@@ -594,7 +594,7 @@ struct Renderer::Impl {
             Image between;
             if (inBetween(c, t, lane, *s.video, dw, dh, ctx, native, into, &between)) return between;
         }
-        const double file = fileFrame(c, t, *s.video);
+        const double file = fileFrame(c, t, *s.video, ctx);
         if (file < 0) return {};
         return videoFrame(*s.video, file, dw, dh, ctx, native, into);
     }
@@ -603,14 +603,23 @@ struct Renderer::Impl {
     // the picture between them. false = not slower than the stream there, exactly on a frame, or a frame missing
     // (the caller shows the plain frame)
     // Where clip frame t lies between stream frames i0 and i0 + 1 (frac 0..1); false = no in-between there
-    static bool betweenFrames(const Clip& c, int t, const VideoSource& v, const Ctx& ctx, int64_t* i0, double* frac)
+    // Stream position (stream frames, fractional) of clip frame t where an in-between mode plays the clip slower
+    // than its stream; false = repeat mode, a freeze frame or not slower there
+    static bool slowStreamPosition(const Clip& c, int t, const VideoSource& v, const Ctx& ctx, double* q)
     {
-        if (c.interpolate == FrameInterp::Repeat || !c.isRetimed() || c.freeze || v.fps <= 0) return false;
+        if (c.interpolate == FrameInterp::Repeat || !c.isRetimed() || c.freeze || v.fps <= 0 || ctx.fps <= 0) return false;
         const RetimeMap map(c, v.length);
         const double m = c.in + t;
         const double perFrame = map.speedAt(m) * v.fps / ctx.fps; // stream frames per output frame
         if (perFrame >= 1.0 - 1e-6) return false;
-        const double q = map.fileFrameAt(m) / ctx.fps * v.fps;
+        *q = map.fileFrameAt(m) / ctx.fps * v.fps;
+        return true;
+    }
+
+    static bool betweenFrames(const Clip& c, int t, const VideoSource& v, const Ctx& ctx, int64_t* i0, double* frac)
+    {
+        double q = 0;
+        if (!slowStreamPosition(c, t, v, ctx, &q)) return false;
         *i0 = int64_t(std::floor(q + 1e-6));
         *frac = q - double(*i0);
         const int64_t streamLength = int64_t(double(v.length) / ctx.fps * v.fps);
@@ -662,13 +671,22 @@ struct Renderer::Impl {
     }
 
     // Frame of the file (project rate) a video clip shows at clip frame t; < 0 = none
-    static double fileFrame(const Clip& c, int t, const VideoSource& v)
+    static double fileFrame(const Clip& c, int t, const VideoSource& v, const Ctx& ctx)
     {
         // Material frame -> file frame (project rate) -> stream position
         const double m = c.freeze ? c.stillFrame() : c.in + t;
         double file = m;
         // Speed, reverse, ramp and freeze frame: the one mapping of RetimeMap (by the sound's time)
         if (c.isRetimed()) file = RetimeMap(c, v.length).pictureFrame(m);
+        // In-between modes on (or next to) a stream frame: that stream frame itself. The project-rate frame above
+        // is rounded down: a 60 fps clip at 25 % in a 30 fps project would show stream frame 0 where frame 1 is
+        // due, the picture jumping back between two in-between pictures (0, 0.5, 0, 1.5, 2 ...)
+        if (double q = 0; slowStreamPosition(c, t, v, ctx, &q)) {
+            int64_t frame = std::max<int64_t>(0, std::llround(q));
+            const int64_t streamLength = int64_t(double(v.length) / ctx.fps * v.fps);
+            if (streamLength > 0) frame = std::min(frame, streamLength - 1);
+            file = double(frame) * ctx.fps / v.fps;
+        }
         return file;
     }
 
@@ -1217,7 +1235,7 @@ struct Renderer::Impl {
         int64_t i0 = 0;
         double frac = 0;
         if (betweenFrames(c, f - c.start, *s.video, ctx, &i0, &frac)) return false; // an in-between picture
-        const double file = fileFrame(c, f - c.start, *s.video);
+        const double file = fileFrame(c, f - c.start, *s.video, ctx);
         if (file < 0) return false;
         const auto pic = fetchPicture(*s.video, file, ctx);
         if (!pic) return false;
@@ -1696,7 +1714,7 @@ struct Renderer::Impl {
             nw = s.still->image.width();
             nh = s.still->image.height();
         } else if (s.video) {
-            const double file = fileFrame(c, t, *s.video);
+            const double file = fileFrame(c, t, *s.video, ctx);
             if (file < 0) return false;
             op.picture = fetchPicture(*s.video, file, ctx);
             if (!op.picture) return false;
