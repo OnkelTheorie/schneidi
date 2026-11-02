@@ -2,6 +2,7 @@
 #include "ui/TranscriptPanel.h"
 
 #include "app/Theme.h"
+#include "core/Captions.h"
 #include "core/Editor.h"
 #include "core/I18n.h"
 #include "core/Project.h"
@@ -74,8 +75,14 @@ TranscriptPanel::TranscriptPanel(Project* project, Editor* editor, QWidget* pare
     m_minPause->setValue(QSettings().value("transcript/minPause", 1.0).toDouble());
     m_minPause->setToolTip(T("Pausen ab dieser Länge"));
     connect(m_minPause, &QDoubleSpinBox::valueChanged, this, [](double v) { QSettings().setValue("transcript/minPause", v); });
+    m_captions = new QToolButton;
+    m_captions->setText(T("Wort-Untertitel"));
+    m_captions->setToolTip(T("Neue Untertitelspur aus dem Transkript, Wort für Wort hervorgehoben (Karaoke; Stil im "
+                             "Inspector der Spur)"));
+    connect(m_captions, &QToolButton::clicked, this, &TranscriptPanel::addCaptions);
     auto* tools = new QHBoxLayout;
     tools->addWidget(m_transcribe);
+    tools->addWidget(m_captions);
     tools->addStretch(1);
     tools->addWidget(m_pauses);
     tools->addWidget(m_minPause);
@@ -279,6 +286,25 @@ void TranscriptPanel::removePauses()
     m_editor->deleteRanges(ranges, true, T("Pausen entfernen"));
 }
 
+void TranscriptPanel::addCaptions()
+{
+    // As the CLI op 'captions' does: the words also of clips at another speed, short phrases for a phone
+    const double fps = m_project->frameRate();
+    const QVector<TranscriptCut::Word> words
+        = TranscriptCut::timelineWords(m_project->timeline(), m_project->media(), fps, audioTrack(), true);
+    Captions::Options o;
+    o.maxGapFrames = int(std::lround(0.6 * fps));
+    o.minFrames = int(std::lround(0.4 * fps));
+    const QVector<SubtitleCue> cues = Captions::fromWords(words, o);
+    if (cues.isEmpty()) {
+        QMessageBox::information(this, T("Wort-Untertitel"), T("Keine gesprochenen Wörter in den Tonclips."));
+        return;
+    }
+    CaptionStyle style;
+    style.mode = CaptionMode::Karaoke;
+    m_editor->addCaptions(cues, T("Wort-Untertitel"), style);
+}
+
 void TranscriptPanel::setPlayhead(int frame)
 {
     m_playhead = frame;
@@ -320,6 +346,7 @@ void TranscriptPanel::updateState()
     const auto missing = TranscriptCut::missingTranscripts(m_project->timeline(), m_project->media(), audioTrack());
     m_transcribe->setEnabled(!running && !missing.isEmpty());
     m_pauses->setEnabled(!running && m_words.size() > 1);
+    m_captions->setEnabled(!running && !m_words.isEmpty());
     m_progress->setVisible(running);
     m_cancel->setVisible(running);
     m_track->setEnabled(!running);
