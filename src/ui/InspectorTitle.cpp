@@ -39,9 +39,30 @@
 #include <QToolButton>
 #include <QVBoxLayout>
 #include <cmath>
+#include <functional>
 #include "ui/InspectorDetail.h"
 
 using namespace InspectorDetail;
+
+namespace {
+// Every widget in grid rows [from, to) (also inside nested layouts): rows to show or hide together
+QVector<QWidget*> rowWidgets(QGridLayout* grid, int from, int to)
+{
+    QVector<QWidget*> out;
+    std::function<void(QLayoutItem*)> collect = [&](QLayoutItem* item) {
+        if (!item) return;
+        if (QWidget* w = item->widget()) out << w;
+        if (QLayout* l = item->layout())
+            for (int i = 0; i < l->count(); ++i) collect(l->itemAt(i));
+    };
+    for (int i = 0; i < grid->count(); ++i) {
+        int row, col, rowSpan, colSpan;
+        grid->getItemPosition(i, &row, &col, &rowSpan, &colSpan);
+        if (row >= from && row < to) collect(grid->itemAt(i));
+    }
+    return out;
+}
+} // namespace
 
 void Inspector::buildTitlePage(QVBoxLayout* page)
 {
@@ -82,6 +103,7 @@ void Inspector::buildTitlePage(QVBoxLayout* page)
         }
     };
     txt.grid->addWidget(edit, txt.rows++, 0, 1, 3);
+    const int fontRow = txt.rows;
 
     auto* fontBox = new QFontComboBox;
     fontBox->setFocusPolicy(Qt::ClickFocus);
@@ -103,8 +125,10 @@ void Inspector::buildTitlePage(QVBoxLayout* page)
 
     addSlider(txt, "titleSize", T("Größe"), 1, 400, TitleStyle().size, 0.5, 1,
               [](Clip& c) -> double& { return c.title.size; }, AnimParam::TitleSize);
+    const int colorRow = txt.rows;
     addColor(txt, T("Farbe"), T("Textfarbe"), [](Clip& c) -> QColor& { return c.title.color; }, true, {},
              AnimParam::TitleColor);
+    const int styleRow = txt.rows;
 
     // Style + alignment in one row
     auto* bold = toggleButton();
@@ -156,6 +180,8 @@ void Inspector::buildTitlePage(QVBoxLayout* page)
 
     addXY(txt, "titlePos", T("Position"), -10000, 10000, 0, 1, 3, [](Clip& c) -> double& { return c.title.posX; },
           [](Clip& c) -> double& { return c.title.posY; }, nullptr, AnimParam::TitlePosX, AnimParam::TitlePosY);
+    // A progress bar has no font, size, style or position (its place is the edge): only its colour stays here
+    const QVector<QWidget*> textRows = rowWidgets(txt.grid, fontRow, colorRow) + rowWidgets(txt.grid, styleRow, txt.rows);
 
     // ---- Outline / background (red dot; changing a value switches it on) ----
     auto autoOn = [this, V](Param* p, const QString& key, const QString& text, const Flag& on) {
@@ -188,9 +214,15 @@ void Inspector::buildTitlePage(QVBoxLayout* page)
     }, boxOn, true);
     addColor(box, T("Farbe"), T("Hintergrundfarbe"), [](Clip& c) -> QColor& { return c.title.boxColor; }, true,
              [](Clip& c) { c.title.boxOn = true; });
+    const int padRow = box.rows;
     autoOn(addSlider(box, "titleBoxPad", T("Abstand"), 0, 200, TitleStyle().boxPad, 0.5, 1,
                      [](Clip& c) -> double& { return c.title.boxPad; }),
            "titleBoxPad", T("Hintergrund"), boxOn);
+    const QVector<QWidget*> textOnly = textRows + rowWidgets(box.grid, padRow, box.rows);
+    m_refreshers << [textOnly, current] {
+        if (const Clip* c = current())
+            for (QWidget* w : textOnly) w->setVisible(!c->title.isProgress());
+    };
 
     buildGeneratorSections(page, ol);
     page->addStretch(1);
