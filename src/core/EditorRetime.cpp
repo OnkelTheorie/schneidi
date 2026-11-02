@@ -24,6 +24,17 @@
 
 using EditorDetail::fitTransitions;
 
+void Editor::setFrameInterpolation(const QVector<int>& ids, FrameInterp mode)
+{
+    QVector<int> targets;
+    for (const int id : withLinked(ids)) {
+        const Clip* c = TimelineOps::findClip(m_project->timeline(), id);
+        if (c && !c->isTitle() && c->interpolate != mode) targets << id;
+    }
+    if (targets.isEmpty()) return;
+    modifyClips(targets, T("Zwischenbilder ändern"), [mode](Clip& c) { c.interpolate = mode; });
+}
+
 void Editor::setClipSpeed(const QVector<int>& ids, const Retime& r, bool ripple)
 {
     const QVector<int> all = withLinked(ids);

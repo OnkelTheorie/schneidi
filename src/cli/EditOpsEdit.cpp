@@ -533,6 +533,25 @@ void opLink(Session& s, const QJsonObject& op, bool link)
 
 // ---------- speed ----------
 
+// interpolate: what fills the time between two source frames where the clip plays slower than its source. Without
+// it a strong slowdown gets a hint (the clip keeps repeating frames: the user's choice, never switched on silently)
+static void applyInterpolate(Session& s, const QJsonObject& op, const QVector<int>& ids, double slowest)
+{
+    if (op.contains("interpolate")) {
+        FrameInterp mode = FrameInterp::Repeat;
+        if (!frameInterpFromId(op.value("interpolate").toString(), &mode))
+            fail("BAD_ARGUMENT", "interpolate is 'repeat' (repeat frames), 'blend' (cross-fade the neighbouring frames) "
+                                 "or 'flow' (compute the motion: smooth slow motion)");
+        s.editor.setFrameInterpolation(ids, mode);
+        return;
+    }
+    const Clip* c = ids.isEmpty() ? nullptr : TimelineOps::findClip(s.project.timeline(), ids.first());
+    if (c && slowest < 0.6 && c->interpolate == FrameInterp::Repeat && !c->freeze)
+        s.notes << QString("slowed to %1 %: each source frame is shown repeatedly (can stutter); interpolate:'flow' "
+                           "computes in-between pictures (smooth slow motion, e.g. game clips), 'blend' cross-fades them")
+                       .arg(std::lround(slowest * 100));
+}
+
 void opSpeed(Session& s, const QJsonObject& op)
 {
     const QVector<int> ids = clipIds(s, op);
@@ -543,6 +562,7 @@ void opSpeed(Session& s, const QJsonObject& op)
     if (op.contains("freeze")) r.freeze = op.value("freeze").toBool();
     if (op.contains("keep_pitch")) r.keepPitch = op.value("keep_pitch").toBool();
     s.editor.setClipSpeed(ids, r, op.value("ripple").toBool(true));
+    applyInterpolate(s, op, ids, op.contains("speed") ? r.speed : 1.0);
 }
 
 void opSpeedRamp(Session& s, const QJsonObject& op)
@@ -579,6 +599,9 @@ void opSpeedRamp(Session& s, const QJsonObject& op)
         ed.setSegmentSpeed(id, i + 1, points[i].speed);
         if (points[i].smooth > 0) ed.setSpeedPointSmooth(id, i, points[i].smooth);
     }
+    double slowest = clip().speed;
+    for (const SpeedPoint& p : clip().ramp) slowest = std::min(slowest, p.speed);
+    applyInterpolate(s, op, {id}, slowest);
 }
 
 // ---------- markers ----------
@@ -848,13 +871,19 @@ void addEditOps(QVector<OpDef>& ops)
         << OpDef{"link", "{op:'link'|'unlink', clips}", "link clips (move/cut together) or unlink them", {},
                  [](Session& s, const QJsonObject& op) { opLink(s, op, true); }}
         << OpDef{"unlink", {}, {}, {}, [](Session& s, const QJsonObject& op) { opLink(s, op, false); }}
-        << OpDef{"speed", "{op:'speed', clips, speed?, reverse?, freeze?, keep_pitch?, ripple?:true}",
-                 "clip speed (1 = normal, 0.01..100), reverse, freeze frame; ripple: length follows, later clips move", {}, opSpeed, kClipKeys}
-        << OpDef{"speed_ramp", "{op:'speed_ramp', clip, points:[{at, speed, smooth?}], speed?} or {…, clear:true}",
+        << OpDef{"speed", "{op:'speed', clips, speed?, reverse?, freeze?, keep_pitch?, interpolate?, ripple?:true}",
+                 "clip speed (1 = normal, 0.01..100), reverse, freeze frame; ripple: length follows, later clips move",
+                 "interpolate = what fills the time between two source frames when slower than the source: 'repeat' "
+                 "(each frame shown again, default), 'blend' (cross-fade of the two neighbouring frames, cheap) or "
+                 "'flow' (computes the motion: smooth slow motion; a static HUD stays sharp, no in-between across a "
+                 "cut). Use 'flow' for slow motion of game clips and sports.",
+                 opSpeed, kClipKeys}
+        << OpDef{"speed_ramp", "{op:'speed_ramp', clip, points:[{at, speed, smooth?}], speed?, interpolate?} or {…, clear:true}",
                  "speed ramp: from each point on its own speed (speed = before the first point)",
                  "at = timeline frame inside the clip as it is now, or {clip, source:\"12.4s\"} = where the clip "
                  "plays that source time (safe after earlier ramps); smooth = frames of a soft change around the "
-                 "point. The clip length follows the speeds, later clips move. Replaces earlier points.",
+                 "point. The clip length follows the speeds, later clips move. Replaces earlier points. interpolate as "
+                 "for speed ('flow' = smooth slow parts).",
                  opSpeedRamp, {"clips"}} // clipOf: a list of one
         << OpDef{"marker", "{op:'marker', at, remove?}", "at may be {media, source} to mark a moment of the material", {}, opMarker}
         << OpDef{"marks", "{op:'marks', in?, out?, clear?}", "timeline In/Out range (I/O)", {}, opMarks}

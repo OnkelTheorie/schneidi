@@ -463,6 +463,7 @@ QJsonObject clipJson(const Project& p, const Clip& c, TrackRef ref)
     if (const QJsonObject keys = keyframesJson(c); !keys.isEmpty()) o["keyframes"] = keys;
     if (c.freeze) o["freeze"] = true;
     if (c.isRetimed() && !c.keepPitch) o["keep_pitch"] = false;
+    if (c.interpolate != FrameInterp::Repeat) o["interpolate"] = frameInterpId(c.interpolate);
     if (c.fadeIn) o["fade_in"] = c.fadeIn;
     if (c.fadeOut) o["fade_out"] = c.fadeOut;
     if (c.transIn) o["transition_in"] = c.transIn;

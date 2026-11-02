@@ -215,6 +215,31 @@ Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
     addSlider(comp, "opacity", T("Deckkraft"), 0, 100, 100, 0.5, 2, [](Clip& c) -> double& { return c.transform.opacity; },
               AnimParam::Opacity);
 
+    // ---- Slow motion: what fills the time between two source frames (only on retimed clips) ----
+    Section slow = addSection(videoLay, V, T("Zeitlupe"), [](Clip& c) { c.interpolate = FrameInterp::Repeat; });
+    auto* interpBox = new QComboBox;
+    interpBox->setObjectName("FrameInterp");
+    interpBox->setFocusPolicy(Qt::NoFocus);
+    interpBox->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+    for (const FrameInterpInfo& f : kFrameInterps) interpBox->addItem(T(f.name), int(f.mode));
+    interpBox->setToolTip(T("Langsamer als das Material: Bilder wiederholen, benachbarte Bilder überblenden oder die "
+                            "Bewegung dazwischen berechnen (flüssige Zeitlupe, z. B. für Spiel-Clips)"));
+    connect(interpBox, &QComboBox::activated, this, [this, interpBox](int i) {
+        m_editor->setFrameInterpolation(selectedIds(TrackKind::Video), FrameInterp(interpBox->itemData(i).toInt()));
+    });
+    slow.grid->addWidget(rowLabel(T("Zwischenbilder")), slow.rows, 0);
+    slow.grid->addWidget(interpBox, slow.rows, 1);
+    ++slow.rows;
+    m_refreshers << [this, interpBox, slow] {
+        const Clip* c = primary(TrackKind::Video);
+        const bool show = c && !c->isTitle() && c->isRetimed() && !c->freeze;
+        slow.header->setVisible(show);
+        slow.body->setVisible(show && !slow.body->property("collapsed").toBool());
+        if (!c) return;
+        const QSignalBlocker b(interpBox);
+        interpBox->setCurrentIndex(interpBox->findData(int(c->interpolate)));
+    };
+
     // ---- Green Screen (effect from the EffectRegistry) ----
     Section key = addSection(videoLay, V, T("Green Screen"), [](Clip& c) {
         c.effects.removeIf([](const EffectInstance& x) { return x.effectId == "chromakey"; });

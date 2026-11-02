@@ -531,6 +531,7 @@ QJsonObject clipToJson(const Clip& c, int mediaIndex, const QDir& projectDir)
     if (c.freeze) o["freeze"] = true;
     if (c.freeze && c.freezeFrame >= 0) o["freezeFrame"] = c.freezeFrame;
     if (!c.keepPitch) o["keepPitch"] = false;
+    if (c.interpolate != FrameInterp::Repeat) o["interpolate"] = QString(frameInterpId(c.interpolate));
     if (!c.ramp.isEmpty()) { // Speed Ramp: [{source, speed, smooth}]
         QJsonArray ramp;
         for (const SpeedPoint& p : c.ramp) {
@@ -600,6 +601,7 @@ Clip clipFromJson(const QJsonObject& o, const QVector<MediaInfo>& media, const Q
     // before the file's start (edited by hand) is its first one - a negative one is not saved and came back as `in`
     c.freezeFrame = c.freeze ? std::max(0, intOf(o.value("freezeFrame"), c.in)) : -1;
     c.keepPitch = o.value("keepPitch").toBool(true);
+    frameInterpFromId(o.value("interpolate").toString(), &c.interpolate); // unknown (newer) mode: repeat
     for (const QJsonValue& v : o.value("ramp").toArray()) {
         const QJsonObject j = v.toObject();
         SpeedPoint p;
