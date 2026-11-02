@@ -8,12 +8,14 @@
 
 #include "cli/Commands.h"
 #include "cli/CommandsDetail.h"
+#include "core/Editor.h"
 #include "core/ExportCheck.h"
 #include "core/Generators.h"
 #include "core/I18n.h"
 #include "core/Project.h"
 #include "core/ProjectFile.h"
 #include "core/ProjectFormat.h"
+#include "core/Selection.h"
 #include "core/TimelineOps.h"
 
 #include <QApplication>
@@ -202,6 +204,21 @@ void testWhip()
     const QImage in = render(tl, 5);
     CHECK(all(in, QRect(20, 0, 280, 80), Qt::black));
     CHECK(all(in, QRect(20, 100, 280, 60), kBlue));
+    // A whip from nothing on a transparent frame: the smeared edge fades out in the clip's own colour (blurred
+    // premultiplied: transparency does not darken it), the frame's far edge stays opaque (edge pixels repeat)
+    tl.video[0].clips[0].transInStyle.type = TransitionType::WhipLeft;
+    tl.video[0].clips[0].transInStyle.ease = MotionEase::InOut;
+    const QImage smear = Check::renderFrame(tl, kFormat, 5, {}, true);
+    int soft = 0;
+    for (int x = 0; x < 320; ++x) {
+        const QRgb p = smear.pixel(x, 90);
+        if (qAlpha(p) > 10 && qAlpha(p) < 245) {
+            ++soft;
+            CHECK(qBlue(p) > 200 && qRed(p) < 45);
+        }
+    }
+    CHECK(soft > 10);
+    CHECK_EQ(qAlpha(smear.pixel(300, 90)), 255);
 }
 
 void testCounterValues()
@@ -385,6 +402,40 @@ void testProgress()
     tl.video[1].clips[0].title.barTop = true;
     tl.video[1].clips[0].title.barMargin = 0;
     CHECK_EQ(barWidth(render(tl, 99, vertical), 5), 1080);
+}
+
+// A progress bar dropped onto a track spans the whole timeline: on a track with clips that would overwrite them all
+void testProgressDrop()
+{
+    std::printf("progress bar drop\n");
+    Project p;
+    ProjectData d;
+    d.timeline = emptyTimeline();
+    p.load(d);
+    p.edit("setup", [&](Timeline& tl) {
+        Clip a = media(p.newClipId(), "/x/a.mp4", 0, 100);
+        Clip b = media(p.newClipId(), "/x/b.mp4", 100, 50);
+        tl.video[0].clips << a << b;
+    });
+    Selection sel;
+    Editor e(&p, &sel);
+    e.addTitle(60, 0, 0, TitleKind::Progress);
+    const Timeline& tl = p.timeline();
+    CHECK_EQ(tl.video[0].clips.size(), 2); // V1 untouched
+    CHECK_EQ(tl.video[0].clips.value(0).length(), 100);
+    CHECK_EQ(tl.video[0].clips.value(1).length(), 50);
+    if (CHECK(tl.video.size() >= 2 && tl.video[1].clips.size() == 1)) {
+        CHECK(tl.video[1].clips[0].title.isProgress());
+        CHECK_EQ(tl.video[1].clips[0].start, 0);
+        CHECK_EQ(tl.video[1].clips[0].length(), 150);
+    }
+    // Onto an empty track: there
+    p.edit("track", [](Timeline& t) { TimelineOps::ensureTracks(t, TrackKind::Video, 4); });
+    e.addTitle(10, 3, 0, TitleKind::Progress);
+    CHECK_EQ(p.timeline().video[3].clips.size(), 1);
+    // A counter keeps the language's separators (the test runs in English)
+    e.addTitle(10, -1, 25, TitleKind::Counter);
+    CHECK(TimelineOps::findClip(p.timeline(), *sel.ids().begin())->title.numbers == NumberStyle::CommaPoint);
 }
 
 void testProjectFile(const QString& dir)
@@ -613,6 +664,7 @@ int main(int argc, char** argv)
     testCounterValues();
     testCounterPicture();
     testProgress();
+    testProgressDrop();
     testProjectFile(tmp.path());
     testCli(tmp.path());
     return Check::result();
