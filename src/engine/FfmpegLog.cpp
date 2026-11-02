@@ -10,6 +10,7 @@ extern "C" {
 
 #include <cstdarg>
 #include <cstdio>
+#include <cstring>
 
 namespace FfmpegLog {
 
@@ -22,10 +23,16 @@ void handler(void* avcl, int level, const char* fmt, va_list args)
     if (level > av_log_get_level()) return;
     char buf[2048];
     int prefix = 1;
-    va_list copy;
-    va_copy(copy, args);
-    av_log_format_line2(avcl, level, fmt, copy, buf, sizeof buf, &prefix);
-    va_end(copy);
+    if (fmt && std::strncmp(fmt, "Format not on whitelist", 23) == 0) {
+        // A file refused by its demuxer (engine/OpenMedia): FFmpeg would print the whole allowed list (~3 KB)
+        av_log_format_line2(avcl, level, "Format not allowed (opens other files or addresses), file refused\n", args,
+                            buf, sizeof buf, &prefix);
+    } else {
+        va_list copy;
+        va_copy(copy, args);
+        av_log_format_line2(avcl, level, fmt, copy, buf, sizeof buf, &prefix);
+        va_end(copy);
+    }
     // Mostly UTF-8, on Windows paths partly in the ANSI code page
     QStringDecoder utf8(QStringConverter::Utf8, QStringConverter::Flag::Stateless);
     QString text = utf8(QByteArrayView(buf));
