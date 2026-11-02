@@ -471,7 +471,8 @@ QVector<Issue> layout(const Timeline& tl, int from, int to, const ProjectFormat&
             }
             if (first < 0 || bad < std::min(b - a, int(std::lround(0.5 * f.rate.fps())))) continue;
             const Zone zone = Zone(std::max_element(zones.begin(), zones.end()) - zones.begin());
-            found.append({ti, zone, first, std::min(b, last + step), c.id, c.title.text.simplified()});
+            const QString name = c.title.kind == TitleKind::Text ? c.title.text.simplified() : c.title.firstLine();
+            found.append({ti, zone, first, std::min(b, last + step), c.id, name});
         }
     }
     for (int i = 0; i < found.size(); ++i) {

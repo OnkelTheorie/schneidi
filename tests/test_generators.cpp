@@ -492,6 +492,7 @@ void testCli(const QString& dir)
         CHECK(counter->title.text.isEmpty());
         CHECK(counter->title.size > 150); // sized for the 1920 high timeline
     }
+    const int counterId = counter ? counter->id : 0;
     // Progress bar without a place: the whole timeline, at the top
     edit(R"([{"op":"title","kind":"progress"}])");
     d = saved();
@@ -499,6 +500,7 @@ void testCli(const QString& dir)
         for (const Clip& c : t.clips)
             if (c.isTitle() && c.title.isProgress()) bar = &c;
     if (CHECK(bar)) {
+        const int barId = bar->id;
         CHECK_EQ(bar->start, 0);
         CHECK_EQ(bar->end(), 100);
         CHECK(bar->title.barTop);
@@ -511,15 +513,24 @@ void testCli(const QString& dir)
         const ProjectFormat v{1080, 1920, {25, 1}};
         auto progressIssue = [&](const Timeline& tl) {
             for (const auto& i : ExportCheck::layout(tl, 0, 100, v))
-                if (i.clip == bar->id) return true;
+                if (i.clip == barId) return true;
             return false;
         };
         CHECK(!progressIssue(d.timeline));
-        edit(QString(R"([{"op":"title","clip":%1,"edge":"bottom","span":"clip","thickness":20}])").arg(bar->id));
+        edit(QString(R"([{"op":"title","clip":%1,"edge":"bottom","span":"clip","thickness":20}])").arg(barId));
         d = saved();
         CHECK(progressIssue(d.timeline));
-        edit(QString(R"([{"op":"title","clip":%1,"margin":500}])").arg(bar->id));
+        edit(QString(R"([{"op":"title","clip":%1,"margin":500}])").arg(barId));
         CHECK(!progressIssue(saved().timeline));
+    }
+    // A counter low in the vertical frame: found by its widest value and named by its range
+    if (counterId) {
+        const int id = counterId;
+        edit(QString(R"([{"op":"title","clip":%1,"y":-850}])").arg(id));
+        bool named = false;
+        for (const auto& i : ExportCheck::layout(saved().timeline, 0, 100, ProjectFormat{1080, 1920, {25, 1}}))
+            if (i.clip == id && i.check == "safe_area") named = i.message.contains("1000 kills");
+        CHECK(named);
     }
     CHECK_EQ(errorOf("edit", {{"project", g_path}, {"ops", R"([{"op":"title","kind":"chart"}])"}}),
              QString("BAD_ARGUMENT"));

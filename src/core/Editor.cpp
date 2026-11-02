@@ -170,7 +170,8 @@ void Editor::addTitle(int frame, int track, int length, TitleKind kind)
         c.title.boxColor = QColor(0, 0, 0, 110);
         if (length <= 0) {
             frame = 0;
-            length = std::max(1, TimelineOps::endFrame(cur));
+            const int end = TimelineOps::endFrame(cur);
+            length = end > 0 ? end : 5 * p->fps(); // empty timeline: like a text title
         }
     }
     c.start = std::max(0, frame);
