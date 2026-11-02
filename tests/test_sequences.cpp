@@ -529,6 +529,22 @@ void testTimelineFormat()
     const Timeline r = p.renderTimeline(main);
     CHECK_EQ(r.frameSize, QSize(1280, 720));
     if (CHECK(r.nested)) CHECK_EQ(r.nested->value(shortId).frameSize, QSize(1080, 1920));
+    // Only a nested sequence's size changes (its clips scale to the same values, here: none): the preview must
+    // still see a new picture (Engine::samePicture -> sameNested), else it keeps the old fit
+    {
+        const int shown = p.currentSequence();
+        const int square = p.addTimeline("Square");
+        p.setCurrentSequence(shown);
+        const Timeline before = p.renderTimeline(main);
+        p.setSequenceSize(square, {1080, 1080});
+        const Timeline after = p.renderTimeline(main);
+        CHECK(before.nested && after.nested && *before.nested == *after.nested); // same cut
+        CHECK(!TimelineOps::sameNested(before, after));
+        CHECK(TimelineOps::sameNested(after, p.renderTimeline(main)));
+        undo->undo();
+        undo->undo();
+        CHECK(!p.sequence(square));
+    }
 
     // Project file: written only when set, version 5 only then; save -> load -> save the same
     const QByteArray json = ProjectFile::toJson(p.data(), "/x/p.schneidi");
