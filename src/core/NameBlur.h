@@ -12,6 +12,8 @@
 #include <QStringList>
 #include <QVector>
 
+#include <cmath>
+
 namespace NameBlur {
 
 enum class Template { Cs2, Valorant, All };
@@ -19,18 +21,32 @@ const char* templateId(Template t);
 bool templateFromId(const QString& id, Template* t);
 QStringList templateIds();
 
+// Where the game's picture lies in the clip's picture and what shape the game drew its HUD for. The templates are
+// measured on a 16:9 screen; a HUD keeps its size with the screen height and sticks to the left edge, the middle or
+// the right edge, so on a 4:3 screen (stretched to 16:9 by the recorder, or between black bars) every zone keeps its
+// distance to its edge in heights.
+struct Screen {
+    double aspect = 16.0 / 9.0;     // width / height of the game's screen
+    QRectF content{0, 0, 1, 1};     // the game picture in the clip's picture (0..1; less with black bars)
+    bool isDefault() const { return std::abs(aspect - 16.0 / 9.0) < 0.01 && content == QRectF(0, 0, 1, 1); }
+};
+
 // A part of the picture (0..1 of width/height, origin top left)
 struct Zone {
     const char* name; // id for notes ("killfeed", "chat", "view")
     QRectF area;
     bool moving;      // text there moves (name tags above heads): tracked; else one window for the zone
     bool always = false; // hidden over the whole clip, found or not (a name the detection misses on its plate)
+    // Narrower text (0..1 of the width) in this zone never counts, in no other zone either: weapon icons and
+    // short labels (CS2 weapon list), while a long line there may end in a name ("… von <name>")
+    double minWidth = 0;
 };
 struct Layout {
     QVector<Zone> include;   // text whose center lies in one of these counts (first match)
     QVector<QRectF> exclude; // text whose center lies here never counts (checked first)
 };
-Layout layout(Template t);
+// The template's zones on `screen` (0..1 of the clip's picture)
+Layout layout(Template t, const Screen& screen = {});
 
 // Text regions found on one sampled frame
 struct Sample {
@@ -59,6 +75,7 @@ struct Options {
     double steadyShare = 0.6;
     // Moving text (name tags) must be followed this long, found on most samples of its time and keep its size
     double minTrackSeconds = 0.5;
+    Screen screen;
 };
 
 // Masks for a clip of `length` frames from its samples (sorted by frame). dropped = moving tracks left out because

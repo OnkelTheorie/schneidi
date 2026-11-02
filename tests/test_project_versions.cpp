@@ -249,6 +249,30 @@ void testVersion3Pixelate()
     CHECK_EQ(GradeWindows::fillAt(*c, 3, 0).amount, 150.0);
 }
 
+// Format 6 (0.16): windows 5 to 8 on a clip. Only a project that uses one of them is written as version 6 (older
+// versions would neither show nor render them, an export would show the names they hide); with windows 1 to 4 it
+// stays version 4 and keeps opening in 0.15. The windows survive save and load.
+void testVersion6Windows(const QString& tmp)
+{
+    ProjectData d;
+    QString err;
+    if (!CHECK(ProjectFile::load(kData + "/v3-0.14dev-pixelate.schneidi", &d, &err))) return;
+    Clip* c = nullptr;
+    for (Track& t : d.timeline.video)
+        for (Clip& x : t.clips)
+            if (x.id == 3) c = &x;
+    if (!CHECK(c)) return;
+    const QString path = tmp + "/windows.schneidi";
+    const auto version = [&] { return QJsonDocument::fromJson(ProjectFile::toJson(d, path)).object().value("version").toInt(); };
+    GradeWindows::add(*c, 4, GradeWindows::Shape::Rectangle);
+    CHECK_EQ(version(), 4);
+    GradeWindows::add(*c, 8, GradeWindows::Shape::Ellipse);
+    CHECK_EQ(version(), 6);
+    ProjectData again;
+    CHECK(ProjectFile::fromJson(ProjectFile::toJson(d, path), path, &again, &err));
+    if (const Clip* a = clip(again.timeline, 3); CHECK(a)) CHECK_EQ(GradeWindows::list(*a), (QVector<int>{1, 2, 3, 4, 8}));
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -262,5 +286,6 @@ int main(int argc, char** argv)
     testVersion2();
     testVersion2Crop();
     testVersion3Pixelate();
+    testVersion6Windows(tmp.path());
     return Check::result();
 }

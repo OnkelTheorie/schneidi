@@ -103,10 +103,26 @@ TrackDynamics dynamicsFromJson(const QJsonObject& o)
 //  5: a timeline with its own resolution (sequence "width"/"height", 0.16). Older versions would show it at the
 //     project's resolution with every position and title in the wrong place. Written only when a sequence has one:
 //     projects without stay version 4 and keep opening in 0.14/0.15 (writtenVersion).
-constexpr int kFormatVersion = 5;
+//  6: Color page windows 5 to 8 on a clip (GradeWindows::kMax 4 -> 8, 0.16, hiding player names). Older versions
+//     keep the data but neither show nor render those windows: an export would show the names they hide. Written
+//     only when a clip uses one of them (writtenVersion).
+constexpr int kFormatVersion = 6;
+
+bool usesWindowsAbove4(const Timeline& t)
+{
+    for (const Track& track : t.video)
+        for (const Clip& c : track.clips)
+            for (int n = 5; n <= GradeWindows::kMax; ++n)
+                if (GradeWindows::exists(c, n)) return true;
+    return false;
+}
+
 // The version a file is written with: the newest one only when it uses what needs it
 int writtenVersion(const ProjectData& d)
 {
+    if (usesWindowsAbove4(d.timeline)
+        || std::any_of(d.sequences.begin(), d.sequences.end(), [](const Sequence& s) { return usesWindowsAbove4(s.timeline); }))
+        return 6;
     const bool ownSize = std::any_of(d.sequences.begin(), d.sequences.end(), [](const Sequence& s) { return s.hasOwnSize(); });
     return ownSize ? 5 : 4;
 }
@@ -120,6 +136,7 @@ const std::array<Migration, kFormatVersion - 1> kMigrations = {
     [](QJsonObject&) {}, // 2 -> 3: crop values are converted while reading (convertCrop needs the media's shape)
     [](QJsonObject&) {}, // 3 -> 4: pixelate amounts are converted while reading (convertPixelate, keyframes too)
     [](QJsonObject&) {}, // 4 -> 5: nothing to convert (sequences without "width"/"height" use the project's)
+    [](QJsonObject&) {}, // 5 -> 6: nothing to convert (windows 5 to 8 are new)
 };
 
 // Format 4: pixelate windows have a finer scale (GradeWindows::pixelBlock: amount 100 = 1/50 of the picture height,

@@ -252,6 +252,70 @@ void testPlan()
     CHECK(!NameBlur::templateFromId("fortnite", &t));
 }
 
+// CS2 weapon list on the right: icons and short weapon names never count (not as HUD text, not as name tags in the
+// view either), a long line there does ("AK-47 | <skin> von <name>")
+void testWeaponList()
+{
+    const QRectF rifle(0.925, 0.715, 0.055, 0.022), pistol(0.948, 0.785, 0.03, 0.022), label(0.955, 0.758, 0.022, 0.011);
+    // Measured on a CS2 recording (1080p): "AK-47 | Smaragdgrüner Nadelstreifen" 243 px, with " von Onkel Theo" 339 px
+    const QRectF skin(0.863, 0.762, 0.127, 0.010);
+    const QRectF dropped(0.812, 0.762, 0.177, 0.010);
+    QVector<NameBlur::Sample> s;
+    for (int f = 0; f < 90; ++f) {
+        NameBlur::Sample x{f, {rifle, pistol, label}};
+        if (f < 25) x.boxes << skin;
+        if (f >= 30 && f < 70) x.boxes << dropped;
+        s << x;
+    }
+    QVector<NameBlur::Mask> m = NameBlur::plan(s, NameBlur::Template::Cs2, 90);
+    QStringList zones;
+    for (const NameBlur::Mask& x : m) zones << x.zone;
+    CHECK_EQ(zones, (QStringList{"player", "items"}));
+    for (const NameBlur::Mask& x : m) {
+        if (x.zone != "items") continue;
+        CHECK(NameBlur::rectAt(x, 10).isEmpty());
+        CHECK(NameBlur::rectAt(x, 50).contains(dropped));
+        CHECK(!NameBlur::rectAt(x, 50).intersects(rifle));
+    }
+}
+
+// The templates on other screens: a zone keeps its size and distance to its edge in heights (4:3 stretched to the
+// clip's 16:9 picture), and lies inside the game picture between black bars
+void testScreens()
+{
+    const auto zone = [](const NameBlur::Layout& l, const char* name) {
+        for (const NameBlur::Zone& z : l.include)
+            if (QLatin1String(z.name) == QLatin1String(name)) return z.area;
+        return QRectF();
+    };
+    const auto near = [](double a, double b) { return std::abs(a - b) < 1e-9; };
+    const NameBlur::Layout wide = NameBlur::layout(NameBlur::Template::Cs2);
+    CHECK(near(zone(wide, "killfeed").left(), 0.6) && near(zone(wide, "killfeed").right(), 1));
+    NameBlur::Screen four;
+    four.aspect = 4.0 / 3.0;
+    const NameBlur::Layout stretched = NameBlur::layout(NameBlur::Template::Cs2, four);
+    CHECK(near(zone(stretched, "killfeed").right(), 1));
+    CHECK(near(zone(stretched, "killfeed").width(), 0.4 * 4 / 3)); // 0.4 of 16:9 = 0.71 heights = 0.53 of 4:3
+    CHECK(near(zone(stretched, "chat").left(), 0) && near(zone(stretched, "chat").width(), 0.42 * 4 / 3));
+    CHECK(near(zone(stretched, "team").center().x(), 0.5) && near(zone(stretched, "team").width(), 0.36 * 4 / 3));
+    CHECK(near(zone(stretched, "view").width(), 1));
+    NameBlur::Screen bars = four;
+    bars.content = QRectF(0.125, 0, 0.75, 1); // 4:3 between black bars in a 16:9 file
+    const NameBlur::Layout boxed = NameBlur::layout(NameBlur::Template::Cs2, bars);
+    CHECK(near(zone(boxed, "killfeed").right(), 0.875) && near(zone(boxed, "killfeed").width(), 0.4));
+    CHECK(near(zone(boxed, "chat").left(), 0.125));
+    CHECK(near(zone(boxed, "view").left(), 0.125) && near(zone(boxed, "view").right(), 0.875));
+    CHECK(near(zone(boxed, "player").center().x(), 0.5));
+    // A kill feed entry of the 4:3 picture between bars counts; the same place in a full 16:9 picture is the view
+    QVector<NameBlur::Sample> s;
+    for (int f = 0; f < 30; ++f) s << NameBlur::Sample{f, {QRectF(0.7, 0.1, 0.15, 0.02)}};
+    NameBlur::Options o;
+    o.screen = bars;
+    bool feed = false;
+    for (const NameBlur::Mask& m : NameBlur::plan(s, NameBlur::Template::Cs2, 30, o)) feed |= m.zone == "killfeed";
+    CHECK(feed);
+}
+
 QVector<NameBlur::Mask> twoMasks()
 {
     NameBlur::Mask feed;
@@ -420,6 +484,8 @@ int main(int argc, char** argv)
     QTemporaryDir tmp;
     if (!CHECK(tmp.isValid())) return Check::result();
     testPlan();
+    testWeaponList();
+    testScreens();
     testDetection();
     testEditor(tmp.path());
     if (!Check::haveFfmpeg()) return Check::skip("ffmpeg nicht gefunden");

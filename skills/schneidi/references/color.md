@@ -31,7 +31,8 @@ clip, then `track_window` so it follows the face – there is no automatic face 
 block size: 100 = 1/50 of the picture height (22 px in 1080p, enough to hide a player name), 50 = half that.
 Player names in game clips (kill feed, chat, name tags above heads): `{"op":"blur_names","template":"cs2"}` (or
 `valorant`, or `all` = any text, also ammo and timers) finds text-like regions over time (no OCR) and adds rectangle
-windows (blur, or `style:'pixelate'`) that grow, shrink and follow moving tags; up to 8 windows per clip. It cannot
+windows (blur, or `style:'pixelate'`) that grow, shrink and follow moving tags; up to 8 windows per clip. 4:3 game
+footage works too (black bars or a clip set to `picture_aspect` 4:3: the HUD zones move with the game's screen). It cannot
 read the names, so check with `frames` (a sheet over the clip) and remove false windows (a sign on a wall, a HUD
 number) with `{"op":"window","window":n,"remove":true}`; small or low-contrast tags can be missed.
 

@@ -2,6 +2,8 @@
 #include "engine/TextRegions.h"
 
 #include "core/I18n.h"
+#include "core/MediaAspect.h"
+#include "engine/BarDetect.h"
 #include "engine/Snapshot.h"
 
 #include <QCryptographicHash>
@@ -79,6 +81,15 @@ bool read(const QByteArray& data, QVector<NameBlur::Sample>* out)
 }
 
 } // namespace
+
+NameBlur::Screen screenOf(const Clip& c)
+{
+    NameBlur::Screen s;
+    s.content = BarDetect::content(c.mediaPath).value_or(QRectF(0, 0, 1, 1));
+    const double aspect = MediaAspect::ofClip(c);
+    if (aspect > 0 && s.content.height() > 0) s.aspect = aspect * s.content.width() / s.content.height();
+    return s;
+}
 
 QVector<QRectF> detect(const QImage& picture)
 {

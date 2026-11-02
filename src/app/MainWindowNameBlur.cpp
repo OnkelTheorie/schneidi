@@ -114,6 +114,7 @@ void MainWindow::blurNames()
             NameBlur::Options o;
             o.maxMasks = GradeWindows::kMax - GradeWindows::list(c).size();
             o.samplesPerSecond = format.rate.fps() / TextRegions::sampleStep(format.rate);
+            o.screen = TextRegions::screenOf(c);
             int d = 0;
             result->insert(c.id, NameBlur::plan(r.samples, tpl, c.length(), o, &d));
             *dropped += d;

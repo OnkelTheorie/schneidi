@@ -11,8 +11,6 @@ namespace {
 struct TemplateName { Template t; const char* id; };
 constexpr TemplateName kTemplates[] = {{Template::Cs2, "cs2"}, {Template::Valorant, "valorant"}, {Template::All, "all"}};
 
-QRectF area(double x, double y, double w, double h) { return QRectF(x, y, w, h); }
-
 // Text box with the zone it belongs to
 struct Found {
     QRectF r;
@@ -118,41 +116,66 @@ QStringList templateIds()
     return out;
 }
 
-Layout layout(Template t)
+Layout layout(Template t, const Screen& screen)
 {
+    // Zones are measured on a 16:9 screen; on another one a zone keeps its size and distance to its edge in heights
+    enum class Anchor { Left, Middle, Right, Whole };
+    const double k = (16.0 / 9.0) / std::max(0.1, screen.aspect); // a 16:9 width fraction on this screen
+    const QRectF& c = screen.content;
+    const auto place = [&](Anchor a, double x, double y, double w, double h) {
+        double x0 = x, x1 = x + w;
+        switch (a) {
+        case Anchor::Left: x0 = x * k, x1 = (x + w) * k; break;
+        case Anchor::Right: x0 = 1 - (1 - x) * k, x1 = 1 - (1 - x - w) * k; break;
+        case Anchor::Middle: x0 = 0.5 + (x - 0.5) * k, x1 = 0.5 + (x + w - 0.5) * k; break;
+        case Anchor::Whole: break;
+        }
+        x0 = std::clamp(x0, 0.0, 1.0), x1 = std::clamp(x1, 0.0, 1.0);
+        return QRectF(c.x() + x0 * c.width(), c.y() + y * c.height(), (x1 - x0) * c.width(), h * c.height());
+    };
+    const auto L = [&](double x, double y, double w, double h) { return place(Anchor::Left, x, y, w, h); };
+    const auto M = [&](double x, double y, double w, double h) { return place(Anchor::Middle, x, y, w, h); };
+    const auto R = [&](double x, double y, double w, double h) { return place(Anchor::Right, x, y, w, h); };
+    const auto W = [&](double x, double y, double w, double h) { return place(Anchor::Whole, x, y, w, h); };
+    const double widthUnit = k * c.width(); // a 16:9 width fraction in the clip's picture
+
     Layout l;
-    const QRectF crosshair = area(0.47, 0.45, 0.06, 0.1);
+    const QRectF crosshair = M(0.47, 0.45, 0.06, 0.1);
     switch (t) {
-    case Template::Cs2:
-        // Default CS2 HUD in 16:9. Names: above the team avatars at the top, the kill feed top right, chat bottom
-        // left, the spectated player bottom middle, pick-ups on the right ("… von <name>"), name tags in the view.
-        l.exclude = {area(0, 0, 0.17, 0.33),        // radar with the place name under it
-                     area(0.32, 0.025, 0.36, 0.16), // score, timer, money and weapons under the avatars
-                     area(0.4, 0.72, 0.2, 0.09),    // round messages in the middle ("bomb planted")
+    case Template::Cs2: {
+        // Default CS2 HUD. Names: above the team avatars at the top, the kill feed top right, chat bottom left, the
+        // spectated player bottom middle, name tags in the view. The weapon list on the right (icons with their
+        // names) only counts with a long line: a weapon someone dropped is "<weapon> | <skin> von <name>".
+        l.exclude = {L(0, 0, 0.17, 0.33),        // radar with the place name under it
+                     M(0.32, 0.025, 0.36, 0.16), // score, timer, money and weapons under the avatars
+                     M(0.4, 0.72, 0.2, 0.09),    // round messages in the middle ("bomb planted")
                      crosshair,
-                     area(0, 0.9, 0.38, 0.1),       // money, health, armor
-                     area(0.6, 0.9, 0.4, 0.1)};     // ammo, weapon name
-        l.include = {{"team", area(0.32, 0, 0.36, 0.025), false},
-                     {"killfeed", area(0.6, 0.04, 0.4, 0.31), false},
-                     {"chat", area(0, 0.6, 0.42, 0.3), false},
+                     L(0, 0.9, 0.38, 0.1),       // money, health, armor
+                     R(0.6, 0.9, 0.4, 0.1)};     // ammo, weapon name
+        Zone weapons{"items", R(0.78, 0.5, 0.22, 0.4), false};
+        weapons.minWidth = 0.14 * widthUnit; // 1080p: own skin names up to ~245 px, "… von <name>" ~340 px
+        l.include = {{"team", M(0.32, 0, 0.36, 0.025), false},
+                     {"killfeed", R(0.6, 0.04, 0.4, 0.31), false},
+                     {"chat", L(0, 0.6, 0.42, 0.3), false},
                      // the own/spectated name left of the avatar: pink on a pink plate is often missed, it is always there
-                     {"player", area(0.385, 0.94, 0.085, 0.045), false, true},
-                     {"items", area(0.8, 0.66, 0.2, 0.24), false},
-                     {"view", area(0, 0.03, 1, 0.87), true}};
+                     {"player", M(0.385, 0.94, 0.085, 0.045), false, true},
+                     weapons,
+                     {"view", W(0, 0.03, 1, 0.87), true}};
         break;
+    }
     case Template::Valorant:
-        // Default Valorant HUD in 16:9: kill feed top right, chat bottom left, name tags in the view
-        l.exclude = {area(0, 0, 0.25, 0.38),        // minimap
-                     area(0.3, 0, 0.4, 0.12),       // score, timer, agent portraits
+        // Default Valorant HUD: kill feed top right, chat bottom left, name tags in the view
+        l.exclude = {L(0, 0, 0.25, 0.38),        // minimap
+                     M(0.3, 0, 0.4, 0.12),       // score, timer, agent portraits
                      crosshair,
-                     area(0.25, 0.85, 0.5, 0.15),   // health, abilities
-                     area(0.75, 0.85, 0.25, 0.15)}; // ammo
-        l.include = {{"killfeed", area(0.68, 0.06, 0.32, 0.32), false},
-                     {"chat", area(0, 0.55, 0.36, 0.3), false},
-                     {"view", area(0, 0.1, 1, 0.75), true}};
+                     M(0.25, 0.85, 0.5, 0.15),   // health, abilities
+                     R(0.75, 0.85, 0.25, 0.15)}; // ammo
+        l.include = {{"killfeed", R(0.68, 0.06, 0.32, 0.32), false},
+                     {"chat", L(0, 0.55, 0.36, 0.3), false},
+                     {"view", W(0, 0.1, 1, 0.75), true}};
         break;
     case Template::All:
-        l.include = {{"all", area(0, 0, 1, 1), true}};
+        l.include = {{"all", W(0, 0, 1, 1), true}};
         break;
     }
     return l;
@@ -161,7 +184,7 @@ Layout layout(Template t)
 QVector<Mask> plan(const QVector<Sample>& samples, Template t, int length, const Options& o, int* dropped)
 {
     if (dropped) *dropped = 0;
-    const Layout l = layout(t);
+    const Layout l = layout(t, o.screen);
     const int n = samples.size();
     // Text per zone and sample
     QVector<QVector<QVector<QRectF>>> inZone(l.include.size(), QVector<QVector<QRectF>>(n));
@@ -171,7 +194,7 @@ QVector<Mask> plan(const QVector<Sample>& samples, Template t, int length, const
             if (std::any_of(l.exclude.begin(), l.exclude.end(), [&](const QRectF& e) { return e.contains(c); })) continue;
             for (int z = 0; z < l.include.size(); ++z)
                 if (l.include[z].area.contains(c)) {
-                    inZone[z][i] << b;
+                    if (b.width() >= l.include[z].minWidth) inZone[z][i] << b;
                     break;
                 }
         }

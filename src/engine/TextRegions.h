@@ -36,6 +36,11 @@ struct Result {
     bool canceled = false;
 };
 
+// The game's screen in the clip's picture for the templates: black bars baked into the file (engine/BarDetect, cached
+// per file) and the shape the clip shows the file at (a stretched 4:3 recording put right, Clip::pictureAspect).
+// Blocking the first time for a file (a dozen decoded pictures).
+NameBlur::Screen screenOf(const Clip& c);
+
 QString cacheDir();
 // The clip's picture (without its effects and transform, as the windows see it) sampled from start to end.
 // progress: 0..1000

@@ -294,6 +294,7 @@ void opBlurNames(Session& s, const QJsonObject& op)
         NameBlur::Options o;
         o.maxMasks = GradeWindows::kMax - GradeWindows::list(c).size();
         o.samplesPerSecond = s.format().rate.fps() / TextRegions::sampleStep(s.format().rate);
+        o.screen = TextRegions::screenOf(c);
         int dropped = 0;
         const QVector<NameBlur::Mask> m = NameBlur::plan(r.samples, tpl, c.length(), o, &dropped);
         masks[id] = m;
@@ -302,6 +303,11 @@ void opBlurNames(Session& s, const QJsonObject& op)
         QString note = QString("clip %1: %2 mask(s)").arg(id).arg(m.size());
         if (!m.isEmpty()) note += " (" + zones.join(", ") + ")";
         if (dropped) note += QString(", %1 moving text(s) left out: no free window").arg(dropped);
+        if (!o.screen.isDefault())
+            note += QString(", HUD of a %1:1 screen at x %2-%3 %")
+                        .arg(o.screen.aspect, 0, 'f', 2)
+                        .arg(o.screen.content.left() * 100, 0, 'f', 1)
+                        .arg(o.screen.content.right() * 100, 0, 'f', 1);
         notes << note;
     }
     const QHash<int, QVector<int>> added = s.editor.blurNames(masks, style, strength);
@@ -868,9 +874,11 @@ void addLookOps(QVector<OpDef>& ops)
                  "(no OCR: what the text says is unknown) and makes rectangle windows (op 'window', fill blur or "
                  "pixelate) that grow, shrink and move with it; text that moves (name tags above heads) is followed. "
                  "template decides which text counts: cs2 (default CS2 HUD: names above the team avatars, kill feed, "
-                 "chat, spectated player, pick-ups, name tags in the view; not radar, money, health, ammo, timer, round "
-                 "messages, crosshair), valorant (kill feed, chat, name tags; not minimap, score bar, abilities, ammo) "
-                 "or all (any text, default; also ammo and timers). Templates assume a 16:9 game picture filling the frame. "
+                 "chat, spectated player, weapons dropped by others, name tags in the view; not radar, money, health, ammo, "
+                 "timer, round messages, crosshair, weapon list), valorant (kill feed, chat, name tags; not minimap, score "
+                 "bar, abilities, ammo) or all (any text, default; also ammo and timers). The templates follow the game's "
+                 "screen: black bars in the file (4:3 between bars) and a stretched 4:3 clip (picture_aspect) move the "
+                 "HUD zones with it (notes say so). "
                  "style blur (default) or pixelate, strength 1..100 (blur default 60, pixelate 100 = 1/50 of the "
                  "picture height per block). Uses free windows of the clip (8 per clip; the notes say which); text that "
                  "found no free window is left out (see notes). Look with `frames` and remove false ones with "
