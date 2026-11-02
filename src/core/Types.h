@@ -113,6 +113,21 @@ inline constexpr TitleKindInfo kTitleKinds[] = {
     {TitleKind::Counter, "counter", N_("Zähler")},
     {TitleKind::Progress, "progress", N_("Fortschrittsbalken")},
 };
+// How a counter writes its number: thousands separator and decimal point. Stored with the title (default: the UI
+// language's way when it is made), so a project renders the same on every machine whatever its language.
+enum class NumberStyle { CommaPoint, PointComma, SpaceComma }; // 1,234.5 | 1.234,5 | 1 234,5 (no-break space)
+struct NumberStyleInfo { NumberStyle style; const char* id; char16_t group, point; };
+inline constexpr NumberStyleInfo kNumberStyles[] = {
+    {NumberStyle::CommaPoint, "comma_point", u',', u'.'},
+    {NumberStyle::PointComma, "point_comma", u'.', u','},
+    {NumberStyle::SpaceComma, "space_comma", u'\u00a0', u','},
+};
+inline const NumberStyleInfo& numberStyleInfo(NumberStyle n)
+{
+    for (const auto& i : kNumberStyles)
+        if (i.style == n) return i;
+    return kNumberStyles[0];
+}
 // Progress bar: filled from the timeline's start to its end wherever the clip sits, or over the clip's own length
 enum class ProgressSpan { Timeline, Clip };
 
@@ -132,7 +147,7 @@ struct TitleStyle {
     QColor boxColor{0, 0, 0, 160};
     double boxPad = 20;
     // What the clip draws (Text: the fields above). Counter: the number in the text's font/colour/outline/box, from
-    // countFrom to countTo over the clip with `decimals` places, thousands grouped in the UI language's way.
+    // countFrom to countTo over the clip with `decimals` places, separators as `numbers` says.
     // Progress: a bar `barThickness` high at the top or bottom edge (barMargin from it), filled in `color`; the box
     // switch/colour is the track behind it.
     TitleKind kind = TitleKind::Text;
@@ -140,6 +155,7 @@ struct TitleStyle {
     int decimals = 0;               // 0..6
     QString prefix, suffix;         // around the number ("$", " kills", "%")
     bool grouping = true;           // thousands separator
+    NumberStyle numbers = NumberStyle::CommaPoint; // separators (Editor::addTitle: the UI language's)
     MotionEase countEase = MotionEase::Out;
     ProgressSpan span = ProgressSpan::Timeline;
     bool barTop = true;             // top edge (phone apps cover the bottom of a vertical video)

@@ -3,6 +3,7 @@
 
 #include "core/EffectFolders.h"
 #include "core/EffectRegistry.h"
+#include "core/Generators.h"
 #include "core/Presets.h"
 #include "core/ProjectFormat.h"
 #include "core/I18n.h"
@@ -161,6 +162,7 @@ void Editor::addTitle(int frame, int track, int length, TitleKind kind)
         c.title.bold = true;
         c.title.outlineOn = true;
         c.title.outlineWidth = std::round(c.title.size / 20);
+        c.title.numbers = Generators::numberStyleOfLanguage(); // stored: renders the same on every machine
     } else if (kind == TitleKind::Progress) {
         // Along the whole timeline unless placed with a length; top edge: the apps cover the bottom of a vertical video
         c.title.text.clear();

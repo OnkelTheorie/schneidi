@@ -6,6 +6,7 @@
 
 #include "core/Captions.h"
 #include "core/EffectFolders.h"
+#include "core/Generators.h"
 #include "core/Retime.h"
 #include "core/Subtitles.h"
 #include "core/TimelineOps.h"
@@ -77,14 +78,15 @@ bool applyStyle(TitleStyle& t, const QJsonObject& op)
 // Counter and progress bar titles (TitleKind): their own settings on top of the style
 const QString kGeneratorFields =
     "kind: text (default), counter or progress. counter: from, to (numbers), decimals (0..6), prefix, suffix (e.g. "
-    "\"$\", \" kills\", \"%\"), grouping (thousands separator, default true; separators follow the UI language), "
+    "\"$\", \" kills\", \"%\"), grouping (thousands separator, default true), separators (comma_point 1,234.5 | "
+    "point_comma 1.234,5 | space_comma 1 234,5; a new counter gets the UI language's, stored with the project), "
     "ease (linear|in|out|in_out, default out); it counts over the title's length in the title's font, size, colour, "
     "outline and box. progress: a bar along the top or bottom edge filled in `color`, the box (box, box_color) is the "
     "track behind it; span timeline (default: fills from the timeline's start to its end wherever the title sits) or "
     "clip (fills over the title's own length); edge top (default: phone apps cover the bottom of a vertical video) or "
     "bottom; thickness, margin (distance from the edge) in pixels; rounded (ends, default true). A new progress bar "
     "without at/duration spans the whole timeline";
-const QStringList kGeneratorKeys{"kind", "from", "to", "decimals", "prefix", "suffix", "grouping", "ease", "span",
+const QStringList kGeneratorKeys{"kind", "from", "to", "decimals", "prefix", "suffix", "grouping", "separators", "ease", "span",
                                  "edge", "thickness", "margin", "rounded"};
 
 MotionEase easeOf(const QJsonObject& op, const char* key)
@@ -105,13 +107,24 @@ TitleKind titleKindOf(const QJsonObject& op)
 
 void applyGenerator(TitleStyle& t, const QJsonObject& op)
 {
-    if (op.contains("kind")) t.kind = titleKindOf(op);
+    if (op.contains("kind")) {
+        const TitleKind k = titleKindOf(op);
+        if (k == TitleKind::Counter && !t.isCounter()) t.numbers = Generators::numberStyleOfLanguage();
+        t.kind = k;
+    }
     if (op.contains("from")) t.countFrom = numberOf(op, "from", -1e12, 1e12);
     if (op.contains("to")) t.countTo = numberOf(op, "to", -1e12, 1e12);
     if (op.contains("decimals")) t.decimals = int(numberOf(op, "decimals", 0, 6));
     if (op.contains("prefix")) t.prefix = op.value("prefix").toString();
     if (op.contains("suffix")) t.suffix = op.value("suffix").toString();
     if (op.contains("grouping")) t.grouping = op.value("grouping").toBool();
+    if (op.contains("separators")) {
+        const QString v = op.value("separators").toString();
+        const auto it = std::find_if(std::begin(kNumberStyles), std::end(kNumberStyles),
+                                     [&](const NumberStyleInfo& n) { return v == QLatin1String(n.id); });
+        if (it == std::end(kNumberStyles)) fail("BAD_ARGUMENT", "separators must be comma_point, point_comma or space_comma");
+        t.numbers = it->style;
+    }
     if (op.contains("ease")) t.countEase = easeOf(op, "ease");
     if (op.contains("span")) {
         const QString v = op.value("span").toString();

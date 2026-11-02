@@ -51,14 +51,20 @@ QString formatNumber(double v, int decimals, bool grouping, QChar point, QChar g
 
 QString counterText(const TitleStyle& s, int t, int length)
 {
-    return s.prefix
-           + formatNumber(counterValue(s, t, length), s.decimals, s.grouping, I18n::decimalPoint(), I18n::groupSeparator())
-           + s.suffix;
+    const NumberStyleInfo& n = numberStyleInfo(s.numbers);
+    return s.prefix + formatNumber(counterValue(s, t, length), s.decimals, s.grouping, n.point, n.group) + s.suffix;
+}
+
+NumberStyle numberStyleOfLanguage()
+{
+    if (I18n::decimalPoint() == '.') return NumberStyle::CommaPoint;
+    return I18n::groupSeparator() == '.' ? NumberStyle::PointComma : NumberStyle::SpaceComma;
 }
 
 QString counterWidest(const TitleStyle& s, const QFontMetricsF& fm)
 {
-    const QChar point = I18n::decimalPoint(), group = I18n::groupSeparator();
+    const NumberStyleInfo& n = numberStyleInfo(s.numbers);
+    const QChar point = n.point, group = n.group;
     const QString a = s.prefix + formatNumber(s.countFrom, s.decimals, s.grouping, point, group) + s.suffix;
     const QString b = s.prefix + formatNumber(s.countTo, s.decimals, s.grouping, point, group) + s.suffix;
     return fm.horizontalAdvance(a) >= fm.horizontalAdvance(b) ? a : b;

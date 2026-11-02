@@ -273,12 +273,24 @@ void Inspector::buildGeneratorSections(QVBoxLayout* page, const Section& outline
         apply(V, {}, T("Tausendertrennzeichen"), [on](Clip& c) { c.title.grouping = on; }, true);
     });
     cnt.grid->addWidget(grouping, cnt.rows++, 1);
-    m_refreshers << [current, places, ease, grouping] {
+    // Separators: stored with the counter (a project renders the same in every UI language)
+    auto* numbers = combo();
+    for (const auto& n : kNumberStyles)
+        numbers->addItem(QStringLiteral("1") + QChar(n.group == u'\u00a0' ? u' ' : n.group) + "234" + QChar(n.point) + "5",
+                         int(n.style));
+    connect(numbers, &QComboBox::activated, this, [this, V, numbers] {
+        const auto n = NumberStyle(numbers->currentData().toInt());
+        apply(V, {}, T("Trennzeichen"), [n](Clip& c) { c.title.numbers = n; }, true);
+    });
+    cnt.grid->addWidget(rowLabel(T("Trennzeichen")), cnt.rows, 0);
+    cnt.grid->addWidget(numbers, cnt.rows++, 1);
+    m_refreshers << [current, places, ease, grouping, numbers] {
         if (const Clip* c = current()) {
-            const QSignalBlocker b1(places), b2(ease), b3(grouping);
+            const QSignalBlocker b1(places), b2(ease), b3(grouping), b4(numbers);
             places->setCurrentIndex(places->findData(std::clamp(c->title.decimals, 0, 3)));
             ease->setCurrentIndex(ease->findData(int(c->title.countEase)));
             grouping->setChecked(c->title.grouping);
+            numbers->setCurrentIndex(numbers->findData(int(c->title.numbers)));
         }
     };
     showFor(cnt, [](const TitleStyle& t) { return t.isCounter(); });

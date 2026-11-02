@@ -384,6 +384,7 @@ QJsonObject titleStyleJson(const TitleStyle& t, const TitleStyle& def)
         if (!t.prefix.isEmpty()) o["prefix"] = t.prefix;
         if (!t.suffix.isEmpty()) o["suffix"] = t.suffix;
         o["grouping"] = t.grouping;
+        o["separators"] = numberStyleInfo(t.numbers).id;
         o["ease"] = motionEaseInfo(t.countEase).id;
     } else if (t.isProgress()) {
         o["kind"] = "progress";

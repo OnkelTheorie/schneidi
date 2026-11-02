@@ -246,14 +246,42 @@ void testCounterValues()
     s.decimals = 1;
     s.prefix = "$";
     s.suffix = " k";
-    I18n::install("en");
+    // Separators are the counter's own, whatever the UI language of the process rendering it
+    s.numbers = NumberStyle::CommaPoint;
+    I18n::install("de");
     CHECK_EQ(Generators::counterText(s, 100, 101), QString("$2,500.0 k"));
     CHECK_EQ(Generators::counterText(s, 50, 101), QString("$1,250.0 k"));
-    I18n::install("de");
+    I18n::install("en");
+    s.numbers = NumberStyle::PointComma;
     CHECK_EQ(Generators::counterText(s, 100, 101), QString("$2.500,0 k"));
     CHECK_EQ(Generators::counterText(s, 0, 101), QString("$0,0 k"));
+    s.numbers = NumberStyle::SpaceComma;
+    CHECK_EQ(Generators::counterText(s, 100, 101), QString("$2\u00a0500,0 k"));
     s.grouping = false;
     CHECK_EQ(Generators::counterText(s, 100, 101), QString("$2500,0 k"));
+    // A new counter takes the UI language's separators (and keeps them)
+    I18n::install("en");
+    CHECK(Generators::numberStyleOfLanguage() == NumberStyle::CommaPoint);
+    I18n::install("de");
+    CHECK(Generators::numberStyleOfLanguage() == NumberStyle::PointComma);
+    I18n::install("fr");
+    CHECK(Generators::numberStyleOfLanguage() == NumberStyle::SpaceComma);
+    I18n::install("en");
+    // Negative numbers, 0.5 cases (away from zero both ways), huge numbers
+    s.prefix.clear();
+    s.suffix.clear();
+    s.grouping = true;
+    s.numbers = NumberStyle::CommaPoint;
+    s.decimals = 0;
+    s.countFrom = -1000;
+    s.countTo = 0;
+    CHECK_EQ(Generators::counterText(s, 0, 101), QString("-1,000"));
+    CHECK_EQ(Generators::counterText(s, 100, 101), QString("0"));
+    s.countFrom = 0;
+    s.countTo = -1;
+    CHECK_EQ(Generators::counterText(s, 50, 101), QString("-1"));
+    s.countTo = 1e12;
+    CHECK_EQ(Generators::counterText(s, 100, 101), QString("1,000,000,000,000"));
 }
 
 void testCounterPicture()
@@ -366,6 +394,7 @@ void testProjectFile(const QString& dir)
         c.title.suffix = "%";
         c.title.grouping = false;
         c.title.countEase = MotionEase::InOut;
+        c.title.numbers = NumberStyle::SpaceComma;
         c.transOut = 10;
         c.transOutStyle.type = TransitionType::WhipUp;
         c.transOutStyle.ease = MotionEase::In;
@@ -493,6 +522,20 @@ void testCli(const QString& dir)
         CHECK(counter->title.size > 150); // sized for the 1920 high timeline
     }
     const int counterId = counter ? counter->id : 0;
+    // Its separators are stored (the test process runs in English: a new one writes 1,000)
+    if (counter) {
+        CHECK(counter->title.numbers == NumberStyle::CommaPoint);
+        edit(QString(R"([{"op":"title","clip":%1,"separators":"point_comma"}])").arg(counterId));
+        bool stored = false;
+        for (const Track& t : saved().timeline.video)
+            for (const Clip& c : t.clips)
+                if (c.id == counterId) stored = c.title.numbers == NumberStyle::PointComma;
+        CHECK(stored);
+        CHECK_EQ(errorOf("edit", {{"project", g_path},
+                                  {"ops", QString(R"([{"op":"title","clip":%1,"separators":"dot"}])").arg(counterId)}}),
+                 QString("BAD_ARGUMENT"));
+        edit(QString(R"([{"op":"title","clip":%1,"separators":"comma_point"}])").arg(counterId));
+    }
     // Progress bar without a place: the whole timeline, at the top
     edit(R"([{"op":"title","kind":"progress"}])");
     d = saved();

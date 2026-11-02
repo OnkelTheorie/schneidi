@@ -21,8 +21,11 @@ double ease(MotionEase e, double x);
 double counterValue(const TitleStyle& s, int t, int length);
 // A number with `decimals` places, the decimal point and (grouping) thousands separator given
 QString formatNumber(double v, int decimals, bool grouping, QChar point, QChar group);
-// Counter text at clip frame t: prefix + number + suffix in the UI language's way (I18n::decimalPoint/groupSeparator)
+// Counter text at clip frame t: prefix + number + suffix, separators by the title's `numbers` (not the UI language:
+// the same project renders the same everywhere)
 QString counterText(const TitleStyle& s, int t, int length);
+// Separators of the UI language (for a new counter)
+NumberStyle numberStyleOfLanguage();
 // The widest text the counter shows (its first or last value): the block keeps this size while the number grows
 QString counterWidest(const TitleStyle& s, const QFontMetricsF& fm);
 

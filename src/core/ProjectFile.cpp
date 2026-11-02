@@ -261,6 +261,7 @@ void generatorToJson(QJsonObject& o, const TitleStyle& t)
         if (!t.prefix.isEmpty()) o["prefix"] = t.prefix;
         if (!t.suffix.isEmpty()) o["suffix"] = t.suffix;
         if (t.grouping != d.grouping) o["grouping"] = t.grouping;
+        o["numbers"] = numberStyleInfo(t.numbers).id;
         if (t.countEase != d.countEase) o["countEase"] = motionEaseInfo(t.countEase).id;
     } else {
         o["span"] = t.span == ProgressSpan::Clip ? "clip" : "timeline";
@@ -322,6 +323,8 @@ TitleStyle titleFromJson(const QJsonObject& o)
     t.prefix = o.value("prefix").toString();
     t.suffix = o.value("suffix").toString();
     t.grouping = o.value("grouping").toBool(t.grouping);
+    for (const auto& n : kNumberStyles)
+        if (o.value("numbers").toString() == QLatin1String(n.id)) t.numbers = n.style;
     t.countEase = easeFromJson(o.value("countEase"), t.countEase);
     if (o.value("span").toString() == "clip") t.span = ProgressSpan::Clip;
     t.barTop = o.value("barTop").toBool(t.barTop);
