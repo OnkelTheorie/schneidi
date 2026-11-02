@@ -7,6 +7,7 @@
 
 #include "check.h"
 
+#include "engine/OutputColor.h"
 #include "engine/picture/Interpolate.h"
 #include "engine/picture/Renderer.h"
 
@@ -226,6 +227,24 @@ void rendererChecks(const QString& video)
             avg.scanLine(y)[x] = uint8_t((f0.constScanLine(y)[x] + f1.constScanLine(y)[x] + 1) / 2);
     if (!CHECK(maxDiff(mid, avg) <= 1)) std::printf("       blend vs average: %d\n", maxDiff(mid, avg));
     CHECK(maxDiff(mid, f0) > 10); // really in between (the test video moves)
+    // The export's shortcut for a plain full-size video (decoded planes handed on as they are) must not skip it
+    {
+        Picture::Options o;
+        o.format = kFmt;
+        o.mode = Picture::Mode::Export;
+        o.gpu = false;
+        Picture::Renderer r(one(video, 0.25, FrameInterp::Blend, 40), o);
+        std::vector<uint8_t> planes(size_t(320) * 180 * 3 / 2);
+        OutputColor::Target target;
+        target.planes[0] = planes.data();
+        target.planes[1] = planes.data() + 320 * 180;
+        target.planes[2] = planes.data() + 320 * 180 + 160 * 90;
+        target.strides[0] = 320;
+        target.strides[1] = target.strides[2] = 160;
+        Picture::RenderHints hints;
+        hints.yuv = &target;
+        CHECK(!r.render(2, hints).yuvWritten());
+    }
     // On a source frame the in-between modes show it unchanged
     CHECK_EQ(maxDiff(render(one(video, 0.25, FrameInterp::Flow, 40), 4), f1), 0);
     // Flow: closer to the average than to either side (a picture in between, not a repeat)
