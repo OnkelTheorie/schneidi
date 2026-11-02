@@ -377,6 +377,13 @@ void MainWindow::buildActions()
             return c && c->pictureAspect > 0;
         }));
     });
+    // Auto-Reframe of game footage: its kill feed as a second picture at the top (Reframe::KeepChoice)
+    QAction* keepFeed = makeAction(clipMenu, "reframe_keep_killfeed", T("Auto-Reframe: Killfeed oben behalten"),
+                                   QKeySequence(), [] {});
+    keepFeed->setCheckable(true);
+    keepFeed->setChecked(QSettings().value(QStringLiteral("reframe/keepKillFeed"), true).toBool());
+    connect(keepFeed, &QAction::toggled, this,
+            [](bool on) { QSettings().setValue(QStringLiteral("reframe/keepKillFeed"), on); });
     QMenu* compoundMenu = timeline->addMenu(T("Compound Clip"));
     makeAction(compoundMenu, "compound_create", T("Neuer Compound Clip…"), QKeySequence(), [this] { createCompoundClip(); });
     makeAction(compoundMenu, "compound_open", T("Compound Clip in Timeline öffnen"), QKeySequence(),

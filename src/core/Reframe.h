@@ -77,7 +77,38 @@ void apply(Clip& c, Mode mode, const QVector<Key>& keys, double mediaAspect, QSi
 // crop values, crop keyframes removed. A whole-picture content leaves the crop alone. False = nothing to do.
 bool cropBars(Clip& c, const QRectF& content, double mediaAspect, QSizeF frame);
 
-// Can the clip be reframed (a video or still clip; not titles, audio, compound or multicam clips)?
+// Can the clip be reframed (a video or still clip; not titles, audio, compound or multicam clips, not a kept region)?
 bool canReframe(const Clip& c);
+
+// A part of the picture kept readable above the reframed picture: the kill feed of a game, which a 9:16 crop of 16:9
+// footage cuts away. Shown by a second copy of the clip on a track above (picture in picture), cropped to the region
+// and placed near the top of the frame.
+struct Keep {
+    QString id;    // what it keeps: "killfeed" (a game's, core/GameHud.h) or "custom"
+    QRectF region; // fractions of the whole picture
+    bool operator==(const Keep&) const = default;
+};
+// Which regions a reframe keeps: Auto = the kill feed of a known game (core/GameHud.h, from the file's folder or name,
+// or `game`) when the reframe cuts the sides away; KillFeed = that kill feed in any case; Custom = `region`
+struct KeepChoice {
+    enum Kind { Auto, KillFeed, None, Custom } kind = Auto;
+    QString game;  // id of the game whose kill feed (empty = each file's own)
+    QRectF region; // Custom: fractions of the whole picture
+};
+// Where a kept region goes: centred, `top` of the frame height below its top edge (under the app buttons of the
+// platforms, ExportCheck safeTop), `width` of the frame width wide but at most `maxHeight` of the frame height tall
+struct KeepPlace {
+    double top = 0.1, width = 0.84, maxHeight = 0.15;
+};
+// The copy of `base` that shows only `k.region`: the same file, time, speed and effects (a grade looks the same), no
+// sound link, no transform keyframes, cropped to the region and placed by `place`. Its id is left to the caller.
+Clip keepCopy(const Clip& base, const Keep& k, double mediaAspect, QSizeF frame, const KeepPlace& place = {});
+// Is `c` a kept-region copy of `base` (same file and the same part of it at the same place)?
+bool isKeepOf(const Clip& c, const Clip& base);
+// `region` (fractions of a game's picture) in fractions of the whole recording, when the game fills only `content`
+// of it (black bars around a 4:3 game)
+QRectF inContent(const QRectF& region, const QRectF& content);
+// Does a reframe cut the sides of the picture away (a 9:16 crop of 16:9 footage)? Then a kill feed at the edge is gone.
+bool cropsSides(Mode mode, double mediaAspect, QSizeF frame, const QRectF& content = QRectF(0, 0, 1, 1));
 
 } // namespace Reframe

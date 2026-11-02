@@ -78,7 +78,8 @@ void opNewTimeline(Session& s, const QJsonObject& op)
         if (op.contains("reframe")) {
             QJsonObject r{{"mode", op.value("reframe")}};
             if (op.contains("smoothness")) r["smoothness"] = op.value("smoothness");
-            if (op.contains("bars")) r["bars"] = op.value("bars");
+            for (const char* k : {"bars", "keep", "game"})
+                if (op.contains(k)) r[k] = op.value(k);
             reframeClips(s, {}, r);
         }
         if (!op.value("switch").toBool(true)) s.project.setCurrentSequence(previous);
@@ -200,15 +201,15 @@ void addTimelineOps(QVector<OpDef>& ops)
                  "this timeline next time; otherwise the app keeps showing the one the user had open.",
                  opTimeline}
         << OpDef{"new_timeline", "{op:'new_timeline', name?, aspect?, width?, height?, from?, reframe?, smoothness?, bars?, "
-                                 "switch?:true, open?}",
+                                 "keep?, game?, switch?:true, open?}",
                  "new empty timeline (aspect:'9:16' = its own 1080x1920 next to a 16:9 edit), or with from a copy of "
                  "a timeline in that shape, reframe:'auto' = its clips follow their subject (the short of an edit in "
                  "one call); the following ops edit it unless switch:false; the app shows it unless open:false",
                  "aspect: 16:9 (1920x1080), 9:16 (1080x1920), 1:1 (1080x1080), 4:5 (1080x1350), 4:3 (1440x1080), or "
                  "width+height (even). Without: the project's resolution (and it follows a later project `format`). "
                  "from = id or name of a timeline to copy (all clips, titles, sound, markers; default name '<from> "
-                 "<aspect>'); reframe: auto, center or fit as in op 'reframe' (smoothness and bars too), else the clips keep "
-                 "their transform (fitted in, with bars).",
+                 "<aspect>'); reframe: auto, center or fit as in op 'reframe' (smoothness, bars, keep and game too: game footage "
+                 "keeps its kill feed readable at the top), else the clips keep their transform (fitted in, with bars).",
                  opNewTimeline}
         << OpDef{"rename_timeline", "{op:'rename_timeline', timeline?, name}", {}, {}, opRenameTimeline}
         << OpDef{"duplicate_timeline", "{op:'duplicate_timeline', timeline?, name?, switch?:false}",

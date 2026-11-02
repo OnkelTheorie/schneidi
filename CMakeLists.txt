@@ -113,6 +113,7 @@ add_library(schneidi_lib STATIC
     src/core/EditorMulticam.cpp
     src/core/EditorReframe.cpp
     src/core/Reframe.h            src/core/Reframe.cpp
+    src/core/GameHud.h            src/core/GameHud.cpp
     src/core/EffectRegistry.h     src/core/EffectRegistry.cpp
     src/core/EffectFolders.h      src/core/EffectFolders.cpp
     src/core/Presets.h            src/core/Presets.cpp

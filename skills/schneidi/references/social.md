@@ -11,7 +11,8 @@ It runs the steps below with the usual commands and answers with `out`, `length_
    `none` = loud moments only), every candidate padded to at least 6 s, the best ones within `min_s`..`max_s`
    (default 15-45 s); nothing found = the end of the recording (where a clip tool puts the moment).
 2. A timeline "Short-Schnitt" with them (`keep`) in the recordings' shape, then the `aspect` copy "Short"
-   (`9:16` default, `1:1`, `4:5`) with `reframe` (`auto` default, `center`, `fit`).
+   (`9:16` default, `1:1`, `4:5`) with `reframe` (`auto` default, `center`, `fit`); game footage keeps its kill
+   feed readable at the top (`keep`, below).
 3. Word captions (`captions` `karaoke` default, `word`, `off`; `language`) - only when whisper is installed. Otherwise
    a note with the install command; it never installs: ask the user first.
 4. `check` for the platform `for` (`shorts` default, `reels`, `tiktok`: length limit, -14 LUFS, true peak) and its sound
@@ -41,6 +42,12 @@ result yourself afterwards (`frames` sheet of `out`) - one call does not replace
     `mode` `"center"` = fill without keyframes, `"fit"` = the blurred-background build below (also for 9:16 footage
     in a 16:9 timeline). Check the result with `frames` (a few times per clip) and fine-tune single moments with
     `keyframe` param `x`.
+  - **The kill feed of game footage** (top right, cut away by a 9:16 crop): `reframe` keeps it by itself (`keep`
+    `"auto"`, default) for a known game (`game` `cs2`/`valorant`, by default from the folder or file name) - a copy
+    of the clip cropped to the kill feed on a free track above, centred near the top under the platforms' buttons
+    (`info`: `keep_region`). `keep` `"killfeed"` = always, `"none"` = no copy (removes earlier ones), a region
+    `"x,y,w,h"` (fractions of the whole picture) = any other part (a scoreboard, the minimap). Reframing a clip
+    again replaces its copies.
   - **Fill and reframe by hand**: `transform` `zoom` ≈ 3.16 fills the height; `x` moves the visible window
     left/right (pixels from the center, about ±1160 at that zoom). Look with `frames` where the subject is.
   - **Fit with blurred background** (gameplay, wide shots, HUD that must stay visible): one track, one clip per

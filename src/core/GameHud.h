@@ -1,0 +1,32 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+#pragma once
+// Where known games show their kill feed, for the analyses (highlights: kills from the player's own kill feed lines)
+// and for Auto-Reframe (the kill feed kept readable above a 9:16 crop that cuts it away). Regions are fractions of
+// the game's picture (16:9 recordings: the whole picture; with black bars around a 4:3 game: the part between them).
+
+#include <QRectF>
+#include <QString>
+#include <QVector>
+
+namespace GameHud {
+
+struct Game {
+    QString id;   // "cs2" (CLI, settings)
+    QString name; // "Counter-Strike 2"
+    // The part of the kill feed where the player's own lines show their mark, and the mark's colour: as small as the
+    // lines allow, so the game picture behind (a red sign, a menu) is not counted as a kill
+    QRectF mark;
+    QString color;
+    int tolerance = 0; // largest difference per channel; 0 = the analysis' default
+    // The whole kill feed (several lines under each other, right-aligned): what a short keeps readable
+    QRectF feed;
+};
+
+const QVector<Game>& games();
+const Game* find(const QString& id); // case-insensitive; nullptr = unknown
+// The game from the folder (a clip tool's "cs2/") or the file name ("cs2_clip_…", "valorant-…"); nullptr = none
+const Game* guess(const QString& file);
+// "x,y,w,h" with up to four decimals (CLI arguments and output)
+QString regionText(const QRectF& r);
+
+} // namespace GameHud

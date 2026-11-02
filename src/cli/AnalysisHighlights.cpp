@@ -3,6 +3,7 @@
 // moments, ready for the 'keep' edit operation
 #include "cli/AnalysisDetail.h"
 
+#include "core/GameHud.h"
 #include "engine/FrameGaps.h"
 
 #include <QJsonArray>
@@ -49,10 +50,34 @@ struct Candidate {
     QVector<QPair<int, int>> clean;    // with stutter: the parts without it, source frames
 };
 
-QJsonObject highlightsOne(const QJsonObject& a, Context& ctx)
+// The game whose kill feed to read (core/GameHud.h): `game`, else from the folder or file name; none when a region or
+// colour is given or game is "none"
+const GameHud::Game* gameOf(const QJsonObject& a, const QString& file)
 {
-    const MediaSource m = openMedia(a);
+    if (a.contains("color") || a.contains("region")) return nullptr;
+    const QString g = a["game"].toString().trimmed();
+    if (g.compare("none", Qt::CaseInsensitive) == 0) return nullptr;
+    if (!g.isEmpty()) {
+        if (const GameHud::Game* game = GameHud::find(g)) return game;
+        QStringList ids{"none"};
+        for (const GameHud::Game& x : GameHud::games()) ids << x.id;
+        fail("BAD_ARGUMENT", "game must be " + ids.join(", ") + " (or leave it out: from the folder or file name)");
+    }
+    return GameHud::guess(file);
+}
+
+QJsonObject highlightsOne(const QJsonObject& given, Context& ctx)
+{
+    const MediaSource m = openMedia(given);
     const ProjectFormat& f = m.format;
+    // A known game: its kill feed, as if region and colour were given
+    QJsonObject a = given;
+    const GameHud::Game* game = m.info.hasVideo && !m.info.isImage ? gameOf(given, m.info.path) : nullptr;
+    if (game) {
+        a["region"] = GameHud::regionText(game->mark);
+        a["color"] = game->color;
+        if (game->tolerance > 0 && !a.contains("tolerance")) a["tolerance"] = game->tolerance;
+    }
     const auto timeArg = [&](const char* key, double defaultSeconds) {
         const int v = a.contains(key) ? parseTime(a[key], f, key) : int(std::lround(defaultSeconds * f.rate.fps()));
         if (v < 0) fail("BAD_ARGUMENT", QString("'%1' must not be negative").arg(key));
@@ -194,6 +219,10 @@ QJsonObject highlightsOne(const QJsonObject& a, Context& ctx)
     QJsonObject out{{"file", m.info.path}, {"frames", m.info.length}, {"fps", formatJson(f)["fps"]},
                     {"candidates", candidates}, {"keep", keep}};
     if (anyStutter) out["keep_clean"] = keepClean;
+    if (game) {
+        out["game"] = game->id;
+        out["region"] = a["region"];
+    }
     if (feed) {
         out["kill_feed_most_pct"] = std::round(most * 1e5) / 1e3;
         out["kills_note"] = "kill_s = when the kill feed line is there (a few frames after the hit); hit_s = the hit "

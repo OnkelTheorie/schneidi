@@ -485,6 +485,7 @@ QJsonObject clipJson(const Project& p, const Clip& c, TrackRef ref)
     if (c.speed != 1.0) o["speed"] = c.speed;
     if (c.reverse) o["reverse"] = true;
     if (c.pictureAspect > 0) o["picture_aspect"] = std::round(c.pictureAspect * 10000) / 10000; // op picture_aspect
+    if (!c.keepRegion.isEmpty()) o["keep_region"] = c.keepRegion; // a kept region above a reframed clip (op reframe keep)
     if (!c.effects.isEmpty()) {
         QJsonArray fx;
         const auto json = [](const QVariant& v) {
@@ -911,8 +912,9 @@ const QVector<Command>& commands()
                                  "the whole picture stays visible)"},
           {"captions", T::String, "karaoke (default: the spoken word lights up), word (one word at a time) or off"},
           {"language", T::String, "spoken language for the captions: de, en, … (default: detect)"},
-          {"game", T::String, "kill feed of this game for the moments: cs2 or valorant (default: from the folder or "
-                              "file name, e.g. clips/cs2/… or cs2_clip_…), none = loud moments only"},
+          {"game", T::String, "kill feed of this game for the moments, and kept readable at the top of the short "
+                              "(reframe keep): cs2 or valorant (default: from the folder or file name, e.g. "
+                              "clips/cs2/… or cs2_clip_…), none = loud moments only, no kill feed kept"},
           {"encoder", T::String, "as in `render`"},
           {"threads", T::Integer, "as in `render`"},
           {"overwrite", T::Boolean, "replace an existing out file"}},
@@ -1013,7 +1015,8 @@ const QVector<Command>& commands()
                                "project or \"@app\" only, live in the app one undo step"},
           {"markers", T::String, "with apply: phrases (default) or bars"}},
          cmdBeats},
-        {"highlights", "Candidates for a highlight video: kills from the kill feed (with region + color, see "
+        {"highlights", "Candidates for a highlight video: kills from the kill feed (of a known game - game, or "
+                       "from the folder or file name: cs2, valorant - or any with region + color, see "
                        "`scenes` color) and loud moments, as source ranges with lead-in and lead-out, best first. "
                        "Kills closer than 'join' are one candidate (a multi kill scores more). Without a kill feed the "
                        "sound alone (bursts of loud moments) gives the candidates, e.g. for sport or vlogs. 'keep' "
@@ -1029,9 +1032,13 @@ const QVector<Command>& commands()
                        "feed). Put accents and beats on hit_s: on the timeline it is {media:file, source:\"<hit_s>s\"}.",
          {{"file", T::Path, "video file", false, true},
           {"files", T::Paths, "several video files (one result each, plus 'best': all candidates by score)"},
+          {"game", T::String, "read the kill feed of this game: cs2 or valorant (its region, colour and tolerance; "
+                              "default: from the folder or file name, e.g. clips/cs2/… or cs2_clip_…, unless region "
+                              "or color is given), none = loud moments only. The result names the game and region"},
           {"region", T::String, "where the kill feed is, \"x,y,w,h\" (fractions 0..1 or pixels; look with `frames` "
-                                "crop first). Only the part with the player's mark: e.g. Valorant \"0.70,0.04,0.22,0.23\", "
-                                "CS2 \"0.72,0.04,0.28,0.2\""},
+                                "crop first). Only the part with the player's mark, as small as the lines allow (game "
+                                "picture in it can look like a kill): e.g. Valorant \"0.70,0.04,0.22,0.23\", CS2 "
+                                "\"0.88,0.06,0.115,0.19\" (what game uses)"},
           {"color", T::String, "the mark of the player's own kill feed lines, e.g. Valorant \"#e7e371\" (yellow), "
                                "CS2 \"#d8444a\" (a thin red frame: tolerance 40)"},
           {"tolerance", T::Integer, "with color: largest difference per channel, 0..255 (default 25; thin marks such as "

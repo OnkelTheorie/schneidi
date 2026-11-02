@@ -6,12 +6,15 @@ also read [social.md](social.md).
 ## Find the moments
 - `highlights` with all clips at once (`files`) gives candidates as source ranges with lead-in and lead-out, best
   first (`best`), and a ready `keep` list per file. Pass `project` so the frames match your project.
-- **Games with a kill feed**: look at the kill feed first with `frames` + `crop` (e.g. `"0.7,0.0,0.3,0.3"` = top
-  right) on a moment with a kill, pick the region and the color that marks the player's *own* kills, then pass
-  `region` + `color`. Without that, `highlights` uses the sound alone (bursts of loud moments) - fine for sports,
-  events, vlogs. A thin mark needs a higher `tolerance` than a filled one: CS2 frames the player's own kills in red
-  (`region` "0.72,0.04,0.28,0.2", `color` "#d8444a", `tolerance` 40). Fewer `kills` than you saw in the kill feed:
-  raise `tolerance` step by step (too high counts red walls and blood as kills).
+- **Games with a kill feed**: CS2 and Valorant are known (`game`, by default from the folder or file name such as
+  `clips/cs2/…` or `cs2_clip_…`): `highlights` reads their kill feed by itself and names `game` and `region` in its
+  answer. Other games: look at the kill feed first with `frames` + `crop` (e.g. `"0.7,0.0,0.3,0.3"` = top right) on
+  a moment with a kill, pick the region and the color that marks the player's *own* kills, then pass `region` +
+  `color` - the region as small as the lines allow (game picture inside it, a red sign, can count as a kill).
+  Without a kill feed (`game` `none`, or an unknown game) `highlights` uses the sound alone (bursts of loud
+  moments) - fine for sports, events, vlogs. A thin mark needs a higher `tolerance` than a filled one: CS2 frames
+  the player's own kills in red (`region` "0.88,0.06,0.115,0.19", `color` "#d8444a", `tolerance` 40). Fewer `kills`
+  than you saw in the kill feed: raise `tolerance` step by step (too high counts red walls and blood as kills).
 - Each kill has two times: `kill_s` = when its kill feed line is there, `hit_s` = the hit itself (the last shot
   before the line, ~0.1-0.3 s earlier). Put accents, sounds and beats on `hit_s`, never on `kill_s` - an effect after
   the kill looks late. `hit_by` "feed" means no shot was heard (a silent first audio stream: pass `audio_stream`
