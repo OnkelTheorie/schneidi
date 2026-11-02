@@ -80,13 +80,18 @@ TranscriptPanel::TranscriptPanel(Project* project, Editor* editor, QWidget* pare
     m_captions->setToolTip(T("Neue Untertitelspur aus dem Transkript, Wort für Wort hervorgehoben (Karaoke; Stil im "
                              "Inspector der Spur)"));
     connect(m_captions, &QToolButton::clicked, this, &TranscriptPanel::addCaptions);
+    // Two rows: in one, the four controls did not fit the panel's usual width and the buttons were elided
+    // ("Wor…ons", "Rem…ses")
     auto* tools = new QHBoxLayout;
     tools->addWidget(m_transcribe);
     tools->addWidget(m_captions);
     tools->addStretch(1);
-    tools->addWidget(m_pauses);
-    tools->addWidget(m_minPause);
     lay->addLayout(tools);
+    auto* pauseTools = new QHBoxLayout;
+    pauseTools->addWidget(m_pauses);
+    pauseTools->addWidget(m_minPause);
+    pauseTools->addStretch(1);
+    lay->addLayout(pauseTools);
 
     m_progress = new QProgressBar;
     m_progress->setRange(0, 1000);

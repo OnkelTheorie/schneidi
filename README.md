@@ -23,6 +23,7 @@ schneidi has four pages – Media, Edit, Color and Deliver – and fewer feature
 ## Why schneidi?
 
 - **Edit together with an AI – any AI, any way.** Tell it what to do in the [AI chat](#ai-chat-in-the-app) next to the timeline (Claude, an OpenAI-compatible service or a local model), connect Claude Code or Claude Desktop in one step, or let an assistant work through the [command line and MCP server](#command-line-and-ai-editing-mcp), also on a server. It finds pauses, scene changes, loud moments and the beats of a song, transcribes, cuts, grades, mixes and renders – and you see what it does: changed clips light up, the AI log lists every step, each change is an undo step. Or review first and accept or discard the whole request.
+- **From a recording to a short.** A 9:16 short lives next to the 16:9 edit in the same project. Auto reframe keeps the subject in view (and a game's kill feed readable at the top), word-by-word captions come from the speech, and presets for YouTube Shorts, Instagram Reels and TikTok go with a check of the platform's length limit and loudness. An AI can do all of it in one call: `schneidi-cli short` turns game recordings into a finished short.
 - **A professional workflow on any computer.** Pages for each step, ripple, roll, slip and slide trims, compound clips, multicam, color wheels and scopes – with the shortcuts you know from the big editors (a standard and a beginner preset, every key changeable), but light enough for an older laptop.
 - **Everything stays on your computer.** Speech recognition (whisper.cpp), text-based editing, sync by sound and rendering work offline – no account, no cloud, no telemetry, open source (AGPL-3.0-only). The only request schneidi makes by itself is a check for a new release on GitHub, at most once a day (off in File › Settings). The AI chat talks only to the provider you pick; with Ollama it stays on your computer too.
 - **Long recordings of one event.** Sync hours of recordings from several PCs or cameras by their sound and cut them in a multicam view that shows up to 16 angles at once.
@@ -30,6 +31,9 @@ schneidi has four pages – Media, Edit, Color and Deliver – and fewer feature
 ## Screenshots
 
 ![Edit page while an AI assistant is connected: transcript, title inspector and timeline](screenshots/edit.png)
+
+![The same edit as a 9:16 short in its own timeline: reframed picture, karaoke captions, picture shape in the Inspector](screenshots/short.png)
+**Short** – the 16:9 edit copied into a 9:16 timeline of the same project: reframed, with karaoke captions from the transcript
 
 | | |
 |---|---|
@@ -46,11 +50,17 @@ schneidi has four pages – Media, Edit, Color and Deliver – and fewer feature
 - **Media Storage and Media Pool:** look at a file and skim through it before importing, set In/Out and insert; filter the pool by flag, clip color and type; remove clips together with their uses in the timeline in one undo step
 - **Watch folders:** new files in a folder (your screen recorder's, for example) come into the Media Pool by themselves – only once they are finished; `schneidi-cli watch` for automatic workflows
 - Large viewer (one click hides the panels beside it) and full-screen viewer
-- Titles, subtitles, fades, transitions, volume, loudness normalization
+- Titles (also an animated counter and a progress bar), subtitles, fades, transitions (dissolves, dips, wipes, push and whip), volume, loudness normalization
 - Color correction, curves, LUTs, effects with keyframes in any order; copy and paste grades (`=`/`-`); the timeline filmstrip and the Media Pool show the grade; green screen with an eyedropper on a large picture of the clip
-- **Vertical video from 16:9 on one track:** a blurred copy of the picture fills the space around it – no second track, smooth preview; **accents** (zoom punch, flash, shake) on hits and drops in one click
+- **A format per timeline:** a 9:16 short (or 1:1, 4:5) next to the 16:9 edit in one project; copy a timeline into another shape in one step; pasting between timelines of different shapes converts positions
+- **Auto reframe:** footage fills a frame of another shape and follows its subject – the view holds still, moves smoothly and jumps only at scene cuts; in game footage the kill feed stays readable as a cropped copy at the top. Or fit the whole picture in with a blurred copy around it, on one track; **accents** (zoom punch, flash, shake) on hits and drops in one click
+- **4:3 game footage:** black bars are found and cropped; a 4:3 game that the recorder stretched to 16:9 is unstretched (per clip, per file or as a watch folder preset) and shown with black bars or blurred sides
+- **Blur names:** finds player names in CS2 recordings (team list, kill feed, chat, the name bar; a Valorant template exists but is less tested) and covers them with blur windows that you check on the Color page – own text detection on your computer, no OCR service; small name tags in the 3D picture are often missed
 - **Windows** on the Color page (rectangle, ellipse, soft edge, invert): grade only part of the picture, or blur, pixelate or cover a region (a face, a name, an overlay); **tracking** makes a window follow a moving object
 - Video stabilization and audio noise reduction (own implementations)
+- **Clean Voice** (a button in the Mixer): removes background noise (RNNoise) and evens out the level of speech in one step; pauses keep a quiet room tone instead of going silent
+- **Voice-over recording:** arm a track and record from the microphone while the timeline plays; the take lands exactly where you heard it (input latency compensated)
+- **Text to speech** (Piper, offline, an optional download): type a narration and get a voice clip with word captions; English and German voices
 - Own effects (green screen with spill removal, glow, halftone …); import effect presets from Kdenlive and Shotcut
 - Video scopes: waveform, RGB parade, vectorscope, histogram
 - Slip and slide tools; two-up/four-up trim view while dragging an edit
@@ -58,17 +68,19 @@ schneidi has four pages – Media, Edit, Color and Deliver – and fewer feature
 - Loudness and true-peak meters, master limiter that holds a true-peak ceiling
 - Per-track EQ (6 bands) and compressor in the mixer, ducking (music goes down while someone speaks)
 - Files with several audio streams (OBS): import presets per stream title – mute the mix, leave out streams, name the tracks
-- Clip speed / retime
+- Clip speed / retime; **smooth slow motion** with in-between frames (blended, or computed from the motion with an own optical flow; never across a scene cut) – chosen in the speed dialog (Ctrl+R)
 - **Timeline exchange:** import and export FCP7 XML, OpenTimelineIO and EDL – bring a cut over from Premiere Pro or DaVinci Resolve, or hand one over for finishing
 - Own video decoding, also on the graphics card (NVIDIA, AMD/Intel via VA-API); proxy media and a render cache for smooth playback – schneidi offers proxies when playback cannot keep up
-- Export and render queue via FFmpeg: H.264, H.265, AV1, VP9 (WebM), ProRes and DNxHR, animated GIF, PNG/TIFF/JPEG image sequences and audio only (AAC, MP3, Opus, WAV, AIFF, FLAC, Apple Lossless); hardware encoders (NVENC, VAAPI, Quick Sync) when available; YouTube/phone presets cap the bit rate; **Smart Render** copies unchanged parts of H.264/H.265 recordings instead of encoding them again
-- Subtitles from speech (whisper.cpp, offline) – pick the voice tracks, one subtitle track each; an optional download under Workspace → Extensions
+- Export and render queue via FFmpeg: H.264, H.265, AV1, VP9 (WebM), ProRes and DNxHR, animated GIF, PNG/TIFF/JPEG image sequences and audio only (AAC, MP3, Opus, WAV, AIFF, FLAC, Apple Lossless); hardware encoders (NVENC, VAAPI, Quick Sync) when available, else OpenH264/kvazaar, or x264/x265 as an optional download (Extensions); presets for YouTube, YouTube Shorts, Instagram Reels and TikTok cap the bit rate; **Smart Render** copies unchanged parts of H.264/H.265 recordings instead of encoding them again
+- Subtitles from speech (whisper.cpp, offline) – pick the voice tracks, one subtitle track each; in game recordings with a separate microphone stream it listens to the microphone, so song lyrics stay out of the subtitles; an optional download under Workspace → Extensions
+- **Word captions:** karaoke (the spoken word lights up), one word at a time, or one word per beat of the music, from the transcript's word times; export as SRT or WebVTT, or as a subtitle stream inside the MP4/MKV/WebM
 - Text-based editing: the Transcript panel shows what is said – delete words to cut them, remove pauses
-- **Check before export:** one click on the Deliver page (or `check` for an AI) finds what often goes wrong in finished videos – a forgotten frame between two clips, missing files, subtitles too short or too fast to read, clipping, loudness off the target, silence at the end, game sound buried under the music, text that TikTok/Reels/Shorts cover, stutter in recordings; one click fixes peaks and loudness (master limiter and fader)
+- **Check before export:** one click on the Deliver page (or `check` for an AI) finds what often goes wrong in finished videos – a forgotten frame between two clips, missing files, subtitles too short or too fast to read, clipping, loudness off the target, silence at the end, game sound buried under the music, text that TikTok/Reels/Shorts cover, black bars, stutter in recordings, and for an AI also the platform's length limit (`check --for tiktok`); one click fixes peaks and loudness (master limiter and fader)
+- `schneidi <file>` while the app runs hands the file over: a project opens, a video lands in the open project's Media Pool; File › Open Video as Project starts a project in the video's own format
 - Contact sheet: stills of the timeline with timecodes as one picture (File › Save Contact Sheet)
 - **AI chat in the app:** tell an AI what to do in the open project – Claude, OpenAI-compatible services (OpenAI, OpenRouter, LM Studio, your company's proxy …) or a local model with Ollama; automatic or review mode ([details](#ai-chat-in-the-app))
 - **See what an AI does:** clips it adds or changes light up in the timeline, the AI log lists every step (a click jumps there), its analyses and renders show with progress
-- **Command line and MCP server** (`schneidi-cli`, locally or over HTTP on a server): scripts or an AI assistant can edit almost everything the app can – find pauses, scene changes, loud moments and events in a part of the picture (kill feed, score), pick highlights (your own kills, loud fights), sync recordings by their sound, build multicam clips, transcribe, cut and trim, grade, animate, mix, duck music and normalize, measure loudness, look at frames (or a detail of them) and scopes, render ([details](#command-line-and-ai-editing-mcp))
+- **Command line and MCP server** (`schneidi-cli`, locally or over HTTP on a server): scripts or an AI assistant can edit almost everything the app can – find pauses, scene changes, loud moments and events in a part of the picture (kill feed, score), pick highlights (your own kills, loud fights), make a finished short of game recordings in one call, sync recordings by their sound, build multicam clips, transcribe, cut and trim, grade, animate, mix, duck music and normalize, measure loudness, look at frames (or a detail of them) and scopes, render ([details](#command-line-and-ai-editing-mcp))
 - Themes, six UI languages (English, German, Spanish, French, Polish, Russian)
 
 ## How light is it?
@@ -146,6 +158,7 @@ schneidi-cli peaks game.mp4 --top 10                         # the loudest momen
 schneidi-cli beats song.mp3 --project talk.schneidi          # tempo, bars, phrases, breaks and drops of a song
 schneidi-cli highlights game.mp4 --region 0.70,0.04,0.22,0.23 --color "#e7e371"  # own kills (Valorant), best first
 schneidi-cli sync cam1.mp4 cam2.mp4 cam3.mp4                 # offsets of recordings of the same event
+schneidi-cli short game1.mp4 game2.mp4 --for tiktok          # best moments → reframed 9:16 short with captions, checked, rendered
 schneidi-cli extensions --install whisper,small              # optional speech recognition (download, ~200 MB)
 schneidi-cli transcribe talk.mp4 --language de --words       # what is said, with word times
 schneidi-cli edit talk.schneidi --ops '[{"op":"keep","media":"talk.mp4","ranges":[[0,250],[310,900]]}]'
@@ -164,10 +177,10 @@ schneidi-cli help edit --op speed_ramp                       # one edit operatio
 
 Edit operations cover cutting, inserting and source edits (insert, replace, place on top, fit to fill), moving,
 trimming (ripple, roll, slip, slide), titles with their style, fades, transitions (dissolve, dip, wipes, luma),
-speed and speed ramps, markers, subtitles (SRT or cue lists, track styles), effects and presets, the color grade
-(wheels, LUTs, windows with blur/pixelate and tracking), transform and crop, keyframes for any animatable value, paste attributes, volume/pan, the mixer
-(also to a loudness target, EQ and compressor per track), ducking, loudness normalization, tracks, linking, compound
-clips, multicam clips (create, cut to an angle, change angles, flatten), several timelines and the project format. Positions can be given relative to a clip or to the source material (`{"clip": 12, "source":
+speed and speed ramps (with in-between frames), markers, subtitles (SRT or cue lists, track styles) and word captions, effects and presets, the color grade
+(wheels, LUTs, windows with blur/pixelate and tracking), transform and crop, reframe to another shape, black bars and stretched 4:3, blurring player names, keyframes for any animatable value, paste attributes, volume/pan, the mixer
+(also to a loudness target, EQ and compressor per track), ducking, loudness normalization, voice cleaning, text to speech, tracks, linking, compound
+clips, multicam clips (create, cut to an angle, change angles, flatten), several timelines (each with its own format) and the project format. Positions can be given relative to a clip or to the source material (`{"clip": 12, "source":
 "34.2s"}`), so they stay right while earlier operations move clips. Output is JSON on stdout (exit code 0 = ok,
 1 = error, 2 = usage error); every save keeps a backup of the previous state (`backups`, `restore`). `schneidi-cli mcp` runs the same commands as an [MCP](https://modelcontextprotocol.io) server on stdio.
 
@@ -210,16 +223,11 @@ claude mcp add --transport http schneidi http://127.0.0.1:8642/mcp
 
 What we are working on next. Plans can still change; the order within a version is not fixed.
 
-### 0.15.x – bug fixes
-Only fixes for problems found in 0.15.0 – new features wait for the next version.
-
-### 0.16 – Shorts Update
-A 16:9 cut and a 9:16 short side by side in one project, auto-reframe between them, word-by-word captions, one word per
-beat, presets for Shorts/Reels/TikTok, voiceover recording, text to speech, smooth slow motion, a sound library for hits
-and cuts, player names blurred automatically.
+### 0.16.x – bug fixes
+Only fixes for problems found in 0.16.0 – new features wait for the next version.
 
 ### Later
-- **0.17 – AI Director Update:** the AI understands the material (searchable index: shots, sounds, quality), builds a story (hook, build-up, payoff) and checks it, shows its cut plan before cutting, measures the pace, J/L cuts, songs cut to length
+- **0.17 – AI Director Update:** the AI understands the material (searchable index: shots, sounds, quality), builds a story (hook, build-up, payoff) and checks it, shows its cut plan before cutting, measures the pace, J/L cuts, songs cut to length, a sound library for hits and cuts (moved from 0.16)
 - **0.18 – Template Update:** templates with placeholders filled from a list, brand kit
 - **0.19 – Fusion Light:** light node compositing on the new picture engine – layers, masks, keyer and tracking as nodes, textured and 3D-edged text
 - **0.20 – Newcomer Update:** Premiere/Final Cut key presets, export for Shotcut/Kdenlive and Final Cut, apt repository
