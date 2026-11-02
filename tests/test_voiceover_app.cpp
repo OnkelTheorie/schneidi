@@ -14,6 +14,7 @@
 
 #include "app/MainWindow.h"
 #include "app/VoiceoverRecorder.h"
+#include "core/EffectRegistry.h"
 #include "core/Project.h"
 #include "core/Voiceover.h"
 #include "engine/Engine.h"
@@ -125,6 +126,16 @@ int main(int argc, char** argv)
                         c.subframe, c.in, project->frameRate());
     }
     CHECK_EQ(project->undoStack()->index(), undoBefore + 1);
+    // "Stimme säubern" next to the record button: voice cleaning on the armed track's clips, one undo step
+    if (auto* clean = w.findChild<QToolButton*>("clean_voice"); CHECK(clean)) {
+        clean->click();
+        CHECK_EQ(project->undoStack()->index(), undoBefore + 2);
+        const Timeline& now = project->timeline();
+        CHECK(now.audio.size() >= 2 && now.audio[1].clips.size() == 1
+              && EffectRegistry::has(now.audio[1].clips[0], "voiceclean"));
+        CHECK(!now.audio[0].clips.isEmpty() && !EffectRegistry::has(now.audio[0].clips[0], "voiceclean"));
+        project->undoStack()->undo();
+    }
     project->undoStack()->undo();
     CHECK(project->timeline().audio.size() < 2 || project->timeline().audio[1].clips.isEmpty());
 
