@@ -13,7 +13,8 @@ current set.
 - `encoder` `auto` uses the graphics card when it works and falls back to software - leave it unless asked.
 - `height` scales (e.g. 720), `fps` changes the frame rate, `from`/`to` renders a part, `size` forces a size
   (letterboxed - for a real vertical edit see [social.md](social.md)).
-- Subtitles: `subtitles` `burn` or `srt` ([subtitles.md](subtitles.md)).
+- Subtitles: `subtitles` `burn`, `srt` or `vtt`; `embed_subtitles` true puts them into the file as switchable text
+  streams ([subtitles.md](subtitles.md)).
 - A version without a track (no voice-over, no music, no facecam): `mute_tracks` `["A2"]` (video tracks like `"V3"`
   are hidden) leaves it out of this render only; the project's mixer stays as it is - no mute, render, unmute.
 - Machine busy (the user plays a game, records, edits): `threads` 2. A render takes all processors by default and

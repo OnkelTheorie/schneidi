@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "core/ExportCheck.h"
 
+#include "core/Captions.h"
 #include "core/EffectRegistry.h"
 #include "core/I18n.h"
 #include "core/Keyframes.h"
@@ -68,10 +69,11 @@ QRectF titleBlock(const Clip& c, double t, double W, double H)
     return r;
 }
 
-// Subtitle lines wrapped at 90 % of the picture width like the timeline builder (wrapSubtitle), block bottom posY
-// above the picture's bottom edge
-QRectF subtitleBlock(const TitleStyle& s, const QString& text, double W, double H)
+// Subtitle lines wrapped at 90 % of the picture width like the timeline builder (wrapSubtitle; word captions at
+// Captions::lineWidth), block bottom posY above the picture's bottom edge
+QRectF subtitleBlock(const TitleStyle& s, const QString& text, double W, double H, bool words = false)
 {
+    const double maxWidth = words ? Captions::lineWidth(QSize(int(W), int(H))) : W * 0.9;
     const QFontMetricsF fm = metrics(s, std::max(1.0, s.size));
     int lines = 0;
     double w = 1;
@@ -83,7 +85,7 @@ QRectF subtitleBlock(const TitleStyle& s, const QString& text, double W, double 
         };
         for (const QString& word : para.split(' ', Qt::SkipEmptyParts)) {
             const QString candidate = line.isEmpty() ? word : line + ' ' + word;
-            if (!line.isEmpty() && fm.horizontalAdvance(candidate) > W * 0.9) {
+            if (!line.isEmpty() && fm.horizontalAdvance(candidate) > maxWidth) {
                 flush();
                 line = word;
             } else {
@@ -268,6 +270,8 @@ QVector<Issue> timeline(const Timeline& tl, int from, int to, const ProjectForma
             if (cue.end > to)
                 out << issue(Severity::Warning, "subtitle_end", T("Untertitel läuft über das Ende hinaus: „%1“").arg(cue.text.simplified()),
                              cue.start, cue.end);
+            // Word captions are read word by word as they are spoken: short cues and fast speech are fine there
+            if (st.captions.mode != CaptionMode::Lines) continue;
             if (seconds < o.subtitleMinS)
                 out << issue(Severity::Warning, "subtitle_short",
                              T("Untertitel zu kurz zum Lesen (%1 s): „%2“").arg(num(seconds), cue.text.simplified()),
@@ -453,7 +457,7 @@ QVector<Issue> layout(const Timeline& tl, int from, int to, const ProjectFormat&
         QVector<int> zones(5, 0);
         for (const SubtitleCue& cue : st.cues) {
             if (cue.end <= from || cue.start >= to || cue.text.trimmed().isEmpty()) continue;
-            const auto [part, zone] = covered(subtitleBlock(st.style, cue.text, W, H), W, H, o);
+            const auto [part, zone] = covered(subtitleBlock(st.style, cue.text, W, H, st.captions.mode != CaptionMode::Lines), W, H, o);
             if (part < o.safeMaxCovered) continue;
             if (first < 0) first = std::max(from, cue.start);
             last = std::min(to, cue.end);

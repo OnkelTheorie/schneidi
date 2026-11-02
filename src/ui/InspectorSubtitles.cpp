@@ -3,6 +3,7 @@
 #include "ui/Inspector.h"
 
 #include "app/Theme.h"
+#include "core/Captions.h"
 #include "core/EffectFolders.h"
 #include "core/EffectRegistry.h"
 #include "core/Editor.h"
@@ -322,6 +323,97 @@ void Inspector::buildSubtitlePage(QVBoxLayout* page)
           [](TitleStyle& t) { t.boxOn = true; });
     slider(box, "subBoxPad", T("Abstand"), 0, 100, 0.5, 1, [](TitleStyle& t) -> double& { return t.boxPad; },
            [](TitleStyle& t) { t.boxOn = true; });
+
+    // ---- Word captions (shorts style): how the track shows its words ----
+    Section wc = addSection(page, V, T("Wort-Untertitel"), {});
+    auto captionsNow = [this]() -> std::optional<CaptionStyle> {
+        int track = -1;
+        if (!selectedCue(&track)) return std::nullopt;
+        return m_editor->project()->timeline().subtitles[track].captions;
+    };
+    auto changeCaptions = [this](const std::function<void(CaptionStyle&)>& fn, const QString& mergeKey = {}) {
+        int track = -1;
+        if (!selectedCue(&track)) return;
+        CaptionStyle c = m_editor->project()->timeline().subtitles[track].captions;
+        fn(c);
+        m_editor->setSubtitleCaptions(track, c, mergeKey);
+    };
+    auto* mode = new QComboBox;
+    mode->setFocusPolicy(Qt::ClickFocus);
+    for (const CaptionModeInfo& m : kCaptionModes) mode->addItem(T(m.name), int(m.mode));
+    mode->setToolTip(T("Karaoke: der gesprochene Satz bleibt stehen, das gerade gesprochene Wort leuchtet auf. Wort "
+                       "für Wort: immer nur das gesprochene Wort, es springt kurz auf. Die Wortzeiten kommen aus dem "
+                       "Transkript."));
+    connect(mode, qOverload<int>(&QComboBox::activated), this, [mode, changeCaptions](int i) {
+        const auto m = CaptionMode(mode->itemData(i).toInt());
+        changeCaptions([m](CaptionStyle& c) { c.mode = m; });
+    });
+    m_subRefreshers << [mode, captionsNow] {
+        if (auto c = captionsNow()) {
+            const QSignalBlocker b(mode);
+            mode->setCurrentIndex(std::max(0, mode->findData(int(c->mode))));
+        }
+    };
+    wc.grid->addWidget(rowLabel(T("Anzeige")), wc.rows, 0);
+    wc.grid->addWidget(mode, wc.rows++, 1);
+
+    auto* highlight = new QToolButton;
+    highlight->setFixedSize(46, 18);
+    highlight->setFocusPolicy(Qt::NoFocus);
+    highlight->setToolTip(T("%1 wählen").arg(T("Hervorhebung")));
+    connect(highlight, &QToolButton::clicked, this, [this, captionsNow, changeCaptions] {
+        auto c = captionsNow();
+        if (!c) return;
+        const QColor col = QColorDialog::getColor(c->highlight, this, T("%1 wählen").arg(T("Hervorhebung")));
+        if (col.isValid()) changeCaptions([col](CaptionStyle& x) { x.highlight = col; });
+    });
+    m_subRefreshers << [highlight, captionsNow] {
+        if (auto c = captionsNow())
+            highlight->setStyleSheet(QString("QToolButton { background: %1; border: 1px solid %2; border-radius: 2px; }")
+                                         .arg(c->highlight.name(QColor::HexRgb), Theme::border.name()));
+    };
+    wc.grid->addWidget(rowLabel(T("Hervorhebung")), wc.rows, 0);
+    wc.grid->addWidget(highlight, wc.rows++, 1, Qt::AlignLeft);
+
+    // Number fields (dragging = one undo step)
+    auto number = [&](const QString& key, const QString& label, double min, double max, double step, int decimals,
+                      const std::function<double(const CaptionStyle&)>& get,
+                      const std::function<void(CaptionStyle&, double)>& set) {
+        auto* edit = new ScrubField(min, max, step, decimals);
+        edit->onChange = [changeCaptions, set, key](double v) {
+            changeCaptions([&](CaptionStyle& c) { set(c, v); }, key);
+        };
+        edit->onFinish = [this] { m_editor->project()->closeMerge(); };
+        m_subRefreshers << [edit, get, captionsNow] {
+            if (auto c = captionsNow()) edit->setValue(get(*c));
+        };
+        wc.grid->addWidget(rowLabel(label), wc.rows, 0);
+        wc.grid->addWidget(edit, wc.rows++, 1, Qt::AlignLeft);
+    };
+    number("capScale", T("Größe des Worts"), 0.5, 3, 0.05, 2, [](const CaptionStyle& c) { return c.highlightScale; },
+           [](CaptionStyle& c, double v) { c.highlightScale = v; });
+    number("capWords", T("Wörter pro Zeile"), 0, 20, 1, 0, [](const CaptionStyle& c) { return double(c.maxWordsPerLine); },
+           [](CaptionStyle& c, double v) { c.maxWordsPerLine = int(std::lround(v)); });
+    number("capPop", T("Aufspringen (ms)"), 0, 1000, 10, 0, [](const CaptionStyle& c) { return double(c.popMs); },
+           [](CaptionStyle& c, double v) { c.popMs = int(std::lround(v)); });
+
+    auto* upper = new QCheckBox(T("Großbuchstaben"));
+    auto* shadow = new QCheckBox(T("Schatten"));
+    for (QCheckBox* box : {upper, shadow}) box->setFocusPolicy(Qt::NoFocus);
+    connect(upper, &QCheckBox::clicked, this, [changeCaptions](bool on) { changeCaptions([on](CaptionStyle& c) { c.uppercase = on; }); });
+    connect(shadow, &QCheckBox::clicked, this, [changeCaptions](bool on) { changeCaptions([on](CaptionStyle& c) { c.shadow = on; }); });
+    m_subRefreshers << [upper, shadow, captionsNow] {
+        if (auto c = captionsNow()) {
+            upper->setChecked(c->uppercase);
+            shadow->setChecked(c->shadow);
+        }
+    };
+    auto* flags = new QHBoxLayout;
+    flags->setContentsMargins(0, 0, 0, 0);
+    flags->addWidget(upper);
+    flags->addWidget(shadow);
+    flags->addStretch(1);
+    wc.grid->addLayout(flags, wc.rows++, 1);
     page->addStretch(1);
 }
 

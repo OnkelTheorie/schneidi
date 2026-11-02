@@ -61,7 +61,7 @@ bool sameOutput(const RenderSettings& a, const RenderSettings& b, QSize timeline
     if (a.audioSampleFormat() != b.audioSampleFormat()) return false;
     const FrameRate none{0, 1};
     if (!a.audioOnly() && a.outputRate(none) != b.outputRate(none)) return false;
-    return a.subtitles == b.subtitles;
+    return a.subtitles == b.subtitles && (a.embedSubtitles && a.canEmbedSubtitles()) == (b.embedSubtitles && b.canEmbedSubtitles());
 }
 
 QString smartTip()
@@ -163,7 +163,13 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
     m_subtitles->addItem(T("Keine"), int(RenderSettings::NoSubtitles));
     m_subtitles->addItem(T("Ins Bild einbrennen"), int(RenderSettings::BurnSubtitles));
     m_subtitles->addItem(T("Als SRT-Datei daneben"), int(RenderSettings::SrtFile));
+    m_subtitles->addItem(T("Als WebVTT-Datei daneben"), int(RenderSettings::VttFile));
     m_subtitles->setToolTip(T("Gilt für die sichtbare Untertitelspur"));
+    // Text streams in the file: players and upload sites can switch them on (word caption styles only burned in)
+    m_embed = new QCheckBox(T("Untertitelspuren in die Datei"));
+    m_embed->setObjectName("renderEmbedSubtitles");
+    m_embed->setToolTip(T("Legt jede Untertitelspur als zuschaltbare Textspur in die Videodatei (MP4, MOV, MKV, "
+                          "WebM); Wort-für-Wort-Stile gibt es nur eingebrannt"));
     m_smart = new QCheckBox(T("Unveränderte Stellen kopieren"));
     m_smart->setObjectName("renderSmart");
     m_smart->setChecked(true);
@@ -209,6 +215,7 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
     form->addRow(T("Audio-Bitrate"), m_audioBitrate);
     form->addRow(T("Audio-Bittiefe"), m_audioBits);
     form->addRow(T("Untertitel"), m_subtitles);
+    form->addRow(QString(), m_embed);
     form->addRow(T("Smart Render"), m_smart);
     form->addRow(T("Bereich"), m_range);
     form->addRow(T("CPU-Threads"), m_threads);
@@ -254,6 +261,7 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
             syncPresetToSettings();
         });
     connect(m_smart, &QCheckBox::toggled, this, [this] { syncPresetToSettings(); });
+    connect(m_embed, &QCheckBox::toggled, this, [this] { syncPresetToSettings(); });
     connect(m_addBtn, &QPushButton::clicked, this, [this] { addToQueue(true); });
     connect(m_checkBtn, &QPushButton::clicked, this, [this] { runCheck(); });
     connect(m_project, &Project::currentSequenceChanged, this, [this] {
@@ -428,6 +436,7 @@ RenderSettings DeliverPanel::settings() const
     }
     s.subtitles = m_subtitles->currentData().toInt();
     s.smartRender = m_smart->isChecked();
+    s.embedSubtitles = m_embed->isChecked() && s.canEmbedSubtitles();
     if (s.audioOnly() && s.subtitles == RenderSettings::BurnSubtitles) s.subtitles = RenderSettings::NoSubtitles;
     const QSize size = m_resolution->currentData().toSize();
     const QSize tl = m_project->format().size();
@@ -454,6 +463,7 @@ void DeliverPanel::setSettings(const RenderSettings& s)
     m_rate->setCurrentIndex(s.rateNum > 0 ? std::max(0, m_rate->findData(QSize(s.rateNum, s.rateDen))) : 0);
     m_subtitles->setCurrentIndex(std::max(0, m_subtitles->findData(s.subtitles)));
     m_smart->setChecked(s.smartRender);
+    m_embed->setChecked(s.embedSubtitles);
     if (!s.audioOnly()) selectSize(s.outputSize(m_project->format().size()));
     m_applying = wasApplying;
     updateControls();
@@ -515,6 +525,7 @@ void DeliverPanel::updateControls()
     if (auto* model = qobject_cast<QStandardItemModel*>(m_subtitles->model()))
         if (QStandardItem* item = model->item(1)) item->setEnabled(video);
     if (!video && m_subtitles->currentIndex() == 1) m_subtitles->setCurrentIndex(0);
+    m_embed->setEnabled(f.kind == RenderKind::Video);
 }
 
 void DeliverPanel::showEvent(QShowEvent* e)

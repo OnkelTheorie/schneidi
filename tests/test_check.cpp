@@ -174,6 +174,10 @@ int main(int argc, char** argv)
                              << SubtitleCue{13, 225, 300, "Cut off"};                          // past frame 250
         const auto issues = ExportCheck::timeline(tl, 0, 250, f);
         CHECK_EQ(checks(issues), QStringList({"subtitle_short", "subtitle_fast", "subtitle_end"}));
+        // Word captions: read as spoken, only the end counts
+        Timeline words = tl;
+        words.subtitles[0].captions.mode = CaptionMode::Karaoke;
+        CHECK_EQ(checks(ExportCheck::timeline(words, 0, 250, f)), QStringList({"subtitle_end"}));
         tl.subtitles[0].enabled = false;
         CHECK(ExportCheck::timeline(tl, 0, 250, f).isEmpty());
     }
