@@ -23,6 +23,8 @@
 #include <QTemporaryDir>
 #include <QTimer>
 
+#include <cmath>
+
 namespace {
 
 void testCatalog()
@@ -283,6 +285,10 @@ void testExport(const QString& dir)
         CHECK_EQ(probe(out, "stream=codec_name,nb_read_frames").split('\n').value(0), QString("h264,50"));
         CHECK(probe(out, "stream=codec_type").contains("audio"));
         CHECK(probe(out, "stream=color_space").contains("bt709"));
+        // Picture and sound start together (the program's muxer delays B-frame streams; the writer moves it back)
+        const QStringList starts = probe(out, "stream=start_time").split('\n');
+        CHECK(starts.size() == 2 && std::abs(starts[0].toDouble() - starts[1].toDouble()) < 0.03);
+        std::printf("  %s start times: %s\n", ext, qPrintable(starts.join(" / ")));
         // The program's intermediate file is gone
         CHECK(QDir(dir).entryList({"*.schneidi-video.nut"}, QDir::Files | QDir::Hidden).isEmpty());
         std::printf("  %s: %lld bytes\n", ext, QFileInfo(out).size());

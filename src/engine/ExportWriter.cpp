@@ -1061,6 +1061,27 @@ struct ExportWriter::Impl {
             return true;
         };
         bool ok = true;
+        // NUT stores no decode time for the first packets of a stream with B-frames (the decoder delay): they get
+        // one frame each before the first packet that has one (decode order = one picture per packet)
+        const int64_t frame = std::max<int64_t>(1, av_rescale_q(1, av_inv_q(rate), vst->time_base));
+        std::vector<AVPacket*> undated;
+        // The program's muxer moves the stream so no decode time is negative (x264 with B-frames: the first picture at
+        // +2 frames): the first packet (the first picture, a key frame) goes back to 0, in sync with the sound
+        int64_t shift = AV_NOPTS_VALUE;
+        const auto put = [&](AVPacket* p) {
+            if (!soundUntil(p) || av_interleaved_write_frame(oc, p) < 0) return false;
+            return true;
+        };
+        const auto flushUndated = [&](int64_t nextDts) {
+            bool good = true;
+            for (size_t i = 0; i < undated.size(); ++i) {
+                AVPacket* p = undated[i];
+                p->dts = nextDts == AV_NOPTS_VALUE ? p->pts : nextDts - int64_t(undated.size() - i) * frame;
+                if (good) good = put(p);
+            }
+            freePackets(undated);
+            return good;
+        };
         while (ok && !stop && av_read_frame(in, packet) >= 0) {
             if (packet->stream_index != index) {
                 av_packet_unref(packet);
@@ -1069,10 +1090,20 @@ struct ExportWriter::Impl {
             av_packet_rescale_ts(packet, src->time_base, vst->time_base);
             packet->stream_index = vst->index;
             packet->pos = -1;
-            ok = soundUntil(packet);
-            if (ok && av_interleaved_write_frame(oc, packet) < 0) ok = false;
+            if (shift == AV_NOPTS_VALUE) shift = packet->pts == AV_NOPTS_VALUE ? 0 : packet->pts;
+            if (packet->pts != AV_NOPTS_VALUE) packet->pts -= shift;
+            if (packet->dts != AV_NOPTS_VALUE) packet->dts -= shift;
+            if (packet->dts == AV_NOPTS_VALUE) {
+                undated.push_back(av_packet_clone(packet));
+                av_packet_unref(packet);
+                continue;
+            }
+            if (!undated.empty()) ok = flushUndated(packet->dts);
+            if (ok) ok = put(packet);
             av_packet_unref(packet);
         }
+        if (ok && !undated.empty()) ok = flushUndated(AV_NOPTS_VALUE);
+        freePackets(undated);
         if (ok) ok = soundUntil(nullptr);
         avformat_close_input(&in);
         if (!ok && !stop) fail(QStringLiteral("writing failed"));
