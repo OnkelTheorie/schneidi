@@ -1082,12 +1082,14 @@ const QVector<Command>& commands()
           {"timeline", T::String, "for a project: which timeline (id or name; default: the open one)"},
           {"project", T::Path, "for a media file: count frames in this project's frame rate"}},
          cmdScopes},
-        {"extensions", "Optional downloads (not part of schneidi): whisper speech recognition and its models, and x264 "
+        {"extensions", "Optional downloads (not part of schneidi): whisper speech recognition and its models, x264 "
                        "(an ffmpeg program with x264/x265 for better H.264/H.265 export quality when no graphics card "
-                       "encoder works; GPL, runs as its own program). Without arguments: list with sizes and what is "
-                       "installed.",
+                       "encoder works; GPL, runs as its own program), and piper text to speech with its voices (edit "
+                       "op 'speak'). Without arguments: list with sizes and what is installed.",
          {{"install", T::String, "ids to download and install, e.g. whisper,small (model sizes: turbo 574 MB, "
-                                 "small 190 MB, base 60 MB, tiny 32 MB) or x264 (72 MB, Windows 90 MB)"},
+                                 "small 190 MB, base 60 MB, tiny 32 MB), x264 (72 MB, Windows 90 MB) or "
+                                 "piper,de_DE-ramona (piper 26 MB, each voice 63 MB; en_US-ljspeech = English, "
+                                 "de_DE-thorsten = clearer German voice, see its licence note)"},
           {"remove", T::String, "ids to delete again"},
           {"reinstall", T::Boolean, "download again even if installed"}},
          cmdExtensions},
@@ -1148,6 +1150,7 @@ QJsonObject execute(const Command& cmd, const QJsonObject& args0, Context& ctx)
         if (Live::Connection* c = Live::connectionFor(args["project"].toString())) {
             if (cmd.name == "edit") args = withSoundSync(args, ctx); // decode here, not in the app
             if (cmd.name == "edit") prepareReframe(args, ctx);
+            if (cmd.name == "edit") args = prepareSpeech(args, ctx); // piper/whisper here, not in the app
             QJsonObject result = Live::run(c, cmd.name, args);
             result["live"] = true;
             return result;

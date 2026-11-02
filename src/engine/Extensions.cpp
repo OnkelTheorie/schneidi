@@ -28,12 +28,21 @@ constexpr const char* kModels = "https://huggingface.co/ggerganov/whisper.cpp/re
 // archive's folder is kept as it is (Linux: bin/ffmpeg finds lib/ by its RUNPATH, Windows: the DLLs are in bin/).
 constexpr const char* kEncoderRelease = "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-10-31-12-59/";
 
+// Piper 2023.11.14-2 (rhasspy/piper, MIT; the last release of that repository, archived 2025). The archive holds the
+// program with its libraries (onnxruntime MIT, piper-phonemize MIT, espeak-ng GPL-3) and espeak-ng-data in one folder.
+constexpr const char* kPiperRelease = "https://github.com/rhasspy/piper/releases/download/2023.11.14-2/";
+// Voices of rhasspy/piper-voices, pinned to one revision (model cards: dataset licence of each voice)
+constexpr const char* kVoices = "https://huggingface.co/rhasspy/piper-voices/resolve/b4e358ffcb232591bf73a540e70f7de528e4174a/";
+constexpr const char* kVoicePrefix = "piper-voice-";
+
 #ifdef Q_OS_WIN
 constexpr const char* kProgramName = "whisper-cli.exe";
 constexpr const char* kFfmpegName = "ffmpeg.exe";
+constexpr const char* kPiperName = "piper.exe";
 #else
 constexpr const char* kProgramName = "whisper-cli";
 constexpr const char* kFfmpegName = "ffmpeg";
+constexpr const char* kPiperName = "piper";
 #endif
 
 QVector<Item> makeCatalog()
@@ -62,6 +71,41 @@ QVector<Item> makeCatalog()
     encoder("ffmpeg-n8.1.3-27-g8dca1586f4-linux64-gpl-shared-8.1.tar.xz",
             "202fe67679a0860b155817a0907ffcc5c1ea82e186acaa21cb87d307f54fd59a", 72031160);
 #endif
+    const auto piper = [&](const char* archive, const char* sha, qint64 size) {
+        list << Item{"piper", Kind::Speech, N_("Piper (Sprachausgabe)"),
+                     N_("Piper: spricht Text offline mit natürlichen Stimmen (für Sprechertexte; Stimmen einzeln)"),
+                     QString(kPiperRelease) + archive, sha, size, archive};
+    };
+#if defined(Q_OS_WIN) && defined(Q_PROCESSOR_X86_64)
+    piper("piper_windows_amd64.zip", "f3c58906402b24f3a96d92145f58acba6d86c9b5db896d207f78dc80811efcea", 22477236);
+#elif defined(Q_OS_LINUX) && defined(Q_PROCESSOR_X86_64)
+    piper("piper_linux_x86_64.tar.gz", "a50cb45f355b7af1f6d758c1b360717877ba0a398cc8cbe6d2a7a3a26e225992", 26460462);
+#elif defined(Q_OS_LINUX) && defined(Q_PROCESSOR_ARM_64)
+    piper("piper_linux_aarch64.tar.gz", "fea0fd2d87c54dbc7078d0f878289f404bd4d6eea6e7444a77835d1537ab88eb", 26004717);
+#endif
+    // Voices (model cards in piper-voices). The first of a language is its default: trained from scratch on data that
+    // allows any use - Ramona (M-AILABS, LibriVox recordings, public domain, BSD-style licence), LJ Speech (public
+    // domain). Thorsten sounds better, but piper's model was fine-tuned from the en_US "lessac" voice, whose training
+    // data (Blizzard 2013) is licensed for research only: offered with that note, never the default.
+    const auto voice = [&](const char* name, const char* title, const char* description, const char* folder,
+                           const char* sha, qint64 size, const char* configSha, qint64 configSize) {
+        const QString file = QString(name) + ".onnx";
+        const QString base = QString(kVoices) + folder + file;
+        list << Item{kVoicePrefix + QString(name).section('-', 0, 1), Kind::Voice, title, description, base, sha, size,
+                     file, base + ".json", configSha, configSize};
+    };
+    voice("de_DE-ramona-low", N_("Stimme Deutsch: Ramona"),
+          N_("weiblich (Piper, 16 kHz; Trainingsdaten gemeinfrei: M-AILABS/LibriVox)"), "de/de_DE/ramona/low/",
+          "a1068592532aad8c49bf3d1a01b8749c11d7dba726689ee28ad64e7b627ae4c5", 63104526,
+          "64906ab7a050ac685fa3dcea044baa798f67ed77be164f9c668a69298c6487d2", 4157);
+    voice("en_US-ljspeech-medium", N_("Stimme Englisch: LJ Speech"), N_("weiblich, amerikanisch (Piper, gemeinfrei)"),
+          "en/en_US/ljspeech/medium/", "6f52a751e2349abe7a76735eb09dc1875298c77ea2342ffd2fef79ff81b87f22", 63531379,
+          "141d612cc0a95ed7efc1ca936b845c2364967f2e9217c5dbfcf69fc4d6c65860", 4972);
+    voice("de_DE-thorsten-medium", N_("Stimme Deutsch: Thorsten"),
+          N_("männlich, klarer Klang (Piper; Daten CC0, aber aus einer Stimme weitertrainiert, deren Daten nur für die "
+             "Forschung freigegeben sind)"),
+          "de/de_DE/thorsten/medium/", "7e64762d8e5118bb578f2eea6207e1a35a8e0c30595010b666f983fc87bb7819", 63201294,
+          "974adee790533adb273a1ac88f49027d2a1b8f0f2cf4905954a4791e79264e85", 4819);
     list << Item{"whisper-vad", Kind::WhisperVad, N_("Sprach-Erkennung für Whisper (Silero VAD)"),
                  N_("findet die Stellen mit Sprache, damit Wortzeiten nicht in Pausen rutschen (gehört zu Whisper)"),
                  "https://huggingface.co/ggml-org/whisper-vad/resolve/main/ggml-silero-v6.2.0.bin",
@@ -88,6 +132,9 @@ QString modelsDir() { return QDir(whisperDir()).filePath("models"); }
 QString binDir() { return QDir(whisperDir()).filePath("bin"); }
 QString encoderDir() { return QDir(rootDir()).filePath("ffmpeg-gpl"); }
 QString encoderTree() { return QDir(encoderDir()).filePath("bin"); }
+QString piperDir() { return QDir(rootDir()).filePath("piper"); }
+QString piperBin() { return QDir(piperDir()).filePath("bin"); }
+QString voicesDir() { return QDir(piperDir()).filePath("voices"); }
 
 // Folder an item's download is unpacked or stored in
 QString downloadDir(const Item& item)
@@ -95,6 +142,8 @@ QString downloadDir(const Item& item)
     switch (item.kind) {
     case Kind::Program: return whisperDir();
     case Kind::Encoder: return encoderDir();
+    case Kind::Speech: return piperDir();
+    case Kind::Voice: return voicesDir();
     default: return modelsDir();
     }
 }
@@ -151,6 +200,12 @@ QVector<const Item*> parseList(const QString& list, QString* unknown)
         if (id == "x265" || id == "x264-x265" || id == "x264/x265") id = "x264";
         const Item* i = find(id);
         if (!i) i = find("whisper-model-" + id);
+        if (!i) // "de_DE-thorsten" (ids are lower case only up to here), its file name, "thorsten"
+            for (const Item& v : catalog())
+                if (v.kind == Kind::Voice
+                    && (v.id.toLower() == id || voiceName(v.id).toLower() == id
+                        || QString(v.fileName).chopped(5).toLower() == id || voiceName(v.id).section('-', 1).toLower() == id))
+                    i = &v;
         if (!i) {
             if (unknown) *unknown = id;
             return {};
@@ -169,6 +224,7 @@ QVector<const Item*> withDependencies(const QVector<const Item*>& items)
     for (const Item* i : items) {
         // A model is no use without the program (unless one is on PATH)
         if (i->kind == Kind::WhisperModel && whisperProgram().isEmpty()) add(find("whisper"));
+        if (i->kind == Kind::Voice && piperProgram().isEmpty()) add(find("piper"));
         add(i);
         if (i->id == "whisper") add(find("whisper-vad"));
     }
@@ -179,8 +235,13 @@ QVector<const Item*> withDependencies(const QVector<const Item*>& items)
 QString installedPath(const Item& item)
 {
     if (item.kind == Kind::Encoder) return installedFfmpeg();
-    const QString path = item.kind == Kind::Program ? QDir(binDir()).filePath(kProgramName)
-                                                    : QDir(modelsDir()).filePath(item.fileName);
+    if (item.kind == Kind::Voice) { // both files
+        const QString path = QDir(voicesDir()).filePath(item.fileName);
+        return QFileInfo::exists(path) && QFileInfo::exists(path + ".json") ? path : QString();
+    }
+    const QString path = item.kind == Kind::Program  ? QDir(binDir()).filePath(kProgramName)
+                         : item.kind == Kind::Speech ? QDir(piperBin()).filePath(kPiperName)
+                                                     : QDir(modelsDir()).filePath(item.fileName);
     return QFileInfo::exists(path) ? path : QString();
 }
 
@@ -190,6 +251,12 @@ bool remove(const Item& item)
 {
     if (item.kind == Kind::Program) return QDir(binDir()).removeRecursively();
     if (item.kind == Kind::Encoder) return QDir(encoderTree()).removeRecursively();
+    if (item.kind == Kind::Speech) return QDir(piperBin()).removeRecursively();
+    if (item.kind == Kind::Voice) {
+        const QString path = QDir(voicesDir()).filePath(item.fileName);
+        QFile::remove(path + ".json");
+        return !QFileInfo::exists(path) || QFile::remove(path);
+    }
     const QString path = installedPath(item);
     return path.isEmpty() || QFile::remove(path);
 }
@@ -212,6 +279,34 @@ QString encoderProgram()
     if (!own.isEmpty()) return QFileInfo(own).isFile() ? QFileInfo(own).absoluteFilePath() : QString();
     const Item* i = find("x264");
     return i ? installedPath(*i) : QString();
+}
+
+QString piperProgram()
+{
+    const QString own = qEnvironmentVariable("SCHNEIDI_PIPER");
+    if (!own.isEmpty()) return QFileInfo(own).isFile() ? QFileInfo(own).absoluteFilePath() : QString();
+    const Item* i = find("piper");
+    return i ? installedPath(*i) : QString();
+}
+
+QStringList installedVoices()
+{
+    QStringList ids;
+    for (const Item& i : catalog())
+        if (i.kind == Kind::Voice && isInstalled(i)) ids << i.id;
+    return ids;
+}
+
+QString voiceName(const QString& id) { return id.startsWith(kVoicePrefix) ? id.mid(QString(kVoicePrefix).size()) : id; }
+
+QString voiceModelPath(const QString& idOrPath)
+{
+    if (idOrPath.isEmpty()) return {};
+    if (const QVector<const Item*> items = parseList(idOrPath); items.size() == 1 && items.first()->kind == Kind::Voice)
+        return installedPath(*items.first());
+    const QFileInfo file(idOrPath);
+    if (file.isFile() && QFileInfo::exists(file.absoluteFilePath() + ".json")) return file.absoluteFilePath();
+    return {};
 }
 
 QStringList installedWhisperModels()
@@ -251,18 +346,26 @@ bool Installer::start(const Item& item, QString* error)
     }
     m_item = item;
     m_cancelled = false;
+    m_part = 0;
+    return startPart(error);
+}
+
+bool Installer::startPart(QString* error)
+{
+    const Item& item = m_item;
     const QString dir = downloadDir(item);
     if (!QDir().mkpath(dir)) {
         if (error) *error = "cannot create " + dir;
         return false;
     }
-    m_file = std::make_unique<QFile>(QDir(dir).filePath(item.fileName + ".part"));
+    const QString name = m_part == 0 ? item.fileName : item.fileName + ".json";
+    m_file = std::make_unique<QFile>(QDir(dir).filePath(name + ".part"));
     if (!m_file->open(QIODevice::WriteOnly | QIODevice::Truncate)) {
         if (error) *error = m_file->errorString();
         return false;
     }
     m_hash = std::make_unique<QCryptographicHash>(QCryptographicHash::Sha256);
-    QNetworkRequest request{QUrl(item.url)};
+    QNetworkRequest request{QUrl(m_part == 0 ? item.url : item.configUrl)};
     request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
     request.setHeader(QNetworkRequest::UserAgentHeader, "schneidi");
     m_reply = m_net->get(request);
@@ -275,7 +378,7 @@ bool Installer::start(const Item& item, QString* error)
         }
     });
     connect(m_reply, &QNetworkReply::downloadProgress, this, [this](qint64 received, qint64 total) {
-        emit progress(received, total > 0 ? total : m_item.size);
+        if (m_part == 0) emit progress(received, total > 0 ? total : m_item.size);
     });
     connect(m_reply, &QNetworkReply::finished, this, &Installer::onFinished);
     return true;
@@ -319,7 +422,9 @@ void Installer::onFinished()
     m_reply = nullptr;
     r->deleteLater();
     m_file->close();
-    if (m_file->size() != m_item.size || m_hash->result().toHex() != m_item.sha256) {
+    const qint64 size = m_part == 0 ? m_item.size : m_item.configSize;
+    const QByteArray sha = m_part == 0 ? m_item.sha256 : m_item.configSha256;
+    if (m_file->size() != size || m_hash->result().toHex() != sha) {
         m_file->remove();
         m_file.reset();
         emit finished(false, T("Die heruntergeladene Datei ist beschädigt oder unerwartet (Prüfsumme falsch)."));
@@ -328,13 +433,19 @@ void Installer::onFinished()
     const QString part = m_file->fileName();
     m_file.reset();
     QString error;
-    if (m_item.kind == Kind::Program || m_item.kind == Kind::Encoder) {
+    if (m_item.kind == Kind::Program || m_item.kind == Kind::Encoder || m_item.kind == Kind::Speech) {
         error = unpack(part);
         QFile::remove(part);
     } else {
         const QString target = part.chopped(5); // without ".part"
         QFile::remove(target);
         if (!QFile::rename(part, target)) error = T("Datei konnte nicht abgelegt werden: %1").arg(target);
+    }
+    // A voice: then its config (the model alone is no use; installedPath wants both)
+    if (error.isEmpty() && m_item.kind == Kind::Voice && m_part == 0) {
+        m_part = 1;
+        if (!startPart(&error)) emit finished(false, error);
+        return;
     }
     if (!error.isEmpty()) emit finished(false, error);
     else emit finished(true, {});
@@ -343,10 +454,10 @@ void Installer::onFinished()
 QString Installer::unpack(const QString& archive)
 {
     // Unpack next to the old version, then swap: a failed update keeps the working one
-    const bool encoder = m_item.kind == Kind::Encoder;
-    const QDir dir(encoder ? encoderDir() : whisperDir());
-    const QString target = encoder ? encoderTree() : binDir();
-    const char* program = encoder ? kFfmpegName : kProgramName;
+    const bool encoder = m_item.kind == Kind::Encoder, piper = m_item.kind == Kind::Speech;
+    const QDir dir(encoder ? encoderDir() : piper ? piperDir() : whisperDir());
+    const QString target = encoder ? encoderTree() : piper ? piperBin() : binDir();
+    const char* program = encoder ? kFfmpegName : piper ? kPiperName : kProgramName;
     const QString staging = dir.filePath("bin.new");
     QDir(staging).removeRecursively();
     dir.mkpath("bin.new");
@@ -356,8 +467,9 @@ QString Installer::unpack(const QString& archive)
         QDir(staging).removeRecursively();
         return T("Entpacken fehlgeschlagen: %1").arg(QString::fromLocal8Bit(tar.readAllStandardError()).trimmed());
     }
-    // The archive has a folder (whisper-bin-ubuntu-x64/, Release/, ffmpeg-…-gpl-shared-8.1/bin/): whisper keeps the
-    // folder with the program, the encoder the whole tree above its bin/ (lib/ beside it)
+    // The archive has a folder (whisper-bin-ubuntu-x64/, Release/, piper/, ffmpeg-…-gpl-shared-8.1/bin/): whisper and
+    // piper keep the folder with the program (piper: its libraries and espeak-ng-data), the encoder the whole tree
+    // above its bin/ (lib/ beside it)
     QString programPath;
     QDirIterator it(staging, {program}, QDir::Files, QDirIterator::Subdirectories);
     if (it.hasNext()) programPath = it.next();

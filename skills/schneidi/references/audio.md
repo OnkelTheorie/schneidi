@@ -15,6 +15,14 @@
    sets the fader. The limiter keeps the peaks below -1 dBTP.
 5. Short `fade`s at the very start and end avoid clicks.
 
+## Spoken text (text to speech)
+`edit` op `speak` makes a voice clip from text (Piper, offline; `extensions` `install` `"piper,de_DE-ramona"` or
+`"piper,en_US-ljspeech"` once, ask the user first): `{"op":"speak","text":"…","at":"2s"}` lands on a free audio
+track (or `track`), `speed` 0.5-2, `pause` = seconds after each sentence, `voice` picks an installed voice. The same
+text and settings again reuse the file (in `<project name>-tts/` beside the project). `captions` `true` (or a style)
+adds word captions; with whisper installed their times are measured, else estimated (the notes say which). Piper
+voices are already loud and clean: `normalize` them with the other speech, then `duck` the music under them.
+
 ## Recordings with several audio streams
 OBS and similar recorders store e.g. "System" and "Mikrofon" separately. `probe` lists the streams; the user's import
 presets decide which ones land on the timeline (by default every stream, one track each). `audio_stream` changes what

@@ -137,6 +137,7 @@ add_library(schneidi_lib STATIC
     src/core/Ducking.h            src/core/Ducking.cpp
     src/core/ExportCheck.h        src/core/ExportCheck.cpp
     src/core/Stutter.h            src/core/Stutter.cpp
+    src/core/Speech.h             src/core/Speech.cpp
     src/core/ContactSheet.h       src/core/ContactSheet.cpp
     src/core/PoolFilter.h         src/core/PoolFilter.cpp
     src/core/WatchFolders.h       src/core/WatchFolders.cpp
@@ -154,6 +155,7 @@ add_library(schneidi_lib STATIC
     src/engine/Extensions.h       src/engine/Extensions.cpp
     src/engine/ExternalEncoder.h  src/engine/ExternalEncoder.cpp
     src/engine/Transcriber.h      src/engine/Transcriber.cpp
+    src/engine/Tts.h              src/engine/Tts.cpp
     src/engine/MediaCache.h       src/engine/MediaCache.cpp
     src/engine/StillFetcher.h     src/engine/StillFetcher.cpp
     src/engine/ScrubFrames.h      src/engine/ScrubFrames.cpp
@@ -240,6 +242,7 @@ add_library(schneidi_lib STATIC
     src/app/MulticamDialog.h src/app/MulticamDialog.cpp
     src/app/ExtensionsDialog.h  src/app/ExtensionsDialog.cpp
     src/app/TranscribeDialog.h  src/app/TranscribeDialog.cpp
+    src/app/SpeechDialog.h      src/app/SpeechDialog.cpp
     src/app/PasteAttributesDialog.h src/app/PasteAttributesDialog.cpp
     src/app/DesignDialog.h src/app/DesignDialog.cpp
     src/app/EqDialog.h src/app/EqDialog.cpp

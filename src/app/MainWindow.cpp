@@ -4,6 +4,11 @@
 #include "app/AiLog.h"
 #include "app/ExtensionsDialog.h"
 #include "app/TranscribeDialog.h"
+#include "app/SpeechDialog.h"
+#include "core/Captions.h"
+#include "core/Speech.h"
+#include "core/TranscriptCut.h"
+#include "engine/Extensions.h"
 #include "ui/TranscriptPanel.h"
 
 #include "app/InputBindings.h"
@@ -931,6 +936,53 @@ void MainWindow::transcribeDialog()
     const QVector<TranscribeDialog::Result> results = dlg.results();
     for (int i = 0; i < results.size(); ++i) // one track per speaker: all visible, one above the other
         m_editor->importSubtitles(results[i].cues, results[i].name, results.size() > 1 ? i : -1);
+    undo->endMacro();
+}
+
+// Text -> voice clip (Piper) at the playhead on the first audio track free there; its words become the file's
+// transcript (Transcript panel, word captions)
+void MainWindow::speechDialog()
+{
+    m_engine->pause();
+    SpeechDialog dlg(Speech::folder(m_projectPath), this);
+    connect(&dlg, &SpeechDialog::openExtensions, this, [this] {
+        ExtensionsDialog ext(this);
+        ext.exec();
+    });
+    connect(&dlg, &SpeechDialog::preview, this, [this](const QString& path) {
+        previewFile(path);
+        m_engine->play();
+    });
+    if (dlg.exec() != QDialog::Accepted) return;
+    const Tts::Result r = dlg.result();
+    if (!m_project->mediaInfo(r.path)) {
+        const MediaInfo info = probeCached(r.path);
+        if (info.length <= 0) return;
+        m_project->addMedia(info);
+    }
+    const MediaInfo m = *m_project->mediaInfo(r.path);
+    const int at = m_timeline->view()->playhead();
+    const int track = Speech::freeAudioTrack(m_project->timeline(), at, at + m.length);
+    // The words as the file's transcript (Transcript panel, op 'captions' later), as the CLI op 'speak' does
+    if (!r.words.isEmpty())
+        m_project->setTranscript(m.path, MediaTranscript{0, Speech::voiceLanguage(Extensions::voiceName(r.voice)), r.words});
+    QUndoStack* undo = m_project->undoStack();
+    undo->beginMacro(T("Sprechertext"));
+    const int len = m_editor->placeSourceRange(m.path, 0, m.length - 1, at, track);
+    if (len > 0 && dlg.captions()) {
+        // Word captions of this clip only (like the Transcript panel's, karaoke style)
+        const double fps = m_project->frameRate();
+        QVector<TranscriptCut::Word> words
+            = TranscriptCut::timelineWords(m_project->timeline(), m_project->media(), fps, track, true);
+        words.removeIf([&](const TranscriptCut::Word& w) { return w.from < at || w.from >= at + len; });
+        Captions::Options o;
+        o.maxGapFrames = int(std::lround(0.6 * fps));
+        o.minFrames = int(std::lround(0.4 * fps));
+        CaptionStyle style;
+        style.mode = CaptionMode::Karaoke;
+        if (const QVector<SubtitleCue> cues = Captions::fromWords(words, o); !cues.isEmpty())
+            m_editor->addCaptions(cues, T("Wort-Untertitel"), style);
+    }
     undo->endMacro();
 }
 
