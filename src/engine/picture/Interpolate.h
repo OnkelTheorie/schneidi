@@ -5,13 +5,15 @@
 //
 // Blend: (1 - t) * a + t * b per pixel.
 // Flow: motion compensated. Own implementation of textbook methods: coarse-to-fine block matching on a luma pyramid
-// (candidate vectors from the coarser level and the neighbours, small full search, sub-pixel by a parabola fit), both
-// directions, forward/backward consistency marks unreliable blocks. The vectors are projected onto the in-between
-// time (each block lands at p + t * v), every in-between block takes the candidate whose two ends match best
-// (bilateral cost), and every output pixel picks again between the vectors around it and standing still - so static
-// overlays (a game HUD) stay put while the picture behind them moves. Where nothing matches (occlusion) the nearer
-// frame's sample is used; when most of the picture is unreliable the whole frame falls back to blending. A scene cut
-// between a and b gives no in-between at all (the nearer frame, no ghosting).
+// (candidate vectors from the coarser level, its neighbours and the dominant motion, small full search, sub-pixel by
+// a parabola fit), both directions, forward/backward consistency marks unreliable blocks. The vectors are projected
+// onto the in-between time (each block lands at p + t * v), every in-between block takes the candidate whose two
+// ends match best (bilateral cost). Every output pixel weighs the vectors around it and standing still by how well
+// their ends match (soft, so no patches with hard edges); detail that is identical in both frames (a game HUD's text)
+// stands still even where the picture behind it moves. A spot that comes in over the frame edge takes the side that
+// has it. When most of the picture is unreliable the whole frame falls back to blending; a scene cut between a and b
+// gives no in-between at all (the nearer frame, no ghosting).
+// Known limit: translucent overlays (a minimap over the moving world) get warped along with the world.
 
 #include <cstdint>
 #include <memory>

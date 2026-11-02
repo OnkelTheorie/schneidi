@@ -521,7 +521,12 @@ void flow(const Motion& m, const uint8_t* a, const uint8_t* b, uint8_t* out, int
                         rgba(a, w, h, x - t * vx, y - t * vy, pa);
                         rgba(b, w, h, x + (1 - t) * vx, y + (1 - t) * vy, pb);
                     }
-                    for (int c = 0; c < 4; ++c) sum[c] += wk * (pa[c] + (pb[c] - pa[c]) * t);
+                    // A spot one side does not have (it comes in over the frame edge): only the other side
+                    const float ax = x - t * vx, ay = y - t * vy, bx = x + (1 - t) * vx, by = y + (1 - t) * vy;
+                    const bool aOut = ax < 0 || ay < 0 || ax > w - 1 || ay > h - 1;
+                    const bool bOut = bx < 0 || by < 0 || bx > w - 1 || by > h - 1;
+                    const float wb = aOut && !bOut ? 1.f : bOut && !aOut ? 0.f : t;
+                    for (int c = 0; c < 4; ++c) sum[c] += wk * (pa[c] + (pb[c] - pa[c]) * wb);
                     weights += wk;
                 }
                 for (int c = 0; c < 4; ++c) o[c] = uint8_t(std::clamp(sum[c] / weights + 0.5f, 0.f, 255.f));

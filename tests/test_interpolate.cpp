@@ -184,6 +184,16 @@ void algorithmChecks()
         std::printf("1080p: motion %.1f ms per frame pair, in-between picture %.1f ms (at 25 %%: %.1f ms per output frame)\n",
                     est, pic, (est + 3 * pic) / 4);
         CHECK(!cut(*m));
+        // Preview size (playback renders smaller)
+        const int pw = 960, ph = 540;
+        const Pic PA = scene(pw, ph, 0, 0, 400, 200, 96, true), PB = scene(pw, ph, -15, 0, 424, 212, 96, true);
+        Pic PO(PA.size());
+        t.restart();
+        const auto pm = estimate(PA.data(), PB.data(), pw, ph);
+        const double pest = t.nsecsElapsed() / 1e6;
+        t.restart();
+        flow(*pm, PA.data(), PB.data(), PO.data(), pw, ph, 0.5);
+        std::printf("960x540: motion %.1f ms, in-between picture %.1f ms\n", pest, t.nsecsElapsed() / 1e6);
     }
 }
 
