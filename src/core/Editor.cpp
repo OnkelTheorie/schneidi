@@ -146,13 +146,33 @@ void Editor::addMediaAt(const QStringList& paths, int frame, int track)
     });
 }
 
-void Editor::addTitle(int frame, int track, int length)
+void Editor::addTitle(int frame, int track, int length, TitleKind kind)
 {
     Project* p = m_project;
     const Timeline& cur = p->timeline();
     Clip c;
     c.kind = ClipKind::Title;
     c.title.text = T("Titel");
+    c.title.kind = kind;
+    const ProjectFormat fmt = p->timelineFormat();
+    if (kind == TitleKind::Counter) {
+        c.title.text.clear();
+        c.title.size = std::round(fmt.height / 9.0); // 120 at 1080, 213 in a 1080x1920 timeline
+        c.title.bold = true;
+        c.title.outlineOn = true;
+        c.title.outlineWidth = std::round(c.title.size / 20);
+    } else if (kind == TitleKind::Progress) {
+        // Along the whole timeline unless placed with a length; top edge: the apps cover the bottom of a vertical video
+        c.title.text.clear();
+        c.title.color = QColor(255, 214, 0);
+        c.title.barThickness = std::max(4.0, std::round(std::max(fmt.width, fmt.height) / 120.0));
+        c.title.boxOn = true;
+        c.title.boxColor = QColor(0, 0, 0, 110);
+        if (length <= 0) {
+            frame = 0;
+            length = std::max(1, TimelineOps::endFrame(cur));
+        }
+    }
     c.start = std::max(0, frame);
     c.in = 0;
     // Placed with its final length: placing 5 s first and shortening afterwards overwrote what followed on the track

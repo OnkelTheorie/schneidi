@@ -3,6 +3,7 @@
 
 #include "core/Captions.h"
 #include "core/EffectRegistry.h"
+#include "core/Generators.h"
 #include "core/Keyframes.h"
 #include "core/MediaAspect.h"
 #include "core/Multicam.h"
@@ -32,6 +33,7 @@ extern "C" {
 #include <QFontMetricsF>
 #include <QHash>
 #include <QImageReader>
+#include <QPainter>
 #include <QStringList>
 
 #include <algorithm>
@@ -41,6 +43,7 @@ extern "C" {
 #include <functional>
 #include <map>
 #include <mutex>
+#include <numbers>
 #include <shared_mutex>
 #include <utility>
 #include <vector>
@@ -332,6 +335,7 @@ struct Renderer::Impl {
         double fps = 25;
         bool preview = false;
         bool bypassGrade = false;
+        int end = 0; // end of the timeline being rendered (TimelineOps::endFrame; progress bars)
     };
 
     Source source(const QString& path, const QString& lane)
@@ -656,6 +660,10 @@ struct Renderer::Impl {
     {
         const TitleStyle& st = c.title;
         const double sx = ctx.W / ctx.PW, sy = ctx.H / ctx.PH;
+        if (st.isProgress()) {
+            drawProgress(layer, c, t, ctx, shift, bounds);
+            return;
+        }
         const double size = std::max(1.0, sizeOverride > 0 ? sizeOverride : st.size);
         // An animated size scales the whole title: outline and box margin with it
         const double grow = st.size > 0 ? size / st.size : 1.0;
@@ -665,12 +673,15 @@ struct Renderer::Impl {
         font.setBold(st.bold);
         font.setItalic(st.italic);
         const QFontMetricsF fm(font);
+        // A counter's block keeps the size of its widest value while the number changes (no jumping)
+        const QString text = st.isCounter() ? Generators::counterText(st, int(std::lround(t)), c.length()) : st.text;
         double w = 1;
-        for (const QString& line : st.text.split('\n')) w = std::max(w, fm.horizontalAdvance(line));
+        for (const QString& line : (st.isCounter() ? Generators::counterWidest(st, fm) : st.text).split('\n'))
+            w = std::max(w, fm.horizontalAdvance(line));
         const bool outline = st.outlineOn && outlineWidth > 0;
         auto layerOf = [&](bool outlineLayer) {
             Text::Params p;
-            p.text = st.text;
+            p.text = text;
             const double x = (ctx.PW - w) / 2 + Keys::valueAt(c, AnimParam::TitlePosX, t);
             const double y = -Keys::valueAt(c, AnimParam::TitlePosY, t);
             p.area = QRectF(x * sx, y * sy, w * sx, ctx.PH * sy);
@@ -702,6 +713,38 @@ struct Renderer::Impl {
         if (outline) layerOf(true);
         layerOf(false);
         if (bounds) *bounds &= QRect(0, 0, ctx.W, ctx.H);
+    }
+
+    // Progress bar title (core/Generators.h): the track (box colour, when on) along the edge and its filled part in the
+    // title colour, rounded ends when set. Same arguments as drawTitle.
+    void drawProgress(Image& layer, const Clip& c, double t, const Ctx& ctx, QPoint shift, QRect* bounds)
+    {
+        const TitleStyle& st = c.title;
+        const double sx = ctx.W / ctx.PW, sy = ctx.H / ctx.PH;
+        const QRectF track = Generators::progressTrack(st, ctx.PW, ctx.PH);
+        const QRectF out(track.x() * sx, track.y() * sy, track.width() * sx, track.height() * sy);
+        if (bounds) {
+            *bounds = out.toAlignedRect() & QRect(0, 0, ctx.W, ctx.H);
+            return;
+        }
+        const double fraction = Generators::progress(st, c, c.start + int(std::lround(t)), ctx.end);
+        QImage img(layer.data(), layer.w, layer.h, layer.w * 4, QImage::Format_RGBA8888);
+        QPainter p(&img);
+        p.setRenderHint(QPainter::Antialiasing);
+        p.translate(-shift);
+        p.setPen(Qt::NoPen);
+        auto bar = [&](const QRectF& r, const QColor& col) {
+            if (r.width() <= 0 || col.alpha() == 0) return;
+            const double radius = st.barRound ? std::min(r.height(), r.width()) / 2 : 0.0;
+            p.setBrush(col);
+            if (radius > 0) p.drawRoundedRect(r, radius, radius);
+            else p.drawRect(r);
+        };
+        if (st.boxOn) bar(out, st.boxColor);
+        QRectF fill = out;
+        fill.setWidth(out.width() * fraction);
+        bar(fill, Keys::animated(c, AnimParam::TitleColor) ? Keys::toColor(Keys::valueAt(c, AnimParam::TitleColor, t))
+                                                           : st.color);
     }
 
     // A clip's source picture (w x h, standing for the whole fitted picture) placed by its transform onto `onto`, with
@@ -787,6 +830,7 @@ struct Renderer::Impl {
             if (!own.isEmpty() && (own.width() != ctx.PW || own.height() != ctx.PH)) {
                 fit = MediaAspect::fit(double(own.width()) / own.height(), QSizeF(ctx.PW, ctx.PH));
                 Ctx sub = ctx;
+                sub.end = TimelineOps::endFrame(*inner);
                 sub.PW = own.width();
                 sub.PH = own.height();
                 sub.W = std::max(1, int(std::lround(fit.width() * sx)));
@@ -795,7 +839,9 @@ struct Renderer::Impl {
                 renderTimeline(*inner, in, src, sub, lane + QString("n%1/").arg(c.sequenceId), false, depth + 1);
             } else {
                 src = Image(W, H);
-                renderTimeline(*inner, in, src, ctx, lane + QString("n%1/").arg(c.sequenceId), false, depth + 1);
+                Ctx sub = ctx;
+                sub.end = TimelineOps::endFrame(*inner);
+                renderTimeline(*inner, in, src, sub, lane + QString("n%1/").arg(c.sequenceId), false, depth + 1);
             }
         } else {
             if (c.mediaPath.isEmpty()) return {};
@@ -1235,8 +1281,9 @@ struct Renderer::Impl {
             }
             return out;
         }
+        if (st.isSlide()) return slide(std::move(a), std::move(b), i, len, st, ctx);
         const double soft = 0.02 + 0.98 * std::clamp(st.softness, 0.0, 100.0) / 100.0;
-        const double progress = double(i) / len;
+        const double progress = Generators::ease(st.ease, double(i) / len);
         if (st.isLuma()) { // both sides (one side is a fade, see trackLayer)
             const QImage grad = Lumas::image(st.luma, a.w, a.h, st.invert);
             if (grad.isNull()) {
@@ -1252,7 +1299,7 @@ struct Renderer::Impl {
             // Wipe from/to nothing: the visible part of the one side shrinks/grows (hard edge)
             const bool fromStart = (type == TransitionType::WipeRight || type == TransitionType::WipeDown) == a.empty();
             Image& one = a.empty() ? b : a;
-            const double p = len > 1 ? double(i) / (len - 1) : 1.0;
+            const double p = Generators::ease(st.ease, len > 1 ? double(i) / (len - 1) : 1.0);
             const double shown = !a.empty() ? 1.0 - p : p;
             const double full = horizontal ? ctx.W : ctx.H;
             const double size = full * shown, pos = fromStart ? 0.0 : full - size;
@@ -1277,6 +1324,83 @@ struct Renderer::Impl {
         });
         wipeBorder(a, st, progress * (1.0 + soft) - soft / 2, ctx); // middle of luma's soft zone
         return a;
+    }
+
+    // Push/whip: b pushes a out in the transition's direction (both move by the eased progress; either may be
+    // missing: it slides over transparency). Whip adds motion blur along the direction, strongest in the middle.
+    static Image slide(Image a, Image b, int i, int len, const TransitionStyle& st, const Ctx& ctx)
+    {
+        const int dir = st.direction();
+        const bool horizontal = dir < 2;
+        const int sign = dir == 0 || dir == 2 ? 1 : -1;
+        const int full = horizontal ? ctx.W : ctx.H;
+        const double x = double(i) / std::max(1, len);
+        const int shift = int(std::lround(Generators::ease(st.ease, x) * full));
+        Image out(ctx.W, ctx.H);
+        std::fill(out.px.begin(), out.px.end(), uint8_t(0));
+        // Copies `src` moved by `offset` pixels along the direction (what leaves the frame is dropped)
+        auto put = [&](const Image& src, int offset) {
+            if (src.empty() || std::abs(offset) >= full) return;
+            const int W = ctx.W, H = ctx.H;
+            if (horizontal) {
+                const int x0 = std::max(0, offset), x1 = std::min(W, W + offset);
+                for (int y = 0; y < H; ++y)
+                    std::memcpy(out.data() + (size_t(y) * W + x0) * 4, src.data() + (size_t(y) * W + x0 - offset) * 4,
+                                size_t(x1 - x0) * 4);
+            } else {
+                const int y0 = std::max(0, offset), y1 = std::min(H, H + offset);
+                std::memcpy(out.data() + size_t(y0) * W * 4, src.data() + size_t(y0 - offset) * W * 4,
+                            size_t(y1 - y0) * W * 4);
+            }
+        };
+        put(a, sign * shift);
+        put(b, sign * (shift - full));
+        if (st.isWhip() && st.blur > 0) {
+            // Box blur as long as up to a quarter of the frame, following the speed (sin^2 bell over the transition)
+            const double bell = std::pow(std::sin(std::numbers::pi * x), 2);
+            const int radius = int(std::lround(std::clamp(st.blur, 0.0, 100.0) / 100.0 * 0.125 * full * bell));
+            if (radius > 0) motionBlur(out, horizontal, radius);
+        }
+        return out;
+    }
+
+    // Box blur of a straight-alpha picture along rows (horizontal) or columns, `radius` pixels each side; the edge
+    // pixels repeat. Blurred premultiplied, so transparent parts do not bleed their colour.
+    static void motionBlur(Image& img, bool horizontal, int radius)
+    {
+        const int n = horizontal ? img.w : img.h, lines = horizontal ? img.h : img.w;
+        const size_t step = horizontal ? 4 : size_t(img.w) * 4, lineStep = horizontal ? size_t(img.w) * 4 : 4;
+        std::vector<int> pre(size_t(n) * 4); // premultiplied line
+        std::vector<int> sum(size_t(n + 1) * 4);
+        const int span = 2 * radius + 1;
+        for (int l = 0; l < lines; ++l) {
+            uint8_t* line = img.data() + size_t(l) * lineStep;
+            for (int k = 0; k < n; ++k) {
+                const uint8_t* q = line + size_t(k) * step;
+                const int al = q[3];
+                pre[size_t(k) * 4] = q[0] * al;
+                pre[size_t(k) * 4 + 1] = q[1] * al;
+                pre[size_t(k) * 4 + 2] = q[2] * al;
+                pre[size_t(k) * 4 + 3] = al;
+            }
+            for (int c = 0; c < 4; ++c) sum[size_t(c)] = 0;
+            for (int k = 0; k < n; ++k)
+                for (int c = 0; c < 4; ++c) sum[size_t(k + 1) * 4 + c] = sum[size_t(k) * 4 + c] + pre[size_t(k) * 4 + c];
+            for (int k = 0; k < n; ++k) {
+                const int lo = k - radius, hi = k + radius; // inclusive; outside = the edge pixel
+                const int a = std::max(0, lo), b = std::min(n - 1, hi);
+                int64_t acc[4];
+                for (int c = 0; c < 4; ++c) {
+                    acc[c] = int64_t(sum[size_t(b + 1) * 4 + c]) - sum[size_t(a) * 4 + c];
+                    if (lo < 0) acc[c] += int64_t(-lo) * pre[size_t(c)];
+                    if (hi > n - 1) acc[c] += int64_t(hi - n + 1) * pre[size_t(n - 1) * 4 + c];
+                }
+                uint8_t* q = line + size_t(k) * step;
+                const int64_t al = acc[3];
+                q[3] = uint8_t((al + span / 2) / span);
+                for (int c = 0; c < 3; ++c) q[c] = al > 0 ? uint8_t(std::min<int64_t>(255, (acc[c] + al / 2) / al)) : 0;
+            }
+        }
     }
 
     // Border of a wipe: a stripe in the border colour around the edge (edge = 0..1 in wipe direction)
@@ -1625,7 +1749,7 @@ struct Renderer::Impl {
         const bool wipe = type == TransitionType::WipeRight || type == TransitionType::WipeLeft
                           || type == TransitionType::WipeDown || type == TransitionType::WipeUp;
         const bool styled = type != TransitionType::CrossDissolve && (!st.isLuma() || both);
-        if (styled && wipe && (!both || st.border >= 0.5)) {
+        if (styled && ((wipe && (!both || st.border >= 0.5)) || st.isSlide())) {
             // Not on the card yet: the CPU's picture of the track
             Image layer = trackLayer(track, trackIndex, f, ctx, tl, prefix, depth);
             if (!layer.empty()) ops.push_back(cpuOp(std::move(layer), 1.0));
@@ -1661,6 +1785,7 @@ struct Renderer::Impl {
         }
         if (styled) {
             m.kind = GpuOp::Luma;
+            m.t = Generators::ease(st.ease, m.t);
             m.softness = 0.02 + 0.98 * std::clamp(st.softness, 0.0, 100.0) / 100.0;
             const int W = ctx.W, H = ctx.H;
             auto grad = std::make_shared<std::vector<uint8_t>>(size_t(W) * H);
@@ -1991,6 +2116,7 @@ Frame Renderer::render(int64_t frame, const RenderHints& hints)
     ctx.PW = d->options.format.width;
     ctx.PH = d->options.format.height;
     ctx.fps = d->options.format.rate.fps();
+    ctx.end = ctx.root ? TimelineOps::endFrame(*ctx.root) : 0;
     ctx.preview = d->options.mode == Mode::Preview;
     ctx.bypassGrade = ctx.preview && d->options.gradeBypass && d->options.gradeBypass->load();
 
@@ -2093,6 +2219,7 @@ void Renderer::prepare(int64_t frame)
     Impl::Ctx ctx;
     ctx.root = tl;
     ctx.fps = fps;
+    ctx.end = tl ? TimelineOps::endFrame(*tl) : 0;
     ctx.PW = d->options.format.width;
     ctx.PH = d->options.format.height;
     ctx.preview = d->options.mode == Mode::Preview;

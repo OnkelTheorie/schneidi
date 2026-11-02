@@ -247,9 +247,40 @@ ClipTransform transformFromJson(const QJsonObject& o)
     return t;
 }
 
+// Counter/progress fields only for those kinds (and only when not the default): text titles keep their old shape
+void generatorToJson(QJsonObject& o, const TitleStyle& t)
+{
+    if (t.kind == TitleKind::Text) return;
+    const TitleStyle d;
+    for (const auto& k : kTitleKinds)
+        if (k.kind == t.kind) o["kind"] = k.id;
+    if (t.isCounter()) {
+        o["countFrom"] = t.countFrom;
+        o["countTo"] = t.countTo;
+        if (t.decimals != d.decimals) o["decimals"] = t.decimals;
+        if (!t.prefix.isEmpty()) o["prefix"] = t.prefix;
+        if (!t.suffix.isEmpty()) o["suffix"] = t.suffix;
+        if (t.grouping != d.grouping) o["grouping"] = t.grouping;
+        if (t.countEase != d.countEase) o["countEase"] = motionEaseInfo(t.countEase).id;
+    } else {
+        o["span"] = t.span == ProgressSpan::Clip ? "clip" : "timeline";
+        o["barTop"] = t.barTop;
+        o["barThickness"] = t.barThickness;
+        if (t.barMargin != d.barMargin) o["barMargin"] = t.barMargin;
+        if (t.barRound != d.barRound) o["barRound"] = t.barRound;
+    }
+}
+
+MotionEase easeFromJson(const QJsonValue& v, MotionEase def)
+{
+    for (const auto& e : kMotionEases)
+        if (v.toString() == QLatin1String(e.id)) return e.ease;
+    return def;
+}
+
 QJsonObject titleToJson(const TitleStyle& t)
 {
-    return {
+    QJsonObject o{
         {"text", t.text},     {"font", t.font},       {"size", t.size},
         {"color", t.color.name(QColor::HexArgb)},     {"bold", t.bold},
         {"italic", t.italic}, {"align", t.align},     {"posX", t.posX},
@@ -257,6 +288,8 @@ QJsonObject titleToJson(const TitleStyle& t)
         {"outlineColor", t.outlineColor.name(QColor::HexArgb)}, {"outlineWidth", t.outlineWidth},
         {"boxOn", t.boxOn},   {"boxColor", t.boxColor.name(QColor::HexArgb)}, {"boxPad", t.boxPad},
     };
+    generatorToJson(o, t);
+    return o;
 }
 
 TitleStyle titleFromJson(const QJsonObject& o)
@@ -281,6 +314,20 @@ TitleStyle titleFromJson(const QJsonObject& o)
     t.boxOn = o.value("boxOn").toBool(t.boxOn);
     t.boxColor = color("boxColor", t.boxColor);
     t.boxPad = o.value("boxPad").toDouble(t.boxPad);
+    for (const auto& k : kTitleKinds) // unknown (newer) kinds: text
+        if (o.value("kind").toString() == QLatin1String(k.id)) t.kind = k.kind;
+    t.countFrom = o.value("countFrom").toDouble(t.countFrom);
+    t.countTo = o.value("countTo").toDouble(t.countTo);
+    t.decimals = std::clamp(o.value("decimals").toInt(t.decimals), 0, 6);
+    t.prefix = o.value("prefix").toString();
+    t.suffix = o.value("suffix").toString();
+    t.grouping = o.value("grouping").toBool(t.grouping);
+    t.countEase = easeFromJson(o.value("countEase"), t.countEase);
+    if (o.value("span").toString() == "clip") t.span = ProgressSpan::Clip;
+    t.barTop = o.value("barTop").toBool(t.barTop);
+    t.barThickness = std::clamp(o.value("barThickness").toDouble(t.barThickness), 1.0, 10000.0);
+    t.barMargin = std::clamp(o.value("barMargin").toDouble(t.barMargin), 0.0, 10000.0);
+    t.barRound = o.value("barRound").toBool(t.barRound);
     return t;
 }
 
@@ -300,6 +347,8 @@ QJsonObject transitionStyleToJson(const TransitionStyle& s, const QDir& projectD
         if (!EffectFolders::isBuiltin(s.luma)) o["lumaRel"] = projectDir.relativeFilePath(s.luma);
     }
     if (s.invert) o["invert"] = true;
+    if (s.ease != d.ease) o["ease"] = motionEaseInfo(s.ease).id;
+    if (s.blur != d.blur) o["blur"] = s.blur;
     return o;
 }
 
@@ -330,6 +379,8 @@ TransitionStyle transitionStyleFromJson(const QJsonObject& o, const QDir& projec
         if (curve == i.id) s.audio = i.curve;
     s.luma = o.value("luma").toString();
     s.invert = o.value("invert").toBool();
+    s.ease = easeFromJson(o.value("ease"), s.ease);
+    s.blur = std::clamp(o.value("blur").toDouble(s.blur), 0.0, 100.0);
     // Image missing: relative to the project file, then look for a file of the same name in the own Transitions folder
     if (!s.luma.isEmpty() && !EffectFolders::isBuiltin(s.luma) && !QFileInfo::exists(s.luma)) {
         const QString rel = o.value("lumaRel").toString();

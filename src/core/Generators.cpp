@@ -1,0 +1,87 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+#include "core/Generators.h"
+
+#include "core/I18n.h"
+
+#include <algorithm>
+#include <cmath>
+
+namespace Generators {
+
+double ease(MotionEase e, double x)
+{
+    x = std::clamp(x, 0.0, 1.0);
+    switch (e) {
+    case MotionEase::Linear: return x;
+    case MotionEase::In: return x * x * x;
+    case MotionEase::Out: {
+        const double u = 1 - x;
+        return 1 - u * u * u;
+    }
+    case MotionEase::InOut: {
+        if (x < 0.5) return 4 * x * x * x;
+        const double u = -2 * x + 2;
+        return 1 - u * u * u / 2;
+    }
+    }
+    return x;
+}
+
+double counterValue(const TitleStyle& s, int t, int length)
+{
+    const double x = length > 1 ? double(t) / (length - 1) : 1.0;
+    const double v = s.countFrom + (s.countTo - s.countFrom) * ease(s.countEase, x);
+    const double k = std::pow(10.0, std::clamp(s.decimals, 0, 6));
+    return std::round(v * k) / k;
+}
+
+QString formatNumber(double v, int decimals, bool grouping, QChar point, QChar group)
+{
+    decimals = std::clamp(decimals, 0, 6);
+    QString digits = QString::number(std::abs(v), 'f', decimals);
+    if (digits.toDouble() == 0) v = 0; // no "-0"
+    QString whole = digits.section('.', 0, 0), frac = decimals > 0 ? digits.section('.', 1, 1) : QString();
+    if (grouping)
+        for (int i = whole.size() - 3; i > 0; i -= 3) whole.insert(i, group);
+    QString out = v < 0 ? QStringLiteral("-") : QString();
+    out += whole;
+    if (decimals > 0) out += point + frac;
+    return out;
+}
+
+QString counterText(const TitleStyle& s, int t, int length)
+{
+    return s.prefix
+           + formatNumber(counterValue(s, t, length), s.decimals, s.grouping, I18n::decimalPoint(), I18n::groupSeparator())
+           + s.suffix;
+}
+
+QString counterWidest(const TitleStyle& s, const QFontMetricsF& fm)
+{
+    const QChar point = I18n::decimalPoint(), group = I18n::groupSeparator();
+    const QString a = s.prefix + formatNumber(s.countFrom, s.decimals, s.grouping, point, group) + s.suffix;
+    const QString b = s.prefix + formatNumber(s.countTo, s.decimals, s.grouping, point, group) + s.suffix;
+    return fm.horizontalAdvance(a) >= fm.horizontalAdvance(b) ? a : b;
+}
+
+double progress(const TitleStyle& s, const Clip& c, int f, int timelineEnd)
+{
+    if (s.span == ProgressSpan::Clip) return c.length() > 1 ? std::clamp(double(f - c.start) / (c.length() - 1), 0.0, 1.0) : 1.0;
+    return timelineEnd > 1 ? std::clamp(double(f) / (timelineEnd - 1), 0.0, 1.0) : 1.0;
+}
+
+QRectF progressTrack(const TitleStyle& s, double W, double H)
+{
+    const double h = std::clamp(s.barThickness, 1.0, H);
+    const double margin = std::clamp(s.barMargin, 0.0, H - h);
+    return QRectF(0, s.barTop ? margin : H - margin - h, W, h);
+}
+
+QRectF progressFill(const TitleStyle& s, double W, double H, double fraction)
+{
+    QRectF r = progressTrack(s, W, H);
+    r.setWidth(W * std::clamp(fraction, 0.0, 1.0));
+    return r;
+}
+
+} // namespace Generators

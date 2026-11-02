@@ -75,6 +75,7 @@ void Inspector::buildTitlePage(QVBoxLayout* page)
     });
     m_refreshers << [edit, current] {
         const Clip* c = current();
+        if (c) edit->setVisible(c->title.kind == TitleKind::Text); // counter/progress bar: no text of their own
         if (c && edit->toPlainText() != c->title.text) {
             const QSignalBlocker b(edit);
             edit->setPlainText(c->title.text);
@@ -190,7 +191,146 @@ void Inspector::buildTitlePage(QVBoxLayout* page)
     autoOn(addSlider(box, "titleBoxPad", T("Abstand"), 0, 200, TitleStyle().boxPad, 0.5, 1,
                      [](Clip& c) -> double& { return c.title.boxPad; }),
            "titleBoxPad", T("Hintergrund"), boxOn);
+
+    buildGeneratorSections(page, ol);
     page->addStretch(1);
+}
+
+// Counter and progress bar (TitleKind): their own sections, shown only for that kind; the progress bar has no
+// outline (its section hides)
+void Inspector::buildGeneratorSections(QVBoxLayout* page, const Section& outline)
+{
+    const TrackKind V = TrackKind::Video;
+    auto current = [this]() -> const Clip* { return primary(TrackKind::Video, true); };
+    auto combo = [] {
+        auto* c = new QComboBox;
+        c->setFocusPolicy(Qt::ClickFocus);
+        return c;
+    };
+    auto lineEdit = [this, V, current](Section& s, const QString& label, const QString& undo,
+                                       const std::function<QString&(Clip&)>& field) {
+        auto* e = new QLineEdit;
+        connect(e, &QLineEdit::textEdited, this, [this, V, undo, field](const QString& text) {
+            apply(V, "title" + undo, undo, [field, text](Clip& c) { field(c) = text; }, true);
+        });
+        m_refreshers << [e, current, field] {
+            if (const Clip* c = current()) {
+                Clip copy = *c;
+                if (e->text() != field(copy)) {
+                    const QSignalBlocker b(e);
+                    e->setText(field(copy));
+                }
+            }
+        };
+        s.grid->addWidget(rowLabel(label), s.rows, 0);
+        s.grid->addWidget(e, s.rows++, 1);
+    };
+    auto showFor = [this, current](const Section& s, std::function<bool(const TitleStyle&)> when) {
+        m_refreshers << [s, current, when] {
+            if (const Clip* c = current()) {
+                const bool on = when(c->title);
+                s.header->setVisible(on);
+                if (!on) s.body->setVisible(false);
+                else if (s.toggle) s.body->setVisible(s.toggle->isChecked());
+            }
+        };
+    };
+
+    // ---- Counter ----
+    Section cnt = addSection(page, V, T("Zähler"), [](Clip& c) {
+        const TitleStyle d;
+        c.title.countFrom = d.countFrom;
+        c.title.countTo = d.countTo;
+        c.title.decimals = d.decimals;
+        c.title.grouping = d.grouping;
+        c.title.countEase = d.countEase;
+    }, {}, true);
+    addSlider(cnt, "titleCountFrom", T("Von"), -1e9, 1e9, TitleStyle().countFrom, 1, 2,
+              [](Clip& c) -> double& { return c.title.countFrom; });
+    addSlider(cnt, "titleCountTo", T("Bis"), -1e9, 1e9, TitleStyle().countTo, 1, 2,
+              [](Clip& c) -> double& { return c.title.countTo; });
+    auto* places = combo();
+    for (int i = 0; i <= 3; ++i) places->addItem(QString::number(i), i);
+    connect(places, &QComboBox::activated, this, [this, V, places] {
+        const int n = places->currentData().toInt();
+        apply(V, {}, T("Nachkommastellen"), [n](Clip& c) { c.title.decimals = n; }, true);
+    });
+    cnt.grid->addWidget(rowLabel(T("Nachkommastellen")), cnt.rows, 0);
+    cnt.grid->addWidget(places, cnt.rows++, 1);
+    lineEdit(cnt, T("Davor"), T("Text vor der Zahl"), [](Clip& c) -> QString& { return c.title.prefix; });
+    lineEdit(cnt, T("Danach"), T("Text nach der Zahl"), [](Clip& c) -> QString& { return c.title.suffix; });
+    auto* ease = combo();
+    for (const auto& e : kMotionEases) ease->addItem(T(e.name), int(e.ease));
+    connect(ease, &QComboBox::activated, this, [this, V, ease] {
+        const auto e = MotionEase(ease->currentData().toInt());
+        apply(V, {}, T("Tempo"), [e](Clip& c) { c.title.countEase = e; }, true);
+    });
+    cnt.grid->addWidget(rowLabel(T("Tempo")), cnt.rows, 0);
+    cnt.grid->addWidget(ease, cnt.rows++, 1);
+    auto* grouping = new QCheckBox(T("Tausendertrennzeichen"));
+    grouping->setFocusPolicy(Qt::ClickFocus);
+    connect(grouping, &QCheckBox::clicked, this, [this, V](bool on) {
+        apply(V, {}, T("Tausendertrennzeichen"), [on](Clip& c) { c.title.grouping = on; }, true);
+    });
+    cnt.grid->addWidget(grouping, cnt.rows++, 1);
+    m_refreshers << [current, places, ease, grouping] {
+        if (const Clip* c = current()) {
+            const QSignalBlocker b1(places), b2(ease), b3(grouping);
+            places->setCurrentIndex(places->findData(std::clamp(c->title.decimals, 0, 3)));
+            ease->setCurrentIndex(ease->findData(int(c->title.countEase)));
+            grouping->setChecked(c->title.grouping);
+        }
+    };
+    showFor(cnt, [](const TitleStyle& t) { return t.isCounter(); });
+
+    // ---- Progress bar ----
+    Section bar = addSection(page, V, T("Fortschrittsbalken"), [](Clip& c) {
+        const TitleStyle d;
+        c.title.span = d.span;
+        c.title.barTop = d.barTop;
+        c.title.barMargin = d.barMargin;
+        c.title.barRound = d.barRound;
+    }, {}, true);
+    auto* span = combo();
+    span->addItem(T("Ganze Timeline"), int(ProgressSpan::Timeline));
+    span->addItem(T("Länge des Clips"), int(ProgressSpan::Clip));
+    span->setToolTip(T("Ganze Timeline: füllt sich vom Anfang bis zum Ende der Timeline, egal wo der Clip liegt"));
+    connect(span, &QComboBox::activated, this, [this, V, span] {
+        const auto v = ProgressSpan(span->currentData().toInt());
+        apply(V, {}, T("Fortschritt über"), [v](Clip& c) { c.title.span = v; }, true);
+    });
+    bar.grid->addWidget(rowLabel(T("Fortschritt über")), bar.rows, 0);
+    bar.grid->addWidget(span, bar.rows++, 1);
+    auto* edge = combo();
+    edge->addItem(T("Oben"), true);
+    edge->addItem(T("Unten"), false);
+    edge->setToolTip(T("Unten verdecken TikTok, Reels und Shorts den Balken mit ihrer eigenen Leiste"));
+    connect(edge, &QComboBox::activated, this, [this, V, edge] {
+        const bool top = edge->currentData().toBool();
+        apply(V, {}, T("Rand"), [top](Clip& c) { c.title.barTop = top; }, true);
+    });
+    bar.grid->addWidget(rowLabel(T("Rand")), bar.rows, 0);
+    bar.grid->addWidget(edge, bar.rows++, 1);
+    addSlider(bar, "titleBarThickness", T("Dicke"), 1, 200, TitleStyle().barThickness, 0.5, 0,
+              [](Clip& c) -> double& { return c.title.barThickness; });
+    addSlider(bar, "titleBarMargin", T("Abstand"), 0, 1000, TitleStyle().barMargin, 0.5, 0,
+              [](Clip& c) -> double& { return c.title.barMargin; });
+    auto* round = new QCheckBox(T("Runde Enden"));
+    round->setFocusPolicy(Qt::ClickFocus);
+    connect(round, &QCheckBox::clicked, this, [this, V](bool on) {
+        apply(V, {}, T("Runde Enden"), [on](Clip& c) { c.title.barRound = on; }, true);
+    });
+    bar.grid->addWidget(round, bar.rows++, 1);
+    m_refreshers << [current, span, edge, round] {
+        if (const Clip* c = current()) {
+            const QSignalBlocker b1(span), b2(edge), b3(round);
+            span->setCurrentIndex(span->findData(int(c->title.span)));
+            edge->setCurrentIndex(c->title.barTop ? 0 : 1);
+            round->setChecked(c->title.barRound);
+        }
+    };
+    showFor(bar, [](const TitleStyle& t) { return t.isProgress(); });
+    showFor(outline, [](const TitleStyle& t) { return !t.isProgress(); });
 }
 
 void Inspector::addColor(Section& s, const QString& label, const QString& text,

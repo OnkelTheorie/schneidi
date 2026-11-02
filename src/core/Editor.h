@@ -51,8 +51,9 @@ public:
     void addMediaAt(const QStringList& paths, int frame, int track = 0);
     // Title of `length` frames (<= 0: 5 s, like DaVinci "Text") at the frame on the lowest video track that is free
     // above all clips in that range (missing track is created); track >= 0 = fixed track (drag from the Media Pool),
-    // overwritten only in [frame, frame + length). New clip is selected.
-    void addTitle(int frame, int track = -1, int length = 0);
+    // overwritten only in [frame, frame + length). New clip is selected. kind: text, counter or progress bar (a
+    // progress bar without length spans the whole timeline from frame 0)
+    void addTitle(int frame, int track = -1, int length = 0, TitleKind kind = TitleKind::Text);
     // New length of a title from its start: shorter frees the end, longer overwrites what lies in the new range on
     // its track (like a new title there; nothing after it changes)
     void setTitleLength(int clipId, int length);

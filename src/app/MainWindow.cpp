@@ -354,7 +354,8 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
                           && TimelineView::confirmTrimForTransition(this);
         m_editor->addTransitions(tv->playhead(), style, kind, trim);
     });
-    connect(m_effects, &EffectsLibrary::titleRequested, this, [this, tv] { m_editor->addTitle(tv->playhead()); });
+    connect(m_effects, &EffectsLibrary::titleRequested, this,
+            [this, tv](int kind) { m_editor->addTitle(tv->playhead(), -1, 0, TitleKind(kind)); });
     // Filters: onto the selected clips of the effect's kind, without a selection onto the clip at the playhead
     connect(m_effects, &EffectsLibrary::effectRequested, this, [this, tv](const QString& id) {
         m_editor->addEffect(m_editor->effectTargets(tv->playhead(), Editor::effectKind(id)), id);
@@ -408,8 +409,12 @@ MediaInfo MainWindow::probeCached(const QString& path)
 
 void MainWindow::onDrop(const QStringList& paths, int frame, int track)
 {
-    if (paths == QStringList{MediaPool::TitleItem}) {
-        m_editor->addTitle(frame, track);
+    if (paths.size() == 1 && MediaPool::isTitleItem(paths.first())) {
+        const QString& p = paths.first();
+        m_editor->addTitle(frame, track, 0,
+                           p == MediaPool::CounterItem    ? TitleKind::Counter
+                           : p == MediaPool::ProgressItem ? TitleKind::Progress
+                                                          : TitleKind::Text);
         return;
     }
     if (paths.size() == 1 && MediaPool::sequenceOfItem(paths.first())) { // Nest timeline/compound clip

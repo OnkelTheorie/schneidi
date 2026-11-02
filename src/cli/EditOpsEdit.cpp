@@ -74,6 +74,60 @@ bool applyStyle(TitleStyle& t, const QJsonObject& op)
     return any;
 }
 
+// Counter and progress bar titles (TitleKind): their own settings on top of the style
+const QString kGeneratorFields =
+    "kind: text (default), counter or progress. counter: from, to (numbers), decimals (0..6), prefix, suffix (e.g. "
+    "\"$\", \" kills\", \"%\"), grouping (thousands separator, default true; separators follow the UI language), "
+    "ease (linear|in|out|in_out, default out); it counts over the title's length in the title's font, size, colour, "
+    "outline and box. progress: a bar along the top or bottom edge filled in `color`, the box (box, box_color) is the "
+    "track behind it; span timeline (default: fills from the timeline's start to its end wherever the title sits) or "
+    "clip (fills over the title's own length); edge top (default: phone apps cover the bottom of a vertical video) or "
+    "bottom; thickness, margin (distance from the edge) in pixels; rounded (ends, default true). A new progress bar "
+    "without at/duration spans the whole timeline";
+const QStringList kGeneratorKeys{"kind", "from", "to", "decimals", "prefix", "suffix", "grouping", "ease", "span",
+                                 "edge", "thickness", "margin", "rounded"};
+
+MotionEase easeOf(const QJsonObject& op, const char* key)
+{
+    const QString id = op.value(key).toString();
+    for (const auto& e : kMotionEases)
+        if (id == QLatin1String(e.id)) return e.ease;
+    fail("BAD_ARGUMENT", QString("%1 must be linear, in, out or in_out").arg(key));
+}
+
+TitleKind titleKindOf(const QJsonObject& op)
+{
+    const QString id = op.value("kind").toString();
+    for (const auto& k : kTitleKinds)
+        if (id == QLatin1String(k.id)) return k.kind;
+    fail("BAD_ARGUMENT", "kind must be text, counter or progress");
+}
+
+void applyGenerator(TitleStyle& t, const QJsonObject& op)
+{
+    if (op.contains("kind")) t.kind = titleKindOf(op);
+    if (op.contains("from")) t.countFrom = numberOf(op, "from", -1e12, 1e12);
+    if (op.contains("to")) t.countTo = numberOf(op, "to", -1e12, 1e12);
+    if (op.contains("decimals")) t.decimals = int(numberOf(op, "decimals", 0, 6));
+    if (op.contains("prefix")) t.prefix = op.value("prefix").toString();
+    if (op.contains("suffix")) t.suffix = op.value("suffix").toString();
+    if (op.contains("grouping")) t.grouping = op.value("grouping").toBool();
+    if (op.contains("ease")) t.countEase = easeOf(op, "ease");
+    if (op.contains("span")) {
+        const QString v = op.value("span").toString();
+        if (v != "timeline" && v != "clip") fail("BAD_ARGUMENT", "span must be timeline or clip");
+        t.span = v == "clip" ? ProgressSpan::Clip : ProgressSpan::Timeline;
+    }
+    if (op.contains("edge")) {
+        const QString v = op.value("edge").toString();
+        if (v != "top" && v != "bottom") fail("BAD_ARGUMENT", "edge must be top or bottom");
+        t.barTop = v == "top";
+    }
+    if (op.contains("thickness")) t.barThickness = numberOf(op, "thickness", 1, 2000);
+    if (op.contains("margin")) t.barMargin = numberOf(op, "margin", 0, 5000);
+    if (op.contains("rounded")) t.barRound = op.value("rounded").toBool();
+}
+
 // Word caption settings of a subtitle track (CaptionStyle): mode under `modeKey` (lines|karaoke|word)
 const QString kCaptionFields = "highlight (colour of the spoken word, karaoke), highlight_scale (its size, 1 = like the "
                                "others, default 1.15), max_words_per_line (0 = by width), pop_ms (pop-in of a word, "
@@ -162,20 +216,23 @@ void opTitle(Session& s, const QJsonObject& op)
         }
     } else {
         // Placed with its final length: only [at, at + duration) changes on the track
-        const int at = timeOf(s, op, "at", 0);
+        // A progress bar without a place spans the whole timeline (Editor::addTitle)
+        const bool wholeTimeline = op.value("kind").toString() == "progress" && !op.contains("at") && length <= 0;
+        const int at = wholeTimeline ? 0 : timeOf(s, op, "at", 0);
         const int track = op.contains("track") ? parseTrack(op.value("track")) : -1;
         const QHash<int, Clip> before =
             clipsIn(s, track, std::max(0, at), std::max(0, at) + (length > 0 ? length : 5 * s.project.fps()));
         s.selection.clear();
-        s.editor.addTitle(at, track, length);
+        s.editor.addTitle(at, track, length, op.contains("kind") ? titleKindOf(op) : TitleKind::Text);
         if (s.selection.ids().isEmpty()) fail("FAILED", "could not place the title (locked track?)");
         id = *s.selection.ids().begin();
         noteOverwritten(s, id, before);
     }
     TitleStyle style = TimelineOps::findClip(s.project.timeline(), id)->title;
-    if (created) style.text = "Title";
+    if (created && style.kind == TitleKind::Text) style.text = "Title";
     if (op.contains("text")) style.text = op.value("text").toString();
     applyStyle(style, op);
+    applyGenerator(style, op);
     s.editor.modifyClips({id}, "Title", [&](Clip& c) { c.title = style; });
 }
 
@@ -224,9 +281,14 @@ TransitionStyle parseTransitionStyle(const QJsonObject& op, TransitionStyle st)
         const auto it = std::find_if(std::begin(kTransitionTypes), std::end(kTransitionTypes),
                                      [&](const TransitionTypeInfo& i) { return id == QLatin1String(i.id); });
         if (it == std::end(kTransitionTypes))
-            fail("BAD_ARGUMENT", "type must be cross_dissolve, dip_color, wipe_right, wipe_left, wipe_down, wipe_up or luma");
+            fail("BAD_ARGUMENT", "type must be cross_dissolve, dip_color, wipe_right, wipe_left, wipe_down, wipe_up, luma, "
+                                 "push_right, push_left, push_down, push_up, whip_right, whip_left, whip_down or whip_up");
+        // A whip is a fast move: eased in and out unless told otherwise
+        if (it->type != st.type && TransitionStyle{it->type}.isWhip() && !op.contains("ease")) st.ease = MotionEase::InOut;
         st.type = it->type;
     }
+    if (op.contains("ease")) st.ease = easeOf(op, "ease");
+    if (op.contains("blur")) st.blur = numberOf(op, "blur", 0, 100);
     if (op.contains("align")) {
         const int a = QStringList{"center", "start", "end"}.indexOf(op.value("align").toString());
         if (a < 0) fail("BAD_ARGUMENT", "align must be center, start or end (of the cut)");
@@ -703,19 +765,23 @@ QJsonObject transitionStyleJson(const TransitionStyle& st)
         if (st.invert) o["invert"] = true;
     }
     if (st.audio != def.audio) o["audio_curve"] = audioCurveInfo(st.audio).id;
+    if (st.ease != def.ease) o["ease"] = motionEaseInfo(st.ease).id;
+    if (st.isWhip()) o["blur"] = st.blur;
     return o;
 }
 
 void addEditOps(QVector<OpDef>& ops)
 {
-    ops << OpDef{"title", "{op:'title', text?, at?, duration?, track?, clip?, <style>}",
+    ops << OpDef{"title", "{op:'title', text?, kind?, at?, duration?, track?, clip?, <style>}",
                  "new title (duration default 5s; on `track` it overwrites only [at, at+duration) like `place`, also an "
                  "earlier title there (notes say what was cut or removed); without track it goes on the video track "
                  "above the clips in that range, so overlapping titles all show) or with clip: change one (a new duration "
                  "keeps its start; longer overwrites only the added range)",
                  "Style (pixels of the timeline format, from the center, y up): " + kStyleFields
-                     + ". Colors \"#rrggbb\" or \"#aarrggbb\". text may have several lines (\\n).",
-                 opTitle, kStyleKeys}
+                     + ". Colors \"#rrggbb\" or \"#aarrggbb\". text may have several lines (\\n). " + kGeneratorFields
+                     + ". Example counter: {op:'title', kind:'counter', from:0, to:1000, suffix:' kills', at:'2s', "
+                       "duration:'3s', size:160}.",
+                 opTitle, kStyleKeys + kGeneratorKeys}
         << OpDef{"trim", "{op:'trim', clip, edge?:'start'|'end', by|to, mode?}",
                  "move a clip edge; mode normal (default, no ripple), ripple, roll (the cut), slip (content, by only), "
                  "slide (clip between its neighbours)",
@@ -729,12 +795,15 @@ void addEditOps(QVector<OpDef>& ops)
                  "dissolve, 1s)",
                  "type: cross_dissolve, dip_color (color), wipe_right, wipe_left, wipe_down, wipe_up (softness 0..100, "
                  "border px, border_color), luma (luma: built-in name from `effects` or an image file, softness, "
-                 "invert). align: center, start, end (relative to the cut). audio_curve: plus3, zero, minus3. "
+                 "invert), push_right/left/down/up (the new shot pushes the old one out in that direction), "
+                 "whip_right/left/down/up (a fast push with motion blur, blur 0..100, default 50; eased in_out). "
+                 "ease (wipes, pushes, whips, luma): linear (default), in, out, in_out. align: center, start, end (relative to the cut). audio_curve: plus3, zero, minus3. "
                  "kind: only 'video' or 'audio' tracks. Alone at a clip edge it fades from/to black (silence). "
                  "remove:true removes them; existing ones change their style/length. A cut without spare material "
                  "(clips used to their ends) gets none; trim:true ripple-trims the clips there so it fits.",
                  opTransition,
-                 kClipKeys + QStringList{"color", "softness", "border", "border_color", "invert", "audio_curve", "luma"}}
+                 kClipKeys + QStringList{"color", "softness", "border", "border_color", "invert", "audio_curve", "luma",
+                                         "ease", "blur"}}
         << OpDef{"track", "{op:'track', track, name?, lock?, mute?, hidden?, color?, move_to?}",
                  "track header settings; subtitle tracks (ST1 …) take name, enabled, lock, the title style and the "
                  "word caption style",

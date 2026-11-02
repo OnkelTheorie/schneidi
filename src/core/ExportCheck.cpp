@@ -3,6 +3,7 @@
 
 #include "core/Captions.h"
 #include "core/EffectRegistry.h"
+#include "core/Generators.h"
 #include "core/I18n.h"
 #include "core/Keyframes.h"
 #include "core/Loudness.h"
@@ -52,14 +53,19 @@ QRectF grown(QRectF r, const TitleStyle& s)
 QRectF titleBlock(const Clip& c, double t, double W, double H)
 {
     const TitleStyle& s = c.title;
-    const QFontMetricsF fm = metrics(s, std::max(1.0, Keys::valueAt(c, AnimParam::TitleSize, t)));
-    const QStringList lines = s.text.split('\n');
-    double w = 1;
-    for (const QString& line : lines) w = std::max(w, fm.horizontalAdvance(line));
-    const double h = fm.lineSpacing() * lines.size();
-    const double cx = W / 2 + Keys::valueAt(c, AnimParam::TitlePosX, t);
-    const double cy = H / 2 - Keys::valueAt(c, AnimParam::TitlePosY, t);
-    QRectF r = grown(QRectF(cx - w / 2, cy - h / 2, w, h), s);
+    QRectF r;
+    if (s.isProgress()) { // the whole bar (it fills up to there)
+        r = Generators::progressTrack(s, W, H);
+    } else {
+        const QFontMetricsF fm = metrics(s, std::max(1.0, Keys::valueAt(c, AnimParam::TitleSize, t)));
+        const QStringList lines = (s.isCounter() ? Generators::counterWidest(s, fm) : s.text).split('\n');
+        double w = 1;
+        for (const QString& line : lines) w = std::max(w, fm.horizontalAdvance(line));
+        const double h = fm.lineSpacing() * lines.size();
+        const double cx = W / 2 + Keys::valueAt(c, AnimParam::TitlePosX, t);
+        const double cy = H / 2 - Keys::valueAt(c, AnimParam::TitlePosY, t);
+        r = grown(QRectF(cx - w / 2, cy - h / 2, w, h), s);
+    }
     if (Keys::hasTransform(c)) {
         const double zx = Keys::valueAt(c, AnimParam::ZoomX, t), zy = Keys::valueAt(c, AnimParam::ZoomY, t);
         const double x = Keys::valueAt(c, AnimParam::PosX, t), y = Keys::valueAt(c, AnimParam::PosY, t);
@@ -434,9 +440,21 @@ QVector<Issue> layout(const Timeline& tl, int from, int to, const ProjectFormat&
         const Track& t = tl.video[ti];
         if (t.hidden) continue;
         for (const Clip& c : t.clips) {
-            if (!c.isTitle() || !c.enabled || c.title.text.trimmed().isEmpty() || c.end() <= from || c.start >= to)
-                continue;
+            if (!c.isTitle() || !c.enabled || c.end() <= from || c.start >= to) continue;
+            if (c.title.kind == TitleKind::Text && c.title.text.trimmed().isEmpty()) continue;
             if (Keys::hasOpacity(c) && !Keys::animated(c, AnimParam::Opacity) && c.transform.opacity <= 0) continue;
+            if (c.title.isProgress()) {
+                // A thin bar along the top edge is the usual place (the apps' top row is text over the picture);
+                // at the bottom the apps draw their own progress bar, the caption and the buttons over it
+                const QRectF r = titleBlock(c, 0, W, H);
+                const double bottomY = H * (1 - o.safeBottom);
+                if (area(r) > 0 && area(r.intersected(QRectF(0, bottomY, W, H - bottomY))) / area(r) >= o.safeMaxCovered)
+                    out << issue(Severity::Warning, "safe_area",
+                                 T("Fortschrittsbalken liegt unten, wo TikTok, Reels und Shorts ihre eigene Leiste, "
+                                   "die Beschreibung und Knöpfe zeigen – an den oberen Rand setzen"),
+                                 std::max(from, c.start), std::min(to, c.end()), c.id);
+                continue;
+            }
             // Animated titles move: look at up to 24 moments of the visible part. A title sliding in from outside
             // for a moment is intended: it counts from half a second on (or the whole title, when shorter).
             const int a = std::max(from, c.start), b = std::min(to, c.end());

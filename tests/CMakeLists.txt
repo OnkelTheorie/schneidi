@@ -26,6 +26,8 @@ schneidi_test(test_interchange)
 target_compile_definitions(test_interchange PRIVATE SCHNEIDI_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/data")
 schneidi_test(test_interchange_app)
 schneidi_test(test_projectfile)
+schneidi_test(test_generators)
+target_link_libraries(test_generators PRIVATE schneidi_cli_lib)
 schneidi_test(test_project_versions)
 target_compile_definitions(test_project_versions PRIVATE SCHNEIDI_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/data")
 schneidi_test(test_undo)
@@ -202,7 +204,7 @@ schneidi_test(test_thread_teardown)
 foreach(name test_stabilize_denoise test_retime test_effects_render test_effect_order test_cli test_export_formats test_audio
              test_audio_regression test_color test_loudness test_dynamics_eq test_audio_sync test_multicam_render
              test_multicam_viewer test_multicam_cli
-             test_ducking test_crop test_blur_fill test_reframe)
+             test_ducking test_crop test_blur_fill test_reframe test_generators)
     add_test(NAME ${name}_de_DE COMMAND ${name})
     set_tests_properties(${name}_de_DE PROPERTIES
         SKIP_RETURN_CODE 77

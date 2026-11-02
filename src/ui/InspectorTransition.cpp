@@ -158,9 +158,29 @@ void Inspector::buildTransitionPage(QVBoxLayout* page)
            swatchRow(m_transBorderColor, T("Randfarbe"), [](TransitionStyle& st) -> QColor& { return st.borderColor; }),
            &m_wipeRows);
 
+    // Wipe/push/whip/gradient wipe: speed over the transition; whip: motion blur
+    m_transEase = combo();
+    for (const auto& e : kMotionEases) m_transEase->addItem(T(e.name), int(e.ease));
+    addRow(T("Tempo"), m_transEase, &m_easeRows);
+    connect(m_transEase, &QComboBox::activated, this, [this] {
+        const auto ease = MotionEase(m_transEase->currentData().toInt());
+        changeTransition([ease](TransitionStyle& st) { st.ease = ease; });
+    });
+    m_transBlur = new ScrubField(0, 100, 0.5, 0);
+    m_transBlur->setSuffix(" %");
+    m_transBlur->setToolTip(T("Bewegungsunschärfe in Schieberichtung"));
+    m_transBlur->onChange = [this](double v) {
+        changeTransition([v](TransitionStyle& st) { st.blur = v; }, "transBlurInspector");
+    };
+    m_transBlur->onFinish = [this] { m_editor->project()->closeMerge(); };
+    addRow(T("Unschärfe"), m_transBlur, &m_whipRows, 1);
+
     connect(m_transType, &QComboBox::activated, this, [this] {
         const auto type = TransitionType(m_transType->currentData().toInt());
         changeTransition([type](TransitionStyle& st) {
+            // A whip is a fast move: eased in and out when chosen
+            if (type != st.type && TransitionStyle{type}.isWhip() && st.ease == MotionEase::Linear)
+                st.ease = MotionEase::InOut;
             st.type = type;
             if (st.isLuma() && st.luma.isEmpty()) st.luma = EffectFolders::builtinTransitions().value(0).path;
         });
@@ -221,6 +241,11 @@ bool Inspector::refreshTransition()
     for (QWidget* w : m_wipeRows) w->setVisible(video && span.style.isWipe());
     for (QWidget* w : m_lumaRows) w->setVisible(video && span.style.isLuma());
     for (QWidget* w : m_softRows) w->setVisible(video && (span.style.isWipe() || span.style.isLuma()));
+    for (QWidget* w : m_easeRows)
+        w->setVisible(video && (span.style.isWipe() || span.style.isLuma() || span.style.isSlide()));
+    for (QWidget* w : m_whipRows) w->setVisible(video && span.style.isWhip());
+    m_transEase->setCurrentIndex(m_transEase->findData(int(span.style.ease)));
+    m_transBlur->setValue(span.style.blur);
     if (video && span.style.isLuma()) {
         // Selection: bundled, then custom images (with subfolder); a missing image as its own entry
         const QSignalBlocker block(m_transLuma);

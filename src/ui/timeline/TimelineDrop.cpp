@@ -161,7 +161,7 @@ void TimelineView::dragEnterEvent(QDragEnterEvent* e)
     if (paths.isEmpty()) return;
     m_dropItems.clear();
     for (const QString& path : paths) {
-        if (path == MediaPool::TitleItem) { // Title from the Media Pool: 5 s, video only
+        if (MediaPool::isTitleItem(path)) { // Title from the Media Pool/Effects Library: 5 s, video only
             m_dropItems << DropItem{5 * m_editor->project()->fps(), true, 0};
             continue;
         }
