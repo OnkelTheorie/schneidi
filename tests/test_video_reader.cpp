@@ -458,6 +458,24 @@ int main(int argc, char** argv)
         CHECK(cf.ok && cf.width == 320 && cf.height == 240);
         const auto probed = MediaProbe::read(late, FrameRate{25, 1});
         CHECK(probed && probed->hasVideo && probed->hasAudio);
+        // The long analysis runs once per file and session: opened again, it is not repeated
+        const int runs = Video::Reader::longAnalyses();
+        CHECK(Video::Reader::open(late) != nullptr);
+        CHECK_EQ(Video::Reader::longAnalyses(), runs);
+    }
+    // Video later than even the long analysis reads (70 s of sound first): refused, and on the next open at once
+    // (it read 60 s on every open)
+    if (const QString later = Check::makeMedia(file("start70.ts"), {"-f", "lavfi", "-i", "sine=r=8000:d=72", "-itsoffset",
+                                                                    "70", "-f", "lavfi", "-i",
+                                                                    "testsrc2=size=160x120:rate=25:d=1", "-map", "1:v",
+                                                                    "-map", "0:a", "-c:v", "libx264", "-c:a", "aac",
+                                                                    "-b:a", "16k"});
+        CHECK(!later.isEmpty())) {
+        const int runs = Video::Reader::longAnalyses();
+        CHECK(Video::Reader::open(later) == nullptr);
+        CHECK_EQ(Video::Reader::longAnalyses(), runs + 1);
+        CHECK(Video::Reader::open(later) == nullptr);
+        CHECK_EQ(Video::Reader::longAnalyses(), runs + 1);
     }
 
     // Hardware decoding: 720p H.264 and 10-bit HEVC

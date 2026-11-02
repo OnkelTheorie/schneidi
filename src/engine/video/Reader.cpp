@@ -14,6 +14,9 @@ extern "C" {
 #include <libswscale/swscale.h>
 }
 
+#include <QDateTime>
+#include <QFileInfo>
+
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -24,7 +27,10 @@ extern "C" {
 #include <deque>
 #include <list>
 #include <mutex>
+#include <optional>
+#include <string>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 namespace Video {
@@ -75,6 +81,44 @@ Registry& registry()
 {
     static Registry r;
     return r;
+}
+
+// Files the first stream analysis could not describe (video late in the file, or none that decodes): what the long
+// one found, per path for this session. The long analysis reads up to 60 s / 120 MB and every reader of such a file
+// (preview, thumbnails, export workers) paid for it again - for a file it never describes, each time for nothing.
+struct LongAnalysis {
+    int64_t size = -1, modified = 0; // the file it was for (a changed file is analysed again)
+    bool described = false;          // false: the long analysis did not describe it either
+};
+
+std::mutex g_longMutex;
+std::atomic<int> g_longRuns{0};
+std::unordered_map<std::string, LongAnalysis>& longAnalyses()
+{
+    static std::unordered_map<std::string, LongAnalysis> m;
+    return m;
+}
+
+// The remembered long analysis of `path`, if the file is unchanged
+std::optional<LongAnalysis> longAnalysisOf(const QByteArray& path)
+{
+    LongAnalysis a;
+    {
+        std::lock_guard lock(g_longMutex);
+        const auto it = longAnalyses().find(path.toStdString());
+        if (it == longAnalyses().end()) return std::nullopt; // the usual case: no file system call
+        a = it->second;
+    }
+    const QFileInfo fi(QString::fromUtf8(path));
+    if (fi.size() != a.size || fi.lastModified().toMSecsSinceEpoch() != a.modified) return std::nullopt;
+    return a;
+}
+
+void rememberLongAnalysis(const QByteArray& path, bool described)
+{
+    const QFileInfo fi(QString::fromUtf8(path));
+    std::lock_guard lock(g_longMutex);
+    longAnalyses()[path.toStdString()] = {fi.size(), fi.lastModified().toMSecsSinceEpoch(), described};
 }
 
 bool amongRecent(const std::atomic<int64_t>& mine, int keep)
@@ -1313,10 +1357,20 @@ std::unique_ptr<Reader> Reader::open(const QString& path, const Options& options
         const AVCodecParameters* p = d.stream->codecpar;
         return p->width > 0 && p->height > 0 && p->format != AV_PIX_FMT_NONE;
     };
-    if (!openStream(0)) return nullptr;
     // Video that starts late (a recording whose picture comes after seconds of sound): the analysis ended before its
-    // first frame. Once more, reading further (only such files pay for it).
-    if (!described() && !openStream(60)) return nullptr;
+    // first frame. Once more, reading further (only such files pay for it, once per session: remembered).
+    constexpr int kLongAnalysis = 60;
+    const std::optional<LongAnalysis> known = longAnalysisOf(d.path);
+    if (known && !known->described) {
+        if (error) *error = QString("unknown picture format in %1").arg(path);
+        return nullptr;
+    }
+    if (!openStream(known ? kLongAnalysis : 0)) return nullptr;
+    if (!described() && !known) {
+        ++g_longRuns;
+        if (!openStream(kLongAnalysis)) return nullptr;
+        rememberLongAnalysis(d.path, described());
+    }
     if (!described()) {
         if (error) *error = QString("unknown picture format in %1").arg(path);
         return nullptr;
@@ -1409,6 +1463,11 @@ const Info& Reader::info() const
 const AVFormatContext* Reader::container() const
 {
     return d->fmt;
+}
+
+int Reader::longAnalyses()
+{
+    return g_longRuns.load();
 }
 
 void Reader::setBehind(int pictures)

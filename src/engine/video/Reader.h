@@ -141,6 +141,8 @@ public:
         int cancelled = 0;        // requests given up by their caller (Fetch::cancel)
     };
     Stats stats() const;
+    // Long stream analyses run by this process (files the first analysis could not describe; once per file and session)
+    static int longAnalyses();
 
 private:
     Reader();
