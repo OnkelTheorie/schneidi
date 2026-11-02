@@ -19,14 +19,19 @@
 #include "engine/Licenses.h"
 #include "engine/picture/gpu/Gpu.h"
 
+#include <QElapsedTimer>
 #include <QGuiApplication>
 #include <QLoggingCategory>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 
+#include <algorithm>
 #include <clocale>
+#include <cmath>
 #include <cstdio>
+#include <memory>
+#include <mutex>
 #include <iostream>
 #include <iterator>
 #include <string>
@@ -164,13 +169,41 @@ int main(int argc, char* argv[])
         return 2;
     }
     Cli::Context ctx;
-    int lastPercent = -1;
-    ctx.progress = [&lastPercent](double p) {
+    // Progress lines on stderr: {"progress":45,"stage":"transcribe","eta_s":30}; a line per new percent or stage.
+    // eta_s: from the time so far, once there is something to go by (steps of `short` run at different speeds: rough)
+    struct ProgressState {
+        std::mutex lock; // some analyses report from their worker threads
+        int percent = -1;
+        double last = 0;
+        QString stage, printed;
+        QElapsedTimer clock;
+    };
+    auto state = std::make_shared<ProgressState>();
+    state->clock.start();
+    state->stage = name;
+    const auto printProgress = [state](double p) { // with state->lock held
+        p = std::clamp(p, 0.0, 1.0);
+        state->last = p;
         const int percent = int(p * 100);
-        if (percent == lastPercent) return;
-        lastPercent = percent;
-        std::fprintf(stderr, "{\"progress\":%d}\n", percent);
+        if (percent == state->percent && state->stage == state->printed) return;
+        state->percent = percent;
+        state->printed = state->stage;
+        QJsonObject line{{"progress", percent}};
+        if (!state->stage.isEmpty()) line["stage"] = state->stage;
+        const double elapsed = state->clock.elapsed() / 1000.0;
+        if (p >= 0.02 && p < 1 && elapsed >= 2) line["eta_s"] = int(std::lround(elapsed * (1 - p) / p));
+        std::fprintf(stderr, "%s\n", QJsonDocument(line).toJson(QJsonDocument::Compact).constData());
         std::fflush(stderr);
+    };
+    ctx.progress = [state, printProgress](double p) {
+        const std::lock_guard<std::mutex> hold(state->lock);
+        printProgress(p);
+    };
+    ctx.stage = [state, printProgress](const QString& stage) {
+        const std::lock_guard<std::mutex> hold(state->lock);
+        if (stage == state->stage) return;
+        state->stage = stage;
+        if (state->percent >= 0) printProgress(state->last); // a new step: say so at once (not for the first command)
     };
     ctx.line = [](const QJsonObject& o) { print(o, false); };
     QJsonObject args0;

@@ -68,7 +68,9 @@ Transcriber::Transcriber(QObject* parent) : QObject(parent)
         auto it = re.globalMatch(QString::fromUtf8(data));
         int percent = -1;
         while (it.hasNext()) percent = it.next().captured(1).toInt();
-        if (percent >= 0) emit progress(kAudioShare + (1 - kAudioShare) * percent / 100.0);
+        // The language check after it gets the last bit
+        const double end = m_request.checkLanguage ? 0.95 : 1.0;
+        if (percent >= 0) emit progress(kAudioShare + (end - kAudioShare) * percent / 100.0);
     });
     connect(&m_process, &QProcess::finished, this, [this](int code, QProcess::ExitStatus status) {
         if (!m_running) return;

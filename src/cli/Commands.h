@@ -47,6 +47,9 @@ struct Context {
     bool mcp = false;
     QVector<QImage> images; // frames tool: shown to the AI directly
     std::function<void(double)> progress; // 0..1, may be empty
+    // What runs now (command name of each step of a combined command like `short`, "transcribe"); may be empty.
+    // Shown with the progress (command line: "stage" in the progress lines, MCP: the notification's message)
+    std::function<void(const QString&)> stage;
     // Command line only (empty in MCP): results printed as they come, one JSON line each (`watch` follow)
     std::function<void(const QJsonObject&)> line;
     // `serve` worker only: name part of a render's temporary files (ExportSettings::partId), so cancelling a job

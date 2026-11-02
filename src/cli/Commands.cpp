@@ -1203,6 +1203,7 @@ QJsonObject execute(const Command& cmd, const QJsonObject& args0, Context& ctx)
             result["live"] = true;
             return result;
         }
+    if (ctx.stage) ctx.stage(cmd.name);
     // Analyses, render … while an AI is connected to the app: the app shows that it works (cli/Live.h)
     Live::Activity activity(cmd.name, args, ctx);
     try {
@@ -1487,7 +1488,9 @@ QJsonObject cmdHelp(const QJsonObject& a, Context&)
     o["usage"] = "schneidi-cli <command> [positional…] [--param value]; output is JSON on stdout, exit code 0 = ok, 1 = "
                  "error, 2 = usage error. `schneidi-cli mcp` runs an MCP server on stdio, `schneidi-cli serve` one over "
                  "HTTP (see 'servers'); `schneidi-cli setup claude` connects Claude Code and Claude Desktop to it. "
-                 "--verbose: progress notes and engine messages on stderr.";
+                 "Long commands (render, transcribe, highlights, short …) write progress lines on stderr: "
+                 "{\"progress\":45,\"stage\":\"transcribe\",\"eta_s\":30} (percent, the step running now, "
+                 "estimated seconds left). --verbose: also progress notes and engine messages on stderr.";
     o["servers"] = servers;
     return o;
 }

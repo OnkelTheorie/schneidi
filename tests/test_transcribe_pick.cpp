@@ -14,6 +14,7 @@
 #include <QGuiApplication>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QProcess>
 #include <QTemporaryDir>
 
 #include <cmath>
@@ -239,6 +240,32 @@ int main(int argc, char** argv)
         // Named tracks as before
         const QJsonObject spotify = run("transcribe", {{"source", proj}, {"model", model}, {"tracks", "Spotify"}});
         CHECK_EQ(text(spotify), QString("f400"));
+    }
+    {
+        // schneidi-cli itself: JSON on stdout, progress lines with the step on stderr
+        QProcess p;
+        QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+        for (const char* var : {"HOME", "XDG_DATA_HOME", "XDG_CONFIG_HOME", "APPDATA", "LOCALAPPDATA"})
+            env.insert(var, dir.filePath("home")); // no whisper installed for the user: the fake on the PATH
+        p.setProcessEnvironment(env);
+        p.start(SCHNEIDI_CLI, {"transcribe", rec, "--model", model, "--language", "fr"});
+        CHECK(p.waitForFinished(60000) && p.exitCode() == 0);
+        const QJsonObject out = QJsonDocument::fromJson(p.readAllStandardOutput()).object();
+        CHECK(out["ok"].toBool());
+        CHECK_EQ(out["detected_language"].toString(), QString("en"));
+        int lines = 0, last = -1;
+        bool staged = true;
+        for (const QByteArray& line : p.readAllStandardError().split('\n')) {
+            const QJsonObject o = QJsonDocument::fromJson(line).object();
+            if (!o.contains("progress")) continue;
+            ++lines;
+            CHECK(o["progress"].toInt() >= last);
+            last = o["progress"].toInt();
+            staged = staged && o["stage"].toString() == QLatin1String("transcribe");
+        }
+        CHECK(lines >= 2);
+        CHECK(staged);
+        CHECK_EQ(last, 100);
     }
     return Check::result();
 }

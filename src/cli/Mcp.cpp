@@ -199,13 +199,17 @@ QJsonObject callTool(const QJsonObject& params, const Options& opt, const Send& 
     const QJsonValue token = params["_meta"].toObject().value("progressToken");
     if (!token.isUndefined() && !token.isNull() && notify) {
         auto last = std::make_shared<int>(-1);
-        ctx.progress = [token, last, notify](double p) {
+        // The step running now (of `short`: "transcribe", "render" …) as the notification's message
+        auto stage = std::make_shared<QString>(name);
+        ctx.progress = [token, last, stage, name, notify](double p) {
             const int percent = std::clamp(int(p * 100), 0, 100);
             if (percent == *last) return;
             *last = percent;
-            notify({{"jsonrpc", "2.0"}, {"method", "notifications/progress"},
-                    {"params", QJsonObject{{"progressToken", token}, {"progress", percent}, {"total", 100}}}});
+            QJsonObject params{{"progressToken", token}, {"progress", percent}, {"total", 100}};
+            if (*stage != name) params["message"] = *stage;
+            notify({{"jsonrpc", "2.0"}, {"method", "notifications/progress"}, {"params", params}});
         };
+        ctx.stage = [stage](const QString& s) { *stage = s; };
     }
     QJsonObject out;
     try {
