@@ -194,15 +194,13 @@ std::vector<float> mix(const Timeline& tl, int rate, int64_t from, int n)
     Audio::Mixer::Options o;
     o.rate = rate;
     Audio::Mixer m(tl, ProjectFormat{}.rate, o);
-    std::vector<float> l(size_t(n)), r(size_t(n));
-    float* planes[] = {l.data(), r.data()};
+    std::vector<float> l(static_cast<size_t>(n)), r(static_cast<size_t>(n));
     for (int done = 0; done < n;) {
         const int k = std::min(n - done, 4800);
         float* p[] = {l.data() + done, r.data() + done};
         m.render(from + done, k, p);
         done += k;
     }
-    (void)planes;
     return l;
 }
 
@@ -347,10 +345,12 @@ int main(int argc, char** argv)
         tl.audio[0].clips[0].effects << fx;
         const int n = rate * 5;
         const std::vector<float> whole = mix(tl, rate, 0, n);
+        // A mono file plays on both channels at -3 dB
         double err = 0;
-        for (int i = rate / 10; i < n; ++i) err = std::max(err, double(std::abs(whole[size_t(i)] - noisy[size_t(i)])));
-        std::printf("mixer %d Hz, dry path: max difference to the source %.5f\n", rate, err);
-        CHECK(err < (rate == 48000 ? 1e-6 : 0.05));
+        for (int i = rate / 10; i < n; ++i)
+            err = std::max(err, double(std::abs(whole[size_t(i)] - noisy[size_t(i)] * float(std::numbers::sqrt2 / 2))));
+        std::printf("mixer %d Hz, dry path: max difference to the source %.7f\n", rate, err);
+        CHECK(err < (rate == 48000 ? 1e-6 : 0.02)); // other rates: through the 48 kHz resampling and back
         const std::vector<float> later = mix(tl, rate, rate * 2, rate);
         double jump = 0;
         for (int i = 0; i < rate; ++i) jump = std::max(jump, double(std::abs(later[size_t(i)] - whole[size_t(rate * 2 + i)])));
