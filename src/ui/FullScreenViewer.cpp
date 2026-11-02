@@ -30,8 +30,10 @@ FullScreenViewer::FullScreenViewer(Engine* engine, const QImage& picture)
     lay->setContentsMargins(0, 0, 0, 0);
     lay->addWidget(m_view);
     connect(engine, &Engine::frameReady, this, [this, engine](const QImage& img) {
+        const bool other = m_view->frameSize() != engine->frameSize(); // project format changed
         m_view->setFrameSize(engine->frameSize());
         m_view->setFrame(img);
+        if (other) emit previewEdgeWanted(wantedPreviewEdge());
     });
     connect(m_view, &FrameView::zoomChanged, this, [this] { emit previewEdgeWanted(wantedPreviewEdge()); });
     m_hideCursor.setSingleShot(true);
@@ -60,9 +62,14 @@ int FullScreenViewer::wantedPreviewEdge() const
 {
     const double z = m_view->zoom();
     if (z != FrameView::kFit && z >= 1.0) return INT_MAX; // the project size
-    // Fit: as many pixels as the screen has - not more (a 4K project on a 1080p screen renders at 1920 wide)
+    // Fit: as many pixels as the picture covers on the screen - not more (a 4K project on a 1080p screen renders
+    // 1920 wide, a portrait project there ~608 x 1080), at most 1920: playback speed comes first, 4K screens get
+    // twice the viewer's preview
     const QSize px = (screen() ? screen()->geometry().size() : size()) * devicePixelRatioF();
-    return std::max(px.width(), px.height());
+    QSize project = m_view->frameSize();
+    if (project.isEmpty()) project = px;
+    const QSize covered = project.scaled(px, Qt::KeepAspectRatio);
+    return std::min(kMaxPreviewEdge, std::max(covered.width(), covered.height()));
 }
 
 const QImage& FullScreenViewer::picture() const

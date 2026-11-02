@@ -395,6 +395,7 @@ void testFullScreen(MainWindow& w, Engine& engine)
         const QSize project = engine.frameSize(), preview = engine.previewSize();
         const int screenEdge = fs->wantedPreviewEdge();
         CHECK_EQ(engine.previewEdge(), screenEdge);
+        CHECK(screenEdge > 0 && screenEdge <= FullScreenViewer::kMaxPreviewEdge);
         CHECK(std::max(preview.width(), preview.height())
               >= std::min({std::max(project.width(), project.height()), screenEdge, 960}) - 2);
         CHECK(preview.width() <= project.width() && preview.height() <= project.height());
