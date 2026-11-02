@@ -26,6 +26,7 @@
 #include <QTemporaryDir>
 #include <QTimer>
 #include <QUndoStack>
+#include <algorithm>
 #include <clocale>
 #include <cmath>
 
@@ -335,6 +336,14 @@ void testAnalysis(const QString& dir, const QString& jumping, const QString& gli
         c.out = 2;
         const QVector<Target> t2 = ReframeAnalysis::targets(c, f.rate, 100, between);
         CHECK(t.size() == 1 && t2.size() == 1 && std::abs(t2.front().x - 0.2) < 1e-9);
+        // A cut sampled on the same clip frame as the sample before it (0.02 s and 0.03 s are both frame 1 at
+        // 25 fps): the cut must survive, with the new shot's position
+        Clip cut;
+        cut.out = 50;
+        const ReframeAnalysis::Samples cutSamples{{0.0, 0.2, 0.5, 1, false}, {0.02, 0.2, 0.5, 1, false},
+                                                  {0.03, 0.8, 0.5, 1, true}, {0.5, 0.8, 0.5, 1, false}};
+        const QVector<Target> ct = ReframeAnalysis::targets(cut, f.rate, 100, cutSamples);
+        CHECK(std::any_of(ct.begin(), ct.end(), [](const Target& x) { return x.cut && std::abs(x.x - 0.8) < 1e-9; }));
     }
     // A square gliding from left to right: the window keeps it in view all the way
     {
