@@ -33,9 +33,9 @@ void draw(uint8_t* rgba, int w, int h, const Params& p);
 QRectF bounds(const Params& p);
 
 // Word captions: lines of words, each word with its own colour, size and opacity (karaoke highlight, pop-in). The
-// layout uses the words at their normal size (a growing word does not push its neighbours), a word grows around its
-// own centre. Lines one below the other, each aligned like Params::halign; the block is aligned in `area` and shrunk
-// to fit it when larger.
+// layout gives a larger word its larger width (the others move aside, a full space stays between words); the block's
+// size counts the widest word grown by `reserve`, so it does not change size while the highlight moves. Lines one
+// below the other, each aligned like Params::halign; the block is aligned in `area` and shrunk to fit it when larger.
 struct Word {
     QString text;
     QColor fg = Qt::white;
@@ -49,7 +49,7 @@ struct WordParams {
     QColor outlineColor = Qt::black, bg = Qt::transparent;
     double outline = 0, pad = 0; // outline: pen width
     QColor shadow = Qt::transparent; // drop shadow (offset by a tenth of the font size down and right)
-    double reserve = 1.0; // room each word gets in the layout (the largest scale a word grows to: no overlap)
+    double reserve = 1.0; // the largest scale a word grows to (block size, see above)
 };
 void drawWords(uint8_t* rgba, int w, int h, const WordParams& p);
 

@@ -18,10 +18,13 @@
 #include "core/TranscriptCut.h"
 #include "engine/Exporter.h"
 #include "engine/RenderQueue.h"
+#include "engine/video/Text.h"
 
 #include <QApplication>
 #include <QEventLoop>
+#include <QDebug>
 #include <QFile>
+#include <QFontMetricsF>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QTemporaryDir>
@@ -350,6 +353,84 @@ int yellow(const QImage& img)
         }
     return n;
 }
+// Inked columns of a picture: first, last and the widths of the empty runs between (gaps of at least 4 pixels: the
+// spaces between words, not the room inside a letter)
+struct Ink {
+    int first = -1, last = -1;
+    QVector<int> gaps;
+};
+Ink ink(const QImage& img)
+{
+    QVector<bool> on(img.width());
+    for (int x = 0; x < img.width(); ++x)
+        for (int y = 0; y < img.height() && !on[x]; ++y) on[x] = qAlpha(img.pixel(x, y)) > 60;
+    Ink out;
+    out.first = int(on.indexOf(true));
+    out.last = int(on.lastIndexOf(true));
+    for (int x = out.first; out.first >= 0 && x <= out.last; ++x) {
+        if (on[x]) continue;
+        int e = x;
+        while (!on[e]) ++e;
+        if (e - x >= 4) out.gaps << e - x;
+        x = e;
+    }
+    return out;
+}
+
+// Karaoke layout: the space before and after the highlighted (larger) word is as wide as in plain text, at every
+// highlighted word and with the outline of the caption style (the grown word covered the spaces: "Thisis word"), and
+// the other spaces do not get wider either (room kept for the grown word made "is  word")
+void testWordLayout()
+{
+    QFont font(QStringLiteral("DejaVu Sans"));
+    font.setPixelSize(84);
+    font.setBold(true);
+    const QStringList list = Captions::words(QStringLiteral("This is word captions,"));
+    const QFontMetricsF fm(font);
+    const auto image = [] {
+        QImage img(1600, 200, QImage::Format_RGBA8888);
+        img.fill(Qt::transparent);
+        return img;
+    };
+    Text::Params plain;
+    plain.text = list.join(' ');
+    plain.font = font;
+    plain.outline = plain.room = 12;
+    QImage ref = image();
+    plain.area = QRectF(0, 0, ref.width(), ref.height());
+    Text::draw(ref.bits(), ref.width(), ref.height(), plain);
+    const Ink refInk = ink(ref);
+    if (!CHECK_EQ(refInk.gaps.size(), 3)) return;
+    for (const double scale : {1.15, 1.4})
+        for (int active = -1; active < list.size(); ++active) {
+            Text::WordParams p;
+            p.font = font;
+            p.reserve = scale;
+            p.outline = 12;
+            p.lines = {{}};
+            for (int i = 0; i < list.size(); ++i)
+                p.lines[0] << Text::Word{list[i], i == active ? QColor(255, 214, 0) : QColor(Qt::white), i == active ? scale : 1.0};
+            QImage img = image();
+            p.area = QRectF(0, 0, img.width(), img.height());
+            Text::drawWords(img.bits(), img.width(), img.height(), p);
+            const Ink got = ink(img);
+            const QString at = QString("scale %1 word %2: gaps %3, plain %4").arg(scale).arg(active)
+                                   .arg(QDebug::toString(got.gaps), QDebug::toString(refInk.gaps));
+            if (!CHECK_EQ(got.gaps.size(), 3)) {
+                qWarning().noquote() << at;
+                continue;
+            }
+            // The grown word's outline is a little wider (pen grows with it)
+            for (int i = 0; i < 3; ++i)
+                if (!CHECK(std::abs(got.gaps[i] - refInk.gaps[i]) <= 3)) qWarning().noquote() << at;
+            // As wide as the plain text plus what the highlighted word grew
+            const double grown = active < 0 ? 0.0 : fm.horizontalAdvance(list[active]) * (scale - 1);
+            const double width = got.last - got.first, refWidth = refInk.last - refInk.first;
+            if (!CHECK(std::abs(width - refWidth - grown) <= 6))
+                qWarning().noquote() << at << "width" << width << "plain" << refWidth << "+" << grown;
+        }
+}
+
 int white(const QImage& img)
 {
     int n = 0;
@@ -518,6 +599,7 @@ int main(int argc, char** argv)
     testSpeed();
     testVtt();
     testProjectFile();
+    testWordLayout();
     QTemporaryDir tmp;
     if (!CHECK(tmp.isValid())) return Check::result();
     testCliOp(tmp.path());

@@ -90,13 +90,23 @@ void drawWords(uint8_t* rgba, int w, int h, const WordParams& tp)
     const QFontMetricsF fm(font);
     const double space = fm.horizontalAdvance(QLatin1Char(' '));
     const double reserve = std::max(1.0, tp.reserve);
+    // A word takes its own width, a larger word (highlight, pop overshoot) its larger width: the words next to it
+    // move aside and keep a full space to it (laid out at the normal width and grown around its centre, a larger
+    // word covered the spaces: "Thisis word"). The size of the block (fit into the area, the box) counts the largest
+    // word grown by `reserve`, so the text does not change size or wrap while the highlight moves.
+    const auto slotOf = [&](const Word& word) { return fm.horizontalAdvance(word.text) * std::max(1.0, word.scale); };
     QVector<double> lineW;
     double blockW = 0;
     for (const QVector<Word>& line : tp.lines) {
-        double lw = 0;
-        for (int i = 0; i < line.size(); ++i) lw += (i ? space : 0.0) + fm.horizontalAdvance(line[i].text) * reserve;
+        double lw = 0, natural = 0, widest = 0;
+        for (int i = 0; i < line.size(); ++i) {
+            const double adv = fm.horizontalAdvance(line[i].text);
+            lw += (i ? space : 0.0) + slotOf(line[i]);
+            natural += (i ? space : 0.0) + adv;
+            widest = std::max(widest, adv);
+        }
         lineW << lw;
-        blockW = std::max(blockW, lw);
+        blockW = std::max({blockW, lw, natural + widest * (reserve - 1)});
     }
     if (tp.lines.isEmpty() || blockW <= 0) return;
     const double blockH = fm.lineSpacing() * (tp.lines.size() - 1) + fm.height();
@@ -119,7 +129,7 @@ void drawWords(uint8_t* rgba, int w, int h, const WordParams& tp)
         const double baseline = ext + fm.ascent() + l * fm.lineSpacing();
         double x = ext + (tp.halign == 0 ? 0.0 : tp.halign == 1 ? (blockW - lineW[l]) / 2 : blockW - lineW[l]);
         for (const Word& word : tp.lines[l]) {
-            const double adv = fm.horizontalAdvance(word.text), slot = adv * reserve;
+            const double adv = fm.horizontalAdvance(word.text), slot = slotOf(word);
             QPainterPath path;
             path.addText(QPointF(x + (slot - adv) / 2, baseline), font, word.text);
             if (word.scale != 1.0) {
