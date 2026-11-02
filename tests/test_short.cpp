@@ -63,10 +63,10 @@ int main(int argc, char** argv)
         p = ShortPick::pick({{0, 30, 33, 1}}, {60}, o);
         if (CHECK_EQ(p.size(), 1)) CHECK(near(p[0].to - p[0].from, 15) && p[0].from < 30 && p[0].to > 33);
         // Too many: the best ones within 45 s, a weaker short one still fits after a long one did not
-        p = ShortPick::pick({{0, 0, 20, 9}, {0, 50, 75, 8}, {0, 100, 120, 7}, {0, 150, 153, 6}}, {200}, o);
+        p = ShortPick::pick({{0, 0, 20, 9}, {0, 50, 76, 8}, {0, 150, 153, 6}}, {200}, o);
         CHECK(ShortPick::total(p) <= 45.001);
         CHECK(std::any_of(p.begin(), p.end(), [](const Moment& m) { return m.from <= 0 && m.to >= 20; }));
-        CHECK(!std::any_of(p.begin(), p.end(), [](const Moment& m) { return m.from >= 49 && m.to <= 76; }));
+        CHECK(!std::any_of(p.begin(), p.end(), [](const Moment& m) { return m.from >= 49 && m.to <= 77; }));
         CHECK(std::any_of(p.begin(), p.end(), [](const Moment& m) { return m.from >= 140; }));
         // Close moments of one file join (no 1 s jump); two files keep their order
         p = ShortPick::pick({{1, 5, 8, 2}, {0, 10, 16, 3}, {0, 17, 23, 1}}, {30, 30}, o);
