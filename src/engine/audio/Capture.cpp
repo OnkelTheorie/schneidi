@@ -20,7 +20,8 @@ namespace Audio {
 
 namespace {
 
-// RIFF/WAVE header for 24-bit PCM; sizes are filled in when the recording stops
+// RIFF/WAVE header for 24-bit PCM; sizes are filled in when the recording stops. An odd data chunk (mono, an odd
+// number of samples) is followed by a pad byte that the RIFF size counts (RIFF chunks are word aligned)
 QByteArray wavHeader(int rate, int channels, quint32 dataBytes)
 {
     QByteArray h(44, '\0');
@@ -28,7 +29,7 @@ QByteArray wavHeader(int rate, int channels, quint32 dataBytes)
     auto u16 = [&](int at, quint16 v) { qToLittleEndian<quint16>(v, h.data() + at); };
     const int block = channels * 3;
     memcpy(h.data(), "RIFF", 4);
-    u32(4, 36 + dataBytes);
+    u32(4, 36 + dataBytes + (dataBytes & 1));
     memcpy(h.data() + 8, "WAVEfmt ", 8);
     u32(16, 16);
     u16(20, 1); // PCM
@@ -104,8 +105,10 @@ struct Capture::Impl {
             *o++ = char((v >> 16) & 0xff);
         }
         read.store(w, std::memory_order_release);
-        if (file.write(pcm.data(), qint64(pcm.size())) != qint64(pcm.size())) writeFailed = true;
-        dataBytes += qint64(pcm.size());
+        // Only what reached the file counts (a full disk: the header must not claim more than is there)
+        const qint64 n = file.write(pcm.data(), qint64(pcm.size()));
+        if (n != qint64(pcm.size())) writeFailed = true;
+        if (n > 0) dataBytes += n;
     }
 
     void writerLoop()
@@ -253,8 +256,17 @@ bool Capture::stop(QString* error)
     d->stopInputs();
     d->stopWriter.store(true);
     if (d->writer.joinable()) d->writer.join();
-    // WAV sizes are 32 bit: a longer recording keeps the maximum (readers take the rest from the file length)
-    const quint32 bytes = quint32(std::min<long long>(d->dataBytes, 0xffffffffLL - 36));
+    // Whole sample frames only (a write cut short by a full disk can end inside one). WAV sizes are 32 bit: a
+    // longer recording keeps the maximum (readers take the rest from the file length)
+    const long long block = 3LL * d->config.channels;
+    const long long whole = d->dataBytes - d->dataBytes % block;
+    const long long limit = 0xffffffffLL - 37;
+    const quint32 bytes = quint32(std::min(whole, limit - limit % block));
+    if (whole <= limit) {
+        // Cut a partial frame off, then the pad byte after an odd data chunk
+        if (whole != d->dataBytes && !d->file.resize(44 + whole)) d->writeFailed = true;
+        if (whole % 2 && (!d->file.seek(44 + whole) || d->file.write("\0", 1) != 1)) d->writeFailed = true;
+    }
     if (!d->file.seek(0) || d->file.write(wavHeader(d->config.rate, d->config.channels, bytes)) != 44)
         d->writeFailed = true;
     d->file.close();

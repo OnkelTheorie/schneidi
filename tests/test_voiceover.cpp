@@ -14,6 +14,7 @@
 #include <QCoreApplication>
 #include <QElapsedTimer>
 #include <QFile>
+#include <QFileInfo>
 #include <QSettings>
 #include <QTemporaryDir>
 #include <QThread>
@@ -40,7 +41,10 @@ Wav readWav(const QString& path)
     w.rate = int(qFromLittleEndian<quint32>(b.constData() + 24));
     w.bits = qFromLittleEndian<quint16>(b.constData() + 34);
     const quint32 bytes = qFromLittleEndian<quint32>(b.constData() + 40);
-    if (w.bits != 24 || 44 + qint64(bytes) != b.size()) return w; // sizes in the header must match the file
+    // Sizes in the header must match the file (an odd data chunk has a pad byte the RIFF size counts)
+    const qint64 padded = qint64(bytes) + (bytes & 1);
+    if (w.bits != 24 || 44 + padded != b.size() || qFromLittleEndian<quint32>(b.constData() + 4) != 36 + padded)
+        return w;
     for (quint32 i = 0; i + 2 < bytes; i += 3) {
         const auto* p = reinterpret_cast<const unsigned char*>(b.constData() + 44 + i);
         qint32 v = p[0] | (p[1] << 8) | (p[2] << 16);
@@ -125,6 +129,25 @@ int main(int argc, char** argv)
         QString error;
         CHECK(Audio::Capture::start(config, tmp.filePath("missing/dir/x.wav"), &error) == nullptr);
         CHECK(!error.isEmpty());
+    }
+
+    // An odd number of mono samples: odd data chunk, pad byte after it (RIFF chunks are word aligned). Blocks of 65
+    // samples: try until a take ends with an odd count
+    {
+        bool odd = false;
+        for (int i = 0; i < 20 && !odd; ++i) {
+            Audio::Capture::Config config;
+            config.buffer = 130;
+            const QString path = tmp.filePath(QString("odd%1.wav").arg(i));
+            auto capture = Audio::Capture::start(config, path);
+            if (!CHECK(capture != nullptr)) break;
+            QThread::msleep(15 + i);
+            CHECK(capture->stop());
+            odd = capture->frames() % 2;
+            CHECK_EQ(QFileInfo(path).size(), 44 + capture->frames() * 3 + (odd ? 1 : 0));
+            CHECK_EQ(qint64(readWav(path).samples.size()), qint64(capture->frames()));
+        }
+        CHECK(odd);
     }
 
     // ---- Placement: where the file goes in the timeline
