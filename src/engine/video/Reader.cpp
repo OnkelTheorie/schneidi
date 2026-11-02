@@ -2,15 +2,20 @@
 #include "engine/video/Reader.h"
 #include "engine/OpenMedia.h"
 #include "engine/video/Hardware.h"
+#include "engine/video/Convert.h"
 
 extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
 #include <libavutil/display.h>
 #include <libavutil/imgutils.h>
+#include <libavutil/intreadwrite.h>
 #include <libavutil/pixdesc.h>
 #include <libswscale/swscale.h>
 }
+
+#include <QDateTime>
+#include <QFileInfo>
 
 #include <algorithm>
 #include <atomic>
@@ -22,7 +27,10 @@ extern "C" {
 #include <deque>
 #include <list>
 #include <mutex>
+#include <optional>
+#include <string>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 namespace Video {
@@ -43,11 +51,10 @@ constexpr int kHardwareWindow = 12;
 constexpr int kSoftwareWindow = 16;
 // Going backwards without setBehind (a reversed clip played or exported forwards): after this many seeks in a row
 // that each land a little (up to kStepBack frames) before the decoded pictures, the reader keeps a window behind as
-// if playing backwards, of at most kBackwardBytes (as the renderer's for playing backwards). Else every few pictures
-// back decode from the key frame again: a long GOP quadratically.
+// if playing backwards, of at most Options::backwardBytes (as the renderer's for playing backwards). Else every few
+// pictures back decode from the key frame again: a long GOP quadratically.
 constexpr int kBackSteps = 2;
 constexpr int kStepBack = 64;
-constexpr double kBackwardBytes = 384.0 * 1024 * 1024;
 
 // SCHNEIDI_DECODER_IDLE_MS shortens it (tests)
 int64_t idleMs()
@@ -74,6 +81,44 @@ Registry& registry()
 {
     static Registry r;
     return r;
+}
+
+// Files the first stream analysis could not describe (video late in the file, or none that decodes): what the long
+// one found, per path for this session. The long analysis reads up to 60 s / 120 MB and every reader of such a file
+// (preview, thumbnails, export workers) paid for it again - for a file it never describes, each time for nothing.
+struct LongAnalysis {
+    int64_t size = -1, modified = 0; // the file it was for (a changed file is analysed again)
+    bool described = false;          // false: the long analysis did not describe it either
+};
+
+std::mutex g_longMutex;
+std::atomic<int> g_longRuns{0};
+std::unordered_map<std::string, LongAnalysis>& longAnalyses()
+{
+    static std::unordered_map<std::string, LongAnalysis> m;
+    return m;
+}
+
+// The remembered long analysis of `path`, if the file is unchanged
+std::optional<LongAnalysis> longAnalysisOf(const QByteArray& path)
+{
+    LongAnalysis a;
+    {
+        std::lock_guard lock(g_longMutex);
+        const auto it = longAnalyses().find(path.toStdString());
+        if (it == longAnalyses().end()) return std::nullopt; // the usual case: no file system call
+        a = it->second;
+    }
+    const QFileInfo fi(QString::fromUtf8(path));
+    if (fi.size() != a.size || fi.lastModified().toMSecsSinceEpoch() != a.modified) return std::nullopt;
+    return a;
+}
+
+void rememberLongAnalysis(const QByteArray& path, bool described)
+{
+    const QFileInfo fi(QString::fromUtf8(path));
+    std::lock_guard lock(g_longMutex);
+    longAnalyses()[path.toStdString()] = {fi.size(), fi.lastModified().toMSecsSinceEpoch(), described};
 }
 
 bool amongRecent(const std::atomic<int64_t>& mine, int keep)
@@ -196,6 +241,43 @@ AVPixelFormat turnedFormat(AVPixelFormat fmt, int quarters)
     return AV_PIX_FMT_NONE;
 }
 
+// One plane of sw x sh samples of T turned by quarter turns (1 = clockwise: the result is sh wide, sw tall), in tiles
+// for quarter turns (a column read whole runs through every row of the source: cache misses)
+template <typename T>
+void turnPlane(const uint8_t* s, int ss, uint8_t* d, int ds, int sw, int sh, int quarters)
+{
+    auto at = [&](int r, int c) { return reinterpret_cast<const T*>(s + ptrdiff_t(r) * ss)[c]; };
+    if (quarters == 2) {
+        for (int r = 0; r < sh; ++r) {
+            const T* in = reinterpret_cast<const T*>(s + ptrdiff_t(sh - 1 - r) * ss);
+            T* out = reinterpret_cast<T*>(d + ptrdiff_t(r) * ds);
+            for (int c = 0; c < sw; ++c) out[c] = in[sw - 1 - c];
+        }
+        return;
+    }
+    constexpr int kTile = 64;
+    for (int r0 = 0; r0 < sw; r0 += kTile)
+        for (int c0 = 0; c0 < sh; c0 += kTile) {
+            const int r1 = std::min(sw, r0 + kTile), c1 = std::min(sh, c0 + kTile);
+            for (int r = r0; r < r1; ++r) {
+                T* out = reinterpret_cast<T*>(d + ptrdiff_t(r) * ds);
+                if (quarters == 1)
+                    for (int c = c0; c < c1; ++c) out[c] = at(sh - 1 - c, r);
+                else
+                    for (int c = c0; c < c1; ++c) out[c] = at(c, sw - 1 - r);
+            }
+        }
+}
+
+// turnPlane for 1- and 2-byte samples (planar YUV up to 16 bit); false for others
+bool turnPlaneFast(int bpp, const uint8_t* s, int ss, uint8_t* d, int ds, int sw, int sh, int quarters)
+{
+    if (bpp == 1) turnPlane<uint8_t>(s, ss, d, ds, sw, sh, quarters);
+    else if (bpp == 2) turnPlane<uint16_t>(s, ss, d, ds, sw, sh, quarters);
+    else return false;
+    return true;
+}
+
 // The same picture turned by quarter turns (per plane, as FFmpeg's transpose/hflip/vflip), in turnedFormat() (4:2:2
 // sideways: each chroma sample taken for both pixels it covers). Palette pictures keep their palette, 1-bit pictures
 // are turned bit by bit. nullptr if turnedFormat() has none.
@@ -263,7 +345,21 @@ AVFrame* turned(const AVFrame* src, int quarters)
         auto pixel = [&](int dr, int dc, int sr, int sc) {
             std::memcpy(d + ptrdiff_t(dr) * ds + ptrdiff_t(dc) * bpp, s + ptrdiff_t(sr) * ss + ptrdiff_t(sc) * bpp, bpp);
         };
-        if (sx != dx || sy != dy) { // 4:2:2 sideways -> 4:4:4
+        // 4:2:2 / 4:1:1 sideways -> 4:4:4: each result row is one source column, taken for the 2 (4) rows it
+        // covers: the chroma plane turned into every 2nd (4th) result row, the rows between copied (a sample at a time
+        // this cost ~140 ms per 4K picture)
+        if (sx != dx && sy == 0 && dx == 0 && dy == 0 && quarters % 2 == 1 && (bpp == 1 || bpp == 2)) {
+            const int sw = AV_CEIL_RSHIFT(W, sx);
+            // The result row source column k lands in: the first of its rows clockwise, else the last
+            auto written = [&](int r) { return quarters == 1 ? (r >> sx) << sx : W - 1 - (((W - 1 - r) >> sx) << sx); };
+            const int first = quarters == 1 ? 0 : W - 1 - ((sw - 1) << sx);
+            turnPlaneFast(bpp, s, ss, d + ptrdiff_t(first) * ds, ds << sx, sw, H, quarters);
+            for (int r = 0; r < h; ++r)
+                if (const int from = written(r); from != r)
+                    std::memcpy(d + ptrdiff_t(r) * ds, d + ptrdiff_t(from) * ds, size_t(w) * bpp);
+            continue;
+        }
+        if (sx != dx || sy != dy) { // 4:4:0 sideways -> 4:4:4 (rare)
             for (int r = 0; r < h; ++r)
                 for (int c = 0; c < w; ++c) {
                     int sr, sc;
@@ -274,6 +370,7 @@ AVFrame* turned(const AVFrame* src, int quarters)
         }
         // The same subsampling (the usual case: 4:2:0 phone video): plane by plane, source plane size sw x sh
         const int sw = AV_CEIL_RSHIFT(W, sx), sh = AV_CEIL_RSHIFT(H, sy);
+        if (turnPlaneFast(bpp, s, ss, d, ds, sw, sh, quarters)) continue;
         if (quarters == 2) {
             for (int r = 0; r < sh; ++r)
                 for (int c = 0; c < sw; ++c) pixel(r, c, sh - 1 - r, sw - 1 - c);
@@ -289,12 +386,23 @@ AVFrame* turned(const AVFrame* src, int quarters)
     return dst;
 }
 
-// The picture in RGBA (formats turned() cannot turn); nullptr on failure
-AVFrame* rgba(const AVFrame* src)
+// The picture in RGBA (formats turned() cannot turn) with the stream's matrix and range (swscale alone took 601 and
+// the range of the pixel format: a 709 or full-range 10-bit picture came out shifted); nullptr on failure
+AVFrame* rgba(const AVFrame* src, int colorspace, bool fullRange)
 {
-    SwsContext* sws = sws_getContext(src->width, src->height, AVPixelFormat(src->format), src->width, src->height,
-                                     AV_PIX_FMT_RGBA, SWS_POINT, nullptr, nullptr, nullptr);
+    const auto fmt = AVPixelFormat(src->format);
+    SwsContext* sws = sws_getContext(src->width, src->height, fmt, src->width, src->height, AV_PIX_FMT_RGBA,
+                                     SWS_POINT, nullptr, nullptr, nullptr);
     if (!sws) return nullptr;
+    const AVPixFmtDescriptor* desc = av_pix_fmt_desc_get(fmt);
+    if (desc && !(desc->flags & AV_PIX_FMT_FLAG_RGB) && desc->nb_components >= 3) {
+        int* inv = nullptr;
+        int* table = nullptr;
+        int srcRange = 0, dstRange = 0, brightness = 0, contrast = 1 << 16, saturation = 1 << 16;
+        sws_getColorspaceDetails(sws, &inv, &srcRange, &table, &dstRange, &brightness, &contrast, &saturation);
+        sws_setColorspaceDetails(sws, sws_getCoefficients(swsColorspace(colorspace)), fullRange ? 1 : srcRange,
+                                 sws_getCoefficients(SWS_CS_DEFAULT), dstRange, brightness, contrast, saturation);
+    }
     AVFrame* dst = av_frame_alloc();
     dst->format = AV_PIX_FMT_RGBA;
     dst->width = src->width;
@@ -692,7 +800,9 @@ struct Reader::Impl {
     {
         constexpr int kWindowFrom = 16;
         const bool back = validFrom == kNothing || position < validFrom;
-        if (behind() <= kWindowFrom || !back) return position;
+        // setBehind: only large ones (the few kept for workers out of order are no window); the automatic one always
+        const bool window = opt.behind > kWindowFrom || autoBehind >= kAutoWindowMin;
+        if (!window || !back) return position;
         return std::max<int64_t>(0, position - (behind() - 2));
     }
     int64_t windowEnd = -1; // the request a backward window was started for (seekStart)
@@ -719,11 +829,13 @@ struct Reader::Impl {
         backTarget = want;
         if (backSteps >= kBackSteps && autoBehind == 0) {
             const int bytes = av_image_get_buffer_size(info.format, std::max(1, info.width), std::max(1, info.height), 1);
-            autoBehind = std::clamp(int(kBackwardBytes / std::max(1, bytes)), kKeepWindowMin, 250);
+            // Within the budget: huge pictures (4K 4:4:4, 16 bit: ~50 MB each) get fewer, at least a window of two
+            const int64_t fit = opt.backwardBytes / std::max(1, bytes);
+            autoBehind = int(std::clamp<int64_t>(fit, kAutoWindowMin, 250));
             ++stats.backwardWindows;
         }
     }
-    static constexpr int kKeepWindowMin = 17; // more than seekStart's kWindowFrom: a window is decoded
+    static constexpr int kAutoWindowMin = 3; // seekStart keeps behind - 1 pictures: the request and one before it
 
     bool wantAhead() const
     {
@@ -817,7 +929,7 @@ struct Reader::Impl {
         if (turns) {
             // Never the picture unturned (squeezed into the upright size): what turned() cannot turn in RGBA
             if (turnedFormat(AVPixelFormat(sw->format), turns) == AV_PIX_FMT_NONE) {
-                AVFrame* c = rgba(sw);
+                AVFrame* c = rgba(sw, info.colorspace, info.fullRange);
                 av_frame_free(&sw);
                 if (!c) return nullptr;
                 sw = c;
@@ -1297,10 +1409,20 @@ std::unique_ptr<Reader> Reader::open(const QString& path, const Options& options
         const AVCodecParameters* p = d.stream->codecpar;
         return p->width > 0 && p->height > 0 && p->format != AV_PIX_FMT_NONE;
     };
-    if (!openStream(0)) return nullptr;
     // Video that starts late (a recording whose picture comes after seconds of sound): the analysis ended before its
-    // first frame. Once more, reading further (only such files pay for it).
-    if (!described() && !openStream(60)) return nullptr;
+    // first frame. Once more, reading further (only such files pay for it, once per session: remembered).
+    constexpr int kLongAnalysis = 60;
+    const std::optional<LongAnalysis> known = longAnalysisOf(d.path);
+    if (known && !known->described) {
+        if (error) *error = QString("unknown picture format in %1").arg(path);
+        return nullptr;
+    }
+    if (!openStream(known ? kLongAnalysis : 0)) return nullptr;
+    if (!described() && !known) {
+        ++g_longRuns;
+        if (!openStream(kLongAnalysis)) return nullptr;
+        rememberLongAnalysis(d.path, described());
+    }
     if (!described()) {
         if (error) *error = QString("unknown picture format in %1").arg(path);
         return nullptr;
@@ -1314,8 +1436,30 @@ std::unique_ptr<Reader> Reader::open(const QString& path, const Options& options
     d.codec = avcodec_find_decoder(par->codec_id);
     const AVDictionaryEntry* alphaMode = av_dict_get(d.stream->metadata, "alpha_mode", nullptr, 0);
     bool alpha = false;
-    if ((par->codec_id == AV_CODEC_ID_VP9 || par->codec_id == AV_CODEC_ID_VP8) && alphaMode
-        && std::strcmp(alphaMode->value, "1") == 0 && AVPixelFormat(par->format) == AV_PIX_FMT_YUV420P) {
+    const bool vpx = par->codec_id == AV_CODEC_ID_VP9 || par->codec_id == AV_CODEC_ID_VP8;
+    bool alphaStated = alphaMode && std::strcmp(alphaMode->value, "1") == 0;
+    // Without the tag (written by other muxers, lost in a remux): the alpha travels in each block's BlockAdditional
+    // (id 1) - the first packet tells. Only untagged VP8/VP9 pay for it: one packet the stream analysis already read,
+    // then back to the start (findFirstPts reads from there).
+    // Matroska/WebM only: other containers have no BlockAdditional (a VP9 MP4 would pay for nothing)
+    const bool matroska = d.fmt->iformat && std::strstr(d.fmt->iformat->name, "matroska");
+    if (vpx && !alphaMode && matroska && AVPixelFormat(par->format) == AV_PIX_FMT_YUV420P) {
+        if (AVPacket* probe = av_packet_alloc()) {
+            for (int n = 0; n < 16 && av_read_frame(d.fmt, probe) >= 0; ++n) {
+                const bool ours = probe->stream_index == d.info.index;
+                if (ours) {
+                    size_t size = 0;
+                    const uint8_t* add = av_packet_get_side_data(probe, AV_PKT_DATA_MATROSKA_BLOCKADDITIONAL, &size);
+                    alphaStated = add && size > 8 && AV_RB64(add) == 1;
+                }
+                av_packet_unref(probe);
+                if (ours) break;
+            }
+            av_packet_free(&probe);
+            av_seek_frame(d.fmt, -1, 0, AVSEEK_FLAG_BACKWARD);
+        }
+    }
+    if (vpx && alphaStated && AVPixelFormat(par->format) == AV_PIX_FMT_YUV420P) {
         if (const AVCodec* c = avcodec_find_decoder_by_name(par->codec_id == AV_CODEC_ID_VP9 ? "libvpx-vp9" : "libvpx")) {
             d.codec = c;
             alpha = true;
@@ -1341,7 +1485,11 @@ std::unique_ptr<Reader> Reader::open(const QString& path, const Options& options
     in.colorspace = mltColorspace(d.dec->colorspace, d.dec->width, d.dec->height);
     in.colorTrc = d.dec->color_trc;
     in.colorPrimaries = mltPrimaries(d.dec->color_primaries);
-    in.fullRange = d.dec->color_range == AVCOL_RANGE_JPEG;
+    // yuvj formats are full range without the tag too (MJPEG in AVI/MOV: only the decoder's format tells)
+    const auto decFormat = AVPixelFormat(par->format);
+    in.fullRange = d.dec->color_range == AVCOL_RANGE_JPEG || decFormat == AV_PIX_FMT_YUVJ420P
+                   || decFormat == AV_PIX_FMT_YUVJ422P || decFormat == AV_PIX_FMT_YUVJ444P
+                   || decFormat == AV_PIX_FMT_YUVJ440P || decFormat == AV_PIX_FMT_YUVJ411P;
     in.hasBFrames = d.dec->has_b_frames > 0;
     in.duration = d.fmt->duration == AV_NOPTS_VALUE ? -1 : d.fmt->duration;
     in.codec = QString::fromLatin1(d.codec->name);
@@ -1369,6 +1517,11 @@ const Info& Reader::info() const
 const AVFormatContext* Reader::container() const
 {
     return d->fmt;
+}
+
+int Reader::longAnalyses()
+{
+    return g_longRuns.load();
 }
 
 void Reader::setBehind(int pictures)

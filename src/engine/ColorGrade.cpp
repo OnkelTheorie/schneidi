@@ -926,6 +926,21 @@ void pixelate(std::vector<uint8_t>& buf, int w, int h, int block)
 
 } // namespace
 
+Window onPicture(Window w, QSizeF frame, QSizeF fit)
+{
+    if (fit.width() <= 0 || fit.height() <= 0) return w;
+    const double kx = frame.width() / fit.width(), ky = frame.height() / fit.height();
+    if (std::abs(kx - 1) < 1e-9 && std::abs(ky - 1) < 1e-9) return w;
+    GradeWindows::Geometry& g = w.geometry;
+    g.x = 50 + (g.x - 50) * kx;
+    g.y = 50 + (g.y - 50) * ky;
+    g.width *= kx;
+    g.height *= ky;
+    g.softness *= ky;
+    w.fill.amount *= ky;
+    return w;
+}
+
 void applyWindow(uint8_t* rgba, int width, int height, const Window& w)
 {
     using GradeWindows::Fill;

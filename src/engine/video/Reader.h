@@ -84,9 +84,11 @@ public:
         bool hardware = true;     // try the hardware decoder (engine/video/Hardware)
         int ahead = 6;            // pictures decoded ahead while frames are fetched in order
         int behind = 4;           // decoded pictures kept before the last request (workers out of order, small steps back)
-        // Requests that keep stepping back a little (a reversed clip) get a large window behind (up to 384 MB).
+        // Requests that keep stepping back a little (a reversed clip) get a large window behind (up to
+        // backwardBytes; huge pictures such as 4K 4:4:4 get fewer of them, never more than that).
         // Off for single pictures (thumbnails ask newest first: it looked like going backwards)
         bool autoBackward = true;
+        int64_t backwardBytes = int64_t(384) * 1024 * 1024;
         // Seek window (preview): after a seek, the pictures decoded on the way from the key frame to the target are kept
         // too (the newest that fit into this many bytes), so steps back and jumps back a little are answered without
         // decoding again. Software decoding only (hardware pictures would have to be downloaded). 0 = off.
@@ -139,6 +141,8 @@ public:
         int cancelled = 0;        // requests given up by their caller (Fetch::cancel)
     };
     Stats stats() const;
+    // Long stream analyses run by this process (files the first analysis could not describe; once per file and session)
+    static int longAnalyses();
 
 private:
     Reader();

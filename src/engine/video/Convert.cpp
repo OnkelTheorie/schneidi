@@ -18,9 +18,17 @@ namespace Video {
 
 namespace {
 
-// The range is part of the swscale format
+bool yuvj(AVPixelFormat f)
+{
+    return f == AV_PIX_FMT_YUVJ420P || f == AV_PIX_FMT_YUVJ411P || f == AV_PIX_FMT_YUVJ422P || f == AV_PIX_FMT_YUVJ444P
+           || f == AV_PIX_FMT_YUVJ440P;
+}
+
+// The range is part of the swscale format. A yuvj format is full range even without the tag (MJPEG in AVI/MOV: the
+// demuxer does not know the range, only the decoder's format tells)
 AVPixelFormat withRange(AVPixelFormat f, bool full)
 {
+    if (yuvj(f)) return f;
     switch (f) {
     case AV_PIX_FMT_YUV420P:
     case AV_PIX_FMT_YUVJ420P: return full ? AV_PIX_FMT_YUVJ420P : AV_PIX_FMT_YUV420P;
@@ -57,32 +65,31 @@ int swsFlags(int sw, int sh, AVPixelFormat src, int dw, int dh, AVPixelFormat ds
 
 // The matrix of a colorspace number. Never the context's current table: the contexts are cached per thread, so that
 // table is whatever the previous conversion set (a BT.2020 picture decoded with 601 or 709 depending on the order).
-// Unknown numbers take swscale's default (601).
 const int* coefficients(int colorspace)
 {
-    switch (colorspace) {
-    case 170:
-    case 470:
-    case 601:
-    case 624: return sws_getCoefficients(SWS_CS_ITU601);
-    case 240: return sws_getCoefficients(SWS_CS_SMPTE240M);
-    case 709: return sws_getCoefficients(SWS_CS_ITU709);
-    case 2020:
-    case 2021: return sws_getCoefficients(SWS_CS_BT2020);
-    default: return sws_getCoefficients(SWS_CS_DEFAULT);
-    }
+    return sws_getCoefficients(swsColorspace(colorspace));
 }
 
-// The matrices of both sides by colorspace number, set for every conversion; the ranges come from the context (the
-// pixel formats)
-int lumaTransfer(SwsContext* ctx, int srcColorspace, int dstColorspace)
+// The matrices of both sides by colorspace number and the source's range, set for every conversion (like the
+// matrix, a range set on a cached context stays for the next picture). srcRange: 0/1 for a YUV source, -1 = the
+// context's (RGB sources). The destination's range is the context's (RGB: full).
+int lumaTransfer(SwsContext* ctx, int srcColorspace, int dstColorspace, int srcRange)
 {
     int* src = nullptr;
     int* dst = nullptr;
-    int srcRange = 0, dstRange = 0, brightness = 0, contrast = 1 << 16, saturation = 1 << 16;
-    sws_getColorspaceDetails(ctx, &src, &srcRange, &dst, &dstRange, &brightness, &contrast, &saturation);
-    return sws_setColorspaceDetails(ctx, coefficients(srcColorspace), srcRange, coefficients(dstColorspace), dstRange,
-                                    brightness, contrast, saturation);
+    int range = 0, dstRange = 0, brightness = 0, contrast = 1 << 16, saturation = 1 << 16;
+    sws_getColorspaceDetails(ctx, &src, &range, &dst, &dstRange, &brightness, &contrast, &saturation);
+    return sws_setColorspaceDetails(ctx, coefficients(srcColorspace), srcRange < 0 ? range : srcRange,
+                                    coefficients(dstColorspace), dstRange, brightness, contrast, saturation);
+}
+
+// lumaTransfer's srcRange for a source format: YUV tagged full range or yuvj -> 1 (formats without a yuvj twin, such
+// as 10 bit, were read as video range), other YUV 0, RGB/grey -1
+int sourceRange(AVPixelFormat f, bool tagged)
+{
+    const AVPixFmtDescriptor* d = av_pix_fmt_desc_get(f);
+    if (!d || (d->flags & AV_PIX_FMT_FLAG_RGB) || d->nb_components < 3) return -1;
+    return tagged || yuvj(f) ? 1 : 0;
 }
 
 // Per thread: a context per conversion (sws_getCachedContext reuses it while the parameters stay the same); slot =
@@ -114,7 +121,7 @@ bool fastRgbSource(AVPixelFormat f)
 // rounding (the SIMD converter: nearest chroma, ±1 step). With SWS_ACCURATE_RND and SWS_FULL_CHR_H_INT the combined
 // pass runs in C code in one thread: 80 ms for 1080p -> 540p on a Raspberry Pi Zero 2 W, 3 ms so.
 bool convertFast(const AVFrame* frame, AVPixelFormat src, uint8_t** outData, int* outStride, AVPixelFormat dst,
-                 int width, int height, int dw, int dh, int flags, int colorspace)
+                 int width, int height, int dw, int dh, int flags, int colorspace, bool fullRange)
 {
     const uint8_t* const* inData = frame->data;
     const int* inStride = frame->linesize;
@@ -134,7 +141,7 @@ bool convertFast(const AVFrame* frame, AVPixelFormat src, uint8_t** outData, int
     }
     SwsContext* ctx = cachedContext(dw, dh, src, dst, SWS_POINT);
     if (!ctx) return false;
-    lumaTransfer(ctx, colorspace, 601); // swscale's RGB side is SWS_CS_DEFAULT (601)
+    lumaTransfer(ctx, colorspace, 601, sourceRange(src, fullRange)); // swscale's RGB side is SWS_CS_DEFAULT (601)
     // The SIMD converter writes whole blocks of pixels per row (8-32): with a width that is no multiple, the last
     // row runs past the end of a tightly packed picture (heap corruption at preview sizes like 476 px). Then into a
     // padded scratch picture and copied.
@@ -165,14 +172,14 @@ bool convertScaled(const Picture& pic, uint8_t* buffer, int width, int height, i
     av_image_fill_arrays(outData, outStride, buffer, AV_PIX_FMT_RGBA, dw, dh, 1);
     if (fast && fastRgbSource(src))
         return convertFast(frame, src, outData, outStride, AV_PIX_FMT_RGBA, width, height, dw, dh, kScaleFlags,
-                           info.colorspace);
+                           info.colorspace, info.fullRange);
     SwsContext* ctx = cachedContext(width, height, src, AV_PIX_FMT_RGBA, kScaleFlags, dw, dh);
     if (!ctx) return false;
     // swscale's RGB side is SWS_CS_DEFAULT (601). RGB to RGB goes through YUV inside swscale: the same matrix both
     // ways, or the colors shift
     const AVPixFmtDescriptor* srcDesc = av_pix_fmt_desc_get(src);
     const bool rgbSource = srcDesc && (srcDesc->flags & AV_PIX_FMT_FLAG_RGB);
-    lumaTransfer(ctx, rgbSource ? 601 : info.colorspace, 601);
+    lumaTransfer(ctx, rgbSource ? 601 : info.colorspace, 601, sourceRange(src, info.fullRange));
     sws_scale(ctx, frame->data, frame->linesize, 0, height, outData, outStride);
     return true;
 }
@@ -193,7 +200,7 @@ void convert(const Picture& pic, uint8_t* buffer, int width, int height, const I
         const int fieldHeight = height / 2;
         SwsContext* ctx = cachedContext(width, fieldHeight, src, dst, flags);
         if (!ctx) return;
-        lumaTransfer(ctx, info.colorspace, 601); // swscale's RGB side is SWS_CS_DEFAULT (601)
+        lumaTransfer(ctx, info.colorspace, 601, sourceRange(src, info.fullRange)); // RGB side: SWS_CS_DEFAULT (601)
         const uint8_t* inData[4];
         int inStride[4];
         for (int i = 0; i < 4; ++i) {
@@ -209,15 +216,30 @@ void convert(const Picture& pic, uint8_t* buffer, int width, int height, const I
         sws_scale(ctx, inData, inStride, 0, fieldHeight, outData, outStride);
     } else if (!fast || !fastRgbSource(src)
                || !convertFast(frame, src, outData, outStride, dst, width, height, width, height, flags,
-                               info.colorspace)) {
+                               info.colorspace, info.fullRange)) {
         SwsContext* ctx = cachedContext(width, height, src, dst, flags);
         if (!ctx) return;
-        lumaTransfer(ctx, info.colorspace, 601);
+        lumaTransfer(ctx, info.colorspace, 601, sourceRange(src, info.fullRange));
         sws_scale(ctx, frame->data, frame->linesize, 0, height, outData, outStride);
     }
 }
 
 } // namespace
+
+int swsColorspace(int colorspace)
+{
+    switch (colorspace) {
+    case 170:
+    case 470:
+    case 601:
+    case 624: return SWS_CS_ITU601;
+    case 240: return SWS_CS_SMPTE240M;
+    case 709: return SWS_CS_ITU709;
+    case 2020:
+    case 2021: return SWS_CS_BT2020;
+    default: return SWS_CS_DEFAULT;
+    }
+}
 
 bool toRgba(const Picture& pic, const Info& info, uint8_t* out, int dw, int dh, bool fast)
 {
@@ -244,7 +266,7 @@ bool toRgba(const Picture& pic, const Info& info, uint8_t* out, int dw, int dh, 
                         ok = false;
                         continue;
                     }
-                    lumaTransfer(ctx, info.colorspace, 601);
+                    lumaTransfer(ctx, info.colorspace, 601, sourceRange(src, info.fullRange));
                     const uint8_t* in[4] = {};
                     int inStride[4] = {};
                     for (int i = 0; i < 3; ++i) {

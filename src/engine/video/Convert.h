@@ -12,4 +12,7 @@ namespace Video {
 // out: dw * dh * 4 bytes, rows tightly packed; false = conversion not possible (unsupported format, size change)
 bool toRgba(const Picture& pic, const Info& info, uint8_t* out, int dw, int dh, bool fast);
 
+// swscale's matrix (SWS_CS_*) of a colorspace number (Info::colorspace); unknown numbers: swscale's default (601)
+int swsColorspace(int colorspace);
+
 } // namespace Video

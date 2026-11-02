@@ -673,6 +673,7 @@
  "Für Aufnahmen mit mehreren Ton-Streams (z. B. OBS): Der Mix-Stream kommt stumm in die Timeline, wenn es Einzelspuren gibt – so ist nichts doppelt zu hören. Limiter auf dem Master gegen Übersteuern.": "Do nagrań z kilkoma strumieniami audio (np. OBS): strumień Mix trafia na oś czasu wyciszony, gdy są osobne ścieżki – nic nie gra podwójnie. Limiter na głównym przeciw przesterowaniu.",
  "Für diese Datei lässt sich kein Proxy erzeugen (kein Video).": "Nie można wygenerować proxy dla tego pliku (brak wideo).",
  "Für diesen Anbieter meist nicht nötig.": "Dla tego dostawcy zwykle niepotrzebny.",
+ "Für Video mit Transparenz lässt sich kein Proxy erzeugen (VP9-Encoder fehlt).": "Nie można wygenerować proxy dla wideo z przezroczystością (brak kodera VP9).",
  "Für dieses System gibt es kein fertiges Whisper-Programm. Ein selbst gebautes <i>whisper-cli</i> im Suchpfad (PATH) wird verwendet.": "Dla tego systemu nie ma gotowego programu Whisper. Używany jest samodzielnie zbudowany <i>whisper-cli</i> ze ścieżki wyszukiwania (PATH).",
  "Für welches Programm?": "Dla jakiego programu?",
  "Gain": "Światła",

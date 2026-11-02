@@ -41,6 +41,11 @@ public:
         ColorGrade::Params params;
         QString lut; // LUT file, empty = none
         QVector<ColorGrade::Window> windows;
+        // Where the picture is in a thumbnail with bars (another shape than the frame): the clip's media (its shape
+        // from MediaAspect, looked up in apply()) and the frame's width/height when the thumbnail is not the frame
+        // itself (0: it is). The grade and the windows work on the picture only, as in the viewer.
+        QString media;
+        double frameAspect = 0;
         quint64 hash = 0; // 0 = the grade changes nothing
         bool isNull() const { return hash == 0; }
         bool operator==(const Spec& o) const { return hash == o.hash; }
@@ -49,7 +54,8 @@ public:
     static Spec specAt(const Clip& c, double t);
     // Are grade values or windows of the clip animated (keyframes)?
     static bool animated(const Clip& c);
-    // The picture with the grade (any size and format, result RGB32). Pure, any thread; null spec = unchanged copy.
+    // The picture with the grade (any size and format, result RGB32); bars around the picture stay as they are. Pure,
+    // any thread; null spec = unchanged copy.
     static QImage apply(const QImage& image, const Spec& spec);
 
     // Graded filmstrip on/off (menu Timeline › Timeline view, default on): off = the source thumbnails as before
