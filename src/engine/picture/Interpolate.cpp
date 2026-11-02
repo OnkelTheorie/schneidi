@@ -117,7 +117,7 @@ int sad(const Plane& P, const Plane& Q, int x0, int y0, int dx, int dy, int limi
 }
 
 // One level of the coarse-to-fine search: P(x) ~ Q(x + v). prev = the coarser level's field (empty at the top)
-Field searchLevel(const Plane& P, const Plane& Q, const Field* prev, int radius, bool subpixel)
+Field searchLevel(const Plane& P, const Plane& Q, const Field* prev, Vec global, int radius, bool subpixel)
 {
     Field f;
     f.gw = (P.w + kBlock - 1) / kBlock;
@@ -129,10 +129,11 @@ Field searchLevel(const Plane& P, const Plane& Q, const Field* prev, int radius,
             for (int i = 0; i < f.gw; ++i) {
                 const int x0 = i * kBlock, y0 = j * kBlock;
                 const int pixels = std::min(kBlock, P.w - x0) * std::min(kBlock, P.h - y0);
-                // Candidates: the coarser level around this block (doubled), standing still
-                std::array<Vec, 10> cands;
+                // Candidates: the coarser level around this block (doubled), standing still, the dominant motion
+                std::array<Vec, 11> cands;
                 int n = 0;
                 cands[n++] = Vec{};
+                cands[n++] = global; // the camera's motion (a fast turn moves everything alike)
                 Vec pred;
                 if (prev) {
                     const Vec c = prev->at(i / 2, j / 2);
@@ -210,10 +211,17 @@ void dropOutliers(Field& f)
 Field motionField(const std::vector<Plane>& P, const std::vector<Plane>& Q)
 {
     Field f;
+    Vec global;
     for (int l = int(P.size()) - 1; l >= 0; --l) {
         const bool top = l == int(P.size()) - 1;
-        f = searchLevel(P[l], Q[l], top ? nullptr : &f, top ? 8 : 1, l == 0);
-        if (l > 0) dropOutliers(f);
+        f = searchLevel(P[l], Q[l], top ? nullptr : &f, global, top ? 12 : 1, l == 0);
+        dropOutliers(f);
+        // Dominant motion = the component-wise median of the field, doubled for the finer level
+        std::vector<float> xs, ys;
+        for (const Vec& v : f.v) xs.push_back(v.x), ys.push_back(v.y);
+        std::nth_element(xs.begin(), xs.begin() + xs.size() / 2, xs.end());
+        std::nth_element(ys.begin(), ys.begin() + ys.size() / 2, ys.end());
+        global = {std::round(xs[xs.size() / 2]) * 2, std::round(ys[ys.size() / 2]) * 2};
     }
     return f;
 }
@@ -437,8 +445,9 @@ void flow(const Motion& m, const uint8_t* a, const uint8_t* b, uint8_t* out, int
             o[c] = top + (bottom - top) * fy;
         }
     };
-    constexpr int kMargin = 9 * 3;     // a candidate must match clearly better to replace the field's vector
-    constexpr int kOccluded = 9 * 40;  // worse than this: nothing matches (covered/uncovered), take one side
+    constexpr float kSoft = 9 * 5;     // cost difference that weighs a candidate down to 1/e
+    constexpr int kStatic = 9 * 4;     // 3x3 difference of unchanged detail (compression noise)
+    constexpr int kDetail = 48;        // contrast in the 3x3 that counts as detail
     parallelRows(h, int64_t(w) * h * 8, [&](int y0, int y1) {
         for (int y = y0; y < y1; ++y) {
             uint8_t* o = out + size_t(y) * w * 4;
@@ -455,33 +464,67 @@ void flow(const Motion& m, const uint8_t* a, const uint8_t* b, uint8_t* out, int
                 const Vec q[4] = {at(i0, j0), at(i0 + 1, j0), at(i0, j0 + 1), at(i0 + 1, j0 + 1)};
                 Vec base{(q[0].x * (1 - fx) + q[1].x * fx) * (1 - fy) + (q[2].x * (1 - fx) + q[3].x * fx) * fy,
                          (q[0].y * (1 - fx) + q[1].y * fx) * (1 - fy) + (q[2].y * (1 - fx) + q[3].y * fx) * fy};
-                float vx = base.x * s, vy = base.y * s;
-                int best = costAt(x, y, vx, vy);
-                // Near a motion edge the blend of vectors fits neither side: try each one
+                // Candidates: the field's vector here, near a motion edge each of the four around (their blend fits
+                // neither side), standing still
+                struct Cand {
+                    float vx, vy;
+                    int cost;
+                };
+                std::array<Cand, 6> cand;
+                int n = 0;
+                const auto add = [&](float vx, float vy) {
+                    for (int k = 0; k < n; ++k)
+                        if (std::abs(cand[k].vx - vx) + std::abs(cand[k].vy - vy) < 0.25f) return;
+                    cand[n++] = {vx, vy, costAt(x, y, vx, vy)};
+                };
+                add(base.x * s, base.y * s);
                 bool edge = false;
                 for (const Vec& v : q) edge |= std::abs(v.x - base.x) + std::abs(v.y - base.y) > 0.5f;
                 if (edge)
-                    for (const Vec& v : q) {
-                        const int c = costAt(x, y, v.x * s, v.y * s);
-                        if (c + kMargin < best) best = c, vx = v.x * s, vy = v.y * s;
-                    }
-                const bool still = vx == 0 && vy == 0;
-                if (!still) { // a sub-pixel vector that matches no better than standing still is noise
-                    const int c = costAt(x, y, 0, 0);
-                    const bool tiny = std::abs(vx) + std::abs(vy) < 0.75f;
-                    if (tiny ? c <= best : c + kMargin < best) best = c, vx = vy = 0;
+                    for (const Vec& v : q) add(v.x * s, v.y * s);
+                int best = cand[0].cost;
+                for (int k = 1; k < n; ++k) best = std::min(best, cand[k].cost);
+                const int still = costAt(x, y, 0, 0);
+                // Standing still for sure: a sub-pixel motion that matches no better, or detail that is exactly the
+                // same in both frames (HUD text, a crosshair) even where the picture behind it moves - the motion
+                // would match there too (it samples the background beside it)
+                bool fixed = (n == 1 && std::abs(cand[0].vx) + std::abs(cand[0].vy) < 0.75f && still <= best) ||
+                             (still <= kStatic && best - still >= 4 * kSoft);
+                if (!fixed && still <= kStatic) {
+                    int lo = 255, hi = 0;
+                    for (int dy = -1; dy <= 1; ++dy)
+                        for (int dx = -1; dx <= 1; ++dx) {
+                            const int v = LA.at(x + dx, y + dy);
+                            lo = std::min(lo, v);
+                            hi = std::max(hi, v);
+                        }
+                    fixed = hi - lo >= kDetail;
                 }
                 const size_t here = (size_t(y) * w + x) * 4;
-                if (vx == 0 && vy == 0) { // standing still: exactly the blend (an unchanged HUD stays identical)
+                if (fixed) { // standing still: exactly the blend (an unchanged HUD stays identical)
                     for (int c = 0; c < 4; ++c) o[c] = uint8_t(a[here + c] + (b[here + c] - a[here + c]) * t + 0.5f);
                     continue;
                 }
-                float pa[4], pb[4];
-                rgba(a, w, h, x - t * vx, y - t * vy, pa);
-                rgba(b, w, h, x + (1 - t) * vx, y + (1 - t) * vy, pb);
-                float wb = t;
-                if (best > kOccluded) wb = t < 0.5f ? 0.f : 1.f; // only one side shows this spot
-                for (int c = 0; c < 4; ++c) o[c] = uint8_t(std::clamp(pa[c] + (pb[c] - pa[c]) * wb + 0.5f, 0.f, 255.f));
+                if (n < int(cand.size())) cand[n++] = {0, 0, still};
+                best = std::min(best, still);
+                // Soft choice: every candidate by how well it matches (hard switching makes patches with edges)
+                float sum[4] = {0, 0, 0, 0}, weights = 0;
+                for (int k = 0; k < n; ++k) {
+                    const float d = float(cand[k].cost - best) / kSoft;
+                    if (d > 4) continue;
+                    const float wk = std::exp(-d);
+                    const float vx = cand[k].vx, vy = cand[k].vy;
+                    float pa[4], pb[4];
+                    if (vx == 0 && vy == 0) {
+                        for (int c = 0; c < 4; ++c) pa[c] = a[here + c], pb[c] = b[here + c];
+                    } else {
+                        rgba(a, w, h, x - t * vx, y - t * vy, pa);
+                        rgba(b, w, h, x + (1 - t) * vx, y + (1 - t) * vy, pb);
+                    }
+                    for (int c = 0; c < 4; ++c) sum[c] += wk * (pa[c] + (pb[c] - pa[c]) * t);
+                    weights += wk;
+                }
+                for (int c = 0; c < 4; ++c) o[c] = uint8_t(std::clamp(sum[c] / weights + 0.5f, 0.f, 255.f));
             }
         }
     });

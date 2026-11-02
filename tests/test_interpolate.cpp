@@ -120,14 +120,23 @@ void algorithmChecks()
         flow(*m, ha.data(), hb.data(), out.data(), w, h, 0.5);
         dump("hud-a", ha, w, h);
         dump("hud-mid", out, w, h);
-        int changed = 0, total = 0;
+        // Inside exactly; its outer pixel row (whose 3x3 neighbourhood sees the moving background) may take a little
+        // of the soft mix (19 levels at most when written)
+        int changed = 0, total = 0, worst = 0;
         for (int y = h - 60; y < h - 20; ++y)
-            for (int x = 20; x < 220; ++x, ++total)
-                for (int c = 0; c < 3; ++c)
-                    if (out[(size_t(y) * w + x) * 4 + c] != ha[(size_t(y) * w + x) * 4 + c]) {
-                        ++changed;
+            for (int x = 20; x < 220; ++x, ++total) {
+                const bool rim = x == 20 || x == 219 || y == h - 60 || y == h - 21;
+                for (int c = 0; c < 3; ++c) {
+                    const int d = std::abs(out[(size_t(y) * w + x) * 4 + c] - ha[(size_t(y) * w + x) * 4 + c]);
+                    worst = std::max(worst, d);
+                    if (d && !rim) {
+                        if (++changed < 4) std::printf("       HUD pixel %d,%d: off by %d\n", x, y, d);
                         break;
                     }
+                }
+            }
+        CHECK_EQ(changed, 0);
+        if (!CHECK(worst <= 32)) std::printf("       HUD rim: off by up to %d\n", worst);
         if (!CHECK(changed == 0)) std::printf("       HUD: %d of %d pixels changed\n", changed, total);
     }
 
