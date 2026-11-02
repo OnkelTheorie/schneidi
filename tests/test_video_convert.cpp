@@ -3,10 +3,16 @@
 // colourspace without a table of its own (BT.2020) once took whatever the previous conversion had set – a 601 picture
 // converted after a 2020 one came out different (mean 2.5 levels) from the same picture converted alone. Exact and
 // fast (preview) conversions, unscaled and scaled.
+// The range: a yuvj picture is full range even when the stream is not tagged so (MJPEG in AVI), a 10-bit picture tagged
+// full range (no yuvj twin) is not read as video range.
 #include "check.h"
 
 #include "engine/video/Convert.h"
 #include "engine/video/Reader.h"
+
+extern "C" {
+#include <libavutil/frame.h>
+}
 
 #include <QCoreApplication>
 #include <QTemporaryDir>
@@ -33,6 +39,63 @@ double meanDiff(const std::vector<uint8_t>& a, const std::vector<uint8_t>& b)
     return s / double(a.size());
 }
 
+// A flat grey picture: luma `y`, neutral chroma (8 or 10 bit planar 4:2:0)
+Video::Picture flat(AVPixelFormat fmt, int y, int w = 640, int h = 360)
+{
+    Video::Picture p;
+    p.frame = av_frame_alloc();
+    p.frame->format = fmt;
+    p.frame->width = w;
+    p.frame->height = h;
+    if (av_frame_get_buffer(p.frame, 0) < 0) return p;
+    const bool ten = fmt == AV_PIX_FMT_YUV420P10LE;
+    for (int plane = 0; plane < 3; ++plane) {
+        const int pw = plane ? (w + 1) / 2 : w, ph = plane ? (h + 1) / 2 : h;
+        const int v = plane ? (ten ? 512 : 128) : y;
+        for (int r = 0; r < ph; ++r) {
+            uint8_t* row = p.frame->data[plane] + size_t(r) * p.frame->linesize[plane];
+            for (int c = 0; c < pw; ++c) {
+                if (ten) reinterpret_cast<uint16_t*>(row)[c] = uint16_t(v);
+                else row[c] = uint8_t(v);
+            }
+        }
+    }
+    return p;
+}
+
+// Mean red of the converted picture
+double meanRed(const Video::Picture& p, const Video::Info& info, int w, int h, bool fast)
+{
+    std::vector<uint8_t> out(size_t(w) * h * 4);
+    if (!Video::toRgba(p, info, out.data(), w, h, fast)) return -1;
+    double s = 0;
+    for (size_t i = 0; i < out.size(); i += 4) s += out[i];
+    return s / double(size_t(w) * h);
+}
+
+void testRange()
+{
+    // Luma 200 full range = 200; read as video range it would be (200 - 16) * 255 / 219 = 214
+    Video::Info untagged;
+    untagged.colorspace = 709;
+    untagged.fullRange = false;
+    const Video::Picture jpeg = flat(AV_PIX_FMT_YUVJ420P, 200);
+    Video::Info tagged = untagged;
+    tagged.fullRange = true;
+    const Video::Picture ten = flat(AV_PIX_FMT_YUV420P10LE, 800); // 800 / 1023 * 255 = 199.4
+    const Video::Picture limited = flat(AV_PIX_FMT_YUV420P10LE, 800); // (800 - 64) * 255 / 876 = 214.2
+    for (const bool fast : {false, true})
+        for (const QSize size : {QSize(640, 360), QSize(320, 180)}) {
+            const double j = meanRed(jpeg, untagged, size.width(), size.height(), fast);
+            const double t = meanRed(ten, tagged, size.width(), size.height(), fast);
+            const double l = meanRed(limited, untagged, size.width(), size.height(), fast);
+            if (!CHECK(std::abs(j - 200) <= 1.5 && std::abs(t - 199.4) <= 1.5 && std::abs(l - 214.2) <= 1.5))
+                std::printf("       range %s %dx%d: yuvj untagged %.1f (200), 10 bit full %.1f (199.4), 10 bit video "
+                            "%.1f (214.2)\n",
+                            fast ? "fast" : "exact", size.width(), size.height(), j, t, l);
+        }
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -40,6 +103,7 @@ int main(int argc, char** argv)
     Check::initEnv();
     QCoreApplication app(argc, argv);
     Check::initApp("video_convert");
+    testRange();
     if (!Check::haveFfmpeg()) return Check::skip("ffmpeg nicht gefunden");
     QTemporaryDir tmp;
     if (!CHECK(tmp.isValid())) return Check::result();

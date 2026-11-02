@@ -2,6 +2,7 @@
 #include "engine/video/Reader.h"
 #include "engine/OpenMedia.h"
 #include "engine/video/Hardware.h"
+#include "engine/video/Convert.h"
 
 extern "C" {
 #include <libavcodec/avcodec.h>
@@ -288,12 +289,23 @@ AVFrame* turned(const AVFrame* src, int quarters)
     return dst;
 }
 
-// The picture in RGBA (formats turned() cannot turn); nullptr on failure
-AVFrame* rgba(const AVFrame* src)
+// The picture in RGBA (formats turned() cannot turn) with the stream's matrix and range (swscale alone took 601 and
+// the range of the pixel format: a 709 or full-range 10-bit picture came out shifted); nullptr on failure
+AVFrame* rgba(const AVFrame* src, int colorspace, bool fullRange)
 {
-    SwsContext* sws = sws_getContext(src->width, src->height, AVPixelFormat(src->format), src->width, src->height,
-                                     AV_PIX_FMT_RGBA, SWS_POINT, nullptr, nullptr, nullptr);
+    const auto fmt = AVPixelFormat(src->format);
+    SwsContext* sws = sws_getContext(src->width, src->height, fmt, src->width, src->height, AV_PIX_FMT_RGBA,
+                                     SWS_POINT, nullptr, nullptr, nullptr);
     if (!sws) return nullptr;
+    const AVPixFmtDescriptor* desc = av_pix_fmt_desc_get(fmt);
+    if (desc && !(desc->flags & AV_PIX_FMT_FLAG_RGB) && desc->nb_components >= 3) {
+        int* inv = nullptr;
+        int* table = nullptr;
+        int srcRange = 0, dstRange = 0, brightness = 0, contrast = 1 << 16, saturation = 1 << 16;
+        sws_getColorspaceDetails(sws, &inv, &srcRange, &table, &dstRange, &brightness, &contrast, &saturation);
+        sws_setColorspaceDetails(sws, sws_getCoefficients(swsColorspace(colorspace)), fullRange ? 1 : srcRange,
+                                 sws_getCoefficients(SWS_CS_DEFAULT), dstRange, brightness, contrast, saturation);
+    }
     AVFrame* dst = av_frame_alloc();
     dst->format = AV_PIX_FMT_RGBA;
     dst->width = src->width;
@@ -820,7 +832,7 @@ struct Reader::Impl {
         if (turns) {
             // Never the picture unturned (squeezed into the upright size): what turned() cannot turn in RGBA
             if (turnedFormat(AVPixelFormat(sw->format), turns) == AV_PIX_FMT_NONE) {
-                AVFrame* c = rgba(sw);
+                AVFrame* c = rgba(sw, info.colorspace, info.fullRange);
                 av_frame_free(&sw);
                 if (!c) return nullptr;
                 sw = c;
@@ -1344,7 +1356,11 @@ std::unique_ptr<Reader> Reader::open(const QString& path, const Options& options
     in.colorspace = mltColorspace(d.dec->colorspace, d.dec->width, d.dec->height);
     in.colorTrc = d.dec->color_trc;
     in.colorPrimaries = mltPrimaries(d.dec->color_primaries);
-    in.fullRange = d.dec->color_range == AVCOL_RANGE_JPEG;
+    // yuvj formats are full range without the tag too (MJPEG in AVI/MOV: only the decoder's format tells)
+    const auto decFormat = AVPixelFormat(par->format);
+    in.fullRange = d.dec->color_range == AVCOL_RANGE_JPEG || decFormat == AV_PIX_FMT_YUVJ420P
+                   || decFormat == AV_PIX_FMT_YUVJ422P || decFormat == AV_PIX_FMT_YUVJ444P
+                   || decFormat == AV_PIX_FMT_YUVJ440P || decFormat == AV_PIX_FMT_YUVJ411P;
     in.hasBFrames = d.dec->has_b_frames > 0;
     in.duration = d.fmt->duration == AV_NOPTS_VALUE ? -1 : d.fmt->duration;
     in.codec = QString::fromLatin1(d.codec->name);
