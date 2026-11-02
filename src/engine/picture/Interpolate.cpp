@@ -238,22 +238,30 @@ std::vector<Plane> pyramid(const Plane& base)
     return p;
 }
 
-std::array<int, 32> histogram(const Plane& l)
+// How differently the colours of a and b are distributed: per channel the share of pixels that would have to change
+// their 16-step bin, the largest of the three (0 = same, 1 = nothing in common). A CS2 cut between two maps: 0.33;
+// fast camera turns of the same shot: up to 0.09 (a luma histogram alone saw the cut as 0.2)
+double colourDistance(const uint8_t* a, const uint8_t* b, int w, int h)
 {
-    std::array<int, 32> h{};
-    for (uint8_t v : l.p) ++h[v >> 3];
-    return h;
+    const int step = std::max(1, std::min(w, h) / 180); // a thinned-out picture is enough for histograms
+    std::array<std::array<int, 16>, 3> ha{}, hb{};
+    int n = 0;
+    for (int y = 0; y < h; y += step)
+        for (int x = 0; x < w; x += step, ++n) {
+            const uint8_t* p = a + (size_t(y) * w + x) * 4;
+            const uint8_t* q = b + (size_t(y) * w + x) * 4;
+            for (int c = 0; c < 3; ++c) ++ha[c][p[c] >> 4], ++hb[c][q[c] >> 4];
+        }
+    double worst = 0;
+    for (int c = 0; c < 3; ++c) {
+        int d = 0;
+        for (int i = 0; i < 16; ++i) d += std::abs(ha[c][i] - hb[c][i]);
+        worst = std::max(worst, d / (2.0 * std::max(1, n)));
+    }
+    return worst;
 }
 
-double histogramDistance(const Plane& a, const Plane& b)
-{
-    const auto ha = histogram(a), hb = histogram(b);
-    double d = 0;
-    for (int i = 0; i < 32; ++i) d += std::abs(ha[i] - hb[i]);
-    return d / (2.0 * std::max<size_t>(1, a.p.size()));
-}
-
-constexpr double kCutDistance = 0.45;
+constexpr double kCutDistance = 0.2;
 
 } // namespace
 
@@ -277,20 +285,7 @@ void blend(const uint8_t* a, const uint8_t* b, uint8_t* out, int w, int h, doubl
     });
 }
 
-bool isCut(const uint8_t* a, const uint8_t* b, int w, int h)
-{
-    // A thinned-out luma is enough for a histogram
-    const int step = std::max(1, std::min(w, h) / 180);
-    Plane la{0, 0, {}}, lb{0, 0, {}};
-    for (int y = 0; y < h; y += step)
-        for (int x = 0; x < w; x += step) {
-            const uint8_t* p = a + (size_t(y) * w + x) * 4;
-            const uint8_t* q = b + (size_t(y) * w + x) * 4;
-            la.p.push_back(uint8_t((p[0] * 54 + p[1] * 183 + p[2] * 19) >> 8));
-            lb.p.push_back(uint8_t((q[0] * 54 + q[1] * 183 + q[2] * 19) >> 8));
-        }
-    return histogramDistance(la, lb) > kCutDistance;
-}
+bool isCut(const uint8_t* a, const uint8_t* b, int w, int h) { return colourDistance(a, b, w, h) > kCutDistance; }
 
 std::shared_ptr<const Motion> estimate(const uint8_t* a, const uint8_t* b, int w, int h)
 {
@@ -303,7 +298,7 @@ std::shared_ptr<const Motion> estimate(const uint8_t* a, const uint8_t* b, int w
     m->scale = float(w) / ww;
     m->A = shrink(m->fullA, ww, wh);
     m->B = shrink(m->fullB, ww, wh);
-    m->cut = histogramDistance(m->A, m->B) > kCutDistance;
+    m->cut = isCut(a, b, w, h);
     if (m->cut) return m;
     const std::vector<Plane> pa = pyramid(m->A), pb = pyramid(m->B);
     m->fwd = motionField(pa, pb);
@@ -326,6 +321,11 @@ std::shared_ptr<const Motion> estimate(const uint8_t* a, const uint8_t* b, int w
     };
     m->bad = check(m->fwd, m->bwd, m->okF);
     check(m->bwd, m->fwd, m->okB);
+    // A cut the colours did not give away: the motion explains neither the picture nor itself
+    double cost = 0;
+    for (float c : m->fwd.cost) cost += c;
+    cost /= std::max<size_t>(1, m->fwd.cost.size());
+    if (m->bad > 0.6 && cost > 25) m->cut = true;
     return m;
 }
 
