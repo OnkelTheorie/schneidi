@@ -104,9 +104,10 @@ public:
     // Same without an Engine instance (usable from worker threads): the picture in the shape of `format`
     // (as a timeline shows it at zoom 1), with ownShape in the file's own shape (pixel aspect and rotation included:
     // Media Pool tiles, where a landscape clip fills its 16:9 tile also in a 9:16 project), centered in `size` with
-    // black borders
+    // black borders. aspect > 0: the picture shown at that shape instead of the file's (Clip/MediaInfo::pictureAspect,
+    // a stretched 4:3 recording), also as the own shape
     static QImage thumbnail(const ProjectFormat& format, const QString& path, int frame, const QSize& size,
-                            bool ownShape = false);
+                            bool ownShape = false, double aspect = 0);
 
     // Still (Grab Still) of the currently shown image (timeline resp. source) at full project resolution,
     // always from the originals (not from proxies)
@@ -128,7 +129,8 @@ public:
     bool mixerOnlyPending() const { return m_mixerOnlyNext; }
     // keepSpeed: keep playing (leaving the multicam grid during playback)
     void showTimeline(int position, bool keepSpeed = false);
-    void showSource(const QString& path, int position = 0);
+    // aspect > 0: the picture at that shape (MediaInfo::pictureAspect, a stretched 4:3 recording)
+    void showSource(const QString& path, int position = 0, double aspect = 0);
     Mode mode() const { return m_mode; }
     // Positions are timeline frames (Timeline or Multicam mode)
     bool timelinePositions() const { return m_mode != Mode::Source; }
@@ -142,6 +144,7 @@ public:
     void setMulticamAudio(int angle);
     // Last file shown in the source view (kept after Q/timeline, empty = none yet)
     const QString& sourcePath() const { return m_sourcePath; }
+    double sourceAspect() const { return m_sourceAspect; }
 
     void play();
     void pause();
@@ -234,6 +237,7 @@ private:
     int m_gridColumns = 0, m_gridPage = 0;
     std::atomic<int> m_offset{0}; // timeline frame minus content frame (Multicam mode, else 0)
     QString m_sourcePath;
+    double m_sourceAspect = 0;
 
     // Atomic: onPumpShown reads them on the pump's thread while the UI thread switches mode/speed
     std::atomic<Mode> m_mode{Mode::Timeline};

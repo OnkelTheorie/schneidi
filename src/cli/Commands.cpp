@@ -673,6 +673,7 @@ QJsonObject projectJson(const Project& p, const QString& path)
         if (m.bin) o["bin"] = binPath(p, m.bin);
         if (!m.clipColor.isEmpty()) o["color"] = m.clipColor;
         if (!m.flags.isEmpty()) o["flags"] = QJsonArray::fromStringList(m.flags);
+        if (m.pictureAspect > 0) o["picture_aspect"] = std::round(m.pictureAspect * 10000) / 10000; // new clips' shape
         if (m.markIn >= 0) o["mark_in"] = m.markIn;
         if (m.markOut >= 0) o["mark_out"] = m.markOut + 1;
         if (!m.markers.isEmpty()) { // source markers (sync:'marker' of the multicam op)
@@ -825,6 +826,9 @@ const QVector<Command>& commands()
           {"types", T::String, "with add: which media, comma list of video, audio, image (default all)"},
           {"existing", T::Boolean, "with add: also import the files that are in the folder already (default: only "
                                    "new ones)"},
+          {"picture_aspect", T::String, "with add: import preset for a recorder that stretches a 4:3 game to 16:9: "
+                                        "'4:3' = its new videos are shown at 4:3 (their clips get picture_aspect), "
+                                        "'file' = the file's own shape (default)"},
           {"remove", T::Path, "stop watching this folder (imported files stay)"},
           {"list", T::Boolean, "only list the watched folders and the revision, import nothing"},
           {"since", T::Integer, "'new' = every file watch folders brought in after this revision (default: what this "

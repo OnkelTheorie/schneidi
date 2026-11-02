@@ -94,6 +94,7 @@ MulticamAngle placeAngle(Timeline& inner, const QString& name, const QVector<Usa
         if (picture) {
             Clip x = c;
             x.id = p->newClipId();
+            x.pictureAspect = f.info.pictureAspect;
             inner.video[a.videoTrack].clips << x;
         }
         for (int k = 0; k < n; ++k) {

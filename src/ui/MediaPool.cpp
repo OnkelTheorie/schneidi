@@ -3,6 +3,7 @@
 
 #include "app/Theme.h"
 #include "core/I18n.h"
+#include "core/MediaAspect.h"
 #include "core/Project.h"
 #include "core/Timecode.h"
 #include "core/TimelineOps.h"
@@ -169,12 +170,19 @@ QPixmap placeholderThumb(const QString& label)
 }
 
 // Hover scrub picture in the thumbnail frame (black borders), position bar above the clip color stripe
-QPixmap scrubThumb(const QImage& picture, const QPixmap& normal, double fraction)
+// aspect > 0: the picture shown at that shape (MediaInfo::pictureAspect, a stretched 4:3 recording)
+QPixmap scrubThumb(const QImage& picture, const QPixmap& normal, double fraction, double aspect)
 {
     QPixmap pm(kThumb);
     if (picture.isNull()) {
         if (normal.isNull()) pm.fill(Theme::thumbBg);
         else pm = normal;
+    } else if (aspect > 0) {
+        pm.fill(Qt::black);
+        QPainter p(&pm);
+        p.setRenderHint(QPainter::SmoothPixmapTransform);
+        const QSizeF size = MediaAspect::fit(aspect, QSizeF(kThumb));
+        p.drawImage(QRectF(QPointF((kThumb.width() - size.width()) / 2, (kThumb.height() - size.height()) / 2), size), picture);
     } else {
         pm.fill(Qt::black);
         QPainter p(&pm);
@@ -507,8 +515,9 @@ MediaPool::MediaPool(Project* project, Engine* engine, QWidget* parent)
         },
         [this](QListWidgetItem* it, const QImage& picture, double fraction) {
             const QString path = it->data(Qt::UserRole).toString();
+            const MediaInfo* m = m_project->mediaInfo(path);
             if (fraction < 0) m_scrubPicture.remove(path);
-            else m_scrubPicture.insert(path, scrubThumb(picture, m_thumbs.value(path), fraction));
+            else m_scrubPicture.insert(path, scrubThumb(picture, m_thumbs.value(path), fraction, m ? m->pictureAspect : 0));
             updateItem(path);
         });
 
@@ -771,23 +780,27 @@ void MediaPool::requestThumb(const QString& path, int frame)
     m_thumbPending.insert(path);
     const ProjectFormat format = m_project->format();
     const int generation = m_thumbGeneration;
-    m_thumbPool->start([this, format, path, frame, generation] {
+    const MediaInfo* info = m_project->mediaInfo(path);
+    const double aspect = info ? info->pictureAspect : 0; // a stretched 4:3 recording at 4:3
+    m_thumbPool->start([this, format, path, frame, generation, aspect] {
         Background::lowerThisThread(Background::Level::Low); // own pool: its threads do nothing else
         Background::yieldToForeground();
-        const QImage img = Engine::thumbnail(format, path, frame, kThumb, true); // in the clip's own shape
-        QMetaObject::invokeMethod(this, [this, path, img, generation] { thumbReady(path, img, generation); },
+        const QImage img = Engine::thumbnail(format, path, frame, kThumb, true, aspect); // in the clip's own shape
+        QMetaObject::invokeMethod(this, [this, path, img, generation, aspect] { thumbReady(path, img, generation, aspect); },
                                   Qt::QueuedConnection);
     });
 }
 
-void MediaPool::thumbReady(const QString& path, const QImage& img, int generation)
+void MediaPool::thumbReady(const QString& path, const QImage& img, int generation, double aspect)
 {
     if (generation != m_thumbGeneration) return; // format changed meanwhile: requested anew
     m_thumbPending.remove(path);
     const MediaInfo* info = m_project->mediaInfo(path);
     if (!info) return; // removed meanwhile
     m_thumbs.insert(path, img.isNull() ? placeholderThumb(info->hasAudio ? T("♪ Audio") : "?") : QPixmap::fromImage(img));
+    m_thumbAspect.insert(path, aspect);
     updateItem(path);
+    if (info->pictureAspect != aspect) requestThumb(path, info->isImage ? 0 : info->length / 3); // shape changed meanwhile
 }
 
 void MediaPool::rebuildBins()
@@ -940,6 +953,8 @@ void MediaPool::rebuildClips()
             } else {
                 m_thumbs.insert(m->path, placeholderThumb(m->hasAudio ? T("♪ Audio") : "?"));
             }
+        } else if (m->hasVideo && !offline && m_thumbAspect.value(m->path) != m->pictureAspect) {
+            requestThumb(m->path, m->isImage ? 0 : m->length / 3); // shown at another shape: the old one until then
         }
         const QString duration = Timecode::format(m->length, m_project->fps());
         auto* item = new QListWidgetItem(list ? m->name + "    " + duration : m->name + "\n" + duration);
@@ -1311,21 +1326,19 @@ void MediaPool::showContextMenu(const QPoint& pos)
         menu.addAction(T("Multicam-Clip aus ausgewählten Clips erstellen…"), this,
                        [this, recordings] { emit multicamRequested(recordings); })
             ->setEnabled(!recordings.isEmpty());
-        // Stretched 4:3 game footage: the clips of these files in the open timeline at their true shape
+        // Stretched 4:3 game footage: these files (their tiles and new clips) and their clips in the open timeline at
+        // their true shape
         QStringList videos;
+        bool allStretched = true;
         for (const QString& path : paths)
-            if (const MediaInfo* m = m_project->mediaInfo(path); m && m->hasVideo) videos << path;
-        QAction* stretched = menu.addAction(T("Gestrecktes 4:3 entzerren (Clips in der Timeline)"));
+            if (const MediaInfo* m = m_project->mediaInfo(path); m && m->hasVideo && !m->isImage) {
+                videos << path;
+                allStretched = allStretched && m->pictureAspect > 0;
+            }
+        QAction* stretched = menu.addAction(T("Gestrecktes 4:3 entzerren"));
         stretched->setCheckable(true);
-        bool allStretched = !videos.isEmpty(), any = false;
-        for (const Track& t : m_project->timeline().video)
-            for (const Clip& c : t.clips)
-                if (c.kind == ClipKind::Media && videos.contains(c.mediaPath)) {
-                    any = true;
-                    allStretched = allStretched && c.pictureAspect > 0;
-                }
-        stretched->setChecked(any && allStretched);
-        stretched->setEnabled(any);
+        stretched->setChecked(!videos.isEmpty() && allStretched);
+        stretched->setEnabled(!videos.isEmpty());
         connect(stretched, &QAction::triggered, this, [this, videos](bool on) { emit stretchedRequested(videos, on); });
         menu.addSeparator();
         addClipColorMenu(&menu, m_project, paths);

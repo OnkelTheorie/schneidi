@@ -216,12 +216,23 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
     connect(m_mediaPool, &MediaPool::sourceRequested, this, &MainWindow::showSource);
     connect(m_mediaPool, &MediaPool::sequenceOpenRequested, m_timeline, &TimelinePanel::openSequence);
     connect(m_mediaPool, &MediaPool::reframedCopyRequested, this, &MainWindow::reframedCopy);
+    // The source viewer follows a file's shape set in the Media Pool (and its undo)
+    connect(m_project, &Project::poolChanged, this, [this] {
+        if (!sourceActive()) return;
+        const MediaInfo* m = m_project->mediaInfo(m_engine->sourcePath());
+        if (m && m->pictureAspect != m_engine->sourceAspect()) showSource(m->path);
+    });
     connect(m_mediaPool, &MediaPool::stretchedRequested, this, [this](const QStringList& paths, bool on) {
+        // The files (Media Pool tiles, clips placed later) and their clips in the open timeline: one undo step
         QVector<int> ids;
         for (const Track& t : m_project->timeline().video)
             for (const Clip& c : t.clips)
                 if (c.kind == ClipKind::Media && paths.contains(c.mediaPath)) ids << c.id;
-        m_editor->setPictureAspect(ids, on ? 4.0 / 3.0 : 0.0);
+        const double aspect = on ? 4.0 / 3.0 : 0.0;
+        m_project->undoStack()->beginMacro(on ? T("Seitenverhältnis entzerren") : T("Seitenverhältnis der Datei"));
+        m_project->setMediaPictureAspect(paths, aspect);
+        m_editor->setPictureAspect(ids, aspect);
+        m_project->undoStack()->endMacro();
     });
     // Another timeline opened: selection gone, playhead and zoom/scroll as last in this timeline (like DaVinci)
     m_shownSequence = m_project->currentSequence();
@@ -544,7 +555,7 @@ void MainWindow::showSource(const QString& path)
     const MediaInfo* m = m_project->mediaInfo(path);
     if (!m) return;
     m_engine->pause();
-    m_engine->showSource(path, m_sourcePos.value(path, m->markIn >= 0 ? m->markIn : 0));
+    m_engine->showSource(path, m_sourcePos.value(path, m->markIn >= 0 ? m->markIn : 0), m->pictureAspect);
 }
 
 void MainWindow::previewFile(const QString& path)

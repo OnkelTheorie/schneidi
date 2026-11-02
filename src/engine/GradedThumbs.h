@@ -166,6 +166,7 @@ public:
     struct Source {
         QString path;
         int frame = 0;
+        double aspect = 0; // Clip::pictureAspect of the clip shown
         GradedThumbs::Spec grade;
         bool operator==(const Source&) const = default;
     };

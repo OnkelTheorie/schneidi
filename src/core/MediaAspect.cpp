@@ -56,4 +56,12 @@ QSizeF fit(double aspect, QSizeF frame)
     return {frame.height() * aspect, frame.height()};
 }
 
+Reshape reshape(QSizeF frame, double fileAspect, double aspect)
+{
+    const auto centred = [&](QSizeF s) {
+        return QRectF(QPointF((frame.width() - s.width()) / 2, (frame.height() - s.height()) / 2), s);
+    };
+    return {centred(fit(fileAspect, frame)), centred(fit(aspect, frame))};
+}
+
 } // namespace MediaAspect

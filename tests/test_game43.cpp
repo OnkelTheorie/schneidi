@@ -3,23 +3,34 @@
 // bar, a dark video without bars), Auto-Reframe keeping to the picture between the bars (rendered: no black at the
 // edges, the path stays inside), crop_bars with undo, the stretched-4:3 correction (Clip::pictureAspect: a stretched
 // circle renders round in a 16:9 and a 4:3 timeline, crop keeps its share, project round trip) and the CLI ops.
+// Follow-ups: thumbnails/Media Pool tiles/filmstrip geometry at the clip's shape, the file's shape for new clips
+// (MediaInfo::pictureAspect, undo, round trip), the watch folder import preset (app and CLI), blurred sides.
 #include "check.h"
+
+#include "app/ClipSpeedDialog.h"
+#include "app/WatchFoldersDialog.h"
 
 #include "cli/Commands.h"
 #include "cli/CommandsDetail.h"
 #include "core/Editor.h"
+#include "core/I18n.h"
 #include "core/MediaAspect.h"
 #include "core/Project.h"
 #include "core/ProjectFile.h"
 #include "core/Reframe.h"
 #include "core/Selection.h"
 #include "core/TimelineOps.h"
+#include "core/WatchFolders.h"
 #include "engine/BarDetect.h"
 #include "engine/Engine.h"
 #include "engine/ReframeAnalysis.h"
 #include "engine/Snapshot.h"
+#include "ui/Inspector.h"
 
 #include <QApplication>
+#include <QCheckBox>
+#include <QComboBox>
+#include <QDir>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QTemporaryDir>
@@ -333,6 +344,212 @@ void testCli(const QString& dir, const QString& pillar, const QString& stretched
     CHECK(noted);
 }
 
+// Thumbnails (Media Pool tiles, timeline posters) and the filmstrip show the picture at the clip's / file's shape
+void testThumbnails(const QString& stretched)
+{
+    ProjectFormat f;
+    f.width = 1920;
+    f.height = 1080;
+    const QSize tile(320, 180);
+    // As the file is: the oval fills the 16:9 tile
+    const QImage plain = Engine::thumbnail(f, stretched, 5, tile, true).convertToFormat(QImage::Format_RGB32);
+    CHECK_EQ(plain.size(), tile);
+    CHECK(near(blobAspect(plain), 4.0 / 3, 0.06));
+    CHECK_EQ(blackEdge(plain), 0);
+    // Unstretched: round, a 4:3 picture in the middle of the tile (own shape and timeline shape alike)
+    for (bool own : {true, false}) {
+        const QImage round = Engine::thumbnail(f, stretched, 5, tile, own, 4.0 / 3).convertToFormat(QImage::Format_RGB32);
+        CHECK_EQ(round.size(), tile);
+        QRect box;
+        CHECK(near(blobAspect(round, &box), 1.0, 0.06));
+        CHECK(near(box.center().x(), 160, 3));
+        CHECK(blackEdge(round) >= 2);
+    }
+
+    // Filmstrip geometry: the 16:9 picture filling a 16:9 thumbnail goes to the middle 4:3 of it
+    const MediaAspect::Reshape r = MediaAspect::reshape(QSizeF(160, 90), 16.0 / 9, 4.0 / 3);
+    CHECK_EQ(r.source, QRectF(0, 0, 160, 90));
+    CHECK_EQ(r.target, QRectF(20, 0, 120, 90));
+    // A 16:9 file in a 4:3 frame (letterboxed in the thumbnail) shown at 4:3 fills it
+    const MediaAspect::Reshape s = MediaAspect::reshape(QSizeF(120, 90), 16.0 / 9, 4.0 / 3);
+    CHECK_EQ(s.source, QRectF(0, 11.25, 120, 67.5));
+    CHECK_EQ(s.target, QRectF(0, 0, 120, 90));
+    // Unknown shape of the file: it fills the frame
+    CHECK_EQ(MediaAspect::reshape(QSizeF(160, 90), 0, 4.0 / 3).source, QRectF(0, 0, 160, 90));
+}
+
+// The file's shape for its new clips (Media Pool "Unstretch 4:3", the watch folder preset), blurred sides
+void testMediaShape(const QString& dir, const QString& stretched)
+{
+    Project p;
+    Selection sel;
+    Editor ed(&p, &sel);
+    setup(p, stretched, 50, QSize(1920, 1080));
+    const int before = p.undoStack()->index();
+    p.setMediaPictureAspect({stretched}, 4.0 / 3);
+    CHECK_EQ(p.undoStack()->index(), before + 1);
+    CHECK(near(p.mediaInfo(stretched)->pictureAspect, 4.0 / 3, 1e-9));
+    CHECK_EQ(p.timeline().video[0].clips[0].pictureAspect, 0.0); // clips already placed keep theirs
+    // New clips take it: source edits and drops
+    ed.placeSourceRange(stretched, 0, 9, 100, 0);
+    ed.addMediaAt({stretched}, 200, 0);
+    int taken = 0;
+    for (const Clip& c : p.timeline().video[0].clips) taken += c.start >= 100 && near(c.pictureAspect, 4.0 / 3, 1e-9);
+    CHECK_EQ(taken, 2);
+    // Undo takes it back from the file; round trip
+    const int placed = p.undoStack()->index();
+    p.undoStack()->setIndex(before);
+    CHECK_EQ(p.mediaInfo(stretched)->pictureAspect, 0.0);
+    p.undoStack()->setIndex(placed);
+    CHECK(near(p.mediaInfo(stretched)->pictureAspect, 4.0 / 3, 1e-9));
+    const QString path = dir + "/mediashape.schneidi";
+    QString error;
+    CHECK(ProjectFile::save(p.data(), path, &error));
+    ProjectData d;
+    CHECK(ProjectFile::load(path, &d, &error));
+    if (CHECK_EQ(d.media.size(), 1)) CHECK(near(d.media[0].pictureAspect, 4.0 / 3, 1e-9));
+
+    // Blurred sides together with the shape: one undo step; the plain shape without them
+    const int u = p.undoStack()->index();
+    const int first = p.timeline().video[0].clips[0].id;
+    CHECK_EQ(ed.setPictureAspect({first}, 4.0 / 3, FitFill::Blur), 1);
+    CHECK_EQ(p.undoStack()->index(), u + 1);
+    CHECK(p.timeline().video[0].clips[0].transform.fill == FitFill::Blur);
+    CHECK_EQ(ed.setPictureAspect({first}, 4.0 / 3, FitFill::Blur), 0); // already
+    const QImage blurred = render(p, 5);
+    CHECK_EQ(blackEdge(blurred), 0); // the sides are the blurred picture, no black
+    CHECK_EQ(ed.setPictureAspect({first}, 4.0 / 3, FitFill::None), 1);
+    CHECK(p.timeline().video[0].clips[0].transform.fill == FitFill::None);
+    CHECK(blackEdge(render(p, 5)) >= 2);
+
+    // Watch folder preset: its videos come in at 4:3, another folder's (default) at their own shape
+    Project w;
+    WatchFolder stretch;
+    stretch.path = dir + "/stretchrec";
+    stretch.pictureAspect = 4.0 / 3;
+    WatchFolder plain;
+    plain.path = dir + "/plainrec";
+    w.setWatchFolders({stretch, plain});
+    MediaInfo a{stretch.path + "/a.mp4", "a.mp4", 50, true, true, false};
+    MediaInfo b{plain.path + "/b.mp4", "b.mp4", 50, true, true, false};
+    MediaInfo s{stretch.path + "/still.png", "still.png", 1, true, false, true};
+    w.addWatchedMedia({{a, stretch.path}, {b, plain.path}, {s, stretch.path}});
+    CHECK(near(w.mediaInfo(a.path)->pictureAspect, 4.0 / 3, 1e-9));
+    CHECK_EQ(w.mediaInfo(b.path)->pictureAspect, 0.0);
+    CHECK_EQ(w.mediaInfo(s.path)->pictureAspect, 0.0); // a still keeps its shape
+    const QString wpath = dir + "/watchshape.schneidi";
+    CHECK(ProjectFile::save(w.data(), wpath, &error));
+    ProjectData wd;
+    CHECK(ProjectFile::load(wpath, &wd, &error));
+    if (CHECK_EQ(wd.watchFolders.size(), 2)) {
+        CHECK(near(wd.watchFolders[0].pictureAspect, 4.0 / 3, 1e-9));
+        CHECK_EQ(wd.watchFolders[1].pictureAspect, 0.0);
+    }
+}
+
+// CLI: watch add picture_aspect, the arrival and its clips; op media picture_aspect
+void testWatchCli(const QString& dir, const QString& stretched)
+{
+    auto run = [&](const QString& name, const QJsonObject& args) -> const QJsonObject {
+        const Cli::Command* cmd = Cli::find(name);
+        Cli::Context ctx;
+        return cmd->run(Cli::normalize(*cmd, args), ctx);
+    };
+    const QString project = dir + "/watchcli.schneidi";
+    const QString folder = dir + "/clipi";
+    QDir().mkpath(folder);
+    QFile::copy(stretched, folder + "/rec.mp4");
+    run("new", {{"project", project}});
+    QJsonObject r = run("watch", {{"project", project}, {"add", folder}, {"picture_aspect", "4:3"}, {"existing", true}});
+    if (CHECK_EQ(r["folders"].toArray().size(), 1))
+        CHECK(near(r["folders"].toArray()[0].toObject()["picture_aspect"].toDouble(), 1.3333, 1e-6));
+    try {
+        run("watch", {{"project", project}, {"add", folder}, {"picture_aspect", "wide"}});
+        CHECK(false);
+    } catch (const Cli::Error& e) {
+        CHECK_EQ(e.code, QString("BAD_ARGUMENT"));
+    }
+    r = run("watch", {{"project", project}, {"settle_s", 0}});
+    if (CHECK_EQ(r["new"].toArray().size(), 1))
+        CHECK(near(r["new"].toArray()[0].toObject()["picture_aspect"].toDouble(), 1.3333, 1e-6));
+    run("edit", {{"project", project}, {"ops", "[{\"op\":\"place\",\"media\":\"" + folder + "/rec.mp4\",\"at\":0}]"}});
+    const auto clips = [&] {
+        ProjectData d;
+        ProjectFile::load(project, &d, nullptr);
+        Project q;
+        q.load(d);
+        return q.timeline().video.value(0).clips;
+    };
+    if (CHECK_EQ(clips().size(), 1)) CHECK(near(clips()[0].pictureAspect, 4.0 / 3, 1e-9));
+    // Media op: back to the file's shape for new clips (the placed one keeps its own)
+    r = run("edit", {{"project", project}, {"ops", "[{\"op\":\"media\",\"media\":\"" + folder + "/rec.mp4\",\"picture_aspect\":\"file\"}]"}});
+    const QJsonObject info = run("info", {{"project", project}});
+    CHECK(!QJsonDocument(info["media"].toArray()).toJson(QJsonDocument::Compact).contains("picture_aspect"));
+    run("edit", {{"project", project}, {"ops", "[{\"op\":\"place\",\"media\":\"" + folder + "/rec.mp4\",\"at\":100}]"}});
+    if (CHECK_EQ(clips().size(), 2)) {
+        CHECK(near(clips()[0].pictureAspect, 4.0 / 3, 1e-9));
+        CHECK_EQ(clips()[1].pictureAspect, 0.0);
+    }
+}
+
+// The new controls show whole in German and English (a cut-off combo box text, a label running into its field);
+// GAME43_SHOT=<folder> also saves the speed dialog, the Inspector's picture shape row and the watch folder dialog
+void testLayout(const QString& stretched)
+{
+    const QString shot = qEnvironmentVariable("GAME43_SHOT");
+    Project p;
+    Selection sel;
+    Editor ed(&p, &sel);
+    setup(p, stretched, 50, QSize(1920, 1080));
+    ed.setPictureAspect({}, 4.0 / 3, FitFill::Blur);
+    for (const char* lang : {"de", "en", "es", "fr", "pl", "ru"}) {
+        I18n::install(lang);
+        ClipSpeedDialog normal({1.0, false, false, true, FrameInterp::Flow}, 100, 25, nullptr);
+        if (auto* interp = normal.findChild<QComboBox*>("FrameInterp"); CHECK(interp))
+            CHECK(!interp->isEnabled()); // only matters in slow motion
+        ClipSpeedDialog speed({0.5, false, false, true, FrameInterp::Flow}, 100, 25, nullptr);
+        speed.show();
+        QCoreApplication::processEvents();
+        if (auto* interp = speed.findChild<QComboBox*>("FrameInterp"); CHECK(interp) && CHECK(interp->isEnabled()))
+            Check::report(interp->width() >= interp->sizeHint().width(), "speed dialog: in-between pictures cut off",
+                          __FILE__, __LINE__, QString("%1: %2 < %3").arg(lang).arg(interp->width()).arg(interp->sizeHint().width()));
+        if (!shot.isEmpty()) speed.grab().save(QString("%1/speed-%2.png").arg(shot, lang));
+
+        Inspector insp(&ed);
+        insp.resize(380, 1250);
+        sel.set({p.timeline().video[0].clips[0].id});
+        insp.show();
+        QCoreApplication::processEvents();
+        if (auto* shape = insp.findChild<QComboBox*>("PictureAspect"); CHECK(shape)) {
+            CHECK_EQ(shape->currentIndex(), 2); // 4:3 with blurred sides
+            // Every entry fits the box (arrow and frame take about 30 px)
+            for (int k = 0; k < shape->count(); ++k)
+                Check::report(shape->fontMetrics().horizontalAdvance(shape->itemText(k)) + 30 <= shape->width(),
+                              "picture shape entry cut off", __FILE__, __LINE__,
+                              QString("%1: %2 (%3 px box)").arg(lang, shape->itemText(k)).arg(shape->width()));
+            if (!shot.isEmpty()) {
+                QWidget* row = shape->parentWidget();
+                row->grab().save(QString("%1/inspector-shape-%2.png").arg(shot, lang));
+            }
+        }
+
+        WatchFolder n;
+        n.path = QDir::tempPath();
+        n.pictureAspect = 4.0 / 3;
+        WatchFolderDialog add(p, n, true);
+        add.show();
+        QCoreApplication::processEvents();
+        if (auto* box = add.findChild<QCheckBox*>("watchStretched"); CHECK(box)) {
+            CHECK(box->isChecked());
+            Check::report(box->width() >= box->sizeHint().width(), "watch folder: picture shape box cut off", __FILE__,
+                          __LINE__, QString("%1: %2 < %3").arg(lang).arg(box->width()).arg(box->sizeHint().width()));
+        }
+        CHECK(near(add.folder().pictureAspect, 4.0 / 3, 1e-9));
+        if (!shot.isEmpty()) add.grab().save(QString("%1/watch-add-%2.png").arg(shot, lang));
+    }
+    I18n::install("de");
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -383,5 +600,9 @@ int main(int argc, char** argv)
     testCropBars(pillar);
     testStretched(tmp.path(), stretched);
     testCli(tmp.path(), pillar, stretched);
+    testThumbnails(stretched);
+    testMediaShape(tmp.path(), stretched);
+    testWatchCli(tmp.path(), stretched);
+    testLayout(stretched);
     return Check::result();
 }

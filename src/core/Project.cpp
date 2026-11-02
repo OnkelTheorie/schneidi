@@ -932,6 +932,9 @@ QVector<WatchArrival> Project::addWatchedMedia(const QVector<WatchImport>& files
         known.insert(key);
         const int w = WatchFolders::indexOf(m_watchFolders, f.folder);
         f.media.bin = w >= 0 && bin(m_watchFolders[w].bin) ? m_watchFolders[w].bin : 0;
+        // The folder's import preset: a recorder that stretches 4:3 games to 16:9 (stills keep their shape)
+        if (w >= 0 && m_watchFolders[w].pictureAspect > 0 && f.media.hasVideo && !f.media.isImage)
+            f.media.pictureAspect = m_watchFolders[w].pictureAspect;
         add << f;
     }
     if (add.isEmpty()) return {};
@@ -1033,7 +1036,7 @@ PoolState Project::poolState() const
 {
     PoolState s;
     s.bins = m_bins;
-    for (const MediaInfo& m : m_media) s.media.insert(m.path, MediaOrg{m.bin, m.clipColor, m.flags});
+    for (const MediaInfo& m : m_media) s.media.insert(m.path, MediaOrg{m.bin, m.clipColor, m.flags, m.pictureAspect});
     for (const Sequence& q : m_sequences) s.sequenceBins.insert(q.id, q.bin);
     return s;
 }
@@ -1048,6 +1051,7 @@ void Project::applyPool(const PoolState& state)
         m.bin = it->bin;
         m.clipColor = it->color;
         m.flags = it->flags;
+        m.pictureAspect = it->pictureAspect;
     }
     for (Sequence& q : m_sequences)
         if (const auto it = state.sequenceBins.constFind(q.id); it != state.sequenceBins.cend()) q.bin = *it;
@@ -1183,6 +1187,15 @@ void Project::setFlag(const QStringList& paths, const QString& flagId, bool on)
                 flags.removeAll(flagId);
             }
         }
+    });
+}
+
+void Project::setMediaPictureAspect(const QStringList& paths, double aspect)
+{
+    aspect = aspect > 0 ? std::clamp(aspect, 0.1, 10.0) : 0;
+    editPool(aspect > 0 ? T("Seitenverhältnis entzerren") : T("Seitenverhältnis der Datei"), [&](PoolState& s) {
+        for (const QString& p : paths)
+            if (const MediaInfo* m = mediaInfo(p); m && m->hasVideo && s.media.contains(p)) s.media[p].pictureAspect = aspect;
     });
 }
 

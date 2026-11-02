@@ -16,6 +16,7 @@ struct MediaOrg {
     int bin = 0;
     QString color;
     QStringList flags;
+    double pictureAspect = 0; // MediaInfo::pictureAspect
     bool operator==(const MediaOrg&) const = default;
 };
 // State of the Media Pool organization (bins + organization per path) - undo snapshot
@@ -156,6 +157,8 @@ public:
     void setClipColor(const QStringList& paths, const QString& colorId); // empty = no clip color
     void setFlag(const QStringList& paths, const QString& flagId, bool on);
     void clearFlags(const QStringList& paths);
+    // Shape new clips of these files show their picture at (MediaInfo::pictureAspect, 0 = the file's); one undo step
+    void setMediaPictureAspect(const QStringList& paths, double aspect);
     PoolState poolState() const;
     void applyPool(const PoolState& state); // only for undo
 

@@ -115,6 +115,14 @@ WatchFolderDialog::WatchFolderDialog(const Project& project, const WatchFolder& 
     m_chosenBin = folder.bin;
     connect(m_bin, &QComboBox::activated, this, [this] { m_chosenBin = m_bin->currentData().toInt(); });
     fillBins();
+
+    // Import preset: some players record a 4:3 game stretched to 16:9; off by default (the file's shape)
+    m_stretched = new QCheckBox(T("Gestrecktes 4:3 entzerren"));
+    m_stretched->setObjectName("watchStretched");
+    m_stretched->setChecked(folder.pictureAspect > 0);
+    m_stretched->setToolTip(T("Für Aufnahmen eines 4:3-Spiels, die der Rekorder auf 16:9 gestreckt hat: neue Videos "
+                              "aus diesem Ordner zeigen ihr Bild wieder in 4:3"));
+    form->addRow(T("Bildform:"), m_stretched);
     layout->addLayout(form);
 
     if (adding) {
@@ -176,6 +184,8 @@ WatchFolder WatchFolderDialog::folder() const
     w.audio = m_audio->isChecked();
     w.images = m_images->isChecked();
     w.bin = m_bin->currentData().toInt();
+    // Another shape set elsewhere (schneidi-cli) stays while the box is on
+    w.pictureAspect = !m_stretched->isChecked() ? 0.0 : m_folder.pictureAspect > 0 ? m_folder.pictureAspect : 4.0 / 3.0;
     if (m_existing) w.since = m_existing->isChecked() ? QDateTime() : QDateTime::currentDateTimeUtc();
     return w;
 }

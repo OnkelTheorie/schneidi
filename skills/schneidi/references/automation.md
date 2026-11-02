@@ -7,6 +7,8 @@ and every new recording becomes a cut without anyone clicking - e.g. "new clip â
 - `watch` with `add` = the folder: its new media files come into the project's media pool on their own. `bin` puts
   them into a bin (`"Recordings"`, created if missing), `types` `video` skips sound files and images, `subfolders`
   takes those too. Only files that arrive from then on; `existing` true also takes the ones already there.
+  `picture_aspect` `"4:3"`: the recorder stretches a 4:3 game to 16:9 - the folder's new videos come in at their
+  true 4:3 shape (their clips get `picture_aspect`; off by default).
 - Nothing is watched unless a folder is added (`list` shows them, `remove` stops one; imported files stay).
 - The project comes first, before any recording: `new` with the recorder's frame rate as `fps` (most game clip
   tools record 60). Game recordings with a Mix stream next to the single streams (OBS, clip tools): `template`

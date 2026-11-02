@@ -176,6 +176,7 @@ void Editor::placeSource(Timeline& tl, const MediaInfo& m, int sIn, int len, int
         Track& t = tl.tracks(tg.kind)[tg.idx];
         Clip x = c;
         x.id = newId();
+        if (tg.kind == TrackKind::Video) x.pictureAspect = m.pictureAspect; // the file's shape set in the Media Pool
         if (tg.kind == TrackKind::Audio) {
             x.audioStream = tg.stream.stream;
             x.enabled = tg.stream.enabled;

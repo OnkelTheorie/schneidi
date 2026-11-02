@@ -333,6 +333,7 @@ TimelinePosters::Source TimelinePosters::sourceOf(const Project& project, const 
     if (!best) return s;
     const MediaInfo* m = project.mediaInfo(best->mediaPath);
     s.path = best->mediaPath;
+    s.aspect = best->pictureAspect;
     if (m->isImage) s.frame = 0;
     else if (best->isRetimed() && m->length > 0)
         s.frame = RetimeMap(*best, m->length).pictureFrame(best->freeze ? best->stillFrame() : best->in);
@@ -405,14 +406,14 @@ void TimelinePosters::start(int sequenceId)
     }
     it->busy = true;
     // Same frame, only the grade changed: the decoded frame is reused
-    const QImage raw = src.path == it->shown.path && src.frame == it->shown.frame ? it->raw : QImage();
+    const QImage raw = src.path == it->shown.path && src.frame == it->shown.frame && src.aspect == it->shown.aspect ? it->raw : QImage();
     const ProjectFormat format = m_project->sequenceFormat(sequenceId); // the poster in the timeline's shape
     const QSize size = m_size;
     const int generation = m_generation;
     m_pool->start([this, sequenceId, src, raw, format, size, generation] {
         Background::lowerThisThread(Background::Level::Low); // own pool: its thread does nothing else
         Background::yieldToForeground();
-        const QImage frame = raw.isNull() ? Engine::thumbnail(format, src.path, src.frame, size) : raw;
+        const QImage frame = raw.isNull() ? Engine::thumbnail(format, src.path, src.frame, size, false, src.aspect) : raw;
         const QImage img = frame.isNull() || src.grade.isNull() ? frame : GradedThumbs::apply(frame, src.grade);
         QMetaObject::invokeMethod(
             this, [this, sequenceId, src, frame, img, generation] { done(sequenceId, src, frame, img, generation); },
