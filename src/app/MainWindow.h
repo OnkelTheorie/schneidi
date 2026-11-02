@@ -62,6 +62,10 @@ public:
 
     // Project file (.schneidi): only references to the original media + edit
     bool openProject(const QString& path);
+    // Video as project (`schneidi <video>`, File › Open Video as Project…): a new unsaved project whose format (size,
+    // frame rate) comes from the first video, the files on its timeline one after another. Does not ask about the
+    // project open before (callers do: maybeLeaveProject).
+    void openMediaAsProject(const QStringList& files);
     // New project from a start template (core/StartTemplates.h; asks about unsaved changes first)
     void newProjectFromTemplate(const StartTemplate& t);
     bool offerAutosaveRestore(); // after a crash: offer the last automatic backup (true = restored)
@@ -84,6 +88,8 @@ public:
     void liveGenerateProxies(const QStringList& files) override;
     QJsonObject liveProxyState(const QString& file) const override;
     QString liveProxyWriting() const override;
+    bool liveOpen(const QStringList& files, bool byUser, QString* error) override;
+    void bringToFront(); // window up and active (files handed over from another process)
     void liveConnectionChanged(bool connected, const QString& client) override;
     void liveChanged(const LiveChange& change) override;
     void liveActivity(const LiveActivity& activity) override;
@@ -198,6 +204,7 @@ private:
 
     void newProject(); // the default start template (or the user's choice, if they want to be asked)
     void openProjectDialog();
+    void openMediaAsProjectDialog();
     // File › Save as Start Template…: the open project's format, tracks and import presets; returns the saved id (empty
     // = not saved), madeDefault = new projects start with it now
     QString saveStartTemplate(QWidget* parent, bool* madeDefault = nullptr);
@@ -328,6 +335,7 @@ private:
     class MediaCache* m_mediaCache = nullptr;
 
     QString m_projectPath; // empty = never saved yet
+    QString m_saveSuggestion; // never saved: where Save As suggests (a video opened as project: beside it)
     class QFileSystemWatcher* m_projectWatcher = nullptr;
     QTimer m_projectCheck;            // waits until an outside save is done
     QByteArray m_projectFingerprint;  // project file as last loaded/saved here (ProjectFile::fingerprint)

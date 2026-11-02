@@ -120,6 +120,7 @@ void MainWindow::updateTitle()
 void MainWindow::setProjectPath(const QString& path)
 {
     m_projectPath = path;
+    m_saveSuggestion.clear();
     if (!path.isEmpty() && !m_autosaveDisabled) addRecent(path); // test run: do not touch the user's list
     updateTitle();
     // Called right after loading/saving: the file now holds our state
@@ -296,6 +297,37 @@ void MainWindow::openProjectDialog()
     if (!path.isEmpty()) openProject(path);
 }
 
+void MainWindow::openMediaAsProjectDialog()
+{
+    if (!maybeLeaveProject()) return;
+    const QStringList files = QFileDialog::getOpenFileNames(
+        this, T("Video als Projekt öffnen"), QDir::homePath(),
+        T("Medien (*.mp4 *.mov *.mkv *.avi *.webm *.mts *.m4v *.mp3 *.wav *.flac *.ogg *.m4a *.aac "
+          "*.png *.jpg *.jpeg *.webp *.bmp *.srt);;Alle Dateien (*)"));
+    if (!files.isEmpty()) openMediaAsProject(files);
+}
+
+void MainWindow::openMediaAsProject(const QStringList& files)
+{
+    // Neutral, not the default start template: the clip decides the format, not a template's fixed 9:16
+    startProject(StartTemplates::find(StartTemplates::NeutralId).value_or(StartTemplates::builtIn().value(0)));
+    QStringList paths;
+    for (const QString& f : files) paths << QFileInfo(f).absoluteFilePath();
+    m_mediaPool->importFiles(paths);
+    QStringList placed; // readable files (folders came in as bins, subtitles as subtitle tracks)
+    for (const QString& p : paths)
+        if (m_project->mediaInfo(p)) placed << p;
+    if (placed.isEmpty()) return;
+    offerClipFormat(placed, false);
+    m_editor->addMediaAt(placed, 0);
+    // That is where the project starts: undo does not take the clips off again; unsaved, Save As suggests the
+    // video's folder and name
+    m_project->undoStack()->clear();
+    m_project->markModified();
+    const QFileInfo first(placed.first());
+    m_saveSuggestion = first.dir().filePath(first.completeBaseName() + "." + ProjectFile::Extension);
+}
+
 const Clip* MainWindow::presetClip() const
 {
     // Like adding effects: selected video clips (else the one under the playhead), the earliest with effects
@@ -439,7 +471,9 @@ bool MainWindow::saveAs()
 {
     QString path = QFileDialog::getSaveFileName(
         this, T("Projekt speichern unter"),
-        m_projectPath.isEmpty() ? QDir::home().filePath(T("Unbenannt.%1").arg(ProjectFile::Extension)) : m_projectPath,
+        !m_projectPath.isEmpty()     ? m_projectPath
+        : !m_saveSuggestion.isEmpty() ? m_saveSuggestion
+                                      : QDir::home().filePath(T("Unbenannt.%1").arg(ProjectFile::Extension)),
         fileFilter());
     if (path.isEmpty()) return false;
     if (QFileInfo(path).suffix() != ProjectFile::Extension) path += QString(".%1").arg(ProjectFile::Extension);

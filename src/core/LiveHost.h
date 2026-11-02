@@ -64,6 +64,17 @@ public:
     virtual QJsonObject liveProxyState(const QString& file) const = 0;
     // Proxy file being written right now (empty = none): cleaning up the proxy folder leaves it alone
     virtual QString liveProxyWriting() const { return {}; }
+    // Files handed to the app (`schneidi <file>` while it runs, `app open`): a project file (.schneidi) opens, media
+    // files come into the Media Pool and are selected there, the window comes to the front. byUser = the user's own
+    // hand-over (asks "save changes?" before another project opens); an AI never replaces a project with unsaved
+    // changes. False with `error` when nothing could be done.
+    virtual bool liveOpen(const QStringList& files, bool byUser, QString* error)
+    {
+        Q_UNUSED(files);
+        Q_UNUSED(byUser);
+        if (error) *error = "opening files is not supported";
+        return false;
+    }
 
     // Shown to the user: an AI session is connected (client = its name) or not anymore
     virtual void liveConnectionChanged(bool connected, const QString& client) = 0;

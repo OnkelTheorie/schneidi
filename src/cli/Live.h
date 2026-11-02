@@ -18,6 +18,9 @@
 //   {"type":"run","command":…,"args":{…}} -> {"ok":true,"result":{…}} or {"ok":false,"error":{code,message}}
 //   {"type":"activity","id":n,"state":"start"|"progress"|"end"|"failed","tool":…,"target":…,"percent":…,
 //    "summary":{…},"error":…}         -> no answer (work outside the app, see Activity; attached client only)
+//   {"type":"open","files":[…]}           -> {"ok":true,"queued":bool} (`schneidi <file>` while the app runs: the
+//                                              user's hand-over, see handOver(); no attach needed, also when AIs are
+//                                              refused; opened right after the answer, or once the app stops waiting)
 // attach, snapshot and run while the app waits -> {"ok":false,"error":{"code":"APP_WAITING","message":text}}
 // hello of an app that refuses AIs has "allowed":false and "refusal": why (the user disconnected, or the setting)
 //
@@ -103,6 +106,7 @@ private:
     void detach(QLocalSocket* s);
     void letGoIfIdle();
     void restartIdle(); // the idle limit counts again from now
+    void openPending(); // files handed over (type "open") into the app, when it can take them
 
     LiveHost* m_host;
     QLocalServer* m_server = nullptr;
@@ -119,7 +123,15 @@ private:
     QTimer* m_idle = nullptr; // runs while an AI is attached, restarted by everything it sends
     int m_idleMs = 2 * 60 * 1000;
     int m_lastJob = 0;      // LiveActivity::id: unique in the app (every client process counts from 1)
+    QStringList m_pendingOpen; // handed-over files not opened yet
+    bool m_opening = false;    // the host opens handed-over files (may show "save changes?")
 };
+
+// Hands files to a schneidi app that already runs (`schneidi <file>`, `schneidi --open <file>`, a recorder that passes
+// its clips on): the app that has the project file open (else the only/first one that answers) opens them like
+// LiveHost::liveOpen and comes to the front. False = no app took them (none runs, none answered, an older version):
+// the caller starts the app itself.
+bool handOver(const QStringList& files, QString* app = nullptr);
 
 // ---------- schneidi-cli side ----------
 

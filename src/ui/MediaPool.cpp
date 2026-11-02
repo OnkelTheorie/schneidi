@@ -1091,6 +1091,23 @@ void MediaPool::markFresh(const QStringList& paths)
     });
 }
 
+void MediaPool::selectMedia(const QStringList& paths)
+{
+    if (paths.isEmpty()) return;
+    if (const MediaInfo* m = m_project->mediaInfo(paths.first()); m && m->bin != m_currentBin) setCurrentBin(m->bin);
+    m_list->clearSelection();
+    QListWidgetItem* first = nullptr;
+    for (int i = 0; i < m_list->count(); ++i) {
+        QListWidgetItem* it = m_list->item(i);
+        if (!paths.contains(it->data(Qt::UserRole).toString())) continue;
+        it->setSelected(true);
+        if (!first) first = it;
+    }
+    if (!first) return;
+    m_list->setCurrentItem(first, QItemSelectionModel::Current);
+    m_list->scrollToItem(first);
+}
+
 void MediaPool::updateProxyStatus()
 {
     const ProxyManager* proxies = m_engine->proxies();

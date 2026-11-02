@@ -771,8 +771,8 @@ QString presetHelp()
              "limit, -14 LUFS, true peak)";
 }
 
-// The running app: state (playhead, selection …) and control (play, seek, select, undo, save, proxies, cleaning up
-// proxy files)
+// The running app: state (playhead, selection …) and control (play, seek, select, undo, save, open, proxies, cleaning
+// up proxy files)
 QJsonObject cmdApp(const QJsonObject& a, Context&)
 {
     LiveHost* h = Live::host();
@@ -849,8 +849,36 @@ QJsonObject cmdApp(const QJsonObject& a, Context&)
         o["kept_bytes"] = plan.keptBytes;
         if (a["delete"].toBool()) o["freed_bytes"] = ProxyCleanup::apply(plan, busy);
         else o["dry_run"] = true;
+    } else if (action == "open") {
+        // Like the user's `schneidi <file>`: a project file opens (never over unsaved changes), media come into the
+        // pool and are selected, the window comes to the front
+        QStringList projects, media;
+        for (const QJsonValue& v : a["files"].toArray()) {
+            const QString f = absolute(v.toString());
+            if (!QFileInfo(f).isFile()) fail("NOT_FOUND", "no such file: " + f);
+            (QFileInfo(f).suffix() == QLatin1String(ProjectFile::Extension) ? projects : media) << f;
+        }
+        if (projects.isEmpty() && media.isEmpty())
+            fail("BAD_ARGUMENT", "open needs 'files': a .schneidi project and/or media files");
+        if (projects.size() > 1) fail("BAD_ARGUMENT", "open takes one project file at a time");
+        QString error;
+        if (!projects.isEmpty()) {
+            if (!h->liveOpen(projects, false, &error)) fail("OPEN_FAILED", error);
+            o["opened"] = h->liveProjectPath();
+        }
+        if (!media.isEmpty()) {
+            {
+                Session s(QString(Live::AppProject), Session::Access::Write);
+                for (const QString& f : media) s.media(f); // into the pool; throws for a file that cannot be read
+            }
+            if (!h->liveOpen(media, false, &error)) fail("OPEN_FAILED", error);
+            QJsonArray list;
+            for (const QString& f : media) list << f;
+            o["media"] = list;
+        }
     } else {
-        fail("BAD_ARGUMENT", "action must be state, seek, play, stop, select, undo, redo, save, proxies or clean_proxies");
+        fail("BAD_ARGUMENT", "action must be state, seek, play, stop, select, undo, redo, save, open, proxies or "
+                             "clean_proxies");
     }
     o["app"] = Live::appState(h);
     return o;

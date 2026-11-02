@@ -6,13 +6,19 @@
 #include "app/Theme.h"
 #include "core/I18n.h"
 #include "core/Project.h"
+#include "core/ProjectFile.h"
 #include "core/Selection.h"
 #include "core/TimelineOps.h"
 #include "engine/Engine.h"
 #include "engine/ProxyManager.h"
+#include "engine/RenderQueue.h"
+#include "ui/DeliverPanel.h"
+#include "ui/RenderQueuePanel.h"
+#include "ui/MediaPool.h"
 #include "ui/timeline/TimelinePanel.h"
 #include "ui/timeline/TimelineView.h"
 
+#include <QApplication>
 #include <QDir>
 #include <QFileInfo>
 #include <QHBoxLayout>
@@ -70,6 +76,69 @@ QJsonObject MainWindow::liveProxyState(const QString& file) const
 }
 
 QString MainWindow::liveProxyWriting() const { return m_engine->proxies()->writing(); }
+
+bool MainWindow::liveOpen(const QStringList& files, bool byUser, QString* error)
+{
+    const auto failed = [error](const QString& why) {
+        if (error) *error = why;
+        return false;
+    };
+    QString project;
+    QStringList media;
+    for (const QString& f : files) {
+        const QString path = QFileInfo(f).absoluteFilePath();
+        if (QFileInfo(path).suffix() == QLatin1String(ProjectFile::Extension)) project = path; // the last one counts
+        else media << path;
+    }
+    bringToFront();
+    const auto same = [](const QString& a, const QString& b) {
+        return !b.isEmpty() && QFileInfo(a).canonicalFilePath() == QFileInfo(b).canonicalFilePath();
+    };
+    if (!project.isEmpty() && !same(project, m_projectPath)) {
+        if (byUser) {
+            // The user asked for it: like File › Open (save changes? a running render?)
+            if (!maybeLeaveProject()) return failed("the user kept the open project");
+            if (!openProject(project)) return failed("could not open " + project);
+        } else {
+            // An AI never replaces work the user has not saved, and asks nothing
+            if (m_project->isModified())
+                return failed("the project open in the app has unsaved changes: the user saves them first "
+                              "(or `app save`)");
+            if (m_deliver->renderQueue()->isRunning()) return failed("the app is rendering: open the project later");
+            ProjectData data;
+            QString why;
+            if (!ProjectFile::load(project, &data, &why)) return failed(why);
+            if (!applyLoaded(std::move(data), project, false)) return failed("could not open " + project);
+            removeAutosave();
+        }
+    }
+    if (media.isEmpty()) return true;
+    QStringList fresh, folders;
+    for (const QString& m : media) {
+        if (QFileInfo(m).isDir()) folders << m;
+        else if (!m_project->mediaInfo(m)) fresh << m;
+    }
+    if (!fresh.isEmpty() || !folders.isEmpty()) m_mediaPool->importFiles(fresh + folders);
+    QStringList shown; // in the pool now: selected there, the new ones lit up for a moment
+    for (const QString& m : media)
+        if (m_project->mediaInfo(m)) shown << m;
+    if (shown.isEmpty() && folders.isEmpty()) return failed("none of the files could be read");
+    m_mediaPool->selectMedia(shown);
+    QStringList lit;
+    for (const QString& m : fresh)
+        if (shown.contains(m)) lit << m;
+    if (!lit.isEmpty()) m_mediaPool->markFresh(lit);
+    return true;
+}
+
+void MainWindow::bringToFront()
+{
+    if (isMinimized()) setWindowState((windowState() & ~Qt::WindowMinimized) | Qt::WindowActive);
+    show();
+    raise();
+    activateWindow();
+    QApplication::alert(this); // where the window system keeps focus where it is (Wayland, focus stealing rules)
+}
 
 void MainWindow::liveConnectionChanged(bool connected, const QString& client)
 {

@@ -795,7 +795,10 @@ const QVector<Command>& commands()
         {"app", "The schneidi app (live, when it has the project open): see what the user sees (playhead, selection, "
                 "open timeline) and control it. `info`, `edit` and the other commands already work on the open "
                 "project there (an edit is one undo step in the app; the user saves).",
-         {{"action", T::String, "state, seek {at}, play {at?}, stop, select {clips}, undo, redo, save {path?}, proxies "
+         {{"action", T::String, "state, seek {at}, play {at?}, stop, select {clips}, undo, redo, save {path?}, open "
+                                "{files} (show files in the app: a .schneidi project opens there - refused while the "
+                                "open one has unsaved changes -, media files come into its media pool and are "
+                                "selected; the window comes to the front), proxies "
                                 "{files?, generate?} (preview proxies; default all video files), clean_proxies "
                                 "{delete?} (proxy files neither this project nor a recently opened one needs, with the "
                                 "reason: missing/changed original, unused, other size, leftover; a dry run unless "
@@ -803,7 +806,8 @@ const QVector<Command>& commands()
           {"project", T::Path, "project file open in the app (default \"@app\" = the project of the running app)"},
           {"at", T::Time, "seek/play: position in the open timeline"},
           {"clips", T::Times, "select: clip ids (empty = nothing selected)"},
-          {"files", T::Paths, "proxies: media files (default: all video in the project)"},
+          {"files", T::Paths, "proxies: media files (default: all video in the project); open: a .schneidi project "
+                              "and/or media files"},
           {"generate", T::Boolean, "proxies: start generating missing ones (default true; false = only show the state)"},
           {"delete", T::Boolean, "clean_proxies: really delete the listed files (default false = only list them)"},
           {"path", T::Path, "save: file for a project that was never saved (a new .schneidi file, never overwrites)"}},

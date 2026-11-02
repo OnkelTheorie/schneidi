@@ -82,6 +82,8 @@ public:
     void setSaveSettings(bool on) { m_saveSettings = on; }
     // New from a watch folder: drawn with a frame in the accent colour for a few seconds
     void markFresh(const QStringList& paths);
+    // Select these media (files handed over to the app): opens the bin of the first one, scrolls to it
+    void selectMedia(const QStringList& paths);
 
     // right-click menus "Clip color" and "Flags" (also in the timeline) for the clips of these media
     static void addClipColorMenu(QMenu* menu, Project* project, const QStringList& paths);
