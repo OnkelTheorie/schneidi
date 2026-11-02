@@ -270,16 +270,11 @@ QJsonObject cmdProbe(const QJsonObject& a, Context& ctx) { return perFile(a, ctx
 
 QJsonObject cmdExtensions(const QJsonObject& a, Context& ctx)
 {
-    // "whisper,small" -> items; short model names work too
+    // "whisper,small" -> items; short model names and aliases (x265) work too
     const auto items = [](const QString& list) {
-        QVector<const Extensions::Item*> out;
-        for (QString id : list.split(',', Qt::SkipEmptyParts)) {
-            id = id.trimmed();
-            const Extensions::Item* i = Extensions::find(id);
-            if (!i) i = Extensions::find("whisper-model-" + id);
-            if (!i) fail("NOT_FOUND", "no extension " + id + " (see `extensions`)");
-            out << i;
-        }
+        QString unknown;
+        const QVector<const Extensions::Item*> out = Extensions::parseList(list, &unknown);
+        if (!unknown.isEmpty()) fail("NOT_FOUND", "no extension " + unknown + " (see `extensions`)");
         return out;
     };
     QJsonArray done;
@@ -322,6 +317,7 @@ QJsonObject cmdExtensions(const QJsonObject& a, Context& ctx)
     }
     QJsonObject out{{"extensions", list}, {"folder", Extensions::rootDir()}};
     if (!done.isEmpty()) out["done"] = done;
+    if (const QString ffmpeg = Extensions::encoderProgram(); !ffmpeg.isEmpty()) out["encoder_program"] = ffmpeg;
     if (Extensions::find("whisper") == nullptr && !Extensions::whisperProgram().isEmpty())
         out["whisper_program"] = Extensions::whisperProgram(); // own build on PATH
     return out;

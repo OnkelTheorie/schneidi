@@ -198,6 +198,11 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
     });
     connect(m_transcript, &TranscriptPanel::seekRequested, tv, &TimelineView::seekRequested);
     connect(m_deliver, &DeliverPanel::seekRequested, tv, &TimelineView::seekRequested);
+    connect(m_deliver, &DeliverPanel::openExtensions, this, [this] {
+        ExtensionsDialog ext(this);
+        ext.exec();
+        m_deliver->refreshEncoders();
+    });
     connect(m_transcript, &TranscriptPanel::openExtensions, this, [this] {
         ExtensionsDialog ext(this);
         ext.exec();

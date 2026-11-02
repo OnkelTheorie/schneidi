@@ -17,10 +17,26 @@ namespace HardwareEncoders {
 // FFmpeg codec of an encoder for a render format ("h264"/"h265"), e.g. h264_nvenc; empty = not for this format.
 // Software gives the software codec (softwareCodec).
 QString codecName(VideoEncoder e, const QString& format);
-// Software video encoder of a render format that this FFmpeg has: the format's own (libx264, libx265, libsvtav1 …)
-// or a free replacement when it is missing (the GPL-free build has no x264/x265): OpenH264 for H.264, kvazaar for
-// H.265, libaom for AV1. Empty = none (and for audio-only formats).
+// Software video encoder of a render format: the format's own (libx264, libx265, libsvtav1 …) when this FFmpeg has
+// it or (x264/x265) the extension's ffmpeg program does (externalProgram), else a free replacement (the GPL-free
+// build has no x264/x265): OpenH264 for H.264, kvazaar for H.265, libaom for AV1. Empty = none (and for audio-only
+// formats). Order for H.264/H.265 overall (resolve): hardware encoder > x264/x265 > free replacement.
 QString softwareCodec(const QString& format);
+// The encoder is built into this FFmpeg. SCHNEIDI_IGNORE_BUILTIN="libx264,libx265" pretends it is not (tests, trying
+// the extension path with a distribution FFmpeg that has x264).
+bool builtIn(const QString& codec);
+// x264/x265 through the extension (engine/Extensions, engine/ExternalEncoder): the extension's ffmpeg program when
+// `codec` is libx264/libx265, not built in, and that program lists it (asked once per program file). Empty = no.
+QString externalProgram(const QString& codec);
+// GPL-free replacement of an x264/x265/SVT-AV1 codec that this FFmpeg has (libx264 -> libopenh264); empty = none
+QString freeReplacement(const QString& codec);
+bool isFreeReplacement(const QString& codec); // libopenh264, libkvazaar
+// When `codec` is the free replacement for H.264/H.265: what that means and how to get x264/x265 (the CLI command,
+// for people and AI). Empty for every other codec.
+QString betterQualityHint(const QString& codec);
+// The format's export would run with the free replacement here: no hardware encoder works and x264/x265 are neither
+// built in nor installed. Blocks for the hardware probe.
+bool needsBetterEncoder(const QString& format);
 // The format can be rendered with this FFmpeg: its audio encoder exists, and a software video encoder or (H.264/H.265)
 // a hardware one. Does not wait for the hardware probe: until it has run, only software counts.
 bool formatAvailable(const QString& format);
@@ -68,12 +84,16 @@ Notifier* notifier();
 // a hardware choice).
 struct Choice {
     QString codec;    // FFmpeg video codec to use
-    QString fallback; // software codec when codec is a hardware one (export falls back to it), else empty
+    // software codec when codec is a hardware one (export falls back to it), the free replacement when codec is
+    // x264/x265 of the extension (a separate program that might fail), else empty
+    QString fallback;
     QString note;     // shown to the user (e.g. "NVENC not available, rendered with software"), may be empty
 };
 Choice resolve(VideoEncoder wanted, const QString& format);
 
 // For tests: forget all results (the next available() probes again)
 void resetForTests();
+// For tests: the probe is done and exactly these hardware codecs work (h264_nvenc …)
+void fakeProbeForTests(const QStringList& working);
 
 } // namespace HardwareEncoders

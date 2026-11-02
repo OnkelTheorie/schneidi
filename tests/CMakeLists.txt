@@ -92,6 +92,7 @@ schneidi_test(test_fast_seek) # seek window, scrubbing (close picture, then the 
 schneidi_test(test_hw_encoders)
 schneidi_test(test_export_opus)
 schneidi_test(test_license_free)
+schneidi_test(test_encoder_extension)
 # a failed/canceled export keeps an older file of the same name, write errors midway fail, odd project sizes
 schneidi_test(test_export_safety)
 schneidi_test(test_timeline_mouse)

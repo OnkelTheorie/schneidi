@@ -130,6 +130,7 @@ private:
     int audioBitrateK() const; // 0 = none for this codec (PCM, lossless)
     // Hardware encoder failed: render again with ExportSettings::softwareCodec; false = no fallback possible
     bool fallBackToSoftware(QString* error);
+    QString fallbackCodec(const QString& failed) const; // encoder to render with when `failed` fails; empty = none
     // Has the encoder written anything yet? (image sequences: the first frame)
     bool wroteOutput() const;
     // The export worked: move what was written under a temporary name (m_part) to the target the user asked for

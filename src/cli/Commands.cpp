@@ -828,7 +828,11 @@ const QVector<Command>& commands()
                                  "one works here, else software), software, nvenc (NVIDIA), vaapi (AMD/Intel on Linux), "
                                  "qsv (Intel Quick Sync). A hardware encoder that does not work falls back to software; "
                                  "the answer's 'encoder' is the codec actually used ('copy' when smart render "
-                                 "copied every frame of the source)"},
+                                 "copied every frame of the source). Software H.264/H.265 is x264/x265 when built in "
+                                 "or installed as the extension 'x264', else the free OpenH264/kvazaar (about twice "
+                                 "the file size for the same quality): then the answer has 'encoder_hint' and "
+                                 "'better_encoder' (install it with `extensions` install x264, ask the user first: "
+                                 "72 MB download, GPL)"},
           {"audio_bitrate", T::Integer, "kbit/s for AAC/MP3/Opus (default 320)"},
           {"subtitles", T::String, "none (default), burn (into the picture) or srt (files next to the video: the visible "
                                   "track as <name>.srt, other tracks with entries as <name>.<track name>.srt)"},
@@ -1015,7 +1019,9 @@ const QVector<Command>& commands()
                   "music). Vertical videos (9:16): safe_area / subtitle_safe_area = text where TikTok, Reels and "
                   "Shorts put their caption and buttons (bottom 20 %), their button column (right 12 %, from 35 % of "
                   "the height down) or their top bar (top 8 %), or outside the picture; slow_hook (info, videos up to "
-                  "3 min) = hardly any motion in the first second. A rendered file (after rendering): black "
+                  "3 min) = hardly any motion in the first second; encoder_quality (info) = H.264/H.265 would be encoded "
+                  "with the free OpenH264/kvazaar here (no graphics card encoder, no x264/x265): the message names the "
+                  "extension 'x264' that gives better quality (install with `extensions`, ask the user first). A rendered file (after rendering): black "
                   "stretches, frozen picture, no sound, the same sound checks. 'issues' (errors first, each with check "
                   "id, message, time range and 'clip' when it is about one), counts of 'errors'/'warnings' and the "
                   "measured 'sound'; for a project with clipping, true peak or loudness off the target also 'fix': the "
@@ -1040,10 +1046,12 @@ const QVector<Command>& commands()
           {"timeline", T::String, "for a project: which timeline (id or name; default: the open one)"},
           {"project", T::Path, "for a media file: count frames in this project's frame rate"}},
          cmdScopes},
-        {"extensions", "Optional downloads (not part of schneidi): whisper speech recognition and its models. "
-                       "Without arguments: list with sizes and what is installed.",
+        {"extensions", "Optional downloads (not part of schneidi): whisper speech recognition and its models, and x264 "
+                       "(an ffmpeg program with x264/x265 for better H.264/H.265 export quality when no graphics card "
+                       "encoder works; GPL, runs as its own program). Without arguments: list with sizes and what is "
+                       "installed.",
          {{"install", T::String, "ids to download and install, e.g. whisper,small (model sizes: turbo 574 MB, "
-                                 "small 190 MB, base 60 MB, tiny 32 MB)"},
+                                 "small 190 MB, base 60 MB, tiny 32 MB) or x264 (72 MB, Windows 90 MB)"},
           {"remove", T::String, "ids to delete again"},
           {"reinstall", T::Boolean, "download again even if installed"}},
          cmdExtensions},

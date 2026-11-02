@@ -3,8 +3,11 @@
 
 #include "core/I18n.h"
 #include "engine/Bundle.h"
+#include "engine/Extensions.h"
 
+#include <QDateTime>
 #include <QDir>
+#include <QFileInfo>
 #include <QHash>
 #include <QProcess>
 #include <QThreadPool>
@@ -179,27 +182,108 @@ QString codecName(VideoEncoder e, const QString& format)
     return softwareCodec(format);
 }
 
+namespace {
+
+// Free replacements (BSD): the GPL-free build has no x264/x265
+const struct {
+    const char* codec;
+    const char* replacement;
+} kFree[] = {{"libx264", "libopenh264"}, {"libx265", "libkvazaar"}, {"libsvtav1", "libaom-av1"}};
+
+// Encoders an ffmpeg program lists (`ffmpeg -encoders`), cached per file and modification time
+QStringList programEncoders(const QString& program)
+{
+    static std::mutex mutex;
+    static QHash<QString, QStringList> cache;
+    const QFileInfo info(program);
+    const QString key = info.absoluteFilePath() + '|' + QString::number(info.lastModified().toMSecsSinceEpoch());
+    {
+        std::lock_guard lock(mutex);
+        if (auto it = cache.constFind(key); it != cache.cend()) return *it;
+    }
+    QProcess p;
+    p.start(program, {"-hide_banner", "-nostdin", "-encoders"});
+    QStringList list;
+    if (p.waitForStarted(10000) && p.waitForFinished(20000) && p.exitStatus() == QProcess::NormalExit) {
+        // " V....D libx264              libx264 H.264 / AVC …"
+        for (const QByteArray& line : p.readAllStandardOutput().split('\n')) {
+            const QList<QByteArray> words = line.simplified().split(' ');
+            if (words.size() >= 2 && words[0].size() == 6) list << QString::fromUtf8(words[1]);
+        }
+    } else if (p.state() != QProcess::NotRunning) {
+        p.kill(); // our own process
+        p.waitForFinished(2000);
+    }
+    if (list.isEmpty()) qWarning("Encoder extension %s lists no encoders", qPrintable(program));
+    std::lock_guard lock(mutex);
+    cache.insert(key, list);
+    return list;
+}
+
+} // namespace
+
+bool builtIn(const QString& codec)
+{
+    if (codec.isEmpty()) return false;
+    const QStringList ignored = qEnvironmentVariable("SCHNEIDI_IGNORE_BUILTIN").split(',', Qt::SkipEmptyParts);
+    return !ignored.contains(codec) && avcodec_find_encoder_by_name(codec.toUtf8().constData()) != nullptr;
+}
+
+QString externalProgram(const QString& codec)
+{
+    if ((codec != "libx264" && codec != "libx265") || builtIn(codec)) return {};
+    const QString program = Extensions::encoderProgram();
+    if (program.isEmpty() || !programEncoders(program).contains(codec)) return {};
+    return program;
+}
+
+QString freeReplacement(const QString& codec)
+{
+    for (const auto& r : kFree)
+        if (codec == QLatin1String(r.codec) && builtIn(r.replacement)) return r.replacement;
+    return {};
+}
+
+bool isFreeReplacement(const QString& codec)
+{
+    return codec == "libopenh264" || codec == "libkvazaar";
+}
+
+QString betterQualityHint(const QString& codec)
+{
+    if (!isFreeReplacement(codec)) return {};
+    const bool h264 = codec == "libopenh264";
+    const Extensions::Item* item = Extensions::find("x264");
+    QString text = T("%1 wird mit %2 kodiert (keine Grafikkarte, die kodiert): für die gleiche Qualität etwa doppelt so "
+                     "große Dateien.")
+                       .arg(h264 ? "H.264" : "H.265", h264 ? "OpenH264" : "kvazaar");
+    if (item)
+        text += ' ' + T("Bessere Qualität mit der Erweiterung x264/x265 (%1 MB): `schneidi-cli extensions --install x264` "
+                        "(MCP: extensions mit install \"x264\").")
+                          .arg(qRound(item->size / 1e6));
+    return text;
+}
+
+bool needsBetterEncoder(const QString& format)
+{
+    const RenderFormatInfo& f = renderFormat(format);
+    if (!f.hardware || QLatin1String(f.id) != format) return false;
+    return isFreeReplacement(softwareCodec(format)) && available(format).isEmpty();
+}
+
 QString softwareCodec(const QString& format)
 {
     const RenderFormatInfo& f = renderFormat(format);
     if (!*f.videoCodec) return {};
-    const auto have = [](const char* name) { return avcodec_find_encoder_by_name(name) != nullptr; };
-    if (have(f.videoCodec)) return f.videoCodec;
-    // Free replacements (BSD): the GPL-free build has no x264/x265
-    static const struct {
-        const char* codec;
-        const char* replacement;
-    } kFree[] = {{"libx264", "libopenh264"}, {"libx265", "libkvazaar"}, {"libsvtav1", "libaom-av1"}};
-    for (const auto& r : kFree)
-        if (qstrcmp(f.videoCodec, r.codec) == 0 && have(r.replacement)) return r.replacement;
-    return {};
+    if (builtIn(f.videoCodec) || !externalProgram(f.videoCodec).isEmpty()) return f.videoCodec;
+    return freeReplacement(f.videoCodec);
 }
 
 bool formatAvailable(const QString& format)
 {
     const RenderFormatInfo& f = renderFormat(format);
     if (QLatin1String(f.id) != format) return false;
-    if (*f.audioCodec && !avcodec_find_encoder_by_name(renderFormat(format).audioCodec)) return false;
+    if (*f.audioCodec && !builtIn(renderFormat(format).audioCodec)) return false;
     if (!*f.videoCodec || !softwareCodec(format).isEmpty()) return true;
     return f.hardware && probed() && !available(format).isEmpty();
 }
@@ -223,7 +307,7 @@ QVector<QPair<QString, QString>> softwareOptions(const QString& codec, int crf, 
 
 QStringList proxyVideoArguments()
 {
-    if (avcodec_find_encoder_by_name("libx264"))
+    if (builtIn("libx264"))
         return {"-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-tune", "fastdecode"};
     // GPL-free build: OpenH264 at a bit rate that suits the proxy size (at most 960 px wide, see ProxyManager)
     return {"-c:v", "libopenh264", "-rc_mode", "quality", "-b:v", "6M", "-allow_skip_frames", "0"};
@@ -344,7 +428,18 @@ Notifier* notifier()
     return g_notifier.load();
 }
 
+// The choice between hardware and software encoders (below)
+static Choice resolveHardware(VideoEncoder wanted, const QString& format);
+
 Choice resolve(VideoEncoder wanted, const QString& format)
+{
+    Choice c = resolveHardware(wanted, format);
+    // x264/x265 of the extension runs as a separate program: if it fails, the free replacement takes over
+    if (c.fallback.isEmpty() && !externalProgram(c.codec).isEmpty()) c.fallback = freeReplacement(c.codec);
+    return c;
+}
+
+static Choice resolveHardware(VideoEncoder wanted, const QString& format)
 {
     const RenderFormatInfo& f = renderFormat(format);
     Choice c;
@@ -383,6 +478,19 @@ void resetForTests()
     st.probe = ProbeState::Idle;
     st.results.clear();
     st.vaapiDevice.clear();
+}
+
+void fakeProbeForTests(const QStringList& working)
+{
+    resetForTests();
+    State& st = state();
+    std::lock_guard lock(st.mutex);
+    for (VideoEncoder e : {VideoEncoder::Nvenc, VideoEncoder::Qsv, VideoEncoder::Vaapi})
+        for (const char* format : {"h264", "h265"}) {
+            const QString codec = codecName(e, format);
+            st.results[cacheKey(codec, kProbeSize)] = working.contains(codec) ? 1 : -1;
+        }
+    st.probe = ProbeState::Done;
 }
 
 } // namespace HardwareEncoders

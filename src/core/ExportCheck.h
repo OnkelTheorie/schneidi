@@ -26,7 +26,7 @@ struct Issue {
     QString check;   // stable id: "offline", "black", "subtitle_end", "subtitle_short", "subtitle_fast", "no_sound",
                      // "clipping", "true_peak", "loudness", "silence_end", "silence_start", "silence", "black_file",
                      // "frozen", "no_video", "no_audio", "under_music", "safe_area", "subtitle_safe_area",
-                     // "slow_hook", "stutter", "missing_effect"
+                     // "slow_hook", "stutter", "missing_effect", "encoder_quality"
     QString message; // for people, in the UI language
     int from = -1;   // frames (exclusive end), -1 = whole video
     int to = -1;

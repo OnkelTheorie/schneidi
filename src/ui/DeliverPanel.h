@@ -59,8 +59,12 @@ public:
     // runs again. Hidden when nothing can be fixed this way.
     QPushButton* fixButton() const { return m_fixBtn; }
 
+    // Encoder choices and the "better quality" hint again (after the extensions dialog)
+    void refreshEncoders();
+
 signals:
     void seekRequested(int frame); // a check result was clicked
+    void openExtensions();         // "Bessere Qualität nachladen": the x264/x265 extension
 
 protected:
     void showEvent(QShowEvent* e) override;
@@ -96,6 +100,9 @@ private:
     QSize m_timelineSize; // last known timeline resolution
     QComboBox* m_quality;
     QComboBox* m_encoder; // video encoder (data: int(VideoEncoder)); hardware ones only when they work here
+    // H.264/H.265 would use the free encoder (no graphics card, no x264/x265): hint with a button to the extension
+    QWidget* m_betterRow = nullptr;
+    QLabel* m_betterText = nullptr;
     VideoEncoder m_wantedEncoder = VideoEncoder::Auto; // from the preset/last choice (kept across format changes)
     QComboBox* m_audioBitrate;
     QComboBox* m_audioBits;

@@ -23,10 +23,17 @@ namespace {
 constexpr const char* kWhisperRelease = "https://github.com/ggml-org/whisper.cpp/releases/download/b5454/";
 constexpr const char* kModels = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/";
 
+// ffmpeg with x264/x265: BtbN/FFmpeg-Builds, release branch 8.1 from the month-end autobuild of October 2026 (the
+// month-end builds stay on GitHub; the daily ones are deleted). "shared": half the download of the static build; the
+// archive's folder is kept as it is (Linux: bin/ffmpeg finds lib/ by its RUNPATH, Windows: the DLLs are in bin/).
+constexpr const char* kEncoderRelease = "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-10-31-12-59/";
+
 #ifdef Q_OS_WIN
 constexpr const char* kProgramName = "whisper-cli.exe";
+constexpr const char* kFfmpegName = "ffmpeg.exe";
 #else
 constexpr const char* kProgramName = "whisper-cli";
+constexpr const char* kFfmpegName = "ffmpeg";
 #endif
 
 QVector<Item> makeCatalog()
@@ -41,6 +48,19 @@ QVector<Item> makeCatalog()
     program("whisper-bin-x64.zip", "6ba69e3482d7826214f90a6a9c84ca07782aec1e1d0c6a7c30c994fd5d816ccb", 8928640);
 #elif defined(Q_OS_LINUX) && defined(Q_PROCESSOR_X86_64)
     program("whisper-bin-ubuntu-x64.tar.gz", "a72becf15d7917f990f6313867a52638b82b7f9ef237fb0c980dac56a135781c", 10364195);
+#endif
+    const auto encoder = [&](const char* archive, const char* sha, qint64 size) {
+        list << Item{"x264", Kind::Encoder, N_("x264/x265 (bessere Export-Qualität)"),
+                     N_("FFmpeg mit x264 und x265: H.264/H.265 in besserer Qualität, wenn keine Grafikkarte kodiert (GPL, "
+                        "eigenes Programm)"),
+                     QString(kEncoderRelease) + archive, sha, size, archive};
+    };
+#if defined(Q_OS_WIN) && defined(Q_PROCESSOR_X86_64)
+    encoder("ffmpeg-n8.1.3-27-g8dca1586f4-win64-gpl-shared-8.1.zip",
+            "3adc00b67118a8c4bdd6624a000e139df283b1eeb8b126fcec4849bd5b778dd4", 89702793);
+#elif defined(Q_OS_LINUX) && defined(Q_PROCESSOR_X86_64)
+    encoder("ffmpeg-n8.1.3-27-g8dca1586f4-linux64-gpl-shared-8.1.tar.xz",
+            "202fe67679a0860b155817a0907ffcc5c1ea82e186acaa21cb87d307f54fd59a", 72031160);
 #endif
     list << Item{"whisper-vad", Kind::WhisperVad, N_("Sprach-Erkennung für Whisper (Silero VAD)"),
                  N_("findet die Stellen mit Sprache, damit Wortzeiten nicht in Pausen rutschen (gehört zu Whisper)"),
@@ -66,6 +86,27 @@ QVector<Item> makeCatalog()
 QString whisperDir() { return QDir(rootDir()).filePath("whisper"); }
 QString modelsDir() { return QDir(whisperDir()).filePath("models"); }
 QString binDir() { return QDir(whisperDir()).filePath("bin"); }
+QString encoderDir() { return QDir(rootDir()).filePath("ffmpeg-gpl"); }
+QString encoderTree() { return QDir(encoderDir()).filePath("bin"); }
+
+// Folder an item's download is unpacked or stored in
+QString downloadDir(const Item& item)
+{
+    switch (item.kind) {
+    case Kind::Program: return whisperDir();
+    case Kind::Encoder: return encoderDir();
+    default: return modelsDir();
+    }
+}
+
+// The installed ffmpeg of the encoder extension: <tree>/bin/ffmpeg (the archive's folder as it was)
+QString installedFfmpeg()
+{
+    const QString direct = QDir(encoderTree()).filePath(QString("bin/") + kFfmpegName);
+    if (QFileInfo(direct).isFile()) return direct;
+    QDirIterator it(encoderTree(), {kFfmpegName}, QDir::Files, QDirIterator::Subdirectories);
+    return it.hasNext() ? it.next() : QString();
+}
 
 } // namespace
 
@@ -87,6 +128,24 @@ QString rootDir()
     return QDir(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)).filePath("extensions");
 }
 
+QVector<const Item*> parseList(const QString& list, QString* unknown)
+{
+    QVector<const Item*> out;
+    for (QString id : list.split(',', Qt::SkipEmptyParts)) {
+        id = id.trimmed().toLower();
+        if (id.isEmpty()) continue;
+        if (id == "x265" || id == "x264-x265" || id == "x264/x265") id = "x264";
+        const Item* i = find(id);
+        if (!i) i = find("whisper-model-" + id);
+        if (!i) {
+            if (unknown) *unknown = id;
+            return {};
+        }
+        if (!out.contains(i)) out << i;
+    }
+    return out;
+}
+
 QVector<const Item*> withDependencies(const QVector<const Item*>& items)
 {
     QVector<const Item*> out;
@@ -105,6 +164,7 @@ QVector<const Item*> withDependencies(const QVector<const Item*>& items)
 
 QString installedPath(const Item& item)
 {
+    if (item.kind == Kind::Encoder) return installedFfmpeg();
     const QString path = item.kind == Kind::Program ? QDir(binDir()).filePath(kProgramName)
                                                     : QDir(modelsDir()).filePath(item.fileName);
     return QFileInfo::exists(path) ? path : QString();
@@ -115,6 +175,7 @@ bool isInstalled(const Item& item) { return !installedPath(item).isEmpty(); }
 bool remove(const Item& item)
 {
     if (item.kind == Kind::Program) return QDir(binDir()).removeRecursively();
+    if (item.kind == Kind::Encoder) return QDir(encoderTree()).removeRecursively();
     const QString path = installedPath(item);
     return path.isEmpty() || QFile::remove(path);
 }
@@ -128,6 +189,14 @@ QString whisperProgram()
 QString whisperVadModel()
 {
     const Item* i = find("whisper-vad");
+    return i ? installedPath(*i) : QString();
+}
+
+QString encoderProgram()
+{
+    const QString own = qEnvironmentVariable("SCHNEIDI_ENCODER_FFMPEG");
+    if (!own.isEmpty()) return QFileInfo(own).isFile() ? QFileInfo(own).absoluteFilePath() : QString();
+    const Item* i = find("x264");
     return i ? installedPath(*i) : QString();
 }
 
@@ -168,7 +237,7 @@ bool Installer::start(const Item& item, QString* error)
     }
     m_item = item;
     m_cancelled = false;
-    const QString dir = item.kind == Kind::Program ? whisperDir() : modelsDir();
+    const QString dir = downloadDir(item);
     if (!QDir().mkpath(dir)) {
         if (error) *error = "cannot create " + dir;
         return false;
@@ -245,7 +314,7 @@ void Installer::onFinished()
     const QString part = m_file->fileName();
     m_file.reset();
     QString error;
-    if (m_item.kind == Kind::Program) {
+    if (m_item.kind == Kind::Program || m_item.kind == Kind::Encoder) {
         error = unpack(part);
         QFile::remove(part);
     } else {
@@ -260,32 +329,38 @@ void Installer::onFinished()
 QString Installer::unpack(const QString& archive)
 {
     // Unpack next to the old version, then swap: a failed update keeps the working one
-    const QDir dir(whisperDir());
+    const bool encoder = m_item.kind == Kind::Encoder;
+    const QDir dir(encoder ? encoderDir() : whisperDir());
+    const QString target = encoder ? encoderTree() : binDir();
+    const char* program = encoder ? kFfmpegName : kProgramName;
     const QString staging = dir.filePath("bin.new");
     QDir(staging).removeRecursively();
     dir.mkpath("bin.new");
     QProcess tar;
     tar.start(Bundle::tool("tar"), {"-xf", archive, "-C", staging});
-    if (!tar.waitForFinished(120000) || tar.exitStatus() != QProcess::NormalExit || tar.exitCode() != 0) {
+    if (!tar.waitForFinished(300000) || tar.exitStatus() != QProcess::NormalExit || tar.exitCode() != 0) {
         QDir(staging).removeRecursively();
         return T("Entpacken fehlgeschlagen: %1").arg(QString::fromLocal8Bit(tar.readAllStandardError()).trimmed());
     }
-    // The archive has a folder (whisper-bin-ubuntu-x64/, Release/): use the one with the program
-    QString programDir;
-    QDirIterator it(staging, {kProgramName}, QDir::Files, QDirIterator::Subdirectories);
-    if (it.hasNext()) programDir = QFileInfo(it.next()).absolutePath();
-    if (programDir.isEmpty()) {
+    // The archive has a folder (whisper-bin-ubuntu-x64/, Release/, ffmpeg-…-gpl-shared-8.1/bin/): whisper keeps the
+    // folder with the program, the encoder the whole tree above its bin/ (lib/ beside it)
+    QString programPath;
+    QDirIterator it(staging, {program}, QDir::Files, QDirIterator::Subdirectories);
+    if (it.hasNext()) programPath = it.next();
+    if (programPath.isEmpty()) {
         QDir(staging).removeRecursively();
-        return T("Im Archiv fehlt %1.").arg(kProgramName);
+        return T("Im Archiv fehlt %1.").arg(program);
     }
-    QDir(binDir()).removeRecursively();
-    if (!QDir().rename(programDir, binDir())) {
+    QString keep = QFileInfo(programPath).absolutePath();
+    if (encoder && QFileInfo(keep).fileName() == "bin") keep = QFileInfo(keep).absolutePath();
+    QDir(target).removeRecursively();
+    if (!QDir().rename(keep, target)) {
         QDir(staging).removeRecursively();
-        return T("Programm konnte nicht abgelegt werden: %1").arg(binDir());
+        return T("Programm konnte nicht abgelegt werden: %1").arg(target);
     }
     QDir(staging).removeRecursively();
-    QFile::setPermissions(QDir(binDir()).filePath(kProgramName),
-                          QFile::permissions(QDir(binDir()).filePath(kProgramName)) | QFile::ExeOwner | QFile::ExeUser);
+    const QString installed = encoder ? installedFfmpeg() : QDir(target).filePath(program);
+    QFile::setPermissions(installed, QFile::permissions(installed) | QFile::ExeOwner | QFile::ExeUser);
     return {};
 }
 

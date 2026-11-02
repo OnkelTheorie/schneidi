@@ -82,7 +82,10 @@ Every command then works on what the app shows, unsaved changes included; `info`
   Ask only when the answer changes the result a lot and you cannot find it in the material or the request (e.g.
   "music" requested but no music file anywhere).
 - **Downloads need a yes**: speech recognition (`transcribe`) needs the whisper extension (hundreds of MB). If it
-  is missing, ask before installing it with `extensions`.
+  is missing, ask before installing it with `extensions`. The same for the `x264` extension (72 MB, GPL): when
+  `check` reports encoder_quality or `render` answers with `encoder_hint` (no graphics card encoder, so H.264/H.265
+  are encoded with the free OpenH264/kvazaar at about twice the file size), offer it; with a yes run `extensions`
+  install x264 and render again.
 - Say "done" only after you have looked at the rendered result.
 
 ## Task guides

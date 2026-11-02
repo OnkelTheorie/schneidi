@@ -206,6 +206,21 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
     form->addRow(T("Bildrate"), m_rate);
     form->addRow(T("Qualität"), m_quality);
     form->addRow(T("Encoder"), m_encoder);
+    m_betterRow = new QWidget;
+    m_betterRow->setObjectName("renderBetterEncoder");
+    auto* betterLayout = new QHBoxLayout(m_betterRow);
+    betterLayout->setContentsMargins(0, 0, 0, 0);
+    m_betterText = new QLabel;
+    m_betterText->setWordWrap(true);
+    m_betterText->setObjectName("hint");
+    auto* betterBtn = new QPushButton(T("Bessere Qualität nachladen"));
+    betterBtn->setToolTip(T("Lädt die Erweiterung x264/x265 (eigenes Programm, GPL-Lizenz). schneidi funktioniert "
+                            "auch ohne."));
+    connect(betterBtn, &QPushButton::clicked, this, &DeliverPanel::openExtensions);
+    betterLayout->addWidget(m_betterText, 1);
+    betterLayout->addWidget(betterBtn, 0, Qt::AlignTop);
+    m_betterRow->hide();
+    form->addRow(QString(), m_betterRow);
     form->addRow(T("Audio-Bitrate"), m_audioBitrate);
     form->addRow(T("Audio-Bittiefe"), m_audioBits);
     form->addRow(T("Untertitel"), m_subtitles);
@@ -523,6 +538,11 @@ void DeliverPanel::showEvent(QShowEvent* e)
     HardwareEncoders::probeInBackground(); // once: which hardware encoders work (does not block)
 }
 
+void DeliverPanel::refreshEncoders()
+{
+    updateEncoders();
+}
+
 void DeliverPanel::updateEncoders()
 {
     const RenderFormatInfo& f = renderFormat(m_format->currentData().toString());
@@ -556,6 +576,15 @@ void DeliverPanel::updateEncoders()
         const QSignalBlocker block(m_encoder);
         m_encoder->setCurrentIndex(std::max(0, m_encoder->findData(int(m_wantedEncoder))));
     }
+    // No graphics card encoder and no x264/x265: the free encoder needs about twice the bit rate
+    const bool better = f.hardware && probed && m_wantedEncoder != VideoEncoder::Nvenc && m_wantedEncoder != VideoEncoder::Vaapi
+                        && m_wantedEncoder != VideoEncoder::Qsv && HardwareEncoders::needsBetterEncoder(f.id);
+    if (better)
+        m_betterText->setText(T("Ohne Grafikkarten-Encoder kodiert %1 mit %2: bei gleicher Qualität etwa doppelt so "
+                                "große Dateien.")
+                                  .arg(QLatin1String(f.id) == QLatin1String("h265") ? "H.265" : "H.264",
+                                       QLatin1String(f.id) == QLatin1String("h265") ? "kvazaar" : "OpenH264"));
+    m_betterRow->setVisible(better);
     m_encoder->setEnabled(f.hardware);
     m_encoder->setToolTip(!f.hardware ? T("Bei diesem Format fest")
                           : !probed     ? T("Grafikkarte wird noch geprüft …")
