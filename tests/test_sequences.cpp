@@ -570,6 +570,51 @@ void testTimelineFormat()
     CHECK_EQ(oddProject.sequenceFormat(shortId).size(), QSize(kMaxFrameSize, 1000));
 }
 
+// Copy in the 16:9 edit, paste into the 9:16 short: pixel values come over in the short's pixels (like a project
+// resolution change converts them), Paste Attributes too
+void testClipboardAcrossResolutions()
+{
+    Project p; // 1920 x 1080
+    Selection sel;
+    Editor ed(&p, &sel);
+    const int edit = p.currentSequence();
+    p.addMedia(media("/x/a.mp4", 100));
+    ed.addMediaAt({"/x/a.mp4"}, 0);
+    const Clip* a = clipOn(p.timeline(), TrackKind::Video, 0, 0);
+    if (!CHECK(a)) return;
+    const int aId = a->id;
+    ed.modifyClips({aId}, "x", [](Clip& c) {
+        c.transform.transformOn = true;
+        c.transform.posX = 480;
+        c.transform.posY = 270;
+    });
+    sel.set({aId});
+    ed.copySelection();
+    const int shortId = p.addTimeline("Short", 0, QSize(1080, 1920));
+    ed.paste(0);
+    const Clip* pasted = clipOn(p.timeline(), TrackKind::Video, 0, 0);
+    if (CHECK(pasted)) {
+        CHECK(std::abs(pasted->transform.posX - 270) < 0.01); // 480 of 1920 -> 270 of 1080
+        CHECK(std::abs(pasted->transform.posY - 480) < 0.01); // 270 of 1080 -> 480 of 1920
+    }
+    // Paste Attributes onto a clip of the short: the position in its pixels as well
+    ed.addMediaAt({"/x/a.mp4"}, 200);
+    const Clip* target = clipOn(p.timeline(), TrackKind::Video, 0, 1);
+    if (CHECK(target)) {
+        const int targetId = target->id;
+        sel.set({targetId});
+        ed.pasteAttributes(Editor::AttrPosition);
+        const Clip* t = TimelineOps::findClip(p.timeline(), targetId);
+        CHECK(t && std::abs(t->transform.posX - 270) < 0.01);
+    }
+    // Back in the edit: the clipboard's own size, values unchanged
+    p.setCurrentSequence(edit);
+    ed.paste(300);
+    const Clip* again = clipOn(p.timeline(), TrackKind::Video, 0, 1);
+    CHECK(again && again->transform.posX == 480.0);
+    CHECK_EQ(p.sequenceFormat(shortId).size(), QSize(1080, 1920));
+}
+
 // ---- Rendering ----
 
 QImage render(const Timeline& tl, const ProjectFormat& fmt, int pos)
@@ -713,6 +758,7 @@ int main(int argc, char** argv)
     testSequenceIdNotReused();
     testProjectFile();
     testTimelineFormat();
+    testClipboardAcrossResolutions();
     if (!Check::haveFfmpeg()) {
         Check::result();
         return Check::skip("ffmpeg nicht gefunden (Render-Teil)");
