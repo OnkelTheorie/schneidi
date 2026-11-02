@@ -171,6 +171,21 @@ QVector<EffectDescriptor>& registry()
               T("Misst das Rauschen laufend in der Aufnahme (in Sprechpausen) statt den festen Rauschpegel zu nehmen")},
          },
          true, T("Senkt gleichmäßiges Rauschen (Rauschen, Brummen, Lüfter) in Sprachaufnahmen ab"), true},
+        // Voice cleaning in one click (engine/VoiceClean, ported from the mici microphone filter): RNNoise noise
+        // suppression, voice gate, bump/click dampers, shaping with mici's recommended values. ~57 ms latency, compensated.
+        {"voiceclean", T("Stimme säubern"), {}, false,
+         {
+             {"amount", T("Stärke"), {}, EffectParam::Double, 100.0, 0, 100, AnimParam::Count, 0.25, 0, {},
+              T("Wie stark Geräusche unter der Stimme entfernt werden (Prozent)")},
+             {"gate", T("Pausen absenken"), {}, EffectParam::Bool, true, 0, 0, AnimParam::Count, 1, 2, {},
+              T("Senkt alles zwischen den Wörtern ab (erkennt Sprache und lernt den Pegel der Stimme)")},
+             {"clicks", T("Klicks und Stöße dämpfen"), {}, EffectParam::Bool, true, 0, 0, AnimParam::Count, 1, 2, {},
+              T("Dämpft Stöße gegen das Mikrofon und Klicks von Tastatur und Maus, wenn gerade niemand spricht")},
+             {"shape", T("Stimme formen"), {}, EffectParam::Bool, true, 0, 0, AnimParam::Count, 1, 2, {},
+              T("Hochpass, Präsenz, Kompressor, De-Esser und Limiter für eine gleichmäßig verständliche Stimme")},
+         },
+         true, T("Säubert Sprache mit einem Klick: entfernt Rauschen und Geräusche, senkt Pausen ab und formt die Stimme"),
+         true},
         // Color page (DaVinci "Primaries - Color Wheels", own area instead of Effects Library): values as in DaVinci
         // (Lift/Gamma 0 = neutral, Gain 1, Offset 25, Contrast 1, Pivot 0.435, Saturation 50), plus LUT (.cube).
         // Engine: engine/ColorGrade, applied before all other effects.

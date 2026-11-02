@@ -9,6 +9,7 @@
 #include "core/Loudness.h"
 #include "core/TimelineOps.h"
 #include "engine/AudioAnalysis.h"
+#include "engine/VoiceClean.h"
 
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -386,6 +387,44 @@ void opDuck(Session& s, const QJsonObject& op)
     s.notes << note;
 }
 
+// "Stimme säubern" in one call: voice cleaning on clips or whole audio tracks, or off again
+void opCleanVoice(Session& s, const QJsonObject& op)
+{
+    const Timeline& tl = s.project.timeline();
+    QVector<int> ids;
+    if (op.contains("track") || op.contains("tracks")) {
+        QJsonArray given = op.value("tracks").toArray();
+        if (given.isEmpty()) given = op.value("track").isArray() ? op.value("track").toArray() : QJsonArray{op.value("track")};
+        for (const QJsonValue& v : given) {
+            TrackKind k = TrackKind::Video;
+            const int index = parseTrack(v, &k);
+            if (k != TrackKind::Audio || index >= tl.audio.size())
+                fail("BAD_ARGUMENT", "track must be an audio track like A2, got " + v.toVariant().toString());
+            if (tl.audio[index].locked) fail("FAILED", trackName({TrackKind::Audio, index}) + " is locked");
+            ids += s.editor.audioTrackClips(index);
+        }
+        if (ids.isEmpty()) fail("BAD_ARGUMENT", "the track has no clips");
+    } else {
+        ids = clipsOn(s, op, TrackKind::Audio, "voice cleaning");
+    }
+    if (op.value("remove").toBool()) {
+        s.editor.removeEffect(ids, "voiceclean");
+        return;
+    }
+    QVariantMap values;
+    if (op.contains("amount")) values["amount"] = numberOf(op, "amount", 0, 100);
+    for (const char* key : {"gate", "clicks", "shape"})
+        if (op.contains(key)) {
+            if (!op.value(key).isBool()) fail("BAD_ARGUMENT", QString("'%1' must be true or false").arg(key));
+            values[key] = op.value(key).toBool();
+        }
+    const QVector<int> done = s.editor.cleanVoice(ids, values);
+    s.notes << QString("voice cleaning on %1 audio clip(s); the sound is %2 ms late inside the effect, compensated "
+                       "(stays in sync)")
+                   .arg(done.size())
+                   .arg(std::lround(VoiceClean::latencyFor(48000) * 1000.0 / 48000));
+}
+
 } // namespace
 
 void addAudioOps(QVector<OpDef>& ops)
@@ -425,7 +464,20 @@ void addAudioOps(QVector<OpDef>& ops)
                  "sound on 'under' (default -35 dBFS), attack/release: ramp before/after a sound (default 0.15s / "
                  "0.4s), hold: pauses shorter than this stay ducked (default 0.5s). Replaces the clips' volume "
                  "keyframes; run it again after editing.",
-                 opDuck, {"clip", "linked", "replace"}}; // replace:false keeps clips that have volume keyframes
+                 opDuck, {"clip", "linked", "replace"}} // replace:false keeps clips that have volume keyframes
+        << OpDef{"clean_voice", "{op:'clean_voice', clips|track, amount?, gate?, clicks?, shape?, remove?}",
+                 "\"Stimme säubern\": clean speech in one call (voice-overs, TTS, voice chat in game clips) - noise "
+                 "and room sounds out, pauses lowered, voice evened out",
+                 "Adds the audio effect voiceclean to the clips (a video clip stands for its linked audio) or to every "
+                 "clip of the audio tracks in track (\"A2\" or [\"A1\",\"A3\"]); runs again = sets the values. "
+                 "amount 0..100 (default 100) = how much of the noise-suppressed sound (neural noise suppression, "
+                 "RNNoise); gate (default true) = lower everything between words - turn it off where game sound or "
+                 "music under the voice should stay; clicks (default true) = dampen bumps and key/mouse clicks away "
+                 "from speech; shape (default true) = high pass, presence, compressor, de-esser and limiter (-1 dBFS), "
+                 "the voice gets more even and a bit louder. remove:true takes it off. Works at any sample rate, "
+                 "offline and the same in preview and export; the effect's ~57 ms delay is compensated (lips stay in "
+                 "sync). The same effect is in `effects` (id voiceclean) for the generic effect op.",
+                 opCleanVoice, {"clip", "linked", "tracks"}};
 }
 
 } // namespace Cli::detail

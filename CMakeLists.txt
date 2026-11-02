@@ -67,6 +67,7 @@ endif()
 # Sound devices of the own audio engine: miniaudio, a single header (Debian libminiaudio-dev, MSYS2 miniaudio)
 find_path(MINIAUDIO_INCLUDE_DIR miniaudio.h PATH_SUFFIXES miniaudio REQUIRED)
 find_package(Threads REQUIRED)
+include(cmake/RNNoise.cmake)
 
 # Git state for the log and the splash screen (buildinfo.h, refreshed on every build)
 find_package(Git QUIET)
@@ -161,6 +162,7 @@ add_library(schneidi_lib STATIC
     src/engine/MemoryRelease.h    src/engine/MemoryRelease.cpp
     src/engine/RenderCache.h      src/engine/RenderCache.cpp
     src/engine/Denoise.h          src/engine/Denoise.cpp
+    src/engine/VoiceClean.h       src/engine/VoiceClean.cpp
     src/engine/Stabilizer.h       src/engine/Stabilizer.cpp
     src/engine/StabilizeCorrection.h
     src/engine/StabilizeMotion.h  src/engine/StabilizeMotion.cpp
@@ -317,6 +319,7 @@ target_include_directories(schneidi_lib PUBLIC src)
 target_include_directories(schneidi_lib PRIVATE ${MINIAUDIO_INCLUDE_DIR})
 target_link_libraries(schneidi_lib PUBLIC Qt6::Widgets Qt6::Network PkgConfig::FFMPEG
                       Threads::Threads ${CMAKE_DL_LIBS})
+target_link_libraries(schneidi_lib PRIVATE rnnoise)
 if(TARGET Qt6::DBus)
     target_link_libraries(schneidi_lib PUBLIC Qt6::DBus)
     target_compile_definitions(schneidi_lib PRIVATE SCHNEIDI_HAVE_DBUS)

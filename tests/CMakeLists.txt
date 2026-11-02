@@ -309,3 +309,5 @@ if(BENCH_RUBBERBAND_FOUND)
     target_link_libraries(bench_stretch PRIVATE PkgConfig::BENCH_RUBBERBAND)
     target_compile_definitions(bench_stretch PRIVATE SCHNEIDI_HAVE_RUBBERBAND=1)
 endif()
+schneidi_test(test_voice_clean) # voice cleaning (RNNoise): sync at any rate, noise drop, stereo, mixer compensation, editor, CLI op
+target_link_libraries(test_voice_clean PRIVATE schneidi_cli_lib)

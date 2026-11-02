@@ -294,6 +294,12 @@ public:
     // kind (clips that have it already keep it), or remove; one undo step each
     void addEffect(const QVector<int>& ids, const QString& effectId); // also "lut:<path>" (EffectFolders::LutPrefix), "preset:<path>" (Presets::Prefix)
     void removeEffect(const QVector<int>& ids, const QString& effectId);
+    // "Stimme säubern" in one click (Mixer button, CLI op clean_voice): voice cleaning (engine/VoiceClean) on the audio
+    // clips among ids (those that have it keep it) with the given values (keys of the "voiceclean" effect: amount,
+    // gate, clicks, shape; switches it on); one undo step. Returns the clips it is on now
+    QVector<int> cleanVoice(const QVector<int>& ids, const QVariantMap& values = {});
+    // The unlocked clips on audio track `index` (whole track at once: a voice-over track, a game clip's voice chat)
+    QVector<int> audioTrackClips(int index) const;
     // Every effect of the clips (Effects Library, Color page grade/LUT) in one undo step; the Green Screen of the
     // Video tab stays
     void removeAllEffects(const QVector<int>& ids);

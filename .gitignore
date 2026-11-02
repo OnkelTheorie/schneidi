@@ -10,3 +10,5 @@ docs/
 videoeditor-anforderungen.md
 # Local agent instructions, not public
 CLAUDE.md
+# RNNoise model tarball (downloaded by cmake/RNNoise.cmake)
+third_party/rnnoise/rnnoise_data-*.tar.gz
