@@ -1,4 +1,4 @@
-; Installer für schneidi (Inno Setup 6). Nimmt denselben Programmordner wie die ZIP (build-win/schneidi).
+﻿; Installer für schneidi (Inno Setup 6). Nimmt denselben Programmordner wie die ZIP (build-win/schneidi).
 ; Wird von build-windows.sh aufgerufen:  ISCC.exe /DVersion=<version> /DSourceDir=<Programmordner> /DOutputDir=<dist> schneidi.iss
 ; Installation nur für den eigenen Benutzer (keine Administratorrechte), Nutzerdaten in %APPDATA%\schneidi bleiben beim
 ; Deinstallieren erhalten.
