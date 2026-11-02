@@ -14,6 +14,8 @@
 #include "engine/Tracker.h"
 
 #include <QFileInfo>
+#include <QJsonArray>
+#include <QSet>
 
 #include <algorithm>
 #include <cmath>
@@ -641,6 +643,40 @@ void reframeClips(Session& s, const QVector<int>& ids, const QJsonObject& op)
                    .arg(moves.isEmpty() ? QString() : "; position keyframes per clip: " + moves.join(", "));
 }
 
+void prepareReframe(const QJsonObject& editArgs, Context& ctx)
+{
+    const QJsonArray ops = editArgs.value("ops").isObject() ? QJsonArray{editArgs.value("ops")} : editArgs.value("ops").toArray();
+    QVector<Clip> clips;
+    try {
+        Session s(editArgs.value("project").toString()); // a copy of what the app shows
+        int sequence = s.project.currentSequence();
+        for (const QJsonValue& v : ops) {
+            const QJsonObject op = v.toObject();
+            const QString name = op.value("op").toString();
+            if (name == "timeline") sequence = s.sequenceOf(op.value("timeline"));
+            const bool reframe = name == "reframe" && op.value("mode").toString("auto") == "auto";
+            const bool copy = name == "new_timeline" && op.value("reframe").toString() == "auto" && op.contains("from");
+            if (!reframe && !copy) continue;
+            const Sequence* q = s.project.sequence(copy ? s.sequenceOf(op.value("from")) : sequence);
+            if (!q) continue;
+            QSet<int> only;
+            for (const QJsonValue& id : op.value("clips").toArray()) only.insert(id.toInt());
+            if (op.contains("clip")) only.insert(op.value("clip").toInt());
+            for (const Track& t : q->timeline.video)
+                for (const Clip& c : t.clips)
+                    if (Reframe::canReframe(c) && (only.isEmpty() || only.contains(c.id))) clips << c;
+        }
+        const FrameRate rate = s.project.format().rate;
+        for (int i = 0; i < clips.size(); ++i) {
+            const MediaInfo* m = s.project.mediaInfo(clips[i].mediaPath);
+            if (const auto n = ReframeAnalysis::need(clips[i], rate, m ? m->length : 0)) ReframeAnalysis::analyze(*n);
+            if (ctx.progress) ctx.progress(double(i + 1) / clips.size());
+        }
+    } catch (const Error&) {
+        // the op reports it where it runs
+    }
+}
+
 void addLookOps(QVector<OpDef>& ops)
 {
     ops << OpDef{"color", "{op:'color', clips, lift?, gamma?, gain?, offset?, contrast?, pivot?, saturation?, "
@@ -718,8 +754,8 @@ void addLookOps(QVector<OpDef>& ops)
                  "out). mode auto (default) = zoom to fill + x/y keyframes that keep the subject in view: measures the "
                  "picture (motion, detail, faces/skin; a game's busy picture stays near the middle where the "
                  "crosshair is), the camera holds still inside a dead zone, moves eased without overshooting and "
-                 "jumps only at scene cuts. Takes a few seconds per minute of footage the first time (cached per "
-                 "file). mode center = zoom to fill, middle of the picture, no keyframes; mode fit = the whole picture "
+                 "jumps only at scene cuts. Measuring takes roughly 5-10 s per minute of 1080p footage the first time "
+                 "(cached per file). mode center = zoom to fill, middle of the picture, no keyframes; mode fit = the whole picture "
                  "fitted in with a blurred copy behind (fit:'blur'; also 9:16 footage in a 16:9 timeline). "
                  "smoothness 0..1 (default 0.5): 0 follows closely, 1 calm (bigger dead zone, slower moves). Replaces "
                  "the clips' zoom/x/y and their keyframes (rotation, crop, other keyframes stay); fine-tune with "

@@ -144,6 +144,9 @@ QString syncMethodName(Multicam::SyncMethod m);
 // Live: the sound sync of 'multicam' ops measured here in schneidi-cli and handed to the op (private field), so the
 // app does not decode recordings for minutes while the user waits
 QJsonObject withSoundSync(const QJsonObject& editArgs, Context& ctx);
+// Live: the pictures Auto-Reframe ops ('reframe', new_timeline with reframe:'auto') need are measured here in
+// schneidi-cli into the shared cache (engine/ReframeAnalysis), so the app does not decode while the user waits
+void prepareReframe(const QJsonObject& editArgs, Context& ctx);
 QJsonObject transitionStyleJson(const TransitionStyle& st);
 // Name of an animatable value as the ops use it ("x", "opacity", "grade.liftY") and a clip's keyframes by name
 // (times in timeline frames)

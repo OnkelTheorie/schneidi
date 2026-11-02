@@ -1107,6 +1107,7 @@ QJsonObject execute(const Command& cmd, const QJsonObject& args0, Context& ctx)
     if (runsInApp(cmd, args) && !Live::host())
         if (Live::Connection* c = Live::connectionFor(args["project"].toString())) {
             if (cmd.name == "edit") args = withSoundSync(args, ctx); // decode here, not in the app
+            if (cmd.name == "edit") prepareReframe(args, ctx);
             QJsonObject result = Live::run(c, cmd.name, args);
             result["live"] = true;
             return result;
