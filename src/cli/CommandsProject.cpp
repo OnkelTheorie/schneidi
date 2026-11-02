@@ -510,19 +510,16 @@ QJsonObject cmdRender(const QJsonObject& a, Context& ctx)
     s.selectTimeline(a["timeline"]);
     RenderJob job;
     if (a.contains("preset")) {
-        // Deliver presets of the app (built-in and the user's own)
+        // Deliver presets of the app (built-in and the user's own), by name or id ("tiktok", "youtube-1080p")
         const QString name = a["preset"].toString();
-        QStringList names;
-        bool found = false;
-        for (const RenderPreset& p : RenderPresets::all()) {
-            names << p.name;
-            if (p.name.compare(name, Qt::CaseInsensitive) == 0) {
-                job.settings = p.settings;
-                job.preset = p.name;
-                found = true;
-            }
+        const std::optional<RenderPreset> p = RenderPresets::find(name);
+        if (!p) {
+            QStringList names;
+            for (const RenderPreset& q : RenderPresets::all()) names << (q.id.isEmpty() ? q.name : q.id);
+            fail("NOT_FOUND", QString("no preset '%1' (there are: %2)").arg(name, names.join(", ")));
         }
-        if (!found) fail("NOT_FOUND", QString("no preset '%1' (there are: %2)").arg(name, names.join(", ")));
+        job.settings = p->settings;
+        job.preset = p->name;
     }
     const QString formatId = a.contains("format") ? a["format"].toString() : job.settings.format;
     const auto& formats = renderFormats();
@@ -766,8 +763,12 @@ QJsonObject cmdEffects(const QJsonObject& a, Context&)
 QString presetHelp()
 {
     QStringList names;
-    for (const RenderPreset& p : RenderPresets::all()) names << p.name;
-    return "Deliver preset of the app (other parameters override it): " + names.join(", ");
+    for (const RenderPreset& p : RenderPresets::all())
+        names << (p.id.isEmpty() ? "'" + p.name + "'" : QString("%1 ('%2')").arg(p.id, p.name));
+    return "Deliver preset of the app by id or name (other parameters override it): " + names.join(", ")
+           + ". youtube-shorts / instagram-reels / tiktok (also 'shorts', 'reels'): 1080x1920 H.264 web quality, the "
+             "timeline's frame rate up to 60 fps, AAC 48 kHz; run `check` with the same platform first (length "
+             "limit, -14 LUFS, true peak)";
 }
 
 // The running app: state (playhead, selection …) and control (play, seek, select, undo, save, proxies, cleaning up

@@ -1147,7 +1147,7 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
             QJsonObject master = run("info", {{"project", sp}, {"summary", true}})["timeline"]["master"].toObject();
             CHECK_EQ(master["volume_db"].toDouble(), 0.0);
             CHECK(master.contains("limiter") && !master["limiter"].toBool());
-            CHECK_EQ(master["limiter_db"].toDouble(), -1.0);
+            CHECK_EQ(master["limiter_db"].toDouble(), -1.2); // kDefaultLimiterDb: a little under check's -1 dBTP
             run("edit", {{"project", sp}, {"ops", R"([{"op":"mixer","track":"A1","mute":true},
                 {"op":"mixer","track":"A2","solo":true},{"op":"track","track":"V2","hidden":true,"lock":true},
                 {"op":"mixer","track":"master","volume_db":-3,"limiter":true,"limiter_db":-2}])"}});

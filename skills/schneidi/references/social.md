@@ -2,6 +2,25 @@
 
 Goal: a vertical video that works on a phone, muted, in the first two seconds.
 
+## One call: `short`
+From recordings to a finished short in one step, e.g. a game clip:
+`short` with `files` `["/clips/cs2/cs2_clip_….mkv"]` (CLI: `schneidi-cli short /clips/cs2/cs2_clip_….mkv`).
+It runs the steps below with the usual commands and answers with `out`, `length_s`, the `moments` it used, `done`
+(every step), `check` (what it fixed, what is left) and `notes`:
+1. `highlights` per file - with the kill feed of `game` (`cs2`, `valorant`; by default from the folder or file name,
+   `none` = loud moments only), every candidate padded to at least 6 s, the best ones within `min_s`..`max_s`
+   (default 15-45 s); nothing found = the end of the recording (where a clip tool puts the moment).
+2. A timeline "Short-Schnitt" with them (`keep`) in the recordings' shape, then the `aspect` copy "Short"
+   (`9:16` default, `1:1`, `4:5`) with `reframe` (`auto` default, `center`, `fit`).
+3. Word captions (`captions` `karaoke` default, `word`, `off`; `language`) - only when whisper is installed. Otherwise
+   a note with the install command; it never installs: ask the user first.
+4. `check` for the platform `for` (`shorts` default, `reels`, `tiktok`: length limit, -14 LUFS, true peak) and its sound
+   fix (limiter, fader) applied.
+5. `render` with the platform's preset into `out` (default `<first file>-short.mp4` beside it, numbered; an existing
+   `out` needs `overwrite`). The project (`project`, default beside `out`) keeps both timelines for reworking.
+Without `files`: `project` (also `"@app"`) and `timeline` = an existing cut to turn into the short. Look at the
+result yourself afterwards (`frames` sheet of `out`) - one call does not replace that.
+
 ## Format
 - New project `width` 1080, `height` 1920 (or `template` "vertical"), frame rate of the material. (`render` `size`
   only letterboxes a landscape timeline into a portrait file - that is not a vertical edit.) In an existing project
@@ -80,5 +99,9 @@ Goal: a vertical video that works on a phone, muted, in the first two seconds.
     on the beat. `ease` (`in_out` is the default for whips) shapes the speed; wipes (`wipe_*`, `softness`) work too.
 
 ## Render
-`render` with `preset` `"Phone / Vertical 9:16"` (H.264, web quality), `subtitles` `"burn"` if the subtitles are on
-a subtitle track. Then [check.md](check.md): is the subject in frame in every shot, is all text inside the safe area?
+`render` with `preset` `"shorts"`, `"reels"` or `"tiktok"` (YouTube Shorts, Instagram Reels, TikTok: 1080x1920
+H.264 in web quality, the timeline's frame rate up to 60 fps, AAC 48 kHz) - `"phone"` is the same without the
+60 fps limit. `subtitles` `"burn"` if the subtitles are on a subtitle track. Before it, `check` with the same
+`for` (the platform): `too_long` = longer than the platform takes as a short (Shorts and Reels 3 min, TikTok 10 min), and the
+sound fix for -14 LUFS / -1 dBTP. Then [check.md](check.md): is the subject in frame in every shot, is all text inside
+the safe area?

@@ -9,6 +9,7 @@
 #include "engine/Background.h"
 #include "engine/Engine.h"
 #include "engine/Extensions.h"
+#include "engine/HardwareEncoders.h"
 #include "engine/FrameGaps.h"
 
 #include <QEventLoop>
@@ -325,6 +326,13 @@ QJsonObject cmdExtensions(const QJsonObject& a, Context& ctx)
         list << o;
     }
     QJsonObject out{{"extensions", list}, {"folder", Extensions::rootDir()}};
+    // What works now: transcribe (whisper with a model), speak (piper with a voice), x264 (H.264/H.265 with x264/x265,
+    // built in or the extension)
+    QJsonArray ready;
+    if (!Extensions::whisperProgram().isEmpty() && !Extensions::installedWhisperModels().isEmpty()) ready << "transcribe";
+    if (!Extensions::piperProgram().isEmpty() && !Extensions::installedVoices().isEmpty()) ready << "speak";
+    if (HardwareEncoders::builtIn("libx264") || !HardwareEncoders::externalProgram("libx264").isEmpty()) ready << "x264";
+    out["ready_for"] = ready;
     if (!done.isEmpty()) out["done"] = done;
     if (const QString ffmpeg = Extensions::encoderProgram(); !ffmpeg.isEmpty()) out["encoder_program"] = ffmpeg;
     if (const QString piper = Extensions::piperProgram(); !piper.isEmpty()) out["piper_program"] = piper;

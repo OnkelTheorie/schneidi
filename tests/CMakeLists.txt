@@ -114,6 +114,8 @@ schneidi_test(test_live)
 schneidi_test(test_transcript_cut)
 schneidi_test(test_captions) # word captions: timing, edits, CLI op, render, embedded text streams
 target_link_libraries(test_captions PRIVATE schneidi_cli_lib)
+schneidi_test(test_short) # `short`: moments, Shorts/Reels/TikTok presets, check platform, limiter, end to end
+target_link_libraries(test_short PRIVATE schneidi_cli_lib)
 schneidi_test(test_speech) # text to speech: piper extension, cache, fake piper, CLI op speak
 target_link_libraries(test_speech PRIVATE schneidi_cli_lib)
 target_link_libraries(test_live PRIVATE schneidi_cli_lib)
