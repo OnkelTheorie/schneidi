@@ -885,7 +885,11 @@ const QVector<Command>& commands()
           {"gaps", T::Boolean, "also find jumps in the picture's time stamps longer than 2 frame durations: 'jumps' "
                                "(at_s, length_s, missing_frames; from/to = frames that repeat the old picture) and "
                                "'stutter' (jumps less than 0.5 s apart as one stretch, from/to). Fast (reads the "
-                               "packets, no decoding), cached. Cut stutter stretches out of the ranges you use"}},
+                               "packets, no decoding), cached. Cut stutter stretches out of the ranges you use"},
+          {"bars", T::Boolean, "also look for black bars baked into the picture (a 4:3 game in a 16:9 recording, "
+                               "letterbox): 'content' = {x, y, w, h} of the picture between them in % (decodes about "
+                               "a dozen pictures, cached; once known it is shown without bars:true too). reframe and "
+                               "crop_bars use it"}},
          cmdProbe},
         {"silence", "Find pauses in the audio of a media file or a project's timeline. Returns 'silence' and "
                     "'sound' ranges [from, to); for a project they are timeline frames and 'sound' fits the 'keep' "

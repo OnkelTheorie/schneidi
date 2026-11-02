@@ -31,7 +31,7 @@ namespace BarDetect {
 
 namespace {
 
-constexpr int kVersion = 1; // bump when the measurement changes
+constexpr int kVersion = 2; // bump when the measurement changes
 constexpr int kW = 320, kH = 240;
 constexpr int kSamples = 12;
 constexpr int kBlack = 32;          // gray value still counted as black (limited-range black is 16, plus noise)
@@ -84,10 +84,29 @@ QRectF measure(const std::vector<std::vector<uint8_t>>& pics)
     while (top < kH && barRow[size_t(top)]) ++top;
     while (bottom < kH - top && barRow[size_t(kH - 1 - bottom)]) ++bottom;
     if (top + bottom >= kH * 9 / 10) top = bottom = 0;
-    // Thin edges are an encoder's padding, not bars; a bar's last line is mixed with the picture (the shrinking
-    // averages them): one more line of it goes
-    const auto edge = [](int n, int side) { return n < kMinBar * side ? 0.0 : double(n + 1) / side; };
-    const double l = edge(left, kW), r = edge(right, kW), t = edge(top, kH), b = edge(bottom, kH);
+    // The first line of the picture may be mixed with the bar (the shrinking averages a bar edge inside a line):
+    // clearly darker than the line after it in the samples where that one is bright, it goes too
+    const auto mean = [&](const std::vector<uint8_t>& p, bool column, int i) {
+        double sum = 0;
+        const int n = column ? kH : kW;
+        for (int k = 0; k < n; ++k) sum += column ? p[size_t(k) * kW + size_t(i)] : p[size_t(i) * kW + size_t(k)];
+        return sum / n;
+    };
+    const auto mixed = [&](bool column, int line, int next) {
+        double a = 0, b = 0;
+        for (const auto& p : pics) {
+            const double m = mean(p, column, next);
+            if (m > kBlack) a += mean(p, column, line), b += m;
+        }
+        return b > 0 && a < 0.8 * b;
+    };
+    // Thin edges are an encoder's padding, not bars
+    const auto edge = [&](int n, int side, bool column, int line, int next) {
+        if (n < kMinBar * side) return 0.0;
+        return double(n + (mixed(column, line, next) ? 1 : 0)) / side;
+    };
+    const double l = edge(left, kW, true, left, left + 1), r = edge(right, kW, true, kW - 1 - right, kW - 2 - right);
+    const double t = edge(top, kH, false, top, top + 1), b = edge(bottom, kH, false, kH - 1 - bottom, kH - 2 - bottom);
     return QRectF(l, t, std::max(0.05, 1 - l - r), std::max(0.05, 1 - t - b));
 }
 

@@ -78,6 +78,7 @@ void opNewTimeline(Session& s, const QJsonObject& op)
         if (op.contains("reframe")) {
             QJsonObject r{{"mode", op.value("reframe")}};
             if (op.contains("smoothness")) r["smoothness"] = op.value("smoothness");
+            if (op.contains("bars")) r["bars"] = op.value("bars");
             reframeClips(s, {}, r);
         }
         if (!op.value("switch").toBool(true)) s.project.setCurrentSequence(previous);
@@ -198,7 +199,7 @@ void addTimelineOps(QVector<OpDef>& ops)
                  "timeline = id or name from `info` (compound clips are timelines too). open:true = the app opens "
                  "this timeline next time; otherwise the app keeps showing the one the user had open.",
                  opTimeline}
-        << OpDef{"new_timeline", "{op:'new_timeline', name?, aspect?, width?, height?, from?, reframe?, smoothness?, "
+        << OpDef{"new_timeline", "{op:'new_timeline', name?, aspect?, width?, height?, from?, reframe?, smoothness?, bars?, "
                                  "switch?:true, open?}",
                  "new empty timeline (aspect:'9:16' = its own 1080x1920 next to a 16:9 edit), or with from a copy of "
                  "a timeline in that shape, reframe:'auto' = its clips follow their subject (the short of an edit in "
@@ -206,7 +207,7 @@ void addTimelineOps(QVector<OpDef>& ops)
                  "aspect: 16:9 (1920x1080), 9:16 (1080x1920), 1:1 (1080x1080), 4:5 (1080x1350), 4:3 (1440x1080), or "
                  "width+height (even). Without: the project's resolution (and it follows a later project `format`). "
                  "from = id or name of a timeline to copy (all clips, titles, sound, markers; default name '<from> "
-                 "<aspect>'); reframe: auto, center or fit as in op 'reframe' (smoothness too), else the clips keep "
+                 "<aspect>'); reframe: auto, center or fit as in op 'reframe' (smoothness and bars too), else the clips keep "
                  "their transform (fitted in, with bars).",
                  opNewTimeline}
         << OpDef{"rename_timeline", "{op:'rename_timeline', timeline?, name}", {}, {}, opRenameTimeline}
