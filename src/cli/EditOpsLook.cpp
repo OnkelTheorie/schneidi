@@ -294,7 +294,7 @@ void opBlurNames(Session& s, const QJsonObject& op)
         NameBlur::Options o;
         o.maxMasks = GradeWindows::kMax - GradeWindows::list(c).size();
         o.samplesPerSecond = s.format().rate.fps() / TextRegions::sampleStep(s.format().rate);
-        o.screen = TextRegions::screenOf(c);
+        o.screen = TextRegions::screenOf(s.format(), c);
         int dropped = 0;
         const QVector<NameBlur::Mask> m = NameBlur::plan(r.samples, tpl, c.length(), o, &dropped);
         masks[id] = m;

@@ -6,8 +6,10 @@
 // smeared along the row into text lines, cut into single lines where the rows run empty, and kept when a line has
 // the height, width, fill and contrast of text. Finds words, not what they say: a template decides which count.
 //
-// Per clip, cached in QStandardPaths::CacheLocation/textregions (named after the file, its size and time, the clip's
-// in/out and the sample step). Runs in any thread, cancellable.
+// A clip is analysed on its own picture (not fitted into the timeline's frame) with black bars cut off, so the game
+// picture always has about kSide on its longer side; the result is given in the timeline's frame like the windows.
+// Per clip, cached in QStandardPaths::CacheLocation/textregions (in picture coordinates; named after the file, its
+// size and time, the clip's in/out, the sample step and its picture shape). Runs in any thread, cancellable.
 
 #include "core/NameBlur.h"
 #include "core/ProjectFormat.h"
@@ -36,10 +38,11 @@ struct Result {
     bool canceled = false;
 };
 
-// The game's screen in the clip's picture for the templates: black bars baked into the file (engine/BarDetect, cached
-// per file) and the shape the clip shows the file at (a stretched 4:3 recording put right, Clip::pictureAspect).
-// Blocking the first time for a file (a dozen decoded pictures).
-NameBlur::Screen screenOf(const Clip& c);
+// The game's screen for the templates, in the frame the clip is analysed in (window geometry is in % of the whole
+// frame, bars included): the picture fitted into the timeline's frame, black bars baked into the file
+// (engine/BarDetect, cached per file) and the shape the clip shows the file at (a stretched 4:3 recording put right,
+// Clip::pictureAspect). Blocking the first time for a file (a dozen decoded pictures).
+NameBlur::Screen screenOf(const ProjectFormat& format, const Clip& c);
 
 QString cacheDir();
 // The clip's picture (without its effects and transform, as the windows see it) sampled from start to end.

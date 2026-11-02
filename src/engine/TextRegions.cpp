@@ -28,7 +28,7 @@ namespace TextRegions {
 
 namespace {
 
-constexpr int kVersion = 1;        // bump when the detection changes (cached results become stale)
+constexpr int kVersion = 2;        // bump when the detection changes (cached results become stale)
 constexpr int kStep = 30;          // brightness step of a letter's edge (0..255)
 constexpr int kMinContrast = 70;   // darkest to brightest inside a text line
 constexpr double kMaxHeight = 0.06; // of the picture height: larger is not HUD text
@@ -42,14 +42,15 @@ struct Segment {
 QString cacheName(const Clip& c, int step)
 {
     const QFileInfo fi(c.mediaPath);
-    const QString id = QString("%1|%2|%3|%4|%5|%6|%7")
+    const QString id = QString("%1|%2|%3|%4|%5|%6|%7|%8")
                            .arg(kVersion)
                            .arg(fi.absoluteFilePath())
                            .arg(fi.size())
                            .arg(fi.lastModified().toMSecsSinceEpoch())
                            .arg(c.in)
                            .arg(c.out)
-                           .arg(step);
+                           .arg(step)
+                           .arg(c.pictureAspect);
     return QString::fromLatin1(QCryptographicHash::hash(id.toUtf8(), QCryptographicHash::Sha1).toHex()) + ".json";
 }
 
@@ -82,12 +83,45 @@ bool read(const QByteArray& data, QVector<NameBlur::Sample>* out)
 
 } // namespace
 
-NameBlur::Screen screenOf(const Clip& c)
+namespace {
+
+// The clip's picture in the frame (fitted, centred; 0..1 of the frame) and the game picture inside it (0..1 of the
+// picture, less with black bars), the picture's shape as shown
+struct Placement {
+    QRectF picture{0, 0, 1, 1};
+    QRectF content{0, 0, 1, 1};
+    double aspect = 0;
+};
+
+Placement placementOf(const ProjectFormat& format, const Clip& c)
+{
+    Placement p;
+    p.aspect = MediaAspect::ofClip(c);
+    if (p.aspect <= 0 || format.width <= 0 || format.height <= 0) return p;
+    p.content = BarDetect::content(c.mediaPath).value_or(QRectF(0, 0, 1, 1));
+    const QSizeF frame(format.width, format.height);
+    const QSizeF fit = MediaAspect::fit(p.aspect, frame);
+    const double fw = fit.width() / frame.width(), fh = fit.height() / frame.height();
+    p.picture = QRectF((1 - fw) / 2, (1 - fh) / 2, fw, fh);
+    return p;
+}
+
+// r (0..1 of `inner`) as 0..1 of what `inner` lies in
+QRectF outOf(const QRectF& inner, const QRectF& r)
+{
+    return QRectF(inner.x() + r.x() * inner.width(), inner.y() + r.y() * inner.height(), r.width() * inner.width(),
+                  r.height() * inner.height());
+}
+
+} // namespace
+
+NameBlur::Screen screenOf(const ProjectFormat& format, const Clip& c)
 {
     NameBlur::Screen s;
-    s.content = BarDetect::content(c.mediaPath).value_or(QRectF(0, 0, 1, 1));
-    const double aspect = MediaAspect::ofClip(c);
-    if (aspect > 0 && s.content.height() > 0) s.aspect = aspect * s.content.width() / s.content.height();
+    const Placement p = placementOf(format, c);
+    if (p.aspect <= 0) return s;
+    if (p.content.height() > 0) s.aspect = p.aspect * p.content.width() / p.content.height();
+    s.content = outOf(p.picture, p.content);
     return s;
 }
 
@@ -229,12 +263,20 @@ Result analyze(const ProjectFormat& format, const Clip& c, const std::atomic<boo
         return res;
     }
     const int step = sampleStep(format.rate);
+    // Found in the clip's picture (0..1 of it, cached like that), returned in the frame (0..1 of it, bars included,
+    // like the windows)
+    const Placement place = placementOf(format, c);
+    const auto toFrame = [&place](Result& r) {
+        for (NameBlur::Sample& x : r.samples)
+            for (QRectF& b : x.boxes) b = outOf(place.picture, b);
+    };
     // Retimed clips are not cached: the key would have to hold the whole speed curve
     const bool cacheable = !c.isRetimed();
     const QString file = QDir(cacheDir()).filePath(cacheName(c, step));
     if (cacheable) {
         QFile f(file);
         if (f.open(QIODevice::ReadOnly) && read(f.readAll(), &res.samples)) {
+            toFrame(res);
             if (progress) progress->store(1000);
             return res;
         }
@@ -254,7 +296,17 @@ Result analyze(const ProjectFormat& format, const Clip& c, const std::atomic<boo
     Timeline tl;
     tl.video.resize(1);
     tl.video[0].clips << plain;
-    auto source = Snapshot::Source::timeline(format, tl);
+    // A frame of the picture's own shape (no bars from fitting it into the timeline), so large that the game picture
+    // between black bars gets kSide on its longer side: the same text size whatever the timeline's shape (a 16:9 clip
+    // in a 9:16 short) and bars
+    ProjectFormat own = format;
+    const QRectF content = place.content;
+    if (place.aspect > 0) {
+        const double h = kSide / std::max(content.width() * place.aspect, content.height());
+        own.height = std::clamp(int(std::lround(h / 2)) * 2, kMinFrameSize, kMaxFrameSize);
+        own.width = std::clamp(int(std::lround(h * place.aspect / 2)) * 2, kMinFrameSize, kMaxFrameSize);
+    }
+    auto source = Snapshot::Source::timeline(own, tl);
     const int length = c.length();
     // Decoding is sequential, the detection runs on a batch of pictures at once (it costs more than decoding)
     const int batch = int(std::clamp(std::thread::hardware_concurrency(), 2u, 8u));
@@ -267,7 +319,7 @@ Result analyze(const ProjectFormat& format, const Clip& c, const std::atomic<boo
         QVector<int> frames;
         std::vector<std::future<QVector<QRectF>>> found;
         for (; f < length && int(frames.size()) < batch; f += step) {
-            QImage img = source->frame(f, kSide);
+            QImage img = source->frame(f);
             if (img.isNull()) {
                 if (f == 0) {
                     res.error = T("Kein Bild vom Clip");
@@ -276,9 +328,16 @@ Result analyze(const ProjectFormat& format, const Clip& c, const std::atomic<boo
                 continue;
             }
             frames << f;
+            const QRect crop(int(std::lround(content.x() * img.width())), int(std::lround(content.y() * img.height())),
+                             int(std::lround(content.width() * img.width())), int(std::lround(content.height() * img.height())));
+            if (crop != img.rect()) img = img.copy(crop);
             found.push_back(std::async(std::launch::async, [img = std::move(img)] { return detect(img); }));
         }
-        for (int k = 0; k < frames.size(); ++k) res.samples << NameBlur::Sample{frames[k], found[size_t(k)].get()};
+        for (int k = 0; k < frames.size(); ++k) {
+            QVector<QRectF> boxes = found[size_t(k)].get();
+            for (QRectF& b : boxes) b = outOf(content, b); // 0..1 of the picture
+            res.samples << NameBlur::Sample{frames[k], boxes};
+        }
         if (progress) progress->store(int(qint64(std::min(f, length)) * 1000 / length));
     }
     if (cacheable) {
@@ -286,6 +345,7 @@ Result analyze(const ProjectFormat& format, const Clip& c, const std::atomic<boo
         QSaveFile out(file);
         if (out.open(QIODevice::WriteOnly) && out.write(write(res.samples)) >= 0) out.commit(); // a cache: may fail
     }
+    toFrame(res);
     if (progress) progress->store(1000);
     return res;
 }

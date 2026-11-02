@@ -21,13 +21,14 @@ const char* templateId(Template t);
 bool templateFromId(const QString& id, Template* t);
 QStringList templateIds();
 
-// Where the game's picture lies in the clip's picture and what shape the game drew its HUD for. The templates are
+// Where the game's picture lies in the frame the masks are measured in (window geometry: % of the frame, bars
+// included) and what shape the game drew its HUD for. The templates are
 // measured on a 16:9 screen; a HUD keeps its size with the screen height and sticks to the left edge, the middle or
 // the right edge, so on a 4:3 screen (stretched to 16:9 by the recorder, or between black bars) every zone keeps its
 // distance to its edge in heights.
 struct Screen {
     double aspect = 16.0 / 9.0;     // width / height of the game's screen
-    QRectF content{0, 0, 1, 1};     // the game picture in the clip's picture (0..1; less with black bars)
+    QRectF content{0, 0, 1, 1};     // the game picture in the frame (0..1; less with black bars or another shape)
     bool isDefault() const { return std::abs(aspect - 16.0 / 9.0) < 0.01 && content == QRectF(0, 0, 1, 1); }
 };
 

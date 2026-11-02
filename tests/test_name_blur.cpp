@@ -19,6 +19,7 @@
 
 #include <QApplication>
 #include <QDir>
+#include <QFileInfo>
 #include <QFontMetrics>
 #include <QJsonArray>
 #include <QPainter>
@@ -305,7 +306,8 @@ void testScreens()
     CHECK(near(zone(boxed, "killfeed").right(), 0.875) && near(zone(boxed, "killfeed").width(), 0.4));
     CHECK(near(zone(boxed, "chat").left(), 0.125));
     CHECK(near(zone(boxed, "view").left(), 0.125) && near(zone(boxed, "view").right(), 0.875));
-    CHECK(near(zone(boxed, "player").center().x(), 0.5));
+    // the middle stays the middle: same place in the file as on a 16:9 screen
+    CHECK(near(zone(boxed, "player").center().x(), zone(wide, "player").center().x()));
     // A kill feed entry of the 4:3 picture between bars counts; the same place in a full 16:9 picture is the view
     QVector<NameBlur::Sample> s;
     for (int f = 0; f < 30; ++f) s << NameBlur::Sample{f, {QRectF(0.7, 0.1, 0.15, 0.02)}};
@@ -474,6 +476,38 @@ void testCli(const QString& dir)
     CHECK(helped);
 }
 
+// The game video in a 9:16 timeline (a short): text is found on the clip's own picture and given in the frame,
+// where the picture lies in a band in the middle; the templates follow it there
+void testOtherFrame(const QString& dir)
+{
+    const QString video = dir + "/game.mp4";
+    if (!QFileInfo::exists(video)) return; // testCli failed already
+    const ProjectFormat tall{540, 960, FrameRate{25, 1}};
+    Clip c;
+    c.id = 1;
+    c.mediaPath = video;
+    c.out = kFrames - 1;
+    const TextRegions::Result r = TextRegions::analyze(tall, c);
+    if (!CHECK(r.error.isEmpty() && r.samples.size() == kFrames)) return;
+    const double band = (960 - 540 * 9.0 / 16) / 2 / 960; // picture from here to 1 - band
+    Truth truth;
+    gamePicture(960, 540, 10, &truth);
+    const QRectF feed = truth.names[0];
+    const QRectF inFrame(feed.x(), band + feed.y() * (1 - 2 * band), feed.width(), feed.height() * (1 - 2 * band));
+    CHECK(coverage(inFrame, r.samples[10].boxes) > 0.6);
+    for (const QRectF& b : r.samples[10].boxes) CHECK(b.top() >= band - 1e-6 && b.bottom() <= 1 - band + 1e-6);
+    const NameBlur::Screen screen = TextRegions::screenOf(tall, c);
+    CHECK(std::abs(screen.aspect - 16.0 / 9) < 0.01);
+    CHECK(std::abs(screen.content.top() - band) < 1e-3 && std::abs(screen.content.width() - 1) < 1e-6);
+    NameBlur::Options o;
+    o.screen = screen;
+    o.samplesPerSecond = 25;
+    bool killfeed = false;
+    for (const NameBlur::Mask& m : NameBlur::plan(r.samples, NameBlur::Template::Cs2, kFrames, o))
+        if (m.zone == "killfeed") killfeed = NameBlur::rectAt(m, 20).intersects(inFrame);
+    CHECK(killfeed);
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -492,5 +526,6 @@ int main(int argc, char** argv)
     Check::initEngine();
     std::setlocale(LC_NUMERIC, "C");
     testCli(tmp.path());
+    testOtherFrame(tmp.path());
     return Check::result();
 }
