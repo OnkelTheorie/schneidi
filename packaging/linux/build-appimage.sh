@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
-# Builds dist/schneidi-<version>-x86_64.AppImage (release build + Qt, ffmpeg/ffprobe).
-# SCHNEIDI_NO_GPL=1: without anything GPL (own LGPL FFmpeg) -> …-x86_64-nogpl.AppImage
+# Builds dist/schneidi-<version>-x86_64.AppImage (release build + Qt, ffmpeg/ffprobe), without anything GPL (0.16:
+# the only Linux package; x264/x265 are an optional download in the program, engine/Extensions "x264").
+# SCHNEIDI_NO_GPL=0: with the build system's FFmpeg (GPL: x264/x265 built in) -> …-x86_64-gpl.AppImage, for local
+# comparisons only, not for releases
 # AppDir layout like the Windows program folder (see src/engine/Bundle.h):
 #   usr/bin/{schneidi,schneidi-cli,ffmpeg,ffprobe}
 # Run from the project folder: packaging/linux/build-appimage.sh
@@ -15,10 +17,10 @@ DIST="$ROOT/dist"
 ARCH="$(uname -m)"
 MULTIARCH="$(gcc -print-multiarch 2>/dev/null || echo "$ARCH-linux-gnu")"
 
-# SCHNEIDI_NO_GPL=1: nothing GPL in the package (0.14). FFmpeg from packaging/linux/build-ffmpeg-lgpl.sh (OpenH264,
+# Nothing GPL in the package (0.14, the default since 0.16). FFmpeg from packaging/linux/build-ffmpeg-lgpl.sh (OpenH264,
 # kvazaar, SVT-AV1 … instead of x264/x265; FFMPEG_PREFIX, built here if missing), checked at the end with
 # `schneidi-cli --licenses`.
-NO_GPL="${SCHNEIDI_NO_GPL:-0}"
+NO_GPL="${SCHNEIDI_NO_GPL:-1}"
 CMAKE_EXTRA=()
 FFMPEG_BIN_DIR=""
 if [ "$NO_GPL" = 1 ]; then
@@ -29,7 +31,8 @@ if [ "$NO_GPL" = 1 ]; then
     export LD_LIBRARY_PATH="$FFMPEG_PREFIX/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
     CMAKE_EXTRA+=(-DSCHNEIDI_NO_GPL=ON)
     FFMPEG_BIN_DIR="$FFMPEG_PREFIX/bin"
-    BUILD="$ROOT/build-appimage-nogpl"
+else
+    BUILD="$ROOT/build-appimage-gpl"
     APPDIR="$BUILD/AppDir"
 fi
 
@@ -119,7 +122,8 @@ if [ "$NO_GPL" = 1 ]; then
         echo "!! GPL library in the AppDir" >&2
         exit 1
     fi
-    mv "$APPIMAGE" "${APPIMAGE%.AppImage}-nogpl.AppImage"
-    APPIMAGE="${APPIMAGE%.AppImage}-nogpl.AppImage"
+else
+    mv "$APPIMAGE" "${APPIMAGE%.AppImage}-gpl.AppImage"
+    APPIMAGE="${APPIMAGE%.AppImage}-gpl.AppImage"
 fi
 echo ">> fertig: $APPIMAGE"
