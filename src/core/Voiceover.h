@@ -48,7 +48,9 @@ std::optional<Placement> place(double fileStart, int from, int fileFrames);
 // Pairs of (frames the input delivered, timeline seconds heard) while recording (see above)
 class Alignment {
 public:
-    // Pairs only count while the clock moves (heardSeconds larger than at the call before)
+    // Pairs only count while the clock moves (heardSeconds larger than at the call before). Once a pair counted, a
+    // clock going back (a seek or a loop back, J/reverse play) ends the pairing: later pairs would sit earlier in
+    // the file than the sound they belong to and pull the take forward; the take keeps the place from before.
     void add(long long capturedFrames, double heardSeconds, int rate);
     bool empty() const { return !m_best; }
     // Timeline seconds at file sample 0: best pair minus an input delay (samples) and the user offset
@@ -56,6 +58,7 @@ public:
 
 private:
     std::optional<double> m_best, m_lastHeard;
+    bool m_ended = false;
 };
 
 } // namespace Voiceover

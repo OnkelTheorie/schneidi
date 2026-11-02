@@ -154,6 +154,16 @@ int main(int argc, char** argv)
         CHECK(std::abs(*a.fileStartSeconds(0, 48000, 0) - 3.895) < 1e-9);
         // Input buffer of 960 samples (20 ms) and a user offset of 30 ms
         CHECK(std::abs(*a.fileStartSeconds(960, 48000, 30) - 3.845) < 1e-9);
+        // The playhead jumps back while recording (a click on the ruler, J): the pairs after it do not count
+        a.add(48000, 2.0, 48000);
+        a.add(48000 + 4800, 2.1, 48000); // would be 1.1
+        CHECK(std::abs(*a.fileStartSeconds(0, 48000, 0) - 3.895) < 1e-9);
+        // Before the first counted pair a jump back is the start (seek to the pre-roll): pairing goes on
+        Voiceover::Alignment b;
+        b.add(0, 4.0, 48000);
+        b.add(0, 2.0, 48000);
+        b.add(4800, 2.1, 48000);
+        CHECK(std::abs(*b.fileStartSeconds(0, 48000, 0) - 2.0) < 1e-9);
     }
 
     // ---- Editor::placeRecording: onto the armed track at the playhead, overwrites, one undo step

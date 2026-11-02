@@ -63,7 +63,11 @@ std::optional<Placement> place(double fileStart, int from, int fileFrames)
 
 void Alignment::add(long long capturedFrames, double heardSeconds, int rate)
 {
-    if (rate <= 0 || !std::isfinite(heardSeconds)) return;
+    if (m_ended || rate <= 0 || !std::isfinite(heardSeconds)) return;
+    if (m_best && m_lastHeard && heardSeconds < *m_lastHeard) {
+        m_ended = true;
+        return;
+    }
     // A standing clock (the player waits for the picture, a hiccup) says nothing about when the sound was heard:
     // only pairs taken while it runs count
     const bool running = m_lastHeard && heardSeconds > *m_lastHeard;
