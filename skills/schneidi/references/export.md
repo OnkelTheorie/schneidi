@@ -2,7 +2,7 @@
 
 ## Presets (`render` `preset`)
 By id or name: `youtube-1080p`, `youtube-4k`, `phone` (Phone / Vertical 9:16), `youtube-shorts` / `shorts`,
-`instagram-reels` / `reels`, `tiktok` (1080x1920, up to 60 fps, AAC 48 kHz; `check` with the same `platform` first),
+`instagram-reels` / `reels`, `tiktok` (1080x1920, up to 60 fps, AAC 48 kHz; `check` with the same `for` first),
 `small`, `h265`, `av1`, `prores`, `dnxhr`, `gif`, audio only `wav`, `flac`, `aac`, `mp3`. Other parameters override
 the preset. `help` `render` lists the current set with the user's own presets.
 

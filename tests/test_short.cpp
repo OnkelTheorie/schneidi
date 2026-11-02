@@ -214,7 +214,7 @@ int main(int argc, char** argv)
         CHECK_EQ(info["timeline"]["width"].toInt(), 1080);
         CHECK_EQ(info["timeline"]["height"].toInt(), 1920);
         // The rendered file passes the platform check's sound part (true peak under -1 dBTP)
-        const QJsonObject fileCheck = run("check", {{"source", out}, {"platform", "shorts"}});
+        const QJsonObject fileCheck = run("check", {{"source", out}, {"for", "shorts"}});
         bool peakOk = true;
         for (const QJsonValue& i : fileCheck["issues"].toArray())
             peakOk &= i["check"].toString() != "true_peak" && i["check"].toString() != "clipping";
@@ -228,7 +228,7 @@ int main(int argc, char** argv)
         CHECK_EQ(run("short", {{"files", QJsonArray{clip}}, {"out", out}})["error"].toString(), QString("EXISTS"));
         // An existing timeline as the cut
         const QJsonObject fromTimeline =
-            run("short", {{"project", proj}, {"timeline", "Short-Schnitt"}, {"captions", "off"}, {"platform", "tiktok"},
+            run("short", {{"project", proj}, {"timeline", "Short-Schnitt"}, {"captions", "off"}, {"for", "tiktok"},
                           {"aspect", "1:1"}, {"out", dir.filePath("out/square.mp4")}});
         CHECK_EQ(fromTimeline["height"].toInt(), 1080);
         CHECK_EQ(fromTimeline["platform"].toString(), QString("TikTok"));

@@ -31,12 +31,13 @@ QString num1(double v) { return QString::number(v, 'f', 1).replace('.', I18n::de
 ExportCheck::Options options(const QJsonObject& a)
 {
     ExportCheck::Options o;
-    if (a.contains("platform")) {
-        const ShortPlatform* p = shortPlatform(a["platform"].toString());
+    // "for", not "platform": QGuiApplication takes --platform from the command line
+    if (a.contains("for")) {
+        const ShortPlatform* p = shortPlatform(a["for"].toString());
         if (!p) {
             QStringList ids;
             for (const ShortPlatform& sp : shortPlatforms()) ids << sp.alias;
-            fail("BAD_ARGUMENT", "platform must be " + ids.join(", "));
+            fail("BAD_ARGUMENT", "for must be " + ids.join(", ") + " (the platform)");
         }
         o.maxLengthS = p->maxSeconds;
         o.platform = QString::fromLatin1(p->name);

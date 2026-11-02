@@ -39,7 +39,7 @@ it finds the moments, reframes, captions, checks and renders. The steps by hand,
    [social.md](social.md)); `keep` with the best candidates' ranges. A project file keeps opening the timeline the
    user had open: give `check`, `frames`, `loudness` and `render` the new one as `timeline` (id or name from the
    `edit` answer).
-3. `check` the project (`platform` `shorts`, `reels` or `tiktok` for a short), `render` with a new name per clip
+3. `check` the project (`for` `shorts`, `reels` or `tiktok` for a short), `render` with a new name per clip
    (preset `"shorts"`, `"reels"` or `"tiktok"`).
 4. Look at the result (`check` on the rendered file) before anything is uploaded; report what you made.
 

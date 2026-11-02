@@ -115,8 +115,8 @@ QJsonObject cmdShort(const QJsonObject& a, Context& ctx)
     const QString captions = a.contains("captions") ? a["captions"].toString().trimmed().toLower() : QString("karaoke");
     if (!QStringList{"karaoke", "word", "off"}.contains(captions))
         fail("BAD_ARGUMENT", "captions must be karaoke, word or off");
-    const ShortPlatform* platform = shortPlatform(a.contains("platform") ? a["platform"].toString() : QString("shorts"));
-    if (!platform) fail("BAD_ARGUMENT", "platform must be shorts, reels or tiktok");
+    const ShortPlatform* platform = shortPlatform(a.contains("for") ? a["for"].toString() : QString("shorts"));
+    if (!platform) fail("BAD_ARGUMENT", "for must be shorts, reels or tiktok (the platform)");
     if (platform->maxSeconds < pick.maxS) pick.maxS = platform->maxSeconds;
     pick.minS = std::min(pick.minS, pick.maxS);
     const GameHint* game = nullptr;
@@ -266,9 +266,9 @@ QJsonObject cmdShort(const QJsonObject& a, Context& ctx)
 
     // 7. Check for the platform and apply its safe fixes (master limiter, fader to the loudness target)
     const QString platformId = QString::fromLatin1(platform->alias);
-    const QJsonObject check = run("check", {{"source", project}, {"timeline", shortTimeline}, {"platform", platformId}},
+    const QJsonObject check = run("check", {{"source", project}, {"timeline", shortTimeline}, {"for", platformId}},
                                   step(0.6, 0.7));
-    QJsonObject checked{{"errors", check["errors"]}, {"warnings", check["warnings"]}};
+    QJsonObject checked;
     if (const QJsonObject fix = check["fix"].toObject(); !fix.isEmpty()) {
         run("edit", {{"project", project}, {"ops", fix["ops"]}}, step(0.7, 0.7));
         checked["fixed"] = fix["what"];
@@ -279,6 +279,13 @@ QJsonObject cmdShort(const QJsonObject& a, Context& ctx)
     for (const QJsonValue& v : check["issues"].toArray())
         if (!solved.contains(v["check"].toString())) left << v;
     checked["issues"] = left;
+    int errors = 0, warnings = 0;
+    for (const QJsonValue& v : left) {
+        errors += v["severity"].toString() == QLatin1String("error");
+        warnings += v["severity"].toString() == QLatin1String("warning");
+    }
+    checked["errors"] = errors;
+    checked["warnings"] = warnings;
 
     // 8. Render with the platform's preset
     QJsonObject r{{"project", project}, {"timeline", shortTimeline}, {"out", out},

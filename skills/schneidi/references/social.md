@@ -14,7 +14,7 @@ It runs the steps below with the usual commands and answers with `out`, `length_
    (`9:16` default, `1:1`, `4:5`) with `reframe` (`auto` default, `center`, `fit`).
 3. Word captions (`captions` `karaoke` default, `word`, `off`; `language`) - only when whisper is installed. Otherwise
    a note with the install command; it never installs: ask the user first.
-4. `check` for the `platform` (`shorts` default, `reels`, `tiktok`: length limit, -14 LUFS, true peak) and its sound
+4. `check` for the platform `for` (`shorts` default, `reels`, `tiktok`: length limit, -14 LUFS, true peak) and its sound
    fix (limiter, fader) applied.
 5. `render` with the platform's preset into `out` (default `<first file>-short.mp4` beside it, numbered; an existing
    `out` needs `overwrite`). The project (`project`, default beside `out`) keeps both timelines for reworking.
@@ -93,6 +93,6 @@ result yourself afterwards (`frames` sheet of `out`) - one call does not replace
 `render` with `preset` `"shorts"`, `"reels"` or `"tiktok"` (YouTube Shorts, Instagram Reels, TikTok: 1080x1920
 H.264 in web quality, the timeline's frame rate up to 60 fps, AAC 48 kHz) - `"phone"` is the same without the
 60 fps limit. `subtitles` `"burn"` if the subtitles are on a subtitle track. Before it, `check` with the same
-`platform`: `too_long` = longer than the platform takes as a short (Shorts and Reels 3 min, TikTok 10 min), and the
+`for` (the platform): `too_long` = longer than the platform takes as a short (Shorts and Reels 3 min, TikTok 10 min), and the
 sound fix for -14 LUFS / -1 dBTP. Then [check.md](check.md): is the subject in frame in every shot, is all text inside
 the safe area?

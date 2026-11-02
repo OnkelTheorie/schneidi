@@ -892,7 +892,8 @@ const QVector<Command>& commands()
                                "one or \"@app\" gets new timelines); without files: the project whose timeline is the cut"},
           {"timeline", T::String, "without files: the timeline to make the short of (default: the open one)"},
           {"out", T::Path, "video to write (default: '<first file>-short.mp4' next to it, numbered, never replacing)"},
-          {"platform", T::String, "shorts (default), reels or tiktok: render preset, length limit and loudness of `check`"},
+          {"for", T::String, "the platform: shorts (default), reels or tiktok - render preset, length limit and "
+                             "loudness of `check`"},
           {"min_s", T::Number, "shortest length in seconds (default 15)"},
           {"max_s", T::Number, "longest length in seconds (default 45; at most the platform's limit)"},
           {"aspect", T::String, "9:16 (default), 1:1 or 4:5"},
@@ -1099,8 +1100,9 @@ const QVector<Command>& commands()
           {"from", T::Time, "for a project: start of the range to check (default: start)"},
           {"to", T::Time, "for a project: end of the range (default: end of the timeline)"},
           {"target_lufs", T::Number, "loudness target (default -14 for web/streaming; -23 broadcast, -16 podcasts)"},
-          {"platform", T::String, "shorts, reels or tiktok: also too_long (longer than the platform takes as a "
-                                  "short: Shorts and Reels 3 min, TikTok 10 min) and its loudness target"},
+          {"for", T::String, "the platform the video is for: shorts, reels or tiktok - also too_long (longer than "
+                             "the platform takes as a short: Shorts and Reels 3 min, TikTok 10 min) and its loudness "
+                             "target"},
           {"sound", T::Boolean, "measure the sound (default true; false = no mixing: no sound and no under_music "
                                 "checks)"}},
          cmdCheck},
