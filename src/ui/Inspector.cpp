@@ -215,10 +215,10 @@ Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
     // The same with blurred sides instead of black ones in a wider frame (Transform › Background); the plain entry
     // turns them off again (it is what the box shows while they are off)
     constexpr int kPlain43 = 1, kBlurSides = 2;
-    shapeBox->addItem(T("4:3 entzerren, Seiten unscharf"), 4.0 / 3.0);
+    shapeBox->addItem(T("4:3 mit unscharfen Seiten"), 4.0 / 3.0);
     shapeBox->setToolTip(T("Viele Spieler nehmen ein 4:3-Spiel auf 16:9 gestreckt auf (breite Köpfe, ovale Kreise). "
                            "„Gestrecktes 4:3 entzerren“ zeigt das Bild wieder in seinen echten Proportionen; in einem "
-                           "breiteren Bild füllt „Seiten unscharf“ die Ränder mit dem unscharfen Bild statt Schwarz."));
+                           "breiteren Bild füllt „4:3 mit unscharfen Seiten“ die Ränder mit dem unscharfen Bild statt Schwarz."));
     connect(shapeBox, &QComboBox::activated, this, [this, shapeBox](int i) {
         m_editor->setPictureAspect(selectedIds(TrackKind::Video), shapeBox->itemData(i).toDouble(),
                                    i == kBlurSides ? std::optional(FitFill::Blur)

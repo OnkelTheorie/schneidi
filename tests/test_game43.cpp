@@ -502,12 +502,15 @@ void testLayout(const QString& stretched)
     Editor ed(&p, &sel);
     setup(p, stretched, 50, QSize(1920, 1080));
     ed.setPictureAspect({}, 4.0 / 3, FitFill::Blur);
-    for (const char* lang : {"de", "en", "ru"}) {
+    for (const char* lang : {"de", "en", "es", "fr", "pl", "ru"}) {
         I18n::install(lang);
+        ClipSpeedDialog normal({1.0, false, false, true, FrameInterp::Flow}, 100, 25, nullptr);
+        if (auto* interp = normal.findChild<QComboBox*>("FrameInterp"); CHECK(interp))
+            CHECK(!interp->isEnabled()); // only matters in slow motion
         ClipSpeedDialog speed({0.5, false, false, true, FrameInterp::Flow}, 100, 25, nullptr);
         speed.show();
         QCoreApplication::processEvents();
-        if (auto* interp = speed.findChild<QComboBox*>("FrameInterp"); CHECK(interp))
+        if (auto* interp = speed.findChild<QComboBox*>("FrameInterp"); CHECK(interp) && CHECK(interp->isEnabled()))
             Check::report(interp->width() >= interp->sizeHint().width(), "speed dialog: in-between pictures cut off",
                           __FILE__, __LINE__, QString("%1: %2 < %3").arg(lang).arg(interp->width()).arg(interp->sizeHint().width()));
         if (!shot.isEmpty()) speed.grab().save(QString("%1/speed-%2.png").arg(shot, lang));
@@ -519,6 +522,11 @@ void testLayout(const QString& stretched)
         QCoreApplication::processEvents();
         if (auto* shape = insp.findChild<QComboBox*>("PictureAspect"); CHECK(shape)) {
             CHECK_EQ(shape->currentIndex(), 2); // 4:3 with blurred sides
+            // Every entry fits the box (arrow and frame take about 30 px)
+            for (int k = 0; k < shape->count(); ++k)
+                Check::report(shape->fontMetrics().horizontalAdvance(shape->itemText(k)) + 30 <= shape->width(),
+                              "picture shape entry cut off", __FILE__, __LINE__,
+                              QString("%1: %2 (%3 px box)").arg(lang, shape->itemText(k)).arg(shape->width()));
             if (!shot.isEmpty()) {
                 QWidget* row = shape->parentWidget();
                 row->grab().save(QString("%1/inspector-shape-%2.png").arg(shot, lang));

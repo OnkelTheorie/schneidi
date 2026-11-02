@@ -39,6 +39,7 @@ ClipSpeedDialog::ClipSpeedDialog(const Editor::Retime& current, int clipLength, 
     m_interp->setObjectName("FrameInterp");
     for (const FrameInterpInfo& f : kFrameInterps) m_interp->addItem(T(f.name), int(f.mode));
     m_interp->setCurrentIndex(m_interp->findData(int(current.interpolate.value_or(FrameInterp::Repeat))));
+    m_interp->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed); // as wide as the number fields
     m_interp->setToolTip(T("Langsamer als das Material: Bilder wiederholen, benachbarte Bilder überblenden oder die "
                            "Bewegung dazwischen berechnen (flüssige Zeitlupe, z. B. für Spiel-Clips)"));
     form->addRow(T("Zwischenbilder"), m_interp);
@@ -67,12 +68,12 @@ ClipSpeedDialog::ClipSpeedDialog(const Editor::Retime& current, int clipLength, 
     // Still image: speed does not matter (grayed out like DaVinci)
     connect(m_freeze, &QCheckBox::toggled, this, [this](bool on) {
         for (QWidget* w : {static_cast<QWidget*>(m_percent), static_cast<QWidget*>(m_fps),
-                           static_cast<QWidget*>(m_reverse), static_cast<QWidget*>(m_pitch),
-                           static_cast<QWidget*>(m_interp)})
+                           static_cast<QWidget*>(m_reverse), static_cast<QWidget*>(m_pitch)})
             w->setEnabled(!on);
         updateDuration();
     });
     m_freeze->toggled(m_freeze->isChecked());
+    setMinimumWidth(340); // the fields get room for their numbers (it was squeezed to the labels' width)
 }
 
 void ClipSpeedDialog::percentEdited()
@@ -95,6 +96,8 @@ void ClipSpeedDialog::fpsEdited()
 
 void ClipSpeedDialog::updateDuration()
 {
+    // In-between pictures only matter in slow motion (the choice stays and applies once it gets slower)
+    m_interp->setEnabled(!m_freeze->isChecked() && m_percent->value() < 100);
     const bool keepLength = !m_ripple->isChecked() || m_freeze->isChecked();
     const int f = keepLength ? m_clipLength : std::max(1, int(std::lround(m_baseLength / (m_percent->value() / 100))));
     const int fps = std::max(1, int(std::lround(m_projectFps)));
