@@ -51,7 +51,8 @@ If an edit went wrong, `restore` puts the previous state back (every save keeps 
 
 When the user talks about "the open project", "in the app" or "what I'm looking at", use `@app` as the project.
 Every command then works on what the app shows, unsaved changes included; `info` adds the playhead and selection,
-`app` can seek, play, select, undo and save.
+`app` can seek, play, select, undo and save, and `open` shows files there (a recording goes into the app's media
+pool and is selected; a .schneidi project opens, never over unsaved changes).
 
 - **The result belongs in the open project**, not in a project file beside it that the user never sees: a new
   version (another format, a short from a long edit) goes into a new timeline with its own resolution

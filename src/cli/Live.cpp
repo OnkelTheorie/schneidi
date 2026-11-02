@@ -27,7 +27,15 @@
 #include <algorithm>
 #include <map>
 #include <memory>
+#include <utility>
 #include <vector>
+
+#ifdef Q_OS_WIN
+#ifndef NOMINMAX
+#define NOMINMAX // std::max/std::clamp below
+#endif
+#include <windows.h>
+#endif
 
 namespace Cli::Live {
 
@@ -169,6 +177,8 @@ QString stepText(const QString& command, const QJsonObject& args, const QJsonObj
     QString step = args.value("action").toString().trimmed().toLower();
     if (const QString undone = result.value("undone").toString(result.value("redone").toString()); !undone.isEmpty())
         step += ": " + undone;
+    else if (step == "open" && !args.value("files").toArray().isEmpty())
+        step += " " + QFileInfo(args.value("files").toArray().first().toString()).fileName();
     else if (args.contains("at") && result.contains("app"))
         step += " " + detail::tc(result["app"].toObject().value("playhead").toInt(), p.format());
     return step;
@@ -304,6 +314,20 @@ void Server::setAllowed(bool on)
 void Server::setWaiting(const QString& message)
 {
     m_waiting = message;
+    if (m_waiting.isEmpty() && !m_pendingOpen.isEmpty()) QTimer::singleShot(0, this, &Server::openPending);
+}
+
+void Server::openPending()
+{
+    if (m_pendingOpen.isEmpty() || !m_waiting.isEmpty()) return; // setWaiting({}) comes back here
+    // An AI command or an earlier hand-over (its question still open) runs: right after it
+    if (m_running || m_opening) return void(QTimer::singleShot(200, this, &Server::openPending));
+    const QStringList files = std::exchange(m_pendingOpen, {});
+    m_opening = true;
+    QString error;
+    if (!m_host->liveOpen(files, true, &error) && !error.isEmpty())
+        qWarning("Opening handed-over files failed: %s", qPrintable(error));
+    m_opening = false;
 }
 
 void Server::onConnection()
@@ -398,6 +422,17 @@ void Server::handle(QLocalSocket* s, const QJsonObject& msg)
         if (!m_waiting.isEmpty()) o["waiting"] = m_waiting;
         if (!peer.chat && !m_allowed && !m_refusal.isEmpty()) o["refusal"] = m_refusal;
         return reply(o);
+    }
+    // The user's own hand-over (`schneidi <file>` while the app runs): no AI session, so neither attach nor the AI
+    // switch applies. Opened after the answer (a "save changes?" question must not keep the other process waiting).
+    if (type == "open") {
+        QStringList files;
+        for (const QJsonValue& v : msg.value("files").toArray())
+            if (const QString f = v.toString(); !f.isEmpty()) files << QFileInfo(f).absoluteFilePath();
+        if (files.isEmpty()) return reply(errorReply("BAD_REQUEST", "no files to open"));
+        m_pendingOpen += files;
+        QTimer::singleShot(0, this, &Server::openPending);
+        return reply({{"ok", true}, {"queued", !m_waiting.isEmpty()}, {"pid", QCoreApplication::applicationPid()}});
     }
     // Let go while it was idle: its next request takes the app again if it is free
     const bool wantsApp = type == "snapshot" || type == "run"
@@ -532,7 +567,8 @@ QJsonObject Server::runCommand(const QJsonObject& msg, bool ownChat)
             dropStep(undo, index);
         p->closeMerge();
     }
-    compareClips(before, clipStates(*p), change);
+    // `app open` of a project: another project now, its clips are no AI changes
+    if (!result.contains("opened")) compareClips(before, clipStates(*p), change);
     change.step = stepText(name, args, result, *p);
     // A `watch` pass that found nothing new is no step (a follow runs one whenever a watched folder changes)
     const bool quiet = name == "watch" && p->media().size() == mediaBefore.size() && !args.contains("add")
@@ -595,6 +631,7 @@ struct Candidate {
     QString refusal; // not allowed: why (empty = the user disconnected the AI)
     QString waiting; // the app waits for the user (why, for the AI)
     bool silent = false; // did not answer hello in time (busy): its project is unknown
+    qint64 pid = 0;
 };
 
 std::vector<Candidate> runningApps()
@@ -644,7 +681,8 @@ std::vector<Candidate> runningApps()
         if (!hello.value("ok").toBool()) continue;
         c->project = hello.value("project").toString();
         out.push_back({std::move(c), hello.value("busy").toBool(), hello.value("allowed").toBool(true),
-                       hello.value("refusal").toString(), hello.value("waiting").toString()});
+                       hello.value("refusal").toString(), hello.value("waiting").toString(), false,
+                       qint64(hello.value("pid").toDouble())});
     }
     return out;
 }
@@ -720,6 +758,37 @@ Connection* connectionFor(const QString& project)
     Connection* c = pick->conn.get();
     map[key] = std::move(pick->conn);
     return c;
+}
+
+bool handOver(const QStringList& files, QString* appProject)
+{
+    if (files.isEmpty()) return false;
+    QJsonArray list;
+    QStringList projects;
+    for (const QString& f : files) {
+        list << QFileInfo(f).absoluteFilePath();
+        if (QFileInfo(f).suffix() == QLatin1String(ProjectFile::Extension)) projects << canonical(f);
+    }
+    std::vector<Candidate> apps = runningApps();
+    Candidate* pick = nullptr;
+    for (Candidate& c : apps) // the app that has the project open already
+        if (!c.silent && !c.conn->project.isEmpty() && projects.contains(canonical(c.conn->project))) pick = &c;
+    for (Candidate& c : apps)
+        if (!pick && !c.silent) pick = &c;
+    if (!pick) return false;
+#ifdef Q_OS_WIN
+    // Windows lets only the foreground process give the foreground away: the app may raise its window
+    if (pick->pid > 0) AllowSetForegroundWindow(DWORD(pick->pid));
+#endif
+    try {
+        const QJsonObject r = pick->conn->request({{"type", "open"}, {"files", list}}, 5000);
+        if (!r.value("ok").toBool()) return false; // an older app without "open": start one of our own
+    } catch (const Error&) {
+        return false;
+    }
+    if (appProject) *appProject = pick->conn->project;
+    pick->conn->socket.disconnectFromServer();
+    return true;
 }
 
 QString projectPath(Connection* c)

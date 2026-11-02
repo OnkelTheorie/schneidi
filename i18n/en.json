@@ -1761,6 +1761,8 @@
  "Video": "Video",
  "Video %1": "Video %1",
  "Video + Audio": "Video + Audio",
+ "Video als Projekt öffnen": "Open Video as Project",
+ "Video als Projekt öffnen…": "Open Video as Project…",
  "Video geschrieben: %1": "Video written: %1",
  "Video-Encoder %1 ist in diesem Build nicht verfügbar.": "Video encoder %1 is not available in this build.",
  "Video-Encoder: %1": "Video encoder: %1",

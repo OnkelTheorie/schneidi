@@ -117,6 +117,7 @@ void MainWindow::buildActions()
     connect(m_templateMenu, &QMenu::aboutToShow, this, &MainWindow::rebuildTemplateMenu);
     rebuildTemplateMenu();
     makeAction(file, "project_open", T("Projekt öffnen…"), QKeySequence("Ctrl+O"), [this] { openProjectDialog(); });
+    makeAction(file, "project_open_video", T("Video als Projekt öffnen…"), QKeySequence(), [this] { openMediaAsProjectDialog(); });
     m_recentMenu = file->addMenu(T("Zuletzt geöffnet"));
     rebuildRecentMenu();
     makeAction(file, "project_save", T("Projekt speichern"), QKeySequence("Ctrl+S"), [this] { save(); });

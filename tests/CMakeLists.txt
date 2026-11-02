@@ -122,6 +122,13 @@ target_link_libraries(test_speech PRIVATE schneidi_cli_lib)
 target_link_libraries(test_live PRIVATE schneidi_cli_lib)
 target_compile_definitions(test_live PRIVATE SCHNEIDI_CLI="$<TARGET_FILE:schneidi-cli>")
 add_dependencies(test_live schneidi-cli)
+# Files handed to the running app (single instance over the live connection), videos opened as projects, `app open`,
+# the real program offscreen
+schneidi_test(test_open_in_app)
+target_link_libraries(test_open_in_app PRIVATE schneidi_cli_lib)
+target_compile_definitions(test_open_in_app PRIVATE SCHNEIDI_CLI="$<TARGET_FILE:schneidi-cli>"
+                           SCHNEIDI_APP="$<TARGET_FILE:schneidi>")
+add_dependencies(test_open_in_app schneidi-cli schneidi)
 schneidi_test(test_setup)
 schneidi_test(test_check)
 schneidi_test(test_contact_sheet)

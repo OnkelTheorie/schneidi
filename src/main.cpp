@@ -108,6 +108,14 @@ int main(int argc, char* argv[])
     I18n::prepareEnvironment(langOverride);
     QApplication app(argc, argv);
     QApplication::setApplicationVersion(QString::fromUtf8(SCHNEIDI_VERSION_LABEL) + (*SCHNEIDI_BUILD ? QString(" (%1)").arg(SCHNEIDI_BUILD) : QString())); // version from CMakeLists, Git state, see cmake/BuildInfo.cmake
+    // Already running: hand the files over to that app (a double-click in the file manager, a recorder passing its
+    // clip on: `schneidi --open <file>` or just `schneidi <file>`) and quit before anything of this process shows or
+    // writes (log, crash report). --new-instance starts another window anyway; test runs never hand over.
+    if (const QStringList args = app.arguments().mid(1), handed = LaunchArgs::files(args);
+        !handed.isEmpty() && screenshot.isEmpty() && !args.contains("--demo") && !args.contains("--actions")
+        && !args.contains("--new-instance") && qEnvironmentVariable("SCHNEIDI_LIVE", "1") == "1"
+        && Cli::Live::handOver(handed))
+        return 0;
     Log::install();
     CrashReport::install(); // after the log: attaches the previous run's log to its crash report
     // Test aid: --lang <code> (en, de, fr, …) only applies to this run (the setting stays unchanged)
@@ -217,7 +225,12 @@ int main(int argc, char* argv[])
         f.rate = nearestFrameRate(parts.value(2, "25").toDouble());
         if (f.width >= 16 && f.height >= 16) w.setProjectFormat(f);
     }
-    if (!files.isEmpty()) w.importFiles(files, demo, formatArg.isEmpty());
+    // A video alone (no project, nothing restored): opens as a new project in the clip's format, the clip on the
+    // timeline. Test runs with --demo/--format keep the project they set up and put the files on it.
+    if (!files.isEmpty()) {
+        if (projectFile.isEmpty() && !restored && !demo && formatArg.isEmpty()) w.openMediaAsProject(files);
+        else w.importFiles(files, demo, formatArg.isEmpty());
+    }
     // Test helper: --storage <folder> opens the folder in Media Storage (is not saved)
     if (!storageArg.isEmpty())
         if (auto* storage = w.findChild<MediaStorage*>()) storage->setFolder(QFileInfo(storageArg).absoluteFilePath());
