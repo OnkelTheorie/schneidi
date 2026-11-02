@@ -582,7 +582,7 @@ QJsonObject cmdRender(const QJsonObject& a, Context& ctx)
         if (i < 0) fail("BAD_ARGUMENT", "subtitles must be none, burn (into the picture) or srt (file next to the video)");
         job.settings.subtitles = i;
     }
-    job.size = job.settings.outputSize(s.format().size());
+    job.size = job.settings.outputSize(s.project.timelineFormat().size());
     Timeline tl = s.project.renderTimeline();
     // Tracks left out of this render only (a voice-over, a music bed): the project keeps its mixer
     for (const QJsonValue& v : a["mute_tracks"].toArray()) {

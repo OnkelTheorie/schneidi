@@ -363,6 +363,8 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
     tv->setMediaCache(m_mediaCache);
     // Project settings -> engine (profile anew), cache, Inspector; comes before timelineChanged
     connect(m_project, &Project::formatChanged, this, &MainWindow::onFormatChanged);
+    // Another timeline opened or a timeline's own resolution: the viewer renders at that size
+    connect(m_project, &Project::timelineFormatChanged, this, &MainWindow::onTimelineFormatChanged);
 
     connect(m_project, &Project::modifiedChanged, this, &MainWindow::updateTitle);
     updateTitle();
@@ -750,18 +752,24 @@ void MainWindow::onFormatChanged()
 {
     const ProjectFormat& f = m_project->format();
     const FrameRate oldRate = m_engine->format().rate;
-    m_engine->setFormat(f); // timeline rebuilds in the following timelineChanged()
-    m_mediaCache->setFormat(f);
+    onTimelineFormatChanged();
     // Every load comes here (also with the same format): graded tiles are kept by clip id, and the next project has
     // clips with the same ids
     m_mediaCache->graded()->clear();
-    m_inspector->setFrameSize(f.size());
     m_probeCache.clear();
     m_editor->setPreviewSource({}); // its length counts in the old frame rate; the Viewer shows the timeline now
     if (f.rate == oldRate) return;
     // Lengths in the Media Pool count in project frames -> re-read (only possible in an empty timeline,
     // undo/redo included)
     m_project->recountMedia(oldRate, [this](const QString& path) { return m_engine->probe(path).length; });
+}
+
+void MainWindow::onTimelineFormatChanged()
+{
+    const ProjectFormat f = m_project->timelineFormat();
+    m_engine->setFormat(f); // nothing when the same; the timeline rebuilds in the following timelineChanged()
+    m_mediaCache->setFormat(f); // thumbnails in the timeline's shape
+    m_inspector->setFrameSize(f.size());
 }
 
 bool MainWindow::eventFilter(QObject* obj, QEvent* event)

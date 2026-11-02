@@ -60,7 +60,7 @@ bool WindowOverlay::transforms(const QRectF& frame, QTransform* clipToWidget, QT
 {
     const Clip* c = clip();
     if (!c || frame.isEmpty()) return false;
-    const ProjectFormat& fmt = m_editor->project()->format();
+    const ProjectFormat fmt = m_editor->project()->timelineFormat();
     const double W = fmt.width, H = fmt.height;
     const double t = std::clamp(m_playhead - c->start, 0, std::max(0, c->length() - 1));
     // The window's picture = the clip before transform, filling the frame (a source of another aspect ratio sits

@@ -318,8 +318,17 @@ void Project::load(const ProjectData& d)
     m_watchLog = d.watchLog;
     m_watchRevision = d.watchRevision;
     for (const WatchArrival& a : m_watchLog) m_watchRevision = std::max(m_watchRevision, a.revision);
+    for (Sequence& s : m_sequences)
+        if (s.hasOwnSize()) { // a hand-edited file: within limits and even, as the export needs
+            const ProjectFormat f = withinLimits({s.width, s.height, m_format.rate});
+            s.width = f.width & ~1;
+            s.height = f.height & ~1;
+        } else {
+            s.width = s.height = 0;
+        }
     markSaved();
     emit formatChanged();
+    noteTimelineFormat(true);
     emit mediaChanged();
     emit sequencesChanged();
     emit poolChanged();
@@ -393,7 +402,7 @@ void Project::setFormat(const ProjectFormat& format)
     if (f == m_format) return;
     QVector<Sequence> after = m_sequences;
     for (Sequence& s : after) {
-        scaleTimeline(s.timeline, m_format.size(), f.size());
+        if (!s.hasOwnSize()) scaleTimeline(s.timeline, m_format.size(), f.size()); // own resolution: stays
         retimeTimeline(s.timeline, m_format.rate, f.rate); // subtitles, markers, in/out (clips lock the rate)
     }
     m_undo.push(new FormatCommand(this, m_format, f, m_sequences, after)); // push calls redo()
@@ -404,7 +413,49 @@ void Project::applyFormat(const ProjectFormat& format, const QVector<Sequence>& 
     m_format = format;
     m_sequences = sequences;
     emit formatChanged();
+    noteTimelineFormat();
     emit timelineChanged();
+}
+
+ProjectFormat Project::sequenceFormat(int id) const
+{
+    ProjectFormat f = m_format;
+    const Sequence* s = id ? sequence(id) : &current();
+    if (s && s->hasOwnSize()) {
+        f.width = s->width;
+        f.height = s->height;
+    }
+    return f;
+}
+
+void Project::setSequenceSize(int id, QSize size)
+{
+    const Sequence* s = sequence(id);
+    if (!s) return;
+    int w = 0, h = 0;
+    if (!size.isEmpty()) {
+        const ProjectFormat f = withinLimits({size.width(), size.height(), m_format.rate});
+        w = f.width & ~1;
+        h = f.height & ~1;
+    }
+    if (w == s->width && h == s->height) return;
+    const QSize from = sequenceFormat(id).size();
+    editSequences(T("Timeline-Auflösung"), [&](QVector<Sequence>& list, int&) {
+        for (Sequence& x : list)
+            if (x.id == id) {
+                x.width = w;
+                x.height = h;
+                scaleTimeline(x.timeline, from, x.hasOwnSize() ? QSize(w, h) : m_format.size());
+            }
+    });
+}
+
+void Project::noteTimelineFormat(bool always)
+{
+    const ProjectFormat f = timelineFormat();
+    if (!always && f == m_timelineFormat) return;
+    m_timelineFormat = f;
+    emit timelineFormatChanged();
 }
 
 void Project::setTimeline(const Timeline& tl)
@@ -420,6 +471,7 @@ void Project::setTimeline(int sequenceId, const Timeline& tl)
     if (sequenceId != m_current) {
         m_current = sequenceId;
         emit currentSequenceChanged();
+        noteTimelineFormat();
     }
     setTimeline(tl);
 }
@@ -445,6 +497,7 @@ void Project::setCurrentSequence(int id)
     closeMerge();
     m_current = id;
     emit currentSequenceChanged();
+    noteTimelineFormat();
     emit timelineChanged();
 }
 
@@ -468,10 +521,11 @@ void Project::applySequences(const QVector<Sequence>& sequences, int cur)
     emit sequencesChanged();
     emit poolChanged(); // sequences are in the Media Pool
     if (switched) emit currentSequenceChanged();
+    noteTimelineFormat();
     emit timelineChanged();
 }
 
-int Project::addTimeline(const QString& name, int binId)
+int Project::addTimeline(const QString& name, int binId, QSize size)
 {
     if (binId != 0 && !bin(binId)) binId = 0;
     QString n = name.trimmed();
@@ -484,8 +538,14 @@ int Project::addTimeline(const QString& name, int binId)
         }
     }
     const int id = newSequenceId();
+    Sequence seq{id, n, false, binId, emptyTimeline()};
+    if (!size.isEmpty() && size != m_format.size()) {
+        const ProjectFormat f = withinLimits({size.width(), size.height(), m_format.rate});
+        seq.width = f.width & ~1;
+        seq.height = f.height & ~1;
+    }
     editSequences(T("Neue Timeline"), [&](QVector<Sequence>& list, int& cur) {
-        list << Sequence{id, n, false, binId, emptyTimeline()};
+        list << seq;
         cur = id;
     });
     return id;
@@ -617,11 +677,13 @@ Timeline Project::renderTimeline(int sequenceId) const
 {
     const Sequence* s = sequenceId ? sequence(sequenceId) : &current();
     Timeline tl = s ? s->timeline : timeline();
+    tl.frameSize = sequenceFormat(s ? s->id : 0).size();
     auto nested = std::make_shared<NestedTimelines>();
     for (const Sequence& x : m_sequences) {
         Timeline t = x.timeline;
         t.nested.reset();
         t.angles = x.multicam ? x.angles : QVector<MulticamAngle>{};
+        t.frameSize = sequenceFormat(x.id).size();
         nested->insert(x.id, t);
     }
     tl.nested = std::move(nested);

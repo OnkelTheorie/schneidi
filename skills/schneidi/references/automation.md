@@ -32,7 +32,8 @@ and every new recording becomes a cut without anyone clicking - e.g. "new clip â
 1. `highlights` on the file (with `region` + `color` for a game's kill feed, else loud moments), `project` passed
    ([highlights.md](highlights.md)). Nothing good in it: skip the file, don't force a video out of it (`edit` op
    `remove_media` takes it out of the media pool, not from disk; the watch does not bring it back).
-2. A new timeline per clip (`edit` op `new_timeline`) or a new project per clip (`new`, 9:16 for a short:
+2. A new timeline per clip (`edit` op `new_timeline`, `aspect` `"9:16"` for a short in a 16:9 project) or a new
+   project per clip (`new`, 9:16 for a short:
    [social.md](social.md)); `keep` with the best candidates' ranges. A project file keeps opening the timeline the
    user had open: give `check`, `frames`, `loudness` and `render` the new one as `timeline` (id or name from the
    `edit` answer).

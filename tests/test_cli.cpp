@@ -954,6 +954,49 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
         CHECK_EQ(run("info", {{"project", empty}})["format"]["fps"].toDouble(), 25.0);
         run("restore", {{"project", empty}});
         CHECK_EQ(run("info", {{"project", empty}})["format"]["fps"].toDouble(), 50.0);
+
+        // A timeline of its own resolution: a 9:16 short next to the 16:9 edit, the project and the edit stay
+        const QString shorts = dir.filePath("shorts.schneidi");
+        run("new", {{"project", shorts}});
+        run("edit", {{"project", shorts},
+                     {"ops", R"([{"op":"title","text":"Edit","at":0,"duration":10,"x":480},
+                                 {"op":"new_timeline","name":"Short","aspect":"9:16"},
+                                 {"op":"new_timeline","name":"Square"}])"}});
+        const QJsonObject shortInfo = run("info", {{"project", shorts}, {"timeline", "Short"}});
+        CHECK_EQ(shortInfo["format"]["width"].toInt(), 1920); // the project's
+        CHECK_EQ(shortInfo["timeline"]["width"].toInt(), 1080);
+        CHECK_EQ(shortInfo["timeline"]["height"].toInt(), 1920);
+        auto listed = [&](const QString& name) {
+            for (const QJsonValue& t : run("info", {{"project", shorts}})["timelines"].toArray())
+                if (t["name"].toString() == name) return t.toObject();
+            return QJsonObject();
+        };
+        CHECK_EQ(listed("Short")["width"].toInt(), 1080);
+        CHECK(!listed("Square").contains("width")); // the project's
+        // format with timeline: only that one (its pixel values scaled); aspect:'project' takes it back
+        run("edit", {{"project", shorts}, {"ops", R"([{"op":"format","timeline":"Timeline 1","width":1080,"height":1080}])"}});
+        const QJsonObject mainInfo = run("info", {{"project", shorts}, {"timeline", "Timeline 1"}});
+        CHECK_EQ(mainInfo["format"]["width"].toInt(), 1920);
+        CHECK_EQ(mainInfo["timeline"]["width"].toInt(), 1080);
+        CHECK_EQ(mainInfo["timeline"]["height"].toInt(), 1080);
+        double titleX = -1;
+        for (const QJsonValue& t : mainInfo["timeline"]["tracks"].toArray())
+            for (const QJsonValue& c : t["clips"].toArray())
+                if (c["kind"].toString() == "title") titleX = c["style"]["x"].toDouble(-1);
+        CHECK(std::abs(titleX - 270) < 0.5); // 480 of 1920 -> 270 of 1080
+        CHECK_EQ(listed("Square").contains("width"), false);
+        run("edit", {{"project", shorts}, {"ops", R"([{"op":"format","timeline":"Timeline 1","aspect":"project"}])"}});
+        CHECK(!listed("Timeline 1").contains("width"));
+        // Without timeline: the project's - the short keeps its own size
+        run("edit", {{"project", shorts}, {"ops", R"([{"op":"format","width":1280,"height":720}])"}});
+        CHECK_EQ(run("info", {{"project", shorts}})["format"]["width"].toInt(), 1280);
+        CHECK_EQ(listed("Short")["width"].toInt(), 1080);
+        CHECK_EQ(errorOf("edit", {{"project", shorts}, {"ops", R"([{"op":"format","timeline":"Short","fps":30}])"}}),
+                 QString("BAD_ARGUMENT"));
+        CHECK_EQ(errorOf("edit", {{"project", shorts}, {"ops", R"([{"op":"format","timeline":"Short","aspect":"3:1"}])"}}),
+                 QString("BAD_ARGUMENT"));
+        CHECK_EQ(errorOf("edit", {{"project", shorts}, {"ops", R"([{"op":"format","aspect":"project"}])"}}),
+                 QString("BAD_ARGUMENT"));
     }
 
     // Audio effect (noise reduction) on audio clips only; stabilization with a choice parameter; `effects` kinds

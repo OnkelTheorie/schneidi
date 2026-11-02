@@ -147,7 +147,7 @@ void Inspector::buildSubtitlePage(QVBoxLayout* page)
     // ---- Track style (applies to all subtitles of the track) ----
     Section st = addSection(page, V, T("Spurstil"), {});
     st.headerLayout->addWidget(resetButton([this] {
-        const TitleStyle def = Subtitles::defaultStyle(m_editor->project()->format().size());
+        const TitleStyle def = Subtitles::defaultStyle(m_editor->project()->timelineFormat().size());
         changeSubtitleStyle(T("Spurstil zurücksetzen"), [def](TitleStyle& t) { t = def; });
     }));
     auto current = [this]() -> std::optional<TitleStyle> {

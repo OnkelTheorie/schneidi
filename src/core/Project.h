@@ -45,14 +45,23 @@ public:
     // On teardown the undo stack still reports "cleanChanged" -> do not pass it on anymore (main window is already gone)
     ~Project() override { blockSignals(true); }
 
-    // Project settings (timeline resolution and frame rate)
+    // Project settings (default timeline resolution and frame rate). For what a timeline shows, renders and exports
+    // use sequenceFormat()/timelineFormat(): a timeline may have its own resolution.
     const ProjectFormat& format() const { return m_format; }
+    // The format a sequence renders at: its own resolution (Sequence::width/height) or the project's, always the
+    // project's frame rate. id 0 = the open timeline. Pixel values in that sequence (transform, titles) refer to it.
+    ProjectFormat sequenceFormat(int id) const;
+    ProjectFormat timelineFormat() const { return sequenceFormat(0); }
+    // A sequence's own resolution as one undo step; an empty size = the project's again. Positions/sizes in that
+    // sequence are converted like setFormat does (scaleTimeline). Sizes are kept within limits and even.
+    void setSequenceSize(int id, QSize size);
     // Whole frames per timecode second (29.97 -> 30) - for timecode and default lengths ("1 s")
     int fps() const { return m_format.rate.timebase(); }
     double frameRate() const { return m_format.rate.fps(); }
     // Like DaVinci: frame rate can only be changed as long as no timeline contains clips
     bool frameRateLocked() const;
-    // One undo step; a new resolution also converts positions/sizes in all timelines (scaleTimeline).
+    // One undo step; a new resolution also converts positions/sizes in all timelines without an own resolution
+    // (scaleTimeline); timelines with their own keep it.
     // A new frame rate keeps subtitles, markers and in/out at their time (retimeTimeline); a locked one stays unchanged.
     void setFormat(const ProjectFormat& format);
     void applyFormat(const ProjectFormat& format, const QVector<Sequence>& sequences); // only for undo
@@ -81,8 +90,9 @@ public:
     QString sequenceName(int id) const;
     // Open (no undo, like DaVinci); emits currentSequenceChanged + timelineChanged
     void setCurrentSequence(int id);
-    // New empty timeline (default tracks) in the bin, gets opened; empty name = "Timeline N". One undo step.
-    int addTimeline(const QString& name = {}, int bin = 0);
+    // New empty timeline (default tracks) in the bin, gets opened; empty name = "Timeline N"; size = its own
+    // resolution (empty = the project's). One undo step.
+    int addTimeline(const QString& name = {}, int bin = 0, QSize size = {});
     void renameSequence(int id, const QString& name);
     // Copy (new clip ids), name "... copy"; returns the new id
     int duplicateSequence(int id);
@@ -193,6 +203,9 @@ signals:
     void currentSequenceChanged(); // another timeline opened (comes before timelineChanged)
     void sequencesChanged();       // sequence list/names/bins changed
     void formatChanged(); // comes before the corresponding timelineChanged()
+    // timelineFormat() changed (another timeline opened, a timeline's or the project's resolution); comes after
+    // formatChanged/currentSequenceChanged and before the corresponding timelineChanged()
+    void timelineFormatChanged();
     void mediaChanged();
     void poolChanged(); // bins/clip colors/flags changed (media list unchanged)
     void mediaMarksChanged(const QString& path); // source in/out changed (without mediaChanged)
@@ -205,6 +218,8 @@ signals:
 
 private:
     ProjectFormat m_format;
+    ProjectFormat m_timelineFormat; // last announced timelineFormat()
+    void noteTimelineFormat(bool always = false); // emits timelineFormatChanged when it changed
     QVector<Sequence> m_sequences; // never empty
     int m_current = 1;             // id of the opened sequence
     int m_lastSequenceId = 1;

@@ -1884,5 +1884,9 @@
  "50 %": "50%",
  "100 %": "100%",
  "200 %": "200%",
- "Zoom des Viewers (Strg+Mausrad im Bild, mittlere Maustaste verschiebt)": "Powiększenie podglądu (Ctrl+kółko myszy na obrazie, środkowy przycisk przesuwa)"
+ "Zoom des Viewers (Strg+Mausrad im Bild, mittlere Maustaste verschiebt)": "Powiększenie podglądu (Ctrl+kółko myszy na obrazie, środkowy przycisk przesuwa)",
+ "Neue Hochformat-Timeline (9:16)": "Nowa pionowa oś czasu (9:16)",
+ "Positionen, Beschneiden und Titel dieser Timeline werden an eine neue Auflösung angepasst. Die anderen Timelines bleiben, wie sie sind.": "Pozycje, kadrowanie i napisy tej osi czasu zostaną dopasowane do nowej rozdzielczości. Pozostałe osie czasu zostają bez zmian.",
+ "Projekteinstellungen verwenden (%1)": "Użyj ustawień projektu (%1)",
+ "Timeline-Auflösung…": "Rozdzielczość osi czasu…"
 }

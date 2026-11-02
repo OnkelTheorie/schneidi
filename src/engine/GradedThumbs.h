@@ -169,7 +169,7 @@ public:
         GradedThumbs::Spec grade;
         bool operator==(const Source&) const = default;
     };
-    static Source sourceOf(const Project& project, const Timeline& tl);
+    static Source sourceOf(const Project& project, const Timeline& tl, QSize frame = {}); // frame: empty = project's
 
     TimelinePosters(Project* project, const QSize& size, QObject* parent = nullptr);
     ~TimelinePosters() override;

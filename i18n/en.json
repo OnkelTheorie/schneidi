@@ -1884,5 +1884,9 @@
  "50 %": "50%",
  "100 %": "100%",
  "200 %": "200%",
- "Zoom des Viewers (Strg+Mausrad im Bild, mittlere Maustaste verschiebt)": "Viewer zoom (Ctrl+mouse wheel over the picture, middle mouse button pans)"
+ "Zoom des Viewers (Strg+Mausrad im Bild, mittlere Maustaste verschiebt)": "Viewer zoom (Ctrl+mouse wheel over the picture, middle mouse button pans)",
+ "Neue Hochformat-Timeline (9:16)": "New vertical timeline (9:16)",
+ "Positionen, Beschneiden und Titel dieser Timeline werden an eine neue Auflösung angepasst. Die anderen Timelines bleiben, wie sie sind.": "Positions, crop and titles of this timeline are adapted to a new resolution. The other timelines stay as they are.",
+ "Projekteinstellungen verwenden (%1)": "Use project settings (%1)",
+ "Timeline-Auflösung…": "Timeline resolution…"
 }

@@ -316,7 +316,7 @@ bool GradedThumbs::idle() const
 
 // ---------- TimelinePosters ----------
 
-TimelinePosters::Source TimelinePosters::sourceOf(const Project& project, const Timeline& tl)
+TimelinePosters::Source TimelinePosters::sourceOf(const Project& project, const Timeline& tl, QSize frame)
 {
     // Earliest picture; at that frame the topmost track wins (tracks from V1 upward, ties go to the higher one)
     const Clip* best = nullptr;
@@ -339,7 +339,8 @@ TimelinePosters::Source TimelinePosters::sourceOf(const Project& project, const 
     else s.frame = best->in;
     s.grade = GradedThumbs::specAt(*best, 0);
     // The poster is the frame fitted into its own size (Engine::thumbnail)
-    if (project.format().height > 0) s.grade.frameAspect = double(project.format().width) / project.format().height;
+    if (frame.isEmpty()) frame = project.format().size();
+    if (frame.height() > 0) s.grade.frameAspect = double(frame.width()) / frame.height();
     return s;
 }
 
@@ -374,7 +375,7 @@ QImage TimelinePosters::poster(int sequenceId)
         const Sequence* q = m_project->sequence(sequenceId);
         if (!q) return {};
         Entry e;
-        e.wanted = sourceOf(*m_project, q->timeline);
+        e.wanted = sourceOf(*m_project, q->timeline, m_project->sequenceFormat(q->id).size());
         m_entries.insert(sequenceId, e);
         start(sequenceId);
         it = m_entries.find(sequenceId);
@@ -386,7 +387,7 @@ void TimelinePosters::refresh()
 {
     for (auto it = m_entries.begin(); it != m_entries.end(); ++it) {
         const Sequence* q = m_project->sequence(it.key());
-        it->wanted = q ? sourceOf(*m_project, q->timeline) : Source{};
+        it->wanted = q ? sourceOf(*m_project, q->timeline, m_project->sequenceFormat(q->id).size()) : Source{};
     }
     const QList<int> ids = m_entries.keys();
     for (int id : ids) start(id);
@@ -405,7 +406,7 @@ void TimelinePosters::start(int sequenceId)
     it->busy = true;
     // Same frame, only the grade changed: the decoded frame is reused
     const QImage raw = src.path == it->shown.path && src.frame == it->shown.frame ? it->raw : QImage();
-    const ProjectFormat format = m_project->format();
+    const ProjectFormat format = m_project->sequenceFormat(sequenceId); // the poster in the timeline's shape
     const QSize size = m_size;
     const int generation = m_generation;
     m_pool->start([this, sequenceId, src, raw, format, size, generation] {

@@ -95,7 +95,7 @@ void MainWindow::buildLayout()
     m_multicam = new MulticamView(m_project, m_selection, m_editor);
     m_viewer->setMulticamView(m_multicam);
     m_inspector = new Inspector(m_editor);
-    m_inspector->setFrameSize(m_project->format().size());
+    m_inspector->setFrameSize(m_project->timelineFormat().size());
     m_timeline = new TimelinePanel(m_editor);
     m_deliver = new DeliverPanel(m_project);
     m_mixer = new Mixer(m_project, m_engine);
