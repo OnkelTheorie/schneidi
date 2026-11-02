@@ -22,6 +22,27 @@
 #include <atomic>
 #include <memory>
 
+namespace {
+
+// The part of its file a clip shows: what the measurement depends on
+bool sameFootage(const Clip& a, const Clip& b)
+{
+    return a.mediaPath == b.mediaPath && a.in == b.in && a.out == b.out && a.speed == b.speed && a.reverse == b.reverse
+           && a.freeze == b.freeze && a.freezeFrame == b.freezeFrame && a.ramp == b.ramp;
+}
+
+// Were the measured clips changed while the dialog was up (live edits keep running)? Then the paths do not fit.
+bool footageChanged(const Timeline& tl, const QVector<Clip>& measured)
+{
+    for (const Clip& c : measured) {
+        const Clip* now = TimelineOps::findClip(tl, c.id);
+        if (!now || !sameFootage(*now, c)) return true;
+    }
+    return false;
+}
+
+} // namespace
+
 bool MainWindow::measureReframe(const QVector<Clip>& clips, const ProjectFormat& format,
                                 QHash<int, QVector<Reframe::Key>>* paths)
 {
@@ -42,12 +63,20 @@ bool MainWindow::measureReframe(const QVector<Clip>& clips, const ProjectFormat&
     connect(&dialog, &QProgressDialog::canceled, this, [cancel] { cancel->store(true); });
     QEventLoop loop;
     connect(thread, &QThread::finished, &loop, &QEventLoop::quit);
+    // Another project opened meanwhile (a live edit from schneidi-cli): the measurement is for clips that are gone
+    QMetaObject::Connection replaced = connect(m_project, &Project::loaded, &loop, [cancel, &loop] {
+        cancel->store(true);
+        loop.quit();
+    });
     QTimer poll;
     poll.setInterval(100);
     connect(&poll, &QTimer::timeout, &dialog, [&] { dialog.setValue(std::min(999, progress->load())); });
     thread->start();
     poll.start();
     loop.exec();
+    disconnect(replaced);
+    // The loop also ends when the app quits: stop measuring instead of waiting for it
+    if (!thread->isFinished()) cancel->store(true);
     thread->wait();
     delete thread;
     poll.stop();
@@ -73,7 +102,11 @@ void MainWindow::autoReframe()
     const int sequence = m_project->currentSequence();
     QHash<int, QVector<Reframe::Key>> paths;
     if (!measureReframe(clips, m_project->timelineFormat(), &paths)) return;
-    if (m_project->currentSequence() != sequence) return; // another timeline opened meanwhile
+    // Another timeline opened or the clips changed meanwhile
+    if (m_project->currentSequence() != sequence || footageChanged(m_project->timeline(), clips)) {
+        statusBar()->showMessage(T("Auto-Reframe abgebrochen: die Timeline hat sich während der Analyse geändert"), 6000);
+        return;
+    }
     const int n = m_editor->reframeClips(ids, Reframe::Mode::Auto, paths);
     statusBar()->showMessage(T("Auto-Reframe: %1 Clips folgen ihrem Motiv").arg(n), 5000);
 }
@@ -93,7 +126,10 @@ void MainWindow::reframedCopy(int sequenceId)
     QHash<int, QVector<Reframe::Key>> paths;
     if (!clips.isEmpty() && !measureReframe(clips, format, &paths)) return;
     q = m_project->sequence(sequenceId);
-    if (!q) return;
+    if (!q || footageChanged(q->timeline, clips)) {
+        statusBar()->showMessage(T("Auto-Reframe abgebrochen: die Timeline hat sich während der Analyse geändert"), 6000);
+        return;
+    }
     const Timeline source = q->timeline;
     const QString name = q->name;
 

@@ -1896,5 +1896,6 @@
  "Auto-Reframe: %1 Clips folgen ihrem Motiv": "Recadrage automatique : %1 clips suivent leur sujet",
  "Auto-Reframe: Bild wird analysiert …": "Recadrage automatique : analyse de l’image …",
  "Auto-Reframe: keine Video-Clips (Titel, Compound- und Multicam-Clips bleiben, wie sie sind)": "Recadrage automatique : aucun clip vidéo (les titres, clips composés et multicaméras restent tels quels)",
+ "Auto-Reframe abgebrochen: die Timeline hat sich während der Analyse geändert": "Recadrage automatique annulé : la timeline a changé pendant l’analyse",
  "Nicht alle Clips ließen sich analysieren, sie bleiben mittig:\n%1": "Tous les clips n’ont pas pu être analysés, ils restent centrés :\n%1"
 }

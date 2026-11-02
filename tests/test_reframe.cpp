@@ -24,6 +24,7 @@
 #include <QApplication>
 #include <QJsonArray>
 #include <QTemporaryDir>
+#include <QTimer>
 #include <QUndoStack>
 #include <clocale>
 #include <cmath>
@@ -516,6 +517,20 @@ void testApp(const QString& jumping)
     if (CHECK(a)) {
         a->trigger();
         CHECK(TimelineOps::findClip(p->timeline(), c.id)->keys.contains(AnimParam::PosX));
+        // The clip trimmed while the analysis runs (a live edit): the measured path no longer fits, nothing applied
+        ed->reframeClips({c.id}, Reframe::Mode::Center);
+        const int id = c.id;
+        QTimer::singleShot(0, p, [p, id] {
+            p->edit("trim", [id](Timeline& tl) {
+                if (Clip* x = TimelineOps::findClip(tl, id)) x->out -= 10;
+            });
+        });
+        const int before = p->undoStack()->index();
+        a->trigger();
+        CHECK(!TimelineOps::findClip(p->timeline(), id)->keys.contains(AnimParam::PosX));
+        CHECK_EQ(p->undoStack()->index(), before + 1); // only the trim
+        p->undoStack()->undo();
+        p->undoStack()->undo();
     }
     p->undoStack()->undo();
     p->undoStack()->undo();

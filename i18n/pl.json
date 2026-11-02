@@ -1896,5 +1896,6 @@
  "Auto-Reframe: %1 Clips folgen ihrem Motiv": "Automatyczne kadrowanie: %1 klipów podąża za obiektem",
  "Auto-Reframe: Bild wird analysiert …": "Automatyczne kadrowanie: analiza obrazu …",
  "Auto-Reframe: keine Video-Clips (Titel, Compound- und Multicam-Clips bleiben, wie sie sind)": "Automatyczne kadrowanie: brak klipów wideo (napisy, klipy złożone i wielokamerowe pozostają bez zmian)",
+ "Auto-Reframe abgebrochen: die Timeline hat sich während der Analyse geändert": "Automatyczne kadrowanie przerwane: oś czasu zmieniła się podczas analizy",
  "Nicht alle Clips ließen sich analysieren, sie bleiben mittig:\n%1": "Nie wszystkie klipy udało się przeanalizować, pozostają wyśrodkowane:\n%1"
 }

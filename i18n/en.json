@@ -1896,5 +1896,6 @@
  "Auto-Reframe: %1 Clips folgen ihrem Motiv": "Auto reframe: %1 clips follow their subject",
  "Auto-Reframe: Bild wird analysiert …": "Auto reframe: analyzing the picture …",
  "Auto-Reframe: keine Video-Clips (Titel, Compound- und Multicam-Clips bleiben, wie sie sind)": "Auto reframe: no video clips (titles, compound and multicam clips stay as they are)",
+ "Auto-Reframe abgebrochen: die Timeline hat sich während der Analyse geändert": "Auto reframe cancelled: the timeline changed during the analysis",
  "Nicht alle Clips ließen sich analysieren, sie bleiben mittig:\n%1": "Not all clips could be analyzed, they stay centered:\n%1"
 }

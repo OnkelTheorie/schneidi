@@ -1896,5 +1896,6 @@
  "Auto-Reframe: %1 Clips folgen ihrem Motiv": "Автокадрирование: %1 клипов следуют за объектом",
  "Auto-Reframe: Bild wird analysiert …": "Автокадрирование: анализ изображения …",
  "Auto-Reframe: keine Video-Clips (Titel, Compound- und Multicam-Clips bleiben, wie sie sind)": "Автокадрирование: нет видеоклипов (титры, составные и мультикамерные клипы остаются как есть)",
+ "Auto-Reframe abgebrochen: die Timeline hat sich während der Analyse geändert": "Автокадрирование отменено: таймлайн изменился во время анализа",
  "Nicht alle Clips ließen sich analysieren, sie bleiben mittig:\n%1": "Не все клипы удалось проанализировать, они остаются по центру:\n%1"
 }
