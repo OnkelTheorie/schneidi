@@ -83,12 +83,16 @@ QImage frameImage(const Picture::Frame& f)
                   [](void* p) { delete static_cast<Picture::Frame*>(p); }, keep);
 }
 
-// Preview size: the project format scaled down to a longer edge of 960 (even), the full size when the viewer zooms
-// to 100 % or more (full) or with SCHNEIDI_FULLRES_PREVIEW
-QSize previewSizeOf(const ProjectFormat& format, bool full)
+// Preview size: the project format scaled down to a longer edge of 960 (even; larger when `edge` asks for it, e.g. the
+// full-screen viewer's screen, never beyond the project), the full size when the viewer zooms to 100 % or more (full)
+// or with SCHNEIDI_FULLRES_PREVIEW
+QSize previewSizeOf(const ProjectFormat& format, bool full, int edge)
 {
     if (full || qEnvironmentVariableIsSet("SCHNEIDI_FULLRES_PREVIEW")) return format.size();
-    const QSize fit = format.size().scaled(960, 960, Qt::KeepAspectRatio);
+    const QSize project = format.size();
+    if (edge >= std::max(project.width(), project.height())) return project;
+    const int longer = std::max(960, edge);
+    const QSize fit = project.scaled(longer, longer, Qt::KeepAspectRatio);
     return QSize(std::max(2, fit.width() & ~1), std::max(2, fit.height() & ~1));
 }
 
@@ -190,7 +194,7 @@ bool Engine::init(QString*)
 void Engine::createPump()
 {
     // Preview image in the project's aspect ratio (otherwise portrait gets distorted), even dimensions
-    m_previewSize = previewSizeOf(m_format, m_previewFull);
+    m_previewSize = previewSizeOf(m_format, m_previewFull, m_previewEdge);
     if (!m_resolved) {
         m_resolved = std::make_shared<Resolved>();
         m_resolved->bypass = m_gradeBypass;
@@ -757,7 +761,22 @@ void Engine::setPreviewFullSize(bool full)
 {
     if (full == m_previewFull) return;
     m_previewFull = full;
-    m_previewSize = previewSizeOf(m_format, full);
+    applyPreviewSize();
+}
+
+void Engine::setPreviewEdge(int px)
+{
+    px = std::max(0, px);
+    if (px == m_previewEdge) return;
+    m_previewEdge = px;
+    applyPreviewSize();
+}
+
+void Engine::applyPreviewSize()
+{
+    const QSize size = previewSizeOf(m_format, m_previewFull, m_previewEdge);
+    if (size == m_previewSize) return;
+    m_previewSize = size;
     if (m_renderer) m_renderer->setOutputSize(m_previewSize);
     if (m_sourceRenderer) m_sourceRenderer->setOutputSize(m_previewSize);
     refresh(); // the frame shown again at the new size

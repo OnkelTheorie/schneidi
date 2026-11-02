@@ -488,10 +488,14 @@ void MainWindow::setViewerFullScreen(bool on)
         // Belongs to the main window for the window manager (no own taskbar entry, stays with it) - set after the
         // first show, the parentless window's surface is fixed by then (FullScreenViewer.h)
         if (QWindow* w = m_fullScreen->windowHandle()) w->setTransientParent(windowHandle());
+        // The picture as sharp as the screen (the viewer's small preview enlarged looked soft), rendered no larger
+        m_engine->setPreviewEdge(m_fullScreen->wantedPreviewEdge());
+        connect(m_fullScreen, &FullScreenViewer::previewEdgeWanted, m_engine, &Engine::setPreviewEdge);
     } else if (!on && m_fullScreen) {
         FullScreenViewer* fs = std::exchange(m_fullScreen, nullptr);
         fs->hide();
         fs->deleteLater();
+        m_engine->setPreviewEdge(0); // back to the viewer's own size
         raise();
         activateWindow();
         // Without a parent nothing hands the focus back: the main window's focus widget stayed unfocused

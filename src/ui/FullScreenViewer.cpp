@@ -9,6 +9,9 @@
 #include <QScreen>
 #include <QVBoxLayout>
 
+#include <algorithm>
+#include <climits>
+
 FullScreenViewer::FullScreenViewer(Engine* engine, const QImage& picture)
     : QWidget(nullptr, Qt::Window | Qt::FramelessWindowHint)
 {
@@ -30,6 +33,7 @@ FullScreenViewer::FullScreenViewer(Engine* engine, const QImage& picture)
         m_view->setFrameSize(engine->frameSize());
         m_view->setFrame(img);
     });
+    connect(m_view, &FrameView::zoomChanged, this, [this] { emit previewEdgeWanted(wantedPreviewEdge()); });
     m_hideCursor.setSingleShot(true);
     m_hideCursor.setInterval(1500);
     // On the picture: its own pointer (hover over the picture sets one) would win over the window's
@@ -50,6 +54,15 @@ void FullScreenViewer::showOn(QScreen* screen)
     activateWindow();
     setFocus();
     m_hideCursor.start();
+}
+
+int FullScreenViewer::wantedPreviewEdge() const
+{
+    const double z = m_view->zoom();
+    if (z != FrameView::kFit && z >= 1.0) return INT_MAX; // the project size
+    // Fit: as many pixels as the screen has - not more (a 4K project on a 1080p screen renders at 1920 wide)
+    const QSize px = (screen() ? screen()->geometry().size() : size()) * devicePixelRatioF();
+    return std::max(px.width(), px.height());
 }
 
 const QImage& FullScreenViewer::picture() const

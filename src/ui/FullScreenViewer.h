@@ -26,9 +26,13 @@ public:
     void showOn(QScreen* screen);
     const QImage& picture() const;
     QRectF pictureRect() const; // where the picture is drawn (empty without one)
+    // Longer edge of the preview frames this window wants: its screen's pixels (fitted), the project size when zoomed
+    // in to 100 % or more (Ctrl+wheel). Engine::setPreviewEdge
+    int wantedPreviewEdge() const;
 
 signals:
     void exitRequested();
+    void previewEdgeWanted(int px); // the zoom changed: see wantedPreviewEdge()
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;

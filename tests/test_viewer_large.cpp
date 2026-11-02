@@ -389,6 +389,22 @@ void testFullScreen(MainWindow& w, Engine& engine)
     CHECK(fs->screen() == w.screen() && fs->geometry() == w.screen()->geometry());
     CHECK(QTest::qWaitForWindowActive(fs));
     checkGpuSurface(viewer, fs, "first");
+    // Picture as sharp as the screen: preview frames with the screen's pixels (never more than the project has),
+    // the project size when zoomed in (Ctrl+wheel); back to the viewer's own size afterwards
+    {
+        const QSize project = engine.frameSize(), preview = engine.previewSize();
+        const int screenEdge = fs->wantedPreviewEdge();
+        CHECK_EQ(engine.previewEdge(), screenEdge);
+        CHECK(std::max(preview.width(), preview.height())
+              >= std::min({std::max(project.width(), project.height()), screenEdge, 960}) - 2);
+        CHECK(preview.width() <= project.width() && preview.height() <= project.height());
+        if (auto* view = fs->findChild<FrameView*>(); CHECK(view)) {
+            view->setZoom(2.0);
+            CHECK_EQ(engine.previewSize(), project);
+            view->setZoom(FrameView::kFit);
+            CHECK_EQ(engine.previewSize(), preview);
+        }
+    }
     // The pointer goes away when the mouse rests - also over the picture, after it moved there (the picture's own
     // pointer from hovering won over the window's blank one: it never hid)
     if (auto* view = fs->findChild<FrameView*>(); CHECK(view)) {
@@ -406,7 +422,8 @@ void testFullScreen(MainWindow& w, Engine& engine)
         settle();
         CHECK(view->cursor().shape() != Qt::BlankCursor);
     }
-    CHECK(fs->picture().size() == shown.size() && !fs->picture().isNull());
+    // the viewer's picture, or already one at the screen's size
+    CHECK(!fs->picture().isNull() && (fs->picture().size() == shown.size() || fs->picture().size() == engine.previewSize()));
     const QRectF r = fs->pictureRect();
     CHECK(r.width() >= fs->width() - 1 || r.height() >= fs->height() - 1); // as large as the screen allows
     if (!dumpDir().isEmpty()) fs->grab().save(dumpDir() + "/full-screen.png");
@@ -433,6 +450,7 @@ void testFullScreen(MainWindow& w, Engine& engine)
     QTest::qWait(50);
     CHECK(!w.fullScreenViewer() && !full->isChecked() && !button->isChecked());
     CHECK(engine.speed() > 0.0);
+    CHECK_EQ(engine.previewEdge(), 0);
     engine.pause();
     settle();
     sameLayout(before, Layout::of(&w), "full screen");

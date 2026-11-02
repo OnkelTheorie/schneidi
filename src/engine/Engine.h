@@ -73,6 +73,10 @@ public:
     // more and would otherwise show the small picture enlarged
     void setPreviewFullSize(bool full);
     bool previewFullSize() const { return m_previewFull; }
+    // Longer edge the scaled-down preview frames at least get (0 = the default 960): the full-screen viewer asks for
+    // its screen's pixels, so the picture is sharp there without rendering beyond what the screen shows
+    void setPreviewEdge(int px);
+    int previewEdge() const { return m_previewEdge; }
     QSize previewSize() const { return m_previewSize; }
 
     // Proxy media: preview (timeline video tracks, source view) reads the proxy if present and
@@ -188,6 +192,8 @@ signals:
 
 private:
     void createPump();
+    void applyPreviewSize(); // m_previewSize from full/edge, renderers at the new size
+
     void refresh();
     void applyAudioState();
     void applyTimeline(const Timeline& tl);
@@ -239,6 +245,7 @@ private:
     QTimer* m_seekRelease;     // no seek for a moment: dragging ended, sound fades in
     QSize m_previewSize{960, 540}; // project format scaled down (longer edge 960), or full (m_previewFull)
     bool m_previewFull = false;
+    int m_previewEdge = 0; // setPreviewEdge
 
     // Own audio engine (docs/archiv/plan-0.10-ton.md): the player plays the sound, the picture follows its clock
     std::unique_ptr<Audio::Player> m_player;
