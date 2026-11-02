@@ -22,6 +22,7 @@
 #include "ui/Viewer.h"
 
 #include <QSettings>
+#include <QShortcut>
 
 #include <QApplication>
 #include <QElapsedTimer>
@@ -126,6 +127,22 @@ int main(int argc, char** argv)
     CHECK_EQ(project->undoStack()->index(), undoBefore + 1);
     project->undoStack()->undo();
     CHECK(project->timeline().audio.size() < 2 || project->timeline().audio[1].clips.isEmpty());
+
+    // Esc ends the take also in the large viewer (its own Esc shortcut must not make the key ambiguous)
+    w.setViewerLarge(true);
+    record->click();
+    CHECK(recorder->recording());
+    w.setViewerLarge(true); // turned on again while recording
+    int escapes = 0;
+    for (QShortcut* s : w.findChildren<QShortcut*>())
+        escapes += s->isEnabled() && s->key() == QKeySequence(Qt::Key_Escape);
+    CHECK_EQ(escapes, 1);
+    wait(300);
+    engine.pause();
+    wait(50);
+    CHECK(!recorder->recording());
+    w.setViewerLarge(false);
+    if (CHECK_EQ(project->undoStack()->index(), undoBefore + 1)) project->undoStack()->undo();
 
     // A second take (the timeline already playing): pausing for the start must not end it at once
     engine.seek(25);

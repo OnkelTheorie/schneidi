@@ -48,6 +48,7 @@ void MainWindow::setupVoiceover()
     connect(m_voiceover, &VoiceoverRecorder::recordingChanged, this, [this](bool on) {
         m_viewer->setRecording(on);
         m_voiceoverEscape->setEnabled(on);
+        if (m_largeEscape) m_largeEscape->setEnabled(m_large.active && !on); // see setViewerLarge
         if (on)
             statusBar()->showMessage(T("Voiceover: Aufnahme auf %1 läuft – Esc oder Leertaste beendet")
                                          .arg(trackShortName({TrackKind::Audio, m_voiceover->armedTrack()})));
