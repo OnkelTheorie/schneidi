@@ -1120,6 +1120,25 @@ struct Renderer::Impl {
         return lane;
     }
 
+    // Decoder lane of the clip on video track `trackIndex`: a clip showing the same part of the same file at the same
+    // time as one on a track below (the kill feed kept above a reframed game clip, a facecam cut out of the gameplay)
+    // reads that clip's decoder - the picture is decoded once instead of twice (a 9:16 short with its kill feed kept
+    // took ~1.5x the export time)
+    QString trackClipLane(const Timeline& tl, int trackIndex, const Clip& c, const QString& prefix) const
+    {
+        const auto sameSource = [&](const Clip& o) {
+            return o.mediaPath == c.mediaPath && o.start == c.start && o.in == c.in && o.out == c.out
+                   && o.speed == c.speed && o.reverse == c.reverse && o.freeze == c.freeze
+                   && o.stillFrame() == c.stillFrame() && o.ramp == c.ramp && o.kind == c.kind;
+        };
+        if (!c.mediaPath.isEmpty() && !c.isNested())
+            for (int j = 0; j < trackIndex && j < tl.video.size(); ++j)
+                for (const Clip& o : tl.video[j].clips)
+                    if (o.start <= c.start && sameSource(o))
+                        return clipLane(tl.video[j], o, prefix + QString("v%1").arg(j));
+        return clipLane(tl.video[trackIndex], c, prefix + QString("v%1").arg(trackIndex));
+    }
+
     // The track's picture at f surely covers the whole frame opaquely (then nothing below is decoded). Conservative:
     // false when unsure.
     bool covers(const Track& track, int trackIndex, int f, const Ctx& ctx, const Timeline& tl, const QString& prefix)
@@ -1141,7 +1160,7 @@ struct Renderer::Impl {
         if (TimelineOps::fadeRamp(*c, f - c->start) < 1.0) return false;
         for (const EffectInstance& e : c->effects)
             if (e.enabled && e.effectId != QLatin1String(ColorGrade::EffectId)) return false;
-        const QString lane = clipLane(track, *c, prefix + QString("v%1").arg(trackIndex));
+        const QString lane = trackClipLane(tl, trackIndex, *c, prefix);
         const Source s = source(c->mediaPath, lane);
         if (s.still) {
             if (!s.still->opaque) return false;
@@ -1234,7 +1253,7 @@ struct Renderer::Impl {
             }
         const Clip* c = clipAt(track, f);
         if (!c || !c->enabled) return;
-        const QString lane = clipLane(track, *c, prefix + QString("v%1").arg(trackIndex));
+        const QString lane = trackClipLane(tl, trackIndex, *c, prefix);
         const int t = f - c->start;
         const double fade = TimelineOps::fadeRamp(*c, t);
         // Render cache (preview, outer timeline): the clip's finished output (frame 0 = clip start) instead of the
@@ -1921,7 +1940,7 @@ struct Renderer::Impl {
             }
         const Clip* c = clipAt(track, f);
         if (!c || !c->enabled) return;
-        const QString lane = clipLane(track, *c, prefix + QString("v%1").arg(trackIndex));
+        const QString lane = trackClipLane(tl, trackIndex, *c, prefix);
         const int t = f - c->start;
         const double fade = TimelineOps::fadeRamp(*c, t);
         if (ctx.preview && options.renderCache && depth == 0 && !c->isTitle() && !c->mediaPath.isEmpty()
@@ -2330,7 +2349,7 @@ void Renderer::prepare(int64_t frame)
         const QVector<Clip>& clips = track.clips;
         for (const Clip& c : clips) {
             if (!c.enabled || c.mediaPath.isEmpty() || c.isTitle() || c.isNested()) continue;
-            const QString lane = d->clipLane(track, c, QString("v%1").arg(i));
+            const QString lane = d->trackClipLane(*tl, i, c, QString());
             if (frame >= c.start - 50 && frame < c.end()) d->source(c.mediaPath, lane);
             // A clip starting soon: decode its first picture now (long-GOP material decodes up to seconds from the
             // keyframe before its in point; in the middle of playback the picture stood that long). Only when the

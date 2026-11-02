@@ -6,6 +6,8 @@
 // by itself with the tighter CS2 region (game picture left of the lines is no kill).
 #include "check.h"
 
+#include "app/InputBindings.h"
+#include "app/MainWindow.h"
 #include "cli/Commands.h"
 #include "cli/CommandsDetail.h"
 #include "core/Editor.h"
@@ -16,9 +18,13 @@
 #include "core/Reframe.h"
 #include "core/Selection.h"
 #include "core/TimelineOps.h"
+#include "engine/Engine.h"
 #include "engine/Snapshot.h"
+#include "ui/MediaPool.h"
 
+#include <QAction>
 #include <QApplication>
+#include <QSettings>
 #include <QDir>
 #include <QJsonArray>
 #include <QTemporaryDir>
@@ -381,6 +387,45 @@ void testCli(const QString& dir, const QString& game, const QString& plain)
     CHECK(helped);
 }
 
+// The app: the clip menu's Auto-Reframe and the Media Pool's 9:16 copy keep the kill feed of game footage (one undo
+// step); the menu switch turns it off
+void testApp(const QString& game)
+{
+    Engine engine;
+    QString err;
+    if (!CHECK(engine.init(&err))) return;
+    std::setlocale(LC_NUMERIC, "C");
+    QSettings().remove("reframe/keepKillFeed");
+    MainWindow w(&engine);
+    w.disableAutosave();
+    w.resize(1400, 900);
+    w.show();
+    w.importFiles({game}, true);
+    auto* p = w.findChild<Project*>();
+    auto* pool = w.findChild<MediaPool*>();
+    if (!CHECK(p && pool) || !CHECK(p->timeline().video.size() > 0 && p->timeline().video[0].clips.size() == 1)) return;
+    const int steps = p->undoStack()->index();
+    emit pool->reframedCopyRequested(p->currentSequence());
+    CHECK_EQ(p->undoStack()->index(), steps + 1); // copy, reframe and kill feed: one step
+    CHECK_EQ(p->timelineFormat().size(), QSize(1080, 1920));
+    CHECK(keptCopy(p->timeline()));
+    QAction* keep = InputBindings::instance().action("reframe_keep_killfeed");
+    QAction* reframe = InputBindings::instance().action("auto_reframe");
+    if (CHECK(keep && reframe)) {
+        CHECK(keep->isChecked()); // on by default
+        keep->setChecked(false);
+        CHECK(!QSettings().value("reframe/keepKillFeed", true).toBool());
+        reframe->trigger();
+        CHECK(!keptCopy(p->timeline())); // off: the copy goes
+        CHECK_EQ(p->undoStack()->index(), steps + 2);
+        keep->setChecked(true);
+        reframe->trigger();
+        CHECK(keptCopy(p->timeline()));
+        CHECK_EQ(videoClips(p->timeline()), 2);
+    }
+    QSettings().remove("reframe/keepKillFeed");
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -394,13 +439,13 @@ int main(int argc, char** argv)
     testGeometry();
     testEditor(tmp.path());
     if (!Check::haveFfmpeg()) return Check::skip("ffmpeg nicht gefunden");
-    // A CS2-like recording (640x360): a kill feed line of the player (red, top right, inside the CS2 mark region) at
+    // A CS2-like recording (640x360): a kill feed line of the player (a thin red frame, top right, inside the CS2 mark region) at
     // 2 s, and at 3.5 s a red patch of game picture left of the lines (inside the old wide region only); shots in
     // the sound for the loud moments
     QDir(tmp.path()).mkpath("cs2");
     const QStringList args{"-f", "lavfi", "-i",
                            "color=c=0x404040:s=640x360:d=6:r=25,"
-                           "drawbox=x=470:y=26:w=165:h=14:c=0xd8444a:t=fill:enable='gte(t,2)',"
+                           "drawbox=x=470:y=26:w=165:h=14:c=0xd8444a:t=2:enable='gte(t,2)',"
                            "drawbox=x=470:y=60:w=40:h=20:c=0xd8444a:t=fill:enable='gte(t,3.5)'",
                            "-f", "lavfi", "-i",
                            "aevalsrc='0.01*(random(0)-0.5)+if(between(t,1.9,1.95)+between(t,4,4.05),0.8*sin(2*PI*900*t),0)'"
@@ -412,5 +457,6 @@ int main(int argc, char** argv)
     Check::initEngine();
     std::setlocale(LC_NUMERIC, "C");
     testCli(tmp.path(), game, plain);
+    testApp(game);
     return Check::result();
 }
