@@ -17,9 +17,11 @@
 
 #include <QAction>
 #include <QApplication>
+#include <QDebug>
 #include <QLabel>
 #include <QTest>
 #include <QTextEdit>
+#include <QToolButton>
 #include <QUndoStack>
 #include <QVBoxLayout>
 
@@ -161,6 +163,24 @@ void testPanel()
     CHECK_EQ(panel.words().size(), 6);
 }
 
+// At the panel's usual width beside the Inspector (~320 px) no button text is elided: the transcribe/caption buttons
+// and the pause tools sit in two rows (in one, "Word captions" and "Remove pauses" were cut to "Wor…ons", "Rem…ses")
+void testPanelButtonsFit()
+{
+    Fixture f;
+    TranscriptPanel panel(&f.project, &f.editor);
+    panel.resize(320, 500);
+    panel.show();
+    QCoreApplication::processEvents();
+    int buttons = 0;
+    for (const QToolButton* b : panel.findChildren<QToolButton*>()) {
+        if (b->text().size() < 2) continue; // the cancel cross
+        ++buttons;
+        if (!CHECK(b->width() >= b->sizeHint().width())) qWarning() << b->text() << b->width() << b->sizeHint();
+    }
+    CHECK_EQ(buttons, 3);
+}
+
 // The cut keys are a bindable action ("transcript_cut", scope "transcript"): in the text with words selected they
 // cut and the window's action on the same key (the timeline's Delete) stays quiet; without words they do nothing
 // (a click into the text clears the selection: the timeline clips must not go); rebinding takes effect at once (also
@@ -273,6 +293,7 @@ int main(int argc, char** argv)
     testRanges();
     testPanel();
     testPanelKeys();
+    testPanelButtonsFit();
     testProjectFile();
     return Check::result();
 }
