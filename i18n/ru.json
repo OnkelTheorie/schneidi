@@ -1950,5 +1950,15 @@
  "Voiceover: %1": "Закадровый голос: %1",
  "Voiceover: Aufnahme auf %1 läuft – Esc oder Leertaste beendet": "Закадровый голос: идёт запись на %1 – Esc или пробел останавливает",
  "Vorlauf": "Предпрокрутка",
- "Zusätzlich abziehen (ms; positiv = Stimme lag zu spät):": "Дополнительно вычесть (мс; положительное = голос запаздывал):"
+ "Zusätzlich abziehen (ms; positiv = Stimme lag zu spät):": "Дополнительно вычесть (мс; положительное = голос запаздывал):",
+ "Stimme säubern": "Очистить голос",
+ "Wie stark Geräusche unter der Stimme entfernt werden (Prozent)": "Насколько сильно убираются шумы под голосом (в процентах)",
+ "Pausen absenken": "Приглушать паузы",
+ "Senkt alles zwischen den Wörtern ab (erkennt Sprache und lernt den Pegel der Stimme)": "Приглушает всё между словами (распознаёт речь и запоминает уровень голоса)",
+ "Klicks und Stöße dämpfen": "Подавлять щелчки и удары",
+ "Dämpft Stöße gegen das Mikrofon und Klicks von Tastatur und Maus, wenn gerade niemand spricht": "Подавляет удары по микрофону и щелчки клавиатуры и мыши, когда никто не говорит",
+ "Stimme formen": "Обработать голос",
+ "Hochpass, Präsenz, Kompressor, De-Esser und Limiter für eine gleichmäßig verständliche Stimme": "Фильтр высоких частот, присутствие, компрессор, де-эссер и лимитер для ровного, разборчивого голоса",
+ "Säubert Sprache mit einem Klick: entfernt Rauschen und Geräusche, senkt Pausen ab und formt die Stimme": "Очищает речь одним щелчком: убирает шум и посторонние звуки, приглушает паузы и обрабатывает голос",
+ "Säubert alle Clips der Spur mit „R“ (sonst der Ziel-Tonspur): entfernt Rauschen und Geräusche, senkt Pausen ab und formt die Stimme": "Очищает все клипы дорожки с «R» (иначе целевой аудиодорожки): убирает шум и посторонние звуки, приглушает паузы и обрабатывает голос"
 }

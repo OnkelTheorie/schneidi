@@ -1950,5 +1950,15 @@
  "Voiceover: %1": "Voz en off: %1",
  "Voiceover: Aufnahme auf %1 läuft – Esc oder Leertaste beendet": "Voz en off: grabando en %1 – Esc o espacio detiene",
  "Vorlauf": "Pre-roll",
- "Zusätzlich abziehen (ms; positiv = Stimme lag zu spät):": "Restar además (ms; positivo = la voz llegó tarde):"
+ "Zusätzlich abziehen (ms; positiv = Stimme lag zu spät):": "Restar además (ms; positivo = la voz llegó tarde):",
+ "Stimme säubern": "Limpiar voz",
+ "Wie stark Geräusche unter der Stimme entfernt werden (Prozent)": "Con qué intensidad se eliminan los ruidos bajo la voz (porcentaje)",
+ "Pausen absenken": "Bajar las pausas",
+ "Senkt alles zwischen den Wörtern ab (erkennt Sprache und lernt den Pegel der Stimme)": "Baja todo lo que hay entre las palabras (detecta la voz y aprende su nivel)",
+ "Klicks und Stöße dämpfen": "Atenuar clics y golpes",
+ "Dämpft Stöße gegen das Mikrofon und Klicks von Tastatur und Maus, wenn gerade niemand spricht": "Atenúa los golpes contra el micrófono y los clics de teclado y ratón mientras nadie habla",
+ "Stimme formen": "Moldear la voz",
+ "Hochpass, Präsenz, Kompressor, De-Esser und Limiter für eine gleichmäßig verständliche Stimme": "Paso alto, presencia, compresor, de-esser y limitador para una voz uniforme y clara",
+ "Säubert Sprache mit einem Klick: entfernt Rauschen und Geräusche, senkt Pausen ab und formt die Stimme": "Limpia la voz con un clic: elimina ruido y sonidos de fondo, baja las pausas y moldea la voz",
+ "Säubert alle Clips der Spur mit „R“ (sonst der Ziel-Tonspur): entfernt Rauschen und Geräusche, senkt Pausen ab und formt die Stimme": "Limpia todos los clips de la pista con «R» (si no, la pista de audio de destino): elimina ruido y sonidos de fondo, baja las pausas y moldea la voz"
 }

@@ -1950,5 +1950,15 @@
  "Voiceover: %1": "Voice-over: %1",
  "Voiceover: Aufnahme auf %1 läuft – Esc oder Leertaste beendet": "Voice-over: recording on %1 – Esc or Space stops",
  "Vorlauf": "Pre-roll",
- "Zusätzlich abziehen (ms; positiv = Stimme lag zu spät):": "Extra to subtract (ms; positive = voice was late):"
+ "Zusätzlich abziehen (ms; positiv = Stimme lag zu spät):": "Extra to subtract (ms; positive = voice was late):",
+ "Stimme säubern": "Clean Voice",
+ "Wie stark Geräusche unter der Stimme entfernt werden (Prozent)": "How strongly noises under the voice are removed (percent)",
+ "Pausen absenken": "Lower pauses",
+ "Senkt alles zwischen den Wörtern ab (erkennt Sprache und lernt den Pegel der Stimme)": "Lowers everything between the words (detects speech and learns the voice's level)",
+ "Klicks und Stöße dämpfen": "Dampen clicks and bumps",
+ "Dämpft Stöße gegen das Mikrofon und Klicks von Tastatur und Maus, wenn gerade niemand spricht": "Dampens bumps against the microphone and keyboard and mouse clicks while nobody is speaking",
+ "Stimme formen": "Shape voice",
+ "Hochpass, Präsenz, Kompressor, De-Esser und Limiter für eine gleichmäßig verständliche Stimme": "High pass, presence, compressor, de-esser and limiter for an even, clear voice",
+ "Säubert Sprache mit einem Klick: entfernt Rauschen und Geräusche, senkt Pausen ab und formt die Stimme": "Cleans speech in one click: removes noise and background sounds, lowers pauses and shapes the voice",
+ "Säubert alle Clips der Spur mit „R“ (sonst der Ziel-Tonspur): entfernt Rauschen und Geräusche, senkt Pausen ab und formt die Stimme": "Cleans all clips of the track with “R” (else the target audio track): removes noise and background sounds, lowers pauses and shapes the voice"
 }

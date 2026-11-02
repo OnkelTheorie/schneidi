@@ -1950,5 +1950,15 @@
  "Voiceover: %1": "Lektor: %1",
  "Voiceover: Aufnahme auf %1 läuft – Esc oder Leertaste beendet": "Lektor: nagrywanie na %1 – Esc lub spacja kończy",
  "Vorlauf": "Rozbieg",
- "Zusätzlich abziehen (ms; positiv = Stimme lag zu spät):": "Dodatkowo odjąć (ms; dodatnie = głos był spóźniony):"
+ "Zusätzlich abziehen (ms; positiv = Stimme lag zu spät):": "Dodatkowo odjąć (ms; dodatnie = głos był spóźniony):",
+ "Stimme säubern": "Oczyść głos",
+ "Wie stark Geräusche unter der Stimme entfernt werden (Prozent)": "Jak mocno usuwane są szumy pod głosem (procent)",
+ "Pausen absenken": "Wycisz pauzy",
+ "Senkt alles zwischen den Wörtern ab (erkennt Sprache und lernt den Pegel der Stimme)": "Wycisza wszystko między słowami (rozpoznaje mowę i uczy się poziomu głosu)",
+ "Klicks und Stöße dämpfen": "Tłum kliknięcia i stuki",
+ "Dämpft Stöße gegen das Mikrofon und Klicks von Tastatur und Maus, wenn gerade niemand spricht": "Tłumi stuknięcia w mikrofon oraz kliknięcia klawiatury i myszy, gdy nikt nie mówi",
+ "Stimme formen": "Kształtuj głos",
+ "Hochpass, Präsenz, Kompressor, De-Esser und Limiter für eine gleichmäßig verständliche Stimme": "Filtr górnoprzepustowy, prezencja, kompresor, de-esser i limiter dla równego, wyraźnego głosu",
+ "Säubert Sprache mit einem Klick: entfernt Rauschen und Geräusche, senkt Pausen ab und formt die Stimme": "Czyści mowę jednym kliknięciem: usuwa szum i odgłosy, wycisza pauzy i kształtuje głos",
+ "Säubert alle Clips der Spur mit „R“ (sonst der Ziel-Tonspur): entfernt Rauschen und Geräusche, senkt Pausen ab und formt die Stimme": "Czyści wszystkie klipy ścieżki z „R” (w przeciwnym razie docelowej ścieżki audio): usuwa szum i odgłosy, wycisza pauzy i kształtuje głos"
 }
