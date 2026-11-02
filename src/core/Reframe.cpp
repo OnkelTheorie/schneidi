@@ -47,6 +47,7 @@ double median(std::vector<double> v)
 struct Point {
     int frame;
     double x, y;
+    double weight = 1;
 };
 
 // Median of x and y over the points with frames in [from, to]
@@ -59,8 +60,37 @@ QPointF medianOver(const std::vector<Point>& pts, int from, int to)
     return {median(xs), median(ys)};
 }
 
-// One shot (no cut inside): holds and eased moves
-void segmentPath(const QVector<Target>& seg, const PathParams& p, QVector<Key>& keys)
+// Weighted median of values (value, weight)
+double weightedMedian(std::vector<std::pair<double, double>> v)
+{
+    std::sort(v.begin(), v.end());
+    double total = 0;
+    for (const auto& [x, w] : v) total += w;
+    double sum = 0;
+    for (const auto& [x, w] : v)
+        if ((sum += w) >= total / 2) return x;
+    return v.empty() ? 0.5 : v.back().first;
+}
+
+// Weighted median over the points with frames in [from, to], plus the middle of the picture with weight `prior` per
+// point: sure measurements decide, unsure ones (a game's busy picture) leave the middle (the crosshair)
+QPointF weightedOver(const std::vector<Point>& pts, int from, int to, double prior, double cx, double cy)
+{
+    std::vector<std::pair<double, double>> xs, ys;
+    for (const Point& p : pts)
+        if (p.frame >= from && p.frame <= to) {
+            xs.push_back({p.x, p.weight});
+            ys.push_back({p.y, p.weight});
+            xs.push_back({cx, prior});
+            ys.push_back({cy, prior});
+        }
+    if (xs.empty()) return {cx, cy};
+    return {weightedMedian(xs), weightedMedian(ys)};
+}
+
+// One shot (no cut inside): holds and eased moves. previous = the camera before a cut: a new shot whose subject is
+// within the dead zone of it keeps it (a flash or a menu counted as a cut must not jolt the picture)
+void segmentPath(const QVector<Target>& seg, const PathParams& p, QVector<Key>& keys, const Key* previous)
 {
     const double s = std::clamp(p.smoothness, 0.0, 1.0);
     const double fps = std::max(1.0, p.fps);
@@ -68,20 +98,19 @@ void segmentPath(const QVector<Target>& seg, const PathParams& p, QVector<Key>& 
     const bool cropX = ww < 0.999, cropY = wh < 0.999;
     const auto keep = [](double v, double w, bool crop) { return crop ? std::clamp(v, w / 2, 1 - w / 2) : 0.5; };
 
-    // Unsure measurements lean towards the middle (game footage: the crosshair), then each side is kept where the
-    // window can go
+    // Each side kept where the window can go
     std::vector<Point> raw;
     raw.reserve(size_t(seg.size()));
-    for (const Target& t : seg) {
-        const double w = std::clamp(t.weight, 0.0, 1.0);
-        raw.push_back({t.frame, keep(0.5 + (t.x - 0.5) * w, ww, cropX), keep(0.5 + (t.y - 0.5) * w, wh, cropY)});
-    }
-    // Median over a short time: single wrong measurements (a flash, a passing object) do not move the camera
+    for (const Target& t : seg)
+        raw.push_back({t.frame, keep(t.x, ww, cropX), keep(t.y, wh, cropY), std::clamp(t.weight, 0.0, 1.0)});
+    // Weighted median over a short time with a pull to the middle: single wrong measurements (a flash, a passing
+    // object) do not move the camera, unsure ones lean towards the middle (game footage: the crosshair)
     const int half = std::max(1, int(std::lround((0.25 + 0.5 * s) * fps)));
+    constexpr double kPrior = 0.1;
     std::vector<Point> f(raw.size());
     for (size_t i = 0; i < raw.size(); ++i) {
-        const QPointF m = medianOver(raw, raw[i].frame - half, raw[i].frame + half);
-        f[i] = {raw[i].frame, m.x(), m.y()};
+        const QPointF m = weightedOver(raw, raw[i].frame - half, raw[i].frame + half, kPrior, 0.5, 0.5);
+        f[i] = {raw[i].frame, keep(m.x(), ww, cropX), keep(m.y(), wh, cropY)};
     }
 
     const double dzX = ww * (0.08 + 0.22 * s), dzY = wh * (0.08 + 0.22 * s);
@@ -92,6 +121,8 @@ void segmentPath(const QVector<Target>& seg, const PathParams& p, QVector<Key>& 
     const int first = f.front().frame, last = f.back().frame;
 
     QPointF cam = medianOver(f, first, first + settle);
+    if (previous && std::abs(previous->x - cam.x()) <= dzX && std::abs(previous->y - cam.y()) <= dzY)
+        cam = QPointF(previous->x, previous->y);
     keys << Key{first, cam.x(), cam.y()};
     int outside = -1;     // index where the subject left the dead zone
     int busyUntil = first; // end of the running move
@@ -118,6 +149,12 @@ void segmentPath(const QVector<Target>& seg, const PathParams& p, QVector<Key>& 
         const int length = std::clamp(int(std::lround(dist / speed * fps)), std::max(1, int(0.25 * fps)),
                                       std::max(1, int(2.5 * fps)));
         int end = std::min(start + length, std::max(last, start + 1));
+        // Arriving just before the shot ends: a jolt for nothing (the next shot starts anew)
+        if (end + minHold > last && start > first) {
+            outside = -1;
+            busyUntil = last + 1;
+            continue;
+        }
         if (start > keys.back().frame) keys << Key{start, cam.x(), cam.y()};
         if (end <= keys.back().frame) end = keys.back().frame + 1;
         keys << Key{end, to.x(), to.y()};
@@ -137,7 +174,7 @@ QVector<Key> path(const QVector<Target>& targets, const PathParams& p)
         int i1 = i0 + 1;
         while (i1 < targets.size() && !targets[i1].cut) ++i1;
         QVector<Key> seg;
-        segmentPath(targets.mid(i0, i1 - i0), p, seg);
+        segmentPath(targets.mid(i0, i1 - i0), p, seg, keys.isEmpty() ? nullptr : &keys.back());
         if (!keys.isEmpty()) {
             // A cut: the old position up to the frame before, the new one from the cut on
             const Key held = keys.back();

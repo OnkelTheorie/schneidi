@@ -4,6 +4,8 @@
 // 'reframe' and new_timeline with from + reframe.
 #include "check.h"
 
+#include "app/InputBindings.h"
+#include "app/MainWindow.h"
 #include "cli/Commands.h"
 #include "cli/CommandsDetail.h"
 #include "core/Editor.h"
@@ -14,9 +16,11 @@
 #include "core/Reframe.h"
 #include "core/Selection.h"
 #include "core/TimelineOps.h"
+#include "ui/MediaPool.h"
 #include "engine/Engine.h"
 #include "engine/ReframeAnalysis.h"
 
+#include <QAction>
 #include <QApplication>
 #include <QJsonArray>
 #include <QTemporaryDir>
@@ -94,6 +98,21 @@ void testPath()
         CHECK(std::abs(k[1].x - 0.3) < 1e-9);
         CHECK_EQ(k[2].frame, 51);
         CHECK(std::abs(k[2].x - 0.7) < 1e-9);
+    }
+    // A cut whose new shot has its subject close to the old place: no jump (a flash or a menu counted as a cut)
+    {
+        QVector<Target> t = line(0, 48, 0.45) + line(51, 150, 0.5);
+        t[17].cut = true;
+        const QVector<Key> k = Reframe::path(t, p);
+        CHECK_EQ(k.size(), 1);
+    }
+    // A move that would arrive just before the next cut is left out
+    {
+        QVector<Target> t = line(0, 90, 0.3) + line(93, 105, 0.7) + line(108, 200, 0.5);
+        t[36].cut = true; // frame 108
+        CHECK_EQ(t[36].frame, 108);
+        const QVector<Key> k = Reframe::path(t, p);
+        for (const Key& x : k) CHECK(x.frame >= 108 || std::abs(x.x - 0.3) < 1e-9);
     }
     // Unsure measurements (a game's busy picture) stay near the middle
     {
@@ -230,7 +249,8 @@ double centreAt(const Clip& c, int t, double aspect, QSizeF frame)
     return 0.5 - Keys::valueAt(c, AnimParam::PosX, t - c.start) / f.picture.width();
 }
 
-void testAnalysis(const QString& dir, const QString& jumping, const QString& gliding, const QString& cut)
+void testAnalysis(const QString& dir, const QString& jumping, const QString& gliding, const QString& busy,
+                  const QString& cut)
 {
     const ProjectFormat f{1080, 1920, FrameRate{25, 1}};
     // The square sits left (x 40..80 of 320) for 2 s, then right (240..280) for 2 s
@@ -292,6 +312,28 @@ void testAnalysis(const QString& dir, const QString& jumping, const QString& gli
         }
         CHECK(seen >= 17);
         CHECK(r.keys.value(AnimParam::PosX).size() >= 3);
+    }
+    // The same on a busy, moving ground (test pattern with sweeping lines): mostly in view
+    {
+        Clip c;
+        c.id = 3;
+        c.mediaPath = busy;
+        c.out = 149;
+        const auto paths = ReframeAnalysis::paths({c}, f, 0.5, [](const QString&) { return 150; });
+        if (!CHECK(paths.contains(3))) return;
+        Clip r = c;
+        Reframe::apply(r, Reframe::Mode::Auto, paths[3], 16.0 / 9.0, QSizeF(1080, 1920));
+        const double half = Reframe::fill(16.0 / 9.0, QSizeF(1080, 1920)).windowW / 2;
+        int seen = 0, total = 0;
+        for (int t = 5; t < 150; t += 5, ++total) {
+            const double s = t / 25.0;
+            const double square = ((s < 3 ? 40 + 100 * s : 540 - (s - 3) * 150) + 30) / 640;
+            const double at = centreAt(r, t, 16.0 / 9.0, QSizeF(1080, 1920));
+            seen += std::abs(at - square) < half;
+            if (qEnvironmentVariableIsSet("SCHNEIDI_REFRAME_DEBUG")) std::printf("  %.2f s: square %.2f window %.2f\n", s, square, at);
+        }
+        std::printf("  busy ground: square in view %d of %d times\n", seen, total);
+        CHECK(seen * 10 >= total * 7);
     }
     // A scene cut (other picture) is found on its frame
     {
@@ -405,6 +447,49 @@ void testCli(const QString& dir, const QString& jumping)
     CHECK(helped);
 }
 
+// The app: Media Pool "copy as 9:16 timeline" (one undo step) and the clip menu's Auto-Reframe
+void testApp(const QString& jumping)
+{
+    Engine engine;
+    QString err;
+    if (!CHECK(engine.init(&err))) return;
+    std::setlocale(LC_NUMERIC, "C");
+    MainWindow w(&engine);
+    w.disableAutosave();
+    w.resize(1400, 900);
+    w.show();
+    w.importFiles({jumping}, true);
+    auto* ed = w.findChild<Editor*>();
+    auto* p = w.findChild<Project*>();
+    auto* pool = w.findChild<MediaPool*>();
+    if (!CHECK(ed && p && pool)) return;
+    const int source = p->currentSequence();
+    const int steps = p->undoStack()->index();
+    if (!CHECK(p->timeline().video.size() > 0 && p->timeline().video[0].clips.size() == 1)) return;
+    emit pool->reframedCopyRequested(source);
+    const int copy = p->currentSequence();
+    CHECK(copy != source);
+    CHECK_EQ(p->undoStack()->index(), steps + 1); // one step
+    CHECK_EQ(p->timelineFormat().size(), QSize(1080, 1920));
+    CHECK(p->sequence(copy) && p->sequence(copy)->name.endsWith(" 9:16"));
+    const Clip c = p->timeline().video[0].clips[0];
+    CHECK(c.transform.zoomX > 3.1);
+    CHECK(c.keys.contains(AnimParam::PosX)); // the square jumps from left to right
+    // The clip menu's Auto-Reframe on the clip after it was centered by hand
+    ed->reframeClips({c.id}, Reframe::Mode::Center);
+    CHECK(!TimelineOps::findClip(p->timeline(), c.id)->keys.contains(AnimParam::PosX));
+    QAction* a = InputBindings::instance().action("auto_reframe");
+    if (CHECK(a)) {
+        a->trigger();
+        CHECK(TimelineOps::findClip(p->timeline(), c.id)->keys.contains(AnimParam::PosX));
+    }
+    p->undoStack()->undo();
+    p->undoStack()->undo();
+    p->undoStack()->undo();
+    CHECK(!p->sequence(copy));
+    CHECK_EQ(p->undoStack()->index(), steps);
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -430,10 +515,16 @@ int main(int argc, char** argv)
         tmp.filePath("cut.mp4"),
         QStringList{"-f", "lavfi", "-i", "testsrc2=s=320x180:r=25:d=2", "-f", "lavfi", "-i",
                     "smptebars=s=320x180:r=25:d=2", "-filter_complex", "[0][1]concat=n=2:v=1"} + h264);
-    if (!CHECK(!jumping.isEmpty() && !gliding.isEmpty() && !cut.isEmpty())) return Check::result();
+    const QString busy = Check::makeMedia(
+        tmp.filePath("busy.mp4"),
+        QStringList{"-f", "lavfi", "-i", "testsrc2=s=640x360:r=25:d=6", "-f", "lavfi", "-i", "color=c=white:s=60x60:r=25:d=6",
+                    "-filter_complex",
+                    "[0]hue=s=0,eq=brightness=-0.35[b];[b][1]overlay=x='if(lt(t,3),40+100*t,540-(t-3)*150)':y=150"} + h264);
+    if (!CHECK(!jumping.isEmpty() && !gliding.isEmpty() && !busy.isEmpty() && !cut.isEmpty())) return Check::result();
     Check::initEngine();
     std::setlocale(LC_NUMERIC, "C");
-    testAnalysis(tmp.path(), jumping, gliding, cut);
+    testAnalysis(tmp.path(), jumping, gliding, busy, cut);
     testCli(tmp.path(), jumping);
+    testApp(jumping);
     return Check::result();
 }

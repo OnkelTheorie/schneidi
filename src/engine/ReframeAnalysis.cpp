@@ -30,7 +30,7 @@ namespace ReframeAnalysis {
 namespace {
 
 // Bump when the measurement changes (old results are not reused)
-constexpr int kVersion = 1;
+constexpr int kVersion = 5;
 constexpr const char* kHeader = "schneidi-reframe 1";
 constexpr const char* kSuffix = ".reframe";
 constexpr int kSide = 128;          // longer side of the analysis picture
@@ -99,7 +99,7 @@ QByteArray writeSamples(const Samples& samples)
 
 // Features of one sampled picture per cell
 struct Cells {
-    std::vector<float> motion, detail, skin;
+    std::vector<float> motion, detail, skin, luma;
     bool cut = false;
     double seconds = 0;
 };
@@ -112,55 +112,81 @@ float quantile(std::vector<float> v, double q)
     return v[k];
 }
 
-// Subject centre of one sample: cells weighted by how much they stand out
+// Subject centre of one sample: every cell scored by how much it stands out (motion, detail, contrast to its
+// surroundings, skin), the strongest area found, its weighted centre taken. How sure: the share of all scores that
+// lies in that area (one subject ~1, a busy picture spread everywhere ~0.1) and how strong they are at all.
 Sample locate(const Cells& c, const std::vector<float>& still, int cw, int ch)
 {
     const size_t n = size_t(cw) * size_t(ch);
-    std::vector<float> detail(n);
+    const auto at = [cw](int x, int y) { return size_t(y) * size_t(cw) + size_t(x); };
+    std::vector<float> detail(n), contrast(n);
     for (size_t i = 0; i < n; ++i) detail[i] = c.detail[i] * still[i];
+    // Brightness against the cells around (5 x 5): a bright object on a dark ground, a face against a wall
+    for (int y = 0; y < ch; ++y)
+        for (int x = 0; x < cw; ++x) {
+            double sum = 0;
+            int k = 0;
+            for (int v = std::max(0, y - 2); v <= std::min(ch - 1, y + 2); ++v)
+                for (int u = std::max(0, x - 2); u <= std::min(cw - 1, x + 2); ++u) sum += c.luma[at(u, v)], ++k;
+            contrast[at(x, y)] = float(std::abs(c.luma[at(x, y)] - sum / k)) * still[at(x, y)];
+        }
     const float mMed = quantile(c.motion, 0.5), mTop = quantile(c.motion, 0.98);
     const float dMed = quantile(detail, 0.5), dTop = quantile(detail, 0.98);
+    const float cMed = quantile(contrast, 0.5), cTop = quantile(contrast, 0.98);
     // Floors: picture noise and compression must not count as a subject
-    const float mRange = std::max(mTop - mMed, 6.0f), dRange = std::max(dTop - dMed, 10.0f);
+    const float mRange = std::max(mTop - mMed, 6.0f), dRange = std::max(dTop - dMed, 10.0f),
+                cRange = std::max(cTop - cMed, 12.0f);
     double skinShare = 0;
     for (float s : c.skin) skinShare += s > 0.5f;
     skinShare /= double(n);
     // Skin everywhere is a wall, sand or a wooden table, not a face
     const double skinTrust = std::clamp((0.45 - skinShare) / 0.3, 0.0, 1.0);
 
-    double sw = 0, sx = 0, sy = 0, energy = 0;
-    std::vector<double> w(n);
+    std::vector<double> score(n);
+    double total = 0;
     for (int y = 0; y < ch; ++y)
         for (int x = 0; x < cw; ++x) {
-            const size_t i = size_t(y) * size_t(cw) + size_t(x);
+            const size_t i = at(x, y);
             const double m = std::clamp((c.motion[i] - mMed) / mRange, 0.0f, 1.0f);
             const double d = std::clamp((detail[i] - dMed) / dRange, 0.0f, 1.0f);
+            const double k = std::clamp((contrast[i] - cMed) / cRange, 0.0f, 1.0f);
             const double px = (x + 0.5) / cw, py = (y + 0.5) / ch;
             const double prior = std::exp(-((px - 0.5) * (px - 0.5) + (py - 0.5) * (py - 0.5)) / (2 * 0.3 * 0.3));
-            const double s = (m + 0.6 * d + 0.8 * c.skin[i] * skinTrust) * (0.4 + 0.6 * prior);
-            energy += s;
-            w[i] = s * s;
-            sw += w[i];
-            sx += w[i] * px;
-            sy += w[i] * py;
+            score[i] = (m + 0.6 * d + 0.6 * k + 0.8 * c.skin[i] * skinTrust) * (0.5 + 0.5 * prior);
+            total += score[i];
         }
     Sample out;
     out.seconds = c.seconds;
     out.cut = c.cut;
-    if (sw <= 1e-9) return out;
-    out.x = sx / sw;
-    out.y = sy / sw;
-    double vx = 0, vy = 0;
+    if (total <= 1e-9) return out;
+    // The strongest area: scores summed over a box of about a sixth of the picture
+    const int rx = std::max(1, cw / 12), ry = std::max(1, ch / 8);
+    double best = -1;
+    int bx = cw / 2, by = ch / 2;
     for (int y = 0; y < ch; ++y)
         for (int x = 0; x < cw; ++x) {
-            const double wi = w[size_t(y) * size_t(cw) + size_t(x)];
-            vx += wi * ((x + 0.5) / cw - out.x) * ((x + 0.5) / cw - out.x);
-            vy += wi * ((y + 0.5) / ch - out.y) * ((y + 0.5) / ch - out.y);
+            double sum = 0;
+            for (int v = std::max(0, y - ry); v <= std::min(ch - 1, y + ry); ++v)
+                for (int u = std::max(0, x - rx); u <= std::min(cw - 1, x + rx); ++u) sum += score[at(u, v)];
+            if (sum > best) best = sum, bx = x, by = y;
         }
-    // A uniform spread has a standard deviation of 0.29; one object ~0.05
-    const double spread = std::sqrt(std::max(vx, vy) / sw);
-    const double focus = std::clamp(1.0 - (spread - 0.06) / 0.16, 0.0, 1.0);
-    const double strength = std::clamp(energy / (double(n) * 0.015), 0.0, 1.0);
+    // Its weighted centre (a little wider box, so a subject larger than the box is taken whole)
+    double sw = 0, sx = 0, sy = 0, inside = 0;
+    for (int v = std::max(0, by - 2 * ry); v <= std::min(ch - 1, by + 2 * ry); ++v)
+        for (int u = std::max(0, bx - 2 * rx); u <= std::min(cw - 1, bx + 2 * rx); ++u) {
+            const double s = score[at(u, v)];
+            inside += s;
+            sw += s * s;
+            sx += s * s * (u + 0.5) / cw;
+            sy += s * s * (v + 0.5) / ch;
+        }
+    if (sw <= 1e-12) return out;
+    out.x = sx / sw;
+    out.y = sy / sw;
+    const double area = double((4 * rx + 1) * (4 * ry + 1)) / double(n); // share of the picture in the wider box
+    const double share = inside / total;
+    const double focus = std::clamp((share - area) / (0.5 - area), 0.0, 1.0);
+    const double strength = std::clamp(total / (double(n) * 0.006), 0.0, 1.0);
     out.weight = focus * strength;
     return out;
 }
@@ -291,6 +317,7 @@ std::optional<Samples> measure(const Need& n, QString* error, const std::atomic<
         c.motion.assign(cells, 0);
         c.detail.assign(cells, 0);
         c.skin.assign(cells, 0);
+        c.luma.assign(cells, 0);
         for (int y = 0; y < ah; ++y)
             for (int x = 0; x < aw; ++x) {
                 const size_t i = size_t(y) * size_t(aw) + size_t(x);
@@ -298,6 +325,7 @@ std::optional<Samples> measure(const Need& n, QString* error, const std::atomic<
                 const int gx = std::abs(int(Y[y * aw + std::min(x + 1, aw - 1)]) - int(Y[y * aw + std::max(x - 1, 0)]));
                 const int gy = std::abs(int(Y[std::min(y + 1, ah - 1) * aw + x]) - int(Y[std::max(y - 1, 0) * aw + x]));
                 c.detail[cell] += float(gx + gy);
+                c.luma[cell] += float(Y[i]);
                 if (!prevSample.empty()) c.motion[cell] += float(std::abs(int(Y[i]) - int(prevSample[i])));
             }
         // Skin: a common chroma box (Cb 77..127, Cr 133..173) on the half-size chroma planes, not too dark
@@ -312,6 +340,7 @@ std::optional<Samples> measure(const Need& n, QString* error, const std::atomic<
         for (size_t i = 0; i < cells; ++i) {
             c.motion[i] /= area;
             c.detail[i] /= area;
+            c.luma[i] /= area;
             c.skin[i] /= area / 4;
         }
         prevSample.assign(Y, Y + pixels);
@@ -334,9 +363,25 @@ std::optional<Samples> measure(const Need& n, QString* error, const std::atomic<
     if (picked.size() > 2 && mean > 0)
         for (size_t i = 0; i < cells; ++i) still[i] = float(std::clamp(activity[i] / (0.5 * mean), 0.0, 1.0));
 
+    // A moving camera (a pan, a game's view turning) points at what matters itself: the more of the picture moves,
+    // the less a measurement off the middle counts - for the whole range (a first-person game) and per sample
+    const auto movingShare = [cells](const Cells& c) {
+        if (c.cut) return 0.0;
+        int moving = 0;
+        for (float m : c.motion) moving += m > 8;
+        return double(moving) / double(cells);
+    };
+    double rangeShare = 0;
+    for (const Cells& c : picked) rangeShare += movingShare(c);
+    rangeShare /= double(picked.size());
+    const double rangeTrust = std::clamp(1.0 - (rangeShare - 0.2) / 0.2, 0.0, 1.0);
     Samples out;
     out.reserve(int(picked.size()));
-    for (const Cells& c : picked) out << locate(c, still, cw, ch);
+    for (const Cells& c : picked) {
+        Sample s = locate(c, still, cw, ch);
+        s.weight *= rangeTrust * std::clamp(1.0 - (movingShare(c) - 0.3) / 0.3, 0.0, 1.0);
+        out << s;
+    }
     if (progress) progress(1000);
 
     QDir().mkpath(cacheDir());

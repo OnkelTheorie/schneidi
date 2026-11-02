@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Auto-Reframe, the measuring part: where the subject of a recording is over time, and where its shots change.
-// Own heuristic, no trained model: on a small copy of the picture (longer side 128) a few times a second, motion
-// against the previous sample, local detail and skin-coloured areas count, all relative to the rest of the picture;
-// parts that never change while the rest does (a game HUD, a logo, a still background) lose their detail; a mild
-// pull towards the middle. The weighted centre is the subject, its spread how sure that is (a game's busy picture
-// spreads wide: the path then stays near the middle, where the crosshair is). Scene cuts: every frame, luma
-// histogram and difference to the previous one.
+// Own heuristic, no trained model: on a small copy of the picture (longer side 128) a few times a second, every cell
+// scores by motion against the previous sample, local detail, brightness against its surroundings and skin colour,
+// each relative to the rest of the picture; parts that hardly ever change while the rest does (a game HUD, a logo, a
+// still background) lose detail and contrast; a mild pull towards the middle. The strongest area is the subject, its
+// share of all scores how sure that is. The more of the picture moves (a pan, a first-person game turning), the less
+// sure: the camera itself points at what matters, the path stays near the middle (a game's crosshair). Scene cuts:
+// every frame, luma histogram and difference to the previous one.
 //
 // Per media file and range, cached in QStandardPaths::CacheLocation/reframe (named after the file, its size and
 // time, and the analyzed seconds); a cached range that covers the request is reused. Runs in any thread, cancellable.
