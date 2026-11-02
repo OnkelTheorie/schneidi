@@ -8,7 +8,8 @@
 // them next to none of its pixels is brighter than black: a dark scene goes bright somewhere in one of the samples, a
 // HUD sits inside the game picture, a small overlay in the bar (a few pixels of a column) does not count. Bars are
 // taken from the edges inwards only and must be about as wide on both sides (centred) and at most 30 % of the side;
-// thinner than 1.5 % they are left (an encoder's edge). A picture that is dark all through has no bars.
+// thinner than 1.5 % they are left (an encoder's edge). A picture that is dark all through has no bars. Bars are flat
+// and steady: a dark edge that gets brighter towards the middle (a vignette) or changes with the scene is picture.
 //
 // Per file (path, size, time), cached in QStandardPaths::CacheLocation/bars and in memory. Runs in any thread.
 

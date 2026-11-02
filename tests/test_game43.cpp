@@ -596,6 +596,17 @@ int main(int argc, char** argv)
         QStringList{"-f", "lavfi", "-i", "color=c=black:s=320x180:r=25:d=4", "-f", "lavfi", "-i",
                     "color=c=white:s=40x40:r=25:d=4", "-filter_complex", "[0][1]overlay=x='if(lt(t,2),20,200)':y=30"} + h264);
     testDetect(pillar, letter, darkPillar, overlay, dark, oneSided);
+    {
+        // A dark picture with a vignette (dark blue, its edges at gray 14-30 over a fifth of the width on each side,
+        // a moving bright patch in the middle): the edges brighten towards the middle, no bars to crop
+        const QString vignette = Check::makeMedia(
+            tmp.filePath("vignette.mp4"),
+            QStringList{"-f", "lavfi", "-i", "color=c=0x1c2a70:s=640x360:r=25:d=3", "-f", "lavfi", "-i",
+                        "color=c=0x30c0a0:s=160x160:r=25:d=3", "-filter_complex",
+                        "[0][1]overlay=x='240+60*sin(t*2)':y=100,vignette=angle=PI/5"} + h264);
+        const auto v = BarDetect::content(vignette);
+        if (CHECK(v.has_value())) CHECK(!BarDetect::hasBars(*v));
+    }
     testReframe(pillar);
     testCropBars(pillar);
     testStretched(tmp.path(), stretched);
