@@ -109,6 +109,8 @@ add_library(schneidi_lib STATIC
     src/core/EditorRetime.cpp
     src/core/EditorEffects.cpp
     src/core/EditorMulticam.cpp
+    src/core/EditorReframe.cpp
+    src/core/Reframe.h            src/core/Reframe.cpp
     src/core/EffectRegistry.h     src/core/EffectRegistry.cpp
     src/core/EffectFolders.h      src/core/EffectFolders.cpp
     src/core/Presets.h            src/core/Presets.cpp
@@ -179,6 +181,7 @@ add_library(schneidi_lib STATIC
     src/engine/picture/gpu/Gpu.h  src/engine/picture/gpu/Gpu.cpp
     src/engine/video/Text.h       src/engine/video/Text.cpp
     src/engine/Tracker.h          src/engine/Tracker.cpp
+    src/engine/ReframeAnalysis.h  src/engine/ReframeAnalysis.cpp
     src/engine/Lumas.h            src/engine/Lumas.cpp
     src/engine/RenderQueue.h      src/engine/RenderQueue.cpp
     src/engine/Snapshot.h         src/engine/Snapshot.cpp
@@ -218,6 +221,7 @@ add_library(schneidi_lib STATIC
     src/app/MainWindowChat.cpp
     src/app/MainWindowMulticam.cpp src/app/MainWindowExchange.cpp
     src/app/MainWindowAudio.cpp
+    src/app/MainWindowReframe.cpp
     src/app/MainWindowWatch.cpp
     src/app/KeyBindingsDialog.h   src/app/KeyBindingsDialog.cpp
     src/app/ProjectSettingsDialog.h src/app/ProjectSettingsDialog.cpp

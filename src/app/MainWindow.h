@@ -246,6 +246,12 @@ private:
     void createMulticamClip(const QStringList& paths);
     void addMulticamMenu(QMenu* menu); // "Switch Angle" + "Flatten" for selected multicam segments
     int selectedMulticamSequence() const;
+    // Auto-Reframe (MainWindowReframe.cpp): the selected video clips (none = the whole timeline) fill the open
+    // timeline's shape and follow their subject; a timeline as a 9:16 copy, reframed (Media Pool)
+    void autoReframe();
+    void reframedCopy(int sequenceId);
+    // Measures the clips with a progress dialog (window modal); false = cancelled
+    bool measureReframe(const QVector<Clip>& clips, const ProjectFormat& format, QHash<int, QVector<Reframe::Key>>* paths);
 
     Engine* m_engine;
     Project* m_project;

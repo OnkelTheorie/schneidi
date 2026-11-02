@@ -60,6 +60,29 @@ void opNewTimeline(Session& s, const QJsonObject& op)
         if (!name.isEmpty() && q.name.compare(name, Qt::CaseInsensitive) == 0)
             fail("EXISTS", QString("there is a timeline '%1' already (id %2)").arg(q.name, QString::number(q.id)));
     const QSize size = sizeOf(op); // own resolution (empty or aspect:'project' = the project's)
+    if (op.contains("reframe") && !op.contains("from"))
+        fail("BAD_ARGUMENT", "reframe needs 'from' (the timeline to copy); for clips already here use op 'reframe'");
+    if (op.contains("from")) {
+        // A copy of an edit in another shape (the 9:16 short of a 16:9 edit), reframed in the same call
+        const int source = s.sequenceOf(op.value("from"));
+        const Sequence* q = s.project.sequence(source);
+        if (!q || q->compound) fail("BAD_ARGUMENT", "from must be a timeline (not a compound or multicam clip)");
+        const int id = s.project.duplicateSequence(source);
+        if (!id) fail("FAILED", "could not copy the timeline");
+        QString label = name;
+        if (label.isEmpty())
+            label = q->name + (op.contains("aspect") ? " " + op.value("aspect").toString().trimmed() : QString(" copy"));
+        s.project.renameSequence(id, label);
+        if (!size.isEmpty()) s.project.setSequenceSize(id, size == s.project.format().size() ? QSize() : size);
+        s.selectTimeline(id, op.value("open").toBool(s.live));
+        if (op.contains("reframe")) {
+            QJsonObject r{{"mode", op.value("reframe")}};
+            if (op.contains("smoothness")) r["smoothness"] = op.value("smoothness");
+            reframeClips(s, {}, r);
+        }
+        if (!op.value("switch").toBool(true)) s.project.setCurrentSequence(previous);
+        return;
+    }
     const int id = s.project.addTimeline(name, 0, size); // opens it
     // In the app the user sees the new timeline right away (open:false keeps showing the old one)
     if (op.value("switch").toBool(true)) s.selectTimeline(id, op.value("open").toBool(s.live));
@@ -175,11 +198,16 @@ void addTimelineOps(QVector<OpDef>& ops)
                  "timeline = id or name from `info` (compound clips are timelines too). open:true = the app opens "
                  "this timeline next time; otherwise the app keeps showing the one the user had open.",
                  opTimeline}
-        << OpDef{"new_timeline", "{op:'new_timeline', name?, aspect?, width?, height?, switch?:true, open?}",
-                 "new empty timeline (aspect:'9:16' = its own 1080x1920 next to a 16:9 edit); the following ops edit "
-                 "it unless switch:false; the app shows it unless open:false",
+        << OpDef{"new_timeline", "{op:'new_timeline', name?, aspect?, width?, height?, from?, reframe?, smoothness?, "
+                                 "switch?:true, open?}",
+                 "new empty timeline (aspect:'9:16' = its own 1080x1920 next to a 16:9 edit), or with from a copy of "
+                 "a timeline in that shape, reframe:'auto' = its clips follow their subject (the short of an edit in "
+                 "one call); the following ops edit it unless switch:false; the app shows it unless open:false",
                  "aspect: 16:9 (1920x1080), 9:16 (1080x1920), 1:1 (1080x1080), 4:5 (1080x1350), 4:3 (1440x1080), or "
-                 "width+height (even). Without: the project's resolution (and it follows a later project `format`).",
+                 "width+height (even). Without: the project's resolution (and it follows a later project `format`). "
+                 "from = id or name of a timeline to copy (all clips, titles, sound, markers; default name '<from> "
+                 "<aspect>'); reframe: auto, center or fit as in op 'reframe' (smoothness too), else the clips keep "
+                 "their transform (fitted in, with bars).",
                  opNewTimeline}
         << OpDef{"rename_timeline", "{op:'rename_timeline', timeline?, name}", {}, {}, opRenameTimeline}
         << OpDef{"duplicate_timeline", "{op:'duplicate_timeline', timeline?, name?, switch?:false}",

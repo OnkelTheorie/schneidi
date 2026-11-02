@@ -1908,5 +1908,12 @@
  "Eigene Auflösung: %1": "Собственное разрешение: %1",
  "Auflösung: %1 (Projekteinstellungen)": "Разрешение: %1 (настройки проекта)",
  "Keine gesprochenen Wörter in den Tonclips.": "В аудиоклипах нет произнесённых слов.",
- "Neue Untertitelspur aus dem Transkript, Wort für Wort hervorgehoben (Karaoke; Stil im Inspector der Spur)": "Новая дорожка субтитров из расшифровки с выделением по словам (караоке; стиль в инспекторе дорожки)"
+ "Neue Untertitelspur aus dem Transkript, Wort für Wort hervorgehoben (Karaoke; Stil im Inspector der Spur)": "Новая дорожка субтитров из расшифровки с выделением по словам (караоке; стиль в инспекторе дорожки)",
+ "Als Hochformat-Timeline kopieren (9:16)": "Копировать как вертикальный монтажный стол (9:16)",
+ "Auto-Reframe": "Автокадрирование",
+ "Auto-Reframe: %1 Clips folgen ihrem Motiv": "Автокадрирование: %1 клипов следуют за объектом",
+ "Auto-Reframe: Bild wird analysiert …": "Автокадрирование: анализ изображения …",
+ "Auto-Reframe: keine Video-Clips (Titel, Compound- und Multicam-Clips bleiben, wie sie sind)": "Автокадрирование: нет видеоклипов (титры, составные и мультикамерные клипы остаются как есть)",
+ "Auto-Reframe abgebrochen: die Timeline hat sich während der Analyse geändert": "Автокадрирование отменено: таймлайн изменился во время анализа",
+ "Nicht alle Clips ließen sich analysieren, sie bleiben mittig:\n%1": "Не все клипы удалось проанализировать, они остаются по центру:\n%1"
 }

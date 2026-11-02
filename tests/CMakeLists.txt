@@ -178,6 +178,8 @@ schneidi_test(test_ducking)
 target_link_libraries(test_ducking PRIVATE schneidi_cli_lib)
 schneidi_test(test_blur_fill) # blurred fill around the fitted picture (op 'transform' fit:'blur')
 target_link_libraries(test_blur_fill PRIVATE schneidi_cli_lib)
+schneidi_test(test_reframe) # Auto-Reframe: camera path, fill geometry, Editor op + undo, subject measurement, CLI ops
+target_link_libraries(test_reframe PRIVATE schneidi_cli_lib)
 schneidi_test(test_accents) # zoom punch / flash / shake as keyframes (op 'accent', clip menu), param zoom
 target_link_libraries(test_accents PRIVATE schneidi_cli_lib)
 # Speed brake: alone (parallel tests would distort the times), baseline per machine in data/speed-baseline.json
@@ -200,7 +202,7 @@ schneidi_test(test_thread_teardown)
 foreach(name test_stabilize_denoise test_retime test_effects_render test_effect_order test_cli test_export_formats test_audio
              test_audio_regression test_color test_loudness test_dynamics_eq test_audio_sync test_multicam_render
              test_multicam_viewer test_multicam_cli
-             test_ducking test_crop test_blur_fill)
+             test_ducking test_crop test_blur_fill test_reframe)
     add_test(NAME ${name}_de_DE COMMAND ${name})
     set_tests_properties(${name}_de_DE PROPERTIES
         SKIP_RETURN_CODE 77

@@ -1908,5 +1908,12 @@
  "Eigene Auflösung: %1": "Own resolution: %1",
  "Auflösung: %1 (Projekteinstellungen)": "Resolution: %1 (project settings)",
  "Keine gesprochenen Wörter in den Tonclips.": "No spoken words in the audio clips.",
- "Neue Untertitelspur aus dem Transkript, Wort für Wort hervorgehoben (Karaoke; Stil im Inspector der Spur)": "New subtitle track from the transcript, highlighted word by word (karaoke; style in the track's Inspector)"
+ "Neue Untertitelspur aus dem Transkript, Wort für Wort hervorgehoben (Karaoke; Stil im Inspector der Spur)": "New subtitle track from the transcript, highlighted word by word (karaoke; style in the track's Inspector)",
+ "Als Hochformat-Timeline kopieren (9:16)": "Copy as vertical timeline (9:16)",
+ "Auto-Reframe": "Auto reframe",
+ "Auto-Reframe: %1 Clips folgen ihrem Motiv": "Auto reframe: %1 clips follow their subject",
+ "Auto-Reframe: Bild wird analysiert …": "Auto reframe: analyzing the picture …",
+ "Auto-Reframe: keine Video-Clips (Titel, Compound- und Multicam-Clips bleiben, wie sie sind)": "Auto reframe: no video clips (titles, compound and multicam clips stay as they are)",
+ "Auto-Reframe abgebrochen: die Timeline hat sich während der Analyse geändert": "Auto reframe cancelled: the timeline changed during the analysis",
+ "Nicht alle Clips ließen sich analysieren, sie bleiben mittig:\n%1": "Not all clips could be analyzed, they stay centered:\n%1"
 }

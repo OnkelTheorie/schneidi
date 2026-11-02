@@ -1278,6 +1278,8 @@ void MediaPool::showContextMenu(const QPoint& pos)
         menu.addAction(T("Umbenennen…"), this, [this, id] { renameSequence(id); });
         menu.addAction(T("Duplizieren"), this, [this, id] { m_project->duplicateSequence(id); });
         menu.addAction(T("Timeline-Auflösung…"), this, [this, id] { editSequenceFormat(id); });
+        if (const Sequence* q = m_project->sequence(id); q && !q->compound)
+            menu.addAction(T("Als Hochformat-Timeline kopieren (9:16)"), this, [this, id] { emit reframedCopyRequested(id); });
         QAction* del = menu.addAction(T("Löschen"), this, [this, id] { m_project->removeSequence(id); });
         del->setEnabled(m_project->canRemoveSequence(id));
         if (!del->isEnabled())

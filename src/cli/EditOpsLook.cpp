@@ -7,11 +7,15 @@
 #include "core/EffectRegistry.h"
 #include "core/GradeWindows.h"
 #include "core/Keyframes.h"
+#include "core/Reframe.h"
 #include "core/TimelineOps.h"
 #include "engine/ColorGrade.h"
+#include "engine/ReframeAnalysis.h"
 #include "engine/Tracker.h"
 
 #include <QFileInfo>
+#include <QJsonArray>
+#include <QSet>
 
 #include <algorithm>
 #include <cmath>
@@ -249,6 +253,24 @@ void opTrack(Session& s, const QJsonObject& op)
                             "there)").arg(tc(c.start + r.lostAt, s.format()));
         s.notes << note;
     }
+}
+
+// ---------- reframe ----------
+
+void opReframe(Session& s, const QJsonObject& op)
+{
+    QVector<int> ids;
+    if (op.contains("clips") || op.contains("clip")) {
+        ids = clipsOn(s, op, TrackKind::Video, "reframing");
+    } else if (op.contains("track")) {
+        TrackKind kind = TrackKind::Video;
+        const int index = parseTrack(op.value("track"), &kind);
+        const Timeline& tl = s.project.timeline();
+        if (kind != TrackKind::Video || index >= tl.video.size()) fail("BAD_ARGUMENT", "track must be a video track (V1, V2 …)");
+        for (const Clip& c : tl.video[index].clips) ids << c.id;
+        if (ids.isEmpty()) fail("NOT_FOUND", "that track has no clips");
+    }
+    reframeClips(s, ids, op);
 }
 
 // ---------- transform ----------
@@ -585,6 +607,76 @@ QJsonObject keyframesJson(const Clip& c)
     return o;
 }
 
+void reframeClips(Session& s, const QVector<int>& ids, const QJsonObject& op)
+{
+    Reframe::Mode mode = Reframe::Mode::Auto;
+    if (op.contains("mode") && !Reframe::modeFromId(op.value("mode").toString(), &mode))
+        fail("BAD_ARGUMENT", "mode must be auto, center or fit");
+    const double smoothness = op.contains("smoothness") ? numberOf(op, "smoothness", 0, 1) : 0.5;
+    const QVector<int> targets = s.editor.reframeTargets(ids);
+    if (targets.isEmpty()) fail("NOT_FOUND", "no video clip to reframe (titles, compound and multicam clips are left out)");
+    const ProjectFormat f = s.format();
+    QHash<int, QVector<Reframe::Key>> paths;
+    if (mode == Reframe::Mode::Auto) {
+        QVector<Clip> clips;
+        for (int id : targets) clips << *TimelineOps::findClip(s.project.timeline(), id);
+        QStringList errors;
+        paths = ReframeAnalysis::paths(clips, f, smoothness, [&s](const QString& path) {
+            const MediaInfo* m = s.project.mediaInfo(path);
+            return m ? m->length : 0;
+        }, &errors);
+        for (const QString& e : errors) s.notes << "not measured, stays centered: " + e;
+    }
+    s.editor.reframeClips(targets, mode, paths);
+    QStringList moves;
+    for (int id : targets) {
+        const Clip* c = TimelineOps::findClip(s.project.timeline(), id);
+        const int keys = c && c->keys.contains(AnimParam::PosX) ? int(c->keys[AnimParam::PosX].size())
+                         : c && c->keys.contains(AnimParam::PosY) ? int(c->keys[AnimParam::PosY].size()) : 0;
+        if (mode == Reframe::Mode::Auto) moves << QString("%1: %2").arg(id).arg(keys ? QString("%1 keys").arg(keys) : "still");
+    }
+    s.notes << QString("reframed %1 clip(s) to %2x%3 (%4)%5")
+                   .arg(targets.size())
+                   .arg(f.width)
+                   .arg(f.height)
+                   .arg(Reframe::modeId(mode))
+                   .arg(moves.isEmpty() ? QString() : "; position keyframes per clip: " + moves.join(", "));
+}
+
+void prepareReframe(const QJsonObject& editArgs, Context& ctx)
+{
+    const QJsonArray ops = editArgs.value("ops").isObject() ? QJsonArray{editArgs.value("ops")} : editArgs.value("ops").toArray();
+    QVector<Clip> clips;
+    try {
+        Session s(editArgs.value("project").toString()); // a copy of what the app shows
+        int sequence = s.project.currentSequence();
+        for (const QJsonValue& v : ops) {
+            const QJsonObject op = v.toObject();
+            const QString name = op.value("op").toString();
+            if (name == "timeline") sequence = s.sequenceOf(op.value("timeline"));
+            const bool reframe = name == "reframe" && op.value("mode").toString("auto") == "auto";
+            const bool copy = name == "new_timeline" && op.value("reframe").toString() == "auto" && op.contains("from");
+            if (!reframe && !copy) continue;
+            const Sequence* q = s.project.sequence(copy ? s.sequenceOf(op.value("from")) : sequence);
+            if (!q) continue;
+            QSet<int> only;
+            for (const QJsonValue& id : op.value("clips").toArray()) only.insert(id.toInt());
+            if (op.contains("clip")) only.insert(op.value("clip").toInt());
+            for (const Track& t : q->timeline.video)
+                for (const Clip& c : t.clips)
+                    if (Reframe::canReframe(c) && (only.isEmpty() || only.contains(c.id))) clips << c;
+        }
+        const FrameRate rate = s.project.format().rate;
+        for (int i = 0; i < clips.size(); ++i) {
+            const MediaInfo* m = s.project.mediaInfo(clips[i].mediaPath);
+            if (const auto n = ReframeAnalysis::need(clips[i], rate, m ? m->length : 0)) ReframeAnalysis::analyze(*n);
+            if (ctx.progress) ctx.progress(double(i + 1) / clips.size());
+        }
+    } catch (const Error&) {
+        // the op reports it where it runs
+    }
+}
+
 void addLookOps(QVector<OpDef>& ops)
 {
     ops << OpDef{"color", "{op:'color', clips, lift?, gamma?, gain?, offset?, contrast?, pivot?, saturation?, "
@@ -656,6 +748,20 @@ void addLookOps(QVector<OpDef>& ops)
                  "Inspector section off (its values and keyframes stay but do not apply, e.g. to compare), true on "
                  "again; `info` shows them when off.",
                  opTransform, kClipKeys}
+        << OpDef{"reframe", "{op:'reframe', clips?, track?, mode?:'auto', smoothness?:0.5}",
+                 "Auto-Reframe: clips fill this timeline's shape (16:9 footage in a 9:16 short) and follow their subject",
+                 "Without clips/track: every video clip of the timeline (titles, compound and multicam clips are left "
+                 "out). mode auto (default) = zoom to fill + x/y keyframes that keep the subject in view: measures the "
+                 "picture (motion, detail, faces/skin; a game's busy picture stays near the middle where the "
+                 "crosshair is), the camera holds still inside a dead zone, moves eased without overshooting and "
+                 "jumps only at scene cuts. Measuring takes roughly 5-10 s per minute of 1080p footage the first time "
+                 "(cached per file). mode center = zoom to fill, middle of the picture, no keyframes; mode fit = the whole picture "
+                 "fitted in with a blurred copy behind (fit:'blur'; also 9:16 footage in a 16:9 timeline). "
+                 "smoothness 0..1 (default 0.5): 0 follows closely, 1 calm (bigger dead zone, slower moves). Replaces "
+                 "the clips' zoom/x/y and their keyframes (rotation, crop, other keyframes stay); fine-tune with "
+                 "'transform'/'keyframe' and look with `frames`. For a whole short in one call: new_timeline with "
+                 "from, aspect:'9:16' and reframe:'auto'.",
+                 opReframe, kClipKeys}
         << OpDef{"keyframe", "{op:'keyframe', clips, param, at, value?, ease?, remove?, move_to?} or {op:'keyframe', "
                              "clips, param, keys:[{at, value?, ease?, remove?, move_to?}, …]} or {op:'keyframe', clips, "
                              "param, clear:true}",

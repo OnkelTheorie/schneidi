@@ -108,6 +108,7 @@ signals:
     void subtitleFilesImported(const QStringList& paths);
     // Right-click "Create Multicam Clip Using Selected Clips" (like DaVinci): the main window asks for name and sync
     void multicamRequested(const QStringList& paths);
+    void reframedCopyRequested(int sequenceId); // "copy as 9:16 timeline" (Auto-Reframe, MainWindow measures)
     // Right-click on a bin "Watch Folder…": a folder whose new files come into this bin on their own
     void watchFolderRequested(int bin);
     // Right-click "Clean up proxy media…": the main window asks and deletes (app/ProxyCleanupDialog)

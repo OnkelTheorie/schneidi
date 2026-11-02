@@ -362,6 +362,7 @@ void MainWindow::buildActions()
         cacheClip->setEnabled(state >= 0);
         cacheClip->setChecked(state == 1);
     });
+    makeAction(clipMenu, "auto_reframe", T("Auto-Reframe"), QKeySequence(), [this] { autoReframe(); });
     QMenu* compoundMenu = timeline->addMenu(T("Compound Clip"));
     makeAction(compoundMenu, "compound_create", T("Neuer Compound Clip…"), QKeySequence(), [this] { createCompoundClip(); });
     makeAction(compoundMenu, "compound_open", T("Compound Clip in Timeline öffnen"), QKeySequence(),

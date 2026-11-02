@@ -1908,5 +1908,12 @@
  "Eigene Auflösung: %1": "Résolution propre : %1",
  "Auflösung: %1 (Projekteinstellungen)": "Résolution : %1 (paramètres du projet)",
  "Keine gesprochenen Wörter in den Tonclips.": "Aucun mot prononcé dans les clips audio.",
- "Neue Untertitelspur aus dem Transkript, Wort für Wort hervorgehoben (Karaoke; Stil im Inspector der Spur)": "Nouvelle piste de sous-titres à partir de la transcription, mise en évidence mot par mot (karaoké ; style dans l'inspecteur de la piste)"
+ "Neue Untertitelspur aus dem Transkript, Wort für Wort hervorgehoben (Karaoke; Stil im Inspector der Spur)": "Nouvelle piste de sous-titres à partir de la transcription, mise en évidence mot par mot (karaoké ; style dans l'inspecteur de la piste)",
+ "Als Hochformat-Timeline kopieren (9:16)": "Copier en timeline verticale (9:16)",
+ "Auto-Reframe": "Recadrage automatique",
+ "Auto-Reframe: %1 Clips folgen ihrem Motiv": "Recadrage automatique : %1 clips suivent leur sujet",
+ "Auto-Reframe: Bild wird analysiert …": "Recadrage automatique : analyse de l’image …",
+ "Auto-Reframe: keine Video-Clips (Titel, Compound- und Multicam-Clips bleiben, wie sie sind)": "Recadrage automatique : aucun clip vidéo (les titres, clips composés et multicaméras restent tels quels)",
+ "Auto-Reframe abgebrochen: die Timeline hat sich während der Analyse geändert": "Recadrage automatique annulé : la timeline a changé pendant l’analyse",
+ "Nicht alle Clips ließen sich analysieren, sie bleiben mittig:\n%1": "Tous les clips n’ont pas pu être analysés, ils restent centrés :\n%1"
 }
