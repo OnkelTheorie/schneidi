@@ -150,7 +150,8 @@ void MulticamView::layoutBars()
 QRect MulticamView::gridRect() const
 {
     const QRect area(0, barHeight(), width(), std::max(1, height() - barHeight()));
-    QSize frame = m_project->format().size();
+    // The grid picture comes at the open timeline's size (Engine): a 9:16 short shows a portrait grid
+    QSize frame = m_project->timelineFormat().size();
     if (frame.isEmpty()) frame = QSize(16, 9);
     return MulticamGrid::fit(area, frame);
 }
