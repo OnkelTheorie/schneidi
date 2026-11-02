@@ -4,7 +4,7 @@ Goal: same content, no dead air, no slips - but still natural, not robotic.
 
 ## Look first
 - `probe`: several audio streams? Recorders like OBS keep e.g. "System" and "Mikrofon" apart. Use the voice stream
-  for analysis (`audio_stream` on media files, `tracks` on projects).
+  for analysis (`audio_stream` on media files, `tracks` on projects; `transcribe` already picks voice-named ones).
 - `transcribe` with `language` set (and `words` true if you want to cut words). Read it: what is the content,
   where are slips, repetitions, false starts?
 

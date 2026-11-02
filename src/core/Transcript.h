@@ -9,6 +9,8 @@
 #include <QString>
 #include <QVector>
 
+#include <functional>
+
 namespace Transcript {
 
 using Word = TranscriptWord;
@@ -54,5 +56,17 @@ QVector<SubtitleCue> mergeCues(const QVector<QVector<SubtitleCue>>& tracks);
 // a cue without any sound is dropped (whisper makes up words in silence). Cues in timeline frames, `offset` =
 // timeline frame of the audio start, as in toCues
 void startAtSound(QVector<SubtitleCue>& cues, const Levels& levels, double fps, int offset = 0);
+
+// Which sound to transcribe when the user chose none. Game recordings (OBS, Clipi) keep game, voice chat, music and
+// the microphone in streams of their own; whisper on the mix writes song lyrics into the captions.
+// A stream or track name that says "own voice": microphone, voice, narration … ("Mikrofon", "Mic/Aux", "Voice")
+bool isVoiceName(const QString& name);
+// Audio streams of a media file to transcribe: its voice-named streams (mixed if several), else {0} (the mix or the
+// only stream)
+QVector<int> defaultStreams(const MediaInfo& info);
+// Audio tracks of a timeline to transcribe: the audible tracks with clips whose track name or audio stream names
+// (`streamName` of a clip, may be empty) say voice, but only when that leaves other audible tracks out; empty = as
+// heard (no voice track, or nothing else there)
+QVector<int> voiceTracks(const Timeline& tl, const std::function<QString(const Clip&)>& streamName);
 
 } // namespace Transcript

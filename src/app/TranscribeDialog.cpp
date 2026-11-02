@@ -33,6 +33,10 @@ TranscribeDialog::TranscribeDialog(const Timeline& timeline, const ProjectFormat
     if (used.size() > 1) {
         bool anySolo = false;
         for (const Track& t : timeline.audio) anySolo = anySolo || t.solo;
+        // The voice tracks alone ("Mikrofon") when there is more to hear: song lyrics never land in the subtitles
+        Timeline named = timeline;
+        for (int i = 0; i < named.audio.size(); ++i) named.audio[i].name = i < trackLabels.size() ? trackLabels[i] : QString();
+        const QVector<int> voice = Transcript::voiceTracks(named, {});
         auto* tracks = new QVBoxLayout;
         tracks->setSpacing(2);
         for (int i : used) {
@@ -40,7 +44,7 @@ TranscribeDialog::TranscribeDialog(const Timeline& timeline, const ProjectFormat
             const QString& label = trackLabels[i];
             const qsizetype dash = label.lastIndexOf(QString::fromUtf8(" – "));
             auto* box = new QCheckBox(label);
-            box->setChecked(!t.muted && (!anySolo || t.solo));
+            box->setChecked(voice.isEmpty() ? !t.muted && (!anySolo || t.solo) : voice.contains(i));
             connect(box, &QCheckBox::toggled, this, &TranscribeDialog::updateState);
             tracks->addWidget(box);
             m_tracks << TrackBox{i, dash >= 0 ? label.mid(dash + 3) : trackShortName({TrackKind::Audio, i}), box};
@@ -50,6 +54,12 @@ TranscribeDialog::TranscribeDialog(const Timeline& timeline, const ProjectFormat
                                  "Untertitelspur je Tonspur, übereinander. Aus: alles in einer Spur, wer gleichzeitig "
                                  "spricht, steht in einer zweiten Zeile."));
         m_separate->setChecked(settings.value("transcribe/separate", true).toBool());
+        if (!voice.isEmpty()) {
+            auto* note = new QLabel(T("Nur die Stimme ist angehakt – Musik und Spielton würden sonst mitgeschrieben."));
+            note->setWordWrap(true);
+            note->setEnabled(false); // dim, a hint
+            tracks->addWidget(note);
+        }
         tracks->addSpacing(4);
         tracks->addWidget(m_separate);
         auto* label = new QLabel(T("Tonspuren"));

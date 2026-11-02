@@ -4,11 +4,14 @@
 - `transcribe` runs whisper locally. It needs the whisper extension: `extensions` without arguments shows what is
   installed. Missing → ask the user before installing (`extensions` `install` `"whisper,small"`, ~200 MB; `turbo`
   is better and bigger). Don't pass `model` unless you need a specific one - the default is the best installed.
-- **Set `language`** (`de`, `en`, …): auto-detection is about twice as slow and can pick the wrong language.
+- **Set `language`** (`de`, `en`, …): auto-detection is about twice as slow and can pick the wrong language. A
+  chosen language is checked: `detected_language` and a note say when whisper clearly hears another one.
 - Transcribe **after** cutting, on the project: the times are then timeline times and fit the edit.
   `apply` true puts the segments onto the timeline as a new subtitle track (one undo step live in the app).
-- Only the voice: `tracks` picks the voice track (e.g. `"A1"` or the stream name `"Mikrofon"`), so music and
-  game sound don't confuse whisper.
+- Only the voice: by default `transcribe` hears only tracks/streams named like a microphone or voice ("Mikrofon",
+  "Mic/Aux", "Voice") when there is more (game, music: no song lyrics in the captions); the answer names them
+  (`tracks` / `audio_stream` + a note). Choose yourself with `tracks` on a project (`"A1"`, `"Discord,Mikrofon"`,
+  `"all"` = everything audible) or `audio_stream` on a file (number or name, several are mixed).
 - `max_chars`: 42 (one line) for landscape; ~20-28 for vertical video.
 
 ## Clean up

@@ -4,6 +4,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QRegularExpression>
 #include <QStringList>
 
 #include <algorithm>
@@ -258,6 +259,45 @@ QVector<SubtitleCue> toCues(const QVector<Word>& words, double fps, int maxChars
         cues[i].end = std::max(cues[i].end, end);
     }
     return cues;
+}
+
+bool isVoiceName(const QString& name)
+{
+    // Word starts, so "Comic" or "Music" are no "mic"; "Mix" and the Polish "Mikser" (mixer) never match
+    static const char* const kStarts[] = {"mic",    "mikro", "микро", "voice",  "voix",   "voz",     "stimm",
+                                          "głos",   "голос", "speech", "sprach", "narrat", "comment", "kommentar",
+                                          "headset"};
+    static const QRegularExpression split("[^\\p{L}]+");
+    for (const QString& word : name.toLower().split(split, Qt::SkipEmptyParts))
+        for (const char* start : kStarts)
+            if (word.startsWith(QString::fromUtf8(start))) return true;
+    return false;
+}
+
+QVector<int> defaultStreams(const MediaInfo& info)
+{
+    QVector<int> voice;
+    if (info.audioStreamCount() > 1)
+        for (int i = 0; i < info.audioStreams.size(); ++i)
+            if (isVoiceName(info.audioStreams[i].title)) voice << i;
+    return voice.isEmpty() ? QVector<int>{0} : voice;
+}
+
+QVector<int> voiceTracks(const Timeline& tl, const std::function<QString(const Clip&)>& streamName)
+{
+    const bool anySolo = std::any_of(tl.audio.begin(), tl.audio.end(), [](const Track& t) { return t.solo; });
+    QVector<int> voice;
+    int audible = 0;
+    for (int i = 0; i < tl.audio.size(); ++i) {
+        const Track& t = tl.audio[i];
+        if (t.muted || (anySolo && !t.solo) || t.clips.isEmpty()) continue;
+        ++audible;
+        bool named = isVoiceName(t.name);
+        for (const Clip& c : t.clips)
+            named = named || (streamName && isVoiceName(streamName(c)));
+        if (named) voice << i;
+    }
+    return voice.size() < audible ? voice : QVector<int>{};
 }
 
 } // namespace Transcript

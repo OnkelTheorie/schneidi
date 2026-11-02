@@ -73,6 +73,15 @@ Transcriber::Transcriber(QObject* parent) : QObject(parent)
     connect(&m_process, &QProcess::finished, this, [this](int code, QProcess::ExitStatus status) {
         if (!m_running) return;
         if (m_cancelled) return done(false, T("Abgebrochen"));
+        if (m_stage == 2) {
+            // "auto-detected language: en (p = 0.976562)"; a failed check never fails the transcript
+            static const QRegularExpression re("auto-detected language:\\s*([a-z]+)\\s*\\(p\\s*=\\s*([0-9.]+)\\)");
+            if (const auto m = re.match(QString::fromUtf8(m_log)); m.hasMatch()) {
+                m_detected = m.captured(1);
+                m_detectedP = m.captured(2).toDouble();
+            }
+            return done(true, {});
+        }
         const QString tail = QString::fromUtf8(m_log.right(400)).trimmed();
         if (status != QProcess::NormalExit || code != 0) {
             return done(false, m_stage == 0 ? T("Ton konnte nicht gelesen werden: %1").arg(tail)
@@ -85,6 +94,8 @@ Transcriber::Transcriber(QObject* parent) : QObject(parent)
         if (!Transcript::parseWhisperJson(json.readAll(), &m_result, &error)) return done(false, error);
         m_result.levels = wavLevels(m_tmp->filePath("audio.wav"));
         Transcript::fitToSpeech(m_result.words, m_result.levels);
+        const QString lang = m_request.language.isEmpty() ? QString("auto") : m_request.language;
+        if (m_request.checkLanguage && lang != QLatin1String("auto") && !m_result.words.isEmpty()) return runDetection();
         done(true, {});
     });
     connect(&m_process, &QProcess::errorOccurred, this, [this](QProcess::ProcessError e) {
@@ -120,16 +131,26 @@ bool Transcriber::start(const TranscribeRequest& request, QString* error)
     m_tmp = std::make_unique<QTemporaryDir>();
     if (!m_tmp->isValid()) return fail(m_tmp->errorString());
     m_result = {};
+    m_detected.clear();
+    m_detectedP = 0;
     m_log.clear();
     m_cancelled = false;
     m_stage = 0;
     const QString wav = m_tmp->filePath("audio.wav");
     if (!request.media.isEmpty()) {
-        // 16 kHz mono like whisper wants it; only the chosen audio stream
-        m_process.start(Bundle::tool("ffmpeg"),
-                        {"-hide_banner", "-nostdin", "-loglevel", "error", "-i", request.media, "-map",
-                         QString("0:a:%1").arg(request.audioStream), "-vn", "-ac", "1", "-ar", "16000", "-c:a",
-                         "pcm_s16le", wav});
+        // 16 kHz mono like whisper wants it; only the chosen audio stream(s), several mixed at their own level
+        QStringList args{"-hide_banner", "-nostdin", "-loglevel", "error", "-i", request.media};
+        const QVector<int> streams = request.audioStreams.isEmpty() ? QVector<int>{request.audioStream} : request.audioStreams;
+        if (streams.size() == 1) {
+            args << "-map" << QString("0:a:%1").arg(streams.first());
+        } else {
+            QString graph;
+            for (int s : streams) graph += QString("[0:a:%1]").arg(s);
+            graph += QString("amix=inputs=%1:duration=longest:normalize=0[voice]").arg(streams.size());
+            args << "-filter_complex" << graph << "-map" << "[voice]";
+        }
+        args << "-vn" << "-ac" << "1" << "-ar" << "16000" << "-c:a" << "pcm_s16le" << wav;
+        m_process.start(Bundle::tool("ffmpeg"), args);
     } else {
         ExportSettings s;
         s.path = wav;
@@ -179,6 +200,15 @@ void Transcriber::runWhisper()
     else if (const QString vad = Extensions::whisperVadModel(); !vad.isEmpty())
         args << "--vad" << "-vm" << vad << "-vt" << "0.35";
     m_process.start(Extensions::whisperProgram(), args);
+}
+
+void Transcriber::runDetection()
+{
+    m_stage = 2;
+    m_log.clear(); // the detected language is a log line of whisper (not with -np)
+    const int threads = m_request.threads > 0 ? m_request.threads : defaultThreads();
+    m_process.start(Extensions::whisperProgram(), {"-m", m_request.model, "-f", m_tmp->filePath("audio.wav"), "-t",
+                                                    QString::number(threads), "-l", "auto", "-dl"});
 }
 
 void Transcriber::cancel()

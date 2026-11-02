@@ -112,6 +112,8 @@ schneidi_test(test_stabilize_motion)
 schneidi_test(test_cli)
 target_link_libraries(test_cli PRIVATE schneidi_cli_lib)
 schneidi_test(test_live)
+schneidi_test(test_transcribe_pick) # which audio stream/track transcribe hears (a fake whisper-cli)
+target_link_libraries(test_transcribe_pick PRIVATE schneidi_cli_lib)
 schneidi_test(test_transcript_cut)
 schneidi_test(test_captions) # word captions: timing, edits, CLI op, render, embedded text streams
 target_link_libraries(test_captions PRIVATE schneidi_cli_lib)

@@ -207,6 +207,11 @@ QString presetHelp(); // the app's Deliver presets for the `render` description
 // Audio tracks of `tl`: "A3", "A2,A5", numbers, track names or the audio stream names of their clips
 // ("Discord,Mikrofon"); empty = none given. Throws if one is not found
 QVector<int> audioTracksOf(const Project& p, const Timeline& tl, const QJsonValue& list);
+// "A5 Mikrofon": an audio track with its name, or else the audio stream names of its clips
+QString trackLabel(const Project& p, const Timeline& tl, int audioTrack);
+// Audio streams of a file: "4", "Mikrofon", "Discord,Mikrofon" (numbers from 0 or stream names as `probe` lists them).
+// Throws if one is not there
+QVector<int> audioStreamsOf(const MediaInfo& info, const QString& list);
 
 QJsonObject cmdProbe(const QJsonObject& a, Context& ctx);
 QJsonObject cmdSilence(const QJsonObject& a, Context& ctx);
