@@ -328,6 +328,13 @@ void testAnalysis(const QString& dir, const QString& jumping, const QString& gli
         c.out = 82;
         paths = ReframeAnalysis::paths({c}, f, 0.5, [](const QString&) { return 100; });
         if (CHECK(paths.contains(13)) && CHECK(!paths[13].isEmpty())) CHECK(std::abs(paths[13].front().x - 0.8125) < 0.1);
+        // No sample inside the clip at all: the nearest one
+        const ReframeAnalysis::Samples between{{0.0, 0.2, 0.5, 1, false}, {0.12, 0.8, 0.5, 1, false}};
+        const QVector<Target> t = ReframeAnalysis::targets(c, f.rate, 100, between);
+        c.in = 1;
+        c.out = 2;
+        const QVector<Target> t2 = ReframeAnalysis::targets(c, f.rate, 100, between);
+        CHECK(t.size() == 1 && t2.size() == 1 && std::abs(t2.front().x - 0.2) < 1e-9);
     }
     // A square gliding from left to right: the window keeps it in view all the way
     {

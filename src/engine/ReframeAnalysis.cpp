@@ -442,6 +442,14 @@ QVector<Reframe::Target> targets(const Clip& c, FrameRate rate, int fileLength, 
         }
         out << t;
     }
+    if (out.isEmpty() && !samples.isEmpty()) {
+        // Shorter than the sampling step (or a still image): the sample nearest to the clip's first picture
+        const double at = (c.isRetimed() ? map.pictureFrame(c.in) : c.in) / fps;
+        const Sample* best = &samples.front();
+        for (const Sample& s : samples)
+            if (std::abs(s.seconds - at) < std::abs(best->seconds - at)) best = &s;
+        out << Reframe::Target{0, best->x, best->y, best->weight, false};
+    }
     return out;
 }
 
