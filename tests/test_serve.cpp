@@ -773,7 +773,10 @@ int main(int argc, char* argv[])
         const QString root4 = tmp.filePath("root4");
         QDir().mkpath(root4 + "/out");
         QFile::copy(clip, root4 + "/clip.mp4");
-        if (!CHECK(s.start(root4, tmp.filePath("s4"), {"--workers", "1", "--job-wait", "1"}, kToken)))
+        const QString temp4 = tmp.filePath("temp4"); // the workers' temp folder (GIF intermediate)
+        QDir().mkpath(temp4);
+        if (!CHECK(s.start(root4, tmp.filePath("s4"), {"--workers", "1", "--job-wait", "1"}, kToken,
+                           {{"TMPDIR", temp4}, {"TMP", temp4}, {"TEMP", temp4}})))
             return Check::result();
         CHECK(s.initialize());
         CHECK_EQ(errorCode(s.call("new", {{"project", "long.schneidi"}, {"media", QJsonArray{"clip.mp4"}}})), QString("ok"));
@@ -801,6 +804,18 @@ int main(int argc, char* argv[])
             if (!CHECK(parts().isEmpty())) std::printf("       left: %s\n", qPrintable(parts().join(", ")));
             CHECK_EQ(readFile(root4 + "/out/long.mp4"), QByteArray("an older render"));
             CHECK_EQ(readFile(root4 + "/out/long.0badf00d.part.mp4"), QByteArray("another job's render"));
+        }
+        // A GIF render cancelled while it writes its intermediate: that goes too
+        const auto intermediates = [&] { return QDir(temp4).entryList({"schneidi-gif-*"}, QDir::Files); };
+        const QString gif = s.call("render", {{"project", "long.schneidi"}, {"out", "out/long.gif"}, {"format", "gif"},
+                                              {"height", 120}, {"threads", 1}})["job"].toString();
+        t.restart();
+        while (intermediates().isEmpty() && !t.hasExpired(60000)) waitMs(100);
+        if (CHECK(!gif.isEmpty() && !intermediates().isEmpty())) {
+            CHECK_EQ(s.call("jobs", {{"job", gif}, {"cancel", true}})["state"].toString(), QString("cancelled"));
+            t.restart();
+            while (!intermediates().isEmpty() && !t.hasExpired(10000)) waitMs(100);
+            if (!CHECK(intermediates().isEmpty())) std::printf("       left: %s\n", qPrintable(intermediates().join(", ")));
         }
     }
     return Check::result();

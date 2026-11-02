@@ -190,6 +190,11 @@ Exporter::Exporter(QObject* parent) : QObject(parent)
     connect(&m_timer, &QTimer::timeout, this, &Exporter::poll);
 }
 
+QString Exporter::gifIntermediate(const QString& partId)
+{
+    return QDir(QStandardPaths::writableLocation(QStandardPaths::TempLocation)).filePath(QString("schneidi-gif-%1.mov").arg(partId));
+}
+
 Exporter::~Exporter()
 {
     if (m_build) stopBuild();
@@ -282,8 +287,7 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
         m_path = QDir(m_part).filePath(QFileInfo(imageSequencePattern(s.path)).fileName());
         break;
     case ExportSettings::Output::Gif:
-        m_path = QDir(QStandardPaths::writableLocation(QStandardPaths::TempLocation))
-                     .filePath(QString("schneidi-gif-%1.mov").arg(QUuid::createUuid().toString(QUuid::Id128)));
+        m_path = gifIntermediate(partId);
         m_part = partPath(s.path, partId);
         break;
     }

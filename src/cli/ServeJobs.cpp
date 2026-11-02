@@ -3,6 +3,7 @@
 #include "cli/ServeJobs.h"
 
 #include "cli/Mcp.h"
+#include "engine/Exporter.h"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -144,8 +145,8 @@ namespace {
 
 // A render stopped mid-way (its worker killed) leaves what the Exporter writes under a temporary name next to the
 // target until it renames it at the end: "<name>.<part id>.part.<ext>" (an image sequence: the folder
-// "<name>.<part id>.part"). Only this job's files go (the part id it gave the worker): another job rendering to the
-// same target keeps its own, an older file of the name stays.
+// "<name>.<part id>.part"; a GIF also its intermediate in the temp folder). Only this job's files go (the part id it
+// gave the worker): another job rendering to the same target keeps its own, an older file of the name stays.
 void removeRenderParts(const QString& out, const QString& partId)
 {
     if (out.isEmpty() || partId.isEmpty()) return;
@@ -158,6 +159,7 @@ void removeRenderParts(const QString& out, const QString& partId)
         if (fi.isDir()) QDir(fi.absoluteFilePath()).removeRecursively();
         else QFile::remove(fi.absoluteFilePath());
     }
+    QFile::remove(Exporter::gifIntermediate(partId));
 }
 
 } // namespace
