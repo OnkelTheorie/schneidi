@@ -17,7 +17,8 @@ OUT="$BUILD/schneidi"
 [ "${MSYSTEM:-}" = "UCRT64" ] || { echo "!! Bitte in der MSYS2-Umgebung UCRT64 starten" >&2; exit 1; }
 
 # FFMPEG_PREFIX=<folder>: the slim GPL-free FFmpeg of packaging/linux/build-ffmpeg-lgpl.sh (components:
-# packaging/ffmpeg-components.txt; built into the folder when it has no ffmpeg.exe) instead of MSYS2's full one.
+# packaging/ffmpeg-components.txt; built into the folder when it has no ffmpeg.exe) instead of MSYS2's full one (which
+# has x264/x265 built in). GPL-free, the installer offers x264/x265 as an optional download (schneidi.iss, GplFree).
 # Its build packages: nasm and mingw-w64-ucrt-x86_64-{openh264,kvazaar,svt-av1,libvpx,dav1d,opus,lame,libvpl,ffnvcodec-headers}
 FFMPEG_PREFIX="${FFMPEG_PREFIX:-}"
 FFMPEG_BIN="$UCRT/bin"
@@ -86,7 +87,9 @@ if [ -z "$ISCC" ]; then
     exit 0
 fi
 # MSYS2 würde /DName=… sonst für einen Pfad halten und umschreiben
-MSYS2_ARG_CONV_EXCL="*" "$ISCC" /Q "/DVersion=$VERSION" "/DSourceDir=$(cygpath -w "$OUT")" "/DOutputDir=$(cygpath -w "$DIST")" \
+ISCC_EXTRA=()
+[ -n "$FFMPEG_PREFIX" ] && ISCC_EXTRA+=("/DGplFree=1") # x264/x265 not built in: offer the extension
+MSYS2_ARG_CONV_EXCL="*" "$ISCC" /Q "/DVersion=$VERSION" "${ISCC_EXTRA[@]}" "/DSourceDir=$(cygpath -w "$OUT")" "/DOutputDir=$(cygpath -w "$DIST")" \
     "$(cygpath -w "$ROOT/packaging/windows/schneidi.iss")"
 SETUP="$DIST/schneidi-setup-$VERSION.exe"
 echo ">> fertig: $SETUP ($(du -h "$SETUP" | cut -f1))"

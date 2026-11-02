@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "engine/ExportWriter.h"
 
+#include "engine/ExternalEncoder.h"
 #include "engine/OpenMedia.h"
 #include "engine/OutputColor.h"
 #include "engine/audio/Mixer.h"
 #include "engine/picture/Renderer.h"
 #include "engine/video/Reader.h"
 
+#include <QFile>
 #include <QFileInfo>
 
 #include <algorithm>
@@ -148,6 +150,23 @@ AVPixelFormat streamFormat(AVPixelFormat f)
     }
 }
 
+// Codec id and kind of an encoder by name: libx264/libx265 also when this FFmpeg lacks them (the extension's program
+// encodes then, ExternalEncoder)
+bool encoderKind(const QString& name, AVCodecID* id, AVMediaType* type)
+{
+    if (const AVCodec* c = avcodec_find_encoder_by_name(name.toUtf8().constData())) {
+        *id = c->id;
+        *type = c->type;
+        return true;
+    }
+    if (name == QLatin1String("libx264") || name == QLatin1String("libx265")) {
+        *id = name == QLatin1String("libx264") ? AV_CODEC_ID_H264 : AV_CODEC_ID_HEVC;
+        *type = AVMEDIA_TYPE_VIDEO;
+        return true;
+    }
+    return false;
+}
+
 void freePackets(std::vector<AVPacket*>& packets)
 {
     for (AVPacket*& p : packets) av_packet_free(&p);
@@ -171,12 +190,13 @@ bool ExportWriter::containerTakes(const QString& path, const QString& muxer, con
     const QString container = muxer.isEmpty() ? "." + suffix : muxer;
     for (const QString& name : {videoCodec, audioCodec}) {
         if (name.isEmpty()) continue;
-        const AVCodec* c = avcodec_find_encoder_by_name(name.toUtf8().constData());
-        if (!c) return no("no encoder " + name);
+        AVCodecID id = AV_CODEC_ID_NONE;
+        AVMediaType type = AVMEDIA_TYPE_UNKNOWN;
+        if (!encoderKind(name, &id, &type)) return no("no encoder " + name);
         // 0 = the muxer knows its codecs and this is none of them (negative: it does not say, try it)
-        if (avformat_query_codec(f, c->id, FF_COMPLIANCE_NORMAL) == 0)
+        if (avformat_query_codec(f, id, FF_COMPLIANCE_NORMAL) == 0)
             return no(QString("the %1 container cannot hold %2 %3").arg(container, name,
-                                                                         c->type == AVMEDIA_TYPE_VIDEO ? "video" : "sound"));
+                                                                         type == AVMEDIA_TYPE_VIDEO ? "video" : "sound"));
     }
     return true;
 }
@@ -188,10 +208,11 @@ bool ExportWriter::containerSurelyTakes(const QString& path, const QString& vide
     if (!f || (soundOnly && f->video_codec != AV_CODEC_ID_NONE)) return false;
     for (const QString& name : {videoCodec, audioCodec}) {
         if (name.isEmpty()) continue;
-        const AVCodec* c = avcodec_find_encoder_by_name(name.toUtf8().constData());
-        if (!c) return false;
-        const AVCodecID fallback = c->type == AVMEDIA_TYPE_VIDEO ? f->video_codec : f->audio_codec;
-        if (avformat_query_codec(f, c->id, FF_COMPLIANCE_NORMAL) != 1 && fallback != c->id) return false;
+        AVCodecID id = AV_CODEC_ID_NONE;
+        AVMediaType type = AVMEDIA_TYPE_UNKNOWN;
+        if (!encoderKind(name, &id, &type)) return false;
+        const AVCodecID fallback = type == AVMEDIA_TYPE_VIDEO ? f->video_codec : f->audio_codec;
+        if (avformat_query_codec(f, id, FF_COMPLIANCE_NORMAL) != 1 && fallback != id) return false;
     }
     return true;
 }
@@ -205,8 +226,9 @@ bool ExportWriter::supportsOwn(const QString& path, const QString& muxer, const 
     };
     if (!containerTakes(path, muxer, videoCodec, audioCodec, why)) return false;
     if (!videoCodec.isEmpty()) {
-        const AVCodec* video = avcodec_find_encoder_by_name(videoCodec.toUtf8().constData());
-        if (!video || video->type != AVMEDIA_TYPE_VIDEO) return no(videoCodec + " is no video encoder");
+        AVCodecID id = AV_CODEC_ID_NONE;
+        AVMediaType type = AVMEDIA_TYPE_UNKNOWN;
+        if (!encoderKind(videoCodec, &id, &type) || type != AVMEDIA_TYPE_VIDEO) return no(videoCodec + " is no video encoder");
         const AVPixelFormat pf = av_get_pix_fmt(pixFmt.toUtf8().constData());
         if (pf == AV_PIX_FMT_NONE) return no("unknown pixel format " + pixFmt);
         // Converted by OutputColor, uploaded (VAAPI) or by swscale from RGBA
@@ -284,6 +306,11 @@ struct ExportWriter::Impl {
     int64_t audioPts = 0;
     int audioFrameSize = 1024;
     bool headerWritten = false;
+    // x264/x265 of the extension (s.externalProgram): the program encodes into `externalFile`; the sound waits in
+    // `heldSound` (encoded packets, small) until the stream's parameters are known and the header is written
+    std::unique_ptr<ExternalEncoder> external;
+    QString externalFile;
+    std::vector<AVPacket*> heldSound;
     // Smart render
     std::vector<uint8_t> pieceHeader; // parameter sets of the piece encoder (Annex B)
     bool pieceStart = false;          // the next encoded packet is the piece's first: parameter sets before it
@@ -934,7 +961,9 @@ struct ExportWriter::Impl {
             vst->time_base = av_inv_q(rate);
             vst->avg_frame_rate = rate;
             vst->sample_aspect_ratio = aspect;
-            if (!smart) {
+            if (!s.externalProgram.isEmpty()) {
+                if (!startExternal()) return false;
+            } else if (!smart) {
                 if (!(venc = newVideoEncoder())) return false;
                 avcodec_parameters_from_context(vst->codecpar, venc);
             }
@@ -963,7 +992,124 @@ struct ExportWriter::Impl {
             audioFrameSize = aenc->frame_size > 0 ? aenc->frame_size : 1024; // PCM takes any size
         }
         if (!openTextStreams()) return false;
-        return smart || writeHeader();
+        return smart || external || writeHeader();
+    }
+
+    // x264/x265 of the extension: start its program (an encoder problem when it does not start: the export falls back
+    // to the free encoder)
+    bool startExternal()
+    {
+        ExternalEncoder::Params p;
+        p.program = s.externalProgram;
+        p.codec = s.videoCodec;
+        p.width = width;
+        p.height = height;
+        p.rate = rate;
+        p.aspect = aspect;
+        p.pixFmt = pixFmt;
+        p.matrix = matrixOf(colorspace, height);
+        p.transfer = transferOf(colorspace);
+        p.primaries = primariesOf(colorspace, height);
+        p.range = target.fullRange ? AVCOL_RANGE_JPEG : AVCOL_RANGE_MPEG;
+        p.options = s.videoOptions;
+        p.threads = s.threads;
+        p.output = externalFile = ExternalEncoder::intermediatePath(s.path);
+        external = std::make_unique<ExternalEncoder>(p);
+        QString why;
+        if (!external->start(&why)) {
+            fail(why, true);
+            return false;
+        }
+        return true;
+    }
+
+    // x264/x265 of the extension, all pictures written: wait for the program, then its stream and the held sound into
+    // the file (in time order), then the trailer is the caller's
+    bool finishExternal()
+    {
+        QString why;
+        if (!external->finish(stop, &why)) {
+            if (!stop) fail(why, true);
+            return false;
+        }
+        AVFormatContext* in = nullptr;
+        const QByteArray file = externalFile.toUtf8();
+        int r = avformat_open_input(&in, file.constData(), nullptr, nullptr);
+        if (r >= 0) r = avformat_find_stream_info(in, nullptr);
+        const int index = r >= 0 ? av_find_best_stream(in, AVMEDIA_TYPE_VIDEO, -1, -1, nullptr, 0) : -1;
+        if (index < 0) {
+            avformat_close_input(&in);
+            fail(QStringLiteral("cannot read the video of the x264/x265 extension: %1").arg(avError(r < 0 ? r : index)), true);
+            return false;
+        }
+        const AVStream* src = in->streams[index];
+        avcodec_parameters_copy(vst->codecpar, src->codecpar);
+        vst->codecpar->codec_tag = 0;
+        vst->codecpar->sample_aspect_ratio = aspect;
+        if (!writeHeader()) {
+            avformat_close_input(&in);
+            return false;
+        }
+        size_t sound = 0;
+        const auto soundUntil = [&](const AVPacket* video) { // held sound up to this video packet's time
+            while (sound < heldSound.size()) {
+                AVPacket* a = heldSound[sound];
+                if (video && av_compare_ts(a->dts, aenc->time_base, video->dts, vst->time_base) > 0) break;
+                ++sound;
+                av_packet_rescale_ts(a, aenc->time_base, ast->time_base); // the muxer may have changed the stream's
+                a->stream_index = ast->index;
+                if (av_interleaved_write_frame(oc, a) < 0) return false;
+            }
+            return true;
+        };
+        bool ok = true;
+        // NUT stores no decode time for the first packets of a stream with B-frames (the decoder delay): they get
+        // one frame each before the first packet that has one (decode order = one picture per packet)
+        const int64_t frame = std::max<int64_t>(1, av_rescale_q(1, av_inv_q(rate), vst->time_base));
+        std::vector<AVPacket*> undated;
+        // The program's muxer moves the stream so no decode time is negative (x264 with B-frames: the first picture at
+        // +2 frames): the first packet (the first picture, a key frame) goes back to 0, in sync with the sound
+        int64_t shift = AV_NOPTS_VALUE;
+        const auto put = [&](AVPacket* p) {
+            if (!soundUntil(p) || av_interleaved_write_frame(oc, p) < 0) return false;
+            return true;
+        };
+        const auto flushUndated = [&](int64_t nextDts) {
+            bool good = true;
+            for (size_t i = 0; i < undated.size(); ++i) {
+                AVPacket* p = undated[i];
+                p->dts = nextDts == AV_NOPTS_VALUE ? p->pts : nextDts - int64_t(undated.size() - i) * frame;
+                if (good) good = put(p);
+            }
+            freePackets(undated);
+            return good;
+        };
+        while (ok && !stop && av_read_frame(in, packet) >= 0) {
+            if (packet->stream_index != index) {
+                av_packet_unref(packet);
+                continue;
+            }
+            av_packet_rescale_ts(packet, src->time_base, vst->time_base);
+            packet->stream_index = vst->index;
+            packet->pos = -1;
+            if (shift == AV_NOPTS_VALUE) shift = packet->pts == AV_NOPTS_VALUE ? 0 : packet->pts;
+            if (packet->pts != AV_NOPTS_VALUE) packet->pts -= shift;
+            if (packet->dts != AV_NOPTS_VALUE) packet->dts -= shift;
+            if (packet->dts == AV_NOPTS_VALUE) {
+                undated.push_back(av_packet_clone(packet));
+                av_packet_unref(packet);
+                continue;
+            }
+            if (!undated.empty()) ok = flushUndated(packet->dts);
+            if (ok) ok = put(packet);
+            av_packet_unref(packet);
+        }
+        if (ok && !undated.empty()) ok = flushUndated(AV_NOPTS_VALUE);
+        freePackets(undated);
+        if (ok) ok = soundUntil(nullptr);
+        avformat_close_input(&in);
+        if (!ok && !stop) fail(QStringLiteral("writing failed"));
+        return ok && !stop;
     }
 
     // Subtitle text streams: the codec the container takes for plain text (none: left out, the export goes on)
@@ -1167,6 +1313,16 @@ struct ExportWriter::Impl {
                 if (!writeVideo(packet, std::exchange(pieceStart, false))) return false;
                 continue;
             }
+            if (!headerWritten && external) { // the video's parameters come at the end (times stay the encoder's)
+                AVPacket* held = av_packet_clone(packet);
+                av_packet_unref(packet);
+                if (!held) {
+                    fail(QStringLiteral("out of memory"));
+                    return false;
+                }
+                heldSound.push_back(held);
+                continue;
+            }
             av_packet_rescale_ts(packet, c->time_base, st->time_base);
             packet->stream_index = st->index;
             const int w = av_interleaved_write_frame(oc, packet); // takes the packet's data
@@ -1289,6 +1445,15 @@ struct ExportWriter::Impl {
 
     void encode()
     {
+        encodeAll();
+        // The program and its file belong to this thread's run
+        external.reset();
+        if (!externalFile.isEmpty()) QFile::remove(externalFile);
+        freePackets(heldSound);
+    }
+
+    void encodeAll()
+    {
         if (!open()) {
             discardQueue();
             return;
@@ -1309,11 +1474,12 @@ struct ExportWriter::Impl {
             }
             if (item.end) {
                 if (smart && !finishPiece()) break;
-                if (!headerWritten) {
+                if (!headerWritten && !external) {
                     fail(QStringLiteral("nothing to write"));
                     break;
                 }
                 if (aenc && !flushSound()) break;
+                if (external && !finishExternal()) break;
                 if (venc && avcodec_send_frame(venc, nullptr) >= 0 && !drain(venc, vst, true)) break;
                 const int r = av_write_trailer(oc);
                 if (r < 0) {
@@ -1359,6 +1525,17 @@ struct ExportWriter::Impl {
                     freeItem(item);
                     break;
                 }
+            }
+            if (external) {
+                QString why;
+                const bool ok = !item.picture || external->write(item.picture, stop, &why);
+                freeItem(item);
+                if (!ok) {
+                    if (!stop) fail(why, true);
+                    break;
+                }
+                ++written;
+                continue;
             }
             if (!venc) { // audio only
                 freeItem(item);
@@ -1480,8 +1657,8 @@ ExportWriter::ExportWriter(const Settings& s, Own own) : d(std::make_unique<Impl
     }
     const int parallel = std::max(1, d->o.parallel);
     d->queueMax = size_t(std::clamp(parallel, 2, 8));
-    if (const AVCodec* c = avcodec_find_encoder_by_name(s.videoCodec.toUtf8().constData())) d->codecId = c->id;
-    d->smart = !s.copy.isEmpty() && d->o.renderer && d->o.rate == d->o.timelineRate
+    if (AVMediaType type; !encoderKind(s.videoCodec, &d->codecId, &type)) d->codecId = AV_CODEC_ID_NONE;
+    d->smart = !s.copy.isEmpty() && d->o.renderer && d->o.rate == d->o.timelineRate && s.externalProgram.isEmpty()
                && (d->codecId == AV_CODEC_ID_H264 || d->codecId == AV_CODEC_ID_HEVC)
                && (streamFormat(d->pixFmt) == AV_PIX_FMT_YUV420P || streamFormat(d->pixFmt) == AV_PIX_FMT_YUV420P10LE);
     if (d->o.renderer) {

@@ -48,10 +48,22 @@ de.AssocProjects=.schneidi-Projekte mit schneidi öffnen
 en.AssocProjects=Open .schneidi projects with schneidi
 de.ProjectFile=schneidi-Projekt
 en.ProjectFile=schneidi project
+de.ExtraComponents=Zusätzliche Komponenten (optional – schneidi funktioniert auch ohne):
+en.ExtraComponents=Additional components (optional – schneidi works without them):
+de.EncoderExtension=Bessere Export-Qualität ohne Grafikkarte (x264/x265, GPL-Lizenz, etwa 90 MB Download)
+en.EncoderExtension=Better export quality without a graphics card (x264/x265, GPL license, about 90 MB download)
+de.EncoderDownload=Lade x264/x265 herunter …
+en.EncoderDownload=Downloading x264/x265 …
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 Name: "assoc"; Description: "{cm:AssocProjects}"; GroupDescription: "{cm:AdditionalIcons}"
+#ifdef GplFree
+; x264/x265 as the program's own extension (engine/Extensions "x264"): never ticked by default. The installer only runs
+; schneidi-cli, which downloads it exactly like the app (fixed URL, size and SHA-256, into the user's AppData) – as the
+; user who started the setup, also when it runs elevated. No network: the setup still finishes, the app offers it later.
+Name: "x264"; Description: "{cm:EncoderExtension}"; GroupDescription: "{cm:ExtraComponents}"; Flags: unchecked
+#endif
 
 [InstallDelete]
 ; Remove old program files before an update (the MLT modules of versions before 0.15 lay in lib/ and share/)
@@ -74,4 +86,7 @@ Root: HKA; Subkey: "Software\Classes\schneidi.Project\DefaultIcon"; ValueType: s
 Root: HKA; Subkey: "Software\Classes\schneidi.Project\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\schneidi.exe"" ""%1"""; Tasks: assoc
 
 [Run]
+#ifdef GplFree
+Filename: "{app}\schneidi-cli.exe"; Parameters: "extensions --install x264"; StatusMsg: "{cm:EncoderDownload}"; Flags: runasoriginaluser runhidden waituntilterminated; Tasks: x264
+#endif
 Filename: "{app}\schneidi.exe"; Description: "{cm:LaunchProgram,schneidi}"; Flags: nowait postinstall skipifsilent

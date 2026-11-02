@@ -236,8 +236,7 @@ sudo apt install build-essential cmake ninja-build pkg-config qt6-base-dev qt6-b
 cmake -S . -B build -G Ninja && cmake --build build && ./build/schneidi
 ```
 
-AppImage: `packaging/linux/build-appimage.sh` → `dist/schneidi-<version>-x86_64.AppImage`
-Without any GPL library (own LGPL FFmpeg, OpenH264/kvazaar instead of x264/x265): `SCHNEIDI_NO_GPL=1 packaging/linux/build-appimage.sh`; bundled libraries and their licenses: [THIRD_PARTY.md](THIRD_PARTY.md)
+AppImage: `packaging/linux/build-appimage.sh` → `dist/schneidi-<version>-x86_64.AppImage`, without any GPL library (own LGPL FFmpeg; H.264/H.265 through the graphics card, else OpenH264/kvazaar, or x264/x265 as an optional download in the program: Extensions); bundled libraries and their licenses: [THIRD_PARTY.md](THIRD_PARTY.md)
 Debian package (system Qt/FFmpeg, no bundling): `cmake --build build && cpack --config build/CPackConfig.cmake -G DEB` → `dist/schneidi_<version>_amd64.deb`
 The .deb is built for Debian 13: it needs exactly its Qt 6.8.2 (the GPU viewer uses Qt's private RHI interface) and FFmpeg 7.1; on every other system use the AppImage.
 

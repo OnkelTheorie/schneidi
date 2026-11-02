@@ -60,6 +60,8 @@ public:
         // Text streams (times from the file start): MP4/MOV mov_text, MKV SubRip, WebM WebVTT; other containers
         // get none
         QVector<Subtitles::TextTrack> subtitles;
+        // x264/x265 of the extension: its ffmpeg program encodes the video (engine/ExternalEncoder; no smart render)
+        QString externalProgram;
     };
     // Picture engine and audio mixer
     struct Own {
@@ -74,7 +76,8 @@ public:
         int parallel = 1;        // frames rendered at once
     };
     // Can the writer write this? videoCodec empty = audio only, pixFmt "vaapi" = upload to the card. why: what does not
-    // fit, for the user ("the .webm container cannot hold libx264 video")
+    // fit, for the user ("the .webm container cannot hold libx264 video"). libx264/libx265 count also when only the
+    // extension has them (the caller decides that, HardwareEncoders::externalProgram).
     static bool supportsOwn(const QString& path, const QString& muxer, const QString& videoCodec, const QString& pixFmt,
                             const QString& audioCodec, const QString& sampleFormat, QString* why = nullptr);
     // Does the container of `path` (by its extension, or `muxer`) take these encoders' streams? Empty = none of that kind

@@ -660,6 +660,11 @@ QJsonObject cmdRender(const QJsonObject& a, Context& ctx)
         o["pattern"] = QFileInfo(imageSequencePattern(out)).fileName();
     }
     if (!ex.note().isEmpty()) o["encoder_note"] = ex.note();
+    // Free H.264/H.265 encoder because neither a graphics card encoder nor x264/x265 is there: how to get better
+    if (const QString hint = HardwareEncoders::betterQualityHint(ex.usedCodec()); !hint.isEmpty()) {
+        o["encoder_hint"] = hint;
+        o["better_encoder"] = QJsonObject{{"extension", "x264"}, {"install", "schneidi-cli extensions --install x264"}};
+    }
     if (!ex.skippedEffects().isEmpty()) {
         // Not in this version: the clip renders without it (the project keeps it; info marks it "available": false)
         QJsonArray skipped;

@@ -238,7 +238,8 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
     if (s.videoCodec.isEmpty()) scaled.video.clear();
     // An encoder this FFmpeg does not have (the GPL-free build has no x264/x265 and offers what it has instead):
     // say so instead of failing without a reason
-    if (!s.videoCodec.isEmpty() && !avcodec_find_encoder_by_name(s.videoCodec.toUtf8().constData())) {
+    if (!s.videoCodec.isEmpty() && !avcodec_find_encoder_by_name(s.videoCodec.toUtf8().constData())
+        && HardwareEncoders::externalProgram(s.videoCodec).isEmpty()) {
         if (error) *error = T("Video-Encoder %1 ist in diesem Build nicht verfügbar.").arg(s.videoCodec);
         return false;
     }
@@ -315,8 +316,9 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
     // Smart render: only where the timeline is written as it is (size, frame rate)
     m_copy.clear();
     const bool sameSize = out.size() == s.format.size();
+    // (not with x264/x265 of the extension: its program encodes the whole video in one go)
     if (s.smartRender && SmartRender::enabled() && s.output == ExportSettings::Output::File && !s.videoCodec.isEmpty()
-        && !convertRate && sameSize)
+        && !convertRate && sameSize && HardwareEncoders::externalProgram(s.videoCodec).isEmpty())
         m_copy = SmartRender::spans(tl, m_from, m_length, s.burnSubtitles);
     const bool smart = !m_copy.isEmpty();
 
@@ -404,17 +406,28 @@ bool Exporter::launch(QString* error)
     return true;
 }
 
+QString Exporter::fallbackCodec(const QString& failed) const
+{
+    // A hardware encoder: the software one chosen with it; x264/x265 of the extension (a separate program): the free one
+    if (HardwareEncoders::isHardwareCodec(failed)) return m_settings.softwareCodec;
+    if (!HardwareEncoders::externalProgram(failed).isEmpty()) return HardwareEncoders::freeReplacement(failed);
+    return {};
+}
+
 bool Exporter::fallBackToSoftware(QString* error)
 {
-    const QString hw = m_usedCodec.isEmpty() ? m_settings.videoCodec : m_usedCodec;
-    if (m_settings.softwareCodec.isEmpty() || !HardwareEncoders::isHardwareCodec(hw)) {
-        if (error) *error = T("Hardware-Encoder %1 funktioniert nicht.").arg(hw);
+    const QString failed = m_usedCodec.isEmpty() ? m_settings.videoCodec : m_usedCodec;
+    const QString next = fallbackCodec(failed);
+    if (next.isEmpty() || next == failed) {
+        if (error) *error = T("Hardware-Encoder %1 funktioniert nicht.").arg(failed);
         return false;
     }
-    qWarning("Export: hardware encoder %s failed, rendering with %s", qPrintable(hw), qPrintable(m_settings.softwareCodec));
-    m_note = T("Hardware-Encoder %1 funktioniert nicht, mit Software gerendert.")
-                 .arg(videoEncoderLabel(HardwareEncoders::encoderOfCodec(hw)));
-    return startWriter(m_settings.softwareCodec, error);
+    qWarning("Export: encoder %s failed, rendering with %s", qPrintable(failed), qPrintable(next));
+    m_note = HardwareEncoders::isHardwareCodec(failed)
+                 ? T("Hardware-Encoder %1 funktioniert nicht, mit Software gerendert.")
+                       .arg(videoEncoderLabel(HardwareEncoders::encoderOfCodec(failed)))
+                 : T("Die Erweiterung x264/x265 funktioniert nicht, mit %1 gerendert.").arg(next);
+    return startWriter(next, error);
 }
 
 QVector<QPair<QByteArray, QByteArray>> Exporter::encoderOptions(const QString& codec) const
@@ -479,6 +492,7 @@ bool Exporter::startWriter(const QString& codec, QString* error)
     w.copy = m_copy;
     w.maxBitrateK = s.maxBitrateK;
     w.subtitles = m_textTracks;
+    if (!s.videoCodec.isEmpty()) w.externalProgram = HardwareEncoders::externalProgram(codec);
     m_usedCodec = s.videoCodec.isEmpty() ? QString() : codec;
     {
         if (s.output == ExportSettings::Output::ImageSequence) w.muxer = "image2";
@@ -493,8 +507,9 @@ bool Exporter::startWriter(const QString& codec, QString* error)
         o.from = m_from;
         o.audioBits = fileBits(s.audioCodec, w.sampleFormat);
         o.parallel = m_frames;
-        qInfo("Export: %s, %d threads, %d frames at once%s",
-              s.videoCodec.isEmpty() ? "audio only" : qPrintable(codec), m_threads, m_frames,
+        qInfo("Export: %s%s, %d threads, %d frames at once%s",
+              s.videoCodec.isEmpty() ? "audio only" : qPrintable(codec),
+              w.externalProgram.isEmpty() ? "" : " (x264/x265 extension)", m_threads, m_frames,
               m_convertRate ? ", frame rate converted" : "");
         m_writer = std::make_unique<ExportWriter>(w, std::move(o));
     }
@@ -503,10 +518,9 @@ bool Exporter::startWriter(const QString& codec, QString* error)
         qWarning("Export: %s", qPrintable(m_writer->error()));
         // A hardware encoder that cannot be opened may fail this early (a fast machine) or later (pollWriter):
         // the same fallback to software both times
-        const bool hardware = HardwareEncoders::isHardwareCodec(codec) && !s.softwareCodec.isEmpty();
-        if (hardware && m_writer->encoderFailed()) {
+        if (!fallbackCodec(codec).isEmpty() && m_writer->encoderFailed()) {
             m_writer.reset();
-            HardwareEncoders::remember(codec, outputSize(), false); // not again
+            if (HardwareEncoders::isHardwareCodec(codec)) HardwareEncoders::remember(codec, outputSize(), false); // not again
             QFile::remove(m_path);
             return fallBackToSoftware(error);
         }
@@ -535,11 +549,12 @@ void Exporter::pollWriter()
             fail(error);
             return;
         }
-        // Hardware encoder could not be opened or failed while encoding: render again with software
-        const bool hardware = HardwareEncoders::isHardwareCodec(m_usedCodec) && !m_settings.softwareCodec.isEmpty();
-        if (hardware && m_writer->encoderFailed()) {
+        // Hardware encoder (or the x264/x265 extension) could not be opened or failed while encoding: render again with
+        // software
+        if (!fallbackCodec(m_usedCodec).isEmpty() && m_writer->encoderFailed()) {
             m_writer.reset();
-            HardwareEncoders::remember(m_usedCodec, outputSize(), false); // not again this session
+            if (HardwareEncoders::isHardwareCodec(m_usedCodec))
+                HardwareEncoders::remember(m_usedCodec, outputSize(), false); // not again this session
             QFile::remove(m_path);
             QString error;
             if (fallBackToSoftware(&error)) return;

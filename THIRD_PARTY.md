@@ -4,7 +4,7 @@ schneidi itself is AGPL-3.0 (see [LICENSE](LICENSE)). The packages bundle these 
 All are linked dynamically (shared libraries / DLLs next to the program), so they can be replaced.
 The running program lists what it really loaded: `schneidi-cli --licenses` (AppImage: `schneidi-….AppImage cli --licenses`).
 
-## GPL-free packages (`SCHNEIDI_NO_GPL=1 packaging/linux/build-appimage.sh`, Docker image)
+## GPL-free packages (AppImage `packaging/linux/build-appimage.sh`, Docker image)
 
 | Part | License | What for |
 |---|---|---|
@@ -26,13 +26,18 @@ Not in these packages: x264, x265, Rubber Band, vid.stab, frei0r plugins.
 
 whisper.cpp (speech recognition, MIT) is not bundled: schneidi downloads it as an extension on request.
 
+x264/x265 (GPL-2.0+) are not bundled either: on request (Extensions, `schneidi-cli extensions --install x264`)
+schneidi downloads an FFmpeg program built with them ([BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds),
+GPL) and runs it as a separate program for H.264/H.265 export when no graphics card encoder works. schneidi does not
+link it; it hands it pictures through a pipe and reads back the encoded video.
+
 **OpenH264 and patents:** the OpenH264 code is BSD-licensed, but H.264 is patent-encumbered. Cisco pays the MPEG LA
 royalties only for its own prebuilt binary downloaded from Cisco; a self-built or bundled OpenH264 is not covered.
 Hardware encoders (the graphics card's driver) are the alternative.
 
-## Regular packages (AppImage without `SCHNEIDI_NO_GPL`, Windows, Debian package)
+## Packages with the system's FFmpeg (Windows, Debian package; AppImage with `SCHNEIDI_NO_GPL=0`, not released)
 
 As above, but with the FFmpeg of Debian 13 / MSYS2, which is built with `--enable-gpl` (x264, x265, Rubber Band,
 vid.stab, frei0r, …) and is therefore GPL-2.0+ as a whole. The Debian package uses these libraries from the system.
-The regular AppImage also carries the Qt image format plugins of the build system (KDE's kimageformats: AVIF, HEIF,
+Such an AppImage also carries the Qt image format plugins of the build system (KDE's kimageformats: AVIF, HEIF,
 JPEG XL, camera RAW, OpenEXR …, LGPL) with their libraries (libavif, libheif, libjxl, LibRaw, OpenEXR; BSD/LGPL).

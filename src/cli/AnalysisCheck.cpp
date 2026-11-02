@@ -9,6 +9,7 @@
 #include "engine/AudioAnalysis.h"
 #include "engine/Bundle.h"
 #include "engine/CheckMeasure.h"
+#include "engine/HardwareEncoders.h"
 #include "engine/video/Scan.h"
 
 #include <QJsonArray>
@@ -259,6 +260,10 @@ QJsonObject cmdCheck(const QJsonObject& a, Context& ctx)
                 f, tl, from, to, [&](const QString& p) { return media(p) ? media(p)->length : 0; }, progress(0, scanned)))
             issues += *st;
         issues += CheckMeasure::hook(f, render, from, to, opt);
+        // H.264 export without a graphics card encoder and without x264: the free encoder needs twice the bit rate
+        if (HardwareEncoders::needsBetterEncoder("h264"))
+            issues << ExportCheck::Issue{ExportCheck::Severity::Info, "encoder_quality",
+                                         HardwareEncoders::betterQualityHint(HardwareEncoders::softwareCodec("h264"))};
         if (withSound) {
             std::vector<float> peaks;
             const auto loud = AudioAnalysis::timelineLoudness(f, render, from, to, progress(scanned, 0.55), &peaks);

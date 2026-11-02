@@ -150,6 +150,7 @@ add_library(schneidi_lib STATIC
     src/engine/OutputColor.h      src/engine/OutputColor.cpp
     src/engine/HardwareEncoders.h src/engine/HardwareEncoders.cpp
     src/engine/Extensions.h       src/engine/Extensions.cpp
+    src/engine/ExternalEncoder.h  src/engine/ExternalEncoder.cpp
     src/engine/Transcriber.h      src/engine/Transcriber.cpp
     src/engine/MediaCache.h       src/engine/MediaCache.cpp
     src/engine/StillFetcher.h     src/engine/StillFetcher.cpp

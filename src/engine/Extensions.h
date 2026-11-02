@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Optional add-ons that schneidi downloads on request instead of shipping them (keeps the program small):
-// whisper.cpp (speech to text) and its language models. Fixed catalog with pinned versions and SHA-256 sums;
-// everything lands in AppDataLocation/extensions and can be removed again.
+// whisper.cpp (speech to text) and its language models, and an ffmpeg program with x264/x265 (better H.264/H.265 export
+// without a graphics card encoder; GPL, so schneidi never links it: the export writer runs it as a separate process,
+// see engine/ExternalEncoder). Fixed catalog with pinned versions and SHA-256 sums; everything lands in
+// AppDataLocation/extensions and can be removed again.
 
 #include <QByteArray>
 #include <QObject>
@@ -18,10 +20,10 @@ class QCryptographicHash;
 
 namespace Extensions {
 
-enum class Kind { Program, WhisperModel, WhisperVad };
+enum class Kind { Program, WhisperModel, WhisperVad, Encoder };
 
 struct Item {
-    QString id;          // "whisper", "whisper-model-small"
+    QString id;          // "whisper", "whisper-model-small", "x264"
     Kind kind = Kind::Program;
     QString name;        // shown name (German source text, translated with T())
     QString description; // one line
@@ -36,12 +38,15 @@ struct Item {
 const QVector<Item>& catalog();
 const Item* find(const QString& id);
 QString rootDir(); // AppDataLocation/extensions
+// Items of a comma list as the CLI takes it ("whisper,small"): ids, short model names ("small" = whisper-model-small)
+// and aliases ("x265" = x264, the same program). unknown: the first id that names nothing (then the result is empty).
+QVector<const Item*> parseList(const QString& list, QString* unknown = nullptr);
 // The items plus what they need, in install order (whisper -> whisper, whisper-vad; a model -> whisper too if no
 // whisper program is there); no duplicates
 QVector<const Item*> withDependencies(const QVector<const Item*>& items);
 
 bool isInstalled(const Item& item);
-QString installedPath(const Item& item); // model file / whisper-cli; empty = not installed
+QString installedPath(const Item& item); // model file / whisper-cli / ffmpeg; empty = not installed
 bool remove(const Item& item);
 
 // whisper-cli to use: the installed one, else one on PATH; empty = none
@@ -51,6 +56,10 @@ QString whisperVadModel(); // empty = not installed (transcribing works without,
 QStringList installedWhisperModels();
 // Model file for an id or a path; empty id = best installed. Empty result = not installed.
 QString whisperModelPath(const QString& idOrPath = {});
+
+// ffmpeg program of the x264/x265 extension (or the one SCHNEIDI_ENCODER_FFMPEG names); empty = not installed.
+// Whether it really has libx264/libx265: HardwareEncoders::externalProgram.
+QString encoderProgram();
 
 // Downloads and installs one item: checks size and SHA-256, unpacks program archives (tar, also on Windows 10+),
 // replaces the old version only when everything worked.
