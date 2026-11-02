@@ -2007,7 +2007,7 @@
  "Was die Stimme sagen soll …": "What the voice should say …",
  "Weitere Stimmen…": "More voices…",
  "keine Ausgabe": "no output",
- "männlich, klarer Klang (Piper; Daten CC0, aber aus einer Stimme weitertrainiert, deren Daten nur für die Forschung freigegeben sind)": "male, clear sound (Piper; CC0 data, but fine-tuned from a voice whose data is licensed for research only)",
+ "männlich, klarer Klang – nur für private, nicht-kommerzielle Videos (Piper; weitertrainiert aus einer Stimme, deren Daten nur für die Forschung freigegeben sind)": "male, clear sound – only for private, non-commercial videos (Piper; fine-tuned from a voice whose data is licensed for research only)",
  "Stimme Deutsch: Ramona": "German voice: Ramona",
  "weiblich (Piper, 16 kHz; Trainingsdaten gemeinfrei: M-AILABS/LibriVox)": "female (Piper, 16 kHz; training data in the public domain: M-AILABS/LibriVox)",
  "weiblich, amerikanisch (Piper, gemeinfrei)": "female, American (Piper, public domain)",

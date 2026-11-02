@@ -102,8 +102,8 @@ QVector<Item> makeCatalog()
           "en/en_US/ljspeech/medium/", "6f52a751e2349abe7a76735eb09dc1875298c77ea2342ffd2fef79ff81b87f22", 63531379,
           "141d612cc0a95ed7efc1ca936b845c2364967f2e9217c5dbfcf69fc4d6c65860", 4972);
     voice("de_DE-thorsten-medium", N_("Stimme Deutsch: Thorsten"),
-          N_("männlich, klarer Klang (Piper; Daten CC0, aber aus einer Stimme weitertrainiert, deren Daten nur für die "
-             "Forschung freigegeben sind)"),
+          N_("männlich, klarer Klang – nur für private, nicht-kommerzielle Videos (Piper; weitertrainiert aus einer "
+             "Stimme, deren Daten nur für die Forschung freigegeben sind)"),
           "de/de_DE/thorsten/medium/", "7e64762d8e5118bb578f2eea6207e1a35a8e0c30595010b666f983fc87bb7819", 63201294,
           "974adee790533adb273a1ac88f49027d2a1b8f0f2cf4905954a4791e79264e85", 4819);
     list << Item{"whisper-vad", Kind::WhisperVad, N_("Sprach-Erkennung für Whisper (Silero VAD)"),
