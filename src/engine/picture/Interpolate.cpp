@@ -317,6 +317,7 @@ std::shared_ptr<const Motion> estimate(const uint8_t* a, const uint8_t* b, int w
         return 1.0 - double(good) / std::max<size_t>(1, f.v.size());
     };
     m->bad = check(m->fwd, m->bwd, m->okF);
+    check(m->bwd, m->fwd, m->okB);
     return m;
 }
 
@@ -405,9 +406,18 @@ void flow(const Motion& m, const uint8_t* a, const uint8_t* b, uint8_t* out, int
     const float s = m.scale;
     const Plane &LA = m.fullA, &LB = m.fullB;
     const auto costAt = [&](int x, int y, float vx, float vy) {
-        const int ax = int(std::lround(x - t * vx)), ay = int(std::lround(y - t * vy));
-        const int bx = int(std::lround(x + (1 - t) * vx)), by = int(std::lround(y + (1 - t) * vy));
+        const auto round = [](float f) { return int(std::floor(f + 0.5f)); };
+        const int ax = round(x - t * vx), ay = round(y - t * vy);
+        const int bx = round(x + (1 - t) * vx), by = round(y + (1 - t) * vy);
         int sum = 0;
+        if (std::min({ax, ay, bx, by}) >= 1 && std::max(ax, bx) < w - 1 && std::max(ay, by) < h - 1) {
+            for (int dy = -1; dy <= 1; ++dy) {
+                const uint8_t* p = &LA.p[size_t(ay + dy) * w + ax - 1];
+                const uint8_t* q = &LB.p[size_t(by + dy) * w + bx - 1];
+                sum += std::abs(p[0] - q[0]) + std::abs(p[1] - q[1]) + std::abs(p[2] - q[2]);
+            }
+            return sum;
+        }
         for (int dy = -1; dy <= 1; ++dy)
             for (int dx = -1; dx <= 1; ++dx) sum += std::abs(int(LA.at(ax + dx, ay + dy)) - int(LB.at(bx + dx, by + dy)));
         return sum;
