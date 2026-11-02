@@ -44,7 +44,7 @@ SpeechDialog::SpeechDialog(const QString& folder, QWidget* parent) : QDialog(par
     m_captions->setToolTip(T("Die Wörter als Untertitel, Wort für Wort zur Stimme (mit Whisper gemessen, sonst geschätzt)"));
     auto* form = new QFormLayout;
     form->addRow(T("Stimme"), m_voice);
-    form->addRow(T("Tempo"), m_speed);
+    form->addRow(T("Sprechtempo"), m_speed);
     form->addRow(T("Pause nach Sätzen"), m_pause);
     form->addRow(QString(), m_captions);
 
