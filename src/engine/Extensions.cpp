@@ -177,11 +177,11 @@ QVector<const Item*> parseList(const QString& list, QString* unknown)
         if (id == "x265" || id == "x264-x265" || id == "x264/x265") id = "x264";
         const Item* i = find(id);
         if (!i) i = find("whisper-model-" + id);
-        if (!i) i = find(kVoicePrefix + id);
-        if (!i) // "de_DE-thorsten-medium" (the file name), "thorsten"
+        if (!i) // "de_DE-thorsten" (ids are lower case only up to here), its file name, "thorsten"
             for (const Item& v : catalog())
                 if (v.kind == Kind::Voice
-                    && (QString(v.fileName).chopped(5).toLower() == id || voiceName(v.id).section('-', 1).toLower() == id))
+                    && (v.id.toLower() == id || voiceName(v.id).toLower() == id
+                        || QString(v.fileName).chopped(5).toLower() == id || voiceName(v.id).section('-', 1).toLower() == id))
                     i = &v;
         if (!i) {
             if (unknown) *unknown = id;

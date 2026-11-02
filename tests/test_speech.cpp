@@ -19,6 +19,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QTemporaryDir>
 #include <QTextStream>
 
