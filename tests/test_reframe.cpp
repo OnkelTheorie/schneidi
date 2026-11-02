@@ -294,6 +294,40 @@ void testAnalysis(const QString& dir, const QString& jumping, const QString& gli
             CHECK(bright > 50);
         }
     }
+    // Retimed clips of the same file: played backwards the square starts right, at double speed it jumps after 1 s
+    {
+        const double half = Reframe::fill(16.0 / 9.0, QSizeF(1080, 1920)).windowW / 2;
+        Clip c;
+        c.id = 11;
+        c.mediaPath = jumping;
+        c.out = 99;
+        c.reverse = true;
+        auto paths = ReframeAnalysis::paths({c}, f, 0.5, [](const QString&) { return 100; });
+        if (CHECK(paths.contains(11))) {
+            Clip r = c;
+            Reframe::apply(r, Reframe::Mode::Auto, paths[11], 16.0 / 9.0, QSizeF(1080, 1920));
+            CHECK(std::abs(centreAt(r, 25, 16.0 / 9.0, QSizeF(1080, 1920)) - 0.8125) < half - 0.05);
+            CHECK(std::abs(centreAt(r, 90, 16.0 / 9.0, QSizeF(1080, 1920)) - 0.1875) < half - 0.05);
+        }
+        c.id = 12;
+        c.reverse = false;
+        c.speed = 2;
+        c.out = 49;
+        paths = ReframeAnalysis::paths({c}, f, 0.5, [](const QString&) { return 100; });
+        if (CHECK(paths.contains(12))) {
+            Clip r = c;
+            Reframe::apply(r, Reframe::Mode::Auto, paths[12], 16.0 / 9.0, QSizeF(1080, 1920));
+            CHECK(std::abs(centreAt(r, 12, 16.0 / 9.0, QSizeF(1080, 1920)) - 0.1875) < half - 0.05);
+            CHECK(std::abs(centreAt(r, 45, 16.0 / 9.0, QSizeF(1080, 1920)) - 0.8125) < half - 0.05);
+        }
+        // A clip shorter than the sampling step still gets the subject (the nearest sample), not the middle
+        c.id = 13;
+        c.speed = 1;
+        c.in = 81;
+        c.out = 82;
+        paths = ReframeAnalysis::paths({c}, f, 0.5, [](const QString&) { return 100; });
+        if (CHECK(paths.contains(13)) && CHECK(!paths[13].isEmpty())) CHECK(std::abs(paths[13].front().x - 0.8125) < 0.1);
+    }
     // A square gliding from left to right: the window keeps it in view all the way
     {
         Clip c;

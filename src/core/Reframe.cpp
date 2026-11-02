@@ -149,7 +149,9 @@ void segmentPath(const QVector<Target>& seg, const PathParams& p, QVector<Key>& 
         const int length = std::clamp(int(std::lround(dist / speed * fps)), std::max(1, int(0.25 * fps)),
                                       std::max(1, int(2.5 * fps)));
         int end = std::min(start + length, std::max(last, start + 1));
-        // Arriving just before the shot ends: a jolt for nothing (the next shot starts anew)
+        // Arriving just before the shot ends: a quicker move that still holds a while (a short clip, the subject
+        // moving late), else none - a jolt for nothing (the next shot starts anew)
+        if (end + minHold > last && last - minHold - start >= std::max(1, int(0.25 * fps))) end = last - minHold;
         if (end + minHold > last && start > first) {
             outside = -1;
             busyUntil = last + 1;
