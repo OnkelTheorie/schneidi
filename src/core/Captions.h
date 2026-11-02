@@ -27,8 +27,8 @@ QVector<CueWord> timing(const SubtitleCue& cue);
 // -1 = none yet or outside the cue
 int activeWord(const SubtitleCue& cue, int frame);
 
-// Pop-in of a word `ageMs` after it started: grows from 70 % with a slight overshoot and fades in during the first
-// half. popMs <= 0 = no animation.
+// Pop-in of a word `ageMs` after it started: grows from 60 % with an overshoot (about 108 %) and fades in during the
+// first half. popMs <= 0 = no animation.
 struct Pop {
     double scale = 1.0, opacity = 1.0;
 };
@@ -47,8 +47,9 @@ void crop(SubtitleCue& cue, int start, int end);
 void remap(SubtitleCue& cue, const std::function<int(int)>& pos, int newStart, int newEnd);
 
 // Text style of a new word caption track for the format: big bold letters with an outline and no box; on a portrait
-// picture above the part phone apps cover (ExportCheck's safe area), otherwise near the bottom
-TitleStyle defaultStyle(QSize format);
+// picture above the part phone apps cover (ExportCheck's safe area), otherwise near the bottom. One word at a time
+// is drawn larger.
+TitleStyle defaultStyle(QSize format, CaptionMode mode = CaptionMode::Karaoke);
 // Width the words of a caption line may take (pixels of the project format): narrower than plain subtitles so that
 // the side buttons of phone apps do not cover them
 double lineWidth(QSize format);

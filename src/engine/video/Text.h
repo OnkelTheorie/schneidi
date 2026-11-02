@@ -49,6 +49,7 @@ struct WordParams {
     QColor outlineColor = Qt::black, bg = Qt::transparent;
     double outline = 0, pad = 0; // outline: pen width
     QColor shadow = Qt::transparent; // drop shadow (offset by a tenth of the font size down and right)
+    double reserve = 1.0; // room each word gets in the layout (the largest scale a word grows to: no overlap)
 };
 void drawWords(uint8_t* rgba, int w, int h, const WordParams& p);
 

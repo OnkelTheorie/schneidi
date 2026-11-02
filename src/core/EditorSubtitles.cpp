@@ -278,7 +278,7 @@ int Editor::addCaptions(const QVector<SubtitleCue>& cues, const QString& name, c
     m_project->edit(T("Wort-Untertitel"), [&](Timeline& tl) {
         SubtitleTrack t;
         t.name = name.simplified();
-        t.style = Captions::defaultStyle(p->format().size());
+        t.style = Captions::defaultStyle(p->format().size(), captions.mode);
         t.captions = captions;
         for (SubtitleTrack& other : tl.subtitles) other.enabled = false; // one visible track
         for (SubtitleCue c : cues) {

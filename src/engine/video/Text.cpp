@@ -89,11 +89,12 @@ void drawWords(uint8_t* rgba, int w, int h, const WordParams& tp)
     const QFont& font = tp.font;
     const QFontMetricsF fm(font);
     const double space = fm.horizontalAdvance(QLatin1Char(' '));
+    const double reserve = std::max(1.0, tp.reserve);
     QVector<double> lineW;
     double blockW = 0;
     for (const QVector<Word>& line : tp.lines) {
         double lw = 0;
-        for (int i = 0; i < line.size(); ++i) lw += (i ? space : 0.0) + fm.horizontalAdvance(line[i].text);
+        for (int i = 0; i < line.size(); ++i) lw += (i ? space : 0.0) + fm.horizontalAdvance(line[i].text) * reserve;
         lineW << lw;
         blockW = std::max(blockW, lw);
     }
@@ -118,11 +119,11 @@ void drawWords(uint8_t* rgba, int w, int h, const WordParams& tp)
         const double baseline = ext + fm.ascent() + l * fm.lineSpacing();
         double x = ext + (tp.halign == 0 ? 0.0 : tp.halign == 1 ? (blockW - lineW[l]) / 2 : blockW - lineW[l]);
         for (const Word& word : tp.lines[l]) {
-            const double adv = fm.horizontalAdvance(word.text);
+            const double adv = fm.horizontalAdvance(word.text), slot = adv * reserve;
             QPainterPath path;
-            path.addText(QPointF(x, baseline), font, word.text);
+            path.addText(QPointF(x + (slot - adv) / 2, baseline), font, word.text);
             if (word.scale != 1.0) {
-                const QPointF c(x + adv / 2, baseline - fm.ascent() + fm.height() / 2);
+                const QPointF c(x + slot / 2, baseline - fm.ascent() + fm.height() / 2);
                 QTransform t;
                 t.translate(c.x(), c.y());
                 t.scale(word.scale, word.scale);
@@ -130,7 +131,7 @@ void drawWords(uint8_t* rgba, int w, int h, const WordParams& tp)
                 path = t.map(path);
             }
             placed.push_back({path, &word});
-            x += adv + space;
+            x += slot + space;
         }
     }
     QImage img(rgba, w, h, w * 4, QImage::Format_RGBA8888);

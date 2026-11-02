@@ -56,11 +56,12 @@ Pop popIn(double ageMs, int popMs)
 {
     if (popMs <= 0 || ageMs >= popMs) return {};
     const double t = std::clamp(ageMs / popMs, 0.0, 1.0);
-    // Ease out with a little overshoot ("back" easing): 0 -> 1, peaking at about 1.1 shortly before the end
-    constexpr double c1 = 1.70158, c3 = c1 + 1;
+    // Ease out with an overshoot ("back" easing): 0 -> 1, peaking at about 1.19 halfway, so the word grows from 60 %
+    // to about 108 % and settles
+    constexpr double c1 = 2.5, c3 = c1 + 1;
     const double u = t - 1;
     const double ease = 1 + c3 * u * u * u + c1 * u * u;
-    return {0.7 + 0.3 * ease, std::min(1.0, 2 * t)};
+    return {0.6 + 0.4 * ease, std::min(1.0, 2 * t)};
 }
 
 QVector<int> lineStarts(const QVector<double>& widths, double spaceWidth, double maxWidth, int maxWords)
@@ -106,7 +107,7 @@ void crop(SubtitleCue& cue, int start, int end)
     remap(cue, [](int f) { return f; }, start, end);
 }
 
-TitleStyle defaultStyle(QSize format)
+TitleStyle defaultStyle(QSize format, CaptionMode mode)
 {
     TitleStyle s = subtitleBaseStyle();
     s.text.clear();
@@ -115,8 +116,9 @@ TitleStyle defaultStyle(QSize format)
     s.outlineOn = true;
     const int w = std::max(1, format.width()), h = std::max(1, format.height());
     const double k = std::min(w, h) / 1080.0;
-    s.size = std::round(76 * k);
-    s.outlineWidth = std::round(6 * k * 10) / 10;
+    const double big = mode == CaptionMode::Word ? 1.5 : 1.0;
+    s.size = std::round(84 * k * big);
+    s.outlineWidth = std::round(6 * k * big * 10) / 10;
     s.posY = std::round(h > w ? 0.30 * h : 0.10 * h);
     return s;
 }

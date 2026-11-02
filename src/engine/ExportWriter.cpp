@@ -1008,7 +1008,10 @@ struct ExportWriter::Impl {
             }
             avcodec_parameters_from_context(st->codecpar, enc);
             st->time_base = enc->time_base;
-            if (!t.name.isEmpty()) av_dict_set(&st->metadata, "title", t.name.toUtf8().constData(), 0);
+            if (!t.name.isEmpty()) { // MP4/MOV keep the name as the handler name
+                av_dict_set(&st->metadata, "title", t.name.toUtf8().constData(), 0);
+                av_dict_set(&st->metadata, "handler_name", t.name.toUtf8().constData(), 0);
+            }
             st->disposition = t.main ? AV_DISPOSITION_DEFAULT : 0;
         }
         // Subtitles are sparse: after the last one the muxer would hold the other streams back up to 10 s

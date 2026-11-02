@@ -1310,7 +1310,8 @@ struct Renderer::Impl {
         } else {
             const QFontMetricsF fm(font);
             QVector<double> widths;
-            for (const QString& w : words) widths << fm.horizontalAdvance(w);
+            p.reserve = std::max(1.0, cs.highlightScale);
+            for (const QString& w : words) widths << fm.horizontalAdvance(w) * p.reserve;
             const QVector<int> starts = Captions::lineStarts(widths, fm.horizontalAdvance(QLatin1Char(' ')), lineWidth * sx,
                                                              cs.maxWordsPerLine);
             for (int i = 0; i < words.size(); ++i) {
