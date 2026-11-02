@@ -70,6 +70,12 @@ Name: "x264"; Description: "{cm:EncoderExtension}"; GroupDescription: "{cm:Extra
 Type: filesandordirs; Name: "{app}\lib"
 Type: filesandordirs; Name: "{app}\share"
 
+[UninstallDelete]
+; Downloaded extensions (x264/x265, Whisper and its models: engine/Extensions, %APPDATA%\schneidi\schneidi\extensions)
+; are program parts that can be downloaded again, often hundreds of MB: they go with the program. Settings, backups
+; and logs (user data) stay.
+Type: filesandordirs; Name: "{userappdata}\schneidi\schneidi\extensions"
+
 [Files]
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 

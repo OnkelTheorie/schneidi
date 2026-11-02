@@ -53,6 +53,13 @@ SRC="$WORK/ffmpeg-$FFMPEG_VERSION"
 rm -rf "$SRC"
 mkdir -p "$SRC"
 tar -xJf "$WORK/download/ffmpeg-$FFMPEG_VERSION.tar.xz" -C "$SRC" --strip-components=1
+# The metadata/ametadata filters write their file output with libavformat, but configure (7.1) does not link
+# libavfilter against it. Linux resolves that at run time; a Windows DLL must resolve it at link time
+# ("undefined reference to avio_open"). Add the missing dependency next to fsync's.
+for f in metadata ametadata; do
+    grep -q "enabled ${f}_filter " "$SRC/configure" ||
+        sed -i "s/^enabled fsync_filter .*/&\nenabled ${f}_filter \&\& prepend avfilter_deps \"avformat\"/" "$SRC/configure"
+done
 
 # Optional libraries: only those that are LGPL-compatible (BSD/MIT/LGPL). --enable-gpl and --enable-nonfree stay
 # off, so configure itself refuses every GPL-only part (x264, x265, rubberband, vidstab, frei0r, eq, signalstats …).

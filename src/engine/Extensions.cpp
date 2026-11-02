@@ -108,6 +108,20 @@ QString installedFfmpeg()
     return it.hasNext() ? it.next() : QString();
 }
 
+// The program that unpacks the archives. Windows: its own bsdtar (System32, since Windows 10 1803), which reads
+// .zip; a GNU tar from MSYS2 or Git on PATH reads "C:\…" as a remote host and cannot unpack zip files.
+QString tarProgram()
+{
+#ifdef Q_OS_WIN
+    const QString root = qEnvironmentVariable("SystemRoot");
+    if (!root.isEmpty()) {
+        const QString own = QDir(QDir::fromNativeSeparators(root)).filePath("System32/tar.exe");
+        if (QFileInfo(own).isFile()) return own;
+    }
+#endif
+    return Bundle::tool("tar");
+}
+
 } // namespace
 
 const QVector<Item>& catalog()
@@ -337,7 +351,7 @@ QString Installer::unpack(const QString& archive)
     QDir(staging).removeRecursively();
     dir.mkpath("bin.new");
     QProcess tar;
-    tar.start(Bundle::tool("tar"), {"-xf", archive, "-C", staging});
+    tar.start(tarProgram(), {"-xf", archive, "-C", staging});
     if (!tar.waitForFinished(300000) || tar.exitStatus() != QProcess::NormalExit || tar.exitCode() != 0) {
         QDir(staging).removeRecursively();
         return T("Entpacken fehlgeschlagen: %1").arg(QString::fromLocal8Bit(tar.readAllStandardError()).trimmed());

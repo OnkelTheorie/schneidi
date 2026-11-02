@@ -243,11 +243,12 @@ The .deb is built for Debian 13: it needs exactly its Qt 6.8.2 (the GPU viewer u
 **Windows:** via [MSYS2](https://www.msys2.org), UCRT64 environment. Clone the repo into a path without spaces or non-ASCII characters, then:
 
 ```bash
-pacman -S --needed mingw-w64-ucrt-x86_64-{toolchain,cmake,ninja,pkgconf,qt6-base,qt6-svg,ffmpeg,ntldd,miniaudio}
+pacman -S --needed mingw-w64-ucrt-x86_64-{toolchain,cmake,ninja,pkgconf,qt6-base,qt6-svg,ntldd,miniaudio}
+pacman -S --needed nasm make diffutils mingw-w64-ucrt-x86_64-{openh264,kvazaar,svt-av1,libvpx,dav1d,opus,lame,libvpl,ffnvcodec-headers}
 packaging/windows/build-windows.sh
 ```
 
-Result: `dist/schneidi-windows-<version>.zip` (portable folder) and, if [Inno Setup 6](https://jrsoftware.org/isinfo.php) is installed (`winget install JRSoftware.InnoSetup`), `dist/schneidi-setup-<version>.exe`.
+Result: `dist/schneidi-windows-<version>.zip` (portable folder) and, if [Inno Setup 6](https://jrsoftware.org/isinfo.php) is installed (`winget install JRSoftware.InnoSetup`), `dist/schneidi-setup-<version>.exe`. Like the AppImage without any GPL library: the first run builds the own LGPL FFmpeg (`packaging/windows/build-ffmpeg-lgpl.sh`, into `build-ffmpeg-lgpl/prefix` or `FFMPEG_PREFIX`); the installer offers x264/x265 as an optional download. `SCHNEIDI_NO_GPL=0` packs MSYS2's full FFmpeg instead (`mingw-w64-ucrt-x86_64-ffmpeg`, GPL, `…-gpl.zip`) for local comparisons.
 
 **Tests:**
 
