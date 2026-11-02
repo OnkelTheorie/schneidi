@@ -241,6 +241,43 @@ AVPixelFormat turnedFormat(AVPixelFormat fmt, int quarters)
     return AV_PIX_FMT_NONE;
 }
 
+// One plane of sw x sh samples of T turned by quarter turns (1 = clockwise: the result is sh wide, sw tall), in tiles
+// for quarter turns (a column read whole runs through every row of the source: cache misses)
+template <typename T>
+void turnPlane(const uint8_t* s, int ss, uint8_t* d, int ds, int sw, int sh, int quarters)
+{
+    auto at = [&](int r, int c) { return reinterpret_cast<const T*>(s + ptrdiff_t(r) * ss)[c]; };
+    if (quarters == 2) {
+        for (int r = 0; r < sh; ++r) {
+            const T* in = reinterpret_cast<const T*>(s + ptrdiff_t(sh - 1 - r) * ss);
+            T* out = reinterpret_cast<T*>(d + ptrdiff_t(r) * ds);
+            for (int c = 0; c < sw; ++c) out[c] = in[sw - 1 - c];
+        }
+        return;
+    }
+    constexpr int kTile = 64;
+    for (int r0 = 0; r0 < sw; r0 += kTile)
+        for (int c0 = 0; c0 < sh; c0 += kTile) {
+            const int r1 = std::min(sw, r0 + kTile), c1 = std::min(sh, c0 + kTile);
+            for (int r = r0; r < r1; ++r) {
+                T* out = reinterpret_cast<T*>(d + ptrdiff_t(r) * ds);
+                if (quarters == 1)
+                    for (int c = c0; c < c1; ++c) out[c] = at(sh - 1 - c, r);
+                else
+                    for (int c = c0; c < c1; ++c) out[c] = at(c, sw - 1 - r);
+            }
+        }
+}
+
+// turnPlane for 1- and 2-byte samples (planar YUV up to 16 bit); false for others
+bool turnPlaneFast(int bpp, const uint8_t* s, int ss, uint8_t* d, int ds, int sw, int sh, int quarters)
+{
+    if (bpp == 1) turnPlane<uint8_t>(s, ss, d, ds, sw, sh, quarters);
+    else if (bpp == 2) turnPlane<uint16_t>(s, ss, d, ds, sw, sh, quarters);
+    else return false;
+    return true;
+}
+
 // The same picture turned by quarter turns (per plane, as FFmpeg's transpose/hflip/vflip), in turnedFormat() (4:2:2
 // sideways: each chroma sample taken for both pixels it covers). Palette pictures keep their palette, 1-bit pictures
 // are turned bit by bit. nullptr if turnedFormat() has none.
@@ -308,7 +345,21 @@ AVFrame* turned(const AVFrame* src, int quarters)
         auto pixel = [&](int dr, int dc, int sr, int sc) {
             std::memcpy(d + ptrdiff_t(dr) * ds + ptrdiff_t(dc) * bpp, s + ptrdiff_t(sr) * ss + ptrdiff_t(sc) * bpp, bpp);
         };
-        if (sx != dx || sy != dy) { // 4:2:2 sideways -> 4:4:4
+        // 4:2:2 / 4:1:1 sideways -> 4:4:4: each result row is one source column, taken for the 2 (4) rows it
+        // covers: the chroma plane turned into every 2nd (4th) result row, the rows between copied (a sample at a time
+        // this cost ~140 ms per 4K picture)
+        if (sx != dx && sy == 0 && dx == 0 && dy == 0 && quarters % 2 == 1 && (bpp == 1 || bpp == 2)) {
+            const int sw = AV_CEIL_RSHIFT(W, sx);
+            // The result row source column k lands in: the first of its rows clockwise, else the last
+            auto written = [&](int r) { return quarters == 1 ? (r >> sx) << sx : W - 1 - (((W - 1 - r) >> sx) << sx); };
+            const int first = quarters == 1 ? 0 : W - 1 - ((sw - 1) << sx);
+            turnPlaneFast(bpp, s, ss, d + ptrdiff_t(first) * ds, ds << sx, sw, H, quarters);
+            for (int r = 0; r < h; ++r)
+                if (const int from = written(r); from != r)
+                    std::memcpy(d + ptrdiff_t(r) * ds, d + ptrdiff_t(from) * ds, size_t(w) * bpp);
+            continue;
+        }
+        if (sx != dx || sy != dy) { // 4:4:0 sideways -> 4:4:4 (rare)
             for (int r = 0; r < h; ++r)
                 for (int c = 0; c < w; ++c) {
                     int sr, sc;
@@ -319,6 +370,7 @@ AVFrame* turned(const AVFrame* src, int quarters)
         }
         // The same subsampling (the usual case: 4:2:0 phone video): plane by plane, source plane size sw x sh
         const int sw = AV_CEIL_RSHIFT(W, sx), sh = AV_CEIL_RSHIFT(H, sy);
+        if (turnPlaneFast(bpp, s, ss, d, ds, sw, sh, quarters)) continue;
         if (quarters == 2) {
             for (int r = 0; r < sh; ++r)
                 for (int c = 0; c < sw; ++c) pixel(r, c, sh - 1 - r, sw - 1 - c);
