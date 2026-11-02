@@ -27,11 +27,21 @@ QString rate(AVRational r)
 QStringList ExternalEncoder::arguments(const Params& p)
 {
     const char* pix = av_get_pix_fmt_name(p.pixFmt);
+    // Color tags. They describe the input too: with tags on the output only, ffmpeg (7.1+) takes the untagged raw
+    // pictures for limited range BT.601 and converts them (BT.709 shifted colors, full range stretched a second time)
+    QStringList tags;
+    if (const char* m = av_color_space_name(p.matrix); m && p.matrix != AVCOL_SPC_UNSPECIFIED) tags << "-colorspace" << m;
+    if (const char* t = av_color_transfer_name(p.transfer); t && p.transfer != AVCOL_TRC_UNSPECIFIED)
+        tags << "-color_trc" << t;
+    if (const char* c = av_color_primaries_name(p.primaries); c && p.primaries != AVCOL_PRI_UNSPECIFIED)
+        tags << "-color_primaries" << c;
+    if (const char* r = av_color_range_name(p.range); r && p.range != AVCOL_RANGE_UNSPECIFIED) tags << "-color_range" << r;
     QStringList a{"-hide_banner", "-nostdin", "-nostats", "-loglevel", "error", "-y",
                   // input: raw pictures from stdin
                   "-f", "rawvideo", "-pix_fmt", pix ? pix : "yuv420p",
-                  "-video_size", QString("%1x%2").arg(p.width).arg(p.height), "-framerate", rate(p.rate), "-i", "pipe:0",
-                  "-map", "0:v:0", "-an", "-sn", "-dn", "-c:v", p.codec, "-pix_fmt", pix ? pix : "yuv420p"};
+                  "-video_size", QString("%1x%2").arg(p.width).arg(p.height), "-framerate", rate(p.rate)};
+    a << tags << "-i" << "pipe:0"
+      << QStringList{"-map", "0:v:0", "-an", "-sn", "-dn", "-c:v", p.codec, "-pix_fmt", pix ? pix : "yuv420p"};
     if (p.threads > 0) a << "-threads:v" << QString::number(p.threads);
     // Options: "vprofile" style names (the export formats') without their prefix, as the writer's applyOption does
     for (const auto& [key, value] : p.options) {
@@ -39,13 +49,8 @@ QStringList ExternalEncoder::arguments(const Params& p)
         if (name == "vprofile" || name == "vb" || name == "vlevel") name = name.mid(1);
         a << QString("-%1:v").arg(name) << QString::fromUtf8(value);
     }
-    // Color tags into the stream (the writer copies the stream's parameters into the file)
-    if (const char* m = av_color_space_name(p.matrix); m && p.matrix != AVCOL_SPC_UNSPECIFIED) a << "-colorspace:v" << m;
-    if (const char* t = av_color_transfer_name(p.transfer); t && p.transfer != AVCOL_TRC_UNSPECIFIED)
-        a << "-color_trc:v" << t;
-    if (const char* c = av_color_primaries_name(p.primaries); c && p.primaries != AVCOL_PRI_UNSPECIFIED)
-        a << "-color_primaries:v" << c;
-    if (const char* r = av_color_range_name(p.range); r && p.range != AVCOL_RANGE_UNSPECIFIED) a << "-color_range:v" << r;
+    // The same tags into the stream (the writer copies the stream's parameters into the file)
+    for (qsizetype i = 0; i + 1 < tags.size(); i += 2) a << tags[i] + ":v" << tags[i + 1];
     if (p.aspect.num > 0 && p.aspect.den > 0 && p.aspect.num != p.aspect.den)
         a << "-aspect:v" << QString::number(double(p.width) * p.aspect.num / (double(p.height) * p.aspect.den), 'f', 6);
     if (p.codec == "libx265") a << "-x265-params" << "log-level=error";

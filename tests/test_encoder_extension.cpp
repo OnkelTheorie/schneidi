@@ -25,6 +25,11 @@
 
 #include <cmath>
 
+extern "C" {
+#include <libavutil/frame.h>
+#include <libavutil/pixdesc.h>
+}
+
 namespace {
 
 void testCatalog()
@@ -197,12 +202,98 @@ void testArguments()
     CHECK(has("-threads:v", "4"));
     CHECK(has("-colorspace:v", "bt709"));
     CHECK(has("-color_range:v", "tv"));
+    // The raw input carries the same tags (else ffmpeg converts the pictures to the output's colors)
+    const QStringList input = a.mid(0, a.indexOf("-i"));
+    const auto inputHas = [&input](const QString& key, const QString& value) {
+        const qsizetype i = input.indexOf(key);
+        return i >= 0 && input.value(i + 1) == value;
+    };
+    CHECK(inputHas("-colorspace", "bt709"));
+    CHECK(inputHas("-color_trc", "bt709"));
+    CHECK(inputHas("-color_primaries", "bt709"));
+    CHECK(inputHas("-color_range", "tv"));
     CHECK(a.contains("-an"));
     CHECK_EQ(a.mid(a.size() - 3), (QStringList{"-f", "nut", p.output}));
     CHECK_EQ(ExternalEncoder::intermediatePath(QDir("/videos").filePath("a.mp4")),
              QDir("/videos").filePath(".a.mp4.schneidi-video.nut"));
     p.codec = "libx265";
     CHECK(ExternalEncoder::arguments(p).contains("log-level=error"));
+}
+
+// ffmpeg with libx264 to stand in for the extension (SCHNEIDI_TEST_ENCODER_FFMPEG: the real one); empty = none
+QString standIn()
+{
+    const QString ffmpeg = qEnvironmentVariable("SCHNEIDI_TEST_ENCODER_FFMPEG", QStandardPaths::findExecutable("ffmpeg"));
+    if (ffmpeg.isEmpty()) return {};
+    QProcess p;
+    p.start(ffmpeg, {"-hide_banner", "-encoders"});
+    p.waitForFinished(20000);
+    return p.readAllStandardOutput().contains("libx264") ? ffmpeg : QString();
+}
+
+// The program keeps the pictures as they come (lossless): no conversion to other colors on the way, for BT.709
+// limited range and BT.601 full range
+void testColors(const QString& dir)
+{
+    const QString ffmpeg = standIn();
+    if (ffmpeg.isEmpty()) {
+        std::printf("  colors skipped: no ffmpeg with libx264\n");
+        return;
+    }
+    struct Case {
+        AVColorSpace matrix;
+        AVColorTransferCharacteristic transfer;
+        AVColorPrimaries primaries;
+        AVColorRange range;
+    };
+    for (const Case& k : {Case{AVCOL_SPC_BT709, AVCOL_TRC_BT709, AVCOL_PRI_BT709, AVCOL_RANGE_MPEG},
+                          Case{AVCOL_SPC_SMPTE170M, AVCOL_TRC_SMPTE170M, AVCOL_PRI_SMPTE170M, AVCOL_RANGE_JPEG}}) {
+        ExternalEncoder::Params p;
+        p.program = ffmpeg;
+        p.codec = "libx264";
+        p.width = 64;
+        p.height = 64;
+        p.matrix = k.matrix;
+        p.transfer = k.transfer;
+        p.primaries = k.primaries;
+        p.range = k.range;
+        p.options = {{"qp", "0"}, {"preset", "ultrafast"}};
+        p.output = QDir(dir).filePath("colors.nut");
+        AVFrame* frame = av_frame_alloc();
+        frame->format = AV_PIX_FMT_YUV420P;
+        frame->width = p.width;
+        frame->height = p.height;
+        if (!CHECK(av_frame_get_buffer(frame, 0) >= 0)) return;
+        for (int y = 0; y < p.height; ++y)
+            for (int x = 0; x < p.width; ++x) frame->data[0][y * frame->linesize[0] + x] = uint8_t((y * p.width + x) % 256);
+        for (int plane : {1, 2})
+            for (int y = 0; y < p.height / 2; ++y)
+                for (int x = 0; x < p.width / 2; ++x) frame->data[plane][y * frame->linesize[plane] + x] = uint8_t(64 + x * 4);
+        ExternalEncoder enc(p);
+        const std::atomic<bool> stop{false};
+        QString why;
+        bool ok = enc.start(&why);
+        for (int i = 0; ok && i < 3; ++i) ok = enc.write(frame, stop, &why);
+        if (ok) ok = enc.finish(stop, &why);
+        if (!CHECK(ok)) std::printf("  %s\n", qPrintable(why));
+        // The first picture back, as it is in the stream
+        QProcess dec;
+        dec.start(ffmpeg, {"-v", "error", "-i", p.output, "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "yuv420p", "-"});
+        dec.waitForFinished(20000);
+        const QByteArray back = dec.readAllStandardOutput();
+        if (CHECK_EQ(back.size(), qsizetype(p.width * p.height * 3 / 2))) {
+            int differ = 0;
+            for (int i = 0; i < p.width * p.height; ++i)
+                if (uint8_t(back[i]) != frame->data[0][(i / p.width) * frame->linesize[0] + i % p.width]) ++differ;
+            for (int i = 0; i < p.width * p.height / 4; ++i)
+                if (uint8_t(back[p.width * p.height + i]) != uint8_t(64 + (i % (p.width / 2)) * 4)) ++differ;
+            if (!CHECK_EQ(differ, 0))
+                std::printf("  %s: Y 10/16/235/250 came back as %d/%d/%d/%d\n", av_color_space_name(k.matrix),
+                            uint8_t(back[10]), uint8_t(back[16]), uint8_t(back[235]), uint8_t(back[250]));
+        }
+        av_frame_free(&frame);
+        QFile::remove(p.output);
+    }
 }
 
 struct Rendered {
@@ -331,6 +422,7 @@ int main(int argc, char** argv)
     testInstallPaths();
     testOrder(tmp.path());
     testArguments();
+    if (Check::haveFfmpeg()) testColors(tmp.path());
     if (Check::haveFfmpeg()) testExport(tmp.path());
     QDir(Extensions::rootDir()).removeRecursively();
     return Check::result();
