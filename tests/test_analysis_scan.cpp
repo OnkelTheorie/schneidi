@@ -92,10 +92,11 @@ int main(int argc, char** argv)
     // corner (kept black) a yellow box that is there in 2-second steps (region and colour events)
     QStringList inputs, labels;
     const char* sources[] = {"testsrc2", "smptebars", "mandelbrot", "rgbtestsrc", "testsrc", "color=c=0x305080",
-                             "cellauto", "life"};
+                             "cellauto=seed=1", "life=seed=1"}; // fixed seeds: random pictures made the cut at 700
+                                                                 // sometimes too weak for ffmpeg (CI flaked)
     for (int i = 0; i < 8; ++i) {
         inputs << "-f" << "lavfi" << "-t" << "4" << "-i"
-               << QString("%1=s=320x180:r=25").arg(sources[i]).replace("=c=0x305080=", "=c=0x305080:");
+               << QString("%1=s=320x180:r=25").arg(sources[i]).replace(QRegularExpression("=([^=:]+)=s="), "=\\1:s=");
         labels << QString("[%1:v]format=yuv420p,setsar=1[v%1];").arg(i);
     }
     QString graph = labels.join("");
