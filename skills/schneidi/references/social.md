@@ -53,7 +53,7 @@ Goal: a vertical video that works on a phone, muted, in the first two seconds.
 - **Narration without a recording** (no voice in the material, a story over gameplay, a product short): `edit` op
   `speak` with the text turns it into a spoken voice clip (offline, Piper), e.g.
   `{"op":"speak","text":"Drei Kills in fünf Sekunden.","at":"0.5s","captions":"karaoke"}` - `captions` makes the word
-  captions of it in the same step. Needs the extension once: `extensions` `install` `"piper,de_DE-thorsten"`
+  captions of it in the same step. Needs the extension once: `extensions` `install` `"piper,de_DE-ramona"`
   (English: `en_US-ljspeech`; ask the user first, about 90 MB). Keep lines short, one thought per `speak`; duck the
   game sound under it ([audio.md](audio.md)).
 - Loud enough: about -14 LUFS ([audio.md](audio.md)).

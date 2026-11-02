@@ -16,7 +16,7 @@
 5. Short `fade`s at the very start and end avoid clicks.
 
 ## Spoken text (text to speech)
-`edit` op `speak` makes a voice clip from text (Piper, offline; `extensions` `install` `"piper,de_DE-thorsten"` or
+`edit` op `speak` makes a voice clip from text (Piper, offline; `extensions` `install` `"piper,de_DE-ramona"` or
 `"piper,en_US-ljspeech"` once, ask the user first): `{"op":"speak","text":"…","at":"2s"}` lands on a free audio
 track (or `track`), `speed` 0.5-2, `pause` = seconds after each sentence, `voice` picks an installed voice. The same
 text and settings again reuse the file (in `<project name>-tts/` beside the project). `captions` `true` (or a style)

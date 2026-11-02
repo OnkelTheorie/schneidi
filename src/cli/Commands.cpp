@@ -1069,7 +1069,8 @@ const QVector<Command>& commands()
                        "op 'speak'). Without arguments: list with sizes and what is installed.",
          {{"install", T::String, "ids to download and install, e.g. whisper,small (model sizes: turbo 574 MB, "
                                  "small 190 MB, base 60 MB, tiny 32 MB), x264 (72 MB, Windows 90 MB) or "
-                                 "piper,de_DE-thorsten (piper 26 MB, each voice 63 MB; en_US-ljspeech = English)"},
+                                 "piper,de_DE-ramona (piper 26 MB, each voice 63 MB; en_US-ljspeech = English, "
+                                 "de_DE-thorsten = clearer German voice, see its licence note)"},
           {"remove", T::String, "ids to delete again"},
           {"reinstall", T::Boolean, "download again even if installed"}},
          cmdExtensions},

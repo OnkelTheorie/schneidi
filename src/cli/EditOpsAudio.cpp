@@ -402,7 +402,7 @@ Tts::Request speechRequest(const QString& projectPath, const QJsonObject& op)
     if (op.contains("pause")) r.options.pause = numberOf(op, "pause", 0, Speech::kMaxPause);
     QString voice = op.value("voice").toString().trimmed();
     if (voice.contains('/') || voice.contains('\\') || voice.endsWith(".onnx", Qt::CaseInsensitive)) voice = absolute(voice);
-    else if (!voice.isEmpty()) { // short names ("thorsten", "de_DE-thorsten") -> the id
+    else if (!voice.isEmpty()) { // short names ("ramona", "de_DE-ramona") -> the id
         const QVector<const Extensions::Item*> items = Extensions::parseList(voice);
         if (items.size() == 1 && items.first()->kind == Extensions::Kind::Voice) voice = items.first()->id;
     }
@@ -411,7 +411,7 @@ Tts::Request speechRequest(const QString& projectPath, const QJsonObject& op)
         QStringList voices;
         for (const Extensions::Item& i : Extensions::catalog())
             if (i.kind == Extensions::Kind::Voice) voices << Extensions::voiceName(i.id);
-        fail("NOT_INSTALLED", why + " - `extensions` with install:'piper," + voices.value(0, "de_DE-thorsten")
+        fail("NOT_INSTALLED", why + " - `extensions` with install:'piper," + voices.value(0, "de_DE-ramona")
                                   + "' (voices: " + voices.join(", ") + ")");
     }
     r.folder = Speech::folder(projectPath);
@@ -539,8 +539,8 @@ void addAudioOps(QVector<OpDef>& ops)
                  opDuck, {"clip", "linked", "replace"}} // replace:false keeps clips that have volume keyframes
         << OpDef{"speak", "{op:'speak', text, voice?, at?, track?, speed?, pause?, captions?, max_words?, name?}",
                  "text to speech: a spoken voice clip (offline, Piper) at `at` on a free audio track",
-                 "voice: an installed voice ('de_DE-thorsten', 'en_US-ljspeech'; `extensions` lists them, install:'piper,"
-                 "de_DE-thorsten' installs piper with a voice) or the path of a piper .onnx voice; default: an installed "
+                 "voice: an installed voice ('de_DE-ramona', 'en_US-ljspeech', 'de_DE-thorsten'; `extensions` lists them, install:'piper,"
+                 "de_DE-ramona' installs piper with a voice) or the path of a piper .onnx voice; default: an installed "
                  "voice of the app's language. at: default the app's playhead (0 on a file). track: that audio track "
                  "if free there, else the first free one, else a new one. speed 0.5..2 (default 1), pause = seconds "
                  "after each sentence (default 0.2). The WAV goes into '<project name>-tts/' beside the project; the "

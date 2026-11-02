@@ -8,6 +8,7 @@
 
 #include "cli/Commands.h"
 #include "cli/CommandsDetail.h"
+#include "core/I18n.h"
 #include "core/Project.h"
 #include "core/ProjectFile.h"
 #include "core/Speech.h"
@@ -16,6 +17,7 @@
 
 #include <QApplication>
 #include <QDir>
+#include <QEventLoop>
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonArray>
@@ -97,8 +99,16 @@ void testCatalog()
 {
     const Extensions::Item* thorsten = Extensions::find("piper-voice-de_DE-thorsten");
     const Extensions::Item* lj = Extensions::find("piper-voice-en_US-ljspeech");
-    if (!CHECK(thorsten && lj)) return;
-    for (const Extensions::Item* v : {thorsten, lj}) {
+    const Extensions::Item* ramona = Extensions::find("piper-voice-de_DE-ramona");
+    if (!CHECK(thorsten && lj && ramona)) return;
+    // The default German voice is the one with a clean licence chain (trained from scratch on public domain data):
+    // the first German voice of the catalog
+    for (const Extensions::Item& i : Extensions::catalog())
+        if (i.kind == Extensions::Kind::Voice && Speech::voiceLanguage(Extensions::voiceName(i.id)) == "de") {
+            CHECK_EQ(i.id, ramona->id);
+            break;
+        }
+    for (const Extensions::Item* v : {thorsten, lj, ramona}) {
         CHECK(v->kind == Extensions::Kind::Voice);
         CHECK(v->url.startsWith("https://huggingface.co/rhasspy/piper-voices/resolve/"));
         CHECK(v->url.endsWith(v->fileName));
@@ -138,6 +148,11 @@ void testCatalog()
     CHECK(Extensions::isInstalled(*thorsten));
     CHECK_EQ(Extensions::installedVoices(), QStringList{thorsten->id});
     CHECK_EQ(Extensions::voiceModelPath("thorsten"), QDir(dir).filePath(thorsten->fileName));
+    // With Ramona installed too, she is the default German voice
+    QFile(QDir(dir).filePath(ramona->fileName)).open(QIODevice::WriteOnly);
+    QFile(QDir(dir).filePath(ramona->fileName + ".json")).open(QIODevice::WriteOnly);
+    if (I18n::language() == "de") CHECK_EQ(Tts::defaultVoice(), ramona->id);
+    CHECK(Extensions::remove(*ramona));
     CHECK(Extensions::remove(*thorsten));
     CHECK(!Extensions::isInstalled(*thorsten));
     CHECK(!QFileInfo::exists(QDir(dir).filePath(thorsten->fileName + ".json")));
@@ -178,6 +193,20 @@ void testPure()
     o.speed = 9;
     CHECK(Speech::piperArguments("m", o, "o").contains("0.500")); // clamped to 2
     CHECK_EQ(Speech::stdinText("Eins.\nZwei.  "), QByteArray("Eins. Zwei.\n"));
+    // Line breaks: inside a sentence a space; a list item or a paragraph ends a sentence; list markers and emoji are
+    // not spoken (espeak reads some emoji by name); a text of emoji only is no text
+    CHECK_EQ(Speech::normalizedText("Das ist ein\nlanger Satz"), QString("Das ist ein langer Satz"));
+    CHECK_EQ(Speech::normalizedText("Drei Gründe:\n- Tempo\n- Preis\n• Freiheit"),
+             QString("Drei Gründe: Tempo. Preis. Freiheit"));
+    CHECK_EQ(Speech::normalizedText("Erster Absatz\n\nZweiter Absatz"), QString("Erster Absatz. Zweiter Absatz"));
+    CHECK_EQ(Speech::normalizedText("Krass 🔥🔥 das war knapp 😂 echt. 👍🏽 🇩🇪"), QString("Krass das war knapp echt."));
+    CHECK_EQ(Speech::normalizedText("30° im Schatten, 5 € - fertig"), QString("30° im Schatten, 5 € - fertig"));
+    CHECK(Speech::normalizedText("🔥🔥🔥\n😂").isEmpty());
+    CHECK_EQ(Speech::normalizedText("Er sagte „Hallo“\r\nund \"Tschüss\"."), QString("Er sagte „Hallo“ und \"Tschüss\"."));
+    // The voice's build is part of the key: a new download of the same voice makes a new file
+    b = a;
+    b.voiceVersion = "other";
+    CHECK(Speech::cacheKey("Hallo", a) != Speech::cacheKey("Hallo", b));
     CHECK_EQ(Speech::voiceLanguage("de_DE-thorsten"), QString("de"));
     CHECK_EQ(Speech::voiceLanguage("piper-voice-en_US-ljspeech"), QString("en"));
     CHECK_EQ(Speech::voiceLanguage("/x/en_GB-alan-medium.onnx"), QString("en"));
@@ -285,6 +314,65 @@ void testSpeaker(const QString& dir, const QString& voice, const QString& log)
     CHECK(!Tts::speak(r, &again, &error));
 }
 
+// Two runs of the same text at once (CLI and app, two edits): both get the one finished file, no part file stays
+void testConcurrent(const QString& dir, const QString& voice)
+{
+    Tts::Request r;
+    r.text = "Zweimal gleichzeitig gesagt.";
+    r.options.voice = voice;
+    r.folder = dir + "/Gleichzeitig-tts";
+    Tts::Speaker a, b;
+    int done = 0, ok = 0;
+    QEventLoop loop;
+    for (Tts::Speaker* s : {&a, &b})
+        QObject::connect(s, &Tts::Speaker::finished, &loop, [&](bool success, const QString& error) {
+            if (!success) std::cerr << qPrintable(error) << "\n";
+            ok += success ? 1 : 0;
+            if (++done == 2) loop.quit();
+        });
+    QString error;
+    CHECK(a.start(r, &error));
+    CHECK(b.start(r, &error));
+    loop.exec();
+    CHECK_EQ(ok, 2);
+    CHECK_EQ(a.result().path, b.result().path);
+    CHECK(Tts::readWav(a.result().path).has_value());
+    CHECK_EQ(QDir(r.folder).entryList({"*.wav"}, QDir::Files), QStringList{QFileInfo(a.result().path).fileName()});
+
+    // Cancelled half way: no part file left behind
+    r.text = "Abgebrochen bevor es fertig ist.";
+    Tts::Speaker c;
+    bool cancelledOk = true;
+    QObject::connect(&c, &Tts::Speaker::finished, &loop, [&](bool success, const QString&) {
+        cancelledOk = success;
+        loop.quit();
+    });
+    CHECK(c.start(r, &error));
+    c.cancel();
+    loop.exec();
+    CHECK(!cancelledOk);
+    CHECK(QDir(r.folder).entryList({"*part*"}, QDir::Files).isEmpty());
+}
+
+// A changed voice file (new download, own model replaced) makes a new file instead of the old sound
+void testVoiceVersion(const QString& dir, const QString& voice)
+{
+    Tts::Request r;
+    r.text = "Gleicher Text, neue Stimme.";
+    r.options.voice = voice;
+    r.folder = dir + "/Version-tts";
+    Tts::Result first, second;
+    QString error;
+    CHECK(Tts::speak(r, &first, &error));
+    QFile f(voice);
+    CHECK(f.open(QIODevice::Append));
+    f.write("new build");
+    f.close();
+    CHECK(Tts::speak(r, &second, &error));
+    CHECK(!second.cached);
+    CHECK(second.path != first.path);
+}
+
 void testCliOp(const QString& dir, const QString& voice)
 {
     const QString path = dir + "/Short.schneidi";
@@ -380,8 +468,11 @@ int main(int argc, char** argv)
     const QString voice = tmp.filePath("de_DE-test-medium.onnx");
     QFile(voice).open(QIODevice::WriteOnly);
     QFile(voice + ".json").open(QIODevice::WriteOnly);
+    qputenv("SCHNEIDI_TTS_WORDS", "estimate"); // a whisper on this machine must not change the results
     testSpeaker(tmp.path(), voice, log);
+    testConcurrent(tmp.path(), voice);
     testCliOp(tmp.path(), voice);
+    testVoiceVersion(tmp.path(), voice);
     qunsetenv("SCHNEIDI_FAKE_PIPER");
     qunsetenv("SCHNEIDI_PIPER");
     QDir(Extensions::rootDir()).removeRecursively();
