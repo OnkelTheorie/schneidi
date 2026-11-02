@@ -9,6 +9,7 @@
 #include "core/Multicam.h"
 #include "core/TimelineOps.h"
 #include "engine/Denoise.h"
+#include "engine/VoiceClean.h"
 #include "engine/audio/Reader.h"
 #include "engine/audio/Retimer.h"
 
@@ -117,6 +118,8 @@ struct Voice {
     bool denoise = false;
     double denoiseReduction = 0, denoiseFloor = 0;
     bool denoiseTrack = true;
+    bool clean = false; // voice cleaning (engine/VoiceClean), after the noise reduction
+    VoiceClean::Params cleanParams;
     bool retimed = false; // speed/reverse/ramp (Retimer)
     int fileFrames = 0;
 
@@ -160,6 +163,7 @@ struct Mixer::Impl {
         bool opened = false;
         int64_t nextU = INT64_MIN; // where the voice continues (u); anything else starts it over
         std::vector<std::unique_ptr<Denoise::Processor>> denoisers;
+        std::unique_ptr<VoiceClean::Processor> cleaner;
     };
     struct TrackState {
         Equalizer eq;
@@ -385,6 +389,15 @@ void Mixer::Impl::planTrack(const Track& track, TrackPlan& out)
             v.denoiseFloor = hundredths("floor");
             v.denoiseTrack = EffectRegistry::value(c, Denoise::EffectId, "track").toBool();
         }
+        if (const EffectInstance* e = EffectRegistry::instance(c, VoiceClean::EffectId); e && e->enabled) {
+            auto value = [&](const char* key) { return EffectRegistry::value(c, VoiceClean::EffectId, key); };
+            v.clean = true;
+            v.cleanParams.amount = std::lround(value("amount").toDouble() * 100.0) / 10000.0; // percent, hundredths
+            v.cleanParams.gate = value("gate").toBool();
+            v.cleanParams.clicks = value("clicks").toBool();
+            v.cleanParams.shape = value("shape").toBool();
+            v.cleanParams.roomDb = std::lround(value("room").toDouble() * 10.0) / 10.0;
+        }
         ++stats->voices;
         out.voices.push_back(std::move(v));
     }
@@ -402,6 +415,7 @@ void Mixer::Impl::restart()
         for (VoiceState& v : ts.voices) {
             v.nextU = INT64_MIN;
             v.denoisers.clear();
+            v.cleaner.reset();
         }
         ts.firstVoice = 0;
         ts.levelSet = false;
@@ -454,30 +468,46 @@ bool Mixer::Impl::readSource(Voice& v, VoiceState& st, int64_t u, int count, flo
     return false;
 }
 
-// The voice's sound at unshifted samples [u, u + count): source, noise reduction, curves, declick
+// The voice's sound at unshifted samples [u, u + count): source, noise reduction, voice cleaning, curves, declick
 void Mixer::Impl::renderVoice(Voice& v, VoiceState& st, int64_t u, int count, float* const* out)
 {
     const bool fresh = u != st.nextU;
     st.nextU = u + count;
-    if (v.denoise) {
-        if (fresh || st.denoisers.empty()) {
+    if (v.denoise || v.clean) {
+        if (fresh || (v.denoise && st.denoisers.empty()) || (v.clean && !st.cleaner)) {
             st.denoisers.clear();
-            for (int c = 0; c < kChannels; ++c) {
+            st.cleaner.reset();
+            for (int c = 0; v.denoise && c < kChannels; ++c) {
                 st.denoisers.push_back(std::make_unique<Denoise::Processor>(opt.rate));
                 st.denoisers.back()->setParams(v.denoiseReduction, v.denoiseFloor, v.denoiseTrack);
             }
+            if (v.clean) {
+                st.cleaner = std::make_unique<VoiceClean::Processor>(opt.rate);
+                st.cleaner->setParams(v.cleanParams);
+            }
         }
-        // The processors run `latency` samples ahead, their output lines up with the timeline
-        const int lead = st.denoisers[0]->latency();
-        if (fresh && lead > 0) {
-            scratch.resize(size_t(lead) * kChannels);
-            float* pre[kChannels];
-            for (int c = 0; c < kChannels; ++c) pre[c] = scratch.data() + size_t(c) * lead;
-            readSource(v, st, u, lead, pre);
-            for (int c = 0; c < kChannels; ++c) st.denoisers[size_t(c)]->process(pre[c], lead);
+        auto process = [&](float* const* data, int n) {
+            for (int c = 0; c < int(st.denoisers.size()); ++c) st.denoisers[size_t(c)]->process(data[c], n);
+            if (st.cleaner) st.cleaner->process(data, n);
+        };
+        // The processors run `lead` samples ahead, their output lines up with the timeline. Starting inside the
+        // clip, the voice cleaning first listens to up to half a second before u (its noise and voice level settle),
+        // so playback from there sounds like the export that ran through from the clip's start.
+        const int lead = (v.denoise ? st.denoisers[0]->latency() : 0) + (st.cleaner ? st.cleaner->latency() : 0);
+        if (fresh) {
+            const int64_t warm = v.clean ? std::clamp<int64_t>(u - v.uStart, 0, opt.rate / 2) : 0;
+            for (int64_t p = u - warm, end = u + lead; p < end;) {
+                const int n = int(std::min<int64_t>(end - p, 4096));
+                scratch.resize(size_t(n) * kChannels);
+                float* pre[kChannels];
+                for (int c = 0; c < kChannels; ++c) pre[c] = scratch.data() + size_t(c) * n;
+                readSource(v, st, p, n, pre);
+                process(pre, n);
+                p += n;
+            }
         }
         readSource(v, st, u + lead, count, out);
-        for (int c = 0; c < kChannels; ++c) st.denoisers[size_t(c)]->process(out[c], count);
+        process(out, count);
     } else {
         readSource(v, st, u, count, out);
     }

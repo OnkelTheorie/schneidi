@@ -7,9 +7,9 @@
 // keyframes stay on whole frames, but gain curves run sample by sample between the frame boundaries (a fade reaches
 // 0 exactly at the clip edge), sub-frame offsets shift a clip by whole samples, and every source is read
 // sample-exact by Audio::Reader. Signal path per clip: source (file stream or the mix of a compound/multicam
-// sequence) -> noise reduction -> volume, pan, fades, transitions -> declick at hard cuts -> sub-frame offset;
-// per track: EQ -> compressor -> fader/pan, solo/mute; master: fader -> limiter. Latency of noise reduction and
-// limiter is compensated (the sound stays where it is in the timeline).
+// sequence) -> noise reduction -> voice cleaning -> volume, pan, fades, transitions -> declick at hard cuts ->
+// sub-frame offset; per track: EQ -> compressor -> fader/pan, solo/mute; master: fader -> limiter. Latency of noise
+// reduction, voice cleaning and limiter is compensated (the sound stays where it is in the timeline).
 //
 // Not thread-safe: one mixer per user. render() is meant to be called with increasing positions; any jump starts the
 // state (filters, readers) over at the new position.

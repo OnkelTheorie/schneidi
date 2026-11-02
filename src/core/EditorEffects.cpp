@@ -50,6 +50,35 @@ void Editor::addEffect(const QVector<int>& ids, const QString& effectId)
     modifyClips(targets, T("%1 hinzufügen").arg(d->name), [&](Clip& c) { EffectRegistry::add(c, effectId); });
 }
 
+QVector<int> Editor::cleanVoice(const QVector<int>& ids, const QVariantMap& values)
+{
+    const QString id = QStringLiteral("voiceclean");
+    const EffectDescriptor* d = EffectRegistry::find(id);
+    const Timeline& tl = m_project->timeline();
+    QVector<int> targets;
+    for (int x : editable(ids))
+        if (TrackRef ref; TimelineOps::findClip(tl, x, &ref) && ref.kind == TrackKind::Audio && !targets.contains(x))
+            targets << x;
+    if (!d || targets.isEmpty()) return {};
+    modifyClips(targets, d->name, [&](Clip& c) {
+        if (!EffectRegistry::has(c, id)) EffectRegistry::add(c, id);
+        EffectInstance* e = EffectRegistry::instance(c, id);
+        if (!e) return;
+        for (auto it = values.begin(); it != values.end(); ++it) e->params[it.key()] = it.value();
+        e->enabled = true;
+    });
+    return targets;
+}
+
+QVector<int> Editor::audioTrackClips(int index) const
+{
+    const Timeline& tl = m_project->timeline();
+    QVector<int> out;
+    if (index < 0 || index >= tl.audio.size() || tl.audio[index].locked) return out;
+    for (const Clip& c : tl.audio[index].clips) out << c.id;
+    return out;
+}
+
 void Editor::removeEffect(const QVector<int>& ids, const QString& effectId)
 {
     // unknown effects (plugin missing on this computer) can be removed too

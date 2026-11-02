@@ -782,6 +782,21 @@ Mixer::Mixer(Project* project, Engine* engine, QWidget* parent)
                                 .arg(Theme::control.name(), Theme::text.name(), Theme::recording.name(),
                                      Theme::readableOn(Theme::recording).name()));
     m_record->setEnabled(false); // until a recorder is set
+    // Voice cleaning for the whole voice track in one click: the armed track, else the target audio track
+    m_cleanVoice = new QToolButton;
+    m_cleanVoice->setObjectName("clean_voice");
+    m_cleanVoice->setText(T("Stimme säubern"));
+    m_cleanVoice->setFocusPolicy(Qt::NoFocus);
+    m_cleanVoice->setToolTip(T("Säubert alle Clips der Spur mit „R“ (sonst der Ziel-Tonspur): entfernt Rauschen und "
+                               "Geräusche, senkt Pausen ab und formt die Stimme"));
+    m_cleanVoice->setStyleSheet(QString("QToolButton { background: %1; color: %2; padding: 1px 6px; }")
+                                    .arg(Theme::control.name(), Theme::text.name()));
+    connect(m_cleanVoice, &QToolButton::clicked, this, [this] {
+        const int armed = m_recorder ? m_recorder->armedTrack() : -1;
+        const int track = armed >= 0 ? armed : editor()->targetAudioTrack();
+        editor()->cleanVoice(editor()->audioTrackClips(track));
+    });
+    titleLay->addWidget(m_cleanVoice);
     titleLay->addWidget(m_record);
     root->addWidget(titleRow);
 

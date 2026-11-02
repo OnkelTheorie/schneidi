@@ -59,5 +59,6 @@ private:
     QElapsedTimer m_clock, m_lastLevels;
     VoiceoverRecorder* m_recorder = nullptr;
     QToolButton* m_record = nullptr;
+    QToolButton* m_cleanVoice = nullptr; // "Stimme säubern" on the armed (or target) audio track
     InputMeter* m_inputMeter = nullptr;
 };

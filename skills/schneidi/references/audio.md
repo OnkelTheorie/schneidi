@@ -7,8 +7,14 @@
 
 ## Order of work
 1. **Even out the clips**: `normalize` (`mode` `"lufs"`) on the speech clips so every part sounds equally loud.
-2. **Clean the voice** if needed: `denoise` effect on the audio clips (noisy rooms, fans), `mixer` EQ on the voice
-   track (band 1 high pass ~80 Hz against rumble), `mixer` `compressor` for uneven speakers or shouting in games.
+2. **Clean the voice** if needed: `clean_voice` on the voice track (`{"op":"clean_voice","track":"A2"}`) or on clips
+   - neural noise suppression, pauses lowered, bumps/clicks dampened, voice evened out (compressor, limiter) in one
+   call; use it for voice-overs, TTS and voice chat. `gate:false` where game sound or music on the same clip should
+   stay between the words, `amount` (0-100) for less suppression, `shape:false` to keep the level as it is, `room` (dBFS, default -60) for
+   how much room sound stays under the voice (pauses never go dead silent). Speech only - it removes ambience and
+   music without a voice as noise. Lighter
+   tools: `denoise` effect (steady hiss/fans only), `mixer` EQ (band 1 high pass ~80 Hz against rumble), `mixer`
+   `compressor` for uneven speakers or shouting in games.
 3. **Music under speech**: music on its own track, then `duck` (music = `track`/`clips`, `under` = the voice
    track) so it dips while someone talks; a music bed sits ~15-20 dB below the voice.
 4. **Master**: `mixer` on `"master"` with `limiter` true first, then `target_lufs` -14 - it measures the mix and
@@ -38,7 +44,8 @@ You cannot speak: a voice-over comes from a file the user gives (`import`, then 
 any clip) or the user records it in the app - Mixer: "R" arms a track, "● Voiceover" (or Shift+R) plays the timeline
 from the playhead and records; the take lands on the armed track at the playhead. Takes are WAV files named
 `voiceover-<date>-<time>.wav` in the folder `<project name>-voiceover` next to the project; in `info` they are plain
-audio clips. Treat them like speech: `normalize`, `denoise`, `duck` the music under that track.
+audio clips. Treat them like speech: `clean_voice` on that track (the Mixer's "Stimme säubern" button does the same for the
+armed track), `normalize`, `duck` the music under that track.
 
 ## Check
 `loudness` on the rendered file: integrated within ±1 LU of the target, true peak ≤ -1 dBTP. If the music drowns

@@ -282,6 +282,20 @@ QPixmap effectIcon(const QString& id)
         }
         p.setPen(QPen(QColor(0xe0, 0xf0, 0xe0), 1.5));
         p.drawPath(wave);
+    } else if (id == "voiceclean") { // two clean word bursts with silent pauses between them
+        p.fillRect(r, Theme::audioClip.darker(160));
+        QPainterPath wave;
+        const double mid = r.center().y();
+        for (int x = 4; x <= int(r.width()) - 4; ++x) {
+            const double t = (x - 4) / (r.width() - 8);
+            const double word = std::max(0.0, std::sin(t * 2 * std::numbers::pi)) * (t < 0.5 ? 1.0 : 0.0)
+                                + std::max(0.0, std::sin((t - 0.55) / 0.4 * std::numbers::pi)) * (t > 0.55 && t < 0.95);
+            const double y = mid - std::sin(t * 18 * std::numbers::pi) * 8 * word;
+            if (x == 4) wave.moveTo(x, y);
+            else wave.lineTo(x, y);
+        }
+        p.setPen(QPen(QColor(0xe0, 0xf0, 0xe0), 1.5));
+        p.drawPath(wave);
     } else if (id == "blur") {
         QRadialGradient g(r.center(), r.height() * 0.55);
         g.setColorAt(0, QColor(0xe8, 0xe8, 0xf0));
