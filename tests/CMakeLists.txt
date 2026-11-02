@@ -41,6 +41,7 @@ schneidi_test(test_output_color) # RGBA -> encoder formats (all layouts, 8/10 bi
 schneidi_test(test_preview_export)
 schneidi_test(test_audio)
 schneidi_test(test_preview_audio)
+schneidi_test(test_voiceover) # voice-over: sound input into a WAV (stand-in input), lining up, placing on the armed track
 # plays in real time: under parallel load the preview could fall behind (gaps in the sound = false clicks)
 set_tests_properties(test_preview_audio PROPERTIES RUN_SERIAL TRUE)
 schneidi_test(test_mediapool)

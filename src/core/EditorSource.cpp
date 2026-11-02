@@ -12,6 +12,7 @@
 #include "core/Selection.h"
 #include "core/Subtitles.h"
 #include "core/TimelineOps.h"
+#include "core/Voiceover.h"
 
 #include <QFileInfo>
 #include <QHash>
@@ -187,6 +188,31 @@ void Editor::placeSource(Timeline& tl, const MediaInfo& m, int sIn, int len, int
         TimelineOps::placeClip(t, x, newId);
     }
     muteRepeatedSound(tl, sound);
+}
+
+int Editor::placeRecording(const QString& path, int track, double fileStart, int from)
+{
+    const MediaInfo* m = m_project->mediaInfo(path);
+    if (!m || !m->hasAudio || m->length <= 0 || track < 0 || isTrackLocked({TrackKind::Audio, track})) return 0;
+    const std::optional<Voiceover::Placement> at = Voiceover::place(fileStart, std::max(0, from), m->length);
+    if (!at) return 0;
+    int id = 0;
+    m_project->edit(T("Voiceover aufnehmen"), [&](Timeline& tl) {
+        TimelineOps::ensureTracks(tl, TrackKind::Audio, track + 1);
+        Track& t = tl.audio[track];
+        Clip c;
+        c.id = id = m_project->newClipId();
+        c.mediaPath = m->path;
+        c.start = at->start;
+        c.subframe = at->subframe;
+        c.in = at->in;
+        c.out = m->length - 1;
+        TimelineOps::clearDissolveAt(t, c.start);
+        TimelineOps::clearDissolveAt(t, c.end());
+        TimelineOps::placeClip(t, c, [this] { return m_project->newClipId(); });
+    });
+    if (id) m_selection->set({id});
+    return id;
 }
 
 void Editor::muteRepeatedSound(Timeline& tl, const QVector<int>& ids)

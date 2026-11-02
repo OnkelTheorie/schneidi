@@ -48,6 +48,12 @@ public:
     // Places media: video on V[track], audio on A[track] (like DaVinci, V2 <-> A2).
     // Missing tracks are created. Several files end up one after another.
     void addMediaAt(const QStringList& paths, int frame, int track = 0);
+    // A voice-over recording (core/Voiceover.h) from the Media Pool onto A[track] (missing tracks are created): file
+    // frame 0 lies at timeline frame `fileStart` (fractional, latency already taken off), the clip starts at the
+    // first file frame at or after `from` (the playhead where recording started; the pre-roll is cut off) and sits
+    // there to 1/100 frame (Clip::subframe). Overwrites what lies there; the new clip is selected. One undo step.
+    // Returns the clip id, 0 = file not in the pool, locked track or nothing after `from`.
+    int placeRecording(const QString& path, int track, double fileStart, int from);
     // Title of `length` frames (<= 0: 5 s, like DaVinci "Text") at the frame on the lowest video track that is free
     // above all clips in that range (missing track is created); track >= 0 = fixed track (drag from the Media Pool),
     // overwritten only in [frame, frame + length). New clip is selected.

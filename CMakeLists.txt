@@ -122,6 +122,7 @@ add_library(schneidi_lib STATIC
     src/core/Transcript.h         src/core/Transcript.cpp
     src/core/TranscriptCut.h      src/core/TranscriptCut.cpp
     src/core/Captions.h           src/core/Captions.cpp
+    src/core/Voiceover.h          src/core/Voiceover.cpp
     src/core/Fft.h                src/core/Fft.cpp
     src/core/AudioSync.h          src/core/AudioSync.cpp
     src/core/Beats.h              src/core/Beats.cpp
@@ -195,6 +196,8 @@ add_library(schneidi_lib STATIC
     src/engine/audio/Player.h     src/engine/audio/Player.cpp
     src/engine/audio/Miniaudio.h  src/engine/audio/Miniaudio.cpp
     src/engine/audio/Wait.h       src/engine/audio/Wait.cpp
+    src/engine/audio/Capture.h    src/engine/audio/Capture.cpp
+    src/engine/audio/DeviceDetail.h
 
     src/app/Theme.h               src/app/Theme.cpp
     src/app/InputBindings.h       src/app/InputBindings.cpp
