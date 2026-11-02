@@ -7,10 +7,14 @@
 #include "core/Equalizer.h"
 #include "core/Keyframes.h"
 #include "core/Loudness.h"
+#include "core/Speech.h"
 #include "core/TimelineOps.h"
 #include "engine/AudioAnalysis.h"
+#include "engine/Extensions.h"
+#include "engine/Tts.h"
 
 #include <QJsonArray>
+#include <QFileInfo>
 #include <QJsonDocument>
 #include <QSet>
 
@@ -386,7 +390,114 @@ void opDuck(Session& s, const QJsonObject& op)
     s.notes << note;
 }
 
+// ---------- speak ----------
+
+// The speech request of a 'speak' op (voice resolved: an installed id or a file; empty voice = default)
+Tts::Request speechRequest(const QString& projectPath, const QJsonObject& op)
+{
+    Tts::Request r;
+    r.text = op.value("text").toString();
+    if (Speech::normalizedText(r.text).isEmpty()) fail("BAD_ARGUMENT", "missing 'text': what the voice says");
+    if (op.contains("speed")) r.options.speed = numberOf(op, "speed", Speech::kMinSpeed, Speech::kMaxSpeed);
+    if (op.contains("pause")) r.options.pause = numberOf(op, "pause", 0, Speech::kMaxPause);
+    QString voice = op.value("voice").toString().trimmed();
+    if (voice.contains('/') || voice.contains('\\') || voice.endsWith(".onnx", Qt::CaseInsensitive)) voice = absolute(voice);
+    else if (!voice.isEmpty()) { // short names ("thorsten", "de_DE-thorsten") -> the id
+        const QVector<const Extensions::Item*> items = Extensions::parseList(voice);
+        if (items.size() == 1 && items.first()->kind == Extensions::Kind::Voice) voice = items.first()->id;
+    }
+    r.options.voice = voice.isEmpty() ? Tts::defaultVoice() : voice;
+    if (const QString why = Tts::notReady(r.options.voice); !why.isEmpty()) {
+        QStringList voices;
+        for (const Extensions::Item& i : Extensions::catalog())
+            if (i.kind == Extensions::Kind::Voice) voices << Extensions::voiceName(i.id);
+        fail("NOT_INSTALLED", why + " - `extensions` with install:'piper," + voices.value(0, "de_DE-thorsten")
+                                  + "' (voices: " + voices.join(", ") + ")");
+    }
+    r.folder = Speech::folder(projectPath);
+    r.words = op.contains("captions") && op.value("captions") != QJsonValue(false);
+    return r;
+}
+
+Tts::Result makeSpeech(const Tts::Request& r)
+{
+    Tts::Result result;
+    QString error;
+    if (!Tts::speak(r, &result, &error)) fail("TTS_FAILED", error);
+    return result;
+}
+
+// Text -> spoken voice clip (piper) on an audio track, optionally word captions of it
+void opSpeak(Session& s, const QJsonObject& op)
+{
+    const Tts::Request req = speechRequest(s.path, op);
+    const Tts::Result speech = makeSpeech(req); // made by schneidi-cli already when live (prepareSpeech): cached
+    const MediaInfo& m = s.media(speech.path);
+    const int at = op.contains("at") ? timeOf(s, op, "at") : s.app.value("playhead").toInt(0);
+    int track = -1;
+    if (op.contains("track")) {
+        TrackKind k = TrackKind::Audio;
+        track = parseTrack(op.value("track"), &k);
+        if (k != TrackKind::Audio) fail("BAD_ARGUMENT", "track must be an audio track (A1 …)");
+    }
+    track = Speech::freeAudioTrack(s.project.timeline(), at, at + m.length, track);
+    const int len = s.editor.placeSourceRange(m.path, 0, m.length - 1, at, track);
+    if (len <= 0) fail("FAILED", QString("could not place the speech on A%1 (locked?)").arg(track + 1));
+    s.notes << QString("speech %1 (%2 s, voice %3%4) on A%5 at %6")
+                   .arg(QFileInfo(speech.path).fileName())
+                   .arg(speech.durationMs / 1000.0, 0, 'f', 2)
+                   .arg(Extensions::voiceName(speech.voice), speech.cached ? ", made before" : "")
+                   .arg(track + 1)
+                   .arg(tc(at, s.format()));
+    if (!req.words) return;
+    // The words as the media transcript (Transcript panel, op 'captions' later) and as captions now
+    const QString lang = Speech::voiceLanguage(Extensions::voiceName(speech.voice));
+    s.project.setTranscript(m.path, MediaTranscript{0, lang, speech.words});
+    const double fps = s.project.frameRate();
+    QJsonArray words;
+    for (const TranscriptWord& w : speech.words) {
+        const int from = at + int(std::lround(w.from * fps / 1000.0));
+        words << QJsonObject{{"from", from}, {"to", std::max(from + 1, at + int(std::lround(w.to * fps / 1000.0)))},
+                             {"text", w.text}};
+    }
+    const QJsonValue style = op.value("captions");
+    QJsonObject c{{"op", "captions"}, {"words", words}, {"style", style.isString() ? style.toString() : QString("karaoke")}};
+    for (const char* key : {"max_words", "name"})
+        if (op.contains(key)) c[key] = op.value(key);
+    captionsOp(s, c);
+    s.notes << (speech.wordSource == "whisper"
+                    ? QString("caption word times measured by whisper")
+                    : QString("caption word times estimated from the text (install whisper and a model for measured "
+                              "times: `extensions` install:'whisper,small')"));
+}
+
 } // namespace
+
+QJsonObject prepareSpeech(const QJsonObject& editArgs, Context& ctx)
+{
+    QJsonArray ops = editArgs.value("ops").isObject() ? QJsonArray{editArgs.value("ops")} : editArgs.value("ops").toArray();
+    bool any = false;
+    for (const QJsonValue& v : ops) any = any || v.toObject().value("op").toString() == "speak";
+    if (!any) return editArgs;
+    try {
+        Session s(editArgs.value("project").toString()); // a copy of what the app shows: its path
+        for (int i = 0; i < ops.size(); ++i) {
+            QJsonObject op = ops[i].toObject();
+            if (op.value("op").toString() != "speak") continue;
+            const Tts::Request r = speechRequest(s.path, op);
+            Tts::Result result;
+            QString error;
+            Tts::speak(r, &result, &error, ctx.progress);
+            op["voice"] = r.options.voice; // the app takes the same voice (its default could differ)
+            ops[i] = op;
+        }
+    } catch (const Error&) {
+        return editArgs; // the op reports it where it runs
+    }
+    QJsonObject out = editArgs;
+    out["ops"] = ops;
+    return out;
+}
 
 void addAudioOps(QVector<OpDef>& ops)
 {
@@ -425,7 +536,18 @@ void addAudioOps(QVector<OpDef>& ops)
                  "sound on 'under' (default -35 dBFS), attack/release: ramp before/after a sound (default 0.15s / "
                  "0.4s), hold: pauses shorter than this stay ducked (default 0.5s). Replaces the clips' volume "
                  "keyframes; run it again after editing.",
-                 opDuck, {"clip", "linked", "replace"}}; // replace:false keeps clips that have volume keyframes
+                 opDuck, {"clip", "linked", "replace"}} // replace:false keeps clips that have volume keyframes
+        << OpDef{"speak", "{op:'speak', text, voice?, at?, track?, speed?, pause?, captions?, max_words?, name?}",
+                 "text to speech: a spoken voice clip (offline, Piper) at `at` on a free audio track",
+                 "voice: an installed voice ('de_DE-thorsten', 'en_US-ljspeech'; `extensions` lists them, install:'piper,"
+                 "de_DE-thorsten' installs piper with a voice) or the path of a piper .onnx voice; default: an installed "
+                 "voice of the app's language. at: default the app's playhead (0 on a file). track: that audio track "
+                 "if free there, else the first free one, else a new one. speed 0.5..2 (default 1), pause = seconds "
+                 "after each sentence (default 0.2). The WAV goes into '<project name>-tts/' beside the project; the "
+                 "same text, voice and options again take that file (instant). captions:true or a style ('karaoke', "
+                 "'word', 'lines') also makes word captions of it (as op 'captions'; max_words, name); the word times "
+                 "are measured by whisper when it is installed, else estimated from the text (the notes say which).",
+                 opSpeak};
 }
 
 } // namespace Cli::detail

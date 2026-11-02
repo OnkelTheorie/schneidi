@@ -318,6 +318,7 @@ QJsonObject cmdExtensions(const QJsonObject& a, Context& ctx)
     QJsonObject out{{"extensions", list}, {"folder", Extensions::rootDir()}};
     if (!done.isEmpty()) out["done"] = done;
     if (const QString ffmpeg = Extensions::encoderProgram(); !ffmpeg.isEmpty()) out["encoder_program"] = ffmpeg;
+    if (const QString piper = Extensions::piperProgram(); !piper.isEmpty()) out["piper_program"] = piper;
     if (Extensions::find("whisper") == nullptr && !Extensions::whisperProgram().isEmpty())
         out["whisper_program"] = Extensions::whisperProgram(); // own build on PATH
     return out;

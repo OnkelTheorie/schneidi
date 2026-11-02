@@ -4,6 +4,8 @@
 #include "app/AiLog.h"
 #include "app/ExtensionsDialog.h"
 #include "app/TranscribeDialog.h"
+#include "app/SpeechDialog.h"
+#include "core/Speech.h"
 #include "ui/TranscriptPanel.h"
 
 #include "app/InputBindings.h"
@@ -926,6 +928,33 @@ void MainWindow::transcribeDialog()
     for (int i = 0; i < results.size(); ++i) // one track per speaker: all visible, one above the other
         m_editor->importSubtitles(results[i].cues, results[i].name, results.size() > 1 ? i : -1);
     undo->endMacro();
+}
+
+// Text -> voice clip (Piper) at the playhead on the first audio track free there; its words become the file's
+// transcript (Transcript panel, word captions)
+void MainWindow::speechDialog()
+{
+    m_engine->pause();
+    SpeechDialog dlg(Speech::folder(m_projectPath), this);
+    connect(&dlg, &SpeechDialog::openExtensions, this, [this] {
+        ExtensionsDialog ext(this);
+        ext.exec();
+    });
+    connect(&dlg, &SpeechDialog::preview, this, [this](const QString& path) {
+        previewFile(path);
+        m_engine->play();
+    });
+    if (dlg.exec() != QDialog::Accepted) return;
+    const Tts::Result r = dlg.result();
+    if (!m_project->mediaInfo(r.path)) {
+        const MediaInfo info = probeCached(r.path);
+        if (info.length <= 0) return;
+        m_project->addMedia(info);
+    }
+    const MediaInfo m = *m_project->mediaInfo(r.path);
+    const int at = m_timeline->view()->playhead();
+    const int track = Speech::freeAudioTrack(m_project->timeline(), at, at + m.length);
+    m_editor->placeSourceRange(m.path, 0, m.length - 1, at, track);
 }
 
 void MainWindow::exportSubtitlesDialog()

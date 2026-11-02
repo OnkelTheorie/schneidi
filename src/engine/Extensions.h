@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Optional add-ons that schneidi downloads on request instead of shipping them (keeps the program small):
-// whisper.cpp (speech to text) and its language models, and an ffmpeg program with x264/x265 (better H.264/H.265 export
+// whisper.cpp (speech to text) and its language models, an ffmpeg program with x264/x265 (better H.264/H.265 export
 // without a graphics card encoder; GPL, so schneidi never links it: the export writer runs it as a separate process,
-// see engine/ExternalEncoder). Fixed catalog with pinned versions and SHA-256 sums; everything lands in
+// see engine/ExternalEncoder), and Piper (text to speech, MIT; its build carries espeak-ng (GPL), so it too only ever
+// runs as a separate process, see engine/Tts) with its voices. Fixed catalog with pinned versions and SHA-256 sums; everything lands in
 // AppDataLocation/extensions and can be removed again.
 
 #include <QByteArray>
@@ -20,7 +21,7 @@ class QCryptographicHash;
 
 namespace Extensions {
 
-enum class Kind { Program, WhisperModel, WhisperVad, Encoder };
+enum class Kind { Program, WhisperModel, WhisperVad, Encoder, Speech, Voice };
 
 struct Item {
     QString id;          // "whisper", "whisper-model-small", "x264"
@@ -31,6 +32,10 @@ struct Item {
     QByteArray sha256;   // hex
     qint64 size = 0;     // bytes of the download
     QString fileName;    // model: file in models/; program: archive name
+    // Voice: its config file (<model>.onnx.json), a second download
+    QString configUrl;
+    QByteArray configSha256;
+    qint64 configSize = 0;
 };
 
 // Items for this platform; "whisper-vad" (finds speech, keeps word times out of pauses) comes with "whisper"
@@ -38,11 +43,11 @@ struct Item {
 const QVector<Item>& catalog();
 const Item* find(const QString& id);
 QString rootDir(); // AppDataLocation/extensions
-// Items of a comma list as the CLI takes it ("whisper,small"): ids, short model names ("small" = whisper-model-small)
-// and aliases ("x265" = x264, the same program). unknown: the first id that names nothing (then the result is empty).
+// Items of a comma list as the CLI takes it ("whisper,small"): ids, short model names ("small" = whisper-model-small),
+// short voice names ("de_DE-thorsten" = piper-voice-de_DE-thorsten) and aliases ("x265" = x264, the same program). unknown: the first id that names nothing (then the result is empty).
 QVector<const Item*> parseList(const QString& list, QString* unknown = nullptr);
 // The items plus what they need, in install order (whisper -> whisper, whisper-vad; a model -> whisper too if no
-// whisper program is there); no duplicates
+// whisper program is there; a voice -> piper too if it is missing); no duplicates
 QVector<const Item*> withDependencies(const QVector<const Item*>& items);
 
 bool isInstalled(const Item& item);
@@ -60,6 +65,16 @@ QString whisperModelPath(const QString& idOrPath = {});
 // ffmpeg program of the x264/x265 extension (or the one SCHNEIDI_ENCODER_FFMPEG names); empty = not installed.
 // Whether it really has libx264/libx265: HardwareEncoders::externalProgram.
 QString encoderProgram();
+
+// piper program: the installed one, or the one SCHNEIDI_PIPER names (tests, an own build); empty = none
+QString piperProgram();
+// Installed voices (ids, catalog order)
+QStringList installedVoices();
+// Voice model (.onnx) for an id, its short name ("de_DE-thorsten") or a path to an .onnx file whose .onnx.json lies
+// beside it; empty = not installed / not found
+QString voiceModelPath(const QString& idOrPath);
+// Short name of a voice id: "piper-voice-de_DE-thorsten" -> "de_DE-thorsten"
+QString voiceName(const QString& id);
 
 // Downloads and installs one item: checks size and SHA-256, unpacks program archives (tar, also on Windows 10+),
 // replaces the old version only when everything worked.
@@ -80,12 +95,14 @@ private:
     void onFinished();
     void fail(const QString& message);
     QString unpack(const QString& archive); // error message, empty = ok
+    bool startPart(QString* error); // the download of m_part (0 = the item's file, 1 = a voice's config)
 
     QNetworkAccessManager* m_net = nullptr;
     QNetworkReply* m_reply = nullptr;
     std::unique_ptr<QFile> m_file;
     std::unique_ptr<QCryptographicHash> m_hash;
     Item m_item;
+    int m_part = 0;
     bool m_cancelled = false;
 };
 

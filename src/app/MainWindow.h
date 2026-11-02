@@ -154,6 +154,7 @@ private:
     void contactSheetDialog(); // File › Save Contact Sheet: stills of the timeline as one picture
     void exportTimelineDialog();
     void transcribeDialog();
+    void speechDialog();
     MediaInfo probeCached(const QString& path);
     // Like DaVinci with the first clip in an empty timeline: adapt the project to the clip's resolution/frame rate
     // (ask = ask first, otherwise take over directly)

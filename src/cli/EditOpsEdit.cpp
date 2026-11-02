@@ -689,6 +689,8 @@ void opSourceEdit(Session& s, const QJsonObject& op, Editor::SourceEditMode mode
 
 } // namespace
 
+void captionsOp(Session& s, const QJsonObject& op) { opCaptions(s, op); }
+
 QJsonObject transitionStyleJson(const TransitionStyle& st)
 {
     const TransitionStyle def;
