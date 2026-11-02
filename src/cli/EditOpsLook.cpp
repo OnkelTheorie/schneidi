@@ -304,10 +304,12 @@ void opBlurNames(Session& s, const QJsonObject& op)
         if (!m.isEmpty()) note += " (" + zones.join(", ") + ")";
         if (dropped) note += QString(", %1 moving text(s) left out: no free window").arg(dropped);
         if (!o.screen.isDefault())
-            note += QString(", HUD of a %1:1 screen at x %2-%3 %")
+            note += QString(", HUD of a %1:1 game screen at x %2-%3 %, y %4-%5 % of the frame")
                         .arg(o.screen.aspect, 0, 'f', 2)
                         .arg(o.screen.content.left() * 100, 0, 'f', 1)
-                        .arg(o.screen.content.right() * 100, 0, 'f', 1);
+                        .arg(o.screen.content.right() * 100, 0, 'f', 1)
+                        .arg(o.screen.content.top() * 100, 0, 'f', 1)
+                        .arg(o.screen.content.bottom() * 100, 0, 'f', 1);
         notes << note;
     }
     const QHash<int, QVector<int>> added = s.editor.blurNames(masks, style, strength);
