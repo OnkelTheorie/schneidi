@@ -290,17 +290,18 @@ QImage Engine::thumbnail(const QString& path, int frame, const QSize& size)
     return thumbnail(m_format, path, frame, size);
 }
 
-QImage Engine::thumbnail(const ProjectFormat& format, const QString& path, int frame, const QSize& size, bool ownShape)
+QImage Engine::thumbnail(const ProjectFormat& format, const QString& path, int frame, const QSize& size, bool ownShape,
+                         double aspect)
 {
     // As a timeline shows the file (format's shape), or in its own shape: a format of that shape it fills
     ProjectFormat shape = format;
     QSize fit = format.size().scaled(size, Qt::KeepAspectRatio);
-    if (const double aspect = ownShape ? pictureAspect(path) : 0; aspect > 0) {
-        shape.width = std::max(2, int(std::lround(aspect * format.height)));
-        fit = QSizeF(aspect * size.height(), size.height()).scaled(QSizeF(size), Qt::KeepAspectRatio).toSize();
+    if (const double own = !ownShape ? 0 : aspect > 0 ? aspect : pictureAspect(path); own > 0) {
+        shape.width = std::max(2, int(std::lround(own * format.height)));
+        fit = QSizeF(own * size.height(), size.height()).scaled(QSizeF(size), Qt::KeepAspectRatio).toSize();
     }
     Picture::MediaStills stills(shape, &ProxyManager::decodeSource, 1); // proxy if present (4K: 0.2-0.7 s a frame)
-    const QImage img = stills.frame(path, frame, QSize(std::max(2, fit.width()), std::max(2, fit.height())));
+    const QImage img = stills.frame(path, frame, QSize(std::max(2, fit.width()), std::max(2, fit.height())), aspect);
     if (img.isNull() || img.size() == size) return img;
     QImage out(size, QImage::Format_RGBA8888);
     out.fill(Qt::black);
@@ -333,6 +334,7 @@ QImage Engine::grabStill(const Timeline& tl)
         Clip c;
         c.id = 1;
         c.mediaPath = m_sourcePath;
+        c.pictureAspect = m_sourceAspect;
         c.out = std::max(0, m_sourceLength - 1);
         shown.video[0].clips << c;
     }
@@ -579,7 +581,7 @@ void Engine::setMulticamAudio(int angle)
     }
 }
 
-void Engine::showSource(const QString& path, int position)
+void Engine::showSource(const QString& path, int position, double aspect)
 {
     const MediaInfo info = probe(m_format, path);
     if (!info.hasVideo && !info.hasAudio) return;
@@ -589,12 +591,14 @@ void Engine::showSource(const QString& path, int position)
     Clip c;
     c.id = 1;
     c.mediaPath = path;
+    c.pictureAspect = std::max(0.0, aspect);
     c.out = m_sourceLength - 1;
     if (info.hasVideo) picture.video[0].clips << c;
     resolveFiles(picture, false);
     const QSize output = m_previewSize;
     m_sourceRenderer = std::make_shared<Picture::Renderer>(picture, previewOptions(output));
     m_sourcePath = path;
+    m_sourceAspect = c.pictureAspect;
     m_speed = 0;
     m_mode = Mode::Source;
     m_offset = 0;

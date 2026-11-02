@@ -7,6 +7,7 @@
 
 #include "core/Types.h"
 
+#include <QRectF>
 #include <QSizeF>
 #include <QString>
 
@@ -25,5 +26,13 @@ double ofClip(const Clip& c);
 // A picture of `aspect` fitted into `frame` keeping its shape, as the engine places it at zoom 1 (a portrait clip in
 // a landscape frame gets room at the sides); aspect <= 0 = it fills the frame (titles, compound clips)
 QSizeF fit(double aspect, QSizeF frame);
+
+// A picture of shape `fileAspect` fitted centred into `frame` (as filmstrip thumbnails are made), shown at `aspect`
+// instead: `source` = where the picture lies in the frame-shaped image, `target` = where it goes to show it at
+// `aspect` (both centred in the frame). fileAspect <= 0 = the picture fills the frame.
+struct Reshape {
+    QRectF source, target;
+};
+Reshape reshape(QSizeF frame, double fileAspect, double aspect);
 
 } // namespace MediaAspect

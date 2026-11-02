@@ -670,6 +670,7 @@ QByteArray toJson(const ProjectData& data, const QString& projectPath)
         if (m.bin != 0) o["bin"] = m.bin; // Media Pool organization (optional, absent in old files)
         if (!m.clipColor.isEmpty()) o["clipColor"] = m.clipColor;
         if (!m.flags.isEmpty()) o["flags"] = QJsonArray::fromStringList(m.flags);
+        if (m.pictureAspect > 0) o["pictureAspect"] = m.pictureAspect; // optional: shape of its new clips
         if (!m.audioStreams.isEmpty()) {
             QJsonArray streams;
             for (const AudioStreamInfo& a : m.audioStreams) {
@@ -815,6 +816,7 @@ QByteArray toJson(const ProjectData& data, const QString& projectPath)
                           {"types", QJsonArray::fromStringList(WatchFolders::typeNames(w))}};
             if (w.subfolders) o["subfolders"] = true;
             if (w.bin != 0) o["bin"] = w.bin;
+            if (w.pictureAspect > 0) o["pictureAspect"] = w.pictureAspect; // optional, older versions ignore it
             if (w.since.isValid()) o["since"] = w.since.toUTC().toString(Qt::ISODateWithMs);
             if (!w.ignored.isEmpty()) o["ignored"] = QJsonArray::fromStringList(w.ignored);
             watches << o;
@@ -880,6 +882,7 @@ bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* d
         if (trackColorInfo(o.value("clipColor").toString())) m.clipColor = o.value("clipColor").toString();
         for (const QJsonValue& f : o.value("flags").toArray())
             if (flagColorInfo(f.toString()) && !m.flags.contains(f.toString())) m.flags << f.toString();
+        if (m.hasVideo) m.pictureAspect = std::clamp(o.value("pictureAspect").toDouble(0), 0.0, 10.0);
         if (m.hasAudio) // missing in older files -> audioStreamCount() assumes 1 stream
             for (const QJsonValue& a : o.value("audioStreams").toArray())
                 m.audioStreams << AudioStreamInfo{std::max(1, a.toObject().value("channels").toInt(2)),
@@ -1038,6 +1041,7 @@ bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* d
             if (WatchFolder known; WatchFolders::setTypes(known, {t.toString()})) types << t.toString();
         if (o.contains("types") && !WatchFolders::setTypes(w, types)) continue;
         w.bin = std::max(0, o.value("bin").toInt()); // a missing bin is set to Master by Project::load
+        w.pictureAspect = std::clamp(o.value("pictureAspect").toDouble(0), 0.0, 10.0);
         w.since = QDateTime::fromString(o.value("since").toString(), Qt::ISODateWithMs);
         for (const QJsonValue& f : o.value("ignored").toArray())
             if (!f.toString().isEmpty()) w.ignored << f.toString();

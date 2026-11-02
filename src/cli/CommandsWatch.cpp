@@ -23,6 +23,7 @@
 #include <QThreadPool>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 
 namespace Cli::detail {
@@ -34,6 +35,7 @@ QJsonObject folderJson(const Project& p, const WatchFolder& w)
     QJsonObject o{{"folder", w.path}, {"types", QJsonArray::fromStringList(WatchFolders::typeNames(w))}};
     if (w.subfolders) o["subfolders"] = true;
     if (w.bin != 0 && p.bin(w.bin)) o["bin"] = binPath(p, w.bin);
+    if (w.pictureAspect > 0) o["picture_aspect"] = std::round(w.pictureAspect * 10000) / 10000;
     if (w.since.isValid()) o["since"] = w.since.toUTC().toString(Qt::ISODate);
     if (!QFileInfo(w.path).isDir()) o["offline"] = true;
     if (!w.ignored.isEmpty()) o["ignored"] = int(w.ignored.size()); // imports the user took back
@@ -63,6 +65,7 @@ QJsonObject arrivalJson(const Project& p, const WatchArrival& a)
     o["audio"] = m->hasAudio;
     if (m->isImage) o["image"] = true;
     if (m->bin) o["bin"] = binPath(p, m->bin);
+    if (m->pictureAspect > 0) o["picture_aspect"] = std::round(m->pictureAspect * 10000) / 10000; // its clips' shape
     return o;
 }
 
@@ -136,7 +139,7 @@ QJsonObject watchOnce(const QJsonObject& a)
 {
     const bool add = a.contains("add"), remove = a.contains("remove");
     if (add && remove) fail("BAD_ARGUMENT", "give either 'add' or 'remove'");
-    for (const char* k : {"bin", "subfolders", "types", "existing"})
+    for (const char* k : {"bin", "subfolders", "types", "existing", "picture_aspect"})
         if (a.contains(k) && !add) fail("BAD_ARGUMENT", QString("'%1' goes with 'add' (the folder to watch)").arg(k));
     const bool scan = !add && !remove && !a["list"].toBool();
     const int settle = settleMs(a);
@@ -158,6 +161,7 @@ QJsonObject watchOnce(const QJsonObject& a)
         if (a.contains("types") && !WatchFolders::setTypes(w, a["types"].toString().split(',')))
             fail("BAD_ARGUMENT", "types: a comma list of video, audio, image");
         if (a.contains("bin")) w.bin = binByPath(p, a["bin"].toString());
+        if (a.contains("picture_aspect")) w.pictureAspect = pictureAspectOf(a["picture_aspect"]);
         if (a["existing"].toBool()) w.since = QDateTime(); // also the files that are there already
         if (i < 0) list << w;
         else list[i] = w;

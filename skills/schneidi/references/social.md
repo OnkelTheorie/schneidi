@@ -65,7 +65,10 @@ result yourself afterwards (`frames` sheet of `out`) - one call does not replace
     reliable automatic detection; when the footage looks stretched (`frames`), `{"op":"picture_aspect",
     "aspect":"4:3"}` shows it at its true shape in preview, export and reframe (`"file"` undoes it). In a 16:9
     edit it then has room left and right (`fit:"blur"` fills it), a 4:3 timeline (`aspect:"4:3"`, 1440x1080)
-    fits it exactly. Do it before `reframe` (the zoom depends on the shape).
+    fits it exactly. Do it before `reframe` (the zoom depends on the shape). For a file whose every clip is
+    stretched: `{"op":"media","media":"<file>","picture_aspect":"4:3"}` makes clips placed from it from then on
+    come in at 4:3; a recorder that always stretches: `watch` `add` with `picture_aspect` `"4:3"` does that for
+    each new recording of the folder (default: the file's shape).
 - Keep text and faces inside the safe area: platforms cover roughly the bottom 20 % (caption, buttons), a strip
   on the right and a bar at the top. Titles and subtitles about 25-35 % up from the bottom, or in the upper third.
   `check` on the project lists text in those zones (`safe_area`, `subtitle_safe_area`).

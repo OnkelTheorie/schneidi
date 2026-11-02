@@ -59,12 +59,13 @@ int Editor::cropBars(const QVector<int>& ids, const QHash<QString, QRectF>& cont
     return int(changed.size());
 }
 
-int Editor::setPictureAspect(const QVector<int>& ids, double aspect)
+int Editor::setPictureAspect(const QVector<int>& ids, double aspect, std::optional<FitFill> fill)
 {
     aspect = aspect > 0 ? std::clamp(aspect, 0.1, 10.0) : 0;
     QVector<int> changed;
     for (int id : reframeTargets(ids))
-        if (const Clip* c = TimelineOps::findClip(m_project->timeline(), id); c && std::abs(c->pictureAspect - aspect) > 1e-9)
+        if (const Clip* c = TimelineOps::findClip(m_project->timeline(), id);
+            c && (std::abs(c->pictureAspect - aspect) > 1e-9 || (fill && c->transform.fill != *fill)))
             changed << id;
     if (changed.isEmpty()) return 0;
     const QSizeF frame = m_project->timelineFormat().size();
@@ -72,6 +73,7 @@ int Editor::setPictureAspect(const QVector<int>& ids, double aspect)
         for (int id : changed)
             if (Clip* c = TimelineOps::findClip(tl, id)) {
                 // Crop values are pixels on the fitted picture: keep their share of it
+                if (fill) c->transform.fill = *fill;
                 const QSizeF a = MediaAspect::fit(MediaAspect::ofClip(*c), frame);
                 c->pictureAspect = aspect;
                 const QSizeF b = MediaAspect::fit(MediaAspect::ofClip(*c), frame);

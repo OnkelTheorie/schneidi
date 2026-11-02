@@ -721,6 +721,9 @@ struct MediaInfo {
     }
     // Source markers (M in the source viewer; multicam sync by marker): source frames, sorted, not in undo
     QVector<int> markers;
+    // Shape new clips of this file show their picture at (Clip::pictureAspect; 0 = the file's): a recording of a 4:3
+    // game stretched to 16:9, marked in the Media Pool or by its watch folder. Media Pool tiles show it too.
+    double pictureAspect = 0;
 };
 
 // Bin (folder) in the Media Pool; Master (id 0) is not in the list, parent 0 = directly under Master

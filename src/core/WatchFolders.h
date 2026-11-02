@@ -27,6 +27,9 @@ struct WatchFolder {
     int bin = 0;             // Media Pool bin for its files (0 = Master; a bin removed meanwhile = Master)
     QDateTime since;         // when the watch started (UTC): files that were there before stay out (invalid = all)
     QStringList ignored;     // files whose import was undone: not taken again
+    // Import preset: shape its videos are shown at (MediaInfo::pictureAspect; 0 = the file's, the default): 4/3 for a
+    // recorder that stretches a 4:3 game to 16:9
+    double pictureAspect = 0;
     bool operator==(const WatchFolder&) const = default;
 };
 

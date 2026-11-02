@@ -212,10 +212,18 @@ Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
     shapeBox->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
     shapeBox->addItem(T("Wie die Datei"), 0.0);
     shapeBox->addItem(T("Gestrecktes 4:3 entzerren"), 4.0 / 3.0);
+    // The same with blurred sides instead of black ones in a wider frame (Transform › Background); the plain entry
+    // turns them off again (it is what the box shows while they are off)
+    constexpr int kPlain43 = 1, kBlurSides = 2;
+    shapeBox->addItem(T("4:3 entzerren, Seiten unscharf"), 4.0 / 3.0);
     shapeBox->setToolTip(T("Viele Spieler nehmen ein 4:3-Spiel auf 16:9 gestreckt auf (breite Köpfe, ovale Kreise). "
-                           "„Gestrecktes 4:3 entzerren“ zeigt das Bild wieder in seinen echten Proportionen."));
+                           "„Gestrecktes 4:3 entzerren“ zeigt das Bild wieder in seinen echten Proportionen; in einem "
+                           "breiteren Bild füllt „Seiten unscharf“ die Ränder mit dem unscharfen Bild statt Schwarz."));
     connect(shapeBox, &QComboBox::activated, this, [this, shapeBox](int i) {
-        m_editor->setPictureAspect(selectedIds(TrackKind::Video), shapeBox->itemData(i).toDouble());
+        m_editor->setPictureAspect(selectedIds(TrackKind::Video), shapeBox->itemData(i).toDouble(),
+                                   i == kBlurSides ? std::optional(FitFill::Blur)
+                                   : i == kPlain43 ? std::optional(FitFill::None)
+                                                   : std::nullopt);
     });
     crop.grid->addWidget(rowLabel(T("Bildform")), crop.rows, 0);
     crop.grid->addWidget(shapeBox, crop.rows, 1);
@@ -230,6 +238,7 @@ Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
             i = -1;
             for (int k = 1; k < shapeBox->count() && i < 0; ++k)
                 if (std::abs(shapeBox->itemData(k).toDouble() - c->pictureAspect) < 1e-6) i = k;
+            if (i == kPlain43 && c->transform.fill == FitFill::Blur) i = kBlurSides;
             if (i < 0) { // another shape (set with schneidi-cli)
                 shapeBox->addItem(QString::number(c->pictureAspect, 'f', 3).replace('.', I18n::decimalPoint()) + ":1",
                                   c->pictureAspect);

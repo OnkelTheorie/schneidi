@@ -473,8 +473,9 @@ public:
     int cropBars(const QVector<int>& ids, const QHash<QString, QRectF>& contents);
     // Shows the clips' pictures at `aspect` (width / height; Clip::pictureAspect, 0 = the file's own shape again): a 4:3
     // game image stretched to 16:9 by the recorder gets its true shape with 4/3. Crop values keep their share of the
-    // picture. One undo step; returns the number of clips changed.
-    int setPictureAspect(const QVector<int>& ids, double aspect);
+    // picture. With `fill` the area around the picture too (FitFill::Blur: a 4:3 picture in a 16:9 frame gets blurred
+    // sides instead of black ones). One undo step; returns the number of clips changed.
+    int setPictureAspect(const QVector<int>& ids, double aspect, std::optional<FitFill> fill = std::nullopt);
 
 signals:
     void targetTracksChanged(); // target tracks (redraw track header marking)

@@ -32,6 +32,7 @@ private:
     WatchFolder m_folder;
     QLineEdit* m_path;
     QCheckBox* m_subfolders;
+    QCheckBox* m_stretched; // import preset: stretched 4:3 recordings shown at 4:3
     QCheckBox* m_video;
     QCheckBox* m_audio;
     QCheckBox* m_images;

@@ -323,28 +323,32 @@ void opCropBars(Session& s, const QJsonObject& op)
     s.notes << QString("cropped the black bars of %1 of %2 clip(s); %3").arg(n).arg(targets.size()).arg(found.join("; "));
 }
 
+} // namespace
+
+double pictureAspectOf(const QJsonValue& v)
+{
+    if (v.isDouble()) {
+        const double aspect = v.toDouble();
+        if (aspect < 0.1 || aspect > 10) fail("BAD_ARGUMENT", "aspect must be between 0.1 and 10 (width / height)");
+        return aspect;
+    }
+    const QString a = v.toString().trimmed().toLower();
+    if (a == "file" || a == "auto" || a == "none") return 0;
+    const QStringList wh = a.split(':');
+    bool ok1 = false, ok2 = false;
+    const double w = wh.size() == 2 ? wh[0].toDouble(&ok1) : 0, h = wh.size() == 2 ? wh[1].toDouble(&ok2) : 0;
+    if (!ok1 || !ok2 || w <= 0 || h <= 0 || w / h < 0.1 || w / h > 10)
+        fail("BAD_ARGUMENT", "aspect must be like '4:3', a number (width / height) or 'file' (the file's own shape)");
+    return w / h;
+}
+
+namespace {
+
 void opPictureAspect(Session& s, const QJsonObject& op)
 {
     const QVector<int> targets = s.editor.reframeTargets(videoClipsOf(s, op, "picture aspect"));
     if (targets.isEmpty()) fail("NOT_FOUND", "no video clip (titles, compound and multicam clips are left out)");
-    double aspect = 0;
-    const QJsonValue v = op.value("aspect");
-    if (v.isDouble()) {
-        aspect = v.toDouble();
-        if (aspect < 0.1 || aspect > 10) fail("BAD_ARGUMENT", "aspect must be between 0.1 and 10 (width / height)");
-    } else {
-        const QString a = v.toString().trimmed().toLower();
-        if (a == "file" || a == "auto" || a == "none") {
-            aspect = 0;
-        } else {
-            const QStringList wh = a.split(':');
-            bool ok1 = false, ok2 = false;
-            const double w = wh.size() == 2 ? wh[0].toDouble(&ok1) : 0, h = wh.size() == 2 ? wh[1].toDouble(&ok2) : 0;
-            if (!ok1 || !ok2 || w <= 0 || h <= 0 || w / h < 0.1 || w / h > 10)
-                fail("BAD_ARGUMENT", "aspect must be like '4:3', a number (width / height) or 'file' (the file's own shape)");
-            aspect = w / h;
-        }
-    }
+    const double aspect = pictureAspectOf(op.value("aspect"));
     const int n = s.editor.setPictureAspect(targets, aspect);
     s.notes << (aspect > 0 ? QString("%1 clip(s) now show their picture at %2:1").arg(n).arg(std::round(aspect * 1000) / 1000)
                            : QString("%1 clip(s) show their file's own shape again").arg(n));

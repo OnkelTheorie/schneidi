@@ -127,6 +127,7 @@ void Editor::addMediaAt(const QStringList& paths, int frame, int track)
                 TimelineOps::ensureTracks(tl, TrackKind::Video, idx + 1);
                 Clip v = c;
                 v.id = newId();
+                v.pictureAspect = info->pictureAspect; // the picture only
                 TimelineOps::placeClip(tl.video[idx], v, newId);
             }
             QVector<int> sound;

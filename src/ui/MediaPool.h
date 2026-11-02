@@ -136,7 +136,7 @@ private:
     void updateItem(const QString& path);
     // Thumbnail in a worker thread (opens the file and decodes up to a third of it: blocked the window per clip)
     void requestThumb(const QString& path, int frame);
-    void thumbReady(const QString& path, const QImage& img, int generation);
+    void thumbReady(const QString& path, const QImage& img, int generation, double aspect);
     void updateSequenceItems(); // duration of the timeline entries (after changes in the edit) // thumbnail with clip color, flags, proxy icon resp. progress
     void updateProxyStatus();
     void applyViewMode();
@@ -164,6 +164,7 @@ private:
     QHash<QString, QPixmap> m_scrubPicture; // path -> picture shown instead of the thumbnail while hovering
     QHash<QString, QListWidgetItem*> m_items; // path -> entry
     QHash<QString, QPixmap> m_thumbs;         // thumbnail without displaying
+    QHash<QString, double> m_thumbAspect;     // shape a thumbnail shows its picture at (MediaInfo::pictureAspect)
     QSet<QString> m_thumbPending;             // being computed
     QSet<QString> m_offline;                  // showing "Media Offline" (computed anew when the file is back)
     int m_thumbGeneration = 0;                // project format changed: older results are dropped

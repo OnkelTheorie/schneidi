@@ -681,6 +681,7 @@ void opMedia(Session& s, const QJsonObject& op)
             s.project.setFlag(paths, f.toString(), true);
         }
     }
+    if (op.contains("picture_aspect")) s.project.setMediaPictureAspect(paths, pictureAspectOf(op.value("picture_aspect")));
     if (op.contains("in") || op.contains("out")) {
         for (const QString& p : paths) {
             if (op.contains("in")) s.editor.setSourceMarkIn(p, timeOf(s, op, "in"));
@@ -887,10 +888,13 @@ void addEditOps(QVector<OpDef>& ops)
                  opSpeedRamp, {"clips"}} // clipOf: a list of one
         << OpDef{"marker", "{op:'marker', at, remove?}", "at may be {media, source} to mark a moment of the material", {}, opMarker}
         << OpDef{"marks", "{op:'marks', in?, out?, clear?}", "timeline In/Out range (I/O)", {}, opMarks}
-        << OpDef{"media", "{op:'media', media, bin?, color?, flags?, in?, out?}",
+        << OpDef{"media", "{op:'media', media, bin?, color?, flags?, in?, out?, picture_aspect?}",
                  "Media Pool: move into a bin (\"Name\" or \"A/B\", created if missing), clip color, flags, source "
-                 "In/Out",
-                 {}, opMedia}
+                 "In/Out, picture shape of its new clips",
+                 "picture_aspect: '4:3' = clips placed from these videos from now on show the picture at 4:3 (a "
+                 "recording of a 4:3 game stretched to 16:9; clips already in a timeline: op picture_aspect), 'file' "
+                 "= the file's own shape again.",
+                 opMedia}
         << OpDef{"remove_media", "{op:'remove_media', media, with_clips?:false}",
                  "Media Pool: take files out (not from disk); media a timeline uses only with with_clips:true (their "
                  "clips leave every timeline too)",

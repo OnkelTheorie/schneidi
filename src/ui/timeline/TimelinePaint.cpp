@@ -9,6 +9,7 @@
 #include "core/I18n.h"
 #include "core/EffectRegistry.h"
 #include "core/Keyframes.h"
+#include "core/MediaAspect.h"
 #include "core/Project.h"
 #include "core/Retime.h"
 #include "core/Selection.h"
@@ -733,6 +734,8 @@ void TimelineView::drawFilmstrip(QPainter& p, const QRect& body, const Clip& c)
     const std::optional<RetimeMap> map = c.isRetimed() && fileLen > 0 ? std::optional<RetimeMap>(RetimeMap(c, fileLen))
                                                                        : std::nullopt;
     const GradedThumbs::ClipGrade grade = m_cache->graded()->forClip(c); // Color page look (false = none)
+    // Shown at another shape than the file's (a stretched 4:3 recording): the file's own shape, probed once and cached
+    const double fileAspect = c.pictureAspect > 0 ? MediaAspect::of(c.mediaPath) : 0;
     for (int i = first; i <= last; ++i) {
         int src = still ? 0 : std::min(c.out, c.in + int(i * framesPerTile));
         if (map && !still)
@@ -755,7 +758,20 @@ void TimelineView::drawFilmstrip(QPainter& p, const QRect& body, const Clip& c)
             const double h = source.width() / want;
             source.adjust(0, (source.height() - h) / 2, 0, -(source.height() - h) / 2);
         }
-        p.drawImage(target, img, source);
+        if (c.pictureAspect <= 0) {
+            p.drawImage(target, img, source);
+            continue;
+        }
+        // The picture where the viewer has it (the thumbnail is the file fitted into the frame), black around it
+        const MediaAspect::Reshape r = MediaAspect::reshape(QSizeF(img.size()), fileAspect, c.pictureAspect);
+        const double kx = target.width() / source.width(), ky = target.height() / source.height();
+        const QRectF to(target.x() + (r.target.x() - source.x()) * kx, target.y() + (r.target.y() - source.y()) * ky,
+                        r.target.width() * kx, r.target.height() * ky);
+        p.fillRect(target, Qt::black);
+        p.save();
+        p.setClipRect(target, Qt::IntersectClip);
+        p.drawImage(to, img, r.source);
+        p.restore();
     }
 }
 
