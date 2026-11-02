@@ -253,6 +253,9 @@ private:
     void reframedCopy(int sequenceId);
     // Measures the clips with a progress dialog (window modal); false = cancelled
     bool measureReframe(const QVector<Clip>& clips, const ProjectFormat& format, QHash<int, QVector<Reframe::Key>>* paths);
+    // Hide player names (MainWindowNameBlur.cpp): the selected video clips (none = the whole timeline) get windows
+    // that blur or pixelate the text found in them
+    void blurNames();
 
     Engine* m_engine;
     Project* m_project;

@@ -231,6 +231,7 @@ add_library(schneidi_lib STATIC
     src/app/MainWindowMulticam.cpp src/app/MainWindowExchange.cpp
     src/app/MainWindowAudio.cpp
     src/app/MainWindowReframe.cpp
+    src/app/MainWindowNameBlur.cpp
     src/app/MainWindowWatch.cpp
     src/app/MainWindowVoiceover.cpp
     src/app/KeyBindingsDialog.h   src/app/KeyBindingsDialog.cpp
