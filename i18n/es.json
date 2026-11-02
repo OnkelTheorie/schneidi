@@ -1888,5 +1888,7 @@
  "Neue Hochformat-Timeline (9:16)": "Nueva línea de tiempo vertical (9:16)",
  "Positionen, Beschneiden und Titel dieser Timeline werden an eine neue Auflösung angepasst. Die anderen Timelines bleiben, wie sie sind.": "Las posiciones, el recorte y los títulos de esta línea de tiempo se adaptan a una nueva resolución. Las demás líneas de tiempo quedan como están.",
  "Projekteinstellungen verwenden (%1)": "Usar los ajustes del proyecto (%1)",
- "Timeline-Auflösung…": "Resolución de la línea de tiempo…"
+ "Timeline-Auflösung…": "Resolución de la línea de tiempo…",
+ "Eigene Auflösung: %1": "Resolución propia: %1",
+ "Auflösung: %1 (Projekteinstellungen)": "Resolución: %1 (ajustes del proyecto)"
 }

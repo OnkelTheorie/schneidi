@@ -1888,5 +1888,7 @@
  "Neue Hochformat-Timeline (9:16)": "Новый вертикальный монтажный стол (9:16)",
  "Positionen, Beschneiden und Titel dieser Timeline werden an eine neue Auflösung angepasst. Die anderen Timelines bleiben, wie sie sind.": "Положение, обрезка и титры этого монтажного стола подгоняются под новое разрешение. Остальные монтажные столы остаются как есть.",
  "Projekteinstellungen verwenden (%1)": "Использовать настройки проекта (%1)",
- "Timeline-Auflösung…": "Разрешение монтажного стола…"
+ "Timeline-Auflösung…": "Разрешение монтажного стола…",
+ "Eigene Auflösung: %1": "Собственное разрешение: %1",
+ "Auflösung: %1 (Projekteinstellungen)": "Разрешение: %1 (настройки проекта)"
 }

@@ -400,5 +400,32 @@ int main(int argc, char** argv)
             CHECK_EQ(r->markers, (QVector<int>{40, 198}));
         }
     }
+    // --- Timelines show their resolution in the tool tip: their own (a 9:16 short) or the project's
+    {
+        Project q;
+        Engine engine;
+        MediaPool pool(&q, &engine);
+        pool.setSaveSettings(false);
+        pool.resize(600, 300);
+        pool.show();
+        const int edit = q.currentSequence();
+        const int shortId = q.addTimeline("Short", 0, QSize(1080, 1920));
+        app.processEvents();
+        auto* list = pool.findChild<QListWidget*>();
+        auto tipOf = [&](int id) {
+            for (int i = 0; list && i < list->count(); ++i)
+                if (list->item(i)->data(Qt::UserRole).toString() == MediaPool::sequenceItem(id))
+                    return list->item(i)->toolTip();
+            return QString();
+        };
+        CHECK(tipOf(shortId).contains("1080 × 1920") && tipOf(shortId).contains("Eigene Auflösung"));
+        CHECK(tipOf(edit).contains("1920 × 1080") && tipOf(edit).contains("Projekteinstellungen"));
+        q.setSequenceSize(shortId, {1080, 1080});
+        app.processEvents();
+        CHECK(tipOf(shortId).contains("1080 × 1080"));
+        q.setFormat({1280, 720, q.format().rate});
+        app.processEvents();
+        CHECK(tipOf(edit).contains("1280 × 720"));
+    }
     return Check::result();
 }

@@ -15,6 +15,7 @@
 #include "ui/ElidedLabel.h"
 #include "ui/PoolFilterButton.h"
 #include "ui/TimelineFormatDialog.h"
+#include "core/ProjectFormat.h"
 #include "engine/Background.h"
 
 #include <QAction>
@@ -903,10 +904,7 @@ void MediaPool::rebuildClips()
         // Multicam clips keep their grid of angles (which angle would be "the" picture?)
         const QImage picture = q->multicam ? QImage() : m_posters->poster(q->id);
         auto* it = new QListWidgetItem(QIcon(sequenceThumb(*q, picture)), QString());
-        it->setData(Qt::UserRole, item);
-        it->setToolTip(q->multicam ? T("Multicam-Clip – in die Timeline ziehen legt ihn ab, Doppelklick öffnet die Winkel")
-                       : q->compound ? T("Compound Clip – Doppelklick öffnet ihn, in die Timeline ziehen legt ihn ab")
-                                     : T("Timeline – Doppelklick öffnet sie, in eine andere Timeline ziehen verschachtelt sie"));
+        it->setData(Qt::UserRole, item); // tool tip: updateSequenceItems (with the resolution)
         m_list->addItem(it);
     }
     updateSequenceItems();
@@ -1132,6 +1130,15 @@ void MediaPool::updateSequenceItems()
         const QString duration = Timecode::format(TimelineOps::endFrame(q->timeline), m_project->fps());
         const QString text = list ? q->name + "    " + duration : q->name + "\n" + duration;
         if (it->text() != text) it->setText(text);
+        // What it is, and its resolution: its own (a 9:16 short) or the project's
+        const ProjectFormat own = m_project->sequenceFormat(id);
+        const QString size = resolutionLabel(own.width, own.height);
+        const QString tip =
+            (q->multicam ? T("Multicam-Clip – in die Timeline ziehen legt ihn ab, Doppelklick öffnet die Winkel")
+             : q->compound ? T("Compound Clip – Doppelklick öffnet ihn, in die Timeline ziehen legt ihn ab")
+                           : T("Timeline – Doppelklick öffnet sie, in eine andere Timeline ziehen verschachtelt sie"))
+            + "\n" + (q->hasOwnSize() ? T("Eigene Auflösung: %1").arg(size) : T("Auflösung: %1 (Projekteinstellungen)").arg(size));
+        if (it->toolTip() != tip) it->setToolTip(tip);
         QFont f = it->font();
         f.setBold(id == m_project->currentSequence()); // highlight the opened timeline
         it->setFont(f);

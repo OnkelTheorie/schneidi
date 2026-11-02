@@ -1888,5 +1888,7 @@
  "Neue Hochformat-Timeline (9:16)": "Nowa pionowa oś czasu (9:16)",
  "Positionen, Beschneiden und Titel dieser Timeline werden an eine neue Auflösung angepasst. Die anderen Timelines bleiben, wie sie sind.": "Pozycje, kadrowanie i napisy tej osi czasu zostaną dopasowane do nowej rozdzielczości. Pozostałe osie czasu zostają bez zmian.",
  "Projekteinstellungen verwenden (%1)": "Użyj ustawień projektu (%1)",
- "Timeline-Auflösung…": "Rozdzielczość osi czasu…"
+ "Timeline-Auflösung…": "Rozdzielczość osi czasu…",
+ "Eigene Auflösung: %1": "Własna rozdzielczość: %1",
+ "Auflösung: %1 (Projekteinstellungen)": "Rozdzielczość: %1 (ustawienia projektu)"
 }
