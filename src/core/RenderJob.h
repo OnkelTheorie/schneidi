@@ -11,6 +11,8 @@
 #include <QString>
 #include <QVector>
 
+#include <optional>
+
 // What a format writes: a video file, audio only, an animated GIF (rendered losslessly first, then converted with
 // ffmpeg's palette filters) or an image sequence (one file per frame in its own folder)
 enum class RenderKind { Video, Audio, Gif, ImageSequence };
@@ -52,6 +54,9 @@ struct RenderSettings {
     int audioBitrateK = 320; // AAC/MP3 only
     int audioBits = 24;      // bit depth for PCM (16, 24, 32 = float) and Apple Lossless (16, 24)
     int rateNum = 0, rateDen = 1; // frame rate of the output, 0 = like the timeline
+    // With rateNum 0: highest frame rate; a faster timeline renders at its rate divided by the smallest whole number
+    // that gets there (120 -> 60, 100 -> 50, 144 -> 48), so every output frame is a timeline frame. 0 = no limit
+    int maxFps = 0;
     // Export subtitles (visible subtitle track): none, burn into the picture, as an SRT or WebVTT file alongside
     enum Subtitles { NoSubtitles = 0, BurnSubtitles = 1, SrtFile = 2, VttFile = 3 };
     int subtitles = NoSubtitles;
@@ -103,7 +108,24 @@ struct RenderPreset {
     QString name;
     RenderSettings settings;
     bool builtin = false;
+    QString id;   // built-in ones: stable ASCII id for the CLI ("youtube-1080p", "tiktok"); empty for own presets
+    QString hint; // built-in ones: what it is for, shown as tooltip (UI language)
 };
+
+// Short-video platforms (YouTube Shorts, Instagram Reels, TikTok): their upload recommendations as render presets
+// (preset id = platform id) and what `check` knows of them. As of 2026: 1080 x 1920, H.264 + AAC 48 kHz, up to
+// 60 fps, about -14 LUFS (all three turn louder uploads down), true peak at most -1 dBTP.
+struct ShortPlatform {
+    const char* id;      // "youtube-shorts", "instagram-reels", "tiktok"
+    const char* name;    // "YouTube Shorts" (a product name, not translated)
+    const char* alias;   // short form for the CLI: "shorts", "reels", "tiktok"
+    double maxSeconds;   // longest video the platform takes as a short
+    double targetLufs = -14;
+    double maxTruePeakDb = -1;
+};
+const QVector<ShortPlatform>& shortPlatforms();
+// By id, alias or name (case, spaces and dashes do not matter); nullptr = none
+const ShortPlatform* shortPlatform(const QString& idOrName);
 
 namespace RenderPresets {
 QVector<RenderPreset> builtins();
@@ -112,6 +134,9 @@ QString userFile();
 QVector<RenderPreset> loadUser();
 bool saveUser(const QVector<RenderPreset>& presets);
 QVector<RenderPreset> all(); // built-in, then own
+// By name or id (case, spaces, dashes and other punctuation do not matter: "tiktok", "YouTube Shorts",
+// "phone-vertical"); also a platform's alias ("shorts"). nullopt = none
+std::optional<RenderPreset> find(const QString& nameOrId);
 } // namespace RenderPresets
 
 enum class RenderStatus { Queued, Rendering, Done, Failed, Canceled };

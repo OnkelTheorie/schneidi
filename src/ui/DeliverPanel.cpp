@@ -333,6 +333,8 @@ void DeliverPanel::reloadPresets(const QString& select)
     for (int i = 0; i < m_presets.size(); ++i) {
         if (i > 0 && m_presets[i - 1].builtin && !m_presets[i].builtin) m_preset->insertSeparator(m_preset->count());
         m_preset->addItem(m_presets[i].name, i);
+        if (!m_presets[i].hint.isEmpty())
+            m_preset->setItemData(m_preset->count() - 1, m_presets[i].hint, Qt::ToolTipRole);
         if (!select.isEmpty() && m_presets[i].name == select && !m_presets[i].builtin) selectIndex = m_preset->count() - 1;
     }
     if (selectIndex >= 0) m_preset->setCurrentIndex(selectIndex);
@@ -448,6 +450,8 @@ RenderSettings DeliverPanel::settings() const
     if (const QSize r = m_rate->currentData().toSize(); r.isValid() && !s.audioOnly()) {
         s.rateNum = r.width();
         s.rateDen = r.height();
+    } else if (!s.audioOnly()) {
+        s.maxFps = m_maxFps;
     }
     s.subtitles = m_subtitles->currentData().toInt();
     s.smartRender = m_smart->isChecked();
@@ -469,6 +473,7 @@ void DeliverPanel::setSettings(const RenderSettings& s)
     m_applying = true;
     m_wantedBits = s.audioBits;
     m_wantedEncoder = s.encoder;
+    m_maxFps = s.maxFps;
     m_format->setCurrentIndex(std::max(0, m_format->findData(renderFormat(s.format).id)));
     m_quality->setCurrentIndex(std::clamp(s.quality, 0, RenderSettings::kQualityWeb));
     const int br = m_audioBitrate->findData(s.audioBitrateK);
@@ -790,6 +795,7 @@ bool DeliverPanel::runCheck()
             issues += *st;
         canceled = progress.wasCanceled();
         if (!canceled) issues += CheckMeasure::hook(f, render, from, to);
+        if (!canceled) issues += CheckMeasure::bars(f, tl, from, to);
     }
     if (job.settings.hasAudio() && !canceled) {
         progress.setLabelText(T("Ton wird gemessen…"));

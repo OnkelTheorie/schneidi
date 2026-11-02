@@ -205,6 +205,40 @@ Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
                           AnimParam::CropTop);
     m_crop[3] = addSlider(crop, "cropBottom", T("Unten"), 0, 1080, 0, 1, 3, [](Clip& c) -> double& { return c.transform.cropBottom; },
                           AnimParam::CropBottom);
+    // Shape of the picture: the file's, or a stretched 4:3 recording shown at 4:3 again (Clip::pictureAspect)
+    auto* shapeBox = new QComboBox;
+    shapeBox->setObjectName("PictureAspect");
+    shapeBox->setFocusPolicy(Qt::NoFocus);
+    shapeBox->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+    shapeBox->addItem(T("Wie die Datei"), 0.0);
+    shapeBox->addItem(T("Gestrecktes 4:3 entzerren"), 4.0 / 3.0);
+    shapeBox->setToolTip(T("Viele Spieler nehmen ein 4:3-Spiel auf 16:9 gestreckt auf (breite Köpfe, ovale Kreise). "
+                           "„Gestrecktes 4:3 entzerren“ zeigt das Bild wieder in seinen echten Proportionen."));
+    connect(shapeBox, &QComboBox::activated, this, [this, shapeBox](int i) {
+        m_editor->setPictureAspect(selectedIds(TrackKind::Video), shapeBox->itemData(i).toDouble());
+    });
+    crop.grid->addWidget(rowLabel(T("Bildform")), crop.rows, 0);
+    crop.grid->addWidget(shapeBox, crop.rows, 1);
+    crop.grid->addWidget(resetButton([this] { m_editor->setPictureAspect(selectedIds(TrackKind::Video), 0); }), crop.rows, 2);
+    ++crop.rows;
+    m_refreshers << [this, shapeBox] {
+        const Clip* c = primary(TrackKind::Video);
+        if (!c) return;
+        const QSignalBlocker b(shapeBox);
+        int i = 0;
+        if (c->pictureAspect > 0) {
+            i = -1;
+            for (int k = 1; k < shapeBox->count() && i < 0; ++k)
+                if (std::abs(shapeBox->itemData(k).toDouble() - c->pictureAspect) < 1e-6) i = k;
+            if (i < 0) { // another shape (set with schneidi-cli)
+                shapeBox->addItem(QString::number(c->pictureAspect, 'f', 3).replace('.', I18n::decimalPoint()) + ":1",
+                                  c->pictureAspect);
+                i = shapeBox->count() - 1;
+            }
+        }
+        shapeBox->setCurrentIndex(i);
+        shapeBox->setEnabled(c->kind == ClipKind::Media);
+    };
 
     // ---- Composite ----
     Section comp = addSection(videoLay, V, T("Composite"), [](Clip& c) {

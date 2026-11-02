@@ -200,45 +200,97 @@ QVector<Key> path(const QVector<Target>& targets, const PathParams& p)
     return out;
 }
 
-Fill fill(double mediaAspect, QSizeF frame)
+namespace {
+
+bool whole(const QRectF& c)
+{
+    return c.left() <= 1e-4 && c.top() <= 1e-4 && c.right() >= 1 - 1e-4 && c.bottom() >= 1 - 1e-4;
+}
+
+QRectF valid(const QRectF& c)
+{
+    const QRectF r = c.normalized().intersected(QRectF(0, 0, 1, 1));
+    return r.width() >= 0.01 && r.height() >= 0.01 ? r : QRectF(0, 0, 1, 1);
+}
+
+} // namespace
+
+Fill fill(double mediaAspect, QSizeF frame, const QRectF& contentRect)
 {
     Fill f;
     f.picture = frame;
+    f.content = valid(contentRect);
     if (mediaAspect <= 0 || frame.isEmpty()) return f;
     const QSizeF fitted = MediaAspect::fit(mediaAspect, frame);
-    f.zoom = std::max(frame.width() / fitted.width(), frame.height() / fitted.height());
+    const QSizeF content(fitted.width() * f.content.width(), fitted.height() * f.content.height());
+    f.zoom = std::max(frame.width() / content.width(), frame.height() / content.height());
     f.picture = fitted * f.zoom;
-    f.windowW = std::min(1.0, frame.width() / f.picture.width());
-    f.windowH = std::min(1.0, frame.height() / f.picture.height());
+    f.windowW = std::min(1.0, frame.width() / (content.width() * f.zoom));
+    f.windowH = std::min(1.0, frame.height() / (content.height() * f.zoom));
     return f;
 }
 
 QPointF position(const Fill& f, QSizeF frame, double x, double y)
 {
-    const double maxX = std::max(0.0, (f.picture.width() - frame.width()) / 2);
-    const double maxY = std::max(0.0, (f.picture.height() - frame.height()) / 2);
+    Q_UNUSED(frame);
+    // Window centre kept inside the content, then as a share of the whole picture
+    const double cx = f.windowW >= 0.999 ? 0.5 : std::clamp(x, f.windowW / 2, 1 - f.windowW / 2);
+    const double cy = f.windowH >= 0.999 ? 0.5 : std::clamp(y, f.windowH / 2, 1 - f.windowH / 2);
+    const double px = f.content.left() + cx * f.content.width(), py = f.content.top() + cy * f.content.height();
     // To see a part right of the middle the picture moves left; y counts upward
-    const double px = std::clamp((0.5 - x) * f.picture.width(), -maxX, maxX);
-    const double py = std::clamp((y - 0.5) * f.picture.height(), -maxY, maxY);
-    return {std::abs(px) < 1e-6 ? 0.0 : px, std::abs(py) < 1e-6 ? 0.0 : py};
+    const double ox = (0.5 - px) * f.picture.width(), oy = (py - 0.5) * f.picture.height();
+    return {std::abs(ox) < 1e-6 ? 0.0 : ox, std::abs(oy) < 1e-6 ? 0.0 : oy};
 }
 
-void apply(Clip& c, Mode mode, const QVector<Key>& keys, double mediaAspect, QSizeF frame)
+bool cropBars(Clip& c, const QRectF& contentRect, double mediaAspect, QSizeF frame)
+{
+    if (c.kind != ClipKind::Media || whole(contentRect)) return false;
+    const QRectF content = valid(contentRect);
+    const QSizeF fitted = MediaAspect::fit(mediaAspect, frame);
+    ClipTransform& t = c.transform;
+    const ClipTransform before = t;
+    const auto keysBefore = c.keys;
+    for (AnimParam a : {AnimParam::CropLeft, AnimParam::CropRight, AnimParam::CropTop, AnimParam::CropBottom}) c.keys.remove(a);
+    t.cropOn = true;
+    t.cropLeft = content.left() * fitted.width();
+    t.cropRight = (1 - content.right()) * fitted.width();
+    t.cropTop = content.top() * fitted.height();
+    t.cropBottom = (1 - content.bottom()) * fitted.height();
+    for (double* v : {&t.cropLeft, &t.cropRight, &t.cropTop, &t.cropBottom})
+        if (std::abs(*v) < 1e-6) *v = 0;
+    return !(t == before) || c.keys != keysBefore;
+}
+
+void apply(Clip& c, Mode mode, const QVector<Key>& keys, double mediaAspect, QSizeF frame, const QRectF& contentRect)
 {
     for (AnimParam a : {AnimParam::ZoomX, AnimParam::ZoomY, AnimParam::PosX, AnimParam::PosY}) c.keys.remove(a);
+    const bool bars = !whole(contentRect) && mediaAspect > 0;
+    if (bars) cropBars(c, contentRect, mediaAspect, frame);
     ClipTransform& t = c.transform;
     t.transformOn = true;
+    const Fill f = fill(mediaAspect, frame, bars ? contentRect : QRectF(0, 0, 1, 1));
     if (mode == Mode::Fit) {
         t.zoomX = t.zoomY = 1;
         t.posX = t.posY = 0;
         t.fill = FitFill::Blur;
+        if (bars) {
+            // The content fitted in instead of the picture with its bars
+            const QSizeF fitted = MediaAspect::fit(mediaAspect, frame);
+            const QSizeF content(fitted.width() * f.content.width(), fitted.height() * f.content.height());
+            t.zoomX = t.zoomY = std::min(frame.width() / content.width(), frame.height() / content.height());
+            const Fill fz{t.zoomX, fitted * t.zoomX, f.content, 1, 1};
+            const QPointF p = position(fz, frame, 0.5, 0.5);
+            t.posX = p.x();
+            t.posY = p.y();
+        }
         return;
     }
     t.fill = FitFill::None;
-    const Fill f = fill(mediaAspect, frame);
     t.zoomX = t.zoomY = f.zoom;
     if (mode == Mode::Center || keys.isEmpty()) {
-        t.posX = t.posY = 0;
+        const QPointF p = position(f, frame, 0.5, 0.5);
+        t.posX = p.x();
+        t.posY = p.y();
         return;
     }
     KeyTrack px, py;

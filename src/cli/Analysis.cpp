@@ -5,9 +5,11 @@
 #include "cli/Live.h"
 
 #include "core/I18n.h"
+#include "engine/BarDetect.h"
 #include "engine/Background.h"
 #include "engine/Engine.h"
 #include "engine/Extensions.h"
+#include "engine/HardwareEncoders.h"
 #include "engine/FrameGaps.h"
 
 #include <QEventLoop>
@@ -260,6 +262,14 @@ QJsonObject probeOne(const QJsonObject& a)
         o["audio_streams"] = streams;
     }
     if (a["gaps"].toBool() && m.info.hasVideo && !m.info.isImage) o["gaps"] = gapsJson(m.info.path, m.format);
+    if (m.info.hasVideo) {
+        const std::optional<QRectF> r = a["bars"].toBool() ? BarDetect::content(m.info.path) : BarDetect::cached(m.info.path);
+        if (r) {
+            const auto pct = [](double v) { return std::round(v * 1000) / 10; };
+            o["content"] = QJsonObject{{"x", pct(r->x())}, {"y", pct(r->y())}, {"w", pct(r->width())}, {"h", pct(r->height())}};
+            o["black_bars"] = BarDetect::hasBars(*r);
+        }
+    }
     return o;
 }
 
@@ -316,6 +326,13 @@ QJsonObject cmdExtensions(const QJsonObject& a, Context& ctx)
         list << o;
     }
     QJsonObject out{{"extensions", list}, {"folder", Extensions::rootDir()}};
+    // What works now: transcribe (whisper with a model), speak (piper with a voice), x264 (H.264/H.265 with x264/x265,
+    // built in or the extension)
+    QJsonArray ready;
+    if (!Extensions::whisperProgram().isEmpty() && !Extensions::installedWhisperModels().isEmpty()) ready << "transcribe";
+    if (!Extensions::piperProgram().isEmpty() && !Extensions::installedVoices().isEmpty()) ready << "speak";
+    if (HardwareEncoders::builtIn("libx264") || !HardwareEncoders::externalProgram("libx264").isEmpty()) ready << "x264";
+    out["ready_for"] = ready;
     if (!done.isEmpty()) out["done"] = done;
     if (const QString ffmpeg = Extensions::encoderProgram(); !ffmpeg.isEmpty()) out["encoder_program"] = ffmpeg;
     if (const QString piper = Extensions::piperProgram(); !piper.isEmpty()) out["piper_program"] = piper;

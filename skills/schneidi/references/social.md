@@ -2,6 +2,25 @@
 
 Goal: a vertical video that works on a phone, muted, in the first two seconds.
 
+## One call: `short`
+From recordings to a finished short in one step, e.g. a game clip:
+`short` with `files` `["/clips/cs2/cs2_clip_….mkv"]` (CLI: `schneidi-cli short /clips/cs2/cs2_clip_….mkv`).
+It runs the steps below with the usual commands and answers with `out`, `length_s`, the `moments` it used, `done`
+(every step), `check` (what it fixed, what is left) and `notes`:
+1. `highlights` per file - with the kill feed of `game` (`cs2`, `valorant`; by default from the folder or file name,
+   `none` = loud moments only), every candidate padded to at least 6 s, the best ones within `min_s`..`max_s`
+   (default 15-45 s); nothing found = the end of the recording (where a clip tool puts the moment).
+2. A timeline "Short-Schnitt" with them (`keep`) in the recordings' shape, then the `aspect` copy "Short"
+   (`9:16` default, `1:1`, `4:5`) with `reframe` (`auto` default, `center`, `fit`).
+3. Word captions (`captions` `karaoke` default, `word`, `off`; `language`) - only when whisper is installed. Otherwise
+   a note with the install command; it never installs: ask the user first.
+4. `check` for the platform `for` (`shorts` default, `reels`, `tiktok`: length limit, -14 LUFS, true peak) and its sound
+   fix (limiter, fader) applied.
+5. `render` with the platform's preset into `out` (default `<first file>-short.mp4` beside it, numbered; an existing
+   `out` needs `overwrite`). The project (`project`, default beside `out`) keeps both timelines for reworking.
+Without `files`: `project` (also `"@app"`) and `timeline` = an existing cut to turn into the short. Look at the
+result yourself afterwards (`frames` sheet of `out`) - one call does not replace that.
+
 ## Format
 - New project `width` 1080, `height` 1920 (or `template` "vertical"), frame rate of the material. (`render` `size`
   only letterboxes a landscape timeline into a portrait file - that is not a vertical edit.) In an existing project
@@ -38,6 +57,15 @@ Goal: a vertical video that works on a phone, muted, in the first two seconds.
     `{"op":"transform","clips":[…],"crop_left":810,"crop_bottom":405,"zoom":4,"x":-1620,"y":-810}` (270 px left
     * zoom 4 = 1080). On a track above the gameplay this is the usual facecam-on-top layout.
   - Material that is already vertical needs nothing.
+- **4:3 game footage** (many CS2/Valorant players play in 4:3): two kinds in a 16:9 recording.
+  - **Black bars left and right** (pillarbox): `reframe` finds and crops them by itself (`bars` default true) and
+    only the game picture fills the short; `probe` with `bars:true` shows `content` (the picture between the bars,
+    in %). Outside a reframe: `{"op":"crop_bars"}` crops them on every clip (one step; then `transform` zoom).
+  - **Stretched to 16:9** (wide heads, oval circles - looks like a normal 16:9 picture without bars): there is no
+    reliable automatic detection; when the footage looks stretched (`frames`), `{"op":"picture_aspect",
+    "aspect":"4:3"}` shows it at its true shape in preview, export and reframe (`"file"` undoes it). In a 16:9
+    edit it then has room left and right (`fit:"blur"` fills it), a 4:3 timeline (`aspect:"4:3"`, 1440x1080)
+    fits it exactly. Do it before `reframe` (the zoom depends on the shape).
 - Keep text and faces inside the safe area: platforms cover roughly the bottom 20 % (caption, buttons), a strip
   on the right and a bar at the top. Titles and subtitles about 25-35 % up from the bottom, or in the upper third.
   `check` on the project lists text in those zones (`safe_area`, `subtitle_safe_area`).
@@ -71,5 +99,9 @@ Goal: a vertical video that works on a phone, muted, in the first two seconds.
     on the beat. `ease` (`in_out` is the default for whips) shapes the speed; wipes (`wipe_*`, `softness`) work too.
 
 ## Render
-`render` with `preset` `"Phone / Vertical 9:16"` (H.264, web quality), `subtitles` `"burn"` if the subtitles are on
-a subtitle track. Then [check.md](check.md): is the subject in frame in every shot, is all text inside the safe area?
+`render` with `preset` `"shorts"`, `"reels"` or `"tiktok"` (YouTube Shorts, Instagram Reels, TikTok: 1080x1920
+H.264 in web quality, the timeline's frame rate up to 60 fps, AAC 48 kHz) - `"phone"` is the same without the
+60 fps limit. `subtitles` `"burn"` if the subtitles are on a subtitle track. Before it, `check` with the same
+`for` (the platform): `too_long` = longer than the platform takes as a short (Shorts and Reels 3 min, TikTok 10 min), and the
+sound fix for -14 LUFS / -1 dBTP. Then [check.md](check.md): is the subject in frame in every shot, is all text inside
+the safe area?

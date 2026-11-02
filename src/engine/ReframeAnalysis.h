@@ -17,6 +17,7 @@
 #include "core/Types.h"
 
 #include <QHash>
+#include <QRectF>
 #include <QString>
 #include <QStringList>
 #include <QVector>
@@ -39,6 +40,9 @@ using Samples = QVector<Sample>;
 struct Need {
     QString file;
     double from = 0, to = 0;
+    // The part of the picture to look at (fractions; engine/BarDetect: the game picture between black bars). Samples
+    // are relative to it.
+    QRectF content{0, 0, 1, 1};
 };
 
 QString cacheDir();
@@ -58,8 +62,12 @@ QVector<Reframe::Target> targets(const Clip& c, FrameRate rate, int fileLength, 
 // each clip shows (or takes it from the cache), blocking. lengthOf(file) = its length in project frames (speed changes).
 // progress 0..1000 over all clips. A clip whose file cannot be read gets no path (it stays centered) and its error
 // goes to *errors. Cancelled: empty.
+// contents: per file the part of the picture to keep (Reframe::apply crops the rest, the path stays inside it); when
+// non-null, black bars are measured (engine/BarDetect) for files not in it yet and added - the caller passes the
+// same map to Editor::reframeClips. Null = the whole picture.
 QHash<int, QVector<Reframe::Key>> paths(const QVector<Clip>& clips, const ProjectFormat& format, double smoothness,
                                         const std::function<int(const QString&)>& lengthOf, QStringList* errors = nullptr,
-                                        const std::atomic<bool>* cancel = nullptr, std::atomic<int>* progress = nullptr);
+                                        const std::atomic<bool>* cancel = nullptr, std::atomic<int>* progress = nullptr,
+                                        QHash<QString, QRectF>* contents = nullptr);
 
 } // namespace ReframeAnalysis

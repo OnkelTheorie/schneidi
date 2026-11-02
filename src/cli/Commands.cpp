@@ -483,6 +483,7 @@ QJsonObject clipJson(const Project& p, const Clip& c, TrackRef ref)
     }
     if (c.speed != 1.0) o["speed"] = c.speed;
     if (c.reverse) o["reverse"] = true;
+    if (c.pictureAspect > 0) o["picture_aspect"] = std::round(c.pictureAspect * 10000) / 10000; // op picture_aspect
     if (!c.effects.isEmpty()) {
         QJsonArray fx;
         const auto json = [](const QVariant& v) {
@@ -876,6 +877,37 @@ const QVector<Command>& commands()
                                   "machine that is busy (a game, a recording) use 2"},
           {"overwrite", T::Boolean, "replace an existing output file"}},
          cmdRender},
+        {"short", "A finished vertical short (YouTube Shorts, Instagram Reels, TikTok) of recordings in one call: "
+                  "finds the best moments (`highlights`: kills of the kill feed with a game hint, else loud moments), "
+                  "pads each to at least 6 s and keeps the best ones within min_s..max_s (a timeline 'Short-Schnitt' "
+                  "in the recordings' shape), copies it into a 9:16 (1:1, 4:5) timeline 'Short' with every clip "
+                  "reframed, adds word captions from the speech (only when whisper is installed; else a note with "
+                  "the install command - never installs), runs `check` for the platform and applies its fixes "
+                  "(master limiter, loudness to -14 LUFS), and renders with the platform's preset. Instead of "
+                  "recordings: an existing timeline of a project (or \"@app\": the timelines appear in the app) as the "
+                  "cut. Answer: out, length_s, the moments used, done (each step), check (what it fixed, what is "
+                  "left: look at it), notes. Takes a while (progress lines on stderr); look at the result with "
+                  "`frames` afterwards.",
+         {{"files", T::Paths, "recordings (video files) to make the short of", false, true},
+          {"project", T::Path, "project for the timelines: with files a new one next to out unless given (an existing "
+                               "one or \"@app\" gets new timelines); without files: the project whose timeline is the cut"},
+          {"timeline", T::String, "without files: the timeline to make the short of (default: the open one)"},
+          {"out", T::Path, "video to write (default: '<first file>-short.mp4' next to it, numbered, never replacing)"},
+          {"for", T::String, "the platform: shorts (default), reels or tiktok - render preset, length limit and "
+                             "loudness of `check`"},
+          {"min_s", T::Number, "shortest length in seconds (default 15)"},
+          {"max_s", T::Number, "longest length in seconds (default 45; at most the platform's limit)"},
+          {"aspect", T::String, "9:16 (default), 1:1 or 4:5"},
+          {"reframe", T::String, "auto (default: every clip follows its subject), center or fit (blurred background, "
+                                 "the whole picture stays visible)"},
+          {"captions", T::String, "karaoke (default: the spoken word lights up), word (one word at a time) or off"},
+          {"language", T::String, "spoken language for the captions: de, en, … (default: detect)"},
+          {"game", T::String, "kill feed of this game for the moments: cs2 or valorant (default: from the folder or "
+                              "file name, e.g. clips/cs2/… or cs2_clip_…), none = loud moments only"},
+          {"encoder", T::String, "as in `render`"},
+          {"threads", T::Integer, "as in `render`"},
+          {"overwrite", T::Boolean, "replace an existing out file"}},
+         cmdShort},
         {"probe", "Media file details: duration, frames, resolution, frame rate, audio streams. With gaps: the stutter "
                   "of a recording with variable frame rate (variable_frame_rate true: game capture keeps the time "
                   "stamps of the frames it got, so where the game lagged the picture stands still).",
@@ -885,7 +917,11 @@ const QVector<Command>& commands()
           {"gaps", T::Boolean, "also find jumps in the picture's time stamps longer than 2 frame durations: 'jumps' "
                                "(at_s, length_s, missing_frames; from/to = frames that repeat the old picture) and "
                                "'stutter' (jumps less than 0.5 s apart as one stretch, from/to). Fast (reads the "
-                               "packets, no decoding), cached. Cut stutter stretches out of the ranges you use"}},
+                               "packets, no decoding), cached. Cut stutter stretches out of the ranges you use"},
+          {"bars", T::Boolean, "also look for black bars baked into the picture (a 4:3 game in a 16:9 recording, "
+                               "letterbox): 'content' = {x, y, w, h} of the picture between them in % (decodes about "
+                               "a dozen pictures, cached; once known it is shown without bars:true too). reframe and "
+                               "crop_bars use it"}},
          cmdProbe},
         {"silence", "Find pauses in the audio of a media file or a project's timeline. Returns 'silence' and "
                     "'sound' ranges [from, to); for a project they are timeline frames and 'sound' fits the 'keep' "
@@ -1047,7 +1083,9 @@ const QVector<Command>& commands()
                   "in the project, skipped when rendering - e.g. frei0r plugins of old projects; remove or replace "
                   "them), frames without any picture (a gap = black), subtitles too "
                   "short/too fast to read or past the end, recordings with stutter in the range a clip uses "
-                  "(stutter: jumps in the time stamps, see `probe` gaps), and the sound of the mix as exported: no "
+                  "(stutter: jumps in the time stamps, see `probe` gaps), black_bars (black bars baked into a "
+                  "recording - a 4:3 game in a 16:9 video - that show in a timeline of another shape or a zoomed "
+                  "clip; fix: edit op crop_bars, or reframe), and the sound of the mix as exported: no "
                   "sound, clipping, true peak above -1 dBTP, loudness off the target, silence at the end, and "
                   "under_music: a track with events more than 15 LU under the music while its events play (music = "
                   "a track named music/song/BGM, or one of sound files only that plays without pauses; events = the "
@@ -1061,7 +1099,7 @@ const QVector<Command>& commands()
                   "stretches, frozen picture, no sound, the same sound checks. 'issues' (errors first, each with check "
                   "id, message, time range and 'clip' when it is about one), counts of 'errors'/'warnings' and the "
                   "measured 'sound'; for a project with clipping, true peak or loudness off the target also 'fix': the "
-                  "ops for `edit` that solve them (master limiter at -1 dBTP, master fader by the difference) - apply "
+                  "ops for `edit` that solve them (master limiter at -1.2 dBTP, a little under the -1 limit, master fader by the difference) - apply "
                   "them, don't judge the numbers yourself. Fix errors before handing over; warnings may be intended "
                   "(a fade to black, a pause).",
          {{"source", T::Path, "project (.schneidi) or rendered media file", true, true},
@@ -1069,6 +1107,9 @@ const QVector<Command>& commands()
           {"from", T::Time, "for a project: start of the range to check (default: start)"},
           {"to", T::Time, "for a project: end of the range (default: end of the timeline)"},
           {"target_lufs", T::Number, "loudness target (default -14 for web/streaming; -23 broadcast, -16 podcasts)"},
+          {"for", T::String, "the platform the video is for: shorts, reels or tiktok - also too_long (longer than "
+                             "the platform takes as a short: Shorts and Reels 3 min, TikTok 10 min) and its loudness "
+                             "target"},
           {"sound", T::Boolean, "measure the sound (default true; false = no mixing: no sound and no under_music "
                                 "checks)"}},
          cmdCheck},

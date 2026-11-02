@@ -5,6 +5,7 @@
 
 #include "core/ExportCheck.h"
 #include "core/I18n.h"
+#include "core/RenderJob.h"
 #include "core/TimelineOps.h"
 #include "engine/AudioAnalysis.h"
 #include "engine/Bundle.h"
@@ -30,6 +31,19 @@ QString num1(double v) { return QString::number(v, 'f', 1).replace('.', I18n::de
 ExportCheck::Options options(const QJsonObject& a)
 {
     ExportCheck::Options o;
+    // "for", not "platform": QGuiApplication takes --platform from the command line
+    if (a.contains("for")) {
+        const ShortPlatform* p = shortPlatform(a["for"].toString());
+        if (!p) {
+            QStringList ids;
+            for (const ShortPlatform& sp : shortPlatforms()) ids << sp.alias;
+            fail("BAD_ARGUMENT", "for must be " + ids.join(", ") + " (the platform)");
+        }
+        o.maxLengthS = p->maxSeconds;
+        o.platform = QString::fromLatin1(p->name);
+        o.targetLufs = p->targetLufs;
+        o.maxTruePeakDb = p->maxTruePeakDb;
+    }
     if (a.contains("target_lufs")) o.targetLufs = a["target_lufs"].toDouble();
     return o;
 }
@@ -260,6 +274,7 @@ QJsonObject cmdCheck(const QJsonObject& a, Context& ctx)
                 f, tl, from, to, [&](const QString& p) { return media(p) ? media(p)->length : 0; }, progress(0, scanned)))
             issues += *st;
         issues += CheckMeasure::hook(f, render, from, to, opt);
+        issues += CheckMeasure::bars(f, tl, from, to);
         // H.264 export without a graphics card encoder and without x264: the free encoder needs twice the bit rate
         if (HardwareEncoders::needsBetterEncoder("h264"))
             issues << ExportCheck::Issue{ExportCheck::Severity::Info, "encoder_quality",
@@ -281,6 +296,7 @@ QJsonObject cmdCheck(const QJsonObject& a, Context& ctx)
         const MediaSource m = openMedia(QJsonObject{{"file", src}});
         f = m.format;
         result["frames"] = m.info.length;
+        issues += ExportCheck::length(0, m.info.length, f, opt);
         if (m.info.isImage) {
             // A still has neither motion nor sound to check: say what it is instead of "no picture" and "no sound"
             issues << ExportCheck::Issue{ExportCheck::Severity::Info, "still_image",

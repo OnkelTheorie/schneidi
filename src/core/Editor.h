@@ -459,10 +459,19 @@ public:
     // The video clips among `ids` (empty = every clip of the open timeline) fill the open timeline's shape: zoom to fill
     // plus the position (keyframes for Mode::Auto from `paths`, clip frames; a clip without a path stays centered), or
     // fitted in with a blurred copy behind (Mode::Fit). Titles, compound/multicam clips and locked tracks are left out.
-    // One undo step; returns the number of clips changed.
-    int reframeClips(const QVector<int>& ids, Reframe::Mode mode, const QHash<int, QVector<Reframe::Key>>& paths = {});
+    // contents: per file the part of the picture between black bars (engine/BarDetect; missing = whole picture):
+    // those bars are cropped and the content fills the frame. One undo step; returns the number of clips changed.
+    int reframeClips(const QVector<int>& ids, Reframe::Mode mode, const QHash<int, QVector<Reframe::Key>>& paths = {},
+                     const QHash<QString, QRectF>& contents = {});
     // The video clips reframeClips would change
     QVector<int> reframeTargets(const QVector<int>& ids) const;
+    // Crops the black bars of the clips among `ids` (video clips; empty = every one of the open timeline) to their
+    // content (per file, engine/BarDetect). One undo step; returns the number of clips changed.
+    int cropBars(const QVector<int>& ids, const QHash<QString, QRectF>& contents);
+    // Shows the clips' pictures at `aspect` (width / height; Clip::pictureAspect, 0 = the file's own shape again): a 4:3
+    // game image stretched to 16:9 by the recorder gets its true shape with 4/3. Crop values keep their share of the
+    // picture. One undo step; returns the number of clips changed.
+    int setPictureAspect(const QVector<int>& ids, double aspect);
 
 signals:
     void targetTracksChanged(); // target tracks (redraw track header marking)

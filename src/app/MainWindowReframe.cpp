@@ -8,9 +8,11 @@
 #include "core/Project.h"
 #include "core/Selection.h"
 #include "core/TimelineOps.h"
+#include "engine/BarDetect.h"
 #include "engine/ReframeAnalysis.h"
 #include "ui/timeline/TimelinePanel.h"
 
+#include <QApplication>
 #include <QEventLoop>
 #include <QMessageBox>
 #include <QProgressDialog>
@@ -44,7 +46,7 @@ bool footageChanged(const Timeline& tl, const QVector<Clip>& measured)
 } // namespace
 
 bool MainWindow::measureReframe(const QVector<Clip>& clips, const ProjectFormat& format,
-                                QHash<int, QVector<Reframe::Key>>* paths)
+                                QHash<int, QVector<Reframe::Key>>* paths, QHash<QString, QRectF>* contents)
 {
     QHash<QString, int> lengths; // read here: the project is not touched from the thread
     for (const Clip& c : clips)
@@ -53,9 +55,10 @@ bool MainWindow::measureReframe(const QVector<Clip>& clips, const ProjectFormat&
     auto progress = std::make_shared<std::atomic<int>>(0);
     auto result = std::make_shared<QHash<int, QVector<Reframe::Key>>>();
     auto errors = std::make_shared<QStringList>();
+    auto bars = std::make_shared<QHash<QString, QRectF>>(); // black bars are never wanted in a reframed picture
     QThread* thread = QThread::create([=] {
         *result = ReframeAnalysis::paths(clips, format, 0.5, [lengths](const QString& p) { return lengths.value(p); },
-                                         errors.get(), cancel.get(), progress.get());
+                                         errors.get(), cancel.get(), progress.get(), bars.get());
     });
     QProgressDialog dialog(T("Auto-Reframe: Bild wird analysiert …"), T("Abbrechen"), 0, 1000, this);
     dialog.setWindowModality(Qt::WindowModal);
@@ -86,6 +89,7 @@ bool MainWindow::measureReframe(const QVector<Clip>& clips, const ProjectFormat&
         QMessageBox::warning(this, T("Auto-Reframe"),
                              T("Nicht alle Clips ließen sich analysieren, sie bleiben mittig:\n%1").arg(errors->join('\n')));
     *paths = *result;
+    if (contents) *contents = *bars;
     return true;
 }
 
@@ -101,13 +105,14 @@ void MainWindow::autoReframe()
         if (const Clip* c = TimelineOps::findClip(m_project->timeline(), id)) clips << *c;
     const int sequence = m_project->currentSequence();
     QHash<int, QVector<Reframe::Key>> paths;
-    if (!measureReframe(clips, m_project->timelineFormat(), &paths)) return;
+    QHash<QString, QRectF> contents;
+    if (!measureReframe(clips, m_project->timelineFormat(), &paths, &contents)) return;
     // Another timeline opened or the clips changed meanwhile
     if (m_project->currentSequence() != sequence || footageChanged(m_project->timeline(), clips)) {
         statusBar()->showMessage(T("Auto-Reframe abgebrochen: die Timeline hat sich während der Analyse geändert"), 6000);
         return;
     }
-    const int n = m_editor->reframeClips(ids, Reframe::Mode::Auto, paths);
+    const int n = m_editor->reframeClips(ids, Reframe::Mode::Auto, paths, contents);
     statusBar()->showMessage(T("Auto-Reframe: %1 Clips folgen ihrem Motiv").arg(n), 5000);
 }
 
@@ -124,7 +129,8 @@ void MainWindow::reframedCopy(int sequenceId)
         for (const Clip& c : t.clips)
             if (!t.locked && Reframe::canReframe(c)) clips << c;
     QHash<int, QVector<Reframe::Key>> paths;
-    if (!clips.isEmpty() && !measureReframe(clips, format, &paths)) return;
+    QHash<QString, QRectF> contents;
+    if (!clips.isEmpty() && !measureReframe(clips, format, &paths, &contents)) return;
     q = m_project->sequence(sequenceId);
     if (!q || footageChanged(q->timeline, clips)) {
         statusBar()->showMessage(T("Auto-Reframe abgebrochen: die Timeline hat sich während der Analyse geändert"), 6000);
@@ -147,7 +153,33 @@ void MainWindow::reframedCopy(int sequenceId)
             for (int i = 0; i < source.video[t].clips.size() && i < now.video[t].clips.size(); ++i)
                 if (paths.contains(source.video[t].clips[i].id))
                     mapped.insert(now.video[t].clips[i].id, paths.value(source.video[t].clips[i].id));
-        m_editor->reframeClips({}, Reframe::Mode::Auto, mapped);
+        m_editor->reframeClips({}, Reframe::Mode::Auto, mapped, contents);
     }
     undo->endMacro();
+}
+
+void MainWindow::cropBlackBars()
+{
+    const QVector<int> ids = m_editor->reframeTargets(m_editor->clipIdsOf(m_selection->ids()));
+    if (ids.isEmpty()) {
+        statusBar()->showMessage(T("Schwarze Balken: keine Video-Clips ausgewählt"), 6000);
+        return;
+    }
+    // A dozen pictures per file, cached: short enough to wait for
+    QHash<QString, QRectF> contents;
+    QApplication::setOverrideCursor(Qt::WaitCursor);
+    for (int id : ids)
+        if (const Clip* c = TimelineOps::findClip(m_project->timeline(), id); c && !contents.contains(c->mediaPath))
+            contents.insert(c->mediaPath, BarDetect::content(c->mediaPath).value_or(QRectF(0, 0, 1, 1)));
+    QApplication::restoreOverrideCursor();
+    const int n = m_editor->cropBars(ids, contents);
+    statusBar()->showMessage(n ? T("Schwarze Balken weggeschnitten: %1 Clips").arg(n)
+                               : T("Keine schwarzen Balken gefunden"), 6000);
+}
+
+void MainWindow::setStretched43(bool on)
+{
+    const QVector<int> ids = m_editor->reframeTargets(m_editor->clipIdsOf(m_selection->ids()));
+    if (ids.isEmpty()) return;
+    m_editor->setPictureAspect(ids, on ? 4.0 / 3.0 : 0.0);
 }

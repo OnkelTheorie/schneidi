@@ -121,6 +121,7 @@ add_library(schneidi_lib STATIC
     src/core/Dynamics.h           src/core/Dynamics.cpp
     src/core/Equalizer.h          src/core/Equalizer.cpp
     src/core/RenderJob.h          src/core/RenderJob.cpp
+    src/core/ShortPick.h          src/core/ShortPick.cpp
     src/core/Subtitles.h          src/core/Subtitles.cpp
     src/core/Transcript.h         src/core/Transcript.cpp
     src/core/TranscriptCut.h      src/core/TranscriptCut.cpp
@@ -189,6 +190,7 @@ add_library(schneidi_lib STATIC
     src/engine/Tracker.h          src/engine/Tracker.cpp
     src/engine/TextRegions.h      src/engine/TextRegions.cpp
     src/engine/ReframeAnalysis.h  src/engine/ReframeAnalysis.cpp
+    src/engine/BarDetect.h        src/engine/BarDetect.cpp
     src/engine/Lumas.h            src/engine/Lumas.cpp
     src/engine/RenderQueue.h      src/engine/RenderQueue.cpp
     src/engine/Snapshot.h         src/engine/Snapshot.cpp
@@ -387,7 +389,7 @@ target_link_libraries(schneidi PRIVATE schneidi_lib schneidi_cli_lib) # live con
 # Command line + MCP server (no window): for scripts and AIs, see src/cli/main.cpp
 add_library(schneidi_cli_lib STATIC
     src/cli/Commands.h src/cli/Commands.cpp src/cli/CommandsDetail.h src/cli/CommandsProject.cpp
-    src/cli/CommandsWatch.cpp
+    src/cli/CommandsWatch.cpp src/cli/CommandsShort.cpp
     src/cli/EditOps.cpp src/cli/EditOpsTimelines.cpp src/cli/EditOpsLook.cpp
     src/cli/EditOpsAudio.cpp src/cli/EditOpsEdit.cpp src/cli/EditOpsMulticam.cpp
     src/cli/AnalysisDetail.h src/cli/Analysis.cpp src/cli/AnalysisAudio.cpp src/cli/AnalysisVideo.cpp src/cli/AnalysisPicture.cpp

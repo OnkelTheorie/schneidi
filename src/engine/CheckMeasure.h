@@ -35,4 +35,9 @@ std::optional<QVector<ExportCheck::Issue>> stutter(const ProjectFormat& f, const
                                                    const std::function<int(const QString& path)>& fileLength,
                                                    const Progress& progress = {});
 
+// Black bars baked into recordings (a 4:3 game in a 16:9 video, engine/BarDetect) that show in a timeline of another
+// shape or in a zoomed (reframed) clip, not cropped away: "black_bars" with the clip. A plain 16:9 edit of pillarboxed
+// footage keeps its bars as recorded (no finding). Measures a dozen pictures per file the first time (cached).
+QVector<ExportCheck::Issue> bars(const ProjectFormat& f, const Timeline& tl, int from, int to);
+
 } // namespace CheckMeasure

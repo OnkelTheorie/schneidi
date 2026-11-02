@@ -26,7 +26,7 @@ struct Issue {
     QString check;   // stable id: "offline", "black", "subtitle_end", "subtitle_short", "subtitle_fast", "no_sound",
                      // "clipping", "true_peak", "loudness", "silence_end", "silence_start", "silence", "black_file",
                      // "frozen", "no_video", "no_audio", "under_music", "safe_area", "subtitle_safe_area",
-                     // "slow_hook", "stutter", "missing_effect", "encoder_quality"
+                     // "slow_hook", "stutter", "missing_effect", "encoder_quality", "black_bars", "too_long"
     QString message; // for people, in the UI language
     int from = -1;   // frames (exclusive end), -1 = whole video
     int to = -1;
@@ -53,11 +53,17 @@ struct Options {
     // start. Motion = mean difference of frames 0.1 s apart (gray, 96 px, black bars left out) in % of full scale:
     // a still 0, a calm or frozen game moment 1.1-1.3, a static scope view with a slow zoom 1.5, gameplay 2-10
     double hookS = 1.0, hookMinMotion = 1.8, hookMaxS = 180;
+    // The platform the video is for (RenderPresets: ShortPlatform): longer than maxLengthS = warning "too_long"
+    // (0 = no limit); `platform` = its name for the message
+    double maxLengthS = 0;
+    QString platform;
 };
 
-// Picture, media and subtitles of the range [from, to) without decoding: offline media, effects this version does
+// Picture, media and subtitles of the range [from, to) without decoding: too long for the platform, offline media, effects this version does
 // not have (skipped), frames without any picture (black), subtitles that are too short, too fast to read or run past the end
 QVector<Issue> timeline(const Timeline& tl, int from, int to, const ProjectFormat& f, const Options& o = {});
+// Only the length: [from, to) longer than Options::maxLengthS ("too_long"); part of timeline(), for rendered files alone
+QVector<Issue> length(int from, int to, const ProjectFormat& f, const Options& o = {});
 
 // Sound of a video: per-frame peaks (linear, 0..1+) starting at frame `offset`, integrated loudness and true peak
 // (LoudnessMeter::kSilence or lower = no sound). limiter = the master limiter is on (no advice to switch it on).

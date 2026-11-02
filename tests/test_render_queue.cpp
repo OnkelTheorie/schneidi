@@ -971,12 +971,12 @@ int main(int argc, char** argv)
             if (const QByteArray dump = qgetenv("CHECK_DUMP"); !dump.isEmpty())
                 panel.grab().save(QString::fromLocal8Bit(dump).replace(".png", "-fix.png"));
             if (CHECK(fix && !fix->isHidden())) {
-                CHECK(fix->text().contains(T("Limiter an (%1 dBTP)").arg(QString("-1,0").replace(',', I18n::decimalPoint()))));
+                CHECK(fix->text().contains(T("Limiter an (%1 dBTP)").arg(QString("-1,2").replace(',', I18n::decimalPoint()))));
                 const int steps = q.undoStack()->count();
                 fix->click();
                 QApplication::processEvents(); // the check runs again
                 const Timeline& tl = q.timeline();
-                CHECK(tl.masterLimiter && tl.masterLimiterDb == -1);
+                CHECK(tl.masterLimiter && tl.masterLimiterDb == -1.2);
                 CHECK(tl.masterVolumeDb > 2 && tl.masterVolumeDb < 12);
                 CHECK_EQ(q.undoStack()->count(), steps + 1);
                 CHECK(!loudnessListed());

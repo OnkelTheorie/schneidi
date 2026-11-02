@@ -91,7 +91,7 @@ public:
     // Open (no undo, like DaVinci); emits currentSequenceChanged + timelineChanged
     void setCurrentSequence(int id);
     // New empty timeline (default tracks) in the bin, gets opened; empty name = "Timeline N"; size = its own
-    // resolution (empty = the project's). One undo step.
+    // resolution (empty = the project's); the master limiter as in the open timeline. One undo step.
     int addTimeline(const QString& name = {}, int bin = 0, QSize size = {});
     void renameSequence(int id, const QString& name);
     // Copy (new clip ids), name "... copy"; returns the new id
