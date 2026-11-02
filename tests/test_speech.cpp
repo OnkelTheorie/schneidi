@@ -8,6 +8,7 @@
 
 #include "cli/Commands.h"
 #include "cli/CommandsDetail.h"
+#include "app/SpeechDialog.h"
 #include "core/I18n.h"
 #include "core/Project.h"
 #include "core/ProjectFile.h"
@@ -16,6 +17,11 @@
 #include "engine/Tts.h"
 
 #include <QApplication>
+#include <QCheckBox>
+#include <QComboBox>
+#include <QDialogButtonBox>
+#include <QPlainTextEdit>
+#include <QPushButton>
 #include <QDir>
 #include <QEventLoop>
 #include <QFile>
@@ -24,6 +30,7 @@
 #include <QJsonDocument>
 #include <QTemporaryDir>
 #include <QTextStream>
+#include <QTimer>
 
 #include <clocale>
 #include <cmath>
@@ -440,6 +447,42 @@ void testCliOp(const QString& dir, const QString& voice)
     }
 }
 
+// The dialog: an installed voice is offered, "Einfügen" with word captions makes the file and its words
+void testDialog(const QString& dir)
+{
+    const Extensions::Item* ramona = Extensions::find("piper-voice-de_DE-ramona");
+    if (!CHECK(ramona)) return;
+    const QString voices = QDir(Extensions::rootDir()).filePath("piper/voices");
+    QDir().mkpath(voices);
+    QFile(QDir(voices).filePath(ramona->fileName)).open(QIODevice::WriteOnly);
+    QFile(QDir(voices).filePath(ramona->fileName + ".json")).open(QIODevice::WriteOnly);
+    SpeechDialog dlg(dir + "/Dialog-tts");
+    auto* text = dlg.findChild<QPlainTextEdit*>();
+    auto* voice = dlg.findChild<QComboBox*>();
+    auto* captions = dlg.findChild<QCheckBox*>();
+    if (!CHECK(text && voice && captions)) return;
+    CHECK_EQ(voice->currentData().toString(), ramona->id);
+    text->setPlainText("Hallo aus dem Dialog.\nZweite Zeile");
+    captions->setChecked(true);
+    dlg.show();
+    QApplication::processEvents();
+    if (const QString shot = qEnvironmentVariable("SCHNEIDI_TEST_SHOT"); !shot.isEmpty()) dlg.grab().save(shot);
+    QPushButton* insert = nullptr;
+    for (QPushButton* b : dlg.findChildren<QPushButton*>())
+        if (b->text() == T("Einfügen")) insert = b;
+    if (!CHECK(insert && insert->isEnabled())) return;
+    QEventLoop loop;
+    QObject::connect(&dlg, &QDialog::accepted, &loop, &QEventLoop::quit);
+    QTimer::singleShot(10000, &loop, &QEventLoop::quit);
+    insert->click();
+    if (dlg.isVisible()) loop.exec();
+    CHECK(dlg.QDialog::result() == QDialog::Accepted);
+    CHECK(dlg.captions());
+    CHECK_EQ(dlg.result().words.size(), 6);
+    CHECK_EQ(dlg.result().words.value(3).text, QString("Dialog."));
+    CHECK(Extensions::remove(*ramona));
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -473,6 +516,7 @@ int main(int argc, char** argv)
     testConcurrent(tmp.path(), voice);
     testCliOp(tmp.path(), voice);
     testVoiceVersion(tmp.path(), voice);
+    testDialog(tmp.path());
     qunsetenv("SCHNEIDI_FAKE_PIPER");
     qunsetenv("SCHNEIDI_PIPER");
     QDir(Extensions::rootDir()).removeRecursively();
