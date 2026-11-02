@@ -43,11 +43,10 @@ constexpr int kHardwareWindow = 12;
 constexpr int kSoftwareWindow = 16;
 // Going backwards without setBehind (a reversed clip played or exported forwards): after this many seeks in a row
 // that each land a little (up to kStepBack frames) before the decoded pictures, the reader keeps a window behind as
-// if playing backwards, of at most kBackwardBytes (as the renderer's for playing backwards). Else every few pictures
-// back decode from the key frame again: a long GOP quadratically.
+// if playing backwards, of at most Options::backwardBytes (as the renderer's for playing backwards). Else every few
+// pictures back decode from the key frame again: a long GOP quadratically.
 constexpr int kBackSteps = 2;
 constexpr int kStepBack = 64;
-constexpr double kBackwardBytes = 384.0 * 1024 * 1024;
 
 // SCHNEIDI_DECODER_IDLE_MS shortens it (tests)
 int64_t idleMs()
@@ -692,7 +691,9 @@ struct Reader::Impl {
     {
         constexpr int kWindowFrom = 16;
         const bool back = validFrom == kNothing || position < validFrom;
-        if (behind() <= kWindowFrom || !back) return position;
+        // setBehind: only large ones (the few kept for workers out of order are no window); the automatic one always
+        const bool window = opt.behind > kWindowFrom || autoBehind >= kAutoWindowMin;
+        if (!window || !back) return position;
         return std::max<int64_t>(0, position - (behind() - 2));
     }
     int64_t windowEnd = -1; // the request a backward window was started for (seekStart)
@@ -719,11 +720,13 @@ struct Reader::Impl {
         backTarget = want;
         if (backSteps >= kBackSteps && autoBehind == 0) {
             const int bytes = av_image_get_buffer_size(info.format, std::max(1, info.width), std::max(1, info.height), 1);
-            autoBehind = std::clamp(int(kBackwardBytes / std::max(1, bytes)), kKeepWindowMin, 250);
+            // Within the budget: huge pictures (4K 4:4:4, 16 bit: ~50 MB each) get fewer, at least a window of two
+            const int64_t fit = opt.backwardBytes / std::max(1, bytes);
+            autoBehind = int(std::clamp<int64_t>(fit, kAutoWindowMin, 250));
             ++stats.backwardWindows;
         }
     }
-    static constexpr int kKeepWindowMin = 17; // more than seekStart's kWindowFrom: a window is decoded
+    static constexpr int kAutoWindowMin = 3; // seekStart keeps behind - 1 pictures: the request and one before it
 
     bool wantAhead() const
     {

@@ -100,6 +100,19 @@ void testSeekWindow(const QString& file)
         for (int k = 121; k <= 130; ++k) forward->picture(k);
         CHECK_EQ(forward->stats().backwardWindows, 0);
     }
+    // The window behind stays within its byte budget: room for 6 pictures (a 4K 4:4:4 picture in 384 MB) -> a window
+    // of 5, so 30 steps back seek about every 5 (it was at least 17 pictures, whatever their size)
+    Video::Reader::Options budget = software(0);
+    budget.backwardBytes = 6 * kPicture;
+    if (auto tight = Video::Reader::open(file, budget); CHECK(tight != nullptr)) {
+        tight->picture(120);
+        int wrong = 0;
+        for (int k = 119; k >= 90; --k) wrong += tight->picture(k)->position != k;
+        CHECK_EQ(wrong, 0);
+        CHECK_EQ(tight->stats().backwardWindows, 1);
+        std::printf("       window behind of 6 pictures: 30 steps back, %d seeks\n", tight->stats().seeks);
+        CHECK(tight->stats().seeks >= 6 && tight->stats().seeks <= 10);
+    }
     Video::Reader::Options stills = software(0);
     stills.autoBackward = false;
     if (auto thumbs = Video::Reader::open(file, stills); CHECK(thumbs != nullptr)) {
