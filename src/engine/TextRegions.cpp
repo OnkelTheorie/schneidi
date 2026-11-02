@@ -195,7 +195,7 @@ QVector<QRectF> detect(const QImage& picture)
                     hi = std::max(hi, v);
                 }
             const double density = edges / area;
-            if (density < 0.05 || density > 0.6 || hi - lo < kMinContrast) continue;
+            if (density < 0.05 || density > 0.85 || hi - lo < kMinContrast) continue;
             out << QRectF(double(s.x0) / W, double(s.y0) / H, double(w) / W, double(h) / H);
         }
     }

@@ -109,14 +109,15 @@ QImage gamePicture(int W, int H, int t, Truth* truth)
     return img;
 }
 
+// Share of the box covered by the found ones (words of a line come as separate boxes; they do not overlap)
 double coverage(const QRectF& truth, const QVector<QRectF>& found)
 {
-    double best = 0;
+    double sum = 0;
     for (const QRectF& r : found) {
         const QRectF i = truth.intersected(r);
-        best = std::max(best, i.width() * i.height() / (truth.width() * truth.height()));
+        sum += i.width() * i.height();
     }
-    return best;
+    return std::min(1.0, sum / (truth.width() * truth.height()));
 }
 
 void testDetection()
@@ -172,6 +173,7 @@ void testDetection()
             return std::any_of(rects.begin(), rects.end(), [&](const QRectF& m) { return m.contains(r); });
         };
         tagCovered += covered(truth.tag);
+        if (!covered(truth.tag)) std::printf("  tag not covered at %d\n", t);
         feedCovered += covered(truth.names[0]) && covered(truth.names[1]);
         ammoCovered += covered(truth.ammo);
         crossCovered += std::any_of(rects.begin(), rects.end(), [](const QRectF& m) { return m.contains(QPointF(0.5, 0.5)); });
