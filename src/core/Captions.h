@@ -42,6 +42,12 @@ QVector<int> lineStarts(const QVector<double>& widths, double spaceWidth, double
 // The cue limited to [start, end) of the timeline: words that start outside are dropped with their text (only when
 // the cue has its own word times; otherwise just the times change). Word times follow the new start.
 void crop(SubtitleCue& cue, int start, int end);
+// true when `after` (a crop/remap of `before`) lost every word of a word caption: its text is empty now
+bool lostAllWords(const SubtitleCue& before, const SubtitleCue& after);
+// The deltas a cue edge may move without dropping every word of a word caption (start edge: up to the last word's
+// start; end edge: down to just after the first word's start); plain cues: no limit (INT_MIN/INT_MAX)
+int maxStartDelta(const SubtitleCue& cue);
+int minEndDelta(const SubtitleCue& cue);
 // Every word time mapped through `pos` (timeline frame -> new timeline frame, e.g. a ripple), cue start/end set to
 // newStart/newEnd; words that shrink to nothing are dropped with their text
 void remap(SubtitleCue& cue, const std::function<int(int)>& pos, int newStart, int newEnd);

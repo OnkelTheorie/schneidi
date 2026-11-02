@@ -258,16 +258,18 @@ void place(SubtitleTrack& track, const SubtitleCue& cue)
             out << o;
             continue;
         }
+        // A part whose words were all covered goes (word captions: an empty cue would stay as an invisible block)
+        bool leftKept = false;
         if (o.start < cue.start) { // partly covered on the left
             SubtitleCue left = o;
             Captions::crop(left, o.start, cue.start);
-            out << left;
+            if (!Captions::lostAllWords(o, left)) out << left, leftKept = true;
         }
         if (o.end > cue.end) { // partly covered on the right
             SubtitleCue right = o;
             Captions::crop(right, cue.end, o.end);
-            if (o.start < cue.start) right.id = 0; // split: right part needs a new id (the editor assigns it)
-            out << right;
+            if (leftKept) right.id = 0; // split: right part needs a new id (the editor assigns it)
+            if (!Captions::lostAllWords(o, right)) out << right;
         }
     }
     out << cue;
@@ -349,9 +351,19 @@ int splitAt(SubtitleTrack& track, int frame, const std::function<int()>& newId)
         if (c.start >= frame || c.end <= frame) continue;
         // Word captions: the words go to the part they are spoken in (plain cues keep the text on both sides)
         SubtitleCue right = c;
-        right.id = newId();
         Captions::crop(right, frame, c.end);
-        Captions::crop(c, c.start, frame);
+        SubtitleCue left = c;
+        Captions::crop(left, c.start, frame);
+        // A side without any of the words (a cut in a pause after or before them) is left out instead of staying
+        // as an empty, invisible cue: the cue just ends (or starts) at the cut
+        const bool rightEmpty = Captions::lostAllWords(c, right), leftEmpty = Captions::lostAllWords(c, left);
+        if (rightEmpty || leftEmpty) {
+            if (!leftEmpty) c = left;
+            else if (!rightEmpty) c = right; // keeps its id
+            return 0;
+        }
+        c = left;
+        right.id = newId();
         track.cues.insert(i + 1, right);
         return right.id;
     }
