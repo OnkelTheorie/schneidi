@@ -481,7 +481,8 @@ void testPictureFrame()
 // Changing a clip's speed keeps the picture at its start (it could show the frame before: a flash at the cut)
 void testSpeedChangeKeepsFirstPicture()
 {
-    for (double speed : {0.5, 0.3, 0.7, 0.25, 2.0}) {
+    for (double speed : {0.5, 0.3, 0.7, 0.25, 0.95, 2.0, 3.0}) {
+      for (bool reverse : {false, true}) {
         Project p;
         Selection sel;
         Editor ed(&p, &sel);
@@ -489,17 +490,24 @@ void testSpeedChangeKeepsFirstPicture()
         ed.addMediaAt({"/x/a.mp4"}, 0);
         const int v = clipOn(p.timeline(), TrackKind::Video, 0, 0)->id;
         ed.trimClip(v, TimelineOps::Edge::Start, 37); // starts at file frame 37
+        ed.trimClip(v, TimelineOps::Edge::End, -20);  // ends at 279
         const Clip* before = clipOn(p.timeline(), TrackKind::Video, 0, 0);
         CHECK_EQ(before->in, 37);
+        CHECK_EQ(before->out, 279);
         Editor::Retime r;
         r.speed = speed;
+        r.reverse = reverse;
         ed.setClipSpeed({v}, r, true);
         const Clip* c = TimelineOps::findClip(p.timeline(), v);
         if (!CHECK(c)) continue;
-        // faster than 1: frame 37 may be skipped, then the next shown one (never the one before)
-        const int first = RetimeMap(*c, 300).pictureFrame(c->in);
-        if (speed <= 1) CHECK_EQ(first, 37);
-        else CHECK(first >= 37 && first < 37 + speed);
+        // faster than 1: a frame may be skipped, then the next shown one (never one outside the old range)
+        const RetimeMap map(*c, 300);
+        const int first = map.pictureFrame(c->in), last = map.pictureFrame(c->out);
+        const int from = reverse ? 279 : 37, to = reverse ? 37 : 279;
+        if (speed <= 1) CHECK_EQ(first, from);
+        CHECK(reverse ? first <= from && first > from - speed : first >= from && first < from + speed);
+        CHECK(reverse ? last >= to && last < to + speed : last <= to && last > to - speed);
+      }
     }
 }
 

@@ -43,6 +43,9 @@ struct Item {
     // First frame of the material (as Clip::in: with a speed change frames of the retimed material, like
     // FCP7 XML in/out); the file frame is in * speed (forward)
     int in = 0;
+    // The source frame `in` came from where a reader knew it (EDL: the source timecode in frames, -1 = none): turned
+    // into material frames once, after the start timecode is taken off (rounding twice drifted at speeds > 1)
+    int sourceIn = -1;
     double speed = 1.0; // > 0
     bool reverse = false;
     bool enabled = true;

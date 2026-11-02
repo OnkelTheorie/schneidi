@@ -326,7 +326,9 @@ void applyStartTimecodes(Sequence& seq, const std::function<QString(const QStrin
         startOf.insert(path, tc.isEmpty() ? -1 : std::max(-1, Timecode::parse(tc, fps)));
     }
     // The file frame the clip's first picture shows (RetimeMap::pictureFrame, forward)
-    const auto fileFrame = [](const Item& it) { return int(std::floor(it.in * it.speed + 1e-6)); };
+    const auto fileFrame = [](const Item& it) {
+        return it.sourceIn >= 0 ? it.sourceIn : int(std::floor(it.in * it.speed + 1e-6));
+    };
     if (seq.inIsTimecode && length) {
         // No timecode, every clip beyond the end of the file: the full hours of the source timecodes are taken off
         QHash<QString, int> first;

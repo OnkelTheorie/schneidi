@@ -341,7 +341,7 @@ bool Stabilizer::analyze(const Request& r, QString* error, const std::atomic<boo
     for (int pos = from; pos <= to; ++pos) {
         if (cancel && cancel->load()) break;
         double file = pos;
-        if (warped != fileLength || reverse) file = map.pictureFrame(pos); // as Picture::Renderer shows it
+        if (speed != 1.0 || reverse) file = map.pictureFrame(pos); // as Picture::Renderer shows it
         const auto pic = reader->picture(int64_t(file / fps * srcFps + 0.5));
         if (!pic || !pic->frame) break;
         const AVFrame* f = pic->frame;

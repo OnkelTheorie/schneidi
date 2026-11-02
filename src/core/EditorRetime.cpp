@@ -61,10 +61,12 @@ void Editor::setClipSpeed(const QVector<int>& ids, const Retime& r, bool ripple)
                     const int oldLen = c.length();
                     int newLen = oldLen;
                     if (ripple && !r.freeze && !c.freeze) {
-                        // Source span of the clip (with a speed ramp not simply length * speed)
-                        const double span = c.hasRamp() ? oldMap.sourceAt(c.out + 1) - oldMap.sourceAt(c.in)
-                                                        : oldLen * c.speed;
-                        newLen = std::max(1, int(std::lround(span / r.speed)));
+                        // The same file time [t0, t1) (speed ramps included): up to the last frame starting before its
+                        // end (rounding the source span / speed could show a picture beyond the old out-point)
+                        const double s0 = oldMap.sourceAt(c.in), s1 = oldMap.sourceAt(c.out + 1);
+                        const double t0 = c.reverse ? L - s1 : s0, t1 = c.reverse ? L - s0 : s1;
+                        const int past = int(std::ceil(newMap.materialAt(r.reverse ? L - t0 : t1) - 1e-6));
+                        newLen = std::max(1, past - newIn);
                     }
                     if (!r.freeze) newLen = std::min(newLen, avail - newIn);
                     // Convert keyframes via the file frames

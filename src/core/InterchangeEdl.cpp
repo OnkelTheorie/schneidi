@@ -247,6 +247,7 @@ Sequence readEdl(const QByteArray& data, FrameRate rate)
             it.speed = e.speed;
             it.reverse = e.reverse;
             it.in = RetimeMap::materialForPicture(e.srcIn, e.speed); // the first frame showing srcIn
+            it.sourceIn = e.srcIn;
             it.link = targets.size() > 1 ? link : 0;
             const int added = int(td.items.size());
             td.items << it;

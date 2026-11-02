@@ -392,7 +392,7 @@ int Editor::placeSourceRange(const QString& path, int in, int out, int frame, in
     // Retimed: in and length in material frames (file frame / speed, see Clip::speed); a still has no speed
     if (m.isImage || speed <= 0) speed = 1.0;
     const int sIn = RetimeMap::materialForPicture(in, speed);
-    const int len = std::max(1, int(std::lround((out - in + 1) / speed)));
+    const int len = std::max(1, RetimeMap::materialForPicture(out + 1, speed) - sIn); // no picture past `out`
     m_project->edit(T("Clip überschreiben: %1").arg(m.name), [&](Timeline& tl) {
         placeSource(tl, m2, sIn, len, std::max(0, frame), track, track, speed);
     });

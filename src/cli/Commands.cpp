@@ -402,9 +402,10 @@ QJsonObject clipJson(const Project& p, const Clip& c, TrackRef ref)
         // (file frame / speed), which read like a different place in the file (CS2 report 28.10.: 660 for 396)
         if (const MediaInfo* m = p.mediaInfo(c.mediaPath); m && c.isRetimed() && !c.freeze) {
             const RetimeMap map(c, m->length);
-            // The part of the file it shows (reversed: the same range, played backwards)
+            // The part of the file it plays (reversed: the same range, played backwards); the start is the file
+            // frame its first picture shows (RetimeMap::pictureFrame), the end where its time ends
             const double a = map.sourceAt(c.in), b = map.sourceAt(c.out + 1);
-            o["src_in"] = int(std::lround(c.reverse ? m->length - b : a));
+            o["src_in"] = map.pictureFrame(c.reverse ? c.out : c.in);
             o["src_out"] = int(std::lround(c.reverse ? m->length - a : b));
         } else {
             o["src_in"] = c.in;

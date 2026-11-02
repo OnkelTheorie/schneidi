@@ -52,14 +52,20 @@ void checkFrames(double f)
     if (!(std::abs(f) <= kMaxFrames)) throw Error{T("Zeitangabe außerhalb des möglichen Bereichs")};
 }
 
-// Frames of a RationalTime in the sequence's rate
-int frames(const QJsonValue& rt, double rate)
+// Frames of a RationalTime in the sequence's rate, unrounded (a slow-motion clip's source start lies between frames)
+double exactFrames(const QJsonValue& rt, double rate)
 {
     const QJsonObject o = rt.toObject();
     const double r = o["rate"].toDouble(rate);
-    const double f = std::round(o["value"].toDouble() * (r > 0 ? rate / r : 1.0));
+    const double f = o["value"].toDouble() * (r > 0 ? rate / r : 1.0);
     checkFrames(f);
-    return int(f);
+    return f;
+}
+
+// Frames of a RationalTime in the sequence's rate
+int frames(const QJsonValue& rt, double rate)
+{
+    return int(std::round(exactFrames(rt, rate)));
 }
 
 } // namespace
@@ -266,8 +272,9 @@ Sequence readOtio(const QByteArray& data)
                     effects = true;
                 }
             }
-            const int fileStart = std::max(0, frames(range["start_time"], rate) - it.mediaStart);
-            it.in = RetimeMap::materialForPicture(fileStart, it.speed);
+            const double fileStart = std::max(0.0, exactFrames(range["start_time"], rate) - it.mediaStart);
+            // a thousandth of a frame of slack: rate conversions leave tiny excesses that must not round up
+            it.in = RetimeMap::materialForPicture(std::max(0.0, fileStart - 1e-3), it.speed);
             const QJsonObject meta = cv["metadata"]["schneidi"].toObject();
             it.volumeDb = meta["volume_db"].toDouble(0);
             it.opacity = meta["opacity"].toDouble(100);
