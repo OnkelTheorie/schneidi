@@ -1,17 +1,24 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Which sound `transcribe` hears: the voice stream/track of a game recording by default (no song lyrics from the
-// music stream in the captions), chosen streams by number or name (several mixed), the language check.
+// music stream in the captions), chosen streams by number or name (several mixed), the language check (CLI and the
+// app's dialog "Untertitel aus Audio erzeugen": a hint after the run).
 // whisper itself is not needed: this program copies itself as "whisper-cli" onto the PATH and then answers like
 // whisper with the pitch of the sound it got ("f1000" = a 1 kHz tone), so the test sees which stream reached it.
+#include "app/TranscribeDialog.h"
 #include "cli/Commands.h"
 #include "cli/CommandsDetail.h"
 #include "core/Transcript.h"
+#include "engine/Extensions.h"
 
 #include "check.h"
 
 #include <QDir>
 #include <QFile>
-#include <QGuiApplication>
+#include <QApplication>
+#include <QEventLoop>
+#include <QPushButton>
+#include <QSettings>
+#include <QTimer>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QProcess>
@@ -104,7 +111,7 @@ int main(int argc, char** argv)
 {
     if (QFileInfo(QString::fromLocal8Bit(argv[0])).baseName() == QLatin1String("whisper-cli")) return fakeWhisper(argc, argv);
     Check::initEnv();
-    QGuiApplication app(argc, argv);
+    QApplication app(argc, argv);
     Check::initApp("transcribe_pick");
 
     // --- Names that say "voice"
@@ -281,6 +288,46 @@ int main(int argc, char** argv)
         CHECK(lines >= 2);
         CHECK(staged);
         CHECK_EQ(last, 100);
+    }
+    {
+        // The app's dialog: a chosen language whisper is sure it does not hear (the fake: "en" at 93 %) gives a hint
+        // after the run, the subtitles are made anyway; the right language or "auto": no hint
+        const Extensions::Item* tiny = Extensions::find("whisper-model-tiny");
+        const QString installed = QDir(Extensions::rootDir()).filePath("whisper/models/" + tiny->fileName);
+        QDir().mkpath(QFileInfo(installed).absolutePath());
+        CHECK(QFile::copy(model, installed));
+        Timeline tl;
+        tl.audio.resize(1);
+        Clip c;
+        c.id = 1;
+        c.mediaPath = rec;
+        c.audioStream = 2; // the microphone
+        c.out = 49;
+        tl.audio[0].clips << c;
+        const ProjectFormat format{640, 360, {25, 1}};
+        const auto hintFor = [&](const char* language, int* cues) {
+            QSettings().setValue("transcribe/language", language);
+            TranscribeDialog dlg(tl, format, 0, 50, {"A1"});
+            QPushButton* start = nullptr;
+            for (QPushButton* b : dlg.findChildren<QPushButton*>())
+                if (b->text() == T("Erzeugen")) start = b;
+            if (!CHECK(start && start->isEnabled())) return QString("no start");
+            QEventLoop loop;
+            QObject::connect(&dlg, &QDialog::finished, &loop, &QEventLoop::quit);
+            QTimer::singleShot(60000, &loop, &QEventLoop::quit);
+            start->click();
+            loop.exec();
+            CHECK_EQ(dlg.result(), int(QDialog::Accepted));
+            *cues = dlg.results().isEmpty() ? 0 : int(dlg.results()[0].cues.size());
+            return dlg.languageHint();
+        };
+        int cues = 0;
+        const QString hint = hintFor("fr", &cues);
+        CHECK(hint.contains(T("Englisch")) && hint.contains(T("Französisch")) && hint.contains("93"));
+        CHECK_EQ(cues, 1);
+        CHECK(hintFor("en", &cues).isEmpty());
+        CHECK(hintFor("auto", &cues).isEmpty());
+        CHECK_EQ(cues, 1);
     }
     return Check::result();
 }

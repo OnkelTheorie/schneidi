@@ -964,6 +964,7 @@ void MainWindow::transcribeDialog()
     for (int i = 0; i < results.size(); ++i) // one track per speaker: all visible, one above the other
         m_editor->importSubtitles(results[i].cues, results[i].name, results.size() > 1 ? i : -1);
     undo->endMacro();
+    if (!dlg.languageHint().isEmpty()) QMessageBox::information(this, T("Untertitel aus Audio erzeugen"), dlg.languageHint());
 }
 
 // Text -> voice clip (Piper) at the playhead on the first audio track free there; its words become the file's

@@ -45,6 +45,15 @@ public:
     // checkLanguage: what whisper detects ("en") and how sure it is (0..1); empty = not checked or not readable
     QString detectedLanguage() const { return m_detected; }
     double detectedProbability() const { return m_detectedP; }
+    // checkLanguage: another language than the chosen one that whisper is sure of (kSureLanguage); empty = none. Only
+    // a clear one is worth a word: German gamer talk with English bits was "en" at 55 % (detection hears only the
+    // first 30 s), a really wrong choice 100 %
+    static constexpr double kSureLanguage = 0.8;
+    QString otherLanguage() const
+    {
+        return !m_detected.isEmpty() && m_detected != m_request.language && m_detectedP >= kSureLanguage ? m_detected
+                                                                                                        : QString();
+    }
     static int defaultThreads();
 
 signals:

@@ -28,6 +28,8 @@ public:
     };
     QVector<Result> results() const { return m_results; }
     QString language() const { return m_language; } // detected or chosen
+    // After the run: whisper is sure the sound is in another language than the chosen one (a hint to show; empty = none)
+    QString languageHint() const { return m_languageHint; }
 
     void reject() override;
 
@@ -65,4 +67,5 @@ private:
     Transcriber m_transcriber;
     QVector<Result> m_results;
     QString m_language;
+    QString m_languageHint;
 };

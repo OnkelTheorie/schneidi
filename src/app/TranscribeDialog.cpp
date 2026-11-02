@@ -17,6 +17,8 @@
 #include <QSpinBox>
 #include <QVBoxLayout>
 
+#include <cmath>
+
 TranscribeDialog::TranscribeDialog(const Timeline& timeline, const ProjectFormat& format, int from, int to,
                                    const QStringList& trackLabels, QWidget* parent)
     : QDialog(parent), m_timeline(timeline), m_format(format), m_from(from), m_to(to)
@@ -121,6 +123,17 @@ TranscribeDialog::TranscribeDialog(const Timeline& timeline, const ProjectFormat
             return;
         }
         m_language = m_transcriber.result().language;
+        if (const QString heard = m_transcriber.otherLanguage(); !heard.isEmpty() && m_languageHint.isEmpty()) {
+            const auto name = [this](const QString& code) {
+                const int i = m_lang->findData(code);
+                return i > 0 ? m_lang->itemText(i) : code;
+            };
+            m_languageHint = T("Whisper hört eher %1 (zu %2 %) als die gewählte Sprache %3. Falls das stimmt, die "
+                               "Untertitel mit „Automatisch erkennen“ neu erzeugen.")
+                                 .arg(name(heard))
+                                 .arg(int(std::lround(m_transcriber.detectedProbability() * 100)))
+                                 .arg(name(m_language));
+        }
         QVector<SubtitleCue> cues =
             Transcript::toCues(m_transcriber.result().words, m_format.rate.fps(), m_chars->value(), 700, m_from);
         Transcript::startAtSound(cues, m_transcriber.result().levels, m_format.rate.fps(), m_from);
@@ -181,6 +194,7 @@ void TranscribeDialog::run()
     // One job for the mix (all ticked tracks, or the timeline as heard), or one per ticked track
     m_jobs.clear();
     m_results.clear();
+    m_languageHint.clear();
     m_job = 0;
     // Always one whisper run per ticked track: in a mix whisper mixes up the speakers (measured: "oder" of one put
     // 3 s early onto the other's "Ja, ja"); without "one track each" the results are merged afterwards
@@ -199,6 +213,8 @@ void TranscribeDialog::startJob()
     req.to = m_to;
     req.audioTracks = m_jobs[m_job].tracks;
     req.language = m_lang->currentData().toString();
+    // A chosen language is checked against whisper's own detection (a wrong one gives made-up words): told afterwards
+    req.checkLanguage = req.language != QLatin1String("auto");
     req.model = Extensions::whisperModelPath(m_model->currentData().toString());
     QString error;
     if (!m_transcriber.start(req, &error)) {
