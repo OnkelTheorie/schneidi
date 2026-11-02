@@ -292,6 +292,7 @@ void opBlurNames(Session& s, const QJsonObject& op)
         if (!r.error.isEmpty()) fail("BAD_ARGUMENT", QString("clip %1: %2").arg(id).arg(r.error));
         NameBlur::Options o;
         o.maxMasks = GradeWindows::kMax - GradeWindows::list(c).size();
+        o.samplesPerSecond = s.format().rate.fps() / TextRegions::sampleStep(s.format().rate);
         int dropped = 0;
         const QVector<NameBlur::Mask> m = NameBlur::plan(r.samples, tpl, c.length(), o, &dropped);
         masks[id] = m;

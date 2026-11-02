@@ -801,7 +801,7 @@ QVector<OpDef> makeOps()
          "chromakey (Green Screen): color = the background's color, distance = tolerance 0..1 (how far from it still "
          "becomes transparent; gray is at ~0.6, skin ~0.75), softness = soft edge, spill = removes the key color's "
          "fringe near the edge (1 = fully). No effect blurs faces by itself: a `window` with fill 'blur', "
-         "`track_window` makes it follow the face. "
+         "`track_window` makes it follow the face; player names in game clips: `blur_names`. "
          "Video effects go on video clips, audio effects (kind 'audio' in `effects`, e.g. denoise) on audio clips. "
          "An effect `info` marks \"available\": false (a plugin of an older project) can still be switched with "
          "enabled, moved or removed on the clips that have it, but not added or set. "

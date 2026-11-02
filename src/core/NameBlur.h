@@ -52,7 +52,12 @@ struct Mask {
 struct Options {
     int maxMasks = 8;       // windows available on the clip
     double padding = 0.4;   // added around a text box on every side, in box heights
-    int minTrack = 4;       // moving text must be seen on at least this many samples
+    double samplesPerSecond = 30; // of the samples given to plan()
+    // HUD text stands still on the screen while the world behind it moves: text in a static zone counts when it is
+    // at the same place on most samples of the half second around it (the floor behind the chat does not)
+    double steadyShare = 0.6;
+    // Moving text (name tags) must be followed this long, found on most samples of its time and keep its size
+    double minTrackSeconds = 0.5;
 };
 
 // Masks for a clip of `length` frames from its samples (sorted by frame). dropped = moving tracks left out because

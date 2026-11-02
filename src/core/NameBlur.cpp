@@ -26,10 +26,12 @@ QRectF padded(const QRectF& r, double padding)
     return r.adjusted(-p * 1.5, -p, p * 1.5, p).intersected(QRectF(0, 0, 1, 1));
 }
 
-bool near(const QRectF& a, const QRectF& b)
+// The same text line in another sample: about the same place and size
+bool same(const QRectF& a, const QRectF& b)
 {
-    const double m = std::max(a.height(), b.height()) * 0.5;
-    return a.adjusted(-m, -m, m, m).intersects(b);
+    const double h = std::max(a.height(), b.height());
+    return std::abs(a.center().y() - b.center().y()) < 0.5 * h && std::abs(a.height() - b.height()) < 0.35 * h
+           && std::abs(a.center().x() - b.center().x()) < std::max(h, 0.25 * std::max(a.width(), b.width()));
 }
 
 // Off key at the place of an on rectangle (zero size at its center: nothing grows out of a corner)
@@ -182,15 +184,22 @@ QVector<Mask> plan(const QVector<Sample>& samples, Template t, int length, const
         const Zone& zone = l.include[z];
         const auto& per = inZone[z];
         if (!zone.moving) {
-            // Kept when it is there on a neighbouring sample too (a flicker of the 3D picture is not a kill feed)
+            // Kept when it stands at the same place on most samples around it (HUD text; the 3D picture behind moves)
+            const int half = std::max(1, int(std::lround(o.samplesPerSecond / 2)));
             QVector<QRectF> rects(n);
             for (int i = 0; i < n; ++i)
                 for (const QRectF& b : per[i]) {
-                    bool seen = false;
-                    for (int j = std::max(0, i - 2); j <= std::min(n - 1, i + 2) && !seen; ++j)
-                        if (j != i)
-                            seen = std::any_of(per[j].begin(), per[j].end(), [&](const QRectF& o2) { return near(b, o2); });
-                    if (seen) rects[i] |= padded(b, o.padding);
+                    // the half second before or the one after (text that just appeared or is about to go)
+                    const auto steady = [&](int from, int to) {
+                        int seen = 0, total = 0;
+                        for (int j = std::max(0, from); j <= std::min(n - 1, to); ++j) {
+                            if (j == i) continue;
+                            ++total;
+                            seen += std::any_of(per[j].begin(), per[j].end(), [&](const QRectF& o2) { return same(b, o2); });
+                        }
+                        return total > 0 && seen >= o.steadyShare * total;
+                    };
+                    if (steady(i - half, i) || steady(i, i + half)) rects[i] |= padded(b, o.padding);
                 }
             // One sample earlier and later as well: text appears between two samples
             QVector<QRectF> wide(n);
@@ -236,8 +245,16 @@ QVector<Mask> plan(const QVector<Sample>& samples, Template t, int length, const
                 }
             }
         }
-        for (const Track& tr : open)
-            if (tr.samples.size() >= o.minTrack) tracks << tr;
+        // Long enough, found on most samples of its time, without jumping in size (a texture flickers and changes)
+        const int minSamples = std::max(3, int(std::lround(o.minTrackSeconds * o.samplesPerSecond)));
+        for (const Track& tr : open) {
+            if (tr.samples.size() < minSamples || tr.samples.size() < 0.6 * (tr.last() - tr.first() + 1)) continue;
+            QVector<double> change;
+            for (int k = 1; k < tr.boxes.size(); ++k)
+                change << std::abs(tr.boxes[k].width() - tr.boxes[k - 1].width()) / std::max(1e-6, tr.boxes[k - 1].width());
+            std::nth_element(change.begin(), change.begin() + change.size() / 2, change.end());
+            if (change[change.size() / 2] <= 0.2) tracks << tr;
+        }
     }
 
     // Tracks share windows when they do not overlap in time (longest first: what stays longest matters most)

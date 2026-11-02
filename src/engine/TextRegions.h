@@ -22,7 +22,7 @@
 
 namespace TextRegions {
 
-constexpr int kSide = 1280; // longer side of the analysed picture (name tags are ~8 px high there)
+constexpr int kSide = 1920; // longer side of the analysed picture (name tags are ~8 px high there)
 
 // Text lines in a picture, 0..1 of its size
 QVector<QRectF> detect(const QImage& picture);

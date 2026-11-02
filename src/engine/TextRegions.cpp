@@ -25,7 +25,7 @@ namespace TextRegions {
 namespace {
 
 constexpr int kVersion = 1;        // bump when the detection changes (cached results become stale)
-constexpr int kStep = 40;          // brightness step of a letter's edge (0..255)
+constexpr int kStep = 30;          // brightness step of a letter's edge (0..255)
 constexpr int kMinContrast = 70;   // darkest to brightest inside a text line
 constexpr double kMaxHeight = 0.06; // of the picture height: larger is not HUD text
 constexpr int kMinHeight = 5;      // pixels of the analysed picture
