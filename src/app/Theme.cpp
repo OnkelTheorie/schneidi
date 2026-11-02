@@ -57,6 +57,7 @@ const QList<Role>& signalRoles()
         {"cacheReady", &cacheReady, N_("Render-Cache fertig")},
         {"cacheMissing", &cacheMissing, N_("Render-Cache fehlt")},
         {"multicamActive", &multicamActive, N_("Multicam: aktiver Winkel")},
+        {"recording", &recording, N_("Voiceover-Aufnahme")},
     };
     return roles;
 }

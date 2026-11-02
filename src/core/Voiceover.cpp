@@ -18,7 +18,6 @@ Settings Settings::load()
     out.input = s.value("audio/input").toString();
     out.offsetMs = std::clamp(s.value("voiceover/offsetMs", 0).toInt(), -2000, 2000);
     out.prerollSeconds = std::clamp(s.value("voiceover/preroll", 0).toInt(), 0, 10);
-    out.muteTrack = s.value("voiceover/muteTrack", false).toBool();
     return out;
 }
 
@@ -28,7 +27,6 @@ void Settings::save() const
     s.setValue("audio/input", input);
     s.setValue("voiceover/offsetMs", offsetMs);
     s.setValue("voiceover/preroll", prerollSeconds);
-    s.setValue("voiceover/muteTrack", muteTrack);
 }
 
 QString folder(const QString& projectPath)

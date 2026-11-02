@@ -222,6 +222,7 @@ add_library(schneidi_lib STATIC
     src/app/MainWindowMulticam.cpp src/app/MainWindowExchange.cpp
     src/app/MainWindowAudio.cpp
     src/app/MainWindowWatch.cpp
+    src/app/MainWindowVoiceover.cpp
     src/app/KeyBindingsDialog.h   src/app/KeyBindingsDialog.cpp
     src/app/ProjectSettingsDialog.h src/app/ProjectSettingsDialog.cpp
     src/app/ClipSpeedDialog.h src/app/ClipSpeedDialog.cpp
@@ -240,6 +241,7 @@ add_library(schneidi_lib STATIC
     src/app/TimelineExportDialog.h src/app/TimelineExportDialog.cpp
     src/app/ContactSheetDialog.h src/app/ContactSheetDialog.cpp
     src/app/FolderWatch.h src/app/FolderWatch.cpp
+    src/app/VoiceoverRecorder.h src/app/VoiceoverRecorder.cpp
     src/app/WatchFoldersDialog.h src/app/WatchFoldersDialog.cpp
     src/app/Log.h                 src/app/Log.cpp
     src/app/CrashReport.h         src/app/CrashReport.cpp

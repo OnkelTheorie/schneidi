@@ -23,7 +23,6 @@ struct Settings {
     QString input;          // Audio::Capture input id, "" = the system default input
     int offsetMs = 0;       // extra latency to take off (positive = the voice was recorded later than heard)
     int prerollSeconds = 0; // timeline plays from that much before the playhead first (0 = off)
-    bool muteTrack = false; // the armed track's own sound is muted while recording
     static Settings load();
     void save() const;
     bool operator==(const Settings&) const = default;

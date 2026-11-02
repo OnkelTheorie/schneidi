@@ -463,7 +463,17 @@ void Viewer::updateModeText()
                    : m_multicamOn         ? T("Timeline – Multicam")
                                           : T("Timeline");
     if (m_engine->colorBypass()) text += T("  (Farbkorrektur umgangen)");
+    m_mode->setTextFormat(m_recording ? Qt::RichText : Qt::PlainText);
+    if (m_recording)
+        text = text.toHtmlEscaped()
+               + QString("&nbsp;&nbsp;<b style=\"color:%1\">● %2</b>").arg(Theme::recording.name(), T("Aufnahme"));
     m_mode->setText(text);
+}
+
+void Viewer::setRecording(bool on)
+{
+    m_recording = on;
+    updateModeText();
 }
 
 QMimeData* Viewer::dragData() const

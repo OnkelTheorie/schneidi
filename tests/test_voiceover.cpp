@@ -222,7 +222,7 @@ int main(int argc, char** argv)
         CHECK_EQ(QFileInfo(Voiceover::uniquePath(dir, when)).fileName(), QString("voiceover-20261102-140509-3.wav"));
     }
 
-    // ---- Settings round trip (defaults: system input, no offset, no pre-roll, track not muted)
+    // ---- Settings round trip (defaults: system input, no offset, no pre-roll)
     {
         QSettings().clear();
         CHECK(Voiceover::Settings::load() == Voiceover::Settings{});
@@ -230,7 +230,6 @@ int main(int argc, char** argv)
         s.input = "alsa_input.usb-Mic-00.mono-fallback";
         s.offsetMs = -12;
         s.prerollSeconds = 2;
-        s.muteTrack = true;
         s.save();
         CHECK(Voiceover::Settings::load() == s);
         QSettings().setValue("voiceover/preroll", 99); // out of range from a hand-edited file

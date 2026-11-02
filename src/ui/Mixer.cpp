@@ -4,6 +4,7 @@
 #include "app/DynamicsDialog.h"
 #include "app/EqDialog.h"
 #include "app/Theme.h"
+#include "app/VoiceoverRecorder.h"
 #include "core/Editor.h"
 #include "core/I18n.h"
 #include "core/Project.h"
@@ -382,6 +383,40 @@ protected:
 
 // A channel strip: name, pan, M/S, peak value, level+fader, value. On the master, pan/M/S stay empty (same height),
 // the limiter switch sits there instead of M/S.
+// Voice-over input level: a thin bar (green/yellow/red by dBFS) that falls back slowly, beside the record button
+class InputMeter : public QWidget {
+public:
+    InputMeter()
+    {
+        setFixedSize(70, 10);
+        setToolTip(T("Eingangspegel"));
+    }
+    void setLevel(float db)
+    {
+        m_db = std::max(db, m_db - 1.5f); // ~45 dB/s fall at 30 updates per second
+        update();
+    }
+    void reset()
+    {
+        m_db = -100.f;
+        update();
+    }
+
+protected:
+    void paintEvent(QPaintEvent*) override
+    {
+        QPainter p(this);
+        p.fillRect(rect(), Theme::well);
+        constexpr float floor = -60.f;
+        const float x = std::clamp((m_db - floor) / -floor, 0.f, 1.f) * width();
+        const QColor c = m_db > -3.f ? Theme::meterHigh : m_db > -12.f ? Theme::meterMid : Theme::meterLow;
+        p.fillRect(QRectF(0, 1, x, height() - 2), c);
+    }
+
+private:
+    float m_db = -100.f;
+};
+
 class ChannelStrip : public QWidget {
 public:
     explicit ChannelStrip(bool master)
@@ -426,6 +461,11 @@ public:
         mute = makeButton("M", Theme::warning, T("Stumm (Mute)"));
         solo = makeButton("S", Theme::meterMid, T("Solo: nur Spuren mit „S“ sind zu hören, die anderen werden "
                                                    "stumm (ausgegraut)"));
+        if (!master) {
+            // Voice-over: the armed track records (one at a time); three buttons share the strip's width
+            arm = makeButton("R", Theme::recording, T("Aufnahmebereit: Voiceover landet auf dieser Spur"));
+            for (QToolButton* b : {mute, solo, arm}) b->setFixedSize(19, 18);
+        }
         if (master) {
             limiter = new QToolButton;
             limiter->setText("LIM");
@@ -536,6 +576,7 @@ public:
     QToolButton* mute;
     QToolButton* solo;
     QToolButton* limiter = nullptr; // master only
+    QToolButton* arm = nullptr;     // tracks only: armed for voice-over recording
     QToolButton* eq = nullptr;      // tracks only
     QToolButton* dyn = nullptr;
     PeakLabel* peak;
@@ -714,9 +755,35 @@ Mixer::Mixer(Project* project, Engine* engine, QWidget* parent)
     auto* root = new QVBoxLayout(this);
     root->setContentsMargins(0, 0, 0, 0);
     root->setSpacing(0);
+    // Title row; on the right the voice-over controls (input level, record)
+    auto* titleRow = new QWidget;
+    titleRow->setObjectName("PanelTitle");
+    titleRow->setAttribute(Qt::WA_StyledBackground);
+    titleRow->setStyleSheet(QString("QWidget#PanelTitle { background: %1; }").arg(Theme::panelHeader.name()));
+    auto* titleLay = new QHBoxLayout(titleRow);
+    titleLay->setContentsMargins(0, 0, 6, 0);
+    titleLay->setSpacing(6);
     auto* title = new QLabel(T("Mixer"));
     title->setObjectName("PanelTitle");
-    root->addWidget(title);
+    titleLay->addWidget(title);
+    titleLay->addStretch(1);
+    m_inputMeter = new InputMeter;
+    m_inputMeter->hide();
+    titleLay->addWidget(m_inputMeter);
+    m_record = new QToolButton;
+    m_record->setObjectName("voiceover_record");
+    m_record->setText("● " + T("Voiceover"));
+    m_record->setCheckable(true);
+    m_record->setFocusPolicy(Qt::NoFocus);
+    m_record->setToolTip(T("Voiceover aufnehmen: die Timeline spielt ab dem Playhead, die Aufnahme landet auf der "
+                           "Spur mit „R“ (Esc oder Leertaste beendet)"));
+    m_record->setStyleSheet(QString("QToolButton { background: %1; color: %2; padding: 1px 6px; }"
+                                    "QToolButton:checked { background: %3; color: %4; }")
+                                .arg(Theme::control.name(), Theme::text.name(), Theme::recording.name(),
+                                     Theme::readableOn(Theme::recording).name()));
+    m_record->setEnabled(false); // until a recorder is set
+    titleLay->addWidget(m_record);
+    root->addWidget(titleRow);
 
     auto* row = new QHBoxLayout;
     row->setContentsMargins(0, 0, 0, 0);
@@ -875,6 +942,10 @@ void Mixer::rebuildStrips(int count)
         connect(s->solo, &QToolButton::clicked, this, [this, i, track] {
             if (const Track* t = track()) m_editor->setTrackSolo(i, !t->solo);
         });
+        connect(s->arm, &QToolButton::clicked, this, [this, i](bool on) {
+            if (m_recorder) m_recorder->setArmedTrack(on ? i : -1);
+            syncArm();
+        });
         // EQ/DYN: click = on/off, double click = editor (the first click of it has switched already)
         const QString tag = trackShortName({TrackKind::Audio, i});
         s->eq->setObjectName("eq_" + tag);
@@ -896,8 +967,41 @@ void Mixer::rebuildStrips(int count)
         m_stripLayout->insertWidget(i, s);
         m_strips << s;
     }
+    syncArm();
     fitStrips();
     if (allShown) QTimer::singleShot(0, this, &Mixer::growToFit);
+}
+
+void Mixer::setRecorder(VoiceoverRecorder* recorder)
+{
+    m_recorder = recorder;
+    m_record->setEnabled(recorder != nullptr);
+    if (!recorder) return;
+    connect(m_record, &QToolButton::clicked, this, [this](bool on) {
+        if (on) emit recordRequested();
+        else emit stopRequested();
+        m_record->setChecked(m_recorder->recording());
+    });
+    connect(recorder, &VoiceoverRecorder::armedChanged, this, &Mixer::syncArm);
+    connect(recorder, &VoiceoverRecorder::recordingChanged, this, [this](bool on) {
+        m_record->setChecked(on);
+        m_inputMeter->setVisible(on);
+        m_inputMeter->reset();
+        syncArm();
+    });
+    connect(recorder, &VoiceoverRecorder::inputLevel, this, [this](float db) { m_inputMeter->setLevel(db); });
+    syncArm();
+}
+
+void Mixer::syncArm()
+{
+    const int armed = m_recorder ? m_recorder->armedTrack() : -1;
+    const bool locked = m_recorder && m_recorder->recording();
+    for (int i = 0; i < m_strips.size(); ++i) {
+        if (!m_strips[i]->arm) continue;
+        m_strips[i]->arm->setChecked(i == armed);
+        m_strips[i]->arm->setEnabled(m_recorder && !locked);
+    }
 }
 
 void Mixer::resizeEvent(QResizeEvent* e)

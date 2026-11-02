@@ -10,7 +10,10 @@ class Project;
 class QHBoxLayout;
 class QTimer;
 class ChannelStrip;
+class InputMeter;
 class LoudnessStrip;
+class QToolButton;
+class VoiceoverRecorder;
 
 // Mixer like DaVinci's Edit page (slimmed down): per audio track a channel strip with meter, fader, pan,
 // mute/solo, EQ/DYN; on the right the master and a loudness meter (LUFS). Dragging a fader = one undo step.
@@ -20,6 +23,13 @@ public:
     Mixer(Project* project, Engine* engine, QWidget* parent = nullptr);
     // EQ/compressor changes go through this editor (the main window's); without one the mixer makes its own
     void setEditor(Editor* editor);
+    // Voice-over: "R" per track arms it, the record button in the title row asks to start/stop (recordRequested /
+    // stopRequested: the main window starts it, it shows messages), the input level shows while recording
+    void setRecorder(VoiceoverRecorder* recorder);
+
+signals:
+    void recordRequested();
+    void stopRequested();
 
 protected:
     bool eventFilter(QObject* watched, QEvent* e) override; // double click on EQ/DYN opens the editor
@@ -35,6 +45,7 @@ private:
     void showEvent(class QShowEvent* e) override;
     void onLevels(const QVector<float>& db);
     void tick();         // let levels decay, peak hold
+    void syncArm();      // "R" buttons from the recorder
 
     Project* m_project;
     Engine* m_engine;
@@ -46,4 +57,7 @@ private:
     LoudnessStrip* m_loudness = nullptr; // Loudness meter to the right of the master
     QTimer* m_timer = nullptr;
     QElapsedTimer m_clock, m_lastLevels;
+    VoiceoverRecorder* m_recorder = nullptr;
+    QToolButton* m_record = nullptr;
+    InputMeter* m_inputMeter = nullptr;
 };
