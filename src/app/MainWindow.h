@@ -403,4 +403,13 @@ private:
     void setupWatchFolders(); // after the layout (Media Pool, Media Storage)
     class FolderWatch* m_folderWatch = nullptr;
     bool m_liveCommand = false; // a command of an AI runs in the app (watch folders wait with their import)
+
+    // Voice-over recording (app/VoiceoverRecorder.h, MainWindowVoiceover.cpp)
+    void setupVoiceover(); // after the layout (Mixer, Viewer)
+    void buildVoiceoverActions(QMenu* play, QMenu* audioMenu);
+    void toggleVoiceover();
+    // A take still running is placed before the project is left or the app quits ("save changes?" must see it)
+    void endVoiceover();
+    class VoiceoverRecorder* m_voiceover = nullptr;
+    class QShortcut* m_voiceoverEscape = nullptr;
 };

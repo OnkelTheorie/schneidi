@@ -50,6 +50,8 @@ inline void initEnv()
     qputenv("QT_QPA_PLATFORM", qEnvironmentVariable("SCHNEIDI_TEST_QPA", "offscreen").toUtf8());
     // Own audio engine: never the sound card in tests (silence paced by a timer), unless a test chose a device
     if (!qEnvironmentVariableIsSet("SCHNEIDI_AUDIO_DEVICE")) qputenv("SCHNEIDI_AUDIO_DEVICE", "null");
+    // Never the microphone either (voice-over): silence paced by a timer
+    if (!qEnvironmentVariableIsSet("SCHNEIDI_AUDIO_INPUT")) qputenv("SCHNEIDI_AUDIO_INPUT", "null");
 }
 
 // After creating the QApplication: own name and test paths -> the user's settings/cache stay untouched

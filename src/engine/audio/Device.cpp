@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "engine/audio/Device.h"
 
+#include "engine/audio/DeviceDetail.h"
 #include "engine/audio/Miniaudio.h"
 #include "engine/audio/Wait.h"
 
@@ -17,8 +18,6 @@
 
 namespace Audio {
 
-namespace {
-
 // "DirectSound" == "directsound", "Core Audio" == "coreaudio" (the setting keeps SDL's names from before 0.10)
 QString plainName(const QString& name)
 {
@@ -27,6 +26,8 @@ QString plainName(const QString& name)
         if (c.isLetterOrNumber()) out += c.toLower();
     return out;
 }
+
+namespace {
 
 // Silence or a file, paced by a timer: one block per period, the block counts as heard when it is handed over.
 // stallMs > 0: stops calling back after that long (a vanished device, tests).
@@ -83,6 +84,8 @@ private:
     std::thread m_thread;
 };
 
+} // namespace
+
 // A miniaudio context of the chosen backend ("" = miniaudio's order)
 bool initContext(const QString& backend, ma_context* context)
 {
@@ -125,18 +128,27 @@ QString idText(ma_backend backend, const ma_device_id& id)
     }
 }
 
-// Playback devices of an open context
-std::vector<std::pair<Device::Output, ma_device_id>> listOutputs(ma_context* context)
+// Playback (or capture) devices of an open context
+std::vector<std::pair<Device::Output, ma_device_id>> listDevices(ma_context* context, bool capture)
 {
     std::vector<std::pair<Device::Output, ma_device_id>> out;
     ma_device_info* infos = nullptr;
     ma_uint32 count = 0;
-    if (ma_context_get_devices(context, &infos, &count, nullptr, nullptr) != MA_SUCCESS) return out;
+    const ma_result r = capture ? ma_context_get_devices(context, nullptr, nullptr, &infos, &count)
+                                : ma_context_get_devices(context, &infos, &count, nullptr, nullptr);
+    if (r != MA_SUCCESS) return out;
     for (ma_uint32 i = 0; i < count; ++i)
         out.push_back({{idText(context->backend, infos[i].id), QString::fromUtf8(infos[i].name),
                         bool(infos[i].isDefault)},
                        infos[i].id});
     return out;
+}
+
+namespace {
+
+std::vector<std::pair<Device::Output, ma_device_id>> listOutputs(ma_context* context)
+{
+    return listDevices(context, false);
 }
 
 class SoundCard final : public Device {

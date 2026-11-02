@@ -53,6 +53,9 @@ public:
     // empty text = hidden
     void setHint(const QString& text, const QString& button = {});
     QString hint() const;
+    // Voice-over recording runs: a red sign in the title row
+    void setRecording(bool on);
+    bool recording() const { return m_recording; }
 
     // Button for a checkable view action (large viewer, full screen) at the right end of the transport bar, beside
     // Before/After: a click triggers it, it shows the action's state
@@ -98,4 +101,5 @@ private:
     bool m_multicamOn = false;
     QString m_sourcePath, m_sourceName;
     int m_length = 0, m_in = -1, m_out = -1;
+    bool m_recording = false;
 };

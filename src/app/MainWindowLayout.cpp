@@ -12,6 +12,7 @@
 #include "app/Log.h"
 #include "app/NormalizeDialog.h"
 #include "app/PasteAttributesDialog.h"
+#include "app/VoiceoverRecorder.h"
 #include "core/Loudness.h"
 #include "app/ProjectSettingsDialog.h"
 #include "core/Editor.h"
@@ -469,7 +470,8 @@ void MainWindow::setViewerLarge(bool on)
         }
     }
     if (m_largeAction) m_largeAction->setChecked(m_large.active);
-    if (m_largeEscape) m_largeEscape->setEnabled(m_large.active);
+    // Two enabled Esc shortcuts are ambiguous and neither fires: while recording, Esc ends the take first
+    if (m_largeEscape) m_largeEscape->setEnabled(m_large.active && !(m_voiceover && m_voiceover->recording()));
 }
 
 void MainWindow::setViewerFullScreen(bool on)

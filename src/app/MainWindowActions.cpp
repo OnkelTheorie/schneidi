@@ -603,6 +603,8 @@ void MainWindow::buildActions()
     }
 #endif
 
+    buildVoiceoverActions(play, audioMenu);
+
     // Color menu like DaVinci (Color → Apply Grade from One/Two Clips Prior); works on the Color page
     QMenu* colorMenu = menuBar()->addMenu(T("&Color"));
     makeAction(colorMenu, "grade_copy", T("Grade kopieren (Color-Seite: Strg+C)"), QKeySequence(),
