@@ -20,6 +20,7 @@ extern "C" {
 #include <QImageReader>
 #include <QMutex>
 #include <QSaveFile>
+#include <QSet>
 #include <QStandardPaths>
 
 #include <algorithm>
@@ -165,11 +166,22 @@ std::optional<QRectF> content(const QString& path, QString* error, const std::at
         const double fps = info.frameRate.num > 0 && info.frameRate.den > 0 ? av_q2d(info.frameRate) : 25.0;
         const int64_t frames = info.duration > 0 ? int64_t(double(info.duration) / AV_TIME_BASE * fps) : 0;
         SwsContext* sws = nullptr;
+        QSet<int64_t> seen;
         for (int i = 0; i < kSamples; ++i) {
             if (cancel && cancel->load()) break;
             // Spread over the file, away from its first and last moments (fades, a black start)
             const int64_t pos = frames > 1 ? int64_t((0.05 + 0.9 * (i + 0.5) / kSamples) * double(frames - 1)) : 0;
-            const auto pic = reader->picture(pos);
+            // Any picture near there will do: the key frame a seek lands on (no decoding up to the exact one). The
+            // same picture again (key frames far apart): skipped once there are enough, else decoded up to the
+            // position (a short file with a single key frame)
+            Video::Reader::Fetch fetch;
+            fetch.nearest = true;
+            auto pic = reader->picture(pos, fetch);
+            if (pic && seen.contains(pic->position)) {
+                if (seen.size() >= kSamples / 2) continue;
+                pic = reader->picture(pos);
+            }
+            if (pic) seen.insert(pic->position);
             if (!pic || !pic->frame) {
                 if (frames <= 1) break;
                 continue;

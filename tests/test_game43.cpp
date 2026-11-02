@@ -21,6 +21,7 @@
 
 #include <QApplication>
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QTemporaryDir>
 #include <QUndoStack>
 #include <clocale>
@@ -310,6 +311,10 @@ void testCli(const QString& dir, const QString& pillar, const QString& stretched
     CHECK_EQ(clip(1).transform.cropLeft, 0.0); // no bars
     run("edit", {{"project", path}, {"ops", "[{\"op\":\"picture_aspect\",\"clips\":[" + QString::number(clip(1).id) + "],\"aspect\":\"4:3\"}]"}});
     CHECK(near(clip(1).pictureAspect, 4.0 / 3, 1e-9));
+    {
+        const QJsonObject info = run("info", {{"project", path}});
+        CHECK(QJsonDocument(info).toJson(QJsonDocument::Compact).contains("\"picture_aspect\":1.3333"));
+    }
     run("edit", {{"project", path}, {"ops", "[{\"op\":\"picture_aspect\",\"aspect\":\"file\"}]"}});
     CHECK_EQ(clip(1).pictureAspect, 0.0);
     CHECK_EQ(errorOf("[{\"op\":\"picture_aspect\",\"aspect\":\"wide\"}]"), QString("BAD_ARGUMENT"));

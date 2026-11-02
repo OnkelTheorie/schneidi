@@ -483,6 +483,7 @@ QJsonObject clipJson(const Project& p, const Clip& c, TrackRef ref)
     }
     if (c.speed != 1.0) o["speed"] = c.speed;
     if (c.reverse) o["reverse"] = true;
+    if (c.pictureAspect > 0) o["picture_aspect"] = std::round(c.pictureAspect * 10000) / 10000; // op picture_aspect
     if (!c.effects.isEmpty()) {
         QJsonArray fx;
         const auto json = [](const QVariant& v) {
