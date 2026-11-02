@@ -12,6 +12,7 @@
 #include "core/EffectRegistry.h"
 #include "core/GradeWindows.h"
 #include "core/Keyframes.h"
+#include "core/MediaAspect.h"
 #include "core/Project.h"
 #include "core/ProjectFile.h"
 #include "core/Selection.h"
@@ -198,6 +199,46 @@ void testSpecAndApply(const QString& dir)
     Clip volume = plain;
     Keys::setKey(volume, AnimParam::Volume, 0, -6.0);
     CHECK(!GradedThumbs::animated(volume)); // other parameters do not
+}
+
+// ---------- bars: a portrait clip in a landscape frame ----------
+
+// The thumbnail of a portrait source in a 16:9 timeline has black bars at the sides (as the viewer shows it): the
+// grade and the windows work on the picture only, the bars stay black (lift raised them, a window across the frame
+// painted them). Windows are in % of the frame, as in the viewer.
+void testBars()
+{
+    MediaAspect::setProbe([](const QString& path) { return path.endsWith("portrait.mp4") ? 9.0 / 16.0 : 0.0; });
+    // 160x90 tile, picture 51x90 in the middle (x 54..104)
+    QImage tile(160, 90, QImage::Format_RGB32);
+    tile.fill(Qt::black);
+    const QRect pic(54, 0, 51, 90);
+    for (int y = 0; y < 90; ++y)
+        for (int x = pic.left(); x <= pic.right(); ++x) tile.setPixel(x, y, qRgb(60, 60, 60));
+    Clip c = clip(1, 0, 0, 100, "/x/portrait.mp4");
+    setGrade(c, "liftY", 0.3); // raises the blacks
+    const QImage lifted = GradedThumbs::apply(tile, GradedThumbs::specAt(c, 0));
+    CHECK(lifted.pixel(10, 45) == qRgb(0, 0, 0) && lifted.pixel(150, 45) == qRgb(0, 0, 0));
+    CHECK(qRed(lifted.pixel(80, 45)) > 70);
+    // A white band across the whole frame width (window 100 % wide): the picture's part only
+    Clip band = clip(2, 0, 0, 100, "/x/portrait.mp4");
+    EffectRegistry::add(band, ColorGrade::EffectId);
+    GradeWindows::add(band, 1, GradeWindows::Shape::Rectangle);
+    auto& params = EffectRegistry::instance(band, ColorGrade::EffectId)->params;
+    params[GradeWindows::key(1, "fill")] = "color";
+    params[GradeWindows::key(1, "color")] = QColor(Qt::white);
+    params[GradeWindows::key(1, "softness")] = 0.0;
+    params[GradeWindows::key(1, "width")] = 100.0;
+    params[GradeWindows::key(1, "height")] = 20.0;
+    const QImage painted = GradedThumbs::apply(tile, GradedThumbs::specAt(band, 0));
+    CHECK(painted.pixel(10, 45) == qRgb(0, 0, 0)); // bar: untouched
+    CHECK(painted.pixel(56, 45) == qRgb(255, 255, 255) && painted.pixel(102, 45) == qRgb(255, 255, 255));
+    CHECK(painted.pixel(80, 20) == qRgb(60, 60, 60)); // above the band (20 % of the frame height: 36..54)
+    // A clip that fills the frame: the whole tile as before
+    Clip wide = clip(3, 0, 0, 100, "/x/wide.mp4");
+    setGrade(wide, "liftY", 0.3);
+    CHECK(qRed(GradedThumbs::apply(tile, GradedThumbs::specAt(wide, 0)).pixel(10, 45)) > 10);
+    MediaAspect::setProbe({});
 }
 
 // ---------- the cache in the paint path ----------
@@ -673,6 +714,7 @@ int main(int argc, char** argv)
     if (!CHECK(tmp.isValid())) return Check::result();
 
     testSpecAndApply(tmp.path());
+    testBars();
     testCacheAndSettle();
     testEditorUndo();
     testManyClips();

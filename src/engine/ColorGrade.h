@@ -7,6 +7,7 @@
 #include "core/GradeWindows.h"
 #include "core/Types.h"
 
+#include <QSizeF>
 #include <QString>
 #include <QVector>
 #include <atomic>
@@ -95,5 +96,9 @@ void applyReference(uint8_t* rgba, int width, int height, const Params& p, const
 // Apply a window on top: inside its mask the picture gets the window's correction and fill (blur/pixelate/color),
 // mixed by the soft edge. Only the window's area is computed.
 void applyWindow(uint8_t* rgba, int width, int height, const Window& w);
+// A window's geometry is in % of the whole frame, bars included (as the overlay and the tracker see it): the same
+// window for a picture that stands for only the fitted part of the frame (`fit`, centred in `frame`), in % of that
+// picture. In pixels the shape stays the same (soft edge and fill strength relative to the frame height as well).
+Window onPicture(Window w, QSizeF frame, QSizeF fit);
 
 } // namespace ColorGrade

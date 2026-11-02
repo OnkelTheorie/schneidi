@@ -3,6 +3,7 @@
 
 #include "core/EffectRegistry.h"
 #include "core/Keyframes.h"
+#include "core/MediaAspect.h"
 #include "core/Project.h"
 #include "core/Retime.h"
 #include "engine/Background.h"
@@ -13,6 +14,8 @@
 #include <QTimer>
 #include <algorithm>
 #include <atomic>
+#include <cmath>
+#include <cstring>
 
 namespace {
 
@@ -82,6 +85,7 @@ GradedThumbs::Spec GradedThumbs::specAt(const Clip& c, double t)
         h.num(int(w.fill.color.rgba()));
     }
     s.hash = h.h ? h.h : 1;
+    s.media = c.mediaPath;
     return s;
 }
 
@@ -105,9 +109,29 @@ QImage GradedThumbs::apply(const QImage& image, const Spec& spec)
     if (img.isNull() || spec.isNull()) return img.convertToFormat(QImage::Format_RGB32);
     std::shared_ptr<const ColorGrade::Lut> lut;
     if (!spec.lut.isEmpty()) lut = ColorGrade::loadLut(spec.lut); // missing/broken: without LUT, like the preview
-    uint8_t* bits = img.bits();
-    if (!spec.params.isNeutral() || lut) ColorGrade::apply(bits, img.width(), img.height(), spec.params, lut.get());
-    for (const ColorGrade::Window& w : spec.windows) ColorGrade::applyWindow(bits, img.width(), img.height(), w);
+    // The thumbnail is the frame with the picture fitted in it (bars where the shapes differ), as the renderer and
+    // the thumbnail maker place it: the frame centred in the image, the picture centred in the frame, rounded
+    auto centred = [](QSizeF size, const QRect& in) {
+        const int w = std::clamp(int(std::lround(size.width())), 1, in.width());
+        const int h = std::clamp(int(std::lround(size.height())), 1, in.height());
+        return QRect(in.x() + (in.width() - w) / 2, in.y() + (in.height() - h) / 2, w, h);
+    };
+    const QRect frame = spec.frameAspect > 0 ? centred(MediaAspect::fit(spec.frameAspect, img.size()), img.rect()) : img.rect();
+    const double aspect = spec.media.isEmpty() ? 0 : MediaAspect::of(spec.media); // cached per file
+    const QRect picture = aspect > 0 ? centred(MediaAspect::fit(aspect, frame.size()), frame) : frame;
+    // Graded alone: lift/offset/LUT would tint the bars, a window over them would paint them, a blur pull them in
+    QImage part = picture == img.rect() ? img : img.copy(picture);
+    uint8_t* bits = part.bits();
+    if (!spec.params.isNeutral() || lut) ColorGrade::apply(bits, part.width(), part.height(), spec.params, lut.get());
+    for (const ColorGrade::Window& w : spec.windows)
+        ColorGrade::applyWindow(bits, part.width(), part.height(),
+                                ColorGrade::onPicture(w, QSizeF(frame.size()), QSizeF(picture.size())));
+    if (picture != img.rect())
+        for (int y = 0; y < part.height(); ++y)
+            std::memcpy(img.scanLine(picture.top() + y) + size_t(picture.left()) * 4, part.constScanLine(y),
+                        size_t(part.width()) * 4);
+    else
+        img = part;
     return img.convertToFormat(QImage::Format_RGB32); // faster to draw
 }
 
@@ -315,6 +339,8 @@ TimelinePosters::Source TimelinePosters::sourceOf(const Project& project, const 
                              m->length - 1);
     else s.frame = best->in;
     s.grade = GradedThumbs::specAt(*best, 0);
+    // The poster is the frame fitted into its own size (Engine::thumbnail)
+    if (project.format().height > 0) s.grade.frameAspect = double(project.format().width) / project.format().height;
     return s;
 }
 

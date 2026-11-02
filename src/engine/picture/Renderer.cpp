@@ -502,24 +502,6 @@ struct Renderer::Impl {
         return out;
     }
 
-    // A Color page window's geometry is in % of the whole frame, bars included (as the overlay and the tracker see
-    // it): onto a picture that stands for only the fitted part of the frame (fit, centred), in % of that picture.
-    // In pixels the shape stays the same (soft edge and fill strength relative to the frame height as well).
-    static ColorGrade::Window windowOnPicture(ColorGrade::Window w, QSizeF fit, const Ctx& ctx)
-    {
-        if (fit.width() <= 0 || fit.height() <= 0) return w;
-        const double kx = ctx.PW / fit.width(), ky = ctx.PH / fit.height();
-        if (std::abs(kx - 1) < 1e-9 && std::abs(ky - 1) < 1e-9) return w;
-        GradeWindows::Geometry& g = w.geometry;
-        g.x = 50 + (g.x - 50) * kx;
-        g.y = 50 + (g.y - 50) * ky;
-        g.width *= kx;
-        g.height *= ky;
-        g.softness *= ky;
-        w.fill.amount *= ky;
-        return w;
-    }
-
     // Effects on the clip's picture (before crop/transform), clip frame t; order as TimelineBuilderDetail::applyEffects:
     // the fixed stages first (grade, then the Green Screen key), then every other effect in the clip's order.
     // frameHeight: the frame's height in pixels of img (blur strength is relative to it); fit: the size img stands for
@@ -541,7 +523,7 @@ struct Renderer::Impl {
             const auto l = lp.isEmpty() ? nullptr : lut(lp);
             if (!p.isNeutral() || l) ColorGrade::apply(img.data(), img.w, img.h, *ColorGrade::bake(p, l.get()), 1);
             for (const ColorGrade::Window& w : ColorGrade::windowsAt(c, t))
-                ColorGrade::applyWindow(img.data(), img.w, img.h, windowOnPicture(w, fit, ctx));
+                ColorGrade::applyWindow(img.data(), img.w, img.h, ColorGrade::onPicture(w, QSizeF(ctx.PW, ctx.PH), fit));
         }
         if (const EffectInstance* key = EffectRegistry::instance(c, "chromakey"); key && key->enabled)
             if (const EffectDescriptor* d = EffectRegistry::find(key->effectId))
