@@ -38,7 +38,8 @@ Goal: a vertical video that works on a phone, muted, in the first two seconds.
   `slow_hook` hint when the first second hardly moves.
 - Length: what the user asks; otherwise 15-45 s. Cut tight, every second must earn its place.
 - **Subtitles burned in** - most people watch muted ([subtitles.md](subtitles.md)): short lines (`max_chars` ~20-28),
-  big font, outline or box.
+  big font, outline or box. Word-by-word captions (karaoke or one word at a time) hold attention best: `transcribe`
+  with `apply` true and `captions` `"karaoke"`.
 - Loud enough: about -14 LUFS ([audio.md](audio.md)).
 
 ## Render

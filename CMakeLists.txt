@@ -121,6 +121,7 @@ add_library(schneidi_lib STATIC
     src/core/Subtitles.h          src/core/Subtitles.cpp
     src/core/Transcript.h         src/core/Transcript.cpp
     src/core/TranscriptCut.h      src/core/TranscriptCut.cpp
+    src/core/Captions.h           src/core/Captions.cpp
     src/core/Fft.h                src/core/Fft.cpp
     src/core/AudioSync.h          src/core/AudioSync.cpp
     src/core/Beats.h              src/core/Beats.cpp

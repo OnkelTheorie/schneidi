@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "engine/picture/Renderer.h"
 
+#include "core/Captions.h"
 #include "core/EffectRegistry.h"
 #include "core/Keyframes.h"
 #include "core/MediaAspect.h"
@@ -1297,6 +1298,59 @@ struct Renderer::Impl {
         Compose::over(img.data(), strip.data(), img.w, img.h, 1.0);
     }
 
+    // Word captions (core/Captions.h): karaoke = the cue's words with the spoken one highlighted, word = the spoken
+    // word alone, popping in. Lines wrap at Captions::lineWidth; posY = bottom of the block above the picture's bottom.
+    void captionLayer(Image& canvas, const SubtitleTrack& st, const SubtitleCue& cue, int f, const Ctx& ctx)
+    {
+        const CaptionStyle& cs = st.captions;
+        const TitleStyle& t = st.style;
+        QStringList words = Captions::words(cue.text);
+        if (words.isEmpty()) return;
+        if (cs.uppercase)
+            for (QString& w : words) w = w.toUpper();
+        const int active = Captions::activeWord(cue, f);
+        const double sx = ctx.W / ctx.PW, sy = ctx.H / ctx.PH;
+        QFont font(t.fontFamily());
+        font.setPixelSize(std::max(1, int(std::lround(std::max(1.0, t.size) * sy))));
+        font.setWeight(t.bold ? QFont::Bold : QFont::Normal);
+        font.setItalic(t.italic);
+        const double lineWidth = Captions::lineWidth(QSize(int(ctx.PW), int(ctx.PH)));
+        Text::WordParams p;
+        if (cs.mode == CaptionMode::Word) {
+            if (active < 0) return;
+            const QVector<CueWord> times = Captions::timing(cue);
+            const Captions::Pop pop = Captions::popIn((f - cue.start - times[active].from) * 1000.0 / ctx.fps, cs.popMs);
+            p.lines = {{Text::Word{words[active], t.color, pop.scale, pop.opacity}}};
+        } else {
+            const QFontMetricsF fm(font);
+            QVector<double> widths;
+            p.reserve = std::max(1.0, cs.highlightScale);
+            double widest = 0;
+            for (const QString& w : words) widths << fm.horizontalAdvance(w), widest = std::max(widest, widths.last());
+            // Room on every line for the widest word grown (Text::drawWords): the lines do not change as it moves
+            const QVector<int> starts = Captions::lineStarts(widths, fm.horizontalAdvance(QLatin1Char(' ')),
+                                                             lineWidth * sx - widest * (p.reserve - 1), cs.maxWordsPerLine);
+            for (int i = 0; i < words.size(); ++i) {
+                if (starts.contains(i)) p.lines.append(QVector<Text::Word>());
+                const bool now = i == active;
+                p.lines.last() << Text::Word{words[i], now ? cs.highlight : t.color, now ? cs.highlightScale : 1.0, 1.0};
+            }
+        }
+        const double bottom = std::clamp(ctx.PH - t.posY, 1.0, ctx.PH);
+        p.area = QRectF(((ctx.PW - lineWidth) / 2 + t.posX) * sx, 0, lineWidth * sx, bottom * sy);
+        p.font = font;
+        p.halign = t.align == 0 ? 0 : t.align == 2 ? 2 : 1;
+        p.valign = 2;
+        p.outlineColor = t.outlineColor;
+        p.outline = (t.outlineOn ? 2 * std::max(0.0, t.outlineWidth) : 0.0) * sy;
+        p.bg = t.boxOn ? t.boxColor : QColor(Qt::transparent);
+        p.pad = (t.boxOn ? std::max(0.0, t.boxPad) : 0.0) * sy;
+        p.shadow = cs.shadow ? QColor(0, 0, 0, 150) : QColor(Qt::transparent);
+        Image layer(ctx.W, ctx.H);
+        Text::drawWords(layer.data(), layer.w, layer.h, p);
+        Compose::over(canvas.data(), layer.data(), canvas.w, canvas.h, 1.0);
+    }
+
     // Every enabled subtitle track at once (e.g. two speakers), in track order
     void subtitleLayer(Image& canvas, const Timeline& tl, int f, const Ctx& ctx)
     {
@@ -1304,6 +1358,10 @@ struct Renderer::Impl {
             if (!st.enabled) continue;
             for (const SubtitleCue& cue : st.cues) {
                 if (f < cue.start || f >= cue.end || cue.text.trimmed().isEmpty()) continue;
+                if (st.captions.mode != CaptionMode::Lines) {
+                    captionLayer(canvas, st, cue, f, ctx);
+                    break;
+                }
                 const TitleStyle& t = st.style;
                 const double sx = ctx.W / ctx.PW, sy = ctx.H / ctx.PH;
                 QFont font(t.fontFamily());

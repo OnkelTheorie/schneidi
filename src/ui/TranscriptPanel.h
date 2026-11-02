@@ -60,12 +60,14 @@ private:
     void transcribe();
     void startNext();
     void removePauses();
+    void addCaptions();
 
     Project* m_project;
     Editor* m_editor;
     QComboBox* m_track;
     QToolButton* m_transcribe;
     QToolButton* m_pauses;
+    QToolButton* m_captions;
     QDoubleSpinBox* m_minPause;
     QProgressBar* m_progress;
     QToolButton* m_cancel;

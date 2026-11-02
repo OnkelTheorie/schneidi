@@ -58,10 +58,12 @@ ExportSettings RenderQueue::exportSettings(const RenderJob& job, const ProjectFo
     // has 50–130 Mbit/s), so "Medium"/"Small" encode everything and "Web" copies only below its cap (ExportWriter)
     s.smartRender = job.settings.smartRender && f.hardware
                     && (job.settings.quality == 0 || job.settings.quality == RenderSettings::kQualityWeb);
-    if (job.settings.subtitles == RenderSettings::SrtFile) {
+    if (job.settings.subtitles == RenderSettings::SrtFile || job.settings.subtitles == RenderSettings::VttFile) {
         const QFileInfo fi(job.path);
-        s.subtitlePath = fi.dir().filePath(fi.completeBaseName() + ".srt");
+        s.subtitlePath = fi.dir().filePath(fi.completeBaseName()
+                                           + (job.settings.subtitles == RenderSettings::VttFile ? ".vtt" : ".srt"));
     }
+    s.embedSubtitles = job.settings.embedSubtitles && job.settings.canEmbedSubtitles();
     s.maxBitrateK = job.settings.maxBitrateK(s.size, s.rate.num > 0 ? s.rate : format.rate);
     if (job.inOut) {
         s.from = std::max(0, job.from);

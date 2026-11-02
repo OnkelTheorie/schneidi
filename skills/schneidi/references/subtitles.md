@@ -19,10 +19,26 @@ what people said.
 `track` op on the subtitle track (`ST1` …): `size`, `bold`, `outline`/`outline_width`, `box`, `y` (distance from
 the bottom edge). Vertical video: bigger and higher (out of the platform buttons, see [social.md](social.md)).
 
+## Word-by-word captions (shorts, reels, TikTok)
+- One call: `transcribe` on the project with `apply` true and `captions` `"karaoke"` (the phrase stays, the spoken
+  word lights up), `"word"` (one big word at a time that pops in) or `"beat"` (word by word, each word on the next
+  beat: pass `beats` from `beats` with `beats` true, or `bpm` + `first_beat`). `max_words` = words per caption
+  (default 4, word/beat 3).
+- Already transcribed: the `captions` edit op takes `words` (the `words` list of `transcribe` with `words` true) or,
+  without them, the media transcripts of the app's Transcript panel (they follow trims and speed changes).
+- The new track becomes the visible one, styled big and bold with an outline, on 9:16 above the part phone apps
+  cover. Change it with the `track` op: `captions` (`lines`|`karaoke`|`word`), `highlight` (colour),
+  `highlight_scale`, `max_words_per_line`, `pop_ms`, `uppercase`, `shadow`, plus the text style keys.
+- Fix a misheard word with the `subtitle` op (`text`): the word times stay as long as the word count stays.
+- Check with `frames` at a few word times; render with `subtitles` `"burn"` (word styles exist only in the picture).
+
 ## Deliver
 - `render` `subtitles` `"burn"`: in the picture (social media, muted viewing).
-- `"srt"`: a file next to the video (YouTube, players; viewers can switch it off).
-- `format` `"srt"` writes only the subtitle file.
+- `"srt"` / `"vtt"`: a file next to the video (YouTube, players; viewers can switch it off); `vtt` = WebVTT for web
+  players.
+- `embed_subtitles` true: every subtitle track as a text stream in the file (MP4/MOV, MKV, WebM; plain text) - also
+  together with `"burn"`.
+- `format` `"srt"` or `"vtt"` writes only the subtitle file.
 - From an existing SRT: the `subtitles` op (`srt`) makes a subtitle track.
 
 ## Check

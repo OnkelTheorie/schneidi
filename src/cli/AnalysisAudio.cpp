@@ -369,6 +369,18 @@ QJsonObject cmdTranscribe(const QJsonObject& a, Context& ctx)
         for (const SubtitleCue& c : cues)
             list << QJsonObject{{"from", c.start}, {"to", std::min(c.end, offset + length)}, {"text", c.text}};
         QJsonObject op{{"op", "subtitles"}, {"cues", list}};
+        if (a.contains("captions")) {
+            // Word captions (edit op 'captions') from the word times instead of plain lines
+            QJsonArray words;
+            const auto fr = [&](qint64 ms) { return offset + int(std::lround(ms / 1000.0 * f.rate.fps())); };
+            for (const Transcript::Word& w : r.words)
+                if (fr(w.from) < offset + length)
+                    words << QJsonObject{{"from", fr(w.from)}, {"to", std::max(fr(w.from) + 1, fr(Transcript::spokenEnd(w)))},
+                                         {"text", w.text}};
+            op = QJsonObject{{"op", "captions"}, {"style", a["captions"]}, {"words", words}};
+            for (const char* key : {"max_words", "beats", "bpm", "first_beat"})
+                if (a.contains(key)) op[key] = a[key];
+        }
         if (a.contains("name")) op["name"] = a["name"];
         QJsonObject edit{{"project", src}, {"ops", QJsonArray{op}}};
         if (a.contains("timeline")) edit["timeline"] = a["timeline"];

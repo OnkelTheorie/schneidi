@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 #include "core/ProjectFormat.h"
+#include "core/Subtitles.h"
 #include "core/Types.h"
 #include "engine/SmartRender.h"
 #include "engine/picture/Renderer.h"
@@ -51,6 +52,9 @@ struct ExportSettings {
     // Additionally write the visible subtitle track as SRT here, the other tracks with entries next to it
     // (Subtitles::srtFiles); empty = not
     QString subtitlePath;
+    // Every subtitle track with entries as a text stream in the file (plain text; ExportWriter picks the codec by the
+    // container: mov_text, SubRip or WebVTT; none in other containers)
+    bool embedSubtitles = false;
     int from = 0, to = -1; // range (frames, inclusive); to < 0 = until the end of the timeline
     int threads = 0;       // threads (logical processors) for rendering (images in parallel, decoder, encoder); 0 = all
     // Length of each media file in frames of the project rate (Project::media()), for the audio mixer: reversed
@@ -187,6 +191,7 @@ private:
     QString m_part;
     // SRT files next to the file (ExportSettings::subtitlePath and one per further track), committed at success
     std::vector<std::unique_ptr<QSaveFile>> m_subtitles;
+    QVector<Subtitles::TextTrack> m_textTracks; // embedded subtitle streams (ExportSettings::embedSubtitles)
     ExportSettings m_settings;
     bool m_convertRate = false;
     std::shared_ptr<Picture::Renderer> m_renderer;

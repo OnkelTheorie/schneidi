@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "core/TranscriptCut.h"
 
+#include "core/Retime.h"
 #include "core/Transcript.h"
 
 #include <QHash>
@@ -19,27 +20,36 @@ const MediaInfo* findMedia(const QVector<MediaInfo>& media, const QString& path)
     return nullptr;
 }
 
-bool usable(const Clip& c) { return c.enabled && c.kind == ClipKind::Media && !c.isRetimed(); }
+bool usable(const Clip& c, bool retimed)
+{
+    return c.enabled && c.kind == ClipKind::Media && (retimed ? !c.reverse && !c.freeze : !c.isRetimed());
+}
 
 template<typename Fn>
-void forClips(const Timeline& tl, int audioTrack, Fn fn)
+void forClips(const Timeline& tl, int audioTrack, Fn fn, bool retimed = false)
 {
     for (int t = 0; t < tl.audio.size(); ++t)
         if (audioTrack < 0 || audioTrack == t)
             for (const Clip& c : tl.audio[t].clips)
-                if (usable(c)) fn(c, t);
+                if (usable(c, retimed)) fn(c, t);
 }
 
 } // namespace
 
-QVector<Word> timelineWords(const Timeline& tl, const QVector<MediaInfo>& media, double fps, int audioTrack)
+QVector<Word> timelineWords(const Timeline& tl, const QVector<MediaInfo>& media, double fps, int audioTrack, bool retimed)
 {
-    const auto frame = [fps](qint64 ms) { return int(std::floor(ms * fps / 1000.0 + 0.5)); };
     QVector<Word> out;
     forClips(tl, audioTrack, [&](const Clip& c, int track) {
         const MediaInfo* m = findMedia(media, c.mediaPath);
         const MediaTranscript* tr = m ? m->transcript(c.audioStream) : nullptr;
         if (!tr) return;
+        // Source time -> material frame of the clip (in/out count in it; at another speed the material is stretched)
+        const RetimeMap map(c, 0);
+        const bool plain = !c.isRetimed();
+        const auto frame = [&](qint64 ms) {
+            const double s = ms * fps / 1000.0;
+            return int(std::floor((plain ? s : map.materialAt(s)) + 0.5));
+        };
         for (const TranscriptWord& w : tr->words) {
             if (w.text.isEmpty()) continue; // placeholder of a transcript without speech
             const int sf = frame(w.from);
@@ -53,7 +63,7 @@ QVector<Word> timelineWords(const Timeline& tl, const QVector<MediaInfo>& media,
             word.track = track;
             out << word;
         }
-    });
+    }, retimed);
     std::stable_sort(out.begin(), out.end(), [](const Word& a, const Word& b) {
         return a.from != b.from ? a.from < b.from : a.track < b.track;
     });

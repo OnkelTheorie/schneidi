@@ -21,6 +21,23 @@ QVector<SubtitleCue> parseSrt(const QByteArray& data, double fps, int* skipped =
 // (export of an In/Out range starts at 00:00:00,000); entries before it are dropped or shortened.
 QByteArray toSrt(const QVector<SubtitleCue>& cues, double fps, int offset = 0, int until = -1);
 QString srtTime(qint64 ms); // "HH:MM:SS,mmm"
+// The same as WebVTT (web players, HTML <track>): "WEBVTT" header, "HH:MM:SS.mmm" times, no numbers needed
+QByteArray toVtt(const QVector<SubtitleCue>& cues, double fps, int offset = 0, int until = -1);
+// SRT or WebVTT by the file's extension (".vtt" = WebVTT)
+QByteArray toFile(const QString& path, const QVector<SubtitleCue>& cues, double fps, int offset = 0, int until = -1);
+
+// A subtitle track as plain text with times from `offset` (ms), for a text stream in an exported file
+struct TextCue {
+    qint64 fromMs = 0, toMs = 0;
+    QString text;
+};
+struct TextTrack {
+    QString name; // track name, empty = unnamed
+    bool main = false; // the visible track (players show it by default)
+    QVector<TextCue> cues;
+};
+// Every track with entries in [offset, until) in the order of srtFiles (main first); empty lines left out
+QVector<TextTrack> textTracks(const Timeline& tl, double fps, int offset = 0, int until = -1);
 
 // The SRT files a subtitle export writes, one per track with entries: the visible track (otherwise the first with
 // entries) into `path`, every other one next to it as "<name>.<track name>.srt" (players offer such files as further

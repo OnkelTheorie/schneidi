@@ -143,9 +143,14 @@ void retimeTimeline(Timeline& tl, FrameRate from, FrameRate to)
     for (SubtitleTrack& t : tl.subtitles) {
         int prevEnd = 0;
         for (SubtitleCue& c : t.cues) { // sorted without overlap: stays so, every cue keeps at least one frame
+            const int start = c.start;
             c.start = std::max(prevEnd, at(c.start));
             c.end = std::max(c.start + 1, at(c.end));
             prevEnd = c.end;
+            for (CueWord& w : c.words) { // word captions: their times from the cue start in the new rate
+                w.from = std::max(0, at(start + w.from) - c.start);
+                w.to = std::max(w.from + 1, at(start + w.to) - c.start);
+            }
         }
     }
     for (int& m : tl.markers) m = at(m);

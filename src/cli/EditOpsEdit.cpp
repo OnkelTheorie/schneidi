@@ -4,14 +4,17 @@
 // speed ramps, markers, Media Pool organisation, copy and insert edits
 #include "cli/CommandsDetail.h"
 
+#include "core/Captions.h"
 #include "core/EffectFolders.h"
 #include "core/Retime.h"
 #include "core/Subtitles.h"
 #include "core/TimelineOps.h"
+#include "core/TranscriptCut.h"
 
 #include <QFileInfo>
 
 #include <algorithm>
+#include <climits>
 
 namespace Cli::detail {
 
@@ -68,6 +71,31 @@ bool applyStyle(TitleStyle& t, const QJsonObject& op)
     flag("box", &t.boxOn);
     color("box_color", &t.boxColor);
     num("box_padding", &t.boxPad, 0, 500);
+    return any;
+}
+
+// Word caption settings of a subtitle track (CaptionStyle): mode under `modeKey` (lines|karaoke|word)
+const QString kCaptionFields = "highlight (colour of the spoken word, karaoke), highlight_scale (its size, 1 = like the "
+                               "others, default 1.15), max_words_per_line (0 = by width), pop_ms (pop-in of a word, "
+                               "default 120, 0 = none), uppercase, shadow";
+const QStringList kCaptionKeys{"highlight", "highlight_scale", "max_words_per_line", "pop_ms", "uppercase", "shadow"};
+
+bool applyCaptions(CaptionStyle& c, const QJsonObject& op, const char* modeKey)
+{
+    bool any = false;
+    if (op.contains(modeKey)) {
+        const QString id = op.value(modeKey).toString();
+        const CaptionModeInfo* m = Captions::modeInfo(id == "beat" ? QStringLiteral("word") : id);
+        if (!m) fail("BAD_ARGUMENT", QString("%1 must be lines, karaoke or word, got '%2'").arg(modeKey, id));
+        c.mode = m->mode;
+        any = true;
+    }
+    if (op.contains("highlight")) c.highlight = colorOf(op.value("highlight"), "highlight"), any = true;
+    if (op.contains("highlight_scale")) c.highlightScale = numberOf(op, "highlight_scale", 0.5, 3), any = true;
+    if (op.contains("max_words_per_line")) c.maxWordsPerLine = int(numberOf(op, "max_words_per_line", 0, 50)), any = true;
+    if (op.contains("pop_ms")) c.popMs = int(numberOf(op, "pop_ms", 0, 2000)), any = true;
+    if (op.contains("uppercase")) c.uppercase = op.value("uppercase").toBool(), any = true;
+    if (op.contains("shadow")) c.shadow = op.value("shadow").toBool(), any = true;
     return any;
 }
 
@@ -312,6 +340,8 @@ void opTrack(Session& s, const QJsonObject& op)
         if (op.contains("lock") && op.value("lock").toBool() != t.locked) ed.toggleSubtitleTrackLock(index);
         TitleStyle style = s.project.timeline().subtitles[index].style;
         if (applyStyle(style, op)) ed.setSubtitleStyle(index, "Subtitle style", [&](TitleStyle& x) { x = style; });
+        CaptionStyle captions = s.project.timeline().subtitles[index].captions;
+        if (applyCaptions(captions, op, "captions")) ed.setSubtitleCaptions(index, captions);
         return;
     }
     TrackKind k = TrackKind::Video;
@@ -338,6 +368,76 @@ void opTrack(Session& s, const QJsonObject& op)
         ed.moveTrack(k, index, to);
     }
     if (op.contains("lock") && op.value("lock").toBool() != state().locked) ed.toggleTrackLock(ref); // last: blocks the rest
+}
+
+// Word captions from the transcript: a new subtitle track with word times, shown as karaoke or word by word
+void opCaptions(Session& s, const QJsonObject& op)
+{
+    const QString style = op.value("style").toString("karaoke");
+    CaptionStyle captions;
+    captions.mode = CaptionMode::Karaoke;
+    applyCaptions(captions, op, "style");
+    QVector<TranscriptCut::Word> words;
+    if (op.contains("words")) {
+        // Word times given (e.g. `transcribe` with words:true: timeline frames)
+        for (const QJsonValue& v : op.value("words").toArray()) {
+            const QJsonObject o = v.toObject();
+            TranscriptCut::Word w;
+            w.from = timeOf(s, o, "from");
+            w.to = w.spokenTo = std::max(w.from + 1, timeOf(s, o, "to", w.from + 1));
+            w.text = o.value("text").toString().trimmed();
+            if (!w.text.isEmpty()) words << w;
+        }
+        std::stable_sort(words.begin(), words.end(), [](const auto& a, const auto& b) { return a.from < b.from; });
+    } else {
+        // The transcripts of the media files (Transcript panel), following trims and speed changes of the clips
+        int track = -1;
+        if (op.contains("track")) {
+            TrackKind k = TrackKind::Audio;
+            track = parseTrack(op.value("track"), &k);
+            if (k != TrackKind::Audio) fail("BAD_ARGUMENT", "track must be an audio track (A1 …)");
+        }
+        const Timeline& tl = s.project.timeline();
+        words = TranscriptCut::timelineWords(tl, s.project.media(), s.project.frameRate(), track, true);
+        if (words.isEmpty()) {
+            QStringList missing;
+            for (const auto& [path, stream] : TranscriptCut::missingTranscripts(tl, s.project.media(), track))
+                missing << QFileInfo(path).fileName();
+            fail("NO_TRANSCRIPT", missing.isEmpty()
+                                      ? QString("no spoken words on the timeline")
+                                      : "no transcript for " + missing.join(", ")
+                                            + ": run `transcribe` on the project with words:true and pass its words "
+                                              "here, or transcribe in the app's Transcript panel");
+        }
+    }
+    if (op.contains("from") || op.contains("to")) {
+        const int from = timeOf(s, op, "from", 0), to = timeOf(s, op, "to", INT_MAX);
+        words.removeIf([&](const TranscriptCut::Word& w) { return w.from < from || w.from >= to; });
+    }
+    Captions::Options o;
+    const double fps = s.project.frameRate();
+    o.maxWords = op.contains("max_words") ? int(numberOf(op, "max_words", 1, 50)) : style == "word" || style == "beat" ? 3 : 4;
+    o.maxGapFrames = int(std::lround(0.6 * fps));
+    o.minFrames = int(std::lround(0.4 * fps));
+    if (op.contains("beats")) {
+        for (const QJsonValue& v : op.value("beats").toArray()) o.beats << parseTime(v, s.format(), "beats");
+        std::sort(o.beats.begin(), o.beats.end());
+    } else if (op.contains("bpm")) {
+        // A regular grid from first_beat on (to the end of the words)
+        const double period = 60.0 * fps / numberOf(op, "bpm", 20, 400);
+        const double first = timeOf(s, op, "first_beat", 0);
+        const int last = words.isEmpty() ? 0 : words.last().spokenTo + int(period) * int(words.size());
+        for (double b = first; b <= last; b += period) o.beats << int(std::lround(b));
+    }
+    if (style == "beat" && o.beats.isEmpty())
+        fail("BAD_ARGUMENT", "style 'beat' needs beats ([times] from `beats` with beats:true) or bpm (+ first_beat)");
+    const QVector<SubtitleCue> cues = Captions::fromWords(words, o);
+    if (cues.isEmpty()) fail("NO_SPEECH", "no words to make captions of");
+    const int index = s.editor.addCaptions(cues, op.value("name").toString(), captions);
+    TitleStyle text = s.project.timeline().subtitles[index].style;
+    if (applyStyle(text, op)) s.editor.setSubtitleStyle(index, "Subtitle style", [&](TitleStyle& x) { x = text; });
+    if (style == "beat" && words.size() > o.beats.size())
+        s.notes << QString("only %1 of %2 words got a beat (the beats ended)").arg(o.beats.size()).arg(words.size());
 }
 
 void opAddSubtitleTrack(Session& s, const QJsonObject& op)
@@ -636,12 +736,31 @@ void addEditOps(QVector<OpDef>& ops)
                  opTransition,
                  kClipKeys + QStringList{"color", "softness", "border", "border_color", "invert", "audio_curve", "luma"}}
         << OpDef{"track", "{op:'track', track, name?, lock?, mute?, hidden?, color?, move_to?}",
-                 "track header settings; subtitle tracks (ST1 …) take name, enabled, lock and the title style",
+                 "track header settings; subtitle tracks (ST1 …) take name, enabled, lock, the title style and the "
+                 "word caption style",
                  "Video/audio track colors: orange, apricot, yellow, lime, olive, green, teal, navy, blue, purple, "
                  "violet, pink, tan, beige, brown, chocolate. Subtitle style: " + kStyleFields
-                     + " (y = distance from the bottom edge).",
-                 opTrack, QStringList{"enabled"} + kStyleKeys}
+                     + " (y = distance from the bottom edge). Word captions: captions (lines|karaoke|word), "
+                     + kCaptionFields + ".",
+                 opTrack, QStringList{"enabled", "captions"} + kStyleKeys + kCaptionKeys}
         << OpDef{"add_subtitle_track", "{op:'add_subtitle_track', name?}", {}, {}, opAddSubtitleTrack}
+        << OpDef{"captions",
+                 "{op:'captions', style?:'karaoke'|'word'|'beat'|'lines', words?:[{from, to, text}], track?:'A1', "
+                 "from?, to?, max_words?, beats?:[times], bpm?, first_beat?, name?}",
+                 "word-by-word captions (shorts/reels style) from the transcript as a new, visible subtitle track",
+                 "style: karaoke = the phrase stays, the spoken word lights up (highlight colour, slightly bigger); "
+                 "word = one word at a time that pops in; beat = word by word, each word on the next beat (beats: "
+                 "the times from `beats` with beats:true, or bpm + first_beat for a regular grid); lines = plain "
+                 "subtitles with word times. Words: the media transcripts (Transcript panel; they follow trims and "
+                 "speed changes, track = only that audio track's clips) or words = the 'words' list of `transcribe` "
+                 "on the project with words:true (timeline frames) - `transcribe` with apply:true and captions:'<style>' "
+                 "does both in one call. max_words = words per caption (default 4, word/beat 3). Text style keys as for "
+                 "'track' (" + kStyleFields + "; y = bottom of the text above the picture's bottom) and " + kCaptionFields
+                     + ". The default style is big bold text with an outline, on 9:16 above the part phone apps cover. "
+                       "Word styles are burned into the picture; an embedded subtitle stream (render "
+                       "embed_subtitles:true) or an SRT/VTT file carries the plain text. Change it later with "
+                       "{op:'track', track:'ST2', captions:'word', highlight:'#ff0'}.",
+                 opCaptions, kStyleKeys + kCaptionKeys}
         << OpDef{"link", "{op:'link'|'unlink', clips}", "link clips (move/cut together) or unlink them", {},
                  [](Session& s, const QJsonObject& op) { opLink(s, op, true); }}
         << OpDef{"unlink", {}, {}, {}, [](Session& s, const QJsonObject& op) { opLink(s, op, false); }}

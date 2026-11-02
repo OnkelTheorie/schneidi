@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "core/ExportCheck.h"
 
+#include "core/Captions.h"
 #include "core/EffectRegistry.h"
 #include "core/I18n.h"
 #include "core/Keyframes.h"
@@ -72,6 +73,7 @@ QRectF titleBlock(const Clip& c, double t, double W, double H)
 // above the picture's bottom edge
 QRectF subtitleBlock(const TitleStyle& s, const QString& text, double W, double H)
 {
+    const double maxWidth = W * 0.9;
     const QFontMetricsF fm = metrics(s, std::max(1.0, s.size));
     int lines = 0;
     double w = 1;
@@ -83,7 +85,7 @@ QRectF subtitleBlock(const TitleStyle& s, const QString& text, double W, double 
         };
         for (const QString& word : para.split(' ', Qt::SkipEmptyParts)) {
             const QString candidate = line.isEmpty() ? word : line + ' ' + word;
-            if (!line.isEmpty() && fm.horizontalAdvance(candidate) > W * 0.9) {
+            if (!line.isEmpty() && fm.horizontalAdvance(candidate) > maxWidth) {
                 flush();
                 line = word;
             } else {
@@ -91,6 +93,38 @@ QRectF subtitleBlock(const TitleStyle& s, const QString& text, double W, double 
             }
         }
         flush();
+    }
+    const double h = fm.lineSpacing() * lines, bottom = std::clamp(H - s.posY, 1.0, H);
+    return grown(QRectF(W / 2 + s.posX - w / 2, bottom - h, w, h), s);
+}
+
+// Word captions as the picture engine lays them out (Renderer::captionLayer): uppercase when set, lines at
+// Captions::lineWidth with room for the highlighted word grown; word by word only the widest word (at the pop's
+// overshoot)
+QRectF captionBlock(const TitleStyle& s, const CaptionStyle& c, const QString& text, double W, double H)
+{
+    QStringList words = Captions::words(text);
+    if (c.uppercase)
+        for (QString& w : words) w = w.toUpper();
+    const QFontMetricsF fm = metrics(s, std::max(1.0, s.size));
+    QVector<double> widths;
+    double widest = 0;
+    for (const QString& w : words) widths << fm.horizontalAdvance(w), widest = std::max(widest, widths.last());
+    double w = 1;
+    int lines = 1;
+    if (c.mode == CaptionMode::Word) {
+        w = std::max(w, widest * 1.08);
+    } else {
+        const double grow = widest * (std::max(1.0, c.highlightScale) - 1), space = fm.horizontalAdvance(QLatin1Char(' '));
+        const QVector<int> starts = Captions::lineStarts(widths, space, Captions::lineWidth(QSize(int(W), int(H))) - grow,
+                                                         c.maxWordsPerLine);
+        lines = std::max(1, int(starts.size()));
+        for (int l = 0; l < starts.size(); ++l) {
+            const int end = l + 1 < starts.size() ? starts[l + 1] : int(widths.size());
+            double lw = 0;
+            for (int i = starts[l]; i < end; ++i) lw += (i > starts[l] ? space : 0.0) + widths[i];
+            w = std::max(w, lw + grow);
+        }
     }
     const double h = fm.lineSpacing() * lines, bottom = std::clamp(H - s.posY, 1.0, H);
     return grown(QRectF(W / 2 + s.posX - w / 2, bottom - h, w, h), s);
@@ -268,6 +302,8 @@ QVector<Issue> timeline(const Timeline& tl, int from, int to, const ProjectForma
             if (cue.end > to)
                 out << issue(Severity::Warning, "subtitle_end", T("Untertitel läuft über das Ende hinaus: „%1“").arg(cue.text.simplified()),
                              cue.start, cue.end);
+            // Word captions are read word by word as they are spoken: short cues and fast speech are fine there
+            if (st.captions.mode != CaptionMode::Lines) continue;
             if (seconds < o.subtitleMinS)
                 out << issue(Severity::Warning, "subtitle_short",
                              T("Untertitel zu kurz zum Lesen (%1 s): „%2“").arg(num(seconds), cue.text.simplified()),
@@ -453,7 +489,9 @@ QVector<Issue> layout(const Timeline& tl, int from, int to, const ProjectFormat&
         QVector<int> zones(5, 0);
         for (const SubtitleCue& cue : st.cues) {
             if (cue.end <= from || cue.start >= to || cue.text.trimmed().isEmpty()) continue;
-            const auto [part, zone] = covered(subtitleBlock(st.style, cue.text, W, H), W, H, o);
+            const QRectF block = st.captions.mode == CaptionMode::Lines ? subtitleBlock(st.style, cue.text, W, H)
+                                                                        : captionBlock(st.style, st.captions, cue.text, W, H);
+            const auto [part, zone] = covered(block, W, H, o);
             if (part < o.safeMaxCovered) continue;
             if (first < 0) first = std::max(from, cue.start);
             last = std::min(to, cue.end);

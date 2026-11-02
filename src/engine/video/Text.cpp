@@ -84,4 +84,97 @@ void draw(uint8_t* rgba, int w, int h, const Params& tp)
     p.end();
 }
 
+void drawWords(uint8_t* rgba, int w, int h, const WordParams& tp)
+{
+    const QFont& font = tp.font;
+    const QFontMetricsF fm(font);
+    const double space = fm.horizontalAdvance(QLatin1Char(' '));
+    const double reserve = std::max(1.0, tp.reserve);
+    // A word takes its own width, a larger word (highlight, pop overshoot) its larger width: the words next to it
+    // move aside and keep a full space to it (laid out at the normal width and grown around its centre, a larger
+    // word covered the spaces: "Thisis word"). The size of the block (fit into the area, the box) counts the largest
+    // word grown by `reserve`, so the text does not change size or wrap while the highlight moves.
+    const auto slotOf = [&](const Word& word) { return fm.horizontalAdvance(word.text) * std::max(1.0, word.scale); };
+    QVector<double> lineW;
+    double blockW = 0;
+    for (const QVector<Word>& line : tp.lines) {
+        double lw = 0, natural = 0, widest = 0;
+        for (int i = 0; i < line.size(); ++i) {
+            const double adv = fm.horizontalAdvance(line[i].text);
+            lw += (i ? space : 0.0) + slotOf(line[i]);
+            natural += (i ? space : 0.0) + adv;
+            widest = std::max(widest, adv);
+        }
+        lineW << lw;
+        blockW = std::max({blockW, lw, natural + widest * (reserve - 1)});
+    }
+    if (tp.lines.isEmpty() || blockW <= 0) return;
+    const double blockH = fm.lineSpacing() * (tp.lines.size() - 1) + fm.height();
+    const double ext = tp.pad + tp.outline / 2;
+    const double cw = blockW + 2 * ext, ch = blockH + 2 * ext;
+    const QRectF& area = tp.area;
+    double k = 1.0;
+    if (area.width() > 0) k = std::min(k, area.width() / cw);
+    if (area.height() > 0) k = std::min(k, area.height() / ch);
+    const double ox = tp.halign == 0 ? area.left() : tp.halign == 1 ? area.left() + (area.width() - cw * k) / 2
+                                                                    : area.right() - cw * k;
+    const double oy = tp.valign == 0 ? area.top() : tp.valign == 1 ? area.top() + (area.height() - ch * k) / 2
+                                                                   : area.bottom() - ch * k;
+    struct Placed {
+        QPainterPath path;
+        const Word* word;
+    };
+    std::vector<Placed> placed;
+    for (int l = 0; l < tp.lines.size(); ++l) {
+        const double baseline = ext + fm.ascent() + l * fm.lineSpacing();
+        double x = ext + (tp.halign == 0 ? 0.0 : tp.halign == 1 ? (blockW - lineW[l]) / 2 : blockW - lineW[l]);
+        // Right-to-left text (Arabic, Hebrew): the first word on the right (each word's letters are shaped by Qt)
+        const QVector<Word>& line = tp.lines[l];
+        QString joined;
+        for (const Word& word : line) joined += word.text + ' ';
+        const bool rtl = joined.isRightToLeft();
+        for (int i = 0; i < line.size(); ++i) {
+            const Word& word = line[rtl ? line.size() - 1 - i : i];
+            const double adv = fm.horizontalAdvance(word.text), slot = slotOf(word);
+            QPainterPath path;
+            path.addText(QPointF(x + (slot - adv) / 2, baseline), font, word.text);
+            if (word.scale != 1.0) {
+                const QPointF c(x + slot / 2, baseline - fm.ascent() + fm.height() / 2);
+                QTransform t;
+                t.translate(c.x(), c.y());
+                t.scale(word.scale, word.scale);
+                t.translate(-c.x(), -c.y());
+                path = t.map(path);
+            }
+            placed.push_back({path, &word});
+            x += slot + space;
+        }
+    }
+    QImage img(rgba, w, h, w * 4, QImage::Format_RGBA8888);
+    QPainter p(&img);
+    p.setRenderHint(QPainter::Antialiasing);
+    p.translate(ox, oy);
+    p.scale(k, k);
+    if (tp.bg.alpha() > 0) p.fillRect(QRectF(0, 0, cw, ch), tp.bg);
+    const double off = font.pixelSize() / 10.0;
+    if (tp.shadow.alpha() > 0)
+        for (const Placed& pl : placed) {
+            p.setOpacity(pl.word->opacity);
+            p.fillPath(pl.path.translated(off, off), tp.shadow);
+            if (tp.outline > 0)
+                p.strokePath(pl.path.translated(off, off), QPen(tp.shadow, tp.outline, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+        }
+    if (tp.outline > 0 && tp.outlineColor.alpha() > 0)
+        for (const Placed& pl : placed) {
+            p.setOpacity(pl.word->opacity);
+            const double width = tp.outline * pl.word->scale;
+            p.strokePath(pl.path, QPen(tp.outlineColor, width, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+        }
+    for (const Placed& pl : placed) {
+        p.setOpacity(pl.word->opacity);
+        p.fillPath(pl.path, pl.word->fg);
+    }
+    p.end();
+}
+
 } // namespace Text

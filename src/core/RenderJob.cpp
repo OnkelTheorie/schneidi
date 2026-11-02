@@ -234,6 +234,8 @@ QString RenderSettings::summary(QSize output) const
     if (const int bits = validBits(*this)) parts << (bits == 32 ? T("32 Bit Float") : T("%1 Bit").arg(bits));
     if (subtitles == BurnSubtitles && !audioOnly()) parts << T("Untertitel eingebrannt");
     if (subtitles == SrtFile) parts << T("Untertitel als SRT");
+    if (subtitles == VttFile) parts << T("Untertitel als WebVTT");
+    if (embedSubtitles && canEmbedSubtitles()) parts << T("Untertitelspur in der Datei");
     return parts.join(QStringLiteral(" · "));
 }
 
@@ -245,6 +247,8 @@ QJsonObject RenderSettings::toJson() const
     if (rateNum > 0) o["rate"] = QString("%1/%2").arg(rateNum).arg(rateDen);
     if (subtitles == BurnSubtitles) o["subtitles"] = "burn";
     if (subtitles == SrtFile) o["subtitles"] = "srt";
+    if (subtitles == VttFile) o["subtitles"] = "vtt";
+    if (embedSubtitles) o["embedSubtitles"] = true;
     o["encoder"] = videoEncoderId(encoder);
     if (!smartRender) o["smartRender"] = false;
     if (size.isValid() && !size.isEmpty()) {
@@ -270,11 +274,17 @@ RenderSettings RenderSettings::fromJson(const QJsonObject& o)
     const int w = o.value("width").toInt(), h = o.value("height").toInt();
     if (w > 0 && h > 0) s.size = QSize(w, h);
     const QString sub = o.value("subtitles").toString();
-    s.subtitles = sub == "burn" ? BurnSubtitles : sub == "srt" ? SrtFile : NoSubtitles;
+    s.subtitles = sub == "burn" ? BurnSubtitles : sub == "srt" ? SrtFile : sub == "vtt" ? VttFile : NoSubtitles;
+    s.embedSubtitles = o.value("embedSubtitles").toBool();
     // Older files know only the software encoder: keep it, so nothing changes for them
     s.encoder = videoEncoderFromId(o.value("encoder").toString(), VideoEncoder::Software);
     s.smartRender = o.value("smartRender").toBool(true);
     return s;
+}
+
+bool RenderSettings::canEmbedSubtitles() const
+{
+    return kind() == RenderKind::Video; // the container decides the codec (an AVI gets none, see ExportWriter)
 }
 
 bool RenderSettings::operator==(const RenderSettings& o) const
@@ -282,6 +292,7 @@ bool RenderSettings::operator==(const RenderSettings& o) const
     const auto normSize = [](QSize s) { return s.isValid() && !s.isEmpty() ? s : QSize(); };
     return format == o.format && shortSide == o.shortSide && normSize(size) == normSize(o.size)
            && quality == o.quality && audioBitrateK == o.audioBitrateK && subtitles == o.subtitles
+           && embedSubtitles == o.embedSubtitles
            && audioBits == o.audioBits && encoder == o.encoder && smartRender == o.smartRender && rateNum == o.rateNum && (rateNum <= 0 || rateDen == o.rateDen);
 }
 

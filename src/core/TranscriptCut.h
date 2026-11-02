@@ -23,7 +23,10 @@ struct Word {
 // Words of all audio clips (audioTrack < 0) or of one audio track, sorted by time. Only clips that play their
 // source at normal speed (no speed change, ramp, freeze or reverse) and are enabled; a word counts if it starts
 // inside the clip. The same word heard on two tracks (same file and stream) appears once.
-QVector<Word> timelineWords(const Timeline& tl, const QVector<MediaInfo>& media, double fps, int audioTrack = -1);
+// retimed = also clips that play forward at another speed or with a speed ramp (word captions: the words follow
+// the speed; cutting by text keeps to normal speed).
+QVector<Word> timelineWords(const Timeline& tl, const QVector<MediaInfo>& media, double fps, int audioTrack = -1,
+                            bool retimed = false);
 
 // Clips on the track(s) whose source has no transcript yet: (media path, audio stream), each once
 QVector<QPair<QString, int>> missingTranscripts(const Timeline& tl, const QVector<MediaInfo>& media, int audioTrack = -1);
