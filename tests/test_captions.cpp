@@ -279,6 +279,24 @@ void testProjectFile()
     CHECK(Captions::toJson(CaptionStyle{}).isEmpty());
 }
 
+// Captions made in a 9:16 timeline of a 16:9 project take the timeline's portrait defaults (size, position above the
+// phone apps' bottom part), not the project's
+void testTimelineFormat()
+{
+    Project p; // 1920 x 1080
+    Selection sel;
+    Editor ed(&p, &sel);
+    p.addTimeline("Short", 0, QSize(1080, 1920));
+    CHECK_EQ(p.timelineFormat().size(), QSize(1080, 1920));
+    const int index = ed.addCaptions({cue(0, 25, "hello there")}, "Words", CaptionStyle{CaptionMode::Karaoke});
+    if (!CHECK(index >= 0)) return;
+    const TitleStyle& st = p.timeline().subtitles[index].style;
+    const TitleStyle portrait = Captions::defaultStyle(QSize(1080, 1920), CaptionMode::Karaoke);
+    CHECK_EQ(st.posY, portrait.posY);
+    CHECK_EQ(st.size, portrait.size);
+    CHECK(st.posY != Captions::defaultStyle(QSize(1920, 1080), CaptionMode::Karaoke).posY);
+}
+
 void testCliOp(const QString& dir)
 {
     const QString path = dir + "/cli.schneidi";
@@ -647,6 +665,7 @@ int main(int argc, char** argv)
     testProjectFile();
     testWordLayout();
     testWordScripts();
+    testTimelineFormat();
     QTemporaryDir tmp;
     if (!CHECK(tmp.isValid())) return Check::result();
     testCliOp(tmp.path());

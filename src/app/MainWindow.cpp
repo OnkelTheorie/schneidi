@@ -363,6 +363,8 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
     tv->setMediaCache(m_mediaCache);
     // Project settings -> engine (profile anew), cache, Inspector; comes before timelineChanged
     connect(m_project, &Project::formatChanged, this, &MainWindow::onFormatChanged);
+    // Another timeline opened or a timeline's own resolution: the viewer renders at that size
+    connect(m_project, &Project::timelineFormatChanged, this, &MainWindow::onTimelineFormatChanged);
 
     connect(m_project, &Project::modifiedChanged, this, &MainWindow::updateTitle);
     updateTitle();
@@ -443,7 +445,10 @@ void MainWindow::onDrop(const QStringList& paths, int frame, int track)
 void MainWindow::offerClipFormat(const QStringList& paths, bool ask)
 {
     if (m_project->frameRateLocked()) return; // only in an empty timeline
-    if (m_project->fixedResolution() && m_project->fixedFrameRate()) return; // start template / Project Settings
+    // A timeline of its own resolution (a 9:16 short) keeps it like a fixed one: only the frame rate is offered
+    const Sequence* open = m_project->sequence(m_project->currentSequence());
+    const bool fixedSize = m_project->fixedResolution() || (open && open->hasOwnSize());
+    if (fixedSize && m_project->fixedFrameRate()) return; // start template / Project Settings
     // The first clip with video decides (still images and audio have no format of their own)
     for (const QString& path : paths) {
         const MediaInfo* info = m_project->mediaInfo(path);
@@ -453,8 +458,8 @@ void MainWindow::offerClipFormat(const QStringList& paths, bool ask)
         const ProjectFormat cur = m_project->format();
         // A fixed resolution or frame rate (start template, Project Settings) stays as it is
         ProjectFormat want;
-        want.width = m_project->fixedResolution() ? cur.width : cf.width;
-        want.height = m_project->fixedResolution() ? cur.height : cf.height;
+        want.width = fixedSize ? cur.width : cf.width;
+        want.height = fixedSize ? cur.height : cf.height;
         want.rate = m_project->fixedFrameRate() ? cur.rate : cf.suggested;
         if (want == cur) return;
         if (ask) {
@@ -750,18 +755,24 @@ void MainWindow::onFormatChanged()
 {
     const ProjectFormat& f = m_project->format();
     const FrameRate oldRate = m_engine->format().rate;
-    m_engine->setFormat(f); // timeline rebuilds in the following timelineChanged()
-    m_mediaCache->setFormat(f);
+    onTimelineFormatChanged();
     // Every load comes here (also with the same format): graded tiles are kept by clip id, and the next project has
     // clips with the same ids
     m_mediaCache->graded()->clear();
-    m_inspector->setFrameSize(f.size());
     m_probeCache.clear();
     m_editor->setPreviewSource({}); // its length counts in the old frame rate; the Viewer shows the timeline now
     if (f.rate == oldRate) return;
     // Lengths in the Media Pool count in project frames -> re-read (only possible in an empty timeline,
     // undo/redo included)
     m_project->recountMedia(oldRate, [this](const QString& path) { return m_engine->probe(path).length; });
+}
+
+void MainWindow::onTimelineFormatChanged()
+{
+    const ProjectFormat f = m_project->timelineFormat();
+    m_engine->setFormat(f); // nothing when the same; the timeline rebuilds in the following timelineChanged()
+    m_mediaCache->setFormat(f); // thumbnails in the timeline's shape
+    m_inspector->setFrameSize(f.size());
 }
 
 bool MainWindow::eventFilter(QObject* obj, QEvent* event)

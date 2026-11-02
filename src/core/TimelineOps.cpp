@@ -817,7 +817,8 @@ bool sameNested(const Timeline& a, const Timeline& b)
     if (a.nested == b.nested) return true;
     if (!a.nested || !b.nested || *a.nested != *b.nested) return false;
     for (auto it = a.nested->cbegin(); it != a.nested->cend(); ++it)
-        if (it->angles != b.nested->value(it.key()).angles) return false;
+        if (const Timeline other = b.nested->value(it.key()); it->angles != other.angles || it->frameSize != other.frameSize)
+            return false; // a sequence's own resolution changed: fitted in anew even when its clips stayed the same
     return true;
 }
 

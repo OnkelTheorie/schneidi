@@ -115,11 +115,24 @@ void scaleTimeline(Timeline& tl, QSize from, QSize to)
                 }
             }
     // Content of the compound clips (appended only when rendering) likewise
+    // (a sequence of its own resolution: that one scaled by the same factors, so it keeps its shape inside)
     if (tl.nested) {
         auto nested = std::make_shared<NestedTimelines>(*tl.nested);
-        for (Timeline& n : *nested) scaleTimeline(n, from, to);
+        for (Timeline& n : *nested) {
+            if (n.frameSize.isEmpty() || n.frameSize == from) {
+                scaleTimeline(n, from, to);
+                if (!n.frameSize.isEmpty()) n.frameSize = to;
+                continue;
+            }
+            const QSize own(std::max(2, int(std::lround(double(n.frameSize.width()) * to.width() / from.width()))),
+                            std::max(2, int(std::lround(double(n.frameSize.height()) * to.height() / from.height()))));
+            const QSize was = n.frameSize;
+            scaleTimeline(n, was, own);
+            n.frameSize = own;
+        }
         tl.nested = std::move(nested);
     }
+    if (!tl.frameSize.isEmpty()) tl.frameSize = to;
 }
 
 void retimeTimeline(Timeline& tl, FrameRate from, FrameRate to)

@@ -68,7 +68,9 @@ public:
 
     explicit Session(const QString& file, Access access = Access::Read);
     ~Session();
-    const ProjectFormat& format() const { return project.format(); }
+    // The format of the timeline being edited (its own resolution or the project's; Project::timelineFormat): what
+    // renders, checks and pixel values use. The project's default is project.format().
+    ProjectFormat format() const { return project.timelineFormat(); }
     // Edit/read another timeline (sequence id or name; undefined = keep). The project still opens with the
     // timeline that was open before, unless open = true.
     void selectTimeline(const QJsonValue& v, bool open = false);

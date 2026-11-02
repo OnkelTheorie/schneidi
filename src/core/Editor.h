@@ -505,6 +505,10 @@ private:
     QVector<ClipboardItem> m_clipboard; // starts relative to the earliest clip
     std::optional<Clip> m_gradeClipboard; // copyGrade: the source clip (only its grade is used)
     FrameRate m_clipboardRate; // frame rate the clipboards count in (clip times, keyframes)
+    QSize m_clipboardSize; // resolution the clipboard's pixel values refer to (the timeline it was copied in)
+    // The clipboard in the open timeline's pixels (positions, crops, title sizes scaled like scaleTimeline): copied
+    // in a 16:9 edit and pasted into a 9:16 short
+    QVector<ClipboardItem> clipboardHere() const;
     // Another project opened or a new frame rate: what still fits of the clipboards (keepClipboardFitting)
     void keepClipboardFitting(bool otherProject);
     MediaInfo m_preview; // setPreviewSource: a file shown in the source viewer that is not in the Media Pool

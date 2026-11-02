@@ -717,5 +717,16 @@ int main(int argc, char** argv)
     for (const QString& c : checksOf(run("check", {{"source", wide}})))
         CHECK(c != "under_music" && c != "safe_area" && c != "subtitle_safe_area" && c != "slow_hook" && c != "stutter");
 
+    // A 9:16 timeline of its own in that 16:9 project: `check` looks at it as a vertical video (what the apps
+    // cover), the 16:9 edit next to it stays without those findings
+    run("edit", {{"project", wide},
+                 {"ops", QString(R"([{"op":"new_timeline","name":"Short","width":270,"height":480},
+                                    {"op":"place","media":"%1","at":0},
+                                    {"op":"title","text":"x16","at":"2s","duration":"1s","size":30,"y":-190}])")
+                             .arg(game)}});
+    CHECK(checksOf(run("check", {{"source", wide}, {"timeline", "Short"}, {"sound", false}})).contains("safe_area"));
+    for (const QString& c : checksOf(run("check", {{"source", wide}, {"timeline", "Timeline 1"}, {"sound", false}})))
+        CHECK(c != "safe_area");
+
     return Check::result();
 }

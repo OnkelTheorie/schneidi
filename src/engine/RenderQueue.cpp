@@ -74,7 +74,7 @@ ExportSettings RenderQueue::exportSettings(const RenderJob& job, const ProjectFo
 
 ExportSettings RenderQueue::exportSettings(const RenderJob& job, const Project& project)
 {
-    ExportSettings s = exportSettings(job, project.format());
+    ExportSettings s = exportSettings(job, project.sequenceFormat(job.sequence)); // the timeline's own resolution
     for (const MediaInfo& m : project.media()) s.mediaLengths.insert(m.path, m.length);
     return s;
 }

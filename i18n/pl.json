@@ -1900,5 +1900,13 @@
  "Wort für Wort": "Słowo po słowie",
  "Wort-Untertitel": "Napisy słowo po słowie",
  "Wörter pro Zeile": "Słowa w wierszu",
- "Zeilen": "Wiersze"
+ "Zeilen": "Wiersze",
+ "Neue Hochformat-Timeline (9:16)": "Nowa pionowa oś czasu (9:16)",
+ "Positionen, Beschneiden und Titel dieser Timeline werden an eine neue Auflösung angepasst. Die anderen Timelines bleiben, wie sie sind.": "Pozycje, kadrowanie i napisy tej osi czasu zostaną dopasowane do nowej rozdzielczości. Pozostałe osie czasu zostają bez zmian.",
+ "Projekteinstellungen verwenden (%1)": "Użyj ustawień projektu (%1)",
+ "Timeline-Auflösung…": "Rozdzielczość osi czasu…",
+ "Eigene Auflösung: %1": "Własna rozdzielczość: %1",
+ "Auflösung: %1 (Projekteinstellungen)": "Rozdzielczość: %1 (ustawienia projektu)",
+ "Keine gesprochenen Wörter in den Tonclips.": "Brak wypowiedzianych słów w klipach dźwiękowych.",
+ "Neue Untertitelspur aus dem Transkript, Wort für Wort hervorgehoben (Karaoke; Stil im Inspector der Spur)": "Nowa ścieżka napisów z transkrypcji, wyróżnianie słowo po słowie (karaoke; styl w Inspektorze ścieżki)"
 }

@@ -775,14 +775,28 @@ struct Renderer::Impl {
                 content.nested = it->nested ? it->nested : tl.nested;
                 inner = &content;
             }
-            src = Image(W, H);
             Timeline withNested;
             if (!inner->nested && tl.nested) {
                 withNested = *inner;
                 withNested.nested = tl.nested;
                 inner = &withNested;
             }
-            renderTimeline(*inner, in, src, ctx, lane + QString("n%1/").arg(c.sequenceId), false, depth + 1);
+            // A sequence of another resolution (a 16:9 edit in a 9:16 short): rendered in its own pixels and fitted
+            // into the frame like a clip of that shape, at the output's scale
+            const QSize own = it->frameSize;
+            if (!own.isEmpty() && (own.width() != ctx.PW || own.height() != ctx.PH)) {
+                fit = MediaAspect::fit(double(own.width()) / own.height(), QSizeF(ctx.PW, ctx.PH));
+                Ctx sub = ctx;
+                sub.PW = own.width();
+                sub.PH = own.height();
+                sub.W = std::max(1, int(std::lround(fit.width() * sx)));
+                sub.H = std::max(1, int(std::lround(fit.height() * sy)));
+                src = Image(sub.W, sub.H);
+                renderTimeline(*inner, in, src, sub, lane + QString("n%1/").arg(c.sequenceId), false, depth + 1);
+            } else {
+                src = Image(W, H);
+                renderTimeline(*inner, in, src, ctx, lane + QString("n%1/").arg(c.sequenceId), false, depth + 1);
+            }
         } else {
             if (c.mediaPath.isEmpty()) return {};
             const double aspect = nativeAspect(c, lane);

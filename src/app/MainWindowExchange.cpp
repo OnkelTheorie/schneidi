@@ -173,7 +173,7 @@ void MainWindow::contactSheetDialog()
     const int from = dialog.inOut() ? tl.markIn : 0;
     const int to = dialog.inOut() ? std::min(end, tl.markOut + 1) : end;
     const QVector<int> frames = ContactSheet::spread(from, to, std::min(dialog.count(), to - from));
-    const ProjectFormat& f = m_project->format();
+    const ProjectFormat f = m_project->timelineFormat(); // the timeline's shape
 
     QProgressDialog progress(T("Bilder werden geholt…"), T("Abbrechen"), 0, int(frames.size()), this);
     progress.setWindowModality(Qt::WindowModal);

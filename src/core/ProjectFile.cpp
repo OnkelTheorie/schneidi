@@ -100,7 +100,16 @@ TrackDynamics dynamicsFromJson(const QJsonObject& o)
 //     pictures of another shape than the frame wrongly.
 //  4: Color page window fill "pixelate" on a five times finer scale (0.14, convertPixelate). Older versions would
 //     show far coarser blocks than set.
-constexpr int kFormatVersion = 4;
+//  5: a timeline with its own resolution (sequence "width"/"height", 0.16). Older versions would show it at the
+//     project's resolution with every position and title in the wrong place. Written only when a sequence has one:
+//     projects without stay version 4 and keep opening in 0.14/0.15 (writtenVersion).
+constexpr int kFormatVersion = 5;
+// The version a file is written with: the newest one only when it uses what needs it
+int writtenVersion(const ProjectData& d)
+{
+    const bool ownSize = std::any_of(d.sequences.begin(), d.sequences.end(), [](const Sequence& s) { return s.hasOwnSize(); });
+    return ownSize ? 5 : 4;
+}
 
 // Migrations: kMigrations[i] turns the JSON of version i + 1 into version i + 2 before the reader sees it. A step
 // converts what the reader of the new version no longer understands (renamed/restructured fields); a new version
@@ -110,6 +119,7 @@ const std::array<Migration, kFormatVersion - 1> kMigrations = {
     [](QJsonObject&) {}, // 1 -> 2: nothing to convert (clips without "audioStream" use stream 0)
     [](QJsonObject&) {}, // 2 -> 3: crop values are converted while reading (convertCrop needs the media's shape)
     [](QJsonObject&) {}, // 3 -> 4: pixelate amounts are converted while reading (convertPixelate, keyframes too)
+    [](QJsonObject&) {}, // 4 -> 5: nothing to convert (sequences without "width"/"height" use the project's)
 };
 
 // Format 4: pixelate windows have a finer scale (GradeWindows::pixelBlock: amount 100 = 1/50 of the picture height,
@@ -706,6 +716,7 @@ QByteArray toJson(const ProjectData& data, const QString& projectPath)
             o["angles"] = angles;
         }
         if (s.bin != 0) o["bin"] = s.bin;
+        if (s.hasOwnSize()) o["width"] = s.width, o["height"] = s.height;
         if (s.id != data.currentSequence) o["timeline"] = timelineJson(s.timeline);
         seqs << o;
     }
@@ -713,7 +724,7 @@ QByteArray toJson(const ProjectData& data, const QString& projectPath)
     for (const MediaBin& b : data.bins) bins << QJsonObject{{"id", b.id}, {"parent", b.parent}, {"name", b.name}};
 
     QJsonObject root{
-        {"app", "schneidi"},       {"version", kFormatVersion},
+        {"app", "schneidi"},       {"version", writtenVersion(data)},
         {"fps", data.format.rate.timebase()}, // for older versions
         {"format", QJsonObject{{"width", data.format.width}, {"height", data.format.height},
                                {"fpsNum", data.format.rate.num}, {"fpsDen", data.format.rate.den}}},
@@ -944,6 +955,8 @@ bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* d
             seq.angles << angle;
         }
         seq.bin = std::max(0, o.value("bin").toInt());
+        seq.width = std::max(0, o.value("width").toInt()); // limits: Project::load
+        seq.height = std::max(0, o.value("height").toInt());
         if (seq.id <= 0) continue;
         if (o.contains("timeline")) seq.timeline = readTimeline(o.value("timeline").toObject());
         d.sequences << seq;

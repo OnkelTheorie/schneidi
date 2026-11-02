@@ -1900,5 +1900,13 @@
  "Wort für Wort": "Word by word",
  "Wort-Untertitel": "Word captions",
  "Wörter pro Zeile": "Words per line",
- "Zeilen": "Lines"
+ "Zeilen": "Lines",
+ "Neue Hochformat-Timeline (9:16)": "New vertical timeline (9:16)",
+ "Positionen, Beschneiden und Titel dieser Timeline werden an eine neue Auflösung angepasst. Die anderen Timelines bleiben, wie sie sind.": "Positions, crop and titles of this timeline are adapted to a new resolution. The other timelines stay as they are.",
+ "Projekteinstellungen verwenden (%1)": "Use project settings (%1)",
+ "Timeline-Auflösung…": "Timeline resolution…",
+ "Eigene Auflösung: %1": "Own resolution: %1",
+ "Auflösung: %1 (Projekteinstellungen)": "Resolution: %1 (project settings)",
+ "Keine gesprochenen Wörter in den Tonclips.": "No spoken words in the audio clips.",
+ "Neue Untertitelspur aus dem Transkript, Wort für Wort hervorgehoben (Karaoke; Stil im Inspector der Spur)": "New subtitle track from the transcript, highlighted word by word (karaoke; style in the track's Inspector)"
 }

@@ -588,7 +588,7 @@ QJsonObject cmdRender(const QJsonObject& a, Context& ctx)
         if (job.settings.embedSubtitles && !job.settings.canEmbedSubtitles())
             fail("BAD_ARGUMENT", "embed_subtitles needs a video file (not audio only, GIF or images)");
     }
-    job.size = job.settings.outputSize(s.format().size());
+    job.size = job.settings.outputSize(s.project.timelineFormat().size());
     Timeline tl = s.project.renderTimeline();
     // Tracks left out of this render only (a voice-over, a music bed): the project keeps its mixer
     for (const QJsonValue& v : a["mute_tracks"].toArray()) {

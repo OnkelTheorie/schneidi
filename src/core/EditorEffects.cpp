@@ -179,7 +179,7 @@ QVector<int> Editor::addAccents(const QVector<int>& idsIn, const QVector<int>& f
             if (c && f >= c->start && f < c->end()) landed.insert(f);
     }
     if (landed.isEmpty()) return {};
-    const ProjectFormat& fmt = m_project->format();
+    const ProjectFormat fmt = m_project->timelineFormat();
     modifyClips(ids, text, [&](Clip& c) {
         // All times, not only the clip's own: the ones outside space its flashes
         QVector<int> local;

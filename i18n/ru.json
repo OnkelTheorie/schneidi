@@ -1900,5 +1900,13 @@
  "Wort für Wort": "Слово за словом",
  "Wort-Untertitel": "Субтитры по словам",
  "Wörter pro Zeile": "Слов в строке",
- "Zeilen": "Строки"
+ "Zeilen": "Строки",
+ "Neue Hochformat-Timeline (9:16)": "Новый вертикальный монтажный стол (9:16)",
+ "Positionen, Beschneiden und Titel dieser Timeline werden an eine neue Auflösung angepasst. Die anderen Timelines bleiben, wie sie sind.": "Положение, обрезка и титры этого монтажного стола подгоняются под новое разрешение. Остальные монтажные столы остаются как есть.",
+ "Projekteinstellungen verwenden (%1)": "Использовать настройки проекта (%1)",
+ "Timeline-Auflösung…": "Разрешение монтажного стола…",
+ "Eigene Auflösung: %1": "Собственное разрешение: %1",
+ "Auflösung: %1 (Projekteinstellungen)": "Разрешение: %1 (настройки проекта)",
+ "Keine gesprochenen Wörter in den Tonclips.": "В аудиоклипах нет произнесённых слов.",
+ "Neue Untertitelspur aus dem Transkript, Wort für Wort hervorgehoben (Karaoke; Stil im Inspector der Spur)": "Новая дорожка субтитров из расшифровки с выделением по словам (караоке; стиль в инспекторе дорожки)"
 }
