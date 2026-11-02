@@ -22,9 +22,11 @@
 #include <QStandardPaths>
 #include <QTemporaryDir>
 #include <QThread>
+#include <QElapsedTimer>
 #include <QTimer>
 
 #include <cmath>
+#include <thread>
 
 extern "C" {
 #include <libavutil/frame.h>
@@ -201,6 +203,65 @@ void testListInProbe(const QString& dir)
     qunsetenv("SCHNEIDI_ENCODER_FFMPEG");
     qunsetenv("SCHNEIDI_IGNORE_BUILTIN");
     HardwareEncoders::resetForTests();
+}
+#endif
+
+#ifdef Q_OS_UNIX
+// A program that hangs (reads nothing): writing waits, a cancel ends it soon, the program is stopped; one that dies
+// is reported instead of blocking
+void testStall(const QString& dir)
+{
+    const QString path = QDir(dir).filePath("fake-ffmpeg-hangs");
+    QFile f(path);
+    if (!CHECK(f.open(QIODevice::WriteOnly))) return;
+    f.write("#!/bin/sh\nexec sleep 60\n");
+    f.close();
+    f.setPermissions(f.permissions() | QFile::ExeOwner);
+    ExternalEncoder::Params p;
+    p.program = path;
+    p.codec = "libx264";
+    p.width = 640;
+    p.height = 360;
+    p.output = QDir(dir).filePath("stall.nut");
+    AVFrame* frame = av_frame_alloc();
+    frame->format = AV_PIX_FMT_YUV420P;
+    frame->width = p.width;
+    frame->height = p.height;
+    if (!CHECK(av_frame_get_buffer(frame, 0) >= 0)) return;
+    QElapsedTimer t;
+    t.start();
+    {
+        ExternalEncoder enc(p);
+        QString why;
+        CHECK(enc.start(&why));
+        std::atomic<bool> stop{false};
+        std::thread canceller([&stop] {
+            QThread::msleep(300);
+            stop = true;
+        });
+        bool ok = true;
+        for (int i = 0; ok && i < 20; ++i) ok = enc.write(frame, stop, &why);
+        canceller.join();
+        CHECK(!ok);
+        CHECK(t.elapsed() < 3000);
+    } // stops the program
+    CHECK(t.elapsed() < 6000);
+    // Dies at once: the next writes fail with a reason
+    f.open(QIODevice::WriteOnly);
+    f.write("#!/bin/sh\necho 'no such option' >&2\nexit 1\n");
+    f.close();
+    {
+        ExternalEncoder enc(p);
+        QString why;
+        CHECK(enc.start(&why));
+        const std::atomic<bool> stop{false};
+        bool ok = true;
+        for (int i = 0; ok && i < 20; ++i) ok = enc.write(frame, stop, &why);
+        if (ok) ok = enc.finish(stop, &why);
+        CHECK(!ok);
+        CHECK(why.contains("no such option"));
+    }
+    av_frame_free(&frame);
 }
 #endif
 
@@ -458,6 +519,7 @@ int main(int argc, char** argv)
     testOrder(tmp.path());
 #ifdef Q_OS_UNIX
     testListInProbe(tmp.path());
+    testStall(tmp.path());
 #endif
     testArguments();
     if (Check::haveFfmpeg()) testColors(tmp.path());
