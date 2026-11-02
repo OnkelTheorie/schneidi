@@ -41,6 +41,10 @@ public:
     static constexpr const char* BinMimeType = "application/x-schneidi-bin";
     // Entry "Text" (title generator) for dragging in; stands in place of a path in the drag data
     static constexpr const char* TitleItem = "schneidi:title";
+    // Counter and progress bar titles (Effects Library, Titles), likewise
+    static constexpr const char* CounterItem = "schneidi:title:counter";
+    static constexpr const char* ProgressItem = "schneidi:title:progress";
+    static bool isTitleItem(const QString& item) { return item == TitleItem || item == CounterItem || item == ProgressItem; }
     // Timeline/compound clip (sequence) as an entry: "schneidi:seq:<id>" instead of a path
     static QString sequenceItem(int id);
     static int sequenceOfItem(const QString& item); // 0 = not a sequence entry

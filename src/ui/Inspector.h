@@ -127,6 +127,7 @@ private:
     void addColor(Section& s, const QString& label, const QString& text, const std::function<QColor&(Clip&)>& color,
                   bool alpha, const std::function<void(Clip&)>& also = {}, std::optional<AnimParam> anim = {});
     void buildTitlePage(QVBoxLayout* page);
+    void buildGeneratorSections(QVBoxLayout* page, const Section& outline);
     void buildTransitionPage(QVBoxLayout* page);
     // Selected transition (track kind + effective position), otherwise false
     bool selectedTransition(TrackKind* kind, TimelineOps::TransitionSpan* span) const;
@@ -195,6 +196,9 @@ private:
     QComboBox* m_transLuma = nullptr;          // Gradient wipe: gradient image (bundled + effects folder)
     class QCheckBox* m_transInvert = nullptr;  // gradient wipe: invert
     QVector<QWidget*> m_dipRows, m_wipeRows, m_lumaRows, m_softRows; // rows only for the respective kind
+    QComboBox* m_transEase = nullptr;          // wipe/push/whip/gradient wipe: speed curve
+    ScrubField* m_transBlur = nullptr;         // whip: motion blur
+    QVector<QWidget*> m_easeRows, m_whipRows;
     // Tab "Untertitel": text/times of the entry and style of its track (like DaVinci Caption + Track Style)
     void buildSubtitlePage(QVBoxLayout* page);
     bool refreshSubtitle(); // true = only subtitles selected and shown

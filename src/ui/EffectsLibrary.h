@@ -34,7 +34,7 @@ public:
 
 signals:
     void transitionRequested(TrackKind kind, const TransitionStyle& style);
-    void titleRequested();
+    void titleRequested(int kind); // TitleKind
     void effectRequested(const QString& effectId);
 
 private:

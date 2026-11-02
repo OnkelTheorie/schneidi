@@ -147,6 +147,14 @@ QChar decimalPoint()
     return lang == "en" ? QChar('.') : QChar(',');
 }
 
+QChar groupSeparator()
+{
+    const QString lang = s_installed.isEmpty() ? language() : s_installed;
+    if (lang == "en") return QChar(',');
+    if (lang == "de" || lang == "es") return QChar('.');
+    return QChar(0x00a0);
+}
+
 } // namespace I18n
 
 QString T(const char* source) { return QCoreApplication::translate(kContext, source); }

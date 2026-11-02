@@ -375,6 +375,25 @@ QJsonObject titleStyleJson(const TitleStyle& t, const TitleStyle& def)
     flag("box", t.boxOn, def.boxOn);
     color("box_color", t.boxColor, t.boxOn ? QColor() : def.boxColor);
     num("box_padding", t.boxPad, t.boxOn ? -1 : def.boxPad);
+    // Counter/progress bar: what it is and all its settings (their defaults are not obvious)
+    if (t.isCounter()) {
+        o["kind"] = "counter";
+        o["from"] = t.countFrom;
+        o["to"] = t.countTo;
+        o["decimals"] = t.decimals;
+        if (!t.prefix.isEmpty()) o["prefix"] = t.prefix;
+        if (!t.suffix.isEmpty()) o["suffix"] = t.suffix;
+        o["grouping"] = t.grouping;
+        o["separators"] = numberStyleInfo(t.numbers).id;
+        o["ease"] = motionEaseInfo(t.countEase).id;
+    } else if (t.isProgress()) {
+        o["kind"] = "progress";
+        o["span"] = t.span == ProgressSpan::Clip ? "clip" : "timeline";
+        o["edge"] = t.barTop ? "top" : "bottom";
+        o["thickness"] = t.barThickness;
+        o["margin"] = t.barMargin;
+        o["rounded"] = t.barRound;
+    }
     return o;
 }
 
