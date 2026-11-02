@@ -69,11 +69,11 @@ QRectF titleBlock(const Clip& c, double t, double W, double H)
     return r;
 }
 
-// Subtitle lines wrapped at 90 % of the picture width like the timeline builder (wrapSubtitle; word captions at
-// Captions::lineWidth), block bottom posY above the picture's bottom edge
-QRectF subtitleBlock(const TitleStyle& s, const QString& text, double W, double H, bool words = false)
+// Subtitle lines wrapped at 90 % of the picture width like the timeline builder (wrapSubtitle), block bottom posY
+// above the picture's bottom edge
+QRectF subtitleBlock(const TitleStyle& s, const QString& text, double W, double H)
 {
-    const double maxWidth = words ? Captions::lineWidth(QSize(int(W), int(H))) : W * 0.9;
+    const double maxWidth = W * 0.9;
     const QFontMetricsF fm = metrics(s, std::max(1.0, s.size));
     int lines = 0;
     double w = 1;
@@ -93,6 +93,38 @@ QRectF subtitleBlock(const TitleStyle& s, const QString& text, double W, double 
             }
         }
         flush();
+    }
+    const double h = fm.lineSpacing() * lines, bottom = std::clamp(H - s.posY, 1.0, H);
+    return grown(QRectF(W / 2 + s.posX - w / 2, bottom - h, w, h), s);
+}
+
+// Word captions as the picture engine lays them out (Renderer::captionLayer): uppercase when set, lines at
+// Captions::lineWidth with room for the highlighted word grown; word by word only the widest word (at the pop's
+// overshoot)
+QRectF captionBlock(const TitleStyle& s, const CaptionStyle& c, const QString& text, double W, double H)
+{
+    QStringList words = Captions::words(text);
+    if (c.uppercase)
+        for (QString& w : words) w = w.toUpper();
+    const QFontMetricsF fm = metrics(s, std::max(1.0, s.size));
+    QVector<double> widths;
+    double widest = 0;
+    for (const QString& w : words) widths << fm.horizontalAdvance(w), widest = std::max(widest, widths.last());
+    double w = 1;
+    int lines = 1;
+    if (c.mode == CaptionMode::Word) {
+        w = std::max(w, widest * 1.08);
+    } else {
+        const double grow = widest * (std::max(1.0, c.highlightScale) - 1), space = fm.horizontalAdvance(QLatin1Char(' '));
+        const QVector<int> starts = Captions::lineStarts(widths, space, Captions::lineWidth(QSize(int(W), int(H))) - grow,
+                                                         c.maxWordsPerLine);
+        lines = std::max(1, int(starts.size()));
+        for (int l = 0; l < starts.size(); ++l) {
+            const int end = l + 1 < starts.size() ? starts[l + 1] : int(widths.size());
+            double lw = 0;
+            for (int i = starts[l]; i < end; ++i) lw += (i > starts[l] ? space : 0.0) + widths[i];
+            w = std::max(w, lw + grow);
+        }
     }
     const double h = fm.lineSpacing() * lines, bottom = std::clamp(H - s.posY, 1.0, H);
     return grown(QRectF(W / 2 + s.posX - w / 2, bottom - h, w, h), s);
@@ -457,7 +489,9 @@ QVector<Issue> layout(const Timeline& tl, int from, int to, const ProjectFormat&
         QVector<int> zones(5, 0);
         for (const SubtitleCue& cue : st.cues) {
             if (cue.end <= from || cue.start >= to || cue.text.trimmed().isEmpty()) continue;
-            const auto [part, zone] = covered(subtitleBlock(st.style, cue.text, W, H, st.captions.mode != CaptionMode::Lines), W, H, o);
+            const QRectF block = st.captions.mode == CaptionMode::Lines ? subtitleBlock(st.style, cue.text, W, H)
+                                                                        : captionBlock(st.style, st.captions, cue.text, W, H);
+            const auto [part, zone] = covered(block, W, H, o);
             if (part < o.safeMaxCovered) continue;
             if (first < 0) first = std::max(from, cue.start);
             last = std::min(to, cue.end);

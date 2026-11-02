@@ -9,6 +9,7 @@
 // its render, on a vertical project (buried game sound, title at the bottom, still start) against a normal 16:9 one
 // (no new findings), and a clip over a stutter.
 #include "cli/Commands.h"
+#include "core/Captions.h"
 #include "core/ExportCheck.h"
 #include "core/Keyframes.h"
 #include "core/Stutter.h"
@@ -392,6 +393,28 @@ int main(int argc, char** argv)
         }
         subs.subtitles[0].style.posY = 1920 * 0.3;
         CHECK(ExportCheck::layout(subs, 0, 100, v).isEmpty());
+        // Word captions count as drawn: in capitals and with the highlighted word grown the text is wider, so moved
+        // towards the button column it reaches it earlier
+        {
+            Timeline caps;
+            caps.subtitles.resize(1);
+            caps.subtitles[0].style = Captions::defaultStyle(v.size());
+            caps.subtitles[0].captions.mode = CaptionMode::Karaoke;
+            caps.subtitles[0].cues << SubtitleCue{20, 0, 50, "make words"};
+            const auto firstReported = [&](bool upper, double scale) {
+                caps.subtitles[0].captions.uppercase = upper;
+                caps.subtitles[0].captions.highlightScale = scale;
+                for (int x = 0; x <= 540; x += 5) {
+                    caps.subtitles[0].style.posX = x;
+                    if (!ExportCheck::layout(caps, 0, 100, v).isEmpty()) return x;
+                }
+                return -1;
+            };
+            const int plain = firstReported(false, 1.0);
+            CHECK(plain > 0);
+            CHECK(firstReported(true, 1.0) < plain);
+            CHECK(firstReported(false, 1.6) < plain);
+        }
 
         // Hook: only vertical, from the start, up to 3 min; 11 frames 0.1 s apart; a still start is a hint
         CHECK(ExportCheck::wantsHook(0, 750, v));
