@@ -66,7 +66,7 @@ QJsonObject importTimeline(Session& s, const QJsonObject& a)
     }
     QStringList extra; // besides the warnings of the file
     // Format: an empty project takes the file's (like opening it in DaVinci), else the timeline is converted
-    const ProjectFormat before = s.format();
+    const ProjectFormat before = s.project.format();
     if (!s.project.frameRateLocked() && (seq.format.rate != before.rate || (seq.hasSize && seq.format.size() != before.size()))) {
         QJsonObject op{{"op", "format"}, {"fps", seq.format.rate.fps()}};
         if (seq.hasSize) op["width"] = seq.format.width, op["height"] = seq.format.height;

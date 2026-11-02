@@ -328,6 +328,18 @@ void testPagesAndLayoutChoice()
     CHECK_EQ(f.view.pageCount(), 1);
 }
 
+// A timeline of its own resolution (a 9:16 short): the grid has its shape, as the engine renders it
+void testGridOfPortraitTimeline()
+{
+    Fixture f;
+    const QRect wide = f.view.gridRect();
+    CHECK(wide.width() > wide.height());
+    f.p.setSequenceSize(f.p.currentSequence(), {1080, 1920});
+    const QRect tall = f.view.gridRect();
+    CHECK(tall.height() > tall.width());
+    CHECK(std::abs(tall.width() * 1920 - tall.height() * 1080) <= 1920);
+}
+
 void testProxyHintForManyCells()
 {
     Fixture f(10);
@@ -588,6 +600,7 @@ int main(int argc, char** argv)
     testActiveAngleFramedAndNamed();
     testPagesAndLayoutChoice();
     testProxyHintForManyCells();
+    testGridOfPortraitTimeline();
     testPageFollowRebuildsGrid();
     testGridRebuildWhilePlayingKeepsPosition(dir.path());
     testPreviewGridSmoothsFineDetail(dir.path());

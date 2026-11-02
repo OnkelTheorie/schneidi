@@ -4,6 +4,7 @@
 #include "core/EffectFolders.h"
 #include "core/EffectRegistry.h"
 #include "core/Presets.h"
+#include "core/ProjectFormat.h"
 #include "core/I18n.h"
 #include "core/Keyframes.h"
 #include "core/Retime.h"
@@ -668,6 +669,22 @@ void Editor::copySelection()
     for (auto& it : items) it.clip.start -= minStart;
     m_clipboard = items;
     m_clipboardRate = m_project->format().rate;
+    m_clipboardSize = m_project->timelineFormat().size();
+}
+
+QVector<Editor::ClipboardItem> Editor::clipboardHere() const
+{
+    const QSize here = m_project->timelineFormat().size();
+    if (m_clipboardSize.isEmpty() || m_clipboardSize == here) return m_clipboard;
+    QVector<ClipboardItem> out = m_clipboard;
+    for (ClipboardItem& it : out) {
+        Timeline one; // scaleTimeline converts per track kind (crops only on video)
+        one.tracks(it.ref.kind).resize(1);
+        one.tracks(it.ref.kind)[0].clips << it.clip;
+        scaleTimeline(one, m_clipboardSize, here);
+        it.clip = one.tracks(it.ref.kind)[0].clips[0];
+    }
+    return out;
 }
 
 void Editor::cutSelection()
@@ -689,7 +706,7 @@ void Editor::paste(int frame)
     if (m_clipboard.isEmpty()) return;
     // do not paste onto locked tracks
     QVector<ClipboardItem> items;
-    for (const auto& it : m_clipboard)
+    for (const auto& it : clipboardHere())
         if (!isTrackLocked(it.ref)
             && (!it.clip.isNested() || m_project->canNest(it.clip.sequenceId, m_project->currentSequence())))
             items << it; // never a compound clip inside itself (loop)

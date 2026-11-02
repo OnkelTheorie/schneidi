@@ -11,6 +11,7 @@
 #include "core/Selection.h"
 #include "core/TimelineOps.h"
 #include "engine/ClipFormat.h"
+#include "engine/RenderQueue.h"
 
 #include <QApplication>
 #include <QImage>
@@ -449,6 +450,171 @@ void testProjectFile()
             CHECK(!c || !c->isCompound());
 }
 
+// A timeline of its own resolution (a 9:16 short next to the 16:9 edit): model, undo, signals, project settings,
+// compound clips, project file
+void testTimelineFormat()
+{
+    Project p; // 1920 x 1080
+    Selection sel;
+    Editor ed(&p, &sel);
+    QUndoStack* undo = p.undoStack();
+    const int main = p.currentSequence();
+    CHECK_EQ(p.timelineFormat().size(), QSize(1920, 1080));
+    int formatSignals = 0;
+    QObject::connect(&p, &Project::timelineFormatChanged, [&] { ++formatSignals; });
+
+    // New timeline with its own size: opened, renders at that size; the project's stays
+    const int shortId = p.addTimeline("Short", 0, QSize(1080, 1920));
+    CHECK(p.sequence(shortId)->hasOwnSize());
+    CHECK_EQ(p.currentSequence(), shortId);
+    CHECK_EQ(p.timelineFormat().size(), QSize(1080, 1920));
+    CHECK_EQ(p.sequenceFormat(main).size(), QSize(1920, 1080));
+    CHECK_EQ(p.format().size(), QSize(1920, 1080));
+    CHECK(p.timelineFormat().rate == p.format().rate); // one frame rate per project
+    CHECK_EQ(formatSignals, 1);
+    p.setCurrentSequence(main);
+    CHECK_EQ(formatSignals, 2);
+    p.setCurrentSequence(shortId);
+    CHECK_EQ(formatSignals, 3);
+    // The project's size as the wish: no own size (follows the project)
+    const int plain = p.addTimeline("Plain", 0, QSize(1920, 1080));
+    CHECK(!p.sequence(plain)->hasOwnSize());
+    undo->undo();
+    CHECK(!p.sequence(plain));
+
+    // Own size of an existing timeline: one undo step, pixel values scaled (title at x 480 of 1920 -> 270 of 1080)
+    p.setCurrentSequence(main);
+    auto titleIn = [](const Timeline& tl) {
+        for (const Track& t : tl.video)
+            for (const Clip& c : t.clips)
+                if (c.isTitle()) return c.id;
+        return 0;
+    };
+    ed.addTitle(0);
+    const int titleId = titleIn(p.timeline());
+    CHECK(titleId > 0);
+    ed.modifyClips({titleId}, "x", [](Clip& c) { c.transform.posX = 480; });
+    const int steps = undo->count();
+    p.setSequenceSize(main, {1080, 1920});
+    CHECK_EQ(undo->count(), steps + 1);
+    CHECK_EQ(p.sequenceFormat(main).size(), QSize(1080, 1920));
+    CHECK(std::abs(TimelineOps::findClip(p.sequence(main)->timeline, titleId)->transform.posX - 270) < 0.01);
+    p.setSequenceSize(main, {1081, 1920}); // odd: even like the export needs -> same as before, no step
+    CHECK_EQ(undo->count(), steps + 1);
+    undo->undo();
+    CHECK(!p.sequence(main)->hasOwnSize());
+    CHECK_EQ(TimelineOps::findClip(p.sequence(main)->timeline, titleId)->transform.posX, 480.0);
+    undo->redo();
+    CHECK_EQ(p.sequenceFormat(main).size(), QSize(1080, 1920));
+    p.setSequenceSize(main, {}); // back to the project's
+    CHECK(!p.sequence(main)->hasOwnSize());
+    CHECK(std::abs(TimelineOps::findClip(p.sequence(main)->timeline, titleId)->transform.posX - 480) < 0.01);
+
+    // Project resolution: timelines without their own follow (scaled), the short keeps its size and positions
+    p.setCurrentSequence(shortId);
+    ed.addTitle(0);
+    const int shortTitle = titleIn(p.timeline());
+    ed.modifyClips({shortTitle}, "x", [](Clip& c) { c.transform.posX = 100; });
+    p.setFormat({1280, 720, p.format().rate});
+    CHECK_EQ(p.sequenceFormat(shortId).size(), QSize(1080, 1920));
+    CHECK_EQ(TimelineOps::findClip(p.sequence(shortId)->timeline, shortTitle)->transform.posX, 100.0);
+    CHECK(std::abs(TimelineOps::findClip(p.sequence(main)->timeline, titleId)->transform.posX - 320) < 0.01);
+    CHECK_EQ(p.sequenceFormat(main).size(), QSize(1280, 720));
+
+    // A compound clip made in the short keeps the short's pixel space
+    sel.set({shortTitle});
+    const int compound = ed.createCompoundClip();
+    if (CHECK(compound > 0)) CHECK_EQ(p.sequenceFormat(compound).size(), QSize(1080, 1920));
+    // Nested content knows its size when rendering (Timeline::frameSize)
+    const Timeline r = p.renderTimeline(main);
+    CHECK_EQ(r.frameSize, QSize(1280, 720));
+    if (CHECK(r.nested)) CHECK_EQ(r.nested->value(shortId).frameSize, QSize(1080, 1920));
+    // Only a nested sequence's size changes (its clips scale to the same values, here: none): the preview must
+    // still see a new picture (Engine::samePicture -> sameNested), else it keeps the old fit
+    {
+        const int shown = p.currentSequence();
+        const int square = p.addTimeline("Square");
+        p.setCurrentSequence(shown);
+        const Timeline before = p.renderTimeline(main);
+        p.setSequenceSize(square, {1080, 1080});
+        const Timeline after = p.renderTimeline(main);
+        CHECK(before.nested && after.nested && *before.nested == *after.nested); // same cut
+        CHECK(!TimelineOps::sameNested(before, after));
+        CHECK(TimelineOps::sameNested(after, p.renderTimeline(main)));
+        undo->undo();
+        undo->undo();
+        CHECK(!p.sequence(square));
+    }
+
+    // Project file: written only when set, version 5 only then; save -> load -> save the same
+    const QByteArray json = ProjectFile::toJson(p.data(), "/x/p.schneidi");
+    CHECK(json.contains("\"version\": 5"));
+    ProjectData back;
+    QString err;
+    if (CHECK(ProjectFile::fromJson(json, "/x/p.schneidi", &back, &err))) {
+        Project q;
+        q.load(back);
+        CHECK_EQ(q.sequenceFormat(shortId).size(), QSize(1080, 1920));
+        CHECK(!q.sequence(main)->hasOwnSize());
+        CHECK_EQ(q.timelineFormat().size(), QSize(1080, 1920)); // the short was open
+        CHECK_EQ(ProjectFile::toJson(q.data(), "/x/p.schneidi"), json);
+    }
+    Project plainProject;
+    CHECK(ProjectFile::toJson(plainProject.data(), "/x/p.schneidi").contains("\"version\": 4"));
+    // A hand-edited file: odd or huge sizes brought within limits
+    ProjectData odd = back;
+    for (Sequence& q : odd.sequences)
+        if (q.id == shortId) q.width = 99999, q.height = 1001;
+    Project oddProject;
+    oddProject.load(odd);
+    CHECK_EQ(oddProject.sequenceFormat(shortId).size(), QSize(kMaxFrameSize, 1000));
+}
+
+// Copy in the 16:9 edit, paste into the 9:16 short: pixel values come over in the short's pixels (like a project
+// resolution change converts them), Paste Attributes too
+void testClipboardAcrossResolutions()
+{
+    Project p; // 1920 x 1080
+    Selection sel;
+    Editor ed(&p, &sel);
+    const int edit = p.currentSequence();
+    p.addMedia(media("/x/a.mp4", 100));
+    ed.addMediaAt({"/x/a.mp4"}, 0);
+    const Clip* a = clipOn(p.timeline(), TrackKind::Video, 0, 0);
+    if (!CHECK(a)) return;
+    const int aId = a->id;
+    ed.modifyClips({aId}, "x", [](Clip& c) {
+        c.transform.transformOn = true;
+        c.transform.posX = 480;
+        c.transform.posY = 270;
+    });
+    sel.set({aId});
+    ed.copySelection();
+    const int shortId = p.addTimeline("Short", 0, QSize(1080, 1920));
+    ed.paste(0);
+    const Clip* pasted = clipOn(p.timeline(), TrackKind::Video, 0, 0);
+    if (CHECK(pasted)) {
+        CHECK(std::abs(pasted->transform.posX - 270) < 0.01); // 480 of 1920 -> 270 of 1080
+        CHECK(std::abs(pasted->transform.posY - 480) < 0.01); // 270 of 1080 -> 480 of 1920
+    }
+    // Paste Attributes onto a clip of the short: the position in its pixels as well
+    ed.addMediaAt({"/x/a.mp4"}, 200);
+    const Clip* target = clipOn(p.timeline(), TrackKind::Video, 0, 1);
+    if (CHECK(target)) {
+        const int targetId = target->id;
+        sel.set({targetId});
+        ed.pasteAttributes(Editor::AttrPosition);
+        const Clip* t = TimelineOps::findClip(p.timeline(), targetId);
+        CHECK(t && std::abs(t->transform.posX - 270) < 0.01);
+    }
+    // Back in the edit: the clipboard's own size, values unchanged
+    p.setCurrentSequence(edit);
+    ed.paste(300);
+    const Clip* again = clipOn(p.timeline(), TrackKind::Video, 0, 1);
+    CHECK(again && again->transform.posX == 480.0);
+    CHECK_EQ(p.sequenceFormat(shortId).size(), QSize(1080, 1920));
+}
+
 // ---- Rendering ----
 
 QImage render(const Timeline& tl, const ProjectFormat& fmt, int pos)
@@ -528,6 +694,44 @@ int testRender(const QString& dir)
     CHECK(near(img.pixel(320 + 160, 180), 0, 255, 0)); // by 160 (= 80 * 2) to the right
     CHECK(near(img.pixel(200, 180), 0, 0, 255));
 
+    // A 16:9 sequence inside a 9:16 timeline (own resolution): fitted like a 16:9 clip, bars above and below;
+    // the short itself renders at its own size
+    {
+        Project v;
+        v.load([&] {
+            ProjectData d;
+            d.format = fmt; // 320 x 180
+            d.timeline = emptyTimeline();
+            return d;
+        }());
+        Selection vs;
+        Editor ve(&v, &vs);
+        v.addMedia(media(blue, 100, true, false));
+        const int wide = v.currentSequence();
+        ve.addMediaAt({blue}, 0, 0);
+        const int shortId = v.addTimeline("Short", 0, QSize(180, 320));
+        CHECK(ve.addSequenceAt(wide, 0, 0));
+        const ProjectFormat sf = v.timelineFormat();
+        CHECK_EQ(sf.size(), QSize(180, 320));
+        img = render(v.renderTimeline(), sf, 10);
+        CHECK_EQ(img.size(), QSize(180, 320));
+        CHECK(near(img.pixel(90, 160), 0, 0, 255)); // middle: the 16:9 picture (180 x ~101)
+        CHECK(near(img.pixel(90, 20), 0, 0, 0));    // above: black bar
+        CHECK(near(img.pixel(90, 300), 0, 0, 0));   // below
+        // Export settings of a job for the short: its size
+        RenderJob job;
+        job.sequence = shortId;
+        CHECK_EQ(RenderQueue::exportSettings(job, v).format.size(), QSize(180, 320));
+        job.sequence = wide;
+        CHECK_EQ(RenderQueue::exportSettings(job, v).format.size(), QSize(320, 180));
+        // Exported at twice the size: the nested sequence keeps its shape (scaleTimeline scales its frame along)
+        Timeline big = v.renderTimeline();
+        scaleTimeline(big, {180, 320}, {360, 640});
+        img = render(big, ProjectFormat{360, 640, {25, 1}}, 10);
+        CHECK(near(img.pixel(180, 320), 0, 0, 255));
+        CHECK(near(img.pixel(180, 40), 0, 0, 0));
+    }
+
     // No crash on loop (broken data): compound refers to itself
     Timeline loop = p.renderTimeline();
     auto nested = std::make_shared<NestedTimelines>(*loop.nested);
@@ -553,6 +757,8 @@ int main(int argc, char** argv)
     testClipboardAcrossProjects();
     testSequenceIdNotReused();
     testProjectFile();
+    testTimelineFormat();
+    testClipboardAcrossResolutions();
     if (!Check::haveFfmpeg()) {
         Check::result();
         return Check::skip("ffmpeg nicht gefunden (Render-Teil)");

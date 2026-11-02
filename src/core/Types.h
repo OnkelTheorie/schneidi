@@ -10,6 +10,7 @@
 #include <QHash>
 #include <QFileInfo>
 #include <QMap>
+#include <QSize>
 #include <QString>
 #include <QStringList>
 #include <QVariantMap>
@@ -470,12 +471,15 @@ struct Timeline {
     std::shared_ptr<const NestedTimelines> nested;
     // For rendering only, in the entries of `nested`: angles of a multicam sequence (copy of Sequence::angles)
     QVector<MulticamAngle> angles;
+    // For rendering only, in the entries of `nested`: the sequence's resolution (Project::sequenceFormat). A nested
+    // sequence of another size than the timeline it lies in is rendered at its own size and fitted in like a clip.
+    QSize frameSize;
 
     QVector<Track>& tracks(TrackKind k) { return k == TrackKind::Video ? video : audio; }
     const QVector<Track>& tracks(TrackKind k) const { return k == TrackKind::Video ? video : audio; }
     Track& track(TrackRef r) { return tracks(r.kind)[r.index]; }
     const Track& track(TrackRef r) const { return tracks(r.kind)[r.index]; }
-    // Same cut (without `nested`/`angles`, which only serve rendering).
+    // Same cut (without `nested`/`angles`/`frameSize`, which only serve rendering).
     // By hand: enter new fields here, otherwise changes to them do not end up in undo
     bool operator==(const Timeline& o) const
     {
@@ -485,8 +489,9 @@ struct Timeline {
     }
 };
 
-// Sequence as in DaVinci: own timeline in the project (visible in the Media Pool) or content of a compound clip.
-// All share project format, media and clip ids.
+// Sequence: own timeline in the project (visible in the Media Pool) or content of a compound clip.
+// All share the project's frame rate, media and clip ids; the resolution is the project's unless the sequence has its
+// own (a 9:16 short next to the 16:9 edit) - Project::sequenceFormat() says which applies.
 struct Sequence {
     int id = 0;
     QString name;
@@ -496,6 +501,9 @@ struct Sequence {
     // Multicam clip (also compound): one angle per recording, placed in sync on its own tracks (core/Multicam.h)
     bool multicam = false;
     QVector<MulticamAngle> angles;
+    // Own resolution (pixel values in `timeline` refer to it); 0 x 0 = the project's
+    int width = 0, height = 0;
+    bool hasOwnSize() const { return width > 0 && height > 0; }
 };
 
 // An audio stream of a file (OBS writes e.g. desktop audio and microphone separately into one file)

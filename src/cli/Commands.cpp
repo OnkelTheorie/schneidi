@@ -546,9 +546,12 @@ QJsonObject timelineJson(const Project& p)
     QJsonArray markers;
     for (int m : tl.markers) markers << m;
     const int end = TimelineOps::endFrame(tl);
+    const ProjectFormat own = p.timelineFormat();
     QJsonObject o{{"id", p.currentSequence()}, {"name", p.sequenceName(p.currentSequence())},
+                  {"width", own.width}, {"height", own.height},
                   {"length", end}, {"length_s", seconds(end, f)}, {"length_tc", tc(end, f)}, {"tracks", tracks},
                   {"markers", markers}};
+    if (const Sequence* q = p.sequence(p.currentSequence()); q && q->hasOwnSize()) o["own_resolution"] = true;
     QJsonArray subtitles;
     for (int i = 0; i < tl.subtitles.size(); ++i) {
         const SubtitleTrack& st = tl.subtitles[i];
@@ -596,6 +599,7 @@ QJsonArray timelinesJson(const Project& p, const QHash<int, QVector<Multicam::An
     for (const Sequence& q : p.sequences()) {
         const int end = TimelineOps::endFrame(q.timeline);
         QJsonObject o{{"id", q.id}, {"name", q.name}, {"length", end}, {"length_tc", tc(end, p.format())}};
+        if (q.hasOwnSize()) o["width"] = q.width, o["height"] = q.height; // else the project's
         if (q.compound) o["compound"] = true;
         if (q.multicam) {
             o["multicam"] = true;

@@ -859,7 +859,7 @@ void ColorPanel::startTracking(bool forward)
     const Clip clip = *c;
     const int n = m_layer, from = localFrame(clip), to = forward ? clip.length() - 1 : 0;
     if (from == to) return;
-    const ProjectFormat format = m_editor->project()->format();
+    const ProjectFormat format = m_editor->project()->timelineFormat();
     m_trackCancel = std::make_shared<std::atomic<bool>>(false);
     m_trackDone = std::make_shared<std::atomic<int>>(0);
     m_trackTotal = std::make_shared<std::atomic<int>>(std::abs(to - from));
@@ -880,7 +880,7 @@ void ColorPanel::startTracking(bool forward)
         delete m_trackThread;
         m_trackThread = nullptr;
         m_trackPoll.stop();
-        const ProjectFormat& fmt = m_editor->project()->format();
+        const ProjectFormat fmt = m_editor->project()->timelineFormat();
         QString text;
         if (generation != m_trackGeneration) {
             // discarded: the clip id may name another clip by now

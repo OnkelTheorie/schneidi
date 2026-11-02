@@ -124,7 +124,7 @@ void Editor::pasteAttributes(int attrs)
     const QVector<int> ids = editable(clipIdsOf(m_selection->ids()));
     if (!attrs || ids.isEmpty()) return;
     // Copy of the sources: the clipboard stays, but pointers should not stay attached to it
-    const QVector<ClipboardItem> clipboard = m_clipboard;
+    const QVector<ClipboardItem> clipboard = clipboardHere(); // in this timeline's pixels
     const Clip* vsrc = clipboardSource(clipboard, TrackKind::Video);
     const Clip* asrc = clipboardSource(clipboard, TrackKind::Audio);
     // Fades and speed apply to both track kinds; if a source of this kind is missing, the value comes from the other one

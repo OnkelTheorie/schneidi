@@ -159,6 +159,7 @@ private:
     // (ask = ask first, otherwise take over directly)
     void offerClipFormat(const QStringList& paths, bool ask);
     void onFormatChanged();
+    void onTimelineFormatChanged();
     void projectSettingsDialog();
     void grabStill();
     // Green Screen pipette (Inspector): the viewer shows the clip alone without its key until a click picks the color

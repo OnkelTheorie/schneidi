@@ -94,6 +94,7 @@ public slots:
     void newBin();                               // in the selected bin, edit the name right away (Ctrl+Shift+N)
     void newTimeline();                          // new empty timeline in the selected bin, gets opened
     void renameSequence(int id);                 // ask for the name
+    void editSequenceFormat(int id);             // a timeline's own resolution (TimelineFormatDialog)
     // Delete/Backspace on the clips (right-click "Remove from Media Pool"): the selected media leave the pool, the
     // selected timelines are deleted (like their "Delete"), one undo step. Media a timeline uses: a question names how
     // many clips in which timelines, "Remove with Their Clips" takes those clips out too, Cancel keeps everything.

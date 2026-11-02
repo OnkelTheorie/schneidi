@@ -14,6 +14,8 @@
 #include "ui/MediaStorage.h"
 #include "ui/ElidedLabel.h"
 #include "ui/PoolFilterButton.h"
+#include "ui/TimelineFormatDialog.h"
+#include "core/ProjectFormat.h"
 #include "engine/Background.h"
 
 #include <QAction>
@@ -902,10 +904,7 @@ void MediaPool::rebuildClips()
         // Multicam clips keep their grid of angles (which angle would be "the" picture?)
         const QImage picture = q->multicam ? QImage() : m_posters->poster(q->id);
         auto* it = new QListWidgetItem(QIcon(sequenceThumb(*q, picture)), QString());
-        it->setData(Qt::UserRole, item);
-        it->setToolTip(q->multicam ? T("Multicam-Clip – in die Timeline ziehen legt ihn ab, Doppelklick öffnet die Winkel")
-                       : q->compound ? T("Compound Clip – Doppelklick öffnet ihn, in die Timeline ziehen legt ihn ab")
-                                     : T("Timeline – Doppelklick öffnet sie, in eine andere Timeline ziehen verschachtelt sie"));
+        it->setData(Qt::UserRole, item); // tool tip: updateSequenceItems (with the resolution)
         m_list->addItem(it);
     }
     updateSequenceItems();
@@ -1131,6 +1130,15 @@ void MediaPool::updateSequenceItems()
         const QString duration = Timecode::format(TimelineOps::endFrame(q->timeline), m_project->fps());
         const QString text = list ? q->name + "    " + duration : q->name + "\n" + duration;
         if (it->text() != text) it->setText(text);
+        // What it is, and its resolution: its own (a 9:16 short) or the project's
+        const ProjectFormat own = m_project->sequenceFormat(id);
+        const QString size = resolutionLabel(own.width, own.height);
+        const QString tip =
+            (q->multicam ? T("Multicam-Clip – in die Timeline ziehen legt ihn ab, Doppelklick öffnet die Winkel")
+             : q->compound ? T("Compound Clip – Doppelklick öffnet ihn, in die Timeline ziehen legt ihn ab")
+                           : T("Timeline – Doppelklick öffnet sie, in eine andere Timeline ziehen verschachtelt sie"))
+            + "\n" + (q->hasOwnSize() ? T("Eigene Auflösung: %1").arg(size) : T("Auflösung: %1 (Projekteinstellungen)").arg(size));
+        if (it->toolTip() != tip) it->setToolTip(tip);
         QFont f = it->font();
         f.setBold(id == m_project->currentSequence()); // highlight the opened timeline
         it->setFont(f);
@@ -1150,6 +1158,18 @@ void MediaPool::renameSequence(int id)
     const QString name = QInputDialog::getText(this, q->compound ? T("Compound Clip umbenennen") : T("Timeline umbenennen"),
                                                T("Name:"), QLineEdit::Normal, q->name, &ok);
     if (ok) m_project->renameSequence(id, name);
+}
+
+void MediaPool::editSequenceFormat(int id)
+{
+    const Sequence* q = m_project->sequence(id);
+    if (!q) return;
+    TimelineFormatDialog dlg(q->name, q->hasOwnSize() ? QSize(q->width, q->height) : QSize(),
+                             m_project->format().size(), this);
+    if (dlg.exec() != QDialog::Accepted) return;
+    // The project's own size means "follow the project" (as in the CLI), not a fixed size that writes file version 5
+    const QSize size = dlg.size();
+    m_project->setSequenceSize(id, size == m_project->format().size() ? QSize() : size);
 }
 
 void MediaPool::removeSelected()
@@ -1257,6 +1277,7 @@ void MediaPool::showContextMenu(const QPoint& pos)
         menu.addAction(T("In Timeline öffnen"), this, [this, id] { emit sequenceOpenRequested(id); });
         menu.addAction(T("Umbenennen…"), this, [this, id] { renameSequence(id); });
         menu.addAction(T("Duplizieren"), this, [this, id] { m_project->duplicateSequence(id); });
+        menu.addAction(T("Timeline-Auflösung…"), this, [this, id] { editSequenceFormat(id); });
         QAction* del = menu.addAction(T("Löschen"), this, [this, id] { m_project->removeSequence(id); });
         del->setEnabled(m_project->canRemoveSequence(id));
         if (!del->isEnabled())
@@ -1266,6 +1287,9 @@ void MediaPool::showContextMenu(const QPoint& pos)
         menu.addSeparator();
     }
     menu.addAction(T("Neue Timeline"), this, &MediaPool::newTimeline);
+    // A short next to the edit: its own 9:16 resolution, the project and the other timelines stay
+    menu.addAction(T("Neue Hochformat-Timeline (9:16)"), this,
+                   [this] { m_project->addTimeline({}, m_currentBin, QSize(1080, 1920)); });
     menu.addAction(T("Neuer Bin"), this, &MediaPool::newBin);
     if (!paths.isEmpty()) {
         menu.addAction(T("Neuer Bin mit ausgewählten Clips"), this, [this, paths] {

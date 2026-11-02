@@ -162,7 +162,11 @@ int Editor::createCompoundClip(const QString& name)
         // Neighbor of a removed clip (outside as well as inside): "standalone" no longer applies
         TimelineOps::keepFadesApart(before, *tl);
         TimelineOps::keepFadesApart(inner, inner);
-        list << Sequence{seqId, n, true, 0, inner};
+        Sequence made{seqId, n, true, 0, inner};
+        // Inside a timeline of its own resolution: the clips' pixel values refer to that one
+        if (const Sequence* parent = p->sequence(p->currentSequence()); parent && parent->hasOwnSize())
+            made.width = parent->width, made.height = parent->height;
+        list << made;
     });
     if (!p->sequence(seqId)) return 0;
     m_selection->set(selectIds);
@@ -214,7 +218,16 @@ bool Editor::decomposeCompoundClips(const QVector<int>& ids)
             for (const auto& part : parts) {
                 const Clip& cc = part.first;
                 const Timeline* inner = nullptr;
-                if (const Sequence* s = p->sequence(cc.sequenceId)) inner = &s->timeline;
+                Timeline scaled; // content of another resolution: its pixel values converted to this timeline's
+                if (const Sequence* s = p->sequence(cc.sequenceId)) {
+                    inner = &s->timeline;
+                    const QSize from = p->sequenceFormat(s->id).size(), to = p->timelineFormat().size();
+                    if (from != to) {
+                        scaled = s->timeline;
+                        scaleTimeline(scaled, from, to);
+                        inner = &scaled;
+                    }
+                }
                 if (!inner) continue;
                 TimelineOps::removeClip(tl, cc.id);
                 QVector<TrackKind> kinds{part.second.kind};

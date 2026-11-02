@@ -54,7 +54,7 @@ public:
     int soundAngle() const { return m_sound; }
     // Hint instead of the grid (no multicam clip at the playhead); empty = grid shown
     QString message() const;
-    // Area of the grid picture (aspect ratio of the project), cells as MulticamGrid::cell of it
+    // Area of the grid picture (aspect ratio of the open timeline), cells as MulticamGrid::cell of it
     QRect gridRect() const;
 
     // More cells than this on a page play smoothly only with proxies: H.264 decodes only at full size, so 16 1080p

@@ -177,7 +177,7 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
     connect(project, &Project::currentSequenceChanged, this, &DeliverPanel::updateName);
     connect(project, &Project::sequencesChanged, this, &DeliverPanel::updateName);
     updateName();
-    connect(project, &Project::formatChanged, this, &DeliverPanel::updateFormat);
+    connect(project, &Project::timelineFormatChanged, this, &DeliverPanel::updateFormat); // also a timeline's own
     updateFormat();
 
     // Threads (logical processors) for rendering: applies per machine (not in presets/jobs), takes effect from the next job
@@ -398,7 +398,7 @@ void DeliverPanel::syncPresetToSettings()
 {
     if (m_applying) return;
     const RenderSettings cur = settings();
-    const QSize tl = m_project->format().size();
+    const QSize tl = m_project->timelineFormat().size();
     // Current preset still matches -> stays; otherwise the first matching one, otherwise "Eigene Einstellungen"
     const int cur_idx = currentPreset();
     if (cur_idx >= 0 && cur_idx < m_presets.size() && sameOutput(m_presets[cur_idx].settings, cur, tl)) return;
@@ -430,7 +430,7 @@ RenderSettings DeliverPanel::settings() const
     s.smartRender = m_smart->isChecked();
     if (s.audioOnly() && s.subtitles == RenderSettings::BurnSubtitles) s.subtitles = RenderSettings::NoSubtitles;
     const QSize size = m_resolution->currentData().toSize();
-    const QSize tl = m_project->format().size();
+    const QSize tl = m_project->timelineFormat().size();
     if (size.isValid() && size != tl) {
         const int shortSide = std::min(size.width(), size.height());
         if (sizeForShortSide(tl, shortSide) == size) s.shortSide = shortSide; // aspect ratio of the timeline
@@ -454,7 +454,7 @@ void DeliverPanel::setSettings(const RenderSettings& s)
     m_rate->setCurrentIndex(s.rateNum > 0 ? std::max(0, m_rate->findData(QSize(s.rateNum, s.rateDen))) : 0);
     m_subtitles->setCurrentIndex(std::max(0, m_subtitles->findData(s.subtitles)));
     m_smart->setChecked(s.smartRender);
-    if (!s.audioOnly()) selectSize(s.outputSize(m_project->format().size()));
+    if (!s.audioOnly()) selectSize(s.outputSize(m_project->timelineFormat().size()));
     m_applying = wasApplying;
     updateControls();
     syncPresetToSettings();
@@ -464,7 +464,7 @@ int DeliverPanel::selectSize(QSize s)
 {
     int i = m_resolution->findData(s);
     if (i < 0 && s.isValid() && !s.isEmpty()) {
-        const QSize tl = m_project->format().size();
+        const QSize tl = m_project->timelineFormat().size();
         const bool other = s.width() * tl.height() != s.height() * tl.width();
         QString label = resolutionLabel(s.width(), s.height());
         if (other) label += s.width() < s.height() ? " (9:16)" : " (16:9)";
@@ -594,7 +594,7 @@ void DeliverPanel::updateFormat()
 {
     // Like DaVinci: default is the timeline resolution; plus common sizes in the same aspect ratio
     // (portrait project -> 720 × 1280, 1080 × 1920 …) and the respective other format (16:9 resp. 9:16)
-    const ProjectFormat& f = m_project->format();
+    const ProjectFormat f = m_project->timelineFormat();
     const QSize timeline = f.size();
     const QSize previous = m_resolution->currentData().toSize();
     QVector<QSize> sizes{timeline};
@@ -708,7 +708,7 @@ bool DeliverPanel::runCheck()
 {
     const RenderJob job = makeJob();
     // Copies (cheap, shared data): the progress dialog lets events run, an AI command may change the project meanwhile
-    const ProjectFormat f = m_project->format();
+    const ProjectFormat f = m_project->timelineFormat();
     const Timeline tl = m_project->timeline();
     const int end = TimelineOps::endFrame(tl);
     const int from = job.inOut ? job.from : 0;

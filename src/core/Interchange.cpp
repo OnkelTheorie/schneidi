@@ -77,7 +77,7 @@ Sequence fromTimeline(const Project& project, int sequenceId)
     const ::Sequence* s = project.sequence(id);
     Sequence out;
     out.name = project.sequenceName(id);
-    out.format = project.format();
+    out.format = project.sequenceFormat(id); // its own resolution, if it has one
     out.hasSize = true;
     if (!s) return out;
     const Timeline& tl = s->timeline;

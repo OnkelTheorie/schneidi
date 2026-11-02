@@ -61,7 +61,7 @@ int Editor::addSubtitleTrack()
     const bool anyOn = std::any_of(cur.subtitles.begin(), cur.subtitles.end(), [](const SubtitleTrack& t) { return t.enabled; });
     m_project->edit(T("Untertitelspur hinzufügen"), [&](Timeline& tl) {
         SubtitleTrack t;
-        t.style = Subtitles::defaultStyle(m_project->format().size());
+        t.style = Subtitles::defaultStyle(m_project->timelineFormat().size());
         t.enabled = !anyOn;
         tl.subtitles << t;
     });
@@ -136,7 +136,7 @@ int Editor::addSubtitle(int frame, int track, const QString& text)
     m_project->edit(T("Untertitel hinzufügen"), [&](Timeline& tl) {
         while (tl.subtitles.size() <= track) {
             SubtitleTrack t;
-            t.style = Subtitles::defaultStyle(m_project->format().size());
+            t.style = Subtitles::defaultStyle(m_project->timelineFormat().size());
             t.enabled = !anyOn;
             tl.subtitles << t;
         }
@@ -250,7 +250,7 @@ int Editor::importSubtitles(const QVector<SubtitleCue>& cues, const QString& nam
     m_project->edit(T("Untertitel importieren"), [&](Timeline& tl) {
         SubtitleTrack t;
         t.name = name.simplified();
-        t.style = Subtitles::defaultStyle(p->format().size());
+        t.style = Subtitles::defaultStyle(p->timelineFormat().size());
         t.enabled = !anyOn || stack >= 0;
         if (stack > 0) t.style.posY += stack * (t.style.size * 1.3 + 2 * t.style.boxPad + 8); // one line higher each
         for (SubtitleCue c : cues) {

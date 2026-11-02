@@ -1884,5 +1884,11 @@
  "50 %": "50 %",
  "100 %": "100 %",
  "200 %": "200 %",
- "Zoom des Viewers (Strg+Mausrad im Bild, mittlere Maustaste verschiebt)": "Zoom du visualiseur (Ctrl+molette sur l'image, le bouton du milieu déplace)"
+ "Zoom des Viewers (Strg+Mausrad im Bild, mittlere Maustaste verschiebt)": "Zoom du visualiseur (Ctrl+molette sur l'image, le bouton du milieu déplace)",
+ "Neue Hochformat-Timeline (9:16)": "Nouvelle timeline verticale (9:16)",
+ "Positionen, Beschneiden und Titel dieser Timeline werden an eine neue Auflösung angepasst. Die anderen Timelines bleiben, wie sie sind.": "Les positions, le recadrage et les titres de cette timeline sont adaptés à une nouvelle résolution. Les autres timelines restent telles quelles.",
+ "Projekteinstellungen verwenden (%1)": "Utiliser les réglages du projet (%1)",
+ "Timeline-Auflösung…": "Résolution de la timeline…",
+ "Eigene Auflösung: %1": "Résolution propre : %1",
+ "Auflösung: %1 (Projekteinstellungen)": "Résolution : %1 (paramètres du projet)"
 }
