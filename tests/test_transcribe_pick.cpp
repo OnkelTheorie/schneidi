@@ -17,6 +17,7 @@
 #include <QProcess>
 #include <QTemporaryDir>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 
@@ -48,9 +49,17 @@ int fakeWhisper(int argc, char** argv)
     if (data < 0) return 3;
     const auto* s = reinterpret_cast<const qint16*>(d.constData() + data + 8);
     const qint64 n = (d.size() - data - 8) / 2;
-    qint64 crossings = 0;
-    for (qint64 i = 1; i < n; ++i) crossings += (s[i - 1] < 0) != (s[i] < 0);
-    const double seconds = n / 16000.0;
+    // Pitch of the sounding part (the tones have silence around them; the timeline mix may be quieter)
+    int peak = 0;
+    for (qint64 i = 0; i < n; ++i) peak = std::max(peak, std::abs(int(s[i])));
+    qint64 first = -1, last = -1, crossings = 0;
+    for (qint64 i = 0; i < n; ++i)
+        if (std::abs(int(s[i])) > peak / 4) {
+            if (first < 0) first = i;
+            last = i;
+        }
+    for (qint64 i = std::max<qint64>(1, first); i <= last; ++i) crossings += (s[i - 1] < 0) != (s[i] < 0);
+    const double seconds = (last - first) / 16000.0;
     const int pitch = seconds > 0 ? int(std::lround(crossings / 2.0 / seconds / 100)) * 100 : 0;
     std::fprintf(stderr, "whisper_print_progress_callback: progress =  50%%\n");
     const QJsonObject json{
@@ -175,12 +184,16 @@ int main(int argc, char** argv)
         CHECK(m.open(QIODevice::WriteOnly) && m.write("model") == 5);
     }
 
-    // A game recording: Mix (400 Hz), Spotify (400 Hz, the "song"), Mikrofon (1 kHz, the voice)
+    // A game recording: Mix (400 Hz), Spotify (400 Hz, the "song"), Mikrofon (1 kHz, the voice); each tone sounds
+    // from 0.1 to 1 s (where the fake's word is) with silence after it, so the cue counts as spoken
+    const auto tone = [](int hz) {
+        return QString("sine=f=%1:d=2:sample_rate=48000,volume='between(t,0.1,1)':eval=frame").arg(hz);
+    };
     const QString rec = Check::makeMedia(
         dir.filePath("rec.mkv"),
-        {"-f", "lavfi", "-i", "color=c=gray:s=160x120:r=25:d=2", "-f", "lavfi", "-i", "sine=f=400:d=2:sample_rate=48000",
-         "-f", "lavfi", "-i", "sine=f=400:d=2:sample_rate=48000", "-f", "lavfi", "-i", "sine=f=1000:d=2:sample_rate=48000",
-         "-map", "0", "-map", "1", "-map", "2", "-map", "3", "-c:v", "libx264", "-c:a", "aac", "-metadata:s:a:0",
+        {"-f", "lavfi", "-i", "color=c=gray:s=160x120:r=25:d=2", "-f", "lavfi", "-i", tone(400), "-f", "lavfi", "-i",
+         tone(400), "-f", "lavfi", "-i", tone(1000), "-map", "0", "-map", "1", "-map", "2", "-map", "3", "-c:v",
+         "libx264", "-c:a", "aac", "-metadata:s:a:0",
          "title=Mix", "-metadata:s:a:1", "title=Spotify", "-metadata:s:a:2", "title=Mikrofon"});
     if (!CHECK(!rec.isEmpty())) return Check::result();
     const QJsonObject base{{"source", rec}, {"model", model}};
