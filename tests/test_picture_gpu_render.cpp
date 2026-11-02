@@ -181,6 +181,23 @@ int main(int argc, char** argv)
         same("3 tracks preview", tl, {10}, 2.0, 30, Picture::Mode::Preview, QSize(960, 540));
     }
 
+    // A kept region (Reframe::keepCopy, the kill feed above a short) on its thin dark frame, faded to 80 %
+    {
+        Timeline tl;
+        tl.video.resize(2);
+        tl.video[0].clips << media(1, g_c, 0, 30);
+        Clip keep = media(2, g_a, 0, 30);
+        keep.keepRegion = "killfeed";
+        keep.transform.cropLeft = 700;
+        keep.transform.cropTop = 40;
+        keep.transform.cropBottom = 520;
+        keep.transform.zoomX = keep.transform.zoomY = 1.6;
+        keep.transform.posY = 200;
+        keep.transform.opacity = 80;
+        tl.video[1].clips << keep;
+        same("kept region frame", tl, {5}, 1.5, 30);
+    }
+
     // Transitions
     {
         Timeline tl = oneTrack({media(1, g_a, 0, 30), media(2, g_b, 30, 30)});

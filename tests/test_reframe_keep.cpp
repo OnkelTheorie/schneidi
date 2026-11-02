@@ -55,6 +55,12 @@ void testGames()
         CHECK(QRectF(0, 0, 1, 1).contains(x.feed));
         CHECK(x.feed.adjusted(-1e-9, -1e-9, 1e-9, 1e-9).intersects(x.mark));
     }
+    // CS2: five kill feed lines (31 px tall, 34 px apart from y 75 in 1080p: the fifth ends at 241) fit, and the copy
+    // in a 9:16 short stays at most 15 % of the frame height
+    const QRectF cs2 = GameHud::find("cs2")->feed;
+    CHECK(cs2.top() * 1080 <= 75 - 3 && cs2.bottom() * 1080 >= 241 + 3);
+    const Clip copy = Reframe::keepCopy(Clip{}, {"killfeed", cs2}, 16.0 / 9.0, QSizeF(1080, 1920));
+    CHECK(copy.transform.zoomY * cs2.height() * 607.5 <= 0.15 * 1920 + 1e-6);
 }
 
 void testGeometry()
@@ -358,6 +364,22 @@ void testCli(const QString& dir, const QString& game, const QString& plain)
         CHECK(redIn(img, top) > W * 2); // the line, scaled up
         CHECK_EQ(redIn(img, QRect(0, int(H * 0.3), W, H - int(H * 0.3))), 0); // the crop below shows no kill feed
         img.save(dir + "/keep-short.png");
+        // A thin dark frame around the copy (the same grey as the picture behind it): above its top edge (at 10 % of the
+        // frame height) and left of it, about 0.6 % of the frame width; the grey inside and further out untouched.
+        // (This 640x360 recording is scaled up ~4.5x, so the copy's own edge is soft over a few pixels.)
+        const double frameWidth = 0.006 * std::min(W, H);
+        const int edge = int(H * 0.1);
+        const auto grey = [&](int x, int y) { return qGreen(img.pixel(x, y)); };
+        int darkest = 255;
+        for (int y = int(edge - frameWidth - 1); y <= edge; ++y) darkest = std::min(darkest, grey(W / 2, y));
+        CHECK(darkest < 30);
+        CHECK(near(grey(W / 2, int(edge - 2 * frameWidth - 2)), 0x40, 4));
+        CHECK(near(grey(W / 2, int(edge + 2 * frameWidth)), 0x40, 4));
+        const int row = int(H * 0.15);
+        int darkX = -1;
+        for (int x = 0; x < W / 2 && darkX < 0; ++x)
+            if (grey(x, row) < 40) darkX = x;
+        CHECK(darkX > 0 && near(grey(darkX - 3, row), 0x40, 4) && near(grey(int(darkX + 3 * frameWidth), row), 0x40, 4));
     }
     // none removes it, a custom region brings one back, killfeed on a file of no known game fails
     run("edit", {{"project", path}, {"ops", R"([{"op":"timeline","timeline":"Short"},{"op":"reframe","mode":"center","keep":"none"}])"}});
