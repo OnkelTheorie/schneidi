@@ -1311,6 +1311,22 @@ void MediaPool::showContextMenu(const QPoint& pos)
         menu.addAction(T("Multicam-Clip aus ausgewählten Clips erstellen…"), this,
                        [this, recordings] { emit multicamRequested(recordings); })
             ->setEnabled(!recordings.isEmpty());
+        // Stretched 4:3 game footage: the clips of these files in the open timeline at their true shape
+        QStringList videos;
+        for (const QString& path : paths)
+            if (const MediaInfo* m = m_project->mediaInfo(path); m && m->hasVideo) videos << path;
+        QAction* stretched = menu.addAction(T("Gestrecktes 4:3 entzerren (Clips in der Timeline)"));
+        stretched->setCheckable(true);
+        bool allStretched = !videos.isEmpty(), any = false;
+        for (const Track& t : m_project->timeline().video)
+            for (const Clip& c : t.clips)
+                if (c.kind == ClipKind::Media && videos.contains(c.mediaPath)) {
+                    any = true;
+                    allStretched = allStretched && c.pictureAspect > 0;
+                }
+        stretched->setChecked(any && allStretched);
+        stretched->setEnabled(any);
+        connect(stretched, &QAction::triggered, this, [this, videos](bool on) { emit stretchedRequested(videos, on); });
         menu.addSeparator();
         addClipColorMenu(&menu, m_project, paths);
         addFlagsMenu(&menu, m_project, paths);

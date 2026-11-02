@@ -290,6 +290,20 @@ void testCli(const QString& dir, const QString& pillar, const QString& stretched
     const QJsonObject probe = run("probe", {{"file", pillar}, {"bars", true}});
     CHECK(probe.value("black_bars").toBool());
     CHECK(near(probe.value("content").toObject().value("x").toDouble(), 12.5, 0.6));
+    // check: in a 9:16 copy (fitted, bars not cropped) the bars show; after crop_bars they do not
+    const auto barsFound = [&](const QString& timeline) {
+        const QJsonObject c = run("check", {{"source", path}, {"timeline", timeline}, {"sound", false}});
+        int n = 0;
+        for (const QJsonValue& i : c.value("issues").toArray()) n += i.toObject().value("check").toString() == "black_bars";
+        return n;
+    };
+    run("edit", {{"project", path}, {"ops", "[{\"op\":\"new_timeline\",\"name\":\"Tall\",\"from\":"
+                                                + QString::number(source) + ",\"aspect\":\"9:16\",\"switch\":false}]"}});
+    CHECK_EQ(barsFound("Tall"), 1); // the pillarboxed clip, not the stretched one (no bars)
+    CHECK_EQ(barsFound(QString::number(source)), 0); // a plain 16:9 edit keeps them as recorded
+    run("edit", {{"project", path}, {"ops", "[{\"op\":\"timeline\",\"timeline\":\"Tall\"},{\"op\":\"crop_bars\"},"
+                                            "{\"op\":\"timeline\",\"timeline\":" + QString::number(source) + "}]"}});
+    CHECK_EQ(barsFound("Tall"), 0);
     const QJsonObject r = run("edit", {{"project", path}, {"ops", "[{\"op\":\"crop_bars\"}]"}});
     CHECK(r.value("notes").toArray().first().toString().contains("cropped the black bars of 1 of 2"));
     CHECK(clip(0).transform.cropLeft > 200);

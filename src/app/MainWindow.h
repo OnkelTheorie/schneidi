@@ -252,7 +252,11 @@ private:
     void autoReframe();
     void reframedCopy(int sequenceId);
     // Measures the clips with a progress dialog (window modal); false = cancelled
-    bool measureReframe(const QVector<Clip>& clips, const ProjectFormat& format, QHash<int, QVector<Reframe::Key>>* paths);
+    bool measureReframe(const QVector<Clip>& clips, const ProjectFormat& format, QHash<int, QVector<Reframe::Key>>* paths,
+                        QHash<QString, QRectF>* contents = nullptr);
+    // Clip menu: crop the black bars baked into the selected clips (engine/BarDetect), show them as stretched 4:3
+    void cropBlackBars();
+    void setStretched43(bool on);
 
     Engine* m_engine;
     Project* m_project;

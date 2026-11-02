@@ -60,6 +60,8 @@ inline constexpr ResolutionPreset kResolutionPresets[] = {
     {1080, 1920, N_("Hochformat HD")},
     {2160, 3840, N_("Hochformat Ultra HD")},
     {1080, 1080, N_("Quadrat")},
+    {1080, 1350, N_("Hochformat 4:5")},
+    {1440, 1080, N_("4:3 (Spiele)")},
 };
 
 // "1920 x 1080 HD" or "1000 x 800" for custom sizes

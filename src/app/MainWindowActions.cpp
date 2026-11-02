@@ -363,6 +363,18 @@ void MainWindow::buildActions()
         cacheClip->setChecked(state == 1);
     });
     makeAction(clipMenu, "auto_reframe", T("Auto-Reframe"), QKeySequence(), [this] { autoReframe(); });
+    makeAction(clipMenu, "crop_bars", T("Schwarze Balken wegschneiden"), QKeySequence(), [this] { cropBlackBars(); });
+    QAction* stretched = makeAction(clipMenu, "stretched_43", T("Gestrecktes 4:3 entzerren"), QKeySequence(), [] {});
+    stretched->setCheckable(true);
+    connect(stretched, &QAction::triggered, this, [this](bool on) { setStretched43(on); });
+    connect(clipMenu, &QMenu::aboutToShow, this, [this, stretched] {
+        const QVector<int> ids = m_editor->reframeTargets(m_editor->clipIdsOf(m_selection->ids()));
+        stretched->setEnabled(!ids.isEmpty());
+        stretched->setChecked(!ids.isEmpty() && std::all_of(ids.begin(), ids.end(), [this](int id) {
+            const Clip* c = TimelineOps::findClip(m_project->timeline(), id);
+            return c && c->pictureAspect > 0;
+        }));
+    });
     QMenu* compoundMenu = timeline->addMenu(T("Compound Clip"));
     makeAction(compoundMenu, "compound_create", T("Neuer Compound Clip…"), QKeySequence(), [this] { createCompoundClip(); });
     makeAction(compoundMenu, "compound_open", T("Compound Clip in Timeline öffnen"), QKeySequence(),

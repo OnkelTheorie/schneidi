@@ -216,6 +216,13 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
     connect(m_mediaPool, &MediaPool::sourceRequested, this, &MainWindow::showSource);
     connect(m_mediaPool, &MediaPool::sequenceOpenRequested, m_timeline, &TimelinePanel::openSequence);
     connect(m_mediaPool, &MediaPool::reframedCopyRequested, this, &MainWindow::reframedCopy);
+    connect(m_mediaPool, &MediaPool::stretchedRequested, this, [this](const QStringList& paths, bool on) {
+        QVector<int> ids;
+        for (const Track& t : m_project->timeline().video)
+            for (const Clip& c : t.clips)
+                if (c.kind == ClipKind::Media && paths.contains(c.mediaPath)) ids << c.id;
+        m_editor->setPictureAspect(ids, on ? 4.0 / 3.0 : 0.0);
+    });
     // Another timeline opened: selection gone, playhead and zoom/scroll as last in this timeline (like DaVinci)
     m_shownSequence = m_project->currentSequence();
     connect(m_project, &Project::currentSequenceChanged, this, [this, tv] {
@@ -268,7 +275,7 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
             }));
             k->setChecked(std::any_of(ids.begin(), ids.end(), [tv](int id) { return tv->curveEditorShown(id); }));
         }
-        for (const char* id : {"clip_speed", "retime_controls", "clip_speed_reset", "curve_editor", "accents", "auto_reframe",
+        for (const char* id : {"clip_speed", "retime_controls", "clip_speed_reset", "curve_editor", "accents", "auto_reframe", "crop_bars", "stretched_43",
                                "normalize_audio", "audio_ducking", "stream_presets_learn", "",
                                "toggle_enabled", "link_clips",
                                "render_cache_clip", "save_effect_preset", "", "compound_create", "compound_open", "compound_decompose", "",
@@ -305,6 +312,15 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
             if (QString(id) == "render_cache_clip") {
                 if (cacheState < 0) continue; // video clips only (no titles)
                 a->setChecked(cacheState == 1);
+            }
+            if (QString(id) == "crop_bars" || QString(id) == "stretched_43") {
+                const QVector<int> media = m_editor->reframeTargets(m_editor->clipIdsOf(m_selection->ids()));
+                if (media.isEmpty()) continue; // video clips only
+                if (QString(id) == "stretched_43")
+                    a->setChecked(std::all_of(media.begin(), media.end(), [this](int cid) {
+                    const Clip* c = TimelineOps::findClip(m_project->timeline(), cid);
+                    return c && c->pictureAspect > 0;
+                }));
             }
             menu.addAction(a);
         }

@@ -2011,5 +2011,19 @@
  "Stimme Deutsch: Ramona": "Głos niemiecki: Ramona",
  "weiblich (Piper, 16 kHz; Trainingsdaten gemeinfrei: M-AILABS/LibriVox)": "żeński (Piper, 16 kHz; dane treningowe w domenie publicznej: M-AILABS/LibriVox)",
  "weiblich, amerikanisch (Piper, gemeinfrei)": "żeński, amerykański (Piper, domena publiczna)",
- "×": "×"
+ "×": "×",
+ "4:3 (Spiele)": "4:3 (gry)",
+ "Bildform": "Kształt obrazu",
+ "Gestrecktes 4:3 entzerren": "Odciągnij rozciągnięte 4:3",
+ "Gestrecktes 4:3 entzerren (Clips in der Timeline)": "Odciągnij rozciągnięte 4:3 (klipy na osi czasu)",
+ "Hochformat 4:5": "Pionowy 4:5",
+ "Keine schwarzen Balken gefunden": "Nie znaleziono czarnych pasów",
+ "Schwarze Balken weggeschnitten: %1 Clips": "Przycięto czarne pasy: %1 klipów",
+ "Schwarze Balken wegschneiden": "Przytnij czarne pasy",
+ "Schwarze Balken: keine Video-Clips ausgewählt": "Czarne pasy: nie zaznaczono klipów wideo",
+ "Seitenverhältnis der Datei": "Proporcje pliku",
+ "Seitenverhältnis entzerren": "Odciągnij proporcje",
+ "Viele Spieler nehmen ein 4:3-Spiel auf 16:9 gestreckt auf (breite Köpfe, ovale Kreise). „Gestrecktes 4:3 entzerren“ zeigt das Bild wieder in seinen echten Proportionen.": "Wielu graczy nagrywa grę 4:3 rozciągniętą do 16:9 (szerokie głowy, owalne koła). „Odciągnij rozciągnięte 4:3” pokazuje obraz znów w prawdziwych proporcjach.",
+ "Wie die Datei": "Jak w pliku",
+ "Die Aufnahme hat schwarze Balken, die im Bild zu sehen sind (4:3-Spiel in 16:9?): „Schwarze Balken wegschneiden“ im Clip-Menü oder Auto-Reframe schneidet sie weg": "Nagranie ma czarne pasy widoczne w obrazie (gra 4:3 w 16:9?): „Przytnij czarne pasy” w menu Klip albo Auto-Reframe je przycina"
 }

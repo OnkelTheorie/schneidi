@@ -14,6 +14,8 @@ It also finds:
   raise that track or `duck` the music under it. Name the music track "Music" if it is not a plain sound file.
 - `missing_effect`: an effect this schneidi does not have (frei0r plugins of old projects) - it stays in the project
   but is skipped when rendering; remove it or use an own effect instead (`effects` lists them).
+- `black_bars`: a recording has black bars (a 4:3 game in a 16:9 video) that show in a timeline of another shape
+  or a zoomed clip - `{"op":"crop_bars"}` crops them; `reframe` does it by itself.
 - `stutter`: a clip uses a part of a recording where the game lagged (the picture stands still) - trim the clip
   around it (`probe` `gaps` shows the jumps, `highlights` gives `clean` parts).
 - 9:16 only: `safe_area` / `subtitle_safe_area` = text where TikTok, Reels and Shorts put caption and buttons

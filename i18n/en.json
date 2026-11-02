@@ -2011,5 +2011,19 @@
  "Stimme Deutsch: Ramona": "German voice: Ramona",
  "weiblich (Piper, 16 kHz; Trainingsdaten gemeinfrei: M-AILABS/LibriVox)": "female (Piper, 16 kHz; training data in the public domain: M-AILABS/LibriVox)",
  "weiblich, amerikanisch (Piper, gemeinfrei)": "female, American (Piper, public domain)",
- "×": "×"
+ "×": "×",
+ "4:3 (Spiele)": "4:3 (games)",
+ "Bildform": "Picture shape",
+ "Gestrecktes 4:3 entzerren": "Unstretch 4:3",
+ "Gestrecktes 4:3 entzerren (Clips in der Timeline)": "Unstretch 4:3 (clips in the timeline)",
+ "Hochformat 4:5": "Portrait 4:5",
+ "Keine schwarzen Balken gefunden": "No black bars found",
+ "Schwarze Balken weggeschnitten: %1 Clips": "Black bars cropped: %1 clips",
+ "Schwarze Balken wegschneiden": "Crop black bars",
+ "Schwarze Balken: keine Video-Clips ausgewählt": "Black bars: no video clips selected",
+ "Seitenverhältnis der Datei": "File's aspect ratio",
+ "Seitenverhältnis entzerren": "Unstretch aspect ratio",
+ "Viele Spieler nehmen ein 4:3-Spiel auf 16:9 gestreckt auf (breite Köpfe, ovale Kreise). „Gestrecktes 4:3 entzerren“ zeigt das Bild wieder in seinen echten Proportionen.": "Many players record a 4:3 game stretched to 16:9 (wide heads, oval circles). “Unstretch 4:3” shows the picture in its true proportions again.",
+ "Wie die Datei": "As the file",
+ "Die Aufnahme hat schwarze Balken, die im Bild zu sehen sind (4:3-Spiel in 16:9?): „Schwarze Balken wegschneiden“ im Clip-Menü oder Auto-Reframe schneidet sie weg": "The recording has black bars that show in the picture (a 4:3 game in 16:9?): “Crop black bars” in the Clip menu or Auto-Reframe crops them"
 }

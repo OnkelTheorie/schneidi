@@ -2011,5 +2011,19 @@
  "Stimme Deutsch: Ramona": "Немецкий голос: Ramona",
  "weiblich (Piper, 16 kHz; Trainingsdaten gemeinfrei: M-AILABS/LibriVox)": "женский (Piper, 16 кГц; обучающие данные — общественное достояние: M-AILABS/LibriVox)",
  "weiblich, amerikanisch (Piper, gemeinfrei)": "женский, американский (Piper, общественное достояние)",
- "×": "×"
+ "×": "×",
+ "4:3 (Spiele)": "4:3 (игры)",
+ "Bildform": "Форма кадра",
+ "Gestrecktes 4:3 entzerren": "Убрать растяжение 4:3",
+ "Gestrecktes 4:3 entzerren (Clips in der Timeline)": "Убрать растяжение 4:3 (клипы на таймлайне)",
+ "Hochformat 4:5": "Вертикальный 4:5",
+ "Keine schwarzen Balken gefunden": "Чёрные полосы не найдены",
+ "Schwarze Balken weggeschnitten: %1 Clips": "Чёрные полосы обрезаны: клипов %1",
+ "Schwarze Balken wegschneiden": "Обрезать чёрные полосы",
+ "Schwarze Balken: keine Video-Clips ausgewählt": "Чёрные полосы: видеоклипы не выбраны",
+ "Seitenverhältnis der Datei": "Соотношение сторон файла",
+ "Seitenverhältnis entzerren": "Убрать растяжение пропорций",
+ "Viele Spieler nehmen ein 4:3-Spiel auf 16:9 gestreckt auf (breite Köpfe, ovale Kreise). „Gestrecktes 4:3 entzerren“ zeigt das Bild wieder in seinen echten Proportionen.": "Многие игроки записывают игру 4:3, растянутую до 16:9 (широкие головы, овальные круги). «Убрать растяжение 4:3» снова показывает кадр в настоящих пропорциях.",
+ "Wie die Datei": "Как в файле",
+ "Die Aufnahme hat schwarze Balken, die im Bild zu sehen sind (4:3-Spiel in 16:9?): „Schwarze Balken wegschneiden“ im Clip-Menü oder Auto-Reframe schneidet sie weg": "В записи есть чёрные полосы, которые видны в кадре (игра 4:3 в 16:9?): «Обрезать чёрные полосы» в меню «Клип» или Auto-Reframe обрежут их"
 }
