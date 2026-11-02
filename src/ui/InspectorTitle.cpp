@@ -307,13 +307,13 @@ void Inspector::buildGeneratorSections(QVBoxLayout* page, const Section& outline
     edge->setToolTip(T("Unten verdecken TikTok, Reels und Shorts den Balken mit ihrer eigenen Leiste"));
     connect(edge, &QComboBox::activated, this, [this, V, edge] {
         const bool top = edge->currentData().toBool();
-        apply(V, {}, T("Rand"), [top](Clip& c) { c.title.barTop = top; }, true);
+        apply(V, {}, T("Bildrand"), [top](Clip& c) { c.title.barTop = top; }, true);
     });
-    bar.grid->addWidget(rowLabel(T("Rand")), bar.rows, 0);
+    bar.grid->addWidget(rowLabel(T("Bildrand")), bar.rows, 0);
     bar.grid->addWidget(edge, bar.rows++, 1);
     addSlider(bar, "titleBarThickness", T("Dicke"), 1, 200, TitleStyle().barThickness, 0.5, 0,
               [](Clip& c) -> double& { return c.title.barThickness; });
-    addSlider(bar, "titleBarMargin", T("Abstand"), 0, 1000, TitleStyle().barMargin, 0.5, 0,
+    addSlider(bar, "titleBarMargin", T("Abstand zum Rand"), 0, 1000, TitleStyle().barMargin, 0.5, 0,
               [](Clip& c) -> double& { return c.title.barMargin; });
     auto* round = new QCheckBox(T("Runde Enden"));
     round->setFocusPolicy(Qt::ClickFocus);
