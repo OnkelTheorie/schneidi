@@ -17,13 +17,17 @@ struct Options {
     QString voice;        // voice id ("piper-voice-de_DE-thorsten"), short name or .onnx path; empty = default voice
     double speed = 1.0;   // 0.5..2: 2 = twice as fast (piper length_scale = 1 / speed)
     double pause = 0.2;   // seconds of silence after each sentence
+    // Which build of the voice (engine/Tts fills it: the catalog's checksum, or size and time of a voice file): a
+    // new download or a changed file makes a new speech file instead of taking the old one
+    QString voiceVersion;
 };
 constexpr double kMinSpeed = 0.5, kMaxSpeed = 2.0, kMaxPause = 3.0;
 
-// Whitespace (line breaks too) collapsed to single spaces, trimmed: what piper speaks (it reads one line per
-// utterance; several lines would each overwrite the output file)
+// What piper speaks, as one line (it reads one line per utterance; several lines would each overwrite the output
+// file): whitespace collapsed, a line break after a list item or a paragraph becomes a sentence end, list markers
+// ("- ", "• ") and emoji left out. The caption words are the words of this text.
 QString normalizedText(const QString& text);
-// Same text + voice + options = same key (16 hex digits); so a second run takes the file that is there
+// Same text + voice (and its version) + options = same key (16 hex digits); so a second run takes the file that is there
 QString cacheKey(const QString& text, const Options& options);
 // "speech-hallo-das-ist-<key>.wav": the first words (ASCII, for any file system) and the key
 QString fileName(const QString& text, const Options& options);

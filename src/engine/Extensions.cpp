@@ -83,7 +83,10 @@ QVector<Item> makeCatalog()
 #elif defined(Q_OS_LINUX) && defined(Q_PROCESSOR_ARM_64)
     piper("piper_linux_aarch64.tar.gz", "fea0fd2d87c54dbc7078d0f878289f404bd4d6eea6e7444a77835d1537ab88eb", 26004717);
 #endif
-    // Voices whose training data allows any use: Thorsten (CC0), LJ Speech (public domain)
+    // Voices (model cards in piper-voices). The first of a language is its default: trained from scratch on data that
+    // allows any use - Ramona (M-AILABS, LibriVox recordings, public domain, BSD-style licence), LJ Speech (public
+    // domain). Thorsten sounds better, but piper's model was fine-tuned from the en_US "lessac" voice, whose training
+    // data (Blizzard 2013) is licensed for research only: offered with that note, never the default.
     const auto voice = [&](const char* name, const char* title, const char* description, const char* folder,
                            const char* sha, qint64 size, const char* configSha, qint64 configSize) {
         const QString file = QString(name) + ".onnx";
@@ -91,12 +94,18 @@ QVector<Item> makeCatalog()
         list << Item{kVoicePrefix + QString(name).section('-', 0, 1), Kind::Voice, title, description, base, sha, size,
                      file, base + ".json", configSha, configSize};
     };
-    voice("de_DE-thorsten-medium", N_("Stimme Deutsch: Thorsten"), N_("männlich, klar (Piper, freie Lizenz CC0)"),
-          "de/de_DE/thorsten/medium/", "7e64762d8e5118bb578f2eea6207e1a35a8e0c30595010b666f983fc87bb7819", 63201294,
-          "974adee790533adb273a1ac88f49027d2a1b8f0f2cf4905954a4791e79264e85", 4819);
+    voice("de_DE-ramona-low", N_("Stimme Deutsch: Ramona"),
+          N_("weiblich (Piper, 16 kHz; Trainingsdaten gemeinfrei: M-AILABS/LibriVox)"), "de/de_DE/ramona/low/",
+          "a1068592532aad8c49bf3d1a01b8749c11d7dba726689ee28ad64e7b627ae4c5", 63104526,
+          "64906ab7a050ac685fa3dcea044baa798f67ed77be164f9c668a69298c6487d2", 4157);
     voice("en_US-ljspeech-medium", N_("Stimme Englisch: LJ Speech"), N_("weiblich, amerikanisch (Piper, gemeinfrei)"),
           "en/en_US/ljspeech/medium/", "6f52a751e2349abe7a76735eb09dc1875298c77ea2342ffd2fef79ff81b87f22", 63531379,
           "141d612cc0a95ed7efc1ca936b845c2364967f2e9217c5dbfcf69fc4d6c65860", 4972);
+    voice("de_DE-thorsten-medium", N_("Stimme Deutsch: Thorsten"),
+          N_("männlich, klarer Klang (Piper; Daten CC0, aber aus einer Stimme weitertrainiert, deren Daten nur für die "
+             "Forschung freigegeben sind)"),
+          "de/de_DE/thorsten/medium/", "7e64762d8e5118bb578f2eea6207e1a35a8e0c30595010b666f983fc87bb7819", 63201294,
+          "974adee790533adb273a1ac88f49027d2a1b8f0f2cf4905954a4791e79264e85", 4819);
     list << Item{"whisper-vad", Kind::WhisperVad, N_("Sprach-Erkennung für Whisper (Silero VAD)"),
                  N_("findet die Stellen mit Sprache, damit Wortzeiten nicht in Pausen rutschen (gehört zu Whisper)"),
                  "https://huggingface.co/ggml-org/whisper-vad/resolve/main/ggml-silero-v6.2.0.bin",

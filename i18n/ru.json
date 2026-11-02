@@ -1947,7 +1947,9 @@
  "Was die Stimme sagen soll …": "Что должен сказать голос …",
  "Weitere Stimmen…": "Другие голоса…",
  "keine Ausgabe": "нет вывода",
- "männlich, klar (Piper, freie Lizenz CC0)": "мужской, чёткий (Piper, свободная лицензия CC0)",
+ "männlich, klarer Klang (Piper; Daten CC0, aber aus einer Stimme weitertrainiert, deren Daten nur für die Forschung freigegeben sind)": "мужской, чистый звук (Piper; данные CC0, но дообучен из голоса, данные которого разрешены только для исследований)",
+ "Stimme Deutsch: Ramona": "Немецкий голос: Ramona",
+ "weiblich (Piper, 16 kHz; Trainingsdaten gemeinfrei: M-AILABS/LibriVox)": "женский (Piper, 16 кГц; обучающие данные — общественное достояние: M-AILABS/LibriVox)",
  "weiblich, amerikanisch (Piper, gemeinfrei)": "женский, американский (Piper, общественное достояние)",
  "×": "×"
 }

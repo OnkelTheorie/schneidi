@@ -16,12 +16,60 @@ namespace {
 QString number(double v) { return QString::number(v, 'f', 3); } // C locale: the same key everywhere
 } // namespace
 
-QString normalizedText(const QString& text) { return text.simplified(); }
+namespace {
+// Emoji and other pictographs: espeak reads some of them by their name ("Gesicht mit Freudentränen"), others not at
+// all; neither belongs in a voice-over or its captions. Signs below the arrows block (°, ©, €) stay.
+bool isPictograph(char32_t c)
+{
+    if (c == 0x200D || c == 0xFE0E || c == 0xFE0F || c == 0x20E3) return true; // joiner, variation selectors, keycap
+    if (c >= 0x1F3FB && c <= 0x1F3FF) return true;                           // skin tones
+    if (c >= 0xE0020 && c <= 0xE007F) return true;                           // tag characters (flags)
+    return c >= 0x2190 && QChar::category(c) == QChar::Symbol_Other;
+}
+} // namespace
+
+QString normalizedText(const QString& text)
+{
+    // One line per text: piper speaks each line as its own utterance into the same file. Line breaks of a list or
+    // between paragraphs end a sentence (else "- Tempo\n- Preis" runs together as "Tempo Preis"); a line break inside
+    // a sentence (wrapped text) is a space. List markers are not spoken.
+    static const QRegularExpression marker(QStringLiteral("^[-*•–—·]\\s+"));
+    struct Line {
+        QString text;
+        bool item = false, paragraphEnd = false;
+    };
+    QVector<Line> lines;
+    for (const QString& raw : text.split('\n')) {
+        QString clean;
+        for (const char32_t c : raw.toUcs4())
+            if (!isPictograph(c)) clean += QString::fromUcs4(&c, 1);
+        Line l{clean.simplified()};
+        if (l.text.contains(marker)) {
+            l.text = l.text.remove(marker).trimmed();
+            l.item = true;
+        }
+        if (l.text.isEmpty()) {
+            if (!lines.isEmpty()) lines.last().paragraphEnd = true;
+            continue;
+        }
+        if (l.item && !lines.isEmpty()) lines.last().paragraphEnd = true; // the line before a list item ends too
+        lines << l;
+    }
+    QStringList out;
+    for (int i = 0; i < lines.size(); ++i) {
+        QString t = lines[i].text;
+        static const QString ends = QStringLiteral(".!?…:;,");
+        const bool last = i + 1 == lines.size();
+        if (!last && (lines[i].item || lines[i].paragraphEnd) && !ends.contains(t.back())) t += '.';
+        out << t;
+    }
+    return out.join(' ');
+}
 
 QString cacheKey(const QString& text, const Options& o)
 {
     // v1: piper 2023.11.14-2; a new piper build (other sound) gets a new version here
-    const QByteArray data = QStringList{"v1", o.voice, number(std::clamp(o.speed, kMinSpeed, kMaxSpeed)),
+    const QByteArray data = QStringList{"v1", o.voice, o.voiceVersion, number(std::clamp(o.speed, kMinSpeed, kMaxSpeed)),
                                         number(std::clamp(o.pause, 0.0, kMaxPause)), normalizedText(text)}
                                 .join('\n')
                                 .toUtf8();

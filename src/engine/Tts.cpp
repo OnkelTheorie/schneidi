@@ -13,6 +13,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QTimer>
+#include <QUuid>
 
 #include <QtEndian>
 
@@ -53,6 +54,20 @@ void saveWords(const QString& wav, const Result& r)
 
 quint32 le32(const char* p) { return quint8(p[0]) | quint8(p[1]) << 8 | quint8(p[2]) << 16 | quint32(quint8(p[3])) << 24; }
 quint16 le16(const char* p) { return quint16(quint8(p[0]) | quint8(p[1]) << 8); }
+
+// Build of a voice for the cache key: the catalog's checksum (pinned download), else size and time of the file
+QString voiceVersion(const QString& voice)
+{
+    if (const QVector<const Extensions::Item*> items = Extensions::parseList(voice);
+        items.size() == 1 && items.first()->kind == Extensions::Kind::Voice)
+        return QString::fromLatin1(items.first()->sha256.left(16));
+    const QFileInfo model(Extensions::voiceModelPath(voice));
+    const QFileInfo config(model.filePath() + ".json");
+    return QString("%1-%2-%3")
+        .arg(model.size())
+        .arg(model.lastModified().toMSecsSinceEpoch())
+        .arg(config.lastModified().toMSecsSinceEpoch());
+}
 
 } // namespace
 
@@ -138,9 +153,11 @@ Speaker::Speaker(QObject* parent) : QObject(parent)
 
 Speaker::~Speaker()
 {
+    m_process.disconnect(this); // no finished() from a dying speaker (its owner is being destroyed)
     if (m_process.state() != QProcess::NotRunning) {
         m_process.kill();
         m_process.waitForFinished(2000);
+        QFile::remove(m_part);
     }
 }
 
@@ -155,10 +172,11 @@ bool Speaker::start(const Request& request, QString* error)
     m_request = request;
     if (m_request.options.voice.isEmpty()) m_request.options.voice = defaultVoice();
     if (const QString why = notReady(m_request.options.voice); !why.isEmpty()) return fail(why);
+    m_request.options.voiceVersion = voiceVersion(m_request.options.voice);
     if (!QDir().mkpath(request.folder)) return fail(T("Ordner kann nicht angelegt werden: %1").arg(request.folder));
     m_result = {};
     m_result.voice = m_request.options.voice;
-    m_result.path = QDir(request.folder).filePath(Speech::fileName(request.text, m_request.options));
+    m_result.path = QDir(request.folder).filePath(Speech::fileName(m_request.text, m_request.options));
     m_cancelled = false;
     m_running = true;
     if (QFileInfo(m_result.path).size() > 44) {
@@ -167,12 +185,12 @@ bool Speaker::start(const Request& request, QString* error)
         QTimer::singleShot(0, this, [this] { piperDone(0, QProcess::NormalExit); });
         return true;
     }
-    m_part = m_result.path.chopped(4) + ".part.wav";
-    QFile::remove(m_part);
+    // A part file of its own: two runs of the same text (CLI and app, two edits) must not write into one file
+    m_part = m_result.path.chopped(4) + "." + QUuid::createUuid().toString(QUuid::Id128).left(8) + ".part.wav";
     const QString model = Extensions::voiceModelPath(m_request.options.voice);
     m_process.setProcessChannelMode(QProcess::SeparateChannels);
     m_process.start(Extensions::piperProgram(), Speech::piperArguments(model, m_request.options, m_part));
-    m_process.write(Speech::stdinText(request.text));
+    m_process.write(Speech::stdinText(m_request.text));
     m_process.closeWriteChannel();
     return true;
 }
@@ -188,16 +206,25 @@ void Speaker::cancel()
 void Speaker::piperDone(int exitCode, QProcess::ExitStatus status)
 {
     if (!m_running) return;
-    if (m_cancelled) return done(false, T("Abgebrochen"));
+    if (m_cancelled) {
+        if (!m_result.cached) QFile::remove(m_part); // killed half way
+        return done(false, T("Abgebrochen"));
+    }
     if (!m_result.cached) {
         if (status != QProcess::NormalExit || exitCode != 0 || QFileInfo(m_part).size() <= 44) {
             const QString log = QString::fromLocal8Bit(m_process.readAllStandardError()).trimmed().right(400);
             QFile::remove(m_part);
             return done(false, T("Piper ist fehlgeschlagen: %1").arg(log.isEmpty() ? T("keine Ausgabe") : log));
         }
-        QFile::remove(m_result.path);
-        if (!QFile::rename(m_part, m_result.path))
-            return done(false, T("Datei konnte nicht abgelegt werden: %1").arg(m_result.path));
+        if (QFileInfo(m_result.path).size() > 44) {
+            QFile::remove(m_part); // another run of the same text was faster: the same sound
+        } else {
+            QFile::remove(m_result.path);
+            if (!QFile::rename(m_part, m_result.path)) {
+                QFile::remove(m_part);
+                return done(false, T("Datei konnte nicht abgelegt werden: %1").arg(m_result.path));
+            }
+        }
     }
     const std::optional<WavInfo> info = readWav(m_result.path);
     if (!info) return done(false, T("Piper hat keine lesbare WAV-Datei erzeugt."));
@@ -211,6 +238,8 @@ void Speaker::piperDone(int exitCode, QProcess::ExitStatus status)
 
 bool Speaker::startWords()
 {
+    // SCHNEIDI_TTS_WORDS=estimate: never whisper (tests: the same result with or without whisper on the machine)
+    if (qEnvironmentVariable("SCHNEIDI_TTS_WORDS") == "estimate") return false;
     const QString model = Extensions::whisperModelPath();
     if (Extensions::whisperProgram().isEmpty() || model.isEmpty()) return false;
     TranscribeRequest req;
