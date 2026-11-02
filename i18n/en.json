@@ -828,6 +828,7 @@
  "Im Ordner zeigen": "Show in Folder",
  "Im Panel „KI“ bearbeitet eine KI das offene Projekt auf Zuruf, mit denselben Werkzeugen wie jede andere KI. Jede Änderung lässt sich rückgängig machen.": "In the “AI” panel an AI edits the open project on request, with the same tools as any other AI. Every change can be undone.",
  "Im Ton wurde keine Sprache erkannt.": "No speech was found in the audio.",
+ "Whisper hört eher %1 (zu %2 %) als die gewählte Sprache %3. Falls das stimmt, die Untertitel mit „Automatisch erkennen“ neu erzeugen.": "Whisper rather hears %1 (%2 % sure) than the chosen language %3. If that is right, create the subtitles again with “Detect automatically”.",
  "Immer": "Always",
  "Import": "Import",
  "Import-Vorgaben für Ton-Streams": "Import Presets for Audio Streams",

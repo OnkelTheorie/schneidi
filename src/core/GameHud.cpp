@@ -10,13 +10,13 @@ namespace GameHud {
 
 const QVector<Game>& games()
 {
-    // CS2 (1080p recordings): kill feed lines from y 0.07 down, ~0.03 apart, right edge at x 0.99; the player's own
-    // lines have a thin red frame. Its right part is enough to see a new line: further left lies game picture
-    // (red signs, awnings) that a wider region took for kills. Shown in a short: x from 0.78 (long names reach 0.81),
-    // four lines (a fifth is cut; more height made the text smaller).
+    // CS2 (1080p recordings): kill feed lines 31 px tall from y 75 (0.069) down, 34 px (0.0315) apart, right edge at
+    // x 0.99; the player's own lines have a thin red frame. Its right part is enough to see a new line: further left
+    // lies game picture (red signs, awnings) that a wider region took for kills. Shown in a short: x from 0.78 (long
+    // names reach 0.81), five lines (the fifth ends at y 241 = 0.223; the text is a little smaller than with four).
     // Valorant: the player's lines carry a yellow mark at their left.
     static const QVector<Game> list{
-        {"cs2", "Counter-Strike 2", QRectF(0.88, 0.06, 0.115, 0.19), "#d8444a", 40, QRectF(0.78, 0.06, 0.22, 0.16)},
+        {"cs2", "Counter-Strike 2", QRectF(0.88, 0.06, 0.115, 0.19), "#d8444a", 40, QRectF(0.78, 0.06, 0.22, 0.172)},
         {"valorant", "Valorant", QRectF(0.70, 0.04, 0.22, 0.23), "#e7e371", 0, QRectF(0.70, 0.04, 0.295, 0.24)},
     };
     return list;

@@ -1,17 +1,26 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Which sound `transcribe` hears: the voice stream/track of a game recording by default (no song lyrics from the
-// music stream in the captions), chosen streams by number or name (several mixed), the language check.
+// music stream in the captions), chosen streams by number or name (several mixed), the language check (CLI and the
+// app's dialog "Untertitel aus Audio erzeugen": a hint after the run).
 // whisper itself is not needed: this program copies itself as "whisper-cli" onto the PATH and then answers like
 // whisper with the pitch of the sound it got ("f1000" = a 1 kHz tone), so the test sees which stream reached it.
+#include "app/TranscribeDialog.h"
 #include "cli/Commands.h"
 #include "cli/CommandsDetail.h"
 #include "core/Transcript.h"
+#include "engine/Extensions.h"
+#include "engine/Transcriber.h"
 
 #include "check.h"
 
 #include <QDir>
 #include <QFile>
-#include <QGuiApplication>
+#include <QApplication>
+#include <QEventLoop>
+#include <QPushButton>
+#include <QSettings>
+#include <QThread>
+#include <QTimer>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QProcess>
@@ -25,7 +34,8 @@ namespace {
 
 // --- The fake whisper-cli ---------------------------------------------------------------------------------------
 // Reads the 16-bit mono WAV of -f, writes -of + ".json" with one word "f<pitch rounded to 100 Hz>"; -dl prints a
-// detected "en" like whisper's log line. The language of -l (auto: "de") is the result's language.
+// detected "en" like whisper's log line. The language of -l (auto: "de") is the result's language. FAKE_WHISPER_MS:
+// works that long first, without a progress line (like whisper on a short clip).
 int fakeWhisper(int argc, char** argv)
 {
     QString wav, out, lang = "de";
@@ -42,6 +52,7 @@ int fakeWhisper(int argc, char** argv)
         std::fprintf(stderr, "whisper_full_with_state: auto-detected language: en (p = 0.930000)\n");
         return 0;
     }
+    QThread::msleep(qEnvironmentVariableIntValue("FAKE_WHISPER_MS"));
     QFile f(wav);
     if (!f.open(QIODevice::ReadOnly)) return 2;
     const QByteArray d = f.readAll();
@@ -104,7 +115,7 @@ int main(int argc, char** argv)
 {
     if (QFileInfo(QString::fromLocal8Bit(argv[0])).baseName() == QLatin1String("whisper-cli")) return fakeWhisper(argc, argv);
     Check::initEnv();
-    QGuiApplication app(argc, argv);
+    QApplication app(argc, argv);
     Check::initApp("transcribe_pick");
 
     // --- Names that say "voice"
@@ -281,6 +292,105 @@ int main(int argc, char** argv)
         CHECK(lines >= 2);
         CHECK(staged);
         CHECK_EQ(last, 100);
+    }
+    {
+        // The app's dialog: a chosen language whisper is sure it does not hear (the fake: "en" at 93 %) gives a hint
+        // after the run, the subtitles are made anyway; the right language or "auto": no hint
+        const Extensions::Item* tiny = Extensions::find("whisper-model-tiny");
+        const QString installed = QDir(Extensions::rootDir()).filePath("whisper/models/" + tiny->fileName);
+        QDir().mkpath(QFileInfo(installed).absolutePath());
+        QFile::remove(installed); // from an earlier run (test settings and data stay)
+        CHECK(QFile::copy(model, installed));
+        Timeline tl;
+        tl.audio.resize(1);
+        Clip c;
+        c.id = 1;
+        c.mediaPath = rec;
+        c.audioStream = 2; // the microphone
+        c.out = 49;
+        tl.audio[0].clips << c;
+        const ProjectFormat format{640, 360, {25, 1}};
+        const auto hintFor = [&](const char* language, int* cues) {
+            QSettings().setValue("transcribe/language", language);
+            TranscribeDialog dlg(tl, format, 0, 50, {"A1"});
+            QPushButton* start = nullptr;
+            for (QPushButton* b : dlg.findChildren<QPushButton*>())
+                if (b->text() == T("Erzeugen")) start = b;
+            if (!CHECK(start && start->isEnabled())) return QString("no start");
+            QEventLoop loop;
+            QObject::connect(&dlg, &QDialog::finished, &loop, &QEventLoop::quit);
+            QTimer::singleShot(60000, &loop, &QEventLoop::quit);
+            start->click();
+            loop.exec();
+            CHECK_EQ(dlg.result(), int(QDialog::Accepted));
+            *cues = dlg.results().isEmpty() ? 0 : int(dlg.results()[0].cues.size());
+            return dlg.languageHint();
+        };
+        int cues = 0;
+        const QString hint = hintFor("fr", &cues);
+        CHECK(hint.contains(T("Englisch")) && hint.contains(T("Französisch")) && hint.contains("93"));
+        CHECK_EQ(cues, 1);
+        CHECK(hintFor("en", &cues).isEmpty());
+        CHECK(hintFor("auto", &cues).isEmpty());
+        CHECK_EQ(cues, 1);
+    }
+    {
+        // Progress while whisper says nothing: estimated from the time against the expected run time, rising,
+        // never 100 % before it is done; the run's speed is remembered for the next estimate
+        CHECK_EQ(Transcriber::heartbeat(0, 10), 0.0);
+        CHECK_EQ(Transcriber::heartbeat(5, 10), 0.5);
+        CHECK_EQ(Transcriber::heartbeat(3, 0), 0.0);
+        double before = 0;
+        bool rising = true;
+        for (double t = 0.5; t < 60; t += 0.5) { // six times as long as expected
+            const double h = Transcriber::heartbeat(t, 10);
+            rising = rising && h > before && h < 1;
+            before = h;
+        }
+        CHECK(rising);
+        CHECK(before > 0.98);
+        // Expected: the remembered speed times the sound, at least one 30 s window
+        QSettings().setValue("transcribe/speed/ggml-test.bin", 0.05);
+        CHECK(std::abs(Transcriber::whisperSeconds(model, 2) - 1.5) < 1e-9);
+        CHECK(std::abs(Transcriber::whisperSeconds(model, 60) - 3) < 1e-9);
+        CHECK(Transcriber::whisperSeconds(dir.filePath("none.bin"), 30) > 0); // a guess without a measurement
+        // The fake works 2 s without a word (expected 1.5 s): several steps in between, below 100 % until done
+        qputenv("FAKE_WHISPER_MS", "2000");
+        Transcriber t;
+        QVector<double> seen;
+        bool finished = false, ok = false;
+        QObject::connect(&t, &Transcriber::progress, [&](double p) {
+            if (!finished) seen << p;
+        });
+        QEventLoop loop;
+        QObject::connect(&t, &Transcriber::finished, [&](bool good, const QString&) {
+            ok = good;
+            finished = true;
+            loop.quit();
+        });
+        TranscribeRequest req;
+        req.media = rec;
+        req.audioStream = 2;
+        req.model = model;
+        QString error;
+        if (CHECK(t.start(req, &error))) {
+            QTimer::singleShot(30000, &loop, &QEventLoop::quit);
+            loop.exec();
+        }
+        qunsetenv("FAKE_WHISPER_MS");
+        CHECK(ok);
+        int between = 0;
+        bool forward = true;
+        for (int i = 0; i < seen.size(); ++i) {
+            between += seen[i] > 0.15 && seen[i] < 0.95;
+            forward = forward && (i == 0 || seen[i] >= seen[i - 1]);
+        }
+        CHECK(between >= 4);
+        CHECK(forward);
+        CHECK(seen.size() >= 2 && seen[seen.size() - 2] < 1.0 && seen.last() == 1.0);
+        // Measured: ~2 s for one 30 s window = 0.067 per second, mixed with the 0.05 before
+        const double speed = QSettings().value("transcribe/speed/ggml-test.bin").toDouble();
+        CHECK(speed > 0.055 && speed < 0.075);
     }
     return Check::result();
 }

@@ -828,6 +828,7 @@
  "Im Ordner zeigen": "Afficher dans le dossier",
  "Im Panel „KI“ bearbeitet eine KI das offene Projekt auf Zuruf, mit denselben Werkzeugen wie jede andere KI. Jede Änderung lässt sich rückgängig machen.": "Dans le panneau « IA », une IA modifie le projet ouvert à la demande, avec les mêmes outils que toute autre IA. Chaque modification peut être annulée.",
  "Im Ton wurde keine Sprache erkannt.": "Aucune parole détectée dans l’audio.",
+ "Whisper hört eher %1 (zu %2 %) als die gewählte Sprache %3. Falls das stimmt, die Untertitel mit „Automatisch erkennen“ neu erzeugen.": "Whisper entend plutôt %1 (sûr à %2 %) que la langue choisie, %3. Si c’est le cas, recréez les sous-titres avec « Détecter automatiquement ».",
  "Immer": "Toujours",
  "Import": "Importer",
  "Import-Vorgaben für Ton-Streams": "Préréglages d'import des flux audio",

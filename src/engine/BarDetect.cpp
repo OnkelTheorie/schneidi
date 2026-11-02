@@ -32,7 +32,7 @@ namespace BarDetect {
 
 namespace {
 
-constexpr int kVersion = 3; // bump when the measurement changes
+constexpr int kVersion = 4; // bump when the measurement changes
 constexpr int kW = 320, kH = 240;
 constexpr int kSamples = 12;
 constexpr int kBlack = 32;          // gray value still counted as black (limited-range black is 16, plus noise)
@@ -40,6 +40,11 @@ constexpr double kBrightShare = 0.04; // a line with fewer bright pixels than th
 constexpr double kMinBar = 0.015;
 constexpr double kMaxBar = 0.3;    // wider (a 4:3 game in 21:9 has 21 %) is a dark picture, not a bar
 constexpr double kSymmetry = 0.02; // left and right bar (top and bottom) differ by at most this share
+// A bar is flat: its inner lines as dark as its outer ones (a vignette or a dark edge of the picture gets brighter
+// towards the middle; measured: a dark blue vignette rose by 4-5 gray values over the 15 dark columns it had), and
+// each of its lines keeps its brightness over the samples (the picture's edge changes with the scene)
+constexpr double kBarSlope = 2.5;  // median gray value: innermost minus outermost line, in every sample
+constexpr double kBarDrift = 4;    // median gray value of a bar line: brightest minus darkest sample
 
 QMutex g_mutex;
 QHash<QString, QRectF> g_memory;
@@ -76,6 +81,33 @@ QRectF measure(const std::vector<std::vector<uint8_t>>& pics)
     while (left < kW && barCol[size_t(left)]) ++left;
     while (right < kW - left && barCol[size_t(kW - 1 - right)]) ++right;
     if (left + right >= kW * 9 / 10) return {0, 0, 1, 1};
+    // Flat bars only (n lines from the outer line `outer` inwards by `step`, `column` = columns)
+    // Median gray value of a line: an overlay in the bar (a webcam, a logo; less than half of it) does not count
+    std::vector<uint8_t> line;
+    const auto lineLevel = [&](const std::vector<uint8_t>& p, bool column, int i, int from, int to) {
+        line.clear();
+        for (int k = from; k < to; ++k) line.push_back(column ? p[size_t(k) * kW + size_t(i)] : p[size_t(i) * kW + size_t(k)]);
+        if (line.empty()) return 0.0;
+        std::nth_element(line.begin(), line.begin() + std::ptrdiff_t(line.size() / 2), line.end());
+        return double(line[line.size() / 2]);
+    };
+    const auto flat = [&](bool column, int n, int outer, int step, int from, int to) {
+        if (n <= 0) return true;
+        // The innermost bar line may be mixed with the picture by the shrinking: one further out
+        const int inner = outer + step * std::max(0, n - 2);
+        for (int k = 0; k < n; ++k) {
+            double lo = 255, hi = 0;
+            for (const auto& p : pics) {
+                const double m = lineLevel(p, column, outer + step * k, from, to);
+                lo = std::min(lo, m), hi = std::max(hi, m);
+            }
+            if (hi - lo > kBarDrift) return false;
+        }
+        for (const auto& p : pics)
+            if (lineLevel(p, column, inner, from, to) - lineLevel(p, column, outer, from, to) > kBarSlope) return false;
+        return true;
+    };
+    if (!flat(true, left, 0, 1, 0, kH) || !flat(true, right, kW - 1, -1, 0, kH)) left = right = 0;
     // Rows only over the content columns (the bars beside would hide a letterbox)
     for (const auto& p : pics)
         for (int y = 0; y < kH; ++y) {
@@ -87,6 +119,7 @@ QRectF measure(const std::vector<std::vector<uint8_t>>& pics)
     while (top < kH && barRow[size_t(top)]) ++top;
     while (bottom < kH - top && barRow[size_t(kH - 1 - bottom)]) ++bottom;
     if (top + bottom >= kH * 9 / 10) top = bottom = 0;
+    if (!flat(false, top, 0, 1, left, kW - right) || !flat(false, bottom, kH - 1, -1, left, kW - right)) top = bottom = 0;
     // The first line of the picture may be mixed with the bar (the shrinking averages a bar edge inside a line):
     // clearly darker than the line after it in the samples where that one is bright, it goes too
     const auto mean = [&](const std::vector<uint8_t>& p, bool column, int i) {

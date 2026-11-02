@@ -191,6 +191,43 @@ void scaleAlpha(Image& img, double k)
     for (size_t i = 0, n = size_t(img.w) * img.h; i < n; ++i) p[4 * i + 3] = uint8_t((p[4 * i + 3] * m) >> 8);
 }
 
+// A kept region (Reframe::keepCopy: a game's kill feed above a short) sits on a thin dark frame with a soft outer edge,
+// so it does not blend into similar scenery behind it. The frame is a small dark picture (straight alpha) drawn behind
+// the cropped picture: `cropSrc` (source pixels) widened by the frame on each side; m = source pixels -> output pixels,
+// frameSize = the frame's width in output pixels. Its texels are a third of the frame, the outer ones lighter.
+struct KeepFrame {
+    Image img;
+    Compose::Affine m;
+};
+constexpr double kKeepFrame = 0.006; // frame width: of the output's shorter side (1080 x 1920: 6.5 pixels)
+constexpr int kKeepFrameAlpha[3] = {110, 190, 230}; // texel rings from the outside in
+
+bool keepFrame(const Compose::Affine& m, const QRectF& cropSrc, double frameSize, KeepFrame& out)
+{
+    const double sx = std::hypot(m.a, m.d), sy = std::hypot(m.b, m.e); // output pixels per source pixel
+    if (sx <= 0 || sy <= 0 || cropSrc.isEmpty() || frameSize <= 0) return false;
+    const double texel = frameSize / 3;
+    const QRectF r = cropSrc.adjusted(-frameSize / sx, -frameSize / sy, frameSize / sx, frameSize / sy);
+    const int w = std::max(7, int(std::lround(r.width() * sx / texel))), h = std::max(7, int(std::lround(r.height() * sy / texel)));
+    out.img = Image(w, h);
+    uint8_t* p = out.img.data();
+    for (int y = 0; y < h; ++y)
+        for (int x = 0; x < w; ++x, p += 4) {
+            const int ring = std::min({x, y, w - 1 - x, h - 1 - y});
+            p[0] = p[1] = p[2] = 0;
+            p[3] = uint8_t(kKeepFrameAlpha[std::min(ring, 2)]);
+        }
+    // texel (u, v) -> source (r.x + u * kx, r.y + v * ky) -> output through m
+    const double kx = r.width() / w, ky = r.height() / h;
+    out.m.a = m.a * kx;
+    out.m.b = m.b * ky;
+    out.m.c = m.a * r.x() + m.b * r.y() + m.c;
+    out.m.d = m.d * kx;
+    out.m.e = m.e * ky;
+    out.m.f = m.d * r.x() + m.e * r.y() + m.f;
+    return true;
+}
+
 // Linear mix of two same-size pictures in premultiplied alpha: a*(1-t) + b*t
 void mix(Image& a, const Image& b, double t)
 {
@@ -1015,7 +1052,14 @@ struct Renderer::Impl {
             m.c += m.a * part.x() + m.b * part.y();
             m.f += m.d * part.x() + m.e * part.y();
         }
-        Compose::draw(layer.data(), W, H, src.data(), src.w, src.h, m, blurFill ? 1.0 : opacity);
+        KeepFrame kf;
+        const bool framed = !c.keepRegion.isEmpty() && crop && !bg
+                            && keepFrame(m, QRectF(QPointF(shares[0] * fullW, shares[1] * fullH),
+                                                   QPointF((1 - shares[2]) * fullW, (1 - shares[3]) * fullH)),
+                                         kKeepFrame * std::min(W, H), kf);
+        if (framed) Compose::draw(layer.data(), W, H, kf.img.data(), kf.img.w, kf.img.h, kf.m, 1.0);
+        Compose::draw(layer.data(), W, H, src.data(), src.w, src.h, m, blurFill || framed ? 1.0 : opacity);
+        if (framed) scaleAlpha(layer, opacity);
         if (bg) {
             BlurFill::composite(layer.data(), W, H, *bg);
             scaleAlpha(layer, opacity);
@@ -1750,6 +1794,20 @@ struct Renderer::Impl {
             }
         }
         if ((transform || crop) && c.transform.hasBlurFill()) return blurFillOp(c, ctx, shares, op);
+        KeepFrame kf;
+        if (!c.keepRegion.isEmpty() && crop && keepFrame(op.m, op.crop, kKeepFrame * std::min(ctx.W, ctx.H), kf)) {
+            // As clipLayer: the frame, the picture over it, then opacity
+            GpuOp back;
+            back.m = kf.m;
+            back.rgba = std::make_shared<Image>(std::move(kf.img));
+            GpuOp group;
+            group.kind = GpuOp::Group;
+            group.opacity = op.opacity;
+            op.opacity = 1.0;
+            group.a.push_back(std::move(back));
+            group.a.push_back(std::move(op));
+            op = std::move(group);
+        }
         return true;
     }
 

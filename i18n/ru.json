@@ -828,6 +828,7 @@
  "Im Ordner zeigen": "Показать в папке",
  "Im Panel „KI“ bearbeitet eine KI das offene Projekt auf Zuruf, mit denselben Werkzeugen wie jede andere KI. Jede Änderung lässt sich rückgängig machen.": "В панели «ИИ» искусственный интеллект редактирует открытый проект по запросу теми же инструментами, что и любой другой ИИ. Любое изменение можно отменить.",
  "Im Ton wurde keine Sprache erkannt.": "В звуке не обнаружена речь.",
+ "Whisper hört eher %1 (zu %2 %) als die gewählte Sprache %3. Falls das stimmt, die Untertitel mit „Automatisch erkennen“ neu erzeugen.": "Whisper скорее слышит %1 (уверенность %2 %), чем выбранный язык %3. Если это так, создайте субтитры заново с вариантом «Определить автоматически».",
  "Immer": "Всегда",
  "Import": "Импорт",
  "Import-Vorgaben für Ton-Streams": "Предустановки импорта аудиопотоков",
