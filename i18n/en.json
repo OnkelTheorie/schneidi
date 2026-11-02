@@ -1937,6 +1937,7 @@
  "Piper konnte nicht gestartet werden.": "Piper could not be started.",
  "Piper: spricht Text offline mit natürlichen Stimmen (für Sprechertexte; Stimmen einzeln)": "Piper: speaks text offline with natural voices (for narration; voices separately)",
  "Sprechertext": "Narration",
+ "Die Wörter als Untertitel, Wort für Wort zur Stimme (mit Whisper gemessen, sonst geschätzt)": "The words as captions, word by word with the voice (measured by Whisper, else estimated)",
  "Sprechertext…": "Narration…",
  "Stille nach jedem Satz": "Silence after each sentence",
  "Stimme": "Voice",

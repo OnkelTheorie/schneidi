@@ -4,6 +4,7 @@
 
 #include <QDialog>
 
+class QCheckBox;
 class QComboBox;
 class QDoubleSpinBox;
 class QLabel;
@@ -20,6 +21,7 @@ public:
     // folder: where the files go (Speech::folder of the project)
     explicit SpeechDialog(const QString& folder, QWidget* parent = nullptr);
     const Tts::Result& result() const { return m_speaker.result(); }
+    bool captions() const; // word captions of it (result().words)
     void reject() override;
 
 signals:
@@ -36,6 +38,7 @@ private:
     QComboBox* m_voice;
     QDoubleSpinBox* m_speed;
     QDoubleSpinBox* m_pause;
+    QCheckBox* m_captions;
     QLabel* m_missing;
     QPushButton* m_extensions;
     QPushButton* m_preview;

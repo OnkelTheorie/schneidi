@@ -1937,6 +1937,7 @@
  "Piper konnte nicht gestartet werden.": "Impossible de lancer Piper.",
  "Piper: spricht Text offline mit natürlichen Stimmen (für Sprechertexte; Stimmen einzeln)": "Piper : lit du texte hors ligne avec des voix naturelles (pour la narration ; voix à part)",
  "Sprechertext": "Narration",
+ "Die Wörter als Untertitel, Wort für Wort zur Stimme (mit Whisper gemessen, sonst geschätzt)": "Les mots en sous-titres, mot à mot avec la voix (mesurés par Whisper, sinon estimés)",
  "Sprechertext…": "Narration…",
  "Stille nach jedem Satz": "Silence après chaque phrase",
  "Stimme": "Voix",

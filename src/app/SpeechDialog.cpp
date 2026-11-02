@@ -4,6 +4,7 @@
 #include "core/I18n.h"
 #include "engine/Extensions.h"
 
+#include <QCheckBox>
 #include <QComboBox>
 #include <QDialogButtonBox>
 #include <QDoubleSpinBox>
@@ -38,10 +39,14 @@ SpeechDialog::SpeechDialog(const QString& folder, QWidget* parent) : QDialog(par
     m_pause->setValue(settings.value("speech/pause", 0.2).toDouble());
     m_pause->setSuffix(T(" s"));
     m_pause->setToolTip(T("Stille nach jedem Satz"));
+    m_captions = new QCheckBox(T("Wort-Untertitel"));
+    m_captions->setChecked(settings.value("speech/captions", false).toBool());
+    m_captions->setToolTip(T("Die Wörter als Untertitel, Wort für Wort zur Stimme (mit Whisper gemessen, sonst geschätzt)"));
     auto* form = new QFormLayout;
     form->addRow(T("Stimme"), m_voice);
     form->addRow(T("Tempo"), m_speed);
     form->addRow(T("Pause nach Sätzen"), m_pause);
+    form->addRow(QString(), m_captions);
 
     m_missing = new QLabel;
     m_missing->setWordWrap(true);
@@ -122,12 +127,14 @@ void SpeechDialog::make(bool insert)
     settings.setValue("speech/voice", m_voice->currentData());
     settings.setValue("speech/speed", m_speed->value());
     settings.setValue("speech/pause", m_pause->value());
+    settings.setValue("speech/captions", m_captions->isChecked());
     Tts::Request req;
     req.text = m_text->toPlainText();
     req.options.voice = m_voice->currentData().toString();
     req.options.speed = m_speed->value();
     req.options.pause = m_pause->value();
     req.folder = m_folder;
+    req.words = insert && m_captions->isChecked(); // the preview needs no word times
     m_insertWhenDone = insert;
     QString error;
     if (!m_speaker.start(req, &error)) {
@@ -138,6 +145,8 @@ void SpeechDialog::make(bool insert)
     m_progress->show();
     updateState();
 }
+
+bool SpeechDialog::captions() const { return m_captions->isChecked() && !m_speaker.result().words.isEmpty(); }
 
 void SpeechDialog::reject()
 {

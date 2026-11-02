@@ -1937,6 +1937,7 @@
  "Piper konnte nicht gestartet werden.": "Не удалось запустить Piper.",
  "Piper: spricht Text offline mit natürlichen Stimmen (für Sprechertexte; Stimmen einzeln)": "Piper: озвучивает текст офлайн естественными голосами (для дикторского текста; голоса отдельно)",
  "Sprechertext": "Дикторский текст",
+ "Die Wörter als Untertitel, Wort für Wort zur Stimme (mit Whisper gemessen, sonst geschätzt)": "Слова как субтитры, слово за словом вместе с голосом (измерено Whisper, иначе оценено)",
  "Sprechertext…": "Дикторский текст…",
  "Stille nach jedem Satz": "Тишина после каждого предложения",
  "Stimme": "Голос",
