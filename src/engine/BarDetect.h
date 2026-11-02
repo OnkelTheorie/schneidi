@@ -7,8 +7,8 @@
 // A few pictures spread over the file are shrunk to a gray 320 x 240 copy. A column (row) is a bar when in every one of
 // them next to none of its pixels is brighter than black: a dark scene goes bright somewhere in one of the samples, a
 // HUD sits inside the game picture, a small overlay in the bar (a few pixels of a column) does not count. Bars are
-// taken from the edges inwards only; thinner than 1.5 % of the side they are left (an encoder's edge). A picture that
-// is dark all through has no bars (nothing to tell them apart).
+// taken from the edges inwards only and must be about as wide on both sides (centred) and at most 30 % of the side;
+// thinner than 1.5 % they are left (an encoder's edge). A picture that is dark all through has no bars.
 //
 // Per file (path, size, time), cached in QStandardPaths::CacheLocation/bars and in memory. Runs in any thread.
 

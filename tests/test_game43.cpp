@@ -88,7 +88,7 @@ double blobAspect(const QImage& img, QRect* box = nullptr)
 }
 
 void testDetect(const QString& pillar, const QString& letter, const QString& darkPillar, const QString& overlay,
-                const QString& dark)
+                const QString& dark, const QString& oneSided)
 {
     QString error;
     const auto p = BarDetect::content(pillar, &error);
@@ -115,6 +115,9 @@ void testDetect(const QString& pillar, const QString& letter, const QString& dar
     // A small overlay inside the bar (a webcam corner, a logo) does not end the bar
     const auto o = BarDetect::content(overlay);
     if (CHECK(o.has_value())) CHECK(near(o->x(), 0.125, 0.006));
+    // A bright object on a black ground staying on one side: no bars (they are centred)
+    const auto j = BarDetect::content(oneSided);
+    if (CHECK(j.has_value())) CHECK(!BarDetect::hasBars(*j));
     // Dark all through: nothing to tell bars from, the whole picture
     const auto z = BarDetect::content(dark);
     if (CHECK(z.has_value())) CHECK(!BarDetect::hasBars(*z));
@@ -371,7 +374,11 @@ int main(int argc, char** argv)
         return Check::result();
     Check::initEngine();
     std::setlocale(LC_NUMERIC, "C");
-    testDetect(pillar, letter, darkPillar, overlay, dark);
+    const QString oneSided = Check::makeMedia(
+        tmp.filePath("oneSided.mp4"),
+        QStringList{"-f", "lavfi", "-i", "color=c=black:s=320x180:r=25:d=4", "-f", "lavfi", "-i",
+                    "color=c=white:s=40x40:r=25:d=4", "-filter_complex", "[0][1]overlay=x='if(lt(t,2),20,200)':y=30"} + h264);
+    testDetect(pillar, letter, darkPillar, overlay, dark, oneSided);
     testReframe(pillar);
     testCropBars(pillar);
     testStretched(tmp.path(), stretched);

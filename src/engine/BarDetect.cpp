@@ -32,12 +32,14 @@ namespace BarDetect {
 
 namespace {
 
-constexpr int kVersion = 2; // bump when the measurement changes
+constexpr int kVersion = 3; // bump when the measurement changes
 constexpr int kW = 320, kH = 240;
 constexpr int kSamples = 12;
 constexpr int kBlack = 32;          // gray value still counted as black (limited-range black is 16, plus noise)
 constexpr double kBrightShare = 0.04; // a line with fewer bright pixels than this in every sample is a bar
 constexpr double kMinBar = 0.015;
+constexpr double kMaxBar = 0.3;    // wider (a 4:3 game in 21:9 has 21 %) is a dark picture, not a bar
+constexpr double kSymmetry = 0.02; // left and right bar (top and bottom) differ by at most this share
 
 QMutex g_mutex;
 QHash<QString, QRectF> g_memory;
@@ -106,8 +108,12 @@ QRectF measure(const std::vector<std::vector<uint8_t>>& pics)
         if (n < kMinBar * side) return 0.0;
         return double(n + (mixed(column, line, next) ? 1 : 0)) / side;
     };
-    const double l = edge(left, kW, true, left, left + 1), r = edge(right, kW, true, kW - 1 - right, kW - 2 - right);
-    const double t = edge(top, kH, false, top, top + 1), b = edge(bottom, kH, false, kH - 1 - bottom, kH - 2 - bottom);
+    double l = edge(left, kW, true, left, left + 1), r = edge(right, kW, true, kW - 1 - right, kW - 2 - right);
+    double t = edge(top, kH, false, top, top + 1), b = edge(bottom, kH, false, kH - 1 - bottom, kH - 2 - bottom);
+    // Bars are centred (a picture fitted into the frame); black on one side only is the picture itself (a dark
+    // scene, a small bright object on a black ground)
+    if (std::abs(l - r) > kSymmetry || l > kMaxBar) l = r = 0;
+    if (std::abs(t - b) > kSymmetry || t > kMaxBar) t = b = 0;
     return QRectF(l, t, std::max(0.05, 1 - l - r), std::max(0.05, 1 - t - b));
 }
 
