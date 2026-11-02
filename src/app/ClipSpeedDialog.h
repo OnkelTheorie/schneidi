@@ -5,11 +5,12 @@
 #include <QDialog>
 
 class QCheckBox;
+class QComboBox;
 class QDoubleSpinBox;
 class QLabel;
 
 // "Change Clip Speed" like DaVinci (Ctrl+R): speed in %, frames per second, duration,
-// reverse, freeze frame, keep pitch and Ripple Sequence. Values of the first selected clip as default.
+// in-between pictures for slow motion, reverse, freeze frame, keep pitch and Ripple Sequence. Values of the first selected clip as default.
 class ClipSpeedDialog : public QDialog {
     Q_OBJECT
 public:
@@ -26,6 +27,7 @@ private:
     QDoubleSpinBox* m_percent;
     QDoubleSpinBox* m_fps;
     QLabel* m_duration;
+    QComboBox* m_interp;
     QCheckBox* m_reverse;
     QCheckBox* m_freeze;
     QCheckBox* m_pitch;

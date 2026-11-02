@@ -16,6 +16,7 @@
 #include "engine/StabilizeCorrection.h"
 #include "engine/VideoEffects.h"
 #include "engine/picture/Effects.h"
+#include "engine/picture/Interpolate.h"
 #include "engine/picture/gpu/Gpu.h"
 #include "engine/video/Compose.h"
 #include "engine/video/Convert.h"
@@ -589,9 +590,75 @@ struct Renderer::Impl {
             return out;
         }
         if (!s.video) return {};
+        if (dw > 0 && dh > 0) {
+            Image between;
+            if (inBetween(c, t, lane, *s.video, dw, dh, ctx, native, into, &between)) return between;
+        }
         const double file = fileFrame(c, t, *s.video);
         if (file < 0) return {};
         return videoFrame(*s.video, file, dw, dh, ctx, native, into);
+    }
+
+    // Slow motion with in-between pictures (Clip::interpolate): where clip frame t falls between two stream frames,
+    // the picture between them. false = not slower than the stream there, exactly on a frame, or a frame missing
+    // (the caller shows the plain frame)
+    // Where clip frame t lies between stream frames i0 and i0 + 1 (frac 0..1); false = no in-between there
+    static bool betweenFrames(const Clip& c, int t, const VideoSource& v, const Ctx& ctx, int64_t* i0, double* frac)
+    {
+        if (c.interpolate == FrameInterp::Repeat || !c.isRetimed() || c.freeze || v.fps <= 0) return false;
+        const RetimeMap map(c, v.length);
+        const double m = c.in + t;
+        const double perFrame = map.speedAt(m) * v.fps / ctx.fps; // stream frames per output frame
+        if (perFrame >= 1.0 - 1e-6) return false;
+        const double q = map.fileFrameAt(m) / ctx.fps * v.fps;
+        *i0 = int64_t(std::floor(q + 1e-6));
+        *frac = q - double(*i0);
+        const int64_t streamLength = int64_t(double(v.length) / ctx.fps * v.fps);
+        return *frac >= 1e-3 && *frac <= 1 - 1e-3 && *i0 >= 0 && (streamLength <= 0 || *i0 + 1 < streamLength);
+    }
+
+    static bool inBetween(const Clip& c, int t, const QString& lane, const VideoSource& v, int dw, int dh, const Ctx& ctx,
+                          QSize* native, uint8_t* into, Image* result)
+    {
+        int64_t i0 = 0;
+        double frac = 0;
+        if (!betweenFrames(c, t, v, ctx, &i0, &frac)) return false;
+        Video::Reader::Fetch fetch;
+        if (t_hints) {
+            fetch.nearest = t_hints->nearest;
+            fetch.cancel = t_hints->cancel;
+        }
+        bool exactA = true, exactB = true;
+        const auto pa = v.reader->picture(i0, fetch, &exactA);
+        if (!pa || !pa->frame || !exactA) return false;
+        const auto pb = v.reader->picture(i0 + 1, fetch, &exactB);
+        if (!pb || !pb->frame || !exactB) return false;
+        Image a(dw, dh), b(dw, dh);
+        if (!Video::toRgba(*pa, v.info, a.data(), dw, dh, ctx.preview) ||
+            !Video::toRgba(*pb, v.info, b.data(), dw, dh, ctx.preview))
+            return false;
+        *native = QSize(pa->frame->width, pa->frame->height);
+        Image out;
+        uint8_t* dst = into;
+        if (!dst) {
+            out = Image(dw, dh);
+            dst = out.data();
+        } else { // straight into the caller's picture: size only, as videoFrame
+            out.w = dw;
+            out.h = dh;
+        }
+        if (c.interpolate == FrameInterp::Blend) {
+            if (Interp::isCut(a.data(), b.data(), dw, dh)) // no ghost of the other shot across a cut
+                std::memcpy(dst, (frac < 0.5 ? a : b).data(), size_t(dw) * dh * 4);
+            else
+                Interp::blend(a.data(), b.data(), dst, dw, dh, frac);
+        } else {
+            const QString key = QString("%1|%2|%3|%4x%5").arg(c.mediaPath, lane).arg(i0).arg(dw).arg(dh);
+            const auto motion = Interp::cachedMotion(key, a.data(), b.data(), dw, dh);
+            Interp::flow(*motion, a.data(), b.data(), dst, dw, dh, frac);
+        }
+        *result = std::move(out);
+        return true;
     }
 
     // Frame of the file (project rate) a video clip shows at clip frame t; < 0 = none
@@ -1128,6 +1195,9 @@ struct Renderer::Impl {
         const Video::Info& info = s.video->info;
         auto family = [](int cs) { return cs == 170 || cs == 470 || cs == 624 ? 601 : cs == 2021 ? 2020 : cs; };
         if (family(info.colorspace) != family(t.colorspace)) return false;
+        int64_t i0 = 0;
+        double frac = 0;
+        if (betweenFrames(c, f - c.start, *s.video, ctx, &i0, &frac)) return false; // an in-between picture
         const double file = fileFrame(c, f - c.start, *s.video);
         if (file < 0) return false;
         const auto pic = fetchPicture(*s.video, file, ctx);
@@ -1589,6 +1659,10 @@ struct Renderer::Impl {
         if (StabilizeCorrection::of(c, options.format.rate, ctx.PH > 0 ? ctx.PW / ctx.PH : 0.0)) return false;
         const Source s = source(c.mediaPath, lane);
         if (s.still) return true;
+        // In-between pictures of slow motion come from the CPU (engine/picture/Interpolate)
+        int64_t i0 = 0;
+        double frac = 0;
+        if (s.video && betweenFrames(c, t, *s.video, ctx, &i0, &frac)) return false;
         return s.video && Gpu::canUpload(s.video->info.format);
     }
 

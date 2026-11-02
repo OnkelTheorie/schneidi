@@ -223,6 +223,7 @@ public:
     struct Retime {
         double speed = 1.0;
         bool reverse = false, freeze = false, keepPitch = true;
+        std::optional<FrameInterp> interpolate; // in-between pictures for slow motion; unset = keep the clip's
     };
     void setClipSpeed(const QVector<int>& ids, const Retime& r, bool ripple);
 
@@ -235,6 +236,8 @@ public:
     void moveSpeedPoint(int clipId, int index, int delta); // move point by delta timeline frames, speed before it stays
     void setSegmentSpeed(int clipId, int segment, double speed);
     void setSpeedPointSmooth(int clipId, int index, int frames);
+    // Slow motion: what fills the time between two source frames (repeat, blend, computed motion), one undo step
+    void setFrameInterpolation(const QVector<int>& ids, FrameInterp mode);
 
     // Look at a file before importing it (click in the Media Storage): the source viewer shows it, In/Out and markers
     // set there stay here, not in the project. The first edit from it (sourceEdit, placeSourceRange) imports it into

@@ -204,7 +204,7 @@ void Editor::pasteAttributes(int attrs)
         }
     });
     if (attrs & AttrSpeed) { // length follows the speed, later clips move up (like DaVinci)
-        auto retime = [](const Clip& s) { return Retime{s.speed, s.reverse, s.freeze, s.keepPitch}; };
+        auto retime = [](const Clip& s) { return Retime{s.speed, s.reverse, s.freeze, s.keepPitch, s.interpolate}; };
         if (!videoTargets.isEmpty() && vAny) setClipSpeed(videoTargets, retime(*vAny), true);
         if (!audioTargets.isEmpty() && aAny) setClipSpeed(audioTargets, retime(*aAny), true);
     }

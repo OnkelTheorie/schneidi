@@ -184,6 +184,7 @@ add_library(schneidi_lib STATIC
     src/engine/OpenMedia.h        src/engine/OpenMedia.cpp
     src/engine/picture/Renderer.h src/engine/picture/Renderer.cpp
     src/engine/picture/Effects.h  src/engine/picture/Effects.cpp
+    src/engine/picture/Interpolate.h src/engine/picture/Interpolate.cpp
     src/engine/picture/Pump.h     src/engine/picture/Pump.cpp
     src/engine/picture/MediaStills.h src/engine/picture/MediaStills.cpp
     src/engine/picture/gpu/Gpu.h  src/engine/picture/gpu/Gpu.cpp

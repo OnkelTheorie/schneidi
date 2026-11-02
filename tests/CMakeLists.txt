@@ -76,6 +76,7 @@ schneidi_test(test_subtitles)
 schneidi_test(test_transcript)
 schneidi_test(test_sequences)
 schneidi_test(test_retime)
+schneidi_test(test_interpolate) # slow motion in-between pictures: blend, motion (flow), HUD, cuts
 schneidi_test(test_curves)
 schneidi_test(test_theme)
 schneidi_test(test_audio_streams)

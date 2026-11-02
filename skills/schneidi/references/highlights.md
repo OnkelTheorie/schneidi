@@ -33,8 +33,8 @@ also read [social.md](social.md).
   - each moment at least ~1.5 s, lead-in at most ~2 s before the action, lead-out ~0.5-1 s after it;
   - open strong (a good moment as the hook), keep the best for the end (rising arc);
   - multi-kills and clutch moments beat single kills; vary the moments, don't repeat the same kind five times;
-  - show a multi-kill or clutch in one piece (a `speed_ramp`: fast between the kills, normal on them), don't chop
-    it into short bits;
+  - show a multi-kill or clutch in one piece (a `speed_ramp`: fast between the kills, normal on them, with
+    `interpolate:"flow"` when a part is slower than 100 %), don't chop it into short bits;
   - 30 s ≈ 5-8 moments. Hit the requested length within about a second.
 - Short `transition`s (cross dissolve 0.2-0.3 s) or hard cuts; hard cuts on the beat feel best.
 - With music, follow the song, not a fixed grid: the strongest moments on its accents (the drop, the first beat
@@ -74,6 +74,10 @@ also read [social.md](social.md).
   `highlights` and `beats` run on the project (bar ones: `downbeats.s` / `downbeats.every_s`). Its notes say where
   a clip ran out of material. Slow motion right in the cut: `speed` on `place`/`keep` (`{"from":…,"to":…,
   "speed":0.5}` as a range).
+- Slow motion of game clips (a kill at 25-50 %): give the slowed clips `interpolate:"flow"` (`{"op":"speed",
+  "clips":[…],"interpolate":"flow"}`, also on `speed_ramp`, `place`, `append` and `keep`) - it computes in-between
+  pictures, so the slow part is smooth instead of repeating each frame (stutter); the HUD stays sharp and nothing is
+  blended across a cut. `"blend"` (cross-fade of neighbouring frames) is cheaper but looks soft on fast camera turns.
 - Put the music on its own audio track (`place` with `track` `"A2"` at 0, or a new track), cut it to the video
   length, `fade` out the last 1-2 s.
 - Keep the game/event sound - it carries the action: shots and kills must stay audible. Measure first: `loudness`

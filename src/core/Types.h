@@ -323,6 +323,30 @@ struct SpeedPoint {
     bool operator==(const SpeedPoint&) const = default;
 };
 
+// In-between pictures where a clip plays slower than its source (engine/picture/Interpolate.h): repeat the source
+// frame, blend the two neighbouring frames, or compute the motion between them (optical flow)
+enum class FrameInterp { Repeat, Blend, Flow };
+struct FrameInterpInfo { FrameInterp mode; const char* id; const char* name; };
+inline constexpr FrameInterpInfo kFrameInterps[] = {{FrameInterp::Repeat, "repeat", N_("Bildwiederholung")},
+                                                    {FrameInterp::Blend, "blend", N_("Überblenden")},
+                                                    {FrameInterp::Flow, "flow", N_("Bewegung berechnen")}};
+inline const char* frameInterpId(FrameInterp m)
+{
+    for (const auto& i : kFrameInterps)
+        if (i.mode == m) return i.id;
+    return "repeat";
+}
+// false: unknown id (mode unchanged)
+inline bool frameInterpFromId(const QString& id, FrameInterp* m)
+{
+    for (const auto& i : kFrameInterps)
+        if (id == QLatin1String(i.id)) {
+            *m = i.mode;
+            return true;
+        }
+    return false;
+}
+
 // Project::edit detects edits without change via operator== (snapshot comparison). The comparisons are
 // `= default` and capture new fields automatically; only Timeline compares by hand (without `nested`).
 struct Clip {
@@ -370,6 +394,8 @@ struct Clip {
     int freezeFrame = -1;
     int stillFrame() const { return freezeFrame >= 0 ? freezeFrame : in; }
     bool keepPitch = true;  // keep pitch (pitch correction)
+    // Slower than the source: what fills the time between two source frames (picture only)
+    FrameInterp interpolate = FrameInterp::Repeat;
     // Speed ramp: further sections (sorted by source); `speed` applies up to the first point. Empty = constant.
     QVector<SpeedPoint> ramp;
     // Render cache clip output (DaVinci "Render Cache Clip Output"): preview plays a pre-rendered file
