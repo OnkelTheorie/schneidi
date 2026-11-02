@@ -87,7 +87,8 @@ QVector<SrtFile> srtFiles(const Timeline& tl, const QString& path)
         if (i == main || tl.subtitles[i].cues.isEmpty()) continue;
         QString name = QString(tl.subtitles[i].name).replace(bad, "_").trimmed();
         while (name.endsWith('.')) name.chop(1); // Windows drops trailing dots
-        if (name.isEmpty() || taken.contains(name.toLower())) name = QString::number(i + 1);
+        // a clash with another name (also a track named like a number): the track number, then counted up
+        for (int n = i + 1; name.isEmpty() || taken.contains(name.toLower()); ++n) name = QString::number(n);
         taken.insert(name.toLower());
         out << SrtFile{fi.dir().filePath(QString("%1.%2.%3").arg(fi.completeBaseName(), name, suffix)), i};
     }

@@ -1588,6 +1588,7 @@
  "Untertitel zu kurz zum Lesen (%1 s): „%2“": "Sous-titre trop court pour être lu (%1 s) : « %2 »",
  "Untertitel zu schnell (%1 Zeichen/s, höchstens %2): „%3“": "Sous-titre trop rapide (%1 caractères/s, au plus %2) : « %3 »",
  "Untertitel-Zeiten": "Minutage des sous-titres",
+ "Die weiteren Untertitelspuren ersetzen diese Dateien:\n%1": "Les autres pistes de sous-titres remplacent ces fichiers :\n%1",
  "Untertiteldatei kann nicht geschrieben werden: %1": "Impossible d’écrire le fichier de sous-titres : %1",
  "Untertitelspur ausblenden": "Masquer la piste de sous-titres",
  "Untertitelspur einblenden": "Afficher la piste de sous-titres",

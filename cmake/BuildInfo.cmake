@@ -12,9 +12,14 @@ endif()
 if(BUILD_ID)
     set(build "${BUILD_ID}")
 elseif(GIT)
+    # Only schneidi's own checkout: a tarball unpacked inside another repository would get that one's commit
+    execute_process(COMMAND "${GIT}" -C "${SRC}" rev-parse --show-toplevel
+                    OUTPUT_VARIABLE top OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
     execute_process(COMMAND "${GIT}" -C "${SRC}" rev-parse --short=7 HEAD
                     OUTPUT_VARIABLE hash OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET RESULT_VARIABLE rc)
-    if(rc EQUAL 0 AND hash)
+    get_filename_component(top "${top}" REALPATH)
+    get_filename_component(src "${SRC}" REALPATH)
+    if(rc EQUAL 0 AND hash AND top STREQUAL src)
         set(build "${hash}")
         execute_process(COMMAND "${GIT}" -C "${SRC}" status --porcelain --untracked-files=no -- src
                         OUTPUT_VARIABLE dirty OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)

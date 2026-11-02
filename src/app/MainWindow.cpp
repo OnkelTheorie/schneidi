@@ -928,7 +928,17 @@ void MainWindow::exportSubtitlesDialog()
                                                 T("Untertitel (*.srt)"));
     if (path.isEmpty()) return;
     if (QFileInfo(path).suffix().isEmpty()) path += ".srt";
-    for (const Subtitles::SrtFile& srt : Subtitles::srtFiles(tl, path)) {
+    const QVector<Subtitles::SrtFile> files = Subtitles::srtFiles(tl, path);
+    // The file dialog asked only about the chosen file: the other tracks' files next to it would be replaced silently
+    QStringList existing;
+    for (int i = 1; i < files.size(); ++i)
+        if (QFileInfo::exists(files[i].path)) existing << QFileInfo(files[i].path).fileName();
+    if (!existing.isEmpty()
+        && QMessageBox::question(this, T("Untertitel exportieren"),
+                                 T("Die weiteren Untertitelspuren ersetzen diese Dateien:\n%1").arg(existing.join('\n')))
+               != QMessageBox::Yes)
+        return;
+    for (const Subtitles::SrtFile& srt : files) {
         QSaveFile f(srt.path);
         if (!f.open(QIODevice::WriteOnly) || f.write(Subtitles::toSrt(tl.subtitles[srt.track].cues, m_project->frameRate())) < 0
             || !f.commit()) {

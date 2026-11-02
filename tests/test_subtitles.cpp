@@ -115,6 +115,12 @@ void testSrt()
         QStringList got;
         for (const Subtitles::SrtFile& f : files) got << QString("%1=%2").arg(f.track).arg(QFileInfo(f.path).fileName());
         CHECK_EQ(got.join(' '), QString("1=film.srt 0=film.English.srt 3=film.4.srt 4=film.5.srt 5=film.a_b_c.srt"));
+        // a track named like the number another one falls back to: counted up, no two tracks into one file
+        track("7", false, true);
+        track("7", false, true);
+        got.clear();
+        for (const Subtitles::SrtFile& f : Subtitles::srtFiles(tl, "/a/film.srt")) got << QFileInfo(f.path).fileName();
+        CHECK_EQ(got.mid(5).join(' '), QString("film.7.srt film.8.srt"));
     }
 
     // Timecode input in the Inspector (like DaVinci)

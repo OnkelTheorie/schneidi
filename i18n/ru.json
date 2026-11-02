@@ -1588,6 +1588,7 @@
  "Untertitel zu kurz zum Lesen (%1 s): „%2“": "Субтитр слишком короткий для чтения (%1 с): «%2»",
  "Untertitel zu schnell (%1 Zeichen/s, höchstens %2): „%3“": "Субтитр слишком быстрый (%1 символов/с, не более %2): «%3»",
  "Untertitel-Zeiten": "Тайминг субтитров",
+ "Die weiteren Untertitelspuren ersetzen diese Dateien:\n%1": "Остальные дорожки субтитров заменят эти файлы:\n%1",
  "Untertiteldatei kann nicht geschrieben werden: %1": "Не удалось записать файл субтитров: %1",
  "Untertitelspur ausblenden": "Скрыть дорожку субтитров",
  "Untertitelspur einblenden": "Показать дорожку субтитров",
