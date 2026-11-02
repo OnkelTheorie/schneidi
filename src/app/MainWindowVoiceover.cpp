@@ -76,6 +76,11 @@ void MainWindow::toggleVoiceover()
     if (!m_voiceover->start(&error)) QMessageBox::warning(this, T("Voiceover aufnehmen"), error);
 }
 
+void MainWindow::endVoiceover()
+{
+    if (m_voiceover && m_voiceover->recording()) m_voiceover->stop();
+}
+
 void MainWindow::buildVoiceoverActions(QMenu* play, QMenu* audioMenu)
 {
     // Input device (like the output): read when the menu opens, devices come and go

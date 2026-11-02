@@ -168,6 +168,20 @@ int main(int argc, char** argv)
     CHECK(!recorder->start(&error));
     CHECK(!error.isEmpty());
     CHECK(!recorder->recording());
+    // Quitting while recording: the take is placed first (so "save changes?" sees it), the file is complete
+    project->edit("unlock", [](Timeline& t) { t.audio[0].locked = false; });
+    recorder->setArmedTrack(1);
+    engine.seek(25);
+    wait(100);
+    record->click();
+    CHECK(recorder->recording());
+    wait(400);
+    const int beforeQuit = project->undoStack()->index();
+    w.close();
+    CHECK(!recorder->recording());
+    CHECK_EQ(project->undoStack()->index(), beforeQuit + 1);
+    CHECK(project->timeline().audio.size() >= 2 && project->timeline().audio[1].clips.size() == 1);
+
     if (e2e) QSettings().clear();
     return Check::result();
 }

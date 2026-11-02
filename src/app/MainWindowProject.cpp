@@ -190,6 +190,7 @@ bool MainWindow::maybeSave()
 
 bool MainWindow::maybeLeaveProject()
 {
+    endVoiceover();
     RenderQueue* queue = m_deliver->renderQueue();
     if (queue->isRunning() && !m_autosaveDisabled) {
         if (QMessageBox::question(this, "schneidi",
@@ -548,6 +549,7 @@ void MainWindow::closeEvent(QCloseEvent* event)
         event->ignore();
         return;
     }
+    endVoiceover();
     if (!maybeSave()) {
         event->ignore();
         return;

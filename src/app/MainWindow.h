@@ -402,6 +402,8 @@ private:
     void setupVoiceover(); // after the layout (Mixer, Viewer)
     void buildVoiceoverActions(QMenu* play, QMenu* audioMenu);
     void toggleVoiceover();
+    // A take still running is placed before the project is left or the app quits ("save changes?" must see it)
+    void endVoiceover();
     class VoiceoverRecorder* m_voiceover = nullptr;
     class QShortcut* m_voiceoverEscape = nullptr;
 };
