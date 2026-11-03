@@ -195,7 +195,7 @@ std::shared_ptr<const ReviewSheet::Data> reviewData(Session& s, const Timeline& 
     const bool hitsOff = (hitsArg.isString() && hitsArg.toString().compare("off", Qt::CaseInsensitive) == 0)
                          || (hitsArg.isBool() && !hitsArg.toBool());
     if (!hitsOff && !hitsArg.isUndefined() && !hitsArg.isNull() && !hitsArg.isObject() && !hitsArg.isBool())
-        fail("BAD_ARGUMENT", "review_hits: \"off\" or {game} / {region, color, tolerance?} (the kill feed to read)");
+        fail("BAD_ARGUMENT", "review_hits: false or {game} / {region, color, tolerance?} (the kill feed to read)");
     QJsonArray hitFiles;
     if (!hitsOff) {
         QStringList files;

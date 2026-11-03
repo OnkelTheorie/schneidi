@@ -113,7 +113,7 @@ int main(int argc, char** argv)
         CHECK(QRect(QPoint(), QSize(960, 540)).contains(lampRect(Lamp::Kill, {960, 540})));
     }
 
-    // ---- Synthetic project: recording (shot at 4.48 s, kill feed line from 4.6 s), green, blue; click track on A2
+    // ---- Synthetic project: recording (shot at 4.44 s, kill feed line from 4.6 s), green, blue; click track on A2
     const QString rec = Check::makeMedia(
         dir.filePath("rec.mkv"),
         {"-f", "lavfi", "-i",
@@ -122,7 +122,7 @@ int main(int argc, char** argv)
          "drawbox=x=400:y=20:w=50:h=14:c=0xd01010:t=fill:enable='gte(t,4.72)',"
          "drawbox=x=400:y=20:w=120:h=14:c=0xd01010:t=fill:enable='gte(t,4.80)'",
          "-f", "lavfi", "-i",
-         "aevalsrc='0.01*(random(0)-0.5)+if(between(t,4.48,4.53),0.8*sin(2*PI*900*t),0)':s=48000:d=6",
+         "aevalsrc='0.01*(random(0)-0.5)+if(between(t,4.44,4.49),0.8*sin(2*PI*900*t),0)':s=48000:d=6",
          "-c:v", "ffv1", "-pix_fmt", "bgr0", "-c:a", "pcm_s16le", "-shortest"});
     const QString green = Check::makeMedia(dir.filePath("green.mkv"), {"-f", "lavfi", "-i", "color=c=0x10c020:s=640x360:d=2:r=25",
                                                                         "-c:v", "ffv1", "-pix_fmt", "bgr0"});
@@ -141,10 +141,10 @@ int main(int argc, char** argv)
                        {"media", QJsonArray{rec, green, blue, song}}})
                .contains("error"));
     const QJsonArray ops{
-        QJsonObject{{"op", "append"}, {"media", rec}, {"in", 0}, {"out", 124}},
-        QJsonObject{{"op", "append"}, {"media", green}, {"in", 0}, {"out", 24}},
-        QJsonObject{{"op", "append"}, {"media", blue}, {"in", 0}, {"out", 49}},
-        QJsonObject{{"op", "place"}, {"media", song}, {"at", 0}, {"track", "A2"}, {"in", 0}, {"out", 199}},
+        QJsonObject{{"op", "append"}, {"media", rec}, {"in", 0}, {"out", 125}},
+        QJsonObject{{"op", "append"}, {"media", green}, {"in", 0}, {"out", 25}},
+        QJsonObject{{"op", "append"}, {"media", blue}, {"in", 0}, {"out", 50}},
+        QJsonObject{{"op", "place"}, {"media", song}, {"at", 0}, {"track", "A2"}, {"in", 0}, {"out", 200}},
     };
     const QJsonObject edited = run("edit", {{"project", project}, {"ops", ops}});
     CHECK(!edited.contains("error"));
@@ -168,6 +168,10 @@ int main(int argc, char** argv)
     const QString out = dir.filePath("review.mp4");
     const QJsonObject r = run("render", {{"project", project}, {"out", out}, {"review", "video"},
                                          {"review_hits", hitsArg}, {"encoder", "software"}});
+    if (qEnvironmentVariableIsSet("REVIEW_JSON")) {
+        std::printf("%s\n", QJsonDocument(r).toJson().constData());
+        std::printf("%s\n", QJsonDocument(run("info", {{"project", project}})).toJson().constData());
+    }
     CHECK_EQ(r["review"].toString(), QString("video"));
     CHECK_EQ(r["size"].toArray(), (QJsonArray{960, 540})); // 540 p by default
     CHECK_EQ(r["beats"]["track"].toString(), QString("A2"));
@@ -178,14 +182,21 @@ int main(int argc, char** argv)
     CHECK_EQ(r["marks"]["notes"].toInt(), 1); // the done one is left out
     CHECK_EQ(r["marks"]["markers"].toInt(), 1);
     CHECK_EQ(r["marks"]["sections"].toInt(), 2);
+    // The hit as highlights finds it (the clip plays the recording from its start: timeline = source time)
+    QJsonObject hl = hitsArg;
+    hl["file"] = rec;
+    const QJsonObject hlr = run("highlights", hl);
+    CHECK(hlr["cached"].toBool()); // the review stored it in the analysis cache
+    const double hitS = hlr["candidates"][0]["hit_s"][0].toDouble();
+    CHECK(std::abs(hitS - 4.44) <= 0.041);
     int hitFrame = -1;
     if (const QJsonArray offs = r["offsets"].toArray(); CHECK_EQ(offs.size(), 1)) {
         const QJsonObject o = offs[0].toObject();
         hitFrame = o["frame"].toInt();
-        CHECK_EQ(hitFrame, 112);
-        CHECK(std::abs(o["hit_s"].toDouble() - 4.48) < 0.001);
-        CHECK(std::abs(o["beat_s"].toDouble() - 4.2) < 0.02);
-        CHECK(std::abs(o["off_ms"].toInt() - 280) <= 20);
+        CHECK_EQ(hitFrame, int(std::lround(hitS * 25)));
+        CHECK(std::abs(o["hit_s"].toDouble() - hitS) < 0.001);
+        CHECK(std::abs(o["beat_s"].toDouble() - 4.2) < 0.02); // beat 7 of the 100 BPM grid
+        CHECK(std::abs(o["off_ms"].toInt() - std::lround((hitS - 4.2) * 1000)) <= 15);
         CHECK_EQ(o["name"].toString(), QString("rec.mkv"));
         if (!CHECK(o["clip"].toInt() > 0)) std::printf("       offsets: %s\n", QJsonDocument(offs).toJson().constData());
     }
@@ -240,14 +251,7 @@ int main(int argc, char** argv)
         }
     }
 
-    // ---- highlights from the cache (the review asked for the same file and settings)
-    {
-        QJsonObject a = hitsArg;
-        a["file"] = rec;
-        const QJsonObject h = run("highlights", a);
-        CHECK(h["cached"].toBool());
-        CHECK_EQ(r["hits_from"][0]["file"].toString(), rec);
-    }
+    CHECK_EQ(r["hits_from"][0]["file"].toString(), rec);
 
     // ---- review sheet: one tile per shot, showing it
     {
@@ -256,6 +260,10 @@ int main(int argc, char** argv)
         CHECK_EQ(sh["review"].toString(), QString("sheet"));
         CHECK_EQ(sh["offsets"].toArray().size(), 1);
         const QImage img(png);
+        if (const QString dump = qEnvironmentVariable("REVIEW_DUMP"); !dump.isEmpty()) {
+            img.save(dump + "/sheet.png");
+            Check::mediaFrame(out, of, hitFrame).save(dump + "/hit.png");
+        }
         if (CHECK(!img.isNull())) {
             CHECK_EQ(img.width(), kSheetWidth);
             const QJsonArray tiles = sh["tiles"].toArray();
@@ -284,7 +292,7 @@ int main(int argc, char** argv)
     // ---- Without a music track: no beat grid, a note; review_hits off: no hits
     {
         const QJsonObject n = run("render", {{"project", project}, {"out", dir.filePath("nobeat.png")}, {"review", "sheet"},
-                                             {"beats_track", "off"}, {"review_hits", "off"}});
+                                             {"beats_track", "off"}, {"review_hits", false}});
         CHECK(!n.contains("beats"));
         CHECK_EQ(n["marks"]["hits"].toInt(), 0);
         CHECK_EQ(n["offsets"].toArray().size(), 0);

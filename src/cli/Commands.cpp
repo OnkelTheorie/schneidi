@@ -924,7 +924,7 @@ const QVector<Command>& commands()
            "cached or why skipped), marks (counts). Hits come from `highlights` (cached per file)"},
           {"review_hits", T::Json, "review: the kill feed to read the hits from: {game:'cs2'} or {region, color, "
                                    "tolerance?} as in `highlights` (default: the game from the folder or file name; a "
-                                   "recording without one is skipped), or \"off\""},
+                                   "recording without one is skipped), or false (no hits)"},
           {"beats_track", T::String, "review: the music track for the beat grid, e.g. \"A2\" (default: the first "
                                      "audio track whose clips are free sound files, not linked to a picture), or "
                                      "\"off\""}},

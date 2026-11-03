@@ -504,8 +504,6 @@ QImage sheet(const Data& d, QVector<Tile>& tiles)
         lane.r = QRectF(x0, names.bottom(), width, marksH);
         p.fillRect(lane.r, QColor(36, 36, 42));
         drawBeats(p, lane, d, 0.35, 200);
-        // The end of the timeline
-        if (lane.to > lengthS) p.fillRect(QRectF(lane.x(lengthS), y, lane.r.right() - lane.x(lengthS), rowH - rowGap), QColor(24, 24, 28));
         QRectF marksRect = lane.r;
         double wy = lane.r.bottom();
         for (const Wave& w : d.waves) {
@@ -519,6 +517,10 @@ QImage sheet(const Data& d, QVector<Tile>& tiles)
             p.drawText(QRectF(margin, wl.r.top(), 38, wl.r.height()), Qt::AlignVCenter | Qt::AlignLeft, w.track);
             wy += waveH;
         }
+        // Past the end of the timeline: nothing
+        if (lane.to > lengthS)
+            p.fillRect(QRectF(lane.x(lengthS) + 1, y + rulerH, lane.r.right() - lane.x(lengthS), rowH - rowGap - rulerH),
+                       QColor(24, 24, 28));
         Lane ml = lane;
         ml.r = QRectF(x0, marksRect.top(), width, wy - marksRect.top());
         drawMarks(p, ml, d, names, true);
