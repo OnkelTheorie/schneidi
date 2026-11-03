@@ -7,9 +7,6 @@
 #include "core/MediaAspect.h"
 #include "core/Types.h"
 
-#include <QFont>
-#include <QFontMetricsF>
-#include <QGuiApplication>
 
 QString FrameRate::label() const
 {
@@ -55,27 +52,45 @@ QString resolutionLabel(int width, int height)
 
 namespace {
 
-// Width of a title's widest line at `size` px in project pixels, laid out as engine/picture's drawTitle does (the
-// visible block is that wide: outline and box margin are fitted into it). Without a GUI application there are no
-// fonts: a generous estimate (0.7 of the size per character, wider than the usual fonts' average).
+// Width of a title's widest line at `size` px in project pixels: a font-independent estimate from the characters'
+// typical share of the size, set to DejaVu Sans (one of the wider sans serif fonts; Inter, Segoe UI, Liberation are
+// narrower), so a fitted title fits on real fonts too.
+// Deliberately not measured with QFontMetrics: the result is stored in the project, and the CLI (no GUI, no fonts)
+// and the app (and two systems with other fonts) must scale a timeline the same way.
+double charWidth(QChar c)
+{
+    const ushort u = c.unicode();
+    if (u >= 0x2E80) return 1.0; // CJK and other full-width scripts
+    if (c == ' ') return 0.32;
+    if (QStringLiteral(".,:;!|'`ijlI").contains(c)) return 0.3;
+    if (QStringLiteral("ftr()[]-\"/").contains(c)) return 0.4;
+    if (QStringLiteral("mwMW@%").contains(c)) return 0.95;
+    if (c.isDigit()) return 0.64;
+    if (c.isUpper()) return 0.72;
+    if (c.isLower()) return 0.6;
+    return 0.65;
+}
+
+double textWidth(const TitleStyle& st, const QString& line, double size)
+{
+    double em = 0;
+    for (const QChar c : line) em += charWidth(c);
+    return em * size * (st.bold ? 1.08 : 1.0);
+}
+
+} // namespace
+
 double titleWidth(const TitleStyle& st, double size)
 {
     size = std::max(1.0, size);
-    if (qobject_cast<QGuiApplication*>(QCoreApplication::instance())) {
-        QFont font(st.fontFamily());
-        font.setPixelSize(std::max(1, int(std::lround(size))));
-        font.setBold(st.bold);
-        font.setItalic(st.italic);
-        const QFontMetricsF fm(font);
-        double w = 1;
-        for (const QString& line : (st.isCounter() ? Generators::counterWidest(st, fm) : st.text).split('\n'))
-            w = std::max(w, fm.horizontalAdvance(line));
-        return w;
-    }
-    qsizetype chars = st.isCounter() ? 6 : 1;
-    for (const QString& line : st.text.split('\n')) chars = std::max(chars, line.size());
-    return 0.7 * size * double(chars);
+    double w = 1;
+    const auto width = [&](const QString& line) { return textWidth(st, line, size); };
+    for (const QString& line : (st.isCounter() ? Generators::counterWidest(st, width) : st.text).split('\n'))
+        w = std::max(w, width(line));
+    return w;
 }
+
+namespace {
 
 // Factor (<= 1) that shrinks a title scaled by `s` from frame width `fromW` to `toW` just enough to fit the new frame
 // with a margin (90 % of its width), but never below the share of the frame it took before (a title running off the
@@ -88,7 +103,7 @@ double titleFit(const Clip& c, double s, double fromW, double toW)
     for (const Keyframe& k : c.keys.value(AnimParam::TitleSize)) peak = std::max(peak, k.value);
     const double limit = std::max(0.9 * toW, titleWidth(st, peak) / fromW * toW);
     double q = 1.0;
-    for (int i = 0; i < 4; ++i) { // the font has whole pixel sizes: measured again at the shrunk size
+    for (int i = 0; i < 4; ++i) { // measured again at the shrunk size
         const double w = titleWidth(st, peak * s * q);
         if (w <= limit) break;
         q *= limit / w;

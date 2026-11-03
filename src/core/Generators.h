@@ -8,6 +8,8 @@
 
 #include <QChar>
 #include <QFontMetricsF>
+
+#include <functional>
 #include <QRectF>
 #include <QString>
 
@@ -28,6 +30,8 @@ QString counterText(const TitleStyle& s, int t, int length);
 NumberStyle numberStyleOfLanguage();
 // The widest text the counter shows (its first or last value): the block keeps this size while the number grows
 QString counterWidest(const TitleStyle& s, const QFontMetricsF& fm);
+// The same with any width measure (e.g. a font-independent estimate)
+QString counterWidest(const TitleStyle& s, const std::function<double(const QString&)>& width);
 
 // Progress bar: how full it is (0..1) at timeline frame f for a clip `c` in a video running from `begin` to `end`
 // (exclusive; the whole timeline, or the exported range: the bar fills over what the viewer gets): Timeline span =
