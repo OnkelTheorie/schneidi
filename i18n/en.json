@@ -41,6 +41,7 @@
  "%1 entfernen": "Remove %1",
  "%1 existiert schon. Beim Rendern überschreiben?": "%1 already exists. Overwrite when rendering?",
  "%1 fps (Timeline)": "%1 fps (timeline)",
+ "%1 fps (Timeline, höchstens %2)": "%1 fps (timeline, at most %2)",
  "%1 freigeben": "Free %1",
  "%1 geht unter der Musik unter: %2 LU leiser als %3 – %1 lauter stellen oder die Musik absenken (Ducking)": "%1 is buried under the music: %2 LU quieter than %3 – raise %1 or lower the music (ducking)",
  "%1 gibt es schon. Ersetzen?": "%1 already exists. Replace it?",

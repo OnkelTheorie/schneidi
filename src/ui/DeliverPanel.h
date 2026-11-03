@@ -75,6 +75,7 @@ private:
     void updateRange();
     void updateName();   // file name = the opened timeline's name, as long as the user has not typed another one
     void updateFormat(); // resolutions matching the project settings
+    void updateRateLabel(); // timeline entry of the frame rate, with the preset's cap
     void updateControls(); // fields depending on the format (audio only, quality)
     void reloadPresets(const QString& select = {});
     void syncPresetToSettings(); // setting changed -> matching preset or "Eigene Einstellungen"

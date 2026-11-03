@@ -41,6 +41,7 @@
  "%1 entfernen": "Usuń %1",
  "%1 existiert schon. Beim Rendern überschreiben?": "%1 już istnieje. Nadpisać podczas renderowania?",
  "%1 fps (Timeline)": "%1 kl./s (oś czasu)",
+ "%1 fps (Timeline, höchstens %2)": "%1 fps (oś czasu, najwyżej %2)",
  "%1 freigeben": "Zwolnij %1",
  "%1 geht unter der Musik unter: %2 LU leiser als %3 – %1 lauter stellen oder die Musik absenken (Ducking)": "%1 ginie pod muzyką: %2 LU ciszej niż %3 – podgłośnij %1 albo ścisz muzykę (automatyczne ściszanie)",
  "%1 gibt es schon. Ersetzen?": "%1 już istnieje. Zastąpić?",

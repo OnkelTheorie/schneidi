@@ -417,6 +417,22 @@ int main(int argc, char** argv)
             if (presets[i].settings.audioOnly()) CHECK(j.size.isEmpty());
             else CHECK_EQ(j.size, presets[i].settings.outputSize({1920, 1080}));
         }
+        // Shorts preset: its 60 fps cap shows in the timeline rate entry and tells it apart from the plain phone
+        // preset; a rate chosen by hand replaces the cap
+        for (int i = 0; i < presets.size(); ++i) {
+            if (presets[i].settings.maxFps <= 0) continue;
+            auto* rate = panel.findChild<QComboBox*>("renderRate");
+            if (!CHECK(rate)) break;
+            panel.selectPreset(i);
+            CHECK_EQ(panel.currentPreset(), i);
+            CHECK_EQ(panel.settings().maxFps, presets[i].settings.maxFps);
+            CHECK(rate->itemText(0).contains(QString::number(presets[i].settings.maxFps)));
+            emit rate->activated(0);
+            CHECK_EQ(panel.settings().maxFps, 0);
+            CHECK(panel.currentPreset() != i);
+            CHECK(!rate->itemText(0).contains(QString::number(presets[i].settings.maxFps)));
+            break;
+        }
         // Change setting -> "Own settings"
         const RenderSettings youtube = presets[0].settings;
         panel.setSettings(RenderSettings{}); // H.264, quality high: no preset (YouTube caps the bit rate)

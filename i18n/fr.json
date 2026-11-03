@@ -41,6 +41,7 @@
  "%1 entfernen": "Supprimer %1",
  "%1 existiert schon. Beim Rendern überschreiben?": "%1 existe déjà. Écraser lors du rendu ?",
  "%1 fps (Timeline)": "%1 i/s (timeline)",
+ "%1 fps (Timeline, höchstens %2)": "%1 fps (timeline, au plus %2)",
  "%1 freigeben": "Libérer %1",
  "%1 geht unter der Musik unter: %2 LU leiser als %3 – %1 lauter stellen oder die Musik absenken (Ducking)": "%1 est couvert par la musique : %2 LU plus bas que %3 – monter %1 ou baisser la musique (atténuation automatique)",
  "%1 gibt es schon. Ersetzen?": "%1 existe déjà. Le remplacer ?",

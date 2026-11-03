@@ -61,6 +61,8 @@ bool sameOutput(const RenderSettings& a, const RenderSettings& b, QSize timeline
     if (a.audioSampleFormat() != b.audioSampleFormat()) return false;
     const FrameRate none{0, 1};
     if (!a.audioOnly() && a.outputRate(none) != b.outputRate(none)) return false;
+    // Following the timeline: a preset's cap (Shorts: up to 60 fps) is part of the output
+    if (!a.audioOnly() && a.rateNum <= 0 && a.maxFps != b.maxFps) return false;
     return a.subtitles == b.subtitles && (a.embedSubtitles && a.canEmbedSubtitles()) == (b.embedSubtitles && b.canEmbedSubtitles());
 }
 
@@ -275,6 +277,13 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
             updateControls();
             syncPresetToSettings();
         });
+    // A frame rate chosen by hand replaces the preset's cap (shown in the timeline entry)
+    connect(m_rate, qOverload<int>(&QComboBox::activated), this, [this] {
+        if (!m_maxFps) return;
+        m_maxFps = 0;
+        updateRateLabel();
+        syncPresetToSettings();
+    });
     connect(m_smart, &QCheckBox::toggled, this, [this] { syncPresetToSettings(); });
     connect(m_embed, &QCheckBox::toggled, this, [this] { syncPresetToSettings(); });
     connect(m_addBtn, &QPushButton::clicked, this, [this] { addToQueue(true); });
@@ -474,6 +483,7 @@ void DeliverPanel::setSettings(const RenderSettings& s)
     m_wantedBits = s.audioBits;
     m_wantedEncoder = s.encoder;
     m_maxFps = s.maxFps;
+    updateRateLabel();
     m_format->setCurrentIndex(std::max(0, m_format->findData(renderFormat(s.format).id)));
     m_quality->setCurrentIndex(std::clamp(s.quality, 0, RenderSettings::kQualityWeb));
     const int br = m_audioBitrate->findData(s.audioBitrateK);
@@ -664,7 +674,14 @@ void DeliverPanel::updateFormat()
     m_timelineSize = timeline;
     m_resolution->setCurrentIndex(keep >= 0 ? keep : m_resolution->findData(timeline));
     m_applying = applying;
-    m_rate->setItemText(0, T("%1 fps (Timeline)").arg(f.rate.label()));
+    updateRateLabel();
+}
+
+void DeliverPanel::updateRateLabel()
+{
+    const QString rate = m_project->timelineFormat().rate.label();
+    m_rate->setItemText(0, m_maxFps > 0 ? T("%1 fps (Timeline, höchstens %2)").arg(rate).arg(m_maxFps)
+                                        : T("%1 fps (Timeline)").arg(rate));
 }
 
 void DeliverPanel::browse()
