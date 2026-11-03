@@ -8,7 +8,10 @@
 #include "core/Retime.h"
 #include "engine/Background.h"
 #include "engine/Engine.h"
+#include "engine/ProxyManager.h"
+#include "engine/picture/Renderer.h"
 
+#include <QPainter>
 #include <QThread>
 #include <QThreadPool>
 #include <QTimer>
@@ -316,6 +319,44 @@ bool GradedThumbs::idle() const
 
 // ---------- TimelinePosters ----------
 
+namespace {
+
+// The poster's frame before the grade: the picture as the timeline shows it, fitted into `size` with black borders
+QImage posterFrame(const ProjectFormat& format, const TimelinePosters::Source& src, const QSize& size)
+{
+    if (src.transform.isIdentity()) return Engine::thumbnail(format, src.path, src.frame, size, false, src.aspect);
+    // Zoomed, moved or cropped: placed by the picture engine (a landscape clip reframed into a 9:16 short would be
+    // a sliver letterboxed into the short's shape otherwise)
+    Clip c;
+    c.id = 1;
+    c.mediaPath = src.path;
+    c.in = c.out = src.frame;
+    c.pictureAspect = src.aspect;
+    c.transform = src.transform;
+    Timeline tl;
+    tl.video.resize(1);
+    tl.video[0].clips << c;
+    Picture::Options o;
+    o.format = format;
+    o.mode = Picture::Mode::Still;
+    o.gpu = false; // a small picture in a worker: not worth the graphics card's queue
+    o.subtitles = false;
+    o.proxy = &ProxyManager::decodeSource; // proxy if present (4K: 0.2-0.7 s a frame)
+    const QSize fit = format.size().scaled(size, Qt::KeepAspectRatio);
+    o.output = QSize(std::max(2, fit.width()), std::max(2, fit.height()));
+    Picture::Renderer renderer(tl, o);
+    const QImage img = renderer.render(0).toImage();
+    if (img.isNull() || img.size() == size) return img;
+    QImage out(size, QImage::Format_RGBA8888);
+    out.fill(Qt::black);
+    QPainter painter(&out);
+    painter.drawImage(QPoint((size.width() - img.width()) / 2, (size.height() - img.height()) / 2), img);
+    painter.end();
+    return out;
+}
+
+} // namespace
+
 TimelinePosters::Source TimelinePosters::sourceOf(const Project& project, const Timeline& tl, QSize frame)
 {
     // Earliest picture; at that frame the topmost track wins (tracks from V1 upward, ties go to the higher one)
@@ -338,6 +379,27 @@ TimelinePosters::Source TimelinePosters::sourceOf(const Project& project, const 
     else if (best->isRetimed() && m->length > 0)
         s.frame = RetimeMap(*best, m->length).pictureFrame(best->freeze ? best->stillFrame() : best->in);
     else s.frame = best->in;
+    s.transform = best->transform;
+    s.transform.opacity = 100;
+    constexpr AnimParam kPlaced[] = {AnimParam::ZoomX,    AnimParam::ZoomY,     AnimParam::PosX,
+                                     AnimParam::PosY,     AnimParam::Rotation,  AnimParam::CropLeft,
+                                     AnimParam::CropRight, AnimParam::CropTop,  AnimParam::CropBottom};
+    for (AnimParam p : kPlaced)
+        if (Keys::animated(*best, p)) {
+            const double v = Keys::valueAt(*best, p, 0);
+            ClipTransform& t = s.transform;
+            switch (p) {
+            case AnimParam::ZoomX: t.zoomX = v; break;
+            case AnimParam::ZoomY: t.zoomY = v; break;
+            case AnimParam::PosX: t.posX = v; break;
+            case AnimParam::PosY: t.posY = v; break;
+            case AnimParam::Rotation: t.rotation = v; break;
+            case AnimParam::CropLeft: t.cropLeft = v; break;
+            case AnimParam::CropRight: t.cropRight = v; break;
+            case AnimParam::CropTop: t.cropTop = v; break;
+            default: t.cropBottom = v; break;
+            }
+        }
     s.grade = GradedThumbs::specAt(*best, 0);
     // The poster is the frame fitted into its own size (Engine::thumbnail)
     if (frame.isEmpty()) frame = project.format().size();
@@ -406,14 +468,14 @@ void TimelinePosters::start(int sequenceId)
     }
     it->busy = true;
     // Same frame, only the grade changed: the decoded frame is reused
-    const QImage raw = src.path == it->shown.path && src.frame == it->shown.frame && src.aspect == it->shown.aspect ? it->raw : QImage();
+    const QImage raw = src.samePicture(it->shown) ? it->raw : QImage();
     const ProjectFormat format = m_project->sequenceFormat(sequenceId); // the poster in the timeline's shape
     const QSize size = m_size;
     const int generation = m_generation;
     m_pool->start([this, sequenceId, src, raw, format, size, generation] {
         Background::lowerThisThread(Background::Level::Low); // own pool: its thread does nothing else
         Background::yieldToForeground();
-        const QImage frame = raw.isNull() ? Engine::thumbnail(format, src.path, src.frame, size, false, src.aspect) : raw;
+        const QImage frame = raw.isNull() ? posterFrame(format, src, size) : raw;
         const QImage img = frame.isNull() || src.grade.isNull() ? frame : GradedThumbs::apply(frame, src.grade);
         QMetaObject::invokeMethod(
             this, [this, sequenceId, src, frame, img, generation] { done(sequenceId, src, frame, img, generation); },
