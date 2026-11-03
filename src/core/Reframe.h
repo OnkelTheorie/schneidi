@@ -86,6 +86,12 @@ bool reshape(Clip& c, double oldAspect, double newAspect, QSizeF frame);
 // Can the clip be reframed (a video or still clip; not titles, audio, compound or multicam clips, not a kept region)?
 bool canReframe(const Clip& c);
 
+// Is the clip an overlay that reframing the whole timeline leaves alone: on a track above V1 (`track` > 0), not a
+// kept region, and its own transform shows it smaller than the frame (zoom below 0.95, or a crop that leaves less
+// than 70 % of the picture), e.g. a webcam picture in a corner? Zooming it to fill the frame would cover the picture
+// below. mediaAspect <= 0 = unknown (the frame's shape).
+bool isOverlay(const Clip& c, int track, double mediaAspect, QSizeF frame);
+
 // A part of the picture kept readable above the reframed picture: the kill feed of a game, which a 9:16 crop of 16:9
 // footage cuts away. Shown by a second copy of the clip on a track above (picture in picture), cropped to the region
 // and placed near the top of the frame.

@@ -27,7 +27,7 @@ using EditorDetail::fitTransitions;
 void Editor::setFrameInterpolation(const QVector<int>& ids, FrameInterp mode)
 {
     QVector<int> targets;
-    for (const int id : withLinked(ids)) {
+    for (const int id : withFollowers(ids)) {
         const Clip* c = TimelineOps::findClip(m_project->timeline(), id);
         if (c && !c->isTitle() && c->interpolate != mode) targets << id;
     }
@@ -37,7 +37,7 @@ void Editor::setFrameInterpolation(const QVector<int>& ids, FrameInterp mode)
 
 void Editor::setClipSpeed(const QVector<int>& ids, const Retime& r, bool ripple)
 {
-    const QVector<int> all = withLinked(ids);
+    const QVector<int> all = withFollowers(ids);
     if (all.isEmpty() || r.speed <= 0) return;
     m_project->edit(T("Geschwindigkeit ändern"), [&](Timeline& tl) {
         QSet<int> touched;
@@ -136,7 +136,7 @@ void Editor::editRamp(const QString& text, int clipId, const std::function<bool(
     const int L = m->length;
     // Partners of the same file take part (video + audio), foreign partners (other audio) do not
     QVector<int> ids;
-    for (int id : withLinked({clipId}))
+    for (int id : withFollowers({clipId}))
         if (const Clip* c = TimelineOps::findClip(cur, id); c && c->mediaPath == first->mediaPath && !c->freeze)
             ids << id;
     // First check on the main clip whether anything changes (no empty undo step)

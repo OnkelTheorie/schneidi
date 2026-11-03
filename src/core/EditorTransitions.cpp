@@ -105,7 +105,7 @@ std::optional<Timeline> Editor::withTransitions(int frame, std::optional<Transit
     };
     auto isLocked = [&](int clipId) { return TimelineOps::isLocked(cur, clipId); };
     if (!m_selection->isEmpty()) {
-        for (int id : withLinked(m_selection->ids().values().toVector()))
+        for (int id : withFollowers(m_selection->ids().values().toVector()))
             if (kindOk(id)) edges << EdgeRef{id, false} << EdgeRef{id, true};
     } else {
         // Cut nearest to the playhead; all tracks with an edge exactly there

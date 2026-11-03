@@ -372,6 +372,33 @@ bool reshape(Clip& c, double oldAspect, double newAspect, QSizeF frame)
 
 bool canReframe(const Clip& c) { return c.kind == ClipKind::Media && !c.mediaPath.isEmpty() && c.keepRegion.isEmpty(); }
 
+bool isOverlay(const Clip& c, int track, double mediaAspect, QSizeF frame)
+{
+    if (track <= 0 || !canReframe(c) || frame.isEmpty()) return false;
+    const ClipTransform& t = c.transform;
+    if (t.transformOn) {
+        // The largest zoom it reaches (an overlay zooming to full screen on a keyframe is a picture of its own)
+        const auto largest = [&](AnimParam p, double v) {
+            double z = std::abs(v);
+            for (const Keyframe& k : c.keys.value(p)) z = std::max(z, std::abs(k.value));
+            return z;
+        };
+        if (std::max(largest(AnimParam::ZoomX, t.zoomX), largest(AnimParam::ZoomY, t.zoomY)) < 0.95) return true;
+    }
+    if (t.cropOn) {
+        if (mediaAspect <= 0) mediaAspect = frame.width() / frame.height();
+        const QSizeF fitted = MediaAspect::fit(mediaAspect, frame);
+        if (fitted.width() > 0 && fitted.height() > 0) {
+            const double w = 1 - (Keys::staticValue(c, AnimParam::CropLeft) + Keys::staticValue(c, AnimParam::CropRight))
+                                     / fitted.width();
+            const double h = 1 - (Keys::staticValue(c, AnimParam::CropTop) + Keys::staticValue(c, AnimParam::CropBottom))
+                                     / fitted.height();
+            if (std::clamp(w, 0.0, 1.0) * std::clamp(h, 0.0, 1.0) < 0.7) return true;
+        }
+    }
+    return false;
+}
+
 Clip keepCopy(const Clip& base, const Keep& k, double mediaAspect, QSizeF frame, const KeepPlace& place)
 {
     Clip c = base;

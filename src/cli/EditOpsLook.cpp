@@ -811,8 +811,16 @@ void reframeClips(Session& s, const QVector<int>& ids, const QJsonObject& op)
         fail("BAD_ARGUMENT", "mode must be auto, center or fit");
     const double smoothness = op.contains("smoothness") ? numberOf(op, "smoothness", 0, 1) : 0.5;
     const bool bars = op.value("bars").toBool(true);
-    const QVector<int> targets = s.editor.reframeTargets(ids);
-    if (targets.isEmpty()) fail("NOT_FOUND", "no video clip to reframe (titles, compound and multicam clips are left out)");
+    QVector<int> overlays; // a whole timeline leaves its overlays (a webcam picture on V2) where they are
+    const QVector<int> targets = s.editor.reframeTargets(ids, &overlays);
+    QStringList overlayIds;
+    for (int id : overlays) overlayIds << QString::number(id);
+    if (targets.isEmpty())
+        fail("NOT_FOUND", overlays.isEmpty()
+                              ? QString("no video clip to reframe (titles, compound and multicam clips are left out)")
+                              : QString("no video clip to reframe: only overlays (clips %1, smaller pictures on tracks "
+                                        "above V1); name them in clips:[…] to reframe them anyway")
+                                    .arg(overlayIds.join(", ")));
     const ProjectFormat f = s.format();
     QHash<int, QVector<Reframe::Key>> paths;
     QVector<Clip> clips;
@@ -840,6 +848,10 @@ void reframeClips(Session& s, const QVector<int>& ids, const QJsonObject& op)
                                  .arg(clips.join(", "), games.join(", ")));
     }
     s.editor.reframeClips(targets, mode, paths, contents, &keeps);
+    if (!overlays.isEmpty())
+        s.notes << QString("overlays not reframed, they keep their place and size in the frame: clips %1 (a smaller "
+                           "picture on a track above V1, e.g. a webcam; name them in clips:[…] to reframe them anyway)")
+                       .arg(overlayIds.join(", "));
     QStringList kept;
     for (int id : targets)
         for (const Reframe::Keep& k : keeps.value(id))
@@ -994,7 +1006,8 @@ void addLookOps(QVector<OpDef>& ops)
         << OpDef{"reframe", "{op:'reframe', clips?, track?, mode?:'auto', smoothness?:0.5, bars?:true, keep?:'auto', game?}",
                  "Auto-Reframe: clips fill this timeline's shape (16:9 footage in a 9:16 short) and follow their subject",
                  "Without clips/track: every video clip of the timeline (titles, compound and multicam clips are left "
-                 "out). mode auto (default) = zoom to fill + x/y keyframes that keep the subject in view: measures the "
+                 "out, and overlays: a smaller picture on a track above V1 such as a webcam in a corner keeps its "
+                 "place and size in the frame; name it in clips to reframe it anyway). mode auto (default) = zoom to fill + x/y keyframes that keep the subject in view: measures the "
                  "picture (motion, detail, faces/skin; a game's busy picture stays near the middle where the "
                  "crosshair is), the camera holds still inside a dead zone, moves eased without overshooting and "
                  "jumps only at scene cuts. Measuring takes roughly 5-10 s per minute of 1080p footage the first time "
@@ -1012,6 +1025,8 @@ void addLookOps(QVector<OpDef>& ops)
                  "the kill feed of game footage when the reframe cuts the sides away (the game from game, or from the "
                  "folder or file name: cs2, valorant - as `highlights` knows them); 'killfeed' = that kill feed "
                  "always; a region \"x,y,w,h\" (fractions 0..1 of the whole picture) = that part; 'none' = nothing. "
+                 "The copy is linked to its clip (`info` link) and follows it: move, trim, split, delete, speed go "
+                 "for both; place or crop the copy itself with 'transform' on its id. "
                  "Reframing a clip again replaces its earlier copies (none removes them); `info` shows them with "
                  "keep_region. A 4:3 game between black bars: the game's region is taken inside the bars. For a whole short in one call: new_timeline with "
                  "from, aspect:'9:16' and reframe:'auto'.",

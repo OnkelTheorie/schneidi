@@ -259,7 +259,7 @@ void TimelineView::mousePressEvent(QMouseEvent* e)
         const QVector<int> group = m_editor->withLinked({hit->clipId});
         if (!sel->ids().contains(hit->clipId)) sel->set(QSet<int>(group.begin(), group.end()));
         m_trim = *hit;
-        m_trimIds = group;
+        m_trimIds = m_editor->withCopies(group); // as Editor::trimClip trims
         m_trimDelta = 0;
         m_drag = Drag::Trim;
         updateTrimFrames(m_editor->project()->timeline(), {TimelineOps::TrimKind::Ripple, m_trimIds, {}, m_trim.edge}, 0);
@@ -297,7 +297,7 @@ void TimelineView::mousePressEvent(QMouseEvent* e)
     if (!ids.contains(id) || alone) sel->set(QSet<int>(group.begin(), group.end()));
 
     TimelineOps::findClip(m_editor->project()->timeline(), id, &m_anchorRef);
-    m_dragIds = m_editor->editable(sel->ids().values().toVector());
+    m_dragIds = m_editor->withCopies(m_editor->editable(sel->ids().values().toVector())); // kill feed copies follow
     m_cueIds = m_editor->selectedSubtitles(); // selected subtitles move along in time (also among m_dragIds)
     m_cueDelta = 0;
     m_cueTrackDelta = 0;
@@ -396,8 +396,7 @@ void TimelineView::dragMove(const QPoint& pos, Qt::KeyboardModifiers mods)
 
         m_dragTrackDelta = 0;
         if (const auto row = rowAt(pos.y()); row && row->ref.kind == m_anchorRef.kind)
-            m_dragTrackDelta = TimelineOps::clampTrackDelta(tl, m_dragIds, m_anchorRef.kind,
-                                                            row->ref.index - m_anchorRef.index);
+            m_dragTrackDelta = m_editor->clampTrackDelta(m_dragIds, m_anchorRef.kind, row->ref.index - m_anchorRef.index);
         for (TrackRef ref : TimelineOps::tracksOf(tl, m_dragIds)) // never onto a locked track
             if (m_editor->isTrackLocked({ref.kind, ref.index + m_dragTrackDelta})) m_dragTrackDelta = 0;
         update();

@@ -13,27 +13,66 @@
 #include <algorithm>
 #include <cmath>
 
-QVector<int> Editor::reframeTargets(const QVector<int>& ids) const
+QVector<int> Editor::reframeTargets(const QVector<int>& ids, QVector<int>* overlays) const
 {
     const Timeline& tl = m_project->timeline();
     const QSet<int> wanted(ids.begin(), ids.end());
+    const QSizeF frame = m_project->timelineFormat().size();
     QVector<int> out;
     for (int t = 0; t < tl.video.size(); ++t) {
         if (isTrackLocked({TrackKind::Video, t})) continue;
-        for (const Clip& c : tl.video[t].clips)
-            if (Reframe::canReframe(c) && (ids.isEmpty() || wanted.contains(c.id))) out << c.id;
+        for (const Clip& c : tl.video[t].clips) {
+            if (!Reframe::canReframe(c) || (!ids.isEmpty() && !wanted.contains(c.id))) continue;
+            if (ids.isEmpty() && overlays && Reframe::isOverlay(c, t, MediaAspect::ofClip(c), frame)) *overlays << c.id;
+            else out << c.id;
+        }
     }
     return out;
+}
+
+QVector<int> Editor::followingCopies(const QVector<int>& ids) const
+{
+    const Timeline& tl = m_project->timeline();
+    QSet<int> links; // of the clips among ids that are no copies themselves
+    for (int id : ids)
+        if (const Clip* c = TimelineOps::findClip(tl, id); c && c->linkId && c->keepRegion.isEmpty())
+            links.insert(c->linkId);
+    QVector<int> out;
+    if (links.isEmpty()) return out;
+    for (const Track& t : tl.video)
+        for (const Clip& x : t.clips)
+            if (!x.keepRegion.isEmpty() && links.contains(x.linkId)) out << x.id;
+    return editable(out);
+}
+
+QVector<int> Editor::withCopies(const QVector<int>& ids) const
+{
+    QVector<int> out = ids;
+    for (int id : followingCopies(ids))
+        if (!out.contains(id)) out << id;
+    return out;
+}
+
+int Editor::clampTrackDelta(const QVector<int>& ids, TrackKind kind, int trackDelta) const
+{
+    const QVector<int> copies = followingCopies(ids);
+    QVector<int> lead;
+    for (int id : ids)
+        if (!copies.contains(id)) lead << id;
+    trackDelta = TimelineOps::clampTrackDelta(m_project->timeline(), lead, kind, trackDelta);
+    // The copies (video clips) only not below V1: anchored on audio, their tracks set no upper limit
+    return TimelineOps::clampTrackDelta(m_project->timeline(), copies, TrackKind::Audio, trackDelta);
 }
 
 QVector<int> Editor::withKeptCopies(const QVector<int>& ids) const
 {
     const Timeline& tl = m_project->timeline();
-    QVector<int> out = ids;
+    QVector<int> out = withCopies(ids);
     QVector<const Clip*> bases;
     for (int id : ids)
         if (const Clip* c = TimelineOps::findClip(tl, id); c && c->keepRegion.isEmpty()) bases << c;
     if (bases.isEmpty()) return out;
+    // Copies made before they were linked to their clip: the ones in sync with it
     for (const Track& t : tl.video)
         for (const Clip& x : t.clips)
             if (!x.keepRegion.isEmpty() && !out.contains(x.id)
@@ -45,7 +84,8 @@ QVector<int> Editor::withKeptCopies(const QVector<int>& ids) const
 int Editor::reframeClips(const QVector<int>& ids, Reframe::Mode mode, const QHash<int, QVector<Reframe::Key>>& paths,
                          const QHash<QString, QRectF>& contents, const QHash<int, QVector<Reframe::Keep>>* keeps)
 {
-    const QVector<int> targets = reframeTargets(ids);
+    QVector<int> overlays; // left out of a whole timeline
+    const QVector<int> targets = reframeTargets(ids, &overlays);
     if (targets.isEmpty()) return 0;
     const QSizeF frame = m_project->timelineFormat().size();
     Project* p = m_project;
@@ -57,9 +97,14 @@ int Editor::reframeClips(const QVector<int>& ids, Reframe::Mode mode, const QHas
         if (!keeps) return;
         for (int id : targets) {
             TrackRef ref;
-            const Clip* found = TimelineOps::findClip(tl, id, &ref);
+            Clip* found = TimelineOps::findClip(tl, id, &ref);
             if (!found) continue;
+            // The copies are linked to their clip: they follow it (Editor::followingCopies)
+            if (!keeps->value(id).isEmpty() && !found->linkId) found->linkId = p->newLinkId();
             const Clip base = *found;
+            const auto linkedCopy = [&](const Clip& x) {
+                return !x.keepRegion.isEmpty() && base.linkId && x.linkId == base.linkId;
+            };
             // The earlier copies of this clip go (a new reframe brings its own): exact ones as a whole, ones that
             // outlast a since trimmed or bladed clip over its range; what is left of them stays only over another
             // part of the bladed clip (in sync with it), not over frames the clip was trimmed off
@@ -74,7 +119,7 @@ int Editor::reframeClips(const QVector<int>& ids, Reframe::Mode mode, const QHas
                 Track along;
                 QVector<Clip> rest;
                 for (const Clip& x : t.clips)
-                    if (Reframe::isKeepOf(x, base)) continue;
+                    if (Reframe::isKeepOf(x, base) || linkedCopy(x)) continue;
                     else if (Reframe::isKeepAlong(x, base)) along.clips << x;
                     else rest << x;
                 if (rest.size() == t.clips.size()) continue;
@@ -87,6 +132,7 @@ int Editor::reframeClips(const QVector<int>& ids, Reframe::Mode mode, const QHas
             for (const Reframe::Keep& k : keeps->value(id)) {
                 Clip copy = Reframe::keepCopy(base, k, MediaAspect::ofClip(base), frame);
                 copy.id = p->newClipId();
+                copy.linkId = base.linkId;
                 // The first unlocked track above the clip that is free over its range (a missing one is added)
                 int track = ref.index + 1;
                 const auto busy = [&](int i) {
@@ -192,7 +238,8 @@ int Editor::setPictureAspect(const QVector<int>& ids, double aspect, std::option
                 for (Track& t : tl.video) {
                     if (t.locked) continue;
                     for (Clip& x : t.clips)
-                        if (Reframe::isKeepAlong(x, base) && std::abs(x.pictureAspect - aspect) > 1e-9) {
+                        if ((Reframe::isKeepAlong(x, base) || (!x.keepRegion.isEmpty() && base.linkId && x.linkId == base.linkId))
+                            && std::abs(x.pictureAspect - aspect) > 1e-9) {
                             const double before = setShape(x);
                             Reframe::reshapeKeep(x, before, MediaAspect::ofClip(x), frame);
                         }
