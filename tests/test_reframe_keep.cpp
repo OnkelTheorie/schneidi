@@ -1094,6 +1094,78 @@ void testZoomedFrame(const QString& plain)
     CHECK(with < 3 * without + 200);
 }
 
+// Another clip overwriting the reframed clip (dropped onto V1): the copy above is cut like its clip - the part over
+// the new clip goes (it showed the old footage's kill feed there), each piece linked to its clip's piece; one undo
+// step. Overwriting an end or the whole clip likewise; a copy on a locked track stays.
+void testOverwriteCopy()
+{
+    MediaAspect::setProbe([](const QString&) { return 16.0 / 9.0; });
+    Project p;
+    Selection sel;
+    Editor ed(&p, &sel);
+    const int seq = p.addTimeline("Short", 0, QSize(1080, 1920));
+    p.setCurrentSequence(seq);
+    p.addMedia({"/x/cs2/a.mkv", "a.mkv", 400, true, true, false});
+    p.addMedia({"/x/other.mkv", "other.mkv", 10, true, false, false});
+    int game = 0;
+    p.edit("setup", [&](Timeline& tl) {
+        Clip v;
+        v.id = game = p.newClipId();
+        v.mediaPath = "/x/cs2/a.mkv";
+        v.start = 20;
+        v.in = 100;
+        v.out = 159; // 20..80
+        v.linkId = p.newLinkId();
+        tl.video[0].clips << v;
+        Clip a = v;
+        a.id = p.newClipId();
+        tl.audio[0].clips << a;
+    });
+    const auto keeps = ed.reframeKeeps({game}, Reframe::Mode::Center, {}, {});
+    ed.reframeClips({game}, Reframe::Mode::Center, {}, {}, &keeps);
+    if (!CHECK_EQ(keptCopies(p.timeline()).size(), 1)) return;
+    const int copyTrack = keptCopies(p.timeline())[0].first;
+    const int copyId = keptCopies(p.timeline())[0].second.id;
+    // Each copy lies exactly on a piece of the clip below it, linked to it
+    const auto matched = [&](int pieces) {
+        const auto k = keptCopies(p.timeline());
+        if (!CHECK_EQ(k.size(), pieces)) return;
+        for (const auto& [track, c] : k) {
+            CHECK_EQ(track, copyTrack);
+            const Clip* b = nullptr;
+            for (const Clip& x : p.timeline().video[0].clips)
+                if (x.mediaPath == c.mediaPath && x.start == c.start) b = &x;
+            if (!CHECK(b)) continue;
+            CHECK(inSync(c, *b));
+            CHECK(c.linkId != 0 && c.linkId == b->linkId);
+        }
+    };
+    const auto step = [&](const char* what, int frame, int pieces) {
+        const Timeline was = p.timeline();
+        const int index = p.undoStack()->index();
+        ed.addMediaAt({"/x/other.mkv"}, frame, 0);
+        if (!CHECK_EQ(p.undoStack()->index(), index + 1)) qWarning("  %s: not one undo step", what);
+        matched(pieces);
+        for (const auto& k : keptCopies(p.timeline())) // nothing over the new clip
+            CHECK(k.second.end() <= frame || k.second.start >= frame + 10);
+        p.undoStack()->undo();
+        if (!CHECK(p.timeline() == was)) qWarning("  %s: undo left another timeline", what);
+    };
+    step("middle", 40, 2);
+    step("start", 15, 1);
+    step("end", 75, 1);
+    p.edit("short", [&](Timeline& tl) { // both 20..28
+        tl.video[0].clips[0].out = tl.video[0].clips[0].in + 7;
+        tl.video[copyTrack].clips[0].out = tl.video[copyTrack].clips[0].in + 7;
+    });
+    step("whole", 19, 0);
+    p.undoStack()->undo();
+    // A locked copy track: the lock holds
+    p.edit("lock", [&](Timeline& tl) { tl.video[copyTrack].locked = true; });
+    ed.addMediaAt({"/x/other.mkv"}, 40, 0);
+    if (CHECK_EQ(keptCopies(p.timeline()).size(), 1)) CHECK_EQ(keptCopies(p.timeline())[0].second.id, copyId);
+}
+
 int main(int argc, char** argv)
 {
     Check::initEnv();
@@ -1107,6 +1179,7 @@ int main(int argc, char** argv)
     testPictureAspect();
     testFollow(tmp.path());
     testFollowNotSound();
+    testOverwriteCopy();
     testOverlays();
     if (!Check::haveFfmpeg()) return Check::skip("ffmpeg nicht gefunden");
     // A CS2-like recording (640x360): a kill feed line of the player (a thin red frame, top right, inside the CS2 mark region) at

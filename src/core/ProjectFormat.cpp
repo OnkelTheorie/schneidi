@@ -1,10 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "core/ProjectFormat.h"
 
+#include "core/Generators.h"
 #include "core/GradeWindows.h"
 #include "core/Keyframes.h"
 #include "core/MediaAspect.h"
 #include "core/Types.h"
+
+#include <QFont>
+#include <QFontMetricsF>
+#include <QGuiApplication>
 
 QString FrameRate::label() const
 {
@@ -47,6 +52,51 @@ QString resolutionLabel(int width, int height)
         if (p.width == width && p.height == height) return size + " " + T(p.name);
     return size;
 }
+
+namespace {
+
+// Width of a title's widest line at `size` px in project pixels, laid out as engine/picture's drawTitle does (the
+// visible block is that wide: outline and box margin are fitted into it). Without a GUI application there are no
+// fonts: a generous estimate (0.7 of the size per character, wider than the usual fonts' average).
+double titleWidth(const TitleStyle& st, double size)
+{
+    size = std::max(1.0, size);
+    if (qobject_cast<QGuiApplication*>(QCoreApplication::instance())) {
+        QFont font(st.fontFamily());
+        font.setPixelSize(std::max(1, int(std::lround(size))));
+        font.setBold(st.bold);
+        font.setItalic(st.italic);
+        const QFontMetricsF fm(font);
+        double w = 1;
+        for (const QString& line : (st.isCounter() ? Generators::counterWidest(st, fm) : st.text).split('\n'))
+            w = std::max(w, fm.horizontalAdvance(line));
+        return w;
+    }
+    qsizetype chars = st.isCounter() ? 6 : 1;
+    for (const QString& line : st.text.split('\n')) chars = std::max(chars, line.size());
+    return 0.7 * size * double(chars);
+}
+
+// Factor (<= 1) that shrinks a title scaled by `s` from frame width `fromW` to `toW` just enough to fit the new frame
+// with a margin (90 % of its width), but never below the share of the frame it took before (a title running off the
+// old frame on purpose runs off the new one as far). Its largest size counts (an animated size).
+double titleFit(const Clip& c, double s, double fromW, double toW)
+{
+    const TitleStyle& st = c.title;
+    if (!c.isTitle() || st.isProgress() || (st.text.isEmpty() && !st.isCounter()) || s <= 0) return 1.0;
+    double peak = st.size;
+    for (const Keyframe& k : c.keys.value(AnimParam::TitleSize)) peak = std::max(peak, k.value);
+    const double limit = std::max(0.9 * toW, titleWidth(st, peak) / fromW * toW);
+    double q = 1.0;
+    for (int i = 0; i < 4; ++i) { // the font has whole pixel sizes: measured again at the shrunk size
+        const double w = titleWidth(st, peak * s * q);
+        if (w <= limit) break;
+        q *= limit / w;
+    }
+    return q;
+}
+
+} // namespace
 
 void scaleTimeline(Timeline& tl, QSize from, QSize to)
 {
@@ -104,12 +154,15 @@ void scaleTimeline(Timeline& tl, QSize from, QSize to)
                     GradeWindows::refit(c, (b.width() / after.width()) / (a.width() / before.width()),
                                         (b.height() / after.height()) / (a.height() / before.height()));
                 }
+                // A title nearly as wide as the old frame would run off a narrower one (a 16:9 caption in a 9:16
+                // copy): shrunk to fit, outline and box margin with it; one that fits keeps its size
+                const double ts = tracks == &tl.video ? s * titleFit(c, s, from.width(), to.width()) : s;
                 TitleStyle& ti = c.title;
                 ti.posX *= sx;
                 ti.posY *= sy;
-                ti.size *= s;
-                ti.outlineWidth *= s;
-                ti.boxPad *= s;
+                ti.size *= ts;
+                ti.outlineWidth *= ts;
+                ti.boxPad *= ts;
                 ti.barThickness *= sy;
                 ti.barMargin *= sy;
                 c.transInStyle.border *= s;
@@ -120,7 +173,7 @@ void scaleTimeline(Timeline& tl, QSize from, QSize to)
                     switch (it.key()) {
                     case AnimParam::PosX: case AnimParam::TitlePosX: f = sx; break;
                     case AnimParam::PosY: case AnimParam::TitlePosY: f = sy; break;
-                    case AnimParam::TitleSize: f = s; break;
+                    case AnimParam::TitleSize: f = ts; break;
                     default: continue;
                     }
                     for (Keyframe& k : it.value()) {

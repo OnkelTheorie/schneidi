@@ -318,14 +318,23 @@ void opBlurNames(Session& s, const QJsonObject& op)
         notes << note;
     }
     const QHash<int, QVector<int>> added = s.editor.blurNames(masks, style, strength);
+    const QVector<int> open = s.editor.editable(ids);
     for (QString& n : notes) {
         const int id = n.section(' ', 1, 1).chopped(1).toInt();
         QStringList numbers;
         for (int w : added.value(id)) numbers << QString::number(w);
         if (!numbers.isEmpty()) n += ", windows " + numbers.join(", ");
+        int found = 0;
+        for (const NameBlur::Mask& m : masks[id]) found += !m.keys.isEmpty();
+        // On a locked track (a kill feed copy above its clip): left as it is, like every edit leaves it
+        if (!open.contains(id)) {
+            if (found + left.value(id) > 0)
+                n += QString(", track locked: %1 text(s) left out, they stay visible (unlock it to hide them)")
+                         .arg(found + left.value(id));
+            continue;
+        }
         // windows taken in between (masks beyond the free numbers) count like those plan() left out
-        int out = left.value(id) - int(added.value(id).size());
-        for (const NameBlur::Mask& m : masks[id]) out += !m.keys.isEmpty();
+        const int out = left.value(id) - int(added.value(id).size()) + found;
         if (out > 0) n += QString(", %1 text(s) left out: no free window, they stay visible").arg(out);
     }
     for (const QString& n : notes) s.notes << n;

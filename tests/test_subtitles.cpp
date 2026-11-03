@@ -20,6 +20,8 @@
 #include <QEventLoop>
 #include <QFile>
 #include <QFileInfo>
+#include <QFont>
+#include <QFontMetricsF>
 #include <QImage>
 #include <QMouseEvent>
 #include <QTemporaryDir>
@@ -542,6 +544,40 @@ void testProjectFile()
     scaleTimeline(trip, {1080, 1920}, {1920, 1080});
     CHECK(std::abs(trip.video[0].clips[0].title.size - 80) < 1);
     CHECK(std::abs(trip.subtitles[0].style.size - t.style.size) < 1);
+    CHECK_EQ(trip.video[0].clips[0].title.size, 80.0); // a short title: exact
+    // A title nearly as wide as the 16:9 frame: in a 9:16 copy shrunk to fit (outline and box margin with it), the
+    // short one beside it keeps its size
+    {
+        Timeline wide;
+        wide.video.resize(1);
+        Clip a = title;
+        a.title.text = "GRAND FINAL HIGHLIGHTS 2026";
+        a.title.size = 110;
+        a.title.outlineWidth = 6;
+        a.title.boxPad = 20;
+        const auto widthOf = [](const TitleStyle& st) {
+            QFont f(st.fontFamily());
+            f.setPixelSize(std::max(1, int(std::lround(st.size))));
+            f.setBold(st.bold);
+            f.setItalic(st.italic);
+            return QFontMetricsF(f).horizontalAdvance(st.text);
+        };
+        const double w0 = widthOf(a.title);
+        std::printf("wide title: %.0f px in 1920\n", w0);
+        CHECK(w0 > 1100 && w0 < 1920);
+        Clip b = title;
+        b.start = 24;
+        b.out = 47;
+        wide.video[0].clips = {a, b};
+        scaleTimeline(wide, {1920, 1080}, {1080, 1920});
+        const TitleStyle& sa = wide.video[0].clips[0].title;
+        std::printf("in 1080: %.0f px, size %.1f\n", widthOf(sa), sa.size);
+        CHECK(widthOf(sa) <= 1080 * 0.9 + 1);
+        CHECK(widthOf(sa) > 1080 * 0.8); // just enough
+        CHECK(std::abs(sa.outlineWidth / sa.size - 6.0 / 110) < 1e-9);
+        CHECK(std::abs(sa.boxPad / sa.size - 20.0 / 110) < 1e-9);
+        CHECK_EQ(wide.video[0].clips[1].title.size, 80.0);
+    }
     CHECK_EQ(Subtitles::defaultStyle({3840, 2160}).size, 96.0);
     CHECK_EQ(Subtitles::defaultStyle({1080, 1920}).size, 48.0); // portrait: shorter edge
     CHECK_EQ(Subtitles::defaultStyle({1080, 1920}).posY, 107.0); // 60 * 1920 / 1080, rounded

@@ -70,7 +70,8 @@ QString resolutionLabel(int width, int height);
 // Resolution changed: convert pixel values in the model (position, crop, title, wipe border) so that
 // everything stays at the same place and the same size relative to the picture. Positions/crop separately
 // by width and height, sizes (font, outline, border) by the ratio of the frame's short sides (a round trip to
-// another shape and back keeps them).
+// another shape and back keeps them). A title that would then run off a narrower frame (a wide caption in a 9:16 copy
+// of a 16:9 edit) is shrunk just enough to fit it with a margin.
 void scaleTimeline(Timeline& tl, QSize from, QSize to);
 
 // Frame rate changed: convert the times that are frames in a timeline without clips (subtitle cues, markers, in/out),

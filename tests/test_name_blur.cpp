@@ -704,6 +704,47 @@ void testCli(const QString& dir)
                 CHECK_EQ(GradeWindows::fillAt(*copy, n, t).amount, GradeWindows::fillAt(*b, n, t).amount);
             }
     }
+
+    // The copy on a locked track: a lock is a lock (it stays as it is), but its names stay readable - counted as left
+    // visible and named as such, in the CLI's notes and in the count the app shows
+    {
+        Project p;
+        Selection sel;
+        Editor ed(&p, &sel);
+        CHECK(ProjectFile::load(kept, &kd, &error));
+        p.load(kd);
+        int copyId = 0, copyTrack = -1;
+        for (int t = 0; t < p.timeline().video.size(); ++t)
+            for (const Clip& x : p.timeline().video[t].clips)
+                if (!x.keepRegion.isEmpty()) copyId = x.id, copyTrack = t;
+        if (!CHECK(copyId && copyTrack > 0)) return;
+        p.edit("strip", [&](Timeline& tl) {
+            for (Track& t : tl.video)
+                for (Clip& x : t.clips) x.effects.clear(), x.keys.clear();
+            tl.video[copyTrack].locked = true;
+        });
+        CHECK(ed.withKeptCopies({base}).contains(copyId));
+        NameBlur::Mask m;
+        m.zone = "killfeed";
+        m.keys = {NameBlur::Key{0, true, QRectF(0.6, 0.1, 0.2, 0.05)}};
+        int dropped = -1, locked = -1;
+        const QHash<int, QVector<int>> added = ed.blurNames({{base, {m}}, {copyId, {m}}}, "blur", 60, &dropped, &locked);
+        CHECK_EQ(added.size(), 1);
+        CHECK(added.contains(base));
+        CHECK_EQ(dropped, 0);
+        CHECK_EQ(locked, 1);
+        CHECK(GradeWindows::list(*TimelineOps::findClip(p.timeline(), copyId)).isEmpty());
+        QString err;
+        CHECK(ProjectFile::save(p.data(), kept, &err));
+        const QJsonObject done = run(
+            "edit", {{"project", kept}, {"ops", QString(R"([{"op":"blur_names","template":"cs2","clips":[%1]}])").arg(base)}});
+        QString notes;
+        for (const QJsonValue& n : done["notes"].toArray()) notes += n.toString() + "\n";
+        std::printf("locked copy notes: %s", qPrintable(notes));
+        CHECK(notes.contains(QString("clip %1: ").arg(copyId)));
+        CHECK(notes.contains("track locked"));
+        CHECK(!notes.contains("no free window"));
+    }
 }
 
 // The game video in a 9:16 timeline (a short): text is found on the clip's own picture and given in the frame,

@@ -158,8 +158,8 @@ void MainWindow::blurNames()
         }
     }
     if (!errors->isEmpty()) QMessageBox::warning(this, T("Namen verwischen"), errors->join('\n'));
-    int notPlaced = 0;
-    const QHash<int, QVector<int>> added = m_editor->blurNames(*result, choice.style, choice.strength, &notPlaced);
+    int notPlaced = 0, locked = 0;
+    const QHash<int, QVector<int>> added = m_editor->blurNames(*result, choice.style, choice.strength, &notPlaced, &locked);
     *dropped += notPlaced;
     int windows = 0;
     for (const QVector<int>& w : added) windows += w.size();
@@ -167,7 +167,16 @@ void MainWindow::blurNames()
                                  .arg(windows)
                                  .arg(added.size())
                            : *dropped ? T("Namen verwischen: kein Fenster frei")
+                           : locked   ? T("Namen verwischen: nur gesperrte Spuren")
                                       : T("Namen verwischen: kein Text gefunden");
     if (*dropped) text += ' ' + T("(%1 Texte ohne freies Fenster: bleiben sichtbar)").arg(*dropped);
+    // A kill feed copy on a locked track keeps its names: said loudly, the export would show them
+    if (locked) {
+        text += ' ' + T("(%1 Texte auf gesperrten Spuren: bleiben sichtbar)").arg(locked);
+        QMessageBox::warning(this, T("Namen verwischen"),
+                             T("%1 Texte liegen auf gesperrten Spuren und bleiben lesbar. Spur entsperren und noch einmal "
+                               "verwischen, um sie zu verbergen.")
+                                 .arg(locked));
+    }
     statusBar()->showMessage(text, 10000);
 }
