@@ -10,6 +10,7 @@
 #include "core/RoomTone.h"
 #include "core/ScriptAlign.h"
 #include "core/TimelineOps.h"
+#include "core/Transcript.h"
 #include "core/TranscriptCut.h"
 #include "engine/AudioAnalysis.h"
 #include "engine/MediaIndex.h"
@@ -298,7 +299,8 @@ double round2(double v) { return std::round(v * 100) / 100; }
 QVector<ScriptAlign::Word> wordsOf(const MediaTranscript& t)
 {
     QVector<ScriptAlign::Word> out;
-    for (const TranscriptWord& w : t.words) out << ScriptAlign::Word{w.text, w.from / 1000.0, w.to / 1000.0};
+    // Up to where the word is spoken (TranscriptWord::to reaches up to the next word: pauses inside a take showed)
+    for (const TranscriptWord& w : t.words) out << ScriptAlign::Word{w.text, w.from / 1000.0, Transcript::spokenEnd(w) / 1000.0};
     return out;
 }
 
@@ -314,6 +316,8 @@ QVector<TranscriptWord> transcribeFile(const QString& file, const QString& langu
     for (const QJsonValue& v : r["words"].toArray())
         words << TranscriptWord{qint64(std::lround(v["from"].toDouble() / fps * 1000)),
                                 qint64(std::lround(v["to"].toDouble() / fps * 1000)), v["text"].toString()};
+    // As every transcript of the project: a word's end reaches up to the next word (TranscriptWord)
+    for (int i = 0; i + 1 < words.size(); ++i) words[i].to = std::max(words[i].to, words[i + 1].from);
     if (lang) *lang = r["language"].toString();
     return words;
 }
@@ -456,28 +460,43 @@ void opBestTakes(Session& s, const QJsonObject& op)
     if (spoken.isEmpty())
         fail("NO_TRANSCRIPT", "no transcribed speech on the timeline (transcribe the clips' files first: the app's "
                               "Transcript panel, or rough_cut)");
-    QVector<ScriptAlign::Word> words;
-    for (const TranscriptCut::Word& w : spoken) words << ScriptAlign::Word{w.text, w.from / fps, w.to / fps};
-    const QVector<ScriptAlign::Repeat> reps = ScriptAlign::repeats(words);
     QVector<QPair<int, int>> cut;
     QJsonArray out;
-    const auto text = [&](const ScriptAlign::Take& t) {
-        QStringList w;
-        for (int i = t.first; i <= t.last; ++i) w << spoken[i].text;
-        return w.join(' ');
-    };
-    for (const ScriptAlign::Repeat& r : reps) {
-        QJsonArray removed;
-        for (int k = 0; k < r.takes.size(); ++k) {
-            if (k == r.keep) continue;
-            const ScriptAlign::Take& t = r.takes[k];
-            // Up to the next word (the pause after the take goes with it; nothing of a frame stays between takes)
-            cut << qMakePair(spoken[t.first].from, t.last + 1 < spoken.size() ? spoken[t.last + 1].from : spoken[t.last].to);
-            removed << QJsonObject{{"text", text(t)}, {"from_s", round2(t.from)}, {"to_s", round2(t.to)}};
+    // Per audio track (two speakers who both say "Ja, genau." are no repeat), words up to their spoken end
+    QVector<int> tracks;
+    for (const TranscriptCut::Word& w : spoken)
+        if (!tracks.contains(w.track)) tracks << w.track;
+    for (int tr : tracks) {
+        QVector<TranscriptCut::Word> on;
+        for (const TranscriptCut::Word& w : spoken)
+            if (w.track == tr) on << w;
+        QVector<ScriptAlign::Word> words;
+        for (const TranscriptCut::Word& w : on) words << ScriptAlign::Word{w.text, w.from / fps, std::max(w.from, w.spokenTo) / fps};
+        const auto text = [&](const ScriptAlign::Take& t) {
+            QStringList w;
+            for (int i = t.first; i <= t.last; ++i) w << on[i].text;
+            return w.join(' ');
+        };
+        for (const ScriptAlign::Repeat& r : ScriptAlign::repeats(words)) {
+            QJsonArray removed;
+            for (int k = 0; k < r.takes.size(); ++k) {
+                if (k == r.keep) continue;
+                const ScriptAlign::Take& t = r.takes[k];
+                // Up to the next word when it follows within a second in the same clip (the pause goes with it),
+                // else just after the last word: never on into another clip or a long stretch without words
+                const TranscriptCut::Word& last = on[t.last];
+                const int spokenEnd = std::max(last.from + 1, last.spokenTo);
+                int end = std::min(last.to, spokenEnd + int(std::lround(0.15 * fps)));
+                if (t.last + 1 < on.size() && on[t.last + 1].clipId == last.clipId
+                    && on[t.last + 1].from - spokenEnd <= int(std::lround(fps)))
+                    end = on[t.last + 1].from;
+                cut << qMakePair(on[t.first].from, end);
+                removed << QJsonObject{{"text", text(t)}, {"from_s", round2(t.from)}, {"to_s", round2(t.to)}};
+            }
+            const ScriptAlign::Take& kept = r.takes[r.keep];
+            out << QJsonObject{{"kept", QJsonObject{{"text", text(kept)}, {"from_s", round2(kept.from)}, {"to_s", round2(kept.to)}}},
+                               {"removed", removed}, {"track", QString("A%1").arg(tr + 1)}};
         }
-        const ScriptAlign::Take& kept = r.takes[r.keep];
-        out << QJsonObject{{"kept", QJsonObject{{"text", text(kept)}, {"from_s", round2(kept.from)}, {"to_s", round2(kept.to)}}},
-                           {"removed", removed}};
     }
     if (cut.isEmpty()) {
         s.notes << "best_takes: no sentence was said twice in a row - nothing cut";
@@ -547,7 +566,7 @@ void opHideJumps(Session& s, const QJsonObject& op)
         for (int id = j.left; id; id = next.value(id)) {
             if (in && (only.isEmpty() || only.contains(id))) {
                 const Clip* c = TimelineOps::findClip(tl, id);
-                const bool free = c && c->transform.zoomX == 1.0 && c->transform.zoomY == 1.0 && c->transform.posX == 0
+                const bool free = c && !TimelineOps::isLocked(tl, id) && c->transform.zoomX == 1.0 && c->transform.zoomY == 1.0 && c->transform.posX == 0
                                   && c->transform.posY == 0
                                   && !Keys::animated(*c, AnimParam::ZoomX) && !Keys::animated(*c, AnimParam::ZoomY)
                                   && !Keys::animated(*c, AnimParam::PosX) && !Keys::animated(*c, AnimParam::PosY);
@@ -576,7 +595,10 @@ void opHideJumps(Session& s, const QJsonObject& op)
                 ++onSubject;
             }
         s.editor.modifyClips({id}, T("Sprünge kaschieren"), [&](Clip& clip) {
-            clip.transform.transformOn = true;
+            if (!clip.transform.transformOn) { // values kept while it was off (a rotation) would come back
+                clip.transform.rotation = 0;
+                clip.transform.transformOn = true;
+            }
             clip.transform.zoomX = clip.transform.zoomY = zoom;
             clip.transform.posX = std::round(shift.x() * 10) / 10;
             clip.transform.posY = std::round(shift.y() * 10) / 10;
@@ -600,7 +622,7 @@ void opHideJumps(Session& s, const QJsonObject& op)
     if (!skipped.isEmpty()) {
         QStringList sk;
         for (int id : skipped) sk << QString::number(id);
-        note += ". Left as they are (own zoom/position or keyframes): " + sk.join(", ");
+        note += ". Left as they are (own zoom/position, keyframes or a locked track): " + sk.join(", ");
     }
     s.notes << note;
 }
@@ -685,6 +707,7 @@ void opBroll(Session& s, const QJsonObject& op)
         const QVector<IndexSearch::Hit> hits = IndexSearch::search(line.text, shots, 0);
         for (const IndexSearch::Hit& h : hits) {
             if (h.score <= 0 || h.file == running || used.contains(h.file + '#' + QString::number(h.n))) continue;
+            if (const MediaInfo* mi = s.project.mediaInfo(h.file); !mi || !mi->hasVideo || mi->isImage) continue;
             // Words of the question, not only a quality ("calm") or an event, must have matched
             const bool worded = std::any_of(h.reasons.begin(), h.reasons.end(), [](const IndexSearch::Reason& r) {
                 return r.field == "tag" || r.field == "desc" || r.field == "speech";
@@ -700,21 +723,34 @@ void opBroll(Session& s, const QJsonObject& op)
         used.insert(best->file + '#' + QString::number(best->n));
         // As long as the sentence (the shot permitting), from the shot's start
         const int length = std::max(1, std::min(line.to - line.from, int(std::floor((best->to - best->from) * fps))));
-        QVector<int> before;
-        for (const Track& t : s.project.timeline().audio)
-            for (const Clip& c : t.clips) before << c.id;
-        applyOp(s, QJsonObject{{"op", "place"}, {"media", best->file}, {"at", line.from},
-                               {"in", QString("%1s").arg(best->from, 0, 'f', 3)}, {"duration", length},
-                               {"track", QString("V%1").arg(track + 1)}});
-        // B-roll is picture: its sound clips go again
-        QJsonArray sound;
-        for (const Track& t : s.project.timeline().audio)
-            for (const Clip& c : t.clips)
-                if (!before.contains(c.id) && c.mediaPath == best->file) sound << c.id;
-        if (!sound.isEmpty()) applyOp(s, QJsonObject{{"op", "delete"}, {"clips", sound}, {"linked", false}});
+        // Picture only, onto the first unlocked video track from `track` up that is free there: a place op would
+        // also lay its sound over the audio track of that number and overwrite what lies on either track
+        const MediaInfo& m = s.media(best->file);
+        const Timeline& now = s.project.timeline();
+        int vt = track;
+        for (; vt < now.video.size(); ++vt) {
+            const Track& t = now.video[vt];
+            if (t.locked) continue;
+            if (std::none_of(t.clips.begin(), t.clips.end(),
+                             [&](const Clip& c) { return c.start < line.from + length && c.end() > line.from; }))
+                break;
+        }
+        Clip b;
+        b.kind = ClipKind::Media;
+        b.mediaPath = m.path;
+        b.start = line.from;
+        b.in = std::clamp(int(std::lround(best->from * fps)), 0, std::max(0, m.length - 1));
+        b.out = std::min(m.length - 1, b.in + length - 1);
+        b.pictureAspect = m.pictureAspect;
+        if (b.out < b.in) continue;
+        b.id = s.project.newClipId();
+        s.project.edit(T("Einfügen"), [&](Timeline& tl) {
+            TimelineOps::ensureTracks(tl, TrackKind::Video, vt + 1);
+            TimelineOps::placeClip(tl.video[vt], b, [&s] { return s.project.newClipId(); });
+        });
         placed << QJsonObject{{"said", line.text.trimmed()}, {"at", line.from}, {"at_s", round2(line.from / fps)},
                               {"length_s", round2(length / fps)}, {"file", best->file}, {"shot", best->n},
-                              {"from_s", round2(best->from)}, {"why", best->why}};
+                              {"from_s", round2(best->from)}, {"track", QString("V%1").arg(vt + 1)}, {"why", best->why}};
     }
     QJsonObject r{{"placed", placed}, {"track", QString("V%1").arg(track + 1)}};
     if (!unmatched.isEmpty()) r["no_match"] = unmatched;
