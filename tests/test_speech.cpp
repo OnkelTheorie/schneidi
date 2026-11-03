@@ -197,6 +197,9 @@ void testPure()
     CHECK_EQ(Speech::piperArguments("/v/x.onnx", o, "/o/a.wav"),
              (QStringList{"--model", "/v/x.onnx", "--output_file", "/o/a.wav", "--length_scale", "0.500",
                           "--sentence_silence", "0.500", "--quiet"}));
+    // The config by its own path (a short 8.3 model path loses the ".onnx" piper appends ".json" to)
+    CHECK_EQ(Speech::piperArguments("C:\\V\\DE_DE-~1.ONN", o, "a.wav", "C:\\V\\DE_DE-~1.JSO").mid(0, 4),
+             (QStringList{"--model", "C:\\V\\DE_DE-~1.ONN", "--config", "C:\\V\\DE_DE-~1.JSO"}));
     o.speed = 9;
     CHECK(Speech::piperArguments("m", o, "o").contains("0.500")); // clamped to 2
     CHECK_EQ(Speech::stdinText("Eins.\nZwei.  "), QByteArray("Eins. Zwei.\n"));

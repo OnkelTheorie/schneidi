@@ -35,8 +35,10 @@ QString fileName(const QString& text, const Options& options);
 // "tts" in the app's data folder (an unsaved project has no folder; the files must outlive any cache)
 QString folder(const QString& projectPath);
 
-// Arguments of the piper program for one file (text comes on stdin, see stdinText)
-QStringList piperArguments(const QString& model, const Options& options, const QString& outFile);
+// Arguments of the piper program for one file (text comes on stdin, see stdinText). config: the voice's .json when
+// piper cannot find it as "<model>.json" itself (a short 8.3 model path ends in ".ONN")
+QStringList piperArguments(const QString& model, const Options& options, const QString& outFile,
+                           const QString& config = {});
 QByteArray stdinText(const QString& text); // UTF-8, one line
 
 // Language of a voice ("de_DE-thorsten", a model file "en_US-ljspeech-medium.onnx" -> "de" / "en"); empty = unknown
