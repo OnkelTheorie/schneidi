@@ -1383,6 +1383,21 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
         const QJsonObject autoEnc = run("render", {{"project", proj}, {"out", dir.filePath("auto.mp4")}, {"height", 180},
                                                    {"to", "1s"}});
         CHECK(autoEnc["encoder"].toString().startsWith("h264_") || autoEnc["encoder"].toString() == "libx264");
+        // Output height: too small is refused (it gave a 1920x1080 file and the answer said 2x0); an odd one is
+        // rounded down to even and the long side follows it, the answer says the file's size
+        CHECK_EQ(errorOf("render", {{"project", proj}, {"out", dir.filePath("h1.mp4")}, {"height", 1}, {"to", "1s"}}),
+                 QString("BAD_ARGUMENT"));
+        CHECK_EQ(errorOf("render", {{"project", proj}, {"out", dir.filePath("h0.mp4")}, {"height", 9000}, {"to", "1s"}}),
+                 QString("BAD_ARGUMENT"));
+        {
+            const QJsonObject odd = run("render", {{"project", proj}, {"out", dir.filePath("h181.mp4")}, {"height", 181},
+                                                   {"to", "1s"}, {"encoder", "software"}});
+            CHECK_EQ(odd["width"].toInt(), 320);
+            CHECK_EQ(odd["height"].toInt(), 180);
+            const QJsonObject pf = run("probe", {{"file", odd["out"].toString()}});
+            CHECK_EQ(pf["width"].toInt(), 320);
+            CHECK_EQ(pf["height"].toInt(), 180);
+        }
         // Scopes of a mid-grey frame: luma in the middle, nothing clipped, no cast
         const QString grey = Check::makeMedia(dir.filePath("grey.mp4"),
                                               {"-f", "lavfi", "-i", "color=c=0x808080:s=320x180:d=1:r=25", "-c:v", "libx264",

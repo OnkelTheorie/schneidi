@@ -241,6 +241,44 @@ void testBars()
     MediaAspect::setProbe({});
 }
 
+// A 9:16 timeline's poster of a landscape clip zoomed to fill it (copy as 9:16): the grade covers the whole picture
+// that shows, not only the 16:9 band it would have at zoom 1; a crop keeps its part ungraded, windows move along
+void testPlacedPoster()
+{
+    MediaAspect::setProbe([](const QString& path) { return path.endsWith("wide.mp4") ? 16.0 / 9.0 : 0.0; });
+    Project p;
+    p.addMedia(MediaInfo{"/x/wide.mp4", "wide.mp4", 3000, true, true, false});
+    // 144x81 tile, the 9:16 frame 46x81 in the middle (x 49..94), the poster frame grey inside it
+    QImage tile(144, 81, QImage::Format_RGB32);
+    tile.fill(Qt::black);
+    for (int y = 0; y < 81; ++y)
+        for (int x = 49; x <= 94; ++x) tile.setPixel(x, y, qRgb(60, 60, 60));
+    Timeline tl;
+    tl.video.resize(1);
+    Clip c = clip(1, 0, 0, 100, "/x/wide.mp4");
+    c.transform.zoomX = c.transform.zoomY = (16.0 / 9.0) / (9.0 / 16.0); // fills the 9:16 frame
+    setGrade(c, "liftY", 0.3);
+    tl.video[0].clips << c;
+    const QImage lifted = GradedThumbs::apply(tile, TimelinePosters::sourceOf(p, tl, QSize(1080, 1920)).grade);
+    CHECK(qRed(lifted.pixel(72, 2)) > 70 && qRed(lifted.pixel(72, 78)) > 70); // top and bottom of the frame
+    CHECK(qRed(lifted.pixel(51, 40)) > 70 && qRed(lifted.pixel(92, 40)) > 70);
+    CHECK(lifted.pixel(10, 40) == qRgb(0, 0, 0) && lifted.pixel(140, 40) == qRgb(0, 0, 0)); // beside the frame
+    // Cropped at the top (a quarter of the frame height, in timeline pixels of the picture at zoom 1): that part
+    // stays as it is
+    tl.video[0].clips[0].transform.cropTop = 1920.0 / 4 / tl.video[0].clips[0].transform.zoomY;
+    const QImage cropped = GradedThumbs::apply(tile, TimelinePosters::sourceOf(p, tl, QSize(1080, 1920)).grade);
+    CHECK(cropped.pixel(72, 10) == qRgb(60, 60, 60));
+    CHECK(qRed(cropped.pixel(72, 40)) > 70);
+    // Moved up by a quarter of the frame height: the bottom quarter is empty frame, ungraded
+    tl.video[0].clips[0].transform.cropTop = 0;
+    tl.video[0].clips[0].transform.posY = 1920.0 / 4;
+    tl.video[0].clips[0].transform.zoomY = 1920.0 / 607.5; // picture exactly the frame's height
+    const QImage moved = GradedThumbs::apply(tile, TimelinePosters::sourceOf(p, tl, QSize(1080, 1920)).grade);
+    CHECK(qRed(moved.pixel(72, 10)) > 70);
+    CHECK(moved.pixel(72, 75) == qRgb(60, 60, 60));
+    MediaAspect::setProbe({});
+}
+
 // ---------- the cache in the paint path ----------
 
 void testCacheAndSettle()
@@ -715,6 +753,7 @@ int main(int argc, char** argv)
 
     testSpecAndApply(tmp.path());
     testBars();
+    testPlacedPoster();
     testCacheAndSettle();
     testEditorUndo();
     testManyClips();

@@ -539,26 +539,60 @@ void flow(const Motion& m, const uint8_t* a, const uint8_t* b, uint8_t* out, int
     });
 }
 
+namespace {
+// Pairs kept for reuse: at most kMotionPairs, and no more than kMotionBytes once two are there (a pair holds both
+// pictures' full-size luma: ~17 MB at 4K, ~66 MB at 8K, kept until the program ends)
+constexpr size_t kMotionPairs = 6, kMotionMinPairs = 2, kMotionBytes = size_t(64) << 20;
+struct MotionCache {
+    struct Entry {
+        QString key;
+        std::shared_future<std::shared_ptr<const Motion>> motion;
+        size_t bytes;
+    };
+    std::mutex lock;
+    std::list<Entry> entries; // front = used last
+    size_t bytes = 0;
+    void trim()
+    {
+        while (entries.size() > kMotionPairs || (bytes > kMotionBytes && entries.size() > kMotionMinPairs)) {
+            bytes -= entries.back().bytes;
+            entries.pop_back();
+        }
+    }
+};
+MotionCache& motionCache()
+{
+    static MotionCache c;
+    return c;
+}
+// Memory of one estimate of a w x h pair (full-size and work-size luma of both pictures; the fields are small)
+size_t motionBytes(int w, int h)
+{
+    const int ww = std::min(w, kWorkWidth), wh = std::max(1, int(std::lround(double(h) * ww / std::max(1, w))));
+    return 2 * (size_t(w) * h + size_t(ww) * wh);
+}
+} // namespace
+
 std::shared_ptr<const Motion> cachedMotion(const QString& key, const uint8_t* a, const uint8_t* b, int w, int h)
 {
     // At 25 % one pair serves three in-between frames; a few pairs cover playback going back and forth. A pair being
     // estimated is in the cache too: the export renders those three frames at once on different threads, and each
     // estimated the same motion itself (2.4 estimates per pair in a 25 % export)
-    using Shared = std::shared_future<std::shared_ptr<const Motion>>;
-    static std::mutex lock;
-    static std::list<std::pair<QString, Shared>> cache;
+    MotionCache& cache = motionCache();
     std::promise<std::shared_ptr<const Motion>> made;
-    Shared found;
+    std::shared_future<std::shared_ptr<const Motion>> found;
     {
-        const std::lock_guard<std::mutex> g(lock);
-        for (auto it = cache.begin(); it != cache.end() && !found.valid(); ++it)
-            if (it->first == key) {
-                cache.splice(cache.begin(), cache, it);
-                found = it->second;
+        const std::lock_guard<std::mutex> g(cache.lock);
+        for (auto it = cache.entries.begin(); it != cache.entries.end() && !found.valid(); ++it)
+            if (it->key == key) {
+                cache.entries.splice(cache.entries.begin(), cache.entries, it);
+                found = it->motion;
             }
         if (!found.valid()) {
-            cache.emplace_front(key, made.get_future().share());
-            while (cache.size() > 6) cache.pop_back();
+            const size_t bytes = motionBytes(w, h);
+            cache.entries.push_front({key, made.get_future().share(), bytes});
+            cache.bytes += bytes;
+            cache.trim();
         }
     }
     if (found.valid()) return found.get(); // waits while another thread estimates it
@@ -568,10 +602,21 @@ std::shared_ptr<const Motion> cachedMotion(const QString& key, const uint8_t* a,
         return m;
     } catch (...) { // (out of memory) the waiting threads get it too; the next call tries again
         made.set_exception(std::current_exception());
-        const std::lock_guard<std::mutex> g(lock);
-        cache.remove_if([&](const auto& e) { return e.first == key; });
+        const std::lock_guard<std::mutex> g(cache.lock);
+        cache.entries.remove_if([&](const MotionCache::Entry& e) {
+            if (e.key != key) return false;
+            cache.bytes -= e.bytes;
+            return true;
+        });
         throw;
     }
+}
+
+MotionCacheStats motionCacheStats()
+{
+    MotionCache& cache = motionCache();
+    const std::lock_guard<std::mutex> g(cache.lock);
+    return {int(cache.entries.size()), cache.bytes};
 }
 
 } // namespace Picture::Interp

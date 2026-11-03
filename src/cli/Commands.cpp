@@ -857,7 +857,7 @@ const QVector<Command>& commands()
            "srt = only the subtitle files (the visible track into out, every other track with entries next to it as "
            "<name>.<track name>.srt, listed in srt_more); vtt = the same as WebVTT"},
           {"quality", T::Integer, "0 = high (default), 1 = medium, 2 = small, 3 = web: high with a bit rate cap like YouTube recommends (H.264/H.265 only; the YouTube and phone presets use it). ProRes, DNxHR, GIF and images have a fixed quality"},
-          {"height", T::Integer, "shorter image edge, e.g. 720 (default: timeline resolution)"},
+          {"height", T::Integer, "shorter image edge, e.g. 720: 16 to 8192, an odd one rounded down to even (default: timeline resolution)"},
           {"size", T::String, "fixed output size, e.g. 1080x1920 (portrait; the picture is fitted in)"},
           {"fps", T::Number, "output frame rate (default: the timeline's)"},
           {"encoder", T::String, "H.264/H.265 video encoder: auto (default: a hardware encoder of the graphics card when "
