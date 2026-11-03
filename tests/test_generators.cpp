@@ -503,7 +503,17 @@ void testInspectorWheel()
         area->verticalScrollBar()->setValue(0);
         QCoreApplication::processEvents();
         const QPoint at = w->mapTo(insp.window(), w->rect().center());
+#if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
         QTest::wheelEvent(insp.window()->windowHandle(), at, QPoint(0, -120));
+#else // Qt before 6.8 (Ubuntu 24.04: 6.4) has no QTest::wheelEvent, and a sent wheel event does not propagate:
+      // to the widget there, then to its parents until one takes it (what QApplication does for a real one)
+        for (QWidget* target = insp.window()->childAt(at); target; target = target->parentWidget()) {
+            QWheelEvent e(target->mapFrom(insp.window(), QPointF(at)), insp.window()->mapToGlobal(QPointF(at)), QPoint(),
+                          QPoint(0, -120), Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+            QApplication::sendEvent(target, &e);
+            if (e.isAccepted()) break;
+        }
+#endif
         return area->verticalScrollBar();
     };
     // shown and really under the mouse at its centre (not covered, inside the visible part of the page)
