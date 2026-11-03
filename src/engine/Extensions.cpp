@@ -43,11 +43,20 @@ constexpr const char* kVoicePrefix = "piper-voice-";
 constexpr const char* kProgramName = "whisper-cli.exe";
 constexpr const char* kFfmpegName = "ffmpeg.exe";
 constexpr const char* kPiperName = "piper.exe";
+constexpr const char* kOnnxRuntimeName = "onnxruntime.dll";
+#elif defined(Q_OS_MACOS)
+constexpr const char* kProgramName = "whisper-cli";
+constexpr const char* kFfmpegName = "ffmpeg";
+constexpr const char* kPiperName = "piper";
+constexpr const char* kOnnxRuntimeName = "libonnxruntime.dylib";
 #else
 constexpr const char* kProgramName = "whisper-cli";
 constexpr const char* kFfmpegName = "ffmpeg";
 constexpr const char* kPiperName = "piper";
+constexpr const char* kOnnxRuntimeName = "libonnxruntime.so";
 #endif
+constexpr const char* kYamnetModel = "yamnet.onnx";
+constexpr const char* kYamnetLabels = "yamnet_class_map.csv";
 
 QVector<Item> makeCatalog()
 {
@@ -128,6 +137,29 @@ QVector<Item> makeCatalog()
           "ggml-base-q5_1.bin", "422f1ae452ade6f30a004d7e5c6a43195e4433bc370bf23fac9cc591f01a8898", 59707625);
     model("whisper-model-tiny", N_("Whisper-Modell „Schnell“ (tiny)"), N_("sehr schnell, ungenau"),
           "ggml-tiny-q5_1.bin", "818710568da3ca15689e31a743197b520007872ff9576237bda97bd1b469c3d7", 32152673);
+
+    // ---- TODO (0.17, audio events): placeholders, NOT offered until a human fills in a verified download ----
+    // Entries without URL, size or SHA-256 never reach the catalog (nothing unchecked is downloaded). To enable one:
+    // URL pinned to a release/revision, size in bytes and SHA-256 of exactly that file, licence read by a human.
+    const auto pending = [&](const Item& item) {
+        if (!item.url.isEmpty() && !item.sha256.isEmpty() && item.size > 0
+            && (item.configUrl.isEmpty() || (!item.configSha256.isEmpty() && item.configSize > 0)))
+            list << item;
+    };
+    // ONNX Runtime (assumed MIT; to check), CPU build from the GitHub releases of microsoft/onnxruntime, e.g.
+    // ".../releases/download/v<ver>/onnxruntime-linux-x64-<ver>.tgz" / "onnxruntime-win-x64-<ver>.zip"; the archive
+    // holds lib/libonnxruntime.so* (lib/onnxruntime.dll), which Installer::unpack looks for. Any version >= 1.11.
+    pending(Item{"onnxruntime", Kind::Runtime, N_("ONNX Runtime (lokale KI-Modelle)"),
+                 N_("rechnet kleine KI-Modelle offline auf dem Prozessor (für Ton-Ereignisse)"),
+                 /*TODO url*/ QString(), /*TODO sha256*/ QByteArray(), /*TODO size*/ 0, /*TODO archive*/ QString()});
+    // YAMNet (Google, assumed Apache-2.0; to check) as ONNX: waveform float32 [N] at 16 kHz -> scores [frames, 521]
+    // (or fixed windows of 15600 samples -> [1, 521]); the class list yamnet_class_map.csv (index,mid,display_name)
+    // from tensorflow/models as the second file. Needs a host with a pinned revision for the .onnx (to find).
+    pending(Item{"audio-events", Kind::AudioModel, N_("Ton-Ereignisse (YAMNet)"),
+                 N_("erkennt Lachen, Applaus, Jubel, Musik, Sprache, Schüsse und Schreie im Ton genauer (braucht ONNX "
+                    "Runtime)"),
+                 /*TODO url*/ QString(), /*TODO sha256*/ QByteArray(), /*TODO size*/ 0, kYamnetModel,
+                 /*TODO class map url*/ QString(), /*TODO sha256*/ QByteArray(), /*TODO size*/ 0, kYamnetLabels});
     return list;
 }
 
@@ -139,6 +171,9 @@ QString encoderTree() { return QDir(encoderDir()).filePath("bin"); }
 QString piperDir() { return QDir(rootDir()).filePath("piper"); }
 QString piperBin() { return QDir(piperDir()).filePath("bin"); }
 QString voicesDir() { return QDir(piperDir()).filePath("voices"); }
+QString onnxDir() { return QDir(rootDir()).filePath("onnxruntime"); }
+QString onnxLib() { return QDir(onnxDir()).filePath("lib"); }
+QString audioEventsDir() { return QDir(rootDir()).filePath("audio-events"); }
 
 // Folder an item's download is unpacked or stored in
 QString downloadDir(const Item& item)
@@ -148,6 +183,8 @@ QString downloadDir(const Item& item)
     case Kind::Encoder: return encoderDir();
     case Kind::Speech: return piperDir();
     case Kind::Voice: return voicesDir();
+    case Kind::Runtime: return onnxDir();
+    case Kind::AudioModel: return audioEventsDir();
     default: return modelsDir();
     }
 }
@@ -201,7 +238,7 @@ void cleanUp()
     // Every "<dir>.old*" there now (moveAside's names, "<dir>.old" of older versions); one moved aside later has a new
     // name and stays for its own caller
     QStringList left;
-    for (const QString& dir : {binDir(), encoderTree(), piperBin()}) {
+    for (const QString& dir : {binDir(), encoderTree(), piperBin(), onnxLib()}) {
         const QFileInfo info(dir);
         const QFileInfoList old =
             info.dir().entryInfoList({info.fileName() + ".old*"}, QDir::Dirs | QDir::NoDotAndDotDot);
@@ -290,6 +327,8 @@ QVector<const Item*> withDependencies(const QVector<const Item*>& items)
         // A model is no use without the program (unless one is on PATH)
         if (i->kind == Kind::WhisperModel && whisperProgram().isEmpty()) add(find("whisper"));
         if (i->kind == Kind::Voice && piperProgram().isEmpty()) add(find("piper"));
+        if (i->kind == Kind::AudioModel && onnxRuntimeLibrary().isEmpty() && piperOnnxRuntime().isEmpty())
+            add(find("onnxruntime"));
         add(i);
         if (i->id == "whisper") add(find("whisper-vad"));
     }
@@ -304,6 +343,12 @@ QString installedPath(const Item& item)
         const QString path = QDir(voicesDir()).filePath(item.fileName);
         return QFileInfo::exists(path) && QFileInfo::exists(path + ".json") ? path : QString();
     }
+    if (item.kind == Kind::AudioModel) { // model and class list
+        const QString path = QDir(audioEventsDir()).filePath(item.fileName);
+        const QString labels = QDir(audioEventsDir()).filePath(item.configName);
+        return QFileInfo::exists(path) && QFileInfo::exists(labels) ? path : QString();
+    }
+    if (item.kind == Kind::Runtime) return onnxRuntimeLibrary();
     const QString path = item.kind == Kind::Program  ? QDir(binDir()).filePath(kProgramName)
                          : item.kind == Kind::Speech ? QDir(piperBin()).filePath(kPiperName)
                                                      : QDir(modelsDir()).filePath(item.fileName);
@@ -314,9 +359,14 @@ bool isInstalled(const Item& item) { return !installedPath(item).isEmpty(); }
 
 bool remove(const Item& item)
 {
-    if (item.kind == Kind::Program || item.kind == Kind::Encoder || item.kind == Kind::Speech) {
+    if (item.kind == Kind::Program || item.kind == Kind::Encoder || item.kind == Kind::Speech
+        || item.kind == Kind::Runtime) {
         QString aside;
-        if (!moveAside(item.kind == Kind::Program ? binDir() : item.kind == Kind::Encoder ? encoderTree() : piperBin(), &aside))
+        if (!moveAside(item.kind == Kind::Program   ? binDir()
+                       : item.kind == Kind::Encoder ? encoderTree()
+                       : item.kind == Kind::Runtime ? onnxLib()
+                                                    : piperBin(),
+                       &aside))
             return false;
         if (!aside.isEmpty()) QDir(aside).removeRecursively();
         return true;
@@ -324,6 +374,11 @@ bool remove(const Item& item)
     if (item.kind == Kind::Voice) {
         const QString path = QDir(voicesDir()).filePath(item.fileName);
         QFile::remove(path + ".json");
+        return !QFileInfo::exists(path) || QFile::remove(path);
+    }
+    if (item.kind == Kind::AudioModel) {
+        const QString path = QDir(audioEventsDir()).filePath(item.fileName);
+        QFile::remove(QDir(audioEventsDir()).filePath(item.configName));
         return !QFileInfo::exists(path) || QFile::remove(path);
     }
     const QString path = installedPath(item);
@@ -378,6 +433,52 @@ QString voiceModelPath(const QString& idOrPath)
     return {};
 }
 
+namespace {
+// The onnxruntime library in a folder (or below it): the plain name first, else a versioned one
+// (libonnxruntime.so.1.21.0, libonnxruntime.1.21.0.dylib)
+QString onnxRuntimeIn(const QString& dir)
+{
+    if (!QFileInfo(dir).isDir()) return {};
+    QDirIterator exact(dir, {kOnnxRuntimeName}, QDir::Files, QDirIterator::Subdirectories);
+    if (exact.hasNext()) return exact.next();
+#ifdef Q_OS_WIN
+    return {};
+#else
+    QDirIterator versioned(dir, {"libonnxruntime.so.*", "libonnxruntime.*.dylib"}, QDir::Files,
+                           QDirIterator::Subdirectories);
+    return versioned.hasNext() ? versioned.next() : QString();
+#endif
+}
+} // namespace
+
+QString onnxRuntimeLibrary() { return onnxRuntimeIn(onnxLib()); }
+
+QString piperOnnxRuntime() { return onnxRuntimeIn(piperBin()); }
+
+QString audioEventsModel()
+{
+    const QString own = qEnvironmentVariable("SCHNEIDI_YAMNET");
+    if (!own.isEmpty()) return QFileInfo(own).isFile() ? QFileInfo(own).absoluteFilePath() : QString();
+    if (const Item* i = find("audio-events")) return installedPath(*i);
+    // Not in the catalog yet (see the TODO there): a model put into the folder by hand works the same
+    const QString path = QDir(audioEventsDir()).filePath(kYamnetModel);
+    return QFileInfo::exists(path) && QFileInfo::exists(QDir(audioEventsDir()).filePath(kYamnetLabels)) ? path
+                                                                                                        : QString();
+}
+
+QString audioEventsLabels()
+{
+    const QString model = audioEventsModel();
+    if (model.isEmpty()) return {};
+    const QFileInfo m(model);
+    // Beside the model: the catalog's name, or <model>.csv (SCHNEIDI_YAMNET=.../my-yamnet.onnx + my-yamnet.csv)
+    for (const QString& name : {QString(kYamnetLabels), m.completeBaseName() + ".csv"}) {
+        const QString path = m.dir().filePath(name);
+        if (QFileInfo(path).isFile()) return path;
+    }
+    return {};
+}
+
 QStringList installedWhisperModels()
 {
     QStringList ids;
@@ -428,7 +529,9 @@ bool Installer::startPart(QString* error)
         if (error) *error = "cannot create " + dir;
         return false;
     }
-    const QString name = m_part == 0 ? item.fileName : item.fileName + ".json";
+    const QString name = m_part == 0                   ? item.fileName
+                         : !item.configName.isEmpty() ? item.configName
+                                                      : item.fileName + ".json";
     m_file = std::make_unique<QFile>(QDir(dir).filePath(name + ".part"));
     if (!m_file->open(QIODevice::WriteOnly | QIODevice::Truncate)) {
         if (error) *error = m_file->errorString();
@@ -511,11 +614,13 @@ void Installer::onFinished()
     const QString part = m_file->fileName();
     m_file.reset();
     QString error;
-    if (m_item.kind == Kind::Program || m_item.kind == Kind::Encoder || m_item.kind == Kind::Speech) {
+    if (m_item.kind == Kind::Program || m_item.kind == Kind::Encoder || m_item.kind == Kind::Speech
+        || m_item.kind == Kind::Runtime) {
         error = unpack(part);
         QFile::remove(part);
-    } else if (m_item.kind == Kind::Voice && m_part == 0) {
-        // A voice: first its config too (the model alone is no use; installedPath wants both), then both in place
+    } else if (!m_item.configUrl.isEmpty() && m_part == 0) {
+        // A voice (an audio model): first its config (class list) too (the model alone is no use; installedPath
+        // wants both), then both in place
         m_voicePart = part;
         m_part = 1;
         if (!startPart(&error)) {
@@ -544,9 +649,10 @@ QString Installer::unpack(const QString& archive)
 {
     // Unpack next to the old version, then swap: a failed update keeps the working one
     const bool encoder = m_item.kind == Kind::Encoder, piper = m_item.kind == Kind::Speech;
-    const QDir dir(encoder ? encoderDir() : piper ? piperDir() : whisperDir());
-    const QString target = encoder ? encoderTree() : piper ? piperBin() : binDir();
-    const char* program = encoder ? kFfmpegName : piper ? kPiperName : kProgramName;
+    const bool onnx = m_item.kind == Kind::Runtime;
+    const QDir dir(encoder ? encoderDir() : piper ? piperDir() : onnx ? onnxDir() : whisperDir());
+    const QString target = encoder ? encoderTree() : piper ? piperBin() : onnx ? onnxLib() : binDir();
+    const char* program = encoder ? kFfmpegName : piper ? kPiperName : onnx ? kOnnxRuntimeName : kProgramName;
     const QString staging = dir.filePath("bin.new");
     QDir(staging).removeRecursively();
     dir.mkpath("bin.new");
@@ -581,6 +687,7 @@ QString Installer::unpack(const QString& archive)
     }
     if (!aside.isEmpty()) QDir(aside).removeRecursively();
     QDir(staging).removeRecursively();
+    if (onnx) return {}; // a library: nothing to run
     const QString installed = encoder ? installedFfmpeg() : QDir(target).filePath(program);
     QFile::setPermissions(installed, QFile::permissions(installed) | QFile::ExeOwner | QFile::ExeUser);
     if (!encoder) provideRuntime(installed);

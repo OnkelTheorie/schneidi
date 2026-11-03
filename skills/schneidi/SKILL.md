@@ -34,6 +34,9 @@ names cost a failed call.
    dark/overexposed, motion, pan, face likely), speech and sounds, and shows the undescribed shots as a sheet -
    describe them with `annotate` ([{file, shot, desc, tags}], kept for good), then `index` `query` ("ruhige
    Totale vom Laden", "wo lacht er") finds them, with a project also in timeline time.
+   `highlights` (loud or exciting moments; `peaks {events:true}` also says what is heard: speech, music, laughter,
+   applause, cheering, shots, screams, silence), `beats` for a song (tempo, bars, phrases, breaks, drops). You cannot
+   edit well what you have not looked at.
 2. **Say the plan in 2-3 sentences** (length, structure, format), then go ahead. Don't wait for approval unless the
    plan rests on a guess about something important that the user can easily answer.
 3. **Build it in small steps.** Create the project with `new` (match the frame rate of the main material; vertical

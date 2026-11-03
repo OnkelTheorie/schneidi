@@ -7,6 +7,7 @@
 #include "core/TimelineOps.h"
 #include "core/Transcript.h"
 #include "engine/AudioAnalysis.h"
+#include "engine/AudioEvents.h"
 #include "engine/Extensions.h"
 #include "engine/Transcriber.h"
 
@@ -141,6 +142,39 @@ QJsonObject peaksOne(const QJsonObject& a, Context& ctx)
             groups << g;
         }
         out["groups"] = groups;
+    }
+    if (a.contains("events")) {
+        const QString way = a["events"].toString().trimmed().toLower();
+        if (way != "false" && way != "no" && way != "0") {
+            AudioEvents::Options o;
+            if (way == "heuristic") o.engine = AudioEvents::Engine::Heuristic;
+            else if (way == "yamnet") o.engine = AudioEvents::Engine::Yamnet;
+            else if (way != "true" && way != "auto" && way != "yes" && way != "1" && !way.isEmpty())
+                fail("BAD_ARGUMENT", "'events' is true, auto, heuristic or yamnet");
+            for (const QString& k : a["event_kinds"].toString().split(',', Qt::SkipEmptyParts)) {
+                const QString kind = k.trimmed().toLower();
+                if (!AudioEvents::kinds().contains(kind))
+                    fail("BAD_ARGUMENT", "unknown event kind '" + kind + "' (kinds: " + AudioEvents::kinds().join(", ") + ")");
+                o.only << kind;
+            }
+            if (a.contains("min_conf")) o.minConf = a["min_conf"].toDouble();
+            const AudioEvents::Result r = AudioEvents::analyzeFile(m.info.path, a["audio_stream"].toInt(), o);
+            if (!r.error.isEmpty()) {
+                if (o.engine == AudioEvents::Engine::Yamnet && !AudioEvents::yamnetAvailable())
+                    fail("NOT_INSTALLED", r.error + " - or use events:'heuristic'");
+                fail("DECODE_FAILED", r.error);
+            }
+            QJsonArray events = AudioEvents::toJson(r.events);
+            const double fps = f.rate.fps();
+            for (QJsonValueRef v : events) {
+                QJsonObject e = v.toObject();
+                e["from"] = int(std::lround(e["from_s"].toDouble() * fps));
+                e["to"] = std::max(e["from"].toInt() + 1, int(std::lround(e["to_s"].toDouble() * fps)));
+                v = e;
+            }
+            out["events"] = events;
+            out["events_by"] = r.by;
+        }
     }
     return out;
 }

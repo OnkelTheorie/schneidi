@@ -1013,7 +1013,15 @@ const QVector<Command>& commands()
           {"group", T::Time, "also return 'groups': peaks less than this apart as one burst (a fight, a rally) "
                              "with from/to, hits, the loudest peak_db and hits per second, e.g. \"2s\""},
           {"audio_stream", T::Integer, "which audio stream, 0 = first"},
-          {"project", T::Path, "count frames in this project's frame rate"}},
+          {"project", T::Path, "count frames in this project's frame rate"},
+          {"events", T::String, "also return 'events': what is heard, with from/to (frames and s), conf 0..1 and by - "
+                                "speech, music, silence, laughter, applause, cheering, shot (also bangs, explosions), "
+                                "scream. true/auto = the YAMNet model when installed (extension audio-events), else "
+                                "heuristics from loudness, spectrum and pitch (good for silence, shots, music vs "
+                                "speech, applause; laughter/cheering/screams are guesses); heuristic; yamnet. Cached "
+                                "per file"},
+          {"event_kinds", T::String, "with events: only these kinds, e.g. \"laughter,applause\""},
+          {"min_conf", T::Number, "with events: only events at least this sure (0..1)"}},
          cmdPeaks},
         {"beats", "Tempo and structure of a song in one call, to cut to the music (not to a fixed grid): bpm (70-220 "
                   "by default, half/double tempo resolved by which beats are loud) with a confidence, the beat grid "

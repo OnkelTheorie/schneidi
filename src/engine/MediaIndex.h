@@ -29,7 +29,7 @@
 
 namespace MediaIndex {
 
-inline constexpr int kVersion = 1; // bump when a measure changes (old cache entries are measured anew)
+inline constexpr int kVersion = 2; // bump when a measure changes (old cache entries are measured anew); 2: real audio events
 
 struct Quality {
     double sharp = 0;      // 0..1 (blurry below 0.3)

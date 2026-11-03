@@ -2133,5 +2133,9 @@
  "„Neuer Chat“ fängt frisch an.": "«Nuevo chat» empieza de cero.",
  "„Neutral“ ist ein neues Projekt wie immer: nichts stumm, nichts umbenannt, das Format kommt vom ersten Clip. Die gewählte Vorlage gilt auch für das Projekt, mit dem schneidi startet.": "«Neutra» es un proyecto nuevo como siempre: nada silenciado, nada renombrado, el formato viene del primer clip. La plantilla elegida también vale para el proyecto con el que arranca schneidi.",
  "◀ Verfolgen": "◀ Rastrear",
- "♪ Audio": "♪ Audio"
+ "♪ Audio": "♪ Audio",
+ "ONNX Runtime (lokale KI-Modelle)": "ONNX Runtime (modelos de IA locales)",
+ "Ton-Ereignisse (YAMNet)": "Eventos de sonido (YAMNet)",
+ "erkennt Lachen, Applaus, Jubel, Musik, Sprache, Schüsse und Schreie im Ton genauer (braucht ONNX Runtime)": "reconoce con más precisión risas, aplausos, vítores, música, voz, disparos y gritos en el sonido (necesita ONNX Runtime)",
+ "rechnet kleine KI-Modelle offline auf dem Prozessor (für Ton-Ereignisse)": "ejecuta pequeños modelos de IA sin conexión en el procesador (para eventos de sonido)"
 }
