@@ -359,6 +359,16 @@ int main(int argc, char* argv[])
         CHECK_EQ(parts.size(), 1);
         CHECK(!parts.isEmpty() && parts.first().length() == 20 * kFps && parts.first().fadeOut > 0 && parts.first().in == 0);
     }
+    // end:'fade' with keep:'drop': the part with the drop (bar 32, 64.5 s) instead of the first 20 s
+    {
+        run("edit", {{"project", project}, {"ops", "[{\"op\":\"clear\"}]"}});
+        const QJsonObject r = edit(project, QString(R"([{"op":"fit_music","media":"%1","length":"20s","end":"fade","keep":"drop","track":"A1"}])").arg(file));
+        const QJsonObject fit = note(r, "fit_music").toObject();
+        const double at = fit["drop_at"].toDouble(-1);
+        if (!CHECK(at >= 0 && at < 20)) std::printf("       %s\n", QJsonDocument(fit).toJson(QJsonDocument::Compact).constData());
+        const QVector<Clip> parts = clipsOn(*load(project), 0);
+        CHECK(parts.size() == 1 && parts.first().length() == 20 * kFps && parts.first().in > 0);
+    }
     // Too short, bad arguments
     CHECK_EQ(edit(project, QString(R"([{"op":"fit_music","media":"%1","length":"200s"}])").arg(file), true)["failed"].toString(),
              QString("TOO_SHORT"));
