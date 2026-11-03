@@ -383,6 +383,19 @@ int main(int argc, char* argv[])
         const QVector<Clip> back = clipsOn(*load(project), 1);
         CHECK(back.size() == 1 && back.value(0).id == id && back.value(0).out == before.mediaInfo(file)->length - 1);
     }
+    // length:'timeline' for a song clip that starts later: it ends with the timeline (it ran past it by its start)
+    {
+        run("edit", {{"project", project}, {"ops", "[{\"op\":\"clear\"}]"}});
+        edit(project, R"([{"op":"title","text":"x","at":0,"duration":"30s"}])");
+        edit(project, QString(R"([{"op":"place","media":"%1","at":"4s","track":"A2"}])").arg(file));
+        const int id = clipsOn(*load(project), 1).value(0).id;
+        edit(project, QString(R"([{"op":"fit_music","clip":%1,"length":"timeline"}])").arg(id));
+        const QVector<Clip> parts = clipsOn(*load(project), 1);
+        if (CHECK(!parts.isEmpty())) {
+            CHECK_EQ(parts.first().start, 4 * kFps);
+            if (!CHECK(std::abs(parts.last().end() - 30 * kFps) <= 1)) std::printf("       ends at %d\n", parts.last().end());
+        }
+    }
 
     // snap_to_beat: a picture cut 0.28 s (14 frames) off the bar ones of the music on A2, rolled onto them
     {
