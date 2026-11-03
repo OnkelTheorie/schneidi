@@ -283,14 +283,21 @@ void testCounterValues()
     CHECK_EQ(Generators::counterText(s, 100, 101), QString("$2\u00a0500,0 k"));
     s.grouping = false;
     CHECK_EQ(Generators::counterText(s, 100, 101), QString("$2500,0 k"));
-    // A new counter takes the UI language's separators (and keeps them)
-    I18n::install("en");
+    // A new counter takes the separators of the user's UI language (the setting, not the translation installed in
+    // this process: schneidi-cli always installs English and must store what the app stores) and keeps them
+    const auto ui = [](const char* lang) {
+        I18n::setLanguage(lang);
+        I18n::install(lang);
+    };
+    ui("en");
     CHECK(Generators::numberStyleOfLanguage() == NumberStyle::CommaPoint);
-    I18n::install("de");
+    ui("de");
     CHECK(Generators::numberStyleOfLanguage() == NumberStyle::PointComma);
-    I18n::install("fr");
+    I18n::install("en"); // the CLI's case: English answers, German user
+    CHECK(Generators::numberStyleOfLanguage() == NumberStyle::PointComma);
+    ui("fr");
     CHECK(Generators::numberStyleOfLanguage() == NumberStyle::SpaceComma);
-    I18n::install("en");
+    ui("en");
     // Negative numbers, 0.5 cases (away from zero both ways), huge numbers
     s.prefix.clear();
     s.suffix.clear();
@@ -503,7 +510,17 @@ void testInspectorWheel()
         area->verticalScrollBar()->setValue(0);
         QCoreApplication::processEvents();
         const QPoint at = w->mapTo(insp.window(), w->rect().center());
+#if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
         QTest::wheelEvent(insp.window()->windowHandle(), at, QPoint(0, -120));
+#else // Qt before 6.8 (Ubuntu 24.04: 6.4) has no QTest::wheelEvent, and a sent wheel event does not propagate:
+      // to the widget there, then to its parents until one takes it (what QApplication does for a real one)
+        for (QWidget* target = insp.window()->childAt(at); target; target = target->parentWidget()) {
+            QWheelEvent e(target->mapFrom(insp.window(), QPointF(at)), insp.window()->mapToGlobal(QPointF(at)), QPoint(),
+                          QPoint(0, -120), Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+            QApplication::sendEvent(target, &e);
+            if (e.isAccepted()) break;
+        }
+#endif
         return area->verticalScrollBar();
     };
     // shown and really under the mouse at its centre (not covered, inside the visible part of the page)
@@ -776,6 +793,7 @@ int main(int argc, char** argv)
     Check::initEnv();
     QApplication app(argc, argv);
     Check::initApp("generators");
+    I18n::setLanguage("en"); // the UI language the counters below expect (settings outlive test runs)
     QTemporaryDir tmp;
     if (!CHECK(tmp.isValid())) return Check::result();
     g_a = still(tmp.filePath("a.png"), kRed, kWhite, true);

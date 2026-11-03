@@ -25,6 +25,9 @@ QChar decimalPoint();                  // decimal separator of the UI language (
 // Thousands separator of the UI language ("." in German and Spanish, "," in English, a no-break space in French,
 // Polish and Russian)
 QChar groupSeparator();
+// The same for a given language code ("de", "en" …), whatever translation is installed in this process
+QChar decimalPointOf(const QString& lang);
+QChar groupSeparatorOf(const QString& lang);
 // Order of names in lists (media, LUTs, effects, timelines): by the system's collation, but without case first even
 // where the system has none (C/POSIX locale on servers and in containers sorts by bytes: "Zeta" before "alpha")
 int compareNames(const QString& a, const QString& b);

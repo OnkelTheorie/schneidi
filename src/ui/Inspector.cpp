@@ -233,7 +233,8 @@ Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
     auto* shapeBox = new QComboBox;
     shapeBox->setObjectName("PictureAspect");
     shapeBox->setFocusPolicy(Qt::NoFocus);
-    shapeBox->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+    // As wide as its longest entry on any font (a fixed length cut entries off with wider fonts, Ubuntu)
+    shapeBox->setSizeAdjustPolicy(QComboBox::AdjustToContents);
     shapeBox->addItem(T("Wie die Datei"), 0.0);
     shapeBox->addItem(T("Gestrecktes 4:3 entzerren"), 4.0 / 3.0);
     // The same with blurred sides instead of black ones in a wider frame (Transform › Background); the plain entry

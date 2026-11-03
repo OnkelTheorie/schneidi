@@ -12,6 +12,7 @@
 #include <cmath>
 
 struct Timeline;
+struct TitleStyle;
 
 struct FrameRate {
     int num = 25, den = 1;
@@ -73,6 +74,9 @@ QString resolutionLabel(int width, int height);
 // another shape and back keeps them). A title that would then run off a narrower frame (a wide caption in a 9:16 copy
 // of a 16:9 edit) is shrunk just enough to fit it with a margin.
 void scaleTimeline(Timeline& tl, QSize from, QSize to);
+// The width scaleTimeline gives a title's widest line at `size` px: a font-independent estimate (the same in the CLI
+// and the app and on every system), on the generous side of the usual sans serif fonts
+double titleWidth(const TitleStyle& st, double size);
 
 // Frame rate changed: convert the times that are frames in a timeline without clips (subtitle cues, markers, in/out),
 // so that they stay at the same time. Clips are not converted (a timeline with clips keeps its frame rate).
