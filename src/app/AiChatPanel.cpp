@@ -286,6 +286,7 @@ public:
         lay->setContentsMargins(8, 6, 8, 6);
         lay->setSpacing(4);
         m_title = new QLabel;
+        m_title->setObjectName("ai_plan_title");
         m_title->setStyleSheet("font-weight: 600;");
         m_title->setWordWrap(true);
         lay->addWidget(m_title);
@@ -365,7 +366,7 @@ private:
         m_rows.clear();
         m_boxes.clear();
         const QJsonArray steps = plan["steps"].toArray();
-        m_title->setText(T("Plan %1 · %2 Schritte").arg(m_id).arg(steps.size()));
+        m_title->setText(steps.size() == 1 ? T("Plan %1 · 1 Schritt").arg(m_id) : T("Plan %1 · %2 Schritte").arg(m_id).arg(steps.size()));
         m_title->setToolTip(T("Nichts ist bisher geändert. Hake an, was geschehen soll."));
         for (const QJsonValue& v : steps) {
             const QJsonObject s = v.toObject();
