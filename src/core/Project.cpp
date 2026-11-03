@@ -305,6 +305,14 @@ void Project::load(const ProjectData& d)
                 for (Clip& c : t.clips)
                     if (c.isMulticam() && (c.angle < 0 || c.angle >= angles.value(c.sequenceId))) c.angle = 0;
             }
+    // Loops over several sequences (A holds B, B holds A; a hand-edited or AI-written file): the clip that closes one
+    // goes. The renderer only stops at its depth limit, and with two such clips per level a frame took 2^17 renders
+    for (Sequence& s : m_sequences)
+        for (auto* tracks : {&s.timeline.video, &s.timeline.audio})
+            for (Track& t : *tracks)
+                for (qsizetype i = 0; i < t.clips.size();)
+                    if (t.clips[i].isNested() && !canNest(t.clips[i].sequenceId, s.id)) t.clips.removeAt(i);
+                    else ++i;
     sanitizePool();
     m_lastClipId = d.lastClipId;
     m_lastLinkId = d.lastLinkId;

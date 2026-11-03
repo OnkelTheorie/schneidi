@@ -336,6 +336,33 @@ void testSequenceIdNotReused()
     CHECK(!ProjectFile::toJson(plain.data(), "/x/p.schneidi").contains("lastSequenceId"));
 }
 
+// A file with a loop over two sequences (A holds B, B holds A; hand-edited or AI-written): the clip closing it goes on
+// load, the other nesting stays
+void testNestingLoopOnLoad()
+{
+    const QByteArray json = R"({"app":"schneidi","version":6,"currentSequence":2,
+        "timeline":{"video":[{"clips":[{"id":1,"sequence":3,"start":0,"in":0,"out":99}]},
+                             {"clips":[{"id":2,"sequence":3,"start":0,"in":0,"out":99}]}]},
+        "sequences":[{"id":2,"name":"A"},{"id":3,"name":"B","compound":true,
+            "timeline":{"video":[{"clips":[{"id":3,"sequence":2,"start":0,"in":0,"out":99}]},
+                                 {"clips":[{"id":4,"sequence":2,"start":0,"in":0,"out":99}]}]}}]})";
+    ProjectData d;
+    QString err;
+    if (!CHECK(ProjectFile::fromJson(json, "/x/p.schneidi", &d, &err))) return;
+    Project p;
+    p.load(d);
+    int nested = 0;
+    for (const Sequence& s : p.sequences())
+        for (const Track& t : s.timeline.video)
+            for (const Clip& c : t.clips)
+                if (c.isNested()) {
+                    ++nested;
+                    if (!CHECK(p.canNest(c.sequenceId, s.id)))
+                        std::printf("       sequence %d holds %d, which holds it back\n", s.id, c.sequenceId);
+                }
+    CHECK(nested >= 2); // one direction stays
+}
+
 // The clipboard after opening another project: compound clips (they point at a sequence of the old project) are left
 // out, media clips bring their Media Pool entry along; another frame rate empties it
 void testClipboardAcrossProjects()
@@ -756,6 +783,7 @@ int main(int argc, char** argv)
     testDecomposeKeepsSettings();
     testClipboardAcrossProjects();
     testSequenceIdNotReused();
+    testNestingLoopOnLoad();
     testProjectFile();
     testTimelineFormat();
     testClipboardAcrossResolutions();
