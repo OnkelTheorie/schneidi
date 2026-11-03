@@ -28,7 +28,8 @@ names cost a failed call.
 1. **Look at the material first.** `probe` (length, resolution, frame rate, audio streams) and `overview` (a few
    lines per stretch of time: loudness, silence, motion, cuts, brightness), then what fits the task: `frames` (a
    contact sheet to *see* it), `transcribe` (what is said), `silence` (pauses), `scenes` (shot changes), `peaks` /
-   `highlights` (loud or exciting moments), `beats` for a song (tempo, bars, phrases, breaks, drops). You cannot
+   `highlights` (loud or exciting moments; `peaks {events:true}` also says what is heard: speech, music, laughter,
+   applause, cheering, shots, screams, silence), `beats` for a song (tempo, bars, phrases, breaks, drops). You cannot
    edit well what you have not looked at.
 2. **Say the plan in 2-3 sentences** (length, structure, format), then go ahead. Don't wait for approval unless the
    plan rests on a guess about something important that the user can easily answer.
