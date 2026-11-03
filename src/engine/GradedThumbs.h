@@ -167,8 +167,16 @@ public:
         QString path;
         int frame = 0;
         double aspect = 0; // Clip::pictureAspect of the clip shown
+        // The clip's transform and crop there (keyframes evaluated, opacity left out): the poster shows the picture
+        // placed as the timeline shows it (a landscape clip zoomed to fill a 9:16 short fills its poster too)
+        ClipTransform transform;
         GradedThumbs::Spec grade;
         bool operator==(const Source&) const = default;
+        // Same picture before the grade (the decoded frame can be reused)
+        bool samePicture(const Source& o) const
+        {
+            return path == o.path && frame == o.frame && aspect == o.aspect && transform == o.transform;
+        }
     };
     static Source sourceOf(const Project& project, const Timeline& tl, QSize frame = {}); // frame: empty = project's
 

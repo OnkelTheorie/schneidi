@@ -374,6 +374,56 @@ int main(int argc, char** argv)
                 }
                 CHECK(!icon.isNull() && red(icon, 3, 30) && red(icon, 140, 30));
             }
+            // A 9:16 timeline next to the 16:9 edit uses the tile's whole height: its landscape clip zoomed to fill
+            // the short (as "copy as 9:16" reframes it) shows as the short shows it, not as a sliver letterboxed into
+            // the 9:16 shape (46 x 26 px of a 144 x 81 tile); a portrait clip stands in the middle the same way
+            Project s;
+            s.addMedia(Engine::probe(s.format(), wide));
+            s.addMedia(Engine::probe(s.format(), tall));
+            const int reframed = s.addTimeline("Short", 0, QSize(1080, 1920));
+            const int portraitShort = s.addTimeline("Portrait", 0, QSize(1080, 1920));
+            Timeline zoomed;
+            zoomed.video.resize(1);
+            Clip c;
+            c.id = 1;
+            c.mediaPath = wide;
+            c.out = 20;
+            c.transform.zoomX = c.transform.zoomY = (16.0 / 9.0) / (9.0 / 16.0); // fills the 9:16 frame
+            zoomed.video[0].clips << c;
+            s.setTimeline(reframed, zoomed);
+            Timeline upright = zoomed;
+            upright.video[0].clips[0].mediaPath = tall;
+            upright.video[0].clips[0].transform = {};
+            s.setTimeline(portraitShort, upright);
+            MediaPool shorts(&s, &engine);
+            shorts.setSaveSettings(false);
+            shorts.resize(600, 300);
+            shorts.show();
+            auto* shortList = shorts.findChild<QListWidget*>();
+            const auto iconOf = [&](int id) {
+                for (int i = 0; shortList && i < shortList->count(); ++i)
+                    if (shortList->item(i)->data(Qt::UserRole).toString() == MediaPool::sequenceItem(id))
+                        return shortList->item(i)->icon().pixmap(tile).toImage();
+                return QImage();
+            };
+            // Rows of the tile's middle column with picture in it (the type badge sits at the top left)
+            const auto redRows = [&](const QImage& img) {
+                int n = 0;
+                for (int y = 0; !img.isNull() && y < img.height(); ++y) n += red(img, 72, y);
+                return n;
+            };
+            QElapsedTimer t;
+            t.start();
+            while (t.elapsed() < 15000 && (redRows(iconOf(reframed)) < 70 || redRows(iconOf(portraitShort)) < 70)) {
+                app.processEvents();
+                QThread::msleep(20);
+            }
+            const QImage zoomedIcon = iconOf(reframed), uprightIcon = iconOf(portraitShort);
+            std::printf("9:16 timelines in the pool: reframed %d of %d rows, portrait %d\n", redRows(zoomedIcon),
+                        tile.height(), redRows(uprightIcon));
+            CHECK(redRows(zoomedIcon) >= 70); // ~ the tile's height
+            CHECK(redRows(uprightIcon) >= 70);
+            CHECK(!red(zoomedIcon, 140, 40)); // still in the short's shape: black at the sides
         }
     }
 
