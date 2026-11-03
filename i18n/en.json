@@ -1228,6 +1228,7 @@
  "Nicht im Preset (Color-Seite bzw. Plugin fehlt): %1": "Not in the preset (Color page or plugin missing): %1",
  "Nicht lesbar:": "Could not read:",
  "Nicht mehr fragen": "Don't ask again",
+ "Nicht mehr gültig: ein anderes Projekt wurde geöffnet.": "No longer valid: another project was opened.",
  "Nicht mehr nach Updates suchen (wieder einschalten: Einstellungen › Allgemein)": "Stop looking for updates (turn it back on: Settings › General)",
  "Nicht synchron (am Anfang platziert, in der Multicam-Timeline von Hand verschieben oder per Marker synchronisieren):\n%1": "Not synced (placed at the start; move it by hand in the multicam timeline or sync by marker):\n%1",
  "Nicht unterstützt (ausgelassen): %1": "Not supported (left out): %1",

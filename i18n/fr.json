@@ -1228,6 +1228,7 @@
  "Nicht im Preset (Color-Seite bzw. Plugin fehlt): %1": "Absent du préréglage (page Couleur ou plugin manquant) : %1",
  "Nicht lesbar:": "Illisible :",
  "Nicht mehr fragen": "Ne plus demander",
+ "Nicht mehr gültig: ein anderes Projekt wurde geöffnet.": "N'est plus valable : un autre projet a été ouvert.",
  "Nicht mehr nach Updates suchen (wieder einschalten: Einstellungen › Allgemein)": "Ne plus rechercher de mises à jour (pour réactiver : Réglages › Général)",
  "Nicht synchron (am Anfang platziert, in der Multicam-Timeline von Hand verschieben oder per Marker synchronisieren):\n%1": "Non synchronisé (placé au début ; déplacez-le à la main dans la timeline multicaméra ou synchronisez par marqueur) :\n%1",
  "Nicht unterstützt (ausgelassen): %1": "Non pris en charge (ignoré) : %1",

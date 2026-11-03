@@ -1228,6 +1228,7 @@
  "Nicht im Preset (Color-Seite bzw. Plugin fehlt): %1": "No está en el preajuste (falta la página Color o el plugin): %1",
  "Nicht lesbar:": "No se puede leer:",
  "Nicht mehr fragen": "No volver a preguntar",
+ "Nicht mehr gültig: ein anderes Projekt wurde geöffnet.": "Ya no es válido: se abrió otro proyecto.",
  "Nicht mehr nach Updates suchen (wieder einschalten: Einstellungen › Allgemein)": "Dejar de buscar actualizaciones (para reactivarlo: Ajustes › General)",
  "Nicht synchron (am Anfang platziert, in der Multicam-Timeline von Hand verschieben oder per Marker synchronisieren):\n%1": "No sincronizado (colocado al inicio; muévelo a mano en la línea de tiempo multicámara o sincroniza por marcador):\n%1",
  "Nicht unterstützt (ausgelassen): %1": "No compatible (omitido): %1",

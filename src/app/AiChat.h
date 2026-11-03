@@ -75,6 +75,9 @@ public:
     int addPlan(const QJsonObject& plan);
     int planEntry(const QString& id) const;
     void setPlanState(const QString& id, Entry::State state, const QVector<int>& ran = {}, const QString& text = {});
+    // Every plan card that can still run is void (another project was opened: plan ids start anew per project,
+    // a card would run the new project's plan of the same id)
+    void stopPlans(const QString& text);
 
     bool busy() const { return m_busy; }
     QString request() const { return m_request; } // what the user asked for in the running/last turn

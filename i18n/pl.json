@@ -1228,6 +1228,7 @@
  "Nicht im Preset (Color-Seite bzw. Plugin fehlt): %1": "Nie w presecie (brak strony Kolor lub wtyczki): %1",
  "Nicht lesbar:": "Nie można odczytać:",
  "Nicht mehr fragen": "Nie pytaj więcej",
+ "Nicht mehr gültig: ein anderes Projekt wurde geöffnet.": "Już nieważne: otwarto inny projekt.",
  "Nicht mehr nach Updates suchen (wieder einschalten: Einstellungen › Allgemein)": "Nie szukaj więcej aktualizacji (włączenie: Ustawienia › Ogólne)",
  "Nicht synchron (am Anfang platziert, in der Multicam-Timeline von Hand verschieben oder per Marker synchronisieren):\n%1": "Niezsynchronizowane (umieszczone na początku; przesuń ręcznie na osi czasu wielokamerowej lub synchronizuj znacznikiem):\n%1",
  "Nicht unterstützt (ausgelassen): %1": "Nieobsługiwane (pominięto): %1",
