@@ -35,7 +35,11 @@ namespace {
 // A signed time: frames, or "-0.5s" / "+12" / a timecode with a sign
 int signedTime(Session& s, const QJsonValue& v, const QString& what)
 {
-    if (v.isDouble()) return int(std::lround(v.toDouble()));
+    if (v.isDouble()) { // frames, checked like every time (a fraction meant seconds; beyond int would be undefined)
+        const double d = v.toDouble();
+        const int f = parseTime(QJsonValue(std::abs(d)), s.format(), what);
+        return d < 0 ? -f : f;
+    }
     QString t = v.toString().trimmed();
     const bool minus = t.startsWith('-');
     if (minus || t.startsWith('+')) t = t.mid(1).trimmed();
