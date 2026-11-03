@@ -128,6 +128,7 @@ add_library(schneidi_lib STATIC
     src/core/Transcript.h         src/core/Transcript.cpp
     src/core/TranscriptCut.h      src/core/TranscriptCut.cpp
     src/core/Captions.h           src/core/Captions.cpp
+    src/core/TimelineStory.h      src/core/TimelineStory.cpp
     src/core/Voiceover.h          src/core/Voiceover.cpp
     src/core/Generators.h         src/core/Generators.cpp
     src/core/Fft.h                src/core/Fft.cpp
@@ -398,6 +399,7 @@ add_library(schneidi_cli_lib STATIC
     src/cli/CommandsWatch.cpp src/cli/CommandsShort.cpp
     src/cli/EditOps.cpp src/cli/EditOpsTimelines.cpp src/cli/EditOpsLook.cpp
     src/cli/EditOpsAudio.cpp src/cli/EditOpsEdit.cpp src/cli/EditOpsMulticam.cpp
+    src/cli/EditOpsStory.cpp src/cli/EditOpsMusic.cpp src/cli/EditOpsSfx.cpp src/cli/EditOpsTalk.cpp
     src/cli/AnalysisDetail.h src/cli/Analysis.cpp src/cli/AnalysisAudio.cpp src/cli/AnalysisVideo.cpp src/cli/AnalysisPicture.cpp
     src/cli/AnalysisHighlights.cpp src/cli/AnalysisCheck.cpp src/cli/AnalysisOverview.cpp src/cli/AnalysisBeats.cpp
     src/cli/Exchange.cpp
