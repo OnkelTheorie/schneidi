@@ -17,6 +17,10 @@
 #include "engine/ClipFormat.h"
 #include "ui/ColorPanel.h"
 
+extern "C" {
+#include <libswscale/version.h>
+}
+
 #include <QApplication>
 #include <QDir>
 #include <QFile>
@@ -249,9 +253,12 @@ void testRender(const QString& dir)
     const Rgb gcy = cyan(render(one(grade({{"saturation", 0.0}})), fmt, 10));
     CHECK(std::abs(gcy.r - gcy.g) < 6 && std::abs(gcy.g - gcy.b) < 6);
 
-    // Preview switch before/after: switchable live, without a switch (export) always corrected
+    // Preview switch before/after: switchable live, without a switch (export) always corrected. The preview converts
+    // with swscale's SIMD path: before FFmpeg 7 (libswscale 8) it comes out a level or two darker than the export's
+    // exact conversion (FFmpeg 6.1, Ubuntu 24.04: mean 0.51); a grade left on would differ by far more (about 40)
+    constexpr double previewTol = LIBSWSCALE_VERSION_MAJOR < 8 ? 1.0 : 0.5;
     auto bypass = std::make_shared<std::atomic<bool>>(true);
-    CHECK(diff(render(darker, fmt, 10, bypass), ref) < 0.5);
+    CHECK(diff(render(darker, fmt, 10, bypass), ref) < previewTol);
     bypass->store(false);
     CHECK(diff(render(darker, fmt, 10, bypass), dark) < 0.5);
     {
@@ -264,7 +271,7 @@ void testRender(const QString& dir)
         auto grab = [&] { return r.render(10).toImage(); };
         CHECK(diff(grab(), dark) < 0.5);
         flag->store(true); // same renderer, no rebuild
-        CHECK(diff(grab(), ref) < 0.5);
+        CHECK(diff(grab(), ref) < previewTol);
     }
 
     // LUT in the render (invert)
