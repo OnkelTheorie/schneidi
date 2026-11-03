@@ -128,8 +128,15 @@ Plan plan(const Beats::Result& r, double songLength, const Options& o)
 
     if (o.end == End::Fade) {
         // No cut: the song from its start (or from where the drop lands on the climax) faded out at the length
+        if ((o.keepDrop || o.climaxAt >= 0) && !haveDrop) {
+            p.errorCode = "NOT_FOUND";
+            p.error = "the song has no drop to keep or to put on the climax (beats finds none)";
+            return p;
+        }
         double s0 = 0;
         if (o.climaxAt >= 0 && haveDrop) s0 = std::clamp(drop - o.climaxAt, 0.0, songLength - T);
+        // The drop kept: it plays a third of the way in, the rest of it rings before the fade
+        else if (o.keepDrop && (drop < s0 || drop >= s0 + T)) s0 = std::clamp(drop - T / 3, 0.0, songLength - T);
         bool inBar = false;
         if (s0 > 0) {
             // On the nearest start window (before a bar one) at or before that
