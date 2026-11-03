@@ -147,7 +147,13 @@ Speaker::Speaker(QObject* parent) : QObject(parent)
 {
     connect(&m_process, &QProcess::finished, this, &Speaker::piperDone);
     connect(&m_process, &QProcess::errorOccurred, this, [this](QProcess::ProcessError e) {
-        if (e == QProcess::FailedToStart && m_running) done(false, T("Piper konnte nicht gestartet werden."));
+        // Queued: on Windows QProcess reports a failed start inside start() itself; finished() from there came
+        // before Speaker::start returned true, and Tts::speak then waited for it forever (the dialog kept its
+        // progress bar)
+        if (e == QProcess::FailedToStart && m_running)
+            QTimer::singleShot(0, this, [this] {
+                if (m_running) done(false, T("Piper konnte nicht gestartet werden."));
+            });
     });
 }
 
