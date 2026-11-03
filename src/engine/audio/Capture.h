@@ -2,7 +2,9 @@
 #pragma once
 // Own audio engine: sound input (voice-over). A capture device hands interleaved float samples to a callback in its
 // real-time thread; that only copies them into a ring buffer, a writer thread puts them into a WAV file (24-bit PCM)
-// as they come. Nothing is lost while the file grows: the header gets its sizes when the recording stops.
+// as they come. Nothing is lost while the file grows: the header gets its sizes when the recording stops. A writer that
+// falls further behind than the ring buffer holds (a stalled disk) loses blocks; those become silence of the same
+// length in the file, so everything after them stays in time with the picture.
 //
 // Kinds like Audio::Device: an input through miniaudio (PulseAudio/PipeWire/ALSA/JACK, WASAPI/DirectSound,
 // CoreAudio) or a stand-in paced by a timer (tests, no microphone): the environment variable SCHNEIDI_AUDIO_INPUT =
@@ -26,6 +28,7 @@ public:
         QString backend;   // Device::Config::backend
         QString input;     // Device::Output::id of an input; "" = the system default input
         int buffer = 1024; // samples the device buffers (two periods)
+        double ringSeconds = 8; // how far the writer may fall behind before blocks are lost (tests: smaller)
     };
 
     // Opens the input and records into `path` (created/overwritten) until stop() or destruction. nullptr = no input
@@ -37,11 +40,14 @@ public:
     // false = writing failed (*error says why). Further calls do nothing.
     bool stop(QString* error = nullptr);
 
-    // Sample frames the input has delivered so far (any thread). The file holds exactly these once stopped, minus
-    // dropped().
+    // Sample frames the input has delivered so far (any thread). The file holds exactly these once stopped (unless
+    // writing failed); dropped() of them are silence.
     long long frames() const;
-    // Frames lost because the writer fell behind by more than the ring buffer holds (a stalled disk); 0 normally
+    // Frames lost because the writer fell behind by more than the ring buffer holds (a stalled disk), written as
+    // silence in their place; 0 normally
     long long dropped() const;
+    // Tests: the writer takes nothing from the ring buffer while held, as with a stalled disk
+    void holdWriter(bool hold);
     // Peak level (linear, over all channels) since the last call (any thread; the meter)
     float takePeak();
     // Samples between the sound reaching the input and the callback getting it (the device's buffer)

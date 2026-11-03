@@ -9,6 +9,7 @@
 #include <QtEndian>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cstring>
@@ -56,8 +57,18 @@ struct Capture::Impl {
     std::atomic<long long> written{0}, read{0};
     std::atomic<long long> frames{0}, dropped{0};
     std::atomic<float> peak{0.f};
-    std::atomic<bool> stopInput{false}, stopWriter{false};
+    std::atomic<bool> stopInput{false}, stopWriter{false}, hold{false};
     std::atomic<bool> inCallback{false};
+    // Lost blocks keep their place: the device thread counts them (gap) and, once the next block fits, publishes a
+    // marker "this many silent frames before sample `at`" ahead of it. Single producer, single consumer like the ring;
+    // with all markers taken further blocks are lost too (one longer gap), so the timing still holds
+    struct Gap {
+        long long at = 0, frames = 0;
+    };
+    static constexpr int kGaps = 64;
+    std::array<Gap, kGaps> gaps{};
+    std::atomic<long long> gapsWritten{0}, gapsRead{0};
+    std::atomic<long long> gap{0}; // frames lost since the last marker (written by the device thread only)
     bool writeFailed = false, stopped = false;
     long long dataBytes = 0;
 
@@ -79,23 +90,55 @@ struct Capture::Impl {
         float old = peak.load(std::memory_order_relaxed);
         while (p > old && !peak.compare_exchange_weak(old, p, std::memory_order_relaxed)) {}
         frames.fetch_add(count, std::memory_order_relaxed);
-        if (w + n - r > size) { // writer far behind: the block is lost (counted), the file stays continuous
+        const long long pending = gap.load(std::memory_order_relaxed);
+        const long long gw = gapsWritten.load(std::memory_order_relaxed);
+        const bool marker = pending == 0 || gw - gapsRead.load(std::memory_order_acquire) < kGaps;
+        if (w + n - r > size || !marker) { // writer far behind: the block is lost, silence takes its place
+            gap.store(pending + count, std::memory_order_relaxed);
             dropped.fetch_add(count, std::memory_order_relaxed);
             return;
+        }
+        if (pending) {
+            gaps[size_t(gw % kGaps)] = {w, pending};
+            gapsWritten.store(gw + 1, std::memory_order_release);
+            gap.store(0, std::memory_order_relaxed);
         }
         for (long long i = 0; i < n; ++i) ring[size_t((w + i) % size)] = in[i];
         written.store(w + n, std::memory_order_release);
     }
 
-    // Writer thread: ring -> file
+    // Writer thread. Only what reached the file counts (a full disk: the header must not claim more than is there)
+    void write(const char* data, qint64 size)
+    {
+        if (size <= 0) return;
+        const qint64 n = file.write(data, size);
+        if (n != size) writeFailed = true;
+        if (n > 0) dataBytes += n;
+    }
+
+    void writeSilence(long long frameCount)
+    {
+        static const std::vector<char> zeros(size_t(1) << 16, 0);
+        for (long long left = frameCount * config.channels * 3; left > 0;) {
+            const qint64 n = std::min<qint64>(left, qint64(zeros.size()));
+            write(zeros.data(), n);
+            left -= n;
+        }
+    }
+
+    // Writer thread: ring -> file, with the silence of lost blocks where they were
     void drain()
     {
-        std::vector<char> pcm;
         const long long size = (long long)ring.size();
         const long long r = read.load(std::memory_order_relaxed);
         const long long w = written.load(std::memory_order_acquire);
-        if (w == r) return;
-        pcm.resize(size_t(w - r) * 3);
+        // Markers up to w (a marker is published before its block, so one at w may come without data yet)
+        std::vector<Gap> silences;
+        long long gr = gapsRead.load(std::memory_order_relaxed);
+        const long long gw = gapsWritten.load(std::memory_order_acquire);
+        for (; gr < gw && gaps[size_t(gr % kGaps)].at <= w; ++gr) silences.push_back(gaps[size_t(gr % kGaps)]);
+        if (w == r && silences.empty()) return;
+        std::vector<char> pcm(size_t(w - r) * 3);
         char* o = pcm.data();
         for (long long i = r; i < w; ++i) {
             const float s = std::clamp(ring[size_t(i % size)], -1.f, 1.f);
@@ -105,19 +148,25 @@ struct Capture::Impl {
             *o++ = char((v >> 16) & 0xff);
         }
         read.store(w, std::memory_order_release);
-        // Only what reached the file counts (a full disk: the header must not claim more than is there)
-        const qint64 n = file.write(pcm.data(), qint64(pcm.size()));
-        if (n != qint64(pcm.size())) writeFailed = true;
-        if (n > 0) dataBytes += n;
+        gapsRead.store(gr, std::memory_order_release);
+        long long at = r; // in samples
+        for (const Gap& g : silences) {
+            write(pcm.data() + (at - r) * 3, (g.at - at) * 3);
+            writeSilence(g.frames);
+            at = g.at;
+        }
+        write(pcm.data() + (at - r) * 3, (w - at) * 3);
     }
 
     void writerLoop()
     {
         while (!stopWriter.load()) {
-            drain();
+            if (!hold.load(std::memory_order_relaxed)) drain();
             sleepFor(std::chrono::milliseconds(20));
         }
         drain();
+        // Blocks lost at the very end (no later block carried their marker); the input has stopped by now
+        writeSilence(gap.exchange(0, std::memory_order_relaxed));
     }
 
     // Stand-in input paced by a timer: silence or a sine
@@ -225,7 +274,10 @@ std::unique_ptr<Capture> Capture::start(const Config& config, const QString& pat
     impl->config.channels = std::clamp(config.channels, 1, 8);
     impl->config.rate = std::clamp(config.rate, 8000, 192000);
     impl->path = path;
-    impl->ring.assign(size_t(impl->config.rate) * impl->config.channels * 8, 0.f); // 8 s against a stalled disk
+    // 8 s against a stalled disk; never less than a few device blocks
+    const long long ring = std::max<long long>(std::lround(impl->config.rate * std::clamp(config.ringSeconds, 0.0, 60.0)),
+                                               4LL * std::max(64, impl->config.buffer));
+    impl->ring.assign(size_t(ring) * impl->config.channels, 0.f);
     impl->file.setFileName(path);
     if (!impl->file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
         if (error) *error = impl->file.errorString();
@@ -276,6 +328,7 @@ bool Capture::stop(QString* error)
 
 long long Capture::frames() const { return d->frames.load(std::memory_order_relaxed); }
 long long Capture::dropped() const { return d->dropped.load(std::memory_order_relaxed); }
+void Capture::holdWriter(bool hold) { d->hold.store(hold, std::memory_order_relaxed); }
 float Capture::takePeak() { return d->peak.exchange(0.f, std::memory_order_relaxed); }
 int Capture::latency() const { return d->latency; }
 int Capture::rate() const { return d->config.rate; }

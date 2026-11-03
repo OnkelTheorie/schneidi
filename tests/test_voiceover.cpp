@@ -108,6 +108,52 @@ int main(int argc, char** argv)
             CHECK(std::abs(m.length - int(std::lround(double(frames) / 48000 * ProjectFormat{}.rate.fps()))) <= 1);
         }
     }
+    // ---- A stalled writer (a disk that hangs): blocks lost beyond the ring buffer become silence of the same length,
+    // the file keeps frames() and everything after a gap lies where it was heard. Two gaps in one take (mono), then a
+    // take that stops while the writer still stalls (stereo: the lost end is silence too)
+    for (const int channels : {1, 2}) {
+        const QString path = tmp.filePath(QString("stall%1.wav").arg(channels));
+        Audio::Capture::Config config;
+        config.rate = 48000;
+        config.channels = channels;
+        config.ringSeconds = 0.1;
+        auto capture = Audio::Capture::start(config, path);
+        if (!CHECK(capture != nullptr)) break;
+        QThread::msleep(150);
+        capture->holdWriter(true);
+        QThread::msleep(400);
+        capture->holdWriter(false);
+        QThread::msleep(150);
+        capture->holdWriter(true);
+        QThread::msleep(400);
+        if (channels == 1) {
+            capture->holdWriter(false);
+            QThread::msleep(150);
+        }
+        CHECK(capture->stop());
+        const long long frames = capture->frames(), dropped = capture->dropped();
+        CHECK(dropped >= 2 * 48000 / 10); // each stall lost more than the 0.3 s past the ring
+        const Wav w = readWav(path);
+        CHECK_EQ(qint64(w.samples.size()), qint64(frames * channels)); // the file is as long as the take
+        // Every sample is the tone at its own index or a lost one (silence); exactly the lost frames are silent
+        long long wrong = 0, silent = 0;
+        for (int i = 0; i < w.samples.size(); ++i) {
+            const double want = 0.25 * std::sin(2 * std::numbers::pi * 1000.0 * (i / channels) / 48000);
+            if (std::abs(w.samples[i] - want) < 1e-5) continue;
+            if (w.samples[i] == 0.f) ++silent;
+            else ++wrong;
+        }
+        CHECK_EQ(wrong, 0LL);
+        // A lost sample where the tone crosses zero matches it anyway: allow those few
+        CHECK(silent <= dropped * channels && silent >= dropped * channels * 9 / 10);
+        if (channels == 1) { // the tone after the last gap: in time to the end
+            double worst = 0;
+            for (int i = int(w.samples.size()) - 4800; i < w.samples.size(); ++i)
+                worst = std::max(worst, std::abs(w.samples[i] - 0.25 * std::sin(2 * std::numbers::pi * 1000.0 * i / 48000)));
+            CHECK(worst < 1e-5);
+        }
+    }
+
     // Silence through the backend "null" (no tone), stereo
     {
         qputenv("SCHNEIDI_AUDIO_INPUT", "");
