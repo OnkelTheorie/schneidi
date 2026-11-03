@@ -407,6 +407,20 @@ int main(int argc, char* argv[])
         }
     }
 
+    // A song clip shorter than the result, another clip after it on the track: refused, nothing overwritten
+    {
+        run("edit", {{"project", project}, {"ops", "[{\"op\":\"clear\"}]"}});
+        edit(project, QString(R"([{"op":"place","media":"%1","at":0,"duration":"10s","track":"A2"}])").arg(file));
+        edit(project, QString(R"([{"op":"place","media":"%1","at":"10s","track":"A2"}])").arg(file));
+        const QVector<Clip> before = clipsOn(*load(project), 1);
+        if (CHECK_EQ(before.size(), 2)) {
+            const QJsonObject r = edit(project, QString(R"([{"op":"fit_music","clip":%1,"length":"30s"}])").arg(before[0].id), true);
+            CHECK_EQ(r["failed"].toString(), QString("FAILED"));
+            const QVector<Clip> after = clipsOn(*load(project), 1);
+            CHECK(after.size() == 2 && after[1].id == before[1].id && after[1].start == before[1].start);
+        }
+    }
+
     // snap_to_beat: a picture cut 0.28 s (14 frames) off the bar ones of the music on A2, rolled onto them
     {
         run("edit", {{"project", project}, {"ops", "[{\"op\":\"clear\"}]"}});

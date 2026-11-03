@@ -255,6 +255,15 @@ void opFitMusic(Session& s, const QJsonObject& op)
     const QVector<Clip> parts = MusicFit::clips(plan, like, fps, at, g.media.length);
     if (parts.isEmpty()) fail("FAILED", "could not cut the song");
     if (track < 0) track = Speech::freeAudioTrack(s.project.timeline(), at, parts.last().end(), -1);
+    // The cut song must not cover other clips of its track (placing overwrites: the next song was cut away unasked)
+    if (track < s.project.timeline().audio.size())
+        for (const Clip& c : s.project.timeline().audio[track].clips)
+            if ((!g.clip || c.id != g.clip->id) && c.start < parts.last().end() && c.end() > at)
+                fail("FAILED", QString("the fitted song (%1 - %2) would cover clip %3 on A%4: move that clip, or give "
+                                       "another track")
+                                   .arg(tc(at, f), tc(parts.last().end(), f))
+                                   .arg(c.id)
+                                   .arg(track + 1));
     if (g.clip && !g.clip->keys.isEmpty())
         s.notes << QString("fit_music: the keyframes of clip %1 (volume …) do not fit the cut song and were left out")
                        .arg(g.clip->id);
