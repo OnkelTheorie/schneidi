@@ -294,6 +294,13 @@ void testRetention()
         CHECK_EQ(c[1].seconds, 10.0);
         CHECK(std::abs(c[1].percent - 80) < 1e-9); // the "audience retention" column
     }
+    // Quoted cells with decimal commas and commas between them (LibreOffice / a German export), a byte order mark
+    c = ExportCheck::retentionFromCsv(QString(QChar(0xfeff)) + "\"0\",\"100\"\n\"0,5\",\"85,3\"\n\"2\",\"80\"\n", 0, &error);
+    if (CHECK_EQ(c.size(), 3)) {
+        CHECK_EQ(c[0].percent, 100.0); // the first row is data, not a header
+        CHECK_EQ(c[1].seconds, 0.5);
+        CHECK(std::abs(c[1].percent - 85.3) < 1e-9);
+    }
     CHECK(ExportCheck::retentionFromCsv("time,ret\n", 10, &error).isEmpty() && !error.isEmpty());
     CHECK(ExportCheck::retentionFromCsv("Video position (%),r\n0,1\n100,0.5\n", 0, &error).isEmpty());
 
