@@ -150,6 +150,8 @@ schneidi_test(test_analysis_scan) # scenes/overview/region/colour events in-proc
 target_link_libraries(test_analysis_scan PRIVATE schneidi_cli_lib)
 schneidi_test(test_beats) # `beats`: tempo, bars, phrases, breaks, drops of a song
 target_link_libraries(test_beats PRIVATE schneidi_cli_lib)
+schneidi_test(test_audio_events) # sound events (heuristics): speech, music, silence, laughter, applause, cheering, shots, screams; cache; peaks {events}
+target_link_libraries(test_audio_events PRIVATE schneidi_cli_lib)
 target_link_libraries(test_check PRIVATE schneidi_cli_lib)
 target_link_libraries(test_setup PRIVATE schneidi_cli_lib)
 target_compile_definitions(test_setup PRIVATE SCHNEIDI_CLI="$<TARGET_FILE:schneidi-cli>")

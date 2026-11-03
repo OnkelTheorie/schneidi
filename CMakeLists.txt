@@ -157,6 +157,8 @@ add_library(schneidi_lib STATIC
     src/engine/OutputColor.h      src/engine/OutputColor.cpp
     src/engine/HardwareEncoders.h src/engine/HardwareEncoders.cpp
     src/engine/Extensions.h       src/engine/Extensions.cpp
+    src/engine/Inference.h        src/engine/Inference.cpp
+    src/engine/AudioEvents.h      src/engine/AudioEvents.cpp
     src/engine/ExternalEncoder.h  src/engine/ExternalEncoder.cpp
     src/engine/Transcriber.h      src/engine/Transcriber.cpp
     src/engine/Tts.h              src/engine/Tts.cpp

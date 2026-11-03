@@ -21,7 +21,7 @@ class QCryptographicHash;
 
 namespace Extensions {
 
-enum class Kind { Program, WhisperModel, WhisperVad, Encoder, Speech, Voice };
+enum class Kind { Program, WhisperModel, WhisperVad, Encoder, Speech, Voice, Runtime, AudioModel };
 
 struct Item {
     QString id;          // "whisper", "whisper-model-small", "x264"
@@ -32,10 +32,11 @@ struct Item {
     QByteArray sha256;   // hex
     qint64 size = 0;     // bytes of the download
     QString fileName;    // model: file in models/; program: archive name
-    // Voice: its config file (<model>.onnx.json), a second download
+    // Voice: its config file (<model>.onnx.json), a second download; audio model: its class list
     QString configUrl;
     QByteArray configSha256;
     qint64 configSize = 0;
+    QString configName; // file name of the second download; empty = <fileName>.json
 };
 
 // Items for this platform; "whisper-vad" (finds speech, keeps word times out of pauses) comes with "whisper"
@@ -85,6 +86,17 @@ QStringList installedVoices();
 QString voiceModelPath(const QString& idOrPath);
 // Short name of a voice id: "piper-voice-de_DE-thorsten" -> "de_DE-thorsten"
 QString voiceName(const QString& id);
+
+// ONNX Runtime (MIT) for local models (engine/Inference): the library of the "onnxruntime" extension; empty = not
+// installed
+QString onnxRuntimeLibrary();
+// The onnxruntime library inside the Piper extension (piper ships one); empty = none
+QString piperOnnxRuntime();
+// YAMNet (sound event classes, Apache-2.0) of the "audio-events" extension, or of SCHNEIDI_YAMNET (a model file with
+// its class list beside it): the model (.onnx) and its class list (yamnet_class_map.csv: index,mid,display_name);
+// empty = not installed
+QString audioEventsModel();
+QString audioEventsLabels();
 
 // Downloads and installs one item: checks size and SHA-256, unpacks program archives (tar, also on Windows 10+),
 // replaces the old version only when everything worked.
