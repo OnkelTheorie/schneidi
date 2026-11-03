@@ -61,13 +61,18 @@ NumberStyle numberStyleOfLanguage()
     return I18n::groupSeparator() == '.' ? NumberStyle::PointComma : NumberStyle::SpaceComma;
 }
 
-QString counterWidest(const TitleStyle& s, const QFontMetricsF& fm)
+QString counterWidest(const TitleStyle& s, const std::function<double(const QString&)>& width)
 {
     const NumberStyleInfo& n = numberStyleInfo(s.numbers);
     const QChar point = n.point, group = n.group;
     const QString a = s.prefix + formatNumber(s.countFrom, s.decimals, s.grouping, point, group) + s.suffix;
     const QString b = s.prefix + formatNumber(s.countTo, s.decimals, s.grouping, point, group) + s.suffix;
-    return fm.horizontalAdvance(a) >= fm.horizontalAdvance(b) ? a : b;
+    return width(a) >= width(b) ? a : b;
+}
+
+QString counterWidest(const TitleStyle& s, const QFontMetricsF& fm)
+{
+    return counterWidest(s, [&](const QString& t) { return fm.horizontalAdvance(t); });
 }
 
 double progress(const TitleStyle& s, const Clip& c, int f, int begin, int end)

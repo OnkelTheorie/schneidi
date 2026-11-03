@@ -552,10 +552,12 @@ void testProjectFile()
         wide.video.resize(1);
         Clip a = title;
         a.title.text = "GRAND FINAL HIGHLIGHTS 2026";
-        a.title.size = 110;
+        a.title.size = 100; // 87 % of the 16:9 frame: under the 90 % margin (a wider one keeps its share)
         a.title.outlineWidth = 6;
         a.title.boxPad = 20;
-        const auto widthOf = [](const TitleStyle& st) {
+        // The fit uses a font-independent estimate (the CLI has no fonts; the app and every system must agree)
+        const auto widthOf = [](const TitleStyle& st) { return titleWidth(st, st.size); };
+        const auto realWidth = [](const TitleStyle& st) { // on this system's font, for a sanity check
             QFont f(st.fontFamily());
             f.setPixelSize(std::max(1, int(std::lround(st.size))));
             f.setBold(st.bold);
@@ -563,7 +565,7 @@ void testProjectFile()
             return QFontMetricsF(f).horizontalAdvance(st.text);
         };
         const double w0 = widthOf(a.title);
-        std::printf("wide title: %.0f px in 1920\n", w0);
+        std::printf("wide title: %.0f px in 1920 (font: %.0f)\n", w0, realWidth(a.title));
         CHECK(w0 > 1100 && w0 < 1920);
         Clip b = title;
         b.start = 24;
@@ -571,11 +573,22 @@ void testProjectFile()
         wide.video[0].clips = {a, b};
         scaleTimeline(wide, {1920, 1080}, {1080, 1920});
         const TitleStyle& sa = wide.video[0].clips[0].title;
-        std::printf("in 1080: %.0f px, size %.1f\n", widthOf(sa), sa.size);
+        std::printf("in 1080: %.0f px (font: %.0f), size %.1f\n", widthOf(sa), realWidth(sa), sa.size);
         CHECK(widthOf(sa) <= 1080 * 0.9 + 1);
         CHECK(widthOf(sa) > 1080 * 0.8); // just enough
-        CHECK(std::abs(sa.outlineWidth / sa.size - 6.0 / 110) < 1e-9);
-        CHECK(std::abs(sa.boxPad / sa.size - 20.0 / 110) < 1e-9);
+        CHECK(realWidth(sa) <= 1080); // fits the frame on a real font too
+        // Bold counts wider; deterministic: the same text gives the same size twice (no font, no GUI needed)
+        {
+            Timeline again = wide;
+            again.video[0].clips = {a};
+            scaleTimeline(again, {1920, 1080}, {1080, 1920});
+            CHECK_EQ(again.video[0].clips[0].title.size, sa.size);
+            TitleStyle bold = a.title;
+            bold.bold = true;
+            CHECK(titleWidth(bold, 100) > titleWidth(a.title, 100));
+        }
+        CHECK(std::abs(sa.outlineWidth / sa.size - 6.0 / 100) < 1e-9);
+        CHECK(std::abs(sa.boxPad / sa.size - 20.0 / 100) < 1e-9);
         CHECK_EQ(wide.video[0].clips[1].title.size, 80.0);
     }
     CHECK_EQ(Subtitles::defaultStyle({3840, 2160}).size, 96.0);
