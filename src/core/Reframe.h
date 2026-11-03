@@ -77,6 +77,12 @@ void apply(Clip& c, Mode mode, const QVector<Key>& keys, double mediaAspect, QSi
 // crop values, crop keyframes removed. A whole-picture content leaves the crop alone. False = nothing to do.
 bool cropBars(Clip& c, const QRectF& content, double mediaAspect, QSizeF frame);
 
+// After the clip's picture changed its shape from oldAspect to newAspect (Clip::pictureAspect): a transform as apply
+// left it (zoomed to fill the frame, or Fit with the content fitted in) follows the new shape with the same window
+// centres. The crop must already be in the new shape's pixels (its share of the picture is the content). Other
+// transforms stay. False = not one apply made.
+bool reshape(Clip& c, double oldAspect, double newAspect, QSizeF frame);
+
 // Can the clip be reframed (a video or still clip; not titles, audio, compound or multicam clips, not a kept region)?
 bool canReframe(const Clip& c);
 
@@ -103,6 +109,9 @@ struct KeepPlace {
 // The copy of `base` that shows only `k.region`: the same file, time, speed and effects (a grade looks the same), no
 // sound link, no transform keyframes, cropped to the region and placed by `place`. Its id is left to the caller.
 Clip keepCopy(const Clip& base, const Keep& k, double mediaAspect, QSizeF frame, const KeepPlace& place = {});
+// The same for a kept-region copy (its crop already in the new shape's pixels): placed anew for the new shape, unless
+// it was moved or zoomed by hand since. False = left as it is.
+bool reshapeKeep(Clip& c, double oldAspect, double newAspect, QSizeF frame);
 // Is `c` a kept-region copy of `base` (same file and the same part of it at the same place)?
 bool isKeepOf(const Clip& c, const Clip& base);
 // A kept-region copy that goes along with `base`: isKeepOf, or (both at their own speed) one of the same file that

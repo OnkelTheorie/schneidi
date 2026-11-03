@@ -281,6 +281,78 @@ void testEditor(const QString& dir)
     MediaAspect::setProbe({});
 }
 
+void testPictureAspect()
+{
+    // A reframed clip set to another shape afterwards (stretched 4:3): its zoom and camera path follow the new shape
+    // (still filling the 9:16 frame, the same window centres), the kill feed copy takes the shape and its region
+    // again, all in one undo step
+    MediaAspect::setProbe([](const QString&) { return 16.0 / 9.0; });
+    Project p;
+    Selection sel;
+    Editor ed(&p, &sel);
+    const QSizeF frame(1080, 1920);
+    p.setCurrentSequence(p.addTimeline("Short", 0, frame.toSize()));
+    p.addMedia({"/x/cs2/a.mkv", "a.mkv", 100, true, false, false});
+    int game = 0;
+    p.edit("setup", [&](Timeline& tl) {
+        Clip v;
+        v.id = game = p.newClipId();
+        v.mediaPath = "/x/cs2/a.mkv";
+        v.out = 49;
+        tl.video[0].clips << v;
+    });
+    const auto keeps = ed.reframeKeeps({game}, Reframe::Mode::Auto, {}, {});
+    const QHash<int, QVector<Reframe::Key>> paths{{game, {{0, 0.3, 0.5}, {30, 0.7, 0.5}}}};
+    ed.reframeClips({game}, Reframe::Mode::Auto, paths, {}, &keeps);
+    const QRectF feed = GameHud::find("cs2")->feed;
+    const int before = p.undoStack()->index();
+    CHECK_EQ(ed.setPictureAspect({game}, 4.0 / 3), 1);
+    CHECK_EQ(p.undoStack()->index(), before + 1);
+    const Clip& c = *TimelineOps::findClip(p.timeline(), game);
+    const Reframe::Fill f = Reframe::fill(4.0 / 3, frame);
+    CHECK(near(c.transform.zoomX, f.zoom, 1e-6));
+    CHECK(near(c.transform.zoomY, f.zoom, 1e-6));
+    const KeyTrack px = c.keys.value(AnimParam::PosX);
+    if (CHECK_EQ(px.size(), 2)) {
+        CHECK(near(px[0].value, Reframe::position(f, frame, 0.3, 0.5).x(), 1e-6));
+        CHECK(near(px[1].value, Reframe::position(f, frame, 0.7, 0.5).x(), 1e-6));
+    }
+    CHECK(near(c.transform.posX, Reframe::position(f, frame, 0.3, 0.5).x(), 1e-6));
+    const Clip* k = keptCopy(p.timeline());
+    if (CHECK(k)) {
+        CHECK(near(k->pictureAspect, 4.0 / 3, 1e-9));
+        const Clip want = Reframe::keepCopy(c, {"killfeed", feed}, 4.0 / 3, frame);
+        CHECK(near(k->transform.zoomX, want.transform.zoomX, 1e-6));
+        CHECK(near(k->transform.posX, want.transform.posX, 1e-6));
+        CHECK(near(k->transform.posY, want.transform.posY, 1e-6));
+        CHECK(near(k->transform.cropLeft, want.transform.cropLeft, 1e-6));
+        CHECK(near(k->transform.cropBottom, want.transform.cropBottom, 1e-6));
+    }
+    // Back to the file's shape: as reframed
+    ed.setPictureAspect({game}, 0);
+    const Reframe::Fill wide = Reframe::fill(16.0 / 9, frame);
+    CHECK(near(TimelineOps::findClip(p.timeline(), game)->transform.zoomX, wide.zoom, 1e-6));
+    if (const Clip* back = keptCopy(p.timeline()); CHECK(back)) {
+        CHECK_EQ(back->pictureAspect, 0.0);
+        CHECK(near(back->transform.zoomX, Reframe::keepCopy(c, {"killfeed", feed}, 16.0 / 9, frame).transform.zoomX, 1e-6));
+    }
+    // A copy moved by hand keeps its place (only the shape and the crop's share follow)
+    p.edit("move", [&](Timeline& tl) {
+        for (Track& t : tl.video)
+            for (Clip& x : t.clips)
+                if (!x.keepRegion.isEmpty()) x.transform.posY -= 100;
+    });
+    const double moved = keptCopy(p.timeline())->transform.posY;
+    ed.setPictureAspect({game}, 4.0 / 3);
+    CHECK(near(keptCopy(p.timeline())->transform.posY, moved, 1e-6));
+    CHECK(near(keptCopy(p.timeline())->pictureAspect, 4.0 / 3, 1e-9));
+    // One undo: the clip and the copy as before
+    p.undoStack()->undo();
+    CHECK_EQ(keptCopy(p.timeline())->pictureAspect, 0.0);
+    CHECK(near(TimelineOps::findClip(p.timeline(), game)->transform.zoomX, wide.zoom, 1e-6));
+    MediaAspect::setProbe({});
+}
+
 // Red pixels (the kill feed line) in a part of a picture
 int redIn(const QImage& img, const QRect& r)
 {
@@ -481,6 +553,7 @@ int main(int argc, char** argv)
     testGames();
     testGeometry();
     testEditor(tmp.path());
+    testPictureAspect();
     if (!Check::haveFfmpeg()) return Check::skip("ffmpeg nicht gefunden");
     // A CS2-like recording (640x360): a kill feed line of the player (a thin red frame, top right, inside the CS2 mark region) at
     // 2 s, and at 3.5 s a red patch of game picture left of the lines (inside the old wide region only); shots in

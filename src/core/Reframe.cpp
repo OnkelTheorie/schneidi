@@ -213,6 +213,30 @@ QRectF valid(const QRectF& c)
     return r.width() >= 0.01 && r.height() >= 0.01 ? r : QRectF(0, 0, 1, 1);
 }
 
+// Fit mode: the content fitted into the frame, centred
+Fill fitIn(double mediaAspect, QSizeF frame, const QRectF& content)
+{
+    const QSizeF fitted = MediaAspect::fit(mediaAspect, frame);
+    const QSizeF size(fitted.width() * content.width(), fitted.height() * content.height());
+    const double zoom = std::min(frame.width() / size.width(), frame.height() / size.height());
+    return Fill{zoom, fitted * zoom, content, 1, 1};
+}
+
+// The part of the picture the static crop leaves (fractions of the picture fitted as `fitted`); the whole picture
+// with the crop off or animated
+QRectF cropContent(const Clip& c, QSizeF fitted)
+{
+    const ClipTransform& t = c.transform;
+    if (!t.cropOn || fitted.isEmpty()) return QRectF(0, 0, 1, 1);
+    for (AnimParam a : {AnimParam::CropLeft, AnimParam::CropRight, AnimParam::CropTop, AnimParam::CropBottom})
+        if (c.keys.contains(a)) return QRectF(0, 0, 1, 1);
+    const double l = t.cropLeft / fitted.width(), r = t.cropRight / fitted.width();
+    const double top = t.cropTop / fitted.height(), b = t.cropBottom / fitted.height();
+    return valid(QRectF(l, top, 1 - l - r, 1 - top - b));
+}
+
+bool same(double a, double b) { return std::abs(a - b) <= 1e-6 * std::max(1.0, std::abs(b)); }
+
 } // namespace
 
 Fill fill(double mediaAspect, QSizeF frame, const QRectF& contentRect)
@@ -275,10 +299,8 @@ void apply(Clip& c, Mode mode, const QVector<Key>& keys, double mediaAspect, QSi
         t.fill = FitFill::Blur;
         if (bars) {
             // The content fitted in instead of the picture with its bars
-            const QSizeF fitted = MediaAspect::fit(mediaAspect, frame);
-            const QSizeF content(fitted.width() * f.content.width(), fitted.height() * f.content.height());
-            t.zoomX = t.zoomY = std::min(frame.width() / content.width(), frame.height() / content.height());
-            const Fill fz{t.zoomX, fitted * t.zoomX, f.content, 1, 1};
+            const Fill fz = fitIn(mediaAspect, frame, f.content);
+            t.zoomX = t.zoomY = fz.zoom;
             const QPointF p = position(fz, frame, 0.5, 0.5);
             t.posX = p.x();
             t.posY = p.y();
@@ -308,6 +330,44 @@ void apply(Clip& c, Mode mode, const QVector<Key>& keys, double mediaAspect, QSi
     };
     if (px.size() > 1 && moves(px)) c.keys[AnimParam::PosX] = px;
     if (py.size() > 1 && moves(py)) c.keys[AnimParam::PosY] = py;
+}
+
+bool reshape(Clip& c, double oldAspect, double newAspect, QSizeF frame)
+{
+    ClipTransform& t = c.transform;
+    if (oldAspect <= 0 || newAspect <= 0 || frame.isEmpty() || c.keys.contains(AnimParam::ZoomX)
+        || c.keys.contains(AnimParam::ZoomY))
+        return false;
+    const QRectF content = cropContent(c, MediaAspect::fit(newAspect, frame));
+    if (t.fill != FitFill::None) {
+        // Fit: centred, the content fitted in (zoom 1 without bars: nothing to change)
+        const Fill a = fitIn(oldAspect, frame, content), b = fitIn(newAspect, frame, content);
+        const QPointF was = position(a, frame, 0.5, 0.5);
+        if (!same(t.zoomX, a.zoom) || !same(t.zoomY, a.zoom) || !same(t.posX, was.x()) || !same(t.posY, was.y())
+            || c.keys.contains(AnimParam::PosX) || c.keys.contains(AnimParam::PosY))
+            return false;
+        const QPointF now = position(b, frame, 0.5, 0.5);
+        t.zoomX = t.zoomY = b.zoom;
+        t.posX = now.x();
+        t.posY = now.y();
+        return true;
+    }
+    // Filling the frame: zoomed past the fitted picture (zoom 1 is a picture fitted in, which the new shape keeps)
+    const Fill a = fill(oldAspect, frame, content), b = fill(newAspect, frame, content);
+    if (a.zoom <= 1 + 1e-6 || !same(t.zoomX, a.zoom) || !same(t.zoomY, a.zoom)) return false;
+    t.zoomX = t.zoomY = b.zoom;
+    // Each position: the window centre on the old picture (a fraction of the content), put there on the new one
+    const auto x = [&](double v) {
+        const double px = 0.5 - v / a.picture.width();
+        return position(b, frame, (px - content.left()) / content.width(), 0.5).x();
+    };
+    const auto y = [&](double v) {
+        const double py = 0.5 + v / a.picture.height();
+        return position(b, frame, 0.5, (py - content.top()) / content.height()).y();
+    };
+    Keys::convert(c, AnimParam::PosX, x, b.picture.width() / a.picture.width());
+    Keys::convert(c, AnimParam::PosY, y, b.picture.height() / a.picture.height());
+    return true;
 }
 
 bool canReframe(const Clip& c) { return c.kind == ClipKind::Media && !c.mediaPath.isEmpty() && c.keepRegion.isEmpty(); }
@@ -346,6 +406,24 @@ Clip keepCopy(const Clip& base, const Keep& k, double mediaAspect, QSizeF frame,
     }
     c.transform = t;
     return c;
+}
+
+bool reshapeKeep(Clip& c, double oldAspect, double newAspect, QSizeF frame)
+{
+    if (c.keepRegion.isEmpty() || oldAspect <= 0 || newAspect <= 0 || frame.isEmpty()) return false;
+    for (AnimParam a : {AnimParam::ZoomX, AnimParam::ZoomY, AnimParam::PosX, AnimParam::PosY})
+        if (c.keys.contains(a)) return false;
+    const Keep k{c.keepRegion, cropContent(c, MediaAspect::fit(newAspect, frame))};
+    const ClipTransform was = keepCopy(c, k, oldAspect, frame).transform;
+    ClipTransform& t = c.transform;
+    if (!same(t.zoomX, was.zoomX) || !same(t.zoomY, was.zoomY) || !same(t.posX, was.posX) || !same(t.posY, was.posY))
+        return false; // placed by hand
+    const ClipTransform now = keepCopy(c, k, newAspect, frame).transform;
+    t.zoomX = now.zoomX;
+    t.zoomY = now.zoomY;
+    t.posX = now.posX;
+    t.posY = now.posY;
+    return true;
 }
 
 bool isKeepOf(const Clip& c, const Clip& base)
