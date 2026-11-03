@@ -476,6 +476,45 @@ void testSplitEdit()
     }
 }
 
+// Story sections as a band in the ruler (color of the kind), notes as marks below it; a section's edge drags (one
+// undo step, not past the neighbor) instead of moving the playhead
+void testStoryBand()
+{
+    Fixture f;
+    f.editor.addSection({StoryKind::Hook, "Kill", 0, 100});
+    f.editor.addSection({StoryKind::Build, {}, 140, 200});
+    const int note = f.editor.addNote(120, "schneller");
+    QApplication::processEvents();
+    const QImage shot = f.tv.grab().toImage();
+    const QColor inHook = shot.pixelColor(f.x(50), 8), outside = shot.pixelColor(f.x(120), 8);
+    CHECK(inHook != outside);
+    CHECK(inHook.red() > inHook.blue()); // the hook's orange tint (Theme::primary)
+    CHECK(shot.pixelColor(f.x(120), TimelineView::kRulerH - 10) != shot.pixelColor(f.x(125) + 4, TimelineView::kRulerH - 10));
+    // Drag the hook's right edge from 100 to 130 frames
+    QUndoStack* undo = f.project.undoStack();
+    const int steps = undo->index();
+    mouse(f.tv, QEvent::MouseButtonPress, {f.x(100), 8}, Qt::LeftButton);
+    mouse(f.tv, QEvent::MouseMove, {f.x(115), 8}, Qt::LeftButton);
+    mouse(f.tv, QEvent::MouseMove, {f.x(130), 8}, Qt::LeftButton);
+    mouse(f.tv, QEvent::MouseButtonRelease, {f.x(130), 8}, Qt::NoButton);
+    const QVector<StorySection>& s = f.project.timeline().sections;
+    if (CHECK_EQ(s.size(), 2)) CHECK(std::abs(s[0].to - 130) <= 1 && s[0].from == 0);
+    CHECK_EQ(undo->index(), steps + 1);
+    // A second drag is its own undo step; it stops before the next section (from 140)
+    const int edge = f.project.timeline().sections[0].to;
+    mouse(f.tv, QEvent::MouseButtonPress, {f.x(edge), 8}, Qt::LeftButton);
+    mouse(f.tv, QEvent::MouseMove, {f.x(135), 8}, Qt::LeftButton);
+    mouse(f.tv, QEvent::MouseMove, {f.x(170), 8}, Qt::LeftButton); // would overlap: refused, 135 stays
+    mouse(f.tv, QEvent::MouseButtonRelease, {f.x(170), 8}, Qt::NoButton);
+    CHECK(std::abs(f.project.timeline().sections[0].to - 135) <= 1);
+    CHECK_EQ(undo->index(), steps + 2);
+    undo->undo();
+    CHECK(std::abs(f.project.timeline().sections[0].to - 130) <= 1);
+    undo->undo();
+    CHECK_EQ(f.project.timeline().sections[0].to, 100);
+    CHECK(f.editor.setNoteDone(note, true)); // the note is still there
+}
+
 int main(int argc, char** argv)
 {
     Check::initEnv();
@@ -490,5 +529,6 @@ int main(int argc, char** argv)
     testEditPoints();
     testSlipSlideTools();
     testSplitEdit();
+    testStoryBand();
     return Check::result();
 }
