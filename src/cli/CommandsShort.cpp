@@ -16,6 +16,7 @@
 #include <QDir>
 #include <QFileInfo>
 #include <QJsonArray>
+#include <QSize>
 
 #include <algorithm>
 #include <cmath>
@@ -123,12 +124,16 @@ QJsonObject cmdShort(const QJsonObject& a, Context& ctx)
         // 1. The recordings: length, frame rate, sound streams
         QVector<double> durations;
         double fps = 0;
+        QSize shape; // the first recording's picture size: the cut's shape
         bool streams = false;
         for (int i = 0; i < files.size(); ++i) {
             const QJsonObject pr = run("probe", {{"file", files[i]}}, step(0.01 * i / files.size(), 0.01 * (i + 1) / files.size()));
             if (!pr["video"].toBool()) fail("BAD_MEDIA", "not a video: " + files[i]);
             durations << pr["seconds"].toDouble();
-            if (i == 0) fps = pr["fps"].toDouble();
+            if (i == 0) {
+                fps = pr["fps"].toDouble();
+                shape = QSize(pr["width"].toInt(), pr["height"].toInt());
+            }
             streams |= pr["audio_streams"].toArray().size() > 1;
         }
         // 2. The project: a new one next to the video unless one is given (that one gets the new timelines)
@@ -171,6 +176,16 @@ QJsonObject cmdShort(const QJsonObject& a, Context& ctx)
         // A new project's empty first timeline becomes the cut (nothing empty left over)
         QJsonArray ops{created ? QJsonObject{{"op", "rename_timeline"}, {"name", cutTimeline}}
                                : QJsonObject{{"op", "new_timeline"}, {"name", cutTimeline}}};
+        // A project of another shape (an existing 9:16 one, a template's fixed resolution): the cut gets its own
+        // resolution in the recordings' shape (in the project's it held them in bars, the reframe had nothing to do)
+        const QJsonObject format = before["format"].toObject();
+        const int pw = format["width"].toInt(), ph = format["height"].toInt();
+        if (shape.width() > 0 && shape.height() > 0 && pw > 0 && ph > 0
+            && std::abs(double(shape.width()) / shape.height() - double(pw) / ph) > 0.01) {
+            const int w = std::max(16, shape.width() / 2 * 2), h = std::max(16, shape.height() / 2 * 2);
+            ops << QJsonObject{{"op", "format"}, {"timeline", cutTimeline}, {"width", w}, {"height", h}}
+                << QJsonObject{{"op", "timeline"}, {"timeline", cutTimeline}};
+        }
         for (int i = 0; i < files.size(); ++i) {
             QJsonArray ranges;
             for (const ShortPick::Moment& m : picked) {

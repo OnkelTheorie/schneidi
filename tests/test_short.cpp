@@ -234,6 +234,17 @@ int main(int argc, char** argv)
         CHECK_EQ(fromTimeline["platform"].toString(), QString("TikTok"));
         CHECK_EQ(fromTimeline["timeline"].toString(), QString("Short 2"));
         CHECK_EQ(run("short", {{"files", QJsonArray{clip}}, {"aspect", "16:9"}})["error"].toString(), QString("BAD_ARGUMENT"));
+        // An existing project of another shape (9:16): the cut is in the recordings' shape as the help says (it got
+        // the project's 9:16 before, the recording sat in bars and the reframe had nothing to do)
+        const QString tall = dir.filePath("out/tall.schneidi");
+        run("new", {{"project", tall}, {"template", "vertical"}});
+        const QJsonObject inTall = run("short", {{"files", QJsonArray{clip}}, {"project", tall}, {"captions", "off"},
+                                                 {"max_s", 15}, {"out", dir.filePath("out/tall.mp4")}});
+        CHECK(!inTall.contains("error"));
+        const QJsonObject cut = run("info", {{"project", tall}, {"timeline", "Short-Schnitt"}, {"summary", true}});
+        if (!CHECK_EQ(cut["timeline"]["width"].toInt() * 9, cut["timeline"]["height"].toInt() * 16))
+            std::printf("       cut %d x %d\n", cut["timeline"]["width"].toInt(), cut["timeline"]["height"].toInt());
+        CHECK_EQ(run("info", {{"project", tall}, {"summary", true}}).value("format").toObject().value("width").toInt(), 1080); // project stays
     }
     return Check::result();
 }

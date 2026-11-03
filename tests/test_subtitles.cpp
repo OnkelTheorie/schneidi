@@ -529,6 +529,19 @@ void testProjectFile()
     scaleTimeline(tl, {1920, 1080}, {3840, 2160});
     CHECK_EQ(tl.subtitles[0].style.size, t.style.size * 2);
     CHECK_EQ(tl.subtitles[0].style.posY, t.style.posY * 2);
+    // 16:9 -> 9:16 -> 16:9 gives the sizes back (the smaller factor both ways left a title at 0.32x)
+    Timeline trip = d.timeline;
+    Clip title;
+    title.kind = ClipKind::Title;
+    title.out = 24;
+    title.title.size = 80;
+    trip.video.resize(1);
+    trip.video[0].clips = {title};
+    scaleTimeline(trip, {1920, 1080}, {1080, 1920});
+    CHECK(std::abs(trip.video[0].clips[0].title.size - 80) < 1);
+    scaleTimeline(trip, {1080, 1920}, {1920, 1080});
+    CHECK(std::abs(trip.video[0].clips[0].title.size - 80) < 1);
+    CHECK(std::abs(trip.subtitles[0].style.size - t.style.size) < 1);
     CHECK_EQ(Subtitles::defaultStyle({3840, 2160}).size, 96.0);
     CHECK_EQ(Subtitles::defaultStyle({1080, 1920}).size, 48.0); // portrait: shorter edge
     CHECK_EQ(Subtitles::defaultStyle({1080, 1920}).posY, 107.0); // 60 * 1920 / 1080, rounded

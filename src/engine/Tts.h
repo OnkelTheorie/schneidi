@@ -12,6 +12,7 @@
 
 #include <QObject>
 #include <QProcess>
+#include <QTimer>
 
 #include <functional>
 #include <memory>
@@ -54,6 +55,10 @@ struct WavInfo {
 };
 std::optional<WavInfo> readWav(const QString& path);
 
+// How long piper may take for a text before it counts as hung and is killed: generous, 30 s + 2 s per 100
+// characters (piper itself needs well under a second per sentence). SCHNEIDI_TTS_TIMEOUT_MS overrides it (tests).
+int piperTimeoutMs(const QString& text);
+
 class Speaker : public QObject {
     Q_OBJECT
 public:
@@ -79,10 +84,12 @@ private:
     Request m_request;
     Result m_result;
     QProcess m_process;
+    QTimer* m_timeout = nullptr; // piper hangs: kill it (piperTimeoutMs)
     std::unique_ptr<Transcriber> m_transcriber;
     QString m_part;
     bool m_running = false;
     bool m_cancelled = false;
+    bool m_timedOut = false;
 };
 
 // Blocking (an event loop until the speaker is done): for schneidi-cli. false + error on failure.

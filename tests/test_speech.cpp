@@ -19,10 +19,12 @@
 #include <QApplication>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QCryptographicHash>
 #include <QDialogButtonBox>
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QEventLoop>
 #include <QFile>
 #include <QFileInfo>
@@ -30,7 +32,9 @@
 #include <QJsonDocument>
 #include <QTemporaryDir>
 #include <QTextStream>
+#include <QThread>
 #include <QTimer>
+#include <QUrl>
 
 #include <clocale>
 #include <cmath>
@@ -89,6 +93,7 @@ int fakePiper(const QStringList& args)
     QFile log(qEnvironmentVariable("SCHNEIDI_FAKE_PIPER"));
     if (log.open(QIODevice::Append)) log.write((args.mid(1).join('|') + "\n" + text).toUtf8());
     if (out.isEmpty() || text.trimmed() == "fail") return 1;
+    if (text.trimmed() == "hang") QThread::sleep(60); // a piper that never answers
     writeWav(out, 22050, 0.2, 0.06 * text.trimmed().size() * scale);
     return 0;
 }
@@ -163,6 +168,71 @@ void testCatalog()
     CHECK(Extensions::remove(*thorsten));
     CHECK(!Extensions::isInstalled(*thorsten));
     CHECK(!QFileInfo::exists(QDir(dir).filePath(thorsten->fileName + ".json")));
+}
+
+QByteArray readAll(const QString& path)
+{
+    QFile f(path);
+    return f.open(QIODevice::ReadOnly) ? f.readAll() : QByteArray();
+}
+
+// Installing a voice over an installed one (an update): both files first, then both in place. A config download that
+// fails keeps the old pair (the new model beside the old config counted as installed before).
+void testVoiceInstall(const QString& tmp)
+{
+    const Extensions::Item* thorsten = Extensions::find("piper-voice-de_DE-thorsten");
+    if (!CHECK(thorsten)) return;
+    const auto source = [&](const QString& name, const QByteArray& data) {
+        const QString path = QDir(tmp).filePath(name);
+        QFile f(path);
+        f.open(QIODevice::WriteOnly);
+        f.write(data);
+        return path;
+    };
+    const QByteArray model = "new model", config = "{\"new\": true}";
+    Extensions::Item item = *thorsten;
+    item.url = QUrl::fromLocalFile(source("new.onnx", model)).toString();
+    item.size = model.size();
+    item.sha256 = QCryptographicHash::hash(model, QCryptographicHash::Sha256).toHex();
+    item.configUrl = QUrl::fromLocalFile(QDir(tmp).filePath("missing.onnx.json")).toString();
+    item.configSize = config.size();
+    item.configSha256 = QCryptographicHash::hash(config, QCryptographicHash::Sha256).toHex();
+    const QString dir = QDir(Extensions::rootDir()).filePath("piper/voices");
+    const QString installed = QDir(dir).filePath(item.fileName);
+    QDir().mkpath(dir);
+    source("old", "old model");
+    QFile::copy(QDir(tmp).filePath("old"), installed);
+    QFile::copy(QDir(tmp).filePath("old"), installed + ".json");
+    const auto install = [&](QString* message) {
+        Extensions::Installer installer;
+        QEventLoop loop;
+        bool ok = false;
+        QObject::connect(&installer, &Extensions::Installer::finished, &loop, [&](bool success, const QString& m) {
+            ok = success;
+            *message = m;
+            loop.quit();
+        });
+        QString error;
+        if (!installer.start(item, &error)) {
+            *message = error;
+            return false;
+        }
+        QTimer::singleShot(20000, &loop, &QEventLoop::quit);
+        loop.exec();
+        return ok;
+    };
+    QString message;
+    CHECK(!install(&message));
+    CHECK_EQ(readAll(installed), QByteArray("old model"));
+    CHECK_EQ(readAll(installed + ".json"), QByteArray("old model"));
+    CHECK(QDir(dir).entryList({"*.part"}, QDir::Files).isEmpty());
+    // Both there: both replaced
+    item.configUrl = QUrl::fromLocalFile(source("new.onnx.json", config)).toString();
+    if (!CHECK(install(&message))) std::cerr << qPrintable(message) << "\n";
+    CHECK_EQ(readAll(installed), model);
+    CHECK_EQ(readAll(installed + ".json"), config);
+    CHECK(QDir(dir).entryList({"*.part"}, QDir::Files).isEmpty());
+    CHECK(Extensions::remove(item));
 }
 
 void testPure()
@@ -320,6 +390,18 @@ void testSpeaker(const QString& dir, const QString& voice, const QString& log)
     CHECK(!Tts::speak(r, &again, &error));
     CHECK(error.contains("Piper"));
     CHECK(QDir(r.folder).entryList({"*part*"}, QDir::Files).isEmpty());
+    // piper hangs: killed after the timeout with an error (it blocked the CLI and the app's speech job forever)
+    CHECK(Tts::piperTimeoutMs("Hallo") >= 30000);
+    CHECK_EQ(Tts::piperTimeoutMs(QString(1000, 'a')), 50000);
+    qputenv("SCHNEIDI_TTS_TIMEOUT_MS", "1500");
+    r.text = "hang";
+    QElapsedTimer clock;
+    clock.start();
+    CHECK(!Tts::speak(r, &again, &error));
+    CHECK(clock.elapsed() < 20000);
+    CHECK(error.contains("Piper"));
+    CHECK(QDir(r.folder).entryList({"*part*"}, QDir::Files).isEmpty());
+    qunsetenv("SCHNEIDI_TTS_TIMEOUT_MS");
     // Nothing to say / unknown voice
     r.text = "  ";
     CHECK(!Tts::speak(r, &again, &error));
@@ -511,6 +593,7 @@ int main(int argc, char** argv)
     testEstimate();
     testFreeTrack();
     testWav(tmp.path());
+    testVoiceInstall(tmp.path());
     // The fake piper and a voice file of its own (a path works as voice)
     const QString log = tmp.filePath("piper.log");
     qputenv("SCHNEIDI_PIPER", QCoreApplication::applicationFilePath().toUtf8());

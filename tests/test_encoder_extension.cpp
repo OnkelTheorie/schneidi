@@ -96,14 +96,36 @@ void testInstallPaths()
 #endif
     CHECK(Extensions::remove(*x264));
     CHECK(!Extensions::isInstalled(*x264));
-    // An old version a running program held (Windows lets the folder be renamed, not its files deleted): gone at start
+#ifndef Q_OS_WIN
+    // A leftover "bin.old" a program still holds (Windows: its files; here: a read-only folder in it) must not block
+    // removing or updating the current version, which nothing holds ("Wird gerade benutzt" before)
+    const QString held = QDir(Extensions::rootDir()).filePath("ffmpeg-gpl/bin.old/held");
+    CHECK(QDir().mkpath(held));
+    QFile(held + "/x").open(QIODevice::WriteOnly);
+    QFile::setPermissions(held, QFileDevice::ReadOwner | QFileDevice::ExeOwner);
+    CHECK(QDir().mkpath(bin));
+    QFile(QDir(bin).filePath(name)).open(QIODevice::WriteOnly);
+    CHECK(Extensions::isInstalled(*x264));
+    if (!QFileInfo(held).isWritable()) { // root writes anyway
+        CHECK(Extensions::remove(*x264));
+        CHECK(!Extensions::isInstalled(*x264));
+    }
+    QFile::setPermissions(held, QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner);
+    CHECK(Extensions::remove(*x264));
+#endif
+    // An old version a running program held (Windows lets the folder be renamed, not its files deleted): gone at
+    // start, under every name it was moved aside to
     const QString old = QDir(Extensions::rootDir()).filePath("ffmpeg-gpl/bin.old/bin");
+    const QString old2 = QDir(Extensions::rootDir()).filePath("ffmpeg-gpl/bin.old-1a2b3c4d/bin");
     CHECK(QDir().mkpath(old));
+    CHECK(QDir().mkpath(old2));
     Extensions::cleanUp();
     QElapsedTimer waited;
     waited.start();
-    while (QFileInfo::exists(old) && waited.elapsed() < 5000) QThread::msleep(20);
+    while ((QFileInfo::exists(old) || QFileInfo::exists(old2)) && waited.elapsed() < 5000) QThread::msleep(20);
     CHECK(!QFileInfo::exists(QFileInfo(old).absolutePath()));
+    CHECK(!QFileInfo::exists(QFileInfo(old2).absolutePath()));
+    CHECK(QFileInfo::exists(QDir(Extensions::rootDir()).filePath("ffmpeg-gpl"))); // only the leftovers
     // Missing MSVC runtime (STATUS_DLL_NOT_FOUND) gets the user's fix, other failures not
     CHECK(!Extensions::missingRuntimeHint(int(0xC0000135u)).isEmpty());
     CHECK(Extensions::missingRuntimeHint(1).isEmpty());
