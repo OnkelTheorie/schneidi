@@ -212,6 +212,12 @@ void testStory()
     CHECK(ExportCheck::story(plain, 0, 500, v, {}, false, {}).isEmpty());  // nothing known: nothing said
     CHECK_EQ(checks(ExportCheck::story(plain, 0, 500, v, {}, true, {})), QStringList({"story_hook_late"}));
     CHECK(ExportCheck::story(late, 50, 500, v, {}, false, {}).isEmpty()); // not from the start
+    {
+        ExportCheck::Options inOut; // the Deliver page's In/Out export: the video starts at 'from'
+        inOut.rangeIsVideo = true;
+        issues = ExportCheck::story(late, 40, 500, v, {}, false, {}, inOut); // the text 2.4 s into it
+        if (CHECK_EQ(checks(issues), QStringList({"story_hook_late"}))) CHECK_EQ(issues[0].from, 40);
+    }
     // strongMoments: the earliest of loud, word and text, and what it is
     QString by;
     CHECK_EQ(ExportCheck::strongMoments(late, 0, 500, v, &peaks, {90}, &by), (QVector<int>{60, 90, 100, 120}));

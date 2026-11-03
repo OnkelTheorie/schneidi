@@ -282,7 +282,7 @@ QVector<Issue> story(const Timeline& tl, int from, int to, const ProjectFormat& 
 
     // The first strong moment: a loud hit, the first word, a text
     if (const int text = firstText(tl, from, to); text >= 0) strong << text;
-    if (from == 0) {
+    if (from == 0 || o.rangeIsVideo) {
         const double limit = isShort ? o.hookLateShortS : o.hookLateS;
         const Severity sev = isShort && length <= o.hookMaxS ? Severity::Warning : Severity::Info;
         int first = -1;
@@ -327,7 +327,7 @@ QVector<Issue> story(const Timeline& tl, int from, int to, const ProjectFormat& 
     const auto at = [&](const StorySection& s) { return num(secondsOf(s.from, f)); };
 
     // Hook at the start
-    if (from == 0) {
+    if (from == 0 || o.rangeIsVideo) {
         const StorySection* hook = firstOf(StoryKind::Hook);
         if (!hook || hook->from > from + framesOf(0.5, f))
             out << issue(Severity::Warning, "story_no_hook",

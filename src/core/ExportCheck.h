@@ -65,6 +65,9 @@ struct Options {
     // Story: the first strong moment (a loud hit, the first word, a text) later than this = late hook (vertical
     // videos and videos for a platform: hookLateShortS, others hookLateS)
     double hookLateShortS = 2, hookLateS = 5;
+    // The range is the whole video (the Deliver page's In/Out export): the opening checks (story_hook_late,
+    // story_no_hook) start at its `from`, not only at frame 0
+    bool rangeIsVideo = false;
 };
 
 // Picture, media and subtitles of the range [from, to) without decoding: too long for the platform, offline media, effects this version does
