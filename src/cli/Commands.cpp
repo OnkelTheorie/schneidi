@@ -1146,7 +1146,30 @@ const QVector<Command>& commands()
                   "measured 'sound'; for a project with clipping, true peak or loudness off the target also 'fix': the "
                   "ops for `edit` that solve them (master limiter at -1.2 dBTP, a little under the -1 limit, master fader by the difference) - apply "
                   "them, don't judge the numbers yourself. Fix errors before handing over; warnings may be intended "
-                  "(a fade to black, a pause).",
+                  "(a fade to black, a pause). "
+                  "Pace (project): a change = a cut or clip edge on a visible video track (V2+: overlay; titles: "
+                  "text), a zoom/position/rotation/exposure keyframe where the value moves (accents), a subtitle "
+                  "start; closer than 0.25 s counts once. pace_slow = longer than max_still_s (3 s) without one: a "
+                  "warning per stretch in vertical videos up to 3 min, else one info at the longest. 'pace': "
+                  "{changes, kinds:{cut, overlay, text, motion}, changes_per_s, longest_s, at, at_s, at_tc (start "
+                  "of the longest stretch), still:[{from, to, from_s, to_s, …}], curve_step_s, curve:[changes per "
+                  "second per step], sections:[{kind, name?, from_s, to_s, changes_per_s, longest_s, "
+                  "longest_at_s}]}. 'suggest' (when something is too still) = {what, ops, text_ops?, how}: a mild "
+                  "punch-in (op accent preset punch, strength 0.5) inside each still stretch, text_ops = the words "
+                  "spoken there as titles instead; each op has a 'why'; creative, never applied by check or short "
+                  "(unlike 'fix') - apply with `edit` (one undo step) if it suits the video. "
+                  "Story (project): story_hook_late = the first strong moment (a loud hit, the first word of a "
+                  "transcript, a text) after 2 s (vertical or for a platform; warning in videos up to 3 min) or 5 s "
+                  "(info). With story sections of the timeline also story_no_hook (no hook section at the start), "
+                  "story_open_question (a question section without a later turn or resolution), "
+                  "story_resolution_late (resolution after 90 % of the length; info: it runs to the end with no "
+                  "room for the cta), story_no_cta (info, no cta section), story_gap (info, time without a "
+                  "section); without sections and with 'for' story_no_cta (info) when no text or word comes near the "
+                  "end. 'story': {sections, first_strong_s, first_strong_by: loud|word|text, note?}. "
+                  "retention (a CSV of the published video's audience retention: time in seconds or M:SS, or a "
+                  "position in % when its header says so, and the retention in %) adds retention_drop (info): a fall "
+                  "of at least 5 points (and 3 x the usual) within 2 s after the first second, 'at'/'at_s' and "
+                  "'clip' = the last change before it; 'retention': {points, start_pct, end_pct, end_s, drops}.",
          {{"source", T::Path, "project (.schneidi) or rendered media file", true, true},
           {"timeline", T::String, "for a project: which timeline (id or name; default: the open one)"},
           {"from", T::Time, "for a project: start of the range to check (default: start)"},
@@ -1156,7 +1179,10 @@ const QVector<Command>& commands()
                              "the platform takes as a short: Shorts and Reels 3 min, TikTok 10 min) and its loudness "
                              "target"},
           {"sound", T::Boolean, "measure the sound (default true; false = no mixing: no sound and no under_music "
-                                "checks)"}},
+                                "checks)"},
+          {"max_still_s", T::Number, "pace: seconds without a change that count as too still (default 3)"},
+          {"retention", T::Path, "audience retention CSV of the published video (YouTube Studio / TikTok export): "
+                                 "adds retention_drop"}},
          cmdCheck},
         {"scopes", "Video scopes of one frame like the Color page (waveform, RGB parade, vectorscope, histogram) as "
                    "one image, plus numbers to judge exposure and color: luma spread (10-bit, 0..1023), clipped "

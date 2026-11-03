@@ -7,12 +7,15 @@
 #include "core/I18n.h"
 #include "core/RenderJob.h"
 #include "core/TimelineOps.h"
+#include "core/TimelineStory.h"
+#include "core/TranscriptCut.h"
 #include "engine/AudioAnalysis.h"
 #include "engine/Bundle.h"
 #include "engine/CheckMeasure.h"
 #include "engine/HardwareEncoders.h"
 #include "engine/video/Scan.h"
 
+#include <QFile>
 #include <QJsonArray>
 #include <QProcess>
 #include <QRegularExpression>
@@ -45,6 +48,10 @@ ExportCheck::Options options(const QJsonObject& a)
         o.maxTruePeakDb = p->maxTruePeakDb;
     }
     if (a.contains("target_lufs")) o.targetLufs = a["target_lufs"].toDouble();
+    if (a.contains("max_still_s")) {
+        o.maxStillS = a["max_still_s"].toDouble();
+        if (!(o.maxStillS >= 0.5 && o.maxStillS <= 600)) fail("BAD_ARGUMENT", "max_still_s must be between 0.5 and 600");
+    }
     return o;
 }
 
@@ -204,6 +211,10 @@ QJsonObject issueJson(const ExportCheck::Issue& i, const ProjectFormat& f)
         for (auto it = r.begin(); it != r.end(); ++it) o[it.key()] = it.value();
     }
     if (i.clip) o["clip"] = i.clip;
+    if (i.at >= 0) {
+        o["at"] = i.at;
+        o["at_s"] = seconds(i.at, f);
+    }
     if (!i.clips.isEmpty()) {
         QJsonArray clips;
         for (int id : i.clips) clips << id;
@@ -234,6 +245,97 @@ QJsonObject fixJson(const ExportCheck::SoundFix& fix, const QJsonValue& timeline
     return {{"what", what.join(", ")}, {"ops", ops}, {"how", "apply with `edit` (one undo step), then `check` again"}};
 }
 
+QJsonValue round2(double v) { return std::round(v * 100) / 100; }
+
+// Pace of the range: changes per second, the longest stretch without one, the curve, per story section
+QJsonObject paceJson(const ExportCheck::Pace& p, const ProjectFormat& f)
+{
+    QJsonObject kinds;
+    for (const ExportCheck::Change& c : p.changes) {
+        const QString k = QString::fromLatin1(ExportCheck::changeKindId(c.kind));
+        kinds[k] = kinds[k].toInt() + 1;
+    }
+    QJsonArray still, curve, sections;
+    for (const ExportCheck::Stretch& s : p.still) still << range(s.from, s.to, f);
+    for (double v : p.curve) curve << v;
+    for (const ExportCheck::SectionPace& sp : p.sections) {
+        QJsonObject o{{"kind", TimelineStory::kindName(sp.section.kind)},
+                      {"from_s", seconds(sp.section.from, f)},
+                      {"to_s", seconds(sp.section.to, f)},
+                      {"changes_per_s", round2(sp.changesPerS)},
+                      {"longest_s", seconds(sp.longest.length(), f)},
+                      {"longest_at_s", seconds(sp.longest.from, f)}};
+        if (!sp.section.name.isEmpty()) o["name"] = sp.section.name;
+        sections << o;
+    }
+    QJsonObject o{{"changes", int(p.changes.size())},
+                  {"kinds", kinds},
+                  {"changes_per_s", round2(p.changesPerS)},
+                  {"longest_s", seconds(p.longest.length(), f)},
+                  {"at", p.longest.from},
+                  {"at_s", seconds(p.longest.from, f)},
+                  {"at_tc", tc(p.longest.from, f)},
+                  {"still", still},
+                  {"curve_step_s", p.curveStepS},
+                  {"curve", curve}};
+    if (!sections.isEmpty()) o["sections"] = sections;
+    return o;
+}
+
+// Ways to break the still stretches, as ops for `edit` with a reason each: a mild punch-in (accent) where a picture
+// is, and as an alternative the words spoken there as a text. Creative suggestions, never applied by `check` or
+// `short` itself (unlike `fix`). Empty when nothing is too still.
+QJsonObject suggestJson(const ExportCheck::Pace& p, const Timeline& tl, const QVector<TranscriptCut::Word>& words,
+                        const ProjectFormat& f, const ExportCheck::Options& o, const QJsonValue& timeline)
+{
+    QJsonArray ops, texts;
+    int points = 0;
+    for (const ExportCheck::Stretch& s : p.still) {
+        const QVector<int> at = ExportCheck::breakPoints(tl, s, f, o);
+        if (at.isEmpty()) continue;
+        const QString why = QString("pace_slow: %1 s without a cut, zoom or text from %2")
+                                .arg(seconds(s.length(), f))
+                                .arg(tc(s.from, f));
+        QJsonArray times;
+        for (int x : at) times << x;
+        ops << QJsonObject{{"op", "accent"}, {"at", times}, {"preset", "punch"}, {"strength", 0.5},
+                           {"why", why + " - a mild punch-in"}};
+        points += at.size();
+        const int span = int(std::lround(1.5 * f.rate.fps()));
+        for (int x : at) {
+            QStringList said;
+            for (const TranscriptCut::Word& w : words)
+                if (w.from >= x && w.from < x + span && said.size() < 5) said << w.text.trimmed();
+            if (said.isEmpty()) continue;
+            texts << QJsonObject{{"op", "title"}, {"text", said.join(' ')}, {"at", x}, {"duration", span},
+                                 {"why", why + " - the words spoken there as a text"}};
+        }
+    }
+    if (ops.isEmpty()) return {};
+    const bool named = !timeline.isUndefined() && !timeline.isNull();
+    if (named) ops.prepend(QJsonObject{{"op", "timeline"}, {"timeline", timeline}});
+    QJsonObject out{{"what", QString("mild punch-in (accent punch, strength 0.5) at %1 points in %2 still stretches")
+                                 .arg(points)
+                                 .arg(ops.size() - (named ? 1 : 0))},
+                    {"ops", ops},
+                    {"how", "a creative suggestion, not applied by `check` or `short`: apply with `edit` (one undo "
+                            "step) if it suits the video - or cut, zoom or add text yourself - then `check` again"}};
+    if (!texts.isEmpty()) {
+        if (named) texts.prepend(QJsonObject{{"op", "timeline"}, {"timeline", timeline}});
+        out["text_ops"] = texts;
+    }
+    return out;
+}
+
+QString readText(const QString& path)
+{
+    QFile file(path);
+    if (!file.exists()) fail("NOT_FOUND", "retention file not found: " + path);
+    if (!file.open(QIODevice::ReadOnly)) fail("BAD_ARGUMENT", "cannot read the retention file: " + path);
+    if (file.size() > 8 * 1024 * 1024) fail("BAD_ARGUMENT", "the retention file is larger than 8 MB");
+    return QString::fromUtf8(file.readAll());
+}
+
 } // namespace
 
 QJsonObject cmdCheck(const QJsonObject& a, Context& ctx)
@@ -250,7 +352,10 @@ QJsonObject cmdCheck(const QJsonObject& a, Context& ctx)
     QVector<ExportCheck::Issue> issues;
     Measured measured;
     QJsonObject result{{"source", absolute(src)}};
-    QJsonObject fix;
+    QJsonObject fix, suggest;
+    QVector<ExportCheck::Change> changes; // pace changes of a project's range (for the retention drops)
+    double length = 0;                    // seconds checked
+    int retentionFrom = 0;
     ProjectFormat f;
 
     if (isProjectFile(src)) {
@@ -292,10 +397,36 @@ QJsonObject cmdCheck(const QJsonObject& a, Context& ctx)
             if (const auto balance = CheckMeasure::mix(f, render, from, to, picture, opt, progress(0.55, 1)))
                 issues += *balance;
         }
+        // Pace and story: from the timeline, the measured peaks and the transcripts (no decoding of their own)
+        const ExportCheck::Pace pace = ExportCheck::pace(tl, from, to, f, opt);
+        issues += ExportCheck::paceIssues(pace, from, to, f, opt);
+        changes = pace.changes;
+        const QVector<TranscriptCut::Word> words = TranscriptCut::timelineWords(tl, s.project.media(), f.rate.fps());
+        QVector<int> spoken;
+        for (const TranscriptCut::Word& w : words) spoken << w.from;
+        QString strongBy;
+        const QVector<int> strong =
+            ExportCheck::strongMoments(tl, from, to, f, withSound ? &measured.peaks : nullptr, spoken, &strongBy);
+        issues += ExportCheck::story(tl, from, to, f, strong, withSound || !words.isEmpty(), spoken, opt);
+        result["pace"] = paceJson(pace, f);
+        QJsonObject story{{"sections", int(tl.sections.size())}};
+        if (!strong.isEmpty()) {
+            story["first_strong_s"] = seconds(strong.first() - from, f);
+            story["first_strong_by"] = strongBy;
+        }
+        if (tl.sections.isEmpty())
+            story["note"] = "no story sections: only the strong moments are checked (story_hook_late); sections "
+                            "(hook, build, question, turn, resolution, cta) add story_no_hook, story_open_question, "
+                            "story_resolution_late, story_no_cta, story_gap";
+        result["story"] = story;
+        suggest = suggestJson(pace, tl, words, f, opt, a["timeline"]);
+        length = seconds(to - from, f);
+        retentionFrom = from;
     } else {
         const MediaSource m = openMedia(QJsonObject{{"file", src}});
         f = m.format;
         result["frames"] = m.info.length;
+        length = m.info.length / f.rate.fps();
         issues += ExportCheck::length(0, m.info.length, f, opt);
         if (m.info.isImage) {
             // A still has neither motion nor sound to check: say what it is instead of "no picture" and "no sound"
@@ -322,6 +453,21 @@ QJsonObject cmdCheck(const QJsonObject& a, Context& ctx)
         }
     }
 
+    // Retention curve of the published video: where viewers leave, with the change before it
+    if (a.contains("retention")) {
+        QString error;
+        const QVector<ExportCheck::RetentionPoint> curve =
+            ExportCheck::retentionFromCsv(readText(absolute(a["retention"].toString())), length, &error);
+        if (curve.isEmpty()) fail("BAD_ARGUMENT", "retention: " + error);
+        const QVector<ExportCheck::Issue> drops = ExportCheck::retention(curve, changes, retentionFrom, f);
+        issues += drops;
+        result["retention"] = QJsonObject{{"points", int(curve.size())},
+                                          {"start_pct", round2(curve.first().percent)},
+                                          {"end_pct", round2(curve.last().percent)},
+                                          {"end_s", round2(curve.last().seconds)},
+                                          {"drops", int(drops.size())}};
+    }
+
     // Errors first, then by time
     std::stable_sort(issues.begin(), issues.end(), [](const ExportCheck::Issue& x, const ExportCheck::Issue& y) {
         if (x.severity != y.severity) return int(x.severity) < int(y.severity);
@@ -338,6 +484,7 @@ QJsonObject cmdCheck(const QJsonObject& a, Context& ctx)
         result["sound"] = m;
     }
     if (!fix.isEmpty()) result["fix"] = fix;
+    if (!suggest.isEmpty()) result["suggest"] = suggest;
     return result;
 }
 

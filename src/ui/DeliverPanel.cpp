@@ -7,6 +7,7 @@
 #include "core/Project.h"
 #include "core/Timecode.h"
 #include "core/TimelineOps.h"
+#include "core/TranscriptCut.h"
 #include "engine/AudioAnalysis.h"
 #include "engine/CheckMeasure.h"
 #include "engine/Exporter.h"
@@ -814,11 +815,13 @@ bool DeliverPanel::runCheck()
         if (!canceled) issues += CheckMeasure::hook(f, render, from, to);
         if (!canceled) issues += CheckMeasure::bars(f, tl, from, to);
     }
+    std::vector<float> peaks;
+    bool measured = false;
     if (job.settings.hasAudio() && !canceled) {
         progress.setLabelText(T("Ton wird gemessen…"));
-        std::vector<float> peaks;
         const auto loud = AudioAnalysis::timelineLoudness(f, render, from, to, step(picture, 0.6), &peaks);
         if (loud && !progress.wasCanceled()) {
+            measured = true;
             const QVector<ExportCheck::Issue> heard =
                 ExportCheck::sound(peaks, from, loud->integrated, loud->truePeakDb, f, {}, render.masterLimiter);
             issues += heard;
@@ -833,6 +836,18 @@ bool DeliverPanel::runCheck()
                 issues += *balance;
         }
         canceled = progress.wasCanceled();
+    }
+
+    // Pace and story of the picture (from the timeline, the peaks just measured and the transcripts)
+    if (!job.settings.audioOnly()) {
+        const ExportCheck::Pace pace = ExportCheck::pace(tl, from, to, f);
+        issues += ExportCheck::paceIssues(pace, from, to, f);
+        QVector<int> words;
+        for (const TranscriptCut::Word& w : TranscriptCut::timelineWords(tl, m_project->media(), f.rate.fps()))
+            words << w.from;
+        const QVector<int> strong =
+            ExportCheck::strongMoments(tl, from, to, f, measured ? &peaks : nullptr, words);
+        issues += ExportCheck::story(tl, from, to, f, strong, measured || !words.isEmpty(), words);
     }
 
     std::stable_sort(issues.begin(), issues.end(), [](const ExportCheck::Issue& a, const ExportCheck::Issue& b) {
