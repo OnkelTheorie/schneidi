@@ -226,10 +226,12 @@ void TimelineView::mousePressEvent(QMouseEvent* e)
             if (!(e->modifiers() & Qt::ControlModifier)) sel->clear();
             return;
         }
-        const QVector<int> group = m_editor->withLinked({hit->clipId});
-        if (!sel->contains(hit->clipId)) sel->set(QSet<int>(group.begin(), group.end()));
+        // Alt at a cut: only this track's edge rolls (J/L cut), like Alt-clicking one part of a linked clip
+        const bool split = (e->modifiers() & Qt::AltModifier) && hit->kind == TimelineOps::TrimKind::Roll;
+        const QVector<int> group = split ? m_editor->editable({hit->clipId}) : m_editor->withLinked({hit->clipId});
+        if (!sel->contains(hit->clipId) || split) sel->set(QSet<int>(group.begin(), group.end()));
         m_trimHit = *hit;
-        m_trimEdit = m_editor->trimEdit(hit->kind, hit->clipId, hit->edge);
+        m_trimEdit = split ? m_editor->splitEdit(hit->clipId, hit->edge) : m_editor->trimEdit(hit->kind, hit->clipId, hit->edge);
         m_trimEditDelta = 0;
         m_trimPreview = m_editor->project()->timeline();
         m_drag = Drag::TrimEdit;
@@ -256,6 +258,23 @@ void TimelineView::mousePressEvent(QMouseEvent* e)
         return;
     }
     if (const auto hit = edgeAt(pos)) {
+        // Alt-drag at a cut (a clip touches it on the other side): only this track's edge rolls, the linked partners
+        // keep their cut and stay linked (J/L cut: the sound starts early or runs on under the next picture)
+        if (e->modifiers() & Qt::AltModifier) {
+            const TimelineOps::TrimEdit split = m_editor->splitEdit(hit->clipId, hit->edge);
+            if (!split.ids.isEmpty() && !split.rightIds.isEmpty()) {
+                const QVector<int> one = m_editor->editable({hit->clipId});
+                sel->set(QSet<int>(one.begin(), one.end()));
+                m_trimHit = TrimHit{TimelineOps::TrimKind::Roll, hit->clipId, hit->edge};
+                m_trimEdit = split;
+                m_trimEditDelta = 0;
+                m_trimPreview = m_editor->project()->timeline();
+                m_drag = Drag::TrimEdit;
+                updateTrimFrames(*m_trimPreview, m_trimEdit, 0);
+                update();
+                return;
+            }
+        }
         const QVector<int> group = m_editor->withLinked({hit->clipId});
         if (!sel->ids().contains(hit->clipId)) sel->set(QSet<int>(group.begin(), group.end()));
         m_trim = *hit;

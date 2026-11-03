@@ -6,6 +6,7 @@
 #include "core/Multicam.h"
 #include "core/ProjectFormat.h"
 #include "core/Reframe.h"
+#include "core/RoomTone.h"
 #include "core/StreamPresets.h"
 #include "core/TimelineOps.h"
 #include "core/Types.h"
@@ -129,6 +130,25 @@ public:
     int clampTrimEdit(const TimelineOps::TrimEdit& e, int delta) const;
     Timeline previewTrimEdit(const TimelineOps::TrimEdit& e, int delta) const; // for the live preview
     void applyTrimEdit(const TimelineOps::TrimEdit& e, int delta);
+    // Split edit (Alt-drag at a cut): a roll of the cut at `edge` of the clip on its own track only; its linked
+    // partners keep their cut and stay linked (J/L cut). Kill feed copies of the clips go along.
+    TimelineOps::TrimEdit splitEdit(int clipId, TimelineOps::Edge edge) const;
+    // J/L cut at the cut leftId|rightId (two adjacent clips, usually video): the sound of their linked audio clips.
+    // pairs = (sound clip of leftId, sound clip of rightId) on each unlocked audio track where both meet; offset =
+    // where their cut lies now relative to the picture cut (frames, < 0 = J: the next sound starts early, > 0 = L:
+    // the previous sound runs on); lo..hi = the offsets the material allows on all tracks.
+    struct SoundEdge {
+        QVector<QPair<int, int>> pairs;
+        int cut = 0;
+        int offset = 0;
+        int lo = 0, hi = 0;
+    };
+    std::optional<SoundEdge> soundEdge(int leftId, int rightId) const;
+    // Rolls the sound cut of every pair to cut + offset (one undo step). False = no pairs or offset outside lo..hi.
+    bool setSoundEdge(int leftId, int rightId, int offset);
+    // Room tone (core/RoomTone.h): fills the gaps on audio track `track` with loops of quiet from their takes, one
+    // undo step. Returns the new clip ids (empty = nothing changed, e.g. locked track).
+    QVector<int> fillRoomTone(int track, const QVector<RoomTone::Fill>& fills);
     // Trim mode + , / . like DaVinci: slip selected clips by `frames`
     void slipSelection(int frames);
     // Slide tool + , / .: slide selected clips by `frames` between their neighbours (one edit like a slide drag)

@@ -95,4 +95,10 @@ std::optional<Ducking::Ranges> soundRanges(const ProjectFormat& format, const Ti
                                            const Ducking::Params& params,
                                            const std::function<bool(double)>& progress = {});
 
+// RMS level (dBFS, power over all channels; silence -200) of each block of `blockSeconds` of a file's audio stream
+// from `from` to `to` seconds (file time as Audio::Reader counts it: 0 = the picture's first frame). Room tone looks
+// for the quiet of a take with it. nullopt = no such stream.
+std::optional<std::vector<double>> fileBlockLevels(const QString& path, int stream, double from, double to,
+                                                   double blockSeconds);
+
 } // namespace AudioAnalysis

@@ -97,6 +97,95 @@ void Editor::applyTrimEdit(const TimelineOps::TrimEdit& e, int delta)
     m_project->edit(text, [&](Timeline& tl) { TimelineOps::applyTrimEdit(tl, e, delta, sourceLength()); });
 }
 
+TimelineOps::TrimEdit Editor::splitEdit(int clipId, TimelineOps::Edge edge) const
+{
+    using namespace TimelineOps;
+    const Timeline& tl = m_project->timeline();
+    TrimEdit e;
+    e.kind = TrimKind::Roll;
+    TrackRef ref;
+    const Clip* c = findClip(tl, clipId, &ref);
+    if (!c || isTrackLocked(ref)) return e;
+    const int cut = edge == Edge::Start ? c->start : c->end();
+    QVector<int> left, right;
+    for (const Clip& o : tl.track(ref).clips) {
+        if (o.end() == cut) left << o.id;
+        if (o.start == cut) right << o.id;
+    }
+    e.ids = withCopies(left);
+    e.rightIds = withCopies(right);
+    return e;
+}
+
+std::optional<Editor::SoundEdge> Editor::soundEdge(int leftId, int rightId) const
+{
+    using namespace TimelineOps;
+    const Timeline& tl = m_project->timeline();
+    const Clip* l = findClip(tl, leftId);
+    const Clip* r = findClip(tl, rightId);
+    if (!l || !r || l->end() != r->start || !l->linkId || !r->linkId || l->linkId == r->linkId) return std::nullopt;
+    SoundEdge s;
+    s.cut = r->start;
+    s.lo = INT_MIN / 2;
+    s.hi = INT_MAX / 2;
+    bool first = true;
+    for (int i = 0; i < tl.audio.size(); ++i) {
+        if (tl.audio[i].locked) continue;
+        const auto& clips = tl.audio[i].clips; // sorted by start
+        for (int k = 0; k + 1 < clips.size(); ++k) {
+            const Clip& a = clips[k];
+            const Clip& b = clips[k + 1];
+            if (a.id == leftId || b.id == rightId || a.linkId != l->linkId || b.linkId != r->linkId || a.end() != b.start)
+                continue;
+            TrimEdit e;
+            e.kind = TrimKind::Roll;
+            e.ids = {a.id};
+            e.rightIds = {b.id};
+            const int offset = a.end() - s.cut;
+            if (first) s.offset = offset; // the sound cut as it is (the first track; the others follow it)
+            first = false;
+            s.lo = std::max(s.lo, offset + clampTrimEdit(e, INT_MIN / 4));
+            s.hi = std::min(s.hi, offset + clampTrimEdit(e, INT_MAX / 4));
+            s.pairs << qMakePair(a.id, b.id);
+        }
+    }
+    if (s.pairs.isEmpty()) return std::nullopt;
+    if (s.lo > s.hi) s.lo = s.hi = s.offset; // the tracks stand differently: only what they share
+    return s;
+}
+
+bool Editor::setSoundEdge(int leftId, int rightId, int offset)
+{
+    const std::optional<SoundEdge> s = soundEdge(leftId, rightId);
+    if (!s || offset < s->lo || offset > s->hi) return false;
+    const auto len = sourceLength();
+    m_project->edit(T("J/L-Schnitt"), [&](Timeline& tl) {
+        for (const auto& p : s->pairs) {
+            const Clip* a = TimelineOps::findClip(tl, p.first);
+            if (!a) continue;
+            TimelineOps::TrimEdit e;
+            e.kind = TimelineOps::TrimKind::Roll;
+            e.ids = {p.first};
+            e.rightIds = {p.second};
+            TimelineOps::applyTrimEdit(tl, e, s->cut + offset - a->end(), len);
+        }
+    });
+    return true;
+}
+
+QVector<int> Editor::fillRoomTone(int track, const QVector<RoomTone::Fill>& fills)
+{
+    if (fills.isEmpty() || isTrackLocked({TrackKind::Audio, track})) return {};
+    QVector<int> ids;
+    m_project->edit(T("Raumton füllen"), [&](Timeline& tl) {
+        for (const RoomTone::Fill& f : fills) {
+            const MediaInfo* m = m_project->mediaInfo(f.take.mediaPath);
+            ids += RoomTone::fill(tl, track, f, m ? m->length : 0, [this] { return m_project->newClipId(); });
+        }
+    });
+    return ids;
+}
+
 void Editor::slipSelection(int frames)
 {
     if (m_selection->isEmpty()) return;

@@ -113,6 +113,7 @@ add_library(schneidi_lib STATIC
     src/core/EditorMulticam.cpp
     src/core/EditorReframe.cpp
     src/core/Reframe.h            src/core/Reframe.cpp
+    src/core/RoomTone.h           src/core/RoomTone.cpp
     src/core/GameHud.h            src/core/GameHud.cpp
     src/core/EffectRegistry.h     src/core/EffectRegistry.cpp
     src/core/EffectFolders.h      src/core/EffectFolders.cpp
@@ -397,7 +398,7 @@ add_library(schneidi_cli_lib STATIC
     src/cli/Commands.h src/cli/Commands.cpp src/cli/CommandsDetail.h src/cli/CommandsProject.cpp
     src/cli/CommandsWatch.cpp src/cli/CommandsShort.cpp
     src/cli/EditOps.cpp src/cli/EditOpsTimelines.cpp src/cli/EditOpsLook.cpp
-    src/cli/EditOpsAudio.cpp src/cli/EditOpsEdit.cpp src/cli/EditOpsMulticam.cpp
+    src/cli/EditOpsAudio.cpp src/cli/EditOpsEdit.cpp src/cli/EditOpsMulticam.cpp src/cli/EditOpsTalk.cpp
     src/cli/AnalysisDetail.h src/cli/Analysis.cpp src/cli/AnalysisAudio.cpp src/cli/AnalysisVideo.cpp src/cli/AnalysisPicture.cpp
     src/cli/AnalysisHighlights.cpp src/cli/AnalysisCheck.cpp src/cli/AnalysisOverview.cpp src/cli/AnalysisBeats.cpp
     src/cli/Exchange.cpp

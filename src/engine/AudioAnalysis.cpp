@@ -263,4 +263,27 @@ std::optional<Ducking::Ranges> soundRanges(const ProjectFormat& format, const Ti
     return Ducking::soundRanges(*peaks, 0, params);
 }
 
+std::optional<std::vector<double>> fileBlockLevels(const QString& path, int stream, double from, double to,
+                                                   double blockSeconds)
+{
+    const auto reader = Audio::Reader::open(path, stream, Audio::Reader::Options{kRate, 0});
+    if (!reader) return std::nullopt;
+    const int ch = std::max(1, reader->channels());
+    const int block = std::max(1, int(std::lround(blockSeconds * kRate)));
+    const int64_t start = int64_t(std::llround(std::max(0.0, from) * kRate));
+    const int64_t end = int64_t(std::llround(std::max(from, to) * kRate));
+    std::vector<float> buf(size_t(block) * ch);
+    std::vector<float*> out(ch);
+    for (int c = 0; c < ch; ++c) out[c] = buf.data() + size_t(c) * block;
+    std::vector<double> levels;
+    for (int64_t pos = start; pos + block <= end; pos += block) {
+        reader->read(pos, block, out.data());
+        double sum = 0;
+        for (float v : buf) sum += double(v) * v;
+        const double ms = sum / (double(block) * ch);
+        levels.push_back(ms > 1e-20 ? 10 * std::log10(ms) : -200.0);
+    }
+    return levels;
+}
+
 } // namespace AudioAnalysis
