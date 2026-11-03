@@ -250,6 +250,20 @@ void testPlan()
     m = NameBlur::plan(tags, NameBlur::Template::Valorant, 60, o, &dropped);
     CHECK_EQ(m.size(), 1);
     CHECK_EQ(dropped, 3);
+    // Static zones beyond the free windows count as left out too (their names stay visible, the user is told):
+    // kill feed text and the CS2 player name with one window
+    QVector<NameBlur::Sample> hud;
+    for (int f = 0; f < 50; f += 2) hud << NameBlur::Sample{f, {QRectF(0.8, 0.1, 0.15, 0.02)}};
+    NameBlur::Options oneWindow = every2;
+    oneWindow.maxMasks = 1;
+    dropped = 0;
+    m = NameBlur::plan(hud, NameBlur::Template::Cs2, 50, oneWindow, &dropped);
+    CHECK_EQ(m.size(), 1);
+    CHECK_EQ(dropped, 1);
+    oneWindow.maxMasks = 0; // all windows taken
+    m = NameBlur::plan(hud, NameBlur::Template::Cs2, 50, oneWindow, &dropped);
+    CHECK(m.isEmpty());
+    CHECK_EQ(dropped, 2);
     NameBlur::Template t;
     CHECK(NameBlur::templateFromId("valorant", &t) && t == NameBlur::Template::Valorant);
     CHECK(!NameBlur::templateFromId("fortnite", &t));
@@ -354,7 +368,9 @@ void testEditor(const QString& dir)
     const int before = p.undoStack()->index();
     QHash<int, QVector<NameBlur::Mask>> masks;
     masks[id] = twoMasks();
-    const QHash<int, QVector<int>> added = ed.blurNames(masks, "pixelate", 80);
+    int left = -1;
+    const QHash<int, QVector<int>> added = ed.blurNames(masks, "pixelate", 80, &left);
+    CHECK_EQ(left, 0);
     CHECK_EQ(p.undoStack()->index(), before + 1);
     CHECK_EQ(added.value(id), (QVector<int>{2, 3}));
     const Clip* c = TimelineOps::findClip(p.timeline(), id);
@@ -368,8 +384,18 @@ void testEditor(const QString& dir)
     CHECK(std::abs(g.x - 45) < 1e-6); // half way from 25 to 65 (centres)
     CHECK(std::abs(g.width - 10) < 1e-6);
     // A full clip: masks beyond the free windows are left out
-    for (int n = 4; n <= GradeWindows::kMax; ++n) ed.addGradeWindow({id}, n, "ellipse");
-    CHECK(ed.blurNames(masks, "blur", 50).value(id).isEmpty());
+    for (int n = 4; n < GradeWindows::kMax; ++n) ed.addGradeWindow({id}, n, "ellipse");
+    // one window left for two masks: the static one is placed, the other counted (its name stays visible)
+    {
+        const int at = p.undoStack()->index();
+        CHECK_EQ(ed.blurNames(masks, "blur", 50, &left).value(id).size(), 1);
+        CHECK_EQ(left, 1);
+        p.undoStack()->undo();
+        CHECK_EQ(p.undoStack()->index(), at);
+    }
+    ed.addGradeWindow({id}, GradeWindows::kMax, "ellipse");
+    CHECK(ed.blurNames(masks, "blur", 50, &left).value(id).isEmpty());
+    CHECK_EQ(left, 2);
 
     // Project round trip
     const QString path = dir + "/names.schneidi";

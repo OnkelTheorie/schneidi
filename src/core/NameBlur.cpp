@@ -207,8 +207,14 @@ QVector<Mask> plan(const QVector<Sample>& samples, Template t, int length, const
     for (int z = 0; z < l.include.size(); ++z) {
         const Zone& zone = l.include[z];
         const auto& per = inZone[z];
+        // Static zones take the free windows first; beyond them the text stays visible (counted, the user is told)
+        const auto noWindow = [&] {
+            if (int(out.size()) < o.maxMasks) return false;
+            if (dropped) ++*dropped;
+            return true;
+        };
         if (zone.always) {
-            if (n == 0) continue;
+            if (n == 0 || noWindow()) continue;
             Mask m;
             m.zone = zone.name;
             m.keys = {Key{0, true, zone.area}};
@@ -239,6 +245,7 @@ QVector<Mask> plan(const QVector<Sample>& samples, Template t, int length, const
                 for (int j = std::max(0, i - 1); j <= std::min(n - 1, i + 1); ++j)
                     if (!rects[j].isEmpty()) wide[i] = wide[i].isEmpty() ? rects[j] : (wide[i] | rects[j]);
             if (std::all_of(wide.begin(), wide.end(), [](const QRectF& r) { return r.isEmpty(); })) continue;
+            if (noWindow()) continue;
             Mask m;
             m.zone = zone.name;
             m.keys = simplify(keysOf(frames, wide));

@@ -370,17 +370,20 @@ void Editor::setGradeWindowPath(int clipId, int n, int from, const QVector<Grade
 }
 
 QHash<int, QVector<int>> Editor::blurNames(const QHash<int, QVector<NameBlur::Mask>>& masks, const QString& fill,
-                                          double amount)
+                                          double amount, int* dropped)
 {
+    if (dropped) *dropped = 0;
     QHash<int, QVector<int>> added;
     GradeWindows::Fill f = GradeWindows::Fill::Blur;
     if (!GradeWindows::fillFromId(fill, &f) || (f != GradeWindows::Fill::Blur && f != GradeWindows::Fill::Pixelate))
         return added;
     QVector<int> targets;
+    int wanted = 0; // masks with keys on video clips: each one not placed leaves a name visible
     for (int id : videoOnly(m_project->timeline(), masks.keys().toVector()))
-        if (const Clip* c = TimelineOps::findClip(m_project->timeline(), id);
-            c && !masks.value(id).isEmpty() && GradeWindows::freeNumber(*c))
-            targets << id;
+        if (const Clip* c = TimelineOps::findClip(m_project->timeline(), id); c && !masks.value(id).isEmpty()) {
+            for (const NameBlur::Mask& m : masks.value(id)) wanted += !m.keys.isEmpty();
+            if (GradeWindows::freeNumber(*c)) targets << id;
+        }
     std::sort(targets.begin(), targets.end());
     modifyClips(targets, T("Namen verwischen"), [&](Clip& c) {
         EffectRegistry::add(c, kGrade);
@@ -388,8 +391,9 @@ QHash<int, QVector<int>> Editor::blurNames(const QHash<int, QVector<NameBlur::Ma
         // showed in the export
         if (EffectInstance* g = EffectRegistry::instance(c, kGrade)) g->enabled = true;
         for (const NameBlur::Mask& m : masks.value(c.id)) {
+            if (m.keys.isEmpty()) continue;
             const int n = GradeWindows::freeNumber(c);
-            if (!n || m.keys.isEmpty()) break;
+            if (!n) break;
             GradeWindows::add(c, n, GradeWindows::Shape::Rectangle);
             EffectInstance* e = EffectRegistry::instance(c, kGrade);
             e->params[GradeWindows::key(n, "fill")] = QString(GradeWindows::fillId(f));
@@ -407,6 +411,11 @@ QHash<int, QVector<int>> Editor::blurNames(const QHash<int, QVector<NameBlur::Ma
             added[c.id] << n;
         }
     });
+    if (dropped) {
+        int placed = 0;
+        for (const QVector<int>& w : added) placed += w.size();
+        *dropped = wanted - placed;
+    }
     return added;
 }
 

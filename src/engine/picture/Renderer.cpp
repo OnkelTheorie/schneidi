@@ -268,6 +268,8 @@ struct VideoSource {
     double fps = 0;     // stream frame rate (positions count in it)
     int length = 0;     // frames in the project rate (as MLT's producer length)
     bool hasAlpha = false; // pixel format with alpha
+    QString file;          // the file decoded (the proxy in a preview with proxies)
+    qint64 modified = 0;   // its time of change at opening (ms since the epoch): names its pictures with the path
 };
 
 struct StillSource {
@@ -441,6 +443,8 @@ struct Renderer::Impl {
                 if (v->info.duration > 0)
                     v->length = int(double(v->info.duration) / AV_TIME_BASE * options.format.rate.fps() + 0.5);
                 if (direction < 0) r->setBehind(std::max(4, backwardKeep(v->info.width, v->info.height)));
+                v->file = file;
+                v->modified = QFileInfo(file).lastModified().toMSecsSinceEpoch();
                 v->reader = std::move(r);
                 s.video = std::move(v);
             }
@@ -703,7 +707,15 @@ struct Renderer::Impl {
             else
                 Interp::blend(a.data(), b.data(), dst, dw, dh, frac);
         } else {
-            const QString key = QString("%1|%2|%3|%4x%5").arg(c.mediaPath, lane).arg(i0).arg(dw).arg(dh);
+            // The pictures really decoded: proxy and original (or a file replaced since) never share motion; the
+            // preview converts colours the fast way
+            const QString key = QString("%1|%2|%3|%4|%5|%6x%7")
+                                    .arg(v.file, lane)
+                                    .arg(v.modified)
+                                    .arg(int(ctx.preview))
+                                    .arg(i0)
+                                    .arg(dw)
+                                    .arg(dh);
             const auto motion = Interp::cachedMotion(key, a.data(), b.data(), dw, dh);
             Interp::flow(*motion, a.data(), b.data(), dst, dw, dh, frac);
         }
