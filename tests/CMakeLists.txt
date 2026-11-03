@@ -152,6 +152,20 @@ schneidi_test(test_beats) # `beats`: tempo, bars, phrases, breaks, drops of a so
 target_link_libraries(test_beats PRIVATE schneidi_cli_lib)
 schneidi_test(test_audio_events) # sound events (heuristics): speech, music, silence, laughter, applause, cheering, shots, screams; cache; peaks {events}
 target_link_libraries(test_audio_events PRIVATE schneidi_cli_lib)
+schneidi_test(test_audio_events_yamnet) # the real YAMNet model; skipped unless the audio-events extension is installed
+# ONNX Runtime by QLibrary with tiny models built in the test, and the YAMNet path with a stand-in model. Needs an
+# onnxruntime library here (none = skipped; never downloaded): a system one, or SCHNEIDI_ONNXRUNTIME at run time
+schneidi_test(test_inference)
+find_library(SCHNEIDI_TEST_ONNXRUNTIME NAMES onnxruntime)
+if(NOT SCHNEIDI_TEST_ONNXRUNTIME AND CMAKE_LIBRARY_ARCHITECTURE)
+    file(GLOB _ort "/usr/lib/${CMAKE_LIBRARY_ARCHITECTURE}/libonnxruntime.so.*")
+    if(_ort)
+        list(GET _ort 0 SCHNEIDI_TEST_ONNXRUNTIME)
+    endif()
+endif()
+if(SCHNEIDI_TEST_ONNXRUNTIME)
+    target_compile_definitions(test_inference PRIVATE SCHNEIDI_TEST_ONNXRUNTIME="${SCHNEIDI_TEST_ONNXRUNTIME}")
+endif()
 target_link_libraries(test_check PRIVATE schneidi_cli_lib)
 target_link_libraries(test_setup PRIVATE schneidi_cli_lib)
 target_compile_definitions(test_setup PRIVATE SCHNEIDI_CLI="$<TARGET_FILE:schneidi-cli>")
