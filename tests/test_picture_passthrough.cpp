@@ -92,9 +92,13 @@ int main(int argc, char** argv)
     if (!Check::haveFfmpeg()) return Check::skip("ffmpeg nicht gefunden");
     QTemporaryDir tmp;
     if (!CHECK(tmp.isValid())) return Check::result();
+    // Converted with the BT.709 matrix it is tagged with: FFmpeg before 7.1 converts RGB sources with BT.601 whatever
+    // the tag (no colorspace negotiation in its filters), the file then holds colors outside the RGB cube that the
+    // conversion here clips and the planes passed through do not (FFmpeg 6.1, Ubuntu 24.04: mean difference 3.25)
     g_video = Check::makeMedia(tmp.filePath("v.mp4"), {"-f", "lavfi", "-i", "testsrc2=size=640x360:rate=25:duration=2",
-                                                       "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
-                                                       "-colorspace", "bt709"});
+                                                       "-vf", "scale=out_color_matrix=bt709", "-c:v", "libx264",
+                                                       "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-colorspace",
+                                                       "bt709"});
     g_small = Check::makeMedia(tmp.filePath("s.mp4"), {"-f", "lavfi", "-i", "testsrc2=size=320x180:rate=25:duration=2",
                                                        "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p"});
     if (!CHECK(!g_video.isEmpty() && !g_small.isEmpty())) return Check::result();
