@@ -4,11 +4,14 @@
 #include "cli/CommandsDetail.h"
 
 #include "cli/Commands.h"
+#include "core/JumpCut.h"
+#include "core/Keyframes.h"
 #include "core/RoomTone.h"
 #include "core/ScriptAlign.h"
 #include "core/TimelineOps.h"
 #include "core/TranscriptCut.h"
 #include "engine/AudioAnalysis.h"
+#include "engine/ReframeAnalysis.h"
 #include "engine/Extensions.h"
 
 #include <QFile>
@@ -472,6 +475,125 @@ void opBestTakes(Session& s, const QJsonObject& op)
     s.notes << QJsonObject{{"best_takes", out}};
 }
 
+// ---------- hide_jumps ----------
+
+// Where the subject of the clip is (0..1 of the picture, the mean of the reframe samples in the clip's part of the
+// file, weighted by how sure they are); nullopt = not measured
+std::optional<QPointF> subjectOf(Session& s, const Clip& c, bool measure)
+{
+    const MediaInfo* m = s.project.mediaInfo(c.mediaPath);
+    const auto n = ReframeAnalysis::need(c, s.project.format().rate, m ? m->length : 0);
+    if (!n) return std::nullopt;
+    std::optional<ReframeAnalysis::Samples> samples = ReframeAnalysis::cached(*n);
+    if (!samples && measure) samples = ReframeAnalysis::analyze(*n);
+    if (!samples) return std::nullopt;
+    double x = 0, y = 0, w = 0;
+    for (const ReframeAnalysis::Sample& smp : *samples)
+        if (smp.seconds >= n->from && smp.seconds <= n->to && smp.weight > 0) {
+            x += smp.x * smp.weight;
+            y += smp.y * smp.weight;
+            w += smp.weight;
+        }
+    if (w <= 0) return std::nullopt;
+    return QPointF(x / w, y / w);
+}
+
+void opHideJumps(Session& s, const QJsonObject& op)
+{
+    const Timeline& tl = s.project.timeline();
+    const double zoom = op.contains("zoom") ? numberOf(op, "zoom", 1.01, 2.0) : 1.12;
+    const int minSkip = op.contains("min_jump") ? timeOf(s, op, "min_jump") : int(std::lround(0.3 * s.format().rate.fps()));
+    const QString center = op.value("center").toString("subject");
+    if (center != "subject" && center != "middle") fail("BAD_ARGUMENT", "center must be 'subject' or 'middle'");
+    // The track: given, else the one of the clips given, else V1
+    int track = 0;
+    QSet<int> only;
+    if (op.contains("clips") || op.contains("clip"))
+        for (int id : onTracks(s, clipIds(s, op), TrackKind::Video, "hide_jumps")) only.insert(id);
+    if (op.contains("track")) {
+        TrackKind k = TrackKind::Video;
+        track = parseTrack(op.value("track"), &k);
+        if (k != TrackKind::Video) fail("BAD_ARGUMENT", "track must be a video track (V1 …)");
+    } else if (!only.isEmpty()) {
+        TrackRef ref;
+        TimelineOps::findClip(tl, *only.begin(), &ref);
+        track = ref.index;
+    }
+    if (track < 0 || track >= tl.video.size()) fail("NOT_FOUND", QString("no track V%1").arg(track + 1));
+    const QVector<JumpCut::Jump> jumps = JumpCut::find(tl.video[track], minSkip);
+    // Runs of clips joined by jumps: within each run every second clip is pushed in (the first stays as it is)
+    QHash<int, int> next; // left clip -> right clip of a jump
+    QSet<int> rights;
+    for (const JumpCut::Jump& j : jumps) {
+        next.insert(j.left, j.right);
+        rights.insert(j.right);
+    }
+    QVector<int> zoomed, skipped;
+    for (const JumpCut::Jump& j : jumps) {
+        if (rights.contains(j.left)) continue; // not the start of a run
+        bool in = false;
+        for (int id = j.left; id; id = next.value(id)) {
+            if (in && (only.isEmpty() || only.contains(id))) {
+                const Clip* c = TimelineOps::findClip(tl, id);
+                const bool free = c && c->transform.zoomX == 1.0 && c->transform.zoomY == 1.0 && c->transform.posX == 0
+                                  && c->transform.posY == 0
+                                  && !Keys::animated(*c, AnimParam::ZoomX) && !Keys::animated(*c, AnimParam::ZoomY)
+                                  && !Keys::animated(*c, AnimParam::PosX) && !Keys::animated(*c, AnimParam::PosY);
+                (free ? zoomed : skipped) << id;
+            }
+            in = !in;
+        }
+    }
+    if (jumps.isEmpty()) {
+        s.notes << QString("hide_jumps: no jump cut on V%1 (clips of one file that touch and skip at least %2 of it)")
+                       .arg(track + 1)
+                       .arg(tc(minSkip, s.format()));
+        return;
+    }
+    const ProjectFormat f = s.format();
+    int onSubject = 0;
+    for (int id : zoomed) {
+        const Clip c = *TimelineOps::findClip(s.project.timeline(), id);
+        // Pushed in around the subject: it stays where it is in the frame; the zoomed picture still fills the frame
+        QPointF shift;
+        if (center == "subject")
+            if (const auto p = subjectOf(s, c, !s.live)) {
+                const double px = (p->x() - 0.5) * f.width, py = (0.5 - p->y()) * f.height; // Y up
+                const double limX = (zoom - 1) * f.width / 2, limY = (zoom - 1) * f.height / 2;
+                shift = QPointF(std::clamp((1 - zoom) * px, -limX, limX), std::clamp((1 - zoom) * py, -limY, limY));
+                ++onSubject;
+            }
+        s.editor.modifyClips({id}, T("Sprünge kaschieren"), [&](Clip& clip) {
+            clip.transform.transformOn = true;
+            clip.transform.zoomX = clip.transform.zoomY = zoom;
+            clip.transform.posX = std::round(shift.x() * 10) / 10;
+            clip.transform.posY = std::round(shift.y() * 10) / 10;
+        });
+    }
+    QString note = QString("hide_jumps: %1 jump cut%2 on V%3, zoom %4 on clip%5 %6")
+                       .arg(jumps.size())
+                       .arg(jumps.size() == 1 ? "" : "s")
+                       .arg(track + 1)
+                       .arg(zoom, 0, 'f', 2)
+                       .arg(zoomed.size() == 1 ? "" : "s");
+    QStringList ids;
+    for (int id : zoomed) ids << QString::number(id);
+    note += ids.join(", ");
+    if (center == "subject")
+        note += QString(" (%1 of %2 around the subject%3)")
+                    .arg(onSubject)
+                    .arg(zoomed.size())
+                    .arg(onSubject < zoomed.size() ? (s.live ? ", the others in the middle: not measured yet (reframe measures it)"
+                                                             : ", the others in the middle")
+                                                   : QString());
+    if (!skipped.isEmpty()) {
+        QStringList sk;
+        for (int id : skipped) sk << QString::number(id);
+        note += ". Left as they are (own zoom/position or keyframes): " + sk.join(", ");
+    }
+    s.notes << note;
+}
+
 } // namespace
 
 QJsonObject prepareTalk(const QJsonObject& editArgs, Context& ctx)
@@ -550,7 +672,17 @@ void addTalkOps(QVector<OpDef>& ops)
                  "From the transcripts of the timeline's clips (all audio tracks, or track / the clips given); the "
                  "earlier takes are cut out with ripple (one undo step). The answer's notes give best_takes "
                  "[{kept:{text, from_s, to_s}, removed:[…]}] in source seconds of the words.",
-                 opBestTakes, kClipKeys};
+                 opBestTakes, kClipKeys}
+        << OpDef{"hide_jumps", "{op:'hide_jumps', clips?, track?, zoom?:1.12, min_jump?:'0.3s', center?:'subject'|'middle'}",
+                 "after a pause or word cut: every second clip of a jump cut pushed in (zoom), so the jump looks like a "
+                 "camera change",
+                 "A jump = two clips of one track that touch, play the same file at normal speed and skip at least "
+                 "min_jump of it (another file is a real cut and stays). In each run of jumps the clips alternate "
+                 "between as they are and zoom (1.01-2); center subject (default) keeps the subject (the reframe "
+                 "measurement, cached) where it is in the frame, middle zooms on the centre. Clips with their own zoom, "
+                 "position or keyframes are left out (named in the answer). track = the video track (default: the one "
+                 "of the clips given, else V1). One undo step; `check` reports remaining jumps as jump_cut (info).",
+                 opHideJumps, kClipKeys};
 }
 
 } // namespace Cli::detail

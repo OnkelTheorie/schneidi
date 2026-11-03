@@ -842,6 +842,7 @@ bool DeliverPanel::runCheck()
     if (!job.settings.audioOnly()) {
         const ExportCheck::Pace pace = ExportCheck::pace(tl, from, to, f);
         issues += ExportCheck::paceIssues(pace, from, to, f);
+        issues += ExportCheck::jumpCuts(tl, from, to, f);
         QVector<int> words;
         for (const TranscriptCut::Word& w : TranscriptCut::timelineWords(tl, m_project->media(), f.rate.fps()))
             words << w.from;

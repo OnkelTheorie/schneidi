@@ -4,6 +4,8 @@
 #include "core/ExportCheck.h"
 
 #include "core/I18n.h"
+#include "core/JumpCut.h"
+#include "core/TimelineOps.h"
 
 #include <QRegularExpression>
 #include <QStringList>
@@ -381,6 +383,32 @@ QVector<Issue> story(const Timeline& tl, int from, int to, const ProjectFormat& 
         covered = std::max(covered, s.to);
     }
     gap(covered, to);
+    return out;
+}
+
+// ---------- jump cuts
+
+QVector<Issue> jumpCuts(const Timeline& tl, int from, int to, const ProjectFormat& f)
+{
+    QVector<Issue> out;
+    int count = 0;
+    for (const Track& t : tl.video) {
+        if (t.hidden) continue;
+        for (const JumpCut::Jump& j : JumpCut::find(t, framesOf(0.3, f))) {
+            if (j.at <= from || j.at >= to) continue;
+            const Clip* a = TimelineOps::findClip(tl, j.left);
+            const Clip* b = TimelineOps::findClip(tl, j.right);
+            if (!a || !b || !JumpCut::sameFraming(*a, *b)) continue;
+            if (++count <= 20)
+                out << issue(Severity::Info, "jump_cut",
+                             T("Sprung im Bild bei %1 s: dieselbe Aufnahme, %2 s ausgelassen – abwechselnd "
+                               "heranzoomen lässt ihn wie einen Kamerawechsel wirken")
+                                 .arg(num(secondsOf(j.at - from, f)), num(secondsOf(std::abs(j.skipped), f))),
+                             j.at, j.at + 1, j.right);
+        }
+    }
+    if (count > 20)
+        out << issue(Severity::Info, "jump_cut", T("%1 weitere Sprünge im Bild").arg(count - 20));
     return out;
 }
 

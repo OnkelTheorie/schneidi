@@ -415,6 +415,7 @@ QJsonObject cmdCheck(const QJsonObject& a, Context& ctx)
         // Pace and story: from the timeline, the measured peaks and the transcripts (no decoding of their own)
         const ExportCheck::Pace pace = ExportCheck::pace(tl, from, to, f, opt);
         issues += ExportCheck::paceIssues(pace, from, to, f, opt);
+        issues += ExportCheck::jumpCuts(tl, from, to, f);
         changes = pace.changes;
         const QVector<TranscriptCut::Word> words = TranscriptCut::timelineWords(tl, s.project.media(), f.rate.fps());
         QVector<int> spoken;

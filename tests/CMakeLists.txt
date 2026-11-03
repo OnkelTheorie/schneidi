@@ -116,6 +116,8 @@ schneidi_test(test_jl_cuts) # J/L cuts (sound edge alone) and room tone in the g
 target_link_libraries(test_jl_cuts PRIVATE schneidi_cli_lib)
 schneidi_test(test_rough_cut) # 0.17: rough_cut from a script, best_takes, core/ScriptAlign (takes, rating, repeats)
 target_link_libraries(test_rough_cut PRIVATE schneidi_cli_lib)
+schneidi_test(test_hide_jumps) # 0.17: hide_jumps (alternating zoom at jump cuts), core/JumpCut, check jump_cut
+target_link_libraries(test_hide_jumps PRIVATE schneidi_cli_lib)
 schneidi_test(test_story_fields) # 0.17: story sections/notes on a timeline (file, duplicate, retime, undo, info), 'why' on ops
 target_link_libraries(test_story_fields PRIVATE schneidi_cli_lib)
 schneidi_test(test_story_pace) # 0.17: `check` pace (changes, pace_slow, suggestions), story checks, retention CSV

@@ -203,6 +203,10 @@ QVector<int> strongMoments(const Timeline& tl, int from, int to, const ProjectFo
 QVector<Issue> story(const Timeline& tl, int from, int to, const ProjectFormat& f, QVector<int> strong,
                      bool strongKnown, const QVector<int>& words, const Options& o = {});
 
+// Jump cuts in [from, to) (core/JumpCut): two clips of one take that touch and skip a part of it (at least 0.3 s)
+// with the same framing on a visible video track - jump_cut (info), one per cut; at most 20, then one summary
+QVector<Issue> jumpCuts(const Timeline& tl, int from, int to, const ProjectFormat& f);
+
 // ---- Retention curve (YouTube Studio / TikTok export): where viewers leave
 
 struct RetentionPoint {
