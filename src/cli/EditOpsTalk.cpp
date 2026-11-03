@@ -4,6 +4,7 @@
 #include "cli/CommandsDetail.h"
 
 #include "cli/Commands.h"
+#include "core/IndexSearch.h"
 #include "core/JumpCut.h"
 #include "core/Keyframes.h"
 #include "core/RoomTone.h"
@@ -11,6 +12,7 @@
 #include "core/TimelineOps.h"
 #include "core/TranscriptCut.h"
 #include "engine/AudioAnalysis.h"
+#include "engine/MediaIndex.h"
 #include "engine/ReframeAnalysis.h"
 #include "engine/Extensions.h"
 
@@ -594,6 +596,124 @@ void opHideJumps(Session& s, const QJsonObject& op)
     s.notes << note;
 }
 
+// ---------- broll ----------
+
+// The spoken sentences of the timeline in [from, to): timeline frames and their text
+struct Said {
+    int from = 0, to = 0;
+    QString text;
+};
+
+QVector<Said> saidIn(Session& s, int from, int to)
+{
+    QVector<Said> out;
+    Said cur;
+    const auto flush = [&] {
+        if (!cur.text.trimmed().isEmpty()) out << cur;
+        cur = Said{};
+    };
+    for (const TranscriptCut::Word& w : TranscriptCut::timelineWords(s.project.timeline(), s.project.media(), s.format().rate.fps())) {
+        if (w.from < from || w.from >= to) continue;
+        if (cur.text.isEmpty()) cur.from = w.from;
+        cur.to = w.spokenTo > w.from ? w.spokenTo : w.to;
+        cur.text += w.text + ' ';
+        const QString t = w.text.trimmed();
+        if (t.endsWith('.') || t.endsWith('!') || t.endsWith('?')) flush();
+    }
+    flush();
+    return out;
+}
+
+// The file playing on the lowest video track at the frame (the one the B-roll covers), or empty
+QString playingAt(const Timeline& tl, int frame)
+{
+    for (const Track& t : tl.video)
+        for (const Clip& c : t.clips)
+            if (c.enabled && !c.mediaPath.isEmpty() && c.start <= frame && frame < c.end()) return c.mediaPath;
+    return {};
+}
+
+void opBroll(Session& s, const QJsonObject& op)
+{
+    const Timeline& tl = s.project.timeline();
+    const int end = TimelineOps::endFrame(tl);
+    if (end <= 0) s.failEmpty();
+    const int from = op.contains("from") ? timeOf(s, op, "from") : 0;
+    const int to = op.contains("to") ? std::min(end, timeOf(s, op, "to")) : end;
+    if (to <= from) fail("BAD_ARGUMENT", "'to' must be after 'from'");
+    TrackKind kind = TrackKind::Video;
+    const int track = op.contains("track") ? parseTrack(op.value("track"), &kind) : 1;
+    if (kind != TrackKind::Video || track < 1) fail("BAD_ARGUMENT", "track must be a video track above V1 (default V2)");
+    const QString query = op.value("query").toString().trimmed();
+    const int most = op.contains("max") ? std::clamp(op.value("max").toInt(), 1, 100) : 10;
+    // What can be shown: the indexed shots of the project's video files (cached; made now on a file, not in the app)
+    QVector<IndexSearch::Shot> shots;
+    QStringList notIndexed;
+    for (const MediaInfo& m : s.project.media()) {
+        if (!m.hasVideo || m.isImage) continue;
+        std::optional<MediaIndex::Entry> e = MediaIndex::cached(m.path);
+        if (!e && !s.live) e = MediaIndex::build(m.path);
+        if (!e) {
+            notIndexed << QFileInfo(m.path).fileName();
+            continue;
+        }
+        if (const MediaTranscript* t = m.transcript(0)) MediaIndex::addSpeech(*e, t->words);
+        shots += MediaIndex::searchable(*e);
+    }
+    if (shots.isEmpty())
+        fail("NOT_FOUND", "no indexed shots: run `index` on the project first (and describe the shots with annotate)");
+    // What is said: a sentence each (or the whole range for a given query)
+    QVector<Said> said = query.isEmpty() ? saidIn(s, from, to) : QVector<Said>{Said{from, to, query}};
+    if (said.isEmpty())
+        fail("NO_TRANSCRIPT", "nothing transcribed is said in the range: give query, or transcribe the speech first");
+    QJsonArray placed, unmatched;
+    QSet<QString> used; // file + shot: nothing twice
+    const double fps = s.format().rate.fps();
+    for (const Said& line : said) {
+        if (placed.size() >= most) break;
+        const QString running = playingAt(tl, line.from);
+        const IndexSearch::Hit* best = nullptr;
+        const QVector<IndexSearch::Hit> hits = IndexSearch::search(line.text, shots, 0);
+        for (const IndexSearch::Hit& h : hits) {
+            if (h.score <= 0 || h.file == running || used.contains(h.file + '#' + QString::number(h.n))) continue;
+            // Words of the question, not only a quality ("calm") or an event, must have matched
+            const bool worded = std::any_of(h.reasons.begin(), h.reasons.end(), [](const IndexSearch::Reason& r) {
+                return r.field == "tag" || r.field == "desc" || r.field == "speech";
+            });
+            if (!worded) continue;
+            best = &h;
+            break;
+        }
+        if (!best) {
+            unmatched << line.text.trimmed();
+            continue;
+        }
+        used.insert(best->file + '#' + QString::number(best->n));
+        // As long as the sentence (the shot permitting), from the shot's start
+        const int length = std::max(1, std::min(line.to - line.from, int(std::floor((best->to - best->from) * fps))));
+        QVector<int> before;
+        for (const Track& t : s.project.timeline().audio)
+            for (const Clip& c : t.clips) before << c.id;
+        applyOp(s, QJsonObject{{"op", "place"}, {"media", best->file}, {"at", line.from},
+                               {"in", QString("%1s").arg(best->from, 0, 'f', 3)}, {"duration", length},
+                               {"track", QString("V%1").arg(track + 1)}});
+        // B-roll is picture: its sound clips go again
+        QJsonArray sound;
+        for (const Track& t : s.project.timeline().audio)
+            for (const Clip& c : t.clips)
+                if (!before.contains(c.id) && c.mediaPath == best->file) sound << c.id;
+        if (!sound.isEmpty()) applyOp(s, QJsonObject{{"op", "delete"}, {"clips", sound}});
+        placed << QJsonObject{{"said", line.text.trimmed()}, {"at", line.from}, {"at_s", round2(line.from / fps)},
+                              {"length_s", round2(length / fps)}, {"file", best->file}, {"shot", best->n},
+                              {"from_s", round2(best->from)}, {"why", best->why}};
+    }
+    QJsonObject r{{"placed", placed}, {"track", QString("V%1").arg(track + 1)}};
+    if (!unmatched.isEmpty()) r["no_match"] = unmatched;
+    if (!notIndexed.isEmpty()) r["not_indexed"] = QJsonArray::fromStringList(notIndexed);
+    if (placed.isEmpty()) r["note"] = "no shot matches what is said: describe the shots (`index` annotate) or give query";
+    s.notes << QJsonObject{{"broll", r}};
+}
+
 } // namespace
 
 QJsonObject prepareTalk(const QJsonObject& editArgs, Context& ctx)
@@ -682,7 +802,17 @@ void addTalkOps(QVector<OpDef>& ops)
                  "measurement, cached) where it is in the frame, middle zooms on the centre. Clips with their own zoom, "
                  "position or keyframes are left out (named in the answer). track = the video track (default: the one "
                  "of the clips given, else V1). One undo step; `check` reports remaining jumps as jump_cut (info).",
-                 opHideJumps, kClipKeys};
+                 opHideJumps, kClipKeys}
+        << OpDef{"broll", "{op:'broll', from?, to?, query?, track?:'V2', max?}",
+                 "B-roll that matches what is said: shots of the material index over the sentences of the transcript",
+                 "Each spoken sentence in [from, to) (the timeline's transcripts) is searched in the index (`index`: "
+                 "descriptions, tags, speech of every video file of the project; build it and describe the shots "
+                 "first) and the best shot whose words match - not from the file playing below, no shot twice - goes "
+                 "onto track (default V2) as long as the sentence (or the shot), picture only. query instead searches "
+                 "that once for the whole range. At most max (10) shots. The answer's notes give broll {placed:[{said, "
+                 "at_s, length_s, file, shot, from_s, why}], no_match, not_indexed}. Best as a plan (plan:true): the "
+                 "user picks.",
+                 opBroll};
 }
 
 } // namespace Cli::detail
