@@ -30,12 +30,20 @@ struct Shot {
     bool dark = false, overexposed = false, blurry = false, sharp = false, pan = false, face = false;
 };
 
+// Why a shot matched one word of the question
+struct Reason {
+    QString field; // tag, desc, speech, event, quality
+    QString term;  // the matching word, the event id or the quality ("calm", "dark", "face likely" …)
+    double conf = 0; // events: their confidence
+};
+
 struct Hit {
     QString file;
     int n = 0;
     double from = 0, to = 0; // the shot, or the event that matched best
     double score = 0;
-    QString why; // "event laughter 0.80", "tag 'laden'", "desc 'totale'", "speech 'laden'", "quality calm"
+    QString why; // "event laughter 0.80, tag 'laden', desc 'totale', speech 'laden', quality calm"
+    QVector<Reason> reasons;
 };
 
 // Lower case, umlauts folded (ä -> a, ß -> ss), split into words; filler words of a question ("wo", "der", "the")

@@ -188,13 +188,13 @@ QVector<Hit> search(const QString& query, const QVector<Shot>& shots, int top)
         const QStringList desc = words(s.desc), speech = words(s.speech);
         double total = 0;
         int matched = 0;
-        QStringList why;
+        QVector<Reason> reasons;
         const Event* bestEvent = nullptr;
         for (const Meaning& m : meanings) {
             double best = 0;
-            QString reason;
+            Reason reason;
             const Event* event = nullptr;
-            const auto consider = [&](double score, const QString& r, const Event* e = nullptr) {
+            const auto consider = [&](double score, const Reason& r, const Event* e = nullptr) {
                 if (score > best) {
                     best = score;
                     reason = r;
@@ -204,26 +204,30 @@ QVector<Hit> search(const QString& query, const QVector<Shot>& shots, int top)
             for (int i = 0; i < m.terms.size(); ++i) {
                 const QString& term = m.terms[i];
                 const double weight = i == 0 ? 1.0 : 0.8; // the asked word beats its synonyms
-                consider(3.0 * weight * termScore(term, tags), QString("tag '%1'").arg(term));
-                consider(2.0 * weight * termScore(term, desc), QString("desc '%1'").arg(term));
-                consider(1.5 * weight * termScore(term, speech), QString("speech '%1'").arg(term));
+                consider(3.0 * weight * termScore(term, tags), {"tag", term});
+                consider(2.0 * weight * termScore(term, desc), {"desc", term});
+                consider(1.5 * weight * termScore(term, speech), {"speech", term});
             }
             for (const Event& e : s.events) {
                 const bool same = m.events.contains(e.kind) || m.terms.first() == e.kind;
                 if (same)
-                    consider(2.0 * std::clamp(e.conf, 0.1, 1.0),
-                             QString("event %1 %2").arg(e.kind).arg(e.conf, 0, 'f', 2), &e);
+                    consider(2.0 * std::clamp(e.conf, 0.1, 1.0), {"event", e.kind, e.conf}, &e);
             }
             for (Quality q : m.quality)
-                if (hasQuality(s, q)) consider(1.0, QString("quality %1").arg(QLatin1String(qualityName(q))));
+                if (hasQuality(s, q)) consider(1.0, {"quality", QString::fromLatin1(qualityName(q))});
             if (best <= 0) continue;
             total += best;
             ++matched;
-            why << reason;
+            reasons << reason;
             if (event && (!bestEvent || event->conf > bestEvent->conf)) bestEvent = event;
         }
         if (matched == 0) continue;
-        Hit h{s.file, s.n, s.from, s.to, total * matched / tokens.size(), why.join(", ")};
+        QStringList why;
+        for (const Reason& r : reasons)
+            why << (r.field == "event"     ? QString("event %1 %2").arg(r.term).arg(r.conf, 0, 'f', 2)
+                    : r.field == "quality" ? QString("quality %1").arg(r.term)
+                                           : QString("%1 '%2'").arg(r.field, r.term));
+        Hit h{s.file, s.n, s.from, s.to, total * matched / tokens.size(), why.join(", "), reasons};
         if (bestEvent) {
             h.from = std::max(s.from, bestEvent->from);
             h.to = std::min(s.to, bestEvent->to);

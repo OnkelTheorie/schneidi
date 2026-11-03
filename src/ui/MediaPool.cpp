@@ -3,12 +3,14 @@
 
 #include "app/Theme.h"
 #include "core/I18n.h"
+#include "core/IndexSearch.h"
 #include "core/MediaAspect.h"
 #include "core/Project.h"
 #include "core/Timecode.h"
 #include "core/TimelineOps.h"
 #include "engine/Engine.h"
 #include "engine/GradedThumbs.h"
+#include "engine/MediaIndex.h"
 #include "engine/ProxyManager.h"
 #include "ui/FileManager.h"
 #include "ui/HoverScrub.h"
@@ -22,10 +24,13 @@
 #include <QAction>
 #include <QActionGroup>
 #include <QDateTime>
+#include <QDialog>
+#include <QDialogButtonBox>
 #include <QDir>
 #include <QDragEnterEvent>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QFormLayout>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QInputDialog>
@@ -348,15 +353,19 @@ MediaPool::MediaPool(Project* project, Engine* engine, QWidget* parent)
 
     // Search: magnifier shows the field, Esc resp. another click clears and closes it
     m_search = new QLineEdit;
-    m_search->setPlaceholderText(T("Suchen…"));
+    m_search->setPlaceholderText(T("Im Material suchen…"));
+    m_search->setObjectName("pool_search");
     m_search->setClearButtonEnabled(true);
     m_search->setVisible(false);
     title->ensurePolished(); // the field is at least as wide as the title it replaces: the Viewer beside stays put
     m_search->setMinimumWidth(std::max(60, title->sizeHint().width()));
-    connect(m_search, &QLineEdit::textChanged, this, [this] { rebuildClips(); });
+    connect(m_search, &QLineEdit::textChanged, this, [this] {
+        rebuildClips();
+        m_indexTimer->start(); // the material search after a short pause in typing
+    });
     m_searchBtn = new QToolButton;
     m_searchBtn->setText("🔍︎"); // U+FE0E: as text, not as a colored emoji (Windows)
-    m_searchBtn->setToolTip(T("Clips suchen"));
+    m_searchBtn->setToolTip(T("Clips und Material durchsuchen"));
     m_searchBtn->setAutoRaise(true);
     m_searchBtn->setCheckable(true);
     // The open field takes the title's place: the header stays as narrow as before (the pool does not widen)
@@ -476,7 +485,46 @@ MediaPool::MediaPool(Project* project, Engine* engine, QWidget* parent)
     clipLay->setContentsMargins(0, 0, 0, 0);
     clipLay->setSpacing(0);
     clipLay->addLayout(titleRow);
-    clipLay->addWidget(m_list, 1);
+
+    // Material search: the shots of the material index that match the search text, with picture and time
+    m_indexPanel = new QWidget;
+    m_indexPanel->setObjectName("pool_index_panel");
+    auto* indexLay = new QVBoxLayout(m_indexPanel);
+    indexLay->setContentsMargins(0, 0, 0, 0);
+    indexLay->setSpacing(0);
+    m_indexTitle = new QLabel;
+    m_indexTitle->setObjectName("pool_index_title");
+    m_indexTitle->setWordWrap(true);
+    m_indexTitle->setContentsMargins(6, 2, 6, 2);
+    m_indexTitle->setStyleSheet(QString("color: %1;").arg(Theme::textDim.name()));
+    m_indexTitle->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+    m_indexHits = new QListWidget;
+    m_indexHits->setObjectName("pool_index_hits");
+    m_indexHits->setIconSize(kListIcon);
+    m_indexHits->setUniformItemSizes(true);
+    m_indexHits->setContextMenuPolicy(Qt::CustomContextMenu);
+    m_indexHits->setToolTip(T("Doppelklick: im Quell-Viewer an dieser Stelle zeigen"));
+    connect(m_indexHits, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem* it) {
+        emit sourceRequestedAt(it->data(Qt::UserRole).toString(), it->data(Qt::UserRole + 1).toInt());
+    });
+    connect(m_indexHits, &QListWidget::customContextMenuRequested, this, &MediaPool::showHitMenu);
+    indexLay->addWidget(m_indexTitle);
+    indexLay->addWidget(m_indexHits, 1);
+    m_indexPanel->hide();
+    m_indexTimer = new QTimer(this);
+    m_indexTimer->setSingleShot(true);
+    m_indexTimer->setInterval(200);
+    connect(m_indexTimer, &QTimer::timeout, this, &MediaPool::updateIndexHits);
+    m_indexPool = new QThreadPool(this);
+    m_indexPool->setMaxThreadCount(1); // one file at a time: each decodes on several cores already
+
+    auto* clipSplit = new QSplitter(Qt::Vertical);
+    clipSplit->addWidget(m_list);
+    clipSplit->addWidget(m_indexPanel);
+    clipSplit->setStretchFactor(0, 3);
+    clipSplit->setStretchFactor(1, 2);
+    clipSplit->setChildrenCollapsible(false);
+    clipLay->addWidget(clipSplit, 1);
 
     auto* split = new QSplitter(Qt::Horizontal);
     split->addWidget(m_bins);
@@ -761,6 +809,9 @@ MediaPool::~MediaPool()
     // Finish running thumbnail jobs while this object is complete (they report back to it)
     m_thumbPool->clear();
     m_thumbPool->waitForDone();
+    m_indexCancel = true; // a file being measured stops at its next picture
+    m_indexPool->clear();
+    m_indexPool->waitForDone();
 }
 
 void MediaPool::rebuild()
@@ -1378,6 +1429,14 @@ void MediaPool::showContextMenu(const QPoint& pos)
             menu.addAction(T("Proxy-Erzeugung abbrechen"), this, [proxies, pending] { proxies->cancel(pending); });
         menu.addAction(T("Proxy-Medien aufräumen…"), this, &MediaPool::proxyCleanupRequested);
         menu.addSeparator();
+        QStringList indexable;
+        for (const QString& path : paths)
+            if (const MediaInfo* m = m_project->mediaInfo(path);
+                m && (m->hasVideo || m->hasAudio) && !m_indexing.contains(path) && QFileInfo::exists(path))
+                indexable << path;
+        menu.addAction(T("Material-Index erstellen"), this, [this, indexable] { buildIndex(indexable); })
+            ->setEnabled(!indexable.isEmpty());
+        menu.addSeparator();
         QString file = paths.first(); // the one right-clicked, else the first selected
         if (QListWidgetItem* it = m_list->itemAt(pos); it && paths.contains(it->data(Qt::UserRole).toString()))
             file = it->data(Qt::UserRole).toString();
@@ -1440,4 +1499,182 @@ void MediaPool::dropEvent(QDropEvent* e)
     for (const QUrl& url : e->mimeData()->urls())
         if (url.isLocalFile()) paths << url.toLocalFile();
     importFiles(paths);
+}
+
+// ---------- Material search (engine/MediaIndex) ----------
+
+namespace {
+
+QString clockOf(double seconds)
+{
+    const int s = std::max(0, int(seconds));
+    return QString("%1:%2").arg(s / 60).arg(s % 60, 2, 10, QChar('0'));
+}
+
+QString eventName(const QString& kind)
+{
+    static const QHash<QString, const char*> names{
+        {"laughter", N_("Lachen")}, {"applause", N_("Applaus")}, {"cheering", N_("Jubel")}, {"shot", N_("Schuss")},
+        {"scream", N_("Schrei")},   {"music", N_("Musik")},      {"speech", N_("Sprache")}, {"silence", N_("Stille")}};
+    const auto it = names.constFind(kind);
+    return it == names.constEnd() ? kind : T(*it);
+}
+
+QString qualityName(const QString& q)
+{
+    static const QHash<QString, const char*> names{
+        {"calm", N_("ruhig")},       {"motion", N_("viel Bewegung")}, {"dark", N_("dunkel")},
+        {"overexposed", N_("überbelichtet")}, {"blurry", N_("unscharf")}, {"sharp", N_("scharf")},
+        {"pan", N_("Schwenk")},      {"face likely", N_("Gesicht wahrscheinlich")}, {"speech", N_("Sprache")}};
+    const auto it = names.constFind(q);
+    return it == names.constEnd() ? q : T(*it);
+}
+
+QString reasonText(const IndexSearch::Reason& r)
+{
+    if (r.field == "tag") return T("Schlagwort „%1“").arg(r.term);
+    if (r.field == "desc") return T("Beschreibung „%1“").arg(r.term);
+    if (r.field == "speech") return T("Gesagt „%1“").arg(r.term);
+    if (r.field == "event") return T("Ton: %1").arg(eventName(r.term));
+    return T("Bild: %1").arg(qualityName(r.term));
+}
+
+} // namespace
+
+void MediaPool::buildIndex(const QStringList& paths)
+{
+    for (const QString& path : paths) {
+        if (m_indexing.contains(path)) continue;
+        m_indexing.insert(path);
+        m_indexPool->start([this, path] {
+            Background::lowerThisThread(Background::Level::Lowest); // own pool: its thread does nothing else
+            Background::yieldToForeground();
+            MediaIndex::Options o;
+            o.progress = [this](double) { return !m_indexCancel.load(); };
+            MediaIndex::build(path, o);
+            QMetaObject::invokeMethod(
+                this,
+                [this, path] {
+                    m_indexing.remove(path);
+                    if (!m_search->text().trimmed().isEmpty()) updateIndexHits();
+                    emit indexBuilt(path);
+                },
+                Qt::QueuedConnection);
+        });
+    }
+    if (!m_search->text().trimmed().isEmpty()) updateIndexHits();
+}
+
+void MediaPool::updateIndexHits()
+{
+    const QString query = m_search->text().trimmed();
+    m_indexHits->clear();
+    if (query.isEmpty()) {
+        m_indexPanel->hide();
+        return;
+    }
+    m_indexPanel->show();
+    QVector<IndexSearch::Shot> shots;
+    int indexed = 0;
+    for (const MediaInfo& m : m_project->media()) {
+        std::optional<MediaIndex::Entry> e = MediaIndex::cached(m.path);
+        if (!e) continue;
+        ++indexed;
+        for (const MediaTranscript& t : m.transcripts) MediaIndex::addSpeech(*e, t.words);
+        shots += MediaIndex::searchable(*e);
+    }
+    const QVector<IndexSearch::Hit> hits = IndexSearch::search(query, shots, 50);
+    QString title = !indexed         ? T("Noch kein Material-Index: Rechtsklick auf Clips › Material-Index erstellen")
+                    : hits.isEmpty() ? T("Im Material: nichts gefunden")
+                                     : T("Im Material: %1 Treffer").arg(hits.size());
+    if (!m_indexing.isEmpty()) title += "  " + T("(Index wird erstellt: %1)").arg(m_indexing.size());
+    m_indexTitle->setText(title);
+
+    const ProjectFormat format = m_project->format();
+    const double fps = format.rate.fps();
+    for (const IndexSearch::Hit& h : hits) {
+        const MediaInfo* m = m_project->mediaInfo(h.file);
+        if (!m) continue;
+        const int frame = std::clamp(int(std::lround(h.from * fps)), 0, std::max(0, m->length - 1));
+        QStringList why;
+        for (const IndexSearch::Reason& r : h.reasons) why << reasonText(r);
+        auto* it = new QListWidgetItem(
+            QString("%1  %2–%3\n%4").arg(m->name, clockOf(h.from), clockOf(h.to), why.join(", ")), m_indexHits);
+        it->setData(Qt::UserRole, h.file);
+        it->setData(Qt::UserRole + 1, frame);
+        it->setData(Qt::UserRole + 2, h.n);
+        it->setToolTip(T("Einstellung %1 von %2").arg(h.n).arg(m->name));
+        const QString key = h.file + '#' + QString::number(frame);
+        it->setData(Qt::UserRole + 3, key);
+        if (const auto pm = m_hitThumbs.constFind(key); pm != m_hitThumbs.constEnd()) {
+            it->setIcon(*pm);
+        } else if (m->hasVideo && !m->isImage && QFileInfo::exists(h.file)) {
+            if (m_thumbs.contains(h.file)) it->setIcon(m_thumbs.value(h.file)); // until its own picture is there
+            const double aspect = m->pictureAspect;
+            const QString path = h.file;
+            m_hitThumbs.insert(key, m_thumbs.value(h.file)); // asked once
+            m_thumbPool->start([this, format, path, frame, key, aspect] {
+                Background::lowerThisThread(Background::Level::Low);
+                const QImage img = Engine::thumbnail(format, path, frame, kThumb, true, aspect);
+                QMetaObject::invokeMethod(
+                    this,
+                    [this, key, img] {
+                        if (img.isNull()) return;
+                        const QPixmap pm = QPixmap::fromImage(img);
+                        m_hitThumbs.insert(key, pm);
+                        for (int i = 0; i < m_indexHits->count(); ++i)
+                            if (m_indexHits->item(i)->data(Qt::UserRole + 3).toString() == key)
+                                m_indexHits->item(i)->setIcon(pm);
+                    },
+                    Qt::QueuedConnection);
+            });
+        } else {
+            it->setIcon(m_thumbs.value(h.file));
+        }
+    }
+}
+
+void MediaPool::showHitMenu(const QPoint& pos)
+{
+    QListWidgetItem* it = m_indexHits->itemAt(pos);
+    if (!it) return;
+    const QString path = it->data(Qt::UserRole).toString();
+    const int frame = it->data(Qt::UserRole + 1).toInt(), shot = it->data(Qt::UserRole + 2).toInt();
+    QMenu menu(this);
+    menu.addAction(T("Im Quell-Viewer zeigen"), this, [this, path, frame] { emit sourceRequestedAt(path, frame); });
+    menu.addAction(T("Beschreibung bearbeiten…"), this, [this, path, shot] { editHitNote(path, shot); });
+    menu.exec(m_indexHits->viewport()->mapToGlobal(pos));
+}
+
+void MediaPool::editHitNote(const QString& path, int shot)
+{
+    std::optional<MediaIndex::Entry> e = MediaIndex::cached(path);
+    if (!e) return;
+    const MediaIndex::Shot* s = nullptr;
+    for (const MediaIndex::Shot& x : e->shots)
+        if (x.n == shot) s = &x;
+    if (!s) return;
+    QDialog dlg(this);
+    dlg.setWindowTitle(T("Beschreibung bearbeiten"));
+    auto* form = new QFormLayout(&dlg);
+    auto* desc = new QLineEdit(s->desc);
+    desc->setObjectName("index_note_desc");
+    desc->setMinimumWidth(320);
+    auto* tags = new QLineEdit(s->tags.join(", "));
+    tags->setObjectName("index_note_tags");
+    tags->setPlaceholderText(T("durch Kommas getrennt"));
+    form->addRow(new QLabel(T("Einstellung %1 von %2").arg(shot).arg(QFileInfo(path).fileName())));
+    form->addRow(T("Beschreibung"), desc);
+    form->addRow(T("Schlagworte"), tags);
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+    connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+    form->addRow(buttons);
+    if (dlg.exec() != QDialog::Accepted) return;
+    QStringList list;
+    for (const QString& t : tags->text().split(',', Qt::SkipEmptyParts)) list << t.trimmed();
+    QString error;
+    if (!MediaIndex::annotate(*e, shot, desc->text(), list, &error))
+        QMessageBox::warning(this, T("Beschreibung bearbeiten"), error);
+    updateIndexHits();
 }

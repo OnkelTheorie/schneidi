@@ -49,6 +49,7 @@ schneidi_test(test_voiceover_app) # voice-over in the app: arm, record button, s
 set_tests_properties(test_preview_audio PROPERTIES RUN_SERIAL TRUE)
 schneidi_test(test_mediapool)
 schneidi_test(test_pool_storage) # Media Pool filter + keys, Media Storage marks, hover scrub, look before import
+schneidi_test(test_pool_index) # Media Pool material search: hits from the material index, double-click to the source
 schneidi_test(test_pool_remove) # removing clips from the Media Pool: core op, undo, watch, AI turn, CLI op, keys, question
 target_link_libraries(test_pool_remove PRIVATE schneidi_cli_lib)
 schneidi_test(test_color)
