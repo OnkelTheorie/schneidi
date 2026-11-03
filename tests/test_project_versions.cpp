@@ -17,6 +17,7 @@
 #include <QTemporaryDir>
 
 #include <cmath>
+#include <functional>
 
 namespace {
 
@@ -273,6 +274,38 @@ void testVersion6Windows(const QString& tmp)
     if (const Clip* a = clip(again.timeline, 3); CHECK(a)) CHECK_EQ(GradeWindows::list(*a), (QVector<int>{1, 2, 3, 4, 8}));
 }
 
+// The rest of 0.16 that 0.15 would open silently and show or export differently also needs version 6, each on its
+// own; a project without any of it stays version 4
+void testVersion6Features(const QString& tmp)
+{
+    ProjectData base;
+    QString err;
+    if (!CHECK(ProjectFile::load(kData + "/v3-0.14dev-pixelate.schneidi", &base, &err))) return;
+    const QString path = tmp + "/features.schneidi";
+    const auto version = [&](const ProjectData& d) {
+        return QJsonDocument::fromJson(ProjectFile::toJson(d, path)).object().value("version").toInt();
+    };
+    CHECK_EQ(version(base), 4);
+    const auto with = [&](const char* what, const std::function<void(Clip&, Timeline&)>& change) {
+        ProjectData d = base;
+        change(d.timeline.video[0].clips[0], d.timeline);
+        if (!CHECK_EQ(version(d), 6)) std::printf("       %s\n", what);
+    };
+    with("picture aspect", [](Clip& c, Timeline&) { c.pictureAspect = 16.0 / 9; });
+    with("kept region", [](Clip& c, Timeline&) { c.keepRegion = "killfeed"; });
+    with("in-between pictures", [](Clip& c, Timeline&) { c.interpolate = FrameInterp::Blend; });
+    with("push transition", [](Clip& c, Timeline&) { c.transInStyle.type = TransitionType::PushLeft; });
+    with("whip transition", [](Clip& c, Timeline&) { c.transOutStyle.type = TransitionType::WhipUp; });
+    with("counter title", [](Clip& c, Timeline&) {
+        c.kind = ClipKind::Title;
+        c.title.kind = TitleKind::Counter;
+    });
+    with("word captions", [](Clip&, Timeline& t) {
+        t.subtitles.resize(1);
+        t.subtitles[0].captions.mode = CaptionMode::Karaoke;
+    });
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -287,5 +320,6 @@ int main(int argc, char** argv)
     testVersion2Crop();
     testVersion3Pixelate();
     testVersion6Windows(tmp.path());
+    testVersion6Features(tmp.path());
     return Check::result();
 }

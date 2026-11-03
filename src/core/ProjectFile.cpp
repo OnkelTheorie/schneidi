@@ -105,23 +105,33 @@ TrackDynamics dynamicsFromJson(const QJsonObject& o)
 //     projects without stay version 4 and keep opening in 0.14/0.15 (writtenVersion).
 //  6: Color page windows 5 to 8 on a clip (GradeWindows::kMax 4 -> 8, 0.16, hiding player names). Older versions
 //     keep the data but neither show nor render those windows: an export would show the names they hide. Written
-//     only when a clip uses one of them (writtenVersion).
+//     only when a clip uses one of them (writtenVersion). Likewise the rest of 0.16 that 0.15 would open without a
+//     word and show or export differently: a recording's own picture shape, a kept region, counter/progress titles,
+//     push/whip transitions, in-between pictures in slow motion, word captions.
 constexpr int kFormatVersion = 6;
 
-bool usesWindowsAbove4(const Timeline& t)
+bool usesVersion6(const Timeline& t)
 {
+    const auto slide = [](const TransitionStyle& s) { return s.isSlide(); };
     for (const Track& track : t.video)
-        for (const Clip& c : track.clips)
+        for (const Clip& c : track.clips) {
             for (int n = 5; n <= GradeWindows::kMax; ++n)
                 if (GradeWindows::exists(c, n)) return true;
+            if (c.pictureAspect > 0 || !c.keepRegion.isEmpty() || c.interpolate != FrameInterp::Repeat
+                || slide(c.transInStyle) || slide(c.transOutStyle))
+                return true;
+            if (c.kind == ClipKind::Title && c.title.kind != TitleKind::Text) return true;
+        }
+    for (const SubtitleTrack& st : t.subtitles)
+        if (!Captions::toJson(st.captions).isEmpty()) return true;
     return false;
 }
 
 // The version a file is written with: the newest one only when it uses what needs it
 int writtenVersion(const ProjectData& d)
 {
-    if (usesWindowsAbove4(d.timeline)
-        || std::any_of(d.sequences.begin(), d.sequences.end(), [](const Sequence& s) { return usesWindowsAbove4(s.timeline); }))
+    if (usesVersion6(d.timeline)
+        || std::any_of(d.sequences.begin(), d.sequences.end(), [](const Sequence& s) { return usesVersion6(s.timeline); }))
         return 6;
     const bool ownSize = std::any_of(d.sequences.begin(), d.sequences.end(), [](const Sequence& s) { return s.hasOwnSize(); });
     return ownSize ? 5 : 4;
