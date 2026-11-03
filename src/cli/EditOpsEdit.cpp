@@ -527,8 +527,7 @@ void opLink(Session& s, const QJsonObject& op, bool link)
 {
     const QVector<int> ids = s.editor.editable(clipIds(s, QJsonObject{{"clips", op.value("clips")}, {"linked", link ? false : true}}));
     if (link && ids.size() < 2) fail("BAD_ARGUMENT", "link needs at least two clips");
-    const int id = link ? s.project.newLinkId() : 0;
-    s.editor.modifyClips(ids, link ? "Link clips" : "Unlink clips", [id](Clip& c) { c.linkId = id; });
+    s.editor.setLinked(ids, link, link ? "Link clips" : "Unlink clips"); // kill feed copies keep following
 }
 
 // ---------- speed ----------

@@ -33,15 +33,17 @@ QVector<int> Editor::reframeTargets(const QVector<int>& ids, QVector<int>* overl
 QVector<int> Editor::followingCopies(const QVector<int>& ids) const
 {
     const Timeline& tl = m_project->timeline();
-    QSet<int> links; // of the clips among ids that are no copies themselves
+    // Of the video clips among ids that are no copies themselves: the copy shares its link with the clip's sound too,
+    // which edited alone (Alt-click, linked selection off) must not take the copy away from its picture
+    QSet<QPair<int, QString>> leads;
     for (int id : ids)
-        if (const Clip* c = TimelineOps::findClip(tl, id); c && c->linkId && c->keepRegion.isEmpty())
-            links.insert(c->linkId);
+        if (TrackRef r; const Clip* c = TimelineOps::findClip(tl, id, &r))
+            if (r.kind == TrackKind::Video && c->linkId && c->keepRegion.isEmpty()) leads.insert({c->linkId, c->mediaPath});
     QVector<int> out;
-    if (links.isEmpty()) return out;
+    if (leads.isEmpty()) return out;
     for (const Track& t : tl.video)
         for (const Clip& x : t.clips)
-            if (!x.keepRegion.isEmpty() && links.contains(x.linkId)) out << x.id;
+            if (!x.keepRegion.isEmpty() && leads.contains({x.linkId, x.mediaPath})) out << x.id;
     return editable(out);
 }
 
