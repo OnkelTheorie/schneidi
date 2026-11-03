@@ -307,7 +307,11 @@ void testSpeaker(const QString& dir, const QString& voice, const QString& log)
     CHECK_EQ(fakeRuns(log), 2);
     QFile f(log);
     f.open(QIODevice::ReadOnly);
-    CHECK(f.readAll().contains("--length_scale|0.500|"));
+    const QByteArray logged = f.readAll();
+    CHECK(logged.contains("--length_scale|0.500|"));
+    // The output by its file name only (piper runs in the folder): piper.exe reads its arguments in the ANSI code
+    // page, a project folder with other letters became '?' on Windows
+    CHECK(logged.contains("--output_file|speech-hallo-das-ist-ein-test-"));
     // piper fails: an error, no file left
     r.text = "fail";
     CHECK(!Tts::speak(r, &again, &error));
