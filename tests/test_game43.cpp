@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // 4:3 game footage in 16:9 recordings: black bar detection (pillarbox, letterbox, a dark scene, a small overlay in the
-// bar, a dark video without bars), Auto-Reframe keeping to the picture between the bars (rendered: no black at the
-// edges, the path stays inside), crop_bars with undo, the stretched-4:3 correction (Clip::pictureAspect: a stretched
+// bar, a webcam in one bar, a dark video without bars), Auto-Reframe keeping to the picture between the bars
+// (rendered: no black at the edges, the path stays inside), crop_bars with undo, the stretched-4:3 correction (Clip::pictureAspect: a stretched
 // circle renders round in a 16:9 and a 4:3 timeline, crop keeps its share, project round trip) and the CLI ops.
 // Follow-ups: thumbnails/Media Pool tiles/filmstrip geometry at the clip's shape, the file's shape for new clips
 // (MediaInfo::pictureAspect, undo, round trip), the watch folder import preset (app and CLI), blurred sides.
@@ -133,6 +133,45 @@ void testDetect(const QString& pillar, const QString& letter, const QString& dar
     const auto z = BarDetect::content(dark);
     if (CHECK(z.has_value())) CHECK(!BarDetect::hasBars(*z));
     CHECK(!BarDetect::content("/does/not/exist.mp4", &error).has_value());
+}
+
+// A webcam inside one of the bars (a compact picture in the black, the bar running on beyond it) does not end the bar:
+// the content is still the game picture between the bars, whatever corner the webcam sits in
+void testWebcam(const QString& dir, const QStringList& h264)
+{
+    struct Case {
+        const char* name;
+        bool pillar;
+        const char* cam; // size of the webcam
+        const char* at;  // its place in the 640x360 frame
+    };
+    const Case cases[] = {
+        {"camTopLeft", true, "72x100", "x=0:y=0"},          // pillarbox, in the corner of the frame
+        {"camBottomRight", true, "72x110", "x=564:y=246"},  // pillarbox, right bar, next to the picture
+        {"camMidLeft", true, "80x120", "x=0:y=120"},        // pillarbox, filling the bar's width
+        {"camLetterTop", false, "130x40", "x=0:y=2"},       // letterbox, top bar at the left
+        {"camLetterBottom", false, "150x44", "x=480:y=316"} // letterbox, bottom bar at the right
+    };
+    for (const Case& c : cases) {
+        const QString game = c.pillar ? "testsrc2=s=480x360:r=25:d=3" : "testsrc2=s=640x270:r=25:d=3";
+        const QString pad = c.pillar ? "pad=640:360:80:0:black" : "pad=640:360:0:45:black";
+        const QString file = Check::makeMedia(
+            QDir(dir).filePath(QString(c.name) + ".mp4"),
+            QStringList{"-f", "lavfi", "-i", game, "-f", "lavfi", "-i", QString("testsrc=s=%1:r=25:d=3").arg(c.cam),
+                        "-filter_complex", QString("[0]%1[g];[g][1]overlay=%2").arg(pad, c.at)} + h264);
+        if (!CHECK(!file.isEmpty())) continue;
+        const auto r = BarDetect::content(file);
+        if (!CHECK(r.has_value())) continue;
+        if (c.pillar) {
+            CHECK(near(r->x(), 0.125, 0.006));
+            CHECK(near(r->width(), 0.75, 0.01));
+            CHECK(near(r->height(), 1, 1e-6));
+        } else {
+            CHECK(near(r->y(), 0.125, 0.008));
+            CHECK(near(r->height(), 0.75, 0.016));
+            CHECK(near(r->width(), 1, 1e-6));
+        }
+    }
 }
 
 void testReframe(const QString& pillar)
@@ -607,6 +646,7 @@ int main(int argc, char** argv)
         const auto v = BarDetect::content(vignette);
         if (CHECK(v.has_value())) CHECK(!BarDetect::hasBars(*v));
     }
+    testWebcam(tmp.path(), h264);
     testReframe(pillar);
     testCropBars(pillar);
     testStretched(tmp.path(), stretched);

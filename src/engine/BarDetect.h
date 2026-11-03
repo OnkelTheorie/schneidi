@@ -10,6 +10,8 @@
 // taken from the edges inwards only and must be about as wide on both sides (centred) and at most 30 % of the side;
 // thinner than 1.5 % they are left (an encoder's edge). A picture that is dark all through has no bars. Bars are flat
 // and steady: a dark edge that gets brighter towards the middle (a vignette) or changes with the scene is picture.
+// A webcam in one bar (a compact, filled rectangle, at most 40 % of the bar's length, the bar black beyond it) does
+// not end that bar: it is as wide as the other one.
 //
 // Per file (path, size, time), cached in QStandardPaths::CacheLocation/bars and in memory. Runs in any thread.
 
