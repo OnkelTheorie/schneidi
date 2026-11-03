@@ -773,6 +773,20 @@ void test(const QString& dir)
             if (auto* state = all.last()->findChild<QLabel*>("ai_plan_state"); CHECK(state))
                 CHECK_EQ(state->text(), T("Nicht ausgeführt: das Projekt wurde seit dem Plan geändert. Bitte die KI, neu zu planen."));
         }
+        // A plan card, then the project is opened anew (another one could have the same plan id): the card is void
+        fake.script = {anthropicTool("toolu_p5", "edit", {{"project", "@app"}, {"plan", true},
+                                                          {"ops", QJsonArray{QJsonObject{{"op", "split"}, {"at", "0.2s"}, {"why", "y"}}}}}),
+                       anthropicText("Plan.")};
+        panel->sendText("Und noch einer");
+        CHECK(waitFor([&] { return !chat->busy(); }));
+        w.liveProject()->load(w.liveProject()->data());
+        settle(50);
+        const QList<QWidget*> four = panel->findChildren<QWidget*>("ai_plan");
+        if (CHECK_EQ(four.size(), 4)) {
+            if (auto* run = four.last()->findChild<QPushButton*>("ai_plan_run"); CHECK(run)) CHECK(!run->isEnabled() || !run->isVisible());
+            if (auto* state = four.last()->findChild<QLabel*>("ai_plan_state"); CHECK(state))
+                CHECK_EQ(state->text(), T("Nicht mehr gültig: ein anderes Projekt wurde geöffnet."));
+        }
         // The chat as text lists the plans with their reasons
         CHECK(chat->transcript().contains("Hook markieren"));
         w.setChatRunner({});

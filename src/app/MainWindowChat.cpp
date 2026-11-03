@@ -53,6 +53,8 @@ void MainWindow::buildChat()
 {
     m_aiKeys = std::make_unique<Ai::Keys>();
     m_chat = new AiChat(this);
+    // Plans belong to the project they were made on: another one opened, their cards cannot run any more
+    connect(m_project, &Project::loaded, m_chat, [this] { m_chat->stopPlans(T("Nicht mehr gültig: ein anderes Projekt wurde geöffnet.")); });
     m_chat->setLanguage(languageName(I18n::language()));
     m_chat->setCompact(m_aiSettings.compact);
     m_chatPanel = new AiChatPanel(m_chat);

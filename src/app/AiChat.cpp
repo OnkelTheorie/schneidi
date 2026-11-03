@@ -151,6 +151,16 @@ void AiChat::setPlanState(const QString& id, Entry::State state, const QVector<i
     });
 }
 
+void AiChat::stopPlans(const QString& text)
+{
+    for (int i = 0; i < m_entries.size(); ++i)
+        if (m_entries[i].kind == Entry::Kind::Plan && m_entries[i].state == Entry::State::Running)
+            change(i, [&](Entry& e) { // shown like a plan that went stale (the text, in the warning color)
+                e.state = Entry::State::Failed;
+                e.text = text;
+            });
+}
+
 void AiChat::setBusy(bool on)
 {
     if (m_busy == on) return;
