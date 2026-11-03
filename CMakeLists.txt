@@ -143,7 +143,7 @@ add_library(schneidi_lib STATIC
     src/core/StreamPresets.h      src/core/StreamPresets.cpp
     src/core/StartTemplates.h     src/core/StartTemplates.cpp
     src/core/Ducking.h            src/core/Ducking.cpp
-    src/core/ExportCheck.h        src/core/ExportCheck.cpp
+    src/core/ExportCheck.h        src/core/ExportCheck.cpp src/core/ExportCheckStory.cpp
     src/core/Stutter.h            src/core/Stutter.cpp
     src/core/Speech.h             src/core/Speech.cpp
     src/core/ContactSheet.h       src/core/ContactSheet.cpp

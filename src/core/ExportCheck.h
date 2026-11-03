@@ -26,12 +26,15 @@ struct Issue {
     QString check;   // stable id: "offline", "black", "subtitle_end", "subtitle_short", "subtitle_fast", "no_sound",
                      // "clipping", "true_peak", "loudness", "silence_end", "silence_start", "silence", "black_file",
                      // "frozen", "no_video", "no_audio", "under_music", "safe_area", "subtitle_safe_area",
-                     // "slow_hook", "stutter", "missing_effect", "encoder_quality", "black_bars", "too_long"
+                     // "slow_hook", "stutter", "missing_effect", "encoder_quality", "black_bars", "too_long",
+                     // "pace_slow", "story_no_hook", "story_hook_late", "story_resolution_late",
+                     // "story_open_question", "story_no_cta", "story_gap", "retention_drop"
     QString message; // for people, in the UI language
     int from = -1;   // frames (exclusive end), -1 = whole video
     int to = -1;
     int clip = 0;    // the clip it is about (title outside the safe area, recording with stutter), 0 = none
     QVector<int> clips; // all clips when one finding stands for several (titles of a track in the same zone)
+    int at = -1;        // a moment it points at (the cut before a retention drop), -1 = none
 };
 
 struct Options {
@@ -57,6 +60,11 @@ struct Options {
     // (0 = no limit); `platform` = its name for the message
     double maxLengthS = 0;
     QString platform;
+    // Pace: a stretch longer than this without a change (cut, zoom/position keyframe, accent, text, overlay) = slow
+    double maxStillS = 3;
+    // Story: the first strong moment (a loud hit, the first word, a text) later than this = late hook (vertical
+    // videos and videos for a platform: hookLateShortS, others hookLateS)
+    double hookLateShortS = 2, hookLateS = 5;
 };
 
 // Picture, media and subtitles of the range [from, to) without decoding: too long for the platform, offline media, effects this version does
@@ -132,6 +140,83 @@ QVector<Issue> mix(const Timeline& tl, const QVector<TrackSound>& sounds, int fr
 QVector<Issue> stutter(const Timeline& tl, int from, int to, const ProjectFormat& f,
                        const std::function<std::optional<Stutter::Scan>(const QString& path)>& scanOf,
                        const std::function<int(const QString& path)>& fileLength);
+
+// ---- Pace (0.17): how often the picture changes
+
+// A change the viewer sees: a cut or a clip edge on a visible video track (titles: text on/off; V2+: an overlay),
+// a zoom/position/rotation/exposure keyframe where the value moves (accents are such keyframes), a subtitle that
+// starts. Changes within 0.4 s of the first count once (an accent writes several keyframes around its hit).
+enum class ChangeKind { Cut, Overlay, Text, Motion };
+const char* changeKindId(ChangeKind k); // "cut", "overlay", "text", "motion"
+struct Change {
+    int frame = 0;
+    ChangeKind kind = ChangeKind::Cut;
+    int clip = 0; // the clip that starts or moves there (0 = a subtitle)
+};
+// Changes strictly inside (from, to), sorted
+QVector<Change> changes(const Timeline& tl, int from, int to, const ProjectFormat& f);
+
+struct Stretch {
+    int from = 0, to = 0;
+    int length() const { return to - from; }
+};
+struct SectionPace {
+    StorySection section; // clipped to the range
+    double changesPerS = 0;
+    Stretch longest;
+};
+struct Pace {
+    QVector<Change> changes;
+    double changesPerS = 0;   // changes per second over the range
+    Stretch longest;          // longest stretch without a change (the range itself when there is none)
+    QVector<Stretch> still;   // stretches longer than Options::maxStillS, in time order
+    double curveStepS = 1;    // changes per second in steps of this many seconds (at most ~60 steps)
+    QVector<double> curve;
+    QVector<SectionPace> sections; // per story section (Timeline::sections) in the range
+};
+Pace pace(const Timeline& tl, int from, int to, const ProjectFormat& f, const Options& o = {});
+// pace_slow: vertical videos up to Options::hookMaxS = a warning per still stretch (viewers swipe away), other
+// videos = one info at the longest that names how many there are
+QVector<Issue> paceIssues(const Pace& p, int from, int to, const ProjectFormat& f, const Options& o = {});
+// Where a still stretch could get a change: evenly inside it so no part stays longer than 90 % of maxStillS, only at frames
+// a video clip with a picture covers (an accent needs one)
+QVector<int> breakPoints(const Timeline& tl, const Stretch& s, const ProjectFormat& f, const Options& o = {});
+
+// ---- Story (0.17): sections (Timeline::sections) and the strong moments of the video
+
+// Loud hits in per-frame peaks (from frame `offset`): at least -24 dBFS and 12 dB above the median of the half
+// second before (a sound that plays from the first frame on is no hit). At most one per 0.25 s.
+QVector<int> loudMoments(const std::vector<float>& framePeaks, int offset, double fps);
+// The first frame >= from where a text starts (title clip on a visible track, subtitle of an enabled track), -1 = none
+int firstText(const Timeline& tl, int from, int to);
+// The strong moments of [from, to), sorted: the loud hits of framePeaks (from frame `from`; null = sound not
+// measured), the first spoken word (words = timeline frames), the first text. by = what the earliest one is: "loud",
+// "word", "text" (empty = none)
+QVector<int> strongMoments(const Timeline& tl, int from, int to, const ProjectFormat& f,
+                           const std::vector<float>* framePeaks, const QVector<int>& words, QString* by = nullptr);
+// Story checks of [from, to). strong = strong moments (strongMoments; text starts are added from the timeline
+// again, harmless). strongKnown = the caller could look for them (the sound was measured or there are
+// transcripts): without, a missing strong moment is not reported. words = timeline frames of spoken words (for the
+// call to action without sections). With sections: story_no_hook, story_resolution_late, story_open_question,
+// story_no_cta (info), story_gap (info); always (range from the start): story_hook_late; without sections and with
+// a platform: story_no_cta (info) when no text or word comes near the end.
+QVector<Issue> story(const Timeline& tl, int from, int to, const ProjectFormat& f, QVector<int> strong,
+                     bool strongKnown, const QVector<int>& words, const Options& o = {});
+
+// ---- Retention curve (YouTube Studio / TikTok export): where viewers leave
+
+struct RetentionPoint {
+    double seconds = 0;
+    double percent = 0; // of the viewers at the start (100 = all)
+};
+// CSV text: a time column (seconds, "M:SS", "H:MM:SS"; or a position in % of the video when its header says
+// position/%), a retention column (percent; fractions 0..1 are scaled; "85,3 %" works). Header optional, separator
+// , ; or tab. lengthS = video length (for positions in %). Empty + error when nothing could be read.
+QVector<RetentionPoint> retentionFromCsv(const QString& text, double lengthS, QString* error = nullptr);
+// retention_drop (info): stretches where the curve falls at least 5 points (and 3 x the usual fall) within 2 s,
+// after the first second; `at` = the last change before it (pace changes of the timeline, from frame `from`)
+QVector<Issue> retention(const QVector<RetentionPoint>& curve, const QVector<Change>& changes, int from,
+                         const ProjectFormat& f);
 
 int errors(const QVector<Issue>& issues);
 int warnings(const QVector<Issue>& issues);

@@ -41,7 +41,8 @@ names cost a failed call.
    (`{"clip": 3, "source": "12.4s"}`) stay correct while earlier ops move things. Give an op `"why"` (a short
    reason, e.g. `"hook: loudest kill first"`): the answer repeats it under `why`, so the user can follow the cut.
 4. **Check before rendering**: `check` on the project (gaps, missing media, subtitles, sound, game sound or
-   speech buried under the music, stutter in recordings; 9:16: text the apps cover, a slow start), `info` (length,
+   speech buried under the music, stutter in recordings, too long without a cut, zoom or text (`pace`), a late
+   hook and story sections; 9:16: text the apps cover, a slow start), `info` (length,
    tracks) and a `frames` sheet of the timeline.
 5. **Render**, then **look at the rendered file yourself**: `check` on the file, a `frames` sheet, `probe`. Read
    [references/check.md](references/check.md) for what to look for. Fix and render again if something is off.

@@ -83,7 +83,8 @@ result yourself afterwards (`frames` sheet of `out`) - one call does not replace
 ## Content
 - **Hook in the first 1-2 s**: start with the strongest moment or a bold question/claim as a `title`; the first
   frame already moves and shows the payoff, not the build-up; no slow intros, no logo first. `check` gives a
-  `slow_hook` hint when the first second hardly moves.
+  `slow_hook` hint when the first second hardly moves, `story_hook_late` when the first hit, word or text comes
+  after 2 s, and `pace_slow` for every stretch over 3 s without a cut, zoom or text.
 - Length: what the user asks; otherwise 15-45 s. Cut tight, every second must earn its place.
 - **Subtitles burned in** - most people watch muted ([subtitles.md](subtitles.md)): short lines (`max_chars` ~20-28),
   big font, outline or box. Word-by-word captions (karaoke or one word at a time) hold attention best: `transcribe`

@@ -60,7 +60,7 @@ QString instructions(const Options& opt)
                 "result (a project can have several timelines, each may have its own resolution: a 9:16 short "
                 "next to a 16:9 edit), `check` finds what typically goes wrong before "
                 "rendering (gaps, sound, game sound buried under the music, stutter in recordings, text a phone app "
-                "covers), `render` writes a video (presets for YouTube Shorts, Instagram Reels, TikTok), `short` makes a "
+                "covers, too long without a cut, a late hook, where viewers left by a retention CSV), `render` writes a video (presets for YouTube Shorts, Instagram Reels, TikTok), `short` makes a "
                 "finished vertical short of recordings in one call (best moments, reframe, captions, check, render), "
                 "`restore` undoes a change (`backups` lists the saved states), "
                 "`watch` takes new files of watched folders into the media pool (a recorder's output; for automated "

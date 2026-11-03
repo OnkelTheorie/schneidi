@@ -518,11 +518,12 @@ int main(int argc, char** argv)
                                     {"op":"subtitles","cues":[{"from":"1s","to":"1.2s","text":"Hi"}]}])")
                              .arg(media)}});
     QJsonObject r = run("check", {{"source", project}});
-    CHECK_EQ(checksOf(r), QStringList({"loudness", "subtitle_short", "black"})); // warnings sorted by time
+    // Warnings sorted by time, then the info: the second clip is 4 s without a change (16:9: one info)
+    CHECK_EQ(checksOf(r), QStringList({"loudness", "subtitle_short", "black", "pace_slow"}));
     CHECK_EQ(r["errors"].toInt(), 0);
     CHECK_EQ(r["warnings"].toInt(), 3);
     const QJsonArray issues = r["issues"].toArray();
-    if (CHECK_EQ(issues.size(), 3)) {
+    if (CHECK_EQ(issues.size(), 4)) {
         CHECK_EQ(issues[2]["from"].toInt(), 100);
         CHECK_EQ(issues[2]["to"].toInt(), 101);
         CHECK(issues[2]["from_tc"].isString());

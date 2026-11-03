@@ -115,6 +115,8 @@ schneidi_test(test_jl_cuts) # J/L cuts (sound edge alone) and room tone in the g
 target_link_libraries(test_jl_cuts PRIVATE schneidi_cli_lib)
 schneidi_test(test_story_fields) # 0.17: story sections/notes on a timeline (file, duplicate, retime, undo, info), 'why' on ops
 target_link_libraries(test_story_fields PRIVATE schneidi_cli_lib)
+schneidi_test(test_story_pace) # 0.17: `check` pace (changes, pace_slow, suggestions), story checks, retention CSV
+target_link_libraries(test_story_pace PRIVATE schneidi_cli_lib)
 schneidi_test(test_live)
 schneidi_test(test_transcribe_pick) # which audio stream/track transcribe hears (a fake whisper-cli)
 target_link_libraries(test_transcribe_pick PRIVATE schneidi_cli_lib)
@@ -251,7 +253,8 @@ schneidi_test(test_thread_teardown)
 foreach(name test_stabilize_denoise test_retime test_effects_render test_effect_order test_cli test_export_formats test_audio
              test_audio_regression test_color test_loudness test_dynamics_eq test_audio_sync test_multicam_render
              test_multicam_viewer test_multicam_cli
-             test_ducking test_crop test_blur_fill test_reframe test_reframe_keep test_game43 test_generators test_fit_music)
+             test_ducking test_crop test_blur_fill test_reframe test_reframe_keep test_game43 test_generators test_fit_music
+             test_story_pace)
     add_test(NAME ${name}_de_DE COMMAND ${name})
     set_tests_properties(${name}_de_DE PROPERTIES
         SKIP_RETURN_CODE 77
