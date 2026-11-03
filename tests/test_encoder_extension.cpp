@@ -374,7 +374,9 @@ void testColors(const QString& dir)
         if (!CHECK(ok)) std::printf("  %s\n", qPrintable(why));
         // The first picture back, as it is in the stream
         QProcess dec;
-        dec.start(ffmpeg, {"-v", "error", "-i", p.output, "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "yuv420p", "-"});
+        // In the stream's own pixel format (8-bit 4:2:0 either way): FFmpeg before 7.1 takes "-pix_fmt yuv420p" for
+        // limited range and squeezes a full-range (yuvj420p) picture into it
+        dec.start(ffmpeg, {"-v", "error", "-i", p.output, "-frames:v", "1", "-f", "rawvideo", "-"});
         dec.waitForFinished(20000);
         const QByteArray back = dec.readAllStandardOutput();
         if (CHECK_EQ(back.size(), qsizetype(p.width * p.height * 3 / 2))) {
