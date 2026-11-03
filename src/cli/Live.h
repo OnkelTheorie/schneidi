@@ -21,6 +21,7 @@
 //   {"type":"open","files":[…]}           -> {"ok":true,"queued":bool} (`schneidi <file>` while the app runs: the
 //                                              user's hand-over, see handOver(); no attach needed, also when AIs are
 //                                              refused; opened right after the answer, or once the app stops waiting)
+// hello and open are also answered while a command runs (others wait for its end): a hand-over meanwhile is queued
 // attach, snapshot and run while the app waits -> {"ok":false,"error":{"code":"APP_WAITING","message":text}}
 // hello of an app that refuses AIs has "allowed":false and "refusal": why (the user disconnected, or the setting)
 //
@@ -38,8 +39,11 @@
 #include <QPointer>
 #include <QString>
 
+#include <memory>
+
 class LiveHost;
 class QLocalServer;
+class QLockFile;
 class QTimer;
 
 namespace Cli::Live {
@@ -129,9 +133,16 @@ private:
 
 // Hands files to a schneidi app that already runs (`schneidi <file>`, `schneidi --open <file>`, a recorder that passes
 // its clips on): the app that has the project file open (else the only/first one that answers) opens them like
-// LiveHost::liveOpen and comes to the front. False = no app took them (none runs, none answered, an older version):
-// the caller starts the app itself.
-bool handOver(const QStringList& files, QString* app = nullptr);
+// LiveHost::liveOpen and comes to the front. An app that does not answer at once (still starting, a long command)
+// gets up to `patienceMs` before this gives up on it. False = no app took them (none runs, none answered, an older
+// version): the caller starts the app itself.
+bool handOver(const QStringList& files, QString* app = nullptr, int patienceMs = 30000);
+
+// Launches with files decide "hand over or become the app" one at a time: lock, handOver(), and when that fails keep
+// the lock until this process's Server::start() registered it (then release it). Two launches at the same moment
+// end in one app, the second one hands its files to the first. A lock file in registryDir(); a crashed holder leaves a
+// stale lock that QLockFile detects. nullptr = not taken within timeoutMs (go on without it, as before).
+std::unique_ptr<QLockFile> lockLaunch(int timeoutMs = 60000);
 
 // ---------- schneidi-cli side ----------
 

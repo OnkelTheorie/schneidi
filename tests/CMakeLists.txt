@@ -133,6 +133,9 @@ target_link_libraries(test_open_in_app PRIVATE schneidi_cli_lib)
 target_compile_definitions(test_open_in_app PRIVATE SCHNEIDI_CLI="$<TARGET_FILE:schneidi-cli>"
                            SCHNEIDI_APP="$<TARGET_FILE:schneidi>")
 add_dependencies(test_open_in_app schneidi-cli schneidi)
+# Launches with files while an app runs: a slow or busy app still gets them, two launches at once end in one app
+schneidi_test(test_handover)
+target_link_libraries(test_handover PRIVATE schneidi_cli_lib)
 schneidi_test(test_setup)
 schneidi_test(test_check)
 schneidi_test(test_contact_sheet)
@@ -244,7 +247,7 @@ set_tests_properties(test_av_sync test_preview_audio test_play_end PROPERTIES RU
 # builds, a game, a parallel ctest), not when the code is wrong. tools/run_tests.py runs everything else in parallel,
 # then these one by one, and once more what failed (ctest -LE timing / -L timing work by hand too).
 set_tests_properties(test_av_sync test_preview_audio test_play_end test_audio_player test_speed test_serve
-                     test_watch_folders test_voiceover test_voiceover_app
+                     test_watch_folders test_voiceover test_voiceover_app test_handover
                      PROPERTIES LABELS timing)
 
 # Server/container without a display: titles (Qt's fonts) and the renderer still work

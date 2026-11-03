@@ -18,6 +18,7 @@
 #include <QApplication>
 #include <QAction>
 #include <QElapsedTimer>
+#include <QLockFile>
 #include <QMessageBox>
 #include <QPainter>
 #include <QSplashScreen>
@@ -26,6 +27,7 @@
 #include <QRegularExpression>
 #include <QTimer>
 #include <clocale>
+#include <memory>
 
 namespace {
 
@@ -111,11 +113,15 @@ int main(int argc, char* argv[])
     // Already running: hand the files over to that app (a double-click in the file manager, a recorder passing its
     // clip on: `schneidi --open <file>` or just `schneidi <file>`) and quit before anything of this process shows or
     // writes (log, crash report). --new-instance starts another window anyway; test runs never hand over.
+    // One launch at a time decides (two double-clicks at once end in one app): a launch that becomes the app keeps
+    // the lock until its live server is registered, the next one then hands its files to it.
+    std::unique_ptr<QLockFile> launchLock;
     if (const QStringList args = app.arguments().mid(1), handed = LaunchArgs::files(args);
         !handed.isEmpty() && screenshot.isEmpty() && !args.contains("--demo") && !args.contains("--actions")
-        && !args.contains("--new-instance") && qEnvironmentVariable("SCHNEIDI_LIVE", "1") == "1"
-        && Cli::Live::handOver(handed))
-        return 0;
+        && !args.contains("--new-instance") && qEnvironmentVariable("SCHNEIDI_LIVE", "1") == "1") {
+        launchLock = Cli::Live::lockLaunch();
+        if (Cli::Live::handOver(handed)) return 0;
+    }
     Log::install();
     CrashReport::install(); // after the log: attaches the previous run's log to its crash report
     // Test aid: --lang <code> (en, de, fr, …) only applies to this run (the setting stays unchanged)
@@ -148,6 +154,7 @@ int main(int argc, char* argv[])
     QString error;
     const qint64 beforeEngine = startTimer.elapsed();
     if (!engine.init(&error)) {
+        launchLock.reset(); // the next launch must not wait for this message box
         splash.reset();
         QMessageBox::critical(nullptr, "schneidi", error);
         return 1;
@@ -198,6 +205,7 @@ int main(int argc, char* argv[])
             live.reset();
         }
     }
+    launchLock.reset(); // registered (or never will be): the next launch may hand its files over
     // AI chat panel: its tools are this installation's `schneidi-cli mcp`, talking to this app (cli/Live.h). Test runs
     // (and runs without a screen) never send anything to an AI provider.
     // Without the live connection the chat's tools must not reach another schneidi that runs: a server that is not there
@@ -254,6 +262,10 @@ int main(int argc, char* argv[])
     }
     const int rc = app.exec();
     // Restart after design/language change: only here, when the window is closed and everything has been saved
-    if (w.restartRequested()) QProcess::startDetached(QCoreApplication::applicationFilePath(), w.restartArguments());
+    // The live server goes first: the new process would otherwise hand its project back to this one, which is quitting
+    if (w.restartRequested()) {
+        live.reset();
+        QProcess::startDetached(QCoreApplication::applicationFilePath(), w.restartArguments());
+    }
     return rc;
 }
