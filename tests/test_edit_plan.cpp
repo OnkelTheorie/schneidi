@@ -349,6 +349,10 @@ int main(int argc, char* argv[])
     r = cli({"edit", "@app", "--ops", R"([{"op":"split","at":40}])"}, chatEnv);
     CHECK_EQ(code(r), QString("PLAN_MODE"));
     CHECK_EQ(fake.project.undoStack()->index(), undo2);
+    // The other commands that change the project in the app neither (restore replaced the timelines unasked)
+    CHECK_EQ(code(cli({"restore", "@app"}, chatEnv)), QString("PLAN_MODE"));
+    CHECK_EQ(code(cli({"import", "@app", "--files", R"(["/x/b.mp4"])"}, chatEnv)), QString("PLAN_MODE"));
+    CHECK_EQ(fake.project.undoStack()->index(), undo2);
     // An AI from outside is not the chat: plan mode is the chat's setting
     CHECK_EQ(code(cli({"edit", fake.path, "--ops", R"([{"op":"marker","at":5}])"})), QString("ok"));
     fake.project.undoStack()->undo();
