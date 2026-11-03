@@ -6,6 +6,7 @@
 
 #include "cli/Commands.h"
 #include "cli/CommandsDetail.h"
+#include "core/EffectRegistry.h"
 #include "core/Editor.h"
 #include "core/GradeWindows.h"
 #include "core/Keyframes.h"
@@ -14,6 +15,7 @@
 #include "core/ProjectFile.h"
 #include "core/Selection.h"
 #include "core/TimelineOps.h"
+#include "engine/ColorGrade.h"
 #include "engine/Snapshot.h"
 #include "engine/TextRegions.h"
 
@@ -389,6 +391,12 @@ void testEditor(const QString& dir)
     // Undo: the masks go, the face window stays
     while (p.undoStack()->index() > before) p.undoStack()->undo();
     CHECK_EQ(GradeWindows::list(*TimelineOps::findClip(p.timeline(), id)), (QVector<int>{1}));
+    // The clip's grade switched off: hiding names switches it on, else the windows would not render
+    p.edit("grade off", [&](Timeline& tl) { EffectRegistry::instance(*TimelineOps::findClip(tl, id), "grade")->enabled = false; });
+    ed.blurNames(masks, "blur", 50);
+    const Clip* off = TimelineOps::findClip(p.timeline(), id);
+    CHECK(EffectRegistry::instance(*off, "grade")->enabled);
+    CHECK(ColorGrade::active(*off));
 }
 
 void testCli(const QString& dir)
