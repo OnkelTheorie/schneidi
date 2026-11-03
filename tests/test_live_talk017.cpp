@@ -200,7 +200,8 @@ int main(int argc, char* argv[])
         R"([{"op":"jl_cut","clip":5,"audio":"+12"}])",
         R"([{"op":"room_tone","track":"A2"}])",
         R"([{"op":"jl_cut","at":100,"audio":0},{"op":"room_tone","track":"A2"}])",
-        // Story sections, notes and hook variants (0.17 package B)
+        // Story sections, notes and hook variants (0.17 package B; hook_variants last: redoing it opens the last
+        // timeline it made, so an op after it would edit that one in the app but the original on the file)
         R"([{"op":"section","kind":"hook","from":0,"to":"2s","name":"Kill"}])",
         R"([{"op":"sections","auto":true}])",
         R"([{"op":"note","at":"0:03","text":"schneller"},{"op":"note","done":1}])",
