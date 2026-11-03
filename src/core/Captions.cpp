@@ -3,6 +3,7 @@
 
 #include <QRegularExpression>
 #include <algorithm>
+#include <climits>
 #include <cmath>
 
 namespace Captions {
@@ -105,6 +106,23 @@ void remap(SubtitleCue& cue, const std::function<int(int)>& pos, int newStart, i
 void crop(SubtitleCue& cue, int start, int end)
 {
     remap(cue, [](int f) { return f; }, start, end);
+}
+
+bool lostAllWords(const SubtitleCue& before, const SubtitleCue& after)
+{
+    return !before.text.trimmed().isEmpty() && after.text.trimmed().isEmpty();
+}
+
+int maxStartDelta(const SubtitleCue& cue)
+{
+    if (!ownTimes(cue, words(cue.text))) return INT_MAX;
+    return cue.words.last().from;
+}
+
+int minEndDelta(const SubtitleCue& cue)
+{
+    if (!ownTimes(cue, words(cue.text))) return INT_MIN;
+    return cue.words.first().from + 1 - cue.length();
 }
 
 TitleStyle defaultStyle(QSize format, CaptionMode mode)

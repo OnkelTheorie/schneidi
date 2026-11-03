@@ -168,6 +168,11 @@ void Editor::setSubtitleTiming(int id, int start, int end)
     start = std::clamp(start, lo, std::min(hi, INT_MAX - 1) - 1);
     end = std::clamp(end, start + 1, hi);
     if (start == c->start && end == c->end) return;
+    if (end - start != c->end - c->start) { // an edge moved: word captions keep at least one word
+        SubtitleCue test = *c;
+        Captions::crop(test, start, end);
+        if (Captions::lostAllWords(*c, test)) return;
+    }
     m_project->edit(T("Untertitel-Zeiten"), [&](Timeline& tl) {
         if (SubtitleCue* cue = Subtitles::find(tl, id)) {
             // Moved as a whole: the words go along; otherwise an edge moved and the words stay where they are spoken
@@ -225,9 +230,11 @@ int Editor::clampSubtitleTrim(int id, TimelineOps::Edge edge, int delta) const
     if (!c) return 0;
     int lo, hi;
     neighbours(tl.subtitles[track], id, &lo, &hi);
-    if (edge == TimelineOps::Edge::Start) return std::clamp(delta, lo - c->start, c->length() - 1);
+    // Word captions: at least one word stays (trimming off all of them left an empty, invisible cue)
+    if (edge == TimelineOps::Edge::Start)
+        return std::clamp(delta, lo - c->start, std::min(c->length() - 1, Captions::maxStartDelta(*c)));
     const long long maxGrow = hi == INT_MAX ? INT_MAX / 2 : hi - c->end;
-    return std::clamp<long long>(delta, 1 - c->length(), maxGrow);
+    return std::clamp<long long>(delta, std::max(1 - c->length(), Captions::minEndDelta(*c)), maxGrow);
 }
 
 void Editor::trimSubtitle(int id, TimelineOps::Edge edge, int delta)

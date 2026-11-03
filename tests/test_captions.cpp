@@ -144,6 +144,29 @@ void testEdits()
         CHECK_EQ(wordsOf(t.cues[0]), QString("100-115:a@0-5 bb@5-10"));
         CHECK_EQ(wordsOf(t.cues[1]), QString("115-150:ccc@5-15"));
     }
+    // Split in the pause after the last word: no empty, invisible cue on the right (the cue ends at the cut)
+    {
+        SubtitleTrack e;
+        e.cues = {cue(100, 150, "a bb ccc", {{0, 5}, {5, 10}, {20, 30}})};
+        e.cues[0].id = 1;
+        CHECK_EQ(Subtitles::splitAt(e, 135, [&] { return next++; }), 0);
+        CHECK_EQ(e.cues.size(), 1);
+        for (const SubtitleCue& c : e.cues) CHECK(!c.text.isEmpty());
+        if (e.cues.size() == 1) CHECK_EQ(wordsOf(e.cues[0]), QString("100-135:a@0-5 bb@5-10 ccc@20-30"));
+        // ... and before the first word: the cue starts at the cut, keeping its id
+        SubtitleTrack b;
+        b.cues = {cue(100, 150, "a bb", {{10, 15}, {15, 20}})};
+        b.cues[0].id = 1;
+        CHECK_EQ(Subtitles::splitAt(b, 105, [&] { return next++; }), 0);
+        CHECK(b.cues.size() == 1 && b.cues[0].id == 1);
+        if (b.cues.size() == 1) CHECK_EQ(wordsOf(b.cues[0]), QString("105-150:a@5-10 bb@10-15"));
+        // Overwritten over all its words: the rest of it goes too
+        SubtitleTrack w;
+        w.cues = {cue(100, 150, "a bb", {{0, 5}, {5, 10}})};
+        Subtitles::place(w, cue(95, 125, "neu"));
+        CHECK_EQ(w.cues.size(), 1);
+        for (const SubtitleCue& c : w.cues) CHECK(!c.text.isEmpty());
+    }
     // Ripple: removing frames 104..112 takes "bb" (105-110) out and moves "ccc" up
     SubtitleTrack r;
     r.cues = {cue(100, 150, "a bb ccc", {{0, 5}, {5, 10}, {20, 30}})};
@@ -170,6 +193,15 @@ void testEdits()
     CHECK_EQ(wordsOf(p.timeline().subtitles[0].cues[0]), QString("203-250:bb@2-7 ccc@17-27"));
     p.undoStack()->undo();
     p.undoStack()->undo();
+    CHECK_EQ(wordsOf(p.timeline().subtitles[0].cues[0]), QString("100-150:a@0-5 bb@5-10 ccc@20-30"));
+    // Trimming past every word stops at the last (start) or first (end) word: the cue never ends up empty
+    ed.trimSubtitle(id, TimelineOps::Edge::Start, 40);
+    CHECK_EQ(wordsOf(p.timeline().subtitles[0].cues[0]), QString("120-150:ccc@0-10"));
+    p.undoStack()->undo();
+    ed.trimSubtitle(id, TimelineOps::Edge::End, -49);
+    CHECK_EQ(wordsOf(p.timeline().subtitles[0].cues[0]), QString("100-101:a@0-1"));
+    p.undoStack()->undo();
+    ed.setSubtitleTiming(id, 140, 150); // all words before 140: refused
     CHECK_EQ(wordsOf(p.timeline().subtitles[0].cues[0]), QString("100-150:a@0-5 bb@5-10 ccc@20-30"));
 }
 
