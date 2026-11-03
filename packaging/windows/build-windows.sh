@@ -84,7 +84,9 @@ cp "$UCRT/share/qt6/plugins/platforms/qoffscreen.dll" "$OUT/platforms/"
 MSVC_RUNTIME_DIR="${MSVC_RUNTIME_DIR:-/c/schneidi/msvc-runtime}"
 mkdir -p "$OUT/msvc-runtime"
 for dll in vcruntime140.dll vcruntime140_1.dll msvcp140.dll vcomp140.dll; do
-    src="$(find "$MSVC_RUNTIME_DIR" -maxdepth 1 -iname "$dll" | head -n1)"
+    # (no folder: the warning below, not an abort of the whole build through set -e/pipefail)
+    src=""
+    [ -d "$MSVC_RUNTIME_DIR" ] && src="$(find "$MSVC_RUNTIME_DIR" -maxdepth 1 -iname "$dll" | head -n1)"
     if [ -n "$src" ]; then cp "$src" "$OUT/msvc-runtime/$dll"; else echo "!! MSVC runtime missing: $MSVC_RUNTIME_DIR/$dll (whisper/piper won't start on a fresh Windows)" >&2; fi
 done
 

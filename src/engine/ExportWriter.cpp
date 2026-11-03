@@ -1178,10 +1178,18 @@ struct ExportWriter::Impl {
                 QString text = c.text;
                 // SubRip line breaks as CRLF (what FFmpeg's SRT encoder wrote), WebVTT and 3GPP text keep '\n'
                 if (id == AV_CODEC_ID_SUBRIP) text.replace('\n', QLatin1String("\r\n"));
+                // WebVTT: '<' and '&' start tags/entities, "-->" a timing line (as Subtitles::toVtt): FFmpeg's decoder
+                // and browsers dropped the text from a typed '<' on
+                if (id == AV_CODEC_ID_WEBVTT)
+                    text.replace('&', QLatin1String("&amp;")).replace('<', QLatin1String("&lt;")).replace("-->", QLatin1String("--&gt;"));
                 QByteArray payload = text.toUtf8();
                 if (payload.isEmpty()) continue;
                 if (id == AV_CODEC_ID_MOV_TEXT) { // 3GPP timed text sample: 16-bit big-endian byte length, then UTF-8
-                    payload.truncate(0xffff);
+                    // Cut on a character: half a UTF-8 sequence made decoders drop the whole cue
+                    int cut = std::min(int(payload.size()), 0xffff);
+                    if (cut < payload.size())
+                        while (cut > 0 && (uchar(payload[cut]) & 0xc0) == 0x80) --cut;
+                    payload.truncate(cut);
                     const int len = int(payload.size());
                     payload.prepend(char(len & 0xff)).prepend(char(len >> 8));
                 }

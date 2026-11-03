@@ -767,6 +767,96 @@ void testEmbed(const QString& dir)
     CHECK(RenderQueue::exportSettings(job, fmt).subtitlePath.endsWith("none.vtt"));
 }
 
+// The cue texts of a file's subtitle streams as a player gets them: decoded by FFmpeg's decoders (ASS events, the
+// text after the 8th comma; ASS line breaks as '\n'), stream by stream with " | " between
+QString decodedTexts(const QString& path)
+{
+    AVFormatContext* fc = nullptr;
+    if (avformat_open_input(&fc, path.toUtf8().constData(), nullptr, nullptr) < 0) return "cannot open";
+    avformat_find_stream_info(fc, nullptr);
+    std::vector<AVCodecContext*> dec(fc->nb_streams, nullptr);
+    for (unsigned i = 0; i < fc->nb_streams; ++i) {
+        const AVCodecParameters* par = fc->streams[i]->codecpar;
+        const AVCodec* codec = par->codec_type == AVMEDIA_TYPE_SUBTITLE ? avcodec_find_decoder(par->codec_id) : nullptr;
+        if (!codec) continue;
+        dec[i] = avcodec_alloc_context3(codec);
+        avcodec_parameters_to_context(dec[i], par);
+        dec[i]->pkt_timebase = fc->streams[i]->time_base;
+        if (avcodec_open2(dec[i], codec, nullptr) < 0) avcodec_free_context(&dec[i]);
+    }
+    QMap<int, QStringList> texts;
+    AVPacket* p = av_packet_alloc();
+    while (av_read_frame(fc, p) >= 0) {
+        AVCodecContext* d = dec[size_t(p->stream_index)];
+        AVSubtitle sub{};
+        int got = 0;
+        if (d && p->size > 2 && avcodec_decode_subtitle2(d, &sub, &got, p) >= 0 && got) {
+            for (unsigned r = 0; r < sub.num_rects; ++r)
+                if (sub.rects[r]->ass) {
+                    const QString ass = QString::fromUtf8(sub.rects[r]->ass);
+                    texts[p->stream_index] << ass.section(',', 8).replace("\\N", "\n");
+                }
+            avsubtitle_free(&sub);
+        }
+        av_packet_unref(p);
+    }
+    av_packet_free(&p);
+    for (AVCodecContext*& d : dec) avcodec_free_context(&d);
+    avformat_close_input(&fc);
+    QStringList out;
+    for (const QStringList& t : texts) out << t.join(',');
+    return out.join(" | ");
+}
+
+// What a player shows of the embedded text: '<', '&' and "-->" as typed in WebM's WebVTT (FFmpeg's decoder and
+// browsers read them as tags/entities: "1 <2" lost everything after '<'); a mov_text cue over 64 KB cut on a
+// character, not inside one
+void testEmbedPlayers(const QString& dir)
+{
+    const QString media = Check::makeMedia(dir + "/src2.mp4", {"-f", "lavfi", "-i", "testsrc2=size=320x180:rate=25:duration=1",
+                                                                "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p"});
+    if (!CHECK(!media.isEmpty())) return;
+    const ProjectFormat fmt{320, 180, {25, 1}};
+    Timeline tl;
+    tl.video.resize(1);
+    Clip c;
+    c.id = 1;
+    c.mediaPath = media;
+    c.out = 24;
+    tl.video[0].clips << c;
+    SubtitleTrack t;
+    t.name = "T";
+    const QString typed = QStringLiteral("1 <2 & 3 &amp; x --> y");
+    const QString longText = QString(65534, 'a') + QChar(0xe4); // 65536 bytes in UTF-8, the last character 2 of them
+    t.cues = {{1, 2, 10, typed}, {2, 12, 20, longText}};
+    tl.subtitles = {t};
+    struct Case { const char* file; const char* format; QString expected; };
+    // (SRT in MKV has no escape for '<': players read it as a tag there as in an .srt file)
+    for (const Case& k : {Case{"p.webm", "vp9", typed + "," + longText}, Case{"p.mp4", "h264", typed + "," + QString(65534, 'a')}}) {
+        RenderJob job;
+        job.id = 1;
+        job.path = dir + "/" + k.file;
+        job.settings.format = k.format;
+        job.settings.embedSubtitles = true;
+        job.settings.smartRender = false;
+        Exporter ex;
+        QEventLoop loop;
+        bool ok = false;
+        QObject::connect(&ex, &Exporter::finished, &loop, [&](bool success, const QString&) {
+            ok = success;
+            loop.quit();
+        });
+        QString error;
+        if (!CHECK(ex.start(tl, RenderQueue::exportSettings(job, fmt), &error))) continue;
+        QTimer::singleShot(120000, &loop, &QEventLoop::quit);
+        loop.exec();
+        if (!CHECK(ok)) continue;
+        const QString got = decodedTexts(job.path);
+        if (!CHECK(got == k.expected))
+            std::printf("       %s: %s\n", k.file, qPrintable(got.left(80) + " ... " + got.right(20)));
+    }
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -797,5 +887,6 @@ int main(int argc, char** argv)
     Check::initEngine();
     testRender(tmp.path());
     testEmbed(tmp.path());
+    testEmbedPlayers(tmp.path());
     return Check::result();
 }
