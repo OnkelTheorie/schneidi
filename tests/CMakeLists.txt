@@ -111,6 +111,8 @@ schneidi_test(test_stabilize_denoise)
 schneidi_test(test_stabilize_motion)
 schneidi_test(test_cli)
 target_link_libraries(test_cli PRIVATE schneidi_cli_lib)
+schneidi_test(test_jl_cuts) # J/L cuts (sound edge alone) and room tone in the gaps of a dialogue track
+target_link_libraries(test_jl_cuts PRIVATE schneidi_cli_lib)
 schneidi_test(test_live)
 schneidi_test(test_transcribe_pick) # which audio stream/track transcribe hears (a fake whisper-cli)
 target_link_libraries(test_transcribe_pick PRIVATE schneidi_cli_lib)

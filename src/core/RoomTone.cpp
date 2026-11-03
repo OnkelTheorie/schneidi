@@ -20,27 +20,28 @@ Quiet findQuiet(const std::vector<double>& blockDb, int want, int least)
     const int n = int(blockDb.size());
     least = std::max(1, least);
     for (int len = std::max(want, least); len >= least; len = len > least ? std::max(least, len * 3 / 4) : 0) {
-        double bestMax = 1e9;
+        double bestMean = 1e9;
         int best = -1;
-        // The loudest block of each window; digital silence or a louder block (a word) rules the window out
         for (int i = 0; i + len <= n; ++i) {
-            double worst = -1e9;
+            double hiDb = -1e9, loDb = 1e9, power = 0;
             bool ok = true;
             for (int j = i; j < i + len && ok; ++j) {
                 if (blockDb[j] <= kSilentDb || blockDb[j] > ceiling) ok = false;
-                worst = std::max(worst, blockDb[j]);
+                hiDb = std::max(hiDb, blockDb[j]);
+                loDb = std::min(loDb, blockDb[j]);
+                power += std::pow(10.0, blockDb[j] / 10);
             }
-            if (ok && worst < bestMax) {
-                bestMax = worst;
+            if (!ok || hiDb - loDb > kSteadyDb) continue;
+            const double mean = 10 * std::log10(power / len);
+            if (mean < bestMean) {
+                bestMean = mean;
                 best = i;
             }
         }
         if (best >= 0) {
-            double power = 0;
-            for (int j = best; j < best + len; ++j) power += std::pow(10.0, blockDb[j] / 10);
             q.from = best;
             q.to = best + len;
-            q.meanDb = 10 * std::log10(power / len);
+            q.meanDb = bestMean;
             return q;
         }
         if (len == least) break;
