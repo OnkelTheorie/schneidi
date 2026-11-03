@@ -20,11 +20,39 @@
 #include <cmath>
 #include <cstdlib>
 
+#ifdef Q_OS_WIN
+#ifndef NOMINMAX
+#define NOMINMAX // std::max/std::clamp
+#endif
+#include <windows.h>
+
+#include <string>
+#endif
+
 namespace Tts {
 
 namespace {
 
 QString wordsFile(const QString& wav) { return wav + ".words.json"; }
+
+// A path piper can open. piper.exe reads its arguments in the ANSI code page: a folder with letters outside it
+// (Cyrillic on a German Windows, an accented user name) became '?'. Windows: the short (8.3) name where there is one;
+// elsewhere and without one the path as it is.
+QString narrowSafe(const QString& path)
+{
+#ifdef Q_OS_WIN
+    const std::wstring w = QDir::toNativeSeparators(path).toStdWString();
+    DWORD n = GetShortPathNameW(w.c_str(), nullptr, 0);
+    if (n == 0) return path;
+    std::wstring out(n, L'\0');
+    n = GetShortPathNameW(w.c_str(), out.data(), n);
+    if (n == 0 || n >= out.size()) return path;
+    out.resize(n);
+    return QString::fromStdWString(out);
+#else
+    return path;
+#endif
+}
 
 bool loadWords(const QString& wav, Result* r)
 {
@@ -189,7 +217,11 @@ bool Speaker::start(const Request& request, QString* error)
     m_part = m_result.path.chopped(4) + "." + QUuid::createUuid().toString(QUuid::Id128).left(8) + ".part.wav";
     const QString model = Extensions::voiceModelPath(m_request.options.voice);
     m_process.setProcessChannelMode(QProcess::SeparateChannels);
-    m_process.start(Extensions::piperProgram(), Speech::piperArguments(model, m_request.options, m_part));
+    // The part file by its name in the folder (piper's working directory): its ASCII name passes through piper's
+    // ANSI arguments whatever the project folder is called; the model by a path piper can open
+    m_process.setWorkingDirectory(QFileInfo(m_part).absolutePath());
+    m_process.start(Extensions::piperProgram(),
+                    Speech::piperArguments(narrowSafe(model), m_request.options, QFileInfo(m_part).fileName()));
     m_process.write(Speech::stdinText(m_request.text));
     m_process.closeWriteChannel();
     return true;
