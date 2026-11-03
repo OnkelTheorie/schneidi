@@ -492,6 +492,9 @@ void testCli(const QString& dir, const QString& game, const QString& plain)
     CHECK_EQ(errorOf("edit", {{"project", path}, {"ops", ops.arg("\"killfeed\"")}}), QString("BAD_ARGUMENT"));
     CHECK_EQ(errorOf("edit", {{"project", path}, {"ops", ops.arg("\"0.5,0.5,0.8,0.1\"")}}), QString("BAD_ARGUMENT"));
     CHECK_EQ(errorOf("edit", {{"project", path}, {"ops", ops.arg("\"wild\"")}}), QString("BAD_ARGUMENT"));
+    // "nan" reads as a number but is none (it passed every range check and cropped the copy by NaN)
+    CHECK_EQ(errorOf("edit", {{"project", path}, {"ops", ops.arg("\"nan,0,0.5,0.5\"")}}), QString("BAD_ARGUMENT"));
+    CHECK_EQ(errorOf("edit", {{"project", path}, {"ops", ops.arg("\"0,0,nan,0.5\"")}}), QString("BAD_ARGUMENT"));
     CHECK_EQ(errorOf("edit", {{"project", path}, {"ops", R"([{"op":"reframe","game":"tetris"}])"}}), QString("BAD_ARGUMENT"));
     run("edit", {{"project", path}, {"ops", R"([{"op":"timeline","timeline":"Short"},
         {"op":"reframe","mode":"center","keep":"killfeed","game":"valorant"}])"}});

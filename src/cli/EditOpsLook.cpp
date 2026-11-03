@@ -410,7 +410,8 @@ double pictureAspectOf(const QJsonValue& v)
     const QStringList wh = a.split(':');
     bool ok1 = false, ok2 = false;
     const double w = wh.size() == 2 ? wh[0].toDouble(&ok1) : 0, h = wh.size() == 2 ? wh[1].toDouble(&ok2) : 0;
-    if (!ok1 || !ok2 || w <= 0 || h <= 0 || w / h < 0.1 || w / h > 10)
+    // "nan:1" reads as numbers: NaN passes every comparison, so ask for the range itself
+    if (!ok1 || !ok2 || !(w > 0 && h > 0 && w / h >= 0.1 && w / h <= 10))
         fail("BAD_ARGUMENT", "aspect must be like '4:3', a number (width / height) or 'file' (the file's own shape)");
     return w / h;
 }
@@ -791,7 +792,7 @@ static Reframe::KeepChoice keepChoice(const QJsonObject& op)
             if (!ok) n.clear();
             if (n.isEmpty()) break;
         }
-        if (n.size() != 4 || std::any_of(n.begin(), n.end(), [](double x) { return x < 0 || x > 1; }) || n[2] < 0.01
+        if (n.size() != 4 || std::any_of(n.begin(), n.end(), [](double x) { return !(x >= 0 && x <= 1); }) || n[2] < 0.01
             || n[3] < 0.01 || n[0] + n[2] > 1.0001 || n[1] + n[3] > 1.0001)
             fail("BAD_ARGUMENT", "keep must be auto, killfeed, none or a region \"x,y,w,h\" (fractions 0..1 of the "
                                  "picture, e.g. \"0.7,0.05,0.3,0.2\")");

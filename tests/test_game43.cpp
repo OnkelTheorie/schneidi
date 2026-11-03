@@ -372,6 +372,8 @@ void testCli(const QString& dir, const QString& pillar, const QString& stretched
     CHECK_EQ(clip(1).pictureAspect, 0.0);
     CHECK_EQ(errorOf("[{\"op\":\"picture_aspect\",\"aspect\":\"wide\"}]"), QString("BAD_ARGUMENT"));
     CHECK_EQ(errorOf("[{\"op\":\"picture_aspect\",\"aspect\":50}]"), QString("BAD_ARGUMENT"));
+    CHECK_EQ(errorOf("[{\"op\":\"picture_aspect\",\"aspect\":\"nan:1\"}]"), QString("BAD_ARGUMENT")); // no shape
+    CHECK_EQ(errorOf("[{\"op\":\"picture_aspect\",\"aspect\":\"inf:1\"}]"), QString("BAD_ARGUMENT"));
     // reframe: bars cropped by default; bars:false leaves the crop
     run("edit", {{"project", path}, {"ops", "[{\"op\":\"transform\",\"clips\":[" + QString::number(clip(0).id)
                                                 + "],\"crop_left\":0,\"crop_right\":0},{\"op\":\"new_timeline\","

@@ -1384,7 +1384,8 @@ QJsonObject normalize(const Command& cmd, const QJsonObject& given)
             break;
         case ParamType::Number:
             if (v.isDouble()) out[p.name] = v.toDouble();
-            else out[p.name] = QLocale::c().toDouble(str, &ok);
+            else if (const double d = QLocale::c().toDouble(str, &ok); ok && !std::isfinite(d)) ok = false; // "nan", "inf"
+            else out[p.name] = d;
             break;
         case ParamType::Boolean:
             if (v.isBool()) out[p.name] = v.toBool();

@@ -242,6 +242,18 @@ int main(int argc, char** argv)
             message = e.message;
         }
         CHECK(message.contains("'file'") && message.contains("source") && message.contains("sheet"));
+        // "--target_lufs nan" reads as a number but is none: refused (check left out its loudness test silently)
+        const Cli::Command* check = Cli::find("check");
+        for (const char* bad : {"nan", "inf", "-inf"}) {
+            QString code;
+            try {
+                Cli::normalize(*check, {{"source", g_path}, {"target_lufs", bad}});
+            } catch (const Cli::Error& e) {
+                code = e.code;
+            }
+            CHECK_EQ(code, QString("BAD_ARGUMENT"));
+        }
+        CHECK_EQ(Cli::normalize(*check, {{"source", g_path}, {"target_lufs", "-16"}})["target_lufs"].toDouble(), -16.0);
     }
     // Times beyond int: an error, not an undefined cast
     {
