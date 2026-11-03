@@ -612,7 +612,11 @@ struct Renderer::Impl {
         const double m = c.in + t;
         const double perFrame = map.speedAt(m) * v.fps / ctx.fps; // stream frames per output frame
         if (perFrame >= 1.0 - 1e-6) return false;
-        *q = map.fileFrameAt(m) / ctx.fps * v.fps;
+        // Backwards: from the end of the stream frames the file frame covers (project frame f holds stream frames
+        // f*r .. (f+1)*r - 1); f*r started a 60 fps clip in a 30 fps project one stream frame early and never
+        // showed its last one
+        const double f = map.fileFrameAt(m), r = v.fps / ctx.fps;
+        *q = c.reverse ? (f + 1) * r - 1 : f * r;
         return true;
     }
 

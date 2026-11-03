@@ -355,6 +355,11 @@ void fasterSourceChecks(const QString& video50)
     CHECK(maxDiff(render(back, 2), render(back, 0)) > 10);
     CHECK_EQ(maxDiff(render(back, 1), render(back, 0)), 0);
     CHECK(maxDiff(render(back, 4), render(back, 2)) > 10);
+    // ... and the in-between modes start on the same last stream frame (not one before it)
+    Timeline backBlend = one(video50, 0.25, FrameInterp::Blend, 40);
+    backBlend.video[0].clips[0].reverse = true;
+    CHECK_EQ(maxDiff(render(backBlend, 0), render(back, 0)), 0);
+    CHECK_EQ(maxDiff(render(backBlend, 2), render(back, 2)), 0);
 }
 
 } // namespace
