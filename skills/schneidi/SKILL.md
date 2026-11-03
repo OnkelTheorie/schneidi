@@ -40,6 +40,10 @@ names cost a failed call.
    them - they change when clips are split. Positions relative to a clip or to source time
    (`{"clip": 3, "source": "12.4s"}`) stay correct while earlier ops move things. Give an op `"why"` (a short
    reason, e.g. `"hook: loudest kill first"`): the answer repeats it under `why`, so the user can follow the cut.
+   **Plan first** when the user wants to decide before anything changes ("show me what you would cut"): `edit` with
+   `plan:true` checks every op like `dry_run`, changes nothing and answers `plan {id, steps:[{n, op, why, summary,
+   changes}]}`; show the steps, then `edit` with `plan_id` and `run` (`[1,2,4]` or `"all"`: one edit, one undo step)
+   or `discard:true`. A plan is void once the project changes (`PLAN_STALE`: plan again).
 4. **Check before rendering**: `check` on the project (gaps, missing media, subtitles, sound, game sound or
    speech buried under the music, stutter in recordings; 9:16: text the apps cover, a slow start), `info` (length,
    tracks) and a `frames` sheet of the timeline.
