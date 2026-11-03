@@ -19,6 +19,7 @@ extern "C" {
 #include <QImage>
 #include <QImageReader>
 #include <QMutex>
+#include <QRect>
 #include <QSaveFile>
 #include <QSet>
 #include <QStandardPaths>
@@ -32,7 +33,7 @@ namespace BarDetect {
 
 namespace {
 
-constexpr int kVersion = 4; // bump when the measurement changes
+constexpr int kVersion = 5; // bump when the measurement changes
 constexpr int kW = 320, kH = 240;
 constexpr int kSamples = 12;
 constexpr int kBlack = 32;          // gray value still counted as black (limited-range black is 16, plus noise)
@@ -40,6 +41,7 @@ constexpr double kBrightShare = 0.04; // a line with fewer bright pixels than th
 constexpr double kMinBar = 0.015;
 constexpr double kMaxBar = 0.3;    // wider (a 4:3 game in 21:9 has 21 %) is a dark picture, not a bar
 constexpr double kSymmetry = 0.02; // left and right bar (top and bottom) differ by at most this share
+constexpr double kMaxCam = 0.4;    // a webcam in a bar covers at most this share of the bar's length
 // A bar is flat: its inner lines as dark as its outer ones (a vignette or a dark edge of the picture gets brighter
 // towards the middle; measured: a dark blue vignette rose by 4-5 gray values over the 15 dark columns it had), and
 // each of its lines keeps its brightness over the samples (the picture's edge changes with the scene)
@@ -66,21 +68,83 @@ QString cacheFile(const QString& file) { return QDir(cacheDir()).filePath(base(f
 QRectF measure(const std::vector<std::vector<uint8_t>>& pics)
 {
     if (pics.empty()) return {0, 0, 1, 1};
-    // Per sample and line: share of bright pixels; a line is a bar if it stays below kBrightShare in every sample
-    std::vector<bool> barCol(kW, true), barRow(kH, true);
+    const auto bright = [](const std::vector<uint8_t>& p, int x, int y) {
+        return p[size_t(y) * kW + size_t(x)] > kBlack;
+    };
+    // Per sample and line (columns or rows, over [from, to) of the other direction): share of bright pixels; a line is
+    // a bar if it stays below kBrightShare in every sample. Pixels in `skip` (a webcam in the bar) do not count.
     bool anyBright = false;
-    for (const auto& p : pics) {
-        for (int x = 0; x < kW; ++x) {
-            int bright = 0;
-            for (int y = 0; y < kH; ++y) bright += p[size_t(y) * kW + size_t(x)] > kBlack;
-            if (bright >= kBrightShare * kH) barCol[size_t(x)] = false, anyBright = true;
-        }
-    }
+    const auto barLines = [&](bool column, int from, int to, const QRect& skip) {
+        std::vector<bool> bar(size_t(column ? kW : kH), true);
+        for (const auto& p : pics)
+            for (int i = 0; i < int(bar.size()); ++i) {
+                int n = 0;
+                for (int k = from; k < to; ++k) {
+                    const int x = column ? i : k, y = column ? k : i;
+                    n += bright(p, x, y) && !skip.contains(x, y);
+                }
+                if (n >= kBrightShare * (to - from)) bar[size_t(i)] = false, anyBright = true;
+            }
+        return bar;
+    };
+    // Bar lines from both edges inwards
+    const auto runs = [](const std::vector<bool>& bar, int& a, int& b) {
+        const int n = int(bar.size());
+        a = b = 0;
+        while (a < n && bar[size_t(a)]) ++a;
+        while (b < n - a && bar[size_t(n - 1 - b)]) ++b;
+    };
+    // A webcam in one of the bars (a compact bright rectangle in the black; the bar runs on beyond it) ends that bar
+    // early, so the two bars differ. Taking the wider one's width `w` for both: the bright pixels (in any sample) of
+    // the narrower side's first w - 1 lines must be one rectangle, filled at least by half and at most kMaxCam of the
+    // bar's length; with it left out, that bar must run on to about w (a bright object in a dark picture does not).
+    const auto webcam = [&](bool column, int& a, int& b, int from, int to) -> QRect {
+        const int side = column ? kW : kH;
+        const int w = std::max(a, b);
+        if (std::abs(a - b) <= kSymmetry * side || w < kMinBar * side || w > kMaxBar * side) return {};
+        const bool far = b < a; // the webcam is at the far edge (right, bottom)
+        const int depth = w - 1;
+        const int start = far ? side - depth : 0;
+        const QRect region = column ? QRect(start, from, depth, to - from) : QRect(from, start, to - from, depth);
+        std::vector<uint8_t> lit(size_t(region.width()) * size_t(region.height()), 0);
+        std::vector<int> perCol(size_t(region.width()), 0), perRow(size_t(region.height()), 0);
+        for (int y = 0; y < region.height(); ++y)
+            for (int x = 0; x < region.width(); ++x)
+                for (const auto& p : pics)
+                    if (bright(p, region.x() + x, region.y() + y)) {
+                        lit[size_t(y) * size_t(region.width()) + size_t(x)] = 1;
+                        ++perCol[size_t(x)], ++perRow[size_t(y)];
+                        break;
+                    }
+        // Bounding box of the lines with more than a stray pixel
+        const auto span = [](const std::vector<int>& v, int& lo, int& hi) {
+            lo = 0, hi = int(v.size()) - 1;
+            while (lo <= hi && v[size_t(lo)] < 2) ++lo;
+            while (hi >= lo && v[size_t(hi)] < 2) --hi;
+            return lo <= hi;
+        };
+        int x0, x1, y0, y1;
+        if (!span(perCol, x0, x1) || !span(perRow, y0, y1)) return {};
+        if ((column ? y1 - y0 + 1 : x1 - x0 + 1) > kMaxCam * (to - from)) return {};
+        int filled = 0;
+        for (int y = y0; y <= y1; ++y)
+            for (int x = x0; x <= x1; ++x) filled += lit[size_t(y) * size_t(region.width()) + size_t(x)];
+        if (filled < 0.5 * (x1 - x0 + 1) * (y1 - y0 + 1)) return {};
+        // One line more around it: the shrinking blurs its edges (and the bar's innermost line was left out)
+        const QRect cam = QRect(QPoint(region.x() + x0, region.y() + y0), QPoint(region.x() + x1, region.y() + y1))
+                              .adjusted(-1, -1, 1, 1);
+        int a2, b2;
+        runs(barLines(column, from, to, cam), a2, b2);
+        if (std::abs((far ? b2 : a2) - w) > kSymmetry * side) return {};
+        (far ? b : a) = far ? b2 : a2;
+        return cam;
+    };
+    std::vector<bool> barCol = barLines(true, 0, kH, {});
     if (!anyBright) return {0, 0, 1, 1}; // dark all through: nothing to tell bars from
     int left = 0, right = 0;
-    while (left < kW && barCol[size_t(left)]) ++left;
-    while (right < kW - left && barCol[size_t(kW - 1 - right)]) ++right;
+    runs(barCol, left, right);
     if (left + right >= kW * 9 / 10) return {0, 0, 1, 1};
+    webcam(true, left, right, 0, kH);
     // Flat bars only (n lines from the outer line `outer` inwards by `step`, `column` = columns)
     // Median gray value of a line: an overlay in the bar (a webcam, a logo; less than half of it) does not count
     std::vector<uint8_t> line;
@@ -109,16 +173,10 @@ QRectF measure(const std::vector<std::vector<uint8_t>>& pics)
     };
     if (!flat(true, left, 0, 1, 0, kH) || !flat(true, right, kW - 1, -1, 0, kH)) left = right = 0;
     // Rows only over the content columns (the bars beside would hide a letterbox)
-    for (const auto& p : pics)
-        for (int y = 0; y < kH; ++y) {
-            int bright = 0;
-            for (int x = left; x < kW - right; ++x) bright += p[size_t(y) * kW + size_t(x)] > kBlack;
-            if (bright >= kBrightShare * (kW - left - right)) barRow[size_t(y)] = false;
-        }
     int top = 0, bottom = 0;
-    while (top < kH && barRow[size_t(top)]) ++top;
-    while (bottom < kH - top && barRow[size_t(kH - 1 - bottom)]) ++bottom;
+    runs(barLines(false, left, kW - right, {}), top, bottom);
     if (top + bottom >= kH * 9 / 10) top = bottom = 0;
+    webcam(false, top, bottom, left, kW - right);
     if (!flat(false, top, 0, 1, left, kW - right) || !flat(false, bottom, kH - 1, -1, left, kW - right)) top = bottom = 0;
     // The first line of the picture may be mixed with the bar (the shrinking averages a bar edge inside a line):
     // clearly darker than the line after it in the samples where that one is bright, it goes too
