@@ -69,6 +69,11 @@ public:
     // there to 1/100 frame (Clip::subframe). Overwrites what lies there; the new clip is selected. One undo step.
     // Returns the clip id, 0 = file not in the pool, locked track or nothing after `from`.
     int placeRecording(const QString& path, int track, double fileStart, int from);
+    // Audio clips made elsewhere (core/MusicFit: a song cut to a length, its parts with transitions) onto audio track
+    // `track` (missing tracks are created), overwriting what lies there; clip `replace` (> 0, e.g. the song before it
+    // was cut) is removed first. They get new ids and are selected. One undo step `text`. Returns the ids (empty =
+    // locked track or nothing to place).
+    QVector<int> placeAudioClips(const QVector<Clip>& clips, int track, int replace, const QString& text);
     // Title of `length` frames (<= 0: 5 s, like DaVinci "Text") at the frame on the lowest video track that is free
     // above all clips in that range (missing track is created); track >= 0 = fixed track (drag from the Media Pool),
     // overwritten only in [frame, frame + length). New clip is selected. kind: text, counter or progress bar (a

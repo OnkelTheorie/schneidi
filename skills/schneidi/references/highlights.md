@@ -83,7 +83,11 @@ also read [social.md](social.md).
   pictures, so the slow part is smooth instead of repeating each frame (stutter); the HUD stays sharp and nothing is
   blended across a cut. `"blend"` (cross-fade of neighbouring frames) is cheaper but looks soft on fast camera turns.
 - Put the music on its own audio track (`place` with `track` `"A2"` at 0, or a new track), cut it to the video
-  length, `fade` out the last 1-2 s.
+  length, `fade` out the last 1-2 s. Better than a fade in the middle of the song: `fit_music` cuts the song to the
+  length on its phrases and keeps its real end (`{"op":"fit_music","clip":<music clip>,"length":"timeline"}`;
+  `climax_at` puts the strongest drop on the big moment, `keep:"drop"` keeps it). Then `snap_to_beat` puts the
+  picture cuts on its beats (`grid` `"bar"` for bar ones; `event:"hit"` with the `hit_s` as `events` slips the kills
+  onto the beat, their accents go along).
 - Keep the game/event sound - it carries the action: shots and kills must stay audible. Measure first: `loudness`
   of the song and of the game clips (a mastered song is often -4 to -8 LUFS, game sound -15 to -20). Then lower the
   music until it sits a few LU under the game sound at the moments, or let the sound lower it (`duck` with the

@@ -21,6 +21,18 @@ It also finds:
 - 9:16 only: `safe_area` / `subtitle_safe_area` = text where TikTok, Reels and Shorts put caption and buttons
   (bottom 20 %), their button column (right) or their top bar - move it; `slow_hook` (info) = the first second
   hardly moves - start with the strongest moment.
+- `pace_slow`: longer than 3 s (`max_still_s`) without a change - a cut, a zoom/position keyframe or accent, a
+  text, an overlay on V2+. A warning per stretch in 9:16 videos up to 3 min (viewers swipe away), one info
+  otherwise. `pace` in the answer has the numbers: `changes_per_s`, `longest_s` and where (`at_s`), a `curve` of
+  changes per second, and per story section. `suggest` holds ready ops with a `why` each (a mild punch-in per
+  still stretch, `text_ops` = the words spoken there as titles instead) - a suggestion, not a fix: apply it with
+  `edit` only if it suits the video (a calm interview may want calm), or cut, zoom or add text yourself.
+- Story: `story_hook_late` = the first strong moment (a loud hit, the first word, a text) comes after 2 s (9:16 or
+  `for` a platform) or 5 s - move it to the front or tease it. With story sections on the timeline also
+  `story_no_hook`, `story_open_question` (a question with no turn or resolution after it), `story_resolution_late`,
+  `story_no_cta` and `story_gap` (info). `story` in the answer says what the first strong moment is.
+- After publishing: `retention` = the audience retention CSV (YouTube Studio, TikTok) → `retention_drop` (info)
+  where viewers leave, with `at_s` = the change right before it: often the cut to look at.
 
 Each finding has its time range (and `clip` when it is about one).
 

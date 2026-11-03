@@ -115,6 +115,8 @@ schneidi_test(test_jl_cuts) # J/L cuts (sound edge alone) and room tone in the g
 target_link_libraries(test_jl_cuts PRIVATE schneidi_cli_lib)
 schneidi_test(test_story_fields) # 0.17: story sections/notes on a timeline (file, duplicate, retime, undo, info), 'why' on ops
 target_link_libraries(test_story_fields PRIVATE schneidi_cli_lib)
+schneidi_test(test_story_pace) # 0.17: `check` pace (changes, pace_slow, suggestions), story checks, retention CSV
+target_link_libraries(test_story_pace PRIVATE schneidi_cli_lib)
 schneidi_test(test_live)
 schneidi_test(test_transcribe_pick) # which audio stream/track transcribe hears (a fake whisper-cli)
 target_link_libraries(test_transcribe_pick PRIVATE schneidi_cli_lib)
@@ -160,6 +162,12 @@ schneidi_test(test_analysis_scan) # scenes/overview/region/colour events in-proc
 target_link_libraries(test_analysis_scan PRIVATE schneidi_cli_lib)
 schneidi_test(test_beats) # `beats`: tempo, bars, phrases, breaks, drops of a song
 target_link_libraries(test_beats PRIVATE schneidi_cli_lib)
+# `fit_music` (a song cut to a length on its phrases, its own end, crossfades without clicks) and `snap_to_beat`;
+# live in the app one undo step, the same as on the file
+schneidi_test(test_fit_music)
+target_link_libraries(test_fit_music PRIVATE schneidi_cli_lib)
+target_compile_definitions(test_fit_music PRIVATE SCHNEIDI_CLI="$<TARGET_FILE:schneidi-cli>")
+add_dependencies(test_fit_music schneidi-cli)
 target_link_libraries(test_check PRIVATE schneidi_cli_lib)
 target_link_libraries(test_setup PRIVATE schneidi_cli_lib)
 target_compile_definitions(test_setup PRIVATE SCHNEIDI_CLI="$<TARGET_FILE:schneidi-cli>")
@@ -247,8 +255,8 @@ schneidi_test(test_thread_teardown)
 foreach(name test_stabilize_denoise test_retime test_effects_render test_effect_order test_cli test_export_formats test_audio
              test_audio_regression test_color test_loudness test_dynamics_eq test_audio_sync test_multicam_render
              test_multicam_viewer test_multicam_cli
-             test_ducking test_crop test_blur_fill test_reframe test_reframe_keep test_game43 test_generators
-             test_review_render)
+             test_ducking test_crop test_blur_fill test_reframe test_reframe_keep test_game43 test_generators test_fit_music
+             test_story_pace test_review_render)
     add_test(NAME ${name}_de_DE COMMAND ${name})
     set_tests_properties(${name}_de_DE PROPERTIES
         SKIP_RETURN_CODE 77
