@@ -6,6 +6,7 @@
 #include "core/I18n.h"
 
 #include <QHash>
+#include <QMap>
 #include <QReadWriteLock>
 
 #include <algorithm>
@@ -478,6 +479,38 @@ bool linearBetween(const Clip& c, AnimParam p, int t0, int t1)
         if (shape(a, b, 0.5) != 0.5) return false;
     }
     return true;
+}
+
+KeyTrack onePerFrame(const KeyTrack& mapped, const QVector<double>& exact)
+{
+    const auto at = [&](int i) { return i < exact.size() ? exact[i] : double(mapped[i].frame); };
+    // Keys per frame, the one closest to it first
+    QMap<int, QVector<int>> on;
+    for (int i = 0; i < mapped.size(); ++i) on[mapped[i].frame] << i;
+    for (QVector<int>& g : on)
+        std::stable_sort(g.begin(), g.end(), [&](int a, int b) {
+            return std::abs(at(a) - mapped[a].frame) < std::abs(at(b) - mapped[b].frame) - 1e-9;
+        });
+    QMap<int, Keyframe> out;
+    for (auto it = on.cbegin(); it != on.cend(); ++it) out.insert(it.key(), mapped[it.value().first()]);
+    // The others onto the free frame next to it on their side (the one nearest to it): the curve keeps its shape
+    for (auto it = on.cbegin(); it != on.cend(); ++it) {
+        const int f = it.key();
+        for (const int side : {-1, 1}) {
+            int best = -1;
+            for (int k = 1; k < it.value().size(); ++k) {
+                const int i = it.value()[k];
+                if ((at(i) - f) * side <= 0) continue;
+                if (best < 0 || std::abs(at(i) - (f + side)) < std::abs(at(best) - (f + side))) best = i;
+            }
+            if (best >= 0 && !out.contains(f + side)) {
+                Keyframe kf = mapped[best];
+                kf.frame = f + side;
+                out.insert(kf.frame, kf);
+            }
+        }
+    }
+    return KeyTrack(out.begin(), out.end());
 }
 
 void rescaleHandles(const KeyTrack& before, KeyTrack& after)

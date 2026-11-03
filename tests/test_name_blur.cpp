@@ -10,9 +10,12 @@
 #include "core/Editor.h"
 #include "core/GradeWindows.h"
 #include "core/Keyframes.h"
+#include "core/MediaAspect.h"
 #include "core/NameBlur.h"
 #include "core/Project.h"
 #include "core/ProjectFile.h"
+#include "core/Retime.h"
+#include "core/Reframe.h"
 #include "core/Selection.h"
 #include "core/TimelineOps.h"
 #include "engine/ColorGrade.h"
@@ -347,6 +350,120 @@ QVector<NameBlur::Mask> twoMasks()
     return {feed, tag};
 }
 
+// Masks keep lying on the names when the picture fills another part of the frame: a stretched 4:3 recording shown at
+// its true shape (pillarboxed), the timeline made 9:16. Windows are % of the frame, laid onto the fitted picture.
+void testRefit()
+{
+    // A 16:9 recording (no engine here to open files)
+    MediaAspect::setProbe([](const QString& f) { return f == "/x/b.mp4" ? 16.0 / 9 : 0.0; });
+    Project p;
+    Selection sel;
+    Editor ed(&p, &sel);
+    p.setFormat(ProjectFormat{1920, 1080, FrameRate{25, 1}});
+    p.addMedia({"/x/b.mp4", "b.mp4", 100, true, false, false});
+    p.edit("setup", [&](Timeline& tl) {
+        Clip v;
+        v.id = p.newClipId();
+        v.mediaPath = "/x/b.mp4";
+        v.out = 49;
+        tl.video[0].clips << v;
+    });
+    const int id = p.timeline().video[0].clips[0].id;
+    QHash<int, QVector<NameBlur::Mask>> masks;
+    masks[id] = twoMasks();
+    CHECK_EQ(ed.blurNames(masks, "blur", 60).value(id).size(), 2);
+    // Each window on the picture at a few frames (what the renderer blurs: ColorGrade::onPicture)
+    const auto onPicture = [&] {
+        const Clip* c = TimelineOps::findClip(p.timeline(), id);
+        const QSizeF frame = p.timelineFormat().size();
+        const QSizeF fit = MediaAspect::fit(MediaAspect::ofClip(*c), frame);
+        QVector<ColorGrade::Window> out;
+        for (int t : {0, 15, 20, 39})
+            for (const ColorGrade::Window& w : ColorGrade::windowsAt(*c, t)) out << ColorGrade::onPicture(w, frame, fit);
+        return out;
+    };
+    const auto same = [](const QVector<ColorGrade::Window>& a, const QVector<ColorGrade::Window>& b) {
+        if (a.size() != b.size()) return false;
+        for (int i = 0; i < a.size(); ++i) {
+            const GradeWindows::Geometry &x = a[i].geometry, &y = b[i].geometry;
+            if (std::abs(x.x - y.x) > 1e-6 || std::abs(x.y - y.y) > 1e-6 || std::abs(x.width - y.width) > 1e-6
+                || std::abs(x.height - y.height) > 1e-6 || std::abs(x.softness - y.softness) > 1e-6
+                || std::abs(a[i].fill.amount - b[i].fill.amount) > 1e-6) {
+                std::printf("window %d: x %.2f/%.2f y %.2f/%.2f w %.2f/%.2f h %.2f/%.2f amount %.1f/%.1f\n", i, x.x, y.x,
+                            x.y, y.y, x.width, y.width, x.height, y.height, a[i].fill.amount, b[i].fill.amount);
+                return false;
+            }
+        }
+        return true;
+    };
+    const QVector<ColorGrade::Window> was = onPicture();
+    CHECK(!was.isEmpty());
+    // The kill feed mask at the right edge: with the picture pillarboxed it must move inwards with it
+    CHECK_EQ(ed.setPictureAspect({id}, 4.0 / 3.0), 1);
+    CHECK(same(onPicture(), was));
+    p.undoStack()->undo();
+    CHECK(same(onPicture(), was));
+    // A 9:16 short of the 16:9 edit: the picture in a band in the middle
+    p.setFormat(ProjectFormat{1080, 1920, FrameRate{25, 1}});
+    CHECK(same(onPicture(), was));
+    p.undoStack()->undo();
+    const int seq = p.currentSequence();
+    p.setSequenceSize(seq, QSize(1080, 1920));
+    CHECK(same(onPicture(), was));
+    MediaAspect::setProbe(nullptr);
+}
+
+// A clip sped up (or reversed) after hiding its names: a mask switches on from nothing on the frame before the text
+// appears. Mapped to the new speed, that off key and the on key can land on one frame; the on key must win, else the
+// mask grew from nothing over the whole time the name is shown
+void testRetime()
+{
+    Project p;
+    Selection sel;
+    Editor ed(&p, &sel);
+    p.setFormat(ProjectFormat{1920, 1080, FrameRate{25, 1}});
+    p.addMedia({"/x/c.mp4", "c.mp4", 400, true, false, false});
+    p.edit("setup", [&](Timeline& tl) {
+        Clip v;
+        v.id = p.newClipId();
+        v.mediaPath = "/x/c.mp4";
+        v.out = 199;
+        tl.video[0].clips << v;
+    });
+    const int id = p.timeline().video[0].clips[0].id;
+    // The kill feed line from frame 21 to 120 as plan() gives it (shrunk to nothing on the frames around it)
+    NameBlur::Mask feed;
+    feed.zone = "killfeed";
+    const QRectF r(0.8, 0.05, 0.18, 0.04);
+    feed.keys = {{20, false, QRectF(r.center(), QSizeF())}, {21, true, r}, {120, true, r}, {121, false, QRectF(r.center(), QSizeF())}};
+    QHash<int, QVector<NameBlur::Mask>> masks;
+    masks[id] = {feed};
+    const int n = ed.blurNames(masks, "blur", 60).value(id).value(0);
+    if (!CHECK(n > 0)) return;
+    for (const double speed : {2.0, 4.0, 3.0}) {
+        for (const bool reverse : {false, true}) {
+            Editor::Retime rt;
+            rt.speed = speed;
+            rt.reverse = reverse;
+            ed.setClipSpeed({id}, rt, true);
+            const Clip* c = TimelineOps::findClip(p.timeline(), id);
+            const RetimeMap map(*c, 400);
+            int bad = 0;
+            for (int t = 0; t < c->length(); ++t) {
+                const int file = map.pictureFrame(c->in + t);
+                // every frame showing the name only (all file frames it plays lie inside the run) is hidden in full
+                const int next = map.pictureFrame(c->in + t + 1);
+                if (std::min(file, next) < 22 || std::max(file, next) > 119) continue;
+                const GradeWindows::Geometry g = GradeWindows::geometryAt(*c, n, t);
+                if (std::abs(g.width - r.width() * 100) > 1e-6 || GradeWindows::fillAt(*c, n, t).amount < 60 - 1e-6) ++bad;
+            }
+            if (bad) std::printf("speed %.0f%s: %d frames with the name partly shown\n", speed * 100, reverse ? " reversed" : "", bad);
+            CHECK_EQ(bad, 0);
+            p.undoStack()->undo();
+        }
+    }
+}
+
 void testEditor(const QString& dir)
 {
     Project p;
@@ -508,6 +625,85 @@ void testCli(const QString& dir)
     bool helped = false;
     for (const QJsonValue& v : Cli::detail::editOpsHelp()) helped |= v["op"].toString() == "blur_names";
     CHECK(helped);
+
+    // The blurred 16:9 edit made a 9:16 short (resolution changed, the copy-as-9:16 macro): the picture now lies in a
+    // band in the middle of the frame, the masks must still lie on the names
+    {
+        q.setFormat(ProjectFormat{540, 960, FrameRate{25, 1}});
+        Timeline plainTall = q.timeline();
+        plainTall.video[0].clips[0].effects.clear();
+        plainTall.video[0].clips[0].keys.clear();
+        const double band = (960 - 540 * 9.0 / 16) / 2 / 960;
+        const auto inBand = [band](const QRectF& r) {
+            return QRectF(r.x(), band + r.y() * (1 - 2 * band), r.width(), r.height() * (1 - 2 * band));
+        };
+        for (int t : {5, 20, 35}) {
+            Truth truth;
+            gamePicture(960, 540, t, &truth);
+            const QImage a = Snapshot::timeline(q.format(), plainTall, t), b = Snapshot::timeline(q.format(), q.timeline(), t);
+            if (!CHECK(!a.isNull() && a.size() == b.size() && a.height() > a.width())) break;
+            const auto diff = [&](const QRectF& r) {
+                const QRect px(int(r.x() * a.width()), int(r.y() * a.height()), std::max(1, int(r.width() * a.width())),
+                               std::max(1, int(r.height() * a.height())));
+                double sum = 0;
+                for (int y = px.top(); y <= px.bottom(); ++y)
+                    for (int x = px.left(); x <= px.right(); ++x)
+                        sum += std::abs(qGray(a.pixel(x, y)) - qGray(b.pixel(x, y)));
+                return sum / (px.width() * px.height());
+            };
+            std::printf("9:16 t=%d: tag %.1f, feed %.1f, ammo %.1f\n", t, diff(inBand(truth.tag)),
+                        diff(inBand(truth.names[0])), diff(inBand(truth.ammo)));
+            CHECK(diff(inBand(truth.tag)) > 8);
+            CHECK(diff(inBand(truth.names[0])) > 8);
+            CHECK(diff(inBand(truth.ammo)) < 1);
+        }
+    }
+
+    // A reframed clip with its kill feed copy above it (Auto-Reframe keep): hiding the names of the clip alone must
+    // hide them in the copy too - it shows the kill feed large at the top of the short
+    const QString kept = dir + "/kept.schneidi";
+    int base = 0;
+    {
+        Project p;
+        Selection sel;
+        Editor ed(&p, &sel);
+        p.setFormat(ProjectFormat{960, 540, FrameRate{25, 1}});
+        p.addMedia({video, "game.mp4", kFrames, true, false, false});
+        p.edit("setup", [&](Timeline& tl) {
+            Clip v;
+            v.id = p.newClipId();
+            v.mediaPath = video;
+            v.out = kFrames - 1;
+            tl.video[0].clips << v;
+        });
+        base = p.timeline().video[0].clips[0].id;
+        QHash<int, QVector<Reframe::Keep>> keeps;
+        keeps[base] = {Reframe::Keep{"killfeed", QRectF(0.6, 0.04, 0.4, 0.31)}};
+        CHECK_EQ(ed.reframeClips({base}, Reframe::Mode::Center, {}, {}, &keeps), 1);
+        CHECK_EQ(ed.withKeptCopies({base}).size(), 2);
+        QString err;
+        CHECK(ProjectFile::save(p.data(), kept, &err));
+    }
+    run("edit", {{"project", kept}, {"ops", QString(R"([{"op":"blur_names","template":"cs2","clips":[%1]}])").arg(base)}});
+    ProjectData kd;
+    CHECK(ProjectFile::load(kept, &kd, &error));
+    Project k;
+    k.load(kd);
+    const Clip* b = TimelineOps::findClip(k.timeline(), base);
+    const Clip* copy = nullptr;
+    for (const Track& t : k.timeline().video)
+        for (const Clip& x : t.clips)
+            if (!x.keepRegion.isEmpty()) copy = &x;
+    if (CHECK(b && copy)) {
+        CHECK(!GradeWindows::list(*b).isEmpty());
+        CHECK_EQ(GradeWindows::list(*copy), GradeWindows::list(*b));
+        for (int n : GradeWindows::list(*b))
+            for (int t : {5, 20, 35}) {
+                const GradeWindows::Geometry gb = GradeWindows::geometryAt(*b, n, t), gc = GradeWindows::geometryAt(*copy, n, t);
+                CHECK(std::abs(gb.x - gc.x) < 1e-6 && std::abs(gb.width - gc.width) < 1e-6);
+                CHECK_EQ(GradeWindows::fillAt(*copy, n, t).amount, GradeWindows::fillAt(*b, n, t).amount);
+            }
+    }
 }
 
 // The game video in a 9:16 timeline (a short): text is found on the clip's own picture and given in the frame,
@@ -563,6 +759,8 @@ int main(int argc, char** argv)
     testWeaponList();
     testScreens();
     testDetection();
+    testRefit();
+    testRetime();
     testEditor(tmp.path());
     if (!Check::haveFfmpeg()) return Check::skip("ffmpeg nicht gefunden");
     Check::initEngine();

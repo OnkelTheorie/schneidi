@@ -53,6 +53,11 @@ int freeNumber(const Clip& c);    // first unused number, 0 = all used
 void add(Clip& c, int n, Shape shape);
 // Removes the window's values and keyframes
 void remove(Clip& c, int n);
+// The picture fitted into the frame now takes kx (ky) times its former share of the frame's width (height): another
+// frame shape, another picture shape (Clip::pictureAspect). Windows are in % of the frame and laid onto the fitted
+// picture (engine/ColorGrade onPicture): they are converted to keep their place, size, soft edge and fill strength on
+// the picture - a blurred name stays hidden.
+void refit(Clip& c, double kx, double ky);
 
 // Shape at clip frame t (keyframes interpolated). Units as stored: x, y, width, height in % of the picture width/height
 // (x/y = center, y downward), rotation in degrees, softness = soft edge outside the shape in % of the picture height.

@@ -81,7 +81,8 @@ void MainWindow::blurNames()
 {
     QVector<Clip> clips;
     const Timeline& tl = m_project->timeline();
-    const QVector<int> ids = m_editor->clipIdsOf(m_selection->ids()); // none selected = the whole timeline
+    // None selected = the whole timeline; the kill feed copies above reframed clips show the same names
+    const QVector<int> ids = m_editor->withKeptCopies(m_editor->clipIdsOf(m_selection->ids()));
     for (const Track& t : tl.video)
         for (const Clip& c : t.clips)
             if ((ids.isEmpty() || ids.contains(c.id)) && !c.isTitle() && !c.isNested()) clips << c;

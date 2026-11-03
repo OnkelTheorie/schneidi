@@ -2,6 +2,7 @@
 // Editor: Auto-Reframe (core/Reframe.h)
 #include "core/Editor.h"
 #include "core/GameHud.h"
+#include "core/GradeWindows.h"
 #include "core/I18n.h"
 #include "core/Keyframes.h"
 #include "core/MediaAspect.h"
@@ -22,6 +23,22 @@ QVector<int> Editor::reframeTargets(const QVector<int>& ids) const
         for (const Clip& c : tl.video[t].clips)
             if (Reframe::canReframe(c) && (ids.isEmpty() || wanted.contains(c.id))) out << c.id;
     }
+    return out;
+}
+
+QVector<int> Editor::withKeptCopies(const QVector<int>& ids) const
+{
+    const Timeline& tl = m_project->timeline();
+    QVector<int> out = ids;
+    QVector<const Clip*> bases;
+    for (int id : ids)
+        if (const Clip* c = TimelineOps::findClip(tl, id); c && c->keepRegion.isEmpty()) bases << c;
+    if (bases.isEmpty()) return out;
+    for (const Track& t : tl.video)
+        for (const Clip& x : t.clips)
+            if (!x.keepRegion.isEmpty() && !out.contains(x.id)
+                && std::any_of(bases.begin(), bases.end(), [&](const Clip* b) { return Reframe::isKeepAlong(x, *b); }))
+                out << x.id;
     return out;
 }
 
@@ -157,6 +174,8 @@ int Editor::setPictureAspect(const QVector<int>& ids, double aspect, std::option
                 const double k = p == AnimParam::CropLeft || p == AnimParam::CropRight ? kx : ky;
                 Keys::convert(c, p, [k](double v) { return v * k; }, k);
             }
+            // Windows (blurred names) stay on the same part of the picture, which now fills another share of the frame
+            GradeWindows::refit(c, kx, ky);
         }
         return was;
     };
