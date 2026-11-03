@@ -78,6 +78,16 @@ done
 # offscreen: für den unsichtbaren Testlauf (--screenshot), wie im AppImage
 cp "$UCRT/share/qt6/plugins/platforms/qoffscreen.dll" "$OUT/platforms/"
 
+# MSVC runtime for the whisper/piper extensions (built with MSVC; a fresh Windows lacks it): Microsoft's redistributable
+# DLLs, taken from vc_redist.x64.exe without installing it (docs/dev/windows.md). The app copies them next to an
+# installed extension program (engine/Extensions.cpp provideRuntime); schneidi itself does not use them
+MSVC_RUNTIME_DIR="${MSVC_RUNTIME_DIR:-/c/schneidi/msvc-runtime}"
+mkdir -p "$OUT/msvc-runtime"
+for dll in vcruntime140.dll vcruntime140_1.dll msvcp140.dll vcomp140.dll; do
+    src="$(find "$MSVC_RUNTIME_DIR" -maxdepth 1 -iname "$dll" | head -n1)"
+    if [ -n "$src" ]; then cp "$src" "$OUT/msvc-runtime/$dll"; else echo "!! MSVC runtime missing: $MSVC_RUNTIME_DIR/$dll (whisper/piper won't start on a fresh Windows)" >&2; fi
+done
+
 # --- Collect every other DLL from UCRT64 (also those of ffmpeg) ---
 collect() {
     ntldd -R "$@" 2>/dev/null | tr '\\' '/' | sed -n 's|.*=> \(.*\.dll\) (0x.*|\1|p' | while read -r dll; do

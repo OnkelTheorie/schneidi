@@ -55,6 +55,11 @@ QString installedPath(const Item& item); // model file / whisper-cli / ffmpeg; e
 bool remove(const Item& item);
 // Removes folders of old versions a running program still held at the last update/removal; in the background, at start
 void cleanUp();
+// Windows: whisper and piper are built with MSVC and need its runtime (VCRUNTIME140, MSVCP140 …), which a fresh Windows
+// lacks. The package carries those DLLs in "msvc-runtime" next to schneidi.exe (Microsoft lets them be redistributed);
+// this copies the missing ones next to an installed extension program. No-op elsewhere and for programs outside the
+// extensions folder (an own whisper-cli on PATH)
+void provideRuntime(const QString& program);
 // The user's fix when an extension program could not start for a missing system library (Windows: the MSVC runtime of
 // whisper/piper); empty = not that
 QString missingRuntimeHint(int exitCode);

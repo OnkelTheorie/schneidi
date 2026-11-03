@@ -4,6 +4,7 @@
 #include "core/I18n.h"
 #include "engine/Bundle.h"
 
+#include <QCoreApplication>
 #include <QCryptographicHash>
 #include <QDir>
 #include <QDirIterator>
@@ -201,6 +202,22 @@ void cleanUp()
     std::thread([left] {
         for (const QString& dir : left) QDir(dir).removeRecursively();
     }).detach();
+}
+
+void provideRuntime(const QString& program)
+{
+#ifdef Q_OS_WIN
+    if (program.isEmpty()) return;
+    const QFileInfo exe(program);
+    const QString root = QDir(rootDir()).absolutePath() + '/';
+    if (!exe.absoluteFilePath().startsWith(root, Qt::CaseInsensitive)) return;
+    const QDir from(QDir(QCoreApplication::applicationDirPath()).filePath("msvc-runtime"));
+    const QDir to = exe.absoluteDir();
+    for (const QString& dll : from.entryList({"*.dll"}, QDir::Files))
+        if (!to.exists(dll)) QFile::copy(from.filePath(dll), to.filePath(dll));
+#else
+    Q_UNUSED(program);
+#endif
 }
 
 QString missingRuntimeHint(int exitCode)
@@ -536,6 +553,7 @@ QString Installer::unpack(const QString& archive)
     QDir(staging).removeRecursively();
     const QString installed = encoder ? installedFfmpeg() : QDir(target).filePath(program);
     QFile::setPermissions(installed, QFile::permissions(installed) | QFile::ExeOwner | QFile::ExeUser);
+    if (!encoder) provideRuntime(installed);
     return {};
 }
 

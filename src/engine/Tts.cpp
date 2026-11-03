@@ -228,6 +228,7 @@ bool Speaker::start(const Request& request, QString* error)
     // too: piper looks for "<model path>.json", and the short name of "x.onnx" is "X~1.ONN" (Windows test: piper
     // aborted with 0xC0000409 in every folder, the extensions folder name alone is longer than 8 letters)
     m_process.setWorkingDirectory(QFileInfo(m_part).absolutePath());
+    Extensions::provideRuntime(Extensions::piperProgram()); // installed before the package carried it
     m_process.start(Extensions::piperProgram(),
                     Speech::piperArguments(narrowSafe(model), m_request.options, QFileInfo(m_part).fileName(),
                                            narrowSafe(model + ".json")));

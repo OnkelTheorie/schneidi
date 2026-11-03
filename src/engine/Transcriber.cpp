@@ -247,6 +247,7 @@ void Transcriber::runWhisper()
     if (m_request.music) args << "-mc" << "0";
     else if (const QString vad = Extensions::whisperVadModel(); !vad.isEmpty())
         args << "--vad" << "-vm" << narrowSafePath(vad) << "-vt" << "0.35";
+    Extensions::provideRuntime(Extensions::whisperProgram()); // installed before the package carried it
     m_process.start(Extensions::whisperProgram(), args);
 }
 
