@@ -53,6 +53,11 @@ QVector<const Item*> withDependencies(const QVector<const Item*>& items);
 bool isInstalled(const Item& item);
 QString installedPath(const Item& item); // model file / whisper-cli / ffmpeg; empty = not installed
 bool remove(const Item& item);
+// Removes folders of old versions a running program still held at the last update/removal; in the background, at start
+void cleanUp();
+// The user's fix when an extension program could not start for a missing system library (Windows: the MSVC runtime of
+// whisper/piper); empty = not that
+QString missingRuntimeHint(int exitCode);
 
 // whisper-cli to use: the installed one, else one on PATH; empty = none
 QString whisperProgram();

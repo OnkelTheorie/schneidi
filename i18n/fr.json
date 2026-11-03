@@ -2072,5 +2072,6 @@
  "◀ Verfolgen": "◀ Suivre",
  "♪ Audio": "♪ Audio",
  "Nur die Stimme ist angehakt – Musik und Spielton würden sonst mitgeschrieben.": "Seule la voix est cochée – sinon la musique et le son du jeu se retrouveraient dans les sous-titres.",
- "Wird gerade benutzt: Bitte laufende Exporte, Sprachausgabe und Transkription beenden und es dann noch einmal versuchen.": "En cours d'utilisation : arrêtez d'abord les exports, la synthèse vocale et les transcriptions en cours, puis réessayez."
+ "Wird gerade benutzt: Bitte laufende Exporte, Sprachausgabe und Transkription beenden und es dann noch einmal versuchen.": "En cours d'utilisation : arrêtez d'abord les exports, la synthèse vocale et les transcriptions en cours, puis réessayez.",
+ "Es fehlt die Microsoft Visual C++ Runtime. Bitte „vc_redist.x64.exe“ von Microsoft installieren (aka.ms/vs/17/release/vc_redist.x64.exe).": "Le Microsoft Visual C++ Runtime est manquant. Veuillez installer « vc_redist.x64.exe » de Microsoft (aka.ms/vs/17/release/vc_redist.x64.exe)."
 }

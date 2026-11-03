@@ -12,6 +12,7 @@
 #include "app/Theme.h"
 #include "core/I18n.h"
 #include "engine/Engine.h"
+#include "engine/Extensions.h"
 #include "engine/FfmpegLog.h"
 #include "engine/picture/gpu/Gpu.h"
 
@@ -123,6 +124,7 @@ int main(int argc, char* argv[])
         if (Cli::Live::handOver(handed)) return 0;
     }
     Log::install();
+    Extensions::cleanUp(); // old versions a running program held at its update
     CrashReport::install(); // after the log: attaches the previous run's log to its crash report
     // Test aid: --lang <code> (en, de, fr, …) only applies to this run (the setting stays unchanged)
     I18n::install(langOverride);

@@ -96,6 +96,17 @@ void testInstallPaths()
 #endif
     CHECK(Extensions::remove(*x264));
     CHECK(!Extensions::isInstalled(*x264));
+    // An old version a running program held (Windows lets the folder be renamed, not its files deleted): gone at start
+    const QString old = QDir(Extensions::rootDir()).filePath("ffmpeg-gpl/bin.old/bin");
+    CHECK(QDir().mkpath(old));
+    Extensions::cleanUp();
+    QElapsedTimer waited;
+    waited.start();
+    while (QFileInfo::exists(old) && waited.elapsed() < 5000) QThread::msleep(20);
+    CHECK(!QFileInfo::exists(QFileInfo(old).absolutePath()));
+    // Missing MSVC runtime (STATUS_DLL_NOT_FOUND) gets the user's fix, other failures not
+    CHECK(!Extensions::missingRuntimeHint(int(0xC0000135u)).isEmpty());
+    CHECK(Extensions::missingRuntimeHint(1).isEmpty());
     CHECK(Extensions::encoderProgram().isEmpty());
     // Own program by environment
     qputenv("SCHNEIDI_ENCODER_FFMPEG", "/no/such/ffmpeg");

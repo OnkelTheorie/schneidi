@@ -119,6 +119,8 @@ Transcriber::Transcriber(QObject* parent) : QObject(parent)
         }
         const QString tail = QString::fromUtf8(m_log.right(400)).trimmed();
         if (status != QProcess::NormalExit || code != 0) {
+            if (const QString hint = Extensions::missingRuntimeHint(code); m_stage > 0 && !hint.isEmpty())
+                return done(false, hint);
             return done(false, m_stage == 0 ? T("Ton konnte nicht gelesen werden: %1").arg(tail)
                                             : T("Whisper ist fehlgeschlagen: %1").arg(tail));
         }

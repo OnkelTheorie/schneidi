@@ -2072,5 +2072,6 @@
  "◀ Verfolgen": "◀ Track",
  "♪ Audio": "♪ Audio",
  "Nur die Stimme ist angehakt – Musik und Spielton würden sonst mitgeschrieben.": "Only the voice is ticked – music and game sound would otherwise end up in the subtitles.",
- "Wird gerade benutzt: Bitte laufende Exporte, Sprachausgabe und Transkription beenden und es dann noch einmal versuchen.": "In use: please stop running exports, speech and transcriptions first, then try again."
+ "Wird gerade benutzt: Bitte laufende Exporte, Sprachausgabe und Transkription beenden und es dann noch einmal versuchen.": "In use: please stop running exports, speech and transcriptions first, then try again.",
+ "Es fehlt die Microsoft Visual C++ Runtime. Bitte „vc_redist.x64.exe“ von Microsoft installieren (aka.ms/vs/17/release/vc_redist.x64.exe).": "The Microsoft Visual C++ Runtime is missing. Please install “vc_redist.x64.exe” from Microsoft (aka.ms/vs/17/release/vc_redist.x64.exe)."
 }

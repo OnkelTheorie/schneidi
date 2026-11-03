@@ -15,6 +15,8 @@
 #include <QProcess>
 #include <QStandardPaths>
 
+#include <thread>
+
 namespace Extensions {
 
 namespace {
@@ -171,9 +173,11 @@ QString tarProgram()
     return Bundle::tool("tar");
 }
 
-// Moves an installed folder out of the way in one step before it is replaced or deleted. Windows refuses to rename a
-// folder while a program in it runs (an export with this ffmpeg, a voice, a transcription): then nothing is touched,
-// where deleting file by file would leave a half-removed install. False = in use; *aside = where it went ("" = none)
+// Moves an installed folder out of the way in one step before it is replaced or deleted, where deleting file by file
+// would leave a half-removed install. A program running from it (an export with this ffmpeg, a voice, a transcription)
+// goes on from "<dir>.old" (Windows allows the rename, only deleting its files fails; cleanUp() takes the rest at the
+// next start). False = the rename was refused (a file held open without sharing): nothing touched; *aside = where it
+// went ("" = none)
 bool moveAside(const QString& dir, QString* aside)
 {
     aside->clear();
@@ -186,6 +190,26 @@ bool moveAside(const QString& dir, QString* aside)
 }
 
 } // namespace
+
+void cleanUp()
+{
+    QStringList left;
+    for (const QString& dir : {binDir(), encoderTree(), piperBin()})
+        if (QFileInfo::exists(dir + ".old")) left << dir + ".old";
+    if (left.isEmpty()) return;
+    // The x264 ffmpeg is ~220 MB: never on the start's way
+    std::thread([left] {
+        for (const QString& dir : left) QDir(dir).removeRecursively();
+    }).detach();
+}
+
+QString missingRuntimeHint(int exitCode)
+{
+    // STATUS_DLL_NOT_FOUND: whisper and piper are built with MSVC and need its runtime, which a fresh Windows lacks
+    if (uint32_t(exitCode) != 0xC0000135u) return {};
+    return T("Es fehlt die Microsoft Visual C++ Runtime. Bitte „vc_redist.x64.exe“ von Microsoft installieren "
+             "(aka.ms/vs/17/release/vc_redist.x64.exe).");
+}
 
 const QVector<Item>& catalog()
 {

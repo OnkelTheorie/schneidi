@@ -255,6 +255,7 @@ void Speaker::piperDone(int exitCode, QProcess::ExitStatus status)
         if (status != QProcess::NormalExit || exitCode != 0 || QFileInfo(m_part).size() <= 44) {
             const QString log = QString::fromUtf8(m_process.readAllStandardError()).trimmed().right(400);
             QFile::remove(m_part);
+            if (const QString hint = Extensions::missingRuntimeHint(exitCode); !hint.isEmpty()) return done(false, hint);
             return done(false, T("Piper ist fehlgeschlagen: %1").arg(log.isEmpty() ? T("keine Ausgabe") : log));
         }
         if (QFileInfo(m_result.path).size() > 44) {

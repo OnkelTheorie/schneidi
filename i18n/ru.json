@@ -2072,5 +2072,6 @@
  "◀ Verfolgen": "◀ Отслеж.",
  "♪ Audio": "♪ Аудио",
  "Nur die Stimme ist angehakt – Musik und Spielton würden sonst mitgeschrieben.": "Отмечен только голос – иначе музыка и звук игры попали бы в субтитры.",
- "Wird gerade benutzt: Bitte laufende Exporte, Sprachausgabe und Transkription beenden und es dann noch einmal versuchen.": "Используется: сначала остановите идущие экспорты, озвучку и транскрипцию, затем повторите попытку."
+ "Wird gerade benutzt: Bitte laufende Exporte, Sprachausgabe und Transkription beenden und es dann noch einmal versuchen.": "Используется: сначала остановите идущие экспорты, озвучку и транскрипцию, затем повторите попытку.",
+ "Es fehlt die Microsoft Visual C++ Runtime. Bitte „vc_redist.x64.exe“ von Microsoft installieren (aka.ms/vs/17/release/vc_redist.x64.exe).": "Отсутствует Microsoft Visual C++ Runtime. Установите «vc_redist.x64.exe» от Microsoft (aka.ms/vs/17/release/vc_redist.x64.exe)."
 }
