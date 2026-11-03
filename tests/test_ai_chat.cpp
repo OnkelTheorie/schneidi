@@ -789,6 +789,21 @@ void test(const QString& dir)
             if (auto* state = all.last()->findChild<QLabel*>("ai_plan_state"); CHECK(state))
                 CHECK_EQ(state->text(), T("Nicht ausgeführt: das Projekt wurde seit dem Plan geändert. Bitte die KI, neu zu planen."));
         }
+        // A plan gone meanwhile (expired after a day): said in the user's language
+        fake.script = {anthropicTool("toolu_p6", "edit", {{"project", "@app"}, {"plan", true},
+                                                          {"ops", QJsonArray{QJsonObject{{"op", "split"}, {"at", "0.1s"}, {"why", "z"}}}}}),
+                       anthropicText("Plan.")};
+        panel->sendText("Noch ein Plan");
+        CHECK(waitFor([&] { return !chat->busy(); }));
+        w.setChatRunner([](const QString&, const QJsonObject&) {
+            return QJsonObject{{"ok", false}, {"error", QJsonObject{{"code", "NOT_FOUND"}, {"message", "no plan 'p9'"}}}};
+        });
+        if (const QList<QWidget*> cardsNow = panel->findChildren<QWidget*>("ai_plan"); CHECK(!cardsNow.isEmpty())) {
+            if (auto* run = cardsNow.last()->findChild<QPushButton*>("ai_plan_run"); CHECK(run)) run->click();
+            settle(50);
+            if (auto* state = cardsNow.last()->findChild<QLabel*>("ai_plan_state"); CHECK(state))
+                CHECK_EQ(state->text(), T("Nicht ausgeführt: den Plan gibt es nicht mehr (nach einem Tag abgelaufen oder schon ausgeführt). Bitte die KI, neu zu planen."));
+        }
         // The chat as text lists the plans with their reasons
         CHECK(chat->transcript().contains("Hook markieren"));
         w.setChatRunner({});

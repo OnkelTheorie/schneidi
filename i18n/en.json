@@ -1211,6 +1211,7 @@
  "Nicht alle Clips ließen sich analysieren, sie bleiben mittig:\n%1": "Not all clips could be analyzed, they stay centered:\n%1",
  "Nicht ausgeführt: %1": "Not run: %1",
  "Nicht ausgeführt: das Projekt wurde seit dem Plan geändert. Bitte die KI, neu zu planen.": "Not run: the project was changed since the plan. Ask the AI to plan again.",
+ "Nicht ausgeführt: den Plan gibt es nicht mehr (nach einem Tag abgelaufen oder schon ausgeführt). Bitte die KI, neu zu planen.": "Not run: the plan no longer exists (expired after a day or already run). Ask the AI to plan again.",
  "Nicht gelöscht: %1": "Not deleted: %1",
  "Nicht im Preset (Color-Seite bzw. Plugin fehlt): %1": "Not in the preset (Color page or plugin missing): %1",
  "Nicht lesbar:": "Could not read:",
