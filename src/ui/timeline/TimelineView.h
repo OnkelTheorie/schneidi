@@ -139,6 +139,7 @@ protected:
     bool eventFilter(QObject* obj, QEvent* e) override;
     void wheelEvent(QWheelEvent*) override;
     void contextMenuEvent(QContextMenuEvent*) override;
+    bool event(QEvent* e) override; // tooltips of story sections and notes in the ruler
     void leaveEvent(QEvent*) override;
     void dragEnterEvent(QDragEnterEvent*) override;
     void dragMoveEvent(QDragMoveEvent*) override;
@@ -157,7 +158,7 @@ private:
     };
     enum class Drag { None, Scrub, MaybeMove, Move, Trim, TrimEdit, Volume, TransitionLength, Fade, Keyframe,
                       CueMaybeMove, CueMove, CueTrim, SpeedPoint, CurvePoint, CurveHandle,
-                      TrackMaybeMove, TrackMove, Rubber };
+                      TrackMaybeMove, TrackMove, Rubber, SectionEdge };
     // Retime bar: speed point (point >= 0) or section (segment >= 0) under the mouse
     struct RetimeHit {
         int clipId = 0;
@@ -275,6 +276,20 @@ private:
     int snapDelta(const QVector<int>& edges, const QSet<int>& exclude, bool* hit = nullptr) const;
 
     void drawRuler(QPainter& p);
+    // Story sections (a band in the upper part of the ruler, colored by kind) and notes (marks at the bottom of the
+    // ruler) of the timeline: drawing, hit tests, the ruler's context menu, edge drag. TimelineStory.cpp
+    static constexpr int kSectionTop = 3, kSectionBottom = kRulerH - 16;
+    void drawStory(QPainter& p);
+    int sectionAt(const QPoint& pos) const;              // index, -1 = none (only inside the band)
+    int sectionEdgeAt(const QPoint& pos, bool* left) const; // index of the section whose edge is under the mouse
+    int noteAt(const QPoint& pos) const;                 // note id, 0 = none
+    QString storyToolTip(const QPoint& pos) const;
+    bool rulerMenu(const QPoint& pos, const QPoint& globalPos); // false = not in the ruler
+    bool sectionPress(const QPoint& pos);                // starts an edge drag; false = no edge there
+    void sectionDrag(const QPoint& pos);
+    int m_sectionDrag = -1;   // index of the dragged section
+    bool m_sectionLeft = false; // its left edge (else the right one)
+    int m_sectionDrags = 0;     // counts the drags: each one is its own undo step
     void drawTracks(QPainter& p);
     // spans: audio transitions of the track (waveform follows the crossfade); color: track color (invalid = default)
     void drawClip(QPainter& p, const QRect& r, const Clip& c, TrackKind kind, bool selected, bool ghost,

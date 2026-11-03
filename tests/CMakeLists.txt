@@ -118,6 +118,8 @@ schneidi_test(test_story_fields) # 0.17: story sections/notes on a timeline (fil
 target_link_libraries(test_story_fields PRIVATE schneidi_cli_lib)
 schneidi_test(test_story_pace) # 0.17: `check` pace (changes, pace_slow, suggestions), story checks, retention CSV
 target_link_libraries(test_story_pace PRIVATE schneidi_cli_lib)
+schneidi_test(test_story_ops) # 0.17: section/sections/note/hook_variants ops, core/Story (teaser, suggestion, shift)
+target_link_libraries(test_story_ops PRIVATE schneidi_cli_lib)
 schneidi_test(test_live)
 schneidi_test(test_transcribe_pick) # which audio stream/track transcribe hears (a fake whisper-cli)
 target_link_libraries(test_transcribe_pick PRIVATE schneidi_cli_lib)

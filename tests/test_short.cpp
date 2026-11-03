@@ -183,7 +183,7 @@ int main(int argc, char** argv)
         const QString clip = Check::makeMedia(
             dir.filePath("clips/cs2/cs2_clip_test.mp4"),
             {"-f", "lavfi", "-i", "testsrc2=s=640x360:r=30:d=40", "-f", "lavfi", "-i",
-             "aevalsrc='0.02*sin(2*PI*220*t)+if(between(t,9,9.6)+between(t,29,29.6),0.9*sin(2*PI*440*t),0)':d=40:s=48000",
+             "aevalsrc='0.02*sin(2*PI*220*t)+if(between(t,9,9.6),0.4*sin(2*PI*440*t),0)+if(between(t,29,29.6),0.9*sin(2*PI*440*t),0)':d=40:s=48000",
              "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest"});
         if (!CHECK(!clip.isEmpty())) return Check::result();
         const QString out = dir.filePath("out/short.mp4");
@@ -203,6 +203,8 @@ int main(int argc, char** argv)
                                [s](const QJsonValue& m) { return m["from_s"].toDouble() <= s && m["to_s"].toDouble() >= s; });
         };
         CHECK(covers(9.3) && covers(29.3));
+        // hook:'best' (default): the louder, later moment opens the short and is its hook section
+        if (CHECK(!moments.isEmpty())) CHECK(moments[0]["from_s"].toDouble() <= 29.3 && moments[0]["to_s"].toDouble() >= 29.3);
         // No whisper here: no captions, a note with the install command (never installed)
         const QString notes = QJsonDocument(r["notes"].toArray()).toJson();
         CHECK(notes.contains("extensions --install whisper"));
@@ -213,6 +215,15 @@ int main(int argc, char** argv)
         const QJsonObject info = run("info", {{"project", proj}, {"timeline", "Short"}, {"summary", true}});
         CHECK_EQ(info["timeline"]["width"].toInt(), 1080);
         CHECK_EQ(info["timeline"]["height"].toInt(), 1920);
+        {
+            const QJsonArray sections = info["timeline"]["sections"].toArray();
+            if (CHECK_EQ(sections.size(), 1)) {
+                CHECK_EQ(sections[0]["kind"].toString(), QString("hook"));
+                CHECK_EQ(sections[0]["from"].toInt(), 0);
+                const double hookLen = moments[0]["to_s"].toDouble() - moments[0]["from_s"].toDouble();
+                CHECK(std::abs(sections[0]["to_s"].toDouble() - hookLen) < 0.1);
+            }
+        }
         // The rendered file passes the platform check's sound part (true peak under -1 dBTP)
         const QJsonObject fileCheck = run("check", {{"source", out}, {"for", "shorts"}});
         bool peakOk = true;
@@ -224,6 +235,12 @@ int main(int argc, char** argv)
         const QJsonObject again = run("short", {{"files", QJsonArray{clip}}, {"captions", "off"}, {"max_s", 20}});
         CHECK_EQ(QFileInfo(again["out"].toString()).fileName(), QString("cs2_clip_test-short.mp4"));
         CHECK(again["length_s"].toDouble() <= 20.05);
+        // hook:'chronological': the moments in the order they happened
+        const QJsonObject inOrder = run("short", {{"files", QJsonArray{clip}}, {"captions", "off"}, {"game", "none"},
+                                                  {"hook", "chronological"}});
+        const QJsonArray ordered = inOrder["moments"].toArray();
+        if (CHECK(ordered.size() >= 2)) CHECK(ordered[0]["from_s"].toDouble() < ordered[1]["from_s"].toDouble());
+        CHECK_EQ(run("short", {{"files", QJsonArray{clip}}, {"hook", "loudest"}})["error"].toString(), QString("BAD_ARGUMENT"));
         CHECK(QJsonDocument(again["done"].toArray()).toJson().contains("kill feed of cs2")); // game from the folder
         CHECK_EQ(run("short", {{"files", QJsonArray{clip}}, {"out", out}})["error"].toString(), QString("EXISTS"));
         // An existing timeline as the cut

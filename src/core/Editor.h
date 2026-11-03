@@ -542,6 +542,20 @@ public:
     // sides instead of black ones). One undo step; returns the number of clips changed.
     int setPictureAspect(const QVector<int>& ids, double aspect, std::optional<FitFill> fill = std::nullopt);
 
+    // ---- Story sections and notes of the open timeline (Timeline::sections / notes, core/Story.h). EditorStory.cpp
+    // Each call is one undo step. addSection: empty = done, else why not (overlap, empty range)
+    QString addSection(const StorySection& section);
+    bool removeSectionAt(int frame);                     // false = no section there
+    void setSections(const QVector<StorySection>& sections, const QString& text); // replaces all of them
+    // A dragged edge (the same mergeKey = one undo step for the whole drag); false = it would overlap or be empty
+    bool setSectionRange(int index, int from, int to, const QString& mergeKey = {});
+    int addNote(int frame, const QString& text);          // returns its id
+    bool setNoteDone(int id, bool done);                  // false = no such note
+    bool removeNote(int id);
+    // A teaser: [from, to) of the open timeline copied in front of it, everything else moves back (Story::prependTeaser).
+    // false = nothing in the range
+    bool prependTeaser(int from, int to);
+
 signals:
     void targetTracksChanged(); // target tracks (redraw track header marking)
     void mixerOnlyEdit();       // next change affects only the mixer (live preview, without rebuild)

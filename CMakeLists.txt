@@ -113,6 +113,7 @@ add_library(schneidi_lib STATIC
     src/core/EditorMulticam.cpp
     src/core/EditorReframe.cpp
     src/core/EditorMusic.cpp
+    src/core/EditorStory.cpp
     src/core/Reframe.h            src/core/Reframe.cpp
     src/core/RoomTone.h           src/core/RoomTone.cpp
     src/core/GameHud.h            src/core/GameHud.cpp
@@ -131,6 +132,7 @@ add_library(schneidi_lib STATIC
     src/core/TranscriptCut.h      src/core/TranscriptCut.cpp
     src/core/Captions.h           src/core/Captions.cpp
     src/core/TimelineStory.h      src/core/TimelineStory.cpp
+    src/core/Story.h              src/core/Story.cpp
     src/core/Voiceover.h          src/core/Voiceover.cpp
     src/core/Generators.h         src/core/Generators.cpp
     src/core/Fft.h                src/core/Fft.cpp
@@ -318,6 +320,7 @@ add_library(schneidi_lib STATIC
     src/ui/timeline/TimelineDrop.cpp
     src/ui/timeline/TimelineMenus.cpp
     src/ui/timeline/TimelineSubtitles.cpp
+    src/ui/timeline/TimelineStory.cpp
     src/ui/timeline/TimelineRetime.cpp
     src/ui/timeline/TimelineViewDetail.h
     src/ui/timeline/TimelinePanel.h   src/ui/timeline/TimelinePanel.cpp

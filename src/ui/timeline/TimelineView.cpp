@@ -420,6 +420,10 @@ int TimelineView::volumeLineAt(const QPoint& pos) const
 
 void TimelineView::updateHoverCursor(const QPoint& pos)
 {
+    if (pos.y() < kRulerH && sectionEdgeAt(pos, nullptr) >= 0) { // a story section's edge can be dragged
+        setCursor(Qt::SizeHorCursor);
+        return;
+    }
     if (subRowAt(pos.y())) {
         if (m_hoverClip || m_hoverVolClip) {
             m_hoverClip = m_hoverVolClip = 0;

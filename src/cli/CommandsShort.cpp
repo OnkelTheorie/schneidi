@@ -87,6 +87,9 @@ QJsonObject cmdShort(const QJsonObject& a, Context& ctx)
     const QString captions = a.contains("captions") ? a["captions"].toString().trimmed().toLower() : QString("karaoke");
     if (!QStringList{"karaoke", "word", "off"}.contains(captions))
         fail("BAD_ARGUMENT", "captions must be karaoke, word or off");
+    // Hook: the best moment first (default; the rest in their order), or all in the order they happened
+    const QString hook = a.contains("hook") ? a["hook"].toString().trimmed().toLower() : QString("best");
+    if (!QStringList{"best", "chronological"}.contains(hook)) fail("BAD_ARGUMENT", "hook must be best or chronological");
     const ShortPlatform* platform = shortPlatform(a.contains("for") ? a["for"].toString() : QString("shorts"));
     if (!platform) fail("BAD_ARGUMENT", "for must be shorts, reels or tiktok (the platform)");
     if (platform->maxSeconds < pick.maxS) pick.maxS = platform->maxSeconds;
@@ -186,16 +189,39 @@ QJsonObject cmdShort(const QJsonObject& a, Context& ctx)
             ops << QJsonObject{{"op", "format"}, {"timeline", cutTimeline}, {"width", w}, {"height", h}}
                 << QJsonObject{{"op", "timeline"}, {"timeline", cutTimeline}};
         }
+        // The best moment opens the short (hook:'best', more than one moment): its own keep first, then the others
+        int best = -1;
+        if (hook == QLatin1String("best") && picked.size() > 1)
+            for (int k = 0; k < picked.size(); ++k)
+                if (best < 0 || picked[k].score > picked[best].score) best = k;
+        const auto range = [](const ShortPick::Moment& m) {
+            return QJsonArray{QString("%1s").arg(m.from, 0, 'f', 3), QString("%1s").arg(m.to, 0, 'f', 3)};
+        };
+        const auto moment = [&](const ShortPick::Moment& m) {
+            moments << QJsonObject{{"file", files[m.file]}, {"from_s", secondsOf(m.from)}, {"to_s", secondsOf(m.to)}};
+        };
+        if (best >= 0) {
+            ops << QJsonObject{{"op", "keep"}, {"media", files[picked[best].file]}, {"ranges", QJsonArray{range(picked[best])}}};
+            moment(picked[best]);
+        }
         for (int i = 0; i < files.size(); ++i) {
             QJsonArray ranges;
-            for (const ShortPick::Moment& m : picked) {
-                if (m.file != i) continue;
-                ranges << QJsonArray{QString("%1s").arg(m.from, 0, 'f', 3), QString("%1s").arg(m.to, 0, 'f', 3)};
-                moments << QJsonObject{{"file", files[i]}, {"from_s", secondsOf(m.from)}, {"to_s", secondsOf(m.to)}};
+            for (int k = 0; k < picked.size(); ++k) {
+                const ShortPick::Moment& m = picked[k];
+                if (m.file != i || k == best) continue;
+                ranges << range(m);
+                moment(m);
             }
             if (!ranges.isEmpty()) ops << QJsonObject{{"op", "keep"}, {"media", files[i]}, {"ranges", ranges}};
         }
+        // The story: the first moment is the hook (`check` story_no_hook reads it; the short's copy keeps it)
+        if (!picked.isEmpty()) {
+            const ShortPick::Moment& first = best >= 0 ? picked[best] : picked.first();
+            ops << QJsonObject{{"op", "section"}, {"kind", "hook"}, {"from", 0},
+                               {"to", QString("%1s").arg(std::max(0.04, first.to - first.from), 0, 'f', 3)}};
+        }
         run("edit", {{"project", project}, {"ops", ops}}, step(0.3, 0.32));
+        if (best >= 0) done << QString("hook: the best moment first (%1 s of %2)").arg(secondsOf(picked[best].from)).arg(QFileInfo(files[picked[best].file]).fileName());
         done << QString("cut: %1 moment%2, %3 s (timeline '%4')")
                     .arg(picked.size())
                     .arg(picked.size() == 1 ? "" : "s")
