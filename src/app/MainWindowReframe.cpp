@@ -6,6 +6,7 @@
 
 #include "core/Editor.h"
 #include "core/I18n.h"
+#include "core/MediaAspect.h"
 #include "core/Project.h"
 #include "core/Selection.h"
 #include "core/TimelineOps.h"
@@ -44,6 +45,13 @@ bool footageChanged(const Timeline& tl, const QVector<Clip>& measured)
         if (!now || !sameFootage(*now, c)) return true;
     }
     return false;
+}
+
+// Status text for the overlays a whole-timeline reframe left alone
+QString overlayNote(int n)
+{
+    return n == 1 ? T("1 Overlay (kleineres Bild auf einer oberen Spur, z. B. Webcam) bleibt an seinem Platz im Bild.")
+                  : T("%1 Overlays (kleinere Bilder auf oberen Spuren, z. B. Webcam) bleiben an ihrem Platz im Bild.").arg(n);
 }
 
 } // namespace
@@ -98,7 +106,8 @@ bool MainWindow::measureReframe(const QVector<Clip>& clips, const ProjectFormat&
 
 void MainWindow::autoReframe()
 {
-    const QVector<int> ids = m_editor->reframeTargets(m_editor->clipIdsOf(m_selection->ids()));
+    QVector<int> overlays; // left out of a whole timeline (nothing selected)
+    const QVector<int> ids = m_editor->reframeTargets(m_editor->clipIdsOf(m_selection->ids()), &overlays);
     if (ids.isEmpty()) {
         statusBar()->showMessage(T("Auto-Reframe: keine Video-Clips (Titel, Compound- und Multicam-Clips bleiben, wie sie sind)"), 6000);
         return;
@@ -118,9 +127,10 @@ void MainWindow::autoReframe()
     const auto keeps = m_editor->reframeKeeps(ids, Reframe::Mode::Auto, contents, reframeKeepChoice());
     const int n = m_editor->reframeClips(ids, Reframe::Mode::Auto, paths, contents, &keeps);
     const bool kept = std::any_of(keeps.begin(), keeps.end(), [](const QVector<Reframe::Keep>& k) { return !k.isEmpty(); });
-    statusBar()->showMessage(kept ? T("Auto-Reframe: %1 Clips folgen ihrem Motiv, der Killfeed bleibt oben lesbar").arg(n)
-                                  : T("Auto-Reframe: %1 Clips folgen ihrem Motiv").arg(n),
-                             5000);
+    QString text = kept ? T("Auto-Reframe: %1 Clips folgen ihrem Motiv, der Killfeed bleibt oben lesbar").arg(n)
+                        : T("Auto-Reframe: %1 Clips folgen ihrem Motiv").arg(n);
+    if (!overlays.isEmpty()) text += " " + overlayNote(int(overlays.size()));
+    statusBar()->showMessage(text, overlays.isEmpty() ? 5000 : 8000);
 }
 
 void MainWindow::reframedCopy(int sequenceId)
@@ -131,10 +141,14 @@ void MainWindow::reframedCopy(int sequenceId)
     format.width = 1080;
     format.height = 1920;
     // The clips the copy will reframe, in track order (the copy has the same order, with new ids)
+    // (overlays such as a webcam picture on V2 are not reframed: they keep their place in the frame)
+    const QSizeF sourceFrame = m_project->sequenceFormat(sequenceId).size();
     QVector<Clip> clips;
-    for (const Track& t : q->timeline.video)
-        for (const Clip& c : t.clips)
-            if (!t.locked && Reframe::canReframe(c)) clips << c;
+    for (int t = 0; t < q->timeline.video.size(); ++t)
+        for (const Clip& c : q->timeline.video[t].clips)
+            if (!q->timeline.video[t].locked && Reframe::canReframe(c)
+                && !Reframe::isOverlay(c, t, MediaAspect::ofClip(c), sourceFrame))
+                clips << c;
     QHash<int, QVector<Reframe::Key>> paths;
     QHash<QString, QRectF> contents;
     if (!clips.isEmpty() && !measureReframe(clips, format, &paths, &contents)) return;
@@ -160,9 +174,11 @@ void MainWindow::reframedCopy(int sequenceId)
             for (int i = 0; i < source.video[t].clips.size() && i < now.video[t].clips.size(); ++i)
                 if (paths.contains(source.video[t].clips[i].id))
                     mapped.insert(now.video[t].clips[i].id, paths.value(source.video[t].clips[i].id));
-        const auto keeps = m_editor->reframeKeeps(m_editor->reframeTargets({}), Reframe::Mode::Auto, contents,
-                                                  reframeKeepChoice());
-        m_editor->reframeClips({}, Reframe::Mode::Auto, mapped, contents, &keeps);
+        QVector<int> overlays;
+        const QVector<int> targets = m_editor->reframeTargets({}, &overlays);
+        const auto keeps = m_editor->reframeKeeps(targets, Reframe::Mode::Auto, contents, reframeKeepChoice());
+        if (!targets.isEmpty()) m_editor->reframeClips(targets, Reframe::Mode::Auto, mapped, contents, &keeps);
+        if (!overlays.isEmpty()) statusBar()->showMessage(overlayNote(int(overlays.size())), 8000);
     }
     undo->endMacro();
 }

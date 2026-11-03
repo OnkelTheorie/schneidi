@@ -22,6 +22,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <algorithm>
+#include <utility>
 
 namespace {
 
@@ -30,6 +31,17 @@ void removeCues(Timeline& tl, const QVector<int>& ids)
     for (SubtitleTrack& t : tl.subtitles)
         t.cues.erase(std::remove_if(t.cues.begin(), t.cues.end(), [&](const SubtitleCue& c) { return ids.contains(c.id); }),
                      t.cues.end());
+}
+
+// Following kill feed copies may go onto tracks above the top one when their clip moves up (Editor::clampTrackDelta)
+void ensureMoveTracks(Timeline& tl, const QVector<int>& ids, int trackDelta)
+{
+    if (trackDelta <= 0) return;
+    int top = -1;
+    for (int id : ids)
+        if (TrackRef r; TimelineOps::findClip(std::as_const(tl), id, &r) && r.kind == TrackKind::Video)
+            top = std::max(top, r.index);
+    if (top >= 0) TimelineOps::ensureTracks(tl, TrackKind::Video, top + trackDelta + 1);
 }
 
 } // namespace
@@ -68,10 +80,18 @@ void Editor::keepClipboardFitting(bool otherProject)
 QVector<int> Editor::withLinked(const QVector<int>& ids) const
 {
     if (!m_linkedSelection) return editable(ids);
+    const Timeline& tl = m_project->timeline();
+    const auto isCopy = [&](int id) {
+        const Clip* c = TimelineOps::findClip(tl, id);
+        return c && !c->keepRegion.isEmpty();
+    };
     QVector<int> out;
-    for (int id : editable(ids)) // a locked clip does not take its partners along either
-        for (int g : TimelineOps::linkedGroup(m_project->timeline(), id))
-            if (!out.contains(g)) out << g;
+    for (int id : editable(ids)) { // a locked clip does not take its partners along either
+        const bool copy = isCopy(id);
+        for (int g : TimelineOps::linkedGroup(tl, id))
+            // A kill feed copy and its clip are linked so that the copy follows (withCopies), not as partners
+            if (!out.contains(g) && (g == id || (!copy && !isCopy(g)))) out << g;
+    }
     return editable(out); // partner on a locked track stays in place (like DaVinci)
 }
 
@@ -236,11 +256,11 @@ QVector<int> Editor::unlockedSubtitles(const QVector<int>& ids, int* minStart) c
 
 void Editor::moveClips(const QVector<int>& idsIn, int deltaFrames, TrackKind kind, int trackDelta)
 {
-    const QVector<int> ids = editable(idsIn);
+    const QVector<int> ids = withCopies(editable(idsIn));
     if (ids.isEmpty() || (deltaFrames == 0 && trackDelta == 0)) return;
     // never move onto a locked track
     const Timeline& cur = m_project->timeline();
-    const int dt = TimelineOps::clampTrackDelta(cur, ids, kind, trackDelta);
+    const int dt = clampTrackDelta(ids, kind, trackDelta);
     for (TrackRef ref : TimelineOps::tracksOf(cur, ids))
         if (isTrackLocked({ref.kind, ref.index + dt})) return;
     int cueStart = INT_MAX;
@@ -258,8 +278,8 @@ void Editor::moveClips(const QVector<int>& idsIn, int deltaFrames, TrackKind kin
     Project* p = m_project;
     p->edit(clips ? T("Clips verschieben") : T("Untertitel verschieben"), [&](Timeline& tl) {
         TimelineOps::detachTransitions(tl, ids);
-        TimelineOps::moveClips(tl, ids, deltaFrames, kind, trackDelta,
-                               [p] { return p->newClipId(); });
+        ensureMoveTracks(tl, ids, dt);
+        TimelineOps::moveClips(tl, ids, deltaFrames, kind, dt, [p] { return p->newClipId(); });
         if (cueDelta) Subtitles::move(tl, cues, cueDelta, 0, [p] { return p->newClipId(); });
     });
 }
@@ -267,10 +287,10 @@ void Editor::moveClips(const QVector<int>& idsIn, int deltaFrames, TrackKind kin
 void Editor::moveClipsFine(const QVector<int>& idsIn, int fine, TrackKind kind, int trackDelta)
 {
     if (fine % 100 == 0) return moveClips(idsIn, fine / 100, kind, trackDelta);
-    const QVector<int> ids = editable(idsIn);
+    const QVector<int> ids = withCopies(editable(idsIn));
     if (ids.isEmpty()) return;
     const Timeline& cur = m_project->timeline();
-    const int dt = TimelineOps::clampTrackDelta(cur, ids, kind, trackDelta);
+    const int dt = clampTrackDelta(ids, kind, trackDelta);
     for (TrackRef ref : TimelineOps::tracksOf(cur, ids))
         if (isTrackLocked({ref.kind, ref.index + dt})) return;
     // Not before frame 0 with one delta for all (see moveClips)
@@ -295,7 +315,8 @@ void Editor::moveClipsFine(const QVector<int>& idsIn, int fine, TrackKind kind, 
     Project* p = m_project;
     p->edit(T("Clips verschieben"), [&](Timeline& tl) {
         TimelineOps::detachTransitions(tl, ids);
-        TimelineOps::moveClips(tl, ids, frames, kind, trackDelta, [p] { return p->newClipId(); });
+        ensureMoveTracks(tl, ids, dt);
+        TimelineOps::moveClips(tl, ids, frames, kind, dt, [p] { return p->newClipId(); });
         for (auto it = target.cbegin(); it != target.cend(); ++it)
             if (Clip* c = TimelineOps::findClip(tl, it.key())) c->subframe = it->subframe;
         if (cueDelta) Subtitles::move(tl, cues, cueDelta, 0, [p] { return p->newClipId(); });
@@ -384,7 +405,7 @@ void Editor::bladeAt(int clipId, int frame)
         p->edit(T("Schnitt"), [&](Timeline& tl) { Subtitles::splitAt(tl.subtitles[st], frame, [p] { return p->newClipId(); }); });
         return;
     }
-    const QVector<int> ids = withLinked({clipId});
+    const QVector<int> ids = withFollowers({clipId});
     if (ids.isEmpty()) return;
     p->edit(T("Schnitt"), [&](Timeline& tl) {
         TimelineOps::splitAt(tl, ids, frame, [p] { return p->newClipId(); },
@@ -394,7 +415,7 @@ void Editor::bladeAt(int clipId, int frame)
 
 QVector<int> Editor::targetIds(int frame) const
 {
-    if (!m_selection->isEmpty()) return withLinked(m_selection->ids().values().toVector());
+    if (!m_selection->isEmpty()) return withFollowers(m_selection->ids().values().toVector());
     QVector<int> ids;
     const Timeline& tl = m_project->timeline();
     for (TrackKind k : {TrackKind::Video, TrackKind::Audio})
@@ -420,7 +441,7 @@ void Editor::splitAtPlayhead(int frame)
                 for (const auto& c : t.clips)
                     if (frame > c.start && frame < c.end()) ids << c.id;
             }
-        ids = withLinked(ids);
+        ids = withFollowers(ids);
     } else {
         ids = targetIds(frame);
     }
@@ -506,7 +527,7 @@ void Editor::deleteRanges(const QVector<QPair<int, int>>& input, bool ripple, co
 void Editor::rippleDeleteSelection()
 {
     const QVector<int> cues = selectedSubtitles();
-    const QVector<int> ids = editable(clipIdsOf(m_selection->ids()));
+    const QVector<int> ids = withCopies(editable(clipIdsOf(m_selection->ids())));
     if (ids.isEmpty() && cues.isEmpty()) return;
     m_project->edit(T("Löschen mit Ripple"), [&](Timeline& tl) {
         removeCues(tl, cues); // subtitles: without ripple (gap stays)
@@ -554,7 +575,7 @@ void Editor::selectFromPlayhead(int frame, bool forward, bool allTracks)
 
 void Editor::nudgeSelection(int frames)
 {
-    const QVector<int> ids = editable(m_selection->ids().values().toVector());
+    const QVector<int> ids = withCopies(editable(m_selection->ids().values().toVector()));
     int minStart = INT_MAX;
     const QVector<int> cues = unlockedSubtitles(ids, &minStart); // subtitles of the selection move along
     bool any = !cues.isEmpty();
@@ -576,7 +597,7 @@ void Editor::nudgeSelection(int frames)
 
 void Editor::toggleSelectionEnabled()
 {
-    const QVector<int> ids = editable(m_selection->ids().values().toVector());
+    const QVector<int> ids = withCopies(editable(m_selection->ids().values().toVector())); // a kill feed copy goes along
     if (ids.isEmpty()) return;
     // Like DaVinci: if one is active, all get deactivated
     bool anyEnabled = false;
@@ -830,7 +851,7 @@ void Editor::deleteSelection()
         return;
     }
     const QVector<int> cues = selectedSubtitles();
-    const QVector<int> ids = editable(clipIdsOf(m_selection->ids()));
+    const QVector<int> ids = withCopies(editable(clipIdsOf(m_selection->ids())));
     if (ids.isEmpty() && cues.isEmpty()) return;
     // Delete without ripple: a gap remains, nothing moves up
     m_project->edit(T("Löschen"), [&](Timeline& tl) {

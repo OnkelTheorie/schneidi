@@ -63,7 +63,7 @@ int Editor::createCompoundClip(const QString& name)
 {
     Project* p = m_project;
     const Timeline& cur = p->timeline();
-    const QVector<int> ids = withLinked(clipIdsOf(m_selection->ids()));
+    const QVector<int> ids = withFollowers(clipIdsOf(m_selection->ids())); // a kill feed copy goes in with its clip
     if (ids.isEmpty()) return 0;
 
     // Span and lowest/highest track per kind

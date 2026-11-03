@@ -41,8 +41,20 @@ public:
     bool splitOnSelectedTracks() const { return m_splitOnSelectedTracks; }
     void setSplitOnSelectedTracks(bool on) { m_splitOnSelectedTracks = on; }
 
-    // Clip + linked partners (if "Linked Selection" is on); never clips on locked tracks
+    // Clip + linked partners (if "Linked Selection" is on); never clips on locked tracks. A kill feed copy
+    // (Reframe::keepCopy) is linked to its clip but is no partner here: selecting one does not select the other.
     QVector<int> withLinked(const QVector<int>& ids) const;
+    // The kill feed copies (Reframe::keepCopy, linked to their clip) that follow a clip among `ids` that is no copy
+    // itself, also those among `ids`; never on locked tracks. They move, trim, split, retime and go with their clip.
+    QVector<int> followingCopies(const QVector<int>& ids) const;
+    // `ids` and their following copies (the edits that change a clip's time: moving, deleting, trimming, splitting,
+    // retiming - whatever the "Linked Selection" setting)
+    QVector<int> withCopies(const QVector<int>& ids) const;
+    // withLinked plus the following copies of all of them
+    QVector<int> withFollowers(const QVector<int>& ids) const { return withCopies(withLinked(ids)); }
+    // Track delta for moving `ids` (TimelineOps::clampTrackDelta), where following copies above their clip may go
+    // onto new tracks (moveClips adds them) instead of holding their clip back
+    int clampTrackDelta(const QVector<int>& ids, TrackKind kind, int trackDelta) const;
     // Only clips that can be edited (not on locked tracks)
     QVector<int> editable(const QVector<int>& ids) const;
     bool isTrackLocked(TrackRef ref) const;
@@ -477,9 +489,12 @@ public:
     int reframeClips(const QVector<int>& ids, Reframe::Mode mode, const QHash<int, QVector<Reframe::Key>>& paths = {},
                      const QHash<QString, QRectF>& contents = {},
                      const QHash<int, QVector<Reframe::Keep>>* keeps = nullptr);
-    // The video clips reframeClips would change
-    QVector<int> reframeTargets(const QVector<int>& ids) const;
-    // `ids` and the kept-region copies (kill feed above a reframed clip, Reframe::isKeepAlong) of the clips among
+    // The video clips reframeClips would change. With `overlays` given and ids empty (reframing the whole
+    // timeline), overlays (Reframe::isOverlay, e.g. a small webcam picture in a corner on V2) are left out and listed
+    // there: they keep their place and size in the frame (as the timeline's new size converted them, scaleTimeline);
+    // an explicit id of one still reframes it. reframeClips with empty ids leaves them out too.
+    QVector<int> reframeTargets(const QVector<int>& ids, QVector<int>* overlays = nullptr) const;
+    // `ids` and the kept-region copies (kill feed above a reframed clip, followingCopies or Reframe::isKeepAlong) of the clips among
     // them: they show the same picture, so hiding names on a clip has to reach them too
     QVector<int> withKeptCopies(const QVector<int>& ids) const;
     // The regions to keep per clip (ids as reframeClips' targets) for `choice` in the open timeline's shape;

@@ -790,12 +790,12 @@ QVector<OpDef> makeOps()
          {}, opFade, kClipKeys},
         {"enable", "{op:'enable'|'disable', clips}", {}, {},
          [](Session& s, const QJsonObject& op) {
-             s.editor.modifyClips(clipIds(s, op), "Enable", [](Clip& c) { c.enabled = true; });
+             s.editor.modifyClips(s.editor.withCopies(clipIds(s, op)), "Enable", [](Clip& c) { c.enabled = true; });
          },
          kClipKeys},
         {"disable", {}, {}, {},
          [](Session& s, const QJsonObject& op) {
-             s.editor.modifyClips(clipIds(s, op), "Disable", [](Clip& c) { c.enabled = false; });
+             s.editor.modifyClips(s.editor.withCopies(clipIds(s, op)), "Disable", [](Clip& c) { c.enabled = false; });
          },
          kClipKeys},
         {"clear", "{op:'clear'}", "empty the timeline", {},

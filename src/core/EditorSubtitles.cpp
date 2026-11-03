@@ -208,7 +208,7 @@ void Editor::moveSubtitles(const QVector<int>& ids, int delta, int trackDelta)
     }
     if (cues.isEmpty()) return;
     // Clips of a mixed selection move along in time, on their own tracks
-    QVector<int> clips = editable(clipIdsOf(QSet<int>(ids.begin(), ids.end())));
+    QVector<int> clips = withCopies(editable(clipIdsOf(QSet<int>(ids.begin(), ids.end()))));
     for (int id : clips) minStart = std::min(minStart, TimelineOps::findClip(cur, id)->start);
     delta = std::max(delta, -minStart);
     if (delta == 0 && trackDelta == 0) return;

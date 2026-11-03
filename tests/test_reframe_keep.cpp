@@ -24,6 +24,7 @@
 
 #include <QAction>
 #include <QApplication>
+#include <QStatusBar>
 #include <QSettings>
 #include <QDir>
 #include <QJsonArray>
@@ -194,7 +195,7 @@ void testEditor(const QString& dir)
         CHECK_EQ(track, 2); // V2 holds the title over the clip's range: the next free track
         CHECK_EQ(k->start, 0);
         CHECK_EQ(k->out, 49);
-        CHECK_EQ(k->linkId, 0);
+        CHECK_EQ(k->linkId, 1); // linked to its clip (and its sound): it follows the clip
         CHECK(k->id != game);
     }
     CHECK_EQ(p.timeline().audio[0].clips.size(), 1); // no sound added
@@ -353,6 +354,261 @@ void testPictureAspect()
     MediaAspect::setProbe({});
 }
 
+// The kill feed copies of a timeline (track index, clip), by start
+QVector<QPair<int, Clip>> keptCopies(const Timeline& tl)
+{
+    QVector<QPair<int, Clip>> out;
+    for (int i = 0; i < tl.video.size(); ++i)
+        for (const Clip& c : tl.video[i].clips)
+            if (!c.keepRegion.isEmpty()) out << qMakePair(i, c);
+    std::sort(out.begin(), out.end(), [](const auto& a, const auto& b) { return a.second.start < b.second.start; });
+    return out;
+}
+
+// Does the copy show the same time of the file as its clip?
+bool inSync(const Clip& copy, const Clip& base)
+{
+    return copy.start == base.start && copy.in == base.in && copy.out == base.out && copy.speed == base.speed
+           && copy.reverse == base.reverse && copy.freeze == base.freeze && copy.freezeFrame == base.freezeFrame
+           && copy.ramp == base.ramp && copy.interpolate == base.interpolate && copy.enabled == base.enabled;
+}
+
+// The kill feed copy follows its clip (linked to it): moving (in time, to another track, with ripple), trimming,
+// splitting, deleting, retiming - each one undo step; selecting the clip does not select the copy, moving the copy by
+// hand still moves it alone; the link survives the project file
+void testFollow(const QString& dir)
+{
+    MediaAspect::setProbe([](const QString&) { return 16.0 / 9.0; });
+    Project p;
+    Selection sel;
+    Editor ed(&p, &sel);
+    const int seq = p.addTimeline("Short", 0, QSize(1080, 1920));
+    p.setCurrentSequence(seq);
+    p.addMedia({"/x/cs2/a.mkv", "a.mkv", 400, true, true, false});
+    int lead = 0, game = 0, sound = 0, after = 0;
+    p.edit("setup", [&](Timeline& tl) {
+        Clip l; // a clip before it on V1 (ripple)
+        l.id = lead = p.newClipId();
+        l.mediaPath = "/x/cs2/a.mkv";
+        l.in = 300;
+        l.out = 319;
+        tl.video[0].clips << l;
+        Clip v;
+        v.id = game = p.newClipId();
+        v.mediaPath = "/x/cs2/a.mkv";
+        v.start = 20;
+        v.in = 100;
+        v.out = 159;
+        v.linkId = p.newLinkId();
+        tl.video[0].clips << v;
+        Clip a = v;
+        a.id = sound = p.newClipId();
+        tl.audio[0].clips << a;
+        Clip w = l; // after it on V1
+        w.id = after = p.newClipId();
+        w.start = 80;
+        tl.video[0].clips << w;
+    });
+    const auto keeps = ed.reframeKeeps({game}, Reframe::Mode::Center, {}, {});
+    ed.reframeClips({game}, Reframe::Mode::Center, {}, {}, &keeps);
+    const auto base = [&] { return *TimelineOps::findClip(p.timeline(), game); };
+    const auto copies = [&] { return keptCopies(p.timeline()); };
+    if (!CHECK_EQ(copies().size(), 1)) return;
+    const int copy = copies()[0].second.id;
+    CHECK_EQ(copies()[0].first, 1);
+    CHECK(copies()[0].second.linkId != 0 && copies()[0].second.linkId == base().linkId);
+    CHECK_EQ(TimelineOps::findClip(p.timeline(), sound)->linkId, base().linkId); // the sound stays linked too
+    // Selecting the clip takes its sound, not the copy; the copy alone is just the copy
+    const QVector<int> group = ed.withLinked({game});
+    CHECK(group.contains(sound) && !group.contains(copy));
+    CHECK_EQ(ed.withLinked({copy}), QVector<int>{copy});
+    const auto step = [&](const char* what, const std::function<void()>& change, const std::function<void()>& verify) {
+        const Timeline was = p.timeline();
+        const int index = p.undoStack()->index();
+        change();
+        if (!CHECK_EQ(p.undoStack()->index(), index + 1)) qWarning("  %s: not one undo step", what);
+        verify();
+        p.undoStack()->undo();
+        if (!CHECK(p.timeline() == was)) qWarning("  %s: undo left another timeline", what);
+    };
+    const auto synced = [&](const char* what) {
+        const auto k = copies();
+        if (!CHECK_EQ(k.size(), 1) || !CHECK(inSync(k[0].second, base())))
+            qWarning("  %s: the copy did not follow", what);
+    };
+    // Move in time: the copy stays on its own track
+    step("move", [&] { ed.moveClips(group, 30, TrackKind::Video, 0); }, [&] {
+        synced("move");
+        CHECK_EQ(base().start, 50);
+        CHECK_EQ(copies().value(0).first, 1);
+    });
+    // To another track: it stays above (V3, a new track)
+    step("move up", [&] { ed.moveClips(group, 0, TrackKind::Video, 1); }, [&] {
+        synced("move up");
+        TrackRef ref;
+        TimelineOps::findClip(p.timeline(), game, &ref);
+        CHECK_EQ(ref.index, 1);
+        CHECK_EQ(copies().value(0).first, 2);
+    });
+    // Ripple delete of the clip before: everything moves up
+    step("ripple before", [&] { sel.set({lead}); ed.rippleDeleteSelection(); }, [&] {
+        synced("ripple before");
+        CHECK_EQ(base().start, 0);
+    });
+    // Trim both ends
+    step("trim end", [&] { ed.trimClip(game, TimelineOps::Edge::End, -15); }, [&] { synced("trim end"); });
+    step("trim start", [&] { ed.trimClip(game, TimelineOps::Edge::Start, 10); }, [&] {
+        synced("trim start");
+        CHECK_EQ(base().start, 30);
+    });
+    // Ripple trim (trim mode)
+    step("ripple trim", [&] {
+        ed.applyTrimEdit(ed.trimEdit(TimelineOps::TrimKind::Ripple, game, TimelineOps::Edge::End), -20);
+    }, [&] {
+        synced("ripple trim");
+        CHECK_EQ(TimelineOps::findClip(p.timeline(), after)->start, 60);
+    });
+    // Split: each part keeps its own copy, linked to that part
+    step("split", [&] { ed.bladeAt(game, 45); }, [&] {
+        const auto k = copies();
+        if (CHECK_EQ(k.size(), 2)) {
+            CHECK(inSync(k[0].second, base()));
+            const Clip* right = nullptr;
+            for (const Clip& c : p.timeline().video[0].clips)
+                if (c.start == 45) right = &c;
+            if (CHECK(right)) {
+                CHECK(inSync(k[1].second, *right));
+                CHECK(k[1].second.linkId != 0 && k[1].second.linkId == right->linkId && right->linkId != base().linkId);
+            }
+        }
+    });
+    step("split at playhead", [&] {
+        sel.set({game, sound});
+        ed.splitAtPlayhead(45);
+    }, [&] { CHECK_EQ(copies().size(), 2); });
+    // Delete, with and without ripple; also with linked selection off (the copy is no sound partner)
+    step("delete", [&] { sel.set({game, sound}); ed.deleteSelection(); }, [&] { CHECK(copies().isEmpty()); });
+    step("ripple delete", [&] { sel.set({game, sound}); ed.rippleDeleteSelection(); }, [&] {
+        CHECK(copies().isEmpty());
+        CHECK_EQ(TimelineOps::findClip(p.timeline(), after)->start, 20);
+    });
+    ed.setLinkedSelection(false);
+    step("delete alone", [&] { sel.set({game}); ed.deleteSelection(); }, [&] {
+        CHECK(copies().isEmpty());
+        CHECK(TimelineOps::findClip(p.timeline(), sound)); // the sound stays (linked selection off)
+    });
+    ed.setLinkedSelection(true);
+    // Speed, reverse, freeze, ramp, in-between pictures
+    step("speed", [&] { ed.setClipSpeed({game}, {0.5}, true); }, [&] {
+        synced("speed");
+        CHECK_EQ(base().speed, 0.5);
+    });
+    step("reverse", [&] { ed.setClipSpeed({game}, {1.0, true}, true); }, [&] { synced("reverse"); });
+    step("freeze", [&] { ed.setClipSpeed({game}, {1.0, false, true}, true); }, [&] {
+        synced("freeze");
+        CHECK(base().freeze);
+    });
+    step("ramp", [&] { ed.addSpeedPoint(game, 40); }, [&] {
+        synced("ramp");
+        CHECK_EQ(base().ramp.size(), 1);
+    });
+    step("interpolate", [&] { ed.setFrameInterpolation({game}, FrameInterp::Blend); }, [&] {
+        synced("interpolate");
+        CHECK(base().interpolate == FrameInterp::Blend);
+    });
+    step("disable", [&] { sel.set({game, sound}); ed.toggleSelectionEnabled(); }, [&] { synced("disable"); });
+    // The copy by hand: moved alone in time, placed and zoomed alone
+    step("copy alone", [&] { ed.moveClips(ed.withLinked({copy}), 5, TrackKind::Video, 0); }, [&] {
+        CHECK_EQ(base().start, 20);
+        CHECK_EQ(copies().value(0).second.start, 25);
+    });
+    step("copy placed", [&] { ed.modifyClips({copy}, "place", [](Clip& c) { c.transform.posY -= 50; }); }, [&] {
+        CHECK_EQ(base().transform.posY, 0.0);
+    });
+    // The clip's own transform (Inspector on the clip's selection) leaves the copy's place alone
+    const ClipTransform placed = copies()[0].second.transform;
+    step("clip placed", [&] {
+        sel.set(QSet<int>(group.begin(), group.end()));
+        ed.modifyClips(ed.editable(sel.ids().values().toVector()), "zoom", [](Clip& c) { c.transform.zoomX = 3; });
+    }, [&] { CHECK(copies().value(0).second.transform == placed); });
+    // Project round trip: still linked, still following
+    const QString path = dir + "/follow.schneidi";
+    QString error;
+    CHECK(ProjectFile::save(p.data(), path, &error));
+    ProjectData d;
+    CHECK(ProjectFile::load(path, &d, &error));
+    Project q;
+    q.load(d);
+    q.setCurrentSequence(seq);
+    Selection qs;
+    Editor qe(&q, &qs);
+    const QVector<int> loaded = qe.withLinked({game});
+    CHECK(!loaded.contains(copy));
+    qe.moveClips(loaded, 7, TrackKind::Video, 0);
+    const auto k = keptCopies(q.timeline());
+    CHECK(k.size() == 1 && inSync(k[0].second, *TimelineOps::findClip(q.timeline(), game)));
+    q.undoStack()->undo();
+    CHECK_EQ(TimelineOps::findClip(q.timeline(), game)->start, 20);
+    MediaAspect::setProbe({});
+}
+
+// Reframing a whole timeline leaves its overlays (a small webcam picture on V2) where they are; asked for by id, one
+// is reframed
+void testOverlays()
+{
+    MediaAspect::setProbe([](const QString&) { return 16.0 / 9.0; });
+    Project p;
+    Selection sel;
+    Editor ed(&p, &sel);
+    const QSizeF frame(1080, 1920);
+    p.setCurrentSequence(p.addTimeline("Short", 0, frame.toSize()));
+    p.addMedia({"/x/cs2/a.mkv", "a.mkv", 100, true, false, false});
+    p.addMedia({"/x/cam.mkv", "cam.mkv", 100, true, false, false});
+    int game = 0, cam = 0, cropped = 0, full = 0;
+    p.edit("setup", [&](Timeline& tl) {
+        Clip v;
+        v.id = game = p.newClipId();
+        v.mediaPath = "/x/cs2/a.mkv";
+        v.out = 49;
+        tl.video[0].clips << v;
+        TimelineOps::ensureTracks(tl, TrackKind::Video, 3);
+        Clip c; // webcam in a corner
+        c.id = cam = p.newClipId();
+        c.mediaPath = "/x/cam.mkv";
+        c.out = 49;
+        c.transform.zoomX = c.transform.zoomY = 0.3;
+        c.transform.posX = -350;
+        c.transform.posY = -700;
+        tl.video[1].clips << c;
+        Clip r = c; // the webcam cut out of a full picture by its crop
+        r.id = cropped = p.newClipId();
+        r.start = 50;
+        r.transform = {};
+        r.transform.cropLeft = 700;
+        r.transform.cropTop = 300;
+        tl.video[1].clips << r;
+        Clip f = c; // a picture of its own on V3 (B-roll at full size): reframed
+        f.id = full = p.newClipId();
+        f.transform = {};
+        tl.video[2].clips << f;
+    });
+    CHECK(Reframe::isOverlay(*TimelineOps::findClip(p.timeline(), cam), 1, 16.0 / 9, frame));
+    CHECK(Reframe::isOverlay(*TimelineOps::findClip(p.timeline(), cropped), 1, 16.0 / 9, frame));
+    CHECK(!Reframe::isOverlay(*TimelineOps::findClip(p.timeline(), cam), 0, 16.0 / 9, frame)); // V1 is the picture
+    CHECK(!Reframe::isOverlay(*TimelineOps::findClip(p.timeline(), full), 2, 16.0 / 9, frame));
+    const ClipTransform camWas = TimelineOps::findClip(p.timeline(), cam)->transform;
+    const ClipTransform croppedWas = TimelineOps::findClip(p.timeline(), cropped)->transform;
+    CHECK_EQ(ed.reframeClips({}, Reframe::Mode::Center), 2);
+    CHECK(TimelineOps::findClip(p.timeline(), cam)->transform == camWas);
+    CHECK(TimelineOps::findClip(p.timeline(), cropped)->transform == croppedWas);
+    CHECK(TimelineOps::findClip(p.timeline(), game)->transform.zoomX > 1.5);
+    CHECK(TimelineOps::findClip(p.timeline(), full)->transform.zoomX > 1.5);
+    // Asked for by id: reframed
+    CHECK_EQ(ed.reframeClips({cam}, Reframe::Mode::Center), 1);
+    CHECK(TimelineOps::findClip(p.timeline(), cam)->transform.zoomX > 1.5);
+    MediaAspect::setProbe({});
+}
+
 // Red pixels (the kill feed line) in a part of a picture
 int redIn(const QImage& img, const QRect& r)
 {
@@ -505,6 +761,96 @@ void testCli(const QString& dir, const QString& game, const QString& plain)
     CHECK(helped);
 }
 
+// CLI: a 9:16 copy of an edit with a webcam overlay leaves the webcam in its corner (noted), clips:[…] reframes it;
+// the kill feed copy follows its clip through move, speed and delete ops
+void testCliFollow(const QString& dir, const QString& game, const QString& plain)
+{
+    auto run = [&](const QString& name, const QJsonObject& args) -> const QJsonObject {
+        const Cli::Command* cmd = Cli::find(name);
+        Cli::Context ctx;
+        return cmd->run(Cli::normalize(*cmd, args), ctx);
+    };
+    const QString path = dir + "/overlay-cli.schneidi";
+    int source = 0;
+    {
+        Project p;
+        p.addMedia({game, "clip.mkv", 150, true, true, false});
+        p.addMedia({plain, "plain.mkv", 150, true, true, false});
+        p.edit("setup", [&](Timeline& tl) {
+            Clip v;
+            v.id = p.newClipId();
+            v.mediaPath = game;
+            v.out = 99;
+            tl.video[0].clips << v;
+            TimelineOps::ensureTracks(tl, TrackKind::Video, 2);
+            Clip w;
+            w.id = p.newClipId();
+            w.mediaPath = plain;
+            w.out = 99;
+            w.transform.zoomX = w.transform.zoomY = 0.3;
+            w.transform.posX = 600;
+            w.transform.posY = -300;
+            tl.video[1].clips << w;
+        });
+        source = p.currentSequence();
+        QString error;
+        CHECK(ProjectFile::save(p.data(), path, &error));
+    }
+    const QJsonObject made = run("edit", {{"project", path}, {"ops", QString(R"([{"op":"new_timeline","from":%1,
+        "name":"Short","aspect":"9:16","reframe":"center"}])").arg(source)}});
+    bool noted = false;
+    for (const QJsonValue& n : made["notes"].toArray()) noted |= n.toString().startsWith("overlays not reframed");
+    CHECK(noted);
+    const auto clips = [&] {
+        QVector<QJsonObject> out;
+        for (const QJsonValue& t : run("info", {{"project", path}, {"timeline", "Short"}})["timeline"]["tracks"].toArray())
+            for (const QJsonValue& c : t["clips"].toArray()) out << c.toObject();
+        return out;
+    };
+    const auto find = [&](const std::function<bool(const QJsonObject&)>& f) {
+        for (const QJsonObject& c : clips())
+            if (f(c)) return c;
+        return QJsonObject{};
+    };
+    const auto camOf = [&] { return find([&](const QJsonObject& c) { return c["media"].toString() == plain; }); };
+    const auto gameOf = [&] {
+        return find([&](const QJsonObject& c) { return c["media"].toString() == game && c["track"] == "V1"; });
+    };
+    const auto copyOf = [&] { return find([&](const QJsonObject& c) { return c["keep_region"].toString() == "killfeed"; }); };
+    QJsonObject cam = camOf();
+    CHECK(near(cam["transform"].toObject()["zoom_x"].toDouble(), 0.3, 1e-9));
+    CHECK(near(cam["transform"].toObject()["x"].toDouble(), 600.0 * 1080 / 1920, 1e-6)); // same place in the frame
+    CHECK(near(cam["transform"].toObject()["y"].toDouble(), -300.0 * 1920 / 1080, 1e-6));
+    CHECK(gameOf()["transform"].toObject()["zoom_x"].toDouble() > 1.5);
+    if (!CHECK(!copyOf().isEmpty())) return;
+    CHECK_EQ(copyOf()["link"].toInt(), gameOf()["link"].toInt());
+    // Named: reframed
+    run("edit", {{"project", path}, {"ops", QString(R"([{"op":"timeline","timeline":"Short"},
+        {"op":"reframe","mode":"center","clips":[%1]}])").arg(cam["id"].toInt())}});
+    CHECK(camOf()["transform"].toObject()["zoom_x"].toDouble() > 1.5);
+    // The copy follows
+    const int id = gameOf()["id"].toInt();
+    const auto edit = [&](const QString& op) {
+        run("edit", {{"project", path}, {"ops", QString(R"([{"op":"timeline","timeline":"Short"},%1])").arg(op)}});
+    };
+    edit(QString(R"({"op":"move","clips":[%1],"by":10})").arg(id));
+    CHECK_EQ(gameOf()["start"].toInt(), 10);
+    CHECK_EQ(copyOf()["start"].toInt(), 10);
+    edit(QString(R"({"op":"speed","clips":[%1],"speed":0.5})").arg(id));
+    CHECK_EQ(copyOf()["speed"].toDouble(), 0.5);
+    CHECK_EQ(copyOf()["end"].toInt(), gameOf()["end"].toInt());
+    edit(QString(R"({"op":"trim","clip":%1,"edge":"end","by":-20})").arg(id));
+    CHECK_EQ(copyOf()["end"].toInt(), gameOf()["end"].toInt());
+    edit(QString(R"({"op":"split","clip":%1,"at":40})").arg(id));
+    int feeds = 0;
+    for (const QJsonObject& c : clips()) feeds += c["keep_region"].toString() == "killfeed";
+    CHECK_EQ(feeds, 2);
+    edit(QString(R"({"op":"delete","clips":[%1]})").arg(id));
+    feeds = 0;
+    for (const QJsonObject& c : clips()) feeds += c["keep_region"].toString() == "killfeed";
+    CHECK_EQ(feeds, 1); // the right part's copy stays with the right part
+}
+
 // The app: the clip menu's Auto-Reframe and the Media Pool's 9:16 copy keep the kill feed of game footage (one undo
 // step); the menu switch turns it off
 void testApp(const QString& game)
@@ -522,11 +868,32 @@ void testApp(const QString& game)
     auto* p = w.findChild<Project*>();
     auto* pool = w.findChild<MediaPool*>();
     if (!CHECK(p && pool) || !CHECK(p->timeline().video.size() > 0 && p->timeline().video[0].clips.size() == 1)) return;
+    // A webcam-like overlay of the same recording in a corner on V2: not reframed by the 9:16 copy
+    p->edit("overlay", [&](Timeline& tl) {
+        TimelineOps::ensureTracks(tl, TrackKind::Video, 2);
+        Clip c = tl.video[0].clips[0];
+        c.id = p->newClipId();
+        c.linkId = 0;
+        c.transform.zoomX = c.transform.zoomY = 0.25;
+        c.transform.posX = -600;
+        c.transform.posY = -350;
+        tl.video[1].clips << c;
+    });
+    const int overlay = p->timeline().video[1].clips[0].id;
+    const double fromWidth = p->timelineFormat().width;
     const int steps = p->undoStack()->index();
     emit pool->reframedCopyRequested(p->currentSequence());
     CHECK_EQ(p->undoStack()->index(), steps + 1); // copy, reframe and kill feed: one step
     CHECK_EQ(p->timelineFormat().size(), QSize(1080, 1920));
     CHECK(keptCopy(p->timeline()));
+    if (CHECK_EQ(p->timeline().video.value(1).clips.size(), 1)) { // the copy's clip ids are new: the one on V2
+        const Clip& o = p->timeline().video[1].clips[0];
+        CHECK(o.id != overlay && o.keepRegion.isEmpty());
+        CHECK(near(o.transform.zoomX, 0.25, 1e-9));
+        CHECK(near(o.transform.posX, -600.0 * 1080 / fromWidth, 1e-6)); // same place in the frame
+        CHECK(!o.keys.contains(AnimParam::PosX));
+    }
+    CHECK(w.statusBar()->currentMessage().contains("Overlay"));
     QAction* keep = InputBindings::instance().action("reframe_keep_killfeed");
     QAction* reframe = InputBindings::instance().action("auto_reframe");
     if (CHECK(keep && reframe)) {
@@ -539,7 +906,9 @@ void testApp(const QString& game)
         keep->setChecked(true);
         reframe->trigger();
         CHECK(keptCopy(p->timeline()));
-        CHECK_EQ(videoClips(p->timeline()), 2);
+        CHECK_EQ(videoClips(p->timeline()), 3);
+        CHECK(near(p->timeline().video[1].clips.value(0).transform.zoomX, 0.25, 1e-9)); // the overlay again
+        CHECK(w.statusBar()->currentMessage().contains("Overlay"));
     }
     QSettings().remove("reframe/keepKillFeed");
 }
@@ -557,6 +926,8 @@ int main(int argc, char** argv)
     testGeometry();
     testEditor(tmp.path());
     testPictureAspect();
+    testFollow(tmp.path());
+    testOverlays();
     if (!Check::haveFfmpeg()) return Check::skip("ffmpeg nicht gefunden");
     // A CS2-like recording (640x360): a kill feed line of the player (a thin red frame, top right, inside the CS2 mark region) at
     // 2 s, and at 3.5 s a red patch of game picture left of the lines (inside the old wide region only); shots in
@@ -576,6 +947,7 @@ int main(int argc, char** argv)
     Check::initEngine();
     std::setlocale(LC_NUMERIC, "C");
     testCli(tmp.path(), game, plain);
+    testCliFollow(tmp.path(), game, plain);
     testApp(game);
     return Check::result();
 }

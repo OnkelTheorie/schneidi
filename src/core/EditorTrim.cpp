@@ -32,12 +32,12 @@ TimelineOps::SourceLength Editor::sourceLength() const
 
 int Editor::clampTrim(int clipId, TimelineOps::Edge edge, int delta) const
 {
-    return TimelineOps::clampTrim(m_project->timeline(), withLinked({clipId}), edge, delta, sourceLength());
+    return TimelineOps::clampTrim(m_project->timeline(), withFollowers({clipId}), edge, delta, sourceLength());
 }
 
 void Editor::trimClip(int clipId, TimelineOps::Edge edge, int delta)
 {
-    const QVector<int> ids = withLinked({clipId});
+    const QVector<int> ids = withFollowers({clipId});
     if (TimelineOps::clampTrim(m_project->timeline(), ids, edge, delta, sourceLength()) == 0) return;
     m_project->edit(T("Trimmen"), [&](Timeline& tl) { TimelineOps::trimClips(tl, ids, edge, delta, sourceLength()); });
 }
@@ -52,16 +52,16 @@ TimelineOps::TrimEdit Editor::trimEdit(TimelineOps::TrimKind kind, int clipId, T
     const Clip* c = findClip(tl, clipId);
     if (!c) return e;
     if (kind != TrimKind::Roll) {
-        e.ids = withLinked({clipId});
+        e.ids = withFollowers({clipId});
         return e;
     }
     // Roll: on each partner track the clip that ends at the cut and the one that starts there
     const int cut = edge == Edge::Start ? c->start : c->end();
     TrackRef ref;
     findClip(tl, clipId, &ref);
-    QVector<int> seeds = withLinked({clipId});
+    QVector<int> seeds = withFollowers({clipId});
     for (const Clip& o : tl.track(ref).clips) // neighbor on the other side of the cut
-        if (o.id != clipId && (edge == Edge::Start ? o.end() == cut : o.start == cut)) seeds += withLinked({o.id});
+        if (o.id != clipId && (edge == Edge::Start ? o.end() == cut : o.start == cut)) seeds += withFollowers({o.id});
     QVector<TrackRef> done;
     for (int id : seeds) {
         if (!findClip(tl, id, &ref) || done.contains(ref)) continue;
@@ -102,7 +102,7 @@ void Editor::slipSelection(int frames)
     if (m_selection->isEmpty()) return;
     TimelineOps::TrimEdit e;
     e.kind = TimelineOps::TrimKind::Slip;
-    e.ids = withLinked(m_selection->ids().values().toVector());
+    e.ids = withFollowers(m_selection->ids().values().toVector());
     applyTrimEdit(e, frames);
 }
 
@@ -110,7 +110,7 @@ void Editor::slideSelection(int frames)
 {
     TimelineOps::TrimEdit e;
     e.kind = TimelineOps::TrimKind::Slide;
-    e.ids = withLinked(clipIdsOf(m_selection->ids()));
+    e.ids = withFollowers(clipIdsOf(m_selection->ids()));
     applyTrimEdit(e, frames);
 }
 
