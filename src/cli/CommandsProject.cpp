@@ -346,7 +346,8 @@ QString planDir(const QString& projectPath)
 }
 
 // The project a plan is made on, as a fingerprint: a plan runs only on exactly that state. Not part of it: what does
-// not change what the ops do (playhead, render queue, which timeline is open - the plan names its timeline).
+// not change what the ops do (playhead, render queue, which timeline is open - the plan names its timeline, where
+// the project file is).
 // Inside the app the app's own project (a planning session there edits a copy of it).
 QByteArray planBase(const Session& s, const QString& path)
 {
@@ -355,7 +356,10 @@ QByteArray planBase(const Session& s, const QString& path)
     d.renderQueue.clear();
     d.currentSequence = -1; // every timeline in "sequences"
     d.timeline = emptyTimeline();
-    return QCryptographicHash::hash(ProjectFile::toJson(d, path), QCryptographicHash::Sha256).toHex();
+    // Not the path either: a plan made while the project was never saved runs once it is saved under a name
+    // (media paths are absolute in the file; relative ones against a fixed folder)
+    Q_UNUSED(path);
+    return QCryptographicHash::hash(ProjectFile::toJson(d, QDir::rootPath() + "plan.schneidi"), QCryptographicHash::Sha256).toHex();
 }
 
 // Removes plans older than kPlanHours; returns the ids of those left
@@ -468,9 +472,15 @@ QJsonObject runPlan(const QJsonObject& a)
     // dry_run: what running the steps would change, nothing saved, the plan stays (a test run changed the project)
     const bool dry = a["dry_run"].toBool();
     Session s(a["project"].toString(), discard || dry ? Session::Access::Read : Session::Access::Write);
-    const QString dir = planDir(s.path);
-    const QStringList ids = prunePlans(dir);
+    QString dir = planDir(s.path);
+    QStringList ids = prunePlans(dir);
     static const QRegularExpression valid("^p[1-9][0-9]{0,8}$");
+    // Made before the project was first saved: in the folder of unsaved projects (its base tells whether it fits)
+    if (!s.path.isEmpty() && valid.match(id).hasMatch() && !QFileInfo::exists(QDir(dir).filePath(id + ".json"))
+        && QFileInfo::exists(QDir(planDir({})).filePath(id + ".json"))) {
+        dir = planDir({});
+        ids = prunePlans(dir);
+    }
     const QString file = QDir(dir).filePath(id + ".json");
     QFile f(file);
     if (!valid.match(id).hasMatch() || !f.open(QIODevice::ReadOnly))
