@@ -57,8 +57,11 @@ QString counterText(const TitleStyle& s, int t, int length)
 
 NumberStyle numberStyleOfLanguage()
 {
-    if (I18n::decimalPoint() == '.') return NumberStyle::CommaPoint;
-    return I18n::groupSeparator() == '.' ? NumberStyle::PointComma : NumberStyle::SpaceComma;
+    // The user's UI language, not the translation installed here: schneidi-cli answers in English but must store
+    // the same default as the app (a counter made on a file and live in the app looked different)
+    const QString lang = I18n::language();
+    if (I18n::decimalPointOf(lang) == '.') return NumberStyle::CommaPoint;
+    return I18n::groupSeparatorOf(lang) == '.' ? NumberStyle::PointComma : NumberStyle::SpaceComma;
 }
 
 QString counterWidest(const TitleStyle& s, const std::function<double(const QString&)>& width)
