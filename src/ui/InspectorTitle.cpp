@@ -289,7 +289,7 @@ void Inspector::buildGeneratorSections(QVBoxLayout* page, const Section& outline
         p->slider->hide();
     }
     auto* places = combo();
-    for (int i = 0; i <= 3; ++i) places->addItem(QString::number(i), i);
+    for (int i = 0; i <= 6; ++i) places->addItem(QString::number(i), i); // like the file and the CLI (0..6)
     connect(places, &QComboBox::activated, this, [this, V, places] {
         const int n = places->currentData().toInt();
         apply(V, {}, T("Nachkommastellen"), [n](Clip& c) { c.title.decimals = n; }, true);
@@ -326,7 +326,7 @@ void Inspector::buildGeneratorSections(QVBoxLayout* page, const Section& outline
     m_refreshers << [current, places, ease, grouping, numbers] {
         if (const Clip* c = current()) {
             const QSignalBlocker b1(places), b2(ease), b3(grouping), b4(numbers);
-            places->setCurrentIndex(places->findData(std::clamp(c->title.decimals, 0, 3)));
+            places->setCurrentIndex(places->findData(std::clamp(c->title.decimals, 0, 6)));
             ease->setCurrentIndex(ease->findData(int(c->title.countEase)));
             grouping->setChecked(c->title.grouping);
             numbers->setCurrentIndex(numbers->findData(int(c->title.numbers)));

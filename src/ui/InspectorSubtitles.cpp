@@ -239,7 +239,13 @@ void Inspector::buildSubtitlePage(QVBoxLayout* page)
     // ---- Track style (applies to all subtitles of the track) ----
     Section st = addSection(page, V, T("Spurstil"), {});
     st.headerLayout->addWidget(resetButton([this] {
-        const TitleStyle def = Subtitles::defaultStyle(m_editor->project()->timelineFormat().size());
+        // a word caption track (karaoke/word) goes back to the caption style it was made with, not to plain lines
+        int track = -1;
+        if (!selectedCue(&track)) return;
+        const QSize format = m_editor->project()->timelineFormat().size();
+        const CaptionMode mode = m_editor->project()->timeline().subtitles[track].captions.mode;
+        const TitleStyle def = mode == CaptionMode::Lines ? Subtitles::defaultStyle(format)
+                                                           : Captions::defaultStyle(format, mode);
         changeSubtitleStyle(T("Spurstil zurücksetzen"), [def](TitleStyle& t) { t = def; });
     }));
     auto current = [this]() -> std::optional<TitleStyle> {
