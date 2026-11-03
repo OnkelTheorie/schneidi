@@ -23,6 +23,9 @@ QStringList words(const QString& text);
 // they fit the text, otherwise the cue's length shared by the words' lengths (an SRT import, an edited text)
 QVector<CueWord> timing(const SubtitleCue& cue);
 
+// true when the cue has its own word times for every word of its text (a word caption from a transcript)
+bool timed(const SubtitleCue& cue);
+
 // Index of the word spoken at timeline frame `frame` (the last one that started; it stays until the next one starts),
 // -1 = none yet or outside the cue
 int activeWord(const SubtitleCue& cue, int frame);
