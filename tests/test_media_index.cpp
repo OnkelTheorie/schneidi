@@ -262,6 +262,19 @@ int main(int argc, char** argv)
     hits = run("index", {{"project", project}, {"query", "unscharf"}})["hits"].toArray();
     CHECK(!hits.isEmpty() && !hits[0].toObject().contains("timeline")); // not on the timeline
 
+    // Thumbnails of two files with the same name in different folders: each has its own (they overwrote each other)
+    {
+        QDir().mkpath(dir.filePath("b"));
+        const QString twin = dir.filePath("b/Läden ü.mp4");
+        CHECK(QFile::copy(media, twin));
+        const QJsonArray both = run("index", {{"files", QJsonArray{media, twin}}, {"thumbs", dir.filePath("thumbs")}})["media"].toArray();
+        if (CHECK_EQ(both.size(), 2)) {
+            const QString a = both[0]["shots"][0]["thumb"].toString(), b = both[1]["shots"][0]["thumb"].toString();
+            CHECK(!a.isEmpty() && !b.isEmpty() && a != b);
+            CHECK(QFileInfo::exists(a) && QFileInfo::exists(b));
+        }
+    }
+
     // Errors: an unknown shot, a missing file
     CHECK_EQ(run("index", {{"annotate", QJsonArray{QJsonObject{{"file", media}, {"shot", 40}, {"desc", "x"}}}}})["failed"].toString(),
              QString("BAD_ARGUMENT"));
