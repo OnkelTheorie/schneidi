@@ -148,6 +148,7 @@ add_library(schneidi_lib STATIC
     src/core/Speech.h             src/core/Speech.cpp
     src/core/ContactSheet.h       src/core/ContactSheet.cpp
     src/core/PoolFilter.h         src/core/PoolFilter.cpp
+    src/core/IndexSearch.h        src/core/IndexSearch.cpp
     src/core/WatchFolders.h       src/core/WatchFolders.cpp
 
     src/engine/Engine.h           src/engine/Engine.cpp
@@ -179,6 +180,8 @@ add_library(schneidi_lib STATIC
     src/engine/AudioAnalysis.h    src/engine/AudioAnalysis.cpp
     src/engine/CheckMeasure.h     src/engine/CheckMeasure.cpp
     src/engine/FrameGaps.h        src/engine/FrameGaps.cpp
+    src/engine/MediaIndex.h       src/engine/MediaIndex.cpp
+    src/engine/AudioEvents.h      src/engine/AudioEvents.cpp
     src/engine/MediaProbe.h       src/engine/MediaProbe.cpp
     src/engine/SoundSync.h        src/engine/SoundSync.cpp
     src/engine/ColorGrade.h       src/engine/ColorGrade.cpp
@@ -405,6 +408,7 @@ add_library(schneidi_cli_lib STATIC
     src/cli/EditOpsStory.cpp src/cli/EditOpsMusic.cpp src/cli/EditOpsSfx.cpp src/cli/EditOpsTalk.cpp
     src/cli/AnalysisDetail.h src/cli/Analysis.cpp src/cli/AnalysisAudio.cpp src/cli/AnalysisVideo.cpp src/cli/AnalysisPicture.cpp
     src/cli/AnalysisHighlights.cpp src/cli/AnalysisCheck.cpp src/cli/AnalysisOverview.cpp src/cli/AnalysisBeats.cpp
+    src/cli/CommandsIndex.cpp
     src/cli/Exchange.cpp
     src/cli/Mcp.h      src/cli/Mcp.cpp
     src/cli/Sandbox.h  src/cli/Sandbox.cpp

@@ -29,7 +29,11 @@ names cost a failed call.
    lines per stretch of time: loudness, silence, motion, cuts, brightness), then what fits the task: `frames` (a
    contact sheet to *see* it), `transcribe` (what is said), `silence` (pauses), `scenes` (shot changes), `peaks` /
    `highlights` (loud or exciting moments), `beats` for a song (tempo, bars, phrases, breaks, drops). You cannot
-   edit well what you have not looked at.
+   edit well what you have not looked at. With a lot of material (vlog, interview, B-roll) build the material
+   index once: `index` with the files or the project lists every shot with its quality (sharp/blurry,
+   dark/overexposed, motion, pan, face likely), speech and sounds, and shows the undescribed shots as a sheet -
+   describe them with `annotate` ([{file, shot, desc, tags}], kept for good), then `index` `query` ("ruhige
+   Totale vom Laden", "wo lacht er") finds them, with a project also in timeline time.
 2. **Say the plan in 2-3 sentences** (length, structure, format), then go ahead. Don't wait for approval unless the
    plan rests on a guess about something important that the user can easily answer.
 3. **Build it in small steps.** Create the project with `new` (match the frame rate of the main material; vertical

@@ -54,7 +54,8 @@ QString instructions(const Options& opt)
                 "`probe`/`silence`/`scenes`/`peaks`/`frames`/`transcribe`/`loudness`/`scopes` look at (and listen to) "
                 "the material (`sync` lines up recordings of the same event by their sound, `highlights` finds kills "
                 "and loud moments for a highlight video, `beats` gives a song's tempo, bars, phrases, breaks and "
-                "drops), `edit` changes a "
+                "drops, `index` knows every shot - quality, speech, sounds, descriptions you write - and finds "
+                "\"the calm wide shot of the shop\"), `edit` changes a "
                 "timeline (see its 'ops' description, `help` with command 'edit' and op '<name>' has details "
                 "per op; op 'speak' turns text into a spoken voice clip; `effects` lists effects, LUTs, transitions and accents), `info` shows the "
                 "result (a project can have several timelines, each may have its own resolution: a 9:16 short "
@@ -99,7 +100,7 @@ QJsonArray toolList(const Options& opt)
                                                      "command 'edit' and op 'name' (or a comma list; "
                                                      "\"all\" = every op; without op: only what each op is for).")
                                            : c.summary;
-        static const QStringList longTools{"render", "transcribe", "sync", "highlights", "scenes"};
+        static const QStringList longTools{"render", "transcribe", "sync", "highlights", "scenes", "index"};
         if (opt.server && longTools.contains(c.name))
             summary += QString(" On this server: if it takes longer than %1 s, the answer is a job (see `jobs`).")
                            .arg(opt.jobWaitS);

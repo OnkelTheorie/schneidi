@@ -9,6 +9,8 @@
 #include <QPixmap>
 #include <QWidget>
 
+#include <atomic>
+
 class Project;
 class ElidedLabel;
 class Engine;
@@ -26,6 +28,7 @@ class QToolButton;
 class QTreeWidget;
 class QTreeWidgetItem;
 class QThreadPool;
+class QTimer;
 class TimelinePosters;
 
 // Media Pool (top left like in DaVinci): on the left the bin list (Master with sub-bins), on the right the clips of the
@@ -62,7 +65,8 @@ public:
     void setCurrentBin(int id);
     void setViewMode(ViewMode mode);
     void setSort(SortKey key, bool ascending);
-    // Search like DaVinci (magnifier on top): shows matching clips (name contains text) in the bin and its sub-bins
+    // Search (magnifier on top): shows matching clips (name contains text) in the bin and its sub-bins, and below them
+    // the shots of the material index that match (engine/MediaIndex, core/IndexSearch), each with picture and time
     void setSearch(const QString& text);
     // Filter (funnel next to the search): by kind, flag and clip color; like the search it shows the matching clips of
     // the bin and its sub-bins, and both combine. For this session only (not in the project).
@@ -105,9 +109,15 @@ public slots:
     // selected timelines are deleted (like their "Delete"), one undo step. Media a timeline uses: a question names how
     // many clips in which timelines, "Remove with Their Clips" takes those clips out too, Cancel keeps everything.
     void removeSelected();
+    // Right-click "Create Material Index": measures these files in the background (cached; the search finds their
+    // shots once done)
+    void buildIndex(const QStringList& paths);
 
 signals:
     void sourceRequested(const QString& path);
+    // double-click on a hit of the material search: that file in the source viewer at that source frame
+    void sourceRequestedAt(const QString& path, int frame);
+    void indexBuilt(const QString& path); // buildIndex finished one file (also when it failed)
     // double-click on a timeline/compound clip: open it in the timeline
     void sequenceOpenRequested(int id);
     // subtitle files (.srt) imported/dragged in: become subtitle tracks, not media
@@ -143,6 +153,9 @@ private:
     void updateProxyStatus();
     void applyViewMode();
     void saveSettings() const;
+    void updateIndexHits(); // material search for the search text (MediaIndex::cached, nothing measured)
+    void showHitMenu(const QPoint& pos);
+    void editHitNote(const QString& path, int shot); // description and tags of a shot (MediaIndex::annotate)
 
     Project* m_project;
     Engine* m_engine;
@@ -180,4 +193,13 @@ private:
     bool m_saveSettings = true;
     bool m_rebuildQueued = false;
     QSet<QString> m_fresh; // markFresh
+    // Material search below the clips
+    QWidget* m_indexPanel = nullptr;
+    QLabel* m_indexTitle = nullptr;
+    QListWidget* m_indexHits = nullptr;
+    QTimer* m_indexTimer = nullptr; // typing: search after a short pause
+    QThreadPool* m_indexPool = nullptr;
+    QSet<QString> m_indexing; // being measured
+    std::atomic<bool> m_indexCancel{false};
+    QHash<QString, QPixmap> m_hitThumbs; // "<path>#<frame>" -> picture
 };

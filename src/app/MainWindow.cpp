@@ -214,6 +214,10 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
     });
     connect(m_engine, &Engine::frameReady, m_scopes, &ScopesPanel::setFrame);
     connect(m_mediaPool, &MediaPool::sourceRequested, this, &MainWindow::showSource);
+    connect(m_mediaPool, &MediaPool::sourceRequestedAt, this, [this](const QString& path, int frame) {
+        m_sourcePos.insert(path, frame); // a hit of the material search: the source viewer opens there
+        showSource(path);
+    });
     connect(m_mediaPool, &MediaPool::sequenceOpenRequested, m_timeline, &TimelinePanel::openSequence);
     connect(m_mediaPool, &MediaPool::reframedCopyRequested, this, &MainWindow::reframedCopy);
     // The source viewer follows a file's shape set in the Media Pool (and its undo)
