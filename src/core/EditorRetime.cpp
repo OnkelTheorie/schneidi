@@ -82,16 +82,14 @@ void Editor::setClipSpeed(const QVector<int>& ids, const Retime& r, bool ripple)
                     if (!r.freeze) newLen = std::min(newLen, avail - newIn);
                     // Convert keyframes via the file frames
                     for (auto it = c.keys.begin(); it != c.keys.end(); ++it) {
-                        KeyTrack mapped = it.value(), moved;
-                        for (Keyframe& kf : mapped)
-                            kf.frame = int(std::lround(newMap.materialAtFile(oldMap.fileFrameAt(kf.frame))));
+                        KeyTrack mapped = it.value();
+                        QVector<double> exact;
+                        for (Keyframe& kf : mapped) {
+                            exact << newMap.materialAtFile(oldMap.fileFrameAt(kf.frame));
+                            kf.frame = int(std::lround(exact.last()));
+                        }
                         Keys::rescaleHandles(it.value(), mapped);
-                        for (const Keyframe& kf : mapped)
-                            if (std::none_of(moved.begin(), moved.end(), [&](const Keyframe& o) { return o.frame == kf.frame; }))
-                                moved << kf;
-                        std::sort(moved.begin(), moved.end(),
-                                  [](const Keyframe& x, const Keyframe& y) { return x.frame < y.frame; });
-                        it.value() = moved;
+                        it.value() = Keys::onePerFrame(mapped, exact);
                     }
                     const int oldEnd = c.end();
                     c.in = newIn;
@@ -169,14 +167,16 @@ void Editor::editRamp(const QString& text, int clipId, const std::function<bool(
                 const int len = std::clamp(int(std::lround(newMap.materialAt(sEnd))) - n.in, 1, avail - n.in);
                 n.out = n.in + len - 1;
                 for (auto it = n.keys.begin(); it != n.keys.end(); ++it) {
-                    KeyTrack mapped = it.value(), moved;
+                    KeyTrack mapped = it.value();
                     const QVector<double>& src = keySrc[it.key()];
                     mapped.resize(std::min(mapped.size(), src.size()));
-                    for (int j = 0; j < mapped.size(); ++j) mapped[j].frame = int(std::lround(newMap.materialAt(src[j])));
+                    QVector<double> exact;
+                    for (int j = 0; j < mapped.size(); ++j) {
+                        exact << newMap.materialAt(src[j]);
+                        mapped[j].frame = int(std::lround(exact.last()));
+                    }
                     Keys::rescaleHandles(it.value(), mapped);
-                    for (const Keyframe& kf : mapped)
-                        if (moved.isEmpty() || moved.last().frame != kf.frame) moved << kf;
-                    it.value() = moved;
+                    it.value() = Keys::onePerFrame(mapped, exact);
                 }
                 n.fadeIn = std::min(n.fadeIn, len);
                 n.fadeOut = std::min(n.fadeOut, len);

@@ -207,6 +207,21 @@ void remove(Clip& c, int n)
     });
 }
 
+void refit(Clip& c, double kx, double ky)
+{
+    if (kx <= 0 || ky <= 0 || (std::abs(kx - 1) < 1e-9 && std::abs(ky - 1) < 1e-9)) return;
+    const auto around = [](double k) { return [k](double v) { return 50 + (v - 50) * k; }; };
+    const auto times = [](double k) { return [k](double v) { return v * k; }; };
+    for (int n : list(c)) {
+        Keys::convert(c, param(n, "x"), around(kx), kx);
+        Keys::convert(c, param(n, "y"), around(ky), ky);
+        Keys::convert(c, param(n, "width"), times(kx), kx);
+        Keys::convert(c, param(n, "height"), times(ky), ky);
+        Keys::convert(c, param(n, "softness"), times(ky), ky);
+        Keys::convert(c, param(n, "amount"), times(ky), ky);
+    }
+}
+
 Geometry geometryAt(const Clip& c, int n, double t)
 {
     Geometry g;

@@ -79,6 +79,12 @@ void setHandle(KeyTrack& k, int i, bool out, double dt, double dv, bool broken =
 // After converting the keyframe times (speed): stretch handle times along in proportion to the distances.
 // after = the same keyframes in the same order as before (not yet sorted); reversed swaps in/out.
 void rescaleHandles(const KeyTrack& before, KeyTrack& after);
+// After converting the keyframe times: `mapped` (frames rounded from the exact times `exact`, same order) sorted by
+// frame, one key per frame. Of keys rounded onto the same frame the one whose exact time lies closest to it stays, the
+// nearest other one before (after) it goes onto the frame before (after) when that one is free: a window switched on
+// right after its off key (a blurred name in a sped-up clip) keeps both, instead of growing from nothing up to the
+// next key. Other keys of such a frame are left out.
+KeyTrack onePerFrame(const KeyTrack& mapped, const QVector<double>& exact);
 
 // Timeline keyframe track: all parameters together at the times
 void setEase(Clip& c, const QVector<int>& times, KeyEase ease, const QVector<AnimParam>& params = {});

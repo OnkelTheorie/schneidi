@@ -479,6 +479,9 @@ public:
                      const QHash<int, QVector<Reframe::Keep>>* keeps = nullptr);
     // The video clips reframeClips would change
     QVector<int> reframeTargets(const QVector<int>& ids) const;
+    // `ids` and the kept-region copies (kill feed above a reframed clip, Reframe::isKeepAlong) of the clips among
+    // them: they show the same picture, so hiding names on a clip has to reach them too
+    QVector<int> withKeptCopies(const QVector<int>& ids) const;
     // The regions to keep per clip (ids as reframeClips' targets) for `choice` in the open timeline's shape;
     // `noGame` gets the clips without a known game when the choice asks for a kill feed
     QHash<int, QVector<Reframe::Keep>> reframeKeeps(const QVector<int>& ids, Reframe::Mode mode,

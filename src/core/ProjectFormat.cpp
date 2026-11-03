@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "core/ProjectFormat.h"
 
+#include "core/GradeWindows.h"
 #include "core/Keyframes.h"
 #include "core/MediaAspect.h"
 #include "core/Types.h"
@@ -89,6 +90,17 @@ void scaleTimeline(Timeline& tl, QSize from, QSize to)
                         const double k = p == AnimParam::CropLeft || p == AnimParam::CropRight ? kx : ky;
                         Keys::convert(c, p, [k](double v) { return v * k; }, k);
                     }
+                }
+                // Color page windows (a blurred name, a tracked face) lie on the picture fitted into the frame: a
+                // frame of another shape fits it differently (a 16:9 edit copied to a 9:16 short left its name masks
+                // above the picture band, the names readable)
+                if (tracks == &tl.video && std::abs(sx - sy) > 1e-9 && c.kind == ClipKind::Media && !c.cropOnFrame
+                    && !GradeWindows::list(c).isEmpty()) {
+                    double aspect = MediaAspect::ofClip(c);
+                    if (aspect <= 0) aspect = before.width() / before.height();
+                    const QSizeF a = MediaAspect::fit(aspect, before), b = MediaAspect::fit(aspect, after);
+                    GradeWindows::refit(c, (b.width() / after.width()) / (a.width() / before.width()),
+                                        (b.height() / after.height()) / (a.height() / before.height()));
                 }
                 TitleStyle& ti = c.title;
                 ti.posX *= sx;

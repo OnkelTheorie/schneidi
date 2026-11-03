@@ -281,6 +281,8 @@ void opBlurNames(Session& s, const QJsonObject& op)
                     if (!c.isTitle() && !c.isNested()) ids << c.id;
         if (ids.isEmpty()) fail("NOT_FOUND", "no video clips to look at");
     }
+    // The kill feed copies above reframed clips show the same names
+    ids = s.editor.withKeptCopies(ids);
     NameBlur::Template tpl = NameBlur::Template::All;
     if (op.contains("template") && !NameBlur::templateFromId(op.value("template").toString(), &tpl))
         fail("BAD_ARGUMENT", "template is " + NameBlur::templateIds().join(", "));
