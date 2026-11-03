@@ -205,6 +205,8 @@ int main(int argc, char* argv[])
         R"([{"op":"sections","auto":true}])",
         R"([{"op":"note","at":"0:03","text":"schneller"},{"op":"note","done":1}])",
         R"([{"op":"hook_variants","at":["3s"],"question":"Wer?"}])",
+        // Jump cuts (0.17 package K): the three clips of a.mp4 skip parts of it
+        R"([{"op":"hide_jumps","center":"middle"}])",
     };
     for (const QString& ops : calls) {
         const QByteArray before = state(fake.project);
