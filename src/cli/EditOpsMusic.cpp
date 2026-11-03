@@ -430,11 +430,15 @@ void opSnapToBeat(Session& s, const QJsonObject& op)
     std::sort(moments.begin(), moments.end());
 
     QVector<int> done;
+    QHash<int, int> shifted; // clip -> how far its content moved for its first event
     QJsonArray report;
+    // Markers are moved after all clips: one marker toggled away must not hide another one of the list
+    QVector<QPair<int, int>> markerMoves;
     for (const auto& [t, id] : moments) {
         QJsonObject r{{"clip", id}, {"event", tc(t, f)}};
         if (done.contains(id)) {
             r["note"] = "same clip as an earlier event: moved with it";
+            if (event == "marker" && shifted.value(id)) markerMoves << qMakePair(t, t + shifted.value(id));
             report << r;
             continue;
         }
@@ -484,11 +488,8 @@ void opSnapToBeat(Session& s, const QJsonObject& op)
                     s.editor.modifyClips({id}, "Snap to beat", [&](Clip& c) { c.keys = before.keys; });
             }
         }
-        if (event == "marker" && got != 0) {
-            QVector<int> markers = s.project.timeline().markers;
-            if (markers.contains(t)) s.editor.toggleMarker(t);
-            if (!s.project.timeline().markers.contains(t + got)) s.editor.toggleMarker(t + got);
-        }
+        shifted.insert(id, got);
+        if (event == "marker" && got != 0) markerMoves << qMakePair(t, t + got);
         r["to"] = tc(t + got, f);
         r["shift_frames"] = got;
         if (got == 0 && TimelineOps::isLocked(s.project.timeline(), id))
@@ -496,6 +497,14 @@ void opSnapToBeat(Session& s, const QJsonObject& op)
         else if (got != want)
             r["note"] = QString("not enough material or room to move it all the way (%1 frames off)").arg(want - got);
         report << r;
+    }
+    if (!markerMoves.isEmpty()) {
+        QVector<int> markers = s.project.timeline().markers;
+        for (const auto& [from, to] : markerMoves) markers.removeAll(from);
+        for (const auto& [from, to] : markerMoves)
+            if (!markers.contains(to)) markers << to;
+        std::sort(markers.begin(), markers.end());
+        s.project.edit(T("Marker setzen/entfernen"), [&](Timeline& tl) { tl.markers = markers; });
     }
     s.notes << QJsonObject{{"snap_to_beat", report}};
 }
