@@ -175,9 +175,13 @@ Plan plan(const Beats::Result& r, double songLength, const Options& o)
                 for (int b = a + 1; b < g.bars; ++b) consider({{a}, {b}, g.start[size_t(a)] + E - g.start[size_t(b)] - T});
             // Two cuts, when one is not good (a climax far from where one cut can put the drop, sounds that differ)
             if (best.cost > 6 || o.climaxAt >= 0) {
+                // A long song: the first three edges on phrase starts only (bars^3 would take seconds)
+                const bool coarse = g.bars > 64;
+                const auto skip = [&](int b) { return coarse && !g.phrase(b); };
                 for (int a1 = 1; a1 < g.bars; ++a1)
-                    for (int b1 = a1 + 1; b1 < g.bars; ++b1)
-                        for (int a2 = b1 + 1; a2 < g.bars; ++a2) {
+                    for (int b1 = a1 + 1; b1 < g.bars && !skip(a1); ++b1)
+                        for (int a2 = b1 + 1; a2 < g.bars && !skip(b1); ++a2) {
+                            if (skip(a2)) continue;
                             const double rest = g.start[size_t(a1)] + g.start[size_t(a2)] - g.start[size_t(b1)] + E - T;
                             // The start of the last part that leaves the least to take off the song's start, and
                             // one bar earlier (a later bar one to start from)
