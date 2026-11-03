@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// The 0.17 talk ops (jl_cut, room_tone) live in the app: each `edit` call is one undo step, undo gives back exactly the
+// The 0.17 talk ops (jl_cut, room_tone) and story ops (section, sections, note, hook_variants) live in the app: each `edit` call is one undo step, undo gives back exactly the
 // project before, redo the change, and the result matches the same ops run on the project file.
 #include "cli/Live.h"
 #include "core/LiveHost.h"
@@ -200,6 +200,11 @@ int main(int argc, char* argv[])
         R"([{"op":"jl_cut","clip":5,"audio":"+12"}])",
         R"([{"op":"room_tone","track":"A2"}])",
         R"([{"op":"jl_cut","at":100,"audio":0},{"op":"room_tone","track":"A2"}])",
+        // Story sections, notes and hook variants (0.17 package B)
+        R"([{"op":"section","kind":"hook","from":0,"to":"2s","name":"Kill"}])",
+        R"([{"op":"sections","auto":true}])",
+        R"([{"op":"note","at":"0:03","text":"schneller"},{"op":"note","done":1}])",
+        R"([{"op":"hook_variants","at":["3s"],"question":"Wer?"}])",
     };
     for (const QString& ops : calls) {
         const QByteArray before = state(fake.project);
