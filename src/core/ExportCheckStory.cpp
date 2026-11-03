@@ -399,6 +399,13 @@ QVector<Issue> jumpCuts(const Timeline& tl, int from, int to, const ProjectForma
             const Clip* a = TimelineOps::findClip(tl, j.left);
             const Clip* b = TimelineOps::findClip(tl, j.right);
             if (!a || !b || !JumpCut::sameFraming(*a, *b)) continue;
+            // Covered at the cut by a picture on a track above (B-roll): nobody sees the jump
+            bool covered = false;
+            for (int u = int(&t - tl.video.data()) + 1; u < tl.video.size() && !covered; ++u)
+                if (!tl.video[u].hidden)
+                    for (const Clip& c : tl.video[u].clips)
+                        covered |= c.enabled && !c.isTitle() && c.start <= j.at && c.end() > j.at;
+            if (covered) continue;
             if (++count <= 20)
                 out << issue(Severity::Info, "jump_cut",
                              T("Sprung im Bild bei %1 s: dieselbe Aufnahme, %2 s ausgelassen – abwechselnd "

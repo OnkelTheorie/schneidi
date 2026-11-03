@@ -138,10 +138,14 @@ std::unique_ptr<Project> loaded()
     return p;
 }
 
+// As the app stores them: a word's end reaches up to the next word
 MediaTranscript transcriptOf(const QVector<Word>& words)
 {
     MediaTranscript t{0, "de", {}};
-    for (const Word& w : words) t.words << TranscriptWord{qint64(std::lround(w.from * 1000)), qint64(std::lround(w.to * 1000)), w.text};
+    for (int i = 0; i < words.size(); ++i) {
+        const double to = i + 1 < words.size() ? words[i + 1].from : words[i].to;
+        t.words << TranscriptWord{qint64(std::lround(words[i].from * 1000)), qint64(std::lround(to * 1000)), words[i].text};
+    }
     return t;
 }
 
@@ -155,8 +159,14 @@ void testOps(const QString& dir)
                                           "Handy. Heute zeige ich euch das neue Handy.", 0));
         MediaInfo b{"/x/b.mp4", "b.mp4", 25 * 60, true, true, false};
         b.transcripts << transcriptOf(say("Es hat drei Kameras. Das war es.", 10));
+        // Two takes, the later one with a stall of 1.5 s in it: the earlier, fluent one is the last good one
+        MediaInfo c{"/x/c.mp4", "c.mp4", 25 * 60, true, true, false};
+        c.transcripts << transcriptOf(say("Wir fahren heute ans Meer. Wir fahren heute | ans Meer.", 0));
+        MediaInfo q{"/x/quiet.mp4", "quiet.mp4", 25 * 60, true, true, false}; // no transcript
         p.addMedia(a);
         p.addMedia(b);
+        p.addMedia(c);
+        p.addMedia(q);
         Timeline tl;
         tl.video.resize(1);
         tl.audio.resize(1);
@@ -184,12 +194,19 @@ void testOps(const QString& dir)
                 CHECK_EQ(v[0].mediaPath, QString("/x/b.mp4"));
                 CHECK(std::abs(v[0].in - 248) <= 1); // 9.92 s
                 CHECK_EQ(v[1].mediaPath, QString("/x/a.mp4"));
-                CHECK(std::abs(v[1].in - 158) <= 1); // 6.32 s
+                CHECK(std::abs(v[1].in - 160) <= 1); // 6.4 s: the word before ends right there
                 CHECK(v[1].start == v[0].end());
                 // ends after the last word's spoken end (8.8 + 0.25 + 0.07 * 6 + 0.12 s), before the file's next word
                 CHECK(v[1].out - v[1].in + 1 < 3.3 * 25);
             }
         }
+    }
+    {
+        const QJsonObject sea = run("edit", {{"project", g_path}, {"ops", QJsonArray{QJsonObject{
+                                                  {"op", "rough_cut"}, {"media", QJsonArray{"/x/c.mp4"}},
+                                                  {"script", "Wir fahren heute ans Meer."}, {"name", "Meer"}}}}});
+        const QString t = QString::fromUtf8(QJsonDocument(sea).toJson(QJsonDocument::Compact));
+        if (!CHECK(t.contains("take 1 of 2: the last complete one"))) std::printf("       %s\n", qPrintable(t.left(600)));
     }
     // Errors: no script, a wrong takes value, nothing found
     CHECK(errorOf({QJsonObject{{"op", "rough_cut"}}}).startsWith("BAD_ARGUMENT"));
@@ -203,6 +220,23 @@ void testOps(const QString& dir)
     const QJsonObject again = run("edit", {{"project", g_path},
                                            {"ops", QJsonArray{QJsonObject{{"op", "rough_cut"}, {"script", "Es hat drei Kameras."}}}}});
     CHECK(QJsonDocument(again).toJson().contains("Rohschnitt 2"));
+
+    // best_takes never cuts into a clip without words between two takes (it cut up to the next word anywhere)
+    run("edit", {{"project", g_path},
+                 {"ops", QJsonArray{QJsonObject{{"op", "new_timeline"}, {"name", "Zwischen"}},
+                                    QJsonObject{{"op", "keep"}, {"media", "/x/a.mp4"}, {"ranges", QJsonArray{QJsonArray{"0s", "2.8s"}}}},
+                                    QJsonObject{{"op", "keep"}, {"media", "/x/quiet.mp4"}, {"ranges", QJsonArray{QJsonArray{"0s", "2s"}}}},
+                                    QJsonObject{{"op", "keep"}, {"media", "/x/a.mp4"}, {"ranges", QJsonArray{QJsonArray{"6.4s", "9.2s"}}}}}}});
+    run("edit", {{"project", g_path}, {"timeline", "Zwischen"}, {"ops", QJsonArray{QJsonObject{{"op", "best_takes"}}}}});
+    {
+        const auto p = loaded();
+        for (const Sequence& q : p->sequences())
+            if (p->sequenceName(q.id) == "Zwischen") p->setCurrentSequence(q.id);
+        int quiet = 0;
+        for (const Clip& c : p->timeline().video[0].clips)
+            if (c.mediaPath == "/x/quiet.mp4") quiet += c.length();
+        CHECK_EQ(quiet, 50); // all of it
+    }
 
     // best_takes on a timeline of all of a.mp4: the first two takes go, the last one stays
     run("edit", {{"project", g_path},

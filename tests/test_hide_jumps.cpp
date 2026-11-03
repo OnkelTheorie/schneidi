@@ -125,6 +125,32 @@ void testOp(const QString& dir)
         CHECK_EQ(clipOf(*p, 5).transform.zoomX, 1.0);
         CHECK_EQ(jumpInfos(*p), 0);
     }
+    // Covered by B-roll on V2 at the cut: no jump_cut; a locked track: nothing zoomed, the answer says so
+    {
+        Timeline covered;
+        covered.video << track();
+        covered.video.resize(2);
+        covered.video[1].clips << media(9, 40, 0, 20, "/x/c.mp4");
+        covered.video[0].clips.resize(2);
+        save(covered, {MediaInfo{"/x/a.mp4", "a.mp4", 1000, true, true, false}, MediaInfo{"/x/c.mp4", "c.mp4", 1000, true, false, false}});
+        CHECK_EQ(jumpInfos(*loaded()), 0);
+        Timeline locked = covered;
+        locked.video.resize(1);
+        locked.video[0].locked = true;
+        save(locked, {MediaInfo{"/x/a.mp4", "a.mp4", 1000, true, true, false}});
+        CHECK_EQ(jumpInfos(*loaded()), 1);
+        const QJsonObject l = run("edit", {{"project", g_path}, {"ops", QJsonArray{QJsonObject{{"op", "hide_jumps"}, {"center", "middle"}}}}});
+        CHECK(QJsonDocument(l).toJson().contains("locked track"));
+        CHECK_EQ(clipOf(*loaded(), 2).transform.zoomX, 1.0);
+        // A transform that is off with an old zoom kept: framing as shown (no zoom), so the jump counts
+        Timeline off = covered;
+        off.video.resize(1);
+        off.video[0].clips[1].transform.zoomX = off.video[0].clips[1].transform.zoomY = 1.5;
+        off.video[0].clips[1].transform.transformOn = false;
+        save(off, {MediaInfo{"/x/a.mp4", "a.mp4", 1000, true, true, false}});
+        CHECK_EQ(jumpInfos(*loaded()), 1);
+    }
+
     // No jump at all: a note, nothing changes
     Timeline plain;
     plain.video.resize(1);
