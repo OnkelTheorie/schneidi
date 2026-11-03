@@ -172,6 +172,33 @@ void testEdits()
     r.cues = {cue(100, 150, "a bb ccc", {{0, 5}, {5, 10}, {20, 30}})};
     CHECK(Subtitles::ripple(r, {{112, -8}}));
     CHECK_EQ(wordsOf(r.cues[0]), QString("100-142:a@0-4 ccc@12-22"));
+    // Ripple over every word of a cue that lasts past them (minFrames): the cue goes, no empty, invisible block stays
+    // (cutting out a filler word "äh" by text)
+    {
+        SubtitleTrack f;
+        f.cues = {cue(100, 112, "äh", {{0, 6}}), cue(120, 130, "gut", {{0, 5}})};
+        CHECK(Subtitles::ripple(f, {{106, -6}}));
+        CHECK_EQ(f.cues.size(), 1);
+        for (const SubtitleCue& c : f.cues) CHECK(!c.text.isEmpty());
+        if (f.cues.size() == 1) CHECK_EQ(wordsOf(f.cues[0]), QString("114-124:gut@0-5"));
+    }
+    // Ripple with time added inside a word caption (the clip under its first words got longer): the words spoken
+    // after that point move with their clip, the cue grows; a plain cue across the point stays as it is
+    {
+        SubtitleTrack g;
+        g.cues = {cue(100, 150, "a bb ccc", {{0, 5}, {5, 10}, {20, 30}}), cue(160, 170, "dd", {{0, 5}})};
+        CHECK(Subtitles::ripple(g, {{112, 8}}));
+        CHECK_EQ(g.cues.size(), 2);
+        if (g.cues.size() == 2) {
+            CHECK_EQ(wordsOf(g.cues[0]), QString("100-158:a@0-5 bb@5-10 ccc@28-38"));
+            CHECK_EQ(wordsOf(g.cues[1]), QString("168-178:dd@0-5"));
+        }
+        SubtitleTrack plain;
+        plain.cues = {cue(100, 150, "a bb ccc")};
+        CHECK(!Subtitles::ripple(plain, {{112, 8}}));
+        CHECK_EQ(plain.cues[0].start, 100);
+        CHECK_EQ(plain.cues[0].end, 150);
+    }
     // Overwritten by another cue at the end: the covered words go
     SubtitleTrack o;
     o.cues = {cue(100, 150, "a bb ccc", {{0, 5}, {5, 10}, {20, 30}})};

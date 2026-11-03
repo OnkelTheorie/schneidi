@@ -17,8 +17,11 @@
 #include "core/ProjectFormat.h"
 #include "core/Selection.h"
 #include "core/TimelineOps.h"
+#include "ui/Inspector.h"
 
 #include <QApplication>
+#include <QSlider>
+#include <QWheelEvent>
 #include <QImage>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -438,6 +441,40 @@ void testProgressDrop()
     CHECK(TimelineOps::findClip(p.timeline(), *sel.ids().begin())->title.numbers == NumberStyle::CommaPoint);
 }
 
+// The Inspector of a counter: scrolling the Inspector with the mouse wheel over a slider must not change the count by
+// millions (the From/To sliders spanned +-1e9: one wheel notch over them moved "To" from 1000 to about 6,001,000)
+void testCounterInspector()
+{
+    std::printf("counter inspector\n");
+    Project p;
+    ProjectData d;
+    d.timeline = emptyTimeline();
+    p.load(d);
+    Selection sel;
+    Editor e(&p, &sel);
+    Inspector insp(&e);
+    e.addTitle(0, -1, 50, TitleKind::Counter);
+    const int id = *sel.ids().begin();
+    insp.resize(380, 1600);
+    insp.show();
+    QCoreApplication::processEvents();
+    int sliders = 0;
+    for (QSlider* s : insp.findChildren<QSlider*>()) {
+        if (!s->isVisibleTo(&insp)) continue;
+        ++sliders;
+        const QPointF at(s->width() / 2.0, s->height() / 2.0);
+        QWheelEvent wheel(at, s->mapToGlobal(at), QPoint(), QPoint(0, 120), Qt::NoButton, Qt::NoModifier,
+                          Qt::NoScrollPhase, false);
+        QCoreApplication::sendEvent(s, &wheel);
+    }
+    CHECK(sliders > 0); // the title page is shown (size, outline …)
+    const Clip* c = TimelineOps::findClip(p.timeline(), id);
+    if (CHECK(c)) {
+        CHECK(std::abs(c->title.countFrom - TitleStyle().countFrom) < 100);
+        CHECK(std::abs(c->title.countTo - TitleStyle().countTo) < 100);
+    }
+}
+
 void testProjectFile(const QString& dir)
 {
     std::printf("project file\n");
@@ -665,6 +702,7 @@ int main(int argc, char** argv)
     testCounterPicture();
     testProgress();
     testProgressDrop();
+    testCounterInspector();
     testProjectFile(tmp.path());
     testCli(tmp.path());
     return Check::result();

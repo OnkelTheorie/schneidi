@@ -23,6 +23,11 @@ bool ownTimes(const SubtitleCue& cue, const QStringList& list)
 
 } // namespace
 
+bool timed(const SubtitleCue& cue)
+{
+    return ownTimes(cue, words(cue.text));
+}
+
 QVector<CueWord> timing(const SubtitleCue& cue)
 {
     const QStringList list = words(cue.text);

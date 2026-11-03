@@ -277,10 +277,17 @@ void Inspector::buildGeneratorSections(QVBoxLayout* page, const Section& outline
         c.title.grouping = d.grouping;
         c.title.countEase = d.countEase;
     }, {}, true);
-    addSlider(cnt, "titleCountFrom", T("Von"), -1e9, 1e9, TitleStyle().countFrom, 1, 2,
-              [](Clip& c) -> double& { return c.title.countFrom; });
-    addSlider(cnt, "titleCountTo", T("Bis"), -1e9, 1e9, TitleStyle().countTo, 1, 2,
-              [](Clip& c) -> double& { return c.title.countTo; });
+    // Number fields only (drag or type): a slider over +-1e9 moved the count by millions per step, also when the
+    // mouse wheel scrolled the Inspector across it
+    for (Param* p : {addSlider(cnt, "titleCountFrom", T("Von"), -1e9, 1e9, TitleStyle().countFrom, 1, 2,
+                               [](Clip& c) -> double& { return c.title.countFrom; }),
+                     addSlider(cnt, "titleCountTo", T("Bis"), -1e9, 1e9, TitleStyle().countTo, 1, 2,
+                               [](Clip& c) -> double& { return c.title.countTo; })}) {
+        QSizePolicy keep = p->slider->sizePolicy(); // the field stays where the other rows have theirs
+        keep.setRetainSizeWhenHidden(true);
+        p->slider->setSizePolicy(keep);
+        p->slider->hide();
+    }
     auto* places = combo();
     for (int i = 0; i <= 3; ++i) places->addItem(QString::number(i), i);
     connect(places, &QComboBox::activated, this, [this, V, places] {

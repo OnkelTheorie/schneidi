@@ -374,7 +374,8 @@ bool ripple(SubtitleTrack& track, const QVector<QPair<int, int>>& shifts)
 {
     if (shifts.isEmpty() || track.cues.isEmpty()) return false;
     // new position of an edge t: subtract removed time before it; positive offsets only count for entries
-    // that start entirely after it (an entry across the cut is not stretched)
+    // that start entirely after it (an entry across the cut is not stretched). Word captions: each word moves with
+    // the time it is spoken in (the words after the cut go along with its clip, the cue grows by them)
     auto pos = [&](int t, int cueStart) {
         int p = t;
         for (const auto& [frame, d] : shifts) {
@@ -386,11 +387,20 @@ bool ripple(SubtitleTrack& track, const QVector<QPair<int, int>>& shifts)
     QVector<SubtitleCue> moved;
     bool changed = false;
     for (SubtitleCue c : track.cues) {
-        const int s = pos(c.start, c.start), e = pos(c.end, c.start);
+        const bool timed = Captions::timed(c);
+        // The end of a word caption goes with its last word
+        const int endAnchor = timed ? c.start + c.words.last().from : c.start;
+        const int s = pos(c.start, c.start), e = pos(c.end, std::max(c.start, endAnchor));
         changed |= s != c.start || e != c.end;
         if (e <= s) continue; // entirely in removed time
         const int cueStart = c.start;
-        Captions::remap(c, [&](int t) { return pos(t, cueStart); }, s, e);
+        const SubtitleCue before = c;
+        Captions::remap(c, [&](int t) { return timed ? pos(t, std::max(cueStart, t)) : pos(t, cueStart); }, s, e);
+        // A word caption whose words were all in the removed time goes (an empty cue stayed as an invisible block)
+        if (Captions::lostAllWords(before, c)) {
+            changed = true;
+            continue;
+        }
         moved << c;
     }
     if (!changed) return false;
