@@ -283,14 +283,21 @@ void testCounterValues()
     CHECK_EQ(Generators::counterText(s, 100, 101), QString("$2\u00a0500,0 k"));
     s.grouping = false;
     CHECK_EQ(Generators::counterText(s, 100, 101), QString("$2500,0 k"));
-    // A new counter takes the UI language's separators (and keeps them)
-    I18n::install("en");
+    // A new counter takes the separators of the user's UI language (the setting, not the translation installed in
+    // this process: schneidi-cli always installs English and must store what the app stores) and keeps them
+    const auto ui = [](const char* lang) {
+        I18n::setLanguage(lang);
+        I18n::install(lang);
+    };
+    ui("en");
     CHECK(Generators::numberStyleOfLanguage() == NumberStyle::CommaPoint);
-    I18n::install("de");
+    ui("de");
     CHECK(Generators::numberStyleOfLanguage() == NumberStyle::PointComma);
-    I18n::install("fr");
+    I18n::install("en"); // the CLI's case: English answers, German user
+    CHECK(Generators::numberStyleOfLanguage() == NumberStyle::PointComma);
+    ui("fr");
     CHECK(Generators::numberStyleOfLanguage() == NumberStyle::SpaceComma);
-    I18n::install("en");
+    ui("en");
     // Negative numbers, 0.5 cases (away from zero both ways), huge numbers
     s.prefix.clear();
     s.suffix.clear();
@@ -786,6 +793,7 @@ int main(int argc, char** argv)
     Check::initEnv();
     QApplication app(argc, argv);
     Check::initApp("generators");
+    I18n::setLanguage("en"); // the UI language the counters below expect (settings outlive test runs)
     QTemporaryDir tmp;
     if (!CHECK(tmp.isValid())) return Check::result();
     g_a = still(tmp.filePath("a.png"), kRed, kWhite, true);

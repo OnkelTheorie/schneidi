@@ -141,19 +141,18 @@ int compareNames(const QString& a, const QString& b)
     return c != 0 ? c : QString::localeAwareCompare(a, b);
 }
 
-QChar decimalPoint()
-{
-    const QString lang = s_installed.isEmpty() ? language() : s_installed;
-    return lang == "en" ? QChar('.') : QChar(',');
-}
+QChar decimalPointOf(const QString& lang) { return lang == "en" ? QChar('.') : QChar(','); }
 
-QChar groupSeparator()
+QChar groupSeparatorOf(const QString& lang)
 {
-    const QString lang = s_installed.isEmpty() ? language() : s_installed;
     if (lang == "en") return QChar(',');
     if (lang == "de" || lang == "es") return QChar('.');
     return QChar(0x00a0);
 }
+
+QChar decimalPoint() { return decimalPointOf(s_installed.isEmpty() ? language() : s_installed); }
+
+QChar groupSeparator() { return groupSeparatorOf(s_installed.isEmpty() ? language() : s_installed); }
 
 } // namespace I18n
 
