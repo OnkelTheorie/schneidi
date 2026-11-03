@@ -513,6 +513,15 @@ void testStoryBand()
     undo->undo();
     CHECK_EQ(f.project.timeline().sections[0].to, 100);
     CHECK(f.editor.setNoteDone(note, true)); // the note is still there
+    // Touching sections: the one the mouse is over is grabbed (the later one's left edge could never be)
+    f.editor.removeSectionAt(150);
+    f.editor.addSection({StoryKind::Build, {}, 100, 200});
+    drag(f.tv, {f.x(100) + 2, 8}, {f.x(110) + 2, 8});
+    const QVector<StorySection>& t = f.project.timeline().sections;
+    if (CHECK_EQ(t.size(), 2)) {
+        CHECK_EQ(t[0].to, 100); // the hook stays
+        CHECK(std::abs(t[1].from - 110) <= 1);
+    }
 }
 
 int main(int argc, char** argv)

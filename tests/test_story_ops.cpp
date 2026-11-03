@@ -296,9 +296,38 @@ void testOps(const QString& dir)
         CHECK(c.start == 0 && c.in == 397);
         if (const auto s = sectionsOf("Hook C"); CHECK(!s.isEmpty())) CHECK(s[0].kind == StoryKind::Hook);
     }
+    // With suggested sections: every variant keeps a build after its hook (no time without a section)
+    edit({QJsonObject{{"op", "sections"}, {"auto", true}}});
+    edit({QJsonObject{{"op", "hook_variants"}, {"at", QJsonArray{"8.4s"}}, {"question", "Wer?"}}});
+    {
+        const auto p = loaded();
+        for (const Sequence& q : p->sequences()) {
+            const QString n = p->sequenceName(q.id);
+            if (!n.startsWith("Hook") || !n.contains("(2)")) continue;
+            const QVector<StorySection>& sec = q.timeline.sections;
+            bool covered = !sec.isEmpty() && sec.first().from == 0;
+            for (int i = 1; i < sec.size(); ++i) covered &= sec[i].from == sec[i - 1].to;
+            bool build = false;
+            for (const StorySection& x : sec) build |= x.kind == StoryKind::Build;
+            if (!CHECK(covered && (build || n.startsWith("Hook C")))) { // C: 4 s left, all of it is the opening
+                std::printf("       %s:", qPrintable(n));
+                for (const StorySection& x : sec) std::printf(" %d-%d", x.from, x.to);
+                std::printf("\n");
+            }
+        }
+    }
+    edit({QJsonObject{{"op", "sections"}, {"clear", true}}});
+
     // A second call: new names, B skipped without a question (the answer says why)
     r = edit({QJsonObject{{"op", "hook_variants"}, {"at", QJsonArray{"8.4s"}}, {"count", 2}}});
-    CHECK(text(r).contains("Hook A (2)") && text(r).contains("Skipped: B"));
+    CHECK(text(r).contains("Hook A (3)") && text(r).contains("Skipped: B"));
+    // The moment in a gap: no teaser (skipped), the others are made; a locked track: no "into the action"
+    edit({QJsonObject{{"op", "delete"}, {"clips", QJsonArray{2, 5}}, {"ripple", false}}});
+    r = edit({QJsonObject{{"op", "hook_variants"}, {"at", QJsonArray{"6s"}}, {"question", "Wer?"}}});
+    CHECK(text(r).contains("A (teaser: nothing plays") && text(r).contains("Hook C"));
+    edit({QJsonObject{{"op", "track"}, {"track", "A1"}, {"lock", true}}});
+    r = edit({QJsonObject{{"op", "hook_variants"}, {"at", QJsonArray{"10s"}}, {"question", "Wer?"}}});
+    CHECK(text(r).contains("a locked track"));
 }
 
 } // namespace

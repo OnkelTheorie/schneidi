@@ -202,11 +202,19 @@ void opHookVariants(Session& s, const QJsonObject& op)
         return name;
     };
     const auto hookSection = [&](int to, const QString& name) {
-        QVector<StorySection> sections = s.project.timeline().sections;
-        sections.erase(std::remove_if(sections.begin(), sections.end(),
-                                      [&](const StorySection& x) { return x.kind == StoryKind::Hook || x.from < to; }),
-                       sections.end());
-        sections.prepend(StorySection{StoryKind::Hook, name, 0, std::min(to, lengthOf(s))});
+        // The new hook in front; the old hook becomes build, sections it reaches into start after it (a build that
+        // began inside the opening keeps its rest): no time without a section
+        const int end = std::min(to, lengthOf(s));
+        QVector<StorySection> sections;
+        for (StorySection x : s.project.timeline().sections) {
+            if (x.kind == StoryKind::Hook) { // the old opening now follows the new one: part of the build
+                x.kind = StoryKind::Build;
+                x.name.clear();
+            }
+            x.from = std::max(x.from, end);
+            if (x.to > x.from) sections << x;
+        }
+        sections.prepend(StorySection{StoryKind::Hook, name, 0, end});
         s.editor.setSections(sections, T("Abschnitte vorschlagen"));
     };
     for (int v = 0; v < count; ++v) {
@@ -217,6 +225,14 @@ void opHookVariants(Session& s, const QJsonObject& op)
             }
             const int a = std::clamp(strong.first() - framesOf(s, 0.5), 0, std::max(0, length - 1));
             const int b = std::min(length, a + teaser);
+            bool anything = false; // the moment may lie in a gap: then there is no teaser, the others still come
+            for (TrackKind k : {TrackKind::Video, TrackKind::Audio})
+                for (const Track& t : s.project.timeline().tracks(k))
+                    for (const Clip& c : t.clips) anything |= c.start < b && c.end() > a;
+            if (!anything) {
+                skipped << "A (teaser: nothing plays at " + span(s, a, b) + ")";
+                continue;
+            }
             const QString name = variant("A");
             if (!s.editor.prependTeaser(a, b)) fail("FAILED", "nothing to copy at " + span(s, a, b));
             hookSection(b - a, T("Teaser"));
@@ -239,6 +255,16 @@ void opHookVariants(Session& s, const QJsonObject& op)
             if (first < 0 || cut <= 0) {
                 skipped << (first < 0 ? QString("C (into the action: no strong moment)")
                                       : QString("C (into the action: the first strong moment is at the start already)"));
+                continue;
+            }
+            // A locked track would stay while everything else moves up (out of sync): not without the user
+            bool locked = false;
+            for (TrackKind k : {TrackKind::Video, TrackKind::Audio})
+                for (const Track& t : s.project.timeline().tracks(k))
+                    if (t.locked)
+                        for (const Clip& c : t.clips) locked |= c.end() > 0;
+            if (locked) {
+                skipped << "C (into the action: a locked track would get out of sync - unlock it)";
                 continue;
             }
             const QString name = variant("C");
