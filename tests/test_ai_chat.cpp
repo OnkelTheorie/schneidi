@@ -1030,6 +1030,10 @@ void test(const QString& dir)
         bool tight = false;
         for (const AiChat::Entry& e : chat->entries()) tight |= e.kind == AiChat::Entry::Kind::Notice && e.text.contains("knapp") && e.text.contains("8192");
         CHECK(tight);
+        // The short request stays within its budget (it grew past an 8192-token model with the 0.17 tools once):
+        // system prompt and tools of a fresh chat, the one word above aside
+        if (!CHECK(chat->requestTokens() * 4 <= Ai::kCompactBudget))
+            std::printf("       short request: %lld characters, budget %lld\n", chat->requestTokens() * 4, Ai::kCompactBudget);
         // Off: the full request also for a server on this computer
         fake.gets.remove("/api/show");
         chat->clear();

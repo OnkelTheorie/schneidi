@@ -309,7 +309,8 @@ void AiChat::prepare()
 QString AiChat::systemPrompt() const
 {
     QStringList parts;
-    if (!m_mcp->instructions().isEmpty()) parts << m_mcp->instructions();
+    if (!m_mcp->instructions().isEmpty())
+        parts << (m_compact ? Ai::compactInstructions(m_mcp->instructions()) : m_mcp->instructions());
     // The short request: the guide's main points instead of its whole main text (~7,500 characters)
     if (m_compact) parts << Ai::compactGuide(m_guideTopicList);
     else if (!m_guideText.isEmpty())

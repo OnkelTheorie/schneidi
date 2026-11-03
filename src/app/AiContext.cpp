@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "app/AiContext.h"
 
+#include <QHash>
 #include <QJsonDocument>
+#include <QRegularExpression>
 
 #include <algorithm>
 
@@ -110,8 +112,57 @@ QString firstSentence(const QString& text, int max)
     return cut + ".";
 }
 
+namespace {
+
+// A time parameter takes frames or a text ("4.5s"): in short only the text (seconds are the safest, the guide says)
+void textTimes(QJsonObject& p)
+{
+    const QJsonArray both{"integer", "string"};
+    if (p.value("type").toArray() == both) p["type"] = "string";
+    if (QJsonObject items = p.value("items").toObject(); items.value("type").toArray() == both) {
+        items["type"] = "string";
+        p["items"] = items;
+    }
+}
+
+// An op signature in short: the values and defaults of optional keys left out ("mode?:'peak'|'lufs'" -> "mode?"),
+// `help` with the op has them
+QString shortUsage(const QString& usage)
+{
+    static const QRegularExpression values(R"(\?:(\[[^\]]*\]|'[^']*'(\|'[^']*')*|[A-Za-z0-9_.]+))");
+    return QString(usage).replace(values, "?");
+}
+
+} // namespace
+
+QString compactInstructions(const QString& instructions)
+{
+    // The list of what each tool is for: the tool descriptions say it as well
+    static const QString start = "Edit projects (.schneidi) with these tools:";
+    const qsizetype from = instructions.indexOf(start);
+    if (from < 0) return instructions;
+    int depth = 0;
+    for (qsizetype i = from + start.size(); i < instructions.size(); ++i) {
+        const QChar c = instructions[i];
+        if (c == '(') ++depth;
+        else if (c == ')') depth = std::max(0, depth - 1);
+        else if (c == '.' && depth == 0 && (i + 1 == instructions.size() || instructions[i + 1] == ' '))
+            return instructions.left(from) + "Edit projects (.schneidi) with the tools (each one's description says "
+                                              "what it is for)." + instructions.mid(i + 1);
+    }
+    return instructions;
+}
+
 QJsonArray compactTools(const QJsonArray& tools, const QJsonArray& editOps)
 {
+    // A parameter text several tools share word for word ("project": "project file") says little: left out
+    QHash<QString, int> shared;
+    for (const QJsonValue& v : tools) {
+        const QJsonObject props = v["inputSchema"]["properties"].toObject();
+        for (auto it = props.begin(); it != props.end(); ++it)
+            if (const QString d = it.value().toObject()["description"].toString(); !d.isEmpty())
+                ++shared[it.key() + '\n' + shortParam(d)];
+    }
     QJsonArray out;
     for (const QJsonValue& v : tools) {
         QJsonObject t = v.toObject();
@@ -126,8 +177,10 @@ QJsonArray compactTools(const QJsonArray& tools, const QJsonArray& editOps)
         }
         for (auto it = props.begin(); it != props.end(); ++it) {
             QJsonObject p = it.value().toObject();
-            if (rare || p["description"].toString().isEmpty()) p.remove("description");
-            else p["description"] = shortParam(p["description"].toString());
+            const QString text = shortParam(p["description"].toString());
+            if (rare || text.isEmpty() || shared.value(it.key() + '\n' + text) >= kSharedParam) p.remove("description");
+            else p["description"] = text;
+            textTimes(p);
             it.value() = p;
         }
         if (rare) description += QString(" Parameters in detail: `help` with command '%1'.").arg(name);
@@ -137,7 +190,7 @@ QJsonArray compactTools(const QJsonArray& tools, const QJsonArray& editOps)
         if (name == "edit") {
             QStringList ops;
             for (const QJsonValue& op : editOps)
-                if (const QString usage = op["usage"].toString(); !usage.isEmpty()) ops << usage;
+                if (const QString usage = op["usage"].toString(); !usage.isEmpty()) ops << shortUsage(usage);
             QJsonObject p = props["ops"].toObject();
             p["description"] = "List of operations, applied in order (nothing changes if one fails). Times: frames, "
                                "\"4.5s\", \"HH:MM:SS:FF\" or \"MM:SS\"; ranges [from, to). Tracks: \"V1\", \"A2\". Clip ids "
