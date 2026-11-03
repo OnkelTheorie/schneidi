@@ -801,11 +801,19 @@ const QVector<Command>& commands()
                  "project is open in the schneidi app, the app's project changes instead (one undo step, not saved). "
                  "Answer: 'changes' (added clips and subtitles as `info` shows them, with their new ids; changed "
                  "ones with id, track, start, end and the values that changed, keyframes as a count per parameter; "
-                 "removed ids) and the timeline as a summary.",
+                 "removed ids) and the timeline as a summary. Plan first (the user decides): plan:true changes "
+                 "nothing and answers plan {id, steps:[{n, op, why, summary, changes}]}; then edit with plan_id and "
+                 "run:[step numbers] or \"all\" (one edit, one undo step) or discard:true. A plan is void once the "
+                 "project changes (PLAN_STALE: plan again) and gone after a day.",
          {{"project", T::Path, "project file", true, true},
-          {"ops", T::Json, editHelp(), true},
+          {"ops", T::Json, editHelp() + " (Not with plan_id: a plan runs its own ops.)"},
           {"timeline", T::String, "timeline to edit (id or name from `info`; default: the open one)"},
           {"dry_run", T::Boolean, "only show what would change, do not save"},
+          {"plan", T::Boolean, "make a plan instead of editing: checks every op like dry_run, changes nothing and "
+                               "answers plan {id, steps (n, op, why, summary, changes), summary}; give every op a why"},
+          {"plan_id", T::String, "a plan from plan:true (\"p3\"): run its steps (run) or drop it (discard)"},
+          {"run", T::Times, "with plan_id: the step numbers to run ([1,2,4]) or \"all\"; in the plan's order, as one edit"},
+          {"discard", T::Boolean, "with plan_id: drop the plan without running anything"},
           {"full", T::Boolean, "answer with the whole timeline (every clip, like `info`) instead of the summary"}},
          cmdEdit},
         {"backups", "List the backup copies of a project (every save keeps the previous state, newest first).",
@@ -1278,7 +1286,9 @@ bool runsInApp(const Command& cmd, const QJsonObject& args)
     if (cmd.name == "app" || cmd.name == "import" || cmd.name == "restore") return true;
     // A `watch` pass or setting folders up changes the project; follow only starts passes (each one goes there)
     if (cmd.name == "watch") return !args["list"].toBool() && !args["follow"].toBool();
-    return cmd.name == "edit" && !args["dry_run"].toBool();
+    // A plan is made, run or discarded there too: the app shows it (cli/Live.h) and its state is the app's project
+    return cmd.name == "edit"
+           && (!args["dry_run"].toBool() || args["plan"].toBool() || args.contains("plan_id"));
 }
 
 QJsonObject execute(const Command& cmd, const QJsonObject& args0, Context& ctx)

@@ -6,11 +6,14 @@
 
 #include <QAction>
 #include <QApplication>
+#include <QCheckBox>
 #include <QClipboard>
 #include <QComboBox>
 #include <QCursor>
 #include <QFormLayout>
 #include <QGridLayout>
+#include <QJsonArray>
+#include <QJsonDocument>
 #include <QHBoxLayout>
 #include <QKeyEvent>
 #include <QLabel>
@@ -134,8 +137,14 @@ private:
     QImage m_image;
 };
 
-// One entry of the chat
-class EntryView : public QWidget {
+// What the chat list holds: one widget per entry, updated when the entry changes
+class EntryWidget : public QWidget {
+public:
+    virtual void set(const Entry& e) = 0;
+};
+
+// One entry of the chat (all kinds but plans)
+class EntryView : public EntryWidget {
 public:
     explicit EntryView(Entry::Kind kind)
     {
@@ -197,12 +206,13 @@ public:
             m_text->setTextFormat(Qt::PlainText);
             m_text->setStyleSheet(QString("QLabel { color: %1; }").arg(Theme::warning.name()));
             break;
-        case Entry::Kind::Tool: break;
+        case Entry::Kind::Tool:
+        case Entry::Kind::Plan: break; // (PlanCard)
         }
         lay->addWidget(m_text);
     }
 
-    void set(const Entry& e)
+    void set(const Entry& e) override
     {
         m_entry = e;
         if (m_text) {
@@ -257,6 +267,163 @@ private:
     QGridLayout* m_grid = nullptr;
     int m_shown = 0;
     bool m_open = false;
+};
+
+// A plan of the AI (plan mode): its steps with their reasons and what each changes, a tick per step, "Run" / "Discard".
+// Nothing is changed until the user runs it (one undo step); after that the card shows what became of it.
+class PlanCard : public EntryWidget {
+public:
+    std::function<void(const QString& id, const QVector<int>& steps)> run;
+    std::function<void(const QString& id)> discard;
+
+    PlanCard()
+    {
+        setObjectName("ai_plan");
+        setAttribute(Qt::WA_StyledBackground);
+        setStyleSheet(QString("#ai_plan { background: %1; border: 1px solid %2; border-radius: 4px; }")
+                          .arg(Theme::mix(Theme::panel, Theme::primary, 0.12).name(), Theme::border.name()));
+        auto* lay = new QVBoxLayout(this);
+        lay->setContentsMargins(8, 6, 8, 6);
+        lay->setSpacing(4);
+        m_title = new QLabel;
+        m_title->setStyleSheet("font-weight: 600;");
+        m_title->setWordWrap(true);
+        lay->addWidget(m_title);
+        m_steps = new QVBoxLayout;
+        m_steps->setSpacing(2);
+        lay->addLayout(m_steps);
+        m_state = new QLabel;
+        m_state->setObjectName("ai_plan_state");
+        m_state->setWordWrap(true);
+        m_state->hide();
+        lay->addWidget(m_state);
+        auto* buttons = new QHBoxLayout;
+        m_run = new QPushButton(T("Ausführen"));
+        m_run->setObjectName("ai_plan_run");
+        m_run->setToolTip(T("Die angehakten Schritte ausführen (ein Rückgängig-Schritt)"));
+        m_discard = new QPushButton(T("Verwerfen"));
+        m_discard->setObjectName("ai_plan_discard");
+        m_discard->setToolTip(T("Den Plan verwerfen: nichts davon geschieht"));
+        QObject::connect(m_run, &QPushButton::clicked, this, [this] {
+            if (run) run(m_id, chosen());
+        });
+        QObject::connect(m_discard, &QPushButton::clicked, this, [this] {
+            if (discard) discard(m_id);
+        });
+        buttons->addWidget(m_run);
+        buttons->addWidget(m_discard);
+        buttons->addStretch(1);
+        lay->addLayout(buttons);
+    }
+
+    void set(const Entry& e) override
+    {
+        m_entry = e;
+        if (m_id != e.plan["id"].toString()) build(e.plan);
+        const bool open = e.state == Entry::State::Running;
+        for (QCheckBox* box : std::as_const(m_boxes)) {
+            box->setEnabled(open);
+            if (e.state == Entry::State::Done) box->setChecked(e.ran.contains(box->property("step").toInt()));
+        }
+        QString state;
+        QColor color = Theme::textDim;
+        switch (e.state) {
+        case Entry::State::Running: break;
+        case Entry::State::Done: {
+            QStringList ran;
+            for (int n : e.ran) ran << QString::number(n);
+            state = (ran.size() == 1 ? T("Ausgeführt: Schritt %1 (ein Rückgängig-Schritt).")
+                                     : T("Ausgeführt: Schritte %1 (ein Rückgängig-Schritt)."))
+                        .arg(ran.join(", "));
+            break;
+        }
+        case Entry::State::Stopped: state = T("Verworfen: nichts davon wurde ausgeführt."); break;
+        case Entry::State::Failed:
+            state = e.text;
+            color = Theme::warning;
+            break;
+        }
+        m_state->setText(state);
+        m_state->setStyleSheet(QString("QLabel { color: %1; font-style: italic; }").arg(color.name()));
+        m_state->setVisible(!state.isEmpty());
+        m_run->setVisible(open);
+        m_discard->setVisible(open);
+        updateButtons();
+    }
+
+    void setBusy(bool busy)
+    {
+        m_busy = busy;
+        updateButtons();
+    }
+
+private:
+    void build(const QJsonObject& plan)
+    {
+        m_id = plan["id"].toString();
+        qDeleteAll(m_rows);
+        m_rows.clear();
+        m_boxes.clear();
+        const QJsonArray steps = plan["steps"].toArray();
+        m_title->setText(T("Plan %1 · %2 Schritte").arg(m_id).arg(steps.size()));
+        m_title->setToolTip(T("Nichts ist bisher geändert. Hake an, was geschehen soll."));
+        for (const QJsonValue& v : steps) {
+            const QJsonObject s = v.toObject();
+            const int n = s["n"].toInt();
+            auto* row = new QWidget;
+            auto* rl = new QVBoxLayout(row);
+            rl->setContentsMargins(0, 0, 0, 0);
+            rl->setSpacing(0);
+            const QString why = s["why"].toString().trimmed();
+            const QString op = s["op"].toObject()["op"].toString();
+            auto* box = new QCheckBox(QString("%1. %2").arg(n).arg(why.isEmpty() ? op : why));
+            box->setObjectName(QString("ai_plan_step_%1").arg(n));
+            box->setProperty("step", n);
+            box->setChecked(true);
+            box->setToolTip(QString::fromUtf8(QJsonDocument(s["op"].toObject()).toJson(QJsonDocument::Indented)));
+            QObject::connect(box, &QCheckBox::toggled, this, [this] { updateButtons(); });
+            rl->addWidget(box);
+            // What it changes, in the user's words (the op's name stays: it is what the tool line shows)
+            const QJsonObject c = s["changes"].toObject();
+            const QString counts = T("%1: %2 neu, %3 geändert, %4 entfernt")
+                                       .arg(op)
+                                       .arg(c["added"].toArray().size())
+                                       .arg(c["changed"].toArray().size())
+                                       .arg(c["removed"].toArray().size());
+            QLabel* detail = dimLabel(counts);
+            detail->setContentsMargins(22, 0, 0, 0);
+            rl->addWidget(detail);
+            m_steps->addWidget(row);
+            m_rows << row;
+            m_boxes << box;
+        }
+    }
+
+    QVector<int> chosen() const
+    {
+        QVector<int> out;
+        for (const QCheckBox* box : m_boxes)
+            if (box->isChecked()) out << box->property("step").toInt();
+        return out;
+    }
+
+    void updateButtons()
+    {
+        const bool open = m_entry.state == Entry::State::Running;
+        m_run->setEnabled(open && !m_busy && !chosen().isEmpty());
+        m_discard->setEnabled(open && !m_busy);
+    }
+
+    Entry m_entry;
+    QString m_id;
+    QLabel* m_title = nullptr;
+    QVBoxLayout* m_steps = nullptr;
+    QLabel* m_state = nullptr;
+    QPushButton* m_run = nullptr;
+    QPushButton* m_discard = nullptr;
+    QVector<QWidget*> m_rows;
+    QVector<QCheckBox*> m_boxes;
+    bool m_busy = false;
 };
 
 } // namespace
@@ -448,7 +615,16 @@ void AiChatPanel::addEntry(int index)
 {
     flush();
     const Entry& e = m_chat->entries().value(index);
-    auto* view = new EntryView(e.kind);
+    EntryWidget* view = nullptr;
+    if (e.kind == Entry::Kind::Plan) {
+        auto* card = new PlanCard;
+        card->run = [this](const QString& id, const QVector<int>& steps) { emit planRun(id, steps); };
+        card->discard = [this](const QString& id) { emit planDiscarded(id); };
+        card->setBusy(m_chat->busy());
+        view = card;
+    } else {
+        view = new EntryView(e.kind);
+    }
     view->set(e);
     m_listLayout->insertWidget(m_listLayout->indexOf(m_working), view); // above the working line and the stretch
     m_widgets << view;
@@ -460,7 +636,7 @@ void AiChatPanel::addEntry(int index)
 void AiChatPanel::updateEntry(int index)
 {
     if (index < 0 || index >= m_widgets.size() || index >= m_chat->entries().size()) return;
-    static_cast<EntryView*>(m_widgets[index])->set(m_chat->entries()[index]);
+    static_cast<EntryWidget*>(m_widgets[index])->set(m_chat->entries()[index]);
 }
 
 void AiChatPanel::flush()
@@ -516,6 +692,8 @@ void AiChatPanel::updateBusy(bool busy)
 {
     if (busy) m_tick->start();
     else m_tick->stop();
+    for (QWidget* w : std::as_const(m_widgets)) // a plan runs only while the AI is not working
+        if (auto* card = dynamic_cast<PlanCard*>(w)) card->setBusy(busy);
     updateWorking();
     m_sendButton->setText(busy ? T("Stopp") : T("Senden"));
     m_sendButton->setToolTip(busy ? T("Die KI anhalten") : T("Senden (Enter)"));

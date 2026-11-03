@@ -34,14 +34,17 @@
 #include <QBuffer>
 #include <QColor>
 #include <QCoreApplication>
+#include <QCryptographicHash>
 #include <QDateTime>
 #include <QDir>
 #include <QElapsedTimer>
 #include <QEventLoop>
+#include <QFile>
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QPainter>
+#include <QRegularExpression>
 #include <QUndoStack>
 
 #include <algorithm>
@@ -326,15 +329,75 @@ QString frameRateNote(const Project& p, const QString& video)
         .arg(std::round(cf.suggested.fps() * 1000) / 1000);
 }
 
-QJsonObject cmdEdit(const QJsonObject& a, Context&)
+namespace {
+
+// ---------- Plans (edit plan:true, then plan_id + run or discard) ----------
+
+constexpr int kPlanHours = 24; // a plan nobody ran or discarded is gone after this
+
+// Plans of a project live beside its backups (AppDataLocation, portable); a project in the app never saved has
+// one folder for all of them (the project state in each plan tells them apart)
+QString planDir(const QString& projectPath)
 {
-    Session s(a["project"].toString(), a["dry_run"].toBool() ? Session::Access::Read : Session::Access::Write);
-    s.selectTimeline(a["timeline"]);
-    QJsonValue opsValue = a["ops"];
-    if (opsValue.isObject()) opsValue = QJsonArray{opsValue};
-    const QJsonArray ops = opsValue.toArray();
-    if (ops.isEmpty()) fail("BAD_ARGUMENT", "'ops' must be a non-empty list of operations");
+    if (projectPath.isEmpty()) return QDir(ProjectFile::backupDir({})).filePath("unsaved-plans");
+    return QDir(ProjectFile::backupDir(projectPath)).filePath("plans");
+}
+
+// The project a plan is made on, as a fingerprint: a plan runs only on exactly that state. Not part of it: what does
+// not change what the ops do (playhead, render queue, which timeline is open - the plan names its timeline).
+// Inside the app the app's own project (a planning session there edits a copy of it).
+QByteArray planBase(const Session& s, const QString& path)
+{
+    ProjectData d = Live::host() ? Live::host()->liveProject()->data() : s.project.data();
+    d.playhead = 0;
+    d.renderQueue.clear();
+    d.currentSequence = -1; // every timeline in "sequences"
+    d.timeline = emptyTimeline();
+    return QCryptographicHash::hash(ProjectFile::toJson(d, path), QCryptographicHash::Sha256).toHex();
+}
+
+// Removes plans older than kPlanHours; returns the ids of those left
+QStringList prunePlans(const QString& dir)
+{
+    QStringList ids;
+    const QDateTime limit = QDateTime::currentDateTimeUtc().addSecs(-kPlanHours * 3600);
+    for (const QFileInfo& fi : QDir(dir).entryInfoList({"p*.json"}, QDir::Files, QDir::Name)) {
+        if (fi.lastModified().toUTC() < limit) QFile::remove(fi.absoluteFilePath());
+        else ids << fi.completeBaseName();
+    }
+    std::sort(ids.begin(), ids.end(), [](const QString& x, const QString& y) { return x.mid(1).toInt() < y.mid(1).toInt(); });
+    return ids;
+}
+
+// A new plan id: p1, p2 … per folder, never given twice (a counter file; an old id never names a newer plan)
+QString newPlanId(const QString& dir)
+{
+    QFile counter(QDir(dir).filePath("next"));
+    int next = 1;
+    if (counter.open(QIODevice::ReadOnly)) next = std::max(1, counter.readAll().trimmed().toInt());
+    counter.close();
+    while (QFileInfo::exists(QDir(dir).filePath(QString("p%1.json").arg(next)))) ++next;
+    if (counter.open(QIODevice::WriteOnly | QIODevice::Truncate)) counter.write(QByteArray::number(next + 1));
+    return QString("p%1").arg(next);
+}
+
+// One line for a step: what it changes in numbers ("keep: 2 added, 1 changed")
+QString stepSummary(const QString& op, const QJsonObject& changes)
+{
+    QStringList parts;
+    if (const int n = changes["added"].toArray().size()) parts << QString("%1 added").arg(n);
+    if (const int n = changes["changed"].toArray().size()) parts << QString("%1 changed").arg(n);
+    if (const int n = changes["removed"].toArray().size()) parts << QString("%1 removed").arg(n);
+    return op + ": " + (parts.isEmpty() ? QString("no clip or subtitle changes") : parts.join(", "));
+}
+
+// Applies `ops` in order (all or nothing) and answers like `edit`. steps (plan): what each op would change.
+// numbers: the plan's step numbers of the ops (errors name them), empty = op indexes.
+QJsonObject applyEdit(Session& s, const QJsonArray& ops, const QJsonObject& a, bool dry, QJsonArray* steps = nullptr,
+                      const QVector<int>& numbers = {})
+{
     const QMap<QString, Shown> before = shownItems(s.project);
+    QMap<QString, Shown> last = before;
     for (int i = 0; i < ops.size(); ++i) {
         try {
             if (!ops[i].isObject()) fail("BAD_ARGUMENT", "operation is not an object");
@@ -342,10 +405,21 @@ QJsonObject cmdEdit(const QJsonObject& a, Context&)
             applyOp(s, ops[i].toObject());
             s.opIndex = -1;
         } catch (const Error& e) {
+            if (!numbers.isEmpty())
+                throw Error{e.code, QString("step %1 (%2): %3").arg(numbers.value(i)).arg(ops[i]["op"].toString(), e.message)};
             throw Error{e.code, QString("op %1 (%2): %3").arg(i).arg(ops[i]["op"].toString(), e.message)};
         }
+        if (steps) {
+            const QMap<QString, Shown> now = shownItems(s.project);
+            const QJsonObject op = ops[i].toObject();
+            const QJsonObject changes = changesJson(last, now, s.project.currentSequence());
+            QJsonObject step{{"n", i + 1}, {"op", op}, {"summary", stepSummary(op["op"].toString(), changes)},
+                             {"changes", changes}};
+            if (const QString why = op["why"].toString().trimmed(); !why.isEmpty()) step["why"] = why;
+            *steps << step;
+            last = now;
+        }
     }
-    const bool dry = a["dry_run"].toBool();
     // The timeline edited last (save() may switch back to the one the app opens): what changed and a summary; the
     // whole timeline only on request (an AI reads every answer: it was up to 56 KB per edit)
     const QJsonObject tl = timelineJson(s.project);
@@ -360,6 +434,127 @@ QJsonObject cmdEdit(const QJsonObject& a, Context&)
         const QString backup = s.save();
         if (!backup.isEmpty()) o["backup"] = backup;
     }
+    return o;
+}
+
+// edit plan_id + run|discard: runs the chosen steps of a plan as one edit (one undo step in the app) or drops it
+QJsonObject runPlan(const QJsonObject& a)
+{
+    const QString id = a["plan_id"].toString().trimmed().toLower();
+    const bool discard = a["discard"].toBool();
+    if (a.contains("ops") || a["plan"].toBool())
+        fail("BAD_ARGUMENT", "plan_id runs the plan's own ops: give run (step numbers or \"all\") or discard:true, "
+                             "no 'ops' or 'plan'");
+    if (!discard && !a.contains("run"))
+        fail("BAD_ARGUMENT", "plan_id needs run:[step numbers] (or \"all\") or discard:true");
+    if (discard && a.contains("run")) fail("BAD_ARGUMENT", "run or discard, not both");
+    Session s(a["project"].toString(), discard ? Session::Access::Read : Session::Access::Write);
+    const QString dir = planDir(s.path);
+    const QStringList ids = prunePlans(dir);
+    static const QRegularExpression valid("^p[1-9][0-9]{0,8}$");
+    const QString file = QDir(dir).filePath(id + ".json");
+    QFile f(file);
+    if (!valid.match(id).hasMatch() || !f.open(QIODevice::ReadOnly))
+        fail("NOT_FOUND", QString("no plan '%1' for this project (%2; a plan is gone once it was run or discarded, "
+                                  "and after %3 h)")
+                              .arg(a["plan_id"].toString(), ids.isEmpty() ? QString("it has none")
+                                                                          : "it has: " + ids.join(", "))
+                              .arg(kPlanHours));
+    const QJsonObject plan = QJsonDocument::fromJson(f.readAll()).object();
+    f.close();
+    if (discard) {
+        QFile::remove(file);
+        return {{"project", s.path}, {"plan", QJsonObject{{"id", id}, {"discarded", true}}}};
+    }
+    if (planBase(s, s.path) != plan["base"].toString().toLatin1())
+        fail("PLAN_STALE", QString("the project changed since plan %1 was made (an edit, the user's own changes or an "
+                                   "undo); nothing was run - look at `info` and plan again (edit with plan:true)")
+                               .arg(id));
+    const QJsonArray all = plan["ops"].toArray();
+    QVector<int> chosen;
+    const QJsonValue run = a["run"];
+    const bool everything = (run.isString() && run.toString().trimmed().toLower() == "all")
+                            || (run.isArray() && run.toArray().size() == 1 && run.toArray()[0].toString().toLower() == "all");
+    if (everything)
+        for (int n = 1; n <= all.size(); ++n) chosen << n;
+    else
+        for (const QJsonValue& v : run.toArray()) {
+            bool ok = v.isDouble();
+            const int n = ok ? v.toInt() : v.toString().trimmed().toInt(&ok);
+            if (!ok || n < 1 || n > all.size())
+                fail("BAD_ARGUMENT", QString("plan %1 has steps 1 to %2, not '%3'").arg(id).arg(all.size()).arg(v.toVariant().toString()));
+            if (!chosen.contains(n)) chosen << n;
+        }
+    if (chosen.isEmpty()) fail("BAD_ARGUMENT", "run: no step chosen (step numbers like [1,2,4] or \"all\")");
+    std::sort(chosen.begin(), chosen.end()); // always in the plan's order
+    QJsonArray ops;
+    for (int n : chosen) ops << all[n - 1];
+    if (const int seq = plan["timeline"].toInt(); s.project.sequence(seq)) s.selectTimeline(seq);
+    QJsonObject o = applyEdit(s, ops, a, false, nullptr, chosen);
+    QFile::remove(file); // done: the project is another one now
+    if (o.contains("why")) { // by the plan's step numbers, not by the index among the steps run
+        QJsonArray why;
+        for (const QJsonValue& v : o["why"].toArray()) {
+            QJsonObject w = v.toObject();
+            if (w.contains("index")) w["step"] = chosen.value(w.take("index").toInt());
+            why << w;
+        }
+        o["why"] = why;
+    }
+    QJsonArray ran, skipped;
+    for (int n = 1; n <= all.size(); ++n) (chosen.contains(n) ? ran : skipped) << n;
+    QJsonObject done{{"id", id}, {"ran", ran}};
+    if (!skipped.isEmpty()) done["skipped"] = skipped;
+    o["plan"] = done;
+    return o;
+}
+
+} // namespace
+
+QJsonObject cmdEdit(const QJsonObject& a, Context&)
+{
+    if (a.contains("plan_id")) return runPlan(a);
+    if (a.contains("run") || a.contains("discard"))
+        fail("BAD_ARGUMENT", "run/discard belong to a plan: give plan_id (from the answer of edit with plan:true)");
+    const bool plan = a["plan"].toBool();
+    const bool dry = a["dry_run"].toBool() || plan;
+    Session s(a["project"].toString(), dry ? Session::Access::Read : Session::Access::Write);
+    const QByteArray base = plan ? planBase(s, s.path) : QByteArray();
+    s.selectTimeline(a["timeline"]);
+    const int sequence = s.project.currentSequence();
+    QJsonValue opsValue = a["ops"];
+    if (opsValue.isObject()) opsValue = QJsonArray{opsValue};
+    const QJsonArray ops = opsValue.toArray();
+    if (ops.isEmpty()) fail("BAD_ARGUMENT", "'ops' must be a non-empty list of operations");
+    QJsonArray steps;
+    QJsonObject o = applyEdit(s, ops, a, dry, plan ? &steps : nullptr);
+    if (!plan) return o;
+    // A plan: nothing changed; the ops (as given, with their reasons) wait for the user's choice
+    const QString dir = planDir(s.path);
+    if (!QDir().mkpath(dir)) fail("SAVE_FAILED", "cannot write the plan into " + dir);
+    prunePlans(dir);
+    const QString id = newPlanId(dir);
+    const QDateTime now = QDateTime::currentDateTimeUtc();
+    const QJsonObject stored{{"id", id}, {"created", now.toString(Qt::ISODate)}, {"project", s.path},
+                             {"timeline", sequence}, {"base", QString::fromLatin1(base)}, {"ops", ops}};
+    QFile f(QDir(dir).filePath(id + ".json"));
+    if (!f.open(QIODevice::WriteOnly) || f.write(QJsonDocument(stored).toJson(QJsonDocument::Compact)) < 0)
+        fail("SAVE_FAILED", "cannot write the plan " + f.fileName());
+    f.close();
+    int added = 0, changed = 0, removed = 0;
+    const QJsonObject total = o["changes"].toObject();
+    added = total["added"].toArray().size();
+    changed = total["changed"].toArray().size();
+    removed = total["removed"].toArray().size();
+    o["saved"] = false;
+    o["plan"] = QJsonObject{
+        {"id", id},
+        {"steps", steps},
+        {"summary", QString("%1 step(s): %2 added, %3 changed, %4 removed").arg(ops.size()).arg(added).arg(changed).arg(removed)},
+        {"expires", now.addSecs(kPlanHours * 3600).toString(Qt::ISODate)},
+        {"next", QString("nothing changed yet: run the steps with edit {plan_id:'%1', run:[1,2,…] or \"all\"} (one "
+                         "edit, one undo step in the app), or edit {plan_id:'%1', discard:true}; the plan is void "
+                         "once the project changes").arg(id)}};
     return o;
 }
 

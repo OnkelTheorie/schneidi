@@ -127,6 +127,30 @@ void AiChat::addNotice(const QString& text) { add({Entry::Kind::Notice, text}); 
 
 void AiChat::addError(const QString& text) { add({Entry::Kind::Error, text}); }
 
+int AiChat::addPlan(const QJsonObject& plan)
+{
+    Entry e{Entry::Kind::Plan, plan["summary"].toString()};
+    e.plan = plan;
+    e.state = Entry::State::Running;
+    return add(std::move(e));
+}
+
+int AiChat::planEntry(const QString& id) const
+{
+    for (int i = int(m_entries.size()) - 1; i >= 0; --i)
+        if (m_entries[i].kind == Entry::Kind::Plan && m_entries[i].plan["id"].toString() == id) return i;
+    return -1;
+}
+
+void AiChat::setPlanState(const QString& id, Entry::State state, const QVector<int>& ran, const QString& text)
+{
+    change(planEntry(id), [&](Entry& e) {
+        e.state = state;
+        e.ran = ran;
+        if (!text.isEmpty()) e.text = text;
+    });
+}
+
 void AiChat::setBusy(bool on)
 {
     if (m_busy == on) return;
@@ -148,7 +172,35 @@ void AiChat::appendUser(const QString& text, const QVector<Ai::ToolResult>& resu
     m_history << m;
 }
 
-bool AiChat::send(const QString& text, const Ai::Endpoint& endpoint, bool review)
+namespace {
+
+// How the user takes the AI's changes, for the system prompt (switched = a note when it changes during a chat)
+QString modeNote(AiChat::Mode mode, bool switched)
+{
+    switch (mode) {
+    case AiChat::Mode::Review:
+        return switched ? "from now on the user reviews your changes at the end of each request and accepts or "
+                          "discards them together"
+                        : "- The user reviews your changes: when your answer is done, they accept all changes of the "
+                          "request as one undo step or discard them. Do the whole request in one go instead of asking "
+                          "for confirmation in between.\n";
+    case AiChat::Mode::Plan:
+        return QString(switched ? "from now on the user wants a plan first: " : "- Plan mode: the user wants a plan first. ")
+               + "Look at the project and the material as needed, then put the whole change into ONE `edit` call with "
+                 "plan:true and every op with a why (the reason, in the user's language). That changes nothing; the "
+                 "app shows the plan to the user as a card where they tick the steps and run them (or discard the "
+                 "plan). Then end your answer with a short summary of the plan. Do not run the plan yourself (edit "
+                 "without plan:true is refused while plan mode is on). The next request tells you what the user ran."
+               + (switched ? "" : "\n");
+    case AiChat::Mode::Auto: break;
+    }
+    return switched ? "from now on your changes take effect right away, one undo step per edit"
+                    : "- Your changes take effect right away; the user can undo each edit.\n";
+}
+
+} // namespace
+
+bool AiChat::send(const QString& text, const Ai::Endpoint& endpoint, Mode mode)
 {
     if (m_busy || text.trimmed().isEmpty()) return false;
     if (m_offline) {
@@ -186,13 +238,9 @@ bool AiChat::send(const QString& text, const Ai::Endpoint& endpoint, bool review
         message = notes.join('\n') + "\n\n" + message;
         m_notes.clear();
     }
-    if (!m_system.isEmpty() && review != m_review) // the prompt stays as it is for the whole chat
-        message = QString("[Note from the schneidi app: %1]\n\n").arg(
-                      review ? "from now on the user reviews your changes at the end of each request and accepts or "
-                               "discards them together"
-                             : "from now on your changes take effect right away, one undo step per edit")
-                  + message;
-    m_review = review;
+    if (!m_system.isEmpty() && mode != m_mode) // the prompt stays as it is for the whole chat
+        message = QString("[Note from the schneidi app: %1]\n\n").arg(modeNote(mode, true)) + message;
+    m_mode = mode;
     appendUser(message);
     setBusy(true);
     // The model's context, once per address and model, while the tools start (a short timeout: no server says it = 0,
@@ -289,10 +337,7 @@ QString AiChat::systemPrompt() const
     if (m_endpoint.protocol != Ai::Protocol::Anthropic)
         app += "- Never ask the user for file paths or clip ids: `info` with \"@app\" lists the project's media files "
                "(absolute paths) and its clips with their ids. Make tool calls; do not write them as text.\n";
-    app += m_review ? "- The user reviews your changes: when your answer is done, they accept all changes of the "
-                      "request as one undo step or discard them. Do the whole request in one go instead of asking for "
-                      "confirmation in between.\n"
-                    : "- Your changes take effect right away; the user can undo each edit.\n";
+    app += modeNote(m_mode, false);
     parts << app;
     return parts.join("\n\n");
 }
@@ -656,6 +701,15 @@ QString AiChat::transcript() const
         case Entry::Kind::Tool: out << "  › " + e.summary; break;
         case Entry::Kind::Notice:
         case Entry::Kind::Error: out << "  (" + e.text + ")"; break;
+        case Entry::Kind::Plan: {
+            QStringList steps{"  " + T("Plan %1:").arg(e.plan["id"].toString())};
+            for (const QJsonValue& s : e.plan["steps"].toArray()) {
+                const QString why = s["why"].toString();
+                steps << QString("   %1. %2%3").arg(s["n"].toInt()).arg(s["summary"].toString(), why.isEmpty() ? QString() : " – " + why);
+            }
+            out << steps.join('\n');
+            break;
+        }
         }
     }
     return out.join("\n\n") + "\n";
@@ -673,7 +727,11 @@ QString AiChat::toolLine(const QString& tool, const QJsonObject& args)
         {"watch", N_("Sieht in überwachten Ordnern nach")},
     };
     QString line;
-    if (tool == "edit") line = T("Bearbeitet: %1").arg(opsOf(args));
+    const QString plan = args["plan_id"].toString().trimmed();
+    if (tool == "edit" && !plan.isEmpty())
+        line = args["discard"].toBool() ? T("Verwirft Plan %1").arg(plan) : T("Führt Plan %1 aus").arg(plan);
+    else if (tool == "edit" && args["plan"].toBool()) line = T("Plant: %1").arg(opsOf(args));
+    else if (tool == "edit") line = T("Bearbeitet: %1").arg(opsOf(args));
     else if (tool == "app") line = T("Steuert die App: %1").arg(args["action"].toString());
     else if (steps.contains(tool)) line = T(steps.value(tool));
     else line = capitalized(AiLog::jobText(tool)); // analyses, render … (same words as the AI log)

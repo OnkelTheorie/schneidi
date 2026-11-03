@@ -94,6 +94,8 @@ public:
     void liveChanged(const LiveChange& change) override;
     void liveActivity(const LiveActivity& activity) override;
     void liveCommandRunning(bool running, bool ownChat) override;
+    void livePlan(const QString& state, const QJsonObject& plan, bool ownChat) override;
+    bool livePlanOnly() const override;
     // AI log (click on the AI indicator, Workspace › AI Log): popup under the indicator
     void showAiLog();
     class AiLog* aiLog() const { return m_aiLog; }
@@ -111,6 +113,12 @@ public:
     // does not link the command layer) with the environment of the live connection (Cli::Live::Server::chatEnvironment)
     void setAiChatTools(const QStringList& command, const QHash<QString, QString>& environment);
     void setAiChatOffline(bool on); // test runs: the chat never sends anything
+    // Runs a command for the chat's plan card (the live connection's Cli::Live::Server::runForChat; main.cpp hands it
+    // in): its reply {"ok":true,"result"} or {"ok":false,"error":{code,message}}
+    void setChatRunner(const std::function<QJsonObject(const QString& command, const QJsonObject& args)>& run)
+    {
+        m_chatRunner = run;
+    }
     class AiChat* aiChat() const { return m_chat; }
     class AiChatPanel* aiChatPanel() const { return m_chatPanel; }
     void showAiChat(bool on);
@@ -394,6 +402,9 @@ private:
     void chatUndoChanged();
     void acceptChatChanges();
     void discardChatChanges();
+    void runChatPlan(const QString& id, const QVector<int>& steps); // plan card: the ticked steps, one undo step
+    void discardChatPlan(const QString& id);
+    std::function<QJsonObject(const QString&, const QJsonObject&)> m_chatRunner;
     class AiChat* m_chat = nullptr;
     class AiChatPanel* m_chatPanel = nullptr;
     QSplitter* m_chatSplit = nullptr;

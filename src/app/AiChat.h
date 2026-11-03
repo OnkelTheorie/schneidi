@@ -13,6 +13,7 @@
 #include <QElapsedTimer>
 #include <QHash>
 #include <QImage>
+#include <QJsonObject>
 #include <QObject>
 #include <QStringList>
 #include <QVector>
@@ -27,7 +28,9 @@ class AiChat : public QObject {
 public:
     // What the panel shows, in order
     struct Entry {
-        enum class Kind { User, Assistant, Tool, Notice, Error };
+        // Plan: a plan the AI made (plan mode): its steps with reasons, the user runs the ticked ones or discards it
+        enum class Kind { User, Assistant, Tool, Notice, Error, Plan };
+        // Plan: Running = waits for the user, Done = run, Stopped = discarded, Failed = could not run (text: why)
         enum class State { Running, Done, Failed, Stopped };
         Kind kind = Kind::Notice;
         QString text;    // what the user or the model wrote, a notice, an error
@@ -37,7 +40,11 @@ public:
         QVector<QImage> images; // Tool: pictures it returned (frames)
         State state = State::Done;
         int percent = -1; // Tool: progress while it runs
+        QJsonObject plan; // Plan: the plan as `edit` answered it {id, steps:[{n, op, why, summary, changes}], summary}
+        QVector<int> ran; // Plan: the steps that were run (Done)
     };
+    // How the user wants the AI's changes: right away, reviewed at the end of a request, or as a plan first
+    enum class Mode { Auto, Review, Plan };
 
     explicit AiChat(QObject* parent = nullptr);
     ~AiChat() override;
@@ -54,15 +61,20 @@ public:
     void setOffline(bool on) { m_offline = on; }
     bool offline() const { return m_offline; }
 
-    // A request of the user, to `endpoint`; review = the user accepts or discards the turn's changes at its end.
-    // false = not now (a turn runs, or a test run)
-    bool send(const QString& text, const Ai::Endpoint& endpoint, bool review);
+    // A request of the user, to `endpoint`; mode: Review = the user accepts or discards the turn's changes at its end,
+    // Plan = the AI makes a plan (`edit` plan:true) the user runs from its card. false = not now (a turn runs, a test run)
+    bool send(const QString& text, const Ai::Endpoint& endpoint, Mode mode = Mode::Auto);
     void stop();  // ends the running turn now (what the model wrote so far stays)
     void clear(); // a new chat
     // Goes to the model with the next request ("the user discarded your changes")
     void addNote(const QString& text) { m_notes << text; }
     void addNotice(const QString& text); // shown only
     void addError(const QString& text);
+    // Plans (shown as a card): a new one, and what became of it (state Done with the steps run, Stopped, Failed with
+    // the reason as text). -1 / nothing when there is no card of that id.
+    int addPlan(const QJsonObject& plan);
+    int planEntry(const QString& id) const;
+    void setPlanState(const QString& id, Entry::State state, const QVector<int>& ran = {}, const QString& text = {});
 
     bool busy() const { return m_busy; }
     QString request() const { return m_request; } // what the user asked for in the running/last turn
@@ -125,7 +137,7 @@ private:
     QStringList m_notes;
     QString m_request;
     Ai::Endpoint m_endpoint;
-    bool m_review = false;
+    Mode m_mode = Mode::Auto;
     QString m_system; // fixed for the chat (providers cache it with the tools)
     QString m_guideText; // the editing guide (the `guide` tool), read once
     QString m_guideTopicList; // its task guides, one "- social: Short, Reel …" line each

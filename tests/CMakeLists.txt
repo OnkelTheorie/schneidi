@@ -142,6 +142,11 @@ schneidi_test(test_live_talk017) # jl_cut and room_tone live in the app: one und
 target_link_libraries(test_live_talk017 PRIVATE schneidi_cli_lib)
 target_compile_definitions(test_live_talk017 PRIVATE SCHNEIDI_CLI="$<TARGET_FILE:schneidi-cli>")
 add_dependencies(test_live_talk017 schneidi-cli)
+# 0.17 plans: edit plan:true changes nothing, plan_id + run/discard, stale/expired/unknown, live = file, plan mode
+schneidi_test(test_edit_plan)
+target_link_libraries(test_edit_plan PRIVATE schneidi_cli_lib)
+target_compile_definitions(test_edit_plan PRIVATE SCHNEIDI_CLI="$<TARGET_FILE:schneidi-cli>")
+add_dependencies(test_edit_plan schneidi-cli)
 # Files handed to the running app (single instance over the live connection), videos opened as projects, `app open`,
 # the real program offscreen
 schneidi_test(test_open_in_app)

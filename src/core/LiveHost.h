@@ -89,4 +89,14 @@ public:
         Q_UNUSED(running);
         Q_UNUSED(ownChat);
     }
+    // Plans (`edit` with plan:true, then plan_id + run/discard; nothing changes until a run): state "made" (plan =
+    // the answer's plan {id, steps, summary}), "ran" or "discarded" (plan = {id, ran?}); ownChat = the app's own chat
+    virtual void livePlan(const QString& state, const QJsonObject& plan, bool ownChat)
+    {
+        Q_UNUSED(state);
+        Q_UNUSED(plan);
+        Q_UNUSED(ownChat);
+    }
+    // Plan mode of the app's own chat (Settings › AI): its edits must be plans; the user runs them from the chat
+    virtual bool livePlanOnly() const { return false; }
 };

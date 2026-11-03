@@ -23,6 +23,9 @@
 //                                              refused; opened right after the answer, or once the app stops waiting)
 // hello and open are also answered while a command runs (others wait for its end): a hand-over meanwhile is queued
 // attach, snapshot and run while the app waits -> {"ok":false,"error":{"code":"APP_WAITING","message":text}}
+// Plans (`edit` plan:true, plan_id + run/discard) run in the app too: making or dropping one is no undo step, the host
+// hears of them (LiveHost::livePlan); in the chat's plan mode (LiveHost::livePlanOnly) the chat's other edits are
+// refused with PLAN_MODE - the user runs a plan through Server::runForChat.
 // hello of an app that refuses AIs has "allowed":false and "refusal": why (the user disconnected, or the setting)
 //
 // The app's own AI chat starts `schneidi-cli mcp` with the environment of Server::chatEnvironment(): that process
@@ -89,6 +92,10 @@ public:
     // the app until it disconnects; Settings › AI)
     int idleLimit() const { return m_idleMs; }
     void setIdleLimit(int ms);
+    // A command the app itself runs for the user on behalf of its own chat (a plan's steps from the chat's plan card:
+    // edit plan_id + run/discard), as the chat's commands run: one undo step, lit up, in the AI log. The reply as for
+    // a "run" request ({"ok":true,"result"} or {"ok":false,"error"}); APP_BUSY while another command runs.
+    QJsonObject runForChat(const QString& command, const QJsonObject& args);
 
 signals:
     void stateChanged(); // attached/allowed changed
@@ -105,7 +112,7 @@ private:
     void onConnection();
     void onReadyRead(QLocalSocket* s);
     void handle(QLocalSocket* s, const QJsonObject& msg);
-    QJsonObject runCommand(const QJsonObject& msg, bool ownChat);
+    QJsonObject runCommand(const QJsonObject& msg, bool ownChat, bool byUser = false);
     void attach(QLocalSocket* s, const QString& client);
     void detach(QLocalSocket* s);
     void letGoIfIdle();
