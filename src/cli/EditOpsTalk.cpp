@@ -1,14 +1,20 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// schneidi-cli edit operations for talk (interviews, vlogs, podcasts): J/L cuts (the sound edge of a cut alone)
-// and room tone in the gaps of a dialogue track
+// schneidi-cli edit operations for talk (interviews, vlogs, podcasts): J/L cuts (the sound edge of a cut alone),
+// room tone in the gaps of a dialogue track, a rough cut from a script and the best takes (core/ScriptAlign)
 #include "cli/CommandsDetail.h"
 
+#include "cli/Commands.h"
 #include "core/RoomTone.h"
+#include "core/ScriptAlign.h"
 #include "core/TimelineOps.h"
+#include "core/TranscriptCut.h"
 #include "engine/AudioAnalysis.h"
+#include "engine/Extensions.h"
 
+#include <QFile>
 #include <QFileInfo>
 #include <QHash>
+#include <QJsonArray>
 #include <QSet>
 
 #include <algorithm>
@@ -275,7 +281,232 @@ void opRoomTone(Session& s, const QJsonObject& op)
     }
 }
 
+// ---------- rough_cut, best_takes ----------
+
+double round2(double v) { return std::round(v * 100) / 100; }
+
+// The words of a file's transcript (the project's, of its first transcribed stream), seconds
+QVector<ScriptAlign::Word> wordsOf(const MediaTranscript& t)
+{
+    QVector<ScriptAlign::Word> out;
+    for (const TranscriptWord& w : t.words) out << ScriptAlign::Word{w.text, w.from / 1000.0, w.to / 1000.0};
+    return out;
+}
+
+// whisper on a file in this process (schneidi-cli; never in the app): the words with their spoken end, ms
+QVector<TranscriptWord> transcribeFile(const QString& file, const QString& language, QString* lang)
+{
+    QJsonObject a{{"source", file}, {"words", true}};
+    if (!language.isEmpty()) a["language"] = language;
+    Context ctx;
+    const QJsonObject r = execute(*find("transcribe"), a, ctx);
+    const double fps = r["fps"].toDouble(25);
+    QVector<TranscriptWord> words;
+    for (const QJsonValue& v : r["words"].toArray())
+        words << TranscriptWord{qint64(std::lround(v["from"].toDouble() / fps * 1000)),
+                                qint64(std::lround(v["to"].toDouble() / fps * 1000)), v["text"].toString()};
+    if (lang) *lang = r["language"].toString();
+    return words;
+}
+
+bool canTranscribe() { return !Extensions::whisperProgram().isEmpty() && !Extensions::installedWhisperModels().isEmpty(); }
+
+QStringList roughCutMedia(Session& s, const QJsonObject& op)
+{
+    QStringList files;
+    const QJsonValue given = op.value("media");
+    for (const QJsonValue& v : given.isArray() ? given.toArray() : given.isUndefined() ? QJsonArray{} : QJsonArray{given})
+        files << s.media(v.toString()).path;
+    if (files.isEmpty())
+        for (const MediaInfo& m : s.project.media())
+            if (m.hasAudio && !m.transcripts.isEmpty()) files << m.path;
+    if (files.isEmpty())
+        fail("BAD_ARGUMENT", "missing 'media' (the recordings to cut from); no file of the project has a transcript yet");
+    return files;
+}
+
+QString scriptOf(Session& s, const QJsonObject& op)
+{
+    if (op.contains("script_file")) {
+        QFile f(absolute(op.value("script_file").toString()));
+        if (!f.open(QIODevice::ReadOnly)) fail("NOT_FOUND", "cannot read script_file " + f.fileName());
+        return QString::fromUtf8(f.readAll());
+    }
+    const QString text = op.value("script").toString();
+    if (text.trimmed().isEmpty()) fail("BAD_ARGUMENT", "missing 'script' (the text, sentences ending with . ! ?) or 'script_file'");
+    return text;
+}
+
+void opRoughCut(Session& s, const QJsonObject& op)
+{
+    const QVector<ScriptAlign::Sentence> script = ScriptAlign::sentences(scriptOf(s, op));
+    if (script.isEmpty()) fail("BAD_ARGUMENT", "the script has no words");
+    const QString pickName = op.value("takes").toString("last_good");
+    if (pickName != "last_good" && pickName != "best") fail("BAD_ARGUMENT", "takes must be 'last_good' or 'best'");
+    const ScriptAlign::Pick pick = pickName == "best" ? ScriptAlign::Pick::Best : ScriptAlign::Pick::LastGood;
+    const QStringList files = roughCutMedia(s, op);
+    // Every file's words: its transcript in the project, else made now (whisper, made before the app gets the edit
+    // when live: _transcripts) and kept as the file's transcript (the Transcript panel shows it, best_takes uses it)
+    const QJsonObject prepared = op.value("_transcripts").toObject();
+    QVector<QVector<ScriptAlign::Word>> sources;
+    QStringList made;
+    for (const QString& file : files) {
+        const MediaInfo* m = s.project.mediaInfo(file);
+        if (m && !m->transcripts.isEmpty()) {
+            sources << wordsOf(m->transcripts.first());
+            continue;
+        }
+        MediaTranscript t;
+        if (prepared.contains(file)) {
+            const QJsonObject p = prepared.value(file).toObject();
+            t.language = p.value("language").toString();
+            for (const QJsonValue& v : p.value("words").toArray())
+                t.words << TranscriptWord{qint64(v[0].toDouble()), qint64(v[1].toDouble()), v[2].toString()};
+        } else if (!s.live && canTranscribe()) {
+            t.words = transcribeFile(file, op.value("language").toString(), &t.language);
+        } else {
+            fail("NO_TRANSCRIPT", QString("%1 has no transcript: transcribe it in the app's Transcript panel, or install "
+                                          "whisper (`extensions`) and rough_cut transcribes it")
+                                      .arg(QFileInfo(file).fileName()));
+        }
+        s.project.setTranscript(file, t);
+        made << QFileInfo(file).fileName();
+        sources << wordsOf(t);
+    }
+    const QVector<ScriptAlign::Choice> choices = ScriptAlign::roughCut(script, sources, pick);
+
+    // A new timeline of the chosen takes in the script's order (the timeline before stays as it is)
+    const double fps = s.format().rate.fps();
+    const QString name = op.value("name").toString(T("Rohschnitt"));
+    applyOp(s, QJsonObject{{"op", "new_timeline"}, {"name", name}});
+    QJsonArray sentencesOut, missing;
+    const auto takeJson = [&](const ScriptAlign::Take& t) {
+        return QJsonObject{{"file", files[t.source]}, {"from_s", round2(t.from)}, {"to_s", round2(t.to)},
+                           {"coverage", round2(t.coverage)}, {"good", t.good}};
+    };
+    for (const ScriptAlign::Choice& c : choices) {
+        QJsonObject o{{"sentence", script[c.sentence].text}, {"why", c.why}};
+        if (c.chosen < 0) {
+            missing << script[c.sentence].text;
+            sentencesOut << o;
+            continue;
+        }
+        const ScriptAlign::Take& t = c.takes[c.chosen];
+        const QVector<ScriptAlign::Word>& words = sources[t.source];
+        // From just before the first word to the end of the last one spoken (not into the next word)
+        double from = std::max(0.0, t.from - 0.08);
+        if (t.first > 0) from = std::max(from, words[t.first - 1].to);
+        double to = std::min(t.to, words[t.last].from + 0.25 + 0.07 * words[t.last].text.size()) + 0.12;
+        if (t.last + 1 < words.size()) to = std::min(to, words[t.last + 1].from);
+        if (to - from < 1.0 / fps) to = from + 1.0 / fps;
+        applyOp(s, QJsonObject{{"op", "keep"}, {"media", files[t.source]},
+                               {"ranges", QJsonArray{QJsonArray{QString("%1s").arg(from, 0, 'f', 3), QString("%1s").arg(to, 0, 'f', 3)}}}});
+        o["take"] = takeJson(t);
+        QJsonArray alternatives;
+        for (int k = 0; k < c.takes.size(); ++k)
+            if (k != c.chosen) alternatives << takeJson(c.takes[k]);
+        if (!alternatives.isEmpty()) o["alternatives"] = alternatives;
+        sentencesOut << o;
+    }
+    if (missing.size() == choices.size())
+        fail("NOT_FOUND", "no sentence of the script was found in the transcripts (other language? other files?)");
+    QJsonObject r{{"timeline", name}, {"sentences", sentencesOut}, {"missing", missing}};
+    if (!made.isEmpty()) r["transcribed"] = QJsonArray::fromStringList(made);
+    s.notes << QJsonObject{{"rough_cut", r}};
+}
+
+void opBestTakes(Session& s, const QJsonObject& op)
+{
+    const Timeline& tl = s.project.timeline();
+    int track = -1;
+    if (op.contains("track")) {
+        TrackKind k = TrackKind::Audio;
+        track = parseTrack(op.value("track"), &k);
+        if (k != TrackKind::Audio) fail("BAD_ARGUMENT", "track must be an audio track (A1 …)");
+    }
+    QSet<int> only;
+    if (op.contains("clips") || op.contains("clip"))
+        for (int id : clipIds(s, op)) only.insert(id);
+    const double fps = s.format().rate.fps();
+    QVector<TranscriptCut::Word> spoken = TranscriptCut::timelineWords(tl, s.project.media(), fps, track);
+    if (!only.isEmpty())
+        spoken.erase(std::remove_if(spoken.begin(), spoken.end(), [&](const TranscriptCut::Word& w) {
+                         if (only.contains(w.clipId)) return false;
+                         const Clip* c = TimelineOps::findClip(tl, w.clipId);
+                         return !(c && c->linkId && std::any_of(only.begin(), only.end(), [&](int id) {
+                             const Clip* o = TimelineOps::findClip(tl, id);
+                             return o && o->linkId == c->linkId;
+                         }));
+                     }),
+                     spoken.end());
+    if (spoken.isEmpty())
+        fail("NO_TRANSCRIPT", "no transcribed speech on the timeline (transcribe the clips' files first: the app's "
+                              "Transcript panel, or rough_cut)");
+    QVector<ScriptAlign::Word> words;
+    for (const TranscriptCut::Word& w : spoken) words << ScriptAlign::Word{w.text, w.from / fps, w.to / fps};
+    const QVector<ScriptAlign::Repeat> reps = ScriptAlign::repeats(words);
+    QVector<QPair<int, int>> cut;
+    QJsonArray out;
+    const auto text = [&](const ScriptAlign::Take& t) {
+        QStringList w;
+        for (int i = t.first; i <= t.last; ++i) w << spoken[i].text;
+        return w.join(' ');
+    };
+    for (const ScriptAlign::Repeat& r : reps) {
+        QJsonArray removed;
+        for (int k = 0; k < r.takes.size(); ++k) {
+            if (k == r.keep) continue;
+            const ScriptAlign::Take& t = r.takes[k];
+            cut << qMakePair(spoken[t.first].from, spoken[t.last].to);
+            removed << QJsonObject{{"text", text(t)}, {"from_s", round2(t.from)}, {"to_s", round2(t.to)}};
+        }
+        const ScriptAlign::Take& kept = r.takes[r.keep];
+        out << QJsonObject{{"kept", QJsonObject{{"text", text(kept)}, {"from_s", round2(kept.from)}, {"to_s", round2(kept.to)}}},
+                           {"removed", removed}};
+    }
+    if (cut.isEmpty()) {
+        s.notes << "best_takes: no sentence was said twice in a row - nothing cut";
+        return;
+    }
+    s.editor.deleteRanges(cut, true, T("Beste Takes behalten"));
+    s.notes << QJsonObject{{"best_takes", out}};
+}
+
 } // namespace
+
+QJsonObject prepareTalk(const QJsonObject& editArgs, Context& ctx)
+{
+    Q_UNUSED(ctx);
+    QJsonArray ops = editArgs.value("ops").isObject() ? QJsonArray{editArgs.value("ops")} : editArgs.value("ops").toArray();
+    bool any = false;
+    for (const QJsonValue& v : ops) any = any || v.toObject().value("op").toString() == "rough_cut";
+    if (!any || !canTranscribe()) return editArgs;
+    try {
+        Session s(editArgs.value("project").toString()); // a copy of what the app shows
+        for (int i = 0; i < ops.size(); ++i) {
+            QJsonObject op = ops[i].toObject();
+            if (op.value("op").toString() != "rough_cut" || op.contains("_transcripts")) continue;
+            QJsonObject prepared;
+            for (const QString& file : roughCutMedia(s, op)) {
+                const MediaInfo* m = s.project.mediaInfo(file);
+                if (m && !m->transcripts.isEmpty()) continue;
+                QString lang;
+                QJsonArray words;
+                for (const TranscriptWord& w : transcribeFile(file, op.value("language").toString(), &lang))
+                    words << QJsonArray{double(w.from), double(w.to), w.text};
+                prepared[file] = QJsonObject{{"language", lang}, {"words", words}};
+            }
+            if (prepared.isEmpty()) continue;
+            op["_transcripts"] = prepared;
+            ops[i] = op;
+        }
+    } catch (const Error&) {
+        return editArgs; // the op reports it where it runs
+    }
+    QJsonObject out = editArgs;
+    out["ops"] = ops;
+    return out;
+}
 
 void addTalkOps(QVector<OpDef>& ops)
 {
@@ -301,7 +532,25 @@ void addTalkOps(QVector<OpDef>& ops)
                  "least one frame); the takes fade into the room tone without touching their sound before the cut. "
                  "Only measured by level (no speech recognition): a recording without a quiet stretch of 1 s (all "
                  "words, digital silence) is left out with a note. Nothing happens on its own: only when asked.",
-                 opRoomTone};
+                 opRoomTone, {}}
+        << OpDef{"rough_cut", "{op:'rough_cut', script|script_file, media?:[files], takes?:'last_good'|'best', language?, name?}",
+                 "a rough cut from a script: each sentence's take from what was said, in the script's order, as a new "
+                 "timeline",
+                 "The sentences (split after . ! ?) are found in the transcripts of the media (default: every file of "
+                 "the project with one) by a word alignment that forgives misheard words; a sentence said several times "
+                 "has takes: last_good (default) = the last complete one without extra words (people repeat until it "
+                 "is right), best = the highest rated (complete, no slip, few fillers and pauses). A file without a "
+                 "transcript is transcribed with whisper when it is installed (language) and keeps it. The answer's "
+                 "notes give rough_cut {timeline, sentences:[{sentence, take:{file, from_s, to_s, coverage, good}, "
+                 "alternatives, why}], missing:[sentences not found], transcribed}. With plan:true it is a plan.",
+                 opRoughCut, {"_transcripts"}}
+        << OpDef{"best_takes", "{op:'best_takes', clips?, track?}",
+                 "without a script: a sentence said again right after itself (a slip, a false start) keeps only its "
+                 "last good take",
+                 "From the transcripts of the timeline's clips (all audio tracks, or track / the clips given); the "
+                 "earlier takes are cut out with ripple (one undo step). The answer's notes give best_takes "
+                 "[{kept:{text, from_s, to_s}, removed:[…]}] in source seconds of the words.",
+                 opBestTakes, kClipKeys};
 }
 
 } // namespace Cli::detail

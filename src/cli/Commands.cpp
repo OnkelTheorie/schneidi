@@ -1320,6 +1320,7 @@ QJsonObject execute(const Command& cmd, const QJsonObject& args0, Context& ctx)
             if (cmd.name == "edit") prepareReframe(args, ctx);
             if (cmd.name == "edit") args = prepareSpeech(args, ctx); // piper/whisper here, not in the app
             if (cmd.name == "edit") args = prepareMusic(args, ctx); // beats of songs here, not in the app
+            if (cmd.name == "edit") args = prepareTalk(args, ctx); // whisper for rough_cut here, not in the app
             QJsonObject result = Live::run(c, cmd.name, args);
             result["live"] = true;
             return result;
