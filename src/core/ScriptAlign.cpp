@@ -300,10 +300,12 @@ QVector<Repeat> repeats(const QVector<Word>& words, int source, double minCovera
             group << j++;
         }
         if (group.size() > 1) {
-            // Rated against the longest one (a false start is incomplete)
+            // Rated against the last one (people say it again until it is right), unless that is a false start
+            // (less than 70 % of the longest): then against the longest
             int longest = group.first();
             for (int g : group)
                 if (spoken[g].norm.size() > spoken[longest].norm.size()) longest = g;
+            if (spoken[group.last()].norm.size() >= 0.7 * spoken[longest].norm.size()) longest = group.last();
             Repeat r;
             for (int g : group) {
                 const Hit h = align(spoken[longest].norm, spoken[g].norm, 0, int(spoken[g].norm.size()));

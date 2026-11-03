@@ -66,7 +66,8 @@ QVector<Choice> roughCut(const QVector<Sentence>& script, const QVector<QVector<
 
 // Without a script: the sentences of a transcript (split after . ! ?) said more than once in a row - a group of takes
 // (the earlier ones may be false starts: a sentence that the next one says again from its start). keep = the take
-// that stays (the last good one, else the best); the others are cut out by best_takes.
+// that stays (the last good one, else the best; each take is measured against the last one, unless that is a false
+// start: a slip in a longer earlier take counts as extra words); the others are cut out by best_takes.
 struct Repeat {
     QVector<Take> takes; // by time
     int keep = 0;

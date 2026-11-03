@@ -382,7 +382,12 @@ void opRoughCut(Session& s, const QJsonObject& op)
 
     // A new timeline of the chosen takes in the script's order (the timeline before stays as it is)
     const double fps = s.format().rate.fps();
-    const QString name = op.value("name").toString(T("Rohschnitt"));
+    // A free name: the wanted one, else numbered ("Rohschnitt 2")
+    const QString wanted = op.value("name").toString(T("Rohschnitt"));
+    QSet<QString> names;
+    for (const Sequence& q : s.project.sequences()) names.insert(s.project.sequenceName(q.id));
+    QString name = wanted;
+    for (int n = 2; names.contains(name); ++n) name = QString("%1 %2").arg(wanted).arg(n);
     applyOp(s, QJsonObject{{"op", "new_timeline"}, {"name", name}});
     QJsonArray sentencesOut, missing;
     const auto takeJson = [&](const ScriptAlign::Take& t) {
@@ -462,7 +467,8 @@ void opBestTakes(Session& s, const QJsonObject& op)
         for (int k = 0; k < r.takes.size(); ++k) {
             if (k == r.keep) continue;
             const ScriptAlign::Take& t = r.takes[k];
-            cut << qMakePair(spoken[t.first].from, spoken[t.last].to);
+            // Up to the next word (the pause after the take goes with it; nothing of a frame stays between takes)
+            cut << qMakePair(spoken[t.first].from, t.last + 1 < spoken.size() ? spoken[t.last + 1].from : spoken[t.last].to);
             removed << QJsonObject{{"text", text(t)}, {"from_s", round2(t.from)}, {"to_s", round2(t.to)}};
         }
         const ScriptAlign::Take& kept = r.takes[r.keep];
@@ -572,15 +578,14 @@ void opHideJumps(Session& s, const QJsonObject& op)
             clip.transform.posY = std::round(shift.y() * 10) / 10;
         });
     }
+    QStringList ids;
+    for (int id : zoomed) ids << QString::number(id);
     QString note = QString("hide_jumps: %1 jump cut%2 on V%3, zoom %4 on clip%5 %6")
                        .arg(jumps.size())
                        .arg(jumps.size() == 1 ? "" : "s")
                        .arg(track + 1)
                        .arg(zoom, 0, 'f', 2)
-                       .arg(zoomed.size() == 1 ? "" : "s");
-    QStringList ids;
-    for (int id : zoomed) ids << QString::number(id);
-    note += ids.join(", ");
+                       .arg(zoomed.size() == 1 ? "" : "s", ids.join(", "));
     if (center == "subject")
         note += QString(" (%1 of %2 around the subject%3)")
                     .arg(onSubject)
@@ -702,7 +707,7 @@ void opBroll(Session& s, const QJsonObject& op)
         for (const Track& t : s.project.timeline().audio)
             for (const Clip& c : t.clips)
                 if (!before.contains(c.id) && c.mediaPath == best->file) sound << c.id;
-        if (!sound.isEmpty()) applyOp(s, QJsonObject{{"op", "delete"}, {"clips", sound}});
+        if (!sound.isEmpty()) applyOp(s, QJsonObject{{"op", "delete"}, {"clips", sound}, {"linked", false}});
         placed << QJsonObject{{"said", line.text.trimmed()}, {"at", line.from}, {"at_s", round2(line.from / fps)},
                               {"length_s", round2(length / fps)}, {"file", best->file}, {"shot", best->n},
                               {"from_s", round2(best->from)}, {"why", best->why}};

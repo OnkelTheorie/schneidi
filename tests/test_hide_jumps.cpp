@@ -114,7 +114,7 @@ void testOp(const QString& dir)
     CHECK_EQ(jumpInfos(*loaded()), 1); // 1|2 (2|3 has another framing already)
     const QJsonObject r = run("edit", {{"project", g_path}, {"ops", QJsonArray{QJsonObject{{"op", "hide_jumps"}, {"center", "middle"}}}}});
     const QString answer = QString::fromUtf8(QJsonDocument(r).toJson(QJsonDocument::Compact));
-    CHECK(answer.contains("2 jump cuts on V1") && answer.contains("Left as they are"));
+    if (!CHECK(answer.contains("2 jump cuts on V1, zoom 1.12 on clip 2"))) std::printf("       %s\n", qPrintable(answer));
     {
         const auto p = loaded();
         CHECK_EQ(clipOf(*p, 1).transform.zoomX, 1.0);  // the first of the run stays

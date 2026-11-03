@@ -94,6 +94,12 @@ void testTakes()
     if (CHECK(c[0].chosen >= 0)) CHECK_EQ(c[0].takes[c[0].chosen].source, 1);
 
     // Repeats without a script: a false start and its full take; a sentence said once is no repeat
+    // A longer take with a slip before the right one: the right (last) one stays
+    const QVector<Repeat> slip = repeats(say("Heute zeige ich euch das alte neue Handy. Heute zeige ich euch das neue Handy.", 0));
+    if (CHECK_EQ(slip.size(), 1) && CHECK_EQ(slip[0].takes.size(), 2)) {
+        CHECK_EQ(slip[0].keep, 1);
+        CHECK_EQ(slip[0].takes[0].extra, 1);
+    }
     const QVector<Repeat> r = repeats(say("Also ich wollte sagen. Also ich wollte euch sagen dass es klappt. Danke schön.", 0));
     if (CHECK_EQ(r.size(), 1) && CHECK_EQ(r[0].takes.size(), 2)) {
         CHECK_EQ(r[0].keep, 1);
@@ -188,7 +194,15 @@ void testOps(const QString& dir)
     // Errors: no script, a wrong takes value, nothing found
     CHECK(errorOf({QJsonObject{{"op", "rough_cut"}}}).startsWith("BAD_ARGUMENT"));
     CHECK(errorOf({QJsonObject{{"op", "rough_cut"}, {"script", "Hallo."}, {"takes", "first"}}}).contains("last_good"));
-    CHECK(errorOf({QJsonObject{{"op", "rough_cut"}, {"script", "Völlig anderer Text hier."}}}).startsWith("NOT_FOUND"));
+    {
+        const QString e = errorOf({QJsonObject{{"op", "rough_cut"}, {"script", "Völlig anderer Text hier."}}});
+        if (!CHECK(e.startsWith("NOT_FOUND"))) std::printf("       %s\n", qPrintable(e));
+    }
+
+    // Again: a new timeline beside the first one
+    const QJsonObject again = run("edit", {{"project", g_path},
+                                           {"ops", QJsonArray{QJsonObject{{"op", "rough_cut"}, {"script", "Es hat drei Kameras."}}}}});
+    CHECK(QJsonDocument(again).toJson().contains("Rohschnitt 2"));
 
     // best_takes on a timeline of all of a.mp4: the first two takes go, the last one stays
     run("edit", {{"project", g_path},
@@ -197,14 +211,15 @@ void testOps(const QString& dir)
     const QJsonObject b = run("edit", {{"project", g_path}, {"timeline", "Alles"},
                                        {"ops", QJsonArray{QJsonObject{{"op", "best_takes"}}}}});
     const QString bt = QString::fromUtf8(QJsonDocument(b).toJson(QJsonDocument::Compact));
-    CHECK(bt.contains("best_takes") && bt.contains("\"removed\""));
+    if (!CHECK(bt.contains("best_takes") && bt.contains("\"removed\""))) std::printf("       %s\n", qPrintable(bt));
     {
         const auto p = loaded();
         for (const Sequence& q : p->sequences())
             if (p->sequenceName(q.id) == "Alles") p->setCurrentSequence(q.id);
         const QVector<Clip>& v = p->timeline().video[0].clips;
         // What is left starts with the third take (source 6.4 s)
-        if (CHECK(!v.isEmpty())) CHECK(std::abs(v[0].in - 160) <= 1);
+        if (CHECK(!v.isEmpty()) && !CHECK(std::abs(v[0].in - 160) <= 1))
+            for (const Clip& c : v) std::printf("       clip %d start %d in %d out %d\n", c.id, c.start, c.in, c.out);
         CHECK(TimelineOps::endFrame(p->timeline()) < 6 * 25);
     }
 }

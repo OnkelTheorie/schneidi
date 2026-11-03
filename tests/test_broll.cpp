@@ -87,7 +87,7 @@ int main(int argc, char** argv)
                                                       {"tags", QJsonArray{"laden", "totale"}}}}}});
     r = run("edit", {{"project", project}, {"ops", QJsonArray{QJsonObject{{"op", "broll"}}}}});
     answer = QString::fromUtf8(QJsonDocument(r).toJson(QJsonDocument::Compact));
-    CHECK(answer.contains("shop.mp4"));
+    if (!CHECK(answer.contains("shop.mp4"))) std::printf("       %s\n", qPrintable(answer));
     CHECK(answer.contains("Das Wetter ist schön.")); // no match for it
     CHECK(answer.contains("Noch mal der Laden.")); // the only shop shot is used once already
     {
