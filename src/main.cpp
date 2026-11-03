@@ -117,11 +117,10 @@ int main(int argc, char* argv[])
     // One launch at a time decides (two double-clicks at once end in one app): a launch that becomes the app keeps
     // the lock until its live server is registered, the next one then hands its files to it.
     std::unique_ptr<QLockFile> launchLock;
-    if (const QStringList args = app.arguments().mid(1), handed = LaunchArgs::files(args);
-        !handed.isEmpty() && screenshot.isEmpty() && !args.contains("--demo") && !args.contains("--actions")
-        && !args.contains("--new-instance") && qEnvironmentVariable("SCHNEIDI_LIVE", "1") == "1") {
+    if (const QStringList args = app.arguments().mid(1);
+        LaunchArgs::handsOver(args) && screenshot.isEmpty() && qEnvironmentVariable("SCHNEIDI_LIVE", "1") == "1") {
         launchLock = Cli::Live::lockLaunch();
-        if (Cli::Live::handOver(handed)) return 0;
+        if (Cli::Live::handOver(LaunchArgs::files(args))) return 0;
     }
     Log::install();
     Extensions::cleanUp(); // old versions a running program held at its update

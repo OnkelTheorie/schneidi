@@ -18,4 +18,13 @@ inline const QStringList& valueOptions()
 // 1600x900+0+0): taken as files they were reported "not readable" in a modal box that blocked a test run's start.
 QStringList files(const QStringList& args);
 
+// Whether a launch with these arguments first offers its files to a schneidi that already runs (cli/Live.h handOver)
+// instead of opening a window of its own: files given, no test run (--demo, --actions), no --new-instance. The caller
+// checks --screenshot and SCHNEIDI_LIVE itself.
+bool handsOver(const QStringList& args);
+
+// The arguments of the restart after a design/language change: the same project again, in a window of its own. Never
+// handed over: with a second schneidi running, the project would land in that one and this window would be gone.
+QStringList restart(const QString& projectPath);
+
 } // namespace LaunchArgs
