@@ -33,6 +33,11 @@ After rendering:
    - titles, logo and subtitles are readable, spelled right, inside the frame and the safe area;
    - nothing unwanted: menus, loading screens, desktop, the end of a recording.
    For a closer look at a cut, `frames` with `at` a few frames before and after it.
+   Edits to music or with kills: a review render before the real one - `render` `review:"sheet"` (out `.png`,
+   seconds) or `review:"video"` (540 p, lamps light on the frame of a beat, bar one, cut, hit, kill feed line; a
+   strip shows 2 s around the playhead). Read its `offsets` (`off_ms` of each hit to its nearest beat: more than
+   ~40 ms is visible) and `cuts_off_beat`, fix with `align`/`trim`, review again. `review_hits` names the kill feed
+   when the file name does not (`{"game":"cs2"}` or `{"region":…,"color":…}`), `beats_track` the music track.
 3. **Against the request**: every requested format, length, music, logo at the end, subtitles, file names.
 
 In the report, say what you checked and the measured numbers (length, LUFS, true peak), plus anything you could

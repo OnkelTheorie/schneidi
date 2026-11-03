@@ -75,7 +75,8 @@ also read [social.md](social.md).
   bar one) by slipping the content - the cuts stay put: `{"op":"align","events":[{"media":"/path/clip.mkv",
   "source":"7.67s"}, …],"to":{"first":<beat_phase.s>,"every":<beat_period.s>},"accent":"hit"}` with the `hit_s` of
   `highlights` and `beats` run on the project (bar ones: `downbeats.s` / `downbeats.every_s`). Its notes say where
-  a clip ran out of material. Slow motion right in the cut: `speed` on `place`/`keep` (`{"from":…,"to":…,
+  a clip ran out of material. Check it with `render` `review:"sheet"` (or `"video"`): its `offsets` give each hit's
+  distance to the nearest beat in ms. Slow motion right in the cut: `speed` on `place`/`keep` (`{"from":…,"to":…,
   "speed":0.5}` as a range).
 - Slow motion of game clips (a kill at 25-50 %): give the slowed clips `interpolate:"flow"` (`{"op":"speed",
   "clips":[…],"interpolate":"flow"}`, also on `speed_ramp`, `place`, `append` and `keep`) - it computes in-between

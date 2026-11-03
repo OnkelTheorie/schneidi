@@ -112,4 +112,10 @@ struct ColorEvents {
 };
 ColorEvents colorEvents(const MediaSource& m, const QJsonObject& a, const std::function<void(double)>& progress);
 
+// ---------- Highlights (AnalysisHighlights.cpp) ----------
+
+// `highlights` of one file (`file`, the command's settings): from the cache (CacheLocation/highlights, key = file,
+// size, modification time, frame rate and settings; the answer then has cached:true) or analysed and stored there
+QJsonObject highlightsFile(const QJsonObject& a, Context& ctx);
+
 } // namespace Cli::detail

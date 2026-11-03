@@ -145,6 +145,7 @@ add_library(schneidi_lib STATIC
     src/core/Stutter.h            src/core/Stutter.cpp
     src/core/Speech.h             src/core/Speech.cpp
     src/core/ContactSheet.h       src/core/ContactSheet.cpp
+    src/core/ReviewSheet.h        src/core/ReviewSheet.cpp
     src/core/PoolFilter.h         src/core/PoolFilter.cpp
     src/core/WatchFolders.h       src/core/WatchFolders.cpp
 
@@ -188,6 +189,7 @@ add_library(schneidi_lib STATIC
     src/engine/OpenMedia.h        src/engine/OpenMedia.cpp
     src/engine/picture/Renderer.h src/engine/picture/Renderer.cpp
     src/engine/picture/Effects.h  src/engine/picture/Effects.cpp
+    src/engine/picture/ReviewOverlay.h src/engine/picture/ReviewOverlay.cpp
     src/engine/picture/Interpolate.h src/engine/picture/Interpolate.cpp
     src/engine/picture/Pump.h     src/engine/picture/Pump.cpp
     src/engine/picture/MediaStills.h src/engine/picture/MediaStills.cpp
@@ -397,6 +399,7 @@ target_link_libraries(schneidi PRIVATE schneidi_lib schneidi_cli_lib) # live con
 # Command line + MCP server (no window): for scripts and AIs, see src/cli/main.cpp
 add_library(schneidi_cli_lib STATIC
     src/cli/Commands.h src/cli/Commands.cpp src/cli/CommandsDetail.h src/cli/CommandsProject.cpp
+    src/cli/RenderReview.cpp
     src/cli/CommandsWatch.cpp src/cli/CommandsShort.cpp
     src/cli/EditOps.cpp src/cli/EditOpsTimelines.cpp src/cli/EditOpsLook.cpp
     src/cli/EditOpsAudio.cpp src/cli/EditOpsEdit.cpp src/cli/EditOpsMulticam.cpp

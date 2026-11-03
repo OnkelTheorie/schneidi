@@ -122,6 +122,10 @@ struct Options {
     std::shared_ptr<const std::atomic<bool>> gradeBypass;
     // Composite on the graphics card when Gpu::Service::instance() has a hardware device (CPU path otherwise)
     bool gpu = true;
+    // Drawn onto every finished frame (RGBA, straight alpha, output size) after everything else, e.g. the marks of a
+    // review render (engine/picture/ReviewOverlay). Called from several threads at once. A frame with an overlay is
+    // always an RGBA picture (never written straight into the encoder's planes).
+    std::function<void(uint8_t* rgba, int width, int height, int64_t frame)> overlay;
 
     QSize outputSize() const { return output.isEmpty() ? format.size() : output; }
 };
@@ -177,6 +181,7 @@ public:
     Stats stats() const;
 
 private:
+    Frame renderFrame(int64_t frame, const RenderHints& hints);
     struct Impl;
     std::unique_ptr<Impl> d;
 };

@@ -42,7 +42,10 @@ names cost a failed call.
    reason, e.g. `"hook: loudest kill first"`): the answer repeats it under `why`, so the user can follow the cut.
 4. **Check before rendering**: `check` on the project (gaps, missing media, subtitles, sound, game sound or
    speech buried under the music, stutter in recordings; 9:16: text the apps cover, a slow start), `info` (length,
-   tracks) and a `frames` sheet of the timeline.
+   tracks) and a `frames` sheet of the timeline. With music or kills, a **review render** shows what you would
+   otherwise guess: `render` with `review` `"sheet"` (one PNG: a tile per shot, beat grid, cuts, hits, sections,
+   waveforms) or `"video"` (small, fast, the marks burned in), and its answer has `offsets` (each hit next to its
+   nearest beat in ms) and `cuts_off_beat`. It changes nothing in the project.
 5. **Render**, then **look at the rendered file yourself**: `check` on the file, a `frames` sheet, `probe`. Read
    [references/check.md](references/check.md) for what to look for. Fix and render again if something is off.
 6. **Report briefly**: output file(s), length, what you did, measured loudness, and anything you could not do.

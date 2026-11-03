@@ -1,12 +1,21 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // schneidi-cli: highlights – candidates for a highlight video from the kill feed (one colour in a region) and loud
-// moments, ready for the 'keep' edit operation
+// moments, ready for the 'keep' edit operation. Results are cached per file and settings (hit_s for the review
+// render, snap to beat, sound effects and the material index read the same cache)
 #include "cli/AnalysisDetail.h"
 
 #include "core/GameHud.h"
 #include "engine/FrameGaps.h"
 
+#include <QCryptographicHash>
+#include <QDateTime>
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
 #include <QJsonArray>
+#include <QJsonDocument>
+#include <QSaveFile>
+#include <QStandardPaths>
 
 #include <algorithm>
 #include <cmath>
@@ -239,11 +248,59 @@ QJsonObject highlightsOne(const QJsonObject& given, Context& ctx)
     return out;
 }
 
+// Raise when the analysis gives other results for the same file and settings (old cache entries are then ignored)
+constexpr int kCacheVersion = 1;
+
+QString cacheFile(const QString& key)
+{
+    return QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + "/highlights/" + key + ".json";
+}
+
 } // namespace
+
+QJsonObject highlightsFile(const QJsonObject& a, Context& ctx)
+{
+    // Key: the file (path, size, modification time), the frame rate frames count in and every setting that changes
+    // the result
+    const MediaSource m = openMedia(a);
+    const QFileInfo fi(m.info.path);
+    QJsonObject settings;
+    for (const char* k : {"game", "region", "color", "tolerance", "min_area", "pre", "post", "join", "threshold_db",
+                          "min", "audio_stream"})
+        if (a.contains(k)) settings[k] = a[k];
+    const QString id = QString("%1|%2|%3|%4/%5|%6|%7")
+                           .arg(fi.absoluteFilePath())
+                           .arg(fi.size())
+                           .arg(fi.lastModified().toMSecsSinceEpoch())
+                           .arg(m.format.rate.num)
+                           .arg(m.format.rate.den)
+                           .arg(QString::fromUtf8(QJsonDocument(settings).toJson(QJsonDocument::Compact)))
+                           .arg(kCacheVersion);
+    const QString key = QString::fromLatin1(QCryptographicHash::hash(id.toUtf8(), QCryptographicHash::Sha1).toHex());
+    {
+        QFile f(cacheFile(key));
+        if (f.open(QIODevice::ReadOnly)) {
+            const QJsonObject o = QJsonDocument::fromJson(f.readAll()).object();
+            if (o["version"].toInt() == kCacheVersion && o["result"].isObject()) {
+                QJsonObject r = o["result"].toObject();
+                r["cached"] = true;
+                return r;
+            }
+        }
+    }
+    QJsonObject r = highlightsOne(a, ctx);
+    const QString file = cacheFile(key);
+    QDir().mkpath(QFileInfo(file).absolutePath());
+    QSaveFile out(file);
+    if (out.open(QIODevice::WriteOnly)
+        && out.write(QJsonDocument(QJsonObject{{"version", kCacheVersion}, {"result", r}}).toJson(QJsonDocument::Compact)) >= 0)
+        out.commit();
+    return r;
+}
 
 QJsonObject cmdHighlights(const QJsonObject& a, Context& ctx)
 {
-    QJsonObject out = perFile(a, ctx, highlightsOne, 2);
+    QJsonObject out = perFile(a, ctx, highlightsFile, 2);
     if (!out.contains("files")) {
         if (a.contains("top")) {
             QJsonArray c = out["candidates"].toArray();

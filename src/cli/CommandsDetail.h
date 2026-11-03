@@ -19,6 +19,10 @@
 #include <functional>
 #include <memory>
 
+namespace ReviewSheet {
+struct Data;
+}
+
 namespace Cli::detail {
 
 [[noreturn]] void fail(const QString& code, const QString& message);
@@ -202,6 +206,17 @@ QJsonObject cmdEdit(const QJsonObject& a, Context& ctx);
 QJsonObject cmdBackups(const QJsonObject& a, Context& ctx);
 QJsonObject cmdRestore(const QJsonObject& a, Context& ctx);
 QJsonObject cmdRender(const QJsonObject& a, Context& ctx);
+// Review render (RenderReview.cpp, `render review`): the marks of timeline tl up to frame `end` (cuts, accents,
+// notes, markers, sections; hits/kills from the cached highlights per recording, `review_hits`; the beat grid of
+// `beats_track`, auto = the free music track). allWaves: a waveform of every audio track (the sheet), else only the
+// music track's. info gets what was looked at (beats, hits_from, review_notes). The project is only read.
+std::shared_ptr<const ReviewSheet::Data> reviewData(Session& s, const Timeline& tl, int end, const QJsonObject& a,
+                                                    Context& ctx, bool allWaves, QJsonObject* info);
+// offsets (hits next to the nearest beat), cuts_off_beat, counts of the marks
+QJsonObject reviewNumbers(const ReviewSheet::Data& d);
+// The review sheet (one PNG) into out: {out, size, tiles}
+QJsonObject reviewSheetRender(Session& s, const Timeline& tl, const ReviewSheet::Data& d, const QString& out,
+                              Context& ctx);
 QJsonObject cmdOverview(const QJsonObject& a, Context& ctx);
 QJsonObject cmdCheck(const QJsonObject& a, Context& ctx);
 QJsonObject cmdEffects(const QJsonObject& a, Context& ctx);
