@@ -212,6 +212,30 @@ void fileTests(const QString& path, const QProcessEnvironment& env)
     CHECK_EQ(code(cli({"edit", path, "--plan_id", two, "--run", "all", "--ops", "[]"}, env)), QString("BAD_ARGUMENT"));
     CHECK_EQ(code(cli({"edit", path, "--run", "all"}, env)), QString("BAD_ARGUMENT"));
     CHECK(fileBytes(path) == changed);
+    // dry_run with plan_id: what it would change, nothing saved, the plan stays
+    r = cli({"edit", path, "--plan_id", two, "--run", "all", "--dry_run"}, env);
+    CHECK_EQ(code(r), QString("ok"));
+    CHECK(!std::as_const(r)["saved"].toBool());
+    CHECK(std::as_const(r)["plan"]["dry_run"].toBool());
+    CHECK_EQ(std::as_const(r)["changes"]["added"].toArray().size(), 4); // two splits, V1 + A1 each
+    CHECK(fileBytes(path) == changed);
+    CHECK(QFileInfo::exists(planFile(path, two)));
+    // A step on a clip that a step left out makes: refused (the id would name another clip)
+    r = cli({"edit", path, "--plan", "--ops",
+             R"([{"op":"title","text":"A","at":0,"duration":10},{"op":"title","text":"B","at":20,"duration":10}])"}, env);
+    const int titleA = std::as_const(r)["plan"]["steps"][0]["changes"]["added"][0]["id"].toInt(); // the id step 1 gives
+    CHECK(titleA > 0);
+    r = cli({"edit", path, "--plan", "--ops",
+             QString(R"([{"op":"title","text":"A","at":0,"duration":10},{"op":"title","text":"B","at":20,"duration":10},)"
+                     R"({"op":"transform","clips":[%1],"opacity":50}])").arg(titleA)}, env);
+    const QString dependent = std::as_const(r)["plan"]["id"].toString();
+    r = cli({"edit", path, "--plan_id", dependent, "--run", "[2,3]"}, env);
+    CHECK_EQ(code(r), QString("BAD_ARGUMENT"));
+    CHECK(std::as_const(r)["error"]["message"].toString().contains("step 3 works on clip"));
+    CHECK(fileBytes(path) == changed);
+    CHECK_EQ(code(cli({"edit", path, "--plan_id", dependent, "--run", "[1,3]"}, env)), QString("ok")); // with its maker
+    const QByteArray afterTitles = fileBytes(path);
+    CHECK(afterTitles != changed);
     // A plan with an op that fails is no plan
     r = cli({"edit", path, "--plan", "--ops", R"([{"op":"split","at":170},{"op":"delete","clips":[999]}])"}, env);
     CHECK_EQ(code(r), QString("NOT_FOUND"));
@@ -225,7 +249,7 @@ void fileTests(const QString& path, const QProcessEnvironment& env)
     }
     CHECK_EQ(code(cli({"edit", path, "--plan_id", two, "--run", "all"}, env)), QString("NOT_FOUND"));
     CHECK(!QFileInfo::exists(planFile(path, two)));
-    CHECK(fileBytes(path) == changed);
+    CHECK(fileBytes(path) == afterTitles);
 }
 
 } // namespace
