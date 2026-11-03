@@ -847,7 +847,9 @@ bool DeliverPanel::runCheck()
             words << w.from;
         const QVector<int> strong =
             ExportCheck::strongMoments(tl, from, to, f, measured ? &peaks : nullptr, words);
-        issues += ExportCheck::story(tl, from, to, f, strong, measured || !words.isEmpty(), words);
+        ExportCheck::Options so;
+        so.rangeIsVideo = true; // an In/Out export: the video starts at `from`, its opening is checked there
+        issues += ExportCheck::story(tl, from, to, f, strong, measured || !words.isEmpty(), words, so);
     }
 
     std::stable_sort(issues.begin(), issues.end(), [](const ExportCheck::Issue& a, const ExportCheck::Issue& b) {
