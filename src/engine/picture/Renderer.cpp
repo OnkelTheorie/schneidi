@@ -649,7 +649,11 @@ struct Renderer::Impl {
         const double m = c.in + t;
         const double perFrame = map.speedAt(m) * v.fps / ctx.fps; // stream frames per output frame
         if (perFrame >= 1.0 - 1e-6) return false;
-        *q = map.fileFrameAt(m) / ctx.fps * v.fps;
+        // Backwards: from the end of the stream frames the file frame covers (project frame f holds stream frames
+        // f*r .. (f+1)*r - 1); f*r started a 60 fps clip in a 30 fps project one stream frame early and never
+        // showed its last one
+        const double f = map.fileFrameAt(m), r = v.fps / ctx.fps;
+        *q = c.reverse ? (f + 1) * r - 1 : f * r;
         return true;
     }
 
@@ -718,11 +722,21 @@ struct Renderer::Impl {
         // In-between modes on (or next to) a stream frame: that stream frame itself. The project-rate frame above
         // is rounded down: a 60 fps clip at 25 % in a 30 fps project would show stream frame 0 where frame 1 is
         // due, the picture jumping back between two in-between pictures (0, 0.5, 0, 1.5, 2 ...)
-        if (double q = 0; slowStreamPosition(c, t, v, ctx, &q)) {
-            int64_t frame = std::max<int64_t>(0, std::llround(q));
-            const int64_t streamLength = int64_t(double(v.length) / ctx.fps * v.fps);
+        const int64_t streamLength = ctx.fps > 0 ? int64_t(double(v.length) / ctx.fps * v.fps) : 0;
+        const auto streamFrame = [&](int64_t frame) {
+            frame = std::max<int64_t>(0, frame);
             if (streamLength > 0) frame = std::min(frame, streamLength - 1);
-            file = double(frame) * ctx.fps / v.fps;
+            return double(frame) * ctx.fps / v.fps;
+        };
+        if (double q = 0; slowStreamPosition(c, t, v, ctx, &q)) return streamFrame(std::llround(q));
+        // Repeat mode with a stream faster than the project (60 fps gameplay slowed down in a 30 fps edit): the
+        // stream frame that started last, like pictureFrame but counted in stream frames. Rounded in project frames,
+        // every other stream frame was never shown (at 25 %: 0, 0, 0, 0, 2, 2, 2, 2 instead of 0, 0, 1, 1, 2, 2)
+        if (c.isRetimed() && !c.freeze && ctx.fps > 0 && v.fps > ctx.fps * (1 + 1e-6)) {
+            const RetimeMap map(c, v.length);
+            const double f = map.fileFrameAt(c.in + t), r = v.fps / ctx.fps;
+            const int64_t frame = c.reverse ? int64_t(std::ceil((f + 1) * r - 1e-6)) - 1 : int64_t(std::floor(f * r + 1e-6));
+            return streamFrame(frame);
         }
         return file;
     }
