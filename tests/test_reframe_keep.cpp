@@ -2,8 +2,9 @@
 // Auto-Reframe keeps the kill feed: game detection from folder/file name (core/GameHud), the kept-region copy's
 // geometry (Reframe::keepCopy), the Editor op (copy on a free track above, one undo step, replaced on a new reframe,
 // removed with none, never reframed itself, project round trip), the CLI (op reframe keep/game, new_timeline, info,
-// errors), the rendered 9:16 picture (the kill feed line shows at the top) and highlights reading a game's kill feed
-// by itself with the tighter CS2 region (game picture left of the lines is no kill).
+// errors), the rendered 9:16 picture (the kill feed line shows at the top; its frame stays cheap zoomed far in) and
+// highlights reading a game's kill feed by itself with the tighter CS2 region (game picture left of the lines is no
+// kill).
 #include "check.h"
 
 #include "app/InputBindings.h"
@@ -26,9 +27,11 @@
 #include <QApplication>
 #include <QSettings>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QJsonArray>
 #include <QTemporaryDir>
 #include <QUndoStack>
+#include <array>
 #include <clocale>
 #include <cmath>
 
@@ -543,6 +546,52 @@ void testApp(const QString& game)
 
 } // namespace
 
+// The dark frame behind a kept region is made only for the part that can show. Zoomed far in it was a picture of
+// the region's whole zoomed size: a facecam-sized region at zoom 80 took many times as long as the same clip without
+// the frame (hundreds of MB per frame and thread; zoom 100 took seconds per frame)
+void testZoomedFrame(const QString& plain)
+{
+    const ProjectFormat fmt{1080, 1920, {25, 1}};
+    // crop: left, right, top, bottom in timeline pixels of the picture fitted at zoom 1 (1080 x 607.5)
+    const auto timeline = [&](std::array<double, 4> crop, double zoom, double posX, double posY, bool kept) {
+        Timeline tl;
+        tl.video.resize(2);
+        Clip base;
+        base.id = 1;
+        base.mediaPath = plain;
+        base.out = 24;
+        tl.video[0].clips << base;
+        Clip keep = base;
+        keep.id = 2;
+        if (kept) keep.keepRegion = "killfeed";
+        keep.transform.cropLeft = crop[0];
+        keep.transform.cropRight = crop[1];
+        keep.transform.cropTop = crop[2];
+        keep.transform.cropBottom = crop[3];
+        keep.transform.zoomX = keep.transform.zoomY = zoom;
+        keep.transform.posX = posX;
+        keep.transform.posY = posY;
+        tl.video[1].clips << keep;
+        return tl;
+    };
+    // Still framed where it shows: zoom 2, the region (600 x 95 px) moved to x 240..840, y 852..948 over the clip
+    const QImage framed = Check::renderFrame(timeline({760, 20, 40, 520}, 2, -740, -420, true), fmt, 0);
+    if (!CHECK(!framed.isNull())) return;
+    const int ring = qGray(framed.pixel(540, 849)), beside = qGray(framed.pixel(540, 800));
+    if (!CHECK(ring + 20 < beside)) std::printf("       frame %d, picture beside it %d\n", ring, beside);
+    // Zoomed far in (the region's middle in the middle of the frame): about as fast as without the frame
+    const auto timed = [&](bool kept) {
+        QElapsedTimer t;
+        t.start();
+        CHECK(!Check::renderFrame(timeline({540, 20, 40, 267.5}, 80, -20800, -9100, kept), fmt, 0).isNull());
+        return t.elapsed();
+    };
+    timed(false); // decoder warm
+    const qint64 without = timed(false), with = timed(true);
+    std::printf("zoom 80: %lld ms framed, %lld ms without\n", with, without);
+    CHECK(with < 3 * without + 200);
+}
+
 int main(int argc, char** argv)
 {
     Check::initEnv();
@@ -572,6 +621,7 @@ int main(int argc, char** argv)
     if (!CHECK(!game.isEmpty() && !plain.isEmpty())) return Check::result();
     Check::initEngine();
     std::setlocale(LC_NUMERIC, "C");
+    testZoomedFrame(plain);
     testCli(tmp.path(), game, plain);
     testApp(game);
     return Check::result();

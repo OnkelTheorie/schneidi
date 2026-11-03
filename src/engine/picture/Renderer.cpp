@@ -202,12 +202,27 @@ struct KeepFrame {
 constexpr double kKeepFrame = 0.006; // frame width: of the output's shorter side (1080 x 1920: 6.5 pixels)
 constexpr int kKeepFrameAlpha[3] = {110, 190, 230}; // texel rings from the outside in
 
-bool keepFrame(const Compose::Affine& m, const QRectF& cropSrc, double frameSize, KeepFrame& out)
+bool keepFrame(const Compose::Affine& m, const QRectF& cropSrc, double frameSize, QSize output, KeepFrame& out)
 {
     const double sx = std::hypot(m.a, m.d), sy = std::hypot(m.b, m.e); // output pixels per source pixel
     if (sx <= 0 || sy <= 0 || cropSrc.isEmpty() || frameSize <= 0) return false;
     const double texel = frameSize / 3;
-    const QRectF r = cropSrc.adjusted(-frameSize / sx, -frameSize / sy, frameSize / sx, frameSize / sy);
+    QRectF r = cropSrc.adjusted(-frameSize / sx, -frameSize / sy, frameSize / sx, frameSize / sy);
+    // Only the part that can show: the output (widened by twice the frame, so the rings of an edge cut here stay
+    // outside it) taken back into source pixels. A kept region zoomed far in made a frame picture of its whole size
+    // (zoom 100: hundreds of MB and seconds per frame)
+    const double det = m.a * m.e - m.b * m.d;
+    if (std::abs(det) > 1e-12 && !output.isEmpty()) {
+        const double pad = 2 * frameSize, W = output.width() + pad, H = output.height() + pad;
+        double x0 = 1e300, y0 = 1e300, x1 = -1e300, y1 = -1e300;
+        for (const QPointF& o : {QPointF(-pad, -pad), QPointF(W, -pad), QPointF(-pad, H), QPointF(W, H)}) {
+            const double dx = o.x() - m.c, dy = o.y() - m.f;
+            const double x = (m.e * dx - m.b * dy) / det, y = (-m.d * dx + m.a * dy) / det;
+            x0 = std::min(x0, x), y0 = std::min(y0, y), x1 = std::max(x1, x), y1 = std::max(y1, y);
+        }
+        r &= QRectF(QPointF(x0, y0), QPointF(x1, y1));
+        if (r.isEmpty()) return false;
+    }
     const int w = std::max(7, int(std::lround(r.width() * sx / texel))), h = std::max(7, int(std::lround(r.height() * sy / texel)));
     out.img = Image(w, h);
     uint8_t* p = out.img.data();
@@ -1100,7 +1115,7 @@ struct Renderer::Impl {
         const bool framed = !c.keepRegion.isEmpty() && crop && !bg
                             && keepFrame(m, QRectF(QPointF(shares[0] * fullW, shares[1] * fullH),
                                                    QPointF((1 - shares[2]) * fullW, (1 - shares[3]) * fullH)),
-                                         kKeepFrame * std::min(W, H), kf);
+                                         kKeepFrame * std::min(W, H), QSize(W, H), kf);
         if (framed) Compose::draw(layer.data(), W, H, kf.img.data(), kf.img.w, kf.img.h, kf.m, 1.0);
         Compose::draw(layer.data(), W, H, src.data(), src.w, src.h, m, blurFill || framed ? 1.0 : opacity);
         if (framed) scaleAlpha(layer, opacity);
@@ -1839,7 +1854,8 @@ struct Renderer::Impl {
         }
         if ((transform || crop) && c.transform.hasBlurFill()) return blurFillOp(c, ctx, shares, op);
         KeepFrame kf;
-        if (!c.keepRegion.isEmpty() && crop && keepFrame(op.m, op.crop, kKeepFrame * std::min(ctx.W, ctx.H), kf)) {
+        if (!c.keepRegion.isEmpty() && crop
+            && keepFrame(op.m, op.crop, kKeepFrame * std::min(ctx.W, ctx.H), QSize(ctx.W, ctx.H), kf)) {
             // As clipLayer: the frame, the picture over it, then opacity
             GpuOp back;
             back.m = kf.m;
