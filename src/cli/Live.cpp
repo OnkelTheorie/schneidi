@@ -169,6 +169,14 @@ QString undoText(const QJsonObject& args) { return T("KI: %1").arg(opNames(args)
 // "undo: KI: split") …
 QString stepText(const QString& command, const QJsonObject& args, const QJsonObject& result, const Project& p)
 {
+    if (command == "edit" && args.contains("plan_id")) { // "plan p3: 1, 2, 4" / "plan p3: discard"
+        const QString id = args.value("plan_id").toString().trimmed().toLower();
+        if (args.value("discard").toBool()) return QString("plan %1: discard").arg(id);
+        QStringList ran;
+        for (const QJsonValue& n : result.value("plan").toObject().value("ran").toArray()) ran << QString::number(n.toInt());
+        return QString("plan %1: %2").arg(id, ran.isEmpty() ? QString("run") : ran.join(", "));
+    }
+    if (command == "edit" && args.value("plan").toBool()) return "plan: " + opNames(args);
     if (command == "edit") return opNames(args);
     if (command == "watch") { // set up a folder, or what one pass brought in
         if (args.contains("add")) return "watch: add " + QFileInfo(args.value("add").toString()).fileName();
@@ -535,12 +543,35 @@ void Server::handle(QLocalSocket* s, const QJsonObject& msg)
     reply(errorReply("BAD_REQUEST", "unknown request type " + type));
 }
 
-QJsonObject Server::runCommand(const QJsonObject& msg, bool ownChat)
+QJsonObject Server::runForChat(const QString& command, const QJsonObject& args)
+{
+    if (m_running) return errorReply("APP_BUSY", "another command runs in the app");
+    if (!m_waiting.isEmpty()) return errorReply("APP_WAITING", m_waiting);
+    m_running = true;
+    m_host->liveCommandRunning(true, true);
+    const QJsonObject result = runCommand({{"command", command}, {"args", args}}, true, true);
+    m_host->liveCommandRunning(false, true);
+    m_running = false;
+    QTimer::singleShot(0, this, [this] { // requests that came in meanwhile
+        for (QLocalSocket* p : m_peers.keys()) onReadyRead(p);
+    });
+    return result;
+}
+
+QJsonObject Server::runCommand(const QJsonObject& msg, bool ownChat, bool byUser)
 {
     const QString name = msg.value("command").toString();
     const Command* cmd = find(name);
     const QJsonObject args = msg.value("args").toObject(); // normalized by the client
     if (!cmd || !runsInApp(*cmd, args)) return errorReply("BAD_REQUEST", "command does not run in the app: " + name);
+    // Plans: making or dropping one changes nothing (no undo step); running one is an edit
+    const bool planning = name == "edit" && (args.value("plan").toBool() || args.value("discard").toBool());
+    const bool planRun = name == "edit" && args.contains("plan_id") && !args.value("discard").toBool();
+    // Plan mode of the own chat: the user sees a plan first and runs it from the chat's plan card
+    if (ownChat && !byUser && name == "edit" && !planning && m_host->livePlanOnly())
+        return errorReply("PLAN_MODE", "the user wants to see a plan first (plan mode in the schneidi app): send the "
+                                       "whole change as one edit with plan:true (every op with a why) and end your "
+                                       "answer; the user runs the steps they want from the plan card");
     HostScope scope(m_host);
     Project* p = m_host->liveProject();
     const QHash<int, ClipState> before = clipStates(*p);
@@ -549,11 +580,12 @@ QJsonObject Server::runCommand(const QJsonObject& msg, bool ownChat)
     // One undo step per changing command, all or nothing like on the file; it never merges with the user's slider
     // series before or after it (`restore` is one step of its own and changes nothing before it can fail)
     QUndoStack* undo = p->undoStack();
-    const bool step = name == "edit" || name == "import" || name == "watch";
+    const bool step = (name == "edit" && !planning) || name == "import" || name == "watch";
     const int index = undo->index();
     if (step) {
         p->closeMerge();
-        undo->beginMacro(name == "edit" ? undoText(args) : T("KI: %1").arg(name));
+        const QString planText = T("KI: %1").arg("plan " + args.value("plan_id").toString().trimmed().toLower());
+        undo->beginMacro(planRun ? planText : name == "edit" ? undoText(args) : T("KI: %1").arg(name));
     }
     QJsonObject result;
     Context ctx;
@@ -594,6 +626,9 @@ QJsonObject Server::runCommand(const QJsonObject& msg, bool ownChat)
                        && !args.contains("remove");
     if ((logged && !quiet) || !change.added.isEmpty() || !change.changed.isEmpty() || !change.removed.isEmpty())
         m_host->liveChanged(change);
+    if (name == "edit" && args.value("plan").toBool()) m_host->livePlan("made", result.value("plan").toObject(), ownChat);
+    else if (name == "edit" && args.contains("plan_id"))
+        m_host->livePlan(planRun ? "ran" : "discarded", result.value("plan").toObject(), ownChat);
     return {{"ok", true}, {"result", result}};
 }
 

@@ -3,7 +3,8 @@
 // The "AI" panel: chat with an AI that edits the open project (app/AiChat.h). Messages of the user and the AI, the
 // AI's tool steps (one line each, opened with a click: arguments and answer; pictures as thumbnails), the input
 // (Enter sends, Shift+Enter is a new line), Stop while it works, "New chat", "Copy" and the chat's tokens. Review
-// mode: a bar "Accept / Discard" after a request that changed the project. Without a set-up provider: a short setup
+// mode: a bar "Accept / Discard" after a request that changed the project. Plan mode: a card per plan of the AI (its
+// steps with reasons, a tick each, "Run" / "Discard"). Without a set-up provider: a short setup
 // (provider, key, model) right here. MainWindow (MainWindowChat.cpp) decides what happens with a request (privacy
 // notice, key, undo bookkeeping) and docks the panel left or right.
 
@@ -60,6 +61,9 @@ signals:
     void hideRequested();
     void approved();
     void discarded();
+    // Plan mode: the user runs the ticked steps of a plan card, or discards the plan
+    void planRun(const QString& id, const QVector<int>& steps);
+    void planDiscarded(const QString& id);
 
 protected:
     void resizeEvent(QResizeEvent* e) override;

@@ -89,6 +89,10 @@ public:
     // the app until it disconnects; Settings › AI)
     int idleLimit() const { return m_idleMs; }
     void setIdleLimit(int ms);
+    // A command the app itself runs for the user on behalf of its own chat (a plan's steps from the chat's plan card:
+    // edit plan_id + run/discard), as the chat's commands run: one undo step, lit up, in the AI log. The reply as for
+    // a "run" request ({"ok":true,"result"} or {"ok":false,"error"}); APP_BUSY while another command runs.
+    QJsonObject runForChat(const QString& command, const QJsonObject& args);
 
 signals:
     void stateChanged(); // attached/allowed changed
@@ -105,7 +109,7 @@ private:
     void onConnection();
     void onReadyRead(QLocalSocket* s);
     void handle(QLocalSocket* s, const QJsonObject& msg);
-    QJsonObject runCommand(const QJsonObject& msg, bool ownChat);
+    QJsonObject runCommand(const QJsonObject& msg, bool ownChat, bool byUser = false);
     void attach(QLocalSocket* s, const QString& client);
     void detach(QLocalSocket* s);
     void letGoIfIdle();

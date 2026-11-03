@@ -25,7 +25,9 @@ struct AiSettings {
 
     // AI chat (the "AI" panel, app/AiChat.h). Approval: Auto = every change goes through (one undo step per edit);
     // Review = the changes of one request stay visible until the user accepts them (one undo step) or discards them.
-    enum class Approval { Auto, Review };
+    // Plan = the AI first shows a plan (its steps with their reasons, nothing changed yet); the user runs the steps they
+    // tick, as one undo step, or discards it (cli `edit` plan:true / plan_id)
+    enum class Approval { Auto, Review, Plan };
     QString chatProvider;               // preset id (app/AiProvider.h); empty = not set up yet
     QString chatAddress;                // base URL; empty = the provider's own
     QHash<QString, QString> chatModels; // model per provider (empty/missing = the provider's default)

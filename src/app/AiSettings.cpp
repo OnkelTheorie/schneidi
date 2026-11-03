@@ -40,7 +40,8 @@ AiSettings AiSettings::load()
     const QVariantMap models = s.value("ai/chat/models").toMap();
     for (auto it = models.begin(); it != models.end(); ++it)
         if (const QString m = it.value().toString().trimmed(); !m.isEmpty()) a.chatModels.insert(it.key(), m);
-    a.approval = s.value("ai/chat/approval").toString() == "review" ? Approval::Review : Approval::Auto;
+    const QString approval = s.value("ai/chat/approval").toString();
+    a.approval = approval == "review" ? Approval::Review : approval == "plan" ? Approval::Plan : Approval::Auto;
     const QString compact = s.value("ai/chat/compact").toString();
     a.compact = compact == "on" ? Ai::Compact::On : compact == "off" ? Ai::Compact::Off : Ai::Compact::Auto;
     return a;
@@ -62,6 +63,6 @@ void AiSettings::save() const
     QVariantMap models;
     for (auto it = chatModels.begin(); it != chatModels.end(); ++it) models.insert(it.key(), it.value());
     s.setValue("ai/chat/models", models);
-    s.setValue("ai/chat/approval", approval == Approval::Review ? "review" : "auto");
+    s.setValue("ai/chat/approval", approval == Approval::Review ? "review" : approval == Approval::Plan ? "plan" : "auto");
     s.setValue("ai/chat/compact", compact == Ai::Compact::On ? "on" : compact == Ai::Compact::Off ? "off" : "auto");
 }

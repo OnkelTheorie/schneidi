@@ -82,6 +82,8 @@ void MainWindow::setupChat()
     });
     connect(m_chatPanel, &AiChatPanel::approved, this, &MainWindow::acceptChatChanges);
     connect(m_chatPanel, &AiChatPanel::discarded, this, &MainWindow::discardChatChanges);
+    connect(m_chatPanel, &AiChatPanel::planRun, this, &MainWindow::runChatPlan);
+    connect(m_chatPanel, &AiChatPanel::planDiscarded, this, &MainWindow::discardChatPlan);
     connect(m_chatPanel, &AiChatPanel::setupDone, this, [this](const AiChatPanel::SetupChoice& c) {
         AiSettings s = m_aiSettings;
         s.chatProvider = c.provider;
@@ -205,7 +207,7 @@ bool MainWindow::chatEndpoint(Ai::Endpoint& e, QString* problem)
 bool MainWindow::sendChat(const QString& text)
 {
     if (m_chat->busy() || m_review.pending) return false;
-    if (m_chat->offline()) return m_chat->send(text, {}, false); // says why nothing goes out
+    if (m_chat->offline()) return m_chat->send(text, {}); // says why nothing goes out
     Ai::Endpoint e;
     QString problem;
     if (!chatEndpoint(e, &problem)) {
@@ -233,8 +235,11 @@ bool MainWindow::sendChat(const QString& text)
     }
     if (const QString note = chatChangesNote(); !note.isEmpty()) m_chat->addNote(note);
     const bool review = m_aiSettings.approval == AiSettings::Approval::Review;
+    const AiChat::Mode mode = review ? AiChat::Mode::Review
+                              : m_aiSettings.approval == AiSettings::Approval::Plan ? AiChat::Mode::Plan
+                                                                                    : AiChat::Mode::Auto;
     if (review) m_review = {true, m_project->undoStack()->index(), false, false};
-    if (!m_chat->send(text, e, review)) {
+    if (!m_chat->send(text, e, mode)) {
         m_review = {};
         return false;
     }
@@ -245,6 +250,65 @@ void MainWindow::liveCommandRunning(bool running, bool ownChat)
 {
     m_chatCommand = running && ownChat;
     m_liveCommand = running;
+}
+
+bool MainWindow::livePlanOnly() const { return m_aiSettings.approval == AiSettings::Approval::Plan; }
+
+void MainWindow::livePlan(const QString& state, const QJsonObject& plan, bool ownChat)
+{
+    const QString id = plan["id"].toString();
+    if (state == "made") {
+        if (!ownChat || !m_chat) return; // an AI from outside shows its plan in its own chat
+        m_chat->addPlan(plan);
+        showAiChat(true);
+        return;
+    }
+    if (!m_chat || m_chat->planEntry(id) < 0) return;
+    // Run or dropped by the AI itself (outside plan mode) or by the card: the card shows it
+    QVector<int> ran;
+    for (const QJsonValue& n : plan["ran"].toArray()) ran << n.toInt();
+    m_chat->setPlanState(id, state == "ran" ? AiChat::Entry::State::Done : AiChat::Entry::State::Stopped, ran);
+}
+
+void MainWindow::runChatPlan(const QString& id, const QVector<int>& steps)
+{
+    if (!m_chatRunner || m_chat->busy() || steps.isEmpty()) return;
+    QJsonArray run;
+    for (int n : steps) run << n;
+    const QJsonObject reply = m_chatRunner("edit", {{"project", "@app"}, {"plan_id", id}, {"run", run}});
+    QStringList numbers;
+    for (int n : steps) numbers << QString::number(n);
+    if (reply["ok"].toBool()) {
+        m_chat->setPlanState(id, AiChat::Entry::State::Done, steps);
+        rememberChatState(); // the plan's changes are the AI's, not edits of the user
+        m_chat->addNote(QString("the user ran steps %1 of plan %2 (one undo step)%3")
+                            .arg(numbers.join(", "), id,
+                                 steps.size() < m_chat->entries()[m_chat->planEntry(id)].plan["steps"].toArray().size()
+                                     ? "; the other steps were left out"
+                                     : ""));
+        return;
+    }
+    const QJsonObject error = reply["error"].toObject();
+    const QString code = error["code"].toString();
+    if (code == "APP_BUSY" || code == "APP_WAITING") { // later again: the card stays
+        m_chat->addError(error["message"].toString());
+        return;
+    }
+    m_chat->setPlanState(id, AiChat::Entry::State::Failed, {},
+                         code == "PLAN_STALE"
+                             ? T("Nicht ausgeführt: das Projekt wurde seit dem Plan geändert. Bitte die KI, neu zu planen.")
+                             : T("Nicht ausgeführt: %1").arg(error["message"].toString()));
+    m_chat->addNote(QString("plan %1 could not run (%2: %3); nothing of it was changed")
+                        .arg(id, code, error["message"].toString()));
+}
+
+void MainWindow::discardChatPlan(const QString& id)
+{
+    if (m_chat->busy()) return;
+    // Gone already (expired) or not: nothing of it happens
+    if (m_chatRunner) m_chatRunner("edit", {{"project", "@app"}, {"plan_id", id}, {"discard", true}});
+    m_chat->setPlanState(id, AiChat::Entry::State::Stopped);
+    m_chat->addNote(QString("the user discarded plan %1; nothing of it was run").arg(id));
 }
 
 void MainWindow::chatUndoChanged()

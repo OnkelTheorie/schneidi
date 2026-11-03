@@ -25,6 +25,7 @@
 #include <QToolButton>
 #include <QVBoxLayout>
 
+#include <algorithm>
 #include <cmath>
 
 namespace {
@@ -323,11 +324,14 @@ void AiSettingsPage::addChatSection(Ai::Keys* keys)
     m_approval->setObjectName("ai_chat_approval");
     m_approval->addItem(T("Automatisch: jede Änderung gilt sofort"), int(AiSettings::Approval::Auto));
     m_approval->addItem(T("Annehmen: erst ansehen, dann übernehmen oder verwerfen"), int(AiSettings::Approval::Review));
-    m_approval->setCurrentIndex(m_initial.approval == AiSettings::Approval::Review ? 1 : 0);
+    m_approval->addItem(T("Plan: erst Schnittliste zeigen, dann schneiden"), int(AiSettings::Approval::Plan));
+    m_approval->setCurrentIndex(std::max(0, m_approval->findData(int(m_initial.approval))));
     f->addRow(T("Freigabe"), m_approval);
     f->addRow(hint(T("Automatisch: jede Änderung der KI ist ein eigener Rückgängig-Schritt. Annehmen: die Änderungen einer "
                      "Anfrage sind sofort in Timeline und Vorschau zu sehen; danach übernimmst du sie als einen Schritt "
                      "oder verwirfst sie.")));
+    f->addRow(hint(T("Plan: die KI ändert erst nichts, sondern zeigt ihre Schritte mit Begründung. Du hakst an, was "
+                     "geschehen soll, und führst es als einen Schritt aus – oder verwirfst den Plan.")));
     m_compact = new QComboBox;
     m_compact->setObjectName("ai_chat_compact");
     m_compact->addItem(T("Automatisch"), int(Ai::Compact::Auto));
