@@ -283,7 +283,7 @@ int main(int argc, char* argv[])
     CHECK_EQ(code(live), QString("ok"));
     CHECK(std::as_const(live)["live"].toBool());
     CHECK_EQ(fake.project.undoStack()->index(), undo0 + 1);
-    CHECK(fake.project.undoStack()->undoText().contains("plan p1"));
+    CHECK_EQ(fake.project.undoStack()->undoText(), T("KI: Plan %1").arg("p1"));
     CHECK(fileBytes(fake.path) == fileBytes(copy));
     CHECK_EQ(fake.plans.last(), QString("ran p1"));
     CHECK_EQ(fake.lastPlan["ran"].toArray(), (QJsonArray{1, 3}));
@@ -339,6 +339,7 @@ int main(int argc, char* argv[])
         server.runForChat("edit", {{"project", "@app"}, {"plan_id", chatPlan}, {"run", QJsonArray{2}}});
     CHECK(std::as_const(reply)["ok"].toBool());
     CHECK_EQ(fake.project.undoStack()->index(), undo3 + 1);
+    CHECK_EQ(fake.project.undoStack()->text(undo3), T("KI: Plan %1").arg(chatPlan)); // the Undo menu's text, translated
     if (CHECK_EQ(fake.project.timeline().video[0].clips.size(), 2)) CHECK_EQ(fake.project.timeline().video[0].clips[1].start, 90);
     CHECK_EQ(fake.plans.last(), "ran " + chatPlan + " chat");
     // Gone after the run

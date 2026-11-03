@@ -584,7 +584,7 @@ QJsonObject Server::runCommand(const QJsonObject& msg, bool ownChat, bool byUser
     const int index = undo->index();
     if (step) {
         p->closeMerge();
-        const QString planText = T("KI: %1").arg("plan " + args.value("plan_id").toString().trimmed().toLower());
+        const QString planText = T("KI: Plan %1").arg(args.value("plan_id").toString().trimmed().toLower());
         undo->beginMacro(planRun ? planText : name == "edit" ? undoText(args) : T("KI: %1").arg(name));
     }
     QJsonObject result;
