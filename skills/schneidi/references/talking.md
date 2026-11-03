@@ -25,7 +25,12 @@ Goal: same content, no dead air, no slips - but still natural, not robotic.
   `delete_range` (`ranges`). Times from a media file are source times - map them onto the timeline or transcribe the
   project instead (its times are timeline times).
 - Whisper often leaves out "uh/um/äh"; don't promise to remove filler you cannot see in the transcript.
-- For a false start ("We went - we drove to …") cut the first try, keep the clean one.
+- For a false start ("We went - we drove to …") cut the first try, keep the clean one. Sentences said again right
+  after themselves: `{"op":"best_takes"}` keeps the last good take of each (from the clips' transcripts).
+- **From a script:** `{"op":"rough_cut","script":"…"}` finds each sentence in the transcripts of the project's files
+  (forgiving misheard words), takes the last complete take (`takes` `"best"` = the highest rated) and lays them out in
+  the script's order in a new timeline; the notes list each sentence's take, the alternatives and `missing` sentences.
+  Best as a plan (`plan` true) when the user wants to choose.
 
 ## Smoother cuts (offer them, they are not automatic)
 - **Room tone:** after a pause cut the gaps between clips of the voice track are dead silent (with a gap left by
@@ -36,6 +41,11 @@ Goal: same content, no dead air, no slips - but still natural, not robotic.
   cut. `{"op":"jl_cut","at":"0:12","audio":"-0.4s"}` = J (the next person is heard before we see them), `"+0.4s"` = L
   (the previous sentence runs on under the next shot); 0 puts it back. Only the sound edge moves, picture and sync
   stay. 0.2-0.6 s sounds natural; not enough material in the file = an error that says how far it can go.
+- **Jump cuts** after a pause or word cut (one take, a part skipped; `check` lists them as `jump_cut`):
+  `{"op":"hide_jumps"}` pushes every second clip in (zoom 1.12 around the speaker), so the jump looks like a second
+  camera.
+- **B-roll to what is said:** after `index` (shots described with `annotate`), `{"op":"broll"}` puts the matching shot
+  of the material over each sentence on V2 (picture only); best as a plan.
 
 ## Sound
 Speech is the product: see [audio.md](audio.md) - `clean_voice` on the voice track (noise, pauses, even level; `denoise` for light hiss only), EQ high pass ~80 Hz, `normalize`
