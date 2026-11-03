@@ -131,7 +131,10 @@ int main(int argc, char** argv)
         const QStringList sound{"-f", "lavfi", "-i", "sine=frequency=440:duration=3"};
         const QStringList picture{"-f", "lavfi", "-i", "testsrc2=size=320x180:rate=25:duration=3"};
         const QStringList x264{"-map", "1:v", "-map", "0:a", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt",
-                               "yuv420p", "-g", "10"};
+                               "yuv420p", "-g", "10",
+                               // the picture's own time stamps: FFmpeg 6.1 fills a late start in MP4 with copies of
+                               // the first picture (constant frame rate), the picture is then not late at all
+                               "-fps_mode", "passthrough"};
         const QString late = Check::makeMedia(dir.filePath("late_picture.mkv"),
                                               sound + QStringList{"-itsoffset", "0.04"} + picture + x264
                                                   + QStringList{"-c:a", "flac"});

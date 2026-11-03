@@ -117,7 +117,11 @@ QString makeSource(const QString& dir, const Case& c)
     for (int s = 0; s < c.streams; ++s) a << "-map" << QString("%1:a").arg(firstAudio + s);
     if (c.cover) a << "-map" << QString("%1:v").arg(inputs) << "-c:v" << "mjpeg" << "-disposition:v" << "attached_pic"
                    << "-id3v2_version" << "3";
-    if (c.video) a << "-c:v" << "libx264" << "-preset" << "ultrafast" << "-pix_fmt" << "yuv420p" << "-g" << "25";
+    // The picture's own time stamps (a late start stays late): FFmpeg 6.1 makes MOV/MP4 constant frame rate by
+    // default and fills a late start with copies of the first picture, the file then starts with both together
+    if (c.video)
+        a << "-c:v" << "libx264" << "-preset" << "ultrafast" << "-pix_fmt" << "yuv420p" << "-g" << "25" << "-fps_mode"
+          << "passthrough";
     a << "-c:a" << c.codec;
     if (QString(c.codec) == "aac" || QString(c.codec) == "libmp3lame") a << "-b:a" << "192k";
     if (QString(c.codec) == "aac" && !c.pns) a << "-aac_pns" << "0";
