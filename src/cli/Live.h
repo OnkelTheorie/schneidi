@@ -133,10 +133,10 @@ private:
 
 // Hands files to a schneidi app that already runs (`schneidi <file>`, `schneidi --open <file>`, a recorder that passes
 // its clips on): the app that has the project file open (else the only/first one that answers) opens them like
-// LiveHost::liveOpen and comes to the front. An app that does not answer at once (still starting, a long command)
-// gets up to `patienceMs` before this gives up on it. False = no app took them (none runs, none answered, an older
+// LiveHost::liveOpen and comes to the front. An app that does not answer at once (still starting; a running command
+// does not keep it from answering) gets up to `patienceMs` before this gives up on it and opens a window of its own. False = no app took them (none runs, none answered, an older
 // version): the caller starts the app itself.
-bool handOver(const QStringList& files, QString* app = nullptr, int patienceMs = 30000);
+bool handOver(const QStringList& files, QString* app = nullptr, int patienceMs = 10000);
 
 // Launches with files decide "hand over or become the app" one at a time: lock, handOver(), and when that fails keep
 // the lock until this process's Server::start() registered it (then release it). Two launches at the same moment

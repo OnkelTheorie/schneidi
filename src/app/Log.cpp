@@ -26,6 +26,9 @@ void write(const char* level, const QString& text)
                             + text.trimmed().toUtf8() + '\n';
     std::lock_guard<std::mutex> lock(s_mutex);
     if (!s_file.isOpen()) return;
+    // Another instance may write to the same file (Windows: it could not be rotated): append at its real end, not at
+    // the offset this process last wrote to, so the two do not overwrite each other's lines
+    s_file.seek(s_file.size());
     s_file.write(line);
     s_file.flush(); // in a crash everything up to then should be in there
 }
