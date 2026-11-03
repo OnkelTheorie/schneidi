@@ -82,6 +82,18 @@ void testInstallPaths()
     f.close();
     CHECK(Extensions::isInstalled(*x264));
     CHECK_EQ(Extensions::encoderProgram(), QDir(bin).filePath(name));
+#ifndef Q_OS_WIN
+    // In use (Windows: an export runs this ffmpeg, the folder cannot be renamed; here: a read-only parent folder):
+    // removing fails as a whole and leaves the install working, instead of deleting it file by file
+    const QString holder = QDir(bin + "/../..").canonicalPath(); // holds the encoder tree (bin/bin/ffmpeg)
+    const QFileDevice::Permissions was = QFile::permissions(holder);
+    QFile::setPermissions(holder, QFileDevice::ReadOwner | QFileDevice::ExeOwner);
+    if (!QFileInfo(holder).isWritable()) { // root writes anyway
+        CHECK(!Extensions::remove(*x264));
+        CHECK(Extensions::isInstalled(*x264));
+    }
+    QFile::setPermissions(holder, was);
+#endif
     CHECK(Extensions::remove(*x264));
     CHECK(!Extensions::isInstalled(*x264));
     CHECK(Extensions::encoderProgram().isEmpty());

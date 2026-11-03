@@ -46,9 +46,14 @@ ExtensionsDialog::ExtensionsDialog(QWidget* parent) : QDialog(parent)
         m_rows << Row{&item, status, button};
         connect(button, &QPushButton::clicked, this, [this, &item] {
             if (Extensions::isInstalled(item)) {
+                bool removed = true;
                 for (const Extensions::Item* i : Extensions::withDependencies({&item}))
-                    if (i->kind == item.kind || i->kind == Extensions::Kind::WhisperVad) Extensions::remove(*i);
+                    if (i->kind == item.kind || i->kind == Extensions::Kind::WhisperVad) removed &= Extensions::remove(*i);
                 refresh();
+                if (!removed)
+                    QMessageBox::warning(this, T(item.name),
+                                         T("Wird gerade benutzt: Bitte laufende Exporte, Sprachausgabe und Transkription "
+                                           "beenden und es dann noch einmal versuchen."));
             } else {
                 install(item);
             }

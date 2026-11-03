@@ -171,6 +171,20 @@ QString tarProgram()
     return Bundle::tool("tar");
 }
 
+// Moves an installed folder out of the way in one step before it is replaced or deleted. Windows refuses to rename a
+// folder while a program in it runs (an export with this ffmpeg, a voice, a transcription): then nothing is touched,
+// where deleting file by file would leave a half-removed install. False = in use; *aside = where it went ("" = none)
+bool moveAside(const QString& dir, QString* aside)
+{
+    aside->clear();
+    if (!QFileInfo::exists(dir)) return true;
+    const QString old = dir + ".old";
+    QDir(old).removeRecursively(); // left over from a run whose program still held it
+    if (!QDir().rename(dir, old)) return false;
+    *aside = old;
+    return true;
+}
+
 } // namespace
 
 const QVector<Item>& catalog()
@@ -249,9 +263,13 @@ bool isInstalled(const Item& item) { return !installedPath(item).isEmpty(); }
 
 bool remove(const Item& item)
 {
-    if (item.kind == Kind::Program) return QDir(binDir()).removeRecursively();
-    if (item.kind == Kind::Encoder) return QDir(encoderTree()).removeRecursively();
-    if (item.kind == Kind::Speech) return QDir(piperBin()).removeRecursively();
+    if (item.kind == Kind::Program || item.kind == Kind::Encoder || item.kind == Kind::Speech) {
+        QString aside;
+        if (!moveAside(item.kind == Kind::Program ? binDir() : item.kind == Kind::Encoder ? encoderTree() : piperBin(), &aside))
+            return false;
+        if (!aside.isEmpty()) QDir(aside).removeRecursively();
+        return true;
+    }
     if (item.kind == Kind::Voice) {
         const QString path = QDir(voicesDir()).filePath(item.fileName);
         QFile::remove(path + ".json");
@@ -479,11 +497,18 @@ QString Installer::unpack(const QString& archive)
     }
     QString keep = QFileInfo(programPath).absolutePath();
     if (encoder && QFileInfo(keep).fileName() == "bin") keep = QFileInfo(keep).absolutePath();
-    QDir(target).removeRecursively();
+    QString aside;
+    if (!moveAside(target, &aside)) {
+        QDir(staging).removeRecursively();
+        return T("Wird gerade benutzt: Bitte laufende Exporte, Sprachausgabe und Transkription beenden und es dann noch "
+                 "einmal versuchen.");
+    }
     if (!QDir().rename(keep, target)) {
+        if (!aside.isEmpty()) QDir().rename(aside, target); // the working version back
         QDir(staging).removeRecursively();
         return T("Programm konnte nicht abgelegt werden: %1").arg(target);
     }
+    if (!aside.isEmpty()) QDir(aside).removeRecursively();
     QDir(staging).removeRecursively();
     const QString installed = encoder ? installedFfmpeg() : QDir(target).filePath(program);
     QFile::setPermissions(installed, QFile::permissions(installed) | QFile::ExeOwner | QFile::ExeUser);

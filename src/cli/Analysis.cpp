@@ -329,7 +329,7 @@ QJsonObject cmdExtensions(const QJsonObject& a, Context& ctx)
     };
     QJsonArray done;
     for (const Extensions::Item* i : Extensions::withDependencies(items(a["remove"].toString()))) {
-        if (!Extensions::remove(*i)) fail("FAILED", "could not remove " + i->id);
+        if (!Extensions::remove(*i)) fail("FAILED", "could not remove " + i->id + " (in use? stop running exports, speech and transcriptions first)");
         done << QJsonObject{{"removed", i->id}};
     }
     const QVector<const Extensions::Item*> install = Extensions::withDependencies(items(a["install"].toString()));

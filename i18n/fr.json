@@ -2070,5 +2070,6 @@
  "„Neutral“ ist ein neues Projekt wie immer: nichts stumm, nichts umbenannt, das Format kommt vom ersten Clip. Die gewählte Vorlage gilt auch für das Projekt, mit dem schneidi startet.": "« Neutre » est un nouveau projet comme toujours : rien de muet, rien de renommé, le format vient du premier clip. Le modèle choisi vaut aussi pour le projet avec lequel schneidi démarre.",
  "◀ Verfolgen": "◀ Suivre",
  "♪ Audio": "♪ Audio",
- "Nur die Stimme ist angehakt – Musik und Spielton würden sonst mitgeschrieben.": "Seule la voix est cochée – sinon la musique et le son du jeu se retrouveraient dans les sous-titres."
+ "Nur die Stimme ist angehakt – Musik und Spielton würden sonst mitgeschrieben.": "Seule la voix est cochée – sinon la musique et le son du jeu se retrouveraient dans les sous-titres.",
+ "Wird gerade benutzt: Bitte laufende Exporte, Sprachausgabe und Transkription beenden und es dann noch einmal versuchen.": "En cours d'utilisation : arrêtez d'abord les exports, la synthèse vocale et les transcriptions en cours, puis réessayez."
 }
