@@ -784,6 +784,8 @@ void test(const QString& dir)
         const QList<QWidget*> four = panel->findChildren<QWidget*>("ai_plan");
         if (CHECK_EQ(four.size(), 4)) {
             if (auto* run = four.last()->findChild<QPushButton*>("ai_plan_run"); CHECK(run)) CHECK(!run->isEnabled() || !run->isVisible());
+            if (auto* title = four.last()->findChild<QLabel*>("ai_plan_title"); CHECK(title))
+                CHECK(title->text().endsWith(T("Plan %1 · 1 Schritt").arg("").mid(5))); // one step, not "1 Schritte"
             if (auto* state = four.last()->findChild<QLabel*>("ai_plan_state"); CHECK(state))
                 CHECK_EQ(state->text(), T("Nicht mehr gültig: ein anderes Projekt wurde geöffnet."));
         }
