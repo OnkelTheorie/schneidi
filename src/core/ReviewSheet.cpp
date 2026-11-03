@@ -418,7 +418,8 @@ QImage sheet(const Data& d, QVector<Tile>& tiles)
     const double span = std::max(20.0, std::ceil(lengthS / 15));
     const int rows = std::max(1, int(std::ceil(lengthS / span - 1e-9)));
     const int rulerH = 18, bandH = 18, namesH = 14, marksH = 56, waveH = 44, rowGap = 14;
-    const int rowH = rulerH + bandH + namesH + marksH + int(d.waves.size()) * waveH + rowGap;
+    const int paceH = d.pace.empty() ? 0 : 34;
+    const int rowH = rulerH + bandH + namesH + marksH + int(d.waves.size()) * waveH + paceH + rowGap;
     const int H = headerH + tileRows * (tileH + labelH + gap) + gap + rows * rowH + margin;
 
     QImage out(W, H, QImage::Format_RGB32);
@@ -516,6 +517,29 @@ QImage sheet(const Data& d, QVector<Tile>& tiles)
             p.setPen(QColor(200, 200, 200));
             p.drawText(QRectF(margin, wl.r.top(), 38, wl.r.height()), Qt::AlignVCenter | Qt::AlignLeft, w.track);
             wy += waveH;
+        }
+        if (paceH > 0) {
+            // Pace: changes per second, scaled to at least 2 per second at the top
+            const QRectF pr(x0, wy + 2, width, paceH - 4);
+            p.fillRect(pr, QColor(32, 32, 38));
+            const double top = std::max(2.0, *std::max_element(d.pace.begin(), d.pace.end()));
+            QPainterPath path;
+            bool first = true;
+            for (size_t i = 0; i < d.pace.size(); ++i) {
+                const double s = (i + 0.5) * d.paceStepS;
+                if (s < lane.from - d.paceStepS || s > lane.to + d.paceStepS) continue;
+                const QPointF pt(std::clamp(lane.x(s), pr.left(), pr.right()), pr.bottom() - d.pace[i] / top * pr.height());
+                if (first) path.moveTo(pt);
+                else path.lineTo(pt);
+                first = false;
+            }
+            p.setPen(QPen(QColor(240, 180, 60), 2));
+            p.setBrush(Qt::NoBrush);
+            p.drawPath(path);
+            p.setFont(font(10, true));
+            p.setPen(QColor(200, 200, 200));
+            p.drawText(QRectF(margin, pr.top(), 38, pr.height()), Qt::AlignVCenter | Qt::AlignLeft, T("Tempo"));
+            wy += paceH;
         }
         // Past the end of the timeline: nothing
         if (lane.to > lengthS)

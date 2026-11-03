@@ -6,6 +6,7 @@
 #include "cli/AnalysisDetail.h"
 
 #include "core/Beats.h"
+#include "core/ExportCheck.h"
 #include "core/GameHud.h"
 #include "core/Retime.h"
 #include "core/ReviewSheet.h"
@@ -283,6 +284,10 @@ std::shared_ptr<const ReviewSheet::Data> reviewData(Session& s, const Timeline& 
         d->waves << sound->wave;
     }
     if (beatTrack < 0) notes << "no music track for the beat grid (every audio track has linked or video sound): pass beats_track";
+    // Pace of the edit (the same measure as `check`)
+    const ExportCheck::Pace pace = ExportCheck::pace(tl, 0, end, d->format);
+    d->pace.assign(pace.curve.begin(), pace.curve.end());
+    d->paceStepS = pace.curveStepS;
     d->sort();
     if (info && !notes.isEmpty()) (*info)["review_notes"] = notes;
     return d;

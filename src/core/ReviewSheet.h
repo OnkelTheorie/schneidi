@@ -54,6 +54,9 @@ struct Data {
     QVector<Section> sections; // sorted by from
     QVector<Wave> waves;       // one per audio track looked at
     int musicWave = -1;        // index in waves of the beat track (drawn under the review video's strip)
+    // Pace (core/ExportCheck::pace): changes per second in steps of paceStepS seconds; empty = not drawn
+    std::vector<double> pace;
+    double paceStepS = 1;
 
     double fps() const { return format.rate.fps() > 0 ? format.rate.fps() : 25.0; }
     void sort(); // marks by frame (kind order for the same frame), sections by from
@@ -116,7 +119,7 @@ constexpr int kSheetWidth = 1600;
 constexpr int kSheetColumns = 6;
 // The sheet: header, the shots as tiles (label: timecode + clip, count of hits/kills in the shot), then the timeline
 // in rows of up to 20 s (more for long timelines, at most 15 rows): ruler, sections, marks over the beat grid and one
-// waveform per audio track with the beat grid behind it. tiles: their rect is set.
+// waveform per audio track with the beat grid behind it, and the pace curve (changes per second). tiles: their rect is set.
 QImage sheet(const Data& d, QVector<Tile>& tiles);
 
 } // namespace ReviewSheet
