@@ -42,7 +42,8 @@ names cost a failed call.
    the Mix stream comes in muted). `templates` lists them with the user's own. Then `edit` with a list of ops. Its answer lists the clips it added and changed
    (`changes`, with their new ids) and the timeline as a summary; take ids from there or from `info`, never guess
    them - they change when clips are split. Positions relative to a clip or to source time
-   (`{"clip": 3, "source": "12.4s"}`) stay correct while earlier ops move things.
+   (`{"clip": 3, "source": "12.4s"}`) stay correct while earlier ops move things. Give an op `"why"` (a short
+   reason, e.g. `"hook: loudest kill first"`): the answer repeats it under `why`, so the user can follow the cut.
 4. **Check before rendering**: `check` on the project (gaps, missing media, subtitles, sound, game sound or
    speech buried under the music, stutter in recordings; 9:16: text the apps cover, a slow start), `info` (length,
    tracks) and a `frames` sheet of the timeline.

@@ -74,6 +74,6 @@ QString resolutionLabel(int width, int height);
 // of a 16:9 edit) is shrunk just enough to fit it with a margin.
 void scaleTimeline(Timeline& tl, QSize from, QSize to);
 
-// Frame rate changed: convert the times that are frames in a timeline without clips (subtitle cues, markers, in/out),
-// so that they stay at the same time. Clips are not converted (a timeline with clips keeps its frame rate).
+// Frame rate changed: convert the times that are frames in a timeline without clips (subtitle cues, markers, in/out,
+// story sections, notes), so that they stay at the same time. Clips are not converted (a timeline with clips keeps its frame rate).
 void retimeTimeline(Timeline& tl, FrameRate from, FrameRate to);
