@@ -290,8 +290,8 @@ void MainWindow::runChatPlan(const QString& id, const QVector<int>& steps)
     }
     const QJsonObject error = reply["error"].toObject();
     const QString code = error["code"].toString();
-    if (code == "APP_BUSY" || code == "APP_WAITING") { // later again: the card stays
-        m_chat->addError(error["message"].toString());
+    if (code == "APP_BUSY" || code == "APP_WAITING") { // later again: the card stays (in the user's language)
+        m_chat->addError(T("Die App führt gerade einen anderen Befehl aus – bitte gleich noch einmal versuchen."));
         return;
     }
     m_chat->setPlanState(id, AiChat::Entry::State::Failed, {},

@@ -755,6 +755,11 @@ void test(const QString& dir)
             if (auto* state = cards.last()->findChild<QLabel*>("ai_plan_state"); CHECK(state))
                 CHECK(state->text() != T("Verworfen: nichts davon wurde ausgeführt."));
             CHECK_EQ(count(chat, AiChat::Entry::Kind::Error), errorsBefore + 1);
+            // Run while busy: the same, in the user's language (it showed the English text of the tool)
+            if (auto* run = cards.last()->findChild<QPushButton*>("ai_plan_run"); CHECK(run)) run->click();
+            settle(50);
+            if (const AiChat::Entry* e = lastOf(chat, AiChat::Entry::Kind::Error); CHECK(e))
+                CHECK_EQ(e->text, T("Die App führt gerade einen anderen Befehl aus – bitte gleich noch einmal versuchen."));
             w.setChatRunner([&server](const QString& command, const QJsonObject& args) { return server.runForChat(command, args); });
             if (auto* discard = cards.last()->findChild<QPushButton*>("ai_plan_discard"); CHECK(discard)) discard->click();
             settle(150);
