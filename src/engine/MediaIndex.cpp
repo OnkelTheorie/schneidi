@@ -467,7 +467,22 @@ std::optional<Entry> build(const QString& file, const Options& options, QString*
         QMutexLocker lock(&g_mutex);
         source = eventSource();
     }
-    const QVector<AudioEvents::Event> events = source ? source(e->file) : AudioEvents::analyze(e->file, 0);
+    // The sound part asks for a cancel too (a sound-only file never did: closing the app waited for all of it)
+    const auto cancelled = [&] {
+        if (error) *error = "canceled";
+        return std::nullopt;
+    };
+    if (options.progress && !options.progress(0.9)) return cancelled();
+    QVector<AudioEvents::Event> events;
+    if (source) {
+        events = source(e->file);
+    } else {
+        AudioEvents::Options ao;
+        if (options.progress) ao.progress = [&options](double p) { return options.progress(0.9 + 0.1 * std::clamp(p, 0.0, 1.0)); };
+        const AudioEvents::Result r = AudioEvents::analyzeFile(e->file, 0, ao);
+        if (options.progress && r.error.contains("cancel", Qt::CaseInsensitive)) return cancelled();
+        events = r.events;
+    }
     distribute(*e, events);
     const QString key = keyOf(fi);
     saveJson(cacheDir() + '/' + key + ".json", toJson(*e, events));
