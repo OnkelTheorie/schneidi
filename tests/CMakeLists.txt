@@ -126,6 +126,11 @@ target_link_libraries(test_speech PRIVATE schneidi_cli_lib)
 target_link_libraries(test_live PRIVATE schneidi_cli_lib)
 target_compile_definitions(test_live PRIVATE SCHNEIDI_CLI="$<TARGET_FILE:schneidi-cli>")
 add_dependencies(test_live schneidi-cli)
+# The 0.16 edit ops live in the app: one undo step each, undo exact, same result as on the file
+schneidi_test(test_live_ops016)
+target_link_libraries(test_live_ops016 PRIVATE schneidi_cli_lib)
+target_compile_definitions(test_live_ops016 PRIVATE SCHNEIDI_CLI="$<TARGET_FILE:schneidi-cli>")
+add_dependencies(test_live_ops016 schneidi-cli)
 # Files handed to the running app (single instance over the live connection), videos opened as projects, `app open`,
 # the real program offscreen
 schneidi_test(test_open_in_app)
