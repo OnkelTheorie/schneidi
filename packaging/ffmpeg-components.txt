@@ -357,6 +357,8 @@ filter setparams
 filter fps
 filter trim
 filter atrim
+# transcribe with several audio streams (engine/Transcriber.cpp: "Discord,Mikrofon" mixed for whisper)
+filter amix
 filter transpose
 filter hflip
 filter vflip

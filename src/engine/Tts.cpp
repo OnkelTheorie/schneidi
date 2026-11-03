@@ -224,10 +224,13 @@ bool Speaker::start(const Request& request, QString* error)
     const QString model = Extensions::voiceModelPath(m_request.options.voice);
     m_process.setProcessChannelMode(QProcess::SeparateChannels);
     // The part file by its name in the folder (piper's working directory): its ASCII name passes through piper's
-    // ANSI arguments whatever the project folder is called; the model by a path piper can open
+    // ANSI arguments whatever the project folder is called; the model by a path piper can open. Its config by name
+    // too: piper looks for "<model path>.json", and the short name of "x.onnx" is "X~1.ONN" (Windows test: piper
+    // aborted with 0xC0000409 in every folder, the extensions folder name alone is longer than 8 letters)
     m_process.setWorkingDirectory(QFileInfo(m_part).absolutePath());
     m_process.start(Extensions::piperProgram(),
-                    Speech::piperArguments(narrowSafe(model), m_request.options, QFileInfo(m_part).fileName()));
+                    Speech::piperArguments(narrowSafe(model), m_request.options, QFileInfo(m_part).fileName(),
+                                           narrowSafe(model + ".json")));
     m_process.write(Speech::stdinText(m_request.text));
     m_process.closeWriteChannel();
     return true;

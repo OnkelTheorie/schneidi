@@ -99,11 +99,12 @@ QString folder(const QString& projectPath)
     return fi.absoluteDir().filePath(fi.completeBaseName() + "-tts");
 }
 
-QStringList piperArguments(const QString& model, const Options& o, const QString& outFile)
+QStringList piperArguments(const QString& model, const Options& o, const QString& outFile, const QString& config)
 {
-    return {"--model", model, "--output_file", outFile, "--length_scale",
-            number(1.0 / std::clamp(o.speed, kMinSpeed, kMaxSpeed)), "--sentence_silence",
-            number(std::clamp(o.pause, 0.0, kMaxPause)), "--quiet"};
+    QStringList args{"--model", model};
+    if (!config.isEmpty()) args << "--config" << config;
+    return args << "--output_file" << outFile << "--length_scale" << number(1.0 / std::clamp(o.speed, kMinSpeed, kMaxSpeed))
+                << "--sentence_silence" << number(std::clamp(o.pause, 0.0, kMaxPause)) << "--quiet";
 }
 
 QByteArray stdinText(const QString& text) { return normalizedText(text).toUtf8() + '\n'; }
