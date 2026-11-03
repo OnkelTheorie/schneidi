@@ -407,6 +407,20 @@ int main(int argc, char** argv)
         // Measured: ~2 s for one 30 s window = 0.067 per second, mixed with the 0.05 before
         const double speed = QSettings().value("transcribe/speed/ggml-test.bin").toDouble();
         CHECK(speed > 0.055 && speed < 0.075);
+
+        // The same Transcriber again (the Transcript panel keeps one for every file): the run before left whisper's
+        // working directory on its temporary folder, which is gone now; reading the next file's sound must not
+        // start in it (ffmpeg "could not be started", every second transcription in a session failed)
+        ok = finished = false;
+        QString message;
+        QObject::connect(&t, &Transcriber::finished, [&](bool, const QString& m) { message = m; });
+        req.audioStream = 0;
+        if (CHECK(t.start(req, &error))) {
+            QTimer::singleShot(30000, &loop, &QEventLoop::quit);
+            loop.exec();
+        }
+        if (!CHECK(ok)) std::printf("       second run: %s\n", qPrintable(message));
+        if (CHECK_EQ(t.result().words.size(), qsizetype(1))) CHECK_EQ(t.result().words[0].text, QString("f400"));
     }
     return Check::result();
 }

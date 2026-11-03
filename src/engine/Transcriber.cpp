@@ -138,8 +138,13 @@ Transcriber::Transcriber(QObject* parent) : QObject(parent)
         done(true, {});
     });
     connect(&m_process, &QProcess::errorOccurred, this, [this](QProcess::ProcessError e) {
+        // Queued: QProcess can report a failed start inside start() itself (Windows: CreateProcess; Linux: a working
+        // directory that is gone). Before Transcriber::start returned, that was swallowed (m_running still false)
+        // and the caller waited for finished() forever; from there finished() came before start() returned true.
         if (e == QProcess::FailedToStart && m_running)
-            done(false, T("%1 konnte nicht gestartet werden.").arg(m_process.program()));
+            QTimer::singleShot(0, this, [this, program = m_process.program()] {
+                if (m_running) done(false, T("%1 konnte nicht gestartet werden.").arg(program));
+            });
     });
 }
 
@@ -175,6 +180,7 @@ bool Transcriber::start(const TranscribeRequest& request, QString* error)
     m_log.clear();
     m_cancelled = false;
     m_stage = 0;
+    m_running = true; // a failed start below is reported through finished() (see errorOccurred)
     const QString wav = m_tmp->filePath("audio.wav");
     if (!request.media.isEmpty()) {
         // 16 kHz mono like whisper wants it; only the chosen audio stream(s), several mixed at their own level
@@ -189,6 +195,9 @@ bool Transcriber::start(const TranscribeRequest& request, QString* error)
             args << "-filter_complex" << graph << "-map" << "[voice]";
         }
         args << "-vn" << "-ac" << "1" << "-ar" << "16000" << "-c:a" << "pcm_s16le" << wav;
+        // Not in whisper's folder of the run before (runWhisper): that temporary folder is gone, and a process
+        // cannot start in it - every second transcription of a file with the same Transcriber failed
+        m_process.setWorkingDirectory(QString());
         m_process.start(Bundle::tool("ffmpeg"), args);
     } else {
         ExportSettings s;
@@ -216,9 +225,12 @@ bool Transcriber::start(const TranscribeRequest& request, QString* error)
             runWhisper();
         });
         QString exportError;
-        if (!m_exporter->start(tl, s, &exportError)) return fail(exportError);
+        if (!m_exporter->start(tl, s, &exportError)) {
+            m_running = false;
+            m_exporter.reset();
+            return fail(exportError);
+        }
     }
-    m_running = true;
     return true;
 }
 
