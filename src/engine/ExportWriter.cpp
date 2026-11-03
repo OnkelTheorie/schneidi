@@ -1165,36 +1165,34 @@ struct ExportWriter::Impl {
         return true;
     }
 
-    // All subtitle packets right after the header: the muxer interleaves them by time with the pictures and sound
+    // All subtitle packets right after the header: the muxer interleaves them by time with the pictures and sound.
+    // The packets are written here, not by the text encoders: those read the text as an ASS event, so a user's "\N",
+    // "\h" or "{\i1}" became a line break or a tag instead of showing as typed (there is no ASS escape for them).
+    // The encoders stay for the stream parameters (mov_text's sample description).
     bool writeTextStreams()
     {
-        std::vector<uint8_t> buffer(1 << 16);
         for (size_t i = 0; i < textStreams.size(); ++i) {
             auto [st, enc] = textStreams[i];
+            const AVCodecID id = enc->codec_id;
             for (const Subtitles::TextCue& c : s.subtitles[int(i)].cues) {
-                // ASS event without times ("ReadOrder,Layer,Style,Name,MarginL,MarginR,MarginV,Effect,Text"), line
-                // breaks as \N; braces would start override tags
                 QString text = c.text;
-                text.replace('{', QLatin1String("(")).replace('}', QLatin1String(")")).replace('\n', QLatin1String("\\N"));
-                QByteArray ass = "0,0,Default,,0,0,0,," + text.toUtf8();
-                AVSubtitleRect rect{};
-                rect.type = SUBTITLE_ASS;
-                rect.ass = ass.data();
-                AVSubtitleRect* rects[1] = {&rect};
-                AVSubtitle sub{};
-                sub.num_rects = 1;
-                sub.rects = rects;
-                sub.end_display_time = uint32_t(c.toMs - c.fromMs);
-                sub.pts = av_rescale_q(c.fromMs, AVRational{1, 1000}, AV_TIME_BASE_Q);
-                const int n = avcodec_encode_subtitle(enc, buffer.data(), int(buffer.size()), &sub);
-                if (n <= 0) continue;
+                // SubRip line breaks as CRLF (what FFmpeg's SRT encoder wrote), WebVTT and 3GPP text keep '\n'
+                if (id == AV_CODEC_ID_SUBRIP) text.replace('\n', QLatin1String("\r\n"));
+                QByteArray payload = text.toUtf8();
+                if (payload.isEmpty()) continue;
+                if (id == AV_CODEC_ID_MOV_TEXT) { // 3GPP timed text sample: 16-bit big-endian byte length, then UTF-8
+                    payload.truncate(0xffff);
+                    const int len = int(payload.size());
+                    payload.prepend(char(len & 0xff)).prepend(char(len >> 8));
+                }
+                const int n = int(payload.size());
                 AVPacket* p = av_packet_alloc();
                 if (!p || av_new_packet(p, n) < 0) {
                     av_packet_free(&p);
                     fail(QStringLiteral("out of memory"));
                     return false;
                 }
-                std::memcpy(p->data, buffer.data(), size_t(n));
+                std::memcpy(p->data, payload.constData(), size_t(n));
                 p->pts = p->dts = c.fromMs;
                 p->duration = c.toMs - c.fromMs;
                 p->stream_index = st->index;

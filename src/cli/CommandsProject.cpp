@@ -547,7 +547,10 @@ QJsonObject cmdRender(const QJsonObject& a, Context& ctx)
     if (!srtOnly) job.settings.format = formatId;
     if (a.contains("quality")) job.settings.quality = std::clamp(a["quality"].toInt(), 0, RenderSettings::kQualityWeb);
     if (a.contains("height")) {
-        job.settings.shortSide = a["height"].toInt();
+        // Like size: a too small one gave an empty size, so the file had the timeline's size and the answer said 2x0
+        const int h = a["height"].toInt();
+        if (h < 16 || h > 8192) fail("BAD_ARGUMENT", "height (the shorter image edge) must be 16 to 8192");
+        job.settings.shortSide = h;
         job.settings.size = {};
     }
     if (a.contains("size")) {

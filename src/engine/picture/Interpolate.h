@@ -15,6 +15,7 @@
 // gives no in-between at all (the nearer frame, no ghosting).
 // Known limit: translucent overlays (a minimap over the moving world) get warped along with the world.
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 
@@ -41,5 +42,11 @@ void flow(const Motion& m, const uint8_t* a, const uint8_t* b, uint8_t* out, int
 
 // estimate() through a small cache: key names the frame pair (source, frame index, size)
 std::shared_ptr<const Motion> cachedMotion(const QString& key, const uint8_t* a, const uint8_t* b, int w, int h);
+// For tests: pairs the cache holds and their memory (bytes); bounded to ~64 MB once two pairs are there
+struct MotionCacheStats {
+    int pairs = 0;
+    size_t bytes = 0;
+};
+MotionCacheStats motionCacheStats();
 
 } // namespace Picture::Interp

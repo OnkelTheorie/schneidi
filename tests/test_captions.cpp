@@ -670,6 +670,31 @@ QString textStreams(const QString& path)
     return out.join(" | ");
 }
 
+// The cue texts of a file's subtitle streams as stored (stream by stream, " | " between), line breaks as '\n'
+QString textPayloads(const QString& path)
+{
+    AVFormatContext* fc = nullptr;
+    if (avformat_open_input(&fc, path.toUtf8().constData(), nullptr, nullptr) < 0) return "cannot open";
+    avformat_find_stream_info(fc, nullptr);
+    QMap<int, QStringList> texts;
+    AVPacket* p = av_packet_alloc();
+    while (av_read_frame(fc, p) >= 0) {
+        const AVStream* st = fc->streams[p->stream_index];
+        if (st->codecpar->codec_type == AVMEDIA_TYPE_SUBTITLE && p->size > 2) {
+            QByteArray b(reinterpret_cast<const char*>(p->data), p->size);
+            if (st->codecpar->codec_id == AV_CODEC_ID_MOV_TEXT) // 16-bit length, then the text (then style boxes)
+                b = b.mid(2, (uchar(b[0]) << 8) | uchar(b[1]));
+            texts[p->stream_index] << QString::fromUtf8(b).replace("\r\n", "\n");
+        }
+        av_packet_unref(p);
+    }
+    av_packet_free(&p);
+    avformat_close_input(&fc);
+    QStringList out;
+    for (const QStringList& t : texts) out << t.join(',');
+    return out.join(" | ");
+}
+
 void testEmbed(const QString& dir)
 {
     const QString media = Check::makeMedia(dir + "/src.mp4", {"-f", "lavfi", "-i", "testsrc2=size=320x180:rate=25:duration=2",
@@ -694,7 +719,8 @@ void testEmbed(const QString& dir)
     de.cues = {{3, 5, 20, "Hallo {Welt}"}, {4, 25, 40, "zwei\nZeilen"}};
     en.name = "English";
     en.enabled = false;
-    en.cues = {{5, 10, 30, "Hello"}};
+    // ASS escapes and override tags typed by the user show as typed (the text encoders read them as ASS)
+    en.cues = {{5, 10, 30, "Hello \\N \\h {\\i1}x"}};
     de.captions.mode = CaptionMode::Karaoke; // the stream carries the plain text anyway
     tl.subtitles = {de, en};
     struct Case { const char* file; const char* format; const char* codec; };
@@ -722,6 +748,7 @@ void testEmbed(const QString& dir)
         if (!CHECK(ok)) continue;
         CHECK_EQ(textStreams(job.path),
                  QString("%1 Deutsch* 200+600,1000+600 | %1 English 400+800").arg(k.codec));
+        CHECK_EQ(textPayloads(job.path), QString("Hallo {Welt},zwei\nZeilen | Hello \\N \\h {\\i1}x"));
     }
     // Off: no stream
     RenderJob job;

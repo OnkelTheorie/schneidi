@@ -245,6 +245,19 @@ void algorithmChecks()
         for (const auto& g : got) shared += g && g == got[0];
         if (!CHECK_EQ(shared, 4)) std::printf("       %d of 4 threads got the same motion\n", shared);
         CHECK(cachedMotion("test|same pair", A.data(), B.data(), W, H) == got[0]); // and later from the cache
+
+        // The cache's memory is bounded: 4K pairs (~17 MB each) stay under ~64 MB, two are always kept (25 % slow
+        // motion reuses one pair three times); it kept 6 pairs of any size until the program ended (~400 MB at 8K)
+        {
+            const int kw = 3840, kh = 2160;
+            Pic big(size_t(kw) * kh * 4, 90);
+            for (int i = 0; i < 6; ++i) cachedMotion(QString("test|4k %1").arg(i), big.data(), big.data(), kw, kh);
+            const MotionCacheStats st = motionCacheStats();
+            std::printf("motion cache after six 4K pairs: %d pairs, %.1f MB\n", st.pairs, st.bytes / 1048576.0);
+            CHECK(st.pairs >= 2);
+            CHECK(st.bytes <= size_t(64) << 20);
+            CHECK(cachedMotion("test|4k 5", nullptr, nullptr, kw, kh) != nullptr); // the last one still there
+        }
     }
 }
 

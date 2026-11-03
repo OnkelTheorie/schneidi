@@ -121,14 +121,42 @@ QImage GradedThumbs::apply(const QImage& image, const Spec& spec)
     };
     const QRect frame = spec.frameAspect > 0 ? centred(MediaAspect::fit(spec.frameAspect, img.size()), img.rect()) : img.rect();
     const double aspect = spec.media.isEmpty() ? 0 : MediaAspect::of(spec.media); // cached per file
-    const QRect picture = aspect > 0 ? centred(MediaAspect::fit(aspect, frame.size()), frame) : frame;
+    QRect picture = aspect > 0 ? centred(MediaAspect::fit(aspect, frame.size()), frame) : frame;
+    // Windows are in % of the frame for the picture at zoom 1 (as in the viewer): first in % of the fitted picture
+    std::vector<ColorGrade::Window> windows;
+    for (const ColorGrade::Window& w : spec.windows)
+        windows.push_back(ColorGrade::onPicture(w, QSizeF(frame.size()), QSizeF(picture.size())));
+    if (const Spec::Placement& pl = spec.placement; !pl.isIdentity()) {
+        // Zoomed, moved, cropped: the picture as placed (it may reach past the frame), the part of it that shows
+        // (crop off, inside the frame) is graded; the windows move and scale along with the picture
+        const QSizeF fit = MediaAspect::fit(aspect, QSizeF(frame.size()));
+        const double fw = frame.width(), fh = frame.height();
+        const double w = fit.width() * std::abs(pl.zoomX), h = fit.height() * std::abs(pl.zoomY);
+        const QRectF placed(frame.x() + fw / 2 + pl.x * fw - w / 2, frame.y() + fh / 2 + pl.y * fh - h / 2, w, h);
+        const QRectF shown = placed.adjusted(pl.cropLeft * fw * std::abs(pl.zoomX), pl.cropTop * fh * std::abs(pl.zoomY),
+                                             -pl.cropRight * fw * std::abs(pl.zoomX),
+                                             -pl.cropBottom * fh * std::abs(pl.zoomY));
+        const QRect visible = QRect(QPoint(int(std::lround(shown.left())), int(std::lround(shown.top()))),
+                                    QPoint(int(std::lround(shown.right())) - 1, int(std::lround(shown.bottom())) - 1))
+                                  .intersected(frame);
+        if (visible.isEmpty() || placed.isEmpty()) return img.convertToFormat(QImage::Format_RGB32);
+        for (ColorGrade::Window& win : windows) {
+            GradeWindows::Geometry& g = win.geometry;
+            const double kx = placed.width() / visible.width(), ky = placed.height() / visible.height();
+            g.x = (placed.left() + g.x / 100 * placed.width() - visible.left()) / visible.width() * 100;
+            g.y = (placed.top() + g.y / 100 * placed.height() - visible.top()) / visible.height() * 100;
+            g.width *= kx;
+            g.height *= ky;
+            g.softness *= ky;
+            win.fill.amount *= ky;
+        }
+        picture = visible;
+    }
     // Graded alone: lift/offset/LUT would tint the bars, a window over them would paint them, a blur pull them in
     QImage part = picture == img.rect() ? img : img.copy(picture);
     uint8_t* bits = part.bits();
     if (!spec.params.isNeutral() || lut) ColorGrade::apply(bits, part.width(), part.height(), spec.params, lut.get());
-    for (const ColorGrade::Window& w : spec.windows)
-        ColorGrade::applyWindow(bits, part.width(), part.height(),
-                                ColorGrade::onPicture(w, QSizeF(frame.size()), QSizeF(picture.size())));
+    for (const ColorGrade::Window& w : windows) ColorGrade::applyWindow(bits, part.width(), part.height(), w);
     if (picture != img.rect())
         for (int y = 0; y < part.height(); ++y)
             std::memcpy(img.scanLine(picture.top() + y) + size_t(picture.left()) * 4, part.constScanLine(y),
@@ -404,6 +432,24 @@ TimelinePosters::Source TimelinePosters::sourceOf(const Project& project, const 
     // The poster is the frame fitted into its own size (Engine::thumbnail)
     if (frame.isEmpty()) frame = project.format().size();
     if (frame.height() > 0) s.grade.frameAspect = double(frame.width()) / frame.height();
+    // The grade on the picture as placed (posterFrame): a clip zoomed to fill a 9:16 short was graded only in the
+    // 16:9 band it would have at zoom 1
+    if (!s.grade.isNull() && frame.width() > 0 && frame.height() > 0) {
+        const ClipTransform& t = s.transform;
+        GradedThumbs::Spec::Placement& pl = s.grade.placement;
+        if (t.transformOn) {
+            pl.zoomX = t.zoomX;
+            pl.zoomY = t.zoomY;
+            pl.x = t.posX / frame.width();
+            pl.y = -t.posY / frame.height(); // Y of the position is upward
+        }
+        if (t.cropOn) {
+            pl.cropLeft = t.cropLeft / frame.width();
+            pl.cropRight = t.cropRight / frame.width();
+            pl.cropTop = t.cropTop / frame.height();
+            pl.cropBottom = t.cropBottom / frame.height();
+        }
+    }
     return s;
 }
 

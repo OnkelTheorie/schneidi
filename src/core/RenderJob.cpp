@@ -187,8 +187,10 @@ QSize sizeForShortSide(QSize timeline, int shortSide)
 {
     const int w = timeline.width(), h = timeline.height();
     if (w <= 0 || h <= 0) return {};
-    if (w >= h) return {int(std::lround(double(shortSide) * w / h)) & ~1, shortSide & ~1};
-    return {shortSide & ~1, int(std::lround(double(shortSide) * h / w)) & ~1};
+    // Even short side first, the long side from it: 181 gives the same picture as 180, not a wider one
+    const int even = std::max(2, shortSide & ~1);
+    if (w >= h) return {std::max(2, int(std::lround(double(even) * w / h)) & ~1), even};
+    return {even, std::max(2, int(std::lround(double(even) * h / w)) & ~1)};
 }
 
 QSize RenderSettings::outputSize(QSize timeline) const

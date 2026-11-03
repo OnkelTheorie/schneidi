@@ -144,6 +144,25 @@ int main(int argc, char** argv)
         if (!CHECK(!p)) std::printf("       %s: passed through\n", c.name);
     }
 
+    // A copy of the clip kept on the track above (same file, part and time) reads the lower clip's decoder when its
+    // frame is passed through too: one decoder, not two
+    {
+        Timeline kept = one([](Clip&) {});
+        kept.video.resize(2);
+        kept.video[1].clips << clip(2, g_video);
+        Picture::Options o;
+        o.format = kFmt;
+        o.mode = Picture::Mode::Export;
+        o.gpu = false;
+        Picture::Renderer r(kept, o);
+        Planes p;
+        const OutputColor::Target t = p.target();
+        Picture::RenderHints h;
+        h.yuv = &t;
+        CHECK(r.render(5, h).yuvWritten());
+        if (!CHECK_EQ(r.stats().sourcesOpen, 1)) std::printf("       kept copy passed through: own decoder\n");
+    }
+
     // A full-frame still at the bottom is drawn straight into the frame: red, not black
     {
         Picture::Options o;

@@ -46,6 +46,16 @@ public:
         // itself (0: it is). The grade and the windows work on the picture only, as in the viewer.
         QString media;
         double frameAspect = 0;
+        // The picture zoomed, moved or cropped in the frame (a poster of a 9:16 short with a landscape clip zoomed to
+        // fill it): position (y downward) and crop in frame widths/heights. Identity = fitted and centred. Rotation
+        // is left out (a thumbnail: the picture's unrotated rectangle is graded).
+        struct Placement {
+            double zoomX = 1, zoomY = 1, x = 0, y = 0;
+            double cropLeft = 0, cropRight = 0, cropTop = 0, cropBottom = 0;
+            bool isIdentity() const { return *this == Placement{}; }
+            bool operator==(const Placement&) const = default;
+        };
+        Placement placement;
         quint64 hash = 0; // 0 = the grade changes nothing
         bool isNull() const { return hash == 0; }
         bool operator==(const Spec& o) const { return hash == o.hash; }

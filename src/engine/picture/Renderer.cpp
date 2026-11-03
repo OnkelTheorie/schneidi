@@ -1308,7 +1308,7 @@ struct Renderer::Impl {
         if (index < 0 || !covers(tl.video[index], index, f, ctx, tl, QString())) return false;
         const Clip& c = *clipAt(tl.video[index], f);
         if (Keys::hasTransform(c) || !c.effects.isEmpty()) return false;
-        const QString lane = QStringLiteral("v%1").arg(index);
+        const QString lane = trackClipLane(tl, index, c, QString()); // a kept copy reads the lower clip's decoder
         const QSizeF fit = MediaAspect::fit(nativeAspect(c, lane), QSizeF(ctx.PW, ctx.PH));
         if (std::lround(fit.width() * ctx.W / ctx.PW) != ctx.W || std::lround(fit.height() * ctx.H / ctx.PH) != ctx.H)
             return false;
@@ -2473,10 +2473,13 @@ void Renderer::prepare(int64_t frame)
             // keyframe before its in point; in the middle of playback the picture stood that long). Only when the
             // clip's decoder is not in use until then (a split without a jump continues on it, see clipLane).
             if (c.start <= frame || c.start > soon) continue;
-            const bool shared = std::any_of(clips.cbegin(), clips.cend(), [&](const Clip& o) {
-                return o.id != c.id && o.mediaPath == c.mediaPath && o.end() > frame && o.start < c.start
-                       && d->clipLane(track, o, QString("v%1").arg(i)) == lane;
-            });
+            // (on any track: a kept copy reads the decoder of the clip below it, see trackClipLane)
+            bool shared = false;
+            for (int j = 0; j < tl->video.size() && !shared; ++j)
+                shared = std::any_of(tl->video[j].clips.cbegin(), tl->video[j].clips.cend(), [&](const Clip& o) {
+                    return o.id != c.id && o.mediaPath == c.mediaPath && o.end() > frame && o.start < c.start
+                           && d->trackClipLane(*tl, j, o, QString()) == lane;
+                });
             if (shared) continue;
             QSize native;
             d->mediaPicture(c, 0, lane, 0, 0, ctx, &native); // decodes, converts nothing
