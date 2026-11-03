@@ -384,6 +384,9 @@ QHash<int, QVector<int>> Editor::blurNames(const QHash<int, QVector<NameBlur::Ma
     std::sort(targets.begin(), targets.end());
     modifyClips(targets, T("Namen verwischen"), [&](Clip& c) {
         EffectRegistry::add(c, kGrade);
+        // A grade switched off (Color page, Inspector) would leave the new windows out of the picture: the names
+        // showed in the export
+        if (EffectInstance* g = EffectRegistry::instance(c, kGrade)) g->enabled = true;
         for (const NameBlur::Mask& m : masks.value(c.id)) {
             const int n = GradeWindows::freeNumber(c);
             if (!n || m.keys.isEmpty()) break;
