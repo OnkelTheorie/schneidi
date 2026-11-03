@@ -427,9 +427,10 @@ int main(int argc, char** argv)
         const ClipFormat cf = detectClipFormat(odd);
         CHECK(cf.ok && cf.width == 640 && cf.height == 360);
     }
-    // A 1x1 video still has a clip format (even sizes, at least 2x2)
-    if (const QString tiny = Check::makeMedia(file("tiny.mkv"), {"-f", "lavfi", "-i", "color=c=red:s=1x1:r=25", "-t",
-                                                                  "1", "-c:v", "ffv1"});
+    // A 1x1 video still has a clip format (even sizes, at least 2x2). Made in RGB: FFmpeg 6.1's color source cannot
+    // make 1x1 in its default 4:2:0 ("Picture size 0x0 is invalid" for the chroma planes)
+    if (const QString tiny = Check::makeMedia(file("tiny.mkv"), {"-f", "lavfi", "-i", "color=c=red:s=2x2:r=25,format=gbrp,scale=1:1",
+                                                                  "-t", "1", "-c:v", "ffv1"});
         CHECK(!tiny.isEmpty())) {
         const ClipFormat cf = detectClipFormat(tiny);
         Check::report(cf.ok && cf.width == 2 && cf.height == 2, "1x1 video: clip format 2x2", __FILE__, __LINE__,
