@@ -14,8 +14,35 @@
 
 #include <algorithm>
 
+#ifdef Q_OS_WIN
+#ifndef NOMINMAX
+#define NOMINMAX // std::max/std::clamp
+#endif
+#include <windows.h>
+
+#include <string>
+#endif
+
 namespace {
 constexpr double kAudioShare = 0.1; // progress: preparing the audio, then whisper
+
+// A path whisper-cli can open: it reads its arguments in the ANSI code page on Windows (letters outside it became
+// '?'). Windows: the short (8.3) name where the volume has one; elsewhere the path as it is.
+QString narrowSafePath(const QString& path)
+{
+#ifdef Q_OS_WIN
+    const std::wstring w = QDir::toNativeSeparators(path).toStdWString();
+    DWORD n = GetShortPathNameW(w.c_str(), nullptr, 0);
+    if (n == 0) return path;
+    std::wstring out(n, L'\0');
+    n = GetShortPathNameW(w.c_str(), out.data(), n);
+    if (n == 0 || n >= out.size()) return path;
+    out.resize(n);
+    return QString::fromStdWString(out);
+#else
+    return path;
+#endif
+}
 
 // Loudness of a 16-bit PCM WAV (ffmpeg or the Exporter wrote it), channels mixed; empty if unreadable
 Transcript::Levels wavLevels(const QString& path)
@@ -191,16 +218,19 @@ void Transcriber::runWhisper()
     emit progress(kAudioShare);
     const int threads = m_request.threads > 0 ? m_request.threads : defaultThreads();
     // One word per segment (-ml 1 -sow): word times for cutting; Transcript::toCues builds subtitle lines from them
-    QStringList args{"-m", m_request.model, "-f", m_tmp->filePath("audio.wav"), "-t", QString::number(threads), "-l",
+    // Files by name in whisper's working directory (the temporary folder): whisper-cli reads its arguments in the
+    // ANSI code page on Windows, a temp folder under a user name with other letters became '?'
+    m_process.setWorkingDirectory(m_tmp->path());
+    QStringList args{"-m", narrowSafePath(m_request.model), "-f", "audio.wav", "-t", QString::number(threads), "-l",
                      m_request.language.isEmpty() ? QString("auto") : m_request.language, "-ml", "1", "-sow", "-oj",
-                     "-of", m_tmp->filePath("out"), "-np", "-pp"};
+                     "-of", "out", "-np", "-pp"};
     // Without voice detection whisper puts the first words of a passage at the start of a pause before it
     // Threshold 0.35 instead of 0.5: keeps quiet or laughed words (measured: "Diese Scheiß-Pferd" instead of "Das")
     // Music: voice detection hears no speech in a song (nothing found in a whole track, the shouted title and the
     // singing without it); without the previous text as context whisper does not loop on repeated lines
     if (m_request.music) args << "-mc" << "0";
     else if (const QString vad = Extensions::whisperVadModel(); !vad.isEmpty())
-        args << "--vad" << "-vm" << vad << "-vt" << "0.35";
+        args << "--vad" << "-vm" << narrowSafePath(vad) << "-vt" << "0.35";
     m_process.start(Extensions::whisperProgram(), args);
 }
 
@@ -209,7 +239,8 @@ void Transcriber::runDetection()
     m_stage = 2;
     m_log.clear(); // the detected language is a log line of whisper (not with -np)
     const int threads = m_request.threads > 0 ? m_request.threads : defaultThreads();
-    m_process.start(Extensions::whisperProgram(), {"-m", m_request.model, "-f", m_tmp->filePath("audio.wav"), "-t",
+    m_process.setWorkingDirectory(m_tmp->path());
+    m_process.start(Extensions::whisperProgram(), {"-m", narrowSafePath(m_request.model), "-f", "audio.wav", "-t",
                                                     QString::number(threads), "-l", "auto", "-dl"});
 }
 

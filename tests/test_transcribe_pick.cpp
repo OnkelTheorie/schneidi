@@ -38,6 +38,11 @@ int fakeWhisper(int argc, char** argv)
         else if (a == "-l" && next != "auto") lang = next;
         else if (a == "-dl") detect = true;
     }
+    // The test reads the arguments back: the files must come by name (whisper runs in their folder)
+    if (const QString log = qEnvironmentVariable("SCHNEIDI_FAKE_WHISPER_LOG"); !log.isEmpty()) {
+        QFile l(log);
+        if (l.open(QIODevice::Append)) l.write(("-f " + wav + " -of " + out + "\n").toUtf8());
+    }
     if (detect) {
         std::fprintf(stderr, "whisper_full_with_state: auto-detected language: en (p = 0.930000)\n");
         return 0;
@@ -206,6 +211,17 @@ int main(int argc, char** argv)
         CHECK_EQ(r["audio_stream_name"].toString(), QString("Mikrofon"));
         CHECK(QJsonDocument(r["notes"].toArray()).toJson().contains("2 = Mikrofon"));
         CHECK(!r.contains("detected_language")); // auto: nothing to check
+    }
+    {
+        // The files go to whisper by name, it runs in their folder: whisper-cli reads its arguments in the ANSI code
+        // page on Windows, a temporary folder under a user name with other letters became '?'
+        const QString log = dir.filePath("whisper-args.log");
+        qputenv("SCHNEIDI_FAKE_WHISPER_LOG", log.toUtf8());
+        CHECK_EQ(text(run("transcribe", base)), QString("f1000"));
+        qunsetenv("SCHNEIDI_FAKE_WHISPER_LOG");
+        QFile l(log);
+        CHECK(l.open(QIODevice::ReadOnly));
+        CHECK_EQ(QString::fromUtf8(l.readAll()).trimmed(), QString("-f audio.wav -of out"));
     }
     {
         // By number (also as a JSON number) and by name
