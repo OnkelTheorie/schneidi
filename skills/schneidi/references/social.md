@@ -85,6 +85,14 @@ result yourself afterwards (`frames` sheet of `out`) - one call does not replace
   frame already moves and shows the payoff, not the build-up; no slow intros, no logo first. `check` gives a
   `slow_hook` hint when the first second hardly moves, `story_hook_late` when the first hit, word or text comes
   after 2 s, and `pace_slow` for every stretch over 3 s without a cut, zoom or text.
+- **Story sections** make the structure checkable: `{"op":"sections","auto":true}` suggests hook / build /
+  resolution from the cuts, `{"op":"section","kind":"question","from":"4s","to":"7s"}` adds one (kinds hook, build,
+  question, turn, resolution, cta, free). Not sure which opening works: `{"op":"hook_variants","at":["12.4s"],
+  "question":"Wer gewinnt?"}` makes timelines "Hook A/B/C" (teaser of the moment in front / the question as a title /
+  straight into the action) - compare them with `render` `review`, keep one. `short` opens with the best moment as
+  its hook section by default (`hook` `"chronological"` keeps the order).
+- **Notes**: "faster at 0:07" from the user becomes `{"op":"note","at":"0:07","text":"faster"}`; `info` lists open
+  notes, tick each off when done (`{"op":"note","done":<id>}`).
 - Length: what the user asks; otherwise 15-45 s. Cut tight, every second must earn its place.
 - **Subtitles burned in** - most people watch muted ([subtitles.md](subtitles.md)): short lines (`max_chars` ~20-28),
   big font, outline or box. Word-by-word captions (karaoke or one word at a time) hold attention best: `transcribe`

@@ -500,13 +500,19 @@ void testStoryBand()
     const QVector<StorySection>& s = f.project.timeline().sections;
     if (CHECK_EQ(s.size(), 2)) CHECK(std::abs(s[0].to - 130) <= 1 && s[0].from == 0);
     CHECK_EQ(undo->index(), steps + 1);
-    // Not into the next section
-    drag(f.tv, {f.x(s[0].to), 8}, {f.x(170), 8});
-    CHECK(f.project.timeline().sections[0].to <= 140);
+    // A second drag is its own undo step; it stops before the next section (from 140)
+    const int edge = f.project.timeline().sections[0].to;
+    mouse(f.tv, QEvent::MouseButtonPress, {f.x(edge), 8}, Qt::LeftButton);
+    mouse(f.tv, QEvent::MouseMove, {f.x(135), 8}, Qt::LeftButton);
+    mouse(f.tv, QEvent::MouseMove, {f.x(170), 8}, Qt::LeftButton); // would overlap: refused, 135 stays
+    mouse(f.tv, QEvent::MouseButtonRelease, {f.x(170), 8}, Qt::NoButton);
+    CHECK(std::abs(f.project.timeline().sections[0].to - 135) <= 1);
+    CHECK_EQ(undo->index(), steps + 2);
     undo->undo();
+    CHECK(std::abs(f.project.timeline().sections[0].to - 130) <= 1);
     undo->undo();
     CHECK_EQ(f.project.timeline().sections[0].to, 100);
-    CHECK(f.editor.setNoteDone(note, true));
+    CHECK(f.editor.setNoteDone(note, true)); // the note is still there
 }
 
 int main(int argc, char** argv)
