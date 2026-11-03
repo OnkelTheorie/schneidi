@@ -3,8 +3,8 @@
 // lands within a pixel of its ideal in-between position, a static HUD over a panning background stays identical,
 // blending is the exact average, a cut (also one to the same brightness in other colours, or to other content in
 // the same colours) gives no ghost; through the renderer: blend at 25 % equals the average of
-// the two source frames, a freeze frame and the parts of a ramp at full speed stay as before. Prints the time per
-// 1080p in-between picture.
+// the two source frames, a freeze frame and the parts of a ramp at full speed stay as before; a proxy never takes
+// the original's cached motion. Prints the time per 1080p in-between picture.
 
 #include "check.h"
 
@@ -362,6 +362,23 @@ void fasterSourceChecks(const QString& video50)
     CHECK_EQ(maxDiff(render(backBlend, 2), render(back, 2)), 0);
 }
 
+// Flow's motion is cached per frame pair: a preview with proxies decodes the proxy, not the original, so their
+// pictures must never share motion (the original's vectors moved the proxy's pixels the wrong way). The proxy here
+// is the original mirrored: everything moves the other way
+void proxyMotionChecks(const QString& video, const QString& proxy)
+{
+    const QImage expected = render(one(proxy, 0.25, FrameInterp::Flow, 40), 2); // the proxy's own motion
+    CHECK(maxDiff(render(one(video, 0.25, FrameInterp::Flow, 40), 2), expected) > 10); // the original's in cache
+    Picture::Options o;
+    o.format = kFmt;
+    o.mode = Picture::Mode::Export;
+    o.gpu = false;
+    o.proxy = [proxy](const QString&) { return proxy; };
+    Picture::Renderer r(one(video, 0.25, FrameInterp::Flow, 40), o);
+    const QImage viaProxy = r.render(2).toImage().convertToFormat(QImage::Format_RGBA8888);
+    if (!CHECK_EQ(maxDiff(viaProxy, expected), 0)) std::printf("       proxy used the original's motion\n");
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -388,5 +405,10 @@ int main(int argc, char** argv)
                                              {"-f", "lavfi", "-i", "testsrc2=size=320x180:rate=50:duration=2", "-c:v",
                                               "libx264", "-preset", "ultrafast", "-g", "1", "-pix_fmt", "yuv420p"});
     if (CHECK(!video50.isEmpty())) fasterSourceChecks(video50);
+    const QString mirrored = Check::makeMedia(tmp.filePath("proxy.mp4"),
+                                              {"-f", "lavfi", "-i", "testsrc2=size=320x180:rate=25:duration=2", "-vf",
+                                               "hflip,vflip", "-c:v", "libx264", "-preset", "ultrafast", "-g", "1",
+                                               "-pix_fmt", "yuv420p"});
+    if (CHECK(!mirrored.isEmpty())) proxyMotionChecks(video, mirrored);
     return Check::result();
 }

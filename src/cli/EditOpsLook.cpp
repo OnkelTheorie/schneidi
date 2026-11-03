@@ -288,6 +288,7 @@ void opBlurNames(Session& s, const QJsonObject& op)
     if (style != "blur" && style != "pixelate") fail("BAD_ARGUMENT", "style is \"blur\" or \"pixelate\"");
     const double strength = op.contains("strength") ? numberOf(op, "strength", 1, 100) : (style == "blur" ? 60 : 100);
     QHash<int, QVector<NameBlur::Mask>> masks;
+    QHash<int, int> left; // per clip: texts without a free window (their names stay visible)
     QStringList notes;
     for (int id : ids) {
         const Clip c = *TimelineOps::findClip(tl, id);
@@ -300,11 +301,11 @@ void opBlurNames(Session& s, const QJsonObject& op)
         int dropped = 0;
         const QVector<NameBlur::Mask> m = NameBlur::plan(r.samples, tpl, c.length(), o, &dropped);
         masks[id] = m;
+        left[id] = dropped;
         QStringList zones;
         for (const NameBlur::Mask& x : m) zones << x.zone;
         QString note = QString("clip %1: %2 mask(s)").arg(id).arg(m.size());
         if (!m.isEmpty()) note += " (" + zones.join(", ") + ")";
-        if (dropped) note += QString(", %1 moving text(s) left out: no free window").arg(dropped);
         if (!o.screen.isDefault())
             note += QString(", HUD of a %1:1 game screen at x %2-%3 %, y %4-%5 % of the frame")
                         .arg(o.screen.aspect, 0, 'f', 2)
@@ -320,6 +321,10 @@ void opBlurNames(Session& s, const QJsonObject& op)
         QStringList numbers;
         for (int w : added.value(id)) numbers << QString::number(w);
         if (!numbers.isEmpty()) n += ", windows " + numbers.join(", ");
+        // windows taken in between (masks beyond the free numbers) count like those plan() left out
+        int out = left.value(id) - int(added.value(id).size());
+        for (const NameBlur::Mask& m : masks[id]) out += !m.keys.isEmpty();
+        if (out > 0) n += QString(", %1 text(s) left out: no free window, they stay visible").arg(out);
     }
     for (const QString& n : notes) s.notes << n;
 }

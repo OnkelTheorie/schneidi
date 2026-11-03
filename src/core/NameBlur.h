@@ -79,8 +79,8 @@ struct Options {
     Screen screen;
 };
 
-// Masks for a clip of `length` frames from its samples (sorted by frame). dropped = moving tracks left out because
-// no window was free.
+// Masks for a clip of `length` frames from its samples (sorted by frame). dropped = texts left out because no window
+// was free (static zones and moving tracks; their names stay visible).
 QVector<Mask> plan(const QVector<Sample>& samples, Template t, int length, const Options& o = {}, int* dropped = nullptr);
 
 // Rectangle of a mask at clip frame t (interpolated like linear keyframes); empty = off

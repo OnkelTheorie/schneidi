@@ -157,13 +157,16 @@ void MainWindow::blurNames()
         }
     }
     if (!errors->isEmpty()) QMessageBox::warning(this, T("Namen verwischen"), errors->join('\n'));
-    const QHash<int, QVector<int>> added = m_editor->blurNames(*result, choice.style, choice.strength);
+    int notPlaced = 0;
+    const QHash<int, QVector<int>> added = m_editor->blurNames(*result, choice.style, choice.strength, &notPlaced);
+    *dropped += notPlaced;
     int windows = 0;
     for (const QVector<int>& w : added) windows += w.size();
     QString text = windows ? T("Namen verwischen: %1 Fenster auf %2 Clips – auf der Farbseite prüfen, falsche löschen")
                                  .arg(windows)
                                  .arg(added.size())
-                           : T("Namen verwischen: kein Text gefunden");
-    if (*dropped) text += ' ' + T("(%1 bewegte Texte ohne freies Fenster)").arg(*dropped);
+                           : *dropped ? T("Namen verwischen: kein Fenster frei")
+                                      : T("Namen verwischen: kein Text gefunden");
+    if (*dropped) text += ' ' + T("(%1 Texte ohne freies Fenster: bleiben sichtbar)").arg(*dropped);
     statusBar()->showMessage(text, 10000);
 }
