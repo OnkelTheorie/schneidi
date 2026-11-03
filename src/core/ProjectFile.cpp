@@ -112,7 +112,8 @@ constexpr int kFormatVersion = 6;
 
 bool usesVersion6(const Timeline& t)
 {
-    const auto slide = [](const TransitionStyle& s) { return s.isSlide(); };
+    // Push/whip, or a wipe/luma with an ease curve (0.15 plays it linear)
+    const auto slide = [](const TransitionStyle& s) { return s.isSlide() || s.ease != MotionEase::Linear; };
     for (const Track& track : t.video)
         for (const Clip& c : track.clips) {
             for (int n = 5; n <= GradeWindows::kMax; ++n)
@@ -131,7 +132,10 @@ bool usesVersion6(const Timeline& t)
 int writtenVersion(const ProjectData& d)
 {
     if (usesVersion6(d.timeline)
-        || std::any_of(d.sequences.begin(), d.sequences.end(), [](const Sequence& s) { return usesVersion6(s.timeline); }))
+        || std::any_of(d.sequences.begin(), d.sequences.end(), [](const Sequence& s) { return usesVersion6(s.timeline); })
+        // A recording's picture shape on the pool entry or watch folder (its new clips): 0.15 would drop it
+        || std::any_of(d.media.begin(), d.media.end(), [](const MediaInfo& m) { return m.pictureAspect > 0; })
+        || std::any_of(d.watchFolders.begin(), d.watchFolders.end(), [](const WatchFolder& w) { return w.pictureAspect > 0; }))
         return 6;
     const bool ownSize = std::any_of(d.sequences.begin(), d.sequences.end(), [](const Sequence& s) { return s.hasOwnSize(); });
     return ownSize ? 5 : 4;

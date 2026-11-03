@@ -8,6 +8,7 @@
 #include "core/Keyframes.h"
 #include "core/MediaAspect.h"
 #include "core/ProjectFile.h"
+#include "core/WatchFolders.h"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -300,6 +301,20 @@ void testVersion6Features(const QString& tmp)
         c.kind = ClipKind::Title;
         c.title.kind = TitleKind::Counter;
     });
+    with("eased wipe", [](Clip& c, Timeline&) { c.transInStyle.ease = MotionEase::InOut; });
+    {
+        ProjectData d = base;
+        if (CHECK(!d.media.isEmpty())) {
+            d.media[0].pictureAspect = 16.0 / 9;
+            CHECK_EQ(version(d), 6);
+        }
+        ProjectData w = base;
+        WatchFolder folder;
+        folder.path = "/x";
+        folder.pictureAspect = 16.0 / 9;
+        w.watchFolders << folder;
+        CHECK_EQ(version(w), 6);
+    }
     with("word captions", [](Clip&, Timeline& t) {
         t.subtitles.resize(1);
         t.subtitles[0].captions.mode = CaptionMode::Karaoke;

@@ -333,12 +333,12 @@ void Server::openPending()
     m_opening = true;
     // The host may ask "save changes?" (a modal dialog with its own event loop, which delivers live requests): AIs
     // wait meanwhile, an edit must not land in the project the user is about to save or leave
-    m_waiting = "schneidi is waiting for the user (opening files handed to it, maybe asking to save changes); try "
-                "again in a moment";
+    const QString before = std::exchange(m_waiting, "schneidi is waiting for the user (opening files handed to it, "
+                                                     "maybe asking to save changes); try again in a moment");
     QString error;
     if (!m_host->liveOpen(files, true, &error) && !error.isEmpty())
         qWarning("Opening handed-over files failed: %s", qPrintable(error));
-    m_waiting.clear();
+    m_waiting = before; // the app may have been waiting already
     m_opening = false;
     if (!m_pendingOpen.isEmpty()) QTimer::singleShot(0, this, &Server::openPending); // handed over meanwhile
 }

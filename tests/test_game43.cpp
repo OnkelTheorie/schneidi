@@ -355,6 +355,19 @@ void testCli(const QString& dir, const QString& pillar, const QString& stretched
                                                 + QString::number(source) + ",\"aspect\":\"9:16\",\"switch\":false}]"}});
     CHECK_EQ(barsFound("Tall"), 1); // the pillarboxed clip, not the stretched one (no bars)
     CHECK_EQ(barsFound(QString::number(source)), 0); // a plain 16:9 edit keeps them as recorded
+    {
+        // Two copies without a name get different ones (timeline:"<name>" must find each)
+        const QString op = "{\"op\":\"new_timeline\",\"from\":" + QString::number(source) + ",\"aspect\":\"1:1\",\"switch\":false}";
+        run("edit", {{"project", path}, {"ops", "[" + op + "," + op + "]"}});
+        ProjectData d;
+        QString err;
+        QStringList names;
+        if (CHECK(ProjectFile::load(path, &d, &err)))
+            for (const Sequence& q : d.sequences)
+                if (q.name.contains("1:1")) names << q.name;
+        CHECK_EQ(names.size(), 2);
+        if (names.size() == 2) CHECK(names[0] != names[1]);
+    }
     run("edit", {{"project", path}, {"ops", "[{\"op\":\"timeline\",\"timeline\":\"Tall\"},{\"op\":\"crop_bars\"},"
                                             "{\"op\":\"timeline\",\"timeline\":" + QString::number(source) + "}]"}});
     CHECK_EQ(barsFound("Tall"), 0);

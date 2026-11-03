@@ -7,6 +7,7 @@
 
 #include <QFileInfo>
 
+#include <algorithm>
 #include <cmath>
 
 namespace Cli::detail {
@@ -71,8 +72,16 @@ void opNewTimeline(Session& s, const QJsonObject& op)
         const int id = s.project.duplicateSequence(source);
         if (!id) fail("FAILED", "could not copy the timeline");
         QString label = name;
-        if (label.isEmpty())
-            label = sourceName + (op.contains("aspect") ? " " + op.value("aspect").toString().trimmed() : QString(" copy"));
+        if (label.isEmpty()) {
+            // Unique, so `timeline:"<name>"` finds this one: "Edit 9:16", "Edit 9:16 2" …
+            const QString base = sourceName + (op.contains("aspect") ? " " + op.value("aspect").toString().trimmed() : QString(" copy"));
+            const auto taken = [&](const QString& n) {
+                return std::any_of(s.project.sequences().begin(), s.project.sequences().end(),
+                                   [&](const Sequence& x) { return x.id != id && x.name.compare(n, Qt::CaseInsensitive) == 0; });
+            };
+            label = base;
+            for (int i = 2; taken(label); ++i) label = QString("%1 %2").arg(base).arg(i);
+        }
         s.project.renameSequence(id, label);
         if (!size.isEmpty()) s.project.setSequenceSize(id, size == s.project.format().size() ? QSize() : size);
         s.selectTimeline(id, op.value("open").toBool(s.live));
