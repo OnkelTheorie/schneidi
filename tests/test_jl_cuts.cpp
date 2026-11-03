@@ -23,6 +23,7 @@
 #include <QUndoStack>
 #include <QtEndian>
 
+#include <algorithm>
 #include <cmath>
 #include <memory>
 #include <random>
@@ -271,7 +272,7 @@ bool writeWav(const QString& path, const std::vector<float>& mono)
     return true;
 }
 
-// 40 s take: a 120 Hz hum at -50 dBFS under everything (the room), "words" (loud noise) at 0-4, 6-10, 12.5-20 and
+// 40 s take: a 125 Hz hum (5 periods a frame: pieces of it meet in phase, so a seam shows only what the cut does) at -50 dBFS under everything (the room), "words" (loud noise) at 0-4, 6-10, 12.5-20 and
 // 22-38 s, and a stretch where the room is quieter (-56 dBFS) at 10-12.5 s
 std::vector<float> take()
 {
@@ -283,7 +284,7 @@ std::vector<float> take()
         const double t = double(i) / kRate;
         const bool quiet = t >= 10 && t < 12.5;
         const bool words = t < 4 || (t >= 6 && t < 10) || (t >= 12.5 && t < 20) || (t >= 22 && t < 38);
-        s[i] = float((quiet ? hum / 2 : hum) * std::sin(2 * M_PI * 120 * t)) + (words ? noise(rng) : 0.f);
+        s[i] = float((quiet ? hum / 2 : hum) * std::sin(2 * M_PI * 125 * t)) + (words ? noise(rng) : 0.f);
     }
     return s;
 }
@@ -306,11 +307,17 @@ double rmsDb(const std::vector<float>& s, size_t from, size_t to)
     return 10 * std::log10(sum / double(std::max<size_t>(1, to - from)) + 1e-30);
 }
 
-double maxStep(const std::vector<float>& s, size_t from, size_t to)
+// Envelope of the hum: the largest |sample| of each half period (any such window holds one crest), every 1 ms
+std::vector<double> envelope(const std::vector<float>& s, size_t from, size_t to)
 {
-    double m = 0;
-    for (size_t i = std::max<size_t>(from, 1); i < to; ++i) m = std::max(m, double(std::abs(s[i] - s[i - 1])));
-    return m;
+    constexpr size_t half = kRate / 125 / 2, hop = kRate / 1000;
+    std::vector<double> e;
+    for (size_t i = from; i + half <= to; i += hop) {
+        double m = 0;
+        for (size_t j = i; j < i + half; ++j) m = std::max(m, double(std::abs(s[j])));
+        e.push_back(m);
+    }
+    return e;
 }
 
 void testRoomTone(const QString& dir)
@@ -391,9 +398,15 @@ void testRoomTone(const QString& dir)
     const double room = rmsDb(s, 0, 10 * perFrame);          // the take before the gap
     const double gap = rmsDb(s, 12 * perFrame, (g1 - from - 2) * perFrame);
     if (!CHECK(std::abs(gap - room) < 1.5)) std::printf("       room %.1f dB, gap %.1f dB\n", room, gap);
-    const double steady = maxStep(s, 0, 9 * perFrame);
-    const double seams = maxStep(s, 9 * perFrame, s.size());
-    if (!CHECK(seams < 3 * steady)) std::printf("       largest step %.5f at the seams, %.5f in the room\n", seams, steady);
+    // No click (a crest above the room) and no drop (the mixer's declick ramp at a hard cut dips to zero) at the
+    // seams and the gap's edges
+    std::vector<double> ref = envelope(s, 0, 9 * perFrame);
+    std::sort(ref.begin(), ref.end());
+    const double crest = ref[ref.size() / 2];
+    const std::vector<double> seams = envelope(s, 9 * perFrame, s.size());
+    const auto [lo, hi] = std::minmax_element(seams.begin(), seams.end());
+    if (!CHECK(*lo > 0.7 * crest && *hi < 1.5 * crest))
+        std::printf("       envelope %.5f..%.5f at the seams, %.5f in the room\n", *lo, *hi, crest);
     // Before: silence in the gap (the drop the op is for)
     const std::vector<float> dry = mix(*before, from, to);
     CHECK(rmsDb(dry, 12 * perFrame, (g1 - from - 2) * perFrame) < -90);
