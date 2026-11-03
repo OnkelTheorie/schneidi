@@ -144,20 +144,39 @@ int Editor::setPictureAspect(const QVector<int>& ids, double aspect, std::option
             changed << id;
     if (changed.isEmpty()) return 0;
     const QSizeF frame = m_project->timelineFormat().size();
+    // Gives the clip the new shape; returns its old aspect
+    const auto setShape = [&](Clip& c) {
+        // Crop values are pixels on the fitted picture: keep their share of it
+        const double was = MediaAspect::ofClip(c);
+        const QSizeF a = MediaAspect::fit(was, frame);
+        c.pictureAspect = aspect;
+        const QSizeF b = MediaAspect::fit(MediaAspect::ofClip(c), frame);
+        if (a.width() > 0 && a.height() > 0 && a != b) {
+            const double kx = b.width() / a.width(), ky = b.height() / a.height();
+            for (AnimParam p : {AnimParam::CropLeft, AnimParam::CropRight, AnimParam::CropTop, AnimParam::CropBottom}) {
+                const double k = p == AnimParam::CropLeft || p == AnimParam::CropRight ? kx : ky;
+                Keys::convert(c, p, [k](double v) { return v * k; }, k);
+            }
+        }
+        return was;
+    };
     m_project->edit(aspect > 0 ? T("Seitenverhältnis entzerren") : T("Seitenverhältnis der Datei"), [&](Timeline& tl) {
         for (int id : changed)
             if (Clip* c = TimelineOps::findClip(tl, id)) {
-                // Crop values are pixels on the fitted picture: keep their share of it
+                const double was = setShape(*c);
+                // A reframed clip keeps filling the frame (its zoom and camera path follow the new shape), before a
+                // fill given here applies
+                Reframe::reshape(*c, was, MediaAspect::ofClip(*c), frame);
                 if (fill) c->transform.fill = *fill;
-                const QSizeF a = MediaAspect::fit(MediaAspect::ofClip(*c), frame);
-                c->pictureAspect = aspect;
-                const QSizeF b = MediaAspect::fit(MediaAspect::ofClip(*c), frame);
-                if (a.width() > 0 && a.height() > 0 && a != b) {
-                    const double kx = b.width() / a.width(), ky = b.height() / a.height();
-                    for (AnimParam p : {AnimParam::CropLeft, AnimParam::CropRight, AnimParam::CropTop, AnimParam::CropBottom}) {
-                        const double k = p == AnimParam::CropLeft || p == AnimParam::CropRight ? kx : ky;
-                        Keys::convert(*c, p, [k](double v) { return v * k; }, k);
-                    }
+                // Its kill feed copies show the same picture: the same shape, their region placed anew
+                const Clip base = *c;
+                for (Track& t : tl.video) {
+                    if (t.locked) continue;
+                    for (Clip& x : t.clips)
+                        if (Reframe::isKeepAlong(x, base) && std::abs(x.pictureAspect - aspect) > 1e-9) {
+                            const double before = setShape(x);
+                            Reframe::reshapeKeep(x, before, MediaAspect::ofClip(x), frame);
+                        }
                 }
             }
     });
