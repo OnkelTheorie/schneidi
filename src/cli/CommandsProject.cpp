@@ -15,6 +15,7 @@
 #include "core/ProjectFile.h"
 #include "core/RenderJob.h"
 #include "core/Retime.h"
+#include "core/ReviewSheet.h"
 #include "core/Selection.h"
 #include "core/StartTemplates.h"
 #include "core/Subtitles.h"
@@ -30,6 +31,7 @@
 #include "engine/RenderQueue.h"
 #include "engine/Snapshot.h"
 #include "engine/Stabilizer.h"
+#include "engine/picture/ReviewOverlay.h"
 
 #include <QBuffer>
 #include <QColor>
@@ -707,6 +709,12 @@ QJsonObject cmdRender(const QJsonObject& a, Context& ctx)
 {
     Session s(a["project"].toString());
     s.selectTimeline(a["timeline"]);
+    // Review render (cli/RenderReview.cpp): a small fast video with the marks burned in, or one picture of the timeline
+    const QString review = a["review"].toString();
+    if (a.contains("review") && review != "video" && review != "sheet")
+        fail("BAD_ARGUMENT", "review must be video (a small fast render with beats, cuts, hits, sections burned in) or "
+                             "sheet (one PNG of the whole timeline)");
+    const bool sheet = review == "sheet", reviewVideo = review == "video";
     RenderJob job;
     if (a.contains("preset")) {
         // Deliver presets of the app (built-in and the user's own), by name or id ("tiktok", "youtube-1080p")
@@ -735,16 +743,29 @@ QJsonObject cmdRender(const QJsonObject& a, Context& ctx)
         fail("BAD_ARGUMENT", "format " + formatId + " has no encoder in this build of FFmpeg (available: " + ids.join(", ")
                                   + ", srt)");
     }
+    if (reviewVideo && (srtOnly || renderFormat(formatId).kind != RenderKind::Video))
+        fail("BAD_ARGUMENT", "review video needs a video format (h264 default, h265, av1, vp9, prores …)");
     QString out = absolute(a["out"].toString());
-    if (QFileInfo(out).suffix().isEmpty()) out += "." + QString(srtOnly ? formatId : renderFormat(formatId).extension);
-    if (!srtOnly) checkExtension(out, formatId);
+    if (QFileInfo(out).suffix().isEmpty())
+        out += "." + QString(sheet ? QStringLiteral("png") : srtOnly ? formatId : QString(renderFormat(formatId).extension));
+    if (sheet) {
+        if (!QStringList{"png", "jpg", "jpeg"}.contains(QFileInfo(out).suffix().toLower()))
+            fail("BAD_ARGUMENT", "review sheet writes a picture: out must end in .png (or .jpg)");
+    } else if (!srtOnly) {
+        checkExtension(out, formatId);
+    }
     RenderSettings target = job.settings;
     if (!srtOnly) target.format = formatId;
-    if (QFileInfo::exists(firstOutputFile(out, target)) && !a["overwrite"].toBool())
+    if (QFileInfo::exists(sheet ? out : firstOutputFile(out, target)) && !a["overwrite"].toBool())
         fail("EXISTS", "output exists (pass overwrite to replace it): " + out);
     job.path = out;
     if (!srtOnly) job.settings.format = formatId;
     if (a.contains("quality")) job.settings.quality = std::clamp(a["quality"].toInt(), 0, RenderSettings::kQualityWeb);
+    // Review video: small (540 p) and the fastest encoder setting unless a size is given
+    if (reviewVideo && !a.contains("height") && !a.contains("size")) {
+        job.settings.shortSide = 540;
+        job.settings.size = {};
+    }
     if (a.contains("height")) {
         // Like size: a too small one gave an empty size, so the file had the timeline's size and the answer said 2x0
         const int h = a["height"].toInt();
@@ -808,6 +829,23 @@ QJsonObject cmdRender(const QJsonObject& a, Context& ctx)
         job.to = (a.contains("to") ? parseTime(a["to"], s.format(), "to") : end) - 1;
         if (job.to < job.from) fail("BAD_ARGUMENT", "'to' must be after 'from'");
     }
+    QJsonObject reviewInfo;
+    std::shared_ptr<const ReviewSheet::Data> marks;
+    if (sheet || reviewVideo) {
+        if (Exporter::readsFile(tl, out)) fail("BAD_ARGUMENT", "the output would overwrite a source file of the project");
+        QElapsedTimer timer;
+        timer.start();
+        marks = reviewData(s, tl, end, a, ctx, sheet, &reviewInfo);
+        if (sheet) {
+            QJsonObject o = reviewSheetRender(s, tl, *marks, out, ctx);
+            o["review"] = "sheet";
+            o["render_s"] = std::round(timer.elapsed() / 100.0) / 10;
+            for (auto it = reviewInfo.begin(); it != reviewInfo.end(); ++it) o[it.key()] = it.value();
+            const QJsonObject numbers = reviewNumbers(*marks);
+            for (auto it = numbers.begin(); it != numbers.end(); ++it) o[it.key()] = it.value();
+            return o;
+        }
+    }
     if (srtOnly) {
         // Only the subtitle files (the visible track into out, every other one with entries next to it), times from
         // the range start
@@ -848,11 +886,25 @@ QJsonObject cmdRender(const QJsonObject& a, Context& ctx)
     ExportSettings es = RenderQueue::exportSettings(job, s.project);
     if (threads > 0) es.threads = threads;
     es.partId = ctx.partId;
+    if (marks) {
+        // The marks drawn onto every frame after compositing; the timeline itself stays as it is
+        es.overlay = Picture::reviewOverlay(marks);
+        es.smartRender = false;
+        es.preset = "ultrafast";
+        es.crf = std::max(es.crf, 28);
+    }
     if (!ex.start(tl, es, &error)) fail("RENDER_FAILED", error);
     loop.exec();
     if (!ok) fail("RENDER_FAILED", message.isEmpty() ? QString("rendering failed") : message);
     QJsonObject o{{"out", out}, {"format", formatId}, {"render_s", std::round(timer.elapsed() / 100.0) / 10}};
     o["threads"] = ex.threads();
+    if (marks) {
+        o["review"] = "video";
+        o["size"] = QJsonArray{es.size.width(), es.size.height()};
+        for (auto it = reviewInfo.begin(); it != reviewInfo.end(); ++it) o[it.key()] = it.value();
+        const QJsonObject numbers = reviewNumbers(*marks);
+        for (auto it = numbers.begin(); it != numbers.end(); ++it) o[it.key()] = it.value();
+    }
     if (!ex.usedCodec().isEmpty()) o["encoder"] = ex.usedCodec(); // video codec that wrote the file, e.g. h264_nvenc ("copy": smart render)
     if (job.settings.kind() == RenderKind::ImageSequence) {
         o["frames_dir"] = imageSequenceDir(out);

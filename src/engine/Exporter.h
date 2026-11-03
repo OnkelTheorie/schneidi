@@ -14,6 +14,7 @@
 #include <QProcess>
 #include <QTimer>
 #include <atomic>
+#include <functional>
 #include <memory>
 #include <vector>
 
@@ -66,6 +67,9 @@ struct ExportSettings {
     // Name part of the temporary files (8 hex digits: "<name>.<id>.part.<ext>", the GIF intermediate gifIntermediate());
     // empty = a random one. `serve` gives its own to remove exactly this render's files after killing its worker.
     QString partId;
+    // Drawn onto every frame after compositing (Picture::Options::overlay): the marks of a review render
+    // (engine/picture/ReviewOverlay). Empty for every normal export. Turns smart render off.
+    std::function<void(uint8_t* rgba, int width, int height, int64_t frame)> overlay;
 };
 
 // Renders the timeline into a file (engine/ExportWriter with its own renderer and mixer, so that preview and export

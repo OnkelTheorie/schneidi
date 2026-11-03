@@ -317,7 +317,7 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
     m_copy.clear();
     const bool sameSize = out.size() == s.format.size();
     // (not with x264/x265 of the extension: its program encodes the whole video in one go)
-    if (s.smartRender && SmartRender::enabled() && s.output == ExportSettings::Output::File && !s.videoCodec.isEmpty()
+    if (s.smartRender && !s.overlay && SmartRender::enabled() && s.output == ExportSettings::Output::File && !s.videoCodec.isEmpty()
         && !convertRate && sameSize && HardwareEncoders::externalProgram(s.videoCodec).isEmpty())
         m_copy = SmartRender::spans(tl, m_from, m_length, s.burnSubtitles);
     const bool smart = !m_copy.isEmpty();
@@ -345,6 +345,7 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
                 po.subtitles = s.burnSubtitles;
                 po.decoderThreads = threads;
                 po.parallelFrames = frames;
+                po.overlay = s.overlay;
                 g.renderer = std::make_shared<Picture::Renderer>(scaled, po);
             }
             if (mixed) {

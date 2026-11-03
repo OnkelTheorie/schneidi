@@ -916,7 +916,26 @@ const QVector<Command>& commands()
           {"threads", T::Integer, "processor threads for this render (default: the app's export setting, else all). "
                                   "Fewer threads also render fewer frames at once and so need less memory: on a "
                                   "machine that is busy (a game, a recording) use 2"},
-          {"overwrite", T::Boolean, "replace an existing output file"}},
+          {"overwrite", T::Boolean, "replace an existing output file"},
+          {"review", T::String,
+           "a review render to check the edit yourself instead of guessing (the project is not changed; the marks "
+           "exist only in this render): video = small fast video (540 p unless height/size, fastest encoder setting) "
+           "with a burned-in info box (timecode, frame number, story section, BPM and beat of the bar), lamps that "
+           "light on the frame of a beat / bar one / cut / hit / kill feed line, and a strip of 2 s around the "
+           "playhead: music waveform, beat grid (bar ones thicker), cuts with clip names, hits (filled triangle), "
+           "kill feed lines (outlined triangle), accents, open notes, markers, sections; sheet = one PNG of the whole "
+           "timeline (out .png): a tile per shot (answer 'tiles' with times, clip and pixel rect), then rows of up to "
+           "20 s with sections, beat grid, cuts, hits, kills, accents, notes and a waveform per audio track. Both "
+           "answer with the numbers: offsets [{hit_s, beat_s, off_ms, frame, clip, name}] (each hit next to its "
+           "nearest beat, off_ms > 0 = after it), cuts_off_beat [{at_s, beat_s, off_ms, …}] (cuts more than half a "
+           "frame off their nearest beat), beats {track, bpm, count}, hits_from (per recording: game, hits, kills, "
+           "cached or why skipped), marks (counts). Hits come from `highlights` (cached per file)"},
+          {"review_hits", T::Json, "review: the kill feed to read the hits from: {game:'cs2'} or {region, color, "
+                                   "tolerance?} as in `highlights` (default: the game from the folder or file name; a "
+                                   "recording without one is skipped), or false (no hits)"},
+          {"beats_track", T::String, "review: the music track for the beat grid, e.g. \"A2\" (default: the first "
+                                     "audio track whose clips are free sound files, not linked to a picture), or "
+                                     "\"off\""}},
          cmdRender},
         {"short", "A finished vertical short (YouTube Shorts, Instagram Reels, TikTok) of recordings in one call: "
                   "finds the best moments (`highlights`: kills of the kill feed with a game hint, else loud moments), "

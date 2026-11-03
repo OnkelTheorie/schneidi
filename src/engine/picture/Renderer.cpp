@@ -2334,6 +2334,17 @@ Frame Renderer::render(int64_t frame)
 
 Frame Renderer::render(int64_t frame, const RenderHints& hints)
 {
+    if (!d->options.overlay) return renderFrame(frame, hints);
+    // The overlay needs the RGBA picture: no pass-through or GPU read into the encoder's planes
+    RenderHints rgba = hints;
+    rgba.yuv = nullptr;
+    Frame f = renderFrame(frame, rgba);
+    if (!f.isNull() && f.m_buffer) d->options.overlay(f.m_buffer->data.data(), f.m_width, f.m_height, frame);
+    return f;
+}
+
+Frame Renderer::renderFrame(int64_t frame, const RenderHints& hints)
+{
     if (hints.cancel && hints.cancel->load()) return {};
     Impl::Ctx ctx;
     QSize out;

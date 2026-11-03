@@ -128,6 +128,8 @@ schneidi_test(test_captions) # word captions: timing, edits, CLI op, render, emb
 target_link_libraries(test_captions PRIVATE schneidi_cli_lib)
 schneidi_test(test_short) # `short`: moments, Shorts/Reels/TikTok presets, check platform, limiter, end to end
 target_link_libraries(test_short PRIVATE schneidi_cli_lib)
+schneidi_test(test_review_render) # `render review`: marks burned in at their frames, sheet tiles, offsets, project untouched
+target_link_libraries(test_review_render PRIVATE schneidi_cli_lib)
 schneidi_test(test_speech) # text to speech: piper extension, cache, fake piper, CLI op speak
 target_link_libraries(test_speech PRIVATE schneidi_cli_lib)
 target_link_libraries(test_live PRIVATE schneidi_cli_lib)
@@ -278,7 +280,7 @@ foreach(name test_stabilize_denoise test_retime test_effects_render test_effect_
              test_audio_regression test_color test_loudness test_dynamics_eq test_audio_sync test_multicam_render
              test_multicam_viewer test_multicam_cli
              test_ducking test_crop test_blur_fill test_reframe test_reframe_keep test_game43 test_generators test_fit_music
-             test_story_pace)
+             test_story_pace test_review_render)
     add_test(NAME ${name}_de_DE COMMAND ${name})
     set_tests_properties(${name}_de_DE PROPERTIES
         SKIP_RETURN_CODE 77
