@@ -727,7 +727,7 @@ void test(const QString& dir)
             CHECK_EQ(clips(w), clips0 + 1);
             CHECK_EQ(int(w.liveProject()->timeline().markers.size()), markers0 + 1);
             CHECK_EQ(undoIndex(w), undo0 + 1);
-            CHECK(w.liveProject()->undoStack()->undoText().contains("plan"));
+            CHECK(w.liveProject()->undoStack()->undoText().startsWith(T("KI: Plan %1").arg("").trimmed()));
             auto* state = card->findChild<QLabel*>("ai_plan_state");
             if (CHECK(state)) CHECK_EQ(state->text(), T("Ausgeführt: Schritte %1 (ein Rückgängig-Schritt).").arg("1, 3"));
             CHECK(run && run->isHidden());
