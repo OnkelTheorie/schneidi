@@ -275,6 +275,32 @@ int main(int argc, char** argv)
         }
     }
 
+    // Words, not letters: "lacht" is no "flache Landschaft", "Stille" is silence and not every calm shot
+    {
+        IndexSearch::Shot flat;
+        flat.file = "/x/a.mp4";
+        flat.n = 1;
+        flat.to = 2;
+        flat.motion = 3;
+        flat.desc = "flache Landschaft";
+        IndexSearch::Shot calm = flat;
+        calm.n = 2;
+        calm.desc = "Totale";
+        calm.motion = 0.2;
+        IndexSearch::Shot laugh = flat;
+        laugh.n = 3;
+        laugh.desc = "sie lacht laut";
+        IndexSearch::Shot roof = flat;
+        roof.n = 4;
+        roof.desc = "Kameraschwenk";
+        const QVector<IndexSearch::Shot> shots{flat, calm, laugh, roof};
+        const QVector<IndexSearch::Hit> l = IndexSearch::search("wo lacht sie", shots);
+        if (CHECK_EQ(l.size(), 1)) CHECK_EQ(l[0].n, 3);
+        CHECK(IndexSearch::search("Stille", shots).isEmpty());
+        const QVector<IndexSearch::Hit> pan = IndexSearch::search("Schwenk", shots); // a compound's head still counts
+        if (CHECK_EQ(pan.size(), 1)) CHECK_EQ(pan[0].n, 4);
+    }
+
     // Errors: an unknown shot, a missing file
     CHECK_EQ(run("index", {{"annotate", QJsonArray{QJsonObject{{"file", media}, {"shot", 40}, {"desc", "x"}}}}})["failed"].toString(),
              QString("BAD_ARGUMENT"));

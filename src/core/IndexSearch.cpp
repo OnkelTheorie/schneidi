@@ -83,7 +83,8 @@ double termScore(const QString& term, const QStringList& fieldWords)
     double best = 0;
     for (const QString& w : fieldWords) {
         if (w == term) return 1.0;
-        if (term.size() >= 4 && w.contains(term)) best = 0.6;
+        // Part of a word only at its start or (a compound's head, 5 letters or more) its end: "lach" is not in "flach"
+        if (term.size() >= 4 && (w.startsWith(term) || (term.size() >= 5 && w.endsWith(term)))) best = 0.6;
         else if (w.size() >= 4 && term.startsWith(w)) best = std::max(best, 0.5);
     }
     return best;
@@ -133,10 +134,14 @@ Meaning meaningOf(const QString& token)
 {
     Meaning m;
     m.terms << token;
+    // A group that has the word itself wins over groups whose stem only starts it ("stille" is silence, not "still")
+    bool exact = false;
+    for (const Group& g : groups())
+        for (const char* s : g.stems) exact |= token == QLatin1String(s);
     for (const Group& g : groups()) {
         bool hit = false;
         for (const char* s : g.stems)
-            if (stemMatches(token, QString::fromLatin1(s))) hit = true;
+            if (exact ? token == QLatin1String(s) : stemMatches(token, QString::fromLatin1(s))) hit = true;
         if (!hit) continue;
         for (const char* s : g.stems)
             if (!m.terms.contains(QLatin1String(s))) m.terms << QString::fromLatin1(s);
