@@ -11,6 +11,7 @@
 #include "check.h"
 
 #include <QElapsedTimer>
+#include <QFileInfo>
 #include <QGuiApplication>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -134,6 +135,12 @@ int main(int argc, char* argv[])
     CHECK(QFile::copy(fake.path, copy));
     Cli::Live::Server server(&fake);
     if (!CHECK(server.start(&error))) return Check::result();
+    {
+        // The registry entry holds the token: only the user may read it
+        const QFileInfo entry(QString("%1/data/schneidi/live/%2.json").arg(tmp.path()).arg(QCoreApplication::applicationPid()));
+        CHECK(entry.exists());
+        CHECK(!(entry.permissions() & (QFile::ReadGroup | QFile::ReadOther)));
+    }
     // The file copy is edited without the app (no live connection for it: another path)
     QProcessEnvironment noLive = QProcessEnvironment::systemEnvironment();
     noLive.insert("XDG_DATA_HOME", tmp.path() + "/other"); // no registry: no running app
