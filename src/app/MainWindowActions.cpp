@@ -330,6 +330,9 @@ void MainWindow::buildActions()
             for (const Track& t : m_project->timeline().video)
                 for (const Clip& c : t.clips)
                     if (c.start < frame && frame < c.end()) ids << c.id;
+        // A kill feed copy gets the point with its clip (Editor::editRamp); on its own first it took the link's
+        // turn and the clip stayed without one
+        for (int k : m_editor->followingCopies(ids)) ids.removeAll(k);
         QSet<int> done;
         for (int id : ids) {
             const Clip* c = TimelineOps::findClip(m_project->timeline(), id);

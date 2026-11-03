@@ -188,6 +188,11 @@ public:
     int selectionRenderCacheState() const;
     // Link selected clips, or unlink them if they are already linked
     void toggleLinkSelection();
+    // Link `ids` together (link) or unlink them (also the CLI ops link/unlink); their kill feed copies keep following
+    // them (Editor::followingCopies). One undo step, none when nothing changes.
+    void setLinked(const QVector<int>& ids, bool link, const QString& text);
+    // Is the clip linked to another clip (sound, picture), not only to its own kill feed copies?
+    bool hasPartner(int id) const;
     void toggleMarker(int frame);
     // In/out point (I/O like DaVinci); -1 = remove. If out is before in, the other point is discarded.
     void setMarkIn(int frame);

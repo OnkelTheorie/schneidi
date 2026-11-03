@@ -22,6 +22,7 @@
 #include "engine/Engine.h"
 #include "engine/Snapshot.h"
 #include "ui/MediaPool.h"
+#include "ui/timeline/TimelineView.h"
 
 #include <QAction>
 #include <QApplication>
@@ -555,6 +556,110 @@ void testFollow(const QString& dir)
     MediaAspect::setProbe({});
 }
 
+// The copy follows its picture, not the sound it shares the link with: the sound edited alone (Alt-click, linked
+// selection off) leaves the copy in sync with the clip; unlinking or relinking the sound keeps the copy following
+void testFollowNotSound()
+{
+    MediaAspect::setProbe([](const QString&) { return 16.0 / 9.0; });
+    Project p;
+    Selection sel;
+    Editor ed(&p, &sel);
+    p.setCurrentSequence(p.addTimeline("Short", 0, QSize(1080, 1920)));
+    p.addMedia({"/x/cs2/a.mkv", "a.mkv", 400, true, true, false});
+    int game = 0, sound = 0;
+    p.edit("setup", [&](Timeline& tl) {
+        Clip v;
+        v.id = game = p.newClipId();
+        v.mediaPath = "/x/cs2/a.mkv";
+        v.start = 20;
+        v.in = 100;
+        v.out = 159;
+        v.linkId = p.newLinkId();
+        tl.video[0].clips << v;
+        Clip a = v;
+        a.id = sound = p.newClipId();
+        tl.audio[0].clips << a;
+    });
+    const auto keeps = ed.reframeKeeps({game}, Reframe::Mode::Center, {}, {});
+    ed.reframeClips({game}, Reframe::Mode::Center, {}, {}, &keeps);
+    const auto base = [&] { return *TimelineOps::findClip(p.timeline(), game); };
+    const auto copies = [&] { return keptCopies(p.timeline()); };
+    if (!CHECK_EQ(copies().size(), 1)) return;
+    const auto inPlace = [&](const char* what) {
+        const auto k = copies();
+        if (!CHECK_EQ(k.size(), 1) || !CHECK(inSync(k[0].second, base())))
+            qWarning("  %s: the copy went with the sound", what);
+    };
+    ed.setLinkedSelection(false);
+    CHECK(ed.followingCopies({sound}).isEmpty());
+    ed.moveClips({sound}, 7, TrackKind::Audio, 0);
+    inPlace("sound moved");
+    p.undoStack()->undo();
+    ed.trimClip(sound, TimelineOps::Edge::End, -10);
+    inPlace("sound trimmed");
+    p.undoStack()->undo();
+    ed.bladeAt(sound, 40);
+    inPlace("sound split");
+    p.undoStack()->undo();
+    sel.set({sound});
+    ed.deleteSelection();
+    inPlace("sound deleted");
+    p.undoStack()->undo();
+    ed.setClipSpeed({sound}, {0.5}, false);
+    inPlace("sound retimed");
+    p.undoStack()->undo();
+    ed.setLinkedSelection(true);
+    // Unlinked from its sound: the copy still follows the clip, not the sound
+    sel.set({game, sound});
+    ed.toggleLinkSelection();
+    CHECK_EQ(TimelineOps::findClip(p.timeline(), sound)->linkId, 0);
+    CHECK(!ed.withLinked({game}).contains(sound));
+    ed.moveClips({game}, 5, TrackKind::Video, 0);
+    inPlace("unlinked, clip moved");
+    CHECK_EQ(TimelineOps::findClip(p.timeline(), sound)->start, 20);
+    p.undoStack()->undo();
+    // Linked again: the copy follows the clip and is still no partner
+    ed.toggleLinkSelection();
+    CHECK(ed.withLinked({game}).contains(sound));
+    ed.moveClips(ed.withLinked({game}), 5, TrackKind::Video, 0);
+    inPlace("relinked, clip moved");
+    CHECK(!ed.withLinked({game}).contains(copies()[0].second.id));
+    p.undoStack()->undo();
+    p.undoStack()->undo();
+    p.undoStack()->undo();
+    CHECK_EQ(TimelineOps::findClip(p.timeline(), sound)->linkId, base().linkId);
+    // Cut and paste elsewhere: the copy goes with the clip (as with delete) and comes back linked to the pasted clip;
+    // Copy and paste gives the pasted clip a copy of its own
+    sel.set({game, sound});
+    ed.cutSelection();
+    CHECK(copies().isEmpty());
+    ed.paste(200);
+    const auto pastedPair = [&](const char* what) {
+        const Clip* pasted = nullptr;
+        for (const Clip& c : p.timeline().video[0].clips)
+            if (c.start == 200) pasted = &c;
+        const auto k = copies();
+        bool ok = pasted && !k.isEmpty() && k.last().second.start == 200 && inSync(k.last().second, *pasted)
+                  && k.last().second.linkId == pasted->linkId && pasted->linkId != 0;
+        if (!CHECK(ok)) qWarning("  %s: no kill feed copy with the pasted clip", what);
+        return ok ? k.last().second.id : 0;
+    };
+    pastedPair("cut, paste");
+    p.undoStack()->undo();
+    p.undoStack()->undo();
+    CHECK_EQ(copies().size(), 1);
+    sel.set({game, sound});
+    ed.copySelection();
+    CHECK_EQ(ed.pasteAttributesSource(), p.clipName(base())); // the clip is still the attributes' source
+    ed.paste(200);
+    if (const int pastedCopy = pastedPair("copy, paste")) {
+        CHECK_EQ(copies().size(), 2);
+        CHECK(pastedCopy != copies()[0].second.id);
+    }
+    p.undoStack()->undo();
+    MediaAspect::setProbe({});
+}
+
 // Reframing a whole timeline leaves its overlays (a small webcam picture on V2) where they are; asked for by id, one
 // is reframed
 void testOverlays()
@@ -844,6 +949,11 @@ void testCliFollow(const QString& dir, const QString& game, const QString& plain
     CHECK_EQ(copyOf()["end"].toInt(), gameOf()["end"].toInt());
     edit(QString(R"({"op":"trim","clip":%1,"edge":"end","by":-20})").arg(id));
     CHECK_EQ(copyOf()["end"].toInt(), gameOf()["end"].toInt());
+    // Unlinked (from its sound, if any): the copy still follows
+    edit(QString(R"({"op":"unlink","clips":[%1]})").arg(id));
+    edit(QString(R"({"op":"move","clips":[%1],"by":5})").arg(id));
+    CHECK_EQ(gameOf()["start"].toInt(), 15);
+    CHECK_EQ(copyOf()["start"].toInt(), 15);
     edit(QString(R"({"op":"split","clip":%1,"at":40})").arg(id));
     int feeds = 0;
     for (const QJsonObject& c : clips()) feeds += c["keep_region"].toString() == "killfeed";
@@ -913,6 +1023,26 @@ void testApp(const QString& game)
         CHECK(near(p->timeline().video[1].clips.value(0).transform.zoomX, 0.25, 1e-9)); // the overlay again
         CHECK(w.statusBar()->currentMessage().contains("Overlay"));
     }
+    // A speed point on a selection of the clip and its copy (rubber band): the clip and its copy both get it (the copy
+    // first in the selection took the link's turn: only the copy was ramped, its kill feed out of sync)
+    auto* sel = w.findChild<Selection*>();
+    auto* tv = w.findChild<TimelineView*>();
+    QAction* point = InputBindings::instance().action("speed_point_add");
+    if (const Clip* k = keptCopy(p->timeline()); CHECK(sel && tv && point && k)) {
+        const int base = p->timeline().video[0].clips.value(0).id, copy = k->id;
+        QSet<int> all{base, copy};
+        // Both orders of the two in the selection (QSet's order depends on the hash seed and its size)
+        for (int round = 0; round < 16; ++round) {
+            sel->set(all);
+            tv->setPlayhead(40);
+            point->trigger();
+            const Clip* b = TimelineOps::findClip(p->timeline(), base);
+            const Clip* c = TimelineOps::findClip(p->timeline(), copy);
+            if (!CHECK(b && c && b->ramp.size() == 1 && c->ramp == b->ramp)) break;
+            p->undoStack()->undo();
+            all.insert(100000 + round); // another order next round
+        }
+    }
     QSettings().remove("reframe/keepKillFeed");
 }
 
@@ -976,6 +1106,7 @@ int main(int argc, char** argv)
     testEditor(tmp.path());
     testPictureAspect();
     testFollow(tmp.path());
+    testFollowNotSound();
     testOverlays();
     if (!Check::haveFfmpeg()) return Check::skip("ffmpeg nicht gefunden");
     // A CS2-like recording (640x360): a kill feed line of the player (a thin red frame, top right, inside the CS2 mark region) at

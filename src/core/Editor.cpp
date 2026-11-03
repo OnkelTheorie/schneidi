@@ -644,11 +644,45 @@ void Editor::toggleLinkSelection()
     const QVector<int> ids = editable(m_selection->ids().values().toVector());
     if (ids.isEmpty()) return;
     bool anyLinked = false;
-    for (int id : ids)
-        if (const Clip* c = TimelineOps::findClip(m_project->timeline(), id)) anyLinked |= c->linkId != 0;
+    for (int id : ids) anyLinked |= hasPartner(id);
     if (!anyLinked && ids.size() < 2) return;
-    const int link = anyLinked ? 0 : m_project->newLinkId();
-    modifyClips(ids, anyLinked ? T("Verknüpfung lösen") : T("Clips verknüpfen"), [link](Clip& c) { c.linkId = link; });
+    setLinked(ids, !anyLinked, anyLinked ? T("Verknüpfung lösen") : T("Clips verknüpfen"));
+}
+
+bool Editor::hasPartner(int id) const
+{
+    const Timeline& tl = m_project->timeline();
+    const Clip* c = TimelineOps::findClip(tl, id);
+    if (!c || !c->linkId) return false;
+    // A kill feed copy and its clip share the link without being partners (withLinked)
+    const QVector<int> copies = followingCopies({id});
+    for (int g : TimelineOps::linkedGroup(tl, id))
+        if (g != id && !copies.contains(g) && !followingCopies({g}).contains(id)) return true;
+    return false;
+}
+
+void Editor::setLinked(const QVector<int>& idsIn, bool link, const QString& text)
+{
+    const QVector<int> ids = editable(idsIn);
+    if (ids.isEmpty()) return;
+    const Timeline& tl = m_project->timeline();
+    // The new link per clip; the kill feed copies of a clip keep following it: they take its new link, and a clip
+    // unlinked from its sound keeps one of its own with them
+    QHash<int, int> to;
+    const int shared = link ? m_project->newLinkId() : 0;
+    for (int id : ids) to.insert(id, shared);
+    for (int id : ids) {
+        const QVector<int> copies = followingCopies({id});
+        if (copies.isEmpty() || copies.contains(id)) continue;
+        if (!link) to[id] = m_project->newLinkId();
+        for (int k : copies) to[k] = to[id];
+    }
+    QVector<int> all = to.keys().toVector();
+    std::sort(all.begin(), all.end());
+    for (qsizetype i = all.size() - 1; i >= 0; --i)
+        if (const Clip* c = TimelineOps::findClip(tl, all[i]); !c || c->linkId == to[all[i]]) all.removeAt(i);
+    if (all.isEmpty()) return;
+    modifyClips(all, text, [&](Clip& c) { c.linkId = to.value(c.id); });
 }
 
 void Editor::toggleMarker(int frame)
@@ -702,10 +736,15 @@ void Editor::copySelection()
 {
     // A transition to a clip that is not copied along does not belong to it (otherwise the copy fades out over black)
     Timeline tl = m_project->timeline();
-    TimelineOps::detachTransitions(tl, clipIdsOf(m_selection->ids()));
+    // The kill feed copies of the clips go along (after them: the clip stays the source of Paste Attributes), as
+    // they go when the clips are cut or deleted
+    QVector<int> ids = m_selection->ids().values().toVector();
+    for (int id : followingCopies(clipIdsOf(m_selection->ids())))
+        if (!ids.contains(id)) ids << id;
+    TimelineOps::detachTransitions(tl, clipIdsOf(QSet<int>(ids.begin(), ids.end())));
     QVector<ClipboardItem> items;
     int minStart = INT_MAX;
-    for (int id : m_selection->ids()) {
+    for (int id : ids) {
         TrackRef ref;
         if (const Clip* c = TimelineOps::findClip(tl, id, &ref)) {
             ClipboardItem it{*c, ref, {}};
@@ -741,7 +780,7 @@ void Editor::cutSelection()
 {
     // Only delete what also goes to the clipboard (clips): selected subtitles/keyframes/transitions would
     // otherwise be lost, and pasting would bring the old clipboard
-    const QVector<int> ids = editable(clipIdsOf(m_selection->ids()));
+    const QVector<int> ids = withCopies(editable(clipIdsOf(m_selection->ids()))); // kill feed copies too (as copied)
     if (ids.isEmpty()) return;
     copySelection();
     m_project->edit(T("Ausschneiden"), [&](Timeline& tl) {
