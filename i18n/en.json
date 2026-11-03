@@ -509,6 +509,7 @@
  "Die Anfrage passt nicht in den Kontext des Modells.": "The request does not fit into the model's context.",
  "Die Anfrage passt nicht in den Kontext des Modells: es nimmt %1 Token, die Anfrage hat %2.": "The request does not fit into the model's context: it takes %1 tokens, the request has %2.",
  "Die Antwort wurde abgeschnitten (zu lang).": "The answer was cut off (too long).",
+ "Die App führt gerade einen anderen Befehl aus – bitte gleich noch einmal versuchen.": "The app is running another command – please try again in a moment.",
  "Die Auflösung beginnt erst bei %1 % der Länge – kaum Zeit, sie wirken zu lassen": "The resolution only starts at %1 % of the length – hardly any time to let it sink in",
  "Die Auflösung läuft bis zum Ende – kein Platz mehr für den Aufruf": "The resolution runs to the end – no room left for the call to action",
  "Die Aufnahme hat schwarze Balken, die im Bild zu sehen sind (4:3-Spiel in 16:9?): „Schwarze Balken wegschneiden“ im Clip-Menü oder Auto-Reframe schneidet sie weg": "The recording has black bars that show in the picture (a 4:3 game in 16:9?): “Crop black bars” in the Clip menu or Auto-Reframe crops them",

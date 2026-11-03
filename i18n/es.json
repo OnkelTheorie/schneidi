@@ -509,6 +509,7 @@
  "Die Anfrage passt nicht in den Kontext des Modells.": "La petición no cabe en el contexto del modelo.",
  "Die Anfrage passt nicht in den Kontext des Modells: es nimmt %1 Token, die Anfrage hat %2.": "La petición no cabe en el contexto del modelo: admite %1 tokens y la petición tiene %2.",
  "Die Antwort wurde abgeschnitten (zu lang).": "La respuesta se cortó (demasiado larga).",
+ "Die App führt gerade einen anderen Befehl aus – bitte gleich noch einmal versuchen.": "La aplicación está ejecutando otro comando: inténtalo de nuevo en un momento.",
  "Die Auflösung beginnt erst bei %1 % der Länge – kaum Zeit, sie wirken zu lassen": "La resolución no empieza hasta el %1 % de la duración: apenas hay tiempo para que cale",
  "Die Auflösung läuft bis zum Ende – kein Platz mehr für den Aufruf": "La resolución dura hasta el final: no queda sitio para la llamada a la acción",
  "Die Aufnahme hat schwarze Balken, die im Bild zu sehen sind (4:3-Spiel in 16:9?): „Schwarze Balken wegschneiden“ im Clip-Menü oder Auto-Reframe schneidet sie weg": "La grabación tiene barras negras que se ven en la imagen (¿un juego 4:3 en 16:9?): «Recortar barras negras» en el menú Clip o Auto-Reframe las recorta",

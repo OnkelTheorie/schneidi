@@ -509,6 +509,7 @@
  "Die Anfrage passt nicht in den Kontext des Modells.": "Запрос не помещается в контекст модели.",
  "Die Anfrage passt nicht in den Kontext des Modells: es nimmt %1 Token, die Anfrage hat %2.": "Запрос не помещается в контекст модели: она принимает %1 токенов, а в запросе %2.",
  "Die Antwort wurde abgeschnitten (zu lang).": "Ответ обрезан (слишком длинный).",
+ "Die App führt gerade einen anderen Befehl aus – bitte gleich noch einmal versuchen.": "Приложение выполняет другую команду – попробуй ещё раз через минуту.",
  "Die Auflösung beginnt erst bei %1 % der Länge – kaum Zeit, sie wirken zu lassen": "Развязка начинается только на %1 % длины – почти нет времени, чтобы она подействовала",
  "Die Auflösung läuft bis zum Ende – kein Platz mehr für den Aufruf": "Развязка идёт до самого конца – не остаётся места для призыва к действию",
  "Die Aufnahme hat schwarze Balken, die im Bild zu sehen sind (4:3-Spiel in 16:9?): „Schwarze Balken wegschneiden“ im Clip-Menü oder Auto-Reframe schneidet sie weg": "В записи есть чёрные полосы, которые видны в кадре (игра 4:3 в 16:9?): «Обрезать чёрные полосы» в меню «Клип» или Auto-Reframe обрежут их",

@@ -509,6 +509,7 @@
  "Die Anfrage passt nicht in den Kontext des Modells.": "La demande ne tient pas dans le contexte du modèle.",
  "Die Anfrage passt nicht in den Kontext des Modells: es nimmt %1 Token, die Anfrage hat %2.": "La demande ne tient pas dans le contexte du modèle : il accepte %1 jetons, la demande en compte %2.",
  "Die Antwort wurde abgeschnitten (zu lang).": "La réponse a été coupée (trop longue).",
+ "Die App führt gerade einen anderen Befehl aus – bitte gleich noch einmal versuchen.": "L'application exécute une autre commande – réessaie dans un instant.",
  "Die Auflösung beginnt erst bei %1 % der Länge – kaum Zeit, sie wirken zu lassen": "La résolution ne commence qu’à %1 % de la durée – presque pas le temps de la laisser agir",
  "Die Auflösung läuft bis zum Ende – kein Platz mehr für den Aufruf": "La résolution dure jusqu’à la fin – plus de place pour l’appel à l’action",
  "Die Aufnahme hat schwarze Balken, die im Bild zu sehen sind (4:3-Spiel in 16:9?): „Schwarze Balken wegschneiden“ im Clip-Menü oder Auto-Reframe schneidet sie weg": "L'enregistrement a des bandes noires visibles dans l'image (un jeu 4:3 en 16:9 ?) : « Rogner les bandes noires » dans le menu Clip ou Auto-Reframe les rogne",

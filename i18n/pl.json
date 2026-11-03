@@ -509,6 +509,7 @@
  "Die Anfrage passt nicht in den Kontext des Modells.": "Zapytanie nie mieści się w kontekście modelu.",
  "Die Anfrage passt nicht in den Kontext des Modells: es nimmt %1 Token, die Anfrage hat %2.": "Zapytanie nie mieści się w kontekście modelu: przyjmuje %1 tokenów, a zapytanie ma %2.",
  "Die Antwort wurde abgeschnitten (zu lang).": "Odpowiedź została ucięta (za długa).",
+ "Die App führt gerade einen anderen Befehl aus – bitte gleich noch einmal versuchen.": "Aplikacja wykonuje właśnie inne polecenie – spróbuj ponownie za chwilę.",
  "Die Auflösung beginnt erst bei %1 % der Länge – kaum Zeit, sie wirken zu lassen": "Rozwiązanie zaczyna się dopiero przy %1 % długości – prawie nie ma czasu, by wybrzmiało",
  "Die Auflösung läuft bis zum Ende – kein Platz mehr für den Aufruf": "Rozwiązanie trwa do końca – brak miejsca na wezwanie do działania",
  "Die Aufnahme hat schwarze Balken, die im Bild zu sehen sind (4:3-Spiel in 16:9?): „Schwarze Balken wegschneiden“ im Clip-Menü oder Auto-Reframe schneidet sie weg": "Nagranie ma czarne pasy widoczne w obrazie (gra 4:3 w 16:9?): „Przytnij czarne pasy” w menu Klip albo Auto-Reframe je przycina",
