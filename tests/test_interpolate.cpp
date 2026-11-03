@@ -4,7 +4,8 @@
 // blending is the exact average, a cut (also one to the same brightness in other colours, or to other content in
 // the same colours) gives no ghost; through the renderer: blend at 25 % equals the average of
 // the two source frames, a freeze frame and the parts of a ramp at full speed stay as before; a proxy never takes
-// the original's cached motion. Prints the time per 1080p in-between picture.
+// the original's cached motion, threads asking at once share one estimate. Prints the time per 1080p in-between
+// picture.
 
 #include "check.h"
 
@@ -17,6 +18,8 @@
 #include <QTemporaryDir>
 #include <clocale>
 #include <cmath>
+#include <latch>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -226,6 +229,22 @@ void algorithmChecks()
         t.restart();
         flow(*pm, PA.data(), PB.data(), PO.data(), pw, ph, 0.5);
         std::printf("960x540: motion %.1f ms, in-between picture %.1f ms\n", pest, t.nsecsElapsed() / 1e6);
+
+        // The cache: threads asking for the same pair at once (the export renders the in-betweens of one pair in
+        // parallel) share one estimate instead of each making its own
+        std::latch go(4);
+        std::vector<std::shared_ptr<const Motion>> got(4);
+        std::vector<std::thread> threads;
+        for (int i = 0; i < 4; ++i)
+            threads.emplace_back([&, i] {
+                go.arrive_and_wait();
+                got[size_t(i)] = cachedMotion("test|same pair", A.data(), B.data(), W, H);
+            });
+        for (std::thread& th : threads) th.join();
+        int shared = 0;
+        for (const auto& g : got) shared += g && g == got[0];
+        if (!CHECK_EQ(shared, 4)) std::printf("       %d of 4 threads got the same motion\n", shared);
+        CHECK(cachedMotion("test|same pair", A.data(), B.data(), W, H) == got[0]); // and later from the cache
     }
 }
 
