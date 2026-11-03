@@ -288,5 +288,24 @@ int main(int argc, char** argv)
         CHECK(cmd->params.size() <= 10);
     }
     MediaIndex::setEventSource({});
+
+    // Cancelled (the app closes while the Media Pool builds the index): a sound-only file stops too, nothing is
+    // cached (the audio part never asked, closing the app waited for the whole file)
+    {
+        const QString podcast = Check::makeMedia(dir.filePath("podcast.wav"), {"-f", "lavfi", "-i", "sine=f=300:d=60"});
+        if (CHECK(!podcast.isEmpty())) {
+            MediaIndex::Options o;
+            int asked = 0;
+            o.progress = [&asked](double) {
+                ++asked;
+                return false;
+            };
+            QString error;
+            CHECK(!MediaIndex::build(podcast, o, &error).has_value());
+            CHECK(asked > 0);
+            CHECK(!MediaIndex::cached(podcast).has_value());
+            CHECK(MediaIndex::build(podcast).has_value()); // not cancelled: built
+        }
+    }
     return Check::result();
 }
