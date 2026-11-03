@@ -18,6 +18,7 @@
 #include <QJsonDocument>
 #include <QLocalServer>
 #include <QLocalSocket>
+#include <QLockFile>
 #include <QRandomGenerator>
 #include <QSaveFile>
 #include <QStandardPaths>
@@ -382,16 +383,22 @@ void Server::onReadyRead(QLocalSocket* s)
 {
     if (!m_peers.contains(s)) return;
     m_peers[s].buffer += s->readAll();
-    if (m_running) return; // picked up when the running command is done
     QPointer<QLocalSocket> guard(s);
     while (guard && m_peers.contains(s)) {
         QByteArray& buf = m_peers[s].buffer;
         const int nl = buf.indexOf('\n');
         if (nl < 0) break;
         const QByteArray msg = buf.left(nl).trimmed();
+        const QJsonDocument doc = QJsonDocument::fromJson(msg);
+        // While a command runs (it may spin the event loop) only what leaves the project alone: a hello and the user's
+        // hand-over (opened once the command is done), so a launch with files does not take the app for gone and
+        // open a second window. Everything else is picked up when the command is done.
+        if (m_running && !msg.isEmpty()) {
+            const QString type = doc.object().value("type").toString();
+            if (type != "hello" && type != "open") break;
+        }
         buf.remove(0, nl + 1);
         if (msg.isEmpty()) continue;
-        const QJsonDocument doc = QJsonDocument::fromJson(msg);
         if (!doc.isObject()) {
             s->write(line(errorReply("BAD_REQUEST", "not a JSON object")));
             continue;
@@ -638,6 +645,7 @@ struct Candidate {
     QString waiting; // the app waits for the user (why, for the AI)
     bool silent = false; // did not answer hello in time (busy): its project is unknown
     qint64 pid = 0;
+    QString server, token; // from its registry entry: a second try (handOver waits longer for a silent app)
 };
 
 std::vector<Candidate> runningApps()
@@ -662,7 +670,10 @@ std::vector<Candidate> runningApps()
     for (int i = 0; i < entries.size(); ++i) {
         const QJsonObject& entry = entries[i];
         auto c = std::make_unique<Connection>();
-        c->socket.connectToServer(entry.value("server").toString());
+        const QString server = entry.value("server").toString();
+        const QString token = entry.value("token").toString();
+        const qint64 pid = qint64(entry.value("pid").toDouble());
+        c->socket.connectToServer(server);
         if (!c->socket.waitForConnected(1000)) {
             // App gone without cleaning up (crash): forget it and its socket file
             if (!files[i].isEmpty()
@@ -675,13 +686,16 @@ std::vector<Candidate> runningApps()
         }
         QJsonObject hello;
         try {
-            hello = c->request({{"type", "hello"}, {"token", entry.value("token").toString()}}, 3000);
+            hello = c->request({{"type", "hello"}, {"token", token}}, 3000);
         } catch (const Error& e) {
             // Busy (a long command in its event loop): it may have the project open, so it is no "not running"
             if (e.code == "APP_BUSY") {
                 Candidate busy;
                 busy.conn = std::move(c);
                 busy.silent = true;
+                busy.pid = pid;
+                busy.server = server;
+                busy.token = token;
                 out.push_back(std::move(busy));
             }
             continue;
@@ -690,7 +704,7 @@ std::vector<Candidate> runningApps()
         c->project = hello.value("project").toString();
         out.push_back({std::move(c), hello.value("busy").toBool(), hello.value("allowed").toBool(true),
                        hello.value("refusal").toString(), hello.value("waiting").toString(), false,
-                       qint64(hello.value("pid").toDouble())});
+                       qint64(hello.value("pid").toDouble(double(pid))), server, token});
     }
     return out;
 }
@@ -768,7 +782,19 @@ Connection* connectionFor(const QString& project)
     return c;
 }
 
-bool handOver(const QStringList& files, QString* appProject)
+std::unique_ptr<QLockFile> lockLaunch(int timeoutMs)
+{
+    const QString dir = registryDir();
+    QDir().mkpath(dir);
+    auto l = std::make_unique<QLockFile>(dir + "/launch.lock");
+    // Stale only when its process is gone, never by age: the holder keeps it while its window is built (slow at a
+    // first start on Windows, the virus scanner looks at every DLL), longer than Qt's default 30 s
+    l->setStaleLockTime(0);
+    if (!l->tryLock(timeoutMs)) return nullptr;
+    return l;
+}
+
+bool handOver(const QStringList& files, QString* appProject, int patienceMs)
 {
     if (files.isEmpty()) return false;
     QJsonArray list;
@@ -783,20 +809,40 @@ bool handOver(const QStringList& files, QString* appProject)
         if (!c.silent && !c.conn->project.isEmpty() && projects.contains(canonical(c.conn->project))) pick = &c;
     for (Candidate& c : apps)
         if (!pick && !c.silent) pick = &c;
-    if (!pick) return false;
+    const auto open = [&](Candidate& c) {
 #ifdef Q_OS_WIN
-    // Windows lets only the foreground process give the foreground away: the app may raise its window
-    if (pick->pid > 0) AllowSetForegroundWindow(DWORD(pick->pid));
+        // Windows lets only the foreground process give the foreground away: the app may raise its window
+        if (c.pid > 0) AllowSetForegroundWindow(DWORD(c.pid));
 #endif
-    try {
-        const QJsonObject r = pick->conn->request({{"type", "open"}, {"files", list}}, 5000);
-        if (!r.value("ok").toBool()) return false; // an older app without "open": start one of our own
-    } catch (const Error&) {
-        return false;
+        try {
+            const QJsonObject r = c.conn->request({{"type", "open"}, {"files", list}}, 5000);
+            if (!r.value("ok").toBool()) return false; // an older app without "open": start one of our own
+        } catch (const Error&) {
+            return false;
+        }
+        if (appProject) *appProject = c.conn->project;
+        c.conn->socket.disconnectFromServer();
+        return true;
+    };
+    if (pick) return open(*pick);
+    // Only apps that did not answer in time (still starting, a command that keeps its event loop busy): one of them
+    // rather takes the files late than a second window opens. Asked again on a new connection (the first one ended
+    // with its timeout), with more patience.
+    for (Candidate& c : apps) {
+        if (!c.silent || c.server.isEmpty()) continue;
+        c.conn = std::make_unique<Connection>();
+        c.conn->socket.connectToServer(c.server);
+        if (!c.conn->socket.waitForConnected(1000)) continue;
+        try {
+            const QJsonObject hello = c.conn->request({{"type", "hello"}, {"token", c.token}}, std::max(patienceMs, 0));
+            if (!hello.value("ok").toBool()) continue;
+            c.conn->project = hello.value("project").toString();
+        } catch (const Error&) {
+            continue;
+        }
+        if (open(c)) return true;
     }
-    if (appProject) *appProject = pick->conn->project;
-    pick->conn->socket.disconnectFromServer();
-    return true;
+    return false;
 }
 
 QString projectPath(Connection* c)
