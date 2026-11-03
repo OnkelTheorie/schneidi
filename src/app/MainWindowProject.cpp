@@ -5,6 +5,7 @@
 #include "app/InputBindings.h"
 #include "app/Theme.h"
 #include "app/KeyBindingsDialog.h"
+#include "app/LaunchArgs.h"
 #include "app/ClipSpeedDialog.h"
 #include "app/DesignDialog.h"
 #include "app/Log.h"
@@ -176,7 +177,7 @@ void MainWindow::offerRestart(const QString& message, const QString& now, const 
 
 QStringList MainWindow::restartArguments() const
 {
-    return m_projectPath.isEmpty() ? QStringList{} : QStringList{m_projectPath};
+    return LaunchArgs::restart(m_projectPath);
 }
 
 bool MainWindow::maybeSave()

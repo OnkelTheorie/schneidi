@@ -28,4 +28,17 @@ QStringList files(const QStringList& args)
     return out;
 }
 
+bool handsOver(const QStringList& args)
+{
+    return !files(args).isEmpty() && !args.contains("--demo") && !args.contains("--actions")
+           && !args.contains("--new-instance");
+}
+
+QStringList restart(const QString& projectPath)
+{
+    QStringList args{"--new-instance"};
+    if (!projectPath.isEmpty()) args << projectPath;
+    return args;
+}
+
 } // namespace LaunchArgs
