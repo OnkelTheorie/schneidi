@@ -5,6 +5,7 @@
 #include "core/GradeWindows.h"
 #include "core/Keyframes.h"
 #include "core/MediaAspect.h"
+#include "core/TimelineStory.h"
 #include "core/Types.h"
 
 #include <QFont>
@@ -227,4 +228,5 @@ void retimeTimeline(Timeline& tl, FrameRate from, FrameRate to)
     tl.markIn = at(tl.markIn);
     tl.markOut = at(tl.markOut);
     if (tl.markIn >= 0 && tl.markOut >= 0) tl.markOut = std::max(tl.markOut, tl.markIn);
+    TimelineStory::retime(tl.sections, tl.notes, k);
 }
