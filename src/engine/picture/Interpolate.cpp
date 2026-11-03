@@ -5,6 +5,8 @@
 #include <array>
 #include <cmath>
 #include <cstdlib>
+#include <exception>
+#include <future>
 #include <list>
 #include <mutex>
 #include <thread>
@@ -539,22 +541,37 @@ void flow(const Motion& m, const uint8_t* a, const uint8_t* b, uint8_t* out, int
 
 std::shared_ptr<const Motion> cachedMotion(const QString& key, const uint8_t* a, const uint8_t* b, int w, int h)
 {
-    // At 25 % one pair serves three in-between frames; a few pairs cover playback going back and forth
+    // At 25 % one pair serves three in-between frames; a few pairs cover playback going back and forth. A pair being
+    // estimated is in the cache too: the export renders those three frames at once on different threads, and each
+    // estimated the same motion itself (2.4 estimates per pair in a 25 % export)
+    using Shared = std::shared_future<std::shared_ptr<const Motion>>;
     static std::mutex lock;
-    static std::list<std::pair<QString, std::shared_ptr<const Motion>>> cache;
+    static std::list<std::pair<QString, Shared>> cache;
+    std::promise<std::shared_ptr<const Motion>> made;
+    Shared found;
     {
         const std::lock_guard<std::mutex> g(lock);
-        for (auto it = cache.begin(); it != cache.end(); ++it)
+        for (auto it = cache.begin(); it != cache.end() && !found.valid(); ++it)
             if (it->first == key) {
                 cache.splice(cache.begin(), cache, it);
-                return it->second;
+                found = it->second;
             }
+        if (!found.valid()) {
+            cache.emplace_front(key, made.get_future().share());
+            while (cache.size() > 6) cache.pop_back();
+        }
     }
-    auto m = estimate(a, b, w, h);
-    const std::lock_guard<std::mutex> g(lock);
-    cache.emplace_front(key, m);
-    while (cache.size() > 6) cache.pop_back();
-    return m;
+    if (found.valid()) return found.get(); // waits while another thread estimates it
+    try {
+        auto m = estimate(a, b, w, h);
+        made.set_value(m);
+        return m;
+    } catch (...) { // (out of memory) the waiting threads get it too; the next call tries again
+        made.set_exception(std::current_exception());
+        const std::lock_guard<std::mutex> g(lock);
+        cache.remove_if([&](const auto& e) { return e.first == key; });
+        throw;
+    }
 }
 
 } // namespace Picture::Interp
