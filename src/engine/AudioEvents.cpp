@@ -20,6 +20,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cstdio>
 #include <cmath>
 #include <memory>
 #include <optional>
@@ -430,51 +431,75 @@ QVector<Range> silences(const std::vector<Frame>& fr)
     return out;
 }
 
-// Shots, bangs, explosions, hits: the sound jumps >= 12 dB within 30 ms to well above what is around it (the upper
-// quartile of the 1.5 s before and after, without the bang's own tail) and is noisy at its peak (a kick drum or a
-// plosive is not: tonal / not loud enough against the speech around it). Ends where it fell 20 dB (at most 1.5 s).
+// Shots, bangs, explosions, hits: the sound jumps >= 12 dB within 50 ms, is loudest within 80 ms of that (a real shot
+// builds up over a few blocks: transients, the room) and does not get louder in the 170 ms after (a consonant or a
+// breath is followed by a louder vowel), stands 10 dB above the median of the second before, has no clear pitch
+// while it is loud, is not all bass (a kick drum) and dies away (10 dB down within 0.6 s) (a kick drum, a plucked note or a
+// syllable has one). Dense rises (claps, rain, a rattle) are no shots. Ends where it fell 20 dB (at most 1.5 s).
 QVector<Range> shots(const std::vector<Frame>& fr)
 {
     QVector<Range> out;
     const int n = int(fr.size());
+    const bool dump = qEnvironmentVariableIsSet("AUDIO_EVENTS_DUMP");
+    const auto riseAt = [&](int j) {
+        return fr[size_t(j)].db - std::min({fr[size_t(j - 1)].db, fr[size_t(j - 2)].db, fr[size_t(j - 3)].db});
+    };
     int last = -1000;
     for (int t = 3; t < n; ++t) {
-        const float before = std::min({fr[size_t(t - 1)].db, fr[size_t(t - 2)].db, fr[size_t(t - 3)].db});
-        if (fr[size_t(t)].db - before < 12 || t - last < 5) continue;
-        // The peak in the next 30 ms
+        // A rise starts here (>= 4 dB in a block) and reaches >= 12 dB over the level before within 50 ms
+        if (riseAt(t) < 4 || t - last < 10) continue;
+        const float base = std::min({fr[size_t(t - 1)].db, fr[size_t(t - 2)].db, fr[size_t(t - 3)].db});
+        float quick = -120;
+        for (int j = t; j < std::min(n, t + 5); ++j) quick = std::max(quick, fr[size_t(j)].db);
+        if (quick - base < 12) continue;
         int p = t;
-        for (int j = t; j < std::min(n, t + 3); ++j)
+        for (int j = t; j < std::min(n, t + 8); ++j)
             if (fr[size_t(j)].db > fr[size_t(p)].db) p = j;
         const float peak = fr[size_t(p)].db;
-        if (peak < -40) continue;
-        // A bang is loudest at its start; a consonant or a breath is followed by a louder vowel
-        bool louderAfter = false;
-        for (int j = p + 1; j < std::min(n, t + 15); ++j) louderAfter |= fr[size_t(j)].db > peak + 1;
-        if (louderAfter) continue;
-        // Noisy at its loudest and still while it fades (a laugh or a word starts with breath or a consonant, then
-        // the voice comes: tonal within a few frames)
-        float flat = 0;
-        for (int j = p; j < p + 5; ++j) flat += fr[size_t(std::min(n - 1, j))].flat / 5;
-        // Not one of many: dense rises (more than 6 within half a second each side) are claps, rain, a rattle
+        float after = -120;
+        for (int j = p + 1; j < std::min(n, t + 25); ++j) after = std::max(after, fr[size_t(j)].db);
+        // Pitch while loud: the mean autocorrelation of the 50 ms from the peak
+        float voicing = 0;
+        for (int j = p; j < p + 5; ++j) voicing += fr[size_t(std::min(n - 1, j))].voicing / 5;
         int rises = 0;
-        for (int j = std::max(3, t - 50); j < std::min(n, t + 50); ++j)
-            rises += fr[size_t(j)].db - std::min({fr[size_t(j - 1)].db, fr[size_t(j - 2)].db, fr[size_t(j - 3)].db}) >= 12
-                     && fr[size_t(j)].db >= -40;
-
-        std::vector<float> around;
-        for (int j = std::max(0, t - 150); j < t - 5; ++j) around.push_back(fr[size_t(j)].db);
-        for (int j = t + 50; j < std::min(n, t + 150); ++j) around.push_back(fr[size_t(j)].db);
-        const double ref = around.empty() ? -120 : percentile(around, 0.75);
+        for (int j = std::max(3, t - 50); j < std::min(n, t + 50); ++j) rises += riseAt(j) >= 12 && fr[size_t(j)].db >= -40;
+        // Against the usual level of the second before (its median: in a firefight the shots before are louder
+        // than that, the gaps between them are not)
+        std::vector<float> before;
+        for (int j = std::max(0, t - 100); j < t - 3; ++j) before.push_back(fr[size_t(j)].db);
+        const double ref = before.empty() ? -120 : percentile(before, 0.5);
         const double over = peak - std::max(ref, -90.0);
-        if (qEnvironmentVariableIsSet("AUDIO_EVENTS_DUMP"))
-            qInfo("shot? %.2f peak %.1f over %.1f flat %.2f rises %d", timeOf(t), peak, over, flat, rises);
-        if (over < 10 || flat < 0.15f || rises > 12) continue;
+        if (dump)
+            std::fprintf(stderr, "shot? %.2f peak %.1f after %+.1f over %.1f voicing %.2f rises %d centroid %.0f\n",
+                         timeOf(t), peak, after - peak, over, voicing, rises, fr[size_t(p)].centroid);
+        // It dies away: 10 dB down within 0.6 s (a note or music going on does not)
+        float low = peak;
+        for (int j = p; j < std::min(n, p + 60); ++j) low = std::min(low, fr[size_t(j)].db);
+        // A kick drum is all bass (centroid well under 200 Hz); a shot, a hit or a bang has more in it
+        if (peak < -40 || after > peak + 3 || voicing > 0.6f || rises > 12 || over < 10 || low > peak - 10
+            || fr[size_t(p)].centroid < 200)
+            continue;
         int end = p;
         while (end < std::min(n, p + 150) && fr[size_t(end)].db > peak - 20) ++end;
-        out << Range{t, std::max(end, t + 1), 0.5 + 0.5 * ramp(over, 10, 30) * ramp(flat, 0.15, 0.35)};
+        out << Range{t, std::max(end, t + 1), 0.5 + 0.5 * ramp(over, 10, 30) * (1 - ramp(voicing, 0.3, 0.6))};
         last = t;
     }
-    return out;
+    // A steady row of them (4 or more, 0.2-0.8 s apart, evenly) is a rhythm: footsteps, a drum, a hammer - not shots
+    // (automatic fire is faster than that)
+    QVector<Range> kept;
+    for (int i = 0; i < out.size();) {
+        int j = i;
+        while (j + 1 < out.size()) {
+            const int gap = out[j + 1].from - out[j].from;
+            const int first = out[i + 1 < out.size() ? i + 1 : i].from - out[i].from;
+            if (gap < 20 || gap > 80 || std::abs(gap - first) > 0.15 * first) break;
+            ++j;
+        }
+        if (j - i + 1 < 4)
+            for (int k = i; k <= j; ++k) kept << out[k];
+        i = j + 1;
+    }
+    return kept;
 }
 
 // Laughter: a row of at least 5 short bursts ("ha-ha-ha") at a steady pace of 3-7.5 per second (much steadier than
@@ -616,8 +641,8 @@ QVector<Event> rules(const std::vector<Frame>& fr)
         applause[size_t(i)] = s.applause;
         cheering[size_t(i)] = s.cheering;
         if (dump)
-            qInfo("%6.2f act %.2f lef %.2f voi %.2f vm %.2f f0 %4.0f flat %.3f cen %4.0f held %.2f ons %4.1f "
-                  "rough %4.1f | sp %.2f mu %.2f ap %.2f ch %.2f",
+            std::fprintf(stderr, "%6.2f act %.2f lef %.2f voi %.2f vm %.2f f0 %4.0f flat %.3f cen %4.0f held %.2f ons %4.1f "
+                  "rough %4.1f | sp %.2f mu %.2f ap %.2f ch %.2f\n",
                   timeOf(c), b.active, b.lef, b.voiced, b.voiceMean, b.pitch, b.flat, b.centroid, b.held, b.onsets,
                   b.roughness, s.speech, s.music, s.applause, s.cheering);
     }
