@@ -459,6 +459,23 @@ int main(int argc, char* argv[])
         c = TimelineOps::findClip(qPtr->timeline(), ids[2]);
         CHECK_EQ(c->in, 1000 + 225 + (305 - 225) - 75); // source of frame 305 (after the roll) now plays at 300
         CHECK_EQ(edit(project, R"([{"op":"snap_to_beat","grid":"bars"}])", true)["failed"].toString(), QString("BAD_ARGUMENT"));
+        // A locked track: nothing moves, the answer says so, the marker stays with its content
+        pPtr = load(project);
+        pPtr->edit("lock", [&](Timeline& tl) {
+            tl.video[0].locked = true;
+            tl.markers = {330};
+        });
+        CHECK(ProjectFile::save(pPtr->data(), project, &error));
+        const int lockedStart = TimelineOps::findClip(pPtr->timeline(), ids[2])->start;
+        r = edit(project, R"([{"op":"snap_to_beat","event":"marker","how":"move"}])");
+        qPtr = load(project);
+        CHECK_EQ(TimelineOps::findClip(qPtr->timeline(), ids[2])->start, lockedStart);
+        CHECK(qPtr->timeline().markers == QVector<int>{330});
+        const QJsonArray locked = note(r, "snap_to_beat").toArray();
+        if (CHECK_EQ(locked.size(), 1)) {
+            CHECK_EQ(locked[0]["shift_frames"].toInt(), 0);
+            CHECK(locked[0]["note"].toString().contains("locked"));
+        }
     }
 
     // Live in the app: one undo step, the same as on the file

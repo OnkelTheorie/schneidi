@@ -444,10 +444,16 @@ void opSnapToBeat(Session& s, const QJsonObject& op)
         }
         int got = 0;
         const int want = target - t;
+        // How far the clip really moved (a locked track does not move: moveClips leaves it as it is)
+        const auto moved = [&](int start) {
+            const Clip* c = TimelineOps::findClip(s.project.timeline(), id);
+            return c ? c->start - start : 0;
+        };
+        const int startBefore = TimelineOps::findClip(s.project.timeline(), id)->start;
         if (how == "move") {
             const QVector<int> ids = s.editor.withFollowers({id});
             s.editor.moveClips(ids, want, TrackKind::Video, 0);
-            got = want;
+            got = moved(startBefore);
         } else {
             const bool roll = how == "roll";
             const TimelineOps::TrimEdit e = s.editor.trimEdit(roll ? TimelineOps::TrimKind::Roll : TimelineOps::TrimKind::Slip,
@@ -455,7 +461,7 @@ void opSnapToBeat(Session& s, const QJsonObject& op)
             if (roll && (e.isNull() || e.rightIds.isEmpty() || e.ids.isEmpty())) {
                 // No clip right before it: the clip moves
                 s.editor.moveClips(s.editor.withFollowers({id}), want, TrackKind::Video, 0);
-                got = want;
+                got = moved(startBefore);
                 r["how"] = "move";
             } else if (!e.isNull()) {
                 // Slip: the content moves the other way (by > 0 = later material shows here)
@@ -476,7 +482,10 @@ void opSnapToBeat(Session& s, const QJsonObject& op)
         }
         r["to"] = tc(t + got, f);
         r["shift_frames"] = got;
-        if (got != want) r["note"] = QString("not enough material or room to move it all the way (%1 frames off)").arg(want - got);
+        if (got == 0 && TimelineOps::isLocked(s.project.timeline(), id))
+            r["note"] = "on a locked track: left as it is";
+        else if (got != want)
+            r["note"] = QString("not enough material or room to move it all the way (%1 frames off)").arg(want - got);
         report << r;
     }
     s.notes << QJsonObject{{"snap_to_beat", report}};
