@@ -1149,7 +1149,7 @@ const QVector<Command>& commands()
                   "(a fade to black, a pause). "
                   "Pace (project): a change = a cut or clip edge on a visible video track (V2+: overlay; titles: "
                   "text), a zoom/position/rotation/exposure keyframe where the value moves (accents), a subtitle "
-                  "start; closer than 0.25 s counts once. pace_slow = longer than max_still_s (3 s) without one: a "
+                  "start; within 0.4 s counts once. pace_slow = longer than max_still_s (3 s) without one: a "
                   "warning per stretch in vertical videos up to 3 min, else one info at the longest. 'pace': "
                   "{changes, kinds:{cut, overlay, text, motion}, changes_per_s, longest_s, at, at_s, at_tc (start "
                   "of the longest stretch), still:[{from, to, from_s, to_s, …}], curve_step_s, curve:[changes per "

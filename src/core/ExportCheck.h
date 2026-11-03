@@ -145,7 +145,7 @@ QVector<Issue> stutter(const Timeline& tl, int from, int to, const ProjectFormat
 
 // A change the viewer sees: a cut or a clip edge on a visible video track (titles: text on/off; V2+: an overlay),
 // a zoom/position/rotation/exposure keyframe where the value moves (accents are such keyframes), a subtitle that
-// starts. Changes closer than 0.25 s count once (an accent writes several keyframes around its hit).
+// starts. Changes within 0.4 s of the first count once (an accent writes several keyframes around its hit).
 enum class ChangeKind { Cut, Overlay, Text, Motion };
 const char* changeKindId(ChangeKind k); // "cut", "overlay", "text", "motion"
 struct Change {
@@ -178,7 +178,7 @@ Pace pace(const Timeline& tl, int from, int to, const ProjectFormat& f, const Op
 // pace_slow: vertical videos up to Options::hookMaxS = a warning per still stretch (viewers swipe away), other
 // videos = one info at the longest that names how many there are
 QVector<Issue> paceIssues(const Pace& p, int from, int to, const ProjectFormat& f, const Options& o = {});
-// Where a still stretch could get a change: evenly inside it so no part stays longer than maxStillS, only at frames
+// Where a still stretch could get a change: evenly inside it so no part stays longer than 90 % of maxStillS, only at frames
 // a video clip with a picture covers (an accent needs one)
 QVector<int> breakPoints(const Timeline& tl, const Stretch& s, const ProjectFormat& f, const Options& o = {});
 

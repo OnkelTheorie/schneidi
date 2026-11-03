@@ -74,7 +74,7 @@ const char* changeKindId(ChangeKind k)
 
 QVector<Change> changes(const Timeline& tl, int from, int to, const ProjectFormat& f)
 {
-    QVector<Change> all;
+    QVector<Change> all, ends; // ends after starts: at a cut the clip that starts is the change
     const auto add = [&](int frame, ChangeKind kind, int clip) {
         if (frame > from && frame < to) all << Change{frame, kind, clip};
     };
@@ -87,7 +87,7 @@ QVector<Change> changes(const Timeline& tl, int from, int to, const ProjectForma
             if (!c.enabled || c.end() <= from || c.start >= to) continue;
             const ChangeKind edge = c.isTitle() ? ChangeKind::Text : t == 0 ? ChangeKind::Cut : ChangeKind::Overlay;
             add(c.start, edge, c.id);
-            add(c.end(), edge, c.id);
+            if (c.end() > from && c.end() < to) ends << Change{c.end(), edge, c.id};
             // Keyframes where the value moves (a single one, or one between equal neighbours, holds still)
             for (AnimParam p : kMoving) {
                 const auto it = c.keys.constFind(p);
@@ -107,9 +107,11 @@ QVector<Change> changes(const Timeline& tl, int from, int to, const ProjectForma
         if (!st.enabled) continue;
         for (const SubtitleCue& cue : st.cues) add(cue.start, ChangeKind::Text, 0);
     }
+    all += ends;
     std::stable_sort(all.begin(), all.end(), [](const Change& a, const Change& b) { return a.frame < b.frame; });
-    // Close ones count once: an accent writes keyframes around its hit, a cut under a title edge is one change
-    const int gap = std::max(1, framesOf(0.25, f));
+    // Close ones count once: an accent writes keyframes around its hit (rise, peak, landing within ~0.3 s), a cut
+    // under a title edge is one change
+    const int gap = std::max(1, framesOf(0.4, f));
     QVector<Change> out;
     for (const Change& c : all)
         if (out.isEmpty() || c.frame - out.last().frame >= gap) out << c;
@@ -184,7 +186,8 @@ QVector<int> breakPoints(const Timeline& tl, const Stretch& s, const ProjectForm
     QVector<int> out;
     const int maxStill = std::max(1, framesOf(o.maxStillS, f));
     if (s.length() <= maxStill) return out;
-    const int pieces = (s.length() + maxStill - 1) / maxStill;
+    // Pieces of at most 90 % of the allowance: an accent's change starts a frame before its hit
+    const int pieces = int(std::ceil(s.length() / (0.9 * maxStill)));
     const auto covered = [&](int frame) {
         for (const Track& t : tl.video) {
             if (t.hidden) continue;
@@ -450,14 +453,15 @@ QVector<RetentionPoint> retentionFromCsv(const QString& text, double lengthS, QS
         first = 1;
         const QString t = head[0].toLower();
         position = t.contains('%') || t.contains("position") || t.contains("posición") || t.contains("pozycja");
-        for (int i = 1; i < head.size(); ++i) {
-            const QString h = head[i].toLower();
-            if (h.contains("retention") || h.contains("bindung") || h.contains("viewers") || h.contains("zuschauer")
-                || h.contains("audience")) {
-                valueCol = i;
-                break;
-            }
-        }
+        // The absolute retention (share of all viewers) before a relative one (against similar videos)
+        const auto column = [&](std::initializer_list<const char*> words) {
+            for (int i = 1; i < head.size(); ++i)
+                for (const char* w : words)
+                    if (head[i].toLower().contains(QLatin1String(w))) return i;
+            return -1;
+        };
+        if (const int c = column({"absolute", "audience", "zuschauer", "viewers"}); c > 0) valueCol = c;
+        else if (const int r = column({"retention", "bindung"}); r > 0) valueCol = r;
     }
     QVector<RetentionPoint> out;
     for (int i = first; i < lines.size(); ++i) {
