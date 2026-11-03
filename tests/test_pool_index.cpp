@@ -117,6 +117,17 @@ int main(int argc, char** argv)
         CHECK_EQ(hits->item(0)->data(Qt::UserRole).toString(), b);
         CHECK_EQ(hits->item(0)->data(Qt::UserRole + 1).toInt(), 25); // the laugh at 1 s
     }
+    // Another frame rate: the open hits count in it (a double-click opened the source at half the time)
+    {
+        ProjectFormat f = p.format();
+        f.rate = {50, 1};
+        p.setFormat(f);
+        CHECK(waitFor([&] { return hits->count() == 1 && hits->item(0)->data(Qt::UserRole + 1).toInt() == 50; }, 3000));
+        // Another project: its hits, not the old ones (none: nothing of it is indexed)
+        Project other;
+        p.load(other.data());
+        CHECK(waitFor([&] { return hits->count() == 0; }, 3000));
+    }
     if (const QString dump = qEnvironmentVariable("POOL_INDEX_DUMP"); !dump.isEmpty()) pool.grab().save(dump);
     pool.setSearch("");
     CHECK(waitFor([&] { return panel->isHidden(); }, 3000));
