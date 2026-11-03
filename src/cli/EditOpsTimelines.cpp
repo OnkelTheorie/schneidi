@@ -67,11 +67,12 @@ void opNewTimeline(Session& s, const QJsonObject& op)
         const int source = s.sequenceOf(op.value("from"));
         const Sequence* q = s.project.sequence(source);
         if (!q || q->compound) fail("BAD_ARGUMENT", "from must be a timeline (not a compound or multicam clip)");
+        const QString sourceName = q->name; // copied first: duplicating may move the sequences
         const int id = s.project.duplicateSequence(source);
         if (!id) fail("FAILED", "could not copy the timeline");
         QString label = name;
         if (label.isEmpty())
-            label = q->name + (op.contains("aspect") ? " " + op.value("aspect").toString().trimmed() : QString(" copy"));
+            label = sourceName + (op.contains("aspect") ? " " + op.value("aspect").toString().trimmed() : QString(" copy"));
         s.project.renameSequence(id, label);
         if (!size.isEmpty()) s.project.setSequenceSize(id, size == s.project.format().size() ? QSize() : size);
         s.selectTimeline(id, op.value("open").toBool(s.live));

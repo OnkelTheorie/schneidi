@@ -77,7 +77,7 @@ ExternalEncoder::~ExternalEncoder()
 QString ExternalEncoder::failure(const QString& what)
 {
     QString log;
-    if (m_process) log = QString::fromLocal8Bit(m_process->readAllStandardError()).trimmed();
+    if (m_process) log = QString::fromUtf8(m_process->readAllStandardError()).trimmed();
     if (log.size() > 600) log = "…" + log.right(600);
     return log.isEmpty() ? what : what + ": " + log;
 }

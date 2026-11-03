@@ -5,6 +5,7 @@
 #include "core/TimelineOps.h"
 
 #include <QDateTime>
+#include <QDir>
 #include <QFileInfo>
 #include <QSet>
 #include <QUndoCommand>
@@ -706,6 +707,12 @@ const MediaInfo* Project::mediaInfo(const QString& path) const
 {
     for (const auto& m : m_media)
         if (m.path == path) return &m;
+#ifdef Q_OS_WIN
+    // Windows paths ignore case and separators: C:/Clips/A.mp4 is c:\clips\a.mp4, not a second pool entry
+    const QString key = QDir::cleanPath(QDir::fromNativeSeparators(path));
+    for (const auto& m : m_media)
+        if (QDir::cleanPath(QDir::fromNativeSeparators(m.path)).compare(key, Qt::CaseInsensitive) == 0) return &m;
+#endif
     return nullptr;
 }
 

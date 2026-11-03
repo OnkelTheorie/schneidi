@@ -382,7 +382,7 @@ void ProxyManager::launch(const QString& original, const QStringList& args, doub
     m_process = new QProcess(this);
     connect(m_process, &QProcess::readyReadStandardOutput, this, &ProxyManager::onOutput);
     connect(m_process, &QProcess::readyReadStandardError, this, [this] {
-        m_errorTail = (m_errorTail + QString::fromLocal8Bit(m_process->readAllStandardError())).right(600);
+        m_errorTail = (m_errorTail + QString::fromUtf8(m_process->readAllStandardError())).right(600);
     });
     connect(m_process, &QProcess::finished, this,
             [this](int code, QProcess::ExitStatus st) { onFinished(code, st == QProcess::CrashExit); });

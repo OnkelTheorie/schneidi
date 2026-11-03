@@ -52,7 +52,9 @@ void install()
     QFile::remove(name(kKeep - 1));
     for (int i = kKeep - 2; i >= 0; --i) QFile::rename(name(i), name(i + 1));
     s_file.setFileName(name(0));
-    if (!s_file.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) return;
+    // Still there: another instance holds it open (Windows refuses the rename), so append instead of wiping its log
+    const QIODevice::OpenMode mode = QFile::exists(name(0)) ? QIODevice::Append : QIODevice::Truncate;
+    if (!s_file.open(QIODevice::WriteOnly | mode | QIODevice::Text)) return;
     write("INFO ", QString("schneidi %1 gestartet (%2, Qt %3)")
                        .arg(QCoreApplication::applicationVersion(), QSysInfo::prettyProductName(), qVersion()));
     s_previous = qInstallMessageHandler(qtHandler);

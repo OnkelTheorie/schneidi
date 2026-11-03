@@ -19,6 +19,7 @@
 #include <QLocalServer>
 #include <QLocalSocket>
 #include <QRandomGenerator>
+#include <QSaveFile>
 #include <QStandardPaths>
 #include <QThread>
 #include <QTimer>
@@ -274,18 +275,23 @@ bool Server::start(QString* error)
     m_token = randomHex(16);
     m_chatSecret = randomHex(16);
     m_file = QString("%1/%2.json").arg(dir).arg(QCoreApplication::applicationPid());
-    QFile f(m_file);
-    // Owner-only before the token goes in
-    if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+    // Written whole or not at all: a client reading a half-written file would take the app for gone and delete it
+    QSaveFile f(m_file);
+    if (!f.open(QIODevice::WriteOnly)) {
         if (error) *error = f.errorString();
         return false;
     }
+    // Owner-only before the token goes in
     f.setPermissions(QFile::ReadOwner | QFile::WriteOwner);
     f.write(QJsonDocument(QJsonObject{{"server", m_server->fullServerName()},
                                       {"token", m_token},
                                       {"pid", QCoreApplication::applicationPid()},
                                       {"version", QCoreApplication::applicationVersion()}})
                 .toJson());
+    if (!f.commit()) {
+        if (error) *error = f.errorString();
+        return false;
+    }
     return true;
 }
 
@@ -647,7 +653,9 @@ std::vector<Candidate> runningApps()
         for (const QFileInfo& fi : QDir(registryDir()).entryInfoList({"*.json"}, QDir::Files)) {
             QFile f(fi.absoluteFilePath());
             if (!f.open(QIODevice::ReadOnly)) continue;
-            entries << QJsonDocument::fromJson(f.readAll()).object();
+            const QJsonObject entry = QJsonDocument::fromJson(f.readAll()).object();
+            if (entry.value("server").toString().isEmpty()) continue; // unreadable: never delete what we did not parse
+            entries << entry;
             files << fi.absoluteFilePath();
         }
     }

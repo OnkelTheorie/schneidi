@@ -477,7 +477,7 @@ bool RenderCache::render(const Clip& clip, const ProjectFormat& format, const QS
             return fail(T("Render-Cache: Bild %1 ließ sich nicht rendern.").arg(i));
         }
         if (proc.write(reinterpret_cast<const char*>(d), frameBytes) != frameBytes) {
-            const QString msg = QString::fromLocal8Bit(proc.readAllStandardError()).trimmed();
+            const QString msg = QString::fromUtf8(proc.readAllStandardError()).trimmed();
             abort();
             return fail(T("Render-Cache fehlgeschlagen:\n%1").arg(msg.section('\n', -3)));
         }
@@ -491,7 +491,7 @@ bool RenderCache::render(const Clip& clip, const ProjectFormat& format, const QS
     while (!proc.waitForFinished(200))
         if (cancelled() || proc.state() == QProcess::NotRunning) break;
     if (cancelled()) return abort();
-    const QString log = QString::fromLocal8Bit(proc.readAllStandardError()).trimmed();
+    const QString log = QString::fromUtf8(proc.readAllStandardError()).trimmed();
     if (proc.exitStatus() != QProcess::NormalExit || proc.exitCode() != 0 || QFileInfo(part).size() <= 0) {
         QFile::remove(part);
         qWarning("Render-Cache fehlgeschlagen (Code %d): %s", proc.exitCode(), qPrintable(log.right(2000)));

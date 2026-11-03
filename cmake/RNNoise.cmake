@@ -63,5 +63,12 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64|amd64")
         ${RNN_DIR}/src/x86/nnet_avx2.c)
     target_compile_definitions(rnnoise PRIVATE RNN_ENABLE_X86_RTCD CPU_INFO_BY_ASM)
     set_source_files_properties(${RNN_DIR}/src/x86/nnet_sse4_1.c PROPERTIES COMPILE_OPTIONS "-msse4.1")
-    set_source_files_properties(${RNN_DIR}/src/x86/nnet_avx2.c PROPERTIES COMPILE_OPTIONS "-mavx2;-mfma")
+    if(MINGW)
+        # MinGW GCC does not align the stack to 32 bytes (GCC PR 54412): a spilled __m256 with an aligned move would
+        # crash, so the assembler turns aligned vector moves into unaligned ones (same speed on AVX2 CPUs)
+        set_source_files_properties(${RNN_DIR}/src/x86/nnet_avx2.c PROPERTIES COMPILE_OPTIONS
+            "-mavx2;-mfma;-Wa,-muse-unaligned-vector-move")
+    else()
+        set_source_files_properties(${RNN_DIR}/src/x86/nnet_avx2.c PROPERTIES COMPILE_OPTIONS "-mavx2;-mfma")
+    endif()
 endif()
