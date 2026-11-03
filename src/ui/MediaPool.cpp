@@ -1515,7 +1515,7 @@ QString eventName(const QString& kind)
 {
     static const QHash<QString, const char*> names{
         {"laughter", N_("Lachen")}, {"applause", N_("Applaus")}, {"cheering", N_("Jubel")}, {"shot", N_("Schuss")},
-        {"scream", N_("Schrei")},   {"music", N_("Musik")},      {"speech", N_("Sprache")}, {"silence", N_("Stille")}};
+        {"scream", N_("Schrei")},   {"music", N_("Musik")},      {"speech", N_("Sprechen")}, {"silence", N_("Stille")}};
     const auto it = names.constFind(kind);
     return it == names.constEnd() ? kind : T(*it);
 }
@@ -1525,7 +1525,7 @@ QString qualityName(const QString& q)
     static const QHash<QString, const char*> names{
         {"calm", N_("ruhig")},       {"motion", N_("viel Bewegung")}, {"dark", N_("dunkel")},
         {"overexposed", N_("überbelichtet")}, {"blurry", N_("unscharf")}, {"sharp", N_("scharf")},
-        {"pan", N_("Schwenk")},      {"face likely", N_("Gesicht wahrscheinlich")}, {"speech", N_("Sprache")}};
+        {"pan", N_("Schwenk")},      {"face likely", N_("Gesicht wahrscheinlich")}, {"speech", N_("Sprechen")}};
     const auto it = names.constFind(q);
     return it == names.constEnd() ? q : T(*it);
 }
