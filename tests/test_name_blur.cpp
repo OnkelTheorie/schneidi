@@ -506,6 +506,14 @@ void testOtherFrame(const QString& dir)
     for (const NameBlur::Mask& m : NameBlur::plan(r.samples, NameBlur::Template::Cs2, kFrames, o))
         if (m.zone == "killfeed") killfeed = NameBlur::rectAt(m, 20).intersects(inFrame);
     CHECK(killfeed);
+    // The same clip (in/out in project frames) at 30 fps covers other moments of the file: not the 25 fps result
+    // from the cache
+    const auto cached = [] { return QDir(TextRegions::cacheDir()).entryList(QDir::Files).size(); };
+    const qsizetype before = cached();
+    const ProjectFormat tall30{540, 960, FrameRate{30, 1}};
+    const TextRegions::Result r30 = TextRegions::analyze(tall30, c);
+    CHECK(r30.error.isEmpty());
+    CHECK_EQ(cached(), before + 1);
 }
 
 } // namespace
