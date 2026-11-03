@@ -112,6 +112,7 @@ add_library(schneidi_lib STATIC
     src/core/EditorEffects.cpp
     src/core/EditorMulticam.cpp
     src/core/EditorReframe.cpp
+    src/core/EditorMusic.cpp
     src/core/Reframe.h            src/core/Reframe.cpp
     src/core/RoomTone.h           src/core/RoomTone.cpp
     src/core/GameHud.h            src/core/GameHud.cpp
@@ -135,6 +136,7 @@ add_library(schneidi_lib STATIC
     src/core/Fft.h                src/core/Fft.cpp
     src/core/AudioSync.h          src/core/AudioSync.cpp
     src/core/Beats.h              src/core/Beats.cpp
+    src/core/MusicFit.h           src/core/MusicFit.cpp
     src/core/Multicam.h           src/core/Multicam.cpp
     src/core/Interchange.h        src/core/Interchange.cpp
     src/core/InterchangeEdl.cpp   src/core/InterchangeFcp7.cpp  src/core/InterchangeOtio.cpp

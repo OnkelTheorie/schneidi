@@ -146,6 +146,8 @@ void addStoryOps(QVector<OpDef>& ops); // EditOpsStory.cpp: story sections, note
 void addMusicOps(QVector<OpDef>& ops); // EditOpsMusic.cpp: music edit
 void addSfxOps(QVector<OpDef>& ops);   // EditOpsSfx.cpp: sound effects
 void addTalkOps(QVector<OpDef>& ops);  // EditOpsTalk.cpp: talking head / interview
+// Live: the beats fit_music/snap_to_beat need, analysed by schneidi-cli before the edit goes to the app (`_beats`)
+QJsonObject prepareMusic(const QJsonObject& editArgs, Context& ctx); // EditOpsMusic.cpp
 // Multicam (EditOpsMulticam.cpp): the angles of a multicam sequence for `info` (1-based, files with their start
 // in the multicam clip; with `sync` also how they were synced) and the sync method's name in the CLI
 QJsonArray multicamAnglesJson(const Sequence& s, const QVector<Multicam::Angle>* sync = nullptr);
