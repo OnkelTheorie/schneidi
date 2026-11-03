@@ -150,6 +150,8 @@ schneidi_test(test_analysis_scan) # scenes/overview/region/colour events in-proc
 target_link_libraries(test_analysis_scan PRIVATE schneidi_cli_lib)
 schneidi_test(test_beats) # `beats`: tempo, bars, phrases, breaks, drops of a song
 target_link_libraries(test_beats PRIVATE schneidi_cli_lib)
+schneidi_test(test_media_index) # `index`: shots, quality, cache, annotate, search, timeline times
+target_link_libraries(test_media_index PRIVATE schneidi_cli_lib)
 target_link_libraries(test_check PRIVATE schneidi_cli_lib)
 target_link_libraries(test_setup PRIVATE schneidi_cli_lib)
 target_compile_definitions(test_setup PRIVATE SCHNEIDI_CLI="$<TARGET_FILE:schneidi-cli>")

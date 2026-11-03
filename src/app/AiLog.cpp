@@ -44,6 +44,7 @@ const Job* jobOf(const QString& tool)
         {"check", N_("prüft vor dem Export"), N_("Geprüft, Hinweise: %1")},
         {"overview", N_("verschafft sich einen Überblick"), N_("Überblick: %1 Abschnitte")},
         {"beats", N_("sucht den Takt eines Songs"), N_("Tempo: %1 BPM")},
+        {"index", N_("erstellt oder durchsucht den Material-Index"), N_("Material-Index: %1")},
     };
     for (const Job& j : jobs)
         if (tool == QLatin1String(j.tool)) return &j;

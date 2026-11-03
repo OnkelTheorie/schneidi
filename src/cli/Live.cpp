@@ -883,7 +883,7 @@ bool isJob(const QString& command)
 {
     static const QStringList jobs{"probe",  "silence", "scenes", "peaks",           "highlights", "frames",
                                   "transcribe", "loudness", "scopes", "sync", "render", "export_timeline",
-                                  "extensions", "check", "overview", "beats"};
+                                  "extensions", "check", "overview", "beats", "index"};
     return jobs.contains(command);
 }
 
@@ -945,6 +945,7 @@ QJsonObject activitySummary(const QString& tool, const QJsonObject& r)
         {"silence", {"silence"}},       {"scenes", {"cuts", "changes"}}, {"peaks", {"peaks"}},
         {"highlights", {"best", "candidates"}}, {"frames", {"frames"}},  {"transcribe", {"segments"}},
         {"check", {"issues"}},           {"overview", {"windows", "files"}},
+        {"index", {"hits", "media"}},
     };
     if (counted.contains(tool)) return {{"count", countOf(r, counted.value(tool))}};
     if (tool == "sync") {

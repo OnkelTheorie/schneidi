@@ -1015,6 +1015,25 @@ const QVector<Command>& commands()
                                "project or \"@app\" only, live in the app one undo step"},
           {"markers", T::String, "with apply: phrases (default) or bars"}},
          cmdBeats},
+        {"index", "Material index: per shot (cut) of each file its time, quality (sharp/blurry, dark/overexposed, "
+                  "motion, pan, face likely), speech (project transcripts), hearable events, tags and description; "
+                  "cached, so a second call is instant. Building it shows the shots without a description as a sheet: "
+                  "describe them with annotate (kept apart from the cache). query searches it (German/English, "
+                  "e.g. \"wo lacht er\", \"ruhige Totale vom Laden\"): hits as file + source seconds, with a project "
+                  "also where they play on the timeline.",
+         {{"file", T::Path, "media file", false, true},
+          {"files", T::Paths, "several media files"},
+          {"project", T::Path, "a project (or \"@app\"): its media (unless files are given), their transcripts, and hits "
+                               "in timeline time"},
+          {"timeline", T::String, "with project: which timeline the hits are placed on (default: the open one)"},
+          {"query", T::String, "search words or a question; returns 'hits' (file, shot, from_s, to_s, score, why)"},
+          {"top", T::Integer, "with query: at most this many hits (default 10)"},
+          {"annotate", T::Json, "write descriptions: [{file, shot, desc?, tags?}] (shot = its n; replaces that shot's "
+                                "earlier text)"},
+          {"refresh", T::Boolean, "measure again even when cached"},
+          {"thumbs", T::Path, "folder: also write a picture per shot (thumb = its path)"},
+          {"sheet", T::Boolean, "MCP: show undescribed shots as a contact sheet (default true)"}},
+         cmdIndex},
         {"highlights", "Candidates for a highlight video: kills from the kill feed (of a known game - game, or "
                        "from the folder or file name: cs2, valorant - or any with region + color, see "
                        "`scenes` color) and loud moments, as source ranges with lead-in and lead-out, best first. "
