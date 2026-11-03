@@ -453,17 +453,34 @@ void opSnapToBeat(Session& s, const QJsonObject& op)
             return c ? c->start - start : 0;
         };
         const int startBefore = TimelineOps::findClip(s.project.timeline(), id)->start;
+        // A move only as far as there is room on each track (moving overwrites: the next clip lost its start)
+        const auto roomFor = [&](const QVector<int>& ids, int by) {
+            const Timeline& now = s.project.timeline();
+            for (int x : ids) {
+                TrackRef ref;
+                const Clip* c = TimelineOps::findClip(now, x, &ref);
+                if (!c) continue;
+                for (const Clip& o : now.track(ref).clips) {
+                    if (ids.contains(o.id)) continue;
+                    if (by > 0 && o.start >= c->end()) by = std::min(by, o.start - c->end());
+                    if (by < 0 && o.end() <= c->start) by = std::max(by, o.end() - c->start);
+                }
+                if (by < 0) by = std::max(by, -c->start);
+            }
+            return by;
+        };
         if (how == "move") {
             const QVector<int> ids = s.editor.withFollowers({id});
-            s.editor.moveClips(ids, want, TrackKind::Video, 0);
+            if (const int by = roomFor(ids, want)) s.editor.moveClips(ids, by, TrackKind::Video, 0);
             got = moved(startBefore);
         } else {
             const bool roll = how == "roll";
             const TimelineOps::TrimEdit e = s.editor.trimEdit(roll ? TimelineOps::TrimKind::Roll : TimelineOps::TrimKind::Slip,
                                                                id, TimelineOps::Edge::Start);
             if (roll && (e.isNull() || e.rightIds.isEmpty() || e.ids.isEmpty())) {
-                // No clip right before it: the clip moves
-                s.editor.moveClips(s.editor.withFollowers({id}), want, TrackKind::Video, 0);
+                // No clip right before it: the clip moves (as far as there is room)
+                const QVector<int> ids = s.editor.withFollowers({id});
+                if (const int by = roomFor(ids, want)) s.editor.moveClips(ids, by, TrackKind::Video, 0);
                 got = moved(startBefore);
                 r["how"] = "move";
             } else if (!e.isNull()) {

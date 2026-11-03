@@ -471,6 +471,28 @@ int main(int argc, char* argv[])
             CHECK_EQ(locked[0]["shift_frames"].toInt(), 0);
             CHECK(locked[0]["note"].toString().contains("locked"));
         }
+        // A clip with a gap before it is moved onto the beat - but not into the clip after it
+        pPtr = load(project);
+        pPtr->edit("room", [&](Timeline& tl) {
+            tl.markers.clear();
+            tl.video[0].locked = false;
+            QVector<Clip>& v = tl.video[0].clips;
+            v.resize(2);
+            v[0].start = 120; // 5 frames before the beat at 125, a gap before it
+            v[0].in = 1000;
+            v[0].out = 1000 + 79; // up to 200
+            v[1].start = 200;
+            v[1].in = 2000;
+            v[1].out = 2000 + 99;
+        });
+        CHECK(ProjectFile::save(pPtr->data(), project, &error));
+        r = edit(project, R"([{"op":"snap_to_beat","clips":[)" + QByteArray::number(ids[0]) + R"(],"how":"move"}])");
+        qPtr = load(project);
+        if (CHECK_EQ(qPtr->timeline().video[0].clips.size(), 2)) {
+            CHECK_EQ(qPtr->timeline().video[0].clips[1].start, 200); // the next clip keeps its start
+            CHECK_EQ(qPtr->timeline().video[0].clips[1].in, 2000);
+            CHECK_EQ(qPtr->timeline().video[0].clips[0].start, 120); // no room: stays
+        }
     }
 
     // Live in the app: one undo step, the same as on the file
