@@ -6,7 +6,10 @@
 // outside are switched off; what the provider gets (key header, guide in the system prompt, tools, the thinking block
 // sent back unchanged, tool results, pictures of `frames` as a user message after the tool answers); review mode
 // (accept = one undo step, discard = all back and the AI is told, editing meanwhile keeps the single steps, a file of a
-// watch folder waits until the user has chosen); what the user changed between two answers comes with the next request
+// watch folder waits until the user has chosen); plan mode (an edit without plan is refused, the plan shows as a card
+// with a tick per step: the ticked steps run as one undo step, discard changes nothing, a plan the project outgrew does
+// not run, the AI hears what became of it; the setting is kept); what the user changed between two answers comes with
+// the next request
 // (clips added, changed, removed); an empty answer of an OpenAI-compatible model is asked once to go on, tool calls it
 // wrote as text are run, a call without a project works on the open one, a request a local server cut is not run,
 // unreadable arguments are answered with what to send, `guide` without a topic gets the topics only, a failed call sent
@@ -16,7 +19,8 @@
 // has the details), its context asked once (llama.cpp's /props, Ollama's num_ctx): too small = not sent, tight = said;
 // a cut request's answer is not shown (a big tool call in the history is no sign of one), a final answer written as
 // JSON shows its text.
-// AI_CHAT_DUMP=<folder>: ai-setup.png, ai-conversation.png, ai-approval.png, ai-window.png, ai-settings.png.
+// AI_CHAT_DUMP=<folder>: ai-setup.png, ai-conversation.png, ai-approval.png, ai-plan.png, ai-plan-done.png,
+// ai-window.png, ai-settings.png.
 
 #include "check.h"
 
@@ -37,6 +41,7 @@
 #include "engine/Engine.h"
 
 #include <QApplication>
+#include <QCheckBox>
 #include <QComboBox>
 #include <QDir>
 #include <QElapsedTimer>
@@ -425,7 +430,7 @@ void testBrokenTools()
         chat.tools()->setSetupTimeoutMs(700);
         chat.setTools({QCoreApplication::applicationFilePath(), "--fake-mcp", mode}, {});
         fake.script = {anthropicText("nie erreicht")};
-        CHECK(chat.send("Hallo", e, false));
+        CHECK(chat.send("Hallo", e));
         const bool ended = waitFor([&] { return !chat.busy(); }, 10000);
         if (!CHECK(ended)) std::printf("       mode %s: still working\n", mode);
         if (const AiChat::Entry* err = lastOf(&chat, AiChat::Entry::Kind::Error); CHECK(err)) {
@@ -678,6 +683,99 @@ void test(const QString& dir)
         panel->sendText("Nichts geändert");
         CHECK(waitFor([&] { return !chat->busy(); }));
         CHECK(!lastUserText(fake.last().body).contains("the user changed"));
+    }
+
+    // ---- Plan mode: an edit is refused, the plan changes nothing and shows as a card; the ticked steps run as one
+    // undo step; discarding changes nothing; a plan the project outgrew does not run ----
+    {
+        w.setChatRunner([&server](const QString& command, const QJsonObject& args) { return server.runForChat(command, args); });
+        s.approval = AiSettings::Approval::Plan;
+        w.setAiSettings(s);
+        const QJsonArray planned{QJsonObject{{"op", "split"}, {"at", "0.2s"}, {"why", "Einstieg kürzen"}},
+                                 QJsonObject{{"op", "split"}, {"at", "0.6s"}, {"why", "zweiter Schnitt"}},
+                                 QJsonObject{{"op", "marker"}, {"at", "0.1s"}, {"why", "Hook markieren"}}};
+        fake.script = {anthropicTool("toolu_p1", "edit", {{"project", "@app"}, {"ops", QJsonArray{QJsonObject{{"op", "split"}, {"at", "0.4s"}}}}}),
+                       anthropicTool("toolu_p2", "edit", {{"project", "@app"}, {"plan", true}, {"ops", planned}}),
+                       anthropicText("Plan mit drei Schritten.")};
+        const int clips0 = clips(w), undo0 = undoIndex(w), markers0 = int(w.liveProject()->timeline().markers.size());
+        const int requests0 = int(fake.requests.size());
+        panel->sendText("Plane den Einstieg");
+        CHECK(waitFor([&] { return !chat->busy(); }));
+        CHECK_EQ(clips(w), clips0); // nothing changed yet
+        CHECK_EQ(undoIndex(w), undo0);
+        if (CHECK_EQ(int(fake.requests.size()), requests0 + 3)) {
+            CHECK(lastUserText(fake.requests[requests0].body).contains("wants a plan first")); // the mode, as a note
+            // The edit without plan came back as refused
+            const QJsonArray m = fake.requests[requests0 + 1].body["messages"].toArray();
+            CHECK(QJsonDocument(m.last().toObject()).toJson().contains("PLAN_MODE"));
+        }
+        auto* card = panel->findChild<QWidget*>("ai_plan");
+        if (CHECK(card)) {
+            CHECK(card->isVisible());
+            auto* step2 = card->findChild<QCheckBox*>("ai_plan_step_2");
+            auto* run = card->findChild<QPushButton*>("ai_plan_run");
+            if (CHECK(step2 && run)) {
+                CHECK(step2->isChecked());
+                CHECK(step2->text().contains("zweiter Schnitt")); // the reason, as the AI wrote it
+                CHECK(run->isEnabled());
+                dump(panel, "ai-plan.png");
+                step2->setChecked(false);
+                run->click();
+                settle(150); // the panel shows changed entries in batches
+            }
+            // Steps 1 and 3: one split, one marker, one undo step
+            CHECK_EQ(clips(w), clips0 + 1);
+            CHECK_EQ(int(w.liveProject()->timeline().markers.size()), markers0 + 1);
+            CHECK_EQ(undoIndex(w), undo0 + 1);
+            CHECK(w.liveProject()->undoStack()->undoText().contains("plan"));
+            auto* state = card->findChild<QLabel*>("ai_plan_state");
+            if (CHECK(state)) CHECK_EQ(state->text(), T("Ausgeführt: Schritte %1 (ein Rückgängig-Schritt).").arg("1, 3"));
+            CHECK(run && run->isHidden());
+            if (auto* box = card->findChild<QCheckBox*>("ai_plan_step_1"); CHECK(box)) CHECK(!box->isEnabled());
+            dump(panel, "ai-plan-done.png");
+        }
+        // The AI hears what the user ran
+        fake.script = {anthropicTool("toolu_p3", "edit", {{"project", "@app"}, {"plan", true},
+                                                          {"ops", QJsonArray{QJsonObject{{"op", "split"}, {"at", "0.7s"}, {"why", "noch einer"}}}}}),
+                       anthropicText("Neuer Plan.")};
+        panel->sendText("Noch ein Schnitt");
+        CHECK(waitFor([&] { return !chat->busy(); }));
+        CHECK(lastUserText(fake.requests[requests0 + 3].body).contains("the user ran steps 1, 3 of plan"));
+        // Discard: nothing happens, the AI hears it
+        const QList<QWidget*> cards = panel->findChildren<QWidget*>("ai_plan");
+        if (CHECK_EQ(cards.size(), 2)) {
+            const int clips1 = clips(w), undo1 = undoIndex(w);
+            if (auto* discard = cards.last()->findChild<QPushButton*>("ai_plan_discard"); CHECK(discard)) discard->click();
+            settle(150);
+            CHECK_EQ(clips(w), clips1);
+            CHECK_EQ(undoIndex(w), undo1);
+            if (auto* state = cards.last()->findChild<QLabel*>("ai_plan_state"); CHECK(state))
+                CHECK_EQ(state->text(), T("Verworfen: nichts davon wurde ausgeführt."));
+        }
+        // A plan, then the user edits: it does not run any more
+        fake.script = {anthropicText("Gesehen.")};
+        panel->sendText("Danke");
+        CHECK(waitFor([&] { return !chat->busy(); }));
+        CHECK(lastUserText(fake.last().body).contains("discarded plan"));
+        fake.script = {anthropicTool("toolu_p4", "edit", {{"project", "@app"}, {"plan", true},
+                                                          {"ops", QJsonArray{QJsonObject{{"op", "split"}, {"at", "0.3s"}, {"why", "x"}}}}}),
+                       anthropicText("Plan.")};
+        panel->sendText("Plane noch einen");
+        CHECK(waitFor([&] { return !chat->busy(); }));
+        w.liveProject()->edit("user", [](Timeline& tl) { tl.markIn = 3; });
+        const int clips2 = clips(w), undo2 = undoIndex(w);
+        const QList<QWidget*> all = panel->findChildren<QWidget*>("ai_plan");
+        if (CHECK_EQ(all.size(), 3)) {
+            if (auto* run = all.last()->findChild<QPushButton*>("ai_plan_run"); CHECK(run)) run->click();
+            settle(150);
+            CHECK_EQ(clips(w), clips2);
+            CHECK_EQ(undoIndex(w), undo2);
+            if (auto* state = all.last()->findChild<QLabel*>("ai_plan_state"); CHECK(state))
+                CHECK_EQ(state->text(), T("Nicht ausgeführt: das Projekt wurde seit dem Plan geändert. Bitte die KI, neu zu planen."));
+        }
+        // The chat as text lists the plans with their reasons
+        CHECK(chat->transcript().contains("Hook markieren"));
+        w.setChatRunner({});
     }
 
     s.approval = AiSettings::Approval::Auto;
@@ -1207,6 +1305,22 @@ void test(const QString& dir)
     CHECK_EQ(chosen.chatProvider, QString("claude"));
     CHECK_EQ(chosen.chatModel(), QString("claude-opus-5-5"));
     CHECK(chosen.approval == AiSettings::Approval::Review);
+    // The third choice, plan mode: in the list and kept in the settings
+    if (approval) {
+        CHECK(approval->findData(int(AiSettings::Approval::Plan)) >= 0);
+        approval->setCurrentIndex(approval->findData(int(AiSettings::Approval::Plan)));
+        CHECK(dlg.aiSettings().approval == AiSettings::Approval::Plan);
+        approval->setCurrentIndex(approval->findData(int(AiSettings::Approval::Review)));
+    }
+    {
+        AiSettings saved = AiSettings::load();
+        saved.approval = AiSettings::Approval::Plan;
+        saved.save();
+        CHECK_EQ(QSettings().value("ai/chat/approval").toString(), QString("plan"));
+        CHECK(AiSettings::load().approval == AiSettings::Approval::Plan);
+        saved.approval = AiSettings::Approval::Auto;
+        saved.save();
+    }
     CHECK_EQ(chosen.chatAddress, fake.address());
     // A typed key goes to the store on OK (here the settings: tests have no keychain)
     keyField->setText("sk-typed");

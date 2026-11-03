@@ -332,7 +332,9 @@ public:
         case Entry::State::Done: {
             QStringList ran;
             for (int n : e.ran) ran << QString::number(n);
-            state = T("Ausgeführt: Schritt %1 (ein Rückgängig-Schritt).").arg(ran.join(", "));
+            state = (ran.size() == 1 ? T("Ausgeführt: Schritt %1 (ein Rückgängig-Schritt).")
+                                     : T("Ausgeführt: Schritte %1 (ein Rückgängig-Schritt)."))
+                        .arg(ran.join(", "));
             break;
         }
         case Entry::State::Stopped: state = T("Verworfen: nichts davon wurde ausgeführt."); break;
