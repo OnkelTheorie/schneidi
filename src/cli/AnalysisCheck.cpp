@@ -245,6 +245,9 @@ QJsonObject fixJson(const ExportCheck::SoundFix& fix, const QJsonValue& timeline
     return {{"what", what.join(", ")}, {"ops", ops}, {"how", "apply with `edit` (one undo step), then `check` again"}};
 }
 
+constexpr int kMaxListed = 50;   // still stretches in the answer
+constexpr int kMaxSuggested = 60; // break points in `suggest`
+
 QJsonValue round2(double v) { return std::round(v * 100) / 100; }
 
 // Pace of the range: changes per second, the longest stretch without one, the curve, per story section
@@ -255,8 +258,10 @@ QJsonObject paceJson(const ExportCheck::Pace& p, const ProjectFormat& f)
         const QString k = QString::fromLatin1(ExportCheck::changeKindId(c.kind));
         kinds[k] = kinds[k].toInt() + 1;
     }
+    // At most kMaxListed still stretches listed (a long static podcast has hundreds), still_count says how many
     QJsonArray still, curve, sections;
-    for (const ExportCheck::Stretch& s : p.still) still << range(s.from, s.to, f);
+    for (const ExportCheck::Stretch& s : p.still)
+        if (still.size() < kMaxListed) still << range(s.from, s.to, f);
     for (double v : p.curve) curve << v;
     for (const ExportCheck::SectionPace& sp : p.sections) {
         QJsonObject o{{"kind", TimelineStory::kindName(sp.section.kind)},
@@ -276,6 +281,7 @@ QJsonObject paceJson(const ExportCheck::Pace& p, const ProjectFormat& f)
                   {"at_s", seconds(p.longest.from, f)},
                   {"at_tc", tc(p.longest.from, f)},
                   {"still", still},
+                  {"still_count", int(p.still.size())},
                   {"curve_step_s", p.curveStepS},
                   {"curve", curve}};
     if (!sections.isEmpty()) o["sections"] = sections;
@@ -290,8 +296,13 @@ QJsonObject suggestJson(const ExportCheck::Pace& p, const Timeline& tl, const QV
 {
     QJsonArray ops, texts;
     int points = 0;
+    bool limited = false;
     for (const ExportCheck::Stretch& s : p.still) {
-        const QVector<int> at = ExportCheck::breakPoints(tl, s, f, o);
+        QVector<int> at = ExportCheck::breakPoints(tl, s, f, o);
+        if (points + at.size() > kMaxSuggested) {
+            at.resize(std::max(0, kMaxSuggested - points));
+            limited = true;
+        }
         if (at.isEmpty()) continue;
         const QString why = QString("pace_slow: %1 s without a cut, zoom or text from %2")
                                 .arg(seconds(s.length(), f))
@@ -320,6 +331,10 @@ QJsonObject suggestJson(const ExportCheck::Pace& p, const Timeline& tl, const QV
                     {"ops", ops},
                     {"how", "a creative suggestion, not applied by `check` or `short`: apply with `edit` (one undo "
                             "step) if it suits the video - or cut, zoom or add text yourself - then `check` again"}};
+    if (limited)
+        out["limited"] = QString("only the first %1 points: the video is still for long stretches - more cuts, "
+                                 "b-roll or a calmer pace on purpose?")
+                             .arg(kMaxSuggested);
     if (!texts.isEmpty()) {
         if (named) texts.prepend(QJsonObject{{"op", "timeline"}, {"timeline", timeline}});
         out["text_ops"] = texts;
