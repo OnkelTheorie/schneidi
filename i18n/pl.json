@@ -1225,6 +1225,7 @@
  "Nicht alle Clips ließen sich analysieren, sie bleiben mittig:\n%1": "Nie wszystkie klipy udało się przeanalizować, pozostają wyśrodkowane:\n%1",
  "Nicht ausgeführt: %1": "Nie wykonano: %1",
  "Nicht ausgeführt: das Projekt wurde seit dem Plan geändert. Bitte die KI, neu zu planen.": "Nie wykonano: projekt zmienił się od czasu planu. Poproś AI o nowy plan.",
+ "Nicht ausgeführt: den Plan gibt es nicht mehr (nach einem Tag abgelaufen oder schon ausgeführt). Bitte die KI, neu zu planen.": "Nie wykonano: planu już nie ma (wygasł po dniu albo został już wykonany). Poproś AI o nowy plan.",
  "Nicht gelöscht: %1": "Nie usunięto: %1",
  "Nicht im Preset (Color-Seite bzw. Plugin fehlt): %1": "Nie w presecie (brak strony Kolor lub wtyczki): %1",
  "Nicht lesbar:": "Nie można odczytać:",

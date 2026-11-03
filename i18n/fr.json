@@ -1225,6 +1225,7 @@
  "Nicht alle Clips ließen sich analysieren, sie bleiben mittig:\n%1": "Tous les clips n’ont pas pu être analysés, ils restent centrés :\n%1",
  "Nicht ausgeführt: %1": "Non exécuté : %1",
  "Nicht ausgeführt: das Projekt wurde seit dem Plan geändert. Bitte die KI, neu zu planen.": "Non exécuté : le projet a changé depuis le plan. Demande à l’IA de refaire un plan.",
+ "Nicht ausgeführt: den Plan gibt es nicht mehr (nach einem Tag abgelaufen oder schon ausgeführt). Bitte die KI, neu zu planen.": "Non exécuté : le plan n'existe plus (expiré après un jour ou déjà exécuté). Demande à l'IA de replanifier.",
  "Nicht gelöscht: %1": "Non supprimée : %1",
  "Nicht im Preset (Color-Seite bzw. Plugin fehlt): %1": "Absent du préréglage (page Couleur ou plugin manquant) : %1",
  "Nicht lesbar:": "Illisible :",

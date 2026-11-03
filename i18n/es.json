@@ -1225,6 +1225,7 @@
  "Nicht alle Clips ließen sich analysieren, sie bleiben mittig:\n%1": "No se pudieron analizar todos los clips; se quedan centrados:\n%1",
  "Nicht ausgeführt: %1": "No ejecutado: %1",
  "Nicht ausgeführt: das Projekt wurde seit dem Plan geändert. Bitte die KI, neu zu planen.": "No ejecutado: el proyecto cambió desde el plan. Pide a la IA que vuelva a planificar.",
+ "Nicht ausgeführt: den Plan gibt es nicht mehr (nach einem Tag abgelaufen oder schon ausgeführt). Bitte die KI, neu zu planen.": "No ejecutado: el plan ya no existe (caducó tras un día o ya se ejecutó). Pide a la IA que vuelva a planificar.",
  "Nicht gelöscht: %1": "No se borró: %1",
  "Nicht im Preset (Color-Seite bzw. Plugin fehlt): %1": "No está en el preajuste (falta la página Color o el plugin): %1",
  "Nicht lesbar:": "No se puede leer:",
