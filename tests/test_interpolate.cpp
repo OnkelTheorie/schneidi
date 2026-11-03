@@ -340,6 +340,21 @@ void fasterSourceChecks(const QString& video50)
                 avg.scanLine(y)[x] = uint8_t((s0.constScanLine(y)[x] + s1.constScanLine(y)[x] + 1) / 2);
         if (!CHECK(maxDiff(mid, avg) <= 1)) std::printf("       50 fps blend vs average: %d\n", maxDiff(mid, avg));
     }
+    // Repeat mode: every stream frame shows, twice at 25 % (0, 0, 1, 1, 2, 2); rounded in project frames every other
+    // one was skipped (0, 0, 0, 0, 2, 2, 2, 2)
+    const QImage r0 = render(one(video50, 0.25, FrameInterp::Repeat, 40), 0);
+    const QImage r2 = render(one(video50, 0.25, FrameInterp::Repeat, 40), 2);
+    const QImage r3 = render(one(video50, 0.25, FrameInterp::Repeat, 40), 3);
+    const QImage s1 = render(one(video50, 0.25, FrameInterp::Blend, 40), 2); // stream frame 1 itself
+    if (!CHECK(maxDiff(r2, r0) > 10)) std::printf("       repeat: stream frame 1 skipped\n");
+    CHECK_EQ(maxDiff(r2, s1), 0);
+    CHECK_EQ(maxDiff(r3, r2), 0);
+    // Backwards likewise: the last of 40 project frames is stream frame 79, then 79, 78, 78 ...
+    Timeline back = one(video50, 0.25, FrameInterp::Repeat, 40);
+    back.video[0].clips[0].reverse = true;
+    CHECK(maxDiff(render(back, 2), render(back, 0)) > 10);
+    CHECK_EQ(maxDiff(render(back, 1), render(back, 0)), 0);
+    CHECK(maxDiff(render(back, 4), render(back, 2)) > 10);
 }
 
 } // namespace
