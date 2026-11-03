@@ -10,6 +10,7 @@
 #include "core/Keyframes.h"
 #include "core/MediaAspect.h"
 #include "core/Retime.h"
+#include "core/TimelineStory.h"
 
 #include <QColor>
 #include <QDir>
@@ -789,6 +790,9 @@ QByteArray toJson(const ProjectData& data, const QString& projectPath)
                       {"masterVolumeDb", timeline.masterVolumeDb}, {"masterLimiter", timeline.masterLimiter},
                       {"masterLimiterDb", timeline.masterLimiterDb}};
         if (!subtitles.isEmpty()) o["subtitles"] = subtitles;
+        // Story sections and notes (0.17, optional): older versions keep the cut and only drop them
+        if (!timeline.sections.isEmpty()) o["sections"] = TimelineStory::sectionsToJson(timeline.sections);
+        if (!timeline.notes.isEmpty()) o["notes"] = TimelineStory::notesToJson(timeline.notes);
         return o;
     };
 
@@ -1035,6 +1039,8 @@ bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* d
         std::sort(timeline.markers.begin(), timeline.markers.end());
         timeline.markIn = intOf(tl.value("markIn"), -1);
         timeline.markOut = intOf(tl.value("markOut"), -1);
+        timeline.sections = TimelineStory::sectionsFromJson(tl.value("sections").toArray());
+        timeline.notes = TimelineStory::notesFromJson(tl.value("notes").toArray());
         return timeline;
     };
     d.timeline = readTimeline(root.value("timeline").toObject());
