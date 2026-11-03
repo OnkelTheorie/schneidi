@@ -51,14 +51,17 @@ std::vector<float> song()
     };
     // Per phrase: level, pad tone, which parts play
     const double gain[kPhrases] = {0.45, 0.6, 0.7, 0.35, 1.0, 0.6, 0.45};
-    const double pad[kPhrases] = {220, 262, 294, 247, 330, 262, 196};
+    const double pad[kPhrases] = {221.3, 262.7, 293.9, 247.4, 330.6, 262.7, 196.2}; // not in phase at the bar ones
     for (int bar = 0; bar < kBars; ++bar) {
         const int ph = bar / kPhraseBars;
         const bool pause = ph == 3, bass = ph != 0 && !pause, lead = ph == 2 || ph == 4;
         const double g = gain[ph];
         const double t0 = barStart(bar);
         // A pad that holds through the phrase (its phase runs on: a hard cut between two of them jumps)
-        add(t0, kBar, [&](double, double t) { return 0.22 * g * std::sin(2 * kPi * pad[ph] * t); });
+        add(t0, kBar, [&](double, double t) {
+            const double x = std::fmod(t - kLead, kPhraseBars * kBar), edge = std::min({1.0, x / 0.005, (kPhraseBars * kBar - x) / 0.005});
+            return 0.22 * g * edge * std::sin(2 * kPi * pad[ph] * t);
+        });
         for (int b = 0; b < 4; ++b) {
             const double t = t0 + b * kBeat;
             if (!pause) {
@@ -86,7 +89,7 @@ std::vector<float> song()
     // The end: a last kick and the pad ringing out
     const double end = barStart(kBars);
     add(end, 0.3, [&](double x, double) { return 0.5 * std::exp(-x / 0.08) * std::sin(2 * kPi * (50 * x + 3 * (1 - std::exp(-x / 0.03)))); });
-    add(end, kRing, [&](double x, double t) { return 0.22 * 0.45 * std::exp(-x / 0.8) * std::sin(2 * kPi * 196 * t); });
+    add(end, kRing, [&](double x, double t) { return 0.22 * 0.45 * std::min(1.0, x / 0.005) * std::exp(-x / 0.8) * std::sin(2 * kPi * 196.2 * t); });
     return s;
 }
 
@@ -296,6 +299,7 @@ void checkFit(const QString& project, const QString& file, double length, double
     const std::vector<float> sound = mix(p);
     for (const QJsonValue& c : fit["cuts_at"].toArray()) {
         const double at = c.toDouble(), jump = maxJump(sound, at - 0.1, at + 0.1);
+        if (qEnvironmentVariableIsSet("JUMPS")) std::printf("       jump %.4f at %.2f s (song %.4f)\n", jump, at, baseline);
         if (!CHECK(jump <= baseline * 1.25 + 0.005)) std::printf("       jump %.4f at %.2f s (song %.4f)\n", jump, at, baseline);
     }
 }
