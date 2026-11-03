@@ -320,6 +320,28 @@ void rendererChecks(const QString& video)
     CHECK(maxDiff(render(rp, 12), render(rpr, 12)) > 10);   // source 10.5: in between
 }
 
+// A source faster than the project (50 fps in 25 fps, like 60 fps gameplay in a 30 fps edit) at 25 %: the stream
+// position runs 0, 0.5, 1, 1.5, 2 ... per output frame. On a stream frame its own picture, never the one before
+// (the picture jumped back: 0, 0-1, 0, 1-2, 2, 2-3, 2 ...)
+void fasterSourceChecks(const QString& video50)
+{
+    for (FrameInterp mode : {FrameInterp::Blend, FrameInterp::Flow}) {
+        const QImage s0 = render(one(video50, 0.25, mode, 40), 0);
+        const QImage s1 = render(one(video50, 0.25, mode, 40), 2); // stream frame 1
+        const QImage s2 = render(one(video50, 0.25, mode, 40), 4); // stream frame 2
+        if (!CHECK(maxDiff(s1, s0) > 10)) std::printf("       mode %d: stream frame 1 shows frame 0\n", int(mode));
+        CHECK(maxDiff(s1, s2) > 10);
+        if (mode != FrameInterp::Blend) continue;
+        // Output frame 1 lies halfway between stream frames 0 and 1
+        const QImage mid = render(one(video50, 0.25, mode, 40), 1);
+        QImage avg = s0;
+        for (int y = 0; y < avg.height(); ++y)
+            for (int x = 0; x < avg.width() * 4; ++x)
+                avg.scanLine(y)[x] = uint8_t((s0.constScanLine(y)[x] + s1.constScanLine(y)[x] + 1) / 2);
+        if (!CHECK(maxDiff(mid, avg) <= 1)) std::printf("       50 fps blend vs average: %d\n", maxDiff(mid, avg));
+    }
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -342,5 +364,9 @@ int main(int argc, char** argv)
     if (!CHECK(!video.isEmpty())) return Check::result();
     Check::initEngine();
     rendererChecks(video);
+    const QString video50 = Check::makeMedia(tmp.filePath("v50.mp4"),
+                                             {"-f", "lavfi", "-i", "testsrc2=size=320x180:rate=50:duration=2", "-c:v",
+                                              "libx264", "-preset", "ultrafast", "-g", "1", "-pix_fmt", "yuv420p"});
+    if (CHECK(!video50.isEmpty())) fasterSourceChecks(video50);
     return Check::result();
 }
