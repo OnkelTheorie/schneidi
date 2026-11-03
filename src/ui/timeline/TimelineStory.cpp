@@ -93,10 +93,12 @@ int TimelineView::sectionEdgeAt(const QPoint& pos, bool* left) const
     const QVector<StorySection>& sections = m_editor->project()->timeline().sections;
     int best = -1;
     double dist = kEdgePx + 1;
+    // Two sections that touch share an edge: the one the mouse is over is grabbed (its left edge, or the right one)
+    const int over = Story::at(sections, int(std::floor(xToFrame(pos.x()))));
     for (int i = 0; i < sections.size(); ++i)
         for (const bool l : {true, false}) {
             const double d = std::abs(frameToX(l ? sections[i].from : sections[i].to) - pos.x());
-            if (d < dist) {
+            if (d < dist || (d == dist && i == over)) {
                 dist = d;
                 best = i;
                 if (left) *left = l;
@@ -192,7 +194,8 @@ bool TimelineView::sectionPress(const QPoint& pos)
     if (i < 0) return false;
     m_sectionDrag = i;
     m_sectionLeft = left;
-    ++m_sectionDrags;
+    static int drags = 0; // over all views: a new view must not merge into an older drag's undo step
+    m_sectionDrags = ++drags;
     m_drag = Drag::SectionEdge;
     return true;
 }
