@@ -454,7 +454,12 @@ QVector<Reframe::Target> targets(const Clip& c, FrameRate rate, int fileLength, 
             // A cut between the two samples (either direction: reversed clips)
             const int a = std::min(items[k - 1].index, items[k].index), b = std::max(items[k - 1].index, items[k].index);
             for (int j = a + 1; j <= b && !t.cut; ++j) t.cut = samples[j].cut;
-            if (t.frame == out.last().frame) continue;
+            if (t.frame == out.last().frame) {
+                // Two samples on one clip frame (a cut is sampled right after a regular sample; a fast source or
+                // a sped-up clip): the one after a cut wins, else the next target would no longer see the cut
+                if (t.cut) out.last() = t;
+                continue;
+            }
         }
         out << t;
     }
