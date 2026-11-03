@@ -104,6 +104,7 @@ signals:
 private:
     void onFinished();
     void fail(const QString& message);
+    void dropVoicePart();
     QString unpack(const QString& archive); // error message, empty = ok
     bool startPart(QString* error); // the download of m_part (0 = the item's file, 1 = a voice's config)
 
@@ -113,6 +114,9 @@ private:
     std::unique_ptr<QCryptographicHash> m_hash;
     Item m_item;
     int m_part = 0;
+    // A voice's model, downloaded and checked, waits as its part file until the config is there too: an update whose
+    // config download fails keeps the old pair instead of a new model beside the old config
+    QString m_voicePart;
     bool m_cancelled = false;
 };
 

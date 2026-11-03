@@ -53,7 +53,9 @@ void scaleTimeline(Timeline& tl, QSize from, QSize to)
     if (from == to || from.isEmpty() || to.isEmpty()) return;
     const double sx = double(to.width()) / from.width();
     const double sy = double(to.height()) / from.height();
-    const double s = std::min(sx, sy);
+    // Sizes by the frame's short side (like Subtitles::defaultStyle): a round trip 16:9 -> 9:16 -> 16:9 gives the
+    // sizes back (the smaller of sx and sy shrank them both ways, a title of 80 px came back with 25)
+    const double s = double(std::min(to.width(), to.height())) / std::min(from.width(), from.height());
     for (SubtitleTrack& t : tl.subtitles) {
         TitleStyle& st = t.style;
         st.posX *= sx;

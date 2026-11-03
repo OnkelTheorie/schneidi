@@ -169,10 +169,25 @@ std::optional<WavInfo> readWav(const QString& path)
     return info;
 }
 
+int piperTimeoutMs(const QString& text)
+{
+    bool ok = false;
+    const int forced = qEnvironmentVariableIntValue("SCHNEIDI_TTS_TIMEOUT_MS", &ok);
+    if (ok && forced > 0) return forced;
+    return int(std::min<qint64>(30000 + qint64(text.size()) * 20, 3600000));
+}
+
 // ---------- Speaker ----------
 
-Speaker::Speaker(QObject* parent) : QObject(parent)
+Speaker::Speaker(QObject* parent) : QObject(parent), m_timeout(new QTimer(this))
 {
+    m_timeout->setSingleShot(true);
+    connect(m_timeout, &QTimer::timeout, this, [this] {
+        // piper hangs (a broken voice, a stuck runtime): without this the CLI and the app's speech job wait forever
+        if (!m_running || m_process.state() == QProcess::NotRunning) return;
+        m_timedOut = true;
+        m_process.kill(); // finished() follows: piperDone reports it
+    });
     connect(&m_process, &QProcess::finished, this, &Speaker::piperDone);
     connect(&m_process, &QProcess::errorOccurred, this, [this](QProcess::ProcessError e) {
         // Queued: on Windows QProcess reports a failed start inside start() itself; finished() from there came
@@ -212,6 +227,7 @@ bool Speaker::start(const Request& request, QString* error)
     m_result.voice = m_request.options.voice;
     m_result.path = QDir(request.folder).filePath(Speech::fileName(m_request.text, m_request.options));
     m_cancelled = false;
+    m_timedOut = false;
     m_running = true;
     if (QFileInfo(m_result.path).size() > 44) {
         // Made before: only the words may be missing
@@ -234,6 +250,7 @@ bool Speaker::start(const Request& request, QString* error)
                                            narrowSafe(model + ".json")));
     m_process.write(Speech::stdinText(m_request.text));
     m_process.closeWriteChannel();
+    m_timeout->start(piperTimeoutMs(m_request.text));
     return true;
 }
 
@@ -248,6 +265,12 @@ void Speaker::cancel()
 void Speaker::piperDone(int exitCode, QProcess::ExitStatus status)
 {
     if (!m_running) return;
+    m_timeout->stop();
+    if (m_timedOut) {
+        QFile::remove(m_part);
+        const int seconds = piperTimeoutMs(m_request.text) / 1000;
+        return done(false, T("Piper antwortet nicht (nach %1 s abgebrochen).").arg(seconds));
+    }
     if (m_cancelled) {
         if (!m_result.cached) QFile::remove(m_part); // killed half way
         return done(false, T("Abgebrochen"));
@@ -331,6 +354,7 @@ void Speaker::wordsDone(const QVector<TranscriptWord>& measured, const QString& 
 void Speaker::done(bool ok, const QString& error)
 {
     m_running = false;
+    m_timeout->stop();
     if (m_transcriber) m_transcriber.release()->deleteLater(); // may be inside its own signal
     if (ok) emit progress(1.0);
     emit finished(ok, error);

@@ -15,6 +15,7 @@
 #include <QNetworkRequest>
 #include <QProcess>
 #include <QStandardPaths>
+#include <QUuid>
 
 #include <thread>
 
@@ -176,15 +177,18 @@ QString tarProgram()
 
 // Moves an installed folder out of the way in one step before it is replaced or deleted, where deleting file by file
 // would leave a half-removed install. A program running from it (an export with this ffmpeg, a voice, a transcription)
-// goes on from "<dir>.old" (Windows allows the rename, only deleting its files fails; cleanUp() takes the rest at the
-// next start). False = the rename was refused (a file held open without sharing): nothing touched; *aside = where it
-// went ("" = none)
+// goes on from "<dir>.old-<random>" (Windows allows the rename, only deleting its files fails; cleanUp() takes the
+// rest at the next start). A name of its own each time: a leftover a program still holds never blocks the update, and
+// cleanUp() never deletes the folder just moved aside. False = the rename was refused (a file held open without
+// sharing): nothing touched; *aside = where it went ("" = none)
 bool moveAside(const QString& dir, QString* aside)
 {
     aside->clear();
     if (!QFileInfo::exists(dir)) return true;
-    const QString old = dir + ".old";
-    QDir(old).removeRecursively(); // left over from a run whose program still held it
+    QString old;
+    do {
+        old = dir + ".old-" + QUuid::createUuid().toString(QUuid::Id128).left(8);
+    } while (QFileInfo::exists(old));
     if (!QDir().rename(dir, old)) return false;
     *aside = old;
     return true;
@@ -194,9 +198,15 @@ bool moveAside(const QString& dir, QString* aside)
 
 void cleanUp()
 {
+    // Every "<dir>.old*" there now (moveAside's names, "<dir>.old" of older versions); one moved aside later has a new
+    // name and stays for its own caller
     QStringList left;
-    for (const QString& dir : {binDir(), encoderTree(), piperBin()})
-        if (QFileInfo::exists(dir + ".old")) left << dir + ".old";
+    for (const QString& dir : {binDir(), encoderTree(), piperBin()}) {
+        const QFileInfo info(dir);
+        const QFileInfoList old =
+            info.dir().entryInfoList({info.fileName() + ".old*"}, QDir::Dirs | QDir::NoDotAndDotDot);
+        for (const QFileInfo& o : old) left << o.absoluteFilePath();
+    }
     if (left.isEmpty()) return;
     // The x264 ffmpeg is ~220 MB: never on the start's way
     std::thread([left] {
@@ -406,6 +416,7 @@ bool Installer::start(const Item& item, QString* error)
     m_item = item;
     m_cancelled = false;
     m_part = 0;
+    dropVoicePart();
     return startPart(error);
 }
 
@@ -450,8 +461,15 @@ void Installer::cancel()
     m_reply->abort(); // -> onFinished
 }
 
+void Installer::dropVoicePart()
+{
+    if (!m_voicePart.isEmpty()) QFile::remove(m_voicePart);
+    m_voicePart.clear();
+}
+
 void Installer::fail(const QString& message)
 {
+    dropVoicePart();
     if (m_reply) {
         QNetworkReply* r = m_reply;
         m_reply = nullptr;
@@ -486,6 +504,7 @@ void Installer::onFinished()
     if (m_file->size() != size || m_hash->result().toHex() != sha) {
         m_file->remove();
         m_file.reset();
+        dropVoicePart();
         emit finished(false, T("Die heruntergeladene Datei ist beschädigt oder unerwartet (Prüfsumme falsch)."));
         return;
     }
@@ -495,16 +514,27 @@ void Installer::onFinished()
     if (m_item.kind == Kind::Program || m_item.kind == Kind::Encoder || m_item.kind == Kind::Speech) {
         error = unpack(part);
         QFile::remove(part);
+    } else if (m_item.kind == Kind::Voice && m_part == 0) {
+        // A voice: first its config too (the model alone is no use; installedPath wants both), then both in place
+        m_voicePart = part;
+        m_part = 1;
+        if (!startPart(&error)) {
+            dropVoicePart();
+            emit finished(false, error);
+        }
+        return;
     } else {
+        // The config first out of the way: should a rename fail, the voice is missing rather than mismatched
+        const QString model = m_voicePart.isEmpty() ? QString() : m_voicePart.chopped(5);
         const QString target = part.chopped(5); // without ".part"
         QFile::remove(target);
-        if (!QFile::rename(part, target)) error = T("Datei konnte nicht abgelegt werden: %1").arg(target);
-    }
-    // A voice: then its config (the model alone is no use; installedPath wants both)
-    if (error.isEmpty() && m_item.kind == Kind::Voice && m_part == 0) {
-        m_part = 1;
-        if (!startPart(&error)) emit finished(false, error);
-        return;
+        if (!model.isEmpty()) {
+            QFile::remove(model);
+            if (!QFile::rename(m_voicePart, model)) error = T("Datei konnte nicht abgelegt werden: %1").arg(model);
+            dropVoicePart();
+        }
+        if (!error.isEmpty()) QFile::remove(part);
+        else if (!QFile::rename(part, target)) error = T("Datei konnte nicht abgelegt werden: %1").arg(target);
     }
     if (!error.isEmpty()) emit finished(false, error);
     else emit finished(true, {});
