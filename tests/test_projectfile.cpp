@@ -8,8 +8,11 @@
 #include "core/Interchange.h"
 #include "core/Keyframes.h"
 #include "core/Project.h"
+#include "core/Retime.h"
 #include "core/ProjectFile.h"
 #include "core/TimelineOps.h"
+
+#include <climits>
 
 #include <QCoreApplication>
 #include <QDateTime>
@@ -553,6 +556,29 @@ int main(int argc, char** argv)
             if (CHECK(p.timeline().subtitles.size() == 1 && p.timeline().subtitles[0].cues.size() == 1))
                 CHECK(p.timeline().subtitles[0].cues[0].id > p.timeline().video[0].clips[0].id);
             CHECK(stable(id));
+            // A clip from -2^30 to 2^30 (length() and end() overflowed int), one at the slowest speed of a file
+            // 2^30 frames long (its length overflowed), speeds and ramp points no editor makes, word times near 2^30
+            const QByteArray wide = R"({"app":"schneidi","media":[{"name":"a.mp4","path":"/m/a.mp4","hasVideo":true,
+                "length":1073741824}],"timeline":{"video":[{"clips":[
+                {"id":1,"media":0,"start":0,"in":-1073741824,"out":1073741824},
+                {"id":2,"media":0,"start":1073741824,"in":0,"out":1073741823,"speed":1e-9}]},{"clips":[
+                {"id":3,"media":0,"start":0,"in":0,"out":9,"speed":1e300,"ramp":[{"source":1e300,"speed":2}]}]}],
+                "subtitles":[{"cues":[{"start":-1073741824,"end":10,"text":"a b","words":[[1073741824,1073741824],[0,1]]}]}]}})";
+            CHECK(!opened(wide, p).isEmpty());
+            for (const Track& t : p.timeline().video)
+                for (const Clip& c : t.clips) {
+                    CHECK(qint64(c.start) + qint64(c.out) - c.in + 1 <= INT_MAX);
+                    CHECK(c.speed >= Retime::kMinSpeed && c.speed <= Retime::kMaxSpeed);
+                    for (const SpeedPoint& sp : c.ramp) CHECK(sp.source <= double(1 << 30));
+                    const qint64 retimed = c.retimedLength(1 << 30);
+                    CHECK(retimed >= 1 && retimed <= (1 << 30));
+                }
+            for (const SubtitleTrack& t : p.timeline().subtitles)
+                for (const SubtitleCue& c : t.cues) {
+                    CHECK(c.start >= 0);
+                    for (const CueWord& w : c.words) CHECK(w.from >= 0 && w.to <= c.length());
+                }
+            CHECK(stable(wide));
             // A transcript word at 10^60 ms (no qint64)
             const QByteArray words = R"({"app":"schneidi","media":[{"name":"a.mp4","path":"/m/a.mp4","hasAudio":true,
                 "length":300,"transcripts":[{"words":[[1e60,900,"x"]]}]}]})";

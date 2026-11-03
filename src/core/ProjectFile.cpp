@@ -596,7 +596,8 @@ Clip clipFromJson(const QJsonObject& o, const QVector<MediaInfo>& media, const Q
     }
     c.start = std::max(0, intOf(o.value("start")));
     c.in = intOf(o.value("in"));
-    c.out = std::max(c.in, intOf(o.value("out"))); // file edited by hand: at least 1 frame long
+    // File edited by hand: at least 1 frame long, at most 2^29 (in -2^30 and out 2^30 made length() and end() overflow)
+    c.out = std::clamp(intOf(o.value("out")), c.in, c.in + (1 << 29) - 1);
     c.linkId = intOf(o.value("link"));
     c.volumeDb = o.value("volumeDb").toDouble(0.0);
     c.pan = o.value("pan").toDouble(0.0);
@@ -614,6 +615,7 @@ Clip clipFromJson(const QJsonObject& o, const QVector<MediaInfo>& media, const Q
     c.fadeOut = std::max(0, intOf(o.value("fadeOut")));
     c.speed = o.value("speed").toDouble(1.0);
     if (c.speed <= 0) c.speed = 1.0;
+    c.speed = std::clamp(c.speed, Retime::kMinSpeed, Retime::kMaxSpeed); // as the editor allows (1e-9 overflowed lengths)
     c.reverse = o.value("reverse").toBool();
     c.freeze = o.value("freeze").toBool();
     // Older files without freezeFrame: pin the frame = `in` on loading (splitting/trimming shifts `in` later); a frame
@@ -624,7 +626,7 @@ Clip clipFromJson(const QJsonObject& o, const QVector<MediaInfo>& media, const Q
     for (const QJsonValue& v : o.value("ramp").toArray()) {
         const QJsonObject j = v.toObject();
         SpeedPoint p;
-        p.source = j.value("source").toDouble();
+        p.source = std::clamp(j.value("source").toDouble(), 0.0, double(1 << 30)); // file length unknown here
         p.speed = j.value("speed").toDouble(1.0);
         p.smooth = j.value("smooth").toInt();
         c.ramp << p;
@@ -981,13 +983,14 @@ bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* d
             }
             for (const QJsonValue& cv : o.value("cues").toArray()) {
                 const QJsonObject c = cv.toObject();
-                SubtitleCue cue{intOf(c.value("id")), intOf(c.value("start")), intOf(c.value("end")),
+                SubtitleCue cue{intOf(c.value("id")), std::max(0, intOf(c.value("start"))), intOf(c.value("end")),
                                 c.value("text").toString()};
                 if (cue.end <= cue.start) continue;
+                // Word times inside the cue (start + word time overflowed for times near 2^30)
                 for (const QJsonValue& wv : c.value("words").toArray()) {
                     const QJsonArray w = wv.toArray();
-                    const int from = std::max(0, intOf(w.at(0)));
-                    cue.words << CueWord{from, std::max(from + 1, intOf(w.at(1)))};
+                    const int from = std::clamp(intOf(w.at(0)), 0, cue.length() - 1);
+                    cue.words << CueWord{from, std::clamp(intOf(w.at(1)), from + 1, cue.length())};
                 }
                 t.cues << cue;
             }

@@ -126,13 +126,14 @@ int RetimeMap::materialForPicture(double f) const
 int RetimeMap::length() const
 {
     if (m_fileLength <= 0) return 0;
-    return std::max(1, int(materialAt(m_fileLength)));
+    return int(std::clamp(materialAt(m_fileLength), 1.0, double(1 << 30)));
 }
 
 int Clip::retimedLength(int fileLength) const
 {
     if (fileLength <= 0 || freeze) return 0;
-    if (ramp.isEmpty()) return std::max(1, int(fileLength / speed));
+    // In double first: a long file at the slowest speed is longer than an int counts
+    if (ramp.isEmpty()) return int(std::clamp(fileLength / speed, 1.0, double(1 << 30)));
     return RetimeMap(*this, fileLength).length();
 }
 
