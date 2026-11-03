@@ -415,6 +415,67 @@ void testSlipSlideTools()
 
 } // namespace
 
+// Alt-drag at a cut rolls only that track's edge (J/L cut): picture and sound stay linked, the other track keeps its
+// cut; with the select tool on the clip edge and with the trim tool on the cut
+void testSplitEdit()
+{
+    struct Split : ToolFixture {
+        Split()
+        {
+            Timeline tl;
+            tl.video.resize(1);
+            tl.audio.resize(1);
+            auto at = [](int id, int start, int in, int link) {
+                Clip c = clip(id, start, 100);
+                c.in = in;
+                c.out = in + 99;
+                c.linkId = link;
+                return c;
+            };
+            tl.video[0].clips << at(1, 0, 100, 1) << at(2, 100, 500, 2);
+            tl.audio[0].clips << at(3, 0, 100, 1) << at(4, 100, 500, 2);
+            project.load(ProjectData{ProjectFormat{}, 0, project.media(), {}, tl, 4, 2});
+            project.undoStack()->clear();
+            QApplication::processEvents();
+        }
+        const Clip& c(int id) const { return *TimelineOps::findClip(project.timeline(), id); }
+    };
+    {
+        // Select tool, Alt on the sound edge: J cut (the next sound starts 10 frames early)
+        Split f;
+        const QString original = f.dump();
+        drag(f.tv, {f.x(100) + 2, 125}, {f.x(100) + 2 - f.frames(10), 125}, Qt::AltModifier);
+        CHECK_EQ(f.c(3).end(), 90);
+        CHECK_EQ(f.c(4).start, 90);
+        CHECK_EQ(f.c(4).in, 490);
+        CHECK_EQ(f.c(1).end(), 100);
+        CHECK_EQ(f.c(2).start, 100);
+        CHECK_EQ(f.c(4).linkId, 2);
+        CHECK(f.sel.ids() == QSet<int>{4}); // only the sound part is selected
+        CHECK_EQ(f.project.undoStack()->count(), 1);
+        f.project.undoStack()->undo();
+        CHECK_EQ(f.dump(), original);
+        // Without Alt the linked edges trim together: into the neighbours nothing moves
+        drag(f.tv, {f.x(100) + 2, 125}, {f.x(100) + 2 - f.frames(10), 125});
+        CHECK_EQ(f.dump(), original);
+    }
+    {
+        // Trim tool, Alt on the picture cut: only the picture rolls (the sound runs on: an L cut seen from the picture)
+        Split f;
+        f.tv.setTool(TimelineView::Tool::Trim);
+        drag(f.tv, {f.x(100) + 1, 60}, {f.x(100) + 1 + f.frames(10), 60}, Qt::AltModifier);
+        CHECK_EQ(f.c(1).end(), 110);
+        CHECK_EQ(f.c(2).start, 110);
+        CHECK_EQ(f.c(3).end(), 100);
+        CHECK_EQ(f.c(4).start, 100);
+        f.project.undoStack()->undo();
+        // Without Alt the roll takes the sound along
+        drag(f.tv, {f.x(100) + 1, 60}, {f.x(100) + 1 + f.frames(10), 60});
+        CHECK_EQ(f.c(2).start, 110);
+        CHECK_EQ(f.c(4).start, 110);
+    }
+}
+
 int main(int argc, char** argv)
 {
     Check::initEnv();
@@ -428,5 +489,6 @@ int main(int argc, char** argv)
     testSelectFromPlayhead();
     testEditPoints();
     testSlipSlideTools();
+    testSplitEdit();
     return Check::result();
 }
