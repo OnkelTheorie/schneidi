@@ -250,6 +250,22 @@ void fileTests(const QString& path, const QProcessEnvironment& env)
     CHECK_EQ(code(cli({"edit", path, "--plan_id", two, "--run", "all"}, env)), QString("NOT_FOUND"));
     CHECK(!QFileInfo::exists(planFile(path, two)));
     CHECK(fileBytes(path) == afterTitles);
+
+    // A plan made while the project in the app was never saved (one folder for those), then the project is saved
+    // under a name: the plan is still found and runs (it was NOT_FOUND, and its base held the path)
+    r = cli({"edit", path, "--plan", "--ops", R"([{"op":"marker","at":7}])"}, env);
+    const QString early = std::as_const(r)["plan"]["id"].toString();
+    const QString saved = QFileInfo(path).absolutePath() + "/saved-later.schneidi";
+    CHECK(QFile::copy(path, saved));
+    const QString unsaved = QDir(ProjectFile::backupDir({})).filePath("unsaved-plans");
+    QDir().mkpath(unsaved);
+    // (the CLI's own data folder: the test's environment points it into the temporary folder)
+    const QString moved = QDir(unsaved).filePath("p77.json");
+    QFile::remove(moved);
+    CHECK(QFile::rename(planFile(path, early), moved));
+    r = cli({"edit", saved, "--plan_id", "p77", "--run", "all"}, env);
+    if (!CHECK_EQ(code(r), QString("ok"))) std::printf("       %s\n", QJsonDocument(r).toJson(QJsonDocument::Compact).constData());
+    CHECK(!QFileInfo::exists(moved));
 }
 
 } // namespace
