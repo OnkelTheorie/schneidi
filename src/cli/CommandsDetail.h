@@ -62,6 +62,10 @@ public:
     bool live = false;  // the project as open in the app (inside the app, or a copy of it)
     QJsonObject app;    // live: the app's state (playhead, selection …) for `info`
     QJsonArray notes;   // hints for the AI from the ops (warnings, what changed besides the given clips)
+    // The reasons the ops were given ('why' of every edit op, free text, not evaluated): [{index?, op, why}] in the
+    // edit's answer. opIndex = the op of the edit list being applied (-1 = an op another command runs)
+    QJsonArray why;
+    int opIndex = -1;
     // How the recordings of the multicam clips made in this session were synced (sequence id -> placement); the
     // model keeps only the positions, so `synced`/`via`/`confidence` show in the answer of that edit only
     QHash<int, QVector<Multicam::Angle>> multicamSync;
@@ -137,9 +141,13 @@ void addLookOps(QVector<OpDef>& ops);     // EditOpsLook.cpp
 void addAudioOps(QVector<OpDef>& ops);    // EditOpsAudio.cpp
 void addEditOps(QVector<OpDef>& ops);     // EditOpsEdit.cpp
 void addMulticamOps(QVector<OpDef>& ops); // EditOpsMulticam.cpp
-void addMusicOps(QVector<OpDef>& ops);    // EditOpsMusic.cpp
+// Ops of the 0.17 packages, one file each (filled in by the packages; registered in makeOps)
+void addStoryOps(QVector<OpDef>& ops); // EditOpsStory.cpp: story sections, notes
+void addMusicOps(QVector<OpDef>& ops); // EditOpsMusic.cpp: music edit
+void addSfxOps(QVector<OpDef>& ops);   // EditOpsSfx.cpp: sound effects
+void addTalkOps(QVector<OpDef>& ops);  // EditOpsTalk.cpp: talking head / interview
 // Live: the beats fit_music/snap_to_beat need, analysed by schneidi-cli before the edit goes to the app (`_beats`)
-QJsonObject prepareMusic(const QJsonObject& editArgs, Context& ctx);
+QJsonObject prepareMusic(const QJsonObject& editArgs, Context& ctx); // EditOpsMusic.cpp
 // Multicam (EditOpsMulticam.cpp): the angles of a multicam sequence for `info` (1-based, files with their start
 // in the multicam clip; with `sync` also how they were synced) and the sync method's name in the CLI
 QJsonArray multicamAnglesJson(const Sequence& s, const QVector<Multicam::Angle>* sync = nullptr);

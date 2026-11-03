@@ -20,6 +20,7 @@
 #include "core/Selection.h"
 #include "core/Subtitles.h"
 #include "core/Timecode.h"
+#include "core/TimelineStory.h"
 #include "core/TimelineOps.h"
 #include "engine/AudioAnalysis.h"
 #include "engine/Engine.h"
@@ -596,6 +597,28 @@ QJsonObject timelineJson(const Project& p)
         {"volume_db", tl.masterVolumeDb}, {"limiter", tl.masterLimiter}, {"limiter_db", tl.masterLimiterDb}};
     if (tl.markIn >= 0) o["mark_in"] = tl.markIn;
     if (tl.markOut >= 0) o["mark_out"] = tl.markOut + 1;
+    // Story sections and notes (0.17, only when there are some): frames plus seconds/timecode like the cues
+    if (!tl.sections.isEmpty()) {
+        QJsonArray sections;
+        for (const StorySection& sec : tl.sections) {
+            QJsonObject so{{"kind", TimelineStory::kindName(sec.kind)}, {"from", sec.from}, {"to", sec.to},
+                           {"from_s", seconds(sec.from, f)}, {"to_s", seconds(sec.to, f)},
+                           {"from_tc", tc(sec.from, f)}, {"to_tc", tc(sec.to, f)}};
+            if (!sec.name.isEmpty()) so["name"] = sec.name;
+            sections << so;
+        }
+        o["sections"] = sections;
+    }
+    if (!tl.notes.isEmpty()) {
+        QJsonArray notes;
+        for (const TimelineNote& n : tl.notes) {
+            QJsonObject no{{"id", n.id}, {"at", n.at}, {"at_s", seconds(n.at, f)}, {"at_tc", tc(n.at, f)},
+                           {"text", n.text}};
+            if (n.done) no["done"] = true;
+            notes << no;
+        }
+        o["notes"] = notes;
+    }
     return o;
 }
 
