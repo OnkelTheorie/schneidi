@@ -129,6 +129,22 @@ int main(int argc, char** argv)
         CHECK(waitFor([&] { return hits->count() == 0; }, 3000));
     }
     if (const QString dump = qEnvironmentVariable("POOL_INDEX_DUMP"); !dump.isEmpty()) pool.grab().save(dump);
+    // A project that holds the file in another spelling (".", on Windows a lower-case drive letter): its hits show
+    // (they were counted in the title but left out of the list)
+    {
+        const QString spelled = QFileInfo(a).absolutePath() + "/./" + QFileInfo(a).fileName();
+        Project q;
+        MediaInfo m = Engine::probe(q.format(), a);
+        m.path = spelled;
+        q.addMedia(m);
+        MediaPool other(&q, &engine);
+        other.setSaveSettings(false);
+        other.show();
+        auto* list = other.findChild<QListWidget*>("pool_index_hits");
+        other.setSearch("totale");
+        CHECK(waitFor([&] { return list && list->count() == 1; }, 3000));
+        if (list && list->count() == 1) CHECK_EQ(list->item(0)->data(Qt::UserRole).toString(), spelled);
+    }
     pool.setSearch("");
     CHECK(waitFor([&] { return panel->isHidden(); }, 3000));
     MediaIndex::setEventSource({});

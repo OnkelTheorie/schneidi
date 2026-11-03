@@ -1587,6 +1587,7 @@ void MediaPool::updateIndexHits()
     for (const MediaInfo& m : m_project->media()) {
         std::optional<MediaIndex::Entry> e = MediaIndex::cached(m.path);
         if (!e) continue;
+        e->file = m.path; // the project's spelling of the path (the index cleans it: "./", the drive letter's case)
         ++indexed;
         for (const MediaTranscript& t : m.transcripts) MediaIndex::addSpeech(*e, t.words);
         shots += MediaIndex::searchable(*e);
