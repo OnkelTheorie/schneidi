@@ -367,6 +367,8 @@ void Project::edit(const QString& text, const std::function<void(Timeline&)>& fn
 {
     Timeline after = timeline();
     fn(after);
+    // A clip overwritten in place: its kill feed copy is cut the same way (every overwrite path at once)
+    TimelineOps::cutCopiesLikeBases(timeline(), after, [this] { return newClipId(); });
     TimelineOps::resolvePendingLinks(after, [this] { return newLinkId(); }); // leftover pieces from clearRange
     TimelineOps::unpairBrokenDissolves(timeline(), after);
     TimelineOps::keepFadesApart(timeline(), after);

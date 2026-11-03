@@ -181,6 +181,84 @@ void resolvePendingLinks(Timeline& tl, const IdGen& newLinkId)
     });
 }
 
+void cutCopiesLikeBases(const Timeline& before, Timeline& after, const IdGen& newId)
+{
+    const auto isCopy = [](const Clip& c) { return !c.keepRegion.isEmpty() && c.linkId > 0; };
+    if (std::none_of(after.video.cbegin(), after.video.cend(), [&](const Track& t) {
+            return std::any_of(t.clips.cbegin(), t.clips.cend(), isCopy);
+        }))
+        return;
+    QHash<int, const Clip*> was, now;
+    QHash<int, int> wasTrack, nowTrack;
+    for (int i = 0; i < before.video.size(); ++i)
+        for (const Clip& c : before.video[i].clips) was.insert(c.id, &c), wasTrack.insert(c.id, i);
+    for (int i = 0; i < after.video.size(); ++i)
+        for (const Clip& c : after.video[i].clips) now.insert(c.id, &c), nowTrack.insert(c.id, i);
+    // Same file and the same part of it at the same place, played the same way (the copy's clip or a piece of it)
+    const auto inSync = [](const Clip& x, const Clip& base) {
+        return x.keepRegion.isEmpty() && x.mediaPath == base.mediaPath && x.start - x.in == base.start - base.in
+               && x.speed == base.speed && x.reverse == base.reverse && x.freeze == base.freeze
+               && x.freezeFrame == base.freezeFrame && x.ramp == base.ramp;
+    };
+    const auto sameTime = [](const Clip& a, const Clip& b) { return a.start == b.start && a.in == b.in && a.out == b.out; };
+    QHash<int, QVector<Clip>> cut; // copy id -> its pieces (none: gone)
+    for (int ti = 0; ti < after.video.size(); ++ti) {
+        if (after.video[ti].locked) continue;
+        for (const Clip& c : after.video[ti].clips) {
+            const Clip* prev = was.value(c.id);
+            if (!isCopy(c) || !prev || !sameTime(*prev, c)) continue; // new, or changed by the edit itself
+            // Its clip before the edit: linked to it, in sync where they overlap
+            const Clip* base = nullptr;
+            for (const Track& t : before.video)
+                for (const Clip& b : t.clips)
+                    if (!base && b.linkId == c.linkId && inSync(b, c) && b.start < c.end() && b.end() > c.start) base = &b;
+            if (!base) continue;
+            const Clip* still = now.value(base->id);
+            if (still && (sameTime(*still, *base) || !inSync(*still, *base) || still->linkId != base->linkId
+                          || nowTrack.value(base->id) != wasTrack.value(base->id)))
+                continue; // untouched, or moved/changed on purpose: not this kind of edit
+            // The pieces of the clip left in place on its track (clearRange: the right one with the provisional link)
+            QVector<const Clip*> pieces;
+            for (const Clip& x : after.video[wasTrack.value(base->id)].clips)
+                if ((x.id == base->id || !was.contains(x.id)) && inSync(x, *base) && x.start >= base->start
+                    && x.end() <= base->end() && (x.linkId == base->linkId || x.linkId == -base->linkId))
+                    pieces << &x;
+            std::sort(pieces.begin(), pieces.end(), [](const Clip* a, const Clip* b) { return a->start < b->start; });
+            QVector<Clip> out;
+            bool kept = false;
+            for (const Clip* x : pieces) {
+                const int lo = std::max(x->start, c.start), hi = std::min(x->end(), c.end());
+                if (hi <= lo) continue;
+                Clip q = c;
+                q.start = lo;
+                q.in = c.in + (lo - c.start);
+                q.out = q.in + (hi - lo) - 1;
+                if (lo > c.start) q.transIn = 0, q.fadeIn = 0;
+                if (hi < c.end()) q.transOut = 0, q.fadeOut = 0;
+                q.linkId = x->linkId;
+                kept = kept || x->id == base->id;
+                q.id = x->id == base->id ? c.id : 0;
+                out << q;
+            }
+            // The piece over the clip's own keeps the copy's id (else the first), the others get new ones
+            if (!kept && !out.isEmpty()) out[0].id = c.id;
+            for (Clip& q : out)
+                if (!q.id) q.id = newId();
+            cut.insert(c.id, out);
+        }
+    }
+    if (cut.isEmpty()) return;
+    for (Track& t : after.video) {
+        if (std::none_of(t.clips.cbegin(), t.clips.cend(), [&](const Clip& c) { return cut.contains(c.id); })) continue;
+        QVector<Clip> clips;
+        for (const Clip& c : std::as_const(t.clips))
+            if (cut.contains(c.id)) clips << cut.value(c.id);
+            else clips << c;
+        t.clips = clips;
+        sortTrack(t);
+    }
+}
+
 void clearRange(Track& track, int start, int end, const IdGen& newId)
 {
     if (end <= start) return;

@@ -49,6 +49,11 @@ QVector<int> repeatedSound(const Timeline& tl, const QVector<int>& clipIds);
 void clearRange(Track& track, int start, int end, const IdGen& newId);
 // Replace provisional (negative) linkIds from clearRange with new ones: same provisional id -> same new id
 void resolvePendingLinks(Timeline& tl, const IdGen& newLinkId);
+// After an edit from `before` to `after`: kill feed copies (Reframe::keepCopy, linked to their clip) that the edit left
+// as they were while it cut their clip in place (another clip overwrote its middle, an end or all of it: clearRange,
+// placeClip) are cut the same way - the part over the new clip goes, each piece stays linked to the clip's piece
+// below it (before resolvePendingLinks). Copies on locked tracks stay. Called by Project::edit.
+void cutCopiesLikeBases(const Timeline& before, Timeline& after, const IdGen& newId);
 
 // Changes the clips for which `need` is true with `apply`, without touching the others: tracks without such a clip
 // stay shared with copies of the timeline (the undo snapshots; a plain non-const loop would copy every track)

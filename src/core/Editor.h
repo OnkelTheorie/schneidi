@@ -365,10 +365,11 @@ public:
     void setGradeWindowPath(int clipId, int n, int from, const QVector<GradeWindows::PathPoint>& points);
     // Hide names (core/NameBlur): every clip's masks become new rectangle windows with fill "blur" or "pixelate" of
     // strength `amount`, their place and size keyed along the mask (off = size 0 and amount 0). Free window numbers
-    // only; masks beyond them are left out and counted in `dropped` (their names stay visible). One undo step.
+    // only; masks beyond them are left out and counted in `dropped` (their names stay visible). Clips on locked tracks
+    // stay as they are: their masks are counted in `locked` (names visible too). One undo step.
     // Returns the new window numbers per clip.
     QHash<int, QVector<int>> blurNames(const QHash<int, QVector<NameBlur::Mask>>& masks, const QString& fill,
-                                       double amount, int* dropped = nullptr);
+                                       double amount, int* dropped = nullptr, int* locked = nullptr);
 
     // Clipboard (Ctrl+C/X/V): paste at the playhead on the same tracks, overwrites
     void copySelection();
