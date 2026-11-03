@@ -10,6 +10,7 @@
 #include "cli/CommandsDetail.h"
 #include "core/Captions.h"
 #include "core/Editor.h"
+#include "core/I18n.h"
 #include "core/Project.h"
 #include "core/ProjectFile.h"
 #include "core/RenderJob.h"
@@ -19,6 +20,7 @@
 #include "engine/Exporter.h"
 #include "engine/RenderQueue.h"
 #include "engine/video/Text.h"
+#include "ui/Inspector.h"
 
 #include <QApplication>
 #include <QEventLoop>
@@ -29,6 +31,7 @@
 #include <QJsonDocument>
 #include <QTemporaryDir>
 #include <QTimer>
+#include <QToolButton>
 #include <clocale>
 
 extern "C" {
@@ -354,6 +357,37 @@ void testTimelineFormat()
     CHECK_EQ(st.posY, portrait.posY);
     CHECK_EQ(st.size, portrait.size);
     CHECK(st.posY != Captions::defaultStyle(QSize(1920, 1080), CaptionMode::Karaoke).posY);
+}
+
+// "Spurstil zurücksetzen" in the Inspector on a word caption track goes back to the caption defaults of its mode
+// (bold, outline, bigger for word-by-word), not to the plain subtitle style
+void testResetTrackStyle()
+{
+    std::printf("reset track style\n");
+    for (CaptionMode mode : {CaptionMode::Karaoke, CaptionMode::Word}) {
+        Project p;
+        Selection sel;
+        Editor ed(&p, &sel);
+        const int index = ed.addCaptions({cue(0, 25, "hello there")}, "Words", CaptionStyle{mode});
+        if (!CHECK(index >= 0)) return;
+        ed.setSubtitleStyle(index, "change", [](TitleStyle& t) { t.size = 11; t.outlineOn = false; });
+        sel.set({p.timeline().subtitles[index].cues.first().id});
+        Inspector insp(&ed);
+        QToolButton* reset = nullptr;
+        for (QToolButton* b : insp.findChildren<QToolButton*>())
+            if (b->text() == T("Spurstil"))
+                for (QToolButton* r : b->parentWidget()->findChildren<QToolButton*>())
+                    if (r->text() == QString::fromUtf8("↺")) reset = r;
+        if (!CHECK(reset)) return;
+        reset->click();
+        const TitleStyle& st = p.timeline().subtitles[index].style;
+        const TitleStyle want = Captions::defaultStyle(p.timelineFormat().size(), mode);
+        CHECK_EQ(st.size, want.size);
+        CHECK_EQ(st.outlineOn, want.outlineOn);
+        CHECK_EQ(st.outlineWidth, want.outlineWidth);
+        CHECK_EQ(st.boxOn, want.boxOn);
+        CHECK_EQ(st.bold, want.bold);
+    }
 }
 
 void testCliOp(const QString& dir)
@@ -725,6 +759,7 @@ int main(int argc, char** argv)
     testWordLayout();
     testWordScripts();
     testTimelineFormat();
+    testResetTrackStyle();
     QTemporaryDir tmp;
     if (!CHECK(tmp.isValid())) return Check::result();
     testCliOp(tmp.path());

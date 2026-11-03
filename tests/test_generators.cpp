@@ -20,6 +20,10 @@
 #include "ui/Inspector.h"
 
 #include <QApplication>
+#include <QComboBox>
+#include <QScrollArea>
+#include <QScrollBar>
+#include <QTest>
 #include <QSlider>
 #include <QWheelEvent>
 #include <QImage>
@@ -475,6 +479,89 @@ void testCounterInspector()
     }
 }
 
+// Scrolling the Inspector with the mouse wheel over a slider or a combo box (not clicked into) scrolls the page and
+// leaves the value alone (window-system wheel events, so they propagate like the user's)
+void testInspectorWheel()
+{
+    std::printf("inspector wheel\n");
+    Project p;
+    ProjectData d;
+    d.timeline = emptyTimeline();
+    p.load(d);
+    Selection sel;
+    Editor e(&p, &sel);
+    Inspector insp(&e);
+    e.addTitle(0, -1, 50, TitleKind::Text);
+    insp.resize(380, 420);
+    insp.show();
+    QCoreApplication::processEvents();
+    const Timeline before = p.timeline();
+    auto wheelOver = [&](QWidget* w) -> QScrollBar* {
+        QScrollArea* area = nullptr;
+        for (QWidget* up = w; up && !area; up = up->parentWidget()) area = qobject_cast<QScrollArea*>(up);
+        if (!CHECK(area)) return nullptr;
+        area->verticalScrollBar()->setValue(0);
+        QCoreApplication::processEvents();
+        const QPoint at = w->mapTo(insp.window(), w->rect().center());
+        QTest::wheelEvent(insp.window()->windowHandle(), at, QPoint(0, -120));
+        return area->verticalScrollBar();
+    };
+    // shown and really under the mouse at its centre (not covered, inside the visible part of the page)
+    auto underMouse = [&](QWidget* w) {
+        if (!w->isVisibleTo(&insp) || !w->isEnabled()) return false;
+        const QPoint at = w->mapTo(&insp, w->rect().center());
+        if (!insp.rect().contains(at)) return false;
+        for (QWidget* hit = insp.childAt(at); hit; hit = hit->parentWidget())
+            if (hit == w) return true;
+        return false;
+    };
+    QSlider* slider = nullptr;
+    for (QSlider* s : insp.findChildren<QSlider*>())
+        if (!slider && underMouse(s)) slider = s;
+    QComboBox* combo = nullptr;
+    for (QComboBox* c : insp.findChildren<QComboBox*>())
+        if (!combo && underMouse(c) && c->count() > 1) combo = c;
+    if (CHECK(slider)) {
+        const int value = slider->value();
+        QScrollBar* bar = wheelOver(slider);
+        CHECK_EQ(slider->value(), value);
+        if (bar) CHECK(bar->value() > 0); // the page scrolled
+    }
+    if (CHECK(combo)) {
+        const int index = combo->currentIndex();
+        QScrollBar* bar = wheelOver(combo);
+        CHECK_EQ(combo->currentIndex(), index);
+        if (bar) CHECK(bar->value() > 0);
+    }
+    CHECK(p.timeline() == before); // nothing changed in the project
+}
+
+// Counter decimal places in the Inspector: 0..6 like the project file and the CLI
+void testCounterDecimals()
+{
+    std::printf("counter decimals\n");
+    Project p;
+    ProjectData d;
+    d.timeline = emptyTimeline();
+    p.load(d);
+    Selection sel;
+    Editor e(&p, &sel);
+    Inspector insp(&e);
+    e.addTitle(0, -1, 50, TitleKind::Counter);
+    const int id = *sel.ids().begin();
+    p.edit("decimals", [id](Timeline& tl) { TimelineOps::findClip(tl, id)->title.decimals = 5; });
+    QComboBox* places = nullptr;
+    for (QComboBox* c : insp.findChildren<QComboBox*>())
+        if (c->count() > 0 && c->itemText(0) == "0" && c->itemData(0).toInt() == 0) places = c;
+    if (!CHECK(places)) return;
+    CHECK_EQ(places->count(), 7);
+    CHECK_EQ(places->currentText(), QString("5"));
+    places->setCurrentIndex(6);
+    emit places->activated(6);
+    const Clip* c = TimelineOps::findClip(p.timeline(), id);
+    if (CHECK(c)) CHECK_EQ(c->title.decimals, 6);
+}
+
 void testProjectFile(const QString& dir)
 {
     std::printf("project file\n");
@@ -703,6 +790,8 @@ int main(int argc, char** argv)
     testProgress();
     testProgressDrop();
     testCounterInspector();
+    testInspectorWheel();
+    testCounterDecimals();
     testProjectFile(tmp.path());
     testCli(tmp.path());
     return Check::result();

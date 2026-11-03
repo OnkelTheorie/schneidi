@@ -13,6 +13,7 @@
 #include "core/Timecode.h"
 #include "core/TimelineOps.h"
 #include "ui/ScrubField.h"
+#include "ui/WheelGuard.h"
 
 #include <QButtonGroup>
 #include <QCheckBox>
@@ -445,6 +446,7 @@ Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
     lay->addWidget(m_empty, 1);
 
     m_tabs->button(0)->setChecked(true);
+    WheelGuard::install(this); // scrolling the pages over sliders and boxes must not change their values
     connect(editor->selection(), &Selection::changed, this, &Inspector::refresh);
     connect(editor->project(), &Project::timelineChanged, this, &Inspector::refresh);
     refresh();

@@ -7,6 +7,7 @@
 #include "app/UpdateCheck.h"
 #include "core/I18n.h"
 #include "engine/Background.h"
+#include "ui/WheelGuard.h"
 
 #include <QCheckBox>
 #include <QComboBox>
@@ -32,6 +33,7 @@ QScrollArea* scrolling(QWidget* page)
     area->setWidgetResizable(true);
     area->setFrameShape(QFrame::NoFrame);
     area->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff); // long hints wrap instead
+    WheelGuard::install(page); // scrolling the page over a box must not change it
     return area;
 }
 
