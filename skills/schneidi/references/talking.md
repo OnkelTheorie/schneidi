@@ -27,6 +27,16 @@ Goal: same content, no dead air, no slips - but still natural, not robotic.
 - Whisper often leaves out "uh/um/äh"; don't promise to remove filler you cannot see in the transcript.
 - For a false start ("We went - we drove to …") cut the first try, keep the clean one.
 
+## Smoother cuts (offer them, they are not automatic)
+- **Room tone:** after a pause cut the gaps between clips of the voice track are dead silent (with a gap left by
+  `delete_range` ripple:false, or a pause you kept). `{"op":"room_tone","track":"A1"}` fills every gap with a loop of
+  the recording's own quiet, at its noise floor, crossfaded so nothing clicks; `from`/`to` limit it. The notes say
+  which part of the file it used.
+- **J/L cuts** for interviews and dialogue: the sound changes a moment before or after the picture, which hides the
+  cut. `{"op":"jl_cut","at":"0:12","audio":"-0.4s"}` = J (the next person is heard before we see them), `"+0.4s"` = L
+  (the previous sentence runs on under the next shot); 0 puts it back. Only the sound edge moves, picture and sync
+  stay. 0.2-0.6 s sounds natural; not enough material in the file = an error that says how far it can go.
+
 ## Sound
 Speech is the product: see [audio.md](audio.md) - `clean_voice` on the voice track (noise, pauses, even level; `denoise` for light hiss only), EQ high pass ~80 Hz, `normalize`
 (lufs) so all parts sound equally loud, about -14 LUFS for the web, -16 for podcasts is also common.
