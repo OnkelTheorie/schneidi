@@ -446,6 +446,14 @@ int main(int argc, char* argv[])
         c = TimelineOps::findClip(qPtr->timeline(), ids[2]);
         CHECK_EQ(c->in, 1000 + 225 + (305 - 225) - 75); // source of frame 305 (after the roll) now plays at 300
         CHECK_EQ(edit(project, R"([{"op":"snap_to_beat","grid":"bars"}])", true)["failed"].toString(), QString("BAD_ARGUMENT"));
+        // Two markers on one clip: the clip moves for the first, the second goes with its content (it stayed behind)
+        pPtr = load(project);
+        pPtr->edit("markers", [&](Timeline& tl) { tl.markers = {330, 360}; });
+        CHECK(ProjectFile::save(pPtr->data(), project, &error));
+        r = edit(project, R"([{"op":"snap_to_beat","event":"marker"}])");
+        qPtr = load(project);
+        if (!CHECK(qPtr->timeline().markers == (QVector<int>{325, 355})))
+            for (int m : qPtr->timeline().markers) std::printf("       marker %d\n", m);
         // A locked track: nothing moves, the answer says so, the marker stays with its content
         pPtr = load(project);
         pPtr->edit("lock", [&](Timeline& tl) {
