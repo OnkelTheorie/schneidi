@@ -203,6 +203,27 @@ void testEditor(const QString& dir)
     keeps = ed.reframeKeeps(ed.reframeTargets({}), Reframe::Mode::Auto, {}, {});
     ed.reframeClips({}, Reframe::Mode::Center, {}, {}, &keeps);
     CHECK_EQ(videoClips(p.timeline()), 4);
+    // The clip trimmed since (the copy is not linked to it), then reframed again: still one copy, as long as the clip
+    p.edit("trim", [&](Timeline& tl) {
+        Clip* g = TimelineOps::findClip(tl, game);
+        g->start += 10;
+        g->in += 10;
+    });
+    keeps = ed.reframeKeeps({game}, Reframe::Mode::Auto, {}, {});
+    ed.reframeClips({game}, Reframe::Mode::Center, {}, {}, &keeps);
+    {
+        int copies = 0;
+        for (const Track& t : p.timeline().video)
+            for (const Clip& x : t.clips)
+                if (!x.keepRegion.isEmpty()) {
+                    ++copies;
+                    CHECK(x.start == 10 && x.in == 10 && x.out == 49);
+                }
+        CHECK_EQ(copies, 1);
+    }
+    p.undoStack()->undo();
+    p.undoStack()->undo();
+    CHECK_EQ(videoClips(p.timeline()), 4);
     // Without keeps given the copy stays; none removes it
     ed.reframeClips({}, Reframe::Mode::Center);
     CHECK(keptCopy(p.timeline()));

@@ -43,12 +43,30 @@ int Editor::reframeClips(const QVector<int>& ids, Reframe::Mode mode, const QHas
             const Clip* found = TimelineOps::findClip(tl, id, &ref);
             if (!found) continue;
             const Clip base = *found;
-            // The earlier copies of this clip go (a new reframe brings its own)
-            for (Track& t : tl.video)
-                if (!t.locked)
-                    t.clips.erase(std::remove_if(t.clips.begin(), t.clips.end(),
-                                                 [&](const Clip& x) { return Reframe::isKeepOf(x, base); }),
-                                  t.clips.end());
+            // The earlier copies of this clip go (a new reframe brings its own): exact ones as a whole, ones that
+            // outlast a since trimmed or bladed clip over its range; what is left of them stays only over another
+            // part of the bladed clip (in sync with it), not over frames the clip was trimmed off
+            const auto overAnotherPart = [&](const Clip& x) {
+                for (const Track& vt : tl.video)
+                    for (const Clip& y : vt.clips)
+                        if (y.id != base.id && Reframe::isKeepAlong(x, y)) return true;
+                return false;
+            };
+            for (Track& t : tl.video) {
+                if (t.locked) continue;
+                Track along;
+                QVector<Clip> rest;
+                for (const Clip& x : t.clips)
+                    if (Reframe::isKeepOf(x, base)) continue;
+                    else if (Reframe::isKeepAlong(x, base)) along.clips << x;
+                    else rest << x;
+                if (rest.size() == t.clips.size()) continue;
+                TimelineOps::clearRange(along, base.start, base.end(), [p] { return p->newClipId(); });
+                for (const Clip& x : along.clips)
+                    if (overAnotherPart(x)) rest << x;
+                std::sort(rest.begin(), rest.end(), [](const Clip& a, const Clip& b) { return a.start < b.start; });
+                t.clips = rest;
+            }
             for (const Reframe::Keep& k : keeps->value(id)) {
                 Clip copy = Reframe::keepCopy(base, k, MediaAspect::ofClip(base), frame);
                 copy.id = p->newClipId();

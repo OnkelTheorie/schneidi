@@ -105,6 +105,9 @@ struct KeepPlace {
 Clip keepCopy(const Clip& base, const Keep& k, double mediaAspect, QSizeF frame, const KeepPlace& place = {});
 // Is `c` a kept-region copy of `base` (same file and the same part of it at the same place)?
 bool isKeepOf(const Clip& c, const Clip& base);
+// A kept-region copy that goes along with `base`: isKeepOf, or (both at their own speed) one of the same file that
+// overlaps it in sync, e.g. after the base was trimmed or bladed since its copy was made
+bool isKeepAlong(const Clip& c, const Clip& base);
 // `region` (fractions of a game's picture) in fractions of the whole recording, when the game fills only `content`
 // of it (black bars around a 4:3 game)
 QRectF inContent(const QRectF& region, const QRectF& content);
