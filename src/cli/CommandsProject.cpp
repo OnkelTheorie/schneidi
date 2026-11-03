@@ -68,6 +68,7 @@ QJsonObject summarized(QJsonObject tl)
     tl["tracks"] = tracks;
     tl["clips"] = clips;
     tl["markers"] = tl["markers"].toArray().size();
+    if (tl.contains("notes")) tl["notes"] = tl["notes"].toArray().size(); // story sections stay (a few, small)
     QJsonArray subs;
     for (const QJsonValue& v : tl["subtitles"].toArray()) {
         QJsonObject st = v.toObject();
@@ -337,7 +338,9 @@ QJsonObject cmdEdit(const QJsonObject& a, Context&)
     for (int i = 0; i < ops.size(); ++i) {
         try {
             if (!ops[i].isObject()) fail("BAD_ARGUMENT", "operation is not an object");
+            s.opIndex = i;
             applyOp(s, ops[i].toObject());
+            s.opIndex = -1;
         } catch (const Error& e) {
             throw Error{e.code, QString("op %1 (%2): %3").arg(i).arg(ops[i]["op"].toString(), e.message)};
         }
@@ -351,6 +354,7 @@ QJsonObject cmdEdit(const QJsonObject& a, Context&)
                   {"changes", changesJson(before, shownItems(s.project), s.project.currentSequence())}};
     if (s.live) o["live"] = true; // changed in the app (one undo step there), the user saves
     if (!s.notes.isEmpty()) o["notes"] = s.notes;
+    if (!s.why.isEmpty()) o["why"] = s.why; // the reasons the ops were given, by op index
     if (s.project.sequences().size() > 1) o["timelines"] = timelinesJson(s.project, s.multicamSync);
     if (!dry) {
         const QString backup = s.save();

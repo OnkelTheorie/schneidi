@@ -844,6 +844,9 @@ QVector<OpDef> makeOps()
     addAudioOps(ops);
     addEditOps(ops);
     addMulticamOps(ops);
+    addStoryOps(ops);
+    addMusicOps(ops);
+    addSfxOps(ops);
     addTalkOps(ops);
     return ops;
 }
@@ -979,6 +982,8 @@ QStringList editOpKeys(const QString& name)
                     for (const QString& op : o.ops) add(op, o.keys);
             add(d.name, d.moreKeys);
         }
+        // Every op takes a reason (applyOp)
+        for (QStringList& k : keys) k << "why";
         // The dispatcher takes the file under the names of other commands as 'media'
         for (QStringList& k : keys)
             if (k.contains("media")) k << "file" << "path";
@@ -998,12 +1003,22 @@ void applyOp(Session& s, const QJsonObject& given)
     for (auto it = given.begin(); it != given.end(); ++it)
         if (!keys.contains(it.key())) {
             QStringList shown = keys;
-            for (const char* k : {"op", "file", "path"}) shown.removeAll(k);
+            for (const char* k : {"op", "file", "path", "why"}) shown.removeAll(k); // why: every op (editHelp)
             shown.erase(std::remove_if(shown.begin(), shown.end(), [](const QString& k) { return k.startsWith('_'); }),
                         shown.end());
             fail("BAD_ARGUMENT", QString("unknown key '%1' (keys: %2; `help` with command 'edit' and op '%3')")
                                      .arg(it.key(), shown.isEmpty() ? "none" : shown.join(", "), name));
         }
+    // The reason for the op (any op, free text): not evaluated, echoed in the edit's answer; the op never sees it
+    if (op.contains("why")) {
+        const QJsonValue why = op.take("why");
+        if (!why.isString() && !why.isNull()) fail("BAD_ARGUMENT", "'why' must be a text (the reason for the op)");
+        if (!why.toString().trimmed().isEmpty()) {
+            QJsonObject w{{"op", name}, {"why", why.toString()}};
+            if (s.opIndex >= 0) w["index"] = s.opIndex;
+            s.why << w;
+        }
+    }
     // The file under the name other commands give it ("file", "path"; no op has such a key): taken as 'media'
     if (!op.contains("media"))
         for (const char* alias : {"file", "path"})
@@ -1035,6 +1050,8 @@ QString editHelp()
                "Linked audio/video partners are included unless linked:false; ops for one kind of clip (effect, color, "
                "transform, volume, keyframe …) take only the given clips of that kind, a clip of the other kind "
                "stands for its linked partners (linked:true = all partners, false = only the given ones). Subtitle ids work with 'delete' too. "
+               "Every op takes why:'<reason>' (free text, e.g. 'hook: the loudest kill first'): not evaluated, the "
+               "answer lists it under 'why' with the op's index. "
                "`help` with command 'edit' and op '<name>' has the details of an op. Operations: ")
         + lines.join("; ") + ".";
 }

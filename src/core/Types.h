@@ -607,6 +607,26 @@ struct MulticamAngle {
     bool operator==(const MulticamAngle&) const = default;
 };
 
+// Story structure of a timeline (0.17): a section of the edit with its role in the story. Times in timeline frames,
+// half-open [from, to). Only structure here; ops and checks on it come from the story package (core/TimelineStory.h)
+enum class StoryKind { Hook, Build, Question, Turn, Resolution, Cta, Free };
+struct StorySection {
+    StoryKind kind = StoryKind::Free;
+    QString name;
+    int from = 0;
+    int to = 0;
+    bool operator==(const StorySection&) const = default;
+};
+
+// A note (comment) at a moment of the timeline, e.g. "music too loud here" - by the user or the AI
+struct TimelineNote {
+    int id = 0;
+    int at = 0; // timeline frame
+    QString text;
+    bool done = false;
+    bool operator==(const TimelineNote&) const = default;
+};
+
 struct Timeline;
 // Content of the sequences (id -> timeline) for nested clips when rendering
 using NestedTimelines = QHash<int, Timeline>;
@@ -623,6 +643,8 @@ struct Timeline {
     // Off by default like DaVinci (bus dynamics are off there; otherwise it hides the overload warning).
     bool masterLimiter = false;
     double masterLimiterDb = kDefaultLimiterDb;
+    QVector<StorySection> sections; // story structure (sorted by from), optional
+    QVector<TimelineNote> notes;    // notes at moments (sorted by at), optional
     // For rendering only (Project::renderTimeline): content of all sequences that compound clips refer to.
     // Never saved and not part of undo; the truth is the sequences in the Project.
     std::shared_ptr<const NestedTimelines> nested;
@@ -642,7 +664,8 @@ struct Timeline {
     {
         return video == o.video && audio == o.audio && subtitles == o.subtitles && markers == o.markers
                && markIn == o.markIn && markOut == o.markOut && masterVolumeDb == o.masterVolumeDb
-               && masterLimiter == o.masterLimiter && masterLimiterDb == o.masterLimiterDb;
+               && masterLimiter == o.masterLimiter && masterLimiterDb == o.masterLimiterDb
+               && sections == o.sections && notes == o.notes;
     }
 };
 
