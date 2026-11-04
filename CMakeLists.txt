@@ -89,6 +89,8 @@ add_library(schneidi_lib STATIC
     src/core/TrimFrames.h         src/core/TrimFrames.cpp
     src/core/Keyframes.h          src/core/Keyframes.cpp
     src/core/Accents.h            src/core/Accents.cpp
+    src/core/SfxSynth.h           src/core/SfxSynth.cpp
+    src/core/SfxPlace.h           src/core/SfxPlace.cpp
     src/core/MediaAspect.h        src/core/MediaAspect.cpp
     src/core/GradeWindows.h       src/core/GradeWindows.cpp
     src/core/NameBlur.h           src/core/NameBlur.cpp
