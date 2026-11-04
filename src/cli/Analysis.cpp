@@ -9,6 +9,7 @@
 #include "engine/Background.h"
 #include "engine/Engine.h"
 #include "engine/Extensions.h"
+#include "engine/FaceDetect.h"
 #include "engine/HardwareEncoders.h"
 #include "engine/FrameGaps.h"
 
@@ -367,11 +368,12 @@ QJsonObject cmdExtensions(const QJsonObject& a, Context& ctx)
     }
     QJsonObject out{{"extensions", list}, {"folder", Extensions::rootDir()}};
     // What works now: transcribe (whisper with a model), speak (piper with a voice), x264 (H.264/H.265 with x264/x265,
-    // built in or the extension)
+    // built in or the extension), faces (the face model with a runtime that loads)
     QJsonArray ready;
     if (!Extensions::whisperProgram().isEmpty() && !Extensions::installedWhisperModels().isEmpty()) ready << "transcribe";
     if (!Extensions::piperProgram().isEmpty() && !Extensions::installedVoices().isEmpty()) ready << "speak";
     if (HardwareEncoders::builtIn("libx264") || !HardwareEncoders::externalProgram("libx264").isEmpty()) ready << "x264";
+    if (FaceDetect::available()) ready << "faces"; // counted faces in `index`
     out["ready_for"] = ready;
     if (!done.isEmpty()) out["done"] = done;
     if (const QString ffmpeg = Extensions::encoderProgram(); !ffmpeg.isEmpty()) out["encoder_program"] = ffmpeg;

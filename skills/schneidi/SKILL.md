@@ -31,7 +31,7 @@ names cost a failed call.
    `highlights` (loud or exciting moments), `beats` for a song (tempo, bars, phrases, breaks, drops). You cannot
    edit well what you have not looked at. With a lot of material (vlog, interview, B-roll) build the material
    index once: `index` with the files or the project lists every shot with its quality (sharp/blurry,
-   dark/overexposed, motion, pan, face likely), speech and sounds, and shows the undescribed shots as a sheet -
+   dark/overexposed, motion, pan, face likely; counted faces with the `faces` extension), speech and sounds, and shows the undescribed shots as a sheet -
    describe them with `annotate` ([{file, shot, desc, tags}], kept for good), then `index` `query` ("ruhige
    Totale vom Laden", "wo lacht er") finds them, with a project also in timeline time.
    `highlights` (loud or exciting moments; `peaks {events:true}` also says what is heard: speech, music, laughter,
@@ -108,7 +108,8 @@ pool and is selected; a .schneidi project opens, never over unsaved changes).
   is missing, ask before installing it with `extensions`. The same for the `x264` extension (72 MB, GPL): when
   `check` reports encoder_quality or `render` answers with `encoder_hint` (no graphics card encoder, so H.264/H.265
   are encoded with the free OpenH264/kvazaar at about twice the file size), offer it; with a yes run `extensions`
-  install x264 and render again. Spoken text (`edit` op `speak`) needs `piper` plus a voice (about 90 MB).
+  install x264 and render again. Spoken text (`edit` op `speak`) needs `piper` plus a voice (about 90 MB). Counted
+  faces in `index` need the `faces` extension (YuNet, under 1 MB, plus ONNX Runtime 6 MB on Linux, 66 MB on Windows).
 - Say "done" only after you have looked at the rendered result.
 
 ## Task guides
