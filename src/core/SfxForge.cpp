@@ -202,12 +202,14 @@ Result build(const BuildP& p0, std::uint64_t salt, double length)
     }
     // (The shepard layer is off in these sets, shep_db -48: not ported)
     // Reverse swell: the reversed reverb tail of a bright burst, concave by nature, ending on the last sample
+    // (its decay at most 1.2 x the length, unlike the original: a short riser keeps its rise)
     Vec sw;
     if (p.rswell_db > -47) {
         const size_t kb = nOf(0.03);
         Vec hb = butter(r.normals(kb), true, 1500.0, 2);
         for (size_t i = 0; i < kb; ++i) hb[i] *= std::exp(-double(i) / SR / 0.008);
-        const Vec wet = wetOf(hb, r, p.rswell_rt, nOf(p.rswell_rt + 0.1), 0.3, 0.0, 400.0);
+        const double rt = std::min(p.rswell_rt, 1.2 * L);
+        const Vec wet = wetOf(hb, r, rt, nOf(rt + 0.1), 0.3, 0.0, 400.0);
         const size_t k = std::min(n, wet.size());
         sw.assign(n, 0.0);
         for (size_t j = 0; j < k; ++j) sw[n - k + j] = wet[k - 1 - j];
