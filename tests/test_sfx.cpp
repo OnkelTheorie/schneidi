@@ -408,7 +408,7 @@ void testOp(const QString& dir)
     CHECK_EQ(sfxNote(r)["placed"].toArray().size(), 0); // the one on the track counts
     // ... also when the second one should go to another track (one impact per video, not per track)
     edit(project, {QJsonObject{{"op", "add_track"}, {"kind", "audio"}}});
-    r = edit(project, {QJsonObject{{"op", "sfx"}, {"at", "13s"}, {"kind", "impact"}, {"level", "normal"}, {"track", "A3"}}});
+    r = edit(project, {QJsonObject{{"op", "sfx"}, {"at", "11s"}, {"kind", "impact"}, {"level", "normal"}, {"track", "A3"}}});
     if (!CHECK_EQ(sfxNote(r)["placed"].toArray().size(), 0))
         std::printf("       %s\n", QJsonDocument(r).toJson(QJsonDocument::Compact).constData());
     CHECK(sfxNote(r)["skipped"].toArray().size() == 1 && sfxNote(r)["skipped"][0]["why"].toString() == "impact_once");
