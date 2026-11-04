@@ -33,10 +33,8 @@ names cost a failed call.
    index once: `index` with the files or the project lists every shot with its quality (sharp/blurry,
    dark/overexposed, motion, pan, face likely), speech and sounds, and shows the undescribed shots as a sheet -
    describe them with `annotate` ([{file, shot, desc, tags}], kept for good), then `index` `query` ("ruhige
-   Totale vom Laden", "wo lacht er") finds them, with a project also in timeline time.
-   `highlights` (loud or exciting moments; `peaks {events:true}` also says what is heard: speech, music, laughter,
-   applause, cheering, shots, screams, silence), `beats` for a song (tempo, bars, phrases, breaks, drops). You cannot
-   edit well what you have not looked at.
+   Totale vom Laden", "wo lacht er") finds them, with a project also in timeline time. `peaks {events:true}` also
+   says what is heard: speech, music, laughter, applause, cheering, shots, screams, silence.
 2. **Say the plan in 2-3 sentences** (length, structure, format), then go ahead. Don't wait for approval unless the
    plan rests on a guess about something important that the user can easily answer.
 3. **Build it in small steps.** Create the project with `new` (match the frame rate of the main material; vertical
@@ -128,3 +126,4 @@ Read the guide that fits the task (several if it combines them):
 | Formats, presets, hardware encoding, exchange with other editors | [references/export.md](references/export.md) |
 | Checking a render before handing it over | [references/check.md](references/check.md) |
 | Automation: new recordings in a folder → cut → render, without anyone clicking | [references/automation.md](references/automation.md) |
+| Story: hook, sections, notes, plan first, review render | [references/story.md](references/story.md) |
