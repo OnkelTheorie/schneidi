@@ -5,6 +5,7 @@
 // the same result live as on the file; a run is refused once the project changed (PLAN_STALE), a plan is gone once run
 // or discarded and after a day, unknown ids are NOT_FOUND. In the app: the host hears about plans; in plan mode the
 // app's own chat may only plan (PLAN_MODE), the user runs the plan through Server::runForChat.
+#include "cli/CommandsDetail.h"
 #include "cli/Live.h"
 #include "core/LiveHost.h"
 #include "core/Project.h"
@@ -283,6 +284,17 @@ int main(int argc, char* argv[])
     qputenv("XDG_CACHE_HOME", (tmp.path() + "/cache").toUtf8());
     QGuiApplication app(argc, argv);
     QGuiApplication::setApplicationName("schneidi");
+
+    // Plan ids across processes: the id's file is made at once, so another process that read the same counter (here:
+    // the counter is gone again) cannot get that id before the first one wrote its plan
+    {
+        const QString dir = tmp.filePath("ids");
+        QDir().mkpath(dir);
+        CHECK_EQ(Cli::detail::newPlanId(dir), QString("p1"));
+        QFile::remove(QDir(dir).filePath("next"));
+        CHECK_EQ(Cli::detail::newPlanId(dir), QString("p2"));
+        CHECK_EQ(Cli::detail::newPlanId(dir), QString("p3"));
+    }
 
     FakeApp fake;
     setup(fake.project);

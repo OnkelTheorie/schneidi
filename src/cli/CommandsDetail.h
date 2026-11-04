@@ -44,6 +44,9 @@ QJsonObject importPresetsJson(const StreamPresets& p);
 
 // ---------- Projects ----------
 
+// A new plan id (p1, p2 …) in the plan folder `dir`, its file created there exclusively (empty; the caller writes it)
+QString newPlanId(const QString& dir);
+
 // A loaded project with an editor. Writing sessions hold the project's write lock (ProjectFile::lock) from
 // loading until they end, so the app cannot save in between; save() writes back with a backup copy first.
 // Live (cli/Live.h): is the project open in the app, a writing session in the app process edits the app's project
