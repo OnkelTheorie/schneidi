@@ -11,12 +11,14 @@
 #include "core/SfxSynth.h"
 #include "engine/Extensions.h"
 
+#include <QElapsedTimer>
 #include <QFile>
 #include <QGuiApplication>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QTemporaryDir>
 #include <QTextStream>
+#include <QThread>
 
 #include <cstring>
 
@@ -416,7 +418,22 @@ void testPackLicense(const QString& dir)
     // Installed again over itself: the new one takes the place, nothing of the old one is left beside it
     CHECK(Extensions::installSoundPack(pack("cc0", true), target).isEmpty());
     CHECK(QDir(Extensions::soundPacksDir()).entryList(QDir::Dirs | QDir::NoDotAndDotDot) == QStringList{"test-pack"});
+    // Removed: gone, nothing left beside it
+    Extensions::Item item;
+    item.id = "test-pack";
+    item.kind = Extensions::Kind::SoundPack;
+    CHECK(Extensions::remove(item));
+    CHECK(!QFileInfo::exists(target));
+    CHECK(QDir(Extensions::soundPacksDir()).entryList(QDir::Dirs | QDir::NoDotAndDotDot).isEmpty());
+    // What a removal or reinstall could not delete (Windows: a file still open) goes at the next start
+    CHECK(QDir().mkpath(target + ".old-1234abcd/cc0"));
+    Extensions::cleanUp();
+    QElapsedTimer t;
+    t.start();
+    while (QFileInfo::exists(target + ".old-1234abcd") && t.elapsed() < 5000) QThread::msleep(10);
+    CHECK(!QFileInfo::exists(target + ".old-1234abcd"));
     // A licence removed by hand: the pack no longer counts
+    CHECK(Extensions::installSoundPack(pack("cc0", true), target).isEmpty());
     QFile::remove(target + "/cc0/LICENSE.txt");
     CHECK(Extensions::installedSoundPacks().isEmpty());
     QDir(target).removeRecursively();
