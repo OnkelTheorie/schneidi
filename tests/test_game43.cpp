@@ -164,6 +164,26 @@ void testDeterministic(const QString& dir, const QString& darkPillar)
         }
 }
 
+// MPEG-TS seeks by bytes: a seek to a key frame's own time stamp may land on the next group (with B-frames), and a seek
+// into a file's only group finds no key frame after it. A pillarboxed clip with a black start (the first picture says
+// nothing) is still measured from pictures spread over it, with many key frames and with a single one.
+void testTransportStream(const QString& dir)
+{
+    for (const int gop : {10, 1000}) {
+        const QString ts = Check::makeMedia(
+            QDir(dir).filePath(QString("pillar%1.ts").arg(gop)),
+            QStringList{"-f", "lavfi", "-i", "testsrc2=s=480x360:r=25:d=4", "-vf",
+                        "drawbox=color=black:t=fill:enable='lt(t,0.6)',pad=640:360:80:0:black", "-c:v", "libx264",
+                        "-preset", "veryfast", "-bf", "3", "-g", QString::number(gop), "-pix_fmt", "yuv420p"});
+        if (!CHECK(!ts.isEmpty())) continue;
+        const auto r = BarDetect::content(ts);
+        if (CHECK(r.has_value())) {
+            CHECK(near(r->x(), 0.125, 0.006));
+            CHECK(near(r->width(), 0.75, 0.01));
+        }
+    }
+}
+
 // A webcam inside one of the bars (a compact picture in the black, the bar running on beyond it) does not end the bar:
 // the content is still the game picture between the bars, whatever corner the webcam sits in
 void testWebcam(const QString& dir, const QStringList& h264)
@@ -695,6 +715,7 @@ int main(int argc, char** argv)
         if (CHECK(v.has_value())) CHECK(!BarDetect::hasBars(*v));
     }
     testDeterministic(tmp.path(), darkPillar);
+    testTransportStream(tmp.path());
     testWebcam(tmp.path(), h264);
     testReframe(pillar);
     testCropBars(pillar);

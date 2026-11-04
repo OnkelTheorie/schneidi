@@ -261,17 +261,30 @@ int fixedPictures(const QString& path, const std::vector<double>& at, int minKey
     auto src = std::make_unique<Source>();
     if (!src->open(path, 0, false)) return -1;
     AVFrame* last = av_frame_alloc(); // the picture a decodeTo() got to
-    const auto freeLast = qScopeGuard([&] { av_frame_free(&last); });
+    std::vector<AVPacket*> keyPackets; // pass 1's key frame packets, one per different key frame
+    const auto cleanup = qScopeGuard([&] {
+        av_frame_free(&last);
+        for (AVPacket*& k : keyPackets) av_packet_free(&k);
+    });
     const double tb = av_q2d(src->st->time_base);
     const double duration =
         src->fmt->duration != AV_NOPTS_VALUE && src->fmt->duration > 0 ? double(src->fmt->duration) / AV_TIME_BASE : 0;
     const AVRational rate = av_guess_frame_rate(src->fmt, src->st, nullptr);
     const double fps = rate.num > 0 && rate.den > 0 ? av_q2d(rate) : 0;
     bool eof = false;
+    bool held = false; // src->pkt was read but the decoder had no room for it yet: sent first on the next decodeTo()
+    const auto reset = [&] {
+        if (held) av_packet_unref(src->pkt);
+        held = false;
+        eof = false;
+        av_frame_unref(last);
+    };
     // Decodes on from where the demuxer and the decoder are, until a picture at `seconds` or later (or `limit`
-    // pictures, or the end of the stream); false if no picture came at all. The picture stays in `last`.
+    // pictures, or 4 x limit packets read (at least 256: a decoder that gives nothing), or the end of the stream); false
+    // if no picture came at all. The picture stays in `last`.
     const auto decodeTo = [&](double seconds, int limit) {
-        int n = 0;
+        int n = 0, packets = 0;
+        const int maxPackets = std::max(256, 4 * limit);
         const auto take = [&] {
             while (avcodec_receive_frame(src->dec, src->frame) >= 0) {
                 av_frame_unref(last);
@@ -283,35 +296,40 @@ int fixedPictures(const QString& path, const std::vector<double>& at, int minKey
             return false;
         };
         if (take()) return true;
-        while (!eof) {
-            if (av_read_frame(src->fmt, src->pkt) < 0) {
-                eof = true;
-                avcodec_send_packet(src->dec, nullptr);
-                break;
-            }
-            if (src->pkt->stream_index == src->st->index) {
-                while (avcodec_send_packet(src->dec, src->pkt) == AVERROR(EAGAIN))
-                    if (take()) {
-                        av_packet_unref(src->pkt);
-                        return true;
-                    }
-                if (take()) {
-                    av_packet_unref(src->pkt);
-                    return true;
+        while (!eof && packets < maxPackets) {
+            if (!held) {
+                if (av_read_frame(src->fmt, src->pkt) < 0) {
+                    eof = true;
+                    avcodec_send_packet(src->dec, nullptr);
+                    break;
                 }
+                if (src->pkt->stream_index != src->st->index) {
+                    av_packet_unref(src->pkt);
+                    continue;
+                }
+                ++packets;
+            }
+            held = false;
+            if (avcodec_send_packet(src->dec, src->pkt) == AVERROR(EAGAIN)) {
+                held = true; // no room: pictures out first, the packet goes in on the next round
+                if (take()) return true;
+                continue;
             }
             av_packet_unref(src->pkt);
+            if (take()) return true;
         }
         take();
         return n > 0 || last->data[0] != nullptr;
     };
-    // The first picture only: a single picture, a file without a duration, or nothing came at the spots (a raw stream
-    // that cannot seek)
-    const auto first = [&]() -> int {
+    // From the start of the file again (a new demuxer and decoder)
+    const auto restart = [&]() {
+        reset();
         src = std::make_unique<Source>();
-        eof = false;
-        av_frame_unref(last);
-        if (!src->open(path, 0, false)) return -1;
+        return src->open(path, 0, false);
+    };
+    // The first picture only: a single picture, a file without a duration, or nothing came at the spots
+    const auto first = [&]() -> int {
+        if (!restart()) return -1;
         if (!decodeTo(-1e300, 1)) return 0;
         onFrame(last, src->turns);
         return 1;
@@ -321,10 +339,12 @@ int fixedPictures(const QString& path, const std::vector<double>& at, int minKey
     const auto target = [&](double fraction) {
         return int64_t(std::floor((std::clamp(fraction, 0.0, 1.0) * duration + src->startSeconds) / tb));
     };
-    // The key frame packet a seek back from `ts` lands on (kept in src->pkt); AV_NOPTS_VALUE if none
+    // Seek back from `ts`: the time stamp of the key frame packet it lands on (kept in src->pkt), AV_NOPTS_VALUE if
+    // none follows within 1000 packets (a stream whose key frames are further apart than that, an MPEG-TS seeking by
+    // bytes into its only group)
     const auto keyAt = [&](int64_t ts) -> int64_t {
+        reset();
         if (av_seek_frame(src->fmt, src->st->index, ts, AVSEEK_FLAG_BACKWARD) < 0) return AV_NOPTS_VALUE;
-        eof = false;
         for (int n = 0; n < 1000 && av_read_frame(src->fmt, src->pkt) >= 0; ++n) {
             if (src->pkt->stream_index == src->st->index && (src->pkt->flags & AV_PKT_FLAG_KEY)) {
                 const int64_t key = src->pkt->pts != AV_NOPTS_VALUE ? src->pkt->pts : src->pkt->dts;
@@ -334,25 +354,25 @@ int fixedPictures(const QString& path, const std::vector<double>& at, int minKey
         }
         return AV_NOPTS_VALUE;
     };
-    // Which key frame answers each spot: packets only, nothing decoded
-    std::vector<int64_t> keys;
-    std::vector<int64_t> unique;
+    // Which key frame answers each spot (packets only, nothing decoded); each different one's packet is kept. Not
+    // sought again later: a seek to a key frame's own time stamp may land elsewhere (MPEG-TS with B-frames: the next
+    // group)
+    std::vector<int64_t> keys, unique;
     for (const double f : at) {
         const int64_t key = keyAt(target(f));
-        av_packet_unref(src->pkt);
         keys.push_back(key);
-        if (key != AV_NOPTS_VALUE && std::find(unique.begin(), unique.end(), key) == unique.end()) unique.push_back(key);
+        if (key != AV_NOPTS_VALUE && std::find(unique.begin(), unique.end(), key) == unique.end()) {
+            unique.push_back(key);
+            keyPackets.push_back(av_packet_clone(src->pkt));
+        }
+        av_packet_unref(src->pkt);
     }
     int count = 0;
     if (int(unique.size()) >= std::max(1, minKeys)) {
         // One packet per key frame: decoded alone, then the decoder is emptied for the next one
-        for (const int64_t key : unique) {
-            if (keyAt(key) != key) {
-                av_packet_unref(src->pkt);
-                continue;
-            }
-            avcodec_send_packet(src->dec, src->pkt);
-            av_packet_unref(src->pkt);
+        for (AVPacket* k : keyPackets) {
+            if (!k) continue;
+            avcodec_send_packet(src->dec, k);
             avcodec_send_packet(src->dec, nullptr);
             const bool got = avcodec_receive_frame(src->dec, src->frame) >= 0;
             avcodec_flush_buffers(src->dec);
@@ -363,22 +383,32 @@ int fixedPictures(const QString& path, const std::vector<double>& at, int minKey
             if (!more) return count;
         }
     } else {
-        // Exact pictures: from the key frame before each spot, or on from the last spot within the same key frame's group.
-        // Pictures no other one refers to are skipped (B-frames: a spot gets the next picture that is decoded), and so is
-        // the deblocking filter (a few pixels per block, nothing an analysis of small pictures sees): about half the time
-        src->dec->skip_frame = AVDISCARD_NONREF;
-        src->dec->skip_loop_filter = AVDISCARD_ALL;
+        // Exact pictures: from the key frame before each spot, or on from the last spot within the same key frame's
+        // group; a spot without a key frame found before it (a single group in a file that seeks by bytes) is decoded
+        // from the start of the file. Pictures no other one refers to are skipped (B-frames: a spot gets the next
+        // picture that is decoded), and so is the deblocking filter (a few pixels per block, nothing an analysis of
+        // small pictures sees): about half the time
+        const auto fast = [&] {
+            src->dec->skip_frame = AVDISCARD_NONREF;
+            src->dec->skip_loop_filter = AVDISCARD_ALL;
+        };
+        fast();
+        constexpr int64_t kStart = INT64_MIN; // the group decoded from the start of the file
         int64_t group = AV_NOPTS_VALUE, given = AV_NOPTS_VALUE;
         double reached = 0;
         for (size_t i = 0; i < at.size(); ++i) {
-            if (keys[i] == AV_NOPTS_VALUE) continue;
             const double seconds = std::clamp(at[i], 0.0, 1.0) * duration;
-            if (keys[i] != group || reached > seconds || eof) {
-                if (av_seek_frame(src->fmt, src->st->index, target(at[i]), AVSEEK_FLAG_BACKWARD) < 0) continue;
-                avcodec_flush_buffers(src->dec);
-                av_frame_unref(last);
-                eof = false;
-                group = keys[i];
+            const int64_t want = keys[i] == AV_NOPTS_VALUE ? kStart : keys[i];
+            if (want != group || reached > seconds || eof) {
+                if (want == kStart) {
+                    if (!restart()) return count;
+                    fast();
+                } else {
+                    reset();
+                    if (av_seek_frame(src->fmt, src->st->index, target(at[i]), AVSEEK_FLAG_BACKWARD) < 0) continue;
+                    avcodec_flush_buffers(src->dec);
+                }
+                group = want;
             }
             if (!decodeTo(seconds, std::max(1, maxDecode))) continue;
             reached = src->seconds(last);
