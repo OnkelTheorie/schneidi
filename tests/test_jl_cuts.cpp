@@ -241,6 +241,26 @@ void testJlCutOp(const QString& dir)
     CHECK(errorOf({op({{"op", "jl_cut"}, {"clip", 2}, {"audio", 4294967296.0}})}).startsWith("BAD_ARGUMENT"));
     CHECK(errorOf({op({{"op", "jl_cut"}, {"clip", 9}, {"audio", 5}})}).startsWith("BAD_ARGUMENT")); // music: no picture
     CHECK_EQ(clipOf(*loaded(), 5).start, 95); // errors changed nothing
+
+    // Audio tracks cut at different times (A2 rolled alone to 105, no material on either side there): the range is
+    // A1's, the note says where A2's cut really is and the error names the times
+    {
+        Project p;
+        setup(p);
+        p.edit("apart", [](Timeline& tl) {
+            tl.audio[1].clips[0] = media(7, 0, 195, 105, 1, 1);  // file 195..299: nothing after
+            tl.audio[1].clips[1] = media(8, 105, 0, 95, 2, 1);   // file 0..: nothing before
+        });
+        QString error;
+        if (!CHECK(ProjectFile::save(p.data(), g_path, &error))) return;
+    }
+    r = run("edit", {{"project", g_path}, {"ops", QJsonArray{op({{"op", "jl_cut"}, {"clip", 2}, {"audio", 0}})}}});
+    const QString note = QJsonDocument(r["notes"].toArray()).toJson();
+    if (!CHECK(note.contains("on A1; A2 at 00:00:04:05 (not enough material"))) std::printf("       %s\n", qPrintable(note));
+    CHECK_EQ(clipOf(*loaded(), 7).end(), 105);
+    const QString apart = errorOf({op({{"op", "jl_cut"}, {"clip", 2}, {"audio", -5}})});
+    if (!CHECK(apart.contains("cut at different times: A1 at 00:00:04:00; A2 at 00:00:04:05")))
+        std::printf("       %s\n", qPrintable(apart));
 }
 
 // ---------- room tone ----------
@@ -351,6 +371,17 @@ void testRoomTone(const QString& dir)
         q = RoomTone::findQuiet(db, 20, 20);
         CHECK(q.found() && std::abs(q.meanDb + 50) < 1e-6);
         CHECK(!RoomTone::findQuiet(std::vector<double>(50, -20.0), 100, 60).found());
+        // Words the voice detection found are never room tone, however quiet and steady (a murmur far away)
+        {
+            std::vector<double> room(100, -50.0);
+            for (int i = 20; i < 40; ++i) room[size_t(i)] = -55;
+            CHECK_EQ(RoomTone::findQuiet(room, 20, 10).from, 20);
+            std::vector<bool> speech(room.size(), false);
+            for (int i = 20; i < 40; ++i) speech[size_t(i)] = true;
+            const RoomTone::Quiet q2 = RoomTone::findQuiet(room, 20, 10, speech);
+            CHECK(q2.found() && (q2.to <= 20 || q2.from >= 40));
+            CHECK(std::abs(q2.meanDb + 50) < 1e-6);
+        }
         CHECK_EQ(RoomTone::seamFrames(25), 1);
         CHECK_EQ(RoomTone::seamFrames(120), 2);
     }

@@ -48,6 +48,8 @@ int main(int argc, char** argv)
     QGuiApplication app(argc, argv);
     Check::initApp("broll");
     if (!Check::haveFfmpeg()) return Check::result();
+    // Notes of an earlier run follow the same generated files by their content: start without any
+    QDir(MediaIndex::notesDir()).removeRecursively();
     QTemporaryDir dir;
     const QString talk = Check::makeMedia(QDir(dir.path()).filePath("talk.mp4"),
                                           {"-f", "lavfi", "-i", "testsrc2=s=320x180:r=25:d=12", "-f", "lavfi", "-i",

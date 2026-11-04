@@ -21,6 +21,7 @@
 #include <QVector>
 
 #include <functional>
+#include <memory>
 #include <vector>
 
 namespace AudioEvents {
@@ -59,6 +60,8 @@ struct Result {
     QString by;            // the way that was used: "heuristic" | "yamnet"
     QString error;         // why there are no events (no sound, YAMNet missing, canceled); empty = ok
     bool cached = false;   // came from the cache
+    bool incomplete = false; // reading the file failed (a network share gone, the file lost while reading): the
+                             // events of what was read, not cached (the next call measures again)
     double duration = 0;   // seconds of sound analysed
 };
 
@@ -72,6 +75,22 @@ QVector<Event> analyze(const QString& path, int stream = 0, const Options& optio
 constexpr int kRate = 16000;
 QVector<Event> heuristics(const std::vector<float>& mono16k, const std::function<bool(double)>& progress = {});
 
+// The heuristics fed piece by piece (16 kHz mono): the same events as heuristics() without holding the sound (a
+// long recording in pieces of any size; only small features per 10 ms are kept)
+class Listener {
+public:
+    Listener();
+    ~Listener();
+    Listener(const Listener&) = delete;
+    Listener& operator=(const Listener&) = delete;
+    void add(const float* mono16k, int n);
+    QVector<Event> finish(); // once, after the last add
+
+private:
+    struct Data;
+    std::unique_ptr<Data> d;
+};
+
 // YAMNet is installed and the runtime loads; why not
 bool yamnetAvailable(QString* why = nullptr);
 // YAMNet on samples (16 kHz mono). error: why there are no events. Mapped kinds only (shot times as YAMNet's grid).
@@ -80,6 +99,13 @@ QVector<Event> yamnet(const std::vector<float>& mono16k, QString* error = nullpt
 // A YAMNet-like model and class list given directly (tests: a tiny stand-in model)
 QVector<Event> yamnetWith(const QString& model, const QString& labels, const std::vector<float>& mono16k,
                           QString* error = nullptr, const std::function<bool(double)>& progress = {});
+
+// How events are made right now (remembered per process and model file), as a cache key part: "heuristic", or YAMNet with its model file (path, size,
+// modification time). A cache of results that contain events (the material index) keys on it too, so installing or
+// updating the model measures anew.
+QString way(Engine engine = Engine::Auto);
+// The same for a given model file (empty = the heuristics); pure, for tests
+QString wayKey(const QString& model);
 
 // JSON for the CLI and the index: [{kind, from_s, to_s, conf, by}] (times to the millisecond, conf to 0.01)
 QJsonArray toJson(const QVector<Event>& events);

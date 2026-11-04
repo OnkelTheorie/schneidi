@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "engine/MediaIndex.h"
 
+#include "core/PathKey.h"
 #include "engine/OpenMedia.h"
 #include "engine/video/Scan.h"
 
@@ -19,9 +20,11 @@ extern "C" {
 #include <QJsonObject>
 #include <QMutex>
 #include <QSaveFile>
+#include <QSet>
 #include <QStandardPaths>
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdlib>
 #include <memory>
@@ -58,14 +61,8 @@ QString hashOf(const QString& s)
     return QString::fromLatin1(QCryptographicHash::hash(s.toUtf8(), QCryptographicHash::Sha1).toHex());
 }
 
-QString keyOf(const QFileInfo& fi)
-{
-    return hashOf(QString("%1|%2|%3|%4")
-                      .arg(fi.absoluteFilePath())
-                      .arg(fi.size())
-                      .arg(fi.lastModified().toMSecsSinceEpoch())
-                      .arg(kVersion));
-}
+// How the audio events were made is part of the key: installing or updating the audio-events model measures anew
+QString keyOf(const QFileInfo& fi) { return cacheKey(fi.absoluteFilePath(), AudioEvents::way()); }
 
 double round3(double v) { return std::round(v * 1000) / 1000; }
 
@@ -422,9 +419,76 @@ void applyNotes(Entry& e)
     }
 }
 
-QString notesFile(const QString& file) { return notesDir() + '/' + hashOf(QFileInfo(file).absoluteFilePath()) + ".json"; }
+QString notesFile(const QString& file) { return notesDir() + '/' + hashOf(PathKey::of(file)) + ".json"; }
+
+// The notes by the file's content: found when its path has none - a moved project folder, another drive letter.
+// File name "c-<name+size>-<name+size+first MB>.json": the first part needs only the file's name and size, so the first
+// MB is read only for a file that has a stored copy of its name and size (one per file and process).
+std::atomic<int> g_contentReads{0};
+QString contentPrefix(const QFileInfo& fi) { return "c-" + hashOf(QString("%1|%2").arg(fi.fileName()).arg(fi.size())).left(16); }
+
+QString contentNotesFile(const QString& file)
+{
+    const QFileInfo fi(file);
+    const QString key = QString("%1|%2|%3").arg(PathKey::of(file)).arg(fi.size()).arg(fi.lastModified().toMSecsSinceEpoch());
+    static QMutex mutex;
+    static QHash<QString, QString> known;
+    {
+        QMutexLocker lock(&mutex);
+        if (const auto it = known.constFind(key); it != known.constEnd()) return *it;
+    }
+    QFile f(file);
+    if (!f.open(QIODevice::ReadOnly)) return {};
+    ++g_contentReads;
+    const QByteArray head = QCryptographicHash::hash(f.read(1 << 20), QCryptographicHash::Sha1).toHex();
+    const QString path = notesDir() + '/' + contentPrefix(fi) + '-'
+                         + hashOf(QString("%1|%2|%3").arg(fi.fileName()).arg(fi.size()).arg(QString::fromLatin1(head))) + ".json";
+    QMutexLocker lock(&mutex);
+    known.insert(key, path);
+    return path;
+}
+
+// The name+size parts of the stored content copies, listed once and again when the folder changed (annotate here or
+// in another process) - a Media Pool search asks for every file on every key press
+QMutex g_contentMutex;
+QSet<QString> g_contentPrefixes;
+QDateTime g_contentListed;
+bool g_contentValid = false;
+
+bool hasContentCopy(const QFileInfo& fi)
+{
+    const QDateTime changed = QFileInfo(notesDir()).lastModified();
+    QMutexLocker lock(&g_contentMutex);
+    if (!g_contentValid || changed != g_contentListed) {
+        g_contentPrefixes.clear();
+        for (const QString& name : QDir(notesDir()).entryList({"c-*.json"}, QDir::Files))
+            g_contentPrefixes.insert(name.section('-', 0, 1));
+        g_contentListed = changed;
+        g_contentValid = true;
+    }
+    return g_contentPrefixes.contains(contentPrefix(fi));
+}
+
+void contentChanged()
+{
+    QMutexLocker lock(&g_contentMutex);
+    g_contentValid = false;
+}
 
 } // namespace
+
+QString cacheKey(const QString& file, const QString& audioWay)
+{
+    const QFileInfo fi(file);
+    return hashOf(QString("%1|%2|%3|%4|%5")
+                      .arg(PathKey::of(file))
+                      .arg(fi.size())
+                      .arg(fi.lastModified().toMSecsSinceEpoch())
+                      .arg(kVersion)
+                      .arg(audioWay));
+}
+
+int contentReadCount() { return g_contentReads.load(); }
 
 QString cacheDir() { return QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + "/index"; }
 QString notesDir() { return QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/index"; }
@@ -474,6 +538,8 @@ std::optional<Entry> build(const QString& file, const Options& options, QString*
     };
     if (options.progress && !options.progress(0.9)) return cancelled();
     QVector<AudioEvents::Event> events;
+    bool incomplete = false;
+    QString way = AudioEvents::way(); // the way the events were made (YAMNet failing on a file: the heuristics)
     if (source) {
         events = source(e->file);
     } else {
@@ -482,11 +548,13 @@ std::optional<Entry> build(const QString& file, const Options& options, QString*
         const AudioEvents::Result r = AudioEvents::analyzeFile(e->file, 0, ao);
         if (options.progress && r.error.contains("cancel", Qt::CaseInsensitive)) return cancelled();
         events = r.events;
+        incomplete = r.incomplete;
+        if (r.by == "heuristic") way = AudioEvents::wayKey({});
     }
     distribute(*e, events);
-    const QString key = keyOf(fi);
-    saveJson(cacheDir() + '/' + key + ".json", toJson(*e, events));
-    {
+    if (!incomplete) { // a read error is not the file's sound: measured again next time
+        const QString key = cacheKey(fi.absoluteFilePath(), way);
+        saveJson(cacheDir() + '/' + key + ".json", toJson(*e, events));
         QMutexLocker lock(&g_mutex);
         memory().insert(key, *e);
     }
@@ -510,7 +578,13 @@ void addSpeech(Entry& e, const QVector<TranscriptWord>& words)
 QVector<Note> notes(const QString& file)
 {
     QFile f(notesFile(file));
-    if (!f.open(QIODevice::ReadOnly)) return {};
+    if (!f.open(QIODevice::ReadOnly)) {
+        // No notes under this path: the same file elsewhere (read only when a copy of its name and size exists)
+        const QFileInfo fi(file);
+        if (!fi.isFile() || !hasContentCopy(fi)) return {};
+        f.setFileName(contentNotesFile(file));
+        if (f.fileName().isEmpty() || !f.open(QIODevice::ReadOnly)) return {};
+    }
     QVector<Note> out;
     for (const QJsonValue& v : QJsonDocument::fromJson(f.readAll()).object()["notes"].toArray()) {
         const QJsonObject o = v.toObject();
@@ -555,15 +629,19 @@ bool annotate(Entry& e, int shot, const std::optional<QString>& desc, const std:
     for (const Note& n : ns)
         arr << QJsonObject{{"shot", n.shot}, {"from", n.from}, {"to", n.to}, {"desc", n.desc},
                            {"tags", QJsonArray::fromStringList(n.tags)}};
-    const QString path = notesFile(e.file);
-    QDir().mkpath(QFileInfo(path).absolutePath());
-    QSaveFile out(path);
-    if (!out.open(QIODevice::WriteOnly)
-        || out.write(QJsonDocument(QJsonObject{{"file", e.file}, {"notes", arr}}).toJson(QJsonDocument::Indented)) < 0
-        || !out.commit()) {
-        if (error) *error = "cannot write " + QDir::toNativeSeparators(path);
-        return false;
+    // By path, and a copy by content (name, size, first MB) for the file found under another path later
+    const QByteArray json = QJsonDocument(QJsonObject{{"file", e.file}, {"notes", arr}}).toJson(QJsonDocument::Indented);
+    for (const QString& path : {notesFile(e.file), contentNotesFile(e.file)}) {
+        if (path.isEmpty()) continue; // unreadable now: by path only
+        QDir().mkpath(QFileInfo(path).absolutePath());
+        QSaveFile out(path);
+        if (!out.open(QIODevice::WriteOnly) || out.write(json) < 0 || !out.commit()) {
+            if (error) *error = "cannot write " + QDir::toNativeSeparators(path);
+            contentChanged();
+            return false;
+        }
     }
+    contentChanged();
     return true;
 }
 

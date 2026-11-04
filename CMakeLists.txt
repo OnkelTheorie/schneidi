@@ -97,6 +97,7 @@ add_library(schneidi_lib STATIC
     src/core/Project.h            src/core/Project.cpp
     src/core/ProjectFile.h        src/core/ProjectFile.cpp
     src/core/LiveHost.h
+    src/core/PathKey.h
     src/core/Selection.h
     src/core/PlaybackMeter.h
     src/core/Editor.h             src/core/Editor.cpp

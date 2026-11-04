@@ -2,6 +2,7 @@
 #include "engine/AudioEvents.h"
 
 #include "core/Fft.h"
+#include "core/PathKey.h"
 #include "engine/Extensions.h"
 #include "engine/Inference.h"
 #include "engine/audio/Reader.h"
@@ -791,6 +792,22 @@ QVector<Event> heuristics(const std::vector<float>& mono16k, const std::function
     return rules(ex.frames);
 }
 
+struct Listener::Data {
+    Extractor ex;
+};
+
+Listener::Listener() : d(std::make_unique<Data>()) {}
+Listener::~Listener() = default;
+void Listener::add(const float* mono16k, int n)
+{
+    if (n > 0) d->ex.add(mono16k, n);
+}
+QVector<Event> Listener::finish()
+{
+    d->ex.finish();
+    return rules(d->ex.frames);
+}
+
 QVector<Event> yamnetWith(const QString& model, const QString& labels, const std::vector<float>& mono16k,
                           QString* error, const std::function<bool(double)>& progress)
 {
@@ -1007,6 +1024,34 @@ Result filtered(Result r, const Options& o)
 
 } // namespace
 
+QString wayKey(const QString& model)
+{
+    if (model.isEmpty()) return "heuristic";
+    const QFileInfo m(model);
+    return QString("yamnet|%1|%2|%3").arg(m.absoluteFilePath()).arg(m.size()).arg(m.lastModified().toMSecsSinceEpoch());
+}
+
+QString way(Engine engine)
+{
+    if (engine == Engine::Heuristic) return wayKey({});
+    // Once per process and model file (the index asks on every cache lookup, on the GUI thread too): whether the
+    // runtime loads is asked only when the model file is new or changed
+    const QString model = Extensions::audioEventsModel();
+    if (model.isEmpty()) return wayKey({});
+    const QString stat = wayKey(model);
+    static QMutex mutex;
+    static QString lastStat, lastWay;
+    {
+        QMutexLocker lock(&mutex);
+        if (stat == lastStat) return lastWay;
+    }
+    const QString w = yamnetAvailable() ? stat : wayKey({});
+    QMutexLocker lock(&mutex);
+    lastStat = stat;
+    lastWay = w;
+    return w;
+}
+
 Result analyzeFile(const QString& path, int stream, const Options& options)
 {
     Result result;
@@ -1022,13 +1067,9 @@ Result analyzeFile(const QString& path, int stream, const Options& options)
         return result;
     }
     // The key names everything the result depends on: the file, the stream, the way and the model's file
-    QString way = "heuristic";
-    if (model) {
-        const QFileInfo m(Extensions::audioEventsModel());
-        way = QString("yamnet|%1|%2|%3").arg(m.absoluteFilePath()).arg(m.size()).arg(m.lastModified().toMSecsSinceEpoch());
-    }
+    const QString way = model ? wayKey(Extensions::audioEventsModel()) : wayKey({});
     const QString id = QString("%1|%2|%3|%4|%5|%6")
-                           .arg(fi.absoluteFilePath())
+                           .arg(PathKey::of(path))
                            .arg(fi.size())
                            .arg(fi.lastModified().toMSecsSinceEpoch())
                            .arg(stream)
@@ -1077,11 +1118,14 @@ Result analyzeFile(const QString& path, int stream, const Options& options)
             return result;
         }
         const int n = int(std::min<int64_t>(kChunk, end - pos));
-        reader->read(pos, n, out);
+        if (!reader->read(pos, n, out)) result.incomplete = true;
         ex.add(buf.data(), n);
         if (model) all.insert(all.end(), buf.begin(), buf.begin() + n);
     }
     ex.finish();
+    // Reading the file failed (a network share gone, the reader lost the file): not the file's sound. A file that
+    // is damaged for good (cut off, broken packets) reads the same every time and is cached as it is.
+    if (reader->stats().readErrors > 0) result.incomplete = true;
     result.duration = double(end) / kRate;
     const QVector<Event> heur = rules(ex.frames);
     if (model) {
@@ -1112,7 +1156,7 @@ Result analyzeFile(const QString& path, int stream, const Options& options)
         result.by = "heuristic";
     }
     if (options.progress) options.progress(1.0);
-    if (options.useCache && (result.by == "yamnet") == model) {
+    if (options.useCache && (result.by == "yamnet") == model && !result.incomplete) {
         saveDisk(key, result);
         QMutexLocker lock(&g_mutex);
         memory().insert(key, result);

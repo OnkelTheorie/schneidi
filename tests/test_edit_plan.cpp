@@ -5,6 +5,7 @@
 // the same result live as on the file; a run is refused once the project changed (PLAN_STALE), a plan is gone once run
 // or discarded and after a day, unknown ids are NOT_FOUND. In the app: the host hears about plans; in plan mode the
 // app's own chat may only plan (PLAN_MODE), the user runs the plan through Server::runForChat.
+#include "cli/CommandsDetail.h"
 #include "cli/Live.h"
 #include "core/LiveHost.h"
 #include "core/Project.h"
@@ -12,6 +13,7 @@
 #include "core/Selection.h"
 
 #include "check.h"
+#include "fake_piper.h"
 
 #include <QDateTime>
 #include <QDir>
@@ -40,7 +42,8 @@ public:
     Project* liveProject() override { return &project; }
     QString liveProjectPath() const override { return path; }
     Selection* liveSelection() override { return &selection; }
-    int livePlayhead() const override { return 0; }
+    int playhead = 0;
+    int livePlayhead() const override { return playhead; }
     bool livePlaying() const override { return false; }
     void liveSeek(int) override {}
     void livePlay(bool) override {}
@@ -272,11 +275,26 @@ void fileTests(const QString& path, const QProcessEnvironment& env)
 
 int main(int argc, char* argv[])
 {
+    if (qEnvironmentVariableIsSet("SCHNEIDI_FAKE_PIPER")) {
+        QCoreApplication app(argc, argv);
+        return fakePiper(app.arguments());
+    }
     QTemporaryDir tmp;
     qputenv("XDG_DATA_HOME", (tmp.path() + "/data").toUtf8()); // registry of running apps, backups and plans
     qputenv("XDG_CACHE_HOME", (tmp.path() + "/cache").toUtf8());
     QGuiApplication app(argc, argv);
     QGuiApplication::setApplicationName("schneidi");
+
+    // Plan ids across processes: the id's file is made at once, so another process that read the same counter (here:
+    // the counter is gone again) cannot get that id before the first one wrote its plan
+    {
+        const QString dir = tmp.filePath("ids");
+        QDir().mkpath(dir);
+        CHECK_EQ(Cli::detail::newPlanId(dir), QString("p1"));
+        QFile::remove(QDir(dir).filePath("next"));
+        CHECK_EQ(Cli::detail::newPlanId(dir), QString("p2"));
+        CHECK_EQ(Cli::detail::newPlanId(dir), QString("p3"));
+    }
 
     FakeApp fake;
     setup(fake.project);
@@ -391,5 +409,32 @@ int main(int argc, char* argv[])
     CHECK_EQ(again["error"]["code"].toString(),
              QString("NOT_FOUND"));
     fake.planOnly = false;
+
+    // speak without `at` in a plan: where the playhead was when the plan was made, not where it is at the run (the
+    // playhead is not part of the plan's base). A fake piper: this program (no real piper needed)
+    qputenv("SCHNEIDI_PIPER", QCoreApplication::applicationFilePath().toUtf8());
+    qputenv("SCHNEIDI_FAKE_PIPER", tmp.filePath("piper.log").toUtf8());
+    qputenv("SCHNEIDI_TTS_WORDS", "estimate");
+    const QString voice = tmp.filePath("de_DE-test-medium.onnx");
+    QFile(voice).open(QIODevice::WriteOnly);
+    QFile(voice + ".json").open(QIODevice::WriteOnly);
+    fake.playhead = 50;
+    const QString speakOps = QJsonDocument(QJsonArray{QJsonObject{{"op", "speak"}, {"text", "Hallo"}, {"voice", voice}}})
+                                 .toJson(QJsonDocument::Compact);
+    r = cli({"edit", fake.path, "--plan", "--ops", speakOps});
+    if (CHECK_EQ(code(r), QString("ok"))) {
+        const QString speakPlan = std::as_const(r)["plan"]["id"].toString();
+        CHECK_EQ(std::as_const(r)["plan"]["steps"][0]["op"]["at"].toInt(), 50); // the step as stored
+        fake.playhead = 120;                                                     // the user moves on
+        r = cli({"edit", fake.path, "--plan_id", speakPlan, "--run", "all"});
+        CHECK_EQ(code(r), QString("ok"));
+        int start = -1;
+        for (const Track& t : fake.project.timeline().audio)
+            for (const Clip& c : t.clips)
+                if (c.mediaPath.endsWith(".wav")) start = c.start;
+        CHECK_EQ(start, 50);
+    }
+    qunsetenv("SCHNEIDI_FAKE_PIPER");
+    qunsetenv("SCHNEIDI_PIPER");
     return Check::result();
 }

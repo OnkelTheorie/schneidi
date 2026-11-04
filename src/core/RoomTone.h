@@ -28,9 +28,9 @@ struct Quiet {
 // The quietest steady stretch of `want` blocks (shorter down to `least` when there is none): no block louder than
 // floor + 6 dB (no word, breath or click), none in digital silence, its blocks within kSteadyDb of each other (no
 // step in level that would pump in a loop); among those the one with the lowest level. `blockDb` = RMS level of each
-// block in dBFS (silence -200).
+// block in dBFS (silence -200). `speech`: blocks with words in them (a voice detection), never used (empty = none).
 constexpr double kSteadyDb = 4;
-Quiet findQuiet(const std::vector<double>& blockDb, int want, int least);
+Quiet findQuiet(const std::vector<double>& blockDb, int want, int least, const std::vector<bool>& speech = {});
 
 // Crossfade length at the seams in frames: about 20 ms, at least one frame
 int seamFrames(double fps);

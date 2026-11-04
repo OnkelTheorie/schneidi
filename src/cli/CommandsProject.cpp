@@ -331,6 +331,24 @@ QString frameRateNote(const Project& p, const QString& video)
         .arg(std::round(cf.suggested.fps() * 1000) / 1000);
 }
 
+// A new plan id: p1, p2 … per folder, never given twice (a counter file; an old id never names a newer plan). The
+// plan's file is created here exclusively (QFile::NewOnly), so two processes planning at the same moment cannot get
+// the same id: the one that loses the race takes the next number
+QString newPlanId(const QString& dir)
+{
+    QFile counter(QDir(dir).filePath("next"));
+    int next = 1;
+    if (counter.open(QIODevice::ReadOnly)) next = std::max(1, counter.readAll().trimmed().toInt());
+    counter.close();
+    for (int tries = 0;; ++next, ++tries) {
+        QFile plan(QDir(dir).filePath(QString("p%1.json").arg(next)));
+        if (plan.open(QIODevice::WriteOnly | QIODevice::NewOnly)) break;
+        if (!plan.exists() || tries > 100000) fail("SAVE_FAILED", "cannot write a plan into " + dir);
+    }
+    if (counter.open(QIODevice::WriteOnly | QIODevice::Truncate)) counter.write(QByteArray::number(next + 1));
+    return QString("p%1").arg(next);
+}
+
 namespace {
 
 // ---------- Plans (edit plan:true, then plan_id + run or discard) ----------
@@ -373,18 +391,6 @@ QStringList prunePlans(const QString& dir)
     }
     std::sort(ids.begin(), ids.end(), [](const QString& x, const QString& y) { return x.mid(1).toInt() < y.mid(1).toInt(); });
     return ids;
-}
-
-// A new plan id: p1, p2 … per folder, never given twice (a counter file; an old id never names a newer plan)
-QString newPlanId(const QString& dir)
-{
-    QFile counter(QDir(dir).filePath("next"));
-    int next = 1;
-    if (counter.open(QIODevice::ReadOnly)) next = std::max(1, counter.readAll().trimmed().toInt());
-    counter.close();
-    while (QFileInfo::exists(QDir(dir).filePath(QString("p%1.json").arg(next)))) ++next;
-    if (counter.open(QIODevice::WriteOnly | QIODevice::Truncate)) counter.write(QByteArray::number(next + 1));
-    return QString("p%1").arg(next);
 }
 
 // The clip ids an op names: clip, clips, and {clip:id} inside it (a relative time)
@@ -574,8 +580,17 @@ QJsonObject cmdEdit(const QJsonObject& a, Context&)
     const int sequence = s.project.currentSequence();
     QJsonValue opsValue = a["ops"];
     if (opsValue.isObject()) opsValue = QJsonArray{opsValue};
-    const QJsonArray ops = opsValue.toArray();
+    QJsonArray ops = opsValue.toArray();
     if (ops.isEmpty()) fail("BAD_ARGUMENT", "'ops' must be a non-empty list of operations");
+    // A plan keeps where the app's playhead is now: `speak` without `at` lands there, not where the playhead is when
+    // the user runs the plan (the playhead is not part of the plan's base)
+    if (plan && s.app.contains("playhead"))
+        for (int i = 0; i < ops.size(); ++i) {
+            QJsonObject op = ops[i].toObject();
+            if (op.value("op").toString() != "speak" || op.contains("at")) continue;
+            op["at"] = s.app.value("playhead").toInt(0);
+            ops[i] = op;
+        }
     QJsonArray steps;
     QJsonObject o = applyEdit(s, ops, a, dry, plan ? &steps : nullptr);
     if (!plan) return o;

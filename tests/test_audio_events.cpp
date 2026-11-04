@@ -6,6 +6,7 @@
 // again); `only`/`minConf`; YAMNet required but missing = error, Auto falls back to the heuristics; an unloadable
 // ONNX Runtime (garbage file, a library without OrtGetApiBase) is reported, nothing crashes; `peaks {events}`.
 #include "cli/Commands.h"
+#include "engine/AudioAnalysis.h"
 #include "engine/AudioEvents.h"
 #include "engine/Inference.h"
 
@@ -366,6 +367,58 @@ void testBrokenRuntime(const QDir& dir)
 }
 
 // An AAC file made by ffmpeg (lavfi): a bang at 2 s on silence, a tone chord from 4 s
+// A file damaged for good (cut off: half of an m4a whose index says 20 s) reads the same every time: cached like any
+// other (a read error - a network share gone - is not cached; not reproducible here without such a share)
+void testCutOff(const QDir& dir)
+{
+    if (!Check::haveFfmpeg()) {
+        std::printf("no ffmpeg - cut-off part skipped\n");
+        return;
+    }
+    const QString whole = Check::makeMedia(dir.filePath("whole.m4a"), {"-f", "lavfi", "-i", "sine=f=440:d=20", "-c:a",
+                                                                         "aac", "-movflags", "+faststart"});
+    if (!CHECK(!whole.isEmpty())) return;
+    const QString cut = dir.filePath("cut.m4a");
+    {
+        QFile in(whole), out(cut);
+        if (!CHECK(in.open(QIODevice::ReadOnly) && out.open(QIODevice::WriteOnly))) return;
+        out.write(in.read(in.size() / 2));
+    }
+    AudioEvents::clearMemoryCache();
+    const int before = AudioEvents::measuredCount();
+    const AudioEvents::Result r = AudioEvents::analyzeFile(cut);
+    CHECK(!r.incomplete);
+    AudioEvents::clearMemoryCache();
+    CHECK(AudioEvents::analyzeFile(cut).cached);
+    CHECK_EQ(AudioEvents::measuredCount(), before + 1);
+}
+
+// The heuristics fed piece by piece (Listener) give the same events as on the whole sound, and the room tone's pass
+// (block levels with the voice detection in it, 48 kHz stereo -> 16 kHz mono inside) finds the words
+void testListener(const QDir& dir)
+{
+    const std::vector<float> s = sequence(kRate);
+    const QVector<Event> all = AudioEvents::heuristics(s);
+    AudioEvents::Listener l;
+    for (size_t at = 0, n = 1; at < s.size(); at += n, n = n * 7 % 4099 + 1) l.add(s.data() + at, int(std::min(n, s.size() - at)));
+    const QVector<Event> pieces = l.finish();
+    if (CHECK_EQ(pieces.size(), all.size()))
+        for (int i = 0; i < all.size(); ++i) {
+            CHECK_EQ(pieces[i].kind, all[i].kind);
+            CHECK(std::abs(pieces[i].from - all[i].from) < 1e-9 && std::abs(pieces[i].to - all[i].to) < 1e-9);
+        }
+    const QString wav = dir.filePath("levels.wav");
+    if (!CHECK(Synth::writeWav(wav, sequence(48000), 48000, 2))) return;
+    std::vector<bool> speech;
+    const auto levels = AudioAnalysis::fileBlockLevels(wav, 0, 0, 31, 0.05, &speech, 0);
+    if (!CHECK(levels && speech.size() == levels->size())) return;
+    int in = 0, out = 0;
+    for (size_t i = 0; i < speech.size(); ++i)
+        if (speech[i]) (i >= 10 && i < 150 ? in : out) += 1;
+    CHECK(in >= 80); // 4 of the 6 s of words (like the whole-sound check above)
+    CHECK(out <= 6);
+}
+
 void testLavfi(const QDir& dir)
 {
     if (!Check::haveFfmpeg()) {
@@ -475,6 +528,8 @@ int main(int argc, char** argv)
     testProgressCancels();
     testFile(dir);
     testLavfi(dir);
+    testCutOff(dir);
+    testListener(dir);
     testCli(dir);
     testWithoutYamnet(dir);
     testBrokenRuntime(dir); // last: it points the shared runtime at a broken file for the rest of the program

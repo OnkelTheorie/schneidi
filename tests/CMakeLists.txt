@@ -187,6 +187,7 @@ target_link_libraries(test_fit_music_app PRIVATE schneidi_cli_lib)
 target_link_libraries(test_fit_music PRIVATE schneidi_cli_lib)
 target_compile_definitions(test_fit_music PRIVATE SCHNEIDI_CLI="$<TARGET_FILE:schneidi-cli>")
 add_dependencies(test_fit_music schneidi-cli)
+schneidi_test(test_path_key) # path keys: absolute, clean, lower case on Windows; caches/backups use them
 schneidi_test(test_media_index) # `index`: shots, quality, cache, annotate, search, timeline times
 target_link_libraries(test_media_index PRIVATE schneidi_cli_lib)
 schneidi_test(test_audio_events) # sound events (heuristics): speech, music, silence, laughter, applause, cheering, shots, screams; cache; peaks {events}

@@ -91,6 +91,12 @@ int main(int argc, char** argv)
     QGuiApplication app(argc, argv);
     Check::initApp("media_index");
     searchOnly();
+    // The cache key names how the audio events are made: installing or updating the audio-events model (YAMNet)
+    // measures anew instead of keeping the heuristic events (pure part: a real model needs the ONNX Runtime extension)
+    CHECK_EQ(AudioEvents::wayKey({}), QString("heuristic"));
+    CHECK(AudioEvents::wayKey("/m/yamnet.onnx").startsWith("yamnet|"));
+    CHECK(MediaIndex::cacheKey("/x/a.mp4", AudioEvents::wayKey({}))
+          != MediaIndex::cacheKey("/x/a.mp4", AudioEvents::wayKey("/m/yamnet.onnx")));
     if (!Check::haveFfmpeg()) return Check::skip("ffmpeg missing");
     Check::initEngine();
     QTemporaryDir dir;
@@ -215,6 +221,32 @@ int main(int argc, char** argv)
     r = run("index", {{"files", QJsonArray{media}}});
     CHECK(!r["cached"].toBool(true));
     CHECK_EQ(eventCalls, 3);
+
+    // A moved project folder (or another drive letter): the notes follow the file by its name, size and first MB
+    {
+        const QString moved = dir.filePath("moved/") + QFileInfo(media).fileName();
+        QDir().mkpath(QFileInfo(moved).absolutePath());
+        CHECK(QFile::copy(media, moved));
+        const int reads = MediaIndex::contentReadCount();
+        CHECK_EQ(MediaIndex::notes(moved).size(), 2);
+        CHECK_EQ(MediaIndex::contentReadCount(), reads + 1);
+        CHECK_EQ(MediaIndex::notes(moved).size(), 2); // remembered: not read again
+        CHECK_EQ(MediaIndex::contentReadCount(), reads + 1);
+        // A file without a stored copy of its name and size is not read at all (a search asks for every pool file)
+        const QString stranger = dir.filePath("moved/stranger.mp4");
+        CHECK(QFile::copy(media, stranger));
+        CHECK(MediaIndex::notes(stranger).isEmpty());
+        CHECK_EQ(MediaIndex::contentReadCount(), reads + 1);
+        const QJsonArray found = run("index", {{"files", QJsonArray{moved}}, {"query", "ruhige Totale"}})["hits"].toArray();
+        CHECK(!found.isEmpty() && found[0].toObject()["shot"].toInt() == 1);
+        // Same name, other content: not the same file
+        const QString other = dir.filePath("other/") + QFileInfo(media).fileName();
+        QDir().mkpath(QFileInfo(other).absolutePath());
+        QFile o(other);
+        if (CHECK(o.open(QIODevice::WriteOnly))) o.write(QByteArray(int(QFileInfo(media).size()), 'x'));
+        o.close();
+        CHECK(MediaIndex::notes(other).isEmpty());
+    }
 
     // Project: transcript words become the shots' speech; hits in timeline time where the trimmed clips play
     const QString project = dir.filePath("p.schneidi");

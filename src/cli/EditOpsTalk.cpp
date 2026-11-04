@@ -21,6 +21,7 @@
 #include <QFileInfo>
 #include <QHash>
 #include <QJsonArray>
+#include <QMap>
 #include <QSet>
 
 #include <algorithm>
@@ -121,26 +122,49 @@ void opJlCut(Session& s, const QJsonObject& op)
                                "track (link them with op 'link'; a sound cut alone: trim mode:'roll')")
                            .arg(left)
                            .arg(right));
-    if (offset < e->lo || offset > e->hi)
+    // Where each audio track's sound cut is (they can stand differently: one rolled alone)
+    const auto soundCuts = [&s, &e] {
+        QMap<int, QStringList> at; // sound cut -> tracks
+        for (const auto& p : e->pairs) {
+            TrackRef ref;
+            if (const Clip* a = TimelineOps::findClip(s.project.timeline(), p.first, &ref)) at[a->end()] << trackName(ref);
+        }
+        return at;
+    };
+    const QMap<int, QStringList> was = soundCuts();
+    if (offset < e->lo || offset > e->hi) {
+        QString apart;
+        if (was.size() > 1) {
+            QStringList list;
+            for (auto it = was.begin(); it != was.end(); ++it) list << it.value().join(", ") + " at " + tc(it.key(), f);
+            apart = QString(" (the audio tracks are cut at different times: %1; jl_cut moves them to one time - roll "
+                            "one track alone with trim mode:'roll')")
+                        .arg(list.join("; "));
+        }
         fail("BAD_ARGUMENT",
              QString("audio %1 needs more material than the clips have: at this cut the sound can start up to %2 early "
-                     "(audio:'-%3s') and run on up to %4 (audio:'+%5s')")
+                     "(audio:'-%3s') and run on up to %4 (audio:'+%5s')%6")
                  .arg(offset)
                  .arg(frameSpan(std::max(0, -e->lo), f))
                  .arg(seconds(std::max(0, -e->lo), f), 0, 'f', 2)
                  .arg(frameSpan(std::max(0, e->hi), f))
-                 .arg(seconds(std::max(0, e->hi), f), 0, 'f', 2));
-    s.editor.setSoundEdge(left, right, offset);
-    QStringList tracks;
-    for (const auto& p : e->pairs) {
-        TrackRef ref;
-        if (TimelineOps::findClip(s.project.timeline(), p.first, &ref)) tracks << trackName(ref);
+                 .arg(seconds(std::max(0, e->hi), f), 0, 'f', 2)
+                 .arg(apart));
     }
+    s.editor.setSoundEdge(left, right, offset);
+    // The note names where the sound cut really is on each track: a track without the material for it is elsewhere
+    const QMap<int, QStringList> now = soundCuts();
+    QStringList parts{now.value(e->cut + offset).join(", ")};
+    if (parts[0].isEmpty()) parts.clear(); // no track reached it
+    for (auto it = now.begin(); it != now.end(); ++it)
+        if (it.key() != e->cut + offset)
+            parts << QString("%1 at %2 (not enough material for that cut)").arg(it.value().join(", "), tc(it.key(), f));
+    const QString tracks = parts.join("; ");
     const QString what = offset < 0   ? QString("J cut: the sound of clip %1 starts %2 before").arg(right).arg(frameSpan(-offset, f))
                          : offset > 0 ? QString("L cut: the sound of clip %1 runs %2 past").arg(left).arg(frameSpan(offset, f))
                                       : QString("straight cut: the sound cuts with");
     s.notes << QString("jl_cut: %1 the picture cut at %2 (sound cut at %3 on %4; picture and links unchanged)")
-                   .arg(what, tc(e->cut, f), tc(e->cut + offset, f), tracks.join(", "));
+                   .arg(what, tc(e->cut, f), tc(e->cut + offset, f), tracks);
 }
 
 // ---------- room_tone ----------
@@ -149,6 +173,7 @@ constexpr double kQuietWant = 2.0;  // seconds of quiet the loop is made of
 constexpr double kQuietLeast = 1.0; // at least
 constexpr double kScanMargin = 30.0; // seconds of the file around the used parts searched for quiet
 constexpr double kMaxGainDb = 12.0;
+constexpr double kSpeechMargin = 0.15; // seconds around detected speech left out
 
 struct TakeQuiet {
     bool found = false;
@@ -173,11 +198,14 @@ TakeQuiet measureTake(Session& s, const Clip& take, int track)
     lo = std::max(0, lo - margin);
     hi = std::min(m->length, hi + margin);
     if (hi <= lo) return q;
+    // With the words in it (the heuristic voice detection, same pass): a quiet murmur under the floor + 6 dB must not
+    // become the room tone. A margin for the ends of a word.
+    std::vector<bool> speech;
     const auto levels = AudioAnalysis::fileBlockLevels(take.mediaPath, take.audioStream, lo / fps, hi / fps,
-                                                       RoomTone::kBlockSeconds);
+                                                       RoomTone::kBlockSeconds, &speech, kSpeechMargin);
     if (!levels) return q;
     const RoomTone::Quiet quiet = RoomTone::findQuiet(*levels, int(std::lround(kQuietWant / RoomTone::kBlockSeconds)),
-                                                      int(std::lround(kQuietLeast / RoomTone::kBlockSeconds)));
+                                                      int(std::lround(kQuietLeast / RoomTone::kBlockSeconds)), speech);
     q.floorDb = quiet.floorDb;
     if (!quiet.found()) return q;
     // Whole frames inside the stretch

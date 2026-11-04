@@ -160,7 +160,10 @@ struct Reader::Impl {
             const int r = av_read_frame(fmt, pkt);
             if (r == AVERROR(EAGAIN)) continue;
             if (r < 0) {
-                if (r != AVERROR_EOF) ++stats.decodeErrors;
+                if (r != AVERROR_EOF) {
+                    ++stats.decodeErrors;
+                    ++stats.readErrors;
+                }
                 return false;
             }
             if (pkt->stream_index != index) {
