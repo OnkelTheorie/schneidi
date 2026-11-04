@@ -25,6 +25,7 @@
 #include "engine/Engine.h"
 #include "engine/ReframeAnalysis.h"
 #include "engine/Snapshot.h"
+#include "engine/video/Thumbnails.h"
 #include "ui/Inspector.h"
 
 #include <QApplication>
@@ -181,6 +182,12 @@ void testTransportStream(const QString& dir)
             CHECK(near(r->x(), 0.125, 0.006));
             CHECK(near(r->width(), 0.75, 0.01));
         }
+        // Every spot gets its picture, the first one too (a single group: decoded from the start of the file, not on
+        // from where the key frame search left it)
+        int pictures = 0;
+        const int n = Video::fixedPictures(ts, {0.3, 0.6, 0.9}, 6, 250, [&](const AVFrame*, int) { return ++pictures, true; });
+        if (!CHECK_EQ(n, 3)) std::printf("       gop %d: %d pictures\n", gop, n);
+        CHECK_EQ(pictures, n);
     }
 }
 
