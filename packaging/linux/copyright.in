@@ -31,6 +31,32 @@ License: CC0-1.0
  commercial purposes, all without asking permission.
  Full text: https://creativecommons.org/publicdomain/zero/1.0/legalcode
 
+Files: assets/sfx/cc0/impact/freesound-*
+Copyright: FFeller (https://freesound.org/people/FFeller/sounds/532873/)
+           dorian.mastin (https://freesound.org/people/dorian.mastin/sounds/381626/)
+License: CC0-1.0
+ Recorded impact sounds of op 'sfx', built into schneidi (taken from the Godot
+ demo projects, https://github.com/godotengine/godot-demo-projects).
+ .
+ The person who associated a work with this deed has dedicated the work to the
+ public domain by waiving all of his or her rights to the work worldwide under
+ copyright law, including all related and neighboring rights, to the extent
+ allowed by law. You can copy, modify, distribute and perform the work, even for
+ commercial purposes, all without asking permission.
+ Full text: https://creativecommons.org/publicdomain/zero/1.0/legalcode
+
+Files: assets/sfx/cc0/impact/kenney-* assets/sfx/cc0/click/*
+Copyright: Kenney (Starter Kit Racing, Starter Kit City Builder, https://github.com/KenneyNL)
+License: CC0-1.0
+ Recorded impact and click sounds of op 'sfx', built into schneidi.
+ .
+ The person who associated a work with this deed has dedicated the work to the
+ public domain by waiving all of his or her rights to the work worldwide under
+ copyright law, including all related and neighboring rights, to the extent
+ allowed by law. You can copy, modify, distribute and perform the work, even for
+ commercial purposes, all without asking permission.
+ Full text: https://creativecommons.org/publicdomain/zero/1.0/legalcode
+
 Files: src/core/SfxWhoosh.cpp src/core/SfxForge.cpp src/core/SfxDsp.h third_party/earshot/*
 Copyright: 2026 Leon Lin
            2026 OnkelTheorie and schneidi contributors (the C++ port)

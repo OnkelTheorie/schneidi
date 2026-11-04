@@ -11,7 +11,9 @@
 #include "core/SfxSynth.h"
 #include "engine/Extensions.h"
 
+#include <QDirIterator>
 #include <QFile>
+#include <QFileInfo>
 #include <QGuiApplication>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -128,9 +130,12 @@ void testSynth()
 void testRecorded()
 {
     const QString root = SfxSynth::recordedRoot();
-    for (const char* f : {"/sounds.json", "/SOURCES.md", "/LICENSE-opengameart-swishes.txt", "/LICENSE-kenney-impact-sounds.txt"})
+    for (const char* f : {"/sounds.json", "/SOURCES.md", "/LICENSE-opengameart-swishes.txt", "/LICENSE-kenney-impact-sounds.txt",
+                          "/LICENSE-kenney-starter-kits.txt", "/LICENSE-freesound-ffeller-impact-big.md",
+                          "/LICENSE-freesound-dorian-mastin-impact-small.md"})
         CHECK(QFileInfo::exists(root + f));
-    for (SfxSynth::Kind k : {SfxSynth::Kind::Whoosh, SfxSynth::Kind::Swish, SfxSynth::Kind::Hit}) {
+    for (SfxSynth::Kind k : {SfxSynth::Kind::Whoosh, SfxSynth::Kind::Swish, SfxSynth::Kind::Hit, SfxSynth::Kind::Impact,
+                             SfxSynth::Kind::Click}) {
         const QVector<SfxSynth::Recorded> list = SfxSynth::recorded(k);
         if (!CHECK(list.size() >= 3)) continue;
         for (const SfxSynth::Recorded& r : list) {
@@ -153,9 +158,23 @@ void testRecorded()
         // A length given: computed (a recording does not stretch)
         CHECK(SfxSynth::parseCachedFile(SfxSynth::cachedFile(k, 2, 0.5 * SfxSynth::maxLength(k) + 0.5 * SfxSynth::minLength(k))));
     }
-    // Riser, impact, click: computed
-    for (SfxSynth::Kind k : {SfxSynth::Kind::Riser, SfxSynth::Kind::Impact, SfxSynth::Kind::Click})
-        CHECK(SfxSynth::recorded(k).isEmpty());
+    // The riser: computed (no CC0 riser recording)
+    CHECK(SfxSynth::recorded(SfxSynth::Kind::Riser).isEmpty());
+    // Every recording of the table is a file with its licence file (no entry silently dropped)
+    QFile table(root + "/sounds.json");
+    if (CHECK(table.open(QIODevice::ReadOnly))) {
+        const QJsonArray sounds = QJsonDocument::fromJson(table.readAll())["sounds"].toArray();
+        CHECK(sounds.size() >= 20);
+        for (const QJsonValue& v : sounds) {
+            CHECK(QFileInfo::exists(root + "/" + v["file"].toString()));
+            CHECK(QFileInfo::exists(root + "/" + v["licence_file"].toString()));
+        }
+    }
+    // The whole collection stays small (it is in every package)
+    qint64 bytes = 0;
+    QDirIterator all(root, QDir::Files, QDirIterator::Subdirectories);
+    while (all.hasNext()) bytes += QFileInfo(all.next()).size();
+    CHECK(bytes < 3 * 1024 * 1024);
 }
 
 void testPlace()

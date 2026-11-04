@@ -40,8 +40,8 @@ constexpr KindInfo kInfo[] = {
     {Kind::Whoosh, "whoosh", "air rushing past: swells to its peak and falls away (peak on the cut)", 0.9, -12},
     {Kind::Riser, "riser", "a dark noise build with a sub and a speeding stutter that peaks on the moment (a drop)", 0.9, -11},
     {Kind::Hit, "hit", "short knock on a block (a kill, a hit)", 0.2, -8},
-    {Kind::Impact, "impact", "a deep sub drop under a click (the one big moment of a video)", 1.3, -6},
-    {Kind::Click, "click", "a camera shutter click (a counter, a snapshot, a pop-up)", 0.15, -16},
+    {Kind::Impact, "impact", "a heavy impact, a crash (the one big moment of a video)", 1.3, -6},
+    {Kind::Click, "click", "a short click (a counter, a snapshot, a pop-up)", 0.15, -16},
     {Kind::Swish, "swish", "short, soft swipe of cloth or paper (a fast wipe, a title flying in)", 0.6, -14},
 };
 

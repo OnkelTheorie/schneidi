@@ -155,6 +155,7 @@ SfxPlace::Existing existingOf(const Clip& c, double fps, const Source& src)
         e.sameKind = src.kind == n->kind;
     } else if (const auto r = SfxSynth::recordedOfFile(c.mediaPath)) {
         e.at = (c.start - c.in) / fps + r->anchor;
+        e.impact = r->kind == SfxSynth::Kind::Impact;
         e.sameKind = src.kind == r->kind;
     }
     return e;

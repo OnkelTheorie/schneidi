@@ -57,7 +57,7 @@ bool writeWav(const QString& path, const std::vector<float>& samples, int rate =
 QString cachedFile(Kind kind, unsigned seed = 1, double length = 0);
 // ---------- Recorded sounds (shipped CC0 recordings, assets/sfx/cc0) ----------
 // Whoosh, swish and hit are recordings by default (they sound real; the computed ones are the fallback when the data
-// is missing); riser, impact and click stay computed. The files are kept as they are: anchor, peak and length come
+// is missing); impact and click are recordings too, the riser stays computed. The files are kept as they are: anchor, peak and length come
 // from a table measured once (sounds.json), op 'sfx' levels them at placement (levelGainDb).
 struct Recorded {
     QString file;   // relative to the data folder ("swish/oga-swish-1.wav")
