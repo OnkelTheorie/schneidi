@@ -164,7 +164,7 @@ QVector<Item> makeCatalog()
     // licence text of the same revision is the second download and lies beside the model as LICENSE. Offered on every
     // system: without the runtime extension a system onnxruntime or Piper's copy runs it.
     list << Item{"faces", Kind::FaceModel, N_("Gesichtserkennung (YuNet)"),
-                 N_("findet Gesichter im Bild für den Materialindex (braucht ONNX Runtime)"),
+                 N_("findet Gesichter im Bild für den Material-Index (braucht ONNX Runtime)"),
                  QString(kOpencvZoo) + "face_detection_yunet_2023mar.onnx",
                  "8f2383e4dd3cfbb4553ea8718107fc0423210dc964f9f4280604804ed2552fa4", 232589, kYunetModel,
                  QString(kOpencvZooRaw) + "LICENSE", "c83b8120c50ccbd4c4f96edf53141bdd566ebb8f8e9227e415326aa1b1aba958",

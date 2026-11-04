@@ -830,6 +830,7 @@
  "Geschwindigkeit ändern": "Cambiar velocidad del clip",
  "Geschwindigkeitsrampe als erste Geschwindigkeit des Clips geschrieben": "rampa de velocidad escrita como la primera velocidad del clip",
  "Gesicht wahrscheinlich": "probablemente una cara",
+ "Gesichtserkennung (YuNet)": "Detección de caras (YuNet)",
  "Gespeichert: %1.": "Guardada: %1.",
  "Gesperrte Spuren lassen sich nicht löschen": "No se pueden eliminar las pistas bloqueadas",
  "Gesprochenen Text der Tonclips zeigen; Wörter löschen schneidet die Timeline": "Mostrar el texto hablado de los clips de audio; borrar palabras corta la línea de tiempo",
@@ -903,6 +904,7 @@
  "Höhe": "Alto",
  "Im Archiv fehlt %1.": "Falta %1 en el archivo.",
  "Im Dateimanager zeigen": "Mostrar en el gestor de archivos",
+ "Im Klangpaket fehlt die Lizenzdatei (LICENSE): nicht installiert.": "Al paquete de sonidos le falta el archivo de licencia (LICENSE): no se ha instalado.",
  "Im Material suchen…": "Buscar en el material…",
  "Im Material: %1 Treffer": "En el material: %1 resultados",
  "Im Material: nichts gefunden": "En el material: nada encontrado",
@@ -2124,6 +2126,7 @@
  "fertig": "listo",
  "ffmpeg nicht gefunden.": "No se encontró ffmpeg.",
  "ffmpeg wurde nicht gefunden. Bitte ffmpeg installieren.": "No se encontró ffmpeg. Instalar ffmpeg.",
+ "findet Gesichter im Bild für den Material-Index (braucht ONNX Runtime)": "encuentra caras en la imagen para el índice del material (necesita ONNX Runtime)",
  "findet die Stellen mit Sprache, damit Wortzeiten nicht in Pausen rutschen (gehört zu Whisper)": "encuentra dónde hay voz para que los tiempos de las palabras no caigan en pausas (forma parte de Whisper)",
  "gelöscht: %1": "eliminados: %1",
  "gespeichert – zum Ändern neu eingeben": "guardada – escribe una nueva para cambiarla",
@@ -2151,7 +2154,7 @@
  "optional": "opcional",
  "prüft eine Datei": "revisa un archivo",
  "prüft vor dem Export": "revisa antes de exportar",
- "rechnet kleine KI-Modelle offline auf dem Prozessor (für Ton-Ereignisse)": "ejecuta pequeños modelos de IA sin conexión en el procesador (para eventos de sonido)",
+ "rechnet kleine KI-Modelle offline auf dem Prozessor (für Gesichter und Ton-Ereignisse)": "ejecuta pequeños modelos de IA sin conexión en el procesador (para caras y eventos de sonido)",
  "rendert": "renderiza",
  "ruhig": "tranquilo",
  "scharf": "nítido",
@@ -2233,6 +2236,5 @@
  "„Neuer Chat“ fängt frisch an.": "«Nuevo chat» empieza de cero.",
  "„Neutral“ ist ein neues Projekt wie immer: nichts stumm, nichts umbenannt, das Format kommt vom ersten Clip. Die gewählte Vorlage gilt auch für das Projekt, mit dem schneidi startet.": "«Neutra» es un proyecto nuevo como siempre: nada silenciado, nada renombrado, el formato viene del primer clip. La plantilla elegida también vale para el proyecto con el que arranca schneidi.",
  "◀ Verfolgen": "◀ Rastrear",
- "♪ Audio": "♪ Audio",
- "Im Klangpaket fehlt die Lizenzdatei (LICENSE): nicht installiert.": "Al paquete de sonidos le falta el archivo de licencia (LICENSE): no se ha instalado."
+ "♪ Audio": "♪ Audio"
 }

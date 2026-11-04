@@ -830,6 +830,7 @@
  "Geschwindigkeit ändern": "Modifier la vitesse du clip",
  "Geschwindigkeitsrampe als erste Geschwindigkeit des Clips geschrieben": "rampe de vitesse écrite comme première vitesse du clip",
  "Gesicht wahrscheinlich": "visage probable",
+ "Gesichtserkennung (YuNet)": "Détection des visages (YuNet)",
  "Gespeichert: %1.": "Enregistrée : %1.",
  "Gesperrte Spuren lassen sich nicht löschen": "Les pistes verrouillées ne peuvent pas être supprimées",
  "Gesprochenen Text der Tonclips zeigen; Wörter löschen schneidet die Timeline": "Afficher le texte parlé des clips audio ; supprimer des mots coupe la timeline",
@@ -903,6 +904,7 @@
  "Höhe": "Hauteur",
  "Im Archiv fehlt %1.": "%1 est manquant dans l’archive.",
  "Im Dateimanager zeigen": "Afficher dans le gestionnaire de fichiers",
+ "Im Klangpaket fehlt die Lizenzdatei (LICENSE): nicht installiert.": "Le pack de sons n’a pas de fichier de licence (LICENSE) : non installé.",
  "Im Material suchen…": "Rechercher dans les rushes…",
  "Im Material: %1 Treffer": "Dans les rushes : %1 résultats",
  "Im Material: nichts gefunden": "Dans les rushes : rien trouvé",
@@ -2124,6 +2126,7 @@
  "fertig": "terminé",
  "ffmpeg nicht gefunden.": "ffmpeg introuvable.",
  "ffmpeg wurde nicht gefunden. Bitte ffmpeg installieren.": "ffmpeg est introuvable. Veuillez installer ffmpeg.",
+ "findet Gesichter im Bild für den Material-Index (braucht ONNX Runtime)": "trouve les visages dans l’image pour l’index des rushes (nécessite ONNX Runtime)",
  "findet die Stellen mit Sprache, damit Wortzeiten nicht in Pausen rutschen (gehört zu Whisper)": "repère où il y a de la parole pour que les minutages des mots ne tombent pas dans les pauses (fait partie de Whisper)",
  "gelöscht: %1": "supprimés : %1",
  "gespeichert – zum Ändern neu eingeben": "enregistrée – saisis-en une nouvelle pour la changer",
@@ -2151,7 +2154,7 @@
  "optional": "facultatif",
  "prüft eine Datei": "examine un fichier",
  "prüft vor dem Export": "vérifie avant l’export",
- "rechnet kleine KI-Modelle offline auf dem Prozessor (für Ton-Ereignisse)": "exécute de petits modèles d’IA hors ligne sur le processeur (pour les événements sonores)",
+ "rechnet kleine KI-Modelle offline auf dem Prozessor (für Gesichter und Ton-Ereignisse)": "exécute de petits modèles d’IA hors ligne sur le processeur (pour les visages et les événements sonores)",
  "rendert": "fait le rendu",
  "ruhig": "calme",
  "scharf": "net",
@@ -2233,6 +2236,5 @@
  "„Neuer Chat“ fängt frisch an.": "« Nouvelle conversation » repart de zéro.",
  "„Neutral“ ist ein neues Projekt wie immer: nichts stumm, nichts umbenannt, das Format kommt vom ersten Clip. Die gewählte Vorlage gilt auch für das Projekt, mit dem schneidi startet.": "« Neutre » est un nouveau projet comme toujours : rien de muet, rien de renommé, le format vient du premier clip. Le modèle choisi vaut aussi pour le projet avec lequel schneidi démarre.",
  "◀ Verfolgen": "◀ Suivre",
- "♪ Audio": "♪ Audio",
- "Im Klangpaket fehlt die Lizenzdatei (LICENSE): nicht installiert.": "Le pack de sons n’a pas de fichier de licence (LICENSE) : non installé."
+ "♪ Audio": "♪ Audio"
 }

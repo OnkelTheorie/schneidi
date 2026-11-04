@@ -830,6 +830,7 @@
  "Geschwindigkeit ändern": "Change clip speed",
  "Geschwindigkeitsrampe als erste Geschwindigkeit des Clips geschrieben": "speed ramp written as the clip's first speed",
  "Gesicht wahrscheinlich": "face likely",
+ "Gesichtserkennung (YuNet)": "Face detection (YuNet)",
  "Gespeichert: %1.": "Stored: %1.",
  "Gesperrte Spuren lassen sich nicht löschen": "Locked tracks cannot be deleted",
  "Gesprochenen Text der Tonclips zeigen; Wörter löschen schneidet die Timeline": "Show the spoken text of the audio clips; deleting words cuts the timeline",
@@ -903,6 +904,7 @@
  "Höhe": "Height",
  "Im Archiv fehlt %1.": "%1 is missing in the archive.",
  "Im Dateimanager zeigen": "Show in File Manager",
+ "Im Klangpaket fehlt die Lizenzdatei (LICENSE): nicht installiert.": "The sound pack has no licence file (LICENSE): not installed.",
  "Im Material suchen…": "Search footage…",
  "Im Material: %1 Treffer": "In footage: %1 hits",
  "Im Material: nichts gefunden": "In footage: nothing found",
@@ -2124,6 +2126,7 @@
  "fertig": "done",
  "ffmpeg nicht gefunden.": "ffmpeg not found.",
  "ffmpeg wurde nicht gefunden. Bitte ffmpeg installieren.": "ffmpeg was not found. Please install ffmpeg.",
+ "findet Gesichter im Bild für den Material-Index (braucht ONNX Runtime)": "finds faces in the picture for the footage index (needs ONNX Runtime)",
  "findet die Stellen mit Sprache, damit Wortzeiten nicht in Pausen rutschen (gehört zu Whisper)": "finds where speech is, so word times do not slip into pauses (part of Whisper)",
  "gelöscht: %1": "deleted: %1",
  "gespeichert – zum Ändern neu eingeben": "stored – type a new one to change it",
@@ -2151,7 +2154,7 @@
  "optional": "optional",
  "prüft eine Datei": "checks a file",
  "prüft vor dem Export": "checks before export",
- "rechnet kleine KI-Modelle offline auf dem Prozessor (für Ton-Ereignisse)": "runs small AI models offline on the processor (for sound events)",
+ "rechnet kleine KI-Modelle offline auf dem Prozessor (für Gesichter und Ton-Ereignisse)": "runs small AI models offline on the processor (for faces and sound events)",
  "rendert": "renders",
  "ruhig": "calm",
  "scharf": "sharp",
@@ -2233,6 +2236,5 @@
  "„Neuer Chat“ fängt frisch an.": "“New Chat” starts afresh.",
  "„Neutral“ ist ein neues Projekt wie immer: nichts stumm, nichts umbenannt, das Format kommt vom ersten Clip. Die gewählte Vorlage gilt auch für das Projekt, mit dem schneidi startet.": "“Neutral” is a new project as always: nothing muted, nothing renamed, the format comes from the first clip. The chosen template also applies to the project schneidi starts with.",
  "◀ Verfolgen": "◀ Track",
- "♪ Audio": "♪ Audio",
- "Im Klangpaket fehlt die Lizenzdatei (LICENSE): nicht installiert.": "The sound pack has no licence file (LICENSE): not installed."
+ "♪ Audio": "♪ Audio"
 }

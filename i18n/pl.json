@@ -830,6 +830,7 @@
  "Geschwindigkeit ändern": "Zmień prędkość",
  "Geschwindigkeitsrampe als erste Geschwindigkeit des Clips geschrieben": "rampę prędkości zapisano jako pierwszą prędkość klipu",
  "Gesicht wahrscheinlich": "prawdopodobnie twarz",
+ "Gesichtserkennung (YuNet)": "Wykrywanie twarzy (YuNet)",
  "Gespeichert: %1.": "Zapisano: %1.",
  "Gesperrte Spuren lassen sich nicht löschen": "Zablokowanych ścieżek nie można usunąć",
  "Gesprochenen Text der Tonclips zeigen; Wörter löschen schneidet die Timeline": "Pokaż wypowiadany tekst klipów audio; usuwanie słów tnie oś czasu",
@@ -903,6 +904,7 @@
  "Höhe": "Wysokość",
  "Im Archiv fehlt %1.": "W archiwum brakuje %1.",
  "Im Dateimanager zeigen": "Pokaż w menedżerze plików",
+ "Im Klangpaket fehlt die Lizenzdatei (LICENSE): nicht installiert.": "W pakiecie dźwięków brakuje pliku licencji (LICENSE): nie zainstalowano.",
  "Im Material suchen…": "Szukaj w materiale…",
  "Im Material: %1 Treffer": "W materiale: %1 trafień",
  "Im Material: nichts gefunden": "W materiale: nic nie znaleziono",
@@ -2124,6 +2126,7 @@
  "fertig": "gotowe",
  "ffmpeg nicht gefunden.": "Nie znaleziono ffmpeg.",
  "ffmpeg wurde nicht gefunden. Bitte ffmpeg installieren.": "Nie znaleziono ffmpeg. Zainstaluj ffmpeg.",
+ "findet Gesichter im Bild für den Material-Index (braucht ONNX Runtime)": "znajduje twarze w obrazie dla indeksu materiału (wymaga ONNX Runtime)",
  "findet die Stellen mit Sprache, damit Wortzeiten nicht in Pausen rutschen (gehört zu Whisper)": "znajduje fragmenty z mową, aby czasy słów nie wpadały w pauzy (część Whisper)",
  "gelöscht: %1": "usunięte: %1",
  "gespeichert – zum Ändern neu eingeben": "zapisany – wpisz nowy, aby zmienić",
@@ -2151,7 +2154,7 @@
  "optional": "opcjonalnie",
  "prüft eine Datei": "sprawdza plik",
  "prüft vor dem Export": "sprawdza przed eksportem",
- "rechnet kleine KI-Modelle offline auf dem Prozessor (für Ton-Ereignisse)": "uruchamia małe modele SI offline na procesorze (do zdarzeń dźwiękowych)",
+ "rechnet kleine KI-Modelle offline auf dem Prozessor (für Gesichter und Ton-Ereignisse)": "uruchamia małe modele SI offline na procesorze (do twarzy i zdarzeń dźwiękowych)",
  "rendert": "renderuje",
  "ruhig": "spokojny",
  "scharf": "ostry",
@@ -2233,6 +2236,5 @@
  "„Neuer Chat“ fängt frisch an.": "„Nowy czat” zaczyna od nowa.",
  "„Neutral“ ist ein neues Projekt wie immer: nichts stumm, nichts umbenannt, das Format kommt vom ersten Clip. Die gewählte Vorlage gilt auch für das Projekt, mit dem schneidi startet.": "„Neutralny” to nowy projekt jak zawsze: nic wyciszonego, nic przemianowanego, format pochodzi z pierwszego klipu. Wybrany szablon dotyczy też projektu, z którym startuje schneidi.",
  "◀ Verfolgen": "◀ Śledź",
- "♪ Audio": "♪ Dźwięk",
- "Im Klangpaket fehlt die Lizenzdatei (LICENSE): nicht installiert.": "W pakiecie dźwięków brakuje pliku licencji (LICENSE): nie zainstalowano."
+ "♪ Audio": "♪ Dźwięk"
 }

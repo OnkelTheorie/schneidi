@@ -830,6 +830,7 @@
  "Geschwindigkeit ändern": "Изменить скорость",
  "Geschwindigkeitsrampe als erste Geschwindigkeit des Clips geschrieben": "изменение скорости записано как первая скорость клипа",
  "Gesicht wahrscheinlich": "вероятно лицо",
+ "Gesichtserkennung (YuNet)": "Распознавание лиц (YuNet)",
  "Gespeichert: %1.": "Сохранён: %1.",
  "Gesperrte Spuren lassen sich nicht löschen": "Заблокированные дорожки нельзя удалить",
  "Gesprochenen Text der Tonclips zeigen; Wörter löschen schneidet die Timeline": "Показать произнесённый текст аудиоклипов; удаление слов режет монтажный стол",
@@ -903,6 +904,7 @@
  "Höhe": "Высота",
  "Im Archiv fehlt %1.": "В архиве отсутствует %1.",
  "Im Dateimanager zeigen": "Показать в файловом менеджере",
+ "Im Klangpaket fehlt die Lizenzdatei (LICENSE): nicht installiert.": "В пакете звуков нет файла лицензии (LICENSE): не установлен.",
  "Im Material suchen…": "Поиск по материалу…",
  "Im Material: %1 Treffer": "В материале: %1 совпадений",
  "Im Material: nichts gefunden": "В материале: ничего не найдено",
@@ -2124,6 +2126,7 @@
  "fertig": "готово",
  "ffmpeg nicht gefunden.": "ffmpeg не найден.",
  "ffmpeg wurde nicht gefunden. Bitte ffmpeg installieren.": "ffmpeg не найден. Установите ffmpeg.",
+ "findet Gesichter im Bild für den Material-Index (braucht ONNX Runtime)": "находит лица в кадре для индекса материала (нужен ONNX Runtime)",
  "findet die Stellen mit Sprache, damit Wortzeiten nicht in Pausen rutschen (gehört zu Whisper)": "находит фрагменты с речью, чтобы время слов не попадало в паузы (часть Whisper)",
  "gelöscht: %1": "удалено: %1",
  "gespeichert – zum Ändern neu eingeben": "сохранён – введи новый, чтобы изменить",
@@ -2151,7 +2154,7 @@
  "optional": "необязательно",
  "prüft eine Datei": "проверяет файл",
  "prüft vor dem Export": "проверяет перед экспортом",
- "rechnet kleine KI-Modelle offline auf dem Prozessor (für Ton-Ereignisse)": "запускает небольшие модели ИИ офлайн на процессоре (для звуковых событий)",
+ "rechnet kleine KI-Modelle offline auf dem Prozessor (für Gesichter und Ton-Ereignisse)": "запускает небольшие модели ИИ офлайн на процессоре (для лиц и звуковых событий)",
  "rendert": "рендерит",
  "ruhig": "спокойный",
  "scharf": "резкий",
@@ -2233,6 +2236,5 @@
  "„Neuer Chat“ fängt frisch an.": "«Новый чат» начинает заново.",
  "„Neutral“ ist ein neues Projekt wie immer: nichts stumm, nichts umbenannt, das Format kommt vom ersten Clip. Die gewählte Vorlage gilt auch für das Projekt, mit dem schneidi startet.": "«Нейтральный» — новый проект как всегда: ничего не заглушено и не переименовано, формат берётся от первого клипа. Выбранный шаблон действует и для проекта, с которым запускается schneidi.",
  "◀ Verfolgen": "◀ Отслеж.",
- "♪ Audio": "♪ Аудио",
- "Im Klangpaket fehlt die Lizenzdatei (LICENSE): nicht installiert.": "В пакете звуков нет файла лицензии (LICENSE): не установлен."
+ "♪ Audio": "♪ Аудио"
 }
