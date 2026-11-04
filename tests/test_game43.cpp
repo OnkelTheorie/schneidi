@@ -576,11 +576,15 @@ void testLayout(const QString& stretched)
         QCoreApplication::processEvents();
         if (auto* shape = insp.findChild<QComboBox*>("PictureAspect"); CHECK(shape)) {
             CHECK_EQ(shape->currentIndex(), 2); // 4:3 with blurred sides
-            // Every entry fits the box (arrow and frame take about 30 px)
+            // Every entry fits the box: the layout gives it at least its size hint, which covers the longest entry
+            // with the style's arrow and frame (a fixed allowance for them failed on fonts and styles where they are
+            // narrower)
+            Check::report(shape->width() >= shape->sizeHint().width(), "picture shape entry cut off", __FILE__, __LINE__,
+                          QString("%1: %2 < %3").arg(lang).arg(shape->width()).arg(shape->sizeHint().width()));
             for (int k = 0; k < shape->count(); ++k)
-                Check::report(shape->fontMetrics().horizontalAdvance(shape->itemText(k)) + 30 <= shape->width(),
-                              "picture shape entry cut off", __FILE__, __LINE__,
-                              QString("%1: %2 (%3 px box)").arg(lang, shape->itemText(k)).arg(shape->width()));
+                Check::report(shape->fontMetrics().horizontalAdvance(shape->itemText(k)) < shape->sizeHint().width(),
+                              "picture shape entry wider than the box's size hint", __FILE__, __LINE__,
+                              QString("%1: %2").arg(lang, shape->itemText(k)));
             if (!shot.isEmpty()) {
                 QWidget* row = shape->parentWidget();
                 row->grab().save(QString("%1/inspector-shape-%2.png").arg(shot, lang));

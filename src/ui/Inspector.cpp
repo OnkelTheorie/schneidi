@@ -83,6 +83,29 @@ Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
     tabLay->addStretch(1);
     connect(m_tabs, &QButtonGroup::idClicked, m_pages, &QStackedWidget::setCurrentIndex);
 
+    // ---- Overall layout ----
+    // Before the pages are built: they then grow inside the panel's own tree. Hung in after the last page, the whole
+    // finished tree changed parents in one go (~60-80 ms of the start in 0.16, the window showed ~50 ms later than 0.15)
+    m_clipName = new QLabel;
+    m_clipName->setAlignment(Qt::AlignCenter);
+    m_clipName->setContentsMargins(8, 4, 8, 4);
+    m_clipName->setStyleSheet(QString("color: %1;").arg(Theme::textDim.name()));
+
+    m_content = new QWidget;
+    auto* cl = new QVBoxLayout(m_content);
+    cl->setContentsMargins(0, 0, 0, 0);
+    cl->setSpacing(0);
+    cl->addWidget(tabBar);
+    cl->addWidget(m_clipName);
+    cl->addWidget(m_pages, 1);
+
+    auto* lay = new QVBoxLayout(this);
+    lay->setContentsMargins(0, 0, 0, 0);
+    lay->setSpacing(0);
+    lay->addWidget(title);
+    lay->addWidget(m_content, 1);
+    lay->addWidget(m_empty, 1);
+
     auto makePage = [this]() {
         auto* page = new QWidget;
         auto* lay = new QVBoxLayout(page);
@@ -210,7 +233,8 @@ Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
     auto* shapeBox = new QComboBox;
     shapeBox->setObjectName("PictureAspect");
     shapeBox->setFocusPolicy(Qt::NoFocus);
-    shapeBox->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+    // As wide as its longest entry on any font (a fixed length cut entries off with wider fonts, Ubuntu)
+    shapeBox->setSizeAdjustPolicy(QComboBox::AdjustToContents);
     shapeBox->addItem(T("Wie die Datei"), 0.0);
     shapeBox->addItem(T("Gestrecktes 4:3 entzerren"), 4.0 / 3.0);
     // The same with blurred sides instead of black ones in a wider frame (Transform › Background); the plain entry
@@ -423,27 +447,6 @@ Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
     m_audioFxLay = audioLay;
     m_audioFxIndex = audioLay->count(); // Audio FX sections below (arrangeEffectSections)
     audioLay->addStretch(1);
-
-    // ---- Overall layout ----
-    m_clipName = new QLabel;
-    m_clipName->setAlignment(Qt::AlignCenter);
-    m_clipName->setContentsMargins(8, 4, 8, 4);
-    m_clipName->setStyleSheet(QString("color: %1;").arg(Theme::textDim.name()));
-
-    m_content = new QWidget;
-    auto* cl = new QVBoxLayout(m_content);
-    cl->setContentsMargins(0, 0, 0, 0);
-    cl->setSpacing(0);
-    cl->addWidget(tabBar);
-    cl->addWidget(m_clipName);
-    cl->addWidget(m_pages, 1);
-
-    auto* lay = new QVBoxLayout(this);
-    lay->setContentsMargins(0, 0, 0, 0);
-    lay->setSpacing(0);
-    lay->addWidget(title);
-    lay->addWidget(m_content, 1);
-    lay->addWidget(m_empty, 1);
 
     m_tabs->button(0)->setChecked(true);
     WheelGuard::install(this); // scrolling the pages over sliders and boxes must not change their values
