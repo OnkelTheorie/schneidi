@@ -99,6 +99,8 @@ QString notesDir();
 // The cache key of a file's entry: path, size, modification time, kVersion and how its audio events are made
 // (AudioEvents::way(): the heuristics or YAMNet with its model file)
 QString cacheKey(const QString& file, const QString& audioWay);
+// For tests: how often the first MB of a file was read for its notes by content
+int contentReadCount();
 // For tests: forget what is cached in memory
 void clearMemoryCache();
 // For tests (until engine/AudioEvents measures for real): where the events of a file come from (empty = AudioEvents)

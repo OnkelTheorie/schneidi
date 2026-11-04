@@ -20,9 +20,11 @@ extern "C" {
 #include <QJsonObject>
 #include <QMutex>
 #include <QSaveFile>
+#include <QSet>
 #include <QStandardPaths>
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdlib>
 #include <memory>
@@ -419,8 +421,12 @@ void applyNotes(Entry& e)
 
 QString notesFile(const QString& file) { return notesDir() + '/' + hashOf(PathKey::of(file)) + ".json"; }
 
-// The notes by the file's content (name, size, the first MB): found when its path has none - a moved project folder,
-// another drive letter. Remembered per path, size and time (reads 1 MB once per file and process).
+// The notes by the file's content: found when its path has none - a moved project folder, another drive letter.
+// File name "c-<name+size>-<name+size+first MB>.json": the first part needs only the file's name and size, so the first
+// MB is read only for a file that has a stored copy of its name and size (one per file and process).
+std::atomic<int> g_contentReads{0};
+QString contentPrefix(const QFileInfo& fi) { return "c-" + hashOf(QString("%1|%2").arg(fi.fileName()).arg(fi.size())).left(16); }
+
 QString contentNotesFile(const QString& file)
 {
     const QFileInfo fi(file);
@@ -433,11 +439,40 @@ QString contentNotesFile(const QString& file)
     }
     QFile f(file);
     if (!f.open(QIODevice::ReadOnly)) return {};
+    ++g_contentReads;
     const QByteArray head = QCryptographicHash::hash(f.read(1 << 20), QCryptographicHash::Sha1).toHex();
-    const QString path = notesDir() + "/c-" + hashOf(QString("%1|%2|%3").arg(fi.fileName()).arg(fi.size()).arg(QString::fromLatin1(head))) + ".json";
+    const QString path = notesDir() + '/' + contentPrefix(fi) + '-'
+                         + hashOf(QString("%1|%2|%3").arg(fi.fileName()).arg(fi.size()).arg(QString::fromLatin1(head))) + ".json";
     QMutexLocker lock(&mutex);
     known.insert(key, path);
     return path;
+}
+
+// The name+size parts of the stored content copies, listed once and again when the folder changed (annotate here or
+// in another process) - a Media Pool search asks for every file on every key press
+QMutex g_contentMutex;
+QSet<QString> g_contentPrefixes;
+QDateTime g_contentListed;
+bool g_contentValid = false;
+
+bool hasContentCopy(const QFileInfo& fi)
+{
+    const QDateTime changed = QFileInfo(notesDir()).lastModified();
+    QMutexLocker lock(&g_contentMutex);
+    if (!g_contentValid || changed != g_contentListed) {
+        g_contentPrefixes.clear();
+        for (const QString& name : QDir(notesDir()).entryList({"c-*.json"}, QDir::Files))
+            g_contentPrefixes.insert(name.section('-', 0, 1));
+        g_contentListed = changed;
+        g_contentValid = true;
+    }
+    return g_contentPrefixes.contains(contentPrefix(fi));
+}
+
+void contentChanged()
+{
+    QMutexLocker lock(&g_contentMutex);
+    g_contentValid = false;
 }
 
 } // namespace
@@ -452,6 +487,8 @@ QString cacheKey(const QString& file, const QString& audioWay)
                       .arg(kVersion)
                       .arg(audioWay));
 }
+
+int contentReadCount() { return g_contentReads.load(); }
 
 QString cacheDir() { return QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + "/index"; }
 QString notesDir() { return QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/index"; }
@@ -540,8 +577,9 @@ QVector<Note> notes(const QString& file)
 {
     QFile f(notesFile(file));
     if (!f.open(QIODevice::ReadOnly)) {
-        // No notes under this path: the same file elsewhere (only looked for while there are any such notes at all)
-        if (QDir(notesDir()).entryList({"c-*.json"}, QDir::Files).isEmpty()) return {};
+        // No notes under this path: the same file elsewhere (read only when a copy of its name and size exists)
+        const QFileInfo fi(file);
+        if (!fi.isFile() || !hasContentCopy(fi)) return {};
         f.setFileName(contentNotesFile(file));
         if (f.fileName().isEmpty() || !f.open(QIODevice::ReadOnly)) return {};
     }
@@ -597,9 +635,11 @@ bool annotate(Entry& e, int shot, const std::optional<QString>& desc, const std:
         QSaveFile out(path);
         if (!out.open(QIODevice::WriteOnly) || out.write(json) < 0 || !out.commit()) {
             if (error) *error = "cannot write " + QDir::toNativeSeparators(path);
+            contentChanged();
             return false;
         }
     }
+    contentChanged();
     return true;
 }
 

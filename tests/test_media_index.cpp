@@ -227,7 +227,16 @@ int main(int argc, char** argv)
         const QString moved = dir.filePath("moved/") + QFileInfo(media).fileName();
         QDir().mkpath(QFileInfo(moved).absolutePath());
         CHECK(QFile::copy(media, moved));
+        const int reads = MediaIndex::contentReadCount();
         CHECK_EQ(MediaIndex::notes(moved).size(), 2);
+        CHECK_EQ(MediaIndex::contentReadCount(), reads + 1);
+        CHECK_EQ(MediaIndex::notes(moved).size(), 2); // remembered: not read again
+        CHECK_EQ(MediaIndex::contentReadCount(), reads + 1);
+        // A file without a stored copy of its name and size is not read at all (a search asks for every pool file)
+        const QString stranger = dir.filePath("moved/stranger.mp4");
+        CHECK(QFile::copy(media, stranger));
+        CHECK(MediaIndex::notes(stranger).isEmpty());
+        CHECK_EQ(MediaIndex::contentReadCount(), reads + 1);
         const QJsonArray found = run("index", {{"files", QJsonArray{moved}}, {"query", "ruhige Totale"}})["hits"].toArray();
         CHECK(!found.isEmpty() && found[0].toObject()["shot"].toInt() == 1);
         // Same name, other content: not the same file
