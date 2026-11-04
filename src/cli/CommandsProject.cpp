@@ -574,8 +574,17 @@ QJsonObject cmdEdit(const QJsonObject& a, Context&)
     const int sequence = s.project.currentSequence();
     QJsonValue opsValue = a["ops"];
     if (opsValue.isObject()) opsValue = QJsonArray{opsValue};
-    const QJsonArray ops = opsValue.toArray();
+    QJsonArray ops = opsValue.toArray();
     if (ops.isEmpty()) fail("BAD_ARGUMENT", "'ops' must be a non-empty list of operations");
+    // A plan keeps where the app's playhead is now: `speak` without `at` lands there, not where the playhead is when
+    // the user runs the plan (the playhead is not part of the plan's base)
+    if (plan && s.app.contains("playhead"))
+        for (int i = 0; i < ops.size(); ++i) {
+            QJsonObject op = ops[i].toObject();
+            if (op.value("op").toString() != "speak" || op.contains("at")) continue;
+            op["at"] = s.app.value("playhead").toInt(0);
+            ops[i] = op;
+        }
     QJsonArray steps;
     QJsonObject o = applyEdit(s, ops, a, dry, plan ? &steps : nullptr);
     if (!plan) return o;
