@@ -61,6 +61,12 @@ mkdir -p "$OUT"
 cp "$BUILD/schneidi.exe" "$BUILD/schneidi-cli.exe" "$OUT/"
 strip "$OUT/schneidi.exe" "$OUT/schneidi-cli.exe"
 cp "$FFMPEG_BIN/ffmpeg.exe" "$FFMPEG_BIN/ffprobe.exe" "$OUT/"
+# Licence texts (MIT/BSD ask for their notice in every copy: earshot's recipe ports, RNNoise; the CC0 sounds' files)
+mkdir -p "$OUT/licenses"
+cp "$ROOT/LICENSE" "$ROOT/THIRD_PARTY.md" "$OUT/licenses/"
+cp "$ROOT/third_party/earshot/LICENSE" "$OUT/licenses/earshot-LICENSE.txt"
+cp "$ROOT/third_party/rnnoise/COPYING" "$OUT/licenses/rnnoise-COPYING.txt"
+cp "$ROOT"/assets/sfx/cc0/LICENSE-*.txt "$ROOT/assets/sfx/cc0/SOURCES.md" "$OUT/licenses/"
 
 
 # --- Qt (Plugins: platforms, styles, imageformats, …) ---
