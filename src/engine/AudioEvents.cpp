@@ -1087,11 +1087,15 @@ Result analyzeFile(const QString& path, int stream, const Options& options)
             return result;
         }
         const int n = int(std::min<int64_t>(kChunk, end - pos));
-        reader->read(pos, n, out);
+        if (!reader->read(pos, n, out)) result.incomplete = true;
         ex.add(buf.data(), n);
         if (model) all.insert(all.end(), buf.begin(), buf.begin() + n);
     }
     ex.finish();
+    // A read error, or the sound stopped with an error well before the end the file announces (cut off: a copy that
+    // broke, a recording still being written): not the file's sound
+    const Audio::Reader::Stats& rs = reader->stats();
+    if (rs.readErrors > 0 || (rs.decodeErrors > 0 && rs.endedAt >= 0 && rs.endedAt < end - kRate)) result.incomplete = true;
     result.duration = double(end) / kRate;
     const QVector<Event> heur = rules(ex.frames);
     if (model) {
@@ -1122,7 +1126,7 @@ Result analyzeFile(const QString& path, int stream, const Options& options)
         result.by = "heuristic";
     }
     if (options.progress) options.progress(1.0);
-    if (options.useCache && (result.by == "yamnet") == model) {
+    if (options.useCache && (result.by == "yamnet") == model && !result.incomplete) {
         saveDisk(key, result);
         QMutexLocker lock(&g_mutex);
         memory().insert(key, result);

@@ -501,6 +501,7 @@ std::optional<Entry> build(const QString& file, const Options& options, QString*
     };
     if (options.progress && !options.progress(0.9)) return cancelled();
     QVector<AudioEvents::Event> events;
+    bool incomplete = false;
     if (source) {
         events = source(e->file);
     } else {
@@ -509,11 +510,12 @@ std::optional<Entry> build(const QString& file, const Options& options, QString*
         const AudioEvents::Result r = AudioEvents::analyzeFile(e->file, 0, ao);
         if (options.progress && r.error.contains("cancel", Qt::CaseInsensitive)) return cancelled();
         events = r.events;
+        incomplete = r.incomplete;
     }
     distribute(*e, events);
-    const QString key = keyOf(fi);
-    saveJson(cacheDir() + '/' + key + ".json", toJson(*e, events));
-    {
+    if (!incomplete) { // a read error is not the file's sound: measured again next time
+        const QString key = keyOf(fi);
+        saveJson(cacheDir() + '/' + key + ".json", toJson(*e, events));
         QMutexLocker lock(&g_mutex);
         memory().insert(key, *e);
     }

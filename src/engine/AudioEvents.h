@@ -59,6 +59,8 @@ struct Result {
     QString by;            // the way that was used: "heuristic" | "yamnet"
     QString error;         // why there are no events (no sound, YAMNet missing, canceled); empty = ok
     bool cached = false;   // came from the cache
+    bool incomplete = false; // the sound could not be read to its end (a read error: a cut-off file, a network share
+                             // gone): the events of what was read, not cached (the next call measures again)
     double duration = 0;   // seconds of sound analysed
 };
 

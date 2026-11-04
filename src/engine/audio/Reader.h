@@ -55,6 +55,8 @@ public:
         int outliers = 0;      // single packets far ahead of the stream, placed where the stream was
         int overlaps = 0;      // overlapping packets trimmed
         int decodeErrors = 0;
+        int readErrors = 0;    // reading the file failed (not its end: a network share gone, a damaged file)
+        int64_t endedAt = -1;  // where the decoded sound ended (output samples; -1 = not reached yet)
         int reopens = 0;       // jumps to the start that needed a fresh demuxer
     };
     const Stats& stats() const;
