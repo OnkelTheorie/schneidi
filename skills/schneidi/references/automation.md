@@ -43,7 +43,13 @@ it finds the moments, reframes, captions, checks and renders. The steps by hand,
    `edit` answer).
 3. `check` the project (`for` `shorts`, `reels` or `tiktok` for a short), `render` with a new name per clip
    (preset `"shorts"`, `"reels"` or `"tiktok"`).
-4. Look at the result (`check` on the rendered file) before anything is uploaded; report what you made.
+4. Look at the result (`check` on the rendered file) before anything is uploaded; report what you made. With music
+   or kills a `render` with `review` `"sheet"` before the real render shows hits off the beat and late hooks
+   without a person looking ([story.md](story.md)).
+
+Unattended runs add nothing nobody asked for: no effect sounds (`short` keeps `sfx` `off` unless the user set it), no
+`hook_variants` (the user picks one), no `broll` (a plan for the user). What the user wants every time belongs in the
+script or the request, not in your defaults.
 
 Keep the project small: one project for the watch folder, one timeline (or project) per output. Several files that
 belong together (one match in parts) can go into one cut - wait until the last one is no longer `pending`.
