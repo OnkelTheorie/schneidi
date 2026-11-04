@@ -65,6 +65,9 @@ struct Options {
     // Story: the first strong moment (a loud hit, the first word, a text) later than this = late hook (vertical
     // videos and videos for a platform: hookLateShortS, others hookLateS)
     double hookLateShortS = 2, hookLateS = 5;
+    // The range is the whole video (the Deliver page's In/Out export): the opening checks (story_hook_late,
+    // story_no_hook) start at its `from`, not only at frame 0
+    bool rangeIsVideo = false;
 };
 
 // Picture, media and subtitles of the range [from, to) without decoding: too long for the platform, offline media, effects this version does
@@ -202,6 +205,10 @@ QVector<int> strongMoments(const Timeline& tl, int from, int to, const ProjectFo
 // a platform: story_no_cta (info) when no text or word comes near the end.
 QVector<Issue> story(const Timeline& tl, int from, int to, const ProjectFormat& f, QVector<int> strong,
                      bool strongKnown, const QVector<int>& words, const Options& o = {});
+
+// Jump cuts in [from, to) (core/JumpCut): two clips of one take that touch and skip a part of it (at least 0.3 s)
+// with the same framing on a visible video track - jump_cut (info), one per cut; at most 20, then one summary
+QVector<Issue> jumpCuts(const Timeline& tl, int from, int to, const ProjectFormat& f);
 
 // ---- Retention curve (YouTube Studio / TikTok export): where viewers leave
 

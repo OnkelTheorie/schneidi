@@ -235,6 +235,10 @@ void testJlCutOp(const QString& dir)
     if (!CHECK(far.contains("20 frames") && far.contains("up to 0 frames"))) std::printf("       %s\n", qPrintable(far));
     CHECK(errorOf({op({{"op", "jl_cut"}, {"clip", 1}, {"audio", 5}})}).startsWith("FAILED")); // nothing before clip 1
     CHECK(errorOf({op({{"op", "jl_cut"}, {"clip", 2}})}).startsWith("BAD_ARGUMENT"));
+    // A number is frames like everywhere: a fraction (meant as seconds) says how to write them, a huge one is refused
+    // (it was rounded to 1 frame / cut to int: a silent wrong J/L cut)
+    CHECK(errorOf({op({{"op", "jl_cut"}, {"clip", 2}, {"audio", -0.5}})}).contains("\"0.5s\""));
+    CHECK(errorOf({op({{"op", "jl_cut"}, {"clip", 2}, {"audio", 4294967296.0}})}).startsWith("BAD_ARGUMENT"));
     CHECK(errorOf({op({{"op", "jl_cut"}, {"clip", 9}, {"audio", 5}})}).startsWith("BAD_ARGUMENT")); // music: no picture
     CHECK_EQ(clipOf(*loaded(), 5).start, 95); // errors changed nothing
 }

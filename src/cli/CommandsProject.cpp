@@ -346,7 +346,8 @@ QString planDir(const QString& projectPath)
 }
 
 // The project a plan is made on, as a fingerprint: a plan runs only on exactly that state. Not part of it: what does
-// not change what the ops do (playhead, render queue, which timeline is open - the plan names its timeline).
+// not change what the ops do (playhead, render queue, which timeline is open - the plan names its timeline, where
+// the project file is).
 // Inside the app the app's own project (a planning session there edits a copy of it).
 QByteArray planBase(const Session& s, const QString& path)
 {
@@ -355,7 +356,10 @@ QByteArray planBase(const Session& s, const QString& path)
     d.renderQueue.clear();
     d.currentSequence = -1; // every timeline in "sequences"
     d.timeline = emptyTimeline();
-    return QCryptographicHash::hash(ProjectFile::toJson(d, path), QCryptographicHash::Sha256).toHex();
+    // Not the path either: a plan made while the project was never saved runs once it is saved under a name
+    // (media paths are absolute in the file; relative ones against a fixed folder)
+    Q_UNUSED(path);
+    return QCryptographicHash::hash(ProjectFile::toJson(d, QDir::rootPath() + "plan.schneidi"), QCryptographicHash::Sha256).toHex();
 }
 
 // Removes plans older than kPlanHours; returns the ids of those left
@@ -381,6 +385,21 @@ QString newPlanId(const QString& dir)
     while (QFileInfo::exists(QDir(dir).filePath(QString("p%1.json").arg(next)))) ++next;
     if (counter.open(QIODevice::WriteOnly | QIODevice::Truncate)) counter.write(QByteArray::number(next + 1));
     return QString("p%1").arg(next);
+}
+
+// The clip ids an op names: clip, clips, and {clip:id} inside it (a relative time)
+QVector<int> clipRefs(const QJsonValue& v, const QString& key = {})
+{
+    QVector<int> out;
+    if (v.isObject()) {
+        const QJsonObject o = v.toObject();
+        for (auto it = o.begin(); it != o.end(); ++it) out += clipRefs(it.value(), it.key());
+    } else if (v.isArray()) {
+        for (const QJsonValue& x : v.toArray()) out += clipRefs(x, key);
+    } else if (v.isDouble() && (key == "clip" || key == "clips")) {
+        out << v.toInt();
+    }
+    return out;
 }
 
 // One line for a step: what it changes in numbers ("keep: 2 added, 1 changed")
@@ -450,10 +469,18 @@ QJsonObject runPlan(const QJsonObject& a)
     if (!discard && !a.contains("run"))
         fail("BAD_ARGUMENT", "plan_id needs run:[step numbers] (or \"all\") or discard:true");
     if (discard && a.contains("run")) fail("BAD_ARGUMENT", "run or discard, not both");
-    Session s(a["project"].toString(), discard ? Session::Access::Read : Session::Access::Write);
-    const QString dir = planDir(s.path);
-    const QStringList ids = prunePlans(dir);
+    // dry_run: what running the steps would change, nothing saved, the plan stays (a test run changed the project)
+    const bool dry = a["dry_run"].toBool();
+    Session s(a["project"].toString(), discard || dry ? Session::Access::Read : Session::Access::Write);
+    QString dir = planDir(s.path);
+    QStringList ids = prunePlans(dir);
     static const QRegularExpression valid("^p[1-9][0-9]{0,8}$");
+    // Made before the project was first saved: in the folder of unsaved projects (its base tells whether it fits)
+    if (!s.path.isEmpty() && valid.match(id).hasMatch() && !QFileInfo::exists(QDir(dir).filePath(id + ".json"))
+        && QFileInfo::exists(QDir(planDir({})).filePath(id + ".json"))) {
+        dir = planDir({});
+        ids = prunePlans(dir);
+    }
     const QString file = QDir(dir).filePath(id + ".json");
     QFile f(file);
     if (!valid.match(id).hasMatch() || !f.open(QIODevice::ReadOnly))
@@ -491,8 +518,29 @@ QJsonObject runPlan(const QJsonObject& a)
     std::sort(chosen.begin(), chosen.end()); // always in the plan's order
     QJsonArray ops;
     for (int n : chosen) ops << all[n - 1];
+    // A step that works on a clip a step left out makes: the clip does not exist then, or (ids are handed out in
+    // order) another one has its id - refused instead of changing the wrong clip
+    const QJsonArray adds = plan["adds"].toArray();
+    QHash<int, int> madeBy; // clip id -> the step that adds it
+    for (int n = 1; n <= adds.size(); ++n)
+        for (const QJsonValue& v : adds[n - 1].toArray()) madeBy.insert(v.toInt(), n);
+    for (int k = 0; k < chosen.size(); ++k)
+        for (int id : clipRefs(all[chosen[k] - 1].toObject()))
+            if (const int by = madeBy.value(id); by && !chosen.contains(by))
+                fail("BAD_ARGUMENT", QString("step %1 works on clip %2 that step %3 makes: run step %3 too (or not %1)")
+                                         .arg(chosen[k])
+                                         .arg(id)
+                                         .arg(by));
     if (const int seq = plan["timeline"].toInt(); s.project.sequence(seq)) s.selectTimeline(seq);
-    QJsonObject o = applyEdit(s, ops, a, false, nullptr, chosen);
+    QJsonObject o = applyEdit(s, ops, a, dry, nullptr, chosen);
+    if (dry) {
+        o["plan"] = QJsonObject{{"id", id}, {"dry_run", true}, {"would_run", QJsonArray::fromVariantList([&] {
+                                     QVariantList l;
+                                     for (int n : chosen) l << n;
+                                     return l;
+                                 }())}};
+        return o;
+    }
     QFile::remove(file); // done: the project is another one now
     if (o.contains("why")) { // by the plan's step numbers, not by the index among the steps run
         QJsonArray why;
@@ -537,8 +585,16 @@ QJsonObject cmdEdit(const QJsonObject& a, Context&)
     prunePlans(dir);
     const QString id = newPlanId(dir);
     const QDateTime now = QDateTime::currentDateTimeUtc();
-    const QJsonObject stored{{"id", id}, {"created", now.toString(Qt::ISODate)}, {"project", s.path},
-                             {"timeline", sequence}, {"base", QString::fromLatin1(base)}, {"ops", ops}};
+    QJsonArray adds; // per step: the ids of the clips it adds (runPlan: a step on a clip of a step left out)
+    for (const QJsonValue& st : steps) {
+        QJsonArray ids;
+        for (const QJsonValue& c : st["changes"]["added"].toArray())
+            if (c["id"].isDouble()) ids << c["id"];
+        adds << ids;
+    }
+    const QJsonObject stored{{"id", id},         {"created", now.toString(Qt::ISODate)}, {"project", s.path},
+                             {"timeline", sequence}, {"base", QString::fromLatin1(base)},  {"ops", ops},
+                             {"adds", adds}};
     QFile f(QDir(dir).filePath(id + ".json"));
     if (!f.open(QIODevice::WriteOnly) || f.write(QJsonDocument(stored).toJson(QJsonDocument::Compact)) < 0)
         fail("SAVE_FAILED", "cannot write the plan " + f.fileName());

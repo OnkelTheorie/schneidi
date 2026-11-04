@@ -727,7 +727,7 @@ void test(const QString& dir)
             CHECK_EQ(clips(w), clips0 + 1);
             CHECK_EQ(int(w.liveProject()->timeline().markers.size()), markers0 + 1);
             CHECK_EQ(undoIndex(w), undo0 + 1);
-            CHECK(w.liveProject()->undoStack()->undoText().contains("plan"));
+            CHECK(w.liveProject()->undoStack()->undoText().startsWith(T("KI: Plan %1").arg("").trimmed()));
             auto* state = card->findChild<QLabel*>("ai_plan_state");
             if (CHECK(state)) CHECK_EQ(state->text(), T("Ausgeführt: Schritte %1 (ein Rückgängig-Schritt).").arg("1, 3"));
             CHECK(run && run->isHidden());
@@ -745,6 +745,22 @@ void test(const QString& dir)
         const QList<QWidget*> cards = panel->findChildren<QWidget*>("ai_plan");
         if (CHECK_EQ(cards.size(), 2)) {
             const int clips1 = clips(w), undo1 = undoIndex(w);
+            // The app busy with another command: not discarded, the card stays and says so
+            w.setChatRunner([](const QString&, const QJsonObject&) {
+                return QJsonObject{{"ok", false}, {"error", QJsonObject{{"code", "APP_BUSY"}, {"message", "busy"}}}};
+            });
+            const int errorsBefore = count(chat, AiChat::Entry::Kind::Error);
+            if (auto* discard = cards.last()->findChild<QPushButton*>("ai_plan_discard"); CHECK(discard)) discard->click();
+            settle(50);
+            if (auto* state = cards.last()->findChild<QLabel*>("ai_plan_state"); CHECK(state))
+                CHECK(state->text() != T("Verworfen: nichts davon wurde ausgeführt."));
+            CHECK_EQ(count(chat, AiChat::Entry::Kind::Error), errorsBefore + 1);
+            // Run while busy: the same, in the user's language (it showed the English text of the tool)
+            if (auto* run = cards.last()->findChild<QPushButton*>("ai_plan_run"); CHECK(run)) run->click();
+            settle(50);
+            if (const AiChat::Entry* e = lastOf(chat, AiChat::Entry::Kind::Error); CHECK(e))
+                CHECK_EQ(e->text, T("Die App führt gerade einen anderen Befehl aus – bitte gleich noch einmal versuchen."));
+            w.setChatRunner([&server](const QString& command, const QJsonObject& args) { return server.runForChat(command, args); });
             if (auto* discard = cards.last()->findChild<QPushButton*>("ai_plan_discard"); CHECK(discard)) discard->click();
             settle(150);
             CHECK_EQ(clips(w), clips1);
@@ -772,6 +788,37 @@ void test(const QString& dir)
             CHECK_EQ(undoIndex(w), undo2);
             if (auto* state = all.last()->findChild<QLabel*>("ai_plan_state"); CHECK(state))
                 CHECK_EQ(state->text(), T("Nicht ausgeführt: das Projekt wurde seit dem Plan geändert. Bitte die KI, neu zu planen."));
+        }
+        // A plan card, then the project is opened anew (another one could have the same plan id): the card is void
+        fake.script = {anthropicTool("toolu_p5", "edit", {{"project", "@app"}, {"plan", true},
+                                                          {"ops", QJsonArray{QJsonObject{{"op", "split"}, {"at", "0.2s"}, {"why", "y"}}}}}),
+                       anthropicText("Plan.")};
+        panel->sendText("Und noch einer");
+        CHECK(waitFor([&] { return !chat->busy(); }));
+        w.liveProject()->load(w.liveProject()->data());
+        settle(50);
+        const QList<QWidget*> four = panel->findChildren<QWidget*>("ai_plan");
+        if (CHECK_EQ(four.size(), 4)) {
+            if (auto* run = four.last()->findChild<QPushButton*>("ai_plan_run"); CHECK(run)) CHECK(!run->isEnabled() || !run->isVisible());
+            if (auto* title = four.last()->findChild<QLabel*>("ai_plan_title"); CHECK(title))
+                CHECK(title->text().endsWith(T("Plan %1 · 1 Schritt").arg("").mid(5))); // one step, not "1 Schritte"
+            if (auto* state = four.last()->findChild<QLabel*>("ai_plan_state"); CHECK(state))
+                CHECK_EQ(state->text(), T("Nicht mehr gültig: ein anderes Projekt wurde geöffnet."));
+        }
+        // A plan gone meanwhile (expired after a day): said in the user's language
+        fake.script = {anthropicTool("toolu_p6", "edit", {{"project", "@app"}, {"plan", true},
+                                                          {"ops", QJsonArray{QJsonObject{{"op", "split"}, {"at", "0.1s"}, {"why", "z"}}}}}),
+                       anthropicText("Plan.")};
+        panel->sendText("Noch ein Plan");
+        CHECK(waitFor([&] { return !chat->busy(); }));
+        w.setChatRunner([](const QString&, const QJsonObject&) {
+            return QJsonObject{{"ok", false}, {"error", QJsonObject{{"code", "NOT_FOUND"}, {"message", "no plan 'p9'"}}}};
+        });
+        if (const QList<QWidget*> cardsNow = panel->findChildren<QWidget*>("ai_plan"); CHECK(!cardsNow.isEmpty())) {
+            if (auto* run = cardsNow.last()->findChild<QPushButton*>("ai_plan_run"); CHECK(run)) run->click();
+            settle(50);
+            if (auto* state = cardsNow.last()->findChild<QLabel*>("ai_plan_state"); CHECK(state))
+                CHECK_EQ(state->text(), T("Nicht ausgeführt: den Plan gibt es nicht mehr (nach einem Tag abgelaufen oder schon ausgeführt). Bitte die KI, neu zu planen."));
         }
         // The chat as text lists the plans with their reasons
         CHECK(chat->transcript().contains("Hook markieren"));
@@ -1030,6 +1077,10 @@ void test(const QString& dir)
         bool tight = false;
         for (const AiChat::Entry& e : chat->entries()) tight |= e.kind == AiChat::Entry::Kind::Notice && e.text.contains("knapp") && e.text.contains("8192");
         CHECK(tight);
+        // The short request stays within its budget (it grew past an 8192-token model with the 0.17 tools once):
+        // system prompt and tools of a fresh chat, the one word above aside
+        if (!CHECK(chat->requestTokens() * 4 <= Ai::kCompactBudget))
+            std::printf("       short request: %lld characters, budget %lld\n", chat->requestTokens() * 4, Ai::kCompactBudget);
         // Off: the full request also for a server on this computer
         fake.gets.remove("/api/show");
         chat->clear();

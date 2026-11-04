@@ -572,6 +572,12 @@ QJsonObject Server::runCommand(const QJsonObject& msg, bool ownChat, bool byUser
         return errorReply("PLAN_MODE", "the user wants to see a plan first (plan mode in the schneidi app): send the "
                                        "whole change as one edit with plan:true (every op with a why) and end your "
                                        "answer; the user runs the steps they want from the plan card");
+    // The other commands that change the app's project (restore, import, watch passes) have no plan: not in plan mode
+    if (ownChat && !byUser && (name == "restore" || name == "import" || name == "watch") && m_host->livePlanOnly())
+        return errorReply("PLAN_MODE", QString("the user wants to see a plan first (plan mode in the schneidi app) and "
+                                               "`%1` changes the project without one: say in your answer what you would "
+                                               "do, the user does it or switches plan mode off")
+                                           .arg(name));
     HostScope scope(m_host);
     Project* p = m_host->liveProject();
     const QHash<int, ClipState> before = clipStates(*p);
@@ -584,7 +590,7 @@ QJsonObject Server::runCommand(const QJsonObject& msg, bool ownChat, bool byUser
     const int index = undo->index();
     if (step) {
         p->closeMerge();
-        const QString planText = T("KI: %1").arg("plan " + args.value("plan_id").toString().trimmed().toLower());
+        const QString planText = T("KI: Plan %1").arg(args.value("plan_id").toString().trimmed().toLower());
         undo->beginMacro(planRun ? planText : name == "edit" ? undoText(args) : T("KI: %1").arg(name));
     }
     QJsonObject result;

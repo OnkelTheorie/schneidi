@@ -216,7 +216,8 @@ void opFitMusic(Session& s, const QJsonObject& op)
     if (!op.contains("length")) fail("BAD_ARGUMENT", "missing 'length': the length of the result (\"30s\", or \"timeline\")");
     int frames = 0;
     if (op.value("length").toString() == "timeline") {
-        frames = timelineEnd(s, g.clip ? g.clip->id : 0) - (op.contains("at") ? timeOf(s, op, "at") : 0);
+        // From where the song will start (at, else the clip's own start) to the end of the rest of the timeline
+        frames = timelineEnd(s, g.clip ? g.clip->id : 0) - (op.contains("at") ? timeOf(s, op, "at") : g.clip ? g.clip->start : 0);
         if (frames <= 0) fail("EMPTY", "length:'timeline': the timeline has nothing besides the song to take the length from");
     } else {
         frames = timeOf(s, op, "length");
@@ -254,6 +255,15 @@ void opFitMusic(Session& s, const QJsonObject& op)
     const QVector<Clip> parts = MusicFit::clips(plan, like, fps, at, g.media.length);
     if (parts.isEmpty()) fail("FAILED", "could not cut the song");
     if (track < 0) track = Speech::freeAudioTrack(s.project.timeline(), at, parts.last().end(), -1);
+    // The cut song must not cover other clips of its track (placing overwrites: the next song was cut away unasked)
+    if (track < s.project.timeline().audio.size())
+        for (const Clip& c : s.project.timeline().audio[track].clips)
+            if ((!g.clip || c.id != g.clip->id) && c.start < parts.last().end() && c.end() > at)
+                fail("FAILED", QString("the fitted song (%1 - %2) would cover clip %3 on A%4: move that clip, or give "
+                                       "another track")
+                                   .arg(tc(at, f), tc(parts.last().end(), f))
+                                   .arg(c.id)
+                                   .arg(track + 1));
     if (g.clip && !g.clip->keys.isEmpty())
         s.notes << QString("fit_music: the keyframes of clip %1 (volume …) do not fit the cut song and were left out")
                        .arg(g.clip->id);
@@ -420,11 +430,15 @@ void opSnapToBeat(Session& s, const QJsonObject& op)
     std::sort(moments.begin(), moments.end());
 
     QVector<int> done;
+    QHash<int, int> shifted; // clip -> how far its content moved for its first event
     QJsonArray report;
+    // Markers are moved after all clips: one marker toggled away must not hide another one of the list
+    QVector<QPair<int, int>> markerMoves;
     for (const auto& [t, id] : moments) {
         QJsonObject r{{"clip", id}, {"event", tc(t, f)}};
         if (done.contains(id)) {
             r["note"] = "same clip as an earlier event: moved with it";
+            if (event == "marker" && shifted.value(id)) markerMoves << qMakePair(t, t + shifted.value(id));
             report << r;
             continue;
         }
@@ -443,18 +457,41 @@ void opSnapToBeat(Session& s, const QJsonObject& op)
         }
         int got = 0;
         const int want = target - t;
+        // How far the clip really moved (a locked track does not move: moveClips leaves it as it is)
+        const auto moved = [&](int start) {
+            const Clip* c = TimelineOps::findClip(s.project.timeline(), id);
+            return c ? c->start - start : 0;
+        };
+        const int startBefore = TimelineOps::findClip(s.project.timeline(), id)->start;
+        // A move only as far as there is room on each track (moving overwrites: the next clip lost its start)
+        const auto roomFor = [&](const QVector<int>& ids, int by) {
+            const Timeline& now = s.project.timeline();
+            for (int x : ids) {
+                TrackRef ref;
+                const Clip* c = TimelineOps::findClip(now, x, &ref);
+                if (!c) continue;
+                for (const Clip& o : now.track(ref).clips) {
+                    if (ids.contains(o.id)) continue;
+                    if (by > 0 && o.start >= c->end()) by = std::min(by, o.start - c->end());
+                    if (by < 0 && o.end() <= c->start) by = std::max(by, o.end() - c->start);
+                }
+                if (by < 0) by = std::max(by, -c->start);
+            }
+            return by;
+        };
         if (how == "move") {
             const QVector<int> ids = s.editor.withFollowers({id});
-            s.editor.moveClips(ids, want, TrackKind::Video, 0);
-            got = want;
+            if (const int by = roomFor(ids, want)) s.editor.moveClips(ids, by, TrackKind::Video, 0);
+            got = moved(startBefore);
         } else {
             const bool roll = how == "roll";
             const TimelineOps::TrimEdit e = s.editor.trimEdit(roll ? TimelineOps::TrimKind::Roll : TimelineOps::TrimKind::Slip,
                                                                id, TimelineOps::Edge::Start);
             if (roll && (e.isNull() || e.rightIds.isEmpty() || e.ids.isEmpty())) {
-                // No clip right before it: the clip moves
-                s.editor.moveClips(s.editor.withFollowers({id}), want, TrackKind::Video, 0);
-                got = want;
+                // No clip right before it: the clip moves (as far as there is room)
+                const QVector<int> ids = s.editor.withFollowers({id});
+                if (const int by = roomFor(ids, want)) s.editor.moveClips(ids, by, TrackKind::Video, 0);
+                got = moved(startBefore);
                 r["how"] = "move";
             } else if (!e.isNull()) {
                 // Slip: the content moves the other way (by > 0 = later material shows here)
@@ -468,15 +505,23 @@ void opSnapToBeat(Session& s, const QJsonObject& op)
                     s.editor.modifyClips({id}, "Snap to beat", [&](Clip& c) { c.keys = before.keys; });
             }
         }
-        if (event == "marker" && got != 0) {
-            QVector<int> markers = s.project.timeline().markers;
-            if (markers.contains(t)) s.editor.toggleMarker(t);
-            if (!s.project.timeline().markers.contains(t + got)) s.editor.toggleMarker(t + got);
-        }
+        shifted.insert(id, got);
+        if (event == "marker" && got != 0) markerMoves << qMakePair(t, t + got);
         r["to"] = tc(t + got, f);
         r["shift_frames"] = got;
-        if (got != want) r["note"] = QString("not enough material or room to move it all the way (%1 frames off)").arg(want - got);
+        if (got == 0 && TimelineOps::isLocked(s.project.timeline(), id))
+            r["note"] = "on a locked track: left as it is";
+        else if (got != want)
+            r["note"] = QString("not enough material or room to move it all the way (%1 frames off)").arg(want - got);
         report << r;
+    }
+    if (!markerMoves.isEmpty()) {
+        QVector<int> markers = s.project.timeline().markers;
+        for (const auto& [from, to] : markerMoves) markers.removeAll(from);
+        for (const auto& [from, to] : markerMoves)
+            if (!markers.contains(to)) markers << to;
+        std::sort(markers.begin(), markers.end());
+        s.project.edit(T("Marker setzen/entfernen"), [&](Timeline& tl) { tl.markers = markers; });
     }
     s.notes << QJsonObject{{"snap_to_beat", report}};
 }

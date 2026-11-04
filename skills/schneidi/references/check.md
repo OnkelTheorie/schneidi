@@ -30,7 +30,8 @@ It also finds:
 - Story: `story_hook_late` = the first strong moment (a loud hit, the first word, a text) comes after 2 s (9:16 or
   `for` a platform) or 5 s - move it to the front or tease it. With story sections on the timeline also
   `story_no_hook`, `story_open_question` (a question with no turn or resolution after it), `story_resolution_late`,
-  `story_no_cta` and `story_gap` (info). `story` in the answer says what the first strong moment is.
+  `story_no_cta` and `story_gap` (info). `story` in the answer says what the first strong moment is. No sections yet:
+  `{"op":"sections","auto":true}` suggests them from the cuts.
 - After publishing: `retention` = the audience retention CSV (YouTube Studio, TikTok) → `retention_drop` (info)
   where viewers leave, with `at_s` = the change right before it: often the cut to look at.
 

@@ -585,8 +585,16 @@ MediaPool::MediaPool(Project* project, Engine* engine, QWidget* parent)
         ++m_thumbGeneration;
         m_thumbs.clear();
         m_thumbPending.clear();
+        m_hitThumbs.clear();
         rebuildClips();
+        if (!m_search->text().trimmed().isEmpty()) updateIndexHits(); // the hits' frames are of the old rate
     });
+    // Another project, other media: the search shows their hits (the old ones led nowhere)
+    const auto hitsAnew = [this] {
+        if (!m_search->text().trimmed().isEmpty()) updateIndexHits();
+    };
+    connect(m_project, &Project::loaded, this, hitsAnew);
+    connect(m_project, &Project::mediaChanged, this, hitsAnew);
     connect(m_project, &Project::timelineChanged, this, &MediaPool::updateSequenceItems);
     // Organization changed: rebuild collected after the current event (may come from itemChanged of the
     // bin list – the item must not be deleted there)
@@ -1579,6 +1587,7 @@ void MediaPool::updateIndexHits()
     for (const MediaInfo& m : m_project->media()) {
         std::optional<MediaIndex::Entry> e = MediaIndex::cached(m.path);
         if (!e) continue;
+        e->file = m.path; // the project's spelling of the path (the index cleans it: "./", the drive letter's case)
         ++indexed;
         for (const MediaTranscript& t : m.transcripts) MediaIndex::addSpeech(*e, t.words);
         shots += MediaIndex::searchable(*e);
@@ -1613,13 +1622,14 @@ void MediaPool::updateIndexHits()
             const double aspect = m->pictureAspect;
             const QString path = h.file;
             m_hitThumbs.insert(key, m_thumbs.value(h.file)); // asked once
-            m_thumbPool->start([this, format, path, frame, key, aspect] {
+            const int generation = m_thumbGeneration;
+            m_thumbPool->start([this, format, path, frame, key, aspect, generation] {
                 Background::lowerThisThread(Background::Level::Low);
                 const QImage img = Engine::thumbnail(format, path, frame, kThumb, true, aspect);
                 QMetaObject::invokeMethod(
                     this,
-                    [this, key, img] {
-                        if (img.isNull()) return;
+                    [this, key, img, generation] {
+                        if (img.isNull() || generation != m_thumbGeneration) return; // a picture of the old rate
                         const QPixmap pm = QPixmap::fromImage(img);
                         m_hitThumbs.insert(key, pm);
                         for (int i = 0; i < m_indexHits->count(); ++i)

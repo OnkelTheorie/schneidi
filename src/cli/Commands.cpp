@@ -961,6 +961,7 @@ const QVector<Command>& commands()
           {"reframe", T::String, "auto (default: every clip follows its subject), center or fit (blurred background, "
                                  "the whole picture stays visible)"},
           {"captions", T::String, "karaoke (default: the spoken word lights up), word (one word at a time) or off"},
+          {"hook", T::String, "best (default: the best moment opens the short, as its hook section) or chronological"},
           {"language", T::String, "spoken language for the captions: de, en, … (default: detect)"},
           {"game", T::String, "kill feed of this game for the moments, and kept readable at the top of the short "
                               "(reframe keep): cs2 or valorant (default: from the folder or file name, e.g. "
@@ -1320,6 +1321,7 @@ QJsonObject execute(const Command& cmd, const QJsonObject& args0, Context& ctx)
             if (cmd.name == "edit") prepareReframe(args, ctx);
             if (cmd.name == "edit") args = prepareSpeech(args, ctx); // piper/whisper here, not in the app
             if (cmd.name == "edit") args = prepareMusic(args, ctx); // beats of songs here, not in the app
+            if (cmd.name == "edit") args = prepareTalk(args, ctx); // whisper for rough_cut here, not in the app
             QJsonObject result = Live::run(c, cmd.name, args);
             result["live"] = true;
             return result;

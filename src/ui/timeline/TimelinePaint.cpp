@@ -138,6 +138,7 @@ void TimelineView::drawRuler(QPainter& p)
             p.drawLine(QPointF(xOut - 1, kRulerH - 15), QPointF(xOut - 5, kRulerH - 15));
         }
     }
+    drawStory(p); // story sections and notes (TimelineStory.cpp)
     // Markers (M) as small flags like in DaVinci (secondary color)
     p.setRenderHint(QPainter::Antialiasing);
     for (int m : m_editor->project()->timeline().markers) {

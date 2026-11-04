@@ -4,6 +4,8 @@
 #include "core/ExportCheck.h"
 
 #include "core/I18n.h"
+#include "core/JumpCut.h"
+#include "core/TimelineOps.h"
 
 #include <QRegularExpression>
 #include <QStringList>
@@ -280,7 +282,7 @@ QVector<Issue> story(const Timeline& tl, int from, int to, const ProjectFormat& 
 
     // The first strong moment: a loud hit, the first word, a text
     if (const int text = firstText(tl, from, to); text >= 0) strong << text;
-    if (from == 0) {
+    if (from == 0 || o.rangeIsVideo) {
         const double limit = isShort ? o.hookLateShortS : o.hookLateS;
         const Severity sev = isShort && length <= o.hookMaxS ? Severity::Warning : Severity::Info;
         int first = -1;
@@ -325,7 +327,7 @@ QVector<Issue> story(const Timeline& tl, int from, int to, const ProjectFormat& 
     const auto at = [&](const StorySection& s) { return num(secondsOf(s.from, f)); };
 
     // Hook at the start
-    if (from == 0) {
+    if (from == 0 || o.rangeIsVideo) {
         const StorySection* hook = firstOf(StoryKind::Hook);
         if (!hook || hook->from > from + framesOf(0.5, f))
             out << issue(Severity::Warning, "story_no_hook",
@@ -384,6 +386,39 @@ QVector<Issue> story(const Timeline& tl, int from, int to, const ProjectFormat& 
     return out;
 }
 
+// ---------- jump cuts
+
+QVector<Issue> jumpCuts(const Timeline& tl, int from, int to, const ProjectFormat& f)
+{
+    QVector<Issue> out;
+    int count = 0;
+    for (const Track& t : tl.video) {
+        if (t.hidden) continue;
+        for (const JumpCut::Jump& j : JumpCut::find(t, framesOf(0.3, f))) {
+            if (j.at <= from || j.at >= to) continue;
+            const Clip* a = TimelineOps::findClip(tl, j.left);
+            const Clip* b = TimelineOps::findClip(tl, j.right);
+            if (!a || !b || !JumpCut::sameFraming(*a, *b)) continue;
+            // Covered at the cut by a picture on a track above (B-roll): nobody sees the jump
+            bool covered = false;
+            for (int u = int(&t - tl.video.data()) + 1; u < tl.video.size() && !covered; ++u)
+                if (!tl.video[u].hidden)
+                    for (const Clip& c : tl.video[u].clips)
+                        covered |= c.enabled && !c.isTitle() && c.start <= j.at && c.end() > j.at;
+            if (covered) continue;
+            if (++count <= 20)
+                out << issue(Severity::Info, "jump_cut",
+                             T("Sprung im Bild bei %1 s: dieselbe Aufnahme, %2 s ausgelassen – abwechselnd "
+                               "heranzoomen lässt ihn wie einen Kamerawechsel wirken")
+                                 .arg(num(secondsOf(j.at - from, f)), num(secondsOf(std::abs(j.skipped), f))),
+                             j.at, j.at + 1, j.right);
+        }
+    }
+    if (count > 20)
+        out << issue(Severity::Info, "jump_cut", T("%1 weitere Sprünge im Bild").arg(count - 20));
+    return out;
+}
+
 // ---------- retention
 
 namespace {
@@ -439,12 +474,33 @@ QVector<RetentionPoint> retentionFromCsv(const QString& text, double lengthS, QS
         return QVector<RetentionPoint>{};
     };
     QStringList lines;
-    for (const QString& l : text.split(QRegularExpression("[\r\n]+"), Qt::SkipEmptyParts))
+    QString body = text;
+    if (body.startsWith(QChar(0xfeff))) body.remove(0, 1); // a byte order mark (Excel's UTF-8 CSV)
+    for (const QString& l : body.split(QRegularExpression("[\r\n]+"), Qt::SkipEmptyParts))
         if (!l.trimmed().isEmpty()) lines << l;
     if (lines.isEmpty()) return failed("the file is empty");
     const QString& probe = lines.first();
     const QChar sep = probe.contains('\t') ? QChar('\t') : probe.contains(';') ? QChar(';') : QChar(',');
-    const auto fields = [&](const QString& l) { return l.split(sep); };
+    // Cells split at the separator outside quotes ("0,5","85,3": decimal commas in a comma file), quotes removed
+    const auto fields = [&](const QString& l) {
+        QStringList out;
+        QString cell;
+        bool quoted = false;
+        for (int i = 0; i < l.size(); ++i) {
+            const QChar ch = l[i];
+            if (ch == '"') {
+                if (quoted && i + 1 < l.size() && l[i + 1] == '"') cell += l[++i]; // "" inside quotes
+                else quoted = !quoted;
+            } else if (ch == sep && !quoted) {
+                out << cell;
+                cell.clear();
+            } else {
+                cell += ch;
+            }
+        }
+        out << cell;
+        return out;
+    };
 
     int timeCol = 0, valueCol = 1;
     bool position = false;

@@ -8,6 +8,7 @@
 #include "engine/MediaIndex.h"
 #include "engine/Snapshot.h"
 
+#include <QCryptographicHash>
 #include <QDir>
 #include <QFileInfo>
 #include <QJsonArray>
@@ -275,7 +276,13 @@ QJsonObject cmdIndex(const QJsonObject& a, Context& ctx)
             QString thumbFile;
             if (snap) {
                 const QImage img = snap->frame(std::clamp(int(std::lround(s.thumb * f.rate.fps())), 0, std::max(0, length - 1)), 320);
-                thumbFile = QDir(thumbs).absoluteFilePath(QString("%1_shot%2.jpg").arg(QFileInfo(e.file).completeBaseName()).arg(s.n, 3, 10, QChar('0')));
+                // The name plus a short hash of the whole path: two "clip.mp4" from different folders (or clip.mp4 and
+                // clip.mov) overwrote each other's pictures
+                const QString tag = QString::fromLatin1(
+                    QCryptographicHash::hash(e.file.toUtf8(), QCryptographicHash::Sha1).toHex().left(8));
+                thumbFile = QDir(thumbs).absoluteFilePath(QString("%1_%2_shot%3.jpg")
+                                                              .arg(QFileInfo(e.file).completeBaseName(), tag)
+                                                              .arg(s.n, 3, 10, QChar('0')));
                 if (img.isNull() || !img.save(thumbFile, "JPG", 85)) thumbFile.clear();
             }
             if (s.desc.isEmpty()) ++undescribed;

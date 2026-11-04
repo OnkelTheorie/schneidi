@@ -262,6 +262,45 @@ int main(int argc, char** argv)
     hits = run("index", {{"project", project}, {"query", "unscharf"}})["hits"].toArray();
     CHECK(!hits.isEmpty() && !hits[0].toObject().contains("timeline")); // not on the timeline
 
+    // Thumbnails of two files with the same name in different folders: each has its own (they overwrote each other)
+    {
+        QDir().mkpath(dir.filePath("b"));
+        const QString twin = dir.filePath("b/Läden ü.mp4");
+        CHECK(QFile::copy(media, twin));
+        const QJsonArray both = run("index", {{"files", QJsonArray{media, twin}}, {"thumbs", dir.filePath("thumbs")}})["media"].toArray();
+        if (CHECK_EQ(both.size(), 2)) {
+            const QString a = both[0]["shots"][0]["thumb"].toString(), b = both[1]["shots"][0]["thumb"].toString();
+            CHECK(!a.isEmpty() && !b.isEmpty() && a != b);
+            CHECK(QFileInfo::exists(a) && QFileInfo::exists(b));
+        }
+    }
+
+    // Words, not letters: "lacht" is no "flache Landschaft", "Stille" is silence and not every calm shot
+    {
+        IndexSearch::Shot flat;
+        flat.file = "/x/a.mp4";
+        flat.n = 1;
+        flat.to = 2;
+        flat.motion = 3;
+        flat.desc = "flache Landschaft";
+        IndexSearch::Shot calm = flat;
+        calm.n = 2;
+        calm.desc = "Totale";
+        calm.motion = 0.2;
+        IndexSearch::Shot laugh = flat;
+        laugh.n = 3;
+        laugh.desc = "sie lacht laut";
+        IndexSearch::Shot roof = flat;
+        roof.n = 4;
+        roof.desc = "Kameraschwenk";
+        const QVector<IndexSearch::Shot> shots{flat, calm, laugh, roof};
+        const QVector<IndexSearch::Hit> l = IndexSearch::search("wo lacht sie", shots);
+        if (CHECK_EQ(l.size(), 1)) CHECK_EQ(l[0].n, 3);
+        CHECK(IndexSearch::search("Stille", shots).isEmpty());
+        const QVector<IndexSearch::Hit> pan = IndexSearch::search("Schwenk", shots); // a compound's head still counts
+        if (CHECK_EQ(pan.size(), 1)) CHECK_EQ(pan[0].n, 4);
+    }
+
     // Errors: an unknown shot, a missing file
     CHECK_EQ(run("index", {{"annotate", QJsonArray{QJsonObject{{"file", media}, {"shot", 40}, {"desc", "x"}}}}})["failed"].toString(),
              QString("BAD_ARGUMENT"));
@@ -275,5 +314,24 @@ int main(int argc, char** argv)
         CHECK(cmd->params.size() <= 10);
     }
     MediaIndex::setEventSource({});
+
+    // Cancelled (the app closes while the Media Pool builds the index): a sound-only file stops too, nothing is
+    // cached (the audio part never asked, closing the app waited for the whole file)
+    {
+        const QString podcast = Check::makeMedia(dir.filePath("podcast.wav"), {"-f", "lavfi", "-i", "sine=f=300:d=60"});
+        if (CHECK(!podcast.isEmpty())) {
+            MediaIndex::Options o;
+            int asked = 0;
+            o.progress = [&asked](double) {
+                ++asked;
+                return false;
+            };
+            QString error;
+            CHECK(!MediaIndex::build(podcast, o, &error).has_value());
+            CHECK(asked > 0);
+            CHECK(!MediaIndex::cached(podcast).has_value());
+            CHECK(MediaIndex::build(podcast).has_value()); // not cancelled: built
+        }
+    }
     return Check::result();
 }

@@ -758,6 +758,35 @@ void testContext()
         CHECK_EQ(c[3]["inputSchema"]["properties"]["folder"]["type"].toString(), QString("string"));
         CHECK(c[3]["description"].toString().contains("`help` with command 'watch'"));
     }
+    // Shorter still: times as text, optional keys without their values, a parameter text three tools share left out,
+    // the instructions without the list of tools
+    {
+        const QJsonObject time{{"type", QJsonArray{"integer", "string"}}, {"description", "start of the range"}};
+        const QJsonObject times{{"type", "array"}, {"items", QJsonObject{{"type", QJsonArray{"integer", "string"}}}}};
+        const QJsonObject project{{"type", "string"}, {"description", "project file"}};
+        const QJsonArray more{tool("a", "A.", {{"from", time}, {"at", times}, {"project", project}}),
+                              tool("b", "B.", {{"project", project}}), tool("c", "C.", {{"project", project}}),
+                              tool("d", "D.", {{"file", QJsonObject{{"type", "string"}, {"description", "project file"}}}}),
+                              tool("edit", "Edit.", {{"ops", QJsonObject{{"type", "array"}}}})};
+        const QJsonArray ops2{QJsonObject{{"op", "normalize"}, {"usage", "{op:'normalize', clips, mode?:'peak'|'lufs', ripple?:true, "
+                                                                          "ranges:[[from,to]], at?:[times], track?:'A1'}"}}};
+        const QJsonArray m = Ai::compactTools(more, ops2);
+        CHECK_EQ(m[0]["inputSchema"]["properties"]["from"]["type"].toString(), QString("string"));
+        CHECK_EQ(m[0]["inputSchema"]["properties"]["from"]["description"].toString(), QString("start of the range"));
+        CHECK_EQ(m[0]["inputSchema"]["properties"]["at"]["items"]["type"].toString(), QString("string"));
+        CHECK(!m[0]["inputSchema"]["properties"]["from"].toObject().contains("items")); // nothing added
+        for (int i = 0; i < 3; ++i) CHECK(!m[i]["inputSchema"]["properties"]["project"].toObject().contains("description"));
+        CHECK_EQ(m[3]["inputSchema"]["properties"]["file"]["description"].toString(), QString("project file")); // another key
+        CHECK(m[4]["inputSchema"]["properties"]["ops"]["description"].toString().contains(
+            "{op:'normalize', clips, mode?, ripple?, ranges:[[from,to]], at?, track?}"));
+        const QString instr = "schneidi is a video editor. Edit projects (.schneidi) with these tools: `new` creates one "
+                              "(a template; see `templates`), `edit` changes a timeline (e.g. a cut). If the project is "
+                              "open in the app, tools work live. Use absolute file paths.";
+        CHECK_EQ(Ai::compactInstructions(instr),
+                 QString("schneidi is a video editor. Edit projects (.schneidi) with the tools (each one's description "
+                         "says what it is for). If the project is open in the app, tools work live. Use absolute file paths."));
+        CHECK_EQ(Ai::compactInstructions("Other text."), QString("Other text."));
+    }
     // Without the ops `edit` stays whole (the model could not edit otherwise)
     CHECK_EQ(Ai::compactTools(tools, {})[1].toObject(), tools[1].toObject());
     CHECK(Ai::compactGuide("- social: Short").contains("call `guide` with the topic before such a task):\n- social: Short"));

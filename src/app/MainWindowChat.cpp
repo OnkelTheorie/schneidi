@@ -53,6 +53,8 @@ void MainWindow::buildChat()
 {
     m_aiKeys = std::make_unique<Ai::Keys>();
     m_chat = new AiChat(this);
+    // Plans belong to the project they were made on: another one opened, their cards cannot run any more
+    connect(m_project, &Project::loaded, m_chat, [this] { m_chat->stopPlans(T("Nicht mehr gültig: ein anderes Projekt wurde geöffnet.")); });
     m_chat->setLanguage(languageName(I18n::language()));
     m_chat->setCompact(m_aiSettings.compact);
     m_chatPanel = new AiChatPanel(m_chat);
@@ -290,13 +292,15 @@ void MainWindow::runChatPlan(const QString& id, const QVector<int>& steps)
     }
     const QJsonObject error = reply["error"].toObject();
     const QString code = error["code"].toString();
-    if (code == "APP_BUSY" || code == "APP_WAITING") { // later again: the card stays
-        m_chat->addError(error["message"].toString());
+    if (code == "APP_BUSY" || code == "APP_WAITING") { // later again: the card stays (in the user's language)
+        m_chat->addError(T("Die App führt gerade einen anderen Befehl aus – bitte gleich noch einmal versuchen."));
         return;
     }
     m_chat->setPlanState(id, AiChat::Entry::State::Failed, {},
                          code == "PLAN_STALE"
                              ? T("Nicht ausgeführt: das Projekt wurde seit dem Plan geändert. Bitte die KI, neu zu planen.")
+                         : code == "NOT_FOUND" // expired after a day, or run/discarded elsewhere
+                             ? T("Nicht ausgeführt: den Plan gibt es nicht mehr (nach einem Tag abgelaufen oder schon ausgeführt). Bitte die KI, neu zu planen.")
                              : T("Nicht ausgeführt: %1").arg(error["message"].toString()));
     m_chat->addNote(QString("plan %1 could not run (%2: %3); nothing of it was changed")
                         .arg(id, code, error["message"].toString()));
@@ -305,8 +309,16 @@ void MainWindow::runChatPlan(const QString& id, const QVector<int>& steps)
 void MainWindow::discardChatPlan(const QString& id)
 {
     if (m_chat->busy()) return;
-    // Gone already (expired) or not: nothing of it happens
-    if (m_chatRunner) m_chatRunner("edit", {{"project", "@app"}, {"plan_id", id}, {"discard", true}});
+    // Gone already (expired) or not: nothing of it happens. The app busy with another command: the plan is still
+    // there (an AI could run it) - the card stays, the user tries again
+    if (m_chatRunner) {
+        const QJsonObject reply = m_chatRunner("edit", {{"project", "@app"}, {"plan_id", id}, {"discard", true}});
+        const QString code = reply["error"].toObject()["code"].toString();
+        if (!reply["ok"].toBool() && (code == "APP_BUSY" || code == "APP_WAITING")) {
+            m_chat->addError(T("Die App führt gerade einen anderen Befehl aus – bitte gleich noch einmal versuchen."));
+            return;
+        }
+    }
     m_chat->setPlanState(id, AiChat::Entry::State::Stopped);
     m_chat->addNote(QString("the user discarded plan %1; nothing of it was run").arg(id));
 }

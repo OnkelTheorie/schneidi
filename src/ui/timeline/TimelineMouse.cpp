@@ -151,6 +151,7 @@ void TimelineView::mousePressEvent(QMouseEvent* e)
         return;
     }
     if (pos.y() < kRulerH) {
+        if (sectionPress(pos)) return; // the edge of a story section
         m_drag = Drag::Scrub;
         m_scrubFrame = std::max(0, int(std::lround(xToFrame(pos.x()))));
         emit seekRequested(m_scrubFrame);
@@ -350,6 +351,9 @@ void TimelineView::dragMove(const QPoint& pos, Qt::KeyboardModifiers mods)
         }
         return;
     }
+    case Drag::SectionEdge:
+        sectionDrag(pos);
+        return;
     case Drag::Scrub: {
         // Only jump on a new frame: every jump discards the buffer during playback and decodes anew –
         // when clicking (mouse jitters by a pixel) that stuttered
@@ -612,6 +616,12 @@ void TimelineView::mouseReleaseEvent(QMouseEvent* e)
 {
     if (e->button() != Qt::LeftButton) return;
     m_autoScroll->stop();
+    if (m_drag == Drag::SectionEdge) {
+        m_drag = Drag::None;
+        m_sectionDrag = -1;
+        updateHoverCursor(e->position().toPoint());
+        return;
+    }
     if (m_drag == Drag::Rubber) {
         m_drag = Drag::None;
         m_rubberBase.clear();

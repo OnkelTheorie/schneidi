@@ -212,6 +212,12 @@ void testStory()
     CHECK(ExportCheck::story(plain, 0, 500, v, {}, false, {}).isEmpty());  // nothing known: nothing said
     CHECK_EQ(checks(ExportCheck::story(plain, 0, 500, v, {}, true, {})), QStringList({"story_hook_late"}));
     CHECK(ExportCheck::story(late, 50, 500, v, {}, false, {}).isEmpty()); // not from the start
+    {
+        ExportCheck::Options inOut; // the Deliver page's In/Out export: the video starts at 'from'
+        inOut.rangeIsVideo = true;
+        issues = ExportCheck::story(late, 40, 500, v, {}, false, {}, inOut); // the text 2.4 s into it
+        if (CHECK_EQ(checks(issues), QStringList({"story_hook_late"}))) CHECK_EQ(issues[0].from, 40);
+    }
     // strongMoments: the earliest of loud, word and text, and what it is
     QString by;
     CHECK_EQ(ExportCheck::strongMoments(late, 0, 500, v, &peaks, {90}, &by), (QVector<int>{60, 90, 100, 120}));
@@ -293,6 +299,13 @@ void testRetention()
     if (CHECK_EQ(c.size(), 3)) {
         CHECK_EQ(c[1].seconds, 10.0);
         CHECK(std::abs(c[1].percent - 80) < 1e-9); // the "audience retention" column
+    }
+    // Quoted cells with decimal commas and commas between them (LibreOffice / a German export), a byte order mark
+    c = ExportCheck::retentionFromCsv(QString(QChar(0xfeff)) + "\"0\",\"100\"\n\"0,5\",\"85,3\"\n\"2\",\"80\"\n", 0, &error);
+    if (CHECK_EQ(c.size(), 3)) {
+        CHECK_EQ(c[0].percent, 100.0); // the first row is data, not a header
+        CHECK_EQ(c[1].seconds, 0.5);
+        CHECK(std::abs(c[1].percent - 85.3) < 1e-9);
     }
     CHECK(ExportCheck::retentionFromCsv("time,ret\n", 10, &error).isEmpty() && !error.isEmpty());
     CHECK(ExportCheck::retentionFromCsv("Video position (%),r\n0,1\n100,0.5\n", 0, &error).isEmpty());

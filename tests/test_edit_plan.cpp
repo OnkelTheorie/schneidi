@@ -212,6 +212,30 @@ void fileTests(const QString& path, const QProcessEnvironment& env)
     CHECK_EQ(code(cli({"edit", path, "--plan_id", two, "--run", "all", "--ops", "[]"}, env)), QString("BAD_ARGUMENT"));
     CHECK_EQ(code(cli({"edit", path, "--run", "all"}, env)), QString("BAD_ARGUMENT"));
     CHECK(fileBytes(path) == changed);
+    // dry_run with plan_id: what it would change, nothing saved, the plan stays
+    r = cli({"edit", path, "--plan_id", two, "--run", "all", "--dry_run"}, env);
+    CHECK_EQ(code(r), QString("ok"));
+    CHECK(!std::as_const(r)["saved"].toBool());
+    CHECK(std::as_const(r)["plan"]["dry_run"].toBool());
+    CHECK_EQ(std::as_const(r)["changes"]["added"].toArray().size(), 4); // two splits, V1 + A1 each
+    CHECK(fileBytes(path) == changed);
+    CHECK(QFileInfo::exists(planFile(path, two)));
+    // A step on a clip that a step left out makes: refused (the id would name another clip)
+    r = cli({"edit", path, "--plan", "--ops",
+             R"([{"op":"title","text":"A","at":0,"duration":10},{"op":"title","text":"B","at":20,"duration":10}])"}, env);
+    const int titleA = std::as_const(r)["plan"]["steps"][0]["changes"]["added"][0]["id"].toInt(); // the id step 1 gives
+    CHECK(titleA > 0);
+    r = cli({"edit", path, "--plan", "--ops",
+             QString(R"([{"op":"title","text":"A","at":0,"duration":10},{"op":"title","text":"B","at":20,"duration":10},)"
+                     R"({"op":"transform","clips":[%1],"opacity":50}])").arg(titleA)}, env);
+    const QString dependent = std::as_const(r)["plan"]["id"].toString();
+    r = cli({"edit", path, "--plan_id", dependent, "--run", "[2,3]"}, env);
+    CHECK_EQ(code(r), QString("BAD_ARGUMENT"));
+    CHECK(std::as_const(r)["error"]["message"].toString().contains("step 3 works on clip"));
+    CHECK(fileBytes(path) == changed);
+    CHECK_EQ(code(cli({"edit", path, "--plan_id", dependent, "--run", "[1,3]"}, env)), QString("ok")); // with its maker
+    const QByteArray afterTitles = fileBytes(path);
+    CHECK(afterTitles != changed);
     // A plan with an op that fails is no plan
     r = cli({"edit", path, "--plan", "--ops", R"([{"op":"split","at":170},{"op":"delete","clips":[999]}])"}, env);
     CHECK_EQ(code(r), QString("NOT_FOUND"));
@@ -225,7 +249,23 @@ void fileTests(const QString& path, const QProcessEnvironment& env)
     }
     CHECK_EQ(code(cli({"edit", path, "--plan_id", two, "--run", "all"}, env)), QString("NOT_FOUND"));
     CHECK(!QFileInfo::exists(planFile(path, two)));
-    CHECK(fileBytes(path) == changed);
+    CHECK(fileBytes(path) == afterTitles);
+
+    // A plan made while the project in the app was never saved (one folder for those), then the project is saved
+    // under a name: the plan is still found and runs (it was NOT_FOUND, and its base held the path)
+    r = cli({"edit", path, "--plan", "--ops", R"([{"op":"marker","at":7}])"}, env);
+    const QString early = std::as_const(r)["plan"]["id"].toString();
+    const QString saved = QFileInfo(path).absolutePath() + "/saved-later.schneidi";
+    CHECK(QFile::copy(path, saved));
+    const QString unsaved = QDir(ProjectFile::backupDir({})).filePath("unsaved-plans");
+    QDir().mkpath(unsaved);
+    // (the CLI's own data folder: the test's environment points it into the temporary folder)
+    const QString moved = QDir(unsaved).filePath("p77.json");
+    QFile::remove(moved);
+    CHECK(QFile::rename(planFile(path, early), moved));
+    r = cli({"edit", saved, "--plan_id", "p77", "--run", "all"}, env);
+    if (!CHECK_EQ(code(r), QString("ok"))) std::printf("       %s\n", QJsonDocument(r).toJson(QJsonDocument::Compact).constData());
+    CHECK(!QFileInfo::exists(moved));
 }
 
 } // namespace
@@ -283,7 +323,7 @@ int main(int argc, char* argv[])
     CHECK_EQ(code(live), QString("ok"));
     CHECK(std::as_const(live)["live"].toBool());
     CHECK_EQ(fake.project.undoStack()->index(), undo0 + 1);
-    CHECK(fake.project.undoStack()->undoText().contains("plan p1"));
+    CHECK_EQ(fake.project.undoStack()->undoText(), T("KI: Plan %1").arg("p1"));
     CHECK(fileBytes(fake.path) == fileBytes(copy));
     CHECK_EQ(fake.plans.last(), QString("ran p1"));
     CHECK_EQ(fake.lastPlan["ran"].toArray(), (QJsonArray{1, 3}));
@@ -325,6 +365,10 @@ int main(int argc, char* argv[])
     r = cli({"edit", "@app", "--ops", R"([{"op":"split","at":40}])"}, chatEnv);
     CHECK_EQ(code(r), QString("PLAN_MODE"));
     CHECK_EQ(fake.project.undoStack()->index(), undo2);
+    // The other commands that change the project in the app neither (restore replaced the timelines unasked)
+    CHECK_EQ(code(cli({"restore", "@app"}, chatEnv)), QString("PLAN_MODE"));
+    CHECK_EQ(code(cli({"import", "@app", "--files", R"(["/x/b.mp4"])"}, chatEnv)), QString("PLAN_MODE"));
+    CHECK_EQ(fake.project.undoStack()->index(), undo2);
     // An AI from outside is not the chat: plan mode is the chat's setting
     CHECK_EQ(code(cli({"edit", fake.path, "--ops", R"([{"op":"marker","at":5}])"})), QString("ok"));
     fake.project.undoStack()->undo();
@@ -339,6 +383,7 @@ int main(int argc, char* argv[])
         server.runForChat("edit", {{"project", "@app"}, {"plan_id", chatPlan}, {"run", QJsonArray{2}}});
     CHECK(std::as_const(reply)["ok"].toBool());
     CHECK_EQ(fake.project.undoStack()->index(), undo3 + 1);
+    CHECK_EQ(fake.project.undoStack()->text(undo3), T("KI: Plan %1").arg(chatPlan)); // the Undo menu's text, translated
     if (CHECK_EQ(fake.project.timeline().video[0].clips.size(), 2)) CHECK_EQ(fake.project.timeline().video[0].clips[1].start, 90);
     CHECK_EQ(fake.plans.last(), "ran " + chatPlan + " chat");
     // Gone after the run

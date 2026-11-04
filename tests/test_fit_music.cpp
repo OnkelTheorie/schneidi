@@ -359,6 +359,16 @@ int main(int argc, char* argv[])
         CHECK_EQ(parts.size(), 1);
         CHECK(!parts.isEmpty() && parts.first().length() == 20 * kFps && parts.first().fadeOut > 0 && parts.first().in == 0);
     }
+    // end:'fade' with keep:'drop': the part with the drop (bar 32, 64.5 s) instead of the first 20 s
+    {
+        run("edit", {{"project", project}, {"ops", "[{\"op\":\"clear\"}]"}});
+        const QJsonObject r = edit(project, QString(R"([{"op":"fit_music","media":"%1","length":"20s","end":"fade","keep":"drop","track":"A1"}])").arg(file));
+        const QJsonObject fit = note(r, "fit_music").toObject();
+        const double at = fit["drop_at"].toDouble(-1);
+        if (!CHECK(at >= 0 && at < 20)) std::printf("       %s\n", QJsonDocument(fit).toJson(QJsonDocument::Compact).constData());
+        const QVector<Clip> parts = clipsOn(*load(project), 0);
+        CHECK(parts.size() == 1 && parts.first().length() == 20 * kFps && parts.first().in > 0);
+    }
     // Too short, bad arguments
     CHECK_EQ(edit(project, QString(R"([{"op":"fit_music","media":"%1","length":"200s"}])").arg(file), true)["failed"].toString(),
              QString("TOO_SHORT"));
@@ -382,6 +392,33 @@ int main(int argc, char* argv[])
         run("restore", {{"project", project}});
         const QVector<Clip> back = clipsOn(*load(project), 1);
         CHECK(back.size() == 1 && back.value(0).id == id && back.value(0).out == before.mediaInfo(file)->length - 1);
+    }
+    // length:'timeline' for a song clip that starts later: it ends with the timeline (it ran past it by its start)
+    {
+        run("edit", {{"project", project}, {"ops", "[{\"op\":\"clear\"}]"}});
+        edit(project, R"([{"op":"title","text":"x","at":0,"duration":"30s"}])");
+        edit(project, QString(R"([{"op":"place","media":"%1","at":"4s","track":"A2"}])").arg(file));
+        const int id = clipsOn(*load(project), 1).value(0).id;
+        edit(project, QString(R"([{"op":"fit_music","clip":%1,"length":"timeline"}])").arg(id));
+        const QVector<Clip> parts = clipsOn(*load(project), 1);
+        if (CHECK(!parts.isEmpty())) {
+            CHECK_EQ(parts.first().start, 4 * kFps);
+            if (!CHECK(std::abs(parts.last().end() - 30 * kFps) <= 1)) std::printf("       ends at %d\n", parts.last().end());
+        }
+    }
+
+    // A song clip shorter than the result, another clip after it on the track: refused, nothing overwritten
+    {
+        run("edit", {{"project", project}, {"ops", "[{\"op\":\"clear\"}]"}});
+        edit(project, QString(R"([{"op":"place","media":"%1","at":0,"duration":"10s","track":"A2"}])").arg(file));
+        edit(project, QString(R"([{"op":"place","media":"%1","at":"10s","track":"A2"}])").arg(file));
+        const QVector<Clip> before = clipsOn(*load(project), 1);
+        if (CHECK_EQ(before.size(), 2)) {
+            const QJsonObject r = edit(project, QString(R"([{"op":"fit_music","clip":%1,"length":"30s"}])").arg(before[0].id), true);
+            CHECK_EQ(r["failed"].toString(), QString("FAILED"));
+            const QVector<Clip> after = clipsOn(*load(project), 1);
+            CHECK(after.size() == 2 && after[1].id == before[1].id && after[1].start == before[1].start);
+        }
     }
 
     // snap_to_beat: a picture cut 0.28 s (14 frames) off the bar ones of the music on A2, rolled onto them
@@ -446,6 +483,53 @@ int main(int argc, char* argv[])
         c = TimelineOps::findClip(qPtr->timeline(), ids[2]);
         CHECK_EQ(c->in, 1000 + 225 + (305 - 225) - 75); // source of frame 305 (after the roll) now plays at 300
         CHECK_EQ(edit(project, R"([{"op":"snap_to_beat","grid":"bars"}])", true)["failed"].toString(), QString("BAD_ARGUMENT"));
+        // Two markers on one clip: the clip moves for the first, the second goes with its content (it stayed behind)
+        pPtr = load(project);
+        pPtr->edit("markers", [&](Timeline& tl) { tl.markers = {330, 360}; });
+        CHECK(ProjectFile::save(pPtr->data(), project, &error));
+        r = edit(project, R"([{"op":"snap_to_beat","event":"marker"}])");
+        qPtr = load(project);
+        if (!CHECK(qPtr->timeline().markers == (QVector<int>{325, 355})))
+            for (int m : qPtr->timeline().markers) std::printf("       marker %d\n", m);
+        // A locked track: nothing moves, the answer says so, the marker stays with its content
+        pPtr = load(project);
+        pPtr->edit("lock", [&](Timeline& tl) {
+            tl.video[0].locked = true;
+            tl.markers = {330};
+        });
+        CHECK(ProjectFile::save(pPtr->data(), project, &error));
+        const int lockedStart = TimelineOps::findClip(pPtr->timeline(), ids[2])->start;
+        r = edit(project, R"([{"op":"snap_to_beat","event":"marker","how":"move"}])");
+        qPtr = load(project);
+        CHECK_EQ(TimelineOps::findClip(qPtr->timeline(), ids[2])->start, lockedStart);
+        CHECK(qPtr->timeline().markers == QVector<int>{330});
+        const QJsonArray locked = note(r, "snap_to_beat").toArray();
+        if (CHECK_EQ(locked.size(), 1)) {
+            CHECK_EQ(locked[0]["shift_frames"].toInt(), 0);
+            CHECK(locked[0]["note"].toString().contains("locked"));
+        }
+        // A clip with a gap before it is moved onto the beat - but not into the clip after it
+        pPtr = load(project);
+        pPtr->edit("room", [&](Timeline& tl) {
+            tl.markers.clear();
+            tl.video[0].locked = false;
+            QVector<Clip>& v = tl.video[0].clips;
+            v.resize(2);
+            v[0].start = 120; // 5 frames before the beat at 125, a gap before it
+            v[0].in = 1000;
+            v[0].out = 1000 + 79; // up to 200
+            v[1].start = 200;
+            v[1].in = 2000;
+            v[1].out = 2000 + 99;
+        });
+        CHECK(ProjectFile::save(pPtr->data(), project, &error));
+        r = edit(project, R"([{"op":"snap_to_beat","clips":[)" + QByteArray::number(ids[0]) + R"(],"how":"move"}])");
+        qPtr = load(project);
+        if (CHECK_EQ(qPtr->timeline().video[0].clips.size(), 2)) {
+            CHECK_EQ(qPtr->timeline().video[0].clips[1].start, 200); // the next clip keeps its start
+            CHECK_EQ(qPtr->timeline().video[0].clips[1].in, 2000);
+            CHECK_EQ(qPtr->timeline().video[0].clips[0].start, 120); // no room: stays
+        }
     }
 
     // Live in the app: one undo step, the same as on the file
