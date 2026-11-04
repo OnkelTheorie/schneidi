@@ -199,9 +199,18 @@ void opSfx(Session& s, const QJsonObject& op)
             track = sfxTrack(tl);
         }
     }
+    // The sounds already there: every clip of the target track, and the built-in sounds on the other tracks (the
+    // spacing and the one impact per video hold for the whole timeline)
     QVector<SfxPlace::Existing> existing;
-    if (track >= 0)
-        for (const Clip& c : s.project.timeline().audio[track].clips) existing << existingOf(c, fps, src);
+    for (int k = 0; k < s.project.timeline().audio.size(); ++k)
+        for (const Clip& c : s.project.timeline().audio[k].clips) {
+            if (k != track && !SfxSynth::parseCachedFile(c.mediaPath) && !SfxSynth::recordedOfFile(c.mediaPath)) continue;
+            SfxPlace::Existing e = existingOf(c, fps, src);
+            e.sameTrack = k == track;
+            e.start = c.start / fps;
+            e.end = c.end() / fps;
+            existing << e;
+        }
 
     // The variants: one seed if given, else 1, 2, 3 in turn (the same sound three times in a row sounds made). The
     // anchors differ a little per variant: the rules see the first one, each sound lands with its own
