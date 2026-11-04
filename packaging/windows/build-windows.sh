@@ -66,7 +66,7 @@ mkdir -p "$OUT/licenses"
 cp "$ROOT/LICENSE" "$ROOT/THIRD_PARTY.md" "$OUT/licenses/"
 cp "$ROOT/third_party/earshot/LICENSE" "$OUT/licenses/earshot-LICENSE.txt"
 cp "$ROOT/third_party/rnnoise/COPYING" "$OUT/licenses/rnnoise-COPYING.txt"
-cp "$ROOT"/assets/sfx/cc0/LICENSE-*.txt "$ROOT/assets/sfx/cc0/SOURCES.md" "$OUT/licenses/"
+cp "$ROOT"/assets/sfx/cc0/LICENSE-* "$ROOT/assets/sfx/cc0/SOURCES.md" "$OUT/licenses/"
 
 
 # --- Qt (Plugins: platforms, styles, imageformats, …) ---
