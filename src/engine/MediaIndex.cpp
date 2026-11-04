@@ -419,6 +419,27 @@ void applyNotes(Entry& e)
 
 QString notesFile(const QString& file) { return notesDir() + '/' + hashOf(PathKey::of(file)) + ".json"; }
 
+// The notes by the file's content (name, size, the first MB): found when its path has none - a moved project folder,
+// another drive letter. Remembered per path, size and time (reads 1 MB once per file and process).
+QString contentNotesFile(const QString& file)
+{
+    const QFileInfo fi(file);
+    const QString key = QString("%1|%2|%3").arg(PathKey::of(file)).arg(fi.size()).arg(fi.lastModified().toMSecsSinceEpoch());
+    static QMutex mutex;
+    static QHash<QString, QString> known;
+    {
+        QMutexLocker lock(&mutex);
+        if (const auto it = known.constFind(key); it != known.constEnd()) return *it;
+    }
+    QFile f(file);
+    if (!f.open(QIODevice::ReadOnly)) return {};
+    const QByteArray head = QCryptographicHash::hash(f.read(1 << 20), QCryptographicHash::Sha1).toHex();
+    const QString path = notesDir() + "/c-" + hashOf(QString("%1|%2|%3").arg(fi.fileName()).arg(fi.size()).arg(QString::fromLatin1(head))) + ".json";
+    QMutexLocker lock(&mutex);
+    known.insert(key, path);
+    return path;
+}
+
 } // namespace
 
 QString cacheKey(const QString& file, const QString& audioWay)
@@ -516,7 +537,12 @@ void addSpeech(Entry& e, const QVector<TranscriptWord>& words)
 QVector<Note> notes(const QString& file)
 {
     QFile f(notesFile(file));
-    if (!f.open(QIODevice::ReadOnly)) return {};
+    if (!f.open(QIODevice::ReadOnly)) {
+        // No notes under this path: the same file elsewhere (only looked for while there are any such notes at all)
+        if (QDir(notesDir()).entryList({"c-*.json"}, QDir::Files).isEmpty()) return {};
+        f.setFileName(contentNotesFile(file));
+        if (f.fileName().isEmpty() || !f.open(QIODevice::ReadOnly)) return {};
+    }
     QVector<Note> out;
     for (const QJsonValue& v : QJsonDocument::fromJson(f.readAll()).object()["notes"].toArray()) {
         const QJsonObject o = v.toObject();
@@ -561,14 +587,16 @@ bool annotate(Entry& e, int shot, const std::optional<QString>& desc, const std:
     for (const Note& n : ns)
         arr << QJsonObject{{"shot", n.shot}, {"from", n.from}, {"to", n.to}, {"desc", n.desc},
                            {"tags", QJsonArray::fromStringList(n.tags)}};
-    const QString path = notesFile(e.file);
-    QDir().mkpath(QFileInfo(path).absolutePath());
-    QSaveFile out(path);
-    if (!out.open(QIODevice::WriteOnly)
-        || out.write(QJsonDocument(QJsonObject{{"file", e.file}, {"notes", arr}}).toJson(QJsonDocument::Indented)) < 0
-        || !out.commit()) {
-        if (error) *error = "cannot write " + QDir::toNativeSeparators(path);
-        return false;
+    // By path, and a copy by content (name, size, first MB) for the file found under another path later
+    const QByteArray json = QJsonDocument(QJsonObject{{"file", e.file}, {"notes", arr}}).toJson(QJsonDocument::Indented);
+    for (const QString& path : {notesFile(e.file), contentNotesFile(e.file)}) {
+        if (path.isEmpty()) continue; // unreadable now: by path only
+        QDir().mkpath(QFileInfo(path).absolutePath());
+        QSaveFile out(path);
+        if (!out.open(QIODevice::WriteOnly) || out.write(json) < 0 || !out.commit()) {
+            if (error) *error = "cannot write " + QDir::toNativeSeparators(path);
+            return false;
+        }
     }
     return true;
 }

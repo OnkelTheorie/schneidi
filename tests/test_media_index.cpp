@@ -222,6 +222,23 @@ int main(int argc, char** argv)
     CHECK(!r["cached"].toBool(true));
     CHECK_EQ(eventCalls, 3);
 
+    // A moved project folder (or another drive letter): the notes follow the file by its name, size and first MB
+    {
+        const QString moved = dir.filePath("moved/") + QFileInfo(media).fileName();
+        QDir().mkpath(QFileInfo(moved).absolutePath());
+        CHECK(QFile::copy(media, moved));
+        CHECK_EQ(MediaIndex::notes(moved).size(), 2);
+        const QJsonArray found = run("index", {{"files", QJsonArray{moved}}, {"query", "ruhige Totale"}})["hits"].toArray();
+        CHECK(!found.isEmpty() && found[0].toObject()["shot"].toInt() == 1);
+        // Same name, other content: not the same file
+        const QString other = dir.filePath("other/") + QFileInfo(media).fileName();
+        QDir().mkpath(QFileInfo(other).absolutePath());
+        QFile o(other);
+        if (CHECK(o.open(QIODevice::WriteOnly))) o.write(QByteArray(int(QFileInfo(media).size()), 'x'));
+        o.close();
+        CHECK(MediaIndex::notes(other).isEmpty());
+    }
+
     // Project: transcript words become the shots' speech; hits in timeline time where the trimmed clips play
     const QString project = dir.filePath("p.schneidi");
     CHECK(!run("new", {{"project", project}, {"template", "neutral"}, {"fps", 25}, {"media", QJsonArray{media}}})
