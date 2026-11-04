@@ -42,6 +42,11 @@ COPY --from=build /opt/ffmpeg/bin/ffmpeg /usr/local/bin/ffmpeg
 RUN rm -rf /opt/ffmpeg/lib/pkgconfig && echo /opt/ffmpeg/lib > /etc/ld.so.conf.d/ffmpeg.conf && ldconfig \
  && ldd /usr/local/bin/ffmpeg | grep -q /opt/ffmpeg/lib/libavcodec
 COPY --from=build /src/build/schneidi-cli /usr/local/bin/schneidi-cli
+# Licence texts (MIT/BSD ask for their notice in every copy: earshot's recipe ports, RNNoise; the CC0 sounds' files)
+COPY --from=build /src/LICENSE /src/THIRD_PARTY.md /usr/share/doc/schneidi/
+COPY --from=build /src/third_party/earshot/LICENSE /usr/share/doc/schneidi/earshot-LICENSE.txt
+COPY --from=build /src/third_party/rnnoise/COPYING /usr/share/doc/schneidi/rnnoise-COPYING.txt
+COPY --from=build /src/assets/sfx/cc0/LICENSE-*.txt /src/assets/sfx/cc0/SOURCES.md /usr/share/doc/schneidi/
 RUN ldd /usr/local/bin/schneidi-cli | grep -q /opt/ffmpeg/lib/libavcodec
 
 # Not root. Work folder /data; backups, the generated token and extensions (whisper) in the home folder
