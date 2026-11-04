@@ -786,7 +786,8 @@ void testContext()
                               QJsonObject{{"op", "align"}, {"usage", "{op:'align', events:[times], to:[times]|{first, every}}"}},
                               QJsonObject{{"op", "clear"}, {"usage", "{op:'clear'}"}},
                               QJsonObject{{"op", "ramp"}, {"usage", "{op:'ramp', clip, points:[{at, speed}]} or {…, clear:true}"}}};
-        const QString d3 = Ai::compactTools(more, ops3)[4]["inputSchema"]["properties"]["ops"]["description"].toString();
+        const QJsonArray m3 = Ai::compactTools(more, ops3);
+        const QString d3 = m3[4]["inputSchema"]["properties"]["ops"]["description"].toString();
         CHECK(d3.contains("enable|disable(clips); align(events:[times], to:[times]|{first, every}); clear(); "
                           "ramp(clip, points:[{at, speed}]) or {…, clear:true}"));
         const QString instr = "schneidi is a video editor. Edit projects (.schneidi) with these tools: `new` creates one "
