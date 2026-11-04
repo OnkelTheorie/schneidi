@@ -322,12 +322,15 @@ int main(int argc, char** argv)
     quick->play(0, 1.0);
     quick->release();
     sleepMs(300);
-    for (int i = 0; i < 60; ++i) {
-        if (i % 5 == 4) quick->pause();
-        else quick->play(double(frameStart(20 + (i * 37) % 300)), 1.0);
-        quick->release();
-        sleepMs(1 + i % 4); // 1-4 ms: inside the fade-out, the fade-in, or after them
-    }
+    // Rounds of 60 commands until at least 10 of them arrived as fades (a loaded machine runs the device thread late
+    // and it takes several commands as one: the case to test did not happen yet, which is no pass), at most 8 rounds
+    for (int round = 0; round < 8 && (round == 0 || quick->stats().fadeOuts < 10); ++round)
+        for (int i = 0; i < 60; ++i) {
+            if (i % 5 == 4) quick->pause();
+            else quick->play(double(frameStart(20 + (i * 37 + round * 11) % 300)), 1.0);
+            quick->release();
+            sleepMs(1 + i % 4); // 1-4 ms: inside the fade-out, the fade-in, or after them
+        }
     quick->play(double(frameStart(60)), 1.0);
     quick->release();
     sleepMs(200);
