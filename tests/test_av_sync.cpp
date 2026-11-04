@@ -22,6 +22,7 @@
 #include <QSettings>
 #include <QTemporaryDir>
 #include <QTimer>
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <mutex>
@@ -279,7 +280,12 @@ struct SpeakerClock {
 // Preview: the real Engine plays a timeline with three sources from their file start – flash shown (frameReady)
 // against beep handed to the speaker. The picture follows the sound's clock: |offset| <= kPreviewTolMs. The "speaker"
 // (the engine's file device) has no device latency; with a sound card the clock subtracts its buffer.
-void testPreview(const QString& dir, const QString& speaker, SpeakerClock& clock)
+// A run on a loaded machine can be disturbed by what the test cannot control: late frames the picture pump skips (a
+// flash is one frame) or a starved device thread that hands several blocks at once (the speaker clock then dates them
+// wrong). Such a run says nothing about the sync: it is run again (at most 3 times); an undisturbed run decides.
+enum class PreviewRun { Pass, Fail, Disturbed };
+
+PreviewRun testPreview(const QString& dir, const QString& speaker, SpeakerClock& clock, bool last)
 {
     const Variant* parts[] = {&kVariants[0], &kVariants[1], &kVariants[3]}; // mov, late_audio, aac
     Timeline tl;
@@ -287,7 +293,7 @@ void testPreview(const QString& dir, const QString& speaker, SpeakerClock& clock
     tl.audio.resize(1);
     for (int i = 0; i < 3; ++i) {
         const QString src = QString("%1/%2.%3").arg(dir, parts[i]->name, parts[i]->container);
-        if (!CHECK(QFileInfo::exists(src))) return;
+        if (!CHECK(QFileInfo::exists(src))) return PreviewRun::Fail;
         tl.video[0].clips << clip(10 + 2 * i, src, 100 * i, 0, kLenA, 10 + 2 * i);
         tl.audio[0].clips << clip(11 + 2 * i, src, 100 * i, 0, kLenA, 10 + 2 * i);
     }
@@ -302,7 +308,7 @@ void testPreview(const QString& dir, const QString& speaker, SpeakerClock& clock
     QString error;
     if (!engine.init(&error)) {
         std::printf("Vorschau übersprungen: %s\n", qPrintable(error));
-        return;
+        return PreviewRun::Pass;
     }
     engine.setFormat(kFmt);
     QObject::connect(&engine, &Engine::frameReady, &engine, [&](const QImage& img) {
@@ -324,9 +330,14 @@ void testPreview(const QString& dir, const QString& speaker, SpeakerClock& clock
     QTimer::singleShot(400, &wait, &QEventLoop::quit);
     wait.exec();
     clock.finish();
+    const Picture::Pump::Stats pictures = engine.pictureStats();
+    // Blocks the speaker got at once (a starved device thread catching up): more than one block per size step
+    int bursts = 0;
+    for (size_t i = 1; i < clock.writes.size(); ++i)
+        if (clock.writes[i].first - clock.writes[i - 1].first > 480 * 4) ++bursts; // a period: 480 samples (buffer 960)
 
     QFile f(speaker);
-    if (!CHECK(f.open(QIODevice::ReadOnly))) return;
+    if (!CHECK(f.open(QIODevice::ReadOnly))) return PreviewRun::Fail;
     const QByteArray raw = f.readAll();
     const auto* s = reinterpret_cast<const int16_t*>(raw.constData());
     std::vector<float> left(size_t(raw.size() / 4));
@@ -337,21 +348,40 @@ void testPreview(const QString& dir, const QString& speaker, SpeakerClock& clock
         std::lock_guard<std::mutex> g(lock);
         flashes = shown;
     }
-    std::printf("Vorschau (Ton am Lautsprecher - Bild gezeigt, ms; je Quelle ab Dateianfang):\n");
-    if (!CHECK_EQ(int(flashes.size()), 6) || !CHECK_EQ(int(beeps.size()), 6)) return;
+    std::printf("Vorschau (Ton am Lautsprecher - Bild gezeigt, ms; je Quelle ab Dateianfang; %d Bilder übersprungen, "
+                "%d Sprünge, %d Block-Schübe):\n", pictures.skipped, pictures.jumps, bursts);
+    const bool disturbed = pictures.skipped + pictures.jumps > 0 || bursts > 0;
+    if (int(flashes.size()) != 6 || int(beeps.size()) != 6) {
+        std::printf("  %d Blitze, %d Pieptöne\n", int(flashes.size()), int(beeps.size()));
+        if (disturbed && !last) return PreviewRun::Disturbed;
+        CHECK_EQ(int(flashes.size()), 6);
+        CHECK_EQ(int(beeps.size()), 6);
+        return PreviewRun::Fail;
+    }
+    bool ok = true;
+    std::vector<double> offsets;
     for (int i = 0; i < 3; ++i) {
         QString line;
         for (int k = 0; k < 2; ++k) {
             const size_t n = size_t(2 * i + k);
             const qint64 heard = clock.timeOf(beeps[n]);
-            if (!CHECK(heard >= 0)) return;
+            if (!CHECK(heard >= 0)) return PreviewRun::Fail;
             const double ms = (heard - flashes[n]) / 1e6;
+            offsets.push_back(ms);
             line += QString(" %1").arg(ms, 7, 'f', 1);
             if (std::abs(ms) > kPreviewTolMs) line += " <- versetzt";
-            CHECK(std::abs(ms) <= kPreviewTolMs);
+            ok = ok && std::abs(ms) <= kPreviewTolMs;
         }
         std::printf("  %-20s%s\n", parts[i]->name, qPrintable(line));
     }
+    // The median always (a systematic offset or a drift shows in every run, disturbed or not)
+    std::sort(offsets.begin(), offsets.end());
+    const double median = (offsets[2] + offsets[3]) / 2;
+    CHECK(std::abs(median) <= kPreviewTolMs);
+    if (ok) return PreviewRun::Pass;
+    if (disturbed && !last) return PreviewRun::Disturbed;
+    CHECK(ok); // undisturbed (or the last run): each offset counts
+    return PreviewRun::Fail;
 }
 
 } // namespace
@@ -373,7 +403,17 @@ int main(int argc, char** argv)
     testExport(tmp.path());
     clock.clock.start();
     clock.start();
-    testPreview(tmp.path(), clock.path, clock);
+    PreviewRun run = testPreview(tmp.path(), clock.path, clock, false);
     if (clock.thread.joinable()) clock.finish();
+    for (int attempt = 2; attempt <= 3 && run == PreviewRun::Disturbed; ++attempt) {
+        std::printf("Vorschau gestört: Versuch %d\n", attempt);
+        SpeakerClock again; // a fresh speaker file
+        again.path = tmp.filePath(QString("speaker%1.raw").arg(attempt));
+        qputenv("SCHNEIDI_AUDIO_DEVICE", ("file:" + QDir::toNativeSeparators(again.path)).toLocal8Bit());
+        again.clock.start();
+        again.start();
+        run = testPreview(tmp.path(), again.path, again, attempt == 3);
+        if (again.thread.joinable()) again.finish();
+    }
     return Check::result();
 }
