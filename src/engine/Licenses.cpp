@@ -119,6 +119,8 @@ QVector<Part> report()
     // Built in (assets/sfx/cc0, SOURCES.md): the recorded sounds of op 'sfx'
     out << Part{"Swishes Sound Pack by artisticdude, OpenGameArt (built in)", "CC0-1.0", false, {}};
     out << Part{"Impact Sounds by Kenney, www.kenney.nl (built in)", "CC0-1.0", false, {}};
+    out << Part{"Impact recordings by FFeller and dorian.mastin, Freesound (built in)", "CC0-1.0", false, {}};
+    out << Part{"Starter Kit sounds (Racing, City Builder) by Kenney, www.kenney.nl (built in)", "CC0-1.0", false, {}};
 
     // Loaded libraries: GPL ones by name
     for (const QString& path : loadedLibraries()) {
