@@ -22,6 +22,7 @@
 #include <QFileInfo>
 #include <QHash>
 #include <QJsonArray>
+#include <QMap>
 #include <QSet>
 
 #include <algorithm>
@@ -122,26 +123,47 @@ void opJlCut(Session& s, const QJsonObject& op)
                                "track (link them with op 'link'; a sound cut alone: trim mode:'roll')")
                            .arg(left)
                            .arg(right));
-    if (offset < e->lo || offset > e->hi)
+    // Where each audio track's sound cut is (they can stand differently: one rolled alone)
+    const auto soundCuts = [&s, &e] {
+        QMap<int, QStringList> at; // sound cut -> tracks
+        for (const auto& p : e->pairs) {
+            TrackRef ref;
+            if (const Clip* a = TimelineOps::findClip(s.project.timeline(), p.first, &ref)) at[a->end()] << trackName(ref);
+        }
+        return at;
+    };
+    const QMap<int, QStringList> was = soundCuts();
+    if (offset < e->lo || offset > e->hi) {
+        QString apart;
+        if (was.size() > 1) {
+            QStringList list;
+            for (auto it = was.begin(); it != was.end(); ++it) list << it.value().join(", ") + " at " + tc(it.key(), f);
+            apart = QString(" (the audio tracks are cut at different times: %1; jl_cut moves them to one time - roll "
+                            "one track alone with trim mode:'roll')")
+                        .arg(list.join("; "));
+        }
         fail("BAD_ARGUMENT",
              QString("audio %1 needs more material than the clips have: at this cut the sound can start up to %2 early "
-                     "(audio:'-%3s') and run on up to %4 (audio:'+%5s')")
+                     "(audio:'-%3s') and run on up to %4 (audio:'+%5s')%6")
                  .arg(offset)
                  .arg(frameSpan(std::max(0, -e->lo), f))
                  .arg(seconds(std::max(0, -e->lo), f), 0, 'f', 2)
                  .arg(frameSpan(std::max(0, e->hi), f))
-                 .arg(seconds(std::max(0, e->hi), f), 0, 'f', 2));
-    s.editor.setSoundEdge(left, right, offset);
-    QStringList tracks;
-    for (const auto& p : e->pairs) {
-        TrackRef ref;
-        if (TimelineOps::findClip(s.project.timeline(), p.first, &ref)) tracks << trackName(ref);
+                 .arg(seconds(std::max(0, e->hi), f), 0, 'f', 2)
+                 .arg(apart));
     }
+    s.editor.setSoundEdge(left, right, offset);
+    // The note names where the sound cut really is on each track: a track without the material for it is elsewhere
+    const QMap<int, QStringList> now = soundCuts();
+    QString tracks = now.value(e->cut + offset).join(", ");
+    for (auto it = now.begin(); it != now.end(); ++it)
+        if (it.key() != e->cut + offset)
+            tracks += QString("; %1 at %2 (not enough material for that cut)").arg(it.value().join(", "), tc(it.key(), f));
     const QString what = offset < 0   ? QString("J cut: the sound of clip %1 starts %2 before").arg(right).arg(frameSpan(-offset, f))
                          : offset > 0 ? QString("L cut: the sound of clip %1 runs %2 past").arg(left).arg(frameSpan(offset, f))
                                       : QString("straight cut: the sound cuts with");
     s.notes << QString("jl_cut: %1 the picture cut at %2 (sound cut at %3 on %4; picture and links unchanged)")
-                   .arg(what, tc(e->cut, f), tc(e->cut + offset, f), tracks.join(", "));
+                   .arg(what, tc(e->cut, f), tc(e->cut + offset, f), tracks);
 }
 
 // ---------- room_tone ----------

@@ -241,6 +241,26 @@ void testJlCutOp(const QString& dir)
     CHECK(errorOf({op({{"op", "jl_cut"}, {"clip", 2}, {"audio", 4294967296.0}})}).startsWith("BAD_ARGUMENT"));
     CHECK(errorOf({op({{"op", "jl_cut"}, {"clip", 9}, {"audio", 5}})}).startsWith("BAD_ARGUMENT")); // music: no picture
     CHECK_EQ(clipOf(*loaded(), 5).start, 95); // errors changed nothing
+
+    // Audio tracks cut at different times (A2 rolled alone to 105, no material on either side there): the range is
+    // A1's, the note says where A2's cut really is and the error names the times
+    {
+        Project p;
+        setup(p);
+        p.edit("apart", [](Timeline& tl) {
+            tl.audio[1].clips[0] = media(7, 0, 195, 105, 1, 1);  // file 195..299: nothing after
+            tl.audio[1].clips[1] = media(8, 105, 0, 95, 2, 1);   // file 0..: nothing before
+        });
+        QString error;
+        if (!CHECK(ProjectFile::save(p.data(), g_path, &error))) return;
+    }
+    r = run("edit", {{"project", g_path}, {"ops", QJsonArray{op({{"op", "jl_cut"}, {"clip", 2}, {"audio", 0}})}}});
+    const QString note = QJsonDocument(r["notes"].toArray()).toJson();
+    if (!CHECK(note.contains("on A1; A2 at 00:00:04:05 (not enough material"))) std::printf("       %s\n", qPrintable(note));
+    CHECK_EQ(clipOf(*loaded(), 7).end(), 105);
+    const QString apart = errorOf({op({{"op", "jl_cut"}, {"clip", 2}, {"audio", -5}})});
+    if (!CHECK(apart.contains("cut at different times: A1 at 00:00:04:00; A2 at 00:00:04:05")))
+        std::printf("       %s\n", qPrintable(apart));
 }
 
 // ---------- room tone ----------
