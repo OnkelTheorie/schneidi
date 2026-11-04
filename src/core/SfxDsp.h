@@ -4,7 +4,7 @@
 // filters, smoothing, coloured noise, shelves, a small room, the edit. Header-only, internal to those two files.
 //
 // Ported from earshot (https://github.com/Leonxlnx/earshot): earshot/forge/recipes/whoosh.py (`render`, `envelope`,
-// `_edit`, `shelf`, helpers), earshot/forge/dsp.py (`svf`) and the parameter sets of earshot/forge/bank/forge_v2.json
+// `_edit`, `shelf`, helpers), earshot/forge/dsp.py (`svf`, `osc`) and the parameter sets of earshot/forge/bank/forge_v2.json
 // (swipe/*, pro_whoosh_big/*). Changes: C++, mono, own deterministic noise, a simpler noise-tail room instead of
 // fx.reverb's FDN, tape saturation without oversampling and emphasis. The ported code is under the MIT licence:
 //
@@ -189,15 +189,16 @@ inline Vec svf(const Vec& x, const Vec& fc, double q, int mode, double lo = 20, 
 }
 
 
-// Peak of a 10 ms RMS envelope (a layer's level for the mix)
-inline double lvl(const Vec& x)
+// Peak of a 10 ms RMS envelope (a layer's level for the mix); frac > 0: of the last `frac` of the sound only
+inline double lvl(const Vec& x, double frac = 0)
 {
-    const size_t h = nOf(0.01), k = x.size() / h;
+    const size_t s0 = frac > 0 ? size_t(double(x.size()) * (1 - frac)) : 0;
+    const size_t h = nOf(0.01), k = (x.size() - s0) / h;
     if (k == 0) return rmsOf(x) + 1e-12;
     double best = 0;
     for (size_t b = 0; b < k; ++b) {
         double q = 0;
-        for (size_t i = b * h; i < (b + 1) * h; ++i) q += x[i] * x[i];
+        for (size_t i = s0 + b * h; i < s0 + (b + 1) * h; ++i) q += x[i] * x[i];
         best = std::max(best, std::sqrt(q / double(h)));
     }
     return best + 1e-12;
@@ -264,11 +265,11 @@ inline Vec shelf(Vec x, double f0, double gainDb, bool high)
     return x;
 }
 
-// The room: a short smooth noise tail (a real room's late field is Gaussian noise; highs die faster with damp),
-// unit energy, high-passed at lowcut, after a predelay; dry + wet * it
-inline Vec room(const Vec& x, Rng& r, double rt60, double damp, double wet, double tailS)
+// A reverb's impulse response as a short smooth noise tail (a real room's late field is Gaussian noise; highs die
+// faster with damp): a 4 ms onset after the predelay, high-passed at lowcut, unit energy
+inline Vec noiseIr(Rng& r, double rt60, double damp, double predelay, double lowcut, double tailS)
 {
-    const size_t n = nOf(tailS), pd = nOf(0.006);
+    const size_t n = nOf(tailS), pd = predelay > 0 ? nOf(predelay) : 0;
     const double rtHi = rt60 * std::max(0.05, 1 - 0.85 * damp);
     const Vec lo = butter(r.normals(n), false, 4000, 2), hiN = butter(r.normals(n), true, 4000, 2);
     Vec ir(pd + n, 0);
@@ -277,10 +278,16 @@ inline Vec room(const Vec& x, Rng& r, double rt60, double damp, double wet, doub
         const double onset = std::min(1.0, t / 0.004);
         ir[pd + i] = onset * (lo[i] * std::pow(10.0, -3 * t / rt60) + hiN[i] * std::pow(10.0, -3 * t / rtHi));
     }
-    ir = butter(ir, true, 120, 2);
+    ir = butter(ir, true, lowcut, 2);
     const double e = std::sqrt(std::inner_product(ir.begin(), ir.end(), ir.begin(), 0.0)) + 1e-12;
     for (double& v : ir) v /= e;
-    Vec y = convolve(x, ir);
+    return ir;
+}
+
+// The room: x through noiseIr (6 ms predelay, high-passed at 120 Hz); dry + wet * it
+inline Vec room(const Vec& x, Rng& r, double rt60, double damp, double wet, double tailS)
+{
+    Vec y = convolve(x, noiseIr(r, rt60, damp, 0.006, 120, tailS));
     for (double& v : y) v *= wet;
     for (size_t i = 0; i < x.size(); ++i) y[i] += x[i];
     return y;
@@ -389,6 +396,43 @@ inline void trimTail(Vec& x, double floorDb, double keep)
             break;
         }
     x.resize(std::min(x.size(), last + nOf(keep)));
+}
+
+// dsp.osc: a band-limited oscillator on a per-sample frequency (Hz), phase in cycles, peak about 1: 0 sine, 1 saw
+// (PolyBLEP), 2 square (PolyBLEP), 3 triangle (the band-limited square integrated, leaky, from -1)
+inline double blep(double t, double dt)
+{
+    if (t < dt) {
+        t /= dt;
+        return t + t - t * t - 1.0;
+    }
+    if (t > 1.0 - dt) {
+        t = (t - 1.0) / dt;
+        return t * t + t + t + 1.0;
+    }
+    return 0.0;
+}
+
+inline Vec osc(const Vec& freq, int shape, double phase = 0)
+{
+    const size_t n = freq.size();
+    const double ph0 = phase - std::floor(phase);
+    const int k = shape == 3 ? 2 : shape;
+    Vec y(n);
+    double ph = ph0;
+    for (size_t i = 0; i < n; ++i) {
+        const double dt = std::clamp(freq[i] / SR, 1e-9, 0.49);
+        if (k == 0) y[i] = std::sin(2 * kPi * ph);
+        else if (k == 1) y[i] = 2.0 * ph - 1.0 - blep(ph, dt);
+        else y[i] = (ph < 0.5 ? 1.0 : -1.0) + blep(ph, dt) - blep(std::fmod(ph + 0.5, 1.0), dt);
+        ph += dt;
+        if (ph >= 1.0) ph -= 1.0;
+    }
+    if (shape == 3) { // lfilter([1], [1, -0.9995]) of the square x 4 f / SR, starting from -(1 - 2 phase)
+        double prev = -(1 - 2 * ph0);
+        for (size_t i = 0; i < n; ++i) prev = y[i] = y[i] * 4 * freq[i] / SR + 0.9995 * prev;
+    }
+    return y;
 }
 
 inline Vec times(size_t n)

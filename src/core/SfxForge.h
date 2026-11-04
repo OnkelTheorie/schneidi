@@ -1,15 +1,18 @@
 // SPDX-License-Identifier: AGPL-3.0-only AND MIT
 #pragma once
 // Riser, click and hit sounds (core/SfxSynth): C++ ports of earshot's forge recipes (Leon Lin, MIT; licence in
-// third_party/earshot/LICENSE and at the top of SfxForge.cpp): darkriser (a dark noise build with a sub and an
-// accelerating stutter gate, no rising tone), shutter (a two-stage mechanical click), knock (a struck block) and
-// subdrop (a sub falling under a click, the impact), each with parameter sets of earshot's banks. Mono, deterministic per seed.
+// third_party/earshot/LICENSE and at the top of SfxForge.cpp): riser (the designed build: a detuned chord gliding
+// up, a noise band opening, an accelerating gate and a reverse reverb swell, cut on its peak), darkriser (a dark
+// noise build with a sub and an accelerating stutter gate, no rising tone), shutter (a two-stage mechanical click),
+// knock (a struck block) and subdrop (a sub falling under a click, the impact), each with parameter sets of earshot's
+// banks. Mono, deterministic per seed.
 
 #include <vector>
 
 namespace SfxForge {
 
-enum class Riser { Dark, Snatch, Build };
+// Dark, Snatch, Build: darkriser (rings a little after the peak); Tension, Swell, Air: riser.py's build (ends on the peak)
+enum class Riser { Dark, Snatch, Build, Tension, Swell, Air };
 enum class Click { Snap, Mirror, Dslr };
 enum class Knock { Snap, Wood };
 enum class Drop { Soft };
