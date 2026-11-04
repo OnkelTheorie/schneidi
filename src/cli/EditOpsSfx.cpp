@@ -342,8 +342,8 @@ void addSfxOps(QVector<OpDef>& ops)
                  "moment, the riser ends on it, a hit starts on it. Sparing: never two sounds closer than min_gap "
                  "(1.5 s), at most max_per_min in any minute (mild 3, normal 6), one impact per video; the answer's "
                  "notes list what the rules left out (skipped, why). level 'mild' (default, -10 dB) or 'normal' "
-                 "(-4 dB); volume_db sets it directly (on the sound at its kind's peak level). Whoosh, swish and hit are "
-                 "CC0 recordings (computed ones when a length is given), the others computed. seed: one variant (default 1-3 in turn); length: "
+                 "(-4 dB); volume_db sets it directly (on the sound at its kind's peak level). All but the riser are "
+                 "CC0 recordings (computed ones when a length is given); the riser is computed. seed: one variant (default 1-3 in turn); length: "
                  "of the sound (a riser 0.5-8 s). Only where asked: never on every cut by default.",
                  opSfx,
                  {"seed", "length", "track", "min_gap", "max_per_min", "music", "game", "_kills", "_beats"}};
