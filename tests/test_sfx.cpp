@@ -435,6 +435,14 @@ void testOp(const QString& dir)
         // Another version's name (another schneidi): left offline, never a different sound under the same clip
         CHECK(SfxSynth::restoreCachedFile("/x/sfx/whoosh-1-795ms-v1.wav").isEmpty());
         CHECK(SfxSynth::restoreCachedFile("/x/ding.wav").isEmpty());
+        // A file of the version before (6) of a kind that has not changed since: restored as this version's file
+        // (same samples); a riser of 6 (changed in 7) is not
+        const QString click = SfxSynth::cachedFile(SfxSynth::Kind::Click, 2, 0.12);
+        const QString oldName = QFileInfo(click).fileName().replace(QString("-v%1.wav").arg(SfxSynth::kVersion), "-v6.wav");
+        CHECK(oldName != QFileInfo(click).fileName());
+        CHECK_EQ(SfxSynth::restoreCachedFile("/elsewhere/sfx/" + oldName), click);
+        const QString riser = QFileInfo(SfxSynth::cachedFile(SfxSynth::Kind::Riser, 1, 1.5)).fileName();
+        CHECK(SfxSynth::restoreCachedFile("/elsewhere/sfx/" + QString(riser).replace(QString("-v%1.wav").arg(SfxSynth::kVersion), "-v6.wav")).isEmpty());
     }
     // `effects` lists the sounds
     const QJsonObject fx = run("effects", {{"kind", "sfx"}});

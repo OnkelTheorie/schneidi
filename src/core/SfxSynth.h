@@ -17,7 +17,7 @@
 namespace SfxSynth {
 
 constexpr int kRate = 48000; // mono, 48 kHz
-// Bumped when a sound changes: part of the cache file names
+// Bumped when a sound changes: part of the cache file names (and lastChange of that kind set to it)
 constexpr int kVersion = 7;
 
 enum class Kind { Whoosh, Riser, Hit, Impact, Click, Swish };
@@ -86,6 +86,9 @@ struct CachedName {
 std::optional<CachedName> parseCachedFile(const QString& path);
 // A built-in sound of a project that is missing (cache cleared, project from another computer): made again in this
 // computer's cache when its name is one of this version's; the path it has now (empty = not one, or another version)
+// (also one of an older version when its kind's sound has not changed since: lastChange)
 QString restoreCachedFile(const QString& missingPath);
+// The version in which a kind's computed sound last changed (files of older versions sound different)
+int lastChange(Kind k);
 
 } // namespace SfxSynth
