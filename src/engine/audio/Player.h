@@ -85,6 +85,8 @@ public:
         int reroutes = 0;   // the system moved the sound to another output by itself
     };
     Stats stats() const;
+    // Tests: the feeder makes no sound for `ms` (a starved computer); the sound runs dry and must not click
+    void stallFeedForTest(int ms);
 
 private:
     struct Impl;

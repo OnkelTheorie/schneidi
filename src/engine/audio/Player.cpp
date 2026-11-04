@@ -105,7 +105,10 @@ struct Player::Impl {
         int fadeLeft = 0; // old generation still fading out
         bool sounding = false;
         float muteGain = 1.f;
+        // The sound broke off (the feeder could not keep up): what comes next fades in from here (a sample of handed)
+        int64_t fadeInAt = 0;
     } cb;
+    std::atomic<int64_t> feedStallUntil{0}; // tests: the feeder makes nothing before this (ns)
     std::atomic<int> underruns{0}, fadeOuts{0}, mixersBuilt{0}, liveUpdates{0}, reopens{0}, reroutes{0};
     std::atomic<int64_t> lastCallback{0}; // when the device last took samples (ns)
     std::atomic<int64_t> silentLimit{kSilentNs}; // took nothing for this long: vanished (ns, from the buffer)
@@ -194,7 +197,7 @@ void Player::Impl::process(float* out, int frames)
             fadeOuts.fetch_add(1, std::memory_order_relaxed);
         }
         s.gen = g;
-        s.handed = s.runT = s.runN = 0;
+        s.handed = s.runT = s.runN = s.fadeInAt = 0;
         s.gapT = s.total;
         s.inRun = false;
     }
@@ -206,6 +209,7 @@ void Player::Impl::process(float* out, int frames)
     const float muteTarget = muted.load(std::memory_order_relaxed) ? 0.f : 1.f;
     int i = 0;
     bool sound = false;
+    int own = -1; // where this generation's sound starts in `out` (-1: none of it here)
     while (i < frames) {
         const uint64_t r = consumed.load(std::memory_order_relaxed);
         if (r == written.load(std::memory_order_acquire)) break;
@@ -231,8 +235,9 @@ void Player::Impl::process(float* out, int frames)
                 s.runT = s.total + i;
                 s.runN = s.handed;
             }
+            if (own < 0) own = i;
             for (int j = 0; j < k; ++j) {
-                const int64_t n = s.handed + j;
+                const int64_t n = s.handed + j - s.fadeInAt;
                 if (s.muteGain != muteTarget)
                     s.muteGain = muteTarget > s.muteGain ? std::min(1.f, s.muteGain + 1.f / kFade)
                                                         : std::max(0.f, s.muteGain - 1.f / kFade);
@@ -250,14 +255,31 @@ void Player::Impl::process(float* out, int frames)
             consumed.store(r + 1, std::memory_order_release);
         }
     }
+    // The feeder fell behind (a starved computer): the sound that is there fades out instead of breaking off, and
+    // what comes after the gap fades in (a hard stop and a hard start were two clicks). The ring runs dry at a block
+    // boundary, mostly the end of a callback: so the fade starts in the callback whose successor cannot be filled.
+    const auto fadeOutTail = [&](int end) {
+        const int m = own < 0 ? 0 : std::min(kFade, end - own);
+        for (int j = 0; j < m; ++j)
+            for (int c = 0; c < kChannels; ++c) out[(end - m + j) * kChannels + c] *= float(m - j) / float(m + 1);
+        s.fadeInAt = s.handed;
+    };
     if (i < frames) {
         std::fill(out + i * kChannels, out + frames * kChannels, 0.f);
         if (s.inRun) { // the sound ran dry (not: a generation that has not started yet)
+            if (s.fadeInAt != s.handed) fadeOutTail(i); // not faded out at the end of the callback before
             s.inRun = false;
             s.gapT = s.total + i;
             underruns.fetch_add(1, std::memory_order_relaxed);
         }
         sound = false;
+    } else if (s.inRun && !hold && own >= 0 && s.handed - s.fadeInAt > kFade) {
+        // Full, but the next callback could not be: less than `frames` of this generation left in the ring
+        int64_t left = 0;
+        const uint64_t w = written.load(std::memory_order_acquire);
+        for (uint64_t r = consumed.load(std::memory_order_relaxed); r < w && left < frames; ++r)
+            if (ring[r % kRing].gen == g) left += kBlock - (r == consumed.load(std::memory_order_relaxed) ? s.offset : 0);
+        if (left < frames) fadeOutTail(frames);
     }
     s.sounding = sound;
     s.total += frames;
@@ -348,6 +370,10 @@ void Player::Impl::feed()
             continue;
         }
         if (c.gen != f.gen) startGeneration(f, c);
+        if (const int64_t stall = feedStallUntil.load(std::memory_order_relaxed); stall != 0 && nowNs() < stall) {
+            waitFor(wake, lock, std::chrono::milliseconds(2));
+            continue;
+        }
         // Ahead = blocks of this generation only: the old ones still in the ring are dropped by the callback. Counting
         // them too, the feeder waited after a jump while the callback emptied the ring (an underrun where the wait is
         // coarse: on Windows a plain 2-ms wait takes ~16 ms, Wait.h).
@@ -778,6 +804,8 @@ QString Player::deviceError() const
     std::lock_guard<std::mutex> lock(d->mutex);
     return d->deviceError;
 }
+
+void Player::stallFeedForTest(int ms) { d->feedStallUntil.store(nowNs() + int64_t(ms) * 1000000); }
 
 Player::Stats Player::stats() const
 {
