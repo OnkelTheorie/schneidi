@@ -7,6 +7,7 @@
 #include "check.h"
 #include "cli/Commands.h"
 #include "core/ProjectFile.h"
+#include "core/SfxForge.h"
 #include "core/SfxPlace.h"
 #include "core/SfxSynth.h"
 #include "engine/Extensions.h"
@@ -89,7 +90,7 @@ void testSynth()
         const double at = double(loud) / SfxSynth::kRate;
         if (!CHECK(std::abs(at - w.anchor) < 0.1)) std::printf("       whoosh: loudest at %.3f s, anchor %.3f s\n", at, w.anchor);
         const SfxSynth::Sound r = SfxSynth::make(SfxSynth::Kind::Riser, 1, 3.0);
-        CHECK(r.length > 3.0 && r.length < 3.7); // the build to the peak, then its short fall
+        CHECK(std::abs(r.length - 3.0) < 1e-9); // the build to the peak, cut there
         CHECK(std::abs(r.anchor - 3.0) < 1e-9);
         const size_t peak = size_t(3.0 * SfxSynth::kRate);
         const std::vector<float> first(r.samples.begin(), r.samples.begin() + peak / 4),
@@ -120,8 +121,59 @@ void testSynth()
     // The name tells kind, seed and the asked length back
     const auto parsed = SfxSynth::parseCachedFile(SfxSynth::cachedFile(SfxSynth::Kind::Riser, 2, 3.0));
     CHECK(parsed && parsed->kind == SfxSynth::Kind::Riser && parsed->seed == 2 && std::abs(parsed->asked - 3.0) < 1e-9
-          && parsed->length > 3.0 && parsed->length < 3.7);
+          && std::abs(parsed->length - 3.0) < 1e-3);
+    // The dark riser (seed 3) still rings a little after its peak
+    CHECK(SfxSynth::make(SfxSynth::Kind::Riser, 3, 1.0).length > 1.0);
     CHECK(!SfxSynth::parseCachedFile("/x/ding.wav"));
+}
+
+// The designed risers (SfxForge: earshot's riser build): deterministic, rising, loudest at their end (they stop on the
+// peak, nothing rings after it), clean
+void testForgeRisers()
+{
+    // 10 ms RMS envelope in dB
+    const auto envelope = [](const std::vector<float>& s) {
+        const size_t h = SfxSynth::kRate / 100;
+        std::vector<double> e(s.size() / h);
+        for (size_t b = 0; b < e.size(); ++b) e[b] = rmsDb(std::vector<float>(s.begin() + long(b * h), s.begin() + long((b + 1) * h)));
+        return e;
+    };
+    struct Case {
+        SfxForge::Riser member;
+        double length;
+    };
+    const Case cases[] = {{SfxForge::Riser::Tension, 0.3}, {SfxForge::Riser::Tension, 2.0}, {SfxForge::Riser::Tension, 8.0},
+                          {SfxForge::Riser::Swell, 0.3},   {SfxForge::Riser::Swell, 2.0},   {SfxForge::Riser::Swell, 8.0},
+                          {SfxForge::Riser::Air, 2.0}};
+    for (const Case& c : cases) {
+        const SfxForge::Result a = SfxForge::riser(c.member, 3, c.length);
+        const auto& s = a.samples;
+        const QString what = QString("riser %1, %2 s").arg(int(c.member)).arg(c.length);
+        if (c.length < 2.5) { // the same seed and length: the same samples; another seed: others
+            CHECK(s == SfxForge::riser(c.member, 3, c.length).samples);
+            CHECK(s != SfxForge::riser(c.member, 4, c.length).samples);
+        }
+        // The length is the build to the peak, the anchor its end
+        CHECK_EQ(s.size(), size_t(std::lround(c.length * SfxSynth::kRate)));
+        CHECK(std::abs(a.anchor - c.length) < 1e-9);
+        CHECK(std::all_of(s.begin(), s.end(), [](float v) { return std::isfinite(v); }));
+        double mean = 0;
+        float peak = 0;
+        for (float v : s) mean += v, peak = std::max(peak, std::abs(v));
+        mean /= double(s.size());
+        if (!CHECK(std::abs(mean) < 1e-3)) std::printf("       %s: mean %.2e\n", qPrintable(what), mean);
+        CHECK(std::abs(peak - 1.f) < 1e-4f);
+        // The last 50 ms hold the loudest 10 ms (within 1.5 dB: the noise, the last tremolo pulses)
+        const std::vector<double> e = envelope(s);
+        const double best = *std::max_element(e.begin(), e.end()), end = *std::max_element(e.end() - 5, e.end());
+        if (!CHECK(end > best - 1.5)) std::printf("       %s: the last 50 ms %.1f dB under the loudest\n", qPrintable(what), best - end);
+        // A rising envelope: the last quarter clearly louder than the first
+        const size_t q = s.size() / 4;
+        const double rise = rmsDb(std::vector<float>(s.end() - long(q), s.end())) - rmsDb(std::vector<float>(s.begin(), s.begin() + long(q)));
+        if (!CHECK(rise > 10.0)) std::printf("       %s: rises %.1f dB\n", qPrintable(what), rise);
+    }
+    // Length 0: the member's own build
+    CHECK(std::abs(SfxForge::riser(SfxForge::Riser::Swell, 1).anchor - SfxForge::riserLength(SfxForge::Riser::Swell)) < 1e-9);
 }
 
 // The shipped CC0 recordings: there with their licences, picked by seed, anchors from their table
@@ -478,7 +530,7 @@ void writeSample(const QString& dir)
         SfxSynth::writeWav(dir + "/" + file, s.samples);
         all.insert(all.end(), s.samples.begin(), s.samples.end());
         all.insert(all.end(), gap.begin(), gap.end());
-        static const char* recipes[] = {"whoosh (pass engine)", "darkriser", "knock", "subdrop", "shutter", "whoosh (pass engine)"};
+        static const char* recipes[] = {"whoosh (pass engine)", "riser (build) / darkriser", "knock", "subdrop", "shutter", "whoosh (pass engine)"};
         out << QString("| %1 | %2 | %3 | %4 | %5 | %6 | %7 | %8 | %9 |\n")
                    .arg(n)
                    .arg(file, SfxSynth::kindName(c.kind))
@@ -512,6 +564,7 @@ int main(int argc, char** argv)
     QGuiApplication app(argc, argv);
     Check::initApp("sfx");
     testSynth();
+    testForgeRisers();
     testRecorded();
     testPlace();
     QTemporaryDir tmp;

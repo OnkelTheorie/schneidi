@@ -38,7 +38,7 @@ struct KindInfo {
 // (the user found the first ones harsh)
 constexpr KindInfo kInfo[] = {
     {Kind::Whoosh, "whoosh", "air rushing past: swells to its peak and falls away (peak on the cut)", 0.9, -12},
-    {Kind::Riser, "riser", "a dark noise build with a sub and a speeding stutter that peaks on the moment (a drop)", 0.9, -11},
+    {Kind::Riser, "riser", "a rising build (a gliding chord, an opening noise band, a speeding tremolo or a reverse swell) that peaks on the moment (a drop)", 0.9, -11},
     {Kind::Hit, "hit", "short knock on a block (a kill, a hit)", 0.2, -8},
     {Kind::Impact, "impact", "a deep sub drop under a click (the one big moment of a video)", 1.3, -6},
     {Kind::Click, "click", "a camera shutter click (a counter, a snapshot, a pop-up)", 0.15, -16},
@@ -126,9 +126,9 @@ Sound make(Kind kind, unsigned seed, double length)
     switch (kind) {
     case Kind::Whoosh: makePass(s, seed, asked, kWhooshes); break;
     case Kind::Swish: makePass(s, seed, asked, kSwishes); break;
-    case Kind::Riser: { // earshot's dark riser (no rising tone): the length is the build to the peak
+    case Kind::Riser: { // earshot's designed risers (tension, swell) and its dark riser: the length is the build to the peak
         static constexpr Variant<SfxForge::Riser> kRisers[3] = {
-            {SfxForge::Riser::Build, 2}, {SfxForge::Riser::Snatch, 2}, {SfxForge::Riser::Dark, 4}};
+            {SfxForge::Riser::Tension, 1}, {SfxForge::Riser::Swell, 1}, {SfxForge::Riser::Build, 2}};
         const auto [m, noise] = variant(kRisers, seed);
         take(s, SfxForge::riser(m, noise, asked));
         break;
