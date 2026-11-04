@@ -606,8 +606,10 @@ std::optional<Entry> build(const QString& file, const Options& options, QString*
     bool faces = false;
     std::optional<Entry> e = measure(fi.absoluteFilePath(), options, error, &faces);
     if (!e) return std::nullopt;
-    // A sound-only file has no picture to look at: keyed as the face model says, nothing to measure anew
-    const QString faceWay = faces || !e->video ? FaceDetect::way() : QString();
+    // Keyed as the face model says now, also when it failed on this file (a broken model file, a picture it cannot
+    // read): cached() looks there, and a failure measured again would fail again (a new model file changes the key)
+    const QString faceWay = FaceDetect::way();
+    (void)faces;
     std::function<QVector<AudioEvents::Event>(const QString&)> source;
     {
         QMutexLocker lock(&g_mutex);
