@@ -106,11 +106,24 @@ int main(int argc, char** argv)
     wait(700);
     const double played = playing.elapsed() / 1000.0;
     engine.pause();
-    wait(300);
-
-    QFile f(out);
-    if (!CHECK(f.open(QIODevice::ReadOnly))) return Check::result();
-    const QByteArray raw = f.readAll();
+    // Until the device has written the stop and a quarter second of silence after it (a loaded machine runs the device
+    // thread late: after a fixed 300 ms the file could end inside the sound, which read as a cut), at most 5 s
+    QByteArray raw;
+    {
+        QElapsedTimer settle;
+        settle.start();
+        for (;;) {
+            QFile f(out);
+            if (!CHECK(f.open(QIODevice::ReadOnly))) return Check::result();
+            raw = f.readAll();
+            const auto* q = reinterpret_cast<const int16_t*>(raw.constData());
+            const qsizetype n = raw.size() / 4, quiet = 48000 / 4;
+            bool silent = n > quiet;
+            for (qsizetype i = n - quiet; silent && i < n; ++i) silent = std::abs(int(q[i * 2])) < 100;
+            if ((silent && settle.elapsed() >= 300) || settle.elapsed() > 5000) break;
+            wait(20);
+        }
+    }
     const auto* s = reinterpret_cast<const int16_t*>(raw.constData());
     const qsizetype frames = raw.size() / 4; // s16 stereo
     const double seconds = frames / 48000.0;
