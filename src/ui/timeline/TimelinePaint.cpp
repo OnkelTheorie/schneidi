@@ -295,6 +295,13 @@ void TimelineView::drawTracks(QPainter& p)
         p.drawLine(x, kRulerH, x, height());
     }
 
+    // Dragging in an effect sound: where its moment lands (its peak, its end for a riser, its attack for a hit)
+    if (m_soundDropFrame >= 0) {
+        p.setPen(QPen(Theme::warning, 1, Qt::DashLine));
+        const int x = int(frameToX(m_soundDropFrame));
+        p.drawLine(x, kRulerH, x, height());
+    }
+
     // Dragging in a transition: show the position of the new transition at the cut
     if (m_transDrop) {
         if (const auto row = rowFor(m_transDrop->ref)) {

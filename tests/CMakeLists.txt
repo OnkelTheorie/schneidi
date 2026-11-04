@@ -402,3 +402,5 @@ schneidi_test(test_voice_clean) # voice cleaning (RNNoise): sync at any rate, no
 target_link_libraries(test_voice_clean PRIVATE schneidi_cli_lib)
 schneidi_test(test_sfx) # effect sounds: synthesis deterministic and mild, placement rules, op sfx
 target_link_libraries(test_sfx PRIVATE schneidi_cli_lib)
+schneidi_test(test_sfx_library) # Effects Library "Klänge": list, drag data, drop = op sfx as one undo step, nothing placed by itself
+target_link_libraries(test_sfx_library PRIVATE schneidi_cli_lib)

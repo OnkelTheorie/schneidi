@@ -145,6 +145,12 @@ int TimelineView::fxDropClipAt(const QPoint& pos) const
 
 void TimelineView::dragEnterEvent(QDragEnterEvent* e)
 {
+    if (e->mimeData()->hasFormat(EffectsLibrary::SoundMimeType)) {
+        m_soundDragging = e->mimeData()->data(EffectsLibrary::SoundMimeType);
+        m_soundDropFrame = -1;
+        e->acceptProposedAction();
+        return;
+    }
     if (e->mimeData()->hasFormat(EffectsLibrary::EffectMimeType)) {
         m_fxDragging = QString::fromUtf8(e->mimeData()->data(EffectsLibrary::EffectMimeType));
         m_fxDropClip = 0;
@@ -195,6 +201,14 @@ void TimelineView::dragEnterEvent(QDragEnterEvent* e)
 
 void TimelineView::dragMoveEvent(QDragMoveEvent* e)
 {
+    if (!m_soundDragging.isEmpty()) {
+        int frame = std::max(0, int(std::lround(xToFrame(e->position().toPoint().x()))));
+        frame += snapDelta({frame, frame}, {});
+        m_soundDropFrame = std::max(0, frame);
+        e->acceptProposedAction();
+        update();
+        return;
+    }
     if (!m_fxDragging.isEmpty()) {
         m_fxDropClip = fxDropClipAt(e->position().toPoint());
         if (m_fxDropClip) e->acceptProposedAction();
@@ -229,11 +243,25 @@ void TimelineView::dragLeaveEvent(QDragLeaveEvent*)
     m_transDrop.reset();
     m_fxDragging.clear();
     m_fxDropClip = 0;
+    m_soundDragging.clear();
+    m_soundDropFrame = -1;
     update();
 }
 
 void TimelineView::dropEvent(QDropEvent* e)
 {
+    if (!m_soundDragging.isEmpty()) {
+        const QByteArray sound = m_soundDragging;
+        const int frame = m_soundDropFrame;
+        m_soundDragging.clear();
+        m_soundDropFrame = -1;
+        update();
+        if (frame >= 0) {
+            e->acceptProposedAction();
+            emit soundDropRequested(sound, frame);
+        }
+        return;
+    }
     if (!m_fxDragging.isEmpty()) {
         // Like DaVinci: only onto the clip under the mouse (even if others are selected)
         if (const int id = fxDropClipAt(e->position().toPoint())) {

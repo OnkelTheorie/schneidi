@@ -113,6 +113,7 @@ void ensure()
     QDir().mkpath(lutDir());
     QDir().mkpath(transitionDir());
     QDir().mkpath(presetDir());
+    QDir().mkpath(soundDir());
     // New content (presets) -> replace an older readme
     const QString readme = QDir(root()).filePath(T("Liesmich.txt"));
     QFile old(readme);
@@ -210,6 +211,7 @@ QStringList watchDirs()
     addDirs(lutDir(), &dirs);
     addDirs(transitionDir(), &dirs);
     addDirs(presetDir(), &dirs);
+    addDirs(soundDir(), &dirs);
     return dirs;
 }
 

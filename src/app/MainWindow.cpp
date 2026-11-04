@@ -262,6 +262,7 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
         tv->setPlayhead(pos);
     });
     connect(tv, &TimelineView::dropRequested, this, &MainWindow::onDrop);
+    connect(tv, &TimelineView::soundDropRequested, this, &MainWindow::placeSound);
     // Trim view in the viewer while an edit is dragged (like DaVinci)
     connect(tv, &TimelineView::trimFramesChanged, m_viewer, &Viewer::showTrim);
     connect(tv, &TimelineView::trimFramesEnded, m_viewer, &Viewer::endTrim);
@@ -402,6 +403,12 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
     // Filters: onto the selected clips of the effect's kind, without a selection onto the clip at the playhead
     connect(m_effects, &EffectsLibrary::effectRequested, this, [this, tv](const QString& id) {
         m_editor->addEffect(m_editor->effectTargets(tv->playhead(), Editor::effectKind(id)), id);
+    });
+    // Sounds: listen in the Viewer (the source, from its start); placing is dragging them into the timeline
+    connect(m_effects, &EffectsLibrary::soundPreviewRequested, this, [this](const QString& file) {
+        m_sourcePos.remove(file);
+        previewFile(file);
+        m_engine->play();
     });
     tv->setProbe([this](const QString& path) { return probeCached(path); });
     m_mediaCache = new MediaCache(this);

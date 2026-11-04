@@ -19,7 +19,10 @@ class QTreeWidget;
 // its subfolders as subcategories), on the right the entries with preview icon. Categories can be collapsed
 // (saved). "Import effects…" opens the effects folder, new files appear on their own. Dragging onto a cut/clip edge creates
 // the transition, "Text" ends up as a title on the video track, a filter on a video clip attaches the effect;
-// double-click applies the entry at the playhead/to the selection.
+// double-click applies the entry at the playhead/to the selection. "Klänge" (effect sounds of op 'sfx': built-in
+// recordings and computed ones, installed sound packs, the user's own folder): double-click = listen, dragging into
+// the timeline places it as op 'sfx' does (its moment where it is dropped, own SFX track, one undo step). Nothing is
+// ever placed by itself.
 class EffectsLibrary : public QWidget {
     Q_OBJECT
 public:
@@ -29,6 +32,11 @@ public:
     static bool parseTransition(const QByteArray& data, TrackKind* kind, TransitionStyle* style);
     // Drag data of a filter (Open FX): id from the EffectRegistry, resp. "lut:<path>" for a LUT, "preset:<path>"
     static constexpr const char* EffectMimeType = "application/x-schneidi-effect";
+    // Drag data of an effect sound ("Klänge"): the fields of op 'sfx' without op and at, as JSON ({"kind":"whoosh",
+    // "seed":2}, {"kind":"riser","length":"0.9s","seed":1} = computed, {"kind":"<file>"} = a pack's or the user's file)
+    static constexpr const char* SoundMimeType = "application/x-schneidi-sound";
+    // The file a sound entry plays (built-in: made into the cache on first use); empty = none
+    static QString soundFile(const QByteArray& data);
 
     explicit EffectsLibrary(QWidget* parent = nullptr);
 
@@ -36,6 +44,7 @@ signals:
     void transitionRequested(TrackKind kind, const TransitionStyle& style);
     void titleRequested(int kind); // TitleKind
     void effectRequested(const QString& effectId);
+    void soundPreviewRequested(const QString& file); // double-click on a sound: hear it (nothing is placed)
 
 private:
     void rebuild();
@@ -57,7 +66,8 @@ private:
     class QTreeWidgetItem* m_lutRoot = nullptr;
     class QTreeWidgetItem* m_transRoot = nullptr;
     class QTreeWidgetItem* m_presetRoot = nullptr;
-    QVector<EffectFolders::LutEntry> m_userLuts, m_userTransitions, m_userPresets;
+    class QTreeWidgetItem* m_soundRoot = nullptr;
+    QVector<EffectFolders::LutEntry> m_userLuts, m_userTransitions, m_userPresets, m_userSounds;
     QFileSystemWatcher* m_watcher;
     QTimer* m_rescan;
     struct IconEntry {
