@@ -59,8 +59,8 @@ struct Result {
     QString by;            // the way that was used: "heuristic" | "yamnet"
     QString error;         // why there are no events (no sound, YAMNet missing, canceled); empty = ok
     bool cached = false;   // came from the cache
-    bool incomplete = false; // the sound could not be read to its end (a read error: a cut-off file, a network share
-                             // gone): the events of what was read, not cached (the next call measures again)
+    bool incomplete = false; // reading the file failed (a network share gone, the file lost while reading): the
+                             // events of what was read, not cached (the next call measures again)
     double duration = 0;   // seconds of sound analysed
 };
 
@@ -83,7 +83,7 @@ QVector<Event> yamnet(const std::vector<float>& mono16k, QString* error = nullpt
 QVector<Event> yamnetWith(const QString& model, const QString& labels, const std::vector<float>& mono16k,
                           QString* error = nullptr, const std::function<bool(double)>& progress = {});
 
-// How events are made right now, as a cache key part: "heuristic", or YAMNet with its model file (path, size,
+// How events are made right now (remembered per process and model file), as a cache key part: "heuristic", or YAMNet with its model file (path, size,
 // modification time). A cache of results that contain events (the material index) keys on it too, so installing or
 // updating the model measures anew.
 QString way(Engine engine = Engine::Auto);

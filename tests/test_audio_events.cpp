@@ -366,8 +366,8 @@ void testBrokenRuntime(const QDir& dir)
 }
 
 // An AAC file made by ffmpeg (lavfi): a bang at 2 s on silence, a tone chord from 4 s
-// A file that ends in a read error (cut off: a copy that broke, a network share gone, a recording still being
-// written): the events of what was read, but nothing cached - the next call measures again
+// A file damaged for good (cut off: half of an m4a whose index says 20 s) reads the same every time: cached like any
+// other (a read error - a network share gone - is not cached; not reproducible here without such a share)
 void testCutOff(const QDir& dir)
 {
     if (!Check::haveFfmpeg()) {
@@ -381,20 +381,15 @@ void testCutOff(const QDir& dir)
     {
         QFile in(whole), out(cut);
         if (!CHECK(in.open(QIODevice::ReadOnly) && out.open(QIODevice::WriteOnly))) return;
-        out.write(in.read(in.size() / 2)); // the index at the start says 20 s, half of the samples are there
+        out.write(in.read(in.size() / 2));
     }
     AudioEvents::clearMemoryCache();
     const int before = AudioEvents::measuredCount();
     const AudioEvents::Result r = AudioEvents::analyzeFile(cut);
-    CHECK(r.incomplete);
-    CHECK(!r.cached);
+    CHECK(!r.incomplete);
     AudioEvents::clearMemoryCache();
-    const AudioEvents::Result again = AudioEvents::analyzeFile(cut);
-    CHECK(!again.cached);
-    CHECK_EQ(AudioEvents::measuredCount(), before + 2);
-    // The whole file reads to its end: cached as before
-    CHECK(!AudioEvents::analyzeFile(whole).incomplete);
-    CHECK(AudioEvents::analyzeFile(whole).cached);
+    CHECK(AudioEvents::analyzeFile(cut).cached);
+    CHECK_EQ(AudioEvents::measuredCount(), before + 1);
 }
 
 void testLavfi(const QDir& dir)

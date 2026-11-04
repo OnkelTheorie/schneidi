@@ -670,7 +670,6 @@ struct Reader::Impl {
             silentFrom = validFrom;
         }
         ended = true;
-        stats.endedAt = outNext;
         return false;
     }
 

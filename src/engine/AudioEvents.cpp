@@ -1017,8 +1017,23 @@ QString wayKey(const QString& model)
 
 QString way(Engine engine)
 {
-    const bool model = engine != Engine::Heuristic && yamnetAvailable();
-    return wayKey(model ? Extensions::audioEventsModel() : QString());
+    if (engine == Engine::Heuristic) return wayKey({});
+    // Once per process and model file (the index asks on every cache lookup, on the GUI thread too): whether the
+    // runtime loads is asked only when the model file is new or changed
+    const QString model = Extensions::audioEventsModel();
+    if (model.isEmpty()) return wayKey({});
+    const QString stat = wayKey(model);
+    static QMutex mutex;
+    static QString lastStat, lastWay;
+    {
+        QMutexLocker lock(&mutex);
+        if (stat == lastStat) return lastWay;
+    }
+    const QString w = yamnetAvailable() ? stat : wayKey({});
+    QMutexLocker lock(&mutex);
+    lastStat = stat;
+    lastWay = w;
+    return w;
 }
 
 Result analyzeFile(const QString& path, int stream, const Options& options)
@@ -1092,10 +1107,9 @@ Result analyzeFile(const QString& path, int stream, const Options& options)
         if (model) all.insert(all.end(), buf.begin(), buf.begin() + n);
     }
     ex.finish();
-    // A read error, or the sound stopped with an error well before the end the file announces (cut off: a copy that
-    // broke, a recording still being written): not the file's sound
-    const Audio::Reader::Stats& rs = reader->stats();
-    if (rs.readErrors > 0 || (rs.decodeErrors > 0 && rs.endedAt >= 0 && rs.endedAt < end - kRate)) result.incomplete = true;
+    // Reading the file failed (a network share gone, the reader lost the file): not the file's sound. A file that
+    // is damaged for good (cut off, broken packets) reads the same every time and is cached as it is.
+    if (reader->stats().readErrors > 0) result.incomplete = true;
     result.duration = double(end) / kRate;
     const QVector<Event> heur = rules(ex.frames);
     if (model) {

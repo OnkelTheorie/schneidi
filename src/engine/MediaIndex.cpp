@@ -539,6 +539,7 @@ std::optional<Entry> build(const QString& file, const Options& options, QString*
     if (options.progress && !options.progress(0.9)) return cancelled();
     QVector<AudioEvents::Event> events;
     bool incomplete = false;
+    QString way = AudioEvents::way(); // the way the events were made (YAMNet failing on a file: the heuristics)
     if (source) {
         events = source(e->file);
     } else {
@@ -548,10 +549,11 @@ std::optional<Entry> build(const QString& file, const Options& options, QString*
         if (options.progress && r.error.contains("cancel", Qt::CaseInsensitive)) return cancelled();
         events = r.events;
         incomplete = r.incomplete;
+        if (r.by == "heuristic") way = AudioEvents::wayKey({});
     }
     distribute(*e, events);
     if (!incomplete) { // a read error is not the file's sound: measured again next time
-        const QString key = keyOf(fi);
+        const QString key = cacheKey(fi.absoluteFilePath(), way);
         saveJson(cacheDir() + '/' + key + ".json", toJson(*e, events));
         QMutexLocker lock(&g_mutex);
         memory().insert(key, *e);
