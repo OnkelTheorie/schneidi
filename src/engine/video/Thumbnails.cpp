@@ -394,12 +394,15 @@ int fixedPictures(const QString& path, const std::vector<double>& at, int minKey
         };
         fast();
         constexpr int64_t kStart = INT64_MIN; // the group decoded from the start of the file
+        // No group yet: its own state (kStart and AV_NOPTS_VALUE are the same number, INT64_MIN - a first spot without a
+        // key frame took the decoder where the key frame search had left the file, often at its end)
+        bool started = false;
         int64_t group = AV_NOPTS_VALUE, given = AV_NOPTS_VALUE;
         double reached = 0;
         for (size_t i = 0; i < at.size(); ++i) {
             const double seconds = std::clamp(at[i], 0.0, 1.0) * duration;
             const int64_t want = keys[i] == AV_NOPTS_VALUE ? kStart : keys[i];
-            if (want != group || reached > seconds || eof) {
+            if (!started || want != group || reached > seconds || eof) {
                 if (want == kStart) {
                     if (!restart()) return count;
                     fast();
@@ -409,6 +412,7 @@ int fixedPictures(const QString& path, const std::vector<double>& at, int minKey
                     avcodec_flush_buffers(src->dec);
                 }
                 group = want;
+                started = true;
             }
             if (!decodeTo(seconds, std::max(1, maxDecode))) continue;
             reached = src->seconds(last);
