@@ -363,7 +363,11 @@ int fixedPictures(const QString& path, const std::vector<double>& at, int minKey
             if (!more) return count;
         }
     } else {
-        // Exact pictures: from the key frame before each spot, or on from the last spot within the same key frame's group
+        // Exact pictures: from the key frame before each spot, or on from the last spot within the same key frame's group.
+        // Pictures no other one refers to are skipped (B-frames: a spot gets the next picture that is decoded), and so is
+        // the deblocking filter (a few pixels per block, nothing an analysis of small pictures sees): about half the time
+        src->dec->skip_frame = AVDISCARD_NONREF;
+        src->dec->skip_loop_filter = AVDISCARD_ALL;
         int64_t group = AV_NOPTS_VALUE, given = AV_NOPTS_VALUE;
         double reached = 0;
         for (size_t i = 0; i < at.size(); ++i) {
