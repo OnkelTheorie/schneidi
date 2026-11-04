@@ -46,7 +46,7 @@ COPY --from=build /src/build/schneidi-cli /usr/local/bin/schneidi-cli
 COPY --from=build /src/LICENSE /src/THIRD_PARTY.md /usr/share/doc/schneidi/
 COPY --from=build /src/third_party/earshot/LICENSE /usr/share/doc/schneidi/earshot-LICENSE.txt
 COPY --from=build /src/third_party/rnnoise/COPYING /usr/share/doc/schneidi/rnnoise-COPYING.txt
-COPY --from=build /src/assets/sfx/cc0/LICENSE-*.txt /src/assets/sfx/cc0/SOURCES.md /usr/share/doc/schneidi/
+COPY --from=build /src/assets/sfx/cc0/LICENSE-* /src/assets/sfx/cc0/SOURCES.md /usr/share/doc/schneidi/
 RUN ldd /usr/local/bin/schneidi-cli | grep -q /opt/ffmpeg/lib/libavcodec
 
 # Not root. Work folder /data; backups, the generated token and extensions (whisper) in the home folder
