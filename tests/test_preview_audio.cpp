@@ -137,8 +137,12 @@ int main(int argc, char** argv)
 
     // Stop: the sound fades out within a few ms instead of breaking off (the last sounding 2 ms are much quieter than
     // the sine before them): the audio engine fades out and keeps the device open.
+    // The end of the sound is where it falls below ~1 % of the sine: a hard cut ends there at full level, the 5-ms
+    // fade (linear) has reached < 46 % of it 2 ms before, at any phase. With the end at 1000 (~9 % of the sine at
+    // -3 dB) the end lay earlier in the fade, and the 2-ms window reached back to > 50 % for ~10 % of the phases
+    // (a 440-Hz half wave is 55 samples): the faded stop counted as a cut now and then.
     qsizetype last = frames - 1;
-    while (last > 0 && std::abs(s[last * 2]) < 1000) --last;
+    while (last > 0 && std::abs(s[last * 2]) < 100) --last;
     auto peak = [&](qsizetype from, qsizetype to) {
         int p = 0;
         for (qsizetype i = std::max<qsizetype>(0, from); i <= to; ++i) p = std::max(p, std::abs(int(s[i * 2])));
