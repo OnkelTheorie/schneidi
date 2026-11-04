@@ -135,7 +135,15 @@ int main(int argc, char** argv)
     CHECK(all.contains(T("%1 %2 (Aufnahme)").arg(T("Whoosh")).arg(1)));
     CHECK(all.contains(T("%1 %2 (berechnet)").arg(T("Riser")).arg(1)));
     CHECK(all.contains("Gong"));
-    if (const QString dump = qEnvironmentVariable("SFX_LIBRARY_DUMP"); !dump.isEmpty()) library->grab().save(dump);
+    if (const QString dump = qEnvironmentVariable("SFX_LIBRARY_DUMP"); !dump.isEmpty()) {
+        // The Effects panel is closed by default: the library on its own, at a panel's size
+        EffectsLibrary shown;
+        shown.resize(560, 520);
+        shown.show();
+        if (QTreeWidgetItem* s = category(shown.findChild<QTreeWidget*>(), T("Klänge"))) shown.findChild<QTreeWidget*>()->setCurrentItem(s);
+        QApplication::processEvents();
+        CHECK(shown.grab().save(dump));
+    }
     // Packs: none installed - its subcategory says so
     if (QTreeWidgetItem* packs = category(tree, T("Pakete"), sounds); CHECK(packs)) {
         tree->setCurrentItem(packs);
