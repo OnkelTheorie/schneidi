@@ -223,7 +223,10 @@ QStringList candidates()
     QStringList out;
     for (const QString& f : {Extensions::onnxRuntimeLibrary(), Extensions::piperOnnxRuntime()})
         if (!f.isEmpty()) out << f;
+#ifndef Q_OS_WIN
     out << "onnxruntime"; // QLibrary adds lib…so / ….dll and searches the system's paths
+#endif
+    // (Windows: no bare name - Windows 11 ships an onnxruntime.dll of its own in System32, of an unknown version)
     return out;
 }
 
