@@ -285,6 +285,9 @@ void cleanUp()
             info.dir().entryInfoList({info.fileName() + ".old*"}, QDir::Dirs | QDir::NoDotAndDotDot);
         for (const QFileInfo& o : old) left << o.absoluteFilePath();
     }
+    // Sound packs: "<id>.old-*" of a reinstall or a removal that could not delete everything
+    for (const QFileInfo& o : QDir(soundPacksDir()).entryInfoList({"*.old-*"}, QDir::Dirs | QDir::NoDotAndDotDot))
+        left << o.absoluteFilePath();
     if (left.isEmpty()) return;
     // The x264 ffmpeg is ~220 MB: never on the start's way
     std::thread([left] {
@@ -417,7 +420,14 @@ bool remove(const Item& item)
         if (!aside.isEmpty()) QDir(aside).removeRecursively();
         return true;
     }
-    if (item.kind == Kind::SoundPack) return QDir(soundPackDir(item)).removeRecursively();
+    if (item.kind == Kind::SoundPack) {
+        // Moved aside first: a file of it open elsewhere (Windows: a sound on the timeline) leaves the pack whole
+        // instead of half deleted; what cannot go now goes at the next start (cleanUp)
+        QString aside;
+        if (!moveAside(soundPackDir(item), &aside)) return false;
+        if (!aside.isEmpty()) QDir(aside).removeRecursively();
+        return true;
+    }
     if (item.kind == Kind::Voice) {
         const QString path = QDir(voicesDir()).filePath(item.fileName);
         QFile::remove(path + ".json");
