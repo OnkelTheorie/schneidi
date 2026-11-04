@@ -331,10 +331,6 @@ PreviewRun testPreview(const QString& dir, const QString& speaker, SpeakerClock&
     wait.exec();
     clock.finish();
     const Picture::Pump::Stats pictures = engine.pictureStats();
-    // Blocks the speaker got at once (a starved device thread catching up): more than one block per size step
-    int bursts = 0;
-    for (size_t i = 1; i < clock.writes.size(); ++i)
-        if (clock.writes[i].first - clock.writes[i - 1].first > 480 * 4) ++bursts; // a period: 480 samples (buffer 960)
 
     QFile f(speaker);
     if (!CHECK(f.open(QIODevice::ReadOnly))) return PreviewRun::Fail;
@@ -348,8 +344,17 @@ PreviewRun testPreview(const QString& dir, const QString& speaker, SpeakerClock&
         std::lock_guard<std::mutex> g(lock);
         flashes = shown;
     }
+    // A beep in blocks the speaker got at once (a starved device thread catching up: more than a period of 480 samples
+    // in one size step): the speaker clock cannot date it
+    int bursts = 0;
+    for (long beep : beeps)
+        for (size_t i = 1; i < clock.writes.size(); ++i)
+            if (clock.writes[i].first > qint64(beep) * 4) {
+                if (clock.writes[i].first - clock.writes[i - 1].first > 480 * 4) ++bursts;
+                break;
+            }
     std::printf("Vorschau (Ton am Lautsprecher - Bild gezeigt, ms; je Quelle ab Dateianfang; %d Bilder übersprungen, "
-                "%d Sprünge, %d Block-Schübe):\n", pictures.skipped, pictures.jumps, bursts);
+                "%d Sprünge, %d Pieptöne in Block-Schüben):\n", pictures.skipped, pictures.jumps, bursts);
     const bool disturbed = pictures.skipped + pictures.jumps > 0 || bursts > 0;
     if (int(flashes.size()) != 6 || int(beeps.size()) != 6) {
         std::printf("  %d Blitze, %d Pieptöne\n", int(flashes.size()), int(beeps.size()));
