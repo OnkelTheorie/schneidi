@@ -186,8 +186,13 @@ void Player::Impl::process(float* out, int frames)
     auto& s = cb;
     const uint32_t g = gen.load(std::memory_order_acquire);
     if (g != s.gen) { // new generation: fade out what sounds, count anew
-        s.fadeLeft = s.sounding ? kFade : 0;
-        if (s.sounding) fadeOuts.fetch_add(1, std::memory_order_relaxed);
+        // A fade under way goes on from its gain: one still fading in (handed < kFade) fades out from where it got,
+        // a fade-out keeps going over the old sound (starting it anew from full level was a step up, dropping it a
+        // break from half level – a jump or stop within 5 ms of the one before)
+        if (s.sounding) {
+            s.fadeLeft = int(std::min<int64_t>(kFade, s.handed));
+            fadeOuts.fetch_add(1, std::memory_order_relaxed);
+        }
         s.gen = g;
         s.handed = s.runT = s.runN = 0;
         s.gapT = s.total;
@@ -218,6 +223,7 @@ void Player::Impl::process(float* out, int frames)
             sound = false;
             s.offset = s.fadeLeft > 0 ? s.offset + k : kBlock;
         } else {
+            s.fadeLeft = 0; // the old sound ran out before its fade ended: nothing of it is left to fade
             if (hold) break;
             k = std::min(frames - i, kBlock - s.offset);
             if (!s.inRun) {

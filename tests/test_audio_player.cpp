@@ -307,5 +307,51 @@ int main(int argc, char** argv)
     std::printf("Sprung während das Gerät 1,5 s lang öffnet: %.1f ms\n", jumpMs);
     CHECK(jumpMs < 200);
     CHECK(slow->playing());
+    slow.reset();
+
+    // 10. Jumps and stops faster than the 5-ms fade on a device with short periods (64 samples, like a low-latency
+    // PipeWire/WASAPI): each one arrives while the fade of the one before is still running. The fade goes on from its
+    // gain – before, a jump during a fade-out dropped the rest of it (sound broke off from half level) and one during
+    // a fade-in faded out from full level (a step up).
+    const QString quickPath = tmp.filePath("quick.raw");
+    qputenv("SCHNEIDI_AUDIO_DEVICE", ("file:" + QDir::toNativeSeparators(quickPath)).toLocal8Bit());
+    Audio::Player::Options shortOpt;
+    shortOpt.buffer = 128;
+    auto quick = std::make_unique<Audio::Player>(shortOpt);
+    quick->setTimeline(tl, kFps);
+    quick->play(0, 1.0);
+    quick->release();
+    sleepMs(300);
+    for (int i = 0; i < 60; ++i) {
+        if (i % 5 == 4) quick->pause();
+        else quick->play(double(frameStart(20 + (i * 37) % 300)), 1.0);
+        quick->release();
+        sleepMs(1 + i % 4); // 1-4 ms: inside the fade-out, the fade-in, or after them
+    }
+    quick->play(double(frameStart(60)), 1.0);
+    quick->release();
+    sleepMs(200);
+    quick->pause();
+    sleepMs(100);
+    const Audio::Player::Stats quickStats = quick->stats();
+    quick.reset();
+    QFile qf(quickPath);
+    if (!CHECK(qf.open(QIODevice::ReadOnly))) return Check::result();
+    const QByteArray qraw = qf.readAll();
+    const auto* q = reinterpret_cast<const int16_t*>(qraw.constData());
+    const qsizetype qframes = qraw.size() / 4;
+    int quickClicks = 0, quickLargest = 0;
+    for (qsizetype i = 2; i < qframes; ++i) {
+        const int d2 = std::abs(q[i * 2] - 2 * q[(i - 1) * 2] + q[(i - 2) * 2]);
+        quickLargest = std::max(quickLargest, d2);
+        if (d2 > 1500) {
+            if (quickClicks < 5) std::printf("       Sprung in der Welle bei %.3f s: %d\n", i / double(kRate), d2);
+            ++quickClicks;
+        }
+    }
+    std::printf("Schnelle Sprünge: %.2f s Ton, %d Ausblendungen, %d Aussetzer, größte Krümmung %d\n",
+                qframes / double(kRate), quickStats.fadeOuts, quickStats.underruns, quickLargest);
+    CHECK(quickStats.fadeOuts >= 10);
+    CHECK_EQ(quickClicks, 0);
     return Check::result();
 }
