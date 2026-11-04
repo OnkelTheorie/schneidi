@@ -487,7 +487,9 @@ int main(int argc, char** argv)
         EffectRegistry::instance(q, "stabilize")->params["accuracy"] = 6.0;
         const auto r3 = Stabilizer::request(q, fmt);
         st->sync({*r3});
-        CHECK(st->state(*r3) == Stabilizer::State::Running);
+        // r2 is Done once its result is written, its thread may still be ending: r3 waits behind it (Queued) for a
+        // moment (seen under load). The case here is stopping a *running* analysis: wait until it runs
+        CHECK(waitFor([&] { return st->state(*r3) == Stabilizer::State::Running; }, 10000));
         st->sync({});
         st->sync({*r3});
         CHECK(waitFor([&] { return st->state(*r3) == Stabilizer::State::Done; }, 60000));
