@@ -29,7 +29,8 @@ struct Candidate {
 
 const Candidate kCandidates[] = {
     {SfxSynth::Kind::Whoosh, 1, 0}, {SfxSynth::Kind::Whoosh, 2, 0}, {SfxSynth::Kind::Whoosh, 3, 0},
-    {SfxSynth::Kind::Swish, 1, 0},  {SfxSynth::Kind::Swish, 2, 0},  {SfxSynth::Kind::Riser, 1, 2.0},
+    {SfxSynth::Kind::Whoosh, 4, 0}, {SfxSynth::Kind::Whoosh, 5, 0}, {SfxSynth::Kind::Whoosh, 6, 0},
+    {SfxSynth::Kind::Swish, 1, 0},  {SfxSynth::Kind::Swish, 2, 0},  {SfxSynth::Kind::Swish, 3, 0},  {SfxSynth::Kind::Riser, 1, 2.0},
     {SfxSynth::Kind::Riser, 2, 4.0}, {SfxSynth::Kind::Hit, 1, 0},   {SfxSynth::Kind::Hit, 2, 0},
     {SfxSynth::Kind::Hit, 3, 0},    {SfxSynth::Kind::Impact, 1, 0}, {SfxSynth::Kind::Impact, 2, 0},
     {SfxSynth::Kind::Click, 1, 0},  {SfxSynth::Kind::Click, 2, 0},

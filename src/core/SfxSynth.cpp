@@ -89,37 +89,93 @@ struct Svf {
 // Exponential glide from a to b over u in [0, 1]
 double glide(double a, double b, double u) { return a * std::pow(b / a, std::clamp(u, 0.0, 1.0)); }
 
-// A whoosh or swish: noise through a band pass that sweeps up to the peak and back down, swelling and falling
-void sweep(std::vector<float>& out, Rng& rng, double length, double f0, double f1, double peakPart, double q,
-           double* anchor)
+// Smooth curve 0..1 (no corner at either end): how a sweep moves
+double smooth(double u)
 {
-    const double peak = length * peakPart;
+    u = std::clamp(u, 0.0, 1.0);
+    return u * u * (3 - 2 * u);
+}
+
+// Slow seeded wobble in [-1, 1]: noise through two one-pole low passes at `hz` (filter drift, the air moving)
+struct Wobble {
+    double a = 0, b = 0, k = 0;
+    explicit Wobble(double hz) : k(1 - std::exp(-2 * kPi * hz / kRate)) {}
+    double next(Rng& rng)
+    {
+        a += k * (rng.bipolar() * 6 - a); // ~unit spread after the double smoothing
+        b += k * (a - b);
+        return std::clamp(b, -1.0, 1.0);
+    }
+};
+
+struct SweepShape {
+    double f0, f1, fEnd; // centre at the start, at the peak, at the end (Hz)
+    double peakPart;     // where the peak lies (part of the length)
+    double rumble;       // mix of a faint low layer (0 = none)
+    double air;          // mix of the high "air" layer
+};
+
+// A whoosh or swish: air moving, not a tone. Three layered noise bands of low resonance (Q below 1: a high Q rings
+// and sounds metallic), each a little early or late and higher or lower, whose centre and width move on a smooth
+// curve with a slow random drift; a soft (raised cosine) swell to the peak and a longer exponential tail; a faint
+// high air layer and, for a whoosh, a low rumble under it.
+void sweep(std::vector<float>& out, Rng& rng, double length, const SweepShape& shape, double* anchor)
+{
+    const double peak = length * shape.peakPart;
     *anchor = peak;
     const double fall = std::max(0.02, length - peak);
-    const double fEnd = f0 * rng.range(1.2, 1.8);
-    Svf band, air;
+    struct Band {
+        Svf f;
+        double ratio, shift, gain;
+    };
+    Band bands[3] = {{{}, rng.range(0.55, 0.7), rng.range(-0.06, -0.02), 0.6},
+                     {{}, 1.0, 0.0, 1.0},
+                     {{}, rng.range(1.5, 1.9), rng.range(0.02, 0.06), 0.45}};
+    Svf air, rumble;
+    Wobble drift(rng.range(3, 6)), level(rng.range(5, 9));
+    const double tail = fall * rng.range(0.3, 0.4);
     const size_t n = out.size();
     for (size_t i = 0; i < n; ++i) {
         const double t = double(i) / kRate;
-        const double fc = t < peak ? glide(f0, f1, t / peak) : glide(f1, fEnd, (t - peak) / fall);
-        const double env = t < peak ? std::pow(t / peak, 2.2) : std::exp(-3.5 * (t - peak) / fall);
-        const double x = rng.bipolar();
-        band.run(x, fc, q);
-        air.run(x, fc * 2.5, 0.7);
-        out[i] = float(env * (band.bp + 0.25 * air.hp * env));
+        const double d = drift.next(rng), lv = level.next(rng);
+        double v = 0;
+        for (Band& band : bands) {
+            const double tb = t - band.shift * length; // this band's own timing
+            const double up = smooth(tb / peak), down = smooth((tb - peak) / fall);
+            const double fc = (tb < peak ? shape.f0 * std::pow(shape.f1 / shape.f0, up)
+                                         : shape.f1 * std::pow(shape.fEnd / shape.f1, down))
+                              * band.ratio * std::pow(2.0, 0.2 * d);
+            // Wider at the peak (more air rushing past), narrower at the edges; never resonant
+            const double q = 0.55 + 0.25 * (tb < peak ? 1 - up : down);
+            band.f.run(rng.bipolar(), fc, q);
+            const double env = tb <= 0 ? 0
+                               : tb < peak ? std::pow(std::sin(0.5 * kPi * tb / peak), 2.0)
+                                           : std::exp(-(tb - peak) / tail);
+            v += band.gain * env * band.f.bp;
+        }
+        const double env = t < peak ? std::pow(std::sin(0.5 * kPi * t / peak), 2.0) : std::exp(-(t - peak) / tail);
+        air.run(rng.bipolar(), 7000, 0.5);
+        rumble.run(rng.bipolar(), 140, 0.5);
+        v += shape.air * std::pow(env, 1.5) * air.hp + shape.rumble * env * rumble.lp;
+        out[i] = float(v * (1 + 0.12 * lv));
     }
 }
 
 void makeWhoosh(Sound& s, Rng& rng)
 {
-    sweep(s.samples, rng, s.length, 250 * rng.range(0.8, 1.25), 2200 * rng.range(0.75, 1.3),
-          0.62 * rng.range(0.92, 1.08), rng.range(1.2, 2.0), &s.anchor);
+    const double f0 = 220 * rng.range(0.8, 1.25);
+    sweep(s.samples, rng, s.length,
+          {f0, 1600 * rng.range(0.75, 1.3), f0 * rng.range(1.3, 2.0), 0.6 * rng.range(0.92, 1.08), rng.range(0.6, 1.0),
+           rng.range(0.08, 0.14)},
+          &s.anchor);
 }
 
 void makeSwish(Sound& s, Rng& rng)
 {
-    sweep(s.samples, rng, s.length, 1200 * rng.range(0.8, 1.25), 6000 * rng.range(0.8, 1.2),
-          0.45 * rng.range(0.9, 1.1), rng.range(2.0, 3.0), &s.anchor);
+    const double f0 = 1100 * rng.range(0.8, 1.25);
+    sweep(s.samples, rng, s.length,
+          {f0, 4500 * rng.range(0.8, 1.2), f0 * rng.range(1.4, 2.0), 0.45 * rng.range(0.9, 1.1), 0.0, rng.range(0.15, 0.22)},
+          &s.anchor);
 }
 
 void makeRiser(Sound& s, Rng& rng)
@@ -135,7 +191,7 @@ void makeRiser(Sound& s, Rng& rng)
     for (size_t i = 0; i < s.samples.size(); ++i) {
         const double t = double(i) / kRate;
         const double u = t / L;
-        band.run(rng.bipolar(), glide(f0, f1, u), 3.0);
+        band.run(rng.bipolar(), glide(f0, f1, u), 0.9); // low Q: a resonant sweep sounds metallic
         const double freq = tone0 * std::pow(2.0, octaves * u * u); // slow at first, faster towards the end
         phase += 2 * kPi * freq / kRate;
         phase2 += 2 * kPi * freq * 1.5 / kRate; // a fifth above

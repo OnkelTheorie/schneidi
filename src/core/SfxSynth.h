@@ -15,7 +15,7 @@ namespace SfxSynth {
 
 constexpr int kRate = 48000; // mono, 48 kHz
 // Bumped when a sound changes: part of the cache file names
-constexpr int kVersion = 1;
+constexpr int kVersion = 2;
 
 enum class Kind { Whoosh, Riser, Hit, Impact, Click, Swish };
 constexpr Kind kKinds[] = {Kind::Whoosh, Kind::Riser, Kind::Hit, Kind::Impact, Kind::Click, Kind::Swish};
