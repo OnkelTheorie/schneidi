@@ -262,7 +262,10 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
         tv->setPlayhead(pos);
     });
     connect(tv, &TimelineView::dropRequested, this, &MainWindow::onDrop);
-    connect(tv, &TimelineView::soundDropRequested, this, &MainWindow::placeSound);
+    // After the drop (the drag source waits until dropEvent returns; a message box there would block it)
+    connect(tv, &TimelineView::soundDropRequested, this, [this](const QByteArray& sound, int frame) {
+        QTimer::singleShot(0, this, [this, sound, frame] { placeSound(sound, frame); });
+    });
     // Trim view in the viewer while an edit is dragged (like DaVinci)
     connect(tv, &TimelineView::trimFramesChanged, m_viewer, &Viewer::showTrim);
     connect(tv, &TimelineView::trimFramesEnded, m_viewer, &Viewer::endTrim);
