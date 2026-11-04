@@ -722,7 +722,9 @@ void test(const QString& dir)
                 dump(panel, "ai-plan.png");
                 step2->setChecked(false);
                 run->click();
-                settle(150); // the panel shows changed entries in batches
+                // the panel shows changed entries in batches: until the run is there (a loaded machine is late)
+                waitFor([&] { return clips(w) == clips0 + 1; }, 10000);
+                settle(150);
             }
             // Steps 1 and 3: one split, one marker, one undo step
             CHECK_EQ(clips(w), clips0 + 1);
@@ -763,7 +765,8 @@ void test(const QString& dir)
                 CHECK_EQ(e->text, T("Die App führt gerade einen anderen Befehl aus – bitte gleich noch einmal versuchen."));
             w.setChatRunner([&server](const QString& command, const QJsonObject& args) { return server.runForChat(command, args); });
             if (auto* discard = cards.last()->findChild<QPushButton*>("ai_plan_discard"); CHECK(discard)) discard->click();
-            settle(150);
+            if (auto* state = cards.last()->findChild<QLabel*>("ai_plan_state"))
+                waitFor([&] { return state->text() == T("Verworfen: nichts davon wurde ausgeführt."); }, 10000);
             CHECK_EQ(clips(w), clips1);
             CHECK_EQ(undoIndex(w), undo1);
             if (auto* state = cards.last()->findChild<QLabel*>("ai_plan_state"); CHECK(state))
@@ -784,7 +787,8 @@ void test(const QString& dir)
         const QList<QWidget*> all = panel->findChildren<QWidget*>("ai_plan");
         if (CHECK_EQ(all.size(), 3)) {
             if (auto* run = all.last()->findChild<QPushButton*>("ai_plan_run"); CHECK(run)) run->click();
-            settle(150);
+            if (auto* state = all.last()->findChild<QLabel*>("ai_plan_state"))
+                waitFor([&] { return state->text().startsWith(T("Nicht ausgeführt: %1").arg("").trimmed()); }, 10000);
             CHECK_EQ(clips(w), clips2);
             CHECK_EQ(undoIndex(w), undo2);
             if (auto* state = all.last()->findChild<QLabel*>("ai_plan_state"); CHECK(state))
@@ -817,7 +821,8 @@ void test(const QString& dir)
         });
         if (const QList<QWidget*> cardsNow = panel->findChildren<QWidget*>("ai_plan"); CHECK(!cardsNow.isEmpty())) {
             if (auto* run = cardsNow.last()->findChild<QPushButton*>("ai_plan_run"); CHECK(run)) run->click();
-            settle(50);
+            if (auto* state = cardsNow.last()->findChild<QLabel*>("ai_plan_state"))
+                waitFor([&] { return state->text().startsWith(T("Nicht ausgeführt: %1").arg("").trimmed()); }, 10000);
             if (auto* state = cardsNow.last()->findChild<QLabel*>("ai_plan_state"); CHECK(state))
                 CHECK_EQ(state->text(), T("Nicht ausgeführt: den Plan gibt es nicht mehr (nach einem Tag abgelaufen oder schon ausgeführt). Bitte die KI, neu zu planen."));
         }
@@ -833,7 +838,8 @@ void test(const QString& dir)
         });
         if (const QList<QWidget*> cardsNow = panel->findChildren<QWidget*>("ai_plan"); CHECK(!cardsNow.isEmpty())) {
             if (auto* run = cardsNow.last()->findChild<QPushButton*>("ai_plan_run"); CHECK(run)) run->click();
-            settle(50);
+            if (auto* state = cardsNow.last()->findChild<QLabel*>("ai_plan_state"))
+                waitFor([&] { return state->text().startsWith(T("Nicht ausgeführt: %1").arg("").trimmed()); }, 10000);
             if (auto* state = cardsNow.last()->findChild<QLabel*>("ai_plan_state"); CHECK(state)) {
                 CHECK_EQ(state->text(), T("Nicht ausgeführt: %1").arg(T("Im Song wurde kein Takt gefunden (Stille, oder kürzer als vier Schläge).")));
                 CHECK(!state->text().contains("no beat found"));
