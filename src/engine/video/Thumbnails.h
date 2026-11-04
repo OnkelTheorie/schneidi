@@ -12,6 +12,9 @@
 #include <QString>
 
 #include <functional>
+#include <vector>
+
+struct AVFrame;
 
 namespace Video {
 
@@ -29,5 +32,17 @@ int keyFrames(const QString& path, const KeyFrameOptions& options, const std::fu
 // The picture shown at `seconds` (exact: decoded from the key frame before), fitted into `box` without borders; the
 // first picture if the file is shorter. Null if the file has no readable video.
 QImage stillAt(const QString& path, double seconds, const QSize& box);
+
+// Pictures at fixed spots, for analyses that must give the same result every time (black bars): the same file always
+// gives the same pictures, whatever the machine's load (no decoder racing ahead decides which picture answers).
+// `at` = spots as fractions of the duration (ascending). Each spot gets the key frame at or before it: a seek and one
+// packet decoded. When fewer than `minKeys` different key frames answer the spots (a short file with a single key
+// frame), each spot gets its exact picture instead, decoded from the key frame before (at most `maxDecode` pictures
+// per spot; the one it got to then). Same key frame twice: given once. A file of one picture (or without a duration)
+// gives its first picture only. onFrame gets the decoded frame (as stored: software format, not turned) and the quarter
+// turns clockwise that show it upright; returning false stops. Returns the number of pictures given, -1 if the file has
+// no readable video stream.
+int fixedPictures(const QString& path, const std::vector<double>& at, int minKeys, int maxDecode,
+                  const std::function<bool(const AVFrame*, int turns)>& onFrame);
 
 } // namespace Video

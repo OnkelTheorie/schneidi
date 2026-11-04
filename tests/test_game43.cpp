@@ -31,12 +31,14 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDir>
+#include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QTemporaryDir>
 #include <QUndoStack>
 #include <clocale>
 #include <cmath>
+#include <thread>
 
 namespace {
 
@@ -133,6 +135,33 @@ void testDetect(const QString& pillar, const QString& letter, const QString& dar
     const auto z = BarDetect::content(dark);
     if (CHECK(z.has_value())) CHECK(!BarDetect::hasBars(*z));
     CHECK(!BarDetect::content("/does/not/exist.mp4", &error).has_value());
+}
+
+// The measurement takes the same pictures on every run, however busy the machine: copies of the dark pillar clip (each
+// its own cache entry) measured by several threads at once all give the same rect, the 75 % of the picture. It used to
+// take the newest picture the decoder had got to near each spot: a busy machine gave other pictures (a dark one
+// instead of a bright one), 73.4 % in about one of eight runs.
+void testDeterministic(const QString& dir, const QString& darkPillar)
+{
+    QStringList copies;
+    for (int i = 0; i < 8; ++i) {
+        const QString c = QDir(dir).filePath(QString("darkCopy%1.mp4").arg(i));
+        QFile::remove(c);
+        if (CHECK(QFile::copy(darkPillar, c))) copies << c;
+    }
+    std::vector<std::optional<QRectF>> rects(size_t(copies.size()));
+    {
+        std::vector<std::thread> threads;
+        for (int i = 0; i < copies.size(); ++i)
+            threads.emplace_back([&, i] { rects[size_t(i)] = BarDetect::content(copies[i]); });
+        for (auto& t : threads) t.join();
+    }
+    for (const auto& r : rects)
+        if (CHECK(r.has_value())) {
+            CHECK(near(r->x(), 0.125, 0.006));
+            CHECK(near(r->width(), 0.75, 0.01));
+            CHECK(*r == *rects.front());
+        }
 }
 
 // A webcam inside one of the bars (a compact picture in the black, the bar running on beyond it) does not end the bar:
@@ -665,6 +694,7 @@ int main(int argc, char** argv)
         const auto v = BarDetect::content(vignette);
         if (CHECK(v.has_value())) CHECK(!BarDetect::hasBars(*v));
     }
+    testDeterministic(tmp.path(), darkPillar);
     testWebcam(tmp.path(), h264);
     testReframe(pillar);
     testCropBars(pillar);

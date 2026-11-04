@@ -9,11 +9,13 @@ extern "C" {
 #include <libswscale/swscale.h>
 }
 
+#include <QScopeGuard>
 #include <QTransform>
 
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <memory>
 
 namespace Video {
 
@@ -251,6 +253,140 @@ QImage stillAt(const QString& path, double seconds, const QSize& box)
     // Nothing after the seek (a raw stream without time stamps such as .h264: it lands anywhere): the first picture
     if (img.isNull() && opened && seconds > 0) return stillOnce(path, 0, box, &opened);
     return img;
+}
+
+int fixedPictures(const QString& path, const std::vector<double>& at, int minKeys, int maxDecode,
+                  const std::function<bool(const AVFrame*, int turns)>& onFrame)
+{
+    auto src = std::make_unique<Source>();
+    if (!src->open(path, 0, false)) return -1;
+    AVFrame* last = av_frame_alloc(); // the picture a decodeTo() got to
+    const auto freeLast = qScopeGuard([&] { av_frame_free(&last); });
+    const double tb = av_q2d(src->st->time_base);
+    const double duration =
+        src->fmt->duration != AV_NOPTS_VALUE && src->fmt->duration > 0 ? double(src->fmt->duration) / AV_TIME_BASE : 0;
+    const AVRational rate = av_guess_frame_rate(src->fmt, src->st, nullptr);
+    const double fps = rate.num > 0 && rate.den > 0 ? av_q2d(rate) : 0;
+    bool eof = false;
+    // Decodes on from where the demuxer and the decoder are, until a picture at `seconds` or later (or `limit`
+    // pictures, or the end of the stream); false if no picture came at all. The picture stays in `last`.
+    const auto decodeTo = [&](double seconds, int limit) {
+        int n = 0;
+        const auto take = [&] {
+            while (avcodec_receive_frame(src->dec, src->frame) >= 0) {
+                av_frame_unref(last);
+                av_frame_move_ref(last, src->frame);
+                ++n;
+                const double t = src->seconds(last);
+                if (std::isnan(t) || t >= seconds - 1e-6 || n >= limit) return true;
+            }
+            return false;
+        };
+        if (take()) return true;
+        while (!eof) {
+            if (av_read_frame(src->fmt, src->pkt) < 0) {
+                eof = true;
+                avcodec_send_packet(src->dec, nullptr);
+                break;
+            }
+            if (src->pkt->stream_index == src->st->index) {
+                while (avcodec_send_packet(src->dec, src->pkt) == AVERROR(EAGAIN))
+                    if (take()) {
+                        av_packet_unref(src->pkt);
+                        return true;
+                    }
+                if (take()) {
+                    av_packet_unref(src->pkt);
+                    return true;
+                }
+            }
+            av_packet_unref(src->pkt);
+        }
+        take();
+        return n > 0 || last->data[0] != nullptr;
+    };
+    // The first picture only: a single picture, a file without a duration, or nothing came at the spots (a raw stream
+    // that cannot seek)
+    const auto first = [&]() -> int {
+        src = std::make_unique<Source>();
+        eof = false;
+        av_frame_unref(last);
+        if (!src->open(path, 0, false)) return -1;
+        if (!decodeTo(-1e300, 1)) return 0;
+        onFrame(last, src->turns);
+        return 1;
+    };
+    if (at.empty() || duration <= 0 || src->st->nb_frames == 1 || (fps > 0 && duration * fps < 1.5)) return first();
+
+    const auto target = [&](double fraction) {
+        return int64_t(std::floor((std::clamp(fraction, 0.0, 1.0) * duration + src->startSeconds) / tb));
+    };
+    // The key frame packet a seek back from `ts` lands on (kept in src->pkt); AV_NOPTS_VALUE if none
+    const auto keyAt = [&](int64_t ts) -> int64_t {
+        if (av_seek_frame(src->fmt, src->st->index, ts, AVSEEK_FLAG_BACKWARD) < 0) return AV_NOPTS_VALUE;
+        eof = false;
+        for (int n = 0; n < 1000 && av_read_frame(src->fmt, src->pkt) >= 0; ++n) {
+            if (src->pkt->stream_index == src->st->index && (src->pkt->flags & AV_PKT_FLAG_KEY)) {
+                const int64_t key = src->pkt->pts != AV_NOPTS_VALUE ? src->pkt->pts : src->pkt->dts;
+                if (key != AV_NOPTS_VALUE) return key;
+            }
+            av_packet_unref(src->pkt);
+        }
+        return AV_NOPTS_VALUE;
+    };
+    // Which key frame answers each spot: packets only, nothing decoded
+    std::vector<int64_t> keys;
+    std::vector<int64_t> unique;
+    for (const double f : at) {
+        const int64_t key = keyAt(target(f));
+        av_packet_unref(src->pkt);
+        keys.push_back(key);
+        if (key != AV_NOPTS_VALUE && std::find(unique.begin(), unique.end(), key) == unique.end()) unique.push_back(key);
+    }
+    int count = 0;
+    if (int(unique.size()) >= std::max(1, minKeys)) {
+        // One packet per key frame: decoded alone, then the decoder is emptied for the next one
+        for (const int64_t key : unique) {
+            if (keyAt(key) != key) {
+                av_packet_unref(src->pkt);
+                continue;
+            }
+            avcodec_send_packet(src->dec, src->pkt);
+            av_packet_unref(src->pkt);
+            avcodec_send_packet(src->dec, nullptr);
+            const bool got = avcodec_receive_frame(src->dec, src->frame) >= 0;
+            avcodec_flush_buffers(src->dec);
+            if (!got) continue;
+            ++count;
+            const bool more = onFrame(src->frame, src->turns);
+            av_frame_unref(src->frame);
+            if (!more) return count;
+        }
+    } else {
+        // Exact pictures: from the key frame before each spot, or on from the last spot within the same key frame's group
+        int64_t group = AV_NOPTS_VALUE, given = AV_NOPTS_VALUE;
+        double reached = 0;
+        for (size_t i = 0; i < at.size(); ++i) {
+            if (keys[i] == AV_NOPTS_VALUE) continue;
+            const double seconds = std::clamp(at[i], 0.0, 1.0) * duration;
+            if (keys[i] != group || reached > seconds || eof) {
+                if (av_seek_frame(src->fmt, src->st->index, target(at[i]), AVSEEK_FLAG_BACKWARD) < 0) continue;
+                avcodec_flush_buffers(src->dec);
+                av_frame_unref(last);
+                eof = false;
+                group = keys[i];
+            }
+            if (!decodeTo(seconds, std::max(1, maxDecode))) continue;
+            reached = src->seconds(last);
+            if (std::isnan(reached)) reached = seconds;
+            const int64_t ts = last->best_effort_timestamp != AV_NOPTS_VALUE ? last->best_effort_timestamp : last->pts;
+            if (ts != AV_NOPTS_VALUE && ts == given) continue; // the same picture again (past the end)
+            given = ts;
+            ++count;
+            if (!onFrame(last, src->turns)) return count;
+        }
+    }
+    return count > 0 ? count : first();
 }
 
 } // namespace Video

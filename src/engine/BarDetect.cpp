@@ -2,11 +2,10 @@
 #include "engine/BarDetect.h"
 
 #include "core/I18n.h"
-#include "engine/video/Reader.h"
+#include "engine/video/Thumbnails.h"
 
 extern "C" {
 #include <libavutil/frame.h>
-#include <libavutil/rational.h>
 #include <libswscale/swscale.h>
 }
 
@@ -21,7 +20,6 @@ extern "C" {
 #include <QMutex>
 #include <QRect>
 #include <QSaveFile>
-#include <QSet>
 #include <QStandardPaths>
 
 #include <algorithm>
@@ -33,9 +31,10 @@ namespace BarDetect {
 
 namespace {
 
-constexpr int kVersion = 5; // bump when the measurement changes
+constexpr int kVersion = 6; // bump when the measurement changes (6: fixed pictures instead of the nearest decoded)
 constexpr int kW = 320, kH = 240;
 constexpr int kSamples = 12;
+constexpr int kMaxDecode = 250; // pictures decoded at most per spot for an exact picture (files with few key frames)
 constexpr int kBlack = 32;          // gray value still counted as black (limited-range black is 16, plus noise)
 constexpr double kBrightShare = 0.04; // a line with fewer bright pixels than this in every sample is a bar
 constexpr double kMinBar = 0.015;
@@ -253,49 +252,42 @@ std::optional<QRectF> content(const QString& path, QString* error, const std::at
     };
     if (!QFileInfo::exists(path)) return fail(T("Datei nicht gefunden: %1").arg(path));
     std::vector<std::vector<uint8_t>> pics;
-    Video::Reader::Options ro;
-    ro.hardware = false;
-    ro.behind = 0;
-    std::unique_ptr<Video::Reader> reader = Video::Reader::open(path, ro);
-    if (reader) {
-        reader->setFrameRate(AVRational{25, 1});
-        const Video::Info& info = reader->info();
-        const double fps = info.frameRate.num > 0 && info.frameRate.den > 0 ? av_q2d(info.frameRate) : 25.0;
-        const int64_t frames = info.duration > 0 ? int64_t(double(info.duration) / AV_TIME_BASE * fps) : 0;
-        SwsContext* sws = nullptr;
-        QSet<int64_t> seen;
-        for (int i = 0; i < kSamples; ++i) {
-            if (cancel && cancel->load()) break;
-            // Spread over the file, away from its first and last moments (fades, a black start)
-            const int64_t pos = frames > 1 ? int64_t((0.05 + 0.9 * (i + 0.5) / kSamples) * double(frames - 1)) : 0;
-            // Any picture near there will do: the key frame a seek lands on (no decoding up to the exact one). The
-            // same picture again (key frames far apart): skipped once there are enough, else decoded up to the
-            // position (a short file with a single key frame)
-            Video::Reader::Fetch fetch;
-            fetch.nearest = true;
-            auto pic = reader->picture(pos, fetch);
-            if (pic && seen.contains(pic->position)) {
-                if (seen.size() >= kSamples / 2) continue;
-                pic = reader->picture(pos);
-            }
-            if (pic) seen.insert(pic->position);
-            if (!pic || !pic->frame) {
-                if (frames <= 1) break;
-                continue;
-            }
-            const AVFrame* f = pic->frame;
-            sws = sws_getCachedContext(sws, f->width, f->height, AVPixelFormat(f->format), kW, kH, AV_PIX_FMT_GRAY8,
-                                       SWS_AREA, nullptr, nullptr, nullptr);
-            if (!sws) break;
-            std::vector<uint8_t> gray(size_t(kW) * kH);
-            uint8_t* planes[4] = {gray.data(), nullptr, nullptr, nullptr};
-            int strides[4] = {kW, 0, 0, 0};
-            sws_scale(sws, f->data, f->linesize, 0, f->height, planes, strides);
-            pics.push_back(std::move(gray));
-            if (frames <= 1) break; // a still picture
+    // Fixed pictures (the same ones on every run, however busy the machine): the key frames near spots spread over the
+    // file, away from its first and last moments (fades, a black start); a file with too few key frames for that (a
+    // short one with a single key frame) gets the exact pictures there, decoded at most kMaxDecode pictures per spot
+    std::vector<double> at;
+    for (int i = 0; i < kSamples; ++i) at.push_back(0.05 + 0.9 * (i + 0.5) / kSamples);
+    SwsContext* sws = nullptr;
+    const int got = Video::fixedPictures(path, at, kSamples / 2, kMaxDecode, [&](const AVFrame* f, int turns) {
+        if (cancel && cancel->load()) return false;
+        // Shrunk as stored, then turned upright (sideways: stored kH x kW)
+        const bool sideways = turns % 2 != 0;
+        const int w = sideways ? kH : kW, h = sideways ? kW : kH;
+        sws = sws_getCachedContext(sws, f->width, f->height, AVPixelFormat(f->format), w, h, AV_PIX_FMT_GRAY8, SWS_AREA,
+                                   nullptr, nullptr, nullptr);
+        if (!sws) return false;
+        std::vector<uint8_t> gray(size_t(kW) * kH);
+        uint8_t* planes[4] = {gray.data(), nullptr, nullptr, nullptr};
+        int strides[4] = {w, 0, 0, 0};
+        sws_scale(sws, f->data, f->linesize, 0, f->height, planes, strides);
+        if (turns) {
+            std::vector<uint8_t> up(gray.size());
+            for (int y = 0; y < h; ++y)
+                for (int x = 0; x < w; ++x) {
+                    // Turned clockwise by `turns` quarters (y down)
+                    int ux = x, uy = y;
+                    if (turns == 1) ux = h - 1 - y, uy = x;
+                    else if (turns == 2) ux = w - 1 - x, uy = h - 1 - y;
+                    else ux = y, uy = w - 1 - x;
+                    up[size_t(uy) * kW + size_t(ux)] = gray[size_t(y) * size_t(w) + size_t(x)];
+                }
+            gray.swap(up);
         }
-        sws_freeContext(sws);
-    } else {
+        pics.push_back(std::move(gray));
+        return true;
+    });
+    sws_freeContext(sws);
+    if (got < 0) {
         QImageReader ir(path);
         ir.setAutoTransform(true);
         const QImage img = ir.read();
