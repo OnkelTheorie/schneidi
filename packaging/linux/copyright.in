@@ -7,6 +7,57 @@ Files: *
 Copyright: 2026 OnkelTheorie and schneidi contributors
 License: AGPL-3.0-only
 
+Files: assets/sfx/cc0/swish/*
+Copyright: artisticdude (Swishes Sound Pack, https://opengameart.org/content/swishes-sound-pack)
+License: CC0-1.0
+ Recorded whoosh and swish sounds of op 'sfx', built into schneidi.
+ .
+ The person who associated a work with this deed has dedicated the work to the
+ public domain by waiving all of his or her rights to the work worldwide under
+ copyright law, including all related and neighboring rights, to the extent
+ allowed by law. You can copy, modify, distribute and perform the work, even for
+ commercial purposes, all without asking permission.
+ Full text: https://creativecommons.org/publicdomain/zero/1.0/legalcode
+
+Files: assets/sfx/cc0/hit/*
+Copyright: Kenney (Impact Sounds 1.0, https://kenney.nl/assets/impact-sounds)
+License: CC0-1.0
+ Recorded hit sounds of op 'sfx', built into schneidi.
+ .
+ The person who associated a work with this deed has dedicated the work to the
+ public domain by waiving all of his or her rights to the work worldwide under
+ copyright law, including all related and neighboring rights, to the extent
+ allowed by law. You can copy, modify, distribute and perform the work, even for
+ commercial purposes, all without asking permission.
+ Full text: https://creativecommons.org/publicdomain/zero/1.0/legalcode
+
+Files: src/core/SfxWhoosh.cpp src/core/SfxForge.cpp src/core/SfxDsp.h third_party/earshot/*
+Copyright: 2026 Leon Lin
+           2026 OnkelTheorie and schneidi contributors (the C++ port)
+License: MIT
+ The built-in effect sounds of op 'sfx': a C++ port of earshot's sound recipes
+ (https://github.com/Leonxlnx/earshot: forge/recipes/whoosh.py, darkriser.py,
+ shutter.py, knock.py, subdrop.py, _tonal.py, forge/dsp.py) and parameter sets
+ of its banks (forge_v2.json, forge04.json), compiled into schneidi.
+ .
+ Permission is hereby granted, free of charge, to any person obtaining a copy
+ of this software and associated documentation files (the "Software"), to deal
+ in the Software without restriction, including without limitation the rights
+ to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ copies of the Software, and to permit persons to whom the Software is
+ furnished to do so, subject to the following conditions:
+ .
+ The above copyright notice and this permission notice shall be included in all
+ copies or substantial portions of the Software.
+ .
+ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ SOFTWARE.
+
 Files: third_party/rnnoise/*
 Copyright: 2007-2017, 2024 Jean-Marc Valin
            2023 Amazon

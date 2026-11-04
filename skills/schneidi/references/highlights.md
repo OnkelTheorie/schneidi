@@ -51,6 +51,11 @@ also read [social.md](social.md).
   the file's start first, `silence` shows it). When a kill comes before the previous sound has ended, end the
   previous copy there (`trim`), like a sampler starting the sound again - copies on separate tracks pile up, get
   loud and clip. Keep them overlapping only when the user asks for it.
+- Effect sounds of schneidi's own (whoosh, riser, hit, impact, click, swish; `effects` `kind` `sfx` lists them and the
+  user's): op `sfx`, e.g. `{"op":"sfx","on":"kills"}` (a hit on each `hit_s`), `{"op":"sfx","on":"cuts","kind":"whoosh"}`
+  (the peak on the cut), `{"op":"sfx","on":"drops"}` (a riser ending on the drop) or `at` times. It keeps them sparse by
+  itself (1.5 s apart, a few per minute, one impact per video) on the track "SFX", mild by default. Only when the
+  user wants sounds - never on every cut unasked.
 - `accent` puts them on many moments in one op, as keyframes: `{"op":"accent","at":["3.3s","7.2s"],"preset":"hit"}`
   (drops from `beats`; for kills the `hit_s` of `highlights` as `{"media":"/path/clip.mkv","source":"7.67s"}`, which
   finds the moment on the timeline wherever the clip ended up). Presets: `punch`, `flash`, `shake`, `hit` (mild: punch + light shake, a kill), `big` (punch + flash +

@@ -403,7 +403,7 @@ int Editor::sourceEdit(SourceEditMode mode, const QString& path, int srcPos, int
     return mode == M::Replace ? playhead : start + len;
 }
 
-int Editor::placeSourceRange(const QString& path, int in, int out, int frame, int track, double speed)
+int Editor::placeSourceRange(const QString& path, int in, int out, int frame, int track, double speed, bool audioOnly)
 {
     importPreviewSource(path, m_preview.bin); // looked at in the Media Storage: into the Media Pool first
     const MediaInfo* info = m_project->mediaInfo(path);
@@ -413,7 +413,7 @@ int Editor::placeSourceRange(const QString& path, int in, int out, int frame, in
     out = m.isImage ? std::max(out, in) : std::clamp(out, in, m.length - 1); // a still takes any length (as trimmed)
     MediaInfo m2 = m; // locked track: this part is dropped
     track = std::max(0, track);
-    if (m2.hasVideo && isTrackLocked(TrackRef{TrackKind::Video, track})) m2.hasVideo = false;
+    if (m2.hasVideo && (audioOnly || isTrackLocked(TrackRef{TrackKind::Video, track}))) m2.hasVideo = false;
     if (m2.hasAudio && isTrackLocked(TrackRef{TrackKind::Audio, track})) m2.hasAudio = false;
     if (!m2.hasVideo && !m2.hasAudio) return 0;
     // Retimed: in and length in material frames (file frame / speed, see Clip::speed); a still has no speed

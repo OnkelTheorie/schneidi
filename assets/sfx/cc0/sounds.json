@@ -1,0 +1,135 @@
+{
+ "note": "Measured once (tools: ffmpeg decode, 48 kHz mono): anchor_s = loudest 20 ms (whoosh/swish) or the first sample within 20 dB of the peak (hit); peak_db = sample peak of the decoded file. Kept as they are; op sfx levels them at placement. Left out after `earshot sfx check` (2026-11-04): oga-swish-8 (DC offset), oga-swish-1 and -2 (tail cut), impactPunch_heavy_004, _medium_002, _medium_003 (a click in the tail).",
+ "sounds": [
+  {
+   "file": "swish/oga-swish-4.wav",
+   "kind": "whoosh",
+   "anchor_s": 0.0601,
+   "peak_db": 2.86,
+   "length_s": 0.1458,
+   "author": "artisticdude (OpenGameArt)",
+   "licence": "CC0-1.0",
+   "licence_file": "LICENSE-opengameart-swishes.txt"
+  },
+  {
+   "file": "swish/oga-swish-5.wav",
+   "kind": "swish",
+   "anchor_s": 0.0497,
+   "peak_db": 2.83,
+   "length_s": 0.1271,
+   "author": "artisticdude (OpenGameArt)",
+   "licence": "CC0-1.0",
+   "licence_file": "LICENSE-opengameart-swishes.txt"
+  },
+  {
+   "file": "swish/oga-swish-6.wav",
+   "kind": "whoosh",
+   "anchor_s": 0.0454,
+   "peak_db": 2.62,
+   "length_s": 0.138,
+   "author": "artisticdude (OpenGameArt)",
+   "licence": "CC0-1.0",
+   "licence_file": "LICENSE-opengameart-swishes.txt"
+  },
+  {
+   "file": "swish/oga-swish-7.wav",
+   "kind": "whoosh",
+   "anchor_s": 0.046,
+   "peak_db": 2.75,
+   "length_s": 0.1875,
+   "author": "artisticdude (OpenGameArt)",
+   "licence": "CC0-1.0",
+   "licence_file": "LICENSE-opengameart-swishes.txt"
+  },
+  {
+   "file": "swish/oga-swish-9.wav",
+   "kind": "whoosh",
+   "anchor_s": 0.0803,
+   "peak_db": 2.7,
+   "length_s": 0.1969,
+   "author": "artisticdude (OpenGameArt)",
+   "licence": "CC0-1.0",
+   "licence_file": "LICENSE-opengameart-swishes.txt"
+  },
+  {
+   "file": "swish/oga-swish-10.wav",
+   "kind": "swish",
+   "anchor_s": 0.0285,
+   "peak_db": 2.55,
+   "length_s": 0.125,
+   "author": "artisticdude (OpenGameArt)",
+   "licence": "CC0-1.0",
+   "licence_file": "LICENSE-opengameart-swishes.txt"
+  },
+  {
+   "file": "swish/oga-swish-11.wav",
+   "kind": "swish",
+   "anchor_s": 0.0394,
+   "peak_db": 2.61,
+   "length_s": 0.1042,
+   "author": "artisticdude (OpenGameArt)",
+   "licence": "CC0-1.0",
+   "licence_file": "LICENSE-opengameart-swishes.txt"
+  },
+  {
+   "file": "swish/oga-swish-12.wav",
+   "kind": "swish",
+   "anchor_s": 0.0297,
+   "peak_db": 2.76,
+   "length_s": 0.076,
+   "author": "artisticdude (OpenGameArt)",
+   "licence": "CC0-1.0",
+   "licence_file": "LICENSE-opengameart-swishes.txt"
+  },
+  {
+   "file": "hit/kenney-impactPunch_heavy_000.ogg",
+   "kind": "hit",
+   "anchor_s": 0.0233,
+   "peak_db": 2.04,
+   "length_s": 0.649,
+   "author": "Kenney (www.kenney.nl)",
+   "licence": "CC0-1.0",
+   "licence_file": "LICENSE-kenney-impact-sounds.txt"
+  },
+  {
+   "file": "hit/kenney-impactPunch_heavy_001.ogg",
+   "kind": "hit",
+   "anchor_s": 0.0191,
+   "peak_db": 1.83,
+   "length_s": 0.536,
+   "author": "Kenney (www.kenney.nl)",
+   "licence": "CC0-1.0",
+   "licence_file": "LICENSE-kenney-impact-sounds.txt"
+  },
+  {
+   "file": "hit/kenney-impactPunch_heavy_002.ogg",
+   "kind": "hit",
+   "anchor_s": 0.0165,
+   "peak_db": 2.04,
+   "length_s": 0.4575,
+   "author": "Kenney (www.kenney.nl)",
+   "licence": "CC0-1.0",
+   "licence_file": "LICENSE-kenney-impact-sounds.txt"
+  },
+  {
+   "file": "hit/kenney-impactPunch_heavy_003.ogg",
+   "kind": "hit",
+   "anchor_s": 0.017,
+   "peak_db": 2.12,
+   "length_s": 0.4738,
+   "author": "Kenney (www.kenney.nl)",
+   "licence": "CC0-1.0",
+   "licence_file": "LICENSE-kenney-impact-sounds.txt"
+  },
+  {
+   "file": "hit/kenney-impactPunch_medium_001.ogg",
+   "kind": "hit",
+   "anchor_s": 0.0076,
+   "peak_db": 1.87,
+   "length_s": 0.4017,
+   "author": "Kenney (www.kenney.nl)",
+   "licence": "CC0-1.0",
+   "licence_file": "LICENSE-kenney-impact-sounds.txt"
+  }
+ ]
+}

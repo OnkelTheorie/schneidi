@@ -106,6 +106,8 @@ QString transitionDir() { return QDir(root()).filePath("Transitions"); }
 
 QString presetDir() { return QDir(root()).filePath("Presets"); }
 
+QString soundDir() { return QDir(root()).filePath("Sounds"); }
+
 void ensure()
 {
     QDir().mkpath(lutDir());
@@ -178,6 +180,16 @@ QVector<LutEntry> builtinTransitions()
 }
 
 QVector<LutEntry> userTransitions() { return scan(transitionDir(), &isTransitionFile, false); }
+
+const QStringList& soundSuffixes()
+{
+    static const QStringList s{"wav", "flac", "ogg", "oga", "opus", "mp3", "m4a", "aif", "aiff"};
+    return s;
+}
+
+bool isSoundFile(const QString& path) { return soundSuffixes().contains(QFileInfo(path).suffix().toLower()); }
+
+QVector<LutEntry> userSounds() { return scan(soundDir(), &isSoundFile, false); }
 
 QVector<LutEntry> userPresets()
 {

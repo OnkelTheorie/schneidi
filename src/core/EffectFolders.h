@@ -19,6 +19,7 @@ QString root();   // effects folder
 QString lutDir(); // root/LUTs
 QString transitionDir(); // root/Transitions (ASCII name: FFmpeg on Windows)
 QString presetDir();     // root/Presets: Shotcut/Kdenlive presets (core/Presets)
+QString soundDir();      // root/Sounds: the user's own effect sounds (op 'sfx', Effects Library "Klänge")
 void ensure();    // create folders (and readme) if they are missing
 
 // LUT formats (extensions lowercase, without dot): .cube, .3dl, .csp, Hald CLUT images
@@ -39,6 +40,10 @@ QVector<LutEntry> builtinLuts(); // bundled, names translated
 QVector<LutEntry> userLuts();    // lutDir() recursively, sorted by group and name
 QVector<LutEntry> builtinTransitions(); // bundled gradient wipes
 QVector<LutEntry> userTransitions();    // transitionDir() recursively
+// Effect sounds: common audio formats
+const QStringList& soundSuffixes();
+bool isSoundFile(const QString& path);
+QVector<LutEntry> userSounds();         // soundDir() recursively (name = file name without extension)
 QVector<LutEntry> userPresets();        // presetDir() recursively (every file but readmes; name = file name)
 QStringList watchDirs();                // LUTs/Transitions/Presets folders and all subfolders (for watching)
 bool isBuiltin(const QString& path);

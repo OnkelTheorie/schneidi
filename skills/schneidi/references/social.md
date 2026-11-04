@@ -15,6 +15,8 @@ It runs the steps below with the usual commands and answers with `out`, `length_
    feed readable at the top (`keep`, below).
 3. Word captions (`captions` `karaoke` default, `word`, `off`; `language`) - only when whisper is installed. Otherwise
    a note with the install command; it never installs: ask the user first.
+   Effect sounds only on request: `sfx` `off` (default) or `mild` (a soft whoosh on the hard cuts, a hit on the
+   kills, sparingly - op `sfx`).
 4. `check` for the platform `for` (`shorts` default, `reels`, `tiktok`: length limit, -14 LUFS, true peak) and its sound
    fix (limiter, fader) applied.
 5. `render` with the platform's preset into `out` (default `<first file>-short.mp4` beside it, numbered; an existing

@@ -89,6 +89,11 @@ add_library(schneidi_lib STATIC
     src/core/TrimFrames.h         src/core/TrimFrames.cpp
     src/core/Keyframes.h          src/core/Keyframes.cpp
     src/core/Accents.h            src/core/Accents.cpp
+    src/core/SfxSynth.h           src/core/SfxSynth.cpp
+    src/core/SfxWhoosh.h          src/core/SfxWhoosh.cpp
+    src/core/SfxForge.h           src/core/SfxForge.cpp
+    src/core/SfxDsp.h
+    src/core/SfxPlace.h           src/core/SfxPlace.cpp
     src/core/MediaAspect.h        src/core/MediaAspect.cpp
     src/core/GradeWindows.h       src/core/GradeWindows.cpp
     src/core/NameBlur.h           src/core/NameBlur.cpp
@@ -346,6 +351,9 @@ set(SCHNEIDI_THEMES assets/themes/dark-orange.json assets/themes/midnight.json a
 qt_add_resources(schneidi_lib "themes" PREFIX "/" BASE assets FILES ${SCHNEIDI_THEMES})
 file(GLOB SCHNEIDI_LUTS RELATIVE ${PROJECT_SOURCE_DIR} CONFIGURE_DEPENDS ${PROJECT_SOURCE_DIR}/assets/luts/*.cube) # tools/gen_luts.py
 qt_add_resources(schneidi_lib "luts" PREFIX "/" BASE assets FILES ${SCHNEIDI_LUTS})
+# Recorded effect sounds (CC0, op 'sfx'): built into the program, so every package and the tests have them
+file(GLOB_RECURSE SCHNEIDI_SFX RELATIVE ${PROJECT_SOURCE_DIR} CONFIGURE_DEPENDS ${PROJECT_SOURCE_DIR}/assets/sfx/*)
+qt_add_resources(schneidi_lib "sfx" PREFIX "/" BASE assets FILES ${SCHNEIDI_SFX})
 target_include_directories(schneidi_lib PUBLIC src)
 target_include_directories(schneidi_lib PRIVATE ${MINIAUDIO_INCLUDE_DIR})
 target_link_libraries(schneidi_lib PUBLIC Qt6::Widgets Qt6::Network PkgConfig::FFMPEG

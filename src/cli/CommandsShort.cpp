@@ -10,6 +10,8 @@
 #include "core/I18n.h"
 #include "core/ProjectFile.h"
 #include "core/RenderJob.h"
+#include "core/SfxPlace.h"
+#include "core/SfxSynth.h"
 #include "core/ShortPick.h"
 #include "engine/Extensions.h"
 
@@ -20,6 +22,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <optional>
 
 namespace Cli::detail {
 
@@ -47,6 +50,20 @@ QString uniqueTimelineName(const QJsonArray& timelines, const QString& wanted)
 
 double secondsOf(const QJsonValue& v) { return std::round(v.toDouble() * 100) / 100; }
 
+} // namespace
+
+namespace {
+// Sample peak of a timeline's mix (dBFS); nullopt = silent or not measurable
+std::optional<double> soundPeakDb(const QString& project, const QString& timeline, Context c)
+{
+    try {
+        const QJsonObject l = execute(*find("loudness"), {{"source", project}, {"timeline", timeline}}, c);
+        const QJsonValue v = l["loudness"]["sample_peak_db"];
+        if (v.isDouble() && v.toDouble() > -60) return v.toDouble();
+    } catch (const Error&) {
+    }
+    return std::nullopt;
+}
 } // namespace
 
 QJsonObject cmdShort(const QJsonObject& a, Context& ctx)
@@ -90,6 +107,9 @@ QJsonObject cmdShort(const QJsonObject& a, Context& ctx)
     // Hook: the best moment first (default; the rest in their order), or all in the order they happened
     const QString hook = a.contains("hook") ? a["hook"].toString().trimmed().toLower() : QString("best");
     if (!QStringList{"best", "chronological"}.contains(hook)) fail("BAD_ARGUMENT", "hook must be best or chronological");
+    // Effect sounds: none unless asked for (never by itself on every cut)
+    const QString sfx = a.contains("sfx") ? a["sfx"].toString().trimmed().toLower() : QString("off");
+    if (!QStringList{"off", "mild"}.contains(sfx)) fail("BAD_ARGUMENT", "sfx must be off or mild");
     const ShortPlatform* platform = shortPlatform(a.contains("for") ? a["for"].toString() : QString("shorts"));
     if (!platform) fail("BAD_ARGUMENT", "for must be shorts, reels or tiktok (the platform)");
     if (platform->maxSeconds < pick.maxS) pick.maxS = platform->maxSeconds;
@@ -274,6 +294,24 @@ QJsonObject cmdShort(const QJsonObject& a, Context& ctx)
                 notes << "no captions: no speech in the short";
             }
         }
+    }
+
+    // 6b. Effect sounds (sfx:'mild' only): a whoosh on the hard cuts, a hit on the kills, sparingly (op 'sfx' rules)
+    if (sfx == QLatin1String("mild")) {
+        // The hits first (they matter most), the whooshes in the room left (each kind has its own cap per minute)
+        QJsonArray ops;
+        if (game) {
+            // The hits 14 dB under the game sound's peak (without game sound: level mild)
+            QJsonObject hit{{"op", "sfx"}, {"on", "kills"}, {"kind", "hit"}, {"level", "mild"}, {"game", game->id}};
+            hit["volume_db"] = SfxPlace::underPeakDb(soundPeakDb(project, shortTimeline, step(0.6, 0.6)),
+                                                     SfxSynth::peakLevelDb(SfxSynth::Kind::Hit));
+            ops << hit;
+        }
+        ops << QJsonObject{{"op", "sfx"}, {"on", "cuts"}, {"kind", "whoosh"}, {"level", "mild"}};
+        const QJsonObject e = run("edit", {{"project", project}, {"timeline", shortTimeline}, {"ops", ops}}, step(0.6, 0.6));
+        int placed = 0;
+        for (const QJsonValue& n : e["notes"].toArray()) placed += int(n["sfx"]["placed"].toArray().size());
+        done << QString("sfx mild: %1 sound%2").arg(placed).arg(placed == 1 ? "" : "s");
     }
 
     // 7. Check for the platform and apply its safe fixes (master limiter, fader to the loudness target)
