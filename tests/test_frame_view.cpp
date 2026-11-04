@@ -354,9 +354,10 @@ void testViewer(const QString& clipDir)
     CHECK(fit->isChecked() && viewer->zoom() == FrameView::kFit);
     CHECK(!engine.previewFullSize());
     engine.seek(10);
-    QTest::qWait(300);
+    // Waits for what is to be seen, not a fixed time (a loaded machine renders later; an empty picture passed before)
+    CHECK(QTest::qWaitFor([&] { return !viewer->picture().isNull(); }, 10000));
     const QSize small = viewer->picture().size();
-    CHECK(small.width() <= 960);
+    CHECK(!small.isEmpty() && small.width() <= 960);
     dump(&w, "viewer-fit");
 
     z100->trigger();
@@ -364,7 +365,7 @@ void testViewer(const QString& clipDir)
     CHECK(z100->isChecked() && !fit->isChecked());
     CHECK_EQ(button->text(), QString("100 %"));
     CHECK(engine.previewFullSize());
-    QTest::qWait(400);
+    QTest::qWaitFor([&] { return viewer->picture().size() == engine.frameSize(); }, 10000);
     CHECK_EQ(viewer->picture().size(), engine.frameSize()); // full-size frames for 100 %
     dump(&w, "viewer-100");
     if (!dumpDir().isEmpty()) viewer->picture().save(dumpDir() + "/picture-100.png");
@@ -377,7 +378,7 @@ void testViewer(const QString& clipDir)
     fit->trigger();
     CHECK_EQ(viewer->zoom(), FrameView::kFit);
     CHECK_EQ(button->text(), QString("Einpassen"));
-    QTest::qWait(400);
+    QTest::qWaitFor([&] { return viewer->picture().size() == small; }, 10000);
     CHECK_EQ(viewer->picture().size(), small);
 }
 

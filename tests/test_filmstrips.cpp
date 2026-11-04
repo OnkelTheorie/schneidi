@@ -18,6 +18,7 @@
 #include <QTemporaryDir>
 
 #include <cmath>
+#include <ctime>
 #include <utility>
 #include <vector>
 
@@ -224,10 +225,15 @@ int main(int argc, char** argv)
         if (CHECK(!raw264.isEmpty())) {
             QElapsedTimer t;
             t.start();
+            const std::clock_t cpu0 = std::clock();
             const QImage img = Video::stillAt(raw264, 1.0, QSize(144, 81));
             const qint64 ms = t.elapsed();
-            std::printf("still of a raw 60 s stream: %lld ms\n", ms);
-            CHECK(!img.isNull() && ms < 400);
+            // Processor time of this process (the decoder's threads too): what decoding the whole file would cost,
+            // without the wall clock of a loaded machine (other processes' time is not counted)
+            const double cpuMs = 1000.0 * double(std::clock() - cpu0) / CLOCKS_PER_SEC;
+            std::printf("still of a raw 60 s stream: %lld ms, %.0f ms processor time\n", ms, cpuMs);
+            CHECK(!img.isNull() && cpuMs < 400);
+            CHECK(ms < 5000);
         }
     }
 
