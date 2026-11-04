@@ -88,7 +88,8 @@ bool useCompact(Compact mode, const Endpoint& e, qint64 context)
 }
 
 // Tools an editing chat in the app seldom needs: their parameters come from `help` when they are used
-const QStringList kRareTools{"new", "templates", "backups", "restore", "export_timeline", "watch", "sync", "extensions"};
+const QStringList kRareTools{"new",  "templates", "backups", "restore", "export_timeline", "watch", "sync", "extensions",
+                             "import", "scopes"};
 
 QString firstSentence(const QString& text, int max)
 {
@@ -126,17 +127,49 @@ void textTimes(QJsonObject& p)
 }
 
 // An op signature in short: the values and defaults of optional keys left out ("mode?:'peak'|'lufs'" -> "mode?"),
-// `help` with the op has them
+// `help` with the op has them; written as a call: "{op:'split', at, clip?}" -> "split(at, clip?)", "{op:'enable'|
+// 'disable', clips}" -> "enable|disable(clips)" (the ops' text says how to read it)
 QString shortUsage(const QString& usage)
 {
     static const QRegularExpression values(R"(\?:(\[[^\]]*\]|'[^']*'(\|'[^']*')*|[A-Za-z0-9_.]+))");
-    return QString(usage).replace(values, "?");
+    static const QRegularExpression head(R"(\{op:'([a-z_]+)'((?:\|'[a-z_]+')*)(, )?)");
+    const QString s = QString(usage).replace(values, "?");
+    QString out;
+    qsizetype i = 0;
+    while (i < s.size()) {
+        const QRegularExpressionMatch m = head.match(s, i, QRegularExpression::NormalMatch,
+                                                     QRegularExpression::AnchorAtOffsetMatchOption);
+        if (!m.hasMatch()) {
+            out += s[i++];
+            continue;
+        }
+        // The closing brace of this signature (brackets inside it nest)
+        qsizetype j = m.capturedEnd();
+        int depth = 0;
+        for (; j < s.size(); ++j) {
+            const QChar c = s[j];
+            if (c == '{' || c == '[' || c == '(') ++depth;
+            else if (c == ']' || c == ')') --depth;
+            else if (c == '}' && depth-- == 0) break;
+        }
+        if (j >= s.size()) return s; // not one we know how to read: as it is
+        out += m.captured(1) + QString(m.captured(2)).remove('\'') + '(' + s.mid(m.capturedEnd(), j - m.capturedEnd()) + ')';
+        i = j + 1;
+    }
+    return out;
 }
 
 } // namespace
 
 QString compactInstructions(const QString& instructions)
 {
+    // The app (the only one that asks for the short request) says how its project works live in its own part
+    static const QString live = " If the project is open in the schneidi app, all tools work live";
+    if (const qsizetype from = instructions.indexOf(live); from >= 0) {
+        static const QString end = "the project open in the running app.";
+        if (const qsizetype to = instructions.indexOf(end, from); to > from)
+            return compactInstructions(instructions.left(from) + instructions.mid(to + end.size()));
+    }
     // The list of what each tool is for: the tool descriptions say it as well
     static const QString start = "Edit projects (.schneidi) with these tools:";
     const qsizetype from = instructions.indexOf(start);
@@ -183,10 +216,9 @@ QJsonArray compactTools(const QJsonArray& tools, const QJsonArray& editOps)
             textTimes(p);
             it.value() = p;
         }
-        if (rare) description += QString(" Parameters in detail: `help` with command '%1'.").arg(name);
         if (name == "help")
-            description = "The details of a tool: command '<tool>' (all its parameters); of edit ops: command 'edit' "
-                          "and op '<name>' (or a comma list).";
+            description = "The details of a tool: command '<tool>' (all its parameters, also those without a text "
+                          "here); of edit ops: command 'edit' and op '<name>' (or a comma list).";
         if (name == "edit") {
             QStringList ops;
             for (const QJsonValue& op : editOps)
@@ -195,7 +227,8 @@ QJsonArray compactTools(const QJsonArray& tools, const QJsonArray& editOps)
             p["description"] = "List of operations, applied in order (nothing changes if one fails). Times: frames, "
                                "\"4.5s\", \"HH:MM:SS:FF\" or \"MM:SS\"; ranges [from, to). Tracks: \"V1\", \"A2\". Clip ids "
                                "come from `info` or the answer of the edit before (they change when clips are split). "
-                               "An op's parameters in detail: `help` with command 'edit' and op '<name>'. Ops: "
+                               "An op's parameters in detail: `help` with command 'edit' and op '<name>'. Ops, each written as "
+                               "name(keys) for {op:'name', keys}, key? = optional, a|b = one of them: "
                                + ops.join("; ");
             props["ops"] = p;
         }

@@ -748,7 +748,8 @@ void testContext()
         CHECK_EQ(c[0]["name"].toString(), QString("help"));
         CHECK(c[0]["description"].toString().contains("command '<tool>'"));
         const QString edit = c[1]["inputSchema"]["properties"]["ops"]["description"].toString();
-        CHECK(edit.contains("{op:'split', at, clip?}; {op:'trim', clip, edge?, by|to}"));
+        CHECK(edit.contains("split(at, clip?); trim(clip, edge?, by|to)"));
+        CHECK(edit.contains("name(keys) for {op:'name', keys}"));
         CHECK(edit.contains("`help` with command 'edit' and op '<name>'") && edit.size() < 1000);
         CHECK_EQ(c[1]["description"].toString(), QString("Apply edit operations to a project and save it."));
         CHECK_EQ(c[1]["inputSchema"]["properties"]["project"]["description"].toString(), QString("project file"));
@@ -756,7 +757,8 @@ void testContext()
                  QString("where the kill feed is, \"x,y,w,h\""));
         CHECK(!c[3]["inputSchema"]["properties"]["folder"].toObject().contains("description"));
         CHECK_EQ(c[3]["inputSchema"]["properties"]["folder"]["type"].toString(), QString("string"));
-        CHECK(c[3]["description"].toString().contains("`help` with command 'watch'"));
+        CHECK(!c[3]["description"].toString().contains("help")); // `help` says it once for all of them
+        CHECK(c[0]["description"].toString().contains("also those without a text here"));
     }
     // Shorter still: times as text, optional keys without their values, a parameter text three tools share left out,
     // the instructions without the list of tools
@@ -778,7 +780,15 @@ void testContext()
         for (int i = 0; i < 3; ++i) CHECK(!m[i]["inputSchema"]["properties"]["project"].toObject().contains("description"));
         CHECK_EQ(m[3]["inputSchema"]["properties"]["file"]["description"].toString(), QString("project file")); // another key
         CHECK(m[4]["inputSchema"]["properties"]["ops"]["description"].toString().contains(
-            "{op:'normalize', clips, mode?, ripple?, ranges:[[from,to]], at?, track?}"));
+            "normalize(clips, mode?, ripple?, ranges:[[from,to]], at?, track?)"));
+        // Several names, nested braces, a second form with "or", a form without op: as calls where they are ops
+        const QJsonArray ops3{QJsonObject{{"op", "enable"}, {"usage", "{op:'enable'|'disable', clips}"}},
+                              QJsonObject{{"op", "align"}, {"usage", "{op:'align', events:[times], to:[times]|{first, every}}"}},
+                              QJsonObject{{"op", "clear"}, {"usage", "{op:'clear'}"}},
+                              QJsonObject{{"op", "ramp"}, {"usage", "{op:'ramp', clip, points:[{at, speed}]} or {…, clear:true}"}}};
+        const QString d3 = Ai::compactTools(more, ops3)[4]["inputSchema"]["properties"]["ops"]["description"].toString();
+        CHECK(d3.contains("enable|disable(clips); align(events:[times], to:[times]|{first, every}); clear(); "
+                          "ramp(clip, points:[{at, speed}]) or {…, clear:true}"));
         const QString instr = "schneidi is a video editor. Edit projects (.schneidi) with these tools: `new` creates one "
                               "(a template; see `templates`), `edit` changes a timeline (e.g. a cut). If the project is "
                               "open in the app, tools work live. Use absolute file paths.";
@@ -786,6 +796,10 @@ void testContext()
                  QString("schneidi is a video editor. Edit projects (.schneidi) with the tools (each one's description "
                          "says what it is for). If the project is open in the app, tools work live. Use absolute file paths."));
         CHECK_EQ(Ai::compactInstructions("Other text."), QString("Other text."));
+        // How the app's project works live: said by the app chat's own part
+        CHECK_EQ(Ai::compactInstructions("A. If the project is open in the schneidi app, all tools work live on it; "
+                                         "\"@app\" = the project open in the running app. Use absolute file paths."),
+                 QString("A. Use absolute file paths."));
     }
     // Without the ops `edit` stays whole (the model could not edit otherwise)
     CHECK_EQ(Ai::compactTools(tools, {})[1].toObject(), tools[1].toObject());

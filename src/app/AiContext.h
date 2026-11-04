@@ -31,13 +31,14 @@ bool useCompact(Compact mode, const Endpoint& e, qint64 context);
 
 // The tools in short: all of them, each with the first sentence of its description and short parameter texts (the
 // first clause); rarely needed tools (kRareTools) with parameter names and types only; `edit` lists its ops as
-// signatures (editOps: the 'ops' of `help` with command 'edit'; empty = `edit` stays as it is); `help` says it has the
-// details of every tool. The order and the names stay.
+// signatures written as calls ("split(at, clip?)"; editOps: the 'ops' of `help` with command 'edit'; empty = `edit`
+// stays as it is); `help` says it has the details of every tool. The order and the names stay.
 // In short also: time parameters typed as text only, op signatures without the values of optional keys, and no text
 // for a parameter whose text kSharedParam or more tools share word for word ("project": "project file").
 QJsonArray compactTools(const QJsonArray& tools, const QJsonArray& editOps);
 constexpr int kSharedParam = 3;
 // The tool server's instructions in short: without the list of what each tool is for (the tool descriptions say it)
+// and without how the app's project works live (the app chat's own part says it)
 QString compactInstructions(const QString& instructions);
 // What the short request (system prompt and tools, no chat) may take at most, in characters: about 7,500 tokens, so
 // it fits an 8192-token local model with room for a short chat (test_ai_chat checks it)

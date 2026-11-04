@@ -886,7 +886,7 @@ void test(const QString& dir)
             names << t["function"]["name"].toString();
             if (t["function"]["name"].toString() == "edit") {
                 const QString ops = t["function"]["parameters"]["properties"]["ops"]["description"].toString();
-                CHECK(ops.contains("{op:'split', at, clip?}") && !ops.contains("A timeline position"));
+                CHECK(ops.contains("split(at, clip?)") && !ops.contains("A timeline position"));
             }
         }
         CHECK_EQ(names, tools);
@@ -1101,8 +1101,9 @@ void test(const QString& dir)
         CHECK(tight);
         // The short request stays within its budget (it grew past an 8192-token model with the 0.17 tools once):
         // system prompt and tools of a fresh chat, the one word above aside
-        if (!CHECK(chat->requestTokens() * 4 <= Ai::kCompactBudget))
-            std::printf("       short request: %lld characters, budget %lld\n", chat->requestTokens() * 4, Ai::kCompactBudget);
+        // (and keeps room for the next ops: 2500 characters below it after 0.17)
+        std::printf("       short request: %lld characters, budget %lld\n", chat->requestTokens() * 4, Ai::kCompactBudget);
+        CHECK(chat->requestTokens() * 4 <= Ai::kCompactBudget);
         // Off: the full request also for a server on this computer
         fake.gets.remove("/api/show");
         chat->clear();
