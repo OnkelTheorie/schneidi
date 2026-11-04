@@ -581,8 +581,9 @@ int main(int argc, char** argv)
     if (Check::haveFfmpeg()) {
         testOp(tmp.path());
         testKillsDryRun(tmp.path());
+    } else {
+        std::printf("  no ffmpeg: op test skipped\n");
     }
-    else std::printf("  no ffmpeg: op test skipped\n");
     if (const QString dir = qEnvironmentVariable("SCHNEIDI_SFX_SAMPLE_DIR"); !dir.isEmpty()) writeSample(dir);
     return Check::result();
 }
