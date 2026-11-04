@@ -458,7 +458,8 @@ int main(int argc, char** argv)
         const auto r = Stabilizer::request(q, fmt);
         CHECK(st->state(*r) == Stabilizer::State::Missing);
         int ready = 0;
-        QObject::connect(st, &Stabilizer::resultReady, &app, [&] { ++ready; });
+        // (disconnected at the end of this block: `ready` lives on its stack, the Stabilizer for the whole test)
+        const QMetaObject::Connection counting = QObject::connect(st, &Stabilizer::resultReady, &app, [&] { ++ready; });
         st->sync({*r});
         CHECK(st->state(*r) == Stabilizer::State::Running);
         CHECK(waitFor([&] { return st->state(*r) == Stabilizer::State::Done; }, 60000));
@@ -493,6 +494,7 @@ int main(int argc, char** argv)
         st->sync({});
         st->sync({*r3});
         CHECK(waitFor([&] { return st->state(*r3) == Stabilizer::State::Done; }, 60000));
+        QObject::disconnect(counting);
     }
 
     // The preview takes a finished analysis: the still shown while it ran is drawn again (it stayed unstabilized)
