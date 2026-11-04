@@ -811,7 +811,10 @@ QString Installer::unpack(const QString& archive)
     }
     if (!aside.isEmpty()) QDir(aside).removeRecursively();
     QDir(staging).removeRecursively();
-    if (onnx) return {}; // a library: nothing to run
+    if (onnx) { // a library: nothing to run; on Windows the MSVC runtime beside it (engine/Inference loads it first)
+        provideRuntime(QDir(target).filePath(kOnnxRuntimeName));
+        return {};
+    }
     const QString installed = encoder ? installedFfmpeg() : QDir(target).filePath(program);
     QFile::setPermissions(installed, QFile::permissions(installed) | QFile::ExeOwner | QFile::ExeUser);
     if (!encoder) provideRuntime(installed);

@@ -4,13 +4,12 @@
 #include "engine/Extensions.h"
 #include "engine/Inference.h"
 
-#include <QFileInfo>
 #include <QDateTime>
+#include <QFileInfo>
 #include <QMutex>
 
 #include <algorithm>
 #include <cmath>
-#include <numeric>
 
 namespace FaceDetect {
 

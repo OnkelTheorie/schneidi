@@ -3,6 +3,7 @@
 
 #include "engine/Extensions.h"
 
+#include <QDir>
 #include <QFile>
 #include <QFileInfo>
 #include <QLibrary>
@@ -123,6 +124,19 @@ std::optional<Loaded> load(const QString& file, QString* error)
         if (error) *error = "no file";
         return std::nullopt;
     }
+#ifdef Q_OS_WIN
+    // The official build needs the MSVC runtime (VCRUNTIME140, MSVCP140 …), which a fresh Windows lacks and which
+    // Windows does not look for in the library's own folder: copies beside it (Extensions::provideRuntime) are loaded
+    // first by their full path, so the library finds them in the process. vcruntime before msvcp (which needs it).
+    if (QFileInfo(file).isAbsolute()) {
+        const QDir here = QFileInfo(file).dir();
+        for (const char* pattern : {"vcruntime140*.dll", "msvcp140*.dll"})
+            for (const QString& dll : here.entryList({pattern}, QDir::Files, QDir::Name)) {
+                QLibrary runtimeDll(here.filePath(dll));
+                runtimeDll.load(); // stays loaded (QLibrary's destructor does not unload); a failure shows below
+            }
+    }
+#endif
     auto lib = std::make_unique<QLibrary>(file);
     if (!lib->load()) {
         if (error) *error = "cannot load " + file + ": " + lib->errorString();
