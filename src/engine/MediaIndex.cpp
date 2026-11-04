@@ -56,13 +56,25 @@ std::function<QVector<AudioEvents::Event>(const QString&)>& eventSource()
     return s;
 }
 
+// For tests: the way taken as AudioEvents::way() and the way the event source answers with (empty = the real ones)
+QString g_testWay, g_testAnswered;
+
+QString currentWay()
+{
+    {
+        QMutexLocker lock(&g_mutex);
+        if (!g_testWay.isEmpty()) return g_testWay;
+    }
+    return AudioEvents::way();
+}
+
 QString hashOf(const QString& s)
 {
     return QString::fromLatin1(QCryptographicHash::hash(s.toUtf8(), QCryptographicHash::Sha1).toHex());
 }
 
 // How the audio events were made is part of the key: installing or updating the audio-events model measures anew
-QString keyOf(const QFileInfo& fi) { return cacheKey(fi.absoluteFilePath(), AudioEvents::way()); }
+QString keyOf(const QFileInfo& fi) { return cacheKey(fi.absoluteFilePath(), currentWay()); }
 
 double round3(double v) { return std::round(v * 1000) / 1000; }
 
@@ -319,7 +331,15 @@ std::optional<Entry> loadDisk(const QString& key)
 {
     QFile f(cacheDir() + '/' + key + ".json");
     if (!f.open(QIODevice::ReadOnly)) return std::nullopt;
-    return fromJson(QJsonDocument::fromJson(f.readAll()).object());
+    const QJsonObject o = QJsonDocument::fromJson(f.readAll()).object();
+    // YAMNet failed on the file and the heuristics answered: the entry lies under the heuristic way (one step only)
+    if (const QString other = o["same_as"].toString(); !other.isEmpty() && other != key) {
+        if (o["version"].toInt() != kVersion) return std::nullopt;
+        QFile g(cacheDir() + '/' + other + ".json");
+        if (!g.open(QIODevice::ReadOnly)) return std::nullopt;
+        return fromJson(QJsonDocument::fromJson(g.readAll()).object());
+    }
+    return fromJson(o);
 }
 
 void saveJson(const QString& file, const QJsonObject& o)
@@ -539,9 +559,12 @@ std::optional<Entry> build(const QString& file, const Options& options, QString*
     if (options.progress && !options.progress(0.9)) return cancelled();
     QVector<AudioEvents::Event> events;
     bool incomplete = false;
-    QString way = AudioEvents::way(); // the way the events were made (YAMNet failing on a file: the heuristics)
+    const QString current = currentWay();
+    QString way = current; // the way the events were made (YAMNet failing on a file: the heuristics)
     if (source) {
         events = source(e->file);
+        QMutexLocker lock(&g_mutex);
+        if (!g_testAnswered.isEmpty()) way = g_testAnswered;
     } else {
         AudioEvents::Options ao;
         if (options.progress) ao.progress = [&options](double p) { return options.progress(0.9 + 0.1 * std::clamp(p, 0.0, 1.0)); };
@@ -555,8 +578,13 @@ std::optional<Entry> build(const QString& file, const Options& options, QString*
     if (!incomplete) { // a read error is not the file's sound: measured again next time
         const QString key = cacheKey(fi.absoluteFilePath(), way);
         saveJson(cacheDir() + '/' + key + ".json", toJson(*e, events));
+        // Found under the way of now too (cached() looks there): a pointer to it, not a copy labelled YAMNet
+        const QString currentKey = cacheKey(fi.absoluteFilePath(), current);
+        if (currentKey != key)
+            saveJson(cacheDir() + '/' + currentKey + ".json", QJsonObject{{"version", kVersion}, {"same_as", key}});
         QMutexLocker lock(&g_mutex);
         memory().insert(key, *e);
+        memory().insert(currentKey, *e);
     }
     if (options.progress) options.progress(1.0);
     applyNotes(*e);
@@ -682,6 +710,13 @@ void setEventSource(std::function<QVector<AudioEvents::Event>(const QString&)> s
 {
     QMutexLocker lock(&g_mutex);
     eventSource() = std::move(source);
+}
+
+void setWaysForTests(const QString& current, const QString& answered)
+{
+    QMutexLocker lock(&g_mutex);
+    g_testWay = current;
+    g_testAnswered = answered;
 }
 
 } // namespace MediaIndex

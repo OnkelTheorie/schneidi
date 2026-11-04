@@ -105,5 +105,8 @@ int contentReadCount();
 void clearMemoryCache();
 // For tests (until engine/AudioEvents measures for real): where the events of a file come from (empty = AudioEvents)
 void setEventSource(std::function<QVector<AudioEvents::Event>(const QString& file)> source);
+// For tests: the way taken as AudioEvents::way() (current) and the way the event source's answer was made (answered:
+// "heuristic" = YAMNet failed on the file); empty = the real ones
+void setWaysForTests(const QString& current, const QString& answered);
 
 } // namespace MediaIndex
