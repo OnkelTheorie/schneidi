@@ -13,6 +13,7 @@
 #include "core/Transcript.h"
 #include "core/TranscriptCut.h"
 #include "engine/AudioAnalysis.h"
+#include "engine/AudioEvents.h"
 #include "engine/MediaIndex.h"
 #include "engine/ReframeAnalysis.h"
 #include "engine/Extensions.h"
@@ -149,6 +150,7 @@ constexpr double kQuietWant = 2.0;  // seconds of quiet the loop is made of
 constexpr double kQuietLeast = 1.0; // at least
 constexpr double kScanMargin = 30.0; // seconds of the file around the used parts searched for quiet
 constexpr double kMaxGainDb = 12.0;
+constexpr double kSpeechMargin = 0.15; // seconds around detected speech left out
 
 struct TakeQuiet {
     bool found = false;
@@ -176,8 +178,18 @@ TakeQuiet measureTake(Session& s, const Clip& take, int track)
     const auto levels = AudioAnalysis::fileBlockLevels(take.mediaPath, take.audioStream, lo / fps, hi / fps,
                                                        RoomTone::kBlockSeconds);
     if (!levels) return q;
+    // Words in the scanned part (the heuristic voice detection of engine/AudioEvents, on just this part): a quiet
+    // murmur under the floor + 6 dB must not become the room tone. With a margin for the ends of a word.
+    std::vector<bool> speech(levels->size(), false);
+    if (const auto mono = AudioAnalysis::fileMono(take.mediaPath, take.audioStream, lo / fps, hi / fps, AudioEvents::kRate))
+        for (const AudioEvents::Event& ev : AudioEvents::heuristics(*mono)) {
+            if (ev.kind != "speech") continue;
+            const int a = std::max(0, int(std::floor((ev.from - kSpeechMargin) / RoomTone::kBlockSeconds)));
+            const int b = std::min(int(speech.size()), int(std::ceil((ev.to + kSpeechMargin) / RoomTone::kBlockSeconds)));
+            for (int i = a; i < b; ++i) speech[size_t(i)] = true;
+        }
     const RoomTone::Quiet quiet = RoomTone::findQuiet(*levels, int(std::lround(kQuietWant / RoomTone::kBlockSeconds)),
-                                                      int(std::lround(kQuietLeast / RoomTone::kBlockSeconds)));
+                                                      int(std::lround(kQuietLeast / RoomTone::kBlockSeconds)), speech);
     q.floorDb = quiet.floorDb;
     if (!quiet.found()) return q;
     // Whole frames inside the stretch

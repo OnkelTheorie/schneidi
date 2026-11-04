@@ -100,5 +100,8 @@ std::optional<Ducking::Ranges> soundRanges(const ProjectFormat& format, const Ti
 // for the quiet of a take with it. nullopt = no such stream.
 std::optional<std::vector<double>> fileBlockLevels(const QString& path, int stream, double from, double to,
                                                    double blockSeconds);
+// The samples of a file's audio stream from `from` to `to` seconds (file time as above), mixed to mono at `rate`
+// (engine/AudioEvents::heuristics wants 16 kHz). nullopt = no such stream.
+std::optional<std::vector<float>> fileMono(const QString& path, int stream, double from, double to, int rate);
 
 } // namespace AudioAnalysis

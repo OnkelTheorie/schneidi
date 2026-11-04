@@ -351,6 +351,17 @@ void testRoomTone(const QString& dir)
         q = RoomTone::findQuiet(db, 20, 20);
         CHECK(q.found() && std::abs(q.meanDb + 50) < 1e-6);
         CHECK(!RoomTone::findQuiet(std::vector<double>(50, -20.0), 100, 60).found());
+        // Words the voice detection found are never room tone, however quiet and steady (a murmur far away)
+        {
+            std::vector<double> room(100, -50.0);
+            for (int i = 20; i < 40; ++i) room[size_t(i)] = -55;
+            CHECK_EQ(RoomTone::findQuiet(room, 20, 10).from, 20);
+            std::vector<bool> speech(room.size(), false);
+            for (int i = 20; i < 40; ++i) speech[size_t(i)] = true;
+            const RoomTone::Quiet q2 = RoomTone::findQuiet(room, 20, 10, speech);
+            CHECK(q2.found() && (q2.to <= 20 || q2.from >= 40));
+            CHECK(std::abs(q2.meanDb + 50) < 1e-6);
+        }
         CHECK_EQ(RoomTone::seamFrames(25), 1);
         CHECK_EQ(RoomTone::seamFrames(120), 2);
     }

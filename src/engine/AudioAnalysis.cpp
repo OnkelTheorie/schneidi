@@ -286,4 +286,19 @@ std::optional<std::vector<double>> fileBlockLevels(const QString& path, int stre
     return levels;
 }
 
+std::optional<std::vector<float>> fileMono(const QString& path, int stream, double from, double to, int rate)
+{
+    const auto reader = Audio::Reader::open(path, stream, Audio::Reader::Options{rate, 1});
+    if (!reader) return std::nullopt;
+    const int64_t start = int64_t(std::llround(std::max(0.0, from) * rate));
+    const int64_t end = int64_t(std::llround(std::max(from, to) * rate));
+    std::vector<float> all(size_t(std::max<int64_t>(0, end - start)));
+    constexpr int kChunk = 1 << 16;
+    for (int64_t pos = start; pos < end; pos += kChunk) {
+        float* out[1] = {all.data() + (pos - start)};
+        reader->read(pos, int(std::min<int64_t>(kChunk, end - pos)), out);
+    }
+    return all;
+}
+
 } // namespace AudioAnalysis

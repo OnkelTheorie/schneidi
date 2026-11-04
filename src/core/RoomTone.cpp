@@ -6,7 +6,7 @@
 
 namespace RoomTone {
 
-Quiet findQuiet(const std::vector<double>& blockDb, int want, int least)
+Quiet findQuiet(const std::vector<double>& blockDb, int want, int least, const std::vector<bool>& speech)
 {
     Quiet q;
     std::vector<double> sound;
@@ -26,7 +26,8 @@ Quiet findQuiet(const std::vector<double>& blockDb, int want, int least)
             double hiDb = -1e9, loDb = 1e9, power = 0;
             bool ok = true;
             for (int j = i; j < i + len && ok; ++j) {
-                if (blockDb[j] <= kSilentDb || blockDb[j] > ceiling) ok = false;
+                if (blockDb[j] <= kSilentDb || blockDb[j] > ceiling || (size_t(j) < speech.size() && speech[size_t(j)]))
+                    ok = false;
                 hiDb = std::max(hiDb, blockDb[j]);
                 loDb = std::min(loDb, blockDb[j]);
                 power += std::pow(10.0, blockDb[j] / 10);
