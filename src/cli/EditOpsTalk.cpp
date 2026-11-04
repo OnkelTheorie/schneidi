@@ -154,10 +154,12 @@ void opJlCut(Session& s, const QJsonObject& op)
     s.editor.setSoundEdge(left, right, offset);
     // The note names where the sound cut really is on each track: a track without the material for it is elsewhere
     const QMap<int, QStringList> now = soundCuts();
-    QString tracks = now.value(e->cut + offset).join(", ");
+    QStringList parts{now.value(e->cut + offset).join(", ")};
+    if (parts[0].isEmpty()) parts.clear(); // no track reached it
     for (auto it = now.begin(); it != now.end(); ++it)
         if (it.key() != e->cut + offset)
-            tracks += QString("; %1 at %2 (not enough material for that cut)").arg(it.value().join(", "), tc(it.key(), f));
+            parts << QString("%1 at %2 (not enough material for that cut)").arg(it.value().join(", "), tc(it.key(), f));
+    const QString tracks = parts.join("; ");
     const QString what = offset < 0   ? QString("J cut: the sound of clip %1 starts %2 before").arg(right).arg(frameSpan(-offset, f))
                          : offset > 0 ? QString("L cut: the sound of clip %1 runs %2 past").arg(left).arg(frameSpan(offset, f))
                                       : QString("straight cut: the sound cuts with");
