@@ -153,6 +153,7 @@ std::optional<Loaded> load(const QString& file, QString* error)
 struct Runtime {
     QMutex mutex;
     bool tried = false;
+    QStringList triedFiles; // the candidates of the last try (none loaded: tried again when they change, e.g. installed)
     std::optional<Loaded> loaded;
     QString path, error;
     OrtEnv* env = nullptr;
@@ -168,10 +169,13 @@ Runtime& runtime()
 bool ensure(QString* error)
 {
     Runtime& r = runtime();
+    // Not loaded yet: tried again when the candidates changed (the extension installed while the program runs)
+    if (r.tried && !r.loaded && candidates() != r.triedFiles) r.tried = false;
     if (!r.tried) {
         r.tried = true;
+        r.triedFiles = candidates();
         QStringList errors;
-        for (const QString& file : candidates()) {
+        for (const QString& file : r.triedFiles) {
             QString e;
             auto l = load(file, &e);
             if (!l) {

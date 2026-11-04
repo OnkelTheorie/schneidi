@@ -21,7 +21,8 @@
 
 namespace Inference {
 
-// The runtime is there and works (loaded on the first call, then remembered). error: why not
+// The runtime is there and works (loaded on the first call, then remembered; while none loads, looked for again when
+// the candidates change, e.g. the extension installed meanwhile). error: why not
 bool available(QString* error = nullptr);
 // The library file that was loaded ("" = none) and its version ("1.21.0")
 QString libraryPath();

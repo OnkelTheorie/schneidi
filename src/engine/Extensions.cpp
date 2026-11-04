@@ -55,6 +55,15 @@ constexpr const char* kFfmpegName = "ffmpeg";
 constexpr const char* kPiperName = "piper";
 constexpr const char* kOnnxRuntimeName = "libonnxruntime.so";
 #endif
+// ONNX Runtime 1.20.1 (CPU build) from the GitHub releases of microsoft/onnxruntime
+constexpr const char* kOnnxRelease = "https://github.com/microsoft/onnxruntime/releases/download/v1.20.1/";
+// YuNet in opencv/opencv_zoo, one commit: the model is a Git LFS file (media.githubusercontent.com), its licence not
+constexpr const char* kOpencvZoo = "https://media.githubusercontent.com/media/opencv/opencv_zoo/"
+                                   "48b10fa505aeb51fbd127fc60a5c660040e823b7/models/face_detection_yunet/";
+constexpr const char* kOpencvZooRaw = "https://raw.githubusercontent.com/opencv/opencv_zoo/"
+                                      "48b10fa505aeb51fbd127fc60a5c660040e823b7/models/face_detection_yunet/";
+constexpr const char* kYunetModel = "face_detection_yunet_2023mar.onnx";
+constexpr const char* kLicenseName = "LICENSE";
 constexpr const char* kYamnetModel = "yamnet.onnx";
 constexpr const char* kYamnetLabels = "yamnet_class_map.csv";
 
@@ -138,6 +147,29 @@ QVector<Item> makeCatalog()
     model("whisper-model-tiny", N_("Whisper-Modell „Schnell“ (tiny)"), N_("sehr schnell, ungenau"),
           "ggml-tiny-q5_1.bin", "818710568da3ca15689e31a743197b520007872ff9576237bda97bd1b469c3d7", 32152673);
 
+    // ONNX Runtime 1.20.1 (microsoft/onnxruntime, MIT), the CPU build of its GitHub release; sums of exactly these
+    // archives. They hold onnxruntime-<os>-x64-1.20.1/lib/ with the library (libonnxruntime.so* / onnxruntime.dll),
+    // which Installer::unpack keeps, and LICENSE and ThirdPartyNotices.txt beside lib/, which it copies into it.
+    const auto onnx = [&](const char* archive, const char* sha, qint64 size) {
+        list << Item{"onnxruntime", Kind::Runtime, N_("ONNX Runtime (lokale KI-Modelle)"),
+                     N_("rechnet kleine KI-Modelle offline auf dem Prozessor (für Gesichter und Ton-Ereignisse)"),
+                     QString(kOnnxRelease) + archive, sha, size, archive};
+    };
+#if defined(Q_OS_WIN) && defined(Q_PROCESSOR_X86_64)
+    onnx("onnxruntime-win-x64-1.20.1.zip", "78d447051e48bd2e1e778bba378bec4ece11191c9e538cf7b2c4a4565e8f5581", 65585496);
+#elif defined(Q_OS_LINUX) && defined(Q_PROCESSOR_X86_64)
+    onnx("onnxruntime-linux-x64-1.20.1.tgz", "67db4dc1561f1e3fd42e619575c82c601ef89849afc7ea85a003abbac1a1a105", 6191581);
+#endif
+    // YuNet 2023mar (opencv/opencv_zoo, MIT, Copyright (c) 2020 Shiqi Yu), pinned to one revision of the zoo; its
+    // licence text of the same revision is the second download and lies beside the model as LICENSE. Offered on every
+    // system: without the runtime extension a system onnxruntime or Piper's copy runs it.
+    list << Item{"faces", Kind::FaceModel, N_("Gesichtserkennung (YuNet)"),
+                 N_("findet Gesichter im Bild für den Materialindex (braucht ONNX Runtime)"),
+                 QString(kOpencvZoo) + "face_detection_yunet_2023mar.onnx",
+                 "8f2383e4dd3cfbb4553ea8718107fc0423210dc964f9f4280604804ed2552fa4", 232589, kYunetModel,
+                 QString(kOpencvZooRaw) + "LICENSE", "c83b8120c50ccbd4c4f96edf53141bdd566ebb8f8e9227e415326aa1b1aba958",
+                 1085, kLicenseName};
+
     // ---- TODO (0.17, audio events): placeholders, NOT offered until a human fills in a verified download ----
     // Entries without URL, size or SHA-256 never reach the catalog (nothing unchecked is downloaded). To enable one:
     // URL pinned to a release/revision, size in bytes and SHA-256 of exactly that file, licence read by a human.
@@ -146,15 +178,13 @@ QVector<Item> makeCatalog()
             && (item.configUrl.isEmpty() || (!item.configSha256.isEmpty() && item.configSize > 0)))
             list << item;
     };
-    // ONNX Runtime (assumed MIT; to check), CPU build from the GitHub releases of microsoft/onnxruntime, e.g.
-    // ".../releases/download/v<ver>/onnxruntime-linux-x64-<ver>.tgz" / "onnxruntime-win-x64-<ver>.zip"; the archive
-    // holds lib/libonnxruntime.so* (lib/onnxruntime.dll), which Installer::unpack looks for. Any version >= 1.11.
-    pending(Item{"onnxruntime", Kind::Runtime, N_("ONNX Runtime (lokale KI-Modelle)"),
-                 N_("rechnet kleine KI-Modelle offline auf dem Prozessor (für Ton-Ereignisse)"),
-                 /*TODO url*/ QString(), /*TODO sha256*/ QByteArray(), /*TODO size*/ 0, /*TODO archive*/ QString()});
-    // YAMNet (Google, assumed Apache-2.0; to check) as ONNX: waveform float32 [N] at 16 kHz -> scores [frames, 521]
-    // (or fixed windows of 15600 samples -> [1, 521]); the class list yamnet_class_map.csv (index,mid,display_name)
-    // from tensorflow/models as the second file. Needs a host with a pinned revision for the .onnx (to find).
+    // YAMNet (Google, Apache-2.0) as ONNX: waveform float32 [N] at 16 kHz -> scores [frames, 521] (or fixed windows
+    // of 15600 samples -> [1, 521]); the class list yamnet_class_map.csv (index,mid,display_name) as the second file.
+    // There is no ONNX of it to download: the official model is TFLite,
+    // https://storage.googleapis.com/download.tensorflow.org/models/tflite/task_library/audio_classification/android/lite-model_yamnet_classification_tflite_1.tflite
+    // with the class map
+    // https://raw.githubusercontent.com/tensorflow/models/master/research/audioset/yamnet/yamnet_class_map.csv
+    // (to be pinned to a commit). Needs a conversion to ONNX and a pinned host for the result: the lead's decision.
     pending(Item{"audio-events", Kind::AudioModel, N_("Ton-Ereignisse (YAMNet)"),
                  N_("erkennt Lachen, Applaus, Jubel, Musik, Sprache, Schüsse und Schreie im Ton genauer (braucht ONNX "
                     "Runtime)"),
@@ -174,6 +204,7 @@ QString voicesDir() { return QDir(piperDir()).filePath("voices"); }
 QString onnxDir() { return QDir(rootDir()).filePath("onnxruntime"); }
 QString onnxLib() { return QDir(onnxDir()).filePath("lib"); }
 QString audioEventsDir() { return QDir(rootDir()).filePath("audio-events"); }
+QString facesDir() { return QDir(rootDir()).filePath("faces"); }
 
 } // namespace
 
@@ -193,6 +224,7 @@ QString downloadDir(const Item& item)
     case Kind::Voice: return voicesDir();
     case Kind::Runtime: return onnxDir();
     case Kind::AudioModel: return audioEventsDir();
+    case Kind::FaceModel: return facesDir();
     case Kind::SoundPack: return soundPacksDir();
     default: return modelsDir();
     }
@@ -336,7 +368,8 @@ QVector<const Item*> withDependencies(const QVector<const Item*>& items)
         // A model is no use without the program (unless one is on PATH)
         if (i->kind == Kind::WhisperModel && whisperProgram().isEmpty()) add(find("whisper"));
         if (i->kind == Kind::Voice && piperProgram().isEmpty()) add(find("piper"));
-        if (i->kind == Kind::AudioModel && onnxRuntimeLibrary().isEmpty() && piperOnnxRuntime().isEmpty())
+        if ((i->kind == Kind::AudioModel || i->kind == Kind::FaceModel) && onnxRuntimeLibrary().isEmpty()
+            && piperOnnxRuntime().isEmpty())
             add(find("onnxruntime"));
         add(i);
         if (i->id == "whisper") add(find("whisper-vad"));
@@ -352,10 +385,10 @@ QString installedPath(const Item& item)
         const QString path = QDir(voicesDir()).filePath(item.fileName);
         return QFileInfo::exists(path) && QFileInfo::exists(path + ".json") ? path : QString();
     }
-    if (item.kind == Kind::AudioModel) { // model and class list
-        const QString path = QDir(audioEventsDir()).filePath(item.fileName);
-        const QString labels = QDir(audioEventsDir()).filePath(item.configName);
-        return QFileInfo::exists(path) && QFileInfo::exists(labels) ? path : QString();
+    if (item.kind == Kind::AudioModel || item.kind == Kind::FaceModel) { // model and class list / licence
+        const QDir dir(downloadDir(item));
+        const QString path = dir.filePath(item.fileName);
+        return QFileInfo::exists(path) && QFileInfo::exists(dir.filePath(item.configName)) ? path : QString();
     }
     if (item.kind == Kind::Runtime) return onnxRuntimeLibrary();
     if (item.kind == Kind::SoundPack) {
@@ -390,9 +423,10 @@ bool remove(const Item& item)
         QFile::remove(path + ".json");
         return !QFileInfo::exists(path) || QFile::remove(path);
     }
-    if (item.kind == Kind::AudioModel) {
-        const QString path = QDir(audioEventsDir()).filePath(item.fileName);
-        QFile::remove(QDir(audioEventsDir()).filePath(item.configName));
+    if (item.kind == Kind::AudioModel || item.kind == Kind::FaceModel) {
+        const QDir dir(downloadDir(item));
+        const QString path = dir.filePath(item.fileName);
+        QFile::remove(dir.filePath(item.configName));
         return !QFileInfo::exists(path) || QFile::remove(path);
     }
     const QString path = installedPath(item);
@@ -491,6 +525,14 @@ QString audioEventsLabels()
         if (QFileInfo(path).isFile()) return path;
     }
     return {};
+}
+
+QString faceModel()
+{
+    const QString own = qEnvironmentVariable("SCHNEIDI_YUNET");
+    if (!own.isEmpty()) return QFileInfo(own).isFile() ? QFileInfo(own).absoluteFilePath() : QString();
+    const Item* i = find("faces");
+    return i ? installedPath(*i) : QString();
 }
 
 QStringList installedWhisperModels()
@@ -636,8 +678,8 @@ void Installer::onFinished()
         error = installSoundPack(part, soundPackDir(m_item));
         QFile::remove(part);
     } else if (!m_item.configUrl.isEmpty() && m_part == 0) {
-        // A voice (an audio model): first its config (class list) too (the model alone is no use; installedPath
-        // wants both), then both in place
+        // A voice (an audio model, the face model): first its config (class list, licence) too (the model alone is
+        // no use; installedPath wants both), then both in place
         m_voicePart = part;
         m_part = 1;
         if (!startPart(&error)) {
@@ -748,6 +790,14 @@ QString Installer::unpack(const QString& archive)
     }
     QString keep = QFileInfo(programPath).absolutePath();
     if (encoder && QFileInfo(keep).fileName() == "bin") keep = QFileInfo(keep).absolutePath();
+    if (onnx) {
+        // ONNX Runtime keeps only lib/: its licence and the notices of what it contains (beside lib/ in the archive)
+        // go into it, its debug symbols and import libraries (Windows: a 300 MB .pdb) not
+        const QDir from = QFileInfo(keep).dir(), to(keep);
+        for (const QString& name : {QString("LICENSE"), QString("ThirdPartyNotices.txt")})
+            if (from.exists(name) && !to.exists(name)) QFile::copy(from.filePath(name), to.filePath(name));
+        for (const QString& name : to.entryList({"*.pdb", "*.lib"}, QDir::Files)) QFile::remove(to.filePath(name));
+    }
     QString aside;
     if (!moveAside(target, &aside)) {
         QDir(staging).removeRecursively();
