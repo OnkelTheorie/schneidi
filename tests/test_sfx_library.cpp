@@ -178,6 +178,8 @@ int main(int argc, char** argv)
     auto* tv = w.findChild<TimelineView*>();
     if (!CHECK(tv)) return Check::result();
     emit tv->soundDropRequested(whooshData, 200);
+    CHECK(sfxClips(p).isEmpty()); // after the drop event, not inside it
+    QApplication::processEvents();
     QVector<Clip> placed = sfxClips(p);
     if (CHECK_EQ(placed.size(), 1)) {
         const double anchor = SfxSynth::anchorOf(SfxSynth::Kind::Whoosh, 1, 0);
@@ -187,6 +189,7 @@ int main(int argc, char** argv)
     CHECK_EQ(p->undoStack()->undoText(), T("Klang einfügen"));
     // One more 0.5 s later: too close, left out with the reason, nothing changed
     emit tv->soundDropRequested(gongData, 212);
+    QApplication::processEvents();
     CHECK_EQ(sfxClips(p).size(), 1);
     CHECK_EQ(p->undoStack()->index(), undo0 + 1);
     CHECK(w.statusBar()->currentMessage().contains(T("zu nah an einem anderen Klang")));
@@ -195,6 +198,7 @@ int main(int argc, char** argv)
     CHECK(sfxClips(p).isEmpty());
     // The user's own file 4 s later: placed from its start (a file's moment is its start)
     emit tv->soundDropRequested(gongData, 300);
+    QApplication::processEvents();
     placed = sfxClips(p);
     if (CHECK_EQ(placed.size(), 1)) CHECK_EQ(placed[0].start, 300);
     return Check::result();
