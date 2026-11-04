@@ -2,6 +2,7 @@
 #include "engine/AudioEvents.h"
 
 #include "core/Fft.h"
+#include "core/PathKey.h"
 #include "engine/Extensions.h"
 #include "engine/Inference.h"
 #include "engine/audio/Reader.h"
@@ -1037,7 +1038,7 @@ Result analyzeFile(const QString& path, int stream, const Options& options)
     // The key names everything the result depends on: the file, the stream, the way and the model's file
     const QString way = model ? wayKey(Extensions::audioEventsModel()) : wayKey({});
     const QString id = QString("%1|%2|%3|%4|%5|%6")
-                           .arg(fi.absoluteFilePath())
+                           .arg(PathKey::of(path))
                            .arg(fi.size())
                            .arg(fi.lastModified().toMSecsSinceEpoch())
                            .arg(stream)

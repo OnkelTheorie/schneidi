@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "core/ProjectFile.h"
+#include "core/PathKey.h"
 
 #include "core/Captions.h"
 #include "core/Dynamics.h"
@@ -1120,10 +1121,19 @@ QString backupDir(const QString& projectPath)
 {
     const QString root = QDir(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)).filePath("backups");
     if (projectPath.isEmpty()) return root;
-    // Name + short hash of the path: projects of the same name in different folders do not get mixed up
+    // Name + short hash of the path: projects of the same name in different folders do not get mixed up. The path
+    // as a key (core/PathKey: one folder for "c:/x" and "C:/X" on Windows)
     const QFileInfo fi(projectPath);
-    const QString hash = QCryptographicHash::hash(fi.absoluteFilePath().toUtf8(), QCryptographicHash::Sha1).toHex().left(8);
-    return QDir(root).filePath(fi.completeBaseName() + "-" + hash);
+    const auto hashOf = [](const QString& s) {
+        return QString::fromLatin1(QCryptographicHash::hash(s.toUtf8(), QCryptographicHash::Sha1).toHex().left(8));
+    };
+    const QString dir = QDir(root).filePath(fi.completeBaseName() + "-" + hashOf(PathKey::of(projectPath)));
+    // Folders made before the key folded the case (Windows): keep using them
+    if (PathKey::kFoldCase && !QFileInfo::exists(dir)) {
+        const QString old = QDir(root).filePath(fi.completeBaseName() + "-" + hashOf(fi.absoluteFilePath()));
+        if (QFileInfo::exists(old)) return old;
+    }
+    return dir;
 }
 
 namespace {
@@ -1181,7 +1191,7 @@ std::unique_ptr<QLockFile> lock(const QString& projectPath, int timeoutMs)
     const QDir dir(QDir(QStandardPaths::writableLocation(QStandardPaths::TempLocation)).filePath("schneidi-locks"));
     dir.mkpath(".");
     const QByteArray hash =
-        QCryptographicHash::hash(QFileInfo(projectPath).absoluteFilePath().toUtf8(), QCryptographicHash::Sha1).toHex();
+        QCryptographicHash::hash(PathKey::of(projectPath).toUtf8(), QCryptographicHash::Sha1).toHex(); // one lock per file
     auto l = std::make_unique<QLockFile>(dir.filePath(QString::fromLatin1(hash.left(16)) + ".lock"));
     // Stale only when its process is gone, never by age: a CLI write session holds the lock from loading to
     // saving, often longer than Qt's default 30 s. (Qt's own file lock keeps a held lock today, this does not

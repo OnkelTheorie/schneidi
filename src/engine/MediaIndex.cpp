@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "engine/MediaIndex.h"
 
+#include "core/PathKey.h"
 #include "engine/OpenMedia.h"
 #include "engine/video/Scan.h"
 
@@ -416,7 +417,7 @@ void applyNotes(Entry& e)
     }
 }
 
-QString notesFile(const QString& file) { return notesDir() + '/' + hashOf(QFileInfo(file).absoluteFilePath()) + ".json"; }
+QString notesFile(const QString& file) { return notesDir() + '/' + hashOf(PathKey::of(file)) + ".json"; }
 
 } // namespace
 
@@ -424,7 +425,7 @@ QString cacheKey(const QString& file, const QString& audioWay)
 {
     const QFileInfo fi(file);
     return hashOf(QString("%1|%2|%3|%4|%5")
-                      .arg(fi.absoluteFilePath())
+                      .arg(PathKey::of(file))
                       .arg(fi.size())
                       .arg(fi.lastModified().toMSecsSinceEpoch())
                       .arg(kVersion)
