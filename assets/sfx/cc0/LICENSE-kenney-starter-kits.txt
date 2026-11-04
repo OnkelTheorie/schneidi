@@ -1,0 +1,9 @@
+Kenney Starter Kits (Kenney, www.kenney.nl), sound effects
+
+From the README.md of each kit (github.com/KenneyNL/Starter-Kit-Racing, github.com/KenneyNL/Starter-Kit-City-Builder):
+
+    Assets included in this package (2D sprites, 3D models and sound effects) are CC0 licensed
+    (https://creativecommons.org/publicdomain/zero/1.0/)
+
+The kits' code is MIT; the sound files taken here are assets and fall under CC0 1.0 Universal.
+CC0 needs no credit; we credit anyway.

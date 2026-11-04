@@ -1,5 +1,5 @@
 {
- "note": "Measured once (tools: ffmpeg decode, 48 kHz mono): anchor_s = loudest 20 ms (whoosh/swish) or the first sample within 20 dB of the peak (hit); peak_db = sample peak of the decoded file. Kept as they are; op sfx levels them at placement. Left out after `earshot sfx check` (2026-11-04): oga-swish-8 (DC offset), oga-swish-1 and -2 (tail cut), impactPunch_heavy_004, _medium_002, _medium_003 (a click in the tail).",
+ "note": "Measured once (tools: ffmpeg decode, 48 kHz mono): anchor_s = loudest 20 ms (whoosh/swish) or the first sample within 20 dB of the peak (hit); peak_db = sample peak of the decoded file. Kept as they are; op sfx levels them at placement. Left out after `earshot sfx check` (2026-11-04): oga-swish-8 (DC offset), oga-swish-1 and -2 (tail cut), impactPunch_heavy_004, _medium_002, _medium_003 (a click in the tail). Added 2026-11-04 (cloud): impact and click recordings, anchors by the hit rule; numeric checks only (no earshot here).",
  "sounds": [
   {
    "file": "swish/oga-swish-4.wav",
@@ -130,6 +130,76 @@
    "author": "Kenney (www.kenney.nl)",
    "licence": "CC0-1.0",
    "licence_file": "LICENSE-kenney-impact-sounds.txt"
+  },
+  {
+   "file": "impact/freesound-ffeller-impact-big.wav",
+   "kind": "impact",
+   "anchor_s": 0.0001,
+   "peak_db": -2.51,
+   "length_s": 1.0497,
+   "author": "FFeller (Freesound, via the Godot demo projects)",
+   "licence": "CC0-1.0",
+   "licence_file": "LICENSE-freesound-ffeller-impact-big.md"
+  },
+  {
+   "file": "impact/freesound-dorian-mastin-impact-small.wav",
+   "kind": "impact",
+   "anchor_s": 0.0271,
+   "peak_db": -5.69,
+   "length_s": 0.9698,
+   "author": "dorian.mastin (Freesound, via the Godot demo projects)",
+   "licence": "CC0-1.0",
+   "licence_file": "LICENSE-freesound-dorian-mastin-impact-small.md"
+  },
+  {
+   "file": "impact/kenney-racing-impact.ogg",
+   "kind": "impact",
+   "anchor_s": 0.0,
+   "peak_db": 1.79,
+   "length_s": 0.6537,
+   "author": "Kenney (www.kenney.nl), Starter Kit Racing",
+   "licence": "CC0-1.0",
+   "licence_file": "LICENSE-kenney-starter-kits.txt"
+  },
+  {
+   "file": "click/kenney-citybuilder-placement-a.ogg",
+   "kind": "click",
+   "anchor_s": 0.0001,
+   "peak_db": 1.92,
+   "length_s": 0.0971,
+   "author": "Kenney (www.kenney.nl), Starter Kit City Builder",
+   "licence": "CC0-1.0",
+   "licence_file": "LICENSE-kenney-starter-kits.txt"
+  },
+  {
+   "file": "click/kenney-citybuilder-placement-b.ogg",
+   "kind": "click",
+   "anchor_s": 0.0002,
+   "peak_db": 2.1,
+   "length_s": 0.0971,
+   "author": "Kenney (www.kenney.nl), Starter Kit City Builder",
+   "licence": "CC0-1.0",
+   "licence_file": "LICENSE-kenney-starter-kits.txt"
+  },
+  {
+   "file": "click/kenney-citybuilder-placement-c.ogg",
+   "kind": "click",
+   "anchor_s": 0.0001,
+   "peak_db": 1.76,
+   "length_s": 0.0971,
+   "author": "Kenney (www.kenney.nl), Starter Kit City Builder",
+   "licence": "CC0-1.0",
+   "licence_file": "LICENSE-kenney-starter-kits.txt"
+  },
+  {
+   "file": "click/kenney-citybuilder-placement-d.ogg",
+   "kind": "click",
+   "anchor_s": 0.0003,
+   "peak_db": 1.96,
+   "length_s": 0.1205,
+   "author": "Kenney (www.kenney.nl), Starter Kit City Builder",
+   "licence": "CC0-1.0",
+   "licence_file": "LICENSE-kenney-starter-kits.txt"
   }
  ]
 }
