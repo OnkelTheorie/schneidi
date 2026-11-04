@@ -358,6 +358,43 @@ QVector<QPair<int, double>> sfxClips(const QString& project)
     return out;
 }
 
+// Kills (the kill feed's hit_s, given as the op's _kills like the live path hands them in) with their weights: the
+// strongest of two close ones keeps its sound; dry_run shows what would happen and leaves the project file alone
+void testKillsDryRun(const QString& dir)
+{
+    const QString video = Check::makeMedia(dir + "/k.mp4", {"-f", "lavfi", "-i", "testsrc=size=160x90:rate=25:duration=14",
+                                                            "-c:v", "mpeg4", "-q:v", "5"});
+    if (!CHECK(!video.isEmpty())) return;
+    const QString project = dir + "/kills.schneidi";
+    run("new", {{"project", project}, {"fps", 25}});
+    CHECK(!edit(project, {QJsonObject{{"op", "place"}, {"media", video}, {"at", 0}}}).contains("failed"));
+    QFile f(project);
+    const auto bytes = [&] {
+        f.open(QIODevice::ReadOnly);
+        const QByteArray b = f.readAll();
+        f.close();
+        return b;
+    };
+    const QJsonArray kills{QJsonArray{100, 1}, QJsonArray{110, 5}, QJsonArray{300, 2}};
+    const QByteArray before = bytes();
+    QJsonObject r = run("edit", {{"project", project}, {"dry_run", true},
+                                 {"ops", QJsonArray{QJsonObject{{"op", "sfx"}, {"on", "kills"}, {"_kills", kills}}}}});
+    CHECK(!r.contains("failed"));
+    CHECK(bytes() == before); // nothing written
+    CHECK(sfxClips(project).isEmpty());
+    r = edit(project, {QJsonObject{{"op", "sfx"}, {"on", "kills"}, {"_kills", kills}}});
+    const QJsonObject n = sfxNote(r);
+    CHECK_EQ(n["kind"].toString(), QString("hit"));
+    if (CHECK_EQ(n["placed"].toArray().size(), 2)) {
+        CHECK(std::abs(n["placed"][0]["at_s"].toDouble() - 4.4) < 1e-6); // the strong one, not the first
+        CHECK(std::abs(n["placed"][1]["at_s"].toDouble() - 12.0) < 1e-6);
+    }
+    CHECK(n["skipped"].toArray().size() == 1 && n["skipped"][0]["why"].toString() == "too_close");
+    // The hits start on their moments (a flam may come a few ms before)
+    const QVector<QPair<int, double>> clips = sfxClips(project);
+    if (CHECK_EQ(clips.size(), 2)) CHECK(clips[0].first >= 107 && clips[0].first <= 110 && clips[1].first >= 297 && clips[1].first <= 300);
+}
+
 // Op 'sfx' on a project: whoosh peaks on the hard cuts, spacing, one impact, nothing without being asked
 void testOp(const QString& dir)
 {
@@ -633,8 +670,12 @@ int main(int argc, char** argv)
     testPlace();
     QTemporaryDir tmp;
     testPackLicense(tmp.path());
-    if (Check::haveFfmpeg()) testOp(tmp.path());
-    else std::printf("  no ffmpeg: op test skipped\n");
+    if (Check::haveFfmpeg()) {
+        testOp(tmp.path());
+        testKillsDryRun(tmp.path());
+    } else {
+        std::printf("  no ffmpeg: op test skipped\n");
+    }
     if (const QString dir = qEnvironmentVariable("SCHNEIDI_SFX_SAMPLE_DIR"); !dir.isEmpty()) writeSample(dir);
     return Check::result();
 }
