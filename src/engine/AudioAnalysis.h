@@ -97,11 +97,10 @@ std::optional<Ducking::Ranges> soundRanges(const ProjectFormat& format, const Ti
 
 // RMS level (dBFS, power over all channels; silence -200) of each block of `blockSeconds` of a file's audio stream
 // from `from` to `to` seconds (file time as Audio::Reader counts it: 0 = the picture's first frame). Room tone looks
-// for the quiet of a take with it. nullopt = no such stream.
+// for the quiet of a take with it. nullopt = no such stream. speech: also the blocks with words in them (the
+// heuristic voice detection of engine/AudioEvents in the same pass, `speechMargin` seconds around each), one per level.
 std::optional<std::vector<double>> fileBlockLevels(const QString& path, int stream, double from, double to,
-                                                   double blockSeconds);
-// The samples of a file's audio stream from `from` to `to` seconds (file time as above), mixed to mono at `rate`
-// (engine/AudioEvents::heuristics wants 16 kHz). nullopt = no such stream.
-std::optional<std::vector<float>> fileMono(const QString& path, int stream, double from, double to, int rate);
+                                                   double blockSeconds, std::vector<bool>* speech = nullptr,
+                                                   double speechMargin = 0);
 
 } // namespace AudioAnalysis

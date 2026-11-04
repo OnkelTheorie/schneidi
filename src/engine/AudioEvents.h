@@ -21,6 +21,7 @@
 #include <QVector>
 
 #include <functional>
+#include <memory>
 #include <vector>
 
 namespace AudioEvents {
@@ -73,6 +74,22 @@ QVector<Event> analyze(const QString& path, int stream = 0, const Options& optio
 // tests and for callers that have the sound already.
 constexpr int kRate = 16000;
 QVector<Event> heuristics(const std::vector<float>& mono16k, const std::function<bool(double)>& progress = {});
+
+// The heuristics fed piece by piece (16 kHz mono): the same events as heuristics() without holding the sound (a
+// long recording in pieces of any size; only small features per 10 ms are kept)
+class Listener {
+public:
+    Listener();
+    ~Listener();
+    Listener(const Listener&) = delete;
+    Listener& operator=(const Listener&) = delete;
+    void add(const float* mono16k, int n);
+    QVector<Event> finish(); // once, after the last add
+
+private:
+    struct Data;
+    std::unique_ptr<Data> d;
+};
 
 // YAMNet is installed and the runtime loads; why not
 bool yamnetAvailable(QString* why = nullptr);

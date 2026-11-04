@@ -13,7 +13,6 @@
 #include "core/Transcript.h"
 #include "core/TranscriptCut.h"
 #include "engine/AudioAnalysis.h"
-#include "engine/AudioEvents.h"
 #include "engine/MediaIndex.h"
 #include "engine/ReframeAnalysis.h"
 #include "engine/Extensions.h"
@@ -197,19 +196,12 @@ TakeQuiet measureTake(Session& s, const Clip& take, int track)
     lo = std::max(0, lo - margin);
     hi = std::min(m->length, hi + margin);
     if (hi <= lo) return q;
+    // With the words in it (the heuristic voice detection, same pass): a quiet murmur under the floor + 6 dB must not
+    // become the room tone. A margin for the ends of a word.
+    std::vector<bool> speech;
     const auto levels = AudioAnalysis::fileBlockLevels(take.mediaPath, take.audioStream, lo / fps, hi / fps,
-                                                       RoomTone::kBlockSeconds);
+                                                       RoomTone::kBlockSeconds, &speech, kSpeechMargin);
     if (!levels) return q;
-    // Words in the scanned part (the heuristic voice detection of engine/AudioEvents, on just this part): a quiet
-    // murmur under the floor + 6 dB must not become the room tone. With a margin for the ends of a word.
-    std::vector<bool> speech(levels->size(), false);
-    if (const auto mono = AudioAnalysis::fileMono(take.mediaPath, take.audioStream, lo / fps, hi / fps, AudioEvents::kRate))
-        for (const AudioEvents::Event& ev : AudioEvents::heuristics(*mono)) {
-            if (ev.kind != "speech") continue;
-            const int a = std::max(0, int(std::floor((ev.from - kSpeechMargin) / RoomTone::kBlockSeconds)));
-            const int b = std::min(int(speech.size()), int(std::ceil((ev.to + kSpeechMargin) / RoomTone::kBlockSeconds)));
-            for (int i = a; i < b; ++i) speech[size_t(i)] = true;
-        }
     const RoomTone::Quiet quiet = RoomTone::findQuiet(*levels, int(std::lround(kQuietWant / RoomTone::kBlockSeconds)),
                                                       int(std::lround(kQuietLeast / RoomTone::kBlockSeconds)), speech);
     q.floorDb = quiet.floorDb;

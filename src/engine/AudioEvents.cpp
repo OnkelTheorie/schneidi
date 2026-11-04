@@ -792,6 +792,22 @@ QVector<Event> heuristics(const std::vector<float>& mono16k, const std::function
     return rules(ex.frames);
 }
 
+struct Listener::Data {
+    Extractor ex;
+};
+
+Listener::Listener() : d(std::make_unique<Data>()) {}
+Listener::~Listener() = default;
+void Listener::add(const float* mono16k, int n)
+{
+    if (n > 0) d->ex.add(mono16k, n);
+}
+QVector<Event> Listener::finish()
+{
+    d->ex.finish();
+    return rules(d->ex.frames);
+}
+
 QVector<Event> yamnetWith(const QString& model, const QString& labels, const std::vector<float>& mono16k,
                           QString* error, const std::function<bool(double)>& progress)
 {

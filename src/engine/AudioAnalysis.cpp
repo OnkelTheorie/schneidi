@@ -3,6 +3,7 @@
 
 #include "core/Loudness.h"
 #include "core/TimelineOps.h"
+#include "engine/AudioEvents.h"
 #include "engine/ClipFormat.h"
 #include "engine/audio/Mixer.h"
 #include "engine/audio/Reader.h"
@@ -264,7 +265,7 @@ std::optional<Ducking::Ranges> soundRanges(const ProjectFormat& format, const Ti
 }
 
 std::optional<std::vector<double>> fileBlockLevels(const QString& path, int stream, double from, double to,
-                                                   double blockSeconds)
+                                                   double blockSeconds, std::vector<bool>* speech, double speechMargin)
 {
     const auto reader = Audio::Reader::open(path, stream, Audio::Reader::Options{kRate, 0});
     if (!reader) return std::nullopt;
@@ -276,29 +277,44 @@ std::optional<std::vector<double>> fileBlockLevels(const QString& path, int stre
     std::vector<float*> out(ch);
     for (int c = 0; c < ch; ++c) out[c] = buf.data() + size_t(c) * block;
     std::vector<double> levels;
+    // The voice detection in the same pass: mono, 48 -> 16 kHz by the mean of 3 samples (a gentle low-pass, enough
+    // for its pitch and loudness features); only its small features are kept, not the sound
+    static_assert(kRate % AudioEvents::kRate == 0);
+    constexpr int kDown = kRate / AudioEvents::kRate;
+    std::unique_ptr<AudioEvents::Listener> listener = speech ? std::make_unique<AudioEvents::Listener>() : nullptr;
+    std::vector<float> mono;
+    double acc = 0;
+    int accN = 0;
     for (int64_t pos = start; pos + block <= end; pos += block) {
         reader->read(pos, block, out.data());
         double sum = 0;
         for (float v : buf) sum += double(v) * v;
         const double ms = sum / (double(block) * ch);
         levels.push_back(ms > 1e-20 ? 10 * std::log10(ms) : -200.0);
+        if (!listener) continue;
+        mono.clear();
+        for (int i = 0; i < block; ++i) {
+            double m = 0;
+            for (int c = 0; c < ch; ++c) m += out[c][i];
+            acc += m / ch;
+            if (++accN == kDown) {
+                mono.push_back(float(acc / kDown));
+                acc = 0;
+                accN = 0;
+            }
+        }
+        listener->add(mono.data(), int(mono.size()));
+    }
+    if (listener) {
+        speech->assign(levels.size(), false);
+        for (const AudioEvents::Event& ev : listener->finish()) {
+            if (ev.kind != "speech") continue;
+            const int a = std::max(0, int(std::floor((ev.from - speechMargin) / blockSeconds)));
+            const int b = std::min(int(levels.size()), int(std::ceil((ev.to + speechMargin) / blockSeconds)));
+            for (int i = a; i < b; ++i) (*speech)[size_t(i)] = true;
+        }
     }
     return levels;
-}
-
-std::optional<std::vector<float>> fileMono(const QString& path, int stream, double from, double to, int rate)
-{
-    const auto reader = Audio::Reader::open(path, stream, Audio::Reader::Options{rate, 1});
-    if (!reader) return std::nullopt;
-    const int64_t start = int64_t(std::llround(std::max(0.0, from) * rate));
-    const int64_t end = int64_t(std::llround(std::max(from, to) * rate));
-    std::vector<float> all(size_t(std::max<int64_t>(0, end - start)));
-    constexpr int kChunk = 1 << 16;
-    for (int64_t pos = start; pos < end; pos += kChunk) {
-        float* out[1] = {all.data() + (pos - start)};
-        reader->read(pos, int(std::min<int64_t>(kChunk, end - pos)), out);
-    }
-    return all;
 }
 
 } // namespace AudioAnalysis
