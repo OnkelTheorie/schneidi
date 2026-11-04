@@ -394,3 +394,5 @@ if(BENCH_RUBBERBAND_FOUND)
 endif()
 schneidi_test(test_voice_clean) # voice cleaning (RNNoise): sync at any rate, noise drop, stereo, mixer compensation, editor, CLI op
 target_link_libraries(test_voice_clean PRIVATE schneidi_cli_lib)
+schneidi_test(test_sfx) # effect sounds: synthesis deterministic and mild, placement rules, op sfx
+target_link_libraries(test_sfx PRIVATE schneidi_cli_lib)

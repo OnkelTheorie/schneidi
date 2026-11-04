@@ -90,6 +90,9 @@ QJsonObject cmdShort(const QJsonObject& a, Context& ctx)
     // Hook: the best moment first (default; the rest in their order), or all in the order they happened
     const QString hook = a.contains("hook") ? a["hook"].toString().trimmed().toLower() : QString("best");
     if (!QStringList{"best", "chronological"}.contains(hook)) fail("BAD_ARGUMENT", "hook must be best or chronological");
+    // Effect sounds: none unless asked for (never by itself on every cut)
+    const QString sfx = a.contains("sfx") ? a["sfx"].toString().trimmed().toLower() : QString("off");
+    if (!QStringList{"off", "mild"}.contains(sfx)) fail("BAD_ARGUMENT", "sfx must be off or mild");
     const ShortPlatform* platform = shortPlatform(a.contains("for") ? a["for"].toString() : QString("shorts"));
     if (!platform) fail("BAD_ARGUMENT", "for must be shorts, reels or tiktok (the platform)");
     if (platform->maxSeconds < pick.maxS) pick.maxS = platform->maxSeconds;
@@ -274,6 +277,16 @@ QJsonObject cmdShort(const QJsonObject& a, Context& ctx)
                 notes << "no captions: no speech in the short";
             }
         }
+    }
+
+    // 6b. Effect sounds (sfx:'mild' only): a whoosh on the hard cuts, a hit on the kills, sparingly (op 'sfx' rules)
+    if (sfx == QLatin1String("mild")) {
+        QJsonArray ops{QJsonObject{{"op", "sfx"}, {"on", "cuts"}, {"kind", "whoosh"}, {"level", "mild"}}};
+        if (game) ops << QJsonObject{{"op", "sfx"}, {"on", "kills"}, {"kind", "hit"}, {"level", "mild"}, {"game", game->id}};
+        const QJsonObject e = run("edit", {{"project", project}, {"timeline", shortTimeline}, {"ops", ops}}, step(0.6, 0.6));
+        int placed = 0;
+        for (const QJsonValue& n : e["notes"].toArray()) placed += int(n["sfx"]["placed"].toArray().size());
+        done << QString("sfx mild: %1 sound%2").arg(placed).arg(placed == 1 ? "" : "s");
     }
 
     // 7. Check for the platform and apply its safe fixes (master limiter, fader to the loudness target)

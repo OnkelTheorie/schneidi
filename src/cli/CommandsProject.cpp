@@ -1014,8 +1014,14 @@ QJsonArray assetsJson(const QVector<EffectFolders::LutEntry>& list)
 }
 } // namespace
 
+
 QJsonObject cmdEffects(const QJsonObject& a, Context&)
 {
+    const QString kind = a["kind"].toString();
+    if (kind == "sfx")
+        return {{"sounds", sfxSounds()}, {"folder", EffectFolders::soundDir()},
+                {"note", "built-in sounds are schneidi's own (synthesized, variants by seed); own: files in the folder"}};
+    if (!kind.isEmpty()) fail("BAD_ARGUMENT", "kind: 'sfx' (or leave it out)");
     const QString only = a["effect"].toString();
     QJsonArray list;
     for (const EffectDescriptor& d : EffectRegistry::all()) {
@@ -1067,7 +1073,8 @@ QJsonObject cmdEffects(const QJsonObject& a, Context&)
             {"transition_types", types},
             {"lumas", assetsJson(EffectFolders::builtinTransitions() + EffectFolders::userTransitions())},
             {"presets", assetsJson(EffectFolders::userPresets())},
-            {"accents", accents}};
+            {"accents", accents},
+            {"sounds", sfxSounds()}};
 }
 
 QString presetHelp()

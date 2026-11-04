@@ -175,6 +175,14 @@ QString onnxDir() { return QDir(rootDir()).filePath("onnxruntime"); }
 QString onnxLib() { return QDir(onnxDir()).filePath("lib"); }
 QString audioEventsDir() { return QDir(rootDir()).filePath("audio-events"); }
 
+} // namespace
+
+QString soundPacksDir() { return QDir(rootDir()).filePath("sounds"); }
+
+namespace {
+
+QString soundPackDir(const Item& item) { return QDir(soundPacksDir()).filePath(item.id); }
+
 // Folder an item's download is unpacked or stored in
 QString downloadDir(const Item& item)
 {
@@ -185,6 +193,7 @@ QString downloadDir(const Item& item)
     case Kind::Voice: return voicesDir();
     case Kind::Runtime: return onnxDir();
     case Kind::AudioModel: return audioEventsDir();
+    case Kind::SoundPack: return soundPacksDir();
     default: return modelsDir();
     }
 }
@@ -349,6 +358,10 @@ QString installedPath(const Item& item)
         return QFileInfo::exists(path) && QFileInfo::exists(labels) ? path : QString();
     }
     if (item.kind == Kind::Runtime) return onnxRuntimeLibrary();
+    if (item.kind == Kind::SoundPack) {
+        const QString dir = soundPackDir(item);
+        return QFileInfo(dir).isDir() && soundPackLicenseError(dir).isEmpty() ? dir : QString();
+    }
     const QString path = item.kind == Kind::Program  ? QDir(binDir()).filePath(kProgramName)
                          : item.kind == Kind::Speech ? QDir(piperBin()).filePath(kPiperName)
                                                      : QDir(modelsDir()).filePath(item.fileName);
@@ -371,6 +384,7 @@ bool remove(const Item& item)
         if (!aside.isEmpty()) QDir(aside).removeRecursively();
         return true;
     }
+    if (item.kind == Kind::SoundPack) return QDir(soundPackDir(item)).removeRecursively();
     if (item.kind == Kind::Voice) {
         const QString path = QDir(voicesDir()).filePath(item.fileName);
         QFile::remove(path + ".json");
@@ -618,6 +632,9 @@ void Installer::onFinished()
         || m_item.kind == Kind::Runtime) {
         error = unpack(part);
         QFile::remove(part);
+    } else if (m_item.kind == Kind::SoundPack) {
+        error = installSoundPack(part, soundPackDir(m_item));
+        QFile::remove(part);
     } else if (!m_item.configUrl.isEmpty() && m_part == 0) {
         // A voice (an audio model): first its config (class list) too (the model alone is no use; installedPath
         // wants both), then both in place
@@ -643,6 +660,55 @@ void Installer::onFinished()
     }
     if (!error.isEmpty()) emit finished(false, error);
     else emit finished(true, {});
+}
+
+QStringList installedSoundPacks()
+{
+    QStringList out;
+    for (const QFileInfo& fi : QDir(soundPacksDir()).entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name))
+        if (!fi.fileName().endsWith(".new") && soundPackLicenseError(fi.absoluteFilePath()).isEmpty())
+            out << fi.absoluteFilePath();
+    return out;
+}
+
+QString soundPackLicenseError(const QString& dir)
+{
+    // LICENSE, LICENCE, COPYING, with or without an extension (LICENSE.txt, License.md), at the top or one folder down
+    // (an archive with its own folder)
+    const auto has = [](const QString& d) {
+        for (const QFileInfo& fi : QDir(d).entryInfoList(QDir::Files)) {
+            const QString base = fi.completeBaseName().toUpper();
+            if (base == "LICENSE" || base == "LICENCE" || base == "COPYING") return true;
+        }
+        return false;
+    };
+    if (has(dir)) return {};
+    for (const QFileInfo& sub : QDir(dir).entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot))
+        if (has(sub.absoluteFilePath())) return {};
+    return T("Im Klangpaket fehlt die Lizenzdatei (LICENSE): nicht installiert.");
+}
+
+QString installSoundPack(const QString& archive, const QString& target)
+{
+    const QString staging = target + ".new";
+    QDir(staging).removeRecursively();
+    QDir().mkpath(staging);
+    QProcess tar;
+    tar.start(tarProgram(), {"-xf", archive, "-C", staging});
+    if (!tar.waitForFinished(300000) || tar.exitStatus() != QProcess::NormalExit || tar.exitCode() != 0) {
+        QDir(staging).removeRecursively();
+        return T("Entpacken fehlgeschlagen: %1").arg(QString::fromLocal8Bit(tar.readAllStandardError()).trimmed());
+    }
+    if (const QString error = soundPackLicenseError(staging); !error.isEmpty()) {
+        QDir(staging).removeRecursively();
+        return error;
+    }
+    QDir(target).removeRecursively();
+    if (!QDir().rename(staging, target)) {
+        QDir(staging).removeRecursively();
+        return T("Datei konnte nicht abgelegt werden: %1").arg(target);
+    }
+    return {};
 }
 
 QString Installer::unpack(const QString& archive)

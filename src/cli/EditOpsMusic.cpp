@@ -318,6 +318,7 @@ QVector<const Clip*> musicClips(Session& s, const QJsonObject& op)
     } else {
         int longest = 0;
         for (int i = 0; i < tl.audio.size(); ++i) {
+            if (tl.audio[i].name == kSfxTrackName) continue; // effect sounds (op 'sfx') are no music
             int len = 0;
             for (const Clip& c : tl.audio[i].clips)
                 if (c.kind == ClipKind::Media && c.enabled && !s.editor.hasPartner(c.id)) len += c.length();
@@ -364,6 +365,28 @@ QVector<double> gridOf(Session& s, const QJsonObject& op, const QString& grid)
     if (out.isEmpty()) fail("NO_BEAT", "the music clips play no " + grid + " of their song");
     return out;
 }
+
+} // namespace
+
+QVector<QPair<double, double>> musicDrops(Session& s, const QJsonObject& op)
+{
+    const ProjectFormat& f = s.format();
+    const double fps = f.rate.fps();
+    const QJsonObject given = op.value("_beats").toObject();
+    QVector<QPair<double, double>> out;
+    for (const Clip* c : musicClips(s, op)) {
+        if (c->isRetimed()) continue;
+        const Beats::Result r = songBeats(f, s.media(c->mediaPath), c->audioStream, given);
+        for (const Beats::Drop& d : r.drops) {
+            const double t = c->start + c->subframe / 100.0 + Beats::beatTime(r, d.beat) * fps - c->in;
+            if (t >= c->start && t < c->end()) out << qMakePair(t, d.score);
+        }
+    }
+    std::sort(out.begin(), out.end());
+    return out;
+}
+
+namespace {
 
 // A clip whose content is shown at timeline frame t: on top of the video tracks
 const Clip* videoClipAt(const Timeline& tl, int t)
@@ -543,7 +566,7 @@ void addBeats(Session* s, const QJsonObject& op, QJsonObject* beats, Context& ct
             const int stream = op.contains("stream") ? op.value("stream").toInt() : c.audioStream;
             (*beats)[beatsKey(m.path, stream)] = beatsJson(songBeats(s->format(), m, stream, {}, &ctx));
         }
-    } else if (name == "snap_to_beat" && s) {
+    } else if ((name == "snap_to_beat" || (name == "sfx" && op.value("on").toString() == "drops")) && s) {
         for (const Clip* c : musicClips(*s, op)) {
             const MediaInfo& m = s->media(c->mediaPath);
             (*beats)[beatsKey(m.path, c->audioStream)] = beatsJson(songBeats(s->format(), m, c->audioStream, {}, &ctx));
@@ -561,7 +584,8 @@ QJsonObject prepareMusic(const QJsonObject& editArgs, Context& ctx)
     for (int i = 0; i < ops.size(); ++i) {
         QJsonObject op = ops[i].toObject();
         const QString name = op.value("op").toString();
-        if ((name != "fit_music" && name != "snap_to_beat") || op.contains("_beats")) continue;
+        const bool drops = name == "sfx" && op.value("on").toString() == "drops";
+        if ((name != "fit_music" && name != "snap_to_beat" && !drops) || op.contains("_beats")) continue;
         try {
             if (!s) {
                 s = std::make_unique<Session>(editArgs.value("project").toString()); // a copy of what the app shows

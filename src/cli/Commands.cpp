@@ -962,6 +962,7 @@ const QVector<Command>& commands()
                                  "the whole picture stays visible)"},
           {"captions", T::String, "karaoke (default: the spoken word lights up), word (one word at a time) or off"},
           {"hook", T::String, "best (default: the best moment opens the short, as its hook section) or chronological"},
+          {"sfx", T::String, "off (default) or mild: a soft whoosh on hard cuts, hits on kills"},
           {"language", T::String, "spoken language for the captions: de, en, … (default: detect)"},
           {"game", T::String, "kill feed of this game for the moments, and kept readable at the top of the short "
                               "(reframe keep): cs2 or valorant (default: from the folder or file name, e.g. "
@@ -1262,9 +1263,11 @@ const QVector<Command>& commands()
          cmdExtensions},
         {"effects", "Video and audio effects for the 'effect' edit operation: all ids with their kind and parameter "
                     "names, or one effect with types, ranges and defaults. Also lists LUTs (op 'color' lut), transition types and "
-                    "luma images (op 'transition'), effect presets (op 'effect' preset) and accent presets (op "
-                    "'accent': zoom punch, flash, shake on kills, beats, drops).",
-         {{"effect", T::String, "only this effect, with parameter details", false, true}}, cmdEffects},
+                    "luma images (op 'transition'), effect presets (op 'effect' preset), accent presets (op "
+                    "'accent': zoom punch, flash, shake on kills, beats, drops) and effect sounds (op 'sfx').",
+         {{"effect", T::String, "only this effect, with parameter details", false, true},
+          {"kind", T::String, "'sfx': only the effect sounds", false, true}},
+         cmdEffects},
         {"sync", "Line up recordings of the same event (camera angles, player POVs) by their sound: the offset "
                  "of each file to the first one (the reference), found by shared sounds like a round start or "
                  "announcements. Files that do not overlap the reference are matched over the others. A file without "
@@ -1322,6 +1325,7 @@ QJsonObject execute(const Command& cmd, const QJsonObject& args0, Context& ctx)
             if (cmd.name == "edit") args = prepareSpeech(args, ctx); // piper/whisper here, not in the app
             if (cmd.name == "edit") args = prepareMusic(args, ctx); // beats of songs here, not in the app
             if (cmd.name == "edit") args = prepareTalk(args, ctx); // whisper for rough_cut here, not in the app
+            if (cmd.name == "edit") args = prepareSfx(args, ctx); // the kill feed for sfx on:'kills' here, not in the app
             QJsonObject result = Live::run(c, cmd.name, args);
             result["live"] = true;
             return result;

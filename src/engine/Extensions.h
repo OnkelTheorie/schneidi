@@ -21,7 +21,7 @@ class QCryptographicHash;
 
 namespace Extensions {
 
-enum class Kind { Program, WhisperModel, WhisperVad, Encoder, Speech, Voice, Runtime, AudioModel };
+enum class Kind { Program, WhisperModel, WhisperVad, Encoder, Speech, Voice, Runtime, AudioModel, SoundPack };
 
 struct Item {
     QString id;          // "whisper", "whisper-model-small", "x264"
@@ -97,6 +97,17 @@ QString piperOnnxRuntime();
 // empty = not installed
 QString audioEventsModel();
 QString audioEventsLabels();
+
+// Sound packs (op 'sfx', Effects Library "Klänge"): free sound collections (CC0) as archives, each unpacked into
+// soundPacksDir()/<id>. A pack must carry its licence: without a LICENSE (LICENCE, COPYING, also .txt/.md) file at
+// its top or one folder down it is not installed.
+QString soundPacksDir(); // AppDataLocation/extensions/sounds
+QStringList installedSoundPacks(); // folders of the installed packs
+// Error text when `dir` holds no licence file; empty = it has one
+QString soundPackLicenseError(const QString& dir);
+// Unpacks a downloaded (checked) pack archive into `target`, replacing an older version only when it worked and
+// has its licence; error text, empty = ok
+QString installSoundPack(const QString& archive, const QString& target);
 
 // Downloads and installs one item: checks size and SHA-256, unpacks program archives (tar, also on Windows 10+),
 // replaces the old version only when everything worked.

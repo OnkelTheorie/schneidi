@@ -241,6 +241,20 @@ int main(int argc, char** argv)
         const QJsonArray ordered = inOrder["moments"].toArray();
         if (CHECK(ordered.size() >= 2)) CHECK(ordered[0]["from_s"].toDouble() < ordered[1]["from_s"].toDouble());
         CHECK_EQ(run("short", {{"files", QJsonArray{clip}}, {"hook", "loudest"}})["error"].toString(), QString("BAD_ARGUMENT"));
+        // Effect sounds: none by default (sfx:'off', nothing on the cuts by itself); sfx:'mild' puts a soft whoosh on the
+        // hard cut between the two moments, on its own track "SFX"
+        const auto hasSfx = [&](const QJsonObject& made) {
+            const QJsonObject i = run("info", {{"project", made["project"]}, {"timeline", made["timeline"]}});
+            return QJsonDocument(i["timeline"]["tracks"].toArray()).toJson().contains("\"SFX\"");
+        };
+        CHECK(!hasSfx(r));
+        CHECK(!hasSfx(inOrder));
+        CHECK(!QJsonDocument(inOrder["done"].toArray()).toJson().contains("sfx"));
+        const QJsonObject withSfx = run("short", {{"files", QJsonArray{clip}}, {"captions", "off"}, {"game", "none"},
+                                                  {"hook", "chronological"}, {"sfx", "mild"}});
+        CHECK(hasSfx(withSfx));
+        CHECK(QJsonDocument(withSfx["done"].toArray()).toJson().contains("sfx mild: 1 sound"));
+        CHECK_EQ(run("short", {{"files", QJsonArray{clip}}, {"sfx", "loud"}})["error"].toString(), QString("BAD_ARGUMENT"));
         CHECK(QJsonDocument(again["done"].toArray()).toJson().contains("kill feed of cs2")); // game from the folder
         CHECK_EQ(run("short", {{"files", QJsonArray{clip}}, {"out", out}})["error"].toString(), QString("EXISTS"));
         // An existing timeline as the cut

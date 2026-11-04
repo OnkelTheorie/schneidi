@@ -152,6 +152,16 @@ void addSfxOps(QVector<OpDef>& ops);   // EditOpsSfx.cpp: sound effects
 void addTalkOps(QVector<OpDef>& ops);  // EditOpsTalk.cpp: talking head / interview
 // Live: the beats fit_music/snap_to_beat need, analysed by schneidi-cli before the edit goes to the app (`_beats`)
 QJsonObject prepareMusic(const QJsonObject& editArgs, Context& ctx); // EditOpsMusic.cpp
+// The track op 'sfx' puts its sounds on (by name); music lookups leave it out
+inline const QString kSfxTrackName = QStringLiteral("SFX");
+// The drops of the music on the timeline (EditOpsMusic.cpp): timeline frames (exact) and score, sorted by time; the
+// music as snap_to_beat finds it (op key 'music'), beats from `_beats` or the cache
+QVector<QPair<double, double>> musicDrops(Session& s, const QJsonObject& op);
+// The effect sounds op 'sfx' takes (EditOpsSfx.cpp): built-in, of installed sound packs, the user's (effects folder
+// "Sounds"): [{name, from:'built-in'|'pack'|'own', description?|file}]
+QJsonArray sfxSounds();
+// Live: what op 'sfx' on:'kills' needs, read by schneidi-cli before the edit goes to the app (`_kills`)
+QJsonObject prepareSfx(const QJsonObject& editArgs, Context& ctx); // EditOpsSfx.cpp
 // whisper for rough_cut's files without a transcript, here and not in the app (EditOpsTalk.cpp)
 QJsonObject prepareTalk(const QJsonObject& editArgs, Context& ctx);
 // Multicam (EditOpsMulticam.cpp): the angles of a multicam sequence for `info` (1-based, files with their start

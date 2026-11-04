@@ -57,7 +57,7 @@ QString instructions(const Options& opt)
                 "drops, `index` knows every shot - quality, speech, sounds, descriptions you write - and finds "
                 "\"the calm wide shot of the shop\"), `edit` changes a "
                 "timeline (see its 'ops' description, `help` with command 'edit' and op '<name>' has details "
-                "per op; op 'speak' turns text into a spoken voice clip; `effects` lists effects, LUTs, transitions and accents), `info` shows the "
+                "per op; op 'speak' turns text into a spoken voice clip; `effects` lists effects, LUTs, transitions, accents and effect sounds), `info` shows the "
                 "result (a project can have several timelines, each may have its own resolution: a 9:16 short "
                 "next to a 16:9 edit), `check` finds what typically goes wrong before "
                 "rendering (gaps, sound, game sound buried under the music, stutter in recordings, text a phone app "
