@@ -80,10 +80,11 @@ cp "$UCRT/share/qt6/plugins/platforms/qoffscreen.dll" "$OUT/platforms/"
 
 # MSVC runtime for the whisper/piper extensions (built with MSVC; a fresh Windows lacks it): Microsoft's redistributable
 # DLLs, taken from vc_redist.x64.exe without installing it (docs/dev/windows.md). The app copies them next to an
-# installed extension program (engine/Extensions.cpp provideRuntime); schneidi itself does not use them
+# installed extension program (engine/Extensions.cpp provideRuntime); schneidi itself does not use them. ONNX Runtime
+# 1.20 also imports msvcp140_1.dll (in vc_redist's vcRuntimeMinimum)
 MSVC_RUNTIME_DIR="${MSVC_RUNTIME_DIR:-/c/schneidi/msvc-runtime}"
 mkdir -p "$OUT/msvc-runtime"
-for dll in vcruntime140.dll vcruntime140_1.dll msvcp140.dll vcomp140.dll; do
+for dll in vcruntime140.dll vcruntime140_1.dll msvcp140.dll msvcp140_1.dll vcomp140.dll; do
     # (no folder: the warning below, not an abort of the whole build through set -e/pipefail)
     src=""
     [ -d "$MSVC_RUNTIME_DIR" ] && src="$(find "$MSVC_RUNTIME_DIR" -maxdepth 1 -iname "$dll" | head -n1)"
