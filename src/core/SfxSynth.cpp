@@ -38,7 +38,7 @@ struct KindInfo {
 // (the user found the first ones harsh)
 constexpr KindInfo kInfo[] = {
     {Kind::Whoosh, "whoosh", "air rushing past: swells to its peak and falls away (peak on the cut)", 0.9, -12},
-    {Kind::Riser, "riser", "a rising build (a gliding chord, an opening noise band, a speeding tremolo or a reverse swell) that peaks on the moment (a drop)", 0.9, -11},
+    {Kind::Riser, "riser", "a rising build (a gliding chord, an opening noise band, a speeding tremolo or a reverse swell) that peaks on the moment (a drop)", 2.0, -11},
     {Kind::Hit, "hit", "short knock on a block (a kill, a hit)", 0.2, -8},
     {Kind::Impact, "impact", "a heavy impact, a crash (the one big moment of a video)", 1.3, -6},
     {Kind::Click, "click", "a short click (a counter, a snapshot, a pop-up)", 0.15, -16},
@@ -130,7 +130,8 @@ Sound make(Kind kind, unsigned seed, double length)
         static constexpr Variant<SfxForge::Riser> kRisers[3] = {
             {SfxForge::Riser::Tension, 1}, {SfxForge::Riser::Swell, 1}, {SfxForge::Riser::Build, 2}};
         const auto [m, noise] = variant(kRisers, seed);
-        take(s, SfxForge::riser(m, noise, asked));
+        // No length asked: the kind's default build (what `effects` says), not each recipe's own (2.2-2.8 s)
+        take(s, SfxForge::riser(m, noise, asked > 0 ? asked : defaultLength(kind)));
         break;
     }
     case Kind::Hit: { // earshot's bright knock, three takes

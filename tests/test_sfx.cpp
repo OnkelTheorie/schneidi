@@ -179,6 +179,17 @@ void testForgeRisers()
 }
 
 // The shipped CC0 recordings: there with their licences, picked by seed, anchors from their table
+// The riser without a length: the default build length of the kind (what `effects` says), every variant
+void testRiserDefault()
+{
+    for (unsigned seed : {1u, 2u, 3u}) {
+        const SfxSynth::Sound r = SfxSynth::make(SfxSynth::Kind::Riser, seed);
+        if (!CHECK(std::abs(r.anchor - SfxSynth::defaultLength(SfxSynth::Kind::Riser)) < 0.05))
+            std::printf("       riser %u: peak at %.2f s, default %.2f s\n", seed, r.anchor,
+                        SfxSynth::defaultLength(SfxSynth::Kind::Riser));
+    }
+}
+
 void testRecorded()
 {
     const QString root = SfxSynth::recordedRoot();
@@ -609,6 +620,7 @@ int main(int argc, char** argv)
     Check::initApp("sfx");
     testSynth();
     testForgeRisers();
+    testRiserDefault();
     testRecorded();
     testPlace();
     QTemporaryDir tmp;
