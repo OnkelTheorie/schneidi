@@ -69,6 +69,176 @@ const RiserP kRisers[] = {
      0.5742, 0.0, 0.1399},
 };
 
+// ---------- riser (the designed 'build' render) ----------
+
+struct BuildP {
+    double length, curve, rise_db, noise_db, nf0, nf1, nbw, pink, tone_db, fifth_db, oct_db;
+    int wave; // dsp.osc: 0 sine, 1 saw, 3 tri
+    double tf0, toct, tbright, detune, width, gate_depth, gate_on, gate_p0, gate_p1, gate_duty, gate_sharp, gate_pow,
+        tone_gate, rswell_db, rswell_rt, verb, rt60, sat, hp, end_ms;
+};
+
+const BuildP kBuilds[] = {
+    // riser/tension (forge_v2 bank): pitch leads, a detuned tri chord 600 Hz -> 2.4 kHz under a tremolo speeding up
+    // 5 -> 33 Hz, an opening noise band and a little reverse swell support it
+    {2.8, 2.4, 30.0, -2.0, 1200.0, 11000.0, 3.0, 0.6, 0.0, -6.0, -14.0, 3, 600.0, 2.0, 4.0, 22.0, 0.5, 0.5, 0.1, 0.2,
+     0.03, 0.5, 0.15, 1.5, 1.0, -10.0, 2.0, 0.25, 2.0, 1.0, 260.0, 4.0},
+    // riser/swell: the reverse-cymbal build, a reversed computed reverb tail of a bright burst, a bright band and a
+    // thin high sine chord, no gate
+    {2.2, 2.8, 38.0, -14.0, 2000.0, 16000.0, 1.4, 0.3, -22.0, -6.0, -30.0, 0, 1500.0, 1.6, 4.0, 8.0, 0.5, 0.0, 0.5,
+     0.12, 0.03, 0.5, 0.2, 2.0, 0.5, 0.0, 2.6, 0.2, 1.6, 1.0, 500.0, 4.0},
+    // riser/air: a noise band opening up under a light accelerating tremolo, a faint tri chord rising 2 octaves
+    {2.4, 2.6, 34.0, 0.0, 900.0, 13000.0, 2.2, 0.5, -12.0, -6.0, -26.0, 3, 700.0, 2.0, 4.0, 14.0, 0.6, 0.3, 0.15, 0.25,
+     0.034, 0.55, 0.3, 1.6, 0.6, -6.0, 2.2, 0.3, 2.0, 1.0, 300.0, 5.0},
+};
+constexpr double kFinalOpen = 0.045; // s: the gate is open over the last 45 ms, so the riser peaks on the cut
+constexpr double kUnison[5] = {-1.0, -0.45, 0.0, 0.45, 1.0}; // voice offsets (x detune cents) and pans (x width)
+
+// riser.unison, mono (the mid of its pan): 5 voices detuned kUnison x detune x detScale cents
+Vec unison(const Vec& f, int wave, const Vec& detune, double detScale, double width, const double* phases)
+{
+    const size_t n = f.size();
+    Vec out(n, 0.0), fk(n);
+    for (int k = 0; k < 5; ++k) {
+        for (size_t i = 0; i < n; ++i) fk[i] = f[i] * std::exp2(kUnison[k] * detune[i] * detScale / 1200.0);
+        const Vec v = osc(fk, wave, phases[k]);
+        const double th = (std::clamp(kUnison[k] * width, -1.0, 1.0) + 1) * kPi / 4;
+        const double g = (std::cos(th) + std::sin(th)) / 2 * std::numbers::sqrt2 / 5;
+        for (size_t i = 0; i < n; ++i) out[i] += g * v[i];
+    }
+    return out;
+}
+
+// riser.wet_of, mono: the reverb return alone of x (a unit-energy noise tail in place of fx.reverb_ir's FDN), cut to
+// nOut samples
+Vec wetOf(const Vec& x, Rng& r, double rt60, size_t nOut, double damp, double predelay, double lowcut)
+{
+    Vec ir = noiseIr(r, rt60, damp, predelay, lowcut, 1.44 * rt60); // fx.reverb_ir's tail: 1.2 x rt60 x bass 1.2
+    if (ir.size() > nOut) ir.resize(nOut);
+    Vec y = convolve(x, ir);
+    y.resize(nOut, 0.0);
+    return y;
+}
+
+Result build(const BuildP& p0, std::uint64_t salt, double length)
+{
+    BuildP p = p0;
+    if (length > 0) p.length = length;
+    Rng r(salt);
+    const double L = p.length;
+    const size_t n = nOf(L);
+    Vec w(n), lv(n), per(n), ph(n), gateN(n), gateT(n);
+    for (size_t i = 0; i < n; ++i) {
+        const double u = double(i) / SR / L;
+        w[i] = std::pow(u, p.curve); // accelerating progress
+        lv[i] = std::pow(10.0, -p.rise_db * (1 - w[i]) / 20);
+        per[i] = p.gate_p0 * std::pow(p.gate_p1 / p.gate_p0, std::pow(u, p.gate_pow));
+    }
+    // The accelerating gate, laid out from the end (riser.phase_from_end: the last pulse open on the final sample)
+    double cycles = 0;
+    for (size_t i = n; i-- > 0;) {
+        cycles += 1.0 / per[i] / SR;
+        ph[i] = 0.5 * p.gate_duty - cycles;
+    }
+    for (size_t i = 0; i < n; ++i) { // riser.gate_shape: a smooth tremolo .. a hard gate with 1.2 ms edges
+        const double t = double(i) / SR, u = t / L, fr = ph[i] - std::floor(ph[i]);
+        const double trem = 0.5 + 0.5 * std::cos(2 * kPi * (fr - 0.5 * p.gate_duty));
+        const double on = std::clamp(fr * per[i] / 0.0012, 0.0, 1.0);
+        const double off = std::clamp((p.gate_duty - fr) * per[i] / 0.0018, 0.0, 1.0);
+        const double g = (1 - p.gate_sharp) * trem + p.gate_sharp * std::min(on, off);
+        const double o = std::clamp((u - p.gate_on) / 0.2, 0.0, 1.0);
+        double fin = std::clamp((L - t) / kFinalOpen, 0.0, 1.0);
+        fin = fin * fin * (3 - 2 * fin);
+        const double depth = p.gate_depth * o * o * (3 - 2 * o) * fin;
+        gateN[i] = 1 - depth * (1 - g);
+        gateT[i] = 1 - p.tone_gate * depth * (1 - g);
+    }
+    // Noise: an unresonant band moving up (24 dB/oct low pass nf0 -> nf1, a high pass nbw octaves under it)
+    Vec nz = r.normals(n);
+    {
+        const Vec pk = colored(n, r, 0.5);
+        Vec fc(n), fl(n);
+        for (size_t i = 0; i < n; ++i) {
+            nz[i] = (1 - p.pink) * nz[i] + p.pink * pk[i] * 1.6;
+            const double f = p.nf0 * std::pow(p.nf1 / p.nf0, w[i]);
+            fc[i] = std::min(f, 18000.0);
+            fl[i] = std::max(f / std::exp2(p.nbw), 20.0);
+        }
+        nz = svf(svf(nz, fc, 0.54, 0), fc, 1.31, 0);
+        nz = butter(svf(svf(nz, fl, 0.54, 2), fl, 1.31, 2), true, p.hp, 4);
+    }
+    // Tonal: a unison chord (root + fifth + a late octave) on a concave glide
+    Vec tone, octv;
+    {
+        Vec f(n), det(n), f2(n);
+        for (size_t i = 0; i < n; ++i) {
+            const double u = double(i) / SR / L;
+            f[i] = p.tf0 * std::exp2(p.toct * std::pow(u, std::max(1.0, 0.8 * p.curve)));
+            f2[i] = 2 * f[i];
+            det[i] = p.detune * (0.6 + 0.8 * w[i]);
+        }
+        double ph0[15];
+        for (double& v : ph0) v = r.unit();
+        tone = unison(f, p.wave, det, 1.0, 0.5 * p.width, ph0);
+        if (p.fifth_db > -47) {
+            Vec f5(n);
+            for (size_t i = 0; i < n; ++i) f5[i] = 1.5 * f[i];
+            const Vec v = unison(f5, p.wave, det, 1.0, 0.7 * p.width, ph0 + 5);
+            for (size_t i = 0; i < n; ++i) tone[i] += std::pow(10.0, p.fifth_db / 20) * v[i];
+        }
+        octv = unison(f2, p.wave, det, 0.7, 0.6 * p.width, ph0 + 10);
+        for (size_t i = 0; i < n; ++i) {
+            const double k = std::clamp((double(i) / SR / L - 0.4) / 0.6, 0.0, 1.0);
+            octv[i] *= k * k;
+        }
+        if (p.wave == 1) {
+            Vec cut(n), cut2(n);
+            for (size_t i = 0; i < n; ++i) cut[i] = std::min(f[i] * p.tbright, 18000.0), cut2[i] = std::min(2 * cut[i], 18000.0);
+            tone = svf(tone, cut, 0.7, 0);
+            octv = svf(octv, cut2, 0.7, 0);
+        }
+        tone = butter(std::move(tone), true, p.hp * 0.8, 2);
+        octv = butter(std::move(octv), true, p.hp, 2);
+    }
+    // (The shepard layer is off in these sets, shep_db -48: not ported)
+    // Reverse swell: the reversed reverb tail of a bright burst, concave by nature, ending on the last sample
+    Vec sw;
+    if (p.rswell_db > -47) {
+        const size_t kb = nOf(0.03);
+        Vec hb = butter(r.normals(kb), true, 1500.0, 2);
+        for (size_t i = 0; i < kb; ++i) hb[i] *= std::exp(-double(i) / SR / 0.008);
+        const Vec wet = wetOf(hb, r, p.rswell_rt, nOf(p.rswell_rt + 0.1), 0.3, 0.0, 400.0);
+        const size_t k = std::min(n, wet.size());
+        sw.assign(n, 0.0);
+        for (size_t j = 0; j < k; ++j) sw[n - k + j] = wet[k - 1 - j];
+        sw = butter(std::move(sw), true, p.hp, 2);
+    }
+    // The mix: each layer at its level re its loudest 10 ms in the last quarter
+    const auto at = [](double db, const Vec& x) { return std::pow(10.0, db / 20) / lvl(x, 0.25); };
+    const double gn = at(p.noise_db, nz), gt = at(p.tone_db, tone), go = at(p.oct_db, octv);
+    Vec send(n);
+    for (size_t i = 0; i < n; ++i) send[i] = (gn * nz[i] * gateN[i] + (gt * tone[i] + go * octv[i]) * gateT[i]) * lv[i];
+    if (!sw.empty()) { // the swell carries its own (reversed-decay) curve
+        const double gs = at(p.rswell_db, sw);
+        for (size_t i = 0; i < n; ++i) send[i] += gs * sw[i] * (0.25 + 0.75 * gateN[i]);
+    }
+    Vec y = send;
+    if (p.verb > 0.005) { // the space grows with the build, cut at the end (never after the hit)
+        const Vec wet = wetOf(send, r, p.rt60, n, 0.5, 0.02, 200.0);
+        const double g = p.verb / lvl(wet, 0.25) * lvl(send, 0.25);
+        for (size_t i = 0; i < n; ++i) y[i] += g * wet[i];
+    }
+    if (p.sat > 0.1) { // fx.saturate tanh, level 'rms' (without its oversampling)
+        const double g = std::pow(10.0, p.sat / 20), before = rmsOf(y);
+        for (double& v : y) v = std::tanh(g * v);
+        const double k = before / (rmsOf(y) + 1e-12);
+        for (double& v : y) v *= k;
+    }
+    y = butter(butter(std::move(y), true, 120.0, 2), false, 18000.0, 4);
+    fade(y, 0.004, p.end_ms / 1000.0);
+    return done(std::move(y), double(n) / SR);
+}
+
 // ---------- shutter ----------
 
 struct ShutterP {
@@ -164,10 +334,16 @@ const DropP kDrops[] = {
 
 } // namespace
 
-double riserLength(Riser m) { return kRisers[int(m)].length; }
+double riserLength(Riser m)
+{
+    return m >= Riser::Tension ? kBuilds[int(m) - int(Riser::Tension)].length : kRisers[int(m)].length;
+}
 
 Result riser(Riser member, unsigned seed, double length)
 {
+    if (member >= Riser::Tension)
+        return build(kBuilds[int(member) - int(Riser::Tension)], std::uint64_t(seed) * 8 + std::uint64_t(member) + 101,
+                     length);
     RiserP p = kRisers[int(member)];
     if (length > 0) p.length = length;
     Rng r(std::uint64_t(seed) * 8 + std::uint64_t(member) + 101);

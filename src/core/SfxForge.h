@@ -9,7 +9,7 @@
 
 namespace SfxForge {
 
-enum class Riser { Dark, Snatch, Build };
+enum class Riser { Dark, Snatch, Build, Tension, Swell, Air };
 enum class Click { Snap, Mirror, Dslr };
 enum class Knock { Snap, Wood };
 enum class Drop { Soft };
