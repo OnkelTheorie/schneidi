@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "core/SfxSynth.h"
 
+#include "core/SfxWhoosh.h"
+
 #include <QDir>
 #include <QFileInfo>
 #include <QSaveFile>
@@ -29,12 +31,12 @@ struct KindInfo {
 
 // Peak levels: a whoosh or click sits under the game sound, a hit or impact may be heard a little more
 constexpr KindInfo kInfo[] = {
-    {Kind::Whoosh, "whoosh", "filtered noise that swells to its peak and falls away (peak on the cut)", 0.9, -10},
+    {Kind::Whoosh, "whoosh", "air rushing past: swells to its peak and falls away (peak on the cut)", 0.9, -10},
     {Kind::Riser, "riser", "noise and a rising tone that build up and end on the moment (a drop)", 2.0, -9},
     {Kind::Hit, "hit", "short punch: a falling low tone with a noise attack (a kill, a hit)", 0.5, -6},
     {Kind::Impact, "impact", "deep boom with a long low tail (the one big moment of a video)", 1.8, -4},
     {Kind::Click, "click", "tiny tick (a counter, a menu, a pop-up)", 0.06, -14},
-    {Kind::Swish, "swish", "short, bright whoosh (a fast wipe, a title flying in)", 0.35, -12},
+    {Kind::Swish, "swish", "short, soft swipe of cloth or paper (a fast wipe, a title flying in)", 0.6, -12},
 };
 
 const KindInfo& info(Kind k)
@@ -89,94 +91,21 @@ struct Svf {
 // Exponential glide from a to b over u in [0, 1]
 double glide(double a, double b, double u) { return a * std::pow(b / a, std::clamp(u, 0.0, 1.0)); }
 
-// Smooth curve 0..1 (no corner at either end): how a sweep moves
-double smooth(double u)
+// Whoosh and swish: the earshot pass engine (core/SfxWhoosh, MIT), three of its designed members per kind; the seed
+// picks the member (1, 2, 3, then again with other noise) and the noise. A length other than the default stretches
+// the motion (the sound ends where its tail has faded, so its length is about the asked one)
+void makePass(Sound& s, unsigned seed, double asked, const SfxWhoosh::Member (&members)[3])
 {
-    u = std::clamp(u, 0.0, 1.0);
-    return u * u * (3 - 2 * u);
+    const SfxWhoosh::Member m = members[(std::max(1u, seed) - 1) % 3];
+    const double stretch = asked > 0 ? asked / SfxWhoosh::naturalLength(m) : 1.0;
+    SfxWhoosh::Result r = SfxWhoosh::render(m, seed, stretch);
+    s.samples = std::move(r.samples);
+    s.anchor = r.anchor;
+    s.length = double(s.samples.size()) / kRate;
 }
 
-// Slow seeded wobble in [-1, 1]: noise through two one-pole low passes at `hz` (filter drift, the air moving)
-struct Wobble {
-    double a = 0, b = 0, k = 0;
-    explicit Wobble(double hz) : k(1 - std::exp(-2 * kPi * hz / kRate)) {}
-    double next(Rng& rng)
-    {
-        a += k * (rng.bipolar() * 6 - a); // ~unit spread after the double smoothing
-        b += k * (a - b);
-        return std::clamp(b, -1.0, 1.0);
-    }
-};
-
-struct SweepShape {
-    double f0, f1, fEnd; // centre at the start, at the peak, at the end (Hz)
-    double peakPart;     // where the peak lies (part of the length)
-    double rumble;       // mix of a faint low layer (0 = none)
-    double air;          // mix of the high "air" layer
-};
-
-// A whoosh or swish: air moving, not a tone. Three layered noise bands of low resonance (Q below 1: a high Q rings
-// and sounds metallic), each a little early or late and higher or lower, whose centre and width move on a smooth
-// curve with a slow random drift; a soft (raised cosine) swell to the peak and a longer exponential tail; a faint
-// high air layer and, for a whoosh, a low rumble under it.
-void sweep(std::vector<float>& out, Rng& rng, double length, const SweepShape& shape, double* anchor)
-{
-    const double peak = length * shape.peakPart;
-    *anchor = peak;
-    const double fall = std::max(0.02, length - peak);
-    struct Band {
-        Svf f;
-        double ratio, shift, gain;
-    };
-    Band bands[3] = {{{}, rng.range(0.55, 0.7), rng.range(-0.06, -0.02), 0.6},
-                     {{}, 1.0, 0.0, 1.0},
-                     {{}, rng.range(1.5, 1.9), rng.range(0.02, 0.06), 0.45}};
-    Svf air, rumble;
-    Wobble drift(rng.range(3, 6)), level(rng.range(5, 9));
-    const double tail = fall * rng.range(0.3, 0.4);
-    const size_t n = out.size();
-    for (size_t i = 0; i < n; ++i) {
-        const double t = double(i) / kRate;
-        const double d = drift.next(rng), lv = level.next(rng);
-        double v = 0;
-        for (Band& band : bands) {
-            const double tb = t - band.shift * length; // this band's own timing
-            const double up = smooth(tb / peak), down = smooth((tb - peak) / fall);
-            const double fc = (tb < peak ? shape.f0 * std::pow(shape.f1 / shape.f0, up)
-                                         : shape.f1 * std::pow(shape.fEnd / shape.f1, down))
-                              * band.ratio * std::pow(2.0, 0.2 * d);
-            // Wider at the peak (more air rushing past), narrower at the edges; never resonant
-            const double q = 0.55 + 0.25 * (tb < peak ? 1 - up : down);
-            band.f.run(rng.bipolar(), fc, q);
-            const double env = tb <= 0 ? 0
-                               : tb < peak ? std::pow(std::sin(0.5 * kPi * tb / peak), 2.0)
-                                           : std::exp(-(tb - peak) / tail);
-            v += band.gain * env * band.f.bp;
-        }
-        const double env = t < peak ? std::pow(std::sin(0.5 * kPi * t / peak), 2.0) : std::exp(-(t - peak) / tail);
-        air.run(rng.bipolar(), 7000, 0.5);
-        rumble.run(rng.bipolar(), 140, 0.5);
-        v += shape.air * std::pow(env, 1.5) * air.hp + shape.rumble * env * rumble.lp;
-        out[i] = float(v * (1 + 0.12 * lv));
-    }
-}
-
-void makeWhoosh(Sound& s, Rng& rng)
-{
-    const double f0 = 220 * rng.range(0.8, 1.25);
-    sweep(s.samples, rng, s.length,
-          {f0, 1600 * rng.range(0.75, 1.3), f0 * rng.range(1.3, 2.0), 0.6 * rng.range(0.92, 1.08), rng.range(0.6, 1.0),
-           rng.range(0.08, 0.14)},
-          &s.anchor);
-}
-
-void makeSwish(Sound& s, Rng& rng)
-{
-    const double f0 = 1100 * rng.range(0.8, 1.25);
-    sweep(s.samples, rng, s.length,
-          {f0, 4500 * rng.range(0.8, 1.2), f0 * rng.range(1.4, 2.0), 0.45 * rng.range(0.9, 1.1), 0.0, rng.range(0.15, 0.22)},
-          &s.anchor);
-}
+constexpr SfxWhoosh::Member kWhooshes[3] = {SfxWhoosh::Member::Windy, SfxWhoosh::Member::Long, SfxWhoosh::Member::Glide};
+constexpr SfxWhoosh::Member kSwishes[3] = {SfxWhoosh::Member::Flick, SfxWhoosh::Member::Cloth, SfxWhoosh::Member::Paper};
 
 void makeRiser(Sound& s, Rng& rng)
 {
@@ -290,13 +219,14 @@ Sound make(Kind kind, unsigned seed, double length)
     Sound s;
     s.kind = kind;
     s.seed = seed;
-    s.length = std::clamp(length > 0 ? length : defaultLength(kind), minLength(kind), maxLength(kind));
+    const double asked = length > 0 ? std::clamp(length, minLength(kind), maxLength(kind)) : 0.0;
+    s.length = asked > 0 ? asked : defaultLength(kind);
     s.samples.assign(size_t(std::lround(s.length * kRate)), 0.f);
     // The seed picks the variant; the kind is mixed in so whoosh 1 and swish 1 differ in their noise too
     Rng rng(std::uint64_t(seed) * 16 + std::uint64_t(kind) + 1);
     switch (kind) {
-    case Kind::Whoosh: makeWhoosh(s, rng); break;
-    case Kind::Swish: makeSwish(s, rng); break;
+    case Kind::Whoosh: makePass(s, seed, asked, kWhooshes); break;
+    case Kind::Swish: makePass(s, seed, asked, kSwishes); break;
     case Kind::Riser: makeRiser(s, rng); break;
     case Kind::Hit: makeHit(s, rng); break;
     case Kind::Impact: makeImpact(s, rng); break;
@@ -364,12 +294,12 @@ bool writeWav(const QString& path, const std::vector<float>& samples, int rate)
 
 QString cachedFile(Kind kind, unsigned seed, double length)
 {
-    const Sound probe{kind, seed, std::clamp(length > 0 ? length : defaultLength(kind), minLength(kind), maxLength(kind))};
+    const double probeLength = std::clamp(length > 0 ? length : defaultLength(kind), minLength(kind), maxLength(kind));
     const QString path = QStandardPaths::writableLocation(QStandardPaths::CacheLocation)
                          + QString("/sfx/%1-%2-%3-v%4.wav")
                                .arg(kindName(kind))
                                .arg(seed)
-                               .arg(std::lround(probe.length * 1000))
+                               .arg(std::lround(probeLength * 1000))
                                .arg(kVersion);
     if (QFileInfo(path).size() > 44) return path;
     const Sound s = make(kind, seed, length);

@@ -151,7 +151,10 @@ SfxPlace::Existing existingOf(const Clip& c, double fps)
     SfxPlace::Existing e{c.start / fps, false};
     if (parts.size() == 4 && parts[3].startsWith('v'))
         if (const auto k = SfxSynth::kindFrom(parts[0])) {
-            const double anchor = SfxSynth::anchorOf(*k, parts[1].toUInt(), parts[2].toDouble() / 1000.0);
+            // The cache name holds the default length for a sound made without one (0: a whoosh's own length)
+            const double ms = parts[2].toDouble();
+            const double length = std::lround(SfxSynth::defaultLength(*k) * 1000) == std::lround(ms) ? 0.0 : ms / 1000.0;
+            const double anchor = SfxSynth::anchorOf(*k, parts[1].toUInt(), length);
             e.at = (c.start - c.in) / fps + anchor;
             e.impact = *k == SfxSynth::Kind::Impact;
         }

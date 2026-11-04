@@ -21,6 +21,7 @@ The running program lists what it really loaded: `schneidi-cli --licenses` (AppI
 | [libva](https://github.com/intel/libva), [libdrm](https://gitlab.freedesktop.org/mesa/drm), [oneVPL](https://github.com/intel/libvpl), [nv-codec-headers](https://github.com/FFmpeg/nv-codec-headers) | MIT | hardware encoders (VAAPI, Quick Sync, NVENC) |
 | [miniaudio](https://miniaud.io) | MIT-0 / public domain | sound output |
 | [RNNoise](https://gitlab.xiph.org/xiph/rnnoise) v0.2 with its model `0b50c45` (Xiph.Org, Mozilla, Amazon, Jean-Marc Valin; sources in `third_party/rnnoise`, built into the program) | BSD-3-Clause | noise suppression of the effect "Stimme säubern" |
+| [earshot](https://github.com/Leonxlnx/earshot) whoosh pass engine and its forge_v2 swipe / whoosh parameter sets (Copyright (c) 2026 Leon Lin), ported to C++ in `src/core/SfxWhoosh.cpp` (license text: `third_party/earshot/LICENSE`) | MIT | the built-in whoosh and swish sounds (op `sfx`) |
 | libglvnd (EGL/OpenGL dispatch, fallback only) | MIT-style | systems without a desktop |
 | System libraries pulled in by the above (glib, ICU, fontconfig, FreeType, HarfBuzz, libpng, zlib, zstd, libjpeg-turbo, PCRE2, X11/XCB/xkbcommon, Wayland, D-Bus, double-conversion, brotli, md4c …) | LGPL-2.1+, MIT, BSD, Zlib, IJG, Unicode, FTL, AFL-2.1 (D-Bus, dual-licensed) | as used by Qt |
 

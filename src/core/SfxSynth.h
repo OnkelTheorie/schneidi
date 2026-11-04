@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Effect sounds of schneidi's own (op 'sfx', the Effects Library): synthesized here from noise, filters and sine
-// waves, so they carry no foreign license. Each kind has variants by seed; the same kind, seed and length give
+// waves (whoosh and swish: a port of earshot's whoosh engine, MIT, core/SfxWhoosh). Each kind has variants by seed; the same kind, seed and length give
 // the same samples. Levels are mild on purpose (a sound under the game sound, never on top of it): the loudest
 // sample of every sound lies at its kind's peak level, at most -1 dBFS.
 
@@ -15,7 +15,7 @@ namespace SfxSynth {
 
 constexpr int kRate = 48000; // mono, 48 kHz
 // Bumped when a sound changes: part of the cache file names
-constexpr int kVersion = 2;
+constexpr int kVersion = 3;
 
 enum class Kind { Whoosh, Riser, Hit, Impact, Click, Swish };
 constexpr Kind kKinds[] = {Kind::Whoosh, Kind::Riser, Kind::Hit, Kind::Impact, Kind::Click, Kind::Swish};
@@ -25,7 +25,8 @@ std::optional<Kind> kindFrom(const QString& name);
 QStringList kindNames();
 QString description(Kind k); // one line, English (CLI/MCP)
 double defaultLength(Kind k); // seconds
-// Length range a kind takes (riser: 0.5-8 s; the others keep their shape, 0.5x-2x of the default)
+// Length range a kind takes (riser: 0.5-8 s; the others keep their shape, 0.5x-2x of the default). Whoosh and swish
+// end where their tail has faded: their length is about the asked one (Sound::length says it)
 double minLength(Kind k);
 double maxLength(Kind k);
 double peakLevelDb(Kind k); // the loudest sample, dBFS

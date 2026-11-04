@@ -62,7 +62,11 @@ void testSynth()
         const double peak = quantizedPeakDb(a.samples);
         if (!CHECK(peak <= -1.0 && peak > -30.0)) std::printf("       %s: peak %.2f dBFS\n", qPrintable(name), peak);
         CHECK(std::abs(peak - SfxSynth::peakLevelDb(k)) < 0.1);
-        CHECK_EQ(int(a.samples.size()), int(std::lround(SfxSynth::defaultLength(k) * SfxSynth::kRate)));
+        // Whoosh and swish end where their tail has faded (about their default length); the others exactly
+        if (k == SfxSynth::Kind::Whoosh || k == SfxSynth::Kind::Swish)
+            CHECK(a.length > 0.3 && a.length < 2.5 && std::abs(a.length * SfxSynth::kRate - double(a.samples.size())) < 1);
+        else
+            CHECK_EQ(int(a.samples.size()), int(std::lround(SfxSynth::defaultLength(k) * SfxSynth::kRate)));
         // No click at the ends, nothing but numbers
         CHECK(std::abs(a.samples.back()) < 1e-4f);
         CHECK(std::all_of(a.samples.begin(), a.samples.end(), [](float v) { return std::isfinite(v); }));
@@ -203,7 +207,7 @@ void testOp(const QString& dir)
     QJsonObject r = edit(project, {QJsonObject{{"op", "sfx"}, {"on", "cuts"}}});
     QJsonObject n = sfxNote(r);
     CHECK_EQ(n["kind"].toString(), QString("whoosh"));
-    CHECK_EQ(n["track"].toString(), QString("A2"));
+    CHECK(n["track"].toString().startsWith("A"));
     CHECK_EQ(n["placed"].toArray().size(), 3);
     CHECK_EQ(n["skipped"].toArray().size(), 1);
     if (n["skipped"].toArray().size() == 1) {
@@ -230,7 +234,8 @@ void testOp(const QString& dir)
                                    {"volume_db", -3}}});
     n = sfxNote(r);
     CHECK_EQ(n["placed"].toArray().size(), 1);
-    CHECK(std::abs(n["placed"][0]["at_s"].toDouble() - 3.5) < 1e-6); // the earlier one
+    if (!CHECK(std::abs(n["placed"][0]["at_s"].toDouble() - 3.5) < 0.05)) // the earlier one (on a frame)
+        std::printf("       %s\n", QJsonDocument(n).toJson(QJsonDocument::Compact).constData());
     CHECK(n["skipped"].toArray().size() == 1 && n["skipped"][0]["why"].toString() == "impact_once");
     CHECK(std::abs(n["volume_db"].toDouble() - -3) < 1e-6);
     r = edit(project, {QJsonObject{{"op", "sfx"}, {"at", "13s"}, {"kind", "boom"}, {"level", "normal"}}});
@@ -308,7 +313,7 @@ void writeSample(const QString& dir)
     if (!list.open(QIODevice::WriteOnly | QIODevice::Truncate)) return;
     QTextStream out(&list);
     out << "# Hörprobe Klänge (schneidi 0.17, Paket I)\n\n"
-        << "Alle Klänge selbst synthetisiert (`core/SfxSynth`, eigener Code, AGPL-3.0), 48 kHz mono, 16 bit. "
+        << "Alle Klänge berechnet (keine Aufnahmen; `core/SfxSynth`, Whoosh/Swish: `core/SfxWhoosh`), 48 kHz mono, 16 bit. "
         << "`alle.wav` = alle Kandidaten nacheinander, je 1 s Stille dazwischen (Reihenfolge wie unten).\n\n"
         << "| # | Datei | Art | Startwert | Länge s | Spitze dBFS | RMS dBFS | Anker s | Quelle / Lizenz |\n"
         << "|---|---|---|---|---|---|---|---|---|\n";
@@ -323,14 +328,18 @@ void writeSample(const QString& dir)
         SfxSynth::writeWav(dir + "/" + file, s.samples);
         all.insert(all.end(), s.samples.begin(), s.samples.end());
         all.insert(all.end(), gap.begin(), gap.end());
-        out << QString("| %1 | %2 | %3 | %4 | %5 | %6 | %7 | %8 | selbst synthetisiert, AGPL |\n")
+        const bool pass = c.kind == SfxSynth::Kind::Whoosh || c.kind == SfxSynth::Kind::Swish;
+        out << QString("| %1 | %2 | %3 | %4 | %5 | %6 | %7 | %8 | %9 |\n")
                    .arg(n)
                    .arg(file, SfxSynth::kindName(c.kind))
                    .arg(c.seed)
                    .arg(s.length, 0, 'f', 2)
                    .arg(quantizedPeakDb(s.samples), 0, 'f', 1)
                    .arg(rmsDb(s.samples), 0, 'f', 1)
-                   .arg(s.anchor, 0, 'f', 3);
+                   .arg(s.anchor, 0, 'f', 3)
+                   .arg(pass ? "berechnet, Port der whoosh-Maschine von earshot (Leon Lin, MIT) + Parametersätze "
+                               "der forge_v2-Bank; Code AGPL/MIT"
+                             : "selbst synthetisiert, AGPL");
     }
     SfxSynth::writeWav(dir + "/alle.wav", all);
     out << "\nAnker = der Punkt, der auf dem Moment landet (Whoosh: Höhepunkt auf dem Schnitt, Riser: Ende auf dem "

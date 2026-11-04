@@ -90,6 +90,7 @@ add_library(schneidi_lib STATIC
     src/core/Keyframes.h          src/core/Keyframes.cpp
     src/core/Accents.h            src/core/Accents.cpp
     src/core/SfxSynth.h           src/core/SfxSynth.cpp
+    src/core/SfxWhoosh.h          src/core/SfxWhoosh.cpp
     src/core/SfxPlace.h           src/core/SfxPlace.cpp
     src/core/MediaAspect.h        src/core/MediaAspect.cpp
     src/core/GradeWindows.h       src/core/GradeWindows.cpp

@@ -113,6 +113,8 @@ QVector<Part> report()
         << ffmpegPart("libswresample", swresample_version(), swresample_license());
     // Compiled in (third_party/rnnoise): the noise suppression of the voice cleaning (engine/VoiceClean)
     out << Part{"RNNoise 0.2 (built in)", "BSD-3-Clause", false, {}};
+    // Ported into core/SfxWhoosh (third_party/earshot/LICENSE): the whoosh / swish sounds of op 'sfx'
+    out << Part{"earshot whoosh engine (Leon Lin, ported in)", "MIT", false, {}};
 
     // Loaded libraries: GPL ones by name
     for (const QString& path : loadedLibraries()) {
