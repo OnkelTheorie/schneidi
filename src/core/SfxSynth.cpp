@@ -343,14 +343,22 @@ std::optional<CachedName> parseCachedFile(const QString& path)
                       m.captured(4).isEmpty() ? 0.0 : m.captured(4).toDouble() / 1000.0, m.captured(5).toInt()};
 }
 
+int lastChange(Kind k)
+{
+    // kVersion 7 changed the riser only (earshot's riser.py builds); every kind's sound as of 6 before
+    return k == Kind::Riser ? 7 : 6;
+}
+
 QString restoreCachedFile(const QString& missingPath)
 {
     if (const auto r = recordedOfFile(missingPath)) return placeRecorded(*r);
     const QString name = QFileInfo(QString(missingPath).replace('\\', '/')).fileName();
     const std::optional<CachedName> n = parseCachedFile(name);
-    if (!n || n->version != kVersion) return {};
+    // An older version's file of a kind whose sound has not changed since: the same samples under this version's name
+    if (!n || n->version > kVersion || n->version < lastChange(n->kind)) return {};
     const QString path = cachedFile(n->kind, n->seed, n->asked);
-    return QFileInfo(path).fileName() == name ? path : QString();
+    const auto unversioned = [](const QString& f) { return f.left(f.lastIndexOf("-v")); };
+    return unversioned(QFileInfo(path).fileName()) == unversioned(name) ? path : QString();
 }
 
 } // namespace SfxSynth
