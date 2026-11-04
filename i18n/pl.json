@@ -2151,7 +2151,6 @@
  "optional": "opcjonalnie",
  "prüft eine Datei": "sprawdza plik",
  "prüft vor dem Export": "sprawdza przed eksportem",
- "rechnet kleine KI-Modelle offline auf dem Prozessor (für Ton-Ereignisse)": "uruchamia małe modele SI offline na procesorze (do zdarzeń dźwiękowych)",
  "rendert": "renderuje",
  "ruhig": "spokojny",
  "scharf": "ostry",
@@ -2256,5 +2255,8 @@
  "der Klang liefe über das Ende der Timeline hinaus": "dźwięk wychodziłby poza koniec osi czasu",
  "nur ein Einschlag je Video": "tylko jedno uderzenie na film",
  "schon genug Klänge in dieser Minute": "w tej minucie jest już dość dźwięków",
- "zu nah an einem anderen Klang": "za blisko innego dźwięku"
+ "zu nah an einem anderen Klang": "za blisko innego dźwięku",
+ "Gesichtserkennung (YuNet)": "Wykrywanie twarzy (YuNet)",
+ "findet Gesichter im Bild für den Material-Index (braucht ONNX Runtime)": "znajduje twarze w obrazie dla indeksu materiału (wymaga ONNX Runtime)",
+ "rechnet kleine KI-Modelle offline auf dem Prozessor (für Gesichter und Ton-Ereignisse)": "uruchamia małe modele SI offline na procesorze (do twarzy i zdarzeń dźwiękowych)"
 }

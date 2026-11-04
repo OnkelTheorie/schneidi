@@ -2151,7 +2151,6 @@
  "optional": "необязательно",
  "prüft eine Datei": "проверяет файл",
  "prüft vor dem Export": "проверяет перед экспортом",
- "rechnet kleine KI-Modelle offline auf dem Prozessor (für Ton-Ereignisse)": "запускает небольшие модели ИИ офлайн на процессоре (для звуковых событий)",
  "rendert": "рендерит",
  "ruhig": "спокойный",
  "scharf": "резкий",
@@ -2256,5 +2255,8 @@
  "der Klang liefe über das Ende der Timeline hinaus": "звук вышел бы за конец таймлайна",
  "nur ein Einschlag je Video": "только один удар на видео",
  "schon genug Klänge in dieser Minute": "в этой минуте уже достаточно звуков",
- "zu nah an einem anderen Klang": "слишком близко к другому звуку"
+ "zu nah an einem anderen Klang": "слишком близко к другому звуку",
+ "Gesichtserkennung (YuNet)": "Распознавание лиц (YuNet)",
+ "findet Gesichter im Bild für den Material-Index (braucht ONNX Runtime)": "находит лица в кадре для индекса материала (нужен ONNX Runtime)",
+ "rechnet kleine KI-Modelle offline auf dem Prozessor (für Gesichter und Ton-Ereignisse)": "запускает небольшие модели ИИ офлайн на процессоре (для лиц и звуковых событий)"
 }

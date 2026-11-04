@@ -2151,7 +2151,6 @@
  "optional": "optional",
  "prüft eine Datei": "checks a file",
  "prüft vor dem Export": "checks before export",
- "rechnet kleine KI-Modelle offline auf dem Prozessor (für Ton-Ereignisse)": "runs small AI models offline on the processor (for sound events)",
  "rendert": "renders",
  "ruhig": "calm",
  "scharf": "sharp",
@@ -2256,5 +2255,8 @@
  "der Klang liefe über das Ende der Timeline hinaus": "the sound would run past the end of the timeline",
  "nur ein Einschlag je Video": "only one impact per video",
  "schon genug Klänge in dieser Minute": "enough sounds in this minute already",
- "zu nah an einem anderen Klang": "too close to another sound"
+ "zu nah an einem anderen Klang": "too close to another sound",
+ "Gesichtserkennung (YuNet)": "Face detection (YuNet)",
+ "findet Gesichter im Bild für den Material-Index (braucht ONNX Runtime)": "finds faces in the picture for the footage index (needs ONNX Runtime)",
+ "rechnet kleine KI-Modelle offline auf dem Prozessor (für Gesichter und Ton-Ereignisse)": "runs small AI models offline on the processor (for faces and sound events)"
 }

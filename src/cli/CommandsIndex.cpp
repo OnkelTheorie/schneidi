@@ -31,6 +31,8 @@ QJsonObject shotJson(const MediaIndex::Shot& s, const QString& thumbFile)
     QJsonObject quality{{"sharp", r2(q.sharp)}, {"bright", r2(q.bright)},     {"dark", q.dark},
                         {"overexposed", q.overexposed}, {"blurry", q.blurry}, {"motion", q.motion},
                         {"pan", q.pan},         {"face", q.face}};
+    if (q.faces >= 0) quality["faces"] = q.faces; // only measured with the face model (extension "faces")
+    if (q.faces > 0) quality["face_box"] = QJsonArray{r3(q.faceX), r3(q.faceY), r3(q.faceW), r3(q.faceH)};
     QJsonObject o{{"n", s.n}, {"from_s", r3(s.from)}, {"to_s", r3(s.to)}, {"thumb_s", r3(s.thumb)}, {"quality", quality}};
     if (!thumbFile.isEmpty()) o["thumb"] = thumbFile;
     if (!s.speech.isEmpty()) o["speech"] = s.speech;

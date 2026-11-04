@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "engine/Licenses.h"
 
+#include "engine/Extensions.h"
+
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -122,9 +124,18 @@ QVector<Part> report()
     out << Part{"Impact recordings by FFeller and dorian.mastin, Freesound (built in)", "CC0-1.0", false, {}};
     out << Part{"Starter Kit sounds (Racing, City Builder) by Kenney, www.kenney.nl (built in)", "CC0-1.0", false, {}};
 
-    // Loaded libraries: GPL ones by name
+    // Extensions (downloaded on request, not bundled) as far as they are there: the face model (its licence text lies
+    // beside it), ONNX Runtime once loaded (below; its LICENSE and ThirdPartyNotices.txt lie beside the library)
+    if (const QString yunet = Extensions::faceModel(); !yunet.isEmpty())
+        out << Part{"YuNet 2023mar face detection, Shiqi Yu (extension \"faces\")", "MIT", false, yunet};
+
+    // Loaded libraries: GPL ones by name, ONNX Runtime
     for (const QString& path : loadedLibraries()) {
         const QString file = QFileInfo(path).fileName();
+        if (baseName(file) == QLatin1String("onnxruntime")) {
+            out << Part{"ONNX Runtime " + file + " (extension \"onnxruntime\" or Piper's copy)", "MIT", false, path};
+            continue;
+        }
         const QString gpl = knownGplLicense(file);
         if (gpl.isEmpty()) continue;
         Part p;

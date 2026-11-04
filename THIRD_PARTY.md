@@ -33,6 +33,14 @@ Not in these packages: x264, x265, Rubber Band, vid.stab, frei0r plugins.
 
 whisper.cpp (speech recognition, MIT) is not bundled: schneidi downloads it as an extension on request.
 
+Local AI models are not bundled either; on request (Extensions, `schneidi-cli extensions --install faces`) schneidi
+downloads, each pinned by size and SHA-256:
+
+| Extension | License | What for |
+|---|---|---|
+| [ONNX Runtime](https://github.com/microsoft/onnxruntime) 1.20.1, the CPU build of its GitHub release (Linux x64, Windows x64), id `onnxruntime` | MIT (its `LICENSE` and `ThirdPartyNotices.txt` are kept beside the library) | runs the models below; loaded at run time (QLibrary), never linked |
+| [YuNet](https://github.com/opencv/opencv_zoo/tree/48b10fa505aeb51fbd127fc60a5c660040e823b7/models/face_detection_yunet) `face_detection_yunet_2023mar.onnx` (Copyright (c) 2020 Shiqi Yu; opencv_zoo commit `48b10fa`), id `faces` | MIT (its `LICENSE` of the same commit is downloaded beside the model) | faces per shot in the material index (`index`) |
+
 x264/x265 (GPL-2.0+) are not bundled either: on request (Extensions, `schneidi-cli extensions --install x264`)
 schneidi downloads an FFmpeg program built with them ([BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds),
 GPL) and runs it as a separate program for H.264/H.265 export when no graphics card encoder works. schneidi does not

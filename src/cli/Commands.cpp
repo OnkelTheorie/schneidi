@@ -1076,11 +1076,11 @@ const QVector<Command>& commands()
           {"markers", T::String, "with apply: phrases (default) or bars"}},
          cmdBeats},
         {"index", "Material index: per shot (cut) of each file its time, quality (sharp/blurry, dark/overexposed, "
-                  "motion, pan, face likely), speech (project transcripts), hearable events, tags and description; "
-                  "cached, so a second call is instant. Building it shows the shots without a description as a sheet: "
-                  "describe them with annotate (kept apart from the cache). query searches it (German/English, "
-                  "e.g. \"wo lacht er\", \"ruhige Totale vom Laden\"): hits as file + source seconds, with a project "
-                  "also where they play on the timeline.",
+                  "motion, pan, face likely; faces + face_box with the faces extension), speech (project transcripts), "
+                  "hearable events, tags and description; cached, so a second call is instant. Building it shows the "
+                  "shots without a description as a sheet: describe them with annotate (kept apart from the cache). "
+                  "query searches it (German/English, e.g. \"wo lacht er\", \"ruhige Totale vom Laden\"): hits as "
+                  "file + source seconds, with a project also where they play on the timeline.",
          {{"file", T::Path, "media file", false, true},
           {"files", T::Paths, "several media files"},
           {"project", T::Path, "a project (or \"@app\"): its media (unless files are given), their transcripts, and hits "
@@ -1252,12 +1252,14 @@ const QVector<Command>& commands()
          cmdScopes},
         {"extensions", "Optional downloads (not part of schneidi): whisper speech recognition and its models, x264 "
                        "(an ffmpeg program with x264/x265 for better H.264/H.265 export quality when no graphics card "
-                       "encoder works; GPL, runs as its own program), and piper text to speech with its voices (edit "
-                       "op 'speak'). Without arguments: list with sizes and what is installed.",
+                       "encoder works; GPL, runs as its own program), piper text to speech with its voices (edit "
+                       "op 'speak'), and faces (YuNet face detection for `index`, brings onnxruntime). Without "
+                       "arguments: list with sizes and what is installed.",
          {{"install", T::String, "ids to download and install, e.g. whisper,small (model sizes: turbo 574 MB, "
                                  "small 190 MB, base 60 MB, tiny 32 MB), x264 (72 MB, Windows 90 MB) or "
                                  "piper,de_DE-ramona (piper 26 MB, each voice 63 MB; en_US-ljspeech = English, "
-                                 "de_DE-thorsten = clearer German voice, see its licence note)"},
+                                 "de_DE-thorsten = clearer German voice, see its licence note) or faces (0.2 MB + "
+                                 "onnxruntime 6 MB, Windows 66 MB)"},
           {"remove", T::String, "ids to delete again"},
           {"reinstall", T::Boolean, "download again even if installed"}},
          cmdExtensions},

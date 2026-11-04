@@ -2151,7 +2151,6 @@
  "optional": "opcional",
  "prüft eine Datei": "revisa un archivo",
  "prüft vor dem Export": "revisa antes de exportar",
- "rechnet kleine KI-Modelle offline auf dem Prozessor (für Ton-Ereignisse)": "ejecuta pequeños modelos de IA sin conexión en el procesador (para eventos de sonido)",
  "rendert": "renderiza",
  "ruhig": "tranquilo",
  "scharf": "nítido",
@@ -2256,5 +2255,8 @@
  "der Klang liefe über das Ende der Timeline hinaus": "el sonido pasaría del final de la línea de tiempo",
  "nur ein Einschlag je Video": "solo un impacto por vídeo",
  "schon genug Klänge in dieser Minute": "ya hay suficientes sonidos en este minuto",
- "zu nah an einem anderen Klang": "demasiado cerca de otro sonido"
+ "zu nah an einem anderen Klang": "demasiado cerca de otro sonido",
+ "Gesichtserkennung (YuNet)": "Detección de caras (YuNet)",
+ "findet Gesichter im Bild für den Material-Index (braucht ONNX Runtime)": "encuentra caras en la imagen para el índice del material (necesita ONNX Runtime)",
+ "rechnet kleine KI-Modelle offline auf dem Prozessor (für Gesichter und Ton-Ereignisse)": "ejecuta pequeños modelos de IA sin conexión en el procesador (para caras y eventos de sonido)"
 }

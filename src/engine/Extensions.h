@@ -4,7 +4,8 @@
 // whisper.cpp (speech to text) and its language models, an ffmpeg program with x264/x265 (better H.264/H.265 export
 // without a graphics card encoder; GPL, so schneidi never links it: the export writer runs it as a separate process,
 // see engine/ExternalEncoder), and Piper (text to speech, MIT; its build carries espeak-ng (GPL), so it too only ever
-// runs as a separate process, see engine/Tts) with its voices. Fixed catalog with pinned versions and SHA-256 sums; everything lands in
+// runs as a separate process, see engine/Tts) with its voices, ONNX Runtime (MIT, a library loaded at run time, see
+// engine/Inference) and the YuNet face model (MIT, see engine/FaceDetect). Fixed catalog with pinned versions and SHA-256 sums; everything lands in
 // AppDataLocation/extensions and can be removed again.
 
 #include <QByteArray>
@@ -21,7 +22,7 @@ class QCryptographicHash;
 
 namespace Extensions {
 
-enum class Kind { Program, WhisperModel, WhisperVad, Encoder, Speech, Voice, Runtime, AudioModel, SoundPack };
+enum class Kind { Program, WhisperModel, WhisperVad, Encoder, Speech, Voice, Runtime, AudioModel, SoundPack, FaceModel };
 
 struct Item {
     QString id;          // "whisper", "whisper-model-small", "x264"
@@ -32,7 +33,8 @@ struct Item {
     QByteArray sha256;   // hex
     qint64 size = 0;     // bytes of the download
     QString fileName;    // model: file in models/; program: archive name
-    // Voice: its config file (<model>.onnx.json), a second download; audio model: its class list
+    // Voice: its config file (<model>.onnx.json), a second download; audio model: its class list; face model: its
+    // licence text (LICENSE, beside the model)
     QString configUrl;
     QByteArray configSha256;
     qint64 configSize = 0;
@@ -97,6 +99,9 @@ QString piperOnnxRuntime();
 // empty = not installed
 QString audioEventsModel();
 QString audioEventsLabels();
+// YuNet 2023mar (face detection, MIT) of the "faces" extension, or of SCHNEIDI_YUNET (a model file; tests): the model
+// (.onnx); empty = not installed. Its licence text lies beside it as LICENSE.
+QString faceModel();
 
 // Sound packs (op 'sfx', Effects Library "Klänge"): free sound collections (CC0) as archives, each unpacked into
 // soundPacksDir()/<id>. A pack must carry its licence: without a LICENSE (LICENCE, COPYING, also .txt/.md) file at
