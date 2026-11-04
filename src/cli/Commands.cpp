@@ -1076,11 +1076,11 @@ const QVector<Command>& commands()
           {"markers", T::String, "with apply: phrases (default) or bars"}},
          cmdBeats},
         {"index", "Material index: per shot (cut) of each file its time, quality (sharp/blurry, dark/overexposed, "
-                  "motion, pan, face likely), speech (project transcripts), hearable events, tags and description; "
-                  "cached, so a second call is instant. Building it shows the shots without a description as a sheet: "
-                  "describe them with annotate (kept apart from the cache). query searches it (German/English, "
-                  "e.g. \"wo lacht er\", \"ruhige Totale vom Laden\"): hits as file + source seconds, with a project "
-                  "also where they play on the timeline.",
+                  "motion, pan, face likely; faces + face_box with the faces extension), speech (project transcripts), "
+                  "hearable events, tags and description; cached, so a second call is instant. Building it shows the "
+                  "shots without a description as a sheet: describe them with annotate (kept apart from the cache). "
+                  "query searches it (German/English, e.g. \"wo lacht er\", \"ruhige Totale vom Laden\"): hits as "
+                  "file + source seconds, with a project also where they play on the timeline.",
          {{"file", T::Path, "media file", false, true},
           {"files", T::Paths, "several media files"},
           {"project", T::Path, "a project (or \"@app\"): its media (unless files are given), their transcripts, and hits "

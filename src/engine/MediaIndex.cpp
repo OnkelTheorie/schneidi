@@ -2,6 +2,7 @@
 #include "engine/MediaIndex.h"
 
 #include "core/PathKey.h"
+#include "engine/FaceDetect.h"
 #include "engine/OpenMedia.h"
 #include "engine/video/Scan.h"
 
@@ -39,6 +40,7 @@ constexpr int kWidth = 320;          // analysis picture width (as `scenes`)
 constexpr double kCutScore = 0.3;    // `scenes` default threshold
 constexpr double kMinShot = 0.5;     // `scenes` default 'min'
 constexpr double kPanRate = 5;       // pan checks per second
+constexpr double kFaceRate = 1;      // face detections per second (YuNet: ~25 ms per picture on 2 cores)
 constexpr double kAudioPiece = 30;   // files without a picture: "shots" of this length
 // Laplacian/gradient ratio -> sharpness 0..1: below kSharpFloor nothing is sharp (a 10 px blur on 640 px: 0.4), from
 // kSharpFloor + kSharpSpan on fully (crisp test pictures 1.5, 8-bit noise of a smooth gradient keeps it above 0)
@@ -61,8 +63,9 @@ QString hashOf(const QString& s)
     return QString::fromLatin1(QCryptographicHash::hash(s.toUtf8(), QCryptographicHash::Sha1).toHex());
 }
 
-// How the audio events were made is part of the key: installing or updating the audio-events model measures anew
-QString keyOf(const QFileInfo& fi) { return cacheKey(fi.absoluteFilePath(), AudioEvents::way()); }
+// How the audio events were made and how faces were found are part of the key: installing or updating the
+// audio-events or the face model measures anew
+QString keyOf(const QFileInfo& fi) { return cacheKey(fi.absoluteFilePath(), AudioEvents::way(), FaceDetect::way()); }
 
 double round3(double v) { return std::round(v * 1000) / 1000; }
 
@@ -75,6 +78,8 @@ struct FrameStat {
     double sharp = -1; // Laplacian / gradient ratio (-1: too flat to say)
     double skin = 0;   // share of skin-coloured pixels
     int pan = -1;      // moved as a whole against the picture before: 1, not: 0, not checked: -1
+    int faces = -1;    // faces found (YuNet), -1: not looked
+    FaceDetect::Face largest; // the largest of them (fractions)
 };
 
 double meanDifference(const Video::Scan::Frame& a, const Video::Scan::Frame& b)
@@ -217,6 +222,20 @@ Quality qualityOf(const std::vector<FrameStat>& stats, size_t first, size_t last
     q.overexposed = q.bright > 0.85;
     q.pan = panN >= 2 && panYes * 2 >= panN;
     q.face = q.skin >= 0.08 ? "likely" : q.skin >= 0.02 ? "maybe" : "no";
+    // Faces: the most in one looked-at picture, the largest box among them (a shot without a looked-at picture,
+    // shorter than 1 s, gets the nearest picture before it: the same scene, most likely)
+    const auto takeFaces = [&q](const FrameStat& s) {
+        q.faces = std::max(q.faces, s.faces);
+        if (s.faces > 0 && s.largest.w * s.largest.h > q.faceW * q.faceH) {
+            q.faceX = round3(s.largest.x);
+            q.faceY = round3(s.largest.y);
+            q.faceW = round3(s.largest.w);
+            q.faceH = round3(s.largest.h);
+        }
+    };
+    for (size_t i = first; i < last; ++i) takeFaces(stats[i]);
+    for (size_t i = first; q.faces < 0 && i-- > 0;)
+        if (stats[i].faces >= 0) takeFaces(stats[i]);
     return q;
 }
 
@@ -260,11 +279,14 @@ QJsonObject toJson(const Entry& e, const QVector<AudioEvents::Event>& events)
     QJsonArray shots, evs;
     for (const Shot& s : e.shots) {
         const Quality& q = s.quality;
-        shots << QJsonObject{{"n", s.n},          {"from", s.from},       {"to", s.to},
-                             {"thumb", s.thumb},  {"sharp", q.sharp},     {"bright", q.bright},
-                             {"motion", q.motion}, {"skin", q.skin},      {"dark", q.dark},
-                             {"overexposed", q.overexposed}, {"blurry", q.blurry}, {"pan", q.pan},
-                             {"face", q.face}};
+        QJsonObject o{{"n", s.n},          {"from", s.from},       {"to", s.to},
+                      {"thumb", s.thumb},  {"sharp", q.sharp},     {"bright", q.bright},
+                      {"motion", q.motion}, {"skin", q.skin},      {"dark", q.dark},
+                      {"overexposed", q.overexposed}, {"blurry", q.blurry}, {"pan", q.pan},
+                      {"face", q.face}};
+        if (q.faces >= 0) o["faces"] = q.faces;
+        if (q.faces > 0) o["face_box"] = QJsonArray{q.faceX, q.faceY, q.faceW, q.faceH};
+        shots << o;
     }
     for (const AudioEvents::Event& ev : events) evs << eventJson(ev);
     return {{"version", kVersion}, {"file", e.file}, {"duration", e.duration}, {"video", e.video},
@@ -304,6 +326,13 @@ std::optional<Entry> fromJson(const QJsonObject& o)
         q.blurry = j["blurry"].toBool();
         q.pan = j["pan"].toBool();
         q.face = j["face"].toString();
+        q.faces = j["faces"].toInt(-1);
+        if (const QJsonArray box = j["face_box"].toArray(); box.size() == 4) {
+            q.faceX = box[0].toDouble();
+            q.faceY = box[1].toDouble();
+            q.faceW = box[2].toDouble();
+            q.faceH = box[3].toDouble();
+        }
         e.shots << s;
     }
     QVector<AudioEvents::Event> events;
@@ -329,8 +358,10 @@ void saveJson(const QString& file, const QJsonObject& o)
     if (out.open(QIODevice::WriteOnly) && out.write(QJsonDocument(o).toJson(QJsonDocument::Compact)) >= 0) out.commit();
 }
 
-std::optional<Entry> measure(const QString& path, const Options& options, QString* error)
+// faces: whether faces were looked for (the face model ran)
+std::optional<Entry> measure(const QString& path, const Options& options, QString* error, bool* faces)
 {
+    *faces = false;
     const auto info = probe(path);
     if (!info) {
         if (error) *error = "cannot read media: " + path;
@@ -347,6 +378,24 @@ std::optional<Entry> measure(const QString& path, const Options& options, QStrin
         o.format = AV_PIX_FMT_YUV420P;
         std::mutex mutex;
         std::vector<FrameStat> stats;
+        // Faces (YuNet), when installed: one session for all decoding threads, one picture at a time (the runtime
+        // uses several cores itself). A model that fails on a picture is not asked again (the entry gets no faces).
+        std::unique_ptr<FaceDetect::Detector> detector = FaceDetect::available() ? FaceDetect::Detector::open() : nullptr;
+        std::mutex faceMutex;
+        bool faceFailed = false;
+        const auto findFaces = [&](const Video::Scan::Frame& f, FrameStat& s) {
+            const std::vector<uint8_t> bgr = FaceDetect::bgrFromYuv420(f.data, f.linesize, f.width, f.height, f.fullRange);
+            std::lock_guard lock(faceMutex);
+            if (faceFailed) return;
+            const auto found = detector->detect(bgr.data(), f.width, f.height, f.width * 3);
+            if (!found) {
+                faceFailed = true;
+                return;
+            }
+            s.faces = int(found->size());
+            for (const FaceDetect::Face& face : *found)
+                if (face.w * face.h > s.largest.w * s.largest.h) s.largest = face;
+        };
         const Video::Scan::Result r = Video::Scan::run(
             path, o,
             [&](const Video::Scan::Frame& f, const Video::Scan::Frame* previous) {
@@ -368,6 +417,8 @@ std::optional<Entry> measure(const QString& path, const Options& options, QStrin
                     if (std::floor(f.seconds * kPanRate) != std::floor(previous->seconds * kPanRate))
                         s.pan = panOf(f, *previous);
                 }
+                if (detector && (!previous || std::floor(f.seconds * kFaceRate) != std::floor(previous->seconds * kFaceRate)))
+                    findFaces(f, s);
                 std::lock_guard lock(mutex);
                 stats.push_back(s);
             },
@@ -383,6 +434,9 @@ std::optional<Entry> measure(const QString& path, const Options& options, QStrin
         if (e.duration <= 0) e.duration = round3(std::max_element(stats.begin(), stats.end(), [](auto& a, auto& b) {
                                                      return a.seconds < b.seconds;
                                                  })->seconds);
+        if (faceFailed) // all or nothing: a half-measured file would look like one without faces
+            for (FrameStat& s : stats) s.faces = -1;
+        *faces = detector && !faceFailed;
         e.shots = shotsOf(stats, e.duration);
     } else {
         // Sound only (a podcast, a song): pieces of fixed length, for the speech and the events in them
@@ -477,15 +531,17 @@ void contentChanged()
 
 } // namespace
 
-QString cacheKey(const QString& file, const QString& audioWay)
+QString cacheKey(const QString& file, const QString& audioWay, const QString& faceWay)
 {
     const QFileInfo fi(file);
-    return hashOf(QString("%1|%2|%3|%4|%5")
-                      .arg(PathKey::of(file))
-                      .arg(fi.size())
-                      .arg(fi.lastModified().toMSecsSinceEpoch())
-                      .arg(kVersion)
-                      .arg(audioWay));
+    QString id = QString("%1|%2|%3|%4|%5")
+                     .arg(PathKey::of(file))
+                     .arg(fi.size())
+                     .arg(fi.lastModified().toMSecsSinceEpoch())
+                     .arg(kVersion)
+                     .arg(audioWay);
+    if (!faceWay.isEmpty()) id += "|faces:" + faceWay; // none: the key as before faces were measured
+    return hashOf(id);
 }
 
 int contentReadCount() { return g_contentReads.load(); }
@@ -524,8 +580,11 @@ std::optional<Entry> build(const QString& file, const Options& options, QString*
     }
     if (!options.refresh)
         if (auto e = cached(file)) return e;
-    std::optional<Entry> e = measure(fi.absoluteFilePath(), options, error);
+    bool faces = false;
+    std::optional<Entry> e = measure(fi.absoluteFilePath(), options, error, &faces);
     if (!e) return std::nullopt;
+    // A sound-only file has no picture to look at: keyed as the face model says, nothing to measure anew
+    const QString faceWay = faces || !e->video ? FaceDetect::way() : QString();
     std::function<QVector<AudioEvents::Event>(const QString&)> source;
     {
         QMutexLocker lock(&g_mutex);
@@ -553,7 +612,7 @@ std::optional<Entry> build(const QString& file, const Options& options, QString*
     }
     distribute(*e, events);
     if (!incomplete) { // a read error is not the file's sound: measured again next time
-        const QString key = cacheKey(fi.absoluteFilePath(), way);
+        const QString key = cacheKey(fi.absoluteFilePath(), way, faceWay);
         saveJson(cacheDir() + '/' + key + ".json", toJson(*e, events));
         QMutexLocker lock(&g_mutex);
         memory().insert(key, *e);
@@ -665,7 +724,7 @@ QVector<IndexSearch::Shot> searchable(const Entry& e)
         x.blurry = q.blurry;
         x.sharp = e.video && q.sharp >= 0.6;
         x.pan = q.pan;
-        x.face = q.face == QLatin1String("likely");
+        x.face = q.faces >= 0 ? q.faces > 0 : q.face == QLatin1String("likely"); // found faces over the skin hint
         if (!e.video) x.motion = -1; // no picture: neither calm nor busy
         out << x;
     }

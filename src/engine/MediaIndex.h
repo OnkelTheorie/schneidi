@@ -5,7 +5,7 @@
 // spoken in it (from the media transcripts of a project) and a description with tags that a person or the calling AI
 // wrote. The measured part comes from one pass over the picture (engine/video/Scan, time ranges decoded in parallel
 // like `scenes`) and is cached per file in CacheLocation/index (key: path, size, modification time, kVersion, the
-// way the audio events are made).
+// way the audio events are made, the face model).
 // What is written (descriptions, tags) is not cache: it lives in AppDataLocation/index and survives clearing the
 // cache; it is matched to the shots by time, so a re-measured file keeps it. Thread-safe, no GUI dependency.
 //
@@ -16,6 +16,8 @@
 //  - motion: mean change of brightness per pixel between neighbouring pictures (0 = still, 5+ = a lot)
 //  - pan: most pictures of the shot match their predecessor best when shifted as a whole
 //  - face: share of skin-coloured pixels (YCbCr box), "likely" / "maybe" / "no" - a hint, not a detector
+//  - faces: with the "faces" extension (YuNet, engine/FaceDetect) and ONNX Runtime, the faces found in one picture
+//    per second of the shot (on a 640 px copy): the most in one picture and the largest box; unmeasured otherwise
 
 #include "core/IndexSearch.h"
 #include "core/Types.h"
@@ -41,7 +43,9 @@ struct Quality {
     bool overexposed = false; // bright > 0.85
     bool blurry = false;
     bool pan = false;
-    QString face;          // "likely", "maybe", "no"
+    QString face;          // "likely", "maybe", "no" (skin hint)
+    int faces = -1;        // most faces in one picture of the shot (YuNet); -1 = not measured (no face model)
+    double faceX = 0, faceY = 0, faceW = 0, faceH = 0; // the largest of them, fractions of the picture (faces > 0)
 };
 
 struct Shot {
@@ -96,9 +100,10 @@ QVector<IndexSearch::Shot> searchable(const Entry& e);
 
 QString cacheDir();
 QString notesDir();
-// The cache key of a file's entry: path, size, modification time, kVersion and how its audio events are made
-// (AudioEvents::way(): the heuristics or YAMNet with its model file)
-QString cacheKey(const QString& file, const QString& audioWay);
+// The cache key of a file's entry: path, size, modification time, kVersion, how its audio events are made
+// (AudioEvents::way(): the heuristics or YAMNet with its model file) and how faces are found (FaceDetect::way(): ""
+// = not at all, which keeps the key of a file indexed without the face model)
+QString cacheKey(const QString& file, const QString& audioWay, const QString& faceWay = {});
 // For tests: how often the first MB of a file was read for its notes by content
 int contentReadCount();
 // For tests: forget what is cached in memory
