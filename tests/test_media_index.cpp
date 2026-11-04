@@ -345,6 +345,29 @@ int main(int argc, char** argv)
         CHECK(cmd->summary.size() < 700);
         CHECK(cmd->params.size() <= 10);
     }
+    // YAMNet installed but failing on a file (the heuristics answered): the entry is found again, measured once
+    {
+        const QString clip = Check::makeMedia(dir.filePath("yamnet-fails.wav"), {"-f", "lavfi", "-i", "sine=f=500:d=3"});
+        if (CHECK(!clip.isEmpty())) {
+            MediaIndex::setWaysForTests(AudioEvents::wayKey("/m/yamnet.onnx"), AudioEvents::wayKey({}));
+            const int before = eventCalls;
+            CHECK(MediaIndex::build(clip, {}).has_value());
+            CHECK_EQ(eventCalls, before + 1);
+            CHECK(MediaIndex::cached(clip).has_value()); // in memory
+            MediaIndex::clearMemoryCache();
+            CHECK(MediaIndex::cached(clip).has_value()); // and on disk
+            CHECK(MediaIndex::build(clip, {}).has_value());
+            CHECK_EQ(eventCalls, before + 1); // not measured again
+            // A heuristic entry made before YAMNet was installed is no answer of YAMNet: measured anew
+            const QString older = Check::makeMedia(dir.filePath("before-yamnet.wav"), {"-f", "lavfi", "-i", "sine=f=600:d=3"});
+            MediaIndex::setWaysForTests(AudioEvents::wayKey({}), {});
+            CHECK(MediaIndex::build(older, {}).has_value());
+            MediaIndex::setWaysForTests(AudioEvents::wayKey("/m/yamnet.onnx"), {});
+            MediaIndex::clearMemoryCache();
+            CHECK(!MediaIndex::cached(older).has_value());
+            MediaIndex::setWaysForTests({}, {});
+        }
+    }
     MediaIndex::setEventSource({});
 
     // Cancelled (the app closes while the Media Pool builds the index): a sound-only file stops too, nothing is
