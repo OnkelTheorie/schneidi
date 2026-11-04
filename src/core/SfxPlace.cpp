@@ -46,10 +46,12 @@ Result place(QVector<Moment> moments, double anchor, double length, double end, 
         i = j;
     }
     QVector<double> taken, sameKind; // every sound (spacing), the ones of this kind (cap)
+    QVector<std::pair<double, double>> spans; // the time the sounds take on the target track
     bool impactUsed = false;
     for (const Existing& e : existing) {
         taken << e.at;
         if (e.sameKind) sameKind << e.at;
+        if (e.sameTrack) spans << std::pair{e.start, e.end};
         impactUsed = impactUsed || e.impact;
     }
     for (const Moment& m : order) {
@@ -58,6 +60,10 @@ Result place(QVector<Moment> moments, double anchor, double length, double end, 
         if (start < -1e-9) why = "before_start";
         else if (m.at >= end || start + length > end + 1e-9) why = "after_end";
         else if (rules.impact && impactUsed) why = "impact_once";
+        else if (std::any_of(spans.begin(), spans.end(), [&](const std::pair<double, double>& sp) {
+                     return sp.first < start + length - 1e-9 && start < sp.second - 1e-9;
+                 }))
+            why = "overlaps";
         else if (std::any_of(taken.begin(), taken.end(), [&](double t) { return std::abs(t - m.at) < rules.minGap - 1e-9; }))
             why = "too_close";
         else if (rules.maxPerMinute > 0) {
@@ -78,6 +84,7 @@ Result place(QVector<Moment> moments, double anchor, double length, double end, 
         }
         taken << m.at;
         sameKind << m.at;
+        spans << std::pair{start, start + length};
         impactUsed = impactUsed || rules.impact;
         r.placed << Placed{m.at, start};
     }

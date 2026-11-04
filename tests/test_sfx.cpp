@@ -220,6 +220,25 @@ void testPlace()
     rules.minGap = 0;
     r = place({{1.0}, {1.2}}, 0, 0, 60, {}, rules);
     CHECK_EQ(int(r.placed.size()), 1);
+    // Long sounds (4 s risers, 3 s apart): the stronger moment keeps its sound, the weaker one overlaps it; the
+    // skipped one takes nothing from its neighbours (a third moment 2 s after it is placed)
+    rules = Rules{};
+    rules.maxPerMinute = 0;
+    r = place({{10, 0.3}, {13, 0.9}, {19, 0.3}}, 4.0, 4.2, 60, {}, rules);
+    if (CHECK_EQ(int(r.placed.size()), 2)) {
+        CHECK(std::abs(r.placed[0].moment - 13) < 1e-9);
+        CHECK(std::abs(r.placed[1].moment - 19) < 1e-9);
+    }
+    CHECK(r.skipped.size() == 1 && std::abs(r.skipped[0].moment - 10) < 1e-9 && r.skipped[0].why == "overlaps");
+    // A sound on the target track blocks its time; one on another track only counts for the spacing
+    Existing other{30, false, true};
+    other.start = 26;
+    other.end = 31;
+    r = place({{33}}, 4.0, 4.2, 60, {other}, rules);
+    CHECK_EQ(int(r.placed.size()), 1);
+    other.sameTrack = true;
+    r = place({{33}}, 4.0, 4.2, 60, {other}, rules);
+    CHECK(r.placed.isEmpty() && r.skipped.size() == 1 && r.skipped[0].why == "overlaps");
 }
 
 QJsonObject run(const QString& name, const QJsonObject& raw, bool quiet = false)
@@ -316,6 +335,12 @@ void testOp(const QString& dir)
     CHECK(std::abs(n["volume_db"].toDouble() - -3) < 1e-6);
     r = edit(project, {QJsonObject{{"op", "sfx"}, {"at", "13s"}, {"kind", "boom"}, {"level", "normal"}}});
     CHECK_EQ(sfxNote(r)["placed"].toArray().size(), 0); // the one on the track counts
+    // ... also when the second one should go to another track (one impact per video, not per track)
+    edit(project, {QJsonObject{{"op", "add_track"}, {"kind", "audio"}}});
+    r = edit(project, {QJsonObject{{"op", "sfx"}, {"at", "13s"}, {"kind", "impact"}, {"level", "normal"}, {"track", "A3"}}});
+    if (!CHECK_EQ(sfxNote(r)["placed"].toArray().size(), 0))
+        std::printf("       %s\n", QJsonDocument(r).toJson(QJsonDocument::Compact).constData());
+    CHECK(sfxNote(r)["skipped"].toArray().size() == 1 && sfxNote(r)["skipped"][0]["why"].toString() == "impact_once");
     // A mild whoosh now: three whooshes in this minute already; a click has its own budget
     r = edit(project, {QJsonObject{{"op", "sfx"}, {"at", "8s"}, {"kind", "whoosh"}}});
     CHECK(sfxNote(r)["skipped"].toArray().size() == 1 && sfxNote(r)["skipped"][0]["why"].toString() == "per_minute");

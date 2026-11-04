@@ -30,6 +30,9 @@ struct Existing {
     double at = 0;
     bool impact = false;
     bool sameKind = true;
+    // On the track the new sounds go to: the time it takes there (seconds, [start, end)); a new sound must not overlap it
+    bool sameTrack = false;
+    double start = 0, end = 0;
 };
 
 struct Placed {
@@ -39,7 +42,8 @@ struct Placed {
 
 struct Skipped {
     double moment = 0;
-    QString why; // "too_close", "per_minute", "impact_once", "before_start", "after_end" (the sound would run past it)
+    QString why; // "too_close", "per_minute", "impact_once", "before_start", "after_end" (the sound would run past it),
+                 // "overlaps" (another sound on the track where this one would play)
 };
 
 struct Result {
@@ -49,7 +53,8 @@ struct Result {
 
 // anchor / length: of the sound (seconds); end = the timeline's end (seconds; the whole sound must end by then). When
 // the rules leave moments out, equal-weight ones are taken spread over the time (the farthest from those taken first),
-// not the first ones in a row
+// not the first ones in a row. A sound longer than the gap is checked against the time the others take too (a
+// stronger moment is never left out for a weaker one whose sound would overlap it)
 Result place(QVector<Moment> moments, double anchor, double length, double end, const QVector<Existing>& existing,
              Rules rules);
 
