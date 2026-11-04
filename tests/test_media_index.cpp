@@ -6,6 +6,7 @@
 // "dunkel"); hits in timeline time for trimmed clips; a file name with umlauts; the MCP description stays short.
 #include "cli/Commands.h"
 #include "core/IndexSearch.h"
+#include "engine/FaceDetect.h"
 #include "engine/MediaIndex.h"
 
 #include "check.h"
@@ -97,6 +98,12 @@ int main(int argc, char** argv)
     CHECK(AudioEvents::wayKey("/m/yamnet.onnx").startsWith("yamnet|"));
     CHECK(MediaIndex::cacheKey("/x/a.mp4", AudioEvents::wayKey({}))
           != MediaIndex::cacheKey("/x/a.mp4", AudioEvents::wayKey("/m/yamnet.onnx")));
+    // ... and how faces are found (YuNet, extension "faces"); without the face model the key stays as it was
+    CHECK_EQ(MediaIndex::cacheKey("/x/a.mp4", AudioEvents::wayKey({}), FaceDetect::wayKey({})),
+             MediaIndex::cacheKey("/x/a.mp4", AudioEvents::wayKey({})));
+    CHECK(MediaIndex::cacheKey("/x/a.mp4", AudioEvents::wayKey({}), "yunet|/m/yunet.onnx|1|2")
+          != MediaIndex::cacheKey("/x/a.mp4", AudioEvents::wayKey({})));
+    qunsetenv("SCHNEIDI_YUNET"); // no face model here (tests/test_face_detect has it): the skin hint only
     if (!Check::haveFfmpeg()) return Check::skip("ffmpeg missing");
     Check::initEngine();
     QTemporaryDir dir;
@@ -150,6 +157,7 @@ int main(int argc, char** argv)
         CHECK(q(4)["pan"].toBool() && q(4)["motion"].toDouble() > 2.0);
         CHECK_EQ(q(5)["face"].toString(), QString("likely"));
         CHECK(q(0)["face"].toString() != QLatin1String("likely"));
+        for (int i = 0; i < 6; ++i) CHECK(!q(i).contains("faces") && !q(i).contains("face_box")); // not measured
         CHECK(shots[3].toObject()["events"].toArray().size() == 1);
         CHECK(!shots[0].toObject().contains("events"));
     }
