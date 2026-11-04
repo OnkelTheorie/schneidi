@@ -356,5 +356,41 @@ int main(int argc, char** argv)
                 qframes / double(kRate), quickStats.fadeOuts, quickStats.underruns, quickLargest);
     CHECK(quickStats.fadeOuts >= 10);
     CHECK_EQ(quickClicks, 0);
+
+    // 11. The feeder falls behind (a starved computer): the sound runs dry and comes back - faded out and in, never
+    // broken off (an underrun was a hard stop and a hard start: two clicks)
+    const QString starvedPath = tmp.filePath("starved.raw");
+    qputenv("SCHNEIDI_AUDIO_DEVICE", ("file:" + QDir::toNativeSeparators(starvedPath)).toLocal8Bit());
+    auto starved = std::make_unique<Audio::Player>();
+    starved->setTimeline(tl, kFps);
+    starved->play(double(frameStart(10)), 1.0);
+    starved->release();
+    sleepMs(300);
+    for (int n = 0; n < 3; ++n) { // three gaps, at different places in the device's periods
+        starved->stallFeedForTest(150 + 37 * n);
+        sleepMs(450);
+    }
+    starved->pause();
+    sleepMs(100);
+    const Audio::Player::Stats starvedStats = starved->stats();
+    starved.reset();
+    QFile sf(starvedPath);
+    if (!CHECK(sf.open(QIODevice::ReadOnly))) return Check::result();
+    const QByteArray sraw = sf.readAll();
+    const auto* sv = reinterpret_cast<const int16_t*>(sraw.constData());
+    const qsizetype sframes = sraw.size() / 4;
+    int starvedClicks = 0, starvedLargest = 0;
+    for (qsizetype i = 2; i < sframes; ++i) {
+        const int d2 = std::abs(sv[i * 2] - 2 * sv[(i - 1) * 2] + sv[(i - 2) * 2]);
+        starvedLargest = std::max(starvedLargest, d2);
+        if (d2 > 1500) {
+            if (starvedClicks < 5) std::printf("       Sprung in der Welle bei %.3f s: %d\n", i / double(kRate), d2);
+            ++starvedClicks;
+        }
+    }
+    std::printf("Ausgehungert: %.2f s Ton, %d Aussetzer, größte Krümmung %d\n", sframes / double(kRate),
+                starvedStats.underruns, starvedLargest);
+    CHECK(starvedStats.underruns >= 3); // the case happened
+    CHECK_EQ(starvedClicks, 0);
     return Check::result();
 }
