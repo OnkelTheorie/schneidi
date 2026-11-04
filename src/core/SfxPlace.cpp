@@ -60,12 +60,13 @@ Result place(QVector<Moment> moments, double anchor, double length, double end, 
         if (start < -1e-9) why = "before_start";
         else if (m.at >= end || start + length > end + 1e-9) why = "after_end";
         else if (rules.impact && impactUsed) why = "impact_once";
+        else if (std::any_of(taken.begin(), taken.end(), [&](double t) { return std::abs(t - m.at) < rules.minGap - 1e-9; }))
+            why = "too_close";
+        // farther apart than the gap, but the sounds would still overlap (long sounds)
         else if (std::any_of(spans.begin(), spans.end(), [&](const std::pair<double, double>& sp) {
                      return sp.first < start + length - 1e-9 && start < sp.second - 1e-9;
                  }))
             why = "overlaps";
-        else if (std::any_of(taken.begin(), taken.end(), [&](double t) { return std::abs(t - m.at) < rules.minGap - 1e-9; }))
-            why = "too_close";
         else if (rules.maxPerMinute > 0) {
             // Every 60 s window holding this moment keeps at most maxPerMinute sounds of this kind
             QVector<double> near;
