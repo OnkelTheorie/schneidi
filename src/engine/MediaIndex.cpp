@@ -460,7 +460,10 @@ QString contentNotesFile(const QString& file)
     QFile f(file);
     if (!f.open(QIODevice::ReadOnly)) return {};
     ++g_contentReads;
-    const QByteArray head = QCryptographicHash::hash(f.read(1 << 20), QCryptographicHash::Sha1).toHex();
+    // A short read (a network drive gone, the file locked) is no key: nothing is kept, the next call reads again
+    const QByteArray data = f.read(1 << 20);
+    if (data.size() != std::min<qint64>(fi.size(), 1 << 20)) return {};
+    const QByteArray head = QCryptographicHash::hash(data, QCryptographicHash::Sha1).toHex();
     const QString path = notesDir() + '/' + contentPrefix(fi) + '-'
                          + hashOf(QString("%1|%2|%3").arg(fi.fileName()).arg(fi.size()).arg(QString::fromLatin1(head))) + ".json";
     QMutexLocker lock(&mutex);
