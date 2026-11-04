@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only AND MIT
-// Ported from earshot (https://github.com/Leonxlnx/earshot): earshot/forge/recipes/darkriser.py, shutter.py,
-// knock.py, subdrop.py and _tonal.py (burst, thump, modes, strike, finish), earshot/forge/dsp.py (room_ir, room, fade, trim_tail)
-// and the parameter sets riser/*, shutter/*, knock/* of earshot/forge/bank/forge04.json and pro_sub_drop/* of
-// forge_v2.json. Changes: C++, mono, own
-// deterministic noise, _tonal.finish's small room as a noise tail instead of fx.reverb. The ported code is under the
-// MIT licence:
+// Ported from earshot (https://github.com/Leonxlnx/earshot): earshot/forge/recipes/riser.py (render_build, unison,
+// phase_from_end, gate_shape, lvl, wet_of), darkriser.py, shutter.py, knock.py, subdrop.py and _tonal.py (burst,
+// thump, modes, strike, finish), earshot/forge/dsp.py (osc, room_ir, room, fade, trim_tail) and the parameter sets
+// riser/*, shutter/*, knock/* of earshot/forge/bank/forge04.json and riser/tension, riser/swell, riser/air,
+// pro_sub_drop/* of forge_v2.json. Changes: C++, mono (the mid of the stereo layers), own deterministic noise,
+// _tonal.finish's small room and riser.py's FDN reverb as noise tails instead of fx.reverb, the riser's saturation
+// without oversampling, its reverse swell no longer than 1.2 x the length. The ported code is under the MIT licence:
 //
 // MIT License
 //

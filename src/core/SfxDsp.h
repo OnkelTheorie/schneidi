@@ -4,7 +4,7 @@
 // filters, smoothing, coloured noise, shelves, a small room, the edit. Header-only, internal to those two files.
 //
 // Ported from earshot (https://github.com/Leonxlnx/earshot): earshot/forge/recipes/whoosh.py (`render`, `envelope`,
-// `_edit`, `shelf`, helpers), earshot/forge/dsp.py (`svf`) and the parameter sets of earshot/forge/bank/forge_v2.json
+// `_edit`, `shelf`, helpers), earshot/forge/dsp.py (`svf`, `osc`) and the parameter sets of earshot/forge/bank/forge_v2.json
 // (swipe/*, pro_whoosh_big/*). Changes: C++, mono, own deterministic noise, a simpler noise-tail room instead of
 // fx.reverb's FDN, tape saturation without oversampling and emphasis. The ported code is under the MIT licence:
 //

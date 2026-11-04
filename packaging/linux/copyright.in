@@ -36,9 +36,10 @@ Copyright: 2026 Leon Lin
            2026 OnkelTheorie and schneidi contributors (the C++ port)
 License: MIT
  The built-in effect sounds of op 'sfx': a C++ port of earshot's sound recipes
- (https://github.com/Leonxlnx/earshot: forge/recipes/whoosh.py, darkriser.py,
- shutter.py, knock.py, subdrop.py, _tonal.py, forge/dsp.py) and parameter sets
- of its banks (forge_v2.json, forge04.json), compiled into schneidi.
+ (https://github.com/Leonxlnx/earshot: forge/recipes/whoosh.py, riser.py,
+ darkriser.py, shutter.py, knock.py, subdrop.py, _tonal.py, forge/dsp.py) and
+ parameter sets of its banks (forge_v2.json, forge04.json), compiled into
+ schneidi.
  .
  Permission is hereby granted, free of charge, to any person obtaining a copy
  of this software and associated documentation files (the "Software"), to deal
