@@ -81,6 +81,13 @@ QVector<Event> yamnet(const std::vector<float>& mono16k, QString* error = nullpt
 QVector<Event> yamnetWith(const QString& model, const QString& labels, const std::vector<float>& mono16k,
                           QString* error = nullptr, const std::function<bool(double)>& progress = {});
 
+// How events are made right now, as a cache key part: "heuristic", or YAMNet with its model file (path, size,
+// modification time). A cache of results that contain events (the material index) keys on it too, so installing or
+// updating the model measures anew.
+QString way(Engine engine = Engine::Auto);
+// The same for a given model file (empty = the heuristics); pure, for tests
+QString wayKey(const QString& model);
+
 // JSON for the CLI and the index: [{kind, from_s, to_s, conf, by}] (times to the millisecond, conf to 0.01)
 QJsonArray toJson(const QVector<Event>& events);
 

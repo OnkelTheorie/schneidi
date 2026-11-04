@@ -4,7 +4,8 @@
 // dark or bright, how much it moves, a camera pan, a face likely), hearable events (engine/AudioEvents), the words
 // spoken in it (from the media transcripts of a project) and a description with tags that a person or the calling AI
 // wrote. The measured part comes from one pass over the picture (engine/video/Scan, time ranges decoded in parallel
-// like `scenes`) and is cached per file in CacheLocation/index (key: path, size, modification time, kVersion).
+// like `scenes`) and is cached per file in CacheLocation/index (key: path, size, modification time, kVersion, the
+// way the audio events are made).
 // What is written (descriptions, tags) is not cache: it lives in AppDataLocation/index and survives clearing the
 // cache; it is matched to the shots by time, so a re-measured file keeps it. Thread-safe, no GUI dependency.
 //
@@ -95,6 +96,9 @@ QVector<IndexSearch::Shot> searchable(const Entry& e);
 
 QString cacheDir();
 QString notesDir();
+// The cache key of a file's entry: path, size, modification time, kVersion and how its audio events are made
+// (AudioEvents::way(): the heuristics or YAMNet with its model file)
+QString cacheKey(const QString& file, const QString& audioWay);
 // For tests: forget what is cached in memory
 void clearMemoryCache();
 // For tests (until engine/AudioEvents measures for real): where the events of a file come from (empty = AudioEvents)

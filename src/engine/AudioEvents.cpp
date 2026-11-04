@@ -1007,6 +1007,19 @@ Result filtered(Result r, const Options& o)
 
 } // namespace
 
+QString wayKey(const QString& model)
+{
+    if (model.isEmpty()) return "heuristic";
+    const QFileInfo m(model);
+    return QString("yamnet|%1|%2|%3").arg(m.absoluteFilePath()).arg(m.size()).arg(m.lastModified().toMSecsSinceEpoch());
+}
+
+QString way(Engine engine)
+{
+    const bool model = engine != Engine::Heuristic && yamnetAvailable();
+    return wayKey(model ? Extensions::audioEventsModel() : QString());
+}
+
 Result analyzeFile(const QString& path, int stream, const Options& options)
 {
     Result result;
@@ -1022,11 +1035,7 @@ Result analyzeFile(const QString& path, int stream, const Options& options)
         return result;
     }
     // The key names everything the result depends on: the file, the stream, the way and the model's file
-    QString way = "heuristic";
-    if (model) {
-        const QFileInfo m(Extensions::audioEventsModel());
-        way = QString("yamnet|%1|%2|%3").arg(m.absoluteFilePath()).arg(m.size()).arg(m.lastModified().toMSecsSinceEpoch());
-    }
+    const QString way = model ? wayKey(Extensions::audioEventsModel()) : wayKey({});
     const QString id = QString("%1|%2|%3|%4|%5|%6")
                            .arg(fi.absoluteFilePath())
                            .arg(fi.size())

@@ -58,14 +58,8 @@ QString hashOf(const QString& s)
     return QString::fromLatin1(QCryptographicHash::hash(s.toUtf8(), QCryptographicHash::Sha1).toHex());
 }
 
-QString keyOf(const QFileInfo& fi)
-{
-    return hashOf(QString("%1|%2|%3|%4")
-                      .arg(fi.absoluteFilePath())
-                      .arg(fi.size())
-                      .arg(fi.lastModified().toMSecsSinceEpoch())
-                      .arg(kVersion));
-}
+// How the audio events were made is part of the key: installing or updating the audio-events model measures anew
+QString keyOf(const QFileInfo& fi) { return cacheKey(fi.absoluteFilePath(), AudioEvents::way()); }
 
 double round3(double v) { return std::round(v * 1000) / 1000; }
 
@@ -425,6 +419,17 @@ void applyNotes(Entry& e)
 QString notesFile(const QString& file) { return notesDir() + '/' + hashOf(QFileInfo(file).absoluteFilePath()) + ".json"; }
 
 } // namespace
+
+QString cacheKey(const QString& file, const QString& audioWay)
+{
+    const QFileInfo fi(file);
+    return hashOf(QString("%1|%2|%3|%4|%5")
+                      .arg(fi.absoluteFilePath())
+                      .arg(fi.size())
+                      .arg(fi.lastModified().toMSecsSinceEpoch())
+                      .arg(kVersion)
+                      .arg(audioWay));
+}
 
 QString cacheDir() { return QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + "/index"; }
 QString notesDir() { return QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/index"; }

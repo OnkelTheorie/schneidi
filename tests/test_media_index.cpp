@@ -91,6 +91,12 @@ int main(int argc, char** argv)
     QGuiApplication app(argc, argv);
     Check::initApp("media_index");
     searchOnly();
+    // The cache key names how the audio events are made: installing or updating the audio-events model (YAMNet)
+    // measures anew instead of keeping the heuristic events (pure part: a real model needs the ONNX Runtime extension)
+    CHECK_EQ(AudioEvents::wayKey({}), QString("heuristic"));
+    CHECK(AudioEvents::wayKey("/m/yamnet.onnx").startsWith("yamnet|"));
+    CHECK(MediaIndex::cacheKey("/x/a.mp4", AudioEvents::wayKey({}))
+          != MediaIndex::cacheKey("/x/a.mp4", AudioEvents::wayKey("/m/yamnet.onnx")));
     if (!Check::haveFfmpeg()) return Check::skip("ffmpeg missing");
     Check::initEngine();
     QTemporaryDir dir;
