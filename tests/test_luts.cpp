@@ -335,7 +335,8 @@ void testUserFolder(const QString& dir)
         CHECK_EQ(all[1].name, QString("Zeta"));
         CHECK_EQ(all[2].group, QString("Film/Kodak"));
     }
-    CHECK_EQ(EffectFolders::watchDirs().size(), 5); // LUTs + 2 subfolders + Transitions + Presets
+    CHECK_EQ(EffectFolders::watchDirs().size(), 6); // LUTs + 2 subfolders + Transitions + Presets + Sounds
+    CHECK(QFileInfo(EffectFolders::soundDir()).isDir()); // made with the others (the Effects Library watches it)
     CHECK_EQ(EffectFolders::findUserLut("k2.cube"), luts.filePath("Film/Kodak/k2.cube"));
     CHECK(EffectFolders::findUserLut("gibtsnicht.cube").isEmpty());
 
