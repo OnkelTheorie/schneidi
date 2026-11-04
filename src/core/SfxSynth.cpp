@@ -5,7 +5,11 @@
 #include "core/SfxWhoosh.h"
 
 #include <QDir>
+#include <QFile>
 #include <QFileInfo>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QRegularExpression>
 #include <QSaveFile>
 #include <QStandardPaths>
@@ -136,9 +140,9 @@ Sound make(Kind kind, unsigned seed, double length)
         take(s, SfxForge::knock(m, noise));
         break;
     }
-    case Kind::Impact: { // earshot's designed sub drop (a boom under a click)
+    case Kind::Impact: { // earshot's designed sub drop (a boom under a click), the soft one in three takes
         static constexpr Variant<SfxForge::Drop> kDrops[3] = {
-            {SfxForge::Drop::Soft, 1}, {SfxForge::Drop::Bright, 1}, {SfxForge::Drop::Quick, 1}};
+            {SfxForge::Drop::Soft, 1}, {SfxForge::Drop::Soft, 6}, {SfxForge::Drop::Soft, 3}};
         const auto [m, noise] = variant(kDrops, seed);
         take(s, SfxForge::drop(m, noise));
         break;
@@ -165,7 +169,96 @@ Sound make(Kind kind, unsigned seed, double length)
     return s;
 }
 
-double anchorOf(Kind kind, unsigned seed, double length) { return make(kind, seed, length).anchor; }
+double anchorOf(Kind kind, unsigned seed, double length)
+{
+    if (length <= 0)
+        if (const auto r = recordedFor(kind, seed)) return r->anchor;
+    return make(kind, seed, length).anchor;
+}
+
+QString recordedRoot()
+{
+    const QString env = qEnvironmentVariable("SCHNEIDI_SFX_DATA");
+    return env.isEmpty() ? QStringLiteral(":/sfx/cc0") : env;
+}
+
+namespace {
+
+const QVector<Recorded>& recordedTable()
+{
+    // Read once per data folder (tests switch it)
+    static QString root;
+    static QVector<Recorded> table;
+    if (root == recordedRoot() && !root.isEmpty()) return table;
+    root = recordedRoot();
+    table.clear();
+    QFile f(root + "/sounds.json");
+    if (!f.open(QIODevice::ReadOnly)) return table;
+    for (const QJsonValue& v : QJsonDocument::fromJson(f.readAll())["sounds"].toArray()) {
+        const std::optional<Kind> k = kindFrom(v["kind"].toString());
+        const QString file = v["file"].toString();
+        if (!k || file.isEmpty() || !QFileInfo::exists(root + "/" + file)) continue;
+        table << Recorded{file, *k, v["anchor_s"].toDouble(), v["peak_db"].toDouble(), v["length_s"].toDouble(),
+                          v["author"].toString(), v["licence"].toString(), v["licence_file"].toString()};
+    }
+    return table;
+}
+
+QString recordedCachePath(const Recorded& r)
+{
+    return QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + "/sfx/cc0/" + QFileInfo(r.file).fileName();
+}
+
+// The recording as a file of its own (FFmpeg reads files, not the program's resources); empty = could not
+QString placeRecorded(const Recorded& r)
+{
+    const QString path = recordedCachePath(r);
+    if (QFileInfo(path).size() > 0) return path;
+    QDir().mkpath(QFileInfo(path).absolutePath());
+    QFile::remove(path);
+    if (!QFile::copy(recordedRoot() + "/" + r.file, path)) return {};
+    QFile::setPermissions(path, QFile::ReadOwner | QFile::WriteOwner | QFile::ReadGroup | QFile::ReadOther);
+    return path;
+}
+
+} // namespace
+
+QVector<Recorded> recorded(Kind k)
+{
+    QVector<Recorded> out;
+    for (const Recorded& r : recordedTable())
+        if (r.kind == k) out << r;
+    return out;
+}
+
+std::optional<Recorded> recordedFor(Kind k, unsigned seed)
+{
+    const QVector<Recorded> list = recorded(k);
+    if (list.isEmpty()) return std::nullopt;
+    return list[qsizetype((std::max(1u, seed) - 1) % unsigned(list.size()))];
+}
+
+std::optional<Recorded> recordedOfFile(const QString& path)
+{
+    const QString name = QFileInfo(QString(path).replace('\\', '/')).fileName();
+    for (const Recorded& r : recordedTable())
+        if (QFileInfo(r.file).fileName() == name) return r;
+    return std::nullopt;
+}
+
+double soundLength(Kind kind, unsigned seed, double length)
+{
+    if (length <= 0)
+        if (const auto r = recordedFor(kind, seed)) return r->length;
+    return make(kind, seed, length).length;
+}
+
+double levelGainDb(Kind kind, unsigned seed, double length)
+{
+    if (length <= 0)
+        if (const auto r = recordedFor(kind, seed)) return peakLevelDb(kind) - r->peakDb;
+    return 0.0;
+}
 
 double peakDb(const std::vector<float>& samples)
 {
@@ -221,6 +314,8 @@ bool writeWav(const QString& path, const std::vector<float>& samples, int rate)
 
 QString cachedFile(Kind kind, unsigned seed, double length)
 {
+    if (length <= 0)
+        if (const auto r = recordedFor(kind, seed)) return placeRecorded(*r);
     // The name holds the real length (a whoosh ends where its tail has faded) and the asked one when there was one:
     // kind-seed-<ms>ms[-a<asked ms>]-v<version>.wav. Making the sound to know its length is cheap (milliseconds)
     const Sound s = make(kind, seed, length);
@@ -244,7 +339,17 @@ std::optional<CachedName> parseCachedFile(const QString& path)
     const std::optional<Kind> kind = kindFrom(m.captured(1));
     if (!kind) return std::nullopt;
     return CachedName{*kind, m.captured(2).toUInt(), m.captured(3).toDouble() / 1000.0,
-                      m.captured(4).isEmpty() ? 0.0 : m.captured(4).toDouble() / 1000.0};
+                      m.captured(4).isEmpty() ? 0.0 : m.captured(4).toDouble() / 1000.0, m.captured(5).toInt()};
+}
+
+QString restoreCachedFile(const QString& missingPath)
+{
+    if (const auto r = recordedOfFile(missingPath)) return placeRecorded(*r);
+    const QString name = QFileInfo(QString(missingPath).replace('\\', '/')).fileName();
+    const std::optional<CachedName> n = parseCachedFile(name);
+    if (!n || n->version != kVersion) return {};
+    const QString path = cachedFile(n->kind, n->seed, n->asked);
+    return QFileInfo(path).fileName() == name ? path : QString();
 }
 
 } // namespace SfxSynth

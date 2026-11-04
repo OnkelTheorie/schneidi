@@ -113,8 +113,12 @@ QVector<Part> report()
         << ffmpegPart("libswresample", swresample_version(), swresample_license());
     // Compiled in (third_party/rnnoise): the noise suppression of the voice cleaning (engine/VoiceClean)
     out << Part{"RNNoise 0.2 (built in)", "BSD-3-Clause", false, {}};
-    // Ported into core/SfxWhoosh (third_party/earshot/LICENSE): the whoosh / swish sounds of op 'sfx'
-    out << Part{"earshot whoosh engine (Leon Lin, ported in)", "MIT", false, {}};
+    // Ported into core/SfxWhoosh, core/SfxForge, core/SfxDsp.h (third_party/earshot/LICENSE): the built-in sounds of
+    // op 'sfx'
+    out << Part{"earshot sound recipes: whoosh, darkriser, shutter, knock, subdrop, banks (Leon Lin, ported in)", "MIT", false, {}};
+    // Built in (assets/sfx/cc0, SOURCES.md): the recorded sounds of op 'sfx'
+    out << Part{"Swishes Sound Pack by artisticdude, OpenGameArt (built in)", "CC0-1.0", false, {}};
+    out << Part{"Impact Sounds by Kenney, www.kenney.nl (built in)", "CC0-1.0", false, {}};
 
     // Loaded libraries: GPL ones by name
     for (const QString& path : loadedLibraries()) {

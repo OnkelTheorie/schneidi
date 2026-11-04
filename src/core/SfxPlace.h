@@ -24,10 +24,12 @@ struct Rules {
     double minGapLimit = 0.5; // minGap below this is raised to it
 };
 
-// A sound that is on the timeline already (the SFX track): its moment counts for the spacing and the cap
+// A sound that is on the timeline already (the SFX track): its moment counts for the spacing; for the cap per minute
+// only when it is of the same kind (a whoosh on a cut does not use up the budget of the hits on kills)
 struct Existing {
     double at = 0;
     bool impact = false;
+    bool sameKind = true;
 };
 
 struct Placed {
@@ -37,7 +39,7 @@ struct Placed {
 
 struct Skipped {
     double moment = 0;
-    QString why; // "too_close", "per_minute", "impact_once", "before_start", "after_end"
+    QString why; // "too_close", "per_minute", "impact_once", "before_start", "after_end" (the sound would run past it)
 };
 
 struct Result {
@@ -45,8 +47,11 @@ struct Result {
     QVector<Skipped> skipped; // sorted by time
 };
 
-// anchor: of the sound (seconds from its start); end = the timeline's end (seconds; the moment must lie before it)
-Result place(QVector<Moment> moments, double anchor, double end, const QVector<Existing>& existing, Rules rules);
+// anchor / length: of the sound (seconds); end = the timeline's end (seconds; the whole sound must end by then). When
+// the rules leave moments out, equal-weight ones are taken spread over the time (the farthest from those taken first),
+// not the first ones in a row
+Result place(QVector<Moment> moments, double anchor, double length, double end, const QVector<Existing>& existing,
+             Rules rules);
 
 // Level of a sound by name: 'mild' (default) -10 dB, 'normal' -4 dB on top of the sound's own peak level
 double levelDb(const QString& level);

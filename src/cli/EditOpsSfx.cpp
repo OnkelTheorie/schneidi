@@ -144,13 +144,18 @@ int sfxTrack(const Timeline& tl)
     return -1;
 }
 
-// A sound on the track already: its moment (a built-in sound from its cache name, else its start)
-SfxPlace::Existing existingOf(const Clip& c, double fps)
+// A sound on the track already: its moment (a built-in sound from its cache name, else its start) and whether it is
+// of the kind being placed (its own cap per minute)
+SfxPlace::Existing existingOf(const Clip& c, double fps, const Source& src)
 {
-    SfxPlace::Existing e{c.start / fps, false};
+    SfxPlace::Existing e{c.start / fps, false, !src.kind && c.mediaPath == src.file};
     if (const auto n = SfxSynth::parseCachedFile(c.mediaPath)) {
         e.at = (c.start - c.in) / fps + SfxSynth::anchorOf(n->kind, n->seed, n->asked);
         e.impact = n->kind == SfxSynth::Kind::Impact;
+        e.sameKind = src.kind == n->kind;
+    } else if (const auto r = SfxSynth::recordedOfFile(c.mediaPath)) {
+        e.at = (c.start - c.in) / fps + r->anchor;
+        e.sameKind = src.kind == r->kind;
     }
     return e;
 }
@@ -165,6 +170,7 @@ void opSfx(Session& s, const QJsonObject& op)
     const QString kindName = op.contains("kind") ? op.value("kind").toString() : kindFor.value(on);
     if (kindName.isEmpty()) fail("BAD_ARGUMENT", "missing 'kind' (" + SfxSynth::kindNames().join(", ") + " or a file)");
     const Source src = sourceOf(kindName);
+    if (!src.kind && !s.media(src.file).hasAudio) fail("NO_AUDIO", "the sound file has no audio: " + src.file);
     const QString level = op.value("level").toString("mild");
     if (level != "mild" && level != "normal") fail("BAD_ARGUMENT", "level: 'mild' or 'normal'");
     const double volume = op.contains("volume_db") ? numberOf(op, "volume_db", -60, 6) : SfxPlace::levelDb(level);
@@ -195,7 +201,7 @@ void opSfx(Session& s, const QJsonObject& op)
     }
     QVector<SfxPlace::Existing> existing;
     if (track >= 0)
-        for (const Clip& c : s.project.timeline().audio[track].clips) existing << existingOf(c, fps);
+        for (const Clip& c : s.project.timeline().audio[track].clips) existing << existingOf(c, fps, src);
 
     // The variants: one seed if given, else 1, 2, 3 in turn (the same sound three times in a row sounds made). The
     // anchors differ a little per variant: the rules see the first one, each sound lands with its own
@@ -207,8 +213,19 @@ void opSfx(Session& s, const QJsonObject& op)
     rules.impact = src.kind == SfxSynth::Kind::Impact;
     QVector<SfxPlace::Moment> pm;
     for (const Moment& m : moments) pm << SfxPlace::Moment{m.frame / fps, m.weight};
-    const double end = TimelineOps::endFrame(s.project.timeline()) / fps;
-    const SfxPlace::Result r = SfxPlace::place(pm, anchorOf(seedOf(0)), end, existing, rules);
+    // The timeline's end without the sounds of this track: a sound must end inside the picture (no black frames)
+    int endFrame = 0;
+    {
+        const Timeline& tl = s.project.timeline();
+        for (int k = 0; k < tl.video.size(); ++k)
+            for (const Clip& c : tl.video[k].clips) endFrame = std::max(endFrame, c.end());
+        for (int k = 0; k < tl.audio.size(); ++k)
+            if (k != track)
+                for (const Clip& c : tl.audio[k].clips) endFrame = std::max(endFrame, c.end());
+    }
+    const double end = endFrame / fps;
+    const double soundLength = src.kind ? SfxSynth::soundLength(*src.kind, seedOf(0), length) : s.media(src.file).length / fps;
+    const SfxPlace::Result r = SfxPlace::place(pm, anchorOf(seedOf(0)), soundLength, end, existing, rules);
 
     QJsonArray placed, skipped;
     for (const SfxPlace::Skipped& k : r.skipped) skipped << QJsonObject{{"at_s", rounded(k.moment)}, {"why", k.why}};
@@ -227,14 +244,17 @@ void opSfx(Session& s, const QJsonObject& op)
         const Track& t = s.project.timeline().audio[track];
         const bool busy = std::any_of(t.clips.begin(), t.clips.end(),
                                       [&](const Clip& c) { return c.start < start + m.length && start < c.end(); });
-        if (start < 0 || busy) {
-            skipped << QJsonObject{{"at_s", rounded(p.moment)}, {"why", busy ? "overlaps" : "before_start"}};
+        if (start < 0 || busy || start + m.length > endFrame) {
+            skipped << QJsonObject{{"at_s", rounded(p.moment)},
+                                   {"why", busy ? "overlaps" : start < 0 ? "before_start" : "after_end"}};
             continue;
         }
-        if (s.editor.placeSourceRange(m.path, 0, m.length - 1, start, track) <= 0)
+        // Only its sound (a video file as the sound must not overwrite the picture)
+        if (s.editor.placeSourceRange(m.path, 0, m.length - 1, start, track, 1.0, true) <= 0)
             fail("FAILED", QString("could not place the sound on A%1 (locked?)").arg(track + 1));
         for (const Clip& c : s.project.timeline().audio[track].clips)
-            if (c.start == start && c.mediaPath == m.path) s.editor.setClipVolume(c.id, volume);
+            if (c.start == start && c.mediaPath == m.path)
+                s.editor.setClipVolume(c.id, volume + (src.kind ? SfxSynth::levelGainDb(*src.kind, sd, length) : 0.0));
         placed << QJsonObject{{"at_s", rounded(p.moment)}, {"start", tc(start, f)}};
         ++i;
     }
@@ -250,9 +270,23 @@ void opSfx(Session& s, const QJsonObject& op)
 QJsonArray sfxSounds()
 {
     QJsonArray out;
-    for (SfxSynth::Kind k : SfxSynth::kKinds)
-        out << QJsonObject{{"name", SfxSynth::kindName(k)}, {"from", "built-in"}, {"description", SfxSynth::description(k)},
-                           {"length_s", SfxSynth::defaultLength(k)}};
+    for (SfxSynth::Kind k : SfxSynth::kKinds) {
+        QJsonObject o{{"name", SfxSynth::kindName(k)}, {"from", "built-in"}, {"description", SfxSynth::description(k)},
+                      {"length_s", SfxSynth::defaultLength(k)}};
+        // Recorded (CC0) by default for this kind: the files seed 1, 2 … pick, with their source and licence
+        if (const QVector<SfxSynth::Recorded> rec = SfxSynth::recorded(k); !rec.isEmpty()) {
+            QJsonArray files;
+            for (const SfxSynth::Recorded& r : rec)
+                files << QJsonObject{{"file", QFileInfo(r.file).fileName()}, {"length_s", r.length}, {"author", r.author},
+                                     {"licence", r.licence}};
+            o["recorded"] = files;
+            o["length_s"] = rec.first().length;
+            o["note"] = "recorded (CC0); computed when a length is given";
+        } else {
+            o["computed"] = "earshot recipe port (MIT)";
+        }
+        out << o;
+    }
     // Packs: "<pack>/<file name without extension>"
     for (const QString& pack : Extensions::installedSoundPacks()) {
         QDirIterator it(pack, QDir::Files, QDirIterator::Subdirectories);
@@ -307,7 +341,8 @@ void addSfxOps(QVector<OpDef>& ops)
                  "moment, the riser ends on it, a hit starts on it. Sparing: never two sounds closer than min_gap "
                  "(1.5 s), at most max_per_min in any minute (mild 3, normal 6), one impact per video; the answer's "
                  "notes list what the rules left out (skipped, why). level 'mild' (default, -10 dB) or 'normal' "
-                 "(-4 dB); volume_db sets the clip volume directly. seed: one variant (default 1-3 in turn); length: "
+                 "(-4 dB); volume_db sets it directly (on the sound at its kind's peak level). Whoosh, swish and hit are "
+                 "CC0 recordings (computed ones when a length is given), the others computed. seed: one variant (default 1-3 in turn); length: "
                  "of the sound (a riser 0.5-8 s). Only where asked: never on every cut by default.",
                  opSfx,
                  {"seed", "length", "track", "min_gap", "max_per_min", "music", "game", "_kills", "_beats"}};

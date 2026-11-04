@@ -666,7 +666,8 @@ QStringList installedSoundPacks()
 {
     QStringList out;
     for (const QFileInfo& fi : QDir(soundPacksDir()).entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name))
-        if (!fi.fileName().endsWith(".new") && soundPackLicenseError(fi.absoluteFilePath()).isEmpty())
+        if (!fi.fileName().endsWith(".new") && !fi.fileName().contains(".old-")
+            && soundPackLicenseError(fi.absoluteFilePath()).isEmpty())
             out << fi.absoluteFilePath();
     return out;
 }
@@ -703,11 +704,18 @@ QString installSoundPack(const QString& archive, const QString& target)
         QDir(staging).removeRecursively();
         return error;
     }
-    QDir(target).removeRecursively();
-    if (!QDir().rename(staging, target)) {
+    // The old version out of the way first and back if the new one cannot take its place (like unpack())
+    QString aside;
+    if (!moveAside(target, &aside)) {
         QDir(staging).removeRecursively();
         return T("Datei konnte nicht abgelegt werden: %1").arg(target);
     }
+    if (!QDir().rename(staging, target)) {
+        if (!aside.isEmpty()) QDir().rename(aside, target);
+        QDir(staging).removeRecursively();
+        return T("Datei konnte nicht abgelegt werden: %1").arg(target);
+    }
+    if (!aside.isEmpty()) QDir(aside).removeRecursively();
     return {};
 }
 

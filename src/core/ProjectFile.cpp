@@ -10,6 +10,7 @@
 #include "core/Keyframes.h"
 #include "core/MediaAspect.h"
 #include "core/Retime.h"
+#include "core/SfxSynth.h"
 #include "core/TimelineStory.h"
 
 #include <QColor>
@@ -1198,6 +1199,38 @@ QByteArray fingerprint(const QString& path)
     return QCryptographicHash::hash(f.readAll(), QCryptographicHash::Sha1);
 }
 
+namespace {
+
+// Every reference to an old path (media pool, clips of every timeline) to its new one
+void redirect(ProjectData* data, const QHash<QString, QString>& moved)
+{
+    for (MediaInfo& m : data->media)
+        if (moved.contains(m.path)) m.path = moved.value(m.path);
+    auto relinkTimeline = [&](Timeline& tl) {
+        for (QVector<Track>* list : {&tl.video, &tl.audio})
+            for (Track& t : *list)
+                for (Clip& c : t.clips)
+                    if (moved.contains(c.mediaPath)) {
+                        c.mediaPath = moved.value(c.mediaPath);
+                        // Crop of an old project opened while the file was offline: now its shape is known
+                        if (c.cropOnFrame) convertCrop(c, QSizeF(data->format.width, data->format.height));
+                    }
+    };
+    relinkTimeline(data->timeline);
+    for (Sequence& s : data->sequences) relinkTimeline(s.timeline);
+}
+
+// Built-in effect sounds (op 'sfx') live in the cache: made again when they are missing (core/SfxSynth)
+void restoreBuiltinSounds(ProjectData* data)
+{
+    QHash<QString, QString> moved;
+    for (const QString& p : missingMedia(*data))
+        if (const QString now = SfxSynth::restoreCachedFile(p); !now.isEmpty()) moved.insert(p, now);
+    if (!moved.isEmpty()) redirect(data, moved);
+}
+
+} // namespace
+
 bool load(const QString& path, ProjectData* data, QString* error)
 {
     QFile f(path);
@@ -1205,7 +1238,9 @@ bool load(const QString& path, ProjectData* data, QString* error)
         if (error) *error = f.errorString();
         return false;
     }
-    return fromJson(f.readAll(), path, data, error);
+    if (!fromJson(f.readAll(), path, data, error)) return false;
+    restoreBuiltinSounds(data);
+    return true;
 }
 
 QStringList missingEffects(const ProjectData& data)
@@ -1282,20 +1317,7 @@ int relink(ProjectData* data, const QString& searchDir)
         }
     }
 
-    for (MediaInfo& m : data->media)
-        if (moved.contains(m.path)) m.path = moved.value(m.path);
-    auto relinkTimeline = [&](Timeline& tl) {
-        for (QVector<Track>* list : {&tl.video, &tl.audio})
-            for (Track& t : *list)
-                for (Clip& c : t.clips)
-                    if (moved.contains(c.mediaPath)) {
-                        c.mediaPath = moved.value(c.mediaPath);
-                        // Crop of an old project opened while the file was offline: now its shape is known
-                        if (c.cropOnFrame) convertCrop(c, QSizeF(data->format.width, data->format.height));
-                    }
-    };
-    relinkTimeline(data->timeline);
-    for (Sequence& s : data->sequences) relinkTimeline(s.timeline);
+    redirect(data, moved);
     return moved.size();
 }
 

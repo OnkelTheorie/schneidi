@@ -12,7 +12,7 @@ namespace SfxForge {
 enum class Riser { Dark, Snatch, Build };
 enum class Click { Snap, Mirror, Dslr };
 enum class Knock { Snap, Wood };
-enum class Drop { Soft, Bright, Quick };
+enum class Drop { Soft };
 
 struct Result {
     std::vector<float> samples; // 48 kHz mono, peak 1

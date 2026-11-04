@@ -6,6 +6,7 @@
 
 #include "check.h"
 #include "cli/Commands.h"
+#include "core/ProjectFile.h"
 #include "core/SfxPlace.h"
 #include "core/SfxSynth.h"
 #include "engine/Extensions.h"
@@ -16,6 +17,8 @@
 #include <QJsonDocument>
 #include <QTemporaryDir>
 #include <QTextStream>
+
+#include <cstring>
 
 #include <cmath>
 
@@ -96,20 +99,63 @@ void testSynth()
     // Lengths are clamped to the kind's range
     CHECK(std::abs(SfxSynth::make(SfxSynth::Kind::Riser, 1, 30).anchor - SfxSynth::maxLength(SfxSynth::Kind::Riser)) < 1e-9);
     CHECK(std::abs(SfxSynth::make(SfxSynth::Kind::Riser, 1, 0.01).anchor - SfxSynth::minLength(SfxSynth::Kind::Riser)) < 1e-9);
-    // The cache file: written once, a valid WAV of the sound
-    const QString file = SfxSynth::cachedFile(SfxSynth::Kind::Hit, 3);
-    const SfxSynth::Sound hit3 = SfxSynth::make(SfxSynth::Kind::Hit, 3);
-    CHECK(!file.isEmpty() && QFileInfo(file).size() == 44 + 2 * qint64(hit3.samples.size()));
-    CHECK_EQ(SfxSynth::cachedFile(SfxSynth::Kind::Hit, 3), file);
-    CHECK(file.contains(QString("/sfx/hit-3-%1ms-v").arg(std::lround(hit3.length * 1000))));
-    // A whoosh's name holds its real length; the name tells kind, seed and the asked length back
-    const QString w = SfxSynth::cachedFile(SfxSynth::Kind::Whoosh, 2);
-    const SfxSynth::Sound ws = SfxSynth::make(SfxSynth::Kind::Whoosh, 2);
-    CHECK(w.contains(QString("/sfx/whoosh-2-%1ms-v").arg(std::lround(ws.length * 1000))));
+    // Without the recorded sounds (data folder missing): computed ones, cached as WAV files named by kind, seed, length
+    {
+        const QByteArray keep = qgetenv("SCHNEIDI_SFX_DATA");
+        qputenv("SCHNEIDI_SFX_DATA", "/nonexistent/sfx");
+        CHECK(SfxSynth::recorded(SfxSynth::Kind::Hit).isEmpty());
+        const QString file = SfxSynth::cachedFile(SfxSynth::Kind::Hit, 3);
+        const SfxSynth::Sound hit3 = SfxSynth::make(SfxSynth::Kind::Hit, 3);
+        CHECK(!file.isEmpty() && QFileInfo(file).size() == 44 + 2 * qint64(hit3.samples.size()));
+        CHECK_EQ(SfxSynth::cachedFile(SfxSynth::Kind::Hit, 3), file);
+        CHECK(file.contains(QString("/sfx/hit-3-%1ms-v").arg(std::lround(hit3.length * 1000))));
+        CHECK(std::abs(SfxSynth::anchorOf(SfxSynth::Kind::Hit, 3) - hit3.anchor) < 1e-9);
+        // A whoosh's name holds its real length
+        const QString w = SfxSynth::cachedFile(SfxSynth::Kind::Whoosh, 2);
+        const SfxSynth::Sound ws = SfxSynth::make(SfxSynth::Kind::Whoosh, 2);
+        CHECK(w.contains(QString("/sfx/whoosh-2-%1ms-v").arg(std::lround(ws.length * 1000))));
+        if (keep.isEmpty()) qunsetenv("SCHNEIDI_SFX_DATA");
+        else qputenv("SCHNEIDI_SFX_DATA", keep);
+    }
+    // The name tells kind, seed and the asked length back
     const auto parsed = SfxSynth::parseCachedFile(SfxSynth::cachedFile(SfxSynth::Kind::Riser, 2, 3.0));
     CHECK(parsed && parsed->kind == SfxSynth::Kind::Riser && parsed->seed == 2 && std::abs(parsed->asked - 3.0) < 1e-9
           && parsed->length > 3.0 && parsed->length < 3.7);
     CHECK(!SfxSynth::parseCachedFile("/x/ding.wav"));
+}
+
+// The shipped CC0 recordings: there with their licences, picked by seed, anchors from their table
+void testRecorded()
+{
+    const QString root = SfxSynth::recordedRoot();
+    for (const char* f : {"/sounds.json", "/SOURCES.md", "/LICENSE-opengameart-swishes.txt", "/LICENSE-kenney-impact-sounds.txt"})
+        CHECK(QFileInfo::exists(root + f));
+    for (SfxSynth::Kind k : {SfxSynth::Kind::Whoosh, SfxSynth::Kind::Swish, SfxSynth::Kind::Hit}) {
+        const QVector<SfxSynth::Recorded> list = SfxSynth::recorded(k);
+        if (!CHECK(list.size() >= 3)) continue;
+        for (const SfxSynth::Recorded& r : list) {
+            CHECK(QFileInfo::exists(root + "/" + r.file));
+            CHECK(QFileInfo::exists(root + "/" + r.licenceFile));
+            CHECK_EQ(r.licence, QString("CC0-1.0"));
+            CHECK(r.anchor >= 0 && r.anchor < r.length);
+        }
+        // Seed 1, 2 … take the files in turn, the same every time
+        CHECK(SfxSynth::recordedFor(k, 1)->file == list[0].file && SfxSynth::recordedFor(k, 2)->file == list[1].file);
+        CHECK(SfxSynth::recordedFor(k, unsigned(list.size()) + 1)->file == list[0].file);
+        CHECK(std::abs(SfxSynth::anchorOf(k, 2) - list[1].anchor) < 1e-9);
+        CHECK(std::abs(SfxSynth::soundLength(k, 2) - list[1].length) < 1e-9);
+        CHECK(std::abs(SfxSynth::levelGainDb(k, 2) - (SfxSynth::peakLevelDb(k) - list[1].peakDb)) < 1e-9);
+        // A copy in the cache, the file itself (kept as it is)
+        const QString placed = SfxSynth::cachedFile(k, 2);
+        QFile a(placed), b(root + "/" + list[1].file);
+        CHECK(a.open(QIODevice::ReadOnly) && b.open(QIODevice::ReadOnly) && a.readAll() == b.readAll());
+        CHECK(SfxSynth::recordedOfFile(placed) && SfxSynth::recordedOfFile(placed)->file == list[1].file);
+        // A length given: computed (a recording does not stretch)
+        CHECK(SfxSynth::parseCachedFile(SfxSynth::cachedFile(k, 2, 0.5 * SfxSynth::maxLength(k) + 0.5 * SfxSynth::minLength(k))));
+    }
+    // Riser, impact, click: computed
+    for (SfxSynth::Kind k : {SfxSynth::Kind::Riser, SfxSynth::Kind::Impact, SfxSynth::Kind::Click})
+        CHECK(SfxSynth::recorded(k).isEmpty());
 }
 
 void testPlace()
@@ -118,35 +164,51 @@ void testPlace()
     Rules rules;
     rules.maxPerMinute = 0;
     // The anchor lands on the moment
-    Result r = place({{10.0}, {20.0}}, 0.6, 60, {}, rules);
+    Result r = place({{10.0}, {20.0}}, 0.6, 0, 60, {}, rules);
     CHECK_EQ(int(r.placed.size()), 2);
     if (r.placed.size() == 2) {
         CHECK(std::abs(r.placed[0].start - 9.4) < 1e-9);
         CHECK(std::abs(r.placed[1].moment - 20.0) < 1e-9);
     }
     // Minimum spacing 1.5 s: 10.0 and 12.0 stay, 11.0 and 12.4 go; an existing sound counts too
-    r = place({{10.0}, {11.0}, {12.0}, {12.4}, {30.0}}, 0, 60, {{29.0, false}}, rules);
+    r = place({{10.0}, {11.0}, {12.0}, {12.4}, {30.0}}, 0, 0, 60, {{29.0, false}}, rules);
     CHECK_EQ(int(r.placed.size()), 2);
     CHECK_EQ(int(r.skipped.size()), 3);
     for (const Skipped& s : r.skipped) CHECK_EQ(s.why, QString("too_close"));
     // A heavier moment wins over an earlier one nearby
-    r = place({{10.0, 1}, {11.0, 5}}, 0, 60, {}, rules);
+    r = place({{10.0, 1}, {11.0, 5}}, 0, 0, 60, {}, rules);
     CHECK(r.placed.size() == 1 && std::abs(r.placed[0].moment - 11.0) < 1e-9);
     // Cap per minute: 3 in any 60 s
     rules.maxPerMinute = 3;
-    r = place({{1}, {5}, {9}, {13}, {17}, {70}}, 0, 120, {}, rules);
-    CHECK_EQ(int(r.placed.size()), 4); // 1, 5, 9 and 70 (13, 17 over the cap)
-    CHECK(r.skipped.size() == 2 && r.skipped[0].why == "per_minute");
+    r = place({{1}, {5}, {9}, {13}, {17}, {70}}, 0, 0, 120, {}, rules);
+    CHECK_EQ(int(r.placed.size()), 4); // spread: 1, 70, 17 and 9 (5 and 13 over the cap), not the first three in a row
+    CHECK(r.skipped.size() == 2 && r.skipped[0].why == "per_minute" && std::abs(r.skipped[0].moment - 5) < 1e-9
+          && std::abs(r.skipped[1].moment - 13) < 1e-9);
+    // Ten cuts in 50 s at mild's cap: three, over the whole time (the first at 0 s, the others late and in between)
+    {
+        QVector<Moment> cuts;
+        for (int i = 0; i < 10; ++i) cuts << Moment{5.0 * i};
+        const Result c = place(cuts, 0, 0, 60, {}, rules);
+        CHECK(c.placed.size() == 3 && c.placed[0].moment < 1 && c.placed[2].moment > 40);
+    }
+    // Sounds of another kind on the track keep their distance but not this kind's cap (hits before whooshes in a short)
+    r = place({{30}}, 0, 0, 60, {{10, false, false}, {20, false, false}, {40, false, false}}, rules);
+    CHECK_EQ(int(r.placed.size()), 1);
+    r = place({{30}}, 0, 0, 60, {{10, false, true}, {20, false, true}, {40, false, true}}, rules);
+    CHECK(r.placed.isEmpty() && r.skipped.size() == 1 && r.skipped[0].why == "per_minute");
+    // A sound whose tail would run past the end of the timeline (black frames in a render)
+    r = place({{58.0}}, 0.1, 2.5, 60, {}, rules);
+    CHECK(r.placed.isEmpty() && r.skipped.size() == 1 && r.skipped[0].why == "after_end");
     // One impact per video, also with one on the timeline already
     rules.maxPerMinute = 0;
     rules.impact = true;
-    r = place({{5}, {40}}, 0, 60, {}, rules);
+    r = place({{5}, {40}}, 0, 0, 60, {}, rules);
     CHECK(r.placed.size() == 1 && r.skipped.size() == 1 && r.skipped[0].why == "impact_once");
-    r = place({{5}}, 0, 60, {{30, true}}, rules);
+    r = place({{5}}, 0, 0, 60, {{30, true}}, rules);
     CHECK(r.placed.isEmpty());
     // A riser that would start before 0, a moment after the end
     rules.impact = false;
-    r = place({{1.0}, {65.0}}, 2.0, 60, {}, rules);
+    r = place({{1.0}, {65.0}}, 2.0, 0, 60, {}, rules);
     CHECK(r.placed.isEmpty() && r.skipped.size() == 2 && r.skipped[0].why == "before_start"
           && r.skipped[1].why == "after_end");
     // short sfx:'mild': a hit (peak -6 dBFS) 14 dB under a game sound peaking at -3 dBFS = clip volume -11 dB; quiet
@@ -156,7 +218,7 @@ void testPlace()
     CHECK(std::abs(underPeakDb(std::nullopt, -6.0) - levelDb("mild")) < 1e-9);
     // A minimum spacing below 0.5 s is raised (never a burst)
     rules.minGap = 0;
-    r = place({{1.0}, {1.2}}, 0, 60, {}, rules);
+    r = place({{1.0}, {1.2}}, 0, 0, 60, {}, rules);
     CHECK_EQ(int(r.placed.size()), 1);
 }
 
@@ -234,7 +296,8 @@ void testOp(const QString& dir)
             const double anchor = SfxSynth::anchorOf(SfxSynth::Kind::Whoosh, unsigned(1 + i), 0);
             const int expected = int(std::lround(cuts[i] - anchor * 25));
             if (!CHECK_EQ(clips[i].first, expected)) std::printf("       whoosh %d\n", i);
-            CHECK(std::abs(clips[i].second - -10.0) < 1e-6); // level mild
+            // level mild, the recording brought to its kind's peak level
+            CHECK(std::abs(clips[i].second - (-10.0 + SfxSynth::levelGainDb(SfxSynth::Kind::Whoosh, unsigned(1 + i)))) < 1e-6);
         }
     }
     // Again on the same cuts: every one is taken (the sounds on the SFX track count)
@@ -243,7 +306,7 @@ void testOp(const QString& dir)
     CHECK_EQ(sfxClips(project).size(), 3);
 
     // Impact at most once per video; level normal (6 per minute: mild's 3 are taken), an own volume
-    r = edit(project, {QJsonObject{{"op", "sfx"}, {"at", QJsonArray{"12.5s", "3.5s"}}, {"kind", "impact"}, {"level", "normal"},
+    r = edit(project, {QJsonObject{{"op", "sfx"}, {"at", QJsonArray{"12s", "3.5s"}}, {"kind", "impact"}, {"level", "normal"},
                                    {"volume_db", -3}}});
     n = sfxNote(r);
     CHECK_EQ(n["placed"].toArray().size(), 1);
@@ -253,9 +316,11 @@ void testOp(const QString& dir)
     CHECK(std::abs(n["volume_db"].toDouble() - -3) < 1e-6);
     r = edit(project, {QJsonObject{{"op", "sfx"}, {"at", "13s"}, {"kind", "boom"}, {"level", "normal"}}});
     CHECK_EQ(sfxNote(r)["placed"].toArray().size(), 0); // the one on the track counts
-    // A mild one now: three in this minute already
-    r = edit(project, {QJsonObject{{"op", "sfx"}, {"at", "8s"}, {"kind", "click"}}});
+    // A mild whoosh now: three whooshes in this minute already; a click has its own budget
+    r = edit(project, {QJsonObject{{"op", "sfx"}, {"at", "8s"}, {"kind", "whoosh"}}});
     CHECK(sfxNote(r)["skipped"].toArray().size() == 1 && sfxNote(r)["skipped"][0]["why"].toString() == "per_minute");
+    r = edit(project, {QJsonObject{{"op", "sfx"}, {"at", "12s"}, {"kind", "click"}}});
+    CHECK_EQ(sfxNote(r)["placed"].toArray().size(), 1);
     // Hit on a marker, starting on it
     edit(project, {QJsonObject{{"op", "marker"}, {"at", "8s"}}});
     r = edit(project, {QJsonObject{{"op", "sfx"}, {"on", "markers"}, {"seed", 2}, {"level", "normal"}}});
@@ -271,6 +336,43 @@ void testOp(const QString& dir)
     CHECK(SfxSynth::writeWav(own, SfxSynth::make(SfxSynth::Kind::Click, 1).samples));
     r = edit(project, {QJsonObject{{"op", "sfx"}, {"at", "0.5s"}, {"kind", own}, {"level", "normal"}}});
     CHECK_EQ(sfxNote(r)["kind"].toString(), QString("ding.wav"));
+    // A video file as the sound: only its sound is placed, the picture stays; a file without sound is refused
+    {
+        const QString clip = Check::makeMedia(dir + "/boom.mp4", {"-f", "lavfi", "-i", "testsrc=size=160x90:rate=25:duration=1",
+                                                                  "-f", "lavfi", "-i", "sine=frequency=60:duration=1",
+                                                                  "-c:v", "mpeg4", "-c:a", "aac", "-shortest"});
+        const QString p2 = dir + "/p2.schneidi";
+        run("new", {{"project", p2}, {"fps", 25}});
+        edit(p2, {QJsonObject{{"op", "place"}, {"media", video}, {"at", 0}}});
+        const auto videoClips = [&] {
+            const QJsonObject info = run("info", {{"project", p2}});
+            QStringList out;
+            for (const QJsonValue& t : info["timeline"]["tracks"].toArray())
+                if (t["track"].toString().startsWith('V'))
+                    for (const QJsonValue& c : t["clips"].toArray()) out << QJsonDocument(c.toObject()).toJson(QJsonDocument::Compact);
+            return out;
+        };
+        const QStringList before2 = videoClips();
+        r = edit(p2, {QJsonObject{{"op", "sfx"}, {"at", "5s"}, {"kind", clip}}});
+        CHECK_EQ(sfxNote(r)["placed"].toArray().size(), 1);
+        CHECK(videoClips() == before2);
+        CHECK_EQ(edit(p2, {QJsonObject{{"op", "sfx"}, {"at", "9s"}, {"kind", video}}}, true)["failed"].toString(), QString("NO_AUDIO"));
+        // The end: a whoosh whose tail would run past the picture is left out
+        r = edit(p2, {QJsonObject{{"op", "sfx"}, {"at", "13.96s"}, {"kind", "whoosh"}}});
+        CHECK(sfxNote(r)["skipped"].toArray().size() == 1 && sfxNote(r)["skipped"][0]["why"].toString() == "after_end");
+    }
+    // A built-in sound whose cache file is gone (cache cleared, another computer): made again when the project loads
+    {
+        const QString file = SfxSynth::cachedFile(SfxSynth::Kind::Whoosh, 1);
+        CHECK(QFile::remove(file));
+        ProjectData d;
+        CHECK(ProjectFile::load(project, &d, nullptr));
+        CHECK(QFileInfo::exists(file));
+        CHECK(ProjectFile::missingMedia(d).isEmpty());
+        // Another version's name (another schneidi): left offline, never a different sound under the same clip
+        CHECK(SfxSynth::restoreCachedFile("/x/sfx/whoosh-1-795ms-v1.wav").isEmpty());
+        CHECK(SfxSynth::restoreCachedFile("/x/ding.wav").isEmpty());
+    }
     // `effects` lists the sounds
     const QJsonObject fx = run("effects", {{"kind", "sfx"}});
     CHECK_EQ(fx["sounds"].toArray().size(), 6);
@@ -311,6 +413,9 @@ void testPackLicense(const QString& dir)
     if (!CHECK(good.isEmpty())) std::printf("       %s\n", qPrintable(good));
     CHECK(QFileInfo::exists(target + "/cc0/LICENSE.txt"));
     CHECK_EQ(Extensions::installedSoundPacks(), QStringList{target});
+    // Installed again over itself: the new one takes the place, nothing of the old one is left beside it
+    CHECK(Extensions::installSoundPack(pack("cc0", true), target).isEmpty());
+    CHECK(QDir(Extensions::soundPacksDir()).entryList(QDir::Dirs | QDir::NoDotAndDotDot) == QStringList{"test-pack"});
     // A licence removed by hand: the pack no longer counts
     QFile::remove(target + "/cc0/LICENSE.txt");
     CHECK(Extensions::installedSoundPacks().isEmpty());
@@ -327,11 +432,42 @@ void writeSample(const QString& dir)
     if (!list.open(QIODevice::WriteOnly | QIODevice::Truncate)) return;
     QTextStream out(&list);
     out << "# Hörprobe Klänge (schneidi 0.17, Paket I)\n\n"
-        << "Alle Klänge berechnet (keine Aufnahmen; `core/SfxWhoosh`, `core/SfxForge`), 48 kHz mono, 16 bit. "
+        << "Zuerst die mitgelieferten CC0-Aufnahmen (Whoosh, Swish, Hit: Standard), dann die berechneten (Ports von "
+           "earshot-Rezepten; `core/SfxWhoosh`, `core/SfxForge`; für Riser, Impact, Klick und als Ersatz), 48 kHz mono. "
         << "`alle.wav` = alle Kandidaten nacheinander, je 1 s Stille dazwischen (Reihenfolge wie unten).\n\n"
         << "| # | Datei | Art | Startwert | Länge s | Spitze dBFS | RMS dBFS | Anker s | Quelle / Lizenz |\n"
         << "|---|---|---|---|---|---|---|---|---|\n";
     int n = 0;
+    // The recorded ones first (whoosh, swish, hit: the default), decoded with ffmpeg for alle.wav
+    for (SfxSynth::Kind k : {SfxSynth::Kind::Whoosh, SfxSynth::Kind::Swish, SfxSynth::Kind::Hit}) {
+        unsigned seed = 0;
+        for (const SfxSynth::Recorded& r : SfxSynth::recorded(k)) {
+            ++seed;
+            const QString file = QString("%1-%2-%3-%4").arg(++n, 2, 10, QChar('0')).arg(SfxSynth::kindName(k)).arg(seed)
+                                     .arg(QFileInfo(r.file).fileName());
+            QFile::remove(dir + "/" + file);
+            QFile::copy(SfxSynth::recordedRoot() + "/" + r.file, dir + "/" + file);
+            QProcess p;
+            p.start("ffmpeg", {"-nostdin", "-loglevel", "error", "-i", dir + "/" + file, "-ac", "1", "-ar", "48000", "-f", "f32le", "-"});
+            p.waitForFinished(30000);
+            const QByteArray raw = p.readAllStandardOutput();
+            std::vector<float> pcm(size_t(raw.size()) / sizeof(float));
+            std::memcpy(pcm.data(), raw.constData(), pcm.size() * sizeof(float));
+            const float g = float(std::pow(10.0, (SfxSynth::peakLevelDb(k) - r.peakDb) / 20)); // as op sfx levels it
+            for (float& v : pcm) v *= g;
+            all.insert(all.end(), pcm.begin(), pcm.end());
+            all.insert(all.end(), gap.begin(), gap.end());
+            out << QString("| %1 | %2 | %3 | %4 | %5 | %6 | %7 | %8 | aufgenommen: %9, %10 (Datei unverändert; in alle.wav auf die Art-Spitze gepegelt) |\n")
+                       .arg(n)
+                       .arg(file, SfxSynth::kindName(k))
+                       .arg(seed)
+                       .arg(r.length, 0, 'f', 2)
+                       .arg(r.peakDb, 0, 'f', 1)
+                       .arg(pcm.empty() ? 0.0 : rmsDb(pcm) - 20 * std::log10(g), 0, 'f', 1)
+                       .arg(r.anchor, 0, 'f', 3)
+                       .arg(r.author, r.licence);
+        }
+    }
     for (const Candidate& c : kCandidates) {
         const SfxSynth::Sound s = SfxSynth::make(c.kind, c.seed, c.length);
         const QString file = QString("%1-%2-%3-%4.wav")
@@ -376,6 +512,7 @@ int main(int argc, char** argv)
     QGuiApplication app(argc, argv);
     Check::initApp("sfx");
     testSynth();
+    testRecorded();
     testPlace();
     QTemporaryDir tmp;
     testPackLicense(tmp.path());

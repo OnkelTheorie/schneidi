@@ -298,7 +298,8 @@ QJsonObject cmdShort(const QJsonObject& a, Context& ctx)
 
     // 6b. Effect sounds (sfx:'mild' only): a whoosh on the hard cuts, a hit on the kills, sparingly (op 'sfx' rules)
     if (sfx == QLatin1String("mild")) {
-        QJsonArray ops{QJsonObject{{"op", "sfx"}, {"on", "cuts"}, {"kind", "whoosh"}, {"level", "mild"}}};
+        // The hits first (they matter most), the whooshes in the room left (each kind has its own cap per minute)
+        QJsonArray ops;
         if (game) {
             // The hits 14 dB under the game sound's peak (without game sound: level mild)
             QJsonObject hit{{"op", "sfx"}, {"on", "kills"}, {"kind", "hit"}, {"level", "mild"}, {"game", game->id}};
@@ -306,6 +307,7 @@ QJsonObject cmdShort(const QJsonObject& a, Context& ctx)
                                                      SfxSynth::peakLevelDb(SfxSynth::Kind::Hit));
             ops << hit;
         }
+        ops << QJsonObject{{"op", "sfx"}, {"on", "cuts"}, {"kind", "whoosh"}, {"level", "mild"}};
         const QJsonObject e = run("edit", {{"project", project}, {"timeline", shortTimeline}, {"ops", ops}}, step(0.6, 0.6));
         int placed = 0;
         for (const QJsonValue& n : e["notes"].toArray()) placed += int(n["sfx"]["placed"].toArray().size());

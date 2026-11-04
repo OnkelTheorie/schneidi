@@ -158,12 +158,8 @@ struct DropP {
 };
 
 const DropP kDrops[] = {
-    // pro_sub_drop/soft (forge_v2 bank)
+    // pro_sub_drop/soft (forge_v2 bank; its bright and quick members scored 0.43-0.48 as real and are left out)
     {62.0, 44.0, 0.75, 1.3, 0.43, 0.08, 34.0, 1.4818, 0.12125, 160.033, 0.14804, 1440.02, 31.0003, 0.0, 0.05, 0.03, 0.05},
-    // pro_sub_drop/bright
-    {66.0, 44.0, 0.7, 1.0, 0.3, 0.04, 42.0, 1.25, 0.6, 420.0, 0.9, 5500.0, 30.0, 0.0, 0.0, 0.06, 0.12},
-    // pro_sub_drop/quick
-    {72.0, 46.0, 0.5, 1.0, 0.24, 0.02, 52.0, 1.0, 0.3, 320.0, 0.8, 4200.0, 25.0, 0.1, 0.0, 0.04, 0.08},
 };
 
 } // namespace
