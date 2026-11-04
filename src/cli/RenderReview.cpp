@@ -13,6 +13,7 @@
 #include "core/TimelineOps.h"
 #include "core/TimelineStory.h"
 #include "engine/AudioAnalysis.h"
+#include "engine/picture/ReviewOverlay.h"
 #include "engine/Snapshot.h"
 
 #include <QDir>
@@ -122,9 +123,12 @@ std::optional<TrackSound> trackSound(const ProjectFormat& f, Timeline tl, int tr
     s.beats = beats;
     s.fps = f.rate.fps();
     s.wave.track = trackName({TrackKind::Audio, track});
-    if (!AudioAnalysis::timelineSound(f, tl, 0, end,
-                                      [&s](const float* pcm, int n, int ch, int rate) { s.add(pcm, n, ch, rate); }))
-        return std::nullopt;
+    const std::atomic<bool>* stop = cancelFlag();
+    const bool mixed = AudioAnalysis::timelineSound(
+        f, tl, 0, end, [&s](const float* pcm, int n, int ch, int rate) { s.add(pcm, n, ch, rate); },
+        [stop](double) { return !(stop && stop->load()); });
+    if (stop && stop->load()) fail("CANCELED", "canceled");
+    if (!mixed) return std::nullopt;
     return s;
 }
 
@@ -141,12 +145,19 @@ QJsonObject offsetJson(const ReviewSheet::Offset& o, const char* atKey)
 std::shared_ptr<const ReviewSheet::Data> reviewData(Session& s, const Timeline& tl, int end, const QJsonObject& a,
                                                     Context& ctx, bool allWaves, QJsonObject* info)
 {
+    return reviewData(s.project, s.format(), s.project.sequenceName(s.project.currentSequence()), tl, end, a, ctx,
+                      allWaves, info);
+}
+
+std::shared_ptr<const ReviewSheet::Data> reviewData(const Project& p, const ProjectFormat& format, const QString& title,
+                                                    const Timeline& tl, int end, const QJsonObject& a, Context& ctx,
+                                                    bool allWaves, QJsonObject* info)
+{
     using namespace ReviewSheet;
-    const Project& p = s.project;
     auto d = std::make_shared<Data>();
-    d->format = s.format();
+    d->format = format;
     d->length = end;
-    d->title = p.sequenceName(p.currentSequence());
+    d->title = title;
     const double fps = d->fps();
     QJsonArray notes;
 
@@ -208,6 +219,7 @@ std::shared_ptr<const ReviewSheet::Data> reviewData(Session& s, const Timeline& 
                         files << c.mediaPath;
         }
         for (const QString& file : files) {
+            if (canceled()) fail("CANCELED", "canceled");
             QJsonObject args{{"file", file}};
             for (const char* k : {"game", "region", "color", "tolerance", "min_area", "audio_stream"})
                 if (hitsArg.toObject().contains(k)) args[k] = hitsArg.toObject()[k];
@@ -222,6 +234,7 @@ std::shared_ptr<const ReviewSheet::Data> reviewData(Session& s, const Timeline& 
                 Context quiet; // the review's own progress is not split into the analysis
                 r = highlightsFile(args, quiet);
             } catch (const Error& e) {
+                if (e.code == "CANCELED") throw;
                 fileInfo["skipped"] = e.code + ": " + e.message;
                 hitFiles << fileInfo;
                 continue;
@@ -292,6 +305,36 @@ std::shared_ptr<const ReviewSheet::Data> reviewData(Session& s, const Timeline& 
     if (info && !notes.isEmpty()) (*info)["review_notes"] = notes;
     return d;
 }
+
+} // namespace Cli::detail
+
+namespace Cli {
+
+std::function<void(uint8_t* rgba, int width, int height, int64_t frame)> reviewOverlay(const ProjectData& data,
+                                                                                         int sequence,
+                                                                                         const std::atomic<bool>* cancel)
+{
+    if (cancel && cancel->load()) return {};
+    detail::CancelScope scope(cancel);
+    Project p;
+    p.load(data);
+    if (sequence && !p.sequence(sequence)) sequence = 0;
+    const int seq = sequence ? sequence : p.currentSequence();
+    const Timeline tl = p.renderTimeline(sequence);
+    const int end = TimelineOps::endFrame(tl);
+    if (end <= 0) return {};
+    Context quiet;
+    try {
+        return Picture::reviewOverlay(detail::reviewData(p, p.sequenceFormat(sequence), p.sequenceName(seq), tl, end,
+                                                         {}, quiet, false, nullptr));
+    } catch (const Error&) {
+        return {}; // the marks are a help: without them the review job still renders its small fast picture
+    }
+}
+
+} // namespace Cli
+
+namespace Cli::detail {
 
 QJsonObject reviewNumbers(const ReviewSheet::Data& d)
 {

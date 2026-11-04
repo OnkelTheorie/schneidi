@@ -177,6 +177,14 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
     m_smart->setObjectName("renderSmart");
     m_smart->setChecked(true);
     m_smart->setToolTip(smartTip());
+    // Review render: a small fast video to check the edit, with its marks burned in (never part of a preset: a normal
+    // export never gets them)
+    m_review = new QCheckBox(T("Prüf-Render (klein, mit Markierungen)"));
+    m_review->setObjectName("renderReview");
+    m_review->setToolTip(T("Schnelle kleine Fassung (540p) zum Prüfen des Schnitts: Zeitcode und Bildnummer, "
+                           "Abschnitte, Beat-Raster der Musikspur, Schnitte mit Clipnamen, Treffer und offene Notizen "
+                           "sind ins Bild eingebrannt. Die Datei bekommt den Zusatz „Prüf-Render“; der normale Export "
+                           "bleibt ohne Markierungen."));
     m_range = new QComboBox;
     m_range->addItem(T("Ganze Timeline"));
     m_range->addItem(T("In/Out-Bereich"));
@@ -235,6 +243,7 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
     form->addRow(T("Untertitel"), m_subtitles);
     form->addRow(QString(), m_embed);
     form->addRow(T("Smart Render"), m_smart);
+    form->addRow(T("Prüfen"), m_review);
     form->addRow(T("Bereich"), m_range);
     form->addRow(T("CPU-Threads"), m_threads);
 
@@ -287,6 +296,7 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
     });
     connect(m_smart, &QCheckBox::toggled, this, [this] { syncPresetToSettings(); });
     connect(m_embed, &QCheckBox::toggled, this, [this] { syncPresetToSettings(); });
+    connect(m_review, &QCheckBox::toggled, this, &DeliverPanel::updateControls);
     connect(m_addBtn, &QPushButton::clicked, this, [this] { addToQueue(true); });
     connect(m_checkBtn, &QPushButton::clicked, this, [this] { runCheck(); });
     connect(m_project, &Project::currentSequenceChanged, this, [this] {
@@ -311,9 +321,15 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
         for (const RenderJob& j : m_project->renderQueue())
             if (j.id == id) {
                 setSettings(j.settings);
-                if (!j.settings.audioOnly() && !j.size.isEmpty()) selectSize(j.size);
+                // A review job: the box again, the name without the suffix makeJob() adds, the resolution of its
+                // settings (the job's own size is always the 540 p of the review)
+                m_review->setChecked(j.review);
+                if (!j.review && !j.settings.audioOnly() && !j.size.isEmpty()) selectSize(j.size);
                 const QFileInfo fi(j.path);
-                m_name->setText(fi.completeBaseName());
+                QString name = fi.completeBaseName();
+                const QString suffix = " - " + T("Prüf-Render");
+                if (j.review && name.endsWith(suffix)) name.chop(suffix.size());
+                m_name->setText(name);
                 m_folder->setText(QDir::toNativeSeparators(fi.absolutePath()));
             }
     });
@@ -557,6 +573,12 @@ void DeliverPanel::updateControls()
         if (QStandardItem* item = model->item(1)) item->setEnabled(video);
     if (!video && m_subtitles->currentIndex() == 1) m_subtitles->setCurrentIndex(0);
     m_embed->setEnabled(f.kind == RenderKind::Video);
+    m_review->setEnabled(f.kind == RenderKind::Video); // the marks need a video file
+    // A review render is always 540 p and encodes every frame: resolution and smart render do not apply to it
+    const bool review = m_review->isEnabled() && m_review->isChecked();
+    m_resolution->setEnabled(video && !review);
+    m_resolution->setToolTip(review ? T("Prüf-Render: immer 540p") : QString());
+    if (review) m_smart->setEnabled(false);
 }
 
 void DeliverPanel::showEvent(QShowEvent* e)
@@ -708,10 +730,16 @@ RenderJob DeliverPanel::makeJob() const
         }
     // Empty: the timeline's name. Typed names too: no characters a file system refuses (Windows: : ? * …)
     name = renderFileBaseName(name.isEmpty() ? m_project->sequenceName(m_project->currentSequence()) : name);
+    job.review = m_review->isChecked() && m_review->isEnabled();
+    if (job.review) name = renderFileBaseName(name + " - " + T("Prüf-Render")); // never over the real export
     job.path = QDir(QDir::fromNativeSeparators(m_folder->text().trimmed())).absoluteFilePath(name + ext);
     const int idx = currentPreset();
     if (idx >= 0 && idx < m_presets.size()) job.preset = m_presets[idx].name;
     if (!job.settings.audioOnly()) job.size = m_resolution->currentData().toSize();
+    if (job.review) { // 540 p like `render review:"video"` (a smaller timeline keeps its size)
+        const QSize tl = m_project->timelineFormat().size();
+        job.size = std::min(tl.width(), tl.height()) > 540 ? sizeForShortSide(tl, 540) : tl;
+    }
     job.sequence = m_project->currentSequence(); // this timeline gets rendered, even if another one is open later
     if (m_range->currentIndex() == 1) {
         const Timeline& tl = m_project->timeline();

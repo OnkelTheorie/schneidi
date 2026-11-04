@@ -6,6 +6,7 @@
 #include "app/Log.h"
 #include "core/ProjectFile.h"
 #include "app/MainWindow.h"
+#include "cli/Commands.h"
 #include "cli/Live.h"
 #include "cli/Setup.h"
 #include "ui/MediaStorage.h"
@@ -13,6 +14,7 @@
 #include "core/I18n.h"
 #include "engine/Engine.h"
 #include "engine/Extensions.h"
+#include "engine/RenderQueue.h"
 #include "engine/FfmpegLog.h"
 #include "engine/picture/gpu/Gpu.h"
 
@@ -162,7 +164,15 @@ int main(int argc, char* argv[])
     }
     const qint64 afterEngine = startTimer.elapsed();
 
+    // Deliver › Prüf-Render: the marks of `render review:"video"` (the command layer, which the app's library does not link)
+    RenderQueue::setReviewMarks([](const ProjectData& data, int sequence, const std::atomic<bool>& cancel) {
+        return Cli::reviewOverlay(data, sequence, &cancel);
+    });
     MainWindow w(&engine);
+    // Menu entries that map onto an edit op of the command layer ("Musik auf Länge…"): the user's own undo step
+    w.setUserRunner([&w](const QString& command, const QJsonObject& args, const QString& undoText) {
+        return Cli::Live::runForUser(&w, command, args, undoText);
+    });
     // Start maximized like DaVinci; screenshot test runs (offscreen) keep the fixed size from MainWindow
     if (app.arguments().contains("--screenshot")) w.show();
     else w.showMaximized();

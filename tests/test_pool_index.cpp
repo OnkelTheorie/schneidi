@@ -5,12 +5,17 @@
 // source frame, an empty search hides the hits. POOL_INDEX_DUMP=<file.png>: picture of the pool with hits.
 #include "check.h"
 
+#include "core/I18n.h"
 #include "core/Project.h"
 #include "engine/Engine.h"
 #include "engine/MediaIndex.h"
 #include "ui/MediaPool.h"
 
 #include <QApplication>
+#include <QDialog>
+#include <QFile>
+#include <QMessageBox>
+#include <QTimer>
 #include <QDir>
 #include <QElapsedTimer>
 #include <QLabel>
@@ -89,6 +94,51 @@ int main(int argc, char** argv)
     std::optional<MediaIndex::Entry> e = MediaIndex::cached(a);
     if (!CHECK(e && e->shots.size() == 2)) return Check::result();
     CHECK(MediaIndex::annotate(*e, 2, QString("Totale vom Laden"), QStringList{"laden"}));
+    // "Beschreibung bearbeiten…": a note that cannot be written, a shot that is gone - said in the user's language
+    // (it showed the English error of MediaIndex::annotate, "cannot write …")
+    {
+        const auto answer = [](QString* text, const QString& dump) {
+            QTimer::singleShot(0, [text, dump] {
+                waitFor([] { return QApplication::activeModalWidget() != nullptr; }, 5000);
+                if (auto* dlg = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+                    dlg && dlg->objectName() == "index_note_dialog") {
+                    if (auto* desc = dlg->findChild<QLineEdit*>("index_note_desc")) desc->setText("Halbtotale");
+                    if (!dump.isEmpty()) dlg->grab().save(dump);
+                    QTimer::singleShot(0, [text] {
+                        waitFor([] { return qobject_cast<QMessageBox*>(QApplication::activeModalWidget()) != nullptr; }, 5000);
+                        if (auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget())) {
+                            *text = box->text();
+                            box->accept();
+                        }
+                    });
+                    dlg->accept();
+                } else if (auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget())) {
+                    *text = box->text();
+                    box->accept();
+                }
+            });
+        };
+        const QString notes = MediaIndex::notesDir();
+        QDir(notes).removeRecursively();
+        QFile blocker(notes); // a file where the folder should be: the note cannot be written
+        CHECK(blocker.open(QIODevice::WriteOnly));
+        blocker.close();
+        QString text;
+        answer(&text, qEnvironmentVariable("POOL_NOTE_DUMP"));
+        pool.editHitNote(a, 1);
+        CHECK_EQ(text, T("Die Beschreibung ließ sich nicht speichern: in den Ordner %1 kann schneidi nicht schreiben.")
+                           .arg(QDir::toNativeSeparators(notes)));
+        CHECK(!text.contains("cannot write"));
+        QFile::remove(notes);
+        text.clear();
+        answer(&text, {});
+        pool.editHitNote(a, 9);
+        CHECK_EQ(text, T("Die Einstellung %1 gibt es in %2 nicht mehr (die Datei wurde neu untersucht).").arg(9).arg("a.mp4"));
+        // Written again (the folder is back): the earlier note of shot 2 is gone with the folder, write it anew
+        e = MediaIndex::cached(a);
+        if (!CHECK(e)) return Check::result();
+        CHECK(MediaIndex::annotate(*e, 2, QString("Totale vom Laden"), QStringList{"laden"}));
+    }
 
     // By description: the second shot of a.mp4, at its source frame
     pool.setSearch("totale");

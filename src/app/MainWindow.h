@@ -119,6 +119,13 @@ public:
     {
         m_chatRunner = run;
     }
+    // Runs an edit op of the command layer for one of the app's own menu entries (Clip › "Musik auf Länge…"; main.cpp
+    // hands in Cli::Live::runForUser: the user's own undo step, not the AI's). Reply as for setChatRunner.
+    using UserRunner = std::function<QJsonObject(const QString& command, const QJsonObject& args, const QString& undoText)>;
+    void setUserRunner(const UserRunner& run) { m_userRunner = run; }
+    // Clip › "Musik auf Länge…": the selected song's audio clip cut to the length of the timeline, the In/Out range or
+    // a number (FitMusicDialog -> op fit_music, one undo step); errors in the UI language
+    void fitMusicDialog();
     class AiChat* aiChat() const { return m_chat; }
     class AiChatPanel* aiChatPanel() const { return m_chatPanel; }
     void showAiChat(bool on);
@@ -405,6 +412,7 @@ private:
     void runChatPlan(const QString& id, const QVector<int>& steps); // plan card: the ticked steps, one undo step
     void discardChatPlan(const QString& id);
     std::function<QJsonObject(const QString&, const QJsonObject&)> m_chatRunner;
+    UserRunner m_userRunner;
     class AiChat* m_chat = nullptr;
     class AiChatPanel* m_chatPanel = nullptr;
     QSplitter* m_chatSplit = nullptr;

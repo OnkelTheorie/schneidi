@@ -138,6 +138,8 @@ schneidi_test(test_short) # `short`: moments, Shorts/Reels/TikTok presets, check
 target_link_libraries(test_short PRIVATE schneidi_cli_lib)
 schneidi_test(test_review_render) # `render review`: marks burned in at their frames, sheet tiles, offsets, project untouched
 target_link_libraries(test_review_render PRIVATE schneidi_cli_lib)
+schneidi_test(test_deliver_review) # Deliver › Prüf-Render: review jobs in the queue with the marks, normal ones without
+target_link_libraries(test_deliver_review PRIVATE schneidi_cli_lib)
 schneidi_test(test_speech) # text to speech: piper extension, cache, fake piper, CLI op speak
 target_link_libraries(test_speech PRIVATE schneidi_cli_lib)
 target_link_libraries(test_live PRIVATE schneidi_cli_lib)
@@ -179,6 +181,9 @@ target_link_libraries(test_beats PRIVATE schneidi_cli_lib)
 # `fit_music` (a song cut to a length on its phrases, its own end, crossfades without clicks) and `snap_to_beat`;
 # live in the app one undo step, the same as on the file
 schneidi_test(test_fit_music)
+# Clip › "Musik auf Länge…": the dialog onto op fit_music (one undo step, errors in the user's language)
+schneidi_test(test_fit_music_app)
+target_link_libraries(test_fit_music_app PRIVATE schneidi_cli_lib)
 target_link_libraries(test_fit_music PRIVATE schneidi_cli_lib)
 target_compile_definitions(test_fit_music PRIVATE SCHNEIDI_CLI="$<TARGET_FILE:schneidi-cli>")
 add_dependencies(test_fit_music schneidi-cli)

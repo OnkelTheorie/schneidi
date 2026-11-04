@@ -7,6 +7,7 @@
 #include "app/AiChatPanel.h"
 #include "app/AiKeys.h"
 #include "app/McpClient.h"
+#include "app/ToolErrors.h"
 #include "core/I18n.h"
 #include "core/Project.h"
 #include "ui/FullScreenViewer.h"
@@ -301,7 +302,7 @@ void MainWindow::runChatPlan(const QString& id, const QVector<int>& steps)
                              ? T("Nicht ausgeführt: das Projekt wurde seit dem Plan geändert. Bitte die KI, neu zu planen.")
                          : code == "NOT_FOUND" // expired after a day, or run/discarded elsewhere
                              ? T("Nicht ausgeführt: den Plan gibt es nicht mehr (nach einem Tag abgelaufen oder schon ausgeführt). Bitte die KI, neu zu planen.")
-                             : T("Nicht ausgeführt: %1").arg(error["message"].toString()));
+                             : T("Nicht ausgeführt: %1").arg(ToolErrors::text(code, error["message"].toString())));
     m_chat->addNote(QString("plan %1 could not run (%2: %3); nothing of it was changed")
                         .arg(id, code, error["message"].toString()));
 }

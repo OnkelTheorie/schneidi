@@ -151,6 +151,12 @@ bool handOver(const QStringList& files, QString* app = nullptr, int patienceMs =
 // stale lock that QLockFile detects. nullptr = not taken within timeoutMs (go on without it, as before).
 std::unique_ptr<QLockFile> lockLaunch(int timeoutMs = 60000);
 
+// A command the app runs for the user from one of its own menu entries that maps onto an edit op (Clip › "Musik auf
+// Länge…" = op fit_music) on the host's project (also without a running Server): one undo step named `undoText`, all
+// or nothing, but the user's own: not in the AI log, not lit up as the AI's, plan mode does not apply. The reply as
+// for Server::runForChat ({"ok":true,"result"} or {"ok":false,"error":{code,message}}); APP_BUSY while a command runs.
+QJsonObject runForUser(LiveHost* host, const QString& command, const QJsonObject& args, const QString& undoText);
+
 // ---------- schneidi-cli side ----------
 
 // Connection to the app that has `project` open; nullptr = no app has it open (work on the file). Throws

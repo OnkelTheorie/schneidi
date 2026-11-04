@@ -9,7 +9,11 @@
 #include <QString>
 #include <QVector>
 
+#include <atomic>
+#include <cstdint>
 #include <functional>
+
+struct ProjectData;
 
 namespace Cli {
 
@@ -80,5 +84,12 @@ QJsonObject normalize(const Command& cmd, const QJsonObject& raw);
 // The app's own AI chat (its tool server has Live::ChatServerEnv): a command that needs a project and got none (not
 // under another name either) works on the project open in the app - "@app" is put in; true when it was
 bool defaultToAppProject(const Command& cmd, QJsonObject& raw);
+
+// The app's review render (Deliver › "Prüf-Render", RenderQueue::setReviewMarks): what `render review:"video"` burns
+// into the frames (cli/RenderReview.cpp, default settings) for timeline `sequence` (0 = the open one) of a copy of a
+// project. Slow (mixes the music track for its beats, reads the kill feed of game recordings): for a worker thread;
+// `cancel` turning true stops it within a moment. Empty = nothing to mark (empty timeline) or canceled.
+std::function<void(uint8_t* rgba, int width, int height, int64_t frame)>
+reviewOverlay(const ProjectData& data, int sequence, const std::atomic<bool>* cancel = nullptr);
 
 } // namespace Cli

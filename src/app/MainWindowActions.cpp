@@ -387,6 +387,8 @@ void MainWindow::buildActions()
     keepFeed->setChecked(QSettings().value(QStringLiteral("reframe/keepKillFeed"), true).toBool());
     connect(keepFeed, &QAction::toggled, this,
             [](bool on) { QSettings().setValue(QStringLiteral("reframe/keepKillFeed"), on); });
+    // A song cut to a length on its phrases (op fit_music): timeline, In/Out range or a number
+    makeAction(clipMenu, "fit_music", T("Musik auf Länge…"), QKeySequence(), [this] { fitMusicDialog(); });
     QMenu* compoundMenu = timeline->addMenu(T("Compound Clip"));
     makeAction(compoundMenu, "compound_create", T("Neuer Compound Clip…"), QKeySequence(), [this] { createCompoundClip(); });
     makeAction(compoundMenu, "compound_open", T("Compound Clip in Timeline öffnen"), QKeySequence(),

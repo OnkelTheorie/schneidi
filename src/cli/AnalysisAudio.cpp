@@ -34,10 +34,12 @@ LoudPeaks loudPeaks(const MediaSource& m, const QJsonObject& a, const std::funct
     c.audioStream = a["audio_stream"].toInt();
     if (c.audioStream >= m.info.audioStreamCount())
         fail("BAD_ARGUMENT", QString("the file has %1 audio stream(s)").arg(m.info.audioStreamCount()));
-    const auto peaks = AudioAnalysis::clipFramePeaks(f, c, [&progress](double p) {
+    const std::atomic<bool>* stop = cancelFlag();
+    const auto peaks = AudioAnalysis::clipFramePeaks(f, c, [&progress, stop](double p) {
         if (progress) progress(p);
-        return true;
+        return !(stop && stop->load());
     });
+    if (stop && stop->load()) fail("CANCELED", "canceled");
     if (!peaks || peaks->empty()) fail("NO_AUDIO", "could not decode the audio of " + m.info.path);
     std::vector<double> db(peaks->size());
     for (size_t i = 0; i < db.size(); ++i) db[i] = 20 * std::log10(std::max(1e-6f, (*peaks)[i]));

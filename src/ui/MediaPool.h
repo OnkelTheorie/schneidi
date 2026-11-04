@@ -113,6 +113,10 @@ public slots:
     // shots once done)
     void buildIndex(const QStringList& paths);
 
+    // "Beschreibung bearbeiten…" of a search hit: description and tags of a shot (MediaIndex::annotate); an error
+    // (the note file cannot be written, the shot is gone) is said in the UI language
+    void editHitNote(const QString& path, int shot);
+
 signals:
     void sourceRequested(const QString& path);
     // double-click on a hit of the material search: that file in the source viewer at that source frame
@@ -155,7 +159,6 @@ private:
     void saveSettings() const;
     void updateIndexHits(); // material search for the search text (MediaIndex::cached, nothing measured)
     void showHitMenu(const QPoint& pos);
-    void editHitNote(const QString& path, int shot); // description and tags of a shot (MediaIndex::annotate)
 
     Project* m_project;
     Engine* m_engine;

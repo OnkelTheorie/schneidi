@@ -1663,8 +1663,15 @@ void MediaPool::editHitNote(const QString& path, int shot)
     const MediaIndex::Shot* s = nullptr;
     for (const MediaIndex::Shot& x : e->shots)
         if (x.n == shot) s = &x;
-    if (!s) return;
+    if (!s) {
+        QMessageBox::warning(this, T("Beschreibung bearbeiten"),
+                             T("Die Einstellung %1 gibt es in %2 nicht mehr (die Datei wurde neu untersucht).")
+                                 .arg(shot)
+                                 .arg(QFileInfo(path).fileName()));
+        return;
+    }
     QDialog dlg(this);
+    dlg.setObjectName("index_note_dialog");
     dlg.setWindowTitle(T("Beschreibung bearbeiten"));
     auto* form = new QFormLayout(&dlg);
     auto* desc = new QLineEdit(s->desc);
@@ -1684,7 +1691,11 @@ void MediaPool::editHitNote(const QString& path, int shot)
     QStringList list;
     for (const QString& t : tags->text().split(',', Qt::SkipEmptyParts)) list << t.trimmed();
     QString error;
+    // The shot is there (looked up above): what fails is writing the note next to the index (English for the CLI)
     if (!MediaIndex::annotate(*e, shot, desc->text(), list, &error))
-        QMessageBox::warning(this, T("Beschreibung bearbeiten"), error);
+        QMessageBox::warning(this, T("Beschreibung bearbeiten"),
+                             T("Die Beschreibung ließ sich nicht speichern: in den Ordner %1 kann schneidi nicht "
+                               "schreiben.")
+                                 .arg(QDir::toNativeSeparators(MediaIndex::notesDir())));
     updateIndexHits();
 }

@@ -103,6 +103,7 @@ bool ffmpegAnalysis()
 
 std::vector<PictureScore> pictureScores(const MediaSource& m, int width, const std::function<void(double)>& progress)
 {
+    const std::atomic<bool>* stop = cancelFlag(); // stops with the review render too (the callbacks may run elsewhere)
     if (ffmpegAnalysis()) return scoresFfmpeg(m, width, progress);
     Video::Scan::Options o;
     o.width = width;
@@ -119,8 +120,9 @@ std::vector<PictureScore> pictureScores(const MediaSource& m, int width, const s
         },
         [&](double p) {
             if (progress) progress(p);
-            return true;
+            return !(stop && stop->load());
         });
+    if (stop && stop->load()) fail("CANCELED", "canceled");
     if (!r.ok) fail("DECODE_FAILED", "could not read the video of " + m.info.path + ": " + r.error);
     std::sort(out.begin(), out.end(), [](const PictureScore& a, const PictureScore& b) { return a.seconds < b.seconds; });
     // Scene score as ffmpeg's select filter defines it: the smaller of the difference to the picture before and its
@@ -138,10 +140,20 @@ std::vector<PictureScore> pictureScores(const MediaSource& m, int width, const s
     return out;
 }
 
+namespace {
+thread_local const std::atomic<bool>* t_cancel = nullptr;
+}
+
+const std::atomic<bool>* cancelFlag() { return t_cancel; }
+bool canceled() { return t_cancel && t_cancel->load(); }
+CancelScope::CancelScope(const std::atomic<bool>* flag) : m_old(t_cancel) { t_cancel = flag; }
+CancelScope::~CancelScope() { t_cancel = m_old; }
+
 void pictureSamples(const MediaSource& m, const QRectF& crop, QSize size, int rate, const QString& ffmpegFilter,
                     const std::function<void(int, const uchar*)>& each, const std::function<void(double)>& progress,
                     bool everyPicture)
 {
+    const std::atomic<bool>* stop = cancelFlag(); // read here: the callbacks may run on decoding threads
     const ProjectFormat& f = m.format;
     const double total = m.info.length / f.rate.fps() * rate;
     const qsizetype frameBytes = qsizetype(size.width()) * size.height() * 3;
@@ -162,6 +174,11 @@ void pictureSamples(const MediaSource& m, const QRectF& crop, QSize size, int ra
             raw.remove(0, at);
         };
         while (ff.state() != QProcess::NotRunning) {
+            if (stop && stop->load()) {
+                ff.kill();
+                ff.waitForFinished(5000);
+                fail("CANCELED", "canceled");
+            }
             ff.waitForReadyRead(200);
             raw += ff.readAllStandardOutput();
             consume();
@@ -199,8 +216,9 @@ void pictureSamples(const MediaSource& m, const QRectF& crop, QSize size, int ra
         },
         [&](double p) {
             if (progress) progress(p);
-            return true;
+            return !(stop && stop->load());
         });
+    if (stop && stop->load()) fail("CANCELED", "canceled");
     if (!r.ok) fail("DECODE_FAILED", "could not read the video of " + m.info.path + ": " + r.error);
 }
 

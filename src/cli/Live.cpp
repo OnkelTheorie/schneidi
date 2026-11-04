@@ -638,6 +638,46 @@ QJsonObject Server::runCommand(const QJsonObject& msg, bool ownChat, bool byUser
     return {{"ok", true}, {"result", result}};
 }
 
+QJsonObject runForUser(LiveHost* host, const QString& command, const QJsonObject& args, const QString& undoText)
+{
+    if (g_host) return errorReply("APP_BUSY", "another command runs in the app");
+    const Command* cmd = find(command);
+    if (!cmd) return errorReply("BAD_REQUEST", "no command " + command);
+    HostScope scope(host);
+    Project* p = host->liveProject();
+    QUndoStack* undo = p->undoStack();
+    const int index = undo->index();
+    const QVector<MediaInfo> mediaBefore = p->media();
+    p->closeMerge();
+    undo->beginMacro(undoText);
+    try {
+        Context ctx;
+        const QJsonObject result = cmd->run(normalize(*cmd, args), ctx);
+        undo->endMacro();
+        if (undo->index() == index + 1 && undo->command(index)->childCount() == 0) dropStep(undo, index); // no-op
+        p->closeMerge();
+        return {{"ok", true}, {"result", result}};
+    } catch (const Error& e) {
+        undo->endMacro();
+        if (undo->index() > index) undo->undo(); // all or nothing
+        dropStep(undo, index);
+        restoreMedia(*p, mediaBefore);
+        return errorReply(e.code, e.message);
+    } catch (const std::exception& e) { // not an Error (std::bad_alloc …): the macro must not stay open either
+        undo->endMacro();
+        if (undo->index() > index) undo->undo();
+        dropStep(undo, index);
+        restoreMedia(*p, mediaBefore);
+        return errorReply("INTERNAL", QString("the command failed: %1").arg(e.what()));
+    } catch (...) {
+        undo->endMacro();
+        if (undo->index() > index) undo->undo();
+        dropStep(undo, index);
+        restoreMedia(*p, mediaBefore);
+        return errorReply("INTERNAL", "the command failed");
+    }
+}
+
 // ---------- schneidi-cli side ----------
 
 class Connection {

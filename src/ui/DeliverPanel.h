@@ -112,6 +112,7 @@ private:
     QComboBox* m_range; // whole timeline / In-Out range
     QCheckBox* m_smart; // smart render (H.264/H.265 only)
     QCheckBox* m_embed = nullptr; // embed the subtitle tracks as text streams
+    QCheckBox* m_review = nullptr; // review render (RenderJob::review), off by default, not in presets
     QComboBox* m_subtitles; // Subtitles: none / burn in / SRT file (data: RenderSettings::Subtitles)
     bool m_hadRange = false;
     bool m_applying = false;

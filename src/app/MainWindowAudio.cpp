@@ -3,6 +3,8 @@
 #include "app/MainWindow.h"
 
 #include "app/DuckingDialog.h"
+#include "app/FitMusicDialog.h"
+#include "app/ToolErrors.h"
 #include "app/StreamPresetsDialog.h"
 #include "core/Editor.h"
 #include "core/I18n.h"
@@ -13,6 +15,7 @@
 #include "engine/AudioAnalysis.h"
 
 #include <QApplication>
+#include <QJsonArray>
 #include <QMessageBox>
 #include <QProgressDialog>
 #include <QStatusBar>
@@ -97,4 +100,63 @@ void MainWindow::duckingDialog()
     }
     const int ducked = m_editor->duck(dlg.musicIds(), *ranges, params);
     statusBar()->showMessage(T("Ducking: %1 Clips abgesenkt").arg(ducked), 5000);
+}
+
+void MainWindow::fitMusicDialog()
+{
+    // The song: the first selected audio clip of a file
+    const Timeline& tl = m_project->timeline();
+    const Clip* song = nullptr;
+    for (int id : m_editor->selectedAudioClips())
+        if (const Clip* c = TimelineOps::findClip(tl, id); c && c->kind == ClipKind::Media) {
+            song = c;
+            break;
+        }
+    const MediaInfo* m = song ? m_project->mediaInfo(song->mediaPath) : nullptr;
+    if (!song || !m) {
+        QMessageBox::information(this, T("Musik auf Länge"), T("Erst den Audioclip der Musik in der Timeline auswählen."));
+        return;
+    }
+    const int songId = song->id, songStart = song->start, songFrames = m->length;
+    // Length "timeline" = from the song's start to the end of the other clips (as the op takes it)
+    int end = 0;
+    for (const QVector<Track>* tracks : {&tl.video, &tl.audio})
+        for (const Track& t : *tracks)
+            for (const Clip& c : t.clips)
+                if (c.id != songId) end = std::max(end, c.end());
+    const double fps = m_project->timelineFormat().rate.fps();
+    FitMusicDialog dlg(songFrames, end - songStart, tl.markIn, tl.markOut, fps, this);
+    if (dlg.exec() != QDialog::Accepted) return;
+    if (!m_userRunner) return; // no command layer (a bare library build)
+    QJsonObject op = dlg.opFields();
+    op["op"] = "fit_music";
+    op["clip"] = songId;
+    statusBar()->showMessage(T("Musik auf Länge: Song wird analysiert…"));
+    QApplication::setOverrideCursor(Qt::WaitCursor);
+    const QJsonObject reply =
+        m_userRunner("edit", {{"project", "@app"}, {"ops", QJsonArray{op}}}, T("Musik auf Länge"));
+    QApplication::restoreOverrideCursor();
+    statusBar()->clearMessage();
+    if (!reply["ok"].toBool()) {
+        const QJsonObject error = reply["error"].toObject();
+        const QString code = error["code"].toString();
+        const auto secs = [fps](int frames) {
+            return T("%1 s").arg(QString::number(frames / fps, 'f', 1).replace('.', I18n::decimalPoint()));
+        };
+        QMessageBox::warning(this, T("Musik auf Länge"),
+                             code == "TOO_SHORT"
+                                 ? T("Der Song ist nur %1 lang – kürzer als die gewünschte Länge (%2).")
+                                       .arg(secs(songFrames), secs(dlg.targetFrames()))
+                                 : ToolErrors::text(code, error["message"].toString()));
+        return;
+    }
+    // What came out (the op's answer is in its notes: fit_music {length_s, cuts …})
+    for (const QJsonValue& n : reply["result"]["notes"].toArray())
+        if (const QJsonObject r = n.toObject()["fit_music"].toObject(); !r.isEmpty()) {
+            statusBar()->showMessage(
+                T("Musik auf Länge: %1, %2 Schnitte").arg(T("%1 s").arg(QString::number(r["length_s"].toDouble(), 'f', 2).replace('.', I18n::decimalPoint())))
+                    .arg(r["cuts"].toArray().size()),
+                6000);
+            break;
+        }
 }

@@ -7,8 +7,15 @@
 
 #include <QDir>
 #include <QFileInfo>
+#include <QThread>
 #include <QTimer>
 #include <algorithm>
+
+namespace {
+RenderQueue::ReviewMarks g_reviewMarks;
+}
+
+void RenderQueue::setReviewMarks(ReviewMarks make) { g_reviewMarks = std::move(make); }
 
 RenderQueue::RenderQueue(Project* project, QObject* parent)
     : QObject(parent), m_project(project), m_exporter(new Exporter(this))
@@ -24,6 +31,17 @@ RenderQueue::RenderQueue(Project* project, QObject* parent)
         emit progress(m_current, 0);
     });
     connect(m_exporter, &Exporter::finished, this, &RenderQueue::onExportFinished);
+}
+
+RenderQueue::~RenderQueue()
+{
+    // A review job's marks still being made (on its own copy of the project): stop it, wait for it, delete it
+    for (const MarksThread& m : std::as_const(m_threads)) m.cancel->store(true);
+    for (const MarksThread& m : std::as_const(m_threads))
+        if (m.thread) {
+            m.thread->wait();
+            delete m.thread.data();
+        }
 }
 
 ExportSettings RenderQueue::exportSettings(const RenderJob& job, const ProjectFormat& format)
@@ -68,6 +86,11 @@ ExportSettings RenderQueue::exportSettings(const RenderJob& job, const ProjectFo
     if (job.inOut) {
         s.from = std::max(0, job.from);
         s.to = job.to;
+    }
+    if (job.review) { // small and fast: every frame is drawn on (nothing copied), the fastest encoder setting
+        s.smartRender = false;
+        s.preset = "ultrafast";
+        s.crf = std::max(s.crf, 28);
     }
     return s;
 }
@@ -151,16 +174,55 @@ bool RenderQueue::launch()
         error = T("Export abgebrochen.");
     } else if (it->sequence && !m_project->sequence(it->sequence)) {
         error = T("Die Timeline gibt es nicht mehr.");
-    } else if (m_exporter->start(m_project->renderTimeline(it->sequence), exportSettings(*it, *m_project), &error)) {
-        // Preparing (opening the files) goes on in the background until the exporter reports started()
+    } else if (it->review && g_reviewMarks && !m_marksReady) {
+        makeReviewMarks(*it); // launch() again when the marks are there
         return true;
+    } else {
+        ExportSettings es = exportSettings(*it, *m_project);
+        // A review job renders the timeline its marks were made of (an edit while they were made would not fit them)
+        const Timeline tl = it->review && m_marksTimeline ? *m_marksTimeline : m_project->renderTimeline(it->sequence);
+        if (it->review) es.overlay = std::move(m_overlay);
+        m_marksReady = false;
+        m_overlay = {};
+        m_marksTimeline.reset();
+        // Preparing (opening the files) goes on in the background until the exporter reports started()
+        if (m_exporter->start(tl, es, &error)) return true;
     }
+    m_marksReady = false;
+    m_overlay = {};
+    m_marksTimeline.reset();
     m_current = 0;
     m_preparing = false;
     ++m_failed;
     setStatus(id, RenderStatus::Failed, error);
     emit jobFinished(id, RenderStatus::Failed);
     return false;
+}
+
+void RenderQueue::makeReviewMarks(const RenderJob& job)
+{
+    static int tokens = 0;
+    const int token = ++tokens, id = job.id, sequence = job.sequence;
+    m_marksJob = token;
+    m_marksTimeline = m_project->renderTimeline(sequence); // the same moment as the copy for the marks
+    auto result = std::make_shared<Overlay>();
+    auto cancel = std::make_shared<std::atomic<bool>>(false);
+    QThread* t = QThread::create([data = m_project->data(), sequence, result, cancel, make = g_reviewMarks] {
+        *result = make(data, sequence, *cancel);
+    });
+    m_threads << MarksThread{t, cancel};
+    connect(t, &QThread::finished, this, [this, t, token, id, result, cancel] {
+        m_threads.erase(std::remove_if(m_threads.begin(), m_threads.end(),
+                                       [t](const MarksThread& m) { return m.thread == t || !m.thread; }),
+                        m_threads.end());
+        t->deleteLater();
+        if (cancel->load() || m_marksJob != token || m_current != id) return; // canceled meanwhile
+        m_marksJob = 0;
+        m_overlay = *result;
+        m_marksReady = true;
+        if (!launch()) next();
+    });
+    t->start(QThread::LowPriority);
 }
 
 void RenderQueue::onExportFinished(bool ok, const QString& message)
@@ -209,6 +271,13 @@ void RenderQueue::cancel()
         return;
     }
     m_canceling = true;
+    if (m_marksJob) { // still making a review job's marks: the exporter has not started; stop the thread
+        m_marksJob = 0;
+        m_marksTimeline.reset();
+        for (const MarksThread& m : std::as_const(m_threads)) m.cancel->store(true);
+        onExportFinished(false, {});
+        return;
+    }
     if (m_probeWait) { // still waiting for the graphics card probe: the exporter has not started
         disconnect(m_probeWait);
         onExportFinished(false, {});

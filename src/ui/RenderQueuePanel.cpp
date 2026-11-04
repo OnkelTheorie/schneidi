@@ -268,8 +268,9 @@ void RenderQueuePanel::rebuild()
         const QString timeline = !j.sequence ? QString()
                                  : m_project->sequence(j.sequence) ? m_project->sequenceName(j.sequence)
                                                                    : T("(Timeline gelöscht)");
-        card->summary->setFullText(timeline.isEmpty() ? j.settings.summary(j.size)
-                                                      : timeline + QStringLiteral(" · ") + j.settings.summary(j.size));
+        const QString summary = j.review ? T("Prüf-Render") + QStringLiteral(" · ") + j.settings.summary(j.size)
+                                         : j.settings.summary(j.size);
+        card->summary->setFullText(timeline.isEmpty() ? summary : timeline + QStringLiteral(" · ") + summary);
         card->range->setFullText(j.inOut ? T("In/Out: %1 – %2")
                                            .arg(Timecode::format(j.from, fps),
                                                 j.to >= 0 ? Timecode::format(j.to, fps) : T("Ende"))

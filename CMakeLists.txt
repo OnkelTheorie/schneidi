@@ -258,6 +258,8 @@ add_library(schneidi_lib STATIC
     src/app/KeyBindingsDialog.h   src/app/KeyBindingsDialog.cpp
     src/app/ProjectSettingsDialog.h src/app/ProjectSettingsDialog.cpp
     src/app/ClipSpeedDialog.h src/app/ClipSpeedDialog.cpp
+    src/app/FitMusicDialog.h src/app/FitMusicDialog.cpp
+    src/app/ToolErrors.h src/app/ToolErrors.cpp
     src/app/ProxyCleanupDialog.h src/app/ProxyCleanupDialog.cpp
     src/app/NormalizeDialog.h src/app/NormalizeDialog.cpp
     src/app/StreamPresetsDialog.h src/app/StreamPresetsDialog.cpp

@@ -216,6 +216,10 @@ QJsonObject cmdRender(const QJsonObject& a, Context& ctx);
 // music track's. info gets what was looked at (beats, hits_from, review_notes). The project is only read.
 std::shared_ptr<const ReviewSheet::Data> reviewData(Session& s, const Timeline& tl, int end, const QJsonObject& a,
                                                     Context& ctx, bool allWaves, QJsonObject* info);
+// The same on any project (the app's review render, Cli::reviewOverlay): `format`/`title` of the timeline tl
+std::shared_ptr<const ReviewSheet::Data> reviewData(const Project& p, const ProjectFormat& format, const QString& title,
+                                                    const Timeline& tl, int end, const QJsonObject& a, Context& ctx,
+                                                    bool allWaves, QJsonObject* info);
 // offsets (hits next to the nearest beat), cuts_off_beat, counts of the marks
 QJsonObject reviewNumbers(const ReviewSheet::Data& d);
 // The review sheet (one PNG) into out: {out, size, tiles}

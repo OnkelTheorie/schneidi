@@ -26,6 +26,7 @@
 
 #include "app/AiChat.h"
 #include "app/AiChatPanel.h"
+#include "app/ToolErrors.h"
 #include "app/AiClient.h"
 #include "app/AiKeys.h"
 #include "app/AiLog.h"
@@ -820,6 +821,27 @@ void test(const QString& dir)
             if (auto* state = cardsNow.last()->findChild<QLabel*>("ai_plan_state"); CHECK(state))
                 CHECK_EQ(state->text(), T("Nicht ausgeführt: den Plan gibt es nicht mehr (nach einem Tag abgelaufen oder schon ausgeführt). Bitte die KI, neu zu planen."));
         }
+        // Another error of the tool (English for AIs): a known code in the user's language, the rest inside a sentence
+        // of it (the card showed "Nicht ausgeführt: no beat found in song.wav …")
+        fake.script = {anthropicTool("toolu_p7", "edit", {{"project", "@app"}, {"plan", true},
+                                                          {"ops", QJsonArray{QJsonObject{{"op", "split"}, {"at", "0.1s"}, {"why", "w"}}}}}),
+                       anthropicText("Plan.")};
+        panel->sendText("Ein letzter Plan");
+        CHECK(waitFor([&] { return !chat->busy(); }));
+        w.setChatRunner([](const QString&, const QJsonObject&) {
+            return QJsonObject{{"ok", false}, {"error", QJsonObject{{"code", "NO_BEAT"}, {"message", "no beat found in song.wav"}}}};
+        });
+        if (const QList<QWidget*> cardsNow = panel->findChildren<QWidget*>("ai_plan"); CHECK(!cardsNow.isEmpty())) {
+            if (auto* run = cardsNow.last()->findChild<QPushButton*>("ai_plan_run"); CHECK(run)) run->click();
+            settle(50);
+            if (auto* state = cardsNow.last()->findChild<QLabel*>("ai_plan_state"); CHECK(state)) {
+                CHECK_EQ(state->text(), T("Nicht ausgeführt: %1").arg(T("Im Song wurde kein Takt gefunden (Stille, oder kürzer als vier Schläge).")));
+                CHECK(!state->text().contains("no beat found"));
+            }
+        }
+        CHECK_EQ(ToolErrors::text("FAILED", "could not place the song on A1 (locked?)"),
+                 T("Der Schritt ist fehlgeschlagen. Meldung: „%1“").arg("could not place the song on A1 (locked?)"));
+        CHECK(ToolErrors::text("FAILED", "x") != "x");
         // The chat as text lists the plans with their reasons
         CHECK(chat->transcript().contains("Hook markieren"));
         w.setChatRunner({});

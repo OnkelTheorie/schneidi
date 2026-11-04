@@ -152,6 +152,9 @@ struct RenderJob {
     bool inOut = false;  // In/Out range instead of whole timeline
     int from = 0, to = -1; // range (frames, inclusive), to < 0 = until the end
     int sequence = 0;    // timeline (sequence id) when adding, 0 = the currently opened one (old files)
+    // Review render (Deliver › "Prüf-Render", like `render review:"video"`): a small fast video with the marks of the
+    // edit burned in (beats, cuts, hits, sections; engine/picture/ReviewOverlay). Never set for a normal export.
+    bool review = false;
     RenderStatus status = RenderStatus::Queued;
     QString message;     // error text or note (e.g. hardware encoder fell back to software)
     QString encoderUsed; // FFmpeg video codec of the last render, e.g. "h264_nvenc" (empty = not rendered yet)

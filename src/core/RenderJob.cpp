@@ -448,7 +448,7 @@ std::optional<RenderPreset> find(const QString& nameOrId)
 bool RenderJob::operator==(const RenderJob& o) const
 {
     return id == o.id && path == o.path && preset == o.preset && settings == o.settings && size == o.size
-           && inOut == o.inOut && sequence == o.sequence && from == o.from && to == o.to && status == o.status && message == o.message
+           && inOut == o.inOut && sequence == o.sequence && review == o.review && from == o.from && to == o.to && status == o.status && message == o.message
            && renderMs == o.renderMs && encoderUsed == o.encoderUsed;
 }
 
@@ -470,6 +470,7 @@ QJsonArray toJson(const QVector<RenderJob>& jobs)
             o["height"] = j.size.height();
         }
         if (j.sequence) o["sequence"] = j.sequence;
+        if (j.review) o["review"] = true; // older versions render it as a normal export (no harm)
         if (j.inOut) {
             o["inOut"] = true;
             o["from"] = j.from;
@@ -502,6 +503,7 @@ QVector<RenderJob> fromJson(const QJsonArray& arr)
         const int w = o.value("width").toInt(), h = o.value("height").toInt();
         if (w > 0 && h > 0 && !j.settings.audioOnly()) j.size = QSize(w, h);
         j.sequence = std::max(0, o.value("sequence").toInt());
+        j.review = o.value("review").toBool();
         j.inOut = o.value("inOut").toBool();
         if (j.inOut) {
             j.from = std::max(0, o.value("from").toInt());

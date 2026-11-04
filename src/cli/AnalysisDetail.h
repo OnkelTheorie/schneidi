@@ -11,10 +11,26 @@
 #include <QRectF>
 #include <QSize>
 
+#include <atomic>
 #include <functional>
 #include <vector>
 
 namespace Cli::detail {
+
+// Stopping a long analysis from outside (the app's review render, Cli::reviewOverlay): a CancelScope sets the flag for
+// the calling thread; the decoding loops (pictureSamples, loudPeaks, the review's sound mixes) read it once at their
+// start and stop when it turns true, then fail with CANCELED. nullptr = cannot be canceled (the CLI).
+const std::atomic<bool>* cancelFlag();
+bool canceled(); // the calling thread's flag is set and true
+struct CancelScope {
+    explicit CancelScope(const std::atomic<bool>* flag);
+    ~CancelScope();
+    CancelScope(const CancelScope&) = delete;
+    CancelScope& operator=(const CancelScope&) = delete;
+
+private:
+    const std::atomic<bool>* m_old;
+};
 
 // Media file + the frame rate frames count in (project format, or the file's own rate)
 struct MediaSource {
