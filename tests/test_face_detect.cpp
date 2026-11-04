@@ -311,6 +311,18 @@ void testModel(const QDir& tmp, const QString& model)
     r = run("index", {{"files", QJsonArray{media}}});
     CHECK(r["cached"].toBool());
     CHECK_EQ(r["media"][0]["shots"][0]["quality"]["faces"].toInt(-1), 0);
+    // A face model that cannot run (a broken file): no faces, but cached all the same (not measured on every call)
+    const QString broken = tmp.filePath("broken.onnx");
+    if (QFile b(broken); CHECK(b.open(QIODevice::WriteOnly))) b.write("no onnx model");
+    qputenv("SCHNEIDI_YUNET", broken.toUtf8());
+    MediaIndex::clearMemoryCache();
+    r = run("index", {{"files", QJsonArray{media}}});
+    CHECK_EQ(r["cached"].toBool(true), false); // another model file: another key
+    CHECK(!r["media"][0]["shots"][0]["quality"].toObject().contains("faces"));
+    MediaIndex::clearMemoryCache();
+    r = run("index", {{"files", QJsonArray{media}}});
+    CHECK(r["cached"].toBool());
+    qputenv("SCHNEIDI_YUNET", model.toUtf8());
     MediaIndex::setEventSource({});
 }
 
