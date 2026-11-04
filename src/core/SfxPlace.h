@@ -8,6 +8,8 @@
 #include <QString>
 #include <QVector>
 
+#include <optional>
+
 namespace SfxPlace {
 
 struct Moment {
@@ -50,5 +52,8 @@ Result place(QVector<Moment> moments, double anchor, double end, const QVector<E
 double levelDb(const QString& level);
 // The cap per minute that goes with a level: mild 3, normal 6
 int perMinute(const QString& level);
+// Clip volume that puts a sound (its own peak soundPeakDb) `under` dB below the game sound's peak (`short` sfx:'mild':
+// hits 14 dB under it); no game sound (nullopt) = level 'mild'. Within -40..0 dB
+double underPeakDb(std::optional<double> gamePeakDb, double soundPeakDb, double under = 14.0);
 
 } // namespace SfxPlace

@@ -55,4 +55,10 @@ Result place(QVector<Moment> moments, double anchor, double end, const QVector<E
 double levelDb(const QString& level) { return level == "normal" ? -4.0 : -10.0; }
 int perMinute(const QString& level) { return level == "normal" ? 6 : 3; }
 
+double underPeakDb(std::optional<double> gamePeakDb, double soundPeakDb, double under)
+{
+    if (!gamePeakDb) return levelDb("mild");
+    return std::clamp(*gamePeakDb - under - soundPeakDb, -40.0, 0.0);
+}
+
 } // namespace SfxPlace

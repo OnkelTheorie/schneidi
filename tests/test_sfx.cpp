@@ -30,17 +30,19 @@ struct Candidate {
 const Candidate kCandidates[] = {
     {SfxSynth::Kind::Whoosh, 1, 0}, {SfxSynth::Kind::Whoosh, 2, 0}, {SfxSynth::Kind::Whoosh, 3, 0},
     {SfxSynth::Kind::Whoosh, 4, 0}, {SfxSynth::Kind::Whoosh, 5, 0}, {SfxSynth::Kind::Whoosh, 6, 0},
-    {SfxSynth::Kind::Swish, 1, 0},  {SfxSynth::Kind::Swish, 2, 0},  {SfxSynth::Kind::Swish, 3, 0},  {SfxSynth::Kind::Riser, 1, 2.0},
-    {SfxSynth::Kind::Riser, 2, 4.0}, {SfxSynth::Kind::Hit, 1, 0},   {SfxSynth::Kind::Hit, 2, 0},
-    {SfxSynth::Kind::Hit, 3, 0},    {SfxSynth::Kind::Impact, 1, 0}, {SfxSynth::Kind::Impact, 2, 0},
-    {SfxSynth::Kind::Click, 1, 0},  {SfxSynth::Kind::Click, 2, 0},
+    {SfxSynth::Kind::Swish, 1, 0},  {SfxSynth::Kind::Swish, 2, 0},  {SfxSynth::Kind::Swish, 3, 0},
+    {SfxSynth::Kind::Riser, 1, 0},  {SfxSynth::Kind::Riser, 2, 0},  {SfxSynth::Kind::Riser, 3, 0},
+    {SfxSynth::Kind::Riser, 1, 2.0},
+    {SfxSynth::Kind::Hit, 1, 0},    {SfxSynth::Kind::Hit, 2, 0},    {SfxSynth::Kind::Hit, 3, 0},
+    {SfxSynth::Kind::Impact, 1, 0}, {SfxSynth::Kind::Impact, 2, 0}, {SfxSynth::Kind::Impact, 3, 0},
+    {SfxSynth::Kind::Click, 1, 0},  {SfxSynth::Kind::Click, 2, 0},  {SfxSynth::Kind::Click, 3, 0},
 };
 
-// 16-bit as the WAV holds it
+// 16-bit as the WAV holds it (its dither adds at most 2 steps)
 double quantizedPeakDb(const std::vector<float>& s)
 {
     long peak = 0;
-    for (float v : s) peak = std::max(peak, std::abs(std::lround(double(v) * 32767.0)));
+    for (float v : s) peak = std::max(peak, std::abs(std::lround(double(v) * 32767.0)) + 2);
     return peak > 0 ? 20.0 * std::log10(double(peak) / 32767.0) : -200.0;
 }
 
@@ -62,11 +64,8 @@ void testSynth()
         const double peak = quantizedPeakDb(a.samples);
         if (!CHECK(peak <= -1.0 && peak > -30.0)) std::printf("       %s: peak %.2f dBFS\n", qPrintable(name), peak);
         CHECK(std::abs(peak - SfxSynth::peakLevelDb(k)) < 0.1);
-        // Whoosh and swish end where their tail has faded (about their default length); the others exactly
-        if (k == SfxSynth::Kind::Whoosh || k == SfxSynth::Kind::Swish)
-            CHECK(a.length > 0.3 && a.length < 2.5 && std::abs(a.length * SfxSynth::kRate - double(a.samples.size())) < 1);
-        else
-            CHECK_EQ(int(a.samples.size()), int(std::lround(SfxSynth::defaultLength(k) * SfxSynth::kRate)));
+        // Every sound ends where its tail has faded (about its default length)
+        CHECK(a.length > 0.03 && a.length < 3.0 && std::abs(a.length * SfxSynth::kRate - double(a.samples.size())) < 1);
         // No click at the ends, nothing but numbers
         CHECK(std::abs(a.samples.back()) < 1e-4f);
         CHECK(std::all_of(a.samples.begin(), a.samples.end(), [](float v) { return std::isfinite(v); }));
@@ -87,21 +86,30 @@ void testSynth()
         const double at = double(loud) / SfxSynth::kRate;
         if (!CHECK(std::abs(at - w.anchor) < 0.1)) std::printf("       whoosh: loudest at %.3f s, anchor %.3f s\n", at, w.anchor);
         const SfxSynth::Sound r = SfxSynth::make(SfxSynth::Kind::Riser, 1, 3.0);
-        CHECK(std::abs(r.length - 3.0) < 1e-9);
+        CHECK(r.length > 3.0 && r.length < 3.7); // the build to the peak, then its short fall
         CHECK(std::abs(r.anchor - 3.0) < 1e-9);
-        const size_t n = r.samples.size();
-        const std::vector<float> first(r.samples.begin(), r.samples.begin() + n / 4),
-            last(r.samples.begin() + n * 3 / 4, r.samples.end() - SfxSynth::kRate / 100);
+        const size_t peak = size_t(3.0 * SfxSynth::kRate);
+        const std::vector<float> first(r.samples.begin(), r.samples.begin() + peak / 4),
+            last(r.samples.begin() + peak * 3 / 4, r.samples.begin() + peak);
         CHECK(rmsDb(last) > rmsDb(first) + 12);
     }
     // Lengths are clamped to the kind's range
-    CHECK(std::abs(SfxSynth::make(SfxSynth::Kind::Riser, 1, 30).length - SfxSynth::maxLength(SfxSynth::Kind::Riser)) < 1e-9);
-    CHECK(std::abs(SfxSynth::make(SfxSynth::Kind::Hit, 1, 0.01).length - SfxSynth::minLength(SfxSynth::Kind::Hit)) < 1e-9);
+    CHECK(std::abs(SfxSynth::make(SfxSynth::Kind::Riser, 1, 30).anchor - SfxSynth::maxLength(SfxSynth::Kind::Riser)) < 1e-9);
+    CHECK(std::abs(SfxSynth::make(SfxSynth::Kind::Riser, 1, 0.01).anchor - SfxSynth::minLength(SfxSynth::Kind::Riser)) < 1e-9);
     // The cache file: written once, a valid WAV of the sound
     const QString file = SfxSynth::cachedFile(SfxSynth::Kind::Hit, 3);
-    CHECK(!file.isEmpty() && QFileInfo(file).size() == 44 + 2 * qint64(SfxSynth::make(SfxSynth::Kind::Hit, 3).samples.size()));
+    const SfxSynth::Sound hit3 = SfxSynth::make(SfxSynth::Kind::Hit, 3);
+    CHECK(!file.isEmpty() && QFileInfo(file).size() == 44 + 2 * qint64(hit3.samples.size()));
     CHECK_EQ(SfxSynth::cachedFile(SfxSynth::Kind::Hit, 3), file);
-    CHECK(file.contains("/sfx/hit-3-500-v"));
+    CHECK(file.contains(QString("/sfx/hit-3-%1ms-v").arg(std::lround(hit3.length * 1000))));
+    // A whoosh's name holds its real length; the name tells kind, seed and the asked length back
+    const QString w = SfxSynth::cachedFile(SfxSynth::Kind::Whoosh, 2);
+    const SfxSynth::Sound ws = SfxSynth::make(SfxSynth::Kind::Whoosh, 2);
+    CHECK(w.contains(QString("/sfx/whoosh-2-%1ms-v").arg(std::lround(ws.length * 1000))));
+    const auto parsed = SfxSynth::parseCachedFile(SfxSynth::cachedFile(SfxSynth::Kind::Riser, 2, 3.0));
+    CHECK(parsed && parsed->kind == SfxSynth::Kind::Riser && parsed->seed == 2 && std::abs(parsed->asked - 3.0) < 1e-9
+          && parsed->length > 3.0 && parsed->length < 3.7);
+    CHECK(!SfxSynth::parseCachedFile("/x/ding.wav"));
 }
 
 void testPlace()
@@ -141,6 +149,11 @@ void testPlace()
     r = place({{1.0}, {65.0}}, 2.0, 60, {}, rules);
     CHECK(r.placed.isEmpty() && r.skipped.size() == 2 && r.skipped[0].why == "before_start"
           && r.skipped[1].why == "after_end");
+    // short sfx:'mild': a hit (peak -6 dBFS) 14 dB under a game sound peaking at -3 dBFS = clip volume -11 dB; quiet
+    // game sound does not lift it over 0 dB; without game sound level mild
+    CHECK(std::abs(underPeakDb(-3.0, -6.0) - -11.0) < 1e-9);
+    CHECK(std::abs(underPeakDb(-1.0, -20.0) - 0.0) < 1e-9);
+    CHECK(std::abs(underPeakDb(std::nullopt, -6.0) - levelDb("mild")) < 1e-9);
     // A minimum spacing below 0.5 s is raised (never a burst)
     rules.minGap = 0;
     r = place({{1.0}, {1.2}}, 0, 60, {}, rules);
@@ -250,7 +263,8 @@ void testOp(const QString& dir)
     CHECK_EQ(n["kind"].toString(), QString("hit"));
     CHECK_EQ(n["placed"].toArray().size(), 1);
     bool onMarker = false;
-    for (const auto& [start, db] : sfxClips(project)) onMarker |= start == 200;
+    // (its main contact on the marker: a flam may come a few ms before it)
+    for (const auto& [start, db] : sfxClips(project)) onMarker |= start >= 197 && start <= 200;
     CHECK(onMarker);
     // A file as the sound
     const QString own = dir + "/ding.wav";
@@ -313,7 +327,7 @@ void writeSample(const QString& dir)
     if (!list.open(QIODevice::WriteOnly | QIODevice::Truncate)) return;
     QTextStream out(&list);
     out << "# Hörprobe Klänge (schneidi 0.17, Paket I)\n\n"
-        << "Alle Klänge berechnet (keine Aufnahmen; `core/SfxSynth`, Whoosh/Swish: `core/SfxWhoosh`), 48 kHz mono, 16 bit. "
+        << "Alle Klänge berechnet (keine Aufnahmen; `core/SfxWhoosh`, `core/SfxForge`), 48 kHz mono, 16 bit. "
         << "`alle.wav` = alle Kandidaten nacheinander, je 1 s Stille dazwischen (Reihenfolge wie unten).\n\n"
         << "| # | Datei | Art | Startwert | Länge s | Spitze dBFS | RMS dBFS | Anker s | Quelle / Lizenz |\n"
         << "|---|---|---|---|---|---|---|---|---|\n";
@@ -328,7 +342,7 @@ void writeSample(const QString& dir)
         SfxSynth::writeWav(dir + "/" + file, s.samples);
         all.insert(all.end(), s.samples.begin(), s.samples.end());
         all.insert(all.end(), gap.begin(), gap.end());
-        const bool pass = c.kind == SfxSynth::Kind::Whoosh || c.kind == SfxSynth::Kind::Swish;
+        static const char* recipes[] = {"whoosh (pass engine)", "darkriser", "knock", "subdrop", "shutter", "whoosh (pass engine)"};
         out << QString("| %1 | %2 | %3 | %4 | %5 | %6 | %7 | %8 | %9 |\n")
                    .arg(n)
                    .arg(file, SfxSynth::kindName(c.kind))
@@ -337,9 +351,9 @@ void writeSample(const QString& dir)
                    .arg(quantizedPeakDb(s.samples), 0, 'f', 1)
                    .arg(rmsDb(s.samples), 0, 'f', 1)
                    .arg(s.anchor, 0, 'f', 3)
-                   .arg(pass ? "berechnet, Port der whoosh-Maschine von earshot (Leon Lin, MIT) + Parametersätze "
-                               "der forge_v2-Bank; Code AGPL/MIT"
-                             : "selbst synthetisiert, AGPL");
+                   .arg(QString("berechnet, Port von earshots Rezept %1 (Leon Lin, MIT) + Parametersatz der Bank; "
+                                "Code AGPL/MIT")
+                            .arg(recipes[int(c.kind)]));
     }
     SfxSynth::writeWav(dir + "/alle.wav", all);
     out << "\nAnker = der Punkt, der auf dem Moment landet (Whoosh: Höhepunkt auf dem Schnitt, Riser: Ende auf dem "

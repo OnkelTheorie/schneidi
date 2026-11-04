@@ -10,6 +10,8 @@
 #include "core/I18n.h"
 #include "core/ProjectFile.h"
 #include "core/RenderJob.h"
+#include "core/SfxPlace.h"
+#include "core/SfxSynth.h"
 #include "core/ShortPick.h"
 #include "engine/Extensions.h"
 
@@ -20,6 +22,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <optional>
 
 namespace Cli::detail {
 
@@ -47,6 +50,20 @@ QString uniqueTimelineName(const QJsonArray& timelines, const QString& wanted)
 
 double secondsOf(const QJsonValue& v) { return std::round(v.toDouble() * 100) / 100; }
 
+} // namespace
+
+namespace {
+// Sample peak of a timeline's mix (dBFS); nullopt = silent or not measurable
+std::optional<double> soundPeakDb(const QString& project, const QString& timeline, Context c)
+{
+    try {
+        const QJsonObject l = execute(*find("loudness"), {{"source", project}, {"timeline", timeline}}, c);
+        const QJsonValue v = l["loudness"]["sample_peak_db"];
+        if (v.isDouble() && v.toDouble() > -60) return v.toDouble();
+    } catch (const Error&) {
+    }
+    return std::nullopt;
+}
 } // namespace
 
 QJsonObject cmdShort(const QJsonObject& a, Context& ctx)
@@ -282,7 +299,13 @@ QJsonObject cmdShort(const QJsonObject& a, Context& ctx)
     // 6b. Effect sounds (sfx:'mild' only): a whoosh on the hard cuts, a hit on the kills, sparingly (op 'sfx' rules)
     if (sfx == QLatin1String("mild")) {
         QJsonArray ops{QJsonObject{{"op", "sfx"}, {"on", "cuts"}, {"kind", "whoosh"}, {"level", "mild"}}};
-        if (game) ops << QJsonObject{{"op", "sfx"}, {"on", "kills"}, {"kind", "hit"}, {"level", "mild"}, {"game", game->id}};
+        if (game) {
+            // The hits 14 dB under the game sound's peak (without game sound: level mild)
+            QJsonObject hit{{"op", "sfx"}, {"on", "kills"}, {"kind", "hit"}, {"level", "mild"}, {"game", game->id}};
+            hit["volume_db"] = SfxPlace::underPeakDb(soundPeakDb(project, shortTimeline, step(0.6, 0.6)),
+                                                     SfxSynth::peakLevelDb(SfxSynth::Kind::Hit));
+            ops << hit;
+        }
         const QJsonObject e = run("edit", {{"project", project}, {"timeline", shortTimeline}, {"ops", ops}}, step(0.6, 0.6));
         int placed = 0;
         for (const QJsonValue& n : e["notes"].toArray()) placed += int(n["sfx"]["placed"].toArray().size());
