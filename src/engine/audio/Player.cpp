@@ -107,6 +107,9 @@ struct Player::Impl {
         float muteGain = 1.f;
         // The sound broke off (the feeder could not keep up): what comes next fades in from here (a sample of handed)
         int64_t fadeInAt = 0;
+        // At the end of the callback before: the ring's write count and the time (did the feeder have a chance?)
+        uint64_t prevWritten = 0;
+        int64_t prevNow = 0;
     } cb;
     std::atomic<int64_t> feedStallUntil{0}; // tests: the feeder makes nothing before this (ns)
     std::atomic<int> underruns{0}, fadeOuts{0}, mixersBuilt{0}, liveUpdates{0}, reopens{0}, reroutes{0};
@@ -193,7 +196,8 @@ void Player::Impl::process(float* out, int frames)
         // a fade-out keeps going over the old sound (starting it anew from full level was a step up, dropping it a
         // break from half level – a jump or stop within 5 ms of the one before)
         if (s.sounding) {
-            s.fadeLeft = int(std::min<int64_t>(kFade, s.handed));
+            // (from where its fade-in after a gap got: one just faded out at a gap is silent already)
+            s.fadeLeft = int(std::clamp<int64_t>(s.handed - s.fadeInAt, 0, kFade));
             fadeOuts.fetch_add(1, std::memory_order_relaxed);
         }
         s.gen = g;
@@ -273,8 +277,12 @@ void Player::Impl::process(float* out, int frames)
             underruns.fetch_add(1, std::memory_order_relaxed);
         }
         sound = false;
-    } else if (s.inRun && !hold && own >= 0 && s.handed - s.fadeInAt > kFade) {
-        // Full, but the next callback could not be: less than `frames` of this generation left in the ring
+    } else if (s.inRun && !hold && own >= 0 && s.handed - s.fadeInAt > kFade
+               && written.load(std::memory_order_acquire) == s.prevWritten && now - s.prevNow >= 4'000'000) {
+        // Full, but the next callback could not be: less than `frames` of this generation left in the ring, and the
+        // feeder wrote nothing since the callback before although it had the time (a feeder that keeps up tops the
+        // ring up every 2 ms; a device that calls back in bursts, e.g. DirectSound, gives it no time in between - no
+        // underrun there, so no dip)
         int64_t left = 0;
         const uint64_t w = written.load(std::memory_order_acquire);
         for (uint64_t r = consumed.load(std::memory_order_relaxed); r < w && left < frames; ++r)
@@ -282,6 +290,8 @@ void Player::Impl::process(float* out, int frames)
         if (left < frames) fadeOutTail(frames);
     }
     s.sounding = sound;
+    s.prevWritten = written.load(std::memory_order_acquire);
+    s.prevNow = now;
     s.total += frames;
     lastCallback.store(now, std::memory_order_relaxed);
     publishClock(now);
