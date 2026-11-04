@@ -122,6 +122,8 @@ signals:
     void dropRequested(const QStringList& paths, int frame, int track);
     // Source range [in, out] from the Viewer dropped (overwrite like DaVinci)
     void rangeDropRequested(const QString& path, int in, int out, int frame, int track);
+    // An effect sound from the Effects Library dropped at `frame` (EffectsLibrary::SoundMimeType data): op 'sfx' there
+    void soundDropRequested(const QByteArray& sound, int frame);
     // Right-click on a clip (it is selected then)
     void clipMenuRequested(const QPoint& globalPos);
     // Double-click on a subtitle: edit the text in the Inspector
@@ -469,4 +471,7 @@ private:
     QString m_fxDragging;  // effect ID, empty = no filter drag
     int m_fxDropClip = 0;  // video clip under the mouse
     int fxDropClipAt(const QPoint& pos) const;
+    // Drag an effect sound ("Klänge"): its moment where the mouse is (the line shows it)
+    QByteArray m_soundDragging;
+    int m_soundDropFrame = -1;
 };

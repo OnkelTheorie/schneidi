@@ -5,6 +5,8 @@
 #include "core/EffectRegistry.h"
 #include "core/I18n.h"
 #include "core/Presets.h"
+#include "core/SfxSynth.h"
+#include "engine/Extensions.h"
 #include "engine/ColorGrade.h"
 #include "engine/Lumas.h"
 #include "engine/VideoEffects.h"
@@ -13,8 +15,11 @@
 #include <QDateTime>
 #include <QDesktopServices>
 #include <QDir>
+#include <QDirIterator>
 #include <QFileInfo>
 #include <QFileSystemWatcher>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineF>
@@ -45,6 +50,7 @@ enum Category {
     LumasAll, BuiltinTransitions, Transitions, TransitionGroup,   // Gradient wipes: bundled + custom
     PresetsAll, PresetGroup,                                      // Shotcut/Kdenlive presets (own folder only)
     AudioFx,                                                      // audio effects (DaVinci: Audio FX → Fairlight FX)
+    SoundsAll, BuiltinSounds, PackSounds, Sounds, SoundGroup,     // effect sounds: built-in, packs, own folder
     // Luts/Transitions = own effects folder, …Group = its subfolder
     // (numbers are saved with the collapsed state: append new categories at the end)
 };
@@ -60,6 +66,46 @@ constexpr const char* kTitleData = "title";
 constexpr const char* kCounterData = "title:counter";
 constexpr const char* kProgressData = "title:progress";
 constexpr const char* kEffectPrefix = "fx:"; // List entry of a filter: "fx:<effect ID>"
+constexpr const char* kSoundPrefix = "sound:"; // List entry of an effect sound: "sound:<op fields as JSON>"
+
+// The shown name of a sound kind
+QString soundKindName(SfxSynth::Kind k)
+{
+    switch (k) {
+    case SfxSynth::Kind::Whoosh: return T("Whoosh");
+    case SfxSynth::Kind::Riser: return T("Riser");
+    case SfxSynth::Kind::Hit: return T("Treffer");
+    case SfxSynth::Kind::Impact: return T("Einschlag");
+    case SfxSynth::Kind::Click: return T("Klick");
+    case SfxSynth::Kind::Swish: return T("Swish");
+    }
+    return {};
+}
+
+QString soundData(const QJsonObject& fields)
+{
+    return kSoundPrefix + QString::fromUtf8(QJsonDocument(fields).toJson(QJsonDocument::Compact));
+}
+
+QString secondsText(double s) { return T("%1 s").arg(QString::number(s, 'f', 2).replace('.', I18n::decimalPoint())); }
+
+// A speaker as icon (sounds have no picture)
+QPixmap soundIcon(bool own)
+{
+    QPixmap pm(kIcon);
+    pm.fill(Qt::transparent);
+    QPainter p(&pm);
+    p.setRenderHint(QPainter::Antialiasing);
+    const QColor c = own ? QColor(0xc8, 0x8a, 0x3c) : QColor(0x3b, 0x9a, 0x8a);
+    p.setPen(Qt::NoPen);
+    p.setBrush(c);
+    const int cy = kIcon.height() / 2;
+    p.drawPolygon(QPolygon({{12, cy - 4}, {17, cy - 4}, {23, cy - 9}, {23, cy + 9}, {17, cy + 4}, {12, cy + 4}}));
+    p.setPen(QPen(c, 1.6));
+    p.setBrush(Qt::NoBrush);
+    for (int r : {5, 9}) p.drawArc(QRectF(23 - r, cy - r, 2 * r, 2 * r), -45 * 16, 90 * 16);
+    return pm;
+}
 
 class EffectList : public QListWidget {
 public:
@@ -75,6 +121,7 @@ protected:
         else if (d == kCounterData) data->setData(MediaPool::MimeType, QByteArray(MediaPool::CounterItem));
         else if (d == kProgressData) data->setData(MediaPool::MimeType, QByteArray(MediaPool::ProgressItem));
         else if (d.startsWith(kEffectPrefix)) data->setData(EffectsLibrary::EffectMimeType, d.mid(3).toUtf8());
+        else if (d.startsWith(kSoundPrefix)) data->setData(EffectsLibrary::SoundMimeType, d.mid(6).toUtf8());
         else if (d.startsWith(EffectFolders::LutPrefix) || d.startsWith(Presets::Prefix))
             data->setData(EffectsLibrary::EffectMimeType, d.toUtf8());
         else data->setData(EffectsLibrary::MimeType, d.toUtf8());
@@ -82,7 +129,7 @@ protected:
     }
     QStringList mimeTypes() const override
     {
-        return {EffectsLibrary::MimeType, EffectsLibrary::EffectMimeType, MediaPool::MimeType};
+        return {EffectsLibrary::MimeType, EffectsLibrary::EffectMimeType, EffectsLibrary::SoundMimeType, MediaPool::MimeType};
     }
 };
 
@@ -431,6 +478,12 @@ EffectsLibrary::EffectsLibrary(QWidget* parent) : QWidget(parent)
     auto* openFx = add(m_categories, QStringLiteral("Open FX"), OpenFx);
     add(openFx, T("Filter"), Filters);
     add(m_categories, QStringLiteral("Audio FX"), AudioFx)->setToolTip(0, T("Effekte für Audioclips"));
+    auto* sounds = add(m_categories, T("Klänge"), SoundsAll);
+    sounds->setToolTip(0, T("Effekt-Klänge: Doppelklick = anhören, in die Timeline ziehen = an dieser Stelle einfügen"));
+    add(sounds, T("Mitgeliefert"), BuiltinSounds);
+    add(sounds, T("Pakete"), PackSounds);
+    m_soundRoot = add(sounds, T("Eigene"), Sounds);
+    m_soundRoot->setToolTip(0, QDir::toNativeSeparators(EffectFolders::soundDir()));
     // Sorted by kind, below that bundled and custom effects folder each (subfolder = subcategories)
     auto* luts = add(m_categories, QStringLiteral("LUTs"), LutsAll);
     add(luts, T("Mitgeliefert"), BuiltinLuts);
@@ -465,6 +518,10 @@ EffectsLibrary::EffectsLibrary(QWidget* parent) : QWidget(parent)
         }
         if (d.startsWith(kEffectPrefix)) {
             emit effectRequested(d.mid(3));
+            return;
+        }
+        if (d.startsWith(kSoundPrefix)) { // listen only: placing is dragging it into the timeline
+            if (const QString file = soundFile(d.mid(6).toUtf8()); !file.isEmpty()) emit soundPreviewRequested(file);
             return;
         }
         if (d.startsWith(EffectFolders::LutPrefix) || d.startsWith(Presets::Prefix)) { // LUT/preset -> like a filter
@@ -536,6 +593,7 @@ void EffectsLibrary::rescanFolders()
     m_userLuts = EffectFolders::userLuts();
     m_userTransitions = EffectFolders::userTransitions();
     m_userPresets = EffectFolders::userPresets();
+    m_userSounds = EffectFolders::userSounds();
 
     // Subcategories = subfolders (nested like in the folder); selection stays if it still exists
     const QSignalBlocker block(m_categories);
@@ -544,7 +602,8 @@ void EffectsLibrary::rescanFolders()
     const int curCat = cur ? cur->data(0, Qt::UserRole).toInt() : -1; // cur may get deleted soon
     for (auto [root, group, entries] : {std::tuple{m_lutRoot, int(LutGroup), &m_userLuts},
                                         std::tuple{m_transRoot, int(TransitionGroup), &m_userTransitions},
-                                        std::tuple{m_presetRoot, int(PresetGroup), &m_userPresets}}) {
+                                        std::tuple{m_presetRoot, int(PresetGroup), &m_userPresets},
+                                        std::tuple{m_soundRoot, int(SoundGroup), &m_userSounds}}) {
         const bool wasInside = curCat == group;
         qDeleteAll(root->takeChildren());
         fillGroups(root, group, *entries);
@@ -653,6 +712,52 @@ void EffectsLibrary::rebuild()
         }
         return out;
     };
+    // Effect sounds: the recordings and computed ones built in, the installed packs, the user's folder
+    auto builtinSounds = [&] {
+        QVector<Entry> out;
+        for (SfxSynth::Kind k : SfxSynth::kKinds) {
+            const QVector<SfxSynth::Recorded> rec = SfxSynth::recorded(k);
+            for (qsizetype i = 0; i < rec.size(); ++i) {
+                const SfxSynth::Recorded& r = rec[i];
+                out << Entry{T("%1 %2 (Aufnahme)").arg(soundKindName(k)).arg(i + 1),
+                             soundData({{"kind", SfxSynth::kindName(k)}, {"seed", int(i + 1)}}), soundIcon(false),
+                             T("Aufnahme von %1 (%2), %3").arg(r.author, r.licence, secondsText(r.length))};
+            }
+            // The computed ones (a length = computed, also where recordings are the default)
+            const double length = SfxSynth::defaultLength(k);
+            for (int seed = 1; seed <= 3; ++seed)
+                out << Entry{T("%1 %2 (berechnet)").arg(soundKindName(k)).arg(seed),
+                             soundData({{"kind", SfxSynth::kindName(k)}, {"seed", seed},
+                                        {"length", QString::number(length, 'f', 3) + "s"}}),
+                             soundIcon(false), T("Berechnet (eigener Klang, keine Aufnahme), %1").arg(secondsText(length))};
+        }
+        return out;
+    };
+    auto soundFiles = [&](const QVector<EffectFolders::LutEntry>& list, bool own) {
+        QVector<Entry> out;
+        for (const auto& l : list) {
+            if (own && !group.isEmpty() && l.group != group && !l.group.startsWith(group + '/')) continue;
+            out << Entry{l.name, soundData({{"kind", l.path}}), soundIcon(own), QDir::toNativeSeparators(l.path)};
+        }
+        return out;
+    };
+    auto packSounds = [&] {
+        QVector<EffectFolders::LutEntry> list;
+        for (const QString& pack : Extensions::installedSoundPacks()) {
+            QDirIterator it(pack, QDir::Files, QDirIterator::Subdirectories);
+            QStringList found;
+            while (it.hasNext())
+                if (const QString f = it.next(); EffectFolders::isSoundFile(f)) found << f;
+            found.sort();
+            for (const QString& f : found) {
+                EffectFolders::LutEntry e;
+                e.name = QFileInfo(pack).fileName() + "/" + QFileInfo(f).completeBaseName();
+                e.path = f;
+                list << e;
+            }
+        }
+        return soundFiles(list, false);
+    };
     const QVector<Entry> titles{Entry{T("Text"), kTitleData, titleIcon()},
                                 Entry{T("Zähler"), kCounterData, titleIcon(TitleKind::Counter),
                                       T("Zahl, die über die Länge des Clips hochzählt (z. B. 0 → 1000 Kills)")},
@@ -687,6 +792,14 @@ void EffectsLibrary::rebuild()
     case TransitionGroup: groups = {{{}, files(m_userTransitions, false, false)}}; break;
     case PresetsAll:
     case PresetGroup: groups = {{{}, presets()}}; break;
+    case SoundsAll:
+        groups = {{T("Mitgeliefert"), builtinSounds()}, {T("Pakete"), packSounds()},
+                  {T("Eigene"), soundFiles(m_userSounds, true)}};
+        break;
+    case BuiltinSounds: groups = {{{}, builtinSounds()}}; break;
+    case PackSounds: groups = {{{}, packSounds()}}; break;
+    case Sounds:
+    case SoundGroup: groups = {{{}, soundFiles(m_userSounds, true)}}; break;
     }
 
     for (const Group& g : groups) {
@@ -719,6 +832,9 @@ void EffectsLibrary::rebuild()
             hint = T("Noch keine Verlaufsblenden – „Effekte importieren…“ öffnet den Ordner");
         if (shown == PresetsAll || shown == PresetGroup)
             hint = T("Noch keine Presets – „Effekte importieren…“ öffnet den Ordner");
+        if (shown == Sounds || shown == SoundGroup)
+            hint = T("Noch keine eigenen Klänge – „Effekte importieren…“ öffnet den Ordner (Unterordner „Sounds“)");
+        if (shown == PackSounds) hint = T("Noch keine Klangpakete installiert");
         if (!hint.isEmpty()) {
             auto* h = new QListWidgetItem(hint);
             h->setFlags(Qt::NoItemFlags);
@@ -757,4 +873,15 @@ const EffectsLibrary::PresetEntry& EffectsLibrary::presetEntry(const QString& pa
     e.ok = p.error.isEmpty() && !m.empty();
     e.icon = presetIcon(p.source, int(m.effects.size()) + (m.lut.isEmpty() ? 0 : 1));
     return *m_presets.insert(path, e);
+}
+
+QString EffectsLibrary::soundFile(const QByteArray& data)
+{
+    const QJsonObject o = QJsonDocument::fromJson(data).object();
+    const QString kind = o["kind"].toString();
+    const std::optional<SfxSynth::Kind> k = SfxSynth::kindFrom(kind);
+    if (!k) return QFileInfo(kind).isFile() ? kind : QString(); // a pack's or the user's file
+    double length = 0;
+    if (const QString l = o["length"].toString(); l.endsWith('s')) length = l.chopped(1).toDouble();
+    return SfxSynth::cachedFile(*k, unsigned(std::max(1, o["seed"].toInt(1))), length);
 }

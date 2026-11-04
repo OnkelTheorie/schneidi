@@ -126,6 +126,9 @@ public:
     // Clip › "Musik auf Länge…": the selected song's audio clip cut to the length of the timeline, the In/Out range or
     // a number (FitMusicDialog -> op fit_music, one undo step); errors in the UI language
     void fitMusicDialog();
+    // An effect sound dropped from the Effects Library ("Klänge"): op 'sfx' with its moment at `frame` (one undo step,
+    // the op's rules: own SFX track, spacing); a sound the rules leave out says why in the status bar
+    void placeSound(const QByteArray& sound, int frame);
     class AiChat* aiChat() const { return m_chat; }
     class AiChatPanel* aiChatPanel() const { return m_chatPanel; }
     void showAiChat(bool on);

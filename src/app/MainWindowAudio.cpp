@@ -16,6 +16,8 @@
 
 #include <QApplication>
 #include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QMessageBox>
 #include <QProgressDialog>
 #include <QStatusBar>
@@ -159,4 +161,35 @@ void MainWindow::fitMusicDialog()
                 6000);
             break;
         }
+}
+
+void MainWindow::placeSound(const QByteArray& sound, int frame)
+{
+    if (!m_userRunner) return; // no command layer (a bare library build)
+    QJsonObject op = QJsonDocument::fromJson(sound).object();
+    if (op["kind"].toString().isEmpty()) return;
+    op["op"] = "sfx";
+    op["at"] = frame;
+    QApplication::setOverrideCursor(Qt::WaitCursor);
+    const QJsonObject reply = m_userRunner("edit", {{"project", "@app"}, {"ops", QJsonArray{op}}}, T("Klang einfügen"));
+    QApplication::restoreOverrideCursor();
+    if (!reply["ok"].toBool()) {
+        const QJsonObject error = reply["error"].toObject();
+        QMessageBox::warning(this, T("Klang einfügen"), ToolErrors::text(error["code"].toString(), error["message"].toString()));
+        return;
+    }
+    for (const QJsonValue& n : reply["result"]["notes"].toArray()) {
+        const QJsonObject r = n.toObject()["sfx"].toObject();
+        if (r.isEmpty() || !r["placed"].toArray().isEmpty()) continue;
+        // Left out by the op's rules: why
+        const QString why = r["skipped"].toArray().first()["why"].toString();
+        const QString text = why == "too_close"    ? T("zu nah an einem anderen Klang")
+                             : why == "overlaps"   ? T("an dieser Stelle liegt schon ein Klang")
+                             : why == "per_minute" ? T("schon genug Klänge in dieser Minute")
+                             : why == "impact_once" ? T("nur ein Einschlag je Video")
+                             : why == "before_start" ? T("der Klang finge vor dem Anfang der Timeline an")
+                             : why == "after_end"   ? T("der Klang liefe über das Ende der Timeline hinaus")
+                                                    : why;
+        statusBar()->showMessage(T("Klang nicht eingefügt: %1").arg(text), 6000);
+    }
 }
