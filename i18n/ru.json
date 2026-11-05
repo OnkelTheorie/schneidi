@@ -2258,5 +2258,8 @@
  "zu nah an einem anderen Klang": "слишком близко к другому звуку",
  "Gesichtserkennung (YuNet)": "Распознавание лиц (YuNet)",
  "findet Gesichter im Bild für den Material-Index (braucht ONNX Runtime)": "находит лица в кадре для индекса материала (нужен ONNX Runtime)",
- "rechnet kleine KI-Modelle offline auf dem Prozessor (für Gesichter und Ton-Ereignisse)": "запускает небольшие модели ИИ офлайн на процессоре (для лиц и звуковых событий)"
+ "rechnet kleine KI-Modelle offline auf dem Prozessor (für Gesichter und Ton-Ereignisse)": "запускает небольшие модели ИИ офлайн на процессоре (для лиц и звуковых событий)",
+ "Als Platzhalter markieren": "Отметить как заполнитель",
+ "Platzhalter entfernen": "Убрать заполнитель",
+ "Platzhalter füllen": "Заполнить заполнители"
 }

@@ -2258,5 +2258,8 @@
  "zu nah an einem anderen Klang": "too close to another sound",
  "Gesichtserkennung (YuNet)": "Face detection (YuNet)",
  "findet Gesichter im Bild für den Material-Index (braucht ONNX Runtime)": "finds faces in the picture for the footage index (needs ONNX Runtime)",
- "rechnet kleine KI-Modelle offline auf dem Prozessor (für Gesichter und Ton-Ereignisse)": "runs small AI models offline on the processor (for faces and sound events)"
+ "rechnet kleine KI-Modelle offline auf dem Prozessor (für Gesichter und Ton-Ereignisse)": "runs small AI models offline on the processor (for faces and sound events)",
+ "Als Platzhalter markieren": "Mark as Placeholder",
+ "Platzhalter entfernen": "Remove Placeholder",
+ "Platzhalter füllen": "Fill Placeholders"
 }

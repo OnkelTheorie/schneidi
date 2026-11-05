@@ -347,6 +347,39 @@ inline bool frameInterpFromId(const QString& id, FrameInterp* m)
     return false;
 }
 
+// Placeholder of a template (0.18, core/TemplateFill.h): a clip, title text, song or logo of a template that
+// `template fill` (or a drag from the Media Pool) replaces. Times in frames of the project frame rate.
+enum class SlotKind { Clip, Text, Music, Logo };
+enum class SlotFit { Trim, Speed, Freeze, Loop };   // how a too short clip fills the slot (too long = trimmed)
+enum class SlotLength { Fixed, Flexible };         // Flexible: the slot takes the value's length within [minLen,maxLen], later clips ripple
+struct ClipSlot {
+    QString id;          // stable key used by `template fill` values ("hook_text", "clip1"); empty = no placeholder
+    QString label;       // shown name (user text, not translated)
+    SlotKind kind = SlotKind::Clip;
+    SlotLength length = SlotLength::Fixed; int minLen = 0, maxLen = 0;   // frames, 0 = no limit
+    SlotFit fit = SlotFit::Trim; bool reframe = true;                   // Clip
+    int maxChars = 0; bool shrink = true;                               // Text (title clip: its text)
+    bool fitMusic = true; bool snapCuts = false;                        // Music
+    QString hint;        // free text for humans/AI: "best kill", "product front view"
+    bool isSet() const { return !id.isEmpty(); }
+    bool operator==(const ClipSlot&) const = default;
+};
+// ids = keys in the project file and the CLI
+inline constexpr const char* kSlotKindIds[] = {"clip", "text", "music", "logo"};
+inline constexpr const char* kSlotFitIds[] = {"trim", "speed", "freeze", "loop"};
+inline constexpr const char* kSlotLengthIds[] = {"fixed", "flexible"};
+// false: unknown id (value unchanged)
+template <typename E, size_t N>
+bool slotEnumFromId(const char* const (&ids)[N], const QString& id, E* value)
+{
+    for (size_t i = 0; i < N; ++i)
+        if (id == QLatin1String(ids[i])) {
+            *value = E(i);
+            return true;
+        }
+    return false;
+}
+
 // Project::edit detects edits without change via operator== (snapshot comparison). The comparisons are
 // `= default` and capture new fields automatically; only Timeline compares by hand (without `nested`).
 struct Clip {
@@ -412,6 +445,8 @@ struct Clip {
     // keeps ("killfeed", "custom"); empty = an ordinary clip. Not reframed itself; reframing its clip again with
     // keep settings replaces it.
     QString keepRegion;
+    // Placeholder of a template (0.18, core/TemplateFill.h); not set = an ordinary clip
+    ClipSlot slot;
 
     bool isRetimed() const { return speed != 1.0 || reverse || freeze || !ramp.isEmpty(); }
     bool hasRamp() const { return !ramp.isEmpty() && !freeze; }
@@ -779,3 +814,12 @@ inline const FlagColorInfo* flagColorInfo(const QString& id)
         if (id == QLatin1String(i.id)) return &i;
     return nullptr;
 }
+
+// What a template (core/TemplateLibrary.h) says about itself, in its project file (0.18, optional)
+struct TemplateInfo {
+    QString name;
+    QString description;
+    QStringList tags;
+    QString aspect; // hint for browsers: "9:16", "16:9", "1:1" (empty = from the project format)
+    bool operator==(const TemplateInfo&) const = default;
+};

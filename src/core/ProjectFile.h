@@ -43,6 +43,8 @@ struct ProjectData {
     // Highest sequence id ever given (optional): ids of deleted timelines are never given again (a queued render job
     // keeps pointing at "deleted", not at a new timeline). 0 = the highest of `sequences`.
     int lastSequenceId = 0;
+    // A content template's own description (core/TemplateLibrary.h, optional; "templateInfo" in the file)
+    std::optional<TemplateInfo> templateInfo;
 };
 
 namespace ProjectFile {

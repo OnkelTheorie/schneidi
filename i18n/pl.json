@@ -2258,5 +2258,8 @@
  "zu nah an einem anderen Klang": "za blisko innego dźwięku",
  "Gesichtserkennung (YuNet)": "Wykrywanie twarzy (YuNet)",
  "findet Gesichter im Bild für den Material-Index (braucht ONNX Runtime)": "znajduje twarze w obrazie dla indeksu materiału (wymaga ONNX Runtime)",
- "rechnet kleine KI-Modelle offline auf dem Prozessor (für Gesichter und Ton-Ereignisse)": "uruchamia małe modele SI offline na procesorze (do twarzy i zdarzeń dźwiękowych)"
+ "rechnet kleine KI-Modelle offline auf dem Prozessor (für Gesichter und Ton-Ereignisse)": "uruchamia małe modele SI offline na procesorze (do twarzy i zdarzeń dźwiękowych)",
+ "Als Platzhalter markieren": "Oznacz jako symbol zastępczy",
+ "Platzhalter entfernen": "Usuń symbol zastępczy",
+ "Platzhalter füllen": "Wypełnij symbole zastępcze"
 }

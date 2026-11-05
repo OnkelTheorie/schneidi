@@ -2258,5 +2258,8 @@
  "zu nah an einem anderen Klang": "trop près d'un autre son",
  "Gesichtserkennung (YuNet)": "Détection des visages (YuNet)",
  "findet Gesichter im Bild für den Material-Index (braucht ONNX Runtime)": "trouve les visages dans l’image pour l’index des rushes (nécessite ONNX Runtime)",
- "rechnet kleine KI-Modelle offline auf dem Prozessor (für Gesichter und Ton-Ereignisse)": "exécute de petits modèles d’IA hors ligne sur le processeur (pour les visages et les événements sonores)"
+ "rechnet kleine KI-Modelle offline auf dem Prozessor (für Gesichter und Ton-Ereignisse)": "exécute de petits modèles d’IA hors ligne sur le processeur (pour les visages et les événements sonores)",
+ "Als Platzhalter markieren": "Marquer comme espace réservé",
+ "Platzhalter entfernen": "Retirer l’espace réservé",
+ "Platzhalter füllen": "Remplir les espaces réservés"
 }

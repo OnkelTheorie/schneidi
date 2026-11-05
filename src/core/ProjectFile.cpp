@@ -533,6 +533,47 @@ void normalizeParams(EffectInstance& e)
     }
 }
 
+// Placeholder of a template clip (0.18): only values other than the default; older versions ignore "slot"
+QJsonObject slotToJson(const ClipSlot& s)
+{
+    const ClipSlot def;
+    QJsonObject o{{"id", s.id}};
+    if (!s.label.isEmpty()) o["label"] = s.label;
+    if (s.kind != def.kind) o["kind"] = kSlotKindIds[int(s.kind)];
+    if (s.length != def.length) o["length"] = kSlotLengthIds[int(s.length)];
+    if (s.minLen > 0) o["minLen"] = s.minLen;
+    if (s.maxLen > 0) o["maxLen"] = s.maxLen;
+    if (s.fit != def.fit) o["fit"] = kSlotFitIds[int(s.fit)];
+    if (s.reframe != def.reframe) o["reframe"] = s.reframe;
+    if (s.maxChars > 0) o["maxChars"] = s.maxChars;
+    if (s.shrink != def.shrink) o["shrink"] = s.shrink;
+    if (s.fitMusic != def.fitMusic) o["fitMusic"] = s.fitMusic;
+    if (s.snapCuts != def.snapCuts) o["snapCuts"] = s.snapCuts;
+    if (!s.hint.isEmpty()) o["hint"] = s.hint;
+    return o;
+}
+
+ClipSlot slotFromJson(const QJsonObject& o)
+{
+    ClipSlot s;
+    s.id = o.value("id").toString().trimmed();
+    if (s.id.isEmpty()) return {};
+    s.label = o.value("label").toString();
+    slotEnumFromId(kSlotKindIds, o.value("kind").toString(), &s.kind); // unknown (newer) kind: clip
+    slotEnumFromId(kSlotLengthIds, o.value("length").toString(), &s.length);
+    slotEnumFromId(kSlotFitIds, o.value("fit").toString(), &s.fit);
+    s.minLen = std::max(0, intOf(o.value("minLen")));
+    s.maxLen = std::max(0, intOf(o.value("maxLen")));
+    if (s.maxLen > 0 && s.minLen > s.maxLen) std::swap(s.minLen, s.maxLen);
+    s.reframe = o.value("reframe").toBool(true);
+    s.maxChars = std::max(0, intOf(o.value("maxChars")));
+    s.shrink = o.value("shrink").toBool(true);
+    s.fitMusic = o.value("fitMusic").toBool(true);
+    s.snapCuts = o.value("snapCuts").toBool(false);
+    s.hint = o.value("hint").toString();
+    return s;
+}
+
 // Clips refer to the media list by index -> path appears only once in the file
 QJsonObject clipToJson(const Clip& c, int mediaIndex, const QDir& projectDir)
 {
@@ -591,6 +632,7 @@ QJsonObject clipToJson(const Clip& c, int mediaIndex, const QDir& projectDir)
         o["effects"] = fx;
     }
     if (Keys::hasKeys(c)) o["keys"] = keysToJson(c);
+    if (c.slot.isSet()) o["slot"] = slotToJson(c.slot); // optional: a template's placeholder
     return o;
 }
 
@@ -662,6 +704,7 @@ Clip clipFromJson(const QJsonObject& o, const QVector<MediaInfo>& media, const Q
         c.effects << inst;
     }
     keysFromJson(c, o.value("keys").toObject()); // missing in older files
+    if (o.value("slot").isObject()) c.slot = slotFromJson(o.value("slot").toObject());
     return c;
 }
 
@@ -870,6 +913,14 @@ QByteArray toJson(const ProjectData& data, const QString& projectPath)
             files << QJsonObject{{"revision", a.revision}, {"path", a.path}, {"folder", a.folder},
                                  {"time", a.time.toUTC().toString(Qt::ISODateWithMs)}};
         root["watchLog"] = QJsonObject{{"revision", data.watchRevision}, {"files", files}};
+    }
+    if (data.templateInfo) { // optional: a content template's description (older versions ignore it)
+        const TemplateInfo& t = *data.templateInfo;
+        QJsonObject o{{"name", t.name}};
+        if (!t.description.isEmpty()) o["description"] = t.description;
+        if (!t.tags.isEmpty()) o["tags"] = QJsonArray::fromStringList(t.tags);
+        if (!t.aspect.isEmpty()) o["aspect"] = t.aspect;
+        root["templateInfo"] = o;
     }
     return QJsonDocument(root).toJson(QJsonDocument::Indented);
 }
@@ -1102,6 +1153,17 @@ bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* d
     std::sort(d.watchLog.begin(), d.watchLog.end(),
               [](const WatchArrival& a, const WatchArrival& b) { return a.revision < b.revision; });
     if (d.watchLog.size() > WatchFolders::kLogSize) d.watchLog.remove(0, d.watchLog.size() - WatchFolders::kLogSize);
+
+    if (root.value("templateInfo").isObject()) {
+        const QJsonObject o = root.value("templateInfo").toObject();
+        TemplateInfo t;
+        t.name = o.value("name").toString();
+        t.description = o.value("description").toString();
+        for (const QJsonValue& v : o.value("tags").toArray())
+            if (const QString tag = v.toString().trimmed(); !tag.isEmpty() && !t.tags.contains(tag)) t.tags << tag;
+        t.aspect = o.value("aspect").toString();
+        d.templateInfo = t;
+    }
 
     *data = d;
     return true;

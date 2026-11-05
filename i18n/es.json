@@ -2258,5 +2258,8 @@
  "zu nah an einem anderen Klang": "demasiado cerca de otro sonido",
  "Gesichtserkennung (YuNet)": "Detección de caras (YuNet)",
  "findet Gesichter im Bild für den Material-Index (braucht ONNX Runtime)": "encuentra caras en la imagen para el índice del material (necesita ONNX Runtime)",
- "rechnet kleine KI-Modelle offline auf dem Prozessor (für Gesichter und Ton-Ereignisse)": "ejecuta pequeños modelos de IA sin conexión en el procesador (para caras y eventos de sonido)"
+ "rechnet kleine KI-Modelle offline auf dem Prozessor (für Gesichter und Ton-Ereignisse)": "ejecuta pequeños modelos de IA sin conexión en el procesador (para caras y eventos de sonido)",
+ "Als Platzhalter markieren": "Marcar como marcador de posición",
+ "Platzhalter entfernen": "Quitar marcador de posición",
+ "Platzhalter füllen": "Rellenar marcadores de posición"
 }
