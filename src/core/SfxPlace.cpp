@@ -46,18 +46,22 @@ Result place(QVector<Moment> moments, double anchor, double length, double end, 
         i = j;
     }
     QVector<double> taken, sameKind; // every sound (spacing), the ones of this kind (cap)
-    QVector<std::pair<double, double>> spans; // the time the sounds take on the target track
+    struct Span {
+        double start, end;
+        bool riser;
+    };
+    QVector<Span> spans; // the time the sounds take on the target track
     bool impactUsed = false;
     for (const Existing& e : existing) {
         taken << e.at;
         if (e.sameKind) sameKind << e.at;
-        if (e.sameTrack) spans << std::pair{e.start, e.end};
+        if (e.sameTrack) spans << Span{e.start, e.end, e.riser};
         impactUsed = impactUsed || e.impact;
     }
     // A hit or an impact on the very moment a riser leads into belongs to it (the build and its landing): only
     // that riser is near, every other sound still keeps its distance
     const auto onRiser = [&](double at) {
-        if (rules.riser) return false;
+        if (!rules.landing) return false;
         bool any = false;
         for (const double t : taken) {
             if (std::abs(t - at) >= rules.minGap - 1e-9) continue;
@@ -77,10 +81,13 @@ Result place(QVector<Moment> moments, double anchor, double length, double end, 
         else if (std::any_of(taken.begin(), taken.end(), [&](double t) { return std::abs(t - m.at) < rules.minGap - 1e-9; })
                  && !onRiser(m.at))
             why = "too_close";
-        // farther apart than the gap, but the sounds would still overlap (long sounds)
-        else if (std::any_of(spans.begin(), spans.end(), [&](const std::pair<double, double>& sp) {
-                     // touching within 20 ms is no overlap (an impact whose attack is a sample before a riser's end)
-                     return sp.first < start + length - 0.02 && start < sp.second - 0.02;
+        // farther apart than the gap, but the sounds would still overlap (long sounds); a landing on a riser's
+        // moment may start in its last 0.1 s (it is moved to the riser's end when placed)
+        else if (const bool landsOnRiser = onRiser(m.at);
+                 std::any_of(spans.begin(), spans.end(), [&](const Span& sp) {
+                     if (landsOnRiser && sp.riser && sp.end - start <= 0.1 + 1e-9) return false;
+                     // touching within 20 ms is no overlap
+                     return sp.start < start + length - 0.02 && start < sp.end - 0.02;
                  }))
             why = "overlaps";
         else if (rules.maxPerMinute > 0) {
@@ -101,7 +108,7 @@ Result place(QVector<Moment> moments, double anchor, double length, double end, 
         }
         taken << m.at;
         sameKind << m.at;
-        spans << std::pair{start, start + length};
+        spans << Span{start, start + length, rules.riser};
         impactUsed = impactUsed || rules.impact;
         r.placed << Placed{m.at, start};
     }

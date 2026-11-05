@@ -289,8 +289,19 @@ void testPlace()
         riser.end = 30;
         Rules impact = rules;
         impact.impact = true;
+        impact.landing = true;
         r = place({{30.0}}, 0.0001, 1.0, 60, {riser}, impact);
         CHECK_EQ(int(r.placed.size()), 1);
+        // a hit's attack 23 ms in, 0.05 s before the riser's moment: it starts 73 ms inside the riser, still lands
+        Rules hit = rules;
+        hit.landing = true;
+        r = place({{29.95}}, 0.023, 0.3, 60, {riser}, hit);
+        CHECK_EQ(int(r.placed.size()), 1);
+        r = place({{29.85}}, 0.023, 0.3, 60, {riser}, hit); // 0.15 s before it: too close
+        CHECK(r.placed.isEmpty() && r.skipped.size() == 1 && r.skipped[0].why == "too_close");
+        Rules whooshRules = rules; // not a landing sound: the riser keeps its distance
+        r = place({{30.0}}, 0.2, 0.6, 60, {riser}, whooshRules);
+        CHECK(r.placed.isEmpty() && r.skipped.size() == 1 && r.skipped[0].why == "too_close");
         Existing whoosh{30, false, false};
         r = place({{30.0}}, 0.0001, 1.0, 60, {whoosh}, impact);
         CHECK(r.placed.isEmpty() && r.skipped.size() == 1 && r.skipped[0].why == "too_close");
@@ -594,6 +605,21 @@ void testUnderMix(const QString& dir)
     CHECK(n["level"].toString().contains("as loud as the mix"));
     n = sfxNote(edit(project, {QJsonObject{{"op", "sfx"}, {"at", "5s"}, {"kind", "whoosh"}, {"level", "normal"}}}));
     check(n, "4.2s", "6s", -3, "normal");
+    // A riser and the default hit landing on its moment (real sounds, the hit's attack a few ms in): placed, starting
+    // where the riser ends; one 0.05 s early too
+    for (const char* at : {"6.4s", "6.35s"}) {
+        const QString p2 = dir + QString("/land-%1.schneidi").arg(at);
+        run("new", {{"project", p2}, {"fps", 25}});
+        edit(p2, {QJsonObject{{"op", "place"}, {"media", media}, {"at", 0}}});
+        edit(p2, {QJsonObject{{"op", "sfx"}, {"at", "6.4s"}, {"kind", "riser"}, {"length", "2s"}}});
+        const QJsonObject h = sfxNote(edit(p2, {QJsonObject{{"op", "sfx"}, {"at", at}, {"kind", "hit"}}}));
+        if (!CHECK_EQ(h["placed"].toArray().size(), 1)) {
+            std::printf("       hit at %s: %s\n", at, QJsonDocument(h).toJson(QJsonDocument::Compact).constData());
+            continue;
+        }
+        const QVector<QPair<int, double>> c = sfxClips(p2);
+        CHECK(c.size() == 2 && c[1].first == 160); // the riser ends at 6.4 s = frame 160
+    }
     // volume_db given: that level, the mix does not matter
     n = sfxNote(edit(project, {QJsonObject{{"op", "sfx"}, {"at", "7.4s"}, {"kind", "click"}, {"volume_db", -20}}}));
     if (CHECK_EQ(n["placed"].toArray().size(), 1))

@@ -23,6 +23,7 @@ struct Rules {
     bool impact = false;   // the sound is an impact: at most one per video
     bool riser = false;    // the sound is a riser (it leads into its moment)
     double minGapLimit = 0.5; // minGap below this is raised to it
+    bool landing = false;  // the sound is a hit or an impact: it may land on the moment a riser leads into
 };
 
 // A sound that is on the timeline already (the SFX track): its moment counts for the spacing; for the cap per minute

@@ -166,23 +166,18 @@ SfxPlace::Existing existingOf(const Clip& c, double fps, const Source& src)
 
 double rounded(double seconds) { return std::round(seconds * 1000) / 1000; }
 
-// The loudest sample (dBFS) of the timeline mix [from, to) as it is exported; nullopt: nothing measured
-std::optional<double> mixPeakDb(Session& s, int from, int to)
+// The timeline without the built-in sounds (computed or recorded) on any track: what a new sound is set against
+// (a riser it lands on must not make it louder)
+Timeline withoutSounds(const Timeline& tl)
 {
-    const auto peaks = AudioAnalysis::timelineFramePeaks(s.format(), s.project.timeline(), std::max(0, from), to);
-    if (!peaks || peaks->empty()) return std::nullopt;
-    const float peak = *std::max_element(peaks->begin(), peaks->end());
-    return peak > 0 ? std::optional<double>(20.0 * std::log10(double(peak))) : std::optional<double>(-200.0);
-}
-
-// The loudest sample (dBFS) of a sound file
-std::optional<double> filePeakDb(Session& s, const MediaInfo& m)
-{
-    Clip c;
-    c.mediaPath = m.path;
-    c.in = 0;
-    c.out = std::max(0, m.length - 1);
-    return AudioAnalysis::clipPeakDb(s.format(), c);
+    Timeline out = tl;
+    for (Track& t : out.audio)
+        t.clips.erase(std::remove_if(t.clips.begin(), t.clips.end(),
+                                     [](const Clip& c) {
+                                         return SfxSynth::parseCachedFile(c.mediaPath) || SfxSynth::recordedOfFile(c.mediaPath);
+                                     }),
+                      t.clips.end());
+    return out;
 }
 
 void opSfx(Session& s, const QJsonObject& op)
@@ -250,6 +245,7 @@ void opSfx(Session& s, const QJsonObject& op)
     rules.maxPerMinute = op.contains("max_per_min") ? int(numberOf(op, "max_per_min", 0, 60)) : SfxPlace::perMinute(level);
     rules.impact = src.kind == SfxSynth::Kind::Impact;
     rules.riser = src.kind == SfxSynth::Kind::Riser;
+    rules.landing = src.kind == SfxSynth::Kind::Hit || src.kind == SfxSynth::Kind::Impact;
     QVector<SfxPlace::Moment> pm;
     for (const Moment& m : moments) pm << SfxPlace::Moment{m.frame / fps, m.weight};
     // The timeline's end without the sounds of this track: a sound must end inside the picture (no black frames)
@@ -274,6 +270,7 @@ void opSfx(Session& s, const QJsonObject& op)
         s.editor.renameTrack(TrackRef{TrackKind::Audio, track}, kSfxTrackName);
     }
     int i = 0;
+    QHash<QString, std::optional<AudioAnalysis::Loudness>> aloneCache;
     for (const SfxPlace::Placed& p : r.placed) {
         const unsigned sd = seedOf(i);
         const QString file = src.kind ? SfxSynth::cachedFile(*src.kind, sd, length) : src.file;
@@ -283,8 +280,8 @@ void opSfx(Session& s, const QJsonObject& op)
         const Track& t = s.project.timeline().audio[track];
         // On a riser's moment: the riser's last frames would be under it, so it begins where the riser ends
         for (const Clip& c : t.clips)
-            if (const auto n = SfxSynth::parseCachedFile(c.mediaPath); n && n->kind == SfxSynth::Kind::Riser
-                && src.kind != SfxSynth::Kind::Riser && c.start < start && start < c.end() && c.end() - start <= std::lround(0.1 * fps))
+            if (const auto n = SfxSynth::parseCachedFile(c.mediaPath); n && n->kind == SfxSynth::Kind::Riser && rules.landing
+                && c.start < start && start < c.end() && c.end() - start <= std::lround(0.1 * fps))
                 start = c.end();
         const bool busy = std::any_of(t.clips.begin(), t.clips.end(),
                                       [&](const Clip& c) { return c.start < start + m.length && start < c.end(); });
@@ -302,7 +299,7 @@ void opSfx(Session& s, const QJsonObject& op)
         const int around = int(std::lround(0.3 * fps));
         const int from = std::max(0, start - around), to = start + m.length + around;
         std::optional<AudioAnalysis::Loudness> mix;
-        if (!volumeGiven) mix = AudioAnalysis::timelineLoudness(f, s.project.timeline(), from, to);
+        if (!volumeGiven) mix = AudioAnalysis::timelineLoudness(f, withoutSounds(s.project.timeline()), from, to);
         // Only its sound (a video file as the sound must not overwrite the picture)
         if (s.editor.placeSourceRange(m.path, 0, m.length - 1, start, track, 1.0, true) <= 0)
             fail("FAILED", QString("could not place the sound on A%1 (locked?)").arg(track + 1));
@@ -310,22 +307,28 @@ void opSfx(Session& s, const QJsonObject& op)
         for (const Clip& c : s.project.timeline().audio[track].clips)
             if (c.start == start && c.mediaPath == m.path) clipId = c.id;
         if (mix && mix->maxMomentary > -50) {
-            // The sound alone at 0 dB, measured the same way (the master's gain is in both)
-            Timeline alone = s.project.timeline();
-            for (int k = 0; k < alone.audio.size(); ++k) {
-                alone.audio[k].muted = k != track;
-                alone.audio[k].solo = false;
-                if (k == track) {
-                    QVector<Clip> keep;
-                    for (Clip c : alone.audio[k].clips)
-                        if (c.id == clipId) {
-                            c.volumeDb = 0;
-                            keep << c;
-                        }
-                    alone.audio[k].clips = keep;
+            // The sound alone at 0 dB, measured the same way (the master's gain is in both; its limiter is not: it
+            // would squash a hot file and let the clip come out too loud). Once per file and op (many cuts, one sound)
+            std::optional<AudioAnalysis::Loudness> sound = aloneCache.value(m.path);
+            if (!aloneCache.contains(m.path)) {
+                Timeline alone = s.project.timeline();
+                alone.masterLimiter = false;
+                for (int k = 0; k < alone.audio.size(); ++k) {
+                    alone.audio[k].muted = k != track;
+                    alone.audio[k].solo = false;
+                    if (k == track) {
+                        QVector<Clip> keep;
+                        for (Clip c : alone.audio[k].clips)
+                            if (c.id == clipId) {
+                                c.volumeDb = 0;
+                                keep << c;
+                            }
+                        alone.audio[k].clips = keep;
+                    }
                 }
+                sound = AudioAnalysis::timelineLoudness(f, alone, start, start + m.length + int(std::lround(0.4 * fps)));
+                aloneCache.insert(m.path, sound);
             }
-            const auto sound = AudioAnalysis::timelineLoudness(f, alone, start, start + m.length + int(std::lround(0.4 * fps)));
             if (sound && sound->maxMomentary > -100) {
                 // The meter's 400 ms window thins a short sound out more than the ear does (it hears ~200 ms as one):
                 // a 0.1 s click gets up to 3 dB back. A riser builds for seconds and is heard as louder than its
