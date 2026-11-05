@@ -2308,5 +2308,14 @@
  "Arbeitet mit dem Brand-Kit": "Работает с брендбуком",
  "Als Platzhalter markieren": "Отметить как заполнитель",
  "Platzhalter entfernen": "Убрать заполнитель",
- "Platzhalter füllen": "Заполнить заполнители"
+ "Platzhalter füllen": "Заполнить заполнители",
+ "16:9-Highlight auf Musik: Titel, fünf kurze Clips mit Edit-Look, Song auf Länge geschnitten.": "Нарезка 16:9 под музыку: заголовок, пять коротких клипов с образом Edit, песня обрезана по длине.",
+ "16:9-Logo-Intro (4 s) und Outro mit Aufruf (6 s, eigene Timeline) für das Brand-Kit.": "Интро с логотипом 16:9 (4 с) и аутро с призывом к действию (6 с, отдельная таймлайн) для брендбука.",
+ "Gaming-Highlight": "Игровые моменты",
+ "Hochformat-Ausschnitt aus einem Podcast: Sprecher-Video, Thema oben, Wort-Untertitel, Logo.": "Вертикальный отрывок подкаста: видео спикера, тема сверху, пословные субтитры, логотип.",
+ "Hochformat-Short: Hook-Text über dem ersten Clip, drei Clips, Musik darunter.": "Вертикальный шортс: текст-крючок поверх первого клипа, три клипа, музыка под ними.",
+ "Podcast-Ausschnitt": "Отрывок подкаста",
+ "Produktclip 15 s": "Ролик о товаре 15 с",
+ "Quadratischer 15-s-Produktclip: drei Bilder, Name, Preis oder Versprechen, Aufruf, Logo.": "Квадратный ролик о товаре на 15 с: три кадра, название, цена или обещание, призыв к действию, логотип.",
+ "Short mit Hook": "Шортс с крючком"
 }
