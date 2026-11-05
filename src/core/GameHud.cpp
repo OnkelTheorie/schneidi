@@ -10,13 +10,17 @@ namespace GameHud {
 
 const QVector<Game>& games()
 {
-    // CS2 (1080p recordings): kill feed lines 31 px tall from y 75 (0.069) down, 34 px (0.0315) apart, right edge at
-    // x 0.99; the player's own lines have a thin red frame. Its right part is enough to see a new line: further left
-    // lies game picture (red signs, awnings) that a wider region took for kills. Shown in a short: x from 0.78 (long
-    // names reach 0.81), five lines (the fifth ends at y 241 = 0.223; the text is a little smaller than with four).
+    // CS2 (1080p recordings): kill feed lines 31 px tall from y 75 (0.069) down (lower with some HUD layouts: 95),
+    // 34 px (0.0315) apart, right edge at x 0.99; the player's own lines have a thin red frame (1 px edges in rows 74
+    // and 104, columns 1908-1909). Its right part is enough to see a new line: further left lies game picture (red
+    // signs, awnings) that a wider region took for kills when counting the colour. Found by the frame's shape, the
+    // area reaches down to y 430 (ten lines: on a full server the feed is longer than five and a new line shows at
+    // its bottom; red signs and the hit tint behind do not count there). Shown in a short: x from 0.78 (long names
+    // reach 0.81), five lines (the fifth ends at y 241 = 0.223; the text is a little smaller than with four).
     // Valorant: the player's lines carry a yellow mark at their left.
     static const QVector<Game> list{
-        {"cs2", "Counter-Strike 2", QRectF(0.88, 0.06, 0.115, 0.19), "#d8444a", 40, QRectF(0.78, 0.06, 0.22, 0.172)},
+        {"cs2", "Counter-Strike 2", QRectF(0.88, 0.06, 0.115, 0.19), "#d8444a", 40, QRectF(0.78, 0.06, 0.22, 0.172),
+         QRectF(0.88, 0.06, 0.115, 0.34), 30.0 / 1080, 1908.5 / 1920},
         {"valorant", "Valorant", QRectF(0.70, 0.04, 0.22, 0.23), "#e7e371", 0, QRectF(0.70, 0.04, 0.295, 0.24)},
     };
     return list;

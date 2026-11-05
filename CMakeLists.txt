@@ -429,6 +429,7 @@ add_library(schneidi_cli_lib STATIC
     src/cli/EditOpsAudio.cpp src/cli/EditOpsEdit.cpp src/cli/EditOpsMulticam.cpp
     src/cli/EditOpsStory.cpp src/cli/EditOpsMusic.cpp src/cli/EditOpsSfx.cpp src/cli/EditOpsTalk.cpp
     src/cli/AnalysisDetail.h src/cli/Analysis.cpp src/cli/AnalysisAudio.cpp src/cli/AnalysisVideo.cpp src/cli/AnalysisPicture.cpp
+    src/cli/AnalysisKillFeed.cpp
     src/cli/AnalysisHighlights.cpp src/cli/AnalysisCheck.cpp src/cli/AnalysisOverview.cpp src/cli/AnalysisBeats.cpp
     src/cli/CommandsIndex.cpp
     src/cli/Exchange.cpp
