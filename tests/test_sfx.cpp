@@ -454,6 +454,14 @@ void testOp(const QString& dir)
         std::printf("       %s\n", QJsonDocument(n).toJson(QJsonDocument::Compact).constData());
     CHECK(n["skipped"].toArray().size() == 1 && n["skipped"][0]["why"].toString() == "impact_once");
     CHECK(std::abs(n["volume_db"].toDouble() - -3) < 1e-6);
+    // The answer names the clip's own volume (the level plus the sound's evening-out), the one the timeline shows
+    {
+        const int at = int(std::lround(n["placed"][0]["at_s"].toDouble() * 25));
+        bool found = false;
+        for (const auto& [start, db] : sfxClips(project))
+            if (std::abs(start - at) < 25 && std::abs(db - n["placed"][0]["clip_db"].toDouble()) < 0.01) found = true;
+        CHECK(n["placed"][0].toObject().contains("clip_db") && found);
+    }
     r = edit(project, {QJsonObject{{"op", "sfx"}, {"at", "13s"}, {"kind", "boom"}, {"level", "normal"}}});
     CHECK_EQ(sfxNote(r)["placed"].toArray().size(), 0); // the one on the track counts
     // ... also when the second one should go to another track (one impact per video, not per track)

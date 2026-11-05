@@ -262,10 +262,11 @@ void opSfx(Session& s, const QJsonObject& op)
         // Only its sound (a video file as the sound must not overwrite the picture)
         if (s.editor.placeSourceRange(m.path, 0, m.length - 1, start, track, 1.0, true) <= 0)
             fail("FAILED", QString("could not place the sound on A%1 (locked?)").arg(track + 1));
+        // The clip's own volume: the level on the sound's peak plus the evening-out of this sound
+        const double clipDb = volume + (src.kind ? SfxSynth::levelGainDb(*src.kind, sd, length) : 0.0);
         for (const Clip& c : s.project.timeline().audio[track].clips)
-            if (c.start == start && c.mediaPath == m.path)
-                s.editor.setClipVolume(c.id, volume + (src.kind ? SfxSynth::levelGainDb(*src.kind, sd, length) : 0.0));
-        placed << QJsonObject{{"at_s", rounded(p.moment)}, {"start", tc(start, f)}};
+            if (c.start == start && c.mediaPath == m.path) s.editor.setClipVolume(c.id, clipDb);
+        placed << QJsonObject{{"at_s", rounded(p.moment)}, {"start", tc(start, f)}, {"clip_db", rounded(clipDb)}};
         ++i;
     }
     QJsonObject note{{"kind", src.kind ? SfxSynth::kindName(*src.kind) : QFileInfo(src.file).fileName()},
@@ -353,7 +354,7 @@ void addSfxOps(QVector<OpDef>& ops)
                  "notes list what the rules left out (skipped, why). level 'mild' (default, -10 dB) or 'normal' "
                  "(-4 dB); volume_db sets it directly (on the sound at its kind's peak level). All but the riser are "
                  "CC0 recordings (computed ones when a length is given); the riser is computed. seed: one variant (default 1-3 in turn); length: "
-                 "of the sound (a riser 0.5-8 s). Only where asked: never on every cut by default.",
+                 "of the sound ('2s'; a riser 0.5-8 s). Only where asked: never on every cut by default.",
                  opSfx,
                  {"seed", "length", "track", "min_gap", "max_per_min", "music", "game", "_kills", "_beats"}};
 }
