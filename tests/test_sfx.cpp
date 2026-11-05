@@ -229,7 +229,7 @@ void testRecorded()
     QFile table(root + "/sounds.json");
     if (CHECK(table.open(QIODevice::ReadOnly))) {
         const QJsonArray sounds = QJsonDocument::fromJson(table.readAll())["sounds"].toArray();
-        CHECK(sounds.size() >= 20);
+        CHECK(sounds.size() >= 19);
         for (const QJsonValue& v : sounds) {
             CHECK(QFileInfo::exists(root + "/" + v["file"].toString()));
             CHECK(QFileInfo::exists(root + "/" + v["licence_file"].toString()));

@@ -182,16 +182,6 @@
    "licence_file": "LICENSE-kenney-starter-kits.txt"
   },
   {
-   "file": "click/kenney-citybuilder-placement-c.ogg",
-   "kind": "click",
-   "anchor_s": 0.0001,
-   "peak_db": 1.76,
-   "length_s": 0.0971,
-   "author": "Kenney (www.kenney.nl), Starter Kit City Builder",
-   "licence": "CC0-1.0",
-   "licence_file": "LICENSE-kenney-starter-kits.txt"
-  },
-  {
    "file": "click/kenney-citybuilder-placement-d.ogg",
    "kind": "click",
    "anchor_s": 0.0003,
