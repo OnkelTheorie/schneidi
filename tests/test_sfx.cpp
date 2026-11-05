@@ -560,7 +560,7 @@ void testOp(const QString& dir)
     CHECK(run("effects", {})["sounds"].toArray().size() >= 6);
 }
 
-// The level follows the mix where a sound lands: as heard (momentary loudness) 3 LU under it (mild) or as loud
+// The level follows the mix where a sound lands: as heard (momentary loudness) as loud as it (mild) or 3 LU louder
 // (normal), master +3 dB; over silence the fixed level; volume_db wins
 void testUnderMix(const QString& dir)
 {
@@ -578,7 +578,7 @@ void testUnderMix(const QString& dir)
         if (!tracks.isEmpty()) args["tracks"] = tracks;
         return run("loudness", args).value("loudness").toObject();
     };
-    // The sound as heard against the mix around it: 3 LU quieter (mild) or as loud (normal), unless its peak would
+    // The sound as heard against the mix around it: as loud (mild) or 3 LU louder (normal), unless its peak would
     // stand more than 3 dB over the mix's; both measured as exported (the master's +3 dB in both)
     const auto check = [&](const QJsonObject& n, const char* from, const char* to, double under, const char* what) {
         if (!CHECK_EQ(n["placed"].toArray().size(), 1)) return;
@@ -590,10 +590,10 @@ void testUnderMix(const QString& dir)
             std::printf("       %s: sound %.2f LUFS peak %.2f, mix %.2f LUFS peak %.2f\n", what, soundM, soundPeak, mixM, mixPeak);
     };
     QJsonObject n = sfxNote(edit(project, {QJsonObject{{"op", "sfx"}, {"at", "2s"}, {"kind", "whoosh"}}}));
-    check(n, "1.2s", "3s", 3, "mild");
-    CHECK(n["level"].toString().contains("3 LU quieter"));
+    check(n, "1.2s", "3s", 0, "mild");
+    CHECK(n["level"].toString().contains("as loud as the mix"));
     n = sfxNote(edit(project, {QJsonObject{{"op", "sfx"}, {"at", "5s"}, {"kind", "whoosh"}, {"level", "normal"}}}));
-    check(n, "4.2s", "6s", 0, "normal");
+    check(n, "4.2s", "6s", -3, "normal");
     // volume_db given: that level, the mix does not matter
     n = sfxNote(edit(project, {QJsonObject{{"op", "sfx"}, {"at", "7.4s"}, {"kind", "click"}, {"volume_db", -20}}}));
     if (CHECK_EQ(n["placed"].toArray().size(), 1))

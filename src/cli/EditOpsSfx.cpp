@@ -196,12 +196,13 @@ void opSfx(Session& s, const QJsonObject& op)
     if (!src.kind && !s.media(src.file).hasAudio) fail("NO_AUDIO", "the sound file has no audio: " + src.file);
     const QString level = op.value("level").toString("mild");
     if (level != "mild" && level != "normal") fail("BAD_ARGUMENT", "level: 'mild' or 'normal'");
-    // volume_db given: that level on the sound's peak. Else as loud as heard as the mix where it lands (mild 3 LU
-    // under, normal as loud): audible over loud game sound, quiet in a quiet part; over silence the fixed level of the
-    // kind (mild -10 dB, normal -4 dB on its peak)
+    // volume_db given: that level on the sound's peak. Else as loud as heard as the mix where it lands (mild as loud,
+    // normal 3 LU louder; 3 LU under it the whoosh and the impact went unheard on a phone over CS2 game sound):
+    // audible over loud game sound, quiet in a quiet part; over silence the fixed level of the kind (mild -10 dB,
+    // normal -4 dB on its peak)
     const bool volumeGiven = op.contains("volume_db");
     const double volume = volumeGiven ? numberOf(op, "volume_db", -60, 6) : SfxPlace::levelDb(level);
-    const double underMix = level == "normal" ? 0.0 : 3.0;
+    const double underMix = level == "normal" ? -3.0 : 0.0; // under the mix in LU (negative: over it)
     const bool seedGiven = op.contains("seed");
     const unsigned seed = seedGiven ? unsigned(numberOf(op, "seed", 1, 1000000)) : 1;
     const ProjectFormat& f = s.format();
@@ -345,7 +346,7 @@ void opSfx(Session& s, const QJsonObject& op)
     QJsonObject note{{"kind", src.kind ? SfxSynth::kindName(*src.kind) : QFileInfo(src.file).fileName()},
                      {"placed", placed}};
     if (volumeGiven) note["volume_db"] = volume;
-    else note["level"] = QString("%1: %2 LU quieter than the mix (as heard)").arg(level).arg(underMix);
+    else note["level"] = level == "normal" ? QString("normal: 3 LU louder than the mix (as heard)") : QString("mild: as loud as the mix (as heard)");
     if (track >= 0) note["track"] = QString("A%1").arg(track + 1);
     if (!skipped.isEmpty()) note["skipped"] = skipped;
     s.notes << QJsonObject{{"sfx", note}};
@@ -426,8 +427,8 @@ void addSfxOps(QVector<OpDef>& ops)
                  "kind:'sfx'), a sound of the effects folder 'Sounds' or a file. The whoosh's peak lands on the "
                  "moment, the riser ends on it, a hit starts on it. Sparing: never two sounds closer than min_gap "
                  "(1.5 s), at most max_per_min in any minute (mild 3, normal 6), one impact per video; the answer's "
-                 "notes list what the rules left out (skipped, why). level 'mild' (default: 3 LU quieter than the mix "
-                 "there; -10 dB over silence) or 'normal' (as loud; -4 dB); volume_db sets it directly. All but the riser are "
+                 "notes list what the rules left out (skipped, why). level 'mild' (default: as loud as the mix there "
+                 "as heard; -10 dB over silence) or 'normal' (3 LU louder; -4 dB); volume_db sets it directly. All but the riser are "
                  "CC0 recordings (computed ones when a length is given); the riser is computed. seed: one variant (default 1-3 in turn); length: "
                  "of the sound ('2s'; a riser 0.5-8 s). Only where asked: never on every cut by default.",
                  opSfx,
