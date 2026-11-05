@@ -170,6 +170,7 @@ void MainWindow::placeSound(const QByteArray& sound, int frame)
     if (op["kind"].toString().isEmpty()) return;
     op["op"] = "sfx";
     op["at"] = frame;
+    op["_by_hand"] = true; // where the user put it: no sparing rules (those are for placing on cuts or kills)
     QApplication::setOverrideCursor(Qt::WaitCursor);
     const QJsonObject reply = m_userRunner("edit", {{"project", "@app"}, {"ops", QJsonArray{op}}}, T("Klang einfügen"));
     QApplication::restoreOverrideCursor();

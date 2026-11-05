@@ -2,8 +2,9 @@
 // Effects Library › "Klänge" (0.17, package I in the app): the built-in sounds (recordings and computed ones), the
 // installed packs and the user's own folder are listed; an entry drags as op 'sfx' fields and plays as a file; a
 // double-click only plays it (nothing is placed); a sound dropped into the timeline goes through op 'sfx' (its moment
-// where it was dropped, own SFX track) as one undo step named after it, undo takes it out again; one dropped too close
-// to the first is left out with the reason in the status bar and changes nothing. Nothing is ever placed by itself.
+// where it was dropped, own SFX track) as one undo step named after it, undo takes it out again; one dropped onto it
+// is left out with the reason in the status bar and changes nothing, one 1 s after it is placed (no sparing rules
+// by hand). Nothing is ever placed by itself.
 // SFX_LIBRARY_DUMP=<file.png>: picture of the library on "Klänge".
 #include "check.h"
 
@@ -186,13 +187,20 @@ int main(int argc, char** argv)
     }
     CHECK_EQ(p->undoStack()->index(), undo0 + 1);
     CHECK_EQ(p->undoStack()->undoText(), T("Klang einfügen"));
-    // One more 0.5 s later: too close, left out with the reason, nothing changed
-    emit tv->soundDropRequested(gongData, 212);
+    // One more on the whoosh itself: a sound is there, left out with the reason, nothing changed
+    emit tv->soundDropRequested(gongData, 200);
     QApplication::processEvents();
     CHECK_EQ(sfxClips(p).size(), 1);
     CHECK_EQ(p->undoStack()->index(), undo0 + 1);
-    CHECK(w.statusBar()->currentMessage().contains(T("zu nah an einem anderen Klang")));
-    // Undo: gone again
+    CHECK(w.statusBar()->currentMessage().contains(T("an dieser Stelle liegt schon ein Klang")));
+    // ... and one 1 s later, after the whoosh's end: placed - the sparing rules of automatic placing (1.5 s apart,
+    // a few per minute) are not for a sound put there by hand
+    emit tv->soundDropRequested(gongData, 225);
+    QApplication::processEvents();
+    CHECK_EQ(sfxClips(p).size(), 2);
+    CHECK_EQ(p->undoStack()->index(), undo0 + 2);
+    // Undo twice: gone again
+    p->undoStack()->undo();
     p->undoStack()->undo();
     CHECK(sfxClips(p).isEmpty());
     // The user's own file 4 s later: placed from its start (a file's moment is its start)

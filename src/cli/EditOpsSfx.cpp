@@ -21,6 +21,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <memory>
 #include <optional>
 
@@ -246,6 +247,15 @@ void opSfx(Session& s, const QJsonObject& op)
     rules.impact = src.kind == SfxSynth::Kind::Impact;
     rules.riser = src.kind == SfxSynth::Kind::Riser;
     rules.landing = src.kind == SfxSynth::Kind::Hit || src.kind == SfxSynth::Kind::Impact;
+    // A sound the user dropped by hand (Effects Library): where it was put, the sparing rules are for automatic
+    // placing (on cuts, kills, drops); only a sound already there at that spot stops it
+    const bool byHand = op.value("_by_hand").toBool();
+    if (byHand) {
+        rules.minGap = 0;
+        rules.minGapLimit = 0;
+        rules.maxPerMinute = 0;
+        rules.impact = false;
+    }
     QVector<SfxPlace::Moment> pm;
     for (const Moment& m : moments) pm << SfxPlace::Moment{m.frame / fps, m.weight};
     // The timeline's end without the sounds of this track: a sound must end inside the picture (no black frames)
@@ -258,6 +268,7 @@ void opSfx(Session& s, const QJsonObject& op)
             if (k != track)
                 for (const Clip& c : tl.audio[k].clips) endFrame = std::max(endFrame, c.end());
     }
+    if (byHand) endFrame = std::numeric_limits<int>::max() / 2; // it may run past the picture (the timeline grows)
     const double end = endFrame / fps;
     const double soundLength = src.kind ? SfxSynth::soundLength(*src.kind, seedOf(0), length) : s.media(src.file).length / fps;
     const SfxPlace::Result r = SfxPlace::place(pm, anchorOf(seedOf(0)), soundLength, end, existing, rules);
@@ -435,7 +446,7 @@ void addSfxOps(QVector<OpDef>& ops)
                  "CC0 recordings (computed ones when a length is given); the riser is computed. seed: one variant (default 1-3 in turn); length: "
                  "of the sound ('2s'; a riser 0.5-8 s). Only where asked: never on every cut by default.",
                  opSfx,
-                 {"seed", "length", "track", "min_gap", "max_per_min", "music", "game", "_kills", "_beats"}};
+                 {"seed", "length", "track", "min_gap", "max_per_min", "music", "game", "_kills", "_beats", "_by_hand"}};
 }
 
 } // namespace Cli::detail
