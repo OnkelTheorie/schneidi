@@ -7,9 +7,11 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QHash>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QMutex>
 #include <QRegularExpression>
 #include <QSaveFile>
 #include <QStandardPaths>
@@ -170,11 +172,35 @@ Sound make(Kind kind, unsigned seed, double length)
     return s;
 }
 
+namespace {
+// Anchor and length of a computed sound, kept once made: a riser (ported recipe) takes 70-300 ms to make, and one op
+// asks for them several times plus once per riser on the timeline (deterministic: the same kind, seed and length
+// always give the same sound)
+struct Shape {
+    double anchor = 0, length = 0;
+};
+Shape shapeOf(Kind kind, unsigned seed, double length)
+{
+    static QMutex mutex;
+    static QHash<QString, Shape> known;
+    const QString key = QString("%1|%2|%3").arg(int(kind)).arg(seed).arg(length, 0, 'g', 12);
+    {
+        QMutexLocker lock(&mutex);
+        if (const auto it = known.constFind(key); it != known.constEnd()) return *it;
+    }
+    const Sound s = make(kind, seed, length);
+    const Shape shape{s.anchor, s.length};
+    QMutexLocker lock(&mutex);
+    known.insert(key, shape);
+    return shape;
+}
+} // namespace
+
 double anchorOf(Kind kind, unsigned seed, double length)
 {
     if (length <= 0)
         if (const auto r = recordedFor(kind, seed)) return r->anchor;
-    return make(kind, seed, length).anchor;
+    return shapeOf(kind, seed, length).anchor;
 }
 
 QString recordedRoot()
@@ -251,7 +277,7 @@ double soundLength(Kind kind, unsigned seed, double length)
 {
     if (length <= 0)
         if (const auto r = recordedFor(kind, seed)) return r->length;
-    return make(kind, seed, length).length;
+    return shapeOf(kind, seed, length).length;
 }
 
 double levelGainDb(Kind kind, unsigned seed, double length)
@@ -318,18 +344,18 @@ QString cachedFile(Kind kind, unsigned seed, double length)
     if (length <= 0)
         if (const auto r = recordedFor(kind, seed)) return placeRecorded(*r);
     // The name holds the real length (a whoosh ends where its tail has faded) and the asked one when there was one:
-    // kind-seed-<ms>ms[-a<asked ms>]-v<version>.wav. Making the sound to know its length is cheap (milliseconds)
-    const Sound s = make(kind, seed, length);
+    // kind-seed-<ms>ms[-a<asked ms>]-v<version>.wav; the sound is made only when the file is not there yet
+    const Shape shape = shapeOf(kind, seed, length);
     const QString asked = length > 0 ? QString("-a%1").arg(std::lround(std::clamp(length, minLength(kind), maxLength(kind)) * 1000)) : QString();
     const QString path = QStandardPaths::writableLocation(QStandardPaths::CacheLocation)
                          + QString("/sfx/%1-%2-%3ms%4-v%5.wav")
                                .arg(kindName(kind))
                                .arg(seed)
-                               .arg(std::lround(s.length * 1000))
+                               .arg(std::lround(shape.length * 1000))
                                .arg(asked)
                                .arg(kVersion);
     if (QFileInfo(path).size() > 44) return path;
-    return writeWav(path, s.samples) ? path : QString();
+    return writeWav(path, make(kind, seed, length).samples) ? path : QString();
 }
 
 std::optional<CachedName> parseCachedFile(const QString& path)
