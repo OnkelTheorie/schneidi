@@ -18,6 +18,9 @@ check each with `scopes` and adjust the outliers - same scene, same look.
 ## Looks (second)
 `effects` lists the built-in LUTs (`lut` in the `color` op; also `.cube`/`.3dl` files). Log footage needs its
 conversion LUT first. A look on top of a bad correction stays bad.
+Bundled looks are presets (`presets` in `effects`): `{"op":"effect","clips":[…],"preset":"edit"}` gives the
+social-media "Edit" look in one step (LUT `edit`: saturation up, teal shadows, orange highlights, skin kept; plus a
+light `frei0r.glow`, `strength` 0.25). Milder: a lower glow `strength`; only the color: `lut:"edit"` in `color`.
 Effects (`effect` op: blur, glow, halftone, noise, scan lines, gradient …; ids in `effects`) render after the grade,
 in the clip's order as `info` lists them; the order changes the picture (blur then pixelate ≠ pixelate then blur).
 `effect` with `move` ('up', 'down', 'first', 'last' or a place) reorders them.

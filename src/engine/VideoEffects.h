@@ -28,8 +28,10 @@ double keyDistance(const QColor& key, const QColor& pixel);
 void key(uint8_t* rgba, int width, int height, const KeyParams& p);
 
 // ---- frei0r replacements (parameters 0..1 as in the frei0r plugins) ----
-// Glow: the picture blurred and laid over itself with "screen" (blur 0..1 = up to 1/20 of the picture height)
-void glow(uint8_t* rgba, int width, int height, double blur);
+// Glow: the picture blurred and laid over itself with "screen" (blur 0..1 = up to 1/20 of the picture height);
+// strength 0..1 mixes the result with the picture (1 = the frei0r plugin's full screen, 0 = no glow); threshold 0..1:
+// only what is brighter glows (0 = the whole picture, as the plugin; higher = no haze over dark parts)
+void glow(uint8_t* rgba, int width, int height, double blur, double strength = 1.0, double threshold = 0.0);
 // Color halftone: per channel dots of its ink (cyan for red …) on rotated grids, black in that channel, the picture
 // between them (dot 0..1 = cell size, angles 0..1 = 0..360°)
 void halftone(uint8_t* rgba, int width, int height, double dot, double cyan, double magenta, double yellow);

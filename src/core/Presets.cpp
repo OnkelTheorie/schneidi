@@ -808,7 +808,13 @@ Preset load(const QString& path)
         p.error = f.errorString();
         return p;
     }
-    return parse(f.read(4 << 20), path, QFileInfo(path).absoluteDir().dirName());
+    Preset p = parse(f.read(4 << 20), path, QFileInfo(path).absoluteDir().dirName());
+    if (EffectFolders::isBuiltin(path)) { // bundled look: translated name, schneidi's own
+        p.name = EffectFolders::displayName(path);
+        p.description = EffectFolders::builtinPresetDescription(path);
+        p.source = QStringLiteral("schneidi");
+    }
+    return p;
 }
 
 Mapped map(const Preset& preset, double fps)

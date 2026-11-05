@@ -122,6 +122,37 @@ def kino(r, g, b):
     return [scurve(contrast(c, 1.08), 0.3) for c in rgb]
 
 
+def vibrance(rgb, amount, skin=0.6):
+    """Saturation up by `amount`, less for colours that are already strong (no neon) and for skin hues (orange,
+    about 10..50 degrees) by the share `skin`."""
+    mx, mn = max(rgb), min(rgb)
+    chroma = mx - mn
+    if chroma < 1e-6:
+        return list(rgb)
+    r, g, b = rgb
+    if mx == r:
+        hue = 60 * (((g - b) / chroma) % 6)
+    elif mx == g:
+        hue = 60 * ((b - r) / chroma + 2)
+    else:
+        hue = 60 * ((r - g) / chroma + 4)
+    d = min(abs(hue - 30), 360 - abs(hue - 30))  # distance from the skin hue
+    w_skin = 1 - smooth(10, 35, d)
+    s = 1 + amount * (1 - chroma) * (1 - skin * w_skin)
+    return sat(rgb, s)
+
+
+def edit(r, g, b):
+    """Social media "edit" look: shadows teal, highlights orange (split toning by luma), saturation up (vibrance:
+    strong colours and skin less), gentle S-curve. The glow of the "Edit" look is a separate effect (spatial)."""
+    # tint() fading out towards pure black and white, so they stay neutral
+    y = luma(r, g, b)
+    fade = smooth(0.0, 0.12, y) * (1 - smooth(0.85, 1.0, y))
+    rgb = tint([r, g, b], (-0.05 * fade, 0.015 * fade, 0.05 * fade), (0.05 * fade, 0.01 * fade, -0.05 * fade))
+    rgb = vibrance([clamp(c) for c in rgb], 0.35)
+    return [scurve(c, 0.2) for c in rgb]
+
+
 def lebendig(r, g, b):
     return [scurve(c, 0.15) for c in sat([r, g, b], 1.35)]
 
@@ -139,7 +170,7 @@ LOOKS = {
     'teal-orange': teal_orange, 'warm': warm, 'kuehl': kuehl, 'verblasst': verblasst,
     'schwarzweiss': schwarzweiss, 'schwarzweiss-kontrast': sw_kontrast, 'sepia': sepia,
     'bleach-bypass': bleach_bypass, 'retro': retro, 'nacht': nacht, 'kino': kino, 'lebendig': lebendig,
-    'cross-process': cross_process, 'pastell': pastell,
+    'cross-process': cross_process, 'pastell': pastell, 'edit': edit,
 }
 
 

@@ -23,6 +23,7 @@ struct Builtin {
 };
 constexpr Builtin kBuiltins[] = {
     {"teal-orange", N_("Teal & Orange")},
+    {"edit", N_("Edit-Look")}, // the color of the look "Edit" (kLooks) without its glow
     {"kino", N_("Kino-Kontrast")},
     {"bleach-bypass", N_("Bleach Bypass")},
     {"verblasst", N_("Verblasst")},
@@ -62,6 +63,21 @@ constexpr Builtin kLumas[] = {
 };
 
 QString lumaPath(const char* id) { return QString(kLumaDir) + QString::fromLatin1(id); }
+
+// Bundled looks (assets/presets/<id>.xml): a LUT of the color grade plus effects, applied like a preset
+constexpr const char* kLookDir = ":/presets/";
+struct Look {
+    const char* id;
+    const char* name;
+    const char* description;
+};
+constexpr Look kLooks[] = {
+    {"edit", N_("Edit-Look"),
+     N_("Wie in Social-Media-Edits: kräftigere Farben, Schatten türkis, Lichter orange, leichtes Glühen; Hauttöne "
+        "bleiben natürlich")},
+};
+
+QString lookPath(const char* id) { return QString(kLookDir) + QString::fromLatin1(id) + ".xml"; }
 
 QVector<LutEntry> scan(const QString& dir, bool (*accept)(const QString&), bool keepSuffix)
 {
@@ -215,7 +231,24 @@ QStringList watchDirs()
     return dirs;
 }
 
-bool isBuiltin(const QString& path) { return path.startsWith(kBuiltinDir) || path.startsWith(kLumaDir); }
+bool isBuiltin(const QString& path)
+{
+    return path.startsWith(kBuiltinDir) || path.startsWith(kLumaDir) || path.startsWith(kLookDir);
+}
+
+QVector<LutEntry> builtinPresets()
+{
+    QVector<LutEntry> out;
+    for (const Look& l : kLooks) out << LutEntry{lookPath(l.id), T(l.name), {}};
+    return out;
+}
+
+QString builtinPresetDescription(const QString& path)
+{
+    for (const Look& l : kLooks)
+        if (path == lookPath(l.id)) return T(l.description);
+    return {};
+}
 
 QString builtinId(const QString& path)
 {
@@ -229,6 +262,8 @@ QString displayName(const QString& path)
         if (path == builtinPath(b.id)) return T(b.name);
     for (const Builtin& b : kLumas)
         if (path == lumaPath(b.id)) return T(b.name);
+    for (const Look& l : kLooks)
+        if (path == lookPath(l.id)) return T(l.name);
     return isTransitionFile(path) && !isLutFile(path) ? QFileInfo(path).completeBaseName() : QFileInfo(path).fileName();
 }
 

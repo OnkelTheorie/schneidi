@@ -45,9 +45,12 @@ const QStringList& soundSuffixes();
 bool isSoundFile(const QString& path);
 QVector<LutEntry> userSounds();         // soundDir() recursively (name = file name without extension)
 QVector<LutEntry> userPresets();        // presetDir() recursively (every file but readmes; name = file name)
+// Bundled looks: presets ":/presets/<id>.xml" (a LUT plus effects, applied as one step like a preset), names translated
+QVector<LutEntry> builtinPresets();
+QString builtinPresetDescription(const QString& path); // translated, empty = not a bundled look
 QStringList watchDirs();                // LUTs/Transitions/Presets folders and all subfolders (for watching)
 bool isBuiltin(const QString& path);
-QString builtinId(const QString& path);  // ":/lumas/kreis" -> "kreis"
+QString builtinId(const QString& path);  // ":/lumas/kreis" -> "kreis", ":/presets/edit.xml" -> "edit"
 QString displayName(const QString& path); // bundled: translated name, otherwise file name (LUT) or without extension
 // Project from another machine: look for a file of the same name in the LUTs or Transitions folder, empty = none
 QString findUserLut(const QString& fileName);

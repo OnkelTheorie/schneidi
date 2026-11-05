@@ -68,6 +68,8 @@ schneidi_test(test_picture_gpu_render) # Renderer's GPU path vs its CPU path, wh
 set_tests_properties(test_picture_gpu_render PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;SCHNEIDI_AUDIO_DEVICE=null")
 schneidi_test(test_own_effects)
 schneidi_test(test_presets)
+schneidi_test(test_look_edit) # bundled look "Edit": listed, one undo step, colours and a mild glow
+target_link_libraries(test_look_edit PRIVATE schneidi_cli_lib)
 schneidi_test(test_rendercache)
 schneidi_test(test_loudness)
 schneidi_test(test_truepeak)
