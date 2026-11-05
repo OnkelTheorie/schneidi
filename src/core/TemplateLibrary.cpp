@@ -6,6 +6,7 @@
 #include "core/TemplateFill.h"
 #include "core/TimelineOps.h"
 
+#include <QDateTime>
 #include <QDir>
 #include <QDirIterator>
 #include <QFile>
@@ -36,7 +37,22 @@ QString builtInCache()
     return QDir(QStandardPaths::writableLocation(QStandardPaths::CacheLocation)).filePath("templates-builtin");
 }
 
-// Copies the files of `from` (resources or a folder) into `to` where they are missing or of another size
+// Whether the copy `dst` still is `src`: same size and the modification time of `src` it was stamped with on copying
+// (resources keep their source file's time, so a changed template of the same size in a program update counts as
+// new; no file is read). Without a time of `src` the contents are compared.
+bool sameFile(const QFileInfo& src, const QFileInfo& dst)
+{
+    if (!dst.exists() || dst.size() != src.size()) return false;
+    const QDateTime t = src.lastModified();
+    if (t.isValid()) return dst.lastModified() == t;
+    QFile a(src.filePath()), b(dst.filePath());
+    if (!a.open(QIODevice::ReadOnly) || !b.open(QIODevice::ReadOnly)) return false;
+    while (!a.atEnd())
+        if (a.read(1 << 20) != b.read(1 << 20)) return false;
+    return true;
+}
+
+// Copies the files of `from` (resources or a folder) into `to` where they are missing or changed (sameFile)
 bool copyTree(const QString& from, const QString& to)
 {
     bool ok = true;
@@ -44,8 +60,8 @@ bool copyTree(const QString& from, const QString& to)
     while (it.hasNext()) {
         const QString src = it.next();
         const QString dst = QDir(to).filePath(QDir(from).relativeFilePath(src));
-        const QFileInfo di(dst);
-        if (di.exists() && di.size() == QFileInfo(src).size()) continue;
+        const QFileInfo si(src), di(dst);
+        if (sameFile(si, di)) continue;
         QDir().mkpath(di.absolutePath());
         QFile::remove(dst);
         if (!QFile::copy(src, dst)) {
@@ -54,6 +70,11 @@ bool copyTree(const QString& from, const QString& to)
         }
         // Copies out of the resources are read-only: a newer version must be able to replace them
         QFile::setPermissions(dst, QFile::permissions(dst) | QFileDevice::WriteOwner | QFileDevice::ReadOwner);
+        // Stamped with the source's time for sameFile
+        if (si.lastModified().isValid()) {
+            QFile f(dst);
+            if (f.open(QIODevice::ReadWrite)) f.setFileTime(si.lastModified(), QFileDevice::FileModificationTime);
+        }
     }
     return ok;
 }
