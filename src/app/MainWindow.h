@@ -40,6 +40,7 @@ class QButtonGroup;
 class QToolButton;
 class DeliverPanel;
 struct StartTemplate;
+struct ContentTemplate;
 
 namespace Ai {
 struct Endpoint;
@@ -70,6 +71,21 @@ public:
     void openMediaAsProject(const QStringList& files);
     // New project from a start template (core/StartTemplates.h; asks about unsaved changes first)
     void newProjectFromTemplate(const StartTemplate& t);
+    // Content templates (core/TemplateLibrary.h, MainWindowTemplates.cpp). New: an untitled project from it (without
+    // its template description); edit: the template's own project (saving changes the template). Both ask about
+    // unsaved changes first; false = not readable (message shown) or cancelled
+    bool newProjectFromContentTemplate(const ContentTemplate& t);
+    bool editContentTemplate(const ContentTemplate& t);
+    // File › New from Template…: the browser (content and start templates)
+    void templateBrowser();
+    // File › Save as Template…: dialog, then TemplateLibrary::save (preview = the viewer's picture at the playhead)
+    void saveContentTemplate();
+    // Timeline › Clip › Mark as Placeholder… (the first selected clip that can be one; the Inspector shows its rules)
+    // and Remove Placeholder (all selected), one undo step each
+    void markPlaceholder();
+    void removePlaceholders();
+    // "Check Fields": the placeholders of the open project and what is wrong with them
+    void checkPlaceholders();
     bool offerAutosaveRestore(); // after a crash: offer the last automatic backup (true = restored)
     void disableAutosave();      // test runs: do not write/delete a backup
     // Set project settings (one undo step); test helper --format

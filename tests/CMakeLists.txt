@@ -265,6 +265,7 @@ target_link_libraries(test_multicam_cli PRIVATE schneidi_cli_lib)
 schneidi_test(test_stream_presets)
 target_link_libraries(test_stream_presets PRIVATE schneidi_cli_lib)
 schneidi_test(test_template_fill) # content templates: placeholders in the project file, filling them, template folders
+schneidi_test(test_template_app) # content templates in the app: placeholders (menu, Inspector, drag-fill), browser, save, check fields
 schneidi_test(test_start_templates) # how new projects look: start templates (app, settings page, CLI new/templates)
 target_link_libraries(test_start_templates PRIVATE schneidi_cli_lib)
 schneidi_test(test_brand_kit) # brand kit: JSON, global file, project file, applyBrand, logo/intro, CLI brand

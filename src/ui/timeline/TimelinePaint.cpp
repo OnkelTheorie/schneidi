@@ -626,6 +626,30 @@ void TimelineView::drawClip(QPainter& p, const QRect& r, const Clip& c, TrackKin
         }
     }
 
+    // Template placeholder (ClipSlot): a badge with its label at the front of the title bar, in the marker colour
+    if (c.slot.isSet() && r.width() > 30 && barH >= 10) {
+        QFont f = font();
+        f.setPointSizeF(6.5);
+        f.setBold(true);
+        p.setFont(f);
+        const QFontMetrics fm(f);
+        const int x = std::max(r.left(), kHeaderW) + 3 + flagW;
+        const int room = r.right() - fxW - 6 - x;
+        const QString label = c.slot.label.isEmpty() ? c.slot.id : c.slot.label;
+        const QString text = fm.elidedText(QStringLiteral("◇ ") + label, Qt::ElideRight, std::min(room, 140));
+        if (room > 14 && !text.isEmpty()) {
+            const int w = fm.horizontalAdvance(text) + 8;
+            const QRect badge(x, r.top() + 2, w, std::max(8, barH - 4));
+            p.setPen(Qt::NoPen);
+            p.setBrush(Theme::secondary);
+            p.drawRoundedRect(badge, 2, 2);
+            p.setBrush(Qt::NoBrush);
+            p.setPen(Theme::readableOn(Theme::secondary));
+            p.drawText(badge, Qt::AlignCenter, text);
+            flagW += w + 3;
+        }
+    }
+
     if (r.width() > 24 && (m_showNames || m_showDurations)) {
         QFont f = font();
         f.setPointSizeF(7.5);
@@ -652,6 +676,16 @@ void TimelineView::drawClip(QPainter& p, const QRect& r, const Clip& c, TrackKin
 
     p.setPen(selected ? QPen(Theme::clipSelected, 2) : QPen(QColor(0, 0, 0, 120), 1));
     p.drawPath(path);
+    // Placeholder: dashed outline inside the border (the selection stays visible around it); the clip a Media Pool
+    // file is dragged onto (drag-fill) gets a filled highlight
+    if (c.slot.isSet() && !ghost) {
+        const bool target = c.id == m_slotDropClip;
+        if (target) p.fillPath(path, Theme::alpha(Theme::secondary, 70));
+        QPen dash(Theme::secondary, target ? 2 : 1, Qt::DashLine);
+        p.setPen(dash);
+        p.setBrush(Qt::NoBrush);
+        p.drawRoundedRect(QRectF(r).adjusted(2.5, 2.5, -2.5, -2.5), 2, 2);
+    }
     // Changed by an AI (live connection): fades out; new = filled, edited = a strong outline only
     if (const auto mark = m_aiClips.constFind(c.id); !ghost && mark != m_aiClips.cend()) {
         if (const double left = aiStrength(mark->start); left > 0) {

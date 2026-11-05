@@ -134,6 +134,8 @@ private:
     QToolButton* brandButton(bool font, const QString& text, const std::function<int&(Clip&)>& ref,
                              const std::function<void(Clip&)>& also = {});
     void buildTitlePage(QVBoxLayout* page);
+    // Section "Placeholder" of a template clip of `kind` (InspectorSlot.cpp): only shown for a placeholder
+    void buildSlotSection(QVBoxLayout* page, TrackKind kind);
     void buildGeneratorSections(QVBoxLayout* page, const Section& outline);
     void buildTransitionPage(QVBoxLayout* page);
     // Selected transition (track kind + effective position), otherwise false

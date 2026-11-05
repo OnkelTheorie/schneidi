@@ -14,10 +14,12 @@
 #include "core/Selection.h"
 #include "core/Subtitles.h"
 #include "core/Timecode.h"
+#include "core/TemplateFill.h"
 #include "core/TimelineOps.h"
 #include "engine/MediaCache.h"
 #include "ui/EffectsLibrary.h"
 #include "ui/MediaPool.h"
+#include "ui/SlotText.h"
 #include "ui/Viewer.h"
 
 #include <QDragEnterEvent>
@@ -166,6 +168,8 @@ void TimelineView::dragEnterEvent(QDragEnterEvent* e)
     const QStringList paths = dropPaths(e->mimeData());
     if (paths.isEmpty()) return;
     m_dropItems.clear();
+    m_dropFile.clear();
+    m_slotDropClip = 0;
     for (const QString& path : paths) {
         if (MediaPool::isTitleItem(path)) { // Title from the Media Pool/Effects Library: 5 s, video only
             int length = 5 * m_editor->project()->fps();
@@ -191,9 +195,11 @@ void TimelineView::dragEnterEvent(QDragEnterEvent* e)
         else if (m_probe) info = m_probe(path);
         int in = 0, out = 0;
         if (dropRange(e->mimeData(), &in, &out)) info.length = out - in + 1; // Source In/Out from the Viewer
-        if (info.length > 0 && (info.hasVideo || info.hasAudio))
+        if (info.length > 0 && (info.hasVideo || info.hasAudio)) {
             m_dropItems << DropItem{info.length, info.hasVideo,
                                     int(m_editor->streamPresets().placements(info).size()), info};
+            if (paths.size() == 1) m_dropFile = path;
+        }
     }
     if (m_dropItems.isEmpty()) return;
     e->acceptProposedAction();
@@ -224,6 +230,14 @@ void TimelineView::dragMoveEvent(QDragMoveEvent* e)
         return;
     }
     if (m_dropItems.isEmpty()) return;
+    // Over a template placeholder: it gets filled (no drop preview)
+    m_slotDropClip = slotDropClipAt(e->position().toPoint(), e->modifiers());
+    if (m_slotDropClip) {
+        m_dropFrame = -1;
+        e->acceptProposedAction();
+        update();
+        return;
+    }
     int total = 0;
     for (const DropItem& it : m_dropItems) total += it.length;
     const QPoint pos = e->position().toPoint();
@@ -239,6 +253,8 @@ void TimelineView::dragLeaveEvent(QDragLeaveEvent*)
 {
     m_dropFrame = -1;
     m_dropItems.clear();
+    m_dropFile.clear();
+    m_slotDropClip = 0;
     m_transDragging = false;
     m_transDrop.reset();
     m_fxDragging.clear();
@@ -284,6 +300,17 @@ void TimelineView::dropEvent(QDropEvent* e)
         }
         return;
     }
+    if (const int slotClip = m_dropItems.isEmpty() ? 0 : slotDropClipAt(e->position().toPoint(), e->modifiers())) {
+        m_slotDropClip = 0;
+        m_dropFrame = -1;
+        m_dropItems.clear();
+        e->acceptProposedAction();
+        fillSlotFromDrop(slotClip, e->mimeData());
+        m_dropFile.clear();
+        update();
+        return;
+    }
+    m_slotDropClip = 0;
     int in = 0, out = 0;
     const QStringList paths = dropPaths(e->mimeData());
     if (m_dropFrame >= 0 && paths.size() == 1 && dropRange(e->mimeData(), &in, &out))
@@ -294,4 +321,48 @@ void TimelineView::dropEvent(QDropEvent* e)
     m_dropItems.clear();
     e->acceptProposedAction();
     update();
+}
+
+// ---------- Drag-fill: a Media Pool file onto a template placeholder ----------
+
+int TimelineView::slotDropClipAt(const QPoint& pos, Qt::KeyboardModifiers mods) const
+{
+    if (m_dropFile.isEmpty() || (mods & Qt::AltModifier)) return 0; // Alt: drop as always
+    const int id = clipAt(pos);
+    if (!id) return 0;
+    const Timeline& tl = m_editor->project()->timeline();
+    const Clip* c = TimelineOps::findClip(tl, id);
+    if (!c) return 0;
+    if (c->slot.isSet()) return id;
+    // Linked audio of a clip placeholder: the placeholder is its video
+    if (c->linkId)
+        for (const Track& t : tl.video)
+            for (const Clip& v : t.clips)
+                if (v.linkId == c->linkId && v.slot.isSet()) return v.id;
+    return 0;
+}
+
+void TimelineView::fillSlotFromDrop(int clipId, const QMimeData* mime)
+{
+    const Clip* c = TimelineOps::findClip(m_editor->project()->timeline(), clipId);
+    if (!c || m_dropFile.isEmpty()) return;
+    const ClipSlot slot = c->slot;
+    TemplateFill::Value value = TemplateFill::Value::ofFile(m_dropFile);
+    if (int in = 0, out = 0; dropRange(mime, &in, &out)) { // Source In/Out from the Viewer
+        value.from = in;
+        value.to = out + 1;
+    }
+    // What the Media Pool knows (or the drop preview's probe); beats and reframe analyses are not run here:
+    // music is trimmed with a fade-out, other shapes are reframed to the center
+    TemplateFill::Context ctx;
+    ctx.probe = [this](const QString& path) -> std::optional<MediaInfo> {
+        if (const MediaInfo* known = m_editor->project()->mediaInfo(path)) return *known;
+        if (!m_probe) return std::nullopt;
+        MediaInfo info = m_probe(path);
+        if (info.length <= 0) return std::nullopt;
+        info.path = path;
+        return info;
+    };
+    const TemplateFill::Report report = m_editor->fillSlot(slot.id, value, ctx);
+    emit slotFilled(SlotText::report(report, slot.label.isEmpty() ? slot.id : slot.label), report.ok());
 }

@@ -13,6 +13,8 @@
 #include "core/TimelineStory.h"
 #include "ui/timeline/TimelineView.h"
 
+#include "ui/SlotText.h"
+
 #include <QHelpEvent>
 #include <QInputDialog>
 #include <QMenu>
@@ -136,7 +138,13 @@ bool TimelineView::event(QEvent* e)
 {
     if (e->type() == QEvent::ToolTip) {
         const auto* help = static_cast<QHelpEvent*>(e);
-        if (const QString tip = storyToolTip(help->pos()); !tip.isEmpty()) QToolTip::showText(help->globalPos(), tip, this);
+        QString tip = storyToolTip(help->pos());
+        // A template placeholder: its label, hint and rules
+        if (tip.isEmpty() && help->pos().x() >= kHeaderW && help->pos().y() >= kRulerH)
+            if (const int id = clipAt(help->pos()))
+                if (const Clip* c = TimelineOps::findClip(m_editor->project()->timeline(), id); c && c->slot.isSet())
+                    tip = SlotText::tooltip(c->slot, m_editor->project()->format().rate.fps());
+        if (!tip.isEmpty()) QToolTip::showText(help->globalPos(), tip, this);
         else QToolTip::hideText();
         return true;
     }
