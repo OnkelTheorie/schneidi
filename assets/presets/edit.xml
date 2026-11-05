@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- schneidi: bundled look "Edit" (own work, AGPL-3.0 like schneidi). Colour = LUT assets/luts/edit.cube from
+     tools/gen_luts.py, plus a light glow. Name and description shown in the app come from core/EffectFolders.cpp. -->
+<effectgroup id="Edit" parentIn="0">
+    <effect id="avfilter.lut3d">
+        <property name="av.file">:/luts/edit.cube</property>
+    </effect>
+    <effect id="frei0r.glow">
+        <property name="Blur">0.3</property>
+        <property name="strength">0.3</property>
+        <property name="threshold">0.6</property>
+    </effect>
+</effectgroup>

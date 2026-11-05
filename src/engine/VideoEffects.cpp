@@ -303,15 +303,22 @@ void key(uint8_t* rgba, int width, int height, const KeyParams& p)
 
 // ---- frei0r replacements ----
 
-void glow(uint8_t* rgba, int width, int height, double amount)
+void glow(uint8_t* rgba, int width, int height, double amount, double strength, double threshold)
 {
     if (!rgba || width <= 0 || height <= 0) return;
+    const int mixK = int(std::lround(std::clamp(strength, 0.0, 1.0) * 256)); // share of the screen result, 8 bits
+    if (mixK == 0) return;
+    // What glows: values above the threshold, stretched to 0..255 again (threshold 0 = the whole picture)
+    uint8_t bright[256];
+    const double t = std::clamp(threshold, 0.0, 0.99) * 255;
+    for (int v = 0; v < 256; ++v) bright[v] = uint8_t(v <= t ? 0 : std::lround((v - t) * 255 / (255 - t)));
     const double sigma = std::clamp(amount, 0.0, 1.0) * height / 20.0;
     const size_t n = size_t(width) * height;
-    auto screen = [](int a, int b) { return uint8_t(a + b - (a * b + 127) / 255); };
+    // screen(a, b) = a + b - ab; mixed with a by k: a + k * (b - ab), b - ab >= 0
+    auto screen = [mixK](int a, int b) { return uint8_t(a + ((b - (a * b + 127) / 255) * mixK + 128) / 256); };
     if (sigma < 1) { // no blur: the picture screened with itself
         for (size_t i = 0; i < n * 4; i += 4)
-            for (int c = 0; c < 3; ++c) rgba[i + c] = screen(rgba[i + c], rgba[i + c]);
+            for (int c = 0; c < 3; ++c) rgba[i + c] = screen(rgba[i + c], bright[rgba[i + c]]);
         return;
     }
     // The glow is soft anyway: blur a picture reduced by f (block means), enlarge it again bilinearly
@@ -326,7 +333,7 @@ void glow(uint8_t* rgba, int width, int height, double amount)
             for (int y = by * f; y < y1; ++y) {
                 const uint8_t* row = rgba + size_t(y) * width * 4;
                 for (int x = 0; x < width; ++x)
-                    for (int c = 0; c < 3; ++c) acc[size_t(x / f) * 3 + c] += row[x * 4 + c];
+                    for (int c = 0; c < 3; ++c) acc[size_t(x / f) * 3 + c] += bright[row[x * 4 + c]];
             }
             for (int bx = 0; bx < sw; ++bx) {
                 const uint32_t count = uint32_t(std::min(width, (bx + 1) * f) - bx * f) * uint32_t(y1 - by * f);
@@ -710,7 +717,7 @@ bool apply(const QString& effectId, uint8_t* img, int w, int h, const Params& pa
         key(img, w, h, p);
         break;
     }
-    case Kind::Glow: glow(img, w, h, c.num("0", 0)); break;
+    case Kind::Glow: glow(img, w, h, c.num("0", 0), c.num("strength", 1.0), c.num("threshold", 0.0)); break;
     case Kind::Halftone: halftone(img, w, h, c.num("0", 0.4), c.num("1", 0.3), c.num("2", 0.45), c.num("3", 0.25)); break;
     case Kind::Noise:
         // a new pattern every frame, the same one for the same frame (preview = export)

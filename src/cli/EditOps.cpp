@@ -621,7 +621,7 @@ void opEffect(Session& s, const QJsonObject& op)
         return;
     }
     if (op.contains("preset")) {
-        // Shotcut/Kdenlive preset from the effects folder: adds its effects with their values
+        // Bundled look or Shotcut/Kdenlive preset from the effects folder: adds its effects with their values
         const QString path = findAsset(Asset::Preset, op.value("preset").toString());
         s.editor.addEffect(clipsOn(s, op, TrackKind::Video, "presets"), Presets::Prefix + path);
         return;
@@ -807,7 +807,7 @@ QVector<OpDef> makeOps()
          "new subtitle track from an SRT file or a cue list", {}, opSubtitles},
         {"effect", "{op:'effect', clips, effect, params?:{key: value}, enabled?, remove?} or {op:'effect', clips, preset} "
                    "or {op:'effect', clips, effect, move:'up'|'down'|'first'|'last'|place}",
-         "add/set/remove an effect (ids and parameters: `effects`); preset = effect preset from `effects`; move = "
+         "add/set/remove an effect (ids and parameters: `effects`); preset = effect preset from `effects` (bundled look 'edit' = LUT + light glow, one step); move = "
          "change the order the clip's effects render in",
          "Effects render in the order `info` lists them (a new one comes last), which matters: blur then pixelate "
          "gives soft blocks, pixelate then blur a smooth picture. move:'up' renders the effect one place "

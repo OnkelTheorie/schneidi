@@ -631,7 +631,7 @@ QString findAsset(Asset kind, const QString& name)
     QVector<EffectFolders::LutEntry> list;
     if (kind == Asset::Lut) list = EffectFolders::builtinLuts() + EffectFolders::userLuts();
     if (kind == Asset::Luma) list = EffectFolders::builtinTransitions() + EffectFolders::userTransitions();
-    if (kind == Asset::Preset) list = EffectFolders::userPresets();
+    if (kind == Asset::Preset) list = EffectFolders::builtinPresets() + EffectFolders::userPresets();
     for (const EffectFolders::LutEntry& e : list) {
         const QString id = EffectFolders::isBuiltin(e.path) ? EffectFolders::builtinId(e.path) : QString();
         const QString grouped = e.group.isEmpty() ? e.name : e.group + "/" + e.name;

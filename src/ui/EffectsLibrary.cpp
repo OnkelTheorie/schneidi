@@ -494,7 +494,7 @@ EffectsLibrary::EffectsLibrary(QWidget* parent) : QWidget(parent)
     m_transRoot = add(lumas, T("Eigene"), Transitions);
     m_transRoot->setToolTip(0, QDir::toNativeSeparators(EffectFolders::transitionDir()));
     m_presetRoot = add(m_categories, QStringLiteral("Presets"), PresetsAll);
-    m_presetRoot->setToolTip(0, T("Presets aus Kdenlive und Shotcut\n%1").arg(QDir::toNativeSeparators(EffectFolders::presetDir())));
+    m_presetRoot->setToolTip(0, T("Mitgelieferte Looks und Presets aus Kdenlive und Shotcut\n%1").arg(QDir::toNativeSeparators(EffectFolders::presetDir())));
     for (QTreeWidgetItem* it : {toolbox, openFx, luts, lumas}) it->setExpanded(true);
     m_categories->setCurrentItem(toolbox);
     connect(m_categories, &QTreeWidget::itemExpanded, this, &EffectsLibrary::saveCollapsed);
@@ -703,6 +703,14 @@ void EffectsLibrary::rebuild()
                 out << Entry{e.name, kEffectPrefix + e.id, effectIcon(e.id), e.description};
         return out;
     };
+    auto builtinPresets = [&] {
+        QVector<Entry> out;
+        for (const auto& l : EffectFolders::builtinPresets()) {
+            const PresetEntry& p = presetEntry(l.path);
+            out << Entry{p.name, Presets::Prefix + l.path, p.icon, p.tip, p.ok};
+        }
+        return out;
+    };
     auto presets = [&] {
         QVector<Entry> out;
         for (const auto& l : m_userPresets) {
@@ -791,6 +799,8 @@ void EffectsLibrary::rebuild()
     case Transitions:
     case TransitionGroup: groups = {{{}, files(m_userTransitions, false, false)}}; break;
     case PresetsAll:
+        groups = {{T("Mitgeliefert"), builtinPresets()}, {T("Eigene"), presets()}};
+        break;
     case PresetGroup: groups = {{{}, presets()}}; break;
     case SoundsAll:
         groups = {{T("Mitgeliefert"), builtinSounds()}, {T("Pakete"), packSounds()},
@@ -830,7 +840,7 @@ void EffectsLibrary::rebuild()
         if (shown == Luts || shown == LutGroup) hint = T("Noch keine LUTs – „Effekte importieren…“ öffnet den Ordner");
         if (shown == Transitions || shown == TransitionGroup)
             hint = T("Noch keine Verlaufsblenden – „Effekte importieren…“ öffnet den Ordner");
-        if (shown == PresetsAll || shown == PresetGroup)
+        if (shown == PresetGroup)
             hint = T("Noch keine Presets – „Effekte importieren…“ öffnet den Ordner");
         if (shown == Sounds || shown == SoundGroup)
             hint = T("Noch keine eigenen Klänge – „Effekte importieren…“ öffnet den Ordner (Unterordner „Sounds“)");

@@ -154,9 +154,12 @@ int main(int argc, char** argv)
         CHECK(d->video);
         CHECK(QString(id) == "chromakey" ? !d->library && d->fixed : d->library && !d->fixed);
     }
-    if (const EffectDescriptor* d = EffectRegistry::find("frei0r.glow"); CHECK(d && d->params.size() == 1)) {
+    // The plugin's blur plus schneidi's own strength and threshold (defaults = the plugin's glow)
+    if (const EffectDescriptor* d = EffectRegistry::find("frei0r.glow"); CHECK(d && d->params.size() == 3)) {
         CHECK(d->params[0].key == "0" && d->params[0].min == 0 && d->params[0].max == 1);
         CHECK(d->params[0].anim == Keys::effectParam("frei0r.glow", "0"));
+        CHECK(d->params[1].key == "strength" && d->params[1].defaultValue.toDouble() == 1.0);
+        CHECK(d->params[2].key == "threshold" && d->params[2].defaultValue.toDouble() == 0.0);
     }
     CHECK(!VideoEffects::isOwn("blur"));
 

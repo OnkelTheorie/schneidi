@@ -55,7 +55,14 @@ QVector<EffectDescriptor> ownLooks()
         out << d;
     };
     add("frei0r.glow", T("Glühen"), T("Weicher, heller Schein um helle Stellen"),
-        {f0rNumber("frei0r.glow", "0", T("Unschärfe"), "Blur", 0.0)});
+        {f0rNumber("frei0r.glow", "0", T("Unschärfe"), "Blur", 0.0),
+         // schneidi's own (the plugin has neither, MLT ignores them); the defaults give the plugin's glow, as before
+         {"strength", T("Stärke"), "strength", EffectParam::Double, 1.0, 0.0, 1.0,
+          Keys::effectParam("frei0r.glow", "strength"), 0.002, 3, {},
+          T("Anteil des Scheins am Bild (1 = voll)")},
+         {"threshold", T("Schwelle"), "threshold", EffectParam::Double, 0.0, 0.0, 1.0,
+          Keys::effectParam("frei0r.glow", "threshold"), 0.002, 3, {},
+          T("Nur was heller ist, leuchtet (0 = das ganze Bild; höher = kein Schleier über dunklen Stellen)")}});
     add("frei0r.colorhalftone", T("Rasterdruck"), T("Farbige Rasterpunkte wie im Zeitungsdruck"),
         {f0rNumber("frei0r.colorhalftone", "0", T("Punktgröße"), "dot radius", 0.4),
          f0rNumber("frei0r.colorhalftone", "1", T("Winkel Cyan"), "cyan angle", 0.3),

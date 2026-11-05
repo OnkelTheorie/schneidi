@@ -1022,8 +1022,10 @@ QJsonArray assetsJson(const QVector<EffectFolders::LutEntry>& list)
     QJsonArray out;
     for (const EffectFolders::LutEntry& e : list) {
         const bool builtin = EffectFolders::isBuiltin(e.path);
-        out << QJsonObject{{"name", builtin ? EffectFolders::builtinId(e.path) : (e.group.isEmpty() ? e.name : e.group + "/" + e.name)},
-                           {"label", builtin ? e.name : QFileInfo(e.path).fileName()}};
+        QJsonObject o{{"name", builtin ? EffectFolders::builtinId(e.path) : (e.group.isEmpty() ? e.name : e.group + "/" + e.name)},
+                      {"label", builtin ? e.name : QFileInfo(e.path).fileName()}};
+        if (const QString d = EffectFolders::builtinPresetDescription(e.path); !d.isEmpty()) o["description"] = d;
+        out << o;
     }
     return out;
 }
@@ -1087,7 +1089,7 @@ QJsonObject cmdEffects(const QJsonObject& a, Context&)
             {"luts", assetsJson(EffectFolders::builtinLuts() + EffectFolders::userLuts())},
             {"transition_types", types},
             {"lumas", assetsJson(EffectFolders::builtinTransitions() + EffectFolders::userTransitions())},
-            {"presets", assetsJson(EffectFolders::userPresets())},
+            {"presets", assetsJson(EffectFolders::builtinPresets() + EffectFolders::userPresets())},
             {"accents", accents},
             {"sounds", sfxSounds()}};
 }
