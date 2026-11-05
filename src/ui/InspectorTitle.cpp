@@ -82,6 +82,7 @@ void Inspector::buildTitlePage(QVBoxLayout* page)
         t.align = d.align;
         t.posX = d.posX;
         t.posY = d.posY;
+        t.colorRef = t.fontRef = 0; // the defaults are fixed values
         for (AnimParam p : {AnimParam::TitleSize, AnimParam::TitleColor, AnimParam::TitlePosX, AnimParam::TitlePosY})
             Keys::clear(c, p);
     }, {}, true);
@@ -208,6 +209,7 @@ void Inspector::buildTitlePage(QVBoxLayout* page)
         const TitleStyle d;
         c.title.outlineColor = d.outlineColor;
         c.title.outlineWidth = d.outlineWidth;
+        c.title.outlineRef = 0;
     }, outlineOn, true);
     addColor(ol, T("Farbe"), T("Umrandungsfarbe"), [](Clip& c) -> QColor& { return c.title.outlineColor; }, true,
              [](Clip& c) { c.title.outlineOn = true; }, {}, [](Clip& c) -> int& { return c.title.outlineRef; });
@@ -220,6 +222,7 @@ void Inspector::buildTitlePage(QVBoxLayout* page)
         const TitleStyle d;
         c.title.boxColor = d.boxColor;
         c.title.boxPad = d.boxPad;
+        c.title.boxRef = 0;
     }, boxOn, true);
     addColor(box, T("Farbe"), T("Hintergrundfarbe"), [](Clip& c) -> QColor& { return c.title.boxColor; }, true,
              [](Clip& c) { c.title.boxOn = true; }, {}, [](Clip& c) -> int& { return c.title.boxRef; });
