@@ -21,6 +21,7 @@ struct Rules {
     double minGap = 1.5;   // seconds between the moments of two sounds, at least
     int maxPerMinute = 4;  // sounds in any 60 s, at most (0 = no cap)
     bool impact = false;   // the sound is an impact: at most one per video
+    bool riser = false;    // the sound is a riser (it leads into its moment)
     double minGapLimit = 0.5; // minGap below this is raised to it
 };
 
@@ -33,6 +34,7 @@ struct Existing {
     // On the track the new sounds go to: the time it takes there (seconds, [start, end)); a new sound must not overlap it
     bool sameTrack = false;
     double start = 0, end = 0;
+    bool riser = false; // a riser leads into its moment: a hit or an impact on that very moment belongs to it
 };
 
 struct Placed {

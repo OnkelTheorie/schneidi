@@ -54,17 +54,33 @@ Result place(QVector<Moment> moments, double anchor, double length, double end, 
         if (e.sameTrack) spans << std::pair{e.start, e.end};
         impactUsed = impactUsed || e.impact;
     }
+    // A hit or an impact on the very moment a riser leads into belongs to it (the build and its landing): only
+    // that riser is near, every other sound still keeps its distance
+    const auto onRiser = [&](double at) {
+        if (rules.riser) return false;
+        bool any = false;
+        for (const double t : taken) {
+            if (std::abs(t - at) >= rules.minGap - 1e-9) continue;
+            const bool riser = std::abs(t - at) <= 0.1
+                               && std::any_of(existing.begin(), existing.end(), [&](const Existing& e) { return e.riser && e.at == t; });
+            if (!riser) return false;
+            any = true;
+        }
+        return any;
+    };
     for (const Moment& m : order) {
         const double start = m.at - anchor;
         QString why;
         if (start < -1e-9) why = "before_start";
         else if (m.at >= end || start + length > end + 1e-9) why = "after_end";
         else if (rules.impact && impactUsed) why = "impact_once";
-        else if (std::any_of(taken.begin(), taken.end(), [&](double t) { return std::abs(t - m.at) < rules.minGap - 1e-9; }))
+        else if (std::any_of(taken.begin(), taken.end(), [&](double t) { return std::abs(t - m.at) < rules.minGap - 1e-9; })
+                 && !onRiser(m.at))
             why = "too_close";
         // farther apart than the gap, but the sounds would still overlap (long sounds)
         else if (std::any_of(spans.begin(), spans.end(), [&](const std::pair<double, double>& sp) {
-                     return sp.first < start + length - 1e-9 && start < sp.second - 1e-9;
+                     // touching within 20 ms is no overlap (an impact whose attack is a sample before a riser's end)
+                     return sp.first < start + length - 0.02 && start < sp.second - 0.02;
                  }))
             why = "overlaps";
         else if (rules.maxPerMinute > 0) {

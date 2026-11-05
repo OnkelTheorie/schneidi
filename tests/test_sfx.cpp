@@ -280,6 +280,25 @@ void testPlace()
     CHECK_EQ(int(r.placed.size()), 1);
     r = place({{30}}, 0, 0, 60, {{10, false, true}, {20, false, true}, {40, false, true}}, rules);
     CHECK(r.placed.isEmpty() && r.skipped.size() == 1 && r.skipped[0].why == "per_minute");
+    // An impact on the moment a riser leads into belongs to it (build and landing); next to another sound it does not
+    {
+        Existing riser{30, false, false};
+        riser.riser = true;
+        riser.sameTrack = true;
+        riser.start = 28;
+        riser.end = 30;
+        Rules impact = rules;
+        impact.impact = true;
+        r = place({{30.0}}, 0.0001, 1.0, 60, {riser}, impact);
+        CHECK_EQ(int(r.placed.size()), 1);
+        Existing whoosh{30, false, false};
+        r = place({{30.0}}, 0.0001, 1.0, 60, {whoosh}, impact);
+        CHECK(r.placed.isEmpty() && r.skipped.size() == 1 && r.skipped[0].why == "too_close");
+        Rules second = rules;
+        second.riser = true; // a second riser on it is too close
+        r = place({{30.0}}, 2.0, 2.0, 60, {riser}, second);
+        CHECK(r.placed.isEmpty());
+    }
     // A sound whose tail would run past the end of the timeline (black frames in a render)
     r = place({{58.0}}, 0.1, 2.5, 60, {}, rules);
     CHECK(r.placed.isEmpty() && r.skipped.size() == 1 && r.skipped[0].why == "after_end");

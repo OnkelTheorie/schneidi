@@ -153,10 +153,12 @@ SfxPlace::Existing existingOf(const Clip& c, double fps, const Source& src)
     if (const auto n = SfxSynth::parseCachedFile(c.mediaPath)) {
         e.at = (c.start - c.in) / fps + SfxSynth::anchorOf(n->kind, n->seed, n->asked);
         e.impact = n->kind == SfxSynth::Kind::Impact;
+        e.riser = n->kind == SfxSynth::Kind::Riser;
         e.sameKind = src.kind == n->kind;
     } else if (const auto r = SfxSynth::recordedOfFile(c.mediaPath)) {
         e.at = (c.start - c.in) / fps + r->anchor;
         e.impact = r->kind == SfxSynth::Kind::Impact;
+        e.riser = r->kind == SfxSynth::Kind::Riser;
         e.sameKind = src.kind == r->kind;
     }
     return e;
@@ -246,6 +248,7 @@ void opSfx(Session& s, const QJsonObject& op)
     rules.minGap = op.contains("min_gap") ? seconds(timeOf(s, op, "min_gap"), f) : 1.5;
     rules.maxPerMinute = op.contains("max_per_min") ? int(numberOf(op, "max_per_min", 0, 60)) : SfxPlace::perMinute(level);
     rules.impact = src.kind == SfxSynth::Kind::Impact;
+    rules.riser = src.kind == SfxSynth::Kind::Riser;
     QVector<SfxPlace::Moment> pm;
     for (const Moment& m : moments) pm << SfxPlace::Moment{m.frame / fps, m.weight};
     // The timeline's end without the sounds of this track: a sound must end inside the picture (no black frames)
@@ -275,8 +278,13 @@ void opSfx(Session& s, const QJsonObject& op)
         const QString file = src.kind ? SfxSynth::cachedFile(*src.kind, sd, length) : src.file;
         if (file.isEmpty()) fail("FAILED", "could not write the sound into the cache folder");
         const MediaInfo& m = s.media(file);
-        const int start = int(std::lround((p.moment - anchorOf(sd)) * fps));
+        int start = int(std::lround((p.moment - anchorOf(sd)) * fps));
         const Track& t = s.project.timeline().audio[track];
+        // On a riser's moment: the riser's last frames would be under it, so it begins where the riser ends
+        for (const Clip& c : t.clips)
+            if (const auto n = SfxSynth::parseCachedFile(c.mediaPath); n && n->kind == SfxSynth::Kind::Riser
+                && src.kind != SfxSynth::Kind::Riser && c.start < start && start < c.end() && c.end() - start <= std::lround(0.1 * fps))
+                start = c.end();
         const bool busy = std::any_of(t.clips.begin(), t.clips.end(),
                                       [&](const Clip& c) { return c.start < start + m.length && start < c.end(); });
         if (start < 0 || busy || start + m.length > endFrame) {
