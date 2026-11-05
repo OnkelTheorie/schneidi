@@ -175,7 +175,7 @@ QString makeTemplate(const QString& dir, const Media& m)
     CHECK_EQ(firstTitle(d)->slot.maxChars, 20);
     // info shows the slot on the clip
     const QJsonObject info = run("info", {{"project", project}});
-    const QJsonArray clips = info["timeline"]["tracks"].toArray()[0]["clips"].toArray();
+    const QJsonArray clips = info["timeline"]["tracks"].toArray()[0].toObject()["clips"].toArray();
     CHECK_EQ(clips[0]["slot"]["id"].toString(), QString("clip1"));
     CHECK_EQ(clips[0]["slot"]["hint"].toString(), QString("best moment"));
     CHECK_EQ(clips[1]["slot"]["fit"].toString(), QString("speed"));
@@ -211,8 +211,8 @@ void testListAndInfo(const QString& tmp)
     TemplateLibrary::setBuiltInRoot({});
 
     const QJsonObject info = run("templates", {{"info", "test short"}});
-    const QJsonArray slots = info["slots"].toArray();
-    const QJsonObject clip1 = find(slots, "id", "clip1"), clip2 = find(slots, "id", "clip2"), hook = find(slots, "id", "hook");
+    const QJsonArray slotList = info["slots"].toArray();
+    const QJsonObject clip1 = find(slotList, "id", "clip1"), clip2 = find(slotList, "id", "clip2"), hook = find(slotList, "id", "hook");
     CHECK_EQ(clip1["kind"].toString(), QString("clip"));
     CHECK_EQ(clip1["length"].toString(), QString("fixed"));
     CHECK_EQ(clip1["fit"].toString(), QString("trim"));
@@ -226,7 +226,7 @@ void testListAndInfo(const QString& tmp)
     CHECK_EQ(inst["start_s"].toDouble(), 3.0);
     CHECK_EQ(inst["length_s"].toDouble(), 3.0);
     CHECK(inst["media"].toString().contains("/Test Short/media/")); // its bundled copy
-    CHECK_EQ(hook["instances"].toArray()[0]["text"].toString(), QString("Hook"));
+    CHECK_EQ(hook["instances"].toArray()[0].toObject()["text"].toString(), QString("Hook"));
     const QJsonArray refs = info["brand_refs"].toArray();
     CHECK_EQ(refs.size(), 1);
     CHECK_EQ(refs[0]["refs"]["color"].toString(), QString("brand1"));
@@ -249,7 +249,7 @@ void testFill(const QString& tmp, const Media& m)
                                         {"out_project", out}, {"dry_run", true}});
     CHECK(dry["dry_run"].toBool());
     CHECK(!dry["ok"].toBool());
-    CHECK_EQ(dry["errors"].toArray()[0]["code"].toString(), QString("FILE_MISSING"));
+    CHECK_EQ(dry["errors"].toArray()[0].toObject()["code"].toString(), QString("FILE_MISSING"));
     CHECK_EQ(dry["unfilled"].toArray().size(), 2);
     CHECK(!QFileInfo::exists(out));
     dry = run("templates", {{"fill", "Test Short"}, {"values", values}, {"dry_run", true}});
@@ -314,7 +314,7 @@ void testFill(const QString& tmp, const Media& m)
     const QString video = tmp + "/out/branded2.mp4";
     const QJsonObject rendered = run("templates", {{"fill", "Test Short"}, {"values", values},
                                                    {"out_project", tmp + "/out/branded2.schneidi"},
-                                                   {"render", QJsonObject{{"out", video}, {"width", 320}, {"height", 180}}}});
+                                                   {"render", QJsonObject{{"out", video}, {"height", 180}}}});
     CHECK(rendered.contains("render"));
     CHECK(QFileInfo(video).size() > 0);
     CHECK(Brand::setGlobal({}));
@@ -355,7 +355,7 @@ void testEditOps(const QString& tmp, const Media& m)
     // Unmark
     run("edit", {{"project", project}, {"ops", QString(R"([{"op":"slot","clip":%1,"remove":true}])").arg(id)}});
     CHECK(!clipWithSlot(load(project), "shot"));
-    CHECK(!run("info", {{"project", project}})["timeline"]["tracks"].toArray()[0]["clips"].toArray()[0].toObject().contains("slot"));
+    CHECK(!run("info", {{"project", project}}).value("timeline")["tracks"].toArray()[0].toObject()["clips"].toArray()[0].toObject().contains("slot"));
 }
 
 QByteArray readAll(const QString& path)
@@ -381,7 +381,7 @@ void testZip(const QString& tmp, const Media& m)
     CHECK_EQ(imp["id"].toString(), QString("Test Short"));
     CHECK_EQ(imp["slots"].toArray().size(), 3);
     const QJsonObject info = run("templates", {{"info", "Test Short"}});
-    CHECK(find(info["slots"].toArray(), "id", "clip2")["instances"].toArray()[0]["media"].toString().startsWith(
+    CHECK(find(info["slots"].toArray(), "id", "clip2")["instances"].toArray()[0].toObject()["media"].toString().startsWith(
         TemplateLibrary::dir() + "/Test Short/media/"));
     // Again: a name of its own
     const QJsonObject second = run("templates", {{"import", zip}});
@@ -410,7 +410,8 @@ void testZip(const QString& tmp, const Media& m)
         p.setWorkingDirectory(tmp + "/deflate");
         p.start("zip", {"-q", "-r", "-9", tmp + "/share/deflated.zip", "."});
         CHECK(p.waitForFinished(60000) && p.exitCode() == 0);
-        const QJsonObject d = run("templates", {{"import", tmp + "/share/deflated.zip"}, {"replace", true}});
+        const QJsonObject d = run("templates", {{"import", tmp + "/share/deflated.zip"}});
+        CHECK_EQ(d["id"].toString(), QString("Test Short 2"));
         CHECK_EQ(d["slots"].toArray().size(), 3);
         CHECK_EQ(readAll(QDir(d["dir"].toString()).filePath("notes.txt")), big);
         run("templates", {{"remove", d["id"].toString()}});
@@ -454,6 +455,7 @@ void testZip(const QString& tmp, const Media& m)
         f.open(QIODevice::ReadWrite);
         QByteArray bytes = f.readAll();
         const qsizetype cd = bytes.lastIndexOf(QByteArray("\x50\x4b\x01\x02", 4));
+        if (!CHECK(cd >= 0)) return;
         const quint32 link = quint32(0120777) << 16;
         for (int i = 0; i < 4; ++i) bytes[cd + 38 + i] = char((link >> (8 * i)) & 0xff);
         f.seek(0);
