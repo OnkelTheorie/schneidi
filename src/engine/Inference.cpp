@@ -129,6 +129,9 @@ std::optional<Loaded> load(const QString& file, QString* error)
     // Windows does not look for in the library's own folder: copies beside it (Extensions::provideRuntime) are loaded
     // first by their full path, so the library finds them in the process. vcruntime before msvcp (which needs it).
     if (QFileInfo(file).isAbsolute()) {
+        // Piper's copy (or an older install) may lie there without them: the package's copies first (only inside
+        // the extensions folder; a file already there stays)
+        Extensions::provideRuntime(file);
         const QDir here = QFileInfo(file).dir();
         for (const char* pattern : {"vcruntime140*.dll", "msvcp140*.dll"})
             for (const QString& dll : here.entryList({pattern}, QDir::Files, QDir::Name)) {
