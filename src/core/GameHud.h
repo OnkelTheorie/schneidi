@@ -20,6 +20,12 @@ struct Game {
     int tolerance = 0; // largest difference per channel; 0 = the analysis' default
     // The whole kill feed (several lines under each other, right-aligned): what a short keeps readable
     QRectF feed;
+    // Lines framed by a thin outline in the mark's colour (CS2): found by that shape instead of the amount of colour,
+    // in `frameArea` (the feed's whole height: the game picture behind does not count). Top edge to bottom edge as
+    // part of the picture height (0 = no frame: the colour is counted), the right edge's x as part of the width
+    QRectF frameArea;
+    double frameHeight = 0;
+    double frameRight = 0;
 };
 
 const QVector<Game>& games();

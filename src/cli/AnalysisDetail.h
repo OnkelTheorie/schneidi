@@ -128,6 +128,13 @@ struct ColorEvents {
 };
 ColorEvents colorEvents(const MediaSource& m, const QJsonObject& a, const std::function<void(double)>& progress);
 
+// ---------- Kill feed (AnalysisKillFeed.cpp) ----------
+
+// New kill feed lines with a thin outline of `color` (CS2): top and bottom edge `lineHeight` apart (part of the
+// picture height), the right edge at `rightEdge` (part of the width), inside `region` (fractions). Only appear events.
+ColorEvents framedLineEvents(const MediaSource& m, const QRectF& region, const QColor& color, double lineHeight,
+                             double rightEdge, const std::function<void(double)>& progress);
+
 // ---------- Highlights (AnalysisHighlights.cpp) ----------
 
 // `highlights` of one file (`file`, the command's settings): from the cache (CacheLocation/highlights, key = file,
