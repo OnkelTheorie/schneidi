@@ -3,6 +3,7 @@
 #include "ui/Inspector.h"
 
 #include "app/Theme.h"
+#include "core/BrandKit.h"
 #include "core/EffectFolders.h"
 #include "core/EffectRegistry.h"
 #include "core/Editor.h"
@@ -81,6 +82,7 @@ void Inspector::buildTitlePage(QVBoxLayout* page)
         t.align = d.align;
         t.posX = d.posX;
         t.posY = d.posY;
+        t.colorRef = t.fontRef = 0; // the defaults are fixed values
         for (AnimParam p : {AnimParam::TitleSize, AnimParam::TitleColor, AnimParam::TitlePosX, AnimParam::TitlePosY})
             Keys::clear(c, p);
     }, {}, true);
@@ -112,7 +114,10 @@ void Inspector::buildTitlePage(QVBoxLayout* page)
     fontBox->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
     connect(fontBox, &QFontComboBox::currentFontChanged, this, [this, V](const QFont& f) {
         const QString family = f.family();
-        apply(V, {}, T("Schriftart"), [family](Clip& c) { c.title.font = family; }, true);
+        apply(V, {}, T("Schriftart"), [family](Clip& c) {
+            c.title.font = family;
+            c.title.fontRef = 0; // chosen by hand: fixed
+        }, true);
     });
     m_refreshers << [fontBox, current] {
         if (const Clip* c = current(); c && fontBox->currentFont().family() != c->title.fontFamily()) {
@@ -120,14 +125,19 @@ void Inspector::buildTitlePage(QVBoxLayout* page)
             fontBox->setCurrentFont(QFont(c->title.fontFamily()));
         }
     };
+    auto* fontLine = new QHBoxLayout;
+    fontLine->setContentsMargins(0, 0, 0, 0);
+    fontLine->setSpacing(4);
+    fontLine->addWidget(fontBox, 1);
+    fontLine->addWidget(brandButton(true, T("Schriftart"), [](Clip& c) -> int& { return c.title.fontRef; }));
     txt.grid->addWidget(rowLabel(T("Schriftart")), txt.rows, 0);
-    txt.grid->addWidget(fontBox, txt.rows++, 1);
+    txt.grid->addLayout(fontLine, txt.rows++, 1);
 
     addSlider(txt, "titleSize", T("Größe"), 1, 400, TitleStyle().size, 0.5, 1,
               [](Clip& c) -> double& { return c.title.size; }, AnimParam::TitleSize);
     const int colorRow = txt.rows;
     addColor(txt, T("Farbe"), T("Textfarbe"), [](Clip& c) -> QColor& { return c.title.color; }, true, {},
-             AnimParam::TitleColor);
+             AnimParam::TitleColor, [](Clip& c) -> int& { return c.title.colorRef; });
     const int styleRow = txt.rows;
 
     // Style + alignment in one row
@@ -199,9 +209,10 @@ void Inspector::buildTitlePage(QVBoxLayout* page)
         const TitleStyle d;
         c.title.outlineColor = d.outlineColor;
         c.title.outlineWidth = d.outlineWidth;
+        c.title.outlineRef = 0;
     }, outlineOn, true);
     addColor(ol, T("Farbe"), T("Umrandungsfarbe"), [](Clip& c) -> QColor& { return c.title.outlineColor; }, true,
-             [](Clip& c) { c.title.outlineOn = true; });
+             [](Clip& c) { c.title.outlineOn = true; }, {}, [](Clip& c) -> int& { return c.title.outlineRef; });
     autoOn(addSlider(ol, "titleOutline", T("Breite"), 0, 40, TitleStyle().outlineWidth, 0.1, 1,
                      [](Clip& c) -> double& { return c.title.outlineWidth; }),
            "titleOutline", T("Umrandung"), outlineOn);
@@ -211,9 +222,10 @@ void Inspector::buildTitlePage(QVBoxLayout* page)
         const TitleStyle d;
         c.title.boxColor = d.boxColor;
         c.title.boxPad = d.boxPad;
+        c.title.boxRef = 0;
     }, boxOn, true);
     addColor(box, T("Farbe"), T("Hintergrundfarbe"), [](Clip& c) -> QColor& { return c.title.boxColor; }, true,
-             [](Clip& c) { c.title.boxOn = true; });
+             [](Clip& c) { c.title.boxOn = true; }, {}, [](Clip& c) -> int& { return c.title.boxRef; });
     const int padRow = box.rows;
     autoOn(addSlider(box, "titleBoxPad", T("Abstand"), 0, 200, TitleStyle().boxPad, 0.5, 1,
                      [](Clip& c) -> double& { return c.title.boxPad; }),
@@ -386,7 +398,7 @@ void Inspector::buildGeneratorSections(QVBoxLayout* page, const Section& outline
 
 void Inspector::addColor(Section& s, const QString& label, const QString& text,
                          const std::function<QColor&(Clip&)>& color, bool alpha, const std::function<void(Clip&)>& also,
-                         std::optional<AnimParam> anim)
+                         std::optional<AnimParam> anim, const std::function<int&(Clip&)>& ref)
 {
     auto* swatch = new QToolButton;
     swatch->setFixedSize(46, 18);
@@ -402,9 +414,10 @@ void Inspector::addColor(Section& s, const QString& label, const QString& text,
         const QColor col = QColorDialog::getColor(cur, this, T("%1 wählen").arg(text),
                                                   alpha ? QColorDialog::ShowAlphaChannel : QColorDialog::ColorDialogOptions());
         if (!col.isValid()) return;
-        apply(kind, {}, text, [this, color, col, also, anim](Clip& clip) {
+        apply(kind, {}, text, [this, color, col, also, anim, ref](Clip& clip) {
             if (anim) Keys::setValue(clip, *anim, localFrame(clip), Keys::fromColor(col)); // animated -> keyframe
             else color(clip) = col;
+            if (ref) ref(clip) = 0; // chosen by hand: fixed
             if (also) also(clip);
         }, title);
     });
@@ -421,8 +434,71 @@ void Inspector::addColor(Section& s, const QString& label, const QString& text,
     row->setContentsMargins(0, 0, 0, 0);
     row->addStretch(1);
     row->addWidget(swatch);
+    if (ref) row->addWidget(brandButton(false, text, ref, also));
     s.grid->addWidget(rowLabel(label), s.rows, 0);
     s.grid->addLayout(row, s.rows, 1);
     if (anim) s.grid->addWidget(keyButtons(kind, title, {*anim}), s.rows, 3);
     ++s.rows;
+}
+
+QToolButton* Inspector::brandButton(bool font, const QString& text, const std::function<int&(Clip&)>& ref,
+                                    const std::function<void(Clip&)>& also)
+{
+    const TrackKind V = TrackKind::Video;
+    auto* button = new QToolButton;
+    button->setFocusPolicy(Qt::NoFocus);
+    button->setPopupMode(QToolButton::InstantPopup);
+    button->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    button->setFixedHeight(18);
+    button->setMinimumWidth(30);
+    auto* menu = new QMenu(button);
+    button->setMenu(menu);
+    connect(menu, &QMenu::aboutToShow, this, [=, this] {
+        menu->clear();
+        const Clip* c = primary(V, true);
+        if (!c) return;
+        Clip copy = *c;
+        const int cur = ref(copy);
+        const BrandKit kit = m_editor->project()->effectiveBrand();
+        const int count = font ? BrandKit::kMaxFonts : BrandKit::kMaxColors;
+        for (int n = 0; n <= count; ++n) {
+            QString name = n == 0 ? T("Fest") : font ? T("Brand-Schrift %1").arg(n) : T("Brand-Farbe %1").arg(n);
+            QIcon icon;
+            if (n > 0 && !font) {
+                if (const auto col = kit.color(n)) {
+                    QPixmap px(14, 14);
+                    px.fill(*col);
+                    icon = QIcon(px);
+                }
+            }
+            if (n > 0 && font && kit.font(n)) name += QString(" (%1)").arg(*kit.font(n));
+            if (n > 0 && !(font ? kit.font(n).has_value() : kit.color(n).has_value())) name += " " + T("(nicht gesetzt)");
+            QAction* a = menu->addAction(icon, name);
+            a->setCheckable(true);
+            a->setChecked(n == cur);
+            connect(a, &QAction::triggered, this, [=, this] {
+                apply(V, {}, text, [=](Clip& clip) {
+                    ref(clip) = n;
+                    Brand::resolve(clip.title, kit); // the kit's value now (missing: the value stays)
+                    if (also && n > 0) also(clip);
+                }, true);
+            });
+            if (n == 0) menu->addSeparator();
+        }
+    });
+    m_refreshers << [=, this] {
+        if (const Clip* c = primary(V, true)) {
+            Clip copy = *c;
+            const int n = ref(copy);
+            const QString label = n ? QString("B%1").arg(n) : QStringLiteral("B");
+            if (button->text() != label) button->setText(label);
+            const QString tip = n ? (font ? T("Brand-Schrift %1").arg(n) : T("Brand-Farbe %1").arg(n))
+                                  : T("Fester Wert (nicht aus dem Brand-Kit)");
+            if (button->toolTip() != tip) button->setToolTip(tip);
+            const QString css = n ? QString("QToolButton { color: %1; font-weight: bold; }").arg(Theme::primary.name())
+                                  : QString("QToolButton { color: %1; }").arg(Theme::textDim.name());
+            if (button->styleSheet() != css) button->setStyleSheet(css);
+        }
+    };
+    return button;
 }

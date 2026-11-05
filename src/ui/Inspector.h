@@ -124,8 +124,15 @@ private:
 
     // Row with color field (QColorDialog); alpha = opacity selectable, i.e. = additionally when applying
     // anim: animatable color (title color)
+    // ref: title colour with a brand kit reference (TitleStyle::colorRef …): a brandButton next to the field, picking
+    // a colour by hand makes it fixed again
     void addColor(Section& s, const QString& label, const QString& text, const std::function<QColor&(Clip&)>& color,
-                  bool alpha, const std::function<void(Clip&)>& also = {}, std::optional<AnimParam> anim = {});
+                  bool alpha, const std::function<void(Clip&)>& also = {}, std::optional<AnimParam> anim = {},
+                  const std::function<int&(Clip&)>& ref = {});
+    // Small menu next to a title colour/font: "Fixed" or brand colour/font 1..n of the project's kit; picking one sets
+    // the reference and the kit's value (Brand::resolve). The button shows the reference ("B2").
+    QToolButton* brandButton(bool font, const QString& text, const std::function<int&(Clip&)>& ref,
+                             const std::function<void(Clip&)>& also = {});
     void buildTitlePage(QVBoxLayout* page);
     void buildGeneratorSections(QVBoxLayout* page, const Section& outline);
     void buildTransitionPage(QVBoxLayout* page);

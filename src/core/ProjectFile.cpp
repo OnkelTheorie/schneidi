@@ -324,6 +324,11 @@ QJsonObject titleToJson(const TitleStyle& t)
         {"boxOn", t.boxOn},   {"boxColor", t.boxColor.name(QColor::HexArgb)}, {"boxPad", t.boxPad},
     };
     generatorToJson(o, t);
+    // Brand kit references (0.18, only when set; older versions ignore them and keep the stored values)
+    if (t.colorRef) o["colorRef"] = t.colorRef;
+    if (t.outlineRef) o["outlineRef"] = t.outlineRef;
+    if (t.boxRef) o["boxRef"] = t.boxRef;
+    if (t.fontRef) o["fontRef"] = t.fontRef;
     return o;
 }
 
@@ -365,6 +370,10 @@ TitleStyle titleFromJson(const QJsonObject& o)
     t.barThickness = std::clamp(o.value("barThickness").toDouble(t.barThickness), 1.0, 10000.0);
     t.barMargin = std::clamp(o.value("barMargin").toDouble(t.barMargin), 0.0, 10000.0);
     t.barRound = o.value("barRound").toBool(t.barRound);
+    t.colorRef = std::clamp(o.value("colorRef").toInt(), 0, BrandKit::kMaxColors);
+    t.outlineRef = std::clamp(o.value("outlineRef").toInt(), 0, BrandKit::kMaxColors);
+    t.boxRef = std::clamp(o.value("boxRef").toInt(), 0, BrandKit::kMaxColors);
+    t.fontRef = std::clamp(o.value("fontRef").toInt(), 0, BrandKit::kMaxFonts);
     return t;
 }
 
@@ -848,6 +857,8 @@ QByteArray toJson(const ProjectData& data, const QString& projectPath)
         root["fixedFormat"] = fixed;
     }
     if (data.importPresets) root["importPresets"] = data.importPresets->toJson(); // optional
+    // The project's own brand kit (optional, 0.18; older versions ignore it): files also relative to the project
+    if (data.brand) root["brand"] = Brand::toJson(*data.brand, &projectDir);
     // Watch folders (optional, absent in old files; older versions ignore them): folder also relative to the project
     // like media, so a project moved together with its recording folder keeps watching it
     if (!data.watchFolders.isEmpty()) {
@@ -1073,6 +1084,7 @@ bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* d
     d.fixedFrameRate = fixed.value("frameRate").toBool();
     if (root.value("importPresets").isObject())
         d.importPresets = StreamPresets::fromJson(root.value("importPresets").toObject());
+    if (root.value("brand").isObject()) d.brand = Brand::fromJson(root.value("brand").toObject(), &projectDir);
     for (const QJsonValue& v : root.value("watchFolders").toArray()) {
         const QJsonObject o = v.toObject();
         WatchFolder w;

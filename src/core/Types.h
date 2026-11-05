@@ -164,6 +164,10 @@ struct TitleStyle {
     double barThickness = 12;       // pixels
     double barMargin = 0;           // distance from the edge (pixels)
     bool barRound = true;           // rounded ends
+    // Brand kit references (core/BrandKit.h, 0.18): 0 = the fixed value above, n = brand colour / font n. The value
+    // stays stored next to the reference (rendering never reads the kit); Editor::applyBrand copies the kit's in.
+    int colorRef = 0, outlineRef = 0, boxRef = 0, fontRef = 0;
+    bool hasBrandRef() const { return colorRef || outlineRef || boxRef || fontRef; }
 
     bool isCounter() const { return kind == TitleKind::Counter; }
     bool isProgress() const { return kind == TitleKind::Progress; }

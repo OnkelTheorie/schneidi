@@ -573,7 +573,7 @@ QJsonObject Server::runCommand(const QJsonObject& msg, bool ownChat, bool byUser
                                        "whole change as one edit with plan:true (every op with a why) and end your "
                                        "answer; the user runs the steps they want from the plan card");
     // The other commands that change the app's project (restore, import, watch passes) have no plan: not in plan mode
-    if (ownChat && !byUser && (name == "restore" || name == "import" || name == "watch") && m_host->livePlanOnly())
+    if (ownChat && !byUser && (name == "restore" || name == "import" || name == "watch" || name == "brand") && m_host->livePlanOnly())
         return errorReply("PLAN_MODE", QString("the user wants to see a plan first (plan mode in the schneidi app) and "
                                                "`%1` changes the project without one: say in your answer what you would "
                                                "do, the user does it or switches plan mode off")
@@ -586,7 +586,7 @@ QJsonObject Server::runCommand(const QJsonObject& msg, bool ownChat, bool byUser
     // One undo step per changing command, all or nothing like on the file; it never merges with the user's slider
     // series before or after it (`restore` is one step of its own and changes nothing before it can fail)
     QUndoStack* undo = p->undoStack();
-    const bool step = (name == "edit" && !planning) || name == "import" || name == "watch";
+    const bool step = (name == "edit" && !planning) || name == "import" || name == "watch" || name == "brand";
     const int index = undo->index();
     if (step) {
         p->closeMerge();

@@ -38,7 +38,7 @@ QString callKey(const Ai::ToolCall& c)
 // Tools that change the project, the app or the files (a failed call may work after them)
 bool changesState(const QString& tool)
 {
-    static const QStringList tools{"edit", "import", "new", "restore", "app", "watch"};
+    static const QStringList tools{"edit", "import", "new", "restore", "app", "watch", "brand"};
     return tools.contains(tool);
 }
 
@@ -735,7 +735,7 @@ QString AiChat::toolLine(const QString& tool, const QJsonObject& args)
         {"new", N_("Legt ein Projekt an")},             {"import", N_("Importiert")},
         {"backups", N_("Sieht sich die Sicherungen an")}, {"restore", N_("Stellt einen gesicherten Stand her")},
         {"templates", N_("Sieht sich die Startvorlagen an")},
-        {"watch", N_("Sieht in überwachten Ordnern nach")},
+        {"watch", N_("Sieht in überwachten Ordnern nach")}, {"brand", N_("Arbeitet mit dem Brand-Kit")},
     };
     QString line;
     const QString plan = args["plan_id"].toString().trimmed();

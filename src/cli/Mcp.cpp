@@ -63,7 +63,8 @@ QString instructions(const Options& opt)
                 "rendering (gaps, sound, game sound buried under the music, stutter in recordings, text a phone app "
                 "covers, too long without a cut, a late hook, where viewers left by a retention CSV), `render` writes a video (presets for YouTube Shorts, Instagram Reels, TikTok), `short` makes a "
                 "finished vertical short of recordings in one call (best moments, reframe, captions, check, render), "
-                "`restore` undoes a change (`backups` lists the saved states), "
+                "`restore` undoes a change (`backups` lists the saved states), `brand` is the user's brand kit "
+                "(logo, colors, fonts, intro/outro; titles can follow it), "
                 "`watch` takes new files of watched folders into the media pool (a recorder's output; for automated "
                 "work: new recording -> highlights -> render).";
     if (opt.app)

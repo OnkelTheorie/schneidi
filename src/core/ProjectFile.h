@@ -3,6 +3,7 @@
 // Project file (.schneidi, JSON): stores only references to the original files and the edit
 // (tracks, clips, effects, markers) - the media themselves are never modified (like DaVinci).
 
+#include "core/BrandKit.h"
 #include "core/ProjectFormat.h"
 #include "core/RenderJob.h"
 #include "core/StreamPresets.h"
@@ -43,6 +44,8 @@ struct ProjectData {
     // Highest sequence id ever given (optional): ids of deleted timelines are never given again (a queued render job
     // keeps pointing at "deleted", not at a new timeline). 0 = the highest of `sequences`.
     int lastSequenceId = 0;
+    // The project's own brand kit (core/BrandKit.h, optional): replaces the global one for this project
+    std::optional<BrandKit> brand;
 };
 
 namespace ProjectFile {

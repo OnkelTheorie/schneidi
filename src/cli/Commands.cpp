@@ -376,6 +376,10 @@ QJsonObject titleStyleJson(const TitleStyle& t, const TitleStyle& def)
     flag("box", t.boxOn, def.boxOn);
     color("box_color", t.boxColor, t.boxOn ? QColor() : def.boxColor);
     num("box_padding", t.boxPad, t.boxOn ? -1 : def.boxPad);
+    // Brand kit references (the value above is the kit's at the last apply)
+    for (const auto& [key, ref] : {std::pair{"color_ref", t.colorRef}, std::pair{"outline_ref", t.outlineRef},
+                                   std::pair{"box_ref", t.boxRef}, std::pair{"font_ref", t.fontRef}})
+        if (ref) o[key] = QString("brand%1").arg(ref);
     // Counter/progress bar: what it is and all its settings (their defaults are not obvious)
     if (t.isCounter()) {
         o["kind"] = "counter";
@@ -873,6 +877,26 @@ const QVector<Command>& commands()
                                   "network folders)"},
           {"follow", T::Boolean, "command line only: keep running, one JSON line per new file (stop with Ctrl+C)"}},
          cmdWatch},
+        {"brand", "Brand kit: logo (corner, size), up to 4 colors, 2 fonts (heading, body), intro/outro clip. A global "
+                  "kit for all projects, a project may have its own. Titles reference it (edit op title: color/"
+                  "outline_color/box_color \"brand1\"..\"brand4\", font \"brand1\"/\"brand2\"); apply copies the kit "
+                  "into them. Without action: show (global, project_kit, effective, references).",
+         {{"project", T::Path, "project file or \"@app\" (needed for everything but show/set of the global kit)", false,
+           true},
+          {"action", T::String, "show (default), set (the given fields; the project then gets the kit applied), "
+                                "apply, unset (the project uses the global kit again), logo (the logo as a clip on a "
+                                "new top track over the timeline), intro_outro (intro at the start, everything moves "
+                                "right; outro at the end)"},
+          {"global", T::Boolean, "set: true (default) = the global kit, false = the project's own"},
+          {"logo", T::String, "set: logo file (image or video; \"\" = none)"},
+          {"logo_corner", T::String, "set: top-right (default), top-left, bottom-right, bottom-left, center"},
+          {"logo_size", T::Number, "set: logo width as share of the picture width (default 0.12)"},
+          {"colors", T::String, "set: comma list of up to 4 colors \"#ffcc00,#202020\" (\"\" = none)"},
+          {"fonts", T::String, "set: comma list of up to 2 font families (heading, body)"},
+          {"intro", T::String, "set: intro clip file (\"\" = none)"},
+          {"outro", T::String, "set: outro clip file (\"\" = none)"},
+          {"timeline", T::String, "logo/intro_outro: which timeline (id or name; default: the open one)"}},
+         cmdBrand},
         {"render", "Render the project timeline to a video, animated GIF, image sequence or audio file. Effects "
                    "this version does not have are left out and listed in the answer's skipped_effects (clip, "
                    "effect, kind).",
@@ -1311,6 +1335,9 @@ bool runsInApp(const Command& cmd, const QJsonObject& args)
     if (cmd.name == "app" || cmd.name == "import" || cmd.name == "restore") return true;
     // A `watch` pass or setting folders up changes the project; follow only starts passes (each one goes there)
     if (cmd.name == "watch") return !args["list"].toBool() && !args["follow"].toBool();
+    // The brand kit: everything but showing changes the project (set of the global kit applies it to the project)
+    if (cmd.name == "brand")
+        return !args["project"].toString().isEmpty() && args["action"].toString("show").trimmed().toLower() != "show";
     // A plan is made, run or discarded there too: the app shows it (cli/Live.h) and its state is the app's project
     return cmd.name == "edit"
            && (!args["dry_run"].toBool() || args["plan"].toBool() || args.contains("plan_id"));

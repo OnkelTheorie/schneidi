@@ -176,6 +176,12 @@ public:
     const std::optional<StreamPresets>& importPresets() const { return m_importPresets; }
     void setImportPresets(const std::optional<StreamPresets>& presets);
     StreamPresets effectiveImportPresets() const { return m_importPresets ? *m_importPresets : StreamPresets::load(); }
+    // The project's own brand kit (core/BrandKit.h); none = the global one. One undo step (values clamped; unchanged =
+    // none). Editor::setProjectBrand also copies the values into the titles that reference the kit, in the same step.
+    const std::optional<BrandKit>& brand() const { return m_brand; }
+    void setBrand(const std::optional<BrandKit>& brand);
+    void applyBrand(const std::optional<BrandKit>& brand); // only for undo
+    BrandKit effectiveBrand() const { return Brand::effective(m_brand); }
     // Watch folders (core/WatchFolders.h): new media files of these folders come into the Media Pool on their own.
     // Setting them up is not in the undo history (like the render queue), but counts as a change.
     const QVector<WatchFolder>& watchFolders() const { return m_watchFolders; }
@@ -216,6 +222,7 @@ signals:
     void modifiedChanged(bool modified);
     void renderQueueChanged();
     void importPresetsChanged(); // own import presets set/removed, or another project loaded
+    void brandChanged();         // own brand kit set/removed, or another project loaded
     void watchFoldersChanged(); // the list of watch folders (also after load())
     void loaded(); // another project (or a new empty one) replaced everything, after the other signals of load()
 
@@ -234,6 +241,7 @@ private:
     bool m_fixedResolution = false;
     bool m_fixedFrameRate = false;
     std::optional<StreamPresets> m_importPresets;
+    std::optional<BrandKit> m_brand;
     int m_lastBinId = 0;
     QUndoStack m_undo;
     int m_lastClipId = 0;
