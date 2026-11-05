@@ -56,10 +56,9 @@ QListWidgetItem* entry(QListWidget* list, const QString& text)
 // What the list hands a drag of this entry
 QByteArray dragData(QListWidget* list, QListWidgetItem* it)
 {
-    struct Open : QListWidget {
-        QMimeData* data(const QList<QListWidgetItem*>& items) const { return mimeData(items); }
-    };
-    std::unique_ptr<QMimeData> m(static_cast<Open*>(list)->data({it}));
+    // Through the model (it asks the list's own mimeData), not a cast to a helper type the list is not
+    std::unique_ptr<QMimeData> m(list->model()->mimeData({list->model()->index(list->row(it), 0)}));
+    if (!m) return {};
     return m->data(EffectsLibrary::SoundMimeType);
 }
 
