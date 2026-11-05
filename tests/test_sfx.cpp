@@ -560,43 +560,42 @@ void testOp(const QString& dir)
     CHECK(run("effects", {})["sounds"].toArray().size() >= 6);
 }
 
-// The level follows the mix where a sound lands: its peak 6 dB (mild) or 2 dB (normal) under the loudest sample of
-// the other sound there (a sine, master +3 dB), over silence the fixed level; volume_db wins
+// The level follows the mix where a sound lands: as heard (momentary loudness) 3 LU under it (mild) or as loud
+// (normal), master +3 dB; over silence the fixed level; volume_db wins
 void testUnderMix(const QString& dir)
 {
+    // Pink noise: steady sound with peaks (a sine would hold the click under the peak cap at once)
     const QString media = Check::makeMedia(dir + "/loud.mkv", {"-f", "lavfi", "-i", "color=c=black:s=160x90:r=25:d=8",
-                                                               "-f", "lavfi", "-i", "sine=f=220:d=8",
+                                                               "-f", "lavfi", "-i", "anoisesrc=d=8:c=pink:a=0.3:seed=7",
                                                                "-c:v", "ffv1", "-c:a", "pcm_s16le", "-shortest"});
     if (!CHECK(!media.isEmpty())) return;
     const QString project = dir + "/under.schneidi";
     run("new", {{"project", project}, {"fps", 25}});
     CHECK(!edit(project, {QJsonObject{{"op", "place"}, {"media", media}, {"at", 0}},
                           QJsonObject{{"op", "mixer"}, {"track", "master"}, {"volume_db", 3}}}).contains("failed"));
-    // Where a click's peak lands before the master: its clip volume on the file's own loudest sample
-    const QString clickFile = SfxSynth::cachedFile(SfxSynth::Kind::Click, 1, 0);
-    const double filePeak = run("loudness", {{"source", clickFile}}).value("loudness").toObject().value("sample_peak_db").toDouble();
-    CHECK(filePeak > -40 && filePeak <= 0.5);
-    const auto soundPeak = [&](const QJsonObject& placed, SfxSynth::Kind, unsigned) {
-        return placed["clip_db"].toDouble() + filePeak;
+    const auto loud = [&](const QString& tracks, const char* from, const char* to) {
+        QJsonObject args{{"source", project}, {"from", from}, {"to", to}};
+        if (!tracks.isEmpty()) args["tracks"] = tracks;
+        return run("loudness", args).value("loudness").toObject();
     };
-    // The mix's loudest sample as exported (master included), measured like `loudness` does
-    const double mix = run("loudness", {{"source", project}, {"from", "1s"}, {"to", "3s"}}).value("loudness").toObject().value("sample_peak_db").toDouble();
-    CHECK(mix > -40);
-    // mild: the sound's peak (before the master) 6 dB under the mix, less the master's 3 dB
-    QJsonObject n = sfxNote(edit(project, {QJsonObject{{"op", "sfx"}, {"at", "2s"}, {"kind", "click"}}}));
-    if (CHECK_EQ(n["placed"].toArray().size(), 1)) {
-        const double got = soundPeak(n["placed"][0].toObject(), SfxSynth::Kind::Click, 1);
-        if (!CHECK(std::abs(got - (mix - 2 - 3)) < 0.3)) std::printf("       mild: %f (mix %f)\n", got, mix);
-    }
-    CHECK(n["level"].toString().contains("2 dB under"));
-    // normal: 2 dB under
-    n = sfxNote(edit(project, {QJsonObject{{"op", "sfx"}, {"at", "5s"}, {"kind", "click"}, {"level", "normal"}}}));
-    if (CHECK_EQ(n["placed"].toArray().size(), 1)) {
-        const double got = soundPeak(n["placed"][0].toObject(), SfxSynth::Kind::Click, 1);
-        if (!CHECK(std::abs(got - (mix - 0 - 3)) < 0.3)) std::printf("       normal: %f (mix %f)\n", got, mix);
-    }
+    // The sound as heard against the mix around it: 3 LU quieter (mild) or as loud (normal), unless its peak would
+    // stand more than 3 dB over the mix's; both measured as exported (the master's +3 dB in both)
+    const auto check = [&](const QJsonObject& n, const char* from, const char* to, double under, const char* what) {
+        if (!CHECK_EQ(n["placed"].toArray().size(), 1)) return;
+        const QJsonObject mix = loud("A1", from, to), sound = loud("SFX", from, to);
+        const double mixM = mix["max_momentary_lufs"].toDouble(), soundM = sound["max_momentary_lufs"].toDouble();
+        const double mixPeak = mix["sample_peak_db"].toDouble(), soundPeak = sound["sample_peak_db"].toDouble();
+        const bool asLoud = std::abs(soundM - (mixM - under)) < 0.6, capped = std::abs(soundPeak - (mixPeak + 3)) < 0.6;
+        if (!CHECK(mixM > -40 && soundM <= mixM - under + 0.6 && (asLoud || capped)))
+            std::printf("       %s: sound %.2f LUFS peak %.2f, mix %.2f LUFS peak %.2f\n", what, soundM, soundPeak, mixM, mixPeak);
+    };
+    QJsonObject n = sfxNote(edit(project, {QJsonObject{{"op", "sfx"}, {"at", "2s"}, {"kind", "whoosh"}}}));
+    check(n, "1.2s", "3s", 3, "mild");
+    CHECK(n["level"].toString().contains("3 LU quieter"));
+    n = sfxNote(edit(project, {QJsonObject{{"op", "sfx"}, {"at", "5s"}, {"kind", "whoosh"}, {"level", "normal"}}}));
+    check(n, "4.2s", "6s", 0, "normal");
     // volume_db given: that level, the mix does not matter
-    n = sfxNote(edit(project, {QJsonObject{{"op", "sfx"}, {"at", "7s"}, {"kind", "click"}, {"volume_db", -20}}}));
+    n = sfxNote(edit(project, {QJsonObject{{"op", "sfx"}, {"at", "7.4s"}, {"kind", "click"}, {"volume_db", -20}}}));
     if (CHECK_EQ(n["placed"].toArray().size(), 1))
         CHECK(std::abs(n["placed"][0]["clip_db"].toDouble() - (-20 + SfxSynth::levelGainDb(SfxSynth::Kind::Click, 1, 0))) < 0.01);
 }

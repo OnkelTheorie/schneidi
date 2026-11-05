@@ -196,12 +196,12 @@ void opSfx(Session& s, const QJsonObject& op)
     if (!src.kind && !s.media(src.file).hasAudio) fail("NO_AUDIO", "the sound file has no audio: " + src.file);
     const QString level = op.value("level").toString("mild");
     if (level != "mild" && level != "normal") fail("BAD_ARGUMENT", "level: 'mild' or 'normal'");
-    // volume_db given: that level on the sound's peak. Else its peak just under the mix's where it lands (mild 2 dB,
-    // normal as loud): audible over loud game sound, quiet in a quiet part; over silence the fixed level of the kind
-    // (mild -10 dB, normal -4 dB on its peak)
+    // volume_db given: that level on the sound's peak. Else as loud as heard as the mix where it lands (mild 3 LU
+    // under, normal as loud): audible over loud game sound, quiet in a quiet part; over silence the fixed level of the
+    // kind (mild -10 dB, normal -4 dB on its peak)
     const bool volumeGiven = op.contains("volume_db");
     const double volume = volumeGiven ? numberOf(op, "volume_db", -60, 6) : SfxPlace::levelDb(level);
-    const double underMix = level == "normal" ? 0.0 : 2.0;
+    const double underMix = level == "normal" ? 0.0 : 3.0;
     const bool seedGiven = op.contains("seed");
     const unsigned seed = seedGiven ? unsigned(numberOf(op, "seed", 1, 1000000)) : 1;
     const ProjectFormat& f = s.format();
@@ -295,27 +295,51 @@ void opSfx(Session& s, const QJsonObject& op)
         // The clip's own volume: the level on the sound's peak plus the evening-out of this sound
         const double evening = src.kind ? SfxSynth::levelGainDb(*src.kind, sd, length) : 0.0;
         double clipDb = volume + evening;
-        if (!volumeGiven) {
-            // Its peak `underMix` under the loudest sample of the mix there (the master's gain applies to both). Half
-            // a second around it counts too: a short click between two shots is heard against them. In a demo cut
-            // over CS2 game sound only sounds about as loud as the shots were heard; 8 dB under them went unheard.
-            const int around = int(std::lround(0.5 * fps));
-            const auto sound = filePeakDb(s, m);
-            if (const auto mix = mixPeakDb(s, start - around, start + m.length + around); sound && mix && *mix > -50 && *sound > -100)
-                clipDb = std::clamp(*mix - underMix - s.project.timeline().masterVolumeDb - *sound, -40.0, 6.0);
-        }
+        // As loud as heard (momentary loudness, K-weighted: what a phone speaker brings across) as the mix around it,
+        // less `underMix`. Peaks misled: a 0.1 s click 2 dB under the shots' peaks was 12 LU quieter than them and went
+        // unheard in a demo cut over CS2 game sound, the riser 2 dB under them was 7 LU louder.
+        const int around = int(std::lround(0.3 * fps));
+        const int from = std::max(0, start - around), to = start + m.length + around;
+        std::optional<AudioAnalysis::Loudness> mix;
+        if (!volumeGiven) mix = AudioAnalysis::timelineLoudness(f, s.project.timeline(), from, to);
         // Only its sound (a video file as the sound must not overwrite the picture)
         if (s.editor.placeSourceRange(m.path, 0, m.length - 1, start, track, 1.0, true) <= 0)
             fail("FAILED", QString("could not place the sound on A%1 (locked?)").arg(track + 1));
+        int clipId = -1;
         for (const Clip& c : s.project.timeline().audio[track].clips)
-            if (c.start == start && c.mediaPath == m.path) s.editor.setClipVolume(c.id, clipDb);
+            if (c.start == start && c.mediaPath == m.path) clipId = c.id;
+        if (mix && mix->maxMomentary > -50) {
+            // The sound alone at 0 dB, measured the same way (the master's gain is in both)
+            Timeline alone = s.project.timeline();
+            for (int k = 0; k < alone.audio.size(); ++k) {
+                alone.audio[k].muted = k != track;
+                alone.audio[k].solo = false;
+                if (k == track) {
+                    QVector<Clip> keep;
+                    for (Clip c : alone.audio[k].clips)
+                        if (c.id == clipId) {
+                            c.volumeDb = 0;
+                            keep << c;
+                        }
+                    alone.audio[k].clips = keep;
+                }
+            }
+            const auto sound = AudioAnalysis::timelineLoudness(f, alone, start, start + m.length + int(std::lround(0.4 * fps)));
+            if (sound && sound->maxMomentary > -100) {
+                clipDb = mix->maxMomentary - underMix - sound->maxMomentary;
+                // ... but its peak not far over the mix's (a click made as loud as gunfire must not crack)
+                if (sound->peakDb > -100 && mix->peakDb > -100) clipDb = std::min(clipDb, mix->peakDb + 3.0 - sound->peakDb);
+                clipDb = std::clamp(clipDb, -40.0, 12.0);
+            }
+        }
+        if (clipId >= 0) s.editor.setClipVolume(clipId, clipDb);
         placed << QJsonObject{{"at_s", rounded(p.moment)}, {"start", tc(start, f)}, {"clip_db", rounded(clipDb)}};
         ++i;
     }
     QJsonObject note{{"kind", src.kind ? SfxSynth::kindName(*src.kind) : QFileInfo(src.file).fileName()},
                      {"placed", placed}};
     if (volumeGiven) note["volume_db"] = volume;
-    else note["level"] = QString("%1: %2 dB under the mix").arg(level).arg(underMix);
+    else note["level"] = QString("%1: %2 LU quieter than the mix (as heard)").arg(level).arg(underMix);
     if (track >= 0) note["track"] = QString("A%1").arg(track + 1);
     if (!skipped.isEmpty()) note["skipped"] = skipped;
     s.notes << QJsonObject{{"sfx", note}};
@@ -396,7 +420,7 @@ void addSfxOps(QVector<OpDef>& ops)
                  "kind:'sfx'), a sound of the effects folder 'Sounds' or a file. The whoosh's peak lands on the "
                  "moment, the riser ends on it, a hit starts on it. Sparing: never two sounds closer than min_gap "
                  "(1.5 s), at most max_per_min in any minute (mild 3, normal 6), one impact per video; the answer's "
-                 "notes list what the rules left out (skipped, why). level 'mild' (default: its peak 2 dB under the mix's "
+                 "notes list what the rules left out (skipped, why). level 'mild' (default: 3 LU quieter than the mix "
                  "there; -10 dB over silence) or 'normal' (as loud; -4 dB); volume_db sets it directly. All but the riser are "
                  "CC0 recordings (computed ones when a length is given); the riser is computed. seed: one variant (default 1-3 in turn); length: "
                  "of the sound ('2s'; a riser 0.5-8 s). Only where asked: never on every cut by default.",
