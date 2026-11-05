@@ -2301,5 +2301,8 @@
  "Unten rechts": "Prawy dolny róg",
  "Videos (*.mp4 *.mov *.webm *.mkv *.avi)": "Filmy (*.mp4 *.mov *.webm *.mkv *.avi)",
  "Wählen…": "Wybierz…",
- "Arbeitet mit dem Brand-Kit": "Pracuje z zestawem marki"
+ "Arbeitet mit dem Brand-Kit": "Pracuje z zestawem marki",
+ "Als Platzhalter markieren": "Oznacz jako symbol zastępczy",
+ "Platzhalter entfernen": "Usuń symbol zastępczy",
+ "Platzhalter füllen": "Wypełnij symbole zastępcze"
 }

@@ -46,6 +46,8 @@ struct ProjectData {
     int lastSequenceId = 0;
     // The project's own brand kit (core/BrandKit.h, optional): replaces the global one for this project
     std::optional<BrandKit> brand;
+    // A content template's own description (core/TemplateLibrary.h, optional; "templateInfo" in the file)
+    std::optional<TemplateInfo> templateInfo;
 };
 
 namespace ProjectFile {
@@ -60,6 +62,11 @@ bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* d
 // A clip as in the project file, media reference as path (e.g. for cache keys: new clip fields count
 // automatically as soon as they are saved)
 QJsonObject clipJson(const Clip& c);
+// A template placeholder as in the project file ("slot" of a clip): {id, label?, kind?, length?, minLen?, maxLen?, fit?,
+// reframe?, maxChars?, shrink?, fitMusic?, snapCuts?, hint?} - only values other than the default; ids of kSlotKindIds
+// etc. Reading clamps hand-edited values (unknown ids = default, no id = no slot).
+QJsonObject slotToJson(const ClipSlot& slot);
+ClipSlot slotFromJson(const QJsonObject& o);
 
 bool save(const ProjectData& data, const QString& path, QString* error);
 // Backup copies like DaVinci "Project Backups": before overwriting, the previous state moves into its

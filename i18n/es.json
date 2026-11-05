@@ -2301,5 +2301,8 @@
  "Unten rechts": "Abajo a la derecha",
  "Videos (*.mp4 *.mov *.webm *.mkv *.avi)": "Vídeos (*.mp4 *.mov *.webm *.mkv *.avi)",
  "Wählen…": "Elegir…",
- "Arbeitet mit dem Brand-Kit": "Trabaja con el kit de marca"
+ "Arbeitet mit dem Brand-Kit": "Trabaja con el kit de marca",
+ "Als Platzhalter markieren": "Marcar como marcador de posición",
+ "Platzhalter entfernen": "Quitar marcador de posición",
+ "Platzhalter füllen": "Rellenar marcadores de posición"
 }

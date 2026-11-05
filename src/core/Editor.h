@@ -9,6 +9,7 @@
 #include "core/Reframe.h"
 #include "core/RoomTone.h"
 #include "core/StreamPresets.h"
+#include "core/TemplateFill.h"
 #include "core/TimelineOps.h"
 #include "core/Types.h"
 
@@ -573,6 +574,18 @@ public:
     // A teaser: [from, to) of the open timeline copied in front of it, everything else moves back (Story::prependTeaser).
     // false = nothing in the range
     bool prependTeaser(int from, int to);
+
+    // ---- Template placeholders (core/TemplateFill.h). EditorTemplate.cpp
+    // Marks clip `clipId` of the open timeline as placeholder `slot` (an empty slot id removes the mark). One undo
+    // step; empty = done, else why not (English): no such clip, locked track, the clip cannot hold that kind, the id
+    // is a slot of another kind already.
+    QString setClipSlot(int clipId, const ClipSlot& slot);
+    // Fills every instance of slot `slotId` (all timelines) with `value`, by the slot's rules (TemplateFill::apply); a
+    // file not in the Media Pool yet comes in (ctx.probe). One undo step, none when nothing could be filled.
+    TemplateFill::Report fillSlot(const QString& slotId, const TemplateFill::Value& value,
+                                  const TemplateFill::Context& ctx = {});
+    // Several slots at once (`template fill` live in the app), one undo step
+    TemplateFill::Report fillSlots(const TemplateFill::Values& values, const TemplateFill::Context& ctx = {});
 
 signals:
     void targetTracksChanged(); // target tracks (redraw track header marking)

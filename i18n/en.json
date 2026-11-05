@@ -2301,5 +2301,8 @@
  "Unten rechts": "Bottom right",
  "Videos (*.mp4 *.mov *.webm *.mkv *.avi)": "Videos (*.mp4 *.mov *.webm *.mkv *.avi)",
  "Wählen…": "Choose…",
- "Arbeitet mit dem Brand-Kit": "Works with the brand kit"
+ "Arbeitet mit dem Brand-Kit": "Works with the brand kit",
+ "Als Platzhalter markieren": "Mark as Placeholder",
+ "Platzhalter entfernen": "Remove Placeholder",
+ "Platzhalter füllen": "Fill Placeholders"
 }

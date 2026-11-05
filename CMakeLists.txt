@@ -121,6 +121,7 @@ add_library(schneidi_lib STATIC
     src/core/EditorMusic.cpp
     src/core/EditorBrand.cpp
     src/core/EditorStory.cpp
+    src/core/EditorTemplate.cpp
     src/core/Reframe.h            src/core/Reframe.cpp
     src/core/RoomTone.h           src/core/RoomTone.cpp
     src/core/GameHud.h            src/core/GameHud.cpp
@@ -154,6 +155,8 @@ add_library(schneidi_lib STATIC
     src/core/StreamPresets.h      src/core/StreamPresets.cpp
     src/core/StartTemplates.h     src/core/StartTemplates.cpp
     src/core/BrandKit.h           src/core/BrandKit.cpp
+    src/core/TemplateLibrary.h    src/core/TemplateLibrary.cpp
+    src/core/TemplateFill.h       src/core/TemplateFill.cpp
     src/core/Ducking.h            src/core/Ducking.cpp
     src/core/ExportCheck.h        src/core/ExportCheck.cpp src/core/ExportCheckStory.cpp
     src/core/Stutter.h            src/core/Stutter.cpp
@@ -358,6 +361,12 @@ qt_add_resources(schneidi_lib "luts" PREFIX "/" BASE assets FILES ${SCHNEIDI_LUT
 # Recorded effect sounds (CC0, op 'sfx'): built into the program, so every package and the tests have them
 file(GLOB_RECURSE SCHNEIDI_SFX RELATIVE ${PROJECT_SOURCE_DIR} CONFIGURE_DEPENDS ${PROJECT_SOURCE_DIR}/assets/sfx/*)
 qt_add_resources(schneidi_lib "sfx" PREFIX "/" BASE assets FILES ${SCHNEIDI_SFX})
+# Built-in content templates (core/TemplateLibrary.h): one folder per template, copied into the cache before use
+file(GLOB_RECURSE SCHNEIDI_TEMPLATES RELATIVE ${PROJECT_SOURCE_DIR} CONFIGURE_DEPENDS ${PROJECT_SOURCE_DIR}/assets/templates/*)
+list(FILTER SCHNEIDI_TEMPLATES EXCLUDE REGEX "(^|/)\\.")
+if(SCHNEIDI_TEMPLATES)
+    qt_add_resources(schneidi_lib "templates" PREFIX "/" BASE assets FILES ${SCHNEIDI_TEMPLATES})
+endif()
 target_include_directories(schneidi_lib PUBLIC src)
 target_include_directories(schneidi_lib PRIVATE ${MINIAUDIO_INCLUDE_DIR})
 target_link_libraries(schneidi_lib PUBLIC Qt6::Widgets Qt6::Network PkgConfig::FFMPEG

@@ -2301,5 +2301,8 @@
  "Unten rechts": "En bas à droite",
  "Videos (*.mp4 *.mov *.webm *.mkv *.avi)": "Vidéos (*.mp4 *.mov *.webm *.mkv *.avi)",
  "Wählen…": "Choisir…",
- "Arbeitet mit dem Brand-Kit": "Travaille avec le kit de marque"
+ "Arbeitet mit dem Brand-Kit": "Travaille avec le kit de marque",
+ "Als Platzhalter markieren": "Marquer comme espace réservé",
+ "Platzhalter entfernen": "Retirer l’espace réservé",
+ "Platzhalter füllen": "Remplir les espaces réservés"
 }

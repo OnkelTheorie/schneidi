@@ -155,6 +155,7 @@ Clip RenderCache::normalized(const Clip& c)
     n.renderCache = false;
     n.keys.remove(AnimParam::Volume);
     n.keys.remove(AnimParam::Pan);
+    n.slot = {}; // a template placeholder mark does not change the picture
     return n;
 }
 

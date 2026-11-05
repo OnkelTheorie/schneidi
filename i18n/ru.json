@@ -2301,5 +2301,8 @@
  "Unten rechts": "Справа снизу",
  "Videos (*.mp4 *.mov *.webm *.mkv *.avi)": "Видео (*.mp4 *.mov *.webm *.mkv *.avi)",
  "Wählen…": "Выбрать…",
- "Arbeitet mit dem Brand-Kit": "Работает с брендбуком"
+ "Arbeitet mit dem Brand-Kit": "Работает с брендбуком",
+ "Als Platzhalter markieren": "Отметить как заполнитель",
+ "Platzhalter entfernen": "Убрать заполнитель",
+ "Platzhalter füllen": "Заполнить заполнители"
 }
