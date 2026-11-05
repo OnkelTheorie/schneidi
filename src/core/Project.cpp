@@ -247,6 +247,7 @@ ProjectData Project::data() const
     d.fixedFrameRate = m_fixedFrameRate;
     d.importPresets = m_importPresets;
     d.brand = m_brand;
+    d.templateInfo = m_templateInfo;
     d.watchFolders = m_watchFolders;
     d.watchLog = m_watchLog;
     d.watchRevision = m_watchRevision;
@@ -336,6 +337,7 @@ void Project::load(const ProjectData& d)
     m_fixedFrameRate = d.fixedFrameRate;
     m_importPresets = d.importPresets;
     m_brand = d.brand;
+    m_templateInfo = d.templateInfo;
     m_watchFolders = d.watchFolders;
     for (WatchFolder& w : m_watchFolders)
         if (w.bin != 0 && !bin(w.bin)) w.bin = 0;

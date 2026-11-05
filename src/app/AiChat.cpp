@@ -35,10 +35,11 @@ QString callKey(const Ai::ToolCall& c)
     return c.name + QString::fromUtf8(QJsonDocument(c.input).toJson(QJsonDocument::Compact));
 }
 
-// Tools that change the project, the app or the files (a failed call may work after them)
+// Tools that change the project, the app or the files (a failed call may work after them; `templates` fills, saves,
+// imports templates)
 bool changesState(const QString& tool)
 {
-    static const QStringList tools{"edit", "import", "new", "restore", "app", "watch", "brand"};
+    static const QStringList tools{"edit", "import", "new", "restore", "app", "watch", "brand", "templates"};
     return tools.contains(tool);
 }
 

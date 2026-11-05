@@ -182,6 +182,9 @@ public:
     void setBrand(const std::optional<BrandKit>& brand);
     void applyBrand(const std::optional<BrandKit>& brand); // only for undo
     BrandKit effectiveBrand() const { return Brand::effective(m_brand); }
+    // A content template's description (core/TemplateLibrary.h); kept from load() to data(), so opening and saving a
+    // template keeps its name/description. No undo, no change signal (set by load / TemplateLibrary::save)
+    const std::optional<TemplateInfo>& templateInfo() const { return m_templateInfo; }
     // Watch folders (core/WatchFolders.h): new media files of these folders come into the Media Pool on their own.
     // Setting them up is not in the undo history (like the render queue), but counts as a change.
     const QVector<WatchFolder>& watchFolders() const { return m_watchFolders; }
@@ -242,6 +245,7 @@ private:
     bool m_fixedFrameRate = false;
     std::optional<StreamPresets> m_importPresets;
     std::optional<BrandKit> m_brand;
+    std::optional<TemplateInfo> m_templateInfo;
     int m_lastBinId = 0;
     QUndoStack m_undo;
     int m_lastClipId = 0;

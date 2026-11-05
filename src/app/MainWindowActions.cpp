@@ -117,6 +117,7 @@ void MainWindow::buildActions()
     m_templateMenu->setToolTipsVisible(true);
     connect(m_templateMenu, &QMenu::aboutToShow, this, &MainWindow::rebuildTemplateMenu);
     rebuildTemplateMenu();
+    makeAction(file, "template_browser", T("Neu aus Vorlage…"), QKeySequence(), [this] { templateBrowser(); });
     makeAction(file, "project_open", T("Projekt öffnen…"), QKeySequence("Ctrl+O"), [this] { openProjectDialog(); });
     makeAction(file, "project_open_video", T("Video als Projekt öffnen…"), QKeySequence(), [this] { openMediaAsProjectDialog(); });
     m_recentMenu = file->addMenu(T("Zuletzt geöffnet"));
@@ -124,6 +125,7 @@ void MainWindow::buildActions()
     makeAction(file, "project_save", T("Projekt speichern"), QKeySequence("Ctrl+S"), [this] { save(); });
     makeAction(file, "project_save_as", T("Projekt speichern unter…"), QKeySequence("Ctrl+Shift+S"), [this] { saveAs(); });
     makeAction(file, "template_save", T("Als Startvorlage speichern…"), QKeySequence(), [this] { saveStartTemplate(this); });
+    makeAction(file, "content_template_save", T("Als Vorlage speichern…"), QKeySequence(), [this] { saveContentTemplate(); });
     makeAction(file, "project_backup_open", T("Sicherungskopie öffnen…"), QKeySequence(), [this] { openBackupDialog(); });
     file->addSeparator();
     makeAction(file, "import", T("Medien importieren…"), QKeySequence("Ctrl+I"), [this] { m_mediaPool->importDialog(); });
@@ -345,6 +347,10 @@ void MainWindow::buildActions()
         }
         if (done.isEmpty()) QApplication::beep();
     });
+    // Template placeholders (core/TemplateFill.h): mark (rules in the Inspector), remove, check
+    makeAction(clipMenu, "slot_mark", T("Als Platzhalter markieren…"), QKeySequence(), [this] { markPlaceholder(); });
+    makeAction(clipMenu, "slot_remove", T("Platzhalter entfernen"), QKeySequence(), [this] { removePlaceholders(); });
+    makeAction(clipMenu, "slot_check", T("Felder prüfen…"), QKeySequence(), [this] { checkPlaceholders(); });
     makeAction(clipMenu, "normalize_audio", T("Audiopegel normalisieren…"), QKeySequence(), [this] { normalizeAudioDialog(); });
     makeAction(clipMenu, "audio_ducking", T("Ducking…"), QKeySequence(), [this] { duckingDialog(); });
     makeAction(clipMenu, "stream_presets_learn", T("Spur-Einstellungen merken"), QKeySequence(), [this] { rememberStreamSettings(); });

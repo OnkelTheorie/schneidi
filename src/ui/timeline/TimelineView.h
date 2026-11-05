@@ -128,6 +128,9 @@ signals:
     void clipMenuRequested(const QPoint& globalPos);
     // Double-click on a subtitle: edit the text in the Inspector
     void subtitleEditRequested(int cueId);
+    // A Media Pool file dropped onto a template placeholder filled it (Editor::fillSlot; message = what was done,
+    // translated; ok = filled)
+    void slotFilled(const QString& message, bool ok);
     // Trim view (like DaVinci): while an edit is dragged the viewer shows the frames on both sides of it
     void trimFramesChanged(const TrimFrames::View& view);
     void trimFramesEnded();
@@ -471,6 +474,13 @@ private:
     QString m_fxDragging;  // effect ID, empty = no filter drag
     int m_fxDropClip = 0;  // video clip under the mouse
     int fxDropClipAt(const QPoint& pos) const;
+    // Drag-fill: one Media Pool file over a template placeholder clip (its linked video's placeholder for linked
+    // audio) fills that placeholder instead of the normal drop; Alt held = drop normally. 0 = none
+    int m_slotDropClip = 0;
+    QString m_dropFile; // the one media file being dragged in (empty = several, a title, a timeline)
+    int slotDropClipAt(const QPoint& pos, Qt::KeyboardModifiers mods) const;
+    // Fills the placeholder of clip `clipId` with the dropped file (one undo step) and reports it (slotFilled)
+    void fillSlotFromDrop(int clipId, const QMimeData* mime);
     // Drag an effect sound ("Klänge"): its moment where the mouse is (the line shows it)
     QByteArray m_soundDragging;
     int m_soundDropFrame = -1;

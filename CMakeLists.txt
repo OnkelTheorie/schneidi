@@ -267,6 +267,7 @@ add_library(schneidi_lib STATIC
     src/app/MainWindowReframe.cpp
     src/app/MainWindowNameBlur.cpp
     src/app/MainWindowWatch.cpp
+    src/app/MainWindowTemplates.cpp
     src/app/MainWindowVoiceover.cpp
     src/app/KeyBindingsDialog.h   src/app/KeyBindingsDialog.cpp
     src/app/ProjectSettingsDialog.h src/app/ProjectSettingsDialog.cpp
@@ -278,6 +279,7 @@ add_library(schneidi_lib STATIC
     src/app/StreamPresetsDialog.h src/app/StreamPresetsDialog.cpp
     src/app/StartTemplatesPage.h src/app/StartTemplatesPage.cpp
     src/app/BrandKitDialog.h src/app/BrandKitDialog.cpp
+    src/app/TemplateDialogs.h src/app/TemplateDialogs.cpp
     src/app/DuckingDialog.h src/app/DuckingDialog.cpp
     src/app/MulticamDialog.h src/app/MulticamDialog.cpp
     src/app/ExtensionsDialog.h  src/app/ExtensionsDialog.cpp
@@ -320,6 +322,8 @@ add_library(schneidi_lib STATIC
     src/ui/InspectorDetail.h
     src/ui/InspectorSections.cpp
     src/ui/InspectorTitle.cpp
+    src/ui/InspectorSlot.cpp
+    src/ui/SlotText.h src/ui/SlotText.cpp
     src/ui/InspectorTransition.cpp
     src/ui/InspectorSubtitles.cpp
     src/ui/ColorPanel.h           src/ui/ColorPanel.cpp

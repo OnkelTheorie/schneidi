@@ -262,6 +262,8 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
         tv->setPlayhead(pos);
     });
     connect(tv, &TimelineView::dropRequested, this, &MainWindow::onDrop);
+    // Drag-fill of a template placeholder: what was done, briefly
+    connect(tv, &TimelineView::slotFilled, this, [this](const QString& message, bool) { statusBar()->showMessage(message, 6000); });
     // After the drop (the drag source waits until dropEvent returns; a message box there would block it)
     connect(tv, &TimelineView::soundDropRequested, this, [this](const QByteArray& sound, int frame) {
         QTimer::singleShot(0, this, [this, sound, frame] { placeSound(sound, frame); });
@@ -296,6 +298,7 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
         }
         for (const char* id : {"clip_speed", "retime_controls", "clip_speed_reset", "curve_editor", "accents", "auto_reframe", "crop_bars", "stretched_43", "blur_names",
                                "normalize_audio", "audio_ducking", "fit_music", "stream_presets_learn", "",
+                               "slot_mark", "slot_remove", "",
                                "toggle_enabled", "link_clips",
                                "render_cache_clip", "save_effect_preset", "", "compound_create", "compound_open", "compound_decompose", "",
                                "delete", "ripple_delete"}) {
@@ -322,6 +325,14 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
             if ((QString(id) == "normalize_audio" || QString(id) == "audio_ducking" || QString(id) == "fit_music") && !audio)
                 continue;
             if (QString(id) == "stream_presets_learn" && !streamPresetsClip()) continue;
+            if (QString(id) == "slot_mark" || QString(id) == "slot_remove") { // the one that fits the clips
+                const QVector<int> ids = m_editor->clipIdsOf(m_selection->ids());
+                const bool marked = std::any_of(ids.begin(), ids.end(), [this](int cid) {
+                    const Clip* c = TimelineOps::findClip(m_project->timeline(), cid);
+                    return c && c->slot.isSet();
+                });
+                if (marked != (QString(id) == "slot_remove")) continue;
+            }
             if (QString(id) == "compound_open" && !compound && !multicam) continue;
             if (QString(id) == "compound_decompose") {
                 if (compound) menu.addAction(a);
