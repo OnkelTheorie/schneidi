@@ -31,6 +31,10 @@ def sources():
     for f in glob.glob(os.path.join(ROOT, 'assets', 'themes', '*.json')):
         design = json.load(open(f, encoding='utf-8'))
         found.update(design[k] for k in ('name', 'description') if design.get(k))
+    # Built-in content templates: name and description are shown through T() (core/TemplateLibrary.cpp)
+    for f in glob.glob(os.path.join(ROOT, 'assets', 'templates', '*', 'template.schneidi')):
+        info = json.load(open(f, encoding='utf-8')).get('templateInfo', {})
+        found.update(info[k] for k in ('name', 'description') if info.get(k))
     return found
 
 

@@ -184,6 +184,10 @@ QVector<ContentTemplate> builtIn()
         copyTree(QDir(root).filePath(id), target);
         if (std::optional<ContentTemplate> t = open(target)) {
             t->builtIn = true;
+            // Built-in names/descriptions are German keys of the dictionaries (tools/i18n_check.py reads them from
+            // assets/templates/*/template.schneidi); own templates keep the user's text
+            t->name = T(t->name);
+            if (!t->description.isEmpty()) t->description = T(t->description);
             list << *t;
         }
     }

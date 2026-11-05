@@ -1,0 +1,334 @@
+{
+ "app": "schneidi",
+ "bins": [],
+ "currentSequence": 1,
+ "format": {
+  "fpsDen": 1,
+  "fpsNum": 30,
+  "height": 1920,
+  "width": 1080
+ },
+ "fps": 30,
+ "lastClipId": 10,
+ "lastLinkId": 1,
+ "media": [
+  {
+   "audioStreams": [
+    {
+     "channels": 1
+    }
+   ],
+   "hasAudio": true,
+   "hasVideo": true,
+   "isImage": false,
+   "length": 600,
+   "name": "speaker.mp4",
+   "path": "media/speaker.mp4",
+   "relPath": "media/speaker.mp4"
+  },
+  {
+   "hasAudio": false,
+   "hasVideo": true,
+   "isImage": true,
+   "length": 150,
+   "name": "logo.png",
+   "path": "media/logo.png",
+   "relPath": "media/logo.png"
+  }
+ ],
+ "playhead": 0,
+ "sequences": [
+  {
+   "id": 1,
+   "name": "Timeline 1"
+  }
+ ],
+ "templateInfo": {
+  "description": "Hochformat-Ausschnitt aus einem Podcast: Sprecher-Video, Thema oben, Wort-Untertitel, Logo.",
+  "name": "Podcast-Ausschnitt",
+  "tags": [
+   "podcast",
+   "9:16",
+   "captions"
+  ]
+ },
+ "timeline": {
+  "audio": [
+   {
+    "clips": [
+     {
+      "id": 2,
+      "in": 0,
+      "link": 1,
+      "media": 0,
+      "out": 599,
+      "start": 0
+     }
+    ],
+    "name": "A1"
+   },
+   {
+    "clips": [],
+    "name": "A2"
+   }
+  ],
+  "markIn": -1,
+  "markOut": -1,
+  "markers": [],
+  "masterLimiter": false,
+  "masterLimiterDb": -1.2,
+  "masterVolumeDb": 0,
+  "subtitles": [
+   {
+    "captions": {
+     "highlight": "#ffffd23f",
+     "mode": "karaoke"
+    },
+    "cues": [
+     {
+      "end": 65,
+      "id": 5,
+      "start": 12,
+      "text": "These sample captions show",
+      "words": [
+       [
+        0,
+        13
+       ],
+       [
+        14,
+        26
+       ],
+       [
+        27,
+        40
+       ],
+       [
+        41,
+        53
+       ]
+      ]
+     },
+     {
+      "end": 119,
+      "id": 6,
+      "start": 66,
+      "text": "where your words go:",
+      "words": [
+       [
+        0,
+        13
+       ],
+       [
+        14,
+        26
+       ],
+       [
+        27,
+        40
+       ],
+       [
+        41,
+        53
+       ]
+      ]
+     },
+     {
+      "end": 146,
+      "id": 7,
+      "start": 120,
+      "text": "after filling,",
+      "words": [
+       [
+        0,
+        13
+       ],
+       [
+        14,
+        26
+       ]
+      ]
+     },
+     {
+      "end": 200,
+      "id": 8,
+      "start": 147,
+      "text": "transcribe the clip and",
+      "words": [
+       [
+        0,
+        13
+       ],
+       [
+        14,
+        26
+       ],
+       [
+        27,
+        40
+       ],
+       [
+        41,
+        53
+       ]
+      ]
+     },
+     {
+      "end": 254,
+      "id": 9,
+      "start": 201,
+      "text": "the captions follow every",
+      "words": [
+       [
+        0,
+        13
+       ],
+       [
+        14,
+        26
+       ],
+       [
+        27,
+        40
+       ],
+       [
+        41,
+        53
+       ]
+      ]
+     },
+     {
+      "end": 281,
+      "id": 10,
+      "start": 255,
+      "text": "spoken word",
+      "words": [
+       [
+        0,
+        13
+       ],
+       [
+        14,
+        26
+       ]
+      ]
+     }
+    ],
+    "label": "Captions",
+    "style": {
+     "align": 1,
+     "bold": true,
+     "boxColor": "#aa000000",
+     "boxOn": false,
+     "boxPad": 10,
+     "color": "#ffffffff",
+     "colorRef": 1,
+     "font": "Sans",
+     "fontRef": 1,
+     "italic": false,
+     "outlineColor": "#ff000000",
+     "outlineOn": true,
+     "outlineRef": 2,
+     "outlineWidth": 6,
+     "posX": 0,
+     "posY": 576,
+     "size": 84
+    }
+   }
+  ],
+  "video": [
+   {
+    "clips": [
+     {
+      "id": 1,
+      "in": 0,
+      "link": 1,
+      "media": 0,
+      "out": 599,
+      "slot": {
+       "hint": "the excerpt of the episode (speaker video); reframed to 9:16",
+       "id": "speaker",
+       "label": "Speaker",
+       "length": "flexible",
+       "maxLen": 2700,
+       "minLen": 150
+      },
+      "start": 0
+     }
+    ],
+    "name": "V1"
+   },
+   {
+    "clips": [
+     {
+      "id": 3,
+      "in": 0,
+      "out": 599,
+      "slot": {
+       "id": "topic",
+       "kind": "text",
+       "label": "Episode or topic",
+       "maxChars": 40
+      },
+      "start": 0,
+      "title": {
+       "align": 1,
+       "bold": true,
+       "boxColor": "#a0000000",
+       "boxOn": true,
+       "boxPad": 22,
+       "boxRef": 1,
+       "color": "#ffffffff",
+       "colorRef": 2,
+       "font": "Sans",
+       "fontRef": 1,
+       "italic": false,
+       "outlineColor": "#ff000000",
+       "outlineOn": false,
+       "outlineWidth": 4,
+       "posX": 0,
+       "posY": 640,
+       "size": 60,
+       "text": "Episode 12: Why simple wins"
+      }
+     }
+    ],
+    "name": "V2"
+   },
+   {
+    "clips": [
+     {
+      "id": 4,
+      "in": 0,
+      "media": 1,
+      "out": 599,
+      "slot": {
+       "hint": "empty: the brand kit's logo",
+       "id": "logo",
+       "kind": "logo",
+       "label": "Logo"
+      },
+      "start": 0,
+      "transform": {
+       "compositeOn": true,
+       "cropBottom": 0,
+       "cropLeft": 0,
+       "cropOn": true,
+       "cropRight": 0,
+       "cropTop": 0,
+       "opacity": 100,
+       "posX": -400,
+       "posY": 820,
+       "rotation": 0,
+       "transformOn": true,
+       "zoomX": 0.12,
+       "zoomY": 0.12
+      }
+     }
+    ],
+    "name": "V3"
+   }
+  ]
+ },
+ "version": 6
+}

@@ -1,0 +1,234 @@
+{
+ "app": "schneidi",
+ "bins": [],
+ "currentSequence": 1,
+ "format": {
+  "fpsDen": 1,
+  "fpsNum": 30,
+  "height": 1920,
+  "width": 1080
+ },
+ "fps": 30,
+ "lastClipId": 8,
+ "lastLinkId": 3,
+ "media": [
+  {
+   "audioStreams": [
+    {
+     "channels": 1
+    }
+   ],
+   "hasAudio": true,
+   "hasVideo": true,
+   "isImage": false,
+   "length": 120,
+   "name": "clip1.mp4",
+   "path": "media/clip1.mp4",
+   "relPath": "media/clip1.mp4"
+  },
+  {
+   "audioStreams": [
+    {
+     "channels": 1
+    }
+   ],
+   "hasAudio": true,
+   "hasVideo": true,
+   "isImage": false,
+   "length": 120,
+   "name": "clip2.mp4",
+   "path": "media/clip2.mp4",
+   "relPath": "media/clip2.mp4"
+  },
+  {
+   "audioStreams": [
+    {
+     "channels": 1
+    }
+   ],
+   "hasAudio": true,
+   "hasVideo": true,
+   "isImage": false,
+   "length": 120,
+   "name": "clip3.mp4",
+   "path": "media/clip3.mp4",
+   "relPath": "media/clip3.mp4"
+  },
+  {
+   "audioStreams": [
+    {
+     "channels": 1
+    }
+   ],
+   "hasAudio": true,
+   "hasVideo": false,
+   "isImage": false,
+   "length": 480,
+   "name": "music.m4a",
+   "path": "media/music.m4a",
+   "relPath": "media/music.m4a"
+  }
+ ],
+ "playhead": 0,
+ "sequences": [
+  {
+   "id": 1,
+   "name": "Timeline 1"
+  }
+ ],
+ "templateInfo": {
+  "description": "Hochformat-Short: Hook-Text über dem ersten Clip, drei Clips, Musik darunter.",
+  "name": "Short mit Hook",
+  "tags": [
+   "short",
+   "9:16",
+   "hook"
+  ]
+ },
+ "timeline": {
+  "audio": [
+   {
+    "clips": [
+     {
+      "id": 2,
+      "in": 0,
+      "link": 1,
+      "media": 0,
+      "out": 119,
+      "start": 0
+     },
+     {
+      "id": 4,
+      "in": 0,
+      "link": 2,
+      "media": 1,
+      "out": 119,
+      "start": 120
+     },
+     {
+      "id": 6,
+      "in": 0,
+      "link": 3,
+      "media": 2,
+      "out": 119,
+      "start": 240
+     }
+    ],
+    "name": "A1"
+   },
+   {
+    "clips": [
+     {
+      "id": 7,
+      "in": 0,
+      "media": 3,
+      "out": 359,
+      "slot": {
+       "hint": "optional: a song, cut to the length on its phrases",
+       "id": "music",
+       "kind": "music",
+       "label": "Music"
+      },
+      "start": 0,
+      "volumeDb": -8
+     }
+    ],
+    "name": "A2"
+   }
+  ],
+  "markIn": -1,
+  "markOut": -1,
+  "markers": [],
+  "masterLimiter": false,
+  "masterLimiterDb": -1.2,
+  "masterVolumeDb": 0,
+  "video": [
+   {
+    "clips": [
+     {
+      "id": 1,
+      "in": 0,
+      "link": 1,
+      "media": 0,
+      "out": 119,
+      "slot": {
+       "fit": "freeze",
+       "hint": "the strongest moment first: it decides whether viewers stay",
+       "id": "clip1",
+       "label": "Clip 1"
+      },
+      "start": 0
+     },
+     {
+      "id": 3,
+      "in": 0,
+      "link": 2,
+      "media": 1,
+      "out": 119,
+      "slot": {
+       "fit": "speed",
+       "hint": "what leads up to the payoff",
+       "id": "clip2",
+       "label": "Clip 2"
+      },
+      "start": 120
+     },
+     {
+      "id": 5,
+      "in": 0,
+      "link": 3,
+      "media": 2,
+      "out": 119,
+      "slot": {
+       "fit": "freeze",
+       "hint": "the payoff or the punchline",
+       "id": "clip3",
+       "label": "Clip 3"
+      },
+      "start": 240
+     }
+    ],
+    "name": "V1"
+   },
+   {
+    "clips": [
+     {
+      "id": 8,
+      "in": 0,
+      "out": 89,
+      "slot": {
+       "hint": "a short line that makes viewers stay (top third, phone apps cover the bottom)",
+       "id": "hook",
+       "kind": "text",
+       "label": "Hook",
+       "maxChars": 40
+      },
+      "start": 0,
+      "title": {
+       "align": 1,
+       "bold": true,
+       "boxColor": "#a0000000",
+       "boxOn": false,
+       "boxPad": 20,
+       "color": "#ffffffff",
+       "colorRef": 1,
+       "font": "Sans",
+       "fontRef": 1,
+       "italic": false,
+       "outlineColor": "#ff000000",
+       "outlineOn": true,
+       "outlineRef": 2,
+       "outlineWidth": 6,
+       "posX": 0,
+       "posY": 560,
+       "size": 110,
+       "text": "Wait for the end…"
+      }
+     }
+    ],
+    "name": "V2"
+   }
+  ]
+ },
+ "version": 4
+}
