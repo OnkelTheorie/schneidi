@@ -531,9 +531,9 @@ QJsonObject rowValues(const QJsonObject& row, const Columns& cols, const QHash<Q
         if (slot.isEmpty() || slot != it.key()) continue;
         const QJsonValue v = it.value();
         if (kinds[slot] == SlotKind::Text) {
-            values[slot] = v.isString() ? v.toString()
-                           : v.isDouble() ? QString::number(v.toDouble())
-                           : v.isObject() ? v : QJsonValue(v.toVariant().toString());
+            if (v.isObject() || v.isString()) values[slot] = v;
+            else if (v.isDouble()) values[slot] = QString::number(v.toDouble());
+            else values[slot] = v.toVariant().toString();
             continue;
         }
         QJsonObject o = v.isObject() ? v.toObject() : QJsonObject{{"file", v.toString()}};

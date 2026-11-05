@@ -120,7 +120,9 @@ void testCsv(const QString& tmp)
     const Clip* clip = withSlot(d, "clip");
     CHECK(hook && hook->title.text == "Buy; now");
     CHECK(clip && clip->mediaPath == data + "/media/a.mp4");
-    CHECK_EQ(withSlot(load(out + "/Pen.schneidi"), "clip")->mediaPath, data + "/media/b.mp4");
+    const ProjectData pen = load(out + "/Pen.schneidi");
+    const Clip* penClip = withSlot(pen, "clip");
+    CHECK(penClip && penClip->mediaPath == data + "/media/b.mp4");
     // Columns that are no slot: one note, not one per row
     const QJsonArray notes = r["notes"].toArray();
     int extra = 0;
@@ -131,7 +133,7 @@ void testCsv(const QString& tmp)
 
     // The default name: <template>-001 …; an "out" column names the files
     const QJsonObject d1 = run("templates", {{"fill", "Batch"}, {"rows", data + "/products.csv"}, {"out_dir", tmp + "/out2"}});
-    CHECK_EQ(filesIn(tmp + "/out2").value(0), QString("batch-001.schneidi"));
+    CHECK_EQ(filesIn(tmp + "/out2").value(0), QString("Batch-001.schneidi"));
     CHECK(d1["ok"].toBool());
     write(data + "/named.csv", "out,hook\nfirst: one,A\nsecond/two,B\n");
     run("templates", {{"fill", "Batch"}, {"rows", data + "/named.csv"}, {"out_dir", tmp + "/out3"}});
@@ -177,14 +179,14 @@ void testBadRow(const QString& tmp)
     CHECK_EQ(r["totals"]["failed"].toInt(), 1);
     CHECK_EQ(r["rows"][1]["errors"][0]["code"].toString(), QString("FILE_MISSING"));
     CHECK(!r["rows"][1].toObject().contains("project")); // nothing written for it
-    CHECK_EQ(filesIn(out), (QStringList{"batch-001.schneidi", "batch-003.schneidi"}));
+    CHECK_EQ(filesIn(out), (QStringList{"Batch-001.schneidi", "Batch-003.schneidi"}));
 
     // Stop at the first bad row
     const QJsonObject stop = run("templates", {{"fill", "Batch"}, {"rows", data + "/bad.csv"}, {"out_dir", tmp + "/stop"},
                                                {"continue_on_error", false}});
     CHECK_EQ(stop["totals"]["ok"].toInt(), 1);
     CHECK_EQ(stop["totals"]["skipped"].toInt(), 1);
-    CHECK_EQ(filesIn(tmp + "/stop"), QStringList{"batch-001.schneidi"});
+    CHECK_EQ(filesIn(tmp + "/stop"), QStringList{"Batch-001.schneidi"});
 }
 
 void testJsonAndRender(const QString& tmp)
@@ -197,9 +199,11 @@ void testJsonAndRender(const QString& tmp)
     const QJsonObject r = run("templates", {{"fill", "Batch"}, {"rows", data + "/rows.json"}, {"out_dir", tmp + "/json"},
                                             {"name", "{hook}"}});
     CHECK_EQ(r["totals"]["ok"].toInt(), 2);
-    const Clip* c1 = withSlot(load(tmp + "/json/J1.schneidi"), "clip");
+    const ProjectData j1 = load(tmp + "/json/J1.schneidi");
+    const Clip* c1 = withSlot(j1, "clip");
     CHECK(c1 && c1->mediaPath == data + "/media/a.mp4" && c1->in == 25);
-    const Clip* c2 = withSlot(load(tmp + "/json/J2.schneidi"), "clip");
+    const ProjectData j2 = load(tmp + "/json/J2.schneidi");
+    const Clip* c2 = withSlot(j2, "clip");
     CHECK(c2 && c2->mediaPath == data + "/media/b.mp4" && (c2->in == 12 || c2->in == 13));
 
     // Inline rows (as the command line gives them: JSON text) and a render of each

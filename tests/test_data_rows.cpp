@@ -75,7 +75,7 @@ void testJson()
     CHECK_EQ(t->rows.size(), 2);
     CHECK(t->columns.contains("clip") && t->columns.contains("title") && t->columns.contains("n"));
     CHECK_EQ(t->rows[0]["n"].toInt(), 3);
-    CHECK_EQ(t->rows[1]["clip"]["file"].toString(), QString("x.mp4"));
+    CHECK_EQ(t->rows[1]["clip"].toObject()["file"].toString(), QString("x.mp4"));
     t = DataRows::parseJson("\xEF\xBB\xBF{\"rows\":[{\"title\":\"A\",\"gone\":null}]}");
     CHECK(t && t->rows.size() == 1 && !t->rows[0].contains("gone"));
     QString err;
