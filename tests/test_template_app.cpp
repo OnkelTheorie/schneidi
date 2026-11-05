@@ -483,6 +483,9 @@ void testBrowserAndWindow(const QString& tmp)
         auto* tree = check.findChild<QTreeWidget*>("slot_check_list");
         if (CHECK(tree)) CHECK_EQ(tree->topLevelItemCount(), 3);
         CHECK_EQ(check.problemCount(), 1);
+        // One problem in the singular
+        auto* summary = check.findChild<QLabel*>("slot_check_summary");
+        if (CHECK(summary)) CHECK_EQ(summary->text(), QString("3 Felder, 1 Problem."));
         if (tree && tree->topLevelItemCount() == 3) CHECK_EQ(tree->topLevelItem(1)->text(6), T("Text zu lang"));
         check.show();
         QApplication::processEvents();

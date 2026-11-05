@@ -415,9 +415,13 @@ SlotCheckDialog::SlotCheckDialog(const ProjectData& d, QWidget* parent) : QDialo
     }
     m_tree->header()->setStretchLastSection(true);
     for (int c = 0; c < m_tree->columnCount() - 1; ++c) m_tree->resizeColumnToContents(c);
+    // One and many: own texts (the repo's way, T() has no plural forms)
+    const int n = int(refs.size());
+    const QString fields = n == 1 ? T("1 Feld") : T("%1 Felder").arg(n);
+    const QString problems = m_problems == 1 ? T("1 Problem") : T("%1 Probleme").arg(m_problems);
     auto* summary = new QLabel(refs.isEmpty() ? T("Das Projekt hat keine Platzhalter (Clip › Als Platzhalter markieren…).")
-                               : m_problems == 0 ? T("%1 Felder, alles in Ordnung.").arg(refs.size())
-                                                 : T("%1 Felder, %2 Probleme.").arg(refs.size()).arg(m_problems));
+                               : m_problems == 0 ? T("%1, alles in Ordnung.").arg(fields)
+                                                 : T("%1, %2.").arg(fields, problems));
     summary->setObjectName("slot_check_summary");
     lay->addWidget(summary);
     lay->addWidget(m_tree, 1);
