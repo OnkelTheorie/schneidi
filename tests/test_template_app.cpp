@@ -41,6 +41,7 @@
 #include <QPainter>
 #include <QPushButton>
 #include <QSettings>
+#include <QStandardPaths>
 #include <QTemporaryDir>
 #include <QTimer>
 #include <QToolButton>
@@ -164,6 +165,8 @@ ProjectData withFiles(ProjectData d, const QString& dir)
 void clean()
 {
     QDir(TemplateLibrary::dir()).removeRecursively();
+    // The built-in ones' copies too: copied again only where sizes differ (a test folder of the same name length)
+    QDir(QDir(QStandardPaths::writableLocation(QStandardPaths::CacheLocation)).filePath("templates-builtin")).removeRecursively();
     QSettings().remove("templates");
 }
 
@@ -257,7 +260,8 @@ void testDropFill()
     CHECK_EQ(mediaOf(2), kTmpl);
     // Over the linked audio of the placeholder: fills the placeholder (its video)
     int audioY = -1;
-    for (int y = hitY + 4; y < 420 && audioY < 0; y += 4) {
+    // (past V1: a video row is at most ViewState::videoTrackHeight high and hitY its first hit)
+    for (int y = hitY + ViewState{}.videoTrackHeight + 2; y < 420 && audioY < 0; y += 4) {
         const int n = project.undoStack()->count();
         dropFile(tv, kTmpl, QPoint(x, y), Qt::NoModifier);
         if (project.undoStack()->count() == n + 1 && mediaOf(3) == kTmpl) audioY = y;
@@ -279,7 +283,7 @@ void testInspector()
     Editor editor(&project, &sel);
     project.load(::project());
     Inspector insp(&editor);
-    insp.resize(380, 900);
+    insp.resize(380, 760);
     insp.show();
     sel.set({2}); // a plain clip: no section
     QApplication::processEvents();
@@ -323,16 +327,16 @@ void testInspector()
     // The title: text rules
     sel.set({5});
     QApplication::processEvents();
-    CHECK(maxChars->isVisible() && !fit->isVisible());
+    CHECK(maxChars->isVisibleTo(body) && !fit->isVisibleTo(body)); // (the Title tab is in front now)
     CHECK_EQ(kind->count(), 1);
     sel.set({1});
     QApplication::processEvents();
     dump(&insp, "slot-inspector.png");
     // Trash in the header: the mark goes (one step)
-    const int n = project.undoStack()->count();
+    const int n = project.undoStack()->index();
     if (auto* trash = insp.findChild<QToolButton*>("slotV_remove"); CHECK(trash)) trash->click();
     CHECK(!slotOf(1).isSet());
-    CHECK_EQ(project.undoStack()->count(), n + 1);
+    CHECK_EQ(project.undoStack()->index(), n + 1);
     QApplication::processEvents();
     CHECK(!body->isVisible());
     // Music on the audio page

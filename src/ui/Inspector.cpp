@@ -127,6 +127,9 @@ Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
 
     const TrackKind V = TrackKind::Video;
 
+    // ---- Placeholder of a template (first: marking a clip shows its rules right away) ----
+    buildSlotSection(videoLay, V);
+
     // ---- Transform ----
     Section tr = addSection(videoLay, V, T("Transform"), [](Clip& c) {
         const ClipTransform d;
@@ -366,7 +369,6 @@ Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
             e.enabled = true;
         });
     };
-    buildSlotSection(videoLay, V);
     videoLay->addStretch(1);
 
     // ---- Effects tab: effects from the Effects Library (Open FX) and the Color page grade ----
@@ -406,6 +408,7 @@ Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
 
     // ---- Audio ----
     const TrackKind A = TrackKind::Audio;
+    buildSlotSection(audioLay, A);
     Section vol = addSection(audioLay, A, T("Lautstärke"), [](Clip& c) {
         c.volumeDb = 0;
         c.pan = 0;
@@ -445,7 +448,6 @@ Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
     };
     vol.grid->addWidget(streamLabel, vol.rows, 0);
     vol.grid->addWidget(streamBox, vol.rows++, 1, 1, 2);
-    buildSlotSection(audioLay, A);
     m_audioFxLay = audioLay;
     m_audioFxIndex = audioLay->count(); // Audio FX sections below (arrangeEffectSections)
     audioLay->addStretch(1);

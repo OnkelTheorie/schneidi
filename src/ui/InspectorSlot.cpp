@@ -8,6 +8,8 @@
 
 #include "ui/InspectorDetail.h"
 
+#include <memory>
+
 using namespace InspectorDetail;
 
 void Inspector::buildSlotSection(QVBoxLayout* page, TrackKind kind)
@@ -167,8 +169,12 @@ void Inspector::buildSlotSection(QVBoxLayout* page, TrackKind kind)
     const Row musicRow = addRow({}, fitMusic);
     s.grid->addWidget(error, s.rows++, 0, 1, 3);
 
+    // Another clip shown: its texts replace the fields even while one has the focus
+    auto lastShown = std::make_shared<int>(0);
     m_refreshers << [=, this] {
         const Clip* c = shown();
+        const bool other = (c ? c->id : 0) != *lastShown;
+        *lastShown = c ? c->id : 0;
         s.header->setVisible(c);
         s.body->setVisible(c && !s.body->property("collapsed").toBool());
         if (!c) {
@@ -181,11 +187,11 @@ void Inspector::buildSlotSection(QVBoxLayout* page, TrackKind kind)
         const bool locked = m_editor->isTrackLocked(ref);
         s.body->setEnabled(!locked);
         trash->setEnabled(!locked);
-        for (QLineEdit* e : {label, id, hint})
-            if (!e->hasFocus()) e->setModified(false);
-        if (!label->hasFocus()) label->setText(sl.label);
-        if (!id->hasFocus()) id->setText(sl.id);
-        if (!hint->hasFocus()) hint->setText(sl.hint);
+        for (const auto& [e, text] : {std::pair{label, sl.label}, std::pair{id, sl.id}, std::pair{hint, sl.hint}})
+            if (other || !e->hasFocus()) {
+                e->setText(text);
+                e->setModified(false);
+            }
         {
             const QSignalBlocker b(kindBox);
             kindBox->clear();
