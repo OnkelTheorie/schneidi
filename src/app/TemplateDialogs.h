@@ -5,11 +5,13 @@
 
 #include "core/StartTemplates.h"
 #include "core/TemplateLibrary.h"
+#include "core/TemplateZip.h"
 
 #include <QDialog>
 #include <QVector>
 
 #include <functional>
+#include <optional>
 
 class QCheckBox;
 class QComboBox;
@@ -43,7 +45,8 @@ private:
 // File › New from Template…: tiles of the content templates (built-in, then own) and the start templates (format and
 // tracks only), with preview picture, format, length and number of fields; filter by picture shape and tag.
 // "New" makes an untitled project from the chosen one, "Edit" opens an own content template itself; own ones can be
-// renamed and deleted here right away (like a file manager). ZIP import/export: buttons in place (see .cpp).
+// renamed and deleted here right away (like a file manager). Import… takes a template ZIP into the own ones (on a
+// name clash it asks: replace or keep both), Export… writes the chosen content template (built-in or own) as ZIP.
 class TemplateBrowserDialog : public QDialog {
     Q_OBJECT
 public:
@@ -63,6 +66,13 @@ public:
     // Tests: select the tile of this name (true = found)
     bool select(const QString& name);
 
+    // The buttons without their file dialogs (tests pass the path): import a ZIP (then shown and selected), export the
+    // chosen content template into `zip` (an existing file is replaced: the save dialog asked). Errors: a message box.
+    bool importFrom(const QString& zip);
+    bool exportTo(const QString& zip);
+    // Tests: the answer to "replace or keep both?" instead of asking (nullopt = cancel)
+    void setClashAnswer(std::function<std::optional<TemplateLibrary::ZipClash>()> answer) { m_clashAnswer = std::move(answer); }
+
 private:
     struct Item {
         bool content = true;
@@ -77,9 +87,13 @@ private:
     void choose(Choice c);
     void renameCurrent();
     void removeCurrent();
+    void importZip();
+    void exportZip();
+    std::optional<TemplateLibrary::ZipClash> askClash(const QString& zip);
     QIcon tileIcon(const Item& item) const;
 
     std::function<QImage(const QString&, const QSize&)> m_thumbnail;
+    std::function<std::optional<TemplateLibrary::ZipClash>()> m_clashAnswer;
     QVector<Item> m_items;
     QComboBox* m_aspect = nullptr;
     QComboBox* m_tag = nullptr;
