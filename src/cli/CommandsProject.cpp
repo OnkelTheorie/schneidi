@@ -264,7 +264,7 @@ QJsonObject cmdNew(const QJsonObject& a, Context&)
     return o;
 }
 
-QJsonObject cmdTemplates(const QJsonObject& a, Context&)
+QJsonObject cmdStartTemplates(const QJsonObject& a, Context&)
 {
     const QString def = StartTemplates::defaultTemplate().id;
     if (!a["template"].toString().trimmed().isEmpty()) return templateJson(startTemplate(a["template"].toString()), def);

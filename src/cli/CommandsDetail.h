@@ -22,6 +22,10 @@
 namespace ReviewSheet {
 struct Data;
 }
+namespace Beats {
+struct Result;
+}
+struct BrandKit;
 
 namespace Cli::detail {
 
@@ -155,6 +159,12 @@ void addSfxOps(QVector<OpDef>& ops);   // EditOpsSfx.cpp: sound effects
 void addTalkOps(QVector<OpDef>& ops);  // EditOpsTalk.cpp: talking head / interview
 // Live: the beats fit_music/snap_to_beat need, analysed by schneidi-cli before the edit goes to the app (`_beats`)
 QJsonObject prepareMusic(const QJsonObject& editArgs, Context& ctx); // EditOpsMusic.cpp
+// The whole song file's beats (EditOpsMusic.cpp; cached per file, `given` = beats measured before, live `_beats`
+// keyed by beatsKey); throws NO_AUDIO / NO_BEAT
+Beats::Result songBeats(const ProjectFormat& f, const MediaInfo& m, int stream, const QJsonObject& given,
+                        Context* ctx = nullptr);
+QString beatsKey(const QString& path, int stream);
+QJsonObject songBeatsJson(const Beats::Result& r);
 // The track op 'sfx' puts its sounds on (by name); music lookups leave it out
 inline const QString kSfxTrackName = QStringLiteral("SFX");
 // The drops of the music on the timeline (EditOpsMusic.cpp): timeline frames (exact) and score, sorted by time; the
@@ -245,6 +255,22 @@ QJsonObject cmdApp(const QJsonObject& a, Context& ctx);
 QJsonObject cmdWatch(const QJsonObject& a, Context& ctx); // CommandsWatch.cpp
 QJsonObject cmdShort(const QJsonObject& a, Context& ctx); // CommandsShort.cpp
 QJsonObject cmdBrand(const QJsonObject& a, Context& ctx); // CommandsBrand.cpp
+// The kit fields of `brand set` (logo, logo_corner, logo_size, colors, fonts, intro, outro) in `a` over `k`
+BrandKit brandWithFields(BrandKit k, const QJsonObject& a); // CommandsBrand.cpp
+// Templates (CommandsTemplate.cpp): `templates` (start templates of CommandsProject.cpp + content templates), filling
+// one into a new project (reusable: render N times), a placeholder as `info`/`templates` show it, the edit ops'
+// values and context, the beats a live fill needs measured here
+QJsonObject cmdStartTemplates(const QJsonObject& a, Context& ctx); // CommandsProject.cpp
+QJsonObject fillTemplate(const QJsonObject& args, Context& ctx);
+QJsonObject slotJson(const ClipSlot& s, const ProjectFormat& f);
+QString fillProblemsText(const QVector<TemplateFill::Problem>& problems); // "slot CODE: message; …"
+TemplateFill::Values fillValues(const QJsonValue& values, const ProjectData& d, const ProjectFormat& f);
+TemplateFill::Context fillContext(const ProjectFormat& f, const QJsonObject& beats, bool measureReframe,
+                                  QStringList* notes, Context* ctx = nullptr);
+QJsonObject fillBeats(const ProjectData& d, const TemplateFill::Values& values, const ProjectFormat& f, Context& ctx);
+// Live: the beats of the songs a `templates` fill or the edit op 'fill' needs, measured here (`_beats`)
+QJsonObject prepareTemplateFill(const QString& command, const QJsonObject& args, Context& ctx);
+void addTemplateOps(QVector<OpDef>& ops); // EditOpsTemplate.cpp
 // What `import` and `watch` say when a video arrives in a project whose timelines are all empty and whose frame rate
 // differs from the video's (the `format` op can still match it); empty = nothing to say
 QString frameRateNote(const Project& p, const QString& video);

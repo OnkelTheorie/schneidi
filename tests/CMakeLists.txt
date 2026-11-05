@@ -269,6 +269,10 @@ schneidi_test(test_start_templates) # how new projects look: start templates (ap
 target_link_libraries(test_start_templates PRIVATE schneidi_cli_lib)
 schneidi_test(test_brand_kit) # brand kit: JSON, global file, project file, applyBrand, logo/intro, CLI brand
 target_link_libraries(test_brand_kit PRIVATE schneidi_cli_lib)
+schneidi_test(test_template_cli) # `templates`: list, info, fill, edit ops slot/fill, ZIP export/import, live fill
+target_link_libraries(test_template_cli PRIVATE schneidi_cli_lib)
+target_compile_definitions(test_template_cli PRIVATE SCHNEIDI_CLI="$<TARGET_FILE:schneidi-cli>")
+add_dependencies(test_template_cli schneidi-cli)
 schneidi_test(test_ducking)
 target_link_libraries(test_ducking PRIVATE schneidi_cli_lib)
 schneidi_test(test_blur_fill) # blurred fill around the fitted picture (op 'transform' fit:'blur')
