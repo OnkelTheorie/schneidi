@@ -92,7 +92,8 @@ QString voiceName(const QString& id);
 // ONNX Runtime (MIT) for local models (engine/Inference): the library of the "onnxruntime" extension; empty = not
 // installed
 QString onnxRuntimeLibrary();
-// The onnxruntime library inside the Piper extension (piper ships one); empty = none
+// The onnxruntime library inside the Piper extension (piper ships one); empty = none (always on Windows: it would
+// lock Piper's folder while loaded)
 QString piperOnnxRuntime();
 // YAMNet (sound event classes, Apache-2.0) of the "audio-events" extension, or of SCHNEIDI_YAMNET (a model file with
 // its class list beside it): the model (.onnx) and its class list (yamnet_class_map.csv: index,mid,display_name);

@@ -516,7 +516,16 @@ QString onnxRuntimeIn(const QString& dir)
 
 QString onnxRuntimeLibrary() { return onnxRuntimeIn(onnxLib()); }
 
-QString piperOnnxRuntime() { return onnxRuntimeIn(piperBin()); }
+QString piperOnnxRuntime()
+{
+#ifdef Q_OS_WIN
+    // Not on Windows: loaded into schneidi's process it locks Piper's folder (a mapped DLL), so updating or removing
+    // Piper fails until a restart; the face and sound models bring their own runtime there
+    return {};
+#else
+    return onnxRuntimeIn(piperBin());
+#endif
+}
 
 QString audioEventsModel()
 {
