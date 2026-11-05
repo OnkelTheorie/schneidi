@@ -765,7 +765,8 @@ const QVector<Command>& commands()
                       "placeholder slots: clips, texts, music, logo). Without parameters: the list of both (kind "
                       "start|content). info: a content template's slots with their rules. fill: a new project from a "
                       "content template with your values (checked against the rules; the answer says what was "
-                      "adjusted: trimmed, slowed, shrunk …), optionally rendered. project + values: fill the slots of "
+                      "adjusted: trimmed, slowed, shrunk …), optionally rendered; with rows (CSV/JSON table, a "
+                      "column per slot) one project and video per row into out_dir. project + values: fill the slots of "
                       "that project in place (\"@app\": one undo step). save/remove/rename own templates, "
                       "export/import a template as ZIP.",
          {{"template", T::String, "only this one (id, name or file): a start template as before, a content template "
@@ -773,10 +774,18 @@ const QVector<Command>& commands()
           {"info", T::String, "content template (id, name, folder, .schneidi or \"@app\"): slots, rules, where they "
                               "are, what they hold, brand references"},
           {"fill", T::String, "content template to fill (id, name or path); needs out_project"},
-          {"values", T::Object, "slot id -> \"file\" | {file, from?, to?} (source times) | \"text\" (text slots)"},
+          {"values", T::Object, "slot id -> \"file\" | {file, from?, to?} (source times) | \"text\" (text slots); "
+                                "with rows: the same for every row"},
+          {"rows", T::Data, "fill: many videos from a table - a .csv (header = slot ids; \",\" or \";\") or .json "
+                            "file (paths relative to it), or [{slot: value, …}, …]. Columns out/name: file name, "
+                            "<slot>.from/.to: source range"},
+          {"out_dir", T::Path, "fill with rows: folder for <name>.schneidi (and the videos)"},
+          {"continue_on_error", T::Boolean, "fill with rows: a bad row is reported and the others are done "
+                                            "(default true; false stops at the first)"},
           {"out_project", T::Path, "fill: the new project file (.schneidi)"},
           {"project", T::Path, "fill the slots of this project in place (with values) instead of a new one"},
-          {"render", T::Object, "fill: render the result, parameters of `render` (out default: out_project as .mp4)"},
+          {"render", T::Object, "fill: render the result, parameters of `render` (out default: out_project as .mp4; "
+                                "with rows: out_dir/<name>.<format's extension>)"},
           {"brand", T::Object, "fill: \"global\" (default: the kit that applies), \"none\", or kit fields as in "
                                "`brand set` (the project's own kit)"},
           {"reframe", T::String, "\"cached\" (default: auto reframe where analysed before, else center) or \"auto\" "
@@ -787,7 +796,8 @@ const QVector<Command>& commands()
           {"copy_media", T::Boolean, "fill: copy the template's own media next to out_project; save: copy the used "
                                      "media into the template (default true for both)"},
           {"save", T::Path, "save this project (or \"@app\") as own content template (needs name)"},
-          {"name", T::String, "save/rename: the template's name"},
+          {"name", T::String, "save/rename: the template's name; fill with rows: file name pattern {n}, {n:03}, "
+                              "{column} (default: the out/name column, else <template>-{n:03})"},
           {"description", T::String, "save: what the template is for"},
           {"tags", T::String, "save: comma list"},
           {"preview", T::Path, "save: preview video or picture"},
@@ -1436,6 +1446,7 @@ QJsonObject inputSchema(const Command& cmd)
         case ParamType::Sources: s["type"] = "array"; s["items"] = QJsonObject{{"type", QJsonArray{"string", "object"}}}; break;
         case ParamType::Json: s["type"] = "array"; s["items"] = QJsonObject{{"type", "object"}}; break;
         case ParamType::Object: s["type"] = QJsonArray{"object", "string"}; break;
+        case ParamType::Data: s["type"] = QJsonArray{"string", "array", "object"}; break;
         }
         props[p.name] = s;
         if (p.required) required << p.name;
@@ -1611,6 +1622,20 @@ QJsonObject normalize(const Command& cmd, const QJsonObject& given)
             } else {
                 out[p.name] = v;
                 ok = v.isObject() || v.isString();
+            }
+            break;
+        case ParamType::Data:
+            if (v.isString() && (str.trimmed().startsWith('[') || str.trimmed().startsWith('{'))) {
+                QJsonParseError err;
+                const QJsonDocument doc = QJsonDocument::fromJson(str.toUtf8(), &err);
+                if (err.error != QJsonParseError::NoError)
+                    fail("BAD_ARGUMENT", QString("%1: invalid JSON (%2)").arg(p.name, err.errorString()));
+                out[p.name] = doc.isArray() ? QJsonValue(doc.array()) : QJsonValue(doc.object());
+            } else if (v.isString()) {
+                out[p.name] = absolute(str);
+            } else {
+                out[p.name] = v;
+                ok = v.isArray() || v.isObject();
             }
             break;
         case ParamType::Json:

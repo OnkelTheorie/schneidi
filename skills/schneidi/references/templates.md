@@ -32,6 +32,27 @@ templates (`new --template`) only set format and tracks; `templates` lists both 
 - An existing `out_project` is only replaced with `overwrite:true` (backup first). The template's own media are
   copied next to the project ("<name> media/"), `copy_media:false` keeps them in the template folder.
 
+## Many videos from a table
+One template, a table of products/texts/clips → one project (and video) per row. `templates` `fill:"<template>"`,
+`rows:"/abs/products.csv"` (or a .json file, or the rows themselves `[{slot: value, …}, …]`), `out_dir:"/abs/out"`:
+```
+product;hook;clip;clip.from
+Mug blue;"Hot; and fast";shots/mug.mp4;2s
+Pen;Writes forever;shots/pen.mp4;
+```
+- Header = slot ids (`templates info` lists them). Separator `,` or `;` (German Excel), UTF-8 with or without BOM,
+  quotes as in Excel. Text slots take the cell as text, clip/music/logo slots a file - relative paths count from the
+  table's folder. `<slot>.from`/`<slot>.to` set the source range. An empty cell leaves that slot unfilled.
+- Other columns are no slots (one note), but usable in the file name: `name:"{n:03}-{product}"` (`{n}` = row
+  number). Default: an `out` or `name` column, else `<template>-001`. Names are made safe for every OS; a repeated
+  name gets "-2". `values` = the same for every row (a cell wins).
+- `render:{preset?, format?, …}` renders each row to `out_dir/<name>.<extension of the format>` (no `render.out`).
+- The answer: per row `ok`, `project`, `video`, `adjusted` (per slot), `errors` (codes as for one fill), `totals`
+  (`ok`, `failed`, `skipped`), `time_s`. A bad row (missing file …) is reported and the others are done;
+  `continue_on_error:false` stops at the first. Run `dry_run:true` first: checks every row, writes nothing.
+- Existing projects/videos are only replaced with `overwrite:true`. Rows run one after another (each render uses all
+  cores); the command line shows `{"progress":…,"stage":"row 3/20"}` on stderr.
+
 ## In a project / in the app
 - `templates` `project` + `values` fills the slots of that project in place; with `"@app"` the project open in the
   app, as one undo step.
