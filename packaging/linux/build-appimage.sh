@@ -109,7 +109,11 @@ cd "$DIST"
     --custom-apprun "$ROOT/packaging/linux/AppRun" \
     --desktop-file "$APPDIR/usr/share/applications/schneidi.desktop" \
     --icon-file "$APPDIR/usr/share/icons/hicolor/scalable/apps/schneidi.svg" \
-    --plugin qt --output appimage
+    --plugin qt
+# Qt plugins only there because the build machine has them installed (kimageformats, virtual keyboard: ~20 MB with
+# their libraries) out, then packed
+python3 -I "$ROOT/packaging/linux/prune-appdir.py" "$APPDIR"
+"$TOOLS/linuxdeploy-$ARCH.AppImage" --appdir "$APPDIR" --output appimage
 APPIMAGE="$(ls -1t "$DIST"/schneidi*.AppImage | head -1)"
 if [ "$NO_GPL" = 1 ]; then
     # The package itself must load nothing GPL (FFmpeg's license, libraries in the process)
