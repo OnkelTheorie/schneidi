@@ -277,7 +277,7 @@ def podcast_clip(cli, work, media):
     st = r.get('timeline', {}).get('subtitles', [{}])
     logo_clip = at[('V3', 0)]
     cli.edit(p, [{'op': 'transform', 'clips': [logo_clip], 'zoom': 0.12, 'x': -400, 'y': 820},
-                 {'op': 'track', 'track': 'ST1', 'color': 'brand1', 'outline_color': 'brand2', 'font': 'brand1',
+                 {'op': 'track', 'track': 'ST1', 'outline_color': 'brand2', 'font': 'brand1',
                   'highlight': '#ffd23f'},
                  {'op': 'slot', 'clip': at[('V1', 0)], 'id': 'speaker', 'label': 'Speaker', 'length': 'flexible',
                   'min': '5s', 'max': '90s', 'fit': 'trim',

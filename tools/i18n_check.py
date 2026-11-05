@@ -2,7 +2,8 @@
 """Compare all dictionaries i18n/<lang>.json with the texts in the code (new language: copy en.json, empty the values).
 
 Collects all T("…") and N_("…") texts from src/ (also literals concatenated over several lines) plus name and
-description of the designs (assets/themes/*.json).
+description of the designs (assets/themes/*.json) and of the built-in content templates
+(assets/templates/*/template.schneidi).
   tools/i18n_check.py            show missing and unused entries (exit 1 if something is missing)
   tools/i18n_check.py --update   add missing entries with an empty value, remove unused ones
   tools/i18n_check.py --lang fr  only check this language (--lang can be repeated)

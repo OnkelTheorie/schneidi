@@ -155,6 +155,13 @@ void testFill(const QString& tmp, const Media& m)
         for (const MediaInfo& mi : d.media) files.insert(mi.path);
         for (const QJsonValue& v : values)
             if (v.toString().startsWith('/')) CHECK(files.contains(v.toString()));
+        if (QString(e.id) == "podcast-clip") {
+            // The speaker slot grew to the 30 s clip: the topic title and the logo still cover all of it
+            const int end = d.timeline.video[0].clips.isEmpty() ? 0 : d.timeline.video[0].clips.last().end();
+            CHECK_EQ(end, 900);
+            for (int t = 1; t < d.timeline.video.size(); ++t)
+                for (const Clip& c : d.timeline.video[t].clips) CHECK_EQ(c.end(), end);
+        }
         if (QString(e.id) == "intro-outro") {
             CHECK(r.contains("render"));
             CHECK(QFileInfo(video).size() > 0);
@@ -199,8 +206,8 @@ void testBrand(const QString& tmp, const Media& m)
     }
     // Podcast captions: the subtitle track's style follows the kit too
     const ProjectData pod = load(tmp + "/brand/podcast-clip.schneidi");
-    CHECK(!pod.timeline.subtitles.isEmpty() && pod.timeline.subtitles[0].style.colorRef == 1
-          && pod.timeline.subtitles[0].style.color.name() == "#ff2200");
+    CHECK(!pod.timeline.subtitles.isEmpty() && pod.timeline.subtitles[0].style.outlineRef == 2
+          && pod.timeline.subtitles[0].style.outlineColor.name() == "#0022ff");
 
     // A logo slot without a value shows the kit's logo; "none" keeps the template's
     const QString withLogo = tmp + "/brand/logo.schneidi";
