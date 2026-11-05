@@ -80,6 +80,9 @@ schneidi has four pages – Media, Edit, Color and Deliver – and fewer feature
 - Contact sheet: stills of the timeline with timecodes as one picture (File › Save Contact Sheet)
 - **AI chat in the app:** tell an AI what to do in the open project – Claude, OpenAI-compatible services (OpenAI, OpenRouter, LM Studio, your company's proxy …) or a local model with Ollama; automatic or review mode ([details](#ai-chat-in-the-app))
 - **See what an AI does:** clips it adds or changes light up in the timeline, the AI log lists every step (a click jumps there), its analyses and renders show with progress
+- **AI director:** a searchable index of your footage (every shot with its quality, what is said and heard; search "where does he laugh"), the edit laid out as a story with a hook and a payoff and checked for pace, the AI's cut plan shown with a reason per step before anything changes, and a review render with cuts, beats and hits burned in for checking its own work
+- **Effect sounds** (Effects › Klänge, or op `sfx`): CC0 recordings and computed risers for whooshes, hits, impacts and clicks, set as loud as the sound where they land – only where you put them or ask for them, never by themselves; your own sounds from the effects folder too
+- **Sound-aware cutting:** J/L cuts and room tone, a song cut to the video's length on its phrases with its real ending, events snapped to the beat, a rough cut from a script with the best take of each line, jump cuts hidden by a zoom, B-roll that matches what is said
 - **Command line and MCP server** (`schneidi-cli`, locally or over HTTP on a server): scripts or an AI assistant can edit almost everything the app can – find pauses, scene changes, loud moments and events in a part of the picture (kill feed, score), pick highlights (your own kills, loud fights), make a finished short of game recordings in one call, sync recordings by their sound, build multicam clips, transcribe, cut and trim, grade, animate, mix, duck music and normalize, measure loudness, look at frames (or a detail of them) and scopes, render ([details](#command-line-and-ai-editing-mcp))
 - Themes, six UI languages (English, German, Spanish, French, Polish, Russian)
 
@@ -223,11 +226,10 @@ claude mcp add --transport http schneidi http://127.0.0.1:8642/mcp
 
 What we are working on next. Plans can still change; the order within a version is not fixed.
 
-### 0.16.x – bug fixes
-Only fixes for problems found in 0.16.0 – new features wait for the next version.
+### 0.17.x – bug fixes
+Only fixes for problems found in 0.17.0 – new features wait for the next version.
 
 ### Later
-- **0.17 – AI Director Update:** the AI understands the material (searchable index: shots, sounds, quality), builds a story (hook, build-up, payoff) and checks it, shows its cut plan before cutting, measures the pace, J/L cuts, songs cut to length, a sound library for hits and cuts (moved from 0.16)
 - **0.18 – Template Update:** templates with placeholders filled from a list, brand kit
 - **0.19 – Fusion Light:** light node compositing on the new picture engine – layers, masks, keyer and tracking as nodes, textured and 3D-edged text
 - **0.20 – Newcomer Update:** Premiere/Final Cut key presets, export for Shotcut/Kdenlive and Final Cut, apt repository
