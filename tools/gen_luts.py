@@ -148,7 +148,7 @@ def edit(r, g, b):
     # tint() fading out towards pure black and white, so they stay neutral
     y = luma(r, g, b)
     fade = smooth(0.0, 0.12, y) * (1 - smooth(0.85, 1.0, y))
-    rgb = tint([r, g, b], (-0.05 * fade, 0.015 * fade, 0.05 * fade), (0.05 * fade, 0.01 * fade, -0.05 * fade))
+    rgb = tint([r, g, b], (-0.04 * fade, 0.012 * fade, 0.04 * fade), (0.045 * fade, 0.01 * fade, -0.045 * fade))
     rgb = vibrance([clamp(c) for c in rgb], 0.35)
     return [scurve(c, 0.2) for c in rgb]
 

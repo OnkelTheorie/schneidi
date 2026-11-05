@@ -460,8 +460,9 @@ int main(int argc, char** argv)
         }
         names.sort();
         usable.sort();
-        CHECK_EQ(names, (QStringList{"Hell", "Shut-off", "Starker Glow", "kaputt"}));
-        CHECK_EQ(usable, (QStringList{"Hell", "Shut-off", "Starker Glow"}));
+        // bundled looks first, then the own ones (headers "Mitgeliefert"/"Eigene")
+        CHECK_EQ(names, (QStringList{"Edit-Look", "Eigene", "Hell", "Mitgeliefert", "Shut-off", "Starker Glow", "kaputt"}));
+        CHECK_EQ(usable, (QStringList{"Edit-Look", "Hell", "Shut-off", "Starker Glow"}));
         for (int i = 0; i < list->count(); ++i)
             if (list->item(i)->text() == "Shut-off") CHECK(list->item(i)->toolTip().contains("qtblend"));
         const auto sub = tree->findItems("Kdenlive", Qt::MatchExactly | Qt::MatchRecursive);
