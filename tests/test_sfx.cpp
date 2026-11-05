@@ -437,7 +437,7 @@ void testOp(const QString& dir)
             const int expected = int(std::lround(cuts[i] - anchor * 25));
             if (!CHECK_EQ(clips[i].first, expected)) std::printf("       whoosh %d\n", i);
             // level mild, the recording brought to its kind's peak level
-            CHECK(std::abs(clips[i].second - (-10.0 + SfxSynth::levelGainDb(SfxSynth::Kind::Whoosh, unsigned(1 + i)))) < 1e-6);
+            if (!CHECK(std::abs(clips[i].second - (-10.0 + SfxSynth::levelGainDb(SfxSynth::Kind::Whoosh, unsigned(1 + i)))) < 1e-6)) std::printf("       got %f want %f\n", clips[i].second, -10.0 + SfxSynth::levelGainDb(SfxSynth::Kind::Whoosh, unsigned(1 + i)));
         }
     }
     // Again on the same cuts: every one is taken (the sounds on the SFX track count)
@@ -539,6 +539,44 @@ void testOp(const QString& dir)
     const QJsonObject fx = run("effects", {{"kind", "sfx"}});
     CHECK_EQ(fx["sounds"].toArray().size(), 6);
     CHECK(run("effects", {})["sounds"].toArray().size() >= 6);
+}
+
+// The level follows the mix where a sound lands: its peak 6 dB (mild) or 2 dB (normal) under the loudest sample of
+// the other sound there (a sine, master +3 dB), over silence the fixed level; volume_db wins
+void testUnderMix(const QString& dir)
+{
+    const QString media = Check::makeMedia(dir + "/loud.mkv", {"-f", "lavfi", "-i", "color=c=black:s=160x90:r=25:d=8",
+                                                               "-f", "lavfi", "-i", "sine=f=220:d=8",
+                                                               "-c:v", "ffv1", "-c:a", "pcm_s16le", "-shortest"});
+    if (!CHECK(!media.isEmpty())) return;
+    const QString project = dir + "/under.schneidi";
+    run("new", {{"project", project}, {"fps", 25}});
+    CHECK(!edit(project, {QJsonObject{{"op", "place"}, {"media", media}, {"at", 0}},
+                          QJsonObject{{"op", "mixer"}, {"track", "master"}, {"volume_db", 3}}}).contains("failed"));
+    const auto soundPeak = [](const QJsonObject& placed, SfxSynth::Kind k, unsigned seed) {
+        // where the sound's peak lands before the master: clip volume without its evening-out, on the kind's level
+        return placed["clip_db"].toDouble() - SfxSynth::levelGainDb(k, seed, 0) + SfxSynth::peakLevelDb(k);
+    };
+    // The mix's loudest sample as exported (master included), measured like `loudness` does
+    const double mix = run("loudness", {{"source", project}, {"from", "1s"}, {"to", "3s"}}).value("loudness").toObject().value("sample_peak_db").toDouble();
+    CHECK(mix > -40);
+    // mild: the sound's peak (before the master) 6 dB under the mix, less the master's 3 dB
+    QJsonObject n = sfxNote(edit(project, {QJsonObject{{"op", "sfx"}, {"at", "2s"}, {"kind", "click"}}}));
+    if (CHECK_EQ(n["placed"].toArray().size(), 1)) {
+        const double got = soundPeak(n["placed"][0].toObject(), SfxSynth::Kind::Click, 1);
+        if (!CHECK(std::abs(got - (mix - 6 - 3)) < 0.3)) std::printf("       mild: %f (mix %f)\n", got, mix);
+    }
+    CHECK(n["level"].toString().contains("6 dB under"));
+    // normal: 2 dB under
+    n = sfxNote(edit(project, {QJsonObject{{"op", "sfx"}, {"at", "5s"}, {"kind", "click"}, {"level", "normal"}}}));
+    if (CHECK_EQ(n["placed"].toArray().size(), 1)) {
+        const double got = soundPeak(n["placed"][0].toObject(), SfxSynth::Kind::Click, 1);
+        if (!CHECK(std::abs(got - (mix - 2 - 3)) < 0.3)) std::printf("       normal: %f (mix %f)\n", got, mix);
+    }
+    // volume_db given: that level, the mix does not matter
+    n = sfxNote(edit(project, {QJsonObject{{"op", "sfx"}, {"at", "7s"}, {"kind", "click"}, {"volume_db", -20}}}));
+    if (CHECK_EQ(n["placed"].toArray().size(), 1))
+        CHECK(std::abs(soundPeak(n["placed"][0].toObject(), SfxSynth::Kind::Click, 1) - (-20 + SfxSynth::peakLevelDb(SfxSynth::Kind::Click))) < 0.01);
 }
 
 // A sound pack needs its licence file: without LICENSE it is not installed (a local archive, no download)
@@ -698,6 +736,7 @@ int main(int argc, char** argv)
     if (Check::haveFfmpeg()) {
         testOp(tmp.path());
         testKillsDryRun(tmp.path());
+        testUnderMix(tmp.path());
     } else {
         std::printf("  no ffmpeg: op test skipped\n");
     }

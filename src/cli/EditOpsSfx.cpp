@@ -12,6 +12,7 @@
 #include "core/SfxPlace.h"
 #include "core/SfxSynth.h"
 #include "core/TimelineOps.h"
+#include "engine/AudioAnalysis.h"
 #include "engine/Extensions.h"
 
 #include <QDirIterator>
@@ -163,6 +164,25 @@ SfxPlace::Existing existingOf(const Clip& c, double fps, const Source& src)
 
 double rounded(double seconds) { return std::round(seconds * 1000) / 1000; }
 
+// The loudest sample (dBFS) of the timeline mix [from, to) as it is exported; nullopt: nothing measured
+std::optional<double> mixPeakDb(Session& s, int from, int to)
+{
+    const auto peaks = AudioAnalysis::timelineFramePeaks(s.format(), s.project.timeline(), std::max(0, from), to);
+    if (!peaks || peaks->empty()) return std::nullopt;
+    const float peak = *std::max_element(peaks->begin(), peaks->end());
+    return peak > 0 ? std::optional<double>(20.0 * std::log10(double(peak))) : std::optional<double>(-200.0);
+}
+
+// The loudest sample (dBFS) of a sound file
+std::optional<double> filePeakDb(Session& s, const MediaInfo& m)
+{
+    Clip c;
+    c.mediaPath = m.path;
+    c.in = 0;
+    c.out = std::max(0, m.length - 1);
+    return AudioAnalysis::clipPeakDb(s.format(), c);
+}
+
 void opSfx(Session& s, const QJsonObject& op)
 {
     const QString on = op.value("on").toString();
@@ -174,7 +194,12 @@ void opSfx(Session& s, const QJsonObject& op)
     if (!src.kind && !s.media(src.file).hasAudio) fail("NO_AUDIO", "the sound file has no audio: " + src.file);
     const QString level = op.value("level").toString("mild");
     if (level != "mild" && level != "normal") fail("BAD_ARGUMENT", "level: 'mild' or 'normal'");
-    const double volume = op.contains("volume_db") ? numberOf(op, "volume_db", -60, 6) : SfxPlace::levelDb(level);
+    // volume_db given: that level on the sound's peak. Else under the mix where it lands (mild 6 dB, normal 2 dB under
+    // the loudest sample of the other sound there): audible over loud game sound, quiet in a quiet part; over silence
+    // the fixed level of the kind (mild -10 dB, normal -4 dB)
+    const bool volumeGiven = op.contains("volume_db");
+    const double volume = volumeGiven ? numberOf(op, "volume_db", -60, 6) : SfxPlace::levelDb(level);
+    const double underMix = level == "normal" ? 2.0 : 6.0;
     const bool seedGiven = op.contains("seed");
     const unsigned seed = seedGiven ? unsigned(numberOf(op, "seed", 1, 1000000)) : 1;
     const ProjectFormat& f = s.format();
@@ -259,18 +284,27 @@ void opSfx(Session& s, const QJsonObject& op)
                                    {"why", busy ? "overlaps" : start < 0 ? "before_start" : "after_end"}};
             continue;
         }
+        // The clip's own volume: the level on the sound's peak plus the evening-out of this sound
+        const double evening = src.kind ? SfxSynth::levelGainDb(*src.kind, sd, length) : 0.0;
+        double clipDb = volume + evening;
+        if (!volumeGiven) {
+            // The sound's peak as placed at 0 dB: a built-in one at its kind's peak level, a file at its own peak
+            const std::optional<double> soundPeak = src.kind ? SfxSynth::peakLevelDb(*src.kind) : filePeakDb(s, m);
+            if (const auto mix = mixPeakDb(s, start, start + m.length); soundPeak && mix && *mix > -50)
+                clipDb = std::clamp(*mix - underMix - s.project.timeline().masterVolumeDb - *soundPeak, -40.0, 6.0) + (src.kind ? evening : 0.0);
+        }
         // Only its sound (a video file as the sound must not overwrite the picture)
         if (s.editor.placeSourceRange(m.path, 0, m.length - 1, start, track, 1.0, true) <= 0)
             fail("FAILED", QString("could not place the sound on A%1 (locked?)").arg(track + 1));
-        // The clip's own volume: the level on the sound's peak plus the evening-out of this sound
-        const double clipDb = volume + (src.kind ? SfxSynth::levelGainDb(*src.kind, sd, length) : 0.0);
         for (const Clip& c : s.project.timeline().audio[track].clips)
             if (c.start == start && c.mediaPath == m.path) s.editor.setClipVolume(c.id, clipDb);
         placed << QJsonObject{{"at_s", rounded(p.moment)}, {"start", tc(start, f)}, {"clip_db", rounded(clipDb)}};
         ++i;
     }
     QJsonObject note{{"kind", src.kind ? SfxSynth::kindName(*src.kind) : QFileInfo(src.file).fileName()},
-                     {"volume_db", volume}, {"placed", placed}};
+                     {"placed", placed}};
+    if (volumeGiven) note["volume_db"] = volume;
+    else note["level"] = QString("%1: %2 dB under the mix").arg(level).arg(underMix);
     if (track >= 0) note["track"] = QString("A%1").arg(track + 1);
     if (!skipped.isEmpty()) note["skipped"] = skipped;
     s.notes << QJsonObject{{"sfx", note}};
@@ -351,8 +385,8 @@ void addSfxOps(QVector<OpDef>& ops)
                  "kind:'sfx'), a sound of the effects folder 'Sounds' or a file. The whoosh's peak lands on the "
                  "moment, the riser ends on it, a hit starts on it. Sparing: never two sounds closer than min_gap "
                  "(1.5 s), at most max_per_min in any minute (mild 3, normal 6), one impact per video; the answer's "
-                 "notes list what the rules left out (skipped, why). level 'mild' (default, -10 dB) or 'normal' "
-                 "(-4 dB); volume_db sets it directly (on the sound at its kind's peak level). All but the riser are "
+                 "notes list what the rules left out (skipped, why). level 'mild' (default: its peak 6 dB under the mix "
+                 "there; -10 dB over silence) or 'normal' (2 dB under; -4 dB); volume_db sets it directly. All but the riser are "
                  "CC0 recordings (computed ones when a length is given); the riser is computed. seed: one variant (default 1-3 in turn); length: "
                  "of the sound ('2s'; a riser 0.5-8 s). Only where asked: never on every cut by default.",
                  opSfx,
