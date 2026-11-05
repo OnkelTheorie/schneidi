@@ -37,6 +37,7 @@ enum class ParamType {
     Sources, // list of files, each optionally an object {file, …settings for this file}
     Json,    // any JSON value (edit operations)
     Object,  // a JSON object (a string holding one is parsed) or a plain string (`templates` values, render, brand)
+    Data,    // a file (made absolute) or inline JSON: an array or object (a string starting with [ or { is parsed)
 };
 
 struct Param {

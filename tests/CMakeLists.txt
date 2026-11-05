@@ -275,6 +275,9 @@ schneidi_test(test_template_cli) # `templates`: list, info, fill, edit ops slot/
 target_link_libraries(test_template_cli PRIVATE schneidi_cli_lib)
 target_compile_definitions(test_template_cli PRIVATE SCHNEIDI_CLI="$<TARGET_FILE:schneidi-cli>")
 add_dependencies(test_template_cli schneidi-cli)
+schneidi_test(test_data_rows) # tables for many videos from a template: CSV/JSON rows, file names from a pattern
+schneidi_test(test_template_batch) # `templates` fill + rows: one project (and video) per row, bad rows, dry_run
+target_link_libraries(test_template_batch PRIVATE schneidi_cli_lib)
 schneidi_test(test_ducking)
 target_link_libraries(test_ducking PRIVATE schneidi_cli_lib)
 schneidi_test(test_blur_fill) # blurred fill around the fitted picture (op 'transform' fit:'blur')
@@ -310,7 +313,7 @@ foreach(name test_stabilize_denoise test_retime test_effects_render test_effect_
              test_audio_regression test_color test_loudness test_dynamics_eq test_audio_sync test_multicam_render
              test_multicam_viewer test_multicam_cli
              test_ducking test_crop test_blur_fill test_reframe test_reframe_keep test_game43 test_generators test_fit_music
-             test_story_pace test_review_render)
+             test_story_pace test_review_render test_data_rows)
     add_test(NAME ${name}_de_DE COMMAND ${name})
     set_tests_properties(${name}_de_DE PROPERTIES
         SKIP_RETURN_CODE 77

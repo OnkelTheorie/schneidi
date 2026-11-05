@@ -3,15 +3,17 @@
 // (core/TemplateLibrary: a project with placeholder slots, core/TemplateFill). Lists both, shows a content template's
 // slots, fills one into a new project (values checked against the slots' rules, brand kit applied, optionally
 // rendered) or fills the slots of a project in place (live in the app: one undo step), saves/removes/renames own
-// templates and shares them as ZIP (core/Zip).
+// templates and shares them as ZIP (core/Zip). fill + rows: one project (and video) per row of a table (core/DataRows).
 #include "cli/CommandsDetail.h"
 
 #include "cli/Live.h"
 #include "cli/Sandbox.h"
 #include "core/Beats.h"
 #include "core/BrandKit.h"
+#include "core/DataRows.h"
 #include "core/LiveHost.h"
 #include "core/ProjectFile.h"
+#include "core/RenderJob.h"
 #include "core/TemplateFill.h"
 #include "core/TemplateLibrary.h"
 #include "core/TimelineOps.h"
@@ -21,6 +23,7 @@
 
 #include <QDir>
 #include <QDirIterator>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonArray>
@@ -480,6 +483,218 @@ QJsonObject importTemplate(const QJsonObject& a)
     return out;
 }
 
+// ---------- Many videos from a table: fill + rows ----------
+
+// The extension a render with these parameters writes (format, else the preset's, else H.264)
+QString renderExtension(const QJsonObject& r)
+{
+    QString format = r["format"].toString().trimmed();
+    if (format.isEmpty() && r.contains("preset"))
+        if (const std::optional<RenderPreset> p = RenderPresets::find(r["preset"].toString())) format = p->settings.format;
+    if (format.isEmpty()) format = RenderSettings().format;
+    if (format == "srt" || format == "vtt") return format;
+    return renderFormat(format).extension;
+}
+
+// What a column of the table fills
+struct Columns {
+    QHash<QString, QString> slotOf;           // column -> slot (the slot's own column, or "<slot>.from"/".to")
+    QString nameColumn;                       // "out" or "name": the file name when no pattern is given
+    QStringList extra, fileColumns, unfilled; // no slot / holding files / slots no column fills
+};
+
+Columns columnsOf(const QStringList& columns, const QHash<QString, SlotKind>& kinds, const QJsonObject& shared)
+{
+    Columns c;
+    for (const QString& col : columns) {
+        const QString slot = !kinds.contains(col) && (col.endsWith(".from") || col.endsWith(".to")) ? col.section('.', 0, -2) : col;
+        if (kinds.contains(slot) && kinds[slot] != SlotKind::Text) c.fileColumns << col;
+        if (kinds.contains(slot) && (slot == col || kinds[slot] != SlotKind::Text)) c.slotOf[col] = slot;
+        else if ((col == "out" || col == "name") && c.nameColumn.isEmpty()) c.nameColumn = col;
+        else c.extra << col;
+    }
+    QStringList ids = kinds.keys();
+    std::sort(ids.begin(), ids.end());
+    for (const QString& id : ids)
+        if (!c.slotOf.values().contains(id) && !shared.contains(id)) c.unfilled << id;
+    return c;
+}
+
+// A row as `values` of fillTemplate: files relative to the data file's folder, "<slot>.from"/".to" as source range
+QJsonObject rowValues(const QJsonObject& row, const Columns& cols, const QHash<QString, SlotKind>& kinds,
+                      const QDir& base, const QJsonObject& shared)
+{
+    QJsonObject values = shared;
+    const auto file = [&](const QString& f) { return QDir::cleanPath(base.absoluteFilePath(f.trimmed())); };
+    for (auto it = row.begin(); it != row.end(); ++it) {
+        const QString slot = cols.slotOf.value(it.key());
+        if (slot.isEmpty() || slot != it.key()) continue;
+        const QJsonValue v = it.value();
+        if (kinds[slot] == SlotKind::Text) {
+            values[slot] = v.isString() ? v.toString()
+                           : v.isDouble() ? QString::number(v.toDouble())
+                           : v.isObject() ? v : QJsonValue(v.toVariant().toString());
+            continue;
+        }
+        QJsonObject o = v.isObject() ? v.toObject() : QJsonObject{{"file", v.toString()}};
+        if (o["file"].isString() && !o["file"].toString().trimmed().isEmpty()) o["file"] = file(o["file"].toString());
+        for (const char* part : {"from", "to"})
+            if (row.contains(slot + "." + part)) o[part] = row[slot + "." + part];
+        values[slot] = o.size() == 1 ? o["file"] : QJsonValue(o);
+    }
+    return values;
+}
+
+// The short form of a fill report for one row: what was adjusted per slot, warnings
+void summarize(const QJsonObject& report, QJsonObject& entry)
+{
+    QJsonObject adjusted;
+    QJsonArray warnings;
+    for (const QJsonValue& r : report["results"].toArray()) {
+        if (!r["adjusted"].toArray().isEmpty()) adjusted[r["slot"].toString()] = r["adjusted"];
+        for (const QJsonValue& w : r["warnings"].toArray()) warnings << QString("%1: %2").arg(r["slot"].toString(), w.toString());
+    }
+    if (!adjusted.isEmpty()) entry["adjusted"] = adjusted;
+    if (!warnings.isEmpty()) entry["warnings"] = warnings;
+    if (!report["unfilled"].toArray().isEmpty()) entry["unfilled"] = report["unfilled"];
+}
+
+QJsonObject fillRows(const QJsonObject& a, Context& ctx)
+{
+    QElapsedTimer timer;
+    timer.start();
+    const ContentTemplate t = *contentTemplate(a["fill"].toString());
+    const ProjectData d = loadTemplate(t);
+    if (a.contains("out_project")) fail("BAD_ARGUMENT", "fill with rows writes one project per row: out_dir (and name) instead of out_project");
+    const QString outDir = a["out_dir"].toString();
+    if (outDir.isEmpty()) fail("BAD_ARGUMENT", "fill with rows needs out_dir (the folder for the projects and videos)");
+    // The table: a file (paths in it relative to its folder) or the rows themselves
+    QString err;
+    std::optional<DataRows::Table> table;
+    QDir base = QDir::current();
+    const QJsonValue rows = a["rows"];
+    if (rows.isString()) {
+        const QString path = rows.toString();
+        if (!QFileInfo(path).isFile()) fail("NOT_FOUND", "no file " + path);
+        table = DataRows::readFile(path, &err);
+        base = QFileInfo(path).absoluteDir();
+    } else {
+        table = DataRows::fromJson(rows, &err);
+    }
+    if (!table) fail("BAD_ROWS", err);
+    if (table->rows.isEmpty()) fail("BAD_ROWS", "no data rows (the first line of a CSV names the columns: the slot ids)");
+    const bool dry = a["dry_run"].toBool(), overwrite = a["overwrite"].toBool();
+    const bool keepGoing = !a.contains("continue_on_error") || a["continue_on_error"].toBool();
+    const QJsonObject shared = a["values"].isObject() ? a["values"].toObject() : QJsonObject();
+
+    QHash<QString, SlotKind> kinds;
+    for (const TemplateFill::SlotRef& r : TemplateFill::listSlots(d)) kinds.insert(r.slot.id, r.slot.kind);
+    if (kinds.isEmpty()) fail("BAD_TEMPLATE", "the template has no slots to fill: " + t.name);
+    const Columns cols = columnsOf(table->columns, kinds, shared);
+    QStringList notes;
+    if (!cols.extra.isEmpty())
+        notes << QString("columns that are no slot, ignored: %1 (slots: %2)").arg(cols.extra.join(", "), QStringList(kinds.keys()).join(", "));
+    if (!cols.unfilled.isEmpty())
+        notes << QString("no column for the slot(s) %1: the template's content stays").arg(cols.unfilled.join(", "));
+
+    // File names: the pattern, else the out/name column, else "<template>-001"
+    QString pattern = a["name"].toString().trimmed();
+    if (pattern.isEmpty()) pattern = cols.nameColumn.isEmpty() ? t.id + "-{n:03}" : "{" + cols.nameColumn + "}";
+    if (const QString e = DataRows::patternError(pattern, table->columns); !e.isEmpty()) fail("BAD_ARGUMENT", e);
+    QStringList names;
+    for (int i = 0; i < table->rows.size(); ++i) {
+        const std::optional<QString> n = DataRows::fileName(pattern, table->rows[i], i + 1, cols.fileColumns, 120, &err);
+        if (!n) fail("BAD_ARGUMENT", err);
+        names << *n;
+    }
+    names = DataRows::uniqueNames(names);
+
+    const bool render = a.contains("render") && !(a["render"].isBool() && !a["render"].toBool());
+    QJsonObject renderArgs = a["render"].isObject() ? a["render"].toObject() : QJsonObject();
+    if (render && (renderArgs.contains("out") || renderArgs.contains("output")))
+        fail("BAD_ARGUMENT", "fill with rows: each video goes to out_dir/<name> (no render.out)");
+    if (render && a["render"].isString() && !QStringList{"true", "yes", "1", ""}.contains(a["render"].toString().trimmed().toLower()))
+        fail("BAD_ARGUMENT", "render: the parameters of `render` as an object ({preset?, format?, …})");
+    const QString extension = renderExtension(renderArgs);
+    if (render && overwrite) renderArgs["overwrite"] = true;
+    const QDir dir(outDir);
+    if (!dry) QDir().mkpath(dir.absolutePath());
+
+    const int count = int(table->rows.size());
+    QJsonArray results;
+    int done = 0, failed = 0, skipped = 0;
+    for (int i = 0; i < count; ++i) {
+        const QString stage = QString("row %1/%2").arg(i + 1).arg(count);
+        QJsonObject entry{{"row", i + 1}, {"name", names[i]}};
+        if (failed && !keepGoing) {
+            ++skipped;
+            continue;
+        }
+        const double share = 1.0 / count, filled = render ? 0.15 : 1.0;
+        if (ctx.stage) ctx.stage(stage);
+        if (ctx.progress) ctx.progress(i * share);
+        Context rc;
+        rc.mcp = ctx.mcp;
+        rc.partId = ctx.partId;
+        if (ctx.progress) rc.progress = [&ctx, i, share, filled](double p) { ctx.progress((i + filled + (1 - filled) * p) * share); };
+        if (ctx.stage) rc.stage = [&ctx, stage](const QString& s) { ctx.stage(stage + " " + s); };
+        const QString project = dir.absoluteFilePath(names[i] + "." + ProjectFile::Extension);
+        const QString video = dir.absoluteFilePath(names[i] + "." + extension);
+        QJsonObject fa = a;
+        for (const char* k : {"rows", "out_dir", "name", "render", "continue_on_error", "values"}) fa.remove(k);
+        QJsonArray errors;
+        try {
+            fa["values"] = rowValues(table->rows[i], cols, kinds, base, shared);
+            fa["out_project"] = project;
+            // Checked first: a value that breaks a rule is reported per slot and nothing is written
+            fa["dry_run"] = true;
+            const QJsonObject check = fillTemplate(fa, rc);
+            for (const QJsonValue& e : check["errors"].toArray()) errors << e;
+            if (!overwrite) {
+                if (QFileInfo::exists(project)) errors << QJsonObject{{"code", "EXISTS"}, {"message", "project exists (overwrite:true replaces it): " + project}};
+                if (render && QFileInfo::exists(video)) errors << QJsonObject{{"code", "EXISTS"}, {"message", "video exists (overwrite:true replaces it): " + video}};
+            }
+            if (!check["unfilled"].toArray().isEmpty()) entry["unfilled"] = check["unfilled"];
+            entry["project"] = project;
+            if (render) entry["video"] = video;
+            if (errors.isEmpty() && !dry) {
+                fa["dry_run"] = false;
+                const QJsonObject r = fillTemplate(fa, rc);
+                summarize(r, entry);
+                if (r.contains("notes")) entry["notes"] = r["notes"];
+                if (render) {
+                    QJsonObject ra = renderArgs;
+                    ra["out"] = video;
+                    const QJsonObject out = renderFilled(ra, project, rc);
+                    entry["video"] = out["out"].toString(video);
+                    if (out.contains("render_s")) entry["render_s"] = out["render_s"];
+                }
+            }
+        } catch (const Error& e) {
+            errors << QJsonObject{{"code", e.code}, {"message", e.message}};
+        }
+        if (!errors.isEmpty()) {
+            if (!dry && !QFileInfo::exists(project)) entry.remove("project");
+            if (!dry && !QFileInfo::exists(video)) entry.remove("video");
+        }
+        entry["ok"] = errors.isEmpty();
+        if (!errors.isEmpty()) entry["errors"] = errors;
+        (errors.isEmpty() ? done : failed) += 1;
+        results << entry;
+    }
+    if (ctx.progress) ctx.progress(1);
+    QJsonObject o{{"template", QJsonObject{{"id", t.id}, {"name", t.name}}},
+                  {"ok", failed == 0},
+                  {"rows", results},
+                  {"totals", QJsonObject{{"rows", count}, {"ok", done}, {"failed", failed}, {"skipped", skipped}}},
+                  {"out_dir", dir.absolutePath()},
+                  {"time_s", std::round(timer.elapsed() / 100.0) / 10}};
+    if (dry) o["dry_run"] = true;
+    if (table->separator == ';') notes << "CSV separated by ';'";
+    if (!notes.isEmpty()) o["notes"] = QJsonArray::fromStringList(notes);
+    return o;
+}
+
 } // namespace
 
 // ---------- Shared with the edit ops (EditOpsTemplate.cpp) and `info` ----------
@@ -732,7 +947,7 @@ QJsonObject cmdTemplates(const QJsonObject& a, Context& ctx)
     if (given.size() > 1)
         fail("BAD_ARGUMENT", QString("one action at a time (given: %1)").arg(given.join(", ")));
     const QString action = given.value(0);
-    if (action == "fill") return fillTemplate(a, ctx);
+    if (action == "fill") return a.contains("rows") ? fillRows(a, ctx) : fillTemplate(a, ctx);
     if (action == "project") return fillInPlace(a, ctx);
     if (action == "save") return saveTemplate(a);
     if (action == "export") return exportTemplate(a);
