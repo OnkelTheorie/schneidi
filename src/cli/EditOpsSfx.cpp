@@ -326,7 +326,13 @@ void opSfx(Session& s, const QJsonObject& op)
             }
             const auto sound = AudioAnalysis::timelineLoudness(f, alone, start, start + m.length + int(std::lround(0.4 * fps)));
             if (sound && sound->maxMomentary > -100) {
-                clipDb = mix->maxMomentary - underMix - sound->maxMomentary;
+                // The meter's 400 ms window thins a short sound out more than the ear does (it hears ~200 ms as one):
+                // a 0.1 s click gets up to 3 dB back. A riser builds for seconds and is heard as louder than its
+                // momentary loudness: 3 dB less (the user heard it far above the others at the same loudness).
+                const double seconds = double(m.length) / fps;
+                const double shortBack = 10.0 * std::log10(0.4 / std::clamp(seconds, 0.2, 0.4));
+                const double riserLess = src.kind == SfxSynth::Kind::Riser ? 3.0 : 0.0;
+                clipDb = mix->maxMomentary - underMix - sound->maxMomentary + shortBack - riserLess;
                 // ... but its peak not far over the mix's (a click made as loud as gunfire must not crack)
                 if (sound->peakDb > -100 && mix->peakDb > -100) clipDb = std::min(clipDb, mix->peakDb + 3.0 - sound->peakDb);
                 clipDb = std::clamp(clipDb, -40.0, 12.0);
