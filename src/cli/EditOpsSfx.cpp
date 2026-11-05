@@ -194,12 +194,12 @@ void opSfx(Session& s, const QJsonObject& op)
     if (!src.kind && !s.media(src.file).hasAudio) fail("NO_AUDIO", "the sound file has no audio: " + src.file);
     const QString level = op.value("level").toString("mild");
     if (level != "mild" && level != "normal") fail("BAD_ARGUMENT", "level: 'mild' or 'normal'");
-    // volume_db given: that level on the sound's peak. Else under the mix where it lands (mild 6 dB, normal 2 dB under
-    // the loudest sample of the other sound there): audible over loud game sound, quiet in a quiet part; over silence
-    // the fixed level of the kind (mild -10 dB, normal -4 dB)
+    // volume_db given: that level on the sound's peak. Else its peak just under the mix's where it lands (mild 2 dB,
+    // normal as loud): audible over loud game sound, quiet in a quiet part; over silence the fixed level of the kind
+    // (mild -10 dB, normal -4 dB on its peak)
     const bool volumeGiven = op.contains("volume_db");
     const double volume = volumeGiven ? numberOf(op, "volume_db", -60, 6) : SfxPlace::levelDb(level);
-    const double underMix = level == "normal" ? 2.0 : 6.0;
+    const double underMix = level == "normal" ? 0.0 : 2.0;
     const bool seedGiven = op.contains("seed");
     const unsigned seed = seedGiven ? unsigned(numberOf(op, "seed", 1, 1000000)) : 1;
     const ProjectFormat& f = s.format();
@@ -288,12 +288,13 @@ void opSfx(Session& s, const QJsonObject& op)
         const double evening = src.kind ? SfxSynth::levelGainDb(*src.kind, sd, length) : 0.0;
         double clipDb = volume + evening;
         if (!volumeGiven) {
-            // The sound's peak as placed at 0 dB: a built-in one at its kind's peak level, a file at its own peak
-            const std::optional<double> soundPeak = src.kind ? SfxSynth::peakLevelDb(*src.kind) : filePeakDb(s, m);
-            // Around it too (half a second each side): a short click between two shots is heard against the shots
+            // Its peak `underMix` under the loudest sample of the mix there (the master's gain applies to both). Half
+            // a second around it counts too: a short click between two shots is heard against them. In a demo cut
+            // over CS2 game sound only sounds about as loud as the shots were heard; 8 dB under them went unheard.
             const int around = int(std::lround(0.5 * fps));
-            if (const auto mix = mixPeakDb(s, start - around, start + m.length + around); soundPeak && mix && *mix > -50)
-                clipDb = std::clamp(*mix - underMix - s.project.timeline().masterVolumeDb - *soundPeak, -40.0, 6.0) + (src.kind ? evening : 0.0);
+            const auto sound = filePeakDb(s, m);
+            if (const auto mix = mixPeakDb(s, start - around, start + m.length + around); sound && mix && *mix > -50 && *sound > -100)
+                clipDb = std::clamp(*mix - underMix - s.project.timeline().masterVolumeDb - *sound, -40.0, 6.0);
         }
         // Only its sound (a video file as the sound must not overwrite the picture)
         if (s.editor.placeSourceRange(m.path, 0, m.length - 1, start, track, 1.0, true) <= 0)
@@ -387,8 +388,8 @@ void addSfxOps(QVector<OpDef>& ops)
                  "kind:'sfx'), a sound of the effects folder 'Sounds' or a file. The whoosh's peak lands on the "
                  "moment, the riser ends on it, a hit starts on it. Sparing: never two sounds closer than min_gap "
                  "(1.5 s), at most max_per_min in any minute (mild 3, normal 6), one impact per video; the answer's "
-                 "notes list what the rules left out (skipped, why). level 'mild' (default: its peak 6 dB under the mix "
-                 "there; -10 dB over silence) or 'normal' (2 dB under; -4 dB); volume_db sets it directly. All but the riser are "
+                 "notes list what the rules left out (skipped, why). level 'mild' (default: its peak 2 dB under the mix's "
+                 "there; -10 dB over silence) or 'normal' (as loud; -4 dB); volume_db sets it directly. All but the riser are "
                  "CC0 recordings (computed ones when a length is given); the riser is computed. seed: one variant (default 1-3 in turn); length: "
                  "of the sound ('2s'; a riser 0.5-8 s). Only where asked: never on every cut by default.",
                  opSfx,
