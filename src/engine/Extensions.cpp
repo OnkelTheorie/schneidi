@@ -304,8 +304,13 @@ void provideRuntime(const QString& program)
     if (!exe.absoluteFilePath().startsWith(root, Qt::CaseInsensitive)) return;
     const QDir from(QDir(QCoreApplication::applicationDirPath()).filePath("msvc-runtime"));
     const QDir to = exe.absoluteDir();
-    for (const QString& dll : from.entryList({"*.dll"}, QDir::Files))
-        if (!to.exists(dll)) QFile::copy(from.filePath(dll), to.filePath(dll));
+    // Copied under a temporary name and then renamed: a second process (or Piper starting next to the face index)
+    // never sees a half-written DLL under its real name and fails to load it
+    for (const QString& dll : from.entryList({"*.dll"}, QDir::Files)) {
+        if (to.exists(dll)) continue;
+        const QString tmp = to.filePath(dll + ".tmp-" + QUuid::createUuid().toString(QUuid::Id128));
+        if (QFile::copy(from.filePath(dll), tmp) && !QFile::rename(tmp, to.filePath(dll))) QFile::remove(tmp);
+    }
 #else
     Q_UNUSED(program);
 #endif
