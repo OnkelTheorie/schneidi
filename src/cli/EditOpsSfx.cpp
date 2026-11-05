@@ -290,7 +290,9 @@ void opSfx(Session& s, const QJsonObject& op)
         if (!volumeGiven) {
             // The sound's peak as placed at 0 dB: a built-in one at its kind's peak level, a file at its own peak
             const std::optional<double> soundPeak = src.kind ? SfxSynth::peakLevelDb(*src.kind) : filePeakDb(s, m);
-            if (const auto mix = mixPeakDb(s, start, start + m.length); soundPeak && mix && *mix > -50)
+            // Around it too (half a second each side): a short click between two shots is heard against the shots
+            const int around = int(std::lround(0.5 * fps));
+            if (const auto mix = mixPeakDb(s, start - around, start + m.length + around); soundPeak && mix && *mix > -50)
                 clipDb = std::clamp(*mix - underMix - s.project.timeline().masterVolumeDb - *soundPeak, -40.0, 6.0) + (src.kind ? evening : 0.0);
         }
         // Only its sound (a video file as the sound must not overwrite the picture)
