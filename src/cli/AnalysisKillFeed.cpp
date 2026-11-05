@@ -27,10 +27,12 @@ constexpr double kSide = 0.5;     // the right edge shows in at least this part 
 constexpr int kSideReach = 4;     // the right edge within this many pixels of where the game draws it
 constexpr int kDown = 4;          // a line stays or moves up; down only by this much (it is found a pixel lower)
 constexpr int kGone = kRate;      // a line not seen for longer (1 s) is gone, not hidden by a flash or the hit tint
-// A new line that looks like one gone up to 2 s before is that one again: the game takes a line away and shows it
-// again a moment later (when the player dies it reorders the feed). Not longer: with bots the same player is killed
-// with the same weapon again 2.1 s after the old line went away (measured; a line shown again after 2.5 s is counted)
-constexpr int kCameBack = 2 * kRate;
+constexpr int kGap = 2;           // a line missing for more samples is only the same line with the same text
+// A new line that looks like one gone up to 1 s before is that one again: the game takes a line away and shows it
+// again a moment later (when the player dies it reorders the feed: back after 0.6 s). Not longer: with bots the same
+// player is killed with the same weapon again 1.7 s after the old line went away (measured; a line shown again after
+// 2.5 s is counted)
+constexpr int kCameBack = kRate;
 constexpr double kSameLine = 0.8; // ... when this part of their bright pixels (text, icons) match
 constexpr int kBright = 170;      // luma of text and icons on the line
 
@@ -214,10 +216,19 @@ ColorEvents framedLineEvents(const MediaSource& m, const QRectF& region, const Q
             if (t - tracks[size_t(i)].last <= kGone) live.push_back(i);
         std::sort(live.begin(), live.end(), [&](int a, int b) { return tracks[size_t(a)].y < tracks[size_t(b)].y; });
         const int nf = int(now.size()), nl = int(live.size());
-        const auto fits = [&](int i, int j) {
-            const int y = now[size_t(i)].top, ty = tracks[size_t(live[size_t(j)])].y;
-            return y >= ty - span * 4 / 3 && y <= ty + down; // up by a line (and a bit), not down
-        };
+        // A find fits a track: up by a line (and a bit) or not moved, not down. After a gap (the line was hidden by a
+        // flash or the tint, or it went away) only with the same text: a new line often takes the place of one that
+        // just went
+        std::vector<char> fit(size_t(nf) * std::max(1, nl), 0);
+        for (int i = 0; i < nf; ++i)
+            for (int j = 0; j < nl; ++j) {
+                const Track& tr = tracks[size_t(live[size_t(j)])];
+                const int y = now[size_t(i)].top;
+                fit[size_t(i * nl + j)] = y >= tr.y - span * 4 / 3 && y <= tr.y + down
+                                          && (t - tr.last <= kGap
+                                              || sameContent(now[size_t(i)].sig, tr.at.back()->sig, sigW, sigH) >= kSameLine);
+            }
+        const auto fits = [&](int i, int j) { return fit[size_t(i * nl + j)] != 0; };
         // best[i][j]: matches of finds i.. with tracks j.. (count, movement)
         std::vector<std::pair<int, int>> best(size_t(nf + 1) * (nl + 1), {0, 0});
         const auto cell = [&](int i, int j) -> std::pair<int, int>& { return best[size_t(i * (nl + 1) + j)]; };
@@ -266,9 +277,16 @@ ColorEvents framedLineEvents(const MediaSource& m, const QRectF& region, const Q
         if (tr.old) continue;
         if (std::count_if(tr.seen.begin(), tr.seen.end(), [&](int k) { return k < tr.first + 4; }) < 3) continue;
         const Found& mine = *tr.at[std::min<size_t>(2, tr.at.size() - 1)]; // whole, no longer fading in
+        // How alike the gone line looked in its last half second (it fades out, maybe under the tint: the clearest)
+        const auto lastLooks = [&](const Track& g) {
+            double most = 0;
+            for (size_t k = g.at.size() > 8 ? g.at.size() - 8 : 0; k < g.at.size(); ++k)
+                most = std::max(most, sameContent(mine.sig, g.at[k]->sig, sigW, sigH));
+            return most;
+        };
         const bool cameBack = std::any_of(tracks.begin(), tracks.end(), [&](const Track& g) {
             return &g != &tr && g.last < tr.first && tr.first - g.last <= kCameBack
-                   && sameContent(mine.sig, g.at.back()->sig, sigW, sigH) >= kSameLine;
+                   && lastLooks(g) >= kSameLine;
         });
         if (!cameBack) fresh.push_back(tr.first);
     }

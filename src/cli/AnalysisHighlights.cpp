@@ -260,7 +260,7 @@ QJsonObject highlightsOne(const QJsonObject& given, Context& ctx)
 }
 
 // Raise when the analysis gives other results for the same file and settings (old cache entries are then ignored)
-constexpr int kCacheVersion = 4; // 4: CS2 kill feed lines by their frame (2 and 3 were experiments)
+constexpr int kCacheVersion = 5; // 4, 5: CS2 kill feed lines by their frame (2 and 3 were experiments)
 
 QString cacheFile(const QString& key)
 {

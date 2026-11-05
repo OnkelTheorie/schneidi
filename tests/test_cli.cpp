@@ -1688,6 +1688,22 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
                 CHECK(std::abs(kills[0] - 1.0) < 0.15);
                 CHECK(std::abs(kills[1] - 5.0) < 0.15);
             }
+            // A new line in the place of one that just went (the top slot, 0.5 s later; review 5.11.: a real kill at
+            // 28.8 s in 10-21_20-17-49 was taken for the old line, hidden for a moment): another text, a kill
+            const QString slot = Check::makeMedia(
+                dir.filePath("cs2_sameslot.mkv"),
+                {"-f", "lavfi", "-i",
+                 "color=c=0x707070:s=1920x1080:d=6:r=25," + line(74, "between(t,1,2.99)", textA) + ","
+                     + line(74, "gte(t,3.5)", textB),
+                 "-c:v", "ffv1", "-pix_fmt", "bgr0"});
+            QVector<double> slotKills;
+            for (const QJsonValue& c : run("highlights", {{"file", slot}})["candidates"].toArray())
+                for (const QJsonValue& k : c["kill_s"].toArray()) slotKills << k.toDouble();
+            std::sort(slotKills.begin(), slotKills.end());
+            if (CHECK_EQ(slotKills.size(), 2)) {
+                CHECK(std::abs(slotKills[0] - 1.0) < 0.15);
+                CHECK(std::abs(slotKills[1] - 3.5) < 0.15);
+            }
         }
         // Without sound: the frame the line began to show
         if (const QJsonObject c = hl["candidates"][0].toObject(); CHECK(c["hit_s"].isArray())) {
