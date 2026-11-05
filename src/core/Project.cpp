@@ -68,6 +68,19 @@ private:
     int m_curBefore, m_curAfter;
 };
 
+// The project's own brand kit set or removed (Project::setBrand)
+class BrandCommand : public QUndoCommand {
+public:
+    BrandCommand(Project* p, const QString& text, std::optional<BrandKit> before, std::optional<BrandKit> after)
+        : QUndoCommand(text), m_project(p), m_before(std::move(before)), m_after(std::move(after)) {}
+    void undo() override { m_project->applyBrand(m_before); }
+    void redo() override { m_project->applyBrand(m_after); }
+
+private:
+    Project* m_project;
+    std::optional<BrandKit> m_before, m_after;
+};
+
 // Change Media Pool organization (bins, clip colors, flags) - undoable as in DaVinci
 class PoolCommand : public QUndoCommand {
 public:
@@ -233,6 +246,7 @@ ProjectData Project::data() const
     d.fixedResolution = m_fixedResolution;
     d.fixedFrameRate = m_fixedFrameRate;
     d.importPresets = m_importPresets;
+    d.brand = m_brand;
     d.watchFolders = m_watchFolders;
     d.watchLog = m_watchLog;
     d.watchRevision = m_watchRevision;
@@ -321,6 +335,7 @@ void Project::load(const ProjectData& d)
     m_fixedResolution = d.fixedResolution;
     m_fixedFrameRate = d.fixedFrameRate;
     m_importPresets = d.importPresets;
+    m_brand = d.brand;
     m_watchFolders = d.watchFolders;
     for (WatchFolder& w : m_watchFolders)
         if (w.bin != 0 && !bin(w.bin)) w.bin = 0;
@@ -345,6 +360,7 @@ void Project::load(const ProjectData& d)
     emit timelineChanged();
     emit renderQueueChanged();
     emit importPresetsChanged();
+    emit brandChanged();
     emit watchFoldersChanged();
     emit loaded();
 }
@@ -928,6 +944,19 @@ void Project::setImportPresets(const std::optional<StreamPresets>& presets)
     m_importPresets = presets;
     emit importPresetsChanged();
     markModified();
+}
+
+void Project::setBrand(const std::optional<BrandKit>& brand)
+{
+    const std::optional<BrandKit> b = brand ? std::optional<BrandKit>(brand->clamped()) : std::nullopt;
+    if (b == m_brand) return;
+    m_undo.push(new BrandCommand(this, b ? T("Brand-Kit des Projekts") : T("Globales Brand-Kit verwenden"), m_brand, b));
+}
+
+void Project::applyBrand(const std::optional<BrandKit>& brand)
+{
+    m_brand = brand;
+    emit brandChanged();
 }
 
 void Project::setWatchFolders(const QVector<WatchFolder>& list)

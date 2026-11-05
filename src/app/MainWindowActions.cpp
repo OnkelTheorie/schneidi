@@ -8,6 +8,7 @@
 #include "app/Theme.h"
 #include "app/KeyBindingsDialog.h"
 #include "app/ClipSpeedDialog.h"
+#include "app/BrandKitDialog.h"
 #include "app/DesignDialog.h"
 #include "app/Log.h"
 #include "app/NormalizeDialog.h"
@@ -742,6 +743,36 @@ void MainWindow::buildActions()
         if (DesignDialog(this).exec() == QDialog::Accepted && Theme::restartNeeded())
             offerRestart(T("Das Design ändert sich nach dem Neustart von schneidi."), T("Jetzt neu starten"), T("Später"));
     });
+    // Brand kit (0.18): the global kit or the project's own; titles that reference it follow (one undo step). Logo and
+    // intro/outro go into the timeline only when asked for here.
+    QMenu* brandMenu = workspace->addMenu(T("Brand-Kit"));
+    makeAction(brandMenu, "brand_kit", T("Brand-Kit…"), QKeySequence(), [this] { editBrandKit(); });
+    brandMenu->addSeparator();
+    // A kit file into the Media Pool (the Editor ops place only what is there); false = no such file
+    auto brandMedia = [this](const QString& path, const QString& none) {
+        if (path.isEmpty() || !QFileInfo::exists(path)) {
+            QMessageBox::information(this, T("Brand-Kit"),
+                                     path.isEmpty() ? none : T("Datei nicht gefunden: %1").arg(path));
+            return false;
+        }
+        if (!m_project->mediaInfo(path)) m_mediaPool->importFiles({path});
+        return m_project->mediaInfo(path) != nullptr;
+    };
+    makeAction(brandMenu, "brand_logo", T("Logo einfügen"), QKeySequence(), [this, brandMedia] {
+        if (!brandMedia(m_project->effectiveBrand().logo, T("Das Brand-Kit hat kein Logo."))) return;
+        if (!m_editor->addBrandLogo())
+            QMessageBox::information(this, T("Brand-Kit"), T("Die Timeline ist leer: das Logo kommt über ihre ganze Länge."));
+    });
+    makeAction(brandMenu, "brand_intro_outro", T("Intro/Outro einfügen"), QKeySequence(), [this, brandMedia] {
+        const BrandKit kit = m_project->effectiveBrand();
+        if (kit.intro.isEmpty() && kit.outro.isEmpty()) {
+            brandMedia({}, T("Das Brand-Kit hat kein Intro und kein Outro."));
+            return;
+        }
+        if (!kit.intro.isEmpty() && !brandMedia(kit.intro, {})) return;
+        if (!kit.outro.isEmpty() && !brandMedia(kit.outro, {})) return;
+        m_editor->addIntroOutro();
+    });
     // Viewer zoom (pure display; the timeline view is not touched): fit, 50/100/200 %, menu also on the viewer's bar.
     // Alt+digits target tracks/multicam angles, so only fit has a default key (Ctrl+wheel over the picture zooms)
     // At 100 % and more the preview comes at the project size instead of scaled down
@@ -792,4 +823,18 @@ void MainWindow::buildActions()
         InputBindings::instance().shieldWindowKeys(panel, removing);
 
     InputBindings::instance().saveIfIncomplete();
+}
+
+void MainWindow::editBrandKit()
+{
+    BrandKitDialog dlg(Brand::global(), m_project->brand(), this);
+    if (dlg.exec() != QDialog::Accepted) return;
+    const BrandKit global = dlg.global();
+    if (global != Brand::global()) {
+        QString err;
+        if (!Brand::setGlobal(global, &err)) QMessageBox::warning(this, T("Brand-Kit"), err);
+    }
+    // The project's own kit (changed: set + applied as one step) or the global one applied
+    if (dlg.project() != m_project->brand()) m_editor->setProjectBrand(dlg.project());
+    else m_editor->applyBrand();
 }

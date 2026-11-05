@@ -119,6 +119,7 @@ add_library(schneidi_lib STATIC
     src/core/EditorMulticam.cpp
     src/core/EditorReframe.cpp
     src/core/EditorMusic.cpp
+    src/core/EditorBrand.cpp
     src/core/EditorStory.cpp
     src/core/Reframe.h            src/core/Reframe.cpp
     src/core/RoomTone.h           src/core/RoomTone.cpp
@@ -152,6 +153,7 @@ add_library(schneidi_lib STATIC
     src/core/InterchangeEdl.cpp   src/core/InterchangeFcp7.cpp  src/core/InterchangeOtio.cpp
     src/core/StreamPresets.h      src/core/StreamPresets.cpp
     src/core/StartTemplates.h     src/core/StartTemplates.cpp
+    src/core/BrandKit.h           src/core/BrandKit.cpp
     src/core/Ducking.h            src/core/Ducking.cpp
     src/core/ExportCheck.h        src/core/ExportCheck.cpp src/core/ExportCheckStory.cpp
     src/core/Stutter.h            src/core/Stutter.cpp
@@ -271,6 +273,7 @@ add_library(schneidi_lib STATIC
     src/app/NormalizeDialog.h src/app/NormalizeDialog.cpp
     src/app/StreamPresetsDialog.h src/app/StreamPresetsDialog.cpp
     src/app/StartTemplatesPage.h src/app/StartTemplatesPage.cpp
+    src/app/BrandKitDialog.h src/app/BrandKitDialog.cpp
     src/app/DuckingDialog.h src/app/DuckingDialog.cpp
     src/app/MulticamDialog.h src/app/MulticamDialog.cpp
     src/app/ExtensionsDialog.h  src/app/ExtensionsDialog.cpp
@@ -424,7 +427,7 @@ target_link_libraries(schneidi PRIVATE schneidi_lib schneidi_cli_lib) # live con
 add_library(schneidi_cli_lib STATIC
     src/cli/Commands.h src/cli/Commands.cpp src/cli/CommandsDetail.h src/cli/CommandsProject.cpp
     src/cli/RenderReview.cpp
-    src/cli/CommandsWatch.cpp src/cli/CommandsShort.cpp
+    src/cli/CommandsWatch.cpp src/cli/CommandsShort.cpp src/cli/CommandsBrand.cpp
     src/cli/EditOps.cpp src/cli/EditOpsTimelines.cpp src/cli/EditOpsLook.cpp
     src/cli/EditOpsAudio.cpp src/cli/EditOpsEdit.cpp src/cli/EditOpsMulticam.cpp
     src/cli/EditOpsStory.cpp src/cli/EditOpsMusic.cpp src/cli/EditOpsSfx.cpp src/cli/EditOpsTalk.cpp

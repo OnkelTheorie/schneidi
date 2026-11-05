@@ -27,12 +27,26 @@ const QString kStyleFields = "font, size, color, bold, italic, align (left|cente
                              "outline_width, box, box_color, box_padding. x/y move the CENTRE of the text block "
                              "(like DaVinci); align only lines up the lines inside the block, it does not move the "
                              "block to an edge. For text at the left edge: align left and x = -(width/2) + margin + "
-                             "half the text width (or check with `frames`). The outline is drawn outside the letters";
+                             "half the text width (or check with `frames`). The outline is drawn outside the letters. "
+                             "color/outline_color/box_color \"brand1\"..\"brand4\" and font \"brand1\"/\"brand2\" "
+                             "take the brand kit's (see `brand`) and follow it when it changes";
 // The keys applyStyle reads (the ones kStyleFields names)
 const QStringList kStyleKeys{"font", "size", "color", "bold", "italic", "align", "x", "y", "outline", "outline_color",
                              "outline_width", "box", "box_color", "box_padding"};
 
-bool applyStyle(TitleStyle& t, const QJsonObject& op)
+// "brand1".."brand4" (any case, also "brand 1"): the brand kit reference n; 0 = a fixed value
+int brandRef(const QJsonValue& v, int max)
+{
+    const QString s = v.toString().trimmed().toLower().remove(' ');
+    if (!s.startsWith("brand")) return 0;
+    bool ok = false;
+    const int n = s.mid(5).toInt(&ok);
+    if (!ok || n < 1 || n > max)
+        fail("BAD_ARGUMENT", QString("brand references go from brand1 to brand%1, got '%2'").arg(max).arg(v.toString()));
+    return n;
+}
+
+bool applyStyle(TitleStyle& t, const QJsonObject& op, const BrandKit& kit)
 {
     bool any = false;
     const auto num = [&](const char* k, double* v, double lo, double hi) {
@@ -40,9 +54,11 @@ bool applyStyle(TitleStyle& t, const QJsonObject& op)
         *v = numberOf(op, k, lo, hi);
         any = true;
     };
-    const auto color = [&](const char* k, QColor* v) {
+    // A brand reference keeps the stored value until the kit has that colour (Brand::resolve below)
+    const auto color = [&](const char* k, QColor* v, int* ref) {
         if (!op.contains(k)) return;
-        *v = colorOf(op.value(k), k);
+        *ref = brandRef(op.value(k), BrandKit::kMaxColors);
+        if (!*ref) *v = colorOf(op.value(k), k);
         any = true;
     };
     const auto flag = [&](const char* k, bool* v) {
@@ -51,11 +67,12 @@ bool applyStyle(TitleStyle& t, const QJsonObject& op)
         any = true;
     };
     if (op.contains("font")) {
-        t.font = op.value("font").toString();
+        t.fontRef = brandRef(op.value("font"), BrandKit::kMaxFonts);
+        if (!t.fontRef) t.font = op.value("font").toString();
         any = true;
     }
     num("size", &t.size, 1, 1000);
-    color("color", &t.color);
+    color("color", &t.color, &t.colorRef);
     flag("bold", &t.bold);
     flag("italic", &t.italic);
     if (op.contains("align")) {
@@ -67,11 +84,12 @@ bool applyStyle(TitleStyle& t, const QJsonObject& op)
     num("x", &t.posX, -10000, 10000);
     num("y", &t.posY, -10000, 10000);
     flag("outline", &t.outlineOn);
-    color("outline_color", &t.outlineColor);
+    color("outline_color", &t.outlineColor, &t.outlineRef);
     num("outline_width", &t.outlineWidth, 0, 200);
     flag("box", &t.boxOn);
-    color("box_color", &t.boxColor);
+    color("box_color", &t.boxColor, &t.boxRef);
     num("box_padding", &t.boxPad, 0, 500);
+    if (any) Brand::resolve(t, kit);
     return any;
 }
 
@@ -244,7 +262,7 @@ void opTitle(Session& s, const QJsonObject& op)
     TitleStyle style = TimelineOps::findClip(s.project.timeline(), id)->title;
     if (created && style.kind == TitleKind::Text) style.text = "Title";
     if (op.contains("text")) style.text = op.value("text").toString();
-    applyStyle(style, op);
+    applyStyle(style, op, s.project.effectiveBrand());
     applyGenerator(style, op);
     s.editor.modifyClips({id}, "Title", [&](Clip& c) { c.title = style; });
 }
@@ -414,7 +432,7 @@ void opTrack(Session& s, const QJsonObject& op)
         if (op.contains("enabled")) ed.setSubtitleTrackEnabled(index, op.value("enabled").toBool());
         if (op.contains("lock") && op.value("lock").toBool() != t.locked) ed.toggleSubtitleTrackLock(index);
         TitleStyle style = s.project.timeline().subtitles[index].style;
-        if (applyStyle(style, op)) ed.setSubtitleStyle(index, "Subtitle style", [&](TitleStyle& x) { x = style; });
+        if (applyStyle(style, op, s.project.effectiveBrand())) ed.setSubtitleStyle(index, "Subtitle style", [&](TitleStyle& x) { x = style; });
         CaptionStyle captions = s.project.timeline().subtitles[index].captions;
         if (applyCaptions(captions, op, "captions")) ed.setSubtitleCaptions(index, captions);
         return;
@@ -510,7 +528,7 @@ void opCaptions(Session& s, const QJsonObject& op)
     if (cues.isEmpty()) fail("NO_SPEECH", "no words to make captions of");
     const int index = s.editor.addCaptions(cues, op.value("name").toString(), captions);
     TitleStyle text = s.project.timeline().subtitles[index].style;
-    if (applyStyle(text, op)) s.editor.setSubtitleStyle(index, "Subtitle style", [&](TitleStyle& x) { x = text; });
+    if (applyStyle(text, op, s.project.effectiveBrand())) s.editor.setSubtitleStyle(index, "Subtitle style", [&](TitleStyle& x) { x = text; });
     if (style == "beat" && words.size() > o.beats.size())
         s.notes << QString("only %1 of %2 words got a beat (the beats ended)").arg(o.beats.size()).arg(words.size());
 }

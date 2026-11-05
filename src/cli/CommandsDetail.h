@@ -244,6 +244,7 @@ QJsonObject cmdEffects(const QJsonObject& a, Context& ctx);
 QJsonObject cmdApp(const QJsonObject& a, Context& ctx);
 QJsonObject cmdWatch(const QJsonObject& a, Context& ctx); // CommandsWatch.cpp
 QJsonObject cmdShort(const QJsonObject& a, Context& ctx); // CommandsShort.cpp
+QJsonObject cmdBrand(const QJsonObject& a, Context& ctx); // CommandsBrand.cpp
 // What `import` and `watch` say when a video arrives in a project whose timelines are all empty and whose frame rate
 // differs from the video's (the `format` op can still match it); empty = nothing to say
 QString frameRateNote(const Project& p, const QString& video);

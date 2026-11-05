@@ -128,3 +128,4 @@ Read the guide that fits the task (several if it combines them):
 | Checking a render before handing it over | [references/check.md](references/check.md) |
 | Automation: new recordings in a folder → cut → render, without anyone clicking | [references/automation.md](references/automation.md) |
 | Story: hook, sections, notes, plan first, review render | [references/story.md](references/story.md) |
+| Brand kit: logo, brand colors and fonts in titles, intro/outro | [references/brand.md](references/brand.md) |

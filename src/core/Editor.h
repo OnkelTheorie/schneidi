@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
+#include "core/BrandKit.h"
 #include "core/Ducking.h"
 #include "core/GradeWindows.h"
 #include "core/NameBlur.h"
@@ -426,6 +427,22 @@ public:
     // Grade of the video clip `back` places before `clipId` in timeline order (start, then lower track first);
     // false = there is no such clip
     bool applyGradeFromPrevious(int clipId, int back);
+
+    // ---- Brand kit (core/BrandKit.h, 0.18) ----
+    // Copies the effective kit (the project's own, else the global one) into everything that references it: titles on
+    // all timelines and the styles of subtitle tracks. A missing brand colour/font keeps the stored value; values
+    // without a reference stay. One undo step; nothing changes = no step (returns false).
+    bool applyBrand();
+    // The project's own kit (none = the global one again) and applyBrand, as one undo step; unchanged = no step
+    void setProjectBrand(const std::optional<BrandKit>& brand);
+    // The kit's logo as a still/video clip on a new video track on top of timeline `sequence` (0 = the open one) over
+    // its whole length, at the kit's corner and size. The logo must be in the Media Pool. One undo step; returns the
+    // clip id (0 = no logo, not in the pool, or an empty timeline).
+    int addBrandLogo(int sequence = 0);
+    // The kit's intro at the start of the open timeline (everything on unlocked tracks moves right by its length) and
+    // its outro after the end, on V1/A1. Both must be in the Media Pool (one of them is enough). One undo step;
+    // false = neither placed (none set, not in the pool, V1 locked).
+    bool addIntroOutro();
 
     // ---- Subtitles (DaVinci Subtitle Tracks, core/Subtitles.h) ----
     // Subtitle entries share the selection with the clips (own ids from the same counter)

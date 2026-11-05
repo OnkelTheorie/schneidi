@@ -14,6 +14,8 @@ Ads run on fixed slots; 15.4 s is wrong.
 - Images (logo, product photo) are media like video: `append`/`place` them; they last 5 s unless you set `in`/`out`.
 - Logo over a background: logo on V2, `transform` `zoom` to size it (an image is fitted to the frame first), a
   short `fade` in. Transparent PNGs keep their transparency.
+- The user's brand kit (`brand`: logo, colors, fonts, intro/outro) when they have one: titles with `color`
+  `"brand1"` follow it, `brand` `action` `"logo"` places the logo ([brand.md](brand.md)).
 - Text: `title` with a clear style - big `size`, `bold`, `outline` or `box` for contrast. Check placement with
   `frames`.
 - Music from the start, cut to the exact end, `fade` out over the last 0.5-1 s; about -14 LUFS ([audio.md](audio.md)).
