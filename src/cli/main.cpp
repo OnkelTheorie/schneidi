@@ -126,7 +126,22 @@ int main(int argc, char* argv[])
         print({{"ok", true}, {"version", QCoreApplication::applicationVersion()}, {"api_version", Cli::ApiVersion}}, pretty);
         return 0;
     }
-    const QString name = args.takeFirst();
+    QString name = args.takeFirst();
+    // `template <action> [value] …` = `templates --<action> value …` (info, fill, save, import, export, remove, rename;
+    // list = all)
+    if (name == "template") {
+        name = "templates";
+        if (!args.isEmpty() && !args.first().startsWith("--")) {
+            const QString action = args.takeFirst().replace('-', '_');
+            if (action != "list") {
+                if (args.isEmpty() || args.first().startsWith("--")) {
+                    print(errorJson("USAGE", QString("template %1 needs a value (template id, project or file)").arg(action)), pretty);
+                    return 2;
+                }
+                args = QStringList{"--" + action, args.takeFirst()} + args;
+            }
+        }
+    }
     if (name == "setup") return Cli::Setup::run(args, pretty);
 
     // The HTTP server only routes: the engine runs in its workers (`mcp` processes)

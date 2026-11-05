@@ -59,8 +59,10 @@ QStringList listOf(const QString& s)
     return out;
 }
 
+} // namespace
+
 // The fields given in `a` over `k`; an empty string clears a file/list
-BrandKit withFields(BrandKit k, const QJsonObject& a)
+BrandKit brandWithFields(BrandKit k, const QJsonObject& a)
 {
     auto path = [](const QString& s) { return s.trimmed().isEmpty() ? QString() : absolute(s.trimmed()); };
     if (a.contains("logo")) k.logo = path(a["logo"].toString());
@@ -91,6 +93,8 @@ BrandKit withFields(BrandKit k, const QJsonObject& a)
     return k.clamped();
 }
 
+namespace {
+
 bool hasFields(const QJsonObject& a)
 {
     for (const char* key : {"logo", "logo_corner", "logo_size", "colors", "fonts", "intro", "outro"})
@@ -118,7 +122,7 @@ QJsonObject cmdBrand(const QJsonObject& a, Context&)
     QJsonObject out;
     // Setting the global kit needs no project; with one, the project gets it applied below
     if (action == "set" && global) {
-        const BrandKit kit = withFields(Brand::global(), a);
+        const BrandKit kit = brandWithFields(Brand::global(), a);
         QString err;
         if (!Brand::setGlobal(kit, &err)) fail("SAVE_FAILED", err);
     }
@@ -131,7 +135,7 @@ QJsonObject cmdBrand(const QJsonObject& a, Context&)
     Session s(project, writes ? Session::Access::Write : Session::Access::Read);
     Project& p = s.project;
     if (action == "set" && !global) {
-        s.editor.setProjectBrand(withFields(p.effectiveBrand(), a)); // starts from what applies now
+        s.editor.setProjectBrand(brandWithFields(p.effectiveBrand(), a)); // starts from what applies now
     } else if (action == "unset") {
         if (!p.brand()) s.notes << "the project has no own kit: nothing to unset";
         s.editor.setProjectBrand(std::nullopt);

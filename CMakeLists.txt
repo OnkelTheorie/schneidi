@@ -157,6 +157,7 @@ add_library(schneidi_lib STATIC
     src/core/BrandKit.h           src/core/BrandKit.cpp
     src/core/TemplateLibrary.h    src/core/TemplateLibrary.cpp
     src/core/TemplateFill.h       src/core/TemplateFill.cpp
+    src/core/Zip.h                src/core/Zip.cpp
     src/core/Ducking.h            src/core/Ducking.cpp
     src/core/ExportCheck.h        src/core/ExportCheck.cpp src/core/ExportCheckStory.cpp
     src/core/Stutter.h            src/core/Stutter.cpp
@@ -439,10 +440,11 @@ target_link_libraries(schneidi PRIVATE schneidi_lib schneidi_cli_lib) # live con
 add_library(schneidi_cli_lib STATIC
     src/cli/Commands.h src/cli/Commands.cpp src/cli/CommandsDetail.h src/cli/CommandsProject.cpp
     src/cli/RenderReview.cpp
-    src/cli/CommandsWatch.cpp src/cli/CommandsShort.cpp src/cli/CommandsBrand.cpp
+    src/cli/CommandsWatch.cpp src/cli/CommandsShort.cpp src/cli/CommandsBrand.cpp src/cli/CommandsTemplate.cpp
     src/cli/EditOps.cpp src/cli/EditOpsTimelines.cpp src/cli/EditOpsLook.cpp
     src/cli/EditOpsAudio.cpp src/cli/EditOpsEdit.cpp src/cli/EditOpsMulticam.cpp
     src/cli/EditOpsStory.cpp src/cli/EditOpsMusic.cpp src/cli/EditOpsSfx.cpp src/cli/EditOpsTalk.cpp
+    src/cli/EditOpsTemplate.cpp
     src/cli/AnalysisDetail.h src/cli/Analysis.cpp src/cli/AnalysisAudio.cpp src/cli/AnalysisVideo.cpp src/cli/AnalysisPicture.cpp
     src/cli/AnalysisHighlights.cpp src/cli/AnalysisCheck.cpp src/cli/AnalysisOverview.cpp src/cli/AnalysisBeats.cpp
     src/cli/CommandsIndex.cpp

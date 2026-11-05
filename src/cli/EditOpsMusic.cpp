@@ -79,6 +79,8 @@ Beats::Result beatsFrom(const QJsonObject& o)
     return r;
 }
 
+} // namespace
+
 // Key of a song in the cache and in `_beats`: file, size, time, stream
 QString beatsKey(const QString& path, int stream)
 {
@@ -92,15 +94,16 @@ QString beatsKey(const QString& path, int stream)
     return QString::fromLatin1(QCryptographicHash::hash(id.toUtf8(), QCryptographicHash::Sha1).toHex());
 }
 
+namespace {
+
 QString cacheFile(const QString& key)
 {
     return QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + "/beats/" + key + ".json";
 }
 
-// The whole file's beats (times from the file start); throws NO_AUDIO / NO_BEAT. `given` = beats schneidi-cli
-// measured before (live: `_beats` of the op)
-Beats::Result songBeats(const ProjectFormat& f, const MediaInfo& m, int stream, const QJsonObject& given,
-                        Context* ctx = nullptr)
+} // namespace
+
+Beats::Result songBeats(const ProjectFormat& f, const MediaInfo& m, int stream, const QJsonObject& given, Context* ctx)
 {
     if (!m.hasAudio) fail("NO_AUDIO", "file has no audio: " + m.path);
     const QString key = beatsKey(m.path, stream);
@@ -151,6 +154,10 @@ Beats::Result songBeats(const ProjectFormat& f, const MediaInfo& m, int stream, 
         fail("NO_BEAT", QString("no beat found in %1 (silence, or shorter than four beats)").arg(QFileInfo(m.path).fileName()));
     return *r;
 }
+
+QJsonObject songBeatsJson(const Beats::Result& r) { return beatsJson(r); }
+
+namespace {
 
 int streamOf(const QJsonObject& op, const MediaInfo& m, int fallback)
 {

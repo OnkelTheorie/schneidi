@@ -438,6 +438,7 @@ QJsonObject clipJson(const Project& p, const Clip& c, TrackRef ref)
         }
     }
     if (c.linkId) o["link"] = c.linkId;
+    if (c.slot.isSet()) o["slot"] = slotJson(c.slot, f); // a template placeholder
     if (!c.enabled) o["enabled"] = false;
     if (ref.kind == TrackKind::Audio && c.volumeDb != 0) o["volume_db"] = c.volumeDb;
     if (ref.kind == TrackKind::Audio && c.pan != 0) o["pan"] = c.pan;
@@ -760,11 +761,42 @@ const QVector<Command>& commands()
           {"overwrite", T::Boolean, "replace an existing project (its last state goes into the backups; not while "
                                     "it is open in the app)"}},
          cmdNew},
-        {"templates", "List the start templates for `new`: built-in ones and the user's own (made in the app: File › "
-                      "Save as Start Template), which one is the default, and what each sets: format (fixed_resolution "
-                      "/ fixed_frame_rate: the first clip does not change it), tracks with names and states, master, "
-                      "import_presets (own import presets for audio streams; absent = the user's settings).",
-         {{"template", T::String, "only this one (id, name or file)", false, true}},
+        {"templates", "Templates. Start templates (format + tracks, for `new`) and content templates (a project with "
+                      "placeholder slots: clips, texts, music, logo). Without parameters: the list of both (kind "
+                      "start|content). info: a content template's slots with their rules. fill: a new project from a "
+                      "content template with your values (checked against the rules; the answer says what was "
+                      "adjusted: trimmed, slowed, shrunk …), optionally rendered. project + values: fill the slots of "
+                      "that project in place (\"@app\": one undo step). save/remove/rename own templates, "
+                      "export/import a template as ZIP.",
+         {{"template", T::String, "only this one (id, name or file): a start template as before, a content template "
+                                  "with its info", false, true},
+          {"info", T::String, "content template (id, name, folder, .schneidi or \"@app\"): slots, rules, where they "
+                              "are, what they hold, brand references"},
+          {"fill", T::String, "content template to fill (id, name or path); needs out_project"},
+          {"values", T::Object, "slot id -> \"file\" | {file, from?, to?} (source times) | \"text\" (text slots)"},
+          {"out_project", T::Path, "fill: the new project file (.schneidi)"},
+          {"project", T::Path, "fill the slots of this project in place (with values) instead of a new one"},
+          {"render", T::Object, "fill: render the result, parameters of `render` (out default: out_project as .mp4)"},
+          {"brand", T::Object, "fill: \"global\" (default: the kit that applies), \"none\", or kit fields as in "
+                               "`brand set` (the project's own kit)"},
+          {"reframe", T::String, "\"cached\" (default: auto reframe where analysed before, else center) or \"auto\" "
+                                 "(measure now, slower)"},
+          {"strict", T::Boolean, "unfilled slots are errors (default: warnings)"},
+          {"dry_run", T::Boolean, "only check the values, write nothing"},
+          {"overwrite", T::Boolean, "replace an existing out_project / zip (the old project goes into the backups)"},
+          {"copy_media", T::Boolean, "fill: copy the template's own media next to out_project; save: copy the used "
+                                     "media into the template (default true for both)"},
+          {"save", T::Path, "save this project (or \"@app\") as own content template (needs name)"},
+          {"name", T::String, "save/rename: the template's name"},
+          {"description", T::String, "save: what the template is for"},
+          {"tags", T::String, "save: comma list"},
+          {"preview", T::Path, "save: preview video or picture"},
+          {"replace", T::Boolean, "save/import: replace an own template with the same id"},
+          {"remove", T::String, "delete this own template (id)"},
+          {"rename", T::String, "own template (id) to give `name`"},
+          {"export", T::String, "template (id or name) to write as ZIP into `zip`"},
+          {"zip", T::Path, "export: the ZIP file to write"},
+          {"import", T::Path, "a template ZIP to add to the own templates"}},
          cmdTemplates},
         {"info", "Show a project: format, media, its timelines and one timeline's tracks and clips (ids, positions, "
                  "source ranges). Each track shows its header and mixer state when not default: name, color, muted, "
@@ -1338,6 +1370,9 @@ bool runsInApp(const Command& cmd, const QJsonObject& args)
     // The brand kit: everything but showing changes the project (set of the global kit applies it to the project)
     if (cmd.name == "brand")
         return !args["project"].toString().isEmpty() && args["action"].toString("show").trimmed().toLower() != "show";
+    // Filling the slots of the open project in place (not a new project from a template, not a check)
+    if (cmd.name == "templates")
+        return !args["project"].toString().isEmpty() && !args["dry_run"].toBool() && !args.contains("fill");
     // A plan is made, run or discarded there too: the app shows it (cli/Live.h) and its state is the app's project
     return cmd.name == "edit"
            && (!args["dry_run"].toBool() || args["plan"].toBool() || args.contains("plan_id"));
@@ -1355,6 +1390,7 @@ QJsonObject execute(const Command& cmd, const QJsonObject& args0, Context& ctx)
             if (cmd.name == "edit") args = prepareMusic(args, ctx); // beats of songs here, not in the app
             if (cmd.name == "edit") args = prepareTalk(args, ctx); // whisper for rough_cut here, not in the app
             if (cmd.name == "edit") args = prepareSfx(args, ctx); // the kill feed for sfx on:'kills' here, not in the app
+            if (cmd.name == "edit" || cmd.name == "templates") args = prepareTemplateFill(cmd.name, args, ctx); // songs' beats
             QJsonObject result = Live::run(c, cmd.name, args);
             result["live"] = true;
             return result;
@@ -1399,6 +1435,7 @@ QJsonObject inputSchema(const Command& cmd)
         case ParamType::Paths: s["type"] = "array"; s["items"] = QJsonObject{{"type", "string"}}; break;
         case ParamType::Sources: s["type"] = "array"; s["items"] = QJsonObject{{"type", QJsonArray{"string", "object"}}}; break;
         case ParamType::Json: s["type"] = "array"; s["items"] = QJsonObject{{"type", "object"}}; break;
+        case ParamType::Object: s["type"] = QJsonArray{"object", "string"}; break;
         }
         props[p.name] = s;
         if (p.required) required << p.name;
@@ -1564,6 +1601,18 @@ QJsonObject normalize(const Command& cmd, const QJsonObject& given)
             out[p.name] = arr;
             break;
         }
+        case ParamType::Object:
+            if (v.isString() && str.trimmed().startsWith('{')) {
+                QJsonParseError err;
+                const QJsonDocument doc = QJsonDocument::fromJson(str.toUtf8(), &err);
+                if (err.error != QJsonParseError::NoError || !doc.isObject())
+                    fail("BAD_ARGUMENT", QString("%1: invalid JSON object (%2)").arg(p.name, err.errorString()));
+                out[p.name] = doc.object();
+            } else {
+                out[p.name] = v;
+                ok = v.isObject() || v.isString();
+            }
+            break;
         case ParamType::Json:
             if (v.isString()) {
                 QJsonParseError err;
