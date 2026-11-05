@@ -458,6 +458,7 @@ void fillMedia(ProjectData& d, Timeline& tl, const SlotRef& r, const MediaInfo& 
     }
     if (!fitted) parts = plan(base, r, m, rg, fps, rep);
     if (r.slot.kind == SlotKind::Music) {
+        if (r.slot.snapCuts) rep.warnings << "snapCuts: cuts are not moved onto the beat by the fill (op snap_to_beat)";
         for (Clip& c : parts.clips) c.linkId = 0; // a new song is not in sync with a picture
         if (!fitted && rep.adjusted.contains("trimmed")) {
             Clip& last = parts.clips.last();
@@ -497,26 +498,27 @@ void fillMedia(ProjectData& d, Timeline& tl, const SlotRef& r, const MediaInfo& 
             rep.adjusted << "no_sound";
             setText(rep, "the file has no sound: linked audio removed");
         } else {
-            bool firstSound = true;
+            const auto sounding = [&](int i) { return !parts.clips[i].freeze && parts.clips[i].linkId; };
+            int lastSounding = 0; // a frozen tail is silent: the sound's own end (fade) goes on the part before it
+            for (int i = 0; i < parts.clips.size(); ++i)
+                if (sounding(i)) lastSounding = i;
             for (int i = 0; i < parts.clips.size(); ++i) {
                 const Clip& p = parts.clips[i];
-                if (p.freeze || !p.linkId) continue;
+                if (!sounding(i)) continue;
                 for (const Sound& s : sound) {
                     Clip a = prepared(s.clip, m);
                     a.keys = s.clip.keys;
                     shiftKeys(a, p.in - s.clip.in);
-                    a.id = firstSound ? s.clip.id : newId();
+                    a.id = i == 0 ? s.clip.id : newId(); // the first part keeps the sound clips' ids
                     a.start = p.start;
                     a.in = p.in;
                     a.out = p.out;
                     a.speed = p.speed;
                     a.linkId = p.linkId;
                     if (i > 0) a.transIn = 0, a.fadeIn = 0, a.transInAlone = false;
-                    if (i + 1 < parts.clips.size()) a.transOut = 0, a.fadeOut = 0, a.transOutAlone = false;
+                    if (i < lastSounding) a.transOut = 0, a.fadeOut = 0, a.transOutAlone = false;
                     TimelineOps::placeClip(tl.audio[s.track], a, newId);
-                    firstSound = false;
                 }
-                firstSound = false;
             }
         }
     }

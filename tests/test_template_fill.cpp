@@ -304,7 +304,9 @@ void testClipFixed()
     { // Freeze: the last frame holds for the rest (no sound there); filled again it is one clip again
         ProjectData d = project();
         slotOf(d, 1).fit = SlotFit::Freeze;
+        d.timeline.audio[0].clips[0].fadeOut = 10; // the sound's own fade-out stays at its (earlier) end
         const SlotReport s = only(apply(d, {{"clip1", Value::ofFile(kShort)}}, ctx));
+        CHECK_EQ(find(d, 3)->fadeOut, 10);
         CHECK(s.adjusted.contains("frozen"));
         CHECK_EQ(int(d.timeline.video[0].clips.size()), 3);
         const Clip& a = d.timeline.video[0].clips[0];

@@ -534,7 +534,7 @@ void normalizeParams(EffectInstance& e)
 }
 
 // Placeholder of a template clip (0.18): only values other than the default; older versions ignore "slot"
-QJsonObject slotToJson(const ClipSlot& s)
+QJsonObject writeSlot(const ClipSlot& s)
 {
     const ClipSlot def;
     QJsonObject o{{"id", s.id}};
@@ -553,7 +553,7 @@ QJsonObject slotToJson(const ClipSlot& s)
     return o;
 }
 
-ClipSlot slotFromJson(const QJsonObject& o)
+ClipSlot readSlot(const QJsonObject& o)
 {
     ClipSlot s;
     s.id = o.value("id").toString().trimmed();
@@ -632,7 +632,7 @@ QJsonObject clipToJson(const Clip& c, int mediaIndex, const QDir& projectDir)
         o["effects"] = fx;
     }
     if (Keys::hasKeys(c)) o["keys"] = keysToJson(c);
-    if (c.slot.isSet()) o["slot"] = slotToJson(c.slot); // optional: a template's placeholder
+    if (c.slot.isSet()) o["slot"] = writeSlot(c.slot); // optional: a template's placeholder
     return o;
 }
 
@@ -704,7 +704,7 @@ Clip clipFromJson(const QJsonObject& o, const QVector<MediaInfo>& media, const Q
         c.effects << inst;
     }
     keysFromJson(c, o.value("keys").toObject()); // missing in older files
-    if (o.value("slot").isObject()) c.slot = slotFromJson(o.value("slot").toObject());
+    if (o.value("slot").isObject()) c.slot = readSlot(o.value("slot").toObject());
     return c;
 }
 
@@ -723,6 +723,9 @@ QString resolvePath(const QJsonObject& m, const QDir& projectDir)
 } // namespace
 
 namespace ProjectFile {
+
+QJsonObject slotToJson(const ClipSlot& slot) { return writeSlot(slot); }
+ClipSlot slotFromJson(const QJsonObject& o) { return readSlot(o); }
 
 QJsonObject clipJson(const Clip& c)
 {
