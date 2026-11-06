@@ -814,6 +814,24 @@ void testLibraryParallel(const QString& tmp, const QString& project)
     run("templates", {{"remove", "Parallel 2"}});
 }
 
+// Two fills to one new name at once (two batches into one out_dir): the other one makes the file while this one runs -
+// it is kept, this one says EXISTS and copies no media
+void testFillParallel(const QString& tmp, const QString& project)
+{
+    std::printf("parallel: fill\n");
+    CHECK(run("templates", {{"save", project}, {"name", "Parallel Fill"}})["saved"].toBool());
+    const QString out = tmp + "/parallel/filled.schneidi";
+    QDir().mkpath(tmp + "/parallel");
+    QString code;
+    CHECK(waitsFor(ProjectFile::lock(out, 0), 1500,
+                   [&] { code = errorOf("templates", {{"fill", "Parallel Fill"}, {"out_project", out}}); },
+                   [&] { writeFile(out, "the other fill's project"); }));
+    CHECK_EQ(code, QString("EXISTS"));
+    CHECK_EQ(readAll(out), QByteArray("the other fill's project"));
+    CHECK(!QFileInfo::exists(tmp + "/parallel/filled media"));
+    run("templates", {{"remove", "Parallel Fill"}});
+}
+
 int main(int argc, char* argv[])
 {
     // schneidi-cli processes (alias, live) must see the same template folder: own data/cache folders for all
@@ -858,5 +876,6 @@ int main(int argc, char* argv[])
     testZip(tmp.path(), m);
     testZipNames(tmp.path(), m);
     testLibraryParallel(tmp.path(), tpl);
+    testFillParallel(tmp.path(), tpl);
     return Check::result();
 }

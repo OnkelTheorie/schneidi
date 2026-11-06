@@ -805,11 +805,13 @@ QJsonObject fillTemplateInto(const QJsonObject& a, Context& ctx, FillBatch* batc
     ProjectData result = p.data();
     result.templateInfo.reset();
     QDir().mkpath(QFileInfo(out).absolutePath());
-    std::unique_ptr<QLockFile> lock;
-    if (replaces) {
-        lock = ProjectFile::lock(out);
-        if (!lock) fail("PROJECT_LOCKED", "the project is being saved by someone else (schneidi app?), try again: " + out);
-    }
+    // Also for a new file: two fills to one name at once (two batches into one out_dir) take turns, and the later one
+    // sees the file the first one made instead of replacing it silently
+    std::unique_ptr<QLockFile> lock = ProjectFile::lock(out);
+    if (!lock) fail("PROJECT_LOCKED", "the project is being saved by someone else (schneidi app?), try again: " + out);
+    const bool exists = QFileInfo::exists(out);
+    if (exists && !overwrite)
+        fail("EXISTS", "project already exists (made meanwhile by another fill?); pass overwrite to replace it: " + out);
     // Only now the template's own files are copied (a fill that stops before leaves none behind): next to the
     // project ("<name> media/") or, for the rows of a batch, into their shared folder. Never over a user's file.
     TemplateLibrary::FileCopies copies;
@@ -821,7 +823,7 @@ QJsonObject fillTemplateInto(const QJsonObject& a, Context& ctx, FillBatch* batc
         if (!TemplateLibrary::copyTemplateFiles(result, t.dir, target, &copies, &err, batch ? &batch->copies : nullptr))
             fail("SAVE_FAILED", err);
     }
-    const QString backup = replaces ? ProjectFile::backup(out) : QString();
+    const QString backup = exists ? ProjectFile::backup(out) : QString();
     QString error;
     if (!ProjectFile::save(result, out, &error)) {
         for (const QString& f : std::as_const(copies.written)) QFile::remove(f);
