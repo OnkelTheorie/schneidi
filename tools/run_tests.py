@@ -9,7 +9,9 @@
    one that fails again is a real failure (exit code 1).
 Results: <build-dir>/Testing/Temporary/LastTest*.log as usual; a summary at the end.
 """
-import argparse, os, re, subprocess, sys
+import argparse, os, re, shutil, subprocess, sys
+
+MIN_FREE_GB = 10  # tests write renders and caches; a full disk shows up as confusing failures
 
 
 def ctest(build, args):
@@ -28,7 +30,12 @@ def main():
     ap.add_argument('build', nargs='?', default='build')
     ap.add_argument('-j', type=int, default=max(1, (os.cpu_count() or 4) - 2))
     ap.add_argument('-R', default='')
+    ap.add_argument('--min-free-gb', type=float, default=MIN_FREE_GB)
     a = ap.parse_args()
+    free = shutil.disk_usage(a.build if os.path.isdir(a.build) else '.').free / 1e9
+    if free < a.min_free_gb:
+        print('run_tests: only %.1f GB free on the disk of %s (need %g) - free space first' % (free, a.build, a.min_free_gb))
+        return 2
     select = ['-R', a.R] if a.R else []
     failed, _ = ctest(a.build, ['-j', str(a.j), '-LE', 'timing'] + select)
     timing, _ = ctest(a.build, ['-L', 'timing'] + select)
