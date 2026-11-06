@@ -7,6 +7,7 @@
 #include <QDateTime>
 #include <QDir>
 #include <QFileInfo>
+#include <QHash>
 #include <QSet>
 #include <QUndoCommand>
 #include <algorithm>
@@ -1121,17 +1122,27 @@ void Project::sanitizePool()
     for (MediaBin& b : m_bins) {
         if (b.parent != 0 && !ids.contains(b.parent)) b.parent = 0;
     }
-    // Break up parent cycles (broken file): whatever reaches itself via the parents goes under Master
+    // Break up parent cycles (broken file): whatever reaches itself via the parents goes under Master. Each bin is
+    // walked once (a hand-written file with thousands of nested bins took minutes to open when every bin walked its
+    // whole chain with a search per step): known good chains end the walk early
+    QHash<int, MediaBin*> byId;
+    for (MediaBin& b : m_bins) byId.insert(b.id, &b);
+    QSet<int> good; // reaches Master
     for (MediaBin& b : m_bins) {
-        int cur = b.parent;
-        for (int guard = 0; cur != 0 && guard <= m_bins.size(); ++guard) {
-            if (cur == b.id || guard == m_bins.size()) {
-                b.parent = 0;
+        QVector<int> chain;
+        QSet<int> onChain;
+        int cur = b.id;
+        while (cur != 0 && !good.contains(cur)) {
+            if (onChain.contains(cur)) { // a loop: where this walk entered it goes under Master (`b` if it is in it)
+                byId.value(cur)->parent = 0;
                 break;
             }
-            const MediaBin* p = bin(cur);
+            onChain.insert(cur);
+            chain << cur;
+            const MediaBin* p = byId.value(cur);
             cur = p ? p->parent : 0;
         }
+        for (int id : std::as_const(chain)) good.insert(id);
     }
     for (MediaInfo& m : m_media) {
         if (m.bin != 0 && !ids.contains(m.bin)) m.bin = 0;
