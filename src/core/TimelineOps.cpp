@@ -6,6 +6,7 @@
 
 #include <QHash>
 #include <QSet>
+#include <QStringList>
 #include <algorithm>
 #include <climits>
 #include <cmath>
@@ -824,6 +825,41 @@ void unpairBrokenDissolves(const Timeline& before, Timeline& after)
         if (brokenOut(c)) c.transOut = 0;
         if (brokenIn(c)) c.transIn = 0;
     });
+}
+
+void forgetSlotLengths(const Timeline& before, Timeline& after)
+{
+    // The ids of a slot instance: the clips of the same slot that touch each other on a track
+    const auto instance = [](const QVector<Clip>& cs, int i, QSet<int>& ids) {
+        int lo = i, hi = i;
+        while (lo > 0 && cs[lo - 1].slot.id == cs[i].slot.id && cs[lo - 1].end() == cs[lo].start) --lo;
+        while (hi + 1 < cs.size() && cs[hi + 1].slot.id == cs[i].slot.id && cs[hi].end() == cs[hi + 1].start) ++hi;
+        for (int k = lo; k <= hi; ++k) ids.insert(cs[k].id);
+    };
+    for (TrackKind k : {TrackKind::Video, TrackKind::Audio}) {
+        QVector<Track>& tracks = after.tracks(k);
+        for (int ti = 0; ti < tracks.size(); ++ti) {
+            // Read first, written only where needed (unchanged tracks stay shared with the undo snapshot)
+            const QVector<Clip>& cs = std::as_const(tracks)[ti].clips;
+            QSet<int> ids; // the instance as it is now and as it was (a trimmed part may not touch the others anymore)
+            for (int i = 0; i < cs.size(); ++i) {
+                const Clip& c = cs[i];
+                if (c.slot.nominalLen <= 0 || ids.contains(c.id)) continue;
+                TrackRef ref;
+                const Clip* b = findClip(before, c.id, &ref);
+                if (b && b->length() == c.length()) continue;
+                instance(cs, i, ids);
+                if (b) {
+                    const QVector<Clip>& bs = before.tracks(ref.kind)[ref.index].clips;
+                    for (int j = 0; j < bs.size(); ++j)
+                        if (bs[j].id == c.id) instance(bs, j, ids);
+                }
+            }
+            if (ids.isEmpty()) continue;
+            for (Clip& c : tracks[ti].clips)
+                if (c.slot.nominalLen > 0 && ids.contains(c.id)) c.slot.nominalLen = 0;
+        }
+    }
 }
 
 void keepFadesApart(const Timeline& before, Timeline& after)

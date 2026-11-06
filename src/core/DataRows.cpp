@@ -154,10 +154,19 @@ QString decodeText(const QByteArray& data)
         QStringDecoder utf16(QStringDecoder::Utf16); // reads the mark: either byte order
         return utf16.decode(data);
     }
-    // Without the mark: a header that starts with an ASCII letter shows the zero byte of UTF-16
-    if (data.size() >= 4 && data.size() % 2 == 0 && (data[0] == 0) != (data[1] == 0)) {
-        QStringDecoder utf16(data[1] == 0 ? QStringDecoder::Utf16LE : QStringDecoder::Utf16BE);
-        return utf16.decode(data);
+    // Without the mark: the separators, line ends and digits (also of a Cyrillic or Greek table) have a zero byte in
+    // UTF-16, all on the odd positions (little endian) or all on the even ones (big endian); UTF-8 and Windows-1252
+    // text has none
+    if (data.size() >= 4 && data.size() % 2 == 0) {
+        const int n = int(std::min<qsizetype>(data.size(), 512));
+        int even = 0, odd = 0;
+        for (int i = 0; i < n; ++i)
+            if (data[i] == 0) ++(i % 2 ? odd : even);
+        const int most = std::max(even, odd), least = std::min(even, odd);
+        if (most * 20 >= n / 2 && least * 4 < most) {
+            QStringDecoder utf16(odd > even ? QStringDecoder::Utf16LE : QStringDecoder::Utf16BE);
+            return utf16.decode(data);
+        }
     }
     QStringDecoder utf8(QStringDecoder::Utf8, QStringDecoder::Flag::Stateless);
     QString text = utf8.decode(data);

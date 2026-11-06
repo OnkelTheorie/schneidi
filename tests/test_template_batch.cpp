@@ -250,6 +250,21 @@ void testNumbersAndMaps(const QString& tmp)
     CHECK(r["ok"].toBool());
     const Clip* c = withSlot(load(tmp + "/mapped/Batch-001.schneidi"), "clip");
     CHECK(c && c->mediaPath == data + "/media/b.mp4");
+
+    // A map whose target is inside its source: row paths are mapped once, not twice (review C10) - a path of the
+    // client's computer and one relative to the table (which is given as the client's path too)
+    const QString client = data + "/client";
+    QDir().mkpath(client);
+    QFile::copy(data + "/media/b.mp4", client + "/b.mp4");
+    write(client + "/nested.csv", QString("hook,clip\nAbs,%1/b.mp4\nRel,b.mp4\n").arg(data).toUtf8());
+    Cli::Sandbox::configure({{}, {data + "=" + client}});
+    r = run("templates", {{"fill", "Batch"}, {"rows", data + "/nested.csv"}, {"out_dir", tmp + "/nested"}});
+    Cli::Sandbox::configure({});
+    CHECK(r["ok"].toBool());
+    for (const char* name : {"/nested/Batch-001.schneidi", "/nested/Batch-002.schneidi"}) {
+        c = withSlot(load(tmp + name), "clip");
+        CHECK(c && c->mediaPath == client + "/b.mp4");
+    }
 }
 
 } // namespace

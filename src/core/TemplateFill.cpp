@@ -400,8 +400,9 @@ void fillText(Timeline& tl, const SlotRef& r, const Value& v, SlotReport& rep)
 }
 // A ripple at `oldEnd` by `delta` inside `sequence`: the compound clips that show it follow. What they showed after
 // oldEnd moved by delta, so a clip showing that point gets longer/shorter (and its own timeline ripples in turn, up
-// through nested compounds), one showing only what comes after it moves in its source, one before it stays. Clips on
-// locked tracks or retimed ones are left (a warning). `followed` counts the clips changed.
+// through nested compounds), one showing only what comes after it moves in its source, one before it stays. A linked
+// group (a compound clip's picture and sound) follows as a whole: with a part on a locked track or retimed, none of it
+// does (a warning). `followed` counts the clips changed.
 void followCompounds(ProjectData& d, int sequence, int oldEnd, int delta, const IdGen& newId, SlotReport& rep,
                      int& followed, int depth)
 {
@@ -416,50 +417,79 @@ void followCompounds(ProjectData& d, int sequence, int oldEnd, int delta, const 
         Timeline* tl = timelineOf(d, parent);
         if (!tl) continue;
         struct Change {
-            int id, in, out, end; // new in/out, old end in the parent
+            int id, in, out; // new in/out
+            int at, dd;      // the parent's frame that shows oldEnd (or the clip's end if it shows only what is before
+                             // it) and the clip's change of length
         };
         QVector<Change> changes;
+        QSet<int> held; // link ids of groups with a part that stays
+        bool stays = false;
         for (TrackKind k : {TrackKind::Video, TrackKind::Audio})
-            for (Track& t : tl->tracks(k))
-                for (Clip& c : t.clips) {
+            for (const Track& t : std::as_const(*tl).tracks(k))
+                for (const Clip& c : t.clips) {
                     if (!c.isCompound() || c.sequenceId != sequence) continue;
                     const int in = moved(c.in), end = moved(c.out + 1);
                     if (in == c.in && end == c.out + 1) continue;
                     if (t.locked || c.isRetimed()) {
-                        const QString w = "a compound clip that shows the slot is on a locked track or retimed: it "
-                                          "does not follow";
-                        if (!rep.warnings.contains(w)) rep.warnings << w;
+                        stays = true;
+                        if (c.linkId) held.insert(c.linkId);
                         continue;
                     }
-                    if (end - in == c.length()) { // only moved in its source
-                        c.in = in, c.out = end - 1;
-                        ++followed;
-                    } else {
-                        changes << Change{c.id, in, end - 1, c.end()};
-                    }
+                    changes << Change{c.id, in, end - 1, c.start + std::min(oldEnd, c.out + 1) - c.in,
+                                      end - in - c.length()};
                 }
-        // Longer/shorter: the parent ripples behind it (from its last such clip back: a ripple never moves the ones
-        // before it; a clip with its linked part at the same place ripples once)
-        std::sort(changes.begin(), changes.end(), [](const Change& a, const Change& b) { return a.end > b.end; });
-        QVector<QPair<int, int>> rippled; // (old end, delta)
-        for (const Change& ch : changes) {
-            const Clip* c = TimelineOps::findClip(*tl, ch.id);
-            if (!c) continue;
-            const int dd = (ch.out - ch.in + 1) - c->length();
-            if (!rippled.contains(QPair<int, int>{ch.end, dd})) {
-                ripple(*tl, ch.end, dd, newId);
-                rippled.append({ch.end, dd});
-                followCompounds(d, parent, ch.end, dd, newId, rep, followed, depth + 1);
+        if (stays) {
+            const QString w = "a compound clip that shows the slot is on a locked track or retimed: it (and what is "
+                              "linked to it) does not follow";
+            if (!rep.warnings.contains(w)) rep.warnings << w;
+        }
+        changes.erase(std::remove_if(changes.begin(), changes.end(),
+                                     [&](const Change& ch) {
+                                         const Clip* c = TimelineOps::findClip(*tl, ch.id);
+                                         return !c || (c->linkId && held.contains(c->linkId));
+                                     }),
+                      changes.end());
+        // Only moved in its source
+        for (const Change& ch : changes)
+            if (!ch.dd)
+                if (Clip* c = TimelineOps::findClip(*tl, ch.id)) {
+                    c->in = ch.in, c->out = ch.out;
+                    ++followed;
+                }
+        // Longer/shorter: the parent ripples where the change shows (from the last such place back: a ripple never
+        // moves what is before it). The clips themselves are out meanwhile and come back with their new in/out, their
+        // fades and transitions kept (the ripple would cut a shrinking one's end off); clips changing at the same
+        // place (picture and linked sound) ripple once.
+        changes.erase(std::remove_if(changes.begin(), changes.end(), [](const Change& ch) { return !ch.dd; }),
+                      changes.end());
+        std::sort(changes.begin(), changes.end(),
+                  [](const Change& a, const Change& b) { return a.at != b.at ? a.at > b.at : a.dd < b.dd; });
+        for (int i = 0; i < changes.size();) {
+            int j = i;
+            while (j < changes.size() && changes[j].at == changes[i].at && changes[j].dd == changes[i].dd) ++j;
+            struct Out {
+                TrackRef ref;
+                Clip clip;
+                int in, out;
+            };
+            QVector<Out> out;
+            for (int k = i; k < j; ++k) {
+                TrackRef ref;
+                if (const Clip* c = TimelineOps::findClip(*tl, changes[k].id, &ref)) {
+                    out << Out{ref, *c, changes[k].in, changes[k].out};
+                    TimelineOps::removeClip(*tl, changes[k].id);
+                }
             }
-            if (Clip* x = TimelineOps::findClip(*tl, ch.id)) {
-                if (ch.out < ch.in) {
-                    TimelineOps::removeClip(*tl, ch.id); // all it showed was taken out
-                } else {
-                    x->in = ch.in;
-                    x->out = ch.out;
-                }
+            ripple(*tl, changes[i].at, changes[i].dd, newId);
+            for (Out& o : out) {
                 ++followed;
+                if (o.out < o.in) continue; // all it showed was taken out
+                o.clip.in = o.in;
+                o.clip.out = o.out;
+                TimelineOps::placeClip(tl->track(o.ref), o.clip, newId);
             }
+            followCompounds(d, parent, changes[i].at, changes[i].dd, newId, rep, followed, depth + 1);
+            i = j;
         }
     }
 }
@@ -712,15 +742,28 @@ QVector<SlotRef> listSlots(const ProjectData& d)
                     out << r;
                 }
         }
-    // A Fixed slot a shorter value left shorter: its own length, as far as its track is free after it
+    // A Fixed slot a shorter value left shorter: its own length, as far as its track is free after it - and the
+    // tracks of its linked sound, which the fill lays along with the picture
     for (SlotRef& r : out) {
         r.slotLength = r.length;
         if (r.slot.length != SlotLength::Fixed || r.slot.nominalLen <= r.length) continue;
+        const int end = r.start + r.length;
         int limit = r.start + r.slot.nominalLen;
-        for (const auto& [seq, tl] : timelines(d))
-            if (seq == r.sequence)
-                for (const Clip& c : tl->track(r.track).clips)
-                    if (c.start >= r.start + r.length) limit = std::min(limit, c.start);
+        for (const auto& [seq, tl] : timelines(d)) {
+            if (seq != r.sequence) continue;
+            QSet<int> links;
+            for (int id : r.parts)
+                if (const Clip* c = TimelineOps::findClip(*tl, id); c && c->linkId) links.insert(c->linkId);
+            const auto linked = [&](const Clip& c) { return c.linkId && links.contains(c.linkId); };
+            const auto freeUntil = [&](const Track& t) {
+                for (const Clip& c : t.clips)
+                    if (c.start >= end && !linked(c)) limit = std::min(limit, c.start);
+            };
+            freeUntil(tl->track(r.track));
+            if (r.track.kind == TrackKind::Video && !links.isEmpty())
+                for (const Track& t : tl->audio)
+                    if (std::any_of(t.clips.begin(), t.clips.end(), linked)) freeUntil(t);
+        }
         r.slotLength = std::max(r.length, limit - r.start);
     }
     return out;
