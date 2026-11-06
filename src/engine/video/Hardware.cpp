@@ -92,6 +92,19 @@ AVBufferRef* open(AVHWDeviceType type)
 
 } // namespace
 
+bool deviceReady(const AVCodec* codec)
+{
+    if (!codec) return false;
+    const std::vector<AVHWDeviceType> types = candidates();
+    std::lock_guard lock(g_mutex);
+    for (AVHWDeviceType type : types) {
+        if (hwFormat(codec, type) == AV_PIX_FMT_NONE) continue;
+        const auto it = g_devices.find(type);
+        if (it != g_devices.end() && it->second.context) return true;
+    }
+    return false;
+}
+
 Device deviceFor(const AVCodec* codec)
 {
     if (!codec) return {};

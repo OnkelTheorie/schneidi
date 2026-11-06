@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(schneidi VERSION 0.17.1 LANGUAGES CXX)
+project(schneidi VERSION 0.18.0 LANGUAGES CXX)
 # Version being worked on. While it differs from the released version above, the app shows "0.11.0 → 0.12.0".
 # On release set both to the same number; after that, set this one to the next target.
 set(SCHNEIDI_NEXT_VERSION 0.18.0)
@@ -64,8 +64,22 @@ if(SCHNEIDI_NO_GPL)
     endif()
     message(STATUS "SCHNEIDI_NO_GPL: FFmpeg license ${FFMPEG_LICENSE}")
 endif()
-# Sound devices of the own audio engine: miniaudio, a single header (Debian libminiaudio-dev, MSYS2 miniaudio)
-find_path(MINIAUDIO_INCLUDE_DIR miniaudio.h PATH_SUFFIXES miniaudio REQUIRED)
+# Sound devices of the own audio engine: miniaudio, a single header (Debian libminiaudio-dev, MSYS2 miniaudio).
+# Systems without a package (openSUSE, Fedora, …) use the copy in third_party/miniaudio (0.11.22, see VERSION.md there).
+# AUTO: the system's header when there is one, else the copy; ON: only the system's; OFF: always the copy.
+set(SCHNEIDI_SYSTEM_MINIAUDIO AUTO CACHE STRING "Use the system's miniaudio.h (AUTO, ON, OFF)")
+set_property(CACHE SCHNEIDI_SYSTEM_MINIAUDIO PROPERTY STRINGS AUTO ON OFF)
+if(SCHNEIDI_SYSTEM_MINIAUDIO STREQUAL "ON")
+    find_path(MINIAUDIO_INCLUDE_DIR miniaudio.h PATH_SUFFIXES miniaudio REQUIRED)
+elseif(SCHNEIDI_SYSTEM_MINIAUDIO STREQUAL "AUTO")
+    find_path(MINIAUDIO_INCLUDE_DIR miniaudio.h PATH_SUFFIXES miniaudio)
+endif()
+if(NOT MINIAUDIO_INCLUDE_DIR OR SCHNEIDI_SYSTEM_MINIAUDIO STREQUAL "OFF")
+    set(MINIAUDIO_INCLUDE_DIR ${PROJECT_SOURCE_DIR}/third_party/miniaudio)
+    message(STATUS "miniaudio: bundled copy (third_party/miniaudio)")
+else()
+    message(STATUS "miniaudio: ${MINIAUDIO_INCLUDE_DIR}")
+endif()
 find_package(Threads REQUIRED)
 include(cmake/RNNoise.cmake)
 
@@ -395,7 +409,8 @@ if(SCHNEIDI_TEMPLATES)
     qt_add_resources(schneidi_lib "templates" PREFIX "/" BASE assets FILES ${SCHNEIDI_TEMPLATES})
 endif()
 target_include_directories(schneidi_lib PUBLIC src)
-target_include_directories(schneidi_lib PRIVATE ${MINIAUDIO_INCLUDE_DIR})
+# SYSTEM: no warnings from the (possibly bundled) third-party header
+target_include_directories(schneidi_lib SYSTEM PRIVATE ${MINIAUDIO_INCLUDE_DIR})
 target_link_libraries(schneidi_lib PUBLIC Qt6::Widgets Qt6::Network PkgConfig::FFMPEG
                       Threads::Threads ${CMAKE_DL_LIBS})
 target_link_libraries(schneidi_lib PRIVATE rnnoise)
@@ -514,6 +529,7 @@ endif()
 if(UNIX AND NOT APPLE)
     install(FILES packaging/linux/schneidi.desktop DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
     install(FILES assets/schneidi.svg DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps)
+    install(FILES packaging/linux/io.github.OnkelTheorie.schneidi.metainfo.xml DESTINATION ${CMAKE_INSTALL_DATADIR}/metainfo)
     # Debian policy: /usr/share/doc/<package>/copyright (DEP-5) and changelog.gz
     set(SCHNEIDI_MAINTAINER "schneidi project <324913804+OnkelTheorie@users.noreply.github.com>")
     set(SCHNEIDI_HOMEPAGE "https://github.com/OnkelTheorie/schneidi")
@@ -527,8 +543,9 @@ if(UNIX AND NOT APPLE)
         DESTINATION ${CMAKE_INSTALL_DOCDIR})
 endif()
 
-# Debian-Paket (schlank, Systembibliotheken statt Bundling): cmake --build build && cpack --config build/CPackConfig.cmake -G DEB
-# Ausgabe nach dist/ (gitignored). Abhängigkeiten ermittelt dpkg-shlibdeps aus der Binärdatei.
+# Debian package (slim, system libraries instead of bundling), from a Release build folder of its own (static programs):
+#   cmake -S . -B build-deb -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build build-deb && cpack --config build-deb/CPackConfig.cmake -G DEB
+# Output into dist/ (gitignored). dpkg-shlibdeps finds the dependencies from the binaries.
 if(UNIX AND NOT APPLE)
     set(CPACK_GENERATOR "DEB")
     set(CPACK_PACKAGE_NAME "schneidi")
@@ -547,6 +564,10 @@ if(UNIX AND NOT APPLE)
     set(CPACK_DEBIAN_PACKAGE_DEPENDS "libasound2t64 | libasound2")
     # Hardware decoding on AMD/Intel (VAAPI) loads the driver at runtime; NVIDIA comes with its driver (CUDA)
     set(CPACK_DEBIAN_PACKAGE_RECOMMENDS "ffmpeg, libpulse0, mesa-va-drivers | va-driver")
+    if(SCHNEIDI_SHARED_LIBS)
+        message(WARNING "SCHNEIDI_SHARED_LIBS is on: a package from this build folder would ship libschneidi_*.so - "
+                        "package from a Release build folder (see the comment above)")
+    endif()
     include(CPack)
 endif()
 

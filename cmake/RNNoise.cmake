@@ -1,7 +1,8 @@
 # RNNoise (BSD-3-Clause, Xiph.Org / Mozilla / Amazon / Jean-Marc Valin): neural noise suppression for the voice
 # cleaning effect (engine/VoiceClean). The sources are vendored in third_party/rnnoise (v0.2, as the mici project uses
-# them); the model weights (a ~29 MB generated C file) are not: they come from the release tarball of the model version
-# in third_party/rnnoise/model_version, checked against a fixed SHA-256.
+# them) plus upstream commit 372f7b4 ("Fix compilation errors": the plain C and NEON kernels, used on 32-bit x86 and
+# ARM, included a header that v0.2 does not have); the model weights (a ~29 MB generated C file) are not: they come
+# from the release tarball of the model version in third_party/rnnoise/model_version, checked against a fixed SHA-256.
 # Offline builds: put the tarball next to model_version (third_party/rnnoise/rnnoise_data-<version>.tar.gz, ignored by
 # git) or give its path with -DSCHNEIDI_RNNOISE_MODEL=<file>; otherwise it is downloaded once into that folder.
 enable_language(C)

@@ -164,7 +164,10 @@ int main(int argc, char* argv[])
         FakeApp other;
         Cli::Live::Server longTmp(&other);
         QString e;
-        if (!runtime.isEmpty() && runtime.size() < 60) CHECK(longTmp.start(&e));
+        // Without XDG_RUNTIME_DIR (a container) Qt puts the runtime folder into TMPDIR, the long one: nothing short
+        if (qEnvironmentVariableIsSet("XDG_RUNTIME_DIR") && !runtime.isEmpty() && runtime.size() < 60
+            && !CHECK(longTmp.start(&e)))
+            std::printf("       %s (runtime folder %s)\n", qPrintable(e), qPrintable(runtime));
         if (oldTmp.isNull()) qunsetenv("TMPDIR");
         else qputenv("TMPDIR", oldTmp);
     }

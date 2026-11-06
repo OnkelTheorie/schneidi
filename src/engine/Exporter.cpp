@@ -12,6 +12,8 @@
 #include "engine/ExportWriter.h"
 #include "engine/HardwareEncoders.h"
 #include "engine/MemoryRelease.h"
+#include "engine/OpenMedia.h"
+#include "engine/MediaProbe.h"
 #include "engine/SmartRender.h"
 #include "engine/Stabilizer.h"
 #include "engine/audio/Mixer.h"
@@ -34,6 +36,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <cstring>
 #include <limits>
 #include <optional>
 
@@ -417,12 +420,22 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
             auto it = known.find(path);
             if (it != known.end()) return *it;
             Source src;
-            if (const ClipFormat cf = detectClipFormat(path); cf.ok) {
-                src.size = QSize(cf.width, cf.height);
-                Video::Reader::Options o;
-                o.hardware = false;
-                if (const auto r = Video::Reader::open(path, o))
-                    src.software = !Video::likelyHardware(r->container()->streams[r->info().index]->codecpar);
+            // The container's stream description only: no decoder opened, nothing decoded, no graphics card
+            // device (start() runs on the GUI thread; opening every file there blocked it 115-140 ms for 24 clips)
+            AVFormatContext* fmt = nullptr;
+            if (!MediaProbe::isAudioFile(path) && OpenMedia::input(&fmt, path.toUtf8().constData()) >= 0) {
+                const char* demuxer = fmt->iformat ? fmt->iformat->name : "";
+                const bool picture = std::strstr(demuxer, "image2") || std::strstr(demuxer, "_pipe");
+                const int v = picture ? -1 : av_find_best_stream(fmt, AVMEDIA_TYPE_VIDEO, -1, -1, nullptr, 0);
+                if (v >= 0) {
+                    const AVCodecParameters* par = fmt->streams[v]->codecpar;
+                    const bool cover = fmt->streams[v]->disposition & AV_DISPOSITION_ATTACHED_PIC;
+                    if (!cover && par->width > 0 && par->height > 0) {
+                        src.size = QSize(par->width, par->height);
+                        src.software = !Video::likelyHardware(par);
+                    }
+                }
+                avformat_close_input(&fmt);
             }
             return *known.insert(path, src);
         };

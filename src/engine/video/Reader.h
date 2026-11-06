@@ -68,7 +68,7 @@ int quarterTurns(double degrees);
 
 // Would a reader with Options::hardware decode this stream on the graphics card? A guess before decoding, for memory
 // estimates (a software decoder keeps pictures per thread, a hardware one runs with one thread): false when hardware
-// decoding is off or no device works for the codec, for streams the reader leaves to software anyway (small, other
+// decoding is off or no device for the codec is open yet (never opens one: Hardware::deviceReady), for streams the reader leaves to software anyway (small, other
 // formats), H.264 above 4096 pixels (no H.264 decoder of a graphics card takes it: NVDEC "width not within range")
 // and AV1 (many cards cannot; counted as software, the safe side)
 bool likelyHardware(const AVCodecParameters* par);

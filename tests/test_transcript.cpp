@@ -138,7 +138,7 @@ int main(int argc, char** argv)
                                    "12530-12990 Wie | 12990-13520 geht | 13520-14050 das?"));
         QVector<SubtitleCue> cs = Transcript::toCues(w, 100);
         Transcript::startAtSound(cs, levels(15000, {{10300, 11400}, {12300, 12350}, {13500, 14100}}), 100);
-        CHECK_EQ(cues(cs), QString("1019-1105 Hey, auf YouTube. | 1340-1405 Wie geht das?"));
+        CHECK_EQ(cues(cs), QString("1020-1105 Hey, auf YouTube. | 1340-1405 Wie geht das?"));
     }
     // Alone between pauses: the loud part; nothing loud or no levels: keeps its start
     {

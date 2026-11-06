@@ -1,0 +1,154 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- AppStream metadata (software centers, distribution packages). Installed to share/metainfo by CMakeLists.txt.
+     On a release add a <release> entry at the top of <releases>. Check: appstreamcli validate <this file> -->
+<component type="desktop-application">
+  <id>io.github.OnkelTheorie.schneidi</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>AGPL-3.0-only</project_license>
+
+  <name>schneidi</name>
+  <summary>Fast, light video editor that an AI assistant can edit with</summary>
+  <developer id="io.github.onkeltheorie">
+    <name>The schneidi project</name>
+  </developer>
+
+  <description>
+    <p>
+      schneidi is a fast, light video editor. It starts in under a second, plays a demanding 1080p60 project smoothly
+      on four CPU cores and runs even on a Raspberry Pi. It has four pages for the steps of an edit – Media, Edit,
+      Color and Deliver – and an AI assistant can edit together with you, live in the project you have open.
+    </p>
+    <p>
+      Tell the AI chat next to the timeline what you want (Claude, an OpenAI-compatible service or a local model
+      through Ollama), or let an assistant work through the command line and its MCP server. It finds pauses, scene
+      changes, loud moments and the beats of a song, transcribes, cuts, grades, mixes and renders – and every change
+      is shown and is one undo step.
+    </p>
+    <p>Features:</p>
+    <ul>
+      <li>Multiple video and audio tracks with ripple, roll, slip and slide trims, compound clips and multicam</li>
+      <li>9:16 shorts next to the 16:9 edit in the same project, with auto reframe and word-by-word captions</li>
+      <li>Templates with placeholders and a brand kit: many videos from one template and a table</li>
+      <li>Color wheels, windows, LUTs and scopes</li>
+      <li>Titles, subtitles, transitions, loudness normalization and voice cleaning</li>
+      <li>Offline speech recognition, text-based editing and sync of several recordings by their sound</li>
+      <li>Render presets for YouTube, YouTube Shorts, Instagram Reels and TikTok</li>
+      <li>User interface in English, German, Spanish, French, Polish and Russian</li>
+    </ul>
+    <p>
+      Everything stays on your computer: no account, no cloud, no telemetry. The only request schneidi makes by
+      itself is a check for a new release, at most once a day, which can be turned off.
+    </p>
+  </description>
+
+  <launchable type="desktop-id">schneidi.desktop</launchable>
+  <provides>
+    <binary>schneidi</binary>
+    <binary>schneidi-cli</binary>
+  </provides>
+
+  <url type="homepage">https://github.com/OnkelTheorie/schneidi</url>
+  <url type="bugtracker">https://github.com/OnkelTheorie/schneidi/issues</url>
+  <url type="vcs-browser">https://github.com/OnkelTheorie/schneidi</url>
+
+  <categories>
+    <category>AudioVideo</category>
+    <category>Video</category>
+    <category>AudioVideoEditing</category>
+  </categories>
+  <keywords>
+    <keyword>video editor</keyword>
+    <keyword>video editing</keyword>
+    <keyword>non-linear editing</keyword>
+    <keyword>shorts</keyword>
+    <keyword>subtitles</keyword>
+    <keyword>AI</keyword>
+    <keyword>MCP</keyword>
+  </keywords>
+
+  <screenshots>
+    <screenshot type="default">
+      <caption>The Edit page with an AI assistant connected: transcript, title inspector and timeline</caption>
+      <image>https://raw.githubusercontent.com/OnkelTheorie/schneidi/main/screenshots/edit.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>The same edit as a 9:16 short: reframed picture and word-by-word captions</caption>
+      <image>https://raw.githubusercontent.com/OnkelTheorie/schneidi/main/screenshots/short.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>The AI chat next to the timeline lists every step it takes</caption>
+      <image>https://raw.githubusercontent.com/OnkelTheorie/schneidi/main/screenshots/chat.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>The Color page: color wheels, a window and the RGB parade</caption>
+      <image>https://raw.githubusercontent.com/OnkelTheorie/schneidi/main/screenshots/color.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Multicam: several angles of one event side by side</caption>
+      <image>https://raw.githubusercontent.com/OnkelTheorie/schneidi/main/screenshots/multicam.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>The Deliver page: render presets and render queue</caption>
+      <image>https://raw.githubusercontent.com/OnkelTheorie/schneidi/main/screenshots/deliver.png</image>
+    </screenshot>
+  </screenshots>
+
+  <branding>
+    <color type="primary" scheme_preference="light">#9fc3f0</color>
+    <color type="primary" scheme_preference="dark">#232327</color>
+  </branding>
+
+  <content_rating type="oars-1.1"/>
+
+  <supports>
+    <control>pointing</control>
+    <control>keyboard</control>
+  </supports>
+  <requires>
+    <display_length compare="ge">1024</display_length>
+  </requires>
+
+  <releases>
+    <release version="0.18.0" date="2026-11-06">
+      <description>
+        <p>Template Update: reusable templates with placeholders that are filled by drag and drop or by an AI, many
+        videos from one template and a table (CSV), a brand kit with colours, fonts, logo, intro and outro, five
+        built-in templates and an Edit look. Renders pick fewer threads by themselves when memory is short.</p>
+      </description>
+      <url type="details">https://github.com/OnkelTheorie/schneidi/releases/tag/v0.18.0</url>
+    </release>
+    <release version="0.17.1" date="2026-11-05">
+      <description>
+        <p>Bug fix release: the highlight search for CS2 recordings now finds the player's kills by the frame of their
+        kill feed lines, so red parts of the game picture are no longer taken for kills.</p>
+      </description>
+      <url type="details">https://github.com/OnkelTheorie/schneidi/releases/tag/v0.17.1</url>
+    </release>
+    <release version="0.17.0" date="2026-11-05">
+      <description>
+        <p>AI Director Update: a searchable index of every shot with its quality, speech and sound, an edit laid out as
+        a story with a cut plan shown before anything changes, review renders, J/L cuts and room tone, songs cut to
+        length on their phrases, and a collection of effect sounds.</p>
+      </description>
+      <url type="details">https://github.com/OnkelTheorie/schneidi/releases/tag/v0.17.0</url>
+    </release>
+    <release version="0.16.1" date="2026-11-03">
+      <url type="details">https://github.com/OnkelTheorie/schneidi/releases/tag/v0.16.1</url>
+    </release>
+    <release version="0.16.0" date="2026-11-03">
+      <description>
+        <p>Shorts Update: a format per timeline, so a 9:16 short lives next to the 16:9 edit; auto reframe, word-by-word
+        captions, presets for YouTube Shorts, Instagram Reels and TikTok, voice-over recording, voice cleaning and text
+        to speech.</p>
+      </description>
+      <url type="details">https://github.com/OnkelTheorie/schneidi/releases/tag/v0.16.0</url>
+    </release>
+    <release version="0.15.0" date="2026-11-01">
+      <description>
+        <p>Speed Update: an own picture engine draws preview, stills and export the same way and uses the graphics card
+        where there is one; faster exports with a fraction of the memory, faster start and seeking.</p>
+      </description>
+      <url type="details">https://github.com/OnkelTheorie/schneidi/releases/tag/v0.15.0</url>
+    </release>
+  </releases>
+</component>

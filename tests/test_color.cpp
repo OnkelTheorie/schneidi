@@ -255,10 +255,16 @@ void testRender(const QString& dir)
 
     // Preview switch before/after: switchable live, without a switch (export) always corrected. The preview converts
     // with swscale's SIMD path: before FFmpeg 7 (libswscale 8) it comes out a level or two darker than the export's
-    // exact conversion (FFmpeg 6.1, Ubuntu 24.04: mean 0.51); a grade left on would differ by far more (about 40)
+    // exact conversion (FFmpeg 6.1, Ubuntu 24.04: mean 0.51; swscale's 32-bit x86 code: 0.507); a grade left on
+    // would differ by far more (about 40)
+#if defined(__i386__) || defined(_M_IX86)
+    constexpr double previewTol = 1.0;
+#else
     constexpr double previewTol = LIBSWSCALE_VERSION_MAJOR < 8 ? 1.0 : 0.5;
+#endif
     auto bypass = std::make_shared<std::atomic<bool>>(true);
-    CHECK(diff(render(darker, fmt, 10, bypass), ref) < previewTol);
+    if (const double d = diff(render(darker, fmt, 10, bypass), ref); !CHECK(d < previewTol))
+        std::printf("       preview bypass differs by %.3f\n", d);
     bypass->store(false);
     CHECK(diff(render(darker, fmt, 10, bypass), dark) < 0.5);
     {
@@ -271,7 +277,8 @@ void testRender(const QString& dir)
         auto grab = [&] { return r.render(10).toImage(); };
         CHECK(diff(grab(), dark) < 0.5);
         flag->store(true); // same renderer, no rebuild
-        CHECK(diff(grab(), ref) < previewTol);
+        if (const double d = diff(grab(), ref); !CHECK(d < previewTol))
+            std::printf("       switched preview differs by %.3f\n", d);
     }
 
     // LUT in the render (invert)
