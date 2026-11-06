@@ -253,10 +253,15 @@ public:
     }
 
 private:
-    double secondsOf(const AVFrame* f) const
+    // A picture without a timestamp (the last one of an MPEG-2 program stream) comes right after the one before: its
+    // "time" was AV_NOPTS_VALUE - firstPts, an overflow, and the picture went to the first range at about -1e14 s
+    double secondsOf(const AVFrame* f)
     {
-        return double(timestampOf(f) - m_plan.firstPts) * av_q2d(m_plan.timeBase);
+        const int64_t ts = timestampOf(f);
+        if (ts == AV_NOPTS_VALUE) return m_lastSeconds += f->duration > 0 ? double(f->duration) * av_q2d(m_plan.timeBase) : 0.0;
+        return m_lastSeconds = double(ts - m_plan.firstPts) * av_q2d(m_plan.timeBase);
     }
+    double m_lastSeconds = 0; // secondsOf's last picture
 
     bool nextPicture()
     {

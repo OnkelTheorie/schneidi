@@ -28,6 +28,7 @@ extern "C" {
 
 #include <atomic>
 #include <cstring>
+#include <mutex>
 #include <random>
 #include <thread>
 
@@ -426,6 +427,25 @@ int main(int argc, char** argv)
                       QString("%1x%2 %3").arg(scanW.load()).arg(scanH.load()).arg(scanned.error));
         const ClipFormat cf = detectClipFormat(odd);
         CHECK(cf.ok && cf.width == 640 && cf.height == 360);
+    }
+    // MPEG-2 program stream: its last picture has no timestamp; the scan gave it the time AV_NOPTS_VALUE - first (a
+    // signed overflow) instead of one after the picture before
+    if (const QString mpg = Check::makeMedia(file("program.mpg"), {"-f", "lavfi", "-i", "testsrc2=size=320x240:rate=30",
+                                                                    "-t", "2", "-c:v", "mpeg2video"});
+        CHECK(!mpg.isEmpty())) {
+        Video::Scan::Options so;
+        so.threads = 1;
+        std::mutex lock;
+        double lowest = 0, highest = 0;
+        int pictures = 0;
+        const auto scanned = Video::Scan::run(mpg, so, [&](const Video::Scan::Frame& f, const Video::Scan::Frame*) {
+            std::lock_guard g(lock);
+            lowest = std::min(lowest, f.seconds);
+            highest = std::max(highest, f.seconds);
+            ++pictures;
+        });
+        Check::report(scanned.ok && lowest >= 0 && highest < 2.5 && pictures >= 59, "mpeg-2: scan times", __FILE__,
+                      __LINE__, QString("%1 pictures, %2 .. %3 s").arg(pictures).arg(lowest).arg(highest));
     }
     // A 1x1 video still has a clip format (even sizes, at least 2x2). Made in RGB: FFmpeg 6.1's color source cannot
     // make 1x1 in its default 4:2:0 ("Picture size 0x0 is invalid" for the chroma planes)
