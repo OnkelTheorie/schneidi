@@ -713,7 +713,7 @@ struct Reader::Impl {
 
     // End of the stream (file time in seconds) from its last packets, for a file whose header states no duration
     // (Matroska of a recorder that crashed or was killed, live streams). A second demuxer reads the file's tail, more
-    // of it if no packet of the stream was there. NAN if none was found.
+    // of it if no packet of the stream was there (at most OpenMedia::kTailScanMaxBytes). NAN if none was found.
     long double lastPacketEnd() const
     {
         AVFormatContext* f = nullptr;
@@ -725,7 +725,8 @@ struct Reader::Impl {
                 if (int(i) != index) f->streams[i]->discard = AVDISCARD_ALL;
             const AVRational stb = f->streams[index]->time_base;
             const int64_t size = f->pb ? avio_size(f->pb) : -1;
-            for (int64_t tail = kTailBytes; std::isnan(end); tail *= 16) {
+            const OpenMedia::ReadLimit limit(f, OpenMedia::kTailScanMaxBytes);
+            for (int64_t tail = kTailBytes; std::isnan(end) && !limit.reached(); tail *= 8) {
                 const int64_t from = size > tail ? size - tail : 0;
                 if (from > 0 && av_seek_frame(f, -1, from, AVSEEK_FLAG_BYTE) < 0) break;
                 while (av_read_frame(f, p) >= 0) {
@@ -736,7 +737,7 @@ struct Reader::Impl {
                     }
                     av_packet_unref(p);
                 }
-                if (from == 0) break; // read from the start: there is no more
+                if (from == 0 || tail >= OpenMedia::kTailScanMaxBytes) break; // read from the start, or enough
             }
         }
         av_packet_free(&p);

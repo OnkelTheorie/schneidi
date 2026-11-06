@@ -7,9 +7,39 @@
 // schneidi never needs them for media; image sequences (image2) and single files open as before.
 
 struct AVDictionary;
+#include <cstdint>
+
 struct AVFormatContext;
+struct AVIOContext;
 
 namespace OpenMedia {
+
+// The most read of a file to find its end when the header states no length (MediaProbe, Audio::Reader: the last 1, 8,
+// then 64 MB, under a ReadLimit of this much in all). A recording of many GB whose tail holds no timed packet (zeros a
+// crash left behind) is not read whole on import; such a file has no length then.
+inline constexpr long long kTailScanMaxBytes = 64LL << 20;
+
+// Reads of `fmt`'s file fail (AVERROR_EXIT) once `bytes` more were read, until this goes away (the file's own read and
+// seek functions again then). A scan of a file's tail cannot bound itself by where it seeks: a demuxer may go back and
+// read on from there - Matroska, after junk it cannot parse, resyncs from its last cluster, through the whole file.
+// Does nothing for a context without its own I/O.
+class ReadLimit {
+public:
+    ReadLimit(AVFormatContext* fmt, long long bytes);
+    ~ReadLimit();
+    ReadLimit(const ReadLimit&) = delete;
+    ReadLimit& operator=(const ReadLimit&) = delete;
+    bool reached() const { return m_left <= 0; }
+
+private:
+    // In place of the file's read function; finds its limit by the file's opaque (unchanged: FFmpeg hands it to other
+    // functions of the file as well) among the limits of this thread
+    static int read(void* opaque, uint8_t* buf, int size);
+    AVIOContext* m_pb = nullptr;
+    void* m_opaque = nullptr;
+    int (*m_read)(void*, uint8_t*, int) = nullptr;
+    long long m_left = 0;
+};
 
 // avformat_open_input(fmt, path, nullptr, options) with the limits; a refused demuxer fails it (AVERROR(EINVAL)), as
 // does a path that exists but is no regular file (folder, named pipe, device, socket: see notAFile).

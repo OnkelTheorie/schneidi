@@ -15,6 +15,7 @@
 #include <QCoreApplication>
 #include <QElapsedTimer>
 #include <QFile>
+#include <QFileInfo>
 #include <QTemporaryDir>
 
 extern "C" {
@@ -199,6 +200,45 @@ void testNoDuration(const QString& dir)
     }
 }
 
+// Bytes this process has read so far (Linux: /proc/self/io rchar, page cache included); -1 = unknown
+qint64 bytesRead()
+{
+    QFile io("/proc/self/io");
+    if (!io.open(QIODevice::ReadOnly)) return -1;
+    for (const QByteArray& line : io.readAll().split('\n'))
+        if (line.startsWith("rchar:")) return line.mid(6).trimmed().toLongLong();
+    return -1;
+}
+
+// A recording without a duration whose tail holds no packet (zeros a crash left behind, here 300 MB of them): the end
+// is looked for in at most the last 64 MB, not in the whole file (a recording of many GB read whole on import)
+void testNoDurationZeroTail(const QString& dir)
+{
+    std::printf("-- Matroska without duration, zeros at the end\n");
+    const QString live = Check::makeMedia(dir + "/live_tail.mkv", {"-f", "lavfi", "-i", "sine=f=440:d=6", "-c:a", "aac",
+                                                                   "-live", "1"});
+    if (!CHECK(!live.isEmpty())) return;
+    const QString padded = dir + "/live_zeros.mkv";
+    QFile::remove(padded);
+    if (!CHECK(QFile::copy(live, padded))) return;
+    QFile f(padded);
+    if (!CHECK(f.resize(QFileInfo(padded).size() + (300LL << 20)))) return; // sparse: nothing written
+    f.close();
+    if (bytesRead() < 0) {
+        std::printf("       no /proc/self/io here, skipped\n");
+        return;
+    }
+    qint64 before = bytesRead();
+    MediaProbe::read(padded, FrameRate{25, 1});
+    const qint64 probe = bytesRead() - before;
+    before = bytesRead();
+    Audio::Reader::open(padded);
+    const qint64 reader = bytesRead() - before;
+    std::printf("       read for the length: probe %lld MB, audio reader %lld MB\n", probe >> 20, reader >> 20);
+    CHECK(probe < (100LL << 20));
+    CHECK(reader < (100LL << 20));
+}
+
 // A 64-channel WAV (FFmpeg knows no layout for 64 channels: its order is "unspecified"), a sine on channel 0 only,
 // read as stereo: FFmpeg's resampler had no matrix for it and the reader gave silence (imported, rendered silent)
 void testUnpositionedChannels(const QString& dir)
@@ -234,6 +274,7 @@ int main(int argc, char** argv)
     testLongGap(dir.path());
     testOutlier(dir.path());
     testNoDuration(dir.path());
+    testNoDurationZeroTail(dir.path());
     testUnpositionedChannels(dir.path());
     return Check::result();
 }

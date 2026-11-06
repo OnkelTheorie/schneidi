@@ -130,7 +130,8 @@ bool decodableStill(QImageReader& reader)
 
 // Length in µs from the last packets in the file's tail (Matroska of a recorder that crashed or was killed, a live
 // stream: no duration in the header, and the stream analysis only sees the start), counted from the file's start
-// time. Reads more of the tail when no timed packet was there. AV_NOPTS_VALUE if none was found. Moves the demuxer.
+// time. Reads more of the tail when no timed packet was there, OpenMedia::kTailScanMaxBytes in all at most.
+// AV_NOPTS_VALUE if none was found. Moves the demuxer (and leaves its file in an error state once the limit was hit).
 int64_t tailDuration(AVFormatContext* fmt)
 {
     if (!fmt->pb) return AV_NOPTS_VALUE;
@@ -139,7 +140,8 @@ int64_t tailDuration(AVFormatContext* fmt)
     int64_t end = AV_NOPTS_VALUE;
     AVPacket* p = av_packet_alloc();
     if (!p) return AV_NOPTS_VALUE;
-    for (int64_t tail = 1 << 20; end == AV_NOPTS_VALUE; tail *= 16) {
+    const OpenMedia::ReadLimit limit(fmt, OpenMedia::kTailScanMaxBytes);
+    for (int64_t tail = 1 << 20; end == AV_NOPTS_VALUE && !limit.reached(); tail *= 8) {
         const int64_t from = size > tail ? size - tail : 0;
         if (av_seek_frame(fmt, -1, from, AVSEEK_FLAG_BYTE) < 0) break;
         while (av_read_frame(fmt, p) >= 0) {
@@ -151,7 +153,7 @@ int64_t tailDuration(AVFormatContext* fmt)
             }
             av_packet_unref(p);
         }
-        if (from == 0) break; // read from the start: there is no more
+        if (from == 0 || tail >= OpenMedia::kTailScanMaxBytes) break; // read from the start, or enough
     }
     av_packet_free(&p);
     return end == AV_NOPTS_VALUE ? AV_NOPTS_VALUE : end - start;

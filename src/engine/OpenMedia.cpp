@@ -10,6 +10,9 @@ extern "C" {
 #include <QFileInfo>
 #include <QList>
 
+#include <algorithm>
+#include <vector>
+
 namespace OpenMedia {
 
 namespace {
@@ -73,6 +76,40 @@ int input(AVFormatContext** fmt, const char* path, const AVDictionary* extra)
     const int r = avformat_open_input(fmt, path, nullptr, &options);
     av_dict_free(&options);
     return r;
+}
+
+namespace {
+thread_local std::vector<ReadLimit*> t_limits; // the ReadLimits alive on this thread (demuxers read on the caller's)
+} // namespace
+
+ReadLimit::ReadLimit(AVFormatContext* fmt, long long bytes) : m_left(bytes)
+{
+    if (!fmt || !fmt->pb || (fmt->flags & AVFMT_FLAG_CUSTOM_IO) || !fmt->pb->read_packet) return;
+    m_pb = fmt->pb;
+    m_opaque = m_pb->opaque;
+    m_read = m_pb->read_packet;
+    m_pb->read_packet = &ReadLimit::read;
+    t_limits.push_back(this);
+}
+
+ReadLimit::~ReadLimit()
+{
+    if (!m_pb) return;
+    m_pb->read_packet = m_read;
+    t_limits.erase(std::remove(t_limits.begin(), t_limits.end(), this), t_limits.end());
+}
+
+int ReadLimit::read(void* opaque, uint8_t* buf, int size)
+{
+    for (auto it = t_limits.rbegin(); it != t_limits.rend(); ++it) {
+        ReadLimit* l = *it;
+        if (l->m_opaque != opaque) continue;
+        if (l->m_left <= 0) return AVERROR_EXIT;
+        const int n = l->m_read(opaque, buf, int(std::min<long long>(size, l->m_left)));
+        if (n > 0) l->m_left -= n;
+        return n;
+    }
+    return AVERROR(EIO); // read on another thread than the limit's: not supported
 }
 
 } // namespace OpenMedia
