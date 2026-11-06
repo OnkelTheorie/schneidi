@@ -26,7 +26,9 @@
 #include <QTemporaryDir>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
+#include <thread>
 #include <utility>
 
 using Check::dump;
@@ -498,14 +500,27 @@ int main(int argc, char** argv)
     CHECK_EQ(tl["subtitles"][0]["cues"].toArray().size(), 2);
     CHECK_EQ(errorOf("restore", {{"project", g_path}, {"backup", "999"}}), QString("NOT_FOUND"));
 
-    // Someone else (the app) saving: writing commands wait, then give up; reading works
+    // Someone else (the app, other AI edits) saving: writing commands wait up to 30 s - ten edits at once on a busy
+    // machine take turns longer than 5 s -, then give up; reading works
     {
-        const auto held = ProjectFile::lock(g_path, 0);
+        auto held = ProjectFile::lock(g_path, 0);
         CHECK(held != nullptr);
+        std::thread release([&held] {
+            std::this_thread::sleep_for(std::chrono::seconds(8));
+            held.reset();
+        });
+        QElapsedTimer waited;
+        waited.start();
+        CHECK_EQ(errorOf("edit", {{"project", g_path}, {"ops", R"([{"op":"marker","at":1}])"}}), QString("none"));
+        release.join();
+        CHECK(waited.elapsed() >= 7000);
+        held = ProjectFile::lock(g_path, 0);
+        CHECK(held != nullptr);
+        waited.restart();
         CHECK_EQ(errorOf("edit", {{"project", g_path}, {"ops", R"([{"op":"marker","at":1}])"}}), QString("PROJECT_LOCKED"));
+        CHECK(waited.elapsed() >= ProjectFile::kCliLockWaitMs - 1000);
         CHECK_EQ(errorOf("info", {{"project", g_path}}), QString("none"));
     }
-    edit(R"([{"op":"marker","at":1}])");
     // A writer that did not wait for the lock (another TMPDIR: a sandboxed app, a container) changed the file while
     // this command ran: nothing is saved over its change
     {

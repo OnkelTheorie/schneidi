@@ -807,7 +807,7 @@ QJsonObject fillTemplateInto(const QJsonObject& a, Context& ctx, FillBatch* batc
     QDir().mkpath(QFileInfo(out).absolutePath());
     // Also for a new file: two fills to one name at once (two batches into one out_dir) take turns, and the later one
     // sees the file the first one made instead of replacing it silently
-    std::unique_ptr<QLockFile> lock = ProjectFile::lock(out);
+    std::unique_ptr<QLockFile> lock = ProjectFile::lock(out, ProjectFile::kCliLockWaitMs);
     if (!lock) fail("PROJECT_LOCKED", "the project is being saved by someone else (schneidi app?), try again: " + out);
     const bool exists = QFileInfo::exists(out);
     if (exists && !overwrite)
