@@ -782,6 +782,14 @@ bool Exporter::commitOutput(QString* error)
         const QDir part(m_part);
         for (const QString& name : part.entryList(QDir::Files))
             ok = QFile::rename(part.filePath(name), dir.filePath(name)) && ok;
+    } else if (!m_settings.replace) {
+        // Without replacing: QFile::rename never overwrites (atomic on Linux and Windows), so a file another
+        // render finished under this name meanwhile stays as it is
+        ok = QFile::rename(m_part, m_target);
+        if (!ok && QFileInfo::exists(m_target)) {
+            if (error) *error = T("Export fehlgeschlagen: %1 gibt es inzwischen (ein anderes Rendern?)").arg(m_target);
+            return false;
+        }
     } else {
         ok = replaceFile(m_part, m_target);
     }

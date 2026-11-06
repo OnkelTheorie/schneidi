@@ -765,6 +765,7 @@
  "Etwas, worauf sich der Schritt bezieht, gibt es nicht (mehr). Meldung: „%1“": "Algo a lo que se refiere el paso no existe (ya). Mensaje: «%1»",
  "Export abgebrochen.": "Renderizado cancelado.",
  "Export fehlgeschlagen: %1": "Error al exportar: %1",
+ "Export fehlgeschlagen: %1 gibt es inzwischen (ein anderes Rendern?)": "Error al exportar: %1 ya existe (¿otro renderizado?)",
  "Export fertig: %1": "Renderizado terminado: %1",
  "Export konnte nicht gestartet werden.": "No se pudo iniciar el renderizado.",
  "Exportieren": "Exportar",

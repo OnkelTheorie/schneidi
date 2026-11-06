@@ -63,12 +63,14 @@ ExportSettings settings(const QString& path)
     return s;
 }
 
-enum class Stop { None, AtStart };
+enum class Stop { None, AtStart, TakeTarget };
 
 struct Result {
     bool started = false, ok = false;
     QString message;
 };
+
+void writeFile(const QString& path, const QByteArray& data);
 
 Result run(const ExportSettings& s, Stop stop = Stop::None, const Timeline& tl = timeline())
 {
@@ -81,6 +83,8 @@ Result run(const ExportSettings& s, Stop stop = Stop::None, const Timeline& tl =
         loop.quit();
     });
     if (stop == Stop::AtStart) QObject::connect(&ex, &Exporter::started, &ex, [&] { ex.cancel(); });
+    // Another render to the same name finishes first: its video lands under the target while this one still runs
+    if (stop == Stop::TakeTarget) QObject::connect(&ex, &Exporter::started, &ex, [&] { writeFile(s.path, kOld); });
     QString error;
     r.started = ex.start(tl, s, &error);
     if (!r.started) {
@@ -120,6 +124,29 @@ QJsonObject probeVideo(const QString& path)
     p.waitForFinished(30000);
     const QJsonArray streams = QJsonDocument::fromJson(p.readAllStandardOutput()).object().value("streams").toArray();
     return streams.isEmpty() ? QJsonObject() : streams.first().toObject();
+}
+
+// Two renders to the same new name at once (two AIs, a batch twice): the one finishing later must not replace the
+// first one's video without overwrite (replace = false) - it fails and leaves nothing behind; with replace it does
+void testNoReplaceOfNewFile(const QString& root)
+{
+    const QString dir = root + "/no-replace";
+    QDir().mkpath(dir);
+    const QString target = dir + "/out.mp4";
+    ExportSettings s = settings(target);
+    s.replace = false;
+    Result r = run(s, Stop::TakeTarget);
+    CHECK(r.started);
+    CHECK(!r.ok);
+    CHECK_EQ(content(target), kOld);
+    CHECK_EQ(entries(dir), QStringList{"out.mp4"});
+
+    QFile::remove(target);
+    s.replace = true;
+    r = run(s, Stop::TakeTarget);
+    CHECK(r.ok);
+    CHECK(content(target) != kOld);
+    CHECK_EQ(entries(dir), QStringList{"out.mp4"});
 }
 
 void testKeepsOlderFile(const QString& root)
@@ -324,6 +351,7 @@ int main(int argc, char** argv)
                                 "-shortest"});
     if (!CHECK(!g_media.isEmpty())) return Check::result();
     testKeepsOlderFile(tmp.path());
+    testNoReplaceOfNewFile(tmp.path());
     testWriteErrorMidway(tmp.path());
     testWrongContainer(tmp.path());
     testImageSequence(tmp.path());

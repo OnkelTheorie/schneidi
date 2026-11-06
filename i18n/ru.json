@@ -765,6 +765,7 @@
  "Etwas, worauf sich der Schritt bezieht, gibt es nicht (mehr). Meldung: „%1“": "То, на что ссылается шаг, не существует (больше). Сообщение: «%1»",
  "Export abgebrochen.": "Рендеринг отменён.",
  "Export fehlgeschlagen: %1": "Рендеринг не удался: %1",
+ "Export fehlgeschlagen: %1 gibt es inzwischen (ein anderes Rendern?)": "Рендеринг не удался: %1 уже существует (другой рендеринг?)",
  "Export fertig: %1": "Рендеринг завершён: %1",
  "Export konnte nicht gestartet werden.": "Не удалось запустить рендеринг.",
  "Exportieren": "Экспортировать",
