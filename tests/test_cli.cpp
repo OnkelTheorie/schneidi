@@ -20,6 +20,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QFile>
+#include <QElapsedTimer>
 #include <QFileInfo>
 #include <QImage>
 #include <QTemporaryDir>
@@ -1477,6 +1478,30 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
         const Cli::Command* frames = Cli::find("frames");
         const QJsonObject fr = frames->run(Cli::normalize(*frames, {{"source", clip}, {"at", QJsonArray{"5s"}}, {"crop", "240,10,60,30"}}), ctx);
         CHECK_EQ(fr["frames"].toArray().size(), 1);
+#ifdef Q_OS_UNIX
+        // A broken project whose media is a device: an image plugin asked whether /dev/zero is a picture read it
+        // forever (frames, render and the app's preview hung)
+        if (QFileInfo(QStringLiteral("/dev/zero")).exists()) {
+            QFile f(proj);
+            f.open(QIODevice::ReadOnly);
+            QByteArray json = f.readAll();
+            json.replace(clip.toUtf8(), "/dev/zero");
+            const QString zero = dir.filePath("zero.schneidi");
+            QFile z(zero);
+            z.open(QIODevice::WriteOnly);
+            z.write(json);
+            z.close();
+            Cli::Context zctx;
+            zctx.mcp = true;
+            QElapsedTimer zt;
+            zt.start();
+            try {
+                frames->run(Cli::normalize(*frames, {{"source", zero}, {"at", QJsonArray{0}}}), zctx);
+            } catch (const Cli::Error&) {
+            }
+            CHECK(zt.elapsed() < 20000);
+        }
+#endif
         if (CHECK(ctx.images.size() == 1)) {
             CHECK_EQ(ctx.images[0].width(), 60);
             CHECK(qGray(ctx.images[0].pixel(30, 15)) > 200); // the white box
