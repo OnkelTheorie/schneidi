@@ -1785,5 +1785,13 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
         CHECK(messageOf("edit", {{"project", proj}, {"ops", R"([{"op":"remove_track","tracks":["V1","V2"]}])"}})
                   .contains("a timeline keeps at least one video track"));
     }
+    // A project loaded from its file keeps no undo history: every op kept a snapshot of the whole timeline, so an
+    // edit with a thousand appends took over a gigabyte and 3000 ran out of memory
+    {
+        Cli::detail::Session s(g_path, Cli::detail::Session::Access::Read);
+        for (int i = 1; i <= 50; ++i) s.editor.toggleMarker(100000 + i);
+        CHECK_EQ(s.project.timeline().markers.count(100050), qsizetype(1));
+        CHECK(s.project.undoStack()->count() <= 1);
+    }
     return Check::result();
 }
