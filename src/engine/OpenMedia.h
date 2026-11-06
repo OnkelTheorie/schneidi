@@ -6,9 +6,9 @@
 // by content whatever the file is called: a server's work folder (cli/Sandbox) would read anything through one.
 // schneidi never needs them for media; image sequences (image2) and single files open as before.
 
-struct AVDictionary;
 #include <cstdint>
 
+struct AVDictionary;
 struct AVFormatContext;
 struct AVIOContext;
 
@@ -19,8 +19,8 @@ namespace OpenMedia {
 // crash left behind) is not read whole on import; such a file has no length then.
 inline constexpr long long kTailScanMaxBytes = 64LL << 20;
 
-// Reads of `fmt`'s file fail (AVERROR_EXIT) once `bytes` more were read, until this goes away (the file's own read and
-// seek functions again then). A scan of a file's tail cannot bound itself by where it seeks: a demuxer may go back and
+// Reads of `fmt`'s file fail (AVERROR_EXIT) once `bytes` more were read, until this goes away (the file's own read function
+// again then). A scan of a file's tail cannot bound itself by where it seeks: a demuxer may go back and
 // read on from there - Matroska, after junk it cannot parse, resyncs from its last cluster, through the whole file.
 // Does nothing for a context without its own I/O.
 class ReadLimit {
