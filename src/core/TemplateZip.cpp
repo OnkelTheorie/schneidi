@@ -136,7 +136,7 @@ bool exportZip(const QString& idOrName, const QString& zip, bool overwrite, QStr
     return true;
 }
 
-std::optional<ContentTemplate> importZip(const QString& zip, ZipClash clash, QString* error, QString* code)
+std::optional<ContentTemplate> importZip(const QString& zip, ZipClash clash, QString* error, QString* code, int waitMs)
 {
     if (!QFileInfo::exists(zip)) return failWith(error, code, "NOT_FOUND", "no file " + zip), std::nullopt;
     QString err;
@@ -197,7 +197,7 @@ std::optional<ContentTemplate> importZip(const QString& zip, ZipClash clash, QSt
     QString id = idForName(name);
     // From the name check to the template in place: no other save/import/delete in between (the same ZIP imported
     // twice at once would otherwise pick the same free name or move each other's folder aside)
-    const std::unique_ptr<QLockFile> held = lockLibrary();
+    const std::unique_ptr<QLockFile> held = lockLibrary(waitMs);
     if (!held) return cleanUp("BUSY", "the own templates are being changed by another schneidi, try again");
     if (QFileInfo::exists(base.filePath(id))) {
         if (clash == ZipClash::Fail) return cleanUp("EXISTS", QString("a template named %1 exists").arg(name));

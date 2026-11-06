@@ -19,7 +19,7 @@ enum class ZipClash {
     Fail,     // nothing is imported, error code "EXISTS" (the app then asks)
 };
 
-// Error codes (`code`, the CLI's codes): NOT_FOUND, BAD_ARGUMENT, EXISTS, SAVE_FAILED, BAD_ZIP, BAD_TEMPLATE
+// Error codes (`code`, the CLI's codes): NOT_FOUND, BAD_ARGUMENT, EXISTS, SAVE_FAILED, BAD_ZIP, BAD_TEMPLATE, BUSY
 
 // Writes template `idOrName` (built-in or own, TemplateLibrary::find) into `zipPath` (must end in .zip; an existing
 // file only with overwrite). Written through a .part file, so a failure leaves no half archive. fileCount = files in it.
@@ -38,7 +38,8 @@ bool exportZip(const QString& idOrName, const QString& zipPath, bool overwrite, 
 // project about 10 times), at most 4 GiB
 quint64 importLimit(qint64 zipSize);
 
+// waitMs: how long to wait for the library lock (lockLibrary; -1 = a minute, the app: AppWaitMs), else code BUSY
 std::optional<ContentTemplate> importZip(const QString& zipPath, ZipClash clash = ZipClash::KeepBoth,
-                                         QString* error = nullptr, QString* code = nullptr);
+                                         QString* error = nullptr, QString* code = nullptr, int waitMs = -1);
 
 } // namespace TemplateLibrary

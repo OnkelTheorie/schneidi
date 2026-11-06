@@ -332,6 +332,11 @@ void TemplateBrowserDialog::choose(Choice c)
     accept();
 }
 
+QString TemplateBrowserDialog::busyText()
+{
+    return T("Ein anderes schneidi ändert gerade die eigenen Vorlagen. Bitte gleich noch einmal versuchen.");
+}
+
 void TemplateBrowserDialog::renameCurrent()
 {
     const Item* it = current();
@@ -341,9 +346,9 @@ void TemplateBrowserDialog::renameCurrent()
     const QString name = QInputDialog::getText(this, T("Vorlage umbenennen"), T("Neuer Name:"), QLineEdit::Normal,
                                                it->name, &ok).trimmed();
     if (!ok || name.isEmpty() || name == it->name) return;
-    QString error;
-    if (!TemplateLibrary::rename(id, name, &error)) {
-        QMessageBox::warning(this, T("Vorlage umbenennen"), error);
+    QString error, code;
+    if (!TemplateLibrary::rename(id, name, &error, &code, TemplateLibrary::AppWaitMs)) {
+        QMessageBox::warning(this, T("Vorlage umbenennen"), code == "BUSY" ? busyText() : error);
         return;
     }
     reload();
@@ -357,9 +362,9 @@ void TemplateBrowserDialog::removeCurrent()
     if (QMessageBox::question(this, T("Vorlage löschen"), T("Die Vorlage „%1“ mit ihren Medien löschen?").arg(it->name))
         != QMessageBox::Yes)
         return;
-    QString error;
-    if (!TemplateLibrary::remove(it->t.id, &error)) {
-        QMessageBox::warning(this, T("Vorlage löschen"), error);
+    QString error, code;
+    if (!TemplateLibrary::remove(it->t.id, &error, &code, TemplateLibrary::AppWaitMs)) {
+        QMessageBox::warning(this, T("Vorlage löschen"), code == "BUSY" ? busyText() : error);
         return;
     }
     reload();
@@ -426,17 +431,19 @@ std::optional<TemplateLibrary::ZipClash> TemplateBrowserDialog::askClash(const Q
 bool TemplateBrowserDialog::importFrom(const QString& zip)
 {
     QString error, code;
-    std::optional<ContentTemplate> t = TemplateLibrary::importZip(zip, TemplateLibrary::ZipClash::Fail, &error, &code);
+    std::optional<ContentTemplate> t =
+        TemplateLibrary::importZip(zip, TemplateLibrary::ZipClash::Fail, &error, &code, TemplateLibrary::AppWaitMs);
     if (!t && code == "EXISTS") {
         const std::optional<TemplateLibrary::ZipClash> answer = askClash(zip);
         if (!answer) return false;
-        t = TemplateLibrary::importZip(zip, *answer, &error, &code);
+        t = TemplateLibrary::importZip(zip, *answer, &error, &code, TemplateLibrary::AppWaitMs);
     }
     if (!t) {
         const QString file = QFileInfo(zip).fileName();
         zipFailed(this, T("Vorlage importieren"),
                   code == "BAD_ZIP"        ? T("„%1“ ist keine lesbare ZIP-Datei.").arg(file)
                   : code == "BAD_TEMPLATE" ? T("In „%1“ ist keine schneidi-Vorlage.").arg(file)
+                  : code == "BUSY"         ? busyText()
                                            : T("Die Vorlage konnte nicht importiert werden."),
                   error);
         return false;

@@ -478,6 +478,7 @@
  "Der Clip passt nicht zur Art des Platzhalters": "Le clip ne correspond pas au type de l’espace réservé",
  "Der Song wird an seinen Phrasen auf die Länge des Platzhalters geschnitten (sonst gekürzt mit Ausblenden)": "Le morceau est coupé sur ses phrases à la durée de l’espace réservé (sinon raccourci avec fondu de sortie)",
  "Die Vorlage ließ sich nicht speichern:\n%1": "Impossible d’enregistrer le modèle :\n%1",
+ "Ein anderes schneidi ändert gerade die eigenen Vorlagen. Bitte gleich noch einmal versuchen.": "Un autre schneidi modifie en ce moment les modèles personnels. Réessayez dans un instant.",
  "Die Vorlage „%1“ ließ sich nicht öffnen:\n%2": "Impossible d’ouvrir le modèle « %1 » :\n%2",
  "Die Dateien der Vorlage ließen sich nicht neben das Projekt kopieren:\n%1": "Impossible de copier les fichiers du modèle à côté du projet :\n%1",
  "Die Vorlage „%1“ mit ihren Medien löschen?": "Supprimer le modèle « %1 » avec ses médias ?",

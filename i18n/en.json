@@ -478,6 +478,7 @@
  "Der Clip passt nicht zur Art des Platzhalters": "The clip does not fit the placeholder’s kind",
  "Der Song wird an seinen Phrasen auf die Länge des Platzhalters geschnitten (sonst gekürzt mit Ausblenden)": "The song is cut on its phrases to the placeholder’s length (otherwise trimmed with a fade-out)",
  "Die Vorlage ließ sich nicht speichern:\n%1": "The template could not be saved:\n%1",
+ "Ein anderes schneidi ändert gerade die eigenen Vorlagen. Bitte gleich noch einmal versuchen.": "Another schneidi is changing the own templates right now. Please try again in a moment.",
  "Die Vorlage „%1“ ließ sich nicht öffnen:\n%2": "The template “%1” could not be opened:\n%2",
  "Die Dateien der Vorlage ließen sich nicht neben das Projekt kopieren:\n%1": "The template’s files could not be copied next to the project:\n%1",
  "Die Vorlage „%1“ mit ihren Medien löschen?": "Delete the template “%1” with its media?",

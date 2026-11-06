@@ -319,9 +319,9 @@ QJsonObject saveTemplate(const QJsonObject& a)
     const ProjectData d = s.project.data();
     if (TemplateFill::slotIds(d).isEmpty())
         s.notes << "the project has no slots: mark placeholders with the edit op 'slot' (or in the app) to make it fillable";
-    QString err;
-    const std::optional<ContentTemplate> t = TemplateLibrary::save(d, name, o, &err);
-    if (!t) fail(err.contains("exists") ? "EXISTS" : "SAVE_FAILED", err);
+    QString err, code;
+    const std::optional<ContentTemplate> t = TemplateLibrary::save(d, name, o, &err, &code);
+    if (!t) fail(code.isEmpty() ? "SAVE_FAILED" : code, err);
     QJsonObject out = contentJson(*t);
     out["saved"] = true;
     if (!s.notes.isEmpty()) out["notes"] = s.notes;

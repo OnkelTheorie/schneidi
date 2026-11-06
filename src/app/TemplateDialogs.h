@@ -54,6 +54,10 @@ public:
     explicit TemplateBrowserDialog(QWidget* parent = nullptr,
                                    std::function<QImage(const QString& video, const QSize& size)> thumbnail = {});
 
+    // The message when another schneidi (an AI's batch) holds the own templates longer than the app waits
+    // (TemplateLibrary::AppWaitMs)
+    static QString busyText();
+
     enum class Choice { None, NewContent, NewStart, Edit };
     Choice choice() const { return m_choice; }
     ContentTemplate content() const { return m_chosenContent; }

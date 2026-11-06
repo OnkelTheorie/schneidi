@@ -20,6 +20,7 @@
 #include <QLockFile>
 #include <QSet>
 #include <QStandardPaths>
+#include <QUuid>
 
 #include <algorithm>
 #include <cmath>
@@ -251,24 +252,28 @@ bool load(const ContentTemplate& t, ProjectData* data, QString* error) { return 
 
 QString idForName(const QString& name) { return StartTemplates::idForName(name.trimmed()); }
 
-std::optional<ContentTemplate> save(const ProjectData& project, const QString& name, const SaveOptions& o, QString* error)
+std::optional<ContentTemplate> save(const ProjectData& project, const QString& name, const SaveOptions& o, QString* error,
+                                    QString* code)
 {
-    const auto fail = [&](const QString& why) {
+    QString tmp; // the staging folder, removed on every failure
+    const auto fail = [&](const char* c, const QString& why) {
+        if (!tmp.isEmpty()) QDir(tmp).removeRecursively();
         if (error) *error = why;
+        if (code) *code = QString::fromLatin1(c);
         return std::nullopt;
     };
     const QString shown = name.trimmed();
-    if (shown.isEmpty()) return fail(T("Die Vorlage braucht einen Namen."));
+    if (shown.isEmpty()) return fail("BAD_ARGUMENT", T("Die Vorlage braucht einen Namen."));
     const QString id = idForName(shown);
     const QDir base(dir());
     const QString final = base.filePath(id);
-    const std::unique_ptr<QLockFile> held = lockLibrary();
-    if (!held) return fail("the own templates are being changed by another schneidi, try again");
-    if (QFileInfo::exists(final) && !o.replace) return fail(QString("a template '%1' exists already").arg(id));
-    // Written next to it first: media of the old template may be the ones copied (saving a filled template again)
-    const QString tmp = base.filePath("." + id + ".saving");
-    QDir(tmp).removeRecursively();
-    if (!QDir().mkpath(tmp)) return fail("cannot create " + tmp);
+    if (QFileInfo::exists(final) && !o.replace) return fail("EXISTS", QString("a template '%1' exists already").arg(id));
+    // Everything that takes long (copying the media) is written into a hidden folder of its own first, without the
+    // library lock: another schneidi (the app on its UI thread) waits only for the move into place. Media of the old
+    // template may be the ones copied (saving a filled template again): they are still there meanwhile.
+    QDir().mkpath(base.absolutePath());
+    tmp = base.filePath(QString(".%1.%2.saving").arg(id, QUuid::createUuid().toString(QUuid::Id128).left(8)));
+    if (!QDir().mkpath(tmp)) return fail("SAVE_FAILED", "cannot create " + tmp);
 
     ProjectData d = project;
     for (Sequence& s : d.sequences)
@@ -299,37 +304,35 @@ std::optional<ContentTemplate> save(const ProjectData& project, const QString& n
                                .arg(sf.suffix().isEmpty() ? QString() : "." + sf.suffix());
             names.insert(fileName.toLower());
             const QString dst = QDir(tmp).filePath(QString(MediaDirName) + "/" + fileName);
-            if (!QFile::copy(src, dst)) {
-                QDir(tmp).removeRecursively();
-                return fail(QString("cannot copy %1 into the template").arg(src));
-            }
+            if (!QFile::copy(src, dst)) return fail("SAVE_FAILED", QString("cannot copy %1 into the template").arg(src));
             moved[src] = dst;
         }
         redirect(d, moved);
     }
     QString err;
-    if (!ProjectFile::save(d, QDir(tmp).filePath(ProjectFileName), &err)) {
-        QDir(tmp).removeRecursively();
-        return fail(err);
-    }
-    QString oldPreview = previewIn(final);
+    if (!ProjectFile::save(d, QDir(tmp).filePath(ProjectFileName), &err)) return fail("SAVE_FAILED", err);
     if (!o.preview.isEmpty()) {
         const QString suffix = QFileInfo(o.preview).suffix().toLower();
-        if (!QFile::copy(o.preview, QDir(tmp).filePath("preview." + (suffix.isEmpty() ? QString("png") : suffix)))) {
-            QDir(tmp).removeRecursively();
-            return fail("cannot copy the preview " + o.preview);
-        }
-    } else if (!oldPreview.isEmpty()) { // replacing a template keeps its preview
-        QFile::copy(oldPreview, QDir(tmp).filePath(QFileInfo(oldPreview).fileName()));
+        if (!QFile::copy(o.preview, QDir(tmp).filePath("preview." + (suffix.isEmpty() ? QString("png") : suffix))))
+            return fail("SAVE_FAILED", "cannot copy the preview " + o.preview);
     }
-    if (QFileInfo::exists(final) && !QDir(final).removeRecursively()) {
-        QDir(tmp).removeRecursively();
-        return fail("cannot replace " + final);
-    }
+
+    // From the name check to the template in place: no other save/import/delete in between
+    const std::unique_ptr<QLockFile> held = lockLibrary(o.lockWaitMs);
+    if (!held) return fail("BUSY", "the own templates are being changed by another schneidi, try again");
+    if (QFileInfo::exists(final) && !o.replace) return fail("EXISTS", QString("a template '%1' exists already").arg(id));
+    if (o.preview.isEmpty()) // replacing a template keeps its preview
+        if (const QString oldPreview = previewIn(final); !oldPreview.isEmpty())
+            QFile::copy(oldPreview, QDir(tmp).filePath(QFileInfo(oldPreview).fileName()));
+    // The old one moves aside and is removed only once the new one is in place (back on a failure)
+    const QString aside = tmp + ".old";
+    if (QFileInfo::exists(final) && !QDir().rename(final, aside)) return fail("SAVE_FAILED", "cannot replace " + final);
     if (!QDir().rename(tmp, final)) {
-        QDir(tmp).removeRecursively();
-        return fail("cannot create " + final);
+        if (QFileInfo::exists(aside)) QDir().rename(aside, final);
+        return fail("SAVE_FAILED", "cannot create " + final);
     }
+    tmp.clear();
+    QDir(aside).removeRecursively();
     // Once more from its place: the absolute media paths point into the final folder (relative ones did already)
     ProjectData placed;
     const QString file = QDir(final).filePath(ProjectFileName);
@@ -460,6 +463,11 @@ QStringList foldersUsed(const ProjectData& project)
 
 std::unique_ptr<QLockFile> lockLibrary(int timeoutMs)
 {
+    if (timeoutMs < 0) {
+        bool ok = false;
+        const int ms = qEnvironmentVariableIntValue("SCHNEIDI_TEMPLATE_LOCK_MS", &ok); // tests: not a minute
+        timeoutMs = ok && ms >= 0 ? ms : 60000;
+    }
     QDir().mkpath(dir());
     auto l = std::make_unique<QLockFile>(QDir(dir()).filePath(".templates.lock"));
     l->setStaleLockTime(0);
@@ -468,14 +476,6 @@ std::unique_ptr<QLockFile> lockLibrary(int timeoutMs)
 }
 
 namespace {
-
-// How long remove/rename wait for the library lock (tests: SCHNEIDI_TEMPLATE_LOCK_MS)
-int libraryWaitMs()
-{
-    bool ok = false;
-    const int ms = qEnvironmentVariableIntValue("SCHNEIDI_TEMPLATE_LOCK_MS", &ok);
-    return ok && ms >= 0 ? ms : 60000;
-}
 
 // The folder of an own template: the id as given, else one whose id (folder name) differs only in case - on a
 // case-sensitive file system "My-Short" and "my-short" must not be two answers to an AI, and Windows sees one
@@ -503,9 +503,9 @@ bool failed(QString* error, QString* code, const char* c, const QString& why)
 
 } // namespace
 
-bool remove(const QString& id, QString* error, QString* code)
+bool remove(const QString& id, QString* error, QString* code, int waitMs)
 {
-    const std::unique_ptr<QLockFile> held = lockLibrary(libraryWaitMs());
+    const std::unique_ptr<QLockFile> held = lockLibrary(waitMs);
     if (!held) return failed(error, code, "BUSY", "the own templates are being changed by another schneidi, try again");
     const QString folder = ownFolder(id);
     if (folder.isEmpty()) return failed(error, code, "NOT_FOUND", QString("no own content template '%1'").arg(id));
@@ -513,11 +513,11 @@ bool remove(const QString& id, QString* error, QString* code)
     return true;
 }
 
-bool rename(const QString& id, const QString& name, QString* error, QString* code)
+bool rename(const QString& id, const QString& name, QString* error, QString* code, int waitMs)
 {
     const QString shown = name.trimmed();
     if (shown.isEmpty()) return failed(error, code, "BAD_ARGUMENT", T("Die Vorlage braucht einen Namen."));
-    const std::unique_ptr<QLockFile> held = lockLibrary(libraryWaitMs());
+    const std::unique_ptr<QLockFile> held = lockLibrary(waitMs);
     if (!held) return failed(error, code, "BUSY", "the own templates are being changed by another schneidi, try again");
     QString folder = ownFolder(id);
     if (folder.isEmpty()) return failed(error, code, "NOT_FOUND", QString("no own content template '%1'").arg(id));

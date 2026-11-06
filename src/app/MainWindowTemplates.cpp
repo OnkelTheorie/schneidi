@@ -138,10 +138,13 @@ void MainWindow::saveContentTemplate()
     }
     ProjectData data = m_project->data();
     data.playhead = m_timeline->view()->playhead();
-    QString error;
-    const std::optional<ContentTemplate> saved = TemplateLibrary::save(data, dlg.name(), o, &error);
+    o.lockWaitMs = TemplateLibrary::AppWaitMs; // not a frozen window while an AI's batch holds the library
+    QString error, code;
+    const std::optional<ContentTemplate> saved = TemplateLibrary::save(data, dlg.name(), o, &error, &code);
     if (!saved) {
-        QMessageBox::warning(this, T("Als Vorlage speichern"), T("Die Vorlage ließ sich nicht speichern:\n%1").arg(error));
+        QMessageBox::warning(this, T("Als Vorlage speichern"),
+                             code == "BUSY" ? TemplateBrowserDialog::busyText()
+                                            : T("Die Vorlage ließ sich nicht speichern:\n%1").arg(error));
         return;
     }
     statusBar()->showMessage(T("Vorlage „%1“ gespeichert (%2 Felder)").arg(saved->name).arg(saved->slotIds.size()), 6000);

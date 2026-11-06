@@ -478,6 +478,7 @@
  "Der Clip passt nicht zur Art des Platzhalters": "El clip no encaja con el tipo del marcador",
  "Der Song wird an seinen Phrasen auf die Länge des Platzhalters geschnitten (sonst gekürzt mit Ausblenden)": "La canción se corta en sus frases a la duración del marcador (si no, se recorta con fundido de salida)",
  "Die Vorlage ließ sich nicht speichern:\n%1": "No se pudo guardar la plantilla:\n%1",
+ "Ein anderes schneidi ändert gerade die eigenen Vorlagen. Bitte gleich noch einmal versuchen.": "Otro schneidi está modificando ahora mismo las plantillas propias. Vuelve a intentarlo en un momento.",
  "Die Vorlage „%1“ ließ sich nicht öffnen:\n%2": "No se pudo abrir la plantilla «%1»:\n%2",
  "Die Dateien der Vorlage ließen sich nicht neben das Projekt kopieren:\n%1": "No se pudieron copiar los archivos de la plantilla junto al proyecto:\n%1",
  "Die Vorlage „%1“ mit ihren Medien löschen?": "¿Eliminar la plantilla «%1» con sus medios?",

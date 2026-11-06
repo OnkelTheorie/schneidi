@@ -70,20 +70,29 @@ struct SaveOptions {
                              // where they are (absolute; the template works only on this machine)
     QString preview;         // a file to copy as preview.mp4/png (empty = none)
     bool replace = false;    // replace an own template of the same id (else an error)
+    int lockWaitMs = -1;     // how long to wait for the library lock (lockLibrary; -1 = a minute, the app: AppWaitMs)
 };
 // Saves `project` as own template `name` (templateInfo set from name + options). Only used media are copied (all
-// timelines); two files of the same name get distinct names in media/. Returns the saved template.
+// timelines); two files of the same name get distinct names in media/. The copies are made in a hidden staging
+// folder (".<id>.<random>.saving") before the library lock is taken: it is held only for moving the template into
+// place. Returns the saved template. code: "EXISTS", "BUSY" (lock still taken after lockWaitMs), "BAD_ARGUMENT" (no
+// name), "SAVE_FAILED"
 std::optional<ContentTemplate> save(const ProjectData& project, const QString& name, const SaveOptions& options = {},
-                                    QString* error = nullptr);
+                                    QString* error = nullptr, QString* code = nullptr);
 // Own templates only: delete the folder; rename (the name in its project; the folder follows when it is free). `id`
 // in any case (else a template's name, as find()). code: "BUSY" (another schneidi changes the own templates and kept
-// them for a minute), "NOT_FOUND", "FAILED" (could not delete/write), "BAD_ARGUMENT" (rename: no name)
-bool remove(const QString& id, QString* error = nullptr, QString* code = nullptr);
+// them for waitMs), "NOT_FOUND", "FAILED" (could not delete/write), "BAD_ARGUMENT" (rename: no name). waitMs as
+// lockLibrary
+bool remove(const QString& id, QString* error = nullptr, QString* code = nullptr, int waitMs = -1);
 // Held while own templates change (save, remove, rename, import): two at once (two AIs saving the same name, a save
 // and a delete) work one after the other instead of on each other's half-written folders. A lock file in dir(),
-// stale only when its process is gone; nullptr = still taken after timeoutMs.
-std::unique_ptr<QLockFile> lockLibrary(int timeoutMs = 60000);
-bool rename(const QString& id, const QString& name, QString* error = nullptr, QString* code = nullptr);
+// stale only when its process is gone; nullptr = still taken after timeoutMs (-1 = a minute, or
+// SCHNEIDI_TEMPLATE_LOCK_MS)
+std::unique_ptr<QLockFile> lockLibrary(int timeoutMs = -1);
+// How long the app waits for the lock on its UI thread: another schneidi (an AI's batch) may hold it for a while,
+// the app says "busy" instead of freezing
+inline constexpr int AppWaitMs = 2000;
+bool rename(const QString& id, const QString& name, QString* error = nullptr, QString* code = nullptr, int waitMs = -1);
 
 // Every file a project refers to: the media of clips, path parameters of clip effects (LUTs), wipe images of
 // transitions and the project brand kit's logo/intro/outro (built-in LUTs and wipes left out). `fn` may change the

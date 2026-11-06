@@ -23,12 +23,16 @@
 #include <QDateTime>
 #include <QDir>
 #include <QDirIterator>
+#include <QThread>
+#include <QLockFile>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QJsonDocument>
 #include <QTemporaryDir>
 #include <QUndoStack>
 
 #include <cmath>
+#include <thread>
 
 QDebug operator<<(QDebug dbg, const ClipSlot& s)
 {
@@ -1112,6 +1116,60 @@ void testCopyNoTraversal()
     CHECK_EQ(d.media.value(0).path, sneaky); // stays a reference to where it is, as any file outside the template
 }
 
+// Saving copies the media before it takes the library lock: another schneidi (the app on its UI thread) waits only
+// for the move into place, not for the copying of gigabytes; a lock held longer than the save waits says BUSY and
+// leaves no staging folder behind
+void testSaveStagesOutsideLock()
+{
+    QDir(TemplateLibrary::dir()).removeRecursively();
+    QTemporaryDir tmp;
+    const QString a = touch(tmp.filePath("one/clip.mp4"), "aaa");
+    ProjectData d = project();
+    d.media = {media(a, 100, true, true)};
+    for (TrackKind k : {TrackKind::Video, TrackKind::Audio})
+        for (Track& t : d.timeline.tracks(k)) t.clips.clear();
+    Clip c;
+    c.id = 1;
+    c.mediaPath = a;
+    c.out = 99;
+    d.timeline.video[0].clips << c;
+    const auto staged = [] {
+        for (const QFileInfo& fi : QDir(TemplateLibrary::dir()).entryInfoList(QDir::Dirs | QDir::Hidden | QDir::NoDotAndDotDot))
+            if (fi.fileName().endsWith(".saving") && QFileInfo::exists(fi.filePath() + "/media/clip.mp4")) return true;
+        return false;
+    };
+    std::unique_ptr<QLockFile> held = TemplateLibrary::lockLibrary(0); // another schneidi
+    if (!CHECK(held != nullptr)) return;
+    TemplateLibrary::SaveOptions o;
+    o.lockWaitMs = 10000;
+    std::optional<ContentTemplate> saved;
+    QString err, code;
+    std::thread save([&] { saved = TemplateLibrary::save(d, "Staged", o, &err, &code); });
+    bool copiedWhileHeld = false;
+    QElapsedTimer clock;
+    clock.start();
+    while (!copiedWhileHeld && clock.elapsed() < 5000) {
+        copiedWhileHeld = staged();
+        if (!copiedWhileHeld) QThread::msleep(5);
+    }
+    held.reset();
+    save.join();
+    CHECK(copiedWhileHeld);
+    CHECK(saved.has_value());
+    if (saved) CHECK(QDir(saved->dir).exists("media/clip.mp4"));
+    CHECK(!staged());
+    // Held longer than the save waits: BUSY, the staged copies are gone
+    held = TemplateLibrary::lockLibrary(0);
+    o.lockWaitMs = 100;
+    o.replace = true;
+    CHECK(!TemplateLibrary::save(d, "Staged", o, &err, &code));
+    CHECK_EQ(code, QString("BUSY"));
+    CHECK(!staged());
+    CHECK_EQ(QDir(TemplateLibrary::dir()).entryList({".Staged*"}, QDir::Dirs | QDir::Hidden).size(), qsizetype(0));
+    held.reset();
+    CHECK(TemplateLibrary::remove("Staged", &err));
+}
+
 void testLibrary()
 {
     QDir(TemplateLibrary::dir()).removeRecursively();
@@ -1276,5 +1334,6 @@ int main(int argc, char** argv)
     testCopyKnown();
     testCopyNoTraversal();
     testLibrary();
+    testSaveStagesOutsideLock();
     return Check::result();
 }
