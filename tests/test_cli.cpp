@@ -20,6 +20,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QFile>
+#include <QElapsedTimer>
 #include <QFileInfo>
 #include <QImage>
 #include <QTemporaryDir>
@@ -1477,6 +1478,30 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
         const Cli::Command* frames = Cli::find("frames");
         const QJsonObject fr = frames->run(Cli::normalize(*frames, {{"source", clip}, {"at", QJsonArray{"5s"}}, {"crop", "240,10,60,30"}}), ctx);
         CHECK_EQ(fr["frames"].toArray().size(), 1);
+#ifdef Q_OS_UNIX
+        // A broken project whose media is a device: an image plugin asked whether /dev/zero is a picture read it
+        // forever (frames, render and the app's preview hung)
+        if (QFileInfo(QStringLiteral("/dev/zero")).exists()) {
+            QFile f(proj);
+            f.open(QIODevice::ReadOnly);
+            QByteArray json = f.readAll();
+            json.replace(clip.toUtf8(), "/dev/zero");
+            const QString zero = dir.filePath("zero.schneidi");
+            QFile z(zero);
+            z.open(QIODevice::WriteOnly);
+            z.write(json);
+            z.close();
+            Cli::Context zctx;
+            zctx.mcp = true;
+            QElapsedTimer zt;
+            zt.start();
+            try {
+                frames->run(Cli::normalize(*frames, {{"source", zero}, {"at", QJsonArray{0}}}), zctx);
+            } catch (const Cli::Error&) {
+            }
+            CHECK(zt.elapsed() < 20000);
+        }
+#endif
         if (CHECK(ctx.images.size() == 1)) {
             CHECK_EQ(ctx.images[0].width(), 60);
             CHECK(qGray(ctx.images[0].pixel(30, 15)) > 200); // the white box
@@ -1784,6 +1809,14 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
         CHECK_EQ(audioTracks(), before - 3);
         CHECK(messageOf("edit", {{"project", proj}, {"ops", R"([{"op":"remove_track","tracks":["V1","V2"]}])"}})
                   .contains("a timeline keeps at least one video track"));
+    }
+    // A project loaded from its file keeps no undo history: every op kept a snapshot of the whole timeline, so an
+    // edit with a thousand appends took over a gigabyte and 3000 ran out of memory
+    {
+        Cli::detail::Session s(g_path, Cli::detail::Session::Access::Read);
+        for (int i = 1; i <= 50; ++i) s.editor.toggleMarker(100000 + i);
+        CHECK_EQ(s.project.timeline().markers.count(100050), qsizetype(1));
+        CHECK(s.project.undoStack()->count() <= 1);
     }
     return Check::result();
 }

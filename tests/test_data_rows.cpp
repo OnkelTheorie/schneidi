@@ -10,6 +10,7 @@
 #include <QCoreApplication>
 #include <QFile>
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QTemporaryDir>
 
 namespace {
@@ -123,6 +124,14 @@ void testNames()
     CHECK(DataRows::patternError("{prodcut}", cols).contains("prodcut"));
     CHECK(DataRows::patternError("{n:x}", cols).contains("{n:03}"));
     CHECK(!DataRows::patternError("{n", cols).isEmpty());
+    // A brace without a column name ("{}", "{:3}"): refused, also when the JSON rows have a column "" - looking it up
+    // in a row with a non-ASCII key crashed in Qt 6.8 (a null key, found by fuzzing)
+    const std::optional<DataRows::Table> t = DataRows::fromJson(QJsonDocument::fromJson(R"([{"":"x"},{"größe":"y"}])").array());
+    CHECK(t && t->columns.contains(""));
+    CHECK(!DataRows::patternError("{:3}", t->columns).isEmpty());
+    CHECK(!DataRows::patternError("{}", t->columns).isEmpty());
+    CHECK_EQ(*DataRows::fileName("a{:3}b", t->rows.value(1), 1), QString("ab"));
+    CHECK_EQ(*DataRows::fileName("a{}b", t->rows.value(1), 1), QString("ab"));
     // Duplicates: -2, -3, case-insensitively, without taking a name that is there already
     CHECK_EQ(DataRows::uniqueNames({"x", "x", "x"}), (QStringList{"x", "x-2", "x-3"}));
     CHECK_EQ(DataRows::uniqueNames({"a", "A", "b", "a", "a-2"}), (QStringList{"a", "A-3", "b", "a-4", "a-2"}));

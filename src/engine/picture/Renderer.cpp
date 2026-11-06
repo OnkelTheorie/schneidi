@@ -311,6 +311,9 @@ constexpr int64_t kSeekWindowBytes = 96ll * 1024 * 1024;
 
 bool looksLikeStill(const QString& path)
 {
+    // Only a regular file: an image plugin asked about a device or a pipe (a broken project naming /dev/zero) read
+    // it forever, and the render (preview, frames, export) hung with it
+    if (!QFileInfo(path).isFile()) return false;
     const QByteArray fmt = QImageReader::imageFormat(path);
     return !fmt.isEmpty() && fmt != "gif"; // animated GIFs go through the decoder
 }

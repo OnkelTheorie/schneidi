@@ -31,6 +31,37 @@ void neighbours(const SubtitleTrack& t, int id, int* lo, int* hi)
         }
 }
 
+// The cues into a new track, each with a new id. Cues one after another (an SRT file, a transcript, an AI's list) are
+// the track as they come; placing each (it sorts the whole track) took minutes for 100000 cues. Overlapping ones are
+// placed one by one: a later cue covers an earlier one.
+void placeAll(SubtitleTrack& t, const QVector<SubtitleCue>& cues, Project* p)
+{
+    bool apart = t.cues.isEmpty();
+    int end = INT_MIN;
+    for (const SubtitleCue& c : cues) {
+        if (c.end <= c.start) continue; // place() drops it
+        if (c.start < end) {
+            apart = false;
+            break;
+        }
+        end = c.end;
+    }
+    if (apart) {
+        t.cues.reserve(cues.size());
+        for (SubtitleCue c : cues) {
+            c.id = p->newClipId();
+            if (c.end > c.start) t.cues << c;
+        }
+        return;
+    }
+    for (SubtitleCue c : cues) {
+        c.id = p->newClipId();
+        Subtitles::place(t, c);
+    }
+    for (SubtitleCue& c : t.cues) // the right part of a cue that a later, overlapping one split
+        if (c.id == 0) c.id = p->newClipId();
+}
+
 } // namespace
 
 bool Editor::isSubtitle(int id) const
@@ -266,12 +297,7 @@ int Editor::importSubtitles(const QVector<SubtitleCue>& cues, const QString& nam
         t.style = Subtitles::defaultStyle(p->timelineFormat().size());
         t.enabled = !anyOn || stack >= 0;
         if (stack > 0) t.style.posY += stack * (t.style.size * 1.3 + 2 * t.style.boxPad + 8); // one line higher each
-        for (SubtitleCue c : cues) {
-            c.id = p->newClipId();
-            Subtitles::place(t, c);
-        }
-        for (SubtitleCue& c : t.cues) // the right part of a cue that a later, overlapping one split
-            if (c.id == 0) c.id = p->newClipId();
+        placeAll(t, cues, p);
         tl.subtitles << t;
     });
     return index;
@@ -288,12 +314,7 @@ int Editor::addCaptions(const QVector<SubtitleCue>& cues, const QString& name, c
         t.style = Captions::defaultStyle(p->timelineFormat().size(), captions.mode);
         t.captions = captions;
         for (SubtitleTrack& other : tl.subtitles) other.enabled = false; // one visible track
-        for (SubtitleCue c : cues) {
-            c.id = p->newClipId();
-            Subtitles::place(t, c);
-        }
-        for (SubtitleCue& c : t.cues)
-            if (c.id == 0) c.id = p->newClipId();
+        placeAll(t, cues, p);
         tl.subtitles << t;
     });
     return index;

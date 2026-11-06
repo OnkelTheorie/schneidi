@@ -300,6 +300,8 @@ QString patternError(const QString& pattern, const QStringList& columns)
             const int width = spec.isEmpty() ? 0 : spec.toInt(&ok);
             if (!ok || width < 0 || spec.startsWith('-'))
                 return QString("name: {n:03} pads the row number, not {%1}").arg(key);
+        } else if (name.isEmpty()) { // "{}", "{:3}" (also with a column "" of JSON rows: see fileName)
+            return QString("name: {%1} names no column (columns: %2; {n} = the row number)").arg(key, columns.join(", "));
         } else if (!columns.contains(name)) {
             return QString("name: no column '%1' (columns: %2; {n} = the row number)").arg(name, columns.join(", "));
         }
@@ -329,7 +331,9 @@ std::optional<QString> fileName(const QString& pattern, const QJsonObject& row, 
             // Padded to at most kMaxNumberWidth digits (a negative width would pad on the right)
             const int width = std::clamp(spec.isEmpty() ? 0 : spec.toInt(), 0, kMaxNumberWidth);
             out += QString("%1").arg(n, width, 10, QChar('0'));
-        } else if (row.contains(name)) { // (a column this row leaves empty adds nothing)
+        } else if (!name.isEmpty() && row.contains(name)) { // (a column this row leaves empty adds nothing)
+            // (never a lookup with an empty name: "{:3}" gives a null QString, and QJsonObject::contains(null) crashes
+            // in Qt 6.8 on an object with a non-ASCII key such as "größe")
             const QString v = valueText(row[name]);
             out += fileColumns.contains(name) ? QFileInfo(v).completeBaseName() : v;
         }

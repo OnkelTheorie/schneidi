@@ -12,6 +12,7 @@
 #include "core/TimelineOps.h"
 
 #include <QCoreApplication>
+#include <QElapsedTimer>
 #include <QUndoStack>
 
 namespace {
@@ -378,5 +379,29 @@ int main(int argc, char** argv)
     CHECK_EQ(p.undoStack()->index(), idle);
     CHECK(state(p) == unchanged);
     testBrokenDissolves();
+
+    // Many markers (an AI edit with tens of thousands of marker ops): each toggle finds its place, the list stays
+    // sorted, toggling again removes; markers that came unsorted (an imported timeline) are sorted first
+    {
+        Project q;
+        q.undoStack()->setUndoLimit(1); // as in schneidi-cli (every step keeps a snapshot of all markers)
+        Selection s;
+        Editor e(&q, &s);
+        QElapsedTimer t;
+        t.start();
+        for (int i = 40000; i > 0; --i) e.toggleMarker(i * 2);
+        CHECK(t.elapsed() < 10000);
+        const QVector<int>& m = q.timeline().markers;
+        CHECK_EQ(m.size(), 40000);
+        CHECK(std::is_sorted(m.cbegin(), m.cend()) && m.first() == 2 && m.last() == 80000);
+        e.toggleMarker(4);
+        e.toggleMarker(5);
+        CHECK_EQ(q.timeline().markers.size(), 40000);
+        CHECK(!q.timeline().markers.contains(4) && q.timeline().markers.value(1) == 5);
+        q.edit("Unsorted", [](Timeline& tl) { tl.markers = {30, 10, 20}; });
+        e.toggleMarker(10);
+        e.toggleMarker(25);
+        CHECK(q.timeline().markers == QVector<int>({20, 25, 30}));
+    }
     return Check::result();
 }

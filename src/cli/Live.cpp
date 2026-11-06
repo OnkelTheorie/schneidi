@@ -273,7 +273,17 @@ bool Server::start(QString* error)
     const QString dir = registryDir();
     QDir().mkpath(dir);
     QFile::setPermissions(dir, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner);
-    const QString name = QString("schneidi-live-%1-%2").arg(QCoreApplication::applicationPid()).arg(randomHex(4));
+    QString name = QString("schneidi-live-%1-%2").arg(QCoreApplication::applicationPid()).arg(randomHex(4));
+#ifndef Q_OS_WIN
+    // A socket path has room for about 104 bytes: in a long TMPDIR the app could not be reached at all (CLI, MCP,
+    // its own AI chat). The runtime folder (/run/user/<uid>) is short.
+    constexpr qsizetype kMaxSocketPath = 100;
+    if (QDir(QDir::tempPath()).filePath(name).toLocal8Bit().size() > kMaxSocketPath) {
+        const QString runtime = QStandardPaths::writableLocation(QStandardPaths::RuntimeLocation);
+        if (!runtime.isEmpty() && QDir(runtime).filePath(name).toLocal8Bit().size() <= kMaxSocketPath)
+            name = QDir(runtime).filePath(name);
+    }
+#endif
     m_server = new QLocalServer(this);
     m_server->setSocketOptions(QLocalServer::UserAccessOption);
     if (!m_server->listen(name)) {

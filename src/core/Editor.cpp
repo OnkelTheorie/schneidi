@@ -688,12 +688,12 @@ void Editor::setLinked(const QVector<int>& idsIn, bool link, const QString& text
 void Editor::toggleMarker(int frame)
 {
     m_project->edit("Marker", [&](Timeline& tl) {
-        if (tl.markers.contains(frame)) {
-            tl.markers.removeAll(frame);
-        } else {
-            tl.markers << frame;
-            std::sort(tl.markers.begin(), tl.markers.end());
-        }
+        // Find the place instead of sorting all again (an edit with tens of thousands of marker ops took minutes);
+        // markers from elsewhere (an imported timeline) may come unsorted
+        if (!std::is_sorted(tl.markers.cbegin(), tl.markers.cend())) std::sort(tl.markers.begin(), tl.markers.end());
+        const auto it = std::lower_bound(tl.markers.begin(), tl.markers.end(), frame);
+        if (it != tl.markers.end() && *it == frame) tl.markers.removeAll(frame);
+        else tl.markers.insert(it, frame);
     });
 }
 

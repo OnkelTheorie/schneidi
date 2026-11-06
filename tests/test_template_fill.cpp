@@ -1091,6 +1091,27 @@ void testCopyKnown()
     CHECK_EQ(known, before);
 }
 
+// A path that only starts like one of the template's ("<template>/media/../../x", a hand-written or downloaded
+// template) is no file of it: not read from outside the template, no copy written outside the target folder
+void testCopyNoTraversal()
+{
+    QTemporaryDir tmp;
+    const QString tdir = tmp.filePath("lib/tmpl");
+    touch(tdir + "/media/in.mp4", "in");
+    const QString secret = touch(tmp.filePath("secret/key.txt"), "secret");
+    const QString sneaky = tdir + "/media/../../../secret/key.txt";
+    CHECK(QFileInfo::exists(sneaky));
+    ProjectData d;
+    d.media = {media(sneaky, 100, true, true)};
+    QString err;
+    const QString target = tmp.filePath("out/1/2/x media");
+    CHECK(TemplateLibrary::copyTemplateFiles(d, tdir, target, nullptr, &err, nullptr, true));
+    CHECK(!QFileInfo::exists(tmp.filePath("out/1/secret/key.txt")));
+    CHECK(!QFileInfo::exists(tmp.filePath("out/secret/key.txt")));
+    CHECK(!QDir(target).exists() || QDir(target).isEmpty());
+    CHECK_EQ(d.media.value(0).path, sneaky); // stays a reference to where it is, as any file outside the template
+}
+
 void testLibrary()
 {
     QDir(TemplateLibrary::dir()).removeRecursively();
@@ -1253,6 +1274,7 @@ int main(int argc, char** argv)
     testUserEditsForgetLength();
     testEditorParts();
     testCopyKnown();
+    testCopyNoTraversal();
     testLibrary();
     return Check::result();
 }

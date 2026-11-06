@@ -265,8 +265,15 @@ bool handle(const QJsonObject& msg, const Options& opt, const ToolCall& call, co
     }
     const QString method = msg["method"].toString();
     // Notifications (initialized, cancelled …) and responses need no answer
-    if (!msg.contains("id") || !msg.contains("method")) return false;
+    if (!msg.contains("id")) return false;
     const QJsonValue id = msg.value("id");
+    if (!msg.contains("method")) {
+        if (msg.contains("result") || msg.contains("error")) return false; // a response
+        // A request without its method: unanswered, the client would wait for it forever
+        send({{"jsonrpc", "2.0"}, {"id", id},
+              {"error", QJsonObject{{"code", -32600}, {"message", "invalid request: no 'method'"}}}});
+        return true;
+    }
     // A request all the same: unanswered, its HTTP request (and connection) would wait forever
     if (method.isEmpty()) {
         send({{"jsonrpc", "2.0"}, {"id", id},
@@ -307,9 +314,45 @@ int run(const Options& opt)
         if (data.isEmpty()) continue;
         QJsonParseError err;
         const QJsonDocument doc = QJsonDocument::fromJson(data, &err);
-        if (!doc.isObject()) {
+        const auto invalid = [&send](const QString& message) {
             send({{"jsonrpc", "2.0"}, {"id", QJsonValue::Null},
-                  {"error", QJsonObject{{"code", -32700}, {"message", "parse error: " + err.errorString()}}}});
+                  {"error", QJsonObject{{"code", -32600}, {"message", "invalid request: " + message}}}});
+        };
+        if (doc.isArray()) {
+            // A batch (2025-03-26 clients, as over HTTP): one array of the answers; notifications on the way go out
+            // as they come. (It answered "parse error: no error occurred" before.)
+            const QJsonArray messages = doc.array();
+            if (messages.isEmpty()) {
+                invalid("empty batch");
+                continue;
+            }
+            if (Mcp::hasNulKey(messages)) {
+                invalid("a key contains U+0000");
+                continue;
+            }
+            QJsonArray answers;
+            const Send collect = [&answers, &send](const QJsonObject& msg) {
+                if (msg.contains("id") && (msg.contains("result") || msg.contains("error"))) answers << msg;
+                else send(msg);
+            };
+            for (const QJsonValue& m : messages) {
+                if (m.isObject()) handle(m.toObject(), opt, here, collect);
+                else
+                    answers << QJsonObject{{"jsonrpc", "2.0"}, {"id", QJsonValue::Null},
+                                           {"error", QJsonObject{{"code", -32600}, {"message", "invalid request: a message is not a JSON object"}}}};
+            }
+            if (!answers.isEmpty()) {
+                const QByteArray out = QJsonDocument(answers).toJson(QJsonDocument::Compact) + '\n';
+                std::fwrite(out.constData(), 1, size_t(out.size()), stdout);
+                std::fflush(stdout);
+            }
+            continue;
+        }
+        if (!doc.isObject()) {
+            if (err.error == QJsonParseError::NoError) invalid("a message is a JSON object");
+            else
+                send({{"jsonrpc", "2.0"}, {"id", QJsonValue::Null},
+                      {"error", QJsonObject{{"code", -32700}, {"message", "parse error: " + err.errorString()}}}});
             continue;
         }
         handle(doc.object(), opt, here, send);

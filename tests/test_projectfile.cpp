@@ -280,6 +280,23 @@ void testBackups(const QString& dir)
         CHECK(!QFileInfo::exists(bdir.filePath("2099-01-01 00-00-00-000.schneidi"))); // oldest by time
         CHECK_EQ(bdir.entryList({"*.schneidi"}, QDir::Files).size(), 4);
     }
+#ifdef Q_OS_UNIX
+    // A device among the backups (or named as the project): it was read until memory ran out (`backups`, every
+    // save compares with the newest copy). A link is no backup copy; reading stops at 256 MB.
+    if (QFileInfo::exists("/dev/zero")) {
+        const QString link = bdir.filePath("2100-01-01 00-00-00-000.schneidi");
+        if (CHECK(QFile::link("/dev/zero", link))) {
+            CHECK_EQ(ProjectFile::backups(path).size(), qsizetype(4));
+            CHECK(!ProjectFile::backups(path).contains(link));
+            d.playhead = 100;
+            CHECK(ProjectFile::save(d, path, &err));
+            CHECK(!ProjectFile::backup(path, 4).isEmpty());
+            QFile::remove(link);
+        }
+        ProjectData z;
+        CHECK(!ProjectFile::load("/dev/zero", &z, &err) && !err.isEmpty());
+    }
+#endif
     // project of the same name in another folder: own backup folder
     CHECK(ProjectFile::backupDir(path) != ProjectFile::backupDir(dir + "/medien/backup-test.schneidi"));
     QDir(ProjectFile::backupDir({})).removeRecursively();
@@ -521,6 +538,18 @@ int main(int argc, char** argv)
             // The open one is the multicam clip: it becomes a normal timeline
             CHECK(!opened(R"({"app":"schneidi","currentSequence":3,"sequences":[{"id":3,"multicam":true}]})", p).isEmpty());
             CHECK(p.sequence(3) && !p.sequence(3)->compound && !p.sequence(3)->multicam);
+        }
+        // Saved by an editor that wrote an umlaut as Latin-1 (no UTF-8): it opens, that byte becomes U+FFFD
+        {
+            Project p;
+            const QByteArray json = "{\"app\":\"schneidi\",\"media\":[{\"name\":\"M\xfcller.mp4\",\"path\":\"/m/a.mp4\","
+                                    "\"hasVideo\":true,\"length\":50}]}";
+            CHECK(!opened(json, p).isEmpty());
+            if (CHECK_EQ(int(p.media().size()), 1)) {
+                CHECK_EQ(p.media()[0].name, QString("M\uFFFDller.mp4"));
+                CHECK_EQ(p.media()[0].path, QString("/m/a.mp4"));
+            }
+            CHECK(stable(json));
         }
         // A frame rate or size no program makes (2^31 fps overflowed the EDL timecodes): brought inside the limits,
         // a rate the app does not offer but other programs do (48 fps) stays

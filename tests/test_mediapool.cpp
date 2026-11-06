@@ -159,6 +159,26 @@ int main(int argc, char** argv)
         CHECK(!json.contains("\"bin\"") && !json.contains("clipColor") && !json.contains("flags"));
     }
 
+    // --- Broken file: 20000 nested bins (a hand-written or generated file) open in moments, not in minutes; a loop
+    // with a tail into it is broken up where it is entered
+    {
+        ProjectData data;
+        for (int i = 1; i <= 20000; ++i) data.bins << MediaBin{i, i - 1, QString("b%1").arg(i)};
+        data.bins << MediaBin{30001, 30002, "x"} << MediaBin{30002, 30003, "y"} << MediaBin{30003, 30001, "z"}
+                  << MediaBin{30004, 30002, "tail"};
+        data.timeline.video << Track{};
+        QElapsedTimer t;
+        t.start();
+        Project q;
+        q.load(data);
+        CHECK(t.elapsed() < 5000);
+        CHECK_EQ(q.bins().size(), 20004);
+        CHECK(q.binInside(20000, 1) && q.bin(1)->parent == 0);
+        CHECK_EQ(q.bin(30001)->parent, 0);
+        CHECK_EQ(q.bin(30004)->parent, 30002);
+        CHECK(q.binInside(30004, 0) && q.binInside(30002, 0) && q.binInside(30003, 0));
+    }
+
     // --- Widget: bins in the list, switching bins shows only its clips, undo updates the view
     {
         Engine engine;

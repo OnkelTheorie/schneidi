@@ -411,6 +411,34 @@ int main(int argc, char* argv[])
         }
     }
 
+    // Over stdio too: a batch gets one array of answers, a request without its method an error (it waited forever),
+    // a JSON value that is no message no "parse error: no error occurred"
+    {
+        QProcess mcp;
+        mcp.start(SCHNEIDI_CLI, {"mcp"});
+        mcp.write(R"([{"jsonrpc":"2.0","id":1,"method":"ping"},{"jsonrpc":"2.0","method":"notifications/initialized"},)"
+                  R"({"jsonrpc":"2.0","id":2,"method":"tools/list"},7])" "\n"
+                  R"({"jsonrpc":"2.0","id":3})" "\n"
+                  R"({"jsonrpc":"2.0","id":4,"result":{}})" "\n"
+                  "[]\n"
+                  R"({"jsonrpc":"2.0","id":5,"method":"ping"})" "\n");
+        mcp.closeWriteChannel();
+        CHECK(mcp.waitForFinished(30000));
+        const QList<QByteArray> lines = mcp.readAllStandardOutput().trimmed().split('\n');
+        if (CHECK_EQ(lines.size(), qsizetype(4))) {
+            const QJsonArray batch = QJsonDocument::fromJson(lines[0]).array();
+            if (CHECK_EQ(batch.size(), qsizetype(3))) {
+                CHECK_EQ(batch[0]["id"].toInt(), 1);
+                CHECK(batch[1]["result"]["tools"].toArray().size() > 5);
+                CHECK_EQ(batch[2]["error"]["code"].toInt(), -32600);
+            }
+            const QJsonObject noMethod = QJsonDocument::fromJson(lines[1]).object();
+            CHECK(noMethod["id"].toInt() == 3 && noMethod["error"]["code"].toInt() == -32600);
+            CHECK(lines[2].contains("empty batch") && !lines[2].contains("no error occurred"));
+            CHECK_EQ(QJsonDocument::fromJson(lines[3]).object()["id"].toInt(), 5);
+        }
+    }
+
     const QString root = tmp.filePath("root");
     QDir().mkpath(root);
     QDir().mkpath(tmp.filePath("outside"));
@@ -428,6 +456,21 @@ int main(int argc, char* argv[])
     QFile::copy(clip, tmp.filePath("outside/other.mp4"));
     QFile::link(tmp.filePath("outside"), root + "/link");
     const bool links = QFileInfo(root + "/link").isSymLink();
+
+    // An option given twice: a list takes both (it kept only the last: `frames --at 0 --at 1s` showed one picture),
+    // anything else is refused instead of silently taking the last
+    {
+        QProcess p;
+        p.start(SCHNEIDI_CLI, {"frames", "--source", clip, "--at", "0", "--at", "1s", "--width", "64", "--out",
+                               tmp.filePath("twice")});
+        CHECK(p.waitForFinished(60000));
+        CHECK_EQ(QJsonDocument::fromJson(p.readAllStandardOutput().trimmed().split('\n').last())
+                     .object()["frames"].toArray().size(), qsizetype(2));
+        QProcess q;
+        q.start(SCHNEIDI_CLI, {"frames", "--source", clip, "--width", "64", "--width", "32", "--out", tmp.filePath("twice2")});
+        CHECK(q.waitForFinished(60000));
+        CHECK(q.exitCode() != 0 && q.readAllStandardOutput().contains("--width is given twice"));
+    }
 
     // An empty token on the network would switch the check off: refused before anything listens
     {

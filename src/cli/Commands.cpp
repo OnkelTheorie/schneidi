@@ -257,6 +257,9 @@ Session::Session(Opened&& o)
       live(o.live), app(o.app), m_inApp(o.inApp != nullptr)
 {
     m_open = project.currentSequence();
+    // A loaded copy needs no undo history: every op kept a snapshot of the whole timeline, so an edit with a
+    // thousand ops took over a gigabyte (quadratic; 3000 appends ran out of memory). The app's project keeps its own.
+    if (m_own) m_own->undoStack()->setUndoLimit(1);
     // The same import presets as the app: the project's own (from its start template) or the settings'
     editor.setStreamPresets(project.effectiveImportPresets());
 }
