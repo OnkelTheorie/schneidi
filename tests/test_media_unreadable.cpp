@@ -14,6 +14,7 @@
 #include "engine/Engine.h"
 #include "engine/MediaIndex.h"
 #include "engine/MediaProbe.h"
+#include "engine/Snapshot.h"
 #include "engine/audio/Reader.h"
 #include "engine/video/Reader.h"
 
@@ -130,6 +131,23 @@ int main(int argc, char** argv)
         // The same picture without its extension goes through FFmpeg's picture demuxer first: refused there as well
         CHECK(QFile::copy(in("huge.png"), in("huge_picture")));
         CHECK(!MediaProbe::read(in("huge_picture"), rate));
+    }
+
+    // A 99-megapixel TIFF (297 MB as RGB, above Qt's 256 MB default limit; TIFF cannot be decoded at a smaller
+    // size): `frames` of the file said "could not decode" although probe, import and render took it
+    {
+        const QString big = Check::makeMedia(in("big.tiff"), {"-f", "lavfi", "-i", "color=c=red:s=11000x9000", "-frames:v", "1",
+                                                            "-compression_algo", "deflate"});
+        if (CHECK(!big.isEmpty())) {
+            const MediaInfo m = Engine::probe(format, big);
+            CHECK(m.isImage && m.hasVideo);
+            ProjectFormat own = format;
+            own.width = 11000;
+            own.height = 9000;
+            const QImage frame = Snapshot::media(own, big, 60, 640); // the middle of its 5 s (FFmpeg has only frame 0)
+            CHECK(!frame.isNull());
+            CHECK(!frame.isNull() && qRed(frame.pixel(frame.width() / 2, frame.height() / 2)) > 200);
+        }
     }
 
     // A 1 ms sound: one frame long, not "no length"

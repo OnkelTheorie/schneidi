@@ -178,6 +178,10 @@ Engine::~Engine()
 void Engine::initHeadless()
 {
     MediaAspect::setProbe(&Engine::pictureAspect);
+    // Qt refuses to decode a picture above 256 MB: a 108-megapixel TIFF (12000x9000, 432 MB as RGBA) was imported and
+    // rendered, but `frames` of the file and the viewer at its own size "could not decode" it. What the probe accepts
+    // (below FFmpeg's limit for one image, MediaProbe) fits 1 GB at 4 bytes per pixel. QT_IMAGEIO_MAXALLOC can set more.
+    if (const int mb = QImageReader::allocationLimit(); mb > 0 && mb < 1024) QImageReader::setAllocationLimit(1024);
 }
 
 bool Engine::init(QString*)
