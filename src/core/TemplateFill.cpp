@@ -187,7 +187,7 @@ void ripple(Timeline& tl, int oldEnd, int delta, const IdGen& newId)
 }
 
 // The clip as the start of the new file's parts: what belonged to the old file goes (ramp, reverse, freeze, kept
-// region, its own picture shape), its look and its own constant speed stay
+// region, its own picture shape), its look and its own constant speed stay (fillMedia: the slot's own one)
 Clip prepared(const Clip& base, const MediaInfo& m)
 {
     Clip c = base;
@@ -469,7 +469,10 @@ void fillMedia(ProjectData& d, Timeline& tl, const SlotRef& r, const MediaInfo& 
 {
     const double fps = d.format.rate.fps();
     const IdGen newId = [&d] { return ++d.lastClipId; };
-    const Clip base = *TimelineOps::findClip(tl, r.clip);
+    Clip base = *TimelineOps::findClip(tl, r.clip);
+    // A former Speed fit's slow motion is not the slot's own speed: the new file starts from the slot's own one
+    const double ownSpeed = base.slot.ownSpeed > 0 ? base.slot.ownSpeed : (base.speed > 0 ? base.speed : 1.0);
+    base.speed = ownSpeed;
     const QSizeF frame = frameOf(d, r.sequence);
     const bool video = r.track.kind == TrackKind::Video;
 
@@ -534,9 +537,11 @@ void fillMedia(ProjectData& d, Timeline& tl, const SlotRef& r, const MediaInfo& 
         }
     }
     if (!fitted) parts = plan(base, r, m, rg, fps, rep);
-    // A Fixed slot left shorter keeps its own length for the next fill
-    for (Clip& c : parts.clips)
+    // A Fixed slot left shorter keeps its own length, a Speed fit the slot's own speed for the next fill
+    for (Clip& c : parts.clips) {
         c.slot.nominalLen = r.slot.length == SlotLength::Fixed && parts.length < r.slotLength ? r.slotLength : 0;
+        c.slot.ownSpeed = std::abs(c.speed - ownSpeed) > 1e-9 ? ownSpeed : 0;
+    }
     if (r.slot.kind == SlotKind::Music) {
         if (r.slot.snapCuts) rep.warnings << "snapCuts: cuts are not moved onto the beat by the fill (op snap_to_beat)";
         for (Clip& c : parts.clips) c.linkId = 0; // a new song is not in sync with a picture

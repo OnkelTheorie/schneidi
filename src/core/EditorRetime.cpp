@@ -95,6 +95,7 @@ void Editor::setClipSpeed(const QVector<int>& ids, const Retime& r, bool ripple)
                     c.in = newIn;
                     c.out = newIn + newLen - 1;
                     c.speed = r.speed;
+                    c.slot.ownSpeed = 0; // the user's speed is the slot's own one now (not a fill's slow motion)
                     c.reverse = r.reverse;
                     c.freeze = r.freeze;
                     c.freezeFrame = r.freeze ? newIn : -1; // frame at the clip start (stays when splitting/trimming)

@@ -33,7 +33,7 @@
 QDebug operator<<(QDebug dbg, const ClipSlot& s)
 {
     return dbg << "slot(" << s.id << int(s.kind) << int(s.length) << s.minLen << s.maxLen << int(s.fit) << s.reframe
-               << s.maxChars << s.shrink << s.fitMusic << s.snapCuts << s.label << s.hint << s.nominalLen << ")";
+               << s.maxChars << s.shrink << s.fitMusic << s.snapCuts << s.label << s.hint << s.nominalLen << s.ownSpeed << ")";
 }
 QDebug operator<<(QDebug dbg, const TemplateInfo& t)
 {
@@ -610,6 +610,59 @@ void testFixedKeepsLength()
     }
 }
 
+// A Speed fit's slow motion is not the slot's own speed: the next, longer value plays at the slot's own speed again
+// (the author's 100 % or 200 %), also through the project file; a speed the user sets is the slot's own one
+void testSpeedNotSticky()
+{
+    const Context ctx = context();
+    for (const double own : {1.0, 2.0}) {
+        ProjectData d = project();
+        slotOf(d, 1).fit = SlotFit::Speed;
+        for (Clip* c : {TimelineOps::findClip(d.timeline, 1), TimelineOps::findClip(d.timeline, 3)}) {
+            c->speed = own;
+            c->out = c->in + 99;
+        }
+        apply(d, {{"clip1", Value::ofFile(kShort)}}, ctx);
+        CHECK_EQ(find(d, 1)->speed, 0.5); // 50 of 100 frames at 100 %, 25 at 200 %
+        CHECK_EQ(find(d, 1)->slot.ownSpeed, own);
+        // Through the project file
+        ProjectData back;
+        QString err;
+        CHECK(ProjectFile::fromJson(ProjectFile::toJson(d, "/x/p.schneidi"), "/x/p.schneidi", &back, &err));
+        CHECK_EQ(find(back, 1)->slot, find(d, 1)->slot);
+        for (ProjectData* p : {&d, &back}) {
+            const SlotReport s = only(apply(*p, {{"clip1", Value::ofFile(kLong)}}, ctx));
+            CHECK_EQ(find(*p, 1)->speed, own);
+            CHECK_EQ(find(*p, 3)->speed, own);
+            CHECK_EQ(find(*p, 1)->length(), 100);
+            CHECK(!s.adjusted.contains("slowed"));
+            CHECK_EQ(find(*p, 1)->slot.ownSpeed, 0.0); // at its own speed: nothing to keep
+        }
+    }
+    { // a long enough value at the slot's own speed: nothing stored, the file stays as before
+        ProjectData d = project();
+        slotOf(d, 1).fit = SlotFit::Speed;
+        apply(d, {{"clip1", Value::ofFile(kLong)}}, ctx);
+        CHECK_EQ(find(d, 1)->slot.ownSpeed, 0.0);
+        CHECK(!ProjectFile::toJson(d, "/x/p.schneidi").contains("ownSpeed"));
+    }
+    { // the user changes the slowed clip's speed: that one is the slot's own speed now
+        ProjectData d = project();
+        slotOf(d, 1).fit = SlotFit::Speed;
+        apply(d, {{"clip1", Value::ofFile(kShort)}}, ctx);
+        Project p;
+        Selection sel;
+        Editor ed(&p, &sel);
+        p.load(d);
+        Editor::Retime rt;
+        rt.speed = 0.75;
+        ed.setClipSpeed({1}, rt, false);
+        const Clip* v = TimelineOps::findClip(p.timeline(), 1);
+        CHECK_EQ(v->speed, 0.75);
+        CHECK_EQ(v->slot.ownSpeed, 0.0);
+    }
+}
+
 // A Clip slot whose placeholder had no sound (a still): the new file brings its sound, linked, on a free audio track
 // (review A6)
 void testStillGetsSound()
@@ -1034,6 +1087,7 @@ int main(int argc, char** argv)
     testSequences();
     testEditor();
     testFixedKeepsLength();
+    testSpeedNotSticky();
     testStillGetsSound();
     testMusicFlexible();
     testTextSplit();

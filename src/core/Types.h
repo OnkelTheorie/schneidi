@@ -367,6 +367,8 @@ struct ClipSlot {
     QString hint;        // free text for humans/AI: "best kill", "product front view"
     int nominalLen = 0;  // frames, set by the fill (not by the user): a Fixed slot's own length while a shorter value
                          // leaves its clips shorter (a gap after them); 0 = the length of its clips
+    double ownSpeed = 0; // set by the fill (not by the user): the slot's own constant speed while a SlotFit::Speed fill
+                         // left its clips slowed down (the next value starts from it); 0 = the speed of its clips
     bool isSet() const { return !id.isEmpty(); }
     bool operator==(const ClipSlot&) const = default;
 };
