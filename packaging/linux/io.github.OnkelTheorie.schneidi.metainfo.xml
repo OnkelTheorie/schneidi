@@ -109,6 +109,14 @@
   </requires>
 
   <releases>
+    <release version="0.18.0" date="2026-11-06">
+      <description>
+        <p>Template Update: reusable templates with placeholders that are filled by drag and drop or by an AI, many
+        videos from one template and a table (CSV), a brand kit with colours, fonts, logo, intro and outro, five
+        built-in templates and an Edit look. Renders pick fewer threads by themselves when memory is short.</p>
+      </description>
+      <url type="details">https://github.com/OnkelTheorie/schneidi/releases/tag/v0.18.0</url>
+    </release>
     <release version="0.17.1" date="2026-11-05">
       <description>
         <p>Bug fix release: the highlight search for CS2 recordings now finds the player's kills by the frame of their
