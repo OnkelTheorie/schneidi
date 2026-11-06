@@ -436,6 +436,24 @@ void testZip(const QString& tmp, const Media& m)
         {"absolute entry", {{"template.schneidi", tpl}, {"/tmp/evil-schneidi.txt", payload}}},
         {"drive letter", {{"template.schneidi", tpl}, {"C:/evil.txt", payload}}},
         {"backslash ..", {{"template.schneidi", tpl}, {"..\\evil.txt", payload}}},
+        // Names Windows reads as another one: ".. " is "..", "a. " is "a", "name." is "name"
+        {"'.. ' part", {{"t/template.schneidi", tpl}, {"t/.. /.. /evil.txt", payload}}},
+        {"'..\\' + space", {{"template.schneidi", tpl}, {".. \\evil.txt", payload}}},
+        {"'a. ' folder", {{"template.schneidi", tpl}, {"a. /evil.txt", payload}}},
+        {"trailing dot", {{"template.schneidi", tpl}, {"media/name.", payload}}},
+        {"trailing space", {{"template.schneidi", tpl}, {"media/name.mp4 ", payload}}},
+        {"three dots", {{"template.schneidi", tpl}, {".../evil.txt", payload}}},
+        // Windows device names, also with an extension or a space
+        {"CON", {{"template.schneidi", tpl}, {"media/CON", payload}}},
+        {"nul.txt", {{"template.schneidi", tpl}, {"media/nul.txt", payload}}},
+        {"Aux folder", {{"template.schneidi", tpl}, {"Aux/x.txt", payload}}},
+        {"com1.mp4", {{"template.schneidi", tpl}, {"media/com1.mp4", payload}}},
+        {"LPT9 .png", {{"template.schneidi", tpl}, {"media/LPT9 .png", payload}}},
+        // Characters Windows refuses, an NTFS stream
+        {"question mark", {{"template.schneidi", tpl}, {"media/what?.mp4", payload}}},
+        {"pipe", {{"template.schneidi", tpl}, {"media/a|b.mp4", payload}}},
+        {"control char", {{"template.schneidi", tpl}, {QString("media/a") + QChar(0x01) + "b.mp4", payload}}},
+        {"NTFS stream", {{"template.schneidi", tpl}, {"media/x.mp4:evil", payload}}},
     };
     for (const Case& c : cases) {
         const QString hostile = tmp + "/share/hostile.zip";
@@ -445,6 +463,10 @@ void testZip(const QString& tmp, const Media& m)
         const QString code = errorOf("templates", {{"import", hostile}}, &msg);
         if (!CHECK_EQ(code, QString("BAD_ZIP"))) std::printf("       %s: %s\n", c.what, qPrintable(msg));
     }
+    // Ordinary names stay allowed
+    for (const char* ok : {"media/clip 1.mp4", "a.b/c.d", ".hidden", "./x.png", "CONSOLE.mp4", "com10.mp4", "nulled.txt",
+                           "Test Short/template.schneidi", "media/Ölfass – Szene ¹.mp4"})
+        if (!CHECK(!Zip::safeName(QString::fromUtf8(ok)).isEmpty())) std::printf("       refused: %s\n", ok);
     CHECK(!QFileInfo::exists(TemplateLibrary::dir() + "/../evil.txt"));
     CHECK(!QFileInfo::exists(QDir(TemplateLibrary::dir()).filePath("../../evil.txt")));
     // A symbolic link entry (external attributes of a Unix link)
@@ -476,6 +498,123 @@ void testZip(const QString& tmp, const Media& m)
     for (const QFileInfo& fi : QDir(TemplateLibrary::dir()).entryInfoList(QDir::Dirs | QDir::Hidden | QDir::NoDotAndDotDot))
         CHECK(!fi.fileName().startsWith(".import")); // no staging folder left
     (void)m;
+}
+
+// Patches the uncompressed size of the first central directory entry (a "zip bomb" announcing more than it holds)
+void announceSize(const QString& zip, quint32 size)
+{
+    QFile f(zip);
+    if (!f.open(QIODevice::ReadWrite)) return;
+    QByteArray bytes = f.readAll();
+    const qsizetype cd = bytes.indexOf(QByteArray("\x50\x4b\x01\x02", 4));
+    if (cd < 0) return;
+    for (int i = 0; i < 4; ++i) bytes[cd + 24 + i] = char((size >> (8 * i)) & 0xff);
+    f.seek(0);
+    f.write(bytes);
+}
+
+QStringList entryNames(const QString& zip)
+{
+    QStringList names;
+    if (const std::optional<QVector<Zip::Entry>> list = Zip::entries(zip))
+        for (const Zip::Entry& e : *list) names << e.name;
+    return names;
+}
+
+// Archives of other systems and names that are not valid everywhere
+void testZipNames(const QString& tmp, const Media& m)
+{
+    std::printf("zip: names of other systems\n");
+    const QString tpl = TemplateLibrary::dir() + "/Test Short/template.schneidi";
+    const int before = int(TemplateLibrary::own().size());
+    QString msg;
+
+    // macOS adds "__MACOSX/" and ".DS_Store" next to the folder: the template is still found, the extras stay out
+    {
+        const QString mac = tmp + "/share/mac.zip";
+        CHECK(Zip::write(mac, {{"Mac Short/template.schneidi", tpl}, {"Mac Short/.DS_Store", m.a}, {"__MACOSX/._Mac Short", m.a},
+                               {"__MACOSX/Mac Short/._template.schneidi", m.a}, {".DS_Store", m.a}}));
+        const QJsonObject imp = run("templates", {{"import", mac}});
+        CHECK(imp["imported"].toBool());
+        const QString folder = TemplateLibrary::dir() + "/" + imp["id"].toString();
+        CHECK(QFileInfo::exists(folder + "/template.schneidi"));
+        CHECK(!QFileInfo::exists(folder + "/.DS_Store"));
+        CHECK(!QFileInfo::exists(folder + "/__MACOSX"));
+        run("templates", {{"remove", imp["id"].toString()}});
+    }
+
+    // Media names legal on Linux but not on Windows: portable names in the archive, the project follows them
+    {
+        QDir().mkpath(tmp + "/odd");
+        const QString colon = tmp + "/odd/take:1.mp4", backslash = tmp + "/odd/cam\\2.mp4", device = tmp + "/odd/nul.mp4";
+        for (const QString& f : {colon, backslash, device}) CHECK(QFile::copy(m.a, f));
+        const QString project = tmp + "/odd/odd.schneidi";
+        run("new", {{"project", project}, {"fps", 25}, {"media", QJsonArray{colon, backslash, device}}});
+        run("edit", {{"project", project},
+                     {"ops", QJsonArray{QJsonObject{{"op", "append"}, {"media", colon}, {"duration", "1s"}},
+                                        QJsonObject{{"op", "append"}, {"media", backslash}, {"duration", "1s"}},
+                                        QJsonObject{{"op", "append"}, {"media", device}, {"duration", "1s"}}}}});
+        CHECK(run("templates", {{"save", project}, {"name", "Odd Names"}})["saved"].toBool());
+        const QString zip = tmp + "/share/odd.zip";
+        CHECK(run("templates", {{"export", "Odd Names"}, {"zip", zip}})["files"].toInt() >= 4);
+        const QStringList names = entryNames(zip);
+        for (const QString& n : names)
+            if (!CHECK(!Zip::safeName(n).isEmpty())) std::printf("       not portable: %s\n", qPrintable(n));
+        CHECK(names.contains("Odd Names/media/take_1.mp4"));
+        CHECK(names.contains("Odd Names/media/cam_2.mp4"));
+        CHECK(names.contains("Odd Names/media/nul_.mp4"));
+        run("templates", {{"remove", "Odd Names"}});
+        const QJsonObject imp = run("templates", {{"import", zip}});
+        CHECK_EQ(imp["id"].toString(), QString("Odd Names"));
+        const std::optional<ContentTemplate> t = TemplateLibrary::find("Odd Names");
+        if (CHECK(t.has_value())) {
+            ProjectData d;
+            CHECK(TemplateLibrary::load(*t, &d));
+            QStringList used;
+            for (const Clip& c : d.timeline.video[0].clips) used << QFileInfo(c.mediaPath).fileName();
+            CHECK_EQ(used, (QStringList{"take_1.mp4", "cam_2.mp4", "nul_.mp4"}));
+            for (const Clip& c : d.timeline.video[0].clips) CHECK(QFileInfo::exists(c.mediaPath) && c.mediaPath.startsWith(t->dir));
+            for (const MediaInfo& mi : d.media) CHECK(QFileInfo::exists(mi.path) && mi.path.startsWith(t->dir));
+        }
+        run("templates", {{"remove", "Odd Names"}});
+    }
+
+    // Two files that are one on Windows and macOS, a file where a folder is: refused
+    for (const QVector<Zip::Source>& files :
+         {QVector<Zip::Source>{{"template.schneidi", tpl}, {"media/Clip.mp4", m.a}, {"media/clip.mp4", m.a}},
+          QVector<Zip::Source>{{"template.schneidi", tpl}, {"media/a.mp4", m.a}, {"media/a.mp4", m.a}},
+          QVector<Zip::Source>{{"template.schneidi", tpl}, {"media", m.a}, {"Media/a.mp4", m.a}}}) {
+        const QString clash = tmp + "/share/clash.zip";
+        QFile::remove(clash);
+        CHECK(Zip::write(clash, files));
+        if (!CHECK_EQ(errorOf("templates", {{"import", clash}}, &msg), QString("BAD_ZIP")))
+            std::printf("       %s\n", qPrintable(files[1].name));
+    }
+
+    // A "zip bomb": announces far more than 20 times its size -> refused before anything is written
+    {
+        const QString bomb = tmp + "/share/bomb.zip";
+        CHECK(Zip::write(bomb, {{"template.schneidi", tpl}, {"media/big.mp4", m.a}}));
+        announceSize(bomb, 0xF0000000u); // 3.75 GiB
+        CHECK_EQ(errorOf("templates", {{"import", bomb}}, &msg), QString("BAD_ZIP"));
+        CHECK(msg.contains("too big"));
+    }
+
+    // A project that does not load: nothing shows up
+    {
+        const QString broken = tmp + "/share/broken.zip";
+        const QString junkProject = tmp + "/odd/template.schneidi";
+        QFile f(junkProject);
+        f.open(QIODevice::WriteOnly);
+        f.write("{ not a project");
+        f.close();
+        CHECK(Zip::write(broken, {{"Broken/template.schneidi", junkProject}}));
+        CHECK_EQ(errorOf("templates", {{"import", broken}}), QString("BAD_TEMPLATE"));
+    }
+
+    CHECK_EQ(int(TemplateLibrary::own().size()), before);
+    for (const QFileInfo& fi : QDir(TemplateLibrary::dir()).entryInfoList(QDir::Dirs | QDir::Hidden | QDir::NoDotAndDotDot))
+        CHECK(!fi.fileName().startsWith(".import")); // no staging folder or replaced copy left
 }
 
 void testAlias()
@@ -557,5 +696,6 @@ int main(int argc, char* argv[])
     testAlias();
     testLive(tmp.path(), m);
     testZip(tmp.path(), m);
+    testZipNames(tmp.path(), m);
     return Check::result();
 }
