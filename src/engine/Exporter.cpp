@@ -34,6 +34,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <limits>
 #include <optional>
 
 extern "C" {
@@ -274,6 +275,27 @@ qint64 Exporter::peakDecoderBytes(const Timeline& tl, int from, int to,
             if (it->isEmpty()) continue;
             const qint64 bytes = qint64(it->width()) * it->height() * 3 / 2 * pictures;
             uses.push_back({a, b, c.mediaPath + '|' + QString::number(c.in - c.start), bytes});
+        }
+        // A dissolve shows both sides over its whole span, each from a decoder of its own - also the same file
+        // going on across the cut (Picture::Renderer gives the right side a second decoder then). Handles taken as
+        // long enough: the span may come out a little longer than rendered, never shorter
+        const QVector<TimelineOps::TransitionSpan> spans =
+            TimelineOps::transitions(t, [](const Clip&) { return std::numeric_limits<int>::max() / 4; });
+        for (const TimelineOps::TransitionSpan& sp : spans) {
+            if (!sp.isDissolve()) continue;
+            const int a = std::max(sp.start, from), b = std::min(sp.end, to);
+            if (a >= b) continue;
+            QString leftKey;
+            for (const int id : {sp.leftId, sp.rightId})
+                for (const Clip& c : t.clips) {
+                    if (c.id != id || !c.enabled || c.mediaPath.isEmpty() || c.isNested() || c.isTitle()) continue;
+                    const QSize size = sizes.value(c.mediaPath, sizeOf(c.mediaPath));
+                    if (size.isEmpty()) continue;
+                    QString key = c.mediaPath + '|' + QString::number(c.in - c.start);
+                    if (id == sp.leftId) leftKey = key;
+                    else if (key == leftKey) key += 'x';
+                    uses.push_back({a, b, key, qint64(size.width()) * size.height() * 3 / 2 * pictures});
+                }
         }
     }
     // The frames where something starts are where the sum can grow

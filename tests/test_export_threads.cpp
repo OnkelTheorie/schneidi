@@ -159,15 +159,22 @@ void testMemoryThreads()
     // 20-picture term alone left all 10 threads, which peaked at 4.7-5 GB in a 5 GB cap; 6 threads measured 3.5 GB
     const QSize uhd8k(7680, 4320);
     const qint64 picture8k = 7680LL * 4320 * 3 / 2;
+    // One recording cut in two with a 1 s dissolve at the cut (the file goes on across it): the right side gets a
+    // decoder of its own over the dissolve
     Timeline dissolve;
-    dissolve.video.resize(2);
-    dissolve.video[0].clips << clip(1, "a8k.mp4", 0, 0, 160);
-    dissolve.video[1].clips << clip(2, "a8k.mp4", 150, 0, 150); // the file from its start again: a decoder of its own
+    dissolve.video.resize(1);
+    dissolve.video[0].clips << clip(1, "a8k.mp4", 0, 0, 150) << clip(2, "a8k.mp4", 150, 150, 150);
+    dissolve.video[0].clips[0].transOut = 30;
+    dissolve.video[0].clips[1].transIn = 30;
     const auto size8k = [&](const QString&) { return uhd8k; };
     const auto hardware = [](const QString&) { return QSize(); };
     CHECK_EQ(Exporter::sourceBytesPerThread(dissolve, 0, 300, size8k), 2 * 3 * picture8k);
     CHECK_EQ(Exporter::sourceBytesPerThread(dissolve, 0, 300, hardware), qint64(0));
     CHECK_EQ(Exporter::sourceBytesPerThread(dissolve, 0, 100, size8k), 3 * picture8k); // one decoder there
+    // Without the dissolve a cut in one recording keeps one decoder
+    Timeline cut = dissolve;
+    cut.video[0].clips[0].transOut = cut.video[0].clips[1].transIn = 0;
+    CHECK_EQ(Exporter::decodedSourceBytes(cut, 0, 300, size8k), 20 * picture8k);
     const qint64 fixed8k = Exporter::decodedSourceBytes(dissolve, 0, 300, size8k);
     CHECK_EQ(fixed8k, 2 * 20 * picture8k);
     const Exporter::ThreadChoice soft8k =
