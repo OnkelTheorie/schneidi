@@ -112,8 +112,9 @@ void startAtSound(QVector<SubtitleCue>& cues, const Levels& levels, double fps, 
         }
         for (int f = a; f + kRun <= b; ++f) {
             if (voiced[f + kRun] - voiced[f] < kRun) continue;
-            // 100 ms before the sound, so the line is there when the first syllable is
-            const int start = offset + int(std::floor((f * fm - 100) / 1000.0 * fps));
+            // 100 ms before the sound, so the line is there when the first syllable is. Multiplied before the
+            // division: (ms / 1000.0) * fps lands just below a whole frame on some machines (x87 on 32-bit x86)
+            const int start = offset + int(std::floor((f * fm - 100) * fps / 1000.0));
             if (start > c.start && start < c.end - 1) c.start = start;
             break;
         }

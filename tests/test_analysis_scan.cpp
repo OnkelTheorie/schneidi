@@ -62,6 +62,19 @@ bool same(const QJsonArray& a, const QJsonArray& b, double slack)
     return true;
 }
 
+// The first value where same() fails, for the failure message ("" when the sizes differ or all match)
+QString firstDiff(const QJsonArray& a, const QJsonArray& b, double slack)
+{
+    for (qsizetype i = 0; i < std::min(a.size(), b.size()); ++i) {
+        const QJsonObject x = a[i].toObject(), y = b[i].toObject();
+        for (const QString& k : x.keys())
+            if (!same(QJsonArray{QJsonObject{{k, x[k]}}}, QJsonArray{QJsonObject{{k, y[k]}}}, slack))
+                return QString("#%1 %2: %3 vs %4").arg(i).arg(k, QString::number(x[k].toDouble(), 'g', 17),
+                                                          QString::number(y[k].toDouble(), 'g', 17));
+    }
+    return {};
+}
+
 // Every event of `want` has one of `got` at most `slack` frames away, and the other way round
 bool near(const QJsonArray& want, const QJsonArray& got, int slack)
 {
@@ -146,8 +159,10 @@ int main(int argc, char** argv)
             const QJsonArray f = run("scenes", a, "ffmpeg", &ffMs)["changes"].toArray();
             const char* what = color ? "colour" : "region";
             CHECK(o.size() >= (color ? 14 : 7));
-            Check::report(same(full, f, turned ? 1 : 0), "region events (every picture) == ffmpeg", __FILE__, __LINE__,
-                          QString("%1 %2\n       own: %3\n       ffmpeg: %4").arg(name, what, frames(full), frames(f)));
+            const double slack = turned ? 1 : 0;
+            Check::report(same(full, f, slack), "region events (every picture) == ffmpeg", __FILE__, __LINE__,
+                          QString("%1 %2\n       own: %3\n       ffmpeg: %4\n       first difference: %5")
+                              .arg(name, what, frames(full), frames(f), firstDiff(full, f, slack)));
             // region: every picture always (B-frames skipped gave uneven samples); colour: skipping, close
             Check::report(color ? near(f, o, 3) : same(o, f, turned ? 1 : 0), "region events (default) ~ ffmpeg",
                           __FILE__, __LINE__,

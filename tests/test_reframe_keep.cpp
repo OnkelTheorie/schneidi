@@ -57,7 +57,8 @@ void testGames()
     CHECK_EQ(GameHud::regionText(QRectF(0.7, 0.055, 0.3, 0.19)), QString("0.7,0.055,0.3,0.19"));
     // Every game: the mark lies inside the kill feed that a short keeps
     for (const GameHud::Game& x : GameHud::games()) {
-        CHECK(QRectF(0, 0, 1, 1).contains(x.feed));
+        // A feed at the edge (0.7 + 0.3) can end a rounding step past 1 (x87 on 32-bit x86)
+        CHECK(QRectF(-1e-9, -1e-9, 1 + 2e-9, 1 + 2e-9).contains(x.feed));
         CHECK(x.feed.adjusted(-1e-9, -1e-9, 1e-9, 1e-9).intersects(x.mark));
     }
     // CS2: five kill feed lines (31 px tall, 34 px apart from y 75 in 1080p: the fifth ends at 241) fit, and the copy

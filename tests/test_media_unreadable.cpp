@@ -25,6 +25,7 @@ extern "C" {
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
+#include <QImageReader>
 #include <QTemporaryDir>
 #include <QtEndian>
 
@@ -134,8 +135,11 @@ int main(int argc, char** argv)
     }
 
     // A 99-megapixel TIFF (297 MB as RGB, above Qt's 256 MB default limit; TIFF cannot be decoded at a smaller
-    // size): `frames` of the file said "could not decode" although probe, import and render took it
-    {
+    // size): `frames` of the file said "could not decode" although probe, import and render took it. Needs Qt's TIFF
+    // plugin (Debian qt6-image-formats-plugins); without it a TIFF is no picture here at all
+    if (!QImageReader::supportedImageFormats().contains("tiff")) {
+        std::printf("  (no Qt TIFF plugin: big TIFF skipped)\n");
+    } else {
         const QString big = Check::makeMedia(in("big.tiff"), {"-f", "lavfi", "-i", "color=c=red:s=11000x9000", "-frames:v", "1",
                                                             "-compression_algo", "deflate"});
         if (CHECK(!big.isEmpty())) {

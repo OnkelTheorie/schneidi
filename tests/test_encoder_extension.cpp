@@ -170,7 +170,9 @@ void testOrder(const QString& dir)
 
     // Hints: only for the free replacements, naming the install command
     const QString hint = HardwareEncoders::betterQualityHint("libopenh264");
-    CHECK(hint.contains("extensions --install x264"));
+    // The x264/x265 extension is built for x86_64 only (Extensions.cpp): elsewhere the hint names no download
+    if (Extensions::find("x264")) CHECK(hint.contains("extensions --install x264"));
+    else CHECK(!hint.contains("extensions --install"));
     CHECK(hint.contains("OpenH264"));
     CHECK(HardwareEncoders::betterQualityHint("libkvazaar").contains("kvazaar"));
     CHECK(HardwareEncoders::betterQualityHint("libx264").isEmpty());
