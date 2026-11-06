@@ -1,6 +1,6 @@
 ---
 name: schneidi
-description: Edit videos with schneidi, the open-source video editor that AI can drive (MCP tools or `schneidi-cli`). Use this skill whenever someone wants to cut, trim, shorten, subtitle, color-correct, mix, reframe or export a video - a highlight reel from game or sports clips, a short/reel/TikTok in 9:16, a talking-head video or podcast without pauses, an ad or product clip, a cut in the schneidi app that is open right now - or mentions schneidi, a .schneidi project file, or the schneidi MCP tools. Also use it when video files arrive together with an editing wish, even if schneidi is not named.
+description: Edit videos with schneidi, the open-source video editor that AI can drive (MCP tools or `schneidi-cli`). Use this skill whenever someone wants to cut, trim, shorten, subtitle, color-correct, mix, reframe or export a video - a highlight reel from game or sports clips, a short/reel/TikTok in 9:16, a talking-head video or podcast without pauses, an ad or product clip, a cut in the schneidi app that is open right now, a video from a template or many videos from one template and a table (CSV), the same logo/colors/intro/outro on every video - or mentions schneidi, a .schneidi project file, or the schneidi MCP tools. Also use it when video files arrive together with an editing wish, even if schneidi is not named.
 ---
 
 # Editing video with schneidi
@@ -40,7 +40,11 @@ names cost a failed call.
 3. **Build it in small steps.** Create the project with `new` (match the frame rate of the main material; vertical
    = width 1080, height 1920). `new` starts from the user's default start template; name one with `template` when it
    fits the task: `podcast` (tracks Voice 1, Voice 2, Music), `vertical` (9:16), `game` (multi-stream recordings:
-   the Mix stream comes in muted). `templates` lists them with the user's own. Then `edit` with a list of ops. Its answer lists the clips it added and changed
+   the Mix stream comes in muted). `templates` lists them with the user's own and the **content templates**:
+   finished projects with slots for clips, texts, music and logo (`short-hook`, `gaming-highlight`, `product-15s`,
+   `podcast-clip`, `intro-outro`, the user's own). When one fits the request (or the user names one), fill it instead
+   of building from scratch: `templates` `fill` gives a finished project in one call, with `rows` one per line of a
+   table ([templates.md](references/templates.md)). Then `edit` with a list of ops. Its answer lists the clips it added and changed
    (`changes`, with their new ids) and the timeline as a summary; take ids from there or from `info`, never guess
    them - they change when clips are split. Positions relative to a clip or to source time
    (`{"clip": 3, "source": "12.4s"}`) stay correct while earlier ops move things. Give an op `"why"` (a short
@@ -94,6 +98,8 @@ pool and is selected; a .schneidi project opens, never over unsaved changes).
   (hours:minutes:seconds:frames), or clock time `"1:30"` (minutes:seconds), `"00:01:02.5"` (decimal seconds).
   Seconds are the safest. Analysis commands on a media file count frames in the file's own rate unless you pass
   `project`, so pass it when you feed the result into `edit`.
+- **The global brand kit and the user's own templates are theirs**: change, replace or remove them only on request
+  (a project's own kit or a new project from a template is fine).
 - **Never overwrite the user's material.** Renders and projects get new names (`trip-cut.mp4`, `trip-9x16.mp4`);
   put them where the user says, otherwise next to the project. Check renders that only you look at go to a
   temporary folder, never into the user's folders.
@@ -128,5 +134,5 @@ Read the guide that fits the task (several if it combines them):
 | Checking a render before handing it over | [references/check.md](references/check.md) |
 | Automation: new recordings in a folder → cut → render, without anyone clicking | [references/automation.md](references/automation.md) |
 | Story: hook, sections, notes, plan first, review render | [references/story.md](references/story.md) |
-| Brand kit: logo, brand colors and fonts in titles, intro/outro | [references/brand.md](references/brand.md) |
-| Templates: fill a template's slots with clips and texts, many videos from a table (CSV), save/share own templates | [references/templates.md](references/templates.md) |
+| Brand kit: the same logo, colors, fonts and intro/outro on every video | [references/brand.md](references/brand.md) |
+| Templates: a finished video from a template's slots (clips, texts, music, logo), many videos from a table (CSV), save/share own templates as ZIP | [references/templates.md](references/templates.md) |

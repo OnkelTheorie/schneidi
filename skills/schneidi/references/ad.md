@@ -10,6 +10,10 @@ Goal: an exact length, one clear message, brand at the end - often in several fo
 Plan the segment lengths so they add up exactly (15 s at 25 fps = 375 frames) and check `info` length afterwards.
 Ads run on fixed slots; 15.4 s is wrong.
 
+**From a template:** `product-15s` (1:1: three product pictures, name, claim, call to action, logo, music) or
+the user's own ad template is built already - fill its slots with `templates` `fill` ([templates.md](templates.md));
+the same ad for 20 products: one row per product in a CSV, `templates` `fill` with `rows`, one video each.
+
 ## Building blocks
 - Images (logo, product photo) are media like video: `append`/`place` them; they last 5 s unless you set `in`/`out`.
 - Logo over a background: logo on V2, `transform` `zoom` to size it (an image is fitted to the frame first), a

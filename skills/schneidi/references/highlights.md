@@ -3,6 +3,10 @@
 Goal: the best moments, tight, with a rising arc, often with music. For a vertical video (Short, Reel, TikTok)
 also read [social.md](social.md).
 
+A fixed shape the user wants every time (title, five clips with the Edit look, song cut to length): the built-in
+`gaming-highlight` template or their own - pick the moments as below, then `templates` `fill` them
+([templates.md](templates.md)).
+
 ## Find the moments
 - `highlights` with all clips at once (`files`) gives candidates as source ranges with lead-in and lead-out, best
   first (`best`), and a ready `keep` list per file. Pass `project` so the frames match your project.

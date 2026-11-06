@@ -24,6 +24,9 @@ It runs the steps below with the usual commands and answers with `out`, `length_
 Without `files`: `project` (also `"@app"`) and `timeline` = an existing cut to turn into the short. Look at the
 result yourself afterwards (`frames` sheet of `out`) - one call does not replace that.
 
+**A template instead**: `short-hook` (hook text over the first clip, three clips, music) or a user's own short
+template - `templates` `fill` with the clips and the hook text ([templates.md](templates.md)).
+
 ## Format
 - New project `width` 1080, `height` 1920 (or `template` "vertical"), frame rate of the material. (`render` `size`
   only letterboxes a landscape timeline into a portrait file - that is not a vertical edit.) In an existing project

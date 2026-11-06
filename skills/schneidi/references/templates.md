@@ -77,11 +77,13 @@ Pen;Writes forever;shots/pen.mp4;
 ## In a project / in the app
 - `templates` `project` + `values` fills the slots of that project in place; with `"@app"` the project open in the
   app, as one undo step.
-- Edit ops: `{op:'fill', slot, value}` fills one slot; `{op:'slot', clip, id, kind?, hint?, length?, min?, max?,
+- Edit ops: `{op:'fill', slot, value, reframe?}` fills one slot; `{op:'slot', clip, id, kind?, label?, hint?, length?, min?, max?,
   fit?, …}` marks a clip as slot (`remove:true` unmarks). `info` shows `slot:{…}` on such clips. A slot made of
   several clips (frozen tail, loop repeats, a cut) changes as a whole.
 - In the app a Media Pool file dropped onto a slot that can take it fills it; onto one that cannot (a text slot, a
   song onto a clip slot) it drops as always.
+- Where the user finds it in the app: File › New from Template… (tiles with preview, also Import/Export of ZIPs),
+  File › Save as Template…, Clip › Mark as Placeholder… (rules in the Inspector), Clip › Check Fields….
 
 ## Own templates and sharing
 - `templates` `save:"/abs/project.schneidi"` (or `"@app"`), `name`, `description?`, `tags?`, `preview?` saves it

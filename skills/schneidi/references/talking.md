@@ -2,6 +2,9 @@
 
 Goal: same content, no dead air, no slips - but still natural, not robotic.
 
+A vertical podcast clip (speaker, topic on top, word captions, logo): the `podcast-clip` template
+([templates.md](templates.md)) - fill it with the clip's range, then transcribe and `captions`.
+
 ## Look first
 - `probe`: several audio streams? Recorders like OBS keep e.g. "System" and "Mikrofon" apart. Use the voice stream
   for analysis (`audio_stream` on media files, `tracks` on projects; `transcribe` already picks voice-named ones).

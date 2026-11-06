@@ -47,6 +47,10 @@ it finds the moments, reframes, captions, checks and renders. The steps by hand,
    or kills a `render` with `review` `"sheet"` before the real render shows hits off the beat and late hooks
    without a person looking ([story.md](story.md)).
 
+**The same video for many inputs** (products, episodes, players): a content template filled from a table -
+`templates` `fill` with `rows` (CSV/JSON) and `out_dir` makes one project and video per row, a bad row is reported
+and the others are done ([templates.md](templates.md)). Run it with `dry_run:true` first.
+
 Unattended runs add nothing nobody asked for: no effect sounds (`short` keeps `sfx` `off` unless the user set it), no
 `hook_variants` (the user picks one), no `broll` (a plan for the user). What the user wants every time belongs in the
 script or the request, not in your defaults.
