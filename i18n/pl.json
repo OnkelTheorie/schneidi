@@ -2436,5 +2436,8 @@
  "Podcast-Ausschnitt": "Fragment podcastu",
  "Produktclip 15 s": "Klip produktowy 15 s",
  "Quadratischer 15-s-Produktclip: drei Bilder, Name, Preis oder Versprechen, Aufruf, Logo.": "Kwadratowy klip produktowy 15 s: trzy obrazy, nazwa, cena lub obietnica, wezwanie do działania, logo.",
- "Short mit Hook": "Short z haczykiem"
+ "Short mit Hook": "Short z haczykiem",
+ "Ton nur in den ersten %1 Stunden geprüft: der Bereich ist %2 Stunden lang (ein Clip sehr weit hinten auf der Zeitleiste?)": "Dźwięk sprawdzony tylko w pierwszych %1 godzinach: zakres trwa %2 godzin (klip bardzo daleko na osi czasu?)",
+ "Die automatische Sicherung konnte nicht geladen werden:\n%1": "Nie udało się wczytać automatycznej kopii zapasowej:\n%1",
+ "Sie liegt jetzt unter %1 und wird nicht mehr angeboten.": "Znajduje się teraz w %1 i nie będzie już proponowana."
 }

@@ -807,7 +807,7 @@ QJsonObject fillTemplateInto(const QJsonObject& a, Context& ctx, FillBatch* batc
     QDir().mkpath(QFileInfo(out).absolutePath());
     // Also for a new file: two fills to one name at once (two batches into one out_dir) take turns, and the later one
     // sees the file the first one made instead of replacing it silently
-    std::unique_ptr<QLockFile> lock = ProjectFile::lock(out);
+    std::unique_ptr<QLockFile> lock = ProjectFile::lock(out, ProjectFile::kCliLockWaitMs);
     if (!lock) fail("PROJECT_LOCKED", "the project is being saved by someone else (schneidi app?), try again: " + out);
     const bool exists = QFileInfo::exists(out);
     if (exists && !overwrite)
@@ -874,14 +874,14 @@ QJsonObject cmdTemplates(const QJsonObject& a, Context& ctx)
     if (action == "export") return exportTemplate(a);
     if (action == "import") return importTemplate(a);
     if (action == "remove") {
-        QString err;
-        if (!TemplateLibrary::remove(a["remove"].toString().trimmed(), &err)) fail("NOT_FOUND", err);
+        QString err, code;
+        if (!TemplateLibrary::remove(a["remove"].toString().trimmed(), &err, &code)) fail(code, err);
         return {{"removed", a["remove"].toString().trimmed()}};
     }
     if (action == "rename") {
-        QString err;
+        QString err, code;
         if (a["name"].toString().trimmed().isEmpty()) fail("BAD_ARGUMENT", "rename needs name");
-        if (!TemplateLibrary::rename(a["rename"].toString().trimmed(), a["name"].toString(), &err)) fail("NOT_FOUND", err);
+        if (!TemplateLibrary::rename(a["rename"].toString().trimmed(), a["name"].toString(), &err, &code)) fail(code, err);
         return contentJson(*contentTemplate(a["name"].toString()));
     }
     if (action == "info") {

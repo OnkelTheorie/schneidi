@@ -22,7 +22,7 @@
 //                                              user's hand-over, see handOver(); no attach needed, also when AIs are
 //                                              refused; opened right after the answer, or once the app stops waiting)
 // hello and open are also answered while a command runs (others wait for its end): a hand-over meanwhile is queued
-// attach, snapshot and run while the app waits -> {"ok":false,"error":{"code":"APP_WAITING","message":text}}
+// attach, snapshot and run while the app waits (Server::setWaiting, or a modal dialog is open) -> {"ok":false,"error":{"code":"APP_WAITING","message":text}}
 // Plans (`edit` plan:true, plan_id + run/discard) run in the app too: making or dropping one is no undo step, the host
 // hears of them (LiveHost::livePlan); in the chat's plan mode (LiveHost::livePlanOnly) the chat's other edits are
 // refused with PLAN_MODE - the user runs a plan through Server::runForChat.
@@ -84,8 +84,11 @@ public:
     // The app cannot take commands yet (its restore dialog at start waits for the user, a project is being opened):
     // `message` tells the AI why (empty = ready). The server runs from the start, so AIs hear "waiting" instead of
     // "the app is not running"; nothing runs meanwhile (a modal dialog's event loop still delivers requests).
+    // A modal dialog of the app (a QWindow with modality) counts as waiting by itself (waitingNow).
     void setWaiting(const QString& message);
     QString waiting() const { return m_waiting; }
+    // What AIs hear now: the setWaiting message, or that a modal dialog is open; empty = ready
+    QString waitingNow() const;
     // For the app's own AI chat process (variable -> value): it connects to this app with the chat's secret
     QHash<QString, QString> chatEnvironment() const;
     // How long an attached AI may stay silent before it is let go (see above; default 2 min, 0 = never: it keeps

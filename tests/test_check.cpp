@@ -6,18 +6,20 @@
 // under the music (also not when the music is ducked, not for flat noise). Stutter (core/Stutter.h): jumps in the time
 // stamps, stretches, clean parts, the clips that use them. Then the commands: the packet scan of real files (MP4 with
 // B-frames, MKV, a clean file, disk cache), `probe` gaps, `highlights` stutter/clean, `check` on a small project and
-// its render, on a vertical project (buried game sound, title at the bottom, still start) against a normal 16:9 one
+// its render, on a project with a clip at frame 2^30 (sound measured at most a day), on a vertical project (buried game sound, title at the bottom, still start) against a normal 16:9 one
 // (no new findings), and a clip over a stutter.
 #include "cli/Commands.h"
 #include "core/Captions.h"
 #include "core/ExportCheck.h"
 #include "core/Keyframes.h"
+#include "core/ProjectFile.h"
 #include "core/Stutter.h"
 #include "core/Subtitles.h"
 #include "engine/FrameGaps.h"
 
 #include "check.h"
 
+#include <QElapsedTimer>
 #include <QFile>
 #include <QGuiApplication>
 #include <QJsonArray>
@@ -561,6 +563,36 @@ int main(int argc, char** argv)
         r = run("check", {{"source", copy}});
         CHECK(!checksOf(r).contains("loudness"));
         CHECK(!r.contains("fix"));
+    }
+
+    // A clip far out on the timeline (frame 2^30, over a year at 25 fps; a broken or hand-written file): the sound is
+    // mixed only where clips play and measured at most ExportCheck::kMaxSoundHours, said so - not a year of silence
+    // mixed (endless) with its frame peaks kept (gigabytes)
+    {
+        const QString far = dir.filePath("far.schneidi");
+        ProjectData data;
+        if (CHECK(ProjectFile::load(project, &data, nullptr)) && CHECK(!data.timeline.video.isEmpty())) {
+            Clip moved = data.timeline.video[0].clips.last();
+            moved.id = 999;
+            moved.start = 1 << 30;
+            moved.linkId = 0;
+            data.timeline.video[0].clips << moved;
+            CHECK(ProjectFile::save(data, far, nullptr));
+            QElapsedTimer t;
+            t.start();
+            r = run("check", {{"source", far}});
+            std::printf("  clip at frame 2^30: check took %lld ms\n", t.elapsed());
+            CHECK(t.elapsed() < 60000);
+            CHECK(checksOf(r).contains("sound_check_limited"));
+            CHECK(checksOf(r).contains("loudness")); // the sound that is there was measured
+            CHECK(std::abs(r["sound"].toObject()["integrated_lufs"].toDouble() - lufs) < 0.5);
+        }
+        const int day = int(ExportCheck::kMaxSoundHours * 3600 * f.rate.fps());
+        QVector<ExportCheck::Issue> limited;
+        CHECK_EQ(ExportCheck::soundEnd(10, 10 + day, f, &limited), 10 + day);
+        CHECK(limited.isEmpty());
+        CHECK_EQ(ExportCheck::soundEnd(10, 1 << 30, f, &limited), 10 + day);
+        if (CHECK_EQ(checks(limited), QStringList({"sound_check_limited"}))) CHECK_EQ(limited[0].from, 10 + day);
     }
 
     // The rendered file: the sound checks again; the gap of one frame is too short for the picture check of a file

@@ -2436,5 +2436,8 @@
  "Podcast-Ausschnitt": "Fragmento de pódcast",
  "Produktclip 15 s": "Clip de producto 15 s",
  "Quadratischer 15-s-Produktclip: drei Bilder, Name, Preis oder Versprechen, Aufruf, Logo.": "Clip de producto cuadrado de 15 s: tres imágenes, nombre, precio o promesa, llamada a la acción, logotipo.",
- "Short mit Hook": "Short con gancho"
+ "Short mit Hook": "Short con gancho",
+ "Ton nur in den ersten %1 Stunden geprüft: der Bereich ist %2 Stunden lang (ein Clip sehr weit hinten auf der Zeitleiste?)": "Sonido comprobado solo en las primeras %1 horas: el rango dura %2 horas (¿un clip muy lejos en la línea de tiempo?)",
+ "Die automatische Sicherung konnte nicht geladen werden:\n%1": "No se pudo cargar la copia de seguridad automática:\n%1",
+ "Sie liegt jetzt unter %1 und wird nicht mehr angeboten.": "Ahora está en %1 y no se volverá a ofrecer."
 }

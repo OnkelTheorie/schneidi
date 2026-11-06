@@ -14,6 +14,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QGuiApplication>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QLocalServer>
@@ -25,6 +26,7 @@
 #include <QThread>
 #include <QTimer>
 #include <QUndoStack>
+#include <QWindow>
 
 #include <algorithm>
 #include <map>
@@ -342,6 +344,21 @@ void Server::setWaiting(const QString& message)
     if (m_waiting.isEmpty() && !m_pendingOpen.isEmpty()) QTimer::singleShot(0, this, &Server::openPending);
 }
 
+QString Server::waitingNow() const
+{
+    if (!m_waiting.isEmpty()) return m_waiting;
+    // A modal dialog ("changed outside schneidi", a load error, "save changes?") runs its own event loop, which
+    // delivers live requests: an edit or `app save` meanwhile would land behind the user's back or answer it
+    if (qobject_cast<QGuiApplication*>(QCoreApplication::instance()))
+        if (const QWindow* w = QGuiApplication::modalWindow()) {
+            const QString title = w->title().trimmed();
+            return QString("schneidi is waiting for the user (a dialog is open in the app%1); try again once it is "
+                           "answered")
+                .arg(title.isEmpty() ? QString() : QString(": \"%1\"").arg(title));
+        }
+    return {};
+}
+
 void Server::openPending()
 {
     if (m_pendingOpen.isEmpty() || !m_waiting.isEmpty()) return; // setWaiting({}) comes back here
@@ -456,7 +473,7 @@ void Server::handle(QLocalSocket* s, const QJsonObject& msg)
                       {"allowed", peer.chat || m_allowed},
                       {"pid", QCoreApplication::applicationPid()},
                       {"version", QCoreApplication::applicationVersion()}};
-        if (!m_waiting.isEmpty()) o["waiting"] = m_waiting;
+        if (const QString waiting = waitingNow(); !waiting.isEmpty()) o["waiting"] = waiting;
         if (!peer.chat && !m_allowed && !m_refusal.isEmpty()) o["refusal"] = m_refusal;
         return reply(o);
     }
@@ -469,12 +486,12 @@ void Server::handle(QLocalSocket* s, const QJsonObject& msg)
         if (files.isEmpty()) return reply(errorReply("BAD_REQUEST", "no files to open"));
         m_pendingOpen += files;
         QTimer::singleShot(0, this, &Server::openPending);
-        return reply({{"ok", true}, {"queued", !m_waiting.isEmpty()}, {"pid", QCoreApplication::applicationPid()}});
+        return reply({{"ok", true}, {"queued", !waitingNow().isEmpty()}, {"pid", QCoreApplication::applicationPid()}});
     }
     // Let go while it was idle: its next request takes the app again if it is free
     const bool wantsApp = type == "snapshot" || type == "run"
                           || (type == "activity" && msg.value("state").toString() == "start");
-    if (wantsApp && !peer.chat && m_attached != s && !peer.client.isEmpty() && m_waiting.isEmpty()) {
+    if (wantsApp && !peer.chat && m_attached != s && !peer.client.isEmpty() && waitingNow().isEmpty()) {
         if (!m_attached && m_allowed) attach(s, peer.client);
         else if (type != "activity")
             return reply(m_allowed ? errorReply("APP_BUSY", "another AI session connected to the schneidi app while "
@@ -486,7 +503,7 @@ void Server::handle(QLocalSocket* s, const QJsonObject& msg)
     const bool attached = m_attached == s || peer.chatAttached;
     // Work of the attached AI outside the app: shown there, never answered (the client does not wait for it)
     if (type == "activity") {
-        if (!attached || !m_waiting.isEmpty()) return;
+        if (!attached || !waitingNow().isEmpty()) return;
         static const QHash<QString, LiveActivity::State> states{{"start", LiveActivity::State::Started},
                                                                  {"progress", LiveActivity::State::Progress},
                                                                  {"end", LiveActivity::State::Finished},
@@ -509,9 +526,10 @@ void Server::handle(QLocalSocket* s, const QJsonObject& msg)
         m_host->liveActivity(a);
         return;
     }
-    // The app waits for the user (restore dialog at start): its project is not the one the user will work on yet
-    if (!m_waiting.isEmpty() && (type == "attach" || type == "snapshot" || type == "run"))
-        return reply(errorReply("APP_WAITING", m_waiting));
+    // The app waits for the user (restore dialog at start: its project is not the one the user will work on yet;
+    // any other modal dialog)
+    if (const QString waiting = waitingNow(); !waiting.isEmpty() && (type == "attach" || type == "snapshot" || type == "run"))
+        return reply(errorReply("APP_WAITING", waiting));
     if (type == "attach") {
         if (peer.chat) { // not shown as a connected AI: the chat panel shows what it does
             peer.chatAttached = true;
@@ -556,7 +574,7 @@ void Server::handle(QLocalSocket* s, const QJsonObject& msg)
 QJsonObject Server::runForChat(const QString& command, const QJsonObject& args)
 {
     if (m_running) return errorReply("APP_BUSY", "another command runs in the app");
-    if (!m_waiting.isEmpty()) return errorReply("APP_WAITING", m_waiting);
+    if (const QString waiting = waitingNow(); !waiting.isEmpty()) return errorReply("APP_WAITING", waiting);
     m_running = true;
     m_host->liveCommandRunning(true, true);
     const QJsonObject result = runCommand({{"command", command}, {"args", args}}, true, true);

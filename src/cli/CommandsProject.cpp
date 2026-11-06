@@ -270,7 +270,7 @@ QJsonObject cmdNew(const QJsonObject& a, Context&)
     std::unique_ptr<QLockFile> lock;
     QString backup;
     if (replaces) {
-        lock = ProjectFile::lock(path);
+        lock = ProjectFile::lock(path, ProjectFile::kCliLockWaitMs);
         if (!lock) fail("PROJECT_LOCKED", "the project is being saved by someone else (schneidi app?), try again: " + path);
         backup = ProjectFile::backup(path);
     }
@@ -738,7 +738,7 @@ QJsonObject cmdRestore(const QJsonObject& a, Context&)
     const QString path = absolute(a["project"].toString());
     if (Live::isAppProject(path)) fail("NO_APP", "the schneidi app is not running");
     if (!QFileInfo::exists(path)) fail("NOT_FOUND", "project not found: " + path);
-    const auto lock = ProjectFile::lock(path);
+    const auto lock = ProjectFile::lock(path, ProjectFile::kCliLockWaitMs);
     if (!lock) fail("PROJECT_LOCKED", "the project is being saved by someone else (schneidi app?), try again: " + path);
     // Pick the copy before the current state goes into the backups (that shifts the numbers)
     const QString source = backupFile(path, a);

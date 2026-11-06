@@ -237,7 +237,7 @@ Session::Opened openSession(const QString& file, Session::Access access)
     if (anyApp) fail("NO_APP", "the schneidi app is not running");
     if (!QFileInfo::exists(o.path)) fail("NOT_FOUND", "project not found: " + o.path);
     if (access == Session::Access::Write) {
-        o.lock = ProjectFile::lock(o.path);
+        o.lock = ProjectFile::lock(o.path, ProjectFile::kCliLockWaitMs);
         if (!o.lock) fail("PROJECT_LOCKED", "the project is being saved by someone else (schneidi app?), try again: " + o.path);
         o.fingerprint = ProjectFile::fingerprint(o.path); // before loading: a change after it shows at save()
     }

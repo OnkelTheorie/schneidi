@@ -90,6 +90,7 @@ Pen;Writes forever;shots/pen.mp4;
 ## Own templates and sharing
 - `templates` `save:"/abs/project.schneidi"` (or `"@app"`), `name`, `description?`, `tags?`, `preview?` saves it
   as own template (used media, LUTs of effects and the project brand kit's logo/intro/outro copied into it); `rename:id` + `name`, `remove:id`.
+  Ids match in any case; `BUSY` = another schneidi is changing the own templates right now - try again.
 - `export:id` + `zip:"/abs/t.zip"` writes it as ZIP; `import:"/abs/t.zip"` adds one (a name that exists gets
   "Name 2" unless `replace:true`; archives with unsafe paths or links are refused).
 - Command line: `schneidi-cli template info|fill|save|import|export <value> [--param …]`.

@@ -221,6 +221,41 @@ void checkFramePeaks(const QString& tone, const QString& late)
     CHECK(m1 && m2 && m3 && m1->integrated == ownLoud->integrated && m3->integrated == m1->integrated
           && m2->integrated < m1->integrated - 0.2);
 
+    // Empty stretches are not mixed (Mixer::soundSpans): A2 two hours later measures in a moment and like A2 10 s
+    // later (silence counts for nothing in the loudness); the frame peaks still cover every frame
+    {
+        Timeline apart;
+        apart.audio.resize(2);
+        apart.audio[0].clips << clipOf(tone, 1, 0);
+        apart.audio[1].clips << clipOf(tone, 2, 2 * 3600 * 25);
+        Timeline near10 = apart;
+        near10.audio[1].clips[0].start = kFrames + 250;
+        QElapsedTimer t;
+        t.start();
+        std::vector<float> peaks;
+        const int farEnd = TimelineOps::endFrame(apart);
+        const auto far = AudioAnalysis::timelineLoudness(kFmt, apart, 0, farEnd, {}, &peaks);
+        const qint64 ms = t.elapsed();
+        const auto close = AudioAnalysis::timelineLoudness(kFmt, near10, 0, TimelineOps::endFrame(near10));
+        std::printf("  2 h Lücke: %lld ms, %.3f LUFS (10 s Lücke: %.3f)\n", ms, far ? far->integrated : 0.0,
+                    close ? close->integrated : 0.0);
+        if (CHECK(far && close)) {
+            CHECK(ms < 5000);
+            CHECK(std::abs(far->integrated - close->integrated) < 0.01); // skipped in whole 100 ms chunks
+            CHECK(std::abs(far->truePeakDb - close->truePeakDb) < 0.01);
+            CHECK_EQ(peaks.size(), size_t(farEnd));
+            CHECK(levels(peaks, 2, 48, 0.5, 2e-3));
+            CHECK(levels(peaks, kFrames + 50, farEnd - kFrames, 0.0, 0.0));
+            CHECK(levels(peaks, farEnd - kFrames + 2, farEnd - kFrames + 48, 0.5, 2e-3));
+        }
+        Audio::Mixer m(apart, kFmt.rate);
+        const auto spans = m.soundSpans();
+        if (CHECK_EQ(spans.size(), size_t(2))) {
+            CHECK_EQ(spans[0].first, int64_t(0));
+            CHECK_EQ(spans[1].first, m.frameStart(2 * 3600 * 25));
+        }
+    }
+
     // Ducking ranges: where A2 sounds (its source is silent 2-3 s = frames 125-149)
     Ducking::Params dp;
     const auto ownRanges = AudioAnalysis::soundRanges(kFmt, tl, {1}, dp);
