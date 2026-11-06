@@ -222,7 +222,6 @@
      "boxOn": false,
      "boxPad": 10,
      "color": "#ffffffff",
-     "colorRef": 1,
      "font": "Sans",
      "fontRef": 1,
      "italic": false,
