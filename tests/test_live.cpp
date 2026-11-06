@@ -25,6 +25,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QLocalSocket>
+#include <QStandardPaths>
 #include <QTemporaryDir>
 #include <QUndoStack>
 
@@ -149,6 +150,24 @@ int main(int argc, char* argv[])
     QString error;
     CHECK(ProjectFile::save(fake.project.data(), fake.path, &error));
     fake.project.markSaved();
+#ifndef Q_OS_WIN
+    // In a long TMPDIR (a socket path holds about 104 bytes) the app could not be reached at all: the runtime folder
+    // takes the socket then (before the test's own server: both would register
+    // under this process id)
+    {
+        const QString runtime = QStandardPaths::writableLocation(QStandardPaths::RuntimeLocation);
+        const QByteArray oldTmp = qgetenv("TMPDIR");
+        const QString deep = tmp.path() + "/" + QString(90, 'd');
+        QDir().mkpath(deep);
+        qputenv("TMPDIR", deep.toLocal8Bit());
+        FakeApp other;
+        Cli::Live::Server longTmp(&other);
+        QString e;
+        if (!runtime.isEmpty() && runtime.size() < 60) CHECK(longTmp.start(&e));
+        if (oldTmp.isNull()) qunsetenv("TMPDIR");
+        else qputenv("TMPDIR", oldTmp);
+    }
+#endif
     Cli::Live::Server server(&fake);
     if (!CHECK(server.start(&error))) {
         std::printf("       %s\n", qPrintable(error));
