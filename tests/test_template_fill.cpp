@@ -33,7 +33,7 @@
 QDebug operator<<(QDebug dbg, const ClipSlot& s)
 {
     return dbg << "slot(" << s.id << int(s.kind) << int(s.length) << s.minLen << s.maxLen << int(s.fit) << s.reframe
-               << s.maxChars << s.shrink << s.fitMusic << s.snapCuts << s.label << s.hint << ")";
+               << s.maxChars << s.shrink << s.fitMusic << s.snapCuts << s.label << s.hint << s.nominalLen << ")";
 }
 QDebug operator<<(QDebug dbg, const TemplateInfo& t)
 {
@@ -559,6 +559,255 @@ void testSequences()
     CHECK_EQ(j.value("results").toArray().size(), 2);
 }
 
+// A fixed slot keeps its length after a value that left it shorter: the next, longer value fills all of it again
+// (review A3) - Trim with a gap, Speed at its 25 % limit, a shortened song; a gap someone filled in the meantime ends it
+void testFixedKeepsLength()
+{
+    const Context ctx = context();
+    { // Trim
+        ProjectData d = project();
+        apply(d, {{"clip1", Value::ofFile(kShort)}}, ctx);
+        CHECK_EQ(find(d, 1)->length(), 50);
+        CHECK_EQ(listSlots(d)[0].length, 50); // what is on the timeline
+        const SlotReport s = only(apply(d, {{"clip1", Value::ofFile(kLong)}}, ctx));
+        CHECK_EQ(find(d, 1)->length(), 100);
+        CHECK_EQ(find(d, 3)->length(), 100);
+        CHECK(s.adjusted.contains("trimmed"));
+        CHECK_EQ(find(d, 2)->start, 100);
+        // Through the project file: the same
+        ProjectData e = project();
+        apply(e, {{"clip1", Value::ofFile(kShort)}}, ctx);
+        ProjectData back;
+        QString err;
+        CHECK(ProjectFile::fromJson(ProjectFile::toJson(e, "/x/p.schneidi"), "/x/p.schneidi", &back, &err));
+        apply(back, {{"clip1", Value::ofFile(kLong)}}, ctx);
+        CHECK_EQ(find(back, 1)->length(), 100);
+    }
+    { // Speed at its limit
+        ProjectData d = project();
+        slotOf(d, 1).fit = SlotFit::Speed;
+        apply(d, {{"clip1", Value::ofFile(kShort, 0, 10)}}, ctx);
+        CHECK_EQ(find(d, 1)->length(), 40);
+        apply(d, {{"clip1", Value::ofFile(kLong)}}, ctx);
+        CHECK_EQ(find(d, 1)->length(), 100);
+    }
+    { // a song shorter than the music slot
+        ProjectData d = project();
+        apply(d, {{"music", Value::ofFile(kSong, 0, 50)}}, ctx);
+        CHECK_EQ(find(d, 7)->length(), 50);
+        apply(d, {{"music", Value::ofFile(kSong)}}, ctx);
+        CHECK_EQ(find(d, 7)->length(), 200);
+    }
+    { // the gap was used for something else: the slot reaches up to it only
+        ProjectData d = project();
+        apply(d, {{"clip1", Value::ofFile(kShort)}}, ctx);
+        d.timeline.video[0].clips.insert(1, clip(50, kTmpl, 70, 0, 10));
+        d.lastClipId = 50;
+        apply(d, {{"clip1", Value::ofFile(kLong)}}, ctx);
+        CHECK_EQ(find(d, 1)->length(), 70);
+        CHECK_EQ(find(d, 50)->start, 70);
+        CHECK_EQ(find(d, 50)->length(), 10);
+    }
+}
+
+// A Clip slot whose placeholder had no sound (a still): the new file brings its sound, linked, on a free audio track
+// (review A6)
+void testStillGetsSound()
+{
+    const Context ctx = context();
+    const auto stillSlot = [](ProjectData& d) {
+        Clip& v = d.timeline.video[0].clips[0];
+        v.mediaPath = kSquare;
+        v.in = 0;
+        v.out = 99;
+        v.linkId = 0;
+        d.timeline.audio[0].clips.removeFirst(); // clip 3, its old sound
+    };
+    { // A1 is free there
+        ProjectData d = project();
+        stillSlot(d);
+        const SlotReport s = only(apply(d, {{"clip1", Value::ofFile(kLong, 20)}}, ctx));
+        const Clip* v = find(d, 1);
+        CHECK(v->linkId != 0);
+        const Track& a1 = d.timeline.audio[0];
+        CHECK_EQ(int(a1.clips.size()), 2);
+        const Clip& a = a1.clips[0];
+        CHECK_EQ(a.mediaPath, kLong);
+        CHECK_EQ(a.start, 0);
+        CHECK_EQ(a.in, 20);
+        CHECK_EQ(a.length(), 100);
+        CHECK_EQ(a.linkId, v->linkId);
+        CHECK(a.linkId != find(d, 4)->linkId);
+        CHECK(!a.slot.isSet());
+        CHECK(s.adjusted.contains("sound_added"));
+    }
+    { // A1 and A2 are taken there: a new track
+        ProjectData d = project();
+        stillSlot(d);
+        d.timeline.audio[0].clips.prepend(clip(40, kSong, 0, 0, 50));
+        d.lastClipId = 40;
+        apply(d, {{"clip1", Value::ofFile(kLong)}}, ctx);
+        CHECK_EQ(int(d.timeline.audio.size()), 3);
+        if (d.timeline.audio.size() == 3) {
+            CHECK_EQ(int(d.timeline.audio[2].clips.size()), 1);
+            CHECK_EQ(d.timeline.audio[2].clips.value(0).linkId, find(d, 1)->linkId);
+        }
+    }
+    { // Loop: each repeat with its sound
+        ProjectData d = project();
+        stillSlot(d);
+        slotOf(d, 1).fit = SlotFit::Loop;
+        apply(d, {{"clip1", Value::ofFile(kShort, 0, 40)}}, ctx);
+        CHECK_EQ(int(d.timeline.video[0].clips.size()), 4);
+        CHECK_EQ(int(d.timeline.audio[0].clips.size()), 4);
+        for (int i = 0; i < 3; ++i)
+            CHECK_EQ(d.timeline.audio[0].clips.value(i).linkId, d.timeline.video[0].clips[i].linkId);
+    }
+    { // a file without sound, or a video placeholder whose sound was taken away on purpose: no sound
+        ProjectData d = project();
+        stillSlot(d);
+        apply(d, {{"clip1", Value::ofFile(kSilent)}}, ctx);
+        CHECK_EQ(int(d.timeline.audio[0].clips.size()), 1);
+        ProjectData e = project();
+        e.timeline.video[0].clips[0].linkId = 0;
+        e.timeline.audio[0].clips.removeFirst();
+        apply(e, {{"clip1", Value::ofFile(kLong)}}, ctx);
+        CHECK_EQ(int(e.timeline.audio[0].clips.size()), 1);
+    }
+}
+
+// A flexible music slot with beats: cut to the song's length within [minLen, maxLen] (review A9)
+void testMusicFlexible()
+{
+    Context ctx = context();
+    Beats::Result b;
+    b.found = true;
+    b.bpm = 120;
+    b.confidence = 0.9;
+    b.period = 0.5;
+    b.phase = 0.5;
+    b.beats = 112;
+    b.downbeatConfidence = 0.9;
+    b.phraseBars = 4;
+    b.phraseConfidence = 0.9;
+    b.barEnergyDb.assign(28, -20);
+    b.barBassDb.assign(28, -30);
+    ctx.beats = [&](const QString&, int) -> std::optional<Beats::Result> { return b; };
+    ProjectData d = project();
+    slotOf(d, 7).length = SlotLength::Flexible;
+    slotOf(d, 7).maxLen = 400;
+    const SlotReport s = only(apply(d, {{"music", Value::ofFile(kSong)}}, ctx));
+    CHECK(s.adjusted.contains("fit_music"));
+    CHECK(std::abs(listSlots(d).last().length - 400) <= 1);
+}
+
+// A text slot cut in two: every part gets the text (review A10)
+void testTextSplit()
+{
+    ProjectData d = project();
+    Clip& t = d.timeline.video[1].clips[0];
+    t.out = 24;
+    Clip second = t;
+    second.id = 8;
+    second.start = 25;
+    d.timeline.video[1].clips << second;
+    d.lastClipId = 8;
+    const SlotReport s = only(apply(d, {{"hook", Value::ofText("HOOKED")}}, context()));
+    CHECK_EQ(s.clips, (QVector<int>{5, 8}));
+    for (int id : {5, 8}) {
+        CHECK_EQ(find(d, id)->title.text, QString("HOOKED"));
+        CHECK(find(d, id)->title.size < 80);
+    }
+    CHECK_EQ(find(d, 5)->title.size, find(d, 8)->title.size);
+}
+
+// A flexible slot inside a compound clip: the compound clips that show it follow, their timeline ripples (review A13)
+void testCompound()
+{
+    ProjectData d = project();
+    Sequence open{1, "Timeline 1"};
+    Sequence inner{2, "Compound"};
+    inner.compound = true;
+    inner.timeline.video.resize(1);
+    Clip c = clip(20, kTmpl, 0, 0, 60);
+    c.slot = slot("inner");
+    c.slot.length = SlotLength::Flexible;
+    inner.timeline.video[0].clips = {c, clip(21, kTmpl, 60, 300, 60)};
+    Clip whole;
+    whole.id = 30;
+    whole.kind = ClipKind::Compound;
+    whole.sequenceId = 2;
+    whole.start = 200;
+    whole.out = 119;
+    Clip tail = whole; // shows the compound's second half
+    tail.id = 31;
+    tail.start = 0;
+    tail.in = 60;
+    tail.out = 119;
+    Clip head = whole; // shows its first 30 frames: before the slot's end
+    head.id = 32;
+    head.start = 100;
+    head.out = 29;
+    d.timeline.video[0].clips << whole << clip(33, kTmpl, 320, 0, 50);
+    d.timeline.video.resize(5);
+    d.timeline.video[3].clips = {tail};
+    d.timeline.video[4].clips = {head};
+    d.sequences = {open, inner};
+    d.currentSequence = 1;
+    d.lastClipId = 33;
+    const SlotReport s = only(apply(d, {{"inner", Value::ofFile(kLong)}}, context()));
+    CHECK_EQ(s.details.value("ripple_s").toDouble(), 9.6);
+    CHECK_EQ(TimelineOps::endFrame(d.sequences[1].timeline), 360);
+    CHECK_EQ(find(d, 30)->start, 200);
+    CHECK_EQ(find(d, 30)->in, 0);
+    CHECK_EQ(find(d, 30)->length(), 360);
+    CHECK_EQ(find(d, 33)->start, 560); // the parent rippled
+    CHECK_EQ(find(d, 31)->in, 300);    // the same picture as before
+    CHECK_EQ(find(d, 31)->length(), 60);
+    CHECK_EQ(find(d, 31)->start, 0);
+    CHECK_EQ(find(d, 32)->in, 0);
+    CHECK_EQ(find(d, 32)->length(), 30);
+    CHECK(s.adjusted.contains("compound"));
+    CHECK(d.sequences[0].timeline == d.timeline);
+}
+
+// Inspector edits reach every part of a slot instance (frozen tail, loop repeats, razor cut) (review A5)
+void testEditorParts()
+{
+    Project p;
+    Selection sel;
+    Editor ed(&p, &sel);
+    ProjectData d = project();
+    slotOf(d, 1).fit = SlotFit::Freeze;
+    apply(d, {{"clip1", Value::ofFile(kShort)}}, context());
+    p.load(d);
+    const QVector<int> parts = listSlots(p.data())[0].parts;
+    CHECK_EQ(int(parts.size()), 2);
+    ClipSlot renamed = TimelineOps::findClip(p.timeline(), parts[1])->slot;
+    renamed.id = "best";
+    CHECK(ed.setClipSlot(parts[1], renamed).isEmpty());
+    CHECK_EQ(p.undoStack()->count(), 1);
+    for (int id : parts) CHECK_EQ(TimelineOps::findClip(p.timeline(), id)->slot.id, QString("best"));
+    CHECK_EQ(listSlots(p.data())[0].parts, parts);
+    CHECK(ed.setClipSlot(parts[0], {}).isEmpty());
+    CHECK_EQ(p.undoStack()->count(), 2);
+    for (int id : parts) CHECK(!TimelineOps::findClip(p.timeline(), id)->slot.isSet());
+    // A kind one of the parts cannot hold: refused for all
+    ProjectData e = project();
+    Clip t = e.timeline.video[1].clips[0]; // a title right after clip1 on V1, the same slot
+    t.id = 9;
+    t.start = 100;
+    t.out = 49;
+    t.slot = slot("clip1");
+    e.timeline.video[0].clips[1].start = 150;
+    e.timeline.video[0].clips.insert(1, t);
+    e.lastClipId = 9;
+    p.load(e);
+    CHECK_EQ(listSlots(p.data())[0].parts, (QVector<int>{1, 9}));
+    CHECK(!ed.setClipSlot(9, slot("clip1", SlotKind::Text)).isEmpty());
+    CHECK(TimelineOps::findClip(p.timeline(), 9)->slot.kind == SlotKind::Clip);
+}
+
 void testEditor()
 {
     Project p;
@@ -784,6 +1033,12 @@ int main(int argc, char** argv)
     testLogo();
     testSequences();
     testEditor();
+    testFixedKeepsLength();
+    testStillGetsSound();
+    testMusicFlexible();
+    testTextSplit();
+    testCompound();
+    testEditorParts();
     testLibrary();
     return Check::result();
 }

@@ -99,6 +99,8 @@ QString report(const TemplateFill::Report& r, const QString& label)
         else if (a == "reframed") done << T("Bildausschnitt angepasst");
         else if (a == "reshaped") done << T("Bildausschnitt angepasst");
         else if (a == "no_sound") done << T("ohne Ton");
+        else if (a == "sound_added") done << T("mit Ton");
+        else if (a == "compound") done << T("Compound Clips angepasst");
         else if (a == "shrunk") done << T("Schrift verkleinert");
         else if (a == "fit_music") done << T("an Phrasen geschnitten");
         else if (a == "faded") done << T("ausgeblendet");

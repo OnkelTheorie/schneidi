@@ -107,10 +107,8 @@ std::optional<Problem> checkOne(const ProjectData& d, const SlotRef& r, const Va
         if (!QFileInfo::exists(v.file)) return problem(r.slot.id, "FILE_MISSING", "file not found: " + v.file);
         return problem(r.slot.id, "UNREADABLE", "cannot read the file: " + v.file);
     }
-    if (r.slot.kind == SlotKind::Music && !m->hasAudio)
-        return problem(r.slot.id, "WRONG_TYPE", "the file has no sound (a music slot): " + v.file);
-    if (r.slot.kind != SlotKind::Music && !m->hasVideo && !m->isImage)
-        return problem(r.slot.id, "WRONG_TYPE", "the file has no picture: " + v.file);
+    if (const QString why = canFill(r.slot.kind, *m); !why.isEmpty())
+        return problem(r.slot.id, "WRONG_TYPE", why + ": " + v.file);
     if (!m->isImage) {
         if (m->length <= 0) return problem(r.slot.id, "UNREADABLE", "the file's length is unknown: " + v.file);
         const Range rg = rangeOf(*m, v);
@@ -220,7 +218,7 @@ Parts plan(const Clip& base, const SlotRef& r, const MediaInfo& m, const Range& 
 {
     const ClipSlot& slot = r.slot;
     Clip c = prepared(base, m);
-    const int S = r.length;
+    const int S = r.slotLength;
     const auto clampLen = [&](int len) {
         if (slot.length != SlotLength::Flexible) return S;
         len = std::max(len, std::max(1, slot.minLen));
@@ -365,9 +363,8 @@ void keepWidth(Clip& c, const Clip& base, const MediaInfo& m, const QSizeF& fram
     setText(rep, QString("zoom %1 to keep its width").arg(QString::number(c.transform.zoomX, 'f', 2)));
 }
 
-void fillText(Timeline& tl, const SlotRef& r, const Value& v, SlotReport& rep)
+void fillTitle(Clip& c, const SlotRef& r, const Value& v, SlotReport& rep)
 {
-    Clip& c = *TimelineOps::findClip(tl, r.clip);
     const TitleStyle old = c.title;
     c.title.text = v.text;
     rep.adjusted << "replaced";
@@ -390,6 +387,81 @@ void fillText(Timeline& tl, const SlotRef& r, const Value& v, SlotReport& rep)
     rep.adjusted << "shrunk";
     rep.details["size_px"] = c.title.size;
     setText(rep, QString("text shrunk to %1 px").arg(QString::number(c.title.size, 'g', 4)));
+}
+
+// Every part of the slot (a title cut in two) gets the text; each part shrinks from its own size (the report tells the
+// first one)
+void fillText(Timeline& tl, const SlotRef& r, const Value& v, SlotReport& rep)
+{
+    for (int i = 0; i < r.parts.size(); ++i) {
+        SlotReport once;
+        if (Clip* c = TimelineOps::findClip(tl, r.parts[i]); c && c->isTitle()) fillTitle(*c, r, v, i == 0 ? rep : once);
+    }
+}
+// A ripple at `oldEnd` by `delta` inside `sequence`: the compound clips that show it follow. What they showed after
+// oldEnd moved by delta, so a clip showing that point gets longer/shorter (and its own timeline ripples in turn, up
+// through nested compounds), one showing only what comes after it moves in its source, one before it stays. Clips on
+// locked tracks or retimed ones are left (a warning). `followed` counts the clips changed.
+void followCompounds(ProjectData& d, int sequence, int oldEnd, int delta, const IdGen& newId, SlotReport& rep,
+                     int& followed, int depth)
+{
+    if (!delta || depth > 32) return;
+    const int newEnd = oldEnd + delta;
+    const auto moved = [&](int f) { return f >= oldEnd ? f + delta : delta < 0 && f > newEnd ? newEnd : f; };
+    QVector<int> parents{d.currentSequence};
+    for (const Sequence& s : d.sequences)
+        if (s.id != d.currentSequence) parents << s.id;
+    for (int parent : parents) {
+        if (parent == sequence) continue;
+        Timeline* tl = timelineOf(d, parent);
+        if (!tl) continue;
+        struct Change {
+            int id, in, out, end; // new in/out, old end in the parent
+        };
+        QVector<Change> changes;
+        for (TrackKind k : {TrackKind::Video, TrackKind::Audio})
+            for (Track& t : tl->tracks(k))
+                for (Clip& c : t.clips) {
+                    if (!c.isCompound() || c.sequenceId != sequence) continue;
+                    const int in = moved(c.in), end = moved(c.out + 1);
+                    if (in == c.in && end == c.out + 1) continue;
+                    if (t.locked || c.isRetimed()) {
+                        const QString w = "a compound clip that shows the slot is on a locked track or retimed: it "
+                                          "does not follow";
+                        if (!rep.warnings.contains(w)) rep.warnings << w;
+                        continue;
+                    }
+                    if (end - in == c.length()) { // only moved in its source
+                        c.in = in, c.out = end - 1;
+                        ++followed;
+                    } else {
+                        changes << Change{c.id, in, end - 1, c.end()};
+                    }
+                }
+        // Longer/shorter: the parent ripples behind it (from its last such clip back: a ripple never moves the ones
+        // before it; a clip with its linked part at the same place ripples once)
+        std::sort(changes.begin(), changes.end(), [](const Change& a, const Change& b) { return a.end > b.end; });
+        QVector<QPair<int, int>> rippled; // (old end, delta)
+        for (const Change& ch : changes) {
+            const Clip* c = TimelineOps::findClip(*tl, ch.id);
+            if (!c) continue;
+            const int dd = (ch.out - ch.in + 1) - c->length();
+            if (!rippled.contains(QPair<int, int>{ch.end, dd})) {
+                ripple(*tl, ch.end, dd, newId);
+                rippled.append({ch.end, dd});
+                followCompounds(d, parent, ch.end, dd, newId, rep, followed, depth + 1);
+            }
+            if (Clip* x = TimelineOps::findClip(*tl, ch.id)) {
+                if (ch.out < ch.in) {
+                    TimelineOps::removeClip(*tl, ch.id); // all it showed was taken out
+                } else {
+                    x->in = ch.in;
+                    x->out = ch.out;
+                }
+                ++followed;
+            }
+        }
+    }
 }
 
 void fillMedia(ProjectData& d, Timeline& tl, const SlotRef& r, const MediaInfo& m, const Value& v, const Context& ctx,
@@ -429,7 +501,12 @@ void fillMedia(ProjectData& d, Timeline& tl, const SlotRef& r, const MediaInfo& 
     Parts parts;
     bool fitted = false;
     if (r.slot.kind == SlotKind::Music && r.slot.fitMusic && ctx.beats && v.from < 0 && v.to < 0) {
-        const int T = r.slot.length == SlotLength::Flexible ? std::max(r.length, r.slot.minLen) : r.length;
+        // Flexible: the whole song within [minLen, maxLen]; Fixed: the slot's own length
+        int T = r.slotLength;
+        if (r.slot.length == SlotLength::Flexible) {
+            T = std::max({1, m.length, r.slot.minLen});
+            if (r.slot.maxLen > 0) T = std::min(T, r.slot.maxLen);
+        }
         const std::optional<Beats::Result> beats = ctx.beats(m.path, base.audioStream < m.audioStreamCount() ? base.audioStream : 0);
         if (beats && beats->found) {
             MusicFit::Options o;
@@ -457,6 +534,9 @@ void fillMedia(ProjectData& d, Timeline& tl, const SlotRef& r, const MediaInfo& 
         }
     }
     if (!fitted) parts = plan(base, r, m, rg, fps, rep);
+    // A Fixed slot left shorter keeps its own length for the next fill
+    for (Clip& c : parts.clips)
+        c.slot.nominalLen = r.slot.length == SlotLength::Fixed && parts.length < r.slotLength ? r.slotLength : 0;
     if (r.slot.kind == SlotKind::Music) {
         if (r.slot.snapCuts) rep.warnings << "snapCuts: cuts are not moved onto the beat by the fill (op snap_to_beat)";
         for (Clip& c : parts.clips) c.linkId = 0; // a new song is not in sync with a picture
@@ -490,8 +570,45 @@ void fillMedia(ProjectData& d, Timeline& tl, const SlotRef& r, const MediaInfo& 
         rep.adjusted << "rippled";
         rep.details["ripple_s"] = round3(delta / fps);
         setText(rep, QString("later clips moved by %1%2").arg(delta > 0 ? "+" : "", secs(delta, fps)));
+        int followed = 0;
+        followCompounds(d, r.sequence, r.start + r.length, delta, newId, rep, followed, 0);
+        if (followed) {
+            rep.adjusted << "compound";
+            rep.details["compound_clips"] = followed;
+            setText(rep, QString("%1 compound clip(s) showing it follow").arg(followed));
+        }
     }
     rep.details["length_s"] = round3(parts.length / fps);
+
+    // A placeholder without sound of its own (a still, a silent file): the new file brings its sound, linked to the
+    // picture, like a drop of the file (the old one had none to keep). One with sound whose linked audio was taken
+    // away stays silent: that was the template's choice.
+    if (video && r.slot.kind == SlotKind::Clip && sound.isEmpty() && m.hasAudio && !m.isImage) {
+        const std::optional<MediaInfo> old = mediaOf(d, ctx, base.mediaPath);
+        if (!old || old->isImage || !old->hasAudio) {
+            const int from = r.start, to = r.start + parts.length;
+            const auto isFree = [&](int i) {
+                if (i < 0 || i >= tl.audio.size() || tl.audio[i].locked) return false;
+                const QVector<Clip>& cs = tl.audio[i].clips;
+                return std::none_of(cs.begin(), cs.end(), [&](const Clip& c) { return c.start < to && c.end() > from; });
+            };
+            int a = r.track.index;
+            if (!isFree(a)) {
+                a = int(tl.audio.size());
+                for (int i = 0; i < tl.audio.size() && a == tl.audio.size(); ++i)
+                    if (isFree(i)) a = i;
+            }
+            TimelineOps::ensureTracks(tl, TrackKind::Audio, a + 1);
+            Clip model;
+            model.mediaPath = m.path;
+            sound << Sound{a, model};
+            const int link = ++d.lastLinkId;
+            for (Clip& c : parts.clips)
+                if (!c.freeze) c.linkId = link; // repeats get their own below
+            rep.adjusted << "sound_added";
+            setText(rep, QString("the file's sound added on A%1").arg(a + 1));
+        }
+    }
 
     Track& track = tl.track(r.track);
     for (int i = 0; i < parts.clips.size(); ++i) {
@@ -525,7 +642,7 @@ void fillMedia(ProjectData& d, Timeline& tl, const SlotRef& r, const MediaInfo& 
                     Clip a = prepared(s.clip, m);
                     a.keys = s.clip.keys;
                     shiftKeys(a, p.in - s.clip.in);
-                    a.id = i == 0 ? s.clip.id : newId(); // the first part keeps the sound clips' ids
+                    a.id = i == 0 && s.clip.id ? s.clip.id : newId(); // the first part keeps the sound clips' ids
                     a.start = p.start;
                     a.in = p.in;
                     a.out = p.out;
@@ -595,6 +712,17 @@ QVector<SlotRef> listSlots(const ProjectData& d)
                     out << r;
                 }
         }
+    // A Fixed slot a shorter value left shorter: its own length, as far as its track is free after it
+    for (SlotRef& r : out) {
+        r.slotLength = r.length;
+        if (r.slot.length != SlotLength::Fixed || r.slot.nominalLen <= r.length) continue;
+        int limit = r.start + r.slot.nominalLen;
+        for (const auto& [seq, tl] : timelines(d))
+            if (seq == r.sequence)
+                for (const Clip& c : tl->track(r.track).clips)
+                    if (c.start >= r.start + r.length) limit = std::min(limit, c.start);
+        r.slotLength = std::max(r.length, limit - r.start);
+    }
     return out;
 }
 
@@ -624,6 +752,22 @@ QString canHold(const Clip& c, TrackKind track, SlotKind kind)
         return {};
     }
     return {};
+}
+
+QString canFill(SlotKind kind, const MediaInfo& m)
+{
+    switch (kind) {
+    case SlotKind::Text: return "a text slot takes a text, not a file";
+    case SlotKind::Music: return m.hasAudio ? QString() : "the file has no sound (a music slot)";
+    case SlotKind::Clip:
+    case SlotKind::Logo: return m.hasVideo || m.isImage ? QString() : "the file has no picture";
+    }
+    return {};
+}
+
+std::optional<Problem> checkSlot(const ProjectData& d, const SlotRef& r, const Value& v, const Context& ctx)
+{
+    return checkOne(d, r, v, ctx);
 }
 
 QVector<Problem> check(const ProjectData& d, const Values& values, const Context& ctx)

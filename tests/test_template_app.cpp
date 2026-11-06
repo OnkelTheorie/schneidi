@@ -272,6 +272,19 @@ void testDropFill()
     }
     CHECK(audioY > hitY);
     CHECK_EQ(mediaOf(1), kTmpl);
+    // A file a placeholder cannot take (a song onto the clip placeholder, its sound or the text placeholder): the drop
+    // is not swallowed, it drops as always; onto the music placeholder it fills it (review A11)
+    int swallowed = 0, filled = 0;
+    for (int y = TimelineView::kRulerH + 2; y < 420; y += 4) {
+        normal.clear();
+        const int n = int(messages.size());
+        dropFile(tv, kSong, QPoint(x, y), Qt::NoModifier);
+        if (int(messages.size()) == n + 1) ++filled;
+        else if (normal != QStringList{kSong}) ++swallowed;
+    }
+    CHECK_EQ(swallowed, 0);
+    CHECK(filled > 0);
+    CHECK_EQ(mediaOf(1), kTmpl);
 
     // Picture: the timeline with three placeholders (clip, text, music)
     tv.update();
@@ -518,6 +531,24 @@ void testBrowserAndWindow(const QString& tmp)
     p->undoStack()->undo();
     CHECK(TimelineOps::findClip(p->timeline(), 5)->slot.isSet());
 
+    // Check Fields: each instance checked with what it holds itself (review A12): a second "clip1" on a locked track
+    // is one problem, the first one is fine
+    {
+        ProjectData d = project();
+        d.timeline.video.resize(3);
+        d.timeline.video[2].locked = true;
+        Clip again = clip(8, kLong, 0, 0, 40);
+        again.slot = slot("clip1", "Bester Moment");
+        d.timeline.video[2].clips = {again};
+        d.lastClipId = 8;
+        SlotCheckDialog check(d);
+        auto* tree = check.findChild<QTreeWidget*>("slot_check_list");
+        CHECK_EQ(check.problemCount(), 1);
+        if (CHECK(tree) && CHECK_EQ(tree->topLevelItemCount(), 4)) {
+            CHECK_EQ(tree->topLevelItem(0)->text(6), T("in Ordnung"));
+            CHECK(tree->topLevelItem(2)->text(6) != T("in Ordnung"));
+        }
+    }
     // Check Fields: the placeholders with their state (the fake files are missing)
     {
         ProjectData d = project();

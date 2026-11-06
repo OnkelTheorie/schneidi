@@ -28,6 +28,12 @@ look + music), `product-15s` (1:1, 3 product pictures, name, claim, call to acti
   fit_music …, with `text` and `details`), `unfilled` (slots without a value keep the template's content - a
   warning; `strict:true` makes it an error), `notes` (e.g. reframed to the center because the file was not
   analysed: `reframe:"auto"` measures it, slower).
+- How a slot fits its value: a fixed slot stays as long as it is (a value left shorter there leaves a gap, and the
+  next, longer value fills the whole slot again); a flexible one takes the value's length within `min_s`/`max_s`
+  (a music slot with `fit_music`: the song's length within them) and everything after it moves - also where the
+  slot is inside a compound clip (the compound clips showing it get longer/shorter). A clip slot's linked sound
+  follows its picture; a placeholder without sound (a picture) gets the new clip's sound on a free audio track
+  (`adjusted`: sound_added). A text slot cut in two gets the text in every part.
 - A value that breaks a rule (missing file, no picture, text over `max_chars` without shrink) fails the call with
   its codes (FILE_MISSING, WRONG_TYPE, TOO_LONG …) and writes nothing. `dry_run:true` checks the values first and
   answers with `errors` and `unfilled` (nothing written) - also EXISTS (the project is there, no `overwrite`) and
@@ -72,7 +78,10 @@ Pen;Writes forever;shots/pen.mp4;
 - `templates` `project` + `values` fills the slots of that project in place; with `"@app"` the project open in the
   app, as one undo step.
 - Edit ops: `{op:'fill', slot, value}` fills one slot; `{op:'slot', clip, id, kind?, hint?, length?, min?, max?,
-  fit?, …}` marks a clip as slot (`remove:true` unmarks). `info` shows `slot:{…}` on such clips.
+  fit?, …}` marks a clip as slot (`remove:true` unmarks). `info` shows `slot:{…}` on such clips. A slot made of
+  several clips (frozen tail, loop repeats, a cut) changes as a whole.
+- In the app a Media Pool file dropped onto a slot that can take it fills it; onto one that cannot (a text slot, a
+  song onto a clip slot) it drops as always.
 
 ## Own templates and sharing
 - `templates` `save:"/abs/project.schneidi"` (or `"@app"`), `name`, `description?`, `tags?`, `preview?` saves it
