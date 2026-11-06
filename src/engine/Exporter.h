@@ -90,6 +90,15 @@ public:
     static int savedThreads();
     static void setSavedThreads(int threads);
     static int availableThreads(); // logical processors (QThread::idealThreadCount) (at least 1)
+    // Threads of a render that leaves the choice to schneidi (ExportSettings::threads 0): every processor, but fewer
+    // when the RAM available now (SystemMemory) would not hold the frames they keep in flight at this output size -
+    // a board with little RAM swaps with all of them and gets slower (Pi Zero 2 W, 415 MB, 1080x1920: 4 threads
+    // 797 s, 2 threads 383 s). availableBytes 0 = unknown = no limit. lowMemory: the memory set the number.
+    struct ThreadChoice {
+        int threads = 1;
+        bool lowMemory = false;
+    };
+    static ThreadChoice automaticThreads(int processors, QSize output, qint64 availableBytes);
     // How many images are rendered at once: threads (0 = all), but 1 if a frame needs the one before (stabilizing
     // with border "keep")
     static int parallelFrames(const Timeline& tl, int threads);
@@ -112,6 +121,9 @@ public:
     const QVector<Picture::SkippedEffect>& skippedEffects() const { return m_skipped; }
     // After start(): processor threads the render uses (also caps the frames rendered at once)
     int threads() const { return m_threads; }
+    // After start(): threads() is lower than the processors because of the RAM available (automaticThreads); x264
+    // then also looks fewer frames ahead
+    bool threadsLowMemory() const { return m_threadsLowMemory; }
     // After finished(): share of the frames copied by smart render (0 = everything encoded)
     int copiedPercent() const { return m_copiedPercent; }
     // Frames handed to the encoder so far (0 before started())
@@ -206,6 +218,7 @@ private:
     int m_colorspace = 709;
     QString m_sampleFormat;   // FFmpeg sample format of the audio encoder
     int m_threads = 0, m_frames = 1;
+    bool m_threadsLowMemory = false;
     QString m_usedCodec, m_note;
     QVector<Picture::SkippedEffect> m_skipped;
     QTimer m_timer;
