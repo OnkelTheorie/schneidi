@@ -947,7 +947,10 @@ QByteArray toJson(const ProjectData& data, const QString& projectPath)
 bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* data, QString* error)
 {
     QJsonParseError pe;
-    const QJsonDocument doc = QJsonDocument::fromJson(json, &pe);
+    QJsonDocument doc = QJsonDocument::fromJson(json, &pe);
+    // A file saved by an editor that wrote umlauts as Latin-1 (or with one damaged byte) did not open at all: the
+    // bytes that are no UTF-8 become U+FFFD, everything else stays
+    if (pe.error == QJsonParseError::IllegalUTF8String) doc = QJsonDocument::fromJson(QString::fromUtf8(json).toUtf8(), &pe);
     QJsonObject root = doc.object();
     if (pe.error != QJsonParseError::NoError || root.value("app").toString() != "schneidi") {
         if (error) *error = T("Keine gültige schneidi-Projektdatei.");

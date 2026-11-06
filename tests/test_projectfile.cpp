@@ -539,6 +539,18 @@ int main(int argc, char** argv)
             CHECK(!opened(R"({"app":"schneidi","currentSequence":3,"sequences":[{"id":3,"multicam":true}]})", p).isEmpty());
             CHECK(p.sequence(3) && !p.sequence(3)->compound && !p.sequence(3)->multicam);
         }
+        // Saved by an editor that wrote an umlaut as Latin-1 (no UTF-8): it opens, that byte becomes U+FFFD
+        {
+            Project p;
+            const QByteArray json = "{\"app\":\"schneidi\",\"media\":[{\"name\":\"M\xfcller.mp4\",\"path\":\"/m/a.mp4\","
+                                    "\"hasVideo\":true,\"length\":50}]}";
+            CHECK(!opened(json, p).isEmpty());
+            if (CHECK_EQ(int(p.media().size()), 1)) {
+                CHECK_EQ(p.media()[0].name, QString("M\uFFFDller.mp4"));
+                CHECK_EQ(p.media()[0].path, QString("/m/a.mp4"));
+            }
+            CHECK(stable(json));
+        }
         // A frame rate or size no program makes (2^31 fps overflowed the EDL timecodes): brought inside the limits,
         // a rate the app does not offer but other programs do (48 fps) stays
         {
