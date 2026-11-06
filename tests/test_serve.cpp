@@ -457,6 +457,21 @@ int main(int argc, char* argv[])
     QFile::link(tmp.filePath("outside"), root + "/link");
     const bool links = QFileInfo(root + "/link").isSymLink();
 
+    // An option given twice: a list takes both (it kept only the last: `frames --at 0 --at 1s` showed one picture),
+    // anything else is refused instead of silently taking the last
+    {
+        QProcess p;
+        p.start(SCHNEIDI_CLI, {"frames", "--source", clip, "--at", "0", "--at", "1s", "--width", "64", "--out",
+                               tmp.filePath("twice")});
+        CHECK(p.waitForFinished(60000));
+        CHECK_EQ(QJsonDocument::fromJson(p.readAllStandardOutput().trimmed().split('\n').last())
+                     .object()["frames"].toArray().size(), qsizetype(2));
+        QProcess q;
+        q.start(SCHNEIDI_CLI, {"frames", "--source", clip, "--width", "64", "--width", "32", "--out", tmp.filePath("twice2")});
+        CHECK(q.waitForFinished(60000));
+        CHECK(q.exitCode() != 0 && q.readAllStandardOutput().contains("--width is given twice"));
+    }
+
     // An empty token on the network would switch the check off: refused before anything listens
     {
         QProcess p;

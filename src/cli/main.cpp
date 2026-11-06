@@ -82,7 +82,22 @@ QJsonObject parseArgs(const Cli::Command& cmd, const QStringList& args)
                 else if (i + 1 < args.size()) value = args[++i];
                 else throw Cli::Error{"USAGE", "missing value for --" + name};
             }
-            raw[name] = value == "-" ? readStdin() : value;
+            if (value == "-") value = readStdin();
+            if (raw.contains(name)) {
+                // Given twice: a list takes both (--at 0 --at 2s = --at 0,2s); anything else is refused. The last
+                // one silently replaced the first, so `frames --at 0 --at 2s` showed only 2 s.
+                const Cli::Param* p = nullptr;
+                for (const Cli::Param& x : cmd.params)
+                    if (x.name == name) p = &x;
+                const bool list = p && (p->type == Cli::ParamType::Times || p->type == Cli::ParamType::Paths
+                                        || p->type == Cli::ParamType::Sources);
+                // (", " for times: "0,1s" would be 0.1 s in German writing)
+                if (list && raw[name].isString())
+                    value = raw[name].toString() + (p->type == Cli::ParamType::Times ? ", " : ",") + value;
+                else if (raw[name].toString() != value)
+                    throw Cli::Error{"USAGE", "--" + a.mid(2).section('=', 0, 0) + " is given twice"};
+            }
+            raw[name] = value;
             continue;
         }
         if (next >= positional.size()) throw Cli::Error{"USAGE", "unexpected argument: " + a};
