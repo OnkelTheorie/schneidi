@@ -75,10 +75,12 @@ bool MainWindow::editContentTemplate(const ContentTemplate& t)
 
 void MainWindow::templateBrowser()
 {
-    // First frame of a preview video for the tiles (Engine::thumbnail without an engine instance)
+    // A frame about 1.5 s into a preview video for the tiles (Engine::thumbnail without an engine instance): the first
+    // one is black when the template fades in; a preview shorter than that shows its first frame
     const ProjectFormat format = m_project->format();
     TemplateBrowserDialog dlg(this, [format](const QString& video, const QSize& size) {
-        return Engine::thumbnail(format, video, 0, size, true);
+        const QImage later = Engine::thumbnail(format, video, 45, size, true);
+        return later.isNull() ? Engine::thumbnail(format, video, 0, size, true) : later;
     });
     if (dlg.exec() != QDialog::Accepted) return;
     switch (dlg.choice()) {
