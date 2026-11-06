@@ -98,6 +98,15 @@ void testMemoryThreads()
     CHECK(Exporter::automaticThreads(4, vertical, 50 * MB).lowMemory);
     CHECK(!Exporter::automaticThreads(1, vertical, 50 * MB).lowMemory); // one processor: nothing was lowered
 
+    // x264's lookahead against the RAM: 8K on a machine with 11 GB free (40 frames = 4 GB) short, 4K and 1080p
+    // there not; a 4 GB machine (2.5 GB free) shortens it at 4K, not at 1080p
+    CHECK(Exporter::shortLookahead(QSize(7680, 4320), 11000 * MB));
+    CHECK(!Exporter::shortLookahead(uhd, 11000 * MB));
+    CHECK(!Exporter::shortLookahead(hd, 11000 * MB));
+    CHECK(Exporter::shortLookahead(uhd, 2500 * MB));
+    CHECK(!Exporter::shortLookahead(hd, 2500 * MB));
+    CHECK(!Exporter::shortLookahead(QSize(7680, 4320), 0)); // unknown: no limit
+
     // /proc/meminfo as Linux writes it
     const SystemMemory::Info info = SystemMemory::parseMeminfo("MemTotal:         425364 kB\nMemFree:           87212 kB\n"
                                                                "MemAvailable:     286720 kB\nBuffers:            1234 kB\n");
@@ -190,7 +199,12 @@ void testMemoryRender(const QString& dir)
     run(3, &used, &low);
     CHECK_EQ(used, 3);
     CHECK(!low);
-    if (x264) CHECK_EQ(lookahead(), QByteArray("40")); // threads asked for: the preset's own
+    // Threads asked for stay, but the lookahead alone (40 frames of 1080p, ~250 MB) does not fit into 100 MB: short
+    // (8K: a render with --threads 2 was killed in a 5 GB cap by x264's lookahead)
+    if (x264) CHECK_EQ(lookahead(), QByteArray("10"));
+    qputenv("SCHNEIDI_AVAILABLE_MB", "4000");
+    run(3, &used, &low);
+    if (x264) CHECK_EQ(lookahead(), QByteArray("40")); // room enough: the preset's own
     qunsetenv("SCHNEIDI_AVAILABLE_MB");
     run(0, &used, &low); // this machine, as it is
     CHECK_EQ(used, Exporter::availableThreads());

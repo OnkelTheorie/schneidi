@@ -47,6 +47,10 @@ constexpr qint64 kFramesPerThread = 8;
 // Left for the program itself, the encoder's lookahead and the rest of the machine: at least this, or an eighth of
 // what is available
 constexpr qint64 kReserveBytes = 96 * kMB;
+// x264's lookahead (shortLookahead): frames at preset medium and bytes per pixel and frame it keeps (measured: ~6 MB
+// per 1080x1920 frame; 8K with 40 frames and 2 threads went over 5 GB)
+constexpr qint64 kLookaheadFrames = 40;
+constexpr qint64 kLookaheadBytesPerPixel = 3;
 
 // The subtitle tracks with entries in the range [from, to) as SRT files (Subtitles::srtFiles: the visible one into path,
 // the others next to it), times from the start of the range. Not committed yet: an existing file of a name is replaced
@@ -213,6 +217,13 @@ Exporter::ThreadChoice Exporter::automaticThreads(int processors, QSize output, 
     return {fit, fit < processors};
 }
 
+bool Exporter::shortLookahead(QSize output, qint64 availableBytes)
+{
+    if (availableBytes <= 0 || output.isEmpty()) return false;
+    const qint64 lookahead = qint64(output.width()) * output.height() * kLookaheadBytesPerPixel * kLookaheadFrames;
+    return lookahead > availableBytes / 3;
+}
+
 int Exporter::parallelFrames(const Timeline& tl, int threads)
 {
     if (Stabilizer::needsFrameOrder(tl)) return 1; // border "keep": each frame takes over parts of the one before
@@ -304,11 +315,13 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
     // Different frame rate: the writer picks the timeline frame of every output frame
     const FrameRate rate = s.rate.num > 0 && s.rate.den > 0 ? s.rate : s.format.rate;
     const bool convertRate = rate != s.format.rate && !s.videoCodec.isEmpty();
+    const qint64 available = s.videoCodec.isEmpty() ? 0 : SystemMemory::read().available;
     const ThreadChoice automatic = s.threads > 0 || s.videoCodec.isEmpty()
                                        ? ThreadChoice{availableThreads(), false}
-                                       : automaticThreads(availableThreads(), out.size(), SystemMemory::read().available);
+                                       : automaticThreads(availableThreads(), out.size(), available);
     const int threads = s.threads > 0 ? s.threads : automatic.threads;
     m_threadsLowMemory = s.threads <= 0 && automatic.lowMemory;
+    m_shortLookahead = m_threadsLowMemory || shortLookahead(out.size(), available);
     m_settings = s;
     m_convertRate = convertRate;
     m_sampleFormat = sampleFormat;
@@ -485,10 +498,10 @@ QVector<QPair<QByteArray, QByteArray>> Exporter::encoderOptions(const QString& c
             o.append({"crf", QByteArray::number(s.crf)}); // H.264/H.265/AV1/VP9; fixed-quality formats have 0
         }
         if (codec == "libx264" || codec == "libx265") o.append({"preset", s.preset.toUtf8()});
-        // Little RAM (automaticThreads lowered the threads): x264's lookahead holds about 6 MB per frame at
-        // 1080x1920, 40 frames at preset medium = more than a 415 MB board has free. 10 like preset veryfast (a
-        // format's own rc-lookahead below still wins)
-        if (m_threadsLowMemory && codec == "libx264") o.append({QByteArrayLiteral("rc-lookahead"), QByteArrayLiteral("10")});
+        // Little RAM (automaticThreads lowered the threads, or the lookahead alone would not fit: shortLookahead):
+        // x264's lookahead holds about 6 MB per frame at 1080x1920, 40 frames at preset medium = more than a 415 MB
+        // board has free, 4 GB at 8K. 10 like preset veryfast (a format's own rc-lookahead below still wins)
+        if (m_shortLookahead && codec == "libx264") o.append({QByteArrayLiteral("rc-lookahead"), QByteArrayLiteral("10")});
     }
     if (s.maxBitrateK > 0) { // quality target as before, but capped (VBV)
         o.append({"maxrate", QByteArray::number(s.maxBitrateK) + "k"});
