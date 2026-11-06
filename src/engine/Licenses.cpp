@@ -115,6 +115,8 @@ QVector<Part> report()
         << ffmpegPart("libswresample", swresample_version(), swresample_license());
     // Compiled in (third_party/rnnoise): the noise suppression of the voice cleaning (engine/VoiceClean)
     out << Part{"RNNoise 0.2 (built in)", "BSD-3-Clause", false, {}};
+    // Compiled in (the system's miniaudio.h or third_party/miniaudio): the sound devices (engine/audio)
+    out << Part{"miniaudio (built in)", "MIT-0 / Unlicense", false, {}};
     // Ported into core/SfxWhoosh, core/SfxForge, core/SfxDsp.h (third_party/earshot/LICENSE): the built-in sounds of
     // op 'sfx'
     out << Part{"earshot sound recipes: whoosh, riser, darkriser, shutter, knock, subdrop, banks (Leon Lin, ported in)", "MIT", false, {}};

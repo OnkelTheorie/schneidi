@@ -2,7 +2,9 @@
 
 schneidi itself is AGPL-3.0 (see [LICENSE](LICENSE)). The packages bundle these libraries; each keeps its own license.
 All are linked dynamically (shared libraries / DLLs next to the program), so they can be replaced, except RNNoise,
-which is compiled into schneidi from `third_party/rnnoise` (its license text: `third_party/rnnoise/COPYING`).
+which is compiled into schneidi from `third_party/rnnoise` (its license text: `third_party/rnnoise/COPYING`), and
+miniaudio, a single header compiled into schneidi (the system's `miniaudio.h`, or the copy in `third_party/miniaudio`
+on systems without one; its license text: `third_party/miniaudio/LICENSE`).
 The running program lists what it really loaded: `schneidi-cli --licenses` (AppImage: `schneidi-….AppImage cli --licenses`).
 
 ## GPL-free packages (AppImage `packaging/linux/build-appimage.sh`, Docker image)
@@ -19,7 +21,7 @@ The running program lists what it really loaded: `schneidi-cli --licenses` (AppI
 | [Opus](https://opus-codec.org) | BSD-3-Clause | audio codec |
 | [LAME](https://lame.sourceforge.io) | LGPL-2.0+ | MP3 encoder |
 | [libva](https://github.com/intel/libva), [libdrm](https://gitlab.freedesktop.org/mesa/drm), [oneVPL](https://github.com/intel/libvpl), [nv-codec-headers](https://github.com/FFmpeg/nv-codec-headers) | MIT | hardware encoders (VAAPI, Quick Sync, NVENC) |
-| [miniaudio](https://miniaud.io) | MIT-0 / public domain | sound output |
+| [miniaudio](https://miniaud.io) 0.11.22 (David Reid; built into the program; the system's header, or the unchanged copy in `third_party/miniaudio` with its SHA-256 in `VERSION.md`) | MIT-0 / public domain (Unlicense) | sound output |
 | [RNNoise](https://gitlab.xiph.org/xiph/rnnoise) v0.2 with its model `0b50c45` (Xiph.Org, Mozilla, Amazon, Jean-Marc Valin; sources in `third_party/rnnoise`, built into the program) | BSD-3-Clause | noise suppression of the effect "Stimme säubern" |
 | [Swishes Sound Pack](https://opengameart.org/content/swishes-sound-pack) by artisticdude (8 of its swishes, `assets/sfx/cc0/swish`, built into the program; sources and SHA-256 in `assets/sfx/cc0/SOURCES.md`) | CC0-1.0 | the recorded whoosh and swish sounds of op `sfx` |
 | [Impact Sounds](https://kenney.nl/assets/impact-sounds) by Kenney (www.kenney.nl) (5 punches, `assets/sfx/cc0/hit`, built into the program) | CC0-1.0 | the recorded hit sounds of op `sfx` |
