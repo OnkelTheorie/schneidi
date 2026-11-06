@@ -19,11 +19,15 @@
 #include <QGuiApplication>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QHash>
+#include <QLockFile>
 #include <QStandardPaths>
 #include <QTemporaryDir>
 
 #include <cmath>
 #include <cstdio>
+#include <chrono>
+#include <thread>
 
 namespace {
 
@@ -395,6 +399,33 @@ int main(int argc, char** argv)
             CHECK(!MediaIndex::cached(podcast).has_value());
             CHECK(MediaIndex::build(podcast).has_value()); // not cancelled: built
         }
+    }
+    // Another schneidi writing shot notes at the same moment (two AIs describing shots): it read the notes, is busy,
+    // writes back its version - this one waits for it, or the later writer drops the other's note
+    {
+        QDir().mkpath(MediaIndex::notesDir());
+        QLockFile other(QDir(MediaIndex::notesDir()).filePath(".notes.lock"));
+        other.setStaleLockTime(0);
+        CHECK(other.tryLock(0));
+        std::thread writer([&] {
+            QHash<QString, QByteArray> read;
+            for (const QFileInfo& fi : QDir(MediaIndex::notesDir()).entryInfoList({"*.json"}, QDir::Files)) {
+                QFile f(fi.absoluteFilePath());
+                if (f.open(QIODevice::ReadOnly)) read[fi.absoluteFilePath()] = f.readAll();
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+            for (auto it = read.cbegin(); it != read.cend(); ++it) {
+                QFile f(it.key());
+                if (f.open(QIODevice::WriteOnly | QIODevice::Truncate)) f.write(it.value());
+            }
+            other.unlock();
+        });
+        const QJsonObject r = run("index", {{"annotate", QJsonArray{QJsonObject{{"file", media}, {"shot", 1}, {"desc", "waited"}}}}});
+        writer.join();
+        CHECK_EQ(r["annotated"].toArray().size(), 1);
+        bool kept = false;
+        for (const MediaIndex::Note& n : MediaIndex::notes(media)) kept = kept || n.desc == "waited";
+        CHECK(kept);
     }
     return Check::result();
 }

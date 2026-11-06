@@ -190,8 +190,10 @@ int main(int argc, char** argv)
     const QString noNote = ProxyManager::proxyPath(tmp.filePath("whatever.mp4"));
     writeFile(noNote, 1200);
     // Half-written files: one from a crash, one being written now, one of the open project's file (may be on its way)
-    const QString crashPart = ProxyManager::proxyPath(unused).chopped(4) + ".part.mp4";
+    const QString crashPart = ProxyManager::proxyPath(unused).chopped(4) + ".1a2b3c4d.part.mp4";
     writeFile(crashPart, 700);
+    const QString oldCrashPart = ProxyManager::proxyPath(unused).chopped(4) + ".part.mp4"; // name before 0.18
+    writeFile(oldCrashPart, 650);
     const QString busyPart = ProxyManager::proxyPath(busy).chopped(4) + ".part.mp4";
     writeFile(busyPart, 600);
     const QString openPart = ProxyManager::proxyPath(open).chopped(4) + ".part.mp4";
@@ -216,12 +218,13 @@ int main(int argc, char** argv)
     CHECK_EQ(reasonOf(otherSizeProxy), int(ProxyCleanup::Reason::OtherSize));
     CHECK_EQ(reasonOf(noNote), int(ProxyCleanup::Reason::Unknown));
     CHECK_EQ(reasonOf(crashPart), int(ProxyCleanup::Reason::Leftover));
+    CHECK_EQ(reasonOf(oldCrashPart), int(ProxyCleanup::Reason::Leftover));
     CHECK_EQ(reasonOf(orphanNote), int(ProxyCleanup::Reason::Leftover));
     // Never: the open project's proxy (and its part), the recent project's, the one being written, foreign files
     for (const QString& f : {openProxy, openPart, recentProxy, busyPart, foreign1, foreign2,
                              ProxyCleanup::notePath(openProxy), ProxyCleanup::notePath(unusedProxy)})
         CHECK(!find(plan, f));
-    CHECK_EQ(plan.items.size(), 7);
+    CHECK_EQ(plan.items.size(), 8);
     CHECK_EQ(plan.kept, 2);
     if (const auto* it = find(plan, goneProxy)) {
         CHECK_EQ(it->original, QFileInfo(gone).absoluteFilePath());

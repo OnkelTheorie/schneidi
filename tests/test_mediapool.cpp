@@ -310,6 +310,38 @@ int main(int argc, char** argv)
         }
     }
 
+    // --- Proxy: another schneidi on the same cache (a second window) making the same proxy at this moment writes
+    // its own part file: this one does not write into it, both end up with one whole proxy
+    if (Check::haveFfmpeg()) {
+        QTemporaryDir tmp;
+        const QString a = Check::makeMedia(tmp.filePath("same.mp4"),
+                                           {"-f", "lavfi", "-i", "testsrc2=size=320x180:rate=25:duration=1", "-c:v", "libx264"});
+        if (CHECK(!a.isEmpty())) {
+            QDir().mkpath(ProxyManager::cacheDir());
+            const QString others = ProxyManager::proxyPath(a).chopped(4) + ".part.mp4";
+            QFile f(others);
+            CHECK(f.open(QIODevice::WriteOnly));
+            f.write("the other window's proxy so far");
+            f.close();
+            ProxyManager pm;
+            pm.generate({a});
+            QEventLoop loop;
+            QTimer poll;
+            QObject::connect(&poll, &QTimer::timeout, &loop, [&] {
+                if (!pm.isPending(a)) loop.quit();
+            });
+            poll.start(50);
+            QTimer::singleShot(60000, &loop, &QEventLoop::quit);
+            loop.exec();
+            CHECK(pm.hasProxy(a));
+            CHECK(f.open(QIODevice::ReadOnly));
+            CHECK_EQ(f.readAll(), QByteArray("the other window's proxy so far"));
+            f.close();
+            QFile::remove(others);
+            CHECK(QDir(ProxyManager::cacheDir()).entryList({"*.part.mp4"}, QDir::Files).isEmpty());
+        }
+    }
+
     // --- Proxy: does not start ffmpeg (broken file at the front of PATH), reports that instead of waiting forever
     if (Check::haveFfmpeg()) {
         QTemporaryDir tmp;

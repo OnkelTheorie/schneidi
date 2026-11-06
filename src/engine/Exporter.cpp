@@ -17,6 +17,7 @@
 #include "engine/picture/Renderer.h"
 #include "engine/picture/gpu/Gpu.h"
 
+#include <QDateTime>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -76,6 +77,20 @@ QString partPath(const QString& target, const QString& id)
     const QFileInfo fi(target);
     const QString suffix = fi.suffix().isEmpty() ? QString() : "." + fi.suffix();
     return fi.dir().filePath(QString("%1.%2.part%3").arg(fi.completeBaseName(), id, suffix));
+}
+
+// Temporary files of renders to `target` that were killed (crash, SIGKILL, power off) stay behind: removed once
+// nothing has written them for an hour (a running render writes its part file all the time; another render to the
+// same name keeps its own).
+void removeStaleParts(const QString& target)
+{
+    const QFileInfo fi(target);
+    const QString suffix = fi.suffix().isEmpty() ? QString() : "." + fi.suffix();
+    const QRegularExpression part("^" + QRegularExpression::escape(fi.completeBaseName()) + "\\.[0-9a-f]{8}\\.part"
+                                  + QRegularExpression::escape(suffix) + "$");
+    const QDateTime old = QDateTime::currentDateTime().addSecs(-3600);
+    for (const QFileInfo& f : fi.dir().entryInfoList(QDir::Files | QDir::Hidden))
+        if (part.match(f.fileName()).hasMatch() && f.lastModified() < old) QFile::remove(f.absoluteFilePath());
 }
 
 // Rename from onto to, replacing an existing file. QFile::rename refuses an existing target: the old file is moved
@@ -810,6 +825,14 @@ bool Exporter::commitOutput(QString* error)
         const QDir part(m_part);
         for (const QString& name : part.entryList(QDir::Files))
             ok = QFile::rename(part.filePath(name), dir.filePath(name)) && ok;
+    } else if (!m_settings.replace) {
+        // Without replacing: QFile::rename never overwrites (atomic on Linux and Windows), so a file another
+        // render finished under this name meanwhile stays as it is
+        ok = QFile::rename(m_part, m_target);
+        if (!ok && QFileInfo::exists(m_target)) {
+            if (error) *error = T("Export fehlgeschlagen: %1 gibt es inzwischen (ein anderes Rendern?)").arg(m_target);
+            return false;
+        }
     } else {
         ok = replaceFile(m_part, m_target);
     }
@@ -824,6 +847,7 @@ bool Exporter::commitOutput(QString* error)
         }
     m_subtitles.clear();
     discardOutput(); // only the intermediates are left (GIF, the empty folder of an image sequence)
+    if (m_settings.output != ExportSettings::Output::ImageSequence) removeStaleParts(m_target);
     return true;
 }
 

@@ -506,6 +506,40 @@ int main(int argc, char** argv)
         CHECK_EQ(errorOf("info", {{"project", g_path}}), QString("none"));
     }
     edit(R"([{"op":"marker","at":1}])");
+    // A writer that did not wait for the lock (another TMPDIR: a sandboxed app, a container) changed the file while
+    // this command ran: nothing is saved over its change
+    {
+        QFile f(g_path);
+        CHECK(f.open(QIODevice::ReadOnly));
+        const QByteArray before = f.readAll();
+        f.close();
+        QString code;
+        {
+            Cli::detail::Session s(g_path, Cli::detail::Session::Access::Write);
+            QJsonObject other = QJsonDocument::fromJson(before).object();
+            other["changedBy"] = "someone else";
+            CHECK(f.open(QIODevice::WriteOnly | QIODevice::Truncate));
+            f.write(QJsonDocument(other).toJson());
+            f.close();
+            try {
+                s.save();
+            } catch (const Cli::Error& e) {
+                code = e.code;
+            }
+        }
+        CHECK_EQ(code, QString("PROJECT_CHANGED"));
+        CHECK(f.open(QIODevice::ReadOnly));
+        CHECK(f.readAll().contains("someone else"));
+        f.close();
+        CHECK(f.open(QIODevice::WriteOnly | QIODevice::Truncate));
+        f.write(before);
+        f.close();
+        {
+            Cli::detail::Session s(g_path, Cli::detail::Session::Access::Write);
+            CHECK_EQ(errorOf("info", {{"project", g_path}}), QString("none"));
+            s.save(); // unchanged since loading: saved
+        }
+    }
 
     // Several timelines: a new one gets edited by the following ops, the app keeps opening the old one;
     // `timeline` selects one for edit/info, place_timeline nests it, compound/decompose

@@ -765,6 +765,7 @@
  "Etwas, worauf sich der Schritt bezieht, gibt es nicht (mehr). Meldung: „%1“": "Coś, do czego odnosi się krok, nie istnieje (już). Komunikat: „%1”",
  "Export abgebrochen.": "Renderowanie anulowane.",
  "Export fehlgeschlagen: %1": "Renderowanie nie powiodło się: %1",
+ "Export fehlgeschlagen: %1 gibt es inzwischen (ein anderes Rendern?)": "Renderowanie nie powiodło się: %1 już istnieje (inne renderowanie?)",
  "Export fertig: %1": "Renderowanie zakończone: %1",
  "Export konnte nicht gestartet werden.": "Nie można uruchomić renderowania.",
  "Exportieren": "Eksportuj",

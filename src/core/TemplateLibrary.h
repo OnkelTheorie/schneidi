@@ -18,6 +18,7 @@
 #include <QVector>
 
 #include <functional>
+#include <memory>
 #include <optional>
 
 struct ContentTemplate {
@@ -35,6 +36,8 @@ struct ContentTemplate {
     int length = 0;      // frames of the open timeline
     QStringList slotIds; // slot ids (TemplateFill::slotIds)
 };
+
+class QLockFile;
 
 namespace TemplateLibrary {
 
@@ -74,6 +77,10 @@ std::optional<ContentTemplate> save(const ProjectData& project, const QString& n
                                     QString* error = nullptr);
 // Own templates only: delete the folder; rename (the name in its project; the folder follows when it is free)
 bool remove(const QString& id, QString* error = nullptr);
+// Held while own templates change (save, remove, rename, import): two at once (two AIs saving the same name, a save
+// and a delete) work one after the other instead of on each other's half-written folders. A lock file in dir(),
+// stale only when its process is gone; nullptr = still taken after timeoutMs.
+std::unique_ptr<QLockFile> lockLibrary(int timeoutMs = 60000);
 bool rename(const QString& id, const QString& name, QString* error = nullptr);
 
 // Every file a project refers to: the media of clips, path parameters of clip effects (LUTs), wipe images of

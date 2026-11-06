@@ -957,6 +957,8 @@ QJsonObject cmdRender(const QJsonObject& a, Context& ctx)
     ExportSettings es = RenderQueue::exportSettings(job, s.project);
     if (threads > 0) es.threads = threads;
     es.partId = ctx.partId;
+    // Checked above, but another render to the same name may finish first: then this one must not replace it
+    es.replace = a["overwrite"].toBool();
     if (marks) {
         // The marks drawn onto every frame after compositing; the timeline itself stays as it is
         es.overlay = Picture::reviewOverlay(marks);
@@ -966,6 +968,9 @@ QJsonObject cmdRender(const QJsonObject& a, Context& ctx)
     }
     if (!ex.start(tl, es, &error)) fail("RENDER_FAILED", error);
     loop.exec();
+    if (!ok && !es.replace && job.settings.kind() != RenderKind::ImageSequence && QFileInfo::exists(out))
+        fail("EXISTS", "output appeared while rendering (another render to the same file?); kept it, this render is "
+                       "discarded (pass overwrite to replace it): " + out);
     if (!ok) fail("RENDER_FAILED", message.isEmpty() ? QString("rendering failed") : message);
     QJsonObject o{{"out", out}, {"format", formatId}, {"render_s", std::round(timer.elapsed() / 100.0) / 10}};
     o["threads"] = ex.threads();

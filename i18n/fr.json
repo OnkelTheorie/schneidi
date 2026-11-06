@@ -765,6 +765,7 @@
  "Etwas, worauf sich der Schritt bezieht, gibt es nicht (mehr). Meldung: „%1“": "Quelque chose auquel l’étape se réfère n’existe pas (ou plus). Message : « %1 »",
  "Export abgebrochen.": "Rendu annulé.",
  "Export fehlgeschlagen: %1": "Échec de l’export : %1",
+ "Export fehlgeschlagen: %1 gibt es inzwischen (ein anderes Rendern?)": "Échec de l’export : %1 existe désormais (un autre rendu ?)",
  "Export fertig: %1": "Rendu terminé : %1",
  "Export konnte nicht gestartet werden.": "Impossible de démarrer le rendu.",
  "Exportieren": "Exporter",

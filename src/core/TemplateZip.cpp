@@ -9,6 +9,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QHash>
+#include <QLockFile>
 #include <QRandomGenerator>
 #include <QSet>
 #include <QStorageInfo>
@@ -120,7 +121,8 @@ bool exportZip(const QString& idOrName, const QString& zip, bool overwrite, QStr
     }
     std::sort(files.begin(), files.end(), [](const Zip::Source& x, const Zip::Source& y) { return x.name < y.name; });
     QDir().mkpath(QFileInfo(zip).absolutePath());
-    const QString part = zip + ".part";
+    // Its own temporary name: two exports to the same ZIP at once do not write into one file
+    const QString part = QString("%1.%2.part").arg(zip).arg(QRandomGenerator::global()->generate(), 8, 16, QChar('0'));
     if (!Zip::write(part, files, &err)) {
         QFile::remove(part);
         return failWith(error, code, "SAVE_FAILED", err);
@@ -193,6 +195,10 @@ std::optional<ContentTemplate> importZip(const QString& zip, ZipClash clash, QSt
                    : !prefix.isEmpty()                                       ? prefix
                                                                              : QFileInfo(zip).completeBaseName();
     QString id = idForName(name);
+    // From the name check to the template in place: no other save/import/delete in between (the same ZIP imported
+    // twice at once would otherwise pick the same free name or move each other's folder aside)
+    const std::unique_ptr<QLockFile> held = lockLibrary();
+    if (!held) return cleanUp("BUSY", "the own templates are being changed by another schneidi, try again");
     if (QFileInfo::exists(base.filePath(id))) {
         if (clash == ZipClash::Fail) return cleanUp("EXISTS", QString("a template named %1 exists").arg(name));
         if (clash == ZipClash::KeepBoth) { // a name of its own: "Name 2"

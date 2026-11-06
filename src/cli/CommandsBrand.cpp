@@ -10,6 +10,7 @@
 
 #include <QFileInfo>
 #include <QJsonArray>
+#include <QLockFile>
 
 namespace Cli::detail {
 
@@ -122,6 +123,8 @@ QJsonObject cmdBrand(const QJsonObject& a, Context&)
     QJsonObject out;
     // Setting the global kit needs no project; with one, the project gets it applied below
     if (action == "set" && global) {
+        const std::unique_ptr<QLockFile> lock = Brand::lockGlobal();
+        if (!lock) fail("BUSY", "the global brand kit is being changed by another schneidi, try again");
         const BrandKit kit = brandWithFields(Brand::global(), a);
         QString err;
         if (!Brand::setGlobal(kit, &err)) fail("SAVE_FAILED", err);

@@ -67,6 +67,9 @@ struct ExportSettings {
     // Name part of the temporary files (8 hex digits: "<name>.<id>.part.<ext>", the GIF intermediate gifIntermediate());
     // empty = a random one. `serve` gives its own to remove exactly this render's files after killing its worker.
     QString partId;
+    // false: the finished file never replaces one that appeared under its name while rendering (another render to the
+    // same path that finished first): the export fails instead (targetTaken()). true = replace it (overwrite).
+    bool replace = true;
     // Drawn onto every frame after compositing (Picture::Options::overlay): the marks of a review render
     // (engine/picture/ReviewOverlay). Empty for every normal export. Turns smart render off.
     std::function<void(uint8_t* rgba, int width, int height, int64_t frame)> overlay;

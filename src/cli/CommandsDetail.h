@@ -69,6 +69,10 @@ private:
 public:
     QString path;
     std::unique_ptr<QLockFile> lock;
+    // Writing session on a file: its content when it was loaded. save() writes only if the file is still that: a
+    // writer that did not take the same lock (another TMPDIR, so another lock folder; a copy of schneidi that
+    // does not lock) must not have its changes replaced silently.
+    QByteArray loadedFingerprint;
     Project& project;
     Selection selection;
     Editor editor{&project, &selection};

@@ -765,6 +765,7 @@
  "Etwas, worauf sich der Schritt bezieht, gibt es nicht (mehr). Meldung: „%1“": "Something the step refers to does not exist (any more). Message: “%1”",
  "Export abgebrochen.": "Render cancelled.",
  "Export fehlgeschlagen: %1": "Export failed: %1",
+ "Export fehlgeschlagen: %1 gibt es inzwischen (ein anderes Rendern?)": "Export failed: %1 exists by now (another render?)",
  "Export fertig: %1": "Render finished: %1",
  "Export konnte nicht gestartet werden.": "Render could not be started.",
  "Exportieren": "Export",

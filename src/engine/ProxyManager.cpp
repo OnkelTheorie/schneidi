@@ -20,6 +20,7 @@ extern "C" {
 #include <QFile>
 #include <QFileInfo>
 #include <QProcess>
+#include <QRandomGenerator>
 #include <QSettings>
 #include <QStandardPaths>
 #include <QThread>
@@ -344,7 +345,11 @@ void ProxyManager::startNext()
     }
     const QString original = m_queue.takeFirst();
     m_current = original;
-    m_currentPart = proxyPath(original).chopped(4) + ".part.mp4";
+    // A name of its own: another schneidi on the same cache (a second window, the app and a CLI) making the proxy of
+    // the same file at once writes its own part file - two ffmpegs in one file would give a broken proxy
+    m_currentPart = QString("%1.%2.part.mp4")
+                        .arg(proxyPath(original).chopped(4))
+                        .arg(QRandomGenerator::global()->generate(), 8, 16, QChar('0'));
     m_progress = 0;
     m_errorTail.clear();
     emit queueChanged();

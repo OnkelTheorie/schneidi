@@ -190,6 +190,7 @@ QJsonObject formatJson(const ProjectFormat& f)
 struct Session::Opened {
     QString path;
     std::unique_ptr<QLockFile> lock;
+    QByteArray fingerprint;
     Project* inApp = nullptr;
     std::unique_ptr<Project> own;
     bool live = false;
@@ -238,6 +239,7 @@ Session::Opened openSession(const QString& file, Session::Access access)
     if (access == Session::Access::Write) {
         o.lock = ProjectFile::lock(o.path);
         if (!o.lock) fail("PROJECT_LOCKED", "the project is being saved by someone else (schneidi app?), try again: " + o.path);
+        o.fingerprint = ProjectFile::fingerprint(o.path); // before loading: a change after it shows at save()
     }
     ProjectData d;
     QString error;
@@ -253,7 +255,8 @@ Session::Opened openSession(const QString& file, Session::Access access)
 Session::Session(const QString& file, Access access) : Session(openSession(file, access)) {}
 
 Session::Session(Opened&& o)
-    : m_own(std::move(o.own)), path(o.path), lock(std::move(o.lock)), project(o.inApp ? *o.inApp : *m_own),
+    : m_own(std::move(o.own)), path(o.path), lock(std::move(o.lock)), loadedFingerprint(o.fingerprint),
+      project(o.inApp ? *o.inApp : *m_own),
       live(o.live), app(o.app), m_inApp(o.inApp != nullptr)
 {
     m_open = project.currentSequence();
@@ -309,9 +312,14 @@ QString Session::save()
     // The app opens the timeline the user had open (or the one an op asked for), not the last one edited
     if (project.sequence(m_open)) project.setCurrentSequence(m_open);
     Sandbox::checkProject(project); // e.g. media of an imported timeline
+    if (!loadedFingerprint.isEmpty() && ProjectFile::fingerprint(path) != loadedFingerprint)
+        fail("PROJECT_CHANGED", "the project file was changed by another program while this command ran (one that "
+                                "did not wait for schneidi's write lock); nothing was saved, run the command again: "
+                                + path);
     const QString backup = ProjectFile::backup(path);
     QString error;
     if (!ProjectFile::save(project.data(), path, &error)) fail("SAVE_FAILED", error);
+    loadedFingerprint = ProjectFile::fingerprint(path);
     return backup;
 }
 

@@ -17,6 +17,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QLockFile>
 #include <QSet>
 #include <QStandardPaths>
 
@@ -261,6 +262,8 @@ std::optional<ContentTemplate> save(const ProjectData& project, const QString& n
     const QString id = idForName(shown);
     const QDir base(dir());
     const QString final = base.filePath(id);
+    const std::unique_ptr<QLockFile> held = lockLibrary();
+    if (!held) return fail("the own templates are being changed by another schneidi, try again");
     if (QFileInfo::exists(final) && !o.replace) return fail(QString("a template '%1' exists already").arg(id));
     // Written next to it first: media of the old template may be the ones copied (saving a filled template again)
     const QString tmp = base.filePath("." + id + ".saving");
@@ -455,9 +458,23 @@ QStringList foldersUsed(const ProjectData& project)
     return list;
 }
 
+std::unique_ptr<QLockFile> lockLibrary(int timeoutMs)
+{
+    QDir().mkpath(dir());
+    auto l = std::make_unique<QLockFile>(QDir(dir()).filePath(".templates.lock"));
+    l->setStaleLockTime(0);
+    if (!l->tryLock(timeoutMs)) return nullptr;
+    return l;
+}
+
 bool remove(const QString& id, QString* error)
 {
     const QString folder = QDir(dir()).filePath(id);
+    const std::unique_ptr<QLockFile> held = lockLibrary();
+    if (!held) {
+        if (error) *error = "the own templates are being changed by another schneidi, try again";
+        return false;
+    }
     if (id.isEmpty() || id.contains('/') || id.contains('\\') || id.startsWith('.')
         || !QFileInfo::exists(QDir(folder).filePath(ProjectFileName))) {
         if (error) *error = QString("no own content template '%1'").arg(id);
@@ -479,6 +496,11 @@ bool rename(const QString& id, const QString& name, QString* error)
     }
     QString folder = QDir(dir()).filePath(id);
     QString file = QDir(folder).filePath(ProjectFileName);
+    const std::unique_ptr<QLockFile> held = lockLibrary();
+    if (!held) {
+        if (error) *error = "the own templates are being changed by another schneidi, try again";
+        return false;
+    }
     if (id.isEmpty() || id.contains('/') || id.contains('\\') || !QFileInfo::exists(file)) {
         if (error) *error = QString("no own content template '%1'").arg(id);
         return false;

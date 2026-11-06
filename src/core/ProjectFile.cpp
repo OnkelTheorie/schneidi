@@ -1275,10 +1275,21 @@ QString backup(const QString& projectPath, int keep)
 
 std::unique_ptr<QLockFile> lock(const QString& projectPath, int timeoutMs)
 {
-    const QDir dir(QDir(QStandardPaths::writableLocation(QStandardPaths::TempLocation)).filePath("schneidi-locks"));
+    // In the user's cache folder, not the temp folder: TMPDIR differs between programs of the same user (an AI
+    // agent's sandbox, a shell in a container setup, the app started from the desktop) and two lock folders mean
+    // no lock. (A lock beside the project would also hold across users and computers, see docs.)
+    const QDir dir(QDir(QStandardPaths::writableLocation(QStandardPaths::GenericCacheLocation)).filePath("schneidi/locks"));
     dir.mkpath(".");
-    const QByteArray hash =
-        QCryptographicHash::hash(PathKey::of(projectPath).toUtf8(), QCryptographicHash::Sha1).toHex(); // one lock per file
+    // One lock per FILE, not per spelling of its path: through a symlinked folder (~/Videos -> another disk) the
+    // same project must get the same lock, or two writers each take their own and one's changes are lost. A file
+    // not there yet: its folder resolved, the name as given.
+    const QFileInfo fi(projectPath);
+    QString real = fi.canonicalFilePath();
+    if (real.isEmpty()) {
+        const QString folder = QFileInfo(fi.absolutePath()).canonicalFilePath();
+        real = folder.isEmpty() ? fi.absoluteFilePath() : QDir(folder).filePath(fi.fileName());
+    }
+    const QByteArray hash = QCryptographicHash::hash(PathKey::of(real).toUtf8(), QCryptographicHash::Sha1).toHex();
     auto l = std::make_unique<QLockFile>(dir.filePath(QString::fromLatin1(hash.left(16)) + ".lock"));
     // Stale only when its process is gone, never by age: a CLI write session holds the lock from loading to
     // saving, often longer than Qt's default 30 s. (Qt's own file lock keeps a held lock today, this does not

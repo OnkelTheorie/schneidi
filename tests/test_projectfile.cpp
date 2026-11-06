@@ -13,12 +13,14 @@
 #include "core/TimelineOps.h"
 
 #include <climits>
+#include <cstdio>
 
 #include <QCoreApplication>
 #include <QDateTime>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QHash>
 #include <QSysInfo>
 #include <QTemporaryDir>
 
@@ -332,6 +334,41 @@ void testLock(const QString& dir)
                 QSysInfo::machineHostName().toUtf8() + "\n");
     }
     CHECK(ProjectFile::lock(path, 0) != nullptr);
+
+    // One lock per file, not per spelling of its path: the project reached through a symlinked folder
+    // (~/Videos -> another disk), saved there while saved here, must find the same lock taken
+    const QString real = dir + "/lock-real", link = dir + "/lock-link";
+    QDir().mkpath(real);
+    if (QFile::link(real, link) && QFileInfo(link).isSymLink()) {
+        const auto held = ProjectFile::lock(real + "/p.schneidi", 0);
+        CHECK(held);
+        CHECK(!ProjectFile::lock(link + "/p.schneidi", 0)); // the file not there yet: its folder resolved
+        QFile f(real + "/p.schneidi");
+        CHECK(f.open(QIODevice::WriteOnly));
+        f.close();
+        CHECK(!ProjectFile::lock(link + "/p.schneidi", 0));
+        CHECK(!ProjectFile::lock(dir + "/lock-real/../lock-link/p.schneidi", 0));
+    } else {
+        std::printf("  (no symlinks here: lock through a linked folder not checked)\n");
+    }
+
+    // ... and not per temp folder: a program with another TMPDIR (an AI agent's sandbox) finds it taken as well
+    {
+        const auto held = ProjectFile::lock(path, 0);
+        CHECK(held);
+        const QString otherTemp = dir + "/other-temp";
+        QDir().mkpath(otherTemp);
+        QHash<QByteArray, QByteArray> before;
+        for (const char* var : {"TMPDIR", "TMP", "TEMP"}) {
+            before[var] = qgetenv(var);
+            qputenv(var, otherTemp.toLocal8Bit());
+        }
+        CHECK_EQ(QDir::tempPath(), QDir(otherTemp).absolutePath());
+        CHECK(!ProjectFile::lock(path, 0));
+        for (auto it = before.cbegin(); it != before.cend(); ++it)
+            if (it.value().isEmpty()) qunsetenv(it.key().constData());
+            else qputenv(it.key().constData(), it.value());
+    }
 }
 
 int main(int argc, char** argv)
