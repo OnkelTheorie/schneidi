@@ -81,9 +81,10 @@ add_custom_target(schneidi_buildinfo
     COMMENT "Build id")
 
 # Development builds on Linux link the program code as shared libraries: every test program then is a few hundred KB
-# instead of a full copy of schneidi with debug info (~260 MB each, ~47 GB per build folder). Release builds (AppImage,
-# Docker) and Windows stay static: one self-contained program, no DLL exports needed.
-if(UNIX AND NOT APPLE AND NOT CMAKE_BUILD_TYPE STREQUAL "Release")
+# instead of a full copy of schneidi with debug info (~260 MB each, ~47 GB per build folder). Only in a git checkout
+# (a developer's): distribution packages build from a source tarball with their own build types and get the static,
+# self-contained programs as before; so do Release builds (AppImage, Docker) and Windows (no DLL exports needed).
+if(UNIX AND NOT APPLE AND NOT CMAKE_BUILD_TYPE STREQUAL "Release" AND EXISTS "${PROJECT_SOURCE_DIR}/.git")
     set(_schneidi_shared_default ON)
 else()
     set(_schneidi_shared_default OFF)
@@ -502,6 +503,13 @@ endif()
 # Installation (Paketierung: AppImage unter Linux, später Programmordner unter Windows, siehe README.md)
 include(GNUInstallDirs)
 install(TARGETS schneidi schneidi-cli RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+if(SCHNEIDI_SHARED_LIBS)
+    # Installed shared build (rare: a developer's `cmake --install`): the libraries go into a private folder that
+    # the programs find relative to themselves
+    install(TARGETS schneidi_lib schneidi_cli_lib LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}/schneidi)
+    set_target_properties(schneidi schneidi-cli PROPERTIES
+        INSTALL_RPATH "$ORIGIN/../${CMAKE_INSTALL_LIBDIR}/schneidi")
+endif()
 if(UNIX AND NOT APPLE)
     install(FILES packaging/linux/schneidi.desktop DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
     install(FILES assets/schneidi.svg DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps)
