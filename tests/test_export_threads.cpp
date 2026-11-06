@@ -12,7 +12,9 @@
 
 #include <QApplication>
 #include <QElapsedTimer>
+#include <QDir>
 #include <QEventLoop>
+#include <QFileInfo>
 #include <QFile>
 #include <QImage>
 #include <QTemporaryDir>
@@ -107,6 +109,45 @@ void testMemoryThreads()
     CHECK(SystemMemory::read().total > 0);
     CHECK(SystemMemory::read().available > 0);
 #endif
+}
+
+// A memory cap of the process's control group (container, systemd scope) counts, not only the machine's free RAM:
+// an 8K render in a 5 GB scope on a machine with 11 GB free chose 9 threads and was killed by the cap
+void testCgroupRoom(const QString& dir)
+{
+    constexpr qint64 MB = 1024 * 1024;
+    auto put = [&](const QString& rel, const QByteArray& text) {
+        QDir().mkpath(QFileInfo(dir + "/cg" + rel).path());
+        QFile f(dir + "/cg" + rel);
+        if (f.open(QIODevice::WriteOnly)) f.write(text);
+    };
+    const QString root = dir + "/cg";
+    const QByteArray self = "0::/user.slice/app.slice/run-1.scope\n";
+    // No limit files at all (no cgroup v2, or no memory controller): unknown
+    CHECK_EQ(SystemMemory::cgroupRoom(self, root), qint64(0));
+    // "max" everywhere: no limit
+    put("/user.slice/memory.max", "max\n");
+    put("/user.slice/app.slice/run-1.scope/memory.max", "max\n");
+    CHECK_EQ(SystemMemory::cgroupRoom(self, root), qint64(0));
+    // The scope: 5 GB cap, 1 GB used of which 200 MB is droppable file cache -> 4.2 GB room
+    put("/user.slice/app.slice/run-1.scope/memory.max", QByteArray::number(5120 * MB) + "\n");
+    put("/user.slice/app.slice/run-1.scope/memory.current", QByteArray::number(1024 * MB) + "\n");
+    put("/user.slice/app.slice/run-1.scope/memory.stat", "anon 1\nfile 2\ninactive_file " + QByteArray::number(200 * MB) + "\n");
+    CHECK_EQ(SystemMemory::cgroupRoom(self, root), 4296 * MB);
+    // A parent with less room wins (memory.high counts like a limit: above it the kernel throttles and reclaims)
+    put("/user.slice/memory.high", QByteArray::number(3000 * MB) + "\n");
+    put("/user.slice/memory.current", QByteArray::number(2000 * MB) + "\n");
+    CHECK_EQ(SystemMemory::cgroupRoom(self, root), 1000 * MB);
+    // cgroup v1 or garbage: unknown, never a path outside the mount
+    CHECK_EQ(SystemMemory::cgroupRoom("12:memory:/user.slice\n", root), qint64(0));
+    CHECK_EQ(SystemMemory::cgroupRoom("0::/../../etc\n", root), qint64(0));
+    CHECK_EQ(SystemMemory::cgroupRoom("", root), qint64(0));
+    // The 8K case of the 5 GB scope with 4.2 GB room: a handful of threads instead of all
+    put("/user.slice/memory.high", "max\n");
+    const Exporter::ThreadChoice uhd8k =
+        Exporter::automaticThreads(10, QSize(7680, 4320), SystemMemory::cgroupRoom(self, root));
+    CHECK(uhd8k.lowMemory);
+    CHECK(uhd8k.threads <= 4);
 }
 
 // A render that leaves the threads to schneidi says when the memory lowered them; a number asked for stays
@@ -302,6 +343,7 @@ int main(int argc, char** argv)
     std::setlocale(LC_NUMERIC, "C");
     testParallelFrames();
     testMemoryThreads();
+    testCgroupRoom(tmp.path());
     testMemoryRender(tmp.path());
     testRender(tmp.path());
     return Check::result();
