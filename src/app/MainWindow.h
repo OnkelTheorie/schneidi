@@ -249,6 +249,9 @@ private:
     bool saveAs();
     void openBackupDialog();
     bool saveTo(const QString& path);
+    // The data to save at `path` made independent of the template it came from (m_templateDir); false = a copy
+    // failed (asked nothing, said why). `written`: the copies made now (removed again when saving fails)
+    bool copyTemplateFiles(ProjectData& data, const QString& path, QStringList* written);
     bool maybeSave(); // false = cancel
     // Before New/Open: if the render queue is running, ask and cancel (otherwise it writes its status
     // into the queue of the next project), then maybeSave(). false = cancel
@@ -377,6 +380,10 @@ private:
 
     QString m_projectPath; // empty = never saved yet
     QString m_saveSuggestion; // never saved: where Save As suggests (a video opened as project: beside it)
+    // New from a content template: its folder. Saving copies the files of it the project uses next to the project
+    // ("<name> media/"), so the saved file never points into the template (MainWindowTemplates.cpp)
+    QString m_templateDir;
+    QHash<QString, QString> m_templateCopies; // template file -> its copy (this session)
     class QFileSystemWatcher* m_projectWatcher = nullptr;
     QTimer m_projectCheck;            // waits until an outside save is done
     QByteArray m_projectFingerprint;  // project file as last loaded/saved here (ProjectFile::fingerprint)

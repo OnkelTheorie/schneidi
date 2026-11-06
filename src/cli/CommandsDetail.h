@@ -262,6 +262,12 @@ BrandKit brandWithFields(BrandKit k, const QJsonObject& a); // CommandsBrand.cpp
 // values and context, the beats a live fill needs measured here
 QJsonObject cmdStartTemplates(const QJsonObject& a, Context& ctx); // CommandsProject.cpp
 QJsonObject fillTemplate(const QJsonObject& args, Context& ctx);
+// The rows of one `fill` + rows share one folder for the template's files (copied once, not per row)
+struct FillBatch {
+    QString mediaDir;               // empty = next to each project ("<name> media/")
+    QHash<QString, QString> copies; // template file -> its copy (TemplateLibrary::copyTemplateFiles)
+};
+QJsonObject fillTemplateInto(const QJsonObject& args, Context& ctx, FillBatch* batch);
 QJsonObject slotJson(const ClipSlot& s, const ProjectFormat& f);
 QString fillProblemsText(const QVector<TemplateFill::Problem>& problems); // "slot CODE: message; …"
 TemplateFill::Values fillValues(const QJsonValue& values, const ProjectData& d, const ProjectFormat& f);

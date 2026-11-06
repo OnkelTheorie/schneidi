@@ -12,10 +12,12 @@
 
 #include "core/ProjectFile.h"
 
+#include <QHash>
 #include <QString>
 #include <QStringList>
 #include <QVector>
 
+#include <functional>
 #include <optional>
 
 struct ContentTemplate {
@@ -73,6 +75,26 @@ std::optional<ContentTemplate> save(const ProjectData& project, const QString& n
 // Own templates only: delete the folder; rename (the name in its project; the folder follows when it is free)
 bool remove(const QString& id, QString* error = nullptr);
 bool rename(const QString& id, const QString& name, QString* error = nullptr);
+
+// Every file a project refers to: the media of clips, path parameters of clip effects (LUTs), wipe images of
+// transitions and the project brand kit's logo/intro/outro (built-in LUTs and wipes left out). `fn` may change the
+// path in place.
+void forEachFile(ProjectData& d, const std::function<void(QString& path)>& fn);
+
+struct FileCopies {
+    QHash<QString, QString> moved; // template file -> its copy
+    QStringList written;           // copies written by this call (the caller removes them when it gives up)
+};
+// Makes a project made from the template in `templateDir` independent of that folder (a built-in one lives in the
+// cache, an own one may be deleted or renamed): the files inside the folder the project uses (forEachFile; with
+// `keepPool` also the Media Pool's) are copied into `targetDir` (their place in the template kept: "media/a.mp4" ->
+// "<targetDir>/media/a.mp4") and the project points at the copies. Without `keepPool` files of the template that
+// nothing uses leave the Media Pool. Never overwrites: a file of that name with other content stays and the copy
+// gets a free name ("a-2.mp4"); one with the same content (size, then bytes) is used as it is. `known` (optional):
+// copies of earlier calls (template file -> copy), used again without comparing while their size matches (the rows
+// of a batch share one folder). False + error when a copy fails; the copies written by this call are removed then.
+bool copyTemplateFiles(ProjectData& d, const QString& templateDir, const QString& targetDir, FileCopies* out,
+                       QString* error = nullptr, QHash<QString, QString>* known = nullptr, bool keepPool = false);
 
 // "9:16" etc. for a size
 QString aspectLabel(int width, int height);

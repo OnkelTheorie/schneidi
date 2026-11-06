@@ -13,7 +13,9 @@ In a `title` op (and a subtitle track's style) give `color`, `outline_color` or 
 and `font` as `"brand1"`/`"brand2"`: `{"op":"title","at":0,"text":"Summer sale","color":"brand1","font":"brand1"}`.
 The title takes the kit's value now and keeps it stored, so the render never depends on the kit; when the kit changes,
 `brand` with `action` `"apply"` copies the new values into every referencing title (one undo step). A fixed value
-(`"#ffffff"`) ends the reference. A reference to a color the kit does not have keeps the title's value. `info`
+(`"#ffffff"`) ends the reference. A reference to a color the kit does not have keeps the title's value. A brand text
+color replaces an animated one (its `title_color` keyframes are removed); keyframing `title_color` again makes the
+color fixed. `info`
 shows references as `color_ref` … `"brand2"`.
 
 ## Changing the kit

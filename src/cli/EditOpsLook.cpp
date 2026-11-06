@@ -498,6 +498,7 @@ void opTransform(Session& s, const QJsonObject& op)
         for (const auto& [p, v] : values) {
             if (hasAt) Keys::setValue(c, p, localFrame(c, at), v);
             else setBase(c, p, v);
+            if (p == AnimParam::TitleColor) c.title.colorRef = 0; // a colour given: fixed, no brand colour
         }
         for (const auto& [name, member] : switches)
             if (op.contains(name)) c.transform.*member = op.value(name).toBool();

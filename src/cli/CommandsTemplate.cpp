@@ -222,47 +222,6 @@ QString checkedProjectPath(const QString& path, const char* what)
     return path;
 }
 
-// Media of the template's own folder the filled project uses, copied next to it ("<name> media/"): the project must
-// not depend on the template staying where it is (a built-in one lives in the cache). Unused ones leave the pool.
-QJsonArray copyTemplateMedia(ProjectData& d, const ContentTemplate& t, const QString& out)
-{
-    const QString inside = QDir::cleanPath(QDir(t.dir).absolutePath()) + '/';
-    QSet<QString> used;
-    forEachTimeline(d, [&](Timeline& tl) {
-        for (TrackKind k : {TrackKind::Video, TrackKind::Audio})
-            for (const Track& tr : tl.tracks(k))
-                for (const Clip& c : tr.clips)
-                    if (c.kind == ClipKind::Media && c.mediaPath.startsWith(inside)) used.insert(c.mediaPath);
-    });
-    QVector<MediaInfo> kept;
-    for (const MediaInfo& m : d.media)
-        if (!m.path.startsWith(inside) || used.contains(m.path)) kept << m;
-    d.media = kept;
-    QJsonArray copied;
-    if (used.isEmpty()) return copied;
-    const QFileInfo of(out);
-    const QDir target(of.absoluteDir().filePath(of.completeBaseName() + " media"));
-    QHash<QString, QString> moved;
-    for (const QString& src : used) {
-        const QString dst = QDir::cleanPath(target.absoluteFilePath(src.mid(inside.size())));
-        if (!(QFileInfo(dst).exists() && QFileInfo(dst).size() == QFileInfo(src).size())) {
-            QDir().mkpath(QFileInfo(dst).absolutePath());
-            QFile::remove(dst);
-            if (!QFile::copy(src, dst)) fail("SAVE_FAILED", QString("cannot copy %1 to %2").arg(src, dst));
-        }
-        moved[src] = dst;
-        copied << dst;
-    }
-    for (MediaInfo& m : d.media) m.path = moved.value(m.path, m.path);
-    forEachTimeline(d, [&](Timeline& tl) {
-        for (TrackKind k : {TrackKind::Video, TrackKind::Audio})
-            for (Track& tr : tl.tracks(k))
-                for (Clip& c : tr.clips)
-                    if (c.kind == ClipKind::Media) c.mediaPath = moved.value(c.mediaPath, c.mediaPath);
-    });
-    return copied;
-}
-
 // The render of a filled project: `render`'s parameters, out next to the project by default
 QJsonObject renderFilled(const QJsonValue& v, const QString& project, Context& ctx)
 {
@@ -434,15 +393,20 @@ QJsonObject rowValues(const QJsonObject& row, const Columns& cols, const QHash<Q
                       const QDir& base, const QJsonObject& shared)
 {
     QJsonObject values = shared;
-    const auto file = [&](const QString& f) { return QDir::cleanPath(base.absoluteFilePath(f.trimmed())); };
+    // --map first (a path of the client's computer), then relative paths against the table's folder
+    const auto file = [&](const QString& f) {
+        const QString given = f.trimmed();
+        const QString mapped = Sandbox::mapPath(given);
+        if (mapped != given || QFileInfo(mapped).isAbsolute()) return mapped;
+        return QDir::cleanPath(base.absoluteFilePath(given));
+    };
     for (auto it = row.begin(); it != row.end(); ++it) {
         const QString slot = cols.slotOf.value(it.key());
         if (slot.isEmpty() || slot != it.key()) continue;
         const QJsonValue v = it.value();
         if (kinds[slot] == SlotKind::Text) {
             if (v.isObject() || v.isString()) values[slot] = v;
-            else if (v.isDouble()) values[slot] = QString::number(v.toDouble());
-            else values[slot] = v.toVariant().toString();
+            else values[slot] = DataRows::valueText(v); // 1234567, not 1.23457e+06
             continue;
         }
         QJsonObject o = v.isObject() ? v.toObject() : QJsonObject{{"file", v.toString()}};
@@ -529,6 +493,9 @@ QJsonObject fillRows(const QJsonObject& a, Context& ctx)
     const QDir dir(outDir);
     if (!dry) QDir().mkpath(dir.absolutePath());
 
+    // The template's own files once for the whole batch, not per row
+    FillBatch batch;
+    batch.mediaDir = dir.absoluteFilePath(t.id + " media");
     const int count = int(table->rows.size());
     QJsonArray results;
     int done = 0, failed = 0, skipped = 0;
@@ -559,16 +526,15 @@ QJsonObject fillRows(const QJsonObject& a, Context& ctx)
             fa["dry_run"] = true;
             const QJsonObject check = fillTemplate(fa, rc);
             for (const QJsonValue& e : check["errors"].toArray()) errors << e;
-            if (!overwrite) {
-                if (QFileInfo::exists(project)) errors << QJsonObject{{"code", "EXISTS"}, {"message", "project exists (overwrite:true replaces it): " + project}};
-                if (render && QFileInfo::exists(video)) errors << QJsonObject{{"code", "EXISTS"}, {"message", "video exists (overwrite:true replaces it): " + video}};
-            }
+            // (the check reports an existing project itself)
+            if (!overwrite && render && QFileInfo::exists(video))
+                errors << QJsonObject{{"code", "EXISTS"}, {"message", "video exists (overwrite:true replaces it): " + video}};
             if (!check["unfilled"].toArray().isEmpty()) entry["unfilled"] = check["unfilled"];
             entry["project"] = project;
             if (render) entry["video"] = video;
             if (errors.isEmpty() && !dry) {
                 fa["dry_run"] = false;
-                const QJsonObject r = fillTemplate(fa, rc);
+                const QJsonObject r = fillTemplateInto(fa, rc, &batch);
                 summarize(r, entry);
                 if (r.contains("notes")) entry["notes"] = r["notes"];
                 if (render) {
@@ -779,11 +745,13 @@ QJsonObject prepareTemplateFill(const QString& command, const QJsonObject& args,
     return out;
 }
 
-QJsonObject fillTemplate(const QJsonObject& a, Context& ctx)
+QJsonObject fillTemplate(const QJsonObject& a, Context& ctx) { return fillTemplateInto(a, ctx, nullptr); }
+
+QJsonObject fillTemplateInto(const QJsonObject& a, Context& ctx, FillBatch* batch)
 {
     const ContentTemplate t = *contentTemplate(a["fill"].toString());
     ProjectData d = loadTemplate(t);
-    const bool dry = a["dry_run"].toBool(), strict = a["strict"].toBool();
+    const bool dry = a["dry_run"].toBool(), strict = a["strict"].toBool(), overwrite = a["overwrite"].toBool();
     TemplateFill::Values values = a.contains("values") ? fillValues(a["values"], d, d.format) : TemplateFill::Values{};
     const QJsonObject tpl{{"id", t.id}, {"name", t.name}};
     QStringList notes;
@@ -802,12 +770,15 @@ QJsonObject fillTemplate(const QJsonObject& a, Context& ctx)
     const QString out = a["out_project"].toString();
     if (out.isEmpty() && !dry) fail("BAD_ARGUMENT", "fill needs out_project (the new project file)");
     if (!out.isEmpty()) checkedProjectPath(out, "out_project");
+    // What would stop the write: dry_run reports it with the slots' problems, a real fill fails with it
     const bool replaces = !out.isEmpty() && QFileInfo::exists(out);
-    if (replaces && !a["overwrite"].toBool() && !dry)
-        fail("EXISTS", "project already exists (pass overwrite to replace it): " + out);
+    QVector<TemplateFill::Problem> blocked;
+    if (replaces && !overwrite)
+        blocked << TemplateFill::Problem{{}, "EXISTS", "project already exists (pass overwrite to replace it): " + out};
     const LiveHost* h = Live::host();
-    if (replaces && !dry && ((h && QFileInfo(h->liveProjectPath()) == QFileInfo(out)) || (!h && Live::connectionFor(out))))
-        fail("IN_USE", "the project is open in the schneidi app; close it there first: " + out);
+    if (replaces && ((h && QFileInfo(h->liveProjectPath()) == QFileInfo(out)) || (!h && Live::connectionFor(out))))
+        blocked << TemplateFill::Problem{{}, "IN_USE", "the project is open in the schneidi app; close it there first: " + out};
+    if (!dry && !blocked.isEmpty()) fail(blocked.first().code, blocked.first().message);
     if (a.contains("brand") && a["brand"].isString()) {
         const QString b = a["brand"].toString().trimmed().toLower();
         if (b != "global" && b != "none") fail("BAD_ARGUMENT", "brand: \"global\", \"none\" or kit fields {colors, fonts, logo, …}");
@@ -815,7 +786,7 @@ QJsonObject fillTemplate(const QJsonObject& a, Context& ctx)
     const TemplateFill::Context fc = fillContext(d.format, a["_beats"].toObject(), reframeMode(a) == "auto", &notes, &ctx);
     const QStringList unfilled = unfilledOf(d, values);
     if (dry) {
-        QJsonObject o = checkJson(TemplateFill::check(d, values, fc), unfilled, strict);
+        QJsonObject o = checkJson(blocked + TemplateFill::check(d, values, fc), unfilled, strict);
         o["template"] = tpl;
         return o;
     }
@@ -824,8 +795,6 @@ QJsonObject fillTemplate(const QJsonObject& a, Context& ctx)
     if (ctx.stage) ctx.stage("fill");
     const TemplateFill::Report report = TemplateFill::apply(d, values, fc);
     if (!report.ok()) fail("FILL_FAILED", problemsText(report.errors));
-    const QJsonArray copied = a.contains("copy_media") && !a["copy_media"].toBool() ? QJsonArray()
-                                                                                    : copyTemplateMedia(d, t, out);
     // The brand kit into the titles that reference it; the result is a project, not a template any more
     Project p;
     p.load(d);
@@ -836,14 +805,29 @@ QJsonObject fillTemplate(const QJsonObject& a, Context& ctx)
     result.templateInfo.reset();
     QDir().mkpath(QFileInfo(out).absolutePath());
     std::unique_ptr<QLockFile> lock;
-    QString backup;
     if (replaces) {
         lock = ProjectFile::lock(out);
         if (!lock) fail("PROJECT_LOCKED", "the project is being saved by someone else (schneidi app?), try again: " + out);
-        backup = ProjectFile::backup(out);
     }
+    // Only now the template's own files are copied (a fill that stops before leaves none behind): next to the
+    // project ("<name> media/") or, for the rows of a batch, into their shared folder. Never over a user's file.
+    TemplateLibrary::FileCopies copies;
+    if (!(a.contains("copy_media") && !a["copy_media"].toBool())) {
+        const QFileInfo of(out);
+        const QString target = batch && !batch->mediaDir.isEmpty() ? batch->mediaDir
+                                                                   : of.absoluteDir().filePath(of.completeBaseName() + " media");
+        QString err;
+        if (!TemplateLibrary::copyTemplateFiles(result, t.dir, target, &copies, &err, batch ? &batch->copies : nullptr))
+            fail("SAVE_FAILED", err);
+    }
+    const QString backup = replaces ? ProjectFile::backup(out) : QString();
     QString error;
-    if (!ProjectFile::save(result, out, &error)) fail("SAVE_FAILED", error);
+    if (!ProjectFile::save(result, out, &error)) {
+        for (const QString& f : std::as_const(copies.written)) QFile::remove(f);
+        if (batch)
+            for (const QString& f : std::as_const(copies.written)) batch->copies.remove(copies.moved.key(f));
+        fail("SAVE_FAILED", error);
+    }
     lock.reset();
 
     QJsonObject o = report.toJson();
@@ -852,9 +836,22 @@ QJsonObject fillTemplate(const QJsonObject& a, Context& ctx)
     o["project"] = out;
     o["template"] = tpl;
     o["brand"] = brand;
+    QJsonArray copied;
+    for (const QString& dst : std::as_const(copies.moved)) copied << dst;
     if (!copied.isEmpty()) o["copied_media"] = copied;
     if (!backup.isEmpty()) o["backup"] = backup;
-    if (a.contains("render") && !(a["render"].isBool() && !a["render"].toBool())) o["render"] = renderFilled(a["render"], out, ctx);
+    // The project is saved: a failing render is reported next to it (a retry renders the project, it does not fill
+    // again into an existing file)
+    if (a.contains("render") && !(a["render"].isBool() && !a["render"].toBool())) {
+        try {
+            o["render"] = renderFilled(a["render"], out, ctx);
+        } catch (const Error& e) {
+            o["ok"] = false;
+            o["render_error"] = QJsonObject{{"code", e.code}, {"message", e.message}};
+            notes << QString("the project was saved, the render failed: render it with `render` {project: \"%1\"} "
+                             "(filling again needs overwrite)").arg(out);
+        }
+    }
     if (!notes.isEmpty()) o["notes"] = QJsonArray::fromStringList(notes);
     return o;
 }

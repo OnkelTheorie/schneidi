@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "core/TemplateLibrary.h"
 
+#include "core/EffectFolders.h"
+#include "core/EffectRegistry.h"
 #include "core/I18n.h"
 #include "core/StartTemplates.h"
 #include "core/TemplateFill.h"
@@ -79,33 +81,30 @@ bool copyTree(const QString& from, const QString& to)
     return ok;
 }
 
-// All media paths a project's timelines use (files of clips; titles and nested clips have none)
-QSet<QString> usedMedia(const ProjectData& d)
+// All files a project uses (forEachFile)
+QSet<QString> usedFiles(ProjectData& d)
 {
     QSet<QString> used;
-    const auto scan = [&](const Timeline& tl) {
-        for (TrackKind k : {TrackKind::Video, TrackKind::Audio})
-            for (const Track& t : tl.tracks(k))
-                for (const Clip& c : t.clips)
-                    if (c.kind == ClipKind::Media && !c.mediaPath.isEmpty()) used.insert(c.mediaPath);
-    };
-    scan(d.timeline);
-    for (const Sequence& s : d.sequences)
-        if (s.id != d.currentSequence) scan(s.timeline);
+    forEachFile(d, [&](QString& path) { used.insert(path); });
     return used;
 }
 
 void redirect(ProjectData& d, const QHash<QString, QString>& moved)
 {
     for (MediaInfo& m : d.media) m.path = moved.value(m.path, m.path);
-    const auto fix = [&](Timeline& tl) {
-        for (TrackKind k : {TrackKind::Video, TrackKind::Audio})
-            for (Track& t : tl.tracks(k))
-                for (Clip& c : t.clips)
-                    if (c.kind == ClipKind::Media) c.mediaPath = moved.value(c.mediaPath, c.mediaPath);
-    };
-    fix(d.timeline);
-    for (Sequence& s : d.sequences) fix(s.timeline);
+    forEachFile(d, [&](QString& path) { path = moved.value(path, path); });
+}
+
+// Same size and the same bytes
+bool sameBytes(const QString& a, const QString& b)
+{
+    const QFileInfo fa(a), fb(b);
+    if (!fa.isFile() || !fb.isFile() || fa.size() != fb.size()) return false;
+    QFile x(a), y(b);
+    if (!x.open(QIODevice::ReadOnly) || !y.open(QIODevice::ReadOnly)) return false;
+    while (!x.atEnd())
+        if (x.read(1 << 20) != y.read(1 << 20)) return false;
+    return true;
 }
 
 // A template's project: media inside its folder are taken from there even when the absolute path they were saved
@@ -277,7 +276,8 @@ std::optional<ContentTemplate> save(const ProjectData& project, const QString& n
     d.watchLog.clear();
     d.watchRevision = 0;
     if (o.copyMedia) {
-        const QSet<QString> used = usedMedia(d);
+        // Clips' media, LUTs and wipe images of effects, the project brand kit's files: the template brings them all
+        const QSet<QString> used = usedFiles(d);
         QVector<MediaInfo> kept;
         for (const MediaInfo& m : d.media)
             if (used.contains(m.path)) kept << m;
@@ -332,6 +332,98 @@ std::optional<ContentTemplate> save(const ProjectData& project, const QString& n
     const QString file = QDir(final).filePath(ProjectFileName);
     if (ProjectFile::load(file, &placed, &err)) ProjectFile::save(placed, file, &err);
     return open(final, error);
+}
+
+void forEachFile(ProjectData& d, const std::function<void(QString& path)>& fn)
+{
+    const auto file = [&](QString& path) {
+        if (!path.isEmpty() && !EffectFolders::isBuiltin(path)) fn(path);
+    };
+    const auto scan = [&](Timeline& tl) {
+        for (TrackKind k : {TrackKind::Video, TrackKind::Audio})
+            for (Track& t : tl.tracks(k))
+                for (Clip& c : t.clips) {
+                    if (c.kind == ClipKind::Media) file(c.mediaPath);
+                    file(c.transInStyle.luma);
+                    file(c.transOutStyle.luma);
+                    for (EffectInstance& e : c.effects) {
+                        const EffectDescriptor* desc = EffectRegistry::find(e.effectId);
+                        if (!desc) continue;
+                        for (const EffectParam& p : desc->params) {
+                            if (p.type != EffectParam::Path || !e.params.contains(p.key)) continue;
+                            QString path = e.params.value(p.key).toString();
+                            const QString before = path;
+                            file(path);
+                            if (path != before) e.params[p.key] = path;
+                        }
+                    }
+                }
+    };
+    scan(d.timeline);
+    for (Sequence& s : d.sequences)
+        if (s.id != d.currentSequence) scan(s.timeline);
+    // The open timeline is `timeline`; its copy in `sequences` follows it (a save writes it from there)
+    for (Sequence& s : d.sequences)
+        if (s.id == d.currentSequence) s.timeline = d.timeline;
+    if (d.brand) {
+        file(d.brand->logo);
+        file(d.brand->intro);
+        file(d.brand->outro);
+    }
+}
+
+bool copyTemplateFiles(ProjectData& d, const QString& templateDir, const QString& targetDir, FileCopies* out,
+                       QString* error, QHash<QString, QString>* known, bool keepPool)
+{
+    FileCopies result;
+    const QString inside = QDir::cleanPath(QDir(templateDir).absolutePath()) + '/';
+    QSet<QString> used;
+    forEachFile(d, [&](QString& path) {
+        if (path.startsWith(inside)) used.insert(path);
+    });
+    if (keepPool)
+        for (const MediaInfo& m : d.media)
+            if (m.path.startsWith(inside)) used.insert(m.path);
+    QVector<MediaInfo> kept;
+    for (const MediaInfo& m : d.media)
+        if (!m.path.startsWith(inside) || used.contains(m.path)) kept << m;
+    d.media = kept;
+    QStringList sources(used.begin(), used.end());
+    sources.sort();
+    const QDir target(targetDir);
+    for (const QString& src : sources) {
+        if (!QFileInfo(src).isFile()) continue; // offline: the reference stays
+        const qint64 size = QFileInfo(src).size();
+        if (known && known->contains(src) && QFileInfo(known->value(src)).size() == size) {
+            result.moved[src] = known->value(src);
+            continue;
+        }
+        // Its place in the template; a different file there keeps it, the copy takes the next free name
+        const QFileInfo want(QDir::cleanPath(target.absoluteFilePath(src.mid(inside.size()))));
+        const QString suffix = want.suffix().isEmpty() ? QString() : "." + want.suffix();
+        QString dst = want.absoluteFilePath();
+        bool same = false;
+        for (int n = 2; QFileInfo::exists(dst); ++n) {
+            if ((same = sameBytes(src, dst))) break;
+            dst = want.dir().filePath(QString("%1-%2%3").arg(want.completeBaseName()).arg(n).arg(suffix));
+        }
+        if (!same) {
+            QDir().mkpath(QFileInfo(dst).absolutePath());
+            if (!QFile::copy(src, dst)) {
+                for (const QString& f : std::as_const(result.written)) QFile::remove(f);
+                if (error) *error = QString("cannot copy %1 to %2").arg(src, dst);
+                return false;
+            }
+            // Copies out of the resources are read-only
+            QFile::setPermissions(dst, QFile::permissions(dst) | QFileDevice::WriteOwner | QFileDevice::ReadOwner);
+            result.written << dst;
+        }
+        result.moved[src] = dst;
+        if (known) known->insert(src, dst);
+    }
+    redirect(d, result.moved);
+    if (out) *out = result;
+    return true;
 }
 
 bool remove(const QString& id, QString* error)

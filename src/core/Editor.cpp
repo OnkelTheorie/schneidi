@@ -840,6 +840,8 @@ void Editor::setKeyframes(const QVector<int>& idsIn, const QVector<AnimParam>& p
             for (AnimParam p : params) {
                 if (on) Keys::setKey(*c, p, t, Keys::valueAt(*c, p, t));
                 else Keys::removeKey(*c, p, t);
+                // An animated text colour is a fixed one (Brand::resolve would end the animation)
+                if (on && p == AnimParam::TitleColor) c->title.colorRef = 0;
             }
         }
     });

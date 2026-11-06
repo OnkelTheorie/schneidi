@@ -62,19 +62,7 @@ void redirectMedia(ProjectData& d, const QHash<QString, QString>& moved)
         if (!path.isEmpty()) path = moved.value(QDir::cleanPath(path), path);
     };
     for (MediaInfo& m : d.media) fix(m.path);
-    const auto fixTimeline = [&](Timeline& tl) {
-        for (TrackKind k : {TrackKind::Video, TrackKind::Audio})
-            for (Track& t : tl.tracks(k))
-                for (Clip& c : t.clips)
-                    if (c.kind == ClipKind::Media) fix(c.mediaPath);
-    };
-    fixTimeline(d.timeline);
-    for (Sequence& s : d.sequences) fixTimeline(s.timeline);
-    if (d.brand) {
-        fix(d.brand->logo);
-        fix(d.brand->intro);
-        fix(d.brand->outro);
-    }
+    forEachFile(d, fix); // clips, LUTs, wipe images, the brand kit's files
 }
 
 constexpr quint64 kMiB = quint64(1) << 20;

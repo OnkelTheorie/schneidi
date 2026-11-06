@@ -7,7 +7,12 @@
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QLocale>
 #include <QSet>
+#include <QStringDecoder>
+
+#include <algorithm>
+#include <cmath>
 
 namespace DataRows {
 
@@ -110,24 +115,60 @@ std::optional<QVector<QVector<Cell>>> records(const QString& text, QChar sep, QV
     return out;
 }
 
+// Windows-1252 (Excel's "CSV" on a Western Windows): Latin-1 but 0x80..0x9F, which hold € „ “ ” – — … there.
+// By hand, not QStringDecoder: without ICU (Windows builds) Qt knows no Windows-1252.
+QString fromWindows1252(const QByteArray& data)
+{
+    static const char16_t high[32] = {0x20AC, 0x81,   0x201A, 0x0192, 0x201E, 0x2026, 0x2020, 0x2021,
+                                      0x02C6, 0x2030, 0x0160, 0x2039, 0x0152, 0x8D,   0x017D, 0x8F,
+                                      0x90,   0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2013, 0x2014,
+                                      0x02DC, 0x2122, 0x0161, 0x203A, 0x0153, 0x9D,   0x017E, 0x0178};
+    QString out(data.size(), Qt::Uninitialized);
+    for (qsizetype i = 0; i < data.size(); ++i) {
+        const uchar b = uchar(data[i]);
+        out[i] = QChar(b >= 0x80 && b < 0xA0 ? high[b - 0x80] : char16_t(b));
+    }
+    return out;
+}
+
+} // namespace
+
 QString valueText(const QJsonValue& v)
 {
     if (v.isString()) return v.toString();
     if (v.isDouble()) {
         const double d = v.toDouble();
-        return d == double(qint64(d)) ? QString::number(qint64(d)) : QString::number(d);
+        // Whole numbers as such (an order number 1234567, not 1.23457e+06), others as short as they stay exact
+        if (std::abs(d) < 9e15 && d == std::floor(d)) return QString::number(qint64(d));
+        return QString::number(d, 'g', QLocale::FloatingPointShortest);
     }
     if (v.isBool()) return v.toBool() ? "true" : "false";
     if (v.isObject()) return v.toObject().contains("file") ? v["file"].toString() : v["text"].toString();
     return {};
 }
 
-} // namespace
+QString decodeText(const QByteArray& data)
+{
+    // UTF-16 with its byte order mark (Excel's "Unicode text"), UTF-8 with or without one, else Windows-1252
+    if (data.startsWith("\xFF\xFE") || data.startsWith("\xFE\xFF")) {
+        QStringDecoder utf16(QStringDecoder::Utf16); // reads the mark: either byte order
+        return utf16.decode(data);
+    }
+    // Without the mark: a header that starts with an ASCII letter shows the zero byte of UTF-16
+    if (data.size() >= 4 && data.size() % 2 == 0 && (data[0] == 0) != (data[1] == 0)) {
+        QStringDecoder utf16(data[1] == 0 ? QStringDecoder::Utf16LE : QStringDecoder::Utf16BE);
+        return utf16.decode(data);
+    }
+    QStringDecoder utf8(QStringDecoder::Utf8, QStringDecoder::Flag::Stateless);
+    QString text = utf8.decode(data);
+    if (utf8.hasError()) text = fromWindows1252(data);
+    if (text.startsWith(QChar(0xFEFF))) text.remove(0, 1);
+    return text;
+}
 
 std::optional<Table> parseCsv(const QByteArray& data, QString* error)
 {
-    QString text = QString::fromUtf8(data);
-    if (text.startsWith(QChar(0xFEFF))) text.remove(0, 1);
+    QString text = decodeText(data);
     Table t;
     t.separator = detectSeparator(text);
     QVector<int> lines;
@@ -246,9 +287,10 @@ QString patternError(const QString& pattern, const QStringList& columns)
         const QString name = key.section(':', 0, 0).trimmed();
         if (name == "n") {
             bool ok = true;
-            const QString spec = key.section(':', 1);
-            if (!spec.isEmpty()) spec.toInt(&ok);
-            if (!ok) return QString("name: {n:03} pads the row number, not {%1}").arg(key);
+            const QString spec = key.section(':', 1).trimmed();
+            const int width = spec.isEmpty() ? 0 : spec.toInt(&ok);
+            if (!ok || width < 0 || spec.startsWith('-'))
+                return QString("name: {n:03} pads the row number, not {%1}").arg(key);
         } else if (!columns.contains(name)) {
             return QString("name: no column '%1' (columns: %2; {n} = the row number)").arg(name, columns.join(", "));
         }
@@ -275,7 +317,8 @@ std::optional<QString> fileName(const QString& pattern, const QJsonObject& row, 
         const QString name = key.section(':', 0, 0).trimmed();
         if (name == "n") {
             const QString spec = key.section(':', 1).trimmed();
-            const int width = spec.isEmpty() ? 0 : spec.toInt();
+            // Padded to at most kMaxNumberWidth digits (a negative width would pad on the right)
+            const int width = std::clamp(spec.isEmpty() ? 0 : spec.toInt(), 0, kMaxNumberWidth);
             out += QString("%1").arg(n, width, 10, QChar('0'));
         } else if (row.contains(name)) { // (a column this row leaves empty adds nothing)
             const QString v = valueText(row[name]);

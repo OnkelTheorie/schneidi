@@ -4,7 +4,8 @@
 // what was adjusted, the brand kit applied or not, unfilled slots warned / strict errors, dry_run writes nothing, no
 // overwrite without asking), the edit ops slot/fill, save/remove/rename, ZIP export -> import round trip (stored and
 // deflated archives), hostile ZIPs refused, the CLI alias `template info`, and filling the app's project live as one
-// undo step.
+// undo step; the template's files copied after the checks and never over a user's file, dry_run reporting an existing
+// project, a render error after the save.
 
 #include "check.h"
 
@@ -25,6 +26,7 @@
 #include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QLockFile>
 #include <QProcess>
 #include <QTemporaryDir>
 
@@ -318,6 +320,83 @@ void testFill(const QString& tmp, const Media& m)
     CHECK(rendered.contains("render"));
     CHECK(QFileInfo(video).size() > 0);
     CHECK(Brand::setGlobal({}));
+}
+
+QByteArray readFile(const QString& path)
+{
+    QFile f(path);
+    f.open(QIODevice::ReadOnly);
+    return f.readAll();
+}
+
+void writeFile(const QString& path, const QByteArray& data)
+{
+    QDir().mkpath(QFileInfo(path).absolutePath());
+    QFile f(path);
+    f.open(QIODevice::WriteOnly);
+    f.write(data);
+}
+
+// The template's own files the filled project uses: copied next to it only once nothing stops the fill, never over a
+// file of the user (same name, other content: the copy gets a free name; the same content is used again); dry_run
+// reports an existing project; a failed render after the save reports the saved project
+void testFillFiles(const QString& tmp, const Media& m)
+{
+    std::printf("fill: template files, existing projects, render errors\n");
+    const std::optional<ContentTemplate> t = TemplateLibrary::find("Test Short");
+    if (!CHECK(t)) return;
+    const QString name = QFileInfo(m.a).fileName();
+    const QString tplFile = t->dir + "/media/" + name;
+    if (!CHECK(QFileInfo::exists(tplFile))) return;
+    const QString dir = tmp + "/files";
+    const QJsonObject values{{"clip1", m.longClip}, {"hook", "Hi"}}; // clip2 keeps the template's clip
+    // A different file of the same size where the copy would go
+    QByteArray other = readFile(tplFile);
+    other[other.size() / 2] = char(other[other.size() / 2] ^ 0x55);
+    writeFile(dir + "/user media/media/" + name, other);
+    QJsonObject r = run("templates", {{"fill", "Test Short"}, {"values", values}, {"out_project", dir + "/user.schneidi"}});
+    CHECK(r["ok"].toBool());
+    CHECK(readFile(dir + "/user media/media/" + name) == other); // the user's file stays
+    const QString copy = clipWithSlot(load(dir + "/user.schneidi"), "clip2")->mediaPath;
+    CHECK_EQ(copy, dir + "/user media/media/" + QFileInfo(m.a).completeBaseName() + "-2.mp4");
+    CHECK(readFile(copy) == readFile(tplFile));
+    // Again (overwrite): the copy with the same content is used, no third file
+    r = run("templates", {{"fill", "Test Short"}, {"values", values}, {"out_project", dir + "/user.schneidi"}, {"overwrite", true}});
+    CHECK_EQ(clipWithSlot(load(dir + "/user.schneidi"), "clip2")->mediaPath, copy);
+    CHECK_EQ(QDir(dir + "/user media/media").entryList(QDir::Files).size(), 2);
+    // A file of another size there stays too
+    writeFile(dir + "/small media/media/" + name, "mine");
+    run("templates", {{"fill", "Test Short"}, {"values", values}, {"out_project", dir + "/small.schneidi"}});
+    CHECK(readFile(dir + "/small media/media/" + name) == "mine");
+    CHECK(readFile(clipWithSlot(load(dir + "/small.schneidi"), "clip2")->mediaPath) == readFile(tplFile));
+
+    // dry_run says that the project exists (as the fill itself would), writes nothing
+    const QJsonObject dry = run("templates", {{"fill", "Test Short"}, {"values", values},
+                                              {"out_project", dir + "/user.schneidi"}, {"dry_run", true}});
+    CHECK(!dry["ok"].toBool());
+    CHECK_EQ(dry["errors"][0]["code"].toString(), QString("EXISTS"));
+    CHECK(run("templates", {{"fill", "Test Short"}, {"values", values}, {"out_project", dir + "/user.schneidi"},
+                            {"dry_run", true}, {"overwrite", true}})["ok"].toBool());
+
+    // A fill that stops (project locked by someone else) leaves no copies behind
+    const QString locked = dir + "/locked.schneidi";
+    writeFile(locked, readFile(dir + "/user.schneidi"));
+    {
+        const std::unique_ptr<QLockFile> lock = ProjectFile::lock(locked);
+        CHECK(lock != nullptr);
+        CHECK_EQ(errorOf("templates", {{"fill", "Test Short"}, {"values", values}, {"out_project", locked}, {"overwrite", true}}),
+                 QString("PROJECT_LOCKED"));
+    }
+    CHECK(!QFileInfo::exists(dir + "/locked media"));
+
+    // The render fails after the project was saved: the answer names the saved project and the render's error
+    const QString rendered = dir + "/render.schneidi";
+    r = run("templates", {{"fill", "Test Short"}, {"values", values}, {"out_project", rendered},
+                          {"render", QJsonObject{{"preset", "no such preset"}}}});
+    CHECK_EQ(r["project"].toString(), rendered);
+    CHECK(QFileInfo::exists(rendered));
+    CHECK(!r["render_error"].toObject()["code"].toString().isEmpty());
+    CHECK(!r["ok"].toBool());
 }
 
 void testEditOps(const QString& tmp, const Media& m)
@@ -692,6 +771,7 @@ int main(int argc, char* argv[])
     if (makeTemplate(tmp.path(), m).isEmpty()) return Check::result();
     testListAndInfo(tmp.path());
     testFill(tmp.path(), m);
+    testFillFiles(tmp.path(), m);
     testEditOps(tmp.path(), m);
     testAlias();
     testLive(tmp.path(), m);
