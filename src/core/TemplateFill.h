@@ -12,7 +12,8 @@
 //   Too short: SlotFit Trim = left shorter (Fixed: a gap stays, warning; Flexible: later clips move up), Speed = slowed
 //   down to fill it (at least 25 %, below that also left shorter), Freeze = its last frame holds for the rest, Loop =
 //   repeated. Flexible slots take the value's length within [minLen, maxLen]; everything after the slot on all
-//   unlocked tracks (subtitles, markers, notes, sections too) ripples by the difference. Linked audio follows the
+//   unlocked tracks (subtitles, markers, notes, sections too) ripples by the difference; titles and stills that cover
+//   exactly the slot (a topic title or a logo over the whole clip) grow with it. Linked audio follows the
 //   picture (removed when the new file has no sound). A picture of another shape than the timeline is reframed
 //   (ClipSlot::reframe; Reframe Center, or Auto when Context::reframePath gives a camera path); a clip that was
 //   reframed for its old file follows the new shape (Reframe::reshape). Speed ramps, reverse and freeze of the

@@ -15,6 +15,12 @@ templates (`new --template`) only set format and tracks; `templates` lists both 
 - Pick the clips for clip slots by their hint and length (`index`, `highlights`, `scenes`); a slot of 3 s wants a
   3 s moment: give `{file, from, to}`.
 
+Built in: `short-hook` (9:16, hook text + 3 clips + music), `gaming-highlight` (16:9, title + 5 clips with the Edit
+look + music), `product-15s` (1:1, 3 product pictures, name, claim, call to action, logo, music), `podcast-clip`
+(9:16, one speaker clip, topic, sample word captions, logo - transcribe and run `captions` after filling, render with
+`subtitles:"burn"`), `intro-outro` (16:9, timelines "Timeline 1" = intro 4 s and "Outro" 6 s; render each with
+`timeline` for the brand kit's intro/outro).
+
 ## Fill
 `templates` `fill:"<template>"`, `values:{slot: value}`, `out_project:"/abs/new.schneidi"`:
 - value = `"/abs/clip.mp4"`, `{"file":"/abs/clip.mp4","from":"12.5s","to":"15.5s"}` or a text (text slots).
@@ -25,6 +31,8 @@ templates (`new --template`) only set format and tracks; `templates` lists both 
 - A value that breaks a rule (missing file, no picture, text over `max_chars` without shrink) fails the call with
   its codes (FILE_MISSING, WRONG_TYPE, TOO_LONG …) and writes nothing. `dry_run:true` checks the values first and
   answers with `errors` and `unfilled` (nothing written).
+- A logo slot without a value shows the brand kit's logo (the global or project kit, or `brand.logo`; not with
+  `brand:"none"`).
 - `brand`: the brand kit goes into the titles that reference it (default `"global"` = what applies), `"none"`
   leaves them, or kit fields like `brand set` (`{"colors":["#ffcc00"],"fonts":["Inter"]}`) = the project's own kit.
 - `render:{…}` renders right away with the parameters of `render` (`out` defaults to the project name as .mp4;

@@ -1,0 +1,507 @@
+{
+ "app": "schneidi",
+ "bins": [],
+ "currentSequence": 1,
+ "format": {
+  "fpsDen": 1,
+  "fpsNum": 30,
+  "height": 1080,
+  "width": 1920
+ },
+ "fps": 30,
+ "lastClipId": 12,
+ "lastLinkId": 5,
+ "media": [
+  {
+   "audioStreams": [
+    {
+     "channels": 1
+    }
+   ],
+   "hasAudio": true,
+   "hasVideo": true,
+   "isImage": false,
+   "length": 90,
+   "name": "clip1.mp4",
+   "path": "media/clip1.mp4",
+   "relPath": "media/clip1.mp4"
+  },
+  {
+   "audioStreams": [
+    {
+     "channels": 1
+    }
+   ],
+   "hasAudio": true,
+   "hasVideo": true,
+   "isImage": false,
+   "length": 90,
+   "name": "clip2.mp4",
+   "path": "media/clip2.mp4",
+   "relPath": "media/clip2.mp4"
+  },
+  {
+   "audioStreams": [
+    {
+     "channels": 1
+    }
+   ],
+   "hasAudio": true,
+   "hasVideo": true,
+   "isImage": false,
+   "length": 90,
+   "name": "clip3.mp4",
+   "path": "media/clip3.mp4",
+   "relPath": "media/clip3.mp4"
+  },
+  {
+   "audioStreams": [
+    {
+     "channels": 1
+    }
+   ],
+   "hasAudio": true,
+   "hasVideo": true,
+   "isImage": false,
+   "length": 90,
+   "name": "clip4.mp4",
+   "path": "media/clip4.mp4",
+   "relPath": "media/clip4.mp4"
+  },
+  {
+   "audioStreams": [
+    {
+     "channels": 1
+    }
+   ],
+   "hasAudio": true,
+   "hasVideo": true,
+   "isImage": false,
+   "length": 90,
+   "name": "clip5.mp4",
+   "path": "media/clip5.mp4",
+   "relPath": "media/clip5.mp4"
+  },
+  {
+   "audioStreams": [
+    {
+     "channels": 1
+    }
+   ],
+   "hasAudio": true,
+   "hasVideo": false,
+   "isImage": false,
+   "length": 540,
+   "name": "music.m4a",
+   "path": "media/music.m4a",
+   "relPath": "media/music.m4a"
+  }
+ ],
+ "playhead": 0,
+ "sequences": [
+  {
+   "id": 1,
+   "name": "Timeline 1"
+  }
+ ],
+ "templateInfo": {
+  "description": "16:9-Highlight auf Musik: Titel, fünf kurze Clips mit Edit-Look, Song auf Länge geschnitten.",
+  "name": "Gaming-Highlight",
+  "tags": [
+   "gaming",
+   "16:9",
+   "music"
+  ]
+ },
+ "timeline": {
+  "audio": [
+   {
+    "clips": [
+     {
+      "id": 2,
+      "in": 0,
+      "link": 1,
+      "media": 0,
+      "out": 89,
+      "start": 0
+     },
+     {
+      "id": 4,
+      "in": 0,
+      "link": 2,
+      "media": 1,
+      "out": 89,
+      "start": 90
+     },
+     {
+      "id": 6,
+      "in": 0,
+      "link": 3,
+      "media": 2,
+      "out": 89,
+      "start": 180
+     },
+     {
+      "id": 8,
+      "in": 0,
+      "link": 4,
+      "media": 3,
+      "out": 89,
+      "start": 270
+     },
+     {
+      "id": 10,
+      "in": 0,
+      "link": 5,
+      "media": 4,
+      "out": 89,
+      "start": 360
+     }
+    ],
+    "name": "A1"
+   },
+   {
+    "clips": [
+     {
+      "id": 11,
+      "in": 0,
+      "media": 5,
+      "out": 449,
+      "slot": {
+       "hint": "the song; cuts can go onto its beat (op snap_to_beat)",
+       "id": "music",
+       "kind": "music",
+       "label": "Music",
+       "snapCuts": true
+      },
+      "start": 0,
+      "volumeDb": -6
+     }
+    ],
+    "name": "A2"
+   }
+  ],
+  "markIn": -1,
+  "markOut": -1,
+  "markers": [],
+  "masterLimiter": false,
+  "masterLimiterDb": -1.2,
+  "masterVolumeDb": 0,
+  "video": [
+   {
+    "clips": [
+     {
+      "effects": [
+       {
+        "enabled": true,
+        "id": "frei0r.glow",
+        "params": {
+         "0": 0.3,
+         "strength": 0.3,
+         "threshold": 0.6
+        }
+       },
+       {
+        "enabled": true,
+        "id": "grade",
+        "params": {
+         "contrast": 1,
+         "exposure": 0,
+         "gainB": 1,
+         "gainG": 1,
+         "gainR": 1,
+         "gainY": 1,
+         "gammaB": 0,
+         "gammaG": 0,
+         "gammaR": 0,
+         "gammaY": 0,
+         "liftB": 0,
+         "liftG": 0,
+         "liftR": 0,
+         "liftY": 0,
+         "lut": ":/luts/edit.cube",
+         "offsetB": 25,
+         "offsetG": 25,
+         "offsetR": 25,
+         "offsetY": 25,
+         "pivot": 0.435,
+         "saturation": 50,
+         "temperature": 0,
+         "tint": 0
+        }
+       }
+      ],
+      "id": 1,
+      "in": 0,
+      "link": 1,
+      "media": 0,
+      "out": 89,
+      "slot": {
+       "fit": "freeze",
+       "hint": "the opener: a strong moment",
+       "id": "clip1",
+       "label": "Clip 1"
+      },
+      "start": 0
+     },
+     {
+      "effects": [
+       {
+        "enabled": true,
+        "id": "frei0r.glow",
+        "params": {
+         "0": 0.3,
+         "strength": 0.3,
+         "threshold": 0.6
+        }
+       },
+       {
+        "enabled": true,
+        "id": "grade",
+        "params": {
+         "contrast": 1,
+         "exposure": 0,
+         "gainB": 1,
+         "gainG": 1,
+         "gainR": 1,
+         "gainY": 1,
+         "gammaB": 0,
+         "gammaG": 0,
+         "gammaR": 0,
+         "gammaY": 0,
+         "liftB": 0,
+         "liftG": 0,
+         "liftR": 0,
+         "liftY": 0,
+         "lut": ":/luts/edit.cube",
+         "offsetB": 25,
+         "offsetG": 25,
+         "offsetR": 25,
+         "offsetY": 25,
+         "pivot": 0.435,
+         "saturation": 50,
+         "temperature": 0,
+         "tint": 0
+        }
+       }
+      ],
+      "id": 3,
+      "in": 0,
+      "link": 2,
+      "media": 1,
+      "out": 89,
+      "slot": {
+       "fit": "freeze",
+       "hint": "build-up",
+       "id": "clip2",
+       "label": "Clip 2"
+      },
+      "start": 90
+     },
+     {
+      "effects": [
+       {
+        "enabled": true,
+        "id": "frei0r.glow",
+        "params": {
+         "0": 0.3,
+         "strength": 0.3,
+         "threshold": 0.6
+        }
+       },
+       {
+        "enabled": true,
+        "id": "grade",
+        "params": {
+         "contrast": 1,
+         "exposure": 0,
+         "gainB": 1,
+         "gainG": 1,
+         "gainR": 1,
+         "gainY": 1,
+         "gammaB": 0,
+         "gammaG": 0,
+         "gammaR": 0,
+         "gammaY": 0,
+         "liftB": 0,
+         "liftG": 0,
+         "liftR": 0,
+         "liftY": 0,
+         "lut": ":/luts/edit.cube",
+         "offsetB": 25,
+         "offsetG": 25,
+         "offsetR": 25,
+         "offsetY": 25,
+         "pivot": 0.435,
+         "saturation": 50,
+         "temperature": 0,
+         "tint": 0
+        }
+       }
+      ],
+      "id": 5,
+      "in": 0,
+      "link": 3,
+      "media": 2,
+      "out": 89,
+      "slot": {
+       "fit": "freeze",
+       "hint": "build-up",
+       "id": "clip3",
+       "label": "Clip 3"
+      },
+      "start": 180
+     },
+     {
+      "effects": [
+       {
+        "enabled": true,
+        "id": "frei0r.glow",
+        "params": {
+         "0": 0.3,
+         "strength": 0.3,
+         "threshold": 0.6
+        }
+       },
+       {
+        "enabled": true,
+        "id": "grade",
+        "params": {
+         "contrast": 1,
+         "exposure": 0,
+         "gainB": 1,
+         "gainG": 1,
+         "gainR": 1,
+         "gainY": 1,
+         "gammaB": 0,
+         "gammaG": 0,
+         "gammaR": 0,
+         "gammaY": 0,
+         "liftB": 0,
+         "liftG": 0,
+         "liftR": 0,
+         "liftY": 0,
+         "lut": ":/luts/edit.cube",
+         "offsetB": 25,
+         "offsetG": 25,
+         "offsetR": 25,
+         "offsetY": 25,
+         "pivot": 0.435,
+         "saturation": 50,
+         "temperature": 0,
+         "tint": 0
+        }
+       }
+      ],
+      "id": 7,
+      "in": 0,
+      "link": 4,
+      "media": 3,
+      "out": 89,
+      "slot": {
+       "fit": "freeze",
+       "hint": "the best moment, on the drop",
+       "id": "clip4",
+       "label": "Clip 4"
+      },
+      "start": 270
+     },
+     {
+      "effects": [
+       {
+        "enabled": true,
+        "id": "frei0r.glow",
+        "params": {
+         "0": 0.3,
+         "strength": 0.3,
+         "threshold": 0.6
+        }
+       },
+       {
+        "enabled": true,
+        "id": "grade",
+        "params": {
+         "contrast": 1,
+         "exposure": 0,
+         "gainB": 1,
+         "gainG": 1,
+         "gainR": 1,
+         "gainY": 1,
+         "gammaB": 0,
+         "gammaG": 0,
+         "gammaR": 0,
+         "gammaY": 0,
+         "liftB": 0,
+         "liftG": 0,
+         "liftR": 0,
+         "liftY": 0,
+         "lut": ":/luts/edit.cube",
+         "offsetB": 25,
+         "offsetG": 25,
+         "offsetR": 25,
+         "offsetY": 25,
+         "pivot": 0.435,
+         "saturation": 50,
+         "temperature": 0,
+         "tint": 0
+        }
+       }
+      ],
+      "id": 9,
+      "in": 0,
+      "link": 5,
+      "media": 4,
+      "out": 89,
+      "slot": {
+       "fit": "freeze",
+       "hint": "the ending",
+       "id": "clip5",
+       "label": "Clip 5"
+      },
+      "start": 360
+     }
+    ],
+    "name": "V1"
+   },
+   {
+    "clips": [
+     {
+      "id": 12,
+      "in": 0,
+      "out": 74,
+      "slot": {
+       "hint": "the game, the player or the event",
+       "id": "title",
+       "kind": "text",
+       "label": "Title",
+       "maxChars": 24
+      },
+      "start": 0,
+      "title": {
+       "align": 1,
+       "bold": true,
+       "boxColor": "#a0000000",
+       "boxOn": false,
+       "boxPad": 20,
+       "color": "#ffffffff",
+       "colorRef": 1,
+       "font": "Sans",
+       "fontRef": 1,
+       "italic": false,
+       "outlineColor": "#ff000000",
+       "outlineOn": true,
+       "outlineRef": 2,
+       "outlineWidth": 8,
+       "posX": 0,
+       "posY": 300,
+       "size": 150,
+       "text": "HIGHLIGHTS"
+      }
+     }
+    ],
+    "name": "V2"
+   }
+  ]
+ },
+ "version": 4
+}

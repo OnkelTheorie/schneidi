@@ -784,8 +784,21 @@ QJsonObject fillTemplate(const QJsonObject& a, Context& ctx)
     const ContentTemplate t = *contentTemplate(a["fill"].toString());
     ProjectData d = loadTemplate(t);
     const bool dry = a["dry_run"].toBool(), strict = a["strict"].toBool();
-    const TemplateFill::Values values = a.contains("values") ? fillValues(a["values"], d, d.format) : TemplateFill::Values{};
+    TemplateFill::Values values = a.contains("values") ? fillValues(a["values"], d, d.format) : TemplateFill::Values{};
     const QJsonObject tpl{{"id", t.id}, {"name", t.name}};
+    QStringList notes;
+    // A logo slot without a value shows the brand kit's logo (the one `brand` gives, unless "none")
+    if (!(a["brand"].isString() && a["brand"].toString().trimmed().toLower() == "none")) {
+        QString logo = Brand::effective(d).logo;
+        if (a["brand"].isObject() && a["brand"].toObject().contains("logo"))
+            logo = a["brand"].toObject().value("logo").toString().trimmed();
+        if (!logo.isEmpty() && QFileInfo(absolute(logo)).isFile())
+            for (const TemplateFill::SlotRef& r : TemplateFill::listSlots(d))
+                if (r.slot.kind == SlotKind::Logo && !values.contains(r.slot.id)) {
+                    values[r.slot.id] = TemplateFill::Value::ofFile(absolute(logo));
+                    notes << QString("%1: the brand kit's logo").arg(r.slot.id);
+                }
+    }
     const QString out = a["out_project"].toString();
     if (out.isEmpty() && !dry) fail("BAD_ARGUMENT", "fill needs out_project (the new project file)");
     if (!out.isEmpty()) checkedProjectPath(out, "out_project");
@@ -799,7 +812,6 @@ QJsonObject fillTemplate(const QJsonObject& a, Context& ctx)
         const QString b = a["brand"].toString().trimmed().toLower();
         if (b != "global" && b != "none") fail("BAD_ARGUMENT", "brand: \"global\", \"none\" or kit fields {colors, fonts, logo, …}");
     }
-    QStringList notes;
     const TemplateFill::Context fc = fillContext(d.format, a["_beats"].toObject(), reframeMode(a) == "auto", &notes, &ctx);
     const QStringList unfilled = unfilledOf(d, values);
     if (dry) {

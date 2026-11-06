@@ -424,3 +424,6 @@ schneidi_test(test_sfx) # effect sounds: synthesis deterministic and mild, place
 target_link_libraries(test_sfx PRIVATE schneidi_cli_lib)
 schneidi_test(test_sfx_library) # Effects Library "Klänge": list, drag data, drop = op sfx as one undo step, nothing placed by itself
 target_link_libraries(test_sfx_library PRIVATE schneidi_cli_lib)
+schneidi_test(test_builtin_templates) # the five built-in templates: listed, filled, brand kit, logo default, size guard
+target_link_libraries(test_builtin_templates PRIVATE schneidi_cli_lib)
+target_compile_definitions(test_builtin_templates PRIVATE SCHNEIDI_SOURCE_DIR="${CMAKE_SOURCE_DIR}")

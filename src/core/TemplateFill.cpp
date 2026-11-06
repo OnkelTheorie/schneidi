@@ -470,7 +470,23 @@ void fillMedia(ProjectData& d, Timeline& tl, const SlotRef& r, const MediaInfo& 
 
     const int delta = parts.length - r.length;
     if (r.slot.length == SlotLength::Flexible && delta) {
+        // Titles and stills on other video tracks that cover exactly the slot (a topic title, a logo over the whole
+        // clip) keep covering it when it grows (when it shrinks, the ripple shortens them anyway)
+        QVector<int> covering;
+        if (delta > 0)
+            for (const Track& t : tl.video) {
+                if (t.locked) continue;
+                for (const Clip& c : t.clips) {
+                    if (c.start != r.start || c.end() != r.start + r.length) continue;
+                    const bool still = std::any_of(d.media.cbegin(), d.media.cend(), [&c](const MediaInfo& mi) {
+                        return mi.path == c.mediaPath && mi.isImage;
+                    });
+                    if (c.isTitle() || (c.kind == ClipKind::Media && still)) covering << c.id;
+                }
+            }
         ripple(tl, r.start + r.length, delta, newId);
+        for (int id : covering)
+            if (Clip* c = TimelineOps::findClip(tl, id)) c->out += delta;
         rep.adjusted << "rippled";
         rep.details["ripple_s"] = round3(delta / fps);
         setText(rep, QString("later clips moved by %1%2").arg(delta > 0 ? "+" : "", secs(delta, fps)));
