@@ -572,12 +572,13 @@ void testBrowserZip(const QString& tmp)
     CHECK_EQ(int(TemplateLibrary::own().size()), 2);
     answer = std::nullopt; // cancel
     CHECK(!dlg.importFrom(zip));
+    CHECK_EQ(asked, 3);
     CHECK_EQ(int(TemplateLibrary::own().size()), 2);
     // A built-in one exported and imported: an own copy, no question
     CHECK(dlg.select("Gaming-Highlight"));
     CHECK(dlg.exportTo(tmp + "/zip/gaming.zip"));
     CHECK(dlg.importFrom(tmp + "/zip/gaming.zip"));
-    CHECK_EQ(asked, 2); // no clash, no question
+    CHECK_EQ(asked, 3); // no clash, no question
     CHECK_EQ(int(TemplateLibrary::own().size()), 3);
 
     // Not a ZIP: a warning in the UI language, nothing imported, no staging folder left
