@@ -71,10 +71,17 @@ qint64 cgroupRoom(const QByteArray& self, const QString& root)
         if (const qint64 high = limitOf(readSmall(dir + "/memory.high")); high && (!limit || high < limit)) limit = high;
         if (limit) {
             const qint64 current = limitOf(readSmall(dir + "/memory.current"));
+            // The page cache the kernel drops when the group needs the memory, like MemAvailable counts it: both
+            // file LRU lists (active_file too: a recording just read or written sits there, often gigabytes)
             qint64 cache = 0;
             for (const QByteArray& line : readSmall(dir + "/memory.stat").split('\n'))
-                if (line.startsWith("inactive_file ")) cache = limitOf(line.mid(14));
-            const qint64 here = std::max<qint64>(1, limit - current + std::min(cache, current));
+                if (line.startsWith("active_file ") || line.startsWith("inactive_file "))
+                    cache += limitOf(line.mid(line.indexOf(' ') + 1));
+            const qint64 used = current - std::min(cache, current);
+            // Above the limit even without the cache (memory.high lowered below what the group uses: the kernel
+            // throttles every allocation and reclaims until it is back under it): no room - 1 byte, never 0 (that
+            // means "no limit known"), so the caller takes the least it can
+            const qint64 here = std::max<qint64>(1, limit - used);
             room = room ? std::min(room, here) : here;
         }
         if (dir.size() <= top.size()) break;

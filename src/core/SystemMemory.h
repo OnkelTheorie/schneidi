@@ -25,8 +25,9 @@ Info parseMeminfo(const QByteArray& text);
 
 // Room the cgroup v2 limits leave, in bytes (0 = no limit known): `self` is the text of /proc/self/cgroup, `root` the
 // cgroup2 mount (/sys/fs/cgroup). Every level from the process's group up to the root counts: limit (the smaller of
-// memory.max and memory.high) minus memory.current, plus the file cache there that can be dropped (inactive_file of
-// memory.stat). Split off for tests (a folder tree in place of the mount).
+// memory.max and memory.high) minus memory.current, plus the file cache there that can be dropped (active_file and
+// inactive_file of memory.stat, as MemAvailable counts it). A group above its limit even without that cache (memory.high
+// set below its use) has no room: 1 byte. Split off for tests (a folder tree in place of the mount).
 qint64 cgroupRoom(const QByteArray& self, const QString& root);
 
 } // namespace SystemMemory

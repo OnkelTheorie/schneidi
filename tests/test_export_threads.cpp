@@ -251,6 +251,26 @@ void testCgroupRoom(const QString& dir)
     put("/user.slice/memory.high", QByteArray::number(3000 * MB) + "\n");
     put("/user.slice/memory.current", QByteArray::number(2000 * MB) + "\n");
     CHECK_EQ(SystemMemory::cgroupRoom(self, root), 1000 * MB);
+    put("/user.slice/memory.high", "max\n");
+    // A file just read or written sits on the active list: droppable too, as MemAvailable counts it (300 MB active +
+    // 200 MB inactive of the 1 GB used -> 5120 - 524)
+    const QString scope = "/user.slice/app.slice/run-1.scope";
+    const auto stat = [&](qint64 active, qint64 inactive) {
+        put(scope + "/memory.stat", "anon 1\nfile 2\nactive_file " + QByteArray::number(active) + "\ninactive_file "
+                                        + QByteArray::number(inactive) + "\nfile_dirty 0\n");
+    };
+    stat(300 * MB, 200 * MB);
+    CHECK_EQ(SystemMemory::cgroupRoom(self, root), 4596 * MB);
+    // memory.high lowered below memory.current (a tool that tightens a slice while it runs): what the cache does not
+    // cover is the room's limit - 800 MB high, 1 GB used of which 500 MB cache -> 276 MB
+    put(scope + "/memory.high", QByteArray::number(800 * MB) + "\n");
+    CHECK_EQ(SystemMemory::cgroupRoom(self, root), 276 * MB);
+    // ... and above it without any cache: no room (1 byte, not 0 = "no limit"), the render takes one thread
+    stat(0, 0);
+    CHECK_EQ(SystemMemory::cgroupRoom(self, root), qint64(1));
+    CHECK_EQ(Exporter::automaticThreads(10, QSize(1920, 1080), SystemMemory::cgroupRoom(self, root)).threads, 1);
+    put(scope + "/memory.high", "max\n");
+    stat(0, 200 * MB);
     // cgroup v1 or garbage: unknown, never a path outside the mount
     CHECK_EQ(SystemMemory::cgroupRoom("12:memory:/user.slice\n", root), qint64(0));
     CHECK_EQ(SystemMemory::cgroupRoom("0::/../../etc\n", root), qint64(0));
