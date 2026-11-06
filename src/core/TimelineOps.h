@@ -178,6 +178,11 @@ void unpairBrokenDissolves(const Timeline& before, Timeline& after);
 // (gap closed, clip pushed up) stay two transitions instead of one dissolve (like DaVinci).
 // Also tidies up the standalone marking where the edges no longer touch.
 void keepFadesApart(const Timeline& before, Timeline& after);
+// After an edit: a Fixed slot's own length (ClipSlot::nominalLen) belongs to the template fill. A slot clip the user
+// made longer or shorter, cut or pasted (a clip that was not there before) lets go of it - with the other parts of
+// its instance (the clips of the same slot that touch it on its track, before or after the edit) - so the next fill
+// fills what is on the timeline.
+void forgetSlotLengths(const Timeline& before, Timeline& after);
 
 int endFrame(const Timeline& tl);
 // The nested sequences (compound clips, multicam angles) of both are the same, their angles and frame sizes included;

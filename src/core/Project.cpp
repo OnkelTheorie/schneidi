@@ -395,6 +395,7 @@ void Project::edit(const QString& text, const std::function<void(Timeline&)>& fn
     TimelineOps::resolvePendingLinks(after, [this] { return newLinkId(); }); // leftover pieces from clearRange
     TimelineOps::unpairBrokenDissolves(timeline(), after);
     TimelineOps::keepFadesApart(timeline(), after);
+    TimelineOps::forgetSlotLengths(timeline(), after); // (the fill itself goes through editSequences)
     if (after == timeline()) {
         // Nothing changed (e.g. Ctrl+B beside the selection): no undo step. Signal anyway, so that a
         // pending Engine::mixerOnlyNext is consumed and does not stick to the next real change.

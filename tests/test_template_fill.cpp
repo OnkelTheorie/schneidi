@@ -608,6 +608,19 @@ void testFixedKeepsLength()
         CHECK_EQ(find(d, 50)->start, 70);
         CHECK_EQ(find(d, 50)->length(), 10);
     }
+    { // ... also on the track of its linked sound: a clip there stays (review C3)
+        ProjectData d = project();
+        apply(d, {{"clip1", Value::ofFile(kShort)}}, ctx);
+        d.timeline.audio[0].clips.insert(1, clip(50, kTmpl, 70, 0, 10));
+        d.lastClipId = 50;
+        apply(d, {{"clip1", Value::ofFile(kLong)}}, ctx);
+        CHECK_EQ(find(d, 1)->length(), 70);
+        CHECK_EQ(find(d, 3)->length(), 70);
+        if (CHECK(find(d, 50))) {
+            CHECK_EQ(find(d, 50)->start, 70);
+            CHECK_EQ(find(d, 50)->length(), 10);
+        }
+    }
 }
 
 // A Speed fit's slow motion is not the slot's own speed: the next, longer value plays at the slot's own speed again
@@ -805,9 +818,10 @@ void testCompound()
     d.timeline.video.resize(5);
     d.timeline.video[3].clips = {tail};
     d.timeline.video[4].clips = {head};
+    d.timeline.audio[0].clips << clip(34, kTmpl, 270, 0, 20); // under the compound's clip 21: moves with it
     d.sequences = {open, inner};
     d.currentSequence = 1;
-    d.lastClipId = 33;
+    d.lastClipId = 34;
     const SlotReport s = only(apply(d, {{"inner", Value::ofFile(kLong)}}, context()));
     CHECK_EQ(s.details.value("ripple_s").toDouble(), 9.6);
     CHECK_EQ(TimelineOps::endFrame(d.sequences[1].timeline), 360);
@@ -815,6 +829,7 @@ void testCompound()
     CHECK_EQ(find(d, 30)->in, 0);
     CHECK_EQ(find(d, 30)->length(), 360);
     CHECK_EQ(find(d, 33)->start, 560); // the parent rippled
+    CHECK_EQ(find(d, 34)->start, 510); // where the slot's change shows, not at the compound clip's end (review C4)
     CHECK_EQ(find(d, 31)->in, 300);    // the same picture as before
     CHECK_EQ(find(d, 31)->length(), 60);
     CHECK_EQ(find(d, 31)->start, 0);
@@ -822,6 +837,117 @@ void testCompound()
     CHECK_EQ(find(d, 32)->length(), 30);
     CHECK(s.adjusted.contains("compound"));
     CHECK(d.sequences[0].timeline == d.timeline);
+}
+
+// A compound clip that gets shorter: the parent ripples where the slot's change shows (review C4), the clip and its
+// linked sound keep their fades and transitions (C5); a linked part on a locked track holds the whole group (C6)
+void testCompoundShrink()
+{
+    const auto make = [] {
+        ProjectData d = project();
+        Sequence inner{2, "Compound"};
+        inner.compound = true;
+        inner.timeline.video.resize(1);
+        Clip c = clip(20, kTmpl, 0, 0, 60);
+        c.slot = slot("inner");
+        c.slot.length = SlotLength::Flexible;
+        inner.timeline.video[0].clips = {c, clip(21, kTmpl, 60, 300, 60)};
+        Clip whole;
+        whole.id = 30;
+        whole.kind = ClipKind::Compound;
+        whole.sequenceId = 2;
+        whole.start = 200;
+        whole.out = 119;
+        whole.linkId = 5;
+        whole.fadeIn = 6;
+        whole.transOut = 8;
+        Clip after = clip(33, kTmpl, 320, 0, 50);
+        after.transIn = 8;
+        d.timeline.video[0].clips << whole << after;
+        d.timeline.video[1].clips << clip(34, kTmpl, 270, 0, 20); // under clip 21
+        Clip sound = whole;
+        sound.id = 35;
+        sound.transOut = 0;
+        sound.fadeOut = 12;
+        d.timeline.audio.resize(3);
+        d.timeline.audio[2].kind = TrackKind::Audio;
+        d.timeline.audio[2].clips = {sound};
+        d.sequences = {Sequence{1, "Timeline 1"}, inner};
+        d.currentSequence = 1;
+        d.lastClipId = 35;
+        d.lastLinkId = 5;
+        return d;
+    };
+    {
+        ProjectData d = make();
+        const SlotReport s = only(apply(d, {{"inner", Value::ofFile(kShort)}}, context())); // 50 frames: -10
+        CHECK(s.adjusted.contains("compound"));
+        if (!CHECK(find(d, 30) && find(d, 35))) return;
+        CHECK_EQ(find(d, 30)->start, 200);
+        CHECK_EQ(find(d, 30)->length(), 110);
+        CHECK_EQ(find(d, 30)->fadeIn, 6);
+        CHECK_EQ(find(d, 30)->transOut, 8);
+        CHECK_EQ(find(d, 35)->length(), 110);
+        CHECK_EQ(find(d, 35)->fadeOut, 12);
+        CHECK_EQ(find(d, 35)->linkId, 5);
+        CHECK_EQ(find(d, 33)->start, 310);
+        CHECK_EQ(find(d, 33)->transIn, 8);
+        CHECK_EQ(find(d, 34)->start, 260); // the picture under it went at 250-260 of the parent, not 310-320
+        CHECK_EQ(find(d, 34)->length(), 20);
+        CHECK_EQ(int(d.timeline.video[0].clips.size()), 4); // nothing cut into pieces
+        CHECK_EQ(int(d.timeline.audio[2].clips.size()), 1);
+    }
+    {
+        ProjectData d = make();
+        d.timeline.audio[2].locked = true;
+        const SlotReport s = only(apply(d, {{"inner", Value::ofFile(kShort)}}, context()));
+        CHECK(!s.adjusted.contains("compound"));
+        CHECK(std::any_of(s.warnings.begin(), s.warnings.end(), [](const QString& w) { return w.contains("locked"); }));
+        CHECK_EQ(find(d, 30)->length(), 120); // the picture stays with its sound
+        CHECK_EQ(find(d, 30)->in, 0);
+        CHECK_EQ(find(d, 35)->length(), 120);
+        CHECK_EQ(find(d, 33)->start, 320);
+    }
+}
+
+// A Fixed slot's own length goes with a deliberate change of the user (trim, razor, paste); the fill's own shortening
+// keeps it (review C7)
+void testUserEditsForgetLength()
+{
+    Project p;
+    Selection sel;
+    Editor ed(&p, &sel);
+    p.load(project());
+    const Context ctx = context();
+    CHECK(ed.fillSlot("clip1", Value::ofFile(kShort), ctx).ok());
+    CHECK_EQ(TimelineOps::findClip(p.timeline(), 1)->slot.nominalLen, 100);
+    CHECK_EQ(listSlots(p.data())[0].slotLength, 100);
+    const ProjectData filled = p.data();
+    // Trimmed: the next fill fills what is there
+    ed.trimClip(1, TimelineOps::Edge::End, -10);
+    CHECK_EQ(TimelineOps::findClip(p.timeline(), 1)->length(), 40);
+    CHECK_EQ(TimelineOps::findClip(p.timeline(), 1)->slot.nominalLen, 0);
+    CHECK(ed.fillSlot("clip1", Value::ofFile(kLong), ctx).ok());
+    CHECK_EQ(TimelineOps::findClip(p.timeline(), 1)->length(), 40);
+    // Razor: both parts let go of it
+    p.load(filled);
+    ed.bladeAt(1, 20);
+    for (const Track& t : p.timeline().video)
+        for (const Clip& c : t.clips)
+            if (c.slot.id == "clip1") CHECK_EQ(c.slot.nominalLen, 0);
+    // A pasted copy has none; the original keeps its own
+    p.load(filled);
+    sel.set({1});
+    ed.copySelection();
+    ed.paste(400);
+    int copies = 0;
+    for (const Clip& c : p.timeline().video[0].clips)
+        if (c.slot.id == "clip1" && c.id != 1) {
+            ++copies;
+            CHECK_EQ(c.slot.nominalLen, 0);
+        }
+    CHECK_EQ(copies, 1);
+    CHECK_EQ(TimelineOps::findClip(p.timeline(), 1)->slot.nominalLen, 100);
 }
 
 // Inspector edits reach every part of a slot instance (frozen tail, loop repeats, razor cut) (review A5)
@@ -1123,6 +1249,8 @@ int main(int argc, char** argv)
     testMusicFlexible();
     testTextSplit();
     testCompound();
+    testCompoundShrink();
+    testUserEditsForgetLength();
     testEditorParts();
     testCopyKnown();
     testLibrary();

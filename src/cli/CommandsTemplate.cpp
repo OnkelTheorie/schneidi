@@ -393,12 +393,13 @@ QJsonObject rowValues(const QJsonObject& row, const Columns& cols, const QHash<Q
                       const QDir& base, const QJsonObject& shared)
 {
     QJsonObject values = shared;
-    // --map first (a path of the client's computer), then relative paths against the table's folder
+    // The values are paths as a client gives them: fillTemplate maps them (--map) once. So a path of the client's
+    // computer stays as it is, a relative one is taken against the table's folder (a path here) and turned back into
+    // the client's (a map whose target is inside its source, /data=/data/client, would map it twice)
     const auto file = [&](const QString& f) {
         const QString given = f.trimmed();
-        const QString mapped = Sandbox::mapPath(given);
-        if (mapped != given || QFileInfo(mapped).isAbsolute()) return mapped;
-        return QDir::cleanPath(base.absoluteFilePath(given));
+        if (Sandbox::mapPath(given) != given || QFileInfo(given).isAbsolute()) return given;
+        return Sandbox::mapBack(QDir::cleanPath(base.absoluteFilePath(given)));
     };
     for (auto it = row.begin(); it != row.end(); ++it) {
         const QString slot = cols.slotOf.value(it.key());

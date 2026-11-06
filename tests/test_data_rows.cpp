@@ -151,6 +151,24 @@ void testEncodings()
                 CHECK_EQ(t->rows[0]["product"].toString(), want);
             }
         }
+    // Without the mark and a header in Cyrillic (no Latin-1 first character): the zero bytes of the separators,
+    // line ends and digits tell the byte order (review C9)
+    const QString cyrillic = QString::fromUtf8("Имя;Цена\nСыр;12\nХлеб;3\n");
+    for (bool bigEndian : {false, true}) {
+        QByteArray data;
+        for (QChar c : cyrillic) {
+            const char hi = char(c.unicode() >> 8), lo = char(c.unicode() & 0xff);
+            data += bigEndian ? QByteArray{&hi, 1} + QByteArray{&lo, 1} : QByteArray{&lo, 1} + QByteArray{&hi, 1};
+        }
+        t = DataRows::parseCsv(data);
+        if (CHECK(t && t->rows.size() == 2)) {
+            CHECK_EQ(t->columns, (QStringList{QString::fromUtf8("Имя"), QString::fromUtf8("Цена")}));
+            CHECK_EQ(t->rows[1][QString::fromUtf8("Имя")].toString(), QString::fromUtf8("Хлеб"));
+        }
+    }
+    // UTF-8 Cyrillic (an even length) stays UTF-8
+    t = DataRows::parseCsv(cyrillic.toUtf8());
+    if (CHECK(t && t->rows.size() == 2)) CHECK_EQ(t->rows[0][QString::fromUtf8("Цена")].toString(), QString("12"));
     t = DataRows::parseCsv("\xEF\xBB\xBFproduct\nK\xC3\xA4se \xE2\x80\x93 5 \xE2\x82\xAC\n"); // UTF-8 with BOM
     if (CHECK(t && t->rows.size() == 1)) CHECK_EQ(t->rows[0]["product"].toString(), want);
 }

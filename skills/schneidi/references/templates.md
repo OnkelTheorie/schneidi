@@ -29,10 +29,12 @@ look + music), `product-15s` (1:1, 3 product pictures, name, claim, call to acti
   warning; `strict:true` makes it an error), `notes` (e.g. reframed to the center because the file was not
   analysed: `reframe:"auto"` measures it, slower).
 - How a slot fits its value: a fixed slot stays as long as it is (a value left shorter there leaves a gap, and the
-  next, longer value fills the whole slot again); a flexible one takes the value's length within `min_s`/`max_s`
+  next, longer value fills the whole slot again, as far as its track and its sound's track are free; a slot clip
+  trimmed, cut or pasted by hand keeps the new length); a flexible one takes the value's length within `min_s`/`max_s`
   (a music slot with `fit_music`: the song's length within them) and everything after it moves - also where the
-  slot is inside a compound clip (the compound clips showing it get longer/shorter). A clip slot's linked sound
-  follows its picture; a placeholder without sound (a picture) gets the new clip's sound on a free audio track
+  slot is inside a compound clip (the compound clips showing it get longer/shorter with their fades; one on a
+  locked track or retimed stays, with what is linked to it - a warning). A clip slot's linked sound follows its
+  picture; a placeholder without sound (a picture) gets the new clip's sound on a free audio track
   (`adjusted`: sound_added). A text slot cut in two gets the text in every part.
 - A value that breaks a rule (missing file, no picture, text over `max_chars` without shrink) fails the call with
   its codes (FILE_MISSING, WRONG_TYPE, TOO_LONG …) and writes nothing. `dry_run:true` checks the values first and
