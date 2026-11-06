@@ -19,10 +19,11 @@ namespace ProxyCleanup {
 
 namespace {
 
-// The names ProxyManager gives: <sha1>.mp4, <sha1>.part.mp4 while writing, <sha1>.json (note). Nothing else is touched.
+// The names ProxyManager gives: <sha1>.mp4, <sha1>.<8 hex>.part.mp4 while writing (<sha1>.part.mp4 before 0.18),
+// <sha1>.json (note). Nothing else is touched.
 const QRegularExpression& ownName()
 {
-    static const QRegularExpression re("^([0-9a-f]{40})(\\.mp4|\\.part\\.mp4|\\.json)$");
+    static const QRegularExpression re("^([0-9a-f]{40})(\\.mp4|(?:\\.[0-9a-f]{8})?\\.part\\.mp4|\\.json)$");
     return re;
 }
 
@@ -88,7 +89,7 @@ Plan plan(const QStringList& keep, const QStringList& busy, const QString& dirPa
         if (kind == ".json") {
             if (names.contains(hash + ".mp4")) continue; // goes with its proxy
             item.reason = Reason::Leftover;              // its proxy is gone
-        } else if (kind == ".part.mp4") {
+        } else if (kind.endsWith(".part.mp4")) {
             if (kept.contains(hash)) continue; // a proxy of an open/recent project's file may be on its way
             item.reason = Reason::Leftover;
         } else {
