@@ -812,6 +812,24 @@ void testLibraryParallel(const QString& tmp, const QString& project)
         CHECK(run("templates", {{"rename", "Parallel"}, {"name", "Parallel 2"}})["name"].toString() == "Parallel 2");
     }));
     run("templates", {{"remove", "Parallel 2"}});
+
+    // Ids in another case find the template (an AI types "my-case", the folder is "My-Case"; Windows sees one folder
+    // anyway); a remove while another schneidi holds the library says BUSY, not NOT_FOUND
+    CHECK(run("templates", {{"save", project}, {"name", "My-Case"}})["saved"].toBool());
+    CHECK_EQ(run("templates", {{"info", "my-case"}})["id"].toString(), QString("My-Case"));
+    CHECK_EQ(run("templates", {{"rename", "MY-CASE"}, {"name", "My-Case 2"}})["name"].toString(), QString("My-Case 2"));
+    CHECK_EQ(run("templates", {{"info", "my-case 2"}})["name"].toString(), QString("My-Case 2"));
+    qputenv("SCHNEIDI_TEMPLATE_LOCK_MS", "200"); // not a minute
+    {
+        const auto held = TemplateLibrary::lockLibrary(0);
+        CHECK(held != nullptr);
+        CHECK_EQ(errorOf("templates", {{"remove", "my-case 2"}}), QString("BUSY"));
+        CHECK_EQ(errorOf("templates", {{"rename", "my-case 2"}, {"name", "x"}}), QString("BUSY"));
+    }
+    qunsetenv("SCHNEIDI_TEMPLATE_LOCK_MS");
+    CHECK_EQ(errorOf("templates", {{"remove", "no such template"}}), QString("NOT_FOUND"));
+    CHECK_EQ(run("templates", {{"remove", "my-case 2"}})["removed"].toString(), QString("my-case 2"));
+    CHECK(TemplateLibrary::own().isEmpty() || !TemplateLibrary::find("My-Case 2"));
 }
 
 // Two fills to one new name at once (two batches into one out_dir): the other one makes the file while this one runs -

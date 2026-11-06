@@ -75,13 +75,15 @@ struct SaveOptions {
 // timelines); two files of the same name get distinct names in media/. Returns the saved template.
 std::optional<ContentTemplate> save(const ProjectData& project, const QString& name, const SaveOptions& options = {},
                                     QString* error = nullptr);
-// Own templates only: delete the folder; rename (the name in its project; the folder follows when it is free)
-bool remove(const QString& id, QString* error = nullptr);
+// Own templates only: delete the folder; rename (the name in its project; the folder follows when it is free). `id`
+// in any case (else a template's name, as find()). code: "BUSY" (another schneidi changes the own templates and kept
+// them for a minute), "NOT_FOUND", "FAILED" (could not delete/write), "BAD_ARGUMENT" (rename: no name)
+bool remove(const QString& id, QString* error = nullptr, QString* code = nullptr);
 // Held while own templates change (save, remove, rename, import): two at once (two AIs saving the same name, a save
 // and a delete) work one after the other instead of on each other's half-written folders. A lock file in dir(),
 // stale only when its process is gone; nullptr = still taken after timeoutMs.
 std::unique_ptr<QLockFile> lockLibrary(int timeoutMs = 60000);
-bool rename(const QString& id, const QString& name, QString* error = nullptr);
+bool rename(const QString& id, const QString& name, QString* error = nullptr, QString* code = nullptr);
 
 // Every file a project refers to: the media of clips, path parameters of clip effects (LUTs), wipe images of
 // transitions and the project brand kit's logo/intro/outro (built-in LUTs and wipes left out). `fn` may change the
