@@ -543,8 +543,9 @@ if(UNIX AND NOT APPLE)
         DESTINATION ${CMAKE_INSTALL_DOCDIR})
 endif()
 
-# Debian-Paket (schlank, Systembibliotheken statt Bundling): cmake --build build && cpack --config build/CPackConfig.cmake -G DEB
-# Ausgabe nach dist/ (gitignored). Abhängigkeiten ermittelt dpkg-shlibdeps aus der Binärdatei.
+# Debian package (slim, system libraries instead of bundling), from a Release build folder of its own (static programs):
+#   cmake -S . -B build-deb -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build build-deb && cpack --config build-deb/CPackConfig.cmake -G DEB
+# Output into dist/ (gitignored). dpkg-shlibdeps finds the dependencies from the binaries.
 if(UNIX AND NOT APPLE)
     set(CPACK_GENERATOR "DEB")
     set(CPACK_PACKAGE_NAME "schneidi")
@@ -563,6 +564,10 @@ if(UNIX AND NOT APPLE)
     set(CPACK_DEBIAN_PACKAGE_DEPENDS "libasound2t64 | libasound2")
     # Hardware decoding on AMD/Intel (VAAPI) loads the driver at runtime; NVIDIA comes with its driver (CUDA)
     set(CPACK_DEBIAN_PACKAGE_RECOMMENDS "ffmpeg, libpulse0, mesa-va-drivers | va-driver")
+    if(SCHNEIDI_SHARED_LIBS)
+        message(WARNING "SCHNEIDI_SHARED_LIBS is on: a package from this build folder would ship libschneidi_*.so - "
+                        "package from a Release build folder (see the comment above)")
+    endif()
     include(CPack)
 endif()
 
