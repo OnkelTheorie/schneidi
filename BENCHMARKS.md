@@ -60,7 +60,7 @@ large project, all threads: s / peak RAM (MB) | memory peak / after giving back 
 | 0.16.0 (e661a4f) [c] | 2026-11-03 | 0.5 | 444 / 444 | - | - / - | - / - | - / - | 2.22 | 38.06 / 1880 | - / - | - / - |
 | 0.16.1 [b] | 2026-11-05 | 16.5 | 412 / 391 | 0.33 | 32 / 33.4 | 126 / 231 | 60.8 / 21.5 | 2.19 | 37.28 / 1550 | 1153 / 633 | 19.13 / 30.62 |
 | 0.17.0 (791ddfd) | 2026-11-05 | 4.3 | 391 / 400 | 0.32 | 31.8 / 33.5 | 143 / 212 | 59.7 / 22.8 | 2.17 | 37.88 / 1917 | 1169 / 634 | 18.79 / 30.71 |
-| 0.18.0 | TBD | TBD | TBD | TBD | TBD | TBD | TBD | TBD | TBD | TBD | TBD |
+| 0.18.0 (13e0e58d) [d] | 2026-11-06 | 0.3 | 418 / 433 | 0.42 | 31.9 / 33.2 | 152 / 214 | 60.7 / 22.9 | 2.17 | 39.23 / 1570 | 1277 / 670 | 19.4 / 31.12 |
 
 Notes on rows:
 
@@ -85,7 +85,11 @@ Notes on rows:
   1550 MB. With 2 threads the large project took about 57 to 59 s
   in every run measured with them.
 - Export is 1.03 to 1.07 times the time of plain FFmpeg on the same file in the quiet runs.
-- The 0.18.0 row is being measured and will be filled in.
+- **[d]** The 0.18.0 row combines two runs of the same suite on the same machine. Start and export numbers (including first
+  frame) come from the rerun on the final code (13e0e58d); probe, playback, render, memory and compose come from the main
+  run on 152bf44e (load 0.3). The main run had a first frame of 200 / 275 ms, caused by the automatic thread memory model
+  opening every source; a later commit (a181a09b, "estimate the sources without opening decoders") removed it. The probe
+  value of 0.42 ms is noise (a repeat gave 0.32 ms).
 
 ## Raspberry Pi Zero 2 W
 
@@ -93,22 +97,32 @@ The Pi is not a target for comfortable editing; the tests show that schneidi sta
 415 MB of RAM. All services on the Pi were stopped during the runs. Pi timings fluctuate from hour to hour (the swap state
 of the SD card changes them): the same task was 129 s at noon and 152 to 189 s in the evening.
 
-### Same task in two versions
+### Same task in two versions (A/B, 2026-11-06)
 
-| Test | 0.11.0 (2026-10-25) | 0.18 (2026-11-06) |
-|---|---|---|
-| Window visible, empty project | 6.5 s, 180 MiB | 4.9 s, 104 MiB |
-| Window visible, project with 720p clip | 6.6 s, 262 MiB | 3.6 s, 199 MiB |
-| Playback 720p30 original (frames/s of 30) | 29.1 | TBD |
-| Playback 1080p60 from proxies (frames/s of 60) | 59.4 | TBD |
-| Export 5 s of 720p30, x264 | 82 s, 1.8 frames/s, 303 MiB | TBD |
+0.11.0 and 0.18 run one after the other on the same Pi, with the same files (720p30 and 1080p test clips made from the
+CS2 clip), all services stopped.
 
-Notes: the 0.11.0 numbers are from the 15 s CS2 clip (1080p60) and its 720p/1080p30 transcodes; the playback rows are after
-the preview conversion fix of 2026-10-25 (before: 12.2 and 26.9 frames/s). The 0.18 start rows were taken with a slightly
-different project (a 720p project instead of the demo clip), so treat them as indicative until the A/B run with the same
-file is in. 0.11.0 still used the MLT media library, which was removed in 0.15; its start was 3.1 s of library
-initialization. Other 0.11.0 numbers (same preview fix): playback 1080p60 original 1.1 frames/s, 1080p30 original 4.0,
-720p30 with a grade 28.2; jump in the timeline 2.1 s median from the original, 68 ms from the proxy.
+| Test | 0.11.0 | 0.18 | Change |
+|---|---|---|---|
+| Export 5 s of 720p30, x264 | 124.5 s (1.2 frames/s), 272 MiB | 77.6 s (1.95 frames/s), 234 MiB | 1.6 times faster |
+| Export 5 s of 720p30 with a grade | 220.7 s (0.65 frames/s), 260 MiB | 87.1 s (1.7 frames/s), 238 MiB | 2.5 times faster |
+| Export 5 s of 1080p30 (limit 600 s) | aborted (over 600 s), 283 to 288 MiB | aborted (over 600 s, 1 run), 289 MiB | both page memory heavily |
+| Playback 720p30, 10 s | 28.4 frames/s, smooth, 161 MiB | 7.3 frames/s: the picture stops after about 2.5 s, 282 MiB | **regression, known 0.18 bug on low RAM** |
+| Jump in the timeline, 1080p60 original (30 jumps) | median 2.00 s (90 %: 4.4 s), 189 MiB | median 2.34 s (90 %: 5.5 s), 238 MiB | 17 % slower |
+| App start, window visible (offscreen) | 9.6 s, 173 MiB | 4.0 s, 100 MiB | 2.4 times faster |
+| Load a 1080p60 file (probe) | 6.65 s, 130 MiB | 2.45 s, 79 MiB | 2.7 times faster |
+
+Why: 0.18 exports with its own picture engine instead of the MLT library (2.3 to 2.6 cores busy instead of 1.0 to 1.6), a
+grade is no longer computed in MLT filters (the largest jump), and the start has no MLT initialization (5.4 to 6.0 s alone
+in 0.11). 1080p with 4 threads and look-ahead 40 does not fit in 415 MB in either version; that is the case where 0.18
+picks 2 threads and look-ahead 10 on its own. The playback bug: in both 0.18 runs the picture stopped after 2 to 2.5 s
+while the audio watchdog reopened the null device; memory pressure is the suspected cause, a fix is open.
+
+For reference, the earlier 0.11.0 measurement of 2026-10-25 (different, shorter material: 15 s of the CS2 clip, after
+the preview conversion fix): window visible 6.5 s / 180 MiB empty and 6.6 s / 262 MiB with a 720p clip; playback 720p30
+29.1 frames/s, 720p30 with a grade 28.2, 1080p30 original 4.0, 1080p60 original 1.1, 1080p60 from proxies 59.4 frames/s;
+jump 2.1 s median from the original and 68 ms from the proxy; export of 5 s 720p30 82 s (1.8 frames/s, 303 MiB). These
+are not comparable with the 0.18 numbers above (different clip), and the A/B re-measurement of 0.11.0 was slower.
 
 ### New on the Pi in 0.18 (development builds of 2026-11-06)
 
@@ -137,6 +151,25 @@ Real CS2 clip (30 s, 1080p60, 5 audio tracks, 39 Mbit/s):
 | same, `--quality 1` | 538 s (2 threads) | - |
 | Window shown with the project (offscreen) | 5.0 s | 204 MiB |
 | `short --game cs2 --reframe center`, 10.8 s, 1080x1920 at 60 fps | 1494 s to 1620 s (render alone 987 s at noon, 1347 s in the evening) | about 330 MB (191 MB in RAM, 144 MB swap) |
+
+### 4K on the Pi (2026-11-06, evening)
+
+Clip: 3840x2160, 30 fps, H.264, 10 s; fresh settings, offscreen, no sound device, services stopped. Result: 4K on a
+Pi Zero 2 W is not practical.
+
+| Step | Result |
+|---|---|
+| `new` + `edit append` | 1.6 s (75 MiB) + 0.8 s |
+| Playback without proxy (2 runs, 10 s) | 0.5 and 0.9 frames/s; the picture stops after 5 to 9 frames while the audio clock runs on; 289 to 291 MiB |
+| Proxy creation through the app | not possible: the app with a 4K project only answered "busy" for over 7 minutes (134 to 175 MiB RAM plus 540 to 570 MiB swap, 74 to 92 % I/O wait); ended by hand after about 8 min |
+| Proxy with the same ffmpeg arguments the app uses (niced) | 137 s (0.077 times real time), 274 MiB, 960x540, 6.0 MB |
+| Playback with the proxy | 13.7 frames/s, choppy (gaps of 1.6 s and 3.0 s), full 30 in the last two seconds; 227 MiB |
+| `check` | 10.7 s, 77 MiB |
+| `render --height 1080`, default threads (limit 20 min) | aborted after 1200 s at 55 % (about 7 s per frame), 270 MiB, 300 to 400 MB swap; a 5-frame render picked 1 thread ("low memory"), 48 s |
+
+Findings: with a 4K project open, two H.264 decoders with five frame threads each fill the 415 MB and block the app's live
+interface; playback without proxy and the 720p playback bug above look alike; an aborted render leaves a `.part` file
+behind. Conclusion: 4K on the Pi works only with a proxy, and the proxy only while no app is open.
 
 The CS2 short is CPU-bound on the Pi (decoding 39 Mbit/s 1080p60 and scaling up 3.2 times, about 3 s of CPU per frame for
 646 frames) and still pages memory out; the project's goal for the Pi is "runs stably", not speed on long shorts. The
