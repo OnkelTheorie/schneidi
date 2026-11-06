@@ -270,6 +270,25 @@ struct Reader::Impl {
         // Downmix (5.1 -> stereo) scaled so that no sum exceeds full scale, as FFmpeg does for integer output (and the
         // sound path before 0.10 did): front 0.41, center and surrounds 0.29. Float output would skip that.
         av_opt_set_double(swr, "rematrix_maxval", 1.0, 0);
+        // Channels without positions (no standard layout for that count: a 64-channel recorder track) give FFmpeg
+        // nothing to mix by, and swr_init failed: silence. Own matrix: input channel i goes to output i % out, every
+        // output the mean of its inputs (fewer inputs than outputs: the inputs repeat).
+        if (inLayout.order == AV_CHANNEL_ORDER_UNSPEC && inLayout.nb_channels != outChannels) {
+            const int in = inLayout.nb_channels, out = outChannels;
+            std::vector<double> matrix(size_t(in) * size_t(out), 0.0);
+            for (int o = 0; o < out; ++o) {
+                if (in < out) {
+                    matrix[size_t(o) * size_t(in) + size_t(o % in)] = 1.0;
+                    continue;
+                }
+                const int n = (in - o + out - 1) / out; // inputs o, o + out, o + 2 out … below in
+                for (int i = o; i < in; i += out) matrix[size_t(o) * size_t(in) + size_t(i)] = 1.0 / n;
+            }
+            if (swr_set_matrix(swr, matrix.data(), in) < 0) {
+                swr_free(&swr);
+                return false;
+            }
+        }
         if (swr_init(swr) < 0) {
             swr_free(&swr);
             return false;
