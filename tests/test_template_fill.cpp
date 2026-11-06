@@ -732,6 +732,12 @@ void testLibrary()
         CHECK(QFileInfo::exists(list[0].preview));
         CHECK(!list[1].builtIn);
     }
+    // A newer version of a built-in file with the same size replaces the cached copy
+    bi.templateInfo->name = "Built 2x";
+    CHECK(ProjectFile::save(bi, root.filePath("demo/template.schneidi"), &err));
+    const QVector<ContentTemplate> updated = TemplateLibrary::builtIn();
+    CHECK_EQ(int(updated.size()), 1);
+    if (!updated.isEmpty()) CHECK_EQ(updated[0].name, QString("Built 2x"));
     CHECK(!TemplateLibrary::remove("demo", &err)); // not an own one
     TemplateLibrary::setBuiltInRoot({});
     // The program's own (resources): listing them works (empty until package E fills assets/templates)

@@ -36,7 +36,20 @@ QString builtInCache()
     return QDir(QStandardPaths::writableLocation(QStandardPaths::CacheLocation)).filePath("templates-builtin");
 }
 
-// Copies the files of `from` (resources or a folder) into `to` where they are missing or of another size
+// Same bytes in both files (the built-in templates are small: comparing all of them costs about a millisecond)
+bool sameContent(const QString& a, const QString& b)
+{
+    QFile fa(a), fb(b);
+    if (fa.size() != fb.size() || !fa.open(QIODevice::ReadOnly) || !fb.open(QIODevice::ReadOnly)) return false;
+    while (!fa.atEnd()) {
+        const QByteArray chunk = fa.read(1 << 16);
+        if (chunk.isEmpty() || chunk != fb.read(chunk.size())) return false;
+    }
+    return true;
+}
+
+// Copies the files of `from` (resources or a folder) into `to` where they are missing or differ - by content, not
+// just size: a newer version of a template file can have the same size (one word changed)
 bool copyTree(const QString& from, const QString& to)
 {
     bool ok = true;
@@ -45,7 +58,7 @@ bool copyTree(const QString& from, const QString& to)
         const QString src = it.next();
         const QString dst = QDir(to).filePath(QDir(from).relativeFilePath(src));
         const QFileInfo di(dst);
-        if (di.exists() && di.size() == QFileInfo(src).size()) continue;
+        if (di.exists() && sameContent(src, dst)) continue;
         QDir().mkpath(di.absolutePath());
         QFile::remove(dst);
         if (!QFile::copy(src, dst)) {
