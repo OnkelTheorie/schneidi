@@ -511,11 +511,10 @@ bool Exporter::fallBackToSoftware(QString* error)
 QVector<QPair<QByteArray, QByteArray>> Exporter::lowMemoryOptions(const QString& codec)
 {
     // x264's lookahead holds about 6 MB per frame at 1080x1920, 40 frames at preset medium = more than a 415 MB
-    // board has free: 10 like preset veryfast, and no frames buffered between its lookahead thread and the encoder
-    // (sync-lookahead 0: 37 MB less at 2 threads, same pictures). x265: lookahead 10 too (20-25 at its presets)
-    if (codec == "libx264")
-        return {{QByteArrayLiteral("rc-lookahead"), QByteArrayLiteral("10")},
-                {QByteArrayLiteral("x264-params"), QByteArrayLiteral("sync-lookahead=0")}};
+    // board has free: 10 like preset veryfast. (sync-lookahead 0 would save 37 MB more at 2 threads, but runs the
+    // lookahead in the encoder's thread: on the Pi Zero 2 W the CS2 short rendered at half the speed.) x265:
+    // lookahead 10 too (20-25 at its presets)
+    if (codec == "libx264") return {{QByteArrayLiteral("rc-lookahead"), QByteArrayLiteral("10")}};
     if (codec == "libx265") return {{QByteArrayLiteral("x265-params"), QByteArrayLiteral("rc-lookahead=10")}};
     return {};
 }

@@ -101,10 +101,8 @@ void testMemoryThreads()
     CHECK(Exporter::automaticThreads(4, vertical, 50 * MB).lowMemory);
     CHECK(!Exporter::automaticThreads(1, vertical, 50 * MB).lowMemory); // one processor: nothing was lowered
 
-    // Shorter encoder lookahead then (sync-lookahead does not show in x264's stream settings)
-    const auto x264 = Exporter::lowMemoryOptions("libx264");
-    CHECK(x264.contains({QByteArray("rc-lookahead"), QByteArray("10")}));
-    CHECK(x264.contains({QByteArray("x264-params"), QByteArray("sync-lookahead=0")}));
+    // Shorter encoder lookahead then
+    CHECK(Exporter::lowMemoryOptions("libx264").contains({QByteArray("rc-lookahead"), QByteArray("10")}));
     CHECK(Exporter::lowMemoryOptions("libx265").contains({QByteArray("x265-params"), QByteArray("rc-lookahead=10")}));
     CHECK(Exporter::lowMemoryOptions("libsvtav1").isEmpty());
 
