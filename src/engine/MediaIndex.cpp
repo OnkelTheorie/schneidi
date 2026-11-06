@@ -19,6 +19,7 @@ extern "C" {
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QLockFile>
 #include <QMutex>
 #include <QSaveFile>
 #include <QSet>
@@ -708,6 +709,15 @@ bool annotate(Entry& e, int shot, const std::optional<QString>& desc, const std:
             if (!t.trimmed().isEmpty() && !s->tags.contains(t.trimmed())) s->tags << t.trimmed();
     }
     QMutexLocker lock(&g_mutex); // one writer at a time per process (the file is replaced atomically)
+    // ... and across processes (two AIs describing shots of the same file at once): read, change and write back under
+    // one lock, or the later writer drops the other's note. Stale only when its process is gone.
+    QDir().mkpath(notesDir());
+    QLockFile fileLock(QDir(notesDir()).filePath(".notes.lock"));
+    fileLock.setStaleLockTime(0);
+    if (!fileLock.tryLock(10000)) {
+        if (error) *error = "the shot notes are being written by another schneidi, try again";
+        return false;
+    }
     QVector<Note> ns = notes(e.file);
     // The shot's earlier note goes (also one written for a shot that overlaps it mostly)
     ns.erase(std::remove_if(ns.begin(), ns.end(),
