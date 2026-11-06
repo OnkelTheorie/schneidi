@@ -13,6 +13,7 @@
 #include "core/TimelineOps.h"
 
 #include <climits>
+#include <cstdio>
 
 #include <QCoreApplication>
 #include <QDateTime>
@@ -315,6 +316,23 @@ void testLock(const QString& dir)
                 QSysInfo::machineHostName().toUtf8() + "\n");
     }
     CHECK(ProjectFile::lock(path, 0) != nullptr);
+
+    // One lock per file, not per spelling of its path: the project reached through a symlinked folder
+    // (~/Videos -> another disk), saved there while saved here, must find the same lock taken
+    const QString real = dir + "/lock-real", link = dir + "/lock-link";
+    QDir().mkpath(real);
+    if (QFile::link(real, link) && QFileInfo(link).isSymLink()) {
+        const auto held = ProjectFile::lock(real + "/p.schneidi", 0);
+        CHECK(held);
+        CHECK(!ProjectFile::lock(link + "/p.schneidi", 0)); // the file not there yet: its folder resolved
+        QFile f(real + "/p.schneidi");
+        CHECK(f.open(QIODevice::WriteOnly));
+        f.close();
+        CHECK(!ProjectFile::lock(link + "/p.schneidi", 0));
+        CHECK(!ProjectFile::lock(dir + "/lock-real/../lock-link/p.schneidi", 0));
+    } else {
+        std::printf("  (no symlinks here: lock through a linked folder not checked)\n");
+    }
 }
 
 int main(int argc, char** argv)
