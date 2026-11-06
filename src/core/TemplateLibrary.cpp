@@ -467,50 +467,68 @@ std::unique_ptr<QLockFile> lockLibrary(int timeoutMs)
     return l;
 }
 
-bool remove(const QString& id, QString* error)
+namespace {
+
+// How long remove/rename wait for the library lock (tests: SCHNEIDI_TEMPLATE_LOCK_MS)
+int libraryWaitMs()
 {
-    const QString folder = QDir(dir()).filePath(id);
-    const std::unique_ptr<QLockFile> held = lockLibrary();
-    if (!held) {
-        if (error) *error = "the own templates are being changed by another schneidi, try again";
-        return false;
-    }
-    if (id.isEmpty() || id.contains('/') || id.contains('\\') || id.startsWith('.')
-        || !QFileInfo::exists(QDir(folder).filePath(ProjectFileName))) {
-        if (error) *error = QString("no own content template '%1'").arg(id);
-        return false;
-    }
-    if (!QDir(folder).removeRecursively()) {
-        if (error) *error = "cannot delete " + folder;
-        return false;
-    }
+    bool ok = false;
+    const int ms = qEnvironmentVariableIntValue("SCHNEIDI_TEMPLATE_LOCK_MS", &ok);
+    return ok && ms >= 0 ? ms : 60000;
+}
+
+// The folder of an own template: the id as given, else one whose id (folder name) differs only in case - on a
+// case-sensitive file system "My-Short" and "my-short" must not be two answers to an AI, and Windows sees one
+// folder anyway -, else one of that name (as find()). Empty = none. Called with the library lock held.
+QString ownFolder(const QString& key)
+{
+    const QString k = key.trimmed();
+    if (k.isEmpty() || k.contains('/') || k.contains('\\') || k.startsWith('.')) return {};
+    const QDir base(dir());
+    if (QFileInfo::exists(QDir(base.filePath(k)).filePath(ProjectFileName))) return base.filePath(k);
+    const QVector<ContentTemplate> list = own();
+    for (const ContentTemplate& t : list)
+        if (t.id.compare(k, Qt::CaseInsensitive) == 0) return t.dir;
+    for (const ContentTemplate& t : list)
+        if (t.name.compare(k, Qt::CaseInsensitive) == 0) return t.dir;
+    return {};
+}
+
+bool failed(QString* error, QString* code, const char* c, const QString& why)
+{
+    if (error) *error = why;
+    if (code) *code = QString::fromLatin1(c);
+    return false;
+}
+
+} // namespace
+
+bool remove(const QString& id, QString* error, QString* code)
+{
+    const std::unique_ptr<QLockFile> held = lockLibrary(libraryWaitMs());
+    if (!held) return failed(error, code, "BUSY", "the own templates are being changed by another schneidi, try again");
+    const QString folder = ownFolder(id);
+    if (folder.isEmpty()) return failed(error, code, "NOT_FOUND", QString("no own content template '%1'").arg(id));
+    if (!QDir(folder).removeRecursively()) return failed(error, code, "FAILED", "cannot delete " + folder);
     return true;
 }
 
-bool rename(const QString& id, const QString& name, QString* error)
+bool rename(const QString& id, const QString& name, QString* error, QString* code)
 {
     const QString shown = name.trimmed();
-    if (shown.isEmpty()) {
-        if (error) *error = T("Die Vorlage braucht einen Namen.");
-        return false;
-    }
-    QString folder = QDir(dir()).filePath(id);
+    if (shown.isEmpty()) return failed(error, code, "BAD_ARGUMENT", T("Die Vorlage braucht einen Namen."));
+    const std::unique_ptr<QLockFile> held = lockLibrary(libraryWaitMs());
+    if (!held) return failed(error, code, "BUSY", "the own templates are being changed by another schneidi, try again");
+    QString folder = ownFolder(id);
+    if (folder.isEmpty()) return failed(error, code, "NOT_FOUND", QString("no own content template '%1'").arg(id));
     QString file = QDir(folder).filePath(ProjectFileName);
-    const std::unique_ptr<QLockFile> held = lockLibrary();
-    if (!held) {
-        if (error) *error = "the own templates are being changed by another schneidi, try again";
-        return false;
-    }
-    if (id.isEmpty() || id.contains('/') || id.contains('\\') || !QFileInfo::exists(file)) {
-        if (error) *error = QString("no own content template '%1'").arg(id);
-        return false;
-    }
     ProjectData d;
-    if (!ProjectFile::load(file, &d, error)) return false;
+    QString why;
+    if (!ProjectFile::load(file, &d, &why)) return failed(error, code, "FAILED", why);
     TemplateInfo info = d.templateInfo.value_or(TemplateInfo{});
     info.name = shown;
     d.templateInfo = info;
-    if (!ProjectFile::save(d, file, error)) return false;
+    if (!ProjectFile::save(d, file, &why)) return failed(error, code, "FAILED", why);
     const QString newFolder = QDir(dir()).filePath(idForName(shown));
     // The folder follows the name when that one is free (a template of that name keeps its own)
     if (newFolder != folder && !QFileInfo::exists(newFolder) && QDir().rename(folder, newFolder)) {

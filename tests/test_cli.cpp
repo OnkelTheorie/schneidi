@@ -26,7 +26,9 @@
 #include <QTemporaryDir>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
+#include <thread>
 #include <utility>
 
 using Check::dump;
@@ -498,14 +500,27 @@ int main(int argc, char** argv)
     CHECK_EQ(tl["subtitles"][0]["cues"].toArray().size(), 2);
     CHECK_EQ(errorOf("restore", {{"project", g_path}, {"backup", "999"}}), QString("NOT_FOUND"));
 
-    // Someone else (the app) saving: writing commands wait, then give up; reading works
+    // Someone else (the app, other AI edits) saving: writing commands wait up to 30 s - ten edits at once on a busy
+    // machine take turns longer than 5 s -, then give up; reading works
     {
-        const auto held = ProjectFile::lock(g_path, 0);
+        auto held = ProjectFile::lock(g_path, 0);
         CHECK(held != nullptr);
+        std::thread release([&held] {
+            std::this_thread::sleep_for(std::chrono::seconds(8));
+            held.reset();
+        });
+        QElapsedTimer waited;
+        waited.start();
+        CHECK_EQ(errorOf("edit", {{"project", g_path}, {"ops", R"([{"op":"marker","at":1}])"}}), QString("none"));
+        release.join();
+        CHECK(waited.elapsed() >= 7000);
+        held = ProjectFile::lock(g_path, 0);
+        CHECK(held != nullptr);
+        waited.restart();
         CHECK_EQ(errorOf("edit", {{"project", g_path}, {"ops", R"([{"op":"marker","at":1}])"}}), QString("PROJECT_LOCKED"));
+        CHECK(waited.elapsed() >= ProjectFile::kCliLockWaitMs - 1000);
         CHECK_EQ(errorOf("info", {{"project", g_path}}), QString("none"));
     }
-    edit(R"([{"op":"marker","at":1}])");
     // A writer that did not wait for the lock (another TMPDIR: a sandboxed app, a container) changed the file while
     // this command ran: nothing is saved over its change
     {
@@ -1187,6 +1202,40 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
             const QString gameProj = dir.filePath("mixed-game.schneidi");
             run("new", {{"project", gameProj}, {"template", "game"}});
             CHECK(!run("edit", {{"project", gameProj}, {"ops", QString(R"([{"op":"append","media":"%1"}])").arg(mixed)}}).contains("notes"));
+        }
+    }
+    // `new` with media: frame rate and size from the first video (sound and stills first do not count), what is
+    // given or fixed by the start template stays; without video the template's 25 fps
+    {
+        const QString sound = Check::makeMedia(dir.filePath("first.wav"), {"-f", "lavfi", "-i", "sine=f=440:d=1"});
+        const QString sixty = Check::makeMedia(dir.filePath("sixty.mp4"),
+                                               {"-f", "lavfi", "-i", "testsrc2=s=640x360:r=60:d=1", "-c:v", "libx264",
+                                                "-pix_fmt", "yuv420p"});
+        if (CHECK(!sound.isEmpty() && !sixty.isEmpty())) {
+            const QString proj = dir.filePath("from-media.schneidi");
+            const QJsonObject r = run("new", {{"project", proj}, {"media", QJsonArray{sound, sixty}}});
+            CHECK_EQ(r["format"]["fps"].toDouble(), 60.0);
+            CHECK_EQ(r["format"]["width"].toInt(), 640);
+            CHECK_EQ(r["format"]["height"].toInt(), 360);
+            CHECK_EQ(r["format_from"].toString(), sixty);
+            // The media lengths count in that rate (1 s = 60 frames)
+            bool counted = false;
+            for (const QJsonValue& m : r["media"].toArray())
+                if (m["path"].toString() == sixty) counted = CHECK_EQ(m["frames"].toInt(), 60);
+            CHECK(counted);
+            const QJsonObject given = run("new", {{"project", proj}, {"overwrite", true}, {"media", QJsonArray{sixty}},
+                                                  {"fps", 30}, {"width", 1280}, {"height", 720}});
+            CHECK_EQ(given["format"]["fps"].toDouble(), 30.0);
+            CHECK_EQ(given["format"]["width"].toInt(), 1280);
+            const QJsonObject vertical = run("new", {{"project", proj}, {"overwrite", true}, {"media", QJsonArray{sixty}},
+                                                     {"template", "vertical"}});
+            CHECK_EQ(vertical["format"]["fps"].toDouble(), 60.0); // its frame rate comes from the material
+            CHECK_EQ(vertical["format"]["width"].toInt(), 1080);   // its size is fixed
+            CHECK_EQ(vertical["format"]["height"].toInt(), 1920);
+            const QJsonObject soundOnly = run("new", {{"project", proj}, {"overwrite", true}, {"media", QJsonArray{sound}}});
+            CHECK_EQ(soundOnly["format"]["fps"].toDouble(), 25.0);
+            CHECK_EQ(soundOnly["format"]["width"].toInt(), 1920);
+            CHECK(!soundOnly.contains("format_from"));
         }
     }
     {

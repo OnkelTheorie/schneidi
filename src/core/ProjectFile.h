@@ -83,6 +83,9 @@ bool load(const QString& path, ProjectData* data, QString* error);
 // the temp folder: TMPDIR differs between programs); a crashed holder leaves a stale lock that QLockFile detects.
 // nullptr = still locked by someone else after timeoutMs.
 std::unique_ptr<QLockFile> lock(const QString& projectPath, int timeoutMs = 5000);
+// How long schneidi-cli's writing commands wait for that lock: ten AI edits of one project at once on a busy machine
+// take turns for longer than the app's 5 s (it must not freeze that long)
+inline constexpr int kCliLockWaitMs = 30000;
 // Content fingerprint of a saved project file (empty = unreadable): tells own saves from changes by others
 QByteArray fingerprint(const QString& path);
 

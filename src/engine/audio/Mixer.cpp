@@ -651,6 +651,22 @@ int64_t Mixer::frameStart(int64_t frame) const { return d->clock.start(frame); }
 int64_t Mixer::frameAt(int64_t sample) const { return d->clock.frameAt(sample); }
 const Mixer::Stats& Mixer::stats() const { return *d->stats; }
 
+std::vector<std::pair<int64_t, int64_t>> Mixer::soundSpans() const
+{
+    std::vector<std::pair<int64_t, int64_t>> spans;
+    for (const TrackPlan& t : d->tracks)
+        if (t.audible)
+            for (const Voice& v : t.voices) spans.emplace_back(v.tStart(), v.tEnd);
+    std::sort(spans.begin(), spans.end());
+    std::vector<std::pair<int64_t, int64_t>> merged;
+    for (const auto& s : spans) {
+        if (s.second <= s.first) continue;
+        if (!merged.empty() && s.first <= merged.back().second) merged.back().second = std::max(merged.back().second, s.second);
+        else merged.push_back(s);
+    }
+    return merged;
+}
+
 void Mixer::render(int64_t pos, int count, float* const* out) { d->render(pos, count, out); }
 
 void Mixer::setMetering(bool on)

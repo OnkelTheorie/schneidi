@@ -237,7 +237,7 @@ Session::Opened openSession(const QString& file, Session::Access access)
     if (anyApp) fail("NO_APP", "the schneidi app is not running");
     if (!QFileInfo::exists(o.path)) fail("NOT_FOUND", "project not found: " + o.path);
     if (access == Session::Access::Write) {
-        o.lock = ProjectFile::lock(o.path);
+        o.lock = ProjectFile::lock(o.path, ProjectFile::kCliLockWaitMs);
         if (!o.lock) fail("PROJECT_LOCKED", "the project is being saved by someone else (schneidi app?), try again: " + o.path);
         o.fingerprint = ProjectFile::fingerprint(o.path); // before loading: a change after it shows at save()
     }
@@ -771,9 +771,11 @@ const QVector<Command>& commands()
           {"template", T::String, "start template: id or name from `templates` (e.g. \"podcast\"), or a template "
                                   "file (.json) or another project (.schneidi) whose format and tracks to take "
                                   "(default: the user's default template)"},
-          {"width", T::Integer, "timeline width (default: the template's, 1920)"},
-          {"height", T::Integer, "timeline height (default: the template's, 1080)"},
-          {"fps", T::Number, "frame rate (default: the template's, 25; 23.976, 24, 25, 29.97, 30, 50, 59.94, 60)"},
+          {"width", T::Integer, "timeline width (default: the first video in media, else the template's, 1920)"},
+          {"height", T::Integer, "timeline height (default: the first video in media, else the template's, 1080)"},
+          {"fps", T::Number, "frame rate (default: the first video in media - its nearest standard rate -, else the "
+                             "template's, 25; 23.976, 24, 25, 29.97, 30, 50, 59.94, 60). A template's fixed size or "
+                             "rate stays; the answer's format_from names the video"},
           {"media", T::Paths, "media files to import"},
           {"overwrite", T::Boolean, "replace an existing project (its last state goes into the backups; not while "
                                     "it is open in the app)"}},

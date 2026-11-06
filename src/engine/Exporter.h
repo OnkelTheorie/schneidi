@@ -101,11 +101,21 @@ public:
         int threads = 1;
         bool lowMemory = false;
     };
-    static ThreadChoice automaticThreads(int processors, QSize output, qint64 availableBytes);
-    // x264 looks fewer frames ahead (10 instead of the preset's, e.g. 40 at medium) when its lookahead alone would take
-    // more than a third of the RAM available: about 3 bytes per pixel and frame (8K: 40 frames = 4 GB, a render with
-    // 2 threads asked for was killed in a 5 GB cap). Whatever the threads: a number asked for does not change it.
+    // sourceBytes: what the source decoders hold (decodedSourceBytes), taken off the RAM before the threads
+    static ThreadChoice automaticThreads(int processors, QSize output, qint64 availableBytes, qint64 sourceBytes = 0);
+    // x264/x265 look fewer frames ahead (lowMemoryOptions) also when the threads were asked for, if the lookahead
+    // alone would take more than a third of the RAM available: about 3 bytes per pixel and frame at 40 frames (8K:
+    // 4 GB, a render with 2 threads asked for was killed in a 5 GB cap). A number of threads asked for stays.
     static bool shortLookahead(QSize output, qint64 availableBytes);
+    // Encoder options of a render whose threads were lowered for the RAM (threadsLowMemory): shorter lookahead of
+    // x264/x265 (a format's own options still win: they are applied after)
+    static QVector<QPair<QByteArray, QByteArray>> lowMemoryOptions(const QString& codec);
+    // The most memory the video decoders of the range [from, to) hold at one frame: every clip showing then with a
+    // decoder of its own (another file, or the same file at another position: picture-in-picture, a transition;
+    // the same file at the same position on another track - a kill-feed layer - shares one) keeps about 20 decoded
+    // pictures of its file's size. sizeOf: a file's picture size (empty = no video decoder: stills, titles)
+    static qint64 decodedSourceBytes(const Timeline& tl, int from, int to,
+                                     const std::function<QSize(const QString&)>& sizeOf);
     // How many images are rendered at once: threads (0 = all), but 1 if a frame needs the one before (stabilizing
     // with border "keep")
     static int parallelFrames(const Timeline& tl, int threads);
@@ -226,7 +236,7 @@ private:
     QString m_sampleFormat;   // FFmpeg sample format of the audio encoder
     int m_threads = 0, m_frames = 1;
     bool m_threadsLowMemory = false;
-    bool m_shortLookahead = false; // x264 rc-lookahead 10 (shortLookahead or m_threadsLowMemory)
+    bool m_shortLookahead = false; // lowMemoryOptions (shortLookahead or m_threadsLowMemory)
     QString m_usedCodec, m_note;
     QVector<Picture::SkippedEffect> m_skipped;
     QTimer m_timer;

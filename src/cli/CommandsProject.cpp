@@ -238,6 +238,24 @@ QJsonObject cmdNew(const QJsonObject& a, Context&)
         fail("IN_USE", "the project is open in the schneidi app; close it there first: " + path);
     const StartTemplate t = startTemplate(a["template"].toString());
     ProjectData d = StartTemplates::apply(t);
+    // What is not given comes from the first video file (frame rate, and the size unless width or height is given),
+    // as the app offers for the first clip in an empty timeline: an AI once cut 60-fps gameplay in a 25-fps project.
+    // A start template's fixed frame rate or resolution stays; no video (sound, stills only): the template's format
+    QString formatFrom;
+    const bool sizeGiven = a.contains("width") || a.contains("height");
+    if ((!a.contains("fps") && !d.fixedFrameRate) || (!sizeGiven && !d.fixedResolution))
+        for (const QJsonValue& v : a["media"].toArray()) {
+            const ClipFormat cf = detectClipFormat(absolute(v.toString()));
+            if (!cf.ok) continue;
+            if (!a.contains("fps") && !d.fixedFrameRate && cf.suggested.num > 0) d.format.rate = cf.suggested;
+            const int w = cf.width & ~1, h = cf.height & ~1;
+            if (!sizeGiven && !d.fixedResolution && w >= 16 && h >= 16 && w <= 8192 && h <= 8192) {
+                d.format.width = w;
+                d.format.height = h;
+            }
+            formatFrom = absolute(v.toString());
+            break;
+        }
     d.format = parseFormat(a, d.format);
     Project p;
     p.load(d);
@@ -252,7 +270,7 @@ QJsonObject cmdNew(const QJsonObject& a, Context&)
     std::unique_ptr<QLockFile> lock;
     QString backup;
     if (replaces) {
-        lock = ProjectFile::lock(path);
+        lock = ProjectFile::lock(path, ProjectFile::kCliLockWaitMs);
         if (!lock) fail("PROJECT_LOCKED", "the project is being saved by someone else (schneidi app?), try again: " + path);
         backup = ProjectFile::backup(path);
     }
@@ -260,6 +278,7 @@ QJsonObject cmdNew(const QJsonObject& a, Context&)
     if (!ProjectFile::save(p.data(), path, &error)) fail("SAVE_FAILED", error);
     QJsonObject o = projectJson(p, path);
     o["template"] = QJsonObject{{"id", t.id}, {"name", t.displayName()}};
+    if (!formatFrom.isEmpty()) o["format_from"] = formatFrom; // the video whose frame rate/size the project took
     if (!backup.isEmpty()) o["backup"] = backup;
     return o;
 }
@@ -719,7 +738,7 @@ QJsonObject cmdRestore(const QJsonObject& a, Context&)
     const QString path = absolute(a["project"].toString());
     if (Live::isAppProject(path)) fail("NO_APP", "the schneidi app is not running");
     if (!QFileInfo::exists(path)) fail("NOT_FOUND", "project not found: " + path);
-    const auto lock = ProjectFile::lock(path);
+    const auto lock = ProjectFile::lock(path, ProjectFile::kCliLockWaitMs);
     if (!lock) fail("PROJECT_LOCKED", "the project is being saved by someone else (schneidi app?), try again: " + path);
     // Pick the copy before the current state goes into the backups (that shifts the numbers)
     const QString source = backupFile(path, a);

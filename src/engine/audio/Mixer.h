@@ -20,6 +20,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <utility>
 #include <vector>
 
 namespace Audio {
@@ -47,6 +48,11 @@ public:
     // First sample of timeline frame f, and the frame a sample belongs to
     int64_t frameStart(int64_t frame) const;
     int64_t frameAt(int64_t sample) const;
+
+    // Where the plan has sound: the merged [start, end) sample spans of the clips on the audible tracks (sources
+    // that cannot be opened included). Outside them the mix is silence apart from the tails of track EQ, compressor
+    // and limiter (well under a second). Analyses skip the rest (a clip far out on the timeline, empty stretches).
+    std::vector<std::pair<int64_t, int64_t>> soundSpans() const;
 
     // Mixes [pos, pos + count) into out[0..kChannels) (planar). Positions outside the timeline give silence.
     void render(int64_t pos, int count, float* const* out);

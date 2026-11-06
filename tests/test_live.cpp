@@ -28,6 +28,7 @@
 #include <QStandardPaths>
 #include <QTemporaryDir>
 #include <QUndoStack>
+#include <QWindow>
 
 namespace {
 
@@ -494,6 +495,29 @@ int main(int argc, char* argv[])
         server.setWaiting({});
         CHECK_EQ(code(cli({"info", "@app"})), QString("ok"));
         CHECK_EQ(code(cli({"app", "state"})), QString("ok"));
+    }
+
+    // A modal dialog of the app ("changed outside schneidi", a load error, "save changes?") waits for the user by
+    // itself: its event loop delivers requests, but an edit or `app save` must not answer it behind the user's back
+    {
+        QWindow dialog;
+        dialog.setTitle("Changed outside schneidi");
+        dialog.setModality(Qt::ApplicationModal);
+        dialog.show();
+        QCoreApplication::processEvents();
+        CHECK(server.waitingNow().contains("Changed outside schneidi"));
+        const int clipsBefore = videoClips(fake.project);
+        QJsonObject r2 = cli({"edit", "@app", "--ops", R"([{"op":"split","at":60}])"});
+        CHECK_EQ(code(r2), QString("APP_WAITING"));
+        CHECK(r2["error"].toObject()["message"].toString().contains("dialog"));
+        CHECK_EQ(videoClips(fake.project), clipsBefore);
+        CHECK_EQ(code(cli({"app", "save"})), QString("APP_WAITING"));
+        CHECK_EQ(server.runForChat("app", {{"action", "save"}})["error"].toObject()["code"].toString(),
+                 QString("APP_WAITING"));
+        dialog.hide();
+        QCoreApplication::processEvents();
+        CHECK(server.waitingNow().isEmpty());
+        CHECK_EQ(code(cli({"info", "@app"})), QString("ok"));
     }
 
     // One AI session at a time: an MCP server keeps its connection

@@ -76,6 +76,12 @@ QVector<Issue> timeline(const Timeline& tl, int from, int to, const ProjectForma
 // Only the length: [from, to) longer than Options::maxLengthS ("too_long"); part of timeline(), for rendered files alone
 QVector<Issue> length(int from, int to, const ProjectFormat& f, const Options& o = {});
 
+// The sound is measured at most kMaxSoundHours from `from` (a clip far out on the timeline - frame 2^30 is over a
+// year - must not make the check mix and keep peaks of months of silence): the end of the measured range, and with a
+// shorter one a warning "sound_check_limited" in `issues`
+inline constexpr double kMaxSoundHours = 24;
+int soundEnd(int from, int to, const ProjectFormat& f, QVector<Issue>* issues);
+
 // Sound of a video: per-frame peaks (linear, 0..1+) starting at frame `offset`, integrated loudness and true peak
 // (LoudnessMeter::kSilence or lower = no sound). limiter = the master limiter is on (no advice to switch it on).
 QVector<Issue> sound(const std::vector<float>& framePeaks, int offset, double integratedLufs, double truePeakDb,

@@ -32,6 +32,9 @@ It also finds:
   `story_no_hook`, `story_open_question` (a question with no turn or resolution after it), `story_resolution_late`,
   `story_no_cta` and `story_gap` (info). `story` in the answer says what the first strong moment is. No sections yet:
   `{"op":"sections","auto":true}` suggests them from the cuts.
+- `sound_check_limited`: the range is longer than a day (usually a clip far out on the timeline by mistake - look
+  at `info`'s length); the sound was measured only in the first 24 hours. Stretches without any clip are skipped
+  when mixing, so a long timeline with little sound checks quickly.
 - After publishing: `retention` = the audience retention CSV (YouTube Studio, TikTok) → `retention_drop` (info)
   where viewers leave, with `at_s` = the change right before it: often the cut to look at.
 

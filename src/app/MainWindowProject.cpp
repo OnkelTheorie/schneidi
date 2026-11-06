@@ -65,6 +65,7 @@
 #include <QMenu>
 #include <QProgressDialog>
 #include <QCloseEvent>
+#include <QDateTime>
 #include <QDir>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -554,7 +555,24 @@ bool MainWindow::offerAutosaveRestore()
         return false;
     }
     ProjectData data;
-    if (!ProjectFile::load(autosavePath(), &data, nullptr) || !applyLoaded(std::move(data), original)) return false;
+    QString error;
+    if (!ProjectFile::load(autosavePath(), &data, &error)) {
+        // Broken (cut off by a crash while writing, a full disk): moved aside, never offered again; kept, not deleted
+        // - the user may want to look into it
+        const QFileInfo fi(autosavePath());
+        const QString aside = fi.dir().filePath(QString("%1-broken-%2.%3")
+                                                    .arg(fi.completeBaseName(),
+                                                         QDateTime::currentDateTime().toString("yyyyMMdd-HHmmss"),
+                                                         ProjectFile::Extension));
+        const bool moved = QFile::rename(fi.filePath(), aside);
+        if (!moved) QFile::remove(fi.filePath());
+        QSettings().remove(autosaveKey());
+        QString text = T("Die automatische Sicherung konnte nicht geladen werden:\n%1").arg(error);
+        if (moved) text += "\n\n" + T("Sie liegt jetzt unter %1 und wird nicht mehr angeboten.").arg(QDir::toNativeSeparators(aside));
+        QMessageBox::warning(this, T("Wiederherstellen"), text);
+        return false;
+    }
+    if (!applyLoaded(std::move(data), original)) return false;
     m_project->markModified(); // restored, but not yet saved into the project file
     return true;
 }

@@ -78,22 +78,27 @@ void testMemoryThreads()
     // Unknown memory: every processor
     CHECK_EQ(Exporter::automaticThreads(12, uhd, 0).threads, 12);
     CHECK(!Exporter::automaticThreads(12, uhd, 0).lowMemory);
+    // Decoders: about 20 pictures of the file's size each (1.5 bytes per pixel)
+    const qint64 hdSource = 1920LL * 1080 * 3 / 2 * 20, uhdSource = 3840LL * 2160 * 3 / 2 * 20;
     // A machine with 4 GB (about 2.5 GB free) or more: 1080p and 4K keep all threads
     for (qint64 free : {2500 * MB, 12000 * MB}) {
         for (QSize size : {hd, vertical})
             for (int cores : {4, 8, 12, 16}) {
-                CHECK_EQ(Exporter::automaticThreads(cores, size, free).threads, cores);
-                CHECK(!Exporter::automaticThreads(cores, size, free).lowMemory);
+                CHECK_EQ(Exporter::automaticThreads(cores, size, free, hdSource).threads, cores);
+                CHECK(!Exporter::automaticThreads(cores, size, free, 2 * hdSource).lowMemory);
             }
+        CHECK_EQ(Exporter::automaticThreads(4, uhd, free, uhdSource).threads, 4);
         CHECK_EQ(Exporter::automaticThreads(8, uhd, free).threads, 8);
     }
-    CHECK_EQ(Exporter::automaticThreads(12, uhd, 12000 * MB).threads, 12);
-    // Raspberry Pi Zero 2 W (415 MB, about 280 MB available) with a 1080x1920 short: 2 of 4
-    const Exporter::ThreadChoice pi = Exporter::automaticThreads(4, vertical, 280 * MB);
+    CHECK_EQ(Exporter::automaticThreads(12, uhd, 12000 * MB, 2 * uhdSource).threads, 12);
+    // Raspberry Pi Zero 2 W (415 MB, about 280 MB available) with a 1080x1920 short of one 1080p recording: 2 of 4;
+    // a second decoder (picture-in-picture of another file) leaves room for one
+    const Exporter::ThreadChoice pi = Exporter::automaticThreads(4, vertical, 280 * MB, hdSource);
     CHECK_EQ(pi.threads, 2);
     CHECK(pi.lowMemory);
+    CHECK_EQ(Exporter::automaticThreads(4, vertical, 280 * MB, 2 * hdSource).threads, 1);
     // 720p there has room for more; nearly nothing free still renders with one
-    CHECK(Exporter::automaticThreads(4, QSize(1280, 720), 280 * MB).threads > 2);
+    CHECK(Exporter::automaticThreads(4, QSize(1280, 720), 280 * MB, 1280LL * 720 * 3 / 2 * 20).threads > 2);
     CHECK_EQ(Exporter::automaticThreads(4, vertical, 50 * MB).threads, 1);
     CHECK(Exporter::automaticThreads(4, vertical, 50 * MB).lowMemory);
     CHECK(!Exporter::automaticThreads(1, vertical, 50 * MB).lowMemory); // one processor: nothing was lowered
@@ -106,6 +111,43 @@ void testMemoryThreads()
     CHECK(Exporter::shortLookahead(uhd, 2500 * MB));
     CHECK(!Exporter::shortLookahead(hd, 2500 * MB));
     CHECK(!Exporter::shortLookahead(QSize(7680, 4320), 0)); // unknown: no limit
+    // Shorter encoder lookahead then
+    CHECK(Exporter::lowMemoryOptions("libx264").contains({QByteArray("rc-lookahead"), QByteArray("10")}));
+    CHECK(Exporter::lowMemoryOptions("libx265").contains({QByteArray("x265-params"), QByteArray("rc-lookahead=10")}));
+    CHECK(Exporter::lowMemoryOptions("libsvtav1").isEmpty());
+
+    // What the decoders hold at once
+    const auto sizeOf = [](const QString& path) {
+        return path == "uhd.mp4" ? QSize(3840, 2160) : path == "still.png" ? QSize() : QSize(1920, 1080);
+    };
+    auto clip = [](int id, const QString& file, int start, int in, int length) {
+        Clip c;
+        c.id = id;
+        c.mediaPath = file;
+        c.start = start;
+        c.in = in;
+        c.out = in + length - 1;
+        return c;
+    };
+    Timeline tl;
+    tl.video.resize(3);
+    tl.video[0].clips << clip(1, "a.mp4", 0, 100, 50) << clip(2, "b.mp4", 50, 0, 50); // one after the other
+    CHECK_EQ(Exporter::decodedSourceBytes(tl, 0, 100, sizeOf), hdSource);
+    // The same file at the same position on another track (a kill-feed layer): the same decoder
+    tl.video[1].clips << clip(3, "a.mp4", 0, 100, 50);
+    CHECK_EQ(Exporter::decodedSourceBytes(tl, 0, 100, sizeOf), hdSource);
+    // At another position (picture-in-picture 30 frames later): a decoder of its own
+    tl.video[1].clips[0].in = 130;
+    tl.video[1].clips[0].out = 179;
+    CHECK_EQ(Exporter::decodedSourceBytes(tl, 0, 100, sizeOf), 2 * hdSource);
+    // A 4K file over both; stills, disabled clips, hidden tracks and what lies outside the range count nothing
+    tl.video[2].clips << clip(4, "uhd.mp4", 40, 0, 20);
+    CHECK_EQ(Exporter::decodedSourceBytes(tl, 0, 100, sizeOf), 2 * hdSource + uhdSource);
+    CHECK_EQ(Exporter::decodedSourceBytes(tl, 60, 100, sizeOf), hdSource);
+    tl.video[2].clips[0].enabled = false;
+    tl.video[1].hidden = true;
+    tl.video[2].clips << clip(5, "still.png", 0, 0, 100);
+    CHECK_EQ(Exporter::decodedSourceBytes(tl, 0, 100, sizeOf), hdSource);
 
     // /proc/meminfo as Linux writes it
     const SystemMemory::Info info = SystemMemory::parseMeminfo("MemTotal:         425364 kB\nMemFree:           87212 kB\n"
@@ -188,14 +230,21 @@ void testMemoryRender(const QString& dir)
         const qsizetype at = data.indexOf("rc_lookahead=");
         return at < 0 ? QByteArray("none") : data.mid(at + 13, data.indexOf(' ', at) - at - 13);
     };
-    qputenv("SCHNEIDI_AVAILABLE_MB", "100");
+    // 240 MB, 1080p from a 1080p file: room for 2 threads (one decoder, the reserve)
+    qputenv("SCHNEIDI_AVAILABLE_MB", "240");
     int used = 0;
     bool low = false;
     run(0, &used, &low);
+    CHECK_EQ(used, std::min(2, Exporter::availableThreads()));
+    CHECK_EQ(low, Exporter::availableThreads() > 2);
+    const bool x264 = lookahead() != "none"; // the GPL-free build writes OpenH264
+    if (low && x264) {
+        CHECK_EQ(lookahead(), QByteArray("10"));
+    }
+    qputenv("SCHNEIDI_AVAILABLE_MB", "100");
+    run(0, &used, &low);
     CHECK_EQ(used, 1);
     CHECK_EQ(low, Exporter::availableThreads() > 1);
-    const bool x264 = lookahead() != "none"; // the GPL-free build writes OpenH264
-    if (low && x264) CHECK_EQ(lookahead(), QByteArray("10"));
     run(3, &used, &low);
     CHECK_EQ(used, 3);
     CHECK(!low);
