@@ -21,7 +21,8 @@
 //   on the audio track of its number if free there, else the first free one, else a new one. A picture of another shape than the timeline is reframed
 //   (ClipSlot::reframe; Reframe Center, or Auto when Context::reframePath gives a camera path); a clip that was
 //   reframed for its old file follows the new shape (Reframe::reshape). Speed ramps, reverse and freeze of the
-//   placeholder are reset (they belong to the old file), its own constant speed stays.
+//   placeholder are reset (they belong to the old file), its own constant speed stays (not a Speed fit's slow motion:
+//   ClipSlot::ownSpeed keeps the speed from before it, the next value starts from that).
 // - Text (a text title): the title gets the text (every part of a title cut in two: each keeps its own look). Over maxChars: an error, unless `shrink`: then a warning. With
 //   `shrink` a text wider than the placeholder's text was gets a smaller font so it fits that width (font-independent
 //   width estimate titleWidth() from core/ProjectFormat.h, the same in app and CLI; at most down to 40 %).

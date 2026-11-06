@@ -91,10 +91,15 @@ struct FileCopies {
 // "<targetDir>/media/a.mp4") and the project points at the copies. Without `keepPool` files of the template that
 // nothing uses leave the Media Pool. Never overwrites: a file of that name with other content stays and the copy
 // gets a free name ("a-2.mp4"); one with the same content (size, then bytes) is used as it is. `known` (optional):
-// copies of earlier calls (template file -> copy), used again without comparing while their size matches (the rows
-// of a batch share one folder). False + error when a copy fails; the copies written by this call are removed then.
+// copies of earlier calls (template file -> copy), used again without comparing while they lie in `targetDir` and
+// their size matches (the rows of a batch share one folder). False + error when a copy fails; the copies written by
+// this call are removed then (and `known` is as before the call).
 bool copyTemplateFiles(ProjectData& d, const QString& templateDir, const QString& targetDir, FileCopies* out,
                        QString* error = nullptr, QHash<QString, QString>* known = nullptr, bool keepPool = false);
+// The template folders (own ones in dir(), built-in ones in the cache) holding files the project uses (forEachFile) or
+// has in its Media Pool, sorted: a project made from a template still points into them until a save copies the files
+// (copyTemplateFiles), also when nothing remembers which template it came from (restored from an automatic backup)
+QStringList foldersUsed(const ProjectData& d);
 
 // "9:16" etc. for a size
 QString aspectLabel(int width, int height);

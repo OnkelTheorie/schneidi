@@ -497,6 +497,38 @@ void testBrowserAndWindow(const QString& tmp)
             CHECK(sd.brand && sd.brand->logo.startsWith(copies) && QFileInfo::exists(sd.brand->logo));
             const QString savedLut = sd.timeline.video[0].clips[0].effects.value(0).params.value("lut").toString();
             CHECK(savedLut.startsWith(copies) && QFileInfo::exists(savedLut));
+            // Saved again elsewhere (Save As): copies there too, not the first folder's
+            const QString other = tmp + "/anders/Projekt2.schneidi";
+            CHECK(w.liveSave(other, &err));
+            ProjectData od;
+            CHECK(ProjectFile::load(other, &od, &err));
+            CHECK(!od.media.isEmpty());
+            for (const MediaInfo& m : od.media)
+                CHECK(m.path.startsWith(tmp + "/anders/Projekt2 media/") && QFileInfo::exists(m.path));
+
+            // Never saved, then restored from its automatic backup (the link to the template is gone, like any loaded
+            // project): saving copies the template's files all the same
+            CHECK(w.newProjectFromContentTemplate(*bundled));
+            const QString backup = tmp + "/autosave/autosave.schneidi";
+            QDir().mkpath(tmp + "/autosave");
+            CHECK(ProjectFile::save(p->data(), backup, &err));
+            CHECK(w.openProject(backup));
+            const QString restored = tmp + "/neu/Wieder.schneidi";
+            CHECK(w.liveSave(restored, &err));
+            ProjectData rd;
+            CHECK(ProjectFile::load(restored, &rd, &err));
+            const QString restoredCopies = tmp + "/neu/Wieder media/";
+            CHECK(!rd.media.isEmpty());
+            for (const MediaInfo& m : rd.media) CHECK(m.path.startsWith(restoredCopies) && QFileInfo::exists(m.path));
+            CHECK(rd.brand && rd.brand->logo.startsWith(restoredCopies));
+            // The template itself saved (Edit): its files stay in it, nothing is copied out
+            CHECK(w.editContentTemplate(*bundled));
+            CHECK(w.liveSave({}, &err));
+            ProjectData td2;
+            CHECK(ProjectFile::load(bundled->project, &td2, &err));
+            CHECK(!td2.media.isEmpty());
+            for (const MediaInfo& m : td2.media) CHECK(m.path.startsWith(media));
+            CHECK(!QFileInfo::exists(bundled->dir + "/template media"));
             CHECK(TemplateLibrary::remove(bundled->id));
         }
     }

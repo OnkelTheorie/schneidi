@@ -29,8 +29,9 @@ QString Editor::setClipSlot(int clipId, const ClipSlot& slot)
         s.minLen = std::max(0, s.minLen);
         s.maxLen = std::max(0, s.maxLen);
         s.maxChars = std::max(0, s.maxChars);
-        // The fill keeps this one (a Fixed slot's own length), the user does not set it
+        // The fill keeps these (a Fixed slot's own length, the slot's own speed), the user does not set them
         s.nominalLen = s.length == SlotLength::Fixed ? c->slot.nominalLen : 0;
+        s.ownSpeed = c->slot.ownSpeed;
     } else {
         s = {};
     }
