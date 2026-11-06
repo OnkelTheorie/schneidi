@@ -79,8 +79,9 @@ QStringList backups(const QString& projectPath);
 QString backupDir(const QString& projectPath);
 bool load(const QString& path, ProjectData* data, QString* error);
 // Write lock of a project file, so that the app and schneidi-cli never write it at the same time: held from
-// reading until the save is done. The lock file lives in the temp folder (not next to the project); a crashed
-// holder leaves a stale lock that QLockFile detects. nullptr = still locked by someone else after timeoutMs.
+// reading until the save is done. The lock file lives in the user's cache folder (not next to the project, not in
+// the temp folder: TMPDIR differs between programs); a crashed holder leaves a stale lock that QLockFile detects.
+// nullptr = still locked by someone else after timeoutMs.
 std::unique_ptr<QLockFile> lock(const QString& projectPath, int timeoutMs = 5000);
 // Content fingerprint of a saved project file (empty = unreadable): tells own saves from changes by others
 QByteArray fingerprint(const QString& path);

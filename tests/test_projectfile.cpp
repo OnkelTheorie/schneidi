@@ -20,6 +20,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QHash>
 #include <QSysInfo>
 #include <QTemporaryDir>
 
@@ -332,6 +333,24 @@ void testLock(const QString& dir)
         CHECK(!ProjectFile::lock(dir + "/lock-real/../lock-link/p.schneidi", 0));
     } else {
         std::printf("  (no symlinks here: lock through a linked folder not checked)\n");
+    }
+
+    // ... and not per temp folder: a program with another TMPDIR (an AI agent's sandbox) finds it taken as well
+    {
+        const auto held = ProjectFile::lock(path, 0);
+        CHECK(held);
+        const QString otherTemp = dir + "/other-temp";
+        QDir().mkpath(otherTemp);
+        QHash<QByteArray, QByteArray> before;
+        for (const char* var : {"TMPDIR", "TMP", "TEMP"}) {
+            before[var] = qgetenv(var);
+            qputenv(var, otherTemp.toLocal8Bit());
+        }
+        CHECK_EQ(QDir::tempPath(), QDir(otherTemp).absolutePath());
+        CHECK(!ProjectFile::lock(path, 0));
+        for (auto it = before.cbegin(); it != before.cend(); ++it)
+            if (it.value().isEmpty()) qunsetenv(it.key().constData());
+            else qputenv(it.key().constData(), it.value());
     }
 }
 

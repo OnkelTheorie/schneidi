@@ -1271,7 +1271,10 @@ QString backup(const QString& projectPath, int keep)
 
 std::unique_ptr<QLockFile> lock(const QString& projectPath, int timeoutMs)
 {
-    const QDir dir(QDir(QStandardPaths::writableLocation(QStandardPaths::TempLocation)).filePath("schneidi-locks"));
+    // In the user's cache folder, not the temp folder: TMPDIR differs between programs of the same user (an AI
+    // agent's sandbox, a shell in a container setup, the app started from the desktop) and two lock folders mean
+    // no lock. (A lock beside the project would also hold across users and computers, see docs.)
+    const QDir dir(QDir(QStandardPaths::writableLocation(QStandardPaths::GenericCacheLocation)).filePath("schneidi/locks"));
     dir.mkpath(".");
     // One lock per FILE, not per spelling of its path: through a symlinked folder (~/Videos -> another disk) the
     // same project must get the same lock, or two writers each take their own and one's changes are lost. A file
