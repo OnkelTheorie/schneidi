@@ -98,7 +98,17 @@ public:
         int threads = 1;
         bool lowMemory = false;
     };
-    static ThreadChoice automaticThreads(int processors, QSize output, qint64 availableBytes);
+    // sourceBytes: what the source decoders hold (decodedSourceBytes), taken off the RAM before the threads
+    static ThreadChoice automaticThreads(int processors, QSize output, qint64 availableBytes, qint64 sourceBytes = 0);
+    // The most memory the video decoders of the range [from, to) hold at one frame: every clip showing then with a
+    // decoder of its own (another file, or the same file at another position: picture-in-picture, a transition;
+    // the same file at the same position on another track - a kill-feed layer - shares one) keeps about 20 decoded
+    // pictures of its file's size. sizeOf: a file's picture size (empty = no video decoder: stills, titles)
+    // Encoder options of a render whose threads were lowered for the RAM (threadsLowMemory): shorter lookahead of
+    // x264/x265 (a format's own options still win: they are applied after)
+    static QVector<QPair<QByteArray, QByteArray>> lowMemoryOptions(const QString& codec);
+    static qint64 decodedSourceBytes(const Timeline& tl, int from, int to,
+                                     const std::function<QSize(const QString&)>& sizeOf);
     // How many images are rendered at once: threads (0 = all), but 1 if a frame needs the one before (stabilizing
     // with border "keep")
     static int parallelFrames(const Timeline& tl, int threads);
