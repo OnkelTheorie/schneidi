@@ -32,11 +32,30 @@ bool MainWindow::newProjectFromContentTemplate(const ContentTemplate& t)
         QMessageBox::warning(this, T("Neu aus Vorlage"), T("Die Vorlage „%1“ ließ sich nicht öffnen:\n%2").arg(t.name, error));
         return false;
     }
-    // A new project like a copy: no template of its own, unsaved (saving asks where)
+    // A new project like a copy: no template of its own, unsaved (saving asks where). Until then it uses the
+    // template's files where they are; saving copies them next to the project (copyTemplateFiles)
     data.templateInfo.reset();
     if (!applyLoaded(std::move(data), {})) return false;
+    m_templateDir = t.dir;
     removeAutosave();
     statusBar()->showMessage(T("Neues Projekt aus „%1“: Dateien aus dem Media Pool auf die Platzhalter ziehen").arg(t.name), 8000);
+    return true;
+}
+
+bool MainWindow::copyTemplateFiles(ProjectData& data, const QString& path, QStringList* written)
+{
+    if (m_templateDir.isEmpty()) return true;
+    const QFileInfo fi(path);
+    const QString target = fi.absoluteDir().filePath(fi.completeBaseName() + " media");
+    TemplateLibrary::FileCopies copies;
+    QString error;
+    // The Media Pool's files of the template too: the user may still put them on the timeline
+    if (!TemplateLibrary::copyTemplateFiles(data, m_templateDir, target, &copies, &error, &m_templateCopies, true)) {
+        QMessageBox::warning(this, T("Projekt speichern"),
+                             T("Die Dateien der Vorlage ließen sich nicht neben das Projekt kopieren:\n%1").arg(error));
+        return false;
+    }
+    if (written) *written = copies.written;
     return true;
 }
 

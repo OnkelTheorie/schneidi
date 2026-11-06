@@ -3,11 +3,12 @@
 // relative to it, extra columns warned once, duplicate names get "-2") gives one project per row, a bad row is
 // reported and the others are done (or the batch stops with continue_on_error:false), dry_run writes nothing,
 // existing projects are not replaced without overwrite, a JSON file / inline rows, the render of each row and the
-// progress stages "row i/N".
+// progress stages "row i/N"; the template's files in one folder per batch, JSON numbers as written, --map on row paths.
 
 #include "check.h"
 
 #include "cli/Commands.h"
+#include "cli/Sandbox.h"
 #include "core/ProjectFile.h"
 
 #include <QApplication>
@@ -139,6 +140,12 @@ void testCsv(const QString& tmp)
     run("templates", {{"fill", "Batch"}, {"rows", data + "/named.csv"}, {"out_dir", tmp + "/out3"}});
     CHECK_EQ(filesIn(tmp + "/out3"), (QStringList{"first - one.schneidi", "second-two.schneidi"}));
 
+    // The template's own files (the clip slot is not filled here): one folder for the whole batch, not one per row
+    CHECK_EQ(QDir(tmp + "/out3").entryList(QDir::Dirs | QDir::NoDotAndDotDot), QStringList{"Batch media"});
+    CHECK(withSlot(load(tmp + "/out3/first - one.schneidi"), "clip")->mediaPath.startsWith(tmp + "/out3/Batch media/"));
+    CHECK_EQ(withSlot(load(tmp + "/out3/first - one.schneidi"), "clip")->mediaPath,
+             withSlot(load(tmp + "/out3/second-two.schneidi"), "clip")->mediaPath);
+
     // Existing projects stay without overwrite (each row reports it), with overwrite they are replaced
     const QJsonObject again = run("templates", {{"fill", "Batch"}, {"rows", data + "/named.csv"}, {"out_dir", tmp + "/out3"}});
     CHECK(!again["ok"].toBool());
@@ -224,6 +231,27 @@ void testJsonAndRender(const QString& tmp)
     CHECK_EQ(wav["rows"][0]["video"].toString(), tmp + "/render/sound.wav");
 }
 
+// Numbers of JSON rows as they are written (not 1.23457e+06); paths of another computer through --map before a
+// relative path is taken against the table's folder
+void testNumbersAndMaps(const QString& tmp)
+{
+    std::printf("JSON numbers, --map\n");
+    const QString data = tmp + "/data";
+    const QString rows = QString(R"([{"hook":1234567,"clip":"%1"},{"hook":2.5,"clip":"%1"}])").arg(data + "/media/a.mp4");
+    QJsonObject r = run("templates", {{"fill", "Batch"}, {"rows", rows}, {"out_dir", tmp + "/numbers"}});
+    CHECK_EQ(r["totals"].toObject()["ok"].toInt(), 2);
+    CHECK_EQ(withSlot(load(tmp + "/numbers/Batch-001.schneidi"), "hook")->title.text, QString("1234567"));
+    CHECK_EQ(withSlot(load(tmp + "/numbers/Batch-002.schneidi"), "hook")->title.text, QString("2.5"));
+
+    Cli::Sandbox::configure({{}, {"Z:\\Clips=" + data + "/media"}});
+    write(data + "/mapped.csv", "hook,clip\nMapped,Z:\\Clips\\b.mp4\n");
+    r = run("templates", {{"fill", "Batch"}, {"rows", data + "/mapped.csv"}, {"out_dir", tmp + "/mapped"}});
+    Cli::Sandbox::configure({});
+    CHECK(r["ok"].toBool());
+    const Clip* c = withSlot(load(tmp + "/mapped/Batch-001.schneidi"), "clip");
+    CHECK(c && c->mediaPath == data + "/media/b.mp4");
+}
+
 } // namespace
 
 int main(int argc, char* argv[])
@@ -251,5 +279,6 @@ int main(int argc, char* argv[])
     testCsv(tmp.path());
     testBadRow(tmp.path());
     testJsonAndRender(tmp.path());
+    testNumbersAndMaps(tmp.path());
     return Check::result();
 }

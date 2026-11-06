@@ -478,6 +478,7 @@
  "Der Song wird an seinen Phrasen auf die Länge des Platzhalters geschnitten (sonst gekürzt mit Ausblenden)": "La canción se corta en sus frases a la duración del marcador (si no, se recorta con fundido de salida)",
  "Die Vorlage ließ sich nicht speichern:\n%1": "No se pudo guardar la plantilla:\n%1",
  "Die Vorlage „%1“ ließ sich nicht öffnen:\n%2": "No se pudo abrir la plantilla «%1»:\n%2",
+ "Die Dateien der Vorlage ließen sich nicht neben das Projekt kopieren:\n%1": "No se pudieron copiar los archivos de la plantilla junto al proyecto:\n%1",
  "Die Vorlage „%1“ mit ihren Medien löschen?": "¿Eliminar la plantilla «%1» con sus medios?",
  "Diesen Platzhalter gibt es nicht": "Este marcador de posición no existe",
  "DNxHR HQX 10 Bit (MOV)": "DNxHR HQX 10 bits (MOV)",

@@ -3,9 +3,9 @@
 // clip as placeholder through the menu action and changing its rules in the Inspector (one undo step each), dropping a
 // Media Pool file onto a placeholder fills it (one undo step) while Alt drops as always, the template browser lists
 // built-in and own content templates and the start templates, "New" gives an untitled project without template
-// description and "Edit" keeps it, ZIP export/import in the browser, saving as template from the window, "Check
-// Fields". Everything stays in the test's
-// own settings and folders.
+// description and "Edit" keeps it (saving it copies the template's files next to the project), a template brings the
+// brand kit's files and LUTs along, ZIP export/import in the browser, saving as template from the window, "Check
+// Fields". Everything stays in the test's own settings and folders.
 // TEMPLATE_DUMP=<folder>: pictures (slot-inspector.png, slot-timeline.png, template-browser.png, slot-check.png,
 // save-template.png)
 
@@ -15,6 +15,7 @@
 #include "app/MainWindow.h"
 #include "app/TemplateDialogs.h"
 #include "app/Theme.h"
+#include "core/BrandKit.h"
 #include "core/Editor.h"
 #include "core/I18n.h"
 #include "core/Project.h"
@@ -443,6 +444,49 @@ void testBrowserAndWindow(const QString& tmp)
     CHECK(p->templateInfo().has_value() && p->templateInfo()->name == "Mein Podcast");
     CHECK_EQ(w.liveProjectPath(), own->project);
     CHECK(!w.editContentTemplate(*hook)); // built-in: never edited in its cache copy
+
+    // A template brings the project's own brand kit files and the LUTs of its effects along (not only clip media)
+    {
+        ProjectData src = withFiles(project(), tmp + "/bundled-files");
+        BrandKit kit;
+        kit.logo = touch(tmp + "/bundled-files/logo.png");
+        kit.intro = touch(tmp + "/bundled-files/intro.mp4");
+        src.brand = kit;
+        EffectInstance grade;
+        grade.effectId = "grade";
+        grade.params["lut"] = touch(tmp + "/bundled-files/look.cube", "LUT_3D_SIZE 2\n0 0 0\n1 0 0\n0 1 0\n1 1 0\n"
+                                                                     "0 0 1\n1 0 1\n0 1 1\n1 1 1\n");
+        src.timeline.video[0].clips[0].effects << grade;
+        const std::optional<ContentTemplate> bundled = TemplateLibrary::save(src, "Mit Dateien", {}, &err);
+        if (CHECK(bundled.has_value())) {
+            ProjectData td;
+            CHECK(TemplateLibrary::load(*bundled, &td, &err));
+            const QString media = bundled->dir + "/media/";
+            CHECK(td.brand && td.brand->logo.startsWith(media) && QFileInfo::exists(td.brand->logo));
+            CHECK(td.brand && td.brand->intro.startsWith(media) && QFileInfo::exists(td.brand->intro));
+            const QString lut = td.timeline.video[0].clips[0].effects.value(0).params.value("lut").toString();
+            CHECK(lut.startsWith(media) && QFileInfo::exists(lut));
+
+            // New from it: unsaved, the files stay in the template; saving copies them next to the project
+            CHECK(w.newProjectFromContentTemplate(*bundled));
+            const QString saved = tmp + "/neu/Projekt.schneidi";
+            QDir().mkpath(tmp + "/neu");
+            CHECK(w.liveSave(saved, &err));
+            ProjectData sd;
+            CHECK(ProjectFile::load(saved, &sd, &err));
+            const QString copies = tmp + "/neu/Projekt media/";
+            CHECK(!sd.media.isEmpty());
+            for (const MediaInfo& m : sd.media) CHECK(m.path.startsWith(copies) && QFileInfo::exists(m.path));
+            for (const QVector<Track>* tracks : {&sd.timeline.video, &sd.timeline.audio})
+                for (const Track& t : *tracks)
+                    for (const Clip& c : t.clips)
+                        if (c.kind == ClipKind::Media) CHECK(c.mediaPath.startsWith(copies));
+            CHECK(sd.brand && sd.brand->logo.startsWith(copies) && QFileInfo::exists(sd.brand->logo));
+            const QString savedLut = sd.timeline.video[0].clips[0].effects.value(0).params.value("lut").toString();
+            CHECK(savedLut.startsWith(copies) && QFileInfo::exists(savedLut));
+            CHECK(TemplateLibrary::remove(bundled->id));
+        }
+    }
 
     // Mark through the menu action: the title becomes a text placeholder, one undo step
     p->load(project(false));

@@ -785,7 +785,8 @@ const QVector<Command>& commands()
           {"out_project", T::Path, "fill: the new project file (.schneidi)"},
           {"project", T::Path, "fill the slots of this project in place (with values) instead of a new one"},
           {"render", T::Object, "fill: render the result, parameters of `render` (out default: out_project as .mp4; "
-                                "with rows: out_dir/<name>.<format's extension>)"},
+                                "with rows: out_dir/<name>.<format's extension>; a failed render: render_error, the "
+                                "project stays saved)"},
           {"brand", T::Object, "fill: \"global\" (default: the kit that applies), \"none\", or kit fields as in "
                                "`brand set` (the project's own kit)"},
           {"reframe", T::String, "\"cached\" (default: auto reframe where analysed before, else center) or \"auto\" "

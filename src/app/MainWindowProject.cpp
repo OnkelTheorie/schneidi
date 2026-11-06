@@ -229,6 +229,8 @@ void MainWindow::startProject(const StartTemplate& t)
     m_selection->clear();
     m_colorPanel->discardTracking();
     m_chatSeen.reset(); // the chat's AI has not seen this project: no "the user changed" against the old one
+    m_templateDir.clear();
+    m_templateCopies.clear();
     const ProjectData d = StartTemplates::apply(t); // Neutral: the empty project as always
     m_engine->setFormat(d.format); // media lengths already fit (empty) -> do not re-read
     m_project->load(d);
@@ -428,6 +430,8 @@ bool MainWindow::applyLoaded(ProjectData data, const QString& path, bool ask)
         box.exec();
     }
 
+    m_templateDir.clear(); // a project of its own (New from template sets it again afterwards)
+    m_templateCopies.clear();
     m_engine->pause();
     m_selection->clear();
     m_colorPanel->discardTracking();
@@ -493,8 +497,13 @@ bool MainWindow::saveTo(const QString& path)
                              T("Die Projektdatei wird gerade von einem anderen Programm gespeichert. Bitte noch einmal versuchen."));
         return false;
     }
+    QStringList copies;
+    if (!copyTemplateFiles(data, path, &copies)) return false;
     if (!m_autosaveDisabled) ProjectFile::backup(path); // keep the previous state (test run: store nothing)
     if (!ProjectFile::save(data, path, &error)) {
+        for (const QString& f : std::as_const(copies)) QFile::remove(f);
+        for (auto it = m_templateCopies.begin(); it != m_templateCopies.end();)
+            it = copies.contains(it.value()) ? m_templateCopies.erase(it) : std::next(it);
         QMessageBox::warning(this, T("Projekt speichern"), T("Speichern fehlgeschlagen:\n%1").arg(error));
         return false;
     }

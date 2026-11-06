@@ -31,6 +31,8 @@ bool appAllowed();
 // directory). Throws OUTSIDE_ROOT if it leaves the root, also through a symlink, HIDDEN for a hidden file or folder in
 // it (or something inside one); "@app" stays (APP_OFF if not allowed)
 QString resolve(const QString& path);
+// Only the path mapping (--map) of a client's path, nothing resolved or checked; unmapped paths stay as given
+QString mapPath(const QString& path);
 // Path relative to the root ("" = the root itself); null if outside (or no root)
 QString relative(const QString& absolutePath);
 // A hidden file or folder in the work folder, or something in one (".ssh/id_rsa", ".config/…"): the server's own file

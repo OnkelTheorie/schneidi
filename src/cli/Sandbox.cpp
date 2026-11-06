@@ -126,6 +126,8 @@ void configure(const Settings& in)
 }
 
 bool active() { return !state().root.isEmpty(); }
+
+QString mapPath(const QString& path) { return applyMaps(path); }
 QString root() { return state().root; }
 bool appAllowed() { return state().app; }
 

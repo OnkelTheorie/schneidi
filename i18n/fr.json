@@ -478,6 +478,7 @@
  "Der Song wird an seinen Phrasen auf die Länge des Platzhalters geschnitten (sonst gekürzt mit Ausblenden)": "Le morceau est coupé sur ses phrases à la durée de l’espace réservé (sinon raccourci avec fondu de sortie)",
  "Die Vorlage ließ sich nicht speichern:\n%1": "Impossible d’enregistrer le modèle :\n%1",
  "Die Vorlage „%1“ ließ sich nicht öffnen:\n%2": "Impossible d’ouvrir le modèle « %1 » :\n%2",
+ "Die Dateien der Vorlage ließen sich nicht neben das Projekt kopieren:\n%1": "Impossible de copier les fichiers du modèle à côté du projet :\n%1",
  "Die Vorlage „%1“ mit ihren Medien löschen?": "Supprimer le modèle « %1 » avec ses médias ?",
  "Diesen Platzhalter gibt es nicht": "Cet espace réservé n’existe pas",
  "DNxHR HQX 10 Bit (MOV)": "DNxHR HQX 10 bits (MOV)",
