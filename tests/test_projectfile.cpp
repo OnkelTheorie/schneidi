@@ -280,6 +280,23 @@ void testBackups(const QString& dir)
         CHECK(!QFileInfo::exists(bdir.filePath("2099-01-01 00-00-00-000.schneidi"))); // oldest by time
         CHECK_EQ(bdir.entryList({"*.schneidi"}, QDir::Files).size(), 4);
     }
+#ifdef Q_OS_UNIX
+    // A device among the backups (or named as the project): it was read until memory ran out (`backups`, every
+    // save compares with the newest copy). A link is no backup copy; reading stops at 256 MB.
+    if (QFileInfo::exists("/dev/zero")) {
+        const QString link = bdir.filePath("2100-01-01 00-00-00-000.schneidi");
+        if (CHECK(QFile::link("/dev/zero", link))) {
+            CHECK_EQ(ProjectFile::backups(path).size(), qsizetype(4));
+            CHECK(!ProjectFile::backups(path).contains(link));
+            d.playhead = 100;
+            CHECK(ProjectFile::save(d, path, &err));
+            CHECK(!ProjectFile::backup(path, 4).isEmpty());
+            QFile::remove(link);
+        }
+        ProjectData z;
+        CHECK(!ProjectFile::load("/dev/zero", &z, &err) && !err.isEmpty());
+    }
+#endif
     // project of the same name in another folder: own backup folder
     CHECK(ProjectFile::backupDir(path) != ProjectFile::backupDir(dir + "/medien/backup-test.schneidi"));
     QDir(ProjectFile::backupDir({})).removeRecursively();

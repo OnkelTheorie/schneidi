@@ -1224,7 +1224,8 @@ namespace {
 // autumn clock change (03:00 -> 02:00) new copies sorted before the old ones -> the newest were deleted
 QStringList backupsOldestFirst(const QDir& dir)
 {
-    QFileInfoList list = dir.entryInfoList({QString("*.%1").arg(Extension)}, QDir::Files);
+    // Only the copies saved here: a link (to a device, to another file) is none of them
+    QFileInfoList list = dir.entryInfoList({QString("*.%1").arg(Extension)}, QDir::Files | QDir::NoSymLinks);
     std::sort(list.begin(), list.end(), [](const QFileInfo& a, const QFileInfo& b) {
         const qint64 ta = a.lastModified().toMSecsSinceEpoch(), tb = b.lastModified().toMSecsSinceEpoch();
         return ta != tb ? ta < tb : a.fileName() < b.fileName();
@@ -1330,7 +1331,15 @@ bool load(const QString& path, ProjectData* data, QString* error)
         if (error) *error = f.errorString();
         return false;
     }
-    if (!fromJson(f.readAll(), path, data, error)) return false;
+    // At most 256 MB (a project with 100000 clips has 6): a device or an endless pipe named as the project or lying
+    // among its backups (/dev/zero) was read until memory ran out
+    constexpr qint64 kMaxBytes = 256ll << 20;
+    const QByteArray bytes = f.read(kMaxBytes + 1);
+    if (bytes.size() > kMaxBytes) {
+        if (error) *error = T("Keine gültige schneidi-Projektdatei."); // (more than any project)
+        return false;
+    }
+    if (!fromJson(bytes, path, data, error)) return false;
     restoreBuiltinSounds(data);
     return true;
 }
