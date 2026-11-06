@@ -10,6 +10,7 @@
 #include "engine/Exporter.h"
 
 #include <QApplication>
+#include <QDateTime>
 #include <QDir>
 #include <QEventLoop>
 #include <QFile>
@@ -147,6 +148,24 @@ void testNoReplaceOfNewFile(const QString& root)
     CHECK(r.ok);
     CHECK(content(target) != kOld);
     CHECK_EQ(entries(dir), QStringList{"out.mp4"});
+}
+
+// A render killed midway (SIGKILL, crash) leaves its part file: the next finished render to that name removes it
+// once it is an hour old, but not the fresh one of a render still running, nor other files
+void testStaleParts(const QString& root)
+{
+    const QString dir = root + "/stale";
+    QDir().mkpath(dir);
+    const QString stale = dir + "/out.deadbeef.part.mp4", fresh = dir + "/out.cafe0123.part.mp4",
+                  other = dir + "/other.deadbeef.part.mp4";
+    for (const QString& f : {stale, fresh, other}) writeFile(f, kOld);
+    for (const QString& f : {stale, other}) {
+        QFile file(f);
+        if (file.open(QIODevice::ReadWrite))
+            CHECK(file.setFileTime(QDateTime::currentDateTime().addSecs(-7200), QFileDevice::FileModificationTime));
+    }
+    CHECK(run(settings(dir + "/out.mp4")).ok);
+    CHECK_EQ(entries(dir), (QStringList{"other.deadbeef.part.mp4", "out.cafe0123.part.mp4", "out.mp4"}));
 }
 
 void testKeepsOlderFile(const QString& root)
@@ -352,6 +371,7 @@ int main(int argc, char** argv)
     if (!CHECK(!g_media.isEmpty())) return Check::result();
     testKeepsOlderFile(tmp.path());
     testNoReplaceOfNewFile(tmp.path());
+    testStaleParts(tmp.path());
     testWriteErrorMidway(tmp.path());
     testWrongContainer(tmp.path());
     testImageSequence(tmp.path());
