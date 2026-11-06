@@ -99,10 +99,16 @@ bool exportZip(const QString& idOrName, const QString& zip, bool overwrite, QStr
         files << Zip::Source{t->id + "/" + name, root.absoluteFilePath(rel)};
     }
     QTemporaryDir tmp;
-    if (!moved.isEmpty()) {
+    // A built-in template is stored with its German source name; the archive carries the name the list shows (the
+    // user's language), as for an own template
+    if (!moved.isEmpty() || t->builtIn) {
         ProjectData d;
         if (!load(*t, &d, &err)) return failWith(error, code, "BAD_TEMPLATE", err);
         redirectMedia(d, moved);
+        if (t->builtIn && d.templateInfo) {
+            d.templateInfo->name = t->name;
+            d.templateInfo->description = t->description;
+        }
         const QString project = tmp.filePath(ProjectFileName);
         QFile f(project);
         // Written as if in the template's folder: relative paths as they are in the archive

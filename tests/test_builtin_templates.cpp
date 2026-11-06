@@ -11,6 +11,8 @@
 #include "core/I18n.h"
 #include "core/ProjectFile.h"
 #include "core/TemplateLibrary.h"
+#include "core/TemplateZip.h"
+#include "core/Zip.h"
 
 #include <QApplication>
 #include <QDir>
@@ -111,6 +113,19 @@ void testNamesTranslated()
     CHECK(en && en->description.startsWith("Vertical short"));
     // Found by its shown name too
     CHECK(TemplateLibrary::find("Podcast excerpt").has_value());
+    // Exported as ZIP: the archive carries the shown name, not the German one it is stored with
+    QTemporaryDir tmp;
+    const QString zip = tmp.filePath("hook.zip");
+    QString err;
+    CHECK(TemplateLibrary::exportZip("short-hook", zip, false, &err));
+    CHECK(Zip::extract(zip, tmp.filePath("out"), "short-hook", &err));
+    ProjectData d;
+    CHECK(ProjectFile::load(tmp.filePath("out/template.schneidi"), &d, &err));
+    CHECK(d.templateInfo.has_value());
+    if (d.templateInfo) {
+        CHECK_EQ(d.templateInfo->name, QString("Short with hook"));
+        CHECK(d.templateInfo->description.startsWith("Vertical short"));
+    }
 }
 
 struct Media {
