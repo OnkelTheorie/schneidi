@@ -427,3 +427,12 @@ target_link_libraries(test_sfx_library PRIVATE schneidi_cli_lib)
 schneidi_test(test_builtin_templates) # the five built-in templates: listed, filled, brand kit, logo default, size guard
 target_link_libraries(test_builtin_templates PRIVATE schneidi_cli_lib)
 target_compile_definitions(test_builtin_templates PRIVATE SCHNEIDI_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+
+# RNNoise's portable C kernels (the path every non-x86 build takes: ARM Linux/Raspberry Pi, Windows/macOS on ARM) -
+# compiled here on x86 too, so a header missing from the vendored sources shows up before an ARM build breaks
+foreach(_rnn_src nnet.c nnet_default.c)
+    add_test(NAME test_rnnoise_generic_c_${_rnn_src}
+        COMMAND ${CMAKE_C_COMPILER} -fsyntax-only -w -U__SSE2__ -U__AVX__ -DRNNOISE_BUILD
+            -I${PROJECT_SOURCE_DIR}/third_party/rnnoise/src -I${PROJECT_SOURCE_DIR}/third_party/rnnoise/include
+            ${PROJECT_SOURCE_DIR}/third_party/rnnoise/src/${_rnn_src})
+endforeach()
