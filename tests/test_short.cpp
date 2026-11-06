@@ -196,6 +196,7 @@ int main(int argc, char** argv)
         CHECK_EQ(r["width"].toInt(), 1080);
         CHECK_EQ(r["height"].toInt(), 1920);
         CHECK_EQ(r["timeline"].toString(), QString("Short"));
+        CHECK(r["threads"].toInt() >= 1); // the render's threads (threads_reason when little RAM lowered them)
         // Both loud moments are in it
         const QJsonArray moments = r["moments"].toArray();
         const auto covers = [&](double s) {

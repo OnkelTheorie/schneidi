@@ -6,12 +6,14 @@
 #include "check.h"
 
 #include "core/EffectRegistry.h"
+#include "core/SystemMemory.h"
 #include "engine/Exporter.h"
 #include "engine/ClipFormat.h"
 
 #include <QApplication>
 #include <QElapsedTimer>
 #include <QEventLoop>
+#include <QFile>
 #include <QImage>
 #include <QTemporaryDir>
 #include <QTimer>
@@ -64,6 +66,94 @@ void testParallelFrames()
     CHECK_EQ(Exporter::parallelFrames(one(st), 4), 4);
     EffectRegistry::instance(st, "stabilize")->params["border"] = QString("keep");
     CHECK_EQ(Exporter::parallelFrames(one(st), 4), 1);
+}
+
+// Automatic threads against the RAM available: unchanged on a normal machine, fewer on a small board
+void testMemoryThreads()
+{
+    constexpr qint64 MB = 1024 * 1024;
+    const QSize hd(1920, 1080), vertical(1080, 1920), uhd(3840, 2160);
+    // Unknown memory: every processor
+    CHECK_EQ(Exporter::automaticThreads(12, uhd, 0).threads, 12);
+    CHECK(!Exporter::automaticThreads(12, uhd, 0).lowMemory);
+    // A machine with 4 GB (about 2.5 GB free) or more: 1080p and 4K keep all threads
+    for (qint64 free : {2500 * MB, 12000 * MB}) {
+        for (QSize size : {hd, vertical})
+            for (int cores : {4, 8, 12, 16}) {
+                CHECK_EQ(Exporter::automaticThreads(cores, size, free).threads, cores);
+                CHECK(!Exporter::automaticThreads(cores, size, free).lowMemory);
+            }
+        CHECK_EQ(Exporter::automaticThreads(8, uhd, free).threads, 8);
+    }
+    CHECK_EQ(Exporter::automaticThreads(12, uhd, 12000 * MB).threads, 12);
+    // Raspberry Pi Zero 2 W (415 MB, about 280 MB available) with a 1080x1920 short: 2 of 4
+    const Exporter::ThreadChoice pi = Exporter::automaticThreads(4, vertical, 280 * MB);
+    CHECK_EQ(pi.threads, 2);
+    CHECK(pi.lowMemory);
+    // 720p there has room for more; nearly nothing free still renders with one
+    CHECK(Exporter::automaticThreads(4, QSize(1280, 720), 280 * MB).threads > 2);
+    CHECK_EQ(Exporter::automaticThreads(4, vertical, 50 * MB).threads, 1);
+    CHECK(Exporter::automaticThreads(4, vertical, 50 * MB).lowMemory);
+    CHECK(!Exporter::automaticThreads(1, vertical, 50 * MB).lowMemory); // one processor: nothing was lowered
+
+    // /proc/meminfo as Linux writes it
+    const SystemMemory::Info info = SystemMemory::parseMeminfo("MemTotal:         425364 kB\nMemFree:           87212 kB\n"
+                                                               "MemAvailable:     286720 kB\nBuffers:            1234 kB\n");
+    CHECK_EQ(info.total, qint64(425364) * 1024);
+    CHECK_EQ(info.available, qint64(286720) * 1024);
+    CHECK_EQ(SystemMemory::parseMeminfo("garbage\n").available, qint64(0));
+    // The real machine: something known on the systems schneidi runs on
+#if defined(Q_OS_LINUX) || defined(Q_OS_WIN)
+    CHECK(SystemMemory::read().total > 0);
+    CHECK(SystemMemory::read().available > 0);
+#endif
+}
+
+// A render that leaves the threads to schneidi says when the memory lowered them; a number asked for stays
+void testMemoryRender(const QString& dir)
+{
+    Timeline tl = one(effectClip(false));
+    tl.video[0].clips[0].out = 9;
+    auto run = [&](int threads, int* used, bool* low) {
+        Exporter ex;
+        ExportSettings s;
+        s.path = dir + "/mem.mp4";
+        s.format = kFmt;
+        s.preset = "medium"; // looks 40 frames ahead
+        s.threads = threads;
+        QEventLoop loop;
+        QObject::connect(&ex, &Exporter::finished, &loop, [&](bool, const QString&) { loop.quit(); });
+        QString error;
+        if (!CHECK(ex.start(tl, s, &error))) return;
+        *used = ex.threads();
+        *low = ex.threadsLowMemory();
+        QTimer::singleShot(120000, &loop, &QEventLoop::quit);
+        loop.exec();
+    };
+    // x264 writes its settings into the stream (SEI): the lookahead it used
+    auto lookahead = [&] {
+        QFile f(dir + "/mem.mp4");
+        if (!f.open(QIODevice::ReadOnly)) return QByteArray("no file");
+        const QByteArray data = f.readAll();
+        const qsizetype at = data.indexOf("rc_lookahead=");
+        return at < 0 ? QByteArray("none") : data.mid(at + 13, data.indexOf(' ', at) - at - 13);
+    };
+    qputenv("SCHNEIDI_AVAILABLE_MB", "100");
+    int used = 0;
+    bool low = false;
+    run(0, &used, &low);
+    CHECK_EQ(used, 1);
+    CHECK_EQ(low, Exporter::availableThreads() > 1);
+    const bool x264 = lookahead() != "none"; // the GPL-free build writes OpenH264
+    if (low && x264) CHECK_EQ(lookahead(), QByteArray("10"));
+    run(3, &used, &low);
+    CHECK_EQ(used, 3);
+    CHECK(!low);
+    if (x264) CHECK_EQ(lookahead(), QByteArray("40")); // threads asked for: the preset's own
+    qunsetenv("SCHNEIDI_AVAILABLE_MB");
+    run(0, &used, &low); // this machine, as it is
+    CHECK_EQ(used, Exporter::availableThreads());
+    CHECK(!low);
 }
 
 // CPU time of the process (all threads) in s; 0 = unknown
@@ -211,6 +301,8 @@ int main(int argc, char** argv)
     Check::initEngine();
     std::setlocale(LC_NUMERIC, "C");
     testParallelFrames();
+    testMemoryThreads();
+    testMemoryRender(tmp.path());
     testRender(tmp.path());
     return Check::result();
 }

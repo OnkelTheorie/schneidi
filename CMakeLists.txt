@@ -111,6 +111,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/core/SfxDsp.h
     src/core/SfxPlace.h           src/core/SfxPlace.cpp
     src/core/MediaAspect.h        src/core/MediaAspect.cpp
+    src/core/SystemMemory.h       src/core/SystemMemory.cpp
     src/core/GradeWindows.h       src/core/GradeWindows.cpp
     src/core/NameBlur.h           src/core/NameBlur.cpp
     src/core/Retime.h             src/core/Retime.cpp

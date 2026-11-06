@@ -969,6 +969,7 @@ QJsonObject cmdRender(const QJsonObject& a, Context& ctx)
     if (!ok) fail("RENDER_FAILED", message.isEmpty() ? QString("rendering failed") : message);
     QJsonObject o{{"out", out}, {"format", formatId}, {"render_s", std::round(timer.elapsed() / 100.0) / 10}};
     o["threads"] = ex.threads();
+    if (ex.threadsLowMemory()) o["threads_reason"] = "low memory"; // fewer than the processors: little RAM free
     if (marks) {
         o["review"] = "video";
         o["size"] = QJsonArray{es.size.width(), es.size.height()};
