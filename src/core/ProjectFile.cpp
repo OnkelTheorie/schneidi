@@ -559,6 +559,7 @@ QJsonObject writeSlot(const ClipSlot& s)
     if (s.fitMusic != def.fitMusic) o["fitMusic"] = s.fitMusic;
     if (s.snapCuts != def.snapCuts) o["snapCuts"] = s.snapCuts;
     if (!s.hint.isEmpty()) o["hint"] = s.hint;
+    if (s.nominalLen > 0) o["nominalLen"] = s.nominalLen;
     return o;
 }
 
@@ -580,6 +581,7 @@ ClipSlot readSlot(const QJsonObject& o)
     s.fitMusic = o.value("fitMusic").toBool(true);
     s.snapCuts = o.value("snapCuts").toBool(false);
     s.hint = o.value("hint").toString();
+    s.nominalLen = std::max(0, intOf(o.value("nominalLen")));
     return s;
 }
 

@@ -365,6 +365,8 @@ struct ClipSlot {
     int maxChars = 0; bool shrink = true;                               // Text (title clip: its text)
     bool fitMusic = true; bool snapCuts = false;                        // Music
     QString hint;        // free text for humans/AI: "best kill", "product front view"
+    int nominalLen = 0;  // frames, set by the fill (not by the user): a Fixed slot's own length while a shorter value
+                         // leaves its clips shorter (a gap after them); 0 = the length of its clips
     bool isSet() const { return !id.isEmpty(); }
     bool operator==(const ClipSlot&) const = default;
 };
