@@ -384,6 +384,7 @@ int main(int argc, char** argv)
     // sorted, toggling again removes; markers that came unsorted (an imported timeline) are sorted first
     {
         Project q;
+        q.undoStack()->setUndoLimit(1); // as in schneidi-cli (every step keeps a snapshot of all markers)
         Selection s;
         Editor e(&q, &s);
         QElapsedTimer t;
