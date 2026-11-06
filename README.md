@@ -130,6 +130,10 @@ RAM in steps of 16 MB (the 2400G was measured in a Docker container, the 5600X i
 | Jumping in the timeline, original → proxies | 2 s → 0.07 s |
 | Export 5 s of 720p (x264) | 82 s |
 
+## Performance
+
+Measured, not estimated: the large 1080x1920 test project (27 clips, about 60 titles) renders in about 37 s with 1.5 GB of RAM since 0.15.0 (0.14.1: 59 s, 4.3 GB), an empty project starts in about 0.4 s, and a Raspberry Pi Zero 2 W with 415 MB of RAM opens the window in under 5 s. 8K footage is editable with proxies; 8K60 without proxies is not smooth. Every benchmark run on record, including the ones that got worse, is in [BENCHMARKS.md](BENCHMARKS.md).
+
 ## AI chat in the app
 
 ![The AI chat panel next to the timeline: the AI finds the speech, adds b-roll with dissolves, subtitles and ducked music; each tool step is listed, the new clips light up](screenshots/chat.png)
