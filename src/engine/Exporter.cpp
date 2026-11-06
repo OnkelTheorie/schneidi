@@ -243,6 +243,11 @@ bool Exporter::shortLookahead(QSize output, qint64 availableBytes)
     return lookahead > availableBytes / 3;
 }
 
+bool Exporter::lowMemoryLookahead(int processors, const ThreadChoice& automatic)
+{
+    return automatic.lowMemory && (automatic.threads * 2 < processors || automatic.threads <= 2);
+}
+
 qint64 Exporter::decodedSourceBytes(const Timeline& tl, int from, int to,
                                    const std::function<QSize(const QString&)>& sizeOf)
 {
@@ -449,7 +454,8 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
     }
     const int threads = s.threads > 0 ? s.threads : automatic.threads;
     m_threadsLowMemory = s.threads <= 0 && automatic.lowMemory;
-    m_shortLookahead = m_threadsLowMemory || shortLookahead(out.size(), available);
+    m_shortLookahead = (s.threads <= 0 && lowMemoryLookahead(availableThreads(), automatic))
+                       || shortLookahead(out.size(), available);
     m_settings = s;
     m_convertRate = convertRate;
     m_sampleFormat = sampleFormat;
@@ -637,8 +643,8 @@ QVector<QPair<QByteArray, QByteArray>> Exporter::encoderOptions(const QString& c
             o.append({"crf", QByteArray::number(s.crf)}); // H.264/H.265/AV1/VP9; fixed-quality formats have 0
         }
         if (codec == "libx264" || codec == "libx265") o.append({"preset", s.preset.toUtf8()});
-        // Threads lowered for the RAM, or the lookahead alone would not fit (shortLookahead, also with threads asked
-        // for: 8K, 40 frames = 4 GB): shorter lookahead
+        // Threads lowered a lot for the RAM (lowMemoryLookahead), or the lookahead alone would not fit
+        // (shortLookahead, also with threads asked for: 8K, 40 frames = 4 GB): shorter lookahead
         if (m_shortLookahead) o += lowMemoryOptions(codec);
     }
     if (s.maxBitrateK > 0) { // quality target as before, but capped (VBV)

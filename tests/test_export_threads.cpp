@@ -336,6 +336,30 @@ void testMemoryRender(const QString& dir)
     qputenv("SCHNEIDI_AVAILABLE_MB", "4000");
     run(3, &used, &low);
     if (x264) CHECK_EQ(lookahead(), QByteArray("40")); // room enough: the preset's own
+    // Automatic threads lowered by one (4K with 4 GB free on 12 processors gets 11): the preset's lookahead stays, a
+    // shorter one would change the quality for a small saving; only a large cut (the Pi's 2 of 4 above) shortens it
+    const int n = Exporter::availableThreads();
+    if (n >= 4) {
+        qputenv("SCHNEIDI_HWDEC", "off"); // the source decodes in software: 3 pictures per thread, as computed here
+        const auto size = [](const QString&) { return QSize(1920, 1080); };
+        const qint64 sources = Exporter::decodedSourceBytes(tl, 0, 10, size);
+        const qint64 perThread = Exporter::sourceBytesPerThread(tl, 0, 10, size);
+        int mb = 100;
+        while (mb < 20000 && Exporter::automaticThreads(n, kFmt.size(), qint64(mb) << 20, sources, perThread).threads < n - 1)
+            ++mb;
+        CHECK(!Exporter::lowMemoryLookahead(n, Exporter::automaticThreads(n, kFmt.size(), qint64(mb) << 20, sources, perThread)));
+        qputenv("SCHNEIDI_AVAILABLE_MB", QByteArray::number(mb));
+        run(0, &used, &low);
+        CHECK_EQ(used, n - 1);
+        CHECK(low);
+        if (x264) CHECK_EQ(lookahead(), QByteArray("40"));
+        qunsetenv("SCHNEIDI_HWDEC");
+    }
+    CHECK(Exporter::lowMemoryLookahead(4, {2, true}));   // the Pi: 2 of 4
+    CHECK(Exporter::lowMemoryLookahead(16, {7, true}));  // less than half
+    CHECK(!Exporter::lowMemoryLookahead(12, {11, true})); // one less
+    CHECK(!Exporter::lowMemoryLookahead(16, {8, true}));
+    CHECK(!Exporter::lowMemoryLookahead(4, {2, false})); // not lowered for the RAM
     qunsetenv("SCHNEIDI_AVAILABLE_MB");
     run(0, &used, &low); // this machine, as it is
     CHECK_EQ(used, Exporter::availableThreads());

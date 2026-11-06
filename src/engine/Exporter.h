@@ -109,8 +109,12 @@ public:
     // alone would take more than a third of the RAM available: about 3 bytes per pixel and frame at 40 frames (8K:
     // 4 GB, a render with 2 threads asked for was killed in a 5 GB cap). A number of threads asked for stays.
     static bool shortLookahead(QSize output, qint64 availableBytes);
-    // Encoder options of a render whose threads were lowered for the RAM (threadsLowMemory): shorter lookahead of
-    // x264/x265 (a format's own options still win: they are applied after)
+    // Do automatic threads lowered for the RAM shorten the lookahead too? Only when they were lowered a lot: fewer than
+    // half the processors, or 2 or fewer (a small board: Pi Zero 2 W 2 of 4). A small cut (4K with 4 GB free: 11 of
+    // 12) keeps the preset's lookahead - a shorter one costs quality, which nobody asked for there.
+    static bool lowMemoryLookahead(int processors, const ThreadChoice& automatic);
+    // Encoder options of a render whose threads were lowered a lot for the RAM (lowMemoryLookahead): shorter
+    // lookahead of x264/x265 (a format's own options still win: they are applied after)
     static QVector<QPair<QByteArray, QByteArray>> lowMemoryOptions(const QString& codec);
     // The most memory the video decoders of the range [from, to) hold at one frame: every clip showing then with a
     // decoder of its own (another file, or the same file at another position: picture-in-picture, a transition;
@@ -246,7 +250,7 @@ private:
     QString m_sampleFormat;   // FFmpeg sample format of the audio encoder
     int m_threads = 0, m_frames = 1;
     bool m_threadsLowMemory = false;
-    bool m_shortLookahead = false; // lowMemoryOptions (shortLookahead or m_threadsLowMemory)
+    bool m_shortLookahead = false; // lowMemoryOptions (shortLookahead or lowMemoryLookahead)
     QString m_usedCodec, m_note;
     QVector<Picture::SkippedEffect> m_skipped;
     QTimer m_timer;
