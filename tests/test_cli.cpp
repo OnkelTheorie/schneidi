@@ -24,6 +24,7 @@
 #include <QImage>
 #include <QTemporaryDir>
 
+#include <algorithm>
 #include <cmath>
 #include <utility>
 
@@ -1653,6 +1654,57 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
             CHECK_EQ(c["hit_by"][0].toString(), QString("sound"));
         }
         CHECK(hh["kills_note"].toString().contains("hit_s"));
+        // CS2 (game from the file name): the player's lines by their thin red frame (1 px, rows y and y+30, right edge
+        // at x 1909), dark inside with white text. Two kills: line A at 1 s, line B at 5 s. Not kills: A taken away at
+        // 3 s and shown again a slot lower at 3.5 s (the game reorders the feed when the player dies), a red sign
+        // filling part of the feed from 2.5 s, the red tint of a hit over the whole picture 4-4.6 s, A going away at
+        // 6 s and B moving up into its place. Counting the colour took the sign, the tint and A shown again for kills
+        {
+            const auto line = [](int y, const QString& when, const QVector<QPair<int, int>>& text) {
+                QString s = QString("drawbox=x=1640:y=%1:w=270:h=31:c=0x181818:t=fill:enable='%2',"
+                                    "drawbox=x=1640:y=%1:w=270:h=31:c=0xd8444a:t=1:enable='%2'")
+                                .arg(y)
+                                .arg(when);
+                for (const auto& [x, w] : text)
+                    s += QString(",drawbox=x=%1:y=%2:w=%3:h=12:c=white:t=fill:enable='%4'").arg(x).arg(y + 10).arg(w).arg(when);
+                return s;
+            };
+            const QVector<QPair<int, int>> textA{{1700, 30}, {1760, 50}, {1840, 20}}, textB{{1690, 15}, {1730, 60}, {1820, 45}};
+            const QString cs2 = Check::makeMedia(
+                dir.filePath("cs2_feed.mkv"),
+                {"-f", "lavfi", "-i",
+                 "color=c=0x707070:s=1920x1080:d=8:r=25," + line(74, "between(t,1,2.99)", textA) + ","
+                     + line(108, "between(t,3.5,5.99)", textA) + "," + line(142, "between(t,5,5.99)", textB) + ","
+                     + line(108, "gte(t,6)", textB) + ",drawbox=x=1650:y=180:w=120:h=40:c=0xd8444a:t=fill:enable='gte(t,2.5)',"
+                     + "drawbox=x=0:y=0:w=iw:h=ih:c=0xd02020@0.35:t=fill:enable='between(t,4,4.6)'",
+                 "-c:v", "ffv1", "-pix_fmt", "bgr0"});
+            const QJsonObject hc = run("highlights", {{"file", cs2}});
+            CHECK_EQ(hc["game"].toString(), QString("cs2"));
+            QVector<double> kills;
+            for (const QJsonValue& c : hc["candidates"].toArray())
+                for (const QJsonValue& k : c["kill_s"].toArray()) kills << k.toDouble();
+            std::sort(kills.begin(), kills.end());
+            if (CHECK_EQ(kills.size(), 2)) {
+                CHECK(std::abs(kills[0] - 1.0) < 0.15);
+                CHECK(std::abs(kills[1] - 5.0) < 0.15);
+            }
+            // A new line in the place of one that just went (the top slot, 0.5 s later; review 5.11.: a real kill at
+            // 28.8 s in 10-21_20-17-49 was taken for the old line, hidden for a moment): another text, a kill
+            const QString slot = Check::makeMedia(
+                dir.filePath("cs2_sameslot.mkv"),
+                {"-f", "lavfi", "-i",
+                 "color=c=0x707070:s=1920x1080:d=6:r=25," + line(74, "between(t,1,2.99)", textA) + ","
+                     + line(74, "gte(t,3.5)", textB),
+                 "-c:v", "ffv1", "-pix_fmt", "bgr0"});
+            QVector<double> slotKills;
+            for (const QJsonValue& c : run("highlights", {{"file", slot}})["candidates"].toArray())
+                for (const QJsonValue& k : c["kill_s"].toArray()) slotKills << k.toDouble();
+            std::sort(slotKills.begin(), slotKills.end());
+            if (CHECK_EQ(slotKills.size(), 2)) {
+                CHECK(std::abs(slotKills[0] - 1.0) < 0.15);
+                CHECK(std::abs(slotKills[1] - 3.5) < 0.15);
+            }
+        }
         // Without sound: the frame the line began to show
         if (const QJsonObject c = hl["candidates"][0].toObject(); CHECK(c["hit_s"].isArray())) {
             CHECK_EQ(c["hit_by"][0].toString(), QString("feed"));

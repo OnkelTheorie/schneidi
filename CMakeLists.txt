@@ -1,8 +1,8 @@
 cmake_minimum_required(VERSION 3.21)
-project(schneidi VERSION 0.17.0 LANGUAGES CXX)
+project(schneidi VERSION 0.17.1 LANGUAGES CXX)
 # Version being worked on. While it differs from the released version above, the app shows "0.11.0 → 0.12.0".
 # On release set both to the same number; after that, set this one to the next target.
-set(SCHNEIDI_NEXT_VERSION 0.17.0)
+set(SCHNEIDI_NEXT_VERSION 0.17.1)
 
 # Build optimized when nothing is given (debug builds stutter in playback: own filters run per frame)
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
@@ -451,6 +451,7 @@ add_library(schneidi_cli_lib STATIC
     src/cli/EditOpsStory.cpp src/cli/EditOpsMusic.cpp src/cli/EditOpsSfx.cpp src/cli/EditOpsTalk.cpp
     src/cli/EditOpsTemplate.cpp
     src/cli/AnalysisDetail.h src/cli/Analysis.cpp src/cli/AnalysisAudio.cpp src/cli/AnalysisVideo.cpp src/cli/AnalysisPicture.cpp
+    src/cli/AnalysisKillFeed.cpp
     src/cli/AnalysisHighlights.cpp src/cli/AnalysisCheck.cpp src/cli/AnalysisOverview.cpp src/cli/AnalysisBeats.cpp
     src/cli/CommandsIndex.cpp
     src/cli/Exchange.cpp

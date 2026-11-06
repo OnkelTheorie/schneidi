@@ -28,6 +28,9 @@ namespace {
 // colour bigger than 1 % that appears at once is a banner or menu in that colour (buy phase, round won), not a kill
 constexpr double kBannerArea = 0.01;
 
+// Picture height from which framed kill feed lines are found by their shape (1080p, a little less for odd sizes)
+constexpr int kFramedFrom = 1000;
+
 // The hit behind a kill feed line: the line shows up a few frames after the shot (the server confirms the kill, the
 // line slides in and is only counted once half of it is there). The last sharp rise of the sound (a shot) in the
 // 0.6 s before the line began; without one the frame where the line began.
@@ -82,8 +85,12 @@ QJsonObject highlightsOne(const QJsonObject& given, Context& ctx)
     // A known game: its kill feed, as if region and colour were given
     QJsonObject a = given;
     const GameHud::Game* game = m.info.hasVideo && !m.info.isImage ? gameOf(given, m.info.path) : nullptr;
+    // Framed lines (CS2) by their shape from 1080p on. In a smaller picture (mostly a 1080p game scaled down) the
+    // 1 px outline smears over several rows and the edges of lines under each other run together: the colour is
+    // counted there
+    const bool framed = game && game->frameHeight > 0 && pictureFormat(m).height >= kFramedFrom;
     if (game) {
-        a["region"] = GameHud::regionText(game->mark);
+        a["region"] = GameHud::regionText(framed ? game->frameArea : game->mark);
         a["color"] = game->color;
         if (game->tolerance > 0 && !a.contains("tolerance")) a["tolerance"] = game->tolerance;
     }
@@ -110,7 +117,11 @@ QJsonObject highlightsOne(const QJsonObject& given, Context& ctx)
         if (!m.info.hasVideo || m.info.isImage) fail("NO_VIDEO", "file has no moving picture: " + m.info.path);
         QJsonObject ca = a;
         ca["only"] = "appear";
-        const ColorEvents ce = colorEvents(m, ca, progress(0.0, m.info.hasAudio ? 0.85 : 1.0));
+        // A game whose lines are framed (CS2): by that shape, the game picture behind does not count
+        const auto pictureProgress = progress(0.0, m.info.hasAudio ? 0.85 : 1.0);
+        const ColorEvents ce = framed ? framedLineEvents(m, game->frameArea, QColor(game->color), game->frameHeight,
+                                                         game->frameRight, pictureProgress)
+                                      : colorEvents(m, ca, pictureProgress);
         for (const ColorEvent& e : ce.events) {
             (e.area > kBannerArea ? banners : kills) << e.frame;
             if (e.area <= kBannerArea) killEvents << e;
@@ -249,7 +260,7 @@ QJsonObject highlightsOne(const QJsonObject& given, Context& ctx)
 }
 
 // Raise when the analysis gives other results for the same file and settings (old cache entries are then ignored)
-constexpr int kCacheVersion = 1;
+constexpr int kCacheVersion = 5; // 4, 5: CS2 kill feed lines by their frame (2 and 3 were experiments)
 
 QString cacheFile(const QString& key)
 {
