@@ -529,6 +529,7 @@ endif()
 if(UNIX AND NOT APPLE)
     install(FILES packaging/linux/schneidi.desktop DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
     install(FILES assets/schneidi.svg DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps)
+    install(FILES packaging/linux/io.github.OnkelTheorie.schneidi.metainfo.xml DESTINATION ${CMAKE_INSTALL_DATADIR}/metainfo)
     # Debian policy: /usr/share/doc/<package>/copyright (DEP-5) and changelog.gz
     set(SCHNEIDI_MAINTAINER "schneidi project <324913804+OnkelTheorie@users.noreply.github.com>")
     set(SCHNEIDI_HOMEPAGE "https://github.com/OnkelTheorie/schneidi")
