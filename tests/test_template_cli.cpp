@@ -30,6 +30,10 @@
 #include <QProcess>
 #include <QTemporaryDir>
 
+#include <chrono>
+#include <functional>
+#include <thread>
+
 namespace {
 
 QJsonObject run(const QString& name, const QJsonObject& raw)
@@ -755,6 +759,61 @@ void testLive(const QString& tmp, const Media& m)
 
 } // namespace
 
+// Another schneidi busy with `lock` (another thread here): it does `busy` while holding it for ms. true = `work`
+// finished only after it let go (waited for it)
+bool waitsFor(std::unique_ptr<QLockFile> lock, int ms, const std::function<void()>& work,
+              const std::function<void()>& busy = {})
+{
+    QElapsedTimer clock;
+    clock.start();
+    qint64 released = 0;
+    std::thread other([&] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(ms));
+        if (busy) busy();
+        released = clock.elapsed();
+        lock.reset();
+    });
+    work();
+    const qint64 done = clock.elapsed();
+    other.join();
+    return done >= released;
+}
+
+// Several schneidi at once on the own templates (two AIs): saving, removing, renaming and importing take turns (one
+// lock for the library) instead of working on each other's half-written folders; a ZIP export does not write into
+// another export's temporary file
+void testLibraryParallel(const QString& tmp, const QString& project)
+{
+    std::printf("parallel: own templates\n");
+    // The other one saves a template of the same name meanwhile: this save sees it (EXISTS), does not mix into it
+    const QString folder = TemplateLibrary::dir() + "/Parallel";
+    QString code;
+    CHECK(waitsFor(TemplateLibrary::lockLibrary(0), 1500,
+                   [&] { code = errorOf("templates", {{"save", project}, {"name", "Parallel"}}); },
+                   [&] {
+                       QDir().mkpath(folder);
+                       QFile::copy(project, folder + "/template.schneidi");
+                   }));
+    CHECK_EQ(code, QString("EXISTS"));
+    QDir(folder).removeRecursively();
+    CHECK(run("templates", {{"save", project}, {"name", "Parallel"}})["saved"].toBool());
+    const QString zip = tmp + "/share/parallel.zip";
+    // Another export to the same ZIP still writing its temporary file next to it: that one stays untouched
+    writeFile(zip + ".part", "busy");
+    CHECK_EQ(run("templates", {{"export", "Parallel"}, {"zip", zip}})["zip"].toString(), zip);
+    CHECK_EQ(readAll(zip + ".part"), QByteArray("busy"));
+    CHECK(waitsFor(TemplateLibrary::lockLibrary(0), 1500, [&] {
+        CHECK_EQ(run("templates", {{"remove", "Parallel"}})["removed"].toString(), QString("Parallel"));
+    }));
+    CHECK(waitsFor(TemplateLibrary::lockLibrary(0), 1500, [&] {
+        CHECK_EQ(run("templates", {{"import", zip}})["id"].toString(), QString("Parallel"));
+    }));
+    CHECK(waitsFor(TemplateLibrary::lockLibrary(0), 1500, [&] {
+        CHECK(run("templates", {{"rename", "Parallel"}, {"name", "Parallel 2"}})["name"].toString() == "Parallel 2");
+    }));
+    run("templates", {{"remove", "Parallel 2"}});
+}
+
 int main(int argc, char* argv[])
 {
     // schneidi-cli processes (alias, live) must see the same template folder: own data/cache folders for all
@@ -788,7 +847,8 @@ int main(int argc, char* argv[])
     m.other = make("other.mp4", 4, "320x180");
     if (!CHECK(!m.a.isEmpty() && !m.longClip.isEmpty() && !m.shortClip.isEmpty() && !m.other.isEmpty()))
         return Check::result();
-    if (makeTemplate(tmp.path(), m).isEmpty()) return Check::result();
+    const QString tpl = makeTemplate(tmp.path(), m);
+    if (tpl.isEmpty()) return Check::result();
     testListAndInfo(tmp.path());
     testFill(tmp.path(), m);
     testFillFiles(tmp.path(), m);
@@ -797,5 +857,6 @@ int main(int argc, char* argv[])
     testLive(tmp.path(), m);
     testZip(tmp.path(), m);
     testZipNames(tmp.path(), m);
+    testLibraryParallel(tmp.path(), tpl);
     return Check::result();
 }
