@@ -748,7 +748,7 @@ void testLibrary()
         QByteArray bytes = f.readAll();
         f.close();
         const qint64 size = bytes.size();
-        bytes.replace("\"Built in\"", "\"Built on\"");
+        bytes.replace("\"Built 2x\"", "\"Built on\"");
         CHECK_EQ(qint64(bytes.size()), size);
         CHECK(f.open(QIODevice::WriteOnly | QIODevice::Truncate));
         f.write(bytes);
