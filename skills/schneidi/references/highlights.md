@@ -33,7 +33,8 @@ A fixed shape the user wants every time (title, five clips with the Edit look, s
   don't drop a multi-kill because of half a second of lag.
 
 ## Build
-- Project in the material's frame rate (60 fps gameplay → `fps` 60).
+- Project in the material's frame rate (60 fps gameplay → 60): `new` with the recordings as `media` takes it from the
+  first video; without media give `fps` 60.
 - `keep` places several source ranges of one file one after another; use one `keep` per file, or `append`/`place`
   for single ranges in the order you want.
 - Rules of thumb:

@@ -28,7 +28,7 @@ result yourself afterwards (`frames` sheet of `out`) - one call does not replace
 template - `templates` `fill` with the clips and the hook text ([templates.md](templates.md)).
 
 ## Format
-- New project `width` 1080, `height` 1920 (or `template` "vertical"), frame rate of the material. (`render` `size`
+- New project `width` 1080, `height` 1920 (or `template` "vertical"), frame rate of the material (`new` with `media` takes it from the first video). (`render` `size`
   only letterboxes a landscape timeline into a portrait file - that is not a vertical edit.) In an existing project
   (the one open in the app, `@app`, a 16:9 edit): a timeline of its own resolution next to it,
   `{"op":"new_timeline","name":"Short","aspect":"9:16"}` (or `{"op":"format","timeline":"Short","aspect":"9:16"}`
