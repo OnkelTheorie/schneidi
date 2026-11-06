@@ -432,12 +432,21 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
                 const char* demuxer = fmt->iformat ? fmt->iformat->name : "";
                 const bool picture = std::strstr(demuxer, "image2") || std::strstr(demuxer, "_pipe");
                 const int v = picture ? -1 : av_find_best_stream(fmt, AVMEDIA_TYPE_VIDEO, -1, -1, nullptr, 0);
+                // MPEG-TS/M2TS (a camera's or recorder's .ts/.m2ts) name no picture size before their stream analysis:
+                // a short one then (the first 1 MB, half a second), else counted as 1080p - never as nothing
+                if (v >= 0 && fmt->streams[v]->codecpar->width <= 0
+                    && !(fmt->streams[v]->disposition & AV_DISPOSITION_ATTACHED_PIC)) {
+                    fmt->probesize = 1 << 20;
+                    fmt->max_analyze_duration = AV_TIME_BASE / 2;
+                    avformat_find_stream_info(fmt, nullptr);
+                }
                 if (v >= 0) {
                     const AVCodecParameters* par = fmt->streams[v]->codecpar;
                     const bool cover = fmt->streams[v]->disposition & AV_DISPOSITION_ATTACHED_PIC;
-                    if (!cover && par->width > 0 && par->height > 0) {
-                        src.size = QSize(par->width, par->height);
-                        src.software = !Video::likelyHardware(par);
+                    if (!cover) {
+                        const bool known = par->width > 0 && par->height > 0;
+                        src.size = known ? QSize(par->width, par->height) : QSize(1920, 1080);
+                        src.software = !known || !Video::likelyHardware(par);
                     }
                 }
                 avformat_close_input(&fmt);

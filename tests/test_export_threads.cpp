@@ -18,6 +18,7 @@
 #include <QFileInfo>
 #include <QFile>
 #include <QImage>
+#include <QProcess>
 #include <QTemporaryDir>
 #include <QTimer>
 #include <clocale>
@@ -353,6 +354,18 @@ void testMemoryRender(const QString& dir)
         CHECK_EQ(used, n - 1);
         CHECK(low);
         if (x264) CHECK_EQ(lookahead(), QByteArray("40"));
+        // The same picture in MPEG-TS (no picture size before the stream analysis): its decoder counts the same
+        CHECK(Exporter::automaticThreads(n, kFmt.size(), qint64(mb) << 20).threads > n - 1); // it does count here
+        const QString ts = dir + "/src.ts";
+        QFile::remove(ts);
+        QProcess::execute("ffmpeg", {"-v", "error", "-y", "-i", g_media, "-c", "copy", "-f", "mpegts", ts});
+        if (CHECK(QFileInfo::exists(ts))) {
+            const QString mp4 = tl.video[0].clips[0].mediaPath;
+            tl.video[0].clips[0].mediaPath = ts;
+            run(0, &used, &low);
+            CHECK_EQ(used, n - 1);
+            tl.video[0].clips[0].mediaPath = mp4;
+        }
         qunsetenv("SCHNEIDI_HWDEC");
     }
     CHECK(Exporter::lowMemoryLookahead(4, {2, true}));   // the Pi: 2 of 4
