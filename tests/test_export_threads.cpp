@@ -28,6 +28,9 @@ extern "C" {
 #include <libavcodec/avcodec.h>
 }
 #ifdef Q_OS_WIN
+#ifndef NOMINMAX
+#define NOMINMAX // std::min/std::max
+#endif
 #include <windows.h>
 #else
 #include <sys/resource.h>
