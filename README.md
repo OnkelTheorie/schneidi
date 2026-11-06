@@ -257,6 +257,8 @@ sudo apt install build-essential cmake ninja-build pkg-config qt6-base-dev qt6-b
 cmake -S . -B build -G Ninja && cmake --build build && ./build/schneidi
 ```
 
+Other distributions: the same libraries (Qt 6 Widgets/Network and its private GUI headers, FFmpeg 7). Without a miniaudio package (openSUSE, Fedora) the build uses the copy in `third_party/miniaudio` (`-DSCHNEIDI_SYSTEM_MINIAUDIO=ON` insists on the system's). Notes for distribution packagers and an openSUSE spec file: [packaging/linux/opensuse](packaging/linux/opensuse).
+
 AppImage: `packaging/linux/build-appimage.sh` → `dist/schneidi-<version>-x86_64.AppImage`, without any GPL library (own LGPL FFmpeg; H.264/H.265 through the graphics card, else OpenH264/kvazaar, or x264/x265 as an optional download in the program: Extensions); bundled libraries and their licenses: [THIRD_PARTY.md](THIRD_PARTY.md)
 Debian package (system Qt/FFmpeg, no bundling): `cmake --build build && cpack --config build/CPackConfig.cmake -G DEB` → `dist/schneidi_<version>_amd64.deb`
 The .deb is built for Debian 13: it needs exactly its Qt 6.8.2 (the GPU viewer uses Qt's private RHI interface) and FFmpeg 7.1; on every other system use the AppImage.
