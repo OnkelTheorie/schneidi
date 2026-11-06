@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // core/DataRows: CSV (quotes, separators "," and ";", BOM, CRLF, empty cells and rows, errors), JSON (array, {rows}),
 // file names from a pattern (row number, columns, file base names, unsafe characters, Windows device names, length)
-// and unique names for duplicates.
+// and unique names for duplicates, Windows-1252/UTF-16 CSVs, the row number's width and numbers without exponent.
 
 #include "check.h"
 
@@ -128,6 +128,46 @@ void testNames()
     CHECK_EQ(DataRows::uniqueNames({"a", "A", "b", "a", "a-2"}), (QStringList{"a", "A-3", "b", "a-4", "a-2"}));
 }
 
+// Excel's other CSVs: Windows-1252 (a Western Windows' "CSV"), UTF-16 with a byte order mark ("Unicode text") or
+// without one; valid UTF-8 stays UTF-8
+void testEncodings()
+{
+    std::printf("encodings\n");
+    const QString want = QString::fromUtf8("Käse – 5 €");
+    std::optional<DataRows::Table> t = DataRows::parseCsv("product\nK\xE4se \x96 5 \x80\n"); // Windows-1252
+    if (CHECK(t && t->rows.size() == 1)) CHECK_EQ(t->rows[0]["product"].toString(), want);
+    const QString text = QString::fromUtf8("product;price\nKäse – 5 €;2\n");
+    for (bool bigEndian : {false, true})
+        for (bool bom : {true, false}) {
+            QByteArray data;
+            if (bom) data = bigEndian ? QByteArray("\xFE\xFF") : QByteArray("\xFF\xFE");
+            for (QChar c : text) {
+                const char hi = char(c.unicode() >> 8), lo = char(c.unicode() & 0xff);
+                data += bigEndian ? QByteArray{&hi, 1} + QByteArray{&lo, 1} : QByteArray{&lo, 1} + QByteArray{&hi, 1};
+            }
+            t = DataRows::parseCsv(data);
+            if (CHECK(t && t->rows.size() == 1)) {
+                CHECK_EQ(t->columns, (QStringList{"product", "price"}));
+                CHECK_EQ(t->rows[0]["product"].toString(), want);
+            }
+        }
+    t = DataRows::parseCsv("\xEF\xBB\xBFproduct\nK\xC3\xA4se \xE2\x80\x93 5 \xE2\x82\xAC\n"); // UTF-8 with BOM
+    if (CHECK(t && t->rows.size() == 1)) CHECK_EQ(t->rows[0]["product"].toString(), want);
+}
+
+// {n:W}: W from 0 to 9 (more is cut to 9, a negative one is refused); numbers of JSON rows without exponent
+void testNumbers()
+{
+    std::printf("row numbers, numbers in names\n");
+    CHECK_EQ(*DataRows::fileName("{n:3}", {}, 7), QString("007"));
+    CHECK_EQ(*DataRows::fileName("{n:200}", {}, 7), QString("000000007"));
+    CHECK_EQ(*DataRows::fileName("{n:-5}x", {}, 7), QString("7x"));
+    CHECK(!DataRows::patternError("{n:-5}", {}).isEmpty());
+    CHECK(DataRows::patternError("{n:200}", {}).isEmpty());
+    const QJsonObject row{{"id", 1234567}, {"price", 1234.5678}, {"small", 0.1}};
+    CHECK_EQ(*DataRows::fileName("{id}_{price}_{small}", row, 1), QString("1234567_1234.5678_0.1"));
+}
+
 } // namespace
 
 int main(int argc, char* argv[])
@@ -136,5 +176,7 @@ int main(int argc, char* argv[])
     testCsv();
     testJson();
     testNames();
+    testEncodings();
+    testNumbers();
     return Check::result();
 }
