@@ -510,10 +510,7 @@ bool likelyHardware(const AVCodecParameters* par)
     if (par->codec_id == AV_CODEC_ID_H264 && (par->width > 4096 || par->height > 4096)) return false;
     const AVCodec* codec = avcodec_find_decoder(par->codec_id);
     if (!codec) return false;
-    Hardware::Device d = Hardware::deviceFor(codec);
-    const bool ok = d.context != nullptr;
-    av_buffer_unref(&d.context);
-    return ok;
+    return Hardware::deviceReady(codec);
 }
 
 namespace {

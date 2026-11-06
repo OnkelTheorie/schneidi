@@ -24,6 +24,10 @@ struct Device {
 // Thread-safe.
 Device deviceFor(const AVCodec* codec);
 
+// Is a device for this codec open and working already (deviceFor succeeded before)? Never opens one (opening CUDA
+// takes 100+ ms: not for estimates on the GUI thread). Thread-safe.
+bool deviceReady(const AVCodec* codec);
+
 // The setting (Wiedergabe › Grafikkarte zum Dekodieren nutzen); the environment variable wins
 bool enabled();
 void setEnabled(bool on);
