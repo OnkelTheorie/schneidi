@@ -3,20 +3,25 @@
 // Reports shown frames per second and the longest gaps (stutter) per second of playback; with the own audio engine
 // (the default; not with SCHNEIDI_AUDIO=mlt) also how far the shown frame is behind the sound clock (picture follows sound).
 // Run: xvfb-run -a env SDL_AUDIODRIVER=dummy ./build-tests/tests/bench_playback <project.schneidi> [seconds] [start]
-//      (start in seconds of the timeline; default 10 s from 0)
+//      [--proxies]
+//      (start in seconds of the timeline; default 10 s from 0; --proxies: first create the proxies of all video files
+//      in the test cache, report time and size, then play from the proxies)
 #include "check.h"
 
 #include "core/Project.h"
 #include "core/ProjectFile.h"
 #include "engine/Engine.h"
+#include "engine/ProxyManager.h"
 
 #include <QApplication>
 #include <QElapsedTimer>
 #include <QEventLoop>
+#include <QFileInfo>
 #include <QTimer>
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <string>
 
 int main(int argc, char** argv)
 {
@@ -24,8 +29,16 @@ int main(int argc, char** argv)
     qputenv("SDL_AUDIODRIVER", "dummy");
     QApplication app(argc, argv);
     Check::initApp("bench-playback");
+    bool useProxies = false;
+    for (int i = 1; i < argc; ++i) {
+        if (std::string(argv[i]) != "--proxies") continue;
+        useProxies = true;
+        for (int j = i; j + 1 < argc; ++j) argv[j] = argv[j + 1];
+        --argc;
+        break;
+    }
     if (argc < 2) {
-        std::printf("usage: bench_playback <project.schneidi> [seconds] [start]\n");
+        std::printf("usage: bench_playback <project.schneidi> [seconds] [start] [--proxies]\n");
         return 2;
     }
     ProjectData data;
@@ -43,6 +56,32 @@ int main(int argc, char** argv)
     if (!engine.init(&error)) {
         std::printf("Engine init failed: %s\n", qPrintable(error));
         return 77;
+    }
+    if (useProxies) {
+        QStringList files;
+        for (const Track& t : project.timeline().video)
+            for (const Clip& c : t.clips)
+                if (!c.mediaPath.isEmpty() && !files.contains(c.mediaPath)) files << c.mediaPath;
+        ProxyManager* pm = engine.proxies();
+        pm->remove(files); // measure the creation, not an older proxy
+        QElapsedTimer took;
+        took.start();
+        pm->generate(files);
+        QEventLoop wait;
+        QTimer poll;
+        QObject::connect(&poll, &QTimer::timeout, &wait, [&] {
+            if (pm->pendingCount() == 0) wait.quit();
+        });
+        QObject::connect(pm, &ProxyManager::failed, &app, [](const QString& f, const QString& m) {
+            std::printf("proxy failed for %s: %s\n", qPrintable(f), qPrintable(m));
+        });
+        poll.start(50);
+        wait.exec();
+        for (const QString& f : files)
+            std::printf("proxy %s: %s, %.1f MB (original %.1f MB)\n", qPrintable(QFileInfo(f).fileName()),
+                        pm->hasProxy(f) ? "made" : "MISSING", QFileInfo(ProxyManager::proxyPath(f)).size() / 1e6,
+                        QFileInfo(f).size() / 1e6);
+        std::printf("proxies created in %.1f s\n", took.elapsed() / 1000.0);
     }
     engine.setFormat(project.format());
     engine.updateTimeline(project.timeline());
