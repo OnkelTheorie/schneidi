@@ -3,7 +3,7 @@
 // (core/TemplateLibrary: a project with placeholder slots, core/TemplateFill). Lists both, shows a content template's
 // slots, fills one into a new project (values checked against the slots' rules, brand kit applied, optionally
 // rendered) or fills the slots of a project in place (live in the app: one undo step), saves/removes/renames own
-// templates and shares them as ZIP (core/Zip). fill + rows: one project (and video) per row of a table (core/DataRows).
+// templates and shares them as ZIP (core/TemplateZip). fill + rows: one project (and video) per row of a table (core/DataRows).
 #include "cli/CommandsDetail.h"
 
 #include "cli/Live.h"
@@ -16,18 +16,16 @@
 #include "core/RenderJob.h"
 #include "core/TemplateFill.h"
 #include "core/TemplateLibrary.h"
+#include "core/TemplateZip.h"
 #include "core/TimelineOps.h"
-#include "core/Zip.h"
 #include "engine/Engine.h"
 #include "engine/ReframeAnalysis.h"
 
 #include <QDir>
-#include <QDirIterator>
 #include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonArray>
-#include <QRandomGenerator>
 #include <QSet>
 
 #include <cmath>
@@ -375,110 +373,21 @@ QJsonObject exportTemplate(const QJsonObject& a)
 {
     const ContentTemplate t = *contentTemplate(a["export"].toString());
     const QString zip = a["zip"].toString();
-    if (zip.isEmpty()) fail("BAD_ARGUMENT", "export needs zip (the file to write)");
-    if (!zip.endsWith(".zip", Qt::CaseInsensitive)) fail("BAD_ARGUMENT", "zip must end in .zip");
-    if (QFileInfo::exists(zip) && !a["overwrite"].toBool()) fail("EXISTS", "file exists (pass overwrite to replace it): " + zip);
-    QVector<Zip::Source> files;
-    const QDir root(t.dir);
-    QDirIterator it(t.dir, QDir::Files | QDir::Hidden | QDir::NoSymLinks, QDirIterator::Subdirectories);
-    while (it.hasNext()) {
-        const QString file = it.next();
-        files << Zip::Source{t.id + "/" + root.relativeFilePath(file), file};
-    }
-    std::sort(files.begin(), files.end(), [](const Zip::Source& x, const Zip::Source& y) { return x.name < y.name; });
-    QDir().mkpath(QFileInfo(zip).absolutePath());
-    const QString part = zip + ".part";
-    QString err;
-    if (!Zip::write(part, files, &err)) {
-        QFile::remove(part);
-        fail("SAVE_FAILED", err);
-    }
-    QFile::remove(zip);
-    if (!QFile::rename(part, zip)) {
-        QFile::remove(part);
-        fail("SAVE_FAILED", "cannot write " + zip);
-    }
-    return {{"zip", zip}, {"template", QJsonObject{{"id", t.id}, {"name", t.name}}}, {"files", int(files.size())},
+    QString err, code;
+    int files = 0;
+    if (!TemplateLibrary::exportZip(t.dir, zip, a["overwrite"].toBool(), &err, &code, &files)) fail(code, err);
+    return {{"zip", zip}, {"template", QJsonObject{{"id", t.id}, {"name", t.name}}}, {"files", files},
             {"size", QFileInfo(zip).size()}};
 }
 
 QJsonObject importTemplate(const QJsonObject& a)
 {
-    const QString zip = a["import"].toString();
-    if (!QFileInfo::exists(zip)) fail("NOT_FOUND", "no file " + zip);
-    QString err;
-    const std::optional<QVector<Zip::Entry>> list = Zip::entries(zip, &err);
-    if (!list) fail("BAD_ZIP", err);
-    // The template's folder in the archive: its root, or the one folder everything is in
-    QString prefix;
-    bool atRoot = false;
-    QSet<QString> tops;
-    for (const Zip::Entry& e : *list) {
-        const QString n = Zip::safeName(e.name);
-        if (n.isEmpty()) continue;
-        if (n == TemplateLibrary::ProjectFileName) atRoot = true;
-        tops.insert(n.section('/', 0, 0));
-    }
-    if (!atRoot) {
-        if (tops.size() == 1) prefix = *tops.begin();
-        bool found = false;
-        for (const Zip::Entry& e : *list)
-            found |= !prefix.isEmpty() && Zip::safeName(e.name) == prefix + "/" + TemplateLibrary::ProjectFileName;
-        if (!found) fail("BAD_TEMPLATE", QString("no %1 in %2 (a template is a folder with it)")
-                                              .arg(TemplateLibrary::ProjectFileName, QFileInfo(zip).fileName()));
-    }
-    const QDir base(TemplateLibrary::dir());
-    QDir().mkpath(base.absolutePath());
-    const QString staging = base.filePath(QString(".import-%1").arg(QRandomGenerator::global()->generate(), 8, 16, QChar('0')));
-    const auto cleanUp = [&] { QDir(staging).removeRecursively(); };
-    if (!Zip::extract(zip, staging, prefix, &err)) {
-        cleanUp();
-        fail("BAD_ZIP", err);
-    }
-    std::optional<ContentTemplate> t = TemplateLibrary::open(staging, &err);
-    if (!t) {
-        cleanUp();
-        fail("BAD_TEMPLATE", err);
-    }
-    ProjectData d;
-    TemplateLibrary::load(*t, &d, &err);
-    QString name = d.templateInfo && !d.templateInfo->name.trimmed().isEmpty() ? d.templateInfo->name.trimmed()
-                   : !prefix.isEmpty()                                       ? prefix
-                                                                             : QFileInfo(zip).completeBaseName();
-    QString id = TemplateLibrary::idForName(name);
-    if (QFileInfo::exists(base.filePath(id))) {
-        if (a["replace"].toBool()) {
-            if (!QDir(base.filePath(id)).removeRecursively()) {
-                cleanUp();
-                fail("SAVE_FAILED", "cannot replace " + base.filePath(id));
-            }
-        } else { // a name of its own: "Name 2"
-            const QString shown = name;
-            for (int n = 2; QFileInfo::exists(base.filePath(id)); ++n) {
-                name = QString("%1 %2").arg(shown).arg(n);
-                id = TemplateLibrary::idForName(name);
-            }
-        }
-    }
-    const QString final = base.filePath(id);
-    if (!QDir().rename(staging, final)) {
-        cleanUp();
-        fail("SAVE_FAILED", "cannot create " + final);
-    }
-    // From its place: media paths into the new folder, the (unique) name in the project
-    std::optional<ContentTemplate> placed = TemplateLibrary::open(final, &err);
-    if (placed) {
-        ProjectData pd;
-        if (TemplateLibrary::load(*placed, &pd, &err)) {
-            TemplateInfo info = pd.templateInfo.value_or(TemplateInfo{});
-            info.name = name;
-            pd.templateInfo = info;
-            ProjectFile::save(pd, placed->project, &err);
-        }
-        placed = TemplateLibrary::open(final, &err);
-    }
-    if (!placed) fail("BAD_TEMPLATE", err);
-    QJsonObject out = contentJson(*placed);
+    QString err, code;
+    const std::optional<ContentTemplate> t = TemplateLibrary::importZip(
+        a["import"].toString(), a["replace"].toBool() ? TemplateLibrary::ZipClash::Replace : TemplateLibrary::ZipClash::KeepBoth,
+        &err, &code);
+    if (!t) fail(code, err);
+    QJsonObject out = contentJson(*t);
     out["imported"] = true;
     return out;
 }

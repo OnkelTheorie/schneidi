@@ -10,6 +10,8 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDialogButtonBox>
+#include <QDir>
+#include <QFileDialog>
 #include <QFileInfo>
 #include <QFontMetrics>
 #include <QFormLayout>
@@ -24,6 +26,7 @@
 #include <QPainter>
 #include <QPushButton>
 #include <QSet>
+#include <QStandardPaths>
 #include <QTreeWidget>
 #include <QVBoxLayout>
 
@@ -135,12 +138,8 @@ TemplateBrowserDialog::TemplateBrowserDialog(QWidget* parent, std::function<QIma
     m_import->setObjectName("template_import");
     m_export = new QPushButton(T("Exportieren…"));
     m_export->setObjectName("template_export");
-    // TODO(0.18 lead): ZIP import/export comes with package B (TemplateLibrary::exportZip / importZip); wire these two
-    // buttons to it after the merge
-    for (QPushButton* b : {m_import, m_export}) {
-        b->setEnabled(false);
-        b->setToolTip(T("Kommt bald: Vorlagen als ZIP weitergeben"));
-    }
+    m_import->setToolTip(T("Eine Vorlage aus einer ZIP-Datei übernehmen"));
+    m_export->setToolTip(T("Die gewählte Vorlage als ZIP-Datei speichern (zum Weitergeben)"));
     m_rename = new QPushButton(T("Umbenennen…"));
     m_rename->setObjectName("template_rename");
     m_remove = new QPushButton(T("Löschen"));
@@ -166,6 +165,8 @@ TemplateBrowserDialog::TemplateBrowserDialog(QWidget* parent, std::function<QIma
     connect(cancel, &QPushButton::clicked, this, &QDialog::reject);
     connect(m_rename, &QPushButton::clicked, this, &TemplateBrowserDialog::renameCurrent);
     connect(m_remove, &QPushButton::clicked, this, &TemplateBrowserDialog::removeCurrent);
+    connect(m_import, &QPushButton::clicked, this, &TemplateBrowserDialog::importZip);
+    connect(m_export, &QPushButton::clicked, this, &TemplateBrowserDialog::exportZip);
     connect(m_list, &QListWidget::currentRowChanged, this, &TemplateBrowserDialog::updateButtons);
     connect(m_aspect, &QComboBox::activated, this, &TemplateBrowserDialog::fill);
     connect(m_tag, &QComboBox::activated, this, &TemplateBrowserDialog::fill);
@@ -305,6 +306,7 @@ void TemplateBrowserDialog::updateButtons()
     m_edit->setEnabled(own);
     m_rename->setEnabled(own);
     m_remove->setEnabled(own);
+    m_export->setEnabled(it && it->content);
     if (!it) {
         m_details->clear();
         return;
@@ -363,6 +365,100 @@ void TemplateBrowserDialog::removeCurrent()
     reload();
 }
 
+// ---- ZIP ----
+
+namespace {
+
+// Where the file dialogs start: the folder of the last ZIP, else the documents
+QString& lastZipFolder()
+{
+    static QString folder;
+    if (folder.isEmpty()) folder = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+    return folder;
+}
+
+void zipFailed(QWidget* parent, const QString& title, const QString& text, const QString& details)
+{
+    QMessageBox box(QMessageBox::Warning, title, text, QMessageBox::Ok, parent);
+    box.setDetailedText(details);
+    box.exec();
+}
+
+} // namespace
+
+void TemplateBrowserDialog::importZip()
+{
+    const QString zip = QFileDialog::getOpenFileName(this, T("Vorlage importieren"), lastZipFolder(),
+                                                     T("ZIP-Dateien (*.zip)"));
+    if (zip.isEmpty()) return;
+    lastZipFolder() = QFileInfo(zip).absolutePath();
+    importFrom(zip);
+}
+
+void TemplateBrowserDialog::exportZip()
+{
+    const Item* it = current();
+    if (!it || !it->content) return;
+    const QString zip = QFileDialog::getSaveFileName(this, T("Vorlage exportieren"),
+                                                     QDir(lastZipFolder()).filePath(it->t.id + ".zip"),
+                                                     T("ZIP-Dateien (*.zip)"));
+    if (zip.isEmpty()) return;
+    lastZipFolder() = QFileInfo(zip).absolutePath();
+    exportTo(zip.endsWith(".zip", Qt::CaseInsensitive) ? zip : zip + ".zip");
+}
+
+std::optional<TemplateLibrary::ZipClash> TemplateBrowserDialog::askClash(const QString& zip)
+{
+    if (m_clashAnswer) return m_clashAnswer();
+    QMessageBox box(QMessageBox::Question, T("Vorlage importieren"),
+                    T("Eine Vorlage mit dem Namen aus „%1“ gibt es schon.").arg(QFileInfo(zip).fileName()),
+                    QMessageBox::NoButton, this);
+    QPushButton* replace = box.addButton(T("Ersetzen"), QMessageBox::DestructiveRole);
+    QPushButton* both = box.addButton(T("Beide behalten"), QMessageBox::AcceptRole);
+    box.addButton(QMessageBox::Cancel);
+    box.setDefaultButton(both);
+    box.exec();
+    if (box.clickedButton() == replace) return TemplateLibrary::ZipClash::Replace;
+    if (box.clickedButton() == both) return TemplateLibrary::ZipClash::KeepBoth;
+    return std::nullopt;
+}
+
+bool TemplateBrowserDialog::importFrom(const QString& zip)
+{
+    QString error, code;
+    std::optional<ContentTemplate> t = TemplateLibrary::importZip(zip, TemplateLibrary::ZipClash::Fail, &error, &code);
+    if (!t && code == "EXISTS") {
+        const std::optional<TemplateLibrary::ZipClash> answer = askClash(zip);
+        if (!answer) return false;
+        t = TemplateLibrary::importZip(zip, *answer, &error, &code);
+    }
+    if (!t) {
+        const QString file = QFileInfo(zip).fileName();
+        zipFailed(this, T("Vorlage importieren"),
+                  code == "BAD_ZIP"        ? T("„%1“ ist keine lesbare ZIP-Datei.").arg(file)
+                  : code == "BAD_TEMPLATE" ? T("In „%1“ ist keine schneidi-Vorlage.").arg(file)
+                                           : T("Die Vorlage konnte nicht importiert werden."),
+                  error);
+        return false;
+    }
+    reload();
+    select(t->name);
+    return true;
+}
+
+bool TemplateBrowserDialog::exportTo(const QString& zip)
+{
+    const Item* it = current();
+    if (!it || !it->content) return false;
+    QString error, code;
+    if (!TemplateLibrary::exportZip(it->t.dir, zip, true, &error, &code)) {
+        zipFailed(this, T("Vorlage exportieren"), T("Die Vorlage konnte nicht exportiert werden."), error);
+        return false;
+    }
+    m_details->setText(T("Exportiert: %1").arg(QDir::toNativeSeparators(zip).toHtmlEscaped()));
+    return true;
+}
+
 QStringList TemplateBrowserDialog::shownNames() const
 {
     QStringList names;
@@ -415,9 +511,13 @@ SlotCheckDialog::SlotCheckDialog(const ProjectData& d, QWidget* parent) : QDialo
     }
     m_tree->header()->setStretchLastSection(true);
     for (int c = 0; c < m_tree->columnCount() - 1; ++c) m_tree->resizeColumnToContents(c);
+    // One and many: own texts (the repo's way, T() has no plural forms)
+    const int n = int(refs.size());
+    const QString fields = n == 1 ? T("1 Feld") : T("%1 Felder").arg(n);
+    const QString problems = m_problems == 1 ? T("1 Problem") : T("%1 Probleme").arg(m_problems);
     auto* summary = new QLabel(refs.isEmpty() ? T("Das Projekt hat keine Platzhalter (Clip › Als Platzhalter markieren…).")
-                               : m_problems == 0 ? T("%1 Felder, alles in Ordnung.").arg(refs.size())
-                                                 : T("%1 Felder, %2 Probleme.").arg(refs.size()).arg(m_problems));
+                               : m_problems == 0 ? T("%1, alles in Ordnung.").arg(fields)
+                                                 : T("%1, %2.").arg(fields, problems));
     summary->setObjectName("slot_check_summary");
     lay->addWidget(summary);
     lay->addWidget(m_tree, 1);

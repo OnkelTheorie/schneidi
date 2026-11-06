@@ -3,7 +3,8 @@
 // clip as placeholder through the menu action and changing its rules in the Inspector (one undo step each), dropping a
 // Media Pool file onto a placeholder fills it (one undo step) while Alt drops as always, the template browser lists
 // built-in and own content templates and the start templates, "New" gives an untitled project without template
-// description and "Edit" keeps it, saving as template from the window, "Check Fields". Everything stays in the test's
+// description and "Edit" keeps it, ZIP export/import in the browser, saving as template from the window, "Check
+// Fields". Everything stays in the test's
 // own settings and folders.
 // TEMPLATE_DUMP=<folder>: pictures (slot-inspector.png, slot-timeline.png, template-browser.png, slot-check.png,
 // save-template.png)
@@ -31,12 +32,14 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDir>
+#include <QFileInfo>
 #include <QDropEvent>
 #include <QFile>
 #include <QHash>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QMessageBox>
 #include <QMimeData>
 #include <QPainter>
 #include <QPushButton>
@@ -165,7 +168,7 @@ ProjectData withFiles(ProjectData d, const QString& dir)
 void clean()
 {
     QDir(TemplateLibrary::dir()).removeRecursively();
-    // The built-in ones' copies too: copied again only where sizes differ (a test folder of the same name length)
+    // The built-in ones' copies too (each test's own built-in folder starts from an empty cache)
     QDir(QDir(QStandardPaths::writableLocation(QStandardPaths::CacheLocation)).filePath("templates-builtin")).removeRecursively();
     QSettings().remove("templates");
 }
@@ -405,14 +408,13 @@ void testBrowserAndWindow(const QString& tmp)
             tag->setCurrentIndex(0);
             emit tag->activated(0);
         }
-        // Built-in: New only; own: also edit, rename, delete; ZIP buttons wait for package B
+        // Built-in: New only; own: also edit, rename, delete
         auto* edit = dlg.findChild<QPushButton*>("template_edit");
         auto* remove = dlg.findChild<QPushButton*>("template_delete");
         CHECK(dlg.select("Gaming-Highlight"));
         CHECK(!edit->isEnabled() && !remove->isEnabled());
         CHECK(dlg.select("Mein Podcast"));
         CHECK(edit->isEnabled() && remove->isEnabled());
-        CHECK(!dlg.findChild<QPushButton*>("template_import")->isEnabled());
         CHECK(dlg.select("Short mit Hook"));
         dlg.resize(840, 560);
         dlg.show();
@@ -483,6 +485,9 @@ void testBrowserAndWindow(const QString& tmp)
         auto* tree = check.findChild<QTreeWidget*>("slot_check_list");
         if (CHECK(tree)) CHECK_EQ(tree->topLevelItemCount(), 3);
         CHECK_EQ(check.problemCount(), 1);
+        // One problem in the singular
+        auto* summary = check.findChild<QLabel*>("slot_check_summary");
+        if (CHECK(summary)) CHECK_EQ(summary->text(), QString("3 Felder, 1 Problem."));
         if (tree && tree->topLevelItemCount() == 3) CHECK_EQ(tree->topLevelItem(1)->text(6), T("Text zu lang"));
         check.show();
         QApplication::processEvents();
@@ -517,6 +522,87 @@ void testBrowserAndWindow(const QString& tmp)
     TemplateLibrary::setBuiltInRoot({});
 }
 
+// ZIP import/export in the browser: export of built-in and own content templates, import with the clash question
+// (keep both -> "Name 2", replace, cancel), an unreadable file gives a message in the UI language
+void testBrowserZip(const QString& tmp)
+{
+    clean();
+    TemplateLibrary::setBuiltInRoot(makeBuiltIns(tmp + "/builtin-zip"));
+    QString err;
+    if (!CHECK(TemplateLibrary::save(withFiles(project(), tmp + "/zipfiles"), "Mein Podcast", {}, &err).has_value())) {
+        std::printf("%s\n", qPrintable(err));
+        return;
+    }
+    TemplateBrowserDialog dlg;
+    auto* importButton = dlg.findChild<QPushButton*>("template_import");
+    auto* exportButton = dlg.findChild<QPushButton*>("template_export");
+    if (!CHECK(importButton && exportButton)) return;
+    CHECK(importButton->isEnabled());
+    CHECK(dlg.select("Gaming-Highlight"));
+    CHECK(exportButton->isEnabled()); // built-in ones can be passed on too
+    CHECK(dlg.select(T("Neutral")));
+    CHECK(!exportButton->isEnabled()); // a start template is no folder
+    CHECK(!dlg.exportTo(tmp + "/zip/neutral.zip"));
+
+    const QString zip = tmp + "/zip/podcast.zip";
+    CHECK(dlg.select("Mein Podcast"));
+    CHECK(dlg.exportTo(zip));
+    CHECK(QFileInfo(zip).size() > 0);
+    CHECK(dlg.exportTo(zip)); // the save dialog asked already: replaced
+    // Import: the name exists -> asked; keep both
+    int asked = 0;
+    std::optional<TemplateLibrary::ZipClash> answer = TemplateLibrary::ZipClash::KeepBoth;
+    dlg.setClashAnswer([&] {
+        ++asked;
+        return answer;
+    });
+    CHECK(dlg.importFrom(zip));
+    CHECK_EQ(asked, 1);
+    CHECK(dlg.shownNames().contains("Mein Podcast 2"));
+    const std::optional<ContentTemplate> second = TemplateLibrary::find("Mein Podcast 2");
+    if (CHECK(second.has_value())) {
+        ProjectData d;
+        CHECK(TemplateLibrary::load(*second, &d, &err));
+        for (const MediaInfo& m : d.media) CHECK(m.path.startsWith(second->dir + "/"));
+    }
+    CHECK_EQ(int(TemplateLibrary::own().size()), 2);
+    answer = TemplateLibrary::ZipClash::Replace;
+    CHECK(dlg.importFrom(zip));
+    CHECK_EQ(asked, 2);
+    CHECK_EQ(int(TemplateLibrary::own().size()), 2);
+    answer = std::nullopt; // cancel
+    CHECK(!dlg.importFrom(zip));
+    CHECK_EQ(asked, 3);
+    CHECK_EQ(int(TemplateLibrary::own().size()), 2);
+    // A built-in one exported and imported: an own copy, no question
+    CHECK(dlg.select("Gaming-Highlight"));
+    CHECK(dlg.exportTo(tmp + "/zip/gaming.zip"));
+    CHECK(dlg.importFrom(tmp + "/zip/gaming.zip"));
+    CHECK_EQ(asked, 3); // no clash, no question
+    CHECK_EQ(int(TemplateLibrary::own().size()), 3);
+
+    // Not a ZIP: a warning in the UI language, nothing imported, no staging folder left
+    QString shown;
+    QTimer close;
+    close.setInterval(20);
+    QObject::connect(&close, &QTimer::timeout, [&] {
+        auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget());
+        if (!box) return;
+        close.stop();
+        shown = box->text();
+        box->accept();
+    });
+    close.start();
+    CHECK(!dlg.importFrom(touch(tmp + "/zip/bad.zip", "not a zip")));
+    close.stop();
+    CHECK_EQ(shown, T("„%1“ ist keine lesbare ZIP-Datei.").arg("bad.zip"));
+    CHECK_EQ(int(TemplateLibrary::own().size()), 3);
+    for (const QFileInfo& fi : QDir(TemplateLibrary::dir()).entryInfoList(QDir::Dirs | QDir::Hidden | QDir::NoDotAndDotDot))
+        CHECK(!fi.fileName().startsWith(".import"));
+    clean();
+    TemplateLibrary::setBuiltInRoot({});
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -531,6 +617,7 @@ int main(int argc, char** argv)
     testDropFill();
     testInspector();
     testBrowserAndWindow(dir.path());
+    testBrowserZip(dir.path());
     clean();
     return Check::result();
 }

@@ -159,6 +159,7 @@ add_library(schneidi_lib STATIC
     src/core/TemplateFill.h       src/core/TemplateFill.cpp
     src/core/DataRows.h           src/core/DataRows.cpp
     src/core/Zip.h                src/core/Zip.cpp
+    src/core/TemplateZip.h        src/core/TemplateZip.cpp
     src/core/Ducking.h            src/core/Ducking.cpp
     src/core/ExportCheck.h        src/core/ExportCheck.cpp src/core/ExportCheckStory.cpp
     src/core/Stutter.h            src/core/Stutter.cpp

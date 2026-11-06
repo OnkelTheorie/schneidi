@@ -20,6 +20,7 @@
 #include "engine/RenderCache.h"
 
 #include <QCoreApplication>
+#include <QDateTime>
 #include <QDir>
 #include <QDirIterator>
 #include <QFile>
@@ -733,6 +734,26 @@ void testLibrary()
         CHECK(!list[1].builtIn);
     }
     CHECK(!TemplateLibrary::remove("demo", &err)); // not an own one
+    {
+        // A program update with a changed template of the very same size: the cached copy is refreshed
+        const QString src = root.filePath("demo/template.schneidi");
+        QFile f(src);
+        CHECK(f.open(QIODevice::ReadOnly));
+        QByteArray bytes = f.readAll();
+        f.close();
+        const qint64 size = bytes.size();
+        bytes.replace("\"Built in\"", "\"Built on\"");
+        CHECK_EQ(qint64(bytes.size()), size);
+        CHECK(f.open(QIODevice::WriteOnly | QIODevice::Truncate));
+        f.write(bytes);
+        f.close();
+        CHECK(f.open(QIODevice::ReadWrite));
+        f.setFileTime(QDateTime::currentDateTime().addSecs(60), QFileDevice::FileModificationTime);
+        f.close();
+        const QVector<ContentTemplate> again = TemplateLibrary::builtIn();
+        CHECK_EQ(int(again.size()), 1);
+        if (!again.isEmpty()) CHECK_EQ(again[0].name, QString("Built on"));
+    }
     TemplateLibrary::setBuiltInRoot({});
     // The program's own (resources): listing them works (empty until package E fills assets/templates)
     for (const ContentTemplate& c : TemplateLibrary::builtIn()) CHECK(c.builtIn);

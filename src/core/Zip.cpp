@@ -6,6 +6,8 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QHash>
+#include <QSet>
 
 #include <algorithm>
 #include <array>
@@ -308,14 +310,39 @@ private:
 
 namespace {
 
-// An absolute path, a drive letter, a ".." part (or a ':' - an NTFS stream, a drive)
+// A Windows device name: no file there, also with an extension or spaces before it ("NUL.txt", "con .mp4", "COM1")
+bool deviceName(const QString& part)
+{
+    const QString stem = part.section('.', 0, 0).trimmed().toUpper();
+    if (stem == "CON" || stem == "PRN" || stem == "AUX" || stem == "NUL" || stem == "CONIN$" || stem == "CONOUT$")
+        return true;
+    if (stem.size() != 4 || !(stem.startsWith("COM") || stem.startsWith("LPT"))) return false;
+    const QChar d = stem[3];
+    return (d >= '0' && d <= '9') || d == QChar(0x00b9) || d == QChar(0x00b2) || d == QChar(0x00b3); // also "COM¹"
+}
+
+// One part of an entry's path that is unsafe or names another file on some system: "..", a ':' (an NTFS stream, a
+// drive), a dot or space at its end (Windows drops them: ".. " is "..", "a. " is "a"), a character Windows refuses
+// (< > " | ? * and control characters), a device name. The same on every system, so an archive behaves alike
+// everywhere.
+bool unsafePart(const QString& p)
+{
+    if (p == ".") return false;
+    if (p == ".." || p.endsWith('.') || p.endsWith(' ') || deviceName(p)) return true;
+    for (const QChar c : p)
+        if (c.unicode() < 0x20 || c == ':' || c == '<' || c == '>' || c == '"' || c == '|' || c == '?' || c == '*')
+            return true;
+    return false;
+}
+
+// An absolute path, a drive letter or an unsafe part (unsafePart)
 bool unsafeName(const QString& name)
 {
     QString n = name;
     n.replace('\\', '/');
     if (n.startsWith('/') || (n.size() >= 2 && n[1] == ':')) return true;
     for (const QString& p : n.split('/', Qt::SkipEmptyParts))
-        if (p == ".." || p.contains(':')) return true;
+        if (unsafePart(p)) return true;
     return false;
 }
 
@@ -330,6 +357,14 @@ QString safeName(const QString& name)
     for (const QString& p : n.split('/', Qt::SkipEmptyParts))
         if (p != ".") parts << p;
     return parts.join('/');
+}
+
+bool junk(const QString& name)
+{
+    if (name == "__MACOSX" || name.startsWith("__MACOSX/")) return true;
+    const QString last = name.section('/', -1);
+    return last == ".DS_Store" || last.startsWith("._") || last.compare("Thumbs.db", Qt::CaseInsensitive) == 0
+           || last.compare("desktop.ini", Qt::CaseInsensitive) == 0;
 }
 
 bool write(const QString& zipPath, const QVector<Source>& files, QString* error)
@@ -485,6 +520,26 @@ bool extract(const QString& zipPath, const QString& dir, const QString& prefix, 
         total += e.size;
         if (total > maxTotal) return failWith(error, QString("%1: too big when unpacked").arg(name));
     }
+    // One file per name on every file system: no duplicates, also not by case, no file where a folder is
+    QHash<QString, QString> files; // case-folded -> as in the archive
+    QSet<QString> folders;
+    for (const Entry& e : *list) {
+        const QString n = safeName(e.name);
+        if (n.isEmpty() || junk(n)) continue;
+        const QString folded = n.toCaseFolded();
+        if (e.dir) {
+            folders.insert(folded);
+            continue;
+        }
+        if (files.contains(folded))
+            return failWith(error, QString("%1: '%2' and '%3' are the same file on Windows and macOS")
+                                       .arg(name, files.value(folded), e.name));
+        files.insert(folded, e.name);
+        for (qsizetype i = folded.indexOf('/'); i > 0; i = folded.indexOf('/', i + 1)) folders.insert(folded.left(i));
+    }
+    for (auto it = files.cbegin(); it != files.cend(); ++it)
+        if (folders.contains(it.key()))
+            return failWith(error, QString("%1: '%2' is a file and a folder").arg(name, it.value()));
     QFile f(zipPath);
     if (!f.open(QIODevice::ReadOnly)) return failWith(error, "cannot read " + zipPath);
     const QDir root(dir);
@@ -493,7 +548,7 @@ bool extract(const QString& zipPath, const QString& dir, const QString& prefix, 
     const QString pre = prefix.isEmpty() ? QString() : safeName(prefix) + '/';
     for (const Entry& e : *list) {
         QString rel = safeName(e.name);
-        if (rel.isEmpty()) continue;
+        if (rel.isEmpty() || junk(rel)) continue;
         if (!pre.isEmpty()) {
             if (!(rel + '/').startsWith(pre)) continue;
             rel = rel.mid(pre.size());
