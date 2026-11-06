@@ -8,6 +8,7 @@
 #include "core/SystemMemory.h"
 #include "core/TimelineOps.h"
 #include "engine/Bundle.h"
+#include "engine/ClipFormat.h"
 #include "engine/ExportWriter.h"
 #include "engine/HardwareEncoders.h"
 #include "engine/MemoryRelease.h"
@@ -22,6 +23,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QRegularExpression>
+#include <QSet>
 #include <QSaveFile>
 #include <QSettings>
 #include <QStandardPaths>
@@ -44,9 +46,13 @@ std::atomic<int> g_running{0}; // running exports (m_timer runs exactly then)
 // buffers, the writer's queue, decoder and encoder frame threads)
 constexpr qint64 kMB = 1024 * 1024;
 constexpr qint64 kFramesPerThread = 8;
-// Left for the program itself, the encoder's lookahead and the rest of the machine: at least this, or an eighth of
-// what is available
-constexpr qint64 kReserveBytes = 96 * kMB;
+// Left for the program itself, the encoder and the rest of the machine: at least this, or an eighth of what is
+// available (the source decoders are counted on their own, decodedSourceBytes)
+constexpr qint64 kReserveBytes = 32 * kMB;
+// Decoded pictures a video decoder holds (YUV 4:2:0, 1.5 bytes per pixel): the reader's window ahead and behind and
+// the decoder's own reference and thread frames. Measured: a second 1080p60 decoder (picture-in-picture of the same
+// recording 30 frames apart) added 70 MB = 22 pictures
+constexpr qint64 kPicturesPerDecoder = 20;
 
 // The subtitle tracks with entries in the range [from, to) as SRT files (Subtitles::srtFiles: the visible one into path,
 // the others next to it), times from the start of the range. Not committed yet: an existing file of a name is replaced
@@ -203,14 +209,55 @@ int Exporter::availableThreads()
     return std::max(1, QThread::idealThreadCount());
 }
 
-Exporter::ThreadChoice Exporter::automaticThreads(int processors, QSize output, qint64 availableBytes)
+Exporter::ThreadChoice Exporter::automaticThreads(int processors, QSize output, qint64 availableBytes,
+                                                  qint64 sourceBytes)
 {
     processors = std::max(1, processors);
     if (availableBytes <= 0 || output.isEmpty()) return {processors, false};
     const qint64 perThread = qint64(output.width()) * output.height() * 4 * kFramesPerThread;
-    const qint64 budget = availableBytes - std::max(kReserveBytes, availableBytes / 8);
+    const qint64 budget = availableBytes - std::max(kReserveBytes, availableBytes / 8) - std::max<qint64>(0, sourceBytes);
     const int fit = int(std::clamp<qint64>(budget / std::max<qint64>(1, perThread), 1, processors));
     return {fit, fit < processors};
+}
+
+qint64 Exporter::decodedSourceBytes(const Timeline& tl, int from, int to,
+                                   const std::function<QSize(const QString&)>& sizeOf)
+{
+    // One decoder per file and position (source frame - timeline frame), as the renderer shares them
+    // (Picture::Renderer's lanes); compound clips' contents are not looked into
+    struct Use {
+        int start, end;
+        QString key;
+        qint64 bytes;
+    };
+    QHash<QString, QSize> sizes;
+    std::vector<Use> uses;
+    for (const Track& t : tl.video) {
+        if (t.hidden) continue;
+        for (const Clip& c : t.clips) {
+            if (!c.enabled || c.mediaPath.isEmpty() || c.isNested() || c.isTitle()) continue;
+            const int a = std::max(c.start, from), b = std::min(c.end(), to);
+            if (a >= b) continue;
+            auto it = sizes.find(c.mediaPath);
+            if (it == sizes.end()) it = sizes.insert(c.mediaPath, sizeOf(c.mediaPath));
+            if (it->isEmpty()) continue;
+            const qint64 bytes = qint64(it->width()) * it->height() * 3 / 2 * kPicturesPerDecoder;
+            uses.push_back({a, b, c.mediaPath + '|' + QString::number(c.in - c.start), bytes});
+        }
+    }
+    // The frames where something starts are where the sum can grow
+    qint64 peak = 0;
+    for (const Use& at : uses) {
+        QSet<QString> open;
+        qint64 sum = 0;
+        for (const Use& u : uses)
+            if (u.start <= at.start && at.start < u.end && !open.contains(u.key)) {
+                open.insert(u.key);
+                sum += u.bytes;
+            }
+        peak = std::max(peak, sum);
+    }
+    return peak;
 }
 
 int Exporter::parallelFrames(const Timeline& tl, int threads)
@@ -304,9 +351,15 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
     // Different frame rate: the writer picks the timeline frame of every output frame
     const FrameRate rate = s.rate.num > 0 && s.rate.den > 0 ? s.rate : s.format.rate;
     const bool convertRate = rate != s.format.rate && !s.videoCodec.isEmpty();
-    const ThreadChoice automatic = s.threads > 0 || s.videoCodec.isEmpty()
-                                       ? ThreadChoice{availableThreads(), false}
-                                       : automaticThreads(availableThreads(), out.size(), SystemMemory::read().available);
+    ThreadChoice automatic{availableThreads(), false};
+    if (s.threads <= 0 && !s.videoCodec.isEmpty())
+        if (const qint64 available = SystemMemory::read().available; available > 0) {
+            const qint64 sources = decodedSourceBytes(scaled, m_from, m_from + m_length, [](const QString& path) {
+                const ClipFormat cf = detectClipFormat(path);
+                return cf.ok ? QSize(cf.width, cf.height) : QSize();
+            });
+            automatic = automaticThreads(availableThreads(), out.size(), available, sources);
+        }
     const int threads = s.threads > 0 ? s.threads : automatic.threads;
     m_threadsLowMemory = s.threads <= 0 && automatic.lowMemory;
     m_settings = s;
@@ -470,6 +523,17 @@ bool Exporter::fallBackToSoftware(QString* error)
     return startWriter(next, error);
 }
 
+QVector<QPair<QByteArray, QByteArray>> Exporter::lowMemoryOptions(const QString& codec)
+{
+    // x264's lookahead holds about 6 MB per frame at 1080x1920, 40 frames at preset medium = more than a 415 MB
+    // board has free: 10 like preset veryfast. (sync-lookahead 0 would save 37 MB more at 2 threads, but runs the
+    // lookahead in the encoder's thread: on the Pi Zero 2 W the CS2 short rendered at half the speed.) x265:
+    // lookahead 10 too (20-25 at its presets)
+    if (codec == "libx264") return {{QByteArrayLiteral("rc-lookahead"), QByteArrayLiteral("10")}};
+    if (codec == "libx265") return {{QByteArrayLiteral("x265-params"), QByteArrayLiteral("rc-lookahead=10")}};
+    return {};
+}
+
 QVector<QPair<QByteArray, QByteArray>> Exporter::encoderOptions(const QString& codec) const
 {
     const ExportSettings& s = m_settings;
@@ -485,10 +549,7 @@ QVector<QPair<QByteArray, QByteArray>> Exporter::encoderOptions(const QString& c
             o.append({"crf", QByteArray::number(s.crf)}); // H.264/H.265/AV1/VP9; fixed-quality formats have 0
         }
         if (codec == "libx264" || codec == "libx265") o.append({"preset", s.preset.toUtf8()});
-        // Little RAM (automaticThreads lowered the threads): x264's lookahead holds about 6 MB per frame at
-        // 1080x1920, 40 frames at preset medium = more than a 415 MB board has free. 10 like preset veryfast (a
-        // format's own rc-lookahead below still wins)
-        if (m_threadsLowMemory && codec == "libx264") o.append({QByteArrayLiteral("rc-lookahead"), QByteArrayLiteral("10")});
+        if (m_threadsLowMemory) o += lowMemoryOptions(codec);
     }
     if (s.maxBitrateK > 0) { // quality target as before, but capped (VBV)
         o.append({"maxrate", QByteArray::number(s.maxBitrateK) + "k"});
