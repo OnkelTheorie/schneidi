@@ -18,6 +18,10 @@ namespace MediaProbe {
 
 // Lengths count in `rate`
 std::optional<MediaInfo> read(const QString& path, FrameRate rate);
+// Why read() found nothing to play in `path`, in a short English sentence for a message (`cannot read media: <path>
+// (<reason>)`): a folder, a pipe or device, no permission, an empty file, no picture or sound streams, a still picture
+// that is broken or too large, … Only meant for a file read() refused (it opens the file again).
+QString whyUnreadable(const QString& path);
 // Sound files by extension (mp3, wav, …): an embedded cover is no picture for the timeline
 bool isAudioFile(const QString& path);
 

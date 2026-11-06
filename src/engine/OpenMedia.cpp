@@ -7,6 +7,7 @@ extern "C" {
 }
 
 #include <QByteArray>
+#include <QFileInfo>
 #include <QList>
 
 namespace OpenMedia {
@@ -52,8 +53,19 @@ bool refused(const char* demuxerName)
     return false;
 }
 
+bool notAFile(const char* path)
+{
+    // Only what exists: a picture sequence's pattern ("shot_%05d.png") names no file itself. QFileInfo follows a
+    // symbolic link to what it points at (a link to /dev/zero is a device).
+    const QFileInfo fi(QString::fromUtf8(path));
+    return fi.exists() && !fi.isFile();
+}
+
 int input(AVFormatContext** fmt, const char* path, const AVDictionary* extra)
 {
+    // Folders, named pipes (FIFOs), devices and sockets are no media files: opening a pipe nobody writes into blocks
+    // forever (a hanging import, probe or render), /dev/zero or /dev/urandom never end
+    if (path && notAFile(path)) return AVERROR(EINVAL);
     AVDictionary* options = nullptr;
     if (extra) av_dict_copy(&options, extra, 0);
     av_dict_set(&options, "protocol_whitelist", "file", 0);

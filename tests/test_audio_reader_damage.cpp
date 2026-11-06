@@ -5,9 +5,11 @@
 // - a long timestamp gap (muted microphone track) is known silence, not a buffer of the gap's whole length
 // - a single packet with a timestamp far ahead (broken recording) does not swallow the rest of the file
 // - Matroska without a duration (the recorder crashed): the end is estimated from the last packets
+// - 64 channels without positions (no standard layout for that count): mixed down by an own matrix, not silence
 
 #include "check.h"
 
+#include "engine/MediaProbe.h"
 #include "engine/audio/Reader.h"
 
 #include <QCoreApplication>
@@ -178,6 +180,15 @@ void testNoDuration(const QString& dir)
         args << "-c:a" << "aac" << "-live" << "1";
         const QString path = Check::makeMedia(dir + (video ? "/live_av.mkv" : "/live_a.mkv"), args);
         if (!CHECK(!path.isEmpty())) continue;
+        // The probe (import, every CLI command) refused such a file ("cannot read media"): its length comes from the
+        // last packets as well
+        const std::optional<MediaInfo> m = MediaProbe::read(path, FrameRate{25, 1});
+        if (CHECK(m)) {
+            std::printf("       %s: probe length %d frames\n", video ? "with picture" : "sound only", m->length);
+            CHECK(std::abs(m->length - 150) <= 2);
+            CHECK_EQ(m->hasVideo, video);
+            CHECK(m->hasAudio);
+        }
         auto r = Audio::Reader::open(path);
         if (!CHECK(r)) continue;
         std::printf("       %s: end %lld\n", video ? "with picture" : "sound only", (long long)r->info().end);
@@ -186,6 +197,28 @@ void testNoDuration(const QString& dir)
         const Planar a = readRange(*r, 0, kRate, 1920);
         CHECK(peak(a[0], size_t(kRate / 10), size_t(kRate)) > 0.1);
     }
+}
+
+// A 64-channel WAV (FFmpeg knows no layout for 64 channels: its order is "unspecified"), a sine on channel 0 only,
+// read as stereo: FFmpeg's resampler had no matrix for it and the reader gave silence (imported, rendered silent)
+void testUnpositionedChannels(const QString& dir)
+{
+    QString expr = "sin(440*2*PI*t)";
+    for (int c = 1; c < 64; ++c) expr += "|0";
+    const QString path = Check::makeMedia(dir + "/ch64.wav", {"-f", "lavfi", "-i", "aevalsrc=" + expr + ":s=48000:d=1",
+                                                              "-c:a", "pcm_s16le"});
+    if (!CHECK(!path.isEmpty())) return;
+    Audio::Reader::Options o;
+    o.rate = kRate;
+    o.channels = 2;
+    auto r = Audio::Reader::open(path, 0, o);
+    if (!CHECK(r)) return;
+    CHECK_EQ(r->channels(), 2);
+    const Planar a = readRange(*r, 0, kRate / 2, 1920);
+    const double left = peak(a[0], 0, size_t(kRate / 2)), right = peak(a[1], 0, size_t(kRate / 2));
+    std::printf("       64 channels as stereo: peak left %.3f, right %.3f\n", left, right);
+    CHECK(left > 0.02);   // channel 0 of 32 on the left (the mean of its inputs)
+    CHECK(right < 0.001); // nothing on the odd channels
 }
 
 } // namespace
@@ -201,5 +234,6 @@ int main(int argc, char** argv)
     testLongGap(dir.path());
     testOutlier(dir.path());
     testNoDuration(dir.path());
+    testUnpositionedChannels(dir.path());
     return Check::result();
 }

@@ -3,6 +3,7 @@
 
 #include "core/PathKey.h"
 #include "engine/FaceDetect.h"
+#include "engine/MediaProbe.h"
 #include "engine/OpenMedia.h"
 #include "engine/video/Scan.h"
 
@@ -382,9 +383,12 @@ void saveJson(const QString& file, const QJsonObject& o)
 std::optional<Entry> measure(const QString& path, const Options& options, QString* error, bool* faces)
 {
     *faces = false;
-    const auto info = probe(path);
+    // What the rest of schneidi refuses (a WAV of 0 channels, only subtitles) is no shot either: FFmpeg opens such
+    // files, and the index got an entry for media no timeline can hold
+    const std::optional<MediaInfo> known = MediaProbe::read(path, FrameRate{25, 1});
+    const auto info = known && (known->hasVideo || known->hasAudio) ? probe(path) : std::nullopt;
     if (!info) {
-        if (error) *error = "cannot read media: " + path;
+        if (error) *error = "cannot read media: " + path + " (" + MediaProbe::whyUnreadable(path) + ")";
         return std::nullopt;
     }
     Entry e;

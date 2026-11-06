@@ -243,7 +243,7 @@ QJsonObject cmdNew(const QJsonObject& a, Context&)
     p.load(d);
     for (const QJsonValue& v : a["media"].toArray()) {
         const MediaInfo info = Engine::probe(p.format(), v.toString());
-        if (info.length <= 0 || (!info.hasVideo && !info.hasAudio)) fail("BAD_MEDIA", "cannot read media: " + v.toString());
+        if (info.length <= 0 || (!info.hasVideo && !info.hasAudio)) fail("BAD_MEDIA", unreadableMessage(absolute(v.toString())));
         p.addMedia(info);
     }
     QDir().mkpath(QFileInfo(path).absolutePath());

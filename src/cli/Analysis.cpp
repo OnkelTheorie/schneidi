@@ -56,7 +56,7 @@ MediaSource openMedia(const QJsonObject& a)
         }
     }
     m.info = Engine::probe(m.format, path);
-    if (m.info.length <= 0 || (!m.info.hasVideo && !m.info.hasAudio)) fail("BAD_MEDIA", "cannot read media: " + path);
+    if (m.info.length <= 0 || (!m.info.hasVideo && !m.info.hasAudio)) fail("BAD_MEDIA", unreadableMessage(path));
     return m;
 }
 

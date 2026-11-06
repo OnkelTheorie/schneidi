@@ -24,6 +24,7 @@
 #include "core/TimelineOps.h"
 #include "engine/AudioAnalysis.h"
 #include "engine/Engine.h"
+#include "engine/MediaProbe.h"
 #include "engine/Exporter.h"
 #include "engine/ClipFormat.h"
 #include "engine/RenderQueue.h"
@@ -311,6 +312,11 @@ QString Session::save()
     return backup;
 }
 
+QString unreadableMessage(const QString& path)
+{
+    return "cannot read media: " + path + " (" + MediaProbe::whyUnreadable(path) + ")";
+}
+
 const MediaInfo& Session::media(const QString& file)
 {
     if (file.trimmed().isEmpty())
@@ -319,7 +325,7 @@ const MediaInfo& Session::media(const QString& file)
     if (const MediaInfo* m = project.mediaInfo(path)) return *m;
     if (!QFileInfo::exists(path)) fail("NOT_FOUND", "media not found: " + path);
     const MediaInfo info = Engine::probe(format(), path);
-    if (info.length <= 0 || (!info.hasVideo && !info.hasAudio)) fail("BAD_MEDIA", "cannot read media: " + path);
+    if (info.length <= 0 || (!info.hasVideo && !info.hasAudio)) fail("BAD_MEDIA", unreadableMessage(path));
     project.addMedia(info);
     return *project.mediaInfo(path);
 }

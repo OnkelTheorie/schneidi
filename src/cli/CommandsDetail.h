@@ -31,6 +31,8 @@ namespace Cli::detail {
 
 [[noreturn]] void fail(const QString& code, const QString& message);
 QString absolute(const QString& path);
+// "cannot read media: <path> (<why>)" for a file Engine::probe found nothing playable in (MediaProbe::whyUnreadable)
+QString unreadableMessage(const QString& path);
 
 // ---------- Times ----------
 
