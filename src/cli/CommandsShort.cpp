@@ -361,6 +361,8 @@ QJsonObject cmdShort(const QJsonObject& a, Context& ctx)
                   {"render_s", rendered["render_s"]}};
     if (!moments.isEmpty()) o["moments"] = moments;
     if (rendered.contains("encoder")) o["encoder"] = rendered["encoder"];
+    for (const char* k : {"threads", "threads_reason"}) // how many render threads, fewer when little RAM was free
+        if (rendered.contains(k)) o[k] = rendered[k];
     if (rendered.contains("encoder_hint")) notes << rendered["encoder_hint"];
     if (!notes.isEmpty()) o["notes"] = notes;
     o["next"] = "look at the result: `frames` of the out file (sheet) and `check` on it";
