@@ -9,6 +9,7 @@
 
 #include "check.h"
 
+#include "engine/MediaProbe.h"
 #include "engine/audio/Reader.h"
 
 #include <QCoreApplication>
@@ -179,6 +180,15 @@ void testNoDuration(const QString& dir)
         args << "-c:a" << "aac" << "-live" << "1";
         const QString path = Check::makeMedia(dir + (video ? "/live_av.mkv" : "/live_a.mkv"), args);
         if (!CHECK(!path.isEmpty())) continue;
+        // The probe (import, every CLI command) refused such a file ("cannot read media"): its length comes from the
+        // last packets as well
+        const std::optional<MediaInfo> m = MediaProbe::read(path, FrameRate{25, 1});
+        if (CHECK(m)) {
+            std::printf("       %s: probe length %d frames\n", video ? "with picture" : "sound only", m->length);
+            CHECK(std::abs(m->length - 150) <= 2);
+            CHECK_EQ(m->hasVideo, video);
+            CHECK(m->hasAudio);
+        }
         auto r = Audio::Reader::open(path);
         if (!CHECK(r)) continue;
         std::printf("       %s: end %lld\n", video ? "with picture" : "sound only", (long long)r->info().end);
