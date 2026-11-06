@@ -103,7 +103,7 @@ void testIsolation()
 {
     CHECK(QSettings().fileName().contains("schneidi-tests"));
     CHECK(StartTemplates::dir().contains("schneidi-test-start-templates"));
-    CHECK(StartTemplates::dir().contains(".qttest")); // QStandardPaths test mode
+    CHECK(StartTemplates::dir().contains("qttest")); // QStandardPaths test mode (".qttest" on Linux, "qttest" on Windows)
 }
 
 // Neutral = the project schneidi always started with, byte for byte, and the default
@@ -490,7 +490,7 @@ void testCliGameMutesMix(const QString& dir)
         Project p;
         p.load(loadProject(path));
         MediaInfo m;
-        m.path = "/x/obs.mkv";
+        m.path = dir + "/obs.mkv"; // absolute on every system ("/x/…" is "C:/x/…" on Windows)
         m.name = "obs.mkv";
         m.length = 100;
         m.hasVideo = m.hasAudio = true;
@@ -501,7 +501,7 @@ void testCliGameMutesMix(const QString& dir)
     }
     const QJsonObject info = run("info", {{"project", path}});
     CHECK(info["import_presets"]["mute_mix"].toBool());
-    run("edit", {{"project", path}, {"ops", R"([{"op":"keep","media":"/x/obs.mkv","ranges":[[0,50]]}])"}});
+    run("edit", {{"project", path}, {"ops", QString(R"([{"op":"keep","media":"%1","ranges":[[0,50]]}])").arg(dir + "/obs.mkv")}});
     const ProjectData d = loadProject(path);
     QStringList clips;
     for (int i = 0; i < d.timeline.audio.size(); ++i)
@@ -514,7 +514,7 @@ void testCliGameMutesMix(const QString& dir)
         Project p;
         p.load(loadProject(path));
         MediaInfo m;
-        m.path = "/x/obs.mkv";
+        m.path = dir + "/obs.mkv"; // absolute on every system ("/x/…" is "C:/x/…" on Windows)
         m.name = "obs.mkv";
         m.length = 100;
         m.hasVideo = m.hasAudio = true;
@@ -523,7 +523,7 @@ void testCliGameMutesMix(const QString& dir)
         QString error;
         CHECK(ProjectFile::save(p.data(), path, &error));
     }
-    run("edit", {{"project", path}, {"ops", R"([{"op":"keep","media":"/x/obs.mkv","ranges":[[0,50]]}])"}});
+    run("edit", {{"project", path}, {"ops", QString(R"([{"op":"keep","media":"%1","ranges":[[0,50]]}])").arg(dir + "/obs.mkv")}});
     int off = 0;
     for (const Track& t : loadProject(path).timeline.audio)
         for (const Clip& c : t.clips) off += c.enabled ? 0 : 1;

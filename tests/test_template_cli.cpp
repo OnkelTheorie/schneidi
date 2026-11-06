@@ -623,6 +623,8 @@ void testZipNames(const QString& tmp, const Media& m)
     }
 
     // Media names legal on Linux but not on Windows: portable names in the archive, the project follows them
+    // (Windows cannot create such files at all)
+#ifndef Q_OS_WIN
     {
         QDir().mkpath(tmp + "/odd");
         const QString colon = tmp + "/odd/take:1.mp4", backslash = tmp + "/odd/cam\\2.mp4", device = tmp + "/odd/nul.mp4";
@@ -657,6 +659,7 @@ void testZipNames(const QString& tmp, const Media& m)
         }
         run("templates", {{"remove", "Odd Names"}});
     }
+#endif
 
     // Two files that are one on Windows and macOS, a file where a folder is: refused
     for (const QVector<Zip::Source>& files :
@@ -682,6 +685,7 @@ void testZipNames(const QString& tmp, const Media& m)
     // A project that does not load: nothing shows up
     {
         const QString broken = tmp + "/share/broken.zip";
+        QDir().mkpath(tmp + "/odd");
         const QString junkProject = tmp + "/odd/template.schneidi";
         QFile f(junkProject);
         f.open(QIODevice::WriteOnly);
@@ -699,6 +703,10 @@ void testZipNames(const QString& tmp, const Media& m)
 void testAlias()
 {
     std::printf("CLI alias\n");
+#ifdef Q_OS_WIN
+    std::printf("       (skipped on Windows: the schneidi-cli process does not share the test folders, XDG does not apply)\n");
+    return;
+#endif
     const QJsonObject o = cli({"template", "info", "Test Short"});
     CHECK(o["ok"].toBool());
     CHECK_EQ(o["slots"].toArray().size(), 3);
@@ -708,6 +716,12 @@ void testAlias()
 void testLive(const QString& tmp, const Media& m)
 {
     std::printf("live fill: one undo step\n");
+#ifdef Q_OS_WIN
+    Q_UNUSED(tmp);
+    Q_UNUSED(m);
+    std::printf("       (skipped on Windows: the schneidi-cli process does not share the test folders, XDG does not apply)\n");
+    return;
+#endif
     FakeApp fake;
     ProjectData d;
     TemplateLibrary::load(*TemplateLibrary::find("Test Short"), &d);
@@ -751,6 +765,12 @@ int main(int argc, char* argv[])
     Check::initEnv();
     QApplication app(argc, argv);
     QApplication::setApplicationName("schneidi");
+#ifdef Q_OS_WIN
+    QStandardPaths::setTestModeEnabled(true); // XDG does not apply there: never the user's templates/backups
+    // The test folders stay between runs there: start empty like a new XDG folder
+    for (const auto where : {QStandardPaths::AppDataLocation, QStandardPaths::CacheLocation})
+        if (const QString d = QStandardPaths::writableLocation(where); d.contains("qttest")) QDir(d).removeRecursively();
+#endif
     Check::initEngine();
     if (!Check::haveFfmpeg()) return Check::skip("no ffmpeg");
     const QString dir = tmp.path() + "/media";

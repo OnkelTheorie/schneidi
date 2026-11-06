@@ -278,6 +278,12 @@ int main(int argc, char* argv[])
     Check::initEnv();
     QApplication app(argc, argv);
     QApplication::setApplicationName("schneidi");
+#ifdef Q_OS_WIN
+    QStandardPaths::setTestModeEnabled(true); // XDG does not apply there: never the user's templates/backups
+    // The test folders stay between runs there: start empty like a new XDG folder
+    for (const auto where : {QStandardPaths::AppDataLocation, QStandardPaths::CacheLocation})
+        if (const QString d = QStandardPaths::writableLocation(where); d.contains("qttest")) QDir(d).removeRecursively();
+#endif
     Check::initEngine();
     if (!Check::haveFfmpeg()) return Check::skip("no ffmpeg");
     const QString media = tmp.path() + "/data/media";
