@@ -96,6 +96,32 @@ QJsonObject Server::filesTool(const QJsonObject& args, const QString& base) cons
     return o;
 }
 
+namespace {
+
+// A file or folder name of `path` below the work folder that no file system takes (255 bytes on Linux/macOS, 255
+// UTF-16 units on Windows): the client hears that, not "cannot write" with a 500
+QString tooLongName(const QString& path)
+{
+    for (const QString& part : Sandbox::relative(path).split('/', Qt::SkipEmptyParts)) {
+#ifdef Q_OS_WIN
+        const bool tooLong = part.size() > 255;
+#else
+        const bool tooLong = part.toUtf8().size() > 255;
+#endif
+        if (tooLong) return part;
+    }
+    return {};
+}
+
+QString tooLongMessage(const QString& name)
+{
+    return QString("file or folder name too long (%1 characters, file systems take at most 255 bytes): %2…")
+        .arg(name.size())
+        .arg(name.left(40));
+}
+
+} // namespace
+
 // `givenPath` as the client wrote it: a trailing separator means a folder (normalizing drops it)
 void Server::prepareUpload(Job& job, const QString& givenPath)
 {
@@ -110,6 +136,7 @@ void Server::prepareUpload(Job& job, const QString& givenPath)
         target = QDir(target).filePath(name);
     target = Sandbox::resolve(target); // the file name must not lead out either
     if (Sandbox::hidden(target)) fail("HIDDEN", "upload into hidden files or folders of the work folder is not allowed");
+    if (const QString name = tooLongName(target); !name.isEmpty()) fail("NAME_TOO_LONG", tooLongMessage(name));
     if (QFileInfo(target).isDir()) fail("BAD_ARGUMENT", "that is a folder: " + Sandbox::mapBack(target));
     if (QFileInfo::exists(target) && !job.args["overwrite"].toBool())
         fail("EXISTS", "file exists (pass overwrite to replace it): " + Sandbox::mapBack(target));
@@ -276,6 +303,10 @@ void Server::filesHead(Http::Connection* c)
         target = filePath(r.path);
     } catch (const Error& e) {
         c->respondJson(403, errorJson(e.code, e.message), cors(r));
+        return;
+    }
+    if (const QString name = tooLongName(target); !name.isEmpty()) {
+        c->respondJson(400, errorJson("NAME_TOO_LONG", tooLongMessage(name)), cors(r));
         return;
     }
     const QFileInfo fi(target);

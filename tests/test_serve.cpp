@@ -617,6 +617,19 @@ int main(int argc, char* argv[])
         CHECK_EQ(rawStatus(s.base, "PUT", "/files/%2e%2e/outside/evil.bin", "x"), 403);
         CHECK(!QFileInfo::exists(tmp.filePath("outside/evil.bin")));
         CHECK_EQ(http("PUT", s.base + "/files/in", "x", {{"Authorization", "Bearer " + kToken}}).status, 409);
+        // A name no file system takes: a client error that says so, not 500 "cannot write"
+        {
+            const QString longName = QString(300, 'a') + ".bin";
+            const auto tooLong = http("PUT", s.base + "/files/in/" + longName, "x", {{"Authorization", "Bearer " + kToken}});
+            CHECK_EQ(tooLong.status, 400);
+            CHECK(tooLong.body.contains("NAME_TOO_LONG"));
+            CHECK_EQ(http("PUT", s.base + "/files/" + QString(256, 'b') + "/x.bin", "x",
+                          {{"Authorization", "Bearer " + kToken}}).status, 400);
+            CHECK_EQ(http("PUT", s.base + "/files/in/" + QString(255, 'c'), "x", {{"Authorization", "Bearer " + kToken}}).status,
+                     201); // 255 bytes still go
+            CHECK_EQ(errorCode(s.call("upload", {{"url", "https://example.com/a.mp4"}, {"path", "in/" + longName}})),
+                     QString("NAME_TOO_LONG"));
+        }
         CHECK_EQ(http("PUT", s.base + "/files/x.bin", "x").status, 401);
         // Hidden files of the work folder (a home folder's .ssh …) are not served, not written
         QDir(root).mkpath(".hidden");
