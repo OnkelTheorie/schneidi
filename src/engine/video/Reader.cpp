@@ -501,6 +501,23 @@ bool hardwareFriendly(const AVCodecParameters* par)
     return f == AV_PIX_FMT_YUV420P || f == AV_PIX_FMT_YUVJ420P || f == AV_PIX_FMT_YUV420P10LE;
 }
 
+} // namespace
+
+bool likelyHardware(const AVCodecParameters* par)
+{
+    if (!par || !hardwareFriendly(par)) return false;
+    if (par->codec_id == AV_CODEC_ID_AV1) return false;
+    if (par->codec_id == AV_CODEC_ID_H264 && (par->width > 4096 || par->height > 4096)) return false;
+    const AVCodec* codec = avcodec_find_decoder(par->codec_id);
+    if (!codec) return false;
+    Hardware::Device d = Hardware::deviceFor(codec);
+    const bool ok = d.context != nullptr;
+    av_buffer_unref(&d.context);
+    return ok;
+}
+
+namespace {
+
 // Errors MLT keeps decoding after (start of an MPEG file, B-frames before the first I-frame)
 bool ignorable(int r)
 {

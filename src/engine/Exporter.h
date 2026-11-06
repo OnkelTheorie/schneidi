@@ -101,8 +101,10 @@ public:
         int threads = 1;
         bool lowMemory = false;
     };
-    // sourceBytes: what the source decoders hold (decodedSourceBytes), taken off the RAM before the threads
-    static ThreadChoice automaticThreads(int processors, QSize output, qint64 availableBytes, qint64 sourceBytes = 0);
+    // sourceBytes: what the source decoders hold (decodedSourceBytes), taken off the RAM before the threads;
+    // sourcePerThread: what they hold more per thread (sourceBytesPerThread: software decoders' frame threads)
+    static ThreadChoice automaticThreads(int processors, QSize output, qint64 availableBytes, qint64 sourceBytes = 0,
+                                         qint64 sourcePerThread = 0);
     // x264/x265 look fewer frames ahead (lowMemoryOptions) also when the threads were asked for, if the lookahead
     // alone would take more than a third of the RAM available: about 3 bytes per pixel and frame at 40 frames (8K:
     // 4 GB, a render with 2 threads asked for was killed in a 5 GB cap). A number of threads asked for stays.
@@ -116,6 +118,11 @@ public:
     // pictures of its file's size. sizeOf: a file's picture size (empty = no video decoder: stills, titles)
     static qint64 decodedSourceBytes(const Timeline& tl, int from, int to,
                                      const std::function<QSize(const QString&)>& sizeOf);
+    // The same per decoder thread: a software decoder (frame threads; the export gives every decoder as many threads
+    // as it renders with) keeps about 3 more pictures per thread, a hardware decoder none (one thread).
+    // softwareSizeOf: the picture size of a file decoded in software (empty = hardware, or no video decoder)
+    static qint64 sourceBytesPerThread(const Timeline& tl, int from, int to,
+                                       const std::function<QSize(const QString&)>& softwareSizeOf);
     // How many images are rendered at once: threads (0 = all), but 1 if a frame needs the one before (stabilizing
     // with border "keep")
     static int parallelFrames(const Timeline& tl, int threads);
@@ -154,6 +161,9 @@ signals:
     void finished(bool ok, const QString& message);
 
 private:
+    // Peak over the range of `pictures` decoded pictures per decoder of its file's size (decodedSourceBytes)
+    static qint64 peakDecoderBytes(const Timeline& tl, int from, int to,
+                                   const std::function<QSize(const QString&)>& sizeOf, qint64 pictures);
     void poll();
     void cleanup();
     // After the build thread: start the writer; false = failed (error set)

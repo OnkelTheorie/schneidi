@@ -9,6 +9,7 @@
 #include "core/SystemMemory.h"
 #include "engine/Exporter.h"
 #include "engine/ClipFormat.h"
+#include "engine/video/Reader.h"
 
 #include <QApplication>
 #include <QElapsedTimer>
@@ -22,6 +23,10 @@
 #include <clocale>
 #include <cstring>
 #include <memory>
+
+extern "C" {
+#include <libavcodec/avcodec.h>
+}
 #ifdef Q_OS_WIN
 #include <windows.h>
 #else
@@ -148,6 +153,53 @@ void testMemoryThreads()
     tl.video[1].hidden = true;
     tl.video[2].clips << clip(5, "still.png", 0, 0, 100);
     CHECK_EQ(Exporter::decodedSourceBytes(tl, 0, 100, sizeOf), hdSource);
+
+    // Software decoders keep about 3 pictures more per thread, hardware ones none: two 8K H.264 sources (software:
+    // NVDEC takes no H.264 above 4096) in a dissolve, rendered to 1080p with 4.9 GB free on 10 processors. The
+    // 20-picture term alone left all 10 threads, which peaked at 4.7-5 GB in a 5 GB cap; 6 threads measured 3.5 GB
+    const QSize uhd8k(7680, 4320);
+    const qint64 picture8k = 7680LL * 4320 * 3 / 2;
+    Timeline dissolve;
+    dissolve.video.resize(2);
+    dissolve.video[0].clips << clip(1, "a8k.mp4", 0, 0, 160);
+    dissolve.video[1].clips << clip(2, "a8k.mp4", 150, 0, 150); // the file from its start again: a decoder of its own
+    const auto size8k = [&](const QString&) { return uhd8k; };
+    const auto hardware = [](const QString&) { return QSize(); };
+    CHECK_EQ(Exporter::sourceBytesPerThread(dissolve, 0, 300, size8k), 2 * 3 * picture8k);
+    CHECK_EQ(Exporter::sourceBytesPerThread(dissolve, 0, 300, hardware), qint64(0));
+    CHECK_EQ(Exporter::sourceBytesPerThread(dissolve, 0, 100, size8k), 3 * picture8k); // one decoder there
+    const qint64 fixed8k = Exporter::decodedSourceBytes(dissolve, 0, 300, size8k);
+    CHECK_EQ(fixed8k, 2 * 20 * picture8k);
+    const Exporter::ThreadChoice soft8k =
+        Exporter::automaticThreads(10, hd, 4900 * MB, fixed8k, Exporter::sourceBytesPerThread(dissolve, 0, 300, size8k));
+    CHECK(soft8k.threads >= 4 && soft8k.threads <= 6);
+    CHECK(soft8k.lowMemory);
+    // The same with hardware decoders (8K HEVC on NVDEC: measured 2.7 GB with 10 threads): all threads
+    CHECK_EQ(Exporter::automaticThreads(10, hd, 4900 * MB, fixed8k, 0).threads, 10);
+    // 1080p sources decoded in software on a normal machine: all threads; the Pi keeps its 2
+    CHECK_EQ(Exporter::automaticThreads(10, hd, 11000 * MB, 2 * hdSource, 2 * 3 * 1920LL * 1080 * 3 / 2).threads, 10);
+    CHECK_EQ(Exporter::automaticThreads(4, vertical, 280 * MB, hdSource, 3 * 1920LL * 1080 * 3 / 2).threads, 2);
+
+    // What decodes on the graphics card: never H.264 above 4096, AV1, other codecs, small pictures, or with
+    // hardware decoding off
+    auto par = [](AVCodecID id, int w, int h, AVPixelFormat f) {
+        AVCodecParameters* p = avcodec_parameters_alloc();
+        p->codec_type = AVMEDIA_TYPE_VIDEO;
+        p->codec_id = id;
+        p->width = w;
+        p->height = h;
+        p->format = f;
+        return std::unique_ptr<AVCodecParameters, void (*)(AVCodecParameters*)>(
+            p, [](AVCodecParameters* x) { avcodec_parameters_free(&x); });
+    };
+    CHECK(!Video::likelyHardware(par(AV_CODEC_ID_H264, 7680, 4320, AV_PIX_FMT_YUV420P).get()));
+    CHECK(!Video::likelyHardware(par(AV_CODEC_ID_AV1, 7680, 4320, AV_PIX_FMT_YUV420P).get()));
+    CHECK(!Video::likelyHardware(par(AV_CODEC_ID_PRORES, 7680, 4320, AV_PIX_FMT_YUV422P10LE).get()));
+    CHECK(!Video::likelyHardware(par(AV_CODEC_ID_HEVC, 640, 360, AV_PIX_FMT_YUV420P).get()));
+    CHECK(!Video::likelyHardware(nullptr));
+    qputenv("SCHNEIDI_HWDEC", "off");
+    CHECK(!Video::likelyHardware(par(AV_CODEC_ID_HEVC, 7680, 4320, AV_PIX_FMT_YUV420P).get()));
+    qunsetenv("SCHNEIDI_HWDEC");
 
     // /proc/meminfo as Linux writes it
     const SystemMemory::Info info = SystemMemory::parseMeminfo("MemTotal:         425364 kB\nMemFree:           87212 kB\n"
