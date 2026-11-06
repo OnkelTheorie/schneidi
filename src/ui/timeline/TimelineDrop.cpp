@@ -333,12 +333,16 @@ int TimelineView::slotDropClipAt(const QPoint& pos, Qt::KeyboardModifiers mods) 
     const Timeline& tl = m_editor->project()->timeline();
     const Clip* c = TimelineOps::findClip(tl, id);
     if (!c) return 0;
-    if (c->slot.isSet()) return id;
+    // Only a placeholder that can take the file (not a text one, no song for a picture): else it drops as always
+    const auto takes = [this](const Clip& slotClip) {
+        return !m_dropItems.isEmpty() && TemplateFill::canFill(slotClip.slot.kind, m_dropItems.first().info).isEmpty();
+    };
+    if (c->slot.isSet()) return takes(*c) ? id : 0;
     // Linked audio of a clip placeholder: the placeholder is its video
     if (c->linkId)
         for (const Track& t : tl.video)
             for (const Clip& v : t.clips)
-                if (v.linkId == c->linkId && v.slot.isSet()) return v.id;
+                if (v.linkId == c->linkId && v.slot.isSet()) return takes(v) ? v.id : 0;
     return 0;
 }
 

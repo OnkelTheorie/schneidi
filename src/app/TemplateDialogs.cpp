@@ -492,10 +492,11 @@ SlotCheckDialog::SlotCheckDialog(const ProjectData& d, QWidget* parent) : QDialo
         // What it holds now, checked against its rules
         const TemplateFill::Value v = r.slot.kind == SlotKind::Text ? TemplateFill::Value::ofText(r.text)
                                                                      : TemplateFill::Value::ofFile(r.media);
-        const QVector<TemplateFill::Problem> problems = TemplateFill::check(d, {{r.slot.id, v}});
+        // (this instance only: other instances with the same id have their own content)
+        const std::optional<TemplateFill::Problem> problem = TemplateFill::checkSlot(d, r, v);
         QStringList state;
-        for (const TemplateFill::Problem& p : problems) state << SlotText::problem(p);
-        m_problems += int(problems.size());
+        if (problem) state << SlotText::problem(*problem);
+        m_problems += int(state.size());
         QString timeline;
         for (const Sequence& s : d.sequences)
             if (s.id == r.sequence) timeline = s.name;
