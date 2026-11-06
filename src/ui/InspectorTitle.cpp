@@ -479,7 +479,8 @@ QToolButton* Inspector::brandButton(bool font, const QString& text, const std::f
             connect(a, &QAction::triggered, this, [=, this] {
                 apply(V, {}, text, [=](Clip& clip) {
                     ref(clip) = n;
-                    Brand::resolve(clip.title, kit); // the kit's value now (missing: the value stays)
+                    // The kit's value now (missing: the value stays); a brand text colour ends its animation
+                    Brand::resolve(clip, kit);
                     if (also && n > 0) also(clip);
                 }, true);
             });

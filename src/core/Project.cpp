@@ -116,6 +116,7 @@ public:
         QVector<Sequence> sequences;
         int current = 0;
         PoolState pool;
+        std::optional<BrandKit> brand; // the project's own kit (Project::setBrand is a step of the history too)
     };
     CombinedCommand(Project* p, const QString& text, State before, State after, MediaChange media)
         : QUndoCommand(text), m_project(p), m_before(std::move(before)), m_after(std::move(after)),
@@ -131,7 +132,10 @@ public:
         if (!m_media.isEmpty()) m_project->applyMediaChange(m_media, true);
     }
 
-    static State capture(const Project& p) { return {p.format(), p.sequences(), p.currentSequence(), p.poolState()}; }
+    static State capture(const Project& p)
+    {
+        return {p.format(), p.sequences(), p.currentSequence(), p.poolState(), p.brand()};
+    }
 
 private:
     void apply(const State& s)
@@ -139,6 +143,7 @@ private:
         if (!(s.format == m_project->format())) m_project->applyFormat(s.format, s.sequences);
         m_project->applySequences(s.sequences, s.current);
         m_project->applyPool(s.pool);
+        if (s.brand != m_project->brand()) m_project->applyBrand(s.brand);
     }
 
     Project* m_project;

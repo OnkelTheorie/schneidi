@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "core/BrandKit.h"
 
+#include "core/Keyframes.h"
 #include "core/ProjectFile.h"
 #include "core/Types.h"
 
@@ -161,6 +162,16 @@ bool resolve(TitleStyle& s, const BrandKit& kit)
     }
     if (const auto f = kit.font(s.fontRef)) s.font = *f;
     return !(s == before);
+}
+
+bool resolve(Clip& clip, const BrandKit& kit)
+{
+    bool changed = false;
+    if (kit.color(clip.title.colorRef) && Keys::animated(clip, AnimParam::TitleColor)) {
+        Keys::clear(clip, AnimParam::TitleColor);
+        changed = true;
+    }
+    return resolve(clip.title, kit) || changed;
 }
 
 } // namespace Brand

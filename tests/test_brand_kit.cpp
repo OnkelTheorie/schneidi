@@ -3,7 +3,8 @@
 // app data folder, the project's own kit and title references in the project file, Editor::applyBrand (references
 // resolved on all timelines and subtitle tracks, fixed values untouched, a missing brand colour keeps the value, one
 // undo step, nothing to do = no step), the project's own kit as one step, logo and intro/outro placed, and the CLI
-// `brand` (show, set, apply, unset, logo) plus brand references in the `edit` title op.
+// `brand` (show, set, apply, unset, logo) plus brand references in the `edit` title op; an AI chat's combined step keeps
+// the project kit; a brand text colour ends a colour animation.
 
 #include "check.h"
 
@@ -12,6 +13,7 @@
 #include "cli/Commands.h"
 #include "core/BrandKit.h"
 #include "core/Editor.h"
+#include "core/Keyframes.h"
 #include "core/Project.h"
 #include "core/ProjectFile.h"
 #include "core/Selection.h"
@@ -255,6 +257,68 @@ void testApplyBrand()
     CHECK(Brand::setGlobal({}));
 }
 
+// An AI chat turn combined into one step (Project::combineSteps, MainWindowChat) keeps a change of the project's own
+// kit with the titles it coloured; undo/redo of the combined step take both along
+void testCombinedBrand()
+{
+    std::printf("combined steps keep the project kit\n");
+    QFile::remove(Brand::globalPath());
+    Project p;
+    Selection sel;
+    Editor ed(&p, &sel);
+    Clip t = titleClip(p.newClipId(), 0, 50);
+    t.title.colorRef = 1;
+    p.edit("setup", [&](Timeline& tl) { tl.video[0].clips << t; });
+    const int from = p.undoStack()->index();
+    BrandKit own;
+    own.colors = {QColor("#0000ff")};
+    ed.setProjectBrand(own);
+    ed.addTitle(60, -1, 25);
+    p.combineSteps(from, "KI-Chat: Markenfarben");
+    CHECK_EQ(p.undoStack()->index(), from + 1);
+    CHECK(p.brand() && *p.brand() == own);
+    CHECK(TimelineOps::findClip(p.timeline(), t.id)->title.color == QColor("#0000ff"));
+    p.undoStack()->undo();
+    CHECK(!p.brand());
+    CHECK(TimelineOps::findClip(p.timeline(), t.id)->title.color == QColor(Qt::white));
+    p.undoStack()->redo();
+    CHECK(p.brand() && *p.brand() == own);
+}
+
+// A brand text colour on a title whose colour is animated: the animation would draw over it (the renderer takes the
+// keyframes), so resolving the reference ends it; animating the colour again makes it a fixed one
+void testAnimatedColor()
+{
+    std::printf("brand colour over an animated text colour\n");
+    QFile::remove(Brand::globalPath());
+    Project p;
+    ProjectData d;
+    d.timeline = emptyTimeline();
+    BrandKit kit;
+    kit.colors = {QColor("#00ff00")};
+    d.brand = kit;
+    Clip t = titleClip(1, 0, 50);
+    Keys::setKey(t, AnimParam::TitleColor, 0, Keys::fromColor(QColor("#ff0000")));
+    Keys::setKey(t, AnimParam::TitleColor, 40, Keys::fromColor(QColor("#0000ff")));
+    t.title.colorRef = 1;
+    d.timeline.video[0].clips << t;
+    d.lastClipId = 1;
+    p.load(d);
+    Selection sel;
+    Editor ed(&p, &sel);
+    CHECK(ed.applyBrand());
+    const Clip* c = TimelineOps::findClip(p.timeline(), 1);
+    CHECK(!Keys::animated(*c, AnimParam::TitleColor));
+    CHECK(Keys::toColor(Keys::valueAt(*c, AnimParam::TitleColor, 20)) == QColor("#00ff00"));
+    // A keyframe set by hand: the colour is fixed again, the next applyBrand keeps the animation
+    ed.setKeyframes({1}, {AnimParam::TitleColor}, 10, true);
+    c = TimelineOps::findClip(p.timeline(), 1);
+    CHECK_EQ(c->title.colorRef, 0);
+    CHECK(Keys::animated(*c, AnimParam::TitleColor));
+    CHECK(!ed.applyBrand());
+    CHECK(Keys::animated(*TimelineOps::findClip(p.timeline(), 1), AnimParam::TitleColor));
+}
+
 void testLogoAndIntro(const QString& dir)
 {
     Project p;
@@ -496,6 +560,8 @@ int main(int argc, char** argv)
     testGlobal(dir.path());
     testProjectFile(dir.path());
     testApplyBrand();
+    testCombinedBrand();
+    testAnimatedColor();
     testLogoAndIntro(dir.path());
     testCli(dir.path());
     testDialog(dir.path());

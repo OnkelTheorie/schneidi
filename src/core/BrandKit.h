@@ -15,6 +15,7 @@
 
 #include <optional>
 
+struct Clip;
 struct ProjectData;
 struct TitleStyle;
 
@@ -59,5 +60,9 @@ BrandKit effective(const std::optional<BrandKit>& projectBrand);
 // Resolve the references of one title style with the kit (colour, outline, box, font). Missing brand colour/font =
 // the stored value stays. True when something changed.
 bool resolve(TitleStyle& style, const BrandKit& kit);
+// A title clip: resolve() on its style, and a text colour reference the kit has replaces the colour's animation
+// (TitleColor keyframes would draw over the brand colour; animating the colour by hand makes it fixed again,
+// Editor::setKeyframes). True when something changed.
+bool resolve(Clip& clip, const BrandKit& kit);
 
 } // namespace Brand

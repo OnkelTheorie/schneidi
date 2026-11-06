@@ -20,10 +20,10 @@ bool resolveTimeline(Timeline& tl, const BrandKit& kit)
         tl,
         [&](const Clip& c) {
             if (!c.isTitle() || !c.title.hasBrandRef()) return false;
-            TitleStyle t = c.title;
-            return Brand::resolve(t, kit);
+            Clip copy = c;
+            return Brand::resolve(copy, kit);
         },
-        [&](Clip& c) { changed |= Brand::resolve(c.title, kit); });
+        [&](Clip& c) { changed |= Brand::resolve(c, kit); });
     for (int i = 0; i < tl.subtitles.size(); ++i) {
         if (!std::as_const(tl.subtitles)[i].style.hasBrandRef()) continue;
         TitleStyle t = std::as_const(tl.subtitles)[i].style;

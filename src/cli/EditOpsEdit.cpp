@@ -264,7 +264,10 @@ void opTitle(Session& s, const QJsonObject& op)
     if (op.contains("text")) style.text = op.value("text").toString();
     applyStyle(style, op, s.project.effectiveBrand());
     applyGenerator(style, op);
-    s.editor.modifyClips({id}, "Title", [&](Clip& c) { c.title = style; });
+    s.editor.modifyClips({id}, "Title", [&](Clip& c) {
+        c.title = style;
+        Brand::resolve(c, s.project.effectiveBrand()); // a brand text colour ends a colour animation
+    });
 }
 
 // ---------- trim ----------
