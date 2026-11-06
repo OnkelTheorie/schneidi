@@ -11,10 +11,13 @@ struct AVFormatContext;
 
 namespace OpenMedia {
 
-// avformat_open_input(fmt, path, nullptr, options) with the limits; a refused demuxer fails it (AVERROR(EINVAL)).
+// avformat_open_input(fmt, path, nullptr, options) with the limits; a refused demuxer fails it (AVERROR(EINVAL)), as
+// does a path that exists but is no regular file (folder, named pipe, device, socket: see notAFile).
 // `options`: further demuxer options (analyzeduration, probesize …), not changed
 int input(AVFormatContext** fmt, const char* path, const AVDictionary* options = nullptr);
 // Would input() refuse this demuxer? ("hls", "imf": yes; "mov,mp4,m4a,3gp,3g2,mj2": no)
 bool refused(const char* demuxerName);
+// Does `path` (UTF-8) exist but is no regular file? A named pipe would block the open, a device never end.
+bool notAFile(const char* path);
 
 } // namespace OpenMedia

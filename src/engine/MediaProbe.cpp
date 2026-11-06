@@ -5,6 +5,7 @@
 extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
+#include <libavutil/samplefmt.h>
 }
 
 #include <QFileInfo>
@@ -114,6 +115,19 @@ int64_t headerDuration(const AVFormatContext* fmt)
     return longest;
 }
 
+// Can a decoder here turn this still picture into pixels? Qt reads the header only (canRead); a broken header can
+// state an absurd size (a flipped bit: 4294967167x2147483647), and a picture beyond FFmpeg's limit for one image
+// ((w+128)*(h+128) < INT_MAX/8, so not even 16384x16384) that Qt cannot decode at a smaller size (only JPEG can) and
+// Qt's own memory limit refuses as well comes out as no picture at all: black in a render, "could not decode" in
+// `frames`. Such a file is unreadable from the start instead.
+bool decodableStill(QImageReader& reader)
+{
+    const QSize size = reader.size();
+    if (!size.isValid() || size.isEmpty()) return false;
+    const double pixels = double(size.width() + 128) * double(size.height() + 128);
+    return pixels < double(INT_MAX / 8) || reader.supportsOption(QImageIOHandler::ScaledSize);
+}
+
 struct CloseInput {
     void operator()(AVFormatContext* f) const { avformat_close_input(&f); }
 };
@@ -166,7 +180,8 @@ std::optional<MediaInfo> read(const QString& path, FrameRate rate)
     const QString suffix = fi.suffix().toLower();
     if (stillSuffix(suffix)) {
         // Still picture: 5 seconds as a default length; QImageReader only reads the header here
-        if (!QImageReader(path).canRead()) return std::nullopt;
+        QImageReader reader(path);
+        if (!reader.canRead() || !decodableStill(reader)) return std::nullopt;
         MediaInfo info;
         info.path = path;
         info.name = fi.fileName();
@@ -181,7 +196,8 @@ std::optional<MediaInfo> read(const QString& path, FrameRate rate)
     const std::unique_ptr<AVFormatContext, CloseInput> fmt(raw);
     if (pictureDemuxer(fmt->iformat)) {
         // A still picture with another extension: as a still when Qt reads it
-        if (!QImageReader(path).canRead()) return std::nullopt;
+        QImageReader reader(path);
+        if (!reader.canRead() || !decodableStill(reader)) return std::nullopt;
         MediaInfo info;
         info.path = path;
         info.name = fi.fileName();
@@ -206,9 +222,62 @@ std::optional<MediaInfo> read(const QString& path, FrameRate rate)
     }
     // In the project frame rate, rounded to whole frames. A broken header can claim absurd lengths (time scale 1,
     // duration 2^32 s): capped at "unknown" (INT_MAX), never overflowing into a negative length
-    const double frames = std::nearbyint(double(duration) * rate.fps() / AV_TIME_BASE);
+    // A sound shorter than half a frame (a click, a 1 ms effect) still is one frame long, not "no length"
+    const double frames = std::max(1.0, std::nearbyint(double(duration) * rate.fps() / AV_TIME_BASE));
     info.length = frames < double(INT_MAX) ? int(frames) : INT_MAX;
     return info;
+}
+
+QString whyUnreadable(const QString& path)
+{
+    const QFileInfo fi(path);
+    if (!fi.exists()) return fi.isSymLink() ? "a link to a file that does not exist" : "the file does not exist";
+    if (fi.isDir()) return "it is a folder, not a file";
+    if (!fi.isFile()) return "not a regular file (a named pipe, device or socket)";
+    if (!fi.isReadable()) return "no permission to read it";
+    if (fi.size() == 0) return "the file is empty (0 bytes)";
+    const QString suffix = fi.suffix().toLower();
+    if (stillSuffix(suffix)) {
+        QImageReader reader(path);
+        if (!reader.canRead()) return "not a picture Qt can read (broken or another format than its extension says)";
+        const QSize size = reader.size();
+        if (!size.isValid() || size.isEmpty()) return "the picture's header is broken (no valid size)";
+        if (!decodableStill(reader))
+            return QString("the picture is too large to decode (%1x%2 pixels)").arg(size.width()).arg(size.height());
+        return "the picture cannot be read";
+    }
+    if (forOtherProducer(suffix)) return QString("'.%1' files are no media schneidi plays").arg(suffix);
+    AVFormatContext* raw = nullptr;
+    if (const int r = OpenMedia::input(&raw, path.toUtf8().constData()); r < 0) {
+        char text[AV_ERROR_MAX_STRING_SIZE] = {};
+        av_strerror(r, text, sizeof text);
+        return QString("no known media format, or its header is damaged (%1)").arg(QString::fromUtf8(text));
+    }
+    const std::unique_ptr<AVFormatContext, CloseInput> fmt(raw);
+    avformat_find_stream_info(fmt.get(), nullptr);
+    int video = 0, audio = 0, other = 0;
+    for (unsigned i = 0; i < fmt->nb_streams; ++i) {
+        const AVCodecParameters* p = fmt->streams[i]->codecpar;
+        const char* codec = avcodec_get_name(p->codec_id);
+        if (p->codec_type == AVMEDIA_TYPE_VIDEO) ++video;
+        else if (p->codec_type == AVMEDIA_TYPE_AUDIO) ++audio;
+        else { ++other; continue; }
+        const AVCodec* decoder = avcodec_find_decoder(p->codec_id);
+        if (!decoder) return QString("no decoder for its %1 stream (%2)").arg(p->codec_type == AVMEDIA_TYPE_VIDEO ? "video" : "audio", codec);
+        if (p->codec_type != AVMEDIA_TYPE_AUDIO) continue;
+        if (p->ch_layout.nb_channels <= 0) return QString("its sound stream (%1) has no channels").arg(codec);
+        if (p->sample_rate <= 0) return QString("its sound stream (%1) has no sample rate").arg(codec);
+        if (soundOf(p, decoder) == Sound::NotPlayable) {
+            const char* sampleFormat = av_get_sample_fmt_name(AVSampleFormat(p->format));
+            return QString("its sound is in a sample format schneidi does not play (%1, %2)")
+                .arg(codec, sampleFormat ? sampleFormat : "?");
+        }
+    }
+    if (video == 0 && audio == 0)
+        return other > 0 ? QString("it has no picture and no sound (only %1 subtitle or data stream%2)").arg(other).arg(other == 1 ? "" : "s")
+                         : QString("it has no picture and no sound");
+    if (fmt->duration == AV_NOPTS_VALUE || fmt->duration <= 0) return "its length is unknown (a damaged or unfinished file)";
+    return "damaged or unsupported";
 }
 
 } // namespace MediaProbe
