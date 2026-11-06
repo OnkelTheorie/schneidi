@@ -16,6 +16,7 @@
 #include <QSet>
 
 #include <algorithm>
+#include <climits>
 #include <cmath>
 
 namespace ExportCheck {
@@ -237,6 +238,20 @@ const char* severityId(Severity s)
     case Severity::Info: return "info";
     }
     return "info";
+}
+
+int soundEnd(int from, int to, const ProjectFormat& f, QVector<Issue>* issues)
+{
+    const int limit = int(std::min<double>(kMaxSoundHours * 3600 * f.rate.fps(), double(INT_MAX)));
+    if (int64_t(to) - from <= limit) return to;
+    const int end = from + limit;
+    if (issues)
+        *issues << issue(Severity::Warning, "sound_check_limited",
+                         T("Ton nur in den ersten %1 Stunden geprüft: der Bereich ist %2 Stunden lang (ein Clip sehr "
+                           "weit hinten auf der Zeitleiste?)")
+                             .arg(num(kMaxSoundHours, 0), num((int64_t(to) - from) / f.rate.fps() / 3600, 0)),
+                         end, to);
+    return end;
 }
 
 QVector<Issue> length(int from, int to, const ProjectFormat& f, const Options& o)

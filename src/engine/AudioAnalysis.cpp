@@ -21,19 +21,60 @@ namespace {
 constexpr int kRate = 48000;
 
 using Progress = std::function<bool(double)>;
-// Planar float audio of one timeline frame; pcm == nullptr = the frame could not be decoded
+// Planar float audio of one timeline frame; pcm == nullptr = silence (mixed: nothing plays there) or a clip frame
+// that could not be decoded
 using Sink = std::function<void(const float* pcm, int samples, int channels, int freq)>;
 
+// Frames of [from, to) that need mixing: where the mixer has sound plus a tail of kTailSeconds after each stretch
+// (EQ/compressor/limiter tails, and the meters' 3 s window runs out on real silence), merged
+constexpr double kTailSeconds = 4.0;
+std::vector<std::pair<int, int>> soundFrames(const Audio::Mixer& mixer, int from, int to)
+{
+    std::vector<std::pair<int, int>> out;
+    const int64_t tail = int64_t(kTailSeconds * mixer.rate());
+    for (const auto& [s, e] : mixer.soundSpans()) {
+        const int a = int(std::clamp<int64_t>(mixer.frameAt(s) - 1, from, to));
+        const int b = int(std::clamp<int64_t>(mixer.frameAt(e + tail) + 1, from, to));
+        if (b <= a) continue;
+        if (!out.empty() && a <= out.back().second) out.back().second = std::max(out.back().second, b);
+        else out.emplace_back(a, b);
+    }
+    // Skipped silence a whole number of the loudness meter's 100 ms chunks where the frames allow it: its blocks keep
+    // their phase, so the measurement is the same as with the silence mixed
+    const int64_t chunk = mixer.rate() / 10;
+    int prevEnd = from;
+    for (auto& [a, b] : out) {
+        for (int k = a; k > prevEnd && k > a - 100; --k)
+            if ((mixer.frameStart(k) - mixer.frameStart(prevEnd)) % chunk == 0) {
+                a = k;
+                break;
+            }
+        prevEnd = b;
+    }
+    return out;
+}
+
 // Own engine: the mixer's frames [from, to) one by one into sink (stereo). false = canceled.
-bool renderFrames(Audio::Mixer& mixer, int from, int to, const Progress& progress, const Sink& sink)
+// skipSilence: frames without any sound (see soundFrames) are not mixed but go to sink as pcm == nullptr - a clip
+// far out on the timeline must not make an analysis mix months of silence.
+bool renderFrames(Audio::Mixer& mixer, int from, int to, const Progress& progress, const Sink& sink,
+                  bool skipSilence = false)
 {
     constexpr int ch = Audio::Mixer::kChannels;
     std::vector<float> buf;
     float* out[ch];
+    const std::vector<std::pair<int, int>> parts =
+        skipSilence ? soundFrames(mixer, from, to) : std::vector<std::pair<int, int>>{{from, to}};
+    size_t part = 0;
     for (int f = from; f < to; ++f) {
         if (progress && (f - from) % 25 == 0 && !progress(double(f - from) / (to - from))) return false;
+        while (part < parts.size() && parts[part].second <= f) ++part;
         const int64_t a = mixer.frameStart(f);
         const int n = int(mixer.frameStart(f + 1) - a);
+        if (part == parts.size() || f < parts[part].first) {
+            sink(nullptr, n, ch, mixer.rate()); // silence
+            continue;
+        }
         buf.resize(size_t(n) * ch);
         for (int c = 0; c < ch; ++c) out[c] = buf.data() + size_t(c) * size_t(n);
         mixer.render(a, n, out);
@@ -84,13 +125,14 @@ bool decode(const ProjectFormat& format, const Clip& clip, const Progress& progr
 }
 
 // The mix of timeline frames [from, to) as it is exported, frame by frame. false = could not mix or canceled.
+// Frames without sound reach sink as pcm == nullptr (renderFrames skipSilence).
 bool mix(const ProjectFormat& format, const Timeline& timeline, int from, int to, const Progress& progress,
          const Sink& sink)
 {
     Audio::Mixer::Options o;
     o.rate = kRate;
     Audio::Mixer mixer(timeline, format.rate, o);
-    return renderFrames(mixer, from, to, progress, sink);
+    return renderFrames(mixer, from, to, progress, sink, true);
 }
 
 float framePeak(const float* pcm, int samples, int channels)
@@ -244,7 +286,16 @@ bool clipSound(const ProjectFormat& format, const Clip& clip, const SoundSink& s
 bool timelineSound(const ProjectFormat& format, const Timeline& timeline, int from, int to, const SoundSink& sink,
                    const std::function<bool(double)>& progress)
 {
-    return to > from && mix(format, timeline, from, to, progress, sink);
+    // Skipped silence is real silence here (nullptr means "could not be decoded" to these sinks)
+    std::vector<float> zeros;
+    const Sink silent = [&](const float* pcm, int samples, int channels, int rate) {
+        if (!pcm) {
+            zeros.resize(size_t(samples) * size_t(channels), 0.f);
+            pcm = zeros.data();
+        }
+        sink(pcm, samples, channels, rate);
+    };
+    return to > from && mix(format, timeline, from, to, progress, silent);
 }
 
 std::optional<Ducking::Ranges> soundRanges(const ProjectFormat& format, const Timeline& timeline, const QVector<int>& under,

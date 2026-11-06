@@ -401,7 +401,8 @@ QJsonObject cmdCheck(const QJsonObject& a, Context& ctx)
                                          HardwareEncoders::betterQualityHint(HardwareEncoders::softwareCodec("h264"))};
         if (withSound) {
             std::vector<float> peaks;
-            const auto loud = AudioAnalysis::timelineLoudness(f, render, from, to, progress(scanned, 0.55), &peaks);
+            const int soundTo = ExportCheck::soundEnd(from, to, f, &issues);
+            const auto loud = AudioAnalysis::timelineLoudness(f, render, from, soundTo, progress(scanned, 0.55), &peaks);
             if (!loud) fail("DECODE_FAILED", "could not mix the sound");
             measured = {peaks, *loud};
             const QVector<ExportCheck::Issue> heard =
@@ -409,7 +410,7 @@ QJsonObject cmdCheck(const QJsonObject& a, Context& ctx)
             issues += heard;
             fix = fixJson(ExportCheck::soundFix(heard, loud->integrated, tl, opt), a["timeline"]);
             const auto picture = [&](const QString& p) { return media(p) && media(p)->hasVideo && !media(p)->isImage; };
-            if (const auto balance = CheckMeasure::mix(f, render, from, to, picture, opt, progress(0.55, 1)))
+            if (const auto balance = CheckMeasure::mix(f, render, from, soundTo, picture, opt, progress(0.55, 1)))
                 issues += *balance;
         }
         // Pace and story: from the timeline, the measured peaks and the transcripts (no decoding of their own)

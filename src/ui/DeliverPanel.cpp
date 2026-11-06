@@ -847,7 +847,8 @@ bool DeliverPanel::runCheck()
     bool measured = false;
     if (job.settings.hasAudio() && !canceled) {
         progress.setLabelText(T("Ton wird gemessen…"));
-        const auto loud = AudioAnalysis::timelineLoudness(f, render, from, to, step(picture, 0.6), &peaks);
+        const int soundTo = ExportCheck::soundEnd(from, to, f, &issues);
+        const auto loud = AudioAnalysis::timelineLoudness(f, render, from, soundTo, step(picture, 0.6), &peaks);
         if (loud && !progress.wasCanceled()) {
             measured = true;
             const QVector<ExportCheck::Issue> heard =
@@ -860,7 +861,7 @@ bool DeliverPanel::runCheck()
                                  QString::number(loud->truePeakDb, 'f', 1).replace('.', I18n::decimalPoint()));
             // Music against game sound / speech: each track alone
             const auto hasPicture = [&](const QString& p) { return media(p) && media(p)->hasVideo && !media(p)->isImage; };
-            if (const auto balance = CheckMeasure::mix(f, render, from, to, hasPicture, {}, step(0.6, 1)))
+            if (const auto balance = CheckMeasure::mix(f, render, from, soundTo, hasPicture, {}, step(0.6, 1)))
                 issues += *balance;
         }
         canceled = progress.wasCanceled();
