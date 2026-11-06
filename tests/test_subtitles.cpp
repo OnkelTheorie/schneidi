@@ -17,6 +17,7 @@
 #include "ui/timeline/TimelineView.h"
 
 #include <QApplication>
+#include <QElapsedTimer>
 #include <QEventLoop>
 #include <QFile>
 #include <QFileInfo>
@@ -241,6 +242,23 @@ void testEditor()
             if (CHECK(c.id > 0 && Subtitles::find(p.timeline(), c.id) == &c)) ids << c.id;
     CHECK_EQ(int(ids.size()), 3);
     undo->undo();
+    // 100000 cues one after another (an SRT file, an AI's cue list) in moments (each sorted the whole track: minutes),
+    // as they come; an empty one is left out as before
+    {
+        QVector<SubtitleCue> many;
+        for (int i = 0; i < 100000; ++i) many << SubtitleCue{0, 2 * i, 2 * i + 1, "x"};
+        many[7].end = many[7].start;
+        QElapsedTimer t;
+        t.start();
+        const int index = ed.importSubtitles(many, "many");
+        CHECK(t.elapsed() < 10000);
+        const QVector<SubtitleCue>& cues = p.timeline().subtitles.value(index).cues;
+        if (CHECK_EQ(int(cues.size()), 99999)) {
+            CHECK(cues[7].start == 16 && cues.last().start == 199998 && cues[0].id > 0 && cues[1].id > cues[0].id);
+            CHECK(std::is_sorted(cues.begin(), cues.end(), [](const SubtitleCue& a, const SubtitleCue& b) { return a.start < b.start; }));
+        }
+        undo->undo();
+    }
 
     // Change style (dragging = one step), rename, delete track
     const int before = undo->index(); // index, not count: the undone import above is dropped by the next push
