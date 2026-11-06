@@ -25,10 +25,14 @@
 #include <QImage>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QLockFile>
 #include <QMenu>
 #include <QScrollArea>
 #include <QTemporaryDir>
 #include <QToolButton>
+
+#include <chrono>
+#include <thread>
 
 namespace {
 
@@ -548,6 +552,30 @@ void testInspector()
 
 } // namespace
 
+// Two `brand set` on the global kit at once (two AIs, two MCP servers): the later one waits until the other has read,
+// changed and written back the kit, then changes that one - neither one's fields get lost
+void testGlobalLock()
+{
+    QFile::remove(Brand::globalPath());
+    std::unique_ptr<QLockFile> held = Brand::lockGlobal(0);
+    if (!CHECK(held)) return;
+    bool wrote = false;
+    std::thread other([&] { // the other writer: read the kit, busy for a while, writes it back with its colour
+        BrandKit k = Brand::global();
+        std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+        k.colors = {QColor("#123456")};
+        wrote = Brand::setGlobal(k);
+        held.reset();
+    });
+    run("brand", {{"action", "set"}, {"fonts", "DejaVu Sans"}});
+    other.join();
+    CHECK(wrote);
+    const BrandKit k = Brand::global();
+    CHECK_EQ(k.colors.size(), 1);
+    CHECK_EQ(k.fonts, QStringList{"DejaVu Sans"});
+    CHECK(Brand::setGlobal({}));
+}
+
 int main(int argc, char** argv)
 {
     Check::initEnv();
@@ -564,6 +592,7 @@ int main(int argc, char** argv)
     testAnimatedColor();
     testLogoAndIntro(dir.path());
     testCli(dir.path());
+    testGlobalLock();
     testDialog(dir.path());
     testInspector();
     return Check::result();

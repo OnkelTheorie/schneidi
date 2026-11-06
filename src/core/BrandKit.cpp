@@ -9,6 +9,7 @@
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QLockFile>
 #include <QSaveFile>
 #include <QStandardPaths>
 
@@ -143,6 +144,16 @@ bool setGlobal(const BrandKit& kit, QString* err)
         return false;
     }
     return true;
+}
+
+std::unique_ptr<QLockFile> lockGlobal(int timeoutMs)
+{
+    const QString path = globalPath();
+    QDir().mkpath(QFileInfo(path).absolutePath());
+    auto l = std::make_unique<QLockFile>(path + ".lock");
+    l->setStaleLockTime(0);
+    if (!l->tryLock(timeoutMs)) return nullptr;
+    return l;
 }
 
 BrandKit effective(const std::optional<BrandKit>& projectBrand) { return projectBrand ? *projectBrand : global(); }
