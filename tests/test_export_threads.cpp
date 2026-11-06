@@ -9,10 +9,13 @@
 #include "core/SystemMemory.h"
 #include "engine/Exporter.h"
 #include "engine/ClipFormat.h"
+#include "engine/video/Reader.h"
 
 #include <QApplication>
 #include <QElapsedTimer>
+#include <QDir>
 #include <QEventLoop>
+#include <QFileInfo>
 #include <QFile>
 #include <QImage>
 #include <QTemporaryDir>
@@ -20,6 +23,10 @@
 #include <clocale>
 #include <cstring>
 #include <memory>
+
+extern "C" {
+#include <libavcodec/avcodec.h>
+}
 #ifdef Q_OS_WIN
 #include <windows.h>
 #else
@@ -101,6 +108,14 @@ void testMemoryThreads()
     CHECK(Exporter::automaticThreads(4, vertical, 50 * MB).lowMemory);
     CHECK(!Exporter::automaticThreads(1, vertical, 50 * MB).lowMemory); // one processor: nothing was lowered
 
+    // x264's lookahead against the RAM: 8K on a machine with 11 GB free (40 frames = 4 GB) short, 4K and 1080p
+    // there not; a 4 GB machine (2.5 GB free) shortens it at 4K, not at 1080p
+    CHECK(Exporter::shortLookahead(QSize(7680, 4320), 11000 * MB));
+    CHECK(!Exporter::shortLookahead(uhd, 11000 * MB));
+    CHECK(!Exporter::shortLookahead(hd, 11000 * MB));
+    CHECK(Exporter::shortLookahead(uhd, 2500 * MB));
+    CHECK(!Exporter::shortLookahead(hd, 2500 * MB));
+    CHECK(!Exporter::shortLookahead(QSize(7680, 4320), 0)); // unknown: no limit
     // Shorter encoder lookahead then
     CHECK(Exporter::lowMemoryOptions("libx264").contains({QByteArray("rc-lookahead"), QByteArray("10")}));
     CHECK(Exporter::lowMemoryOptions("libx265").contains({QByteArray("x265-params"), QByteArray("rc-lookahead=10")}));
@@ -139,6 +154,60 @@ void testMemoryThreads()
     tl.video[2].clips << clip(5, "still.png", 0, 0, 100);
     CHECK_EQ(Exporter::decodedSourceBytes(tl, 0, 100, sizeOf), hdSource);
 
+    // Software decoders keep about 3 pictures more per thread, hardware ones none: two 8K H.264 sources (software:
+    // NVDEC takes no H.264 above 4096) in a dissolve, rendered to 1080p with 4.9 GB free on 10 processors. The
+    // 20-picture term alone left all 10 threads, which peaked at 4.7-5 GB in a 5 GB cap; 6 threads measured 3.5 GB
+    const QSize uhd8k(7680, 4320);
+    const qint64 picture8k = 7680LL * 4320 * 3 / 2;
+    // One recording cut in two with a 1 s dissolve at the cut (the file goes on across it): the right side gets a
+    // decoder of its own over the dissolve
+    Timeline dissolve;
+    dissolve.video.resize(1);
+    dissolve.video[0].clips << clip(1, "a8k.mp4", 0, 0, 150) << clip(2, "a8k.mp4", 150, 150, 150);
+    dissolve.video[0].clips[0].transOut = 30;
+    dissolve.video[0].clips[1].transIn = 30;
+    const auto size8k = [&](const QString&) { return uhd8k; };
+    const auto hardware = [](const QString&) { return QSize(); };
+    CHECK_EQ(Exporter::sourceBytesPerThread(dissolve, 0, 300, size8k), 2 * 3 * picture8k);
+    CHECK_EQ(Exporter::sourceBytesPerThread(dissolve, 0, 300, hardware), qint64(0));
+    CHECK_EQ(Exporter::sourceBytesPerThread(dissolve, 0, 100, size8k), 3 * picture8k); // one decoder there
+    // Without the dissolve a cut in one recording keeps one decoder
+    Timeline cut = dissolve;
+    cut.video[0].clips[0].transOut = cut.video[0].clips[1].transIn = 0;
+    CHECK_EQ(Exporter::decodedSourceBytes(cut, 0, 300, size8k), 20 * picture8k);
+    const qint64 fixed8k = Exporter::decodedSourceBytes(dissolve, 0, 300, size8k);
+    CHECK_EQ(fixed8k, 2 * 20 * picture8k);
+    const Exporter::ThreadChoice soft8k =
+        Exporter::automaticThreads(10, hd, 4900 * MB, fixed8k, Exporter::sourceBytesPerThread(dissolve, 0, 300, size8k));
+    CHECK(soft8k.threads >= 4 && soft8k.threads <= 6);
+    CHECK(soft8k.lowMemory);
+    // The same with hardware decoders (8K HEVC on NVDEC: measured 2.7 GB with 10 threads): all threads
+    CHECK_EQ(Exporter::automaticThreads(10, hd, 4900 * MB, fixed8k, 0).threads, 10);
+    // 1080p sources decoded in software on a normal machine: all threads; the Pi keeps its 2
+    CHECK_EQ(Exporter::automaticThreads(10, hd, 11000 * MB, 2 * hdSource, 2 * 3 * 1920LL * 1080 * 3 / 2).threads, 10);
+    CHECK_EQ(Exporter::automaticThreads(4, vertical, 280 * MB, hdSource, 3 * 1920LL * 1080 * 3 / 2).threads, 2);
+
+    // What decodes on the graphics card: never H.264 above 4096, AV1, other codecs, small pictures, or with
+    // hardware decoding off
+    auto par = [](AVCodecID id, int w, int h, AVPixelFormat f) {
+        AVCodecParameters* p = avcodec_parameters_alloc();
+        p->codec_type = AVMEDIA_TYPE_VIDEO;
+        p->codec_id = id;
+        p->width = w;
+        p->height = h;
+        p->format = f;
+        return std::unique_ptr<AVCodecParameters, void (*)(AVCodecParameters*)>(
+            p, [](AVCodecParameters* x) { avcodec_parameters_free(&x); });
+    };
+    CHECK(!Video::likelyHardware(par(AV_CODEC_ID_H264, 7680, 4320, AV_PIX_FMT_YUV420P).get()));
+    CHECK(!Video::likelyHardware(par(AV_CODEC_ID_AV1, 7680, 4320, AV_PIX_FMT_YUV420P).get()));
+    CHECK(!Video::likelyHardware(par(AV_CODEC_ID_PRORES, 7680, 4320, AV_PIX_FMT_YUV422P10LE).get()));
+    CHECK(!Video::likelyHardware(par(AV_CODEC_ID_HEVC, 640, 360, AV_PIX_FMT_YUV420P).get()));
+    CHECK(!Video::likelyHardware(nullptr));
+    qputenv("SCHNEIDI_HWDEC", "off");
+    CHECK(!Video::likelyHardware(par(AV_CODEC_ID_HEVC, 7680, 4320, AV_PIX_FMT_YUV420P).get()));
+    qunsetenv("SCHNEIDI_HWDEC");
+
     // /proc/meminfo as Linux writes it
     const SystemMemory::Info info = SystemMemory::parseMeminfo("MemTotal:         425364 kB\nMemFree:           87212 kB\n"
                                                                "MemAvailable:     286720 kB\nBuffers:            1234 kB\n");
@@ -150,6 +219,45 @@ void testMemoryThreads()
     CHECK(SystemMemory::read().total > 0);
     CHECK(SystemMemory::read().available > 0);
 #endif
+}
+
+// A memory cap of the process's control group (container, systemd scope) counts, not only the machine's free RAM:
+// an 8K render in a 5 GB scope on a machine with 11 GB free chose 9 threads and was killed by the cap
+void testCgroupRoom(const QString& dir)
+{
+    constexpr qint64 MB = 1024 * 1024;
+    auto put = [&](const QString& rel, const QByteArray& text) {
+        QDir().mkpath(QFileInfo(dir + "/cg" + rel).path());
+        QFile f(dir + "/cg" + rel);
+        if (f.open(QIODevice::WriteOnly)) f.write(text);
+    };
+    const QString root = dir + "/cg";
+    const QByteArray self = "0::/user.slice/app.slice/run-1.scope\n";
+    // No limit files at all (no cgroup v2, or no memory controller): unknown
+    CHECK_EQ(SystemMemory::cgroupRoom(self, root), qint64(0));
+    // "max" everywhere: no limit
+    put("/user.slice/memory.max", "max\n");
+    put("/user.slice/app.slice/run-1.scope/memory.max", "max\n");
+    CHECK_EQ(SystemMemory::cgroupRoom(self, root), qint64(0));
+    // The scope: 5 GB cap, 1 GB used of which 200 MB is droppable file cache -> 4.2 GB room
+    put("/user.slice/app.slice/run-1.scope/memory.max", QByteArray::number(5120 * MB) + "\n");
+    put("/user.slice/app.slice/run-1.scope/memory.current", QByteArray::number(1024 * MB) + "\n");
+    put("/user.slice/app.slice/run-1.scope/memory.stat", "anon 1\nfile 2\ninactive_file " + QByteArray::number(200 * MB) + "\n");
+    CHECK_EQ(SystemMemory::cgroupRoom(self, root), 4296 * MB);
+    // A parent with less room wins (memory.high counts like a limit: above it the kernel throttles and reclaims)
+    put("/user.slice/memory.high", QByteArray::number(3000 * MB) + "\n");
+    put("/user.slice/memory.current", QByteArray::number(2000 * MB) + "\n");
+    CHECK_EQ(SystemMemory::cgroupRoom(self, root), 1000 * MB);
+    // cgroup v1 or garbage: unknown, never a path outside the mount
+    CHECK_EQ(SystemMemory::cgroupRoom("12:memory:/user.slice\n", root), qint64(0));
+    CHECK_EQ(SystemMemory::cgroupRoom("0::/../../etc\n", root), qint64(0));
+    CHECK_EQ(SystemMemory::cgroupRoom("", root), qint64(0));
+    // The 8K case of the 5 GB scope with 4.2 GB room: a handful of threads instead of all
+    put("/user.slice/memory.high", "max\n");
+    const Exporter::ThreadChoice uhd8k =
+        Exporter::automaticThreads(10, QSize(7680, 4320), SystemMemory::cgroupRoom(self, root));
+    CHECK(uhd8k.lowMemory);
+    CHECK(uhd8k.threads <= 4);
 }
 
 // A render that leaves the threads to schneidi says when the memory lowered them; a number asked for stays
@@ -199,7 +307,12 @@ void testMemoryRender(const QString& dir)
     run(3, &used, &low);
     CHECK_EQ(used, 3);
     CHECK(!low);
-    if (x264) CHECK_EQ(lookahead(), QByteArray("40")); // threads asked for: the preset's own
+    // Threads asked for stay, but the lookahead alone (40 frames of 1080p, ~250 MB) does not fit into 100 MB: short
+    // (8K: a render with --threads 2 was killed in a 5 GB cap by x264's lookahead)
+    if (x264) CHECK_EQ(lookahead(), QByteArray("10"));
+    qputenv("SCHNEIDI_AVAILABLE_MB", "4000");
+    run(3, &used, &low);
+    if (x264) CHECK_EQ(lookahead(), QByteArray("40")); // room enough: the preset's own
     qunsetenv("SCHNEIDI_AVAILABLE_MB");
     run(0, &used, &low); // this machine, as it is
     CHECK_EQ(used, Exporter::availableThreads());
@@ -352,6 +465,7 @@ int main(int argc, char** argv)
     std::setlocale(LC_NUMERIC, "C");
     testParallelFrames();
     testMemoryThreads();
+    testCgroupRoom(tmp.path());
     testMemoryRender(tmp.path());
     testRender(tmp.path());
     return Check::result();

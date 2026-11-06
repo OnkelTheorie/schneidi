@@ -17,11 +17,13 @@
 #include "engine/audio/Mixer.h"
 #include "engine/picture/Renderer.h"
 #include "engine/picture/gpu/Gpu.h"
+#include "engine/video/Reader.h"
 
 #include <QDateTime>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QHash>
 #include <QRegularExpression>
 #include <QSet>
 #include <QSaveFile>
@@ -32,10 +34,12 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <limits>
 #include <optional>
 
 extern "C" {
 #include <libavcodec/avcodec.h>
+#include <libavformat/avformat.h>
 }
 
 namespace {
@@ -53,6 +57,14 @@ constexpr qint64 kReserveBytes = 32 * kMB;
 // the decoder's own reference and thread frames. Measured: a second 1080p60 decoder (picture-in-picture of the same
 // recording 30 frames apart) added 70 MB = 22 pictures
 constexpr qint64 kPicturesPerDecoder = 20;
+// ... and per decoder thread of a software decoder (frame threads: each decodes a picture of its own and keeps its
+// references). Measured: two 8K H.264 sources rendered to 1080p, 6 -> 10 threads +1.2 GB = 150 MB per thread and
+// decoder = 3 pictures. A hardware decoder runs with one thread.
+constexpr qint64 kPicturesPerDecoderThread = 3;
+// x264's lookahead (shortLookahead): frames at preset medium and bytes per pixel and frame it keeps (measured: ~6 MB
+// per 1080x1920 frame; 8K with 40 frames and 2 threads went over 5 GB)
+constexpr qint64 kLookaheadFrames = 40;
+constexpr qint64 kLookaheadBytesPerPixel = 3;
 
 // The subtitle tracks with entries in the range [from, to) as SRT files (Subtitles::srtFiles: the visible one into path,
 // the others next to it), times from the start of the range. Not committed yet: an existing file of a name is replaced
@@ -210,18 +222,38 @@ int Exporter::availableThreads()
 }
 
 Exporter::ThreadChoice Exporter::automaticThreads(int processors, QSize output, qint64 availableBytes,
-                                                  qint64 sourceBytes)
+                                                  qint64 sourceBytes, qint64 sourcePerThread)
 {
     processors = std::max(1, processors);
     if (availableBytes <= 0 || output.isEmpty()) return {processors, false};
-    const qint64 perThread = qint64(output.width()) * output.height() * 4 * kFramesPerThread;
+    const qint64 perThread =
+        qint64(output.width()) * output.height() * 4 * kFramesPerThread + std::max<qint64>(0, sourcePerThread);
     const qint64 budget = availableBytes - std::max(kReserveBytes, availableBytes / 8) - std::max<qint64>(0, sourceBytes);
     const int fit = int(std::clamp<qint64>(budget / std::max<qint64>(1, perThread), 1, processors));
     return {fit, fit < processors};
 }
 
+bool Exporter::shortLookahead(QSize output, qint64 availableBytes)
+{
+    if (availableBytes <= 0 || output.isEmpty()) return false;
+    const qint64 lookahead = qint64(output.width()) * output.height() * kLookaheadBytesPerPixel * kLookaheadFrames;
+    return lookahead > availableBytes / 3;
+}
+
 qint64 Exporter::decodedSourceBytes(const Timeline& tl, int from, int to,
                                    const std::function<QSize(const QString&)>& sizeOf)
+{
+    return peakDecoderBytes(tl, from, to, sizeOf, kPicturesPerDecoder);
+}
+
+qint64 Exporter::sourceBytesPerThread(const Timeline& tl, int from, int to,
+                                     const std::function<QSize(const QString&)>& softwareSizeOf)
+{
+    return peakDecoderBytes(tl, from, to, softwareSizeOf, kPicturesPerDecoderThread);
+}
+
+qint64 Exporter::peakDecoderBytes(const Timeline& tl, int from, int to,
+                                 const std::function<QSize(const QString&)>& sizeOf, qint64 pictures)
 {
     // One decoder per file and position (source frame - timeline frame), as the renderer shares them
     // (Picture::Renderer's lanes); compound clips' contents are not looked into
@@ -241,8 +273,29 @@ qint64 Exporter::decodedSourceBytes(const Timeline& tl, int from, int to,
             auto it = sizes.find(c.mediaPath);
             if (it == sizes.end()) it = sizes.insert(c.mediaPath, sizeOf(c.mediaPath));
             if (it->isEmpty()) continue;
-            const qint64 bytes = qint64(it->width()) * it->height() * 3 / 2 * kPicturesPerDecoder;
+            const qint64 bytes = qint64(it->width()) * it->height() * 3 / 2 * pictures;
             uses.push_back({a, b, c.mediaPath + '|' + QString::number(c.in - c.start), bytes});
+        }
+        // A dissolve shows both sides over its whole span, each from a decoder of its own - also the same file
+        // going on across the cut (Picture::Renderer gives the right side a second decoder then). Handles taken as
+        // long enough: the span may come out a little longer than rendered, never shorter
+        const QVector<TimelineOps::TransitionSpan> spans =
+            TimelineOps::transitions(t, [](const Clip&) { return std::numeric_limits<int>::max() / 4; });
+        for (const TimelineOps::TransitionSpan& sp : spans) {
+            if (!sp.isDissolve()) continue;
+            const int a = std::max(sp.start, from), b = std::min(sp.end, to);
+            if (a >= b) continue;
+            QString leftKey;
+            for (const int id : {sp.leftId, sp.rightId})
+                for (const Clip& c : t.clips) {
+                    if (c.id != id || !c.enabled || c.mediaPath.isEmpty() || c.isNested() || c.isTitle()) continue;
+                    const QSize size = sizes.value(c.mediaPath, sizeOf(c.mediaPath));
+                    if (size.isEmpty()) continue;
+                    QString key = c.mediaPath + '|' + QString::number(c.in - c.start);
+                    if (id == sp.leftId) leftKey = key;
+                    else if (key == leftKey) key += 'x';
+                    uses.push_back({a, b, key, qint64(size.width()) * size.height() * 3 / 2 * pictures});
+                }
         }
     }
     // The frames where something starts are where the sum can grow
@@ -351,17 +404,39 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
     // Different frame rate: the writer picks the timeline frame of every output frame
     const FrameRate rate = s.rate.num > 0 && s.rate.den > 0 ? s.rate : s.format.rate;
     const bool convertRate = rate != s.format.rate && !s.videoCodec.isEmpty();
+    const qint64 available = s.videoCodec.isEmpty() ? 0 : SystemMemory::read().available;
     ThreadChoice automatic{availableThreads(), false};
-    if (s.threads <= 0 && !s.videoCodec.isEmpty())
-        if (const qint64 available = SystemMemory::read().available; available > 0) {
-            const qint64 sources = decodedSourceBytes(scaled, m_from, m_from + m_length, [](const QString& path) {
-                const ClipFormat cf = detectClipFormat(path);
-                return cf.ok ? QSize(cf.width, cf.height) : QSize();
-            });
-            automatic = automaticThreads(availableThreads(), out.size(), available, sources);
-        }
+    if (s.threads <= 0 && available > 0) {
+        // Each file once: its picture size and whether it would decode in software (pictures per decoder thread)
+        struct Source {
+            QSize size;
+            bool software = true;
+        };
+        QHash<QString, Source> known;
+        auto source = [&known](const QString& path) -> const Source& {
+            auto it = known.find(path);
+            if (it != known.end()) return *it;
+            Source src;
+            if (const ClipFormat cf = detectClipFormat(path); cf.ok) {
+                src.size = QSize(cf.width, cf.height);
+                Video::Reader::Options o;
+                o.hardware = false;
+                if (const auto r = Video::Reader::open(path, o))
+                    src.software = !Video::likelyHardware(r->container()->streams[r->info().index]->codecpar);
+            }
+            return *known.insert(path, src);
+        };
+        const qint64 sources = decodedSourceBytes(scaled, m_from, m_from + m_length,
+                                                  [&](const QString& path) { return source(path).size; });
+        const qint64 perThread = sourceBytesPerThread(scaled, m_from, m_from + m_length, [&](const QString& path) {
+            const Source& src = source(path);
+            return src.software ? src.size : QSize();
+        });
+        automatic = automaticThreads(availableThreads(), out.size(), available, sources, perThread);
+    }
     const int threads = s.threads > 0 ? s.threads : automatic.threads;
     m_threadsLowMemory = s.threads <= 0 && automatic.lowMemory;
+    m_shortLookahead = m_threadsLowMemory || shortLookahead(out.size(), available);
     m_settings = s;
     m_convertRate = convertRate;
     m_sampleFormat = sampleFormat;
@@ -549,7 +624,9 @@ QVector<QPair<QByteArray, QByteArray>> Exporter::encoderOptions(const QString& c
             o.append({"crf", QByteArray::number(s.crf)}); // H.264/H.265/AV1/VP9; fixed-quality formats have 0
         }
         if (codec == "libx264" || codec == "libx265") o.append({"preset", s.preset.toUtf8()});
-        if (m_threadsLowMemory) o += lowMemoryOptions(codec);
+        // Threads lowered for the RAM, or the lookahead alone would not fit (shortLookahead, also with threads asked
+        // for: 8K, 40 frames = 4 GB): shorter lookahead
+        if (m_shortLookahead) o += lowMemoryOptions(codec);
     }
     if (s.maxBitrateK > 0) { // quality target as before, but capped (VBV)
         o.append({"maxrate", QByteArray::number(s.maxBitrateK) + "k"});

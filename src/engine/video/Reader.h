@@ -28,6 +28,7 @@ extern "C" {
 #include <memory>
 #include <optional>
 
+struct AVCodecParameters;
 struct AVFormatContext;
 struct AVFrame;
 struct AVStream;
@@ -64,6 +65,13 @@ double streamRotation(const AVStream* stream);
 // Quarter turns clockwise the pictures of a rotation (streamRotation) are turned by, as MLT's autorotate (transpose
 // clock / hflip+vflip / transpose cclock): 0 for anything that is no quarter turn (45 degrees stays as it is)
 int quarterTurns(double degrees);
+
+// Would a reader with Options::hardware decode this stream on the graphics card? A guess before decoding, for memory
+// estimates (a software decoder keeps pictures per thread, a hardware one runs with one thread): false when hardware
+// decoding is off or no device works for the codec, for streams the reader leaves to software anyway (small, other
+// formats), H.264 above 4096 pixels (no H.264 decoder of a graphics card takes it: NVDEC "width not within range")
+// and AV1 (many cards cannot; counted as software, the safe side)
+bool likelyHardware(const AVCodecParameters* par);
 
 // Stream frame position of timestamp `pts` (stream time base) as MLT's producer counts it: from `firstPts` (the first
 // key frame, stream time base), else from the container start `startTime` (AV_TIME_BASE units, AV_NOPTS_VALUE =
