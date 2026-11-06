@@ -391,10 +391,14 @@ bool copyTemplateFiles(ProjectData& d, const QString& templateDir, const QString
     QStringList sources(used.begin(), used.end());
     sources.sort();
     const QDir target(targetDir);
+    // Copies of earlier calls count only in this call's folder (a project saved again elsewhere gets copies there)
+    const QString targetInside = QDir::cleanPath(target.absolutePath()) + '/';
+    const QHash<QString, QString> knownBefore = known ? *known : QHash<QString, QString>{};
     for (const QString& src : sources) {
         if (!QFileInfo(src).isFile()) continue; // offline: the reference stays
         const qint64 size = QFileInfo(src).size();
-        if (known && known->contains(src) && QFileInfo(known->value(src)).size() == size) {
+        if (known && known->contains(src) && known->value(src).startsWith(targetInside)
+            && QFileInfo(known->value(src)).size() == size) {
             result.moved[src] = known->value(src);
             continue;
         }
@@ -411,6 +415,7 @@ bool copyTemplateFiles(ProjectData& d, const QString& templateDir, const QString
             QDir().mkpath(QFileInfo(dst).absolutePath());
             if (!QFile::copy(src, dst)) {
                 for (const QString& f : std::as_const(result.written)) QFile::remove(f);
+                if (known) *known = knownBefore; // the removed copies are not known
                 if (error) *error = QString("cannot copy %1 to %2").arg(src, dst);
                 return false;
             }
@@ -424,6 +429,26 @@ bool copyTemplateFiles(ProjectData& d, const QString& templateDir, const QString
     redirect(d, result.moved);
     if (out) *out = result;
     return true;
+}
+
+QStringList foldersUsed(const ProjectData& project)
+{
+    ProjectData d = project; // forEachFile may change paths, this only reads them
+    QStringList roots;
+    for (const QString& r : {dir(), builtInCache()}) roots << QDir::cleanPath(QDir(r).absolutePath()) + '/';
+    QSet<QString> found;
+    const auto look = [&](const QString& path) {
+        for (const QString& root : std::as_const(roots)) {
+            if (!path.startsWith(root)) continue;
+            const int slash = path.indexOf('/', root.size()); // <root>/<id>/...: a file directly in the root is none
+            if (slash > root.size()) found.insert(path.left(slash));
+        }
+    };
+    forEachFile(d, [&](QString& path) { look(path); });
+    for (const MediaInfo& m : d.media) look(m.path);
+    QStringList list(found.begin(), found.end());
+    list.sort();
+    return list;
 }
 
 bool remove(const QString& id, QString* error)

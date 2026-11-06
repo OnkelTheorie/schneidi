@@ -934,6 +934,37 @@ void copyTree(const QString& from, const QString& to)
     }
 }
 
+// copyTemplateFiles' `known` copies: used again only in the same folder (a project saved again elsewhere gets its
+// own copies); a call that fails leaves them as they were (its copies are removed)
+void testCopyKnown()
+{
+    QTemporaryDir tmp;
+    const QString tdir = tmp.filePath("tmpl");
+    const QString a = touch(tdir + "/a.mp4", "aaa"), b = touch(tdir + "/media/b.mp4", "bbbb");
+    const auto data = [&] {
+        ProjectData d;
+        d.media = {media(a, 100, true, true), media(b, 100, true, true)};
+        return d;
+    };
+    QHash<QString, QString> known;
+    QString err;
+    ProjectData first = data();
+    CHECK(TemplateLibrary::copyTemplateFiles(first, tdir, tmp.filePath("A media"), nullptr, &err, &known, true));
+    CHECK_EQ(first.media.value(0).path, tmp.filePath("A media/a.mp4"));
+    ProjectData second = data();
+    CHECK(TemplateLibrary::copyTemplateFiles(second, tdir, tmp.filePath("B media"), nullptr, &err, &known, true));
+    CHECK_EQ(second.media.value(0).path, tmp.filePath("B media/a.mp4"));
+    CHECK_EQ(second.media.value(1).path, tmp.filePath("B media/media/b.mp4"));
+    CHECK(QFileInfo::exists(tmp.filePath("B media/a.mp4")));
+    // "media" taken by a file in the target: a.mp4 is copied, b.mp4 cannot be -> nothing stays, `known` as before
+    touch(tmp.filePath("C media/media"), "x");
+    const QHash<QString, QString> before = known;
+    ProjectData third = data();
+    CHECK(!TemplateLibrary::copyTemplateFiles(third, tdir, tmp.filePath("C media"), nullptr, &err, &known, true));
+    CHECK(!QFileInfo::exists(tmp.filePath("C media/a.mp4")));
+    CHECK_EQ(known, before);
+}
+
 void testLibrary()
 {
     QDir(TemplateLibrary::dir()).removeRecursively();
@@ -1093,6 +1124,7 @@ int main(int argc, char** argv)
     testTextSplit();
     testCompound();
     testEditorParts();
+    testCopyKnown();
     testLibrary();
     return Check::result();
 }

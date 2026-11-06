@@ -16,12 +16,15 @@
 #include "ui/timeline/TimelineView.h"
 
 #include <QDir>
+#include <QFile>
 #include <QFileInfo>
 #include <QMessageBox>
 #include <QStatusBar>
 #include <QTemporaryDir>
 #include <QToolButton>
 #include <QUndoStack>
+
+#include <algorithm>
 
 bool MainWindow::newProjectFromContentTemplate(const ContentTemplate& t)
 {
@@ -44,18 +47,33 @@ bool MainWindow::newProjectFromContentTemplate(const ContentTemplate& t)
 
 bool MainWindow::copyTemplateFiles(ProjectData& data, const QString& path, QStringList* written)
 {
-    if (m_templateDir.isEmpty()) return true;
+    // The template it was made from, and every template folder it still points into: the link to the template is
+    // lost when the never saved project comes back from its automatic backup (or any other way of loading it)
+    QStringList dirs = TemplateLibrary::foldersUsed(data);
+    if (!m_templateDir.isEmpty()) dirs << QDir::cleanPath(QDir(m_templateDir).absolutePath());
+    dirs.removeDuplicates();
     const QFileInfo fi(path);
+    const QString saved = QDir::cleanPath(fi.absoluteFilePath());
+    // Saving a template itself (Edit): its files stay in its folder
+    dirs.erase(std::remove_if(dirs.begin(), dirs.end(), [&](const QString& d) { return saved.startsWith(d + '/'); }),
+               dirs.end());
+    if (written) written->clear();
+    if (dirs.isEmpty()) return true;
     const QString target = fi.absoluteDir().filePath(fi.completeBaseName() + " media");
-    TemplateLibrary::FileCopies copies;
-    QString error;
-    // The Media Pool's files of the template too: the user may still put them on the timeline
-    if (!TemplateLibrary::copyTemplateFiles(data, m_templateDir, target, &copies, &error, &m_templateCopies, true)) {
-        QMessageBox::warning(this, T("Projekt speichern"),
-                             T("Die Dateien der Vorlage ließen sich nicht neben das Projekt kopieren:\n%1").arg(error));
-        return false;
+    QStringList all;
+    for (const QString& dir : std::as_const(dirs)) {
+        TemplateLibrary::FileCopies copies;
+        QString error;
+        // The Media Pool's files of the template too: the user may still put them on the timeline
+        if (!TemplateLibrary::copyTemplateFiles(data, dir, target, &copies, &error, &m_templateCopies, true)) {
+            for (const QString& f : std::as_const(all)) QFile::remove(f);
+            QMessageBox::warning(this, T("Projekt speichern"),
+                                 T("Die Dateien der Vorlage ließen sich nicht neben das Projekt kopieren:\n%1").arg(error));
+            return false;
+        }
+        all << copies.written;
     }
-    if (written) *written = copies.written;
+    if (written) *written = all;
     return true;
 }
 
