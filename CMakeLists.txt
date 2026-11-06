@@ -80,8 +80,23 @@ add_custom_target(schneidi_buildinfo
     BYPRODUCTS ${SCHNEIDI_BUILDINFO}
     COMMENT "Build id")
 
+# Development builds on Linux link the program code as shared libraries: every test program then is a few hundred KB
+# instead of a full copy of schneidi with debug info (~260 MB each, ~47 GB per build folder). Release builds (AppImage,
+# Docker) and Windows stay static: one self-contained program, no DLL exports needed.
+if(UNIX AND NOT APPLE AND NOT CMAKE_BUILD_TYPE STREQUAL "Release")
+    set(_schneidi_shared_default ON)
+else()
+    set(_schneidi_shared_default OFF)
+endif()
+option(SCHNEIDI_SHARED_LIBS "Link schneidi_lib/schneidi_cli_lib as shared libraries (small test programs)" ${_schneidi_shared_default})
+if(SCHNEIDI_SHARED_LIBS)
+    set(SCHNEIDI_LIB_TYPE SHARED)
+else()
+    set(SCHNEIDI_LIB_TYPE STATIC)
+endif()
+
 # All program sources except main.cpp: shared by the app and the tests
-add_library(schneidi_lib STATIC
+add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/core/Types.h
     src/core/I18n.h               src/core/I18n.cpp
     src/core/Timecode.h
@@ -443,7 +458,7 @@ add_dependencies(schneidi schneidi_buildinfo)
 target_link_libraries(schneidi PRIVATE schneidi_lib schneidi_cli_lib) # live connection (cli/Live.h)
 
 # Command line + MCP server (no window): for scripts and AIs, see src/cli/main.cpp
-add_library(schneidi_cli_lib STATIC
+add_library(schneidi_cli_lib ${SCHNEIDI_LIB_TYPE}
     src/cli/Commands.h src/cli/Commands.cpp src/cli/CommandsDetail.h src/cli/CommandsProject.cpp
     src/cli/RenderReview.cpp
     src/cli/CommandsWatch.cpp src/cli/CommandsShort.cpp src/cli/CommandsBrand.cpp src/cli/CommandsTemplate.cpp
