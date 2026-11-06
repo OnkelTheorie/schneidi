@@ -377,16 +377,19 @@ bool copyTemplateFiles(ProjectData& d, const QString& templateDir, const QString
 {
     FileCopies result;
     const QString inside = QDir::cleanPath(QDir(templateDir).absolutePath()) + '/';
+    // Judged by the clean path: "<template>/media/../../x" (a hand-written or downloaded template) is no file of the
+    // template - it would be read from outside it and its copy written outside the target folder
+    const auto inTemplate = [&inside](const QString& path) { return QDir::cleanPath(path).startsWith(inside); };
     QSet<QString> used;
     forEachFile(d, [&](QString& path) {
-        if (path.startsWith(inside)) used.insert(path);
+        if (inTemplate(path)) used.insert(path);
     });
     if (keepPool)
         for (const MediaInfo& m : d.media)
-            if (m.path.startsWith(inside)) used.insert(m.path);
+            if (inTemplate(m.path)) used.insert(m.path);
     QVector<MediaInfo> kept;
     for (const MediaInfo& m : d.media)
-        if (!m.path.startsWith(inside) || used.contains(m.path)) kept << m;
+        if (!inTemplate(m.path) || used.contains(m.path)) kept << m;
     d.media = kept;
     QStringList sources(used.begin(), used.end());
     sources.sort();
@@ -403,7 +406,7 @@ bool copyTemplateFiles(ProjectData& d, const QString& templateDir, const QString
             continue;
         }
         // Its place in the template; a different file there keeps it, the copy takes the next free name
-        const QFileInfo want(QDir::cleanPath(target.absoluteFilePath(src.mid(inside.size()))));
+        const QFileInfo want(QDir::cleanPath(target.absoluteFilePath(QDir::cleanPath(src).mid(inside.size()))));
         const QString suffix = want.suffix().isEmpty() ? QString() : "." + want.suffix();
         QString dst = want.absoluteFilePath();
         bool same = false;
@@ -437,7 +440,8 @@ QStringList foldersUsed(const ProjectData& project)
     QStringList roots;
     for (const QString& r : {dir(), builtInCache()}) roots << QDir::cleanPath(QDir(r).absolutePath()) + '/';
     QSet<QString> found;
-    const auto look = [&](const QString& path) {
+    const auto look = [&](const QString& given) {
+        const QString path = QDir::cleanPath(given);
         for (const QString& root : std::as_const(roots)) {
             if (!path.startsWith(root)) continue;
             const int slash = path.indexOf('/', root.size()); // <root>/<id>/...: a file directly in the root is none
