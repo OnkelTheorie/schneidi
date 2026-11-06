@@ -457,7 +457,11 @@ void testCli(const QString& dir)
     r = run("templates", {});
     CHECK_EQ(std::as_const(r)["default"].toString(), QString("neutral"));
     const QJsonArray list = std::as_const(r)["templates"].toArray();
-    CHECK_EQ(list.size(), qsizetype(5));
+    // 4 built-in start templates + the own one, then the 5 built-in content templates (assets/templates)
+    int starts = 0, contents = 0;
+    for (const QJsonValue& v : list) (v["kind"].toString() == "start" ? starts : contents)++;
+    CHECK_EQ(starts, 5);
+    CHECK_EQ(contents, 5);
     QJsonObject game, own;
     for (const QJsonValue& v : list) {
         if (v["id"].toString() == "game") game = v.toObject();
