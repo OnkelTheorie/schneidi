@@ -61,6 +61,7 @@ large project, all threads: s / peak RAM (MB) | memory peak / after giving back 
 | 0.16.1 [b] | 2026-11-05 | 16.5 | 412 / 391 | 0.33 | 32 / 33.4 | 126 / 231 | 60.8 / 21.5 | 2.19 | 37.28 / 1550 | 1153 / 633 | 19.13 / 30.62 |
 | 0.17.0 (791ddfd) | 2026-11-05 | 4.3 | 391 / 400 | 0.32 | 31.8 / 33.5 | 143 / 212 | 59.7 / 22.8 | 2.17 | 37.88 / 1917 | 1169 / 634 | 18.79 / 30.71 |
 | 0.18.0 (13e0e58d) [d] | 2026-11-06 | 0.3 | 418 / 433 | 0.42 | 31.9 / 33.2 | 152 / 214 | 60.7 / 22.9 | 2.17 | 39.23 / 1570 | 1277 / 670 | 19.4 / 31.12 |
+| 0.19.0 (b5197a8c) [e] | 2026-11-07 | 0.1 | 453 / 443 | 0.33 | 32 / 33.5 | 113 / 248 | 57.1 / 23.4 | 2.15 | 37.45 / 1554 | 1168 / 651 | 21.84 / 35.48 |
 
 Notes on rows:
 
@@ -90,6 +91,9 @@ Notes on rows:
   run on 152bf44e (load 0.3). The main run had a first frame of 200 / 275 ms, caused by the automatic thread memory model
   opening every source; a later commit (a181a09b, "estimate the sources without opening decoders") removed it. The probe
   value of 0.42 ms is noise (a repeat gave 0.32 ms).
+- **[e]** 0.19.0: the comparison script flagged the project export peak (1112 MB) and compose (+13 %). Two A/B runs each
+  of 0.18.1 and 0.19.0, one after the other, gave 1109 / 835 MB and 844 / 834 MB for the export peak and 19.3 / 19.5 ms
+  and 18.8 / 19.0 ms for compose (RGBA 1080p) – the same in both versions, so both are noise.
 
 ## Raspberry Pi Zero 2 W
 
