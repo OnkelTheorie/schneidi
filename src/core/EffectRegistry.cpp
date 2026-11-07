@@ -38,6 +38,31 @@ EffectParam f0rOther(EffectParam::Type type, const char* index, const QString& l
     return p;
 }
 
+// Custom effects written by an AI or a user (0.19, engine/picture/CustomEffects.h): an FFmpeg filter chain and a
+// GLSL shader. The code is text set through `edit` (not in the Inspector, not in the Effects Library); the shader's
+// numbers and colours show in the Inspector and take keyframes
+QVector<EffectDescriptor> customEffects()
+{
+    EffectDescriptor filter;
+    filter.id = QStringLiteral("ffmpeg_filter");
+    filter.name = T("FFmpeg-Filter");
+    filter.description = T("Eine FFmpeg-Filterkette auf dem Bild des Clips (z. B. hue=s=0,edgedetect)");
+    filter.params = {{"chain", T("Filterkette"), "chain", EffectParam::Text, QString(), 0, 0}};
+    EffectDescriptor shader;
+    shader.id = QStringLiteral("shader");
+    shader.name = T("Shader");
+    shader.description = T("Ein eigener GLSL-Shader auf dem Bild des Clips (läuft auf der Grafikkarte)");
+    shader.params = {{"code", T("Shader-Code"), "code", EffectParam::Text, QString(), 0, 0}};
+    for (int i = 1; i <= 8; ++i) {
+        const QString key = QStringLiteral("p%1").arg(i);
+        shader.params << EffectParam{key, T("Wert %1").arg(i), key, EffectParam::Double, 0.0, -100.0, 100.0,
+                                     Keys::effectParam(shader.id, key), 0.01, 3};
+    }
+    shader.params << EffectParam{"color1", T("Farbe 1"), "color1", EffectParam::Color, QColor(255, 255, 255), 0, 0}
+                  << EffectParam{"color2", T("Farbe 2"), "color2", EffectParam::Color, QColor(0, 0, 0), 0, 0};
+    return {filter, shader};
+}
+
 // Own picture effects in place of the frei0r plugins schneidi offered (engine/VideoEffects). Same ids, parameter keys
 // and value ranges as the plugins, so old projects, keyframes and Kdenlive/Shotcut presets keep working; the
 // service stays the frei0r name for the preset files.
@@ -232,7 +257,8 @@ QVector<EffectDescriptor>& registry()
         // the descriptor has none (the node kinds have them, engine/picture/CompNodes.h)
         {"comp", T("Compositing"), {}, true, {}, false,
          T("Ebenen, Masken, Keying und Tracking als Knoten (Seite Comp)"), true},
-    }) + ownLooks(); // after the built-in ones: the Effects Library lists them behind blur and color correction
+    }) + ownLooks() // after the built-in ones: the Effects Library lists them behind blur and color correction
+                   + customEffects();
     return effects;
 }
 

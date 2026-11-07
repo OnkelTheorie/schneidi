@@ -17,6 +17,7 @@
 #include "engine/StabilizeCorrection.h"
 #include "engine/VideoEffects.h"
 #include "engine/picture/CompEval.h"
+#include "engine/picture/CustomEffects.h"
 #include "engine/picture/Effects.h"
 #include "engine/picture/Interpolate.h"
 #include "engine/picture/TitleLook.h"
@@ -638,6 +639,8 @@ struct Renderer::Impl {
                 // Strength 100 = 1/20 of the frame height
                 const double sigma = std::max(0.0, Keys::valueAt(c, P::FxBlur, t)) * frameHeight / 2000.0;
                 VideoEffects::gaussian(img.data(), img.w, img.h, sigma);
+            } else if (Custom::isCustom(inst.effectId)) {
+                Custom::applyToClip(c, inst, t, ctx.fps, img.data(), img.w, img.h); // filter chain, shader (0.19)
             } else if (!VideoEffects::apply(inst.effectId, img.data(), img.w, img.h, effectParams(c, inst, *d, t),
                                             int64_t(c.in + t))) {
                 static std::once_flag warned;
@@ -2798,7 +2801,8 @@ QVector<SkippedEffect> skippedEffects(const Timeline& tl)
                     const EffectDescriptor* d = EffectRegistry::find(e.effectId);
                     if (d && (d->fixed || !d->video || e.effectId == QLatin1String("color")
                               || e.effectId == QLatin1String("blur") || e.effectId == QLatin1String("chromakey")
-                              || VideoEffects::isOwn(e.effectId)))
+                              || VideoEffects::isOwn(e.effectId)
+                              || (Custom::isCustom(e.effectId) && Custom::canRender(e.effectId))))
                         continue;
                     out << SkippedEffect{c.id, e.effectId, true, sequence}; // not known here or not drawn by this engine
                 }

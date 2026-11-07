@@ -12,8 +12,9 @@
 #include <QVector>
 
 struct EffectParam {
-    // Path = file path (project file also stores it relative); Bool = checkbox; Choice = one of `choices`
-    enum Type { Double, Color, Path, Bool, Choice };
+    // Path = file path (project file also stores it relative); Bool = checkbox; Choice = one of `choices`;
+    // Text = free text (a filter chain, shader code of the custom effects; set through `edit`, not in the Inspector)
+    enum Type { Double, Color, Path, Bool, Choice, Text };
     QString key;         // Name in EffectInstance::params
     QString label;       // display in the Inspector
     QString mltProperty; // parameter key of presets and old projects (empty = converted by the picture engine)

@@ -26,6 +26,7 @@
 #include "engine/ExportWriter.h"
 #include "engine/Exporter.h"
 #include "engine/HardwareEncoders.h"
+#include "engine/picture/CustomEffects.h"
 #include "engine/ClipFormat.h"
 #include "engine/ProxyCleanup.h"
 #include "engine/RenderQueue.h"
@@ -1082,13 +1083,28 @@ QJsonObject cmdEffects(const QJsonObject& a, Context&)
             o["note"] = "own keyer (chroma distance, soft edge, spill suppression); fixed stage after the grade";
         if (d.id == Stabilizer::EffectId)
             o["note"] = "needs an analysis pass (background in the app, before encoding in `render`)";
+        // Custom effects (0.19): what the code may use, and whether this machine renders them
+        if (Picture::Custom::isCustom(d.id)) {
+            QString why;
+            if (!Picture::Custom::canRender(d.id, &why)) o["unavailable"] = why;
+            if (d.id == QLatin1String(Picture::Custom::kFilterId))
+                o["note"] = "params.chain = an FFmpeg filter chain on the clip's picture (one linear chain, filters "
+                            "separated by ','; expressions see t = clip seconds; the size stays). Checked when set: "
+                            "bad chains and forbidden filters are refused with the reason";
+            else
+                o["note"] = "params.code = " + Picture::Custom::shaderHelp()
+                            + ". Compiled when set (errors come back with line numbers); drawn on the graphics card "
+                              "only: without one it is skipped (check/render say so). p1..p8 take keyframes";
+            if (!only.isEmpty() && d.id == QLatin1String(Picture::Custom::kFilterId))
+                o["allowed_filters"] = QJsonArray::fromStringList(Picture::Custom::allowedFilters());
+        }
         if (only.isEmpty()) {
             QJsonArray keys;
             for (const EffectParam& p : d.params)
                 if (!p.sparse) keys << p.key; // grade windows: `help edit --op window`
             o["params"] = keys;
         } else {
-            static const char* types[] = {"number", "color", "path", "boolean", "choice"};
+            static const char* types[] = {"number", "color", "path", "boolean", "choice", "text"};
             QJsonArray params;
             for (const EffectParam& p : d.params) {
                 if (p.sparse) continue;
