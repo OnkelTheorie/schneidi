@@ -414,7 +414,6 @@
  "Bildrate": "Частота кадров",
  "Bildrauschen": "Шум изображения",
  "Bildwiederholung": "Повтор кадров",
- "Bildwinkel": "Угол обзора",
  "Bin %1": "Папка %1",
  "Bin entfernen": "Удалить папку",
  "Bin im Media Pool, in den die neuen Dateien kommen": "Корзина в Media Pool, куда попадают новые файлы",
@@ -1378,7 +1377,6 @@
  "Leistung": "Производительность",
  "Letzte Farbe entfernen": "Убрать последний цвет",
  "Letztes Bild halten": "Удержать последний кадр",
- "Licht von": "Свет с",
  "Licht von oben": "Свет сверху",
  "Lichthöhe": "Высота света",
  "Lichtrichtung": "Направление света",
@@ -2728,5 +2726,7 @@
  "%1 · nicht ausgeführt": "%1 · не выполняется",
  "Entfernung": "Расстояние",
  "Analyse verworfen – Clip geändert": "Анализ отброшен – клип изменился",
+ "Eigener Code im Rezept": "Собственный код в рецепте",
+ "Dieses Rezept enthält Code, den du hier nicht selbst geschrieben hast (Filterketten: %1, Shader: %2). Fremder Code kann die Grafikkarte oder den Prozessor lange beschäftigen. Führe ihn nur aus, wenn du der Quelle vertraust.": "Этот рецепт содержит код, который вы здесь не писали сами (цепочки фильтров: %1, шейдеры: %2). Чужой код может надолго занять видеокарту или процессор. Запускайте его, только если доверяете источнику.",
  "„%1“": "«%1»"
 }

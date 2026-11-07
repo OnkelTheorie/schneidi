@@ -42,6 +42,8 @@ void settle()
     for (int i = 0; i < 5; ++i) QApplication::processEvents();
 }
 
+QString g_asked; // the text of the last TrustDialog answered
+
 // Clicks a button of the TrustDialog the next modal loop shows; *asked = it came
 void answer(const char* button, bool* asked)
 {
@@ -53,6 +55,7 @@ void answer(const char* button, bool* asked)
                 if (auto* t = qobject_cast<TrustDialog*>(w); t && t->isVisible()) dlg = t;
         if (!dlg) return;
         *asked = true;
+        if (auto* text = dlg->findChild<QLabel*>("trustText")) g_asked = text->text();
         dlg->findChild<QPushButton*>(button)->click();
     });
 }
@@ -223,6 +226,7 @@ int main(int argc, char** argv)
         w.applyRecipe({clipId}, "trust_flip");
         settle();
         CHECK(asked);
+        CHECK(g_asked.startsWith("Dieses Rezept enthält Code")); // a recipe, not a project
         CHECK_EQ(undo->index(), idx + 1);
         CHECK(!CodeTrust::isTrusted("vflip"));
         CHECK(!CodeTrust::remembered(r->file, codes));

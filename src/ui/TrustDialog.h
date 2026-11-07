@@ -12,7 +12,8 @@ class QPushButton;
 class TrustDialog : public QDialog {
     Q_OBJECT
 public:
-    TrustDialog(const QVector<CodeTrust::Item>& items, QWidget* parent = nullptr);
+    // recipe: the code came with a comp recipe just applied (its wording), not with a project
+    TrustDialog(const QVector<CodeTrust::Item>& items, QWidget* parent = nullptr, bool recipe = false);
     QPushButton* runButton() const { return m_run; }
     QPushButton* skipButton() const { return m_skip; }
 

@@ -414,7 +414,6 @@
  "Bildrate": "Liczba klatek",
  "Bildrauschen": "Szum obrazu",
  "Bildwiederholung": "Powtarzanie klatek",
- "Bildwinkel": "Kąt widzenia",
  "Bin %1": "Pojemnik %1",
  "Bin entfernen": "Usuń pojemnik",
  "Bin im Media Pool, in den die neuen Dateien kommen": "Kosz w Media Pool, do którego trafiają nowe pliki",
@@ -1378,7 +1377,6 @@
  "Leistung": "Wydajność",
  "Letzte Farbe entfernen": "Usuń ostatni kolor",
  "Letztes Bild halten": "Zatrzymaj ostatnią klatkę",
- "Licht von": "Światło z",
  "Licht von oben": "Światło z góry",
  "Lichthöhe": "Wysokość światła",
  "Lichtrichtung": "Kierunek światła",
@@ -2728,5 +2726,7 @@
  "%1 · nicht ausgeführt": "%1 · nieuruchomiony",
  "Entfernung": "Odległość",
  "Analyse verworfen – Clip geändert": "Analiza odrzucona – klip się zmienił",
+ "Eigener Code im Rezept": "Własny kod w przepisie",
+ "Dieses Rezept enthält Code, den du hier nicht selbst geschrieben hast (Filterketten: %1, Shader: %2). Fremder Code kann die Grafikkarte oder den Prozessor lange beschäftigen. Führe ihn nur aus, wenn du der Quelle vertraust.": "Ten przepis zawiera kod, którego nie napisałeś tutaj sam (łańcuchy filtrów: %1, cieniowania: %2). Obcy kod może długo obciążać kartę graficzną lub procesor. Uruchom go tylko, jeśli ufasz źródłu.",
  "„%1“": "„%1”"
 }
