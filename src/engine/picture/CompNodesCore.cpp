@@ -7,6 +7,7 @@
 #include "core/I18n.h"
 #include "engine/ColorGrade.h"
 #include "engine/VideoEffects.h"
+#include "engine/picture/CustomEffects.h"
 #include "engine/video/Blend.h"
 #include "engine/video/Compose.h"
 
@@ -348,8 +349,35 @@ const QStringList& fxEffects()
                                     "frei0r.nosync0r",
                                     "frei0r.cairogradient",
                                     "frei0r.alpha0ps_alpha0ps",
-                                    "chromakey"};
+                                    "chromakey",
+                                    "ffmpeg_filter",
+                                    "shader"};
     return ids;
+}
+
+// A custom effect (engine/picture/CustomEffects.h) on the node's picture; its values under e_<key> like the others
+void applyCustomFx(NodeCtx& ctx, const QString& id, const EffectDescriptor& d, Buf& out)
+{
+    const double seconds = ctx.fps > 0 ? ctx.t / ctx.fps : 0.0;
+    if (id == QLatin1String(Custom::kFilterId)) {
+        Custom::applyFilter(ctx.text(QStringLiteral("e_chain")), out.data(), out.w, out.h, seconds);
+        return;
+    }
+    Custom::ShaderValues v;
+    v.seconds = seconds;
+    v.frame = ctx.t;
+    v.fps = ctx.fps;
+    for (const EffectParam& p : d.params) {
+        const QString key = QStringLiteral("e_") + p.key;
+        if (p.type == EffectParam::Double && p.key.size() == 2 && p.key[0] == QLatin1Char('p')) {
+            const int i = p.key[1].digitValue() - 1;
+            if (i >= 0 && i < 8) v.p[i] = ctx.text(key).isEmpty() ? p.defaultValue.toDouble() : ctx.num(key);
+        } else if (p.type == EffectParam::Color) {
+            const QString s = ctx.text(key);
+            (p.key == QLatin1String("color1") ? v.color1 : v.color2) = s.isEmpty() ? p.defaultValue.value<QColor>() : QColor(s);
+        }
+    }
+    Custom::applyShader(ctx.text(QStringLiteral("e_code")), v, out.data(), out.w, out.h);
 }
 
 // Any own picture effect; its values under its own keys prefixed "e_" (missing = the effect's default)
@@ -361,6 +389,12 @@ bool evalFx(NodeCtx& ctx, Buf* out)
     copyBuf(*src, *out);
     const QString id = ctx.text("effect");
     const EffectDescriptor* d = id == QLatin1String("none") ? nullptr : EffectRegistry::find(id);
+    if (d && Custom::isCustom(id)) { // filter chain or shader (0.19): e_chain / e_code, e_p1..e_p8, e_color1/2
+        applyCustomFx(ctx, id, *d, *out);
+        out->area = {};
+        mixByMask(*out, *src, ctx.input("mask"));
+        return true;
+    }
     if (!d || !VideoEffects::isOwn(id)) return true;
     auto find = [d](const char* name) -> const EffectParam* {
         for (const EffectParam& p : d->params)
@@ -608,7 +642,9 @@ void registerCoreNodes(QVector<NodeType>& out)
         k.params = {other(EffectParam::Choice, "effect", T("Effekt"), QString("none"), fxEffects(), labels)};
         // Only noise draws a new pattern each frame (VideoEffects::apply's frameNo); the others are cached when static
         k.isVarying = [](const NodeType& kind, const QVariantMap& values) {
-            return textValue(kind, values, QStringLiteral("effect")) == QLatin1String("frei0r.rgbnoise");
+            // Noise, and the custom effects (a filter chain or shader may use the time)
+            const QString effect = textValue(kind, values, QStringLiteral("effect"));
+            return effect == QLatin1String("frei0r.rgbnoise") || Custom::isCustom(effect);
         };
         k.eval = evalFx;
         out << k;

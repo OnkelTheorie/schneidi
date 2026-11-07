@@ -53,6 +53,13 @@ names cost a failed call.
    `plan:true` checks every op like `dry_run`, changes nothing and answers `plan {id, steps:[{n, op, why, summary,
    changes}]}`; show the steps, then `edit` with `plan_id` and `run` (`[1,2,4]` or `"all"`: one edit, one undo step)
    or `discard:true`. A plan is void once the project changes (`PLAN_STALE`: plan again).
+   **When schneidi lacks an effect**, don't give up and don't fake it with a pile of keyframes: write it.
+   `{op:'effect', effect:'ffmpeg_filter', params:{chain:'hue=s=0,edgedetect'}}` runs an FFmpeg filter chain on the
+   clip (allowed filters: `effects` `effect:'ffmpeg_filter'`), `effect:'shader'` with `params.code` a GLSL function
+   `vec4 effect(vec2 uv)` (glitch, liquify, mosaic, own looks; p1..p8 and color1/2 take keyframes; needs a graphics
+   card). Both are checked when set: an error comes back with the reason or the line - fix it and send it again.
+   If neither can do it (several inputs, a whole clip at once, a tool schneidi does not have), compute it outside
+   (`ffmpeg`, Python) into a new file and place that file as a clip.
 4. **Check before rendering**: `check` on the project (gaps, missing media, subtitles, sound, game sound or
    speech buried under the music, stutter in recordings, too long without a cut, zoom or text (`pace`), a late
    hook and story sections; 9:16: text the apps cover, a slow start), `info` (length,

@@ -2582,5 +2582,13 @@
  "Ausgabe-Knoten setzen": "Задать выходной узел",
  "Comp-Graph: Knoten %1 erreichen die Ausgabe nicht und wirken nicht": "Граф композитинга: узлы %1 не доходят до выхода и ни на что не влияют",
  "Comp-Graph rechnet etwa %1 ms je Bild (mehr als %2 ms): Render-Cache für diesen Clip einschalten, damit die Wiedergabe flüssig bleibt": "Граф композитинга считает около %1 мс на кадр (больше %2 мс): включите кэш рендеринга для этого клипа, чтобы воспроизведение было плавным",
- "Key unsauber: %1 % halbdurchsichtige Pixel im Motiv (Key-Werte nachstellen oder matte_tune)": "Кеинг нечистый: %1 % полупрозрачных пикселей в объекте (подстройте значения кея или используйте matte_tune)"
+ "Key unsauber: %1 % halbdurchsichtige Pixel im Motiv (Key-Werte nachstellen oder matte_tune)": "Кеинг нечистый: %1 % полупрозрачных пикселей в объекте (подстройте значения кея или используйте matte_tune)",
+ "FFmpeg-Filter": "Фильтр FFmpeg",
+ "Eine FFmpeg-Filterkette auf dem Bild des Clips (z. B. hue=s=0,edgedetect)": "Цепочка фильтров FFmpeg на изображении клипа (например, hue=s=0,edgedetect)",
+ "Filterkette": "Цепочка фильтров",
+ "Shader": "Шейдер",
+ "Ein eigener GLSL-Shader auf dem Bild des Clips (läuft auf der Grafikkarte)": "Собственный шейдер GLSL на изображении клипа (работает на видеокарте)",
+ "Shader-Code": "Код шейдера",
+ "Wert %1": "Значение %1",
+ "Effekt „%1“ wird hier übersprungen: %2": "Эффект «%1» здесь пропускается: %2"
 }

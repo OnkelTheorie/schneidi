@@ -48,6 +48,8 @@
 struct AVFrame;
 class QOffscreenSurface;
 class QRhi;
+class QShader;
+class QByteArray;
 
 namespace ColorGrade {
 struct Baked;
@@ -143,6 +145,12 @@ public:
     TexturePtr compPass(CompShader shader, QSize size, const float p[40], const Texture* t0, const Texture* t1 = nullptr,
                         const Texture* t2 = nullptr);
 
+    // ---- Fragment shaders made at run time (effect "shader", engine/picture/ShaderEffect): the same uniform block and
+    // bindings as the built-in shaders (quad.vert), p = its 10 parameter vec4 after rect and target, t0 = the input
+    // (binding 1). Draws over all of a new RGBA8 target(size). key names the shader (its pipeline is kept for the next
+    // frames; at most 16 shaders, the oldest are dropped). nullptr = the pipeline could not be made
+    TexturePtr customPass(const QByteArray& key, const QShader& frag, QSize size, const float p[40], const Texture* t0);
+
     // Readbacks, filled by the next finish(); the memory must stay valid until then
     // Straight RGBA, width*height*4 bytes
     void readRgba(const Texture& t, uint8_t* out);
@@ -188,6 +196,8 @@ public:
     // Runs job(context) on the GPU thread inside begin()/finish() and waits for it (readbacks are filled on return);
     // false = shut down or the card refused the frame, nothing ran (the caller takes the CPU path)
     bool run(const std::function<void(Context&)>& job);
+    // The caller is the GPU thread itself (inside a job): run() would wait for itself
+    bool onThread() const;
     const DeviceInfo& info() const;
 
 private:

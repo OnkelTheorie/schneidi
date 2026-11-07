@@ -254,6 +254,8 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/engine/picture/CompNodesCore.cpp src/engine/picture/CompNodesMask.cpp src/engine/picture/CompNodesKey.cpp
     src/engine/picture/CompNodesTrack.cpp src/engine/picture/CompNodesStyle.cpp
     src/engine/picture/TitleLook.h src/engine/picture/TitleLook.cpp
+    src/engine/picture/CustomEffects.h src/engine/picture/FilterEffect.cpp src/engine/picture/ShaderEffect.cpp
+    src/engine/picture/CustomEffectsClip.cpp
     src/core/Masks.h              src/core/Masks.cpp
     src/engine/MaskRaster.h       src/engine/MaskRaster.cpp
     src/engine/picture/CompTrack.h src/engine/picture/CompTrack.cpp
@@ -430,6 +432,30 @@ target_include_directories(schneidi_lib SYSTEM PRIVATE ${MINIAUDIO_INCLUDE_DIR})
 target_link_libraries(schneidi_lib PUBLIC Qt6::Widgets Qt6::Network PkgConfig::FFMPEG
                       Threads::Threads ${CMAKE_DL_LIBS})
 target_link_libraries(schneidi_lib PRIVATE rnnoise)
+# Custom effect "ffmpeg_filter" (0.19, engine/picture/FilterEffect.cpp): libavfilter is optional. Found by pkg-config
+# (Debian libavfilter-dev; the bundled LGPL FFmpeg of packaging/ has it), or given by hand with
+# SCHNEIDI_AVFILTER_INCLUDE_DIR + SCHNEIDI_AVFILTER_LIBRARY (headers of the same FFmpeg version as the other libraries).
+# Without it the effect says "not available in this build". Only FilterEffect.cpp sees the define and headers (the
+# rest of the build keeps its flags and compiler cache).
+option(SCHNEIDI_AVFILTER "FFmpeg filter chains as an effect (needs libavfilter)" ON)
+set(SCHNEIDI_AVFILTER_INCLUDE_DIR "" CACHE PATH "libavfilter headers (when pkg-config does not find libavfilter)")
+set(SCHNEIDI_AVFILTER_LIBRARY "" CACHE FILEPATH "libavfilter library (when pkg-config does not find libavfilter)")
+if(SCHNEIDI_AVFILTER)
+    pkg_check_modules(AVFILTER QUIET IMPORTED_TARGET libavfilter)
+    if(AVFILTER_FOUND)
+        target_link_libraries(schneidi_lib PRIVATE PkgConfig::AVFILTER)
+        set_property(SOURCE src/engine/picture/FilterEffect.cpp APPEND PROPERTY COMPILE_DEFINITIONS SCHNEIDI_HAVE_AVFILTER)
+        message(STATUS "FFmpeg filter effect: libavfilter ${AVFILTER_VERSION}")
+    elseif(SCHNEIDI_AVFILTER_INCLUDE_DIR AND SCHNEIDI_AVFILTER_LIBRARY)
+        target_link_libraries(schneidi_lib PRIVATE ${SCHNEIDI_AVFILTER_LIBRARY})
+        set_property(SOURCE src/engine/picture/FilterEffect.cpp APPEND PROPERTY COMPILE_DEFINITIONS SCHNEIDI_HAVE_AVFILTER)
+        set_property(SOURCE src/engine/picture/FilterEffect.cpp APPEND PROPERTY INCLUDE_DIRECTORIES
+                     ${SCHNEIDI_AVFILTER_INCLUDE_DIR})
+        message(STATUS "FFmpeg filter effect: libavfilter ${SCHNEIDI_AVFILTER_LIBRARY}")
+    else()
+        message(STATUS "FFmpeg filter effect: not available (no libavfilter; Debian: libavfilter-dev)")
+    endif()
+endif()
 if(TARGET Qt6::DBus)
     target_link_libraries(schneidi_lib PUBLIC Qt6::DBus)
     target_compile_definitions(schneidi_lib PRIVATE SCHNEIDI_HAVE_DBUS)
@@ -581,7 +607,7 @@ if(UNIX AND NOT APPLE)
     # miniaudio (own audio engine) opens ALSA/PulseAudio with dlopen, invisible to shlibdeps.
     set(CPACK_DEBIAN_PACKAGE_DEPENDS "libasound2t64 | libasound2")
     # Hardware decoding on AMD/Intel (VAAPI) loads the driver at runtime; NVIDIA comes with its driver (CUDA)
-    set(CPACK_DEBIAN_PACKAGE_RECOMMENDS "ffmpeg, libpulse0, mesa-va-drivers | va-driver")
+    set(CPACK_DEBIAN_PACKAGE_RECOMMENDS "ffmpeg, libpulse0, mesa-va-drivers | va-driver, qt6-shader-baker")
     if(SCHNEIDI_SHARED_LIBS)
         message(WARNING "SCHNEIDI_SHARED_LIBS is on: a package from this build folder would ship libschneidi_*.so - "
                         "package from a Release build folder (see the comment above)")

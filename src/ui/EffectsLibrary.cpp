@@ -699,7 +699,8 @@ void EffectsLibrary::rebuild()
     auto filters = [&](bool video) {
         QVector<Entry> out;
         for (const auto& e : EffectRegistry::all())
-            if (e.library && e.video == video)
+            // The custom effects (filter chain, shader) come with their code through `edit`: empty they do nothing
+            if (e.library && e.video == video && e.id != QLatin1String("ffmpeg_filter") && e.id != QLatin1String("shader"))
                 out << Entry{e.name, kEffectPrefix + e.id, effectIcon(e.id), e.description};
         return out;
     };

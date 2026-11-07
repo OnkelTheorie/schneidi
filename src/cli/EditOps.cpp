@@ -8,6 +8,7 @@
 #include "core/StreamPresets.h"
 #include "core/Subtitles.h"
 #include "core/TimelineOps.h"
+#include "engine/picture/CustomEffects.h"
 
 #include <QColor>
 #include <QFile>
@@ -248,6 +249,16 @@ QVariant effectValue(const EffectDescriptor& d, const QString& key, const QJsonV
         if (!p.choices.contains(v.toString()))
             fail("BAD_ARGUMENT", QString("%1.%2 must be one of: %3").arg(d.id, key, p.choices.join(", ")));
         return v.toString();
+    case EffectParam::Text: {
+        if (!v.isString()) fail("BAD_ARGUMENT", QString("%1.%2 must be a text").arg(d.id, key));
+        // The custom effects' code is checked here, so a bad chain or shader never reaches a render
+        const QString text = v.toString();
+        QString why;
+        if (d.id == QLatin1String(Picture::Custom::kFilterId)) why = Picture::Custom::checkFilter(text);
+        else if (d.id == QLatin1String(Picture::Custom::kShaderId)) why = Picture::Custom::checkShader(text);
+        if (!why.isEmpty()) fail("BAD_ARGUMENT", QString("%1.%2: %3").arg(d.id, key, why));
+        return text;
+    }
     }
     return {};
 }
@@ -654,6 +665,8 @@ void opEffect(Session& s, const QJsonObject& op)
     QVariantMap values;
     const QJsonObject params = op.value("params").toObject();
     for (auto it = params.begin(); it != params.end(); ++it) values[it.key()] = effectValue(*d, it.key(), it.value());
+    if (QString why; Picture::Custom::isCustom(effectId) && !Picture::Custom::canRender(effectId, &why))
+        s.notes << QString("%1 is stored but skipped while rendering on this machine: %2").arg(effectId, why);
     s.editor.addEffect(targets, effectId); // clips that have it already keep it
     if (values.isEmpty() && !op.contains("enabled")) return;
     s.editor.modifyClips(targets, d->name, [&](Clip& c) {
@@ -815,6 +828,12 @@ QVector<OpDef> makeOps()
          "rendered first). It works per clip on every given clip that has the effect. Fixed stages cannot move and "
          "always render before the others: stabilize, then grade (Color page), then chromakey (Green Screen, so "
          "effects work on the keyed picture); denoise and voiceclean are per audio clip. "
+         "Own effects when schneidi lacks one: ffmpeg_filter with params.chain = an FFmpeg filter chain "
+         "('hue=s=0,edgedetect'; one linear chain of the allowed filters, `effects effect:'ffmpeg_filter'` lists "
+         "them; expressions see t = clip seconds), shader with params.code = GLSL defining vec4 effect(vec2 uv) "
+         "(pixel(uv), time, resolution, p1..p8, color1/2; `effects effect:'shader'`; drawn on the graphics card only, "
+         "skipped without one). Both are checked when set and refused with the reason (shader: the compiler's line). "
+         "Not possible with them: compute it outside (ffmpeg, Python) and place the result as a clip. "
          "chromakey (Green Screen): color = the background's color, distance = tolerance 0..1 (how far from it still "
          "becomes transparent; gray is at ~0.6, skin ~0.75), softness = soft edge, spill = removes the key color's "
          "fringe near the edge (1 = fully). No effect blurs faces by itself: a `window` with fill 'blur', "

@@ -2582,5 +2582,13 @@
  "Ausgabe-Knoten setzen": "Set output node",
  "Comp-Graph: Knoten %1 erreichen die Ausgabe nicht und wirken nicht": "Comp graph: nodes %1 do not reach the output and have no effect",
  "Comp-Graph rechnet etwa %1 ms je Bild (mehr als %2 ms): Render-Cache für diesen Clip einschalten, damit die Wiedergabe flüssig bleibt": "Comp graph takes about %1 ms per frame (more than %2 ms): switch on the render cache for this clip so playback stays smooth",
- "Key unsauber: %1 % halbdurchsichtige Pixel im Motiv (Key-Werte nachstellen oder matte_tune)": "Key not clean: %1 % half-transparent pixels in the subject (adjust the key values or use matte_tune)"
+ "Key unsauber: %1 % halbdurchsichtige Pixel im Motiv (Key-Werte nachstellen oder matte_tune)": "Key not clean: %1 % half-transparent pixels in the subject (adjust the key values or use matte_tune)",
+ "FFmpeg-Filter": "FFmpeg filter",
+ "Eine FFmpeg-Filterkette auf dem Bild des Clips (z. B. hue=s=0,edgedetect)": "An FFmpeg filter chain on the clip's picture (e.g. hue=s=0,edgedetect)",
+ "Filterkette": "Filter chain",
+ "Shader": "Shader",
+ "Ein eigener GLSL-Shader auf dem Bild des Clips (läuft auf der Grafikkarte)": "Your own GLSL shader on the clip's picture (runs on the graphics card)",
+ "Shader-Code": "Shader code",
+ "Wert %1": "Value %1",
+ "Effekt „%1“ wird hier übersprungen: %2": "Effect “%1” is skipped here: %2"
 }

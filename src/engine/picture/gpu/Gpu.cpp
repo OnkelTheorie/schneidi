@@ -184,6 +184,8 @@ struct Context::Impl {
     // Compositing (RGBA16F targets: pipelines of their own, the render pass differs)
     std::unique_ptr<QRhiGraphicsPipeline> layer16Ps, comp16Ps[4];
     QShader compFrag[4];
+    // Run-time shaders (customPass) by key, the oldest first
+    std::vector<std::pair<QByteArray, std::unique_ptr<QRhiGraphicsPipeline>>> customPs;
     bool compOk = false;
 
     // Per-pass resources, reused frame after frame (slot i = i-th pass of the frame)
@@ -815,6 +817,31 @@ TexturePtr Context::compPass(CompShader shader, QSize size, const float p[40], c
     return out;
 }
 
+TexturePtr Context::customPass(const QByteArray& key, const QShader& frag, QSize size, const float p[40],
+                               const Texture* t0)
+{
+    if (!d->recording || !frag.isValid() || size.isEmpty()) return {};
+    auto it = std::find_if(d->customPs.begin(), d->customPs.end(), [&](const auto& e) { return e.first == key; });
+    if (it == d->customPs.end()) {
+        if (d->customPs.size() >= 16) d->customPs.erase(d->customPs.begin());
+        d->customPs.emplace_back(key, nullptr);
+        it = d->customPs.end() - 1;
+    }
+    TexturePtr out = target(size);
+    if (!out) return {};
+    out->pendingClear = false; // every pixel is written
+    if (t0 && t0->kind == Texture::Target) d->flushClear(const_cast<Texture&>(*t0));
+    Uniforms u;
+    u.rect[2] = float(size.width()), u.rect[3] = float(size.height());
+    std::memcpy(u.inv0, p, 40 * sizeof(float));
+    d->pass(*out, it->second, frag, false, u, t0 ? t0->tex[0].get() : nullptr, nullptr, nullptr, nullptr);
+    if (!it->second) { // the pipeline was refused (pass() drew nothing)
+        d->customPs.erase(it);
+        return {};
+    }
+    return out;
+}
+
 void Context::readRgba(const Texture& t, uint8_t* out)
 {
     if (!d->recording || !out || t.kind != Texture::Target || t.half) return;
@@ -1154,6 +1181,8 @@ bool Service::run(const std::function<void(Context&)>& job)
 
 const DeviceInfo& Service::info() const { return d->info; }
 
+bool Service::onThread() const { return std::this_thread::get_id() == d->thread.get_id(); }
+
 #else // no Qt RHI headers: the CPU path only
 
 class Texture {
@@ -1204,6 +1233,7 @@ TexturePtr Context::luma(const Texture&, const Texture&, const Texture&, double,
 bool Context::compSupported() const { return false; }
 TexturePtr Context::compTarget(QSize, const float*) { return {}; }
 TexturePtr Context::compPass(CompShader, QSize, const float*, const Texture*, const Texture*, const Texture*) { return {}; }
+TexturePtr Context::customPass(const QByteArray&, const QShader&, QSize, const float*, const Texture*) { return {}; }
 void Context::readRgba(const Texture&, uint8_t*) {}
 bool Context::readYuv(const Texture&, const OutputColor::Target&) { return false; }
 Context::Stats Context::stats() const { return {}; }
@@ -1219,6 +1249,7 @@ Service* Service::tryInstance(bool* decided)
 }
 void Service::shutdown() {}
 bool Service::run(const std::function<void(Context&)>&) { return false; }
+bool Service::onThread() const { return false; }
 const DeviceInfo& Service::info() const { return probe(); }
 
 #endif

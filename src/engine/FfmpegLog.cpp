@@ -8,15 +8,27 @@ extern "C" {
 #include <libavutil/log.h>
 }
 
+#include <atomic>
 #include <cstdarg>
 #include <cstdio>
 #include <cstring>
 
 namespace FfmpegLog {
 
+struct CaptureAccess {
+    static void add(Capture& c, const QString& line)
+    {
+        if (line.isEmpty()) return;
+        if (!c.m_text.isEmpty()) c.m_text += QLatin1Char('\n');
+        c.m_text += line;
+    }
+};
+
 namespace {
 
 Sink s_sink = nullptr;
+std::atomic_bool s_installed{false};
+thread_local Capture* t_capture = nullptr;
 
 void handler(void* avcl, int level, const char* fmt, va_list args)
 {
@@ -37,6 +49,7 @@ void handler(void* avcl, int level, const char* fmt, va_list args)
     QStringDecoder utf8(QStringConverter::Utf8, QStringConverter::Flag::Stateless);
     QString text = utf8(QByteArrayView(buf));
     if (utf8.hasError()) text = QString::fromLocal8Bit(buf);
+    if (t_capture && level <= AV_LOG_ERROR) CaptureAccess::add(*t_capture, text.trimmed());
     if (s_sink) s_sink(level <= AV_LOG_ERROR, text.trimmed());
     std::fputs(buf, stderr);
 }
@@ -49,6 +62,17 @@ void install(Sink sink)
     // Warnings are noise in normal operation, e.g. "[opus] Could not update timestamps for skipped/discarded samples"
     av_log_set_level(Bundle::verboseLogging() ? AV_LOG_WARNING : AV_LOG_ERROR);
     av_log_set_callback(handler);
+    s_installed = true;
 }
+
+Capture::Capture() : m_outer(t_capture)
+{
+    if (!s_installed.exchange(true)) av_log_set_callback(handler);
+    t_capture = this;
+}
+
+Capture::~Capture() { t_capture = m_outer; }
+
+QString Capture::text() const { return m_text; }
 
 } // namespace FfmpegLog

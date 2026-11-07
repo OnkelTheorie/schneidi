@@ -415,7 +415,8 @@ QVariant convert(const EffectParam& p, const QString& v, double factor)
         for (const QString& c : p.choices)
             if (c.compare(v, Qt::CaseInsensitive) == 0) return c;
         return {};
-    case EffectParam::Path: return {};
+    case EffectParam::Path:
+    case EffectParam::Text: return {};
     }
     return {};
 }
@@ -444,7 +445,8 @@ QString valueText(const EffectParam& p, const QVariant& v)
         return QString::asprintf("0x%02x%02x%02x%02x", c.red(), c.green(), c.blue(), c.alpha()); // MLT 0xrrggbbaa
     }
     case EffectParam::Choice: return v.toString();
-    case EffectParam::Path: return {};
+    case EffectParam::Path:
+    case EffectParam::Text: return {};
     }
     return {};
 }
@@ -646,7 +648,8 @@ QByteArray toXml(const Clip& c, const QString& name, QStringList* skipped)
             case EffectParam::Bool: x.writeAttribute("type", "bool"); break;
             case EffectParam::Color: x.writeAttribute("type", "color"); break;
             case EffectParam::Choice: x.writeAttribute("type", "list"); break;
-            case EffectParam::Path: break;
+            case EffectParam::Path:
+            case EffectParam::Text: break;
             }
             x.writeAttribute("name", kdenliveName(*d, p));
             x.writeAttribute("default", valueText(p, p.defaultValue));

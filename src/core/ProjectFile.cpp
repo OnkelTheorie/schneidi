@@ -572,7 +572,8 @@ void normalizeParams(EffectInstance& e)
         case EffectParam::Bool: *it = it->toBool(); break;
         case EffectParam::Double: *it = it->toDouble(); break;
         case EffectParam::Choice:
-        case EffectParam::Path: *it = it->toString(); break;
+        case EffectParam::Path:
+        case EffectParam::Text: *it = it->toString(); break;
         }
     }
 }

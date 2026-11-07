@@ -15,6 +15,7 @@
 #include "core/TimelineOps.h"
 #include "engine/picture/CompNodes.h"
 #include "engine/picture/CompTrack.h"
+#include "engine/picture/CustomEffects.h"
 
 #include <QDir>
 #include <QJsonArray>
@@ -47,7 +48,7 @@ const PC::NodeType& kindOf(const QString& type, const QString& where)
 
 const char* typeName(EffectParam::Type t)
 {
-    static const char* names[] = {"number", "color", "path", "boolean", "choice"};
+    static const char* names[] = {"number", "color", "path", "boolean", "choice", "text"};
     return names[t];
 }
 
@@ -65,6 +66,11 @@ QVariantMap nodeValues(Session& s, const PC::NodeType& k, const QJsonValue& v, c
         // fx: the effect's own values under e_<key> (any value its effect takes)
         if (!p && k.id == QLatin1String("fx") && key.startsWith(QLatin1String("e_"))) {
             out[key] = it.value().toVariant();
+            // A custom effect's code (filter chain, shader) is checked here, as in op 'effect'
+            QString why;
+            if (key == QLatin1String("e_chain")) why = Picture::Custom::checkFilter(it.value().toString());
+            else if (key == QLatin1String("e_code")) why = Picture::Custom::checkShader(it.value().toString());
+            if (!why.isEmpty()) fail("BAD_ARGUMENT", QString("%1: %2").arg(name, why));
             continue;
         }
         if (!p) {
@@ -96,6 +102,10 @@ QVariantMap nodeValues(Session& s, const PC::NodeType& k, const QJsonValue& v, c
         case EffectParam::Choice:
             if (!p->choices.contains(x.toString()))
                 fail("BAD_ARGUMENT", QString("'%1' must be one of %2").arg(name, p->choices.join(", ")));
+            out[key] = x.toString();
+            break;
+        case EffectParam::Text:
+            if (!x.isString()) fail("BAD_ARGUMENT", QString("'%1' must be a text").arg(name));
             out[key] = x.toString();
             break;
         case EffectParam::Path: {
