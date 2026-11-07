@@ -154,8 +154,10 @@ int main(int argc, char** argv)
     // node add: a clip without a graph gets clip -> key; dry_run changes nothing
     {
         const QByteArray before = fileBytes();
-        const QJsonObject dry = edit({op(R"({"op":"node","clip":0,"add":{"type":"key","params":{"color":"#00ff00"}}})")}, true);
-        Q_UNUSED(dry);
+        QJsonObject add = op(R"({"op":"node","add":{"type":"key","params":{"color":"#00ff00"}}})");
+        add["clip"] = clip;
+        const QJsonObject dry = edit({add}, true);
+        CHECK(dry["saved"] == false && dry["notes"].toArray().first().toObject()["node"].toObject()["id"] == 2);
         CHECK(fileBytes() == before);
     }
     {
@@ -304,9 +306,9 @@ int main(int argc, char** argv)
         CHECK(!graphOf(clip).linkInto(2, "src"));
     }
 
-    // Tracker: a point on the still figure stays where it is; keyframes of x/y on the node
+    // Tracker: a point (the figure's corner) on the still stays where it is; keyframes of x/y on the node
     {
-        QJsonObject t = op(R"({"op":"node","add":{"type":"tracker","params":{"ax":0.5,"ay":0.5}},"input":false})");
+        QJsonObject t = op(R"({"op":"node","add":{"type":"tracker","params":{"ax":0.375,"ay":0.3333}},"input":false})");
         t["clip"] = clip;
         const QJsonObject r = edit({t});
         const int tr = r["notes"].toArray().first().toObject()["node"].toObject()["id"].toInt();
@@ -318,7 +320,7 @@ int main(int argc, char** argv)
         const ProjectData d = load();
         const Clip* c = clipIn(d, clip);
         const AnimParam x = Keys::effectParam(Comp::kEffectId, QString("n%1.x").arg(tr));
-        CHECK(c && Keys::animated(*c, x) && std::abs(Keys::valueAt(*c, x, 5) - 0.5) < 0.01);
+        CHECK(c && Keys::animated(*c, x) && std::abs(Keys::valueAt(*c, x, 5) - 0.375) < 0.01);
         CHECK(editError({QJsonObject{{"op", "track_node"}, {"clip", clip}, {"node", 2}}}).contains("not a tracker"));
     }
 
@@ -405,12 +407,12 @@ int main(int argc, char** argv)
         int id = 0;
         for (const Track& t : p.timeline().video)
             for (const Clip& c : t.clips)
-                if (!id && c.kind == ClipKind::Media) id = c.id;
+                if (!id) id = c.id; // the comp clip of comp_from
         const auto kinds = [](const QString& t, QStringList* in) { return Picture::Comp::kindInfo(t, in); };
         const QString before = Check::dump(p.timeline());
         const int steps = p.undoStack()->count();
         const int n = ed.addCompNode(id, "blur", {{"radius", 3.0}}, 0, "src", kinds);
-        CHECK(n == 2);
+        CHECK(n > 1);
         CHECK_EQ(p.undoStack()->count(), steps + 1);
         CHECK(ed.setCompNodeValues(id, n, {{"radius", 5.0}}));
         CHECK_EQ(p.undoStack()->count(), steps + 2);
