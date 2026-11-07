@@ -517,7 +517,10 @@ AnimParam parseParam(const QString& name)
 {
     for (const NamedParam& n : kNamed)
         if (name == QLatin1String(n.name)) return n.param;
-    const int dot = name.indexOf('.');
+    int dot = name.indexOf('.');
+    // Effect ids have dots too (frei0r.glow.blur), keys as well (grade.w1.x): the first prefix that is an effect
+    for (int d = dot; d > 0 && !EffectRegistry::find(name.left(dot)); d = name.indexOf('.', d + 1))
+        if (EffectRegistry::find(name.left(d))) dot = d;
     if (dot > 0) {
         const QString effectId = name.left(dot), key = name.mid(dot + 1);
         // A node value of the compositing graph: comp.n<id>.<key> (checked against the clips' graphs by the op)
@@ -528,11 +531,10 @@ AnimParam parseParam(const QString& name)
         }
         const EffectDescriptor* d = EffectRegistry::find(effectId);
         if (!d) fail("NOT_FOUND", QString("no effect '%1' (see `effects`)").arg(effectId));
-        for (const EffectParam& p : d->params)
-            if (p.key == key) {
-                if (p.anim == AnimParam::Count) fail("BAD_ARGUMENT", QString("%1 cannot be animated").arg(name));
-                return p.anim;
-            }
+        if (const EffectParam* p = EffectRegistry::findParam(*d, key)) { // stored key or readable alias
+            if (p->anim == AnimParam::Count) fail("BAD_ARGUMENT", QString("%1 cannot be animated").arg(name));
+            return p->anim;
+        }
         fail("BAD_ARGUMENT", QString("effect %1 has no parameter '%2'").arg(effectId, key));
     }
     QStringList names{"zoom"};
@@ -760,7 +762,7 @@ QString paramName(AnimParam p)
         if (n.param == p) return n.name;
     const EffectDescriptor* d = nullptr;
     const EffectParam* ep = nullptr;
-    if (EffectRegistry::paramFor(p, &d, &ep)) return d->id + "." + ep->key;
+    if (EffectRegistry::paramFor(p, &d, &ep)) return d->id + "." + ep->name();
     if (QString effectId, key; Keys::effectParamOf(p, &effectId, &key) && effectId == QLatin1String(::Comp::kEffectId))
         return effectId + "." + key; // comp.n3.size, as op 'keyframe' takes it
     return Keys::info(p).id;

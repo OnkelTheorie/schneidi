@@ -223,14 +223,14 @@ int parseSubtitleTrack(const QJsonValue& v)
 QVariant effectValue(const EffectDescriptor& d, const QString& key, const QJsonValue& v, QSize picture,
                      const Project& project)
 {
-    const auto it = std::find_if(d.params.begin(), d.params.end(), [&](const EffectParam& p) { return p.key == key; });
-    if (it == d.params.end()) {
+    const EffectParam* found = EffectRegistry::findParam(d, key); // stored key or readable alias
+    if (!found) {
         QStringList keys;
         for (const EffectParam& p : d.params)
-            if (!p.sparse) keys << p.key;
+            if (!p.sparse) keys << p.name();
         fail("BAD_ARGUMENT", QString("effect %1 has no parameter '%2' (has: %3)").arg(d.id, key, keys.join(", ")));
     }
-    const EffectParam& p = *it;
+    const EffectParam& p = *found;
     switch (p.type) {
     case EffectParam::Double:
         if (!v.isDouble()) fail("BAD_ARGUMENT", QString("%1.%2 must be a number").arg(d.id, key));
@@ -669,7 +669,7 @@ void opEffect(Session& s, const QJsonObject& op)
                                           d->video ? "video effects" : "audio effects");
     QVariantMap values;
     const QJsonObject params = op.value("params").toObject();
-    for (auto it = params.begin(); it != params.end(); ++it) values[it.key()] = effectValue(*d, it.key(), it.value(), s.format().size(), s.project);
+    for (auto it = params.begin(); it != params.end(); ++it) values[EffectRegistry::storedKey(effectId, it.key())] = effectValue(*d, it.key(), it.value(), s.format().size(), s.project);
     if (QString why; Picture::Custom::isCustom(effectId) && !Picture::Custom::canRender(effectId, &why))
         s.notes << QString("%1 is stored but skipped while rendering on this machine: %2").arg(effectId, why);
     s.editor.addEffect(targets, effectId); // clips that have it already keep it

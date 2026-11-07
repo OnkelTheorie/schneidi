@@ -534,7 +534,7 @@ QJsonObject clipJson(const Project& p, const Clip& c, TrackRef ref)
                 if (const int n = e.effectId == QLatin1String("grade") ? GradeWindows::windowOf(it.key(), &key) : 0)
                     windows[n][key] = json(it.value());
                 else
-                    params[it.key()] = json(it.value());
+                    params[EffectRegistry::shownKey(e.effectId, it.key())] = json(it.value()); // readable alias
             }
             if (!params.isEmpty()) eo["params"] = params;
             if (!windows.isEmpty()) {
