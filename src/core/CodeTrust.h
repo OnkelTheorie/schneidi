@@ -30,7 +30,8 @@ struct Item {
     int node = 0;   // comp node id, 0 = the clip's own effect
 };
 
-// Custom code of one effect instance (a custom effect or the fx nodes of a comp graph)
+// Custom code of one effect instance that would run (a custom effect, or the fx nodes of a comp graph running one);
+// none for a switched-off instance
 QVector<Item> itemsOf(const EffectInstance& e);
 // Every piece of custom code of a project (all timelines, compound clips included), each once per place
 QVector<Item> items(const ProjectData& d);

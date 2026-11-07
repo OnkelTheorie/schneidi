@@ -7,6 +7,7 @@
 #include "cli/Commands.h"
 #include "cli/CommandsDetail.h"
 #include "core/CodeTrust.h"
+#include "core/CompGraph.h"
 #include "core/CompRecipes.h"
 #include "core/EffectRegistry.h"
 #include "core/PathKey.h"
@@ -72,9 +73,9 @@ void otherComputer()
     QSettings().remove("trust");
 }
 
-QStringList checkIds()
+QStringList checkIds(const QString& project = g_project)
 {
-    const QJsonObject r = run("check", {{"source", g_project}, {"sound", false}});
+    const QJsonObject r = run("check", {{"source", project}, {"sound", false}});
     QStringList ids;
     for (const QJsonValue& v : r["issues"].toArray()) ids << v["check"].toString();
     return ids;
@@ -285,6 +286,43 @@ int main(int argc, char** argv)
         }
         Timeline again = tl;
         CHECK(!CodeTrust::freeze(again)); // all trusted now: nothing to freeze
+    }
+
+    // check lists only code that would run: not a switched-off effect, not a hidden track, not a value left on an fx
+    // node that runs another effect now
+    {
+        ProjectData p;
+        CHECK(ProjectFile::load(g_project, &p, nullptr));
+        Clip& c = p.timeline.video[0].clips[0];
+        c.effects.clear();
+        c.effects << EffectInstance{"ffmpeg_filter", {{"chain", "hue=h=33"}}, false};
+        EffectInstance comp;
+        comp.effectId = Comp::kEffectId;
+        CompGraph g;
+        g.nodes << CompNode{1, "clip", {}} << CompNode{2, "fx", {}};
+        g.links << CompLink{1, 2, "src"};
+        g.out = 2;
+        Comp::setGraph(comp, g);
+        comp.params[CompGraph::paramKey(2, "effect")] = "none";
+        comp.params[CompGraph::paramKey(2, "e_chain")] = "hue=h=44";
+        c.effects << comp;
+        for (Sequence& q : p.sequences)
+            if (q.id == p.currentSequence) q.timeline = p.timeline;
+        const QString quiet = dir.filePath("quiet.schneidi");
+        CHECK(ProjectFile::save(p, quiet, nullptr));
+        CHECK(!checkIds(quiet).contains("custom_code_untrusted"));
+        CHECK(CodeTrust::itemsOf(c.effects[1]).isEmpty());
+        // Switched on: listed; on a hidden track: not
+        c.effects[0].enabled = true;
+        for (Sequence& q : p.sequences)
+            if (q.id == p.currentSequence) q.timeline = p.timeline;
+        CHECK(ProjectFile::save(p, quiet, nullptr));
+        CHECK(checkIds(quiet).contains("custom_code_untrusted"));
+        p.timeline.video[0].hidden = true;
+        for (Sequence& q : p.sequences)
+            if (q.id == p.currentSequence) q.timeline = p.timeline;
+        CHECK(ProjectFile::save(p, quiet, nullptr));
+        CHECK(!checkIds(quiet).contains("custom_code_untrusted"));
     }
 
     // The trust record is the settings' only: a project file cannot carry its own trust

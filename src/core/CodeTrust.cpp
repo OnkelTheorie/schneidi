@@ -7,6 +7,7 @@
 #include "core/Types.h"
 
 #include <QCryptographicHash>
+#include <QHash>
 #include <QSet>
 #include <QSettings>
 
@@ -64,16 +65,26 @@ QVector<Item> itemsOf(const EffectInstance& e)
         const QString code = v.toString();
         if (!code.trimmed().isEmpty()) out << Item{effect, code, 0, 0, node};
     };
+    if (!e.enabled) return out; // switched off: never runs
     if (e.effectId == QLatin1String(kFilterId)) add(e.effectId, e.params.value(QStringLiteral("chain")), 0);
     else if (e.effectId == QLatin1String(kShaderId)) add(e.effectId, e.params.value(QStringLiteral("code")), 0);
     else if (e.effectId == QLatin1String(Comp::kEffectId)) {
-        // Node values "n<id>.e_chain" / "n<id>.e_code" (an fx node running a custom effect)
+        // Node values "n<id>.e_chain" / "n<id>.e_code" of an fx node running that custom effect now (a value left
+        // from an effect the node ran before is not run)
+        QHash<int, QString> effectOf;
+        for (auto it = e.params.cbegin(); it != e.params.cend(); ++it) {
+            int id = 0;
+            QString key;
+            if (CompGraph::splitParamKey(it.key(), &id, &key) && key == QLatin1String("effect")) effectOf[id] = it.value().toString();
+        }
         for (auto it = e.params.cbegin(); it != e.params.cend(); ++it) {
             int id = 0;
             QString key;
             if (!CompGraph::splitParamKey(it.key(), &id, &key)) continue;
-            if (key == QLatin1String("e_chain")) add(QString::fromLatin1(kFilterId), it.value(), id);
-            else if (key == QLatin1String("e_code")) add(QString::fromLatin1(kShaderId), it.value(), id);
+            if (key == QLatin1String("e_chain") && effectOf.value(id) == QLatin1String(kFilterId))
+                add(QString::fromLatin1(kFilterId), it.value(), id);
+            else if (key == QLatin1String("e_code") && effectOf.value(id) == QLatin1String(kShaderId))
+                add(QString::fromLatin1(kShaderId), it.value(), id);
         }
     }
     return out;
