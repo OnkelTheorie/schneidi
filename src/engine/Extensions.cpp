@@ -191,19 +191,16 @@ QVector<Item> makeCatalog()
                     "Runtime)"),
                  /*TODO url*/ QString(), /*TODO sha256*/ QByteArray(), /*TODO size*/ 0, kYamnetModel,
                  /*TODO class map url*/ QString(), /*TODO sha256*/ QByteArray(), /*TODO size*/ 0, kYamnetLabels});
-    // PP-HumanSeg 2023mar (person segmentation, PaddleSeg via opencv/opencv_zoo, Apache-2.0) for the compositing node
-    // "cutout" (engine/PersonMatte): RGB 1 x 3 x 192 x 192 in, background/person 1 x 2 x 192 x 192 out. Its licence
-    // text (the zoo's models/human_segmentation_pphumanseg/LICENSE) is the second download, beside it as LICENSE.
-    // TO VERIFY BY A HUMAN before it is offered (nothing unchecked is downloaded): the two URLs at the same zoo revision
-    // as YuNet above, size and SHA-256 of exactly those files, and that the LICENSE there is Apache-2.0.
-    pending(Item{"cutout", Kind::CutoutModel, N_("Freistellen (Personen)"),
+    // PP-HumanSeg 2023mar (person segmentation, PaddleSeg via opencv/opencv_zoo, Apache-2.0, (c) PaddlePaddle Authors)
+    // for the compositing node "cutout" (engine/PersonMatte): RGB 1 x 3 x 192 x 192 in, background/person
+    // 1 x 2 x 192 x 192 out. Same zoo revision as YuNet; its licence text is the second download, beside it as LICENSE.
+    // Checked 7.11.2026: both files downloaded at that revision, sizes and SHA-256 below, LICENSE is Apache-2.0.
+    list << Item{"cutout", Kind::CutoutModel, N_("Freistellen (Personen)"),
                  N_("stellt Personen ohne Green Screen frei, z. B. für Text hinter einer Person (braucht ONNX Runtime)"),
-                 /*TODO verify*/ QString(kOpencvZoo).replace("face_detection_yunet", "human_segmentation_pphumanseg")
-                     + kCutoutModel,
-                 /*TODO sha256*/ QByteArray(), /*TODO size*/ 0, kCutoutModel,
-                 /*TODO verify*/ QString(kOpencvZooRaw).replace("face_detection_yunet", "human_segmentation_pphumanseg")
-                     + "LICENSE",
-                 /*TODO sha256*/ QByteArray(), /*TODO size*/ 0, kLicenseName});
+                 QString(kOpencvZoo).replace("face_detection_yunet", "human_segmentation_pphumanseg") + kCutoutModel,
+                 "552d8a984054e59b5d773d24b9b12022b22046ceb2bbc4c9aaeaceb36a9ddf24", 6163938, kCutoutModel,
+                 QString(kOpencvZooRaw).replace("face_detection_yunet", "human_segmentation_pphumanseg") + "LICENSE",
+                 "d9cf3b547fa4232fb9285f2db52e909f10f00781aaf64a6d0bb90c55149f1363", 11437, kLicenseName};
     return list;
 }
 
