@@ -317,6 +317,15 @@ void testNode()
     CHECK(runNode("tracker", {}, {{"src", src}}, {}, &out));
     CHECK(out.px == src.px && out.area == src.area && out.kind == Buf::Rgba);
     CHECK(!runNode("tracker", {}, {}, {}, &out)); // nothing in, nothing out
+    // Cost per frame at 1080p (a copy of the picture; the interface hands inputs as const)
+    {
+        Buf big(Buf::Rgba, W, H);
+        Buf o;
+        QElapsedTimer t;
+        t.start();
+        for (int i = 0; i < 20; ++i) runNode("tracker", {}, {{"src", big}}, {}, &o);
+        std::printf("node: %.2f ms per 1080p frame (runNode, copy of the input included)\n", t.nsecsElapsed() / 2e7);
+    }
     // Start values from the node's values
     const TrackStart st = startOf({{"mode", "two"}, {"ax", 0.2}, {"by", 0.7}});
     CHECK(st.mode == TrackMode::Two);
