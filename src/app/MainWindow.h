@@ -117,6 +117,7 @@ public:
     QJsonObject liveProxyState(const QString& file) const override;
     QString liveProxyWriting() const override;
     bool liveOpen(const QStringList& files, bool byUser, QString* error) override;
+    bool liveAskTrust(const ProjectData& data, const QString& path) override;
     void bringToFront(); // window up and active (files handed over from another process)
     void liveConnectionChanged(bool connected, const QString& client) override;
     void liveChanged(const LiveChange& change) override;

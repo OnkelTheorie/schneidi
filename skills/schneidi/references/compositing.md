@@ -121,7 +121,8 @@ When no node or effect does it, write it - on a clip (`{op:'effect', effect:'ffm
 - **Trust:** code written in this session runs. Code that came with a project or recipe from someone else does not
   run until the user trusts it (the app asks; `check` reports `custom_code_untrusted`). Pass
   `trust_custom_code:true` (render, edit, app open) only when the user said they trust that file - never on your
-  own.
+  own. In the running app it shows the user the dialog and waits for the answer; sending the foreign code back
+  unchanged (e.g. a graph copied from `info`) does not trust it.
 If neither can do it (several inputs at once, a whole clip, a tool schneidi does not have), **compute it outside**
 (`ffmpeg`, Python) into a new file and place that file as a clip or as a `media` node.
 

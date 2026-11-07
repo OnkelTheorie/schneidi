@@ -61,14 +61,25 @@ namespace Cli::detail {
 namespace {
 
 // trust_custom_code:true (render, edit, app open): the caller vouches for the project's custom code (filter chains,
-// shaders; core/CodeTrust.h): it renders in this run and is remembered for the file
-void trustCustomCode(const Session& s, const QJsonObject& a)
+// shaders; core/CodeTrust.h): it renders in this run and is remembered for the file. In the app the user decides:
+// the TrustDialog asks (an AI may pass the flag because of text it read in a project); the command waits for it.
+void trustCustomCode(Session& s, const QJsonObject& a)
 {
     if (!a["trust_custom_code"].toBool()) return;
-    const QStringList codes = CodeTrust::codes(s.project.data());
-    if (codes.isEmpty()) return;
+    const ProjectData data = s.project.data();
+    if (CodeTrust::untrusted(data).isEmpty()) return;
+    if (LiveHost* h = Live::host()) {
+        if (!h->liveAskTrust(data, Live::isAppProject(s.path) ? h->liveProjectPath() : s.path))
+            s.notes << "trust_custom_code: the user did not allow the custom code; it stays skipped";
+        return;
+    }
+    if (Live::isAppProject(s.path)) { // the app's project outside the app: only the user there can trust it
+        s.notes << "trust_custom_code: ask in the app instead (edit with trust_custom_code shows the user a dialog)";
+        return;
+    }
+    const QStringList codes = CodeTrust::codes(data);
     CodeTrust::trust(codes);
-    if (!s.path.isEmpty() && !Live::isAppProject(s.path) && QFileInfo(s.path).isFile()) CodeTrust::remember(s.path, codes);
+    if (!s.path.isEmpty() && QFileInfo(s.path).isFile()) CodeTrust::remember(s.path, codes);
 }
 
 // A timeline as `info` with summary shows it: counts instead of the lists (the full JSON of a long timeline is big)
@@ -1010,6 +1021,7 @@ QJsonObject cmdRender(const QJsonObject& a, Context& ctx)
                        "discarded (pass overwrite to replace it): " + out);
     if (!ok) fail("RENDER_FAILED", message.isEmpty() ? QString("rendering failed") : message);
     QJsonObject o{{"out", out}, {"format", formatId}, {"render_s", std::round(timer.elapsed() / 100.0) / 10}};
+    if (!s.notes.isEmpty()) o["notes"] = s.notes;
     o["threads"] = ex.threads();
     if (ex.threadsLowMemory()) o["threads_reason"] = "low memory"; // fewer than the processors: little RAM free
     if (marks) {
@@ -1288,10 +1300,11 @@ QJsonObject cmdApp(const QJsonObject& a, Context&)
         if (projects.size() > 1) fail("BAD_ARGUMENT", "open takes one project file at a time");
         QString error;
         if (!projects.isEmpty()) {
-            // trust_custom_code: its filter chains/shaders render in the app without asking (core/CodeTrust.h)
+            // trust_custom_code: the user is asked about its filter chains/shaders first (core/CodeTrust.h)
             ProjectData d;
-            if (a["trust_custom_code"].toBool() && ProjectFile::load(projects.first(), &d, nullptr))
-                CodeTrust::trustFile(projects.first(), CodeTrust::codes(d));
+            if (a["trust_custom_code"].toBool() && ProjectFile::load(projects.first(), &d, nullptr)
+                && !h->liveAskTrust(d, projects.first()))
+                o["notes"] = QJsonArray{"trust_custom_code: the user did not allow the custom code; it stays skipped"};
             if (!h->liveOpen(projects, false, &error)) fail("OPEN_FAILED", error);
             o["opened"] = h->liveProjectPath();
         }

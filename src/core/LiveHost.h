@@ -13,6 +13,7 @@
 
 class Project;
 class Selection;
+struct ProjectData;
 
 // What one AI command did inside the app (cli/Live.cpp compares the clips before and after it): the app lights the
 // clips up in the timeline and lists the step in its AI log
@@ -73,6 +74,15 @@ public:
         Q_UNUSED(files);
         Q_UNUSED(byUser);
         if (error) *error = "opening files is not supported";
+        return false;
+    }
+
+    // trust_custom_code of an AI (core/CodeTrust.h): the user is asked about the project's untrusted custom code
+    // (ui/TrustDialog) and the command waits; true = trusted now (also remembered for `path`)
+    virtual bool liveAskTrust(const ProjectData& data, const QString& path)
+    {
+        Q_UNUSED(data);
+        Q_UNUSED(path);
         return false;
     }
 
