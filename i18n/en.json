@@ -2705,6 +2705,7 @@
  "Überwachter Ordner „%1“: %2 neue Dateien": "Watch folder “%1”: %2 new files",
  "Überwachter Ordner „%1“: neue Datei „%2“": "Watch folder “%1”: new file “%2”",
  "überbelichtet": "overexposed",
+ "„%1“": "“%1”",
  "„%1“ aus dem Media Pool entfernen": "Remove “%1” from Media Pool",
  "„%1“ bekäme denselben Dateinamen wie die Vorlage „%2“.": "“%1” would get the same file name as the template “%2”.",
  "„%1“ ersetzt die Vorlage „%2“ (gleicher Dateiname). Ersetzen?": "“%1” replaces the template “%2” (same file name). Replace it?",

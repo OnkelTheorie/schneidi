@@ -2705,6 +2705,7 @@
  "Überwachter Ordner „%1“: %2 neue Dateien": "Отслеживаемая папка «%1»: новые файлы: %2",
  "Überwachter Ordner „%1“: neue Datei „%2“": "Отслеживаемая папка «%1»: новый файл «%2»",
  "überbelichtet": "пересвечен",
+ "„%1“": "«%1»",
  "„%1“ aus dem Media Pool entfernen": "Убрать «%1» из медиатеки",
  "„%1“ bekäme denselben Dateinamen wie die Vorlage „%2“.": "У «%1» было бы то же имя файла, что и у шаблона «%2».",
  "„%1“ ersetzt die Vorlage „%2“ (gleicher Dateiname). Ersetzen?": "«%1» заменит шаблон «%2» (то же имя файла). Заменить его?",

@@ -512,5 +512,16 @@ int main(int argc, char** argv)
                         }
         dump(ins, "title-3d-section");
     }
+    // A text node's box quotes its text the way the UI language does (last: the language stays English)
+    {
+        CompGraph g;
+        g.nodes << CompNode{1, "text", {}};
+        g.out = 1;
+        QString why;
+        CHECK(w.editor()->setCompGraph({clipId}, g, {{1, {{"text", "Hello"}}}}, CompUi::kinds(), &why));
+        const Clip* c = TimelineOps::findClip(project->timeline(), clipId);
+        I18n::install("en");
+        CHECK_EQ(CompUi::nodeSummary(*c, *g.node(1)), QString("“Hello”"));
+    }
     return Check::result();
 }
