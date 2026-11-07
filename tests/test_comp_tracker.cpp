@@ -25,6 +25,7 @@
 #include <QGuiApplication>
 #include <QImage>
 #include <QPainter>
+#include <QTemporaryDir>
 #include <QUndoStack>
 
 #include <cmath>
@@ -378,6 +379,49 @@ void testEditor()
     CHECK(!r.error.isEmpty());
 }
 
+// A real clip (a red and blue checkered square 60 x 60 at (100 + 4 n, 150 + 2 n) over a moving test picture, 640 x 360; even whole pixels
+// so 4:2:0 does not round the truth): the node's
+// start values -> trackNode -> trackCompNode; the keyframes follow the square
+void testClip(const QString& media)
+{
+    Project p;
+    Selection sel;
+    Editor ed(&p, &sel);
+    p.addMedia({media, "moving.mp4", 75, true, false, false});
+    ed.addMediaAt({media}, 0, 0);
+    const int id = p.timeline().video[0].clips[0].id;
+    CompGraph g;
+    g.nodes << CompNode{3, "tracker", {}};
+    g.out = 3;
+    ed.modifyClips({id}, "Comp", [&](Clip& c) {
+        EffectInstance e{::Comp::kEffectId, {}, true};
+        ::Comp::setGraph(e, g);
+        e.params["n3.ax"] = 130 / 640.0;
+        e.params["n3.ay"] = 180 / 360.0;
+        e.params["n3.size"] = 70 / 640.0;
+        c.effects << e;
+    });
+    const Clip* c = TimelineOps::findClip(p.timeline(), id);
+    const TrackRun r = trackNode(p.format(), *c, 3, 0, 50);
+    CHECK(r.error.isEmpty());
+    if (!CHECK(r.lostFrames.isEmpty())) std::printf("       lost at %d, found at %d, %d lost\n", r.lostAt, r.foundAt, int(r.lostFrames.size()));
+    if (!CHECK_EQ(r.points.size(), 51)) return;
+    const auto near = [](const ::Comp::TrackPoint& q, double px, double py) {
+        const bool ok = std::abs(q.x * 640 - px) <= 0.5 && std::abs(q.y * 360 - py) <= 0.5;
+        if (!ok) std::printf("       frame %d: %.2f, %.2f (expected %.2f, %.2f)\n", q.frame, q.x * 640, q.y * 360, px, py);
+        return ok;
+    };
+    CHECK(near(r.points[0], 130, 180));
+    for (const ::Comp::TrackPoint& q : r.points) CHECK(near(q, 130 + 4 * q.frame, 180 + 2 * q.frame));
+    CHECK(ed.trackCompNode(id, 3, r.points));
+    c = TimelineOps::findClip(p.timeline(), id);
+    const AnimParam px = Keys::effectParam(::Comp::kEffectId, "n3.x");
+    CHECK_EQ(Keys::keyTimes(*c, {px}).size(), 51);
+    CHECK(std::abs(Keys::valueAt(*c, px, 50) * 640 - 330) <= 0.5);
+    // What another node reads: the comp effect's animated value at clip frame 50
+    CHECK(std::abs(Keys::valueAt(*c, Keys::effectParam(::Comp::kEffectId, "n3.y"), 50) * 360 - 280) <= 0.5);
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -391,5 +435,17 @@ int main(int argc, char** argv)
     testOutlier();
     testFaces();
     testEditor();
+    QTemporaryDir tmp;
+    const QString moving = Check::makeMedia(
+        tmp.filePath("moving.mp4"),
+        {"-f", "lavfi", "-i", "testsrc2=size=640x360:rate=25:duration=3", "-f", "lavfi", "-i",
+         "color=c=red:s=60x60:d=3:r=25", "-filter_complex",
+         "[1]drawbox=x=0:y=0:w=30:h=30:color=blue:t=fill,drawbox=x=30:y=30:w=30:h=30:color=blue:t=fill[s];"
+         "[0][s]overlay=x='100+n*4':y='150+n*2'", "-c:v",
+         "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-g", "1"});
+    if (CHECK(!moving.isEmpty())) {
+        Check::initEngine();
+        testClip(moving);
+    }
     return Check::result();
 }
