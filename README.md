@@ -2,7 +2,7 @@
 
 **A fast, light video editor that an AI assistant can edit with you – live, in the project you have open.**
 
-schneidi has four pages – Media, Edit, Color and Deliver – and fewer features than the big editors, but it starts in under a second, plays a demanding 1080p60 project smoothly on four CPU cores and runs even on a Raspberry Pi. It opens H.264/H.265 video with AAC sound on Linux out of the box – no codec packs, no paid version. The UI is available in English, German, Spanish, French, Polish and Russian.
+schneidi has five pages – Media, Edit, Comp, Color and Deliver – and fewer features than the big editors, but it starts in under a second, plays a demanding 1080p60 project smoothly on four CPU cores and runs even on a Raspberry Pi. It opens H.264/H.265 video with AAC sound on Linux out of the box – no codec packs, no paid version. The UI is available in English, German, Spanish, French, Polish and Russian.
 
 [![Download](https://img.shields.io/github/v/release/OnkelTheorie/schneidi?label=Download&color=2ea44f)](https://github.com/OnkelTheorie/schneidi/releases/latest)
 
@@ -25,6 +25,7 @@ schneidi has four pages – Media, Edit, Color and Deliver – and fewer feature
 - **Edit together with an AI – any AI, any way.** Tell it what to do in the [AI chat](#ai-chat-in-the-app) next to the timeline (Claude, an OpenAI-compatible service or a local model), connect Claude Code or Claude Desktop in one step, or let an assistant work through the [command line and MCP server](#command-line-and-ai-editing-mcp), also on a server. It finds pauses, scene changes, loud moments and the beats of a song, transcribes, cuts, grades, mixes and renders – and you see what it does: changed clips light up, the AI log lists every step, each change is an undo step. Or review first and accept or discard the whole request.
 - **From a recording to a short.** A 9:16 short lives next to the 16:9 edit in the same project. Auto reframe keeps the subject in view (and a game's kill feed readable at the top), word-by-word captions come from the speech, and presets for YouTube Shorts, Instagram Reels and TikTok go with a check of the platform's length limit and loudness. An AI can do all of it in one call: `schneidi-cli short` turns game recordings into a finished short.
 - **One template, many videos.** Mark the clips, texts, song and logo of an edit as placeholders and it becomes a template: drop new clips onto it in the app, or let a script or an AI fill it from a table – one finished video per product, episode or match, all with your brand kit's logo, colors and fonts.
+- **Layers, masks, keying and tracking – with nodes or as layers.** The Comp page shows a clip's compositing as a simple layer stack or as a node graph: key a green screen, put text behind a person, blur a face that moves, stick a logo onto a surface. Ready recipes do the common jobs in one click, and an AI builds the same graphs through the command line.
 - **A professional workflow on any computer.** Pages for each step, ripple, roll, slip and slide trims, compound clips, multicam, color wheels and scopes – with the shortcuts you know from the big editors (a standard and a beginner preset, every key changeable), but light enough for an older laptop.
 - **Everything stays on your computer.** Speech recognition (whisper.cpp), text-based editing, sync by sound and rendering work offline – no account, no cloud, no telemetry, open source (AGPL-3.0-only). The only request schneidi makes by itself is a check for a new release on GitHub, at most once a day (off in File › Settings). The AI chat talks only to the provider you pick; with Ollama it stays on your computer too.
 - **Long recordings of one event.** Sync hours of recordings from several PCs or cameras by their sound and cut them in a multicam view that shows up to 16 angles at once.
@@ -36,6 +37,9 @@ schneidi has four pages – Media, Edit, Color and Deliver – and fewer feature
 ![The same edit as a 9:16 short in its own timeline: reframed picture, karaoke captions, picture shape in the Inspector](screenshots/short.png)
 **Short** – the 16:9 edit copied into a 9:16 timeline of the same project: reframed, with karaoke captions from the transcript
 
+![Comp page: a green screen recipe as a node graph – the keyed presenter in front of a title with a gradient, a sunset clip behind; the key's values in the Inspector](screenshots/comp.png)
+**Comp** – the "text behind subject" recipe as nodes: key and refine the screen, a background and a title behind the person
+
 ![File › New from Template: the five built-in templates as tiles with their preview, format, length and number of fields, then the start templates](screenshots/templates.png)
 **Templates** – File › New from Template…: each template with its preview, format, length and fields; drag your clips onto the fields, or fill it from a table with `schneidi-cli template fill`
 
@@ -43,6 +47,7 @@ schneidi has four pages – Media, Edit, Color and Deliver – and fewer feature
 |---|---|
 | [![Media page: Media Storage and Media Pool](screenshots/media.png)](screenshots/media.png)<br>**Media** – browse and skim folders, import into the Media Pool | [![Color page: a window darkens everything outside an ellipse, color wheels and RGB parade](screenshots/color.png)](screenshots/color.png)<br>**Color** – color wheels, windows, LUTs, scopes |
 | [![Deliver page: render settings and render queue](screenshots/deliver.png)](screenshots/deliver.png)<br>**Deliver** – presets and render queue | [![Multicam view: nine angles of one event side by side](screenshots/multicam.png)](screenshots/multicam.png)<br>**Multicam** – click an angle or press 1–9 to cut to it |
+| [![Comp page in the layer view: the same graph as a stack of layers with blend mode, mask and opacity](screenshots/comp-layers.png)](screenshots/comp-layers.png)<br>**Layers** – the same graph as a stack: blend mode, mask, opacity | [![A real 3D title: extruded, beveled golden letters turned in space, with the 3D section of the title Inspector](screenshots/title3d.png)](screenshots/title3d.png)<br>**3D titles** – real extruded letters with bevel, light and rotation |
 
 ## Features
 
@@ -57,7 +62,13 @@ schneidi has four pages – Media, Edit, Color and Deliver – and fewer feature
 - **Media Storage and Media Pool:** look at a file and skim through it before importing, set In/Out and insert; filter the pool by flag, clip color and type; remove clips together with their uses in the timeline in one undo step
 - **Watch folders:** new files in a folder (your screen recorder's, for example) come into the Media Pool by themselves – only once they are finished; `schneidi-cli watch` for automatic workflows
 - Large viewer (one click hides the panels beside it) and full-screen viewer
-- Titles (also an animated counter and a progress bar), subtitles, fades, transitions (dissolves, dips, wipes, push and whip), volume, loudness normalization
+- **Compositing (Comp page):** a node graph on any clip, shown as layers (blend mode, mask, opacity per layer) or as nodes with links; nodes for clips, files, colors, gradients, text, merge, transform, crop, blur, grade and any effect; handles in the viewer; "Comp from Selection" turns stacked clips into one graph with the same picture
+- **Masks and keying:** rectangle, ellipse, polygon, bezier and gradient masks (soft edge, invert, combined), mattes from luma or alpha; a chroma and luma keyer with spill removal and a matte refiner (grow/shrink, soften, clip black and white)
+- **Tracking:** one point, two points (position, scale and rotation – for a sticker on a surface) or a face; masks and transforms follow the tracker
+- **AI cutout** (an optional extension): cuts out a person without a green screen, for text behind them or a new background
+- **Recipes:** green screen, text behind the subject, a blurred face that follows, picture-in-picture with a frame, a title with a mild glitch, a tracked sticker – one click in the Effects Library; save your own graph as a recipe and share it as a ZIP
+- **Write your own effects:** an FFmpeg filter chain or your own GLSL shader as an effect – written by you or an AI; code that comes with someone else's project or recipe runs only after you say you trust it
+- Titles (also an animated counter and a progress bar) with **title looks** – gradient or texture fill, a 2.5D edge, drop shadow, glow – and **real 3D text** (extruded, beveled, lit, turned in space), subtitles, fades, transitions (dissolves, dips, wipes, push and whip), volume, loudness normalization
 - Color correction, curves, LUTs, effects with keyframes in any order; a built-in **Edit look** preset (teal shadows, warm highlights, skin kept, a soft glow) in one click; copy and paste grades (`=`/`-`); the timeline filmstrip and the Media Pool show the grade; green screen with an eyedropper on a large picture of the clip
 - **A format per timeline:** a 9:16 short (or 1:1, 4:5) next to the 16:9 edit in one project; copy a timeline into another shape in one step; pasting between timelines of different shapes converts positions
 - **Auto reframe:** footage fills a frame of another shape and follows its subject – the view holds still, moves smoothly and jumps only at scene cuts; in game footage the kill feed stays readable as a cropped copy at the top. Or fit the whole picture in with a blurred copy around it, on one track; **accents** (zoom punch, flash, shake) on hits and drops in one click
@@ -90,7 +101,7 @@ schneidi has four pages – Media, Edit, Color and Deliver – and fewer feature
 - **AI director:** a searchable index of your footage (every shot with its quality, what is said and heard; search "where does he laugh"), the edit laid out as a story with a hook and a payoff and checked for pace, the AI's cut plan shown with a reason per step before anything changes, and a review render with cuts, beats and hits burned in for checking its own work
 - **Effect sounds** (Effects › Sounds, or op `sfx`): CC0 recordings and computed risers for whooshes, hits, impacts and clicks, set as loud as the sound where they land – only where you put them or ask for them, never by themselves; your own sounds from the effects folder too
 - **Sound-aware cutting:** J/L cuts and room tone, a song cut to the video's length on its phrases with its real ending, events snapped to the beat, a rough cut from a script with the best take of each line, jump cuts hidden by a zoom, B-roll that matches what is said
-- **Command line and MCP server** (`schneidi-cli`, locally or over HTTP on a server): scripts or an AI assistant can edit almost everything the app can – find pauses, scene changes, loud moments and events in a part of the picture (kill feed, score), pick highlights (your own kills, loud fights), make a finished short of game recordings in one call, fill templates (also one video per row of a table) and apply a brand kit, sync recordings by their sound, build multicam clips, transcribe, cut and trim, grade, animate, mix, duck music and normalize, measure loudness, look at frames (or a detail of them) and scopes, render ([details](#command-line-and-ai-editing-mcp))
+- **Command line and MCP server** (`schneidi-cli`, locally or over HTTP on a server): scripts or an AI assistant can edit almost everything the app can – find pauses, scene changes, loud moments and events in a part of the picture (kill feed, score), pick highlights (your own kills, loud fights), make a finished short of game recordings in one call, build compositing graphs (recipes, keys, masks, trackers, cutouts), fill templates (also one video per row of a table) and apply a brand kit, sync recordings by their sound, build multicam clips, transcribe, cut and trim, grade, animate, mix, duck music and normalize, measure loudness, look at frames (or a detail of them) and scopes, render ([details](#command-line-and-ai-editing-mcp))
 - Themes, six UI languages (English, German, Spanish, French, Polish, Russian)
 
 ## How light is it?
@@ -179,6 +190,8 @@ schneidi-cli brand --action set --colors "#ffcc00,#202020" --fonts Inter --logo 
 schneidi-cli extensions --install whisper,small              # optional speech recognition (download, ~200 MB)
 schneidi-cli transcribe talk.mp4 --language de --words       # what is said, with word times
 schneidi-cli edit talk.schneidi --ops '[{"op":"keep","media":"talk.mp4","ranges":[[0,250],[310,900]]}]'
+schneidi-cli edit talk.schneidi --ops '[{"op":"comp","clips":[4],"recipe":"greenscreen","with":{"background":"beach.jpg"}}]'
+schneidi-cli frames talk.schneidi --clip 4 --node 2 --view matte --out key.jpg   # is the key clean?
 schneidi-cli frames talk.schneidi --count 9 --sheet --out sheet.jpg
 schneidi-cli scopes talk.schneidi --at 10s --out scopes.png      # waveform, parade, vectorscope + numbers
 schneidi-cli loudness talk.schneidi                          # LUFS, true peak of the mix
@@ -197,14 +210,14 @@ trimming (ripple, roll, slip, slide), titles with their style, fades, transition
 speed and speed ramps (with in-between frames), markers, subtitles (SRT or cue lists, track styles) and word captions, effects and presets, the color grade
 (wheels, LUTs, windows with blur/pixelate and tracking), transform and crop, reframe to another shape, black bars and stretched 4:3, blurring player names, keyframes for any animatable value, paste attributes, volume/pan, the mixer
 (also to a loudness target, EQ and compressor per track), ducking, loudness normalization, voice cleaning, text to speech, tracks, linking, compound
-clips, template placeholders (mark, fill), multicam clips (create, cut to an angle, change angles, flatten), several timelines (each with its own format) and the project format. Positions can be given relative to a clip or to the source material (`{"clip": 12, "source":
+clips, compositing graphs (`comp` with recipes, `comp_from`, `node`, trackers with `track_node`, AI cutouts with `cutout_node`), template placeholders (mark, fill), multicam clips (create, cut to an angle, change angles, flatten), several timelines (each with its own format) and the project format. Positions can be given relative to a clip or to the source material (`{"clip": 12, "source":
 "34.2s"}`), so they stay right while earlier operations move clips. Output is JSON on stdout (exit code 0 = ok,
 1 = error, 2 = usage error); every save keeps a backup of the previous state (`backups`, `restore`). `schneidi-cli mcp` runs the same commands as an [MCP](https://modelcontextprotocol.io) server on stdio.
 
 **Connect Claude in one step:** `schneidi-cli setup claude` (AppImage: `./schneidi-<version>-x86_64.AppImage cli setup claude`,
 or File › Settings › AI › Connect with Claude…) adds the MCP server to Claude Code and Claude Desktop with the path of this installation (run it again when the AppImage has a new name after an update), and installs the editing guide as a
 skill for Claude Code ([skills/schneidi](skills/schneidi/SKILL.md): workflow and how-tos for highlight reels, talking
-heads, shorts, ads, templates, subtitles, color, sound). `--only code` / `--only desktop` picks one, `--remove` takes it out again.
+heads, shorts, ads, templates, subtitles, color, compositing, sound). `--only code` / `--only desktop` picks one, `--remove` takes it out again.
 Every other AI gets the same guide through the `guide` tool. By hand: `claude mcp add --scope user schneidi --
 schneidi-cli mcp`, or in Claude Desktop's `claude_desktop_config.json`:
 
@@ -240,14 +253,13 @@ claude mcp add --transport http schneidi http://127.0.0.1:8642/mcp
 
 What we are working on next. Plans can still change; the order within a version is not fixed.
 
-### 0.18 – Template Update (in testing)
-Templates with placeholders (in the app by dragging clips onto them, or filled from a list or a table by the command line), five built-in templates, a template browser, a brand kit and the Edit look – done, being tested for release.
+### 0.19 – Compositing Update (in testing)
+Layers, masks, keying, tracking – with nodes or as layers. A Comp page with a layer view and a node canvas, masks, a keyer, an AI cutout (extension), a tracker (one point, two points, faces), title looks (gradient, texture, 2.5D edge, shadow, glow), real 3D text, six recipes, own effects as an FFmpeg filter chain or a GLSL shader (with a trust question for shared projects), common graphs on the graphics card, and all of it for an AI through the command line and MCP – done, being tested for release.
 
-### Next: 0.19 – Fusion Light
-Light node compositing on the new picture engine – layers, masks, keyer and tracking as nodes, textured and 3D-edged text.
+### Next: 0.20 – Newcomer Update
+Premiere/Final Cut key presets, export for Shotcut/Kdenlive and Final Cut, apt repository.
 
 ### Later
-- **0.20 – Newcomer Update:** Premiere/Final Cut key presets, export for Shotcut/Kdenlive and Final Cut, apt repository
 - **0.21 – Color Update 2:** curves on the Color page, qualifier (select by hue, saturation and lightness), more scope overlays
 
 ## Building
