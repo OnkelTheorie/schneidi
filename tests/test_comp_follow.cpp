@@ -299,10 +299,31 @@ void testTransformFollows()
 
 } // namespace
 
+// One rounding of the follow id for every kind (mask truncated, transform rounded before): 0.6 names node 1
+void testFollowId()
+{
+    CHECK_EQ(::Comp::followId(0.6), 1);
+    CHECK_EQ(::Comp::followId(1.4), 1);
+    CHECK_EQ(::Comp::followId(0.3), 0);
+    CHECK_EQ(::Comp::followId(-2), 0);
+    const QVariantMap tracker{{"x", 0.6}, {"y", 0.55}, {"rx", 0.5}, {"ry", 0.5}};
+    Clip whole, part;
+    whole.out = part.out = 10;
+    whole.effects << maskGraph(tracker);
+    part.effects << maskGraph(tracker);
+    part.effects[0].params["n2.follow"] = 0.6;
+    Clip still = whole;
+    still.effects[0].params["n2.follow"] = 0;
+    const Buf a = evalAt(whole, 0), b = evalAt(part, 0), c = evalAt(still, 0);
+    CHECK(!a.isNull() && a.px == b.px);
+    CHECK(!c.isNull() && a.px != c.px); // following moved it
+}
+
 int main(int argc, char** argv)
 {
     Check::initEnv();
     QGuiApplication app(argc, argv);
+    testFollowId();
     testMaskFollows();
     testTransformFollows();
     return Check::result();

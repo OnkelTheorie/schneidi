@@ -14,6 +14,7 @@
 #include <QString>
 #include <QVector>
 
+#include <cmath>
 #include <functional>
 
 namespace Comp {
@@ -32,6 +33,12 @@ struct TrackPoint {
 inline const char* const kTrackKeys[4] = {"x", "y", "scale", "angle"};
 // The reference point (plain values, no keyframes): written by Editor::trackCompNode from the start frame's point
 inline const char* const kRefKeys[2] = {"rx", "ry"};
+
+// The tracker id a follower's "follow" value names (one rounding for every kind and check): 0 = follows nothing
+inline int followId(double v)
+{
+    return std::isfinite(v) && v >= 0.5 && v < 2e9 ? int(std::lround(v)) : 0;
+}
 
 // The reference point a tracker's mode implies before an analysis wrote rx/ry ("two": middle of a and b, else a)
 inline QPointF impliedReference(const QString& mode, QPointF a, QPointF b)

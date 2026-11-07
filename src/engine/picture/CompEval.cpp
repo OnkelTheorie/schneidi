@@ -165,12 +165,10 @@ bool evaluate(const EffectInstance& comp, const Env& env, Cache* cache, Buf* out
         // A follower reads the followed node's values (numOf): static only while they are fixed, keyed by them (a new
         // analysis or another value is a new key)
         if (isStatic && s.kind->param(QStringLiteral("follow"))) {
-            // (a fractional id: kinds round it differently, so never static)
-            if (const double fv = valueOf(id, s.kind, QStringLiteral("follow")); fv >= 0.5) {
-                const int f = int(fv);
+            if (const int f = ::Comp::followId(valueOf(id, s.kind, QStringLiteral("follow"))); f > 0) {
                 const CompNode* fn = g.node(f);
                 const NodeType* fk = fn ? find(fn->type) : nullptr;
-                if (fv != f || animated.contains(f) || (fk && varies(*fk, valuesOf(f)))) isStatic = false;
+                if (animated.contains(f) || (fk && varies(*fk, valuesOf(f)))) isStatic = false;
                 else key = mix(key, ownHash(fn ? fn->type : QString(), valuesOf(f), env));
             }
         }

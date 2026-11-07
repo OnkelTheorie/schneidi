@@ -244,7 +244,7 @@ CompPlanPtr planComp(const EffectInstance& comp, const Comp::Env& env, Comp::Cac
             Masks::Shape shape;
             if (!Masks::shapeFromId(text(id, *k, "shape"), &shape)) shape = Masks::Shape::Rect;
             if (shape == Masks::Shape::Polygon || shape == Masks::Shape::Bezier) return fail(reason, "polygon mask");
-            if (num(id, *k, "follow") > 0) return fail(reason, "mask follows a tracker");
+            if (::Comp::followId(num(id, *k, "follow")) > 0) return fail(reason, "mask follows a tracker");
             return true;
         }
         if (t == QLatin1String("key")) {
@@ -258,7 +258,7 @@ CompPlanPtr planComp(const EffectInstance& comp, const Comp::Env& env, Comp::Cac
             return true;
         }
         if (t == QLatin1String("transform")) {
-            if (num(id, *k, "follow") > 0) return fail(reason, "transform follows a tracker");
+            if (::Comp::followId(num(id, *k, "follow")) > 0) return fail(reason, "transform follows a tracker");
             if (std::abs(num(id, *k, "size")) < 0.5) return fail(reason, "transform shrinks below 1/2");
             return true;
         }

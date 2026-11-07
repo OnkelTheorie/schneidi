@@ -3,6 +3,7 @@
 #include "engine/picture/CompNodes.h"
 
 #include "core/CompGraph.h"
+#include "core/CompTrack.h"
 #include "core/EffectRegistry.h"
 #include "core/I18n.h"
 #include "engine/ColorGrade.h"
@@ -177,7 +178,7 @@ Compose::Affine transformOf(NodeCtx& ctx, bool* identity)
 {
     const double W = ctx.size.width(), H = ctx.size.height();
     double x = ctx.num("x"), y = ctx.num("y"), size = ctx.num("size"), angle = ctx.num("angle");
-    const int follow = int(std::lround(ctx.num("follow")));
+    const int follow = ::Comp::followId(ctx.num("follow"));
     if (follow > 0 && ctx.numOf) {
         double ts = ctx.numOf(follow, "scale");
         ts = ts > 0 && std::isfinite(ts) ? ts : 1.0;
