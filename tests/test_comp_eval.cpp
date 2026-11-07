@@ -35,6 +35,7 @@
 #include <clocale>
 #include <cmath>
 #include <cstring>
+#include <mutex>
 
 using namespace Picture::Comp;
 
@@ -522,6 +523,24 @@ void bench()
     env.size = QSize(W, H);
     env.clipPicture = [&]() -> const Buf* { return &clipPic; };
     env.mediaPicture = [&](const QString&, double) { return bg; };
+    // a pool like the renderer's (fresh 8 MB allocations cost page faults the app does not pay)
+    std::mutex poolMutex;
+    std::vector<std::vector<uint8_t>> pool;
+    env.takeBytes = [&](size_t n) {
+        std::lock_guard lock(poolMutex);
+        for (size_t i = 0; i < pool.size(); ++i)
+            if (pool[i].size() == n) {
+                std::vector<uint8_t> v = std::move(pool[i]);
+                pool.erase(pool.begin() + qsizetype(i));
+                std::memset(v.data(), 0, n);
+                return v;
+            }
+        return std::vector<uint8_t>(n, 0);
+    };
+    env.giveBytes = [&](std::vector<uint8_t>&& v) {
+        std::lock_guard lock(poolMutex);
+        if (pool.size() < 8) pool.push_back(std::move(v));
+    };
     for (const char* name : {"transform", "merge", "blur", "recipe"}) {
         EffectInstance x = e;
         if (QString(name) == "transform") x = comp({"clip", "transform"}, {{1, 2, "src"}}, 2, {{"n2.size", 0.6}, {"n2.angle", 5.0}});

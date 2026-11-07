@@ -92,6 +92,21 @@ const QStringList& mergeModes()
     return m;
 }
 
+// B(cb, cs) of a separable mode for every pair of bytes, rounded (built once per mode, read-only after)
+const uint8_t* blendTable(int mode)
+{
+    static std::once_flag once[Blend::kModeCount];
+    static std::unique_ptr<uint8_t[]> tables[Blend::kModeCount];
+    std::call_once(once[mode], [mode] {
+        auto t = std::make_unique<uint8_t[]>(256 * 256);
+        for (int a = 0; a < 256; ++a)
+            for (int b = 0; b < 256; ++b)
+                t[size_t(a) * 256 + b] = uint8_t(std::clamp(Blend::channel(mode, a / 255.0f, b / 255.0f), 0.0f, 1.0f) * 255.0f + 0.5f);
+        tables[mode] = std::move(t);
+    });
+    return tables[mode].get();
+}
+
 // Merge: fg over bg with a blend mode (W3C compositing: Cm = (1 - ab) Cs + ab B(Cb, Cs), then source over),
 // fg alpha times opacity times mask
 bool evalMerge(NodeCtx& ctx, Buf* out)
@@ -118,6 +133,8 @@ bool evalMerge(NodeCtx& ctx, Buf* out)
     if (mask && (mask->w != w || mask->h != h)) mask = nullptr;
     out->area = {};
     const uint32_t op = uint32_t(std::lround(opacity * 256));
+    // Separable modes on an opaque backdrop (the usual case): Cm = B(Cb, Cs), result Cb + (Cm - Cb) * as in integers
+    const uint8_t* table = mode < Blend::HslHue && mode != Blend::Saturate ? blendTable(mode) : nullptr;
     Compose::forRows(h, 16, [&](int r0, int r1) {
         for (int y = r0; y < r1; ++y) {
             uint8_t* d = out->data() + size_t(y) * w * 4;
@@ -127,6 +144,13 @@ bool evalMerge(NodeCtx& ctx, Buf* out)
                 if (op != 256) sa = (sa * op + 128) >> 8;
                 if (mask) sa = (sa * maskWeight(*mask, size_t(y) * w + x) + 127) / 255;
                 if (sa == 0) continue;
+                if (table && d[3] == 255) {
+                    for (int c = 0; c < 3; ++c) {
+                        const int cb = d[c], cm = table[size_t(cb) * 256 + s[c]];
+                        d[c] = uint8_t(cb + ((cm - cb) * int(sa) + (cm >= cb ? 127 : -127)) / 255);
+                    }
+                    continue;
+                }
                 const float as = sa / 255.0f, ab = d[3] / 255.0f;
                 const float cb[3] = {d[0] / 255.0f, d[1] / 255.0f, d[2] / 255.0f};
                 const float cs[3] = {s[0] / 255.0f, s[1] / 255.0f, s[2] / 255.0f};
