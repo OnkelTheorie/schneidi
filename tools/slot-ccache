@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # Compiler launcher that shares a fixed number of compile slots between all builds of this user (Linux only): several
 # agents can each build with -j12 while at most N compilers run in total. Each compile takes one of N lock files
-# (flock) under $XDG_RUNTIME_DIR/schneidi-slots and holds it until the compiler exits; then it runs ccache (or the
-# compiler itself when ccache is missing).
+# (flock) under $XDG_RUNTIME_DIR/schneidi-slots (without it: ${TMPDIR:-/tmp}/schneidi-slots-<uid>, mode 700, used only
+# when it is a real directory of this user) and holds it until the compiler exits; then it runs ccache (or the
+# compiler itself when ccache is missing). The lock files are opened without truncating (<>), and in a folder only
+# this user can write, so a planted symlink cannot make a compile clobber another file.
 #
 #   cmake -S . -B build -G Ninja -DCMAKE_CXX_COMPILER_LAUNCHER=$PWD/tools/slot-ccache \
 #         -DCMAKE_C_COMPILER_LAUNCHER=$PWD/tools/slot-ccache
@@ -15,13 +17,24 @@ if [ -z "$n" ]; then
     n=$(head -c 16 "${XDG_CONFIG_HOME:-$HOME/.config}/schneidi-dev/slots" 2>/dev/null | tr -cd '0-9')
 fi
 [ -n "$n" ] && [ "$n" -gt 0 ] 2>/dev/null || n=8
-dir="${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/schneidi-slots"
-mkdir -p "$dir"
+if [ -n "${XDG_RUNTIME_DIR:-}" ]; then
+    dir="$XDG_RUNTIME_DIR/schneidi-slots"
+else
+    dir="${TMPDIR:-/tmp}/schneidi-slots-$(id -u)"
+fi
+(umask 077 && mkdir -p "$dir") 2>/dev/null
 cc=$(command -v ccache || true)
 
 run() {
     if [ -n "$cc" ]; then exec "$cc" "$@"; else exec "$@"; fi
 }
+
+# A folder someone else made (or a symlink to one): no slots rather than lock files there
+if [ -L "$dir" ] || [ ! -d "$dir" ] || [ ! -O "$dir" ]; then
+    echo "slot-ccache: $dir is not a folder of this user, compiling without slots" >&2
+    run "$@"
+fi
+chmod 700 "$dir" 2>/dev/null
 
 # Try every slot without waiting, from a random start (spreads the waiters); when all are busy, wait a little on one
 # of them and try again. The lock stays with the open descriptor, which the exec'd compiler inherits.
@@ -29,12 +42,12 @@ start=$((RANDOM % n))
 while :; do
     for ((k = 0; k < n; k++)); do
         i=$(((start + k) % n))
-        exec {fd}>"$dir/$i"
+        exec {fd}<>"$dir/$i"
         if flock -n "$fd"; then run "$@"; fi
         exec {fd}>&-
     done
     i=$((RANDOM % n))
-    exec {fd}>"$dir/$i"
+    exec {fd}<>"$dir/$i"
     if flock -w 1 "$fd"; then run "$@"; fi
     exec {fd}>&-
 done
