@@ -2657,5 +2657,19 @@
  "Stellt eine Person ohne Green Screen frei (z. B. Text hinter einer Person). Braucht einmal „Freistellen analysieren“ (CLI: cutout_node) und die Erweiterung „Freistellen (Personen)“; ohne Analyse zeigt der Knoten nichts": "Вырезает человека без зелёного фона (например, текст за человеком). Нужен однократный «Анализ вырезания» (CLI: cutout_node) и расширение «Вырезание (люди)»; без анализа узел ничего не показывает",
  "Umriss vergrößern (positiv) oder verkleinern (negativ), in Pixeln": "Увеличить (положительно) или уменьшить (отрицательно) контур, в пикселях",
  "Wachsen": "Расширить",
- "stellt Personen ohne Green Screen frei, z. B. für Text hinter einer Person (braucht ONNX Runtime)": "вырезает людей без зелёного фона, например для текста за человеком (нужен ONNX Runtime)"
+ "stellt Personen ohne Green Screen frei, z. B. für Text hinter einer Person (braucht ONNX Runtime)": "вырезает людей без зелёного фона, например для текста за человеком (нужен ONNX Runtime)",
+ "Seitenfarbe": "Цвет боковин",
+ "Fase": "Фаска",
+ "Drehung X": "Поворот X",
+ "Drehung Y": "Поворот Y",
+ "Drehung Z": "Поворот Z",
+ "Blickwinkel": "Угол обзора",
+ "Lichtrichtung": "Направление света",
+ "Lichthöhe": "Высота света",
+ "Umgebungslicht": "Рассеянный свет",
+ "Glanz": "Блеск",
+ "Metall": "Металл",
+ "Kantenglättung": "Сглаживание краёв",
+ "3D-Text": "3D-текст",
+ "Echter 3D-Text: Buchstaben mit Tiefe und Fase, im Raum gedreht, mit Licht und Glanz; Drehung, Tiefe, Kamera, Licht und Farben animierbar": "Настоящий 3D-текст: буквы с глубиной и фаской, повёрнутые в пространстве, со светом и блеском; поворот, глубина, камера, свет и цвета анимируются"
 }

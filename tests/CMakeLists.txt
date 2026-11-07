@@ -460,6 +460,8 @@ target_link_libraries(test_comp_cutout PRIVATE schneidi_cli_lib)
 # The same with the real segmentation model; 77 without the extension
 schneidi_test(test_comp_cutout_model)
 
+schneidi_test(test_text3d) # real 3D text (0.19): "O" hole, cap area = outline area, side at 90°, light, AA, cache, project, plain title bit-identical
+
 # Every test_*.cpp without a schneidi_test() line above (CONFIGURE_DEPENDS: a new file is picked up by the next build)
 file(GLOB _schneidi_test_sources CONFIGURE_DEPENDS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/test_*.cpp)
 foreach(_src ${_schneidi_test_sources})

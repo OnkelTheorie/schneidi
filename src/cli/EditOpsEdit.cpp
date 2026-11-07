@@ -104,7 +104,12 @@ const QString kLookFields =
     "of the edge, default 45 = down right), color, light (lit from the top, default true)} or true/false. shadow: a drop "
     "shadow {x, y (offset in pixels, y down, default 6, 6), soft (blur, default 6), color, opacity (0..1, default "
     "0.6)} or true/false. glow: {radius (default 16), color, strength (0..1, default 0.5)} or true/false. A group "
-    "object switches it on unless it says on:false. All off by default; outline and box stay as they are";
+    "object switches it on unless it says on:false. text3d: real 3D letters (extruded, beveled, turned, lit; replace the "
+    "flat letters, the box stays) {depth (pixels, default 30), bevel (default 2, in the front color), rot_x (top away, default 15), rot_y "
+    "(right side away, default -25), rot_z (clockwise), fov (degrees, default 35), distance (1 = 2D size), light_angle "
+    "(-90 = from the top), light_height (degrees, default 45), side (color of walls/bevel), shine, metal (0..1)} or "
+    "true/false; animated 3D text: the comp node text3d (keyframes comp.n<id>.rot_y). All off by default; outline and "
+    "box stay as they are";
 
 void applyLook(TitleLook& look, const QJsonObject& op)
 {
@@ -863,7 +868,7 @@ QJsonObject transitionStyleJson(const TransitionStyle& st)
 
 void addEditOps(QVector<OpDef>& ops)
 {
-    ops << OpDef{"title", "{op:'title', text?, kind?, at?, duration?, track?, clip?, <style>, fill?, gradient?, texture?, edge3d?, shadow?, glow?}",
+    ops << OpDef{"title", "{op:'title', text?, kind?, at?, duration?, track?, clip?, <style>, fill?, gradient?, texture?, edge3d?, shadow?, glow?, text3d?}",
                  "new title (duration default 5s; on `track` it overwrites only [at, at+duration) like `place`, also an "
                  "earlier title there (notes say what was cut or removed); without track it goes on the video track "
                  "above the clips in that range, so overlapping titles all show) or with clip: change one (a new duration "

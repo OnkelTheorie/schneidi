@@ -2657,5 +2657,19 @@
  "Stellt eine Person ohne Green Screen frei (z. B. Text hinter einer Person). Braucht einmal „Freistellen analysieren“ (CLI: cutout_node) und die Erweiterung „Freistellen (Personen)“; ohne Analyse zeigt der Knoten nichts": "Wycina osobę bez green screenu (np. tekst za osobą). Wymaga jednorazowo „Analizuj wycinanie” (CLI: cutout_node) i rozszerzenia „Wycinanie (osoby)”; bez analizy węzeł nic nie pokazuje",
  "Umriss vergrößern (positiv) oder verkleinern (negativ), in Pixeln": "Powiększ (dodatnio) lub zmniejsz (ujemnie) obrys, w pikselach",
  "Wachsen": "Rozszerz",
- "stellt Personen ohne Green Screen frei, z. B. für Text hinter einer Person (braucht ONNX Runtime)": "wycina osoby bez green screenu, np. dla tekstu za osobą (wymaga ONNX Runtime)"
+ "stellt Personen ohne Green Screen frei, z. B. für Text hinter einer Person (braucht ONNX Runtime)": "wycina osoby bez green screenu, np. dla tekstu za osobą (wymaga ONNX Runtime)",
+ "Seitenfarbe": "Kolor boków",
+ "Fase": "Fazowanie",
+ "Drehung X": "Obrót X",
+ "Drehung Y": "Obrót Y",
+ "Drehung Z": "Obrót Z",
+ "Blickwinkel": "Pole widzenia",
+ "Lichtrichtung": "Kierunek światła",
+ "Lichthöhe": "Wysokość światła",
+ "Umgebungslicht": "Światło otoczenia",
+ "Glanz": "Połysk",
+ "Metall": "Metal",
+ "Kantenglättung": "Wygładzanie krawędzi",
+ "3D-Text": "Tekst 3D",
+ "Echter 3D-Text: Buchstaben mit Tiefe und Fase, im Raum gedreht, mit Licht und Glanz; Drehung, Tiefe, Kamera, Licht und Farben animierbar": "Prawdziwy tekst 3D: litery z głębią i fazowaniem, obrócone w przestrzeni, ze światłem i połyskiem; obrót, głębia, kamera, światło i kolory animowalne"
 }

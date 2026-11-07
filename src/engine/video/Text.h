@@ -8,6 +8,7 @@
 #include <QColor>
 #include <QFont>
 #include <QImage>
+#include <QPainterPath>
 #include <QPair>
 #include <QRectF>
 #include <QString>
@@ -58,6 +59,9 @@ struct Params {
 void blurPlane(std::vector<uint8_t>& plane, int w, int h, double reach);
 // Draws onto an RGBA picture (straight alpha) of w x h
 void draw(uint8_t* rgba, int w, int h, const Params& p);
+// The letters of draw() as one path in pixels of the picture (same layout: aligned in the area, shrunk to fit; no box,
+// outline or look). Fill rule as Qt's text paths. The 3D title (engine/text3d) extrudes it
+QPainterPath letters(const Params& p);
 // Where draw() can put pixels (box, outline and glyph overhang included, generously): draw only needs a picture that
 // large, shifted
 QRectF bounds(const Params& p);

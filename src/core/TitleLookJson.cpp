@@ -74,7 +74,7 @@ struct Reader {
 
 } // namespace
 
-QStringList keys() { return {"fill", "gradient", "texture", "edge3d", "shadow", "glow"}; }
+QStringList keys() { return {"fill", "gradient", "texture", "edge3d", "shadow", "glow", "text3d"}; }
 
 void write(QJsonObject& o, const TitleLook& l)
 {
@@ -101,6 +101,24 @@ void write(QJsonObject& o, const TitleLook& l)
         || l.glowStrength != d.glowStrength)
         o["glow"] = QJsonObject{{"on", l.glowOn}, {"radius", l.glowRadius}, {"color", colorName(l.glowColor)},
                                 {"strength", l.glowStrength}};
+    if (l.solidOn != d.solidOn || l.solidDepth != d.solidDepth || l.solidBevel != d.solidBevel
+        || l.solidRotX != d.solidRotX || l.solidRotY != d.solidRotY || l.solidRotZ != d.solidRotZ
+        || l.solidFov != d.solidFov || l.solidDistance != d.solidDistance || l.solidLightAngle != d.solidLightAngle
+        || l.solidLightHeight != d.solidLightHeight || l.solidSide != d.solidSide || l.solidShine != d.solidShine
+        || l.solidMetal != d.solidMetal)
+        o["text3d"] = QJsonObject{{"on", l.solidOn},
+                                  {"depth", l.solidDepth},
+                                  {"bevel", l.solidBevel},
+                                  {"rot_x", l.solidRotX},
+                                  {"rot_y", l.solidRotY},
+                                  {"rot_z", l.solidRotZ},
+                                  {"fov", l.solidFov},
+                                  {"distance", l.solidDistance},
+                                  {"light_angle", l.solidLightAngle},
+                                  {"light_height", l.solidLightHeight},
+                                  {"side", colorName(l.solidSide)},
+                                  {"shine", l.solidShine},
+                                  {"metal", l.solidMetal}};
 }
 
 bool read(const QJsonObject& o, TitleLook& out, bool lenient, QString* err, bool* any)
@@ -183,6 +201,20 @@ bool read(const QJsonObject& o, TitleLook& out, bool lenient, QString* err, bool
         r.num(g, "radius", &l.glowRadius, 0, 500, "glow");
         r.color(g, "color", &l.glowColor, "glow");
         r.num(g, "strength", &l.glowStrength, 0, 1, "glow");
+    }
+    if (o.contains("text3d") && (found = true) && r.group(o.value("text3d"), "text3d", &l.solidOn, &g)) {
+        r.num(g, "depth", &l.solidDepth, 0, 1000, "text3d");
+        r.num(g, "bevel", &l.solidBevel, 0, 100, "text3d");
+        r.num(g, "rot_x", &l.solidRotX, -360, 360, "text3d");
+        r.num(g, "rot_y", &l.solidRotY, -360, 360, "text3d");
+        r.num(g, "rot_z", &l.solidRotZ, -360, 360, "text3d");
+        r.num(g, "fov", &l.solidFov, 1, 150, "text3d");
+        r.num(g, "distance", &l.solidDistance, 0.1, 20, "text3d");
+        r.num(g, "light_angle", &l.solidLightAngle, -360, 360, "text3d");
+        r.num(g, "light_height", &l.solidLightHeight, -90, 90, "text3d");
+        r.color(g, "side", &l.solidSide, "text3d");
+        r.num(g, "shine", &l.solidShine, 0, 1, "text3d");
+        r.num(g, "metal", &l.solidMetal, 0, 1, "text3d");
     }
     if (any) *any = found;
     if (!r.err.isEmpty() && !lenient) {

@@ -26,6 +26,7 @@ const QVector<NodeType>& all()
         registerTrackNodes(out);
         registerStyleNodes(out);
         registerCutoutNodes(out);
+        registerText3dNodes(out);
         return out;
     }();
     return kinds;

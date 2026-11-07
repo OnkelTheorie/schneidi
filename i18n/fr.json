@@ -2657,5 +2657,19 @@
  "Stellt eine Person ohne Green Screen frei (z. B. Text hinter einer Person). Braucht einmal „Freistellen analysieren“ (CLI: cutout_node) und die Erweiterung „Freistellen (Personen)“; ohne Analyse zeigt der Knoten nichts": "Détoure une personne sans fond vert (p. ex. du texte derrière une personne). Nécessite une fois « Analyser le détourage » (CLI : cutout_node) et l’extension « Détourage (personnes) » ; sans analyse le nœud n’affiche rien",
  "Umriss vergrößern (positiv) oder verkleinern (negativ), in Pixeln": "Agrandir (positif) ou réduire (négatif) le contour, en pixels",
  "Wachsen": "Étendre",
- "stellt Personen ohne Green Screen frei, z. B. für Text hinter einer Person (braucht ONNX Runtime)": "détoure des personnes sans fond vert, p. ex. pour du texte derrière une personne (nécessite ONNX Runtime)"
+ "stellt Personen ohne Green Screen frei, z. B. für Text hinter einer Person (braucht ONNX Runtime)": "détoure des personnes sans fond vert, p. ex. pour du texte derrière une personne (nécessite ONNX Runtime)",
+ "Seitenfarbe": "Couleur des côtés",
+ "Fase": "Biseau",
+ "Drehung X": "Rotation X",
+ "Drehung Y": "Rotation Y",
+ "Drehung Z": "Rotation Z",
+ "Blickwinkel": "Champ de vision",
+ "Lichtrichtung": "Direction de la lumière",
+ "Lichthöhe": "Hauteur de la lumière",
+ "Umgebungslicht": "Lumière ambiante",
+ "Glanz": "Brillance",
+ "Metall": "Métal",
+ "Kantenglättung": "Anticrénelage",
+ "3D-Text": "Texte 3D",
+ "Echter 3D-Text: Buchstaben mit Tiefe und Fase, im Raum gedreht, mit Licht und Glanz; Drehung, Tiefe, Kamera, Licht und Farben animierbar": "Vrai texte 3D : lettres avec profondeur et biseau, tournées dans l'espace, avec lumière et brillance ; rotation, profondeur, caméra, lumière et couleurs animables"
 }

@@ -239,6 +239,7 @@ const KindKeys kPixelKeys[] = {
     {"shadow", {"x", "y", "soft"}},
     {"glitch", {"rgb"}},
     {"cutout", {"soft", "grow"}},
+    {"text3d", {"size", "depth", "bevel"}},
     {"matte_tune", {"grow", "soft"}},
 };
 

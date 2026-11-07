@@ -2657,5 +2657,19 @@
  "Stellt eine Person ohne Green Screen frei (z. B. Text hinter einer Person). Braucht einmal „Freistellen analysieren“ (CLI: cutout_node) und die Erweiterung „Freistellen (Personen)“; ohne Analyse zeigt der Knoten nichts": "Cuts out a person without a green screen (e.g. text behind a person). Needs “Analyze cutout” once (CLI: cutout_node) and the extension “Cutout (people)”; without the analysis the node shows nothing",
  "Umriss vergrößern (positiv) oder verkleinern (negativ), in Pixeln": "Grow (positive) or shrink (negative) the outline, in pixels",
  "Wachsen": "Grow",
- "stellt Personen ohne Green Screen frei, z. B. für Text hinter einer Person (braucht ONNX Runtime)": "cuts out people without a green screen, e.g. for text behind a person (needs ONNX Runtime)"
+ "stellt Personen ohne Green Screen frei, z. B. für Text hinter einer Person (braucht ONNX Runtime)": "cuts out people without a green screen, e.g. for text behind a person (needs ONNX Runtime)",
+ "Seitenfarbe": "Side color",
+ "Fase": "Bevel",
+ "Drehung X": "Rotation X",
+ "Drehung Y": "Rotation Y",
+ "Drehung Z": "Rotation Z",
+ "Blickwinkel": "Field of view",
+ "Lichtrichtung": "Light direction",
+ "Lichthöhe": "Light height",
+ "Umgebungslicht": "Ambient light",
+ "Glanz": "Shine",
+ "Metall": "Metal",
+ "Kantenglättung": "Anti-aliasing",
+ "3D-Text": "3D text",
+ "Echter 3D-Text: Buchstaben mit Tiefe und Fase, im Raum gedreht, mit Licht und Glanz; Drehung, Tiefe, Kamera, Licht und Farben animierbar": "Real 3D text: letters with depth and bevel, turned in space, with light and shine; rotation, depth, camera, light and colors can be animated"
 }

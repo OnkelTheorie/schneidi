@@ -2657,5 +2657,19 @@
  "Stellt eine Person ohne Green Screen frei (z. B. Text hinter einer Person). Braucht einmal „Freistellen analysieren“ (CLI: cutout_node) und die Erweiterung „Freistellen (Personen)“; ohne Analyse zeigt der Knoten nichts": "Recorta a una persona sin pantalla verde (p. ej. texto detrás de una persona). Necesita «Analizar recorte» una vez (CLI: cutout_node) y la extensión «Recorte (personas)»; sin análisis el nodo no muestra nada",
  "Umriss vergrößern (positiv) oder verkleinern (negativ), in Pixeln": "Agrandar (positivo) o reducir (negativo) el contorno, en píxeles",
  "Wachsen": "Ampliar",
- "stellt Personen ohne Green Screen frei, z. B. für Text hinter einer Person (braucht ONNX Runtime)": "recorta personas sin pantalla verde, p. ej. para texto detrás de una persona (necesita ONNX Runtime)"
+ "stellt Personen ohne Green Screen frei, z. B. für Text hinter einer Person (braucht ONNX Runtime)": "recorta personas sin pantalla verde, p. ej. para texto detrás de una persona (necesita ONNX Runtime)",
+ "Seitenfarbe": "Color lateral",
+ "Fase": "Bisel",
+ "Drehung X": "Rotación X",
+ "Drehung Y": "Rotación Y",
+ "Drehung Z": "Rotación Z",
+ "Blickwinkel": "Campo de visión",
+ "Lichtrichtung": "Dirección de la luz",
+ "Lichthöhe": "Altura de la luz",
+ "Umgebungslicht": "Luz ambiental",
+ "Glanz": "Brillo",
+ "Metall": "Metal",
+ "Kantenglättung": "Suavizado de bordes",
+ "3D-Text": "Texto 3D",
+ "Echter 3D-Text: Buchstaben mit Tiefe und Fase, im Raum gedreht, mit Licht und Glanz; Drehung, Tiefe, Kamera, Licht und Farben animierbar": "Texto 3D real: letras con profundidad y bisel, giradas en el espacio, con luz y brillo; rotación, profundidad, cámara, luz y colores animables"
 }

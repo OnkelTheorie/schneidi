@@ -157,5 +157,6 @@ void registerKeyNodes(QVector<NodeType>& out);   // C: key, matte_tune
 void registerTrackNodes(QVector<NodeType>& out); // D: tracker
 void registerStyleNodes(QVector<NodeType>& out); // E: text, shadow, glitch
 void registerCutoutNodes(QVector<NodeType>& out); // cutout (AI person matte, CompNodesCutout.cpp)
+void registerText3dNodes(QVector<NodeType>& out); // 3D text (round 3): text3d
 
 } // namespace Picture::Comp

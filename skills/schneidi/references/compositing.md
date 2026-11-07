@@ -25,7 +25,9 @@ graph as own recipe (files copied along); `effects` kind recipes with `export`/`
 ## Which node for what
 `effects` with `kind:'nodes'` lists every type with its inputs and parameters (ranges, defaults, choices).
 - **Sources:** `clip` (the clip's own picture; in a compound clip `track` = one inner track), `media` (a file:
-  background, logo, texture; `path`), `color`, `gradient`, `text` (a title with the title looks).
+  background, logo, texture; `path`), `color`, `gradient`, `text` (a title with the title looks), `text3d` (real 3D letters: `depth`, `bevel`,
+  `rot_x/rot_y/rot_z`, `fov`, `distance`, light `light_angle/light_height`, `color`/`side_color`, `shine`, `metal`;
+  keyframe `comp.n<id>.rot_y` for a turning title).
 - **Combine:** `merge` (`bg` + `fg`, optional `mask`; modes normal, add, screen, multiply, overlay, darken, lighten,
   difference; `opacity`).
 - **Masks:** `mask` (rect, ellipse, polygon, bezier, linear, radial; positions 0..1 of the picture, `soft`,

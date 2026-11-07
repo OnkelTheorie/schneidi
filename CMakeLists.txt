@@ -279,6 +279,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/engine/picture/CompNodes.h src/engine/picture/CompNodes.cpp
     src/engine/picture/CompNodesCore.cpp src/engine/picture/CompNodesMask.cpp src/engine/picture/CompNodesKey.cpp
     src/engine/picture/CompNodesTrack.cpp src/engine/picture/CompNodesStyle.cpp
+    src/engine/picture/CompNodesText3d.cpp src/engine/text3d/Text3d.h src/engine/text3d/Text3d.cpp
     src/engine/picture/TitleLook.h src/engine/picture/TitleLook.cpp
     src/engine/picture/CustomEffects.h src/engine/picture/FilterEffect.cpp src/engine/picture/ShaderEffect.cpp
     src/engine/picture/CustomEffectsClip.cpp

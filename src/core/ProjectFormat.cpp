@@ -211,7 +211,8 @@ void scaleTimeline(Timeline& tl, QSize from, QSize to)
                 ti.outlineWidth *= ts;
                 ti.boxPad *= ts;
                 for (double* v : {&ti.look.edgeDepth, &ti.look.shadowX, &ti.look.shadowY, &ti.look.shadowSoft,
-                                  &ti.look.glowRadius, &ti.look.texX, &ti.look.texY})
+                                  &ti.look.glowRadius, &ti.look.texX, &ti.look.texY, &ti.look.solidDepth,
+                                  &ti.look.solidBevel})
                     *v *= ts;
                 ti.barThickness *= sy;
                 ti.barMargin *= sy;

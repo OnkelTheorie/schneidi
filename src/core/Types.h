@@ -172,6 +172,16 @@ struct TitleLook {
     double glowRadius = 16;
     QColor glowColor = Qt::white;
     double glowStrength = 0.5; // 0..1 (mild by default)
+    // Real 3D letters (engine/text3d): the outlines extruded with a bevel, turned in space, lit by one light. They
+    // replace the flat letters (outline, fill, edge, shadow and glow are not drawn; the box stays). Older versions
+    // draw the title flat. Rotations in degrees (x: top away, y: right side away, z: clockwise)
+    bool solidOn = false;
+    double solidDepth = 30, solidBevel = 2; // pixels
+    double solidRotX = 15, solidRotY = -25, solidRotZ = 0;
+    double solidFov = 35, solidDistance = 1; // camera: field of view (degrees), distance (1 = the 2D size)
+    double solidLightAngle = -90, solidLightHeight = 45; // light from (-90 = the top), its height (degrees)
+    QColor solidSide{140, 140, 140}; // walls and bevel
+    double solidShine = 0.3, solidMetal = 0;
 
     bool styledFill() const { return fill == TitleFill::Gradient || (fill == TitleFill::Texture && !texture.isEmpty()); }
     bool behind() const { return (edgeOn && edgeDepth > 0) || shadowOn || (glowOn && glowStrength > 0); }

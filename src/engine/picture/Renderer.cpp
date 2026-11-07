@@ -23,6 +23,7 @@
 #include "engine/picture/TitleLook.h"
 #include "engine/picture/gpu/CompGpu.h"
 #include "engine/picture/gpu/Gpu.h"
+#include "engine/text3d/Text3d.h"
 #include "engine/video/Compose.h"
 #include "engine/video/Convert.h"
 #include "engine/video/Reader.h"
@@ -1012,6 +1013,10 @@ struct Renderer::Impl {
         for (const QString& line : (st.isCounter() ? Generators::counterWidest(st, fm) : st.text).split('\n'))
             w = std::max(w, fm.horizontalAdvance(line));
         const bool outline = st.outlineOn && outlineWidth > 0;
+        if (st.look.solidOn) {
+            drawTitle3d(layer, c, t, ctx, text, w, size, boxPad, shift, bounds);
+            return;
+        }
         // Fill, edge, shadow, glow (0.19): only a styled title takes this path, a plain one is drawn as before
         Text::Look look;
         const bool styled = st.look.active();
@@ -1060,6 +1065,58 @@ struct Renderer::Impl {
         if (outline) layerOf(true);
         layerOf(false);
         if (bounds) *bounds &= QRect(0, 0, ctx.W, ctx.H);
+    }
+
+    // Real 3D letters (TitleLook::solidOn, engine/text3d) over the box: turned, they may reach anywhere in the picture.
+    // text/w/size/boxPad as drawTitle laid them out
+    void drawTitle3d(Image& layer, const Clip& c, double t, const Ctx& ctx, const QString& text, double w, double size,
+                     double boxPad, QPoint shift, QRect* bounds)
+    {
+        const TitleStyle& st = c.title;
+        const TitleLook& l = st.look;
+        if (bounds) {
+            *bounds = QRect(0, 0, ctx.W, ctx.H);
+            return;
+        }
+        const double sx = ctx.W / ctx.PW, sy = ctx.H / ctx.PH;
+        const double grow = st.size > 0 ? size / st.size : 1.0;
+        Text::Params p;
+        p.text = text;
+        const double x = (ctx.PW - w) / 2 + Keys::valueAt(c, AnimParam::TitlePosX, t);
+        const double y = -Keys::valueAt(c, AnimParam::TitlePosY, t);
+        p.area = QRectF(x * sx, y * sy, w * sx, ctx.PH * sy).translated(-shift);
+        QFont f(st.fontFamily());
+        f.setPixelSize(std::max(1, int(std::lround(size * sy))));
+        f.setWeight(st.bold ? QFont::Bold : QFont::Normal);
+        f.setItalic(st.italic);
+        p.font = f;
+        p.halign = st.align == 0 ? 0 : st.align == 2 ? 2 : 1;
+        p.valign = 1;
+        p.pad = (st.boxOn ? boxPad : 0.0) * sy;
+        if (st.boxOn && st.boxColor.alpha() > 0) { // the box alone (letters in no colour)
+            Text::Params box = p;
+            box.bg = st.boxColor;
+            box.fg = Qt::transparent;
+            Text::draw(layer.data(), layer.w, layer.h, box);
+        }
+        const double depth = std::max(0.0, l.solidDepth) * grow * sy;
+        const Text3d::Mesh mesh = Text3d::extrude(Text::letters(p), depth, std::max(0.0, l.solidBevel) * grow * sy);
+        Text3d::View v;
+        v.rotX = l.solidRotX;
+        v.rotY = l.solidRotY;
+        v.rotZ = l.solidRotZ;
+        v.pivot = v.at = p.area.center();
+        v.depth = depth;
+        v.fov = l.solidFov;
+        v.distance = l.solidDistance;
+        v.lightAngle = l.solidLightAngle;
+        v.lightHeight = l.solidLightHeight;
+        v.front = Keys::animated(c, AnimParam::TitleColor) ? Keys::toColor(Keys::valueAt(c, AnimParam::TitleColor, t))
+                                                           : st.color;
+        v.side = l.solidSide;
+        v.shine = l.solidShine;
+        v.metal = l.solidMetal;
+        Text3d::render(mesh, v, layer.data(), layer.w, layer.h);
     }
 
     // Progress bar title (core/Generators.h): the track (box colour, when on) along the edge and its filled part in the
