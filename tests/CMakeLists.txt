@@ -12,8 +12,12 @@ find_package(Qt6 REQUIRED COMPONENTS Widgets Test)
 add_library(schneidi_test_support STATIC check_support.cpp check.h render_check.h)
 target_link_libraries(schneidi_test_support PUBLIC schneidi_lib)
 
-# Exit code 77 = skipped (e.g. ffmpeg missing)
+# Exit code 77 = skipped (e.g. ffmpeg missing). Every tests/test_*.cpp is registered by itself (glob at the end): a
+# new test needs a line here only for extras (schneidi_cli_lib, defines, labels). Calling it again is harmless.
 function(schneidi_test name)
+    if(TARGET ${name})
+        return()
+    endif()
     add_executable(${name} ${name}.cpp)
     target_link_libraries(${name} PRIVATE schneidi_test_support Qt6::Test)
     add_test(NAME ${name} COMMAND ${name})
@@ -438,6 +442,13 @@ target_link_libraries(test_comp_cli PRIVATE schneidi_cli_lib)
 # decides about the card itself (77 without a hardware device)
 schneidi_test(test_comp_gpu)
 set_tests_properties(test_comp_gpu PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;SCHNEIDI_AUDIO_DEVICE=null")
+
+# Every test_*.cpp without a schneidi_test() line above (CONFIGURE_DEPENDS: a new file is picked up by the next build)
+file(GLOB _schneidi_test_sources CONFIGURE_DEPENDS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/test_*.cpp)
+foreach(_src ${_schneidi_test_sources})
+    get_filename_component(_name ${_src} NAME_WE)
+    schneidi_test(${_name})
+endforeach()
 
 # Paths the tests need at run time (Check::buildPath in check.h). No compile definitions: an absolute path there differs
 # per worktree, so ccache could never share those objects. ctest passes them in the environment (all tests of this
