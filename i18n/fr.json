@@ -2443,5 +2443,22 @@
  "Sie liegt jetzt unter %1 und wird nicht mehr angeboten.": "Elle se trouve maintenant dans %1 et ne sera plus proposée.",
  "Einige Zeichen der Projektdatei waren kein gültiges UTF-8 (z. B. Umlaute, die ein anderes Programm anders gespeichert hat) und wurden durch „�“ ersetzt. Medien mit solchen Namen fehlen dann. Speichern behält die Ersetzung; die Datei, wie sie war, bleibt als Sicherungskopie.": "Certains caractères du fichier de projet n’étaient pas de l’UTF-8 valide (par exemple des trémas enregistrés autrement par un autre programme) et ont été remplacés par « � ». Les médias portant de tels noms manquent alors. L’enregistrement conserve le remplacement ; le fichier tel qu’il était reste comme copie de sauvegarde.",
  "Compositing": "Compositing",
- "Ebenen, Masken, Keying und Tracking als Knoten (Seite Comp)": "Calques, masques, incrustation et suivi sous forme de nœuds (page Comp)"
+ "Ebenen, Masken, Keying und Tracking als Knoten (Seite Comp)": "Calques, masques, incrustation et suivi sous forme de nœuds (page Comp)",
+ "In Pixeln: macht die Kante der Matte weich": "En pixels : adoucit le bord du cache",
+ "In Pixeln: positiv lässt die Matte wachsen, negativ schrumpfen": "En pixels : une valeur positive agrandit le cache, une valeur négative le rétrécit",
+ "Kante verschieben": "Décaler le bord",
+ "Key": "Incrustation",
+ "Luma-Key: Breite des Übergangs an den Grenzen": "Incrustation par luminance : largeur de la transition aux limites",
+ "Luma-Key: was dunkler ist, wird durchsichtig": "Incrustation par luminance : ce qui est plus sombre devient transparent",
+ "Luma-Key: was heller ist, wird durchsichtig": "Incrustation par luminance : ce qui est plus clair devient transparent",
+ "Matte verfeinern": "Affiner le cache",
+ "Nimmt den Schimmer der Key-Farbe aus dem ganzen Bild (nur bei einem Bild, nicht bei einer Maske)": "Retire le reflet de la couleur d’incrustation de toute l’image (seulement pour une image, pas pour un masque)",
+ "Obere Grenze": "Limite haute",
+ "Schwarz abschneiden": "Écrêter le noir",
+ "Stellt frei: nach einer Farbe (Green Screen) oder nach der Helligkeit; das Ergebnis ist das Bild mit dem Key im Alpha-Kanal": "Détoure selon une couleur (fond vert) ou selon la luminosité ; le résultat est l’image avec l’incrustation dans le canal alpha",
+ "Untere Grenze": "Limite basse",
+ "Verfeinert eine Matte (Alpha eines Bildes oder eine Maske): Schwarz und Weiß abschneiden, Kante schrumpfen oder wachsen lassen, weich machen, Farbsaum entfernen": "Affine un cache (alpha d’une image ou un masque) : écrêter le noir et le blanc, rétrécir ou agrandir le bord, l’adoucir, retirer le reflet de couleur",
+ "Was deckender ist, wird ganz deckend (schließt Löcher im Motiv)": "Ce qui est plus opaque devient entièrement opaque (bouche les trous du sujet)",
+ "Was durchsichtiger ist, wird ganz durchsichtig (Schleier im Hintergrund)": "Ce qui est plus transparent devient entièrement transparent (voile dans le fond)",
+ "Weiß abschneiden": "Écrêter le blanc"
 }

@@ -115,6 +115,7 @@ bool evalMatteTune(NodeCtx& ctx, Buf* out)
         Compose::forRows(h, kMinRows, [&](int y0, int y1) {
             for (size_t i = size_t(y0) * w, e = size_t(y1) * w; i < e; ++i) plane[i] = table[plane[i]];
         });
+        if (table[0]) b.area = {}; // white clipped to 0: the empty outside became opaque too
     }
     if (spatial) { // each operation: along the rows, then the same along the columns of the transposed plane
         Buf turned;
@@ -214,7 +215,7 @@ void registerKeyNodes(QVector<NodeType>& out)
              T("Was deckender ist, wird ganz deckend (schließt Löcher im Motiv)")},
             {"grow", T("Kante verschieben"), {}, EffectParam::Double, 0.0, -100.0, 100.0, AnimParam::Count, 0.1, 1, {},
              T("In Pixeln: positiv lässt die Matte wachsen, negativ schrumpfen")},
-            {"soft", T("Kante weich"), {}, EffectParam::Double, 0.0, 0.0, 100.0, AnimParam::Count, 0.1, 1, {},
+            {"soft", T("Weiche Kante"), {}, EffectParam::Double, 0.0, 0.0, 100.0, AnimParam::Count, 0.1, 1, {},
              T("In Pixeln: macht die Kante der Matte weich")},
             {"despill", T("Farbsaum entfernen"), {}, EffectParam::Double, 0.0, 0.0, 1.0, AnimParam::Count, 0.002, 3, {},
              T("Nimmt den Schimmer der Key-Farbe aus dem ganzen Bild (nur bei einem Bild, nicht bei einer Maske)")},
