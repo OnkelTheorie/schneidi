@@ -160,8 +160,14 @@ QStringList CompInspector::shownKeys(const Clip& c) const
                  : shape == QLatin1String("linear") || shape == QLatin1String("radial") ? 2
                                                                                          : 0;
     }
+    // Key: only the values of the chosen kind (chroma: color/tolerance/softness/spill, luma: low/high/soft/invert)
+    const bool key = k->id == QLatin1String("key");
+    const bool luma = key && PC::textValue(*k, values, QStringLiteral("mode")) == QLatin1String("luma");
+    static const QStringList chromaKeys{"color", "tolerance", "softness", "spill"};
+    static const QStringList lumaKeys{"low", "high", "soft", "invert"};
     for (const EffectParam& p : k->params) {
         int index = 0;
+        if (key && (luma ? chromaKeys : lumaKeys).contains(p.key)) continue;
         if (k->id == QLatin1String("mask") && pointKey(p.key, &index) && index >= points) continue;
         if (k->id == QLatin1String("mask") && handleKey(p.key)) continue;
         keys << p.key;

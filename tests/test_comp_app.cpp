@@ -286,6 +286,27 @@ int main(int argc, char** argv)
         CHECK(ins->findChild<QWidget*>("comp_param_effect") != nullptr);
     }
 
+    // ---- key node: only the values of the chosen kind (chroma or luma), no two "soft edge" rows ----
+    {
+        CompGraph g;
+        g.nodes << CompNode{1, "clip", {}} << CompNode{2, "key", {}};
+        g.links << CompLink{1, 2, "src"};
+        g.out = 2;
+        QString why;
+        CHECK(w.editor()->setCompGraph({clip2}, g, {}, CompUi::kinds(), &why));
+        w.openComp(clip2);
+        CompPage* page = w.compPage();
+        page->selectNode(2);
+        settle();
+        CompInspector* ins = page->inspector();
+        CHECK(ins->findChild<QWidget*>("comp_param_softness") && ins->findChild<QWidget*>("comp_param_tolerance"));
+        CHECK(!ins->findChild<QWidget*>("comp_param_soft") && !ins->findChild<QWidget*>("comp_param_low"));
+        CHECK(w.editor()->setCompNodeValues(clip2, 2, {{"mode", "luma"}}, &why));
+        settle();
+        CHECK(ins->findChild<QWidget*>("comp_param_soft") && ins->findChild<QWidget*>("comp_param_low"));
+        CHECK(!ins->findChild<QWidget*>("comp_param_softness") && !ins->findChild<QWidget*>("comp_param_tolerance"));
+    }
+
     // ---- fx node with a filter chain: a multi-line field, "Anwenden" checks like the CLI and shows the error ----
     {
         CompGraph g;
