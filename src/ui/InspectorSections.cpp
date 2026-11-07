@@ -680,6 +680,7 @@ Inspector::Param* Inspector::makeParam(const Section& s, const QString& key, con
 {
     auto* p = new Param{s.kind, s.title, field, new ScrubField(min, max, step, decimals), nullptr, min, max, anim, s.effect};
     p->edit->setValue(def);
+    if (!key.isEmpty()) p->edit->setObjectName("inspector_" + key); // tests, styles
     p->edit->onChange = [this, p, key, text, field](double v) {
         if (p->slider) {
             const QSignalBlocker b(p->slider);

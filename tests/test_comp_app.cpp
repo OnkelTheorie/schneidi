@@ -17,6 +17,8 @@
 #include "engine/Engine.h"
 #include "engine/picture/CustomEffects.h"
 #include "ui/EffectsLibrary.h"
+#include "ui/Inspector.h"
+#include "ui/ScrubField.h"
 #include "ui/comp/CompCanvas.h"
 #include "ui/comp/CompInspector.h"
 #include "ui/comp/CompPage.h"
@@ -33,6 +35,9 @@
 #include <QMimeData>
 #include <QTemporaryDir>
 #include <QTest>
+#include <QScrollArea>
+#include <QScrollBar>
+#include <QToolButton>
 #include <QTreeWidget>
 #include <QTreeWidgetItemIterator>
 #include <QUndoStack>
@@ -295,6 +300,57 @@ int main(int argc, char** argv)
         } else {
             std::puts("note: no FFmpeg filters here, only the refusal checked");
         }
+    }
+    // ---- Title 3D in the Edit inspector: each change one undo step, a value switches 3D on ----
+    {
+        w.showPage(MainWindow::Page::Edit);
+        settle();
+        const int before = int(project->timeline().video.size());
+        w.editor()->addTitle(0, -1, 50);
+        settle();
+        int titleId = 0;
+        for (const Track& t : project->timeline().video)
+            for (const Clip& c : t.clips)
+                if (c.kind == ClipKind::Title) titleId = c.id;
+        if (!CHECK(titleId)) return Check::result();
+        Q_UNUSED(before);
+        w.liveSelection()->set({titleId});
+        settle();
+        auto* ins = w.findChild<Inspector*>();
+        const auto field = [&](const char* name) {
+            return ins ? dynamic_cast<ScrubField*>(ins->findChild<QWidget*>(name)) : nullptr;
+        };
+        ScrubField* depth = field("inspector_titleSolidDepth");
+        ScrubField* rotY = field("inspector_titleSolidRotY");
+        if (!CHECK(depth && rotY)) return Check::result();
+        const auto look = [&] { return TimelineOps::findClip(project->timeline(), titleId)->title.look; };
+        CHECK(!look().solidOn);
+        int idx = undo->index();
+        depth->onChange(60); // a drag: several values, one step
+        depth->onChange(80);
+        depth->onFinish();
+        settle();
+        CHECK_EQ(undo->index(), idx + 1);
+        CHECK(look().solidOn);
+        CHECK_EQ(look().solidDepth, 80.0);
+        rotY->onChange(-40);
+        rotY->onFinish();
+        settle();
+        CHECK_EQ(undo->index(), idx + 2);
+        CHECK_EQ(look().solidRotY, -40.0);
+        undo->undo();
+        CHECK_EQ(look().solidRotY, TitleLook().solidRotY);
+        undo->redo();
+        // The section in view for the picture
+        for (QWidget* h : ins->findChildren<QWidget*>("InspectorSection"))
+            for (QToolButton* b : h->findChildren<QToolButton*>())
+                if (b->text() == "3D" && h->isVisible())
+                    for (QScrollArea* area : ins->findChildren<QScrollArea*>())
+                        if (area->isAncestorOf(h)) {
+                            area->verticalScrollBar()->setValue(h->mapTo(area->widget(), QPoint(0, 0)).y());
+                            settle();
+                        }
+        dump(ins, "title-3d-section");
     }
     return Check::result();
 }

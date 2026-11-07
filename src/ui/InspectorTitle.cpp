@@ -428,6 +428,49 @@ void Inspector::buildLookSections(QVBoxLayout* page)
              glowSwitch);
     shown.append({glow, [](const TitleStyle& t) { return !t.isProgress(); }});
 
+    // ---- 3D: real 3D letters (engine/text3d; the values of op title text3d) ----
+    const Flag solidOn = [](Clip& c) -> bool& { return c.title.look.solidOn; };
+    const auto solidSwitch = [](Clip& c) { c.title.look.solidOn = true; };
+    Section solid = addSection(page, V, T("3D"), [](Clip& c) {
+        const TitleLook d;
+        TitleLook& l = c.title.look;
+        l.solidDepth = d.solidDepth;
+        l.solidBevel = d.solidBevel;
+        l.solidRotX = d.solidRotX;
+        l.solidRotY = d.solidRotY;
+        l.solidRotZ = d.solidRotZ;
+        l.solidFov = d.solidFov;
+        l.solidDistance = d.solidDistance;
+        l.solidLightAngle = d.solidLightAngle;
+        l.solidLightHeight = d.solidLightHeight;
+        l.solidSide = d.solidSide;
+        l.solidShine = d.solidShine;
+        l.solidMetal = d.solidMetal;
+    }, solidOn, true);
+    solid.header->setToolTip(T("Echte 3D-Buchstaben mit Tiefe und Fase, im Raum gedreht und beleuchtet (ersetzen die "
+                               "flachen Buchstaben samt Umrandung, Kante, Schatten und Glühen)"));
+    const auto solidSlider = [&](const char* key, const QString& label, double min, double max, double def, double step,
+                                 int decimals, double TitleLook::*field) {
+        autoOn(addSlider(solid, key, label, min, max, def, step, decimals,
+                         [field](Clip& c) -> double& { return c.title.look.*field; }),
+               key, T("3D-Text"), solidSwitch);
+    };
+    const TitleLook d3;
+    solidSlider("titleSolidDepth", T("Tiefe"), 0, 300, d3.solidDepth, 0.5, 1, &TitleLook::solidDepth);
+    solidSlider("titleSolidBevel", T("Fase"), 0, 50, d3.solidBevel, 0.1, 1, &TitleLook::solidBevel);
+    solidSlider("titleSolidRotX", T("Drehung X"), -180, 180, d3.solidRotX, 0.5, 1, &TitleLook::solidRotX);
+    solidSlider("titleSolidRotY", T("Drehung Y"), -180, 180, d3.solidRotY, 0.5, 1, &TitleLook::solidRotY);
+    solidSlider("titleSolidRotZ", T("Drehung Z"), -180, 180, d3.solidRotZ, 0.5, 1, &TitleLook::solidRotZ);
+    solidSlider("titleSolidFov", T("Bildwinkel"), 1, 150, d3.solidFov, 0.5, 1, &TitleLook::solidFov);
+    solidSlider("titleSolidDistance", T("Abstand"), 0.1, 20, d3.solidDistance, 0.01, 2, &TitleLook::solidDistance);
+    solidSlider("titleSolidLightAngle", T("Licht von"), -180, 180, d3.solidLightAngle, 1, 0, &TitleLook::solidLightAngle);
+    solidSlider("titleSolidLightHeight", T("Lichthöhe"), -90, 90, d3.solidLightHeight, 1, 0, &TitleLook::solidLightHeight);
+    addColor(solid, T("Seiten"), T("Farbe der Seiten"), [](Clip& c) -> QColor& { return c.title.look.solidSide; }, false,
+             solidSwitch);
+    solidSlider("titleSolidShine", T("Glanz"), 0, 1, d3.solidShine, 0.01, 2, &TitleLook::solidShine);
+    solidSlider("titleSolidMetal", T("Metall"), 0, 1, d3.solidMetal, 0.01, 2, &TitleLook::solidMetal);
+    shown.append({solid, [](const TitleStyle& t) { return !t.isProgress(); }});
+
     // A progress bar has none of these
     m_refreshers << [shown, current] {
         if (const Clip* c = current())
