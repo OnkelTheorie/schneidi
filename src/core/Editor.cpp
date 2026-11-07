@@ -106,6 +106,18 @@ bool Editor::isTrackLocked(TrackRef ref) const
     return ref.index >= 0 && ref.index < tl.tracks(ref.kind).size() && tl.track(ref).locked;
 }
 
+QVector<int> Editor::dropStreamTracks(const Timeline& tl, const MediaInfo& m, int track, int start) const
+{
+    const int idx = std::max(0, track);
+    const auto locked = [&](TrackKind kind, int j) { return j < tl.tracks(kind).size() && tl.tracks(kind)[j].locked; };
+    if (!m.hasAudio) return {};
+    QVector<int> out = streamTracks(tl, m, idx, start, m.length, m.hasVideo && !locked(TrackKind::Video, idx) ? idx : -1);
+    // A locked target audio track gets no sound at all (as the viewer drag and F9-F12), a locked further one its own
+    for (int& a : out)
+        if (locked(TrackKind::Audio, idx) || (a >= 0 && locked(TrackKind::Audio, a))) a = -1;
+    return out;
+}
+
 void Editor::addMediaAt(const QStringList& paths, int frame, int track)
 {
     Project* p = m_project;
@@ -137,10 +149,10 @@ void Editor::addMediaAt(const QStringList& paths, int frame, int track)
             const bool video = info->hasVideo && videoOk;
             // One clip per placed audio stream on its track (streamTracks); locked tracks get nothing
             const QVector<StreamPlacement> placed = m_streamPresets.placements(*info);
-            const QVector<int> tracks = streamTracks(tl, *info, idx, start, info->length, video ? idx : -1);
-            QVector<int> streams; // index into placed; a locked target audio track: no sound at all (as elsewhere)
-            for (int k = 0; audioOk && k < placed.size(); ++k)
-                if (tracks.value(k, -1) >= 0 && !isTrackLocked({TrackKind::Audio, tracks[k]})) streams << k;
+            const QVector<int> tracks = dropStreamTracks(tl, *info, idx, start);
+            QVector<int> streams; // index into placed
+            for (int k = 0; k < placed.size(); ++k)
+                if (tracks.value(k, -1) >= 0) streams << k;
             c.linkId = int(video) + streams.size() > 1 ? p->newLinkId() : 0;
             if (video) {
                 TimelineOps::ensureTracks(tl, TrackKind::Video, idx + 1);
