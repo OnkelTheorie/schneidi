@@ -227,6 +227,60 @@ QString checkNoise(const QString& name, const AVDictionaryEntry* e)
     return {};
 }
 
+// The filter names of a chain, read from its text (parts split at ',' and ';' outside quotes and escapes, link
+// labels left out; a name ends at '=', '@' or '['). Checked before FFmpeg parses it: a slim FFmpeg cannot parse
+// the arguments of a filter it lacks, and the refusal must not depend on the build
+QStringList filterNames(const QString& chain)
+{
+    QStringList parts;
+    QString cur;
+    bool quoted = false;
+    for (qsizetype i = 0; i < chain.size(); ++i) {
+        const QChar c = chain[i];
+        if (c == QLatin1Char('\\') && i + 1 < chain.size()) {
+            cur += c;
+            cur += chain[++i];
+        } else if (c == QLatin1Char('\'')) {
+            quoted = !quoted;
+            cur += c;
+        } else if (!quoted && (c == QLatin1Char(',') || c == QLatin1Char(';'))) {
+            parts << cur;
+            cur.clear();
+        } else {
+            cur += c;
+        }
+    }
+    parts << cur;
+    static const QRegularExpression labels(QStringLiteral("^\\s*(\\[[^\\]]*\\]\\s*)*"));
+    QStringList names;
+    for (QString part : parts) {
+        part.remove(labels);
+        qsizetype end = 0;
+        while (end < part.size() && part[end] != QLatin1Char('=') && part[end] != QLatin1Char('@') && part[end] != QLatin1Char('['))
+            ++end;
+        const QString name = part.left(end).trimmed();
+        if (!name.isEmpty()) names << name;
+    }
+    return names;
+}
+
+// A name not on the list is refused whatever the build has (empty = all on the list)
+QString checkNames(const QString& chain)
+{
+    for (const QString& name : filterNames(chain))
+        if (!allowed().contains(name))
+            return QStringLiteral("filter '%1' is not allowed (files, commands, several inputs or unknown; allowed: %2)")
+                .arg(name, allowedFilters().join(", "));
+    return {};
+}
+
+// FFmpeg's log lines name their context with a pointer ("[AVFilterGraph @ 0x55…] "): left out, so messages stay the same
+QString withoutContexts(const QString& text)
+{
+    static const QRegularExpression ctx(QStringLiteral("\\[[A-Za-z0-9_ ]+ @ (0x)?[0-9A-Fa-f]+\\]\\s*"));
+    return QString(text).remove(ctx);
+}
+
 // Checks the parsed chain before anything of it is made: one linear chain of allowed filters, no labels, no file
 // options. Empty = fine
 QString checkSegment(const AVFilterGraphSegment* seg)
@@ -239,12 +293,9 @@ QString checkSegment(const AVFilterGraphSegment* seg)
         const QString name = QString::fromUtf8(p->filter_name ? p->filter_name : "");
         if (p->nb_inputs || p->nb_outputs)
             return QStringLiteral("no link labels like [in] in the chain (filter '%1')").arg(name);
-        if (!allowed().contains(name)) {
-            if (avfilter_get_by_name(p->filter_name))
-                return QStringLiteral("filter '%1' is not allowed (files, commands or several inputs; allowed: %2)")
-                    .arg(name, allowedFilters().join(", "));
-            return QStringLiteral("no filter '%1' (allowed: %2)").arg(name, allowedFilters().join(", "));
-        }
+        if (!allowed().contains(name))
+            return QStringLiteral("filter '%1' is not allowed (files, commands, several inputs or unknown; allowed: %2)")
+                .arg(name, allowedFilters().join(", "));
         if (!avfilter_get_by_name(p->filter_name))
             return QStringLiteral("filter '%1' is not in this build's FFmpeg").arg(name);
         const AVFilter* f = avfilter_get_by_name(p->filter_name);
@@ -274,8 +325,8 @@ std::unique_ptr<Graph> build(const QString& chain, int w, int h, QString* error)
     auto fail = [&](const QString& what) -> std::unique_ptr<Graph> {
         if (error) {
             *error = what;
-            const QString detail = log.text();
-            if (!detail.isEmpty()) *error += QStringLiteral(" (FFmpeg: %1)").arg(detail.simplified());
+            if (const QString detail = withoutContexts(log.text()).simplified(); !detail.isEmpty())
+                *error += QStringLiteral(" (FFmpeg: %1)").arg(detail);
         }
         return nullptr;
     };
@@ -286,6 +337,7 @@ std::unique_ptr<Graph> build(const QString& chain, int w, int h, QString* error)
     g->graph.reset(avfilter_graph_alloc());
     if (!g->graph) return fail(QStringLiteral("out of memory"));
     g->graph->nb_threads = 1; // frames render in parallel already
+    if (const QString why = checkNames(chain); !why.isEmpty()) return fail(why);
     const QByteArray text = chain.toUtf8();
     AVFilterGraphSegment* rawSeg = nullptr;
     int ret = avfilter_graph_segment_parse(g->graph.get(), text.constData(), 0, &rawSeg);
