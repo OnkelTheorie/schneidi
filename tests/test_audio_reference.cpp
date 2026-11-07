@@ -44,9 +44,6 @@
 #include <functional>
 #include <vector>
 
-#ifndef SCHNEIDI_AUDIO_REFERENCE
-#define SCHNEIDI_AUDIO_REFERENCE ""
-#endif
 
 namespace {
 
@@ -692,7 +689,7 @@ int main(int argc, char** argv)
     QApplication app(argc, argv);
     Check::initApp("audio_reference");
     if (!Check::haveFfmpeg()) return Check::skip("ffmpeg nicht gefunden");
-    g_dir = qEnvironmentVariable("AUDIO_REFERENCE_DIR", SCHNEIDI_AUDIO_REFERENCE);
+    g_dir = Check::audioReference();
     const QString mode = qEnvironmentVariable("AUDIO_REFERENCE");
     const bool write = mode.startsWith("write");
     if (g_dir.isEmpty() || (!write && !QFileInfo::exists(g_dir + "/eigen/manifest.json")))

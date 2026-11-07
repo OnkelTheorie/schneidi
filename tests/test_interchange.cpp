@@ -349,7 +349,7 @@ int main(int argc, char** argv)
 
     // Files of other programs (sample data of the OpenTimelineIO project, Apache 2.0)
     const auto otioSample = [](const QString& name) {
-        QFile f(QString(SCHNEIDI_TEST_DATA) + "/interchange/" + name);
+        QFile f(Check::testData() + "/interchange/" + name);
         return f.open(QIODevice::ReadOnly) ? f.readAll() : QByteArray();
     };
     const auto itemAt = [](const QVector<TrackData>& tracks, int track, int item) -> const Item* {

@@ -245,7 +245,7 @@ struct Server {
         p.setProcessChannelMode(QProcess::ForwardedErrorChannel);
         QStringList args{"serve", "--port", "0", "--root", rootDir};
         if (!tok.isEmpty()) args << "--token" << QString::fromLatin1(tok);
-        p.start(SCHNEIDI_CLI, args + extra);
+        p.start(Check::cliPath(), args + extra);
         QElapsedTimer t;
         t.start();
         while (!p.canReadLine() && p.state() != QProcess::NotRunning && !t.hasExpired(60000)) p.waitForReadyRead(100);
@@ -396,7 +396,7 @@ int main(int argc, char* argv[])
         QProcessEnvironment e = QProcessEnvironment::systemEnvironment();
         e.insert("SCHNEIDI_TEST_THROW_TOOL", "templates");
         mcp.setProcessEnvironment(e);
-        mcp.start(SCHNEIDI_CLI, {"mcp"});
+        mcp.start(Check::cliPath(), {"mcp"});
         mcp.write(R"({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"templates","arguments":{}}})" "\n"
                   R"({"jsonrpc":"2.0","id":2,"method":"ping"})" "\n");
         mcp.closeWriteChannel();
@@ -415,7 +415,7 @@ int main(int argc, char* argv[])
     // a JSON value that is no message no "parse error: no error occurred"
     {
         QProcess mcp;
-        mcp.start(SCHNEIDI_CLI, {"mcp"});
+        mcp.start(Check::cliPath(), {"mcp"});
         mcp.write(R"([{"jsonrpc":"2.0","id":1,"method":"ping"},{"jsonrpc":"2.0","method":"notifications/initialized"},)"
                   R"({"jsonrpc":"2.0","id":2,"method":"tools/list"},7])" "\n"
                   R"({"jsonrpc":"2.0","id":3})" "\n"
@@ -461,13 +461,13 @@ int main(int argc, char* argv[])
     // anything else is refused instead of silently taking the last
     {
         QProcess p;
-        p.start(SCHNEIDI_CLI, {"frames", "--source", clip, "--at", "0", "--at", "1s", "--width", "64", "--out",
+        p.start(Check::cliPath(), {"frames", "--source", clip, "--at", "0", "--at", "1s", "--width", "64", "--out",
                                tmp.filePath("twice")});
         CHECK(p.waitForFinished(60000));
         CHECK_EQ(QJsonDocument::fromJson(p.readAllStandardOutput().trimmed().split('\n').last())
                      .object()["frames"].toArray().size(), qsizetype(2));
         QProcess q;
-        q.start(SCHNEIDI_CLI, {"frames", "--source", clip, "--width", "64", "--width", "32", "--out", tmp.filePath("twice2")});
+        q.start(Check::cliPath(), {"frames", "--source", clip, "--width", "64", "--width", "32", "--out", tmp.filePath("twice2")});
         CHECK(q.waitForFinished(60000));
         CHECK(q.exitCode() != 0 && q.readAllStandardOutput().contains("--width is given twice"));
     }
@@ -475,7 +475,7 @@ int main(int argc, char* argv[])
     // An empty token on the network would switch the check off: refused before anything listens
     {
         QProcess p;
-        p.start(SCHNEIDI_CLI, {"serve", "--listen", "0.0.0.0", "--port", "0", "--root", root, "--token", ""});
+        p.start(Check::cliPath(), {"serve", "--listen", "0.0.0.0", "--port", "0", "--root", root, "--token", ""});
         CHECK(p.waitForFinished(20000));
         CHECK_EQ(p.exitCode(), 2);
         CHECK(QJsonDocument::fromJson(p.readAllStandardOutput()).object()["error"].toObject()["message"].toString().contains("token"));

@@ -12,6 +12,7 @@
 #include <QCoreApplication>
 #include <QDebug>
 #include <QDir>
+#include <QFile>
 #include <QFileInfo>
 #include <QImage>
 #include <QProcess>
@@ -66,6 +67,31 @@ inline void initApp(const char* name)
 
 // What the engine needs without a preview, like schneidi-cli (Engine::initHeadless, in check_support.cpp)
 void initEngine();
+
+// A path from the build (programs, data folders), by name: SCHNEIDI_CLI, SCHNEIDI_APP, SCHNEIDI_TEST_DATA,
+// SCHNEIDI_AUDIO_REFERENCE, SCHNEIDI_SOURCE_DIR. They are no compile definitions (an absolute path there differs per
+// worktree and makes every ccache lookup miss): ctest sets them in the environment, and a test started by hand reads
+// schneidi-test-paths.ini next to itself (written by CMake). Empty = unknown. Call after creating the application.
+inline QString buildPath(const char* name)
+{
+    const QString env = qEnvironmentVariable(name);
+    if (!env.isEmpty() || !QCoreApplication::instance()) return env;
+    QFile f(QCoreApplication::applicationDirPath() + "/schneidi-test-paths.ini");
+    if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) return {};
+    const QString key = QString::fromLatin1(name) + '=';
+    for (const QString& line : QString::fromUtf8(f.readAll()).split('\n'))
+        if (line.startsWith(key)) return line.mid(key.size()).trimmed();
+    return {};
+}
+inline QString cliPath() { return buildPath("SCHNEIDI_CLI"); }
+inline QString appPath() { return buildPath("SCHNEIDI_APP"); }
+inline QString testData() { return buildPath("SCHNEIDI_TEST_DATA"); }
+inline QString sourceDir() { return buildPath("SCHNEIDI_SOURCE_DIR"); }
+// Reference renders of the sound (private docs folder): AUDIO_REFERENCE_DIR wins, empty = none
+inline QString audioReference()
+{
+    return qEnvironmentVariable("AUDIO_REFERENCE_DIR", buildPath("SCHNEIDI_AUDIO_REFERENCE"));
+}
 
 inline bool haveFfmpeg() { return !QStandardPaths::findExecutable("ffmpeg").isEmpty(); }
 

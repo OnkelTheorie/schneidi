@@ -478,7 +478,7 @@ void test(const QString& dir)
     FakeProvider fake;
     Cli::Live::Server server(&w);
     if (!CHECK(server.start(&err))) return;
-    w.setAiChatTools({SCHNEIDI_CLI, "mcp"}, server.chatEnvironment());
+    w.setAiChatTools({Check::cliPath(), "mcp"}, server.chatEnvironment());
     // AI connections from outside are off: the app's own chat still works
     server.disconnectClient("AI connections are turned off in the settings");
     AiChat* chat = w.aiChat();

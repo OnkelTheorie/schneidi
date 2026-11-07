@@ -22,7 +22,7 @@
 
 namespace {
 
-const QString kData = QStringLiteral(SCHNEIDI_TEST_DATA "/projects");
+QString kData() { return Check::testData() + "/projects"; }
 
 const Clip* clip(const Timeline& tl, int id)
 {
@@ -36,12 +36,12 @@ const Clip* clip(const Timeline& tl, int id)
 // Every fixture: loads, saves as the current version, and a second save gives the same file (nothing lost or added)
 void testRoundTrip(const QString& tmp)
 {
-    const QStringList files = QDir(kData).entryList({"*.schneidi"}, QDir::Files, QDir::Name);
+    const QStringList files = QDir(kData()).entryList({"*.schneidi"}, QDir::Files, QDir::Name);
     CHECK(files.size() >= 2);
     for (const QString& name : files) {
         ProjectData d;
         QString err;
-        if (!Check::report(ProjectFile::load(kData + "/" + name, &d, &err), qPrintable(name), __FILE__, __LINE__, err))
+        if (!Check::report(ProjectFile::load(kData() + "/" + name, &d, &err), qPrintable(name), __FILE__, __LINE__, err))
             continue;
         const QString path = tmp + "/" + name;
         const QByteArray first = ProjectFile::toJson(d, path);
@@ -59,7 +59,7 @@ void testVersion1()
 {
     ProjectData d;
     QString err;
-    if (!CHECK(ProjectFile::load(kData + "/v1-0.1.schneidi", &d, &err))) return;
+    if (!CHECK(ProjectFile::load(kData() + "/v1-0.1.schneidi", &d, &err))) return;
     CHECK_EQ(d.format.width, 1920);
     CHECK_EQ(d.format.height, 1080);
     CHECK_EQ(d.format.rate.num, 30);
@@ -99,7 +99,7 @@ void testVersion2()
 {
     ProjectData d;
     QString err;
-    if (!CHECK(ProjectFile::load(kData + "/v2-0.9.schneidi", &d, &err))) return;
+    if (!CHECK(ProjectFile::load(kData() + "/v2-0.9.schneidi", &d, &err))) return;
     const Timeline& tl = d.timeline;
     CHECK_EQ(tl.video[0].name, QString("Kamera"));
     CHECK(!tl.subtitles.isEmpty() && tl.subtitles[0].cues.size() == 1);
@@ -154,7 +154,7 @@ void testVersion2Crop()
     });
     ProjectData d;
     QString err;
-    if (!CHECK(ProjectFile::load(kData + "/v2-0.12dev-crop.schneidi", &d, &err))) return;
+    if (!CHECK(ProjectFile::load(kData() + "/v2-0.12dev-crop.schneidi", &d, &err))) return;
     CHECK_EQ(d.format.width, 1080);
     const Timeline& tl = d.timeline;
     const auto near = [](double a, double b) { return std::abs(a - b) < 1e-9; };
@@ -200,7 +200,7 @@ void testVersion2Crop()
     MediaAspect::setProbe({});
     // Without a probe (or the media offline) the values stay as they are
     ProjectData plain;
-    if (CHECK(ProjectFile::load(kData + "/v2-0.12dev-crop.schneidi", &plain, &err)))
+    if (CHECK(ProjectFile::load(kData() + "/v2-0.12dev-crop.schneidi", &plain, &err)))
         if (const Clip* c = clip(plain.timeline, 2); CHECK(c)) CHECK(near(c->transform.cropTop, 700) && c->cropOnFrame);
     // ... and stay convertible: saved (as format 3) while offline, opened again with the media there -> converted then
     const QString offline = tmp.filePath("offline.schneidi");
@@ -236,7 +236,7 @@ void testVersion3Pixelate()
 {
     ProjectData d;
     QString err;
-    if (!CHECK(ProjectFile::load(kData + "/v3-0.14dev-pixelate.schneidi", &d, &err))) return;
+    if (!CHECK(ProjectFile::load(kData() + "/v3-0.14dev-pixelate.schneidi", &d, &err))) return;
     const Clip* c = clip(d.timeline, 3);
     if (!CHECK(c)) return;
     CHECK_EQ(GradeWindows::list(*c), (QVector<int>{1, 2, 3}));
@@ -258,7 +258,7 @@ void testVersion6Windows(const QString& tmp)
 {
     ProjectData d;
     QString err;
-    if (!CHECK(ProjectFile::load(kData + "/v3-0.14dev-pixelate.schneidi", &d, &err))) return;
+    if (!CHECK(ProjectFile::load(kData() + "/v3-0.14dev-pixelate.schneidi", &d, &err))) return;
     Clip* c = nullptr;
     for (Track& t : d.timeline.video)
         for (Clip& x : t.clips)
@@ -281,7 +281,7 @@ void testVersion6Features(const QString& tmp)
 {
     ProjectData base;
     QString err;
-    if (!CHECK(ProjectFile::load(kData + "/v3-0.14dev-pixelate.schneidi", &base, &err))) return;
+    if (!CHECK(ProjectFile::load(kData() + "/v3-0.14dev-pixelate.schneidi", &base, &err))) return;
     const QString path = tmp + "/features.schneidi";
     const auto version = [&](const ProjectData& d) {
         return QJsonDocument::fromJson(ProjectFile::toJson(d, path)).object().value("version").toInt();
