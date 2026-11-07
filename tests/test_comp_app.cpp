@@ -41,6 +41,7 @@
 #include <QMimeData>
 #include <QTemporaryDir>
 #include <QTest>
+#include <QThreadPool>
 #include <QDialog>
 #include <QScrollArea>
 #include <QSignalSpy>
@@ -426,6 +427,38 @@ int main(int argc, char** argv)
         c = TimelineOps::findClip(project->timeline(), clip2);
         CHECK(CompUi::animated(*c, 3, "x"));
         CHECK(ins->findChild<QLabel*>("comp_analyze_status")->text().startsWith("Fertig"));
+
+        // The clip changed while it was analysed: the result is dropped, the status says so
+        PersonMatte::setStandIn(standIn());
+        page->selectNode(2);
+        page->refresh();
+        settle();
+        analyze = ins->findChild<QPushButton*>("comp_analyze");
+        if (CHECK(analyze && analyze->isEnabled())) {
+            const QString before = CompUi::nodeValues(*TimelineOps::findClip(project->timeline(), clip2), 2).value("cache").toString();
+            idx = undo->index();
+            analyze->click();
+            w.editor()->modifyClips({clip2}, "trim", [](Clip& cl) { cl.out -= 2; });
+            CHECK(QTest::qWaitFor([&] { return !ins->analyzing(); }, 60000));
+            settle();
+            CHECK_EQ(undo->index(), idx + 1); // the trim only
+            CHECK_EQ(ins->findChild<QLabel*>("comp_analyze_status")->text(), QString("Analyse verworfen – Clip geändert"));
+            CHECK_EQ(CompUi::nodeValues(*TimelineOps::findClip(project->timeline(), clip2), 2).value("cache").toString(), before);
+            undo->undo();
+
+            // Another project replaced it meanwhile: the analysis stops, nothing lands in the new one
+            settle();
+            analyze = ins->findChild<QPushButton*>("comp_analyze");
+            analyze->click();
+            CHECK(ins->analyzing());
+            project->load(project->data());
+            CHECK(!ins->analyzing());
+            QThreadPool::globalInstance()->waitForDone(60000);
+            settle();
+            CHECK_EQ(undo->index(), 0);
+            CHECK(!undo->canUndo());
+        }
+        PersonMatte::setStandIn(std::nullopt);
     }
 
     // ---- Tracker handles on a 9:16 clip in the 16:9 frame: A/B are 0..1 of the clip's own picture (between the bars) ----

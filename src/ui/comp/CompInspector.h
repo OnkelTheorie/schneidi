@@ -60,8 +60,9 @@ private:
     void set(const QString& key, const QVariant& value, bool drag);
     int addAnalysisRow(int row, const QString& kind); // cutout / tracker: button, progress, hint; returns the next row
     void updateAnalysisRow();
-    void analysisDone(int clipId, int node, const QString& kind, const QString& cache,
-                      const QVector<::Comp::TrackPoint>& points, const QString& error, const QString& note);
+    struct Job;
+    void analysisDone(const Job& job, const QString& cache, const QVector<::Comp::TrackPoint>& points,
+                      const QString& error, const QString& note);
 
     Editor* m_editor;
     int m_clipId = 0, m_node = 0, m_playhead = 0;
@@ -79,6 +80,8 @@ private:
         QString kind;
         std::shared_ptr<std::atomic<bool>> cancel;
         int done = 0, total = 0;
+        quint64 generation = 0; // Project::generation() at the start: another project open = the result is dropped
+        QString fingerprint;    // the clip's source/in/out and the node's values at the start (analysisFingerprint)
     };
     std::optional<Job> m_job;
     QString m_analysisNote; // what the last analysis of the shown node said (error, result)

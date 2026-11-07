@@ -204,6 +204,9 @@ public:
     ProjectData data() const;
     void load(const ProjectData& d);
     void reset(); // empty project
+    // Counts the projects this object held: load()/reset() count up (work started on one project, such as a background
+    // analysis, must not land in the next)
+    quint64 generation() const { return m_generation; }
     bool isModified() const { return m_mediaDirty || !m_undo.isClean(); }
     void markSaved();
     void markModified();
@@ -249,6 +252,7 @@ private:
     std::optional<TemplateInfo> m_templateInfo;
     int m_lastBinId = 0;
     QUndoStack m_undo;
+    quint64 m_generation = 0;
     int m_lastClipId = 0;
     int m_lastLinkId = 0;
     int m_mergeSession = 0;
