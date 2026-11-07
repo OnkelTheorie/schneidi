@@ -331,6 +331,17 @@ void testNode()
     CHECK(st.mode == TrackMode::Two);
     CHECK(st.a == QPointF(0.2, 0.5) && st.b == QPointF(0.6, 0.7));
     CHECK(startOf({}).mode == TrackMode::Point);
+    // What followers read: not analyzed = at the start point (no jump of a mask drawn relative to ax/ay)
+    const QVariantMap fresh{{"ax", 0.3}, {"ay", 0.8}};
+    CHECK_EQ(trackerValue(fresh, "x"), 0.3);
+    CHECK_EQ(trackerValue(fresh, "y"), 0.8);
+    CHECK_EQ(trackerValue(fresh, "scale"), 1.0);
+    CHECK_EQ(trackerValue(fresh, "angle"), 0.0);
+    CHECK_EQ(trackerValue({}, "x"), 0.5);
+    const QVariantMap done{{"ax", 0.3}, {"x", 0.42}, {"y", 0.1}, {"angle", 12.5}};
+    CHECK_EQ(trackerValue(done, "x"), 0.42);
+    CHECK_EQ(trackerValue(done, "y"), 0.1);
+    CHECK_EQ(trackerValue(done, "angle"), 12.5);
 }
 
 void testEditor()

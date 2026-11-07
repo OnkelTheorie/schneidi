@@ -63,6 +63,11 @@ TrackRun trackFrames(const std::function<QImage(int frame)>& frame, const TrackS
 // Start of a tracker node from its values (keys without the "n<id>." prefix, missing = defaults)
 TrackStart startOf(const QVariantMap& values);
 
+// A tracker node's value as its followers read it (numOf): like numValue, but a result x/y that is not set (no value,
+// no keyframes – not analyzed yet) is the start point ax/ay, so a follower drawn relative to (ax, ay) does not jump.
+// scale/angle missing = 1/0 (their defaults). The engine's numOf should use this for nodes of kind "tracker"
+double trackerValue(const QVariantMap& values, const QString& key);
+
 // Tracker node `node` of clip c's "comp" graph over clip frames from..to; the node's start values at `from`
 // (keyframes resolved). Pictures: the clip alone without its effects (Tracker::clipFrames)
 TrackRun trackNode(const ProjectFormat& format, const Clip& c, int node, int from, int to,
