@@ -556,6 +556,15 @@ int main(int argc, char** argv)
         undo->undo();
         CHECK_EQ(look().solidRotY, TitleLook().solidRotY);
         undo->redo();
+        // The same ranges as the text3d node and the edit op: turns and the light direction -360..360
+        for (const char* name : {"inspector_titleSolidRotX", "inspector_titleSolidRotY", "inspector_titleSolidRotZ",
+                                 "inspector_titleSolidLightAngle"})
+            if (ScrubField* f = field(name); CHECK(f)) {
+                const double was = f->value();
+                f->setValue(-300); // shown only, no change
+                CHECK_EQ(f->value(), -300.0);
+                f->setValue(was);
+            }
         // The section in view for the picture
         for (QWidget* h : ins->findChildren<QWidget*>("InspectorSection"))
             for (QToolButton* b : h->findChildren<QToolButton*>())
