@@ -437,8 +437,13 @@ bool applyFilter(const QString& chain, uint8_t* rgba, int width, int height, dou
         c.graphs.push_back(std::move(g));
         it = c.graphs.end() - 1;
     }
-    if (run(**it, rgba, seconds, error)) return true;
-    c.graphs.erase(it); // made fresh on the next frame
+    QString why;
+    if (run(**it, rgba, seconds, &why)) return true;
+    // A chain that fails while running is not built again every frame: kept as failed like one that does not build
+    c.graphs.erase(it);
+    if (c.failed.size() > 32) c.failed.clear();
+    c.failed.insert(failKey, why);
+    if (error) *error = why;
     return false;
 }
 

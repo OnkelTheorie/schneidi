@@ -62,6 +62,8 @@ bool shaderCompilerAvailable(QString* why = nullptr);
 bool shaderRenderable(QString* why = nullptr);
 // Empty = compiles; else the compiler's message with line numbers of the user's code
 QString checkShader(const QString& code);
+// How often the compiler program was started in this run (threads asking for the same new shader share one; tests)
+int shaderCompilerRuns();
 // Draws the shader over the picture on the GPU; false = not drawn (no GPU, compile error; in *error)
 bool applyShader(const QString& code, const ShaderValues& values, uint8_t* rgba, int width, int height,
                  QString* error = nullptr);

@@ -34,7 +34,9 @@
 #endif
 
 #include <algorithm>
+#include <atomic>
 #include <cstring>
+#include <future>
 #include <mutex>
 
 namespace Picture::Custom {
@@ -216,10 +218,14 @@ QString qsbPath()
 struct Compiled {
     QShader shader;
     QString error;
+    bool transient = false; // a failure that may not repeat (the compiler timed out, no temporary folder): not kept
 };
 
 std::mutex g_mutex;
 QHash<QByteArray, Compiled> g_compiled; // hash of the full source -> result
+// Compiles running now: the render threads that want the same new shader wait for the one compile
+QHash<QByteArray, std::shared_future<Compiled>> g_running;
+std::atomic<int> g_compilerRuns{0};
 
 QByteArray keyOf(const QString& source)
 {
@@ -259,20 +265,39 @@ QString checkResources(const QShader& shader)
     return {};
 }
 
+Compiled compileNow(const QString& code, const QString& source, const QByteArray& key);
+
+// The compiled shader of the code: from memory, the cache folder or the compiler (once per source at a time)
 Compiled compile(const QString& code)
 {
     const QString source = fullSource(code);
     const QByteArray key = keyOf(source);
+    std::promise<Compiled> promise;
     {
-        std::lock_guard lock(g_mutex);
+        std::unique_lock lock(g_mutex);
         if (auto it = g_compiled.constFind(key); it != g_compiled.cend()) return *it;
+        if (auto it = g_running.constFind(key); it != g_running.cend()) {
+            const std::shared_future<Compiled> f = *it;
+            lock.unlock();
+            return f.get();
+        }
+        g_running.insert(key, promise.get_future().share());
     }
-    Compiled c;
-    if (c.error = checkUserCode(code); !c.error.isEmpty()) {
-        std::lock_guard lock(g_mutex);
+    const Compiled c = compileNow(code, source, key);
+    std::lock_guard lock(g_mutex);
+    g_running.remove(key);
+    if (!c.transient) {
+        if (g_compiled.size() > 64) g_compiled.clear();
         g_compiled.insert(key, c);
-        return c;
     }
+    promise.set_value(c);
+    return c;
+}
+
+Compiled compileNow(const QString& code, const QString& source, const QByteArray& key)
+{
+    Compiled c;
+    if (c.error = checkUserCode(code); !c.error.isEmpty()) return c;
     const QString cached = cacheFile(key);
     if (QFile f(cached); !cached.isEmpty() && f.open(QIODevice::ReadOnly)) c.shader = QShader::fromSerialized(f.readAll());
     if (c.shader.isValid() && !checkResources(c.shader).isEmpty()) c.shader = QShader();
@@ -283,11 +308,13 @@ Compiled compile(const QString& code)
             c.error = QStringLiteral("no shader compiler: the program qsb (Qt Shader Tools) was not found");
         } else if (!tmp.isValid()) {
             c.error = QStringLiteral("no temporary folder for the shader compiler");
+            c.transient = true;
         } else {
             const QString in = tmp.filePath(QStringLiteral("effect.frag")), out = tmp.filePath(QStringLiteral("e.qsb"));
             QFile f(in);
             if (f.open(QIODevice::WriteOnly)) f.write(source.toUtf8());
             f.close();
+            ++g_compilerRuns;
             QProcess p;
             p.setProcessChannelMode(QProcess::MergedChannels);
             p.start(qsb, {QStringLiteral("--glsl"), QStringLiteral("300 es,150,330"), QStringLiteral("--hlsl"),
@@ -297,6 +324,7 @@ Compiled compile(const QString& code)
                 p.kill();
                 p.waitForFinished();
                 c.error = QStringLiteral("the shader compiler did not finish");
+                c.transient = true; // a busy machine: try again on a later frame
             } else {
                 QFile o(out);
                 if (p.exitCode() == 0 && o.open(QIODevice::ReadOnly)) {
@@ -316,9 +344,6 @@ Compiled compile(const QString& code)
             }
         }
     }
-    std::lock_guard lock(g_mutex);
-    if (g_compiled.size() > 64) g_compiled.clear();
-    g_compiled.insert(key, c);
     return c;
 }
 
@@ -337,6 +362,15 @@ QString shaderHelp()
         "own uniforms/buffers/images, out/inout parameters, while/do; loops only as for (int i = 0; i < N; "
         "++i) with a number N (at most 256 steps, all loops together 4096) that change i nowhere else. Example: vec4 effect(vec2 uv) { vec4 c = pixel(uv + vec2(sin(uv.y "
         "* 40.0 + time * 6.0) * 0.01 * p1, 0.0)); return c; }");
+}
+
+int shaderCompilerRuns()
+{
+#ifdef SCHNEIDI_HAVE_RHI
+    return g_compilerRuns.load();
+#else
+    return 0;
+#endif
 }
 
 bool shaderCompilerAvailable(QString* why)

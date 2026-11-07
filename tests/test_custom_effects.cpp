@@ -21,8 +21,11 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QTemporaryDir>
+#include <QUuid>
 
+#include <atomic>
 #include <clocale>
+#include <thread>
 #include <vector>
 
 namespace PC = Picture::Custom;
@@ -318,6 +321,20 @@ int main(int argc, char** argv)
         const QString err = PC::checkShader("vec4 effect(vec2 uv)\n{\n    return pixel(uv) * undefinedThing;\n}");
         if (!CHECK(err.contains("undefinedThing") && err.contains("3"))) std::printf("       %s\n", qPrintable(err));
         CHECK(PC::checkShader("void main2() {}").contains("vec4 effect"));
+        // Render threads asking for the same new shader at once start the compiler once
+        {
+            const QString fresh = QString("// %1\nvec4 effect(vec2 uv) { return pixel(uv).bgra; }").arg(QUuid::createUuid().toString());
+            const int before = PC::shaderCompilerRuns();
+            std::vector<std::thread> threads;
+            std::atomic<int> ok{0};
+            for (int i = 0; i < 6; ++i)
+                threads.emplace_back([&] {
+                    if (PC::checkShader(fresh).isEmpty()) ++ok;
+                });
+            for (std::thread& t : threads) t.join();
+            CHECK_EQ(ok.load(), 6);
+            CHECK_EQ(PC::shaderCompilerRuns() - before, 1);
+        }
         // Normal code with helpers, #define/#if and bounded loops compiles
         const QString blur = "#define R 4\n#if R > 2\nconst float k = 1.0;\n#endif\n// a box blur, in comments: while #include\n"
                              "float w(in float x) { return x * k; }\n"
