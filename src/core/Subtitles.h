@@ -49,7 +49,8 @@ struct SrtFile {
 QVector<SrtFile> srtFiles(const Timeline& tl, const QString& path);
 
 // ---- Readable cues (0.19) ----
-// Regroups short cues (whisper's one-line pieces, a word list) into cues people can read: at most `lines` lines of
+// Regroups short cues (whisper's one-line pieces, a word list) into cues people can read (the cheapest split of each
+// stretch between pauses: no short remainder of a sentence, its pieces about equally long, at punctuation): at most `lines` lines of
 // `lineChars` characters (two lines split evenly; at a comma/phrase end when that is at most 16 characters less even), ended at sentence ends once
 // slow enough, never across a pause longer than `pause` seconds; each one stays at least `minSeconds` and long
 // enough for `cps` characters per second where the next cue leaves room. Word times: a cue with one CueWord per word
