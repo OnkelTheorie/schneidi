@@ -2694,6 +2694,12 @@ QVector<SkippedEffect> skippedEffects(const Timeline& tl)
                 if (!used(track, c, true)) continue;
                 for (const EffectInstance& e : c.effects) {
                     if (!e.enabled) continue;
+                    // A compositing graph renders; node kinds of a newer version in it are passed through
+                    if (e.effectId == QLatin1String(::Comp::kEffectId)) {
+                        for (const QString& kind : Comp::unknownKinds(e))
+                            out << SkippedEffect{c.id, QStringLiteral("comp:") + kind, true, sequence};
+                        continue;
+                    }
                     const EffectDescriptor* d = EffectRegistry::find(e.effectId);
                     if (d && (d->fixed || !d->video || e.effectId == QLatin1String("color")
                               || e.effectId == QLatin1String("blur") || e.effectId == QLatin1String("chromakey")

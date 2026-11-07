@@ -87,6 +87,8 @@ struct NodeState {
     int readers = 0;                  // nodes still to read it
     bool isStatic = false;
     uint64_t key = 0;
+    bool needed = false;              // the output depends on it (and no cached node in between)
+    bool hit = false;                 // static and found in the cache: its inputs are not evaluated
     bool fusedInto = false;           // a compound track painted straight onto the merge that reads it
     int track = -1;
 };
@@ -135,16 +137,48 @@ bool evaluate(const EffectInstance& comp, const Env& env, Cache* cache, Buf* out
         s.node = g.node(id);
         s.kind = s.node ? find(s.node->type) : nullptr;
     }
-    for (const CompLink& l : g.links)
-        if (state.contains(l.from) && state.contains(l.to)) ++state[l.from].readers;
-    ++state[g.out].readers; // the result is read by the caller
-
     auto valueOf = [&](int id, const NodeType* k, const QString& key) -> double {
         if (env.clip && animated.value(id).contains(key))
             return Keys::valueAt(*env.clip, Keys::effectParam(::Comp::kEffectId, CompGraph::paramKey(id, key)), env.t);
         if (!k) return values.value(id).value(key).toDouble();
         return numValue(*k, values.value(id), key);
     };
+
+    // Static: kind not varying, no keyframes, every connected input static; keyed by its values and the inputs' keys
+    for (int id : order) {
+        NodeState& s = state[id];
+        if (!s.node) continue;
+        bool isStatic = s.kind && !s.kind->varying && !animated.contains(id);
+        uint64_t key = isStatic ? ownHash(s.node->type, values.value(id), env) : 0;
+        for (const CompLink& l : g.links)
+            if (l.to == id) {
+                const auto it = state.constFind(l.from);
+                if (it == state.cend() || !it->isStatic) {
+                    isStatic = false;
+                } else {
+                    key = mix(key, it->key);
+                    key = mix(key, qHash(l.input));
+                }
+            }
+        s.isStatic = isStatic;
+        s.key = key;
+    }
+    // From the output back: a static node found in the cache needs nothing below it
+    state[g.out].needed = true;
+    for (auto it = order.crbegin(); it != order.crend(); ++it) {
+        NodeState& s = state[*it];
+        if (!s.needed) continue;
+        if (s.isStatic && cache && (s.kept = cache->find(s.key))) {
+            s.hit = true;
+            continue;
+        }
+        for (const CompLink& l : g.links)
+            if (l.to == *it && state.contains(l.from)) state[l.from].needed = true;
+    }
+    for (const CompLink& l : g.links)
+        if (state.contains(l.from) && state.contains(l.to) && state[l.to].needed && !state[l.to].hit)
+            ++state[l.from].readers;
+    ++state[g.out].readers; // the result is read by the caller
 
     // Compound tracks painted straight onto the merge reading them (normal mode, full opacity, no mask): exactly the
     // timeline's way of laying a track on the ones below, no picture of the track alone
@@ -200,24 +234,15 @@ bool evaluate(const EffectInstance& comp, const Env& env, Cache* cache, Buf* out
         }
         NodeState& s = state[id];
         const CompNode* n = s.node;
-        if (!n) continue;
-        // Static: kind not varying, no keyframes, every connected input static; keyed by its values and the inputs'
-        bool isStatic = s.kind && !s.kind->varying && !animated.contains(id);
-        uint64_t key = isStatic ? ownHash(n->type, values.value(id), env) : 0;
-        for (const CompLink& l : g.links)
-            if (l.to == id) {
-                const auto it = state.constFind(l.from);
-                if (it == state.cend() || !it->isStatic) {
-                    isStatic = false;
-                } else {
-                    key = mix(key, it->key);
-                    key = mix(key, qHash(l.input));
-                }
-            }
-        s.isStatic = isStatic;
-        s.key = key;
+        if (!n || !s.needed) continue;
+        const bool isStatic = s.isStatic;
+        const uint64_t key = s.key;
 
-        if (s.fusedInto) {
+        if (s.hit) {
+            s.pic = s.kept.get();
+            if (stats) ++stats->cached;
+            continue; // read nothing
+        } else if (s.fusedInto) {
             // made by the merge reading it
         } else if (!s.kind) {
             // Unknown kind (newer version): its first connected input passed through
@@ -244,9 +269,6 @@ bool evaluate(const EffectInstance& comp, const Env& env, Cache* cache, Buf* out
                 if (env.paintTrack(track, s.own)) s.pic = &s.own;
                 if (stats) ++stats->evaluated;
             }
-        } else if (isStatic && cache && (s.kept = cache->find(key))) {
-            s.pic = s.kept.get();
-            if (stats) ++stats->cached;
         } else if (s.kind->id == QLatin1String("merge") && g.linkInto(id, "fg")
                    && state.value(g.linkInto(id, "fg")->from).fusedInto) {
             const NodeState& f = state[g.linkInto(id, "fg")->from];

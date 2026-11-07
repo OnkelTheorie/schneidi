@@ -106,7 +106,8 @@ bool evalMerge(NodeCtx& ctx, Buf* out)
     *out = ctx.take(Buf::Rgba);
     if (bg) copyBuf(*bg, *out);
     if (!fg || opacity <= 0) return true;
-    const int mode = Blend::modeIndex(ctx.text("mode"));
+    // the choice by index (a name or its number, as num reads it) to the shared blend math
+    const int mode = Blend::modeIndex(mergeModes().value(int(ctx.num("mode"))));
     const int w = out->w, h = out->h;
     if (fg->w != w || fg->h != h) return true;
     if (mode == Blend::Normal && !mask) { // exactly the timeline's track compositing
@@ -206,10 +207,13 @@ bool evalCrop(NodeCtx& ctx, Buf* out)
         return true;
     }
     // Soft edge: alpha ramps from 0 at the crop line to full `soft` pixels inside
-    auto ramp = [soft](double d) { return std::clamp(d / soft, 0.0, 1.0); };
+    // (only on the cropped sides: the picture's own border stays hard)
+    auto ramp = [soft](double d, bool cut) { return cut ? std::clamp(d / soft, 0.0, 1.0) : d < 0 ? 0.0 : 1.0; };
     std::vector<uint16_t> cx(static_cast<size_t>(w)), cy(static_cast<size_t>(h));
-    for (int i = 0; i < w; ++i) cx[size_t(i)] = uint16_t(std::lround(256 * std::min(ramp(i + 0.5 - x0), ramp(x1 - i - 0.5))));
-    for (int i = 0; i < h; ++i) cy[size_t(i)] = uint16_t(std::lround(256 * std::min(ramp(i + 0.5 - y0), ramp(y1 - i - 0.5))));
+    for (int i = 0; i < w; ++i)
+        cx[size_t(i)] = uint16_t(std::lround(256 * std::min(ramp(i + 0.5 - x0, x0 > 0), ramp(x1 - i - 0.5, x1 < w))));
+    for (int i = 0; i < h; ++i)
+        cy[size_t(i)] = uint16_t(std::lround(256 * std::min(ramp(i + 0.5 - y0, y0 > 0), ramp(y1 - i - 0.5, y1 < h))));
     Compose::forRows(h, 32, [&](int r0, int r1) {
         for (int y = r0; y < r1; ++y) {
             uint8_t* p = out->data() + size_t(y) * w * 4;

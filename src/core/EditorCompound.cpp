@@ -3,6 +3,7 @@
 // dragging a timeline from the Media Pool into another timeline)
 #include "core/Editor.h"
 
+#include "core/CompGraph.h"
 #include "core/EditorDetail.h"
 #include "core/I18n.h"
 #include "core/Multicam.h"
@@ -57,9 +58,49 @@ bool hasClips(const QVector<Track>& tracks)
     return std::any_of(tracks.begin(), tracks.end(), [](const Track& t) { return !t.clips.isEmpty(); });
 }
 
+// The graph of "comp from selection": inner video tracks first..last laid on each other bottom up by normal merges
+// (exactly how a timeline lays its tracks), every track a "clip" node with its index
+EffectInstance compOfTracks(const QVector<int>& tracks)
+{
+    EffectInstance e;
+    e.effectId = Comp::kEffectId;
+    CompGraph g;
+    int prev = 0;
+    double x = 0;
+    for (int i = 0; i < tracks.size(); ++i, x += 220) {
+        const int clip = g.nextId();
+        g.nodes << CompNode{clip, QStringLiteral("clip"), QPointF(x, 120.0 * i)};
+        e.params.insert(CompGraph::paramKey(clip, QStringLiteral("track")), tracks[i]);
+        if (prev == 0) {
+            prev = clip;
+            continue;
+        }
+        const int merge = g.nextId();
+        g.nodes << CompNode{merge, QStringLiteral("merge"), QPointF(x + 110, 120.0 * i - 60)};
+        g.links << CompLink{prev, merge, QStringLiteral("bg")} << CompLink{clip, merge, QStringLiteral("fg")};
+        prev = merge;
+    }
+    g.out = prev;
+    Comp::setGraph(e, g);
+    return e;
+}
+
 } // namespace
 
-int Editor::createCompoundClip(const QString& name)
+int Editor::createCompoundClip(const QString& name) { return createCompound(name, false); }
+
+int Editor::compFrom(const QString& name)
+{
+    // Only with a video clip in the selection (a graph of sound alone means nothing)
+    const QVector<int> ids = withFollowers(clipIdsOf(m_selection->ids()));
+    const bool video = std::any_of(ids.begin(), ids.end(), [&](int id) {
+        TrackRef ref;
+        return TimelineOps::findClip(m_project->timeline(), id, &ref) && ref.kind == TrackKind::Video;
+    });
+    return video ? createCompound(name, true) : 0;
+}
+
+int Editor::createCompound(const QString& name, bool comp)
 {
     Project* p = m_project;
     const Timeline& cur = p->timeline();
@@ -93,7 +134,7 @@ int Editor::createCompoundClip(const QString& name)
     const int seqId = p->newSequenceId();
     const int parentId = p->currentSequence();
     QSet<int> selectIds;
-    p->editSequences(T("Compound Clip erstellen"), [&](QVector<Sequence>& list, int&) {
+    p->editSequences(comp ? T("Comp aus Auswahl") : T("Compound Clip erstellen"), [&](QVector<Sequence>& list, int&) {
         Timeline* tl = timelineOf(list, parentId);
         if (!tl) return;
         const Timeline before = *tl;
@@ -156,6 +197,12 @@ int Editor::createCompoundClip(const QString& name)
             }
             Clip x = c;
             x.id = newId();
+            if (comp && kind == TrackKind::Video) {
+                QVector<int> tracks; // inner video tracks with clips, bottom up
+                for (int i = 0; i < inner.video.size(); ++i)
+                    if (!inner.video[i].clips.isEmpty()) tracks << i;
+                x.effects << compOfTracks(tracks);
+            }
             TimelineOps::placeClip(tl->tracks(kind)[target], x, newId);
             selectIds.insert(x.id);
         }
