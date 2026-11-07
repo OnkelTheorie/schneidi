@@ -3,6 +3,7 @@
 #include "core/PathKey.h"
 
 #include "core/Captions.h"
+#include "core/CompGraph.h"
 #include "core/Dynamics.h"
 #include "core/EffectFolders.h"
 #include "core/EffectRegistry.h"
@@ -491,6 +492,16 @@ void keysFromJson(Clip& c, const QJsonObject& o)
 QJsonObject pathParamsRelative(const EffectInstance& e, const QDir& projectDir)
 {
     QJsonObject rel;
+    // Compositing graph: the files of its "media" nodes ("n<id>.path"), like media of the pool
+    if (e.effectId == QLatin1String(Comp::kEffectId)) {
+        for (auto it = e.params.cbegin(); it != e.params.cend(); ++it) {
+            QString key;
+            if (CompGraph::splitParamKey(it.key(), nullptr, &key) && key == QLatin1String(Comp::kPathKey)
+                && !it->toString().isEmpty())
+                rel[it.key()] = projectDir.relativeFilePath(it->toString());
+        }
+        return rel;
+    }
     if (const EffectDescriptor* d = EffectRegistry::find(e.effectId))
         for (const EffectParam& p : d->params) {
             const QString path = e.params.value(p.key).toString();
@@ -504,6 +515,15 @@ QJsonObject pathParamsRelative(const EffectInstance& e, const QDir& projectDir)
 // a file of the same name in the own LUTs folder (project from another machine, e.g. Linux <-> Windows)
 void resolvePathParams(EffectInstance& e, const QJsonObject& rel, const QDir& projectDir)
 {
+    if (e.effectId == QLatin1String(Comp::kEffectId)) {
+        for (auto it = rel.constBegin(); it != rel.constEnd(); ++it) {
+            const QString abs = e.params.value(it.key()).toString();
+            if (abs.isEmpty() || QFileInfo::exists(abs)) continue;
+            const QString candidate = QDir::cleanPath(projectDir.absoluteFilePath(it->toString()));
+            if (QFileInfo::exists(candidate)) e.params[it.key()] = candidate;
+        }
+        return;
+    }
     const EffectDescriptor* d = EffectRegistry::find(e.effectId);
     if (!d) return;
     for (const EffectParam& p : d->params) {
@@ -527,6 +547,11 @@ void resolvePathParams(EffectInstance& e, const QJsonObject& rel, const QDir& pr
 // loaded clip would count as changed (undo, render cache). Unknown effects stay as read.
 void normalizeParams(EffectInstance& e)
 {
+    // Compositing graph: back into its own storage form (JSON makes every number a double or a long)
+    if (e.effectId == QLatin1String(Comp::kEffectId)) {
+        if (CompGraph g; Comp::graphOf(e, &g)) Comp::setGraph(e, g);
+        return;
+    }
     const EffectDescriptor* d = EffectRegistry::find(e.effectId);
     if (!d) return;
     for (const EffectParam& p : d->params) {
@@ -1326,12 +1351,17 @@ void redirect(ProjectData* data, const QHash<QString, QString>& moved)
     auto relinkTimeline = [&](Timeline& tl) {
         for (QVector<Track>* list : {&tl.video, &tl.audio})
             for (Track& t : *list)
-                for (Clip& c : t.clips)
+                for (Clip& c : t.clips) {
+                    // Files of compositing nodes (media pool items too)
+                    for (EffectInstance& e : c.effects)
+                        if (e.effectId == QLatin1String(Comp::kEffectId))
+                            Comp::redirectMedia(e, [&](const QString& p) { return moved.value(p); });
                     if (moved.contains(c.mediaPath)) {
                         c.mediaPath = moved.value(c.mediaPath);
                         // Crop of an old project opened while the file was offline: now its shape is known
                         if (c.cropOnFrame) convertCrop(c, QSizeF(data->format.width, data->format.height));
                     }
+                }
     };
     relinkTimeline(data->timeline);
     for (Sequence& s : data->sequences) relinkTimeline(s.timeline);

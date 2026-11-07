@@ -2441,5 +2441,7 @@
  "Ton nur in den ersten %1 Stunden geprüft: der Bereich ist %2 Stunden lang (ein Clip sehr weit hinten auf der Zeitleiste?)": "Dźwięk sprawdzony tylko w pierwszych %1 godzinach: zakres trwa %2 godzin (klip bardzo daleko na osi czasu?)",
  "Die automatische Sicherung konnte nicht geladen werden:\n%1": "Nie udało się wczytać automatycznej kopii zapasowej:\n%1",
  "Sie liegt jetzt unter %1 und wird nicht mehr angeboten.": "Znajduje się teraz w %1 i nie będzie już proponowana.",
- "Einige Zeichen der Projektdatei waren kein gültiges UTF-8 (z. B. Umlaute, die ein anderes Programm anders gespeichert hat) und wurden durch „�“ ersetzt. Medien mit solchen Namen fehlen dann. Speichern behält die Ersetzung; die Datei, wie sie war, bleibt als Sicherungskopie.": "Niektóre znaki w pliku projektu nie były poprawnym UTF-8 (np. umlauty zapisane inaczej przez inny program) i zostały zastąpione przez „�”. Brakuje wtedy mediów o takich nazwach. Zapisanie zachowuje zamianę; plik w pierwotnej postaci pozostaje jako kopia zapasowa."
+ "Einige Zeichen der Projektdatei waren kein gültiges UTF-8 (z. B. Umlaute, die ein anderes Programm anders gespeichert hat) und wurden durch „�“ ersetzt. Medien mit solchen Namen fehlen dann. Speichern behält die Ersetzung; die Datei, wie sie war, bleibt als Sicherungskopie.": "Niektóre znaki w pliku projektu nie były poprawnym UTF-8 (np. umlauty zapisane inaczej przez inny program) i zostały zastąpione przez „�”. Brakuje wtedy mediów o takich nazwach. Zapisanie zachowuje zamianę; plik w pierwotnej postaci pozostaje jako kopia zapasowa.",
+ "Compositing": "Kompozycja",
+ "Ebenen, Masken, Keying und Tracking als Knoten (Seite Comp)": "Warstwy, maski, kluczowanie i śledzenie jako węzły (strona Comp)"
 }

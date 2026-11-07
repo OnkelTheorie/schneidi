@@ -618,6 +618,20 @@ struct Renderer::Impl {
                 });
             }
         }
+        // Compositing graph last (0.19): its input "clip" is the picture with every effect above
+        if (const EffectInstance* comp = EffectRegistry::instance(c, "comp"); comp && comp->enabled)
+            applyComp(img, c, *comp, t, ctx);
+    }
+
+    // Evaluates the clip's compositing graph into img (same size). Package A (CompEval) fills this in; until then the
+    // clip's picture stays as it is
+    void applyComp(Image& img, const Clip& c, const EffectInstance& comp, double t, const Ctx& ctx)
+    {
+        Q_UNUSED(img);
+        Q_UNUSED(c);
+        Q_UNUSED(comp);
+        Q_UNUSED(t);
+        Q_UNUSED(ctx);
     }
 
     // Source picture of a media clip at clip frame t, fetched at (dw x dh); empty = none

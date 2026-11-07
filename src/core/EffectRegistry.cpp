@@ -226,6 +226,12 @@ QVector<EffectDescriptor>& registry()
              {"lut", T("LUT"), {}, EffectParam::Path, QString(), 0, 0},
          },
          false, {}, true},
+        // Compositing graph (0.19, core/CompGraph.h): nodes, links and node values in params ("graph", "n<id>.<key>").
+        // Fixed stage after every other effect, before crop/transform: its input "clip" is the clip's picture with all
+        // its effects; the Inspector's transform/opacity work on the result. The parameters depend on the graph, so
+        // the descriptor has none (the node kinds have them, engine/picture/CompNodes.h)
+        {"comp", T("Compositing"), {}, true, {}, false,
+         T("Ebenen, Masken, Keying und Tracking als Knoten (Seite Comp)"), true},
     }) + ownLooks(); // after the built-in ones: the Effects Library lists them behind blur and color correction
     return effects;
 }
@@ -320,9 +326,11 @@ QStringList order(const Clip& c)
 
 QVector<const EffectInstance*> renderOrder(const Clip& c)
 {
-    // Place of a fixed stage in the chain (Picture::Renderer); the movable effects come after all of them
+    // Place of a fixed stage in the chain (Picture::Renderer); the movable effects come after all of them, the
+    // compositing graph last
     static const QStringList stages{"stabilize", "grade", "chromakey"};
     auto rank = [](const EffectInstance& e) {
+        if (e.effectId == QLatin1String("comp")) return int(stages.size()) + 2; // after the movable effects
         if (movable(e.effectId)) return int(stages.size()) + 1;
         const int i = int(stages.indexOf(e.effectId));
         return i >= 0 ? i : int(stages.size());

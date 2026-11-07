@@ -127,6 +127,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/core/MediaAspect.h        src/core/MediaAspect.cpp
     src/core/SystemMemory.h       src/core/SystemMemory.cpp
     src/core/GradeWindows.h       src/core/GradeWindows.cpp
+    src/core/CompGraph.h          src/core/CompGraph.cpp
     src/core/NameBlur.h           src/core/NameBlur.cpp
     src/core/Retime.h             src/core/Retime.cpp
     src/core/ProjectFormat.h      src/core/ProjectFormat.cpp
@@ -246,6 +247,9 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/engine/OpenMedia.h        src/engine/OpenMedia.cpp
     src/engine/picture/Renderer.h src/engine/picture/Renderer.cpp
     src/engine/picture/Effects.h  src/engine/picture/Effects.cpp
+    src/engine/picture/CompNodes.h src/engine/picture/CompNodes.cpp
+    src/engine/picture/CompNodesCore.cpp src/engine/picture/CompNodesMask.cpp src/engine/picture/CompNodesKey.cpp
+    src/engine/picture/CompNodesTrack.cpp src/engine/picture/CompNodesStyle.cpp
     src/engine/picture/ReviewOverlay.h src/engine/picture/ReviewOverlay.cpp
     src/engine/picture/Interpolate.h src/engine/picture/Interpolate.cpp
     src/engine/picture/Pump.h     src/engine/picture/Pump.cpp

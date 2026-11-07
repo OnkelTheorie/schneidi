@@ -78,7 +78,7 @@ bool movable(const QString& id);
 // The movable effects of the clip in render order
 QStringList order(const Clip& c);
 // All effects of the clip in render order: the fixed stages (stabilize, grade, chromakey, then the audio ones), then
-// the movable effects in the clip's order
+// the movable effects in the clip's order, the compositing graph ("comp") last
 QVector<const EffectInstance*> renderOrder(const Clip& c);
 // Value of a parameter (missing = default)
 QVariant value(const Clip& c, const QString& id, const QString& key);

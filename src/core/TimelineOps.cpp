@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "core/TimelineOps.h"
 
+#include "core/CompGraph.h"
 #include "core/Keyframes.h"
 #include "core/Subtitles.h"
 
@@ -939,8 +940,11 @@ bool sameNested(const Timeline& a, const Timeline& b)
 bool usesMediaOnVideo(const Timeline& tl, const QString& path)
 {
     for (const auto& t : tl.video)
-        for (const Clip& c : t.clips)
+        for (const Clip& c : t.clips) {
             if (c.mediaPath == path) return true;
+            for (const EffectInstance& e : c.effects) // a file a compositing node reads
+                if (e.effectId == QLatin1String(Comp::kEffectId) && Comp::mediaPaths(e).contains(path)) return true;
+        }
     return false;
 }
 
