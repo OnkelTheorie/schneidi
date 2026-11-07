@@ -868,6 +868,7 @@ QVector<OpDef> makeOps()
     addSfxOps(ops);
     addTalkOps(ops);
     addCompOps(ops);
+    addCutoutOps(ops);
     addTemplateOps(ops);
     return ops;
 }

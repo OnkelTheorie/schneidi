@@ -453,6 +453,13 @@ schneidi_test(test_comp_recipes) # compositing recipes (0.19 I): built-in ones a
 target_link_libraries(test_comp_recipes PRIVATE schneidi_cli_lib)
 schneidi_test(test_comp_page) # Comp page: lazy page, layer view, canvas add/link/remove/duplicate, handles, keyframe diamond, undo
 
+# AI cutout (0.19): pre/post-processing, matte cache, smoothing, guided upsample, node, analysis + CLI op with a
+# stand-in model, Editor op undo, missing extension
+schneidi_test(test_comp_cutout)
+target_link_libraries(test_comp_cutout PRIVATE schneidi_cli_lib)
+# The same with the real segmentation model; 77 without the extension
+schneidi_test(test_comp_cutout_model)
+
 # Every test_*.cpp without a schneidi_test() line above (CONFIGURE_DEPENDS: a new file is picked up by the next build)
 file(GLOB _schneidi_test_sources CONFIGURE_DEPENDS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/test_*.cpp)
 foreach(_src ${_schneidi_test_sources})

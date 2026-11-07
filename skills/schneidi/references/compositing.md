@@ -33,6 +33,11 @@ graph as own recipe (files copied along); `effects` kind recipes with `export`/`
   picture: text as a window, a track matte).
 - **Keying:** `key` (chroma: `color` of the screen picked from a `frames` image, `tolerance`, `softness`, `spill`;
   luma: `low`/`high`), then `matte_tune` (shrink/grow, soften, clip black/white, despill) for a clean edge.
+- **Cut out a person (no green screen):** `cutout` (input `src` = the clip), then the edit op `cutout_node` finds
+  the person once (an AI model, extension `cutout`); without that analysis the node shows nothing (`info` says so).
+  `threshold` (where the edge lies, default 0.5), `soft`/`grow` (pixels), `invert` (the background), `output`
+  picture|mask. Text behind a person: clip -> merge(bg) with a `text` as fg, then a second merge with that as bg
+  and the `cutout` as fg.
 - **Change a picture:** `transform` (x, y, size, angle; `follow` a tracker), `crop`, `blur` (with `mask` = only
   there), `grade` (Color page values, LUT), `fx` (any picture effect: `effect` = its id, its values as `e_<key>`;
   also your own: `effect:'ffmpeg_filter'` with `e_chain`, `effect:'shader'` with `e_code`, `e_p1`…), `shadow`,

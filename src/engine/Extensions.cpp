@@ -64,6 +64,7 @@ constexpr const char* kOpencvZooRaw = "https://raw.githubusercontent.com/opencv/
                                       "48b10fa505aeb51fbd127fc60a5c660040e823b7/models/face_detection_yunet/";
 constexpr const char* kYunetModel = "face_detection_yunet_2023mar.onnx";
 constexpr const char* kLicenseName = "LICENSE";
+constexpr const char* kCutoutModel = "human_segmentation_pphumanseg_2023mar.onnx";
 constexpr const char* kYamnetModel = "yamnet.onnx";
 constexpr const char* kYamnetLabels = "yamnet_class_map.csv";
 
@@ -190,6 +191,19 @@ QVector<Item> makeCatalog()
                     "Runtime)"),
                  /*TODO url*/ QString(), /*TODO sha256*/ QByteArray(), /*TODO size*/ 0, kYamnetModel,
                  /*TODO class map url*/ QString(), /*TODO sha256*/ QByteArray(), /*TODO size*/ 0, kYamnetLabels});
+    // PP-HumanSeg 2023mar (person segmentation, PaddleSeg via opencv/opencv_zoo, Apache-2.0) for the compositing node
+    // "cutout" (engine/PersonMatte): RGB 1 x 3 x 192 x 192 in, background/person 1 x 2 x 192 x 192 out. Its licence
+    // text (the zoo's models/human_segmentation_pphumanseg/LICENSE) is the second download, beside it as LICENSE.
+    // TO VERIFY BY A HUMAN before it is offered (nothing unchecked is downloaded): the two URLs at the same zoo revision
+    // as YuNet above, size and SHA-256 of exactly those files, and that the LICENSE there is Apache-2.0.
+    pending(Item{"cutout", Kind::CutoutModel, N_("Freistellen (Personen)"),
+                 N_("stellt Personen ohne Green Screen frei, z. B. für Text hinter einer Person (braucht ONNX Runtime)"),
+                 /*TODO verify*/ QString(kOpencvZoo).replace("face_detection_yunet", "human_segmentation_pphumanseg")
+                     + kCutoutModel,
+                 /*TODO sha256*/ QByteArray(), /*TODO size*/ 0, kCutoutModel,
+                 /*TODO verify*/ QString(kOpencvZooRaw).replace("face_detection_yunet", "human_segmentation_pphumanseg")
+                     + "LICENSE",
+                 /*TODO sha256*/ QByteArray(), /*TODO size*/ 0, kLicenseName});
     return list;
 }
 
@@ -205,6 +219,7 @@ QString onnxDir() { return QDir(rootDir()).filePath("onnxruntime"); }
 QString onnxLib() { return QDir(onnxDir()).filePath("lib"); }
 QString audioEventsDir() { return QDir(rootDir()).filePath("audio-events"); }
 QString facesDir() { return QDir(rootDir()).filePath("faces"); }
+QString cutoutDir() { return QDir(rootDir()).filePath("cutout"); }
 
 } // namespace
 
@@ -225,6 +240,7 @@ QString downloadDir(const Item& item)
     case Kind::Runtime: return onnxDir();
     case Kind::AudioModel: return audioEventsDir();
     case Kind::FaceModel: return facesDir();
+    case Kind::CutoutModel: return cutoutDir();
     case Kind::SoundPack: return soundPacksDir();
     default: return modelsDir();
     }
@@ -376,7 +392,7 @@ QVector<const Item*> withDependencies(const QVector<const Item*>& items)
         // A model is no use without the program (unless one is on PATH)
         if (i->kind == Kind::WhisperModel && whisperProgram().isEmpty()) add(find("whisper"));
         if (i->kind == Kind::Voice && piperProgram().isEmpty()) add(find("piper"));
-        if ((i->kind == Kind::AudioModel || i->kind == Kind::FaceModel) && onnxRuntimeLibrary().isEmpty()
+        if ((i->kind == Kind::AudioModel || i->kind == Kind::FaceModel || i->kind == Kind::CutoutModel) && onnxRuntimeLibrary().isEmpty()
             && piperOnnxRuntime().isEmpty())
             add(find("onnxruntime"));
         add(i);
@@ -393,7 +409,7 @@ QString installedPath(const Item& item)
         const QString path = QDir(voicesDir()).filePath(item.fileName);
         return QFileInfo::exists(path) && QFileInfo::exists(path + ".json") ? path : QString();
     }
-    if (item.kind == Kind::AudioModel || item.kind == Kind::FaceModel) { // model and class list / licence
+    if (item.kind == Kind::AudioModel || item.kind == Kind::FaceModel || item.kind == Kind::CutoutModel) { // model and class list / licence
         const QDir dir(downloadDir(item));
         const QString path = dir.filePath(item.fileName);
         return QFileInfo::exists(path) && QFileInfo::exists(dir.filePath(item.configName)) ? path : QString();
@@ -438,7 +454,7 @@ bool remove(const Item& item)
         QFile::remove(path + ".json");
         return !QFileInfo::exists(path) || QFile::remove(path);
     }
-    if (item.kind == Kind::AudioModel || item.kind == Kind::FaceModel) {
+    if (item.kind == Kind::AudioModel || item.kind == Kind::FaceModel || item.kind == Kind::CutoutModel) {
         const QDir dir(downloadDir(item));
         const QString path = dir.filePath(item.fileName);
         QFile::remove(dir.filePath(item.configName));
@@ -556,6 +572,14 @@ QString faceModel()
     const QString own = qEnvironmentVariable("SCHNEIDI_YUNET");
     if (!own.isEmpty()) return QFileInfo(own).isFile() ? QFileInfo(own).absoluteFilePath() : QString();
     const Item* i = find("faces");
+    return i ? installedPath(*i) : QString();
+}
+
+QString cutoutModel()
+{
+    const QString own = qEnvironmentVariable("SCHNEIDI_CUTOUT_MODEL");
+    if (!own.isEmpty()) return QFileInfo(own).isFile() ? QFileInfo(own).absoluteFilePath() : QString();
+    const Item* i = find("cutout");
     return i ? installedPath(*i) : QString();
 }
 
