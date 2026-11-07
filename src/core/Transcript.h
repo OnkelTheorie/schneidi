@@ -36,6 +36,10 @@ bool parseWhisperJson(const QByteArray& json, Result* out, QString* error = null
 // (Editor::importSubtitles assigns them).
 QVector<SubtitleCue> toCues(const QVector<Word>& words, double fps, int maxChars = 42, int maxGapMs = 700, int offset = 0);
 
+// One cue per word (from its start to where it is spoken to, one CueWord; a word overlapping the next ends there),
+// timeline frames with `offset` added: the input of Subtitles::readable with the word times
+QVector<SubtitleCue> wordCues(const QVector<Word>& words, double fps, int offset = 0);
+
 // End of a word without the pause after it (whisper stretches `to` to the next word)
 qint64 spokenEnd(const Word& w);
 

@@ -471,6 +471,38 @@ void Inspector::buildLookSections(QVBoxLayout* page)
     solidSlider("titleSolidMetal", T("Metall"), 0, 1, d3.solidMetal, 0.01, 2, &TitleLook::solidMetal);
     shown.append({solid, [](const TitleStyle& t) { return !t.isProgress(); }});
 
+    // ---- Animation: how the title comes in and goes out (seconds at its start / end) ----
+    Section anim = addSection(page, V, T("Animation"), [](Clip& c) {
+        const TitleStyle d;
+        c.title.enter = d.enter;
+        c.title.exit = d.exit;
+        c.title.enterLen = d.enterLen;
+        c.title.exitLen = d.exitLen;
+    }, {}, true);
+    auto animRow = [&](const QString& label, const QString& undo, TitleAnim TitleStyle::*field, double TitleStyle::*len,
+                       const QString& key) {
+        auto* box = combo();
+        for (const auto& a : kTitleAnims) box->addItem(T(a.name), int(a.anim));
+        connect(box, &QComboBox::activated, this, [this, V, box, field, undo] {
+            const auto a = TitleAnim(box->currentData().toInt());
+            apply(V, {}, undo, [a, field](Clip& c) { c.title.*field = a; }, true);
+        });
+        anim.grid->addWidget(rowLabel(label), anim.rows, 0);
+        anim.grid->addWidget(box, anim.rows++, 1);
+        const int lenRow = anim.rows;
+        addSlider(anim, key, T("Dauer (s)"), 0.05, 3, 0.2, 0.01, 2, [len](Clip& c) -> double& { return c.title.*len; });
+        const QVector<QWidget*> lenWidgets = rowWidgets(anim.grid, lenRow, anim.rows);
+        m_refreshers << [current, box, field, lenWidgets] {
+            if (const Clip* c = current()) {
+                const QSignalBlocker b(box);
+                box->setCurrentIndex(box->findData(int(c->title.*field)));
+                for (QWidget* w : lenWidgets) w->setVisible(c->title.*field != TitleAnim::None);
+            }
+        };
+    };
+    animRow(T("Auftritt"), T("Auftrittsanimation"), &TitleStyle::enter, &TitleStyle::enterLen, "titleEnterLen");
+    animRow(T("Abgang"), T("Abgangsanimation"), &TitleStyle::exit, &TitleStyle::exitLen, "titleExitLen");
+
     // A progress bar has none of these
     m_refreshers << [shown, current] {
         if (const Clip* c = current())

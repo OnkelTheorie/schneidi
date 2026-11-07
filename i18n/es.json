@@ -2728,5 +2728,14 @@
  "Analyse verworfen – Clip geändert": "Análisis descartado: el clip cambió",
  "Eigener Code im Rezept": "Código propio en la receta",
  "Dieses Rezept enthält Code, den du hier nicht selbst geschrieben hast (Filterketten: %1, Shader: %2). Fremder Code kann die Grafikkarte oder den Prozessor lange beschäftigen. Führe ihn nur aus, wenn du der Quelle vertraust.": "Esta receta contiene código que no escribiste tú aquí (cadenas de filtros: %1, sombreadores: %2). El código ajeno puede mantener ocupada la tarjeta gráfica o el procesador durante mucho tiempo. Ejecútalo solo si confías en la fuente.",
- "„%1“": "«%1»"
+ "„%1“": "«%1»",
+ "Animation": "Animación",
+ "Auftritt": "Entrada",
+ "Abgang": "Salida",
+ "Auftrittsanimation": "Animación de entrada",
+ "Abgangsanimation": "Animación de salida",
+ "Dauer (s)": "Duración (s)",
+ "Weich blenden": "Fundido",
+ "Aufploppen": "Rebote",
+ "Hochgleiten": "Deslizar arriba"
 }

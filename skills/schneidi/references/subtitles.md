@@ -8,11 +8,15 @@
   chosen language is checked: `detected_language` and a note say when whisper clearly hears another one.
 - Transcribe **after** cutting, on the project: the times are then timeline times and fit the edit.
   `apply` true puts the segments onto the timeline as a new subtitle track (one undo step live in the app).
+- **Plain subtitles: add `readable` true** (with `apply`/`srt`): the words come as 1-2 line cues (≤ 42 characters a
+  line, ~17 characters/s, split at sentence and phrase ends, never across a pause) that `check` accepts; without it
+  whisper's one-line pieces are often flagged too fast. Don't merge cues with your own script. An existing track:
+  edit op `subtitles` `{track:"ST1", readable:true}`; `readable:{lines:1, line_chars:28}` for vertical video.
 - Only the voice: by default `transcribe` hears only tracks/streams named like a microphone or voice ("Mikrofon",
   "Mic/Aux", "Voice") when there is more (game, music: no song lyrics in the captions); the answer names them
   (`tracks` / `audio_stream` + a note). Choose yourself with `tracks` on a project (`"A1"`, `"Discord,Mikrofon"`,
   `"all"` = everything audible) or `audio_stream` on a file (number or name, several are mixed).
-- `max_chars`: 42 (one line) for landscape; ~20-28 for vertical video.
+- `max_chars` (without `readable`): 42 (one line) for landscape; ~20-28 for vertical video.
 
 ## Clean up
 Read the segments. Fix names, brands and obvious mishearings with the `subtitle` op (`id`, `text`). Don't rewrite

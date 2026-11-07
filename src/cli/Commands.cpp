@@ -426,6 +426,14 @@ QJsonObject titleStyleJson(const TitleStyle& t, const TitleStyle& def)
         o["margin"] = t.barMargin;
         o["rounded"] = t.barRound;
     }
+    // Entry/exit animation in the form op `title` takes (only when set)
+    const auto anim = [&](const char* key, TitleAnim a, double len) {
+        if (a == TitleAnim::None) return;
+        for (const auto& i : kTitleAnims)
+            if (i.anim == a) o[key] = QJsonObject{{"type", i.id}, {"duration", QString("%1s").arg(len)}};
+    };
+    anim("enter", t.enter, t.enterLen);
+    anim("exit", t.exit, t.exitLen);
     return o;
 }
 
@@ -1270,6 +1278,7 @@ const QVector<Command>& commands()
           {"apply", T::Boolean, "for a project: also put the segments onto the timeline as a new subtitle track "
                                 "(live in the app: one undo step)"},
           {"name", T::String, "apply: name of the new subtitle track"},
+          {"readable", T::Boolean, "cues people can read: 1-2 lines, ~17 chars/s (edit op subtitles)"},
           {"captions", T::String, "apply: word-by-word captions instead of plain subtitles (edit op 'captions'): "
                                   "karaoke (the spoken word lights up), word (one word at a time, popping in) or beat "
                                   "(word by word on the beats; needs beats or bpm)"},

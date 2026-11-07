@@ -557,18 +557,53 @@ void opSubtitle(Session& s, const QJsonObject& op)
                        .arg(stop);
 }
 
+// readable: true or {lines, line_chars, cps, min, pause} (Subtitles::ReadableRules); false/missing = as given
+bool readableRules(const QJsonObject& op, Subtitles::ReadableRules* r)
+{
+    const QJsonValue v = op.value("readable");
+    if (v.isUndefined() || v.isNull() || (v.isBool() && !v.toBool())) return false;
+    if (!v.isBool() && !v.isObject()) fail("BAD_ARGUMENT", "readable must be true or {lines, line_chars, cps, min, pause}");
+    const QJsonObject o = v.toObject();
+    if (o.contains("lines")) r->lines = int(numberOf(o, "lines", 1, 4));
+    if (o.contains("line_chars")) r->lineChars = int(numberOf(o, "line_chars", 10, 200));
+    if (o.contains("cps")) r->cps = numberOf(o, "cps", 5, 60);
+    if (o.contains("min")) r->minSeconds = numberOf(o, "min", 0, 10);
+    if (o.contains("pause")) r->pause = numberOf(o, "pause", 0, 10);
+    return true;
+}
+
 void opSubtitles(Session& s, const QJsonObject& op)
 {
-    // A whole new subtitle track: from an SRT file or a list of cues
+    // A whole new subtitle track: from an SRT file, a list of cues or of words; or an existing track regrouped
     QVector<SubtitleCue> cues;
     QString trackName = op.value("name").toString();
+    Subtitles::ReadableRules rules;
+    const bool readable = readableRules(op, &rules) || op.contains("words");
+    const double fps = s.format().rate.fps();
     if (op.contains("srt")) {
         const QString path = absolute(op.value("srt").toString());
         QFile f(path);
         if (!f.open(QIODevice::ReadOnly)) fail("NOT_FOUND", "cannot read " + path);
         cues = Subtitles::parseSrt(f.readAll(), s.project.frameRate());
         if (trackName.isEmpty()) trackName = QFileInfo(path).completeBaseName();
-    } else {
+    } else if (op.contains("words")) {
+        // One cue per word with its time: grouped into readable cues below, the word times kept
+        for (const QJsonValue& v : op.value("words").toArray()) {
+            const QJsonObject o = v.toObject();
+            const int from = timeOf(s, o, "from"), to = std::max(from + 1, timeOf(s, o, "to"));
+            const QString text = o.value("text").toString().simplified();
+            if (text.isEmpty()) continue;
+            SubtitleCue c{0, from, to, text};
+            if (!text.contains(' ')) c.words = {CueWord{0, to - from}};
+            cues << c;
+        }
+        std::sort(cues.begin(), cues.end(), [](const SubtitleCue& a, const SubtitleCue& b) { return a.start < b.start; });
+        for (int i = 1; i < cues.size(); ++i) // overlapping word times (whisper): each word ends where the next starts
+            if (cues[i - 1].end > cues[i].start) {
+                cues[i - 1].end = std::max(cues[i - 1].start + 1, cues[i].start);
+                if (!cues[i - 1].words.isEmpty()) cues[i - 1].words[0].to = cues[i - 1].length();
+            }
+    } else if (op.contains("cues")) {
         for (const QJsonValue& v : op.value("cues").toArray()) {
             const QJsonObject o = v.toObject();
             const int from = timeOf(s, o, "from"), to = timeOf(s, o, "to");
@@ -576,8 +611,23 @@ void opSubtitles(Session& s, const QJsonObject& op)
             cues << SubtitleCue{0, from, to, o.value("text").toString()};
         }
         std::sort(cues.begin(), cues.end(), [](const SubtitleCue& a, const SubtitleCue& b) { return a.start < b.start; });
+    } else if (op.contains("track")) {
+        // An existing track regrouped in place
+        if (!readable) fail("BAD_ARGUMENT", "with only 'track': give readable:true to regroup that track's cues");
+        const Timeline& tl = s.project.timeline();
+        const int index = parseSubtitleTrack(op.value("track"));
+        if (index < 0 || index >= tl.subtitles.size())
+            fail("NOT_FOUND", QString("no subtitle track %1").arg(op.value("track").toVariant().toString()));
+        const QVector<SubtitleCue> before = tl.subtitles[index].cues;
+        if (before.isEmpty()) fail("BAD_ARGUMENT", "that subtitle track has no cues");
+        const QVector<SubtitleCue> after = Subtitles::readable(before, fps, rules);
+        if (!s.editor.setSubtitleCues(index, after, "Readable subtitles")) fail("FAILED", "the subtitle track is locked");
+        s.notes << QString("ST%1: %2 cues regrouped into %3 readable ones").arg(index + 1).arg(before.size()).arg(after.size());
+        return;
     }
-    if (cues.isEmpty()) fail("BAD_ARGUMENT", "no cues (give 'srt' (file) or 'cues' ([{from, to, text}, …]))");
+    if (cues.isEmpty())
+        fail("BAD_ARGUMENT", "no cues (give 'srt' (file), 'cues' ([{from, to, text}, …]) or 'words' ([{from, to, text}, …]))");
+    if (readable) cues = Subtitles::readable(cues, fps, rules);
     s.editor.importSubtitles(cues, trackName);
 }
 
@@ -821,8 +871,16 @@ QVector<OpDef> makeOps()
         {"subtitle", "{op:'subtitle', text, at, to?|duration?, track?:'ST1'}",
          "add a subtitle (default 3s, stops before the next one), or {op:'subtitle', id, text?, at?, to?} change one",
          {}, opSubtitle},
-        {"subtitles", "{op:'subtitles', srt?:file, cues?:[{from, to, text}], name?}",
-         "new subtitle track from an SRT file or a cue list", {}, opSubtitles},
+        {"subtitles", "{op:'subtitles', srt?:file, cues?:[{from, to, text}], words?, readable?, name?}",
+         "new subtitle track from an SRT file, cues or words",
+         "readable:true regroups the cues into ones people can read (what `check` wants): at most 2 lines of 42 "
+         "characters, split evenly at a phrase end, a new cue at a sentence end once slow enough, never across a "
+         "pause > 0.7 s, each at least 0.8 s and at most ~17 characters per second where the next cue leaves room; "
+         "{lines, line_chars, cps, min (seconds), pause (seconds)} changes those. words = the 'words' list of "
+         "`transcribe` with words:true (timeline frames): always grouped readably, the word times kept. "
+         "{op:'subtitles', track:'ST1', readable:true} regroups an existing track in place (one undo step). "
+         "`transcribe` with apply:true and readable:true does it in one call.",
+         opSubtitles, {"track"}},
         {"effect", "{op:'effect', clips, effect, params?:{key: value}, enabled?, remove?} or {op:'effect', clips, preset} "
                    "or {op:'effect', clips, effect, move:'up'|'down'|'first'|'last'|place}",
          "add/set/remove an effect (ids and parameters: `effects`); preset = effect preset from `effects` (bundled look 'edit' = LUT + light glow, one step); move = "

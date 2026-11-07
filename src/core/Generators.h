@@ -41,4 +41,13 @@ double progress(const TitleStyle& s, const Clip& c, int f, int begin, int end);
 QRectF progressTrack(const TitleStyle& s, double W, double H);
 QRectF progressFill(const TitleStyle& s, double W, double H, double fraction);
 
+// Entry / exit animation of a title (TitleStyle::enter, exit) at clip frame t of a clip `length` frames long:
+// scale of the whole title around its centre, opacity, and rise (project pixels up). Still (1, 1, 0) outside the
+// animated frames and for TitleAnim::None
+struct TitleMotion {
+    double scale = 1, opacity = 1, rise = 0;
+    bool still() const { return scale == 1 && opacity == 1 && rise == 0; }
+};
+TitleMotion titleMotion(const TitleStyle& s, double t, int length, double fps);
+
 } // namespace Generators

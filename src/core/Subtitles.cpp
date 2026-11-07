@@ -421,4 +421,162 @@ void insertGap(SubtitleTrack& track, int frame, int length, const std::function<
         }
 }
 
+// ---- Readable cues ----
+
+namespace {
+struct Token {
+    QString text;
+    int from = 0, to = 0; // timeline frames, [from, to)
+    bool known = false;   // from the cue's word times
+    int cueEnd = 0;       // end of the cue it came from (where it was shown until)
+};
+
+bool sentenceEnd(const QString& w)
+{
+    QString t = w;
+    while (!t.isEmpty() && (t.back() == '"' || t.back() == QChar(0x201C) || t.back() == QChar(0x201D) || t.back() == ')'
+                            || t.back() == QChar(0x00BB) || t.back() == QChar(0x00AB)))
+        t.chop(1);
+    return !t.isEmpty() && (t.back() == '.' || t.back() == '?' || t.back() == '!' || t.back() == QChar(0x2026));
+}
+bool phraseEnd(const QString& w)
+{
+    return sentenceEnd(w) || w.endsWith(',') || w.endsWith(';') || w.endsWith(':') || w.endsWith(QChar(0x2013))
+        || w.endsWith(QChar(0x2014));
+}
+
+QVector<Token> tokens(const QVector<SubtitleCue>& cues)
+{
+    QVector<Token> out;
+    for (const SubtitleCue& c : cues) {
+        const QStringList words = c.text.simplified().split(' ', Qt::SkipEmptyParts);
+        if (words.isEmpty() || c.end <= c.start) continue;
+        const bool known = c.words.size() == words.size();
+        double total = 0;
+        for (const QString& w : words) total += w.size() + 1;
+        double at = 0;
+        for (int i = 0; i < words.size(); ++i) {
+            Token t;
+            t.text = words[i];
+            t.known = known;
+            t.cueEnd = c.end;
+            if (known) {
+                t.from = c.start + c.words[i].from;
+                t.to = std::max(t.from + 1, c.start + c.words[i].to);
+            } else { // the cue's time shared by the words' lengths
+                const double len = c.length();
+                t.from = c.start + int(std::lround(len * at / total));
+                at += words[i].size() + 1;
+                t.to = std::max(t.from + 1, c.start + int(std::lround(len * at / total)));
+            }
+            out << t;
+        }
+    }
+    return out;
+}
+} // namespace
+
+QVector<SubtitleCue> readable(const QVector<SubtitleCue>& cues, double fps, const ReadableRules& r)
+{
+    if (fps <= 0) fps = 25;
+    const QVector<Token> tok = tokens(cues);
+    const int n = int(tok.size());
+    const int lines = std::max(1, r.lines), lineChars = std::max(8, r.lineChars);
+    const double cps = std::max(1.0, r.cps);
+    const int pause = int(std::lround(std::max(0.0, r.pause) * fps));
+    const int minFrames = std::max(1, int(std::lround(std::max(0.0, r.minSeconds) * fps)));
+    // Characters of tokens [a, b) with one space each between
+    QVector<int> pre(n + 1, 0);
+    for (int i = 0; i < n; ++i) pre[i + 1] = pre[i] + int(tok[i].text.size()) + 1;
+    const auto chars = [&](int a, int b) { return b > a ? pre[b] - pre[a] - 1 : 0; };
+    // Lines greedy filling needs for [a, b) (the fewest possible)
+    const auto lineCount = [&](int a, int b) {
+        int count = 1;
+        for (int k = a, start = a; k < b; ++k)
+            if (k > start && chars(start, k + 1) > lineChars) start = k, ++count;
+        return count;
+    };
+    const auto pauseBefore = [&](int k) { return k > 0 && k < n && tok[k].from - tok[k - 1].to > pause; };
+    // The time a cue of [a, b) can be shown: up to the next word (after a pause: the pause too, it just lingers)
+    const auto room = [&](int a, int b) {
+        const int until = b < n ? tok[b].from : std::max(tok[b - 1].to, tok[b - 1].cueEnd);
+        return std::max(1, until - tok[a].from);
+    };
+    const auto slowEnough = [&](int a, int b) {
+        const int t = room(a, b);
+        return t >= minFrames && chars(a, b) / (t / fps) <= cps;
+    };
+
+    QVector<QPair<int, int>> groups;
+    for (int a = 0; a < n;) {
+        int b = a + 1;
+        bool full = false;
+        while (b < n) {
+            if (sentenceEnd(tok[b - 1].text) && slowEnough(a, b)) break;
+            if (pauseBefore(b)) break;
+            if (lineCount(a, b + 1) > lines) {
+                full = true;
+                break;
+            }
+            ++b;
+        }
+        if (full) {
+            // Ended by its size: rather at the last phrase end that leaves a readable first part of some length
+            for (int k = b - 1; k > a; --k)
+                if (phraseEnd(tok[k - 1].text) && chars(a, k) >= lineChars / 2 && slowEnough(a, k)) {
+                    b = k;
+                    break;
+                }
+        }
+        groups << qMakePair(a, b);
+        a = b;
+    }
+
+    QVector<SubtitleCue> out;
+    for (int g = 0; g < groups.size(); ++g) {
+        const auto [a, b] = groups[g];
+        SubtitleCue c;
+        c.start = tok[a].from;
+        if (!out.isEmpty()) c.start = std::max(c.start, out.last().end);
+        int end = std::max(tok[b - 1].to, tok[b - 1].cueEnd);
+        const int needed = std::max(minFrames, int(std::ceil(chars(a, b) / cps * fps)));
+        end = std::max(end, c.start + needed);
+        if (b < n) end = std::min(end, tok[b].from);
+        c.end = std::max(end, c.start + 1);
+        // Lines: one when it fits, else the most even split (a phrase end counts as a few characters closer)
+        QStringList words;
+        for (int k = a; k < b; ++k) words << tok[k].text;
+        if (chars(a, b) <= lineChars || lines < 2) {
+            c.text = words.join(' ');
+        } else if (lineCount(a, b) <= 2) {
+            int best = -1;
+            double bestCost = 1e18;
+            for (int k = a + 1; k < b; ++k) {
+                const int l1 = chars(a, k), l2 = chars(k, b);
+                if (l1 > lineChars || l2 > lineChars) continue;
+                const double cost = std::abs(l1 - l2) - (phraseEnd(tok[k - 1].text) ? 16 : 0);
+                if (cost < bestCost) bestCost = cost, best = k;
+            }
+            c.text = best < 0 ? words.join(' ') // a word longer than a line: the picture wraps it
+                              : words.mid(0, best - a).join(' ') + '\n' + words.mid(best - a).join(' ');
+        } else { // more lines allowed: filled greedily
+            QStringList rows;
+            int start = a;
+            for (int k = a; k < b; ++k)
+                if (k > start && chars(start, k + 1) > lineChars) rows << words.mid(start - a, k - start).join(' '), start = k;
+            rows << words.mid(start - a).join(' ');
+            c.text = rows.join('\n');
+        }
+        bool known = true;
+        for (int k = a; k < b; ++k) known = known && tok[k].known;
+        if (known)
+            for (int k = a; k < b; ++k) {
+                const int from = std::clamp(tok[k].from - c.start, 0, c.length() - 1);
+                c.words << CueWord{from, std::clamp(tok[k].to - c.start, from + 1, c.length())};
+            }
+        out << c;
+    }
+    return out;
+}
+
 } // namespace Subtitles

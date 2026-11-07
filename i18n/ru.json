@@ -2728,5 +2728,14 @@
  "Analyse verworfen – Clip geändert": "Анализ отброшен – клип изменился",
  "Eigener Code im Rezept": "Собственный код в рецепте",
  "Dieses Rezept enthält Code, den du hier nicht selbst geschrieben hast (Filterketten: %1, Shader: %2). Fremder Code kann die Grafikkarte oder den Prozessor lange beschäftigen. Führe ihn nur aus, wenn du der Quelle vertraust.": "Этот рецепт содержит код, который вы здесь не писали сами (цепочки фильтров: %1, шейдеры: %2). Чужой код может надолго занять видеокарту или процессор. Запускайте его, только если доверяете источнику.",
- "„%1“": "«%1»"
+ "„%1“": "«%1»",
+ "Animation": "Анимация",
+ "Auftritt": "Появление",
+ "Abgang": "Уход",
+ "Auftrittsanimation": "Анимация появления",
+ "Abgangsanimation": "Анимация ухода",
+ "Dauer (s)": "Длительность (с)",
+ "Weich blenden": "Плавно",
+ "Aufploppen": "Выскок",
+ "Hochgleiten": "Сдвиг вверх"
 }

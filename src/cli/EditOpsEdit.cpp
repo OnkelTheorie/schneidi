@@ -129,6 +129,38 @@ void applyLook(TitleLook& look, const QJsonObject& op)
     if (!TitleLookJson::read(o, look, false, &err)) fail("BAD_ARGUMENT", err);
 }
 
+// Entry/exit animation of a title (TitleStyle::enter, exit)
+const QString kAnimFields =
+    "enter / exit: how the title comes in / goes out: 'pop' (a short scale-up 60 % -> 108 % -> 100 %), 'fade', "
+    "'slide_up' (rises into place fading in; leaving: rises on fading out) or 'none' (default), or {type, duration} "
+    "(default 0.2s, e.g. '0.3s'). Use it instead of size keyframes for pop-in titles";
+
+void applyAnim(Session& s, TitleStyle& t, const QJsonObject& op)
+{
+    const auto one = [&](const char* key, TitleAnim* anim, double* len) {
+        if (!op.contains(key)) return;
+        const QJsonValue v = op.value(key);
+        const QJsonObject o = v.isObject() ? v.toObject() : QJsonObject{{"type", v.isBool() && !v.toBool() ? QStringLiteral("none") : v.toString()}};
+        if (o.contains("type")) {
+            const QString id = o.value("type").toString();
+            const auto it = std::find_if(std::begin(kTitleAnims), std::end(kTitleAnims),
+                                         [&](const TitleAnimInfo& a) { return id == QLatin1String(a.id); });
+            if (it == std::end(kTitleAnims))
+                fail("BAD_ARGUMENT", QString("%1 must be pop, fade, slide_up or none, got '%2'").arg(key, id));
+            *anim = it->anim;
+        } else if (*anim == TitleAnim::None) {
+            fail("BAD_ARGUMENT", QString("%1 needs a type (pop, fade, slide_up or none)").arg(key));
+        }
+        if (o.contains("duration")) {
+            const int frames = parseTime(o.value("duration"), s.format(), QString("%1.duration").arg(key));
+            if (frames <= 0) fail("BAD_ARGUMENT", QString("%1.duration must be at least one frame").arg(key));
+            *len = std::min(60.0, frames / std::max(1.0, s.format().rate.fps()));
+        }
+    };
+    one("enter", &t.enter, &t.enterLen);
+    one("exit", &t.exit, &t.exitLen);
+}
+
 // Counter and progress bar titles (TitleKind): their own settings on top of the style
 const QString kGeneratorFields =
     "kind: text (default), counter or progress. counter: from, to (numbers), decimals (0..6), prefix, suffix (e.g. "
@@ -301,6 +333,7 @@ void opTitle(Session& s, const QJsonObject& op)
     applyStyle(style, op, s.project.effectiveBrand());
     applyGenerator(style, op);
     applyLook(style.look, op);
+    applyAnim(s, style, op);
     s.editor.modifyClips({id}, "Title", [&](Clip& c) {
         c.title = style;
         Brand::resolve(c, s.project.effectiveBrand()); // a brand text colour ends a colour animation
@@ -874,13 +907,14 @@ QJsonObject transitionStyleJson(const TransitionStyle& st)
 
 void addEditOps(QVector<OpDef>& ops)
 {
-    ops << OpDef{"title", "{op:'title', text?, kind?, at?, duration?, track?, clip?, <style>, fill?, gradient?, texture?, edge3d?, shadow?, glow?, text3d?}",
+    ops << OpDef{"title", "{op:'title', text?, kind?, at?, duration?, track?, clip?, <style>, fill?, gradient?, texture?, edge3d?, shadow?, glow?, text3d?, enter?, exit?}",
                  "new title (duration default 5s; on `track` it overwrites only [at, at+duration) like `place`, also an "
-                 "earlier title there (notes say what was cut or removed); without track it goes on the video track "
+                 "earlier title there; without track it goes on the video track "
                  "above the clips in that range, so overlapping titles all show) or with clip: change one (a new duration "
                  "keeps its start; longer overwrites only the added range)",
                  "Style (pixels of the timeline format, from the center, y up): " + kStyleFields
                      + ". Colors \"#rrggbb\" or \"#aarrggbb\". text may have several lines (\\n). " + kLookFields + ". "
+                     + kAnimFields + ". Placing over an earlier title: the notes say what was cut or removed. "
                      + kGeneratorFields
                      + ". Example counter: {op:'title', kind:'counter', from:0, to:1000, suffix:' kills', at:'2s', "
                        "duration:'3s', size:160}.",

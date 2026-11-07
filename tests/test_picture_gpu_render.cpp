@@ -272,6 +272,17 @@ int main(int argc, char** argv)
         bar.title.boxOn = true;
         gen.video[2].clips << bar;
         same("counter + progress bar", gen, {0, 13, 29}, 1.5, 30);
+        // Entry/exit animation (pop in, fade out): the card shows the same sizes and opacities
+        Timeline anim = oneTrack({media(1, g_a, 0, 30)});
+        anim.video.resize(2);
+        Clip pop = counter;
+        pop.id = 7;
+        pop.title.kind = TitleKind::Text;
+        pop.title.text = "POP";
+        pop.title.enter = TitleAnim::Pop;
+        pop.title.exit = TitleAnim::Fade;
+        anim.video[1].clips << pop;
+        same("title pop in + fade out", anim, {0, 3, 27}, 1.5, 30);
         Timeline fill = oneTrack({media(1, g_still, 0, 30)});
         fill.video[0].clips[0].transform.fill = FitFill::Blur;
         same("blur fill still", fill, {0}, 1.5, 30);

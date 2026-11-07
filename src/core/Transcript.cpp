@@ -262,6 +262,24 @@ QVector<SubtitleCue> toCues(const QVector<Word>& words, double fps, int maxChars
     return cues;
 }
 
+QVector<SubtitleCue> wordCues(const QVector<Word>& words, double fps, int offset)
+{
+    QVector<SubtitleCue> cues;
+    const auto frame = [&](qint64 ms) { return offset + int(std::lround(ms / 1000.0 * fps)); };
+    for (const Word& w : words) {
+        const QString text = w.text.simplified();
+        if (text.isEmpty()) continue;
+        const int from = frame(w.from);
+        cues << SubtitleCue{0, from, std::max(from + 1, frame(spokenEnd(w))), text};
+    }
+    std::stable_sort(cues.begin(), cues.end(), [](const SubtitleCue& a, const SubtitleCue& b) { return a.start < b.start; });
+    for (int i = 0; i + 1 < cues.size(); ++i)
+        cues[i].end = std::max(cues[i].start + 1, std::min(cues[i].end, cues[i + 1].start));
+    for (SubtitleCue& c : cues)
+        if (!c.text.contains(' ')) c.words = {CueWord{0, c.length()}};
+    return cues;
+}
+
 bool isVoiceName(const QString& name)
 {
     // Word starts, so "Comic" or "Music" are no "mic"; "Mix" and the Polish "Mikser" (mixer) never match

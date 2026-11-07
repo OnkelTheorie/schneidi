@@ -2728,5 +2728,14 @@
  "Analyse verworfen – Clip geändert": "Analysis discarded – clip changed",
  "Eigener Code im Rezept": "Custom code in the recipe",
  "Dieses Rezept enthält Code, den du hier nicht selbst geschrieben hast (Filterketten: %1, Shader: %2). Fremder Code kann die Grafikkarte oder den Prozessor lange beschäftigen. Führe ihn nur aus, wenn du der Quelle vertraust.": "This recipe contains code you did not write here yourself (filter chains: %1, shaders: %2). Code from others can keep the graphics card or the processor busy for a long time. Only run it if you trust the source.",
- "„%1“": "“%1”"
+ "„%1“": "“%1”",
+ "Animation": "Animation",
+ "Auftritt": "Entrance",
+ "Abgang": "Exit",
+ "Auftrittsanimation": "Entrance animation",
+ "Abgangsanimation": "Exit animation",
+ "Dauer (s)": "Duration (s)",
+ "Weich blenden": "Fade",
+ "Aufploppen": "Pop",
+ "Hochgleiten": "Slide up"
 }
