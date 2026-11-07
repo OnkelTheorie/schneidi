@@ -24,4 +24,21 @@ inline QString of(const QString& path, bool foldCase = kFoldCase)
     return foldCase ? clean.toLower() : clean;
 }
 
+// How paths compare on this platform (foldCase as above)
+inline Qt::CaseSensitivity sensitivity(bool foldCase = kFoldCase)
+{
+    return foldCase ? Qt::CaseInsensitive : Qt::CaseSensitive;
+}
+
+// `path` lies inside the folder `dir` (both cleaned; the folder itself is not inside it): "C:/Templates/x/a.png" is
+// in "c:/templates/x" on Windows, a template saved there keeps its files
+inline bool isInside(const QString& path, const QString& dir, bool foldCase = kFoldCase)
+{
+    if (path.isEmpty() || dir.isEmpty()) return false;
+    QString d = QDir::cleanPath(dir);
+    if (!d.endsWith('/')) d += '/';
+    const QString p = QDir::cleanPath(path);
+    return p.size() > d.size() && p.startsWith(d, sensitivity(foldCase));
+}
+
 } // namespace PathKey

@@ -5,6 +5,7 @@
 #include "app/TemplateDialogs.h"
 #include "core/Editor.h"
 #include "core/I18n.h"
+#include "core/PathKey.h"
 #include "core/Project.h"
 #include "core/Selection.h"
 #include "core/TemplateFill.h"
@@ -19,6 +20,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QMessageBox>
+#include <QSet>
 #include <QStatusBar>
 #include <QTemporaryDir>
 #include <QToolButton>
@@ -51,11 +53,18 @@ bool MainWindow::copyTemplateFiles(ProjectData& data, const QString& path, QStri
     // lost when the never saved project comes back from its automatic backup (or any other way of loading it)
     QStringList dirs = TemplateLibrary::foldersUsed(data);
     if (!m_templateDir.isEmpty()) dirs << QDir::cleanPath(QDir(m_templateDir).absolutePath());
-    dirs.removeDuplicates();
+    QSet<QString> seen; // one folder in two spellings (Windows: any case) is one
+    dirs.erase(std::remove_if(dirs.begin(), dirs.end(), [&](const QString& d) {
+                   const QString key = PathKey::of(d);
+                   if (seen.contains(key)) return true;
+                   seen.insert(key);
+                   return false;
+               }),
+               dirs.end());
     const QFileInfo fi(path);
     const QString saved = QDir::cleanPath(fi.absoluteFilePath());
     // Saving a template itself (Edit): its files stay in its folder
-    dirs.erase(std::remove_if(dirs.begin(), dirs.end(), [&](const QString& d) { return saved.startsWith(d + '/'); }),
+    dirs.erase(std::remove_if(dirs.begin(), dirs.end(), [&](const QString& d) { return PathKey::isInside(saved, d); }),
                dirs.end());
     if (written) written->clear();
     if (dirs.isEmpty()) return true;

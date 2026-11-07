@@ -31,6 +31,16 @@ int main(int argc, char** argv)
         CHECK_EQ(PathKey::of("d.mp4", fold), PathKey::of(QDir::currentPath() + "/d.mp4", fold));
         CHECK(PathKey::of("", fold).isEmpty());
     }
+    // Inside a folder (template files): case-insensitive on Windows, the folder itself and its neighbours are not
+    CHECK(PathKey::isInside("C:/Templates/Intro/media/a.png", "c:/templates/intro", true));
+    CHECK(!PathKey::isInside("C:/Templates/Intro/media/a.png", "c:/templates/intro", false));
+    for (bool fold : {false, true}) {
+        CHECK(PathKey::isInside("/t/intro/a.png", "/t/intro/", fold));
+        CHECK(PathKey::isInside("/t/intro/x/../a.png", "/t/intro", fold));
+        CHECK(!PathKey::isInside("/t/intro", "/t/intro", fold));
+        CHECK(!PathKey::isInside("/t/intro2/a.png", "/t/intro", fold));
+        CHECK(!PathKey::isInside("/t/intro/../b.png", "/t/intro", fold));
+    }
 #ifdef Q_OS_WIN
     CHECK(PathKey::kFoldCase);
 #else

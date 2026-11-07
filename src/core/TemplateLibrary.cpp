@@ -4,6 +4,7 @@
 #include "core/EffectFolders.h"
 #include "core/EffectRegistry.h"
 #include "core/I18n.h"
+#include "core/PathKey.h"
 #include "core/StartTemplates.h"
 #include "core/TemplateFill.h"
 #include "core/TimelineOps.h"
@@ -124,7 +125,7 @@ bool loadProject(const QString& file, ProjectData* d, QString* error)
         const QString rel = o.value("relPath").toString(), abs = o.value("path").toString();
         if (rel.isEmpty() || abs.isEmpty()) continue;
         const QString here = QDir::cleanPath(folder.absoluteFilePath(rel));
-        if (here != abs && here.startsWith(inside) && QFileInfo::exists(here)) moved[abs] = here;
+        if (here != abs && PathKey::isInside(here, inside) && QFileInfo::exists(here)) moved[abs] = here;
     }
     if (!moved.isEmpty()) redirect(*d, moved);
     return true;
@@ -385,7 +386,7 @@ bool copyTemplateFiles(ProjectData& d, const QString& templateDir, const QString
     const QString inside = QDir::cleanPath(QDir(templateDir).absolutePath()) + '/';
     // Judged by the clean path: "<template>/media/../../x" (a hand-written or downloaded template) is no file of the
     // template - it would be read from outside it and its copy written outside the target folder
-    const auto inTemplate = [&inside](const QString& path) { return QDir::cleanPath(path).startsWith(inside); };
+    const auto inTemplate = [&inside](const QString& path) { return PathKey::isInside(path, inside); };
     QSet<QString> used;
     forEachFile(d, [&](QString& path) {
         if (inTemplate(path)) used.insert(path);
@@ -406,7 +407,7 @@ bool copyTemplateFiles(ProjectData& d, const QString& templateDir, const QString
     for (const QString& src : sources) {
         if (!QFileInfo(src).isFile()) continue; // offline: the reference stays
         const qint64 size = QFileInfo(src).size();
-        if (known && known->contains(src) && known->value(src).startsWith(targetInside)
+        if (known && known->contains(src) && PathKey::isInside(known->value(src), targetInside)
             && QFileInfo(known->value(src)).size() == size) {
             result.moved[src] = known->value(src);
             continue;
@@ -445,18 +446,18 @@ QStringList foldersUsed(const ProjectData& project)
     ProjectData d = project; // forEachFile may change paths, this only reads them
     QStringList roots;
     for (const QString& r : {dir(), builtInCache()}) roots << QDir::cleanPath(QDir(r).absolutePath()) + '/';
-    QSet<QString> found;
+    QHash<QString, QString> found; // by PathKey: one folder in two spellings (Windows) is one
     const auto look = [&](const QString& given) {
         const QString path = QDir::cleanPath(given);
         for (const QString& root : std::as_const(roots)) {
-            if (!path.startsWith(root)) continue;
+            if (!PathKey::isInside(path, root)) continue;
             const int slash = path.indexOf('/', root.size()); // <root>/<id>/...: a file directly in the root is none
-            if (slash > root.size()) found.insert(path.left(slash));
+            if (slash > root.size()) found.insert(PathKey::of(path.left(slash)), path.left(slash));
         }
     };
     forEachFile(d, [&](QString& path) { look(path); });
     for (const MediaInfo& m : d.media) look(m.path);
-    QStringList list(found.begin(), found.end());
+    QStringList list = found.values();
     list.sort();
     return list;
 }
