@@ -273,9 +273,20 @@ void filterChecks()
     CHECK_EQ(PC::checkFilter("eq"), QString());
     CHECK_EQ(PC::checkFilter("eq=gamma_r=1.2:gamma_b=0.8:gamma_weight=0.5,negate"), QString());
     CHECK_EQ(PC::checkFilter("eq=brightness='0.1*sin(t)':eval=frame:enable='between(t,0,2)'"), QString());
-    refused("eq=brightness='while(1,1)'", "while()");
-    refused("eq=contrast='st(0,1)'", "st()");
+    refused("eq=brightness='while(1,1)'", "uses 'while'");
+    refused("eq=contrast='st(0,1)'", "uses 'st'");
     refused("eq=brightness='n/100'", "uses 'n'");
+    // Only t, constants and pure functions: nothing of the filters eq is made of, no frame counters, no loops
+    refused("eq=brightness='val/maxval'", "uses 'val'");
+    refused("eq=brightness='pts*tb'", "uses 'pts'");
+    refused("eq=contrast='root(t,1)':eval=frame", "uses 'root'");
+    refused("eq=gamma='random(0)'", "uses 'random'");
+    CHECK_EQ(PC::checkFilter("eq=brightness=1e-2:contrast='if(gt(PI,3),1.1,1)'"), QString());
+    CHECK_EQ(PC::checkFilter("eq=saturation='1+0.5*sin(t)':eval=frame"), QString());
+    // eq's own filter names cannot be taken, and labels/instance names on eq get the usual answers
+    refused("lutrgb@eq0=r=val,eq=brightness=0.1", "kept for eq");
+    refused("[a]eq=brightness=0.1", "no link labels");
+    refused("eq@x=brightness=0.1", "no instance name");
     refused("eq=sharpness=1", "no option 'sharpness'");
     refused("eq=eval=sometimes", "eval is init or frame");
     refused("eq=brightness='0.1*t'", "add eval=frame");

@@ -343,7 +343,16 @@ QString eqChain(const QString& args, int index, double seconds, QList<EqCommand>
     QHash<QString, QString> v = {{"contrast", "1"}, {"brightness", "0"}, {"saturation", "1"},   {"gamma", "1"},
                                  {"gamma_r", "1"},  {"gamma_g", "1"},    {"gamma_b", "1"},      {"gamma_weight", "1"},
                                  {"eval", "init"},  {"enable", ""}};
-    static const QRegularExpression frameVars(QStringLiteral(R"((^|[^A-Za-z0-9_])(n|pos|r)($|[^A-Za-z0-9_(]))"));
+    // Names in a value: t, the constants and pure functions of FFmpeg's expressions. Nothing of the filters the values
+    // go into (lutrgb's val/maxval, hue's n/pts/tb), no frame count (frames render out of order: preview and export
+    // would differ), no loops or stored state (while, ld, st, root, taylor, random)
+    static const QRegularExpression word(QStringLiteral(R"((?<![0-9.A-Za-z_])([A-Za-z_][A-Za-z0-9_]*)(\s*\()?)"));
+    static const QSet<QString> names = {"t", "PI", "E", "PHI"};
+    static const QSet<QString> functions = {
+        "sin",  "cos",   "tan",   "asin",  "acos",  "atan", "atan2", "sinh",  "cosh", "tanh",    "exp",
+        "log",  "abs",   "sqrt",  "cbrt",  "pow",   "min",  "max",   "clip",  "gt",   "gte",     "lt",
+        "lte",  "eq",    "if",    "ifnot", "between", "floor", "ceil", "trunc", "round", "mod", "hypot",
+        "gauss", "isnan", "isinf", "not",  "squish", "bitand", "bitor", "lerp", "sgn",  "gcd"};
     static const QRegularExpression timeVar(QStringLiteral(R"((?<![A-Za-z0-9_])t(?![A-Za-z0-9_(]))"));
     for (const auto& [key, value] : opts) {
         if (!v.contains(key)) {
@@ -355,10 +364,13 @@ QString eqChain(const QString& args, int index, double seconds, QList<EqCommand>
             return {};
         }
         if (key != QLatin1String("enable") && key != QLatin1String("eval")) {
-            if (const QRegularExpressionMatch m = frameVars.match(value); m.hasMatch()) {
-                *error = QStringLiteral("filter 'eq': option '%1' uses '%2' (only t, the time in seconds: frames "
-                                        "render out of order)")
-                             .arg(key, m.captured(2));
+            for (auto it = word.globalMatch(value); it.hasNext();) {
+                const QRegularExpressionMatch m = it.next();
+                const bool call = !m.captured(2).isEmpty();
+                if (call ? functions.contains(m.captured(1)) : names.contains(m.captured(1))) continue;
+                *error = QStringLiteral("filter 'eq': option '%1' uses '%2' (only numbers, t = the time in seconds, PI, "
+                                        "E and functions like sin(), clip(), if())")
+                             .arg(key, m.captured(1));
                 return {};
             }
         }
@@ -409,11 +421,14 @@ QString eqChain(const QString& args, int index, double seconds, QList<EqCommand>
             if (!isDefault(channelGamma, 1)) x = QStringLiteral("pow(%1,1/clip((%2),0.1,10))").arg(x, val(channelGamma));
             return QStringLiteral("maxval*%1").arg(x);
         };
+        // A name no chain can take: withoutEq refuses instance names starting with "eq" in what the user writes
         const QString name = QStringLiteral("lutrgb@eq%1").arg(index);
-        // rgba in: 256 entries per LUT (FFmpeg would pick a 16-bit format for it and make 65536 at each change)
+        // rgba in (the picture as it comes; a filter before may have made it YUV)
         chain << QStringLiteral("format=pix_fmts=rgba,%1=r='%2':g='%3':b='%4'")
                          .arg(name, curve("gamma_r", 0), curve("gamma_g", 0), curve("gamma_b", 0))
                      + enable;
+        // The values for a frame are these, t replaced by a number: checked like the chain itself (only the names
+        // above, no loops), so they are as safe as what checkSegment saw
         if (timed && commands)
             for (const char* ch : {"r", "g", "b"})
                 commands->append({name.toUtf8(), QByteArray(ch),
@@ -436,6 +451,21 @@ QString withoutEq(const QString& chain, double seconds, QList<EqCommand>* comman
     auto flush = [&]() -> bool {
         static const QRegularExpression eqPart(QStringLiteral(R"(^(\s*)eq\s*(=(.*))?$)"),
                                                QRegularExpression::DotMatchesEverythingOption);
+        static const QRegularExpression labelled(QStringLiteral(R"(^\s*(\[[^\]]*\]\s*)+eq\s*(=|@|$))"));
+        static const QRegularExpression named(QStringLiteral(R"(^\s*eq\s*@)"));
+        static const QRegularExpression ownName(QStringLiteral(R"(^\s*(\[[^\]]*\]\s*)*[A-Za-z0-9_]+\s*@\s*eq)"));
+        if (labelled.match(part).hasMatch()) {
+            *error = QStringLiteral("no link labels like [in] in the chain (filter 'eq')");
+            return false;
+        }
+        if (named.match(part).hasMatch()) {
+            *error = QStringLiteral("filter 'eq' takes no instance name (eq@...)");
+            return false;
+        }
+        if (ownName.match(part).hasMatch()) {
+            *error = QStringLiteral("instance names starting with 'eq' are kept for eq's own filters");
+            return false;
+        }
         const QRegularExpressionMatch m = eqPart.match(part);
         if (!m.hasMatch()) {
             out += part;
@@ -712,7 +742,8 @@ bool applyFilter(const QString& chain, uint8_t* rgba, int width, int height, dou
         QList<EqCommand> commands;
         QString eqError;
         withoutEq(chain, seconds, &commands, &eqError);
-        // A command makes the filter compute its whole LUT (4 x 65536 entries): the options of a LUT are set first,
+        // A command makes lutrgb compute its whole LUT again (65536 entries for each of r, g, b, a, whatever the
+        // format): the options of a LUT are set first,
         // and only its last one goes as a command
         for (qsizetype i = 0; i < commands.size(); ++i) {
             const EqCommand& cmd = commands[i];
