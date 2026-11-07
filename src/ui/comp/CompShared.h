@@ -37,6 +37,10 @@ bool animated(const Clip& c, int node, const QString& key);
 // Shown name of a node: its kind's name and id ("Maske 3"); unknown kinds by their id
 QString nodeName(const CompNode& n);
 
+// One line about what the node does, for its box on the canvas: the kind's key value (merge mode and opacity,
+// mask shape, the text, the wrapped effect's name, the media file, a color …); empty = nothing to say
+QString nodeSummary(const Clip& c, const CompNode& n);
+
 // `tl` with the graph of clip `clipId` ending at node `node` (0 = its own output) and, with `matte`, the alpha of
 // that picture as gray (a mask node always shows as gray): what the viewer plays on the Comp page. Unchanged when the
 // clip has no graph or the node is missing.

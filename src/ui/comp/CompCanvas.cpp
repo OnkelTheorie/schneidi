@@ -138,7 +138,8 @@ void CompCanvas::refresh()
     if (m_selected && !m_graph.node(m_selected)) setSelected(0);
     // A clip shown for the first time: its graph in view once (opening it is the user's act; later edits never move
     // the view)
-    if (!m_view.set && !m_graph.isEmpty() && width() > 0) fit();
+    // (only when shown: a hidden canvas has no real size yet and the fit would cut nodes off)
+    if (!m_view.set && !m_graph.isEmpty() && isVisible() && width() > 0) fit();
     update();
 }
 
@@ -181,7 +182,8 @@ QStringList CompCanvas::inputsOf(const CompNode& n) const
 
 QSizeF CompCanvas::nodeSize(const CompNode& n) const
 {
-    return {kNodeW, kHeader + std::max<qsizetype>(1, inputsOf(n).size()) * kRow + 6};
+    // Header, a row per input (the output port sits in the first), a row for the node's key value
+    return {kNodeW, kHeader + std::max<qsizetype>(1, inputsOf(n).size()) * kRow + kRow + 4};
 }
 
 QRectF CompCanvas::nodeRect(int node) const
@@ -364,6 +366,7 @@ void CompCanvas::paintEvent(QPaintEvent*)
         return;
     }
     const double z = m_view.zoom;
+    const Clip* clipPtr = TimelineOps::findClip(m_editor->project()->timeline(), m_clipId);
     // Wires
     auto wire = [&](const QPointF& a, const QPointF& b, const QColor& col) {
         QPainterPath path(a);
@@ -424,6 +427,16 @@ void CompCanvas::paintEvent(QPaintEvent*)
             p.drawEllipse(pt, kPort * z, kPort * z);
             p.setPen(Theme::textDim);
             p.drawText(QRectF(pt.x() + 9 * z, pt.y() - kRow * z / 2, r.width() / 2, kRow * z), Qt::AlignVCenter, in);
+        }
+        // What the node does (its key value), in the last row
+        if (const Clip* c = clipPtr) {
+            const QString summary = CompUi::nodeSummary(*c, n);
+            if (!summary.isEmpty()) {
+                const QRectF body(r.left() + 7 * z, r.bottom() - (kRow + 4) * z, r.width() - 14 * z, kRow * z);
+                p.setPen(Theme::text);
+                p.drawText(body, Qt::AlignVCenter | Qt::AlignLeft,
+                           QFontMetrics(small).elidedText(summary, Qt::ElideRight, int(body.width())));
+            }
         }
         // Output port
         p.setPen(QPen(Theme::border, 1));

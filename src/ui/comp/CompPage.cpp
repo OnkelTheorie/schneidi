@@ -127,7 +127,7 @@ CompPage::CompPage(Editor* editor, QWidget* parent) : QWidget(parent), m_editor(
     m_top->setObjectName("compTop");
     m_top->addWidget(m_inspector);
     m_main = new QSplitter(Qt::Vertical);
-    m_main->setObjectName("compPage");
+    m_main->setObjectName("compMain"); // 0.19 polish: own key, the slim timeline as the new default
     m_main->addWidget(m_top);
     m_main->addWidget(bottom);
     auto* lay = new QVBoxLayout(this);

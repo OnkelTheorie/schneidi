@@ -16,6 +16,8 @@
 #include "core/TimelineOps.h"
 #include "engine/Engine.h"
 #include "ui/EffectsLibrary.h"
+#include "ui/comp/CompCanvas.h"
+#include "ui/comp/CompInspector.h"
 #include "ui/comp/CompPage.h"
 #include "ui/comp/CompShared.h"
 #include "ui/timeline/TimelinePanel.h"
@@ -33,6 +35,14 @@
 #include <clocale>
 
 namespace {
+
+void dump(QWidget* w, const QString& name)
+{
+    const QString dir = qEnvironmentVariable("COMP_APP_DUMP");
+    if (dir.isEmpty()) return;
+    QTest::qWait(600); // the viewer's picture
+    w->grab().save(dir + "/" + name + ".png");
+}
 
 void settle()
 {
@@ -192,6 +202,45 @@ int main(int argc, char** argv)
         CHECK(CompUi::applyRecipe(w.editor(), {clipId}, id, {}, &why));
         CHECK_EQ(undo->index(), idx + 1);
         CHECK_EQ(int(graphOf(project, clipId).nodes.size()), int(graphOf(project, clip2).nodes.size()));
+    }
+    // ---- Comp page polish: node boxes say what the node does, the graph has room, "Einpassen" shows every node ----
+    {
+        CompGraph g;
+        g.nodes << CompNode{1, "clip", {}} << CompNode{2, "color", {}} << CompNode{3, "mask", {}}
+                << CompNode{4, "merge", {}} << CompNode{5, "fx", {}} << CompNode{6, "text", {}} << CompNode{7, "merge", {}};
+        g.links << CompLink{1, 4, "bg"} << CompLink{2, 4, "fg"} << CompLink{3, 4, "mask"} << CompLink{4, 5, "src"}
+                << CompLink{5, 7, "bg"} << CompLink{6, 7, "fg"};
+        g.out = 7;
+        QHash<int, QVariantMap> values;
+        values[3] = {{"shape", "ellipse"}};
+        values[4] = {{"mode", "screen"}, {"opacity", 0.5}};
+        values[5] = {{"effect", "frei0r.glow"}};
+        values[6] = {{"text", "Hallo\nWelt"}};
+        QString why;
+        CHECK(w.editor()->setCompGraph({clipId}, g, values, CompUi::kinds(), &why));
+        const Clip* c = TimelineOps::findClip(project->timeline(), clipId);
+        CHECK_EQ(CompUi::nodeSummary(*c, *g.node(3)), QString("Ellipse"));
+        CHECK_EQ(CompUi::nodeSummary(*c, *g.node(4)), QString("Negativ multiplizieren · 50 %"));
+        CHECK_EQ(CompUi::nodeSummary(*c, *g.node(5)), EffectRegistry::find("frei0r.glow")->name);
+        CHECK_EQ(CompUi::nodeSummary(*c, *g.node(6)), QString("„Hallo Welt“"));
+        CHECK_EQ(CompUi::nodeSummary(*c, *g.node(7)), QString("Normal"));
+        CHECK(!CompUi::nodeSummary(*c, *g.node(2)).isEmpty()); // the colour
+
+        w.openComp(clipId);
+        CompPage* page = w.compPage();
+        page->setView(CompPage::View::Nodes);
+        settle();
+        QTest::qWait(20);
+        settle();
+        CompCanvas* canvas = page->canvas();
+        // The graph area is the biggest part of the page (the timeline a slim strip)
+        CHECK(canvas->height() >= 380);
+        canvas->fit();
+        settle();
+        for (const CompNode& n : g.nodes) CHECK(canvas->rect().contains(canvas->nodeRect(n.id).toRect()));
+        page->selectNode(4);
+        settle();
+        dump(&w, "comp-page-polished");
     }
     return Check::result();
 }

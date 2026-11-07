@@ -33,7 +33,7 @@ void MainWindow::ensureCompPage()
     if (m_compPage) return;
     m_compPage = new CompPage(m_editor);
     m_pages->addWidget(m_compPage);
-    watchSizes(m_compPage->main(), "compPage");
+    watchSizes(m_compPage->main(), "compMain");
     watchSizes(m_compPage->top(), "compTop");
     m_compPage->setPlayhead(m_timeline->view()->playhead());
     connect(m_engine, &Engine::positionChanged, m_compPage, [this](int f) {
