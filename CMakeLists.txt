@@ -123,6 +123,14 @@ if(SCHNEIDI_SHARED_LIBS)
             message(STATUS "Linker: lld (${SCHNEIDI_LD_LLD})")
         endif()
     endif()
+    # Line tables only (-g1): backtraces, addr2line and crash reports keep function names and file:line, but the
+    # library is a fraction of the size and compiles/links faster. Local variables/types in gdb need
+    # -DSCHNEIDI_FULL_DEBUG=ON (full -g). Only the default build type is touched, a chosen Debug stays as it is.
+    option(SCHNEIDI_FULL_DEBUG "Full debug info (-g) in shared dev builds instead of line tables (-g1)" OFF)
+    if(NOT SCHNEIDI_FULL_DEBUG AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "-O2 -g1 -DNDEBUG")
+        set(CMAKE_C_FLAGS_RELWITHDEBINFO "-O2 -g1 -DNDEBUG")
+    endif()
 else()
     set(SCHNEIDI_LIB_TYPE STATIC)
 endif()
