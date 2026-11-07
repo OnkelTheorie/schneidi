@@ -84,7 +84,6 @@ QString soundKindName(SfxSynth::Kind k)
     case SfxSynth::Kind::Impact: return T("Einschlag");
     case SfxSynth::Kind::Click: return T("Klick");
     case SfxSynth::Kind::Swish: return T("Swish");
-    case SfxSynth::Kind::Rewind: return T("Zurückspulen");
     }
     return {};
 }

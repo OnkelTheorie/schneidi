@@ -44,7 +44,6 @@ const Candidate kCandidates[] = {
     {SfxSynth::Kind::Hit, 1, 0},    {SfxSynth::Kind::Hit, 2, 0},    {SfxSynth::Kind::Hit, 3, 0},
     {SfxSynth::Kind::Impact, 1, 0}, {SfxSynth::Kind::Impact, 2, 0}, {SfxSynth::Kind::Impact, 3, 0},
     {SfxSynth::Kind::Click, 1, 0},  {SfxSynth::Kind::Click, 2, 0},  {SfxSynth::Kind::Click, 3, 0},
-    {SfxSynth::Kind::Rewind, 1, 0}, {SfxSynth::Kind::Rewind, 2, 0}, {SfxSynth::Kind::Rewind, 3, 0},
 };
 
 // 16-bit as the WAV holds it (its dither adds at most 2 steps)
@@ -130,44 +129,6 @@ void testSynth()
     // The dark riser (seed 3) still rings a little after its peak
     CHECK(SfxSynth::make(SfxSynth::Kind::Riser, 3, 1.0).length > 1.0);
     CHECK(!SfxSynth::parseCachedFile("/x/ding.wav"));
-}
-
-// The tape rewind (schneidi's own): starts on the moment, its pitch runs up, the reels' stutter is in it, mild level
-void testRewind()
-{
-    CHECK(SfxSynth::kindFrom("rewind") == SfxSynth::Kind::Rewind);
-    CHECK_EQ(SfxSynth::peakLevelDb(SfxSynth::Kind::Rewind), -16.0);
-    for (unsigned seed : {1u, 2u, 3u}) {
-        const SfxSynth::Sound r = SfxSynth::make(SfxSynth::Kind::Rewind, seed);
-        CHECK(std::abs(r.length - 0.8) < 1e-3);
-        CHECK_EQ(r.anchor, 0.0);
-        const size_t n = r.samples.size(), q = n / 4;
-        // Zero crossings of the fundamental (twice low-passed at 1 kHz: harmonics and hiss out)
-        std::vector<double> low(n);
-        double y1 = 0, y2 = 0;
-        const double a = 1.0 - std::exp(-2 * 3.14159265358979 * 1000.0 / SfxSynth::kRate);
-        for (size_t i = 0; i < n; ++i) {
-            y1 += (r.samples[i] - y1) * a;
-            y2 += (y1 - y2) * a;
-            low[i] = y2;
-        }
-        auto crossings = [&](size_t from, size_t to) {
-            int c = 0;
-            for (size_t i = from + 1; i < to; ++i) c += (low[i - 1] < 0) != (low[i] < 0);
-            return c;
-        };
-        const int early = crossings(q / 2, q + q / 2), late = crossings(2 * q, 3 * q);
-        if (!CHECK(late > early * 13 / 10)) std::printf("       rewind %u: crossings %d early, %d late\n", seed, early, late);
-        // Stutter: 5 ms windows in the middle swing by more than 6 dB
-        double lo = 1e9, hi = -1e9;
-        const size_t win = SfxSynth::kRate / 200;
-        for (size_t i = q; i + win < 3 * q; i += win) {
-            const double db = rmsDb(std::vector<float>(r.samples.begin() + i, r.samples.begin() + i + win));
-            lo = std::min(lo, db);
-            hi = std::max(hi, db);
-        }
-        if (!CHECK(hi - lo > 6)) std::printf("       rewind %u: level swings only %.1f dB\n", seed, hi - lo);
-    }
 }
 
 // The designed risers (SfxForge: earshot's riser build): deterministic, rising, loudest at their end (they stop on the
@@ -606,7 +567,7 @@ void testOp(const QString& dir)
     }
     // `effects` lists the sounds
     const QJsonObject fx = run("effects", {{"kind", "sfx"}});
-    CHECK_EQ(fx["sounds"].toArray().size(), 7); // rewind (0.19) included
+    CHECK_EQ(fx["sounds"].toArray().size(), 6);
     CHECK(run("effects", {})["sounds"].toArray().size() >= 6);
 }
 
@@ -779,8 +740,7 @@ void writeSample(const QString& dir)
         SfxSynth::writeWav(dir + "/" + file, s.samples);
         all.insert(all.end(), s.samples.begin(), s.samples.end());
         all.insert(all.end(), gap.begin(), gap.end());
-        static const char* recipes[] = {"whoosh (pass engine)", "riser (build) / darkriser", "knock", "subdrop", "shutter", "whoosh (pass engine)",
-                                        "tape rewind (own)"};
+        static const char* recipes[] = {"whoosh (pass engine)", "riser (build) / darkriser", "knock", "subdrop", "shutter", "whoosh (pass engine)"};
         out << QString("| %1 | %2 | %3 | %4 | %5 | %6 | %7 | %8 | %9 |\n")
                    .arg(n)
                    .arg(file, SfxSynth::kindName(c.kind))
@@ -814,7 +774,6 @@ int main(int argc, char** argv)
     QGuiApplication app(argc, argv);
     Check::initApp("sfx");
     testSynth();
-    testRewind();
     testForgeRisers();
     testRiserDefault();
     testRecorded();
