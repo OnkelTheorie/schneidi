@@ -17,6 +17,7 @@
 #include "engine/VideoEffects.h"
 #include "engine/picture/Effects.h"
 #include "engine/picture/Interpolate.h"
+#include "engine/picture/TitleLook.h"
 #include "engine/picture/gpu/Gpu.h"
 #include "engine/video/Compose.h"
 #include "engine/video/Convert.h"
@@ -862,8 +863,22 @@ struct Renderer::Impl {
         for (const QString& line : (st.isCounter() ? Generators::counterWidest(st, fm) : st.text).split('\n'))
             w = std::max(w, fm.horizontalAdvance(line));
         const bool outline = st.outlineOn && outlineWidth > 0;
+        // Fill, edge, shadow, glow (0.19): only a styled title takes this path, a plain one is drawn as before
+        Text::Look look;
+        const bool styled = st.look.active();
+        if (styled) {
+            QImage texture;
+            if (st.look.fill == TitleFill::Texture && !st.look.texture.isEmpty())
+                if (const Source s = source(st.look.texture, QStringLiteral("title")); s.still) texture = s.still->image;
+            look = titleLook(st.look, st.color, grow * sy, texture);
+        }
         auto layerOf = [&](bool outlineLayer) {
             Text::Params p;
+            if (styled) {
+                p.look = &look;
+                p.lookBehind = outlineLayer || !outline;
+                p.lookFill = !outlineLayer;
+            }
             p.text = text;
             const double x = (ctx.PW - w) / 2 + Keys::valueAt(c, AnimParam::TitlePosX, t);
             const double y = -Keys::valueAt(c, AnimParam::TitlePosY, t);

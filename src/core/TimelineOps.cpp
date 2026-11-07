@@ -942,6 +942,7 @@ bool usesMediaOnVideo(const Timeline& tl, const QString& path)
     for (const auto& t : tl.video)
         for (const Clip& c : t.clips) {
             if (c.mediaPath == path) return true;
+            if (c.isTitle() && c.title.look.texture == path) return true; // a title's texture picture
             for (const EffectInstance& e : c.effects) // a file a compositing node reads
                 if (e.effectId == QLatin1String(Comp::kEffectId) && Comp::mediaPaths(e).contains(path)) return true;
         }
