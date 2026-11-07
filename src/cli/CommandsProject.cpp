@@ -1156,14 +1156,15 @@ QJsonObject cmdEffects(const QJsonObject& a, Context&)
         if (only.isEmpty()) {
             QJsonArray keys;
             for (const EffectParam& p : d.params)
-                if (!p.sparse) keys << p.key; // grade windows: `help edit --op window`
+                if (!p.sparse) keys << p.name(); // grade windows: `help edit --op window`
             o["params"] = keys;
         } else {
             static const char* types[] = {"number", "color", "path", "boolean", "choice", "text"};
             QJsonArray params;
             for (const EffectParam& p : d.params) {
                 if (p.sparse) continue;
-                QJsonObject po{{"key", p.key}, {"label", p.label}, {"type", types[p.type]}};
+                QJsonObject po{{"key", p.name()}, {"label", p.label}, {"type", types[p.type]}};
+                if (!p.alias.isEmpty()) po["stored_as"] = p.key; // the project file's key (also accepted)
                 if (p.type == EffectParam::Double) {
                     po["min"] = p.min;
                     po["max"] = p.max;

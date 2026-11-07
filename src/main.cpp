@@ -11,6 +11,7 @@
 #include "cli/Setup.h"
 #include "ui/MediaStorage.h"
 #include "app/Theme.h"
+#include "core/CodeTrust.h"
 #include "core/I18n.h"
 #include "engine/Engine.h"
 #include "engine/Extensions.h"
@@ -240,6 +241,7 @@ int main(int argc, char* argv[])
     liveWaiting({});
     if (!testRun) QTimer::singleShot(0, &w, [&w] { CrashReport::offer(&w); }); // crashed last time: show the report
     if (!testRun) w.startUpdateCheck(); // at most once a day, a few seconds from now
+    if (!testRun) CodeTrust::prune(); // trust records of deleted files (at most once a day)
     if (!formatArg.isEmpty()) {
         const QStringList parts = formatArg.split(QRegularExpression("[x@]"));
         ProjectFormat f;

@@ -491,3 +491,5 @@ set_property(TEST ${_schneidi_tests} APPEND PROPERTY ENVIRONMENT_MODIFICATION ${
 schneidi_test(test_trust_dialog) # custom code from someone else: the open dialog (run/skip), remembered, inspector "Code erlauben",
 # trust_custom_code of an AI in the app asks the user
 target_link_libraries(test_trust_dialog PRIVATE schneidi_cli_lib)
+schneidi_test(test_effect_aliases) # readable names of index-keyed effect parameters (0.19): op effect, keyframe, fx node, info, effects
+target_link_libraries(test_effect_aliases PRIVATE schneidi_cli_lib)

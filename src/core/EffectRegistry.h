@@ -36,6 +36,10 @@ struct EffectParam {
     // Not written into a new instance (missing = default): many optional values that are mostly unused, like the
     // windows of the Color page (core/GradeWindows)
     bool sparse = false;
+    // Readable name for the CLI/MCP where the stored key is a plugin index ("0", "1" of the effects that replaced
+    // frei0r): accepted wherever a key is, shown instead of it. Empty = the key. The project file keeps the key
+    QString alias;
+    QString name() const { return alias.isEmpty() ? key : alias; }
     // Shown text of a Choice value (label if there is one)
     QString choiceText(const QString& value) const
     {
@@ -63,6 +67,11 @@ struct EffectDescriptor {
 namespace EffectRegistry {
 const QVector<EffectDescriptor>& all();
 const EffectDescriptor* find(const QString& id);
+// Parameter of d by its stored key or its readable alias (EffectParam::alias); nullptr = none
+const EffectParam* findParam(const EffectDescriptor& d, const QString& keyOrAlias);
+// Stored key of a key or alias of effect `effectId` (unchanged if unknown), and the shown name of a stored key
+QString storedKey(const QString& effectId, const QString& keyOrAlias);
+QString shownKey(const QString& effectId, const QString& key);
 // Effect and parameter for an animatable effect parameter (false = not an effect parameter)
 bool paramFor(AnimParam p, const EffectDescriptor** effect, const EffectParam** param);
 

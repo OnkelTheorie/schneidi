@@ -437,19 +437,25 @@ void opTransition(Session& s, const QJsonObject& op)
         return;
     }
     const bool trim = op.value("trim").toBool();
+    // The wanted length and alignment go in right away: trim:true takes off only the frames missing for them
+    const int length = op.contains("length") ? timeOf(s, op, "length") : 0;
+    std::optional<TransitionAlign> align;
+    if (op.contains("align")) {
+        const int a = QStringList{"center", "start", "end"}.indexOf(op.value("align").toString());
+        if (a >= 0) align = TransitionAlign(a); // a bad name fails in parseTransitionStyle
+    }
     QVector<QPair<int, int>> lacking;
     if (clips.isEmpty()) {
-        lacking = ed.addTransitions(cut, std::nullopt, only, trim);
+        lacking = ed.addTransitions(cut, std::nullopt, only, trim, length, align);
     } else {
         s.selection.set(clips);
-        lacking = ed.addTransitions(0, std::nullopt, only, trim);
+        lacking = ed.addTransitions(0, std::nullopt, only, trim, length, align);
         s.selection.clear();
     }
     const auto found = spans();
     if (found.isEmpty())
         fail("FAILED", lacking.isEmpty() || trim ? "no transition possible there"
                                                  : "no spare material at the cut ('trim':true shortens the clips so it fits)");
-    const int length = op.contains("length") ? timeOf(s, op, "length") : 0;
     for (const auto& sp : found) {
         const TransitionStyle st = parseTransitionStyle(op, sp.style);
         if (st != sp.style) ed.setTransitionStyle(sp.leftId, sp.rightId, st);

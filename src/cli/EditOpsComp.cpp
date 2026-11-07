@@ -81,11 +81,10 @@ QVariantMap nodeValues(Session& s, const PC::NodeType& k, const QJsonValue& v, c
         if (!p && fx && key.startsWith(QLatin1String("e_"))) {
             const EffectParam* ep = nullptr;
             if (effect)
-                for (const EffectParam& q : effect->params)
-                    if (QLatin1String("e_") + q.key == key) ep = &q;
+                ep = EffectRegistry::findParam(*effect, key.mid(2)); // stored key or readable alias
             if (effect && !ep) {
                 QStringList keys;
-                for (const EffectParam& q : effect->params) keys << "e_" + q.key;
+                for (const EffectParam& q : effect->params) keys << "e_" + q.name();
                 fail("BAD_ARGUMENT", QString("%1: effect %2 has no value '%3' (values: %4)")
                                          .arg(where, effectId, key.mid(2), keys.isEmpty() ? QString("none") : keys.join(", ")));
             }
@@ -98,10 +97,10 @@ QVariantMap nodeValues(Session& s, const PC::NodeType& k, const QJsonValue& v, c
             } else if (ep && ep->type == EffectParam::Bool && !it.value().isBool()) {
                 fail("BAD_ARGUMENT", QString("'%1' must be true or false").arg(name));
             } else if (ep && ep->type == EffectParam::Color) {
-                out[key] = colorOf(it.value(), "'" + name + "'").name(QColor::HexArgb);
+                out["e_" + ep->key] = colorOf(it.value(), "'" + name + "'").name(QColor::HexArgb);
                 continue;
             }
-            out[key] = it.value().toVariant();
+            out[ep ? "e_" + ep->key : key] = it.value().toVariant(); // the stored key, also when given by alias
             // A custom effect's code (filter chain, shader) is checked here, as in op 'effect'
             QString why;
             if (key == QLatin1String("e_chain")) why = Picture::Custom::checkFilter(it.value().toString(), s.format().size());
@@ -591,7 +590,15 @@ QJsonObject compJson(const EffectInstance& e, const ProjectFormat& f)
     QJsonArray nodes, links;
     for (const CompNode& n : g.nodes) {
         QJsonObject o{{"id", n.id}, {"type", n.type}};
-        if (!values.value(n.id).isEmpty()) o["params"] = values.value(n.id);
+        if (QJsonObject v = values.value(n.id); !v.isEmpty()) {
+            // An effect node's values by their readable names (e_blur, not e_0)
+            if (const QString fxId = v.value("effect").toString(); !fxId.isEmpty())
+                for (const QString& k : v.keys())
+                    if (k.startsWith(QLatin1String("e_")))
+                        if (const QString shown = "e_" + EffectRegistry::shownKey(fxId, k.mid(2)); shown != k)
+                            v[shown] = v.take(k);
+            o["params"] = v;
+        }
         if (!PC::find(n.type)) o["available"] = false; // a newer version's kind: passed through
         for (const char* key : {"e_chain", "e_code"}) // custom code not confirmed (core/CodeTrust.h): passed through
             if (!CodeTrust::isTrusted(values.value(n.id).value(QLatin1String(key)).toString())) o["untrusted"] = true;

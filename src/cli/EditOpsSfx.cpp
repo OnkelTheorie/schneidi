@@ -384,7 +384,7 @@ QJsonArray sfxSounds()
             o["length_s"] = rec.first().length;
             o["note"] = "recorded (CC0); computed when a length is given";
         } else {
-            o["computed"] = "earshot recipe port (MIT)";
+            o["computed"] = k == SfxSynth::Kind::Rewind ? "schneidi's own" : "earshot recipe port (MIT)";
         }
         out << o;
     }
@@ -433,7 +433,7 @@ QJsonObject prepareSfx(const QJsonObject& editArgs, Context& ctx)
 void addSfxOps(QVector<OpDef>& ops)
 {
     ops << OpDef{"sfx", "{op:'sfx', at?|on?:'cuts'|'drops'|'kills'|'markers', kind?, level?:'mild'|'normal', volume_db?}",
-                 "effect sounds (whoosh, riser, hit, impact, click, swish or a file) on moments, sparingly",
+                 "effect sounds (whoosh, riser, hit, impact, click, swish, rewind or a file) on moments, sparingly",
                  "Puts a sound on each moment, on the audio track 'SFX' (made if missing; track: another one). "
                  "at: times; on: 'cuts' (hard cuts of the video), 'drops' (of the music as snap_to_beat finds it; "
                  "music), 'kills' (hit_s of the recordings' kill feed as `highlights` reads it; game) or 'markers'. "

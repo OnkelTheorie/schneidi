@@ -94,7 +94,8 @@ void alignToMaterial(Timeline& tl, const Timeline& wanted, int leftId, int right
 } // namespace
 
 QVector<QPair<int, int>> Editor::addTransitions(int frame, std::optional<TransitionStyle> style,
-                                                std::optional<TrackKind> onlyKind, bool trimClips)
+                                                std::optional<TrackKind> onlyKind, bool trimClips, int length,
+                                                std::optional<TransitionAlign> align)
 {
     const Timeline& cur = m_project->timeline();
     // Selected transition: only swap the style (alignment stays)
@@ -110,7 +111,7 @@ QVector<QPair<int, int>> Editor::addTransitions(int frame, std::optional<Transit
         return {};
     }
     QVector<QPair<int, int>> lacking;
-    const auto tl = withTransitions(frame, style, onlyKind, trimClips, &lacking);
+    const auto tl = withTransitions(frame, style, onlyKind, trimClips, &lacking, length, align);
     if (tl && !sameTransitions(cur, *tl))
         m_project->edit(T("Übergang hinzufügen"), [&](Timeline& t) { t = *tl; });
     return lacking;
@@ -127,7 +128,8 @@ QVector<QPair<int, int>> Editor::transitionsLackingHandles(int frame, std::optio
 
 std::optional<Timeline> Editor::withTransitions(int frame, std::optional<TransitionStyle> style,
                                                 std::optional<TrackKind> onlyKind, bool trimClips,
-                                                QVector<QPair<int, int>>* lacking) const
+                                                QVector<QPair<int, int>>* lacking, int wantedLength,
+                                                std::optional<TransitionAlign> align) const
 {
     const Timeline& cur = m_project->timeline();
     struct EdgeRef { int clipId; bool atEnd; };
@@ -163,7 +165,7 @@ std::optional<Timeline> Editor::withTransitions(int frame, std::optional<Transit
 
     // Start from a copy and bring it to the fitting length
     Timeline tl = cur;
-    const int length = std::max(1, m_project->fps()); // default 1 s like DaVinci
+    const int length = wantedLength > 0 ? wantedLength : std::max(1, m_project->fps()); // default 1 s
     QSet<int> touched;
     QVector<QPair<int, int>> cuts; // dissolves (clip ending | clip starting at the cut)
     for (const EdgeRef& e : edges) {
@@ -174,8 +176,9 @@ std::optional<Timeline> Editor::withTransitions(int frame, std::optional<Transit
         const int idx = int(c - clips.data());
         touched.insert(c->id);
         // New transitions start as Cross Dissolve (or with the chosen style), existing ones keep their style
-        auto set = [&style](int& len, TransitionStyle& s, int value) {
+        auto set = [&style, &align](int& len, TransitionStyle& s, int value) {
             if (len <= 0) s = {};
+            if (align) s.align = *align;
             if (style) {
                 s.type = style->type;
                 s.audio = style->audio;
@@ -236,7 +239,7 @@ bool Editor::trimForTransition(Timeline& tl, int leftId, int rightId, Transition
     const SourceLength len = sourceLength();
     const int srcLen = len ? len(*l) : 0;
     const int handleOut = srcLen > 0 ? srcLen - 1 - l->out : INT_MAX / 2;
-    const int handleIn = r->in;
+    const int handleIn = (len ? len(*r) : 0) > 0 ? r->in : INT_MAX / 2; // still: any
     // Shorter if the clips are too short for the full length
     for (; length > 0; --length) {
         const int before = align == TransitionAlign::Start ? 0 : align == TransitionAlign::End ? length : length / 2;

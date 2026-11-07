@@ -222,6 +222,81 @@ void testTransitionTrimClips()
     CHECK_EQ(dissolve(TrackKind::Video), fps);
 }
 
+// trim:true with a wanted length takes off only the frames missing for it, and never from a still (any length);
+// it used to trim for the default 1 s on both sides and then shorten the dissolve
+void testTransitionTrimWantedLength()
+{
+    Project p;
+    Selection sel;
+    Editor ed(&p, &sel);
+    p.addMedia({"/x/a.mp4", "a.mp4", 250, true, true, false});
+    p.addMedia({"/x/s.png", "s.png", 125, true, false, true});
+    ed.addMediaAt({"/x/a.mp4"}, 0, 0);
+    ed.addMediaAt({"/x/s.png"}, 250, 0);
+    sel.clear();
+    const int a = V(p, 0, 0), st = V(p, 0, 1);
+    const int stillLen = TimelineOps::findClip(p.timeline(), st)->length();
+    const int end = TimelineOps::endFrame(p.timeline());
+    CHECK_EQ(end, 250 + stillLen);
+    auto dissolve = [&] {
+        for (const auto& s : ed.transitions({TrackKind::Video, 0}))
+            if (s.leftId == a && s.rightId == st) return s.length();
+        return 0;
+    };
+    // Centred 12 frames: 6 after the cut are missing in a (it ends at the end of its recording), the still has any.
+    // (A centred dissolve may also move to the end of the cut, where the still has the material: then nothing is
+    // trimmed; either way the still keeps its start and a loses at most the 6 missing frames.)
+    CHECK(ed.addTransitions(250, {}, {}, true, 12).isEmpty());
+    const Clip* ca = TimelineOps::findClip(p.timeline(), a);
+    const Clip* cs = TimelineOps::findClip(p.timeline(), st);
+    CHECK(ca->out == 249 - 6 || ca->out == 249);
+    CHECK_EQ(cs->in, 0);
+    CHECK_EQ(cs->start, ca->end());
+    CHECK_EQ(cs->length(), stillLen);
+    CHECK_EQ(dissolve(), 12);
+    CHECK_EQ(TimelineOps::endFrame(p.timeline()), end - (249 - ca->out));
+    // Aligned to the start of the cut: all 12 frames come from a, the still keeps its start
+    p.undoStack()->undo();
+    CHECK(ed.addTransitions(250, {}, {}, true, 12, TransitionAlign::Start).isEmpty());
+    CHECK_EQ(TimelineOps::findClip(p.timeline(), a)->out, 249 - 12);
+    CHECK_EQ(TimelineOps::findClip(p.timeline(), st)->in, 0);
+    CHECK_EQ(dissolve(), 12);
+    // Aligned to the end: the still has the material before the cut, nothing is trimmed
+    p.undoStack()->undo();
+    CHECK(ed.addTransitions(250, {}, {}, true, 12, TransitionAlign::End).isEmpty());
+    CHECK_EQ(TimelineOps::findClip(p.timeline(), a)->out, 249);
+    CHECK_EQ(TimelineOps::findClip(p.timeline(), st)->in, 0);
+    CHECK_EQ(dissolve(), 12);
+    CHECK_EQ(TimelineOps::endFrame(p.timeline()), end);
+    // Default length (1 s) centred: only a is trimmed, by half of it
+    p.undoStack()->undo();
+    const int fps = p.fps();
+    CHECK(ed.addTransitions(250, {}, {}, true).isEmpty());
+    const int outA = TimelineOps::findClip(p.timeline(), a)->out;
+    CHECK(outA == 249 - (fps - fps / 2) || outA == 249);
+    CHECK_EQ(TimelineOps::findClip(p.timeline(), st)->in, 0);
+    CHECK_EQ(dissolve(), fps);
+
+    // Two clips without spare material, centred 12 frames: 6 frames off each, the timeline 12 frames shorter
+    Project q;
+    Selection sel2;
+    Editor ed2(&q, &sel2);
+    q.addMedia({"/x/a.mp4", "a.mp4", 250, true, false, false});
+    q.addMedia({"/x/b.mp4", "b.mp4", 150, true, false, false});
+    ed2.addMediaAt({"/x/a.mp4"}, 0, 0);
+    ed2.addMediaAt({"/x/b.mp4"}, 250, 0);
+    sel2.clear();
+    const int qa = V(q, 0, 0), qb = V(q, 0, 1);
+    CHECK(ed2.addTransitions(250, {}, {}, true, 12).isEmpty());
+    CHECK_EQ(TimelineOps::findClip(q.timeline(), qa)->out, 249 - 6);
+    CHECK_EQ(TimelineOps::findClip(q.timeline(), qb)->in, 6);
+    CHECK_EQ(TimelineOps::endFrame(q.timeline()), 400 - 12);
+    int qlen = 0;
+    for (const auto& s : ed2.transitions({TrackKind::Video, 0}))
+        if (s.leftId == qa && s.rightId == qb) qlen = s.length();
+    CHECK_EQ(qlen, 12);
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -232,6 +307,7 @@ int main(int argc, char** argv)
     testFadesStayApart();
     testFadeAfterTrim();
     testTransitionTrimClips();
+    testTransitionTrimWantedLength();
 
     Project p;
     Selection sel;

@@ -7,6 +7,8 @@
 #include "core/Types.h"
 
 #include <QCryptographicHash>
+#include <QDate>
+#include <QFileInfo>
 #include <QHash>
 #include <QSet>
 #include <QSettings>
@@ -50,11 +52,13 @@ const QString& frozenMarker()
     return m;
 }
 
-QString settingsKey(const QString& path)
+QString recordId(const QString& path)
 {
-    const QByteArray key = QCryptographicHash::hash(PathKey::of(path).toUtf8(), QCryptographicHash::Sha1).toHex();
-    return QStringLiteral("trust/") + QString::fromLatin1(key);
+    return QString::fromLatin1(QCryptographicHash::hash(PathKey::of(path).toUtf8(), QCryptographicHash::Sha1).toHex());
 }
+QString settingsKey(const QString& path) { return QStringLiteral("trust/") + recordId(path); }
+// The file of a record (prune: the record key is a hash, the path cannot be read back from it)
+QString fileKey(const QString& path) { return QStringLiteral("trustfile/") + recordId(path); }
 
 } // namespace
 
@@ -236,7 +240,36 @@ bool remembered(const QString& path, const QStringList& codes)
 void remember(const QString& path, const QStringList& codes)
 {
     if (path.isEmpty() || codes.isEmpty()) return;
-    QSettings().setValue(settingsKey(path), hashOf(codes));
+    QSettings s;
+    s.setValue(settingsKey(path), hashOf(codes));
+    s.setValue(fileKey(path), QFileInfo(path).absoluteFilePath());
+}
+
+void forget(const QString& path)
+{
+    if (path.isEmpty()) return;
+    QSettings s;
+    s.remove(settingsKey(path));
+    s.remove(fileKey(path));
+}
+
+int prune(bool force)
+{
+    QSettings s;
+    const QDate today = QDate::currentDate();
+    if (!force && s.value(QStringLiteral("trust_pruned")).toDate() == today) return 0;
+    s.setValue(QStringLiteral("trust_pruned"), today);
+    s.beginGroup(QStringLiteral("trustfile"));
+    const QStringList ids = s.childKeys();
+    QStringList gone;
+    for (const QString& id : ids)
+        if (const QString file = s.value(id).toString(); file.isEmpty() || !QFileInfo::exists(file)) gone << id;
+    s.endGroup();
+    for (const QString& id : gone) {
+        s.remove(QStringLiteral("trust/") + id);
+        s.remove(QStringLiteral("trustfile/") + id);
+    }
+    return int(gone.size());
 }
 
 bool admit(const QString& path, const QStringList& codes)

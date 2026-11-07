@@ -21,20 +21,36 @@ QVector<EffectDescriptor> withWindows(QVector<EffectDescriptor> effects)
     return effects;
 }
 
+// The plugin's parameter name as a readable CLI name: "dot radius" -> dot_radius, "HSync" -> hsync
+QString snakeName(const char* name)
+{
+    QString out;
+    for (const QChar c : QString::fromLatin1(name).toLower()) {
+        if (c.isLetterOrNumber()) out += c;
+        else if (!out.isEmpty() && !out.endsWith('_')) out += '_';
+    }
+    while (out.endsWith('_')) out.chop(1);
+    return out;
+}
+
 // Number parameter of an effect that replaced a frei0r plugin: key and property = the plugin's index, keyframes like
-// the plugin's (Keys::effectParam), mltName = the plugin's name (Kdenlive presets)
+// the plugin's (Keys::effectParam), mltName = the plugin's name (Kdenlive presets), alias = that name readable for
+// the CLI (or `alias` when the plugin's name says little)
 EffectParam f0rNumber(const char* effect, const char* index, const QString& label, const char* name, double def,
-                      const QString& description = {})
+                      const QString& description = {}, const char* alias = nullptr)
 {
     EffectParam p{index, label, index, EffectParam::Double, def, 0.0, 1.0, Keys::effectParam(effect, index), 0.002, 3};
     p.mltName = QString::fromLatin1(name);
     p.description = description;
+    p.alias = alias ? QString::fromLatin1(alias) : snakeName(name);
     return p;
 }
-EffectParam f0rOther(EffectParam::Type type, const char* index, const QString& label, const char* name, QVariant def)
+EffectParam f0rOther(EffectParam::Type type, const char* index, const QString& label, const char* name, QVariant def,
+                     const char* alias = nullptr)
 {
     EffectParam p{index, label, index, type, std::move(def), 0, 0};
     p.mltName = QString::fromLatin1(name);
+    p.alias = alias ? QString::fromLatin1(alias) : snakeName(name);
     return p;
 }
 
@@ -96,12 +112,12 @@ QVector<EffectDescriptor> ownLooks()
          f0rNumber("frei0r.colorhalftone", "2", T("Winkel Magenta"), "magenta angle", 0.45),
          f0rNumber("frei0r.colorhalftone", "3", T("Winkel Gelb"), "yellow angle", 0.25)});
     add("frei0r.rgbnoise", T("Bildrauschen"), T("Farbiges Rauschen, in jedem Bild anders"),
-        {f0rNumber("frei0r.rgbnoise", "0", T("Stärke"), "noise", 0.2)});
+        {f0rNumber("frei0r.rgbnoise", "0", T("Stärke"), "noise", 0.2, {}, "amount")});
     add("frei0r.scanline0r", T("Fernsehzeilen"), T("Jede zweite Zeile dunkler, wie ein altes Fernsehbild"), {});
     add("frei0r.nosync0r", T("Gestörter Bildlauf"), T("Bild rollt nach oben weg wie bei einem Fernseher ohne Bildfang"),
-        {f0rNumber("frei0r.nosync0r", "0", T("Versatz"), "HSync", 0.0)});
+        {f0rNumber("frei0r.nosync0r", "0", T("Versatz"), "HSync", 0.0, {}, "offset")});
     {
-        EffectParam shape = f0rOther(EffectParam::Choice, "0", T("Form"), "pattern", QString("gradient_linear"));
+        EffectParam shape = f0rOther(EffectParam::Choice, "0", T("Form"), "pattern", QString("gradient_linear"), "shape");
         shape.choices = {"gradient_linear", "gradient_radial"};
         shape.choiceLabels = {T("Linear"), T("Radial")};
         EffectParam blend = f0rOther(EffectParam::Choice, "10", T("Mischmodus"), "blend mode", QString("normal"));
@@ -133,7 +149,7 @@ QVector<EffectDescriptor> ownLooks()
                        T("0 nichts, 0,2 rasieren, 0,3/0,4 verkleinern hart/weich, 0,6/0,7 vergrößern hart/weich, "
                          "0,8 Schwelle, 1 weichzeichnen")),
              f0rNumber(a, "3", T("Schwelle"), "Threshold", 0.5),
-             f0rNumber(a, "4", T("Stärke"), "Shrink/Grow/Blur amount", 0.333),
+             f0rNumber(a, "4", T("Stärke"), "Shrink/Grow/Blur amount", 0.333, {}, "amount"),
              f0rOther(EffectParam::Bool, "5", T("Umkehren"), "Invert", false)});
     }
     return out;
@@ -273,6 +289,29 @@ const EffectDescriptor* find(const QString& id)
     for (const auto& e : all())
         if (e.id == id) return &e;
     return nullptr;
+}
+
+const EffectParam* findParam(const EffectDescriptor& d, const QString& keyOrAlias)
+{
+    for (const EffectParam& p : d.params)
+        if (p.key == keyOrAlias) return &p;
+    for (const EffectParam& p : d.params)
+        if (!p.alias.isEmpty() && p.alias == keyOrAlias) return &p;
+    return nullptr;
+}
+
+QString storedKey(const QString& effectId, const QString& keyOrAlias)
+{
+    const EffectDescriptor* d = find(effectId);
+    const EffectParam* p = d ? findParam(*d, keyOrAlias) : nullptr;
+    return p ? p->key : keyOrAlias;
+}
+
+QString shownKey(const QString& effectId, const QString& key)
+{
+    const EffectDescriptor* d = find(effectId);
+    const EffectParam* p = d ? findParam(*d, key) : nullptr;
+    return p && p->key == key ? p->name() : key;
 }
 
 bool paramFor(AnimParam p, const EffectDescriptor** effect, const EffectParam** param)
