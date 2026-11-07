@@ -2,11 +2,13 @@
 // Custom effect "ffmpeg_filter" (CustomEffects.h): a libavfilter chain on the clip's picture.
 //
 // Safety: libavfilter has filters that read files (movie, amovie, lut3d/haldclut/curves/selectivecolor with a file,
-// subtitles/ass, drawtext's textfile/fontfile), run commands (sendcmd, zmq/azmq) or take other inputs. A denylist
-// would have to follow every FFmpeg release, so the chain may only use filters of an allowlist: colour, tone, blur,
-// edge, distortion and drawing filters that work on one picture from its own pixels. On top, no option whose name
-// mentions a file is taken, the chain must be one linear chain (no labels, no ';'), and the names are checked on the
-// parsed chain BEFORE any filter is made (a filter's init may already open its file). The bundled LGPL FFmpeg
+// subtitles/ass, drawtext's textfile/fontfile), write files (curves' plot), run commands (sendcmd, zmq/azmq) or take
+// other inputs. A denylist would have to follow every FFmpeg release, so the chain may only use filters of an
+// allowlist: colour, tone, blur, edge, distortion and drawing filters that work on one picture from its own pixels.
+// Options are allowlisted too: by their type (numbers, switches, colours, sizes, durations, flag names cannot name a
+// file) and every text option by name, reviewed per filter (expressions, point lists, colour names; never psfile or
+// plot). The chain must be one linear chain (no labels, no ';'), and all of it is checked on the parsed chain BEFORE
+// any filter is made (a filter's init may already open its file). The bundled LGPL FFmpeg
 // (packaging/ffmpeg-components.txt) builds exactly these filters.
 #include "engine/picture/CustomEffects.h"
 
@@ -30,6 +32,7 @@ extern "C" {
 #include <libavutil/error.h>
 #include <libavutil/frame.h>
 #include <libavutil/mem.h>
+#include <libavutil/opt.h>
 }
 #endif
 
@@ -59,6 +62,38 @@ const QSet<QString>& allowed()
         "colorkey", "lumakey", "chromakey",
         // time-based fade (by t), format helpers
         "fade", "format", "null", "setsar"};
+    return s;
+}
+
+// The text options a filter of the list may take, reviewed one by one: expressions (hue, lut*, geq, pseudocolor,
+// vignette, rotate, swaprect, crop, pad, scale, drawbox/drawgrid, setsar), curves' point lists, selectivecolor's
+// adjustments, convolution's matrices, colour names, scale's flags and size, format's names. A text option that is
+// not here is refused (curves/selectivecolor psfile reads a file, curves plot writes one). A new filter or FFmpeg
+// version with new text options needs a review before they are added
+const QHash<QString, QSet<QString>>& textOptions()
+{
+    static const QHash<QString, QSet<QString>> s = {
+        {"hue", {"h", "s", "H", "b"}},
+        {"curves", {"master", "m", "red", "r", "green", "g", "blue", "b", "all"}},
+        {"lut", {"c0", "c1", "c2", "c3", "y", "u", "v", "r", "g", "b", "a"}},
+        {"lutrgb", {"c0", "c1", "c2", "c3", "y", "u", "v", "r", "g", "b", "a"}},
+        {"lutyuv", {"c0", "c1", "c2", "c3", "y", "u", "v", "r", "g", "b", "a"}},
+        {"geq", {"lum_expr", "lum", "cb_expr", "cb", "cr_expr", "cr", "alpha_expr", "a", "red_expr", "r", "green_expr",
+                 "g", "blue_expr", "b"}},
+        {"selectivecolor", {"reds", "yellows", "greens", "cyans", "blues", "magentas", "whites", "neutrals", "blacks"}},
+        {"pseudocolor", {"c0", "c1", "c2", "c3"}},
+        {"convolution", {"0m", "1m", "2m", "3m"}},
+        {"vignette", {"angle", "a", "x0", "y0"}},
+        {"rotate", {"angle", "a", "out_w", "ow", "out_h", "oh", "fillcolor", "c"}},
+        {"shear", {"fillcolor", "c"}},
+        {"swaprect", {"w", "h", "x1", "y1", "x2", "y2"}},
+        {"crop", {"out_w", "w", "out_h", "h", "x", "y"}},
+        {"pad", {"width", "w", "height", "h", "x", "y"}},
+        {"scale", {"w", "width", "h", "height", "flags", "size", "s"}},
+        {"drawbox", {"x", "y", "width", "w", "height", "h", "color", "c", "thickness", "t", "box_source"}},
+        {"drawgrid", {"x", "y", "width", "w", "height", "h", "color", "c", "thickness", "t"}},
+        {"format", {"pix_fmts", "color_spaces", "color_ranges"}},
+        {"setsar", {"sar", "ratio", "r"}}};
     return s;
 }
 
@@ -111,6 +146,49 @@ struct FrameFree {
     void operator()(AVFrame* f) const { av_frame_free(&f); }
 };
 
+// Is one option of a filter of the list allowed (by its type, text options by name)? Empty = fine
+QString checkOption(const AVFilter* f, const QString& name, const AVDictionaryEntry* e)
+{
+    const QString key = QString::fromUtf8(e->key);
+    const AVOption* o = nullptr;
+    if (f->priv_class)
+        o = av_opt_find(const_cast<const AVClass**>(&f->priv_class), e->key, nullptr, 0, AV_OPT_SEARCH_FAKE_OBJ);
+    if (!o) {
+        // The options every filter has: only `enable` (an expression when the filter works)
+        const AVClass* generic = avfilter_get_class();
+        if (key == QLatin1String("enable") && (f->flags & AVFILTER_FLAG_SUPPORT_TIMELINE)
+            && av_opt_find(&generic, e->key, nullptr, 0, AV_OPT_SEARCH_FAKE_OBJ))
+            return {};
+        return QStringLiteral("filter '%1' has no option '%2' (see `ffmpeg -h filter=%1`)").arg(name, key);
+    }
+    switch (o->type) {
+    case AV_OPT_TYPE_FLAGS:
+    case AV_OPT_TYPE_INT:
+    case AV_OPT_TYPE_INT64:
+    case AV_OPT_TYPE_UINT64:
+    case AV_OPT_TYPE_DOUBLE:
+    case AV_OPT_TYPE_FLOAT:
+    case AV_OPT_TYPE_BOOL:
+    case AV_OPT_TYPE_RATIONAL:
+    case AV_OPT_TYPE_COLOR:
+    case AV_OPT_TYPE_IMAGE_SIZE:
+    case AV_OPT_TYPE_VIDEO_RATE:
+    case AV_OPT_TYPE_DURATION:
+    case AV_OPT_TYPE_PIXEL_FMT:
+        return {}; // parsed as a number, a name of a list or a colour: cannot name a file
+    case AV_OPT_TYPE_STRING:
+        if (textOptions().value(name).contains(key)) return {};
+        break;
+    default:
+        break;
+    }
+    if (key.contains(QLatin1String("file"), Qt::CaseInsensitive) || key == QLatin1String("plot"))
+        return QStringLiteral("filter '%1': option '%2' would use a file (not allowed)").arg(name, key);
+    return QStringLiteral("filter '%1': option '%2' is not allowed (only numbers, switches, colours and reviewed "
+                          "expressions)")
+        .arg(name, key);
+}
+
 // Checks the parsed chain before anything of it is made: one linear chain of allowed filters, no labels, no file
 // options. Empty = fine
 QString checkSegment(const AVFilterGraphSegment* seg)
@@ -131,11 +209,10 @@ QString checkSegment(const AVFilterGraphSegment* seg)
         }
         if (!avfilter_get_by_name(p->filter_name))
             return QStringLiteral("filter '%1' is not in this build's FFmpeg").arg(name);
+        const AVFilter* f = avfilter_get_by_name(p->filter_name);
         const AVDictionaryEntry* e = nullptr;
         while ((e = av_dict_iterate(p->opts, e)))
-            if (QString::fromUtf8(e->key).contains(QLatin1String("file"), Qt::CaseInsensitive))
-                return QStringLiteral("filter '%1': option '%2' would read a file (not allowed)")
-                    .arg(name, QString::fromUtf8(e->key));
+            if (const QString why = checkOption(f, name, e); !why.isEmpty()) return why;
     }
     return {};
 }

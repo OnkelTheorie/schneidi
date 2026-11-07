@@ -22,6 +22,7 @@
 #include <QJsonDocument>
 #include <QTemporaryDir>
 
+#include <clocale>
 #include <vector>
 
 namespace PC = Picture::Custom;
@@ -166,8 +167,22 @@ void filterChecks()
     refused("zmq", "not allowed");
     refused("subtitles=a.srt", "not allowed");
     refused("lut3d=file=a.cube", "not allowed");
-    refused("curves=psfile=a.acv", "would read a file");
-    refused("selectivecolor=psfile=a.asv", "would read a file");
+    refused("curves=psfile=a.acv", "would use a file");
+    refused("selectivecolor=psfile=a.asv", "would use a file");
+    // Options by type and reviewed name: curves' plot writes a gnuplot file (a name without "file"), also when it
+    // is reached by position; text options not reviewed and the generic ones other than enable are refused
+    refused("curves=preset=vintage:plot=plot.txt", "would use a file");
+    refused("curves=none:0/0:0/0:0/0:0/0:0/0:a.acv", "would use a file");
+    refused("hue=s=0:threads=4", "no option 'threads'");
+    refused("drawbox=box_source=x:enable=1,hue=s=0:extra_hw_frames=2", "no option 'extra_hw_frames'");
+    // ... while the normal uses of curves and the other text options still work
+    CHECK_EQ(PC::checkFilter("curves=preset=vintage"), QString());
+    CHECK_EQ(PC::checkFilter("curves=vintage"), QString());
+    CHECK_EQ(PC::checkFilter("curves=r='0/0 0.5/0.6 1/1':all='0/0.1 1/0.9'"), QString());
+    CHECK_EQ(PC::checkFilter("hue=s=0:enable='between(t,0,1)'"), QString());
+    CHECK_EQ(PC::checkFilter("drawbox=x=4:y=4:w=10:h=10:c=red@0.5:t=fill,rotate=a=PI/8:c=black"), QString());
+    CHECK_EQ(PC::checkFilter("lutrgb=r=negval:g=val*0.5,convolution=0m='0 -1 0 -1 5 -1 0 -1 0'"), QString());
+    CHECK_EQ(PC::checkFilter("scale=w=iw/2:h=-2:flags=bicubic,format=pix_fmts=gray,setsar=r=1"), QString());
     // Not one linear chain
     refused("negate;hue=s=0", "one linear chain");
     refused("[in]negate[out]", "labels");
@@ -209,6 +224,7 @@ int main(int argc, char** argv)
 {
     Check::initEnv();
     QGuiApplication app(argc, argv);
+    std::setlocale(LC_NUMERIC, "C"); // as schneidi and schneidi-cli do: FFmpeg reads numbers with a dot
     Check::initApp("custom_effects");
     Check::initEngine();
     QTemporaryDir dir;
