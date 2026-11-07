@@ -24,6 +24,7 @@
 #include "ui/ScrubField.h"
 #include "ui/comp/CompCanvas.h"
 #include "ui/comp/CompInspector.h"
+#include "ui/comp/CompOverlay.h"
 #include "ui/comp/CompPage.h"
 #include "ui/comp/CompShared.h"
 #include "ui/timeline/TimelinePanel.h"
@@ -33,6 +34,7 @@
 #include <QDir>
 #include <QLabel>
 #include <QListWidget>
+#include <QMouseEvent>
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QMimeData>
@@ -402,6 +404,61 @@ int main(int argc, char** argv)
         c = TimelineOps::findClip(project->timeline(), clip2);
         CHECK(CompUi::animated(*c, 3, "x"));
         CHECK(ins->findChild<QLabel*>("comp_analyze_status")->text().startsWith("Fertig"));
+    }
+
+    // ---- Tracker handles on a 9:16 clip in the 16:9 frame: A/B are 0..1 of the clip's own picture (between the bars) ----
+    {
+        const QString vert = Check::makeMedia(dir.path() + "/vert.mp4",
+            {"-f", "lavfi", "-i", "testsrc2=size=180x320:rate=25:duration=1", "-c:v", "libx264", "-preset", "ultrafast",
+             "-pix_fmt", "yuv420p"});
+        if (!CHECK(!vert.isEmpty())) return Check::result();
+        w.importFiles({vert}, true, false);
+        settle();
+        int vertId = 0;
+        for (const Track& t : project->timeline().video)
+            for (const Clip& c : t.clips)
+                if (c.mediaPath == vert) vertId = c.id;
+        if (!CHECK(vertId)) return Check::result();
+        const ProjectFormat f = project->timelineFormat();
+        CHECK_EQ(f.width * 9, f.height * 16); // the frame stayed 16:9
+        CompGraph g;
+        g.nodes << CompNode{1, "clip", {}} << CompNode{2, "tracker", {}};
+        g.links << CompLink{1, 2, "src"};
+        g.out = 2;
+        QHash<int, QVariantMap> values;
+        values[2] = {{"mode", "two"}, {"ax", 0.25}, {"ay", 0.5}, {"bx", 0.75}, {"by", 0.1}};
+        QString why;
+        CHECK(w.editor()->setCompGraph({vertId}, g, values, CompUi::kinds(), &why));
+        w.openComp(vertId);
+        CompPage* page = w.compPage();
+        page->selectNode(2);
+        settle();
+        CompOverlay* o = page->overlay();
+        const QVector<CompOverlay::Handle> hs = o->handles();
+        if (!CHECK_EQ(int(hs.size()), 2)) return Check::result();
+        // The picture: 9:16 at the frame's height, centred
+        const double pw = f.height * 9.0 / 16.0, left = (f.width - pw) / 2;
+        CHECK(std::abs(hs[0].at.x() - (left + 0.25 * pw)) < 0.6);
+        CHECK(std::abs(hs[0].at.y() - 0.5 * f.height) < 0.6);
+        CHECK(std::abs(hs[1].at.x() - (left + 0.75 * pw)) < 0.6);
+        CHECK(std::abs(hs[1].at.y() - 0.1 * f.height) < 0.6);
+        // Dragging A to the picture's right edge gives ax = 1 (not the frame's 0.6 or so), one undo step
+        const QRectF frame(0, 0, f.width, f.height); // widget = frame pixels
+        const QPointF from = o->handlePos(0, frame), to(left + pw, f.height * 0.25);
+        const int idx = undo->index();
+        QMouseEvent press(QEvent::MouseButtonPress, from, from, Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+        CHECK(o->mousePress(&press, frame));
+        for (int i = 1; i <= 4; ++i) {
+            const QPointF at = from + (to - from) * double(i) / 4;
+            QMouseEvent move(QEvent::MouseMove, at, at, Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
+            o->mouseMove(&move, frame);
+        }
+        QMouseEvent release(QEvent::MouseButtonRelease, to, to, Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+        CHECK(o->mouseRelease(&release, frame));
+        CHECK_EQ(undo->index(), idx + 1);
+        const Clip* c = TimelineOps::findClip(project->timeline(), vertId);
+        CHECK(std::abs(CompUi::nodeValues(*c, 2).value("ax").toDouble() - 1.0) < 1e-3);
+        CHECK(std::abs(CompUi::nodeValues(*c, 2).value("ay").toDouble() - 0.25) < 1e-3);
     }
 
     // ---- Title 3D in the Edit inspector: each change one undo step, a value switches 3D on ----

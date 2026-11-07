@@ -4,7 +4,8 @@
 // (rectangle/ellipse: move by the middle, size by the corner; polygon and curve points; the two points of a gradient),
 // a transform's position, a tracker's start points. Each drag = setCompNodeValuesAt with one merge key (one undo
 // step; a value with keyframes gets one at the playhead). Positions are 0..1 of the clip picture, mapped through the
-// clip's own transform like the Color page windows.
+// clip's own transform like the Color page windows. A tracker's points are 0..1 of the clip's own picture (a 9:16 clip
+// in a 16:9 frame: of the picture between the bars), as the tracker sees it.
 
 #include "ui/ViewerOverlay.h"
 
@@ -35,8 +36,11 @@ public:
         enum Kind { Point, Size };
         Kind kind = Point;
         QString kx, ky; // the node values it moves (Size: w/h around the shape's x/y)
-        QPointF at;     // clip picture pixels
+        QPointF at;     // clip picture pixels (the project frame the graph works in)
         QString label;
+        // The values are 0..1 of the clip's own picture without the bars of another aspect ratio (a tracker's start
+        // points, Tracker::pictureRect), not of the frame
+        bool ownPicture = false;
     };
     QVector<Handle> handles() const;
     // Widget coordinates of handle i (tests)
