@@ -48,6 +48,8 @@ FrameSet framesOf(const QString& src, const QJsonObject& a, Context& ctx, int ma
         f = session->format();
         length = TimelineOps::endFrame(session->project.timeline());
         if (a.contains("clip")) clipOnly = compNodeTimeline(*session, a, &clipFrom, &clipTo);
+        else if (a.contains("node") || a.contains("view"))
+            fail("BAD_ARGUMENT", "node/view show a clip's compositing graph: give clip (its id) too");
     } else if (a.contains("clip") || a.contains("node") || a.contains("view")) {
         fail("BAD_ARGUMENT", "clip/node/view are for a project (source = the .schneidi file or \"@app\")");
     } else {

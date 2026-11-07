@@ -382,6 +382,41 @@ int main(int argc, char** argv)
         edit({QJsonObject{{"op", "comp"}, {"clips", QJsonArray{clip}}, {"remove", true}}});
     }
 
+    // Smaller CLI points (round 2): input must be a name or false; fx values against the wrapped effect; text/font
+    // of the text node are text, not files; params + out together; frames node/view need clip
+    {
+        QJsonObject add = op(R"({"op":"node","add":{"type":"blur"},"input":true})");
+        add["clip"] = clip;
+        CHECK(editError({add}).contains("input is the name"));
+        add["input"] = 3;
+        CHECK(editError({add}).contains("input is the name"));
+        add = op(R"({"op":"node","add":{"type":"fx","params":{"effect":"frei0r.rgbnoise","e_0":5}}})");
+        add["clip"] = clip;
+        CHECK(editError({add}).contains("must be between"));
+        add["add"] = op(R"({"type":"fx","params":{"effect":"frei0r.rgbnoise","e_nope":0.5}})");
+        CHECK(editError({add}).contains("has no value 'nope'"));
+        add["add"] = op(R"({"type":"fx","params":{"effect":"frei0r.rgbnoise","e_0":0.5}})");
+        const QJsonObject r = edit({add});
+        const int fx = r["notes"].toArray().first().toObject()["node"].toObject()["id"].toInt();
+        QJsonObject set{{"op", "node"}, {"clip", clip}, {"id", fx}, {"params", QJsonObject{{"e_0", 7}}}};
+        CHECK(editError({set}).contains("must be between")); // the node's effect, not given again
+        set["params"] = QJsonObject{{"e_0", 0.25}};
+        set["out"] = true;
+        edit({set});
+        CHECK(graphOf(clip).out == fx);
+        edit({QJsonObject{{"op", "comp"}, {"clips", QJsonArray{clip}}, {"remove", true}}});
+
+        QHash<QString, QString> types;
+        for (const QJsonValue& v : run("effects", {{"kind", "nodes"}})["nodes"].toArray())
+            if (v["type"].toString() == "text")
+                for (const QJsonValue& p : v["params"].toArray()) types[p["key"].toString()] = p["type"].toString();
+        CHECK_EQ(types.value("text"), QString("text"));
+        CHECK_EQ(types.value("font"), QString("text"));
+        CHECK_EQ(types.value("texture"), QString("path"));
+
+        CHECK(messageOf("frames", {{"source", g_project}, {"node", 2}, {"out", dir.path()}}).contains("give clip"));
+    }
+
     // comp_from: both tracks into one comp clip (compound + graph), named in the notes
     {
         const QJsonObject r = edit({QJsonObject{{"op", "comp_from"}, {"clips", QJsonArray{clip, upper}}}});
