@@ -139,6 +139,7 @@ int fileVideoClips(const QString& path)
 
 int main(int argc, char* argv[])
 {
+    Check::isolateSettings(); // never the user's settings (start template, import presets), nor in schneidi-cli
     QTemporaryDir tmp;
     qputenv("XDG_DATA_HOME", (tmp.path() + "/data").toUtf8()); // own registry of running apps (and backups)
     qputenv("XDG_CACHE_HOME", (tmp.path() + "/cache").toUtf8()); // own proxy folder (clean_proxies deletes there)

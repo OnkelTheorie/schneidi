@@ -140,6 +140,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/core/Types.h
     src/core/TitleLookJson.h      src/core/TitleLookJson.cpp
     src/core/I18n.h               src/core/I18n.cpp
+    src/core/SettingsIsolation.h  src/core/SettingsIsolation.cpp
     src/core/CodeTrust.h          src/core/CodeTrust.cpp
     src/core/Timecode.h
     src/core/TimelineOps.h        src/core/TimelineOps.cpp

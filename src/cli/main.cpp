@@ -15,6 +15,7 @@
 #include "cli/Setup.h"
 #include "core/CodeTrust.h"
 #include "core/I18n.h"
+#include "core/SettingsIsolation.h"
 #include "engine/Engine.h"
 #include "engine/FfmpegLog.h"
 #include "engine/Licenses.h"
@@ -120,6 +121,7 @@ QJsonObject parseArgs(const Cli::Command& cmd, const QStringList& args)
 
 int main(int argc, char* argv[])
 {
+    SettingsIsolation::apply(); // test runs only (SCHNEIDI_TEST_SETTINGS): never the user's settings, before any use
     // No window, no sound: titles still need Qt's painting (fonts), hence a GUI application on the offscreen platform
     if (qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM")) qputenv("QT_QPA_PLATFORM", "offscreen");
     QGuiApplication app(argc, argv);
