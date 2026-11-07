@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // A dissolve dropped onto a cut where one clip has no material beyond it (the right clip starts at the start of its
 // recording, or the left one ends at its end): it is aligned to the side that has material and keeps its full
-// length instead of shrinking to a frame. Centred where both sides have material.
+// length instead of shrinking to a frame. Centred where both sides have material. The same for a transition added at
+// the cut nearest to the playhead (Editor::addTransitions: the "add transition" action, a transition double-clicked in
+// the effects panel, the CLI op 'transition'), which still made it 1 frame.
 #include "check.h"
 
 #include "core/Editor.h"
@@ -77,5 +79,22 @@ int main(int argc, char** argv)
     CHECK(ed.addTransitionAt(1, 2, start));
     CHECK(TimelineOps::findClip(p.timeline(), 1)->transOutStyle.align == TransitionAlign::Start);
     CHECK_EQ(spanOf(p).length(), 10);
+
+    // Added at the cut nearest to the playhead: the same (was 1 frame)
+    setup(p, 100, 0);
+    TransitionStyle iris;
+    iris.type = TransitionType::Luma;
+    iris.luma = ":/lumas/kreis";
+    ed.addTransitions(98, iris);
+    CHECK_EQ(spanOf(p).length(), full);
+    CHECK_EQ(spanOf(p).start, 100);
+    setup(p, 900, 300);
+    ed.addTransitions(103, std::nullopt);
+    CHECK_EQ(spanOf(p).length(), full);
+    CHECK_EQ(spanOf(p).end, 100);
+    setup(p, 100, 300); // both sides: centred
+    ed.addTransitions(100, std::nullopt);
+    CHECK_EQ(spanOf(p).length(), full);
+    CHECK(TimelineOps::findClip(p.timeline(), 1)->transOutStyle.align == TransitionAlign::Center);
     return Check::result();
 }

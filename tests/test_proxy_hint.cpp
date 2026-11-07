@@ -34,6 +34,42 @@ bool play(PlaybackMeter& m, double rate, qint64 ms, double* reported = nullptr)
     return slow;
 }
 
+// Pictures at `rate` per second, but from `dipFrom` for `dipMs` at `dipRate` (0 = nothing shown: a stall)
+bool playWithDip(PlaybackMeter& m, double rate, qint64 ms, qint64 dipFrom, qint64 dipMs, double dipRate)
+{
+    bool slow = false;
+    for (qint64 t = 0; t <= ms;) {
+        const bool dip = t >= dipFrom && t < dipFrom + dipMs;
+        if (dip && dipRate <= 0) {
+            t = dipFrom + dipMs;
+            continue;
+        }
+        if (m.frame(t)) slow = true;
+        t = qint64(t + 1000.0 / (dip ? dipRate : rate));
+    }
+    return slow;
+}
+
+// A short dip (an expensive transition between two 1080p60 recordings: ~30 of 60 pictures/s for two seconds, the pump
+// jumping ahead) is no reason for proxies, even when it pulls the window's rate below kSlow; slow most of the time is.
+// The window opens with the first picture after the warmup (1.5 s) and lasts 4 s.
+void testMeterShortDip()
+{
+    const qint64 window = PlaybackMeter::kWarmupMs + 2 * PlaybackMeter::kWindowMs + 200;
+    PlaybackMeter m;
+    m.start(60, 0);
+    CHECK(!playWithDip(m, 60, window, 3000, 1500, 5)); // window rate 39 of 60
+    m.start(60, 0);
+    CHECK(!playWithDip(m, 60, window, 2600, 1600, 0)); // a stall of 1.6 s (window rate 36 of 60)
+    m.start(60, 0);
+    CHECK(!playWithDip(m, 60, window, 2500, 2000, 10)); // two slow seconds of four (window rate 35)
+    // Slow throughout, or most of the window: reported
+    m.start(60, 0);
+    CHECK(play(m, 35, 12000)); // 35 of 60 every second
+    m.start(60, 0);
+    CHECK(playWithDip(m, 60, window, 2500, 3000, 20)); // three slow seconds of four
+}
+
 void testMeter()
 {
     PlaybackMeter m;
@@ -135,6 +171,7 @@ int main(int argc, char** argv)
     Check::initApp("proxy-hint");
     QTemporaryDir dir;
     testMeter();
+    testMeterShortDip();
     testMainWindow(dir.path());
     return Check::result();
 }

@@ -222,6 +222,40 @@ void testTransitions()
     const QImage w = render(oneTrack({b, c}), 25);
     expect("wipe: left = B", compare(w, right, QRect(0, 0, 150, 180)), 0.0, 0);
     expect("wipe: right = A", compare(w, left, QRect(170, 0, 150, 180)), 0.0, 0);
+    // Wipes in every direction and with a soft edge, the iris (luma "Kreis auf"): rendered again in the same
+    // renderer they look the same (the gradient is built once and shared), and the iris half way shows B in the
+    // middle and A in the corners
+    for (const TransitionType type : {TransitionType::WipeLeft, TransitionType::WipeDown, TransitionType::WipeUp,
+                                      TransitionType::Luma}) {
+        Clip bb = b, cc = c;
+        bb.transOutStyle.type = cc.transInStyle.type = type;
+        bb.transOutStyle.softness = cc.transInStyle.softness = 30;
+        bb.transOutStyle.luma = cc.transInStyle.luma = ":/lumas/kreis";
+        const QImage first = render(oneTrack({bb, cc}), 23);
+        CHECK(!first.isNull());
+        Picture::Options o;
+        o.format = kFormat;
+        o.mode = Picture::Mode::Export;
+        Picture::Renderer r(oneTrack({bb, cc}), o);
+        for (int f : {22, 23}) {
+            const QImage again = r.render(f).toImage();
+            if (f == 23) expect("wipe/iris rendered again = same", compare(again, first), 0.0, 0);
+        }
+        // The gradient is built once per style and size: ahead by prepare() (playback reaching the transition),
+        // not again for its frames (an iris at 1080p took 75 ms per frame to build, the frame itself ~10 ms)
+        o.mode = Picture::Mode::Preview;
+        Picture::Renderer p(oneTrack({bb, cc}), o);
+        p.prepare(5);
+        CHECK_EQ(p.stats().gradients, 1);
+        for (int f = 20; f < 30; ++f) p.render(f);
+        CHECK_EQ(p.stats().gradients, 1);
+        if (type == TransitionType::Luma) {
+            const QImage iris = render(oneTrack({bb, cc}), 26);
+            expect("iris: middle = B", compare(iris, render(oneTrack({media(2, g_pattern2, 0, 0, 49)}), 11),
+                                                QRect(140, 70, 40, 40)), 0.0, 0);
+            expect("iris: corner = A", compare(iris, source(g_pattern, 26), QRect(0, 0, 20, 20)), 0.0, 0);
+        }
+    }
     // Dip to black: darkest at the cut
     b.transOutStyle.type = c.transInStyle.type = TransitionType::DipToColor;
     expect("dip: black at the cut", compare(render(oneTrack({b, c}), 25), zero), 3.0);

@@ -178,6 +178,7 @@ public:
         int framesGpu = 0;         // frames composited on the graphics card
         int layersCpu = 0;         // layers of GPU frames rendered on the CPU (what the card cannot draw yet)
         int layersCompGpu = 0;     // clips whose compositing graph the card evaluated (only its sources on the CPU)
+        int gradients = 0;         // gradients of luma transitions/wipes built (once per style and size)
     };
     Stats stats() const;
 

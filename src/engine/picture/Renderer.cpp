@@ -4,6 +4,7 @@
 #include "core/Captions.h"
 #include "core/CodeTrust.h"
 #include "core/CompGraph.h"
+#include "core/EffectFolders.h"
 #include "core/EffectRegistry.h"
 #include "core/Generators.h"
 #include "core/Keyframes.h"
@@ -386,12 +387,17 @@ struct Renderer::Impl {
 
     std::mutex lutMutex;
     std::map<QString, std::shared_ptr<const ColorGrade::Lut>> luts;
+    // Gradients of luma transitions and wipes (8-bit gray, rows tightly packed), by style and size: building one
+    // costs more than the rest of the frame (iris 1080p: 75 ms; it was built for every frame of the transition)
+    std::mutex gradientMutex;
+    std::map<QString, std::shared_ptr<const std::vector<uint8_t>>> gradients;
     // Static parts of compositing graphs (text, flat colors, stills without keyframes), shared by all frames
     Comp::Cache compCache;
     std::mutex compLogMutex;
     QSet<int> compLogged; // clips whose graph the card did not take, logged once
 
-    std::atomic<int> framesRendered{0}, layersDecoded{0}, layersSkipped{0}, framesGpu{0}, layersCpu{0}, layersCompGpu{0};
+    std::atomic<int> framesRendered{0}, layersDecoded{0}, layersSkipped{0}, framesGpu{0}, layersCpu{0}, layersCompGpu{0},
+        gradientsBuilt{0};
     // GPU path (Options::gpu and a hardware device), looked up by the renders (GUI app: CPU until the GPU has started)
     std::atomic<Gpu::Service*> gpu{nullptr};
     std::atomic<bool> gpuDecided{false};
@@ -1702,26 +1708,84 @@ struct Renderer::Impl {
         return prev.second;
     }
 
-    // luma with a gradient: b replaces a where the gradient is below the progress, over a soft band
-    // (smoothstep(value, value + softness, progress * (1 + softness)))
-    static void luma(Image& a, const Image& b, double progress, double softness, const std::function<double(int, int)>& value)
+    // Gradient of a luma transition or a wipe between two clips at w x h (8-bit gray, rows tightly packed); null =
+    // none (an unknown/unreadable luma image: the transition mixes). Built once per style and size and shared by
+    // every frame of the transition, CPU and GPU path.
+    std::shared_ptr<const std::vector<uint8_t>> gradient(const TransitionStyle& st, int w, int h)
+    {
+        if (w <= 0 || h <= 0) return nullptr;
+        QString key = QString("%1|%2|%3x%4").arg(int(st.type)).arg(st.invert ? 1 : 0).arg(w).arg(h);
+        if (st.isLuma()) {
+            key += '|' + st.luma;
+            if (!EffectFolders::isBuiltin(st.luma)) { // an image file: a changed file is read again
+                const QFileInfo fi(st.luma);
+                key += QString("|%1|%2").arg(fi.lastModified().toMSecsSinceEpoch()).arg(fi.size());
+            }
+        }
+        // Built under the lock: the workers rendering the transition's first frames wait for one build instead of
+        // each building it
+        std::lock_guard lock(gradientMutex);
+        if (auto it = gradients.find(key); it != gradients.end()) return it->second;
+        std::shared_ptr<std::vector<uint8_t>> grad;
+        if (st.isLuma()) {
+            const QImage img = Lumas::image(st.luma, w, h, st.invert);
+            if (!img.isNull()) {
+                const QImage g8 = img.convertToFormat(QImage::Format_Grayscale8);
+                grad = std::make_shared<std::vector<uint8_t>>(size_t(w) * h);
+                for (int y = 0; y < h; ++y) std::memcpy(grad->data() + size_t(y) * w, g8.constScanLine(y), size_t(w));
+            }
+        } else {
+            // Wipe: a linear gradient (wipeLuma: lround(t * 255) per pixel)
+            grad = std::make_shared<std::vector<uint8_t>>(size_t(w) * h);
+            for (int y = 0; y < h; ++y)
+                for (int x = 0; x < w; ++x) {
+                    double v = 0;
+                    switch (st.type) {
+                    case TransitionType::WipeRight: v = double(x) / std::max(1, w - 1); break;
+                    case TransitionType::WipeLeft: v = 1.0 - double(x) / std::max(1, w - 1); break;
+                    case TransitionType::WipeDown: v = double(y) / std::max(1, h - 1); break;
+                    case TransitionType::WipeUp: v = 1.0 - double(y) / std::max(1, h - 1); break;
+                    default: break;
+                    }
+                    (*grad)[size_t(y) * w + x] = uint8_t(std::lround(v * 255));
+                }
+        }
+        gradientsBuilt.fetch_add(1, std::memory_order_relaxed);
+        if (gradients.size() >= 8) gradients.clear(); // a few transitions at one or two sizes; a resize builds anew
+        gradients[key] = grad;
+        return grad;
+    }
+
+    // luma with a gradient (8-bit gray, a's size): b replaces a where the gradient is below the progress, over a soft
+    // band (smoothstep(value, value + softness, progress * (1 + softness)))
+    static void luma(Image& a, const Image& b, double progress, double softness, const uint8_t* gradient)
     {
         const double weight = progress * (1 + softness);
-        uint8_t* d = a.data();
-        const uint8_t* s = b.data();
-        for (int y = 0; y < a.h; ++y)
-            for (int x = 0; x < a.w; ++x, d += 4, s += 4) {
-                const double v = value(x, y);
-                double k;
-                if (weight < v) k = 0;
-                else if (weight >= v + softness) k = 1;
-                else {
-                    const double t = (weight - v) / softness;
-                    k = t * t * (3 - 2 * t);
-                }
-                if (k <= 0) continue;
-                for (int c = 0; c < 4; ++c) d[c] = uint8_t(std::lround(d[c] + (s[c] - d[c]) * k));
+        // The weight depends only on the gradient's value: one table instead of the smoothstep per pixel
+        double table[256];
+        for (int g = 0; g < 256; ++g) {
+            const double v = g / 255.0;
+            double k;
+            if (weight < v) k = 0;
+            else if (weight >= v + softness) k = 1;
+            else {
+                const double t = (weight - v) / softness;
+                k = t * t * (3 - 2 * t);
             }
+            table[g] = k;
+        }
+        uint8_t* __restrict d = a.data();
+        const uint8_t* __restrict s = b.data();
+        const size_t n = size_t(a.w) * a.h;
+        for (size_t i = 0; i < n; ++i, d += 4, s += 4) {
+            const double k = table[gradient[i]];
+            if (k <= 0) continue;
+            if (k >= 1) {
+                std::memcpy(d, s, 4);
+                continue;
+            }
+            for (int c = 0; c < 4; ++c) d[c] = uint8_t(std::lround(d[c] + (s[c] - d[c]) * k));
+        }
     }
 
     // Transitions other than Cross Dissolve (TimelineBuilderDetail::styledTransition): a leaves, b enters, either may
@@ -1751,13 +1815,12 @@ struct Renderer::Impl {
         const double soft = 0.02 + 0.98 * std::clamp(st.softness, 0.0, 100.0) / 100.0;
         const double progress = Generators::ease(st.ease, double(i) / len);
         if (st.isLuma()) { // both sides (one side is a fade, see trackLayer)
-            const QImage grad = Lumas::image(st.luma, a.w, a.h, st.invert);
-            if (grad.isNull()) {
+            const auto grad = gradient(st, a.w, a.h);
+            if (!grad) {
                 mix(a, b, progress);
                 return a;
             }
-            const QImage g8 = grad.convertToFormat(QImage::Format_Grayscale8);
-            luma(a, b, progress, soft, [&](int x, int y) { return g8.constScanLine(y)[x] / 255.0; });
+            luma(a, b, progress, soft, grad->data());
             return a;
         }
         const bool horizontal = type == TransitionType::WipeRight || type == TransitionType::WipeLeft;
@@ -1775,19 +1838,8 @@ struct Renderer::Impl {
             wipeBorder(one, st, p, ctx);
             return std::move(one);
         }
-        // Wipe between two clips: luma with a linear gradient (wipeLuma: lround(t * 255) per pixel)
-        const int w = a.w, h = a.h;
-        luma(a, b, progress, soft, [&](int x, int y) {
-            double t = 0;
-            switch (type) {
-            case TransitionType::WipeRight: t = double(x) / std::max(1, w - 1); break;
-            case TransitionType::WipeLeft: t = 1.0 - double(x) / std::max(1, w - 1); break;
-            case TransitionType::WipeDown: t = double(y) / std::max(1, h - 1); break;
-            case TransitionType::WipeUp: t = 1.0 - double(y) / std::max(1, h - 1); break;
-            default: break;
-            }
-            return std::lround(t * 255) / 255.0;
-        });
+        // Wipe between two clips: luma with a linear gradient
+        luma(a, b, progress, soft, gradient(st, a.w, a.h)->data());
         wipeBorder(a, st, progress * (1.0 + soft) - soft / 2, ctx); // middle of luma's soft zone
         return a;
     }
@@ -2037,7 +2089,7 @@ struct Renderer::Impl {
         std::vector<GpuOp> a, b;
         QColor fill = Qt::transparent;
         double t = 0, softness = 0;
-        std::shared_ptr<std::vector<uint8_t>> gradient; // 8-bit gray, output size
+        std::shared_ptr<const std::vector<uint8_t>> gradient; // 8-bit gray, output size (shared, Impl::gradient)
     };
 
     // A clip the card draws by itself at clip frame t: media (video in an uploadable format, still) with transform,
@@ -2319,31 +2371,8 @@ struct Renderer::Impl {
             m.kind = GpuOp::Luma;
             m.t = Generators::ease(st.ease, m.t);
             m.softness = 0.02 + 0.98 * std::clamp(st.softness, 0.0, 100.0) / 100.0;
-            const int W = ctx.W, H = ctx.H;
-            auto grad = std::make_shared<std::vector<uint8_t>>(size_t(W) * H);
-            if (st.isLuma()) {
-                const QImage img = Lumas::image(st.luma, W, H, st.invert);
-                if (img.isNull()) {
-                    m.kind = GpuOp::Mix;
-                } else {
-                    const QImage g8 = img.convertToFormat(QImage::Format_Grayscale8);
-                    for (int y = 0; y < H; ++y) std::memcpy(grad->data() + size_t(y) * W, g8.constScanLine(y), size_t(W));
-                }
-            } else {
-                for (int y = 0; y < H; ++y)
-                    for (int x = 0; x < W; ++x) {
-                        double v = 0;
-                        switch (type) {
-                        case TransitionType::WipeRight: v = double(x) / std::max(1, W - 1); break;
-                        case TransitionType::WipeLeft: v = 1.0 - double(x) / std::max(1, W - 1); break;
-                        case TransitionType::WipeDown: v = double(y) / std::max(1, H - 1); break;
-                        case TransitionType::WipeUp: v = 1.0 - double(y) / std::max(1, H - 1); break;
-                        default: break;
-                        }
-                        (*grad)[size_t(y) * W + x] = uint8_t(std::lround(v * 255));
-                    }
-            }
-            m.gradient = std::move(grad);
+            m.gradient = gradient(st, ctx.W, ctx.H);
+            if (!m.gradient) m.kind = GpuOp::Mix; // unknown/unreadable luma image
         }
         ops.push_back(std::move(m));
     }
@@ -2784,8 +2813,21 @@ void Renderer::prepare(int64_t frame)
     ctx.PW = d->options.format.width;
     ctx.PH = d->options.format.height;
     ctx.preview = d->options.mode == Mode::Preview;
+    QSize out;
+    {
+        std::lock_guard lock(d->snapMutex);
+        out = d->output;
+    }
     for (int i = 0; i < tl->video.size(); ++i) {
         const Track& track = tl->video[i];
+        // The gradient of a luma transition or wipe starting soon (built once, before its first frame is due)
+        for (const auto& s : d->spansOf(track, *tl)) {
+            const TransitionType type = s.style.type;
+            const bool wipe = type == TransitionType::WipeRight || type == TransitionType::WipeLeft
+                              || type == TransitionType::WipeDown || type == TransitionType::WipeUp;
+            if (s.end > frame && s.start <= soon && s.isDissolve() && (s.style.isLuma() || wipe))
+                d->gradient(s.style, std::max(1, out.width()), std::max(1, out.height()));
+        }
         const QVector<Clip>& clips = track.clips;
         for (const Clip& c : clips) {
             if (!c.enabled || c.mediaPath.isEmpty() || c.isTitle() || c.isNested()) continue;
@@ -2834,6 +2876,7 @@ Renderer::Stats Renderer::stats() const
     s.framesGpu = d->framesGpu;
     s.layersCpu = d->layersCpu;
     s.layersCompGpu = d->layersCompGpu;
+    s.gradients = d->gradientsBuilt;
     std::lock_guard lock(d->sourceMutex);
     s.sourcesOpen = int(d->sources.size());
     return s;
