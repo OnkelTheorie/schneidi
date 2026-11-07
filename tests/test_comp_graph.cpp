@@ -10,8 +10,10 @@
 #include "core/CompGraph.h"
 #include "core/EffectFolders.h"
 #include "core/EffectRegistry.h"
+#include "core/Keyframes.h"
 #include "core/Project.h"
 #include "core/ProjectFile.h"
+#include "core/ProjectFormat.h"
 #include "core/TemplateZip.h"
 #include "core/TimelineOps.h"
 #include "engine/RenderCache.h"
@@ -424,6 +426,57 @@ void testRenderCacheKey(const QString& dir)
     CHECK(RenderCache::key(c, f) != k1);
 }
 
+// 1080p -> 4K: pixel values of nodes (static and keyframes) double, positions 0..1 and unset values stay
+void testScale()
+{
+    Timeline tl = emptyTimeline();
+    Clip c;
+    c.id = 1;
+    c.kind = ClipKind::Media;
+    c.mediaPath = "/x/a.mp4";
+    c.out = 50;
+    CompGraph g;
+    g.nodes = {{1, "text", {}}, {2, "blur", {}}, {3, "shadow", {}}, {4, "transform", {}}, {5, "matte_tune", {}}};
+    g.links = {{1, 2, "src"}, {2, 3, "src"}, {3, 4, "src"}};
+    g.out = 4;
+    EffectInstance e{Comp::kEffectId, {}, true};
+    Comp::setGraph(e, g);
+    e.params["n1.size"] = 64.0;
+    e.params["n1.x"] = 0.25;
+    e.params["n1.shadow_x"] = -3.0;
+    e.params["n1.glow_radius"] = 10.0;
+    e.params["n2.radius"] = 4.5;
+    e.params["n3.soft"] = 6.0;
+    e.params["n4.x"] = 0.5;
+    e.params["n4.size"] = 1.0; // transform size: relative, not pixels
+    e.params["n5.grow"] = 2.0;
+    c.effects << e;
+    Keys::setKey(c, Keys::effectParam(Comp::kEffectId, "n1.size"), 0, 40);
+    Keys::setKey(c, Keys::effectParam(Comp::kEffectId, "n1.size"), 20, 80);
+    Keys::setKey(c, Keys::effectParam(Comp::kEffectId, "n4.x"), 0, 0.1);
+    tl.video[0].clips << c;
+    scaleTimeline(tl, {1920, 1080}, {3840, 2160});
+    const Clip& s = tl.video[0].clips[0];
+    const QVariantMap& p = s.effects[0].params;
+    CHECK_EQ(p.value("n1.size").toDouble(), 128.0);
+    CHECK_EQ(p.value("n1.x").toDouble(), 0.25);
+    CHECK_EQ(p.value("n1.shadow_x").toDouble(), -6.0);
+    CHECK_EQ(p.value("n1.glow_radius").toDouble(), 20.0);
+    CHECK(!p.contains("n1.outline_width")); // unset: the node default
+    CHECK_EQ(p.value("n2.radius").toDouble(), 9.0);
+    CHECK_EQ(p.value("n3.soft").toDouble(), 12.0);
+    CHECK_EQ(p.value("n4.x").toDouble(), 0.5);
+    CHECK_EQ(p.value("n4.size").toDouble(), 1.0);
+    CHECK_EQ(p.value("n5.grow").toDouble(), 4.0);
+    const KeyTrack size = s.keys.value(Keys::effectParam(Comp::kEffectId, "n1.size"));
+    if (CHECK_EQ(size.size(), 2)) {
+        CHECK_EQ(size[0].value, 80.0);
+        CHECK_EQ(size[1].value, 160.0);
+    }
+    const KeyTrack x = s.keys.value(Keys::effectParam(Comp::kEffectId, "n4.x"));
+    if (CHECK_EQ(x.size(), 1)) CHECK_EQ(x[0].value, 0.1);
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -441,5 +494,6 @@ int main(int argc, char** argv)
     testUsage(tmp.path());
     testTemplates(tmp.path());
     testRenderCacheKey(tmp.path());
+    testScale();
     return Check::result();
 }

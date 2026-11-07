@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "core/ProjectFormat.h"
 
+#include "core/CompGraph.h"
 #include "core/Generators.h"
 #include "core/GradeWindows.h"
 #include "core/Keyframes.h"
@@ -112,6 +113,36 @@ double titleFit(const Clip& c, double s, double fromW, double toW)
     return q;
 }
 
+// Node values of compositing graphs in project pixels (Comp::pixelKeys: a text node's size, a blur radius, a shadow
+// offset ...) times k, static values and keyframes; positions as 0..1 of the picture stay. A value never set keeps
+// its node default (the engine's, unknown here) - like a fresh node in the new resolution.
+void scaleCompPixels(Clip& c, double k)
+{
+    QVector<AnimParam> scaled; // keyframes belong to the effect id: two comp instances share them
+    for (EffectInstance& e : c.effects) {
+        CompGraph g;
+        if (!Comp::graphOf(e, &g)) continue;
+        for (const CompNode& n : g.nodes)
+            for (const QString& key : Comp::pixelKeys(n.type)) {
+                const QString full = CompGraph::paramKey(n.id, key);
+                if (auto it = e.params.find(full); it != e.params.end()) {
+                    bool ok = false;
+                    const double v = it->toDouble(&ok);
+                    if (ok) *it = v * k;
+                }
+                const AnimParam p = Keys::effectParam(QString::fromLatin1(Comp::kEffectId), full);
+                if (scaled.contains(p)) continue;
+                scaled << p;
+                if (auto kt = c.keys.find(p); kt != c.keys.end())
+                    for (Keyframe& f : *kt) {
+                        f.value *= k;
+                        f.inDv *= k; // Bezier handles
+                        f.outDv *= k;
+                    }
+            }
+    }
+}
+
 } // namespace
 
 void scaleTimeline(Timeline& tl, QSize from, QSize to)
@@ -186,6 +217,7 @@ void scaleTimeline(Timeline& tl, QSize from, QSize to)
                 ti.barMargin *= sy;
                 c.transInStyle.border *= s;
                 c.transOutStyle.border *= s;
+                if (tracks == &tl.video) scaleCompPixels(c, s);
                 // Convert keyframe values in pixels likewise
                 for (auto it = c.keys.begin(); it != c.keys.end(); ++it) {
                     double f = 1;
