@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "core/Project.h"
 
+#include "core/CompGraph.h"
 #include "core/I18n.h"
 #include "core/TimelineOps.h"
 
@@ -13,6 +14,18 @@
 #include <algorithm>
 
 namespace {
+
+// Does the clip use one of the files: as its media, as a title's texture picture or a file a compositing node reads
+bool usesFile(const Clip& c, const QSet<QString>& files)
+{
+    if (c.kind == ClipKind::Media && files.contains(c.mediaPath)) return true;
+    if (c.isTitle() && files.contains(c.title.look.texture)) return true;
+    for (const EffectInstance& e : c.effects)
+        if (e.effectId == QLatin1String(Comp::kEffectId))
+            for (const QString& p : Comp::mediaPaths(e))
+                if (files.contains(p)) return true;
+    return false;
+}
 
 class SnapshotCommand : public QUndoCommand {
 public:
@@ -824,7 +837,7 @@ QVector<QPair<int, int>> Project::mediaUsage(const QStringList& paths) const
         for (const auto* tracks : {&s.timeline.video, &s.timeline.audio})
             for (const Track& t : *tracks)
                 for (const Clip& c : t.clips)
-                    if (c.kind == ClipKind::Media && files.contains(c.mediaPath)) ++clips;
+                    if (usesFile(c, files)) ++clips;
         if (clips > 0) usage << qMakePair(s.id, clips);
     }
     return usage;
@@ -863,7 +876,7 @@ bool Project::removeMedia(const QStringList& paths, bool withClips)
             for (const auto* tracks : {&s.timeline.video, &s.timeline.audio})
                 for (const Track& t : *tracks)
                     for (const Clip& c : t.clips)
-                        if (c.kind == ClipKind::Media && files.contains(c.mediaPath)) ids << c.id;
+                        if (usesFile(c, files)) ids << c.id;
             if (ids.isEmpty()) continue;
             const Timeline before = s.timeline;
             TimelineOps::detachTransitions(s.timeline, ids);

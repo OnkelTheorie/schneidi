@@ -10,8 +10,11 @@
 #include "core/CompGraph.h"
 #include "core/EffectFolders.h"
 #include "core/EffectRegistry.h"
+#include "core/Project.h"
 #include "core/ProjectFile.h"
+#include "core/TemplateZip.h"
 #include "core/TimelineOps.h"
+#include "engine/RenderCache.h"
 #include "engine/picture/CompNodes.h"
 
 #include <QDir>
@@ -345,6 +348,82 @@ void testNodeFiles(const QString& dir)
     CHECK_EQ(compOf(offline).params.value("n2.path").toString(), QDir(dir + "/files/c/elsewhere").filePath("bg.png"));
 }
 
+// Media pool: a file only a node or a title texture reads counts as used (remove_media refuses without its clips)
+void testUsage(const QString& dir)
+{
+    const QString m = dir + "/usage";
+    ProjectData data = filesProject(m + "/bg.png", m + "/look.cube", m + "/tex.png", m + "/title.png");
+    data.media << MediaInfo{} << MediaInfo{};
+    data.media[2].path = m + "/tex.png";
+    data.media[3].path = m + "/title.png";
+    Project p;
+    p.load(data);
+    for (const QString& f : {m + "/bg.png", m + "/tex.png", m + "/title.png"}) {
+        const auto usage = p.mediaUsage({f});
+        if (CHECK_EQ(usage.size(), 1)) CHECK_EQ(usage[0].second, 1);
+        CHECK(!p.removeMedia({f}, false)); // used: nothing removed
+    }
+    CHECK_EQ(p.media().size(), 4);
+    CHECK(p.removeMedia({m + "/title.png"}, true)); // with its clips: the title goes too
+    CHECK_EQ(p.timeline().video[0].clips.size(), 1);
+}
+
+// Templates: save copies the node files and the title texture into the template, ZIP export/import keeps them
+void testTemplates(const QString& dir)
+{
+    const QString src = dir + "/tpl-src";
+    for (const QString& f : {src + "/bg.png", src + "/look.cube", src + "/tex.png", src + "/title.png"}) writeFile(f);
+    const ProjectData data = filesProject(src + "/bg.png", src + "/look.cube", src + "/tex.png", src + "/title.png");
+    QString err, code;
+    const auto saved = TemplateLibrary::save(data, "Comp files test", {}, &err, &code);
+    if (!CHECK(saved.has_value())) {
+        qWarning() << err << code;
+        return;
+    }
+    const auto inside = [](const ProjectData& d, const QString& folder) {
+        QStringList files = Comp::mediaPaths(compOf(d));
+        files << d.timeline.video[0].clips[1].title.look.texture;
+        bool ok = files.size() == 4;
+        for (const QString& f : files) {
+            ok = ok && f.startsWith(QDir::cleanPath(folder) + '/') && QFileInfo::exists(f);
+            if (!ok) qWarning() << "not in" << folder << f;
+        }
+        return ok;
+    };
+    ProjectData placed;
+    CHECK(TemplateLibrary::load(*saved, &placed, &err));
+    if (CHECK(!placed.timeline.video.isEmpty() && placed.timeline.video[0].clips.size() == 2))
+        CHECK(inside(placed, saved->dir));
+    const QString zip = dir + "/comp-files.zip";
+    CHECK(TemplateLibrary::exportZip(saved->id, zip, true, &err, &code));
+    CHECK(TemplateLibrary::remove(saved->id, &err));
+    const auto imported = TemplateLibrary::importZip(zip, TemplateLibrary::ZipClash::Replace, &err, &code);
+    if (CHECK(imported.has_value())) {
+        ProjectData back;
+        CHECK(TemplateLibrary::load(*imported, &back, &err));
+        if (CHECK(!back.timeline.video.isEmpty() && back.timeline.video[0].clips.size() == 2))
+            CHECK(inside(back, imported->dir));
+        TemplateLibrary::remove(imported->id, &err);
+    }
+}
+
+// Render cache: a node's LUT or texture edited under the same name -> another key
+void testRenderCacheKey(const QString& dir)
+{
+    const QString r = dir + "/cache";
+    for (const QString& f : {r + "/bg.png", r + "/look.cube", r + "/tex.png", r + "/title.png"}) writeFile(f);
+    const ProjectData data = filesProject(r + "/bg.png", r + "/look.cube", r + "/tex.png", r + "/title.png");
+    const Clip& c = data.timeline.video[0].clips[0];
+    const ProjectFormat f;
+    const QString k0 = RenderCache::key(c, f);
+    CHECK_EQ(RenderCache::key(c, f), k0);
+    writeFile(r + "/tex.png", "a longer texture");
+    const QString k1 = RenderCache::key(c, f);
+    CHECK(k1 != k0);
+    writeFile(r + "/look.cube", "a longer LUT file");
+    CHECK(RenderCache::key(c, f) != k1);
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -359,5 +438,8 @@ int main(int argc, char** argv)
     testRunner();
     testFileKeys();
     testNodeFiles(tmp.path());
+    testUsage(tmp.path());
+    testTemplates(tmp.path());
+    testRenderCacheKey(tmp.path());
     return Check::result();
 }
