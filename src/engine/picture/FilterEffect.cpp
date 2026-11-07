@@ -107,6 +107,7 @@ const QHash<QString, QSet<QString>>& textOptions()
 QStringList allowedFilters()
 {
     QStringList l(allowed().begin(), allowed().end());
+    l << QStringLiteral("eq"); // made of lutrgb and hue (withoutEq)
     l.sort();
     return l;
 }
@@ -274,6 +275,197 @@ QString checkNames(const QString& chain)
     return {};
 }
 
+// ---- eq (brightness, contrast, saturation, gamma) ----
+// FFmpeg's own eq is a GPL filter (the bundled LGPL FFmpeg has none, and results must not depend on the build), so
+// `eq=...` is turned into allowed filters before anything is checked: lutrgb for contrast, brightness and the gammas,
+// hue for the saturation. Only eq's options; their expressions are checked like any other (no loops). `t` is the only
+// variable (frames render out of order: a frame count would differ between preview and export) and needs eval=frame:
+// hue knows t itself, the LUT gets the frame's time as a number by a command before each frame. That costs: FFmpeg's
+// LUT has 65536 entries per channel, ~0.1 s to remake (a per-pixel geq took 2.4 s per 1080p frame); with eval=init
+// (the default) the LUT is made once and eq costs what one lutrgb does
+
+// A change of one eq LUT for the frame's time (avfilter_graph_send_command)
+struct EqCommand {
+    QByteArray target, option, value;
+};
+
+// The options of one filter's arguments (a=1:b='x,y' or positional 1:2), quotes and escapes removed. False = cannot
+// be read
+bool splitArgs(const QString& args, const QStringList& positional, QList<std::pair<QString, QString>>* out,
+               QString* error)
+{
+    QStringList items;
+    QString cur;
+    bool quoted = false;
+    for (qsizetype i = 0; i < args.size(); ++i) {
+        const QChar c = args[i];
+        if (c == QLatin1Char('\\') && i + 1 < args.size()) {
+            cur += args[++i];
+        } else if (c == QLatin1Char('\'')) {
+            quoted = !quoted;
+        } else if (!quoted && c == QLatin1Char(':')) {
+            items << cur;
+            cur.clear();
+        } else {
+            cur += c;
+        }
+    }
+    if (quoted) {
+        *error = QStringLiteral("filter 'eq': a quote is not closed");
+        return false;
+    }
+    if (!args.isEmpty()) items << cur;
+    bool named = false;
+    for (int i = 0; i < items.size(); ++i) {
+        const qsizetype eq = items[i].indexOf(QLatin1Char('='));
+        // A value without key= is positional until the first key=value
+        if (eq > 0 && !items[i].left(eq).contains(QLatin1Char('('))) {
+            named = true;
+            out->append({items[i].left(eq).trimmed(), items[i].mid(eq + 1).trimmed()});
+        } else if (!named && i < positional.size()) {
+            out->append({positional[i], items[i].trimmed()});
+        } else {
+            *error = QStringLiteral("filter 'eq': cannot read '%1' (write option=value)").arg(items[i]);
+            return false;
+        }
+    }
+    return true;
+}
+
+// One eq filter's arguments as a chain of allowed filters (empty = error in *error), its LUT made for t = 0 and named
+// lutrgb@eq<index>; *commands get the LUT for `seconds` when it changes over time
+QString eqChain(const QString& args, int index, double seconds, QList<EqCommand>* commands, QString* error)
+{
+    static const QStringList order = {"contrast", "brightness", "saturation",   "gamma", "gamma_r",
+                                      "gamma_g",  "gamma_b",    "gamma_weight", "eval"};
+    QList<std::pair<QString, QString>> opts;
+    if (!splitArgs(args, order, &opts, error)) return {};
+    QHash<QString, QString> v = {{"contrast", "1"}, {"brightness", "0"}, {"saturation", "1"},   {"gamma", "1"},
+                                 {"gamma_r", "1"},  {"gamma_g", "1"},    {"gamma_b", "1"},      {"gamma_weight", "1"},
+                                 {"eval", "init"},  {"enable", ""}};
+    static const QRegularExpression frameVars(QStringLiteral(R"((^|[^A-Za-z0-9_])(n|pos|r)($|[^A-Za-z0-9_(]))"));
+    static const QRegularExpression timeVar(QStringLiteral(R"((?<![A-Za-z0-9_])t(?![A-Za-z0-9_(]))"));
+    for (const auto& [key, value] : opts) {
+        if (!v.contains(key)) {
+            *error = QStringLiteral("filter 'eq' has no option '%1' (options: %2, enable)").arg(key, order.join(", "));
+            return {};
+        }
+        if (value.isEmpty() || value.contains(QLatin1Char('\''))) {
+            *error = QStringLiteral("filter 'eq': option '%1' needs a number or an expression").arg(key);
+            return {};
+        }
+        if (key != QLatin1String("enable") && key != QLatin1String("eval")) {
+            if (const QRegularExpressionMatch m = frameVars.match(value); m.hasMatch()) {
+                *error = QStringLiteral("filter 'eq': option '%1' uses '%2' (only t, the time in seconds: frames "
+                                        "render out of order)")
+                             .arg(key, m.captured(2));
+                return {};
+            }
+        }
+        v[key] = value;
+    }
+    const QString eval = v.value("eval");
+    const bool perFrame = eval == QLatin1String("frame") || eval == QLatin1String("1");
+    if (!perFrame && eval != QLatin1String("init") && eval != QLatin1String("0")) {
+        *error = QStringLiteral("filter 'eq': eval is init or frame, not '%1'").arg(eval);
+        return {};
+    }
+    bool timed = false; // the LUT changes over time
+    for (auto it = v.begin(); it != v.end(); ++it) {
+        if (it.key() == QLatin1String("enable") || it.key() == QLatin1String("eval")) continue;
+        if (!timeVar.match(*it).hasMatch()) continue;
+        if (!perFrame) {
+            *error = QStringLiteral("filter 'eq': option '%1' uses t (add eval=frame)").arg(it.key());
+            return {};
+        }
+        if (it.key() != QLatin1String("saturation")) timed = true;
+    }
+    auto isDefault = [&](const char* key, double d) {
+        bool ok = false;
+        const double x = v.value(QLatin1String(key)).toDouble(&ok);
+        return ok && x == d;
+    };
+    const QString enable =
+        v.value("enable").isEmpty() ? QString() : QStringLiteral(":enable='%1'").arg(v.value("enable"));
+    QStringList chain;
+    const bool tone = !isDefault("contrast", 1) || !isDefault("brightness", 0) || !isDefault("gamma", 1);
+    const bool channels = !isDefault("gamma_r", 1) || !isDefault("gamma_g", 1) || !isDefault("gamma_b", 1);
+    if (tone || channels) {
+        // On r, g and b alike (a LUT on the picture as it comes: no conversion to YUV and back), x in 0..1: contrast
+        // around the middle, then brightness, then gamma (weighted: 0 = none, 1 = all of it), then the channel's gamma.
+        // Each value in eq's own range
+        auto curve = [&](const char* channelGamma, double at) {
+            auto val = [&](const char* key) {
+                return QString(v.value(QLatin1String(key)))
+                    .replace(timeVar, QStringLiteral("(%1)").arg(QString::number(at, 'g', 17)));
+            };
+            QString x = QStringLiteral("(val/maxval)");
+            if (tone) {
+                const QString a = QStringLiteral("clip((%1-0.5)*clip((%2),-1000,1000)+0.5+clip((%3),-1,1),0,1)")
+                                      .arg(x, val("contrast"), val("brightness"));
+                x = QStringLiteral("(%1*(1-clip((%2),0,1))+pow(%1,1/clip((%3),0.1,10))*clip((%2),0,1))")
+                        .arg(a, val("gamma_weight"), val("gamma"));
+            }
+            if (!isDefault(channelGamma, 1)) x = QStringLiteral("pow(%1,1/clip((%2),0.1,10))").arg(x, val(channelGamma));
+            return QStringLiteral("maxval*%1").arg(x);
+        };
+        const QString name = QStringLiteral("lutrgb@eq%1").arg(index);
+        // rgba in: 256 entries per LUT (FFmpeg would pick a 16-bit format for it and make 65536 at each change)
+        chain << QStringLiteral("format=pix_fmts=rgba,%1=r='%2':g='%3':b='%4'")
+                         .arg(name, curve("gamma_r", 0), curve("gamma_g", 0), curve("gamma_b", 0))
+                     + enable;
+        if (timed && commands)
+            for (const char* ch : {"r", "g", "b"})
+                commands->append({name.toUtf8(), QByteArray(ch),
+                                  curve(ch[0] == 'r' ? "gamma_r" : ch[0] == 'g' ? "gamma_g" : "gamma_b", seconds)
+                                      .toUtf8()});
+    }
+    if (!isDefault("saturation", 1))
+        chain << QStringLiteral("hue=s='clip((%1),0,3)'").arg(v.value("saturation")) + enable;
+    return chain.isEmpty() ? QStringLiteral("null") : chain.join(QLatin1Char(','));
+}
+
+// The chain with every eq filter turned into allowed ones (the rest as it is); *commands = what changes for the
+// picture at clip time `seconds` (see eqChain); *error = cannot be read
+QString withoutEq(const QString& chain, double seconds, QList<EqCommand>* commands, QString* error)
+{
+    int index = 0;
+    if (!chain.contains(QLatin1String("eq"))) return chain;
+    QString out, part;
+    bool quoted = false;
+    auto flush = [&]() -> bool {
+        static const QRegularExpression eqPart(QStringLiteral(R"(^(\s*)eq\s*(=(.*))?$)"),
+                                               QRegularExpression::DotMatchesEverythingOption);
+        const QRegularExpressionMatch m = eqPart.match(part);
+        if (!m.hasMatch()) {
+            out += part;
+        } else {
+            const QString repl = eqChain(m.captured(3).trimmed(), index++, seconds, commands, error);
+            if (repl.isEmpty()) return false;
+            out += m.captured(1) + repl;
+        }
+        part.clear();
+        return true;
+    };
+    for (qsizetype i = 0; i < chain.size(); ++i) {
+        const QChar c = chain[i];
+        if (c == QLatin1Char('\\') && i + 1 < chain.size()) {
+            part += c;
+            part += chain[++i];
+        } else if (c == QLatin1Char('\'')) {
+            quoted = !quoted;
+            part += c;
+        } else if (!quoted && (c == QLatin1Char(',') || c == QLatin1Char(';'))) {
+            if (!flush()) return {};
+            out += c;
+        } else {
+            part += c;
+        }
+    }
+    if (!flush()) return {};
+    return out;
+}
+
 // FFmpeg's log lines name their context with a pointer ("[AVFilterGraph @ 0x55…] "): left out, so messages stay the same
 QString withoutContexts(const QString& text)
 {
@@ -316,6 +508,8 @@ struct Graph {
     std::unique_ptr<AVFilterGraph, GraphFree> graph;
     AVFilterContext* src = nullptr;
     AVFilterContext* sink = nullptr;
+    bool timedEq = false;   // an eq whose LUT changes over time (applyFilter sends it for each frame's time)
+    double eqSeconds = 0.0; // the time its LUTs are made for
 };
 
 // Builds the graph for w x h; nullptr = error in *error
@@ -337,8 +531,13 @@ std::unique_ptr<Graph> build(const QString& chain, int w, int h, QString* error)
     g->graph.reset(avfilter_graph_alloc());
     if (!g->graph) return fail(QStringLiteral("out of memory"));
     g->graph->nb_threads = 1; // frames render in parallel already
-    if (const QString why = checkNames(chain); !why.isEmpty()) return fail(why);
-    const QByteArray text = chain.toUtf8();
+    QString eqError;
+    QList<EqCommand> eqCommands;
+    const QString plain = withoutEq(chain, 1.0, &eqCommands, &eqError);
+    if (!eqError.isEmpty()) return fail(eqError);
+    g->timedEq = !eqCommands.isEmpty();
+    if (const QString why = checkNames(plain); !why.isEmpty()) return fail(why);
+    const QByteArray text = plain.toUtf8();
     AVFilterGraphSegment* rawSeg = nullptr;
     int ret = avfilter_graph_segment_parse(g->graph.get(), text.constData(), 0, &rawSeg);
     std::unique_ptr<AVFilterGraphSegment, SegmentFree> seg(rawSeg);
@@ -508,6 +707,25 @@ bool applyFilter(const QString& chain, uint8_t* rgba, int width, int height, dou
         it = c.graphs.end() - 1;
     }
     QString why;
+    // An eq that changes over time: its LUTs for this frame's time
+    if ((*it)->timedEq && (*it)->eqSeconds != seconds) {
+        QList<EqCommand> commands;
+        QString eqError;
+        withoutEq(chain, seconds, &commands, &eqError);
+        // A command makes the filter compute its whole LUT (4 x 65536 entries): the options of a LUT are set first,
+        // and only its last one goes as a command
+        for (qsizetype i = 0; i < commands.size(); ++i) {
+            const EqCommand& cmd = commands[i];
+            AVFilterContext* f = avfilter_graph_get_filter((*it)->graph.get(), cmd.target.constData());
+            if (!f) continue;
+            if (i + 1 < commands.size() && commands[i + 1].target == cmd.target)
+                av_opt_set(f->priv, cmd.option.constData(), cmd.value.constData(), 0);
+            else
+                avfilter_graph_send_command((*it)->graph.get(), cmd.target.constData(), cmd.option.constData(),
+                                            cmd.value.constData(), nullptr, 0, AVFILTER_CMD_FLAG_ONE);
+        }
+        (*it)->eqSeconds = seconds;
+    }
     if (run(**it, rgba, seconds, &why)) return true;
     // A chain that fails while running is not built again every frame: kept as failed like one that does not build
     c.graphs.erase(it);
