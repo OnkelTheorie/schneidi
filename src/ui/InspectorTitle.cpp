@@ -462,7 +462,7 @@ void Inspector::buildLookSections(QVBoxLayout* page)
     solidSlider("titleSolidRotY", T("Drehung Y"), -180, 180, d3.solidRotY, 0.5, 1, &TitleLook::solidRotY);
     solidSlider("titleSolidRotZ", T("Drehung Z"), -180, 180, d3.solidRotZ, 0.5, 1, &TitleLook::solidRotZ);
     solidSlider("titleSolidFov", T("Bildwinkel"), 1, 150, d3.solidFov, 0.5, 1, &TitleLook::solidFov);
-    solidSlider("titleSolidDistance", T("Abstand"), 0.1, 20, d3.solidDistance, 0.01, 2, &TitleLook::solidDistance);
+    solidSlider("titleSolidDistance", T("Entfernung"), 0.1, 20, d3.solidDistance, 0.01, 2, &TitleLook::solidDistance);
     solidSlider("titleSolidLightAngle", T("Licht von"), -180, 180, d3.solidLightAngle, 1, 0, &TitleLook::solidLightAngle);
     solidSlider("titleSolidLightHeight", T("Lichthöhe"), -90, 90, d3.solidLightHeight, 1, 0, &TitleLook::solidLightHeight);
     addColor(solid, T("Seiten"), T("Farbe der Seiten"), [](Clip& c) -> QColor& { return c.title.look.solidSide; }, false,

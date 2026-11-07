@@ -2725,5 +2725,7 @@
  "Nicht ausführen": "No ejecutar",
  "Code erlauben": "Permitir código",
  "Dieser Code stammt nicht von dir und läuft noch nicht. Nur erlauben, wenn du der Quelle vertraust.": "Este código no lo escribiste tú y todavía no se ejecuta. Permítelo solo si confías en la fuente.",
- "%1 · nicht ausgeführt": "%1 · sin ejecutar"
+ "%1 · nicht ausgeführt": "%1 · sin ejecutar",
+ "Entfernung": "Distancia",
+ "„%1“": "«%1»"
 }

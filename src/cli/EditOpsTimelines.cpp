@@ -170,7 +170,7 @@ void opFormat(Session& s, const QJsonObject& op)
     if (op.contains("fps")) {
         const FrameRate rate = nearestFrameRate(numberOf(op, "fps", 1, 120));
         if (rate != f.rate && s.project.frameRateLocked())
-            fail("FAILED", "the frame rate can only change while all timelines are empty (like DaVinci); make a new "
+            fail("FAILED", "the frame rate can only change while all timelines are empty; make a new "
                            "project with `new --fps` instead");
         f.rate = rate;
     }

@@ -25,8 +25,8 @@ namespace {
 // ---------- styles (titles, subtitle tracks) ----------
 
 const QString kStyleFields = "font, size, color, bold, italic, align (left|center|right), x, y, outline, outline_color, "
-                             "outline_width, box, box_color, box_padding. x/y move the CENTRE of the text block "
-                             "(like DaVinci); align only lines up the lines inside the block, it does not move the "
+                             "outline_width, box, box_color, box_padding. x/y move the CENTRE of the text block"
+                             "; align only lines up the lines inside the block, it does not move the "
                              "block to an edge. For text at the left edge: align left and x = -(width/2) + margin + "
                              "half the text width (or check with `frames`). The outline is drawn outside the letters. "
                              "color/outline_color/box_color \"brand1\"..\"brand4\" and font \"brand1\"/\"brand2\" "

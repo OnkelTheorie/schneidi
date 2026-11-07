@@ -73,7 +73,7 @@ QVector<EffectParam> text3dParams()
         num("rot_y", N_("Drehung Y"), -25, -360, 360, 0.5, 1),
         num("rot_z", N_("Drehung Z"), 0, -360, 360, 0.5, 1),
         num("fov", N_("Blickwinkel"), v.fov, 1, 150, 0.5, 1),
-        num("distance", N_("Abstand"), v.distance, 0.1, 20, 0.01, 2),
+        num("distance", N_("Entfernung"), v.distance, 0.1, 20, 0.01, 2),
         num("light_angle", N_("Lichtrichtung"), v.lightAngle, -360, 360, 1, 0),
         num("light_height", N_("Lichthöhe"), v.lightHeight, -90, 90, 1, 0),
         num("ambient", N_("Umgebungslicht"), v.ambient, 0, 1, 0.01, 2),

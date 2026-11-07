@@ -141,7 +141,7 @@ Read the guide that fits the task (several if it combines them):
 | Ad, product or marketing clip, fixed length, several formats | [references/ad.md](references/ad.md) |
 | Subtitles and captions | [references/subtitles.md](references/subtitles.md) |
 | Color: correct, match shots, LUTs | [references/color.md](references/color.md) |
-| Compositing: recipes (green screen, text behind, blur a face, picture in picture, glitch title, sticker), key over a background, blur in a moving mask, node graphs on a clip | [references/compositing.md](references/compositing.md) |
+| Compositing: recipes (green screen, text behind, blur a face, picture in picture, glitch title, sticker), keying, masks, tracking (point, two points, face), AI cutout without a screen, 3D text, own filter chains and shaders, node graphs on a clip | [references/compositing.md](references/compositing.md) |
 | Sound: loudness, music under speech, noise, EQ | [references/audio.md](references/audio.md) |
 | Several cameras or recordings of the same event | [references/sync-multicam.md](references/sync-multicam.md) |
 | Formats, presets, hardware encoding, exchange with other editors | [references/export.md](references/export.md) |

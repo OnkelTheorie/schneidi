@@ -97,7 +97,7 @@ QString nodeSummary(const Clip& c, const CompNode& n)
         return untrustedCode(c, n.id).isEmpty() ? name : T("%1 · nicht ausgeführt").arg(name);
     }
     if (id == QLatin1String("text") || id == QLatin1String("text3d"))
-        return QStringLiteral("„%1“").arg(oneLine(PC::textValue(*k, v, QStringLiteral("text"))));
+        return T("„%1“").arg(oneLine(PC::textValue(*k, v, QStringLiteral("text")))); // the UI language's quotes
     if (id == QLatin1String("color")) return PC::colorValue(*k, v, QStringLiteral("color")).name().toUpper();
     if (id == QLatin1String("blur")) return T("Radius %1").arg(number(PC::numValue(*k, v, QStringLiteral("radius")), 1));
     // Otherwise: a file's name, else the first choice (mask shape, key mode, tracker mode …)

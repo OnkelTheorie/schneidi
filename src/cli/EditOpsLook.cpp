@@ -942,7 +942,7 @@ void addLookOps(QVector<OpDef>& ops)
 {
     ops << OpDef{"color", "{op:'color', clips, lift?, gamma?, gain?, offset?, contrast?, pivot?, saturation?, "
                           "temperature?, tint?, exposure?, lut?, enabled?, reset?, at?, keyframe?}",
-                 "Color page grade (primary wheels like DaVinci, LUT)",
+                 "Color page grade (primary wheels, LUT)",
                  "Wheels lift/gamma/gain/offset: a number (master) or {y, r, g, b}. Neutral: lift 0, gamma 0, gain 1, "
                  "offset 25 (ranges: lift/gamma -1..1, gain 0..4, offset 0..100). contrast 0..2 (1), pivot 0..1 "
                  "(0.435), saturation 0..100 (50), temperature -4000..4000 (0, + = warmer), tint -100..100 (0, + = "
@@ -954,7 +954,7 @@ void addLookOps(QVector<OpDef>& ops)
         << OpDef{"window", "{op:'window', clips, window?, add?, remove?, shape?, x?, y?, width?, height?, rotation?, "
                            "softness?, invert?, fill?, amount?, color?, lift?, gamma?, gain?, offset?, contrast?, pivot?, "
                            "saturation?, temperature?, tint?, exposure?, at?, keyframe?}",
-                 "Color page window (shape mask like DaVinci): grade or hide part of the picture",
+                 "Color page window (a shape mask): grade or hide part of the picture",
                  "Up to 8 windows per clip, part of its grade (copied, reset and switched off with it). add:'ellipse' "
                  "or 'rectangle' makes a new one (number = first free one, see notes; default centered, 40 x 40 %). "
                  "x/y = center in % of the picture width/height from the top left (50/50 = middle), width/height in % "
