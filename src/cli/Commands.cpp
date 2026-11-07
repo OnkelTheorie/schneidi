@@ -1366,7 +1366,13 @@ const QVector<Command>& commands()
                     "'accent': zoom punch, flash, shake on kills, beats, drops) and effect sounds (op 'sfx').",
          {{"effect", T::String, "only this effect, with parameter details", false, true},
           {"kind", T::String, "'sfx': only the effect sounds; 'nodes': the node kinds of the compositing graph (edit "
-                              "ops 'comp', 'node') with inputs and parameters", false, true}},
+                              "ops 'comp', 'node') with inputs and parameters; 'recipes': ready compositing graphs "
+                              "(edit op comp recipe) with their slots", false, true},
+          {"export", T::String, "kind 'recipes': a recipe to write as ZIP (with 'to')"},
+          {"to", T::Path, "kind 'recipes': the .zip file export writes"},
+          {"import", T::Path, "kind 'recipes': a recipe ZIP to add to the own recipes"},
+          {"remove", T::String, "kind 'recipes': delete an own recipe"},
+          {"replace", T::Boolean, "kind 'recipes': import replaces a recipe of the same name, export an existing file"}},
          cmdEffects},
         {"sync", "Line up recordings of the same event (camera angles, player POVs) by their sound: the offset "
                  "of each file to the first one (the reference), found by shared sounds like a round start or "

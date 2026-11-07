@@ -129,6 +129,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/core/SystemMemory.h       src/core/SystemMemory.cpp
     src/core/GradeWindows.h       src/core/GradeWindows.cpp
     src/core/CompGraph.h          src/core/CompGraph.cpp
+    src/core/CompRecipes.h        src/core/CompRecipes.cpp
     src/core/NameBlur.h           src/core/NameBlur.cpp
     src/core/Retime.h             src/core/Retime.cpp
     src/core/ProjectFormat.h      src/core/ProjectFormat.cpp
@@ -420,6 +421,9 @@ list(FILTER SCHNEIDI_TEMPLATES EXCLUDE REGEX "(^|/)\\.")
 if(SCHNEIDI_TEMPLATES)
     qt_add_resources(schneidi_lib "templates" PREFIX "/" BASE assets FILES ${SCHNEIDI_TEMPLATES})
 endif()
+# Built-in compositing recipes (core/CompRecipes.h): one JSON per recipe, read from the resources
+file(GLOB SCHNEIDI_COMP_RECIPES RELATIVE ${PROJECT_SOURCE_DIR} CONFIGURE_DEPENDS ${PROJECT_SOURCE_DIR}/assets/comp/*.json)
+qt_add_resources(schneidi_lib "comp" PREFIX "/" BASE assets FILES ${SCHNEIDI_COMP_RECIPES})
 target_include_directories(schneidi_lib PUBLIC src)
 # SYSTEM: no warnings from the (possibly bundled) third-party header
 target_include_directories(schneidi_lib SYSTEM PRIVATE ${MINIAUDIO_INCLUDE_DIR})

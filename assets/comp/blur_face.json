@@ -1,0 +1,23 @@
+{
+    "name": "Blur a face",
+    "description": "Blurs an ellipse around a face that follows the face through the clip (tracker in face mode). Before tracking the ellipse stays where it is put.",
+    "note": "Run {op:'track_node', clip, node:2} to follow the face (face mode needs the 'faces' extension; track:'point' follows the point x, y instead).",
+    "graph": {
+        "nodes": [
+            {"id": 1, "type": "clip", "x": 0, "y": 0},
+            {"id": 2, "type": "tracker", "x": 160, "y": 0, "params": {"mode": "face", "ax": 0.5, "ay": 0.4}},
+            {"id": 3, "type": "mask", "x": 160, "y": 120, "params": {"shape": "ellipse", "x": 0.5, "y": 0.4, "w": 0.12, "h": 0.16, "soft": 12, "follow": 2}},
+            {"id": 4, "type": "blur", "x": 320, "y": 60, "params": {"radius": 30}}
+        ],
+        "links": [[1, 2, "src"], [2, 4, "src"], [3, 4, "mask"]],
+        "out": 4
+    },
+    "slots": {
+        "x": {"type": "number", "description": "face position 0..1 from the left at the clip's start", "targets": ["3.x", "2.ax"]},
+        "y": {"type": "number", "description": "face position 0..1 from the top at the clip's start", "targets": ["3.y", "2.ay"]},
+        "size": {"type": "number", "description": "ellipse width 0..1 of the picture width (height follows)", "targets": ["3.w", {"param": "3.h", "mul": 1.3333}]},
+        "radius": {"type": "number", "description": "blur radius in project pixels", "targets": ["4.radius"]},
+        "soft": {"type": "number", "description": "soft edge of the ellipse in project pixels", "targets": ["3.soft"]},
+        "track": {"type": "choice", "description": "what the tracker follows: face or point", "targets": ["2.mode"]}
+    }
+}

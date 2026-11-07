@@ -1,0 +1,23 @@
+{
+    "name": "Sticker on a surface",
+    "description": "A logo, picture or video stuck onto a surface in the clip: it follows two tracked points (moves, scales and turns with them).",
+    "note": "Run {op:'track_node', clip, node:2} so the sticker follows the surface; the two points start left and right of x, y.",
+    "graph": {
+        "nodes": [
+            {"id": 1, "type": "clip", "x": 0, "y": 0},
+            {"id": 2, "type": "tracker", "x": 160, "y": 0, "params": {"mode": "two", "ax": 0.45, "ay": 0.5, "bx": 0.55, "by": 0.5}},
+            {"id": 3, "type": "media", "x": 0, "y": 120},
+            {"id": 4, "type": "transform", "x": 160, "y": 120, "params": {"x": 0.5, "y": 0.5, "size": 0.25, "follow": 2}},
+            {"id": 5, "type": "merge", "x": 320, "y": 60}
+        ],
+        "links": [[1, 2, "src"], [3, 4, "src"], [2, 5, "bg"], [4, 5, "fg"]],
+        "out": 5
+    },
+    "slots": {
+        "sticker": {"type": "media", "required": true, "description": "the logo, picture or video to stick on", "targets": ["3.path"]},
+        "x": {"type": "number", "description": "where it sits, 0..1 from the left (the tracked points start around it)", "targets": ["4.x", {"param": "2.ax", "add": -0.05}, {"param": "2.bx", "add": 0.05}]},
+        "y": {"type": "number", "description": "where it sits, 0..1 from the top", "targets": ["4.y", "2.ay", "2.by"]},
+        "size": {"type": "number", "description": "size of the sticker (1 = full picture)", "targets": ["4.size"]},
+        "opacity": {"type": "number", "description": "opacity 0..1", "targets": ["5.opacity"]}
+    }
+}

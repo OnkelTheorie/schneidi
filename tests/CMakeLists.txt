@@ -455,3 +455,5 @@ target_link_libraries(test_comp_cli PRIVATE schneidi_cli_lib)
 # decides about the card itself (77 without a hardware device)
 schneidi_test(test_comp_gpu)
 set_tests_properties(test_comp_gpu PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;SCHNEIDI_AUDIO_DEVICE=null")
+schneidi_test(test_comp_recipes) # compositing recipes (0.19 I): built-in ones apply/validate/render, slots, errors, save/list/apply, ZIP, undo
+target_link_libraries(test_comp_recipes PRIVATE schneidi_cli_lib)

@@ -1,0 +1,23 @@
+{
+    "name": "Picture in picture",
+    "description": "The clip small in a corner with a frame and a drop shadow; the tracks below show around it.",
+    "graph": {
+        "nodes": [
+            {"id": 1, "type": "clip", "x": 0, "y": 0},
+            {"id": 2, "type": "transform", "x": 160, "y": 0, "params": {"x": 0.72, "y": 0.72, "size": 0.4}},
+            {"id": 3, "type": "color", "x": 0, "y": 120, "params": {"color": "#ffffffff"}},
+            {"id": 4, "type": "transform", "x": 160, "y": 120, "params": {"x": 0.72, "y": 0.72, "size": 0.416}},
+            {"id": 5, "type": "merge", "x": 320, "y": 60},
+            {"id": 6, "type": "shadow", "x": 480, "y": 60, "params": {"x": 6, "y": 6, "soft": 12, "opacity": 0.5}}
+        ],
+        "links": [[1, 2, "src"], [3, 4, "src"], [4, 5, "bg"], [2, 5, "fg"], [5, 6, "src"]],
+        "out": 6
+    },
+    "slots": {
+        "x": {"type": "number", "description": "centre 0..1 from the left", "targets": ["2.x", "4.x"]},
+        "y": {"type": "number", "description": "centre 0..1 from the top", "targets": ["2.y", "4.y"]},
+        "size": {"type": "number", "description": "size of the small picture (1 = full)", "targets": ["2.size", {"param": "4.size", "mul": 1.04}]},
+        "frame_color": {"type": "color", "description": "frame color", "targets": ["3.color"]},
+        "shadow": {"type": "number", "description": "shadow opacity 0..1 (0 = none)", "targets": ["6.opacity"]}
+    }
+}

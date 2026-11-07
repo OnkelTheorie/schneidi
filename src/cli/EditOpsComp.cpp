@@ -8,6 +8,7 @@
 #include "cli/CommandsDetail.h"
 
 #include "core/CompGraph.h"
+#include "core/CompRecipes.h"
 #include "core/EffectRegistry.h"
 #include "core/ExportCheck.h"
 #include "core/Keyframes.h"
@@ -15,6 +16,7 @@
 #include "engine/picture/CompNodes.h"
 #include "engine/picture/CompTrack.h"
 
+#include <QDir>
 #include <QJsonArray>
 
 #include <algorithm>
@@ -199,13 +201,85 @@ CompGraph graphOfClip(const Clip& c, bool need = true)
     return g;
 }
 
+// A recipe (core/CompRecipes.h) with its slots filled from `with`, every value checked like a graph given by hand
+Parsed recipeGraph(Session& s, const QJsonObject& op)
+{
+    QString err;
+    const std::optional<CompRecipe> r = CompRecipes::find(op.value("recipe").toString(), &err);
+    if (!r) fail("NOT_FOUND", err);
+    const QJsonValue w = op.value("with");
+    if (!w.isUndefined() && !w.isNull() && !w.isObject())
+        fail("BAD_ARGUMENT", "'with' must be an object {slot: value} (`effects kind:'recipes'` lists the slots)");
+    QVariantMap with = w.toObject().toVariantMap();
+    for (const CompRecipeSlot& slot : r->slotList) // files of the caller: absolute
+        if ((slot.type == QLatin1String("media") || slot.type == QLatin1String("file")) && with.value(slot.id).typeId() == QMetaType::QString
+            && !with.value(slot.id).toString().isEmpty())
+            with[slot.id] = absolute(with.value(slot.id).toString());
+    Parsed p;
+    QHash<int, QVariantMap> values;
+    if (!CompRecipes::apply(*r, with, &p.graph, &values, &err)) fail("BAD_ARGUMENT", err);
+    for (const CompNode& n : p.graph.nodes) {
+        const QString where = QString("recipe %1 node %2").arg(r->id).arg(n.id);
+        p.values[n.id] = nodeValues(s, kindOf(n.type, where), QJsonObject::fromVariantMap(values.value(n.id)), where);
+    }
+    if (!p.graph.validate(kKinds, &err)) fail("BAD_ARGUMENT", QString("recipe %1: %2").arg(r->id, err));
+    return p;
+}
+
+// {op:'comp', clips:[one], save_recipe:'name', description?, replace?}: the clip's graph into the own recipes
+void saveRecipe(Session& s, const QJsonObject& op)
+{
+    const QVector<int> ids = clipsOn(s, op, TrackKind::Video, "a compositing graph");
+    if (ids.size() != 1) fail("BAD_ARGUMENT", "save_recipe: give one clip");
+    const Clip* c = TimelineOps::findClip(s.project.timeline(), ids.first());
+    graphOfClip(*c);
+    const QString name = op.value("save_recipe").toString().trimmed();
+    if (name.isEmpty()) fail("BAD_ARGUMENT", "save_recipe: give the recipe's name");
+    QJsonObject note{{"clip", c->id}, {"name", name}, {"id", CompRecipes::idForName(name)}};
+    if (s.dryRun) {
+        note["saved"] = false;
+        s.notes << QJsonObject{{"save_recipe", note}};
+        return;
+    }
+    CompRecipes::SaveOptions o;
+    o.description = op.value("description").toString();
+    o.replace = op.value("replace").toBool();
+    QString err, code;
+    const std::optional<CompRecipe> r = CompRecipes::save(*EffectRegistry::instance(*c, ::Comp::kEffectId), name, o, &err, &code);
+    if (!r) fail(code, err);
+    note["id"] = r->id;
+    note["folder"] = QDir::toNativeSeparators(r->dir);
+    note["slots"] = recipeSlotsJson(*r);
+    s.notes << QJsonObject{{"save_recipe", note}};
+}
+
 void opComp(Session& s, const QJsonObject& op)
 {
-    // TODO(0.19 package I): recipes ('greenscreen', 'text_behind', 'blur_face', 'pip_frame', 'glitch_title',
-    // 'sticker_track') build a graph here from op 'with' and hand it to Editor::setCompGraph like 'graph' does
-    if (op.contains("recipe"))
-        fail("NOT_SUPPORTED", "comp recipes are not in this version yet: build the graph with graph:{nodes, links, out} "
-                              "or node by node with {op:'node', add}");
+    if (op.contains("save_recipe")) {
+        if (op.contains("recipe") || op.contains("graph") || op.contains("remove"))
+            fail("BAD_ARGUMENT", "save_recipe saves the clip's graph as it is: give it alone (without recipe, graph, remove)");
+        saveRecipe(s, op);
+        return;
+    }
+    if (op.contains("recipe")) {
+        if (op.contains("graph") || op.contains("remove")) fail("BAD_ARGUMENT", "comp: give recipe, graph or remove, not several");
+        const QVector<int> ids = clipsOn(s, op, TrackKind::Video, "a compositing graph");
+        const Parsed p = recipeGraph(s, op);
+        QString err;
+        if (!s.editor.setCompGraph(ids, p.graph, p.values, kKinds, &err)) fail("FAILED", err);
+        const std::optional<CompRecipe> r = CompRecipes::find(op.value("recipe").toString());
+        QJsonObject note{{"recipe", r->id}, {"clips", QJsonArray::fromVariantList([&] {
+                                                QVariantList l;
+                                                for (int id : ids) l << id;
+                                                return l;
+                                            }())}};
+        if (!r->note.isEmpty()) note["next"] = r->note;
+        if (const Clip* c = TimelineOps::findClip(s.project.timeline(), ids.first()))
+            if (const EffectInstance* e = EffectRegistry::instance(*c, ::Comp::kEffectId)) note["graph"] = compJson(*e, s.format());
+        s.notes << QJsonObject{{"comp_recipe", note}};
+        return;
+    }
+    if (op.contains("with")) fail("BAD_ARGUMENT", "'with' fills the slots of a recipe: give recipe too");
     const QVector<int> ids = clipsOn(s, op, TrackKind::Video, "a compositing graph");
     if (op.value("remove").toBool()) {
         const QVector<int> removed = s.editor.removeComp(ids);
@@ -325,6 +399,44 @@ void opTrackNode(Session& s, const QJsonObject& op)
 }
 
 } // namespace
+
+QJsonArray recipeSlotsJson(const CompRecipe& r)
+{
+    QJsonArray list;
+    for (const CompRecipeSlot& slot : r.slotList) {
+        QJsonObject o{{"slot", slot.id}, {"type", slot.type}};
+        if (!slot.description.isEmpty()) o["description"] = slot.description;
+        if (slot.required) o["required"] = true;
+        // The value now: the recipe's, else the node kind's default (numbers back through mul/add)
+        const CompRecipeTarget& t = slot.targets.first();
+        QVariant v = r.values.value(t.node).value(t.key);
+        const CompNode* n = r.graph.node(t.node);
+        const PC::NodeType* k = n ? PC::find(n->type) : nullptr;
+        const EffectParam* ep = k ? k->param(t.key) : nullptr;
+        if (!v.isValid() && ep) v = ep->defaultValue;
+        if (slot.type == QLatin1String("number") && v.isValid() && t.mul != 0) v = (v.toDouble() - t.add) / t.mul;
+        if (slot.type == QLatin1String("choice") && ep) o["choices"] = QJsonArray::fromStringList(ep->choices);
+        if (v.typeId() == QMetaType::QColor) o["default"] = v.value<QColor>().name(QColor::HexArgb);
+        else if (v.isValid() && !(slot.type == QLatin1String("media") && v.toString().isEmpty()))
+            o["default"] = QJsonValue::fromVariant(v);
+        list << o;
+    }
+    return list;
+}
+
+QJsonArray recipesJson()
+{
+    QJsonArray list;
+    for (const CompRecipe& r : CompRecipes::all()) {
+        QJsonObject o{{"recipe", r.id}, {"name", r.name}, {"built_in", r.builtIn}, {"nodes", int(r.graph.nodes.size())},
+                      {"slots", recipeSlotsJson(r)}};
+        if (!r.description.isEmpty()) o["description"] = r.description;
+        if (!r.note.isEmpty()) o["note"] = r.note;
+        if (!r.dir.isEmpty()) o["folder"] = QDir::toNativeSeparators(r.dir);
+        list << o;
+    }
+    return list;
+}
 
 QJsonArray compNodeKindsJson()
 {
@@ -485,6 +597,7 @@ void addCompOps(QVector<OpDef>& ops)
 {
     ops << OpDef{"comp", "{op:'comp', clips, graph:{nodes:[{id, type, params?}], links:[[from, to, input?]], out?}}",
                  "compositing graph on clips: nodes (picture, mask, key, merge, text …) linked into one picture; "
+                 "{op:'comp', clips, recipe:'greenscreen', with:{background:'beach.jpg'}} puts a ready one on; "
                  "{op:'comp', clips, remove:true} takes it off",
                  "The graph replaces the clip's picture (after its other effects, before crop/transform). nodes: id "
                  "(whole number >= 1, default: in order), type (see `effects kind:'nodes'`), params {key: value} "
@@ -495,9 +608,19 @@ void addCompOps(QVector<OpDef>& ops)
                  "cycle. Node values are animated with {op:'keyframe', clips, param:'comp.n3.opacity', at, value}. "
                  "Example (green screen over a background file, a title on top): "
                  R"({"op":"comp","clips":[4],"graph":{"nodes":[{"id":1,"type":"clip"},{"id":2,"type":"key","params":{"color":"#00ff00"}},{"id":3,"type":"media","params":{"path":"/videos/beach.jpg"}},{"id":4,"type":"merge"},{"id":5,"type":"text","params":{"text":"Hello"}},{"id":6,"type":"merge"}],"links":[[1,2,"src"],[3,4,"bg"],[2,4,"fg"],[4,6,"bg"],[5,6,"fg"]],"out":6}}. )"
-                 "Look at a node's picture with `frames` {clip, node, view:'matte'} (is the key clean?). recipe "
-                 "(ready graphs) comes in a later version.",
-                 opComp, QStringList{"clip", "linked", "remove", "recipe", "with"}}
+                 "Look at a node's picture with `frames` {clip, node, view:'matte'} (is the key clean?). "
+                 "Recipes = ready graphs, `effects kind:'recipes'` lists them with their slots: greenscreen "
+                 "(background, color, tolerance …), text_behind (background, text, color, size, x, y; the subject "
+                 "from a key), blur_face (x, y, size, radius, track; then track_node on node 2), pip_frame (x, y, "
+                 "size, frame_color, shadow), glitch_title (text, color, size, strength - mild), sticker_track "
+                 "(sticker = a file, x, y, size; then track_node on node 2). with:{slot: value} fills them (files = "
+                 "media pool items, imported), '<node id>.<key>' sets any node value; missing slots keep the "
+                 "recipe's values; an unknown slot is an error. The answer's notes give the graph and the next step. "
+                 R"(Example: {"op":"comp","clips":[4],"recipe":"greenscreen","with":{"background":"/videos/beach.jpg","tolerance":0.35}}. )"
+                 "{op:'comp', clips:[id], save_recipe:'name', description?, replace?} saves the clip's graph as an own "
+                 "recipe (its files copied along; media and text nodes become slots); `effects kind:'recipes'` with "
+                 "export/to and import shares recipes as ZIP.",
+                 opComp, QStringList{"clip", "linked", "remove", "recipe", "with", "save_recipe", "description", "replace"}}
         << OpDef{"comp_from", "{op:'comp_from', clips, name?}",
                  "the clips as one comp clip: a compound clip whose graph lays its tracks on each other (same picture)",
                  "Like {op:'compound'}, but the new clip carries a graph: a 'clip' node per inner video track (param "

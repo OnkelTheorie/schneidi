@@ -1,0 +1,24 @@
+{
+    "name": "Green screen",
+    "description": "Keys out the green behind the subject and puts a background picture or video there (without a background the tracks below show through).",
+    "graph": {
+        "nodes": [
+            {"id": 1, "type": "clip", "x": 0, "y": 0},
+            {"id": 2, "type": "key", "x": 160, "y": 0, "params": {"mode": "chroma", "color": "#ff00ff00"}},
+            {"id": 3, "type": "matte_tune", "x": 320, "y": 0},
+            {"id": 4, "type": "media", "x": 320, "y": 120},
+            {"id": 5, "type": "merge", "x": 480, "y": 60}
+        ],
+        "links": [[1, 2, "src"], [2, 3, "src"], [4, 5, "bg"], [3, 5, "fg"]],
+        "out": 5
+    },
+    "slots": {
+        "background": {"type": "media", "description": "picture or video behind the subject", "targets": ["4.path"]},
+        "color": {"type": "color", "description": "screen color to key out", "targets": ["2.color", "3.color"]},
+        "tolerance": {"type": "number", "description": "how far from the screen color still counts as screen (0..1)", "targets": ["2.tolerance"]},
+        "softness": {"type": "number", "description": "soft edge of the key (0..1)", "targets": ["2.softness"]},
+        "spill": {"type": "number", "description": "removes the screen color's tint on the subject (0..1)", "targets": ["2.spill"]},
+        "grow": {"type": "number", "description": "moves the matte edge in project pixels (negative = shrink)", "targets": ["3.grow"]},
+        "soften": {"type": "number", "description": "blurs the matte edge in project pixels", "targets": ["3.soft"]}
+    }
+}

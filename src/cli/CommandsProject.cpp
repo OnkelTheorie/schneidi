@@ -5,6 +5,7 @@
 #include "cli/Sandbox.h"
 
 #include "core/Accents.h"
+#include "core/CompRecipes.h"
 #include "core/Editor.h"
 #include "core/StreamPresets.h"
 #include "core/EffectFolders.h"
@@ -443,6 +444,7 @@ QString stepSummary(const QString& op, const QJsonObject& changes)
 QJsonObject applyEdit(Session& s, const QJsonArray& ops, const QJsonObject& a, bool dry, QJsonArray* steps = nullptr,
                       const QVector<int>& numbers = {})
 {
+    s.dryRun = dry;
     const QMap<QString, Shown> before = shownItems(s.project);
     QMap<QString, Shown> last = before;
     for (int i = 0; i < ops.size(); ++i) {
@@ -1070,7 +1072,33 @@ QJsonObject cmdEffects(const QJsonObject& a, Context&)
                          "another node ([from, to, input]); numbers are positions/sizes 0..1 of the picture (size "
                          "relative to its width), pixel amounts in project pixels; every number can get keyframes "
                          "as param 'comp.n<id>.<key>'"}};
-    if (!kind.isEmpty()) fail("BAD_ARGUMENT", "kind: 'sfx' or 'nodes' (or leave it out)");
+    if (kind == "recipes") {
+        QString err, code;
+        if (a.contains("export")) { // a recipe as ZIP
+            if (!a.contains("to")) fail("BAD_ARGUMENT", "export: give 'to' (the .zip file)");
+            int files = 0;
+            if (!CompRecipes::exportZip(a["export"].toString(), a["to"].toString(), a["replace"].toBool(), &err, &code, &files))
+                fail(code, err);
+            return {{"exported", a["export"].toString()}, {"zip", QDir::toNativeSeparators(a["to"].toString())}, {"files", files}};
+        }
+        if (a.contains("import")) {
+            const std::optional<CompRecipe> r = CompRecipes::importZip(a["import"].toString(), a["replace"].toBool(), &err, &code);
+            if (!r) fail(code, err);
+            return {{"imported", r->id}, {"name", r->name}, {"folder", QDir::toNativeSeparators(r->dir)},
+                    {"slots", recipeSlotsJson(*r)}};
+        }
+        if (a.contains("remove")) {
+            if (!CompRecipes::remove(a["remove"].toString(), &err, &code)) fail(code, err);
+            return {{"removed", a["remove"].toString()}};
+        }
+        return {{"recipes", recipesJson()}, {"folder", QDir::toNativeSeparators(CompRecipes::dir())},
+                {"note", "ready compositing graphs: edit op {op:'comp', clips, recipe:'<recipe>', with:{<slot>: value}} "
+                         "(missing slots keep the recipe's values; '<node id>.<key>' sets any node value). Own recipes: "
+                         "{op:'comp', clips:[id], save_recipe:'name'}; share them with export/to and import"}};
+    }
+    if (a.contains("export") || a.contains("import") || a.contains("remove"))
+        fail("BAD_ARGUMENT", "export, import and remove belong to kind:'recipes'");
+    if (!kind.isEmpty()) fail("BAD_ARGUMENT", "kind: 'sfx', 'nodes' or 'recipes' (or leave it out)");
     const QString only = a["effect"].toString();
     QJsonArray list;
     for (const EffectDescriptor& d : EffectRegistry::all()) {
