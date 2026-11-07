@@ -392,8 +392,8 @@ TitleStyle titleFromJson(const QJsonObject& o)
         if (o.value("enter").toString() == QLatin1String(a.id)) t.enter = a.anim;
         if (o.value("exit").toString() == QLatin1String(a.id)) t.exit = a.anim;
     }
-    t.enterLen = std::clamp(o.value("enterLen").toDouble(t.enterLen), 0.01, 60.0);
-    t.exitLen = std::clamp(o.value("exitLen").toDouble(t.exitLen), 0.01, 60.0);
+    t.enterLen = std::clamp(o.value("enterLen").toDouble(t.enterLen), 0.01, 3.0); // the range of op and Inspector
+    t.exitLen = std::clamp(o.value("exitLen").toDouble(t.exitLen), 0.01, 3.0);
     return t;
 }
 

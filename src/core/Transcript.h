@@ -40,6 +40,12 @@ QVector<SubtitleCue> toCues(const QVector<Word>& words, double fps, int maxChars
 // timeline frames with `offset` added: the input of Subtitles::readable with the word times
 QVector<SubtitleCue> wordCues(const QVector<Word>& words, double fps, int offset = 0);
 
+// Readable subtitles of the words (Subtitles::readable of wordCues, word times kept); not for music: then like
+// startAtSound per cue (a cue without any sound is dropped, a start in silence moves to the sound) - per cue, so a
+// quiet word between loud ones stays
+QVector<SubtitleCue> readableCues(const QVector<Word>& words, const Levels& levels, double fps, int offset = 0,
+                                  bool music = false);
+
 // End of a word without the pause after it (whisper stretches `to` to the next word)
 qint64 spokenEnd(const Word& w);
 

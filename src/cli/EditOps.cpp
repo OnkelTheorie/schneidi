@@ -659,7 +659,15 @@ void opSubtitles(Session& s, const QJsonObject& op)
             const QJsonObject o = v.toObject();
             const int from = timeOf(s, o, "from"), to = timeOf(s, o, "to");
             if (to <= from) fail("BAD_ARGUMENT", "cue 'to' must be after 'from'");
-            cues << SubtitleCue{0, from, to, o.value("text").toString()};
+            SubtitleCue c{0, from, to, o.value("text").toString()};
+            // Word times ([[from, to], …] timeline frames, one per word; `transcribe` readable gives them)
+            const QJsonArray times = o.value("words").toArray();
+            if (!times.isEmpty() && times.size() == c.text.simplified().split(' ', Qt::SkipEmptyParts).size())
+                for (const QJsonValue& t : times) {
+                    const int a = std::clamp(t[0].toInt() - from, 0, to - from - 1);
+                    c.words << CueWord{a, std::clamp(t[1].toInt() - from, a + 1, to - from)};
+                }
+            cues << c;
         }
         std::sort(cues.begin(), cues.end(), [](const SubtitleCue& a, const SubtitleCue& b) { return a.start < b.start; });
     } else if (op.contains("track")) {
@@ -671,8 +679,10 @@ void opSubtitles(Session& s, const QJsonObject& op)
             fail("NOT_FOUND", QString("no subtitle track %1").arg(op.value("track").toVariant().toString()));
         const QVector<SubtitleCue> before = tl.subtitles[index].cues;
         if (before.isEmpty()) fail("BAD_ARGUMENT", "that subtitle track has no cues");
+        if (tl.subtitles[index].locked) fail("FAILED", "the subtitle track is locked");
         const QVector<SubtitleCue> after = Subtitles::readable(before, fps, rules);
-        if (!s.editor.setSubtitleCues(index, after, "Readable subtitles")) fail("FAILED", "the subtitle track is locked");
+        if (after.isEmpty()) fail("BAD_ARGUMENT", "the cues of that subtitle track have no text: nothing to regroup");
+        if (!s.editor.setSubtitleCues(index, after, "Readable subtitles")) fail("FAILED", "the subtitle track could not be changed");
         s.notes << QString("ST%1: %2 cues regrouped into %3 readable ones").arg(index + 1).arg(before.size()).arg(after.size());
         return;
     }
@@ -932,7 +942,8 @@ QVector<OpDef> makeOps()
          "characters, split evenly at a phrase end, a new cue at a sentence end once slow enough, never across a "
          "pause > 0.7 s, each at least 0.8 s and at most ~17 characters per second where the next cue leaves room; "
          "{lines, line_chars, cps, min (seconds), pause (seconds)} changes those. words = the 'words' list of "
-         "`transcribe` with words:true (timeline frames): always grouped readably, the word times kept. "
+         "`transcribe` with words:true (timeline frames): always grouped readably, the word times kept; a cue may carry "
+         "its own words:[[from, to], …] (one per word, timeline frames). Overlapping cues are cut apart first. "
          "{op:'subtitles', track:'ST1', readable:true} regroups an existing track in place (one undo step). "
          "`transcribe` with apply:true and readable:true does it in one call.",
          opSubtitles, {"track"}},

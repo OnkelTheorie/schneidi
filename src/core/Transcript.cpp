@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "core/Transcript.h"
 
+#include "core/Subtitles.h"
+
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -278,6 +280,24 @@ QVector<SubtitleCue> wordCues(const QVector<Word>& words, double fps, int offset
     for (SubtitleCue& c : cues)
         if (!c.text.contains(' ')) c.words = {CueWord{0, c.length()}};
     return cues;
+}
+
+QVector<SubtitleCue> readableCues(const QVector<Word>& words, const Levels& levels, double fps, int offset, bool music)
+{
+    QVector<SubtitleCue> cues = Subtitles::readable(wordCues(words, fps, offset), fps);
+    if (music) return cues;
+    QVector<SubtitleCue> moved = cues;
+    for (int i = 0; i < moved.size(); ++i) moved[i].id = i; // which cue it was (startAtSound drops some)
+    startAtSound(moved, levels, fps, offset);
+    for (SubtitleCue& c : moved) {
+        const int d = c.start - cues[c.id].start; // the words stay where they are spoken
+        for (CueWord& w : c.words) {
+            w.to = std::clamp(w.to - d, 1, c.length());
+            w.from = std::clamp(w.from - d, 0, w.to - 1);
+        }
+        c.id = 0;
+    }
+    return moved;
 }
 
 bool isVoiceName(const QString& name)

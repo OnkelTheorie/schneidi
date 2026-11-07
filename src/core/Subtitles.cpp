@@ -445,10 +445,35 @@ bool phraseEnd(const QString& w)
         || w.endsWith(QChar(0x2014));
 }
 
+// Sorted, without overlaps: a cue that starts inside the one before ends that one there; two starting together
+// become one (their text one after the other, no word times)
+QVector<SubtitleCue> apart(QVector<SubtitleCue> in)
+{
+    std::stable_sort(in.begin(), in.end(), [](const SubtitleCue& a, const SubtitleCue& b) { return a.start < b.start; });
+    QVector<SubtitleCue> out;
+    for (const SubtitleCue& c : in) {
+        if (c.end <= c.start || c.text.trimmed().isEmpty()) continue;
+        if (!out.isEmpty() && c.start < out.last().end) {
+            SubtitleCue& last = out.last();
+            if (c.start <= last.start) {
+                last.text += ' ' + c.text;
+                last.end = std::max(last.end, c.end);
+                last.words.clear();
+                continue;
+            }
+            last.end = c.start;
+            for (CueWord& w : last.words) // word times past the new end: squeezed into it
+                w.to = std::clamp(w.to, 1, last.length()), w.from = std::clamp(w.from, 0, w.to - 1);
+        }
+        out << c;
+    }
+    return out;
+}
+
 QVector<Token> tokens(const QVector<SubtitleCue>& cues)
 {
     QVector<Token> out;
-    for (const SubtitleCue& c : cues) {
+    for (const SubtitleCue& c : apart(cues)) {
         const QStringList words = c.text.simplified().split(' ', Qt::SkipEmptyParts);
         if (words.isEmpty() || c.end <= c.start) continue;
         const bool known = c.words.size() == words.size();
