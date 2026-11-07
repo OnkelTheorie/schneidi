@@ -185,11 +185,21 @@ bool Editor::linkCompNodes(int clipId, const CompLink& l, bool on, const CompGra
                     [&](CompGraph& g, EffectInstance&, QString* why) {
                         if (!g.node(l.to)) return failWith(why, QStringLiteral("no node %1 in the graph").arg(l.to));
                         if (on && !g.node(l.from)) return failWith(why, QStringLiteral("no node %1 in the graph").arg(l.from));
+                        if (on) { // replaces what was in that input
+                            g.links.removeIf([&](const CompLink& x) { return x.to == l.to && x.input == l.input; });
+                            g.links << l;
+                            return true;
+                        }
+                        // Only the link from l.from (into l.input, or into any input when it is empty)
                         const qsizetype before = g.links.size();
-                        g.links.removeIf([&](const CompLink& x) { return x.to == l.to && x.input == l.input; });
-                        if (on) g.links << l;
-                        else if (g.links.size() == before)
-                            return failWith(why, QStringLiteral("nothing is linked into input '%1' of node %2").arg(l.input).arg(l.to));
+                        g.links.removeIf([&](const CompLink& x) {
+                            return x.to == l.to && x.from == l.from && (l.input.isEmpty() || x.input == l.input);
+                        });
+                        if (g.links.size() == before)
+                            return failWith(why, l.input.isEmpty()
+                                                     ? QStringLiteral("node %1 is not linked into node %2").arg(l.from).arg(l.to)
+                                                     : QStringLiteral("node %1 is not linked into input '%2' of node %3")
+                                                           .arg(l.from).arg(l.input).arg(l.to));
                         return true;
                     }, kinds, err);
 }

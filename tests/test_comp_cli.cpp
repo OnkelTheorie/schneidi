@@ -343,6 +343,27 @@ int main(int argc, char** argv)
         CHECK(editError({QJsonObject{{"op", "comp"}, {"clips", QJsonArray{clip}}, {"remove", true}}}).contains("none of the clips"));
     }
 
+    // unlink takes only the link from `from` (round 2): without an input the one `from` feeds, a link that is not
+    // there is an error and nothing else goes
+    {
+        QJsonObject g = op(R"({"op":"comp","graph":{"nodes":[{"id":1,"type":"clip"},{"id":2,"type":"color"},{"id":3,"type":"merge"}],"links":[[1,3,"bg"],[2,3,"fg"]],"out":3}})");
+        g["clips"] = QJsonArray{clip};
+        edit({g});
+        QJsonObject un = op(R"({"op":"node","unlink":[2,3]})");
+        un["clip"] = clip;
+        edit({un});
+        CompGraph cg = graphOf(clip);
+        CHECK(cg.linkInto(3, "bg") && cg.linkInto(3, "bg")->from == 1 && !cg.linkInto(3, "fg"));
+        un["unlink"] = QJsonArray{2, 3};
+        CHECK(editError({un}).contains("not linked into node 3"));
+        un["unlink"] = QJsonArray{2, 3, "bg"}; // bg is fed by node 1, not 2
+        CHECK(editError({un}).contains("not linked into input 'bg'"));
+        CHECK(graphOf(clip).linkInto(3, "bg"));
+        un["unlink"] = QJsonArray{1, 3, true};
+        CHECK(editError({un}).contains("the input is a name"));
+        edit({QJsonObject{{"op", "comp"}, {"clips", QJsonArray{clip}}, {"remove", true}}});
+    }
+
     // comp_from: both tracks into one comp clip (compound + graph), named in the notes
     {
         const QJsonObject r = edit({QJsonObject{{"op", "comp_from"}, {"clips", QJsonArray{clip, upper}}}});

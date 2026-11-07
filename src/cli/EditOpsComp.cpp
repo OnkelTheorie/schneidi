@@ -111,7 +111,8 @@ QVariantMap nodeValues(Session& s, const PC::NodeType& k, const QJsonValue& v, c
 }
 
 // [from, to, input?] or {from, to, input?}; a missing input = the first input of `to` nothing is linked into yet
-CompLink linkOf(const QJsonValue& v, const CompGraph& g, const QString& where, bool needFree = true)
+// (unlink: the input `from` feeds)
+CompLink linkOf(const QJsonValue& v, const CompGraph& g, const QString& where, bool unlink = false)
 {
     CompLink l;
     QJsonValue input;
@@ -137,10 +138,19 @@ CompLink linkOf(const QJsonValue& v, const CompGraph& g, const QString& where, b
         l.input = input.toString();
         return l;
     }
+    if (!input.isUndefined() && !input.isNull()) fail("BAD_ARGUMENT", where + ": the input is a name (\"src\", \"bg\", \"mask\" …)");
+    if (unlink) {
+        for (const CompLink& x : g.links)
+            if (x.from == l.from && x.to == l.to) {
+                l.input = x.input;
+                return l;
+            }
+        fail("NOT_FOUND", QString("%1: node %2 is not linked into node %3").arg(where).arg(l.from).arg(l.to));
+    }
     QStringList inputs;
     PC::kindInfo(to->type, &inputs);
     for (const QString& in : inputs)
-        if (!needFree || !g.linkInto(l.to, in)) {
+        if (!g.linkInto(l.to, in)) {
             l.input = in;
             return l;
         }
@@ -267,7 +277,7 @@ void opNode(Session& s, const QJsonObject& op)
     const CompGraph g = graphOfClip(c);
     if (op.contains("link") || op.contains("unlink")) {
         const bool on = op.contains("link");
-        const CompLink l = linkOf(op.value(on ? "link" : "unlink"), g, on ? "link" : "unlink", on);
+        const CompLink l = linkOf(op.value(on ? "link" : "unlink"), g, on ? "link" : "unlink", !on);
         done(s.editor.linkCompNodes(clip, l, on, kKinds, &err));
         return;
     }
