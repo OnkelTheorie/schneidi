@@ -122,6 +122,7 @@ bool runNode(const QString& type, const QVariantMap& params, const QHash<QString
         return it == inputs.cend() || it->isNull() ? nullptr : &*it;
     };
     ctx.take = [&opt](Buf::Kind kind) { return Buf(kind, opt.size.width(), opt.size.height()); };
+    ctx.give = [](Buf&&) {}; // plain allocations: just dropped
     if (opt.clipPicture) ctx.clipPicture = [&opt]() { return opt.clipPicture; };
     ctx.mediaPicture = opt.mediaPicture;
     Buf result;

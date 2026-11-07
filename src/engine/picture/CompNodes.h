@@ -75,6 +75,8 @@ struct NodeCtx {
     std::function<const Buf*(const QString& input)> input;
     // A cleared buffer of the output size from the pool (use it for the result and big scratch pictures)
     std::function<Buf(Buf::Kind)> take;
+    // Gives a scratch buffer that came from take back to the pool once the node no longer needs it (only those)
+    std::function<void(Buf&& scratch)> give;
 
     // Engine services for generator kinds (set by the engine; may be empty in the single-node test runner):
     // the clip's own picture with its effects (node "clip"), a media pool file's picture at a clip time

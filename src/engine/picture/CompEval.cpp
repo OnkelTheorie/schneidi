@@ -357,6 +357,12 @@ bool evaluate(const EffectInstance& comp, const Env& env, Cache* cache, Buf* out
             };
             ctx.input = [&, id](const QString& name) { return inputOf(id, name); };
             ctx.take = take;
+            ctx.give = [&](Buf&& b) {
+                if (b.px.empty()) return;
+                if (env.giveBytes) env.giveBytes(std::move(b.px));
+                b.px = {};
+                --alive;
+            };
             ctx.clipPicture = env.clipPicture;
             ctx.mediaPicture = env.mediaPicture;
             Buf result;

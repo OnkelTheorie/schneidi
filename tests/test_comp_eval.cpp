@@ -499,6 +499,26 @@ void testFusedTrack()
           && painted == 1 && !shared.isNull());
 }
 
+// Scratch pictures of a node go back to the pool: after an evaluation only the result is out of it
+void testScratchGivenBack()
+{
+    std::printf("scratch buffers back to the pool\n");
+    Buf clipPic = solid(40, 24, {QColor(200, 30, 30, 255), QColor(20, 200, 20, 0)});
+    Env env;
+    env.size = QSize(40, 24);
+    env.clipPicture = [&]() -> const Buf* { return &clipPic; };
+    int taken = 0, given = 0;
+    env.takeBytes = [&](size_t n) {
+        ++taken;
+        return std::vector<uint8_t>(n, 0);
+    };
+    env.giveBytes = [&](std::vector<uint8_t>&&) { ++given; };
+    Buf out;
+    CHECK(evaluate(comp({"clip", "matte_tune"}, {{1, 2, "src"}}, 2, {{"n2.soft", 2}, {"n2.black", 0.1}, {"n2.grow", 1}}),
+                   env, nullptr, &out));
+    CHECK(taken >= 3 && taken - given == 1);
+}
+
 // A node following a tracker (numOf) is cached only while the tracker's values are fixed, and keyed by them: an
 // analysed tracker (keyframes) moves it per frame, a new analysis or another value is seen with a cache
 void testFollowCached()
@@ -752,6 +772,7 @@ int main(int argc, char** argv)
     testFollowCached();
     testPassThrough();
     testFusedTrack();
+    testScratchGivenBack();
     bench();
     if (!Check::haveFfmpeg()) return Check::skip("ffmpeg nicht gefunden");
     QTemporaryDir tmp;
