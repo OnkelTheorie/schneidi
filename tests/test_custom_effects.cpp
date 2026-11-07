@@ -208,6 +208,12 @@ void filterChecks()
     // Tried at the picture's size: a fixed crop fits a 1080p clip but not the small fallback picture
     CHECK_EQ(PC::checkFilter("crop=1280:720", QSize(1920, 1080)), QString());
     CHECK(!PC::checkFilter("crop=1280:720").isEmpty());
+    // Temporal noise keeps a random state per graph (preview and export would differ): only still noise
+    refused("noise=alls=20:allf=t", "flag 't'");
+    refused("noise=alls=20:allf=u+a", "flag 'a'");
+    refused("noise=c0s=20:c0_flags=2", "flag '2'");
+    CHECK_EQ(PC::checkFilter("noise=alls=20:allf=u+p"), QString());
+    CHECK_EQ(PC::checkFilter("noise=c0s=10"), QString());
     // Not one linear chain
     refused("negate;hue=s=0", "one linear chain");
     refused("[in]negate[out]", "labels");

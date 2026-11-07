@@ -210,6 +210,23 @@ QString checkExpression(const QString& name, const AVDictionaryEntry* e)
         .arg(name, QString::fromUtf8(e->key), m.captured(2));
 }
 
+// noise's temporal flags (t, a) keep a random state from frame to frame: each render thread and cached graph has its
+// own, so preview and export (and two exports) would differ. Only the still flags u (uniform) and p (pattern), by
+// name (a number could hide the temporal bits)
+QString checkNoise(const QString& name, const AVDictionaryEntry* e)
+{
+    if (name != QLatin1String("noise")) return {};
+    const QString key = QString::fromUtf8(e->key);
+    if (!key.endsWith(QLatin1String("_flags")) && !(key.endsWith(QLatin1Char('f')) && key.size() <= 4)) return {};
+    for (const QString& t : QString::fromUtf8(e->value).split(QRegularExpression(QStringLiteral("[+|\\-\\s]")),
+                                                               Qt::SkipEmptyParts))
+        if (t != QLatin1String("u") && t != QLatin1String("p"))
+            return QStringLiteral("filter 'noise': flag '%1' of '%2' is not allowed (only u and p: temporal noise "
+                                  "would differ between preview and export)")
+                .arg(t, key);
+    return {};
+}
+
 // Checks the parsed chain before anything of it is made: one linear chain of allowed filters, no labels, no file
 // options. Empty = fine
 QString checkSegment(const AVFilterGraphSegment* seg)
@@ -235,6 +252,7 @@ QString checkSegment(const AVFilterGraphSegment* seg)
         while ((e = av_dict_iterate(p->opts, e))) {
             if (const QString why = checkOption(f, name, e); !why.isEmpty()) return why;
             if (const QString why = checkExpression(name, e); !why.isEmpty()) return why;
+            if (const QString why = checkNoise(name, e); !why.isEmpty()) return why;
         }
     }
     return {};
