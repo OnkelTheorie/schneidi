@@ -344,14 +344,25 @@ void Server::setWaiting(const QString& message)
     if (m_waiting.isEmpty() && !m_pendingOpen.isEmpty()) QTimer::singleShot(0, this, &Server::openPending);
 }
 
-QString Server::waitingNow() const
+namespace {
+// Runs in the app that change nothing: allowed while a modal dialog is open (reads go through, edits wait)
+bool readOnlyRun(const QString& command, const QJsonObject& args)
 {
+    return command == "app" && args.value("action").toString().trimmed().toLower() == "state";
+}
+} // namespace
+
+QString Server::waitingNow(bool* readsAllowed) const
+{
+    if (readsAllowed) *readsAllowed = false;
     if (!m_waiting.isEmpty()) return m_waiting;
     // A modal dialog ("changed outside schneidi", a load error, "save changes?") runs its own event loop, which
     // delivers live requests: an edit or `app save` meanwhile would land behind the user's back or answer it
     if (qobject_cast<QGuiApplication*>(QCoreApplication::instance()))
         if (const QWindow* w = QGuiApplication::modalWindow()) {
             const QString title = w->title().trimmed();
+            // The project is the user's and settled: reads cannot answer the dialog, only changes wait
+            if (readsAllowed) *readsAllowed = true;
             return QString("schneidi is waiting for the user (a dialog is open in the app%1); try again once it is "
                            "answered")
                 .arg(title.isEmpty() ? QString() : QString(": \"%1\"").arg(title));
@@ -473,7 +484,11 @@ void Server::handle(QLocalSocket* s, const QJsonObject& msg)
                       {"allowed", peer.chat || m_allowed},
                       {"pid", QCoreApplication::applicationPid()},
                       {"version", QCoreApplication::applicationVersion()}};
-        if (const QString waiting = waitingNow(); !waiting.isEmpty()) o["waiting"] = waiting;
+        bool reads = false;
+        if (const QString waiting = waitingNow(&reads); !waiting.isEmpty()) {
+            o["waiting"] = waiting;
+            if (reads) o["reads"] = true; // a modal dialog only: info, snapshots, `app state` still answered
+        }
         if (!peer.chat && !m_allowed && !m_refusal.isEmpty()) o["refusal"] = m_refusal;
         return reply(o);
     }
@@ -488,10 +503,16 @@ void Server::handle(QLocalSocket* s, const QJsonObject& msg)
         QTimer::singleShot(0, this, &Server::openPending);
         return reply({{"ok", true}, {"queued", !waitingNow().isEmpty()}, {"pid", QCoreApplication::applicationPid()}});
     }
+    // While a modal dialog is open reads still go through (attach, snapshot, a run that changes nothing)
+    bool readsAllowed = false;
+    const QString waiting = waitingNow(&readsAllowed);
+    const bool readRequest = type == "attach" || type == "snapshot"
+                             || (type == "run" && readOnlyRun(msg.value("command").toString(), msg.value("args").toObject()));
+    const bool mustWait = !waiting.isEmpty() && !(readsAllowed && readRequest);
     // Let go while it was idle: its next request takes the app again if it is free
     const bool wantsApp = type == "snapshot" || type == "run"
                           || (type == "activity" && msg.value("state").toString() == "start");
-    if (wantsApp && !peer.chat && m_attached != s && !peer.client.isEmpty() && waitingNow().isEmpty()) {
+    if (wantsApp && !peer.chat && m_attached != s && !peer.client.isEmpty() && !mustWait) {
         if (!m_attached && m_allowed) attach(s, peer.client);
         else if (type != "activity")
             return reply(m_allowed ? errorReply("APP_BUSY", "another AI session connected to the schneidi app while "
@@ -528,7 +549,7 @@ void Server::handle(QLocalSocket* s, const QJsonObject& msg)
     }
     // The app waits for the user (restore dialog at start: its project is not the one the user will work on yet;
     // any other modal dialog)
-    if (const QString waiting = waitingNow(); !waiting.isEmpty() && (type == "attach" || type == "snapshot" || type == "run"))
+    if (mustWait && (type == "attach" || type == "snapshot" || type == "run"))
         return reply(errorReply("APP_WAITING", waiting));
     if (type == "attach") {
         if (peer.chat) { // not shown as a connected AI: the chat panel shows what it does
@@ -574,7 +595,10 @@ void Server::handle(QLocalSocket* s, const QJsonObject& msg)
 QJsonObject Server::runForChat(const QString& command, const QJsonObject& args)
 {
     if (m_running) return errorReply("APP_BUSY", "another command runs in the app");
-    if (const QString waiting = waitingNow(); !waiting.isEmpty()) return errorReply("APP_WAITING", waiting);
+    bool readsAllowed = false;
+    if (const QString waiting = waitingNow(&readsAllowed);
+        !waiting.isEmpty() && !(readsAllowed && readOnlyRun(command, args)))
+        return errorReply("APP_WAITING", waiting);
     m_running = true;
     m_host->liveCommandRunning(true, true);
     const QJsonObject result = runCommand({{"command", command}, {"args", args}}, true, true);
@@ -760,6 +784,7 @@ struct Candidate {
     bool allowed = true;
     QString refusal; // not allowed: why (empty = the user disconnected the AI)
     QString waiting; // the app waits for the user (why, for the AI)
+    bool reads = false; // ... with a modal dialog only: reads still answered, changes refused by the app
     bool silent = false; // did not answer hello in time (busy): its project is unknown
     qint64 pid = 0;
     QString server, token; // from its registry entry: a second try (handOver waits longer for a silent app)
@@ -820,7 +845,8 @@ std::vector<Candidate> runningApps()
         if (!hello.value("ok").toBool()) continue;
         c->project = hello.value("project").toString();
         out.push_back({std::move(c), hello.value("busy").toBool(), hello.value("allowed").toBool(true),
-                       hello.value("refusal").toString(), hello.value("waiting").toString(), false,
+                       hello.value("refusal").toString(), hello.value("waiting").toString(),
+                       hello.value("reads").toBool(), false,
                        qint64(hello.value("pid").toDouble(double(pid))), server, token});
     }
     return out;
@@ -883,7 +909,7 @@ Connection* connectionFor(const QString& project)
         if (!pick) return nullptr;
     }
     if (pick->silent) detail::fail("APP_BUSY", silent);
-    if (!pick->waiting.isEmpty()) detail::fail("APP_WAITING", pick->waiting);
+    if (!pick->waiting.isEmpty() && !pick->reads) detail::fail("APP_WAITING", pick->waiting);
     if (!pick->allowed)
         detail::fail("APP_DISCONNECTED", !pick->refusal.isEmpty()
                                              ? pick->refusal

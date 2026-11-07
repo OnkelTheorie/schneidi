@@ -86,7 +86,8 @@ pool and is selected; a .schneidi project opens, never over unsaved changes).
   user can take it back with one Ctrl+Z.
 - Don't save (`app` save) unless the user asks - they decide when their file changes.
 - `APP_WAITING`: the app waits for the user - a dialog is open there (a question, an error, the restore offer
-  after a crash). Nothing runs meanwhile; tell the user to answer it and try again, don't retry in a loop.
+  after a crash). Changes wait meanwhile (while an ordinary dialog is open you can still read: `info`, `check`,
+  `frames`); tell the user to answer it and try again, don't retry in a loop.
 - The app lights up the clips you changed; mention what you changed so the user knows where to look.
 - **The user edits too.** Between your answers they trim, move, mute or delete clips by hand (in the app chat a
   "[Note from the schneidi app: the user changed …]" lists it). Build on their changes: when you rework something

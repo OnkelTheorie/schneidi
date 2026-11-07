@@ -509,6 +509,11 @@ int main(int argc, char* argv[])
         dialog.show();
         QCoreApplication::processEvents();
         CHECK(server.waitingNow().contains("Changed outside schneidi"));
+        // Reads go through (the user may leave Preferences open and walk away): info, the app's state
+        CHECK_EQ(code(cli({"info", "@app"})), QString("ok"));
+        CHECK_EQ(code(cli({"info", fake.path})), QString("ok"));
+        CHECK_EQ(code(cli({"app", "state"})), QString("ok"));
+        CHECK_EQ(server.runForChat("app", {{"action", "state"}})["ok"].toBool(), true);
         const int clipsBefore = videoClips(fake.project);
         QJsonObject r2 = cli({"edit", "@app", "--ops", R"([{"op":"split","at":60}])"});
         CHECK_EQ(code(r2), QString("APP_WAITING"));
