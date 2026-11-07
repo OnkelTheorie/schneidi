@@ -378,6 +378,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
 
     src/ui/MediaPool.h            src/ui/MediaPool.cpp
     src/ui/TimelineFormatDialog.h src/ui/TimelineFormatDialog.cpp
+    src/ui/TrustDialog.h          src/ui/TrustDialog.cpp
     src/ui/EffectsLibrary.h       src/ui/EffectsLibrary.cpp
     src/ui/MediaStorage.h         src/ui/MediaStorage.cpp
     src/ui/PoolFilterButton.h     src/ui/PoolFilterButton.cpp

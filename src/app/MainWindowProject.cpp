@@ -31,6 +31,7 @@
 #include "engine/ClipFormat.h"
 #include "engine/ProxyManager.h"
 #include "engine/RenderCache.h"
+#include "ui/TrustDialog.h"
 #include "ui/DeliverPanel.h"
 #include "ui/RenderQueuePanel.h"
 #include "engine/Exporter.h"
@@ -441,6 +442,9 @@ bool MainWindow::applyLoaded(ProjectData data, const QString& path, bool ask)
                                + T("Sie bleiben mit ihren Werten im Projekt; der Inspector zeigt sie an."));
         box.exec();
     }
+
+    // Custom code from someone else (filter chains, shaders; core/CodeTrust.h): run it or keep it skipped
+    if (ask) TrustDialog::askForProject(this, data, path);
 
     m_templateDir.clear(); // a project of its own (New from template sets it again afterwards)
     m_templateCopies.clear();

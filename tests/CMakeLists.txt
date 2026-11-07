@@ -486,3 +486,4 @@ file(GENERATE OUTPUT "$<TARGET_FILE_DIR:schneidi_test_support>/schneidi-test-pat
 list(TRANSFORM SCHNEIDI_TEST_PATHS REPLACE "^([A-Z_]+)=" "\\1=set:" OUTPUT_VARIABLE _schneidi_test_env)
 get_property(_schneidi_tests DIRECTORY PROPERTY TESTS)
 set_property(TEST ${_schneidi_tests} APPEND PROPERTY ENVIRONMENT_MODIFICATION ${_schneidi_test_env})
+schneidi_test(test_trust_dialog) # custom code from someone else: the open dialog (run/skip), remembered, inspector "Code erlauben"
