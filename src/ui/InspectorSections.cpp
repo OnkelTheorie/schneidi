@@ -3,6 +3,7 @@
 #include "ui/Inspector.h"
 
 #include "app/Theme.h"
+#include "core/CodeTrust.h"
 #include "core/EffectFolders.h"
 #include "core/EffectRegistry.h"
 #include "core/Editor.h"
@@ -276,6 +277,25 @@ void Inspector::addEffectSection(QVBoxLayout* page, const EffectDescriptor& d)
         }, false, id);
     };
 
+    // Custom code (filter chain, shader) from someone else, not run yet (core/CodeTrust.h): the user allows it here
+    if (id == QLatin1String("ffmpeg_filter") || id == QLatin1String("shader")) {
+        auto* allow = new QPushButton(T("Code erlauben"));
+        allow->setObjectName("allowCode");
+        allow->setToolTip(T("Dieser Code stammt nicht von dir und läuft noch nicht. Nur erlauben, wenn du der Quelle vertraust."));
+        const auto codeOf = [id](const Clip& c) {
+            return EffectRegistry::value(c, id, id == QLatin1String("shader") ? QStringLiteral("code") : QStringLiteral("chain")).toString();
+        };
+        connect(allow, &QPushButton::clicked, this, [this, allow, id, kind, codeOf] {
+            if (const Clip* c = primary(kind, false, id)) CodeTrust::trust(codeOf(*c));
+            allow->hide();
+            emit m_editor->project()->timelineChanged(); // draw the picture again, now with the effect
+        });
+        s.grid->addWidget(allow, s.rows++, 0, 1, 3);
+        m_refreshers << [this, allow, id, kind, codeOf] {
+            const Clip* c = primary(kind, false, id);
+            allow->setVisible(c && !CodeTrust::isTrusted(codeOf(*c)));
+        };
+    }
     for (const EffectParam& p : d.params) {
         if (p.type == EffectParam::Bool) {
             auto* box = new QCheckBox;

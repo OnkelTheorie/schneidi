@@ -2715,5 +2715,14 @@
  "„Neuer Chat“ fängt frisch an.": "«Nuevo chat» empieza de cero.",
  "„Neutral“ ist ein neues Projekt wie immer: nichts stumm, nichts umbenannt, das Format kommt vom ersten Clip. Die gewählte Vorlage gilt auch für das Projekt, mit dem schneidi startet.": "«Neutra» es un proyecto nuevo como siempre: nada silenciado, nada renombrado, el formato viene del primer clip. La plantilla elegida también vale para el proyecto con el que arranca schneidi.",
  "◀ Verfolgen": "◀ Rastrear",
- "♪ Audio": "♪ Audio"
+ "♪ Audio": "♪ Audio",
+ "Eigener Code in „%1“ läuft erst, wenn du ihm vertraust (nicht von dir geschrieben): „%2“ – trust_custom_code:true oder „Ausführen“ in der App": "El código propio en «%1» solo se ejecuta cuando confíes en él (no lo escribiste tú): «%2» – trust_custom_code:true o «Ejecutar» en la aplicación",
+ "Eigener Code im Projekt": "Código propio en el proyecto",
+ "Dieses Projekt enthält Code, den du hier nicht selbst geschrieben hast (Filterketten: %1, Shader: %2). Fremder Code kann die Grafikkarte oder den Prozessor lange beschäftigen. Führe ihn nur aus, wenn du der Quelle vertraust.": "Este proyecto contiene código que no escribiste tú aquí (cadenas de filtros: %1, sombreadores: %2). El código ajeno puede mantener ocupada la tarjeta gráfica o el procesador durante mucho tiempo. Ejecútalo solo si confías en la fuente.",
+ "Clip %1, Knoten %2": "Clip %1, nodo %2",
+ "Clip %1": "Clip %1",
+ "Nicht ausgeführte Effekte bleiben im Projekt; im Inspector kannst du sie später erlauben.": "Los efectos que no se ejecutan se quedan en el proyecto; puedes permitirlos más tarde en el Inspector.",
+ "Nicht ausführen": "No ejecutar",
+ "Code erlauben": "Permitir código",
+ "Dieser Code stammt nicht von dir und läuft noch nicht. Nur erlauben, wenn du der Quelle vertraust.": "Este código no lo escribiste tú y todavía no se ejecuta. Permítelo solo si confías en la fuente."
 }

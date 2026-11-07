@@ -2715,5 +2715,14 @@
  "„Neuer Chat“ fängt frisch an.": "“New Chat” starts afresh.",
  "„Neutral“ ist ein neues Projekt wie immer: nichts stumm, nichts umbenannt, das Format kommt vom ersten Clip. Die gewählte Vorlage gilt auch für das Projekt, mit dem schneidi startet.": "“Neutral” is a new project as always: nothing muted, nothing renamed, the format comes from the first clip. The chosen template also applies to the project schneidi starts with.",
  "◀ Verfolgen": "◀ Track",
- "♪ Audio": "♪ Audio"
+ "♪ Audio": "♪ Audio",
+ "Eigener Code in „%1“ läuft erst, wenn du ihm vertraust (nicht von dir geschrieben): „%2“ – trust_custom_code:true oder „Ausführen“ in der App": "Custom code in “%1” only runs once you trust it (not written by you): “%2” – trust_custom_code:true or “Run” in the app",
+ "Eigener Code im Projekt": "Custom code in the project",
+ "Dieses Projekt enthält Code, den du hier nicht selbst geschrieben hast (Filterketten: %1, Shader: %2). Fremder Code kann die Grafikkarte oder den Prozessor lange beschäftigen. Führe ihn nur aus, wenn du der Quelle vertraust.": "This project contains code you did not write here yourself (filter chains: %1, shaders: %2). Code from others can keep the graphics card or the processor busy for a long time. Only run it if you trust the source.",
+ "Clip %1, Knoten %2": "Clip %1, node %2",
+ "Clip %1": "Clip %1",
+ "Nicht ausgeführte Effekte bleiben im Projekt; im Inspector kannst du sie später erlauben.": "Effects that are not run stay in the project; you can allow them later in the Inspector.",
+ "Nicht ausführen": "Don’t run",
+ "Code erlauben": "Allow code",
+ "Dieser Code stammt nicht von dir und läuft noch nicht. Nur erlauben, wenn du der Quelle vertraust.": "This code was not written by you and does not run yet. Only allow it if you trust the source."
 }

@@ -2715,5 +2715,14 @@
  "„Neuer Chat“ fängt frisch an.": "«Новый чат» начинает заново.",
  "„Neutral“ ist ein neues Projekt wie immer: nichts stumm, nichts umbenannt, das Format kommt vom ersten Clip. Die gewählte Vorlage gilt auch für das Projekt, mit dem schneidi startet.": "«Нейтральный» — новый проект как всегда: ничего не заглушено и не переименовано, формат берётся от первого клипа. Выбранный шаблон действует и для проекта, с которым запускается schneidi.",
  "◀ Verfolgen": "◀ Отслеж.",
- "♪ Audio": "♪ Аудио"
+ "♪ Audio": "♪ Аудио",
+ "Eigener Code in „%1“ läuft erst, wenn du ihm vertraust (nicht von dir geschrieben): „%2“ – trust_custom_code:true oder „Ausführen“ in der App": "Собственный код в «%1» запустится, только когда вы ему доверитесь (написан не вами): «%2» – trust_custom_code:true или «Выполнить» в программе",
+ "Eigener Code im Projekt": "Собственный код в проекте",
+ "Dieses Projekt enthält Code, den du hier nicht selbst geschrieben hast (Filterketten: %1, Shader: %2). Fremder Code kann die Grafikkarte oder den Prozessor lange beschäftigen. Führe ihn nur aus, wenn du der Quelle vertraust.": "Этот проект содержит код, который вы здесь не писали сами (цепочки фильтров: %1, шейдеры: %2). Чужой код может надолго занять видеокарту или процессор. Запускайте его, только если доверяете источнику.",
+ "Clip %1, Knoten %2": "Клип %1, узел %2",
+ "Clip %1": "Клип %1",
+ "Nicht ausgeführte Effekte bleiben im Projekt; im Inspector kannst du sie später erlauben.": "Невыполненные эффекты остаются в проекте; позже их можно разрешить в инспекторе.",
+ "Nicht ausführen": "Не выполнять",
+ "Code erlauben": "Разрешить код",
+ "Dieser Code stammt nicht von dir und läuft noch nicht. Nur erlauben, wenn du der Quelle vertraust.": "Этот код написан не вами и пока не выполняется. Разрешайте, только если доверяете источнику."
 }

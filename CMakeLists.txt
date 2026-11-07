@@ -140,6 +140,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/core/Types.h
     src/core/TitleLookJson.h      src/core/TitleLookJson.cpp
     src/core/I18n.h               src/core/I18n.cpp
+    src/core/CodeTrust.h          src/core/CodeTrust.cpp
     src/core/Timecode.h
     src/core/TimelineOps.h        src/core/TimelineOps.cpp
     src/core/TrimFrames.h         src/core/TrimFrames.cpp
@@ -379,6 +380,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
 
     src/ui/MediaPool.h            src/ui/MediaPool.cpp
     src/ui/TimelineFormatDialog.h src/ui/TimelineFormatDialog.cpp
+    src/ui/TrustDialog.h          src/ui/TrustDialog.cpp
     src/ui/EffectsLibrary.h       src/ui/EffectsLibrary.cpp
     src/ui/MediaStorage.h         src/ui/MediaStorage.cpp
     src/ui/PoolFilterButton.h     src/ui/PoolFilterButton.cpp

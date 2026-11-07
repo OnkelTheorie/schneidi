@@ -4,6 +4,7 @@
 
 #include "cli/CommandsDetail.h"
 #include "core/I18n.h"
+#include "core/CodeTrust.h"
 #include "core/LiveHost.h"
 #include "core/Project.h"
 #include "core/ProjectFile.h"
@@ -568,9 +569,15 @@ void Server::handle(QLocalSocket* s, const QJsonObject& msg)
     if (type == "snapshot") {
         Project* p = m_host->liveProject();
         const QString path = m_host->liveProjectPath();
+        const ProjectData data = p->data();
+        // The custom code the user trusts here (core/CodeTrust.h; sha1 each): the client's renders draw it too
+        QJsonArray trusted;
+        for (const QString& code : CodeTrust::codes(data))
+            if (CodeTrust::isTrusted(code)) trusted << CodeTrust::hashOf({code});
         return reply({{"ok", true},
                       {"project", path},
-                      {"data", QString::fromUtf8(ProjectFile::toJson(p->data(), path))},
+                      {"data", QString::fromUtf8(ProjectFile::toJson(data, path))},
+                      {"trusted_code", trusted},
                       {"app", appState(m_host)}});
     }
     if (type == "run") {
@@ -1000,7 +1007,9 @@ Snapshot snapshot(Connection* c)
 {
     const QJsonObject r = c->request({{"type", "snapshot"}}, 60000);
     if (!r.value("ok").toBool()) detail::fail(r["error"]["code"].toString(), r["error"]["message"].toString());
-    return {r.value("project").toString(), r.value("data").toString().toUtf8(), r.value("app").toObject()};
+    Snapshot snap{r.value("project").toString(), r.value("data").toString().toUtf8(), r.value("app").toObject(), {}};
+    for (const QJsonValue& v : r.value("trusted_code").toArray()) snap.trustedCode << v.toString();
+    return snap;
 }
 
 QJsonObject run(Connection* c, const QString& command, const QJsonObject& args)

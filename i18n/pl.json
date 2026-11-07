@@ -2715,5 +2715,14 @@
  "„Neuer Chat“ fängt frisch an.": "„Nowy czat” zaczyna od nowa.",
  "„Neutral“ ist ein neues Projekt wie immer: nichts stumm, nichts umbenannt, das Format kommt vom ersten Clip. Die gewählte Vorlage gilt auch für das Projekt, mit dem schneidi startet.": "„Neutralny” to nowy projekt jak zawsze: nic wyciszonego, nic przemianowanego, format pochodzi z pierwszego klipu. Wybrany szablon dotyczy też projektu, z którym startuje schneidi.",
  "◀ Verfolgen": "◀ Śledź",
- "♪ Audio": "♪ Dźwięk"
+ "♪ Audio": "♪ Dźwięk",
+ "Eigener Code in „%1“ läuft erst, wenn du ihm vertraust (nicht von dir geschrieben): „%2“ – trust_custom_code:true oder „Ausführen“ in der App": "Własny kod w „%1” uruchomi się dopiero, gdy mu zaufasz (nie napisałeś go): „%2” – trust_custom_code:true lub „Uruchom” w aplikacji",
+ "Eigener Code im Projekt": "Własny kod w projekcie",
+ "Dieses Projekt enthält Code, den du hier nicht selbst geschrieben hast (Filterketten: %1, Shader: %2). Fremder Code kann die Grafikkarte oder den Prozessor lange beschäftigen. Führe ihn nur aus, wenn du der Quelle vertraust.": "Ten projekt zawiera kod, którego nie napisałeś tutaj sam (łańcuchy filtrów: %1, cieniowania: %2). Obcy kod może długo obciążać kartę graficzną lub procesor. Uruchom go tylko, jeśli ufasz źródłu.",
+ "Clip %1, Knoten %2": "Klip %1, węzeł %2",
+ "Clip %1": "Klip %1",
+ "Nicht ausgeführte Effekte bleiben im Projekt; im Inspector kannst du sie später erlauben.": "Nieuruchomione efekty zostają w projekcie; możesz je później zezwolić w Inspektorze.",
+ "Nicht ausführen": "Nie uruchamiaj",
+ "Code erlauben": "Zezwól na kod",
+ "Dieser Code stammt nicht von dir und läuft noch nicht. Nur erlauben, wenn du der Quelle vertraust.": "Ten kod nie pochodzi od ciebie i jeszcze się nie uruchamia. Zezwól tylko, jeśli ufasz źródłu."
 }

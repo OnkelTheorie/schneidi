@@ -191,12 +191,14 @@ private:
 void releasePools();
 
 // The enabled effects of this timeline (nested sequences too) the engine does not have (frei0r/LADSPA plugins of
-// projects from before 0.15, ids of newer versions): such effects stay in the project and are skipped when rendering
+// projects from before 0.15, ids of newer versions) or custom code not trusted (core/CodeTrust.h, effect id, or
+// "comp:<effect>" for an fx node): such effects stay in the project and are skipped when rendering
 struct SkippedEffect {
     int clip = 0;        // clip id (in a nested sequence: of that sequence)
     QString effect;      // effect id
     bool video = true;   // on a video track (else audio)
     int sequence = -1;   // nested sequence id, -1 = the timeline itself
+    QString reason;      // empty = not in this version/engine; "untrusted" = custom code the user did not confirm
 };
 QVector<SkippedEffect> skippedEffects(const Timeline& tl);
 

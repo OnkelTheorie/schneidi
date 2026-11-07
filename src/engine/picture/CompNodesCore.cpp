@@ -2,6 +2,7 @@
 // Compositing node kinds of package A (0.19): clip, media, color, gradient, merge, transform, crop, blur, grade, fx
 #include "engine/picture/CompNodes.h"
 
+#include "core/CodeTrust.h"
 #include "core/CompGraph.h"
 #include "core/CompTrack.h"
 #include "core/EffectRegistry.h"
@@ -360,8 +361,11 @@ const QStringList& fxEffects()
 void applyCustomFx(NodeCtx& ctx, const QString& id, const EffectDescriptor& d, Buf& out)
 {
     const double seconds = ctx.fps > 0 ? ctx.t / ctx.fps : 0.0;
-    if (id == QLatin1String(Custom::kFilterId)) {
-        Custom::applyFilter(ctx.text(QStringLiteral("e_chain")), out.data(), out.w, out.h, seconds);
+    const bool filter = id == QLatin1String(Custom::kFilterId);
+    const QString code = ctx.text(filter ? QStringLiteral("e_chain") : QStringLiteral("e_code"));
+    if (!CodeTrust::isTrusted(code)) return; // not confirmed by the user (core/CodeTrust.h): the picture passes
+    if (filter) {
+        Custom::applyFilter(code, out.data(), out.w, out.h, seconds);
         return;
     }
     Custom::ShaderValues v;
@@ -378,7 +382,7 @@ void applyCustomFx(NodeCtx& ctx, const QString& id, const EffectDescriptor& d, B
             (p.key == QLatin1String("color1") ? v.color1 : v.color2) = s.isEmpty() ? p.defaultValue.value<QColor>() : QColor(s);
         }
     }
-    Custom::applyShader(ctx.text(QStringLiteral("e_code")), v, out.data(), out.w, out.h);
+    Custom::applyShader(code, v, out.data(), out.w, out.h);
 }
 
 // Any own picture effect; its values under its own keys prefixed "e_" (missing = the effect's default)

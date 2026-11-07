@@ -7,6 +7,7 @@
 
 #include "cli/CommandsDetail.h"
 
+#include "core/CodeTrust.h"
 #include "core/CompGraph.h"
 #include "core/CompRecipes.h"
 #include "core/CompTrack.h"
@@ -51,6 +52,9 @@ const PC::NodeType& kindOf(const QString& type, const QString& where)
                                  .arg(where, type, kindIds()));
     return *k;
 }
+
+// Node values being read are a recipe's (recipeGraph): its custom code is not the caller's own
+thread_local bool t_recipeValues = false;
 
 const char* typeName(EffectParam::Type t)
 {
@@ -103,6 +107,9 @@ QVariantMap nodeValues(Session& s, const PC::NodeType& k, const QJsonValue& v, c
             if (key == QLatin1String("e_chain")) why = Picture::Custom::checkFilter(it.value().toString(), s.format().size());
             else if (key == QLatin1String("e_code")) why = Picture::Custom::checkShader(it.value().toString());
             if (!why.isEmpty()) fail("BAD_ARGUMENT", QString("%1: %2").arg(name, why));
+            // Written by the caller: trusted in this run; a recipe's code only through its own record (CompRecipes::apply)
+            if ((key == QLatin1String("e_chain") || key == QLatin1String("e_code")) && !t_recipeValues)
+                CodeTrust::trust(it.value().toString());
             continue;
         }
         if (!p) {
@@ -288,6 +295,10 @@ Parsed recipeGraph(Session& s, const QJsonObject& op)
     Parsed p;
     QHash<int, QVariantMap> values;
     if (!CompRecipes::apply(*r, with, &p.graph, &values, &err)) fail("BAD_ARGUMENT", err);
+    struct RecipeValues {
+        RecipeValues() { t_recipeValues = true; }
+        ~RecipeValues() { t_recipeValues = false; }
+    } recipeValues;
     for (const CompNode& n : p.graph.nodes) {
         const QString where = QString("recipe %1 node %2").arg(r->id).arg(n.id);
         p.values[n.id] = nodeValues(s, kindOf(n.type, where), QJsonObject::fromVariantMap(values.value(n.id)), where);
@@ -581,6 +592,8 @@ QJsonObject compJson(const EffectInstance& e, const ProjectFormat& f)
         QJsonObject o{{"id", n.id}, {"type", n.type}};
         if (!values.value(n.id).isEmpty()) o["params"] = values.value(n.id);
         if (!PC::find(n.type)) o["available"] = false; // a newer version's kind: passed through
+        for (const char* key : {"e_chain", "e_code"}) // custom code not confirmed (core/CodeTrust.h): passed through
+            if (!CodeTrust::isTrusted(values.value(n.id).value(QLatin1String(key)).toString())) o["untrusted"] = true;
         if (n.type == QLatin1String(PC::kCutoutType)) // not analysed: shows nothing (EditOpsCutout.cpp)
             if (const QString hint = PC::cutoutHint(values.value(n.id).value(PC::kCutoutCacheKey).toString()); !hint.isEmpty())
                 o["hint"] = hint;

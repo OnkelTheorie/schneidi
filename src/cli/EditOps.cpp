@@ -2,6 +2,7 @@
 // schneidi-cli: the operations of the `edit` command (one JSON object each, applied through the Editor like in the app)
 #include "cli/CommandsDetail.h"
 
+#include "core/CodeTrust.h"
 #include "core/EffectRegistry.h"
 #include "core/Presets.h"
 #include "core/Retime.h"
@@ -258,6 +259,7 @@ QVariant effectValue(const EffectDescriptor& d, const QString& key, const QJsonV
         if (d.id == QLatin1String(Picture::Custom::kFilterId)) why = Picture::Custom::checkFilter(text, picture);
         else if (d.id == QLatin1String(Picture::Custom::kShaderId)) why = Picture::Custom::checkShader(text);
         if (!why.isEmpty()) fail("BAD_ARGUMENT", QString("%1.%2: %3").arg(d.id, key, why));
+        if (Picture::Custom::isCustom(d.id)) CodeTrust::trust(text); // the caller's own code (core/CodeTrust.h)
         return text;
     }
     }

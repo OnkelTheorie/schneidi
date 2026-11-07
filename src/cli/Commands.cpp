@@ -6,6 +6,7 @@
 #include "cli/Sandbox.h"
 #include "cli/Serve.h"
 
+#include "core/CodeTrust.h"
 #include "core/Captions.h"
 #include "core/Editor.h"
 #include "core/StreamPresets.h"
@@ -206,10 +207,15 @@ Session::Opened openSession(const QString& file, Session::Access access)
     Session::Opened o;
     const bool anyApp = Live::isAppProject(file);
     o.path = anyApp ? file.trimmed() : absolute(file);
-    const auto load = [&o](const QByteArray& json) {
+    const auto load = [&o](const QByteArray& json, const QStringList& trustedCode) {
         ProjectData d;
         QString error;
         if (!ProjectFile::fromJson(json, o.path, &d, &error, &o.warning)) fail("BAD_PROJECT", error);
+        // The custom code the app trusts (or the file's record) renders here too (core/CodeTrust.h)
+        const QStringList codes = CodeTrust::codes(d);
+        for (const QString& code : codes)
+            if (trustedCode.contains(CodeTrust::hashOf({code}))) CodeTrust::trust(code);
+        CodeTrust::admit(o.path, codes);
         o.own = std::make_unique<Project>();
         o.own->load(d);
     };
@@ -231,7 +237,7 @@ Session::Opened openSession(const QString& file, Session::Access access)
         if (access == Session::Access::Write) fail("INTERNAL", "changing commands run inside the app");
         const Live::Snapshot snap = Live::snapshot(c);
         o.path = snap.path;
-        load(snap.data);
+        load(snap.data, snap.trustedCode);
         o.live = true;
         o.app = snap.app;
         return o;
@@ -547,6 +553,10 @@ QJsonObject clipJson(const Project& p, const Clip& c, TrackRef ref)
             if (!e.enabled) eo["enabled"] = false;
             // Not in this version (a frei0r/LADSPA plugin of an older project, an id of a newer one): kept, but skipped
             if (!EffectRegistry::find(e.effectId)) eo["available"] = false;
+            // Custom code the user did not confirm (core/CodeTrust.h): kept, skipped until trusted
+            if (e.effectId != QLatin1String(::Comp::kEffectId))
+                for (const CodeTrust::Item& it : CodeTrust::itemsOf(e))
+                    if (!CodeTrust::isTrusted(it.code)) eo["untrusted"] = true;
             fx << eo;
         }
         o["effects"] = fx;
@@ -842,7 +852,8 @@ const QVector<Command>& commands()
                  "(on/off), limiter_db (ceiling). To check such settings after an edit, summary:true is enough. 'watch': "
                  "watched folders and the revision of the newest file they brought in (see `watch`). A clip effect with "
                  "\"available\": false is not in this version (a plugin of an older project): it stays in the "
-                 "project but renders as if switched off.",
+                 "project but renders as if switched off. \"untrusted\": true = custom code (filter chain, shader, "
+                 "comp fx node) the user did not write or confirm here: skipped until trusted (trust_custom_code).",
          {{"project", T::Path, "project file", true, true},
           {"summary", T::Boolean, "short form: length, counts of clips/tracks/markers, no clip list (track states and "
                                   "master stay)"},
@@ -888,7 +899,11 @@ const QVector<Command>& commands()
           {"plan_id", T::String, "a plan from plan:true (\"p3\"): run its steps (run) or drop it (discard)"},
           {"run", T::Times, "with plan_id: the step numbers to run ([1,2,4]) or \"all\"; in the plan's order, as one edit"},
           {"discard", T::Boolean, "with plan_id: drop the plan without running anything"},
-          {"full", T::Boolean, "answer with the whole timeline (every clip, like `info`) instead of the summary"}},
+          {"full", T::Boolean, "answer with the whole timeline (every clip, like `info`) instead of the summary"},
+          {"trust_custom_code", T::Boolean, "trust the project's custom code (filter chains, shaders) the user did not "
+                                            "write here, e.g. of a shared project or an imported recipe: it renders "
+                                            "from now on; only when the user said so. Code you set with edit is "
+                                            "trusted anyway"}},
          cmdEdit},
         {"backups", "List the backup copies of a project (every save keeps the previous state, newest first).",
          {{"project", T::Path, "project file or \"@app\"", true, true}}, cmdBackups},
@@ -916,7 +931,9 @@ const QVector<Command>& commands()
                               "and/or media files"},
           {"generate", T::Boolean, "proxies: start generating missing ones (default true; false = only show the state)"},
           {"delete", T::Boolean, "clean_proxies: really delete the listed files (default false = only list them)"},
-          {"path", T::Path, "save: file for a project that was never saved (a new .schneidi file, never overwrites)"}},
+          {"path", T::Path, "save: file for a project that was never saved (a new .schneidi file, never overwrites)"},
+          {"trust_custom_code", T::Boolean, "open: run the project's custom code (filter chains, shaders) without the "
+                                            "app asking the user; only when the user said so"}},
          cmdApp},
         {"watch", "Watch folders: new media files in a folder come into the project's media pool on their own (a screen "
                   "recorder's or game clip tool's output, renders of another program, a pipeline that drops "
@@ -969,8 +986,13 @@ const QVector<Command>& commands()
          cmdBrand},
         {"render", "Render the project timeline to a video, animated GIF, image sequence or audio file. Effects "
                    "this version does not have are left out and listed in the answer's skipped_effects (clip, "
-                   "effect, kind).",
+                   "effect, kind; reason \"untrusted\": custom code - filter chain, shader - the user did not write or "
+                   "confirm, see trust_custom_code).",
          {{"project", T::Path, "project file", true, true},
+          {"trust_custom_code", T::Boolean, "run the project's custom code (ffmpeg_filter chains, shaders, comp fx "
+                                            "nodes) although the user did not write or confirm it here (a project "
+                                            "from someone else); only when the user said so - else such effects are "
+                                            "skipped (skipped_effects reason \"untrusted\", `check` lists them)"},
           {"out", T::Path, "output file (extension added if missing). The format decides the codecs, the extension "
                            "the container, so it must fit: h264/h265 .mp4, .mov, .mkv; vp9 .webm, .mkv; wav .wav; "
                            "the error names the ones that fit", true},
@@ -1278,7 +1300,8 @@ const QVector<Command>& commands()
                   "(before rendering): missing media files, effects this version does not have (missing_effect: kept "
                   "in the project, skipped when rendering - e.g. frei0r plugins of old projects; remove or replace "
                   "them; custom_effect_skipped: a shader or filter chain this machine cannot draw - no graphics card, "
-                  "no qsb, no libavfilter), frames without any picture (a gap = black), subtitles too "
+                  "no qsb, no libavfilter; custom_code_untrusted: custom code of a project or recipe from someone else, not run "
+                  "until the user trusts it), frames without any picture (a gap = black), subtitles too "
                   "short/too fast to read or past the end, recordings with stutter in the range a clip uses "
                   "(stutter: jumps in the time stamps, see `probe` gaps), black_bars (black bars baked into a "
                   "recording - a 4:3 game in a 16:9 video - that show in a timeline of another shape or a zoomed "
