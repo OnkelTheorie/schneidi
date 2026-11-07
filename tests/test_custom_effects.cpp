@@ -318,6 +318,45 @@ int main(int argc, char** argv)
         const QString err = PC::checkShader("vec4 effect(vec2 uv)\n{\n    return pixel(uv) * undefinedThing;\n}");
         if (!CHECK(err.contains("undefinedThing") && err.contains("3"))) std::printf("       %s\n", qPrintable(err));
         CHECK(PC::checkShader("void main2() {}").contains("vec4 effect"));
+        // Normal code with helpers, #define/#if and bounded loops compiles
+        const QString blur = "#define R 4\n#if R > 2\nconst float k = 1.0;\n#endif\n// a box blur, in comments: while #include\n"
+                             "float w(in float x) { return x * k; }\n"
+                             "vec4 effect(vec2 uv) {\n  vec4 s = vec4(0.0);\n"
+                             "  for (int y = -4; y <= 4; ++y)\n    for (int x = -4; x <= 4; x++)\n"
+                             "      s += pixel(uv + vec2(x, y) / resolution);\n  return s / w(81.0);\n}";
+        if (!CHECK_EQ(PC::checkShader(blur), QString())) std::printf("       %s\n", qPrintable(PC::checkShader(blur)));
+        // Refused before the compiler: files, features, own resources, loops that may not end
+        auto refusedShader = [](const QString& body, const char* expect) {
+            const QString why = PC::checkShader("vec4 effect(vec2 uv) { return pixel(uv); }\n" + body);
+            if (!CHECK(why.contains(QString::fromUtf8(expect), Qt::CaseInsensitive)))
+                std::printf("       %s: %s\n", qPrintable(body), qPrintable(why));
+        };
+        refusedShader("#extension GL_GOOGLE_include_directive : enable\n#include \"/etc/passwd\"\n", "no #extension");
+        refusedShader("#include \"/etc/passwd\"\n", "no #include");
+        refusedShader("#line 5\n", "no #line");
+        refusedShader("#pragma optimize(off)\n", "no #pragma");
+        refusedShader("  #  version 450\n", "no #version");
+        refusedShader("#\\\ninclude \"x\"\n", "backslash");
+        refusedShader("layout(std430, binding = 2) buffer B { float v[]; };\n", "'layout'");
+        refusedShader("uniform sampler2D other;\n", "'uniform'");
+        refusedShader("shared float s;\n", "'shared'");
+        refusedShader("float f(image2D i) { return 0.0; }\n", "'image2D'");
+        refusedShader("float f() { float x = 0.0; while (true) x += 1.0; return x; }\n", "no while");
+        refusedShader("float f() { float x = 0.0; do { x += 1.0; } while (x > 0.0); return x; }\n", "no do");
+        refusedShader("float f() { float x = 0.0; for (int i = 0; i < 1000; ++i) x += 1.0; return x; }\n", "1000 steps");
+        refusedShader("float f() { float x = 0.0; for (float i = 0.0; i < 9.0; i += 1.0) x += 1.0; return x; }\n", "every loop");
+        refusedShader("float f() { float x = 0.0; for (;;) x += 1.0; return x; }\n", "every loop");
+        refusedShader("float f() { float x = 0.0; for (int i = 0; i < 9; ++i) { x += 1.0; i = 0; } return x; }\n", "changed in the loop");
+        refusedShader("float f() { float x = 0.0; for (int i = 0; i < 9; ++i) { x += 1.0; i--; } return x; }\n", "changed in the loop");
+        refusedShader("void z(inout int k) { k = 0; }\nfloat f() { for (int i = 0; i < 9; ++i) z(i); return 0.0; }\n", "'inout'");
+        refusedShader("#define I i\nfloat f() { for (int i = 0; i < 9; ++i) I = 0; return 0.0; }\n", "macro");
+        refusedShader("#define Z(a) a = 0\nfloat f() { for (int i = 0; i < 9; ++i) Z(i); return 0.0; }\n", "no =");
+        refusedShader("#define P(a) a\nfloat f() { for (int i = 0; i < 9; ++i) P(i)++; return 0.0; }\n", "( … )");
+        refusedShader("#define F for\nfloat f() { F (int i = 0; i < 9; ++i) {} return 0.0; }\n", "every loop");
+        refusedShader("#define C(a, b) a ## b\n", "##");
+        refusedShader("float f() { float x = 0.0; for (int a = 0; a < 64; ++a) for (int b = 0; b < 64; ++b) x += 1.0; "
+                      "for (int c = 0; c < 2; ++c) x += 1.0; return x; }\n",
+                      "4096");
         const QString bad = editError({QJsonObject{{"op", "effect"}, {"clips", QJsonArray{clip}}, {"effect", "shader"},
                                                    {"params", QJsonObject{{"code", "vec4 effect(vec2 uv) { return x; }"}}}}});
         CHECK(bad.startsWith("BAD_ARGUMENT") && bad.contains("shader.code"));
