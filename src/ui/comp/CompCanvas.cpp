@@ -433,7 +433,8 @@ void CompCanvas::paintEvent(QPaintEvent*)
             const QString summary = CompUi::nodeSummary(*c, n);
             if (!summary.isEmpty()) {
                 const QRectF body(r.left() + 7 * z, r.bottom() - (kRow + 4) * z, r.width() - 14 * z, kRow * z);
-                p.setPen(Theme::text);
+                // An fx node whose custom code is skipped (not trusted) says so in warning color
+                p.setPen(CompUi::untrustedCode(*c, n.id).isEmpty() ? Theme::text : Theme::warning);
                 p.drawText(body, Qt::AlignVCenter | Qt::AlignLeft,
                            QFontMetrics(small).elidedText(summary, Qt::ElideRight, int(body.width())));
             }

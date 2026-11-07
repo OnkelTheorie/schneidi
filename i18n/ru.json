@@ -2724,5 +2724,6 @@
  "Nicht ausgeführte Effekte bleiben im Projekt; im Inspector kannst du sie später erlauben.": "Невыполненные эффекты остаются в проекте; позже их можно разрешить в инспекторе.",
  "Nicht ausführen": "Не выполнять",
  "Code erlauben": "Разрешить код",
- "Dieser Code stammt nicht von dir und läuft noch nicht. Nur erlauben, wenn du der Quelle vertraust.": "Этот код написан не вами и пока не выполняется. Разрешайте, только если доверяете источнику."
+ "Dieser Code stammt nicht von dir und läuft noch nicht. Nur erlauben, wenn du der Quelle vertraust.": "Этот код написан не вами и пока не выполняется. Разрешайте, только если доверяете источнику.",
+ "%1 · nicht ausgeführt": "%1 · не выполняется"
 }

@@ -2724,5 +2724,6 @@
  "Nicht ausgeführte Effekte bleiben im Projekt; im Inspector kannst du sie später erlauben.": "Nieuruchomione efekty zostają w projekcie; możesz je później zezwolić w Inspektorze.",
  "Nicht ausführen": "Nie uruchamiaj",
  "Code erlauben": "Zezwól na kod",
- "Dieser Code stammt nicht von dir und läuft noch nicht. Nur erlauben, wenn du der Quelle vertraust.": "Ten kod nie pochodzi od ciebie i jeszcze się nie uruchamia. Zezwól tylko, jeśli ufasz źródłu."
+ "Dieser Code stammt nicht von dir und läuft noch nicht. Nur erlauben, wenn du der Quelle vertraust.": "Ten kod nie pochodzi od ciebie i jeszcze się nie uruchamia. Zezwól tylko, jeśli ufasz źródłu.",
+ "%1 · nicht ausgeführt": "%1 · nieuruchomiony"
 }

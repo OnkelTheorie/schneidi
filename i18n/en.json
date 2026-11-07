@@ -2724,5 +2724,6 @@
  "Nicht ausgeführte Effekte bleiben im Projekt; im Inspector kannst du sie später erlauben.": "Effects that are not run stay in the project; you can allow them later in the Inspector.",
  "Nicht ausführen": "Don’t run",
  "Code erlauben": "Allow code",
- "Dieser Code stammt nicht von dir und läuft noch nicht. Nur erlauben, wenn du der Quelle vertraust.": "This code was not written by you and does not run yet. Only allow it if you trust the source."
+ "Dieser Code stammt nicht von dir und läuft noch nicht. Nur erlauben, wenn du der Quelle vertraust.": "This code was not written by you and does not run yet. Only allow it if you trust the source.",
+ "%1 · nicht ausgeführt": "%1 · not run"
 }

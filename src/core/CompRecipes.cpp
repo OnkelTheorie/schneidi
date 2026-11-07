@@ -345,8 +345,6 @@ std::optional<CompRecipe> find(const QString& key, QString* error)
     return std::nullopt;
 }
 
-namespace {
-// The custom code (filter chains, shaders of fx nodes) of a recipe, for its trust record (core/CodeTrust.h)
 QStringList customCode(const CompRecipe& r)
 {
     QStringList out;
@@ -355,7 +353,6 @@ QStringList customCode(const CompRecipe& r)
             if (const QString code = n.value().value(QLatin1String(key)).toString(); !code.trimmed().isEmpty()) out << code;
     return out;
 }
-} // namespace
 
 bool apply(const CompRecipe& r, const QVariantMap& with, CompGraph* graph, QHash<int, QVariantMap>* values, QString* error)
 {
