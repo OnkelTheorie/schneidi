@@ -9,16 +9,21 @@
 
 #include "core/CompGraph.h"
 #include "core/CompRecipes.h"
+#include "core/CompTrack.h"
 #include "core/EffectRegistry.h"
 #include "core/ExportCheck.h"
+#include "core/I18n.h"
 #include "core/Keyframes.h"
 #include "core/TimelineOps.h"
+#include "engine/ColorGrade.h"
 #include "engine/picture/CompNodes.h"
 #include "engine/picture/CompTrack.h"
 #include "engine/picture/CustomEffects.h"
 
 #include <QDir>
+#include <QFileInfo>
 #include <QJsonArray>
+#include <QUndoStack>
 
 #include <algorithm>
 
@@ -52,19 +57,45 @@ const char* typeName(EffectParam::Type t)
     return names[t];
 }
 
-// Node values from JSON, checked against the kind's parameters (keys without the "n<id>." prefix)
-QVariantMap nodeValues(Session& s, const PC::NodeType& k, const QJsonValue& v, const QString& where)
+// Node values from JSON, checked against the kind's parameters (keys without the "n<id>." prefix). fx: the
+// effect's own values as e_<key>, checked against that effect (given in params, else `fxEffect` = the node's now)
+QVariantMap nodeValues(Session& s, const PC::NodeType& k, const QJsonValue& v, const QString& where,
+                       const QString& fxEffect = {})
 {
     QVariantMap out;
     if (v.isUndefined() || v.isNull()) return out;
     if (!v.isObject()) fail("BAD_ARGUMENT", where + ": 'params' must be an object {key: value}");
     const QJsonObject o = v.toObject();
+    const bool fx = k.id == QLatin1String("fx");
+    const QString effectId = fx && o.value("effect").isString() ? o.value("effect").toString() : fxEffect;
+    const EffectDescriptor* effect = fx && !effectId.isEmpty() ? EffectRegistry::find(effectId) : nullptr;
     for (auto it = o.begin(); it != o.end(); ++it) {
         const QString key = it.key();
         const QString name = QString("%1.%2").arg(where, key);
         const EffectParam* p = k.param(key);
-        // fx: the effect's own values under e_<key> (any value its effect takes)
-        if (!p && k.id == QLatin1String("fx") && key.startsWith(QLatin1String("e_"))) {
+        if (!p && fx && key.startsWith(QLatin1String("e_"))) {
+            const EffectParam* ep = nullptr;
+            if (effect)
+                for (const EffectParam& q : effect->params)
+                    if (QLatin1String("e_") + q.key == key) ep = &q;
+            if (effect && !ep) {
+                QStringList keys;
+                for (const EffectParam& q : effect->params) keys << "e_" + q.key;
+                fail("BAD_ARGUMENT", QString("%1: effect %2 has no value '%3' (values: %4)")
+                                         .arg(where, effectId, key.mid(2), keys.isEmpty() ? QString("none") : keys.join(", ")));
+            }
+            // Numbers in the effect's range, switches as true/false; other values as the effect takes them
+            if (ep && ep->type == EffectParam::Double) {
+                if (!it.value().isDouble()) fail("BAD_ARGUMENT", QString("'%1' must be a number").arg(name));
+                const double d = it.value().toDouble();
+                if (ep->min < ep->max && (d < ep->min || d > ep->max))
+                    fail("BAD_ARGUMENT", QString("'%1' must be between %2 and %3, got %4").arg(name).arg(ep->min).arg(ep->max).arg(d));
+            } else if (ep && ep->type == EffectParam::Bool && !it.value().isBool()) {
+                fail("BAD_ARGUMENT", QString("'%1' must be true or false").arg(name));
+            } else if (ep && ep->type == EffectParam::Color) {
+                out[key] = colorOf(it.value(), "'" + name + "'").name(QColor::HexArgb);
+                continue;
+            }
             out[key] = it.value().toVariant();
             // A custom effect's code (filter chain, shader) is checked here, as in op 'effect'
             QString why;
@@ -111,9 +142,20 @@ QVariantMap nodeValues(Session& s, const PC::NodeType& k, const QJsonValue& v, c
         case EffectParam::Path: {
             if (!x.isString()) fail("BAD_ARGUMENT", QString("'%1' must be a text").arg(name));
             QString text = x.toString();
-            // The file of a media node is a media pool item (imported on first use)
-            if (k.id == QLatin1String(::Comp::kMediaType) && key == QLatin1String(::Comp::kPathKey) && !text.isEmpty())
-                text = s.media(absolute(text)).path;
+            if (!text.isEmpty() && ::Comp::fileKeys(k.id).contains(key)) { // a file (empty = none)
+                if (k.id == QLatin1String(::Comp::kMediaType) && key == QLatin1String(::Comp::kPathKey)) {
+                    text = s.media(absolute(text)).path; // a media pool item (imported on first use)
+                } else if (k.id == QLatin1String(::Comp::kGradeType) && key == QLatin1String(::Comp::kLutKey)) {
+                    text = findAsset(Asset::Lut, text); // by name as op 'look', or a file
+                    QString error;
+                    if (!ColorGrade::parseLut(text, &error))
+                        fail("BAD_ARGUMENT", QString("'%1': cannot read the LUT: %2").arg(name, error));
+                } else {
+                    text = absolute(text);
+                }
+                if (!QFileInfo(text).isFile() || !QFileInfo(text).isReadable())
+                    fail("NOT_FOUND", QString("'%1': cannot read the file '%2'").arg(name, text));
+            }
             out[key] = text;
             break;
         }
@@ -123,7 +165,8 @@ QVariantMap nodeValues(Session& s, const PC::NodeType& k, const QJsonValue& v, c
 }
 
 // [from, to, input?] or {from, to, input?}; a missing input = the first input of `to` nothing is linked into yet
-CompLink linkOf(const QJsonValue& v, const CompGraph& g, const QString& where, bool needFree = true)
+// (unlink: the input `from` feeds)
+CompLink linkOf(const QJsonValue& v, const CompGraph& g, const QString& where, bool unlink = false)
 {
     CompLink l;
     QJsonValue input;
@@ -149,15 +192,31 @@ CompLink linkOf(const QJsonValue& v, const CompGraph& g, const QString& where, b
         l.input = input.toString();
         return l;
     }
+    if (!input.isUndefined() && !input.isNull()) fail("BAD_ARGUMENT", where + ": the input is a name (\"src\", \"bg\", \"mask\" …)");
+    if (unlink) {
+        for (const CompLink& x : g.links)
+            if (x.from == l.from && x.to == l.to) {
+                l.input = x.input;
+                return l;
+            }
+        fail("NOT_FOUND", QString("%1: node %2 is not linked into node %3").arg(where).arg(l.from).arg(l.to));
+    }
     QStringList inputs;
     PC::kindInfo(to->type, &inputs);
     for (const QString& in : inputs)
-        if (!needFree || !g.linkInto(l.to, in)) {
+        if (!g.linkInto(l.to, in)) {
             l.input = in;
             return l;
         }
     fail("BAD_ARGUMENT", QString("%1: node %2 (%3) has no free input; name one (inputs: %4)")
                              .arg(where).arg(l.to).arg(to->type, inputs.isEmpty() ? QString("none") : inputs.join(", ")));
+}
+
+// The effect an existing fx node wraps (empty: none or another kind)
+QString fxEffectOf(const Clip& c, int node)
+{
+    const EffectInstance* e = EffectRegistry::instance(c, ::Comp::kEffectId);
+    return e ? e->params.value(CompGraph::paramKey(node, "effect")).toString() : QString();
 }
 
 struct Parsed {
@@ -337,9 +396,12 @@ void opNode(Session& s, const QJsonObject& op)
         const CompGraph g = graphOfClip(c, false);
         const int after = op.value("after").toInt();
         if (after && !g.node(after)) fail("NOT_FOUND", QString("no node %1 in the graph of clip %2").arg(after).arg(clip));
-        QString input = op.value("input").toString();
-        if (!op.contains("input") && !k.inputs.isEmpty()) input = k.inputs.first(); // merge: the chain is its bg
-        if (op.value("input").isBool() && !op.value("input").toBool()) input.clear(); // input:false = not linked
+        const QJsonValue in = op.value("input");
+        if (!in.isUndefined() && !in.isString() && !(in.isBool() && !in.toBool()))
+            fail("BAD_ARGUMENT", QString("node add: input is the name of an input of %1 (%2) or false (not linked)")
+                                     .arg(k.id, k.inputs.isEmpty() ? QString("none") : k.inputs.join(", ")));
+        QString input = in.toString();
+        if (in.isUndefined() && !k.inputs.isEmpty()) input = k.inputs.first(); // merge: the chain is its bg
         const int id = s.editor.addCompNode(clip, k.id, values, after, input, kKinds, &err);
         done(id > 0);
         s.notes << QJsonObject{{"node", QJsonObject{{"clip", clip}, {"id", id}, {"type", k.id},
@@ -351,7 +413,7 @@ void opNode(Session& s, const QJsonObject& op)
     const CompGraph g = graphOfClip(c);
     if (op.contains("link") || op.contains("unlink")) {
         const bool on = op.contains("link");
-        const CompLink l = linkOf(op.value(on ? "link" : "unlink"), g, on ? "link" : "unlink", on);
+        const CompLink l = linkOf(op.value(on ? "link" : "unlink"), g, on ? "link" : "unlink", !on);
         done(s.editor.linkCompNodes(clip, l, on, kKinds, &err));
         return;
     }
@@ -364,10 +426,22 @@ void opNode(Session& s, const QJsonObject& op)
         done(s.editor.removeCompNode(clip, id, kKinds, &err));
         return;
     }
+    // params and out:true together are one undo step
+    struct Macro {
+        QUndoStack* undo = nullptr;
+        ~Macro()
+        {
+            if (undo) undo->endMacro();
+        }
+    } macro;
+    if (op.contains("params") && op.value("out").toBool()) {
+        macro.undo = s.project.undoStack();
+        macro.undo->beginMacro(T("Knoten ändern"));
+    }
     bool any = false;
     if (op.contains("params")) {
         const QVariantMap values = nodeValues(s, kindOf(n->type, QString("node %1").arg(id)), op.value("params"),
-                                              QString("node %1").arg(id));
+                                              QString("node %1").arg(id), fxEffectOf(c, id));
         if (!values.isEmpty()) done(s.editor.setCompNodeValues(clip, id, values, &err));
         any = true;
     }
@@ -463,7 +537,9 @@ QJsonArray compNodeKindsJson()
                 more << p.key;
                 continue;
             }
-            QJsonObject po{{"key", p.key}, {"type", typeName(p.type)}, {"label", p.label}};
+            // A Path value that is no file (fileKeys: media path, LUT, texture) is text: the text node's text, font
+            const bool text = p.type == EffectParam::Path && !::Comp::fileKeys(k.id).contains(p.key);
+            QJsonObject po{{"key", p.key}, {"type", text ? "text" : typeName(p.type)}, {"label", p.label}};
             if (p.type == EffectParam::Double) {
                 po["min"] = p.min;
                 po["max"] = p.max;
@@ -510,8 +586,11 @@ QJsonObject compJson(const EffectInstance& e, const ProjectFormat& f)
     QJsonObject o{{"nodes", nodes}, {"links", links}, {"out", g.out}};
     QJsonArray unused;
     const QVector<int> order = g.evalOrder();
+    QSet<int> followed; // trackers read through `follow` (a value, not a link) are used
+    for (int id : order)
+        if (const int f = ::Comp::followId(e.params.value(CompGraph::paramKey(id, "follow")).toDouble())) followed.insert(f);
     for (const CompNode& n : g.nodes)
-        if (!order.contains(n.id)) unused << n.id;
+        if (!order.contains(n.id) && !followed.contains(n.id)) unused << n.id;
     if (!unused.isEmpty()) o["unused"] = unused; // do not reach the output
     o["cost_ms"] = std::round(ExportCheck::compCostMs(e, f.size()) * 10) / 10; // rough, one core
     return o;
@@ -647,7 +726,9 @@ void addCompOps(QVector<OpDef>& ops)
                  "the new node; input:false only adds it (a text or color to link yourself). A clip without a graph "
                  "gets one ('clip' node first). The answer's notes give the new id and the graph. remove: what read "
                  "the node reads its first input instead (a chain stays a chain). link replaces what was in that "
-                 "input; a cycle or an input the type does not have is an error. Example: blur only in a mask - "
+                 "input; a cycle or an input the type does not have is an error. unlink takes the link from `from` "
+                 "(without input: the one it feeds). File values (media path, grade lut, text texture) must be "
+                 "readable files; a lut also by name as in op 'look'. Example: blur only in a mask - "
                  R"({"op":"node","clip":4,"add":{"type":"blur","params":{"radius":12}}} then {"op":"node","clip":4,"add":{"type":"mask","params":{"shape":"ellipse"}},"input":false} and {"op":"node","clip":4,"link":[3,2,"mask"]}.)",
                  opNode, QStringList{"id", "params", "remove", "link", "unlink", "out"}}
         << OpDef{"track_node", "{op:'track_node', clip, node, from?, to?}",

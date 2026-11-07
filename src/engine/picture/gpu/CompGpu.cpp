@@ -17,6 +17,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <mutex>
 #include <numbers>
 
 namespace Picture::Gpu {
@@ -30,8 +31,8 @@ struct CompPlan {
         float p[40] = {};
         // Upload: straight RGBA (mask: the value in every channel, premultiplied = as stored)
         std::shared_ptr<std::vector<uint8_t>> pixels;
-        // Key: its table (chroma 257 x 257 RGBA8, luma 256 x 1 gray)
-        std::shared_ptr<std::vector<uint8_t>> table;
+        // Key: its table (chroma 257 x 257 RGBA8, luma 256 x 1 gray), shared while the key's values stay
+        std::shared_ptr<const std::vector<uint8_t>> table;
         bool luma = false;
         // Blur: box radii (rows, columns), then a mix by mask when in[1] >= 0
         int radii[3] = {0, 0, 0};
@@ -84,6 +85,54 @@ void setRect(float* p, const QRect& r)
     p[0] = float(r.left()), p[1] = float(r.top()), p[2] = float(r.right()), p[3] = float(r.bottom());
 }
 
+using Table = std::shared_ptr<const std::vector<uint8_t>>;
+
+// Key tables by their parameters, the last few (any thread): a key that does not change builds its table once, and
+// the card keeps its texture (CompCaches::keyTexture by the same pointer). Chroma: 257 x 257 RGBA8, null = a gray key
+// colour (no chroma: the card cannot key it); luma: 256 gray levels
+Table keyTable(bool luma, QRgb color, double a, double b, double c, double d)
+{
+    struct Entry {
+        bool luma;
+        QRgb color;
+        double v[4];
+        Table table;
+    };
+    static std::mutex mutex;
+    static std::vector<Entry> list;
+    const double v[4] = {a, b, c, d};
+    {
+        const std::lock_guard lock(mutex);
+        for (size_t i = 0; i < list.size(); ++i)
+            if (list[i].luma == luma && list[i].color == color && std::equal(v, v + 4, list[i].v)) {
+                std::rotate(list.begin(), list.begin() + i, list.begin() + i + 1);
+                return list.front().table;
+            }
+    }
+    std::shared_ptr<std::vector<uint8_t>> t;
+    if (luma) {
+        VideoEffects::LumaKeyParams p;
+        p.low = a;
+        p.high = b;
+        p.soft = c;
+        p.invert = d > 0.5;
+        t = std::make_shared<std::vector<uint8_t>>(256);
+        VideoEffects::lumaKeyTable(p, t->data());
+    } else {
+        VideoEffects::KeyParams p;
+        p.color = QColor::fromRgba(color);
+        p.tolerance = a;
+        p.softness = b;
+        p.spill = c;
+        t = std::make_shared<std::vector<uint8_t>>(size_t(VideoEffects::keyTableSide) * VideoEffects::keyTableSide * 4);
+        if (!VideoEffects::keyTable(p, t->data())) t.reset();
+    }
+    const std::lock_guard lock(mutex);
+    list.insert(list.begin(), Entry{luma, color, {a, b, c, d}, t});
+    if (list.size() > 8) list.pop_back();
+    return t;
+}
+
 // GPU thread: baked grades as 3D LUTs (the last few; keyframed grades bake one per frame)
 struct CompCaches {
     struct Lut {
@@ -103,6 +152,22 @@ struct CompCaches {
         luts.insert(luts.begin(), {p, l});
         if (luts.size() > 8) luts.pop_back();
         return l;
+    }
+    // Key tables on the card, by the table they were uploaded from (keyTable keeps it while its key is used)
+    std::vector<std::pair<std::weak_ptr<const std::vector<uint8_t>>, TexturePtr>> keys;
+    TexturePtr keyTexture(Context& g, const Table& table, bool luma)
+    {
+        for (size_t i = 0; i < keys.size(); ++i)
+            if (keys[i].first.lock() == table) {
+                std::rotate(keys.begin(), keys.begin() + i, keys.begin() + i + 1);
+                return keys.front().second;
+            }
+        TexturePtr t = luma ? g.uploadGray(table->data(), 256, 1)
+                            : g.uploadRgba(table->data(), VideoEffects::keyTableSide, VideoEffects::keyTableSide, false);
+        if (!t) return {};
+        keys.insert(keys.begin(), {table, t});
+        if (keys.size() > 8) keys.pop_back();
+        return t;
     }
 };
 
@@ -149,7 +214,6 @@ CompPlanPtr planComp(const EffectInstance& comp, const Comp::Env& env, Comp::Cac
     plan->size = env.size;
     QHash<int, int> stepOf;    // node -> its step (-1 = made nothing)
     QSet<int> onCard;          // nodes made by a card step
-    QHash<int, std::shared_ptr<std::vector<uint8_t>>> keyTables; // chroma key tables made while deciding
     auto inputStep = [&](int id, const char* name) -> int {
         const CompLink* l = g.linkInto(id, QLatin1String(name));
         return l ? stepOf.value(l->from, -1) : -1;
@@ -164,6 +228,13 @@ CompPlanPtr planComp(const EffectInstance& comp, const Comp::Env& env, Comp::Cac
         return int(plan->steps.size()) - 1;
     };
 
+    auto keyTableOf = [&](int id, const Comp::NodeType& k) {
+        if (num(id, k, "mode") >= 0.5)
+            return keyTable(true, 0, num(id, k, "low"), num(id, k, "high"), num(id, k, "soft"), num(id, k, "invert") > 0.5);
+        return keyTable(false, color(id, k, "color").rgba(), num(id, k, "tolerance"), num(id, k, "softness"),
+                        num(id, k, "spill"), 0);
+    };
+
     // Which nodes the card does (decided from the values at t)
     auto cardKind = [&](int id, const CompNode& n, const Comp::NodeType* k, QString* reason) -> bool {
         if (!k) return fail(reason, "unknown kind " + n.type);
@@ -173,20 +244,11 @@ CompPlanPtr planComp(const EffectInstance& comp, const Comp::Env& env, Comp::Cac
             Masks::Shape shape;
             if (!Masks::shapeFromId(text(id, *k, "shape"), &shape)) shape = Masks::Shape::Rect;
             if (shape == Masks::Shape::Polygon || shape == Masks::Shape::Bezier) return fail(reason, "polygon mask");
-            if (num(id, *k, "follow") > 0) return fail(reason, "mask follows a tracker");
+            if (::Comp::followId(num(id, *k, "follow")) > 0) return fail(reason, "mask follows a tracker");
             return true;
         }
         if (t == QLatin1String("key")) {
-            if (num(id, *k, "mode") >= 0.5) return true;
-            VideoEffects::KeyParams p;
-            p.color = color(id, *k, "color");
-            p.tolerance = num(id, *k, "tolerance");
-            p.softness = num(id, *k, "softness");
-            p.spill = num(id, *k, "spill");
-            auto table = std::make_shared<std::vector<uint8_t>>(size_t(VideoEffects::keyTableSide) * VideoEffects::keyTableSide * 4);
-            if (!VideoEffects::keyTable(p, table->data())) return fail(reason, "gray key");
-            keyTables.insert(id, std::move(table));
-            return true;
+            return keyTableOf(id, *k) || fail(reason, "gray key");
         }
         if (t == QLatin1String("blur")) {
             int radii[3];
@@ -196,7 +258,7 @@ CompPlanPtr planComp(const EffectInstance& comp, const Comp::Env& env, Comp::Cac
             return true;
         }
         if (t == QLatin1String("transform")) {
-            if (num(id, *k, "follow") > 0) return fail(reason, "transform follows a tracker");
+            if (::Comp::followId(num(id, *k, "follow")) > 0) return fail(reason, "transform follows a tracker");
             if (std::abs(num(id, *k, "size")) < 0.5) return fail(reason, "transform shrinks below 1/2");
             return true;
         }
@@ -205,34 +267,48 @@ CompPlanPtr planComp(const EffectInstance& comp, const Comp::Env& env, Comp::Cac
         return fail(reason, "node " + t);
     };
 
+    // 1. Decide first, without evaluating anything: which nodes the card does. A CPU node fed by a card node, a CPU
+    // mask with inputs, or an output on the CPU sends the whole graph to the CPU before any work was done for it
+    QSet<int> cardNodes;
     for (int id : order) {
         const CompNode* n = g.node(id);
         if (!n) continue;
-        const Comp::NodeType* k = Comp::find(n->type);
         QString reason;
-        const bool card = cardKind(id, *n, k, &reason);
+        const bool card = cardKind(id, *n, Comp::find(n->type), &reason);
         bool fedByCard = false;
         for (const CompLink& l : g.links)
-            if (l.to == id && onCard.contains(l.from)) fedByCard = true;
+            if (l.to == id && cardNodes.contains(l.from)) fedByCard = true;
         if (!card) {
-            if (fedByCard) {
-                if (why) *why = reason + " after a node on the card";
-                return nullptr;
-            }
-            continue; // made on the CPU when a card node (or the output) reads it
+            if (fedByCard) return fail(why, reason + " after a node on the card"), nullptr;
+            continue; // made on the CPU when a card node reads it
         }
+        for (const CompLink& l : g.links) {
+            if (l.to != id || cardNodes.contains(l.from)) continue;
+            const CompNode* from = g.node(l.from);
+            const Comp::NodeType* fk = from ? Comp::find(from->type) : nullptr;
+            if (!fk || fk->output != Comp::Buf::Mask) continue;
+            // A mask the card cannot draw (polygon, bezier, matte) is made by its node alone: a leaf only
+            bool leaf = true;
+            for (const CompLink& l2 : g.links) leaf = leaf && l2.to != l.from;
+            if (!leaf || !fk->eval) return fail(why, "mask node " + from->type + " with inputs"), nullptr;
+        }
+        cardNodes.insert(id);
+    }
+    if (cardNodes.isEmpty()) return fail(why, "no node for the card"), nullptr;
+    if (!cardNodes.contains(g.out)) return fail(why, "output on the CPU"), nullptr;
+
+    // 2. The steps; the CPU nodes the card nodes read are evaluated and uploaded
+    for (int id : order) {
+        if (!cardNodes.contains(id)) continue;
+        const Comp::NodeType* k = Comp::find(g.node(id)->type);
         // The CPU nodes this one reads: evaluated now (their whole subgraph, CompEval with its cache) and uploaded
         for (const CompLink& l : g.links) {
-            if (l.to != id || onCard.contains(l.from) || stepOf.contains(l.from)) continue;
+            if (l.to != id || cardNodes.contains(l.from) || stepOf.contains(l.from)) continue;
             const CompNode* from = g.node(l.from);
             const Comp::NodeType* fk = from ? Comp::find(from->type) : nullptr;
             Step up;
             up.op = Step::Upload;
-            if (fk && fk->output == Comp::Buf::Mask) {
-                // A mask the card cannot draw (polygon, bezier, matte): its node alone, a leaf only
-                bool leaf = true;
-                for (const CompLink& l2 : g.links) leaf = leaf && l2.to != l.from;
-                if (!leaf || !fk->eval) return fail(why, "mask node " + from->type + " with inputs"), nullptr;
+            if (fk && fk->output == Comp::Buf::Mask) { // a leaf (checked above): its node alone
                 Comp::NodeCtx ctx;
                 ctx.node = l.from;
                 ctx.t = env.t;
@@ -249,14 +325,16 @@ CompPlanPtr planComp(const EffectInstance& comp, const Comp::Env& env, Comp::Cac
                     const CompNode* o = g.node(other);
                     const Comp::NodeType* ok = o ? Comp::find(o->type) : nullptr;
                     if (!ok) return 0.0;
-                    if (o->type == QLatin1String(::Comp::kTrackerType)
-                        && (key == QLatin1String("x") || key == QLatin1String("y"))
-                        && !values.value(other).contains(key) && !animated.value(other).contains(key))
-                        return num(other, *ok, key == QLatin1String("x") ? QStringLiteral("ax") : QStringLiteral("ay"));
+                    if (o->type == QLatin1String(::Comp::kTrackerType)) // the follow rule, as CompEval
+                        return ::Comp::followValue(
+                            key, text(other, *ok, QStringLiteral("mode")),
+                            [&](const QString& q) { return values.value(other).contains(q) || animated.value(other).contains(q); },
+                            [&](const QString& q) { return num(other, *ok, q); });
                     return num(other, *ok, key);
                 };
                 ctx.input = [](const QString&) -> const Comp::Buf* { return nullptr; };
                 ctx.take = [&](Comp::Buf::Kind kind) { return Comp::Buf(kind, W, H); };
+                ctx.give = [](Comp::Buf&& b) { b.px = {}; }; // scratch buffers: plain memory here
                 Comp::Buf b;
                 if (!fk->eval(ctx, &b) || b.kind != Comp::Buf::Mask || b.w != W || b.h != H) {
                     stepOf[l.from] = -1;
@@ -361,20 +439,10 @@ CompPlanPtr planComp(const EffectInstance& comp, const Comp::Env& env, Comp::Cac
             }
             s.op = Step::Key;
             s.in[0] = src;
-            if (num(id, *k, "mode") >= 0.5) {
-                VideoEffects::LumaKeyParams p;
-                p.low = num(id, *k, "low");
-                p.high = num(id, *k, "high");
-                p.soft = num(id, *k, "soft");
-                p.invert = num(id, *k, "invert") > 0.5;
-                s.luma = true;
-                s.p[0] = 1;
-                s.table = std::make_shared<std::vector<uint8_t>>(256);
-                VideoEffects::lumaKeyTable(p, s.table->data());
-            } else {
-                s.table = keyTables.value(id);
-                if (!s.table) return fail(why, "gray key"), nullptr;
-            }
+            s.luma = num(id, *k, "mode") >= 0.5;
+            s.p[0] = s.luma ? 1 : 0;
+            s.table = keyTableOf(id, *k);
+            if (!s.table) return fail(why, "gray key"), nullptr;
         } else if (t == QLatin1String("blur")) {
             const int src = rgbaIn(id, "src");
             if (src < 0) {
@@ -456,8 +524,6 @@ CompPlanPtr planComp(const EffectInstance& comp, const Comp::Env& env, Comp::Cac
         stepOf[id] = push(std::move(s));
         onCard.insert(id);
     }
-    if (onCard.isEmpty()) return fail(why, "no node for the card"), nullptr;
-    if (!onCard.contains(g.out)) return fail(why, "output on the CPU"), nullptr;
     plan->out = stepOf.value(g.out, -1);
     if (plan->out < 0 || isMask(plan->out)) return fail(why, "output makes no picture"), nullptr;
     return plan;
@@ -491,11 +557,9 @@ TexturePtr runComp(Context& g, const CompPlan& plan, std::vector<TexturePtr>* ke
         case Step::Mask: out = g.compPass(Context::CompShader::Mask, size, s.p, tex(s.in[0])); break;
         case Step::Key: {
             if (!s.table) break;
-            TexturePtr table = s.luma ? g.uploadGray(s.table->data(), 256, 1)
-                                      : g.uploadRgba(s.table->data(), VideoEffects::keyTableSide, VideoEffects::keyTableSide, false);
+            TexturePtr table = caches.keyTexture(g, s.table, s.luma);
             if (!table) break;
             out = g.compPass(Context::CompShader::Key, size, s.p, tex(s.in[0]), table.get());
-            keep->push_back(std::move(table));
             break;
         }
         case Step::Blur: {

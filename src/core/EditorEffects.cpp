@@ -387,20 +387,28 @@ bool Editor::trackCompNode(int clipId, int node, const QVector<Comp::TrackPoint>
             lo = std::min(lo, p.frame);
             hi = std::max(hi, p.frame);
         }
+        // The old path's size and turn at the new run's start frame (its scale/angle start at 1/0 there)
+        const int start = points.first().frame;
+        const double oldScale = Keys::keyTimes(c, {params[2]}).isEmpty() ? 1.0 : Keys::valueAt(c, params[2], start);
+        const double oldAngle = Keys::keyTimes(c, {params[3]}).isEmpty() ? 0.0 : Keys::valueAt(c, params[3], start);
         for (AnimParam p : params)
             for (int t : Keys::keyTimes(c, {p}))
                 if (t >= lo && t <= hi) Keys::removeKey(c, p, t);
         // The reference point followers are drawn relative to (follow rule, core/CompTrack.h): the start frame's
         // point (the first one). A new path sets it; an analysis that adds to a path kept outside its range keeps
-        // it, so the part tracked before does not move
+        // it, so the part tracked before does not move, and goes on from the old path's scale and angle at its start
+        // (followers do not snap back to the start frame's size)
         EffectInstance* inst = EffectRegistry::instance(c, Comp::kEffectId);
         const QString rx = CompGraph::paramKey(node, Comp::kRefKeys[0]), ry = CompGraph::paramKey(node, Comp::kRefKeys[1]);
+        double scale0 = oldScale, angle0 = oldAngle;
         if (inst && (Keys::keyTimes(c, {params[0]}).isEmpty() || !inst->params.contains(rx) || !inst->params.contains(ry))) {
             inst->params[rx] = points.first().x;
             inst->params[ry] = points.first().y;
+            scale0 = 1;
+            angle0 = 0;
         }
         for (const Comp::TrackPoint& p : points) {
-            const double v[4] = {p.x, p.y, p.scale, p.angle};
+            const double v[4] = {p.x, p.y, p.scale * scale0, p.angle + angle0};
             for (int i = 0; i < 4; ++i) Keys::setKey(c, params[i], p.frame, v[i]);
         }
     });

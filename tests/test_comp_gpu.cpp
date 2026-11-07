@@ -251,6 +251,14 @@ int main(int argc, char** argv)
                    {"n3.combine", combine}, {"n5.shape", "rect"}, {"n5.x", 0.65}, {"n5.w", 0.3}, {"n5.h", 0.4}}),
              pic);
 
+    // A polygon mask (drawn on the CPU, uploaded) following a tracker that was not analyzed yet: the follow rule
+    // (Comp::followValue) as CompEval - two points, x/y = the reference (middle of a and b), nothing moves
+    same("polygon mask following an unanalyzed two-point tracker",
+         comp({"color", "color", "mask", "merge", "tracker"}, {{1, 4, "bg"}, {2, 4, "fg"}, {3, 4, "mask"}}, 4,
+              {{"n1.color", "#ff000000"}, {"n2.color", "#ffffffff"}, {"n3.shape", "polygon"}, {"n3.follow", 5.0},
+               {"n5.mode", "two"}, {"n5.ax", 0.2}, {"n5.ay", 0.3}, {"n5.bx", 0.8}, {"n5.by", 0.7}}),
+         pic);
+
     // 3. Keys
     same("chroma key", comp({"clip", "key"}, {{1, 2, "src"}}, 2, {{"n2.color", "#ff00c828"}}), pic);
     same("chroma key soft, half spill",
@@ -285,6 +293,17 @@ int main(int argc, char** argv)
         CHECK(!Gpu::planComp(comp({"clip", "fx"}, {{1, 2, "src"}}, 2), env, nullptr, &reason));
         CHECK(!Gpu::planComp(comp({"clip", "blur"}, {{1, 2, "src"}}, 2, {{"n2.radius", 400.0}}), env, nullptr, &reason));
         CHECK(Gpu::planComp(recipeGreenScreen(), env, nullptr, &reason));
+        // Decided before any work: a graph that ends up on the CPU did not fetch (evaluate, upload) its sources first
+        int fetched = 0;
+        PC::Env counting = env;
+        counting.clipPicture = [&]() {
+            ++fetched;
+            return &pic;
+        };
+        CHECK(!Gpu::planComp(comp({"clip", "key", "fx"}, {{1, 2, "src"}, {2, 3, "src"}}, 3), counting, nullptr, &reason));
+        CHECK_EQ(fetched, 0);
+        CHECK(Gpu::planComp(comp({"clip", "key"}, {{1, 2, "src"}}, 2), counting, nullptr, &reason));
+        CHECK_EQ(fetched, 1);
     }
 
     // Timing at 1920x1080

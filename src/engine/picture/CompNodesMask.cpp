@@ -3,11 +3,12 @@
 //
 // mask: a shape (core/Masks: rect, ellipse, polygon, bezier, linear/radial gradient) as a Mask plane; soft edge in
 // project pixels, invert, rotate (clockwise degrees); combined with the mask at its own `mask` input (add, subtract,
-// intersect); `follow` = id of a tracker node: the shape drawn around the tracker's start point (ax, ay) moves with
-// its x, y and turns/scales with its angle/scale.
+// intersect); `follow` = id of a tracker node: the shape moves by the tracker's (x, y) - (rx, ry) and turns/scales
+// around (x, y) with its angle/scale (follow rule, core/CompTrack.h).
 // matte: a Mask plane from the luma (of the premultiplied color) or the alpha of the picture at `src`.
 #include "engine/picture/CompNodes.h"
 
+#include "core/CompTrack.h"
 #include "core/I18n.h"
 #include "core/Masks.h"
 #include "engine/MaskRaster.h"
@@ -100,7 +101,7 @@ bool evalMask(NodeCtx& ctx, Buf* out)
         }
     }
     Masks::Geometry g = Masks::toPixels(s, ctx.size);
-    if (const int follow = int(ctx.num("follow")); follow > 0 && ctx.numOf) {
+    if (const int follow = ::Comp::followId(ctx.num("follow")); follow > 0 && ctx.numOf) {
         Masks::Follow f;
         // The follow rule (core/CompTrack.h): moved by (x, y) - (rx, ry), scaled and turned around (x, y)
         f.from = QPointF(ctx.numOf(follow, "rx") * W, ctx.numOf(follow, "ry") * H);

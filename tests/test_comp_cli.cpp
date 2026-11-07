@@ -19,6 +19,7 @@
 
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QGuiApplication>
 #include <QImage>
 #include <QJsonArray>
@@ -343,6 +344,79 @@ int main(int argc, char** argv)
         CHECK(editError({QJsonObject{{"op", "comp"}, {"clips", QJsonArray{clip}}, {"remove", true}}}).contains("none of the clips"));
     }
 
+    // unlink takes only the link from `from` (round 2): without an input the one `from` feeds, a link that is not
+    // there is an error and nothing else goes
+    {
+        QJsonObject g = op(R"({"op":"comp","graph":{"nodes":[{"id":1,"type":"clip"},{"id":2,"type":"color"},{"id":3,"type":"merge"}],"links":[[1,3,"bg"],[2,3,"fg"]],"out":3}})");
+        g["clips"] = QJsonArray{clip};
+        edit({g});
+        QJsonObject un = op(R"({"op":"node","unlink":[2,3]})");
+        un["clip"] = clip;
+        edit({un});
+        CompGraph cg = graphOf(clip);
+        CHECK(cg.linkInto(3, "bg") && cg.linkInto(3, "bg")->from == 1 && !cg.linkInto(3, "fg"));
+        un["unlink"] = QJsonArray{2, 3};
+        CHECK(editError({un}).contains("not linked into node 3"));
+        un["unlink"] = QJsonArray{2, 3, "bg"}; // bg is fed by node 1, not 2
+        CHECK(editError({un}).contains("not linked into input 'bg'"));
+        CHECK(graphOf(clip).linkInto(3, "bg"));
+        un["unlink"] = QJsonArray{1, 3, true};
+        CHECK(editError({un}).contains("the input is a name"));
+        edit({QJsonObject{{"op", "comp"}, {"clips", QJsonArray{clip}}, {"remove", true}}});
+    }
+
+    // File parameters (Comp::fileKeys): absolute, readable, a LUT by name as op 'look' (round 2)
+    {
+        QJsonObject add = op(R"({"op":"node","add":{"type":"grade","params":{"lut":"teal-orange"}}})");
+        add["clip"] = clip;
+        const QJsonObject r = edit({add});
+        const QJsonObject graph = r["notes"].toArray().first().toObject()["node"].toObject()["graph"].toObject();
+        const QString lut = graph["nodes"].toArray().last().toObject()["params"].toObject()["lut"].toString();
+        CHECK(QFileInfo(lut).isAbsolute() && QFileInfo(lut).isFile());
+        add["add"] = op(R"({"type":"grade","params":{"lut":"no-such-lut"}})");
+        CHECK(editError({add}).contains("no LUT 'no-such-lut'"));
+        add["add"] = QJsonObject{{"type", "text"}, {"params", QJsonObject{{"texture", dir.filePath("missing.png")}}}};
+        CHECK(editError({add}).contains("cannot read the file"));
+        add["add"] = QJsonObject{{"type", "text"}, {"params", QJsonObject{{"texture", still}}}};
+        edit({add});
+        edit({QJsonObject{{"op", "comp"}, {"clips", QJsonArray{clip}}, {"remove", true}}});
+    }
+
+    // Smaller CLI points (round 2): input must be a name or false; fx values against the wrapped effect; text/font
+    // of the text node are text, not files; params + out together; frames node/view need clip
+    {
+        QJsonObject add = op(R"({"op":"node","add":{"type":"blur"},"input":true})");
+        add["clip"] = clip;
+        CHECK(editError({add}).contains("input is the name"));
+        add["input"] = 3;
+        CHECK(editError({add}).contains("input is the name"));
+        add = op(R"({"op":"node","add":{"type":"fx","params":{"effect":"frei0r.rgbnoise","e_0":5}}})");
+        add["clip"] = clip;
+        CHECK(editError({add}).contains("must be between"));
+        add["add"] = op(R"({"type":"fx","params":{"effect":"frei0r.rgbnoise","e_nope":0.5}})");
+        CHECK(editError({add}).contains("has no value 'nope'"));
+        add["add"] = op(R"({"type":"fx","params":{"effect":"frei0r.rgbnoise","e_0":0.5}})");
+        const QJsonObject r = edit({add});
+        const int fx = r["notes"].toArray().first().toObject()["node"].toObject()["id"].toInt();
+        QJsonObject set{{"op", "node"}, {"clip", clip}, {"id", fx}, {"params", QJsonObject{{"e_0", 7}}}};
+        CHECK(editError({set}).contains("must be between")); // the node's effect, not given again
+        set["params"] = QJsonObject{{"e_0", 0.25}};
+        set["out"] = true;
+        edit({set});
+        CHECK(graphOf(clip).out == fx);
+        edit({QJsonObject{{"op", "comp"}, {"clips", QJsonArray{clip}}, {"remove", true}}});
+
+        QHash<QString, QString> types;
+        for (const QJsonValue& v : run("effects", {{"kind", "nodes"}})["nodes"].toArray())
+            if (v["type"].toString() == "text")
+                for (const QJsonValue& p : v["params"].toArray()) types[p["key"].toString()] = p["type"].toString();
+        CHECK_EQ(types.value("text"), QString("text"));
+        CHECK_EQ(types.value("font"), QString("text"));
+        CHECK_EQ(types.value("texture"), QString("path"));
+
+        CHECK(messageOf("frames", {{"source", g_project}, {"node", 2}, {"out", dir.path()}}).contains("give clip"));
+    }
+
     // comp_from: both tracks into one comp clip (compound + graph), named in the notes
     {
         const QJsonObject r = edit({QJsonObject{{"op", "comp_from"}, {"clips", QJsonArray{clip, upper}}}});
@@ -387,6 +461,20 @@ int main(int argc, char** argv)
         CHECK(ExportCheck::compCostMs(*e, hd.size()) > ExportCheck::kCompBudgetMs);
         tl.video[0].clips[0].renderCache = true; // cached: playback reads the file
         CHECK(ids(ExportCheck::comp(tl, 0, 50, hd)) == QStringList{"comp_unused_input"});
+        // A tracker read only through a mask's follow is used
+        {
+            Timeline t2 = tl;
+            EffectInstance* e2 = EffectRegistry::instance(t2.video[0].clips[0], Comp::kEffectId);
+            CompGraph g2;
+            g2.nodes = {{1, "clip", {}}, {2, "blur", {}}, {3, "tracker", {}}, {4, "mask", {}}};
+            g2.links = {{1, 2, "src"}, {4, 2, "mask"}};
+            g2.out = 2;
+            Comp::setGraph(*e2, g2);
+            e2->params["n4.follow"] = 3.0;
+            CHECK(ids(ExportCheck::comp(t2, 0, 50, small)).isEmpty());
+            e2->params.remove("n4.follow");
+            CHECK(ids(ExportCheck::comp(t2, 0, 50, small)) == QStringList{"comp_unused_input"});
+        }
         // key_edges: a soft matte inside the subject is found, a clean one not
         std::vector<uint8_t> alpha(100 * 100, 0);
         for (int y = 20; y < 80; ++y)
@@ -426,6 +514,18 @@ int main(int argc, char** argv)
         CHECK_EQ(p.undoStack()->count(), now + 1);
         while (p.undoStack()->index() > steps) p.undoStack()->undo();
         CHECK(Check::dump(p.timeline()) == before);
+        // A graph with a newer version's node kind stays editable (only new nodes must be known)
+        ed.modifyClips({id}, "future", [&](Clip& c) {
+            EffectInstance* e = EffectRegistry::instance(c, Comp::kEffectId);
+            CompGraph g;
+            Comp::graphOf(*e, &g);
+            g.nodes << CompNode{50, "future_kind", {}};
+            Comp::setGraph(*e, g);
+        });
+        const int b = ed.addCompNode(id, "blur", {}, 0, "src", kinds, &err);
+        CHECK(b > 0);
+        CHECK(ed.setCompOut(id, 50, kinds, &err));
+        CHECK(ed.removeCompNode(id, b, kinds, &err));
     }
     return Check::result();
 }
