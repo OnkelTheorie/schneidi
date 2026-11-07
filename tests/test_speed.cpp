@@ -302,7 +302,7 @@ int main(int argc, char** argv)
     }
     scenarios.push_back({"rate30", plain(a709), {30, 1}, a709, {"-r", "30"}});
 
-    const QString baselinePath = QStringLiteral(SCHNEIDI_TEST_DATA) + "/speed-baseline.json";
+    const QString baselinePath = Check::testData() + "/speed-baseline.json";
     QFile bf(baselinePath);
     QJsonObject all = bf.open(QIODevice::ReadOnly) ? QJsonDocument::fromJson(bf.readAll()).object() : QJsonObject{};
     bf.close();

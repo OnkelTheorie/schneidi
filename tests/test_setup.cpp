@@ -106,7 +106,7 @@ int main(int argc, char** argv)
         env.remove("CLAUDE_CONFIG_DIR");
         env.remove("APPIMAGE");
         p.setProcessEnvironment(env);
-        p.start(SCHNEIDI_CLI, QStringList{"setup"} + args);
+        p.start(Check::cliPath(), QStringList{"setup"} + args);
         Run r;
         if (!p.waitForFinished(30000)) return r;
         r.exit = p.exitCode();
@@ -132,12 +132,12 @@ int main(int argc, char** argv)
         CHECK_EQ(r.out["claude_desktop"]["state"].toString(), QString("done"));
         const QString calls = QString::fromUtf8(readFile(log));
         CHECK(calls.contains("mcp remove --scope user schneidi"));
-        CHECK(calls.contains(QString("mcp add --scope user schneidi -- %1 mcp").arg(SCHNEIDI_CLI)));
+        CHECK(calls.contains(QString("mcp add --scope user schneidi -- %1 mcp").arg(Check::cliPath())));
         CHECK(QFile::exists(home + "/.claude/skills/schneidi/SKILL.md"));
         const QJsonObject config = QJsonDocument::fromJson(readFile(desktopConfig)).object();
         CHECK_EQ(config["globalShortcut"].toString(), QString("Ctrl+Space"));
         CHECK_EQ(config["mcpServers"]["other"]["command"].toString(), QString("x"));
-        CHECK_EQ(config["mcpServers"]["schneidi"]["command"].toString(), QString(SCHNEIDI_CLI));
+        CHECK_EQ(config["mcpServers"]["schneidi"]["command"].toString(), Check::cliPath());
         CHECK_EQ(config["mcpServers"]["schneidi"]["args"].toArray(), QJsonArray({"mcp"}));
     }
 

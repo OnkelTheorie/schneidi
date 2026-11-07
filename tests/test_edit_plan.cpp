@@ -102,7 +102,7 @@ QJsonObject cli(const QStringList& args, const QProcessEnvironment& env = QProce
 {
     QProcess p;
     p.setProcessEnvironment(env);
-    p.start(SCHNEIDI_CLI, args);
+    p.start(Check::cliPath(), args);
     p.closeWriteChannel();
     if (!waitServing(p)) std::printf("       timeout: schneidi-cli %s\n", qPrintable(args.join(' ')));
     QCoreApplication::processEvents();

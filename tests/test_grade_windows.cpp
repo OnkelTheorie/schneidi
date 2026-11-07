@@ -2,7 +2,7 @@
 // Test windows of the Color page (core/GradeWindows): mask math (shapes, soft edge, rotation, invert, bounds), pixel
 // work (window correction, blur, pixelate, color – only inside), parameters stored sparsely in the grade, editor
 // operations with undo, keyframes, copy grade, project file, render through MLT.
-#include "check.h"
+#include "render_check.h"
 
 #include "core/Editor.h"
 #include "core/EffectRegistry.h"

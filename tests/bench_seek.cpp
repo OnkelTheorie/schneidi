@@ -4,7 +4,7 @@
 // exact picture is there); always until the exact picture is shown.
 // Run: QT_QPA_PLATFORM=offscreen ./build-tests/tests/bench_seek <project.schneidi> [jumps]
 //      (on one core: taskset -c 0 …)
-#include "check.h"
+#include "render_check.h"
 
 #include "core/Project.h"
 #include "core/ProjectFile.h"

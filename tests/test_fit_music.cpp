@@ -228,7 +228,7 @@ QJsonObject cli(const QStringList& args, const QProcessEnvironment& env = QProce
 {
     QProcess p;
     p.setProcessEnvironment(env);
-    p.start(SCHNEIDI_CLI, args);
+    p.start(Check::cliPath(), args);
     p.closeWriteChannel();
     QElapsedTimer t;
     t.start();

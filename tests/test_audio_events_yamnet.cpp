@@ -6,7 +6,7 @@
 #include "engine/AudioEvents.h"
 #include "engine/Inference.h"
 
-#include "check.h"
+#include "render_check.h"
 #include "synth_sounds.h"
 
 #include <QGuiApplication>

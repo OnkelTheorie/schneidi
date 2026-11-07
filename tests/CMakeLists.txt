@@ -7,10 +7,19 @@ find_package(Qt6 REQUIRED COMPONENTS Widgets Test)
 
 # Tests link against schneidi_lib from the top-level CMakeLists.txt (same sources as the app)
 
-# Rückgabecode 77 = übersprungen (z. B. ffmpeg fehlt)
+# check.h's out-of-line part (Check::initEngine): keeps the engine headers out of every test. render_check.h = check.h
+# plus the frame helpers, for the tests that render.
+add_library(schneidi_test_support STATIC check_support.cpp check.h render_check.h)
+target_link_libraries(schneidi_test_support PUBLIC schneidi_lib)
+
+# Exit code 77 = skipped (e.g. ffmpeg missing). Every tests/test_*.cpp is registered by itself (glob at the end): a
+# new test needs a line here only for extras (schneidi_cli_lib, defines, labels). Calling it again is harmless.
 function(schneidi_test name)
-    add_executable(${name} ${name}.cpp check.h)
-    target_link_libraries(${name} PRIVATE schneidi_lib Qt6::Test)
+    if(TARGET ${name})
+        return()
+    endif()
+    add_executable(${name} ${name}.cpp)
+    target_link_libraries(${name} PRIVATE schneidi_test_support Qt6::Test)
     add_test(NAME ${name} COMMAND ${name})
     # RESOURCE_LOCK: the locale/display variants below run the same program with the same test folders – never at
     # the same time as it (test_luts_c_locale deleted a folder test_luts was looking for)
@@ -23,13 +32,11 @@ endfunction()
 
 schneidi_test(test_timelineops)
 schneidi_test(test_interchange)
-target_compile_definitions(test_interchange PRIVATE SCHNEIDI_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/data")
 schneidi_test(test_interchange_app)
 schneidi_test(test_projectfile)
 schneidi_test(test_generators)
 target_link_libraries(test_generators PRIVATE schneidi_cli_lib)
 schneidi_test(test_project_versions)
-target_compile_definitions(test_project_versions PRIVATE SCHNEIDI_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/data")
 schneidi_test(test_undo)
 schneidi_test(test_tracks)
 schneidi_test(test_source_edits)
@@ -139,7 +146,6 @@ target_link_libraries(test_story_ops PRIVATE schneidi_cli_lib)
 schneidi_test(test_live)
 schneidi_test(test_transcribe_pick) # which audio stream/track transcribe hears (a fake whisper-cli)
 target_link_libraries(test_transcribe_pick PRIVATE schneidi_cli_lib)
-target_compile_definitions(test_transcribe_pick PRIVATE SCHNEIDI_CLI="$<TARGET_FILE:schneidi-cli>")
 add_dependencies(test_transcribe_pick schneidi-cli)
 schneidi_test(test_transcript_cut)
 schneidi_test(test_captions) # word captions: timing, edits, CLI op, render, embedded text streams
@@ -153,28 +159,22 @@ target_link_libraries(test_deliver_review PRIVATE schneidi_cli_lib)
 schneidi_test(test_speech) # text to speech: piper extension, cache, fake piper, CLI op speak
 target_link_libraries(test_speech PRIVATE schneidi_cli_lib)
 target_link_libraries(test_live PRIVATE schneidi_cli_lib)
-target_compile_definitions(test_live PRIVATE SCHNEIDI_CLI="$<TARGET_FILE:schneidi-cli>")
 add_dependencies(test_live schneidi-cli)
 # The 0.16 edit ops live in the app: one undo step each, undo exact, same result as on the file
 schneidi_test(test_live_ops016)
 target_link_libraries(test_live_ops016 PRIVATE schneidi_cli_lib)
-target_compile_definitions(test_live_ops016 PRIVATE SCHNEIDI_CLI="$<TARGET_FILE:schneidi-cli>")
 add_dependencies(test_live_ops016 schneidi-cli)
 schneidi_test(test_live_talk017) # jl_cut and room_tone live in the app: one undo step, same as on the file
 target_link_libraries(test_live_talk017 PRIVATE schneidi_cli_lib)
-target_compile_definitions(test_live_talk017 PRIVATE SCHNEIDI_CLI="$<TARGET_FILE:schneidi-cli>")
 add_dependencies(test_live_talk017 schneidi-cli)
 # 0.17 plans: edit plan:true changes nothing, plan_id + run/discard, stale/expired/unknown, live = file, plan mode
 schneidi_test(test_edit_plan)
 target_link_libraries(test_edit_plan PRIVATE schneidi_cli_lib)
-target_compile_definitions(test_edit_plan PRIVATE SCHNEIDI_CLI="$<TARGET_FILE:schneidi-cli>")
 add_dependencies(test_edit_plan schneidi-cli)
 # Files handed to the running app (single instance over the live connection), videos opened as projects, `app open`,
 # the real program offscreen
 schneidi_test(test_open_in_app)
 target_link_libraries(test_open_in_app PRIVATE schneidi_cli_lib)
-target_compile_definitions(test_open_in_app PRIVATE SCHNEIDI_CLI="$<TARGET_FILE:schneidi-cli>"
-                           SCHNEIDI_APP="$<TARGET_FILE:schneidi>")
 add_dependencies(test_open_in_app schneidi-cli schneidi)
 # Launches with files while an app runs: a slow or busy app still gets them, two launches at once end in one app
 schneidi_test(test_handover)
@@ -195,7 +195,6 @@ schneidi_test(test_fit_music)
 schneidi_test(test_fit_music_app)
 target_link_libraries(test_fit_music_app PRIVATE schneidi_cli_lib)
 target_link_libraries(test_fit_music PRIVATE schneidi_cli_lib)
-target_compile_definitions(test_fit_music PRIVATE SCHNEIDI_CLI="$<TARGET_FILE:schneidi-cli>")
 add_dependencies(test_fit_music schneidi-cli)
 schneidi_test(test_path_key) # path keys: absolute, clean, lower case on Windows; caches/backups use them
 schneidi_test(test_media_index) # `index`: shots, quality, cache, annotate, search, timeline times
@@ -225,12 +224,10 @@ if(SCHNEIDI_TEST_ONNXRUNTIME)
 endif()
 target_link_libraries(test_check PRIVATE schneidi_cli_lib)
 target_link_libraries(test_setup PRIVATE schneidi_cli_lib)
-target_compile_definitions(test_setup PRIVATE SCHNEIDI_CLI="$<TARGET_FILE:schneidi-cli>")
 add_dependencies(test_setup schneidi-cli)
 # MCP over HTTP: real server processes (workers are schneidi-cli mcp) on a free port
 schneidi_test(test_serve)
 target_link_libraries(test_serve PRIVATE schneidi_cli_lib)
-target_compile_definitions(test_serve PRIVATE SCHNEIDI_CLI="$<TARGET_FILE:schneidi-cli>")
 add_dependencies(test_serve schneidi-cli)
 schneidi_test(test_audio_regression)
 # Reference renders of the sound (own audio engine, docs/archiv/plan-0.10-ton.md): references in the private docs folder
@@ -247,11 +244,7 @@ schneidi_test(test_audio_analysis)
 schneidi_test(test_audio_player)
 set_tests_properties(test_audio_player PROPERTIES RUN_SERIAL TRUE) # real time
 schneidi_test(test_play_end) # playback stops at the end and stays stopped
-target_compile_definitions(test_audio_analysis PRIVATE SCHNEIDI_AUDIO_REFERENCE="${CMAKE_SOURCE_DIR}/docs/testdaten/ton-referenz")
-target_compile_definitions(test_export_audio PRIVATE SCHNEIDI_AUDIO_REFERENCE="${CMAKE_SOURCE_DIR}/docs/testdaten/ton-referenz")
-target_compile_definitions(test_audio_mixer PRIVATE SCHNEIDI_AUDIO_REFERENCE="${CMAKE_SOURCE_DIR}/docs/testdaten/ton-referenz")
 set_tests_properties(test_av_sync PROPERTIES RUN_SERIAL TRUE) # preview timing
-target_compile_definitions(test_audio_reference PRIVATE SCHNEIDI_AUDIO_REFERENCE="${CMAKE_SOURCE_DIR}/docs/testdaten/ton-referenz")
 schneidi_test(test_dynamics_eq)
 target_link_libraries(test_dynamics_eq PRIVATE schneidi_cli_lib)
 schneidi_test(test_audio_sync)
@@ -270,7 +263,6 @@ schneidi_test(test_ai_providers) # AI chat: requests/answers of both protocols, 
 # AI chat end to end: MainWindow + live server, the real schneidi-cli mcp, a fake provider on 127.0.0.1
 schneidi_test(test_ai_chat)
 target_link_libraries(test_ai_chat PRIVATE schneidi_cli_lib)
-target_compile_definitions(test_ai_chat PRIVATE SCHNEIDI_CLI="$<TARGET_FILE:schneidi-cli>")
 add_dependencies(test_ai_chat schneidi-cli)
 schneidi_test(test_multicam_cli)
 target_link_libraries(test_multicam_cli PRIVATE schneidi_cli_lib)
@@ -284,7 +276,6 @@ schneidi_test(test_brand_kit) # brand kit: JSON, global file, project file, appl
 target_link_libraries(test_brand_kit PRIVATE schneidi_cli_lib)
 schneidi_test(test_template_cli) # `templates`: list, info, fill, edit ops slot/fill, ZIP export/import, live fill
 target_link_libraries(test_template_cli PRIVATE schneidi_cli_lib)
-target_compile_definitions(test_template_cli PRIVATE SCHNEIDI_CLI="$<TARGET_FILE:schneidi-cli>")
 add_dependencies(test_template_cli schneidi-cli)
 schneidi_test(test_data_rows) # tables for many videos from a template: CSV/JSON rows, file names from a pattern
 schneidi_test(test_template_batch) # `templates` fill + rows: one project (and video) per row, bad rows, dry_run
@@ -307,11 +298,8 @@ target_link_libraries(test_accents PRIVATE schneidi_cli_lib)
 # Watch folders: rules, project, `watch` command, schneidi-cli (--follow with a file written in chunks), live, app watcher
 schneidi_test(test_watch_folders)
 target_link_libraries(test_watch_folders PRIVATE schneidi_cli_lib)
-target_compile_definitions(test_watch_folders PRIVATE SCHNEIDI_CLI="$<TARGET_FILE:schneidi-cli>"
-                           SCHNEIDI_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/data")
 add_dependencies(test_watch_folders schneidi-cli)
 schneidi_test(test_speed)
-target_compile_definitions(test_speed PRIVATE SCHNEIDI_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/data")
 set_tests_properties(test_speed PROPERTIES RUN_SERIAL TRUE TIMEOUT 600)
 schneidi_test(test_file_manager) # show in file manager / open with the default program, also without a D-Bus session
 # Background workers stopped/reset/canceled while busy (ScrubFrames, GradedThumbs, FolderWatch, render cache/queue):
@@ -388,41 +376,41 @@ endforeach()
 # Benchmark, not run by CTest
 add_executable(bench_filmstrips bench_filmstrips.cpp)
 target_link_libraries(bench_filmstrips PRIVATE schneidi_lib)
-add_executable(bench_engine bench_engine.cpp check.h)
-target_link_libraries(bench_engine PRIVATE schneidi_lib Qt6::Test)
-add_executable(bench_playback bench_playback.cpp check.h)
-target_link_libraries(bench_playback PRIVATE schneidi_lib Qt6::Test)
-add_executable(bench_seek bench_seek.cpp check.h)
-target_link_libraries(bench_seek PRIVATE schneidi_lib Qt6::Test)
-add_executable(bench_multicam bench_multicam.cpp check.h)
-target_link_libraries(bench_multicam PRIVATE schneidi_lib Qt6::Test)
-add_executable(bench_probe bench_probe.cpp check.h)
-target_link_libraries(bench_probe PRIVATE schneidi_lib Qt6::Test)
-add_executable(bench_compose bench_compose.cpp check.h)
-target_link_libraries(bench_compose PRIVATE schneidi_lib Qt6::Test)
-add_executable(bench_export bench_export.cpp check.h)
-target_link_libraries(bench_export PRIVATE schneidi_lib Qt6::Test)
-add_executable(bench_undo bench_undo.cpp check.h)
-target_link_libraries(bench_undo PRIVATE schneidi_lib Qt6::Test)
-add_executable(bench_device_loss bench_device_loss.cpp check.h)
-target_link_libraries(bench_device_loss PRIVATE schneidi_lib Qt6::Test)
-add_executable(bench_graded_thumbs bench_graded_thumbs.cpp check.h)
-target_link_libraries(bench_graded_thumbs PRIVATE schneidi_lib Qt6::Test)
-add_executable(bench_memory bench_memory.cpp check.h)
-target_link_libraries(bench_memory PRIVATE schneidi_lib Qt6::Test)
+add_executable(bench_engine bench_engine.cpp)
+target_link_libraries(bench_engine PRIVATE schneidi_test_support Qt6::Test)
+add_executable(bench_playback bench_playback.cpp)
+target_link_libraries(bench_playback PRIVATE schneidi_test_support Qt6::Test)
+add_executable(bench_seek bench_seek.cpp)
+target_link_libraries(bench_seek PRIVATE schneidi_test_support Qt6::Test)
+add_executable(bench_multicam bench_multicam.cpp)
+target_link_libraries(bench_multicam PRIVATE schneidi_test_support Qt6::Test)
+add_executable(bench_probe bench_probe.cpp)
+target_link_libraries(bench_probe PRIVATE schneidi_test_support Qt6::Test)
+add_executable(bench_compose bench_compose.cpp)
+target_link_libraries(bench_compose PRIVATE schneidi_test_support Qt6::Test)
+add_executable(bench_export bench_export.cpp)
+target_link_libraries(bench_export PRIVATE schneidi_test_support Qt6::Test)
+add_executable(bench_undo bench_undo.cpp)
+target_link_libraries(bench_undo PRIVATE schneidi_test_support Qt6::Test)
+add_executable(bench_device_loss bench_device_loss.cpp)
+target_link_libraries(bench_device_loss PRIVATE schneidi_test_support Qt6::Test)
+add_executable(bench_graded_thumbs bench_graded_thumbs.cpp)
+target_link_libraries(bench_graded_thumbs PRIVATE schneidi_test_support Qt6::Test)
+add_executable(bench_memory bench_memory.cpp)
+target_link_libraries(bench_memory PRIVATE schneidi_test_support Qt6::Test)
 if(WIN32) # WASAPI loopback: what the system sends to the sound card
-    add_executable(bench_soundcard bench_soundcard.cpp check.h)
-    target_link_libraries(bench_soundcard PRIVATE schneidi_lib Qt6::Test)
+    add_executable(bench_soundcard bench_soundcard.cpp)
+    target_link_libraries(bench_soundcard PRIVATE schneidi_test_support Qt6::Test)
     target_include_directories(bench_soundcard SYSTEM PRIVATE ${MINIAUDIO_INCLUDE_DIR})
 endif()
-add_executable(bench_render_start bench_render_start.cpp check.h)
-target_link_libraries(bench_render_start PRIVATE schneidi_lib Qt6::Test)
+add_executable(bench_render_start bench_render_start.cpp)
+target_link_libraries(bench_render_start PRIVATE schneidi_test_support Qt6::Test)
 # Color page correction: baked tables against the per-pixel reference (speed and deviation, 1080p)
-add_executable(bench_color_grade bench_color_grade.cpp check.h)
-target_link_libraries(bench_color_grade PRIVATE schneidi_lib)
+add_executable(bench_color_grade bench_color_grade.cpp)
+target_link_libraries(bench_color_grade PRIVATE schneidi_test_support)
 # Own time stretcher: quality/speed, against Rubber Band when it is installed (comparison only, the app does not use it)
-add_executable(bench_stretch bench_stretch.cpp check.h)
-target_link_libraries(bench_stretch PRIVATE schneidi_lib)
+add_executable(bench_stretch bench_stretch.cpp)
+target_link_libraries(bench_stretch PRIVATE schneidi_test_support)
 pkg_check_modules(BENCH_RUBBERBAND QUIET IMPORTED_TARGET rubberband)
 if(BENCH_RUBBERBAND_FOUND)
     target_link_libraries(bench_stretch PRIVATE PkgConfig::BENCH_RUBBERBAND)
@@ -436,7 +424,6 @@ schneidi_test(test_sfx_library) # Effects Library "Klänge": list, drag data, dr
 target_link_libraries(test_sfx_library PRIVATE schneidi_cli_lib)
 schneidi_test(test_builtin_templates) # the five built-in templates: listed, filled, brand kit, logo default, size guard
 target_link_libraries(test_builtin_templates PRIVATE schneidi_cli_lib)
-target_compile_definitions(test_builtin_templates PRIVATE SCHNEIDI_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 
 # RNNoise's portable C kernels (the path every non-x86 build takes: ARM Linux/Raspberry Pi, Windows/macOS on ARM) -
 # compiled here on x86 too, so a header missing from the vendored sources shows up before an ARM build breaks
@@ -465,3 +452,26 @@ set_tests_properties(test_comp_gpu PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offsc
 schneidi_test(test_comp_recipes) # compositing recipes (0.19 I): built-in ones apply/validate/render, slots, errors, save/list/apply, ZIP, undo
 target_link_libraries(test_comp_recipes PRIVATE schneidi_cli_lib)
 schneidi_test(test_comp_page) # Comp page: lazy page, layer view, canvas add/link/remove/duplicate, handles, keyframe diamond, undo
+
+# Every test_*.cpp without a schneidi_test() line above (CONFIGURE_DEPENDS: a new file is picked up by the next build)
+file(GLOB _schneidi_test_sources CONFIGURE_DEPENDS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/test_*.cpp)
+foreach(_src ${_schneidi_test_sources})
+    get_filename_component(_name ${_src} NAME_WE)
+    schneidi_test(${_name})
+endforeach()
+
+# Paths the tests need at run time (Check::buildPath in check.h). No compile definitions: an absolute path there differs
+# per worktree, so ccache could never share those objects. ctest passes them in the environment (all tests of this
+# folder, added to what each test sets itself); a test started by hand reads schneidi-test-paths.ini next to itself.
+set(SCHNEIDI_TEST_PATHS
+    "SCHNEIDI_CLI=$<TARGET_FILE:schneidi-cli>"
+    "SCHNEIDI_APP=$<TARGET_FILE:schneidi>"
+    "SCHNEIDI_TEST_DATA=${CMAKE_CURRENT_SOURCE_DIR}/data"
+    "SCHNEIDI_AUDIO_REFERENCE=${CMAKE_SOURCE_DIR}/docs/testdaten/ton-referenz"
+    "SCHNEIDI_SOURCE_DIR=${CMAKE_SOURCE_DIR}")
+list(JOIN SCHNEIDI_TEST_PATHS "\n" _schneidi_test_paths_ini)
+file(GENERATE OUTPUT "$<TARGET_FILE_DIR:schneidi_test_support>/schneidi-test-paths.ini"
+     CONTENT "${_schneidi_test_paths_ini}\n")
+list(TRANSFORM SCHNEIDI_TEST_PATHS REPLACE "^([A-Z_]+)=" "\\1=set:" OUTPUT_VARIABLE _schneidi_test_env)
+get_property(_schneidi_tests DIRECTORY PROPERTY TESTS)
+set_property(TEST ${_schneidi_tests} APPEND PROPERTY ENVIRONMENT_MODIFICATION ${_schneidi_test_env})

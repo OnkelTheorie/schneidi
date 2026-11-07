@@ -5,7 +5,7 @@
 // viewer: all angles of a page in their cells (auto and fixed layout, pages, aspect ratio kept), at the right sync
 // position, sound = only the active angle, fine detail of a large angle smoothed
 // into its small cell instead of dropped.
-#include "check.h"
+#include "render_check.h"
 
 #include "core/Editor.h"
 #include "core/Multicam.h"

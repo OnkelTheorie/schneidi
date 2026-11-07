@@ -9,7 +9,7 @@
 // threads = renders one after the other, update() keeps the sources open.
 // SCHNEIDI_PICTURE_DUMP=<folder>: saves the rendered pictures there to look at.
 
-#include "check.h"
+#include "render_check.h"
 
 #include "core/EffectRegistry.h"
 #include "core/ProjectFormat.h"

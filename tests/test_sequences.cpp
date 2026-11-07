@@ -2,7 +2,7 @@
 // Test several timelines per project + compound clips: create/rename/duplicate/delete sequences, undo across
 // timelines, create/dissolve compound clip, loop protection, project file (also old files), bins,
 // rendering of nested timelines (pixels: content, transparency, section, export scaling).
-#include "check.h"
+#include "render_check.h"
 
 #include "core/Editor.h"
 #include "core/Project.h"

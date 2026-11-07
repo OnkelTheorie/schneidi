@@ -5,7 +5,7 @@
 // loading a job takes the box and name back; cancel and the queue going away stop the marks; an edit while the marks
 // are made does not change what renders.
 // DELIVER_REVIEW_DUMP=<file.png>: picture of the Deliver page with the box checked.
-#include "check.h"
+#include "render_check.h"
 
 #include "cli/Commands.h"
 #include "core/I18n.h"

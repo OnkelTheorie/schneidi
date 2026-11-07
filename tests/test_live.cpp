@@ -110,7 +110,7 @@ bool waitServing(QProcess& p, int timeoutMs = 120000)
 QJsonObject cli(const QStringList& args, const QByteArray& stdinData = {})
 {
     QProcess p;
-    p.start(SCHNEIDI_CLI, args);
+    p.start(Check::cliPath(), args);
     if (!stdinData.isEmpty()) p.write(stdinData);
     p.closeWriteChannel();
     if (!waitServing(p)) std::printf("       timeout: schneidi-cli %s\n", qPrintable(args.join(' ')));
@@ -531,7 +531,7 @@ int main(int argc, char* argv[])
     // One AI session at a time: an MCP server keeps its connection
     {
         QProcess mcp;
-        mcp.start(SCHNEIDI_CLI, {"mcp"});
+        mcp.start(Check::cliPath(), {"mcp"});
         mcp.write(R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}})" "\n");
         // "@app" first, then the file path of the same project: one connection, not busy with itself
         mcp.write(R"({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"info","arguments":{"project":"@app"}}})" "\n");
@@ -595,7 +595,7 @@ int main(int argc, char* argv[])
     {
         const int clips = fileVideoClips(fake.path);
         QProcess p;
-        p.start(SCHNEIDI_CLI, {"edit", fake.path, "--ops", R"([{"op":"split","at":30}])"});
+        p.start(Check::cliPath(), {"edit", fake.path, "--ops", R"([{"op":"split","at":30}])"});
         CHECK(p.waitForFinished(60000)); // without serving
         r = QJsonDocument::fromJson(p.readAllStandardOutput()).object();
         CHECK_EQ(code(r), QString("APP_BUSY"));
@@ -605,7 +605,7 @@ int main(int argc, char* argv[])
     // A request that timed out ends the connection: its late answer is not read as the answer to the next one
     {
         QProcess mcp;
-        mcp.start(SCHNEIDI_CLI, {"mcp"});
+        mcp.start(Check::cliPath(), {"mcp"});
         const auto serveUntil = [&](QByteArray& out, int lines) {
             for (int i = 0; i < 4000 && out.count('\n') < lines; ++i) {
                 mcp.waitForReadyRead(5);

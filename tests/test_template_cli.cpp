@@ -64,7 +64,7 @@ QString errorOf(const QString& name, const QJsonObject& raw, QString* message = 
 QJsonObject cli(const QStringList& args)
 {
     QProcess p;
-    p.start(SCHNEIDI_CLI, args);
+    p.start(Check::cliPath(), args);
     p.closeWriteChannel();
     QElapsedTimer t;
     t.start();

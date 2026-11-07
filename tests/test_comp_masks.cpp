@@ -3,7 +3,7 @@
 // edge, soft edge falling monotonically, invert, combine (add/subtract/intersect), follow a tracker, polygon
 // self-intersection and 32 corners, degenerate shapes = empty mask, rect/ellipse equal to the Color page window
 // (ColorGrade::applyWindow) within one code value, matte from luma/alpha; time per shape in 1080p.
-#include "check.h"
+#include "render_check.h"
 
 #include "core/Masks.h"
 #include "engine/ColorGrade.h"

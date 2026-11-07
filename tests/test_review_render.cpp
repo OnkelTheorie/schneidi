@@ -10,7 +10,7 @@
 #include "core/ProjectFile.h"
 #include "core/ReviewSheet.h"
 
-#include "check.h"
+#include "render_check.h"
 
 #include <QCryptographicHash>
 #include <QFile>

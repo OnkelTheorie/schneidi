@@ -2,7 +2,7 @@
 // Auto-Reframe: camera path (dead zone, no overshoot, jumps only at cuts), fill geometry, the Editor op with undo,
 // project round trip, the subject measurement on a synthetic video (a bright square: the crop follows it), the CLI ops
 // 'reframe' and new_timeline with from + reframe.
-#include "check.h"
+#include "render_check.h"
 
 #include "app/InputBindings.h"
 #include "app/MainWindow.h"

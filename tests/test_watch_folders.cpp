@@ -332,7 +332,7 @@ void testProjectFile(const QString& root)
     const QJsonObject po = QJsonDocument::fromJson(ProjectFile::toJson(plain, path)).object();
     CHECK(!po.contains("watchFolders") && !po.contains("watchLog"));
     ProjectData old;
-    if (CHECK(ProjectFile::load(SCHNEIDI_TEST_DATA "/projects/v2-0.9.schneidi", &old, &error))) {
+    if (CHECK(ProjectFile::load(Check::testData() + "/projects/v2-0.9.schneidi", &old, &error))) {
         CHECK(old.watchFolders.isEmpty() && old.watchLog.isEmpty() && old.watchRevision == 0);
     }
 
@@ -472,7 +472,7 @@ void testFrameRateNote(const QString& root)
 QJsonObject cliJson(const QStringList& args)
 {
     QProcess p;
-    p.start(SCHNEIDI_CLI, args);
+    p.start(Check::cliPath(), args);
     p.waitForFinished(120000);
     const QByteArray out = p.readAllStandardOutput().trimmed();
     const QJsonObject o = QJsonDocument::fromJson(out.split('\n').last()).object();
@@ -501,7 +501,7 @@ void testCliProcess(const QString& root, const QString& clip, const QString& lon
     src.open(QIODevice::ReadOnly);
     const QByteArray bytes = src.readAll();
     QProcess p;
-    p.start(SCHNEIDI_CLI, {"watch", project, "--follow", "--settle-s", "2"});
+    p.start(Check::cliPath(), {"watch", project, "--follow", "--settle-s", "2"});
     CHECK(p.waitForStarted(10000));
     QThread::msleep(1500); // its first pass (nothing new) - not needed, but the file then really arrives while it runs
     const QString target = dir + "/recording.mkv";
@@ -569,7 +569,7 @@ public:
 QJsonObject cliServing(const QStringList& args)
 {
     QProcess p;
-    p.start(SCHNEIDI_CLI, args);
+    p.start(Check::cliPath(), args);
     p.closeWriteChannel();
     waitFor([&] { return p.state() == QProcess::NotRunning; }, 120000);
     QCoreApplication::processEvents();
@@ -620,7 +620,7 @@ void testLive(const QString& root, const QString& clip)
     // Follow: every pass goes into the app and lets it go again at once (another AI may attach meanwhile)
     fake.events.clear();
     QProcess p;
-    p.start(SCHNEIDI_CLI, {"watch", fake.path, "--follow", "--settle-s", "1"});
+    p.start(Check::cliPath(), {"watch", fake.path, "--follow", "--settle-s", "1"});
     waitFor([&] { return fake.events.size() >= 2; }, 30000); // the first pass
     copyNow(clip, dir + "/b.mp4");
     QByteArray out;

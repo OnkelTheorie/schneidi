@@ -5,7 +5,7 @@
 //   (Editor::trackCompNode writes rx/ry = the start frame's point), and moves with the path afterwards
 // - an analysis that adds to a kept path keeps the reference
 // - transform with follow: no analysis = the picture unchanged; scale and rotation around the tracked point
-#include "check.h"
+#include "render_check.h"
 #include "core/CompGraph.h"
 #include "core/CompTrack.h"
 #include "core/Editor.h"

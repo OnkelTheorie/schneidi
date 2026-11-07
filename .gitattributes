@@ -2,3 +2,7 @@
 *.sh text eol=lf
 # git archive writes the commit into it: the build id of a build without a Git checkout (cmake/BuildInfo.cmake)
 cmake/archive-commit.txt export-subst
+# i18n dictionaries: three-way union merge (tools/merge_i18n.py) once a clone has
+#   git config merge.i18n.driver "python3 tools/merge_i18n.py %O %A %B"
+# (without it git merges them as text, as before)
+i18n/*.json merge=i18n

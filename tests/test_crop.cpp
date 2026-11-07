@@ -7,7 +7,7 @@
 // in the preview and export renderers and at half size, and checks the core conversions (new timeline
 // resolution, the engine's picture shape probe).
 
-#include "check.h"
+#include "render_check.h"
 
 #include "core/Keyframes.h"
 #include "core/MediaAspect.h"

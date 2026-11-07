@@ -72,7 +72,7 @@ bool waitServing(QProcess& p, int timeoutMs = 120000)
 QJsonObject cli(const QStringList& args)
 {
     QProcess p;
-    p.start(SCHNEIDI_CLI, args);
+    p.start(Check::cliPath(), args);
     p.closeWriteChannel();
     if (!waitServing(p)) std::printf("       timeout: schneidi-cli %s\n", qPrintable(args.join(' ')));
     QApplication::processEvents();
@@ -201,7 +201,7 @@ void testProgram(const QString& dir, const QString& clip, const QString& other)
     QProcess app;
     app.setProcessEnvironment(env);
     app.setProcessChannelMode(QProcess::ForwardedErrorChannel);
-    app.start(SCHNEIDI_APP, {"--screenshot", dir + "/shot.png", "--wait", "60000", clip});
+    app.start(Check::appPath(), {"--screenshot", dir + "/shot.png", "--wait", "60000", clip});
     if (!CHECK(app.waitForStarted(10000))) return;
     // Its live registry entry appears once it runs
     QElapsedTimer t;
@@ -221,7 +221,7 @@ void testProgram(const QString& dir, const QString& clip, const QString& other)
 
     QProcess second;
     second.setProcessEnvironment(env);
-    second.start(SCHNEIDI_APP, {"--open", other});
+    second.start(Check::appPath(), {"--open", other});
     const bool quit = second.waitForFinished(30000);
     CHECK(quit);
     if (!quit) second.kill();

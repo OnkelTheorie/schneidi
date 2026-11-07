@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# Compiler launcher that shares a fixed number of compile slots between all builds of this user (Linux only): several
+# agents can each build with -j12 while at most N compilers run in total. Each compile takes one of N lock files
+# (flock) under $XDG_RUNTIME_DIR/schneidi-slots and holds it until the compiler exits; then it runs ccache (or the
+# compiler itself when ccache is missing).
+#
+#   cmake -S . -B build -G Ninja -DCMAKE_CXX_COMPILER_LAUNCHER=$PWD/tools/slot-ccache \
+#         -DCMAKE_C_COMPILER_LAUNCHER=$PWD/tools/slot-ccache
+#
+# N: SCHNEIDI_SLOTS, else the number in ~/.config/schneidi-dev/slots (read on every compile, so changing it takes
+# effect at once, e.g. 4 while gaming), else 8.
+set -u
+n=${SCHNEIDI_SLOTS:-}
+if [ -z "$n" ]; then
+    n=$(head -c 16 "${XDG_CONFIG_HOME:-$HOME/.config}/schneidi-dev/slots" 2>/dev/null | tr -cd '0-9')
+fi
+[ -n "$n" ] && [ "$n" -gt 0 ] 2>/dev/null || n=8
+dir="${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/schneidi-slots"
+mkdir -p "$dir"
+cc=$(command -v ccache || true)
+
+run() {
+    if [ -n "$cc" ]; then exec "$cc" "$@"; else exec "$@"; fi
+}
+
+# Try every slot without waiting, from a random start (spreads the waiters); when all are busy, wait a little on one
+# of them and try again. The lock stays with the open descriptor, which the exec'd compiler inherits.
+start=$((RANDOM % n))
+while :; do
+    for ((k = 0; k < n; k++)); do
+        i=$(((start + k) % n))
+        exec {fd}>"$dir/$i"
+        if flock -n "$fd"; then run "$@"; fi
+        exec {fd}>&-
+    done
+    i=$((RANDOM % n))
+    exec {fd}>"$dir/$i"
+    if flock -w 1 "$fd"; then run "$@"; fi
+    exec {fd}>&-
+done

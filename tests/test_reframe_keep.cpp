@@ -5,7 +5,7 @@
 // errors), the rendered 9:16 picture (the kill feed line shows at the top; its frame stays cheap zoomed far in) and
 // highlights reading a game's kill feed by itself with the tighter CS2 region (game picture left of the lines is no
 // kill).
-#include "check.h"
+#include "render_check.h"
 
 #include "app/InputBindings.h"
 #include "app/MainWindow.h"

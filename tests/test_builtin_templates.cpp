@@ -242,7 +242,7 @@ void testSize()
 {
     std::printf("size guard\n");
     qint64 bytes = 0;
-    QDirIterator it(QString(SCHNEIDI_SOURCE_DIR) + "/assets/templates", QDir::Files, QDirIterator::Subdirectories);
+    QDirIterator it(Check::sourceDir() + "/assets/templates", QDir::Files, QDirIterator::Subdirectories);
     while (it.hasNext()) bytes += QFileInfo(it.next()).size();
     std::printf("       assets/templates: %.2f MB\n", bytes / 1048576.0);
     CHECK(bytes > 0);

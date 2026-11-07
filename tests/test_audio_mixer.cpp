@@ -32,9 +32,6 @@
 #include <functional>
 #include <vector>
 
-#ifndef SCHNEIDI_AUDIO_REFERENCE
-#define SCHNEIDI_AUDIO_REFERENCE ""
-#endif
 
 namespace {
 
@@ -754,7 +751,7 @@ int main(int argc, char** argv)
             checkRetimed(src);
         }
     }
-    g_dir = qEnvironmentVariable("AUDIO_REFERENCE_DIR", SCHNEIDI_AUDIO_REFERENCE);
+    g_dir = Check::audioReference();
     if (g_dir.isEmpty() || !QFileInfo::exists(g_dir + "/manifest.json")) {
         std::printf("Referenzen übersprungen: keine Ton-Referenzen (docs/testdaten/ton-referenz)\n");
         return Check::result();

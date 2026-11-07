@@ -106,6 +106,31 @@ endif()
 option(SCHNEIDI_SHARED_LIBS "Link schneidi_lib/schneidi_cli_lib as shared libraries (small test programs)" ${_schneidi_shared_default})
 if(SCHNEIDI_SHARED_LIBS)
     set(SCHNEIDI_LIB_TYPE SHARED)
+    # A change inside libschneidi_*.so relinks only the library, not the ~200 programs that use it: they resolve its
+    # symbols at run time. (A changed header still recompiles and relinks the programs that include it.)
+    set(CMAKE_LINK_DEPENDS_NO_SHARED ON)
+    # lld links the big library several times faster than ld.bfd. Dev builds only: Release/AppImage/Windows/packages
+    # keep the platform's default linker. -DSCHNEIDI_LLD=OFF turns it off.
+    option(SCHNEIDI_LLD "Link shared dev builds with lld when it is installed" ON)
+    if(SCHNEIDI_LLD)
+        find_program(SCHNEIDI_LD_LLD NAMES ld.lld)
+        if(SCHNEIDI_LD_LLD)
+            if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.29)
+                set(CMAKE_LINKER_TYPE LLD)
+            else()
+                add_link_options(-fuse-ld=lld)
+            endif()
+            message(STATUS "Linker: lld (${SCHNEIDI_LD_LLD})")
+        endif()
+    endif()
+    # Line tables only (-g1): backtraces, addr2line and crash reports keep function names and file:line, but the
+    # library is a fraction of the size and compiles/links faster. Local variables/types in gdb need
+    # -DSCHNEIDI_FULL_DEBUG=ON (full -g). Only the default build type is touched, a chosen Debug stays as it is.
+    option(SCHNEIDI_FULL_DEBUG "Full debug info (-g) in shared dev builds instead of line tables (-g1)" OFF)
+    if(NOT SCHNEIDI_FULL_DEBUG AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "-O2 -g1 -DNDEBUG")
+        set(CMAKE_C_FLAGS_RELWITHDEBINFO "-O2 -g1 -DNDEBUG")
+    endif()
 else()
     set(SCHNEIDI_LIB_TYPE STATIC)
 endif()

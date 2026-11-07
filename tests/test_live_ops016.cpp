@@ -94,7 +94,7 @@ QJsonObject cli(const QStringList& args, const QProcessEnvironment& env = QProce
 {
     QProcess p;
     p.setProcessEnvironment(env);
-    p.start(SCHNEIDI_CLI, args);
+    p.start(Check::cliPath(), args);
     p.closeWriteChannel();
     if (!waitServing(p)) std::printf("       timeout: schneidi-cli %s\n", qPrintable(args.join(' ')));
     QCoreApplication::processEvents();
@@ -206,7 +206,7 @@ int main(int argc, char* argv[])
         fake.duringQuestion = [&] {
             asked = true;
             QProcess p;
-            p.start(SCHNEIDI_CLI, {"edit", fake.path, "--ops", R"([{"op":"marker","at":3}])"});
+            p.start(Check::cliPath(), {"edit", fake.path, "--ops", R"([{"op":"marker","at":3}])"});
             p.closeWriteChannel();
             waitServing(p, 60000); // the question's event loop keeps the server answering
             const QJsonObject r = QJsonDocument::fromJson(p.readAllStandardOutput()).object();

@@ -10,7 +10,7 @@
 // - generators (color, gradient), media node, transform, crop against known pixels
 // SCHNEIDI_COMP_BENCH=1: also measures a recipe-like graph at 1920x1080 (ms per frame, printed).
 
-#include "check.h"
+#include "render_check.h"
 
 #include "core/CompGraph.h"
 #include "core/Editor.h"

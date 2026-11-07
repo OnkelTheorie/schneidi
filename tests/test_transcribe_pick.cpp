@@ -290,7 +290,7 @@ int main(int argc, char** argv)
         for (const char* var : {"HOME", "XDG_DATA_HOME", "XDG_CONFIG_HOME", "APPDATA", "LOCALAPPDATA"})
             env.insert(var, dir.filePath("home")); // no whisper installed for the user: the fake on the PATH
         p.setProcessEnvironment(env);
-        p.start(SCHNEIDI_CLI, {"transcribe", rec, "--model", model, "--language", "fr"});
+        p.start(Check::cliPath(), {"transcribe", rec, "--model", model, "--language", "fr"});
         CHECK(p.waitForFinished(60000) && p.exitCode() == 0);
         const QJsonObject out = QJsonDocument::fromJson(p.readAllStandardOutput()).object();
         CHECK(out["ok"].toBool());

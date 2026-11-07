@@ -3,7 +3,7 @@
 // (a recording whose sound starts a frame before the picture, as OBS/phones/games write them), a source shorter than
 // the model expects does not move the clips after it, and the frame position of a timestamp
 // counts from the container start in the stream's time base (reader and smart render alike).
-#include "check.h"
+#include "render_check.h"
 
 #include "core/Types.h"
 #include "engine/ClipFormat.h"

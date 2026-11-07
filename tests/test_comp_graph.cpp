@@ -5,7 +5,7 @@
 // core tables of node files and pixel values (Comp::fileKeys/pixelKeys) and everything that follows them: grade LUTs and
 // text textures in the project file (relative, LUT fallback), templates (save, ZIP export/import), the media pool's
 // "in use", the render cache key, scaling with a resolution change.
-#include "check.h"
+#include "render_check.h"
 
 #include "core/CompGraph.h"
 #include "core/EffectFolders.h"

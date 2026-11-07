@@ -3,7 +3,7 @@
 // in parallel too), same result as with one thread.
 // Prints the render times (1 thread / all threads) so that the gain can be measured afterwards.
 
-#include "check.h"
+#include "render_check.h"
 
 #include "core/EffectRegistry.h"
 #include "core/SystemMemory.h"
