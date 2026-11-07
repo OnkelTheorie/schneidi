@@ -519,7 +519,10 @@ void MainWindow::buildActions()
     connect(useProxy, &QAction::toggled, m_engine->proxies(), &ProxyManager::setEnabled);
     // Proxy files no open or recent project needs: list, size, delete after asking (also in the Media Pool's menu)
     auto* cleanProxies = makeAction(play, "proxy_cleanup", T("Proxy-Medien aufräumen…"), QKeySequence(), [this] {
-        if (const qint64 freed = ProxyCleanupDialog::run(this, m_project->data(), m_engine->proxies()); freed > 0)
+        // The open project as it is when deleting (it may change while the dialog is open) and its autosave
+        const QStringList autosave = m_autosaveSlot && !m_autosaveDisabled ? QStringList{autosavePath()} : QStringList{};
+        if (const qint64 freed = ProxyCleanupDialog::run(this, [this] { return m_project->data(); }, m_engine->proxies(), autosave);
+            freed > 0)
             statusBar()->showMessage(T("Proxy-Medien aufgeräumt: %1 frei").arg(ProxyCleanup::sizeText(freed)), 8000);
     });
     connect(m_mediaPool, &MediaPool::proxyCleanupRequested, cleanProxies, &QAction::trigger);
