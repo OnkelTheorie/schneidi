@@ -250,6 +250,8 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/engine/picture/CompNodes.h src/engine/picture/CompNodes.cpp
     src/engine/picture/CompNodesCore.cpp src/engine/picture/CompNodesMask.cpp src/engine/picture/CompNodesKey.cpp
     src/engine/picture/CompNodesTrack.cpp src/engine/picture/CompNodesStyle.cpp
+    src/core/Masks.h              src/core/Masks.cpp
+    src/engine/MaskRaster.h       src/engine/MaskRaster.cpp
     src/engine/picture/ReviewOverlay.h src/engine/picture/ReviewOverlay.cpp
     src/engine/picture/Interpolate.h src/engine/picture/Interpolate.cpp
     src/engine/picture/Pump.h     src/engine/picture/Pump.cpp
