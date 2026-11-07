@@ -2,6 +2,7 @@
 // schneidi-cli edit operations for the look of clips: Color page grade, Inspector transform/crop/opacity,
 // keyframes of any animatable value and Paste Attributes. Same Editor/Keys functions as the app.
 #include "cli/CommandsDetail.h"
+#include "core/CompGraph.h"
 
 #include "core/Accents.h"
 #include "core/EffectRegistry.h"
@@ -519,6 +520,12 @@ AnimParam parseParam(const QString& name)
     const int dot = name.indexOf('.');
     if (dot > 0) {
         const QString effectId = name.left(dot), key = name.mid(dot + 1);
+        // A node value of the compositing graph: comp.n<id>.<key> (checked against the clips' graphs by the op)
+        if (effectId == QLatin1String(::Comp::kEffectId)) {
+            if (!CompGraph::splitParamKey(key, nullptr, nullptr))
+                fail("BAD_ARGUMENT", QString("%1: a node value is comp.n<node id>.<key>, like comp.n3.opacity").arg(name));
+            return Keys::effectParam(effectId, key);
+        }
         const EffectDescriptor* d = EffectRegistry::find(effectId);
         if (!d) fail("NOT_FOUND", QString("no effect '%1' (see `effects`)").arg(effectId));
         for (const EffectParam& p : d->params)
@@ -566,6 +573,9 @@ void opKeyframe(Session& s, const QJsonObject& op)
     const EffectDescriptor* effect = nullptr;
     const EffectParam* ep = nullptr;
     if (EffectRegistry::paramFor(p, &effect, &ep)) effectId = effect->id;
+    // A node value (comp.n3.size): the clips need that node; values are kept in its parameter's range
+    double compLo = 0, compHi = 0;
+    checkCompParam(s, ids, p, &compLo, &compHi);
 
     if (op.value("clear").toBool()) {
         s.editor.modifyClips(ids, "Remove keyframes", [&](Clip& c) {
@@ -594,6 +604,7 @@ void opKeyframe(Session& s, const QJsonObject& op)
         checkKeys(k, {"at", "value", "ease", "remove", "move_to"}, "in keys ");
         Key key{timeOf(s, k, "at"), {}, {}, k.value("remove").toBool(), {}};
         if (k.contains("value")) key.value = paramValue(p, k.value("value"), "value");
+        if (key.value && compLo < compHi) key.value = std::clamp(*key.value, compLo, compHi);
         if (k.contains("ease")) key.ease = parseEase(k.value("ease"));
         if (k.contains("move_to")) {
             key.moveTo = timeOf(s, k, "move_to");
@@ -750,6 +761,8 @@ QString paramName(AnimParam p)
     const EffectDescriptor* d = nullptr;
     const EffectParam* ep = nullptr;
     if (EffectRegistry::paramFor(p, &d, &ep)) return d->id + "." + ep->key;
+    if (QString effectId, key; Keys::effectParamOf(p, &effectId, &key) && effectId == QLatin1String(::Comp::kEffectId))
+        return effectId + "." + key; // comp.n3.size, as op 'keyframe' takes it
     return Keys::info(p).id;
 }
 

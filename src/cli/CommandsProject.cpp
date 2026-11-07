@@ -1064,7 +1064,13 @@ QJsonObject cmdEffects(const QJsonObject& a, Context&)
     if (kind == "sfx")
         return {{"sounds", sfxSounds()}, {"folder", EffectFolders::soundDir()},
                 {"note", "built-in sounds are schneidi's own (synthesized, variants by seed); own: files in the folder"}};
-    if (!kind.isEmpty()) fail("BAD_ARGUMENT", "kind: 'sfx' (or leave it out)");
+    if (kind == "nodes")
+        return {{"nodes", compNodeKindsJson()},
+                {"note", "node kinds of the compositing graph (edit ops 'comp', 'node'): inputs take the picture of "
+                         "another node ([from, to, input]); numbers are positions/sizes 0..1 of the picture (size "
+                         "relative to its width), pixel amounts in project pixels; every number can get keyframes "
+                         "as param 'comp.n<id>.<key>'"}};
+    if (!kind.isEmpty()) fail("BAD_ARGUMENT", "kind: 'sfx' or 'nodes' (or leave it out)");
     const QString only = a["effect"].toString();
     QJsonArray list;
     for (const EffectDescriptor& d : EffectRegistry::all()) {

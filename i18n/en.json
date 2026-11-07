@@ -2568,5 +2568,16 @@
  "Stelle 4": "Position 4",
  "Transformieren": "Transform",
  "Verschieben, vergrößern und drehen (folgt auf Wunsch einem Tracker)": "Move, scale and rotate (optionally follows a tracker)",
- "Zuschneiden": "Crop"
+ "Zuschneiden": "Crop",
+ "Comp-Graph setzen": "Set comp graph",
+ "Comp-Graph entfernen": "Remove comp graph",
+ "Knoten hinzufügen": "Add node",
+ "Knoten ändern": "Change node",
+ "Knoten entfernen": "Remove node",
+ "Knoten verbinden": "Connect nodes",
+ "Verbindung lösen": "Disconnect",
+ "Ausgabe-Knoten setzen": "Set output node",
+ "Comp-Graph: Knoten %1 erreichen die Ausgabe nicht und wirken nicht": "Comp graph: nodes %1 do not reach the output and have no effect",
+ "Comp-Graph rechnet etwa %1 ms je Bild (mehr als %2 ms): Render-Cache für diesen Clip einschalten, damit die Wiedergabe flüssig bleibt": "Comp graph takes about %1 ms per frame (more than %2 ms): switch on the render cache for this clip so playback stays smooth",
+ "Key unsauber: %1 % halbdurchsichtige Pixel im Motiv (Key-Werte nachstellen oder matte_tune)": "Key not clean: %1 % half-transparent pixels in the subject (adjust the key values or use matte_tune)"
 }

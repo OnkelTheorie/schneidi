@@ -163,6 +163,20 @@ void addStoryOps(QVector<OpDef>& ops); // EditOpsStory.cpp: story sections, note
 void addMusicOps(QVector<OpDef>& ops); // EditOpsMusic.cpp: music edit
 void addSfxOps(QVector<OpDef>& ops);   // EditOpsSfx.cpp: sound effects
 void addTalkOps(QVector<OpDef>& ops);  // EditOpsTalk.cpp: talking head / interview
+// Compositing graph (0.19, EditOpsComp.cpp): ops comp, comp_from, node, track_node
+void addCompOps(QVector<OpDef>& ops);
+// `effects kind:'nodes'`: every node kind with inputs, output and parameters (key, type, default, range, choices)
+QJsonArray compNodeKindsJson();
+// A clip's graph for `info` and answers: nodes with their values, links [from, to, input], out, unused (nodes not
+// reaching out), cost_ms (rough estimate at the format's size, ExportCheck::compCostMs)
+QJsonObject compJson(const EffectInstance& comp, const ProjectFormat& f);
+// op 'keyframe' on a node value ("comp.n3.size"): every clip must have that node with a number parameter of that
+// key; *lo/*hi = its range (unchanged for other parameters)
+void checkCompParam(Session& s, const QVector<int>& ids, AnimParam p, double* lo, double* hi);
+// `frames` {clip, node?, view?}: a copy of the edited timeline that shows only the clip a["clip"] as its graph makes it
+// up to node a["node"] (default: the output), a mask as gray, view 'matte' = the alpha as gray; no transform, fades
+// or other clips. *start/*end = the clip's timeline range
+Timeline compNodeTimeline(Session& s, const QJsonObject& a, int* start, int* end);
 // Live: the beats fit_music/snap_to_beat need, analysed by schneidi-cli before the edit goes to the app (`_beats`)
 QJsonObject prepareMusic(const QJsonObject& editArgs, Context& ctx); // EditOpsMusic.cpp
 // The whole song file's beats (EditOpsMusic.cpp; cached per file, `given` = beats measured before, live `_beats`

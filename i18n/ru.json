@@ -2568,5 +2568,16 @@
  "Stelle 4": "Позиция 4",
  "Transformieren": "Трансформировать",
  "Verschieben, vergrößern und drehen (folgt auf Wunsch einem Tracker)": "Сдвиг, масштаб и поворот (при желании следует за трекером)",
- "Zuschneiden": "Обрезать"
+ "Zuschneiden": "Обрезать",
+ "Comp-Graph setzen": "Задать граф композитинга",
+ "Comp-Graph entfernen": "Удалить граф композитинга",
+ "Knoten hinzufügen": "Добавить узел",
+ "Knoten ändern": "Изменить узел",
+ "Knoten entfernen": "Удалить узел",
+ "Knoten verbinden": "Соединить узлы",
+ "Verbindung lösen": "Разъединить",
+ "Ausgabe-Knoten setzen": "Задать выходной узел",
+ "Comp-Graph: Knoten %1 erreichen die Ausgabe nicht und wirken nicht": "Граф композитинга: узлы %1 не доходят до выхода и ни на что не влияют",
+ "Comp-Graph rechnet etwa %1 ms je Bild (mehr als %2 ms): Render-Cache für diesen Clip einschalten, damit die Wiedergabe flüssig bleibt": "Граф композитинга считает около %1 мс на кадр (больше %2 мс): включите кэш рендеринга для этого клипа, чтобы воспроизведение было плавным",
+ "Key unsauber: %1 % halbdurchsichtige Pixel im Motiv (Key-Werte nachstellen oder matte_tune)": "Кеинг нечистый: %1 % полупрозрачных пикселей в объекте (подстройте значения кея или используйте matte_tune)"
 }

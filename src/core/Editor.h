@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 #include "core/BrandKit.h"
+#include "core/CompGraph.h"
 #include "core/CompTrack.h"
 #include "core/Ducking.h"
 #include "core/GradeWindows.h"
@@ -396,6 +397,35 @@ public:
     // point (keyframes between the first and the last point are replaced, others stay). One undo step. false = no
     // such clip, comp effect or tracker node, or no points
     bool trackCompNode(int clipId, int node, const QVector<Comp::TrackPoint>& points);
+
+    // ---- Compositing graph of a clip (effect "comp", core/CompGraph.h; core/EditorComp.cpp) ----
+    // Shared by the CLI ops (comp, node) and the Comp page. `kinds` = the node kinds (Picture::Comp::kindInfo; core
+    // knows only their names): every op checks the graph it makes against them and changes nothing when it is
+    // broken (false, *err in English: unknown kind, bad input, cycle). Each op is one undo step. Node values are keyed
+    // without the "n<id>." prefix; the caller checks them against the kind's parameters.
+    // The whole graph on video clips `ids`: replaces a graph they have (its values and keyframes go), values per node
+    // id. Clips on locked tracks stay. false = nothing changed (no video clip, broken graph)
+    bool setCompGraph(const QVector<int>& ids, const CompGraph& g, const QHash<int, QVariantMap>& values,
+                      const CompGraph::KindInfo& kinds, QString* err = nullptr);
+    // Removes the graph (effect "comp" with its values and keyframes): the picture is as without it. Returns the clips
+    // that had one
+    QVector<int> removeComp(const QVector<int>& ids);
+    // Adds a node of `type` with `values` to the clip's graph (a clip without one gets a graph "clip -> new node").
+    // after > 0: the new node goes behind node `after` - `after` feeds its input `input` and whatever read `after`
+    // (other nodes, the output) reads the new node instead; after = 0 and a graph: behind the output node. Empty
+    // input = the node is only added (a generator such as text or color; link it with linkCompNodes). Returns the new
+    // node's id, 0 = nothing changed
+    int addCompNode(int clipId, const QString& type, const QVariantMap& values, int after, const QString& input,
+                    const CompGraph::KindInfo& kinds, QString* err = nullptr);
+    // Sets values of a node (keys without prefix; a value of a key with keyframes changes the static value only)
+    bool setCompNodeValues(int clipId, int node, const QVariantMap& values, QString* err = nullptr);
+    // Removes a node with its links, values and keyframes; what read it reads the node's first connected input
+    // instead (src, bg, fg …), so a chain stays a chain; the output moves the same way
+    bool removeCompNode(int clipId, int node, const CompGraph::KindInfo& kinds, QString* err = nullptr);
+    // on: link `l` (replaces a link already in that input); off: removes the link into l.to's input l.input
+    bool linkCompNodes(int clipId, const CompLink& l, bool on, const CompGraph::KindInfo& kinds, QString* err = nullptr);
+    // Makes `node` the output node
+    bool setCompOut(int clipId, int node, const CompGraph::KindInfo& kinds, QString* err = nullptr);
     // Hide names (core/NameBlur): every clip's masks become new rectangle windows with fill "blur" or "pixelate" of
     // strength `amount`, their place and size keyed along the mask (off = size 0 and amount 0). Free window numbers
     // only; masks beyond them are left out and counted in `dropped` (their names stay visible). Clips on locked tracks
@@ -606,6 +636,10 @@ private:
     TimelineOps::SourceLength sourceLength() const;
     // createCompoundClip / compFrom (comp = the video clip gets the graph of its tracks)
     int createCompound(const QString& name, bool comp);
+    // One clip's graph changed by fn (on a copy; a clip without one starts empty), checked against kinds, then stored
+    // with orphan values/keyframes dropped as one undo step `text` (core/EditorComp.cpp)
+    bool editComp(int clipId, const QString& text, const std::function<bool(CompGraph&, EffectInstance&, QString*)>& fn,
+                  const CompGraph::KindInfo& kinds, QString* err);
     // Copy of the timeline with a transition at the cut (see addTransitionAt); nullopt = clips not found
     std::optional<Timeline> withTransitionAt(int leftId, int rightId, const TransitionStyle& style, bool trimClips,
                                              TrackRef* where = nullptr) const;
