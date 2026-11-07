@@ -114,6 +114,29 @@ void testFreezePictureOnly(const QString& file)
     for (int id : c) CHECK(TimelineOps::findClip(tl, id) && TimelineOps::findClip(tl, id)->freeze);
 }
 
+// The streams deleted by op stay out of the next piece of the same recording (their tracks are left, empty), with
+// a note; the kept stream goes to its track again, no new tracks; presets:false brings them back on their tracks
+void testNextPieceLeavesDeletedStreamsOut(const QString& file)
+{
+    setUp(file);
+    QVector<int> c = ids(load());
+    if (!CHECK_EQ(c.size(), 4)) return;
+    edit({QJsonObject{{"op", "delete"}, {"clips", QJsonArray{c[1], c[2]}}}});
+    const QJsonObject r = edit({QJsonObject{{"op", "append"}, {"media", file}}});
+    Timeline tl = load();
+    CHECK_EQ(tl.audio.size(), 3);
+    CHECK(tl.audio.value(0).clips.isEmpty() && tl.audio.value(1).clips.isEmpty());
+    CHECK_EQ(tl.audio.value(2).clips.size(), 2);
+    CHECK_EQ(tl.audio.value(2).clips.value(1).audioStream, 2);
+    if (!CHECK(notesOf(r).contains("left out Mix, Discord"))) std::printf("       %s\n", qPrintable(notesOf(r)));
+    edit({QJsonObject{{"op", "append"}, {"media", file}, {"presets", false}}});
+    tl = load();
+    CHECK_EQ(tl.audio.size(), 3);
+    CHECK_EQ(tl.audio.value(0).clips.size(), 1);
+    CHECK_EQ(tl.audio.value(1).clips.size(), 1);
+    CHECK_EQ(tl.audio.value(2).clips.size(), 3);
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -138,5 +161,6 @@ int main(int argc, char** argv)
     g_project = dir.filePath("p.schneidi");
     testDeleteSoundOnly(file);
     testFreezePictureOnly(file);
+    testNextPieceLeavesDeletedStreamsOut(file);
     return Check::result();
 }

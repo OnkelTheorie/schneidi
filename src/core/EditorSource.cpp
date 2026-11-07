@@ -163,6 +163,7 @@ QVector<int> Editor::streamTracks(const Timeline& tl, const MediaInfo& m, int aT
         return a.trimmed().compare(b.trimmed(), Qt::CaseInsensitive) == 0;
     };
     QVector<QVector<int>> homes(n);
+    QVector<bool> held(n, false); // a clip of the stream somewhere
     bool anyOfFile = false;
     for (int j = 0; j < tl.audio.size(); ++j) {
         const Track& t = tl.audio[j];
@@ -172,6 +173,7 @@ QVector<int> Editor::streamTracks(const Timeline& tl, const MediaInfo& m, int aT
                 return c.mediaPath == m.path && c.audioStream == placed[k].stream;
             });
             anyOfFile = anyOfFile || holds;
+            held[k] = held[k] || holds;
             if (named || holds) homes[k] << j;
         }
     }
@@ -183,8 +185,8 @@ QVector<int> Editor::streamTracks(const Timeline& tl, const MediaInfo& m, int aT
     const auto hasFreeHome = [&](int k) {
         return std::any_of(homes[k].begin(), homes[k].end(), [&](int j) { return !locked(j) && empty(j); });
     };
-    // Deleted on purpose: the file is in the timeline, this stream nowhere
-    const auto deleted = [&](int k) { return !m_placeAllStreams && anyOfFile && homes[k].isEmpty(); };
+    // Deleted on purpose: the file's sound is in the timeline, this stream's nowhere (its track may be left)
+    const auto deleted = [&](int k) { return !m_placeAllStreams && anyOfFile && !held[k]; };
     // The layout above fits as long as no stream passes by a free track of its own
     bool fits = true;
     for (int k = 0; k < n && fits; ++k)

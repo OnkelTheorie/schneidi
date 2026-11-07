@@ -347,7 +347,7 @@ public:
     // have tracks (a clip of the stream, or the track named after it) that are free there, but that layout would not
     // use them (tracks deleted or moved since: AI test run 2026-11-07 made five new tracks for every further piece),
     // each stream goes to its own track again and only the rest to free tracks (new ones at the bottom). A stream
-    // the timeline has no clip and no track of while it has others of the file was deleted on purpose: left out,
+    // the timeline has no clip of while it has others of the file was deleted on purpose: left out,
     // unless setPlaceAllStreams(true) (CLI presets:false). Tracks that are locked get nothing.
     QVector<int> streamTracks(const Timeline& tl, const MediaInfo& m, int aTrack, int start, int length) const;
     void setPlaceAllStreams(bool all) { m_placeAllStreams = all; }

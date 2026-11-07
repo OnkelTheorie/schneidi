@@ -303,11 +303,8 @@ void noteLeftOutStreams(Session& s, const MediaInfo& m)
     for (const StreamPlacement& p : s.editor.streamPresets().placements(m)) {
         // Nowhere in the timeline (a locked track would still hold the earlier pieces)
         bool anywhere = false;
-        for (const Track& t : s.project.timeline().audio) {
-            anywhere = anywhere || (!p.trackLabel.isEmpty() && t.name.trimmed().compare(p.trackLabel.trimmed(),
-                                                                                         Qt::CaseInsensitive) == 0);
+        for (const Track& t : s.project.timeline().audio)
             for (const Clip& c : t.clips) anywhere = anywhere || (c.mediaPath == m.path && c.audioStream == p.stream);
-        }
         if (!anywhere) missing << m.audioStreamName(p.stream);
     }
     if (missing.isEmpty()) return;
