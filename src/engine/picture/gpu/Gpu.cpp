@@ -29,6 +29,7 @@ extern "C" {
 #include <chrono>
 #include <atomic>
 #include <condition_variable>
+#include <cstddef>
 #include <cstring>
 #include <deque>
 #include <future>
@@ -99,6 +100,7 @@ public:
     float sampleScale = 1;
     float yuv[16] = {};
     int mipLevels = 1;
+    bool half = false;                       // RGBA16F target (compositing, compTarget)
     std::tuple<int, int, int, int, int> key; // pool key
     uint64_t freedAt = 0;                    // pool frame it came back in (unused ones are dropped, see finish)
 };
@@ -179,6 +181,10 @@ struct Context::Impl {
     std::unique_ptr<QRhiShaderResourceBindings> layoutSrb;
     std::unique_ptr<QRhiGraphicsPipeline> layerPs, mixPs, yuvPs;
     QShader vert, layerFrag, mixFrag, yuvFrag;
+    // Compositing (RGBA16F targets: pipelines of their own, the render pass differs)
+    std::unique_ptr<QRhiGraphicsPipeline> layer16Ps, comp16Ps[4];
+    QShader compFrag[4];
+    bool compOk = false;
 
     // Per-pass resources, reused frame after frame (slot i = i-th pass of the frame)
     std::vector<std::unique_ptr<QRhiBuffer>> ubos;
@@ -207,10 +213,12 @@ struct Context::Impl {
     std::vector<Readback> readbacks;
 
     std::shared_ptr<void> userData; // caller's caches (textures in it go before the QRhi)
+    std::shared_ptr<void> compData;
 
     ~Impl()
     {
         userData.reset();
+        compData.reset();
         pool.reset(); // textures still given out leak their GPU objects instead of touching a dead QRhi
     }
 
@@ -273,6 +281,13 @@ struct Context::Impl {
                              .arg(QString::fromUtf8(r->driverInfo().deviceName));
             return false;
         }
+        // The compositing shaders are optional: without them (or RGBA16F targets) graphs stay on the CPU
+        compOk = r->isTextureFormatSupported(QRhiTexture::RGBA16F);
+        const char* compNames[4] = {"merge", "mask", "key", "blur"};
+        for (int i = 0; i < 4; ++i) {
+            compFrag[i] = loadShader(QStringLiteral(":/picture-shaders/%1.frag.qsb").arg(QLatin1String(compNames[i])));
+            compOk = compOk && compFrag[i].isValid();
+        }
         vbuf.reset(r->newBuffer(QRhiBuffer::Immutable, QRhiBuffer::VertexBuffer, 8 * sizeof(float)));
         vbuf->create();
         nearest.reset(r->newSampler(QRhiSampler::Nearest, QRhiSampler::Nearest, QRhiSampler::None, QRhiSampler::ClampToEdge,
@@ -334,12 +349,14 @@ struct Context::Impl {
         return ps.get();
     }
 
-    std::unique_ptr<Texture> makeTarget(QSize size)
+    std::unique_ptr<Texture> makeTarget(QSize size, bool half = false)
     {
         auto t = std::make_unique<Texture>();
         t->kind = Texture::Target;
         t->size = size;
-        t->tex[0].reset(rhi->newTexture(QRhiTexture::RGBA8, size, 1, QRhiTexture::RenderTarget | QRhiTexture::UsedAsTransferSource));
+        t->half = half;
+        t->tex[0].reset(rhi->newTexture(half ? QRhiTexture::RGBA16F : QRhiTexture::RGBA8, size, 1,
+                                        QRhiTexture::RenderTarget | QRhiTexture::UsedAsTransferSource));
         if (!t->tex[0]->create()) return {};
         QRhiColorAttachment att(t->tex[0].get());
         t->rtClear.reset(rhi->newTextureRenderTarget(QRhiTextureRenderTargetDescription(att)));
@@ -481,12 +498,14 @@ std::unique_ptr<Context> Context::create(QOffscreenSurface* surface, QString* wh
         if (why) *why = c->d->info.error;
         return {};
     }
+    c->d->info.comp = c->d->compOk;
     return c;
 }
 
 QRhi* Context::rhi() const { return d->rhi.get(); }
 const DeviceInfo& Context::info() const { return d->info; }
 std::shared_ptr<void>& Context::userData() { return d->userData; }
+std::shared_ptr<void>& Context::compData() { return d->compData; }
 
 bool Context::begin()
 {
@@ -729,7 +748,8 @@ void Context::draw(Texture& dst, const Layer& layer)
     case Texture::Gray: return;
     }
     if (s->kind == Texture::Target) d->flushClear(const_cast<Texture&>(*s));
-    d->pass(dst, d->layerPs, d->layerFrag, true, u, s->tex[0].get(), s->tex[1].get(), s->tex[2].get(), l);
+    d->pass(dst, dst.half ? d->layer16Ps : d->layerPs, d->layerFrag, true, u, s->tex[0].get(), s->tex[1].get(),
+            s->tex[2].get(), l);
 }
 
 TexturePtr Context::mix(const Texture& a, const Texture& b, double t)
@@ -763,9 +783,41 @@ TexturePtr Context::luma(const Texture& a, const Texture& b, const Texture& grad
     return out;
 }
 
+bool Context::compSupported() const { return d->compOk; }
+
+TexturePtr Context::compTarget(QSize size, const float clear[4])
+{
+    if (size.isEmpty() || !d->compOk) return {};
+    TexturePtr t = d->take({5, size.width(), size.height(), 0, 0}, [&] { return d->makeTarget(size, true); });
+    if (!t) return {};
+    t->pendingClear = true;
+    t->clearColor = clear ? QColor::fromRgbF(clear[0], clear[1], clear[2], clear[3]) : QColor(Qt::transparent);
+    return t;
+}
+
+TexturePtr Context::compPass(CompShader shader, QSize size, const float p[40], const Texture* t0, const Texture* t1,
+                             const Texture* t2)
+{
+    const int i = int(shader);
+    if (!d->recording || !d->compOk || i < 0 || i > 3) return {};
+    TexturePtr out = compTarget(size);
+    if (!out) return {};
+    out->pendingClear = false; // every pixel is written
+    for (const Texture* t : {t0, t1, t2})
+        if (t && t->kind == Texture::Target) d->flushClear(const_cast<Texture&>(*t));
+    Uniforms u;
+    u.rect[2] = float(size.width()), u.rect[3] = float(size.height());
+    // The shader's parameters are the 10 vec4 after rect and target (inv0 … crop: the block is shared by all shaders)
+    static_assert(offsetof(Uniforms, crop) - offsetof(Uniforms, inv0) == 36 * sizeof(float));
+    std::memcpy(u.inv0, p, 40 * sizeof(float));
+    auto tex = [](const Texture* t) { return t ? t->tex[0].get() : nullptr; };
+    d->pass(*out, d->comp16Ps[i], d->compFrag[i], false, u, tex(t0), tex(t1), tex(t2), nullptr);
+    return out;
+}
+
 void Context::readRgba(const Texture& t, uint8_t* out)
 {
-    if (!d->recording || !out || t.kind != Texture::Target) return;
+    if (!d->recording || !out || t.kind != Texture::Target || t.half) return;
     const QSize sz = t.size;
     d->readback(const_cast<Texture&>(t), [dst = out, sz](const QByteArray& data) {
         uint8_t* out = dst;
@@ -788,7 +840,7 @@ void Context::readRgba(const Texture& t, uint8_t* out)
 bool Context::readYuv(const Texture& t, const OutputColor::Target& out)
 {
     using OutputColor::Layout;
-    if (!d->recording || t.kind != Texture::Target || out.bits != 8
+    if (!d->recording || t.kind != Texture::Target || t.half || out.bits != 8
         || (out.layout != Layout::Yuv420 && out.layout != Layout::Nv12))
         return false;
     const int w = t.size.width(), h = t.size.height();
@@ -1137,6 +1189,7 @@ std::shared_ptr<void>& Context::userData()
     static std::shared_ptr<void> none;
     return none;
 }
+std::shared_ptr<void>& Context::compData() { return userData(); }
 const DeviceInfo& Context::info() const { return d->info; }
 bool Context::begin() { return false; }
 void Context::finish() {}
@@ -1148,6 +1201,9 @@ LutPtr Context::gradeLut(const ColorGrade::Baked&, int) { return {}; }
 void Context::draw(Texture&, const Layer&) {}
 TexturePtr Context::mix(const Texture&, const Texture&, double) { return {}; }
 TexturePtr Context::luma(const Texture&, const Texture&, const Texture&, double, double) { return {}; }
+bool Context::compSupported() const { return false; }
+TexturePtr Context::compTarget(QSize, const float*) { return {}; }
+TexturePtr Context::compPass(CompShader, QSize, const float*, const Texture*, const Texture*, const Texture*) { return {}; }
 void Context::readRgba(const Texture&, uint8_t*) {}
 bool Context::readYuv(const Texture&, const OutputColor::Target&) { return false; }
 Context::Stats Context::stats() const { return {}; }

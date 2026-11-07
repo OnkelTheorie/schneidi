@@ -67,6 +67,7 @@ struct DeviceInfo {
     QString api;            // "OpenGL", "Direct3D 11", ...
     QString device;         // driver's device name
     QString error;          // why not
+    bool comp = false;      // compositing graphs work on it (Context::compSupported)
 };
 
 // The device a Context gets on this machine (probed once, on the first call; GUI application needed)
@@ -94,6 +95,8 @@ public:
     const DeviceInfo& info() const;
     // A slot for the caller's per-context caches (LUTs, stills kept on the card); released before the device
     std::shared_ptr<void>& userData();
+    // The same for the compositing passes' caches (gpu/CompGpu)
+    std::shared_ptr<void>& compData();
 
     // false: the card refused the frame (context lost, driver reset): every operation would do nothing
     bool begin();
@@ -126,6 +129,19 @@ public:
     TexturePtr mix(const Texture& a, const Texture& b, double t);
     // Luma wipe: b replaces a where gradient < progress*(1+softness), over the softness band (Renderer luma())
     TexturePtr luma(const Texture& a, const Texture& b, const Texture& gradient, double progress, double softness);
+
+    // ---- Compositing graphs (gpu/CompGpu): node pictures in RGBA16F premultiplied targets (no rounding to 8 bits
+    // between nodes; a mask holds its value in every channel). draw() works onto them too (transform, grade nodes);
+    // they are drawn onto an 8-bit target like any other, never read back themselves.
+    // RGBA16F render targets work and the compositing shaders loaded
+    bool compSupported() const;
+    // A pooled RGBA16F target cleared to `clear` (premultiplied 0..1; nullptr = transparent)
+    TexturePtr compTarget(QSize size, const float clear[4] = nullptr);
+    enum class CompShader { Merge, Mask, Key, Blur };
+    // One pass of a compositing shader over the whole of a new compTarget(size): p = its 40 parameters (10 vec4, see
+    // the shader), t0..t2 its inputs (nullptr = none)
+    TexturePtr compPass(CompShader shader, QSize size, const float p[40], const Texture* t0, const Texture* t1 = nullptr,
+                        const Texture* t2 = nullptr);
 
     // Readbacks, filled by the next finish(); the memory must stay valid until then
     // Straight RGBA, width*height*4 bytes

@@ -448,3 +448,7 @@ schneidi_test(test_comp_tracker)
 # The same in face mode with the real YuNet model; 77 without the extension
 schneidi_test(test_comp_tracker_face)
 schneidi_test(test_comp_eval) # compositing evaluation (0.19 A): merge modes vs formula, graph = effect list bit-identical, comp_from, cache, unknown kinds
+# Compositing graphs on the graphics card (0.19 package F) vs CompEval: merge modes, masks, keys, blur, recipes;
+# decides about the card itself (77 without a hardware device)
+schneidi_test(test_comp_gpu)
+set_tests_properties(test_comp_gpu PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;SCHNEIDI_AUDIO_DEVICE=null")

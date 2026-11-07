@@ -106,4 +106,13 @@ void matteBoxCols(const uint8_t* src, uint8_t* dst, int width, int height, int x
 // brightness kept): a green fringe turns neutral, colors without green in them stay. Nothing for a gray key
 void despill(uint8_t* rgba, int width, int height, const QColor& key, double amount);
 
+// ---- For the GPU path of the compositing nodes (0.19 package F, engine/picture/gpu/CompGpu.cpp) ----
+// The chroma key's table as key() uses it: keyTableSide x keyTableSide entries of 4 bytes (alpha, then the color
+// change in steps of 2 levels as int8 r, g, b), row = chroma Cb + 128, column = chroma Cr + 128 of keyChroma(); false =
+// a gray key (key() measures the distance in RGB there, no table)
+constexpr int keyTableSide = 257;
+bool keyTable(const KeyParams& p, uint8_t* out);
+// The luma key's alpha per Rec. 709 luma level (256 bytes), as lumaKey() uses it
+void lumaKeyTable(const LumaKeyParams& p, uint8_t out[256]);
+
 } // namespace VideoEffects

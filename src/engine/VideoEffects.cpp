@@ -835,4 +835,28 @@ void despill(uint8_t* rgba, int width, int height, const QColor& keyColor, doubl
     }
 }
 
+// ---- For the GPU path of the compositing nodes ----
+
+bool keyTable(const KeyParams& p, uint8_t* out)
+{
+    static_assert(keyTableSide == kChroma && sizeof(KeyEntry) == 4);
+    const KeyGeometry g(p.color);
+    if (!g.chroma || !out) return false;
+    const float inner = float(std::clamp(p.tolerance, 0.0, 1.0));
+    const float outer = inner + float(std::clamp(p.softness, 0.0, 1.0));
+    KeyTable table;
+    table.build(g, inner, outer, float(std::clamp(p.spill, 0.0, 1.0)));
+    std::memcpy(out, table.entries.data(), table.entries.size() * sizeof(KeyEntry));
+    return true;
+}
+
+void lumaKeyTable(const LumaKeyParams& p, uint8_t out[256])
+{
+    // lumaKey() on the gray levels, opaque: luma of (v, v, v) is v, the alpha then the table entry itself
+    uint8_t px[256 * 4];
+    for (int v = 0; v < 256; ++v) px[v * 4] = px[v * 4 + 1] = px[v * 4 + 2] = uint8_t(v), px[v * 4 + 3] = 255;
+    lumaKey(px, 256, 1, p);
+    for (int v = 0; v < 256; ++v) out[v] = px[v * 4 + 3];
+}
+
 } // namespace VideoEffects
