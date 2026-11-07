@@ -135,13 +135,12 @@ void Editor::addMediaAt(const QStringList& paths, int frame, int track)
             c.in = 0;
             c.out = info->length - 1;
             const bool video = info->hasVideo && videoOk;
-            // One clip per placed audio stream on the next track (like DaVinci), from a0 on (streamTrackStart);
-            // locked tracks get nothing
+            // One clip per placed audio stream on its track (streamTracks); locked tracks get nothing
             const QVector<StreamPlacement> placed = m_streamPresets.placements(*info);
-            const int a0 = streamTrackStart(tl, *info, idx, start, info->length);
-            QVector<int> streams; // index into placed = track offset
+            const QVector<int> tracks = streamTracks(tl, *info, idx, start, info->length);
+            QVector<int> streams; // index into placed
             for (int k = 0; k < placed.size(); ++k)
-                if (!isTrackLocked({TrackKind::Audio, a0 + k})) streams << k;
+                if (tracks.value(k, -1) >= 0 && !isTrackLocked({TrackKind::Audio, tracks[k]})) streams << k;
             c.linkId = int(video) + streams.size() > 1 ? p->newLinkId() : 0;
             if (video) {
                 TimelineOps::ensureTracks(tl, TrackKind::Video, idx + 1);
@@ -152,14 +151,15 @@ void Editor::addMediaAt(const QStringList& paths, int frame, int track)
             }
             QVector<int> sound;
             for (int k : streams) {
-                TimelineOps::ensureTracks(tl, TrackKind::Audio, a0 + k + 1);
+                const int at = tracks[k];
+                TimelineOps::ensureTracks(tl, TrackKind::Audio, at + 1);
                 Clip a = c;
                 a.id = newId();
                 a.audioStream = placed[k].stream;
                 a.enabled = placed[k].enabled;
                 a.volumeDb = placed[k].volumeDb;
-                if (tl.audio[a0 + k].name.isEmpty()) tl.audio[a0 + k].name = placed[k].trackLabel;
-                TimelineOps::placeClip(tl.audio[a0 + k], a, newId);
+                if (tl.audio[at].name.isEmpty()) tl.audio[at].name = placed[k].trackLabel;
+                TimelineOps::placeClip(tl.audio[at], a, newId);
                 sound << a.id;
             }
             muteRepeatedSound(tl, sound);

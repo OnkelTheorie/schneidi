@@ -275,16 +275,42 @@ namespace {
 
 int endOf(Session& s) { return TimelineOps::endFrame(s.project.timeline()); }
 
-// presets:false = every audio stream of the file is placed, the import presets of the app are left aside for this op
+// presets:false = every audio stream of the file is placed, the import presets of the app are left aside for this op,
+// and so are the streams deleted from the timeline (Editor::streamTracks)
 struct PresetsScope {
     Editor& editor;
     StreamPresets saved;
     PresetsScope(Session& s, const QJsonObject& op) : editor(s.editor), saved(s.editor.streamPresets())
     {
-        if (!op.value("presets").toBool(true)) editor.setStreamPresets(StreamPresets::none());
+        if (!op.value("presets").toBool(true)) {
+            editor.setStreamPresets(StreamPresets::none());
+            editor.setPlaceAllStreams(true);
+        }
     }
-    ~PresetsScope() { editor.setStreamPresets(saved); }
+    ~PresetsScope()
+    {
+        editor.setStreamPresets(saved);
+        editor.setPlaceAllStreams(false);
+    }
 };
+
+// Streams of a recording an op left out because the timeline has none of them any more (deleted on purpose, see
+// Editor::streamTracks): say so once per op
+void noteLeftOutStreams(Session& s, const MediaInfo& m)
+{
+    if (m.audioStreamCount() < 2 || s.editor.placeAllStreams()) return;
+    QStringList missing;
+    for (const StreamPlacement& p : s.editor.streamPresets().placements(m)) {
+        // Nowhere in the timeline (a locked track would still hold the earlier pieces)
+        bool anywhere = false;
+        for (const Track& t : s.project.timeline().audio)
+            for (const Clip& c : t.clips) anywhere = anywhere || (c.mediaPath == m.path && c.audioStream == p.stream);
+        if (!anywhere) missing << m.audioStreamName(p.stream);
+    }
+    if (missing.isEmpty()) return;
+    s.notes << QString("%1: left out %2 like the rest of the timeline (deleted there; presets:false places every stream)")
+                   .arg(QFileInfo(m.path).fileName(), missing.join(", "));
+}
 
 // A recording with a Mix stream plus its single streams (OBS, game clip tools) placed with all of them playing in
 // [from, to): everything is heard twice, too loud - say so with the Mix clips to turn off (the user's import presets
@@ -331,6 +357,7 @@ void opPlace(Session& s, const QJsonObject& op, bool append)
     const double speed = op.contains("speed") ? numberOf(op, "speed", Retime::kMinSpeed, Retime::kMaxSpeed) : 1.0;
     const int len = s.editor.placeSourceRange(m.path, in, out - 1, at, parseTrack(op.value("track")), speed);
     noteDoubledMix(s, m, at, at + len);
+    noteLeftOutStreams(s, m);
     placedInterpolate(s, op, m, at, at + len, speed);
 }
 
@@ -374,6 +401,7 @@ void opKeep(Session& s, const QJsonObject& op)
         slowest = std::min(slowest, speed);
     }
     noteDoubledMix(s, m, start, at);
+    noteLeftOutStreams(s, m);
     placedInterpolate(s, op, m, start, at, slowest);
 }
 
@@ -485,7 +513,30 @@ void opAlign(Session& s, const QJsonObject& op)
 
 void opDelete(Session& s, const QJsonObject& op)
 {
-    const QVector<int> ids = clipIds(s, op, true);
+    QVector<int> ids;
+    if (op.contains("linked") || op.value("ripple").toBool()) {
+        ids = clipIds(s, op, true); // a ripple moves the partners' tracks too: they go along unless linked:false
+    } else {
+        // A picture takes its sound along (like a click in the timeline); a sound clip named alone goes alone (the
+        // unwanted streams of a recording in one op), its picture and the other streams stay linked
+        QJsonObject alone = op;
+        alone["linked"] = false;
+        const Timeline& tl = s.project.timeline();
+        QVector<int> pictures;
+        QJsonArray kept;
+        for (int id : clipIds(s, alone, true)) {
+            TrackRef r;
+            if (TimelineOps::findClip(tl, id, &r) && r.kind == TrackKind::Video) pictures << id;
+            else ids << id;
+        }
+        ids = s.editor.withLinked(pictures) + ids;
+        for (int id : s.editor.withLinked(ids))
+            if (!ids.contains(id)) kept << id;
+        if (!kept.isEmpty())
+            s.notes << QString("delete: only the named sound clips; their linked partners %1 stay (linked:true deletes "
+                               "them too)")
+                           .arg(QString::fromUtf8(QJsonDocument(kept).toJson(QJsonDocument::Compact)));
+    }
     s.selection.set(QSet<int>(ids.begin(), ids.end()));
     if (op.value("ripple").toBool()) s.editor.rippleDeleteSelection();
     else s.editor.deleteSelection();
@@ -830,7 +881,11 @@ QVector<OpDef> makeOps()
              if (op.contains("clip")) s.editor.bladeAt(clipOf(s, op).id, at);
              else s.editor.splitAtPlayhead(at); // no selection: every clip under `at`
          }},
-        {"delete", "{op:'delete', clips:[ids], ripple?:false}", "clips or subtitles", {}, opDelete, kClipKeys},
+        {"delete", "{op:'delete', clips:[ids], ripple?:false}", "clips or subtitles",
+         "A video clip takes its linked sound along; sound clips named alone go alone (the picture and the other "
+         "streams stay, linked). linked:true = all partners, false = exactly the given clips. ripple:true closes the "
+         "gap and takes the partners along unless linked:false.",
+         opDelete, kClipKeys},
         {"delete_range", "{op:'delete_range', from, to, ripple?:true} or {op:'delete_range', ranges:[[from,to],...]}",
          "remove time ranges on all tracks; `ranges` are all timeline times before the cut (e.g. words of "
          "`transcribe` with words:true), applied together", {},

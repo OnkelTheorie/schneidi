@@ -415,7 +415,7 @@ private:
     struct DropItem {
         int length;
         bool video;
-        int audio;      // Number of audio streams (one track each from A[n], see Editor::streamTrackStart)
+        int audio;      // Number of audio streams (one track each, see Editor::streamTracks)
         MediaInfo info; // files only
     };
     std::function<MediaInfo(const QString&)> m_probe;

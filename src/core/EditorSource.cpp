@@ -146,6 +146,84 @@ int Editor::streamTrackStart(const Timeline& tl, const MediaInfo& m, int aTrack,
     return j;
 }
 
+QVector<int> Editor::streamTracks(const Timeline& tl, const MediaInfo& m, int aTrack, int start, int length) const
+{
+    const QVector<StreamPlacement> placed = m_streamPresets.placements(m);
+    const int n = int(placed.size());
+    const auto locked = [&](int j) { return j >= 0 && j < tl.audio.size() && tl.audio[j].locked; };
+    // One after another from streamTrackStart (the target itself is checked by the caller)
+    const int a0 = streamTrackStart(tl, m, aTrack, start, length);
+    QVector<int> out(n, -1);
+    for (int k = 0; k < n; ++k)
+        if ((k == 0 && a0 == aTrack) || !locked(a0 + k)) out[k] = a0 + k;
+    if (n < 2) return out;
+
+    // The tracks of each stream of the file: holding a clip of it, or named after it
+    const auto same = [](const QString& a, const QString& b) {
+        return a.trimmed().compare(b.trimmed(), Qt::CaseInsensitive) == 0;
+    };
+    QVector<QVector<int>> homes(n);
+    QVector<bool> held(n, false); // a clip of the stream somewhere
+    bool anyOfFile = false;
+    for (int j = 0; j < tl.audio.size(); ++j) {
+        const Track& t = tl.audio[j];
+        for (int k = 0; k < n; ++k) {
+            const bool named = !placed[k].trackLabel.trimmed().isEmpty() && same(t.name, placed[k].trackLabel);
+            const bool holds = std::any_of(t.clips.begin(), t.clips.end(), [&](const Clip& c) {
+                return c.mediaPath == m.path && c.audioStream == placed[k].stream;
+            });
+            anyOfFile = anyOfFile || holds;
+            held[k] = held[k] || holds;
+            if (named || holds) homes[k] << j;
+        }
+    }
+    const auto empty = [&](int j) {
+        if (j >= tl.audio.size()) return true;
+        return std::none_of(tl.audio[j].clips.begin(), tl.audio[j].clips.end(),
+                            [&](const Clip& c) { return c.start < start + length && c.end() > start; });
+    };
+    const auto hasFreeHome = [&](int k) {
+        return std::any_of(homes[k].begin(), homes[k].end(), [&](int j) { return !locked(j) && empty(j); });
+    };
+    // Deleted on purpose: the file's sound is in the timeline, this stream's nowhere (its track may be left)
+    const auto deleted = [&](int k) { return !m_placeAllStreams && anyOfFile && !held[k]; };
+    // The layout above fits as long as no stream passes by a free track of its own
+    bool fits = true;
+    for (int k = 0; k < n && fits; ++k)
+        if (out[k] >= 0 && !homes[k].contains(out[k]) && hasFreeHome(k)) fits = false;
+    if (fits) {
+        for (int k = 0; k < n; ++k)
+            if (deleted(k)) out[k] = -1;
+        return out;
+    }
+    // Each stream on a free track of its own, the rest on free unnamed tracks that are no other stream's
+    QVector<int> taken;
+    for (int k = 0; k < n; ++k) {
+        out[k] = -1;
+        if (deleted(k)) continue;
+        for (int j : homes[k])
+            if (!taken.contains(j) && !locked(j) && empty(j)) {
+                out[k] = j;
+                taken << j;
+                break;
+            }
+    }
+    const auto unusable = [&](int j) {
+        if (taken.contains(j)) return true;
+        if (j >= tl.audio.size()) return false;
+        if (locked(j) || !tl.audio[j].name.trimmed().isEmpty() || !empty(j)) return true;
+        return std::any_of(homes.begin(), homes.end(), [&](const QVector<int>& h) { return h.contains(j); });
+    };
+    for (int k = 0; k < n; ++k) {
+        if (out[k] >= 0 || deleted(k)) continue;
+        int j = 0;
+        while (unusable(j)) ++j; // ends below the last track at the latest
+        out[k] = j;
+        taken << j;
+    }
+    return out;
+}
+
 void Editor::placeSource(Timeline& tl, const MediaInfo& m, int sIn, int len, int start, int vTrack, int aTrack,
                          double speed)
 {
@@ -157,17 +235,15 @@ void Editor::placeSource(Timeline& tl, const MediaInfo& m, int sIn, int len, int
     c.in = sIn;
     c.out = sIn + len - 1;
     c.speed = speed;
-    // Targets: picture, then one track per placed audio stream (import presets) from aTrack on (further streams on
-    // locked tracks are dropped)
+    // Targets: picture, then one track per placed audio stream (import presets, streamTracks)
     struct Target { TrackKind kind; int idx; StreamPlacement stream; };
     QVector<Target> targets;
     if (m.hasVideo) targets << Target{TrackKind::Video, vTrack, {}};
     if (m.hasAudio) {
         const QVector<StreamPlacement> placed = m_streamPresets.placements(m);
-        const int a0 = streamTrackStart(tl, m, aTrack, start, len);
+        const QVector<int> tracks = streamTracks(tl, m, aTrack, start, len);
         for (int k = 0; k < placed.size(); ++k)
-            if ((k == 0 && a0 == aTrack) || !isTrackLocked({TrackKind::Audio, a0 + k}))
-                targets << Target{TrackKind::Audio, a0 + k, placed[k]};
+            if (tracks.value(k, -1) >= 0) targets << Target{TrackKind::Audio, tracks[k], placed[k]};
     }
     c.linkId = targets.size() > 1 ? p->newLinkId() : 0;
     QVector<int> sound; // the new audio clips

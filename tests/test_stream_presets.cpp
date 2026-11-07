@@ -270,6 +270,59 @@ void testSecondCopyKeepsTracksTrue()
     CHECK_EQ(audioAt(f.p.timeline(), 50), QString("A1 Mix:s0 A2 Voice:s1 A3 Discord:s2 A4 System:s3 A5 Mikrofon:s4"));
 }
 
+void testLaterPiecesKeepTheirTracks()
+{
+    // AI test run 2026-11-07: every further piece of the same recording made five new audio tracks once the first
+    // piece's tracks had changed (unwanted streams deleted, their tracks removed), so the game sound had to be moved
+    // back and the extra tracks deleted after each insert. Now each stream goes to the track that holds it, a stream
+    // deleted everywhere stays out, and new tracks come only for what has none.
+    for (bool pool : {false, true}) {
+        Fixture f;
+        const auto place = [&](int frame, int track) {
+            if (pool) f.ed.addMediaAt({"/x/obs.mkv"}, frame, track);
+            else f.ed.placeSourceRange("/x/obs.mkv", 0, 99, frame, track);
+        };
+        place(0, 0);
+        // Mix, Spotify and Discord not wanted: clips and tracks deleted
+        for (int i = 0; i < 3; ++i) f.ed.removeTrack({TrackKind::Audio, 0});
+        CHECK_EQ(audioAt(f.p.timeline(), 50), QString("A1 System:s3 A2 Mikrofon:s4"));
+        const MediaInfo& m = *f.p.mediaInfo("/x/obs.mkv");
+        CHECK_EQ(f.ed.streamTracks(f.p.timeline(), m, 0, 100, 100), QVector<int>({-1, -1, -1, 0, 1})); // the ghost
+        place(100, 0);
+        place(200, 0);
+        CHECK_EQ(audioAt(f.p.timeline(), 150), QString("A1 System:s3 A2 Mikrofon:s4"));
+        CHECK_EQ(audioAt(f.p.timeline(), 250), QString("A1 System:s3 A2 Mikrofon:s4"));
+        CHECK_EQ(f.p.timeline().audio.size(), 2);
+        CHECK_EQ(TimelineOps::linkedGroup(f.p.timeline(), f.p.timeline().video.value(0).clips.value(1).id).size(), 3);
+        // Every stream on purpose (CLI presets:false): the deleted ones on new tracks, the others stay
+        f.ed.setPlaceAllStreams(true);
+        place(300, 0);
+        f.ed.setPlaceAllStreams(false);
+        CHECK_EQ(audioAt(f.p.timeline(), 350), QString("A1 System:s3 A2 Mikrofon:s4 A3 Mix:s0 A4 Spotify:s1 "
+                                                       "A5 Discord:s2"));
+    }
+    // Only the Mix track deleted (the others moved up): the later piece lands on the same tracks, not below them
+    {
+        Fixture f;
+        f.ed.placeSourceRange("/x/obs.mkv", 0, 99, 0, 0);
+        f.ed.removeTrack({TrackKind::Audio, 0});
+        f.ed.placeSourceRange("/x/obs.mkv", 0, 99, 100, 0);
+        CHECK_EQ(audioAt(f.p.timeline(), 150), QString("A1 Spotify:s1 A2 Discord:s2 A3 System:s3 A4 Mikrofon:s4"));
+        CHECK_EQ(f.p.timeline().audio.size(), 4);
+    }
+    // The game sound moved to the top track by hand (tracks swapped): it stays there
+    {
+        Fixture f;
+        f.ed.placeSourceRange("/x/obs.mkv", 0, 99, 0, 0);
+        f.ed.moveTrack(TrackKind::Audio, 3, 0);
+        CHECK_EQ(audioAt(f.p.timeline(), 50), QString("A1 System:s3 A2 Mix:s0 A3 Spotify:s1 A4 Discord:s2 A5 Mikrofon:s4"));
+        f.ed.placeSourceRange("/x/obs.mkv", 0, 99, 100, 0);
+        CHECK_EQ(audioAt(f.p.timeline(), 150),
+                 QString("A1 System:s3 A2 Mix:s0 A3 Spotify:s1 A4 Discord:s2 A5 Mikrofon:s4"));
+        CHECK_EQ(f.p.timeline().audio.size(), 5);
+    }
+}
+
 void testRepeatedSound()
 {
     // TimelineOps::repeatedSound: the same stream of the same file at the same source time elsewhere, over the whole
@@ -541,6 +594,7 @@ int main(int argc, char** argv)
     testAddMediaAtAppliesPresets();
     testSourceEditsApplyPresets();
     testSecondCopyKeepsTracksTrue();
+    testLaterPiecesKeepTheirTracks();
     testRepeatedSound();
     testMulticamAnglesFollowPresets();
     testLearnFromTimeline();

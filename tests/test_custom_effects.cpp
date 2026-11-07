@@ -132,6 +132,35 @@ void filterOnPixels()
         CHECK(PC::applyFilter("crop=iw/2:ih/2:0:0", px.data(), w, h, 0.0));
         CHECK(px[size_t(h - 1) * w * 4 + (w - 1) * 4 + 0] < 140); // the top-left quarter fills the picture
     }
+    // eq: brightness lifts a gray, contrast spreads it from the middle, saturation 0 makes it gray, and with
+    // eval=frame an expression of t changes over time
+    {
+        auto gray = [&](const char* chain, double t, int value) {
+            std::vector<uint8_t> px(size_t(w) * h * 4, uint8_t(value));
+            for (size_t i = 3; i < px.size(); i += 4) px[i] = 255;
+            QString why;
+            if (!CHECK(PC::applyFilter(chain, px.data(), w, h, t, &why))) std::printf("       %s\n", qPrintable(why));
+            return int(px[size_t(h / 2) * w * 4 + (w / 2) * 4 + 1]);
+        };
+        CHECK(gray("eq=brightness=0.2", 0.0, 100) > 140);
+        CHECK(gray("eq=brightness=-0.2", 0.0, 100) < 60);
+        CHECK(gray("eq=contrast=2", 0.0, 90) < 60);
+        CHECK(gray("eq=contrast=2", 0.0, 170) > 200);
+        CHECK(std::abs(gray("eq", 0.0, 100) - 100) <= 2);
+        CHECK(gray("eq=gamma=2", 0.0, 64) > 100);
+        CHECK(std::abs(gray("eq=gamma=2:gamma_weight=0", 0.0, 64) - 64) <= 3);
+        const int early = gray("eq=brightness='0.2*t':eval=frame", 0.0, 100);
+        const int late = gray("eq=brightness='0.2*t':eval=frame", 1.0, 100);
+        CHECK(std::abs(early - 100) <= 3);
+        CHECK(late > 140);
+        CHECK(gray("eq=brightness='0.2*t*t':eval=frame", 1.0, 100) > 140); // each t is the time
+        std::vector<uint8_t> px = gradient(w, h);
+        CHECK(PC::applyFilter("eq=saturation=0", px.data(), w, h, 0.0));
+        int colored = 0;
+        for (size_t i = 0; i < px.size(); i += 4)
+            if (std::abs(px[i] - px[i + 1]) > 3 || std::abs(px[i + 1] - px[i + 2]) > 3) ++colored;
+        CHECK_EQ(colored, 0);
+    }
     // An empty chain changes nothing
     {
         const std::vector<uint8_t> src = gradient(w, h);
@@ -146,7 +175,9 @@ void filterTiming()
 {
     const int w = 1920, h = 1080;
     std::vector<uint8_t> px = gradient(w, h);
-    for (const char* chain : {"negate", "hue=s=0,edgedetect", "gblur=sigma=8"}) {
+    for (const char* chain : {"negate", "hue=s=0,edgedetect", "gblur=sigma=8",
+                              "eq=brightness=0.05:contrast=1.2:saturation=1.2", "eq=brightness=0.05",
+                              "eq=brightness='0.1*t':eval=frame"}) {
         PC::applyFilter(chain, px.data(), w, h, 0.0); // builds the graph
         QElapsedTimer t;
         t.start();
@@ -235,6 +266,20 @@ void filterChecks()
     CHECK(!PC::checkFilter("gblur=sigma=abc").isEmpty());
     // GPL-only filters are not on the list (the bundled FFmpeg has none)
     refused("boxblur=2", "not allowed");
+    // eq (GPL in FFmpeg) is made of allowed filters: its numbers and expressions work, the usual refusals still apply
+    CHECK(PC::allowedFilters().contains("eq"));
+    CHECK_EQ(PC::checkFilter("eq=brightness=0.06:contrast=1.2:saturation=1.3:gamma=0.9"), QString());
+    CHECK_EQ(PC::checkFilter("eq=1.1:0.05:1.2"), QString()); // positional, as in FFmpeg
+    CHECK_EQ(PC::checkFilter("eq"), QString());
+    CHECK_EQ(PC::checkFilter("eq=gamma_r=1.2:gamma_b=0.8:gamma_weight=0.5,negate"), QString());
+    CHECK_EQ(PC::checkFilter("eq=brightness='0.1*sin(t)':eval=frame:enable='between(t,0,2)'"), QString());
+    refused("eq=brightness='while(1,1)'", "while()");
+    refused("eq=contrast='st(0,1)'", "st()");
+    refused("eq=brightness='n/100'", "uses 'n'");
+    refused("eq=sharpness=1", "no option 'sharpness'");
+    refused("eq=eval=sometimes", "eval is init or frame");
+    refused("eq=brightness='0.1*t'", "add eval=frame");
+    refused("eq=brightness=0.1,noise=alls=20:allf=t", "flag 't'");
     // A bad chain at render time: nothing drawn, no crash, the picture stays
     {
         std::vector<uint8_t> px = gradient(16, 16);
