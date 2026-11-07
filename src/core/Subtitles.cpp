@@ -539,11 +539,10 @@ QVector<SubtitleCue> readable(const QVector<SubtitleCue>& cues, double fps, cons
     // a sentence end inside costs a bit (a new sentence rather starts a new cue), one too fast to read too.
     const double cap = lines * lineChars;
     QVector<QPair<int, int>> groups;
+    QVector<int> sFrom(n), sTo(n); // the sentence each token is in: [sentenceFrom, sentenceTo); once, not per stretch
     for (int r0 = 0; r0 < n;) {
         int r1 = r0 + 1;
         while (r1 < n && !pauseBefore(r1)) ++r1;
-        // The sentence each token is in: [sentenceFrom, sentenceTo)
-        QVector<int> sFrom(n), sTo(n);
         for (int k = r0, from = r0; k < r1; ++k) {
             sFrom[k] = from;
             if (sentenceEnd(tok[k].text) || k + 1 == r1) {

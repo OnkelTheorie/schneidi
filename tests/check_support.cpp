@@ -48,8 +48,11 @@ void isolateSettings()
             qputenv(SettingsIsolation::kVariable, QDir::toNativeSeparators(folder).toLocal8Bit());
         }
         QDir dir(folder);
-        // Fresh every run: what an earlier run left (a default template, presets) must not change this one
-        if (dir.exists(kMarker)) dir.removeRecursively();
+        // Fresh every run: what an earlier run left (a default template, presets) must not change this one. Only the
+        // subfolders the isolation itself makes are removed, never the given folder (a hand-set
+        // SCHNEIDI_TEST_SETTINGS=$HOME must not lose anything else)
+        if (dir.exists(kMarker))
+            for (const char* sub : {"settings", "config", "data", "cache"}) QDir(dir.filePath(sub)).removeRecursively();
         dir.mkpath(".");
         QFile marker(dir.filePath(kMarker));
         if (marker.open(QIODevice::WriteOnly)) marker.close();
