@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "engine/Exporter.h"
 
+#include "core/CodeTrust.h"
 #include "core/EffectRegistry.h"
 #include "core/I18n.h"
 #include "core/RenderJob.h"
@@ -403,6 +404,9 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
     // decoded while rendering. The length stays (end is computed above)
     for (Track& t : scaled.video)
         if (t.hidden) t.clips.clear();
+    // Custom code untrusted now stays unrun for the whole file, even when the user trusts it meanwhile (the list of
+    // skipped effects below says so)
+    CodeTrust::freeze(scaled);
 
     QDir().mkpath(QFileInfo(s.path).absolutePath());
     std::vector<std::unique_ptr<QSaveFile>> subtitles;
