@@ -54,7 +54,8 @@ QVector<SrtFile> srtFiles(const Timeline& tl, const QString& path);
 // slow enough, never across a pause longer than `pause` seconds; each one stays at least `minSeconds` and long
 // enough for `cps` characters per second where the next cue leaves room. Word times: a cue with one CueWord per word
 // keeps them (the new cue gets them all, when every source cue had them); otherwise words share their cue's time by
-// length. Sorted input without overlaps, ids 0 in the result.
+// length. Overlapping input is cut apart first (a cue ends where the next starts; two starting together are one);
+// cues without text are left out. ids 0 in the result.
 struct ReadableRules {
     int lines = 2;
     int lineChars = 42;

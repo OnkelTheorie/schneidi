@@ -129,11 +129,12 @@ void applyLook(TitleLook& look, const QJsonObject& op)
     if (!TitleLookJson::read(o, look, false, &err)) fail("BAD_ARGUMENT", err);
 }
 
-// Entry/exit animation of a title (TitleStyle::enter, exit)
+// Entry/exit animation of a title (TitleStyle::enter, exit); the Inspector's duration slider has the same range
+constexpr double kMaxAnimSeconds = 3;
 const QString kAnimFields =
     "enter / exit: how the title comes in / goes out: 'pop' (a short scale-up 60 % -> 108 % -> 100 %), 'fade', "
     "'slide_up' (rises into place fading in; leaving: rises on fading out) or 'none' (default), or {type, duration} "
-    "(default 0.2s, e.g. '0.3s'). Use it instead of size keyframes for pop-in titles";
+    "(default 0.2s, up to 3s, e.g. '0.3s'; a progress bar only fades). Use it instead of size keyframes for pop-in titles";
 
 void applyAnim(Session& s, TitleStyle& t, const QJsonObject& op)
 {
@@ -153,12 +154,19 @@ void applyAnim(Session& s, TitleStyle& t, const QJsonObject& op)
         }
         if (o.contains("duration")) {
             const int frames = parseTime(o.value("duration"), s.format(), QString("%1.duration").arg(key));
-            if (frames <= 0) fail("BAD_ARGUMENT", QString("%1.duration must be at least one frame").arg(key));
-            *len = std::min(60.0, frames / std::max(1.0, s.format().rate.fps()));
+            const double seconds = frames / std::max(1.0, s.format().rate.fps());
+            if (frames <= 0 || seconds > kMaxAnimSeconds)
+                fail("BAD_ARGUMENT", QString("%1.duration must be from one frame to 3s").arg(key));
+            *len = seconds;
         }
     };
     one("enter", &t.enter, &t.enterLen);
     one("exit", &t.exit, &t.exitLen);
+    for (TitleAnim a : {t.enter, t.exit})
+        if (t.isProgress() && (a == TitleAnim::Pop || a == TitleAnim::SlideUp) && (op.contains("enter") || op.contains("exit"))) {
+            s.notes << "a progress bar only fades: pop and slide_up fade it in/out";
+            break;
+        }
 }
 
 // Counter and progress bar titles (TitleKind): their own settings on top of the style

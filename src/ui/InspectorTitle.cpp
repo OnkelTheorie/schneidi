@@ -490,7 +490,7 @@ void Inspector::buildLookSections(QVBoxLayout* page)
         anim.grid->addWidget(rowLabel(label), anim.rows, 0);
         anim.grid->addWidget(box, anim.rows++, 1);
         const int lenRow = anim.rows;
-        addSlider(anim, key, T("Dauer (s)"), 0.05, 3, 0.2, 0.01, 2, [len](Clip& c) -> double& { return c.title.*len; });
+        addSlider(anim, key, T("Dauer (s)"), 0.01, 3, 0.2, 0.01, 2, [len](Clip& c) -> double& { return c.title.*len; });
         const QVector<QWidget*> lenWidgets = rowWidgets(anim.grid, lenRow, anim.rows);
         m_refreshers << [current, box, field, lenWidgets] {
             if (const Clip* c = current()) {

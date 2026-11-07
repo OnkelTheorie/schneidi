@@ -1032,6 +1032,7 @@ struct Renderer::Impl {
             return;
         }
         double size = std::max(1.0, sizeOverride > 0 ? sizeOverride : st.size);
+        const double rise = m.rise * size; // a slide moves by the size drawn (keyframed too)
         if (m.scale != 1) size = std::max(1.0, size * m.scale);
         // An animated size scales the whole title: outline and box margin with it
         const double grow = st.size > 0 ? size / st.size : 1.0;
@@ -1048,7 +1049,7 @@ struct Renderer::Impl {
             w = std::max(w, fm.horizontalAdvance(line));
         const bool outline = st.outlineOn && outlineWidth > 0;
         if (st.look.solidOn) {
-            drawTitle3d(layer, c, t, ctx, text, w, size, boxPad, shift, bounds, m.rise);
+            drawTitle3d(layer, c, t, ctx, text, w, size, boxPad, shift, bounds, rise);
             return;
         }
         // Fill, edge, shadow, glow (0.19): only a styled title takes this path, a plain one is drawn as before
@@ -1069,7 +1070,7 @@ struct Renderer::Impl {
             }
             p.text = text;
             const double x = (ctx.PW - w) / 2 + Keys::valueAt(c, AnimParam::TitlePosX, t);
-            const double y = -Keys::valueAt(c, AnimParam::TitlePosY, t) - m.rise;
+            const double y = -Keys::valueAt(c, AnimParam::TitlePosY, t) - rise;
             p.area = QRectF(x * sx, y * sy, w * sx, ctx.PH * sy);
             QFont f(st.fontFamily());
             f.setPixelSize(std::max(1, int(std::lround(size * sy))));

@@ -94,7 +94,29 @@ void testMotionCurve()
     CHECK(Generators::titleMotion(st, 19, 25, 25).still());
     st.exit = TitleAnim::Fade;
     st.exitLen = 0.4; // 10 frames
-    CHECK_NEAR(Generators::titleMotion(st, 19, 25, 25).opacity, 0.5, 1e-9);
+    CHECK_NEAR(Generators::titleMotion(st, 19, 25, 25).opacity, 0.6, 1e-9); // 5 frames after it: 6 of 10 shown
+    // The first and last frame of a fade already/still show a little (a 1-2 frame title is not invisible)
+    CHECK_NEAR(Generators::titleMotion(st, 24, 25, 25).opacity, 0.1, 1e-9);
+    TitleStyle in = base();
+    in.enter = TitleAnim::Fade;
+    CHECK_NEAR(Generators::titleMotion(in, 0, 25, 25).opacity, 0.2, 1e-9);
+    in.exit = TitleAnim::Fade;
+    CHECK(Generators::titleMotion(in, 0, 1, 25).opacity > 0); // one frame long
+    // Drawn in a transition's overlap (before its start / after its end): held at its first/last frame
+    CHECK_NEAR(Generators::titleMotion(st, 30, 25, 25).opacity, 0.1, 1e-9);
+    in.exit = TitleAnim::None;
+    CHECK_NEAR(Generators::titleMotion(in, -4, 25, 25).opacity, 0.2, 1e-9);
+    TitleStyle pop = base();
+    pop.exit = TitleAnim::Pop;
+    CHECK(Generators::titleMotion(pop, 40, 25, 25).scale > 0.55);
+    // A progress bar only fades: pop and slide neither scale nor lift it
+    TitleStyle bar = base();
+    bar.kind = TitleKind::Progress;
+    bar.enter = TitleAnim::Pop;
+    bar.exit = TitleAnim::SlideUp;
+    const Generators::TitleMotion b0 = Generators::titleMotion(bar, 0, 25, 25), b1 = Generators::titleMotion(bar, 24, 25, 25);
+    CHECK(b0.scale == 1 && b0.rise == 0 && b0.opacity < 1 && b0.opacity > 0);
+    CHECK(b1.scale == 1 && b1.rise == 0 && b1.opacity < 1);
 }
 
 void testPop()
@@ -132,20 +154,28 @@ void testFadeSlide()
     const QRect full = boxOf(still);
     st.enter = TitleAnim::Fade;
     const Clip c = titleClip(st);
-    CHECK_EQ(brightest(render(c, 0, "fade")), 0); // nothing yet
-    const int mid = brightest(render(c, 2, "fade"));    // 40 %
-    std::printf("       fade at 40 %%: %d\n", mid);
+    const int first = brightest(render(c, 0, "fade")), mid = brightest(render(c, 1, "fade"));
+    std::printf("       fade at 20 %%: %d, 40 %%: %d\n", first, mid);
+    CHECK_NEAR(first, 51, 10); // frame 0 not blank
     CHECK_NEAR(mid, 102, 12);
     CHECK(render(c, 5, "fade") == still);
     // Slide up: lower and fainter at first, then in place
     st.enter = TitleAnim::SlideUp;
-    const QImage s2 = render(titleClip(st), 2, "slide");
+    const QImage s2 = render(titleClip(st), 1, "slide");
     const QRect box = boxOf(s2, 20);
     // rise = 0.5 * 140 * (1 - ease_out(0.4)) = 15.1 pixels below its place
     std::printf("       slide at 40 %%: %d px lower, brightest %d\n", box.center().y() - full.center().y(), brightest(s2));
     CHECK_NEAR(box.center().y() - full.center().y(), 15, 3);
     CHECK_NEAR(brightest(s2), 102, 12);
     CHECK(render(titleClip(st), 5, "slide") == still);
+    // The distance follows a keyframed size: half as large, half as far
+    Clip half = titleClip(st);
+    half.keys[AnimParam::TitleSize] = {Keyframe{0, 70}, Keyframe{24, 70}};
+    Clip halfStill = half;
+    halfStill.title.enter = TitleAnim::None;
+    const int halfDrop = boxOf(render(half, 1, "slidehalf"), 20).center().y() - boxOf(render(halfStill, 1, "slidehalf"), 20).center().y();
+    std::printf("       slide with size keyframed to 70: %d px lower\n", halfDrop);
+    CHECK_NEAR(halfDrop, 7.5, 2);
     // Leaving: rises on
     TitleStyle out = base();
     out.exit = TitleAnim::SlideUp;
@@ -171,9 +201,9 @@ void testTransformedAndOutlined()
     const QRect start = boxOf(render(c, 0, "moved"));
     CHECK_NEAR(start.width() / double(full.width()), 0.6, 0.08);
     CHECK_NEAR(start.center().x(), full.center().x(), 3);
-    const QImage fading = render(c, 22, "moved"); // 2 frames after it of 5: 40 %
-    std::printf("       fading out, 2 of 5 frames left: brightest %d\n", brightest(fading));
-    CHECK_NEAR(brightest(fading), 102, 14);
+    const QImage fading = render(c, 22, "moved"); // 2 frames after it of 5: 3 of 5 shown
+    std::printf("       fading out, 2 frames after it: brightest %d\n", brightest(fading));
+    CHECK_NEAR(brightest(fading), 153, 14);
     CHECK(boxOf(fading, 5).width() >= full.width() - 2);
 }
 
@@ -315,6 +345,10 @@ void testCli(const QString& dir)
     CHECK(savedTitle().enter == TitleAnim::None);
     CHECK_EQ(errorOf(QString(R"([{"op":"title","clip":%1,"enter":"spin"}])").arg(id)), QString("BAD_ARGUMENT"));
     CHECK_EQ(errorOf(QString(R"([{"op":"title","clip":%1,"enter":{"duration":"1s"}}])").arg(id)), QString("BAD_ARGUMENT"));
+    CHECK_EQ(errorOf(QString(R"([{"op":"title","clip":%1,"exit":{"duration":"4s"}}])").arg(id)), QString("BAD_ARGUMENT")); // the Inspector's range
+    // A progress bar: pop fades it, with a note
+    const QJsonObject bar = run("edit", {{"project", g_path}, {"ops", R"([{"op":"title","kind":"progress","enter":"pop"}])"}});
+    CHECK(QJsonDocument(bar).toJson().contains("only fades"));
     const QString help = QJsonDocument(run("help", {{"command", "edit"}, {"op", "title"}})).toJson();
     CHECK(help.contains("slide_up"));
 }

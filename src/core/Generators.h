@@ -42,8 +42,9 @@ QRectF progressTrack(const TitleStyle& s, double W, double H);
 QRectF progressFill(const TitleStyle& s, double W, double H, double fraction);
 
 // Entry / exit animation of a title (TitleStyle::enter, exit) at clip frame t of a clip `length` frames long:
-// scale of the whole title around its centre, opacity, and rise (project pixels up). Still (1, 1, 0) outside the
-// animated frames and for TitleAnim::None
+// scale of the whole title around its centre, opacity, and rise (up, in font sizes: times the size drawn before the
+// scale). Still (1, 1, 0) outside the animated frames and for TitleAnim::None; t is held inside the clip (a title
+// drawn in a transition's overlap); a progress bar only fades
 struct TitleMotion {
     double scale = 1, opacity = 1, rise = 0;
     bool still() const { return scale == 1 && opacity == 1 && rise == 0; }

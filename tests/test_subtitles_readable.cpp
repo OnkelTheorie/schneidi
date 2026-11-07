@@ -205,6 +205,51 @@ void testPausesAndSentences()
     }
 }
 
+void testOverlapsAndSound()
+{
+    std::printf("overlapping cues, quiet words\n");
+    // Overlapping cues (an SRT of two speakers): cut apart, no flash of a frame or two
+    const QVector<SubtitleCue> overlap{{0, 0, 60, "Das ist der erste Satz"},   {0, 40, 100, "und hier spricht jemand anders"},
+                                       {0, 40, 70, "gleichzeitig"},           {0, 95, 160, "noch ein Satz zum Schluss."}};
+    const QVector<SubtitleCue> out = Subtitles::readable(overlap, kFps);
+    for (const SubtitleCue& c : out) std::printf("       [%5.2f-%5.2f] %s\n", c.start / kFps, c.end / kFps, qPrintable(QString(c.text).replace('\n', " / ")));
+    for (int i = 0; i < out.size(); ++i) {
+        CHECK(out[i].length() >= 20);
+        if (i > 0) CHECK(out[i].start >= out[i - 1].end);
+    }
+    CHECK_EQ(wordsOf(out).size(), 5 + 5 + 1 + 5);
+    // Without text: nothing
+    CHECK(Subtitles::readable({{0, 0, 25, " "}, {0, 30, 50, ""}}, kFps).isEmpty());
+
+    // `transcribe` readable: a quiet word between loud ones stays (its own sound is too quiet to count), a cue in
+    // silence (whisper made it up) goes, word times stay where the words are spoken
+    const QVector<Transcript::Word> w = speech("Ich war gestern ja auch dabei. | | | Hallo?");
+    const qint64 quiet = w[3].from, quietEnd = w[3].to, last = w.last().from;
+    const Transcript::Levels levels = [&] {
+        Transcript::Levels l;
+        for (qint64 t = 0; t < last + 1000; t += 10)
+            l.db << ((t < w[4].to + 100 && !(t >= quiet && t < quietEnd)) ? -20.f : -90.f);
+        return l;
+    }();
+    const QVector<SubtitleCue> cues = Transcript::readableCues(w, levels, kFps);
+    if (CHECK_EQ(cues.size(), 1)) {
+        CHECK_EQ(cues[0].text, QString("Ich war gestern ja auch dabei."));
+        if (CHECK_EQ(cues[0].words.size(), 6))
+            for (int i = 0; i < 6; ++i) CHECK_EQ(cues[0].start + cues[0].words[i].from, int(std::lround(w[i].from / 1000.0 * kFps)));
+    }
+    // A start in silence moves to the sound, the words keep their times
+    QVector<Transcript::Word> late = speech("Na gut, dann eben so.", 2000);
+    late[0].from = 1700; // whisper starts the first word 0.3 s early, in silence
+    Transcript::Levels l2;
+    for (qint64 t = 0; t < 5000; t += 10) l2.db << (t >= 1950 && t < late.last().to ? -20.f : -90.f);
+    const QVector<SubtitleCue> moved = Transcript::readableCues(late, l2, kFps);
+    if (CHECK_EQ(moved.size(), 1)) {
+        CHECK(moved[0].start > int(std::lround(late[0].from / 1000.0 * kFps)));
+        if (CHECK_EQ(moved[0].words.size(), 5))
+            CHECK_EQ(moved[0].start + moved[0].words[1].from, int(std::lround(late[1].from / 1000.0 * kFps)));
+    }
+}
+
 QJsonObject run(const QString& name, QJsonObject raw)
 {
     if (name == "edit") raw["full"] = true;
@@ -280,6 +325,30 @@ void testOp(const QString& dir)
         refused = e.code == "BAD_ARGUMENT";
     }
     CHECK(refused);
+    // A track whose cues have no text: said so
+    QString message;
+    {
+        Project p;
+        ProjectData pd = load(path);
+        SubtitleTrack empty;
+        empty.cues = {{900001, 10, 30, " "}};
+        pd.timeline.subtitles << empty;
+        p.load(pd);
+        QString error;
+        CHECK(ProjectFile::save(p.data(), path, &error));
+    }
+    try {
+        run("edit", {{"project", path}, {"ops", R"([{"op":"subtitles","track":"ST4","readable":true}])"}});
+    } catch (const Cli::Error& e) {
+        message = e.message;
+    }
+    std::printf("       %s\n", qPrintable(message));
+    CHECK(message.contains("no text"));
+    // Cues with their own word times (what `transcribe` readable applies) keep them
+    run("edit", {{"project", path}, {"ops", R"([{"op":"subtitles","cues":[{"from":10,"to":40,"text":"zwei Worte","words":[[12,20],[25,38]]}]}])"}});
+    d = load(path);
+    if (CHECK_EQ(d.timeline.subtitles.size(), 5) && CHECK_EQ(d.timeline.subtitles[4].cues.size(), 1))
+        CHECK(d.timeline.subtitles[4].cues[0].words == QVector<CueWord>({{2, 10}, {15, 28}}));
 }
 
 } // namespace
@@ -296,6 +365,7 @@ int main(int argc, char** argv)
     testFromWords();
     testFromCues();
     testPausesAndSentences();
+    testOverlapsAndSound();
     testOp(tmp.path());
     return Check::result();
 }
