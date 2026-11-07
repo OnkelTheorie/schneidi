@@ -137,9 +137,9 @@ void Editor::addMediaAt(const QStringList& paths, int frame, int track)
             const bool video = info->hasVideo && videoOk;
             // One clip per placed audio stream on its track (streamTracks); locked tracks get nothing
             const QVector<StreamPlacement> placed = m_streamPresets.placements(*info);
-            const QVector<int> tracks = streamTracks(tl, *info, idx, start, info->length);
-            QVector<int> streams; // index into placed
-            for (int k = 0; k < placed.size(); ++k)
+            const QVector<int> tracks = streamTracks(tl, *info, idx, start, info->length, video ? idx : -1);
+            QVector<int> streams; // index into placed; a locked target audio track: no sound at all (as elsewhere)
+            for (int k = 0; audioOk && k < placed.size(); ++k)
                 if (tracks.value(k, -1) >= 0 && !isTrackLocked({TrackKind::Audio, tracks[k]})) streams << k;
             c.linkId = int(video) + streams.size() > 1 ? p->newLinkId() : 0;
             if (video) {

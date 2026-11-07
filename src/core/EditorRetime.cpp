@@ -39,7 +39,7 @@ void Editor::setClipSpeed(const QVector<int>& ids, const Retime& r, bool ripple)
 {
     // A freeze frame keeps the clip's length: exactly the given clips (a picture without its sound freezes while the
     // sound plays on in sync; a selection with the sound makes it silent); any other speed takes the partners along
-    const QVector<int> all = r.freeze ? withCopies(ids) : withFollowers(ids);
+    const QVector<int> all = r.freeze ? withCopies(editable(ids)) : withFollowers(ids);
     if (all.isEmpty() || r.speed <= 0) return;
     m_project->edit(T("Geschwindigkeit ändern"), [&](Timeline& tl) {
         QSet<int> touched;

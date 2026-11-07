@@ -114,27 +114,38 @@ void testFreezePictureOnly(const QString& file)
     for (int id : c) CHECK(TimelineOps::findClip(tl, id) && TimelineOps::findClip(tl, id)->freeze);
 }
 
-// The streams deleted by op stay out of the next piece of the same recording (their tracks are left, empty), with
-// a note; the kept stream goes to its track again, no new tracks; presets:false brings them back on their tracks
-void testNextPieceLeavesDeletedStreamsOut(const QString& file)
+// The streams deleted by op come back with the next piece of the same recording (the import presets say what is
+// placed), on their own tracks: no new tracks
+void testNextPieceKeepsTheTracks(const QString& file)
 {
     setUp(file);
     QVector<int> c = ids(load());
     if (!CHECK_EQ(c.size(), 4)) return;
     edit({QJsonObject{{"op", "delete"}, {"clips", QJsonArray{c[1], c[2]}}}});
     const QJsonObject r = edit({QJsonObject{{"op", "append"}, {"media", file}}});
-    Timeline tl = load();
+    const Timeline tl = load();
     CHECK_EQ(tl.audio.size(), 3);
-    CHECK(tl.audio.value(0).clips.isEmpty() && tl.audio.value(1).clips.isEmpty());
-    CHECK_EQ(tl.audio.value(2).clips.size(), 2);
-    CHECK_EQ(tl.audio.value(2).clips.value(1).audioStream, 2);
-    if (!CHECK(notesOf(r).contains("left out Mix, Discord"))) std::printf("       %s\n", qPrintable(notesOf(r)));
-    edit({QJsonObject{{"op", "append"}, {"media", file}, {"presets", false}}});
-    tl = load();
-    CHECK_EQ(tl.audio.size(), 3);
-    CHECK_EQ(tl.audio.value(0).clips.size(), 1);
-    CHECK_EQ(tl.audio.value(1).clips.size(), 1);
-    CHECK_EQ(tl.audio.value(2).clips.size(), 3);
+    for (int i = 0; i < 3; ++i) CHECK_EQ(tl.audio.value(i).clips.last().audioStream, i);
+    CHECK(!notesOf(r).contains("left out"));
+}
+
+// A freeze on a locked track changes nothing
+void testFreezeLockedTrack(const QString& file)
+{
+    setUp(file);
+    QVector<int> c = ids(load());
+    if (!CHECK_EQ(c.size(), 4)) return;
+    {
+        ProjectData d;
+        QString error;
+        ProjectFile::load(g_project, &d, &error);
+        d.timeline.video[0].locked = true;
+        CHECK(ProjectFile::save(d, g_project, &error));
+    }
+    edit({QJsonObject{{"op", "speed"}, {"clips", QJsonArray{c[0]}}, {"freeze", true}}});
+    const Timeline tl = load();
+    const Clip* v = TimelineOps::findClip(tl, c[0]);
+    CHECK(v && !v->freeze);
 }
 
 } // namespace
@@ -161,6 +172,7 @@ int main(int argc, char** argv)
     g_project = dir.filePath("p.schneidi");
     testDeleteSoundOnly(file);
     testFreezePictureOnly(file);
-    testNextPieceLeavesDeletedStreamsOut(file);
+    testNextPieceKeepsTheTracks(file);
+    testFreezeLockedTrack(file);
     return Check::result();
 }

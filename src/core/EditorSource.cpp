@@ -146,11 +146,17 @@ int Editor::streamTrackStart(const Timeline& tl, const MediaInfo& m, int aTrack,
     return j;
 }
 
-QVector<int> Editor::streamTracks(const Timeline& tl, const MediaInfo& m, int aTrack, int start, int length) const
+QVector<int> Editor::streamTracks(const Timeline& tl, const MediaInfo& m, int aTrack, int start, int length,
+                                  int vTrack) const
 {
     const QVector<StreamPlacement> placed = m_streamPresets.placements(m);
     const int n = int(placed.size());
     const auto locked = [&](int j) { return j >= 0 && j < tl.audio.size() && tl.audio[j].locked; };
+    const auto overlaps = [&](const Clip& c) { return c.start < start + length && c.end() > start; };
+    const auto empty = [&](int j) {
+        if (j < 0 || j >= tl.audio.size()) return true;
+        return std::none_of(tl.audio[j].clips.begin(), tl.audio[j].clips.end(), overlaps);
+    };
     // One after another from streamTrackStart (the target itself is checked by the caller)
     const int a0 = streamTrackStart(tl, m, aTrack, start, length);
     QVector<int> out(n, -1);
@@ -158,13 +164,57 @@ QVector<int> Editor::streamTracks(const Timeline& tl, const MediaInfo& m, int aT
         if ((k == 0 && a0 == aTrack) || !locked(a0 + k)) out[k] = a0 + k;
     if (n < 2) return out;
 
-    // The tracks of each stream of the file: holding a clip of it, or named after it
+    // Over material (the picture's target or the streams' tracks hold clips there): an overwrite. The sound linked
+    // to the covered pictures is replaced where it lies, the rest as laid out above
+    QVector<int> partners; // audio tracks of the sound linked to the covered pictures, top down
+    QVector<const Clip*> partnerClips;
+    bool covered = false;
+    if (m.hasVideo && vTrack >= 0 && vTrack < tl.video.size())
+        for (const Clip& v : tl.video[vTrack].clips) {
+            if (!overlaps(v)) continue;
+            covered = true;
+            if (!v.linkId) continue;
+            for (int j = 0; j < tl.audio.size(); ++j)
+                for (const Clip& c : tl.audio[j].clips)
+                    if (c.linkId == v.linkId && overlaps(c) && !partners.contains(j) && !locked(j)) {
+                        partners << j;
+                        partnerClips << &c;
+                    }
+        }
+    for (int k = 0; k < n; ++k) covered = covered || (out[k] >= 0 && !empty(out[k]));
+    if (covered) {
+        if (partners.isEmpty()) return out;
+        QVector<int> res(n, -1), taken;
+        // Same file and stream first, then the other partner tracks in order
+        for (int k = 0; k < n; ++k)
+            for (int i = 0; i < partners.size(); ++i)
+                if (!taken.contains(partners[i]) && partnerClips[i]->mediaPath == m.path
+                    && partnerClips[i]->audioStream == placed[k].stream) {
+                    res[k] = partners[i];
+                    taken << partners[i];
+                    break;
+                }
+        for (int k = 0; k < n; ++k)
+            for (int i = 0; i < partners.size() && res[k] < 0; ++i)
+                if (!taken.contains(partners[i])) {
+                    res[k] = partners[i];
+                    taken << partners[i];
+                }
+        for (int k = 0; k < n; ++k) {
+            if (res[k] >= 0 || out[k] < 0) continue;
+            int j = out[k];
+            while (taken.contains(j) || locked(j)) ++j;
+            res[k] = j;
+            taken << j;
+        }
+        return res;
+    }
+
+    // Into empty space. The tracks of each stream of the file: holding a clip of it, or named after it
     const auto same = [](const QString& a, const QString& b) {
         return a.trimmed().compare(b.trimmed(), Qt::CaseInsensitive) == 0;
     };
     QVector<QVector<int>> homes(n);
-    QVector<bool> held(n, false); // a clip of the stream somewhere
-    bool anyOfFile = false;
     for (int j = 0; j < tl.audio.size(); ++j) {
         const Track& t = tl.audio[j];
         for (int k = 0; k < n; ++k) {
@@ -172,35 +222,21 @@ QVector<int> Editor::streamTracks(const Timeline& tl, const MediaInfo& m, int aT
             const bool holds = std::any_of(t.clips.begin(), t.clips.end(), [&](const Clip& c) {
                 return c.mediaPath == m.path && c.audioStream == placed[k].stream;
             });
-            anyOfFile = anyOfFile || holds;
-            held[k] = held[k] || holds;
             if (named || holds) homes[k] << j;
         }
     }
-    const auto empty = [&](int j) {
-        if (j >= tl.audio.size()) return true;
-        return std::none_of(tl.audio[j].clips.begin(), tl.audio[j].clips.end(),
-                            [&](const Clip& c) { return c.start < start + length && c.end() > start; });
-    };
     const auto hasFreeHome = [&](int k) {
         return std::any_of(homes[k].begin(), homes[k].end(), [&](int j) { return !locked(j) && empty(j); });
     };
-    // Deleted on purpose: the file's sound is in the timeline, this stream's nowhere (its track may be left)
-    const auto deleted = [&](int k) { return !m_placeAllStreams && anyOfFile && !held[k]; };
     // The layout above fits as long as no stream passes by a free track of its own
     bool fits = true;
     for (int k = 0; k < n && fits; ++k)
         if (out[k] >= 0 && !homes[k].contains(out[k]) && hasFreeHome(k)) fits = false;
-    if (fits) {
-        for (int k = 0; k < n; ++k)
-            if (deleted(k)) out[k] = -1;
-        return out;
-    }
+    if (fits) return out;
     // Each stream on a free track of its own, the rest on free unnamed tracks that are no other stream's
     QVector<int> taken;
     for (int k = 0; k < n; ++k) {
         out[k] = -1;
-        if (deleted(k)) continue;
         for (int j : homes[k])
             if (!taken.contains(j) && !locked(j) && empty(j)) {
                 out[k] = j;
@@ -215,7 +251,7 @@ QVector<int> Editor::streamTracks(const Timeline& tl, const MediaInfo& m, int aT
         return std::any_of(homes.begin(), homes.end(), [&](const QVector<int>& h) { return h.contains(j); });
     };
     for (int k = 0; k < n; ++k) {
-        if (out[k] >= 0 || deleted(k)) continue;
+        if (out[k] >= 0) continue;
         int j = 0;
         while (unusable(j)) ++j; // ends below the last track at the latest
         out[k] = j;
@@ -225,7 +261,7 @@ QVector<int> Editor::streamTracks(const Timeline& tl, const MediaInfo& m, int aT
 }
 
 void Editor::placeSource(Timeline& tl, const MediaInfo& m, int sIn, int len, int start, int vTrack, int aTrack,
-                         double speed)
+                         double speed, const QVector<int>* given)
 {
     Project* p = m_project;
     auto newId = [p] { return p->newClipId(); };
@@ -241,7 +277,7 @@ void Editor::placeSource(Timeline& tl, const MediaInfo& m, int sIn, int len, int
     if (m.hasVideo) targets << Target{TrackKind::Video, vTrack, {}};
     if (m.hasAudio) {
         const QVector<StreamPlacement> placed = m_streamPresets.placements(m);
-        const QVector<int> tracks = streamTracks(tl, m, aTrack, start, len);
+        const QVector<int> tracks = given ? *given : streamTracks(tl, m, aTrack, start, len, m.hasVideo ? vTrack : -1);
         for (int k = 0; k < placed.size(); ++k)
             if (tracks.value(k, -1) >= 0) targets << Target{TrackKind::Audio, tracks[k], placed[k]};
     }
@@ -310,7 +346,6 @@ int Editor::sourceEdit(SourceEditMode mode, const QString& path, int srcPos, int
     if (!info || info->length <= 0 || (!info->hasVideo && !info->hasAudio)) return -1;
     const MediaInfo m = *info;
     const Timeline& cur = p->timeline();
-    const int placedStreams = m.hasAudio ? int(m_streamPresets.placements(m).size()) : 0; // audio tracks it fills
 
     // Source range: source in/out, if one is missing -> clip start or end (like DaVinci)
     const int last = m.length - 1;
@@ -383,9 +418,9 @@ int Editor::sourceEdit(SourceEditMode mode, const QString& path, int srcPos, int
             aTrack = freeTrack(TrackKind::Audio);
         }
         if (mode == M::Insert) {
-            // Like DaVinci: all unlocked tracks move along (stay in sync), the target tracks anyway
+            // Like DaVinci: all unlocked tracks move along (stay in sync), the target tracks anyway (the streams'
+            // tracks are added below)
             if (m.hasVideo) rippleTracks << TrackRef{TrackKind::Video, vTrack};
-            for (int k = 0; k < placedStreams; ++k) rippleTracks << TrackRef{TrackKind::Audio, aTrack + k};
             for (TrackKind kind : {TrackKind::Video, TrackKind::Audio})
                 for (int i = 0; i < cur.tracks(kind).size(); ++i)
                     if (!cur.tracks(kind)[i].locked && !rippleTracks.contains(TrackRef{kind, i})) rippleTracks << TrackRef{kind, i};
@@ -444,9 +479,29 @@ int Editor::sourceEdit(SourceEditMode mode, const QString& path, int srcPos, int
                        rippleTracks.end());
     if (m2.hasVideo && !rippleTracks.contains(TrackRef{TrackKind::Video, vTrack}) && mode == M::RippleOverwrite)
         rippleTracks << TrackRef{TrackKind::Video, vTrack};
-    if (m2.hasAudio && mode == M::RippleOverwrite)
-        for (int k = 0; k < placedStreams; ++k)
-            if (const TrackRef r{TrackKind::Audio, aTrack + k}; !rippleTracks.contains(r) && !isTrackLocked(r)) rippleTracks << r;
+    // The streams' tracks (streamTracks) on the timeline as the placement will find it: after an insert's gap (every
+    // unlocked track moved on), over the replaced clip for a ripple overwrite, else as it is
+    QVector<int> streams;
+    if (m2.hasAudio) {
+        const int pic = m2.hasVideo ? vTrack : -1;
+        if (mode == M::Insert) {
+            Timeline gap = cur;
+            for (TrackKind kind : {TrackKind::Video, TrackKind::Audio})
+                for (Track& t : gap.tracks(kind))
+                    if (!t.locked)
+                        for (Clip& c : t.clips)
+                            if (c.end() > start) c.start += len;
+            streams = streamTracks(gap, m, aTrack, start, len, pic);
+        } else if (mode == M::RippleOverwrite) {
+            streams = streamTracks(cur, m, aTrack, start, replaceEnd - start, pic);
+        } else {
+            streams = streamTracks(cur, m, aTrack, start, len, pic);
+        }
+        if (mode == M::Insert || mode == M::RippleOverwrite)
+            for (int a : streams)
+                if (const TrackRef r{TrackKind::Audio, a}; a >= 0 && !rippleTracks.contains(r) && !isTrackLocked(r))
+                    rippleTracks << r;
+    }
 
     QString text;
     switch (mode) {
@@ -473,7 +528,7 @@ int Editor::sourceEdit(SourceEditMode mode, const QString& path, int srcPos, int
             // other unlocked tracks stay in sync (stay put if they would overwrite)
             TimelineOps::rippleTracks(tl, {{rippleFrom, rippleDelta}}, rippleTracks);
         }
-        placeSource(tl, m2, sIn, len, start, vTrack, aTrack, speed);
+        placeSource(tl, m2, sIn, len, start, vTrack, aTrack, speed, &streams);
         if (usedTimelineMarks) tl.markIn = tl.markOut = -1; // like DaVinci: used marks are consumed
     });
     return mode == M::Replace ? playhead : start + len;

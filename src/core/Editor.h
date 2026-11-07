@@ -342,16 +342,17 @@ public:
     // the first one). Then tracks named like the streams that are free there, else the first free tracks below
     // whose names fit (new ones at the bottom), so names stay true and nothing is overwritten.
     int streamTrackStart(const Timeline& tl, const MediaInfo& m, int aTrack, int start, int length) const;
-    // The audio track of each placed stream of file m (index = StreamPresets::placements(m), -1 = not placed) for such
-    // an edit: one after another from streamTrackStart while that fits the timeline. When the file's streams already
-    // have tracks (a clip of the stream, or the track named after it) that are free there, but that layout would not
-    // use them (tracks deleted or moved since: AI test run 2026-11-07 made five new tracks for every further piece),
-    // each stream goes to its own track again and only the rest to free tracks (new ones at the bottom). A stream
-    // the timeline has no clip of while it has others of the file was deleted on purpose: left out,
-    // unless setPlaceAllStreams(true) (CLI presets:false). Tracks that are locked get nothing.
-    QVector<int> streamTracks(const Timeline& tl, const MediaInfo& m, int aTrack, int start, int length) const;
-    void setPlaceAllStreams(bool all) { m_placeAllStreams = all; }
-    bool placeAllStreams() const { return m_placeAllStreams; }
+    // The audio track of each placed stream of file m (index = StreamPresets::placements(m), -1 = not placed: locked)
+    // for such an edit with the picture on video track vTrack (-1 = none):
+    // - over material (overwrite, replace, a drop onto clips): the streams take the tracks of the sound linked to
+    //   the pictures they cover (same file and stream first), the rest one after another from streamTrackStart as
+    //   before, so nothing of the old clip is left under the new picture;
+    // - into empty space: one after another from streamTrackStart while that fits; when the file's streams already
+    //   have tracks (a clip of the stream, or the track named after it) that are free there but that layout would
+    //   pass them by (tracks deleted or moved since: AI test run 2026-11-07 made five new tracks for every further
+    //   piece), each stream goes to its own track again, the rest to free unnamed tracks (new ones at the bottom).
+    QVector<int> streamTracks(const Timeline& tl, const MediaInfo& m, int aTrack, int start, int length,
+                              int vTrack = -1) const;
     int targetVideoTrack() const { return m_targetVideo; }
     int targetAudioTrack() const { return m_targetAudio; }
     void setTargetTracks(int video, int audio);
@@ -683,8 +684,9 @@ private:
 
     // Place source range from source frame sIn (len frames) at `start` on V[vTrack]/A[aTrack] (overwrites, linked)
     // sIn/len in frames of the converted material if speed != 1 (see Clip::speed)
+    // tracks: the audio track per placed stream (streamTracks, worked out before a ripple); nullptr = streamTracks now
     void placeSource(Timeline& tl, const MediaInfo& m, int sIn, int len, int start, int vTrack, int aTrack,
-                     double speed = 1.0);
+                     double speed = 1.0, const QVector<int>* tracks = nullptr);
     // New audio clips whose sound already plays there (TimelineOps::repeatedSound, e.g. a second copy of a moment
     // for a blurred background) come in disabled, so nothing is heard twice
     static void muteRepeatedSound(Timeline& tl, const QVector<int>& ids);
@@ -724,7 +726,6 @@ private:
     };
     KeyLocked m_keyLocked;
     StreamPresets m_streamPresets;
-    bool m_placeAllStreams = false; // streamTracks: also the streams deleted from the timeline
     QVector<ClipboardItem> m_clipboard; // starts relative to the earliest clip
     std::optional<Clip> m_gradeClipboard; // copyGrade: the source clip (only its grade is used)
     FrameRate m_clipboardRate; // frame rate the clipboards count in (clip times, keyframes)

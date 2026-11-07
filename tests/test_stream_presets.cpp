@@ -273,9 +273,9 @@ void testSecondCopyKeepsTracksTrue()
 void testLaterPiecesKeepTheirTracks()
 {
     // AI test run 2026-11-07: every further piece of the same recording made five new audio tracks once the first
-    // piece's tracks had changed (unwanted streams deleted, their tracks removed), so the game sound had to be moved
-    // back and the extra tracks deleted after each insert. Now each stream goes to the track that holds it, a stream
-    // deleted everywhere stays out, and new tracks come only for what has none.
+    // piece's tracks had changed (unwanted streams' tracks removed, a track moved), so the game sound had to be moved
+    // back and the extra tracks deleted after each insert. Now each stream goes to the track that holds it, new
+    // tracks come only for what has none (once), and every stream is placed as the import presets say.
     for (bool pool : {false, true}) {
         Fixture f;
         const auto place = [&](int frame, int track) {
@@ -283,43 +283,117 @@ void testLaterPiecesKeepTheirTracks()
             else f.ed.placeSourceRange("/x/obs.mkv", 0, 99, frame, track);
         };
         place(0, 0);
-        // Mix, Spotify and Discord not wanted: clips and tracks deleted
-        for (int i = 0; i < 3; ++i) f.ed.removeTrack({TrackKind::Audio, 0});
+        for (int i = 0; i < 3; ++i) f.ed.removeTrack({TrackKind::Audio, 0}); // Mix, Spotify, Discord removed
         CHECK_EQ(audioAt(f.p.timeline(), 50), QString("A1 System:s3 A2 Mikrofon:s4"));
         const MediaInfo& m = *f.p.mediaInfo("/x/obs.mkv");
-        CHECK_EQ(f.ed.streamTracks(f.p.timeline(), m, 0, 100, 100), QVector<int>({-1, -1, -1, 0, 1})); // the ghost
+        CHECK_EQ(f.ed.streamTracks(f.p.timeline(), m, 0, 100, 100, 0), QVector<int>({2, 3, 4, 0, 1})); // the ghost
         place(100, 0);
         place(200, 0);
-        CHECK_EQ(audioAt(f.p.timeline(), 150), QString("A1 System:s3 A2 Mikrofon:s4"));
-        CHECK_EQ(audioAt(f.p.timeline(), 250), QString("A1 System:s3 A2 Mikrofon:s4"));
-        CHECK_EQ(f.p.timeline().audio.size(), 2);
-        CHECK_EQ(TimelineOps::linkedGroup(f.p.timeline(), f.p.timeline().video.value(0).clips.value(1).id).size(), 3);
-        // Every stream on purpose (CLI presets:false): the deleted ones on new tracks, the others stay
-        f.ed.setPlaceAllStreams(true);
-        place(300, 0);
-        f.ed.setPlaceAllStreams(false);
-        CHECK_EQ(audioAt(f.p.timeline(), 350), QString("A1 System:s3 A2 Mikrofon:s4 A3 Mix:s0 A4 Spotify:s1 "
-                                                       "A5 Discord:s2"));
+        const QString all = "A1 System:s3 A2 Mikrofon:s4 A3 Mix:s0 A4 Spotify:s1 A5 Discord:s2";
+        CHECK_EQ(audioAt(f.p.timeline(), 150), all);
+        CHECK_EQ(audioAt(f.p.timeline(), 250), all);
+        CHECK_EQ(f.p.timeline().audio.size(), 5);
+        CHECK_EQ(TimelineOps::linkedGroup(f.p.timeline(), f.p.timeline().video.value(0).clips.value(1).id).size(), 6);
     }
-    // Only the Mix track deleted (the others moved up): the later piece lands on the same tracks, not below them
+    // Only the Mix track deleted (the others moved up): the later piece lands on the same tracks, the Mix on one
+    // new track below, no gap between
     {
         Fixture f;
         f.ed.placeSourceRange("/x/obs.mkv", 0, 99, 0, 0);
         f.ed.removeTrack({TrackKind::Audio, 0});
         f.ed.placeSourceRange("/x/obs.mkv", 0, 99, 100, 0);
-        CHECK_EQ(audioAt(f.p.timeline(), 150), QString("A1 Spotify:s1 A2 Discord:s2 A3 System:s3 A4 Mikrofon:s4"));
-        CHECK_EQ(f.p.timeline().audio.size(), 4);
+        CHECK_EQ(audioAt(f.p.timeline(), 150),
+                 QString("A1 Spotify:s1 A2 Discord:s2 A3 System:s3 A4 Mikrofon:s4 A5 Mix:s0"));
+        CHECK_EQ(f.p.timeline().audio.size(), 5);
     }
     // The game sound moved to the top track by hand (tracks swapped): it stays there
     {
         Fixture f;
         f.ed.placeSourceRange("/x/obs.mkv", 0, 99, 0, 0);
         f.ed.moveTrack(TrackKind::Audio, 3, 0);
-        CHECK_EQ(audioAt(f.p.timeline(), 50), QString("A1 System:s3 A2 Mix:s0 A3 Spotify:s1 A4 Discord:s2 A5 Mikrofon:s4"));
+        const QString moved = "A1 System:s3 A2 Mix:s0 A3 Spotify:s1 A4 Discord:s2 A5 Mikrofon:s4";
+        CHECK_EQ(audioAt(f.p.timeline(), 50), moved);
         f.ed.placeSourceRange("/x/obs.mkv", 0, 99, 100, 0);
-        CHECK_EQ(audioAt(f.p.timeline(), 150),
-                 QString("A1 System:s3 A2 Mix:s0 A3 Spotify:s1 A4 Discord:s2 A5 Mikrofon:s4"));
+        CHECK_EQ(audioAt(f.p.timeline(), 150), moved);
         CHECK_EQ(f.p.timeline().audio.size(), 5);
+    }
+}
+
+// Every audio clip playing at `frame` belongs to the picture there (nothing old left under a new picture)
+bool soundOfPicture(const Timeline& tl, int frame)
+{
+    int link = -1;
+    for (const Clip& c : tl.video.value(0).clips)
+        if (c.start <= frame && frame < c.end()) link = c.linkId;
+    for (const Track& t : tl.audio)
+        for (const Clip& c : t.clips)
+            if (c.start <= frame && frame < c.end() && c.mediaPath == "/x/obs.mkv" && c.linkId != link) return false;
+    return link > 0;
+}
+
+void testEditsOverMaterialReplaceTheSound()
+{
+    // Review 2026-11-07: with the layout changed (Mix track removed), Replace (F11), Overwrite (F10) and a drop over
+    // the piece put the new picture on V1 but the new streams on other tracks, so the old sound stayed under it. Over
+    // material the new streams take the covered picture's sound tracks; only the Mix (none there) gets a new track
+    using M = Editor::SourceEditMode;
+    const QString after = "A1 Spotify:s1 A2 Discord:s2 A3 System:s3 A4 Mikrofon:s4 A5 Mix:s0";
+    for (int how = 0; how < 3; ++how) {
+        Fixture f;
+        f.ed.placeSourceRange("/x/obs.mkv", 0, 99, 0, 0);
+        f.ed.removeTrack({TrackKind::Audio, 0});
+        f.ed.setTargetTracks(0, 0);
+        if (how == 0) CHECK_EQ(f.ed.sourceEdit(M::Replace, "/x/obs.mkv", 50, 50), 50);
+        if (how == 1) f.ed.placeSourceRange("/x/obs.mkv", 0, 99, 0, 0);
+        if (how == 2) f.ed.addMediaAt({"/x/obs.mkv"}, 0, 0);
+        const Timeline& tl = f.p.timeline();
+        CHECK_EQ(audioAt(tl, 50), after);
+        if (!CHECK(soundOfPicture(tl, 50))) std::printf("       edit %d\n", how);
+    }
+    // Insert (F9) into the piece: the gap opens on every track, the new streams go to their tracks, no empty
+    // unnamed tracks are made
+    {
+        Fixture f;
+        f.ed.placeSourceRange("/x/obs.mkv", 0, 99, 0, 0);
+        f.ed.removeTrack({TrackKind::Audio, 0});
+        f.ed.setTargetTracks(0, 0);
+        f.ed.setSourceMarkIn("/x/obs.mkv", 0);
+        f.ed.setSourceMarkOut("/x/obs.mkv", 19);
+        CHECK_EQ(f.ed.sourceEdit(M::Insert, "/x/obs.mkv", 0, 50), 70);
+        const Timeline& tl = f.p.timeline();
+        CHECK_EQ(audioAt(tl, 60), after);
+        CHECK(soundOfPicture(tl, 60));
+        CHECK_EQ(audioAt(tl, 80), QString("A1 Spotify:s1 A2 Discord:s2 A3 System:s3 A4 Mikrofon:s4")); // moved on
+        CHECK_EQ(tl.audio.size(), 5);
+        for (const Track& t : tl.audio) CHECK(!t.name.isEmpty());
+    }
+    // Ripple Overwrite (Shift+F10) of the piece: its sound tracks are cleared, a music track below stays whole
+    {
+        Fixture f;
+        f.ed.placeSourceRange("/x/obs.mkv", 0, 99, 0, 0);
+        f.ed.removeTrack({TrackKind::Audio, 0});
+        f.ed.placeSourceRange("/x/plain.mp4", 0, 99, 0, 4, 1.0, true); // music on A5
+        f.ed.setTargetTracks(0, 0);
+        f.ed.setSourceMarkIn("/x/obs.mkv", 0);
+        f.ed.setSourceMarkOut("/x/obs.mkv", 99);
+        CHECK(f.ed.sourceEdit(M::RippleOverwrite, "/x/obs.mkv", 0, 50) > 0);
+        const Timeline& tl = f.p.timeline();
+        CHECK(soundOfPicture(tl, 50));
+        CHECK_EQ(tl.audio.value(4).clips.size(), 1);
+        CHECK_EQ(tl.audio.value(4).clips.value(0).length(), 100);
+        CHECK_EQ(tl.audio.value(4).clips.value(0).mediaPath, QString("/x/plain.mp4"));
+    }
+    // A drop with the target audio track locked: the picture only (as the viewer drag and F9-F12 do)
+    {
+        Fixture f;
+        f.ed.addTrack(TrackKind::Audio, 1);
+        f.ed.setTracksLocked({{TrackKind::Audio, 0}}, {}, true);
+        f.ed.addMediaAt({"/x/obs.mkv"}, 0, 0);
+        const Timeline& tl = f.p.timeline();
+        CHECK_EQ(tl.video.value(0).clips.size(), 1);
+        int sound = 0;
+        for (const Track& t : tl.audio) sound += t.clips.size();
+        CHECK_EQ(sound, 0);
     }
 }
 
@@ -595,6 +669,7 @@ int main(int argc, char** argv)
     testSourceEditsApplyPresets();
     testSecondCopyKeepsTracksTrue();
     testLaterPiecesKeepTheirTracks();
+    testEditsOverMaterialReplaceTheSound();
     testRepeatedSound();
     testMulticamAnglesFollowPresets();
     testLearnFromTimeline();
