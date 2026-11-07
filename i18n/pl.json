@@ -2582,5 +2582,19 @@
  "Ausgabe-Knoten setzen": "Ustaw węzeł wyjściowy",
  "Comp-Graph: Knoten %1 erreichen die Ausgabe nicht und wirken nicht": "Graf kompozycji: węzły %1 nie docierają do wyjścia i nie działają",
  "Comp-Graph rechnet etwa %1 ms je Bild (mehr als %2 ms): Render-Cache für diesen Clip einschalten, damit die Wiedergabe flüssig bleibt": "Graf kompozycji liczy ok. %1 ms na klatkę (więcej niż %2 ms): włącz pamięć podręczną renderowania dla tego klipu, aby odtwarzanie było płynne",
- "Key unsauber: %1 % halbdurchsichtige Pixel im Motiv (Key-Werte nachstellen oder matte_tune)": "Kluczowanie niedokładne: %1 % półprzezroczystych pikseli w obiekcie (popraw wartości klucza lub użyj matte_tune)"
+ "Key unsauber: %1 % halbdurchsichtige Pixel im Motiv (Key-Werte nachstellen oder matte_tune)": "Kluczowanie niedokładne: %1 % półprzezroczystych pikseli w obiekcie (popraw wartości klucza lub użyj matte_tune)",
+ "Seitenfarbe": "Kolor boków",
+ "Fase": "Fazowanie",
+ "Drehung X": "Obrót X",
+ "Drehung Y": "Obrót Y",
+ "Drehung Z": "Obrót Z",
+ "Blickwinkel": "Pole widzenia",
+ "Lichtrichtung": "Kierunek światła",
+ "Lichthöhe": "Wysokość światła",
+ "Umgebungslicht": "Światło otoczenia",
+ "Glanz": "Połysk",
+ "Metall": "Metal",
+ "Kantenglättung": "Wygładzanie krawędzi",
+ "3D-Text": "Tekst 3D",
+ "Echter 3D-Text: Buchstaben mit Tiefe und Fase, im Raum gedreht, mit Licht und Glanz; Drehung, Tiefe, Kamera, Licht und Farben animierbar": "Prawdziwy tekst 3D: litery z głębią i fazowaniem, obrócone w przestrzeni, ze światłem i połyskiem; obrót, głębia, kamera, światło i kolory animowalne"
 }

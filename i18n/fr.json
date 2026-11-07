@@ -2582,5 +2582,19 @@
  "Ausgabe-Knoten setzen": "Définir le nœud de sortie",
  "Comp-Graph: Knoten %1 erreichen die Ausgabe nicht und wirken nicht": "Graphe de composition : les nœuds %1 n’atteignent pas la sortie et n’ont aucun effet",
  "Comp-Graph rechnet etwa %1 ms je Bild (mehr als %2 ms): Render-Cache für diesen Clip einschalten, damit die Wiedergabe flüssig bleibt": "Le graphe de composition prend environ %1 ms par image (plus de %2 ms) : activez le cache de rendu de ce clip pour une lecture fluide",
- "Key unsauber: %1 % halbdurchsichtige Pixel im Motiv (Key-Werte nachstellen oder matte_tune)": "Incrustation imparfaite : %1 % de pixels semi-transparents dans le sujet (ajustez les valeurs du key ou utilisez matte_tune)"
+ "Key unsauber: %1 % halbdurchsichtige Pixel im Motiv (Key-Werte nachstellen oder matte_tune)": "Incrustation imparfaite : %1 % de pixels semi-transparents dans le sujet (ajustez les valeurs du key ou utilisez matte_tune)",
+ "Seitenfarbe": "Couleur des côtés",
+ "Fase": "Biseau",
+ "Drehung X": "Rotation X",
+ "Drehung Y": "Rotation Y",
+ "Drehung Z": "Rotation Z",
+ "Blickwinkel": "Champ de vision",
+ "Lichtrichtung": "Direction de la lumière",
+ "Lichthöhe": "Hauteur de la lumière",
+ "Umgebungslicht": "Lumière ambiante",
+ "Glanz": "Brillance",
+ "Metall": "Métal",
+ "Kantenglättung": "Anticrénelage",
+ "3D-Text": "Texte 3D",
+ "Echter 3D-Text: Buchstaben mit Tiefe und Fase, im Raum gedreht, mit Licht und Glanz; Drehung, Tiefe, Kamera, Licht und Farben animierbar": "Vrai texte 3D : lettres avec profondeur et biseau, tournées dans l'espace, avec lumière et brillance ; rotation, profondeur, caméra, lumière et couleurs animables"
 }

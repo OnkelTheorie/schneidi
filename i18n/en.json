@@ -2582,5 +2582,19 @@
  "Ausgabe-Knoten setzen": "Set output node",
  "Comp-Graph: Knoten %1 erreichen die Ausgabe nicht und wirken nicht": "Comp graph: nodes %1 do not reach the output and have no effect",
  "Comp-Graph rechnet etwa %1 ms je Bild (mehr als %2 ms): Render-Cache für diesen Clip einschalten, damit die Wiedergabe flüssig bleibt": "Comp graph takes about %1 ms per frame (more than %2 ms): switch on the render cache for this clip so playback stays smooth",
- "Key unsauber: %1 % halbdurchsichtige Pixel im Motiv (Key-Werte nachstellen oder matte_tune)": "Key not clean: %1 % half-transparent pixels in the subject (adjust the key values or use matte_tune)"
+ "Key unsauber: %1 % halbdurchsichtige Pixel im Motiv (Key-Werte nachstellen oder matte_tune)": "Key not clean: %1 % half-transparent pixels in the subject (adjust the key values or use matte_tune)",
+ "Seitenfarbe": "Side color",
+ "Fase": "Bevel",
+ "Drehung X": "Rotation X",
+ "Drehung Y": "Rotation Y",
+ "Drehung Z": "Rotation Z",
+ "Blickwinkel": "Field of view",
+ "Lichtrichtung": "Light direction",
+ "Lichthöhe": "Light height",
+ "Umgebungslicht": "Ambient light",
+ "Glanz": "Shine",
+ "Metall": "Metal",
+ "Kantenglättung": "Anti-aliasing",
+ "3D-Text": "3D text",
+ "Echter 3D-Text: Buchstaben mit Tiefe und Fase, im Raum gedreht, mit Licht und Glanz; Drehung, Tiefe, Kamera, Licht und Farben animierbar": "Real 3D text: letters with depth and bevel, turned in space, with light and shine; rotation, depth, camera, light and colors can be animated"
 }

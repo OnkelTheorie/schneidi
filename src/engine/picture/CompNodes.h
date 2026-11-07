@@ -156,5 +156,6 @@ void registerMaskNodes(QVector<NodeType>& out);  // B: mask, matte
 void registerKeyNodes(QVector<NodeType>& out);   // C: key, matte_tune
 void registerTrackNodes(QVector<NodeType>& out); // D: tracker
 void registerStyleNodes(QVector<NodeType>& out); // E: text, shadow, glitch
+void registerText3dNodes(QVector<NodeType>& out); // 3D text (round 3): text3d
 
 } // namespace Picture::Comp

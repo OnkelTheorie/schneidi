@@ -2582,5 +2582,19 @@
  "Ausgabe-Knoten setzen": "Establecer nodo de salida",
  "Comp-Graph: Knoten %1 erreichen die Ausgabe nicht und wirken nicht": "Grafo de composición: los nodos %1 no llegan a la salida y no tienen efecto",
  "Comp-Graph rechnet etwa %1 ms je Bild (mehr als %2 ms): Render-Cache für diesen Clip einschalten, damit die Wiedergabe flüssig bleibt": "El grafo de composición tarda unos %1 ms por fotograma (más de %2 ms): activa la caché de render de este clip para que la reproducción sea fluida",
- "Key unsauber: %1 % halbdurchsichtige Pixel im Motiv (Key-Werte nachstellen oder matte_tune)": "Key poco limpio: %1 % de píxeles semitransparentes en el sujeto (ajusta los valores del key o usa matte_tune)"
+ "Key unsauber: %1 % halbdurchsichtige Pixel im Motiv (Key-Werte nachstellen oder matte_tune)": "Key poco limpio: %1 % de píxeles semitransparentes en el sujeto (ajusta los valores del key o usa matte_tune)",
+ "Seitenfarbe": "Color lateral",
+ "Fase": "Bisel",
+ "Drehung X": "Rotación X",
+ "Drehung Y": "Rotación Y",
+ "Drehung Z": "Rotación Z",
+ "Blickwinkel": "Campo de visión",
+ "Lichtrichtung": "Dirección de la luz",
+ "Lichthöhe": "Altura de la luz",
+ "Umgebungslicht": "Luz ambiental",
+ "Glanz": "Brillo",
+ "Metall": "Metal",
+ "Kantenglättung": "Suavizado de bordes",
+ "3D-Text": "Texto 3D",
+ "Echter 3D-Text: Buchstaben mit Tiefe und Fase, im Raum gedreht, mit Licht und Glanz; Drehung, Tiefe, Kamera, Licht und Farben animierbar": "Texto 3D real: letras con profundidad y bisel, giradas en el espacio, con luz y brillo; rotación, profundidad, cámara, luz y colores animables"
 }

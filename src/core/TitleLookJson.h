@@ -5,6 +5,7 @@
 //   fill: "solid" | "gradient" | "texture"
 //   gradient: {stops: [{at, color}, …] (2..4), angle}   texture: {path, scale, x, y}
 //   edge3d: {on, depth, angle, color, light}   shadow: {on, x, y, soft, color, opacity}   glow: {on, radius, color, strength}
+//   text3d: {on, depth, bevel, rot_x, rot_y, rot_z, fov, distance, light_angle, light_height, side, shine, metal}
 // Written only when a group differs from the default (older versions then ignore nothing they would need).
 // The CLI also takes short forms: gradient as a list of colours (evenly spaced) or stops, texture as a path, edge3d /
 // shadow / glow as true/false; giving gradient or texture without fill switches the fill to it, a group object
@@ -17,7 +18,7 @@
 
 namespace TitleLookJson {
 
-// The keys read and written (fill, gradient, texture, edge3d, shadow, glow)
+// The keys read and written (fill, gradient, texture, edge3d, shadow, glow, text3d)
 QStringList keys();
 // Adds the groups that differ from the default to a title object
 void write(QJsonObject& o, const TitleLook& l);

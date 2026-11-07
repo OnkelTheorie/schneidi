@@ -455,3 +455,4 @@ target_link_libraries(test_comp_cli PRIVATE schneidi_cli_lib)
 # decides about the card itself (77 without a hardware device)
 schneidi_test(test_comp_gpu)
 set_tests_properties(test_comp_gpu PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;SCHNEIDI_AUDIO_DEVICE=null")
+schneidi_test(test_text3d) # real 3D text (0.19): "O" hole, cap area = outline area, side at 90°, light, AA, cache, project, plain title bit-identical
