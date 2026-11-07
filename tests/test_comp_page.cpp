@@ -3,7 +3,8 @@
 // graph and shows it; the layer view shows a merge chain; nodes are added (Tab search), linked (wire drag), removed
 // (Del) and duplicated (Ctrl+D) on the canvas, each one undo step; a viewer handle drag changes a mask's position as
 // one undo step; the keyframe diamond sets a keyframe; the Edit Inspector shows "Comp: N Knoten" and opens the page;
-// outside edits (CLI @app) show at once; the page survives undoing the whole graph.
+// outside edits (CLI @app) show at once; the page survives undoing the whole graph; "Comp from Selection" opens the
+// new compound clip.
 // COMP_PAGE_DUMP=<folder>: pictures of the page (layer view, node canvas, inspector of a mask).
 
 #include "check.h"
@@ -349,5 +350,21 @@ int main(int argc, char** argv)
     page->selectNode(mask);
     settle();
     CHECK_EQ(page->inspector()->node(), mask);
+
+    // "Comp from Selection": the clip becomes a compound clip whose graph lays its tracks on each other; the page
+    // shows that clip (one undo step)
+    w.showPage(MainWindow::Page::Edit);
+    w.liveSelection()->set({clipId});
+    idx = undo->index();
+    InputBindings::instance().action("comp_from")->trigger();
+    settle();
+    CHECK_EQ(undo->index(), idx + 1);
+    CHECK(page->isVisible());
+    CHECK(page->clip() != clipId && page->clip() != 0);
+    {
+        const CompGraph from = graphOf(project, page->clip());
+        CHECK(!from.isEmpty());
+        CHECK(from.node(from.out) != nullptr);
+    }
     return Check::result();
 }
