@@ -22,7 +22,8 @@ class QCryptographicHash;
 
 namespace Extensions {
 
-enum class Kind { Program, WhisperModel, WhisperVad, Encoder, Speech, Voice, Runtime, AudioModel, SoundPack, FaceModel };
+enum class Kind { Program, WhisperModel, WhisperVad, Encoder, Speech, Voice, Runtime, AudioModel, SoundPack, FaceModel,
+                  CutoutModel };
 
 struct Item {
     QString id;          // "whisper", "whisper-model-small", "x264"
@@ -103,6 +104,9 @@ QString audioEventsLabels();
 // YuNet 2023mar (face detection, MIT) of the "faces" extension, or of SCHNEIDI_YUNET (a model file; tests): the model
 // (.onnx); empty = not installed. Its licence text lies beside it as LICENSE.
 QString faceModel();
+// Person segmentation (engine/PersonMatte, the compositing node "cutout") of the "cutout" extension, or of
+// SCHNEIDI_CUTOUT_MODEL (a model file; tests): the model (.onnx); empty = not installed. Its licence lies beside it.
+QString cutoutModel();
 
 // Sound packs (op 'sfx', Effects Library "Klänge"): free sound collections (CC0) as archives, each unpacked into
 // soundPacksDir()/<id>. A pack must carry its licence: without a LICENSE (LICENCE, COPYING, also .txt/.md) file at

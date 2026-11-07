@@ -455,3 +455,9 @@ target_link_libraries(test_comp_cli PRIVATE schneidi_cli_lib)
 # decides about the card itself (77 without a hardware device)
 schneidi_test(test_comp_gpu)
 set_tests_properties(test_comp_gpu PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;SCHNEIDI_AUDIO_DEVICE=null")
+# AI cutout (0.19): pre/post-processing, matte cache, smoothing, guided upsample, node, analysis + CLI op with a
+# stand-in model, Editor op undo, missing extension
+schneidi_test(test_comp_cutout)
+target_link_libraries(test_comp_cutout PRIVATE schneidi_cli_lib)
+# The same with the real segmentation model; 77 without the extension
+schneidi_test(test_comp_cutout_model)

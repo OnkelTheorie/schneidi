@@ -12,6 +12,7 @@
 #include "core/ExportCheck.h"
 #include "core/Keyframes.h"
 #include "core/TimelineOps.h"
+#include "engine/picture/CompCutout.h"
 #include "engine/picture/CompNodes.h"
 #include "engine/picture/CompTrack.h"
 
@@ -382,6 +383,9 @@ QJsonObject compJson(const EffectInstance& e, const ProjectFormat& f)
         QJsonObject o{{"id", n.id}, {"type", n.type}};
         if (!values.value(n.id).isEmpty()) o["params"] = values.value(n.id);
         if (!PC::find(n.type)) o["available"] = false; // a newer version's kind: passed through
+        if (n.type == QLatin1String(PC::kCutoutType)) // not analysed: shows nothing (EditOpsCutout.cpp)
+            if (const QString hint = PC::cutoutHint(values.value(n.id).value(PC::kCutoutCacheKey).toString()); !hint.isEmpty())
+                o["hint"] = hint;
         nodes << o;
     }
     for (const CompLink& l : g.links) links << QJsonArray{l.from, l.to, l.input};

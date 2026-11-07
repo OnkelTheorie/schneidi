@@ -1350,7 +1350,8 @@ const QVector<Command>& commands()
         {"extensions", "Optional downloads (not part of schneidi): whisper speech recognition and its models, x264 "
                        "(an ffmpeg program with x264/x265 for better H.264/H.265 export quality when no graphics card "
                        "encoder works; GPL, runs as its own program), piper text to speech with its voices (edit "
-                       "op 'speak'), and faces (YuNet face detection for `index`, brings onnxruntime). Without "
+                       "op 'speak'), faces (YuNet face detection for `index`, brings onnxruntime) and cutout (person "
+                       "segmentation for the compositing node 'cutout', offered once its download is verified). Without "
                        "arguments: list with sizes and what is installed.",
          {{"install", T::String, "ids to download and install, e.g. whisper,small (model sizes: turbo 574 MB, "
                                  "small 190 MB, base 60 MB, tiny 32 MB), x264 (72 MB, Windows 90 MB) or "

@@ -397,6 +397,10 @@ public:
     // point (keyframes between the first and the last point are replaced, others stay). One undo step. false = no
     // such clip, comp effect or tracker node, or no points
     bool trackCompNode(int clipId, int node, const QVector<Comp::TrackPoint>& points);
+    // The cutout node `node` of the clip's graph uses analysis `cache` (its matte file, engine/picture/CompCutout):
+    // sets the node's value "cache" as one undo step (core/EditorCutout.cpp). false + *err = no such clip or node, or
+    // the node is no cutout
+    bool cutoutCompNode(int clipId, int node, const QString& cache, QString* err = nullptr);
 
     // ---- Compositing graph of a clip (effect "comp", core/CompGraph.h; core/EditorComp.cpp) ----
     // Shared by the CLI ops (comp, node) and the Comp page. `kinds` = the node kinds (Picture::Comp::kindInfo; core
