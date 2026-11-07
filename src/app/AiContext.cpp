@@ -186,6 +186,9 @@ QString compactInstructions(const QString& instructions)
     return instructions;
 }
 
+// Only for a request the user asked for in words (trusting someone else's code): never needed by a small model
+const QStringList kRareParams{QStringLiteral("trust_custom_code")};
+
 QJsonArray compactTools(const QJsonArray& tools, const QJsonArray& editOps)
 {
     // A parameter text several tools share word for word ("project": "project file") says little: left out
@@ -208,6 +211,8 @@ QJsonArray compactTools(const QJsonArray& tools, const QJsonArray& editOps)
             out << t;
             continue;
         }
+        // Parameters a small model rarely needs are left out entirely (`help` still lists them)
+        for (const QString& r : kRareParams) props.remove(r);
         for (auto it = props.begin(); it != props.end(); ++it) {
             QJsonObject p = it.value().toObject();
             const QString text = shortParam(p["description"].toString());

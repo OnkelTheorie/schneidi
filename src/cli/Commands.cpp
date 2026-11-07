@@ -852,8 +852,8 @@ const QVector<Command>& commands()
                  "(on/off), limiter_db (ceiling). To check such settings after an edit, summary:true is enough. 'watch': "
                  "watched folders and the revision of the newest file they brought in (see `watch`). A clip effect with "
                  "\"available\": false is not in this version (a plugin of an older project): it stays in the "
-                 "project but renders as if switched off. \"untrusted\": true = custom code (filter chain, shader, "
-                 "comp fx node) the user did not write or confirm here: skipped until trusted (trust_custom_code).",
+                 "project but renders as if switched off. \"untrusted\": true = custom code not confirmed: skipped "
+                 "(see trust_custom_code).",
          {{"project", T::Path, "project file", true, true},
           {"summary", T::Boolean, "short form: length, counts of clips/tracks/markers, no clip list (track states and "
                                   "master stay)"},
@@ -900,10 +900,8 @@ const QVector<Command>& commands()
           {"run", T::Times, "with plan_id: the step numbers to run ([1,2,4]) or \"all\"; in the plan's order, as one edit"},
           {"discard", T::Boolean, "with plan_id: drop the plan without running anything"},
           {"full", T::Boolean, "answer with the whole timeline (every clip, like `info`) instead of the summary"},
-          {"trust_custom_code", T::Boolean, "trust the project's custom code (filter chains, shaders) the user did not "
-                                            "write here, e.g. of a shared project or an imported recipe: it renders "
-                                            "from now on; only when the user said so. Code you set with edit is "
-                                            "trusted anyway"}},
+          {"trust_custom_code", T::Boolean, "trust the project's custom code (filters, shaders) from someone else; only "
+                                            "when the user said so (code you set is trusted)"}},
          cmdEdit},
         {"backups", "List the backup copies of a project (every save keeps the previous state, newest first).",
          {{"project", T::Path, "project file or \"@app\"", true, true}}, cmdBackups},
@@ -932,8 +930,7 @@ const QVector<Command>& commands()
           {"generate", T::Boolean, "proxies: start generating missing ones (default true; false = only show the state)"},
           {"delete", T::Boolean, "clean_proxies: really delete the listed files (default false = only list them)"},
           {"path", T::Path, "save: file for a project that was never saved (a new .schneidi file, never overwrites)"},
-          {"trust_custom_code", T::Boolean, "open: run the project's custom code (filter chains, shaders) without the "
-                                            "app asking the user; only when the user said so"}},
+          {"trust_custom_code", T::Boolean, "open: run its custom code without asking; only when the user said so"}},
          cmdApp},
         {"watch", "Watch folders: new media files in a folder come into the project's media pool on their own (a screen "
                   "recorder's or game clip tool's output, renders of another program, a pipeline that drops "
@@ -986,13 +983,10 @@ const QVector<Command>& commands()
          cmdBrand},
         {"render", "Render the project timeline to a video, animated GIF, image sequence or audio file. Effects "
                    "this version does not have are left out and listed in the answer's skipped_effects (clip, "
-                   "effect, kind; reason \"untrusted\": custom code - filter chain, shader - the user did not write or "
-                   "confirm, see trust_custom_code).",
+                   "effect, kind; reason \"untrusted\" = custom code not confirmed).",
          {{"project", T::Path, "project file", true, true},
-          {"trust_custom_code", T::Boolean, "run the project's custom code (ffmpeg_filter chains, shaders, comp fx "
-                                            "nodes) although the user did not write or confirm it here (a project "
-                                            "from someone else); only when the user said so - else such effects are "
-                                            "skipped (skipped_effects reason \"untrusted\", `check` lists them)"},
+          {"trust_custom_code", T::Boolean, "run custom code (filters, shaders) from someone else's project; only when "
+                                            "the user said so, else it is skipped"},
           {"out", T::Path, "output file (extension added if missing). The format decides the codecs, the extension "
                            "the container, so it must fit: h264/h265 .mp4, .mov, .mkv; vp9 .webm, .mkv; wav .wav; "
                            "the error names the ones that fit", true},
