@@ -2,8 +2,6 @@
 // Timeline: drag and drop from the media pool, file manager and effects library.
 #include "ui/timeline/TimelineView.h"
 
-#include "ui/comp/CompShared.h"
-
 #include "app/InputBindings.h"
 #include "app/Theme.h"
 #include "core/Editor.h"
@@ -23,6 +21,7 @@
 #include "ui/MediaPool.h"
 #include "ui/SlotText.h"
 #include "ui/Viewer.h"
+#include "ui/comp/CompShared.h"
 
 #include <QDragEnterEvent>
 #include <QFileInfo>
