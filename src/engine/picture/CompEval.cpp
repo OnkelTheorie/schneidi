@@ -91,6 +91,7 @@ struct NodeState {
     bool needed = false;              // the output depends on it (and no cached node in between)
     bool hit = false;                 // static and found in the cache: its inputs are not evaluated
     bool fusedInto = false;           // a compound track painted straight onto the merge that reads it
+    int through = -1;                 // passes this node's picture on (unknown kind, tracker): every read is its read
     int track = -1;
 };
 
@@ -239,6 +240,20 @@ bool evaluate(const EffectInstance& comp, const Env& env, Cache* cache, Buf* out
         const auto it = state.constFind(l->from);
         return it == state.cend() ? nullptr : it->pic;
     };
+    // A node whose picture is its input's: no copy; the node owning the picture stays alive for this one's readers
+    auto passOn = [&](NodeState& s, const CompLink* l) {
+        if (!l) return;
+        const auto it = state.find(l->from);
+        if (it == state.end() || !it->pic) return;
+        s.pic = it->pic;
+        s.through = it->through >= 0 ? it->through : l->from;
+        state[s.through].readers += s.readers;
+    };
+    std::function<void(int)> drop = [&](int id) { // one read of node id done
+        NodeState& from = state[id];
+        if (--from.readers == 0) release(from);
+        if (from.through >= 0) drop(from.through);
+    };
 
     for (int id : order) {
         if (env.cancel && env.cancel->load(std::memory_order_relaxed)) {
@@ -257,6 +272,8 @@ bool evaluate(const EffectInstance& comp, const Env& env, Cache* cache, Buf* out
             continue; // read nothing
         } else if (s.fusedInto) {
             // made by the merge reading it
+        } else if (s.kind && !s.kind->passThrough.isEmpty()) {
+            passOn(s, g.linkInto(id, s.kind->passThrough));
         } else if (!s.kind) {
             // Unknown kind (newer version): its first connected input passed through
             if (stats) {
@@ -272,7 +289,7 @@ bool evaluate(const EffectInstance& comp, const Env& env, Cache* cache, Buf* out
                         through = &l;
                         break;
                     }
-            if (through) s.pic = inputOf(id, through->input);
+            passOn(s, through);
         } else if (s.kind->id == QLatin1String("clip") && env.clipPicture) {
             const int track = int(std::lround(valueOf(id, s.kind, "track")));
             if (track < 0 || !env.paintTrack) {
@@ -344,10 +361,7 @@ bool evaluate(const EffectInstance& comp, const Env& env, Cache* cache, Buf* out
         }
         // Inputs read for the last time go back to the pool
         for (const CompLink& l : g.links)
-            if (l.to == id && state.contains(l.from)) {
-                NodeState& from = state[l.from];
-                if (--from.readers == 0) release(from);
-            }
+            if (l.to == id && state.contains(l.from)) drop(l.from);
     }
     if (stats) stats->peakBuffers = std::max(stats->peakBuffers, peak);
 

@@ -98,6 +98,9 @@ struct NodeType {
     // a follower of a tracker). The engine caches a node when it is not varying, has no keyframes and all its inputs
     // are static
     bool varying = false;
+    // Set: the node's picture is this input's, unchanged (tracker). The engine hands that picture on without a copy;
+    // eval is only used by the single-node runner
+    QString passThrough;
     // Makes the node's picture into *out (taken from ctx.take or a moved input). false = nothing (as if not connected)
     std::function<bool(NodeCtx& ctx, Buf* out)> eval;
 

@@ -72,6 +72,7 @@ void registerTrackNodes(QVector<NodeType>& out)
              << number("scale", T("Größe"), 1, 0.01, 100, 0.01, 3) << number("angle", T("Drehung"), 0, -3600, 3600, 0.1, 2);
     k.output = Buf::Rgba;
     k.varying = false; // the picture is its input's; the results are keyframes the engine sees
+    k.passThrough = QStringLiteral("src"); // the engine hands the picture on without a copy
     k.eval = passThrough;
     out << k;
 }

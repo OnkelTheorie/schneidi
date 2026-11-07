@@ -426,6 +426,50 @@ void testEngine()
     CHECK(evaluate(comp(kinds, links, 5, follow), env, nullptr, &moved) && moved.px != plain.px);
 }
 
+// A node passing its input through (an unknown kind of a newer version, a tracker) keeps that picture alive for the
+// nodes after it, without a copy
+void testPassThrough()
+{
+    std::printf("pass-through keeps its input\n");
+    Buf clipPic(Buf::Rgba, 48, 32);
+    for (int i = 0; i < 48 * 32; ++i) {
+        clipPic.px[size_t(i) * 4] = uint8_t((i % 48) * 5);
+        clipPic.px[size_t(i) * 4 + 1] = uint8_t(i % 7 * 30);
+        clipPic.px[size_t(i) * 4 + 3] = uint8_t(i % 48 < 24 ? 255 : 120);
+    }
+    Env env;
+    env.size = QSize(48, 32);
+    env.clipPicture = [&]() -> const Buf* { return &clipPic; };
+    const QVariantMap v{{"n2.radius", 3}, {"n3.color", QColor(10, 200, 30)}};
+    Buf direct;
+    Stats sDirect;
+    // clip -> blur -> merge fg over a color; the same with a pass-through node between blur and merge
+    CHECK(evaluate(comp({"clip", "blur", "color", "merge"}, {{1, 2, "src"}, {3, 4, "bg"}, {2, 4, "fg"}}, 4, v), env,
+                   nullptr, &direct, &sDirect));
+    Buf blurOnly;
+    CHECK(evaluate(comp({"clip", "blur"}, {{1, 2, "src"}}, 2, v), env, nullptr, &blurOnly));
+    for (const QString& through : {QString("hologram"), QString(::Comp::kTrackerType)}) {
+        Stats s1, s2;
+        Buf a, b;
+        const QStringList kinds{"clip", "blur", "color", "merge", through};
+        CHECK(evaluate(comp(kinds, {{1, 2, "src"}, {2, 5, "src"}, {3, 4, "bg"}, {5, 4, "fg"}}, 4, v), env, nullptr, &a,
+                       &s1)
+              && a.px == direct.px);
+        CHECK(evaluate(comp(kinds, {{1, 2, "src"}, {2, 5, "src"}}, 5, v), env, nullptr, &b, &s2) && b.px == blurOnly.px);
+        CHECK(s1.peakBuffers == sDirect.peakBuffers && s2.peakBuffers == 1); // no copy
+        // Read by two nodes after it: both see the picture
+        const QVariantMap two{{"n2.radius", 3}, {"n4.radius", 1}};
+        Buf c, ref;
+        CHECK(evaluate(comp({"clip", "blur", "merge", "blur"}, {{1, 2, "src"}, {2, 3, "bg"}, {2, 4, "src"}, {4, 3, "fg"}},
+                            3, two),
+                       env, nullptr, &ref));
+        CHECK(evaluate(comp({"clip", "blur", "merge", "blur", through},
+                            {{1, 2, "src"}, {2, 5, "src"}, {5, 3, "bg"}, {5, 4, "src"}, {4, 3, "fg"}}, 3, two),
+                       env, nullptr, &c)
+              && c.px == ref.px);
+    }
+}
+
 // A node following a tracker (numOf) is cached only while the tracker's values are fixed, and keyed by them: an
 // analysed tracker (keyframes) moves it per frame, a new analysis or another value is seen with a cache
 void testFollowCached()
@@ -677,6 +721,7 @@ int main(int argc, char** argv)
     testEngine();
     testChoiceValues();
     testFollowCached();
+    testPassThrough();
     bench();
     if (!Check::haveFfmpeg()) return Check::skip("ffmpeg nicht gefunden");
     QTemporaryDir tmp;
