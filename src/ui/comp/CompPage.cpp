@@ -156,6 +156,7 @@ CompPage::CompPage(Editor* editor, QWidget* parent) : QWidget(parent), m_editor(
     connect(m_inspector, &CompInspector::outRequested, this, [this](int node) {
         m_editor->setCompOut(m_clipId, node, CompUi::kinds());
     });
+    connect(m_inspector, &CompInspector::extensionsRequested, this, &CompPage::extensionsRequested);
     connect(m_inspector, &CompInspector::keyPickRequested, this,
             [this](int node, const QString& key) { emit keyPickRequested(m_clipId, node, key); });
     connect(m_showNode, &QToolButton::toggled, this, &CompPage::viewChanged);

@@ -15,6 +15,9 @@
 #include "core/Selection.h"
 #include "core/TimelineOps.h"
 #include "engine/Engine.h"
+#include "engine/PersonMatte.h"
+#include "engine/picture/CompCutout.h"
+#include "engine/picture/CutoutCleanup.h"
 #include "engine/picture/CustomEffects.h"
 #include "ui/EffectsLibrary.h"
 #include "ui/Inspector.h"
@@ -35,7 +38,10 @@
 #include <QMimeData>
 #include <QTemporaryDir>
 #include <QTest>
+#include <QDialog>
 #include <QScrollArea>
+#include <QSignalSpy>
+#include <QTimer>
 #include <QScrollBar>
 #include <QToolButton>
 #include <QTreeWidget>
@@ -44,6 +50,23 @@
 #include <clocale>
 
 namespace {
+
+// Stand-in model: "person" = pixels redder than green, as two-channel logits (like test_comp_cutout)
+PersonMatte::Segmenter standIn()
+{
+    PersonMatte::Segmenter s;
+    s.spec = PersonMatte::Spec{};
+    s.way = "stand-in";
+    s.run = [spec = s.spec](const Inference::Tensor& in, QString*) -> std::optional<Inference::Tensor> {
+        const size_t n = size_t(spec.width) * spec.height;
+        Inference::Tensor out;
+        out.shape = {1, 2, spec.height, spec.width};
+        out.data.assign(2 * n, 0.0f);
+        for (size_t i = 0; i < n; ++i) out.data[n + i] = (in.data[i] - in.data[n + i]) * 8.0f;
+        return out;
+    };
+    return s;
+}
 
 void dump(QWidget* w, const QString& name)
 {
@@ -301,6 +324,86 @@ int main(int argc, char** argv)
             std::puts("note: no FFmpeg filters here, only the refusal checked");
         }
     }
+    // ---- Analysis buttons: cutout (with a stand-in model) and tracker, in the background, one undo step ----
+    {
+        CompGraph g;
+        g.nodes << CompNode{1, "clip", {}} << CompNode{2, "cutout", {}} << CompNode{3, "tracker", {}};
+        g.links << CompLink{1, 2, "src"} << CompLink{1, 3, "src"};
+        g.out = 2;
+        QString why;
+        CHECK(w.editor()->setCompGraph({clip2}, g, {}, CompUi::kinds(), &why));
+        w.openComp(clip2);
+        CompPage* page = w.compPage();
+        CompInspector* ins = page->inspector();
+
+        // Without the model: a clear hint and a button that opens the extensions dialog
+        PersonMatte::setStandIn(std::nullopt);
+        page->selectNode(2);
+        settle();
+        if (!PersonMatte::available()) {
+            auto* analyze = ins->findChild<QPushButton*>("comp_analyze");
+            auto* open = ins->findChild<QPushButton*>("comp_open_extensions");
+            if (!CHECK(analyze && open)) return Check::result();
+            CHECK(!analyze->isEnabled());
+            CHECK(open->isVisibleTo(ins));
+            CHECK(ins->findChild<QLabel*>("comp_analyze_status")->text().contains("Erweiterung"));
+            QSignalSpy spy(ins, &CompInspector::extensionsRequested);
+            QTimer::singleShot(200, [] { // the dialog is modal: close it
+                if (auto* d = qobject_cast<QDialog*>(QApplication::activeModalWidget())) d->reject();
+            });
+            open->click();
+            CHECK_EQ(int(spy.count()), 1);
+        } else {
+            std::puts("note: a cutout model is installed here, the hint without it is not checked");
+        }
+
+        // With the stand-in: analysis in the background, then the node's cache value (one undo step)
+        PersonMatte::setStandIn(standIn());
+        page->refresh();
+        settle();
+        auto* analyze = ins->findChild<QPushButton*>("comp_analyze");
+        if (!CHECK(analyze && analyze->isEnabled())) return Check::result();
+        int idx = undo->index();
+        analyze->click();
+        CHECK(ins->analyzing());
+        CHECK(QTest::qWaitFor([&] { return !ins->analyzing(); }, 60000));
+        settle();
+        CHECK_EQ(undo->index(), idx + 1);
+        const Clip* c = TimelineOps::findClip(project->timeline(), clip2);
+        const QString cache = CompUi::nodeValues(*c, 2).value("cache").toString();
+        CHECK(!cache.isEmpty());
+        CHECK(QFileInfo::exists(Picture::Comp::cutoutCachePath(cache)));
+        CHECK_EQ(ins->findChild<QLabel*>("comp_analyze_status")->text(), QString("Fertig"));
+        PersonMatte::setStandIn(std::nullopt);
+
+        // Cache cleanup: the analysis stays while a node names it, goes once none does
+        CHECK(Picture::Comp::cutoutCachesOf(project->data()).contains(cache));
+        bool listed = false;
+        for (const auto& f : Picture::Comp::unusedCutoutCaches(Picture::Comp::cutoutCachesOf(project->data())))
+            listed |= f.id == cache;
+        CHECK(!listed);
+        undo->undo(); // the node without its analysis
+        listed = false;
+        for (const auto& f : Picture::Comp::unusedCutoutCaches(Picture::Comp::cutoutCachesOf(project->data())))
+            listed |= f.id == cache;
+        CHECK(listed);
+        undo->redo();
+
+        // Tracker: "Tracken" from the playhead to the clip's end, keyframes of x/y
+        page->selectNode(3);
+        settle();
+        analyze = ins->findChild<QPushButton*>("comp_analyze");
+        if (!CHECK(analyze && analyze->isEnabled() && analyze->text() == "Tracken")) return Check::result();
+        idx = undo->index();
+        analyze->click();
+        CHECK(QTest::qWaitFor([&] { return !ins->analyzing(); }, 60000));
+        settle();
+        CHECK_EQ(undo->index(), idx + 1);
+        c = TimelineOps::findClip(project->timeline(), clip2);
+        CHECK(CompUi::animated(*c, 3, "x"));
+        CHECK(ins->findChild<QLabel*>("comp_analyze_status")->text().startsWith("Fertig"));
+    }
+
     // ---- Title 3D in the Edit inspector: each change one undo step, a value switches 3D on ----
     {
         w.showPage(MainWindow::Page::Edit);

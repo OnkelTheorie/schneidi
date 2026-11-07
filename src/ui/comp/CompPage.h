@@ -59,6 +59,7 @@ signals:
     void keyPickRequested(int clipId, int node, const QString& key);
     void message(const QString& text);
     void recipeSaved(const QString& id); // the Effects Library lists it
+    void extensionsRequested();          // a node's analysis needs an extension (the cutout model)
 
 private:
     void updateHeader();

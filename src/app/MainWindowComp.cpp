@@ -3,6 +3,7 @@
 // pipette of a key node.
 #include "app/MainWindow.h"
 
+#include "app/ExtensionsDialog.h"
 #include "core/CompRecipes.h"
 #include "core/EffectRegistry.h"
 #include "core/I18n.h"
@@ -43,6 +44,11 @@ void MainWindow::ensureCompPage()
     connect(m_compPage, &CompPage::message, this, [this](const QString& t) { statusBar()->showMessage(t, 5000); });
     connect(m_compPage, &CompPage::keyPickRequested, this, &MainWindow::startCompKeyPick);
     connect(m_compPage, &CompPage::recipeSaved, m_effects, &EffectsLibrary::refreshRecipes);
+    connect(m_compPage, &CompPage::extensionsRequested, this, [this] {
+        ExtensionsDialog ext(this);
+        ext.exec();
+        m_compPage->refresh(); // the model may be there now
+    });
     // Another video clip selected while the page shows: its graph
     connect(m_selection, &Selection::changed, m_compPage, [this] {
         if (m_page != Page::Comp) return;

@@ -288,6 +288,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/engine/MaskRaster.h       src/engine/MaskRaster.cpp
     src/engine/picture/CompTrack.h src/engine/picture/CompTrack.cpp
     src/engine/picture/CompNodesCutout.cpp src/engine/picture/CompCutout.h src/engine/picture/CompCutout.cpp
+    src/engine/picture/CutoutCleanup.h src/engine/picture/CutoutCleanup.cpp
     src/engine/PersonMatte.h src/engine/PersonMatte.cpp
     src/engine/picture/CompEval.h src/engine/picture/CompEval.cpp src/engine/video/Blend.h
     src/engine/picture/ReviewOverlay.h src/engine/picture/ReviewOverlay.cpp
