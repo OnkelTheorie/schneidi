@@ -2400,6 +2400,7 @@ struct Renderer::Impl {
     struct GpuKeep {
         std::vector<Gpu::TexturePtr> textures;
         std::vector<std::vector<uint8_t>> buffers;
+        bool compRefused = false; // a compositing graph the card did not make: the frame goes the CPU way
     };
 
     // GPU thread: the draws onto dst (size of the output)
@@ -2439,9 +2440,11 @@ struct Renderer::Impl {
                     src = g.uploadRgba(op.rgba->data(), op.rgba->w, op.rgba->h, op.premultiplied);
                 } else if (op.comp) {
                     src = Gpu::runComp(g, *op.comp, &keep.textures);
-                    if (!src) {
+                    if (!src) { // (a pass or a texture refused) not a frame without the clip: the CPU makes it
+                        keep.compRefused = true;
                         static std::once_flag warned;
-                        std::call_once(warned, [] { qWarning("Picture engine: compositing graph refused by the card"); });
+                        std::call_once(warned, [] { qWarning("Picture engine: compositing graph refused by the card (frame on the CPU)"); });
+                        return;
                     }
                 }
                 if (!src) break;
@@ -2506,6 +2509,7 @@ struct Renderer::Impl {
             Gpu::TexturePtr canvas = g.target(size, transparent ? nullptr : black);
             if (!canvas) return;
             runOps(g, *canvas, ops, size, keep);
+            if (keep.compRefused) return;
             if (yuv) yuvDone = g.readYuv(*canvas, *yuv);
             if (!yuvDone) {
                 if (!rgba) return; // the card could not write the planes after all: CPU path
