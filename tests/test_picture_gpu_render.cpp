@@ -8,6 +8,7 @@
 
 #include "check.h"
 
+#include "core/CompGraph.h"
 #include "core/EffectRegistry.h"
 #include "engine/OutputColor.h"
 #include "engine/picture/Renderer.h"
@@ -284,6 +285,50 @@ int main(int argc, char** argv)
         Picture::Renderer r(vfill, o);
         r.render(4);
         CHECK_EQ(r.stats().layersCpu, 0); // all on the card
+    }
+
+    // Compositing graphs (0.19): evaluated on the card (only the clip's picture made on the CPU), the same frames as
+    // CompEval on the CPU; with the clip's transform/crop/opacity, and as one side of a dissolve
+    {
+        auto withComp = [](Clip c) {
+            EffectInstance e;
+            e.effectId = ::Comp::kEffectId;
+            CompGraph g;
+            const char* types[] = {"clip", "key", "gradient", "merge", "mask", "blur"};
+            for (int i = 0; i < 6; ++i) g.nodes << CompNode{i + 1, types[i], QPointF()};
+            // clip -> luma key -> merge over a gradient -> blur in a soft ellipse -> out
+            g.links = {{1, 2, "src"}, {3, 4, "bg"}, {2, 4, "fg"}, {4, 6, "src"}, {5, 6, "mask"}};
+            g.out = 6;
+            ::Comp::setGraph(e, g);
+            e.params.insert("n2.mode", "luma");
+            e.params.insert("n2.low", 0.25);
+            e.params.insert("n2.soft", 0.1);
+            e.params.insert("n3.c0", "#ff302060");
+            e.params.insert("n3.c1", "#ff60c0a0");
+            e.params.insert("n5.shape", "ellipse");
+            e.params.insert("n5.soft", 20.0);
+            e.params.insert("n6.radius", 5.0);
+            c.effects << e;
+            return c;
+        };
+        Timeline plain = oneTrack({withComp(media(1, g_a, 0, 30))});
+        same("comp graph", plain, {0, 17}, 1.5, 30);
+        Timeline placed = plain;
+        Clip& c = placed.video[0].clips[0];
+        c.transform.zoomX = c.transform.zoomY = 0.7;
+        c.transform.posX = 60;
+        c.transform.cropLeft = 40;
+        c.transform.opacity = 70;
+        same("comp graph transform+crop", placed, {5}, 1.5, 30);
+        for (const Timeline* tl : {&plain, &placed}) {
+            Picture::Renderer r(*tl, options(Picture::Mode::Export, true));
+            r.render(5);
+            CHECK_EQ(r.stats().layersCompGpu, 1);
+            CHECK_EQ(r.stats().layersCpu, 0);
+        }
+        Timeline dissolve = oneTrack({withComp(media(1, g_a, 0, 30)), media(2, g_b, 30, 30)});
+        transition(dissolve, TransitionType::CrossDissolve);
+        same("comp graph in a dissolve", dissolve, {27, 31}, 1.5, 30);
     }
 
     // Encoder planes from the card (4:2:0 and NV12) against OutputColor::fromRgba of the CPU frame

@@ -20,12 +20,14 @@
 
 #include <QElapsedTimer>
 #include <QGuiApplication>
+#include <QSurfaceFormat>
 
 #include <cmath>
 #include <cstring>
 #include <vector>
 
 using namespace Picture;
+namespace PC = Picture::Comp;
 
 namespace {
 
@@ -45,9 +47,9 @@ EffectInstance comp(const QStringList& types, const QVector<CompLink>& links, in
 }
 
 // A figure on a green screen: green background, a shaded disc (skin-ish to blue), a gray bar, a green-tinted fringe
-Comp::Buf greenScreen(int w, int h)
+PC::Buf greenScreen(int w, int h)
 {
-    Comp::Buf b(Comp::Buf::Rgba, w, h);
+    PC::Buf b(PC::Buf::Rgba, w, h);
     for (int y = 0; y < h; ++y)
         for (int x = 0; x < w; ++x) {
             uint8_t* p = b.data() + (size_t(y) * w + x) * 4;
@@ -92,20 +94,20 @@ std::vector<uint8_t> runCard(const Gpu::CompPlan& plan, QSize size, bool read = 
     return out;
 }
 
-Comp::Env envFor(const Comp::Buf& clip)
+PC::Env envFor(const PC::Buf& clip)
 {
-    Comp::Env env;
+    PC::Env env;
     env.size = QSize(clip.w, clip.h);
     env.clipPicture = [&clip]() { return &clip; };
     return env;
 }
 
-Result compare(const EffectInstance& e, const Comp::Buf& clip)
+Result compare(const EffectInstance& e, const PC::Buf& clip)
 {
     Result r;
-    const Comp::Env env = envFor(clip);
-    Comp::Buf cpu;
-    r.cpu = Comp::evaluate(e, env, nullptr, &cpu);
+    const PC::Env env = envFor(clip);
+    PC::Buf cpu;
+    r.cpu = PC::evaluate(e, env, nullptr, &cpu);
     QString why;
     const Gpu::CompPlanPtr plan = Gpu::planComp(e, env, nullptr, &why);
     if (!plan) {
@@ -131,10 +133,12 @@ Result compare(const EffectInstance& e, const Comp::Buf& clip)
     return r;
 }
 
-void same(const char* name, const EffectInstance& e, const Comp::Buf& clip, int tolerance = 2)
+void same(const char* name, const EffectInstance& e, const PC::Buf& clip, int tolerance = 2)
 {
     const Result r = compare(e, clip);
     const bool ok = r.cpu && r.gpu && r.maxColor <= tolerance && r.maxAlpha <= tolerance;
+    if (qEnvironmentVariableIsSet("COMP_GPU_VERBOSE"))
+        std::printf("%-60s max colour %d alpha %d, %.2f %% off by > 1\n", name, r.maxColor, r.maxAlpha, r.off);
     Check::report(ok, name, __FILE__, __LINE__,
                   QString("cpu %1 gpu %2, max colour %3, alpha %4, %5 % of pixels off by > 1")
                       .arg(r.cpu).arg(r.gpu).arg(r.maxColor).arg(r.maxAlpha).arg(r.off, 0, 'f', 2));
@@ -184,6 +188,12 @@ EffectInstance recipeLook()
 int main(int argc, char** argv)
 {
     Check::initEnv();
+    // A headless machine's card through EGL (SCHNEIDI_TEST_QPA=eglfs): desktop OpenGL, as on a desktop
+    if (qEnvironmentVariable("SCHNEIDI_TEST_QPA") == QLatin1String("eglfs")) {
+        QSurfaceFormat f = QSurfaceFormat::defaultFormat();
+        f.setRenderableType(QSurfaceFormat::OpenGL);
+        QSurfaceFormat::setDefaultFormat(f);
+    }
     QGuiApplication app(argc, argv);
     Check::initApp("comp_gpu");
 
@@ -195,7 +205,7 @@ int main(int argc, char** argv)
     g_gpu = gpu.get();
     std::printf("GPU: %s on %s\n", qPrintable(gpu->info().api), qPrintable(gpu->info().device));
 
-    const Comp::Buf pic = greenScreen(320, 180);
+    const PC::Buf pic = greenScreen(320, 180);
 
     // 1. Merge: every mode, over the opaque picture and over a transparent band, with opacity, with a mask
     const char* modes[] = {"normal", "add", "screen", "multiply", "overlay", "darken", "lighten", "difference"};
@@ -258,15 +268,17 @@ int main(int argc, char** argv)
     same("transform", comp({"clip", "transform"}, {{1, 2, "src"}}, 2, {{"n2.x", 0.4}, {"n2.size", 0.8}, {"n2.angle", 12.0}}), pic);
     same("transform enlarged", comp({"clip", "transform"}, {{1, 2, "src"}}, 2, {{"n2.size", 1.7}, {"n2.ay", 0.3}}), pic);
     same("crop", comp({"clip", "crop"}, {{1, 2, "src"}}, 2, {{"n2.left", 0.1}, {"n2.top", 0.237}, {"n2.right", 0.3}}), pic);
-    same("grade", comp({"clip", "grade"}, {{1, 2, "src"}}, 2, {{"n2.saturation", 80.0}, {"n2.contrast", 1.1}}), pic, 3);
+    same("grade", comp({"clip", "grade"}, {{1, 2, "src"}}, 2, {{"n2.saturation", 80.0}, {"n2.contrast", 1.1}}), pic);
+    same("grade in a mask", comp({"clip", "grade", "mask"}, {{1, 2, "src"}, {3, 2, "mask"}}, 2,
+                                 {{"n2.saturation", 20.0}, {"n3.shape", "rect"}, {"n3.soft", 8.0}}), pic);
 
     // 5. Recipes
     same("recipe green screen over a background with a title band", recipeGreenScreen(), pic);
-    same("recipe key -> grade -> transform over a blurred background", recipeLook(), pic, 3);
+    same("recipe key -> grade -> transform over a blurred background", recipeLook(), pic);
 
     // 6. Split rule
     {
-        const Comp::Env env = envFor(pic);
+        const PC::Env env = envFor(pic);
         QString reason;
         CHECK(!Gpu::planComp(comp({"clip", "key", "fx"}, {{1, 2, "src"}, {2, 3, "src"}}, 3), env, nullptr, &reason));
         CHECK(reason.contains("after a node on the card"));
@@ -277,8 +289,8 @@ int main(int argc, char** argv)
 
     // Timing at 1920x1080
     if (const int n = qEnvironmentVariableIntValue("COMP_GPU_BENCH"); n > 0) {
-        const Comp::Buf big = greenScreen(1920, 1080);
-        const Comp::Env env = envFor(big);
+        const PC::Buf big = greenScreen(1920, 1080);
+        const PC::Env env = envFor(big);
         struct Bench {
             const char* name;
             EffectInstance e;
@@ -292,12 +304,12 @@ int main(int argc, char** argv)
                                     merged(band(2, 0, 1, "#40ff3010", "#f010a0ff"), {{"n3.mode", "multiply"}}))},
         };
         for (const Bench& b : benches) {
-            Comp::Cache cache;
-            Comp::Buf out;
-            Comp::evaluate(b.e, env, &cache, &out); // warm up (static nodes cached, as in playback)
+            PC::Cache cache;
+            PC::Buf out;
+            PC::evaluate(b.e, env, &cache, &out); // warm up (static nodes cached, as in playback)
             QElapsedTimer t;
             t.start();
-            for (int i = 0; i < n; ++i) Comp::evaluate(b.e, env, &cache, &out);
+            for (int i = 0; i < n; ++i) PC::evaluate(b.e, env, &cache, &out);
             const double cpu = double(t.nsecsElapsed()) / 1e6 / n;
             Gpu::CompPlanPtr plan = Gpu::planComp(b.e, env, &cache);
             if (!plan) {

@@ -69,10 +69,10 @@ void main()
     vec4 bgTexel = hasBg ? texelFetch(tex0, p, 0) : vec4(0.0);
     if (P1.y > 0.5) { // mix by mask
         int k = int(clamp(texelFetch(tex2, p, 0).a, 0.0, 1.0) * 255.0 + 0.5);
-        vec4 fx = texelFetch(tex1, p, 0);
+        vec4 source = texelFetch(tex0, p, 0), fx = texelFetch(tex1, p, 0);
         if (k >= 255) { fragColor = fx; return; }
-        if (k <= 0) { fragColor = bgTexel; return; }
-        ivec4 s = bytesOf(bgTexel), r = bytesOf(fx);
+        if (k <= 0) { fragColor = source; return; }
+        ivec4 s = bytesOf(source), r = bytesOf(fx);
         fragColor = colorOf(s + ivec4(divT((r.r - s.r) * k, 255), divT((r.g - s.g) * k, 255), divT((r.b - s.b) * k, 255),
                                       divT((r.a - s.a) * k, 255)));
         return;
