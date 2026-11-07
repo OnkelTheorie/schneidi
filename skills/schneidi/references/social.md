@@ -118,6 +118,10 @@ template - `templates` `fill` with the clips and the hook text ([templates.md](t
     "suffix":" kills","at":"2s","duration":"1.5s","size":160}` counts up over its length (`ease` out by default,
     `decimals`, `prefix` like "$", `separators` `"comma_point"` 1,000 / `"point_comma"` 1.000 / `"space_comma"`;
     a new counter takes the UI language's and keeps them). Same style fields as a text title.
+  - **Title looks** when a plain color is not enough: `gradient` (`["#ffd200","#ff3c00"]`, top to bottom; or
+    `{"stops":[…],"angle":0}`), `texture` (a picture file the letters show), `edge3d` (an extruded 2.5D edge, `true` or
+    `{"depth":12,"angle":45,"color":"#3c3c3c"}`), `shadow` (`true` or `{"x":6,"y":6,"soft":6,"opacity":0.6}`), `glow`
+    (`{"radius":16,"strength":0.5}`). One or two per title; glow and a deep edge only for the big moment.
   - **Pushes and whip pans** between shots instead of dissolves: `transition` with `type` `push_left`/`push_up` …
     (the new shot pushes the old one out) or `whip_left` … (a fast push with motion blur; `blur` 0-100), 0.2-0.4 s
     on the beat. `ease` (`in_out` is the default for whips) shapes the speed; wipes (`wipe_*`, `softness`) work too.

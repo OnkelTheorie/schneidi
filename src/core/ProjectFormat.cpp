@@ -179,6 +179,9 @@ void scaleTimeline(Timeline& tl, QSize from, QSize to)
                 ti.size *= ts;
                 ti.outlineWidth *= ts;
                 ti.boxPad *= ts;
+                for (double* v : {&ti.look.edgeDepth, &ti.look.shadowX, &ti.look.shadowY, &ti.look.shadowSoft,
+                                  &ti.look.glowRadius, &ti.look.texX, &ti.look.texY})
+                    *v *= ts;
                 ti.barThickness *= sy;
                 ti.barMargin *= sy;
                 c.transInStyle.border *= s;

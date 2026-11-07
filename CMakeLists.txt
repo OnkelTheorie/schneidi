@@ -113,6 +113,7 @@ endif()
 # All program sources except main.cpp: shared by the app and the tests
 add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/core/Types.h
+    src/core/TitleLookJson.h      src/core/TitleLookJson.cpp
     src/core/I18n.h               src/core/I18n.cpp
     src/core/Timecode.h
     src/core/TimelineOps.h        src/core/TimelineOps.cpp
@@ -250,6 +251,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/engine/picture/CompNodes.h src/engine/picture/CompNodes.cpp
     src/engine/picture/CompNodesCore.cpp src/engine/picture/CompNodesMask.cpp src/engine/picture/CompNodesKey.cpp
     src/engine/picture/CompNodesTrack.cpp src/engine/picture/CompNodesStyle.cpp
+    src/engine/picture/TitleLook.h src/engine/picture/TitleLook.cpp
     src/engine/picture/ReviewOverlay.h src/engine/picture/ReviewOverlay.cpp
     src/engine/picture/Interpolate.h src/engine/picture/Interpolate.cpp
     src/engine/picture/Pump.h     src/engine/picture/Pump.cpp

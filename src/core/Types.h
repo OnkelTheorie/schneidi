@@ -133,6 +133,63 @@ inline const NumberStyleInfo& numberStyleInfo(NumberStyle n)
 // Progress bar: filled from the timeline's start to its end wherever the clip sits, or over the clip's own length
 enum class ProgressSpan { Timeline, Clip };
 
+// How a title's letters are filled (0.19): one colour, a linear gradient or a picture from the media pool
+enum class TitleFill { Solid, Gradient, Texture };
+struct TitleFillInfo { TitleFill fill; const char* id; const char* name; };
+inline constexpr TitleFillInfo kTitleFills[] = {
+    {TitleFill::Solid, "solid", N_("Einfarbig")},
+    {TitleFill::Gradient, "gradient", N_("Verlauf")},
+    {TitleFill::Texture, "texture", N_("Textur")},
+};
+// One colour of a gradient at its place along it (0..1)
+struct ColorStop {
+    double at = 0;
+    QColor color;
+    bool operator==(const ColorStop&) const = default;
+};
+
+// Look of a title beyond colour/outline/box (0.19): fill, 2.5D edge, drop shadow, glow. All off by default; a project
+// file holds a group only when it differs from the default, so older versions open the title as before (plain fill).
+// Lengths in pixels of the project format, angles in degrees clockwise (0 = right, 90 = down).
+struct TitleLook {
+    TitleFill fill = TitleFill::Solid;
+    QVector<ColorStop> stops;  // gradient: 2..4 stops (fewer: from the title colour to a darker one)
+    double gradAngle = 90;     // direction the gradient runs (90 = top to bottom)
+    QString texture;           // picture file (media pool) the letters show
+    double texScale = 1;       // 1 = the picture as wide as the text block
+    double texX = 0, texY = 0; // offset of the picture (pixels)
+    bool edgeOn = false;       // extrusion: stacked darker copies of the letters
+    double edgeDepth = 12;
+    double edgeAngle = 45;     // direction the edge goes from the letters (45 = down right)
+    QColor edgeColor{60, 60, 60};
+    bool edgeLight = true;     // light from the top: the edge brighter at the top, darker at the bottom
+    bool shadowOn = false;
+    double shadowX = 6, shadowY = 6; // offset (y down)
+    double shadowSoft = 6;     // blur radius
+    QColor shadowColor = Qt::black;
+    double shadowOpacity = 0.6;
+    bool glowOn = false;
+    double glowRadius = 16;
+    QColor glowColor = Qt::white;
+    double glowStrength = 0.5; // 0..1 (mild by default)
+
+    bool styledFill() const { return fill == TitleFill::Gradient || (fill == TitleFill::Texture && !texture.isEmpty()); }
+    bool behind() const { return (edgeOn && edgeDepth > 0) || shadowOn || (glowOn && glowStrength > 0); }
+    bool active() const { return styledFill() || behind(); }
+    // The gradient's stops as drawn: sorted, 2..4, from the title colour when fewer are set
+    QVector<ColorStop> gradientStops(const QColor& base) const
+    {
+        QVector<ColorStop> s = stops.mid(0, 4);
+        if (s.size() < 2) {
+            const QColor from = s.isEmpty() ? base : s[0].color;
+            s = {{0, from}, {1, from.darker(170)}};
+        }
+        std::stable_sort(s.begin(), s.end(), [](const ColorStop& a, const ColorStop& b) { return a.at < b.at; });
+        return s;
+    }
+    bool operator==(const TitleLook&) const = default;
+};
+
 // Title (text generator as in DaVinci): values in pixels of the project format
 struct TitleStyle {
     QString text = QStringLiteral("Titel");
@@ -167,6 +224,7 @@ struct TitleStyle {
     // Brand kit references (core/BrandKit.h, 0.18): 0 = the fixed value above, n = brand colour / font n. The value
     // stays stored next to the reference (rendering never reads the kit); Editor::applyBrand copies the kit's in.
     int colorRef = 0, outlineRef = 0, boxRef = 0, fontRef = 0;
+    TitleLook look; // fill, edge, shadow, glow (0.19; text and counter titles)
     bool hasBrandRef() const { return colorRef || outlineRef || boxRef || fontRef; }
 
     bool isCounter() const { return kind == TitleKind::Counter; }

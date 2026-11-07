@@ -439,3 +439,5 @@ foreach(_rnn_src nnet.c nnet_default.c)
             -I${PROJECT_SOURCE_DIR}/third_party/rnnoise/src -I${PROJECT_SOURCE_DIR}/third_party/rnnoise/include
             ${PROJECT_SOURCE_DIR}/third_party/rnnoise/src/${_rnn_src})
 endforeach()
+schneidi_test(test_title_style) # title looks: gradient/texture fill, 2.5D edge, shadow, glow, file, op title, nodes text/shadow/glitch
+target_link_libraries(test_title_style PRIVATE schneidi_cli_lib)

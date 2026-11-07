@@ -236,8 +236,208 @@ void Inspector::buildTitlePage(QVBoxLayout* page)
             for (QWidget* w : textOnly) w->setVisible(!c->title.isProgress());
     };
 
+    buildLookSections(page);
     buildGeneratorSections(page, ol);
     page->addStretch(1);
+}
+
+void Inspector::buildLookSections(QVBoxLayout* page)
+{
+    const TrackKind V = TrackKind::Video;
+    auto current = [this]() -> const Clip* { return primary(TrackKind::Video, true); };
+    auto combo = [] {
+        auto* c = new QComboBox;
+        c->setFocusPolicy(Qt::ClickFocus);
+        return c;
+    };
+    // Changing a value of a group switches it on (like outline and box)
+    auto autoOn = [this, V](Param* p, const QString& key, const QString& text, const std::function<void(Clip&)>& on) {
+        p->edit->onChange = [this, p, key, text, on, V](double v) {
+            if (p->slider) { // X/Y fields have none
+                const QSignalBlocker b(p->slider);
+                p->slider->setValue(sliderPos(v, p->min, p->max));
+            }
+            apply(V, key, text, [p, v, on](Clip& c) {
+                p->field(c) = v;
+                on(c);
+            }, true);
+        };
+    };
+    // The gradient's first two stops as fields (3 and 4 stops through the CLI keep their places)
+    auto stop = [](Clip& c, int i) -> QColor& {
+        QVector<ColorStop>& s = c.title.look.stops;
+        if (s.size() < 2) {
+            const QVector<ColorStop> d = c.title.look.gradientStops(c.title.color);
+            s = {d[0], d[1]};
+        }
+        return s[i].color;
+    };
+    QVector<std::pair<Section, std::function<bool(const TitleStyle&)>>> shown;
+
+    // ---- Fill: one colour, gradient or a picture of the media pool ----
+    Section fill = addSection(page, V, T("Füllung"), [](Clip& c) {
+        const TitleLook d;
+        TitleLook& l = c.title.look;
+        l.fill = d.fill;
+        l.stops = d.stops;
+        l.gradAngle = d.gradAngle;
+        l.texture = d.texture;
+        l.texScale = d.texScale;
+        l.texX = d.texX;
+        l.texY = d.texY;
+    }, {}, true);
+    auto* kind = combo();
+    for (const auto& f : kTitleFills) kind->addItem(T(f.name), int(f.fill));
+    connect(kind, &QComboBox::activated, this, [this, V, kind] {
+        const auto f = TitleFill(kind->currentData().toInt());
+        apply(V, {}, T("Füllung"), [f](Clip& c) { c.title.look.fill = f; }, true);
+    });
+    fill.grid->addWidget(rowLabel(T("Art")), fill.rows, 0);
+    fill.grid->addWidget(kind, fill.rows++, 1);
+    const int gradRow = fill.rows;
+    const auto toGradient = [](Clip& c) { c.title.look.fill = TitleFill::Gradient; };
+    addColor(fill, T("Farbe oben"), T("Verlaufsfarbe"), [stop](Clip& c) -> QColor& { return stop(c, 0); }, true,
+             toGradient);
+    addColor(fill, T("Farbe unten"), T("Verlaufsfarbe"), [stop](Clip& c) -> QColor& { return stop(c, 1); }, true,
+             toGradient);
+    autoOn(addSlider(fill, "titleGradAngle", T("Winkel"), -180, 180, TitleLook().gradAngle, 1, 0,
+                     [](Clip& c) -> double& { return c.title.look.gradAngle; }),
+           "titleGradAngle", T("Verlaufswinkel"), toGradient);
+    const int texRow = fill.rows;
+    auto* picture = combo();
+    picture->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+    picture->setMinimumContentsLength(8);
+    picture->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+    picture->setToolTip(T("Ein Bild aus dem Media Pool füllt die Buchstaben"));
+    connect(picture, &QComboBox::activated, this, [this, V, picture] {
+        const QString path = picture->currentData().toString();
+        apply(V, {}, T("Textur"), [path](Clip& c) {
+            c.title.look.texture = path;
+            if (!path.isEmpty()) c.title.look.fill = TitleFill::Texture;
+        }, true);
+    });
+    fill.grid->addWidget(rowLabel(T("Bild")), fill.rows, 0);
+    fill.grid->addWidget(picture, fill.rows++, 1);
+    const auto toTexture = [](Clip& c) {
+        if (!c.title.look.texture.isEmpty()) c.title.look.fill = TitleFill::Texture;
+    };
+    autoOn(addSlider(fill, "titleTexScale", T("Maßstab"), 0.05, 10, TitleLook().texScale, 0.01, 2,
+                     [](Clip& c) -> double& { return c.title.look.texScale; }),
+           "titleTexScale", T("Texturmaßstab"), toTexture);
+    addXY(fill, "titleTexPos", T("Versatz"), -10000, 10000, 0, 1, 0, [](Clip& c) -> double& { return c.title.look.texX; },
+          [](Clip& c) -> double& { return c.title.look.texY; });
+    const QVector<QWidget*> gradWidgets = rowWidgets(fill.grid, gradRow, texRow);
+    const QVector<QWidget*> texWidgets = rowWidgets(fill.grid, texRow, fill.rows);
+    m_refreshers << [this, current, kind, picture, gradWidgets, texWidgets] {
+        const Clip* c = current();
+        if (!c) return;
+        const TitleLook& l = c->title.look;
+        const QSignalBlocker b1(kind), b2(picture);
+        kind->setCurrentIndex(kind->findData(int(l.fill)));
+        for (QWidget* w : gradWidgets) w->setVisible(l.fill == TitleFill::Gradient);
+        for (QWidget* w : texWidgets) w->setVisible(l.fill == TitleFill::Texture);
+        // Pictures of the media pool (and the title's own, also when it is not in the pool any more)
+        picture->clear();
+        picture->addItem(T("Kein Bild"), QString());
+        for (const MediaInfo& m : m_editor->project()->media())
+            if (m.isImage) picture->addItem(m.name.isEmpty() ? QFileInfo(m.path).fileName() : m.name, m.path);
+        if (!l.texture.isEmpty() && picture->findData(l.texture) < 0)
+            picture->addItem(QFileInfo(l.texture).fileName(), l.texture);
+        picture->setCurrentIndex(std::max(0, picture->findData(l.texture)));
+    };
+    shown.append({fill, [](const TitleStyle& t) { return !t.isProgress(); }});
+
+    // ---- Edge: 2.5D extrusion ----
+    const Flag edgeOn = [](Clip& c) -> bool& { return c.title.look.edgeOn; };
+    const auto edgeSwitch = [](Clip& c) { c.title.look.edgeOn = true; };
+    Section edge = addSection(page, V, T("Kante"), [](Clip& c) {
+        const TitleLook d;
+        TitleLook& l = c.title.look;
+        l.edgeDepth = d.edgeDepth;
+        l.edgeAngle = d.edgeAngle;
+        l.edgeColor = d.edgeColor;
+        l.edgeLight = d.edgeLight;
+    }, edgeOn, true);
+    edge.header->setToolTip(T("3D-Kante: die Buchstaben bekommen eine Tiefe in eine Richtung"));
+    autoOn(addSlider(edge, "titleEdgeDepth", T("Tiefe"), 0, 200, TitleLook().edgeDepth, 0.5, 1,
+                     [](Clip& c) -> double& { return c.title.look.edgeDepth; }),
+           "titleEdgeDepth", T("Kante"), edgeSwitch);
+    autoOn(addSlider(edge, "titleEdgeAngle", T("Winkel"), -180, 180, TitleLook().edgeAngle, 1, 0,
+                     [](Clip& c) -> double& { return c.title.look.edgeAngle; }),
+           "titleEdgeAngle", T("Kante"), edgeSwitch);
+    addColor(edge, T("Farbe"), T("Kantenfarbe"), [](Clip& c) -> QColor& { return c.title.look.edgeColor; }, false,
+             edgeSwitch);
+    auto* light = new QCheckBox(T("Licht von oben"));
+    light->setFocusPolicy(Qt::ClickFocus);
+    connect(light, &QCheckBox::clicked, this, [this, V](bool on) {
+        apply(V, {}, T("Licht von oben"), [on](Clip& c) { c.title.look.edgeLight = on; }, true);
+    });
+    edge.grid->addWidget(light, edge.rows++, 1);
+    m_refreshers << [current, light] {
+        if (const Clip* c = current()) {
+            const QSignalBlocker b(light);
+            light->setChecked(c->title.look.edgeLight);
+        }
+    };
+    shown.append({edge, [](const TitleStyle& t) { return !t.isProgress(); }});
+
+    // ---- Shadow ----
+    const Flag shadowOn = [](Clip& c) -> bool& { return c.title.look.shadowOn; };
+    const auto shadowSwitch = [](Clip& c) { c.title.look.shadowOn = true; };
+    Section shadow = addSection(page, V, T("Schatten"), [](Clip& c) {
+        const TitleLook d;
+        TitleLook& l = c.title.look;
+        l.shadowX = d.shadowX;
+        l.shadowY = d.shadowY;
+        l.shadowSoft = d.shadowSoft;
+        l.shadowColor = d.shadowColor;
+        l.shadowOpacity = d.shadowOpacity;
+    }, shadowOn, true);
+    const auto [sx, sy] = addXY(shadow, "titleShadow", T("Versatz"), -500, 500, 6, 0.5, 1,
+                                [](Clip& c) -> double& { return c.title.look.shadowX; },
+                                [](Clip& c) -> double& { return c.title.look.shadowY; });
+    autoOn(sx, "titleShadowX", T("Schatten"), shadowSwitch);
+    autoOn(sy, "titleShadowY", T("Schatten"), shadowSwitch);
+    autoOn(addSlider(shadow, "titleShadowSoft", T("Weichheit"), 0, 100, TitleLook().shadowSoft, 0.5, 1,
+                     [](Clip& c) -> double& { return c.title.look.shadowSoft; }),
+           "titleShadowSoft", T("Schatten"), shadowSwitch);
+    autoOn(addSlider(shadow, "titleShadowOpacity", T("Deckkraft"), 0, 1, TitleLook().shadowOpacity, 0.01, 2,
+                     [](Clip& c) -> double& { return c.title.look.shadowOpacity; }),
+           "titleShadowOpacity", T("Schatten"), shadowSwitch);
+    addColor(shadow, T("Farbe"), T("Schattenfarbe"), [](Clip& c) -> QColor& { return c.title.look.shadowColor; },
+             false, shadowSwitch);
+    shown.append({shadow, [](const TitleStyle& t) { return !t.isProgress(); }});
+
+    // ---- Glow ----
+    const Flag glowOn = [](Clip& c) -> bool& { return c.title.look.glowOn; };
+    const auto glowSwitch = [](Clip& c) { c.title.look.glowOn = true; };
+    Section glow = addSection(page, V, T("Glühen"), [](Clip& c) {
+        const TitleLook d;
+        TitleLook& l = c.title.look;
+        l.glowRadius = d.glowRadius;
+        l.glowColor = d.glowColor;
+        l.glowStrength = d.glowStrength;
+    }, glowOn, true);
+    autoOn(addSlider(glow, "titleGlowRadius", T("Radius"), 0, 200, TitleLook().glowRadius, 0.5, 1,
+                     [](Clip& c) -> double& { return c.title.look.glowRadius; }),
+           "titleGlowRadius", T("Glühen"), glowSwitch);
+    autoOn(addSlider(glow, "titleGlowStrength", T("Stärke"), 0, 1, TitleLook().glowStrength, 0.01, 2,
+                     [](Clip& c) -> double& { return c.title.look.glowStrength; }),
+           "titleGlowStrength", T("Glühen"), glowSwitch);
+    addColor(glow, T("Farbe"), T("Glühfarbe"), [](Clip& c) -> QColor& { return c.title.look.glowColor; }, false,
+             glowSwitch);
+    shown.append({glow, [](const TitleStyle& t) { return !t.isProgress(); }});
+
+    // A progress bar has none of these
+    m_refreshers << [shown, current] {
+        if (const Clip* c = current())
+            for (const auto& [s, when] : shown) {
+                const bool on = when(c->title);
+                s.header->setVisible(on);
+                if (!on) s.body->setVisible(false);
+                else if (s.toggle) s.body->setVisible(s.toggle->isChecked());
+            }
+    };
 }
 
 // Counter and progress bar (TitleKind): their own sections, shown only for that kind; the progress bar has no

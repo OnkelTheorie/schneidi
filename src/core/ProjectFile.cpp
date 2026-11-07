@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "core/ProjectFile.h"
+#include "core/TitleLookJson.h"
 #include "core/PathKey.h"
 
 #include "core/Captions.h"
@@ -330,6 +331,8 @@ QJsonObject titleToJson(const TitleStyle& t)
     if (t.outlineRef) o["outlineRef"] = t.outlineRef;
     if (t.boxRef) o["boxRef"] = t.boxRef;
     if (t.fontRef) o["fontRef"] = t.fontRef;
+    // Fill, edge, shadow, glow (0.19, only when set; older versions draw the title plain)
+    TitleLookJson::write(o, t.look);
     return o;
 }
 
@@ -375,6 +378,7 @@ TitleStyle titleFromJson(const QJsonObject& o)
     t.outlineRef = std::clamp(o.value("outlineRef").toInt(), 0, BrandKit::kMaxColors);
     t.boxRef = std::clamp(o.value("boxRef").toInt(), 0, BrandKit::kMaxColors);
     t.fontRef = std::clamp(o.value("fontRef").toInt(), 0, BrandKit::kMaxFonts);
+    TitleLookJson::read(o, t.look, true);
     return t;
 }
 
@@ -617,7 +621,15 @@ ClipSlot readSlot(const QJsonObject& o)
 QJsonObject clipToJson(const Clip& c, int mediaIndex, const QDir& projectDir)
 {
     QJsonObject o{{"id", c.id}, {"start", c.start}, {"in", c.in}, {"out", c.out}};
-    if (c.isTitle()) o["title"] = titleToJson(c.title); // titles have no media reference
+    if (c.isTitle()) { // titles have no media reference (a texture picture is a path of its own)
+        QJsonObject title = titleToJson(c.title);
+        if (!c.title.look.texture.isEmpty()) {
+            QJsonObject tex = title.value("texture").toObject();
+            tex["rel"] = projectDir.relativeFilePath(c.title.look.texture);
+            title["texture"] = tex;
+        }
+        o["title"] = title;
+    }
     else if (c.isCompound()) o["sequence"] = c.sequenceId; // compound clip: reference to the sequence
     else if (c.isMulticam()) { // multicam segment: sequence + angle shown
         o["multicam"] = c.sequenceId;
@@ -682,6 +694,12 @@ Clip clipFromJson(const QJsonObject& o, const QVector<MediaInfo>& media, const Q
     if (o.contains("title")) {
         c.kind = ClipKind::Title;
         c.title = titleFromJson(o.value("title").toObject());
+        // Texture picture missing: relative to the project file (folder moved), as with media
+        if (QString& tex = c.title.look.texture; !tex.isEmpty() && !QFileInfo::exists(tex)) {
+            const QString rel = o.value("title").toObject().value("texture").toObject().value("rel").toString();
+            const QString candidate = rel.isEmpty() ? QString() : QDir::cleanPath(projectDir.absoluteFilePath(rel));
+            if (!candidate.isEmpty() && QFileInfo::exists(candidate)) tex = candidate;
+        }
     } else if (o.contains("sequence")) {
         c.kind = ClipKind::Compound;
         c.sequenceId = intOf(o.value("sequence"));
@@ -1356,6 +1374,8 @@ void redirect(ProjectData* data, const QHash<QString, QString>& moved)
                     for (EffectInstance& e : c.effects)
                         if (e.effectId == QLatin1String(Comp::kEffectId))
                             Comp::redirectMedia(e, [&](const QString& p) { return moved.value(p); });
+                    if (c.isTitle() && moved.contains(c.title.look.texture))
+                        c.title.look.texture = moved.value(c.title.look.texture);
                     if (moved.contains(c.mediaPath)) {
                         c.mediaPath = moved.value(c.mediaPath);
                         // Crop of an old project opened while the file was offline: now its shape is known
