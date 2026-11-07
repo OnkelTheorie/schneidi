@@ -390,6 +390,20 @@ void testEditor()
     c = TimelineOps::findClip(p.timeline(), id);
     CHECK(Keys::keyAt(*c, px, 7));
     CHECK(Keys::keyTimes(*c, {pa}).isEmpty());
+    // A run that adds to a kept path goes on from its size and turn at the run's start (no snap back to 1 / 0)
+    {
+        const AnimParam ps = Keys::effectParam(::Comp::kEffectId, "n1.scale");
+        CHECK(ed.trackCompNode(id, 1, {{0, 0.4, 0.5, 1, 0}, {10, 0.45, 0.5, 2, 30}}));
+        CHECK(ed.trackCompNode(id, 1, {{10, 0.45, 0.5, 1, 0}, {15, 0.46, 0.5, 1.5, 10}}));
+        c = TimelineOps::findClip(p.timeline(), id);
+        CHECK(std::abs(Keys::valueAt(*c, ps, 10) - 2) < 1e-9);
+        CHECK(std::abs(Keys::valueAt(*c, ps, 15) - 3) < 1e-9);
+        CHECK(std::abs(Keys::valueAt(*c, pa, 10) - 30) < 1e-9);
+        CHECK(std::abs(Keys::valueAt(*c, pa, 15) - 40) < 1e-9);
+        undo.undo();
+        undo.undo();
+        c = TimelineOps::findClip(p.timeline(), id);
+    }
 
     // The clip analysis: errors for a missing node and a title
     TrackRun r = trackNode(p.format(), *c, 9, 0, 10);
