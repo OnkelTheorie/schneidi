@@ -131,6 +131,8 @@ schneidi_test(test_stabilize_denoise)
 schneidi_test(test_stabilize_motion)
 schneidi_test(test_cli)
 target_link_libraries(test_cli PRIVATE schneidi_cli_lib)
+schneidi_test(test_loudness_target) # 0.19: target_lufs and normalize lufs reach the target after the master limiter
+target_link_libraries(test_loudness_target PRIVATE schneidi_cli_lib)
 schneidi_test(test_jl_cuts) # J/L cuts (sound edge alone) and room tone in the gaps of a dialogue track
 target_link_libraries(test_jl_cuts PRIVATE schneidi_cli_lib)
 schneidi_test(test_rough_cut) # 0.17: rough_cut from a script, best_takes, core/ScriptAlign (takes, rating, repeats)

@@ -6,7 +6,8 @@
 `loudness` measures a file, a project's mix (as exported) or single clips.
 
 ## Order of work
-1. **Even out the clips**: `normalize` (`mode` `"lufs"`) on the speech clips so every part sounds equally loud.
+1. **Even out the clips**: `normalize` (`mode` `"lufs"`) on the speech clips so every part sounds equally loud. It
+   changes only the clips you list (one id = that clip, not its track); for the whole mix use step 4.
 2. **Clean the voice** if needed: `clean_voice` on the voice track (`{"op":"clean_voice","track":"A2"}`) or on clips
    - neural noise suppression, pauses lowered, bumps/clicks dampened, voice evened out (compressor, limiter) in one
    call; use it for voice-overs, TTS and voice chat. `gate:false` where game sound or music on the same clip should
@@ -18,7 +19,9 @@
 3. **Music under speech**: music on its own track, then `duck` (music = `track`/`clips`, `under` = the voice
    track) so it dips while someone talks; a music bed sits ~15-20 dB below the voice.
 4. **Master**: `mixer` on `"master"` with `limiter` true first, then `target_lufs` -14 - it measures the mix and
-   sets the fader. The limiter keeps the peaks below -1 dBTP.
+   sets the fader. The limiter keeps the peaks below -1 dBTP. With the limiter on it measures after it and steps
+   until the target is reached (also on peaky game sound: shots at 0 dBFS over quiet ambience), no compressor loop
+   by hand needed; when it cannot get there, the notes say how far it got.
 5. Short `fade`s at the very start and end avoid clicks.
 
 ## Spoken text (text to speech)
