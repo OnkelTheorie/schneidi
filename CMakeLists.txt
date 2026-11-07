@@ -155,6 +155,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/core/GradeWindows.h       src/core/GradeWindows.cpp
     src/core/CompGraph.h          src/core/CompGraph.cpp
     src/core/CompRecipes.h        src/core/CompRecipes.cpp
+    src/core/CompRecipeText.cpp
     src/core/NameBlur.h           src/core/NameBlur.cpp
     src/core/Retime.h             src/core/Retime.cpp
     src/core/ProjectFormat.h      src/core/ProjectFormat.cpp

@@ -2,7 +2,9 @@
 #include "ui/comp/CompPage.h"
 
 #include "app/Theme.h"
+#include "core/CompRecipes.h"
 #include "core/Editor.h"
+#include "core/EffectRegistry.h"
 #include "core/I18n.h"
 #include "core/Project.h"
 #include "core/TimelineOps.h"
@@ -14,6 +16,8 @@
 
 #include <QButtonGroup>
 #include <QHBoxLayout>
+#include <QInputDialog>
+#include <QMessageBox>
 #include <QLabel>
 #include <QPushButton>
 #include <QScrollArea>
@@ -79,7 +83,29 @@ CompPage::CompPage(Editor* editor, QWidget* parent) : QWidget(parent), m_editor(
     barLay->addWidget(fit);
     barLay->addSpacing(10);
     barLay->addWidget(m_create);
+    m_saveRecipe = new QToolButton;
+    m_saveRecipe->setObjectName("comp_save_recipe");
+    m_saveRecipe->setText(T("Als Rezept speichern…"));
+    m_saveRecipe->setToolTip(T("Speichert diesen Graphen als eigenes Rezept (Effects Library › Comp-Rezepte): auf "
+                               "andere Clips ziehen, als ZIP weitergeben"));
+    m_saveRecipe->setFocusPolicy(Qt::NoFocus);
+    connect(m_saveRecipe, &QToolButton::clicked, this, [this] {
+        bool ok = false;
+        const QString name = QInputDialog::getText(this, T("Als Rezept speichern"), T("Name des Rezepts:"),
+                                                   QLineEdit::Normal, {}, &ok).trimmed();
+        if (!ok || name.isEmpty()) return;
+        QString err, code;
+        QString id = saveRecipe(name, false, &err, &code);
+        if (id.isEmpty() && code == QLatin1String("EXISTS")
+            && QMessageBox::question(this, T("Als Rezept speichern"),
+                                     T("Ein eigenes Rezept „%1“ gibt es schon. Ersetzen?").arg(name)) == QMessageBox::Yes)
+            id = saveRecipe(name, true, &err, &code);
+        if (id.isEmpty() && code != QLatin1String("EXISTS"))
+            QMessageBox::warning(this, T("Als Rezept speichern"), T("Das Rezept lässt sich nicht speichern: %1").arg(err));
+        if (!id.isEmpty()) emit message(T("Als Rezept „%1“ gespeichert").arg(name));
+    });
     barLay->addWidget(m_message, 1);
+    barLay->addWidget(m_saveRecipe);
     barLay->addWidget(m_showNode);
     barLay->addWidget(m_matte);
 
@@ -197,6 +223,7 @@ void CompPage::refresh()
     m_inspector->refresh();
     m_overlay->refresh();
     m_create->setVisible(c && !has);
+    m_saveRecipe->setVisible(has);
     updateHeader();
 }
 
@@ -207,6 +234,22 @@ void CompPage::updateHeader()
     const bool has = c && CompUi::graphOf(*c, &g);
     m_clipLabel->setText(!c ? T("Kein Clip") : has ? T("%1 – %2 Knoten").arg(m_editor->project()->clipName(*c)).arg(g.nodes.size())
                                                    : m_editor->project()->clipName(*c));
+}
+
+QString CompPage::saveRecipe(const QString& name, bool replace, QString* err, QString* code)
+{
+    const Clip* c = m_clipId ? TimelineOps::findClip(m_editor->project()->timeline(), m_clipId) : nullptr;
+    const EffectInstance* e = c ? EffectRegistry::instance(*c, Comp::kEffectId) : nullptr;
+    if (!e) {
+        if (err) *err = T("Der Clip hat keinen Comp-Graphen");
+        return {};
+    }
+    CompRecipes::SaveOptions o;
+    o.replace = replace;
+    const std::optional<CompRecipe> r = CompRecipes::save(*e, name, o, err, code);
+    if (!r) return {};
+    emit recipeSaved(r->id);
+    return r->id;
 }
 
 void CompPage::setView(View v)

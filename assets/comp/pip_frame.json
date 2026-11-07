@@ -1,6 +1,18 @@
 {
     "name": "Picture in picture",
     "description": "The clip small in a corner with a frame and a drop shadow; the tracks below show around it.",
+    "name_de": "Bild im Bild",
+    "description_de": "Der Clip klein in einer Ecke mit Rahmen und Schlagschatten; ringsum zeigen sich die Spuren darunter.",
+    "name_en": "Picture in picture",
+    "description_en": "The clip small in a corner with a frame and a drop shadow; the tracks below show around it.",
+    "name_es": "Imagen en imagen",
+    "description_es": "El clip pequeño en una esquina con marco y sombra; alrededor se ven las pistas de abajo.",
+    "name_fr": "Incrustation d'image",
+    "description_fr": "Le clip en petit dans un coin avec un cadre et une ombre portée ; autour apparaissent les pistes en dessous.",
+    "name_pl": "Obraz w obrazie",
+    "description_pl": "Klip w małym rozmiarze w rogu, z ramką i cieniem; wokół widać ścieżki poniżej.",
+    "name_ru": "Картинка в картинке",
+    "description_ru": "Клип в уменьшенном виде в углу с рамкой и тенью; вокруг видны дорожки ниже.",
     "graph": {
         "nodes": [
             {"id": 1, "type": "clip", "x": 0, "y": 0},

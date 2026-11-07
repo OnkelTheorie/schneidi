@@ -10,7 +10,10 @@
 #include <QString>
 #include <QVariantMap>
 
+class Editor;
 class Project;
+class QWidget;
+struct CompRecipe;
 
 namespace Picture::Comp {
 struct NodeType;
@@ -38,5 +41,20 @@ QString nodeName(const CompNode& n);
 // that picture as gray (a mask node always shows as gray): what the viewer plays on the Comp page. Unchanged when the
 // clip has no graph or the node is missing.
 Timeline viewTimeline(Timeline tl, int clipId, int node, bool matte);
+
+// ---- Recipes (core/CompRecipes.h) in the app ----
+// Effects Library entry / drag data of a recipe: "recipe:<id>" (sent like an effect id; the Edit page's effect drop
+// and double-click hand it to applyRecipe)
+inline constexpr const char* kRecipePrefix = "recipe:";
+inline bool isRecipe(const QString& effectId) { return effectId.startsWith(QLatin1String(kRecipePrefix)); }
+// Recipe `idOrName` on the video clips `ids` with the slots of `with` (CompRecipes::apply + Editor::setCompGraph,
+// one undo step named after the recipe). Media/file slot values are taken as absolute paths. False + err when the
+// recipe is missing, a slot does not fit or no clip takes it
+bool applyRecipe(Editor* editor, const QVector<int>& ids, const QString& idOrName, const QVariantMap& with = {},
+                 QString* err = nullptr);
+// The same from a GUI act: asks for the files of the recipe's required media/file slots first (a file dialog over
+// `parent`; cancelled = nothing happens) and shows a failure in a message box. Returns the recipe's note ("next
+// steps") on success (may be empty), a null string when nothing was applied
+QString applyRecipeAsking(QWidget* parent, Editor* editor, const QVector<int>& ids, const QString& idOrName);
 
 } // namespace CompUi

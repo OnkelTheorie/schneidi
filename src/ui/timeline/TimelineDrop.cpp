@@ -2,6 +2,8 @@
 // Timeline: drag and drop from the media pool, file manager and effects library.
 #include "ui/timeline/TimelineView.h"
 
+#include "ui/comp/CompShared.h"
+
 #include "app/InputBindings.h"
 #include "app/Theme.h"
 #include "core/Editor.h"
@@ -281,7 +283,9 @@ void TimelineView::dropEvent(QDropEvent* e)
     if (!m_fxDragging.isEmpty()) {
         // Like DaVinci: only onto the clip under the mouse (even if others are selected)
         if (const int id = fxDropClipAt(e->position().toPoint())) {
-            m_editor->addEffect({id}, m_fxDragging);
+            if (CompUi::isRecipe(m_fxDragging)) // a compositing recipe: its graph onto that clip (one undo step)
+                emit recipeDropped(id, m_fxDragging.mid(int(qstrlen(CompUi::kRecipePrefix))));
+            else m_editor->addEffect({id}, m_fxDragging);
             e->acceptProposedAction();
         }
         m_fxDragging.clear();

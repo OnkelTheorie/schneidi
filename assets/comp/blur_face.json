@@ -1,6 +1,18 @@
 {
     "name": "Blur a face",
     "description": "Blurs an ellipse around a face that follows the face through the clip (tracker in face mode). Before tracking the ellipse stays where it is put.",
+    "name_de": "Gesicht unkenntlich machen",
+    "description_de": "Macht eine Ellipse um ein Gesicht unscharf, die dem Gesicht durch den Clip folgt (Tracker im Gesichtsmodus). Vor dem Tracken bleibt die Ellipse, wo sie steht.",
+    "name_en": "Blur a face",
+    "description_en": "Blurs an ellipse around a face that follows the face through the clip (tracker in face mode). Before tracking the ellipse stays where it is put.",
+    "name_es": "Difuminar una cara",
+    "description_es": "Difumina una elipse alrededor de una cara que la sigue durante todo el clip (tracker en modo cara). Antes del seguimiento la elipse se queda donde se coloca.",
+    "name_fr": "Flouter un visage",
+    "description_fr": "Floute une ellipse autour d'un visage qui le suit pendant tout le clip (tracker en mode visage). Avant le suivi, l'ellipse reste là où elle est placée.",
+    "name_pl": "Rozmycie twarzy",
+    "description_pl": "Rozmywa elipsę wokół twarzy, która podąża za nią przez cały klip (tracker w trybie twarzy). Przed śledzeniem elipsa zostaje tam, gdzie ją ustawiono.",
+    "name_ru": "Размыть лицо",
+    "description_ru": "Размывает эллипс вокруг лица, который следует за ним по всему клипу (трекер в режиме лица). До трекинга эллипс остаётся там, где его поставили.",
     "note": "Run {op:'track_node', clip, node:2} to follow the face (face mode needs the 'faces' extension; track:'point' follows the point x, y instead).",
     "graph": {
         "nodes": [

@@ -1,10 +1,17 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "ui/comp/CompShared.h"
 
+#include "core/CompRecipes.h"
+#include "core/Editor.h"
 #include "core/EffectRegistry.h"
 #include "core/I18n.h"
 #include "core/Keyframes.h"
+#include "core/Project.h"
 #include "engine/picture/CompNodes.h"
+
+#include <QFileDialog>
+#include <QMessageBox>
+#include <QUndoStack>
 
 #include <algorithm>
 
@@ -96,6 +103,44 @@ Timeline viewTimeline(Timeline tl, int clipId, int node, bool matte)
             return tl;
         }
     return tl;
+}
+
+bool applyRecipe(Editor* editor, const QVector<int>& ids, const QString& idOrName, const QVariantMap& with, QString* err)
+{
+    QString why;
+    const std::optional<CompRecipe> r = CompRecipes::find(idOrName, &why);
+    CompGraph g;
+    QHash<int, QVariantMap> values;
+    if (!r || !CompRecipes::apply(*r, with, &g, &values, &why)) {
+        if (err) *err = why;
+        return false;
+    }
+    QUndoStack* undo = editor->project()->undoStack();
+    const int before = undo->index();
+    undo->beginMacro(T("Rezept „%1“ anwenden").arg(CompRecipes::shownName(*r)));
+    const bool ok = editor->setCompGraph(ids, g, values, kinds(), &why);
+    undo->endMacro();
+    if (!ok && undo->index() > before) undo->undo(); // an empty macro: gone again
+    if (!ok && err) *err = why;
+    return ok;
+}
+
+QString applyRecipeAsking(QWidget* parent, Editor* editor, const QVector<int>& ids, const QString& idOrName)
+{
+    QString err;
+    const std::optional<CompRecipe> r = CompRecipes::find(idOrName, &err);
+    QVariantMap with;
+    if (r)
+        for (const CompRecipeSlot& slot : r->slotList) {
+            if (!slot.required || (slot.type != QLatin1String("media") && slot.type != QLatin1String("file"))) continue;
+            const QString file = QFileDialog::getOpenFileName(
+                parent, T("Rezept „%1“: %2").arg(CompRecipes::shownName(*r), slot.description.isEmpty() ? slot.id : slot.description));
+            if (file.isEmpty()) return {};
+            with.insert(slot.id, file);
+        }
+    if (r && applyRecipe(editor, ids, r->id, with, &err)) return r->note.isNull() ? QStringLiteral("") : r->note;
+    QMessageBox::warning(parent, T("Rezept anwenden"), T("Das Rezept lässt sich nicht anwenden: %1").arg(err));
+    return {};
 }
 
 } // namespace CompUi

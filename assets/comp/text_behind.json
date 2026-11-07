@@ -1,6 +1,18 @@
 {
     "name": "Text behind subject",
     "description": "A title between the background and the keyed subject: the person stands in front of the words. The subject comes from a green screen key (without a background the tracks below show through).",
+    "name_de": "Text hinter der Person",
+    "description_de": "Ein Titel zwischen Hintergrund und freigestellter Person: die Person steht vor den Worten. Die Person kommt aus einem Green-Screen-Key (ohne Hintergrund scheinen die Spuren darunter durch).",
+    "name_en": "Text behind subject",
+    "description_en": "A title between the background and the keyed subject: the person stands in front of the words. The subject comes from a green screen key (without a background the tracks below show through).",
+    "name_es": "Texto detrás del sujeto",
+    "description_es": "Un título entre el fondo y el sujeto recortado: la persona queda delante de las palabras. El sujeto sale de un croma de pantalla verde (sin fondo se ven las pistas de abajo).",
+    "name_fr": "Texte derrière le sujet",
+    "description_fr": "Un titre entre l'arrière-plan et le sujet détouré : la personne se tient devant les mots. Le sujet vient d'une incrustation sur fond vert (sans arrière-plan, les pistes en dessous apparaissent).",
+    "name_pl": "Tekst za osobą",
+    "description_pl": "Napis między tłem a wyciętą osobą: osoba stoi przed słowami. Osoba pochodzi z kluczowania green screen (bez tła widać ścieżki poniżej).",
+    "name_ru": "Текст за объектом",
+    "description_ru": "Титр между фоном и вырезанным объектом: человек стоит перед словами. Объект получается из хромакея (без фона просвечивают дорожки ниже).",
     "note": "The subject is cut out by the key (node 2). With footage without a screen, a cutout node can take the key's place once it is available.",
     "graph": {
         "nodes": [

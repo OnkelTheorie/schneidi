@@ -124,6 +124,8 @@ signals:
     void rangeDropRequested(const QString& path, int in, int out, int frame, int track);
     // An effect sound from the Effects Library dropped at `frame` (EffectsLibrary::SoundMimeType data): op 'sfx' there
     void soundDropRequested(const QByteArray& sound, int frame);
+    // A compositing recipe from the Effects Library dropped onto video clip `clipId` (MainWindow applies it)
+    void recipeDropped(int clipId, const QString& recipe);
     // Right-click on a clip (it is selected then)
     void clipMenuRequested(const QPoint& globalPos);
     // Double-click on a subtitle: edit the text in the Inspector

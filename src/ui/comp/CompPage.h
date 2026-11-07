@@ -44,6 +44,11 @@ public:
     bool matte() const;
     int viewNode() const; // node the viewer shows (0 = the output)
 
+    // "Als Rezept speichern…": the clip's graph as an own recipe (CompRecipes::save, the same as op `comp
+    // save_recipe`); empty + err when it fails (code EXISTS: a recipe of that name exists and `replace` is off).
+    // The button asks for the name and whether to replace
+    QString saveRecipe(const QString& name, bool replace, QString* err = nullptr, QString* code = nullptr);
+
     CompCanvas* canvas() const { return m_canvas; }
     CompLayers* layers() const { return m_layers; }
     CompInspector* inspector() const { return m_inspector; }
@@ -53,6 +58,7 @@ signals:
     void viewChanged(); // the viewer should show another node / the matte
     void keyPickRequested(int clipId, int node, const QString& key);
     void message(const QString& text);
+    void recipeSaved(const QString& id); // the Effects Library lists it
 
 private:
     void updateHeader();
@@ -72,6 +78,7 @@ private:
     QToolButton* m_matte;
     QToolButton* m_fit;
     QPushButton* m_create;
+    QToolButton* m_saveRecipe;
     QLabel* m_clipLabel;
     QLabel* m_message;
 };
