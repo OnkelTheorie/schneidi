@@ -239,6 +239,40 @@ void testNoDurationZeroTail(const QString& dir)
     CHECK(reader < (100LL << 20));
 }
 
+// A killed recording larger than the 64 MB a tail scan may read (here 80 MB, cut off inside its last cluster): Matroska
+// put down at a byte of the tail resynced from the file's first cluster, so the scan stopped 64 MB in and the length
+// came out at less than half. It starts at the last cluster now: the whole length, little read.
+void testNoDurationBigLive(const QString& dir)
+{
+    std::printf("-- big killed Matroska without duration\n");
+    const QString live = Check::makeMedia(dir + "/live_big.mkv", {"-f", "lavfi", "-i", "testsrc2=s=320x240:r=25:d=28",
+                                                                  "-f", "lavfi", "-i", "sine=f=440:d=28", "-c:v",
+                                                                  "rawvideo", "-pix_fmt", "yuv420p", "-c:a", "aac",
+                                                                  "-live", "1"});
+    if (!CHECK(!live.isEmpty())) return;
+    QFile f(live);
+    const qint64 size = QFileInfo(live).size();
+    if (!CHECK(size > (70LL << 20))) return;
+    if (!CHECK(f.resize(size - 50000))) return; // killed while writing: the last cluster ends halfway
+    f.close();
+    const qint64 before = bytesRead();
+    const std::optional<MediaInfo> m = MediaProbe::read(live, FrameRate{25, 1});
+    if (CHECK(m)) {
+        std::printf("       probe length %d frames\n", m->length);
+        CHECK(std::abs(m->length - 700) <= 5);
+    }
+    auto r = Audio::Reader::open(live);
+    if (CHECK(r)) {
+        std::printf("       audio end %.2f s\n", double(r->info().end) / kRate);
+        CHECK(std::abs(r->info().end - 28 * kRate) <= kRate / 4);
+    }
+    if (before >= 0) {
+        const qint64 read = bytesRead() - before;
+        std::printf("       read %lld MB\n", read >> 20);
+        CHECK(read < (40LL << 20));
+    }
+}
+
 // A 64-channel WAV (FFmpeg knows no layout for 64 channels: its order is "unspecified"), a sine on channel 0 only,
 // read as stereo: FFmpeg's resampler had no matrix for it and the reader gave silence (imported, rendered silent)
 void testUnpositionedChannels(const QString& dir)
@@ -275,6 +309,7 @@ int main(int argc, char** argv)
     testOutlier(dir.path());
     testNoDuration(dir.path());
     testNoDurationZeroTail(dir.path());
+    testNoDurationBigLive(dir.path());
     testUnpositionedChannels(dir.path());
     return Check::result();
 }

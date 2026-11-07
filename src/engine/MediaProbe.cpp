@@ -130,32 +130,21 @@ bool decodableStill(QImageReader& reader)
 
 // Length in µs from the last packets in the file's tail (Matroska of a recorder that crashed or was killed, a live
 // stream: no duration in the header, and the stream analysis only sees the start), counted from the file's start
-// time. Reads more of the tail when no timed packet was there, OpenMedia::kTailScanMaxBytes in all at most.
+// time (OpenMedia::scanTail: more of the tail when no timed packet was there, kTailScanMaxBytes in all at most).
 // AV_NOPTS_VALUE if none was found. Moves the demuxer (and leaves its file in an error state once the limit was hit).
 int64_t tailDuration(AVFormatContext* fmt)
 {
     if (!fmt->pb) return AV_NOPTS_VALUE;
-    const int64_t size = avio_size(fmt->pb);
     const int64_t start = fmt->start_time != AV_NOPTS_VALUE ? fmt->start_time : 0;
     int64_t end = AV_NOPTS_VALUE;
-    AVPacket* p = av_packet_alloc();
-    if (!p) return AV_NOPTS_VALUE;
-    const OpenMedia::ReadLimit limit(fmt, OpenMedia::kTailScanMaxBytes);
-    for (int64_t tail = 1 << 20; end == AV_NOPTS_VALUE && !limit.reached(); tail *= 8) {
-        const int64_t from = size > tail ? size - tail : 0;
-        if (av_seek_frame(fmt, -1, from, AVSEEK_FLAG_BYTE) < 0) break;
-        while (av_read_frame(fmt, p) >= 0) {
-            const int64_t ts = p->pts != AV_NOPTS_VALUE ? p->pts : p->dts;
-            if (ts != AV_NOPTS_VALUE && p->stream_index >= 0 && unsigned(p->stream_index) < fmt->nb_streams) {
-                const AVStream* st = fmt->streams[p->stream_index];
-                const int64_t e = av_rescale_q(ts + std::max<int64_t>(0, p->duration), st->time_base, AV_TIME_BASE_Q);
-                if (end == AV_NOPTS_VALUE || e > end) end = e;
-            }
-            av_packet_unref(p);
-        }
-        if (from == 0 || tail >= OpenMedia::kTailScanMaxBytes) break; // read from the start, or enough
-    }
-    av_packet_free(&p);
+    OpenMedia::scanTail(fmt, [&](const AVPacket* p) {
+        const int64_t ts = p->pts != AV_NOPTS_VALUE ? p->pts : p->dts;
+        if (ts == AV_NOPTS_VALUE || p->stream_index < 0 || unsigned(p->stream_index) >= fmt->nb_streams) return false;
+        const AVStream* st = fmt->streams[p->stream_index];
+        const int64_t e = av_rescale_q(ts + std::max<int64_t>(0, p->duration), st->time_base, AV_TIME_BASE_Q);
+        if (end == AV_NOPTS_VALUE || e > end) end = e;
+        return true;
+    });
     return end == AV_NOPTS_VALUE ? AV_NOPTS_VALUE : end - start;
 }
 

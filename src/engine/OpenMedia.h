@@ -7,10 +7,12 @@
 // schneidi never needs them for media; image sequences (image2) and single files open as before.
 
 #include <cstdint>
+#include <functional>
 
 struct AVDictionary;
 struct AVFormatContext;
 struct AVIOContext;
+struct AVPacket;
 
 namespace OpenMedia {
 
@@ -40,6 +42,14 @@ private:
     int (*m_read)(void*, uint8_t*, int) = nullptr;
     long long m_left = 0;
 };
+
+// Reads the packets of the file's tail, for a file whose header states no length: the last 1, 8, then 64 MB
+// (kTailScanMaxBytes, under a ReadLimit of that much in all), and hands each packet to `take`, which says whether it
+// counted (a timed packet of the stream wanted). A larger tail only when none counted. Matroska/WebM starts at a
+// cluster found in the tail's bytes: its demuxer, put down at any byte, resyncs from the file's first cluster and read
+// through the whole file (a killed recording of 150 MB came out at half its length under the limit). Packets from
+// before the place sought are not handed over (a demuxer that went back). Moves the demuxer.
+void scanTail(AVFormatContext* fmt, const std::function<bool(const AVPacket*)>& take);
 
 // avformat_open_input(fmt, path, nullptr, options) with the limits; a refused demuxer fails it (AVERROR(EINVAL)), as
 // does a path that exists but is no regular file (folder, named pipe, device, socket: see notAFile).

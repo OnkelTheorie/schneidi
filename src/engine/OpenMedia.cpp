@@ -7,10 +7,12 @@ extern "C" {
 }
 
 #include <QByteArray>
+#include <QFile>
 #include <QFileInfo>
 #include <QList>
 
 #include <algorithm>
+#include <cstring>
 #include <vector>
 
 namespace OpenMedia {
@@ -81,6 +83,62 @@ int input(AVFormatContext** fmt, const char* path, const AVDictionary* extra)
 namespace {
 thread_local std::vector<ReadLimit*> t_limits; // the ReadLimits alive on this thread (demuxers read on the caller's)
 } // namespace
+
+namespace {
+
+// Byte positions of the Matroska clusters that start in [from, from + bytes) of the file, last first (at most `max`):
+// the cluster ID 1F 43 B6 75, a valid size and the cluster's timestamp element (E7) first, as muxers write it (after
+// a CRC-32 element at most)
+// (the four bytes alone also turn up inside packets)
+std::vector<int64_t> clustersIn(const char* path, int64_t from, int64_t bytes, int max)
+{
+    std::vector<int64_t> out;
+    QFile f(QString::fromUtf8(path));
+    if (!f.open(QIODevice::ReadOnly) || !f.seek(from)) return out;
+    const QByteArray b = f.read(bytes);
+    const auto u = [&b](qsizetype i) { return uint8_t(b[i]); };
+    for (qsizetype i = b.size() - 4; i >= 0 && int(out.size()) < max; --i) {
+        if (u(i) != 0x1F || u(i + 1) != 0x43 || u(i + 2) != 0xB6 || u(i + 3) != 0x75) continue;
+        if (i + 4 >= b.size() || u(i + 4) == 0) continue;
+        int len = 1; // EBML size: as many bytes as the first one's leading zeros + 1
+        while (!(u(i + 4) & (0x80 >> (len - 1)))) ++len;
+        qsizetype at = i + 4 + len;
+        if (at + 1 < b.size() && u(at) == 0xBF && u(at + 1) == 0x84) at += 6; // a CRC-32 first (FFmpeg writes one)
+        if (at < b.size() && u(at) == 0xE7) out.push_back(from + i);
+    }
+    return out;
+}
+
+} // namespace
+
+void scanTail(AVFormatContext* fmt, const std::function<bool(const AVPacket*)>& take)
+{
+    if (!fmt || !fmt->pb) return;
+    const int64_t size = avio_size(fmt->pb);
+    const bool matroska = fmt->iformat && fmt->iformat->name && strstr(fmt->iformat->name, "matroska");
+    AVPacket* p = av_packet_alloc();
+    if (!p) return;
+    const ReadLimit limit(fmt, kTailScanMaxBytes);
+    bool counted = false;
+    for (int64_t tail = 1 << 20; !counted && !limit.reached(); tail *= 8) {
+        const int64_t from = size > tail ? size - tail : 0;
+        std::vector<int64_t> starts{from};
+        // The last clusters (the very last may be cut off without a whole packet)
+        if (matroska && size > 0) starts = clustersIn(fmt->url, from, std::min(tail, size - from), 3);
+        for (const int64_t at : starts) {
+            if (counted || limit.reached()) break;
+            if (av_seek_frame(fmt, -1, at, AVSEEK_FLAG_BYTE) < 0) continue;
+            // A packet from before the place sought is none of the tail's: one the demuxer still had queued, or it
+            // resynced further back (read on, the ReadLimit ends that)
+            while (av_read_frame(fmt, p) >= 0) {
+                if ((p->pos < 0 || p->pos >= at) && take(p)) counted = true;
+                av_packet_unref(p);
+            }
+        }
+        if (from == 0 || tail >= kTailScanMaxBytes) break; // read from the start, or enough
+    }
+    av_packet_free(&p);
+}
 
 ReadLimit::ReadLimit(AVFormatContext* fmt, long long bytes) : m_left(bytes)
 {
