@@ -418,7 +418,7 @@ void testCli(const QString& dir)
     CHECK(lookOf(saved()).fill == TitleFill::Solid);
     // `info` shows the look in the form the op takes
     const QJsonObject info = run("info", {{"project", g_path}});
-    CHECK(QJsonDocument(info).toJson().contains("\"edge3d\""));
+    CHECK(QJsonDocument(info).toJson().contains("\"shadow\"")); // still on (edge3d was switched off again)
     // Mistakes are named
     CHECK_EQ(errorOf(QString(R"([{"op":"title","clip":%1,"gradient":["#ff0000"]}])").arg(id)), QString("BAD_ARGUMENT"));
     CHECK_EQ(errorOf(QString(R"([{"op":"title","clip":%1,"fill":"plaid"}])").arg(id)), QString("BAD_ARGUMENT"));
