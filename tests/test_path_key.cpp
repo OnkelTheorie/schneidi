@@ -9,6 +9,7 @@
 
 #include <QCoreApplication>
 #include <QDir>
+#include <QFileInfo>
 #include <QTemporaryDir>
 
 int main(int argc, char** argv)
@@ -24,7 +25,11 @@ int main(int argc, char** argv)
     CHECK_EQ(PathKey::of("C:/Videos/Clip.MP4", true), PathKey::of("C:/Videos/Clip.MP4", true).toLower());
     // Case-sensitive (Linux, macOS): the case stays, two files
     CHECK(PathKey::of("/videos/Clip.mp4", false) != PathKey::of("/videos/clip.mp4", false));
+    // (a path from the root gets the current drive on Windows)
+    CHECK_EQ(PathKey::of("/videos/Clip.mp4", false), QFileInfo("/videos/Clip.mp4").absoluteFilePath());
+#ifndef Q_OS_WIN
     CHECK_EQ(PathKey::of("/videos/Clip.mp4", false), QString("/videos/Clip.mp4"));
+#endif
     // Clean and absolute in both ways: "." and ".." and double slashes do not make another key
     for (bool fold : {false, true}) {
         CHECK_EQ(PathKey::of("/a/./b/../c//d.mp4", fold), PathKey::of("/a/c/d.mp4", fold));
