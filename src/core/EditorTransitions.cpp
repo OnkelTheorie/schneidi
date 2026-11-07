@@ -245,6 +245,30 @@ std::optional<Timeline> Editor::withTransitionAt(int leftId, int rightId, const 
     touched.remove(0);
     const Timeline wanted = tl; // before fitting (fitting sets the lengths of a cut without material to 0)
     fitTransitions(tl, touched, sourceLength());
+    // Centred on the cut it needs material on both sides; a clip that starts at the start of its recording (or ends
+    // at its end) has none on that side and the dissolve shrank to a frame. Then the alignment that gives the longest
+    // dissolve is taken (starting or ending at the cut), with the default length if it fits; an alignment the user
+    // chose stays
+    if (l && r && style.align == TransitionAlign::Center) {
+        auto spanLength = [&](const Timeline& t) {
+            for (const auto& s : TimelineOps::transitions(t.track(lRef), sourceLength()))
+                if (s.leftId == leftId && s.rightId == rightId) return s.length();
+            return 0;
+        };
+        int best = spanLength(tl);
+        for (TransitionAlign align : {TransitionAlign::Start, TransitionAlign::End}) {
+            if (best >= length) continue;
+            Timeline t = wanted;
+            Clip* tl2 = TimelineOps::findClip(t, leftId);
+            Clip* tr2 = TimelineOps::findClip(t, rightId);
+            tl2->transOutStyle.align = tr2->transInStyle.align = align;
+            fitTransitions(t, touched, sourceLength());
+            if (const int n = spanLength(t); n > best) {
+                best = n;
+                tl = t;
+            }
+        }
+    }
     if (trimClips && l && r) {
         const auto spans = TimelineOps::transitions(tl.track(lRef), sourceLength());
         if (std::none_of(spans.begin(), spans.end(), [&](const auto& s) { return s.leftId == leftId && s.rightId == rightId; })) {
