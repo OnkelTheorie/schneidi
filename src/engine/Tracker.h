@@ -113,6 +113,11 @@ struct Result {
 // Pictures of a clip alone for tracking: without its effects/transform (what the grade filter sees), at clip frames,
 // so speed changes and reverse play are included. frame(t, maxEdge); not thread-safe (one caller at a time)
 std::function<QImage(int, int)> clipFrames(const ProjectFormat& format, const Clip& c);
+// The same cut to the clip's own picture: a picture of another aspect ratio without the bars it gets in the frame
+// (what the compositing graph works on, so 0..1 positions there and here are the same). maxEdge counts for the frame
+std::function<QImage(int, int)> clipPictures(const ProjectFormat& format, const Clip& c);
+// Where clipPictures' picture lies in the frame, in project pixels (centred; the whole frame when it fills it)
+QRectF pictureRect(const ProjectFormat& format, const Clip& c);
 
 // Track window n of clip c from clip frame `from` to clip frame `to` (backwards when to < from), both inside the
 // clip. Pictures: the clip alone without its effects/transform (what the grade filter sees), so speed changes and

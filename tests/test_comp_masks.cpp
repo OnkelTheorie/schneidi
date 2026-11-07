@@ -266,9 +266,10 @@ void testCombine()
 
 void testFollow()
 {
-    // Tracker 7 started at (0.5, 0.5) and is now at (0.7, 0.4), twice the size, turned by 90 degrees
+    // Tracker 7 had its reference point at (0.5, 0.5) and is now at (0.7, 0.4), twice the size, turned by 90 degrees.
+    // The follow rule: relative to the reference rx/ry, not to the start point A (two points: A is not the middle)
     RunOptions o;
-    o.otherNodes[7] = {{"ax", 0.5}, {"ay", 0.5}, {"x", 0.7}, {"y", 0.4}, {"scale", 1.0}, {"angle", 0.0}};
+    o.otherNodes[7] = {{"ax", 0.2}, {"ay", 0.3}, {"rx", 0.5}, {"ry", 0.5}, {"x", 0.7}, {"y", 0.4}, {"scale", 1.0}, {"angle", 0.0}};
     QVariantMap p = rect(0.5, 0.5, 0.1, 0.1); // 20 x 20 px around (100, 50)
     p["follow"] = 7;
     Buf b = run(p, {200, 100}, {}, o);

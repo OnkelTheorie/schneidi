@@ -63,13 +63,14 @@ TrackRun trackFrames(const std::function<QImage(int frame)>& frame, const TrackS
 // Start of a tracker node from its values (keys without the "n<id>." prefix, missing = defaults)
 TrackStart startOf(const QVariantMap& values);
 
-// A tracker node's value as its followers read it (numOf): like numValue, but a result x/y that is not set (no value,
-// no keyframes – not analyzed yet) is the start point ax/ay, so a follower drawn relative to (ax, ay) does not jump.
-// scale/angle missing = 1/0 (their defaults). The engine's numOf should use this for nodes of kind "tracker"
+// A tracker node's value as its followers read it (numOf, the follow rule of core/CompTrack.h): like numValue, but
+// rx/ry not set = the point the mode implies (::Comp::impliedReference), x/y not set (not analyzed yet) = rx/ry, so a
+// follower does not move. scale/angle missing = 1/0 (their defaults). The engine's numOf does the same with keyframes
 double trackerValue(const QVariantMap& values, const QString& key);
 
 // Tracker node `node` of clip c's "comp" graph over clip frames from..to; the node's start values at `from`
-// (keyframes resolved). Pictures: the clip alone without its effects (Tracker::clipFrames)
+// (keyframes resolved). Pictures: the clip alone without its effects, its own picture without the bars of another
+// aspect ratio (Tracker::clipPictures), so positions are 0..1 of the picture the graph works on
 TrackRun trackNode(const ProjectFormat& format, const Clip& c, int node, int from, int to,
                    const std::function<void(int, int)>& progress = {}, const std::atomic<bool>* cancel = nullptr,
                    const FaceFinder& faces = {});

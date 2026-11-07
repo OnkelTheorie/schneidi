@@ -170,19 +170,25 @@ bool evalMerge(NodeCtx& ctx, Buf* out)
 }
 
 // Where the transform puts the source: anchor (ax, ay of the picture) to (x, y), scaled by size, turned by angle
-// (clockwise); with "follow" the tracker node's x/y/scale/angle carry it (x, y then count from the picture centre as
-// an offset)
+// (clockwise); with "follow" the tracker carries that placement by the follow rule (core/CompTrack.h): moved by the
+// tracker's (x, y) - (rx, ry), scaled by its scale and turned by its angle around (x, y). Not analyzed = unchanged
 Compose::Affine transformOf(NodeCtx& ctx, bool* identity)
 {
     const double W = ctx.size.width(), H = ctx.size.height();
     double x = ctx.num("x"), y = ctx.num("y"), size = ctx.num("size"), angle = ctx.num("angle");
     const int follow = int(std::lround(ctx.num("follow")));
     if (follow > 0 && ctx.numOf) {
-        x = ctx.numOf(follow, "x") + (x - 0.5);
-        y = ctx.numOf(follow, "y") + (y - 0.5);
-        const double ts = ctx.numOf(follow, "scale");
-        size *= ts > 0 ? ts : 1.0;
-        angle += ctx.numOf(follow, "angle");
+        double ts = ctx.numOf(follow, "scale");
+        ts = ts > 0 && std::isfinite(ts) ? ts : 1.0;
+        double ta = ctx.numOf(follow, "angle");
+        ta = std::isfinite(ta) ? ta : 0.0;
+        // The anchor's place mapped like any point of the picture (in pixels: a turn keeps its shape)
+        const double tr = ta * std::numbers::pi / 180.0, tc = std::cos(tr), tsn = std::sin(tr);
+        const double dx = (x - ctx.numOf(follow, "rx")) * W, dy = (y - ctx.numOf(follow, "ry")) * H;
+        x = ctx.numOf(follow, "x") + ts * (tc * dx - tsn * dy) / W;
+        y = ctx.numOf(follow, "y") + ts * (tsn * dx + tc * dy) / H;
+        size *= ts;
+        angle += ta;
     }
     const double ax = ctx.num("ax") * W, ay = ctx.num("ay") * H;
     const double rad = angle * std::numbers::pi / 180.0, cs = std::cos(rad) * size, sn = std::sin(rad) * size;

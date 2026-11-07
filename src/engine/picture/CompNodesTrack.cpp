@@ -6,7 +6,8 @@
 // result parameters x, y, scale, angle; other nodes read them with numOf(id, "x") ("follow" = this node's id).
 // Parameters: mode point|two|face; start points ax/ay (point, face: where the face is), bx/by (second point) 0..1;
 // size = side of the square looked for, relative to the picture width; results x/y 0..1, scale (1 = as at the start),
-// angle (degrees clockwise against the start).
+// angle (degrees clockwise against the start); rx/ry = the reference point followers are drawn relative to (the
+// follow rule: core/CompTrack.h).
 #include "core/CompTrack.h"
 #include "core/I18n.h"
 #include "engine/picture/CompNodes.h"
@@ -69,7 +70,10 @@ void registerTrackNodes(QVector<NodeType>& out)
              << number("size", T("Suchfeld"), 0.05, 0.005, 0.5, 0.001, 3,
                        T("Seite des Quadrats, das um jeden Punkt gesucht wird (Anteil der Bildbreite)"))
              << number("x", T("Position x"), 0.5, -1, 2, 0.001, 3) << number("y", T("Position y"), 0.5, -1, 2, 0.001, 3)
-             << number("scale", T("Größe"), 1, 0.01, 100, 0.01, 3) << number("angle", T("Drehung"), 0, -3600, 3600, 0.1, 2);
+             << number("scale", T("Größe"), 1, 0.01, 100, 0.01, 3) << number("angle", T("Drehung"), 0, -3600, 3600, 0.1, 2)
+             << number("rx", T("Bezugspunkt x"), 0.5, -1, 2, 0.001, 3,
+                       T("Wo das Verfolgte im Startbild ist; Folgende bewegen sich um den Abstand dazu"))
+             << number("ry", T("Bezugspunkt y"), 0.5, -1, 2, 0.001, 3);
     k.output = Buf::Rgba;
     k.varying = false; // the picture is its input's; the results are keyframes the engine sees
     k.eval = passThrough;

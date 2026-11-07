@@ -300,12 +300,13 @@ bool evaluate(const EffectInstance& comp, const Env& env, Cache* cache, Buf* out
             ctx.numOf = [&](int other, const QString& key) {
                 const CompNode* o = g.node(other);
                 const NodeType* ok = o ? find(o->type) : nullptr;
-                // A tracker that was not analyzed yet (no x/y value, no keyframes) is at its start point, so a
-                // follower drawn relative to (ax, ay) does not jump (Picture::Comp::trackerValue)
-                if (o && o->type == QLatin1String(::Comp::kTrackerType)
-                    && (key == QLatin1String("x") || key == QLatin1String("y")) && !values.value(other).contains(key)
-                    && !animated.value(other).contains(key))
-                    return valueOf(other, ok, key == QLatin1String("x") ? QStringLiteral("ax") : QStringLiteral("ay"));
+                // A tracker's x/y/rx/ry by the follow rule (core/CompTrack.h): not analyzed yet = at its reference
+                // point, so a follower does not move (Picture::Comp::trackerValue)
+                if (ok && o->type == QLatin1String(::Comp::kTrackerType))
+                    return ::Comp::followValue(
+                        key, textValue(*ok, values.value(other), QStringLiteral("mode")),
+                        [&](const QString& q) { return values.value(other).contains(q) || animated.value(other).contains(q); },
+                        [&](const QString& q) { return valueOf(other, ok, q); });
                 return valueOf(other, ok, key);
             };
             ctx.input = [&, id](const QString& name) { return inputOf(id, name); };
