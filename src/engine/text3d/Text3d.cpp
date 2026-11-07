@@ -13,6 +13,10 @@ namespace Text3d {
 
 namespace {
 
+// Float -> int without undefined behaviour: NaN and values beyond [lo, hi] become the nearest end (a vertex close to
+// the camera plane can project to 1e20 or NaN)
+int clampToInt(double v, int lo, int hi) { return v >= lo ? (v <= hi ? int(v) : hi) : lo; }
+
 using Contour = std::vector<QPointF>;
 
 // The outline's closed contours, without the closing point and repeated points
@@ -391,8 +395,9 @@ QRect render(const Mesh& m, const View& v, uint8_t* rgba, int w, int h)
         }
     }
     if (minX > maxX) return {};
-    const QRect box = QRect(QPoint(int(std::floor(minX)), int(std::floor(minY))),
-                            QPoint(int(std::ceil(maxX)), int(std::ceil(maxY)))) & QRect(0, 0, w, h);
+    const QRect box = QRect(QPoint(clampToInt(std::floor(minX), -1, w + 1), clampToInt(std::floor(minY), -1, h + 1)),
+                            QPoint(clampToInt(std::ceil(maxX), -1, w + 1), clampToInt(std::ceil(maxY), -1, h + 1)))
+                      & QRect(0, 0, w, h);
     if (box.isEmpty()) return {};
     const int bw = box.width() * ss, bands = (box.height() + kBandRows - 1) / kBandRows;
 
@@ -432,8 +437,8 @@ QRect render(const Mesh& m, const View& v, uint8_t* rgba, int w, int h)
         tr.b = planeOf(X, Y, b, area2);
         const int id = int(tris.size());
         tris.push_back(tr);
-        const int b0 = std::clamp(int(tr.minY) / (kBandRows * ss), 0, bands - 1),
-                  b1 = std::clamp(int(tr.maxY) / (kBandRows * ss), 0, bands - 1);
+        const int b0 = std::clamp(clampToInt(tr.minY, 0, bands * kBandRows * ss) / (kBandRows * ss), 0, bands - 1),
+                  b1 = std::clamp(clampToInt(tr.maxY, 0, bands * kBandRows * ss) / (kBandRows * ss), 0, bands - 1);
         for (int k = b0; k <= b1; ++k) inBand[size_t(k)].push_back(id);
     }
 
@@ -448,8 +453,8 @@ QRect render(const Mesh& m, const View& v, uint8_t* rgba, int w, int h)
             std::fill(px.begin(), px.begin() + ptrdiff_t(bw) * bandRows, 0u);
             for (int id : inBand[size_t(band)]) {
                 const Tri& tr = tris[size_t(id)];
-                const int ya = std::max(y0, int(std::ceil(tr.minY - 0.5f))),
-                          yb = std::min(y0 + bandRows - 1, int(std::floor(tr.maxY - 0.5f)));
+                const int ya = std::max(y0, clampToInt(std::ceil(tr.minY - 0.5f), y0, y0 + bandRows)),
+                          yb = std::min(y0 + bandRows - 1, clampToInt(std::floor(tr.maxY - 0.5f), y0 - 1, y0 + bandRows));
                 for (int y = ya; y <= yb; ++y) {
                     const float yc = y + 0.5f;
                     float xl = 0, xr = float(bw);
@@ -461,7 +466,7 @@ QRect render(const Mesh& m, const View& v, uint8_t* rgba, int w, int h)
                         else if (rest < 0) empty = true;
                     }
                     if (empty) continue;
-                    const int xa = std::max(0, int(std::ceil(xl - 0.5f))), xb = std::min(bw - 1, int(std::floor(xr - 0.5f)));
+                    const int xa = clampToInt(std::ceil(xl - 0.5f), 0, bw), xb = clampToInt(std::floor(xr - 0.5f), -1, bw - 1);
                     if (xa > xb) continue;
                     float* drow = depth.data() + size_t(y - y0) * bw;
                     uint32_t* prow = px.data() + size_t(y - y0) * bw;
@@ -470,9 +475,8 @@ QRect render(const Mesh& m, const View& v, uint8_t* rgba, int w, int h)
                     for (int x = xa; x <= xb; ++x) {
                         if (q > drow[x]) {
                             drow[x] = q;
-                            const int ri = std::min(255, std::max(0, int(r + 0.5f))),
-                                      gi = std::min(255, std::max(0, int(g + 0.5f))),
-                                      bi = std::min(255, std::max(0, int(b + 0.5f)));
+                            const int ri = clampToInt(r + 0.5f, 0, 255), gi = clampToInt(g + 0.5f, 0, 255),
+                                      bi = clampToInt(b + 0.5f, 0, 255);
                             prow[x] = 0xff000000u | uint32_t(ri) | (uint32_t(gi) << 8) | (uint32_t(bi) << 16);
                         }
                         q += tr.q.a;
