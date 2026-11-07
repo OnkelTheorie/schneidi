@@ -13,6 +13,7 @@
 #include "cli/Sandbox.h"
 #include "cli/Serve.h"
 #include "cli/Setup.h"
+#include "core/CodeTrust.h"
 #include "core/I18n.h"
 #include "engine/Engine.h"
 #include "engine/FfmpegLog.h"
@@ -129,6 +130,7 @@ int main(int argc, char* argv[])
     QGuiApplication::setApplicationVersion(QString::fromUtf8(SCHNEIDI_VERSION_LABEL) + (*SCHNEIDI_BUILD ? QString(" (%1)").arg(SCHNEIDI_BUILD) : QString()));
     I18n::install("en");
     std::setlocale(LC_NUMERIC, "C"); // C libraries (FFmpeg option parsing) read numbers with a dot
+    CodeTrust::prune(); // trust records of deleted files (at most once a day)
 
     QStringList args = app.arguments().mid(1);
     bool pretty = false;

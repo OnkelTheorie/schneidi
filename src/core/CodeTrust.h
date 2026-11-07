@@ -7,8 +7,9 @@
 // - Process-wide set of trusted code (the text itself): what the user wrote in this run (edit op, app), what they
 //   confirmed (dialog, inspector, trust_custom_code:true) and the code of files remembered as trusted.
 // - Remembered per file in the settings (never in the file itself): trust/<sha1 of the path key> = sha1 over all
-//   custom code of the file (sorted). Loading a project (ProjectFile::load) or applying a recipe whose record matches
-//   trusts its code; a changed file asks again. Saving a project whose code is all trusted writes the record.
+//   custom code of the file (sorted), trustfile/<same> = the path (prune drops records of deleted files).
+//   Loading a project (ProjectFile::load), applying a recipe or an effect preset whose record matches trusts its
+//   code; a changed file asks again. Saving a project, recipe or preset whose code is all trusted writes the record.
 // Projects without custom code are never looked at twice: no record, nothing to ask.
 
 #include <QString>
@@ -66,6 +67,11 @@ void remember(const QString& path, const QStringList& codes);
 bool admit(const QString& path, const QStringList& codes);
 // The user trusts the codes of the file: in this run and remembered for the file
 void trustFile(const QString& path, const QStringList& codes);
+// Drop the record of a file (a temporary file that was moved)
+void forget(const QString& path);
+// Drop the records of files that no longer exist; at most once a day unless forced (app/CLI start, cheap: one
+// settings read when done today). Returns the number dropped
+int prune(bool force = false);
 
 // Tests: forget the trust given in this run
 void resetForTests();

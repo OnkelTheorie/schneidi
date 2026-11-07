@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "core/Presets.h"
 
+#include "core/CodeTrust.h"
+
 #include "core/EffectFolders.h"
 #include "core/EffectRegistry.h"
 #include "core/I18n.h"
@@ -415,8 +417,8 @@ QVariant convert(const EffectParam& p, const QString& v, double factor)
         for (const QString& c : p.choices)
             if (c.compare(v, Qt::CaseInsensitive) == 0) return c;
         return {};
-    case EffectParam::Path:
-    case EffectParam::Text: return {};
+    case EffectParam::Text: return v; // custom code; trusted only through the preset's record (load)
+    case EffectParam::Path: return {};
     }
     return {};
 }
@@ -445,8 +447,8 @@ QString valueText(const EffectParam& p, const QVariant& v)
         return QString::asprintf("0x%02x%02x%02x%02x", c.red(), c.green(), c.blue(), c.alpha()); // MLT 0xrrggbbaa
     }
     case EffectParam::Choice: return v.toString();
-    case EffectParam::Path:
-    case EffectParam::Text: return {};
+    case EffectParam::Text: return v.toString(); // custom code (filter chain, shader): schneidi's own elements only
+    case EffectParam::Path: return {};
     }
     return {};
 }
@@ -704,6 +706,12 @@ bool save(const Clip& c, const QString& name, const QString& path, QString* erro
         if (error) *error = f.errorString();
         return false;
     }
+    // The user's own custom code (filter chain, shader): remembered for the file like a project's, so applying the
+    // preset later renders it without asking (core/CodeTrust.h); code they did not trust stays unremembered
+    QVector<CodeTrust::Item> items;
+    for (const EffectInstance& e : c.effects) items += CodeTrust::itemsOf(e);
+    if (const QStringList codes = CodeTrust::codes(items); !codes.isEmpty() && CodeTrust::allTrusted(codes))
+        CodeTrust::remember(path, codes);
     return true;
 }
 
@@ -812,6 +820,10 @@ Preset load(const QString& path)
         return p;
     }
     Preset p = parse(f.read(4 << 20), path, QFileInfo(path).absoluteDir().dirName());
+    // Custom code of a preset the user saved (record matches) is trusted; anyone else's is not
+    QVector<CodeTrust::Item> items;
+    for (const EffectInstance& e : map(p).effects) items += CodeTrust::itemsOf(e);
+    if (const QStringList codes = CodeTrust::codes(items); !codes.isEmpty()) CodeTrust::admit(path, codes);
     if (EffectFolders::isBuiltin(path)) { // bundled look: translated name, schneidi's own
         p.name = EffectFolders::displayName(path);
         p.description = EffectFolders::builtinPresetDescription(path);

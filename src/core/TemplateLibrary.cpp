@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "core/TemplateLibrary.h"
 
+#include "core/CodeTrust.h"
 #include "core/CompGraph.h"
 #include "core/EffectFolders.h"
 #include "core/EffectRegistry.h"
@@ -312,7 +313,10 @@ std::optional<ContentTemplate> save(const ProjectData& project, const QString& n
         redirect(d, moved);
     }
     QString err;
-    if (!ProjectFile::save(d, QDir(tmp).filePath(ProjectFileName), &err)) return fail("SAVE_FAILED", err);
+    const bool saved = ProjectFile::save(d, QDir(tmp).filePath(ProjectFileName), &err);
+    // The save remembers trusted custom code for the temporary file; the template gets its own record once in place
+    CodeTrust::forget(QDir(tmp).filePath(ProjectFileName));
+    if (!saved) return fail("SAVE_FAILED", err);
     if (!o.preview.isEmpty()) {
         const QString suffix = QFileInfo(o.preview).suffix().toLower();
         if (!QFile::copy(o.preview, QDir(tmp).filePath("preview." + (suffix.isEmpty() ? QString("png") : suffix))))
