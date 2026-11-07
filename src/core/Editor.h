@@ -235,8 +235,11 @@ public:
     // A cut without spare material on a needed side gets none (DaVinci "insufficient handles"); trimClips =
     // ripple-trim the clips there first (with linked partners, like the trim mode) so it fits. One undo step.
     // Returns the cuts (left, right clip id) that got no transition for lack of material.
+    // length > 0: the wanted length instead of the default 1 s, align: the alignment of new and existing ones (both
+    // decide how much trimClips takes off)
     QVector<QPair<int, int>> addTransitions(int frame, std::optional<TransitionStyle> style = {},
-                                            std::optional<TrackKind> onlyKind = {}, bool trimClips = false);
+                                            std::optional<TrackKind> onlyKind = {}, bool trimClips = false,
+                                            int length = 0, std::optional<TransitionAlign> align = {});
     // Like addTransitions without trimClips, but changes nothing: the cuts that lack material
     QVector<QPair<int, int>> transitionsLackingHandles(int frame, std::optional<TransitionStyle> style = {},
                                                        std::optional<TrackKind> onlyKind = {}) const;
@@ -662,7 +665,8 @@ private:
     // Copy of the timeline with the transitions of addTransitions; nullopt = nothing to do
     std::optional<Timeline> withTransitions(int frame, std::optional<TransitionStyle> style,
                                             std::optional<TrackKind> onlyKind, bool trimClips,
-                                            QVector<QPair<int, int>>* lacking) const;
+                                            QVector<QPair<int, int>>* lacking, int length = 0,
+                                            std::optional<TransitionAlign> align = {}) const;
     // Ripple-trim the clips at the cut leftId|rightId in tl so a dissolve of `length` with `align` fits there
     // (shorter if the clips are too short for it); false = not possible (locked, no room)
     bool trimForTransition(Timeline& tl, int leftId, int rightId, TransitionAlign align, int length) const;
