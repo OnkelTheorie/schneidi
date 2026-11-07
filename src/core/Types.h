@@ -141,6 +141,18 @@ inline constexpr TitleFillInfo kTitleFills[] = {
     {TitleFill::Gradient, "gradient", N_("Verlauf")},
     {TitleFill::Texture, "texture", N_("Textur")},
 };
+// How a title comes in and goes out (0.19): over its first / last `enterLen` / `exitLen` seconds. Pop = a short
+// scale-up past the size and back (60 % -> 108 % -> 100 %), SlideUp = rising into place while fading in (leaving:
+// rising on while fading out); the exit is the entry backwards. Project files hold it only when set (older versions
+// show the title still).
+enum class TitleAnim { None, Fade, Pop, SlideUp };
+struct TitleAnimInfo { TitleAnim anim; const char* id; const char* name; };
+inline constexpr TitleAnimInfo kTitleAnims[] = {
+    {TitleAnim::None, "none", N_("Keine")},
+    {TitleAnim::Fade, "fade", N_("Weich blenden")},
+    {TitleAnim::Pop, "pop", N_("Aufploppen")},
+    {TitleAnim::SlideUp, "slide_up", N_("Hochgleiten")},
+};
 // One colour of a gradient at its place along it (0..1)
 struct ColorStop {
     double at = 0;
@@ -235,6 +247,8 @@ struct TitleStyle {
     // stays stored next to the reference (rendering never reads the kit); Editor::applyBrand copies the kit's in.
     int colorRef = 0, outlineRef = 0, boxRef = 0, fontRef = 0;
     TitleLook look; // fill, edge, shadow, glow (0.19; text and counter titles)
+    TitleAnim enter = TitleAnim::None, exit = TitleAnim::None; // entry / exit animation (seconds below)
+    double enterLen = 0.2, exitLen = 0.2;
     bool hasBrandRef() const { return colorRef || outlineRef || boxRef || fontRef; }
 
     bool isCounter() const { return kind == TitleKind::Counter; }

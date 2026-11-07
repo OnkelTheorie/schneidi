@@ -21,7 +21,8 @@ the same ad for 20 products: one row per product in a CSV, `templates` `fill` wi
 - The user's brand kit (`brand`: logo, colors, fonts, intro/outro) when they have one: titles with `color`
   `"brand1"` follow it, `brand` `action` `"logo"` places the logo ([brand.md](brand.md)).
 - Text: `title` with a clear style - big `size`, `bold`, `outline` or `box` for contrast. Check placement with
-  `frames`.
+  `frames`. A pop-in: `"enter":"pop"` (also `fade`, `slide_up`; `exit` the same at the end; `{type, duration}`),
+  not size keyframes.
 - Music from the start, cut to the exact end, `fade` out over the last 0.5-1 s; about -14 LUFS ([audio.md](audio.md)).
 
 ## Several formats (16:9 and 9:16 …)

@@ -996,8 +996,34 @@ struct Renderer::Impl {
     // Title text onto an output-size layer (clip frame t)
     // Draws the title onto layer, whose top left is at (shift) of the output frame. bounds: instead of drawing, the
     // part of the output frame it covers (whole pixels, inside the frame)
+    // The entry/exit animation (TitleStyle::enter, exit) is applied here: scale and rise in the layout, a partial
+    // opacity by drawing the title on its own and laying it on.
     void drawTitle(Image& layer, const Clip& c, double t, const Ctx& ctx, double sizeOverride = 0, QPoint shift = {},
                    QRect* bounds = nullptr)
+    {
+        const Generators::TitleMotion m = Generators::titleMotion(c.title, t, c.length(), ctx.fps);
+        if (m.opacity <= 0) {
+            if (bounds) *bounds = QRect();
+            return;
+        }
+        if (m.opacity >= 1 || bounds) {
+            drawTitleAt(layer, c, t, ctx, sizeOverride, shift, bounds, m);
+            return;
+        }
+        QRect box;
+        drawTitleAt(layer, c, t, ctx, sizeOverride, shift, &box, m);
+        box &= QRect(shift, QSize(layer.w, layer.h));
+        if (box.isEmpty()) return;
+        Image part(box.width(), box.height());
+        drawTitleAt(part, c, t, ctx, sizeOverride, box.topLeft(), nullptr, m);
+        const int x0 = box.x() - shift.x(), y0 = box.y() - shift.y();
+        for (int y = 0; y < part.h; ++y)
+            Compose::over(layer.data() + (size_t(y0 + y) * layer.w + x0) * 4, part.data() + size_t(y) * part.w * 4,
+                          part.w, 1, m.opacity);
+    }
+
+    void drawTitleAt(Image& layer, const Clip& c, double t, const Ctx& ctx, double sizeOverride, QPoint shift,
+                     QRect* bounds, const Generators::TitleMotion& m)
     {
         const TitleStyle& st = c.title;
         const double sx = ctx.W / ctx.PW, sy = ctx.H / ctx.PH;
@@ -1005,7 +1031,8 @@ struct Renderer::Impl {
             drawProgress(layer, c, t, ctx, shift, bounds);
             return;
         }
-        const double size = std::max(1.0, sizeOverride > 0 ? sizeOverride : st.size);
+        double size = std::max(1.0, sizeOverride > 0 ? sizeOverride : st.size);
+        if (m.scale != 1) size = std::max(1.0, size * m.scale);
         // An animated size scales the whole title: outline and box margin with it
         const double grow = st.size > 0 ? size / st.size : 1.0;
         const double outlineWidth = st.outlineWidth * grow, boxPad = std::max(0.0, st.boxPad) * grow;
@@ -1021,7 +1048,7 @@ struct Renderer::Impl {
             w = std::max(w, fm.horizontalAdvance(line));
         const bool outline = st.outlineOn && outlineWidth > 0;
         if (st.look.solidOn) {
-            drawTitle3d(layer, c, t, ctx, text, w, size, boxPad, shift, bounds);
+            drawTitle3d(layer, c, t, ctx, text, w, size, boxPad, shift, bounds, m.rise);
             return;
         }
         // Fill, edge, shadow, glow (0.19): only a styled title takes this path, a plain one is drawn as before
@@ -1042,7 +1069,7 @@ struct Renderer::Impl {
             }
             p.text = text;
             const double x = (ctx.PW - w) / 2 + Keys::valueAt(c, AnimParam::TitlePosX, t);
-            const double y = -Keys::valueAt(c, AnimParam::TitlePosY, t);
+            const double y = -Keys::valueAt(c, AnimParam::TitlePosY, t) - m.rise;
             p.area = QRectF(x * sx, y * sy, w * sx, ctx.PH * sy);
             QFont f(st.fontFamily());
             f.setPixelSize(std::max(1, int(std::lround(size * sy))));
@@ -1077,7 +1104,7 @@ struct Renderer::Impl {
     // Real 3D letters (TitleLook::solidOn, engine/text3d) over the box: turned, they may reach anywhere in the picture.
     // text/w/size/boxPad as drawTitle laid them out
     void drawTitle3d(Image& layer, const Clip& c, double t, const Ctx& ctx, const QString& text, double w, double size,
-                     double boxPad, QPoint shift, QRect* bounds)
+                     double boxPad, QPoint shift, QRect* bounds, double rise)
     {
         const TitleStyle& st = c.title;
         const TitleLook& l = st.look;
@@ -1090,7 +1117,7 @@ struct Renderer::Impl {
         Text::Params p;
         p.text = text;
         const double x = (ctx.PW - w) / 2 + Keys::valueAt(c, AnimParam::TitlePosX, t);
-        const double y = -Keys::valueAt(c, AnimParam::TitlePosY, t);
+        const double y = -Keys::valueAt(c, AnimParam::TitlePosY, t) - rise;
         p.area = QRectF(x * sx, y * sy, w * sx, ctx.PH * sy).translated(-shift);
         QFont f(st.fontFamily());
         f.setPixelSize(std::max(1, int(std::lround(size * sy))));

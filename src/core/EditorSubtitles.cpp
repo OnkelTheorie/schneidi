@@ -320,6 +320,29 @@ int Editor::addCaptions(const QVector<SubtitleCue>& cues, const QString& name, c
     return index;
 }
 
+bool Editor::setSubtitleCues(int index, const QVector<SubtitleCue>& cues, const QString& text)
+{
+    const Timeline& cur = m_project->timeline();
+    if (!validTrack(cur, index) || cur.subtitles[index].locked || cues.isEmpty()) return false;
+    Project* p = m_project;
+    const QSet<int> gone = [&] {
+        QSet<int> ids;
+        for (const SubtitleCue& c : cur.subtitles[index].cues) ids << c.id;
+        return ids;
+    }();
+    m_project->edit(text, [&](Timeline& tl) {
+        SubtitleTrack& t = tl.subtitles[index];
+        t.cues.clear();
+        placeAll(t, cues, p);
+    });
+    if (m_selection) {
+        QSet<int> keep = m_selection->ids();
+        keep.subtract(gone);
+        if (keep != m_selection->ids()) m_selection->set(keep);
+    }
+    return true;
+}
+
 void Editor::setSubtitleCaptions(int index, const CaptionStyle& captions, const QString& mergeKey)
 {
     const Timeline& cur = m_project->timeline();

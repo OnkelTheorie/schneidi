@@ -493,3 +493,7 @@ schneidi_test(test_trust_dialog) # custom code from someone else: the open dialo
 target_link_libraries(test_trust_dialog PRIVATE schneidi_cli_lib)
 schneidi_test(test_effect_aliases) # readable names of index-keyed effect parameters (0.19): op effect, keyframe, fx node, info, effects
 target_link_libraries(test_effect_aliases PRIVATE schneidi_cli_lib)
+schneidi_test(test_title_anim) # title entry/exit animation (0.19): pop/fade/slide sizes and opacity, still frames bit-identical, file, op title
+target_link_libraries(test_title_anim PRIVATE schneidi_cli_lib)
+schneidi_test(test_subtitles_readable) # readable subtitle cues (0.19): lines, cps, pauses, word times, check, op subtitles readable/words/track
+target_link_libraries(test_subtitles_readable PRIVATE schneidi_cli_lib)

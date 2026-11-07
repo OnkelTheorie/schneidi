@@ -1,0 +1,301 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Readable subtitle cues (0.19, Subtitles::readable): whisper's fast one-line pieces regrouped into 1-2 line cues
+// (lines at most 42 characters, 2 lines, at most ~17-20 characters per second where the speech leaves room, at
+// least 0.8 s, a new cue at a sentence end, never across a pause > 0.7 s, two lines split at a comma), word times
+// kept, every word once in order; `check` no longer finds them too fast; the edit op 'subtitles' with readable,
+// words and an existing track (one undo step).
+#include "check.h"
+
+#include "cli/Commands.h"
+#include "cli/CommandsDetail.h"
+#include "core/ExportCheck.h"
+#include "core/I18n.h"
+#include "core/Project.h"
+#include "core/ProjectFile.h"
+#include "core/Subtitles.h"
+#include "core/Transcript.h"
+
+#include <QGuiApplication>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QTemporaryDir>
+
+#include <clocale>
+#include <cmath>
+
+namespace {
+
+const double kFps = 25;
+const ProjectFormat kFormat{1920, 1080, {25, 1}};
+
+// Speech of about 15 characters per second: words of `text` one after the other (100 ms + 60 ms per letter, 30 ms
+// apart, 300 ms after a sentence); "|" = a pause of 1 s
+QVector<Transcript::Word> speech(const QString& text, qint64 at = 0)
+{
+    QVector<Transcript::Word> out;
+    for (const QString& w : text.split(' ', Qt::SkipEmptyParts)) {
+        if (w == "|") {
+            at += 1000;
+            continue;
+        }
+        Transcript::Word word;
+        word.text = w;
+        word.from = at;
+        word.to = at + 100 + 60 * w.size();
+        at = word.to + (w.endsWith('.') || w.endsWith('?') ? 300 : 30);
+        out << word;
+    }
+    return out;
+}
+
+const QString kText =
+    "So, heute bauen wir zusammen einen kleinen Tisch aus altem Holz. Zuerst messen wir die Bretter, dann sägen wir "
+    "sie auf die richtige Länge, und danach schleifen wir alles schön glatt. | Das dauert nicht lange. Ja. Gut, "
+    "weiter geht's mit den Beinen, die wir aus den dicken Latten schneiden, damit der Tisch später nicht wackelt.";
+
+QStringList wordsOf(const QVector<SubtitleCue>& cues)
+{
+    QStringList out;
+    for (const SubtitleCue& c : cues) out += c.text.simplified().split(' ', Qt::SkipEmptyParts);
+    return out;
+}
+
+double cps(const SubtitleCue& c)
+{
+    QString letters = c.text;
+    letters.remove('\n');
+    return letters.trimmed().size() / (c.length() / kFps);
+}
+
+int fastCount(const QVector<SubtitleCue>& cues)
+{
+    Timeline tl;
+    tl.video.resize(1);
+    SubtitleTrack st;
+    st.cues = cues;
+    tl.subtitles << st;
+    int n = 0;
+    for (const ExportCheck::Issue& i : ExportCheck::timeline(tl, 0, cues.last().end + 50, kFormat))
+        n += i.check == "subtitle_fast";
+    return n;
+}
+
+// The rules hold for every cue of `out` made from `words`
+void checkRules(const QVector<SubtitleCue>& out, const QVector<Transcript::Word>& words, bool wordTimes)
+{
+    QStringList all;
+    for (const auto& w : words) all << w.text;
+    CHECK_EQ(wordsOf(out), all);
+    const int pause = int(std::lround(0.7 * kFps));
+    int k = 0; // index of the cue's first word in `words`
+    double worst = 0;
+    for (int i = 0; i < out.size(); ++i) {
+        const SubtitleCue& c = out[i];
+        const QStringList lines = c.text.split('\n');
+        CHECK(lines.size() <= 2);
+        for (const QString& l : lines) CHECK(l.size() <= 42);
+        if (i > 0) CHECK(c.start >= out[i - 1].end);
+        const int n = int(c.text.simplified().split(' ').size());
+        // Never across a pause
+        for (int j = k + 1; j < k + n; ++j) {
+            const int gap = int(std::lround(words[j].from / 1000.0 * kFps)) - int(std::lround(Transcript::spokenEnd(words[j - 1]) / 1000.0 * kFps));
+            if (!CHECK(gap <= pause)) std::printf("       across a pause: %s\n", qPrintable(c.text));
+        }
+        // Long and slow enough where the next cue leaves room
+        const int room = i + 1 < out.size() ? out[i + 1].start - c.start : 1 << 20;
+        if (room >= int(0.8 * kFps)) CHECK(c.length() >= int(0.8 * kFps) - 1);
+        const int needed = int(std::ceil(c.text.size() / 17.0 * kFps));
+        if (room >= needed) {
+            worst = std::max(worst, cps(c));
+            if (!CHECK(cps(c) <= 17.5)) std::printf("       too fast (%.1f): %s\n", cps(c), qPrintable(c.text));
+        }
+        if (wordTimes && CHECK_EQ(int(c.words.size()), n))
+            for (int j = 0; j < n; ++j)
+                CHECK_EQ(c.start + c.words[j].from, int(std::lround(words[k + j].from / 1000.0 * kFps)));
+        k += n;
+    }
+    std::printf("       %d cues, slowest allowed 17, fastest with room %.1f characters/s\n", int(out.size()), worst);
+}
+
+void testFromWords()
+{
+    std::printf("from words\n");
+    const QVector<Transcript::Word> words = speech(kText);
+    // As `transcribe` makes them without readable: one line
+    const QVector<SubtitleCue> old = Transcript::toCues(words, kFps);
+    double fastest = 0;
+    for (const SubtitleCue& c : old) fastest = std::max(fastest, cps(c));
+    std::printf("       one-line cues: %d, fastest %.1f characters/s, %d too fast for check\n", int(old.size()),
+                fastest, fastCount(old));
+    const QVector<SubtitleCue> out = Subtitles::readable(Transcript::wordCues(words, kFps), kFps);
+    for (const SubtitleCue& c : out) std::printf("       [%5.2f-%5.2f] %s\n", c.start / kFps, c.end / kFps, qPrintable(QString(c.text).replace('\n', " / ")));
+    checkRules(out, words, true);
+    CHECK_EQ(fastCount(out), 0);
+    CHECK(out.size() < old.size());
+    // Some cues use two lines, split evenly
+    bool two = false;
+    for (const SubtitleCue& c : out)
+        if (c.text.contains('\n')) {
+            two = true;
+            const QStringList l = c.text.split('\n');
+            CHECK(std::abs(l[0].size() - l[1].size()) <= 20);
+        }
+    CHECK(two);
+    // The pause stays a break: "glatt." ends a cue, "Das" starts one
+    bool pauseBreak = false;
+    for (int i = 0; i + 1 < out.size(); ++i)
+        pauseBreak |= out[i].text.endsWith("glatt.") && out[i + 1].text.startsWith("Das");
+    CHECK(pauseBreak);
+}
+
+void testFromCues()
+{
+    std::printf("from one-line cues without word times\n");
+    // Whisper pieces of 23-29 characters shown 1 s each, 0.6 s apart: too fast to read one by one
+    QVector<SubtitleCue> cues;
+    const QStringList pieces{"Das ist wirklich unglaublich", "schnell gesprochen, oder", "nicht? Ich finde schon,",
+                             "dass man das lesen können", "muss, sonst bringt es nichts."};
+    for (int i = 0; i < pieces.size(); ++i) cues << SubtitleCue{0, i * 40, i * 40 + 25, pieces[i]};
+    CHECK(fastCount(cues) > 0);
+    const QVector<SubtitleCue> out = Subtitles::readable(cues, kFps);
+    for (const SubtitleCue& c : out) std::printf("       [%5.2f-%5.2f] %s\n", c.start / kFps, c.end / kFps, qPrintable(QString(c.text).replace('\n', " / ")));
+    QStringList all;
+    for (const SubtitleCue& c : cues) all += c.text.split(' ');
+    CHECK_EQ(wordsOf(out), all);
+    for (const SubtitleCue& c : out) {
+        CHECK(c.text.split('\n').size() <= 2);
+        for (const QString& l : c.text.split('\n')) CHECK(l.size() <= 42);
+        CHECK(c.words.isEmpty()); // no word times known
+    }
+    CHECK(out.size() < cues.size());
+    CHECK_EQ(out.first().start, 0);
+    CHECK(out.last().end >= 185); // at least as long as the last piece
+    CHECK_EQ(fastCount(out), 0);
+}
+
+void testPausesAndSentences()
+{
+    std::printf("pauses, sentences, comma\n");
+    // Two short phrases with a long pause: never one cue, each at least 0.8 s
+    const QVector<Transcript::Word> w = speech("Ja. | | Okay.");
+    const QVector<SubtitleCue> out = Subtitles::readable(Transcript::wordCues(w, kFps), kFps);
+    if (CHECK_EQ(out.size(), 2)) {
+        CHECK(out[0].length() >= 20);
+        CHECK(out[1].length() >= 20);
+    }
+    // A slow sentence ends its cue
+    QVector<Transcript::Word> slow{{0, 900, "Hallo"}, {1000, 1900, "zusammen."}};
+    slow += speech("Heute bauen wir einen Tisch.", 2300);
+    const QVector<SubtitleCue> s = Subtitles::readable(Transcript::wordCues(slow, kFps), kFps);
+    if (CHECK(s.size() >= 2)) {
+        CHECK_EQ(s[0].text, QString("Hallo zusammen."));
+        CHECK(s[1].text.startsWith("Heute"));
+    }
+    // Two lines split at the comma when it is near the middle
+    const QVector<SubtitleCue> c = Subtitles::readable(
+        Transcript::wordCues(speech("Wenn du morgen Zeit hast, kommen wir alle zu dir rüber und kochen"), kFps), kFps);
+    if (CHECK_EQ(c.size(), 1)) CHECK_EQ(c[0].text, QString("Wenn du morgen Zeit hast,\nkommen wir alle zu dir rüber und kochen"));
+    // Other rules: one line of 30
+    Subtitles::ReadableRules r;
+    r.lines = 1;
+    r.lineChars = 30;
+    for (const SubtitleCue& x : Subtitles::readable(Transcript::wordCues(speech(kText), kFps), kFps, r)) {
+        CHECK(!x.text.contains('\n'));
+        CHECK(x.text.size() <= 30);
+    }
+}
+
+QJsonObject run(const QString& name, QJsonObject raw)
+{
+    if (name == "edit") raw["full"] = true;
+    const Cli::Command* cmd = Cli::find(name);
+    Cli::Context ctx;
+    return cmd->run(Cli::normalize(*cmd, raw), ctx);
+}
+
+ProjectData load(const QString& path)
+{
+    ProjectData d;
+    QString error;
+    ProjectFile::load(path, &d, &error);
+    return d;
+}
+
+void testOp(const QString& dir)
+{
+    std::printf("edit op subtitles\n");
+    const QString path = dir + "/subs.schneidi";
+    {
+        Project p;
+        ProjectData d;
+        d.format = kFormat;
+        d.timeline.video.resize(1);
+        p.load(d);
+        QString error;
+        CHECK(ProjectFile::save(p.data(), path, &error));
+    }
+    // Words (as `transcribe` words:true lists them, timeline frames): readable cues with the word times
+    const QVector<SubtitleCue> wc = Transcript::wordCues(speech(kText), kFps);
+    QJsonArray words;
+    for (const SubtitleCue& c : wc) words << QJsonObject{{"from", c.start}, {"to", c.end}, {"text", c.text}};
+    run("edit", {{"project", path}, {"ops", QJsonArray{QJsonObject{{"op", "subtitles"}, {"words", words}, {"name", "W"}}}}});
+    ProjectData d = load(path);
+    if (CHECK_EQ(d.timeline.subtitles.size(), 1)) {
+        CHECK(d.timeline.subtitles[0].cues == [&] {
+            QVector<SubtitleCue> expect = Subtitles::readable(wc, kFps);
+            for (int i = 0; i < expect.size(); ++i) expect[i].id = d.timeline.subtitles[0].cues.value(i).id;
+            return expect;
+        }());
+        CHECK(!d.timeline.subtitles[0].cues.first().words.isEmpty());
+    }
+    // A cue list as given, then the track regrouped in place
+    const QVector<SubtitleCue> old = Transcript::toCues(speech(kText), kFps);
+    QJsonArray cues;
+    for (const SubtitleCue& c : old) cues << QJsonObject{{"from", c.start}, {"to", c.end}, {"text", c.text}};
+    run("edit", {{"project", path}, {"ops", QJsonArray{QJsonObject{{"op", "subtitles"}, {"cues", cues}}}}});
+    d = load(path);
+    if (!CHECK_EQ(d.timeline.subtitles.size(), 2)) return;
+    CHECK_EQ(d.timeline.subtitles[1].cues.size(), old.size());
+    const QJsonObject done = run("edit", {{"project", path}, {"ops", R"([{"op":"subtitles","track":"ST2","readable":true}])"}});
+    std::printf("       %s\n", QJsonDocument(done["notes"].toArray()).toJson(QJsonDocument::Compact).constData());
+    d = load(path);
+    CHECK(d.timeline.subtitles[1].cues.size() < old.size());
+    CHECK_EQ(fastCount(d.timeline.subtitles[1].cues), 0);
+    CHECK_EQ(wordsOf(d.timeline.subtitles[1].cues), wordsOf(old));
+    QSet<int> ids;
+    for (const SubtitleCue& c : d.timeline.subtitles[1].cues) ids << c.id;
+    CHECK(!ids.contains(0) && ids.size() == d.timeline.subtitles[1].cues.size());
+    // readable with other rules on a new cue list
+    run("edit", {{"project", path},
+                 {"ops", QJsonArray{QJsonObject{{"op", "subtitles"}, {"cues", cues},
+                                                {"readable", QJsonObject{{"lines", 1}, {"line_chars", 32}}}}}}});
+    d = load(path);
+    if (CHECK_EQ(d.timeline.subtitles.size(), 3))
+        for (const SubtitleCue& c : d.timeline.subtitles[2].cues) CHECK(!c.text.contains('\n') && c.text.size() <= 32);
+    // Mistakes are named
+    bool refused = false;
+    try {
+        run("edit", {{"project", path}, {"ops", R"([{"op":"subtitles","track":"ST2"}])"}});
+    } catch (const Cli::Error& e) {
+        refused = e.code == "BAD_ARGUMENT";
+    }
+    CHECK(refused);
+}
+
+} // namespace
+
+int main(int argc, char** argv)
+{
+    Check::initEnv();
+    QGuiApplication app(argc, argv);
+    Check::initApp("subtitles_readable");
+    I18n::setLanguage("en");
+    std::setlocale(LC_NUMERIC, "C");
+    QTemporaryDir tmp;
+    if (!CHECK(tmp.isValid())) return Check::result();
+    testFromWords();
+    testFromCues();
+    testPausesAndSentences();
+    testOp(tmp.path());
+    return Check::result();
+}

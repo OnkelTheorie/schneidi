@@ -334,6 +334,14 @@ QJsonObject titleToJson(const TitleStyle& t)
     if (t.fontRef) o["fontRef"] = t.fontRef;
     // Fill, edge, shadow, glow (0.19, only when set; older versions draw the title plain)
     TitleLookJson::write(o, t.look);
+    // Entry/exit animation (0.19, only when set; older versions show the title still)
+    const TitleStyle d;
+    for (const auto& a : kTitleAnims) {
+        if (t.enter != TitleAnim::None && a.anim == t.enter) o["enter"] = a.id;
+        if (t.exit != TitleAnim::None && a.anim == t.exit) o["exit"] = a.id;
+    }
+    if (t.enter != TitleAnim::None && t.enterLen != d.enterLen) o["enterLen"] = t.enterLen;
+    if (t.exit != TitleAnim::None && t.exitLen != d.exitLen) o["exitLen"] = t.exitLen;
     return o;
 }
 
@@ -380,6 +388,12 @@ TitleStyle titleFromJson(const QJsonObject& o)
     t.boxRef = std::clamp(o.value("boxRef").toInt(), 0, BrandKit::kMaxColors);
     t.fontRef = std::clamp(o.value("fontRef").toInt(), 0, BrandKit::kMaxFonts);
     TitleLookJson::read(o, t.look, true);
+    for (const auto& a : kTitleAnims) { // unknown (newer) animations: none
+        if (o.value("enter").toString() == QLatin1String(a.id)) t.enter = a.anim;
+        if (o.value("exit").toString() == QLatin1String(a.id)) t.exit = a.anim;
+    }
+    t.enterLen = std::clamp(o.value("enterLen").toDouble(t.enterLen), 0.01, 60.0);
+    t.exitLen = std::clamp(o.value("exitLen").toDouble(t.exitLen), 0.01, 60.0);
     return t;
 }
 

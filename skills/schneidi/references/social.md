@@ -86,7 +86,8 @@ template - `templates` `fill` with the clips and the hook text ([templates.md](t
   `check` on the project lists text in those zones (`safe_area`, `subtitle_safe_area`).
 
 ## Content
-- **Hook in the first 1-2 s**: start with the strongest moment or a bold question/claim as a `title`; the first
+- **Hook in the first 1-2 s**: start with the strongest moment or a bold question/claim as a `title` (pop-in:
+  `"enter":"pop"`, no size keyframes needed); the first
   frame already moves and shows the payoff, not the build-up; no slow intros, no logo first. `check` gives a
   `slow_hook` hint when the first second hardly moves, `story_hook_late` when the first hit, word or text comes
   after 2 s, and `pace_slow` for every stretch over 3 s without a cut, zoom or text.

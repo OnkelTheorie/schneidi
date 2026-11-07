@@ -98,4 +98,43 @@ QRectF progressFill(const TitleStyle& s, double W, double H, double fraction)
     return r;
 }
 
+namespace {
+// One animation at phase p (0 = its start state, 1 = the title at rest); leaving: p runs from 1 down to 0
+void animate(TitleMotion& m, TitleAnim a, double p, double size, bool leaving)
+{
+    p = std::clamp(p, 0.0, 1.0);
+    switch (a) {
+    case TitleAnim::None: return;
+    case TitleAnim::Fade: m.opacity *= p; return;
+    case TitleAnim::Pop: // 60 % -> 108 % (at 60 % of the time) -> 100 %
+        if (p < 0.6) m.scale *= 0.6 + 0.48 * ease(MotionEase::Out, p / 0.6);
+        else m.scale *= 1.08 - 0.08 * ease(MotionEase::InOut, (p - 0.6) / 0.4);
+        return;
+    case TitleAnim::SlideUp: { // half the font size from below into place; leaving: on upward
+        const double d = 0.5 * std::max(0.0, size) * (1 - ease(MotionEase::Out, p));
+        m.rise += leaving ? d : -d;
+        m.opacity *= p;
+        return;
+    }
+    }
+}
+} // namespace
+
+TitleMotion titleMotion(const TitleStyle& s, double t, int length, double fps)
+{
+    TitleMotion m;
+    if (s.enter == TitleAnim::None && s.exit == TitleAnim::None) return m;
+    if (fps <= 0) fps = 25;
+    if (s.enter != TitleAnim::None) {
+        const double n = std::max(1.0, std::round(s.enterLen * fps));
+        if (t < n) animate(m, s.enter, t / n, s.size, false);
+    }
+    if (s.exit != TitleAnim::None) {
+        const double n = std::max(1.0, std::round(s.exitLen * fps));
+        const double left = length - 1 - t; // frames after this one
+        if (left < n) animate(m, s.exit, left / n, s.size, true);
+    }
+    return m;
+}
+
 } // namespace Generators

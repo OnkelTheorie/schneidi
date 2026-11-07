@@ -425,6 +425,19 @@ QJsonObject cmdTranscribe(const QJsonObject& a, Context& ctx)
     // Not for music: its "loud" is measured against the file, a quieter intro of a song counts as silence (the first
     // shouted line was dropped while its words were there)
     if (!req.music) Transcript::startAtSound(cues, r.levels, f.rate.fps(), offset);
+    // Readable subtitles: the words regrouped into 1-2 line cues (word times kept), the same as edit op 'subtitles'
+    // with words gets them
+    QVector<SubtitleCue> words;
+    const bool readable = a["readable"].toBool() && !a.contains("captions");
+    if (readable) {
+        words = Transcript::wordCues(r.words, f.rate.fps(), offset);
+        if (!req.music) {
+            Transcript::startAtSound(words, r.levels, f.rate.fps(), offset);
+            for (SubtitleCue& c : words)
+                if (!c.words.isEmpty()) c.words = {CueWord{0, c.length()}};
+        }
+        cues = Subtitles::readable(words, f.rate.fps());
+    }
     QJsonArray segments;
     for (const SubtitleCue& c : cues) {
         QJsonObject o = range(c.start, std::min(c.end, offset + length), f);
@@ -461,6 +474,13 @@ QJsonObject cmdTranscribe(const QJsonObject& a, Context& ctx)
         for (const SubtitleCue& c : cues)
             list << QJsonObject{{"from", c.start}, {"to", std::min(c.end, offset + length)}, {"text", c.text}};
         QJsonObject op{{"op", "subtitles"}, {"cues", list}};
+        if (readable) {
+            QJsonArray wordList;
+            for (const SubtitleCue& c : words)
+                if (c.start < offset + length)
+                    wordList << QJsonObject{{"from", c.start}, {"to", std::min(c.end, offset + length)}, {"text", c.text}};
+            op = QJsonObject{{"op", "subtitles"}, {"words", wordList}};
+        }
         if (a.contains("captions")) {
             // Word captions (edit op 'captions') from the word times instead of plain lines
             QJsonArray words;
