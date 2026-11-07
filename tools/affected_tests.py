@@ -2,7 +2,7 @@
 """Which tests does a change touch? Changed files (git diff against a base, plus uncommitted and new files) -> the test
 programs that compile them, from ninja's own dependency records (`ninja -t deps`) of a build folder.
 
-  tools/affected_tests.py <base-ref> [build] [--run] [-j N] [--mem 4G] [--all-on-config]
+  tools/affected_tests.py <base-ref> [build] [--run] [-j N] [--mem 4G] [--all-on-config] [--wide]
 
 Prints a `--target ...` list for cmake --build and a `-R ...` regex for ctest/tools/run_tests.py (all CTest variants
 of a program: _de_DE, _no_display, ...). With --run it builds those targets and runs them through tools/run_tests.py
@@ -10,7 +10,11 @@ of a program: _de_DE, _no_display, ...). With --run it builds those targets and 
 
 Rules: a header or test source counts for every test whose objects include it (directly or not). A library source
 (src/**/Foo.cpp) has no test that compiles it, so it counts like its header: Foo.h, or the header in the same folder
-whose name is the longest prefix of it (EditorTransitions.cpp -> Editor.h). i18n/*.json adds test_i18n. A changed
+whose name is the longest prefix of it (EditorTransitions.cpp -> Editor.h). NOTE: so a change in a library .cpp
+selects only the tests that include its header, not every test that runs the code through other functions (a change
+in FilterEffect.cpp selects the users of CustomEffects.h, not a render test that happens to hit a filter chain). With
+--wide a changed library .cpp also selects every test that links its library (for schneidi_lib that is nearly every
+test: use it for changes deep in shared code). i18n/*.json adds test_i18n. A changed
 CMakeLists.txt/cmake/*.cmake is only reported (--all-on-config: then every test). The build folder must have been
 built once (ninja records dependencies while compiling); a test that was never compiled counts when its source changed.
 """
@@ -52,6 +56,8 @@ def ninja_deps(build):
     repo-relative"""
     out = subprocess.run(['ninja', '-C', build, '-t', 'deps'], capture_output=True, text=True).stdout
     deps, per_source, target, source = {}, {}, None, None
+    global SOURCE_TARGET
+    SOURCE_TARGET = {}
     for line in out.splitlines():
         if not line.strip():
             target = source = None
@@ -63,6 +69,7 @@ def ninja_deps(build):
             if target:
                 deps.setdefault(target, set())
                 per_source.setdefault(source, set())
+                SOURCE_TARGET[source] = target
             continue
         if target:
             f = norm(line.strip(), build)
@@ -70,6 +77,37 @@ def ninja_deps(build):
                 deps[target].add(f)
                 per_source[source].add(f)
     return deps, per_source
+
+
+SOURCE_TARGET = {}  # object source path (as in CMakeFiles/<t>.dir/<source>.o) -> its target, filled by ninja_deps
+
+
+def library_of(f):
+    """The target (library) whose objects compile the repo file f, or None"""
+    for src, t in SOURCE_TARGET.items():
+        if f == src or f.endswith('/' + src):
+            return t
+    return None
+
+
+@functools.lru_cache(maxsize=None)
+def linking_tests(build, lib):
+    """Test programs whose link step takes the output of library target `lib` (from build.ninja)"""
+    out, tests = None, set()
+    with open(os.path.join(build, 'build.ninja'), encoding='utf-8', errors='replace') as fh:
+        lines = fh.read().splitlines()
+    for line in lines:
+        m = re.match(r'build ([^:]+): \w+_(?:SHARED|STATIC|MODULE)_LIBRARY_LINKER__' + re.escape(lib) + r'_', line)
+        if m:
+            out = m.group(1).strip()
+            break
+    if not out:
+        return tests
+    for line in lines:
+        m = re.match(r'build (?:\S*/)?(test_\w+)(?:\.exe)?: \w+_EXECUTABLE_LINKER__', line)
+        if m and out in line.split():
+            tests.add(m.group(1))
+    return tests
 
 
 def header_for(source, headers):
@@ -110,6 +148,9 @@ def main():
     ap.add_argument('-j', type=int, default=0, help='build jobs for --run (default: cmake/ninja default)')
     ap.add_argument('--mem', default='4G', help='MemoryMax of the systemd scope for --run (Linux)')
     ap.add_argument('--all-on-config', action='store_true', help='a changed CMakeLists.txt selects every test')
+    ap.add_argument('--wide', action='store_true',
+                    help='a changed library .cpp also selects every test linking that library (default: only the '
+                         'tests including its header)')
     a = ap.parse_args()
     build = os.path.abspath(a.build if os.path.isabs(a.build) else os.path.join(ROOT, a.build))
     if not os.path.exists(os.path.join(build, 'build.ninja')):
@@ -130,6 +171,10 @@ def main():
         if not os.path.exists(os.path.join(ROOT, f)):
             continue  # deleted: whoever included it changed too
         if f.startswith('src/') and f.endswith(('.cpp', '.c')):
+            if a.wide and (lib := library_of(f)):
+                wide = linking_tests(build, lib) & tests
+                hit |= wide
+                notes.append(f'{f}: --wide, {len(wide)} tests link {lib}')
             look = header_for(f, headers)
             if not look:  # e.g. cli/EditOpsComp.cpp: the headers of its own folder that it includes
                 own = {h for h in per_source.get(f, ()) if h.endswith('.h') and os.path.dirname(h) == os.path.dirname(f)}

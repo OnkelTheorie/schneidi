@@ -11,6 +11,7 @@
 // Both work on 8-bit RGBA with straight alpha, rows without gaps, keep the picture size and are thread-safe.
 
 #include <QColor>
+#include <QSize>
 #include <QString>
 #include <QStringList>
 
@@ -37,9 +38,10 @@ bool applyToClip(const Clip& c, const EffectInstance& inst, double t, double fps
 bool filterAvailable();
 // The filters a chain may use (sorted)
 QStringList allowedFilters();
-// Empty = the chain is fine (or empty); else why not, ready for the caller (unknown/forbidden filter, bad option, error
-// FFmpeg reports when it runs on a test picture)
-QString checkFilter(const QString& chain);
+// Empty = the chain is fine (or empty); else why not, ready for the caller (unknown/forbidden filter or option, a loop in
+// an expression, a picture much larger than the input, error FFmpeg reports when it runs on a test picture of `size`
+// (the picture the effect will get, e.g. the timeline's; empty = a small one), longer than budgetMs for that picture)
+QString checkFilter(const QString& chain, QSize size = {}, int budgetMs = 3000);
 // Runs the chain on the picture at clip time `seconds` (the filters' t, so expressions animate); false = not drawn
 // (error in *error)
 bool applyFilter(const QString& chain, uint8_t* rgba, int width, int height, double seconds, QString* error = nullptr);
@@ -60,6 +62,8 @@ bool shaderCompilerAvailable(QString* why = nullptr);
 bool shaderRenderable(QString* why = nullptr);
 // Empty = compiles; else the compiler's message with line numbers of the user's code
 QString checkShader(const QString& code);
+// How often the compiler program was started in this run (threads asking for the same new shader share one; tests)
+int shaderCompilerRuns();
 // Draws the shader over the picture on the GPU; false = not drawn (no GPU, compile error; in *error)
 bool applyShader(const QString& code, const ShaderValues& values, uint8_t* rgba, int width, int height,
                  QString* error = nullptr);

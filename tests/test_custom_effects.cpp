@@ -21,7 +21,11 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QTemporaryDir>
+#include <QUuid>
 
+#include <atomic>
+#include <clocale>
+#include <thread>
 #include <vector>
 
 namespace PC = Picture::Custom;
@@ -166,8 +170,50 @@ void filterChecks()
     refused("zmq", "not allowed");
     refused("subtitles=a.srt", "not allowed");
     refused("lut3d=file=a.cube", "not allowed");
-    refused("curves=psfile=a.acv", "would read a file");
-    refused("selectivecolor=psfile=a.asv", "would read a file");
+    refused("curves=psfile=a.acv", "would use a file");
+    refused("selectivecolor=psfile=a.asv", "would use a file");
+    // Options by type and reviewed name: curves' plot writes a gnuplot file (a name without "file"), also when it
+    // is reached by position; text options not reviewed and the generic ones other than enable are refused
+    refused("curves=preset=vintage:plot=plot.txt", "would use a file");
+    refused("curves=none:0/0:0/0:0/0:0/0:0/0:a.acv", "would use a file");
+    refused("hue=s=0:threads=4", "no option 'threads'");
+    refused("drawbox=box_source=x:enable=1,hue=s=0:extra_hw_frames=2", "no option 'extra_hw_frames'");
+    // ... while the normal uses of curves and the other text options still work
+    CHECK_EQ(PC::checkFilter("curves=preset=vintage"), QString());
+    CHECK_EQ(PC::checkFilter("curves=vintage"), QString());
+    CHECK_EQ(PC::checkFilter("curves=r='0/0 0.5/0.6 1/1':all='0/0.1 1/0.9'"), QString());
+    CHECK_EQ(PC::checkFilter("hue=s=0:enable='between(t,0,1)'"), QString());
+    CHECK_EQ(PC::checkFilter("drawbox=x=4:y=4:w=10:h=10:c=red@0.5:t=fill,rotate=a=PI/8:c=black"), QString());
+    CHECK_EQ(PC::checkFilter("lutrgb=r=negval:g=val*0.5,convolution=0m='0 -1 0 -1 5 -1 0 -1 0'"), QString());
+    CHECK_EQ(PC::checkFilter("scale=w=iw/2:h=-2:flags=bicubic,format=pix_fmts=gray,setsar=r=1"), QString());
+    // Expressions that loop (an endless while() would hang the edit or a render thread for good) and pictures much
+    // larger than the input are refused; a chain slower than its time budget too
+    refused("geq=lum='while(1\\,1)'", "uses while()");
+    refused("geq=lum='WHILE (1,1)':cb=128:cr=128", "uses while()");
+    refused("geq=lum='st(0\\,X)+ld(0)':cb=128:cr=128", "uses st()");
+    refused("hue=s=0:enable='while(1,1)'", "uses while()");
+    refused("pad=w=16000:h=16000", "at most");
+    refused("scale=w=iw*3:h=ih*3", "at most");
+    CHECK_EQ(PC::checkFilter("transpose,pad=w=iw+20:h=ih+20"), QString());
+    {
+        QString slow = "negate";
+        for (int i = 0; i < 40; ++i) slow += ",gblur=sigma=30:steps=6,geq=lum='taylor(sin(X),Y,9)':cb=128:cr=128";
+        QElapsedTimer t;
+        t.start();
+        const QString why = PC::checkFilter(slow, {}, 1);
+        if (!CHECK(why.contains("takes too long"))) std::printf("       %s\n", qPrintable(why));
+        CHECK(t.elapsed() < 500); // the caller does not wait for the slow chain
+        CHECK_EQ(PC::checkFilter(slow), QString()); // fine with the normal budget
+    }
+    // Tried at the picture's size: a fixed crop fits a 1080p clip but not the small fallback picture
+    CHECK_EQ(PC::checkFilter("crop=1280:720", QSize(1920, 1080)), QString());
+    CHECK(!PC::checkFilter("crop=1280:720").isEmpty());
+    // Temporal noise keeps a random state per graph (preview and export would differ): only still noise
+    refused("noise=alls=20:allf=t", "flag 't'");
+    refused("noise=alls=20:allf=u+a", "flag 'a'");
+    refused("noise=c0s=20:c0_flags=2", "flag '2'");
+    CHECK_EQ(PC::checkFilter("noise=alls=20:allf=u+p"), QString());
+    CHECK_EQ(PC::checkFilter("noise=c0s=10"), QString());
     // Not one linear chain
     refused("negate;hue=s=0", "one linear chain");
     refused("[in]negate[out]", "labels");
@@ -209,6 +255,7 @@ int main(int argc, char** argv)
 {
     Check::initEnv();
     QGuiApplication app(argc, argv);
+    std::setlocale(LC_NUMERIC, "C"); // as schneidi and schneidi-cli do: FFmpeg reads numbers with a dot
     Check::initApp("custom_effects");
     Check::initEngine();
     QTemporaryDir dir;
@@ -257,6 +304,12 @@ int main(int argc, char** argv)
                                                       {"effect", "ffmpeg_filter"},
                                                       {"params", QJsonObject{{"chain", "hue=bogus=2"}}}}});
         CHECK(badOpt.contains("no option 'bogus'"));
+        // tried at the timeline's size (320x180): a fixed crop larger than the small fallback picture is fine
+        CHECK_EQ(editError({QJsonObject{{"op", "effect"}, {"clips", QJsonArray{clip}}, {"effect", "ffmpeg_filter"},
+                                        {"params", QJsonObject{{"chain", "crop=200:100"}}}}}),
+                 QString("none"));
+        edit({QJsonObject{{"op", "effect"}, {"clips", QJsonArray{clip}}, {"effect", "ffmpeg_filter"},
+                          {"params", QJsonObject{{"chain", "negate"}}}}});
         // the refused chain did not replace the stored one
         const ProjectData d = load();
         const Clip* c = TimelineOps::findClip(d.timeline, clip);
@@ -274,6 +327,59 @@ int main(int argc, char** argv)
         const QString err = PC::checkShader("vec4 effect(vec2 uv)\n{\n    return pixel(uv) * undefinedThing;\n}");
         if (!CHECK(err.contains("undefinedThing") && err.contains("3"))) std::printf("       %s\n", qPrintable(err));
         CHECK(PC::checkShader("void main2() {}").contains("vec4 effect"));
+        // Render threads asking for the same new shader at once start the compiler once
+        {
+            const QString fresh = QString("// %1\nvec4 effect(vec2 uv) { return pixel(uv).bgra; }").arg(QUuid::createUuid().toString());
+            const int before = PC::shaderCompilerRuns();
+            std::vector<std::thread> threads;
+            std::atomic<int> ok{0};
+            for (int i = 0; i < 6; ++i)
+                threads.emplace_back([&] {
+                    if (PC::checkShader(fresh).isEmpty()) ++ok;
+                });
+            for (std::thread& t : threads) t.join();
+            CHECK_EQ(ok.load(), 6);
+            CHECK_EQ(PC::shaderCompilerRuns() - before, 1);
+        }
+        // Normal code with helpers, #define/#if and bounded loops compiles
+        const QString blur = "#define R 4\n#if R > 2\nconst float k = 1.0;\n#endif\n// a box blur, in comments: while #include\n"
+                             "float w(in float x) { return x * k; }\n"
+                             "vec4 effect(vec2 uv) {\n  vec4 s = vec4(0.0);\n"
+                             "  for (int y = -4; y <= 4; ++y)\n    for (int x = -4; x <= 4; x++)\n"
+                             "      s += pixel(uv + vec2(x, y) / resolution);\n  return s / w(81.0);\n}";
+        if (!CHECK_EQ(PC::checkShader(blur), QString())) std::printf("       %s\n", qPrintable(PC::checkShader(blur)));
+        // Refused before the compiler: files, features, own resources, loops that may not end
+        auto refusedShader = [](const QString& body, const char* expect) {
+            const QString why = PC::checkShader("vec4 effect(vec2 uv) { return pixel(uv); }\n" + body);
+            if (!CHECK(why.contains(QString::fromUtf8(expect), Qt::CaseInsensitive)))
+                std::printf("       %s: %s\n", qPrintable(body), qPrintable(why));
+        };
+        refusedShader("#extension GL_GOOGLE_include_directive : enable\n#include \"/etc/passwd\"\n", "no #extension");
+        refusedShader("#include \"/etc/passwd\"\n", "no #include");
+        refusedShader("#line 5\n", "no #line");
+        refusedShader("#pragma optimize(off)\n", "no #pragma");
+        refusedShader("  #  version 450\n", "no #version");
+        refusedShader("#\\\ninclude \"x\"\n", "backslash");
+        refusedShader("layout(std430, binding = 2) buffer B { float v[]; };\n", "'layout'");
+        refusedShader("uniform sampler2D other;\n", "'uniform'");
+        refusedShader("shared float s;\n", "'shared'");
+        refusedShader("float f(image2D i) { return 0.0; }\n", "'image2D'");
+        refusedShader("float f() { float x = 0.0; while (true) x += 1.0; return x; }\n", "no while");
+        refusedShader("float f() { float x = 0.0; do { x += 1.0; } while (x > 0.0); return x; }\n", "no do");
+        refusedShader("float f() { float x = 0.0; for (int i = 0; i < 1000; ++i) x += 1.0; return x; }\n", "1000 steps");
+        refusedShader("float f() { float x = 0.0; for (float i = 0.0; i < 9.0; i += 1.0) x += 1.0; return x; }\n", "every loop");
+        refusedShader("float f() { float x = 0.0; for (;;) x += 1.0; return x; }\n", "every loop");
+        refusedShader("float f() { float x = 0.0; for (int i = 0; i < 9; ++i) { x += 1.0; i = 0; } return x; }\n", "changed in the loop");
+        refusedShader("float f() { float x = 0.0; for (int i = 0; i < 9; ++i) { x += 1.0; i--; } return x; }\n", "changed in the loop");
+        refusedShader("void z(inout int k) { k = 0; }\nfloat f() { for (int i = 0; i < 9; ++i) z(i); return 0.0; }\n", "'inout'");
+        refusedShader("#define I i\nfloat f() { for (int i = 0; i < 9; ++i) I = 0; return 0.0; }\n", "macro");
+        refusedShader("#define Z(a) a = 0\nfloat f() { for (int i = 0; i < 9; ++i) Z(i); return 0.0; }\n", "no =");
+        refusedShader("#define P(a) a\nfloat f() { for (int i = 0; i < 9; ++i) P(i)++; return 0.0; }\n", "( … )");
+        refusedShader("#define F for\nfloat f() { F (int i = 0; i < 9; ++i) {} return 0.0; }\n", "every loop");
+        refusedShader("#define C(a, b) a ## b\n", "##");
+        refusedShader("float f() { float x = 0.0; for (int a = 0; a < 64; ++a) for (int b = 0; b < 64; ++b) x += 1.0; "
+                      "for (int c = 0; c < 2; ++c) x += 1.0; return x; }\n",
+                      "4096");
         const QString bad = editError({QJsonObject{{"op", "effect"}, {"clips", QJsonArray{clip}}, {"effect", "shader"},
                                                    {"params", QJsonObject{{"code", "vec4 effect(vec2 uv) { return x; }"}}}}});
         CHECK(bad.startsWith("BAD_ARGUMENT") && bad.contains("shader.code"));

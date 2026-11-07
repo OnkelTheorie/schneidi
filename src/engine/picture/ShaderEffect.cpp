@@ -30,9 +30,13 @@
 
 #ifdef SCHNEIDI_HAVE_RHI
 #include <rhi/qshader.h>
+#include <rhi/qshaderdescription.h>
 #endif
 
+#include <algorithm>
+#include <atomic>
 #include <cstring>
+#include <future>
 #include <mutex>
 
 namespace Picture::Custom {
@@ -92,6 +96,105 @@ void main()
 #line 1
 )";
 
+// The rules user code must keep, checked on the text before it is compiled (and before every compile, so code from a
+// project file is held to them too). The frame's fixed resource bindings must stay the only ones (the pipeline uses
+// a fixed set: another uniform, buffer or image is undefined behaviour up to a driver crash), the compiler must not
+// read files (#include) or switch features (#extension, #pragma), and every loop must end after a few steps (a
+// shader that does not end hangs the graphics card). The rule for loops, simple enough to check robustly:
+// - no while/do; every `for` is `for (int i = A; i < B; ++i)` (or i++, i += S, <=) with number literals, at most
+//   256 steps, all loops together (as if nested) at most 4096 steps per pixel;
+// - the loop variable is changed nowhere else: no assignment, ++/-- of that name outside its header, no out/inout
+//   parameters, no macro that mentions it or assigns anything, no ++/--/assignment on a macro call or `( … )`,
+//   no ## and no line continuation (no way to build such code through the preprocessor).
+// Comments are removed first, as the compiler does. Empty = fine
+QString checkUserCode(const QString& code)
+{
+    if (code.size() > 64 * 1024) return QStringLiteral("the shader code is too long (at most 64 KB)");
+    QString c = code;
+    c.remove(QRegularExpression(QStringLiteral(R"(/\*.*?\*/)"), QRegularExpression::DotMatchesEverythingOption));
+    c.remove(QRegularExpression(QStringLiteral(R"(//[^\n]*)")));
+    if (c.contains(QLatin1String("/*"))) return QStringLiteral("a comment /* is not closed");
+    if (c.contains(QLatin1Char('\\'))) return QStringLiteral("no backslash (line continuation) in the code");
+    if (c.contains(QLatin1String("##"))) return QStringLiteral("no ## in the code");
+    // Preprocessor lines: #define and #if… only; macro names and bodies for the loop rule
+    static const QRegularExpression directive(QStringLiteral(R"(^\s*#\s*(\w*)(.*)$)"));
+    static const QRegularExpression define(QStringLiteral(R"(^\s*([A-Za-z_]\w*)(\([^)]*\))?(.*)$)"));
+    static const QRegularExpression assigns(QStringLiteral(R"((\+\+|--|(?:<<|>>|[-+*/%&|^])?=(?!=)))"));
+    QStringList macroNames, macroBodies;
+    QStringList lines = c.split(QLatin1Char('\n'));
+    for (QString& line : lines) {
+        const QRegularExpressionMatch m = directive.match(line);
+        if (!m.hasMatch()) continue;
+        static const QStringList ok = {"define", "undef", "if", "ifdef", "ifndef", "elif", "else", "endif"};
+        if (!ok.contains(m.captured(1)))
+            return QStringLiteral("only #define and #if/#ifdef/#else/#endif lines (no #%1)").arg(m.captured(1));
+        if (m.captured(1) == QLatin1String("define")) {
+            const QRegularExpressionMatch d = define.match(m.captured(2));
+            if (!d.hasMatch()) return QStringLiteral("a #define without a name");
+            QString body = d.captured(3);
+            body.replace(QRegularExpression(QStringLiteral(R"([<>!=]=)")), QStringLiteral(" "));
+            if (body.contains(assigns))
+                return QStringLiteral("#define %1: no =, ++ or -- in a macro").arg(d.captured(1));
+            macroNames << d.captured(1);
+            macroBodies << d.captured(3);
+        }
+        line.clear(); // the rest is checked without the preprocessor lines
+    }
+    QString body = lines.join(QLatin1Char('\n'));
+    static const QRegularExpression forbidden(QStringLiteral(
+        R"(\b(layout|uniform|buffer|shared|subroutine|out|inout|while|do|attribute|varying|coherent|volatile|restrict|readonly|writeonly|atomic_uint|[iu]?image(?:[123]D|Cube|Buffer|2DRect)\w*|image(?:Load|Store|Size|Samples|Atomic\w*))\b)"));
+    for (const QString& part : {body, macroBodies.join(QLatin1Char('\n'))})
+        if (const QRegularExpressionMatch m = forbidden.match(part); m.hasMatch()) {
+            const QString w = m.captured(1);
+            if (w == QLatin1String("while") || w == QLatin1String("do"))
+                return QStringLiteral("no %1 loops (only for (int i = 0; i < N; ++i) with N at most 256)").arg(w);
+            return QStringLiteral("'%1' is not allowed in the code (the frame declares the inputs; no own uniforms, "
+                                  "buffers, images, out parameters)")
+                .arg(w);
+        }
+    // Loops
+    static const QRegularExpression header(QStringLiteral(
+        R"(\bfor\s*\(\s*int\s+([A-Za-z_]\w*)\s*=\s*(-?\d+)\s*;\s*\1\s*(<=?)\s*(-?\d+)\s*;\s*(?:\+\+\s*\1|\1\s*\+\+|\1\s*\+=\s*(\d+))\s*\))"));
+    QStringList vars;
+    double total = 1;
+    for (auto it = header.globalMatch(body); it.hasNext();) {
+        const QRegularExpressionMatch m = it.next();
+        const qint64 from = m.captured(2).toLongLong(), to = m.captured(4).toLongLong() + (m.captured(3) == "<=" ? 1 : 0);
+        const qint64 step = m.captured(5).isEmpty() ? 1 : m.captured(5).toLongLong();
+        if (step < 1) return QStringLiteral("loop over %1: the step must be at least 1").arg(m.captured(1));
+        const qint64 n = to > from ? (to - from + step - 1) / step : 0;
+        if (n > 256) return QStringLiteral("loop over %1: %2 steps (at most 256)").arg(m.captured(1)).arg(n);
+        total *= std::max<qint64>(1, n);
+        if (total > 4096) return QStringLiteral("the loops make more than 4096 steps per pixel together");
+        vars << m.captured(1);
+    }
+    const QString rest = QString(body).replace(header, QStringLiteral("for(;;)"));
+    if (rest.count(QRegularExpression(QStringLiteral(R"(\bfor\b)"))) != vars.size()
+        || macroBodies.join(QLatin1Char('\n')).contains(QRegularExpression(QStringLiteral(R"(\bfor\b)"))))
+        return QStringLiteral("every loop must be for (int i = A; i < B; ++i) with numbers for A and B (at most 256 "
+                              "steps)");
+    // Nothing can change a loop variable outside its header
+    QString plain = rest;
+    plain.replace(QRegularExpression(QStringLiteral(R"([<>!=]=)")), QStringLiteral(" "));
+    if (plain.contains(QRegularExpression(QStringLiteral(R"(\)\s*(\+\+|--|(?:<<|>>|[-+*/%&|^])?=))")))
+        || plain.contains(QRegularExpression(QStringLiteral(R"((\+\+|--)\s*\()"))))
+        return QStringLiteral("no ++, -- or assignment on a ( … ) expression or macro call");
+    for (const QString& name : macroNames)
+        if (plain.contains(QRegularExpression(
+                QStringLiteral(R"((\b%1\b\s*(\.\s*\w+\s*)?(\+\+|--|(?:<<|>>|[-+*/%&|^])?=))|((\+\+|--)\s*%1\b))")
+                    .arg(name))))
+            return QStringLiteral("no ++, -- or assignment on the macro %1").arg(name);
+    for (const QString& v : vars) {
+        if (plain.contains(QRegularExpression(
+                QStringLiteral(R"((\b%1\b\s*(\.\s*\w+\s*)?(\+\+|--|(?:<<|>>|[-+*/%&|^])?=))|((\+\+|--)\s*%1\b))").arg(v))))
+            return QStringLiteral("the loop variable %1 is changed in the loop (only its for (…) may count it)").arg(v);
+        for (const QString& b : macroBodies)
+            if (b.contains(QRegularExpression(QStringLiteral(R"(\b%1\b)").arg(v))))
+                return QStringLiteral("a macro mentions the loop variable %1").arg(v);
+    }
+    return {};
+}
+
 QString fullSource(const QString& code) { return QString::fromLatin1(kPrelude) + code + QLatin1Char('\n'); }
 
 // The qsb program: SCHNEIDI_QSB, next to schneidi (bundled packages), Qt's own folders, the PATH
@@ -115,10 +218,14 @@ QString qsbPath()
 struct Compiled {
     QShader shader;
     QString error;
+    bool transient = false; // a failure that may not repeat (the compiler timed out, no temporary folder): not kept
 };
 
 std::mutex g_mutex;
 QHash<QByteArray, Compiled> g_compiled; // hash of the full source -> result
+// Compiles running now: the render threads that want the same new shader wait for the one compile
+QHash<QByteArray, std::shared_future<Compiled>> g_running;
+std::atomic<int> g_compilerRuns{0};
 
 QByteArray keyOf(const QString& source)
 {
@@ -145,17 +252,55 @@ QString cleanMessage(QString text)
     return keep.join(QLatin1Char('\n'));
 }
 
+// Does the compiled shader use exactly the frame's resources (the uniform block at 0, the picture at 1, one input,
+// one output)? The text rules should make this always true; this is the check that does not depend on them
+QString checkResources(const QShader& shader)
+{
+    const QShaderDescription d = shader.description();
+    if (d.uniformBlocks().size() != 1 || d.uniformBlocks().first().binding != 0
+        || d.combinedImageSamplers().size() != 1 || d.combinedImageSamplers().first().binding != 1
+        || !d.storageBlocks().isEmpty() || !d.storageImages().isEmpty() || !d.separateImages().isEmpty()
+        || !d.separateSamplers().isEmpty() || d.inputVariables().size() != 1 || d.outputVariables().size() != 1)
+        return QStringLiteral("the shader declares its own inputs or resources (only the given ones are allowed)");
+    return {};
+}
+
+Compiled compileNow(const QString& code, const QString& source, const QByteArray& key);
+
+// The compiled shader of the code: from memory, the cache folder or the compiler (once per source at a time)
 Compiled compile(const QString& code)
 {
     const QString source = fullSource(code);
     const QByteArray key = keyOf(source);
+    std::promise<Compiled> promise;
     {
-        std::lock_guard lock(g_mutex);
+        std::unique_lock lock(g_mutex);
         if (auto it = g_compiled.constFind(key); it != g_compiled.cend()) return *it;
+        if (auto it = g_running.constFind(key); it != g_running.cend()) {
+            const std::shared_future<Compiled> f = *it;
+            lock.unlock();
+            return f.get();
+        }
+        g_running.insert(key, promise.get_future().share());
     }
+    const Compiled c = compileNow(code, source, key);
+    std::lock_guard lock(g_mutex);
+    g_running.remove(key);
+    if (!c.transient) {
+        if (g_compiled.size() > 64) g_compiled.clear();
+        g_compiled.insert(key, c);
+    }
+    promise.set_value(c);
+    return c;
+}
+
+Compiled compileNow(const QString& code, const QString& source, const QByteArray& key)
+{
     Compiled c;
+    if (c.error = checkUserCode(code); !c.error.isEmpty()) return c;
     const QString cached = cacheFile(key);
     if (QFile f(cached); !cached.isEmpty() && f.open(QIODevice::ReadOnly)) c.shader = QShader::fromSerialized(f.readAll());
+    if (c.shader.isValid() && !checkResources(c.shader).isEmpty()) c.shader = QShader();
     if (!c.shader.isValid()) {
         const QString qsb = qsbPath();
         QTemporaryDir tmp;
@@ -163,11 +308,13 @@ Compiled compile(const QString& code)
             c.error = QStringLiteral("no shader compiler: the program qsb (Qt Shader Tools) was not found");
         } else if (!tmp.isValid()) {
             c.error = QStringLiteral("no temporary folder for the shader compiler");
+            c.transient = true;
         } else {
             const QString in = tmp.filePath(QStringLiteral("effect.frag")), out = tmp.filePath(QStringLiteral("e.qsb"));
             QFile f(in);
             if (f.open(QIODevice::WriteOnly)) f.write(source.toUtf8());
             f.close();
+            ++g_compilerRuns;
             QProcess p;
             p.setProcessChannelMode(QProcess::MergedChannels);
             p.start(qsb, {QStringLiteral("--glsl"), QStringLiteral("300 es,150,330"), QStringLiteral("--hlsl"),
@@ -177,26 +324,26 @@ Compiled compile(const QString& code)
                 p.kill();
                 p.waitForFinished();
                 c.error = QStringLiteral("the shader compiler did not finish");
+                c.transient = true; // a busy machine: try again on a later frame
             } else {
                 QFile o(out);
                 if (p.exitCode() == 0 && o.open(QIODevice::ReadOnly)) {
                     const QByteArray data = o.readAll();
                     c.shader = QShader::fromSerialized(data);
+                    if (c.shader.isValid()) c.error = checkResources(c.shader);
+                    if (!c.error.isEmpty()) c.shader = QShader();
                     if (!cached.isEmpty() && c.shader.isValid() && QDir().mkpath(QFileInfo(cached).path())) {
                         QFile w(cached);
                         if (w.open(QIODevice::WriteOnly)) w.write(data);
                     }
                 }
-                if (!c.shader.isValid()) {
+                if (!c.shader.isValid() && c.error.isEmpty()) {
                     c.error = cleanMessage(QString::fromUtf8(p.readAll()));
                     if (c.error.isEmpty()) c.error = QStringLiteral("the shader does not compile");
                 }
             }
         }
     }
-    std::lock_guard lock(g_mutex);
-    if (g_compiled.size() > 64) g_compiled.clear();
-    g_compiled.insert(key, c);
     return c;
 }
 
@@ -210,9 +357,20 @@ QString shaderHelp()
         "GLSL 4.40 code that defines `vec4 effect(vec2 uv)`: uv = 0..1 of the picture (x right, y down), return the "
         "colour (straight alpha, 0..1). Given: pixel(uv) = the clip's picture there (bilinear, straight alpha), "
         "pixelAt(ivec2) = one pixel, resolution (vec2, pixels), time (clip seconds), frame (clip frame), fps, p1..p8 "
-        "(the effect's number values, keyframable), color1, color2 (vec4). Own helper functions, consts and #define "
-        "are fine; do not name things time, frame, p1 …. Example: vec4 effect(vec2 uv) { vec4 c = pixel(uv + vec2(sin(uv.y "
+        "(the effect's number values, keyframable), color1, color2 (vec4). Own helper functions, consts, #define and "
+        "#if are fine; do not name things time, frame, p1 …. Not allowed: other # lines (#include, #extension …), "
+        "own uniforms/buffers/images, out/inout parameters, while/do; loops only as for (int i = 0; i < N; "
+        "++i) with a number N (at most 256 steps, all loops together 4096) that change i nowhere else. Example: vec4 effect(vec2 uv) { vec4 c = pixel(uv + vec2(sin(uv.y "
         "* 40.0 + time * 6.0) * 0.01 * p1, 0.0)); return c; }");
+}
+
+int shaderCompilerRuns()
+{
+#ifdef SCHNEIDI_HAVE_RHI
+    return g_compilerRuns.load();
+#else
+    return 0;
+#endif
 }
 
 bool shaderCompilerAvailable(QString* why)
@@ -238,7 +396,8 @@ bool shaderRenderable(QString* why)
 QString checkShader(const QString& code)
 {
     if (code.trimmed().isEmpty()) return {};
-    QString why;
+    QString why = checkUserCode(code);
+    if (!why.isEmpty()) return why;
     if (!shaderCompilerAvailable(&why)) return why;
 #ifdef SCHNEIDI_HAVE_RHI
     if (!code.contains(QRegularExpression(QStringLiteral(R"(\bvec4\s+effect\s*\()"))))

@@ -100,7 +100,7 @@ QVariantMap nodeValues(Session& s, const PC::NodeType& k, const QJsonValue& v, c
             out[key] = it.value().toVariant();
             // A custom effect's code (filter chain, shader) is checked here, as in op 'effect'
             QString why;
-            if (key == QLatin1String("e_chain")) why = Picture::Custom::checkFilter(it.value().toString());
+            if (key == QLatin1String("e_chain")) why = Picture::Custom::checkFilter(it.value().toString(), s.format().size());
             else if (key == QLatin1String("e_code")) why = Picture::Custom::checkShader(it.value().toString());
             if (!why.isEmpty()) fail("BAD_ARGUMENT", QString("%1: %2").arg(name, why));
             continue;

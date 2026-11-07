@@ -2,23 +2,30 @@
 // Custom effect "ffmpeg_filter" (CustomEffects.h): a libavfilter chain on the clip's picture.
 //
 // Safety: libavfilter has filters that read files (movie, amovie, lut3d/haldclut/curves/selectivecolor with a file,
-// subtitles/ass, drawtext's textfile/fontfile), run commands (sendcmd, zmq/azmq) or take other inputs. A denylist
-// would have to follow every FFmpeg release, so the chain may only use filters of an allowlist: colour, tone, blur,
-// edge, distortion and drawing filters that work on one picture from its own pixels. On top, no option whose name
-// mentions a file is taken, the chain must be one linear chain (no labels, no ';'), and the names are checked on the
-// parsed chain BEFORE any filter is made (a filter's init may already open its file). The bundled LGPL FFmpeg
+// subtitles/ass, drawtext's textfile/fontfile), write files (curves' plot), run commands (sendcmd, zmq/azmq) or take
+// other inputs. A denylist would have to follow every FFmpeg release, so the chain may only use filters of an
+// allowlist: colour, tone, blur, edge, distortion and drawing filters that work on one picture from its own pixels.
+// Options are allowlisted too: by their type (numbers, switches, colours, sizes, durations, flag names cannot name a
+// file) and every text option by name, reviewed per filter (expressions, point lists, colour names; never psfile or
+// plot). The chain must be one linear chain (no labels, no ';'), and all of it is checked on the parsed chain BEFORE
+// any filter is made (a filter's init may already open its file). The bundled LGPL FFmpeg
 // (packaging/ffmpeg-components.txt) builds exactly these filters.
 #include "engine/picture/CustomEffects.h"
 
 #include "engine/FfmpegLog.h"
 
 #include <QHash>
+#include <QRegularExpression>
 #include <QSet>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
+#include <condition_variable>
 #include <cstring>
 #include <memory>
+#include <mutex>
+#include <thread>
 #include <vector>
 
 #ifdef SCHNEIDI_HAVE_AVFILTER
@@ -30,6 +37,7 @@ extern "C" {
 #include <libavutil/error.h>
 #include <libavutil/frame.h>
 #include <libavutil/mem.h>
+#include <libavutil/opt.h>
 }
 #endif
 
@@ -59,6 +67,38 @@ const QSet<QString>& allowed()
         "colorkey", "lumakey", "chromakey",
         // time-based fade (by t), format helpers
         "fade", "format", "null", "setsar"};
+    return s;
+}
+
+// The text options a filter of the list may take, reviewed one by one: expressions (hue, lut*, geq, pseudocolor,
+// vignette, rotate, swaprect, crop, pad, scale, drawbox/drawgrid, setsar), curves' point lists, selectivecolor's
+// adjustments, convolution's matrices, colour names, scale's flags and size, format's names. A text option that is
+// not here is refused (curves/selectivecolor psfile reads a file, curves plot writes one). A new filter or FFmpeg
+// version with new text options needs a review before they are added
+const QHash<QString, QSet<QString>>& textOptions()
+{
+    static const QHash<QString, QSet<QString>> s = {
+        {"hue", {"h", "s", "H", "b"}},
+        {"curves", {"master", "m", "red", "r", "green", "g", "blue", "b", "all"}},
+        {"lut", {"c0", "c1", "c2", "c3", "y", "u", "v", "r", "g", "b", "a"}},
+        {"lutrgb", {"c0", "c1", "c2", "c3", "y", "u", "v", "r", "g", "b", "a"}},
+        {"lutyuv", {"c0", "c1", "c2", "c3", "y", "u", "v", "r", "g", "b", "a"}},
+        {"geq", {"lum_expr", "lum", "cb_expr", "cb", "cr_expr", "cr", "alpha_expr", "a", "red_expr", "r", "green_expr",
+                 "g", "blue_expr", "b"}},
+        {"selectivecolor", {"reds", "yellows", "greens", "cyans", "blues", "magentas", "whites", "neutrals", "blacks"}},
+        {"pseudocolor", {"c0", "c1", "c2", "c3"}},
+        {"convolution", {"0m", "1m", "2m", "3m"}},
+        {"vignette", {"angle", "a", "x0", "y0"}},
+        {"rotate", {"angle", "a", "out_w", "ow", "out_h", "oh", "fillcolor", "c"}},
+        {"shear", {"fillcolor", "c"}},
+        {"swaprect", {"w", "h", "x1", "y1", "x2", "y2"}},
+        {"crop", {"out_w", "w", "out_h", "h", "x", "y"}},
+        {"pad", {"width", "w", "height", "h", "x", "y"}},
+        {"scale", {"w", "width", "h", "height", "flags", "size", "s"}},
+        {"drawbox", {"x", "y", "width", "w", "height", "h", "color", "c", "thickness", "t", "box_source"}},
+        {"drawgrid", {"x", "y", "width", "w", "height", "h", "color", "c", "thickness", "t"}},
+        {"format", {"pix_fmts", "color_spaces", "color_ranges"}},
+        {"setsar", {"sar", "ratio", "r"}}};
     return s;
 }
 
@@ -111,6 +151,82 @@ struct FrameFree {
     void operator()(AVFrame* f) const { av_frame_free(&f); }
 };
 
+// Is one option of a filter of the list allowed (by its type, text options by name)? Empty = fine
+QString checkOption(const AVFilter* f, const QString& name, const AVDictionaryEntry* e)
+{
+    const QString key = QString::fromUtf8(e->key);
+    const AVOption* o = nullptr;
+    if (f->priv_class)
+        o = av_opt_find(const_cast<const AVClass**>(&f->priv_class), e->key, nullptr, 0, AV_OPT_SEARCH_FAKE_OBJ);
+    if (!o) {
+        // The options every filter has: only `enable` (an expression when the filter works)
+        const AVClass* generic = avfilter_get_class();
+        if (key == QLatin1String("enable") && (f->flags & AVFILTER_FLAG_SUPPORT_TIMELINE)
+            && av_opt_find(&generic, e->key, nullptr, 0, AV_OPT_SEARCH_FAKE_OBJ))
+            return {};
+        return QStringLiteral("filter '%1' has no option '%2' (see `ffmpeg -h filter=%1`)").arg(name, key);
+    }
+    switch (o->type) {
+    case AV_OPT_TYPE_FLAGS:
+    case AV_OPT_TYPE_INT:
+    case AV_OPT_TYPE_INT64:
+    case AV_OPT_TYPE_UINT64:
+    case AV_OPT_TYPE_DOUBLE:
+    case AV_OPT_TYPE_FLOAT:
+    case AV_OPT_TYPE_BOOL:
+    case AV_OPT_TYPE_RATIONAL:
+    case AV_OPT_TYPE_COLOR:
+    case AV_OPT_TYPE_IMAGE_SIZE:
+    case AV_OPT_TYPE_VIDEO_RATE:
+    case AV_OPT_TYPE_DURATION:
+    case AV_OPT_TYPE_PIXEL_FMT:
+        return {}; // parsed as a number, a name of a list or a colour: cannot name a file
+    case AV_OPT_TYPE_STRING:
+        if (textOptions().value(name).contains(key)) return {};
+        break;
+    default:
+        break;
+    }
+    if (key.contains(QLatin1String("file"), Qt::CaseInsensitive) || key == QLatin1String("plot"))
+        return QStringLiteral("filter '%1': option '%2' would use a file (not allowed)").arg(name, key);
+    return QStringLiteral("filter '%1': option '%2' is not allowed (only numbers, switches, colours and reviewed "
+                          "expressions)")
+        .arg(name, key);
+}
+
+// FFmpeg's expressions can loop (while(cond, body); ld/st keep the loop's state): one such option hangs the thread
+// that builds or runs the chain, and a running filter cannot be stopped. So those functions are refused in every
+// value. The expression reader drops all white space and compares names case by case; this check ignores case
+QString checkExpression(const QString& name, const AVDictionaryEntry* e)
+{
+    static const QRegularExpression loop(QStringLiteral(R"((^|[^A-Za-z0-9_])(while|ld|st)\()"),
+                                         QRegularExpression::CaseInsensitiveOption);
+    QString v = QString::fromUtf8(e->value);
+    v.remove(QRegularExpression(QStringLiteral("\\s")));
+    const QRegularExpressionMatch m = loop.match(v);
+    if (!m.hasMatch()) return {};
+    return QStringLiteral("filter '%1': option '%2' uses %3() (loops and stored variables are not allowed in "
+                          "expressions)")
+        .arg(name, QString::fromUtf8(e->key), m.captured(2));
+}
+
+// noise's temporal flags (t, a) keep a random state from frame to frame: each render thread and cached graph has its
+// own, so preview and export (and two exports) would differ. Only the still flags u (uniform) and p (pattern), by
+// name (a number could hide the temporal bits)
+QString checkNoise(const QString& name, const AVDictionaryEntry* e)
+{
+    if (name != QLatin1String("noise")) return {};
+    const QString key = QString::fromUtf8(e->key);
+    if (!key.endsWith(QLatin1String("_flags")) && !(key.endsWith(QLatin1Char('f')) && key.size() <= 4)) return {};
+    for (const QString& t : QString::fromUtf8(e->value).split(QRegularExpression(QStringLiteral("[+|\\-\\s]")),
+                                                               Qt::SkipEmptyParts))
+        if (t != QLatin1String("u") && t != QLatin1String("p"))
+            return QStringLiteral("filter 'noise': flag '%1' of '%2' is not allowed (only u and p: temporal noise "
+                                  "would differ between preview and export)")
+                .arg(t, key);
+    return {};
+}
+
 // Checks the parsed chain before anything of it is made: one linear chain of allowed filters, no labels, no file
 // options. Empty = fine
 QString checkSegment(const AVFilterGraphSegment* seg)
@@ -131,11 +247,13 @@ QString checkSegment(const AVFilterGraphSegment* seg)
         }
         if (!avfilter_get_by_name(p->filter_name))
             return QStringLiteral("filter '%1' is not in this build's FFmpeg").arg(name);
+        const AVFilter* f = avfilter_get_by_name(p->filter_name);
         const AVDictionaryEntry* e = nullptr;
-        while ((e = av_dict_iterate(p->opts, e)))
-            if (QString::fromUtf8(e->key).contains(QLatin1String("file"), Qt::CaseInsensitive))
-                return QStringLiteral("filter '%1': option '%2' would read a file (not allowed)")
-                    .arg(name, QString::fromUtf8(e->key));
+        while ((e = av_dict_iterate(p->opts, e))) {
+            if (const QString why = checkOption(f, name, e); !why.isEmpty()) return why;
+            if (const QString why = checkExpression(name, e); !why.isEmpty()) return why;
+            if (const QString why = checkNoise(name, e); !why.isEmpty()) return why;
+        }
     }
     return {};
 }
@@ -218,6 +336,21 @@ std::unique_ptr<Graph> build(const QString& chain, int w, int h, QString* error)
         return fail(QStringLiteral("cannot link the chain: %1").arg(avError(ret)));
     if ((ret = avfilter_graph_config(g->graph.get(), nullptr)) < 0)
         return fail(QStringLiteral("the chain does not work on a picture: %1").arg(avError(ret)));
+    // No picture inside the chain may be much larger than the clip's (pad=w=16000:h=16000 would take a gigabyte per
+    // graph, and every render thread keeps a few): each side at most 2x the larger side (a turn still fits) and
+    // 8192, the area at most 4x
+    const int side = std::min(8192, 2 * std::max(w, h));
+    const qint64 area = 4 * qint64(w) * h;
+    for (unsigned i = 0; i < g->graph->nb_filters; ++i) {
+        const AVFilterContext* f = g->graph->filters[i];
+        for (unsigned j = 0; j < f->nb_outputs; ++j) {
+            const AVFilterLink* l = f->outputs[j];
+            if (l && (l->w > side || l->h > side || qint64(l->w) * l->h > area))
+                return fail(QStringLiteral("the chain makes a picture of %1x%2 from %3x%4 (at most %5 per side and 4 "
+                                           "times the area)")
+                                .arg(l->w).arg(l->h).arg(w).arg(h).arg(side));
+        }
+    }
     return g;
 }
 
@@ -261,22 +394,41 @@ thread_local ThreadCache t_cache;
 
 bool filterAvailable() { return true; }
 
-QString checkFilter(const QString& chain)
+QString checkFilter(const QString& chain, QSize size, int budgetMs)
 {
     if (chain.trimmed().isEmpty()) return {};
-    // A small test picture with a gradient: the chain must build and turn it into a picture of the same size
-    constexpr int w = 64, h = 36;
-    std::vector<uint8_t> px(size_t(w) * h * 4);
-    for (int y = 0; y < h; ++y)
-        for (int x = 0; x < w; ++x) {
-            uint8_t* p = &px[(size_t(y) * w + x) * 4];
-            p[0] = uint8_t(x * 4), p[1] = uint8_t(y * 7), p[2] = 128, p[3] = 255;
-        }
-    QString error;
-    auto g = build(chain, w, h, &error);
-    if (!g) return error;
-    if (!run(*g, px.data(), 0.0, &error)) return error;
-    return {};
+    // A test picture with a gradient: the chain must build and turn it into a picture of the same size. On a thread
+    // of its own with a time budget: a chain that takes too long here would stall every frame (and the edit that
+    // checks it). FFmpeg cannot be interrupted, so a late check runs on detached; the loops that never end are
+    // refused before (checkExpression)
+    struct State {
+        std::mutex mutex;
+        std::condition_variable done;
+        bool finished = false;
+        QString error;
+    };
+    auto st = std::make_shared<State>();
+    // The size the effect will run at (a crop=1280:720 fits a 1080p clip, not a small picture); unknown: a small one
+    const int w = size.width() > 0 && size.height() > 0 ? std::min(size.width(), 8192) : 64;
+    const int h = size.width() > 0 && size.height() > 0 ? std::min(size.height(), 8192) : 36;
+    std::thread([st, chain, w, h] {
+        std::vector<uint8_t> px(size_t(w) * h * 4);
+        for (int y = 0; y < h; ++y)
+            for (int x = 0; x < w; ++x) {
+                uint8_t* p = &px[(size_t(y) * w + x) * 4];
+                p[0] = uint8_t(x * 255 / w), p[1] = uint8_t(y * 255 / h), p[2] = 128, p[3] = 255;
+            }
+        QString error;
+        if (auto g = build(chain, w, h, &error)) run(*g, px.data(), 0.0, &error);
+        std::lock_guard lock(st->mutex);
+        st->error = error;
+        st->finished = true;
+        st->done.notify_all();
+    }).detach();
+    std::unique_lock lock(st->mutex);
+    if (!st->done.wait_for(lock, std::chrono::milliseconds(std::max(1, budgetMs)), [&] { return st->finished; }))
+        return QStringLiteral("the chain takes too long (more than %1 ms for one picture)").arg(budgetMs);
+    return st->error;
 }
 
 bool applyFilter(const QString& chain, uint8_t* rgba, int width, int height, double seconds, QString* error)
@@ -303,8 +455,13 @@ bool applyFilter(const QString& chain, uint8_t* rgba, int width, int height, dou
         c.graphs.push_back(std::move(g));
         it = c.graphs.end() - 1;
     }
-    if (run(**it, rgba, seconds, error)) return true;
-    c.graphs.erase(it); // made fresh on the next frame
+    QString why;
+    if (run(**it, rgba, seconds, &why)) return true;
+    // A chain that fails while running is not built again every frame: kept as failed like one that does not build
+    c.graphs.erase(it);
+    if (c.failed.size() > 32) c.failed.clear();
+    c.failed.insert(failKey, why);
+    if (error) *error = why;
     return false;
 }
 
@@ -319,7 +476,7 @@ QString unavailable()
 } // namespace
 
 bool filterAvailable() { return false; }
-QString checkFilter(const QString& chain) { return chain.trimmed().isEmpty() ? QString() : unavailable(); }
+QString checkFilter(const QString& chain, QSize, int) { return chain.trimmed().isEmpty() ? QString() : unavailable(); }
 bool applyFilter(const QString& chain, uint8_t*, int, int, double, QString* error)
 {
     if (chain.trimmed().isEmpty()) return true;

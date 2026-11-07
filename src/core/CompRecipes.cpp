@@ -182,14 +182,21 @@ bool fromJson(const QJsonObject& o, const QString& baseDir, CompRecipe* out, QSt
         return bad("graph: " + why);
     for (auto it = r.values.begin(); it != r.values.end(); ++it)
         if (!r.graph.node(it.key())) return bad(QString("values of node %1, which is not in the graph").arg(it.key()));
-    // Files relative to the recipe's folder, never outside it (a shared recipe must not reach other files)
+    // Files relative to the recipe's folder, never outside it (a shared recipe must not reach other files): an absolute
+    // path ("/home/u/private.png", "C:/x", a network share \\host\share\x.cube that would send the Windows login
+    // to that host) is refused, only Qt resources (":/…", bundled with schneidi) are kept as they are
     if (!baseDir.isEmpty()) {
         const QString root = QDir::cleanPath(QDir(baseDir).absolutePath()) + '/';
         for (const CompNode& n : r.graph.nodes)
             for (const QString& key : Comp::fileKeys(n.type)) {
                 QVariantMap& v = r.values[n.id];
                 const QString path = v.value(key).toString();
-                if (path.isEmpty() || QDir::isAbsolutePath(path)) continue;
+                if (path.isEmpty() || path.startsWith(QLatin1String(":/"))) continue;
+                if (QDir::isAbsolutePath(path) || path.startsWith(QLatin1String("\\\\")) || path.startsWith(QLatin1String("//"))
+                    || (path.size() > 1 && path[1] == QLatin1Char(':')))
+                    return bad(QString("node %1: the file '%2' is outside the recipe (only files in its folder)")
+                                   .arg(n.id)
+                                   .arg(path));
                 const QString full = QDir::cleanPath(QDir(baseDir).absoluteFilePath(path));
                 if (!full.startsWith(root)) return bad(QString("node %1: the file '%2' is outside the recipe").arg(n.id).arg(path));
                 v[key] = full;

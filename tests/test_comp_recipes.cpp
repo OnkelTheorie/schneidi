@@ -374,6 +374,28 @@ int main(int argc, char** argv)
         Zip::write(evilZip, {{"evil/recipe.json", evil.fileName()}});
         CHECK(messageOf("effects", {{"kind", "recipes"}, {"import", evilZip}}).contains("outside the recipe"));
         CHECK(!QFileInfo::exists(QDir(CompRecipes::dir()).filePath("evil")));
+        // Absolute paths of a shared recipe are refused as well (a private file, a network share that would get the
+        // Windows login); a file in its folder and Qt resources are fine
+        for (const QString& path : {QDir::rootPath() + "etc/hostname", QString("\\\\host\\share\\x.cube"),
+                                    QString("//host/share/x.cube"), QString("C:/Users/u/x.png")}) {
+            const QJsonObject o = QJsonDocument::fromJson(QString(R"({"name":"abs","graph":{"nodes":[{"id":1,"type":"media","params":{"path":"%1"}}],"links":[],"out":1}})")
+                                                              .arg(QString(path).replace("\\", "\\\\"))
+                                                              .toUtf8())
+                                      .object();
+            CompRecipe r;
+            QString why;
+            if (!CHECK(!CompRecipes::fromJson(o, dir.path(), &r, &why) && why.contains("outside the recipe")))
+                std::printf("       %s: %s\n", qPrintable(path), qPrintable(why));
+        }
+        for (const QString& path : {QString("x.txt"), QString(":/icons/x.png")}) {
+            const QJsonObject o = QJsonDocument::fromJson(QString(R"({"name":"ok","graph":{"nodes":[{"id":1,"type":"media","params":{"path":"%1"}}],"links":[],"out":1}})")
+                                                              .arg(path)
+                                                              .toUtf8())
+                                      .object();
+            CompRecipe r;
+            QString why;
+            if (!CHECK(CompRecipes::fromJson(o, dir.path(), &r, &why))) std::printf("       %s: %s\n", qPrintable(path), qPrintable(why));
+        }
     }
 
     // One undo step for a recipe, undone exactly
