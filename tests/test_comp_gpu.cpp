@@ -9,7 +9,7 @@
 // COMP_GPU_BENCH=n: n frames of the recipes at 1920x1080, CPU (CompEval, all threads) vs card (plan + passes +
 // readback), ms per frame.
 
-#include "check.h"
+#include "render_check.h"
 
 #include "core/CompGraph.h"
 #include "core/EffectRegistry.h"

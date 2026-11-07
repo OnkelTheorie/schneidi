@@ -4,7 +4,7 @@
 // (TranscriptCut), WebVTT, project file, the CLI op 'captions', the karaoke highlight in a rendered frame and
 // subtitle text streams in exported MP4/MKV/WebM (read back with libavformat).
 
-#include "check.h"
+#include "render_check.h"
 
 #include "cli/Commands.h"
 #include "cli/CommandsDetail.h"

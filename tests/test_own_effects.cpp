@@ -8,7 +8,7 @@
 // - render through the picture engine: keyed clip over black, a glow on a clip
 // - old projects: the frei0r effect ids, parameters and keyframes load as known effects
 // - speed: ms per 1080p frame for every effect (printed)
-#include "check.h"
+#include "render_check.h"
 
 #include "core/EffectRegistry.h"
 #include "core/Keyframes.h"

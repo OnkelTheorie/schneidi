@@ -2,7 +2,7 @@
 // Test subtitles: read/write SRT (encoding, formatting, broken blocks, overlaps, 29.97 fps),
 // overwriting on the track, editor operations with undo, project file, format change, burn-in in the render
 // (pixels) and SRT file on export.
-#include "check.h"
+#include "render_check.h"
 
 #include "core/Editor.h"
 #include "core/Project.h"

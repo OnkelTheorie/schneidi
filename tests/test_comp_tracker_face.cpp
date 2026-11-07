@@ -3,7 +3,7 @@
 // without it - never downloads anything. Only synthetic pictures (no real person): a grey picture and a moving square
 // have no face, so the analysis says so instead of tracking something else. The face-following logic itself is
 // tested with a stand-in detector in test_comp_tracker.
-#include "check.h"
+#include "render_check.h"
 #include "engine/FaceDetect.h"
 #include "engine/picture/CompTrack.h"
 

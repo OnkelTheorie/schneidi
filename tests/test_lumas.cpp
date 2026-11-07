@@ -3,7 +3,7 @@
 // own images from the Transitions folder (size, invert), drag data "luma:<image>",
 // project file (relative or found again in the own folder) and rendering (door horizontal: middle already B,
 // edges still A; inverted the other way round; into nothing like Cross Dissolve).
-#include "check.h"
+#include "render_check.h"
 
 #include "core/EffectFolders.h"
 #include "core/ProjectFile.h"

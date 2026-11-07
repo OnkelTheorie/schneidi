@@ -5,7 +5,7 @@
 // by its grip or title) and the render: the picture follows the order (blur → pixelate ≠ pixelate → blur, each equal to
 // the second effect applied to a still of the first), the Green Screen key is a fixed stage wherever it is in the list.
 // Pictures of the Inspector while dragging and with the menu: EFFECT_ORDER_DUMP=<folder> build/tests/test_effect_order
-#include "check.h"
+#include "render_check.h"
 
 #include "app/Theme.h"
 #include "cli/Commands.h"

@@ -7,7 +7,7 @@
 // flash, so 0 ms is right; the test prints every offset and fails above kExportTolMs.
 // Coarser sync checks (±1 frame, variable frame rate, overlapping packets): test_audio_regression.
 
-#include "check.h"
+#include "render_check.h"
 
 #include "core/RenderJob.h"
 #include "engine/Engine.h"

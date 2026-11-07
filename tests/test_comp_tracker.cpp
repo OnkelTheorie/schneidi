@@ -9,7 +9,7 @@
 // - the node passes its picture through; keyframes n<id>.x/.y/.scale/.angle written, one undo step
 // - a portrait clip in a 16:9 project: start points and results in the clip picture's coordinates (no bars)
 // Prints the analysis speed at 1080p (frames per second, drawing the pictures not counted).
-#include "check.h"
+#include "render_check.h"
 #include "core/CompGraph.h"
 #include "core/CompTrack.h"
 #include "core/Editor.h"

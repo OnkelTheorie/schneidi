@@ -3,7 +3,7 @@
 // mode Off/Smart/User; rendering (with/without alpha) gives the same picture as the live preview; the builder
 // reads the cache file only with ClipCache (preview), never export and still; background rendering via sync();
 // size limit (trimDir).
-#include "check.h"
+#include "render_check.h"
 
 #include "core/Editor.h"
 #include "core/EffectRegistry.h"

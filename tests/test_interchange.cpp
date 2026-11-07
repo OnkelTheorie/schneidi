@@ -2,7 +2,7 @@
 // Timeline exchange (core/Interchange): round trips schneidi -> FCP7 XML / OTIO / EDL -> schneidi, a hand-written
 // Premiere-style FCP7 XML (start/end -1 at transitions, stereo as two channel items), paths of other computers,
 // frame rate conversion
-#include "check.h"
+#include "render_check.h"
 
 #include "core/Interchange.h"
 #include "core/Project.h"

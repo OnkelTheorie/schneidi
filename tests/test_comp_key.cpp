@@ -8,7 +8,7 @@
 //   black, softened edge, despill takes out the fringe a key without spill left, a mask stays a mask, defaults change
 //   nothing
 // - speed: ms per 1080p frame (printed)
-#include "check.h"
+#include "render_check.h"
 
 #include "engine/VideoEffects.h"
 #include "engine/picture/CompNodes.h"

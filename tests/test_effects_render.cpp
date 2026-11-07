@@ -2,7 +2,7 @@
 // Test effects in the render: render color correction/blur on color bars and check pixel values -
 // direction of the sliders, keyframes, splitting, blur independent of resolution, title with effect (alpha stays),
 // same picture with German number format (LC_NUMERIC) at runtime. Test medium is created with ffmpeg.
-#include "check.h"
+#include "render_check.h"
 
 #include "core/EffectRegistry.h"
 #include "core/Keyframes.h"

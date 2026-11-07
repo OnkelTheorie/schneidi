@@ -4,7 +4,7 @@
 // unchanged by an unused look, project file round trip (plain titles keep their old shape), the CLI op `title`
 // options and the compositing node kinds text, shadow and glitch (single-node runner).
 // SCHNEIDI_PICTURE_DUMP=<folder>: saves the rendered pictures there to look at.
-#include "check.h"
+#include "render_check.h"
 
 #include "cli/Commands.h"
 #include "cli/CommandsDetail.h"

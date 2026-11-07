@@ -4,7 +4,7 @@
 // with that text), the progress bar (filled width at given frames in both spans), project file round trip, the CLI
 // ops and `check` on a progress bar at the bottom of a vertical timeline.
 // SCHNEIDI_PICTURE_DUMP=<folder>: saves the rendered pictures there to look at.
-#include "check.h"
+#include "render_check.h"
 
 #include "cli/Commands.h"
 #include "cli/CommandsDetail.h"
