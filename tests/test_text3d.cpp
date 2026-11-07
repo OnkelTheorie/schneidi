@@ -5,6 +5,7 @@
 // survives a project round trip, Text::draw (layout taken out for Text::letters) unchanged bit for bit.
 // TEXT3D_BENCH=1: ms per frame of a 3-word title at 1080p with an animated rotation.
 #include "check.h"
+#include "render_check.h"
 
 #include "core/CompGraph.h"
 #include "core/Keyframes.h"
