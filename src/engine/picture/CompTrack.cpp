@@ -252,11 +252,9 @@ double trackerValue(const QVariantMap& values, const QString& key)
 {
     const NodeType* k = find(::Comp::kTrackerType);
     if (!k) return values.value(key).toDouble();
-    if (!values.contains(key)) {
-        if (key == QLatin1String("x")) return numValue(*k, values, QStringLiteral("ax"));
-        if (key == QLatin1String("y")) return numValue(*k, values, QStringLiteral("ay"));
-    }
-    return numValue(*k, values, key);
+    return ::Comp::followValue(
+        key, textValue(*k, values, QStringLiteral("mode")), [&](const QString& q) { return values.contains(q); },
+        [&](const QString& q) { return numValue(*k, values, q); });
 }
 
 TrackRun trackNode(const ProjectFormat& format, const Clip& c, int node, int from, int to,

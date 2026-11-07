@@ -448,3 +448,4 @@ schneidi_test(test_comp_tracker)
 # The same in face mode with the real YuNet model; 77 without the extension
 schneidi_test(test_comp_tracker_face)
 schneidi_test(test_comp_eval) # compositing evaluation (0.19 A): merge modes vs formula, graph = effect list bit-identical, comp_from, cache, unknown kinds
+schneidi_test(test_comp_follow) # tracker follow rule (0.19): followers relative to rx/ry, no jump when the analysis lands, transform/mask alike

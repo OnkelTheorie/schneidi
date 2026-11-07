@@ -102,7 +102,8 @@ bool evalMask(NodeCtx& ctx, Buf* out)
     Masks::Geometry g = Masks::toPixels(s, ctx.size);
     if (const int follow = int(ctx.num("follow")); follow > 0 && ctx.numOf) {
         Masks::Follow f;
-        f.from = QPointF(ctx.numOf(follow, "ax") * W, ctx.numOf(follow, "ay") * H);
+        // The follow rule (core/CompTrack.h): moved by (x, y) - (rx, ry), scaled and turned around (x, y)
+        f.from = QPointF(ctx.numOf(follow, "rx") * W, ctx.numOf(follow, "ry") * H);
         f.to = QPointF(ctx.numOf(follow, "x") * W, ctx.numOf(follow, "y") * H);
         f.scale = ctx.numOf(follow, "scale");
         f.angle = ctx.numOf(follow, "angle");

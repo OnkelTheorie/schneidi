@@ -390,6 +390,15 @@ bool Editor::trackCompNode(int clipId, int node, const QVector<Comp::TrackPoint>
         for (AnimParam p : params)
             for (int t : Keys::keyTimes(c, {p}))
                 if (t >= lo && t <= hi) Keys::removeKey(c, p, t);
+        // The reference point followers are drawn relative to (follow rule, core/CompTrack.h): the start frame's
+        // point (the first one). A new path sets it; an analysis that adds to a path kept outside its range keeps
+        // it, so the part tracked before does not move
+        EffectInstance* inst = EffectRegistry::instance(c, Comp::kEffectId);
+        const QString rx = CompGraph::paramKey(node, Comp::kRefKeys[0]), ry = CompGraph::paramKey(node, Comp::kRefKeys[1]);
+        if (inst && (Keys::keyTimes(c, {params[0]}).isEmpty() || !inst->params.contains(rx) || !inst->params.contains(ry))) {
+            inst->params[rx] = points.first().x;
+            inst->params[ry] = points.first().y;
+        }
         for (const Comp::TrackPoint& p : points) {
             const double v[4] = {p.x, p.y, p.scale, p.angle};
             for (int i = 0; i < 4; ++i) Keys::setKey(c, params[i], p.frame, v[i]);

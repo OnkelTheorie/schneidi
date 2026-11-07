@@ -68,7 +68,11 @@ struct NodeCtx {
     std::function<double(const QString& key)> num;
     std::function<QColor(const QString& key)> color;
     std::function<QString(const QString& key)> text;
-    // Another node's value at t (a node following a tracker: "follow" = tracker id, then numOf(id, "x"))
+    // Another node's value at t (a node following a tracker: "follow" = tracker id, then numOf(id, "x")).
+    // Follow rule, the same for every follower (core/CompTrack.h): the tracker's reference point numOf(id, "rx"/"ry")
+    // is where the tracked thing is at the start frame; the follower's own positions move by (x - rx, y - ry) and
+    // scale by "scale" / turn by "angle" (clockwise) around (x, y), in pixels. A transform keeps its own x/y as its
+    // placement and adds that. Not analyzed: x/y = rx/ry, scale 1, angle 0 = nothing moves
     std::function<double(int node, const QString& key)> numOf;
 
     // Picture at an input (nullptr = not connected or the node there made nothing)
