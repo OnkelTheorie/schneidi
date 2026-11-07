@@ -39,8 +39,8 @@ EffectParam f0rOther(EffectParam::Type type, const char* index, const QString& l
 }
 
 // Custom effects written by an AI or a user (0.19, engine/picture/CustomEffects.h): an FFmpeg filter chain and a
-// GLSL shader. The code is text set through `edit` (not in the Inspector, not in the Effects Library); the shader's
-// numbers and colours show in the Inspector and take keyframes
+// GLSL shader. The code is text set through `edit` (not in the Inspector, not offered in the Effects Library, but
+// `library` so the Inspector shows a removable section); the shader's numbers and colours show there, keyframable
 QVector<EffectDescriptor> customEffects()
 {
     EffectDescriptor filter;
@@ -48,11 +48,13 @@ QVector<EffectDescriptor> customEffects()
     filter.name = T("FFmpeg-Filter");
     filter.description = T("Eine FFmpeg-Filterkette auf dem Bild des Clips (z. B. hue=s=0,edgedetect)");
     filter.params = {{"chain", T("Filterkette"), "chain", EffectParam::Text, QString(), 0, 0}};
+    filter.library = true;
     EffectDescriptor shader;
     shader.id = QStringLiteral("shader");
     shader.name = T("Shader");
     shader.description = T("Ein eigener GLSL-Shader auf dem Bild des Clips (läuft auf der Grafikkarte)");
     shader.params = {{"code", T("Shader-Code"), "code", EffectParam::Text, QString(), 0, 0}};
+    shader.library = true;
     for (int i = 1; i <= 8; ++i) {
         const QString key = QStringLiteral("p%1").arg(i);
         shader.params << EffectParam{key, T("Wert %1").arg(i), key, EffectParam::Double, 0.0, -100.0, 100.0,

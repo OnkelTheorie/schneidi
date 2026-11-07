@@ -15,6 +15,7 @@
 
 #include "check.h"
 
+#include <QElapsedTimer>
 #include <QGuiApplication>
 #include <QImage>
 #include <QJsonArray>
@@ -28,21 +29,30 @@ namespace PC = Picture::Custom;
 namespace {
 
 QString g_project;
+bool g_quiet = false;
 
 QJsonObject run(const QString& name, const QJsonObject& raw)
 {
     const Cli::Command* cmd = Cli::find(name);
     Cli::Context ctx;
-    return cmd->run(Cli::normalize(*cmd, raw), ctx);
+    try {
+        return cmd->run(Cli::normalize(*cmd, raw), ctx);
+    } catch (const Cli::Error& e) {
+        if (!g_quiet) std::printf("       unexpected error %s: %s\n", qPrintable(e.code), qPrintable(e.message));
+        throw;
+    }
 }
 
 QString messageOf(const QString& name, const QJsonObject& raw)
 {
+    g_quiet = true;
     try {
         run(name, raw);
     } catch (const Cli::Error& e) {
+        g_quiet = false;
         return e.code + ": " + e.message;
     }
+    g_quiet = false;
     return "none";
 }
 
@@ -126,6 +136,20 @@ void filterOnPixels()
     }
 }
 
+// Rough cost at 1920x1080 (printed, not checked: depends on the machine)
+void filterTiming()
+{
+    const int w = 1920, h = 1080;
+    std::vector<uint8_t> px = gradient(w, h);
+    for (const char* chain : {"negate", "hue=s=0,edgedetect", "gblur=sigma=8"}) {
+        PC::applyFilter(chain, px.data(), w, h, 0.0); // builds the graph
+        QElapsedTimer t;
+        t.start();
+        for (int i = 0; i < 5; ++i) PC::applyFilter(chain, px.data(), w, h, i / 25.0);
+        std::printf("filter %s 1920x1080: %.1f ms per frame\n", chain, t.nsecsElapsed() / 5e6);
+    }
+}
+
 void filterChecks()
 {
     auto refused = [](const char* chain, const char* expect) {
@@ -194,6 +218,7 @@ int main(int argc, char** argv)
     if (filters) {
         filterOnPixels();
         filterChecks();
+        filterTiming();
         fxNode();
     } else {
         std::printf("no libavfilter in this build: only the 'not available' answer is tested\n");
@@ -219,7 +244,7 @@ int main(int argc, char** argv)
     if (filters) {
         edit({QJsonObject{{"op", "effect"}, {"clips", QJsonArray{clip}}, {"effect", "ffmpeg_filter"},
                           {"params", QJsonObject{{"chain", "negate"}}}}});
-        const QJsonObject r = run("frames", {{"source", g_project}, {"out", dir.filePath("f")}, {"width", 320}});
+        const QJsonObject r = run("frames", {{"source", g_project}, {"out", dir.filePath("f")}, {"width", 320}, {"at", QJsonArray{10}}});
         const QImage img(r["frames"].toArray().first().toObject()["file"].toString());
         if (CHECK(!img.isNull())) {
             const QColor c = img.pixelColor(160, 90);
