@@ -79,6 +79,8 @@ struct NodeCtx {
     std::function<const Buf*(const QString& input)> input;
     // A cleared buffer of the output size from the pool (use it for the result and big scratch pictures)
     std::function<Buf(Buf::Kind)> take;
+    // Gives a scratch buffer that came from take back to the pool once the node no longer needs it (only those)
+    std::function<void(Buf&& scratch)> give;
 
     // Engine services for generator kinds (set by the engine; may be empty in the single-node test runner):
     // the clip's own picture with its effects (node "clip"), a media pool file's picture at a clip time
@@ -102,6 +104,12 @@ struct NodeType {
     // a follower of a tracker). The engine caches a node when it is not varying, has no keyframes and all its inputs
     // are static
     bool varying = false;
+    // Set: whether a node of this kind with these values (keys without prefix) varies, instead of `varying` (fx: only
+    // an effect drawing a new pattern each frame)
+    std::function<bool(const NodeType& k, const QVariantMap& values)> isVarying;
+    // Set: the node's picture is this input's, unchanged (tracker). The engine hands that picture on without a copy;
+    // eval is only used by the single-node runner
+    QString passThrough;
     // Makes the node's picture into *out (taken from ctx.take or a moved input). false = nothing (as if not connected)
     std::function<bool(NodeCtx& ctx, Buf* out)> eval;
 
@@ -135,6 +143,12 @@ bool runNode(const QString& type, const QVariantMap& params, const QHash<QString
 double numValue(const NodeType& k, const QVariantMap& values, const QString& key);
 QColor colorValue(const NodeType& k, const QVariantMap& values, const QString& key);
 QString textValue(const NodeType& k, const QVariantMap& values, const QString& key);
+// Does a node of kind k with these values change with time by itself (isVarying, else varying)?
+bool varies(const NodeType& k, const QVariantMap& values);
+// A Choice parameter's value as the index of its choice: the choice id ("ellipse") or its index (1, "1"); anything
+// else (unknown id, index out of range) = the default. num() returns this index, text() the choice id (an id this
+// version does not list as it is)
+int choiceValue(const NodeType& k, const QVariantMap& values, const QString& key);
 
 // Registration functions, one per package file (CompNodes.cpp calls each once)
 void registerCoreNodes(QVector<NodeType>& out);  // A: clip, media, color, gradient, merge, transform, crop, blur, color grade, fx

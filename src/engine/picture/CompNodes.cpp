@@ -4,6 +4,7 @@
 #include <QHash>
 
 #include <algorithm>
+#include <cmath>
 
 namespace Picture::Comp {
 
@@ -44,17 +45,41 @@ bool kindInfo(const QString& type, QStringList* inputs)
     return true;
 }
 
+namespace {
+
+// Index of v among p's choices: an id or an index (number or digits); -1 = neither
+int choiceIndexOf(const EffectParam& p, const QVariant& v)
+{
+    if (!v.isValid()) return -1;
+    if (v.typeId() == QMetaType::QString) {
+        const qsizetype i = p.choices.indexOf(v.toString());
+        if (i >= 0) return int(i);
+    }
+    bool ok = false;
+    const double d = v.toDouble(&ok);
+    if (!ok || !std::isfinite(d)) return -1;
+    const long i = std::lround(d);
+    return i >= 0 && i < p.choices.size() ? int(i) : -1;
+}
+
+} // namespace
+
+int choiceValue(const NodeType& k, const QVariantMap& values, const QString& key)
+{
+    const EffectParam* p = k.param(key);
+    if (!p) return 0;
+    const int i = choiceIndexOf(*p, values.value(key));
+    return i >= 0 ? i : std::max(0, choiceIndexOf(*p, p->defaultValue));
+}
+
+bool varies(const NodeType& k, const QVariantMap& values) { return k.isVarying ? k.isVarying(k, values) : k.varying; }
+
 double numValue(const NodeType& k, const QVariantMap& values, const QString& key)
 {
     const EffectParam* p = k.param(key);
+    if (p && p->type == EffectParam::Choice) return double(choiceValue(k, values, key));
     const QVariant v = values.value(key, p ? p->defaultValue : QVariant());
     if (p && p->type == EffectParam::Bool) return v.toBool() ? 1.0 : 0.0;
-    if (p && p->type == EffectParam::Choice) { // index of the value (a number given as a number stays one)
-        bool ok = false;
-        const double d = v.toDouble(&ok);
-        if (v.typeId() != QMetaType::QString && ok) return d;
-        return double(std::max<qsizetype>(0, p->choices.indexOf(v.toString())));
-    }
     return v.toDouble();
 }
 
@@ -69,6 +94,12 @@ QColor colorValue(const NodeType& k, const QVariantMap& values, const QString& k
 QString textValue(const NodeType& k, const QVariantMap& values, const QString& key)
 {
     const EffectParam* p = k.param(key);
+    if (p && p->type == EffectParam::Choice) { // an index as its id; an id this version does not list stays as it is
+        const QVariant v = values.value(key);
+        if (const int i = choiceIndexOf(*p, v); i >= 0) return p->choices.value(i);
+        if (v.typeId() == QMetaType::QString && !v.toString().isEmpty()) return v.toString();
+        return p->defaultValue.toString();
+    }
     return values.value(key, p ? p->defaultValue : QVariant()).toString();
 }
 
@@ -93,6 +124,7 @@ bool runNode(const QString& type, const QVariantMap& params, const QHash<QString
         return it == inputs.cend() || it->isNull() ? nullptr : &*it;
     };
     ctx.take = [&opt](Buf::Kind kind) { return Buf(kind, opt.size.width(), opt.size.height()); };
+    ctx.give = [](Buf&&) {}; // plain allocations: just dropped
     if (opt.clipPicture) ctx.clipPicture = [&opt]() { return opt.clipPicture; };
     ctx.mediaPicture = opt.mediaPicture;
     Buf result;

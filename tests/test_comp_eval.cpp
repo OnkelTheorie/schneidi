@@ -426,6 +426,195 @@ void testEngine()
     CHECK(evaluate(comp(kinds, links, 5, follow), env, nullptr, &moved) && moved.px != plain.px);
 }
 
+// A node passing its input through (an unknown kind of a newer version, a tracker) keeps that picture alive for the
+// nodes after it, without a copy
+void testPassThrough()
+{
+    std::printf("pass-through keeps its input\n");
+    Buf clipPic(Buf::Rgba, 48, 32);
+    for (int i = 0; i < 48 * 32; ++i) {
+        clipPic.px[size_t(i) * 4] = uint8_t((i % 48) * 5);
+        clipPic.px[size_t(i) * 4 + 1] = uint8_t(i % 7 * 30);
+        clipPic.px[size_t(i) * 4 + 3] = uint8_t(i % 48 < 24 ? 255 : 120);
+    }
+    Env env;
+    env.size = QSize(48, 32);
+    env.clipPicture = [&]() -> const Buf* { return &clipPic; };
+    const QVariantMap v{{"n2.radius", 3}, {"n3.color", QColor(10, 200, 30)}};
+    Buf direct;
+    Stats sDirect;
+    // clip -> blur -> merge fg over a color; the same with a pass-through node between blur and merge
+    CHECK(evaluate(comp({"clip", "blur", "color", "merge"}, {{1, 2, "src"}, {3, 4, "bg"}, {2, 4, "fg"}}, 4, v), env,
+                   nullptr, &direct, &sDirect));
+    Buf blurOnly;
+    CHECK(evaluate(comp({"clip", "blur"}, {{1, 2, "src"}}, 2, v), env, nullptr, &blurOnly));
+    for (const QString& through : {QString("hologram"), QString(::Comp::kTrackerType)}) {
+        Stats s1, s2;
+        Buf a, b;
+        const QStringList kinds{"clip", "blur", "color", "merge", through};
+        CHECK(evaluate(comp(kinds, {{1, 2, "src"}, {2, 5, "src"}, {3, 4, "bg"}, {5, 4, "fg"}}, 4, v), env, nullptr, &a,
+                       &s1)
+              && a.px == direct.px);
+        CHECK(evaluate(comp(kinds, {{1, 2, "src"}, {2, 5, "src"}}, 5, v), env, nullptr, &b, &s2) && b.px == blurOnly.px);
+        CHECK(s1.peakBuffers == sDirect.peakBuffers && s2.peakBuffers == 1); // no copy
+        // Read by two nodes after it: both see the picture
+        const QVariantMap two{{"n2.radius", 3}, {"n4.radius", 1}};
+        Buf c, ref;
+        CHECK(evaluate(comp({"clip", "blur", "merge", "blur"}, {{1, 2, "src"}, {2, 3, "bg"}, {2, 4, "src"}, {4, 3, "fg"}},
+                            3, two),
+                       env, nullptr, &ref));
+        CHECK(evaluate(comp({"clip", "blur", "merge", "blur", through},
+                            {{1, 2, "src"}, {2, 5, "src"}, {5, 3, "bg"}, {5, 4, "src"}, {4, 3, "fg"}}, 3, two),
+                       env, nullptr, &c)
+              && c.px == ref.px);
+    }
+}
+
+// A compound track is painted straight onto the merge reading it only when that merge is its one reader
+void testFusedTrack()
+{
+    std::printf("compound track fused into a merge\n");
+    Env env;
+    env.size = QSize(32, 16);
+    Buf whole = solid(32, 16, {QColor(1, 2, 3)});
+    env.clipPicture = [&]() -> const Buf* { return &whole; };
+    int painted = 0;
+    env.paintTrack = [&](int track, Buf& onto) {
+        ++painted;
+        for (size_t i = 0; i < onto.px.size(); i += 4)
+            if ((i / 4) % 3 == size_t(track)) onto.px[i] = 250, onto.px[i + 3] = 255;
+        return true;
+    };
+    const QVariantMap v{{"n1.track", 0}, {"n2.color", QColor(0, 0, 90)}, {"n4.radius", 1}};
+    // track -> fg of a merge over a color: fused (painted once, onto the color)
+    Buf fused;
+    CHECK(evaluate(comp({"clip", "color", "merge"}, {{2, 3, "bg"}, {1, 3, "fg"}}, 3, v), env, nullptr, &fused)
+          && painted == 1 && fused.px[2] == 90 && fused.px[0] == 250);
+    // The same track also read by a blur: a picture of the track alone that both read
+    painted = 0;
+    Buf shared;
+    CHECK(evaluate(comp({"clip", "color", "merge", "blur", "merge"},
+                        {{2, 3, "bg"}, {1, 3, "fg"}, {1, 4, "src"}, {3, 5, "bg"}, {4, 5, "fg"}}, 5, v),
+                   env, nullptr, &shared)
+          && painted == 1 && !shared.isNull());
+}
+
+// Scratch pictures of a node go back to the pool: after an evaluation only the result is out of it
+void testScratchGivenBack()
+{
+    std::printf("scratch buffers back to the pool\n");
+    Buf clipPic = solid(40, 24, {QColor(200, 30, 30, 255), QColor(20, 200, 20, 0)});
+    Env env;
+    env.size = QSize(40, 24);
+    env.clipPicture = [&]() -> const Buf* { return &clipPic; };
+    int taken = 0, given = 0;
+    env.takeBytes = [&](size_t n) {
+        ++taken;
+        return std::vector<uint8_t>(n, 0);
+    };
+    env.giveBytes = [&](std::vector<uint8_t>&&) { ++given; };
+    Buf out;
+    CHECK(evaluate(comp({"clip", "matte_tune"}, {{1, 2, "src"}}, 2, {{"n2.soft", 2}, {"n2.black", 0.1}, {"n2.grow", 1}}),
+                   env, nullptr, &out));
+    CHECK(taken >= 3 && taken - given == 1);
+}
+
+// fx changes by itself only with an effect drawing a new pattern each frame (noise): the others are cached
+void testFxVarying()
+{
+    std::printf("fx varying per effect\n");
+    Env env;
+    env.size = QSize(40, 24);
+    Cache cache;
+    for (const QString& fx : {QString("frei0r.glow"), QString("frei0r.rgbnoise"), QString("1")}) {
+        cache.clear();
+        const EffectInstance e = comp({"color", "fx"}, {{1, 2, "src"}}, 2,
+                                      {{"n1.color", QColor(120, 90, 60)}, {"n2.effect", fx}, {"n2.e_0", 0.5}});
+        Buf a, b;
+        Stats s1, s2;
+        env.t = 0, env.frameNo = 0;
+        CHECK(evaluate(e, env, &cache, &a, &s1) && s1.evaluated == 2);
+        env.t = 1, env.frameNo = 1;
+        CHECK(evaluate(e, env, &cache, &b, &s2));
+        if (fx == "frei0r.rgbnoise") CHECK(s2.cached == 1 && s2.evaluated == 1 && a.px != b.px);
+        else CHECK(s2.cached == 1 && s2.evaluated == 0 && a.px == b.px); // "1" = the index of glow
+    }
+}
+
+// A node following a tracker (numOf) is cached only while the tracker's values are fixed, and keyed by them: an
+// analysed tracker (keyframes) moves it per frame, a new analysis or another value is seen with a cache
+void testFollowCached()
+{
+    std::printf("follower with a cache\n");
+    for (const QString& follower : {QString("transform"), QString("mask")}) {
+        // A white square (transform of a smaller white picture / a mask shape) on black
+        const bool isMask = follower == "mask";
+        const QStringList kinds = isMask ? QStringList{"tracker", "color", "mask", "color", "merge"}
+                                         : QStringList{"tracker", "color", "transform", "color", "merge"};
+        const QVector<CompLink> links = isMask ? QVector<CompLink>{{4, 5, "bg"}, {2, 5, "fg"}, {3, 5, "mask"}}
+                                               : QVector<CompLink>{{2, 3, "src"}, {4, 5, "bg"}, {3, 5, "fg"}};
+        QVariantMap v{{"n2.color", QColor(255, 255, 255)}, {"n4.color", QColor(0, 0, 0)}, {"n3.follow", 1}};
+        if (isMask) v.insert("n3.w", 0.2), v.insert("n3.h", 0.2);
+        else v.insert("n3.size", 0.2);
+        Env env;
+        env.size = QSize(64, 32);
+        Cache cache;
+        Clip k;
+        const AnimParam kx = Keys::effectParam(::Comp::kEffectId, "n1.x");
+        k.keys[kx] = {Keyframe{0, 0.3}, Keyframe{10, 0.7}};
+        env.clip = &k;
+        Buf f0, f10, again;
+        CHECK(evaluate(comp(kinds, links, 5, v), env, &cache, &f0));
+        env.t = 10;
+        CHECK(evaluate(comp(kinds, links, 5, v), env, &cache, &f10) && f10.px != f0.px);
+        // Analysed anew: other keyframes, the same frame shows the new place
+        k.keys[kx] = {Keyframe{0, 0.3}, Keyframe{10, 0.4}};
+        CHECK(evaluate(comp(kinds, links, 5, v), env, &cache, &again) && again.px != f10.px);
+        // No keyframes: static (cached at another frame), but another tracker value is not taken from the cache
+        env.clip = nullptr;
+        v.insert("n1.x", 0.3);
+        Buf a, b, c;
+        Stats s1, s2;
+        CHECK(evaluate(comp(kinds, links, 5, v), env, &cache, &a));
+        env.t = 3;
+        CHECK(evaluate(comp(kinds, links, 5, v), env, &cache, &b, &s1) && s1.cached >= 1 && a.px == b.px);
+        v.insert("n1.x", 0.7);
+        CHECK(evaluate(comp(kinds, links, 5, v), env, &cache, &c, &s2) && c.px != a.px);
+    }
+}
+
+// Choice values given as an index (a number or digits) mean the same as the choice id, for every kind
+void testChoiceValues()
+{
+    std::printf("choice values by id or index\n");
+    RunOptions o;
+    o.size = QSize(48, 32);
+    auto same = [&](const QString& type, const QVariantMap& byId, const QVariantMap& byIndex,
+                    const QHash<QString, Buf>& inputs = {}) {
+        Buf a, b, d;
+        const bool ok = runNode(type, byId, inputs, o, &a) && runNode(type, byIndex, inputs, o, &b);
+        runNode(type, {}, inputs, o, &d); // the default must differ, or the check says nothing
+        return ok && a.px == b.px && a.px != d.px;
+    };
+    const QVariantMap rect{{"x", 0.5}, {"y", 0.5}, {"w", 0.5}, {"h", 0.6}};
+    QVariantMap ellipse = rect, ellipseN = rect, ellipseS = rect;
+    ellipse["shape"] = "ellipse";
+    ellipseN["shape"] = 1;
+    ellipseS["shape"] = "1";
+    CHECK(same("mask", ellipse, ellipseN));
+    CHECK(same("mask", ellipse, ellipseS));
+    CHECK(same("gradient", {{"shape", "radial"}}, {{"shape", 1}}));
+    Buf half(Buf::Rgba, 48, 32);
+    for (size_t i = 0; i < half.px.size(); i += 4) half.px[i] = 200, half.px[i + 3] = 90;
+    CHECK(same("matte", {{"channel", "alpha"}}, {{"channel", 1}}, {{"src", half}}));
+    // Out of range or unknown: the default
+    Buf a, d;
+    CHECK(runNode("gradient", {{"shape", 7}}, {}, o, &a) && runNode("gradient", {}, {}, o, &d) && a.px == d.px);
+    const NodeType* m = find("mask");
+    CHECK(m && choiceValue(*m, {{"shape", "radial"}}, "shape") == 5 && choiceValue(*m, {{"shape", 2.0}}, "shape") == 2
+          && choiceValue(*m, {{"shape", -1}}, "shape") == 0 && textValue(*m, {{"shape", 3}}, "shape") == "bezier");
+}
+
 // ---- comp from selection ----
 
 MediaInfo info(const QString& path)
@@ -574,12 +763,14 @@ void bench()
         std::lock_guard lock(poolMutex);
         if (pool.size() < 8) pool.push_back(std::move(v));
     };
-    for (const char* name : {"transform", "merge", "blur", "recipe"}) {
+    for (const char* name : {"transform", "merge", "blur", "grade", "recipe"}) {
         EffectInstance x = e;
         if (QString(name) == "transform") x = comp({"clip", "transform"}, {{1, 2, "src"}}, 2, {{"n2.size", 0.6}, {"n2.angle", 5.0}});
         if (QString(name) == "merge")
             x = comp({"clip", "media", "merge"}, {{2, 3, "bg"}, {1, 3, "fg"}}, 3, {{"n2.path", "bg"}, {"n3.mode", "screen"}});
         if (QString(name) == "blur") x = comp({"clip", "blur"}, {{1, 2, "src"}}, 2, {{"n2.radius", 4.0}});
+        if (QString(name) == "grade")
+            x = comp({"clip", "grade"}, {{1, 2, "src"}}, 2, {{"n2.contrast", 1.2}, {"n2.saturation", 60.0}});
         Buf out;
         evaluate(x, env, nullptr, &out);
         QElapsedTimer t;
@@ -601,6 +792,12 @@ int main(int argc, char** argv)
     testMergeModes();
     testSimpleNodes();
     testEngine();
+    testChoiceValues();
+    testFollowCached();
+    testPassThrough();
+    testFusedTrack();
+    testScratchGivenBack();
+    testFxVarying();
     bench();
     if (!Check::haveFfmpeg()) return Check::skip("ffmpeg nicht gefunden");
     QTemporaryDir tmp;

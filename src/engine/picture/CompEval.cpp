@@ -91,6 +91,7 @@ struct NodeState {
     bool needed = false;              // the output depends on it (and no cached node in between)
     bool hit = false;                 // static and found in the cache: its inputs are not evaluated
     bool fusedInto = false;           // a compound track painted straight onto the merge that reads it
+    int through = -1;                 // passes this node's picture on (unknown kind, tracker): every read is its read
     int track = -1;
 };
 
@@ -138,19 +139,41 @@ bool evaluate(const EffectInstance& comp, const Env& env, Cache* cache, Buf* out
         s.node = g.node(id);
         s.kind = s.node ? find(s.node->type) : nullptr;
     }
+    // Lookups without copying a node's values (read per parameter per frame)
+    static const QVariantMap kNoValues;
+    auto valuesOf = [&](int id) -> const QVariantMap& {
+        const auto it = values.constFind(id);
+        return it == values.cend() ? kNoValues : *it;
+    };
+    auto isAnimated = [&](int id, const QString& key) {
+        const auto it = animated.constFind(id);
+        return it != animated.cend() && it->contains(key);
+    };
     auto valueOf = [&](int id, const NodeType* k, const QString& key) -> double {
-        if (env.clip && animated.value(id).contains(key))
+        if (env.clip && isAnimated(id, key))
             return Keys::valueAt(*env.clip, Keys::effectParam(::Comp::kEffectId, CompGraph::paramKey(id, key)), env.t);
-        if (!k) return values.value(id).value(key).toDouble();
-        return numValue(*k, values.value(id), key);
+        if (!k) return valuesOf(id).value(key).toDouble();
+        return numValue(*k, valuesOf(id), key);
     };
 
     // Static: kind not varying, no keyframes, every connected input static; keyed by its values and the inputs' keys
     for (int id : order) {
         NodeState& s = state[id];
         if (!s.node) continue;
-        bool isStatic = s.kind && !s.kind->varying && !animated.contains(id);
-        uint64_t key = isStatic ? ownHash(s.node->type, values.value(id), env) : 0;
+        bool isStatic = s.kind && !varies(*s.kind, valuesOf(id)) && !animated.contains(id);
+        uint64_t key = isStatic ? ownHash(s.node->type, valuesOf(id), env) : 0;
+        // A follower reads the followed node's values (numOf): static only while they are fixed, keyed by them (a new
+        // analysis or another value is a new key)
+        if (isStatic && s.kind->param(QStringLiteral("follow"))) {
+            // (a fractional id: kinds round it differently, so never static)
+            if (const double fv = valueOf(id, s.kind, QStringLiteral("follow")); fv >= 0.5) {
+                const int f = int(fv);
+                const CompNode* fn = g.node(f);
+                const NodeType* fk = fn ? find(fn->type) : nullptr;
+                if (fv != f || animated.contains(f) || (fk && varies(*fk, valuesOf(f)))) isStatic = false;
+                else key = mix(key, ownHash(fn ? fn->type : QString(), valuesOf(f), env));
+            }
+        }
         for (const CompLink& l : g.links)
             if (l.to == id) {
                 const auto it = state.constFind(l.from);
@@ -186,14 +209,16 @@ bool evaluate(const EffectInstance& comp, const Env& env, Cache* cache, Buf* out
     if (env.paintTrack)
         for (int id : order) {
             NodeState& s = state[id];
-            if (!s.kind || s.kind->id != QLatin1String("merge") || g.linkInto(id, "mask")) continue;
+            // Only a merge that is evaluated: its read is then the track's only one (readers counts no other)
+            if (!s.needed || s.hit || !s.kind || s.kind->id != QLatin1String("merge") || g.linkInto(id, "mask"))
+                continue;
             const CompLink* fg = g.linkInto(id, "fg");
             if (!fg || !state.contains(fg->from)) continue;
             NodeState& f = state[fg->from];
             if (!f.kind || f.kind->id != QLatin1String("clip") || f.readers != 1) continue;
             const int track = int(std::lround(valueOf(fg->from, f.kind, "track")));
-            if (track < 0 || animated.value(fg->from).contains("track")) continue;
-            if (numValue(*s.kind, values.value(id), "mode") != 0 || animated.value(id).contains("opacity")
+            if (track < 0 || isAnimated(fg->from, QStringLiteral("track"))) continue;
+            if (numValue(*s.kind, valuesOf(id), "mode") != 0 || isAnimated(id, QStringLiteral("opacity"))
                 || valueOf(id, s.kind, "opacity") < 1.0)
                 continue;
             f.fusedInto = true;
@@ -227,6 +252,27 @@ bool evaluate(const EffectInstance& comp, const Env& env, Cache* cache, Buf* out
         const auto it = state.constFind(l->from);
         return it == state.cend() ? nullptr : it->pic;
     };
+    // The compound track painted straight onto merge id (no copy of a NodeState)
+    auto fusedFg = [&](int id) -> const NodeState* {
+        const CompLink* l = g.linkInto(id, "fg");
+        if (!l) return nullptr;
+        const auto it = state.constFind(l->from);
+        return it != state.cend() && it->fusedInto ? &*it : nullptr;
+    };
+    // A node whose picture is its input's: no copy; the node owning the picture stays alive for this one's readers
+    auto passOn = [&](NodeState& s, const CompLink* l) {
+        if (!l) return;
+        const auto it = state.find(l->from);
+        if (it == state.end() || !it->pic) return;
+        s.pic = it->pic;
+        s.through = it->through >= 0 ? it->through : l->from;
+        state[s.through].readers += s.readers;
+    };
+    std::function<void(int)> drop = [&](int id) { // one read of node id done
+        NodeState& from = state[id];
+        if (--from.readers == 0) release(from);
+        if (from.through >= 0) drop(from.through);
+    };
 
     for (int id : order) {
         if (env.cancel && env.cancel->load(std::memory_order_relaxed)) {
@@ -245,6 +291,8 @@ bool evaluate(const EffectInstance& comp, const Env& env, Cache* cache, Buf* out
             continue; // read nothing
         } else if (s.fusedInto) {
             // made by the merge reading it
+        } else if (s.kind && !s.kind->passThrough.isEmpty()) {
+            passOn(s, g.linkInto(id, s.kind->passThrough));
         } else if (!s.kind) {
             // Unknown kind (newer version): its first connected input passed through
             if (stats) {
@@ -260,7 +308,7 @@ bool evaluate(const EffectInstance& comp, const Env& env, Cache* cache, Buf* out
                         through = &l;
                         break;
                     }
-            if (through) s.pic = inputOf(id, through->input);
+            passOn(s, through);
         } else if (s.kind->id == QLatin1String("clip") && env.clipPicture) {
             const int track = int(std::lround(valueOf(id, s.kind, "track")));
             if (track < 0 || !env.paintTrack) {
@@ -270,9 +318,8 @@ bool evaluate(const EffectInstance& comp, const Env& env, Cache* cache, Buf* out
                 if (env.paintTrack(track, s.own)) s.pic = &s.own;
                 if (stats) ++stats->evaluated;
             }
-        } else if (s.kind->id == QLatin1String("merge") && g.linkInto(id, "fg")
-                   && state.value(g.linkInto(id, "fg")->from).fusedInto) {
-            const NodeState& f = state[g.linkInto(id, "fg")->from];
+        } else if (const NodeState* fused = s.kind->id == QLatin1String("merge") ? fusedFg(id) : nullptr) {
+            const NodeState& f = *fused;
             const Buf* bg = inputOf(id, "bg");
             s.own = take(Buf::Rgba);
             if (bg && bg->kind == Buf::Rgba && bg->px.size() == s.own.px.size())
@@ -290,10 +337,10 @@ bool evaluate(const EffectInstance& comp, const Env& env, Cache* cache, Buf* out
             ctx.fps = env.fps;
             ctx.cancel = env.cancel;
             const NodeType* k = s.kind;
-            const QVariantMap& own = values[id];
+            const QVariantMap& own = valuesOf(id);
             ctx.num = [&, id, k](const QString& key) { return valueOf(id, k, key); };
             ctx.color = [&, id, k](const QString& key) {
-                if (env.clip && animated.value(id).contains(key)) return Keys::toColor(valueOf(id, k, key));
+                if (env.clip && isAnimated(id, key)) return Keys::toColor(valueOf(id, k, key));
                 return colorValue(*k, own, key);
             };
             ctx.text = [&own, k](const QString& key) { return textValue(*k, own, key); };
@@ -304,13 +351,19 @@ bool evaluate(const EffectInstance& comp, const Env& env, Cache* cache, Buf* out
                 // point, so a follower does not move (Picture::Comp::trackerValue)
                 if (ok && o->type == QLatin1String(::Comp::kTrackerType))
                     return ::Comp::followValue(
-                        key, textValue(*ok, values.value(other), QStringLiteral("mode")),
-                        [&](const QString& q) { return values.value(other).contains(q) || animated.value(other).contains(q); },
+                        key, textValue(*ok, valuesOf(other), QStringLiteral("mode")),
+                        [&](const QString& q) { return valuesOf(other).contains(q) || isAnimated(other, q); },
                         [&](const QString& q) { return valueOf(other, ok, q); });
                 return valueOf(other, ok, key);
             };
             ctx.input = [&, id](const QString& name) { return inputOf(id, name); };
             ctx.take = take;
+            ctx.give = [&](Buf&& b) {
+                if (b.px.empty()) return;
+                if (env.giveBytes) env.giveBytes(std::move(b.px));
+                b.px = {};
+                --alive;
+            };
             ctx.clipPicture = env.clipPicture;
             ctx.mediaPicture = env.mediaPicture;
             Buf result;
@@ -333,10 +386,7 @@ bool evaluate(const EffectInstance& comp, const Env& env, Cache* cache, Buf* out
         }
         // Inputs read for the last time go back to the pool
         for (const CompLink& l : g.links)
-            if (l.to == id && state.contains(l.from)) {
-                NodeState& from = state[l.from];
-                if (--from.readers == 0) release(from);
-            }
+            if (l.to == id && state.contains(l.from)) drop(l.from);
     }
     if (stats) stats->peakBuffers = std::max(stats->peakBuffers, peak);
 

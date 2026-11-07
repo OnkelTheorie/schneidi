@@ -76,6 +76,7 @@ void registerTrackNodes(QVector<NodeType>& out)
              << number("ry", T("Bezugspunkt y"), 0.5, -1, 2, 0.001, 3);
     k.output = Buf::Rgba;
     k.varying = false; // the picture is its input's; the results are keyframes the engine sees
+    k.passThrough = QStringLiteral("src"); // the engine hands the picture on without a copy
     k.eval = passThrough;
     out << k;
 }

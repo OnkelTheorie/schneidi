@@ -94,10 +94,15 @@ bool evalMatteTune(NodeCtx& ctx, Buf* out)
 
     // The matte as one plane: the mask itself or the alpha taken out of the picture (pooled scratch)
     Buf alpha;
+    bool alphaPooled = false;
     uint8_t* plane = b.data();
     if (rgba && (levels || spatial)) {
-        if (w == ctx.size.width() && h == ctx.size.height()) alpha = ctx.take(Buf::Mask);
-        if (alpha.kind != Buf::Mask || alpha.w != w || alpha.h != h) alpha = Buf(Buf::Mask, w, h);
+        if (w == ctx.size.width() && h == ctx.size.height()) alpha = ctx.take(Buf::Mask), alphaPooled = true;
+        if (alpha.kind != Buf::Mask || alpha.w != w || alpha.h != h) {
+            if (alphaPooled && ctx.give) ctx.give(std::move(alpha));
+            alpha = Buf(Buf::Mask, w, h);
+            alphaPooled = false;
+        }
         plane = alpha.data();
         const uint8_t* s = b.data();
         Compose::forRows(h, kMinRows, [&](int y0, int y1) {
@@ -119,8 +124,13 @@ bool evalMatteTune(NodeCtx& ctx, Buf* out)
     }
     if (spatial) { // each operation: along the rows, then the same along the columns of the transposed plane
         Buf turned;
-        if (w == ctx.size.width() && h == ctx.size.height()) turned = ctx.take(Buf::Mask);
-        if (turned.kind != Buf::Mask || turned.px.size() != size_t(w) * h) turned = Buf(Buf::Mask, w, h);
+        bool turnedPooled = false;
+        if (w == ctx.size.width() && h == ctx.size.height()) turned = ctx.take(Buf::Mask), turnedPooled = true;
+        if (turned.kind != Buf::Mask || turned.px.size() != size_t(w) * h) {
+            if (turnedPooled && ctx.give) ctx.give(std::move(turned));
+            turned = Buf(Buf::Mask, w, h);
+            turnedPooled = false;
+        }
         const auto separable = [&](const std::function<void(uint8_t* band, int width, int rows)>& rowsFn) {
             const auto pass = [&](uint8_t* p, int pw, int ph) {
                 Compose::forRows(ph, kMinRows, [&](int y0, int y1) { rowsFn(p + size_t(y0) * pw, pw, y1 - y0); });
@@ -145,6 +155,7 @@ bool evalMatteTune(NodeCtx& ctx, Buf* out)
                 });
             }
         }
+        if (turnedPooled && ctx.give) ctx.give(std::move(turned));
     }
 
     if (rgba && (levels || spatial)) {
@@ -153,6 +164,7 @@ bool evalMatteTune(NodeCtx& ctx, Buf* out)
             for (size_t i = size_t(y0) * w, e = size_t(y1) * w; i < e; ++i) d[i * 4 + 3] = plane[i];
         });
     }
+    if (alphaPooled && ctx.give) ctx.give(std::move(alpha));
     if (despill > 0) {
         const QColor key = ctx.color("color");
         uint8_t* d = b.data();

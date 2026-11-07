@@ -13,6 +13,7 @@
 #include "core/ProjectFile.h"
 #include "core/ProjectFormat.h"
 #include "engine/picture/CompNodes.h"
+#include "engine/video/Text.h"
 
 #include <QApplication>
 #include <QElapsedTimer>
@@ -575,6 +576,20 @@ void measure()
 
 } // namespace
 
+// The soft blur of shadows/glows keeps a fully opaque plane opaque and rounds (no loss of one step per pass)
+void testBlurPlaneRounds()
+{
+    std::printf("blur plane rounds\n");
+    for (const double reach : {3.0, 7.0, 20.0, 61.0}) {
+        const int w = 300, h = 200;
+        std::vector<uint8_t> full(size_t(w) * h, 255), half(size_t(w) * h, 128);
+        Text::blurPlane(full, w, h, reach);
+        Text::blurPlane(half, w, h, reach);
+        const size_t mid = size_t(h / 2) * w + w / 2;
+        CHECK(full[mid] == 255 && half[mid] == 128);
+    }
+}
+
 int main(int argc, char** argv)
 {
     Check::initEnv();
@@ -590,6 +605,7 @@ int main(int argc, char** argv)
     CHECK(tex.save(g_texture));
     Check::initEngine();
     std::setlocale(LC_NUMERIC, "C");
+    testBlurPlaneRounds();
     testPlainUnchanged();
     testGradient();
     testTexture();
