@@ -220,7 +220,8 @@ int parseSubtitleTrack(const QJsonValue& v)
 
 // JSON value -> effect parameter value (checked against the effect's description); picture: the size the effect will
 // work on (a filter chain is tried on it)
-QVariant effectValue(const EffectDescriptor& d, const QString& key, const QJsonValue& v, QSize picture)
+QVariant effectValue(const EffectDescriptor& d, const QString& key, const QJsonValue& v, QSize picture,
+                     const Project& project)
 {
     const auto it = std::find_if(d.params.begin(), d.params.end(), [&](const EffectParam& p) { return p.key == key; });
     if (it == d.params.end()) {
@@ -259,7 +260,8 @@ QVariant effectValue(const EffectDescriptor& d, const QString& key, const QJsonV
         if (d.id == QLatin1String(Picture::Custom::kFilterId)) why = Picture::Custom::checkFilter(text, picture);
         else if (d.id == QLatin1String(Picture::Custom::kShaderId)) why = Picture::Custom::checkShader(text);
         if (!why.isEmpty()) fail("BAD_ARGUMENT", QString("%1.%2: %3").arg(d.id, key, why));
-        if (Picture::Custom::isCustom(d.id)) CodeTrust::trust(text); // the caller's own code (core/CodeTrust.h)
+        // The caller's own code (core/CodeTrust.h); the project's untrusted code sent back stays untrusted
+        if (Picture::Custom::isCustom(d.id)) CodeTrust::trustWritten(text, project.data());
         return text;
     }
     }
@@ -667,7 +669,7 @@ void opEffect(Session& s, const QJsonObject& op)
                                           d->video ? "video effects" : "audio effects");
     QVariantMap values;
     const QJsonObject params = op.value("params").toObject();
-    for (auto it = params.begin(); it != params.end(); ++it) values[it.key()] = effectValue(*d, it.key(), it.value(), s.format().size());
+    for (auto it = params.begin(); it != params.end(); ++it) values[it.key()] = effectValue(*d, it.key(), it.value(), s.format().size(), s.project);
     if (QString why; Picture::Custom::isCustom(effectId) && !Picture::Custom::canRender(effectId, &why))
         s.notes << QString("%1 is stored but skipped while rendering on this machine: %2").arg(effectId, why);
     s.editor.addEffect(targets, effectId); // clips that have it already keep it

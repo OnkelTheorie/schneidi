@@ -140,6 +140,12 @@ int main(int argc, char** argv)
         edit({QJsonObject{{"op", "marker"}, {"at", 5}}});
         newRun();
         CHECK(plain(middle()));
+        // Sending the same code back (copied from info) does not make it the caller's own
+        edit({QJsonObject{{"op", "effect"}, {"clips", QJsonArray{clip}}, {"effect", "ffmpeg_filter"},
+                          {"params", QJsonObject{{"chain", "negate"}}}}});
+        CHECK(!CodeTrust::isTrusted("negate"));
+        newRun();
+        CHECK(plain(middle()));
     }
     // trust_custom_code:true on render: runs, and remembered for the file
     {
@@ -203,6 +209,42 @@ int main(int argc, char** argv)
         bool marked = false;
         for (const QJsonValue& n : nodes) marked |= n["untrusted"].toBool();
         CHECK(marked);
+        // A full `comp graph` round trip of info's graph keeps the code untrusted (and unremembered)
+        {
+            QJsonObject graph = info["timeline"]["tracks"].toArray().first()["clips"].toArray().first()["effects"]
+                                    .toArray().first()["graph"].toObject();
+            QJsonArray clean;
+            for (const QJsonValue& n : graph["nodes"].toArray()) {
+                QJsonObject o = n.toObject();
+                o.remove("untrusted");
+                clean << o;
+            }
+            const QJsonObject resend{{"nodes", clean}, {"links", graph["links"]}, {"out", graph["out"]}};
+            edit({QJsonObject{{"op", "comp"}, {"clips", QJsonArray{clip}}, {"graph", resend}}});
+            CHECK(!CodeTrust::isTrusted("negate,vflip"));
+            CHECK(checkIds().contains("custom_code_untrusted"));
+            newRun();
+            CHECK(plain(middle()));
+            // Changed code is the caller's own: it runs
+            QJsonArray changed;
+            for (const QJsonValue& n : clean) {
+                QJsonObject o = n.toObject();
+                if (o["type"] == "fx") {
+                    QJsonObject params = o["params"].toObject();
+                    params["e_chain"] = "negate,vflip,hflip";
+                    o["params"] = params;
+                }
+                changed << o;
+            }
+            edit({QJsonObject{{"op", "comp"}, {"clips", QJsonArray{clip}},
+                              {"graph", QJsonObject{{"nodes", changed}, {"links", graph["links"]}, {"out", graph["out"]}}}}});
+            CHECK(CodeTrust::isTrusted("negate,vflip,hflip"));
+            CHECK(negated(middle()));
+            // The foreign code sent back once the project lost it: still not the caller's own (seen in this run)
+            edit({QJsonObject{{"op", "comp"}, {"clips", QJsonArray{clip}}, {"graph", resend}}});
+            CHECK(!CodeTrust::isTrusted("negate,vflip"));
+            CHECK(plain(middle()));
+        }
         // The user confirms it
         edit({QJsonObject{{"op", "marker"}, {"at", 9}}}, {{"trust_custom_code", true}});
         CHECK(negated(middle()));
