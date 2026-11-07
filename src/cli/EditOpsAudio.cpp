@@ -21,9 +21,12 @@
 
 #include <algorithm>
 #include <cmath>
+#include <functional>
 #include <iterator>
 #include <limits>
 #include <tuple>
+#include <utility>
+#include <vector>
 
 namespace Cli::detail {
 
@@ -71,29 +74,72 @@ void opAudioStream(Session& s, const QJsonObject& op)
     s.editor.modifyClips(ids, "Audio stream", [stream](Clip& c) { c.audioStream = stream; });
 }
 
+using Range = std::pair<int, int>; // timeline frames [first, second)
+
+// The 400 ms loudness blocks of the mix in each of `ranges` (sorted, not overlapping), loudness only (the steps
+// below need no true peak, which costs as much again). One pass over [first start, last end); what lies between the
+// ranges is mixed too, so callers give ranges close together (clips one after the other) or call it per range.
+std::vector<std::vector<double>> rangeBlocks(const ProjectFormat& f, const Timeline& tl, const std::vector<Range>& ranges)
+{
+    std::vector<LoudnessMeter> meters(ranges.size());
+    if (ranges.empty()) return {};
+    int frame = ranges.front().first;
+    size_t r = 0;
+    AudioAnalysis::timelineSound(f, tl, ranges.front().first, ranges.back().second,
+                                 [&](const float* pcm, int samples, int channels, int rate) {
+                                     while (r < ranges.size() && frame >= ranges[r].second) ++r;
+                                     if (r < ranges.size() && frame >= ranges[r].first && pcm)
+                                         meters[r].addPlanar(pcm, samples, channels, rate);
+                                     ++frame;
+                                 });
+    std::vector<std::vector<double>> out;
+    out.reserve(meters.size());
+    for (const LoudnessMeter& m : meters) out.push_back(m.blocks());
+    return out;
+}
+
 // Fader so that the mix (master) or one track alone reaches target LUFS. Without the limiter a fader moves the
 // loudness by exactly its change (one measurement). With it the limiter takes part of every raise (peaky game sound:
-// 1 dB more fader gives maybe 0.5 LU), so measure after the limiter and step again with the measured slope until
-// the target is within 0.2 LU. The master fader ends at +12 dB: with the limiter on, the rest goes onto the
-// audible tracks' faders, all by the same amount (the limiter holds the peaks, so that is safe; the balance stays).
+// 1 dB more fader gives maybe 0.5 LU), so step with the measured slope after the limiter. On a long edit the steps
+// measure 8 spread 10 s windows (only the change counts), then the whole once more (and one last correction if it
+// is still off). The master fader ends at +12 dB: with the limiter on, the rest goes onto the audible tracks'
+// faders, all by the same amount (the limiter holds the peaks, so that is safe; the balance stays).
 void mixToLoudness(Session& s, int track, double target)
 {
-    constexpr double kClose = 0.2, kTolerance = 0.5;
-    constexpr int kRounds = 8;
+    constexpr double kClose = 0.2, kTolerance = 0.5, kCollapse = 0.1;
+    constexpr int kSteps = 6;
     const ProjectFormat& f = s.format();
     AudioAnalysis::MixMeter meter(f);
-    const auto measure = [&] {
+    const auto timeline = [&] {
         Timeline tl = s.project.renderTimeline();
-        const int end = TimelineOps::endFrame(tl);
-        if (end <= 0) s.failEmpty();
         if (track >= 0)
             for (int i = 0; i < tl.audio.size(); ++i) {
                 tl.audio[i].muted = i != track;
                 tl.audio[i].solo = false;
             }
-        const auto l = meter.measure(tl, 0, end);
+        return tl;
+    };
+    const int end = TimelineOps::endFrame(s.project.renderTimeline());
+    if (end <= 0) s.failEmpty();
+    const auto measure = [&] { // the whole, with true peak (what the answer shows)
+        const auto l = meter.measure(timeline(), 0, end);
         if (!l || l->integrated <= LoudnessMeter::kSilence) fail("FAILED", "no sound to measure");
         return *l;
+    };
+    // Where the steps measure: the whole, or on a long edit 8 windows of 10 s spread over it
+    std::vector<Range> windows;
+    const int window = int(std::lround(10 * f.rate.fps()));
+    if (end > 12 * window)
+        for (int i = 0; i < 8; ++i) {
+            const int mid = int((i + 0.5) * end / 8);
+            windows.push_back({mid - window / 2, mid + window / 2});
+        }
+    const auto sampled = [&] {
+        const Timeline tl = timeline();
+        std::vector<double> blocks;
+        for (const Range& w : windows)
+            for (const std::vector<double>& b : rangeBlocks(f, tl, {w})) blocks.insert(blocks.end(), b.begin(), b.end());
+        return LoudnessMeter::integratedOf(blocks);
     };
     const QString what = track >= 0 ? QString("A%1").arg(track + 1) : QString("mix");
     const bool limiter = s.project.timeline().masterLimiter;
@@ -159,17 +205,40 @@ void mixToLoudness(Session& s, int track, double target)
         s.notes << note;
         return;
     }
-    double lastGain = 0, lastLufs = 0;
+    // Steps on what `probe` measures toward `goal`; false = at an end or the limiter takes (almost) everything
+    double lastGain = 0, lastLufs = 0, slope = 1.0;
     bool havePrev = false;
-    for (int round = 1; round < kRounds && std::abs(l.integrated - target) >= kClose; ++round) {
-        const double g = gainNow();
-        double slope = 1.0;
-        if (havePrev && std::abs(g - lastGain) > 0.05) slope = std::clamp((l.integrated - lastLufs) / (g - lastGain), 0.1, 1.0);
-        const double want = std::clamp(g + (target - l.integrated) / slope, kMinVolumeDb, maxGain);
-        if (std::abs(want - g) < 0.05) break; // at an end (or no change would help)
-        lastGain = g, lastLufs = l.integrated, havePrev = true;
-        setGain(want);
+    const auto steps = [&](const std::function<double()>& probe, double now, double goal, int count) {
+        for (int i = 0; i < count && std::abs(now - goal) >= kClose; ++i) {
+            const double g = gainNow();
+            if (havePrev && std::abs(g - lastGain) > 0.05) {
+                const double measured = (now - lastLufs) / (g - lastGain);
+                if (measured < kCollapse) return false;
+                slope = std::min(measured, 1.0);
+            }
+            const double want = std::clamp(g + (goal - now) / slope, kMinVolumeDb, maxGain);
+            if (std::abs(want - g) < 0.05) return false;
+            lastGain = g, lastLufs = now, havePrev = true;
+            setGain(want);
+            now = probe();
+        }
+        return true;
+    };
+    const auto whole = [&] {
         l = measure();
+        return l.integrated;
+    };
+    if (std::abs(l.integrated - target) >= kClose) {
+        if (windows.empty()) {
+            steps(whole, l.integrated, target, kSteps);
+        } else {
+            // The windows move like the whole: step them by the change the whole needs, then check the whole and
+            // correct once more with the windows' slope (the whole is another curve: no secant across the two)
+            const double start = sampled();
+            steps(sampled, start, start + target - l.integrated, kSteps);
+            havePrev = false;
+            steps(whole, whole(), target, 1);
+        }
     }
     QString note = QString("%1 was %2 LUFS, measured after the master limiter now %3 LUFS (target %4), %5, true peak %6 dBTP")
                        .arg(what)
@@ -185,7 +254,7 @@ void mixToLoudness(Session& s, int track, double target)
                                          : "the faders are at their +12 dB end")
                           + " and the limiter takes the peaks (a compressor on the loudest track evens them out, "
                             "or lower the target)"
-                    : QString("the limiter takes every further dB (lower the target or raise limiter_db)");
+                    : QString("the limiter takes (almost) every further dB (lower the target or raise limiter_db)");
     } else if (l.integrated > target + kTolerance) {
         note += QString(" - %1 LU over the target").arg(l.integrated - target, 0, 'f', 1);
     }
@@ -287,12 +356,6 @@ void opMixer(Session& s, const QJsonObject& op)
     if (toLoudness) mixToLoudness(s, index, targetLufs);
 }
 
-// normalize to LUFS with the master limiter on: the limiter takes part of the raise on peaky sound (game clips:
-// shots at 0 dBFS over quiet ambience), so each clip (relative: all of them together) lands under the target. Measure
-// it alone in the mix after the limiter and correct its volume with the measured slope until it is within 0.2 LU of
-// what it is without a limiter (target + its track's and the master's fader as before). What goes beyond the clip
-// volume's +12 dB goes onto its track with allow_track_gain (the track's other clips lowered by as much).
-// `before` = the timeline before normalize; returns the notes.
 // A clip's volume level: its static volume, or with volume keyframes the level Keys::setVolumeLevel moves
 double volumeLevel(const Clip& c)
 {
@@ -300,113 +363,204 @@ double volumeLevel(const Clip& c)
     return -Keys::setVolumeLevel(probe, 0.0);
 }
 
-QStringList normalizeAfterLimiter(Session& s, const Timeline& before, const QVector<int>& clips, double target,
-                                  bool relative, bool trackGain)
-{
-    constexpr double kClose = 0.2, kTolerance = 0.5;
-    constexpr int kRounds = 6;
-    QVector<QVector<int>> groups;
-    if (relative) groups << clips;
-    else
-        for (int id : clips) groups << QVector<int>{id};
-    AudioAnalysis::MixMeter meter(s.format());
+// normalize to LUFS with the master limiter on: the limiter takes part of the raise on peaky sound (game clips:
+// shots at 0 dBFS over quiet ambience), so a clip lands under the target. Each clip whose peaks reach the limiter is
+// measured alone after it, its track unmuted and the faders as the limiter-off path counts them (master and track at
+// 0 dB, only the gain allow_track_gain added stays), and its volume corrected with the measured slope; relative: all
+// clips by the same amount until their blocks together (the basis of the shared measurement) reach it. A clip already
+// within 0.5 LU stays; a correction aims at 0.2 LU, two at most. All clips are measured in one pass per round (clips
+// at the same time in one pass each). What goes beyond the clip volume's +12 dB goes onto its track with
+// allow_track_gain (the track's other clips lowered by as much); the master never moves. Stops when the limiter takes
+// almost every further dB (< 0.2 dB per dB). `before` = the timeline before normalize, `peaks` = the files' true peaks.
+struct AfterLimiter {
     QStringList notes;
-    for (const QVector<int>& group : groups) {
-        const QSet<int> in(group.begin(), group.end());
-        TrackRef first;
-        if (!TimelineOps::findClip(before, group.first(), &first)) continue;
-        const double aim = target + before.audio[first.index].volumeDb + before.masterVolumeDb;
-        const auto measure = [&]() -> std::optional<AudioAnalysis::Loudness> {
-            Timeline tl = s.project.renderTimeline();
-            int from = std::numeric_limits<int>::max(), to = 0;
-            for (Track& t : tl.audio) {
+    QSet<int> handled; // clips the notes speak of (the plain +12 dB notes are not for them)
+};
+AfterLimiter normalizeAfterLimiter(Session& s, const Timeline& before, const QVector<int>& clips,
+                                   const QHash<int, double>& peaks, double target, bool relative, bool trackGain)
+{
+    constexpr double kClose = 0.2, kTolerance = 0.5, kCollapse = 0.2;
+    constexpr int kCorrections = 2;
+    AfterLimiter out;
+    const auto added = [&](int track) {
+        return track < before.audio.size() ? s.project.timeline().audio[track].volumeDb - before.audio[track].volumeDb : 0.0;
+    };
+    // Where the limiter has nothing to do the limiter-off result is exact: no measuring
+    const double ceiling = s.project.timeline().masterLimiterDb;
+    const auto reaches = [&](int id) {
+        TrackRef where;
+        const Clip* c = TimelineOps::findClip(s.project.timeline(), id, &where);
+        return c && peaks.contains(id) && peaks[id] + volumeLevel(*c) + added(where.index) > ceiling - 0.5;
+    };
+    struct Unit {
+        QVector<int> ids;
+        double lufs = LoudnessMeter::kSilence, lastGain = 0, lastLufs = 0;
+        bool havePrev = false, done = false, pinned = false, collapsed = false;
+    };
+    std::vector<Unit> units;
+    if (relative) {
+        if (std::any_of(clips.begin(), clips.end(), reaches)) units.push_back({clips});
+    } else {
+        for (int id : clips)
+            if (reaches(id)) units.push_back({{id}});
+    }
+    // The clips' loudness after the limiter (faders as above), clips at the same time in separate passes
+    const auto measure = [&](const QVector<int>& ids) {
+        const Timeline base = s.project.renderTimeline();
+        QVector<const Clip*> todo;
+        for (int id : ids)
+            if (const Clip* c = TimelineOps::findClip(base, id)) todo << c;
+        std::sort(todo.begin(), todo.end(), [](const Clip* a, const Clip* b) { return a->start < b->start; });
+        QHash<int, std::vector<double>> blocks;
+        while (!todo.isEmpty()) {
+            QVector<const Clip*> pass, later;
+            int free = std::numeric_limits<int>::min();
+            for (const Clip* c : todo) {
+                if (c->start < free) {
+                    later << c;
+                    continue;
+                }
+                pass << c;
+                free = c->end();
+            }
+            QSet<int> in;
+            std::vector<Range> ranges;
+            for (const Clip* c : pass) in.insert(c->id), ranges.push_back({c->start, c->end()});
+            Timeline tl = base;
+            tl.masterVolumeDb = 0;
+            for (int i = 0; i < tl.audio.size(); ++i) {
+                Track& t = tl.audio[i];
                 t.solo = false;
+                t.muted = false;
+                t.volumeDb = added(i);
                 QVector<Clip> kept;
                 for (const Clip& c : t.clips)
-                    if (in.contains(c.id)) kept << c, from = std::min(from, c.start), to = std::max(to, c.end());
+                    if (in.contains(c.id)) kept << c;
                 t.clips = kept;
             }
             for (Track& t : tl.video) t.clips.clear();
-            if (to <= from) return std::nullopt;
-            return meter.measure(tl, from, to);
-        };
-        // The clip's own gain (clip + track fader) of the group's first clip: what the steps move
-        const auto gainNow = [&] {
+            const std::vector<std::vector<double>> b = rangeBlocks(s.format(), tl, ranges);
+            for (int i = 0; i < pass.size() && i < int(b.size()); ++i) blocks[pass[i]->id] = b[size_t(i)];
+            todo = later;
+        }
+        return blocks;
+    };
+    const auto measureUnits = [&] {
+        QVector<int> ids;
+        for (const Unit& u : units)
+            if (!u.done) ids += u.ids;
+        const QHash<int, std::vector<double>> blocks = measure(ids);
+        for (Unit& u : units) {
+            if (u.done) continue;
+            std::vector<double> all;
+            for (int id : u.ids) {
+                const std::vector<double> b = blocks.value(id);
+                all.insert(all.end(), b.begin(), b.end());
+            }
+            u.lufs = LoudnessMeter::integratedOf(all);
+        }
+    };
+    // What the steps move: the unit's mean of clip volume + added track gain
+    const auto gainOf = [&](const Unit& u) {
+        double sum = 0;
+        for (int id : u.ids) {
             TrackRef where;
-            const Clip* c = TimelineOps::findClip(s.project.timeline(), group.first(), &where);
-            return c ? volumeLevel(*c) + s.project.timeline().audio[where.index].volumeDb : 0.0;
-        };
-        auto l = measure();
-        if (!l || l->integrated <= LoudnessMeter::kSilence) continue;
-        double lastGain = 0, lastLufs = 0;
-        bool havePrev = false;
-        for (int round = 1; round < kRounds && std::abs(l->integrated - aim) >= kClose; ++round) {
-            const double g = gainNow();
+            if (const Clip* c = TimelineOps::findClip(s.project.timeline(), id, &where)) sum += volumeLevel(*c) + added(where.index);
+        }
+        return sum / u.ids.size();
+    };
+    measureUnits();
+    for (Unit& u : units) {
+        if (u.lufs <= LoudnessMeter::kSilence) u.done = true; // nothing measured: the limiter-off result stays
+        else for (int id : u.ids) out.handled.insert(id);
+        if (std::abs(u.lufs - target) < kTolerance) u.done = true; // close enough already: one pass, no step
+    }
+    for (int round = 0; round < kCorrections; ++round) {
+        QHash<int, double> step; // clip -> dB
+        QHash<size_t, double> gains;
+        for (size_t i = 0; i < units.size(); ++i) {
+            Unit& u = units[i];
+            if (u.done) continue;
+            const double g = gainOf(u);
             double slope = 1.0;
-            if (havePrev && std::abs(g - lastGain) > 0.05)
-                slope = std::clamp((l->integrated - lastLufs) / (g - lastGain), 0.1, 1.0);
-            const double step = (aim - l->integrated) / slope;
-            s.project.edit("Normalize: after the limiter", [&](Timeline& t) {
-                QHash<int, double> rest; // track -> dB the group's clips need beyond +12
-                QHash<int, double> left; // clip -> its own part of that
-                for (Track& track : t.audio)
-                    for (Clip& c : track.clips) {
-                        if (!in.contains(c.id) || TimelineOps::isLocked(t, c.id)) continue;
-                        const double want = std::max(kMinVolumeDb, volumeLevel(c) + step), now = std::min(want, kMaxVolumeDb);
-                        Keys::setVolumeLevel(c, now);
-                        if (trackGain && want - now > 0.05) {
-                            const int index = int(&track - t.audio.data());
-                            rest[index] = std::max(rest.value(index), want - now);
-                            left[c.id] = want - now;
-                        }
-                    }
-                for (auto it = rest.begin(); it != rest.end(); ++it) {
-                    Track& track = t.audio[it.key()];
-                    const double add = std::min(it.value(), kMaxVolumeDb - track.volumeDb);
-                    if (add <= 0) continue;
-                    track.volumeDb += add;
-                    for (Clip& c : track.clips) {
-                        const double down = add - (in.contains(c.id) ? std::min(add, left.value(c.id)) : 0.0);
-                        if (down > 0) Keys::setVolumeLevel(c, volumeLevel(c) - down);
+            if (u.havePrev && std::abs(g - u.lastGain) > 0.05) {
+                slope = (u.lufs - u.lastLufs) / (g - u.lastGain);
+                if (slope < kCollapse) {
+                    u.collapsed = u.done = true;
+                    continue;
+                }
+                slope = std::min(slope, 1.0);
+            }
+            for (int id : u.ids) step[id] = (target - u.lufs) / slope;
+            gains[i] = g;
+        }
+        if (step.isEmpty()) break;
+        s.project.edit("Normalize: after the limiter", [&](Timeline& t) {
+            QHash<int, double> rest; // track -> dB its clips need beyond +12
+            QHash<int, double> left; // clip -> its own part of that
+            for (int index = 0; index < t.audio.size(); ++index)
+                for (Clip& c : t.audio[index].clips) {
+                    if (!step.contains(c.id) || TimelineOps::isLocked(t, c.id)) continue;
+                    const double want = std::max(kMinVolumeDb, volumeLevel(c) + step[c.id]), now = std::min(want, kMaxVolumeDb);
+                    Keys::setVolumeLevel(c, now);
+                    if (trackGain && want - now > 0.05) {
+                        rest[index] = std::max(rest.value(index), want - now);
+                        left[c.id] = want - now;
                     }
                 }
-            });
-            if (std::abs(gainNow() - g) < 0.05) break; // at the end of the faders
-            lastGain = g, lastLufs = l->integrated, havePrev = true;
-            l = measure();
-            if (!l) break;
+            for (auto it = rest.begin(); it != rest.end(); ++it) {
+                Track& track = t.audio[it.key()];
+                const double add = std::min(it.value(), kMaxVolumeDb - track.volumeDb);
+                if (add <= 0) continue;
+                track.volumeDb += add;
+                for (Clip& c : track.clips) {
+                    const double down = add - (step.contains(c.id) ? std::min(add, left.value(c.id)) : 0.0);
+                    if (down > 0) Keys::setVolumeLevel(c, volumeLevel(c) - down);
+                }
+            }
+        });
+        for (auto it = gains.begin(); it != gains.end(); ++it) {
+            Unit& u = units[it.key()];
+            if (std::abs(gainOf(u) - it.value()) < 0.05) { // every clip of it at the end of its faders
+                u.pinned = u.done = true;
+                continue;
+            }
+            u.lastGain = it.value(), u.lastLufs = u.lufs, u.havePrev = true;
         }
-        if (!l) continue;
-        const QString who = relative ? QString("the clips together") : QString("clip %1").arg(group.first());
-        QString note = QString("%1: %2 LUFS measured after the master limiter (target %3)")
+        measureUnits();
+        for (Unit& u : units)
+            if (!u.done && std::abs(u.lufs - target) < kClose) u.done = true;
+    }
+    for (const Unit& u : units) {
+        if (u.lufs <= LoudnessMeter::kSilence) continue;
+        const QString who = relative ? QString("the clips together") : QString("clip %1").arg(u.ids.first());
+        QString note = QString("%1: %2 LUFS measured after the master limiter (target %3; master and track faders "
+                               "counted as 0 dB like without a limiter)")
                            .arg(who)
-                           .arg(l->integrated, 0, 'f', 1)
-                           .arg(aim, 0, 'f', 1);
-        if (std::abs(aim - target) > 0.05) note += " = the target with the track and master faders";
-        if (l->integrated < aim - kTolerance) {
-            note += QString(" - not reached, %1 LU short: ").arg(aim - l->integrated, 0, 'f', 1);
-            TrackRef where;
-            const Clip* c = TimelineOps::findClip(s.project.timeline(), group.first(), &where);
-            const bool atEnd = c && volumeLevel(*c) >= kMaxVolumeDb - 0.05;
-            if (atEnd && !trackGain)
+                           .arg(u.lufs, 0, 'f', 1)
+                           .arg(target, 0, 'f', 1);
+        if (u.lufs < target - kTolerance) {
+            note += QString(" - not reached, %1 LU short: ").arg(target - u.lufs, 0, 'f', 1);
+            if (u.pinned && !trackGain)
                 note += "the clip volume ends at +12 dB (allow_track_gain:true puts the rest on its track, or "
                         "{op:'mixer', track:'master', target_lufs:...} raises the whole mix)";
-            else if (atEnd && c && s.project.timeline().audio[where.index].volumeDb >= kMaxVolumeDb - 0.05)
+            else if (u.pinned)
                 note += "clip and track volume are at their +12 dB end and the limiter takes the peaks (a compressor "
                         "on the track evens them out, or lower the target)";
+            else if (u.collapsed)
+                note += "the limiter takes almost every further dB (under 0.2 dB per dB; lower the target, raise "
+                        "limiter_db or put a compressor on the track)";
             else
-                note += "the limiter takes every further dB (lower the target or raise limiter_db)";
+                note += "the limiter takes most of every further dB (lower the target or raise limiter_db)";
         }
-        notes << note;
+        out.notes << note;
     }
-    for (int i = 0; i < before.audio.size() && i < s.project.timeline().audio.size(); ++i) {
-        const double added = s.project.timeline().audio[i].volumeDb - before.audio[i].volumeDb;
-        if (added > 0.05)
-            notes << QString("A%1: track fader +%2 dB (allow_track_gain), its other clips lowered by as much")
-                         .arg(i + 1)
-                         .arg(added, 0, 'f', 1);
-    }
-    return notes;
+    for (int i = 0; i < before.audio.size() && i < s.project.timeline().audio.size(); ++i)
+        if (added(i) > 0.05)
+            out.notes << QString("A%1: track fader +%2 dB (allow_track_gain), its other clips lowered by as much")
+                             .arg(i + 1)
+                             .arg(added(i), 0, 'f', 1);
+    return out;
 }
 
 void opNormalize(Session& s, const QJsonObject& op)
@@ -486,7 +640,9 @@ void opNormalize(Session& s, const QJsonObject& op)
                                .arg(it.value(), 0, 'f', 1);
     }
     // With the master limiter on, measure after it and correct (it says itself what was reached)
-    if (lufs && s.project.timeline().masterLimiter) {
+    const bool limited = lufs && s.project.timeline().masterLimiter;
+    AfterLimiter afterLimiter;
+    if (limited) {
         QVector<int> clips;
         for (auto it = levels.begin(); it != levels.end(); ++it) {
             TrackRef where;
@@ -494,14 +650,11 @@ void opNormalize(Session& s, const QJsonObject& op)
             if (c && where.kind == TrackKind::Audio && it.value() > -100.0 && !TimelineOps::isLocked(tl, c->id)) clips << c->id;
         }
         std::sort(clips.begin(), clips.end());
-        if (!clips.isEmpty()) {
-            for (const QString& note : normalizeAfterLimiter(s, tl, clips, target, relative, op.value("allow_track_gain").toBool()))
-                s.notes << note;
-            return;
-        }
+        afterLimiter = normalizeAfterLimiter(s, tl, clips, truePeaks, target, relative, op.value("allow_track_gain").toBool());
+        for (const QString& note : afterLimiter.notes) s.notes << note;
     }
     // The clip fader ends at +12 dB: quiet clips may not reach the target (relative: all of them together)
-    if (relative) {
+    if (relative && afterLimiter.handled.isEmpty()) {
         double loudest = -1000;
         for (const double l : levels) loudest = std::max(loudest, l);
         const double reference = ref ? *ref : loudest, need = target - reference;
@@ -511,9 +664,9 @@ void opNormalize(Session& s, const QJsonObject& op)
                            .arg(need, 0, 'f', 1)
                            .arg(kMaxVolumeDb, 0, 'f', 0)
                            .arg(need - kMaxVolumeDb, 0, 'f', 1);
-    } else {
+    } else if (!relative) {
         for (auto it = levels.begin(); it != levels.end(); ++it)
-            if (it.value() > -100.0 && target - it.value() > kMaxVolumeDb + 0.05)
+            if (it.value() > -100.0 && target - it.value() > kMaxVolumeDb + 0.05 && !afterLimiter.handled.contains(it.key()))
                 s.notes << QString("clip %1 needs %2 dB but clip volume ends at +%3 dB: it stays %4 dB under the target "
                                    "(allow_track_gain:true puts the rest on its track, or raise the master)")
                                .arg(it.key())
@@ -521,7 +674,9 @@ void opNormalize(Session& s, const QJsonObject& op)
                                .arg(kMaxVolumeDb, 0, 'f', 0)
                                .arg(target - it.value() - kMaxVolumeDb, 0, 'f', 1);
     }
-    // Loudness up can push the peaks over 0 dB: say so (the mix of several clips may peak higher still)
+    // Loudness up can push the peaks over 0 dB: say so (the mix of several clips may peak higher still); the
+    // limiter, when on, holds them
+    if (s.project.timeline().masterLimiter) return;
     const Timeline& after = s.project.timeline();
     for (auto it = truePeaks.begin(); it != truePeaks.end(); ++it) {
         TrackRef where;
@@ -779,8 +934,9 @@ void addAudioOps(QVector<OpDef>& ops)
                  "-14, streaming; -23 = EBU R128 broadcast). relative:true moves all clips by the same amount (the "
                  "loudest/whole hits the target), otherwise each clip on its own. allow_track_gain:true: what a clip needs "
                  "beyond the clip volume's +12 dB goes onto its track fader (the track's other clips are lowered by as "
-                 "much, so they stay as they were). With the master limiter on, lufs is measured after the limiter "
-                 "(each clip alone in the mix; relative: all together) and corrected until within 0.2 LU; the notes "
+                 "much, so they stay as they were). With the master limiter on, lufs clips whose peaks reach it are "
+                 "measured after the limiter (each alone, track and master faders counted as 0 dB like without a "
+                 "limiter; relative: all together) and corrected toward the target (never the master); the notes "
                  "say what was reached and why when not. Measures the files (takes a while).",
                  opNormalize, kClipKeys}
         << OpDef{"duck", "{op:'duck', clips|track, under, amount_db?, threshold_db?, attack?, release?, hold?}",

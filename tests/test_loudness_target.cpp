@@ -14,8 +14,12 @@
 #include <QJsonDocument>
 #include <QTemporaryDir>
 
+#include <QRegularExpression>
+
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 
 namespace {
 
@@ -74,6 +78,25 @@ double mixLufs(const QString& project)
 
 QString notesOf(const QJsonObject& r) { return QString::fromUtf8(QJsonDocument(r["notes"].toArray()).toJson()); }
 
+// The first number before `after` in the notes (e.g. "-16.9" of "-16.9 LUFS measured"); nan = none
+double numberBefore(const QString& notes, const QString& after)
+{
+    const QRegularExpressionMatch m = QRegularExpression("(-?\\d+(?:\\.\\d+)?) " + QRegularExpression::escape(after)).match(notes);
+    return m.hasMatch() ? m.captured(1).toDouble() : std::nan("");
+}
+
+// track -> volume_db of the track (0 when not shown); clip id -> its volume_db
+QHash<QString, double> trackVolumes(const QString& project, QHash<int, double>* clips = nullptr)
+{
+    QHash<QString, double> out;
+    for (const QJsonValue& t : run("info", {{"project", project}})["timeline"]["tracks"].toArray()) {
+        out[t["track"].toString()] = t["volume_db"].toDouble();
+        if (clips)
+            for (const QJsonValue& c : t["clips"].toArray()) (*clips)[c["id"].toInt()] = c["volume_db"].toDouble();
+    }
+    return out;
+}
+
 // A new project with the file on an audio track (unmuted) and the master limiter on; the clip's id
 int project(const QString& path, const QString& wav)
 {
@@ -129,8 +152,8 @@ int main(int argc, char** argv)
         const QJsonObject r = run("edit", {{"project", p}, {"ops", R"([{"op":"mixer","track":"master","target_lufs":0}])"}});
         const QString notes = notesOf(r);
         if (!CHECK(notes.contains("not reachable") && notes.contains("LU short"))) std::printf("       %s\n", qPrintable(notes));
-        const double got = mixLufs(p);
-        CHECK(notes.contains(QString("now %1 LUFS").arg(got, 0, 'f', 1)));
+        const double got = mixLufs(p), said = numberBefore(notes, "LUFS (target");
+        if (!CHECK(std::abs(got - said) <= 0.3)) std::printf("       mix %.2f, notes say %.2f\n", got, said);
     }
 
     // normalize lufs -14 with the limiter on
@@ -152,10 +175,64 @@ int main(int argc, char** argv)
         const int clip = project(p, wav);
         const QJsonObject r = run("edit", {{"project", p}, {"ops", QString(R"([{"op":"normalize","clips":[%1],"mode":"lufs","target":-14}])").arg(clip)}});
         const QString notes = notesOf(r);
-        const double got = mixLufs(p);
-        if (!CHECK(notes.contains("not reached") && notes.contains("allow_track_gain")
-                   && notes.contains(QString("%1 LUFS measured after the master limiter").arg(got, 0, 'f', 1))))
+        const double got = mixLufs(p), said = numberBefore(notes, "LUFS measured after the master limiter");
+        if (!CHECK(notes.contains("not reached") && notes.contains("allow_track_gain") && std::abs(got - said) <= 0.3))
             std::printf("       mix %.2f, %s\n", got, qPrintable(notes));
+    }
+    // The clip volume normalize gives one clip to -20 (the reference for the cases below)
+    QHash<int, double> volumes;
+    double single = 0;
+    {
+        const int clip = project(p, wav);
+        run("edit", {{"project", p}, {"ops", QString(R"([{"op":"normalize","clips":[%1],"mode":"lufs","target":-20}])").arg(clip)}});
+        trackVolumes(p, &volumes);
+        single = volumes.value(clip);
+        CHECK(single > 7 && single < 12);
+    }
+    // After the master went to -14 (master +12, the track up too), normalize aims at the clip's own target as without
+    // a limiter (faders counted as 0 dB): the master stays, the track gets only what the clip needs beyond +12 dB
+    // (review: it aimed at -14 + 15 dB of faders, pushed clip and track to +12 and lowered the track's other clips)
+    {
+        const int clip = project(p, wav);
+        run("edit", {{"project", p}, {"ops", R"([{"op":"mixer","track":"master","target_lufs":-14}])"}});
+        const QHash<QString, double> tracksBefore = trackVolumes(p);
+        const double masterBefore = run("info", {{"project", p}})["timeline"]["master"]["volume_db"].toDouble();
+        const QJsonObject r = run("edit", {{"project", p}, {"ops", QString(R"([{"op":"normalize","clips":[%1],"mode":"lufs","target":-14,"allow_track_gain":true}])").arg(clip)}});
+        const QHash<QString, double> tracksAfter = trackVolumes(p);
+        CHECK_EQ(run("info", {{"project", p}})["timeline"]["master"]["volume_db"].toDouble(), masterBefore);
+        const double added = tracksAfter.value("A1") - tracksBefore.value("A1");
+        if (!CHECK(added > 1.5 && added < 4.5)) // the clip alone needs about +3 dB beyond its +12 (see above)
+            std::printf("       A1 %.2f -> %.2f dB, %s\n", tracksBefore.value("A1"), tracksAfter.value("A1"), qPrintable(notesOf(r)));
+        CHECK(!notesOf(r).contains("not reached"));
+    }
+    // relative: two clips at the same time on A1 and A2 (A2's fader -6) are measured each alone, together as one
+    // (as without a limiter), not summed: both get the volume one clip alone gets
+    {
+        const int clip = project(p, wav);
+        const QString copy = dir.filePath("peaky2.wav"); // the same file at the same time would be a disabled take
+        QFile::copy(wav, copy);
+        run("edit", {{"project", p}, {"ops", QString(R"([{"op":"place","media":"%1","at":0,"track":"A2"},{"op":"mixer","track":"A2","volume_db":-6,"mute":false}])").arg(copy)}});
+        volumes.clear();
+        trackVolumes(p, &volumes);
+        int other = 0;
+        for (auto it = volumes.begin(); it != volumes.end(); ++it)
+            if (it.key() != clip) other = it.key();
+        const QJsonObject r = run("edit", {{"project", p}, {"ops", QString(R"([{"op":"normalize","clips":[%1,%2],"mode":"lufs","target":-20,"relative":true}])").arg(clip).arg(other)}});
+        volumes.clear();
+        trackVolumes(p, &volumes);
+        if (!CHECK(std::abs(volumes.value(clip) - single) <= 0.5 && std::abs(volumes.value(other) - single) <= 0.5))
+            std::printf("       %.2f / %.2f dB, alone %.2f dB, %s\n", volumes.value(clip), volumes.value(other), single,
+                        qPrintable(notesOf(r)));
+    }
+    // A clip on a muted track is measured too (unmuted in the measurement), not skipped silently
+    {
+        const int clip = project(p, wav);
+        run("edit", {{"project", p}, {"ops", R"([{"op":"mixer","track":"A1","mute":true}])"}});
+        const QJsonObject r = run("edit", {{"project", p}, {"ops", QString(R"([{"op":"normalize","clips":[%1],"mode":"lufs","target":-20}])").arg(clip)}});
+        CHECK(notesOf(r).contains(QString("clip %1: ").arg(clip)));
+        volumes.clear();
+        trackVolumes(p, &volumes);
+        CHECK(std::abs(volumes.value(clip) - single) <= 0.5);
     }
     return Check::result();
 }
