@@ -15,6 +15,7 @@
 #include "ui/DeliverPanel.h"
 #include "ui/RenderQueuePanel.h"
 #include "ui/MediaPool.h"
+#include "ui/TrustDialog.h"
 #include "ui/timeline/TimelinePanel.h"
 #include "ui/timeline/TimelineView.h"
 
@@ -130,6 +131,14 @@ bool MainWindow::liveOpen(const QStringList& files, bool byUser, QString* error)
         if (shown.contains(m)) lit << m;
     if (!lit.isEmpty()) m_mediaPool->markFresh(lit);
     return true;
+}
+
+bool MainWindow::liveAskTrust(const ProjectData& data, const QString& path)
+{
+    bringToFront();
+    const bool trusted = TrustDialog::askForProject(this, data, path);
+    if (trusted) emit m_project->timelineChanged(); // the picture and the inspector show the code's look now
+    return trusted;
 }
 
 void MainWindow::bringToFront()

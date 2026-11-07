@@ -901,7 +901,7 @@ const QVector<Command>& commands()
           {"discard", T::Boolean, "with plan_id: drop the plan without running anything"},
           {"full", T::Boolean, "answer with the whole timeline (every clip, like `info`) instead of the summary"},
           {"trust_custom_code", T::Boolean, "trust the project's custom code (filters, shaders) from someone else; only "
-                                            "when the user said so (code you set is trusted)"}},
+                                            "when the user said so (in the app the user is asked)"}},
          cmdEdit},
         {"backups", "List the backup copies of a project (every save keeps the previous state, newest first).",
          {{"project", T::Path, "project file or \"@app\"", true, true}}, cmdBackups},
@@ -930,7 +930,7 @@ const QVector<Command>& commands()
           {"generate", T::Boolean, "proxies: start generating missing ones (default true; false = only show the state)"},
           {"delete", T::Boolean, "clean_proxies: really delete the listed files (default false = only list them)"},
           {"path", T::Path, "save: file for a project that was never saved (a new .schneidi file, never overwrites)"},
-          {"trust_custom_code", T::Boolean, "open: run its custom code without asking; only when the user said so"}},
+          {"trust_custom_code", T::Boolean, "open: ask the user to run its custom code; only when the user said so"}},
          cmdApp},
         {"watch", "Watch folders: new media files in a folder come into the project's media pool on their own (a screen "
                   "recorder's or game clip tool's output, renders of another program, a pipeline that drops "
@@ -986,7 +986,7 @@ const QVector<Command>& commands()
                    "effect, kind; reason \"untrusted\" = custom code not confirmed).",
          {{"project", T::Path, "project file", true, true},
           {"trust_custom_code", T::Boolean, "run custom code (filters, shaders) from someone else's project; only when "
-                                            "the user said so, else it is skipped"},
+                                            "the user said so, else it is skipped (@app: use edit)"},
           {"out", T::Path, "output file (extension added if missing). The format decides the codecs, the extension "
                            "the container, so it must fit: h264/h265 .mp4, .mov, .mkv; vp9 .webm, .mkv; wav .wav; "
                            "the error names the ones that fit", true},

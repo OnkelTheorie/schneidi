@@ -197,7 +197,7 @@ void askTrust(QWidget* parent, Editor* editor, const QVector<int>& ids, const Co
             }
     }
     if (untrusted.isEmpty()) return;
-    TrustDialog dialog(untrusted, parent);
+    TrustDialog dialog(untrusted, parent, true);
     if (dialog.exec() != QDialog::Accepted) return; // kept, skipped; the inspector's "Code erlauben" allows it later
     CodeTrust::trust(CodeTrust::codes(untrusted));
     if (!r.file.isEmpty()) CodeTrust::trustFile(r.file, CompRecipes::customCode(r)); // asks no more for this recipe

@@ -107,9 +107,10 @@ QVariantMap nodeValues(Session& s, const PC::NodeType& k, const QJsonValue& v, c
             if (key == QLatin1String("e_chain")) why = Picture::Custom::checkFilter(it.value().toString(), s.format().size());
             else if (key == QLatin1String("e_code")) why = Picture::Custom::checkShader(it.value().toString());
             if (!why.isEmpty()) fail("BAD_ARGUMENT", QString("%1: %2").arg(name, why));
-            // Written by the caller: trusted in this run; a recipe's code only through its own record (CompRecipes::apply)
+            // Written by the caller: trusted in this run, unless it is the project's untrusted code sent back; a
+            // recipe's code only through its own record (CompRecipes::apply)
             if ((key == QLatin1String("e_chain") || key == QLatin1String("e_code")) && !t_recipeValues)
-                CodeTrust::trust(it.value().toString());
+                CodeTrust::trustWritten(it.value().toString(), s.project.data());
             continue;
         }
         if (!p) {

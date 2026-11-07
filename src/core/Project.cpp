@@ -295,6 +295,7 @@ ProjectData Project::data() const
 
 void Project::load(const ProjectData& d)
 {
+    ++m_generation;
     m_undo.clear();
     m_format = d.format;
     m_media = d.media;

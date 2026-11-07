@@ -24,9 +24,11 @@
 #include <QJsonArray>
 #include <QProcess>
 #include <QRegularExpression>
+#include <QSet>
 
 #include <algorithm>
 #include <cstring>
+#include <functional>
 #include <cmath>
 #include <mutex>
 
@@ -416,12 +418,35 @@ QJsonObject cmdCheck(const QJsonObject& a, Context& ctx)
                 }
             }
         // Custom code the user did not confirm (a project or recipe from someone else, core/CodeTrust.h): kept but not
-        // run until trusted (render/edit/open with trust_custom_code:true, or "Ausführen" in the app)
+        // run until trusted (render/edit/open with trust_custom_code:true, or "Ausführen" in the app). Only what the render uses: enabled clips on shown tracks of the open timeline and the sequences its
+        // compound/multicam clips show (not hidden tracks or sequences nothing uses)
         {
             const ProjectData data = s.project.data();
-            for (const CodeTrust::Item& it : CodeTrust::untrusted(data)) {
-                const Clip* c = it.sequence == s.project.currentSequence() ? TimelineOps::findClip(tl, it.clip) : nullptr;
-                if (c && (c->end() <= from || c->start >= to)) continue;
+            QVector<std::pair<CodeTrust::Item, const Clip*>> found; // the item and the open timeline's clip showing it
+            QSet<int> seen{s.project.currentSequence()};
+            std::function<void(const Timeline&, const Clip*)> scan = [&](const Timeline& t, const Clip* top) {
+                for (const Track& tr : t.video) {
+                    if (tr.hidden) continue;
+                    for (const Clip& c : tr.clips) {
+                        if (!c.enabled) continue;
+                        const Clip* shown = top ? top : &c;
+                        if (shown->end() <= from || shown->start >= to) continue;
+                        for (const EffectInstance& e : c.effects)
+                            for (CodeTrust::Item it : CodeTrust::itemsOf(e))
+                                if (!CodeTrust::isTrusted(it.code)) {
+                                    it.clip = c.id;
+                                    found << std::pair{it, shown};
+                                }
+                        if (c.isNested() && !seen.contains(c.sequenceId)) {
+                            seen << c.sequenceId;
+                            for (const Sequence& q : data.sequences)
+                                if (q.id == c.sequenceId) scan(q.timeline, shown);
+                        }
+                    }
+                }
+            };
+            scan(tl, nullptr);
+            for (const auto& [it, c] : found) {
                 const QString what = it.node ? QStringLiteral("comp:%1 (node %2)").arg(it.effect).arg(it.node) : it.effect;
                 QString first = it.code.trimmed().section(QLatin1Char('\n'), 0, 0).left(60);
                 issues << ExportCheck::Issue{ExportCheck::Severity::Warning, "custom_code_untrusted",

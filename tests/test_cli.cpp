@@ -89,6 +89,9 @@ QString saved()
     return dump(d.timeline);
 }
 
+// The media file of the test project as the edits resolve "/x/a.mp4" (on Windows with the current drive)
+QString fakeMedia() { return QFileInfo("/x/a.mp4").absoluteFilePath(); }
+
 // Project with one 100-frame media file (not on disk: edits only need its length) on V1/A1
 void writeProject()
 {
@@ -96,9 +99,9 @@ void writeProject()
     ProjectData d;
     d.timeline = emptyTimeline();
     p.load(d);
-    p.addMedia({"/x/a.mp4", "a.mp4", 100, true, true, false});
+    p.addMedia({fakeMedia(), "a.mp4", 100, true, true, false});
     p.edit("setup", [&](Timeline& tl) {
-        Clip v; v.id = p.newClipId(); v.mediaPath = "/x/a.mp4"; v.out = 99; v.linkId = p.newLinkId();
+        Clip v; v.id = p.newClipId(); v.mediaPath = fakeMedia(); v.out = 99; v.linkId = p.newLinkId();
         Clip a = v; a.id = p.newClipId();
         tl.video[0].clips << v;
         tl.audio[0].clips << a;
@@ -109,7 +112,7 @@ void writeProject()
 
 } // namespace
 
-int main(int argc, char** argv)
+int runTests(int argc, char** argv)
 {
     Check::initEnv();
     QGuiApplication app(argc, argv);
@@ -380,7 +383,7 @@ int main(int argc, char** argv)
     }
 
     // An analysis without a file (small models in the app's chat): the error lists the project's media to copy
-    CHECK(messageOf("highlights", {{"project", g_path}}).contains("; the media of the project: /x/a.mp4"));
+    CHECK(messageOf("highlights", {{"project", g_path}}).contains("; the media of the project: " + fakeMedia()));
 
     // A tool that is an op of edit (small models call "new_timeline"): the error has the call to make; others list the tools
     {
@@ -1902,4 +1905,16 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
         CHECK(s.project.undoStack()->count() <= 1);
     }
     return Check::result();
+}
+
+// An error no check expected (on Windows: a path that resolves differently) is a failed check, not an abort
+int main(int argc, char** argv)
+{
+    try {
+        return runTests(argc, argv);
+    } catch (const Cli::Error& e) {
+        const QString what = QString("unexpected error %1: %2").arg(e.code, e.message);
+        Check::report(false, qPrintable(what), __FILE__, __LINE__);
+        return Check::result();
+    }
 }

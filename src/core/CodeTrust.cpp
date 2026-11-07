@@ -7,10 +7,12 @@
 #include "core/Types.h"
 
 #include <QCryptographicHash>
+#include <QHash>
 #include <QSet>
 #include <QSettings>
 
 #include <algorithm>
+#include <atomic>
 #include <mutex>
 #include <shared_mutex>
 
@@ -32,6 +34,21 @@ QSet<QString>& trusted()
     static QSet<QString> s;
     return s;
 }
+// Code seen untrusted in a file opened in this run (admit): never the caller's own, even once the project lost it
+QSet<QString>& foreign()
+{
+    static QSet<QString> s;
+    return s;
+}
+
+std::atomic<quint64> g_epoch{0};
+
+// Stands in for untrusted code in a frozen timeline (freeze): never trusted, never written by anyone
+const QString& frozenMarker()
+{
+    static const QString m = QStringLiteral("\x01untrusted custom code\x01");
+    return m;
+}
 
 QString settingsKey(const QString& path)
 {
@@ -48,16 +65,26 @@ QVector<Item> itemsOf(const EffectInstance& e)
         const QString code = v.toString();
         if (!code.trimmed().isEmpty()) out << Item{effect, code, 0, 0, node};
     };
+    if (!e.enabled) return out; // switched off: never runs
     if (e.effectId == QLatin1String(kFilterId)) add(e.effectId, e.params.value(QStringLiteral("chain")), 0);
     else if (e.effectId == QLatin1String(kShaderId)) add(e.effectId, e.params.value(QStringLiteral("code")), 0);
     else if (e.effectId == QLatin1String(Comp::kEffectId)) {
-        // Node values "n<id>.e_chain" / "n<id>.e_code" (an fx node running a custom effect)
+        // Node values "n<id>.e_chain" / "n<id>.e_code" of an fx node running that custom effect now (a value left
+        // from an effect the node ran before is not run)
+        QHash<int, QString> effectOf;
+        for (auto it = e.params.cbegin(); it != e.params.cend(); ++it) {
+            int id = 0;
+            QString key;
+            if (CompGraph::splitParamKey(it.key(), &id, &key) && key == QLatin1String("effect")) effectOf[id] = it.value().toString();
+        }
         for (auto it = e.params.cbegin(); it != e.params.cend(); ++it) {
             int id = 0;
             QString key;
             if (!CompGraph::splitParamKey(it.key(), &id, &key)) continue;
-            if (key == QLatin1String("e_chain")) add(QString::fromLatin1(kFilterId), it.value(), id);
-            else if (key == QLatin1String("e_code")) add(QString::fromLatin1(kShaderId), it.value(), id);
+            if (key == QLatin1String("e_chain") && effectOf.value(id) == QLatin1String(kFilterId))
+                add(QString::fromLatin1(kFilterId), it.value(), id);
+            else if (key == QLatin1String("e_code") && effectOf.value(id) == QLatin1String(kShaderId))
+                add(QString::fromLatin1(kShaderId), it.value(), id);
         }
     }
     return out;
@@ -101,27 +128,82 @@ QStringList codes(const ProjectData& d) { return codes(items(d)); }
 bool isTrusted(const QString& code)
 {
     if (code.trimmed().isEmpty()) return true;
+    if (code == frozenMarker()) return false;
     std::shared_lock lock(mutex());
     return trusted().contains(code);
 }
 
 void trust(const QString& code)
 {
-    if (code.trimmed().isEmpty()) return;
+    if (code.trimmed().isEmpty() || code == frozenMarker()) return;
     std::unique_lock lock(mutex());
+    if (!trusted().contains(code)) ++g_epoch;
     trusted().insert(code);
+    foreign().remove(code);
 }
 
 void trust(const QStringList& codes)
 {
     std::unique_lock lock(mutex());
     for (const QString& c : codes)
-        if (!c.trimmed().isEmpty()) trusted().insert(c);
+        if (!c.trimmed().isEmpty() && c != frozenMarker()) {
+            if (!trusted().contains(c)) ++g_epoch;
+            trusted().insert(c);
+            foreign().remove(c);
+        }
+}
+
+quint64 epoch() { return g_epoch.load(); }
+
+namespace {
+
+bool freezeClips(Timeline& tl)
+{
+    bool changed = false;
+    for (auto* tracks : {&tl.video, &tl.audio})
+        for (Track& t : *tracks)
+            for (Clip& c : t.clips)
+                for (EffectInstance& e : c.effects)
+                    for (const Item& it : itemsOf(e)) {
+                        if (isTrusted(it.code)) continue;
+                        const QString key = it.effect == QLatin1String(kShaderId) ? QStringLiteral("code") : QStringLiteral("chain");
+                        e.params[it.node ? CompGraph::paramKey(it.node, QLatin1String("e_") + key) : key] = frozenMarker();
+                        changed = true;
+                    }
+    return changed;
+}
+
+} // namespace
+
+bool freeze(Timeline& tl)
+{
+    bool changed = freezeClips(tl);
+    if (tl.nested) {
+        NestedTimelines nested = *tl.nested;
+        bool any = false;
+        for (Timeline& n : nested) any |= freezeClips(n);
+        if (any) tl.nested = std::make_shared<const NestedTimelines>(std::move(nested));
+        changed |= any;
+    }
+    return changed;
 }
 
 bool allTrusted(const QStringList& codes)
 {
     return std::all_of(codes.cbegin(), codes.cend(), [](const QString& c) { return isTrusted(c); });
+}
+
+bool trustWritten(const QString& code, const ProjectData& before)
+{
+    if (isTrusted(code)) return true;
+    {
+        std::shared_lock lock(mutex());
+        if (foreign().contains(code)) return false;
+    }
+    for (const Item& it : items(before))
+        if (it.code == code) return false; // someone else's code sent back unchanged
+    trust(code);
+    return true;
 }
 
 QVector<Item> untrusted(const ProjectData& d)
@@ -164,7 +246,14 @@ bool admit(const QString& path, const QStringList& codes)
         trust(codes);
         return true;
     }
-    return allTrusted(codes);
+    std::unique_lock lock(mutex());
+    bool all = true;
+    for (const QString& c : codes)
+        if (!c.trimmed().isEmpty() && !trusted().contains(c)) {
+            foreign().insert(c);
+            all = false;
+        }
+    return all;
 }
 
 void trustFile(const QString& path, const QStringList& codes)
@@ -177,6 +266,7 @@ void resetForTests()
 {
     std::unique_lock lock(mutex());
     trusted().clear();
+    foreign().clear();
 }
 
 } // namespace CodeTrust

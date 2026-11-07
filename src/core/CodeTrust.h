@@ -17,6 +17,7 @@
 
 struct EffectInstance;
 struct ProjectData;
+struct Timeline;
 
 namespace CodeTrust {
 
@@ -29,7 +30,8 @@ struct Item {
     int node = 0;   // comp node id, 0 = the clip's own effect
 };
 
-// Custom code of one effect instance (a custom effect or the fx nodes of a comp graph)
+// Custom code of one effect instance that would run (a custom effect, or the fx nodes of a comp graph running one);
+// none for a switched-off instance
 QVector<Item> itemsOf(const EffectInstance& e);
 // Every piece of custom code of a project (all timelines, compound clips included), each once per place
 QVector<Item> items(const ProjectData& d);
@@ -44,12 +46,23 @@ void trust(const QStringList& codes);
 // The items whose code is not trusted (empty = all fine)
 QVector<Item> untrusted(const ProjectData& d);
 bool allTrusted(const QStringList& codes);
+// Counts up whenever code becomes trusted: a picture rendered before (paused viewer, cached clip renders) is stale
+quint64 epoch();
+// For a render that must not change its mind halfway (export): the code untrusted now is replaced by a marker that
+// is never trusted, so trusting it meanwhile does not switch the effect on in the middle of the file. Nested
+// sequences included. False = nothing was untrusted (the timeline is unchanged)
+bool freeze(Timeline& tl);
+// Code a caller writes (edit ops): trusted, unless the same text is in `before` (the project before the edit) and
+// not trusted there or was seen untrusted in a file opened in this run (admit) - re-sending someone else's code
+// (copied from info, a `comp graph` round trip) does not make it the caller's own. True = trusted now.
+bool trustWritten(const QString& code, const ProjectData& before);
 
 // The record of a file (project, recipe): sha1 over the codes
 QString hashOf(const QStringList& codes);
 bool remembered(const QString& path, const QStringList& codes);
 void remember(const QString& path, const QStringList& codes);
-// Trusts the codes when the file's record matches; true = all codes trusted now
+// Trusts the codes when the file's record matches; true = all codes trusted now (the others count as someone
+// else's for trustWritten in this run)
 bool admit(const QString& path, const QStringList& codes);
 // The user trusts the codes of the file: in this run and remembered for the file
 void trustFile(const QString& path, const QStringList& codes);

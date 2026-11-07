@@ -24,18 +24,20 @@ QString firstLines(const QString& code, int lines = 4)
 
 } // namespace
 
-TrustDialog::TrustDialog(const QVector<CodeTrust::Item>& items, QWidget* parent) : QDialog(parent)
+TrustDialog::TrustDialog(const QVector<CodeTrust::Item>& items, QWidget* parent, bool recipe) : QDialog(parent)
 {
-    setWindowTitle(T("Eigener Code im Projekt"));
+    setWindowTitle(recipe ? T("Eigener Code im Rezept") : T("Eigener Code im Projekt"));
     int filters = 0, shaders = 0;
     for (const CodeTrust::Item& it : items) (it.effect == QLatin1String("shader") ? shaders : filters) += 1;
     auto* layout = new QVBoxLayout(this);
-    auto* text = new QLabel(T("Dieses Projekt enthält Code, den du hier nicht selbst geschrieben hast (Filterketten: "
-                              "%1, Shader: %2). Fremder Code kann die Grafikkarte oder den Prozessor lange "
-                              "beschäftigen. Führe ihn nur aus, wenn du der Quelle vertraust.")
-                                .arg(filters)
-                                .arg(shaders),
-                            this);
+    const QString what = recipe ? T("Dieses Rezept enthält Code, den du hier nicht selbst geschrieben hast (Filterketten: "
+                                    "%1, Shader: %2). Fremder Code kann die Grafikkarte oder den Prozessor lange "
+                                    "beschäftigen. Führe ihn nur aus, wenn du der Quelle vertraust.")
+                                : T("Dieses Projekt enthält Code, den du hier nicht selbst geschrieben hast (Filterketten: "
+                                    "%1, Shader: %2). Fremder Code kann die Grafikkarte oder den Prozessor lange "
+                                    "beschäftigen. Führe ihn nur aus, wenn du der Quelle vertraust.");
+    auto* text = new QLabel(what.arg(filters).arg(shaders), this);
+    text->setObjectName("trustText");
     text->setWordWrap(true);
     layout->addWidget(text);
 

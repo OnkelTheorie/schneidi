@@ -458,12 +458,12 @@ void Inspector::buildLookSections(QVBoxLayout* page)
     const TitleLook d3;
     solidSlider("titleSolidDepth", T("Tiefe"), 0, 300, d3.solidDepth, 0.5, 1, &TitleLook::solidDepth);
     solidSlider("titleSolidBevel", T("Fase"), 0, 50, d3.solidBevel, 0.1, 1, &TitleLook::solidBevel);
-    solidSlider("titleSolidRotX", T("Drehung X"), -180, 180, d3.solidRotX, 0.5, 1, &TitleLook::solidRotX);
-    solidSlider("titleSolidRotY", T("Drehung Y"), -180, 180, d3.solidRotY, 0.5, 1, &TitleLook::solidRotY);
-    solidSlider("titleSolidRotZ", T("Drehung Z"), -180, 180, d3.solidRotZ, 0.5, 1, &TitleLook::solidRotZ);
-    solidSlider("titleSolidFov", T("Bildwinkel"), 1, 150, d3.solidFov, 0.5, 1, &TitleLook::solidFov);
+    solidSlider("titleSolidRotX", T("Drehung X"), -360, 360, d3.solidRotX, 0.5, 1, &TitleLook::solidRotX);
+    solidSlider("titleSolidRotY", T("Drehung Y"), -360, 360, d3.solidRotY, 0.5, 1, &TitleLook::solidRotY);
+    solidSlider("titleSolidRotZ", T("Drehung Z"), -360, 360, d3.solidRotZ, 0.5, 1, &TitleLook::solidRotZ);
+    solidSlider("titleSolidFov", T("Blickwinkel"), 1, 150, d3.solidFov, 0.5, 1, &TitleLook::solidFov);
     solidSlider("titleSolidDistance", T("Entfernung"), 0.1, 20, d3.solidDistance, 0.01, 2, &TitleLook::solidDistance);
-    solidSlider("titleSolidLightAngle", T("Licht von"), -180, 180, d3.solidLightAngle, 1, 0, &TitleLook::solidLightAngle);
+    solidSlider("titleSolidLightAngle", T("Lichtrichtung"), -360, 360, d3.solidLightAngle, 1, 0, &TitleLook::solidLightAngle);
     solidSlider("titleSolidLightHeight", T("Lichthöhe"), -90, 90, d3.solidLightHeight, 1, 0, &TitleLook::solidLightHeight);
     addColor(solid, T("Seiten"), T("Farbe der Seiten"), [](Clip& c) -> QColor& { return c.title.look.solidSide; }, false,
              solidSwitch);

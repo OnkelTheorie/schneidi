@@ -9,9 +9,11 @@
 #include "check.h"
 
 #include "app/ProxyCleanupDialog.h"
+#include "core/CompGraph.h"
 #include "core/ProjectFile.h"
 #include "engine/ProxyCleanup.h"
 #include "engine/ProxyManager.h"
+#include "engine/picture/CompCutout.h"
 
 #include <QAbstractButton>
 #include <QApplication>
@@ -86,6 +88,7 @@ void testDialog(const QString& folder)
     for (const QString& f : {pa, pb}) expected += QFileInfo(f).size() + QFileInfo(ProxyCleanup::notePath(f)).size();
     ProjectData open;
     open.media << MediaInfo{kept, "dialog-open.mp4", 25, true, true, false};
+    const auto getOpen = [&open] { return open; }; // the open project as it is now (a copy, like the app's)
     ProxyManager pm;
 
     QString text;
@@ -121,7 +124,7 @@ void testDialog(const QString& folder)
         });
     };
     answer("cancel");
-    CHECK_EQ(ProxyCleanupDialog::run(nullptr, open, &pm), 0);
+    CHECK_EQ(ProxyCleanupDialog::run(nullptr, getOpen, &pm), 0);
     CHECK(shown);
     std::printf("       %s\n       %s\n", qPrintable(text), qPrintable(rows.join("\n       ")));
     CHECK(text.startsWith("2 von 3"));
@@ -135,21 +138,57 @@ void testDialog(const QString& folder)
 
     // The project takes dialog-a.mp4 while the dialog is open (an AI session imports it): its proxy stays
     answer("free", [&] { open.media << MediaInfo{a, "dialog-a.mp4", 25, true, true, false}; });
-    CHECK_EQ(ProxyCleanupDialog::run(nullptr, open, &pm),
+    CHECK_EQ(ProxyCleanupDialog::run(nullptr, getOpen, &pm),
              QFileInfo(pb).size() + QFileInfo(ProxyCleanup::notePath(pb)).size());
     CHECK(QFileInfo::exists(pa) && !QFileInfo::exists(pb));
     open.media.removeLast();
 
     answer("free");
-    CHECK_EQ(ProxyCleanupDialog::run(nullptr, open, &pm), QFileInfo(pa).size() + QFileInfo(ProxyCleanup::notePath(pa)).size());
+    CHECK_EQ(ProxyCleanupDialog::run(nullptr, getOpen, &pm), QFileInfo(pa).size() + QFileInfo(ProxyCleanup::notePath(pa)).size());
     CHECK(!QFileInfo::exists(pa) && !QFileInfo::exists(pb));
     CHECK(QFileInfo::exists(keptProxy));
 
     // Nothing left to do: says so
     answer("cancel");
-    CHECK_EQ(ProxyCleanupDialog::run(nullptr, open, &pm), 0);
+    CHECK_EQ(ProxyCleanupDialog::run(nullptr, getOpen, &pm), 0);
     CHECK(shown);
     CHECK(text.startsWith("Nichts aufzuräumen"));
+
+    // A cutout analysis committed while the dialog is open (a node names it now): it stays; its autosave keeps
+    // another one; an unused one goes
+    {
+        QDir().mkpath(Picture::Comp::cutoutCacheDir());
+        const auto matte = [](const QString& id) {
+            writeFile(Picture::Comp::cutoutCachePath(id), 4096);
+            return Picture::Comp::cutoutCachePath(id);
+        };
+        const QString fresh = matte("dialogfresh"), saved = matte("dialogsaved"), stale = matte("dialogstale");
+        const auto withCutout = [&](const QString& id) {
+            ProjectData d;
+            Clip c = clip(1, kept);
+            EffectInstance e;
+            e.effectId = Comp::kEffectId;
+            CompGraph g;
+            g.nodes << CompNode{1, "clip", {}} << CompNode{2, "cutout", {}};
+            g.links << CompLink{1, 2, "src"};
+            g.out = 2;
+            Comp::setGraph(e, g);
+            e.params[CompGraph::paramKey(2, "cache")] = id;
+            c.effects << e;
+            d.timeline.video << Track{};
+            d.timeline.video[0].clips << c;
+            return d;
+        };
+        const QString autosave = folder + "/autosave.schneidi";
+        CHECK(ProjectFile::save(withCutout("dialogsaved"), autosave, nullptr));
+        answer("free", [&] { open.timeline = withCutout("dialogfresh").timeline; });
+        CHECK(ProxyCleanupDialog::run(nullptr, getOpen, &pm, {autosave}) > 0);
+        CHECK(QFileInfo::exists(fresh));
+        CHECK(QFileInfo::exists(saved));
+        CHECK(!QFileInfo::exists(stale));
+        QFile::remove(fresh);
+        QFile::remove(saved);
+    }
 }
 
 } // namespace

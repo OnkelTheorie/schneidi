@@ -62,8 +62,36 @@ bool handleKey(const QString& key)
 
 } // namespace
 
+namespace {
+
+// What a background analysis of a node worked on: the clip's source and range, speed and the node's values (its
+// own results - the cutout's cache, the tracker's reference point - left out). Changed meanwhile = a stale result
+QString analysisFingerprint(const Clip& c, int node)
+{
+    QStringList parts{c.mediaPath, QString::number(c.in), QString::number(c.out), QString::number(c.speed, 'g', 17),
+                      c.reverse ? QStringLiteral("r") : QString()};
+    const QVariantMap values = CompUi::nodeValues(c, node);
+    for (auto it = values.cbegin(); it != values.cend(); ++it) {
+        if (it.key() == QLatin1String(PC::kCutoutCacheKey) || it.key() == QLatin1String(::Comp::kRefKeys[0])
+            || it.key() == QLatin1String(::Comp::kRefKeys[1]))
+            continue;
+        parts << it.key() + QLatin1Char('=') + it.value().toString();
+    }
+    return parts.join(QLatin1Char('|'));
+}
+
+} // namespace
+
 CompInspector::CompInspector(Editor* editor, QWidget* parent) : QScrollArea(parent), m_editor(editor)
 {
+    // Another project replaced this one: an analysis of the old one stops, its result never lands in the new one
+    connect(m_editor->project(), &Project::loaded, this, [this] {
+        if (!m_job) return;
+        m_job->cancel->store(true);
+        m_job.reset();
+        m_analysisNote.clear();
+        updateAnalysisRow();
+    });
     setObjectName("comp_inspector");
     setWidgetResizable(true);
     setFrameShape(QFrame::NoFrame);
@@ -499,6 +527,8 @@ void CompInspector::startAnalysis()
     job.node = m_node;
     job.kind = m_type;
     job.cancel = std::make_shared<std::atomic<bool>>(false);
+    job.generation = m_editor->project()->generation();
+    job.fingerprint = analysisFingerprint(*c, m_node);
     m_job = job;
     m_analysisNote.clear();
     updateAnalysisRow();
@@ -531,7 +561,7 @@ void CompInspector::startAnalysis()
             if (r.gaveUp) note = T("Zu lange verloren: die Spur endet dort");
         }
         QMetaObject::invokeMethod(guard, [guard, job, cache, points, error, note] {
-            if (guard) guard->analysisDone(job.clipId, job.node, job.kind, cache, points, error, note);
+            if (guard) guard->analysisDone(job, cache, points, error, note);
         }, Qt::QueuedConnection);
     });
 }
@@ -541,13 +571,20 @@ void CompInspector::cancelAnalysis()
     if (m_job) m_job->cancel->store(true);
 }
 
-void CompInspector::analysisDone(int clipId, int node, const QString& kind, const QString& cache,
-                                 const QVector<::Comp::TrackPoint>& points, const QString& error, const QString& note)
+void CompInspector::analysisDone(const Job& job, const QString& cache, const QVector<::Comp::TrackPoint>& points,
+                                 const QString& error, const QString& note)
 {
+    // Started on another project (opened, restored meanwhile): nothing of it is shown or applied here
+    if (job.generation != m_editor->project()->generation() || !m_job || m_job->cancel != job.cancel) return;
     m_job.reset();
+    const int clipId = job.clipId, node = job.node;
+    const QString& kind = job.kind;
     m_noteNode = node;
+    const Clip* now = TimelineOps::findClip(m_editor->project()->timeline(), clipId);
     if (!error.isEmpty()) {
         m_analysisNote = error;
+    } else if (!now || analysisFingerprint(*now, node) != job.fingerprint) {
+        m_analysisNote = T("Analyse verworfen – Clip geändert"); // worked on what the clip was at the start
     } else if (kind == QLatin1String(PC::kCutoutType)) {
         QString err;
         m_analysisNote = m_editor->cutoutCompNode(clipId, node, cache, &err) ? T("Fertig") : err;

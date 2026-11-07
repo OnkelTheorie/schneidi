@@ -21,7 +21,6 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QHash>
-#include <QSysInfo>
 #include <QTemporaryDir>
 
 namespace {
@@ -320,18 +319,27 @@ void testLock(const QString& dir)
         CHECK(!ProjectFile::lock(path, 0)); // one hour old, but its holder still runs
         CHECK(QFileInfo::exists(held->fileName()));
     }
-    // Left behind by a crashed process: free
+    // Left behind by a crashed process: free. The lock as QLockFile writes it here (host and app name exactly as it
+    // spells them - on Windows the host name's case differs from QSysInfo's), only another process id
     QString lockFile;
+    QList<QByteArray> lines;
     {
         const auto l = ProjectFile::lock(path, 0);
         if (!CHECK(l)) return;
         lockFile = l->fileName();
+        qint64 pid = 0;
+        QString host, app;
+        CHECK(l->getLockInfo(&pid, &host, &app));
+        CHECK_EQ(pid, QCoreApplication::applicationPid());
+        QFile f(lockFile);
+        if (f.open(QIODevice::ReadOnly)) lines = f.readAll().split('\n');
+        if (!CHECK(!lines.isEmpty() && lines[0] == QByteArray::number(pid))) return;
     }
     {
+        lines[0] = QByteArray::number(0x7ffffff0);
         QFile f(lockFile);
         CHECK(f.open(QIODevice::WriteOnly));
-        f.write(QByteArray::number(0x7ffffff0) + "\n" + QCoreApplication::applicationName().toUtf8() + "\n" +
-                QSysInfo::machineHostName().toUtf8() + "\n");
+        f.write(lines.join('\n'));
     }
     CHECK(ProjectFile::lock(path, 0) != nullptr);
 

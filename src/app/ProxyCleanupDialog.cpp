@@ -23,26 +23,43 @@ namespace ProxyCleanupDialog {
 
 namespace {
 
-// Originals whose proxies stay: the open project's (unsaved changes included) and the recent projects'
-QStringList keepList(const ProjectData& open)
-{
-    return ProxyCleanup::projectMedia(open) + ProxyCleanup::mediaOfProjects(ProxyCleanup::recentProjects());
-}
-
-// Cutout analyses that stay: the ones the open project's and the recent projects' cutout nodes name
-QStringList keepCutouts(const ProjectData& open)
-{
-    return Picture::Comp::cutoutCachesOf(open) + Picture::Comp::cutoutCachesOfProjects(ProxyCleanup::recentProjects());
-}
+// What the open and the recent projects use: proxies of these originals and these cutout analyses stay
+struct Kept {
+    QStringList media;
+    QStringList cutouts;
+    void add(const ProjectData& d)
+    {
+        media << ProxyCleanup::projectMedia(d);
+        cutouts << Picture::Comp::cutoutCachesOf(d);
+    }
+    void addFiles(const QStringList& files) // each file read once
+    {
+        for (const QString& file : files) {
+            ProjectData d;
+            QString error;
+            if (QFileInfo::exists(file) && ProjectFile::load(file, &d, &error)) add(d);
+        }
+    }
+};
 
 } // namespace
 
-qint64 run(QWidget* parent, const ProjectData& open, const ProxyManager* proxies)
+qint64 run(QWidget* parent, const std::function<ProjectData()>& open, const ProxyManager* proxies,
+           const QStringList& openFiles)
 {
     QApplication::setOverrideCursor(Qt::WaitCursor); // reads the recent projects from disk
-    const ProxyCleanup::Plan plan = ProxyCleanup::plan(keepList(open), {proxies->writing()});
+    Kept recent; // the recent projects on disk: read once
+    recent.addFiles(ProxyCleanup::recentProjects());
+    const auto keep = [&] { // and what the open project uses right now
+        Kept k = recent;
+        k.add(open());
+        k.addFiles(openFiles);
+        return k;
+    };
+    const Kept before = keep();
+    const ProxyCleanup::Plan plan = ProxyCleanup::plan(before.media, {proxies->writing()});
     // Cutout analyses (0.19) no project names any more go along (they can always be made again)
-    const QVector<Picture::Comp::CutoutCacheFile> cutouts = Picture::Comp::unusedCutoutCaches(keepCutouts(open));
+    const QVector<Picture::Comp::CutoutCacheFile> cutouts = Picture::Comp::unusedCutoutCaches(before.cutouts);
     qint64 cutoutBytes = 0;
     for (const auto& c : cutouts) cutoutBytes += c.bytes;
     QApplication::restoreOverrideCursor();
@@ -125,11 +142,12 @@ qint64 run(QWidget* parent, const ProjectData& open, const ProxyManager* proxies
     dialog.resize(640, 420);
 
     if (dialog.exec() != QDialog::Accepted) return 0;
-    // The project may have changed while the dialog was open (an AI session imports): its proxies still stay
-    qint64 freed = ProxyCleanup::apply(plan, {proxies->writing()}, keepList(open));
-    const QStringList stillUsed = keepCutouts(open); // checked again: the project may have changed meanwhile
+    // The project may have changed while the dialog was open (an AI session imports, an analysis finished): what
+    // it uses now still stays
+    const Kept now = keep();
+    qint64 freed = ProxyCleanup::apply(plan, {proxies->writing()}, now.media);
     for (const Picture::Comp::CutoutCacheFile& c : cutouts)
-        if (!stillUsed.contains(c.id) && Picture::Comp::removeCutoutCache(c.id)) freed += c.bytes;
+        if (!now.cutouts.contains(c.id) && Picture::Comp::removeCutoutCache(c.id)) freed += c.bytes;
     return freed;
 }
 

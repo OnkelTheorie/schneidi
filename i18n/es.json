@@ -414,7 +414,6 @@
  "Bildrate": "Velocidad de fotogramas",
  "Bildrauschen": "Ruido de imagen",
  "Bildwiederholung": "Repetir fotogramas",
- "Bildwinkel": "Ángulo de visión",
  "Bin %1": "Contenedor %1",
  "Bin entfernen": "Quitar contenedor",
  "Bin im Media Pool, in den die neuen Dateien kommen": "Bin del Media Pool al que van los archivos nuevos",
@@ -1378,7 +1377,6 @@
  "Leistung": "Rendimiento",
  "Letzte Farbe entfernen": "Quitar el último color",
  "Letztes Bild halten": "Mantener último fotograma",
- "Licht von": "Luz desde",
  "Licht von oben": "Luz desde arriba",
  "Lichthöhe": "Altura de la luz",
  "Lichtrichtung": "Dirección de la luz",
@@ -2727,5 +2725,8 @@
  "Dieser Code stammt nicht von dir und läuft noch nicht. Nur erlauben, wenn du der Quelle vertraust.": "Este código no lo escribiste tú y todavía no se ejecuta. Permítelo solo si confías en la fuente.",
  "%1 · nicht ausgeführt": "%1 · sin ejecutar",
  "Entfernung": "Distancia",
+ "Analyse verworfen – Clip geändert": "Análisis descartado: el clip cambió",
+ "Eigener Code im Rezept": "Código propio en la receta",
+ "Dieses Rezept enthält Code, den du hier nicht selbst geschrieben hast (Filterketten: %1, Shader: %2). Fremder Code kann die Grafikkarte oder den Prozessor lange beschäftigen. Führe ihn nur aus, wenn du der Quelle vertraust.": "Esta receta contiene código que no escribiste tú aquí (cadenas de filtros: %1, sombreadores: %2). El código ajeno puede mantener ocupada la tarjeta gráfica o el procesador durante mucho tiempo. Ejecútalo solo si confías en la fuente.",
  "„%1“": "«%1»"
 }

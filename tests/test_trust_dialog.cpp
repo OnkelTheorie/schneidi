@@ -2,9 +2,12 @@
 // Opening a project with custom code nobody trusted here (core/CodeTrust.h, 0.19): the app asks once (ui/TrustDialog):
 // "Ausführen" trusts and remembers it for the file, "Nicht ausführen" keeps it skipped; the inspector's "Code
 // erlauben" allows it later. A project without custom code (or with remembered code) opens without asking.
+// trust_custom_code:true of an AI in the app shows the user the same dialog (the command waits for the answer).
 #include "check.h"
 
 #include "app/MainWindow.h"
+#include "cli/Commands.h"
+#include "cli/Live.h"
 #include "core/CodeTrust.h"
 #include "core/ProjectFile.h"
 #include "core/Selection.h"
@@ -13,6 +16,8 @@
 #include "ui/TrustDialog.h"
 
 #include <QApplication>
+#include <QJsonArray>
+#include <QJsonDocument>
 #include <QPushButton>
 #include <QSettings>
 #include <QTemporaryDir>
@@ -141,6 +146,36 @@ int main(int argc, char** argv)
         QApplication::processEvents();
         CHECK(!asked);
         CHECK(CodeTrust::isTrusted("negate"));
+    }
+    // An AI passing trust_custom_code:true in the app: the user is asked, a "no" keeps the code skipped
+    resetAll();
+    {
+        bool asked = false;
+        answer("trustSkip", &asked);
+        CHECK(w.openProject(shared));
+        CHECK(!CodeTrust::isTrusted("negate"));
+        Cli::Live::Server server(&w);
+        if (CHECK(server.start(&err))) {
+            const auto editTrusting = [&server] {
+                const QJsonObject raw{{"project", "@app"}, {"ops", QJsonArray{QJsonObject{{"op", "marker"}, {"at", 3}}}},
+                                      {"trust_custom_code", true}};
+                return QString::fromUtf8(QJsonDocument(server.runForChat("edit", Cli::normalize(*Cli::find("edit"), raw)))
+                                             .toJson(QJsonDocument::Compact));
+            };
+            answer("trustSkip", &asked);
+            const QString refused = editTrusting();
+            CHECK(asked);
+            CHECK(!CodeTrust::isTrusted("negate"));
+            if (!CHECK(refused.contains("did not allow"))) std::printf("       %s\n", qPrintable(refused));
+            answer("trustRun", &asked);
+            editTrusting();
+            CHECK(asked);
+            CHECK(CodeTrust::isTrusted("negate"));
+            // Trusted now: asks no more
+            answer("trustSkip", &asked);
+            editTrusting();
+            CHECK(!asked);
+        }
     }
     resetAll();
     return Check::result();

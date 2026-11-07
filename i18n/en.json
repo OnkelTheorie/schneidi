@@ -414,7 +414,6 @@
  "Bildrate": "Frame Rate",
  "Bildrauschen": "Noise",
  "Bildwiederholung": "Repeat frames",
- "Bildwinkel": "Field of view",
  "Bin %1": "Bin %1",
  "Bin entfernen": "Remove Bin",
  "Bin im Media Pool, in den die neuen Dateien kommen": "Bin in the Media Pool that receives the new files",
@@ -1378,7 +1377,6 @@
  "Leistung": "Performance",
  "Letzte Farbe entfernen": "Remove last color",
  "Letztes Bild halten": "Hold last frame",
- "Licht von": "Light from",
  "Licht von oben": "Light from above",
  "Lichthöhe": "Light height",
  "Lichtrichtung": "Light direction",
@@ -2727,5 +2725,8 @@
  "Dieser Code stammt nicht von dir und läuft noch nicht. Nur erlauben, wenn du der Quelle vertraust.": "This code was not written by you and does not run yet. Only allow it if you trust the source.",
  "%1 · nicht ausgeführt": "%1 · not run",
  "Entfernung": "Distance",
+ "Analyse verworfen – Clip geändert": "Analysis discarded – clip changed",
+ "Eigener Code im Rezept": "Custom code in the recipe",
+ "Dieses Rezept enthält Code, den du hier nicht selbst geschrieben hast (Filterketten: %1, Shader: %2). Fremder Code kann die Grafikkarte oder den Prozessor lange beschäftigen. Führe ihn nur aus, wenn du der Quelle vertraust.": "This recipe contains code you did not write here yourself (filter chains: %1, shaders: %2). Code from others can keep the graphics card or the processor busy for a long time. Only run it if you trust the source.",
  "„%1“": "“%1”"
 }

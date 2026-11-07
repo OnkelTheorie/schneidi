@@ -7,11 +7,13 @@
 #include "cli/Commands.h"
 #include "cli/CommandsDetail.h"
 #include "core/CodeTrust.h"
+#include "core/CompGraph.h"
 #include "core/CompRecipes.h"
 #include "core/EffectRegistry.h"
 #include "core/PathKey.h"
 #include "core/ProjectFile.h"
 #include "core/TimelineOps.h"
+#include "engine/RenderCache.h"
 #include "engine/picture/CustomEffects.h"
 
 #include "check.h"
@@ -71,9 +73,9 @@ void otherComputer()
     QSettings().remove("trust");
 }
 
-QStringList checkIds()
+QStringList checkIds(const QString& project = g_project)
 {
-    const QJsonObject r = run("check", {{"source", g_project}, {"sound", false}});
+    const QJsonObject r = run("check", {{"source", project}, {"sound", false}});
     QStringList ids;
     for (const QJsonValue& v : r["issues"].toArray()) ids << v["check"].toString();
     return ids;
@@ -140,6 +142,12 @@ int main(int argc, char** argv)
         edit({QJsonObject{{"op", "marker"}, {"at", 5}}});
         newRun();
         CHECK(plain(middle()));
+        // Sending the same code back (copied from info) does not make it the caller's own
+        edit({QJsonObject{{"op", "effect"}, {"clips", QJsonArray{clip}}, {"effect", "ffmpeg_filter"},
+                          {"params", QJsonObject{{"chain", "negate"}}}}});
+        CHECK(!CodeTrust::isTrusted("negate"));
+        newRun();
+        CHECK(plain(middle()));
     }
     // trust_custom_code:true on render: runs, and remembered for the file
     {
@@ -203,9 +211,118 @@ int main(int argc, char** argv)
         bool marked = false;
         for (const QJsonValue& n : nodes) marked |= n["untrusted"].toBool();
         CHECK(marked);
+        // A full `comp graph` round trip of info's graph keeps the code untrusted (and unremembered)
+        {
+            QJsonObject graph = info["timeline"]["tracks"].toArray().first()["clips"].toArray().first()["effects"]
+                                    .toArray().first()["graph"].toObject();
+            QJsonArray clean;
+            for (const QJsonValue& n : graph["nodes"].toArray()) {
+                QJsonObject o = n.toObject();
+                o.remove("untrusted");
+                clean << o;
+            }
+            const QJsonObject resend{{"nodes", clean}, {"links", graph["links"]}, {"out", graph["out"]}};
+            edit({QJsonObject{{"op", "comp"}, {"clips", QJsonArray{clip}}, {"graph", resend}}});
+            CHECK(!CodeTrust::isTrusted("negate,vflip"));
+            CHECK(checkIds().contains("custom_code_untrusted"));
+            newRun();
+            CHECK(plain(middle()));
+            // Changed code is the caller's own: it runs
+            QJsonArray changed;
+            for (const QJsonValue& n : clean) {
+                QJsonObject o = n.toObject();
+                if (o["type"] == "fx") {
+                    QJsonObject params = o["params"].toObject();
+                    params["e_chain"] = "negate,vflip,hflip";
+                    o["params"] = params;
+                }
+                changed << o;
+            }
+            edit({QJsonObject{{"op", "comp"}, {"clips", QJsonArray{clip}},
+                              {"graph", QJsonObject{{"nodes", changed}, {"links", graph["links"]}, {"out", graph["out"]}}}}});
+            CHECK(CodeTrust::isTrusted("negate,vflip,hflip"));
+            CHECK(negated(middle()));
+            // The foreign code sent back once the project lost it: still not the caller's own (seen in this run)
+            edit({QJsonObject{{"op", "comp"}, {"clips", QJsonArray{clip}}, {"graph", resend}}});
+            CHECK(!CodeTrust::isTrusted("negate,vflip"));
+            CHECK(plain(middle()));
+        }
         // The user confirms it
         edit({QJsonObject{{"op", "marker"}, {"at", 9}}}, {{"trust_custom_code", true}});
         CHECK(negated(middle()));
+    }
+
+    // Trusting code changes the picture of a clip that has it: its render-cache key changes (no stale render);
+    // a clip without custom code keeps its key. An export freezes the trust of its start (freeze)
+    {
+        newRun();
+        ProjectFormat f;
+        Clip plainClip;
+        plainClip.mediaPath = still;
+        plainClip.out = 49;
+        Clip coded = plainClip;
+        EffectInstance fx;
+        fx.effectId = "ffmpeg_filter";
+        fx.params["chain"] = "negate,boxblur=2";
+        coded.effects << fx;
+        const QString plainKey = RenderCache::key(plainClip, f);
+        const QString untrustedKey = RenderCache::key(coded, f);
+        Timeline tl;
+        tl.video << Track{};
+        tl.video[0].clips << coded;
+        Timeline frozen = tl;
+        CHECK(CodeTrust::freeze(frozen));
+        const quint64 epoch = CodeTrust::epoch();
+        CodeTrust::trust("negate,boxblur=2");
+        CHECK(CodeTrust::epoch() > epoch);
+        CHECK(RenderCache::key(coded, f) != untrustedKey);
+        CHECK_EQ(RenderCache::key(plainClip, f), plainKey);
+        // The frozen copy still has it untrusted; the marker itself can never be trusted
+        const QVector<CodeTrust::Item> left = CodeTrust::itemsOf(frozen.video[0].clips[0].effects[0]);
+        if (CHECK_EQ(left.size(), 1)) {
+            CHECK(!CodeTrust::isTrusted(left[0].code));
+            CodeTrust::trust(left[0].code);
+            CHECK(!CodeTrust::isTrusted(left[0].code));
+        }
+        Timeline again = tl;
+        CHECK(!CodeTrust::freeze(again)); // all trusted now: nothing to freeze
+    }
+
+    // check lists only code that would run: not a switched-off effect, not a hidden track, not a value left on an fx
+    // node that runs another effect now
+    {
+        ProjectData p;
+        CHECK(ProjectFile::load(g_project, &p, nullptr));
+        Clip& c = p.timeline.video[0].clips[0];
+        c.effects.clear();
+        c.effects << EffectInstance{"ffmpeg_filter", {{"chain", "hue=h=33"}}, false};
+        EffectInstance comp;
+        comp.effectId = Comp::kEffectId;
+        CompGraph g;
+        g.nodes << CompNode{1, "clip", {}} << CompNode{2, "fx", {}};
+        g.links << CompLink{1, 2, "src"};
+        g.out = 2;
+        Comp::setGraph(comp, g);
+        comp.params[CompGraph::paramKey(2, "effect")] = "none";
+        comp.params[CompGraph::paramKey(2, "e_chain")] = "hue=h=44";
+        c.effects << comp;
+        for (Sequence& q : p.sequences)
+            if (q.id == p.currentSequence) q.timeline = p.timeline;
+        const QString quiet = dir.filePath("quiet.schneidi");
+        CHECK(ProjectFile::save(p, quiet, nullptr));
+        CHECK(!checkIds(quiet).contains("custom_code_untrusted"));
+        CHECK(CodeTrust::itemsOf(c.effects[1]).isEmpty());
+        // Switched on: listed; on a hidden track: not
+        c.effects[0].enabled = true;
+        for (Sequence& q : p.sequences)
+            if (q.id == p.currentSequence) q.timeline = p.timeline;
+        CHECK(ProjectFile::save(p, quiet, nullptr));
+        CHECK(checkIds(quiet).contains("custom_code_untrusted"));
+        p.timeline.video[0].hidden = true;
+        for (Sequence& q : p.sequences)
+            if (q.id == p.currentSequence) q.timeline = p.timeline;
+        CHECK(ProjectFile::save(p, quiet, nullptr));
+        CHECK(!checkIds(quiet).contains("custom_code_untrusted"));
     }
 
     // The trust record is the settings' only: a project file cannot carry its own trust

@@ -414,7 +414,6 @@
  "Bildrate": "Cadence d’images",
  "Bildrauschen": "Bruit d’image",
  "Bildwiederholung": "Répéter les images",
- "Bildwinkel": "Angle de champ",
  "Bin %1": "Chutier %1",
  "Bin entfernen": "Supprimer le chutier",
  "Bin im Media Pool, in den die neuen Dateien kommen": "Chutier du Media Pool qui reçoit les nouveaux fichiers",
@@ -1378,7 +1377,6 @@
  "Leistung": "Performances",
  "Letzte Farbe entfernen": "Retirer la dernière couleur",
  "Letztes Bild halten": "Figer la dernière image",
- "Licht von": "Lumière de",
  "Licht von oben": "Lumière du haut",
  "Lichthöhe": "Hauteur de la lumière",
  "Lichtrichtung": "Direction de la lumière",
@@ -2727,5 +2725,8 @@
  "Dieser Code stammt nicht von dir und läuft noch nicht. Nur erlauben, wenn du der Quelle vertraust.": "Ce code n’a pas été écrit par vous et ne s’exécute pas encore. Ne l’autorisez que si vous faites confiance à la source.",
  "%1 · nicht ausgeführt": "%1 · non exécuté",
  "Entfernung": "Distance",
+ "Analyse verworfen – Clip geändert": "Analyse abandonnée – le clip a changé",
+ "Eigener Code im Rezept": "Code personnalisé dans la recette",
+ "Dieses Rezept enthält Code, den du hier nicht selbst geschrieben hast (Filterketten: %1, Shader: %2). Fremder Code kann die Grafikkarte oder den Prozessor lange beschäftigen. Führe ihn nur aus, wenn du der Quelle vertraust.": "Cette recette contient du code que vous n’avez pas écrit vous-même ici (chaînes de filtres : %1, shaders : %2). Du code étranger peut occuper longtemps la carte graphique ou le processeur. Ne l’exécutez que si vous faites confiance à la source.",
  "„%1“": "« %1 »"
 }

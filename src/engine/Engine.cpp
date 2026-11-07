@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "engine/Engine.h"
 
+#include "core/CodeTrust.h"
 #include "core/I18n.h"
 #include "core/Loudness.h"
 #include "core/MediaAspect.h"
@@ -449,11 +450,14 @@ void Engine::applyTimeline(const Timeline& tl)
     if (m_mode == Mode::Timeline) m_player->setTimeline(tl, m_format.rate);
     m_lastFrame->store(std::max(0, TimelineOps::endFrame(tl) - 1));
     const bool files = resolveFiles(tl, true);
-    if (m_renderer && !files && samePicture(m_built, tl)) {
+    // Code trusted meanwhile (core/CodeTrust.h): the same timeline draws another picture
+    const quint64 trust = CodeTrust::epoch();
+    const bool same = std::exchange(m_builtTrust, trust) == trust && samePicture(m_built, tl);
+    if (m_renderer && !files && same) {
         m_built = tl;
         return;
     }
-    if (!m_renderer || !samePicture(m_built, tl)) {
+    if (!m_renderer || !same) {
         m_renderCache->sync(tl); // queue missing clip outputs, discard outdated ones
         Stabilizer::instance()->sync(Stabilizer::missing(tl, m_format));
     }

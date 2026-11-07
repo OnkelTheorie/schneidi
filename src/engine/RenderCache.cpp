@@ -2,6 +2,7 @@
 #include "engine/RenderCache.h"
 #include "engine/picture/Renderer.h"
 
+#include "core/CodeTrust.h"
 #include "core/CompGraph.h"
 #include "core/I18n.h"
 #include "core/Keyframes.h"
@@ -185,6 +186,12 @@ QString RenderCache::key(const Clip& c, const ProjectFormat& f)
         files += QString("%1|%2|").arg(f.size()).arg(f.lastModified().toMSecsSinceEpoch());
     };
     if (c.isTitle() && !c.title.look.texture.isEmpty()) addFile(c.title.look.texture); // a title's texture picture
+    // Custom code renders only once trusted (core/CodeTrust.h): a render from before stays apart. Clips without
+    // custom code keep their key
+    QByteArray trust;
+    for (const EffectInstance& e : c.effects)
+        for (const CodeTrust::Item& it : CodeTrust::itemsOf(e)) trust += CodeTrust::isTrusted(it.code) ? "t" : "u";
+    if (!trust.isEmpty()) trust.prepend("trust:");
     for (const EffectInstance& e : c.effects) {
         if (e.effectId == QLatin1String(Comp::kEffectId)) {
             // A compositing graph's files (Comp::fileKeys: media, LUTs, textures; its node values hold the paths)
@@ -197,7 +204,7 @@ QString RenderCache::key(const Clip& c, const ProjectFormat& f)
                 if (!path.isEmpty()) addFile(path);
             }
     }
-    return QCryptographicHash::hash(id.toUtf8() + crop + key + stab + retime + files.toUtf8() + clip, QCryptographicHash::Sha1)
+    return QCryptographicHash::hash(id.toUtf8() + crop + key + stab + retime + trust + files.toUtf8() + clip, QCryptographicHash::Sha1)
         .toHex();
 }
 

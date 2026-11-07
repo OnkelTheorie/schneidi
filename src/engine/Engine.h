@@ -229,6 +229,7 @@ private:
     ProjectFormat m_format;
     bool m_formatSet = false;
     Timeline m_built; // the timeline shown
+    quint64 m_builtTrust = 0; // CodeTrust::epoch() of m_built: trusting code changes the picture, not the timeline
     std::unique_ptr<SharedLoudness> m_loudness; // fed by the master level meter in the audio thread
     bool m_mixerOnlyNext = false;
     std::shared_ptr<std::atomic<bool>> m_gradeBypass = std::make_shared<std::atomic<bool>>(false);

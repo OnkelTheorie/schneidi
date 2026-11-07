@@ -219,7 +219,18 @@ void filterChecks()
     refused("negate;hue=s=0", "one linear chain");
     refused("[in]negate[out]", "labels");
     // Unknown filter or option, bad value
-    refused("nosuchfilter", "no filter 'nosuchfilter'");
+    // A name not on the list is refused before FFmpeg parses it (a slim build cannot parse the arguments of a filter
+    // it lacks): the same answer in every build, also with a positional argument
+    refused("nosuchfilter", "filter 'nosuchfilter' is not allowed");
+    refused("nosuchfilter=1", "filter 'nosuchfilter' is not allowed");
+    refused("negate,nosuchfilter=a.srt:x", "filter 'nosuchfilter' is not allowed");
+    refused("negate,'quoted,part'", "is not allowed");
+    // FFmpeg's messages without its pointer prefixes ("[AVFilterGraph @ 0x…]")
+    for (const char* bad : {"gblur=sigma=abc", "negate,,hue", "hue=h=1=2"}) {
+        const QString why = PC::checkFilter(QString::fromUtf8(bad));
+        if (!CHECK(!why.isEmpty() && !why.contains(" @ ") && !why.contains("0x")))
+            std::printf("       chain %s: %s\n", bad, qPrintable(why));
+    }
     refused("hue=bogus=1", "no option 'bogus'");
     CHECK(!PC::checkFilter("gblur=sigma=abc").isEmpty());
     // GPL-only filters are not on the list (the bundled FFmpeg has none)
