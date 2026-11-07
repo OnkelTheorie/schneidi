@@ -109,6 +109,15 @@
   </requires>
 
   <releases>
+    <release version="0.19.0" date="2026-11-08">
+      <description>
+        <p>Compositing Update: a new Comp page with a layer view and a node canvas, masks (shapes, curves, gradients),
+        green screen and luma keying, AI cutout of people (extension), tracking of points and faces, title looks with
+        gradients, textures, edges, shadows and glow, real 3D text, ready-made recipes, and own effects as FFmpeg filter
+        chains or shaders (shared code only runs after you allow it). An AI can build all of it through the CLI.</p>
+      </description>
+      <url type="details">https://github.com/OnkelTheorie/schneidi/releases/tag/v0.19.0</url>
+    </release>
     <release version="0.18.1" date="2026-11-07">
       <description>
         <p>Bug fix release: cut-off recordings without a length get their full length, 4K exports keep their quality
