@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "core/TemplateLibrary.h"
 
+#include "core/CompGraph.h"
 #include "core/EffectFolders.h"
 #include "core/EffectRegistry.h"
 #include "core/I18n.h"
@@ -351,9 +352,14 @@ void forEachFile(ProjectData& d, const std::function<void(QString& path)>& fn)
             for (Track& t : tl.tracks(k))
                 for (Clip& c : t.clips) {
                     if (c.kind == ClipKind::Media) file(c.mediaPath);
+                    if (c.isTitle()) file(c.title.look.texture); // a title's texture picture
                     file(c.transInStyle.luma);
                     file(c.transOutStyle.luma);
                     for (EffectInstance& e : c.effects) {
+                        if (e.effectId == QLatin1String(Comp::kEffectId)) { // files of compositing nodes
+                            Comp::forEachFile(e, [&](const QString&, QString& path) { file(path); });
+                            continue;
+                        }
                         const EffectDescriptor* desc = EffectRegistry::find(e.effectId);
                         if (!desc) continue;
                         for (const EffectParam& p : desc->params) {

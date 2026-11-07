@@ -184,13 +184,11 @@ QString RenderCache::key(const Clip& c, const ProjectFormat& f)
         const QFileInfo f(path);
         files += QString("%1|%2|").arg(f.size()).arg(f.lastModified().toMSecsSinceEpoch());
     };
+    if (c.isTitle() && !c.title.look.texture.isEmpty()) addFile(c.title.look.texture); // a title's texture picture
     for (const EffectInstance& e : c.effects) {
         if (e.effectId == QLatin1String(Comp::kEffectId)) {
-            // A compositing graph's media files and LUTs (its node values hold the paths)
+            // A compositing graph's files (Comp::fileKeys: media, LUTs, textures; its node values hold the paths)
             for (const QString& path : Comp::mediaPaths(e)) addFile(path);
-            for (auto it = e.params.cbegin(); it != e.params.cend(); ++it)
-                if (it.key().endsWith(QLatin1String(".lut")) && !it.value().toString().isEmpty())
-                    addFile(it.value().toString());
             continue;
         }
         if (const EffectDescriptor* d = EffectRegistry::find(e.effectId))

@@ -79,8 +79,27 @@ void setGraph(EffectInstance& e, const CompGraph& g);
 // Removes the values of nodes that are no longer in the graph (after removing a node)
 void dropOrphanParams(EffectInstance& e);
 
-// Media files the graph reads (path parameters of "media" nodes), in node order, without duplicates
+// Further node kinds with a file parameter (the engine's kinds, core knows only their ids and these keys)
+inline constexpr const char* kGradeType = "grade";
+inline constexpr const char* kLutKey = "lut";
+inline constexpr const char* kTextType = "text";
+inline constexpr const char* kTextureKey = "texture";
+
+// Parameter keys of a node kind whose value is a FILE path: media "path", grade "lut", text "texture"; an unknown
+// kind has none. (A Path parameter is not always a file: the text node keeps its words and font in Path ones.)
+// Everything that follows files - project file relative paths and LUT fallback, relink, templates (copy, export,
+// redirect), media pool "in use", render cache key - goes through this table: a NEW node kind or key holding a file
+// must be added here (CompGraph.cpp), or its file is missed.
+QStringList fileKeys(const QString& type);
+// Parameter keys of a node kind whose value is in PROJECT pixels (the engine multiplies them by ctx.scale): they scale
+// with the project's resolution (ProjectFormat::scaleTimeline), static value and keyframes. A NEW pixel parameter must
+// be added here (CompGraph.cpp), or it stays as it was on a 1080p -> 4K change. Unknown kind: none
+QStringList pixelKeys(const QString& type);
+
+// Every file the graph reads (fileKeys of its nodes: media, LUTs, textures), in node order, without duplicates
 QStringList mediaPaths(const EffectInstance& e);
-// Rewrites every media path found in `moved` (relink, collect project); returns how many were changed
+// Calls fn for every non-empty file value (fileKeys) with its full key "n<id>.<key>"; a changed path is stored
+void forEachFile(EffectInstance& e, const std::function<void(const QString& key, QString& path)>& fn);
+// Rewrites every file path found in `moved` (relink, templates); returns how many were changed
 int redirectMedia(EffectInstance& e, const std::function<QString(const QString&)>& moved);
 } // namespace Comp

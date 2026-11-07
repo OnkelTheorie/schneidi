@@ -131,7 +131,8 @@ public:
     // counted anew. `probeLength` = a file's real length in the new rate (0 = unknown: offline files are scaled).
     // App and CLI both call this after setFormat.
     void recountMedia(FrameRate oldRate, const std::function<int(const QString& path)>& probeLength);
-    // The clips that use these media, per timeline (every sequence, compound and multicam clips included): sequence
+    // The clips that use these media (as their media, a title's texture picture or a file of a compositing node),
+    // per timeline (every sequence, compound and multicam clips included): sequence
     // id -> number of clips, in sequence order; empty = no timeline uses them
     QVector<QPair<int, int>> mediaUsage(const QStringList& paths) const;
     // Remove media from the Media Pool as one undo step. Media a timeline uses only go with `withClips`: then their

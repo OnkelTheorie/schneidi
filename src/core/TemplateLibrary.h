@@ -94,8 +94,9 @@ std::unique_ptr<QLockFile> lockLibrary(int timeoutMs = -1);
 inline constexpr int AppWaitMs = 2000;
 bool rename(const QString& id, const QString& name, QString* error = nullptr, QString* code = nullptr, int waitMs = -1);
 
-// Every file a project refers to: the media of clips, path parameters of clip effects (LUTs), wipe images of
-// transitions and the project brand kit's logo/intro/outro (built-in LUTs and wipes left out). `fn` may change the
+// Every file a project refers to: the media of clips, path parameters of clip effects (LUTs), files of compositing
+// nodes (Comp::fileKeys: media, LUTs, textures), title texture pictures, wipe images of transitions and the project
+// brand kit's logo/intro/outro (built-in LUTs and wipes left out). `fn` may change the
 // path in place.
 void forEachFile(ProjectData& d, const std::function<void(QString& path)>& fn);
 
