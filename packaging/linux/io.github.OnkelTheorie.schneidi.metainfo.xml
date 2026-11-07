@@ -109,6 +109,14 @@
   </requires>
 
   <releases>
+    <release version="0.18.1" date="2026-11-07">
+      <description>
+        <p>Bug fix release: cut-off recordings without a length get their full length, 4K exports keep their quality
+        on PCs with little free memory, an AI can still read while a dialog is open in the app, the brand kit dialog no
+        longer overwrites changes made meanwhile, and project files with broken characters say so when opened.</p>
+      </description>
+      <url type="details">https://github.com/OnkelTheorie/schneidi/releases/tag/v0.18.1</url>
+    </release>
     <release version="0.18.0" date="2026-11-06">
       <description>
         <p>Template Update: reusable templates with placeholders that are filled by drag and drop or by an AI, many
