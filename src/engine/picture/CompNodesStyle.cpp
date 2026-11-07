@@ -56,8 +56,8 @@ EffectParam choice(const QString& key, const char* label, const QStringList& val
     p.choiceLabels = labels;
     return p;
 }
-// A free text: there is no text parameter type; Path keeps a string as it is (only the key "path" of a media node
-// is treated as a file by the project file)
+// A free text: there is no text parameter type; Path keeps a string as it is (files are only the keys listed in
+// core/CompGraph.cpp kFileKeys – "text"/"font" are not, "texture" is)
 EffectParam text(const QString& key, const char* label, const QString& def)
 {
     return param(key, label, EffectParam::Path, def);
