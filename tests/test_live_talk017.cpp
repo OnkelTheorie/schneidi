@@ -174,6 +174,7 @@ QByteArray state(const Project& p)
 
 int main(int argc, char* argv[])
 {
+    Check::isolateSettings(); // never the user's settings (start template, import presets), nor in schneidi-cli
     QTemporaryDir tmp;
     qputenv("XDG_DATA_HOME", (tmp.path() + "/data").toUtf8());
     qputenv("XDG_CACHE_HOME", (tmp.path() + "/cache").toUtf8());

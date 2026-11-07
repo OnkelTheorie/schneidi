@@ -501,3 +501,16 @@ schneidi_test(test_title_anim) # title entry/exit animation (0.19): pop/fade/sli
 target_link_libraries(test_title_anim PRIVATE schneidi_cli_lib)
 schneidi_test(test_subtitles_readable) # readable subtitle cues (0.19): lines, cps, pauses, word times, check, op subtitles readable/words/track
 target_link_libraries(test_subtitles_readable PRIVATE schneidi_cli_lib)
+schneidi_test(test_settings_isolation) # SCHNEIDI_TEST_SETTINGS: a spawned schneidi-cli reads the test's settings, never the user's
+add_dependencies(test_settings_isolation schneidi-cli)
+
+# Never the user's settings, data, config or cache (core/SettingsIsolation.h, Check::isolateSettings): every test gets
+# its own folder, honoured by the test and by every schneidi/schneidi-cli it starts (also on Windows, where XDG does
+# nothing). Last in this file: covers every test registered above, variants included.
+get_property(_schneidi_all_tests DIRECTORY PROPERTY TESTS)
+foreach(_t ${_schneidi_all_tests})
+    set(_dir "${CMAKE_CURRENT_BINARY_DIR}/test-settings/${_t}")
+    set_property(TEST ${_t} APPEND PROPERTY ENVIRONMENT_MODIFICATION
+        "SCHNEIDI_TEST_SETTINGS=set:${_dir}" "XDG_CONFIG_HOME=set:${_dir}/config" "XDG_DATA_HOME=set:${_dir}/data"
+        "XDG_CACHE_HOME=set:${_dir}/cache" "SCHNEIDI_TEST_SETTINGS_READY=unset:")
+endforeach()

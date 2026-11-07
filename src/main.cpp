@@ -13,6 +13,7 @@
 #include "app/Theme.h"
 #include "core/CodeTrust.h"
 #include "core/I18n.h"
+#include "core/SettingsIsolation.h"
 #include "engine/Engine.h"
 #include "engine/Extensions.h"
 #include "engine/RenderQueue.h"
@@ -82,6 +83,7 @@ int main(int argc, char* argv[])
 {
     QElapsedTimer startTimer;
     startTimer.start();
+    SettingsIsolation::apply(); // test runs only (SCHNEIDI_TEST_SETTINGS): never the user's settings, before any use
     // Test helper: --screenshot image.png [--wait ms] runs invisibly and silently (no window on the desktop),
     // triggers --actions, saves the window image and quits
     QString screenshot;

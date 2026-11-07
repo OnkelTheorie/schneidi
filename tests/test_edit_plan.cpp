@@ -279,6 +279,7 @@ int main(int argc, char* argv[])
         QCoreApplication app(argc, argv);
         return fakePiper(app.arguments());
     }
+    Check::isolateSettings(); // never the user's settings (start template, import presets), nor in schneidi-cli
     QTemporaryDir tmp;
     qputenv("XDG_DATA_HOME", (tmp.path() + "/data").toUtf8()); // registry of running apps, backups and plans
     qputenv("XDG_CACHE_HOME", (tmp.path() + "/cache").toUtf8());

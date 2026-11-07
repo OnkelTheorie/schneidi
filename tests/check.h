@@ -46,10 +46,18 @@ bool equal(const A& a, const B& b, const char* expr, const char* file, int line)
     return report(false, expr, file, line, s);
 }
 
+// Before creating the QApplication (in check_support.cpp): never the user's settings, data, config or cache - in this
+// process and in every schneidi/schneidi-cli it starts (they inherit SCHNEIDI_TEST_SETTINGS, see
+// core/SettingsIsolation.h). ctest gives each test its own folder (tests/CMakeLists.txt); the first process of a test
+// empties it (only a folder it made itself), a test started by hand gets a temporary one. Sets XDG_DATA_HOME,
+// XDG_CONFIG_HOME, XDG_CACHE_HOME to folders in it (a test may point them elsewhere afterwards). initEnv calls it.
+void isolateSettings();
+
 // Before creating the QApplication: never visible windows, no sound. SCHNEIDI_TEST_QPA picks another platform by hand
 // (e.g. xcb on an Xvfb display with SCHNEIDI_VIEWER=gpu: the GPU viewer, which offscreen never takes)
 inline void initEnv()
 {
+    isolateSettings();
     qputenv("QT_QPA_PLATFORM", qEnvironmentVariable("SCHNEIDI_TEST_QPA", "offscreen").toUtf8());
     // Own audio engine: never the sound card in tests (silence paced by a timer), unless a test chose a device
     if (!qEnvironmentVariableIsSet("SCHNEIDI_AUDIO_DEVICE")) qputenv("SCHNEIDI_AUDIO_DEVICE", "null");
