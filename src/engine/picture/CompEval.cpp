@@ -2,6 +2,7 @@
 #include "engine/picture/CompEval.h"
 
 #include "core/CompGraph.h"
+#include "core/CompTrack.h"
 #include "core/Keyframes.h"
 #include "core/Types.h"
 
@@ -298,7 +299,14 @@ bool evaluate(const EffectInstance& comp, const Env& env, Cache* cache, Buf* out
             ctx.text = [&own, k](const QString& key) { return textValue(*k, own, key); };
             ctx.numOf = [&](int other, const QString& key) {
                 const CompNode* o = g.node(other);
-                return valueOf(other, o ? find(o->type) : nullptr, key);
+                const NodeType* ok = o ? find(o->type) : nullptr;
+                // A tracker that was not analyzed yet (no x/y value, no keyframes) is at its start point, so a
+                // follower drawn relative to (ax, ay) does not jump (Picture::Comp::trackerValue)
+                if (o && o->type == QLatin1String(::Comp::kTrackerType)
+                    && (key == QLatin1String("x") || key == QLatin1String("y")) && !values.value(other).contains(key)
+                    && !animated.value(other).contains(key))
+                    return valueOf(other, ok, key == QLatin1String("x") ? QStringLiteral("ax") : QStringLiteral("ay"));
+                return valueOf(other, ok, key);
             };
             ctx.input = [&, id](const QString& name) { return inputOf(id, name); };
             ctx.take = take;

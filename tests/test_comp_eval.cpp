@@ -406,6 +406,24 @@ void testEngine()
     env.cancel = nullptr;
     CHECK(!evaluate(comp({"blur", "blur"}, {{1, 2, "src"}, {2, 1, "src"}}, 2), env, nullptr, &second));
     CHECK(!evaluate(comp({"blur"}, {}, 7), env, nullptr, &second));
+
+    // A mask following a tracker that was not analyzed yet stays where it is drawn (the tracker reports its start
+    // point as x/y, Picture::Comp::trackerValue); an analyzed tracker moves it. Shown as white through the mask on black
+    const QStringList kinds{"tracker", "mask", "color", "color", "merge"};
+    const QVector<CompLink> links{{3, 5, "bg"}, {4, 5, "fg"}, {2, 5, "mask"}};
+    const QVariantMap shape{{"n2.x", 0.3}, {"n2.y", 0.4}, {"n2.w", 0.2}, {"n2.h", 0.2},
+                            {"n3.color", QColor(0, 0, 0)}, {"n4.color", QColor(255, 255, 255)}};
+    QVariantMap follow = shape;
+    follow.insert("n2.follow", 1);
+    follow.insert("n1.ax", 0.6);
+    follow.insert("n1.ay", 0.7);
+    Buf plain, followed, moved;
+    CHECK(evaluate(comp(kinds, links, 5, shape), env, nullptr, &plain));
+    CHECK(evaluate(comp(kinds, links, 5, follow), env, nullptr, &followed));
+    CHECK(!plain.isNull() && plain.px == followed.px);
+    follow.insert("n1.x", 0.8);
+    follow.insert("n1.y", 0.7);
+    CHECK(evaluate(comp(kinds, links, 5, follow), env, nullptr, &moved) && moved.px != plain.px);
 }
 
 // ---- comp from selection ----
