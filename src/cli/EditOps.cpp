@@ -217,8 +217,9 @@ int parseSubtitleTrack(const QJsonValue& v)
     return n - 1;
 }
 
-// JSON value -> effect parameter value (checked against the effect's description)
-QVariant effectValue(const EffectDescriptor& d, const QString& key, const QJsonValue& v)
+// JSON value -> effect parameter value (checked against the effect's description); picture: the size the effect will
+// work on (a filter chain is tried on it)
+QVariant effectValue(const EffectDescriptor& d, const QString& key, const QJsonValue& v, QSize picture)
 {
     const auto it = std::find_if(d.params.begin(), d.params.end(), [&](const EffectParam& p) { return p.key == key; });
     if (it == d.params.end()) {
@@ -254,7 +255,7 @@ QVariant effectValue(const EffectDescriptor& d, const QString& key, const QJsonV
         // The custom effects' code is checked here, so a bad chain or shader never reaches a render
         const QString text = v.toString();
         QString why;
-        if (d.id == QLatin1String(Picture::Custom::kFilterId)) why = Picture::Custom::checkFilter(text);
+        if (d.id == QLatin1String(Picture::Custom::kFilterId)) why = Picture::Custom::checkFilter(text, picture);
         else if (d.id == QLatin1String(Picture::Custom::kShaderId)) why = Picture::Custom::checkShader(text);
         if (!why.isEmpty()) fail("BAD_ARGUMENT", QString("%1.%2: %3").arg(d.id, key, why));
         return text;
@@ -664,7 +665,7 @@ void opEffect(Session& s, const QJsonObject& op)
                                           d->video ? "video effects" : "audio effects");
     QVariantMap values;
     const QJsonObject params = op.value("params").toObject();
-    for (auto it = params.begin(); it != params.end(); ++it) values[it.key()] = effectValue(*d, it.key(), it.value());
+    for (auto it = params.begin(); it != params.end(); ++it) values[it.key()] = effectValue(*d, it.key(), it.value(), s.format().size());
     if (QString why; Picture::Custom::isCustom(effectId) && !Picture::Custom::canRender(effectId, &why))
         s.notes << QString("%1 is stored but skipped while rendering on this machine: %2").arg(effectId, why);
     s.editor.addEffect(targets, effectId); // clips that have it already keep it

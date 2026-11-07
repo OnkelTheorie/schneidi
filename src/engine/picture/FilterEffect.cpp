@@ -376,7 +376,7 @@ thread_local ThreadCache t_cache;
 
 bool filterAvailable() { return true; }
 
-QString checkFilter(const QString& chain, int budgetMs)
+QString checkFilter(const QString& chain, QSize size, int budgetMs)
 {
     if (chain.trimmed().isEmpty()) return {};
     // A test picture with a gradient: the chain must build and turn it into a picture of the same size. On a thread
@@ -390,13 +390,15 @@ QString checkFilter(const QString& chain, int budgetMs)
         QString error;
     };
     auto st = std::make_shared<State>();
-    std::thread([st, chain] {
-        constexpr int w = 64, h = 36;
+    // The size the effect will run at (a crop=1280:720 fits a 1080p clip, not a small picture); unknown: a small one
+    const int w = size.width() > 0 && size.height() > 0 ? std::min(size.width(), 8192) : 64;
+    const int h = size.width() > 0 && size.height() > 0 ? std::min(size.height(), 8192) : 36;
+    std::thread([st, chain, w, h] {
         std::vector<uint8_t> px(size_t(w) * h * 4);
         for (int y = 0; y < h; ++y)
             for (int x = 0; x < w; ++x) {
                 uint8_t* p = &px[(size_t(y) * w + x) * 4];
-                p[0] = uint8_t(x * 4), p[1] = uint8_t(y * 7), p[2] = 128, p[3] = 255;
+                p[0] = uint8_t(x * 255 / w), p[1] = uint8_t(y * 255 / h), p[2] = 128, p[3] = 255;
             }
         QString error;
         if (auto g = build(chain, w, h, &error)) run(*g, px.data(), 0.0, &error);
@@ -451,7 +453,7 @@ QString unavailable()
 } // namespace
 
 bool filterAvailable() { return false; }
-QString checkFilter(const QString& chain, int) { return chain.trimmed().isEmpty() ? QString() : unavailable(); }
+QString checkFilter(const QString& chain, QSize, int) { return chain.trimmed().isEmpty() ? QString() : unavailable(); }
 bool applyFilter(const QString& chain, uint8_t*, int, int, double, QString* error)
 {
     if (chain.trimmed().isEmpty()) return true;

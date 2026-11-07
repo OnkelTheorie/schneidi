@@ -197,11 +197,14 @@ void filterChecks()
         for (int i = 0; i < 40; ++i) slow += ",gblur=sigma=30:steps=6,geq=lum='taylor(sin(X),Y,9)':cb=128:cr=128";
         QElapsedTimer t;
         t.start();
-        const QString why = PC::checkFilter(slow, 1);
+        const QString why = PC::checkFilter(slow, {}, 1);
         if (!CHECK(why.contains("takes too long"))) std::printf("       %s\n", qPrintable(why));
         CHECK(t.elapsed() < 500); // the caller does not wait for the slow chain
         CHECK_EQ(PC::checkFilter(slow), QString()); // fine with the normal budget
     }
+    // Tried at the picture's size: a fixed crop fits a 1080p clip but not the small fallback picture
+    CHECK_EQ(PC::checkFilter("crop=1280:720", QSize(1920, 1080)), QString());
+    CHECK(!PC::checkFilter("crop=1280:720").isEmpty());
     // Not one linear chain
     refused("negate;hue=s=0", "one linear chain");
     refused("[in]negate[out]", "labels");
@@ -292,6 +295,12 @@ int main(int argc, char** argv)
                                                       {"effect", "ffmpeg_filter"},
                                                       {"params", QJsonObject{{"chain", "hue=bogus=2"}}}}});
         CHECK(badOpt.contains("no option 'bogus'"));
+        // tried at the timeline's size (320x180): a fixed crop larger than the small fallback picture is fine
+        CHECK_EQ(editError({QJsonObject{{"op", "effect"}, {"clips", QJsonArray{clip}}, {"effect", "ffmpeg_filter"},
+                                        {"params", QJsonObject{{"chain", "crop=200:100"}}}}}),
+                 QString("none"));
+        edit({QJsonObject{{"op", "effect"}, {"clips", QJsonArray{clip}}, {"effect", "ffmpeg_filter"},
+                          {"params", QJsonObject{{"chain", "negate"}}}}});
         // the refused chain did not replace the stored one
         const ProjectData d = load();
         const Clip* c = TimelineOps::findClip(d.timeline, clip);
