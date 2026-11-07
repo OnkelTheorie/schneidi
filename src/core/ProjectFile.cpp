@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "core/ProjectFile.h"
+#include "core/CodeTrust.h"
 #include "core/TitleLookJson.h"
 #include "core/PathKey.h"
 
@@ -1260,6 +1261,11 @@ bool save(const ProjectData& data, const QString& path, QString* error)
         if (error) *error = f.errorString();
         return false;
     }
+    // Custom code all trusted in this run (written or confirmed by the user): remembered for this file, so it renders
+    // when the file is opened again (core/CodeTrust.h). Untrusted code keeps the file unremembered.
+    if (const QStringList codes = CodeTrust::codes(data);
+        !codes.isEmpty() && CodeTrust::allTrusted(codes) && !CodeTrust::remembered(path, codes))
+        CodeTrust::remember(path, codes);
     return true;
 }
 
@@ -1422,6 +1428,7 @@ bool load(const QString& path, ProjectData* data, QString* error, QString* warni
     }
     if (!fromJson(bytes, path, data, error, warning)) return false;
     restoreBuiltinSounds(data);
+    CodeTrust::admit(path, CodeTrust::codes(*data)); // custom code of a file the user trusted renders again
     return true;
 }
 

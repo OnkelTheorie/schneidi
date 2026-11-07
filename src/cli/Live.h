@@ -178,6 +178,7 @@ struct Snapshot {
     QString path; // project file in the app (empty = never saved)
     QByteArray data;
     QJsonObject app;
+    QStringList trustedCode; // sha1 (CodeTrust::hashOf of one) of the project's custom code the app trusts
 };
 Snapshot snapshot(Connection* c);
 // Runs a command inside the app; throws its Error

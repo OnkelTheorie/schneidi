@@ -499,7 +499,8 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
     for (const Picture::SkippedEffect& e : Picture::skippedEffects(tl)) {
         if (e.video ? s.videoCodec.isEmpty() : s.audioCodec.isEmpty()) continue; // no picture/sound written anyway
         m_skipped << e;
-        qWarning("Export: effect %s of clip %d is not available here and is skipped", qPrintable(e.effect), e.clip);
+        qWarning("Export: effect %s of clip %d is %s and is skipped", qPrintable(e.effect), e.clip,
+                 e.reason == QLatin1String("untrusted") ? "custom code nobody trusted here" : "not available here");
     }
     if (QString why; !writable(s, sampleFormat, &why)) {
         if (error) *error = T("Export konnte nicht gestartet werden.") + " (" + why + ")";

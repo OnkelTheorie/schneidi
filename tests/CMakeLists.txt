@@ -79,6 +79,8 @@ schneidi_test(test_own_effects)
 # project file round trip; through the CLI
 schneidi_test(test_custom_effects)
 target_link_libraries(test_custom_effects PRIVATE schneidi_cli_lib)
+schneidi_test(test_code_trust) # trust for custom code (0.19): untrusted skipped, check/info/render say so, trust_custom_code, records, recipes
+target_link_libraries(test_code_trust PRIVATE schneidi_cli_lib)
 # The shader on the graphics card (the GPU decides by itself; skips without one or without qsb)
 schneidi_test(test_custom_shader)
 set_tests_properties(test_custom_shader PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;SCHNEIDI_AUDIO_DEVICE=null")

@@ -3,6 +3,7 @@
 // before handing it over
 #include "cli/AnalysisDetail.h"
 
+#include "core/CodeTrust.h"
 #include "core/CompGraph.h"
 #include "core/EffectRegistry.h"
 #include "core/ExportCheck.h"
@@ -414,6 +415,22 @@ QJsonObject cmdCheck(const QJsonObject& a, Context& ctx)
                                                  std::max(from, c.start), std::min(to, c.end()), c.id};
                 }
             }
+        // Custom code the user did not confirm (a project or recipe from someone else, core/CodeTrust.h): kept but not
+        // run until trusted (render/edit/open with trust_custom_code:true, or "Ausführen" in the app)
+        {
+            const ProjectData data = s.project.data();
+            for (const CodeTrust::Item& it : CodeTrust::untrusted(data)) {
+                const Clip* c = it.sequence == s.project.currentSequence() ? TimelineOps::findClip(tl, it.clip) : nullptr;
+                if (c && (c->end() <= from || c->start >= to)) continue;
+                const QString what = it.node ? QStringLiteral("comp:%1 (node %2)").arg(it.effect).arg(it.node) : it.effect;
+                QString first = it.code.trimmed().section(QLatin1Char('\n'), 0, 0).left(60);
+                issues << ExportCheck::Issue{ExportCheck::Severity::Warning, "custom_code_untrusted",
+                                             T("Eigener Code in „%1“ läuft erst, wenn du ihm vertraust (nicht von dir "
+                                               "geschrieben): „%2“ – trust_custom_code:true oder „Ausführen“ in der App")
+                                                 .arg(what, first),
+                                             c ? std::max(from, c->start) : -1, c ? std::min(to, c->end()) : -1, it.clip};
+            }
+        }
         // Keys of compositing graphs: the matte at the middle of the clip, small (one frame per key node, at most 8)
         int keys = 0;
         for (const Track& t : tl.video)

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "core/CompRecipes.h"
 
+#include "core/CodeTrust.h"
 #include "core/I18n.h"
 #include "core/StartTemplates.h"
 #include "core/TemplateZip.h"
@@ -344,8 +345,23 @@ std::optional<CompRecipe> find(const QString& key, QString* error)
     return std::nullopt;
 }
 
+namespace {
+// The custom code (filter chains, shaders of fx nodes) of a recipe, for its trust record (core/CodeTrust.h)
+QStringList customCode(const CompRecipe& r)
+{
+    QStringList out;
+    for (auto n = r.values.cbegin(); n != r.values.cend(); ++n)
+        for (const char* key : {"e_chain", "e_code"})
+            if (const QString code = n.value().value(QLatin1String(key)).toString(); !code.trimmed().isEmpty()) out << code;
+    return out;
+}
+} // namespace
+
 bool apply(const CompRecipe& r, const QVariantMap& with, CompGraph* graph, QHash<int, QVariantMap>* values, QString* error)
 {
+    // Its code renders only when the user saved the recipe from trusted code (or confirmed it): one from a ZIP (or a
+    // changed file) stays unrun until the user trusts it in the project
+    CodeTrust::admit(r.file, customCode(r));
     const auto bad = [error](const QString& why) {
         if (error) *error = why;
         return false;
@@ -482,7 +498,13 @@ std::optional<CompRecipe> save(const EffectInstance& comp, const QString& name, 
         return std::nullopt;
     }
     if (!moveIntoPlace(staging, r.id, o.replace, error, code)) return std::nullopt;
-    return open(QDir(dir()).filePath(r.id), error);
+    std::optional<CompRecipe> saved = open(QDir(dir()).filePath(r.id), error);
+    // The user's own trusted code stays trusted in this recipe (not a recipe's code they never confirmed)
+    if (saved) {
+        const QStringList codes = customCode(*saved);
+        if (!codes.isEmpty() && CodeTrust::allTrusted(codes)) CodeTrust::remember(saved->file, codes);
+    }
+    return saved;
 }
 
 bool remove(const QString& id, QString* error, QString* code)

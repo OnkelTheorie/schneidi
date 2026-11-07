@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // A custom effect instance on a clip's picture (Renderer::applyEffects): its values and keyframes at clip time
+#include "core/CodeTrust.h"
 #include "core/EffectRegistry.h"
 #include "core/Keyframes.h"
 #include "engine/picture/CustomEffects.h"
@@ -33,8 +34,14 @@ bool applyToClip(const Clip& c, const EffectInstance& inst, double t, double fps
     const double seconds = fps > 0 ? t / fps : 0.0;
     QString why;
     bool ok = false;
+    // Code the user did not write or confirm (a project or recipe from someone else) stays in the project, unrun
+    const QString code = inst.params.value(QLatin1String(inst.effectId == QLatin1String(kFilterId) ? kChainKey : kCodeKey)).toString();
+    if (!CodeTrust::isTrusted(code)) {
+        warnOnce(inst.effectId, QStringLiteral("untrusted custom code (trust it in the app or with trust_custom_code)"));
+        return false;
+    }
     if (inst.effectId == QLatin1String(kFilterId)) {
-        ok = applyFilter(inst.params.value(QLatin1String(kChainKey)).toString(), rgba, width, height, seconds, &why);
+        ok = applyFilter(code, rgba, width, height, seconds, &why);
     } else if (inst.effectId == QLatin1String(kShaderId)) {
         ShaderValues v;
         v.seconds = seconds;
@@ -52,7 +59,7 @@ bool applyToClip(const Clip& c, const EffectInstance& inst, double t, double fps
                     inst.params.value(p.key, p.defaultValue).value<QColor>();
             }
         }
-        ok = applyShader(inst.params.value(QLatin1String(kCodeKey)).toString(), v, rgba, width, height, &why);
+        ok = applyShader(code, v, rgba, width, height, &why);
     }
     if (!ok) warnOnce(inst.effectId, why);
     return ok;

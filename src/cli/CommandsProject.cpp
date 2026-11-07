@@ -5,6 +5,7 @@
 #include "cli/Sandbox.h"
 
 #include "core/Accents.h"
+#include "core/CodeTrust.h"
 #include "core/CompRecipes.h"
 #include "core/Editor.h"
 #include "core/StreamPresets.h"
@@ -58,6 +59,17 @@
 namespace Cli::detail {
 
 namespace {
+
+// trust_custom_code:true (render, edit, app open): the caller vouches for the project's custom code (filter chains,
+// shaders; core/CodeTrust.h): it renders in this run and is remembered for the file
+void trustCustomCode(const Session& s, const QJsonObject& a)
+{
+    if (!a["trust_custom_code"].toBool()) return;
+    const QStringList codes = CodeTrust::codes(s.project.data());
+    if (codes.isEmpty()) return;
+    CodeTrust::trust(codes);
+    if (!s.path.isEmpty() && !Live::isAppProject(s.path) && QFileInfo(s.path).isFile()) CodeTrust::remember(s.path, codes);
+}
 
 // A timeline as `info` with summary shows it: counts instead of the lists (the full JSON of a long timeline is big)
 QJsonObject summarized(QJsonObject tl)
@@ -446,6 +458,7 @@ QJsonObject applyEdit(Session& s, const QJsonArray& ops, const QJsonObject& a, b
                       const QVector<int>& numbers = {})
 {
     s.dryRun = dry;
+    if (!dry) trustCustomCode(s, a);
     const QMap<QString, Shown> before = shownItems(s.project);
     QMap<QString, Shown> last = before;
     for (int i = 0; i < ops.size(); ++i) {
@@ -802,6 +815,7 @@ void checkExtension(const QString& out, const QString& formatId)
 QJsonObject cmdRender(const QJsonObject& a, Context& ctx)
 {
     Session s(a["project"].toString());
+    trustCustomCode(s, a);
     s.selectTimeline(a["timeline"]);
     // Review render (cli/RenderReview.cpp): a small fast video with the marks burned in, or one picture of the timeline
     const QString review = a["review"].toString();
@@ -1022,6 +1036,7 @@ QJsonObject cmdRender(const QJsonObject& a, Context& ctx)
         for (const Picture::SkippedEffect& e : ex.skippedEffects()) {
             QJsonObject so{{"clip", e.clip}, {"effect", e.effect}, {"kind", e.video ? "video" : "audio"}};
             if (e.sequence >= 0) so["sequence"] = e.sequence;
+            if (!e.reason.isEmpty()) so["reason"] = e.reason; // "untrusted": custom code not confirmed
             skipped << so;
         }
         o["skipped_effects"] = skipped;
@@ -1273,6 +1288,10 @@ QJsonObject cmdApp(const QJsonObject& a, Context&)
         if (projects.size() > 1) fail("BAD_ARGUMENT", "open takes one project file at a time");
         QString error;
         if (!projects.isEmpty()) {
+            // trust_custom_code: its filter chains/shaders render in the app without asking (core/CodeTrust.h)
+            ProjectData d;
+            if (a["trust_custom_code"].toBool() && ProjectFile::load(projects.first(), &d, nullptr))
+                CodeTrust::trustFile(projects.first(), CodeTrust::codes(d));
             if (!h->liveOpen(projects, false, &error)) fail("OPEN_FAILED", error);
             o["opened"] = h->liveProjectPath();
         }

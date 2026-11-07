@@ -6,6 +6,7 @@
 // (needs qsb; the pixels on the card are tested by test_custom_shader).
 #include "cli/Commands.h"
 #include "cli/CommandsDetail.h"
+#include "core/CodeTrust.h"
 #include "core/EffectRegistry.h"
 #include "core/Keyframes.h"
 #include "core/ProjectFile.h"
@@ -242,6 +243,10 @@ void fxNode()
     Picture::Comp::RunOptions opt;
     opt.size = QSize(32, 18);
     Picture::Comp::Buf out;
+    // Code nobody trusted passes the picture through (core/CodeTrust.h); trusted, it runs
+    CHECK(Picture::Comp::runNode("fx", {{"effect", "ffmpeg_filter"}, {"e_chain", "negate"}}, {{"src", src}}, opt, &out));
+    if (CHECK_EQ(out.px.size(), g.size())) CHECK_EQ(int(out.px[4 * 5]), int(g[4 * 5]));
+    CodeTrust::trust(QStringLiteral("negate"));
     CHECK(Picture::Comp::runNode("fx", {{"effect", "ffmpeg_filter"}, {"e_chain", "negate"}}, {{"src", src}}, opt, &out));
     if (CHECK_EQ(out.px.size(), g.size())) CHECK_EQ(int(out.px[4 * 5]), 255 - g[4 * 5]);
     // The fx node with a custom effect is never cached as static (the chain may use the time)

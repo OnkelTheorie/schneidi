@@ -31,7 +31,7 @@ struct Issue {
                      // "slow_hook", "stutter", "missing_effect", "encoder_quality", "black_bars", "too_long",
                      // "pace_slow", "story_no_hook", "story_hook_late", "story_resolution_late",
                      // "story_open_question", "story_no_cta", "story_gap", "retention_drop", "comp_unused_input",
-                     // "comp_slow", "key_edges", "custom_effect_skipped"
+                     // "comp_slow", "key_edges", "custom_effect_skipped", "custom_code_untrusted"
     QString message; // for people, in the UI language
     int from = -1;   // frames (exclusive end), -1 = whole video
     int to = -1;

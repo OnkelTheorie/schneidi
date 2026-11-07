@@ -58,6 +58,9 @@ names cost a failed call.
    clip (allowed filters: `effects` `effect:'ffmpeg_filter'`), `effect:'shader'` with `params.code` a GLSL function
    `vec4 effect(vec2 uv)` (glitch, liquify, mosaic, own looks; p1..p8 and color1/2 take keyframes; needs a graphics
    card). Both are checked when set: an error comes back with the reason or the line - fix it and send it again.
+   Code you set renders right away; custom code that came with a project or recipe from someone else is skipped
+   until the user trusts it (`check`: custom_code_untrusted) - ask them, then `trust_custom_code:true` on
+   `edit`/`render`/`app open`.
    If neither can do it (several inputs, a whole clip at once, a tool schneidi does not have), compute it outside
    (`ffmpeg`, Python) into a new file and place that file as a clip.
 4. **Check before rendering**: `check` on the project (gaps, missing media, subtitles, sound, game sound or

@@ -2,6 +2,7 @@
 #include "engine/picture/Renderer.h"
 
 #include "core/Captions.h"
+#include "core/CodeTrust.h"
 #include "core/CompGraph.h"
 #include "core/EffectRegistry.h"
 #include "core/Generators.h"
@@ -2862,16 +2863,27 @@ QVector<SkippedEffect> skippedEffects(const Timeline& tl)
                 for (const EffectInstance& e : c.effects) {
                     if (!e.enabled) continue;
                     // A compositing graph renders; node kinds of a newer version in it are passed through
+                    // Custom code the user did not confirm (core/CodeTrust.h) stays unrun
+                    const auto untrusted = [&](const EffectInstance& inst) {
+                        for (const CodeTrust::Item& it : CodeTrust::itemsOf(inst))
+                            if (!CodeTrust::isTrusted(it.code))
+                                out << SkippedEffect{c.id, it.node ? QStringLiteral("comp:") + it.effect : it.effect,
+                                                     true, sequence, QStringLiteral("untrusted")};
+                    };
                     if (e.effectId == QLatin1String(::Comp::kEffectId)) {
                         for (const QString& kind : Comp::unknownKinds(e))
                             out << SkippedEffect{c.id, QStringLiteral("comp:") + kind, true, sequence};
+                        untrusted(e);
+                        continue;
+                    }
+                    if (Custom::isCustom(e.effectId) && Custom::canRender(e.effectId)) {
+                        untrusted(e);
                         continue;
                     }
                     const EffectDescriptor* d = EffectRegistry::find(e.effectId);
                     if (d && (d->fixed || !d->video || e.effectId == QLatin1String("color")
                               || e.effectId == QLatin1String("blur") || e.effectId == QLatin1String("chromakey")
-                              || VideoEffects::isOwn(e.effectId)
-                              || (Custom::isCustom(e.effectId) && Custom::canRender(e.effectId))))
+                              || VideoEffects::isOwn(e.effectId)))
                         continue;
                     out << SkippedEffect{c.id, e.effectId, true, sequence}; // not known here or not drawn by this engine
                 }
