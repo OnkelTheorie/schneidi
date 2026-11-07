@@ -19,6 +19,7 @@
 
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QGuiApplication>
 #include <QImage>
 #include <QJsonArray>
@@ -361,6 +362,23 @@ int main(int argc, char** argv)
         CHECK(graphOf(clip).linkInto(3, "bg"));
         un["unlink"] = QJsonArray{1, 3, true};
         CHECK(editError({un}).contains("the input is a name"));
+        edit({QJsonObject{{"op", "comp"}, {"clips", QJsonArray{clip}}, {"remove", true}}});
+    }
+
+    // File parameters (Comp::fileKeys): absolute, readable, a LUT by name as op 'look' (round 2)
+    {
+        QJsonObject add = op(R"({"op":"node","add":{"type":"grade","params":{"lut":"teal-orange"}}})");
+        add["clip"] = clip;
+        const QJsonObject r = edit({add});
+        const QJsonObject graph = r["notes"].toArray().first().toObject()["node"].toObject()["graph"].toObject();
+        const QString lut = graph["nodes"].toArray().last().toObject()["params"].toObject()["lut"].toString();
+        CHECK(QFileInfo(lut).isAbsolute() && QFileInfo(lut).isFile());
+        add["add"] = op(R"({"type":"grade","params":{"lut":"no-such-lut"}})");
+        CHECK(editError({add}).contains("no LUT 'no-such-lut'"));
+        add["add"] = QJsonObject{{"type", "text"}, {"params", QJsonObject{{"texture", dir.filePath("missing.png")}}}};
+        CHECK(editError({add}).contains("cannot read the file"));
+        add["add"] = QJsonObject{{"type", "text"}, {"params", QJsonObject{{"texture", still}}}};
+        edit({add});
         edit({QJsonObject{{"op", "comp"}, {"clips", QJsonArray{clip}}, {"remove", true}}});
     }
 

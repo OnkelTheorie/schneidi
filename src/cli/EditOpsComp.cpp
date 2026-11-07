@@ -12,9 +12,11 @@
 #include "core/ExportCheck.h"
 #include "core/Keyframes.h"
 #include "core/TimelineOps.h"
+#include "engine/ColorGrade.h"
 #include "engine/picture/CompNodes.h"
 #include "engine/picture/CompTrack.h"
 
+#include <QFileInfo>
 #include <QJsonArray>
 
 #include <algorithm>
@@ -99,9 +101,20 @@ QVariantMap nodeValues(Session& s, const PC::NodeType& k, const QJsonValue& v, c
         case EffectParam::Path: {
             if (!x.isString()) fail("BAD_ARGUMENT", QString("'%1' must be a text").arg(name));
             QString text = x.toString();
-            // The file of a media node is a media pool item (imported on first use)
-            if (k.id == QLatin1String(::Comp::kMediaType) && key == QLatin1String(::Comp::kPathKey) && !text.isEmpty())
-                text = s.media(absolute(text)).path;
+            if (!text.isEmpty() && ::Comp::fileKeys(k.id).contains(key)) { // a file (empty = none)
+                if (k.id == QLatin1String(::Comp::kMediaType) && key == QLatin1String(::Comp::kPathKey)) {
+                    text = s.media(absolute(text)).path; // a media pool item (imported on first use)
+                } else if (k.id == QLatin1String(::Comp::kGradeType) && key == QLatin1String(::Comp::kLutKey)) {
+                    text = findAsset(Asset::Lut, text); // by name as op 'look', or a file
+                    QString error;
+                    if (!ColorGrade::parseLut(text, &error))
+                        fail("BAD_ARGUMENT", QString("'%1': cannot read the LUT: %2").arg(name, error));
+                } else {
+                    text = absolute(text);
+                }
+                if (!QFileInfo(text).isFile() || !QFileInfo(text).isReadable())
+                    fail("NOT_FOUND", QString("'%1': cannot read the file '%2'").arg(name, text));
+            }
             out[key] = text;
             break;
         }
@@ -524,7 +537,9 @@ void addCompOps(QVector<OpDef>& ops)
                  "the new node; input:false only adds it (a text or color to link yourself). A clip without a graph "
                  "gets one ('clip' node first). The answer's notes give the new id and the graph. remove: what read "
                  "the node reads its first input instead (a chain stays a chain). link replaces what was in that "
-                 "input; a cycle or an input the type does not have is an error. Example: blur only in a mask - "
+                 "input; a cycle or an input the type does not have is an error. unlink takes the link from `from` "
+                 "(without input: the one it feeds). File values (media path, grade lut, text texture) must be "
+                 "readable files; a lut also by name as in op 'look'. Example: blur only in a mask - "
                  R"({"op":"node","clip":4,"add":{"type":"blur","params":{"radius":12}}} then {"op":"node","clip":4,"add":{"type":"mask","params":{"shape":"ellipse"}},"input":false} and {"op":"node","clip":4,"link":[3,2,"mask"]}.)",
                  opNode, QStringList{"id", "params", "remove", "link", "unlink", "out"}}
         << OpDef{"track_node", "{op:'track_node', clip, node, from?, to?}",
