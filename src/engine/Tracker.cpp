@@ -133,12 +133,26 @@ double PointTracker::ncc(const Gray& f, int x0, int y0) const
             const float* row = &f.px[(size_t(c) * f.height + y0 + y) * f.width + x0];
             const float* w = &m_w[size_t(y) * m_tw];
             const float* wt = &m_wt[(size_t(c) * m_th + y) * m_tw];
-            for (int x = 0; x < m_tw; ++x) {
-                const double wi = double(w[x]) * row[x];
-                sum += wi;
-                sum2 += wi * row[x];
-                cross += double(wt[x]) * row[x];
+            // A row in float with four partial sums (vectorizes; at most 48 terms, so float is exact enough), the
+            // rows in double
+            float s[4] = {}, s2[4] = {}, cr[4] = {};
+            int x = 0;
+            for (; x + 4 <= m_tw; x += 4)
+                for (int k = 0; k < 4; ++k) {
+                    const float wi = w[x + k] * row[x + k];
+                    s[k] += wi;
+                    s2[k] += wi * row[x + k];
+                    cr[k] += wt[x + k] * row[x + k];
+                }
+            for (; x < m_tw; ++x) {
+                const float wi = w[x] * row[x];
+                s[0] += wi;
+                s2[0] += wi * row[x];
+                cr[0] += wt[x] * row[x];
             }
+            sum += double(s[0] + s[1]) + double(s[2] + s[3]);
+            sum2 += double(s2[0] + s2[1]) + double(s2[2] + s2[3]);
+            cross += double(cr[0] + cr[1]) + double(cr[2] + cr[3]);
         }
         var += sum2 - sum * sum / m_wSum;
     }
