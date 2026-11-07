@@ -249,14 +249,16 @@ CompPlanPtr planComp(const EffectInstance& comp, const Comp::Env& env, Comp::Cac
                     const CompNode* o = g.node(other);
                     const Comp::NodeType* ok = o ? Comp::find(o->type) : nullptr;
                     if (!ok) return 0.0;
-                    if (o->type == QLatin1String(::Comp::kTrackerType)
-                        && (key == QLatin1String("x") || key == QLatin1String("y"))
-                        && !values.value(other).contains(key) && !animated.value(other).contains(key))
-                        return num(other, *ok, key == QLatin1String("x") ? QStringLiteral("ax") : QStringLiteral("ay"));
+                    if (o->type == QLatin1String(::Comp::kTrackerType)) // the follow rule, as CompEval
+                        return ::Comp::followValue(
+                            key, text(other, *ok, QStringLiteral("mode")),
+                            [&](const QString& q) { return values.value(other).contains(q) || animated.value(other).contains(q); },
+                            [&](const QString& q) { return num(other, *ok, q); });
                     return num(other, *ok, key);
                 };
                 ctx.input = [](const QString&) -> const Comp::Buf* { return nullptr; };
                 ctx.take = [&](Comp::Buf::Kind kind) { return Comp::Buf(kind, W, H); };
+                ctx.give = [](Comp::Buf&& b) { b.px = {}; }; // scratch buffers: plain memory here
                 Comp::Buf b;
                 if (!fk->eval(ctx, &b) || b.kind != Comp::Buf::Mask || b.w != W || b.h != H) {
                     stepOf[l.from] = -1;
