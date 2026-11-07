@@ -15,6 +15,7 @@
 #include "core/Selection.h"
 #include "core/TimelineOps.h"
 #include "engine/Engine.h"
+#include "engine/picture/CustomEffects.h"
 #include "ui/EffectsLibrary.h"
 #include "ui/comp/CompCanvas.h"
 #include "ui/comp/CompInspector.h"
@@ -25,7 +26,10 @@
 
 #include <QApplication>
 #include <QDir>
+#include <QLabel>
 #include <QListWidget>
+#include <QPlainTextEdit>
+#include <QPushButton>
 #include <QMimeData>
 #include <QTemporaryDir>
 #include <QTest>
@@ -241,6 +245,56 @@ int main(int argc, char** argv)
         page->selectNode(4);
         settle();
         dump(&w, "comp-page-polished");
+
+        // ---- fx node: the wrapped effect's own values (e_<key>) in the inspector ----
+        page->selectNode(5);
+        settle();
+        CompInspector* ins = page->inspector();
+        const EffectDescriptor* glow = EffectRegistry::find("frei0r.glow");
+        for (const EffectParam& q : glow->params) CHECK(ins->findChild<QWidget*>("comp_param_e_" + q.key) != nullptr);
+        CHECK(ins->findChild<QWidget*>("comp_param_effect") != nullptr);
+    }
+
+    // ---- fx node with a filter chain: a multi-line field, "Anwenden" checks like the CLI and shows the error ----
+    {
+        CompGraph g;
+        g.nodes << CompNode{1, "clip", {}} << CompNode{2, "fx", {}};
+        g.links << CompLink{1, 2, "src"};
+        g.out = 2;
+        QHash<int, QVariantMap> values;
+        values[2] = {{"effect", "ffmpeg_filter"}};
+        QString why;
+        CHECK(w.editor()->setCompGraph({clip2}, g, values, CompUi::kinds(), &why));
+        w.openComp(clip2);
+        CompPage* page = w.compPage();
+        page->selectNode(2);
+        settle();
+        CompInspector* ins = page->inspector();
+        auto* edit = ins->findChild<QPlainTextEdit*>("comp_param_e_chain");
+        auto* applyButton = ins->findChild<QPushButton*>("comp_apply_e_chain");
+        auto* error = ins->findChild<QLabel*>("comp_error_e_chain");
+        if (!CHECK(edit && applyButton && error)) return Check::result();
+        const QString bad = "movie=/etc/passwd";
+        const QString expected = Picture::Custom::checkFilter(bad);
+        CHECK(!expected.isEmpty());
+        int idx = undo->index();
+        edit->setPlainText(bad);
+        applyButton->click();
+        settle();
+        CHECK_EQ(undo->index(), idx); // refused: nothing set
+        CHECK(error->isVisibleTo(ins));
+        CHECK_EQ(error->text(), expected);
+        if (Picture::Custom::filterAvailable() && Picture::Custom::checkFilter("hue=s=0").isEmpty()) {
+            edit->setPlainText("hue=s=0");
+            applyButton->click();
+            settle();
+            CHECK_EQ(undo->index(), idx + 1);
+            CHECK(!error->isVisibleTo(ins));
+            const Clip* c = TimelineOps::findClip(project->timeline(), clip2);
+            CHECK_EQ(CompUi::nodeValues(*c, 2).value("e_chain").toString(), QString("hue=s=0"));
+        } else {
+            std::puts("note: no FFmpeg filters here, only the refusal checked");
+        }
     }
     return Check::result();
 }

@@ -4,14 +4,20 @@
 // like the Edit page's Inspector, choices, switches, colors (the key color with a pipette), files. Each change is one
 // Editor op: setCompNodeValuesAt (a drag of a number field = one undo step; a number with keyframes gets one at the
 // playhead), setCompNodeKeyframe for the diamond. Widgets are rebuilt only when another node (or another set of
-// parameters, a mask's shape) is shown, never during a drag.
+// parameters, a mask's shape) is shown, never during a drag. An fx node shows its effect's own values (e_<key>); a
+// text value (the filter chain, the shader code) is edited in a multi-line field and set with "Anwenden" after the
+// same check as the CLI's (the error shown under the field, nothing set).
 
 #include <QScrollArea>
 #include <QStringList>
 #include <QVector>
 #include <functional>
+#include <memory>
 
 class Editor;
+namespace Picture::Comp {
+struct NodeType;
+}
 class QLabel;
 class QGridLayout;
 class QToolButton;
@@ -34,6 +40,9 @@ signals:
 
 private:
     const Clip* clip() const;
+    // The node's kind as shown: an fx node also gets the wrapped effect's own parameters as e_<key> (labels, ranges,
+    // defaults of the effect's descriptor)
+    std::shared_ptr<const Picture::Comp::NodeType> shownKind(const Clip& c) const;
     QStringList shownKeys(const Clip& c) const; // the parameters shown for the node now
     void rebuild(const Clip& c, const QStringList& keys);
     void set(const QString& key, const QVariant& value, bool drag);
