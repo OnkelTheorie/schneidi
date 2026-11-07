@@ -402,6 +402,34 @@ Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
     gradeLay->addWidget(gradeTrash);
     m_gradeRow->setStyleSheet(QString("QWidget { background: %1; }").arg(Theme::panel.name()));
     fxLay->addWidget(m_gradeRow);
+    // The clip's compositing graph (0.19): how big, and a way to the Comp page
+    m_compRow = new QWidget;
+    m_compRow->setObjectName("inspector_comp_row");
+    auto* compLay = new QHBoxLayout(m_compRow);
+    compLay->setContentsMargins(10, 4, 6, 4);
+    m_compText = new QLabel;
+    auto* compOpen = new QPushButton(T("Öffnen"));
+    compOpen->setObjectName("inspector_comp_open");
+    compOpen->setFocusPolicy(Qt::NoFocus);
+    compOpen->setToolTip(T("Den Graphen auf der Comp-Seite bearbeiten"));
+    connect(compOpen, &QPushButton::clicked, this, [this] {
+        if (const Clip* c = primary(TrackKind::Video)) emit compOpenRequested(c->id);
+    });
+    auto* compTrash = new QToolButton;
+    compTrash->setIcon(trashIcon());
+    compTrash->setIconSize(QSize(14, 14));
+    compTrash->setAutoRaise(true);
+    compTrash->setFocusPolicy(Qt::NoFocus);
+    compTrash->setToolTip(T("Effekt entfernen"));
+    compTrash->setStyleSheet("QToolButton { border: none; background: transparent; }");
+    connect(compTrash, &QToolButton::clicked, this, [this] { m_editor->removeComp(selectedIds(TrackKind::Video)); });
+    compLay->addWidget(m_compText, 1);
+    compLay->addWidget(compOpen);
+    compLay->addWidget(compTrash);
+    m_compRow->setStyleSheet(QString("QWidget#inspector_comp_row { background: %1; }").arg(Theme::panel.name()));
+    m_compRow->setAttribute(Qt::WA_StyledBackground);
+    m_compRow->hide();
+    fxLay->addWidget(m_compRow);
     m_fxLay = fxLay;
     m_fxIndex = fxLay->count(); // sections are created once a clip has the effect (arrangeEffectSections)
     fxLay->addStretch(1);

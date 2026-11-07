@@ -51,6 +51,7 @@ enum Category {
     PresetsAll, PresetGroup,                                      // Shotcut/Kdenlive presets (own folder only)
     AudioFx,                                                      // audio effects (DaVinci: Audio FX → Fairlight FX)
     SoundsAll, BuiltinSounds, PackSounds, Sounds, SoundGroup,     // effect sounds: built-in, packs, own folder
+    CompRecipes,                                                  // compositing recipes (0.19, op `comp recipe`)
     // Luts/Transitions = own effects folder, …Group = its subfolder
     // (numbers are saved with the collapsed state: append new categories at the end)
 };
@@ -493,6 +494,8 @@ EffectsLibrary::EffectsLibrary(QWidget* parent) : QWidget(parent)
     add(lumas, T("Mitgeliefert"), BuiltinTransitions);
     m_transRoot = add(lumas, T("Eigene"), Transitions);
     m_transRoot->setToolTip(0, QDir::toNativeSeparators(EffectFolders::transitionDir()));
+    add(m_categories, T("Comp-Rezepte"), CompRecipes)
+        ->setToolTip(0, T("Fertige Compositing-Graphen (Green Screen, Text hinter Person …) für einen Clip"));
     m_presetRoot = add(m_categories, QStringLiteral("Presets"), PresetsAll);
     m_presetRoot->setToolTip(0, T("Mitgelieferte Looks und Presets aus Kdenlive und Shotcut\n%1").arg(QDir::toNativeSeparators(EffectFolders::presetDir())));
     for (QTreeWidgetItem* it : {toolbox, openFx, luts, lumas}) it->setExpanded(true);
@@ -811,6 +814,10 @@ void EffectsLibrary::rebuild()
     case PackSounds: groups = {{{}, packSounds()}}; break;
     case Sounds:
     case SoundGroup: groups = {{{}, soundFiles(m_userSounds, true)}}; break;
+    case CompRecipes:
+        // TODO(0.19 package I): the built-in recipes (assets/comp/*.json) as entries; data "recipe:<id>", dragging one
+        // onto a clip / double-click = op `comp recipe` on it (one undo step)
+        break;
     }
 
     for (const Group& g : groups) {
@@ -846,6 +853,7 @@ void EffectsLibrary::rebuild()
         if (shown == Sounds || shown == SoundGroup)
             hint = T("Noch keine eigenen Klänge – „Effekte importieren…“ öffnet den Ordner (Unterordner „Sounds“)");
         if (shown == PackSounds) hint = T("Noch keine Klangpakete installiert");
+        if (shown == CompRecipes) hint = T("Noch keine Comp-Rezepte");
         if (!hint.isEmpty()) {
             auto* h = new QListWidgetItem(hint);
             h->setFlags(Qt::NoItemFlags);

@@ -426,6 +426,18 @@ public:
     bool linkCompNodes(int clipId, const CompLink& l, bool on, const CompGraph::KindInfo& kinds, QString* err = nullptr);
     // Makes `node` the output node
     bool setCompOut(int clipId, int node, const CompGraph::KindInfo& kinds, QString* err = nullptr);
+    // Comp page: places of nodes on the canvas (CompNode::pos, no meaning for the picture)
+    bool moveCompNodes(int clipId, const QHash<int, QPointF>& places, QString* err = nullptr);
+    // Values of a node at timeline frame `frame` like the Inspector: a number with keyframes gets a keyframe there,
+    // others change their static value. The same mergeKey = one undo step (a drag of a slider or a handle)
+    bool setCompNodeValuesAt(int clipId, int node, const QVariantMap& values, int frame, const QString& mergeKey = {},
+                             QString* err = nullptr);
+    // Keyframe diamond of a node's number at timeline frame `frame`: on = a keyframe with `value` (the value shown
+    // there; a value never set is its default, which the graph does not store), off = the keyframe there removed
+    bool setCompNodeKeyframe(int clipId, int node, const QString& key, int frame, bool on, double value,
+                             QString* err = nullptr);
+    // A copy of node `node` with its values and keyframes (no links) at `pos`; returns its id, 0 = nothing changed
+    int duplicateCompNode(int clipId, int node, const QPointF& pos, QString* err = nullptr);
     // Hide names (core/NameBlur): every clip's masks become new rectangle windows with fill "blur" or "pixelate" of
     // strength `amount`, their place and size keyed along the mask (off = size 0 and amount 0). Free window numbers
     // only; masks beyond them are left out and counted in `dropped` (their names stay visible). Clips on locked tracks

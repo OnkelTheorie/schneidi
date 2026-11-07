@@ -60,8 +60,15 @@ public:
     bool importTimelineFile(const QString& path);
 
     // Pages like in DaVinci (switchable at the bottom). New page: add here + in showPage().
-    enum class Page { Media, Edit, Deliver, Color };
+    enum class Page { Media, Edit, Deliver, Color, Comp };
     void showPage(Page page);
+    // Comp page (MainWindowComp.cpp): the clip's compositing graph; built on its first showing. openComp shows clip
+    // `clipId` there; "Open in Comp" gives the first selected video clip an empty graph (clip -> output) if it has
+    // none; "Comp from Selection" = Editor::compFrom, then opens it
+    void openComp(int clipId);
+    void openCompForSelection();
+    void compFromSelection();
+    class CompPage* compPage() const { return m_compPage; } // nullptr until the page was shown
 
     // Project file (.schneidi): only references to the original media + edit
     bool openProject(const QString& path);
@@ -276,6 +283,14 @@ private:
     QString autosavePath();
     QString autosaveKey() const; // QSettings key: which project the backup belongs to
     void createCompoundClip(); // ask for the name like DaVinci
+    // Comp page (MainWindowComp.cpp)
+    void ensureCompPage();
+    int selectedVideoClip() const; // first selected video clip (0 = none)
+    // What the viewer plays: the project, on the Comp page with the graph cut at the shown node / its matte
+    Timeline previewTimeline() const;
+    void updatePreview(); // previewTimeline() to the engine now
+    // Pipette of a comp node's color (key color): the picture going into the node, picked in the key pick window
+    void startCompKeyPick(int clipId, int node, const QString& key);
     void openSelectedCompound(); // also a multicam clip (like DaVinci "Open in Timeline")
 
     // Multicam (MainWindowMulticam.cpp): viewer mode with the grid, keys 1-9 cut / Alt+1-9 switch (only there,
@@ -340,6 +355,7 @@ private:
     Mixer* m_mixer = nullptr;
     TimelinePanel* m_timeline = nullptr;
     DeliverPanel* m_deliver = nullptr;
+    class CompPage* m_compPage = nullptr; // built on the first showing (startup stays fast)
 
     QStackedWidget* m_pages = nullptr;
     QSplitter* m_editTop = nullptr;

@@ -1,0 +1,42 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+#pragma once
+// Shared helpers of the Comp page (ui/comp): the clip's graph and node values as the page shows them, the node kinds
+// for the Editor's comp ops, and the timeline the viewer plays while it shows one node or a matte.
+
+#include "core/CompGraph.h"
+#include "core/Types.h"
+
+#include <QColor>
+#include <QString>
+#include <QVariantMap>
+
+class Project;
+
+namespace Picture::Comp {
+struct NodeType;
+}
+
+namespace CompUi {
+
+// The node kinds as the Editor's comp ops check them (Picture::Comp::kindInfo)
+CompGraph::KindInfo kinds();
+// The clip's graph (false = no comp effect or a broken graph)
+bool graphOf(const Clip& c, CompGraph* g);
+// Values of node `id` without the "n<id>." prefix (only those stored; missing = the kind's default)
+QVariantMap nodeValues(const Clip& c, int id);
+// Clip frame of timeline frame `playhead` (limited to the clip)
+int clipFrame(const Clip& c, int playhead);
+// A node's number as the picture uses it at clip frame t: keyframes, else the stored value, else the default
+double number(const Clip& c, int node, const Picture::Comp::NodeType& k, const QString& key, int t);
+// Is there a keyframe of the number at clip frame t / any keyframe at all?
+bool keyAt(const Clip& c, int node, const QString& key, int t);
+bool animated(const Clip& c, int node, const QString& key);
+// Shown name of a node: its kind's name and id ("Maske 3"); unknown kinds by their id
+QString nodeName(const CompNode& n);
+
+// `tl` with the graph of clip `clipId` ending at node `node` (0 = its own output) and, with `matte`, the alpha of
+// that picture as gray (a mask node always shows as gray): what the viewer plays on the Comp page. Unchanged when the
+// clip has no graph or the node is missing.
+Timeline viewTimeline(Timeline tl, int clipId, int node, bool matte);
+
+} // namespace CompUi
