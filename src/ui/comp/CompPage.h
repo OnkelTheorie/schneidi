@@ -70,6 +70,7 @@ private:
     QToolButton* m_nodesButton;
     QToolButton* m_showNode;
     QToolButton* m_matte;
+    QToolButton* m_fit;
     QPushButton* m_create;
     QLabel* m_clipLabel;
     QLabel* m_message;

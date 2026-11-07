@@ -9,6 +9,7 @@
 #include "check.h"
 
 #include "app/InputBindings.h"
+#include "app/Theme.h"
 #include "app/MainWindow.h"
 #include "core/EffectRegistry.h"
 #include "core/Keyframes.h"
@@ -43,7 +44,9 @@ namespace {
 void dump(QWidget* w, const QString& name)
 {
     const QString dir = qEnvironmentVariable("COMP_PAGE_DUMP");
-    if (!dir.isEmpty()) w->grab().save(dir + "/" + name + ".png");
+    if (dir.isEmpty()) return;
+    QTest::qWait(600); // the viewer's picture
+    w->grab().save(dir + "/" + name + ".png");
 }
 
 void settle()
@@ -104,6 +107,7 @@ int main(int argc, char** argv)
     Check::initEnv();
     QApplication app(argc, argv);
     Check::initApp("comp-page");
+    Theme::apply(app); // the pictures as the user sees them
     if (!Check::haveFfmpeg()) {
         std::puts("SKIP: no ffmpeg for the test clip");
         return 77;

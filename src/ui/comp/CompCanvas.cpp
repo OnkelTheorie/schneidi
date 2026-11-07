@@ -284,13 +284,33 @@ void CompCanvas::addNode(const QString& type)
     // Behind the selected node (or the output): it feeds the new node's first input. Only added (the user wires it):
     // a generator, and a mask behind a picture (its input combines masks; it goes into a merge's mask input)
     const PC::NodeType* k = PC::find(type);
-    int from = m_selected ? m_selected : m_graph.out;
+    const int from = m_selected ? m_selected : m_graph.out;
     const CompNode* f = m_graph.node(from);
     const PC::NodeType* fk = f ? PC::find(f->type) : nullptr;
     const bool maskBehindPicture = k && k->output == PC::Buf::Mask && (!fk || fk->output != PC::Buf::Mask);
     const QString input = inputs.isEmpty() || (maskBehindPicture && !m_graph.isEmpty()) ? QString() : inputs.first();
+    // Its place: right of `from` in a chain, left below it when only added (it mostly feeds `from`: a merge's fg);
+    // further down while that is taken. Placed in the same undo step (an unplaced graph gets every shown place, as a
+    // node drag does)
+    const QHash<int, QPointF> before = m_unplaced ? m_places : QHash<int, QPointF>();
+    QPointF at = f ? place(from) + (input.isEmpty() ? QPointF(-(kNodeW + 48), 100) : QPointF(kNodeW + 48, 0)) : QPointF();
+    const auto taken = [&](const QPointF& p) {
+        const QRectF r(p, QSizeF(kNodeW, kHeader + 2 * kRow));
+        for (const CompNode& n : m_graph.nodes)
+            if (QRectF(place(n.id), nodeSize(n)).adjusted(-8, -8, 8, 8).intersects(r)) return true;
+        return false;
+    };
+    for (int i = 0; i < 50 && taken(at); ++i) at.ry() += 70;
+    QUndoStack* undo = m_editor->project()->undoStack();
+    undo->beginMacro(T("Knoten hinzufügen"));
     QString err;
     const int id = m_editor->addCompNode(m_clipId, type, {}, m_selected, input, CompUi::kinds(), &err);
+    if (id) {
+        QHash<int, QPointF> places = before;
+        places.insert(id, at);
+        m_editor->moveCompNodes(m_clipId, places);
+    }
+    undo->endMacro();
     report(id != 0, err);
     if (id) {
         refresh();

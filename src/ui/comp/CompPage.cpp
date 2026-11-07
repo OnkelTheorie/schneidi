@@ -66,7 +66,8 @@ CompPage::CompPage(Editor* editor, QWidget* parent) : QWidget(parent), m_editor(
     m_showNode = toggle("comp_view_node", T("Knoten zeigen"), T("Der Viewer zeigt das Bild des gewählten Knotens statt "
                                                                 "des Ausgangs (Doppelklick auf einen Knoten)"));
     m_matte = toggle("comp_view_matte", T("Matte"), T("Der Viewer zeigt die Deckkraft (Alpha) als Grau"));
-    auto* fit = new QToolButton;
+    auto* fit = m_fit = new QToolButton;
+    fit->setVisible(false); // node view only
     fit->setText(T("Einpassen"));
     fit->setToolTip(T("Den ganzen Graphen zeigen (F)"));
     fit->setFocusPolicy(Qt::NoFocus);
@@ -109,6 +110,7 @@ CompPage::CompPage(Editor* editor, QWidget* parent) : QWidget(parent), m_editor(
 
     connect(m_layersButton, &QToolButton::toggled, this, [this](bool on) {
         m_stack->setCurrentIndex(on ? 0 : 1);
+        m_fit->setVisible(!on);
         if (!on) QTimer::singleShot(0, m_canvas, [this] { m_canvas->refresh(); }); // laid out now: a first fit
     });
     connect(m_layers, &CompLayers::nodeViewRequested, this, [this] { setView(View::Nodes); });

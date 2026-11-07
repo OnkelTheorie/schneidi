@@ -112,8 +112,8 @@ void CompLayers::setSelected(int node)
 {
     if (node == m_selected) return;
     m_selected = node;
-    for (QToolButton* b : m_listBox->findChildren<QToolButton*>(QString(), Qt::FindChildrenRecursively))
-        if (b->property("node").isValid()) b->setChecked(b->property("node").toInt() == node && node);
+    for (QAbstractButton* b : m_listBox->findChildren<QAbstractButton*>())
+        if (b->property("node").isValid() && b->isCheckable()) b->setChecked(b->property("node").toInt() == node && node);
 }
 
 void CompLayers::refresh()
@@ -193,19 +193,20 @@ void CompLayers::rebuild(const Clip& c, const CompGraph& g)
                                .arg(row->objectName(), Theme::panelHeader.name()));
         auto* lay = new QHBoxLayout(row);
         lay->setContentsMargins(6, 3, 6, 3);
-        auto* name = new QToolButton;
+        auto* name = new QPushButton;
+        name->setFlat(true);
         name->setCheckable(true);
         name->setProperty("node", l.node ? l.node : l.merge);
         const CompNode* n = g.node(l.node);
         name->setText(n ? CompUi::nodeName(*n) : T("(leer)"));
-        name->setToolButtonStyle(Qt::ToolButtonTextOnly);
         name->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-        name->setStyleSheet(QString("QToolButton { text-align: left; border: none; background: transparent; color: %1; }"
-                                    "QToolButton:checked { color: %2; font-weight: 600; }")
+        name->setStyleSheet(QString("QPushButton { text-align: left; border: none; background: transparent; color: %1;"
+                                    " padding: 2px 4px; }"
+                                    "QPushButton:checked { color: %2; font-weight: 600; }")
                                 .arg(Theme::text.name(), Theme::primary.name()));
         name->setChecked((l.node ? l.node : l.merge) == m_selected && m_selected);
         const int pick = l.node ? l.node : l.merge;
-        connect(name, &QToolButton::clicked, this, [this, pick] {
+        connect(name, &QPushButton::clicked, this, [this, pick] {
             setSelected(pick);
             emit selectedChanged(pick);
         });
