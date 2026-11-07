@@ -426,6 +426,38 @@ void testEngine()
     CHECK(evaluate(comp(kinds, links, 5, follow), env, nullptr, &moved) && moved.px != plain.px);
 }
 
+// Choice values given as an index (a number or digits) mean the same as the choice id, for every kind
+void testChoiceValues()
+{
+    std::printf("choice values by id or index\n");
+    RunOptions o;
+    o.size = QSize(48, 32);
+    auto same = [&](const QString& type, const QVariantMap& byId, const QVariantMap& byIndex,
+                    const QHash<QString, Buf>& inputs = {}) {
+        Buf a, b, d;
+        const bool ok = runNode(type, byId, inputs, o, &a) && runNode(type, byIndex, inputs, o, &b);
+        runNode(type, {}, inputs, o, &d); // the default must differ, or the check says nothing
+        return ok && a.px == b.px && a.px != d.px;
+    };
+    const QVariantMap rect{{"x", 0.5}, {"y", 0.5}, {"w", 0.5}, {"h", 0.6}};
+    QVariantMap ellipse = rect, ellipseN = rect, ellipseS = rect;
+    ellipse["shape"] = "ellipse";
+    ellipseN["shape"] = 1;
+    ellipseS["shape"] = "1";
+    CHECK(same("mask", ellipse, ellipseN));
+    CHECK(same("mask", ellipse, ellipseS));
+    CHECK(same("gradient", {{"shape", "radial"}}, {{"shape", 1}}));
+    Buf half(Buf::Rgba, 48, 32);
+    for (size_t i = 0; i < half.px.size(); i += 4) half.px[i] = 200, half.px[i + 3] = 90;
+    CHECK(same("matte", {{"channel", "alpha"}}, {{"channel", 1}}, {{"src", half}}));
+    // Out of range or unknown: the default
+    Buf a, d;
+    CHECK(runNode("gradient", {{"shape", 7}}, {}, o, &a) && runNode("gradient", {}, {}, o, &d) && a.px == d.px);
+    const NodeType* m = find("mask");
+    CHECK(m && choiceValue(*m, {{"shape", "radial"}}, "shape") == 5 && choiceValue(*m, {{"shape", 2.0}}, "shape") == 2
+          && choiceValue(*m, {{"shape", -1}}, "shape") == 0 && textValue(*m, {{"shape", 3}}, "shape") == "bezier");
+}
+
 // ---- comp from selection ----
 
 MediaInfo info(const QString& path)
@@ -601,6 +633,7 @@ int main(int argc, char** argv)
     testMergeModes();
     testSimpleNodes();
     testEngine();
+    testChoiceValues();
     bench();
     if (!Check::haveFfmpeg()) return Check::skip("ffmpeg nicht gefunden");
     QTemporaryDir tmp;

@@ -131,6 +131,10 @@ bool runNode(const QString& type, const QVariantMap& params, const QHash<QString
 double numValue(const NodeType& k, const QVariantMap& values, const QString& key);
 QColor colorValue(const NodeType& k, const QVariantMap& values, const QString& key);
 QString textValue(const NodeType& k, const QVariantMap& values, const QString& key);
+// A Choice parameter's value as the index of its choice: the choice id ("ellipse") or its index (1, "1"); anything
+// else (unknown id, index out of range) = the default. num() returns this index, text() the choice id (an id this
+// version does not list as it is)
+int choiceValue(const NodeType& k, const QVariantMap& values, const QString& key);
 
 // Registration functions, one per package file (CompNodes.cpp calls each once)
 void registerCoreNodes(QVector<NodeType>& out);  // A: clip, media, color, gradient, merge, transform, crop, blur, color grade, fx
