@@ -2,6 +2,7 @@
 #include "engine/RenderCache.h"
 #include "engine/picture/Renderer.h"
 
+#include "core/CompGraph.h"
 #include "core/I18n.h"
 #include "core/Keyframes.h"
 #include "core/ProjectFile.h"
@@ -179,14 +180,25 @@ QString RenderCache::key(const Clip& c, const ProjectFormat& f)
     // Files the effects read (a LUT): edited or replaced under the same name, the cached render is stale. The clip
     // JSON has only their paths. Nothing added without such files: other keys stay as they were
     QString files;
-    for (const EffectInstance& e : c.effects)
+    auto addFile = [&files](const QString& path) {
+        const QFileInfo f(path);
+        files += QString("%1|%2|").arg(f.size()).arg(f.lastModified().toMSecsSinceEpoch());
+    };
+    for (const EffectInstance& e : c.effects) {
+        if (e.effectId == QLatin1String(Comp::kEffectId)) {
+            // A compositing graph's media files and LUTs (its node values hold the paths)
+            for (const QString& path : Comp::mediaPaths(e)) addFile(path);
+            for (auto it = e.params.cbegin(); it != e.params.cend(); ++it)
+                if (it.key().endsWith(QLatin1String(".lut")) && !it.value().toString().isEmpty())
+                    addFile(it.value().toString());
+            continue;
+        }
         if (const EffectDescriptor* d = EffectRegistry::find(e.effectId))
             for (const EffectParam& p : d->params) {
                 const QString path = p.type == EffectParam::Path ? e.params.value(p.key).toString() : QString();
-                if (path.isEmpty()) continue;
-                const QFileInfo f(path);
-                files += QString("%1|%2|").arg(f.size()).arg(f.lastModified().toMSecsSinceEpoch());
+                if (!path.isEmpty()) addFile(path);
             }
+    }
     return QCryptographicHash::hash(id.toUtf8() + crop + key + stab + retime + files.toUtf8() + clip, QCryptographicHash::Sha1)
         .toHex();
 }

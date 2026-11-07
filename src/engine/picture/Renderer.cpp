@@ -2,6 +2,7 @@
 #include "engine/picture/Renderer.h"
 
 #include "core/Captions.h"
+#include "core/CompGraph.h"
 #include "core/EffectRegistry.h"
 #include "core/Generators.h"
 #include "core/Keyframes.h"
@@ -15,6 +16,7 @@
 #include "engine/OutputColor.h"
 #include "engine/StabilizeCorrection.h"
 #include "engine/VideoEffects.h"
+#include "engine/picture/CompEval.h"
 #include "engine/picture/Effects.h"
 #include "engine/picture/Interpolate.h"
 #include "engine/picture/TitleLook.h"
@@ -369,6 +371,8 @@ struct Renderer::Impl {
 
     std::mutex lutMutex;
     std::map<QString, std::shared_ptr<const ColorGrade::Lut>> luts;
+    // Static parts of compositing graphs (text, flat colors, stills without keyframes), shared by all frames
+    Comp::Cache compCache;
 
     std::atomic<int> framesRendered{0}, layersDecoded{0}, layersSkipped{0}, framesGpu{0}, layersCpu{0};
     // GPU path (Options::gpu and a hardware device), looked up by the renders (GUI app: CPU until the GPU has started)
@@ -570,11 +574,22 @@ struct Renderer::Impl {
         return out;
     }
 
+    // A compound clip's inner sequence while its picture is made (clipLayer): the compositing graph reads its tracks
+    // one by one. deferred = the inner picture is rendered only when something asks for it (a graph made of tracks)
+    struct Nested {
+        const Timeline* inner = nullptr;
+        int in = 0;
+        Ctx sub;
+        QString prefix;
+        int depth = 0;
+        bool deferred = false;
+    };
     // Effects on the clip's picture (before crop/transform), clip frame t; order as TimelineBuilderDetail::applyEffects:
     // the fixed stages first (grade, then the Green Screen key), then every other effect in the clip's order.
     // frameHeight: the frame's height in pixels of img (blur strength is relative to it); fit: the size img stands for
     // in project pixels (a source of another aspect ratio: the fitted picture without the bars, centred in the frame)
-    void applyEffects(Image& img, const Clip& c, double t, const Ctx& ctx, double frameHeight, QSizeF fit)
+    void applyEffects(Image& img, const Clip& c, double t, const Ctx& ctx, double frameHeight, QSizeF fit,
+                      const QString& lane = {}, Nested* nested = nullptr)
     {
         // Stabilization first (it has to see the camera picture): the analyzed correction at the clip's material
         // frame. Border "keep" has no previous output picture here: edge pixels (as a seek in the MLT filter).
@@ -620,19 +635,123 @@ struct Renderer::Impl {
             }
         }
         // Compositing graph last (0.19): its input "clip" is the picture with every effect above
-        if (const EffectInstance* comp = EffectRegistry::instance(c, "comp"); comp && comp->enabled)
-            applyComp(img, c, *comp, t, ctx);
+        const EffectInstance* comp = EffectRegistry::instance(c, ::Comp::kEffectId);
+        const bool composed = comp && comp->enabled && applyComp(img, c, *comp, t, ctx, frameHeight / ctx.PH, lane, nested);
+        if (!composed && nested && nested->deferred) renderNested(img, *nested);
     }
 
-    // Evaluates the clip's compositing graph into img (same size). Package A (CompEval) fills this in; until then the
-    // clip's picture stays as it is
-    void applyComp(Image& img, const Clip& c, const EffectInstance& comp, double t, const Ctx& ctx)
+    // The clip's only picture effect is an enabled compositing graph (no grade, stabilization, other effects)
+    bool onlyComp(const Clip& c) const
     {
-        Q_UNUSED(img);
-        Q_UNUSED(c);
-        Q_UNUSED(comp);
-        Q_UNUSED(t);
-        Q_UNUSED(ctx);
+        bool comp = false;
+        for (const EffectInstance& e : c.effects) {
+            if (!e.enabled) continue;
+            if (e.effectId != QLatin1String(::Comp::kEffectId)) {
+                const EffectDescriptor* d = EffectRegistry::find(e.effectId);
+                if (!d || d->video) return false;
+                continue;
+            }
+            comp = true;
+        }
+        return comp && !ColorGrade::active(c);
+    }
+    void renderNested(Image& img, Nested& n)
+    {
+        renderTimeline(*n.inner, n.in, img, n.sub, n.prefix, false, n.depth + 1);
+        n.deferred = false;
+    }
+
+    // Evaluates the clip's compositing graph into img (same size, CompEval); false = the picture stays as it is.
+    // scale: project pixels -> pixels of img
+    bool applyComp(Image& img, const Clip& c, const EffectInstance& comp, double t, const Ctx& ctx, double scale,
+                   const QString& lane, Nested* nested)
+    {
+        if (img.empty()) return false;
+        Comp::Buf clip; // img's pixels, lent to the graph while it runs
+        clip.w = img.w;
+        clip.h = img.h;
+        clip.px.swap(img.px);
+        Comp::Env env;
+        env.t = t;
+        env.frameNo = int64_t(std::floor(c.in + t + 1e-6));
+        env.size = QSize(img.w, img.h);
+        env.scale = scale;
+        env.fps = ctx.fps;
+        env.cancel = t_hints ? t_hints->cancel : nullptr;
+        env.clip = &c;
+        env.takeBytes = [](size_t n) { return layerPool().take(n); };
+        env.giveBytes = [](std::vector<uint8_t>&& v) { layerPool().give(std::move(v)); };
+        env.clipPicture = [&]() -> const Comp::Buf* {
+            if (nested && nested->deferred) {
+                Image whole;
+                whole.w = clip.w;
+                whole.h = clip.h;
+                whole.px.swap(clip.px);
+                renderNested(whole, *nested);
+                whole.px.swap(clip.px);
+                whole.w = whole.h = 0;
+            }
+            return &clip;
+        };
+        if (nested && nested->inner)
+            env.paintTrack = [&, nested](int track, Comp::Buf& onto) {
+                if (track < 0 || track >= nested->inner->video.size() || onto.kind != Comp::Buf::Rgba) return false;
+                Image canvas;
+                canvas.w = onto.w;
+                canvas.h = onto.h;
+                canvas.px.swap(onto.px);
+                drawTrack(canvas, false, nested->inner->video[track], track, nested->in, nested->sub, *nested->inner,
+                          nested->prefix, nested->depth + 1);
+                canvas.px.swap(onto.px);
+                canvas.w = canvas.h = 0;
+                return true;
+            };
+        env.mediaPicture = [&](const QString& path, double clipTime) -> Comp::Buf {
+            if (path.isEmpty() || clipTime < -1e-6) return {};
+            Clip m;
+            m.mediaPath = path;
+            m.out = std::numeric_limits<int>::max() / 2;
+            const QString mlane = lane + QStringLiteral("m");
+            const QSizeF fit = MediaAspect::fit(nativeAspect(m, mlane), QSizeF(clip.w, clip.h));
+            const int fw = std::max(1, int(std::lround(fit.width()))), fh = std::max(1, int(std::lround(fit.height())));
+            QSize native;
+            Image pic = mediaPicture(m, int(std::floor(clipTime + 1e-6)), mlane, fw, fh, ctx, &native);
+            if (pic.empty()) return {};
+            layersDecoded.fetch_add(1, std::memory_order_relaxed);
+            Comp::Buf b;
+            b.w = clip.w;
+            b.h = clip.h;
+            if (fw == clip.w && fh == clip.h) {
+                b.px.swap(pic.px);
+                pic.w = pic.h = 0;
+                return b;
+            }
+            b.px = layerPool().take(size_t(b.w) * b.h * 4);
+            Compose::Affine a;
+            a.c = (b.w - fw) / 2;
+            a.f = (b.h - fh) / 2;
+            Compose::draw(b.data(), b.w, b.h, pic.data(), fw, fh, a, 1.0);
+            return b;
+        };
+        Comp::Buf out;
+        Comp::Stats stats;
+        const bool ok = Comp::evaluate(comp, env, &compCache, &out, &stats);
+        if (!stats.unknownKinds.isEmpty()) {
+            static std::once_flag warned;
+            std::call_once(warned, [&] {
+                qWarning("Picture engine: compositing node kind %s unknown (passed through)",
+                         qPrintable(QStringList(stats.unknownKinds.values()).join(", ")));
+            });
+        }
+        if (!ok || out.px.size() != size_t(img.w) * img.h * 4) {
+            if (!out.px.empty()) layerPool().give(std::move(out.px));
+            img.px.swap(clip.px);
+            return false;
+        }
+        img.px.swap(out.px);
+        layerPool().give(std::move(out.px));
+        layerPool().give(std::move(clip.px));
+        return true;
     }
 
     // Source picture of a media clip at clip frame t, fetched at (dw x dh); empty = none
@@ -982,6 +1101,9 @@ struct Renderer::Impl {
         // A title drawn only as large as its text: where that part sits in the full-frame picture it stands for
         QPoint part;
         bool partial = false;
+        // A compound clip: its inner sequence, for the compositing graph's per-track inputs
+        Timeline content, withNested;
+        Nested nested;
         if (c.isTitle()) {
             double size = 0;
             if (Keys::animated(c, AnimParam::TitleSize)) size = Keys::valueAt(c, AnimParam::TitleSize, t);
@@ -1007,7 +1129,6 @@ struct Renderer::Impl {
             if (it == tl.nested->cend()) return {};
             const int in = c.in + t;
             if (in < 0) return {};
-            Timeline content;
             const Timeline* inner = &*it;
             if (c.isMulticam()) {
                 const int angle = std::max(0, c.angle);
@@ -1016,7 +1137,6 @@ struct Renderer::Impl {
                 content.nested = it->nested ? it->nested : tl.nested;
                 inner = &content;
             }
-            Timeline withNested;
             if (!inner->nested && tl.nested) {
                 withNested = *inner;
                 withNested.nested = tl.nested;
@@ -1035,14 +1155,21 @@ struct Renderer::Impl {
                 sub.W = std::max(1, int(std::lround(fit.width() * sx)));
                 sub.H = std::max(1, int(std::lround(fit.height() * sy)));
                 src = Image(sub.W, sub.H);
-                renderTimeline(*inner, in, src, sub, lane + QString("n%1/").arg(c.sequenceId), false, depth + 1);
+                nested.sub = sub;
             } else {
                 src = Image(W, H);
-                Ctx sub = ctx;
-                sub.begin = 0;
-                sub.end = TimelineOps::endFrame(*inner);
-                renderTimeline(*inner, in, src, sub, lane + QString("n%1/").arg(c.sequenceId), false, depth + 1);
+                nested.sub = ctx;
+                nested.sub.begin = 0;
+                nested.sub.end = TimelineOps::endFrame(*inner);
             }
+            nested.inner = inner;
+            nested.in = in;
+            nested.prefix = lane + QString("n%1/").arg(c.sequenceId);
+            nested.depth = depth;
+            // Only a compositing graph on it: the graph asks for the whole inner picture if it needs it (a graph of
+            // its tracks alone never renders it)
+            nested.deferred = onlyComp(c);
+            if (!nested.deferred) renderNested(src, nested);
         } else {
             if (c.mediaPath.isEmpty()) return {};
             const double aspect = nativeAspect(c, lane);
@@ -1092,7 +1219,7 @@ struct Renderer::Impl {
         {
             // the frame's height in the picture's pixels: the picture is fit.height() project pixels tall at zoom 1
             const double frameHeight = src.h * ctx.PH / std::max(1.0, fit.height());
-            applyEffects(src, c, t, ctx, frameHeight, fit);
+            applyEffects(src, c, t, ctx, frameHeight, fit, lane, nested.inner ? &nested : nullptr);
         }
 
         auto val = [&](AnimParam p) { return Keys::valueAt(c, p, t); };
@@ -2582,6 +2709,12 @@ QVector<SkippedEffect> skippedEffects(const Timeline& tl)
                 if (!used(track, c, true)) continue;
                 for (const EffectInstance& e : c.effects) {
                     if (!e.enabled) continue;
+                    // A compositing graph renders; node kinds of a newer version in it are passed through
+                    if (e.effectId == QLatin1String(::Comp::kEffectId)) {
+                        for (const QString& kind : Comp::unknownKinds(e))
+                            out << SkippedEffect{c.id, QStringLiteral("comp:") + kind, true, sequence};
+                        continue;
+                    }
                     const EffectDescriptor* d = EffectRegistry::find(e.effectId);
                     if (d && (d->fixed || !d->video || e.effectId == QLatin1String("color")
                               || e.effectId == QLatin1String("blur") || e.effectId == QLatin1String("chromakey")

@@ -447,3 +447,4 @@ schneidi_test(test_comp_key) # keyer nodes (0.19): chroma = effect chromakey, lu
 schneidi_test(test_comp_tracker)
 # The same in face mode with the real YuNet model; 77 without the extension
 schneidi_test(test_comp_tracker_face)
+schneidi_test(test_comp_eval) # compositing evaluation (0.19 A): merge modes vs formula, graph = effect list bit-identical, comp_from, cache, unknown kinds

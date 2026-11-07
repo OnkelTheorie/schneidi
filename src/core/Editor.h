@@ -495,6 +495,11 @@ public:
     // which the span is free (video + audio linked, never overwrites other clips). One undo step; new
     // clip is selected. Returns the sequence id, 0 = nothing selected.
     int createCompoundClip(const QString& name = {});
+    // "Comp from selection" (0.19): the same compound clip, its video clip carrying a compositing graph (effect
+    // "comp") that lays the inner video tracks on each other - a "clip" node per track (param track = inner index)
+    // and a chain of normal merges - so the picture stays bit-identical and the graph can be rebuilt freely.
+    // One undo step. Returns the sequence id, 0 = nothing selected or no video clip in the selection.
+    int compFrom(const QString& name = {});
     // Decompose compound clips (with partners) back into their clips (DaVinci "Decompose in Place"): content in the
     // used section at the same position, tracks from that of the compound clip. The sequence stays in the Media Pool.
     bool decomposeCompoundClips(const QVector<int>& ids);
@@ -599,6 +604,8 @@ signals:
 
 private:
     TimelineOps::SourceLength sourceLength() const;
+    // createCompoundClip / compFrom (comp = the video clip gets the graph of its tracks)
+    int createCompound(const QString& name, bool comp);
     // Copy of the timeline with a transition at the cut (see addTransitionAt); nullopt = clips not found
     std::optional<Timeline> withTransitionAt(int leftId, int rightId, const TransitionStyle& style, bool trimClips,
                                              TrackRef* where = nullptr) const;
