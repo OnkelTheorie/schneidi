@@ -293,6 +293,17 @@ int main(int argc, char** argv)
         CHECK(!Gpu::planComp(comp({"clip", "fx"}, {{1, 2, "src"}}, 2), env, nullptr, &reason));
         CHECK(!Gpu::planComp(comp({"clip", "blur"}, {{1, 2, "src"}}, 2, {{"n2.radius", 400.0}}), env, nullptr, &reason));
         CHECK(Gpu::planComp(recipeGreenScreen(), env, nullptr, &reason));
+        // Decided before any work: a graph that ends up on the CPU did not fetch (evaluate, upload) its sources first
+        int fetched = 0;
+        PC::Env counting = env;
+        counting.clipPicture = [&]() {
+            ++fetched;
+            return &pic;
+        };
+        CHECK(!Gpu::planComp(comp({"clip", "key", "fx"}, {{1, 2, "src"}, {2, 3, "src"}}, 3), counting, nullptr, &reason));
+        CHECK_EQ(fetched, 0);
+        CHECK(Gpu::planComp(comp({"clip", "key"}, {{1, 2, "src"}}, 2), counting, nullptr, &reason));
+        CHECK_EQ(fetched, 1);
     }
 
     // Timing at 1920x1080

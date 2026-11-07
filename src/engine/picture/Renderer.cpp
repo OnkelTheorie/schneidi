@@ -385,6 +385,8 @@ struct Renderer::Impl {
     std::map<QString, std::shared_ptr<const ColorGrade::Lut>> luts;
     // Static parts of compositing graphs (text, flat colors, stills without keyframes), shared by all frames
     Comp::Cache compCache;
+    std::mutex compLogMutex;
+    QSet<int> compLogged; // clips whose graph the card did not take, logged once
 
     std::atomic<int> framesRendered{0}, layersDecoded{0}, layersSkipped{0}, framesGpu{0}, layersCpu{0}, layersCompGpu{0};
     // GPU path (Options::gpu and a hardware device), looked up by the renders (GUI app: CPU until the GPU has started)
@@ -747,9 +749,15 @@ struct Renderer::Impl {
         };
         if (t_compCapture && t_compCapture->clip == &c && !t_compCapture->plan) {
             // The card evaluates the graph (its CPU nodes are evaluated and kept in the plan here); img stays
-            if ((t_compCapture->plan = Gpu::planComp(comp, env, &compCache))) {
+            QString why;
+            if ((t_compCapture->plan = Gpu::planComp(comp, env, &compCache, &why))) {
                 img.px.swap(clip.px);
                 return true;
+            }
+            const std::lock_guard lock(compLogMutex); // why a graph stays on the CPU: once per clip
+            if (!compLogged.contains(c.id)) {
+                compLogged.insert(c.id);
+                qDebug("Picture engine: compositing graph of clip %d on the CPU (%s)", c.id, qPrintable(why));
             }
         }
         Comp::Buf out;
