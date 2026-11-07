@@ -281,10 +281,16 @@ void CompCanvas::addNode(const QString& type)
 {
     QStringList inputs;
     if (!PC::kindInfo(type, &inputs)) return;
+    // Behind the selected node (or the output): it feeds the new node's first input. Only added (the user wires it):
+    // a generator, and a mask behind a picture (its input combines masks; it goes into a merge's mask input)
+    const PC::NodeType* k = PC::find(type);
+    int from = m_selected ? m_selected : m_graph.out;
+    const CompNode* f = m_graph.node(from);
+    const PC::NodeType* fk = f ? PC::find(f->type) : nullptr;
+    const bool maskBehindPicture = k && k->output == PC::Buf::Mask && (!fk || fk->output != PC::Buf::Mask);
+    const QString input = inputs.isEmpty() || (maskBehindPicture && !m_graph.isEmpty()) ? QString() : inputs.first();
     QString err;
-    // Behind the selected node (or the output): it feeds the new node's first input; a generator is only added
-    const int id = m_editor->addCompNode(m_clipId, type, {}, m_selected, inputs.isEmpty() ? QString() : inputs.first(),
-                                         CompUi::kinds(), &err);
+    const int id = m_editor->addCompNode(m_clipId, type, {}, m_selected, input, CompUi::kinds(), &err);
     report(id != 0, err);
     if (id) {
         refresh();
@@ -478,6 +484,11 @@ void CompCanvas::mouseReleaseEvent(QMouseEvent* e)
     const Drag drag = std::exchange(m_drag, Drag::None);
     m_mouse = e->position();
     QString err;
+    if (drag == Drag::Node && m_selected) {
+        const QPointF d = e->position() - m_press;
+        m_moved = m_moved || std::abs(d.x()) + std::abs(d.y()) >= 3;
+        if (m_moved) m_places[m_selected] = m_pressPlace + d / m_view.zoom;
+    }
     if (drag == Drag::Node && m_moved && m_selected) {
         // An unplaced graph gets every shown place, so the layout stays as the user saw it
         QHash<int, QPointF> places;
@@ -524,6 +535,21 @@ void CompCanvas::wheelEvent(QWheelEvent* e)
     m_view.set = true;
     update();
     e->accept();
+}
+
+bool CompCanvas::event(QEvent* e)
+{
+    if (e->type() == QEvent::ShortcutOverride) {
+        const auto* k = static_cast<QKeyEvent*>(e);
+        const bool ctrlD = k->key() == Qt::Key_D && (k->modifiers() & Qt::ControlModifier);
+        const bool plain = !(k->modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::ShiftModifier));
+        if (ctrlD || (plain && (k->key() == Qt::Key_Delete || k->key() == Qt::Key_Backspace || k->key() == Qt::Key_Tab
+                                || k->key() == Qt::Key_F))) {
+            e->accept();
+            return true;
+        }
+    }
+    return QWidget::event(e);
 }
 
 void CompCanvas::keyPressEvent(QKeyEvent* e)

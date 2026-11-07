@@ -455,3 +455,4 @@ target_link_libraries(test_comp_cli PRIVATE schneidi_cli_lib)
 # decides about the card itself (77 without a hardware device)
 schneidi_test(test_comp_gpu)
 set_tests_properties(test_comp_gpu PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;SCHNEIDI_AUDIO_DEVICE=null")
+schneidi_test(test_comp_page) # Comp page: lazy page, layer view, canvas add/link/remove/duplicate, handles, keyframe diamond, undo

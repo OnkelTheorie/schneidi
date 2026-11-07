@@ -68,6 +68,7 @@ signals:
     void message(const QString& text);
 
 protected:
+    bool event(QEvent*) override; // its keys win over the window's (Del never deletes timeline clips here)
     void paintEvent(QPaintEvent*) override;
     void mousePressEvent(QMouseEvent*) override;
     void mouseMoveEvent(QMouseEvent*) override;
