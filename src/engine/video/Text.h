@@ -13,6 +13,8 @@
 #include <QString>
 #include <QVector>
 
+#include <vector>
+
 #include <cstdint>
 
 namespace Text {
@@ -52,6 +54,8 @@ struct Params {
     const Look* look = nullptr;
     bool lookBehind = true, lookFill = true;
 };
+// Soft blur of one 8-bit plane of w x h in place (three box passes, reaching about `reach` pixels): shadow, glow
+void blurPlane(std::vector<uint8_t>& plane, int w, int h, double reach);
 // Draws onto an RGBA picture (straight alpha) of w x h
 void draw(uint8_t* rgba, int w, int h, const Params& p);
 // Where draw() can put pixels (box, outline and glyph overhang included, generously): draw only needs a picture that

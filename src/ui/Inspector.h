@@ -137,6 +137,8 @@ private:
     // Section "Placeholder" of a template clip of `kind` (InspectorSlot.cpp): only shown for a placeholder
     void buildSlotSection(QVBoxLayout* page, TrackKind kind);
     void buildGeneratorSections(QVBoxLayout* page, const Section& outline);
+    // Fill, 2.5D edge, shadow, glow of a text/counter title (TitleLook, 0.19)
+    void buildLookSections(QVBoxLayout* page);
     void buildTransitionPage(QVBoxLayout* page);
     // Selected transition (track kind + effective position), otherwise false
     bool selectedTransition(TrackKind* kind, TimelineOps::TransitionSpan* span) const;

@@ -63,13 +63,6 @@ void boxPass(std::vector<uint8_t>& a, int w, int h, int r, std::vector<uint8_t>&
     }
 }
 
-void blurPlane(std::vector<uint8_t>& a, int w, int h, double reach)
-{
-    const int r = int(std::lround(reach / 3));
-    if (r < 1) return;
-    std::vector<uint8_t> tmp;
-    for (int i = 0; i < 3; ++i) boxPass(a, w, h, r, tmp);
-}
 
 // A plane as a picture in one colour (its alpha times the plane); rows of the plane brighter at the top and darker
 // at the bottom when `light` (the edge lit from above)
@@ -171,6 +164,14 @@ QBrush fillBrush(const Look& l, const QRectF& ink, double blockW, double k)
 }
 
 } // namespace
+
+void blurPlane(std::vector<uint8_t>& a, int w, int h, double reach)
+{
+    const int r = int(std::lround(reach / 3));
+    if (r < 1) return;
+    std::vector<uint8_t> tmp;
+    for (int i = 0; i < 3; ++i) boxPass(a, w, h, r, tmp);
+}
 
 QRectF bounds(const Params& tp)
 {

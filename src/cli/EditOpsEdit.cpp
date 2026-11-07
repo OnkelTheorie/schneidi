@@ -9,6 +9,7 @@
 #include "core/Generators.h"
 #include "core/Retime.h"
 #include "core/Subtitles.h"
+#include "core/TitleLookJson.h"
 #include "core/TimelineOps.h"
 #include "core/TranscriptCut.h"
 
@@ -91,6 +92,36 @@ bool applyStyle(TitleStyle& t, const QJsonObject& op, const BrandKit& kit)
     num("box_padding", &t.boxPad, 0, 500);
     if (any) Brand::resolve(t, kit);
     return any;
+}
+
+// Fill, 2.5D edge, shadow and glow of a title (0.19, core/TitleLookJson.h has the forms)
+const QString kLookFields =
+    "fill: solid (default) | gradient | texture. gradient: a list of 2..4 colors (evenly spaced, e.g. "
+    "[\"#ffd200\", \"#ff3c00\"]) or {stops:[{at:0..1, color}], angle} (angle in degrees clockwise, 90 = top to bottom, "
+    "the default; 0 = left to right); giving it switches fill to gradient. texture: a picture file (absolute path, e.g. "
+    "from the media pool) or {path, scale (1 = as wide as the text), x, y (offset in pixels)}: the letters show the "
+    "picture; switches fill to texture. edge3d: a 2.5D extruded edge {depth (pixels, default 12), angle (direction "
+    "of the edge, default 45 = down right), color, light (lit from the top, default true)} or true/false. shadow: a drop "
+    "shadow {x, y (offset in pixels, y down, default 6, 6), soft (blur, default 6), color, opacity (0..1, default "
+    "0.6)} or true/false. glow: {radius (default 16), color, strength (0..1, default 0.5)} or true/false. A group "
+    "object switches it on unless it says on:false. All off by default; outline and box stay as they are";
+
+void applyLook(TitleLook& look, const QJsonObject& op)
+{
+    QJsonObject o = op;
+    if (const QJsonValue tex = op.value("texture"); tex.isString() || tex.isObject()) {
+        // The picture as an absolute path (the project file stores it relative too)
+        QJsonObject t = tex.isObject() ? tex.toObject() : QJsonObject{{"path", tex.toString()}};
+        if (t.contains("path")) {
+            const QString path = t.value("path").toString();
+            if (path.isEmpty() || !QFileInfo(path).isFile())
+                fail("BAD_ARGUMENT", QString("texture: picture file not found: '%1'").arg(path));
+            t["path"] = QFileInfo(path).absoluteFilePath();
+        }
+        o["texture"] = t;
+    }
+    QString err;
+    if (!TitleLookJson::read(o, look, false, &err)) fail("BAD_ARGUMENT", err);
 }
 
 // Counter and progress bar titles (TitleKind): their own settings on top of the style
@@ -264,6 +295,7 @@ void opTitle(Session& s, const QJsonObject& op)
     if (op.contains("text")) style.text = op.value("text").toString();
     applyStyle(style, op, s.project.effectiveBrand());
     applyGenerator(style, op);
+    applyLook(style.look, op);
     s.editor.modifyClips({id}, "Title", [&](Clip& c) {
         c.title = style;
         Brand::resolve(c, s.project.effectiveBrand()); // a brand text colour ends a colour animation
@@ -831,16 +863,17 @@ QJsonObject transitionStyleJson(const TransitionStyle& st)
 
 void addEditOps(QVector<OpDef>& ops)
 {
-    ops << OpDef{"title", "{op:'title', text?, kind?, at?, duration?, track?, clip?, <style>}",
+    ops << OpDef{"title", "{op:'title', text?, kind?, at?, duration?, track?, clip?, <style>, fill?, gradient?, texture?, edge3d?, shadow?, glow?}",
                  "new title (duration default 5s; on `track` it overwrites only [at, at+duration) like `place`, also an "
                  "earlier title there (notes say what was cut or removed); without track it goes on the video track "
                  "above the clips in that range, so overlapping titles all show) or with clip: change one (a new duration "
                  "keeps its start; longer overwrites only the added range)",
                  "Style (pixels of the timeline format, from the center, y up): " + kStyleFields
-                     + ". Colors \"#rrggbb\" or \"#aarrggbb\". text may have several lines (\\n). " + kGeneratorFields
+                     + ". Colors \"#rrggbb\" or \"#aarrggbb\". text may have several lines (\\n). " + kLookFields + ". "
+                     + kGeneratorFields
                      + ". Example counter: {op:'title', kind:'counter', from:0, to:1000, suffix:' kills', at:'2s', "
                        "duration:'3s', size:160}.",
-                 opTitle, kStyleKeys + kGeneratorKeys}
+                 opTitle, kStyleKeys + kGeneratorKeys + TitleLookJson::keys()}
         << OpDef{"trim", "{op:'trim', clip, edge?:'start'|'end', by|to, mode?}",
                  "move a clip edge; mode normal (default, no ripple), ripple, roll (the cut), slip (content, by only), "
                  "slide (clip between its neighbours)",

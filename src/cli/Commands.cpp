@@ -20,6 +20,7 @@
 #include "core/Selection.h"
 #include "core/Subtitles.h"
 #include "core/Timecode.h"
+#include "core/TitleLookJson.h"
 #include "core/TimelineStory.h"
 #include "core/TimelineOps.h"
 #include "engine/AudioAnalysis.h"
@@ -399,6 +400,7 @@ QJsonObject titleStyleJson(const TitleStyle& t, const TitleStyle& def)
     for (const auto& [key, ref] : {std::pair{"color_ref", t.colorRef}, std::pair{"outline_ref", t.outlineRef},
                                    std::pair{"box_ref", t.boxRef}, std::pair{"font_ref", t.fontRef}})
         if (ref) o[key] = QString("brand%1").arg(ref);
+    TitleLookJson::write(o, t.look); // fill, edge3d, shadow, glow: the forms op `title` takes
     // Counter/progress bar: what it is and all its settings (their defaults are not obvious)
     if (t.isCounter()) {
         o["kind"] = "counter";
