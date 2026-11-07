@@ -396,7 +396,8 @@ struct Renderer::Impl {
     std::mutex compLogMutex;
     QSet<int> compLogged; // clips whose graph the card did not take, logged once
 
-    std::atomic<int> framesRendered{0}, layersDecoded{0}, layersSkipped{0}, framesGpu{0}, layersCpu{0}, layersCompGpu{0};
+    std::atomic<int> framesRendered{0}, layersDecoded{0}, layersSkipped{0}, framesGpu{0}, layersCpu{0}, layersCompGpu{0},
+        gradientsBuilt{0};
     // GPU path (Options::gpu and a hardware device), looked up by the renders (GUI app: CPU until the GPU has started)
     std::atomic<Gpu::Service*> gpu{nullptr};
     std::atomic<bool> gpuDecided{false};
@@ -1749,6 +1750,7 @@ struct Renderer::Impl {
                     (*grad)[size_t(y) * w + x] = uint8_t(std::lround(v * 255));
                 }
         }
+        gradientsBuilt.fetch_add(1, std::memory_order_relaxed);
         if (gradients.size() >= 8) gradients.clear(); // a few transitions at one or two sizes; a resize builds anew
         gradients[key] = grad;
         return grad;
@@ -2874,6 +2876,7 @@ Renderer::Stats Renderer::stats() const
     s.framesGpu = d->framesGpu;
     s.layersCpu = d->layersCpu;
     s.layersCompGpu = d->layersCompGpu;
+    s.gradients = d->gradientsBuilt;
     std::lock_guard lock(d->sourceMutex);
     s.sourcesOpen = int(d->sources.size());
     return s;
