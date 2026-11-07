@@ -2724,5 +2724,6 @@
  "Nicht ausgeführte Effekte bleiben im Projekt; im Inspector kannst du sie später erlauben.": "Les effets non exécutés restent dans le projet ; vous pourrez les autoriser plus tard dans l’Inspecteur.",
  "Nicht ausführen": "Ne pas exécuter",
  "Code erlauben": "Autoriser le code",
- "Dieser Code stammt nicht von dir und läuft noch nicht. Nur erlauben, wenn du der Quelle vertraust.": "Ce code n’a pas été écrit par vous et ne s’exécute pas encore. Ne l’autorisez que si vous faites confiance à la source."
+ "Dieser Code stammt nicht von dir und läuft noch nicht. Nur erlauben, wenn du der Quelle vertraust.": "Ce code n’a pas été écrit par vous et ne s’exécute pas encore. Ne l’autorisez que si vous faites confiance à la source.",
+ "%1 · nicht ausgeführt": "%1 · non exécuté"
 }

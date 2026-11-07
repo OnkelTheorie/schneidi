@@ -7,7 +7,11 @@
 #include "core/I18n.h"
 #include "core/Keyframes.h"
 #include "core/Project.h"
+#include "core/CodeTrust.h"
+#include "core/TimelineOps.h"
 #include "engine/picture/CompNodes.h"
+#include "engine/picture/CustomEffects.h"
+#include "ui/TrustDialog.h"
 
 #include <QFileDialog>
 #include <QFileInfo>
@@ -89,7 +93,8 @@ QString nodeSummary(const Clip& c, const CompNode& n)
     if (id == QLatin1String("fx")) {
         const QString effect = PC::textValue(*k, v, QStringLiteral("effect"));
         const EffectDescriptor* d = EffectRegistry::find(effect);
-        return d ? d->name : effect;
+        const QString name = d ? d->name : effect;
+        return untrustedCode(c, n.id).isEmpty() ? name : T("%1 · nicht ausgeführt").arg(name);
     }
     if (id == QLatin1String("text") || id == QLatin1String("text3d"))
         return QStringLiteral("„%1“").arg(oneLine(PC::textValue(*k, v, QStringLiteral("text"))));
@@ -102,6 +107,22 @@ QString nodeSummary(const Clip& c, const CompNode& n)
     for (const EffectParam& p : k->params)
         if (p.type == EffectParam::Choice) return choice(p.key);
     return {};
+}
+
+QString untrustedCode(const Clip& c, int node)
+{
+    CompGraph g;
+    const CompNode* n = graphOf(c, &g) ? g.node(node) : nullptr;
+    const PC::NodeType* k = n ? PC::find(n->type) : nullptr;
+    if (!k || k->id != QLatin1String("fx")) return {};
+    const QVariantMap v = nodeValues(c, node);
+    const QString effect = PC::textValue(*k, v, QStringLiteral("effect"));
+    const QString key = effect == QLatin1String(Picture::Custom::kFilterId)   ? QStringLiteral("e_chain")
+                        : effect == QLatin1String(Picture::Custom::kShaderId) ? QStringLiteral("e_code")
+                                                                               : QString();
+    if (key.isEmpty()) return {};
+    const QString code = v.value(key).toString();
+    return CodeTrust::isTrusted(code) ? QString() : code;
 }
 
 Timeline viewTimeline(Timeline tl, int clipId, int node, bool matte)
@@ -162,6 +183,27 @@ bool applyRecipe(Editor* editor, const QVector<int>& ids, const QString& idOrNam
     return ok;
 }
 
+void askTrust(QWidget* parent, Editor* editor, const QVector<int>& ids, const CompRecipe& r)
+{
+    QVector<CodeTrust::Item> untrusted;
+    for (int id : ids) {
+        const Clip* c = TimelineOps::findClip(editor->project()->timeline(), id);
+        const EffectInstance* e = c ? EffectRegistry::instance(*c, Comp::kEffectId) : nullptr;
+        if (!e) continue;
+        for (CodeTrust::Item it : CodeTrust::itemsOf(*e))
+            if (!CodeTrust::isTrusted(it.code)) {
+                it.clip = id;
+                untrusted << it;
+            }
+    }
+    if (untrusted.isEmpty()) return;
+    TrustDialog dialog(untrusted, parent);
+    if (dialog.exec() != QDialog::Accepted) return; // kept, skipped; the inspector's "Code erlauben" allows it later
+    CodeTrust::trust(CodeTrust::codes(untrusted));
+    if (!r.file.isEmpty()) CodeTrust::trustFile(r.file, CompRecipes::customCode(r)); // asks no more for this recipe
+    emit editor->project()->timelineChanged(); // draw the picture again, now with the code
+}
+
 QString applyRecipeAsking(QWidget* parent, Editor* editor, const QVector<int>& ids, const QString& idOrName)
 {
     QString err;
@@ -175,7 +217,10 @@ QString applyRecipeAsking(QWidget* parent, Editor* editor, const QVector<int>& i
             if (file.isEmpty()) return {};
             with.insert(slot.id, file);
         }
-    if (r && applyRecipe(editor, ids, r->id, with, &err)) return r->note.isNull() ? QStringLiteral("") : r->note;
+    if (r && applyRecipe(editor, ids, idOrName, with, &err)) { // the given key: a path recipe has no findable id
+        askTrust(parent, editor, ids, *r);
+        return r->note.isNull() ? QStringLiteral("") : r->note;
+    }
     QMessageBox::warning(parent, T("Rezept anwenden"), T("Das Rezept lässt sich nicht anwenden: %1").arg(err));
     return {};
 }

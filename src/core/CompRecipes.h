@@ -87,6 +87,9 @@ std::optional<CompRecipe> open(const QString& path, QString* error = nullptr);
 bool apply(const CompRecipe& r, const QVariantMap& with, CompGraph* graph, QHash<int, QVariantMap>* values,
            QString* error = nullptr);
 
+// The custom code (filter chains, shaders of fx nodes) of a recipe, for its trust record (core/CodeTrust.h)
+QStringList customCode(const CompRecipe& r);
+
 // Shown name / description in language `lang` (default: the UI language): the recipe file's optional
 // "name_<lang>" / "description_<lang>" (the built-in ones have de, en, es, fr, pl, ru), else "name" / "description".
 // "name" itself stays English for the AI. core/CompRecipeText.cpp (reads the file again, cached by its time)

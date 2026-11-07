@@ -41,6 +41,10 @@ QString nodeName(const CompNode& n);
 // mask shape, the text, the wrapped effect's name, the media file, a color …); empty = nothing to say
 QString nodeSummary(const Clip& c, const CompNode& n);
 
+// The custom code (filter chain, shader) of fx node `node` that is not trusted yet (core/CodeTrust.h) and so skipped
+// when rendering; empty = none, or trusted
+QString untrustedCode(const Clip& c, int node);
+
 // `tl` with the graph of clip `clipId` ending at node `node` (0 = its own output) and, with `matte`, the alpha of
 // that picture as gray (a mask node always shows as gray): what the viewer plays on the Comp page. Unchanged when the
 // clip has no graph or the node is missing.
@@ -58,7 +62,12 @@ bool applyRecipe(Editor* editor, const QVector<int>& ids, const QString& idOrNam
                  QString* err = nullptr);
 // The same from a GUI act: asks for the files of the recipe's required media/file slots first (a file dialog over
 // `parent`; cancelled = nothing happens) and shows a failure in a message box. Returns the recipe's note ("next
-// steps") on success (may be empty), a null string when nothing was applied
+// steps") on success (may be empty), a null string when nothing was applied. Custom code of the recipe that is not
+// trusted (one from a ZIP, core/CodeTrust.h) is asked about right after applying (askTrust)
 QString applyRecipeAsking(QWidget* parent, Editor* editor, const QVector<int>& ids, const QString& idOrName);
+// The TrustDialog for the untrusted custom code on the comp graphs of clips `ids` after recipe `r` was applied (the
+// apply stays its own undo step): "Ausführen" trusts it and remembers it for the recipe file, "Nicht ausführen" keeps
+// it skipped. Nothing untrusted: no question
+void askTrust(QWidget* parent, Editor* editor, const QVector<int>& ids, const CompRecipe& r);
 
 } // namespace CompUi

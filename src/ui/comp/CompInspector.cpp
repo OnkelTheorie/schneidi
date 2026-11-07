@@ -2,6 +2,7 @@
 #include "ui/comp/CompInspector.h"
 
 #include "app/Theme.h"
+#include "core/CodeTrust.h"
 #include "core/Editor.h"
 #include "core/I18n.h"
 #include "core/Project.h"
@@ -222,6 +223,28 @@ void CompInspector::rebuild(const Clip& c, const QStringList& keys)
     if (!k) return;
     const QStringList files = Comp::fileKeys(k->id);
     int row = 0;
+    if (k->id == QLatin1String("fx")) { // custom code from someone else, skipped until allowed (core/CodeTrust.h)
+        auto* skipped = new QLabel(T("Dieser Code stammt nicht von dir und läuft noch nicht. Nur erlauben, wenn du der Quelle vertraust."));
+        skipped->setObjectName("comp_untrusted");
+        skipped->setWordWrap(true);
+        skipped->setStyleSheet(QString("color: %1;").arg(Theme::warning.name()));
+        auto* allow = new QPushButton(T("Code erlauben"));
+        allow->setObjectName("allowCode");
+        const int node = m_node;
+        connect(allow, &QPushButton::clicked, this, [this, node] {
+            const Clip* cl = clip();
+            if (!cl) return;
+            CodeTrust::trust(CompUi::untrustedCode(*cl, node));
+            emit m_editor->project()->timelineChanged(); // draw the picture (and this page) again, now with the code
+        });
+        m_grid->addWidget(skipped, row++, 0, 1, 3);
+        m_grid->addWidget(allow, row++, 0, 1, 3, Qt::AlignLeft);
+        m_updates << [skipped, allow, node](const Clip& cl) {
+            const bool show = !CompUi::untrustedCode(cl, node).isEmpty();
+            skipped->setVisible(show);
+            allow->setVisible(show);
+        };
+    }
     for (const QString& key : keys) {
         const EffectParam* p = k->param(key);
         if (!p) continue;
@@ -373,7 +396,9 @@ void CompInspector::rebuild(const Clip& c, const QStringList& keys)
                 else if (key == QLatin1String("e_code")) why = Picture::Custom::checkShader(text);
                 error->setText(why);
                 error->setVisible(!why.isEmpty());
-                if (why.isEmpty()) set(key, text, false);
+                if (!why.isEmpty()) return;
+                CodeTrust::trust(text); // typed here by the user: their own code runs (core/CodeTrust.h)
+                set(key, text, false);
             });
             m_grid->addWidget(edit, row, 1, 1, 2);
             ++row;
