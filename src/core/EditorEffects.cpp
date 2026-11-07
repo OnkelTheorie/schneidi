@@ -2,6 +2,8 @@
 // Editor: effects and color grade.
 #include "core/Editor.h"
 
+#include "core/CompGraph.h"
+
 #include "core/Accents.h"
 #include "core/EffectFolders.h"
 #include "core/EffectRegistry.h"
@@ -367,6 +369,33 @@ void Editor::setGradeWindowPath(int clipId, int n, int from, const QVector<Grade
             Keys::setKey(c, py, p.frame, p.y);
         }
     });
+}
+
+bool Editor::trackCompNode(int clipId, int node, const QVector<Comp::TrackPoint>& points)
+{
+    const Clip* found = TimelineOps::findClip(m_project->timeline(), clipId);
+    if (!found || points.isEmpty()) return false;
+    const EffectInstance* e = EffectRegistry::instance(*found, Comp::kEffectId);
+    CompGraph g;
+    if (!e || !Comp::graphOf(*e, &g) || !g.node(node) || g.node(node)->type != QLatin1String(Comp::kTrackerType))
+        return false;
+    modifyClips({clipId}, T("Knoten verfolgen"), [&](Clip& c) {
+        AnimParam params[4];
+        for (int i = 0; i < 4; ++i) params[i] = Keys::effectParam(Comp::kEffectId, CompGraph::paramKey(node, Comp::kTrackKeys[i]));
+        int lo = points.first().frame, hi = lo;
+        for (const Comp::TrackPoint& p : points) {
+            lo = std::min(lo, p.frame);
+            hi = std::max(hi, p.frame);
+        }
+        for (AnimParam p : params)
+            for (int t : Keys::keyTimes(c, {p}))
+                if (t >= lo && t <= hi) Keys::removeKey(c, p, t);
+        for (const Comp::TrackPoint& p : points) {
+            const double v[4] = {p.x, p.y, p.scale, p.angle};
+            for (int i = 0; i < 4; ++i) Keys::setKey(c, params[i], p.frame, v[i]);
+        }
+    });
+    return true;
 }
 
 QHash<int, QVector<int>> Editor::blurNames(const QHash<int, QVector<NameBlur::Mask>>& masks, const QString& fill,

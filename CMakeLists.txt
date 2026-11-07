@@ -254,6 +254,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/engine/picture/TitleLook.h src/engine/picture/TitleLook.cpp
     src/core/Masks.h              src/core/Masks.cpp
     src/engine/MaskRaster.h       src/engine/MaskRaster.cpp
+    src/engine/picture/CompTrack.h src/engine/picture/CompTrack.cpp
     src/engine/picture/ReviewOverlay.h src/engine/picture/ReviewOverlay.cpp
     src/engine/picture/Interpolate.h src/engine/picture/Interpolate.cpp
     src/engine/picture/Pump.h     src/engine/picture/Pump.cpp
