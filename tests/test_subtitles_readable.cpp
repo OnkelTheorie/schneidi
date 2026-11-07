@@ -250,6 +250,49 @@ void testOverlapsAndSound()
     }
 }
 
+void testPodcastSentences()
+{
+    std::printf("long sentences: balanced, no orphans\n");
+    // Sentences of a real podcast transcription (whisper, German) that left "dazu gehört." / "aufnehmen?" alone;
+    // words evenly spread, 330 ms each
+    const QString text = "Willkommen zurück zu unserem kleinen Podcast über Videospiele und alles, was dazu gehört. "
+                         "Warum macht Videoschnitt eigentlich so wenig Spaß, obwohl alle ständig Clips aufnehmen? "
+                         "Ich habe letzte Woche ein Highlight von drei Kids verschnitten. "
+                         "Das ist auch ein Problem. Die Programme sind entweder zu einfach oder viel zu kompliziert.";
+    QVector<Transcript::Word> words;
+    qint64 at = 0;
+    for (const QString& w : text.split(' ')) {
+        words << Transcript::Word{at, at + 330, w};
+        at += 330;
+    }
+    const QVector<SubtitleCue> out = Subtitles::readable(Transcript::wordCues(words, kFps), kFps);
+    QStringList flat;
+    for (const SubtitleCue& c : out) {
+        flat << QString(c.text).replace('\n', ' ');
+        std::printf("       [%5.2f-%5.2f] %s\n", c.start / kFps, c.end / kFps, qPrintable(QString(c.text).replace('\n', " / ")));
+    }
+    CHECK_EQ(wordsOf(out), text.split(' '));
+    for (int i = 0; i < out.size(); ++i) {
+        const QString t = flat[i];
+        const bool sentenceStart = i == 0 || flat[i - 1].endsWith('.') || flat[i - 1].endsWith('?');
+        const bool whole = sentenceStart && (t.endsWith('.') || t.endsWith('?'));
+        if (!whole && !CHECK(t.size() >= 20 && t.split(' ').size() > 2)) std::printf("       orphan: %s\n", qPrintable(t));
+        for (const char* dangling : {" was", " so", " zu", " und", " die", " der"}) CHECK(!t.endsWith(dangling));
+        for (const QString& l : out[i].text.split('\n')) CHECK(l.size() <= 42);
+    }
+    CHECK(flat.contains("Ich habe letzte Woche ein Highlight von drei Kids verschnitten."));
+    CHECK(flat.contains("Das ist auch ein Problem."));
+    CHECK(flat.contains("Die Programme sind entweder zu einfach oder viel zu kompliziert."));
+    // The two long sentences: two pieces each of about equal length
+    for (const char* first : {"Willkommen", "Warum"})
+        for (int i = 0; i + 1 < flat.size(); ++i)
+            if (flat[i].startsWith(first)) {
+                std::printf("       %s: %d + %d characters\n", first, int(flat[i].size()), int(flat[i + 1].size()));
+                CHECK(std::abs(flat[i].size() - flat[i + 1].size()) <= 24);
+                CHECK(flat[i + 1].endsWith('.') || flat[i + 1].endsWith('?'));
+            }
+}
+
 QJsonObject run(const QString& name, QJsonObject raw)
 {
     if (name == "edit") raw["full"] = true;
@@ -366,6 +409,7 @@ int main(int argc, char** argv)
     testFromCues();
     testPausesAndSentences();
     testOverlapsAndSound();
+    testPodcastSentences();
     testOp(tmp.path());
     return Check::result();
 }

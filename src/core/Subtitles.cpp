@@ -532,29 +532,57 @@ QVector<SubtitleCue> readable(const QVector<SubtitleCue>& cues, double fps, cons
         return t >= minFrames && chars(a, b) / (t / fps) <= cps;
     };
 
+    // Cues per stretch between pauses: the cheapest split (dynamic programming over the break points). A cue costs
+    // a little by itself (fewer, fuller cues); ending it mid-phrase costs more than at a comma, a sentence end costs
+    // nothing; a piece of a sentence that is short (under 20 characters or 1-2 words) costs a lot unless it is a
+    // whole sentence; the pieces of a sentence too long for one cue should be about equally long; a cue that holds
+    // a sentence end inside costs a bit (a new sentence rather starts a new cue), one too fast to read too.
+    const double cap = lines * lineChars;
     QVector<QPair<int, int>> groups;
-    for (int a = 0; a < n;) {
-        int b = a + 1;
-        bool full = false;
-        while (b < n) {
-            if (sentenceEnd(tok[b - 1].text) && slowEnough(a, b)) break;
-            if (pauseBefore(b)) break;
-            if (lineCount(a, b + 1) > lines) {
-                full = true;
-                break;
+    for (int r0 = 0; r0 < n;) {
+        int r1 = r0 + 1;
+        while (r1 < n && !pauseBefore(r1)) ++r1;
+        // The sentence each token is in: [sentenceFrom, sentenceTo)
+        QVector<int> sFrom(n), sTo(n);
+        for (int k = r0, from = r0; k < r1; ++k) {
+            sFrom[k] = from;
+            if (sentenceEnd(tok[k].text) || k + 1 == r1) {
+                for (int j = from; j <= k; ++j) sTo[j] = k + 1;
+                from = k + 1;
             }
-            ++b;
         }
-        if (full) {
-            // Ended by its size: rather at the last phrase end that leaves a readable first part of some length
-            for (int k = b - 1; k > a; --k)
-                if (phraseEnd(tok[k - 1].text) && chars(a, k) >= lineChars / 2 && slowEnough(a, k)) {
-                    b = k;
-                    break;
-                }
-        }
-        groups << qMakePair(a, b);
-        a = b;
+        const auto startsSentence = [&](int k) { return k == r0 || sentenceEnd(tok[k - 1].text); };
+        const auto endsSentence = [&](int k) { return k == r1 || sentenceEnd(tok[k - 1].text); }; // a cue ending before k
+        const auto cost = [&](int a, int b) {
+            double c = 10;
+            if (b < r1) c += sentenceEnd(tok[b - 1].text) ? 0 : phraseEnd(tok[b - 1].text) ? 4 : 12;
+            const bool whole = startsSentence(a) && endsSentence(b);
+            const int len = chars(a, b);
+            if (!whole && (len < 20 || b - a <= 2)) c += 40;
+            if (!whole) { // a piece of a long sentence: about as long as the others
+                const int sentence = chars(sFrom[a], sTo[a]);
+                const double ideal = sentence / std::ceil(sentence / cap);
+                c += 25 * std::pow((len - ideal) / ideal, 2);
+            }
+            for (int k = a + 1; k < b; ++k)
+                if (sentenceEnd(tok[k - 1].text)) c += 12;
+            if (!slowEnough(a, b)) c += 6;
+            return c;
+        };
+        const int m = r1 - r0;
+        QVector<double> best(m + 1, 1e18);
+        QVector<int> from(m + 1, -1);
+        best[0] = 0;
+        for (int b = r0 + 1; b <= r1; ++b)
+            for (int a = b - 1; a >= r0; --a) {
+                if (a < b - 1 && lineCount(a, b) > lines) break; // one word longer than the lines: a cue of its own
+                const double c = best[a - r0] + cost(a, b);
+                if (c < best[b - r0]) best[b - r0] = c, from[b - r0] = a;
+            }
+        QVector<QPair<int, int>> run;
+        for (int b = r1; b > r0; b = from[b - r0]) run.prepend(qMakePair(from[b - r0], b));
+        groups += run;
+        r0 = r1;
     }
 
     QVector<SubtitleCue> out;
@@ -579,7 +607,9 @@ QVector<SubtitleCue> readable(const QVector<SubtitleCue>& cues, double fps, cons
             for (int k = a + 1; k < b; ++k) {
                 const int l1 = chars(a, k), l2 = chars(k, b);
                 if (l1 > lineChars || l2 > lineChars) continue;
-                const double cost = std::abs(l1 - l2) - (phraseEnd(tok[k - 1].text) ? 16 : 0);
+                // a line ending on a short word ("zu", "the") reads badly
+                const double cost = std::abs(l1 - l2) - (phraseEnd(tok[k - 1].text) ? 16 : 0)
+                                  + (tok[k - 1].text.size() <= 3 ? 6 : 0);
                 if (cost < bestCost) bestCost = cost, best = k;
             }
             c.text = best < 0 ? words.join(' ') // a word longer than a line: the picture wraps it
