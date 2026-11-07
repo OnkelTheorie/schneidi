@@ -2638,5 +2638,6 @@
  "Verbindung verschieben": "Move connection",
  "Wähle einen Knoten in der Knoten- oder Ebenen-Ansicht.": "Select a node in the node or layer view.",
  "Wähle zuerst Videoclips.": "Select video clips first.",
- "Wähle zuerst einen Videoclip.": "Select a video clip first."
+ "Wähle zuerst einen Videoclip.": "Select a video clip first.",
+ "Wird eine Datei nur in einer Comp oder als Titel-Textur benutzt, bleibt der Clip; nur dieser Verweis wird geleert.": "If a file is only used in a comp or as a title texture, the clip stays; only that reference is cleared."
 }

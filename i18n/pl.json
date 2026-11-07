@@ -2638,5 +2638,6 @@
  "Verbindung verschieben": "Przesuń połączenie",
  "Wähle einen Knoten in der Knoten- oder Ebenen-Ansicht.": "Wybierz węzeł w widoku węzłów lub warstw.",
  "Wähle zuerst Videoclips.": "Najpierw wybierz klipy wideo.",
- "Wähle zuerst einen Videoclip.": "Najpierw wybierz klip wideo."
+ "Wähle zuerst einen Videoclip.": "Najpierw wybierz klip wideo.",
+ "Wird eine Datei nur in einer Comp oder als Titel-Textur benutzt, bleibt der Clip; nur dieser Verweis wird geleert.": "Jeśli plik jest używany tylko w kompozycji lub jako tekstura tytułu, klip zostaje; czyszczone jest tylko to odwołanie."
 }

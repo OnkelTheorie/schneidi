@@ -2,6 +2,7 @@
 #include "ui/MediaPool.h"
 
 #include "app/Theme.h"
+#include "core/CompGraph.h"
 #include "core/I18n.h"
 #include "core/IndexSearch.h"
 #include "core/MediaAspect.h"
@@ -1273,21 +1274,38 @@ void MediaPool::removeSelected()
     for (const QPair<int, int>& u : m_project->mediaUsage(paths))
         if (!sequences.contains(u.first) || !m_project->canRemoveSequence(u.first)) usage << u;
     if (!usage.isEmpty()) {
+        // As a clip's media (the clip goes too) or only referenced inside a clip: a compositing node's file or a
+        // title texture (the reference is cleared, the clip stays)
         QSet<QString> used;
+        bool referenced = false;
         for (const Sequence& s : m_project->sequences())
             if (std::any_of(usage.cbegin(), usage.cend(), [&](const QPair<int, int>& u) { return u.first == s.id; }))
                 for (const auto* tracks : {&s.timeline.video, &s.timeline.audio})
                     for (const Track& t : *tracks)
-                        for (const Clip& c : t.clips)
+                        for (const Clip& c : t.clips) {
                             if (c.kind == ClipKind::Media && paths.contains(c.mediaPath)) used.insert(c.mediaPath);
+                            QStringList refs;
+                            if (c.isTitle() && !c.title.look.texture.isEmpty()) refs << c.title.look.texture;
+                            for (const EffectInstance& e : c.effects)
+                                if (e.effectId == QLatin1String(Comp::kEffectId)) refs += Comp::mediaPaths(e);
+                            for (const QString& r : refs)
+                                if (paths.contains(r)) {
+                                    used.insert(r);
+                                    referenced = true;
+                                }
+                        }
         QString text = used.size() == 1 ? T("„%1“ wird noch benutzt:").arg(QFileInfo(*used.cbegin()).fileName())
                                         : T("%1 der ausgewählten Clips werden noch benutzt:").arg(used.size());
         for (const auto& [sequence, clips] : usage)
             text += "\n• " + (clips == 1 ? T("%1: 1 Clip").arg(m_project->sequenceName(sequence))
                                          : T("%1: %2 Clips").arg(m_project->sequenceName(sequence)).arg(clips));
         QMessageBox box(QMessageBox::Question, T("Aus dem Media Pool entfernen"), text, QMessageBox::NoButton, this);
-        box.setInformativeText(T("„Mit ihren Clips entfernen“ nimmt diese Clips auch aus den Timelines (ein "
-                                 "Rückgängig-Schritt holt alles zurück)."));
+        QString info = T("„Mit ihren Clips entfernen“ nimmt diese Clips auch aus den Timelines (ein "
+                         "Rückgängig-Schritt holt alles zurück).");
+        if (referenced)
+            info += ' ' + T("Wird eine Datei nur in einer Comp oder als Titel-Textur benutzt, bleibt der Clip; nur dieser "
+                            "Verweis wird geleert.");
+        box.setInformativeText(info);
         QPushButton* withClips = box.addButton(T("Mit ihren Clips entfernen"), QMessageBox::DestructiveRole);
         box.addButton(QMessageBox::Cancel);
         box.setDefaultButton(QMessageBox::Cancel);

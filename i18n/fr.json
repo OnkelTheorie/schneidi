@@ -2638,5 +2638,6 @@
  "Verbindung verschieben": "Déplacer la liaison",
  "Wähle einen Knoten in der Knoten- oder Ebenen-Ansicht.": "Sélectionnez un nœud dans la vue des nœuds ou des calques.",
  "Wähle zuerst Videoclips.": "Sélectionnez d'abord des clips vidéo.",
- "Wähle zuerst einen Videoclip.": "Sélectionnez d'abord un clip vidéo."
+ "Wähle zuerst einen Videoclip.": "Sélectionnez d'abord un clip vidéo.",
+ "Wird eine Datei nur in einer Comp oder als Titel-Textur benutzt, bleibt der Clip; nur dieser Verweis wird geleert.": "Si un fichier n’est utilisé que dans une composition ou comme texture de titre, le clip reste ; seule cette référence est effacée."
 }

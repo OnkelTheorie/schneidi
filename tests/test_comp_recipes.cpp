@@ -16,6 +16,7 @@
 #include "engine/picture/CompNodes.h"
 
 #include "check.h"
+#include "render_check.h"
 
 #include <QDir>
 #include <QFile>

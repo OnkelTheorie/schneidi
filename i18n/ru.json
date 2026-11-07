@@ -2638,5 +2638,6 @@
  "Verbindung verschieben": "Переместить связь",
  "Wähle einen Knoten in der Knoten- oder Ebenen-Ansicht.": "Выберите узел в виде узлов или слоёв.",
  "Wähle zuerst Videoclips.": "Сначала выберите видеоклипы.",
- "Wähle zuerst einen Videoclip.": "Сначала выберите видеоклип."
+ "Wähle zuerst einen Videoclip.": "Сначала выберите видеоклип.",
+ "Wird eine Datei nur in einer Comp oder als Titel-Textur benutzt, bleibt der Clip; nur dieser Verweis wird geleert.": "Если файл используется только в композиции или как текстура титра, клип остаётся; очищается только эта ссылка."
 }
