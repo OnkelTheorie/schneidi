@@ -131,8 +131,19 @@ bool evalMatteTune(NodeCtx& ctx, Buf* out)
         };
         if (grow != 0) // grow/shrink before the blur (they do not commute)
             separable([&](uint8_t* p, int pw, int rows) { VideoEffects::matteMinMaxRows(p, pw, rows, std::abs(grow), grow > 0); });
-        // The blur whole on one thread: its column pass vectorizes, which beat bands of row passes over threads
-        if (sigma >= 0.5) VideoEffects::matteBlur(plane, w, h, sigma);
+        int radii[3];
+        if (VideoEffects::matteBlurRadii(sigma, radii)) { // three boxes: rows on bands of rows, columns on bands of columns
+            uint8_t* tmp = turned.data();
+            constexpr int kCols = 256; // columns per band (contiguous in a row: the column pass vectorizes)
+            for (const int r : radii) {
+                Compose::forRows(h, kMinRows, [&](int y0, int y1) {
+                    VideoEffects::matteBoxRows(plane + size_t(y0) * w, tmp + size_t(y0) * w, w, y1 - y0, r);
+                });
+                Compose::forRows((w + kCols - 1) / kCols, 1, [&](int b0, int b1) {
+                    VideoEffects::matteBoxCols(tmp, plane, w, h, b0 * kCols, b1 * kCols, r);
+                });
+            }
+        }
     }
 
     if (rgba && (levels || spatial)) {

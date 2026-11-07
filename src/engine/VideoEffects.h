@@ -96,8 +96,12 @@ void lumaKey(uint8_t* rgba, int width, int height, const LumaKeyParams& p);
 // rows of one 8-bit plane, as alphaOps' shrink/grow (the column pass is the same on the transposed plane, so the
 // caller can spread both over threads)
 void matteMinMaxRows(uint8_t* plane, int width, int rows, int radius, bool grow);
-// Gaussian blur of one 8-bit plane, sigma in pixels, as alphaOps' blur (one thread)
-void matteBlur(uint8_t* plane, int width, int height, double sigma);
+// Gaussian blur of one 8-bit plane in bands for threads, the same bytes as alphaOps' blur: for each of the three
+// radii (false = sigma below half a pixel, no blur) the box along the rows on bands of rows (src -> dst), then the box
+// along the columns on bands of columns x0..x1 of the whole height (dst -> src)
+bool matteBlurRadii(double sigma, int radii[3]);
+void matteBoxRows(const uint8_t* src, uint8_t* dst, int width, int rows, int radius);
+void matteBoxCols(const uint8_t* src, uint8_t* dst, int width, int height, int x0, int x1, int radius);
 // Takes the key color's tint out of every color (amount 0..1; the share along the key's hue in the chroma plane,
 // brightness kept): a green fringe turns neutral, colors without green in them stay. Nothing for a gray key
 void despill(uint8_t* rgba, int width, int height, const QColor& key, double amount);

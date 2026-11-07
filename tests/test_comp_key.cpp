@@ -250,6 +250,30 @@ void testSoftAndDefaults()
     CHECK(edge > 60 && edge < 200);
     CHECK_EQ(inside, 255);
     CHECK_EQ(outside, 0);
+    // The same bytes as alphaOps' grow hard / blur (radius = amount * height / 72; 720 rows: amount 0.5 = 5 px), so
+    // the bands of rows and columns on threads add up to the one-thread filter
+    Buf pic(Buf::Rgba, 300, 720);
+    for (int y = 0; y < pic.h; ++y)
+        for (int x = 0; x < pic.w; ++x) {
+            const bool in = std::hypot(x - 150.0, y - 360.0) < 90 || (x > 20 && x < 40 && y % 50 < 30);
+            setPx(pic, x, y, x % 256, y % 256, 99, in ? 255 : (x * 7 + y * 3) % 40);
+        }
+    const auto viaAlphaOps = [&](double op) {
+        Buf b = pic;
+        VideoEffects::AlphaParams a;
+        a.operation = op;
+        a.amount = 0.5;
+        VideoEffects::alphaOps(b.data(), b.w, b.h, a);
+        return b.px;
+    };
+    CHECK(runNode("matte_tune", {{"soft", 5.0}}, {{"src", pic}}, sized(pic), &out));
+    CHECK(out.px == viaAlphaOps(1.0));
+    CHECK(runNode("matte_tune", {{"grow", 5.0}}, {{"src", pic}}, sized(pic), &out));
+    CHECK(out.px == viaAlphaOps(0.6));
+    CHECK(runNode("matte_tune", {{"grow", -5.0}}, {{"src", pic}}, sized(pic), &out));
+    CHECK(out.px == viaAlphaOps(0.3));
+    CHECK(runNode("matte_tune", {{"grow", 5.0}, {"soft", 2.5}}, {{"src", pic}}, sized(pic), &out));
+    CHECK(out.px == viaAlphaOps(0.7));
     // Defaults: nothing changes (mask and picture)
     CHECK(runNode("matte_tune", {}, {{"src", mask}}, sized(mask), &out));
     CHECK(out.px == mask.px);
@@ -286,13 +310,14 @@ void testDespill()
 void testSpeed()
 {
     const Buf src = figureOnGreen(1920, 1080, 300, 12);
+    const QHash<QString, Buf> in{{"src", src}};
     const auto ms = [&](const char* kind, const QVariantMap& v) {
         Buf out;
-        runNode(kind, v, {{"src", src}}, sized(src), &out); // warm (tables, threads)
+        runNode(kind, v, in, sized(src), &out); // warm (tables, threads)
         QElapsedTimer t;
         t.start();
         constexpr int n = 10;
-        for (int i = 0; i < n; ++i) runNode(kind, v, {{"src", src}}, sized(src), &out);
+        for (int i = 0; i < n; ++i) runNode(kind, v, in, sized(src), &out);
         return t.nsecsElapsed() / 1e6 / n;
     };
     const auto msSingle = [&](const std::function<void(uint8_t*)>& fn) {
