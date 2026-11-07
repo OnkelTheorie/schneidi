@@ -953,7 +953,8 @@ void addEditOps(QVector<OpDef>& ops)
                  "clips leave every timeline too)",
                  "media = a file or a list of files in the Media Pool. Without with_clips the op fails with IN_USE if "
                  "any timeline (compound and multicam clips included) uses one of them and says how many clips where. "
-                 "with_clips:true removes those clips too (a gap stays, nothing moves up). A file of a watch folder is "
+                 "with_clips:true removes those clips too (a gap stays, nothing moves up); a clip that only reads the file in "
+                 "its compositing graph or as a title texture stays, that reference is cleared. A file of a watch folder is "
                  "not taken again by its watch. In the app it is one undo step that brings everything back.",
                  opRemoveMedia}
         << OpDef{"bin", "{op:'bin', bin, rename?, into?, remove?}",

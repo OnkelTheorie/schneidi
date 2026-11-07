@@ -366,7 +366,22 @@ void testUsage(const QString& dir)
         CHECK(!p.removeMedia({f}, false)); // used: nothing removed
     }
     CHECK_EQ(p.media().size(), 4);
-    CHECK(p.removeMedia({m + "/title.png"}, true)); // with its clips: the title goes too
+    // With its clips: only clips whose media is the file go; a node or title texture reading it is cleared (the
+    // title draws without its texture, the node shows nothing), one undo step
+    const QString before = Check::dump(p.timeline());
+    CHECK(p.removeMedia({m + "/title.png", m + "/bg.png"}, true));
+    if (CHECK_EQ(p.timeline().video[0].clips.size(), 2)) {
+        const Clip& c = p.timeline().video[0].clips[0];
+        const EffectInstance* e = EffectRegistry::instance(c, Comp::kEffectId);
+        CHECK(e && e->params.value("n2.path").toString().isEmpty());
+        CHECK(e && e->params.value("n4.texture").toString() == m + "/tex.png");
+        CHECK(p.timeline().video[0].clips[1].title.look.texture.isEmpty());
+    }
+    p.undoStack()->undo();
+    CHECK(Check::dump(p.timeline()) == before);
+    CHECK_EQ(p.media().size(), 4);
+    // A clip whose media is the file still goes
+    CHECK(p.removeMedia({m + "/clip.mp4"}, true));
     CHECK_EQ(p.timeline().video[0].clips.size(), 1);
 }
 

@@ -27,6 +27,26 @@ bool usesFile(const Clip& c, const QSet<QString>& files)
     return false;
 }
 
+// Clears what of the clip reads one of the files besides its media (a node's file, a title's texture picture): the
+// node then shows nothing, the title draws without its texture. true = something changed
+bool clearFileRefs(Clip& c, const QSet<QString>& files)
+{
+    bool changed = false;
+    if (c.isTitle() && files.contains(c.title.look.texture)) {
+        c.title.look.texture.clear();
+        changed = true;
+    }
+    for (EffectInstance& e : c.effects)
+        if (e.effectId == QLatin1String(Comp::kEffectId))
+            Comp::forEachFile(e, [&](const QString& key, QString&) {
+                if (files.contains(e.params.value(key).toString())) {
+                    e.params[key] = QString();
+                    changed = true;
+                }
+            });
+    return changed;
+}
+
 class SnapshotCommand : public QUndoCommand {
 public:
     SnapshotCommand(Project* p, const QString& text, int sequence, Timeline before, Timeline after, QString mergeKey)
@@ -869,16 +889,19 @@ bool Project::removeMedia(const QStringList& paths, bool withClips)
     auto* step = new QUndoCommand(text);
     if (!usage.isEmpty()) {
         // Their clips first (undo: the files come back before them): a gap stays like after Delete, a dissolve with a
-        // clip that goes is released
+        // clip that goes is released. Only clips whose media is the file go; a graph node or a title texture that
+        // reads it is cleared instead (removing the background picture keeps the green screen clip)
         QVector<Sequence> after = m_sequences;
         for (Sequence& s : after) {
             QVector<int> ids;
-            for (const auto* tracks : {&s.timeline.video, &s.timeline.audio})
-                for (const Track& t : *tracks)
-                    for (const Clip& c : t.clips)
-                        if (usesFile(c, files)) ids << c.id;
-            if (ids.isEmpty()) continue;
             const Timeline before = s.timeline;
+            for (auto* tracks : {&s.timeline.video, &s.timeline.audio})
+                for (Track& t : *tracks)
+                    for (Clip& c : t.clips) {
+                        if (c.kind == ClipKind::Media && files.contains(c.mediaPath)) ids << c.id;
+                        else clearFileRefs(c, files);
+                    }
+            if (ids.isEmpty()) continue;
             TimelineOps::detachTransitions(s.timeline, ids);
             for (int id : ids) TimelineOps::removeClip(s.timeline, id);
             TimelineOps::unpairBrokenDissolves(before, s.timeline);
