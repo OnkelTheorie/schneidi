@@ -470,6 +470,17 @@ schneidi_test(test_comp_cutout_model)
 
 schneidi_test(test_text3d) # real 3D text (0.19): "O" hole, cap area = outline area, side at 90°, light, AA, cache, project, plain title bit-identical
 
+schneidi_test(test_trust_dialog) # custom code from someone else: the open dialog (run/skip), remembered, inspector "Code erlauben",
+# trust_custom_code of an AI in the app asks the user
+target_link_libraries(test_trust_dialog PRIVATE schneidi_cli_lib)
+schneidi_test(test_effect_aliases) # readable names of index-keyed effect parameters (0.19): op effect, keyframe, fx node, info, effects
+target_link_libraries(test_effect_aliases PRIVATE schneidi_cli_lib)
+schneidi_test(test_title_anim) # title entry/exit animation (0.19): pop/fade/slide sizes and opacity, still frames bit-identical, file, op title
+target_link_libraries(test_title_anim PRIVATE schneidi_cli_lib)
+schneidi_test(test_subtitles_readable) # readable subtitle cues (0.19): lines, cps, pauses, word times, check, op subtitles readable/words/track
+target_link_libraries(test_subtitles_readable PRIVATE schneidi_cli_lib)
+schneidi_test(test_settings_isolation) # SCHNEIDI_TEST_SETTINGS: a spawned schneidi-cli reads the test's settings, never the user's
+
 # Every test_*.cpp without a schneidi_test() line above (CONFIGURE_DEPENDS: a new file is picked up by the next build)
 file(GLOB _schneidi_test_sources CONFIGURE_DEPENDS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/test_*.cpp)
 foreach(_src ${_schneidi_test_sources})
@@ -492,16 +503,6 @@ file(GENERATE OUTPUT "$<TARGET_FILE_DIR:schneidi_test_support>/schneidi-test-pat
 list(TRANSFORM SCHNEIDI_TEST_PATHS REPLACE "^([A-Z_]+)=" "\\1=set:" OUTPUT_VARIABLE _schneidi_test_env)
 get_property(_schneidi_tests DIRECTORY PROPERTY TESTS)
 set_property(TEST ${_schneidi_tests} APPEND PROPERTY ENVIRONMENT_MODIFICATION ${_schneidi_test_env})
-schneidi_test(test_trust_dialog) # custom code from someone else: the open dialog (run/skip), remembered, inspector "Code erlauben",
-# trust_custom_code of an AI in the app asks the user
-target_link_libraries(test_trust_dialog PRIVATE schneidi_cli_lib)
-schneidi_test(test_effect_aliases) # readable names of index-keyed effect parameters (0.19): op effect, keyframe, fx node, info, effects
-target_link_libraries(test_effect_aliases PRIVATE schneidi_cli_lib)
-schneidi_test(test_title_anim) # title entry/exit animation (0.19): pop/fade/slide sizes and opacity, still frames bit-identical, file, op title
-target_link_libraries(test_title_anim PRIVATE schneidi_cli_lib)
-schneidi_test(test_subtitles_readable) # readable subtitle cues (0.19): lines, cps, pauses, word times, check, op subtitles readable/words/track
-target_link_libraries(test_subtitles_readable PRIVATE schneidi_cli_lib)
-schneidi_test(test_settings_isolation) # SCHNEIDI_TEST_SETTINGS: a spawned schneidi-cli reads the test's settings, never the user's
 add_dependencies(test_settings_isolation schneidi-cli)
 
 # Never the user's settings, data, config or cache (core/SettingsIsolation.h, Check::isolateSettings): every test gets
