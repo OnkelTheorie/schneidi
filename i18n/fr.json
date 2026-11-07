@@ -2582,5 +2582,13 @@
  "Ausgabe-Knoten setzen": "Définir le nœud de sortie",
  "Comp-Graph: Knoten %1 erreichen die Ausgabe nicht und wirken nicht": "Graphe de composition : les nœuds %1 n’atteignent pas la sortie et n’ont aucun effet",
  "Comp-Graph rechnet etwa %1 ms je Bild (mehr als %2 ms): Render-Cache für diesen Clip einschalten, damit die Wiedergabe flüssig bleibt": "Le graphe de composition prend environ %1 ms par image (plus de %2 ms) : activez le cache de rendu de ce clip pour une lecture fluide",
- "Key unsauber: %1 % halbdurchsichtige Pixel im Motiv (Key-Werte nachstellen oder matte_tune)": "Incrustation imparfaite : %1 % de pixels semi-transparents dans le sujet (ajustez les valeurs du key ou utilisez matte_tune)"
+ "Key unsauber: %1 % halbdurchsichtige Pixel im Motiv (Key-Werte nachstellen oder matte_tune)": "Incrustation imparfaite : %1 % de pixels semi-transparents dans le sujet (ajustez les valeurs du key ou utilisez matte_tune)",
+ "FFmpeg-Filter": "Filtre FFmpeg",
+ "Eine FFmpeg-Filterkette auf dem Bild des Clips (z. B. hue=s=0,edgedetect)": "Une chaîne de filtres FFmpeg sur l'image du clip (p. ex. hue=s=0,edgedetect)",
+ "Filterkette": "Chaîne de filtres",
+ "Shader": "Nuanceur",
+ "Ein eigener GLSL-Shader auf dem Bild des Clips (läuft auf der Grafikkarte)": "Un nuanceur GLSL personnel sur l'image du clip (s'exécute sur la carte graphique)",
+ "Shader-Code": "Code du nuanceur",
+ "Wert %1": "Valeur %1",
+ "Effekt „%1“ wird hier übersprungen: %2": "L’effet « %1 » est ignoré ici : %2"
 }

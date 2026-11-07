@@ -19,6 +19,7 @@ jobs:
             build-essential cmake ninja-build pkg-config git ca-certificates \
             qt6-base-dev qt6-base-private-dev \
             libavformat-dev libavcodec-dev libswresample-dev libswscale-dev libavutil-dev libminiaudio-dev \
+            libavfilter-dev qt6-shader-baker \
             ffmpeg xvfb xauth locales
           # Locale-aware sorting and German number format are tested; default "C" locale breaks them
           sed -i 's/^# *de_DE.UTF-8/de_DE.UTF-8/' /etc/locale.gen

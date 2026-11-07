@@ -3,7 +3,9 @@
 //
 // Compiling: Qt RHI wants shaders as .qsb (SPIR-V plus GLSL/HLSL/MSL made from it). Qt Shader Tools (QShaderBaker)
 // would do it in-process, but it is a separate Qt module that neither Debian's dev packages nor our builds need
-// otherwise; its command-line form `qsb` (Debian qt6-shader-baker, MSYS2 qt6-shadertools) does the same. So the code
+// otherwise; its command-line form `qsb` (Debian qt6-shader-baker, MSYS2 qt6-shadertools) does the same. Both are
+// GPL-3 (Qt Shader Tools): linked or bundled they would break the GPL-free packages, run as a separate program found
+// on the system they do not (the .deb recommends it; AppImage/Windows find one only if installed). So the code
 // is put into a fixed frame (the uniform block and bindings of the built-in shaders, quad.vert as vertex stage),
 // written to a temporary file and baked by `qsb` through QProcess (no shell). Results are kept in memory and in the
 // cache folder by a hash of the full source, so a shader is baked once per machine, not per frame or start.

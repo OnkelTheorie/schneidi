@@ -68,6 +68,13 @@ schneidi_test(test_picture_gpu_render) # Renderer's GPU path vs its CPU path, wh
 # The GPU decides by itself here (every other test runs the CPU path: SCHNEIDI_GPU=0)
 set_tests_properties(test_picture_gpu_render PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;SCHNEIDI_AUDIO_DEVICE=null")
 schneidi_test(test_own_effects)
+# Custom effects (0.19): FFmpeg filter chain (pixels, refused filters, errors, comp fx node), shader compile errors,
+# project file round trip; through the CLI
+schneidi_test(test_custom_effects)
+target_link_libraries(test_custom_effects PRIVATE schneidi_cli_lib)
+# The shader on the graphics card (the GPU decides by itself; skips without one or without qsb)
+schneidi_test(test_custom_shader)
+set_tests_properties(test_custom_shader PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;SCHNEIDI_AUDIO_DEVICE=null")
 schneidi_test(test_presets)
 schneidi_test(test_look_edit) # bundled look "Edit": listed, one undo step, colours and a mild glow
 target_link_libraries(test_look_edit PRIVATE schneidi_cli_lib)

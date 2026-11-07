@@ -15,6 +15,7 @@
 #include "engine/Bundle.h"
 #include "engine/CheckMeasure.h"
 #include "engine/HardwareEncoders.h"
+#include "engine/picture/CustomEffects.h"
 #include "engine/Snapshot.h"
 #include "engine/video/Scan.h"
 
@@ -399,6 +400,20 @@ QJsonObject cmdCheck(const QJsonObject& a, Context& ctx)
             issues += *st;
         issues += CheckMeasure::hook(f, render, from, to, opt);
         issues += CheckMeasure::bars(f, tl, from, to);
+        // Custom effects this machine cannot draw (shader without a graphics card or qsb, filter chain without
+        // libavfilter): rendered without them
+        for (const Track& t : tl.video)
+            for (const Clip& c : t.clips) {
+                if (t.hidden || !c.enabled || c.end() <= from || c.start >= to) continue;
+                for (const EffectInstance& e : c.effects) {
+                    QString why;
+                    if (!e.enabled || !Picture::Custom::isCustom(e.effectId) || Picture::Custom::canRender(e.effectId, &why))
+                        continue;
+                    issues << ExportCheck::Issue{ExportCheck::Severity::Warning, "custom_effect_skipped",
+                                                 T("Effekt „%1“ wird hier übersprungen: %2").arg(e.effectId, why),
+                                                 std::max(from, c.start), std::min(to, c.end()), c.id};
+                }
+            }
         // Keys of compositing graphs: the matte at the middle of the clip, small (one frame per key node, at most 8)
         int keys = 0;
         for (const Track& t : tl.video)

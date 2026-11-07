@@ -13,7 +13,8 @@
 # - Devices: none, except the lavfi input of the hardware encoder test.
 # - Filters: only the bundled ffmpeg program uses them (proxies, render cache, GIF palette, hardware encoder test,
 #   SCHNEIDI_ANALYSIS=ffmpeg comparisons) plus those its command line inserts by itself (autorotate, format/rate
-#   conversion, -ss/-t). The program itself does not link libavfilter.
+#   conversion, -ss/-t), and since 0.19 the custom effect "ffmpeg_filter" (engine/picture/FilterEffect.cpp links
+#   libavfilter): every filter of its allowlist must be listed here (section at the end).
 
 # ---- Video decoders ----
 # today's cameras, phones, screen and game recorders, delivery codecs
@@ -380,3 +381,65 @@ filter color
 filter sine
 indev lavfi
 decoder wrapped_avframe
+
+# ---- Filters of the custom effect "ffmpeg_filter" (engine/picture/FilterEffect.cpp allowed(); the ones above too) ----
+filter negate
+filter hue
+filter huesaturation
+filter colorchannelmixer
+filter colorbalance
+filter colorlevels
+filter colorcontrast
+filter colorcorrect
+filter colorize
+filter colortemperature
+filter vibrance
+filter exposure
+filter curves
+filter lut
+filter lutrgb
+filter lutyuv
+filter geq
+filter monochrome
+filter grayworld
+filter selectivecolor
+filter colorhold
+filter chromahold
+filter pseudocolor
+filter limiter
+filter shuffleplanes
+filter gblur
+filter avgblur
+filter unsharp
+filter cas
+filter median
+filter bilateral
+filter edgedetect
+filter sobel
+filter prewitt
+filter roberts
+filter scharr
+filter kirsch
+filter convolution
+filter dilation
+filter erosion
+filter deflate
+filter inflate
+filter deband
+filter gradfun
+filter vignette
+filter noise
+filter pixelize
+filter chromashift
+filter rgbashift
+filter shear
+filter lenscorrection
+filter swaprect
+filter pad
+filter fillborders
+filter drawbox
+filter drawgrid
+filter colorkey
+filter lumakey
+filter chromakey
+filter fade

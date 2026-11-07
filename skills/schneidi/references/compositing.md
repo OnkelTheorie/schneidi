@@ -17,8 +17,9 @@ picture-in-picture with a frame, a glitch only on a title.
 - **Keying:** `key` (chroma: `color` of the screen picked from a `frames` image, `tolerance`, `softness`, `spill`;
   luma: `low`/`high`), then `matte_tune` (shrink/grow, soften, clip black/white, despill) for a clean edge.
 - **Change a picture:** `transform` (x, y, size, angle; `follow` a tracker), `crop`, `blur` (with `mask` = only
-  there), `grade` (Color page values, LUT), `fx` (any picture effect: `effect` = its id, its values as `e_<key>`),
-  `shadow`, `glitch` (mild by default).
+  there), `grade` (Color page values, LUT), `fx` (any picture effect: `effect` = its id, its values as `e_<key>`;
+  also your own: `effect:'ffmpeg_filter'` with `e_chain`, `effect:'shader'` with `e_code`, `e_p1`…), `shadow`,
+  `glitch` (mild by default).
 - **Follow something:** `tracker` (mode point, two or face; start points `ax, ay` as 0..1 of the clip's own picture,
   without letterbox bars), then the edit op `track_node` computes it once (keyframes x, y, scale, angle and the
   reference point rx, ry); masks and transforms with `follow` = its id move by (x - rx, y - ry) along.
