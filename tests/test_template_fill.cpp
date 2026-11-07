@@ -409,6 +409,65 @@ void testClipFlexible()
     }
 }
 
+// Items ending with a Flexible slot (a title over the clip with a 1 s fade-out, a lower third, a sound effect) keep
+// their fades when the fill shortens or lengthens the slot (an AI test run 0.19: the titles lost their fade-out)
+void testFlexibleKeepsFades()
+{
+    const auto make = [] {
+        ProjectData d = project();
+        slotOf(d, 1).length = SlotLength::Flexible;
+        Clip over;
+        over.id = 8;
+        over.kind = ClipKind::Title;
+        over.title.text = "TOPIC";
+        over.start = 0;
+        over.out = 99;
+        over.fadeIn = 10;
+        over.fadeOut = 25;
+        Clip lower = over;
+        lower.id = 9;
+        lower.title.text = "NAME";
+        lower.start = 20;
+        lower.out = 79;
+        lower.fadeIn = 5;
+        d.timeline.video.resize(5);
+        d.timeline.video[3].clips = {over};
+        d.timeline.video[4].clips = {lower};
+        d.timeline.audio.resize(3);
+        d.timeline.audio[2].kind = TrackKind::Audio;
+        Clip whoosh = clip(10, kSong, 30, 0, 70);
+        whoosh.fadeOut = 12;
+        d.timeline.audio[2].clips = {whoosh};
+        d.lastClipId = 10;
+        return d;
+    };
+    { // shorter: 100 -> 50 frames
+        ProjectData d = make();
+        apply(d, {{"clip1", Value::ofFile(kShort)}}, context());
+        if (!CHECK(find(d, 8) && find(d, 9) && find(d, 10))) return;
+        CHECK_EQ(find(d, 8)->length(), 50);
+        CHECK_EQ(find(d, 8)->fadeIn, 10);
+        CHECK_EQ(find(d, 8)->fadeOut, 25);
+        CHECK_EQ(find(d, 9)->start, 20);
+        CHECK_EQ(find(d, 9)->end(), 50);
+        CHECK_EQ(find(d, 9)->fadeIn, 5);
+        CHECK_EQ(find(d, 9)->fadeOut, 25);
+        CHECK_EQ(find(d, 10)->fadeOut, 12);
+        CHECK_EQ(find(d, 10)->end(), 50);
+    }
+    { // longer: 100 -> 300 frames, the titles ending with the slot follow its end
+        ProjectData d = make();
+        apply(d, {{"clip1", Value::ofFile(kLong)}}, context());
+        if (!CHECK(find(d, 8) && find(d, 9))) return;
+        CHECK_EQ(find(d, 8)->length(), 300);
+        CHECK_EQ(find(d, 8)->fadeIn, 10);
+        CHECK_EQ(find(d, 8)->fadeOut, 25);
+        CHECK_EQ(find(d, 9)->start, 20);
+        CHECK_EQ(find(d, 9)->end(), 300);
+        CHECK_EQ(find(d, 9)->fadeOut, 25);
+    }
+}
+
 void testReframe()
 {
     Context ctx = context();
@@ -1316,6 +1375,7 @@ int main(int argc, char** argv)
     testCheck();
     testClipFixed();
     testClipFlexible();
+    testFlexibleKeepsFades();
     testReframe();
     testText();
     testMusic();

@@ -134,7 +134,8 @@ void scaleKeys(Clip& c, AnimParam p, double f)
 }
 
 // Everything after `oldEnd` on all unlocked tracks moves by delta (< 0: [oldEnd + delta, oldEnd) is taken out; a clip
-// reaching over that range, a music bed, gets shorter at its end instead of being cut in two)
+// reaching over that range or ending right at oldEnd, a music bed or a title over the slot, gets shorter at its end
+// instead of being cut, so its end keeps its fade-out and transition)
 void ripple(Timeline& tl, int oldEnd, int delta, const IdGen& newId)
 {
     if (!delta) return;
@@ -145,11 +146,13 @@ void ripple(Timeline& tl, int oldEnd, int delta, const IdGen& newId)
             if (delta < 0) {
                 QVector<Clip> over;
                 for (int i = int(t.clips.size()) - 1; i >= 0; --i)
-                    if (t.clips[i].start < newEnd && t.clips[i].end() > oldEnd) over << t.clips.takeAt(i);
+                    if (t.clips[i].start < newEnd && t.clips[i].end() >= oldEnd) over << t.clips.takeAt(i);
                 TimelineOps::clearRange(t, newEnd, oldEnd, newId);
                 TimelineOps::shiftFrom(t, oldEnd, delta);
                 for (Clip c : over) {
                     c.out = std::max(c.in, c.out + delta);
+                    c.fadeOut = std::min(c.fadeOut, c.length());
+                    c.fadeIn = std::min(c.fadeIn, c.length() - c.fadeOut);
                     TimelineOps::placeClip(t, c, newId);
                 }
             } else {
@@ -585,14 +588,15 @@ void fillMedia(ProjectData& d, Timeline& tl, const SlotRef& r, const MediaInfo& 
 
     const int delta = parts.length - r.length;
     if (r.slot.length == SlotLength::Flexible && delta) {
-        // Titles and stills on other video tracks that cover exactly the slot (a topic title, a logo over the whole
-        // clip) keep covering it when it grows (when it shrinks, the ripple shortens them anyway)
+        // Titles and stills on other video tracks that end with the slot (a topic title, a logo over the whole clip, a
+        // lower third up to its end) keep ending with it when it grows (when it shrinks, the ripple shortens them at
+        // their end anyway); their fades stay as they are
         QVector<int> covering;
         if (delta > 0)
             for (const Track& t : tl.video) {
                 if (t.locked) continue;
                 for (const Clip& c : t.clips) {
-                    if (c.start != r.start || c.end() != r.start + r.length) continue;
+                    if (c.start < r.start || c.end() != r.start + r.length) continue;
                     const bool still = std::any_of(d.media.cbegin(), d.media.cend(), [&c](const MediaInfo& mi) {
                         return mi.path == c.mediaPath && mi.isImage;
                     });
