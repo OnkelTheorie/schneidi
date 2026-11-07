@@ -351,6 +351,9 @@ QVector<Issue> timeline(const Timeline& tl, int from, int to, const ProjectForma
                              cue.start, cue.end);
         }
     }
+
+    // Compositing graphs: nodes without effect, graphs too slow to play
+    out += comp(tl, from, to, f);
     return out;
 }
 

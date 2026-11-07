@@ -14,6 +14,7 @@
 #include <QPainterPath>
 
 #include <algorithm>
+#include <optional>
 #include <cmath>
 #include <limits>
 #include <memory>
@@ -38,11 +39,17 @@ FrameSet framesOf(const QString& src, const QJsonObject& a, Context& ctx, int ma
     MediaSource media;
     ProjectFormat f;
     int length = 0;
+    // A clip alone as its compositing graph makes it, up to a node (clip, node?, view?)
+    std::optional<Timeline> clipOnly;
+    int clipFrom = 0, clipTo = 0;
     if (isProjectFile(src)) {
         session = std::make_unique<Session>(src);
         session->selectTimeline(a["timeline"]);
         f = session->format();
         length = TimelineOps::endFrame(session->project.timeline());
+        if (a.contains("clip")) clipOnly = compNodeTimeline(*session, a, &clipFrom, &clipTo);
+    } else if (a.contains("clip") || a.contains("node") || a.contains("view")) {
+        fail("BAD_ARGUMENT", "clip/node/view are for a project (source = the .schneidi file or \"@app\")");
     } else {
         QJsonObject ma{{"file", src}};
         if (a.contains("project")) ma["project"] = a["project"];
@@ -57,8 +64,12 @@ FrameSet framesOf(const QString& src, const QJsonObject& a, Context& ctx, int ma
     }
     QVector<int> at;
     for (const QJsonValue& v : a["at"].toArray()) at << parseTime(v, f, "at");
-    const int from = a.contains("from") ? std::clamp(parseTime(a["from"], f, "from"), 0, length - 1) : 0;
-    const int to = a.contains("to") ? std::clamp(parseTime(a["to"], f, "to"), from + 1, length) : length;
+    const int lo = clipOnly ? clipFrom : 0;
+    const int from = a.contains("from") ? std::clamp(parseTime(a["from"], f, "from"), 0, length - 1) : lo;
+    const int to = a.contains("to") ? std::clamp(parseTime(a["to"], f, "to"), from + 1, length)
+                   : clipOnly ? clipTo : length;
+    // A clip without times: its first frame
+    if (clipOnly && at.isEmpty() && !a.contains("every") && !a.contains("count")) at << clipFrom;
     if (a.contains("every")) {
         const int step = parseTime(a["every"], f, "every");
         if (step <= 0) fail("BAD_ARGUMENT", "'every' must be > 0");
@@ -81,7 +92,7 @@ FrameSet framesOf(const QString& src, const QJsonObject& a, Context& ctx, int ma
     const int decodeEdge = crop ? std::min({fullEdge, 8192, int(std::ceil(double(maxEdge) * fullEdge / regionEdge))})
                                 : maxEdge;
 
-    const auto snap = session ? Snapshot::Source::timeline(f, session->project.renderTimeline())
+    const auto snap = session ? Snapshot::Source::timeline(f, clipOnly ? *clipOnly : session->project.renderTimeline())
                               : Snapshot::Source::media(f, media.info.path);
     FrameSet out;
     out.source = absolute(src);

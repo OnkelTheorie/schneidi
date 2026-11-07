@@ -140,6 +140,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/core/PlaybackMeter.h
     src/core/Editor.h             src/core/Editor.cpp
     src/core/EditorSubtitles.cpp
+    src/core/EditorComp.cpp
     src/core/EditorCompound.cpp
     src/core/EditorAttributes.cpp
     src/core/EditorDetail.h
@@ -194,7 +195,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/core/Zip.h                src/core/Zip.cpp
     src/core/TemplateZip.h        src/core/TemplateZip.cpp
     src/core/Ducking.h            src/core/Ducking.cpp
-    src/core/ExportCheck.h        src/core/ExportCheck.cpp src/core/ExportCheckStory.cpp
+    src/core/ExportCheck.h        src/core/ExportCheck.cpp src/core/ExportCheckStory.cpp src/core/ExportCheckComp.cpp
     src/core/Stutter.h            src/core/Stutter.cpp
     src/core/Speech.h             src/core/Speech.cpp
     src/core/ContactSheet.h       src/core/ContactSheet.cpp
@@ -492,7 +493,7 @@ add_library(schneidi_cli_lib ${SCHNEIDI_LIB_TYPE}
     src/cli/EditOps.cpp src/cli/EditOpsTimelines.cpp src/cli/EditOpsLook.cpp
     src/cli/EditOpsAudio.cpp src/cli/EditOpsEdit.cpp src/cli/EditOpsMulticam.cpp
     src/cli/EditOpsStory.cpp src/cli/EditOpsMusic.cpp src/cli/EditOpsSfx.cpp src/cli/EditOpsTalk.cpp
-    src/cli/EditOpsTemplate.cpp
+    src/cli/EditOpsTemplate.cpp src/cli/EditOpsComp.cpp
     src/cli/AnalysisDetail.h src/cli/Analysis.cpp src/cli/AnalysisAudio.cpp src/cli/AnalysisVideo.cpp src/cli/AnalysisPicture.cpp
     src/cli/AnalysisKillFeed.cpp
     src/cli/AnalysisHighlights.cpp src/cli/AnalysisCheck.cpp src/cli/AnalysisOverview.cpp src/cli/AnalysisBeats.cpp

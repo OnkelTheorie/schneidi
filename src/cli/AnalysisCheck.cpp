@@ -3,6 +3,8 @@
 // before handing it over
 #include "cli/AnalysisDetail.h"
 
+#include "core/CompGraph.h"
+#include "core/EffectRegistry.h"
 #include "core/ExportCheck.h"
 #include "core/I18n.h"
 #include "core/RenderJob.h"
@@ -13,6 +15,7 @@
 #include "engine/Bundle.h"
 #include "engine/CheckMeasure.h"
 #include "engine/HardwareEncoders.h"
+#include "engine/Snapshot.h"
 #include "engine/video/Scan.h"
 
 #include <QFile>
@@ -21,6 +24,7 @@
 #include <QRegularExpression>
 
 #include <algorithm>
+#include <cstring>
 #include <cmath>
 #include <mutex>
 
@@ -395,6 +399,29 @@ QJsonObject cmdCheck(const QJsonObject& a, Context& ctx)
             issues += *st;
         issues += CheckMeasure::hook(f, render, from, to, opt);
         issues += CheckMeasure::bars(f, tl, from, to);
+        // Keys of compositing graphs: the matte at the middle of the clip, small (one frame per key node, at most 8)
+        int keys = 0;
+        for (const Track& t : tl.video)
+            for (const Clip& c : t.clips) {
+                CompGraph g;
+                const EffectInstance* e = EffectRegistry::instance(c, ::Comp::kEffectId);
+                if (t.hidden || !c.enabled || c.end() <= from || c.start >= to || !e || !::Comp::graphOf(*e, &g)) continue;
+                const QVector<int> used = g.evalOrder();
+                for (const CompNode& n : g.nodes) {
+                    if (n.type != QLatin1String("key") || !used.contains(n.id) || ++keys > 8) continue;
+                    int start = 0, stop = 0;
+                    const Timeline only = compNodeTimeline(s, {{"clip", c.id}, {"node", n.id}, {"view", "matte"}}, &start, &stop);
+                    const int mid = std::clamp((std::max(from, start) + std::min(to, stop)) / 2, start, stop - 1);
+                    const QImage m = Snapshot::Source::timeline(f, only)->frame(mid, 320).convertToFormat(QImage::Format_Grayscale8);
+                    if (m.isNull()) continue;
+                    std::vector<uint8_t> alpha(size_t(m.width()) * m.height());
+                    for (int y = 0; y < m.height(); ++y)
+                        std::memcpy(alpha.data() + size_t(y) * m.width(), m.constScanLine(y), size_t(m.width()));
+                    if (auto i = ExportCheck::keyEdges(alpha.data(), m.width(), m.height(), c.id, std::max(from, c.start),
+                                                       std::min(to, c.end())))
+                        issues << *i;
+                }
+            }
         // H.264 export without a graphics card encoder and without x264: the free encoder needs twice the bit rate
         if (HardwareEncoders::needsBetterEncoder("h264"))
             issues << ExportCheck::Issue{ExportCheck::Severity::Info, "encoder_quality",

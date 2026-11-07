@@ -2571,5 +2571,16 @@
  "Stelle 4": "Pozycja 4",
  "Transformieren": "Przekształć",
  "Verschieben, vergrößern und drehen (folgt auf Wunsch einem Tracker)": "Przesuń, skaluj i obróć (opcjonalnie podąża za śledzeniem)",
- "Zuschneiden": "Kadruj"
+ "Zuschneiden": "Kadruj",
+ "Comp-Graph setzen": "Ustaw graf kompozycji",
+ "Comp-Graph entfernen": "Usuń graf kompozycji",
+ "Knoten hinzufügen": "Dodaj węzeł",
+ "Knoten ändern": "Zmień węzeł",
+ "Knoten entfernen": "Usuń węzeł",
+ "Knoten verbinden": "Połącz węzły",
+ "Verbindung lösen": "Rozłącz",
+ "Ausgabe-Knoten setzen": "Ustaw węzeł wyjściowy",
+ "Comp-Graph: Knoten %1 erreichen die Ausgabe nicht und wirken nicht": "Graf kompozycji: węzły %1 nie docierają do wyjścia i nie działają",
+ "Comp-Graph rechnet etwa %1 ms je Bild (mehr als %2 ms): Render-Cache für diesen Clip einschalten, damit die Wiedergabe flüssig bleibt": "Graf kompozycji liczy ok. %1 ms na klatkę (więcej niż %2 ms): włącz pamięć podręczną renderowania dla tego klipu, aby odtwarzanie było płynne",
+ "Key unsauber: %1 % halbdurchsichtige Pixel im Motiv (Key-Werte nachstellen oder matte_tune)": "Kluczowanie niedokładne: %1 % półprzezroczystych pikseli w obiekcie (popraw wartości klucza lub użyj matte_tune)"
 }

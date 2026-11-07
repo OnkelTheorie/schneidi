@@ -2571,5 +2571,16 @@
  "Stelle 4": "Posición 4",
  "Transformieren": "Transformar",
  "Verschieben, vergrößern und drehen (folgt auf Wunsch einem Tracker)": "Mover, escalar y girar (opcionalmente sigue a un rastreador)",
- "Zuschneiden": "Recortar"
+ "Zuschneiden": "Recortar",
+ "Comp-Graph setzen": "Establecer grafo de composición",
+ "Comp-Graph entfernen": "Quitar grafo de composición",
+ "Knoten hinzufügen": "Añadir nodo",
+ "Knoten ändern": "Cambiar nodo",
+ "Knoten entfernen": "Quitar nodo",
+ "Knoten verbinden": "Conectar nodos",
+ "Verbindung lösen": "Desconectar",
+ "Ausgabe-Knoten setzen": "Establecer nodo de salida",
+ "Comp-Graph: Knoten %1 erreichen die Ausgabe nicht und wirken nicht": "Grafo de composición: los nodos %1 no llegan a la salida y no tienen efecto",
+ "Comp-Graph rechnet etwa %1 ms je Bild (mehr als %2 ms): Render-Cache für diesen Clip einschalten, damit die Wiedergabe flüssig bleibt": "El grafo de composición tarda unos %1 ms por fotograma (más de %2 ms): activa la caché de render de este clip para que la reproducción sea fluida",
+ "Key unsauber: %1 % halbdurchsichtige Pixel im Motiv (Key-Werte nachstellen oder matte_tune)": "Key poco limpio: %1 % de píxeles semitransparentes en el sujeto (ajusta los valores del key o usa matte_tune)"
 }

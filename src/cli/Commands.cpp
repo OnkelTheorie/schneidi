@@ -540,6 +540,10 @@ QJsonObject clipJson(const Project& p, const Clip& c, TrackRef ref)
                 }
                 eo["windows"] = list;
             }
+            if (e.effectId == QLatin1String(::Comp::kEffectId)) { // the graph short: nodes, links, out, cost
+                eo.remove("params");
+                eo["graph"] = compJson(e, f);
+            }
             if (!e.enabled) eo["enabled"] = false;
             // Not in this version (a frei0r/LADSPA plugin of an older project, an id of a newer one): kept, but skipped
             if (!EffectRegistry::find(e.effectId)) eo["available"] = false;
@@ -1277,7 +1281,9 @@ const QVector<Command>& commands()
                   "short/too fast to read or past the end, recordings with stutter in the range a clip uses "
                   "(stutter: jumps in the time stamps, see `probe` gaps), black_bars (black bars baked into a "
                   "recording - a 4:3 game in a 16:9 video - that show in a timeline of another shape or a zoomed "
-                  "clip; fix: edit op crop_bars, or reframe), and the sound of the mix as exported: no "
+                  "clip; fix: edit op crop_bars, or reframe), compositing graphs (comp_unused_input: nodes that do not "
+                  "reach the output; comp_slow: estimated above 40 ms per frame, playback may stutter; key_edges: a "
+                  "key's matte with many half-transparent pixels in the subject), and the sound of the mix as exported: no "
                   "sound, clipping, true peak above -1 dBTP, loudness off the target, silence at the end, and "
                   "under_music: a track with events more than 15 LU under the music while its events play (music = "
                   "a track named music/song/BGM, or one of sound files only that plays without pauses; events = the "
@@ -1359,7 +1365,8 @@ const QVector<Command>& commands()
                     "luma images (op 'transition'), effect presets (op 'effect' preset), accent presets (op "
                     "'accent': zoom punch, flash, shake on kills, beats, drops) and effect sounds (op 'sfx').",
          {{"effect", T::String, "only this effect, with parameter details", false, true},
-          {"kind", T::String, "'sfx': only the effect sounds", false, true}},
+          {"kind", T::String, "'sfx': only the effect sounds; 'nodes': the node kinds of the compositing graph (edit "
+                              "ops 'comp', 'node') with inputs and parameters", false, true}},
          cmdEffects},
         {"sync", "Line up recordings of the same event (camera angles, player POVs) by their sound: the offset "
                  "of each file to the first one (the reference), found by shared sounds like a round start or "
@@ -1373,7 +1380,8 @@ const QVector<Command>& commands()
          cmdSync},
         {"frames", "Still images of a media file or a project timeline at given times, as files or one contact "
                    "sheet with timecodes (lets you look at the material). Several files at once with 'sources', a "
-                   "detail of the picture (HUD, kill feed, score …) with 'crop'.",
+                   "detail of the picture (HUD, kill feed, score …) with 'crop', one clip's compositing graph at a "
+                   "node with 'clip'/'node'/'view'.",
          {{"source", T::Path, "media file or project (.schneidi)", false, true},
           {"sources", T::Sources, "several media files (on a sheet labelled 1, 2 … in this order); an entry may be an "
                                   "object {file, crop?, at?, every?, count?, from?, to?} with its own region/times"},
@@ -1391,7 +1399,13 @@ const QVector<Command>& commands()
                                      "800 to read small HUD text)"},
           {"width", T::Integer, "longer edge of each image in pixels, on a sheet of each tile (default 640, MCP 480)"},
           {"project", T::Path, "for a media file: count frames in this project's frame rate"},
-          {"timeline", T::String, "for a project: which timeline (id or name; default: the open one)"}},
+          {"timeline", T::String, "for a project: which timeline (id or name; default: the open one)"},
+          {"clip", T::Integer, "for a project: only this clip, as its compositing graph makes it (no transform, other "
+                               "clips or fades); without times its first frame"},
+          {"node", T::Integer, "with clip: the picture at this node of its graph (default: the output); a mask shows "
+                               "as gray (white = inside)"},
+          {"view", T::String, "with clip: 'matte' = the alpha of the picture as gray (white = solid, black = "
+                              "transparent): is a key clean?"}},
          cmdFrames},
     };
     return list;

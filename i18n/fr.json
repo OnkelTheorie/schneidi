@@ -2571,5 +2571,16 @@
  "Stelle 4": "Position 4",
  "Transformieren": "Transformer",
  "Verschieben, vergrößern und drehen (folgt auf Wunsch einem Tracker)": "Déplacer, agrandir et faire pivoter (suit au besoin un suivi)",
- "Zuschneiden": "Recadrer"
+ "Zuschneiden": "Recadrer",
+ "Comp-Graph setzen": "Définir le graphe de composition",
+ "Comp-Graph entfernen": "Supprimer le graphe de composition",
+ "Knoten hinzufügen": "Ajouter un nœud",
+ "Knoten ändern": "Modifier le nœud",
+ "Knoten entfernen": "Supprimer le nœud",
+ "Knoten verbinden": "Relier les nœuds",
+ "Verbindung lösen": "Défaire la liaison",
+ "Ausgabe-Knoten setzen": "Définir le nœud de sortie",
+ "Comp-Graph: Knoten %1 erreichen die Ausgabe nicht und wirken nicht": "Graphe de composition : les nœuds %1 n’atteignent pas la sortie et n’ont aucun effet",
+ "Comp-Graph rechnet etwa %1 ms je Bild (mehr als %2 ms): Render-Cache für diesen Clip einschalten, damit die Wiedergabe flüssig bleibt": "Le graphe de composition prend environ %1 ms par image (plus de %2 ms) : activez le cache de rendu de ce clip pour une lecture fluide",
+ "Key unsauber: %1 % halbdurchsichtige Pixel im Motiv (Key-Werte nachstellen oder matte_tune)": "Incrustation imparfaite : %1 % de pixels semi-transparents dans le sujet (ajustez les valeurs du key ou utilisez matte_tune)"
 }

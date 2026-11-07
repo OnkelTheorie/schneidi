@@ -449,3 +449,5 @@ schneidi_test(test_comp_tracker)
 schneidi_test(test_comp_tracker_face)
 schneidi_test(test_comp_eval) # compositing evaluation (0.19 A): merge modes vs formula, graph = effect list bit-identical, comp_from, cache, unknown kinds
 schneidi_test(test_comp_follow) # tracker follow rule (0.19): followers relative to rx/ry, no jump when the analysis lands, transform/mask alike
+schneidi_test(test_comp_cli) # compositing through the CLI (0.19 G): ops comp/comp_from/node/track_node, keyframes comp.n<id>.<key>, effects kind nodes, frames at a node, comp checks, undo
+target_link_libraries(test_comp_cli PRIVATE schneidi_cli_lib)
