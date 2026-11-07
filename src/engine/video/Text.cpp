@@ -35,14 +35,16 @@ void boxPass(std::vector<uint8_t>& a, int w, int h, int r, std::vector<uint8_t>&
     if (r < 1) return;
     tmp.resize(a.size());
     const int win = 2 * r + 1;
-    const uint32_t inv = (1u << 24) / uint32_t(win); // sum * inv >> 24 = sum / win
+    // (sum * inv + half) >> 24 = sum / win rounded (truncating lost a step per pass: opaque became 254)
+    const uint32_t inv = (1u << 24) / uint32_t(win);
+    constexpr uint64_t half = uint64_t(1) << 23;
     for (int y = 0; y < h; ++y) {
         const uint8_t* src = a.data() + size_t(y) * w;
         uint8_t* dst = tmp.data() + size_t(y) * w;
         uint32_t sum = 0;
         for (int i = -r; i <= r; ++i) sum += (i >= 0 && i < w) ? src[i] : 0;
         for (int x = 0; x < w; ++x) {
-            dst[x] = uint8_t((uint64_t(sum) * inv) >> 24);
+            dst[x] = uint8_t((uint64_t(sum) * inv + half) >> 24);
             const int in = x + r + 1, out = x - r;
             if (in < w) sum += src[in];
             if (out >= 0) sum -= src[out];
@@ -54,7 +56,7 @@ void boxPass(std::vector<uint8_t>& a, int w, int h, int r, std::vector<uint8_t>&
             for (int x = 0; x < w; ++x) col[x] += tmp[size_t(y) * w + x];
     for (int y = 0; y < h; ++y) {
         uint8_t* dst = a.data() + size_t(y) * w;
-        for (int x = 0; x < w; ++x) dst[x] = uint8_t((uint64_t(col[x]) * inv) >> 24);
+        for (int x = 0; x < w; ++x) dst[x] = uint8_t((uint64_t(col[x]) * inv + half) >> 24);
         const int in = y + r + 1, out = y - r;
         if (in < h)
             for (int x = 0; x < w; ++x) col[x] += tmp[size_t(in) * w + x];
