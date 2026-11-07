@@ -12,6 +12,7 @@
 #include "core/PathKey.h"
 #include "core/ProjectFile.h"
 #include "core/TimelineOps.h"
+#include "engine/RenderCache.h"
 #include "engine/picture/CustomEffects.h"
 
 #include "check.h"
@@ -248,6 +249,42 @@ int main(int argc, char** argv)
         // The user confirms it
         edit({QJsonObject{{"op", "marker"}, {"at", 9}}}, {{"trust_custom_code", true}});
         CHECK(negated(middle()));
+    }
+
+    // Trusting code changes the picture of a clip that has it: its render-cache key changes (no stale render);
+    // a clip without custom code keeps its key. An export freezes the trust of its start (freeze)
+    {
+        newRun();
+        ProjectFormat f;
+        Clip plainClip;
+        plainClip.mediaPath = still;
+        plainClip.out = 49;
+        Clip coded = plainClip;
+        EffectInstance fx;
+        fx.effectId = "ffmpeg_filter";
+        fx.params["chain"] = "negate,boxblur=2";
+        coded.effects << fx;
+        const QString plainKey = RenderCache::key(plainClip, f);
+        const QString untrustedKey = RenderCache::key(coded, f);
+        Timeline tl;
+        tl.video << Track{};
+        tl.video[0].clips << coded;
+        Timeline frozen = tl;
+        CHECK(CodeTrust::freeze(frozen));
+        const quint64 epoch = CodeTrust::epoch();
+        CodeTrust::trust("negate,boxblur=2");
+        CHECK(CodeTrust::epoch() > epoch);
+        CHECK(RenderCache::key(coded, f) != untrustedKey);
+        CHECK_EQ(RenderCache::key(plainClip, f), plainKey);
+        // The frozen copy still has it untrusted; the marker itself can never be trusted
+        const QVector<CodeTrust::Item> left = CodeTrust::itemsOf(frozen.video[0].clips[0].effects[0]);
+        if (CHECK_EQ(left.size(), 1)) {
+            CHECK(!CodeTrust::isTrusted(left[0].code));
+            CodeTrust::trust(left[0].code);
+            CHECK(!CodeTrust::isTrusted(left[0].code));
+        }
+        Timeline again = tl;
+        CHECK(!CodeTrust::freeze(again)); // all trusted now: nothing to freeze
     }
 
     // The trust record is the settings' only: a project file cannot carry its own trust

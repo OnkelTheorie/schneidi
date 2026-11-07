@@ -22,6 +22,7 @@
 
 #include <QApplication>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QLabel>
 #include <QPlainTextEdit>
@@ -32,6 +33,7 @@
 #include <QUndoStack>
 
 #include <clocale>
+#include <functional>
 
 namespace {
 
@@ -53,6 +55,37 @@ void answer(const char* button, bool* asked)
         *asked = true;
         dlg->findChild<QPushButton*>(button)->click();
     });
+}
+
+// The picture the viewer shows next (the engine's frameReady); null when none comes within `ms`
+QImage nextFrame(Engine& engine, const std::function<void()>& action, int ms = 3000)
+{
+    QImage got;
+    const auto c = QObject::connect(&engine, &Engine::frameReady, [&got](const QImage& i) { got = i.copy(); });
+    action();
+    QElapsedTimer t;
+    t.start();
+    while (got.isNull() && !t.hasExpired(ms)) QApplication::processEvents(QEventLoop::AllEvents, 10);
+    QObject::disconnect(c);
+    return got;
+}
+
+// `b` is the negative of `a` where `a` has strong colors (at least one such place)
+bool negativeOf(const QImage& a, const QImage& b)
+{
+    if (a.isNull() || b.isNull() || a.size() != b.size()) return false;
+    int strong = 0;
+    for (int y = 1; y < 8; ++y)
+        for (int x = 1; x < 8; ++x) {
+            const QColor p = a.pixelColor(a.width() * x / 8, a.height() * y / 8);
+            const QColor q = b.pixelColor(b.width() * x / 8, b.height() * y / 8);
+            if (std::abs(p.red() - 128) < 60 && std::abs(p.green() - 128) < 60 && std::abs(p.blue() - 128) < 60) continue;
+            ++strong;
+            if (std::abs(255 - p.red() - q.red()) > 40 || std::abs(255 - p.green() - q.green()) > 40
+                || std::abs(255 - p.blue() - q.blue()) > 40)
+                return false;
+        }
+    return strong > 0;
 }
 
 void resetAll()
@@ -105,7 +138,9 @@ int main(int argc, char** argv)
         QHash<int, QVariantMap> values;
         values[2] = {{"effect", effect}, {key, code}};
         QString why;
-        if (!CHECK(w.editor()->setCompGraph({clipId}, g, values, CompUi::kinds(), &why))) continue;
+        bool set = false;
+        const QImage before = nextFrame(engine, [&] { set = w.editor()->setCompGraph({clipId}, g, values, CompUi::kinds(), &why); });
+        if (!CHECK(set)) continue;
         CHECK(!CodeTrust::isTrusted(code)); // set by an op of someone else's file: not trusted
         w.openComp(clipId);
         CompPage* page = w.compPage();
@@ -121,7 +156,10 @@ int main(int argc, char** argv)
         CHECK_EQ(CompUi::untrustedCode(*clip(), 2), code);
         CHECK(CompUi::nodeSummary(*clip(), g.nodes[1]).endsWith("nicht ausgeführt"));
         const int idx = undo->index();
-        allow->click();
+        // The paused picture shows the code at once, without a seek (trust is part of what the engine draws)
+        const QImage after = nextFrame(engine, [&] { allow->click(); });
+        if (effect == QLatin1String("ffmpeg_filter") && Picture::Custom::filterAvailable())
+            CHECK(negativeOf(before, after));
         settle();
         CHECK(CodeTrust::isTrusted(code));
         CHECK_EQ(undo->index(), idx); // trust is no project change
