@@ -58,6 +58,39 @@ bool sameTransitions(const Timeline& a, const Timeline& b)
     return true;
 }
 
+// Centred on the cut a dissolve needs material on both sides; a clip that starts at the start of its recording (or
+// ends at its end) has none on that side and the dissolve shrank to a frame. Then the alignment that gives the
+// longest dissolve is taken (starting or ending at the cut), with `length` if it fits; an alignment the user chose
+// stays. `tl` is fitted already, `wanted` the same before fitting.
+void alignToMaterial(Timeline& tl, const Timeline& wanted, int leftId, int rightId, int length, const QSet<int>& touched,
+                     const TimelineOps::SourceLength& sourceLength)
+{
+    TrackRef ref;
+    const Clip* wl = TimelineOps::findClip(wanted, leftId, &ref);
+    const Clip* wr = TimelineOps::findClip(wanted, rightId);
+    if (!wl || !wr || wl->transOutStyle.align != TransitionAlign::Center) return;
+    auto spanLength = [&](const Timeline& t) {
+        for (const auto& s : TimelineOps::transitions(t.track(ref), sourceLength))
+            if (s.leftId == leftId && s.rightId == rightId) return s.length();
+        return 0;
+    };
+    int best = spanLength(tl);
+    for (TransitionAlign align : {TransitionAlign::Start, TransitionAlign::End}) {
+        if (best >= length) continue;
+        Timeline t = tl;
+        Clip* l = TimelineOps::findClip(t, leftId);
+        Clip* r = TimelineOps::findClip(t, rightId);
+        l->transOut = wl->transOut;
+        r->transIn = wr->transIn;
+        l->transOutStyle.align = r->transInStyle.align = align;
+        fitTransitions(t, touched, sourceLength);
+        if (const int n = spanLength(t); n > best) {
+            best = n;
+            tl = t;
+        }
+    }
+}
+
 } // namespace
 
 QVector<QPair<int, int>> Editor::addTransitions(int frame, std::optional<TransitionStyle> style,
@@ -169,6 +202,7 @@ std::optional<Timeline> Editor::withTransitions(int frame, std::optional<Transit
     }
     const Timeline wanted = tl; // before fitting (fitting sets the lengths of cuts without material to 0)
     fitTransitions(tl, touched, sourceLength());
+    for (const auto& [l, r] : cuts) alignToMaterial(tl, wanted, l, r, length, touched, sourceLength());
     auto missing = [&] {
         QVector<QPair<int, int>> out;
         for (const auto& [l, r] : cuts) {
@@ -245,30 +279,7 @@ std::optional<Timeline> Editor::withTransitionAt(int leftId, int rightId, const 
     touched.remove(0);
     const Timeline wanted = tl; // before fitting (fitting sets the lengths of a cut without material to 0)
     fitTransitions(tl, touched, sourceLength());
-    // Centred on the cut it needs material on both sides; a clip that starts at the start of its recording (or ends
-    // at its end) has none on that side and the dissolve shrank to a frame. Then the alignment that gives the longest
-    // dissolve is taken (starting or ending at the cut), with the default length if it fits; an alignment the user
-    // chose stays
-    if (l && r && style.align == TransitionAlign::Center) {
-        auto spanLength = [&](const Timeline& t) {
-            for (const auto& s : TimelineOps::transitions(t.track(lRef), sourceLength()))
-                if (s.leftId == leftId && s.rightId == rightId) return s.length();
-            return 0;
-        };
-        int best = spanLength(tl);
-        for (TransitionAlign align : {TransitionAlign::Start, TransitionAlign::End}) {
-            if (best >= length) continue;
-            Timeline t = wanted;
-            Clip* tl2 = TimelineOps::findClip(t, leftId);
-            Clip* tr2 = TimelineOps::findClip(t, rightId);
-            tl2->transOutStyle.align = tr2->transInStyle.align = align;
-            fitTransitions(t, touched, sourceLength());
-            if (const int n = spanLength(t); n > best) {
-                best = n;
-                tl = t;
-            }
-        }
-    }
+    if (l && r) alignToMaterial(tl, wanted, leftId, rightId, length, touched, sourceLength());
     if (trimClips && l && r) {
         const auto spans = TimelineOps::transitions(tl.track(lRef), sourceLength());
         if (std::none_of(spans.begin(), spans.end(), [&](const auto& s) { return s.leftId == leftId && s.rightId == rightId; })) {
