@@ -283,10 +283,11 @@ void TimelineView::drawTracks(QPainter& p)
         for (const DropItem& it : m_dropItems) {
             const int x1 = int(frameToX(start)), x2 = int(frameToX(start + it.length));
             if (it.video && vRow) p.fillRect(QRect(x1, vRow->y + 1, x2 - x1, vRow->h - 3), Theme::alpha(Theme::videoClip, 150));
-            const int a0 =
-                it.audio > 1 ? m_editor->streamTrackStart(tl, it.info, m_dropTrack, start, it.length) : m_dropTrack;
-            for (int k = 0; k < it.audio; ++k)
-                if (const auto aRow = ghostRow(TrackKind::Audio, a0 + k))
+            QVector<int> tracks;
+            if (it.audio > 1) tracks = m_editor->streamTracks(tl, it.info, m_dropTrack, start, it.length);
+            else if (it.audio == 1) tracks = {m_dropTrack};
+            for (int a : tracks)
+                if (const auto aRow = a >= 0 ? ghostRow(TrackKind::Audio, a) : std::nullopt)
                     p.fillRect(QRect(x1, aRow->y + 1, x2 - x1, aRow->h - 3), Theme::alpha(Theme::audioClip, 150));
             start += it.length;
         }

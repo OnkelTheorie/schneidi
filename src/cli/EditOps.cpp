@@ -275,16 +275,45 @@ namespace {
 
 int endOf(Session& s) { return TimelineOps::endFrame(s.project.timeline()); }
 
-// presets:false = every audio stream of the file is placed, the import presets of the app are left aside for this op
+// presets:false = every audio stream of the file is placed, the import presets of the app are left aside for this op,
+// and so are the streams deleted from the timeline (Editor::streamTracks)
 struct PresetsScope {
     Editor& editor;
     StreamPresets saved;
     PresetsScope(Session& s, const QJsonObject& op) : editor(s.editor), saved(s.editor.streamPresets())
     {
-        if (!op.value("presets").toBool(true)) editor.setStreamPresets(StreamPresets::none());
+        if (!op.value("presets").toBool(true)) {
+            editor.setStreamPresets(StreamPresets::none());
+            editor.setPlaceAllStreams(true);
+        }
     }
-    ~PresetsScope() { editor.setStreamPresets(saved); }
+    ~PresetsScope()
+    {
+        editor.setStreamPresets(saved);
+        editor.setPlaceAllStreams(false);
+    }
 };
+
+// Streams of a recording an op left out because the timeline has none of them any more (deleted on purpose, see
+// Editor::streamTracks): say so once per op
+void noteLeftOutStreams(Session& s, const MediaInfo& m)
+{
+    if (m.audioStreamCount() < 2 || s.editor.placeAllStreams()) return;
+    QStringList missing;
+    for (const StreamPlacement& p : s.editor.streamPresets().placements(m)) {
+        // Nowhere in the timeline (a locked track would still hold the earlier pieces)
+        bool anywhere = false;
+        for (const Track& t : s.project.timeline().audio) {
+            anywhere = anywhere || (!p.trackLabel.isEmpty() && t.name.trimmed().compare(p.trackLabel.trimmed(),
+                                                                                         Qt::CaseInsensitive) == 0);
+            for (const Clip& c : t.clips) anywhere = anywhere || (c.mediaPath == m.path && c.audioStream == p.stream);
+        }
+        if (!anywhere) missing << m.audioStreamName(p.stream);
+    }
+    if (missing.isEmpty()) return;
+    s.notes << QString("%1: left out %2 like the rest of the timeline (deleted there; presets:false places every stream)")
+                   .arg(QFileInfo(m.path).fileName(), missing.join(", "));
+}
 
 // A recording with a Mix stream plus its single streams (OBS, game clip tools) placed with all of them playing in
 // [from, to): everything is heard twice, too loud - say so with the Mix clips to turn off (the user's import presets
@@ -331,6 +360,7 @@ void opPlace(Session& s, const QJsonObject& op, bool append)
     const double speed = op.contains("speed") ? numberOf(op, "speed", Retime::kMinSpeed, Retime::kMaxSpeed) : 1.0;
     const int len = s.editor.placeSourceRange(m.path, in, out - 1, at, parseTrack(op.value("track")), speed);
     noteDoubledMix(s, m, at, at + len);
+    noteLeftOutStreams(s, m);
     placedInterpolate(s, op, m, at, at + len, speed);
 }
 
@@ -374,6 +404,7 @@ void opKeep(Session& s, const QJsonObject& op)
         slowest = std::min(slowest, speed);
     }
     noteDoubledMix(s, m, start, at);
+    noteLeftOutStreams(s, m);
     placedInterpolate(s, op, m, start, at, slowest);
 }
 
