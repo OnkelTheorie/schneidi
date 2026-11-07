@@ -72,6 +72,8 @@ int choiceValue(const NodeType& k, const QVariantMap& values, const QString& key
     return i >= 0 ? i : std::max(0, choiceIndexOf(*p, p->defaultValue));
 }
 
+bool varies(const NodeType& k, const QVariantMap& values) { return k.isVarying ? k.isVarying(k, values) : k.varying; }
+
 double numValue(const NodeType& k, const QVariantMap& values, const QString& key)
 {
     const EffectParam* p = k.param(key);

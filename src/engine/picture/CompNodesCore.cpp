@@ -17,6 +17,7 @@
 #include <memory>
 #include <mutex>
 #include <numbers>
+#include <vector>
 
 namespace Picture::Comp {
 
@@ -282,6 +283,29 @@ std::shared_ptr<const ColorGrade::Lut> lutOf(const QString& path)
     return l;
 }
 
+// Baked tables by values + LUT (baking costs more than applying at preview size; a static correction bakes once).
+// The entry holds its LUT, so a LUT's address cannot be reused by another while it is here
+std::shared_ptr<const ColorGrade::Baked> bakedOf(const ColorGrade::Params& p, const std::shared_ptr<const ColorGrade::Lut>& lut)
+{
+    struct Entry {
+        ColorGrade::Params p;
+        std::shared_ptr<const ColorGrade::Lut> lut;
+        std::shared_ptr<const ColorGrade::Baked> baked;
+    };
+    static std::mutex mutex;
+    static std::vector<Entry> entries; // newest last
+    {
+        std::lock_guard lock(mutex);
+        for (auto it = entries.rbegin(); it != entries.rend(); ++it)
+            if (it->lut == lut && it->p == p) return it->baked;
+    }
+    auto baked = ColorGrade::bake(p, lut.get());
+    std::lock_guard lock(mutex);
+    if (entries.size() >= 16) entries.erase(entries.begin());
+    entries.push_back({p, lut, baked});
+    return baked;
+}
+
 bool evalGrade(NodeCtx& ctx, Buf* out)
 {
     const Buf* src = ctx.input("src");
@@ -303,7 +327,7 @@ bool evalGrade(NodeCtx& ctx, Buf* out)
     const QString lp = ctx.text("lut");
     const auto lut = lp.isEmpty() ? nullptr : lutOf(lp);
     if (p.isNeutral() && !lut) return true;
-    ColorGrade::apply(out->data(), out->w, out->h, *ColorGrade::bake(p, lut.get()), 1);
+    ColorGrade::apply(out->data(), out->w, out->h, *bakedOf(p, lut), 1);
     mixByMask(*out, *src, ctx.input("mask"));
     return true;
 }
@@ -576,7 +600,10 @@ void registerCoreNodes(QVector<NodeType>& out)
             labels << (d ? d->name : T("Keiner"));
         }
         k.params = {other(EffectParam::Choice, "effect", T("Effekt"), QString("none"), fxEffects(), labels)};
-        k.varying = true; // noise and broken sync change per frame
+        // Only noise draws a new pattern each frame (VideoEffects::apply's frameNo); the others are cached when static
+        k.isVarying = [](const NodeType& kind, const QVariantMap& values) {
+            return textValue(kind, values, QStringLiteral("effect")) == QLatin1String("frei0r.rgbnoise");
+        };
         k.eval = evalFx;
         out << k;
     }

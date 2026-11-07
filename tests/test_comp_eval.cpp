@@ -519,6 +519,28 @@ void testScratchGivenBack()
     CHECK(taken >= 3 && taken - given == 1);
 }
 
+// fx changes by itself only with an effect drawing a new pattern each frame (noise): the others are cached
+void testFxVarying()
+{
+    std::printf("fx varying per effect\n");
+    Env env;
+    env.size = QSize(40, 24);
+    Cache cache;
+    for (const QString& fx : {QString("frei0r.glow"), QString("frei0r.rgbnoise"), QString("1")}) {
+        cache.clear();
+        const EffectInstance e = comp({"color", "fx"}, {{1, 2, "src"}}, 2,
+                                      {{"n1.color", QColor(120, 90, 60)}, {"n2.effect", fx}, {"n2.e_0", 0.5}});
+        Buf a, b;
+        Stats s1, s2;
+        env.t = 0, env.frameNo = 0;
+        CHECK(evaluate(e, env, &cache, &a, &s1) && s1.evaluated == 2);
+        env.t = 1, env.frameNo = 1;
+        CHECK(evaluate(e, env, &cache, &b, &s2));
+        if (fx == "frei0r.rgbnoise") CHECK(s2.cached == 1 && s2.evaluated == 1 && a.px != b.px);
+        else CHECK(s2.cached == 1 && s2.evaluated == 0 && a.px == b.px); // "1" = the index of glow
+    }
+}
+
 // A node following a tracker (numOf) is cached only while the tracker's values are fixed, and keyed by them: an
 // analysed tracker (keyframes) moves it per frame, a new analysis or another value is seen with a cache
 void testFollowCached()
@@ -741,12 +763,14 @@ void bench()
         std::lock_guard lock(poolMutex);
         if (pool.size() < 8) pool.push_back(std::move(v));
     };
-    for (const char* name : {"transform", "merge", "blur", "recipe"}) {
+    for (const char* name : {"transform", "merge", "blur", "grade", "recipe"}) {
         EffectInstance x = e;
         if (QString(name) == "transform") x = comp({"clip", "transform"}, {{1, 2, "src"}}, 2, {{"n2.size", 0.6}, {"n2.angle", 5.0}});
         if (QString(name) == "merge")
             x = comp({"clip", "media", "merge"}, {{2, 3, "bg"}, {1, 3, "fg"}}, 3, {{"n2.path", "bg"}, {"n3.mode", "screen"}});
         if (QString(name) == "blur") x = comp({"clip", "blur"}, {{1, 2, "src"}}, 2, {{"n2.radius", 4.0}});
+        if (QString(name) == "grade")
+            x = comp({"clip", "grade"}, {{1, 2, "src"}}, 2, {{"n2.contrast", 1.2}, {"n2.saturation", 60.0}});
         Buf out;
         evaluate(x, env, nullptr, &out);
         QElapsedTimer t;
@@ -773,6 +797,7 @@ int main(int argc, char** argv)
     testPassThrough();
     testFusedTrack();
     testScratchGivenBack();
+    testFxVarying();
     bench();
     if (!Check::haveFfmpeg()) return Check::skip("ffmpeg nicht gefunden");
     QTemporaryDir tmp;

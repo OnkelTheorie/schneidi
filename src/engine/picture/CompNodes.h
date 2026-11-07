@@ -100,6 +100,9 @@ struct NodeType {
     // a follower of a tracker). The engine caches a node when it is not varying, has no keyframes and all its inputs
     // are static
     bool varying = false;
+    // Set: whether a node of this kind with these values (keys without prefix) varies, instead of `varying` (fx: only
+    // an effect drawing a new pattern each frame)
+    std::function<bool(const NodeType& k, const QVariantMap& values)> isVarying;
     // Set: the node's picture is this input's, unchanged (tracker). The engine hands that picture on without a copy;
     // eval is only used by the single-node runner
     QString passThrough;
@@ -136,6 +139,8 @@ bool runNode(const QString& type, const QVariantMap& params, const QHash<QString
 double numValue(const NodeType& k, const QVariantMap& values, const QString& key);
 QColor colorValue(const NodeType& k, const QVariantMap& values, const QString& key);
 QString textValue(const NodeType& k, const QVariantMap& values, const QString& key);
+// Does a node of kind k with these values change with time by itself (isVarying, else varying)?
+bool varies(const NodeType& k, const QVariantMap& values);
 // A Choice parameter's value as the index of its choice: the choice id ("ellipse") or its index (1, "1"); anything
 // else (unknown id, index out of range) = the default. num() returns this index, text() the choice id (an id this
 // version does not list as it is)

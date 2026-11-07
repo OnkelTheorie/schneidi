@@ -160,7 +160,7 @@ bool evaluate(const EffectInstance& comp, const Env& env, Cache* cache, Buf* out
     for (int id : order) {
         NodeState& s = state[id];
         if (!s.node) continue;
-        bool isStatic = s.kind && !s.kind->varying && !animated.contains(id);
+        bool isStatic = s.kind && !varies(*s.kind, valuesOf(id)) && !animated.contains(id);
         uint64_t key = isStatic ? ownHash(s.node->type, valuesOf(id), env) : 0;
         // A follower reads the followed node's values (numOf): static only while they are fixed, keyed by them (a new
         // analysis or another value is a new key)
@@ -170,7 +170,7 @@ bool evaluate(const EffectInstance& comp, const Env& env, Cache* cache, Buf* out
                 const int f = int(fv);
                 const CompNode* fn = g.node(f);
                 const NodeType* fk = fn ? find(fn->type) : nullptr;
-                if (fv != f || animated.contains(f) || (fk && fk->varying)) isStatic = false;
+                if (fv != f || animated.contains(f) || (fk && varies(*fk, valuesOf(f)))) isStatic = false;
                 else key = mix(key, ownHash(fn ? fn->type : QString(), valuesOf(f), env));
             }
         }
