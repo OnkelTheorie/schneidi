@@ -20,8 +20,9 @@ constexpr int kRate = 48000; // mono, 48 kHz
 // Bumped when a sound changes: part of the cache file names (and lastChange of that kind set to it)
 constexpr int kVersion = 7;
 
-enum class Kind { Whoosh, Riser, Hit, Impact, Click, Swish };
-constexpr Kind kKinds[] = {Kind::Whoosh, Kind::Riser, Kind::Hit, Kind::Impact, Kind::Click, Kind::Swish};
+// Rewind: schneidi's own (no earshot recipe), a tape spun back; never a default of any op, only when asked
+enum class Kind { Whoosh, Riser, Hit, Impact, Click, Swish, Rewind };
+constexpr Kind kKinds[] = {Kind::Whoosh, Kind::Riser, Kind::Hit, Kind::Impact, Kind::Click, Kind::Swish, Kind::Rewind};
 
 QString kindName(Kind k); // "whoosh", "riser" …
 std::optional<Kind> kindFrom(const QString& name);

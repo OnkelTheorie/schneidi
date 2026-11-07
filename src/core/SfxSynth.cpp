@@ -45,6 +45,7 @@ constexpr KindInfo kInfo[] = {
     {Kind::Impact, "impact", "a heavy impact, a crash (the one big moment of a video)", 1.3, -6},
     {Kind::Click, "click", "a short click (a counter, a snapshot, a pop-up)", 0.15, -16},
     {Kind::Swish, "swish", "short, soft swipe of cloth or paper (a fast wipe, a title flying in)", 0.6, -14},
+    {Kind::Rewind, "rewind", "a tape rewinding: a fast, pitched-up warble that stutters and speeds up (with reverse playback, a flashback); only when asked", 0.8, -16},
 };
 
 const KindInfo& info(Kind k)
@@ -87,6 +88,52 @@ Variant<M> variant(const Variant<M> (&list)[3], unsigned seed)
 {
     const unsigned i = (std::max(1u, seed) - 1) % 3;
     return seed <= 3 ? list[i] : Variant<M>{list[i].member, seed * 7};
+}
+
+// Tape rewind (schneidi's own): voices on a tape spun backwards - a garbled, nasal warble whose pitch wobbles like
+// syllables and runs ever higher, the reels' stutter on it and a little tape hiss under it. Starts on the moment
+// (anchor 0). The seed picks the pitch range and stutter rate (1-3), higher seeds other garble
+void makeRewind(Sound& s, unsigned seed, double length)
+{
+    struct Take {
+        double fromHz, toHz, stutterHz;
+    };
+    static constexpr Take kTakes[3] = {{260, 1500, 19}, {320, 1900, 24}, {220, 1300, 15}};
+    const Take& take = kTakes[(std::max(1u, seed) - 1) % 3];
+    const size_t n = size_t(std::lround(length * kRate));
+    s.samples.assign(n, 0.f);
+    s.anchor = 0;
+    s.length = double(n) / kRate;
+    std::uint64_t state = 0x5EEDull + seed * 0x9E3779B97F4A7C15ull;
+    const auto random = [&state] { // -1..1, deterministic (LCG)
+        state = state * 6364136223846793005ull + 1442695040888963407ull;
+        return double(state >> 11) / double(1ull << 52) - 1.0;
+    };
+    const size_t syllable = size_t(kRate * 0.035); // a new wobble target every 35 ms
+    const size_t attack = size_t(kRate * 0.015), release = size_t(double(n) * 0.18);
+    const double lowpass = 1.0 - std::exp(-2 * std::numbers::pi * 6000.0 / kRate); // soft top: no fizz
+    double phase = 0, stutter = 0, wobble = 0, target = 0, hissLow = 0, out = 0;
+    for (size_t i = 0; i < n; ++i) {
+        const double x = double(i) / double(std::max<size_t>(1, n - 1));
+        if (i % syllable == 0) target = random() * 0.25;
+        wobble += (target - wobble) * 0.002;
+        const double hz = take.fromHz * std::pow(take.toHz / take.fromHz, x * x) * (1 + wobble); // speeding up
+        phase += 2 * std::numbers::pi * hz / kRate;
+        if (phase > 2 * std::numbers::pi) phase -= 2 * std::numbers::pi;
+        const double tone = std::sin(phase) + 0.45 * std::sin(2 * phase) + 0.25 * std::sin(3 * phase)
+                            + 0.12 * std::sin(5 * phase);
+        stutter += take.stutterHz * (1 + 0.6 * x) / kRate; // the reels catch faster as they spin up
+        const double c = 0.5 + 0.5 * std::cos(2 * std::numbers::pi * stutter);
+        const double gate = 0.35 + 0.65 * c * c;
+        const double noise = random();
+        hissLow += (noise - hissLow) * 0.35;
+        const double hiss = (noise - hissLow) * 0.15;
+        double env = 1;
+        if (i < attack) env = double(i) / double(attack);
+        if (i + release > n) env *= double(n - i) / double(release);
+        out += (env * (0.6 * tone * gate + hiss) - out) * lowpass;
+        s.samples[i] = float(out);
+    }
 }
 
 constexpr SfxWhoosh::Member kWhooshes[3] = {SfxWhoosh::Member::Windy, SfxWhoosh::Member::Long, SfxWhoosh::Member::Glide};
@@ -150,6 +197,7 @@ Sound make(Kind kind, unsigned seed, double length)
         take(s, SfxForge::drop(m, noise));
         break;
     }
+    case Kind::Rewind: makeRewind(s, seed, asked > 0 ? asked : defaultLength(kind)); break;
     case Kind::Click: { // earshot's camera shutter clicks
         static constexpr Variant<SfxForge::Click> kClicks[3] = {
             {SfxForge::Click::Mirror, 2}, {SfxForge::Click::Dslr, 3}, {SfxForge::Click::Snap, 8}};
@@ -371,8 +419,9 @@ std::optional<CachedName> parseCachedFile(const QString& path)
 
 int lastChange(Kind k)
 {
-    // kVersion 7 changed the riser only (earshot's riser.py builds); every kind's sound as of 6 before
-    return k == Kind::Riser ? 7 : 6;
+    // kVersion 7 changed the riser only (earshot's riser.py builds) and brought the rewind; every kind's sound as of 6
+    // before
+    return k == Kind::Riser || k == Kind::Rewind ? 7 : 6;
 }
 
 QString restoreCachedFile(const QString& missingPath)
