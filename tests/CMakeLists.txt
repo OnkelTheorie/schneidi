@@ -439,3 +439,4 @@ foreach(_rnn_src nnet.c nnet_default.c)
             -I${PROJECT_SOURCE_DIR}/third_party/rnnoise/src -I${PROJECT_SOURCE_DIR}/third_party/rnnoise/include
             ${PROJECT_SOURCE_DIR}/third_party/rnnoise/src/${_rnn_src})
 endforeach()
+schneidi_test(test_comp_key) # keyer nodes (0.19): chroma = effect chromakey, luma thresholds, matte_tune grow/shrink/clip/soft/despill
