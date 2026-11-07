@@ -348,12 +348,18 @@ void testMemoryRender(const QString& dir)
         int mb = 100;
         while (mb < 20000 && Exporter::automaticThreads(n, kFmt.size(), qint64(mb) << 20, sources, perThread).threads < n - 1)
             ++mb;
+        // Few processors (CI: 4): one thread less already fits into so little that the lookahead alone would not
+        // (shortLookahead, rightly short then) - more room while it still gives n - 1
+        while (Exporter::shortLookahead(kFmt.size(), qint64(mb) << 20)
+               && Exporter::automaticThreads(n, kFmt.size(), qint64(mb + 1) << 20, sources, perThread).threads == n - 1)
+            ++mb;
+        const bool lookaheadFits = !Exporter::shortLookahead(kFmt.size(), qint64(mb) << 20);
         CHECK(!Exporter::lowMemoryLookahead(n, Exporter::automaticThreads(n, kFmt.size(), qint64(mb) << 20, sources, perThread)));
         qputenv("SCHNEIDI_AVAILABLE_MB", QByteArray::number(mb));
         run(0, &used, &low);
         CHECK_EQ(used, n - 1);
         CHECK(low);
-        if (x264) CHECK_EQ(lookahead(), QByteArray("40"));
+        if (x264 && lookaheadFits) CHECK_EQ(lookahead(), QByteArray("40"));
         // The same picture in MPEG-TS (no picture size before the stream analysis): its decoder counts the same
         CHECK(Exporter::automaticThreads(n, kFmt.size(), qint64(mb) << 20).threads > n - 1); // it does count here
         const QString ts = dir + "/src.ts";
