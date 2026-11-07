@@ -7,6 +7,7 @@
 // - outlier: one of the two dots hidden -> the other one leads, size and angle stay
 // - faces through a stand-in detector (the real one: test_comp_tracker_face): follows the box, lost and found
 // - the node passes its picture through; keyframes n<id>.x/.y/.scale/.angle written, one undo step
+// - a portrait clip in a 16:9 project: start points and results in the clip picture's coordinates (no bars)
 // Prints the analysis speed at 1080p (frames per second, drawing the pictures not counted).
 #include "check.h"
 #include "core/CompGraph.h"
@@ -442,6 +443,43 @@ void testClip(const QString& media)
     CHECK(std::abs(Keys::valueAt(*c, Keys::effectParam(::Comp::kEffectId, "n3.y"), 50) * 360 - 280) <= 0.5);
 }
 
+// A portrait clip (360 x 640, the square at (100 + 4 n, 150 + 2 n) as above) in a 16:9 project: the graph works on
+// the clip's own picture without the bars, so start points and results are 0..1 of that picture, not of the frame
+void testPortraitClip(const QString& media)
+{
+    Project p;
+    Selection sel;
+    Editor ed(&p, &sel);
+    CHECK_EQ(p.format().width * 9, p.format().height * 16);
+    p.addMedia({media, "portrait.mp4", 75, true, false, false});
+    ed.addMediaAt({media}, 0, 0);
+    const int id = p.timeline().video[0].clips[0].id;
+    CompGraph g;
+    g.nodes << CompNode{1, "tracker", {}};
+    g.out = 1;
+    ed.modifyClips({id}, "Comp", [&](Clip& c) {
+        EffectInstance e{::Comp::kEffectId, {}, true};
+        ::Comp::setGraph(e, g);
+        e.params["n1.ax"] = 130 / 360.0;
+        e.params["n1.ay"] = 180 / 640.0;
+        e.params["n1.size"] = 70 / 360.0;
+        c.effects << e;
+    });
+    const Clip* c = TimelineOps::findClip(p.timeline(), id);
+    const TrackRun r = trackNode(p.format(), *c, 1, 0, 40);
+    CHECK(r.error.isEmpty());
+    CHECK(r.lostFrames.isEmpty());
+    if (!CHECK_EQ(r.points.size(), 41)) return;
+    double worst = 0;
+    for (const ::Comp::TrackPoint& q : r.points)
+        worst = std::max(worst, std::hypot(q.x * 360 - (130 + 4 * q.frame), q.y * 640 - (180 + 2 * q.frame)));
+    std::printf("portrait clip in a 16:9 project: worst %.2f px of the clip picture\n", worst);
+    // Tracked on a working picture of 247 px for the clip's 360 (the template of 70 px brought to 48): within about
+    // one working pixel (the frame is rendered and the picture cut out of it, two resamplings). Off the frame's
+    // coordinates it would be hundreds of pixels
+    CHECK(worst <= 1.5);
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -466,6 +504,17 @@ int main(int argc, char** argv)
     if (CHECK(!moving.isEmpty())) {
         Check::initEngine();
         testClip(moving);
+    }
+    const QString portrait = Check::makeMedia(
+        tmp.filePath("portrait.mp4"),
+        {"-f", "lavfi", "-i", "testsrc2=size=360x640:rate=25:duration=2", "-f", "lavfi", "-i",
+         "color=c=red:s=60x60:d=2:r=25", "-filter_complex",
+         "[1]drawbox=x=0:y=0:w=30:h=30:color=blue:t=fill,drawbox=x=30:y=30:w=30:h=30:color=blue:t=fill[s];"
+         "[0][s]overlay=x='100+n*4':y='150+n*2'", "-c:v",
+         "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-g", "1"});
+    if (CHECK(!portrait.isEmpty())) {
+        Check::initEngine();
+        testPortraitClip(portrait);
     }
     return Check::result();
 }

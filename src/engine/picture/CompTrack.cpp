@@ -287,13 +287,16 @@ TrackRun trackNode(const ProjectFormat& format, const Clip& c, int node, int fro
         }
     }
     const TrackStart st = startOf(values);
-    // Pictures as big as the working picture needs (a small template = a big picture, at most the project size)
-    const double longest = std::max(format.width, format.height) / double(std::max(1, format.width));
+    // Pictures as big as the working picture needs (a small template = a big picture, at most the project size).
+    // Tracked on the clip's own picture without bars (a portrait clip in a landscape project): the graph works on
+    // that one, so ax/ay and the results are 0..1 of it. The edge asked for counts for the whole frame
+    const QRectF pic = Tracker::pictureRect(format, c);
+    const int frameEdge = std::max(format.width, format.height);
+    const double picW = std::max(1.0, pic.width()), picLongest = std::max({1.0, pic.width(), pic.height()});
     const int edge = st.mode == TrackMode::Face
-                         ? kFaceEdge
-                         : std::clamp(int(std::ceil(kTemplateMax / st.size * longest)), 320,
-                                      std::max(format.width, format.height));
-    const auto source = Tracker::clipFrames(format, c);
+                         ? std::clamp(int(std::ceil(kFaceEdge * frameEdge / picLongest)), kFaceEdge, std::max(kFaceEdge, frameEdge))
+                         : std::clamp(int(std::ceil(kTemplateMax / st.size * frameEdge / picW)), 320, frameEdge);
+    const auto source = Tracker::clipPictures(format, c);
     return trackFrames([&](int f) { return source(f, edge); }, st, from, to, progress, cancel, faces);
 }
 

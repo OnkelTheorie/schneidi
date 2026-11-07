@@ -3,7 +3,10 @@
 
 #include "core/GradeWindows.h"
 #include "core/I18n.h"
+#include "core/MediaAspect.h"
 #include "engine/Snapshot.h"
+
+#include <QPainter>
 
 #include <algorithm>
 #include <cmath>
@@ -261,6 +264,38 @@ std::function<QImage(int, int)> clipFrames(const ProjectFormat& format, const Cl
     tl.video[0].clips << plain;
     std::shared_ptr<Snapshot::Source> source = Snapshot::Source::timeline(format, tl);
     return [source](int frame, int maxEdge) { return source->frame(frame, maxEdge); };
+}
+
+QRectF pictureRect(const ProjectFormat& format, const Clip& c)
+{
+    const QSizeF frame(format.width, format.height);
+    const QSizeF fit = MediaAspect::fit(MediaAspect::ofClip(c), frame);
+    return QRectF((frame.width() - fit.width()) / 2, (frame.height() - fit.height()) / 2, fit.width(), fit.height());
+}
+
+std::function<QImage(int, int)> clipPictures(const ProjectFormat& format, const Clip& c)
+{
+    const auto frames = clipFrames(format, c);
+    const QRectF r = pictureRect(format, c);
+    const bool whole = r.width() >= format.width - 0.5 && r.height() >= format.height - 0.5;
+    if (whole || format.width <= 0 || format.height <= 0) return frames;
+    const QRectF part(r.x() / format.width, r.y() / format.height, r.width() / format.width, r.height() / format.height);
+    return [frames, part](int frame, int maxEdge) {
+        const QImage img = frames(frame, maxEdge);
+        if (img.isNull()) return img;
+        // Sub-pixel exact (a whole-pixel cut is off by up to a pixel and stretches the picture a little)
+        const QRectF from(part.x() * img.width(), part.y() * img.height(), part.width() * img.width(),
+                          part.height() * img.height());
+        const QSize size(std::max(1, int(std::lround(from.width()))), std::max(1, int(std::lround(from.height()))));
+        if (from.width() < 1 || from.height() < 1) return QImage();
+        QImage out(size, QImage::Format_RGB32);
+        out.fill(Qt::black);
+        QPainter p(&out);
+        p.setRenderHint(QPainter::SmoothPixmapTransform);
+        p.drawImage(QRectF(QPointF(0, 0), QSizeF(size)), img, from);
+        p.end();
+        return out;
+    };
 }
 
 Result trackWindow(const ProjectFormat& format, const Clip& c, int n, int from, int to,

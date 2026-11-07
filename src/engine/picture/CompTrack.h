@@ -69,7 +69,8 @@ TrackStart startOf(const QVariantMap& values);
 double trackerValue(const QVariantMap& values, const QString& key);
 
 // Tracker node `node` of clip c's "comp" graph over clip frames from..to; the node's start values at `from`
-// (keyframes resolved). Pictures: the clip alone without its effects (Tracker::clipFrames)
+// (keyframes resolved). Pictures: the clip alone without its effects, its own picture without the bars of another
+// aspect ratio (Tracker::clipPictures), so positions are 0..1 of the picture the graph works on
 TrackRun trackNode(const ProjectFormat& format, const Clip& c, int node, int from, int to,
                    const std::function<void(int, int)>& progress = {}, const std::atomic<bool>* cancel = nullptr,
                    const FaceFinder& faces = {});
