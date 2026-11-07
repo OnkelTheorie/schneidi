@@ -384,14 +384,25 @@ void MainWindow::saveEffectPreset()
 bool MainWindow::openProject(const QString& path)
 {
     ProjectData data;
-    QString error;
-    if (!ProjectFile::load(path, &data, &error)) {
+    QString error, warning;
+    if (!ProjectFile::load(path, &data, &error, &warning)) {
         QMessageBox::warning(this, T("Projekt öffnen"), T("%1 konnte nicht geöffnet werden:\n%2").arg(path, error));
         return false;
     }
     if (!applyLoaded(std::move(data), path)) return false;
     removeAutosave();
+    showLoadWarning(warning);
     return true;
+}
+
+void MainWindow::showLoadWarning(const QString& warning)
+{
+    if (warning.isEmpty()) return;
+    // Not modal: an AI that opened the project goes on reading, the user reads it when they look
+    auto* box = new QMessageBox(QMessageBox::Warning, T("Projekt öffnen"), warning, QMessageBox::Ok, this);
+    box->setAttribute(Qt::WA_DeleteOnClose);
+    box->setModal(false);
+    box->show();
 }
 
 bool MainWindow::applyLoaded(ProjectData data, const QString& path, bool ask)

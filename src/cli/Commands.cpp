@@ -195,6 +195,7 @@ struct Session::Opened {
     std::unique_ptr<Project> own;
     bool live = false;
     QJsonObject app;
+    QString warning; // the file opened, but not as written (ProjectFile::fromJson)
 };
 
 namespace {
@@ -207,7 +208,7 @@ Session::Opened openSession(const QString& file, Session::Access access)
     const auto load = [&o](const QByteArray& json) {
         ProjectData d;
         QString error;
-        if (!ProjectFile::fromJson(json, o.path, &d, &error)) fail("BAD_PROJECT", error);
+        if (!ProjectFile::fromJson(json, o.path, &d, &error, &o.warning)) fail("BAD_PROJECT", error);
         o.own = std::make_unique<Project>();
         o.own->load(d);
     };
@@ -243,7 +244,7 @@ Session::Opened openSession(const QString& file, Session::Access access)
     }
     ProjectData d;
     QString error;
-    if (!ProjectFile::load(o.path, &d, &error)) fail("BAD_PROJECT", error);
+    if (!ProjectFile::load(o.path, &d, &error, &o.warning)) fail("BAD_PROJECT", error);
     o.own = std::make_unique<Project>();
     o.own->load(d);
     Sandbox::checkProject(*o.own);
@@ -260,6 +261,7 @@ Session::Session(Opened&& o)
       live(o.live), app(o.app), m_inApp(o.inApp != nullptr)
 {
     m_open = project.currentSequence();
+    if (!o.warning.isEmpty()) notes << o.warning; // in the answers of info and edit
     // A loaded copy needs no undo history: every op kept a snapshot of the whole timeline, so an edit with a
     // thousand ops took over a gigabyte (quadratic; 3000 appends ran out of memory). The app's project keeps its own.
     if (m_own) m_own->undoStack()->setUndoLimit(1);

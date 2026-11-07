@@ -65,6 +65,8 @@ public:
 
     // Project file (.schneidi): only references to the original media + edit
     bool openProject(const QString& path);
+    // A project that opened but not as written (ProjectFile::load warning): told once, without waiting for an answer
+    void showLoadWarning(const QString& warning);
     // Video as project (`schneidi <video>`, File › Open Video as Project…): a new unsaved project whose format (size,
     // frame rate) comes from the first video, the files on its timeline one after another. Does not ask about the
     // project open before (callers do: maybeLeaveProject).

@@ -57,7 +57,9 @@ inline constexpr const char* Extension = "schneidi";
 // Paths are stored absolute and relative to the project file, so that a
 // folder moved together (project + media) keeps working without relinking.
 QByteArray toJson(const ProjectData& data, const QString& projectPath);
-bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* data, QString* error);
+// warning: set when the file opened but not as written (bytes that are no UTF-8 became U+FFFD), for the user/AI
+bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* data, QString* error,
+              QString* warning = nullptr);
 
 // A clip as in the project file, media reference as path (e.g. for cache keys: new clip fields count
 // automatically as soon as they are saved)
@@ -77,7 +79,7 @@ QString backup(const QString& projectPath, int keep = 20);
 QStringList backups(const QString& projectPath);
 // Folder of a project's backup copies (empty path = folder of all projects)
 QString backupDir(const QString& projectPath);
-bool load(const QString& path, ProjectData* data, QString* error);
+bool load(const QString& path, ProjectData* data, QString* error, QString* warning = nullptr); // warning: fromJson
 // Write lock of a project file, so that the app and schneidi-cli never write it at the same time: held from
 // reading until the save is done. The lock file lives in the user's cache folder (not next to the project, not in
 // the temp folder: TMPDIR differs between programs); a crashed holder leaves a stale lock that QLockFile detects.

@@ -587,6 +587,13 @@ int main(int argc, char** argv)
                 CHECK_EQ(p.media()[0].path, QString("/m/a.mp4"));
             }
             CHECK(stable(json));
+            // ... and says so (app: a notice, CLI: a note in info/edit); a clean file has no warning
+            ProjectData d;
+            QString error, warning = "x";
+            CHECK(ProjectFile::fromJson(json, "/m/p.schneidi", &d, &error, &warning));
+            CHECK(warning.contains("UTF-8"));
+            CHECK(ProjectFile::fromJson(R"({"app":"schneidi"})", "/m/p.schneidi", &d, &error, &warning));
+            CHECK(warning.isEmpty());
         }
         // A frame rate or size no program makes (2^31 fps overflowed the EDL timecodes): brought inside the limits,
         // a rate the app does not offer but other programs do (48 fps) stays

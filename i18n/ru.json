@@ -2440,5 +2440,6 @@
  "Short mit Hook": "Шортс с крючком",
  "Ton nur in den ersten %1 Stunden geprüft: der Bereich ist %2 Stunden lang (ein Clip sehr weit hinten auf der Zeitleiste?)": "Звук проверен только в первые %1 ч: диапазон длится %2 ч (клип очень далеко на таймлайне?)",
  "Die automatische Sicherung konnte nicht geladen werden:\n%1": "Не удалось загрузить автоматическую резервную копию:\n%1",
- "Sie liegt jetzt unter %1 und wird nicht mehr angeboten.": "Теперь она лежит в %1 и больше не будет предлагаться."
+ "Sie liegt jetzt unter %1 und wird nicht mehr angeboten.": "Теперь она лежит в %1 и больше не будет предлагаться.",
+ "Einige Zeichen der Projektdatei waren kein gültiges UTF-8 (z. B. Umlaute, die ein anderes Programm anders gespeichert hat) und wurden durch „�“ ersetzt. Medien mit solchen Namen fehlen dann. Speichern behält die Ersetzung; die Datei, wie sie war, bleibt als Sicherungskopie.": "Некоторые символы в файле проекта не были корректным UTF-8 (например, умлауты, сохранённые другой программой иначе) и были заменены на «�». Медиафайлов с такими именами тогда не хватает. При сохранении замена остаётся; файл в исходном виде сохраняется как резервная копия."
 }

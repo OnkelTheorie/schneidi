@@ -944,13 +944,18 @@ QByteArray toJson(const ProjectData& data, const QString& projectPath)
     return QJsonDocument(root).toJson(QJsonDocument::Indented);
 }
 
-bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* data, QString* error)
+bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* data, QString* error, QString* warning)
 {
+    if (warning) warning->clear();
     QJsonParseError pe;
     QJsonDocument doc = QJsonDocument::fromJson(json, &pe);
     // A file saved by an editor that wrote umlauts as Latin-1 (or with one damaged byte) did not open at all: the
     // bytes that are no UTF-8 become U+FFFD, everything else stays
-    if (pe.error == QJsonParseError::IllegalUTF8String) doc = QJsonDocument::fromJson(QString::fromUtf8(json).toUtf8(), &pe);
+    bool replaced = false;
+    if (pe.error == QJsonParseError::IllegalUTF8String) {
+        doc = QJsonDocument::fromJson(QString::fromUtf8(json).toUtf8(), &pe);
+        replaced = true;
+    }
     QJsonObject root = doc.object();
     if (pe.error != QJsonParseError::NoError || root.value("app").toString() != "schneidi") {
         if (error) *error = T("Keine gültige schneidi-Projektdatei.");
@@ -1189,6 +1194,11 @@ bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* d
     }
 
     *data = d;
+    // Told, not silent: media paths with such characters point nowhere, and the next save keeps the replacement
+    if (replaced && warning)
+        *warning = T("Einige Zeichen der Projektdatei waren kein gültiges UTF-8 (z. B. Umlaute, die ein anderes Programm "
+                     "anders gespeichert hat) und wurden durch „�“ ersetzt. Medien mit solchen Namen fehlen dann. "
+                     "Speichern behält die Ersetzung; die Datei, wie sie war, bleibt als Sicherungskopie.");
     return true;
 }
 
@@ -1338,7 +1348,7 @@ void restoreBuiltinSounds(ProjectData* data)
 
 } // namespace
 
-bool load(const QString& path, ProjectData* data, QString* error)
+bool load(const QString& path, ProjectData* data, QString* error, QString* warning)
 {
     QFile f(path);
     if (!f.open(QIODevice::ReadOnly)) {
@@ -1353,7 +1363,7 @@ bool load(const QString& path, ProjectData* data, QString* error)
         if (error) *error = T("Keine gültige schneidi-Projektdatei."); // (more than any project)
         return false;
     }
-    if (!fromJson(bytes, path, data, error)) return false;
+    if (!fromJson(bytes, path, data, error, warning)) return false;
     restoreBuiltinSounds(data);
     return true;
 }

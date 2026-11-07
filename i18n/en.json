@@ -2440,5 +2440,6 @@
  "Short mit Hook": "Short with hook",
  "Ton nur in den ersten %1 Stunden geprüft: der Bereich ist %2 Stunden lang (ein Clip sehr weit hinten auf der Zeitleiste?)": "Sound checked only in the first %1 hours: the range is %2 hours long (a clip very far out on the timeline?)",
  "Die automatische Sicherung konnte nicht geladen werden:\n%1": "The automatic backup could not be loaded:\n%1",
- "Sie liegt jetzt unter %1 und wird nicht mehr angeboten.": "It is now at %1 and will not be offered again."
+ "Sie liegt jetzt unter %1 und wird nicht mehr angeboten.": "It is now at %1 and will not be offered again.",
+ "Einige Zeichen der Projektdatei waren kein gültiges UTF-8 (z. B. Umlaute, die ein anderes Programm anders gespeichert hat) und wurden durch „�“ ersetzt. Medien mit solchen Namen fehlen dann. Speichern behält die Ersetzung; die Datei, wie sie war, bleibt als Sicherungskopie.": "Some characters in the project file were not valid UTF-8 (for example umlauts another program saved differently) and were replaced by “�”. Media with such names are missing then. Saving keeps the replacement; the file as it was stays as a backup copy."
 }

@@ -106,10 +106,11 @@ bool MainWindow::liveOpen(const QStringList& files, bool byUser, QString* error)
                               "(or `app save`)");
             if (m_deliver->renderQueue()->isRunning()) return failed("the app is rendering: open the project later");
             ProjectData data;
-            QString why;
-            if (!ProjectFile::load(project, &data, &why)) return failed(why);
+            QString why, warning;
+            if (!ProjectFile::load(project, &data, &why, &warning)) return failed(why);
             if (!applyLoaded(std::move(data), project, false)) return failed("could not open " + project);
             removeAutosave();
+            showLoadWarning(warning);
         }
     }
     if (media.isEmpty()) return true;
