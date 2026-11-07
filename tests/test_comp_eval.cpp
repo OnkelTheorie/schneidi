@@ -21,6 +21,7 @@
 #include "core/ProjectFormat.h"
 #include "core/Selection.h"
 #include "core/TimelineOps.h"
+#include "engine/RenderCache.h"
 #include "engine/picture/CompEval.h"
 #include "engine/picture/CompNodes.h"
 #include "engine/picture/Renderer.h"
@@ -323,6 +324,20 @@ void testLinearEqualsChain()
     Clip empty = media(1, g_pattern, 0, 0, 49);
     empty.effects << comp({}, {}, 0);
     CHECK(maxDiff(render(oneTrack({empty}), 7), plain) == 0);
+
+    // Render cache: a file the graph reads, replaced under the same name, makes the cached render stale
+    {
+        QTemporaryDir dir;
+        const QString bgFile = dir.filePath("bg.png");
+        QImage(8, 8, QImage::Format_RGB32).save(bgFile);
+        Clip rc = media(1, g_pattern, 0, 0, 49);
+        rc.effects << comp({"clip", "media", "merge"}, {{2, 3, "bg"}, {1, 3, "fg"}}, 3, {{"n2.path", bgFile}});
+        const QString k1 = RenderCache::key(rc, kFormat);
+        QImage img(16, 16, QImage::Format_RGB32);
+        img.fill(Qt::red);
+        img.save(bgFile); // other size
+        CHECK(RenderCache::key(rc, kFormat) != k1);
+    }
 
     // A recipe: clip made smaller over a media background, blurred where a gradient says so
     Clip r = media(1, g_pattern, 0, 0, 49);
