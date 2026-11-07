@@ -441,3 +441,4 @@ foreach(_rnn_src nnet.c nnet_default.c)
 endforeach()
 schneidi_test(test_title_style) # title looks: gradient/texture fill, 2.5D edge, shadow, glow, file, op title, nodes text/shadow/glitch
 target_link_libraries(test_title_style PRIVATE schneidi_cli_lib)
+schneidi_test(test_comp_masks) # mask nodes (0.19): shapes, soft edge, invert, combine, follow, matte, rect/ellipse == Color page window, timing
