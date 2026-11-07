@@ -14,6 +14,8 @@
 #include "core/TranscriptCut.h"
 
 #include <QFileInfo>
+#include <QJsonArray>
+#include <QJsonDocument>
 
 #include <algorithm>
 #include <climits>
@@ -598,7 +600,27 @@ void opLink(Session& s, const QJsonObject& op, bool link)
 
 void opSpeed(Session& s, const QJsonObject& op)
 {
-    const QVector<int> ids = clipIds(s, op);
+    QVector<int> ids;
+    if (op.value("freeze").toBool() && !op.contains("linked")) {
+        // A freeze frame stops the named pictures; their linked sound keeps playing in sync (the clip keeps its
+        // length). linked:true freezes the sound too (a frozen sound clip is silent)
+        QJsonObject alone = op;
+        alone["linked"] = false;
+        const Timeline& tl = s.project.timeline();
+        for (int id : clipIds(s, alone))
+            if (TrackRef r; TimelineOps::findClip(tl, id, &r) && r.kind == TrackKind::Video) ids << id;
+        if (ids.isEmpty())
+            fail("BAD_ARGUMENT", "freeze stops a picture: name a video clip (silence: {op:'disable', clips})");
+        QJsonArray sound;
+        for (int id : s.editor.withLinked(ids))
+            if (TrackRef r; !ids.contains(id) && TimelineOps::findClip(tl, id, &r) && r.kind == TrackKind::Audio) sound << id;
+        if (!sound.isEmpty())
+            s.notes << QString("freeze: picture only; the linked sound %1 keeps playing in sync (linked:true freezes it "
+                               "too = silent)")
+                           .arg(QString::fromUtf8(QJsonDocument(sound).toJson(QJsonDocument::Compact)));
+    } else {
+        ids = clipIds(s, op);
+    }
     const Clip& first = *TimelineOps::findClip(s.project.timeline(), ids.first());
     Editor::Retime r{first.speed, first.reverse, first.freeze, first.keepPitch};
     if (op.contains("speed")) r.speed = numberOf(op, "speed", Retime::kMinSpeed, Retime::kMaxSpeed);
@@ -941,7 +963,8 @@ void addEditOps(QVector<OpDef>& ops)
                  "interpolate = what fills the time between two source frames when slower than the source: 'repeat' "
                  "(each frame shown again, default), 'blend' (cross-fade of the two neighbouring frames, cheap) or "
                  "'flow' (computes the motion: smooth slow motion; a static HUD stays sharp, no in-between across a "
-                 "cut). Use 'flow' for slow motion of game clips and sports.",
+                 "cut). Use 'flow' for slow motion of game clips and sports. freeze:true stops the named pictures "
+                 "only, their linked sound plays on (linked:true: silent too).",
                  opSpeed, kClipKeys}
         << OpDef{"speed_ramp", "{op:'speed_ramp', clip, points:[{at, speed, smooth?}], speed?, interpolate?} or {…, clear:true}",
                  "speed ramp: from each point on its own speed (speed = before the first point)",

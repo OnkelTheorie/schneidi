@@ -516,7 +516,30 @@ void opAlign(Session& s, const QJsonObject& op)
 
 void opDelete(Session& s, const QJsonObject& op)
 {
-    const QVector<int> ids = clipIds(s, op, true);
+    QVector<int> ids;
+    if (op.contains("linked") || op.value("ripple").toBool()) {
+        ids = clipIds(s, op, true); // a ripple moves the partners' tracks too: they go along unless linked:false
+    } else {
+        // A picture takes its sound along (like a click in the timeline); a sound clip named alone goes alone (the
+        // unwanted streams of a recording in one op), its picture and the other streams stay linked
+        QJsonObject alone = op;
+        alone["linked"] = false;
+        const Timeline& tl = s.project.timeline();
+        QVector<int> pictures;
+        QJsonArray kept;
+        for (int id : clipIds(s, alone, true)) {
+            TrackRef r;
+            if (TimelineOps::findClip(tl, id, &r) && r.kind == TrackKind::Video) pictures << id;
+            else ids << id;
+        }
+        ids = s.editor.withLinked(pictures) + ids;
+        for (int id : s.editor.withLinked(ids))
+            if (!ids.contains(id)) kept << id;
+        if (!kept.isEmpty())
+            s.notes << QString("delete: only the named sound clips; their linked partners %1 stay (linked:true deletes "
+                               "them too)")
+                           .arg(QString::fromUtf8(QJsonDocument(kept).toJson(QJsonDocument::Compact)));
+    }
     s.selection.set(QSet<int>(ids.begin(), ids.end()));
     if (op.value("ripple").toBool()) s.editor.rippleDeleteSelection();
     else s.editor.deleteSelection();
@@ -811,7 +834,11 @@ QVector<OpDef> makeOps()
              if (op.contains("clip")) s.editor.bladeAt(clipOf(s, op).id, at);
              else s.editor.splitAtPlayhead(at); // no selection: every clip under `at`
          }},
-        {"delete", "{op:'delete', clips:[ids], ripple?:false}", "clips or subtitles", {}, opDelete, kClipKeys},
+        {"delete", "{op:'delete', clips:[ids], ripple?:false}", "clips or subtitles",
+         "A video clip takes its linked sound along; sound clips named alone go alone (the picture and the other "
+         "streams stay, linked). linked:true = all partners, false = exactly the given clips. ripple:true closes the "
+         "gap and takes the partners along unless linked:false.",
+         opDelete, kClipKeys},
         {"delete_range", "{op:'delete_range', from, to, ripple?:true} or {op:'delete_range', ranges:[[from,to],...]}",
          "remove time ranges on all tracks; `ranges` are all timeline times before the cut (e.g. words of "
          "`transcribe` with words:true), applied together", {},
