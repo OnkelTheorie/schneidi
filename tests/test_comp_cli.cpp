@@ -465,6 +465,18 @@ int main(int argc, char** argv)
         CHECK_EQ(p.undoStack()->count(), now + 1);
         while (p.undoStack()->index() > steps) p.undoStack()->undo();
         CHECK(Check::dump(p.timeline()) == before);
+        // A graph with a newer version's node kind stays editable (only new nodes must be known)
+        ed.modifyClips({id}, "future", [&](Clip& c) {
+            EffectInstance* e = EffectRegistry::instance(c, Comp::kEffectId);
+            CompGraph g;
+            Comp::graphOf(*e, &g);
+            g.nodes << CompNode{50, "future_kind", {}};
+            Comp::setGraph(*e, g);
+        });
+        const int b = ed.addCompNode(id, "blur", {}, 0, "src", kinds, &err);
+        CHECK(b > 0);
+        CHECK(ed.setCompOut(id, 50, kinds, &err));
+        CHECK(ed.removeCompNode(id, b, kinds, &err));
     }
     return Check::result();
 }

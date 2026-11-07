@@ -59,9 +59,19 @@ bool Editor::editComp(int clipId, const QString& text,
     CompGraph g;
     if (e->params.contains(Comp::kGraphKey) && !Comp::graphOf(*e, &g))
         return failWith(err, QStringLiteral("the clip's graph is broken; set a new one with {op:'comp', graph}"));
+    const CompGraph old = g;
     if (!fn(g, *e, err)) return false;
     QString why;
-    if (kinds && !g.validate(kinds, &why)) return failWith(err, why); // no kinds: the graph's form did not change
+    if (kinds) { // no kinds: the graph's form did not change
+        // Kinds this version does not know (a newer version's graph) may stay; only a NEW node must be known
+        if (!g.validate(kinds, &why, true)) return failWith(err, why);
+        for (const CompNode& n : g.nodes) {
+            const CompNode* was = old.node(n.id);
+            QStringList inputs;
+            if (!kinds(n.type, &inputs) && !(was && was->type == n.type))
+                return failWith(err, QStringLiteral("node %1: unknown type '%2'").arg(n.id).arg(n.type));
+        }
+    }
     Comp::setGraph(*e, g);
     Comp::dropOrphanParams(*e);
     dropOrphanKeys(next, g);
