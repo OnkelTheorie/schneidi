@@ -37,9 +37,10 @@ bool applyToClip(const Clip& c, const EffectInstance& inst, double t, double fps
 bool filterAvailable();
 // The filters a chain may use (sorted)
 QStringList allowedFilters();
-// Empty = the chain is fine (or empty); else why not, ready for the caller (unknown/forbidden filter, bad option, error
-// FFmpeg reports when it runs on a test picture)
-QString checkFilter(const QString& chain);
+// Empty = the chain is fine (or empty); else why not, ready for the caller (unknown/forbidden filter or option, a loop in
+// an expression, a picture much larger than the input, error FFmpeg reports when it runs on a test picture, longer than
+// budgetMs for that picture)
+QString checkFilter(const QString& chain, int budgetMs = 3000);
 // Runs the chain on the picture at clip time `seconds` (the filters' t, so expressions animate); false = not drawn
 // (error in *error)
 bool applyFilter(const QString& chain, uint8_t* rgba, int width, int height, double seconds, QString* error = nullptr);

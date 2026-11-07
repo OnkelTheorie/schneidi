@@ -15,12 +15,17 @@
 #include "engine/FfmpegLog.h"
 
 #include <QHash>
+#include <QRegularExpression>
 #include <QSet>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
+#include <condition_variable>
 #include <cstring>
 #include <memory>
+#include <mutex>
+#include <thread>
 #include <vector>
 
 #ifdef SCHNEIDI_HAVE_AVFILTER
@@ -189,6 +194,22 @@ QString checkOption(const AVFilter* f, const QString& name, const AVDictionaryEn
         .arg(name, key);
 }
 
+// FFmpeg's expressions can loop (while(cond, body); ld/st keep the loop's state): one such option hangs the thread
+// that builds or runs the chain, and a running filter cannot be stopped. So those functions are refused in every
+// value. The expression reader drops all white space and compares names case by case; this check ignores case
+QString checkExpression(const QString& name, const AVDictionaryEntry* e)
+{
+    static const QRegularExpression loop(QStringLiteral(R"((^|[^A-Za-z0-9_])(while|ld|st)\()"),
+                                         QRegularExpression::CaseInsensitiveOption);
+    QString v = QString::fromUtf8(e->value);
+    v.remove(QRegularExpression(QStringLiteral("\\s")));
+    const QRegularExpressionMatch m = loop.match(v);
+    if (!m.hasMatch()) return {};
+    return QStringLiteral("filter '%1': option '%2' uses %3() (loops and stored variables are not allowed in "
+                          "expressions)")
+        .arg(name, QString::fromUtf8(e->key), m.captured(2));
+}
+
 // Checks the parsed chain before anything of it is made: one linear chain of allowed filters, no labels, no file
 // options. Empty = fine
 QString checkSegment(const AVFilterGraphSegment* seg)
@@ -211,8 +232,10 @@ QString checkSegment(const AVFilterGraphSegment* seg)
             return QStringLiteral("filter '%1' is not in this build's FFmpeg").arg(name);
         const AVFilter* f = avfilter_get_by_name(p->filter_name);
         const AVDictionaryEntry* e = nullptr;
-        while ((e = av_dict_iterate(p->opts, e)))
+        while ((e = av_dict_iterate(p->opts, e))) {
             if (const QString why = checkOption(f, name, e); !why.isEmpty()) return why;
+            if (const QString why = checkExpression(name, e); !why.isEmpty()) return why;
+        }
     }
     return {};
 }
@@ -295,6 +318,21 @@ std::unique_ptr<Graph> build(const QString& chain, int w, int h, QString* error)
         return fail(QStringLiteral("cannot link the chain: %1").arg(avError(ret)));
     if ((ret = avfilter_graph_config(g->graph.get(), nullptr)) < 0)
         return fail(QStringLiteral("the chain does not work on a picture: %1").arg(avError(ret)));
+    // No picture inside the chain may be much larger than the clip's (pad=w=16000:h=16000 would take a gigabyte per
+    // graph, and every render thread keeps a few): each side at most 2x the larger side (a turn still fits) and
+    // 8192, the area at most 4x
+    const int side = std::min(8192, 2 * std::max(w, h));
+    const qint64 area = 4 * qint64(w) * h;
+    for (unsigned i = 0; i < g->graph->nb_filters; ++i) {
+        const AVFilterContext* f = g->graph->filters[i];
+        for (unsigned j = 0; j < f->nb_outputs; ++j) {
+            const AVFilterLink* l = f->outputs[j];
+            if (l && (l->w > side || l->h > side || qint64(l->w) * l->h > area))
+                return fail(QStringLiteral("the chain makes a picture of %1x%2 from %3x%4 (at most %5 per side and 4 "
+                                           "times the area)")
+                                .arg(l->w).arg(l->h).arg(w).arg(h).arg(side));
+        }
+    }
     return g;
 }
 
@@ -338,22 +376,39 @@ thread_local ThreadCache t_cache;
 
 bool filterAvailable() { return true; }
 
-QString checkFilter(const QString& chain)
+QString checkFilter(const QString& chain, int budgetMs)
 {
     if (chain.trimmed().isEmpty()) return {};
-    // A small test picture with a gradient: the chain must build and turn it into a picture of the same size
-    constexpr int w = 64, h = 36;
-    std::vector<uint8_t> px(size_t(w) * h * 4);
-    for (int y = 0; y < h; ++y)
-        for (int x = 0; x < w; ++x) {
-            uint8_t* p = &px[(size_t(y) * w + x) * 4];
-            p[0] = uint8_t(x * 4), p[1] = uint8_t(y * 7), p[2] = 128, p[3] = 255;
-        }
-    QString error;
-    auto g = build(chain, w, h, &error);
-    if (!g) return error;
-    if (!run(*g, px.data(), 0.0, &error)) return error;
-    return {};
+    // A test picture with a gradient: the chain must build and turn it into a picture of the same size. On a thread
+    // of its own with a time budget: a chain that takes too long here would stall every frame (and the edit that
+    // checks it). FFmpeg cannot be interrupted, so a late check runs on detached; the loops that never end are
+    // refused before (checkExpression)
+    struct State {
+        std::mutex mutex;
+        std::condition_variable done;
+        bool finished = false;
+        QString error;
+    };
+    auto st = std::make_shared<State>();
+    std::thread([st, chain] {
+        constexpr int w = 64, h = 36;
+        std::vector<uint8_t> px(size_t(w) * h * 4);
+        for (int y = 0; y < h; ++y)
+            for (int x = 0; x < w; ++x) {
+                uint8_t* p = &px[(size_t(y) * w + x) * 4];
+                p[0] = uint8_t(x * 4), p[1] = uint8_t(y * 7), p[2] = 128, p[3] = 255;
+            }
+        QString error;
+        if (auto g = build(chain, w, h, &error)) run(*g, px.data(), 0.0, &error);
+        std::lock_guard lock(st->mutex);
+        st->error = error;
+        st->finished = true;
+        st->done.notify_all();
+    }).detach();
+    std::unique_lock lock(st->mutex);
+    if (!st->done.wait_for(lock, std::chrono::milliseconds(std::max(1, budgetMs)), [&] { return st->finished; }))
+        return QStringLiteral("the chain takes too long (more than %1 ms for one picture)").arg(budgetMs);
+    return st->error;
 }
 
 bool applyFilter(const QString& chain, uint8_t* rgba, int width, int height, double seconds, QString* error)
@@ -396,7 +451,7 @@ QString unavailable()
 } // namespace
 
 bool filterAvailable() { return false; }
-QString checkFilter(const QString& chain) { return chain.trimmed().isEmpty() ? QString() : unavailable(); }
+QString checkFilter(const QString& chain, int) { return chain.trimmed().isEmpty() ? QString() : unavailable(); }
 bool applyFilter(const QString& chain, uint8_t*, int, int, double, QString* error)
 {
     if (chain.trimmed().isEmpty()) return true;

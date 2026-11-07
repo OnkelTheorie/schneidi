@@ -183,6 +183,25 @@ void filterChecks()
     CHECK_EQ(PC::checkFilter("drawbox=x=4:y=4:w=10:h=10:c=red@0.5:t=fill,rotate=a=PI/8:c=black"), QString());
     CHECK_EQ(PC::checkFilter("lutrgb=r=negval:g=val*0.5,convolution=0m='0 -1 0 -1 5 -1 0 -1 0'"), QString());
     CHECK_EQ(PC::checkFilter("scale=w=iw/2:h=-2:flags=bicubic,format=pix_fmts=gray,setsar=r=1"), QString());
+    // Expressions that loop (an endless while() would hang the edit or a render thread for good) and pictures much
+    // larger than the input are refused; a chain slower than its time budget too
+    refused("geq=lum='while(1\\,1)'", "uses while()");
+    refused("geq=lum='WHILE (1,1)':cb=128:cr=128", "uses while()");
+    refused("geq=lum='st(0\\,X)+ld(0)':cb=128:cr=128", "uses st()");
+    refused("hue=s=0:enable='while(1,1)'", "uses while()");
+    refused("pad=w=16000:h=16000", "at most");
+    refused("scale=w=iw*3:h=ih*3", "at most");
+    CHECK_EQ(PC::checkFilter("transpose,pad=w=iw+20:h=ih+20"), QString());
+    {
+        QString slow = "negate";
+        for (int i = 0; i < 40; ++i) slow += ",gblur=sigma=30:steps=6,geq=lum='taylor(sin(X),Y,9)':cb=128:cr=128";
+        QElapsedTimer t;
+        t.start();
+        const QString why = PC::checkFilter(slow, 1);
+        if (!CHECK(why.contains("takes too long"))) std::printf("       %s\n", qPrintable(why));
+        CHECK(t.elapsed() < 500); // the caller does not wait for the slow chain
+        CHECK_EQ(PC::checkFilter(slow), QString()); // fine with the normal budget
+    }
     // Not one linear chain
     refused("negate;hue=s=0", "one linear chain");
     refused("[in]negate[out]", "labels");
