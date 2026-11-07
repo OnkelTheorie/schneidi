@@ -1,10 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Compositing graph model (0.19, core/CompGraph): storage form, validation (unknown kinds, inputs, cycles), evaluation
 // order, node parameter keys, the effect "comp" in the registry and the render order, media files of "media" nodes
-// in the project file (relative paths, relink, "in use"), the single-node runner of engine/picture/CompNodes.
+// in the project file (relative paths, relink, "in use"), the single-node runner of engine/picture/CompNodes; the
+// core tables of node files and pixel values (Comp::fileKeys/pixelKeys) and everything that follows them: grade LUTs and
+// text textures in the project file (relative, LUT fallback), templates (save, ZIP export/import), the media pool's
+// "in use", the render cache key, scaling with a resolution change.
 #include "check.h"
 
 #include "core/CompGraph.h"
+#include "core/EffectFolders.h"
 #include "core/EffectRegistry.h"
 #include "core/ProjectFile.h"
 #include "core/TimelineOps.h"
@@ -216,6 +220,131 @@ void testRunner()
     }
 }
 
+
+void writeFile(const QString& path, const QByteArray& bytes = "x")
+{
+    QDir().mkpath(QFileInfo(path).absolutePath());
+    QFile f(path);
+    f.open(QIODevice::WriteOnly);
+    f.write(bytes);
+}
+
+// A media clip whose graph reads three files: media node 2 (path), grade node 3 (lut), text node 4 (texture; its
+// words in "text", a Path parameter that is no file). The title clip next to it shows a texture picture.
+ProjectData filesProject(const QString& bg, const QString& lut, const QString& tex, const QString& titleTex)
+{
+    ProjectData data;
+    data.media << MediaInfo{} << MediaInfo{};
+    data.media[0].path = QFileInfo(bg).absolutePath() + "/clip.mp4";
+    data.media[1].path = bg;
+    writeFile(data.media[0].path);
+    Track t;
+    Clip c;
+    c.id = 1;
+    c.kind = ClipKind::Media;
+    c.mediaPath = data.media[0].path;
+    c.out = 50;
+    CompGraph g;
+    g.nodes = {{1, "clip", {}}, {2, "media", {}}, {3, "grade", {}}, {4, "text", {}}, {5, "merge", {}}};
+    g.links = {{2, 3, "src"}, {3, 5, "bg"}, {4, 5, "fg"}};
+    g.out = 5;
+    EffectInstance e{Comp::kEffectId, {}, true};
+    Comp::setGraph(e, g);
+    e.params["n2.path"] = bg;
+    e.params["n3.lut"] = lut;
+    e.params["n4.texture"] = tex;
+    e.params["n4.text"] = "Hello";
+    c.effects << e;
+    t.clips << c;
+    Clip title;
+    title.id = 2;
+    title.kind = ClipKind::Title;
+    title.start = 60;
+    title.out = 50;
+    title.title.text = "Title";
+    title.title.look.fill = TitleFill::Texture;
+    title.title.look.texture = titleTex;
+    t.clips << title;
+    data.timeline.video << t;
+    data.sequences = {Sequence{1, "Timeline 1", false, 0, data.timeline}};
+    data.currentSequence = 1;
+    data.lastClipId = 2;
+    return data;
+}
+
+const EffectInstance& compOf(const ProjectData& d) { return d.timeline.video[0].clips[0].effects[0]; }
+
+void testFileKeys()
+{
+    CHECK(Comp::fileKeys("media") == QStringList{"path"});
+    CHECK(Comp::fileKeys("grade") == QStringList{"lut"});
+    CHECK(Comp::fileKeys("text") == QStringList{"texture"});
+    CHECK(Comp::fileKeys("merge").isEmpty() && Comp::fileKeys("no-such-kind").isEmpty());
+    CHECK(Comp::pixelKeys("blur") == QStringList{"radius"});
+    CHECK(Comp::pixelKeys("transform").isEmpty() && Comp::pixelKeys("no-such-kind").isEmpty());
+    // Every key of both tables is a parameter of that engine kind (a renamed parameter shows here)
+    using namespace Picture::Comp;
+    for (const NodeType& k : all())
+        for (const QStringList& keys : {Comp::fileKeys(k.id), Comp::pixelKeys(k.id)})
+            for (const QString& key : keys) {
+                const bool has = std::any_of(k.params.begin(), k.params.end(),
+                                             [&](const EffectParam& p) { return p.key == key; });
+                if (!CHECK(has)) qWarning() << "missing" << k.id << key;
+            }
+    for (const char* kind : {"media", "grade", "text", "blur", "crop", "mask", "shadow", "glitch", "matte_tune"})
+        CHECK(find(QString::fromLatin1(kind)) != nullptr);
+}
+
+// Project file: LUT and textures relative to the project file (folder moved), the LUT by name in the own LUTs folder
+void testNodeFiles(const QString& dir)
+{
+    const QString a = dir + "/files/a";
+    const ProjectData data = filesProject(a + "/media/bg.png", a + "/luts/look.cube", a + "/media/tex.png",
+                                          a + "/media/title.png");
+    for (const QString& f : {a + "/media/bg.png", a + "/luts/look.cube", a + "/media/tex.png", a + "/media/title.png"})
+        writeFile(f);
+    CHECK(Comp::mediaPaths(compOf(data))
+          == QStringList({a + "/media/bg.png", a + "/luts/look.cube", a + "/media/tex.png"})); // not the words
+    CHECK(TimelineOps::usesMediaOnVideo(data.timeline, a + "/luts/look.cube"));
+    QString err;
+    CHECK(ProjectFile::save(data, a + "/p.schneidi", &err));
+    const QByteArray json = ProjectFile::toJson(data, a + "/p.schneidi");
+    CHECK(json.contains("\"n3.lut\": \"luts/look.cube\""));
+    CHECK(json.contains("\"n4.texture\": \"media/tex.png\""));
+    CHECK_EQ(json.count("\"n4.text\""), 1); // its value only: the words of a text node are no file (no relPath)
+    CHECK(QDir().rename(dir + "/files/a", dir + "/files/b"));
+    ProjectData moved;
+    const QString b = dir + "/files/b";
+    CHECK(ProjectFile::load(b + "/p.schneidi", &moved, &err));
+    if (CHECK(!moved.timeline.video.isEmpty() && moved.timeline.video[0].clips.size() == 2)) {
+        CHECK(Comp::mediaPaths(compOf(moved))
+              == QStringList({b + "/media/bg.png", b + "/luts/look.cube", b + "/media/tex.png"}));
+        CHECK_EQ(compOf(moved).params.value("n4.text").toString(), QString("Hello"));
+        CHECK_EQ(moved.timeline.video[0].clips[1].title.look.texture, b + "/media/title.png");
+    }
+
+    // LUT neither at its place nor relative to the project: a file of the same name in the own LUTs folder
+    EffectFolders::ensure();
+    const QString own = QDir(EffectFolders::lutDir()).filePath("comp-fallback-test.cube");
+    writeFile(own);
+    ProjectData other = filesProject(b + "/media/bg.png", "C:\\Users\\someone\\LUTs\\comp-fallback-test.cube",
+                                     b + "/media/tex.png", b + "/media/title.png");
+    CHECK(ProjectFile::save(other, dir + "/files/other.schneidi", &err));
+    ProjectData back;
+    CHECK(ProjectFile::load(dir + "/files/other.schneidi", &back, &err));
+    if (CHECK(!back.timeline.video.isEmpty() && !back.timeline.video[0].clips.isEmpty()))
+        CHECK_EQ(compOf(back).params.value("n3.lut").toString(), own);
+    QFile::remove(own);
+
+    // Relink: the pool item moved -> the node that reads it follows; title textures likewise
+    QDir().mkpath(dir + "/files/c/elsewhere");
+    CHECK(QFile::copy(b + "/media/bg.png", dir + "/files/c/elsewhere/bg.png"));
+    ProjectData offline = filesProject(dir + "/files/gone/bg.png", b + "/luts/look.cube", b + "/media/tex.png",
+                                       b + "/media/title.png");
+    CHECK(ProjectFile::relink(&offline, dir + "/files/c") == 1);
+    CHECK_EQ(compOf(offline).params.value("n2.path").toString(), QDir(dir + "/files/c/elsewhere").filePath("bg.png"));
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -228,5 +357,7 @@ int main(int argc, char** argv)
     testEffect();
     testProjectFile(tmp.path());
     testRunner();
+    testFileKeys();
+    testNodeFiles(tmp.path());
     return Check::result();
 }

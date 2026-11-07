@@ -496,14 +496,12 @@ void keysFromJson(Clip& c, const QJsonObject& o)
 QJsonObject pathParamsRelative(const EffectInstance& e, const QDir& projectDir)
 {
     QJsonObject rel;
-    // Compositing graph: the files of its "media" nodes ("n<id>.path"), like media of the pool
+    // Compositing graph: the files of its nodes (Comp::fileKeys: media, LUT, texture) by their full key "n<id>.<key>"
     if (e.effectId == QLatin1String(Comp::kEffectId)) {
-        for (auto it = e.params.cbegin(); it != e.params.cend(); ++it) {
-            QString key;
-            if (CompGraph::splitParamKey(it.key(), nullptr, &key) && key == QLatin1String(Comp::kPathKey)
-                && !it->toString().isEmpty())
-                rel[it.key()] = projectDir.relativeFilePath(it->toString());
-        }
+        EffectInstance copy = e; // forEachFile may change values; this only reads them
+        Comp::forEachFile(copy, [&](const QString& key, QString& path) {
+            if (!EffectFolders::isBuiltin(path)) rel[key] = projectDir.relativeFilePath(path);
+        });
         return rel;
     }
     if (const EffectDescriptor* d = EffectRegistry::find(e.effectId))
@@ -520,12 +518,20 @@ QJsonObject pathParamsRelative(const EffectInstance& e, const QDir& projectDir)
 void resolvePathParams(EffectInstance& e, const QJsonObject& rel, const QDir& projectDir)
 {
     if (e.effectId == QLatin1String(Comp::kEffectId)) {
-        for (auto it = rel.constBegin(); it != rel.constEnd(); ++it) {
-            const QString abs = e.params.value(it.key()).toString();
-            if (abs.isEmpty() || QFileInfo::exists(abs)) continue;
-            const QString candidate = QDir::cleanPath(projectDir.absoluteFilePath(it->toString()));
-            if (QFileInfo::exists(candidate)) e.params[it.key()] = candidate;
-        }
+        Comp::forEachFile(e, [&](const QString& key, QString& path) {
+            if (EffectFolders::isBuiltin(path) || QFileInfo::exists(path)) return;
+            if (const QString r = rel.value(key).toString(); !r.isEmpty()) {
+                const QString candidate = QDir::cleanPath(projectDir.absoluteFilePath(r));
+                if (QFileInfo::exists(candidate)) {
+                    path = candidate;
+                    return;
+                }
+            }
+            if (EffectFolders::isLutFile(path)) // a grade node's LUT, as with the grade effect
+                if (const QString found = EffectFolders::findUserLut(QString(path).replace('\\', '/').section('/', -1));
+                    !found.isEmpty())
+                    path = found;
+        });
         return;
     }
     const EffectDescriptor* d = EffectRegistry::find(e.effectId);

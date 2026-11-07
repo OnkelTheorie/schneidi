@@ -8,6 +8,7 @@
 #include <QVariantList>
 
 #include <algorithm>
+#include <iterator>
 
 const CompNode* CompGraph::node(int id) const
 {
@@ -198,35 +199,89 @@ void dropOrphanParams(EffectInstance& e)
     }
 }
 
+namespace {
+
+struct KindKeys {
+    const char* type;
+    const char* keys[12]; // up to the first nullptr
+};
+
+QStringList keysOf(const KindKeys* table, size_t n, const QString& type)
+{
+    for (size_t i = 0; i < n; ++i)
+        if (type == QLatin1String(table[i].type)) {
+            QStringList out;
+            for (const char* k : table[i].keys) {
+                if (!k) break;
+                out << QString::fromLatin1(k);
+            }
+            return out;
+        }
+    return {};
+}
+
+// File parameters per node kind. A NEW node kind or parameter holding a file goes here (see fileKeys in the header)
+const KindKeys kFileKeys[] = {
+    {kMediaType, {kPathKey}},
+    {kGradeType, {kLutKey}},
+    {kTextType, {kTextureKey}},
+};
+
+// Values in project pixels per node kind (× ctx.scale in the engine). A NEW pixel parameter goes here (see pixelKeys
+// in the header); positions and sizes as 0..1 of the picture do not
+const KindKeys kPixelKeys[] = {
+    {kTextType,
+     {"size", "outline_width", "box_padding", "edge_depth", "shadow_x", "shadow_y", "shadow_soft", "glow_radius",
+      "texture_x", "texture_y"}},
+    {"blur", {"radius"}},
+    {"crop", {"soft"}},
+    {"mask", {"soft"}},
+    {"shadow", {"x", "y", "soft"}},
+    {"glitch", {"rgb"}},
+    {"matte_tune", {"grow", "soft"}},
+};
+
+} // namespace
+
+QStringList fileKeys(const QString& type) { return keysOf(kFileKeys, std::size(kFileKeys), type); }
+
+QStringList pixelKeys(const QString& type) { return keysOf(kPixelKeys, std::size(kPixelKeys), type); }
+
+void forEachFile(EffectInstance& e, const std::function<void(const QString& key, QString& path)>& fn)
+{
+    CompGraph g;
+    if (!graphOf(e, &g)) return;
+    for (const CompNode& n : g.nodes)
+        for (const QString& k : fileKeys(n.type)) {
+            const QString key = CompGraph::paramKey(n.id, k);
+            QString path = e.params.value(key).toString();
+            if (path.isEmpty()) continue;
+            const QString before = path;
+            fn(key, path);
+            if (path != before) e.params[key] = path;
+        }
+}
+
 QStringList mediaPaths(const EffectInstance& e)
 {
     QStringList out;
-    CompGraph g;
-    if (!graphOf(e, &g)) return out;
-    for (const CompNode& n : g.nodes)
-        if (n.type == QLatin1String(kMediaType)) {
-            const QString p = e.params.value(CompGraph::paramKey(n.id, kPathKey)).toString();
-            if (!p.isEmpty() && !out.contains(p)) out << p;
-        }
+    EffectInstance copy = e; // forEachFile may change values; this only reads them
+    forEachFile(copy, [&](const QString&, QString& path) {
+        if (!out.contains(path)) out << path;
+    });
     return out;
 }
 
 int redirectMedia(EffectInstance& e, const std::function<QString(const QString&)>& moved)
 {
-    CompGraph g;
-    if (!graphOf(e, &g)) return 0;
     int n = 0;
-    for (const CompNode& node : g.nodes)
-        if (node.type == QLatin1String(kMediaType)) {
-            const QString key = CompGraph::paramKey(node.id, kPathKey);
-            const QString p = e.params.value(key).toString();
-            if (p.isEmpty()) continue;
-            const QString now = moved(p);
-            if (!now.isEmpty() && now != p) {
-                e.params[key] = now;
-                ++n;
-            }
+    forEachFile(e, [&](const QString&, QString& path) {
+        const QString now = moved(path);
+        if (!now.isEmpty() && now != path) {
+            path = now;
+            ++n;
         }
+    });
     return n;
 }
 
