@@ -17,6 +17,7 @@
 #include "engine/Engine.h"
 #include "engine/PersonMatte.h"
 #include "engine/picture/CompCutout.h"
+#include "engine/picture/CompNodes.h"
 #include "engine/picture/CutoutCleanup.h"
 #include "engine/picture/CustomEffects.h"
 #include "ui/EffectsLibrary.h"
@@ -522,6 +523,10 @@ int main(int argc, char** argv)
         const Clip* c = TimelineOps::findClip(project->timeline(), clipId);
         I18n::install("en");
         CHECK_EQ(CompUi::nodeSummary(*c, *g.node(1)), QString("“Hello”"));
+        // The 3D title's camera distance is no "Padding" (the box's spacing)
+        const Picture::Comp::NodeType* t3 = Picture::Comp::find("text3d");
+        CHECK(t3 && t3->param("distance"));
+        if (t3 && t3->param("distance")) CHECK_EQ(T(t3->param("distance")->label.toUtf8().constData()), QString("Distance"));
     }
     return Check::result();
 }
