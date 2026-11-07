@@ -8,6 +8,7 @@
 #include "cli/CommandsDetail.h"
 
 #include "core/CompGraph.h"
+#include "core/CompTrack.h"
 #include "core/EffectRegistry.h"
 #include "core/ExportCheck.h"
 #include "core/Keyframes.h"
@@ -411,8 +412,11 @@ QJsonObject compJson(const EffectInstance& e, const ProjectFormat& f)
     QJsonObject o{{"nodes", nodes}, {"links", links}, {"out", g.out}};
     QJsonArray unused;
     const QVector<int> order = g.evalOrder();
+    QSet<int> followed; // trackers read through `follow` (a value, not a link) are used
+    for (int id : order)
+        if (const int f = ::Comp::followId(e.params.value(CompGraph::paramKey(id, "follow")).toDouble())) followed.insert(f);
     for (const CompNode& n : g.nodes)
-        if (!order.contains(n.id)) unused << n.id;
+        if (!order.contains(n.id) && !followed.contains(n.id)) unused << n.id;
     if (!unused.isEmpty()) o["unused"] = unused; // do not reach the output
     o["cost_ms"] = std::round(ExportCheck::compCostMs(e, f.size()) * 10) / 10; // rough, one core
     return o;

@@ -426,6 +426,20 @@ int main(int argc, char** argv)
         CHECK(ExportCheck::compCostMs(*e, hd.size()) > ExportCheck::kCompBudgetMs);
         tl.video[0].clips[0].renderCache = true; // cached: playback reads the file
         CHECK(ids(ExportCheck::comp(tl, 0, 50, hd)) == QStringList{"comp_unused_input"});
+        // A tracker read only through a mask's follow is used
+        {
+            Timeline t2 = tl;
+            EffectInstance* e2 = EffectRegistry::instance(t2.video[0].clips[0], Comp::kEffectId);
+            CompGraph g2;
+            g2.nodes = {{1, "clip", {}}, {2, "blur", {}}, {3, "tracker", {}}, {4, "mask", {}}};
+            g2.links = {{1, 2, "src"}, {4, 2, "mask"}};
+            g2.out = 2;
+            Comp::setGraph(*e2, g2);
+            e2->params["n4.follow"] = 3.0;
+            CHECK(ids(ExportCheck::comp(t2, 0, 50, small)).isEmpty());
+            e2->params.remove("n4.follow");
+            CHECK(ids(ExportCheck::comp(t2, 0, 50, small)) == QStringList{"comp_unused_input"});
+        }
         // key_edges: a soft matte inside the subject is found, a clean one not
         std::vector<uint8_t> alpha(100 * 100, 0);
         for (int y = 20; y < 80; ++y)

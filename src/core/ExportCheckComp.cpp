@@ -4,9 +4,11 @@
 #include "core/ExportCheck.h"
 
 #include "core/CompGraph.h"
+#include "core/CompTrack.h"
 #include "core/EffectRegistry.h"
 #include "core/I18n.h"
 
+#include <QSet>
 #include <QStringList>
 
 #include <algorithm>
@@ -57,9 +59,15 @@ QVector<Issue> comp(const Timeline& tl, int from, int to, const ProjectFormat& f
             if (!e || !e->enabled || !Comp::graphOf(*e, &g) || g.isEmpty()) continue;
             const int a = std::max(from, c.start), b = std::min(to, c.end());
             const QVector<int> order = g.evalOrder();
+            // A tracker is read through `follow` (a value, not a link): followed nodes count as used
+            QSet<int> followed;
+            for (int id : order)
+                if (const int f = Comp::followId(e->params.value(CompGraph::paramKey(id, QStringLiteral("follow"))).toDouble()))
+                    followed.insert(f);
             QStringList unused;
             for (const CompNode& n : g.nodes)
-                if (!order.contains(n.id)) unused << QStringLiteral("%1 (%2)").arg(n.id).arg(n.type);
+                if (!order.contains(n.id) && !followed.contains(n.id))
+                    unused << QStringLiteral("%1 (%2)").arg(n.id).arg(n.type);
             if (!unused.isEmpty())
                 out << Issue{Severity::Info, QStringLiteral("comp_unused_input"),
                              T("Comp-Graph: Knoten %1 erreichen die Ausgabe nicht und wirken nicht").arg(unused.join(", ")),
