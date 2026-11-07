@@ -611,7 +611,7 @@ int Inspector::effectCount(const Clip& c) const
     int n = ColorGrade::active(c) ? 1 : 0;
     for (const EffectInstance& e : c.effects) {
         const EffectDescriptor* d = EffectRegistry::find(e.effectId);
-        if (!d || (d->library && d->video)) ++n;
+        if (!d || (d->library && d->video) || e.effectId == QLatin1String(Comp::kEffectId)) ++n;
     }
     return n;
 }
@@ -628,6 +628,12 @@ void Inspector::arrangeEffectSections()
         m_gradeText->setText(T("Farbkorrektur der Color-Seite") +
                              (lut.isEmpty() ? QString() : "\n" + T("LUT: %1").arg(QFileInfo(lut).completeBaseName())));
     }
+    CompGraph graph;
+    const EffectInstance* comp = c ? EffectRegistry::instance(*c, Comp::kEffectId) : nullptr;
+    m_compRow->setVisible(comp != nullptr);
+    if (comp)
+        m_compText->setText(Comp::graphOf(*comp, &graph) ? T("Comp: %1 Knoten").arg(graph.nodes.size())
+                                                         : T("Comp: Graph nicht lesbar"));
     for (TrackKind kind : {TrackKind::Video, TrackKind::Audio}) {
         const bool video = kind == TrackKind::Video;
         QVBoxLayout* lay = video ? m_fxLay : m_audioFxLay;

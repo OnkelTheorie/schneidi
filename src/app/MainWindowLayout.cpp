@@ -46,6 +46,8 @@
 #include "ui/MulticamView.h"
 #include "ui/FullScreenViewer.h"
 #include "ui/Viewer.h"
+#include "ui/comp/CompOverlay.h"
+#include "ui/comp/CompPage.h"
 #include "ui/timeline/TimelinePanel.h"
 #include "ui/timeline/TimelineView.h"
 
@@ -249,6 +251,7 @@ QWidget* MainWindow::buildPageBar()
     const struct { const char* icon; const char* name; Page page; } pages[] = {
         {"▤", N_("Media"), Page::Media},
         {"✂", N_("Edit"), Page::Edit},
+        {"◇", N_("Comp"), Page::Comp},
         {"◐", N_("Color"), Page::Color},
         {"⇪", N_("Deliver"), Page::Deliver},
     };
@@ -271,7 +274,13 @@ QWidget* MainWindow::buildPageBar()
 void MainWindow::showPage(Page page)
 {
     setViewerLarge(false); // the page's own layout first, then the switch
+    const Page before = m_page;
     m_page = page;
+    if (before == Page::Comp && page != Page::Comp && m_compPage) { // the Color page's windows over the viewer again
+        m_compPage->overlay()->setVisible(false);
+        m_viewer->setOverlay(m_colorPanel->overlay());
+        if (m_compPage->viewNode() || m_compPage->matte()) updatePreview(); // the output again
+    }
     switch (page) {
     case Page::Media:
         m_mediaTop->insertWidget(0, m_storage);
@@ -316,6 +325,22 @@ void MainWindow::showPage(Page page)
         m_colorPage->setStretchFactor(0, 1);
         applySizes(m_colorPage, {460, 200, 300});
         m_pages->setCurrentWidget(m_colorPage);
+        break;
+    case Page::Comp:
+        // Built on the first showing; the selected video clip is opened (openComp sets its own after this)
+        ensureCompPage();
+        if (before != Page::Comp)
+            if (const int id = selectedVideoClip(); id && id != m_compPage->clip()) m_compPage->setClip(id);
+        m_compPage->top()->insertWidget(0, m_viewer);
+        m_compPage->top()->setStretchFactor(0, 1);
+        applySizes(m_compPage->top(), {1200, 340});
+        m_compPage->main()->insertWidget(1, m_timeline);
+        m_compPage->main()->setStretchFactor(0, 1);
+        applySizes(m_compPage->main(), {470, 150, 280});
+        m_viewer->setOverlay(m_compPage->overlay());
+        m_compPage->overlay()->setVisible(true);
+        m_pages->setCurrentWidget(m_compPage);
+        if (m_compPage->viewNode() || m_compPage->matte()) updatePreview();
         break;
     }
     if (auto* b = m_pageButtons->button(int(page))) b->setChecked(true);

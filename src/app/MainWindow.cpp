@@ -129,7 +129,7 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
     m_engineTimer.setSingleShot(true);
     m_engineTimer.setInterval(30);
     connect(&m_engineTimer, &QTimer::timeout, this, [this] {
-        m_engine->updateTimeline(m_project->renderTimeline());
+        m_engine->updateTimeline(previewTimeline()); // the Comp page may show one node of a graph
         updateRenderCacheBar();
     });
     connect(m_editor, &Editor::mixerOnlyEdit, m_engine, &Engine::mixerOnlyNext);
@@ -142,7 +142,7 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
     connect(m_project, &Project::mediaChanged, this, mediaLengths);
     mediaLengths();
     connect(m_project, &Project::timelineChanged, this, [this] {
-        if (m_engine->mixerOnlyPending()) m_engine->updateTimeline(m_project->renderTimeline());
+        if (m_engine->mixerOnlyPending()) m_engine->updateTimeline(previewTimeline());
         else if (!m_engineTimer.isActive()) m_engineTimer.start();
     });
     m_engine->updateTimeline(m_project->renderTimeline());
@@ -191,6 +191,7 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
     connect(m_inspector, &Inspector::savePresetRequested, this, &MainWindow::saveEffectPreset);
     connect(m_inspector, &Inspector::keyPickRequested, this, &MainWindow::startKeyPick);
     connect(m_inspector, &Inspector::keyPickCancelled, this, &MainWindow::stopKeyPick);
+    connect(m_inspector, &Inspector::compOpenRequested, this, &MainWindow::openComp);
     connect(m_selection, &Selection::changed, this, [this] {
         if (m_keyPicker) stopKeyPick();
     });
@@ -300,7 +301,7 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
                                "normalize_audio", "audio_ducking", "fit_music", "stream_presets_learn", "",
                                "slot_mark", "slot_remove", "",
                                "toggle_enabled", "link_clips",
-                               "render_cache_clip", "save_effect_preset", "", "compound_create", "compound_open", "compound_decompose", "",
+                               "render_cache_clip", "save_effect_preset", "", "comp_open", "comp_from", "compound_create", "compound_open", "compound_decompose", "",
                                "delete", "ripple_delete"}) {
             if (!*id) {
                 menu.addSeparator();
@@ -334,6 +335,7 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
                 if (marked != (QString(id) == "slot_remove")) continue;
             }
             if (QString(id) == "compound_open" && !compound && !multicam) continue;
+            if ((QString(id) == "comp_open" || QString(id) == "comp_from") && !selectedVideoClip()) continue;
             if (QString(id) == "compound_decompose") {
                 if (compound) menu.addAction(a);
                 if (multicam) addMulticamMenu(&menu); // switch angle, flatten (like DaVinci)
@@ -848,6 +850,18 @@ void MainWindow::onTimelineFormatChanged()
 bool MainWindow::eventFilter(QObject* obj, QEvent* event)
 {
     const QEvent::Type t = event->type();
+    // Double-click on a clip with a compositing graph in the timeline: open it on the Comp page (the press before
+    // selected it; the timeline itself has no double-click on clips)
+    if (t == QEvent::MouseButtonDblClick && m_timeline && obj == m_timeline->view()) {
+        const auto* me = static_cast<QMouseEvent*>(event);
+        if (me->button() == Qt::LeftButton && me->position().x() >= TimelineView::kHeaderW)
+            if (const int id = selectedVideoClip())
+                if (const Clip* c = TimelineOps::findClip(m_project->timeline(), id);
+                    c && EffectRegistry::has(*c, Comp::kEffectId)) {
+                    QTimer::singleShot(0, this, [this, id] { openComp(id); });
+                    return true;
+                }
+    }
     if (t != QEvent::MouseButtonPress && t != QEvent::MouseButtonRelease && t != QEvent::MouseButtonDblClick)
         return QMainWindow::eventFilter(obj, event);
     // Only in the main window, not in dialogs (there e.g. the binding is being chosen)

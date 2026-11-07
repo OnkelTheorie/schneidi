@@ -293,6 +293,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/app/LaunchArgs.h          src/app/LaunchArgs.cpp
     src/app/MainWindowActions.cpp
     src/app/MainWindowLayout.cpp
+    src/app/MainWindowComp.cpp
     src/app/MainWindowProject.cpp src/app/MainWindowLive.cpp src/app/MainWindowSettings.cpp
     src/app/SettingsDialog.h src/app/SettingsDialog.cpp
     src/app/AiSettings.h src/app/AiSettings.cpp
@@ -358,6 +359,12 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/ui/KeyColorPicker.h       src/ui/KeyColorPicker.cpp
     src/ui/KeyPickWindow.h        src/ui/KeyPickWindow.cpp
     src/ui/WindowOverlay.h        src/ui/WindowOverlay.cpp
+    src/ui/comp/CompShared.h      src/ui/comp/CompShared.cpp
+    src/ui/comp/CompCanvas.h      src/ui/comp/CompCanvas.cpp
+    src/ui/comp/CompLayers.h      src/ui/comp/CompLayers.cpp
+    src/ui/comp/CompInspector.h   src/ui/comp/CompInspector.cpp
+    src/ui/comp/CompOverlay.h     src/ui/comp/CompOverlay.cpp
+    src/ui/comp/CompPage.h        src/ui/comp/CompPage.cpp
     src/ui/EqCurve.h              src/ui/EqCurve.cpp
     src/ui/MulticamGrid.h         src/ui/MulticamGrid.cpp
     src/ui/MulticamView.h         src/ui/MulticamView.cpp

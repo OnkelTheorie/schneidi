@@ -396,6 +396,9 @@ void MainWindow::buildActions()
             [](bool on) { QSettings().setValue(QStringLiteral("reframe/keepKillFeed"), on); });
     // A song cut to a length on its phrases (op fit_music): timeline, In/Out range or a number
     makeAction(clipMenu, "fit_music", T("Musik auf Länge…"), QKeySequence(), [this] { fitMusicDialog(); });
+    // Compositing graph of a clip on the Comp page (0.19)
+    makeAction(clipMenu, "comp_open", T("In Comp öffnen"), QKeySequence(), [this] { openCompForSelection(); });
+    makeAction(clipMenu, "comp_from", T("Comp aus Auswahl"), QKeySequence(), [this] { compFromSelection(); });
     QMenu* compoundMenu = timeline->addMenu(T("Compound Clip"));
     makeAction(compoundMenu, "compound_create", T("Neuer Compound Clip…"), QKeySequence(), [this] { createCompoundClip(); });
     makeAction(compoundMenu, "compound_open", T("Compound Clip in Timeline öffnen"), QKeySequence(),
@@ -666,6 +669,7 @@ void MainWindow::buildActions()
     QMenu* workspace = menuBar()->addMenu(T("&Arbeitsbereich"));
     makeAction(workspace, "page_media", T("Media-Seite"), QKeySequence("Shift+2"), [this] { showPage(Page::Media); });
     makeAction(workspace, "page_edit", T("Edit-Seite"), QKeySequence("Shift+4"), [this] { showPage(Page::Edit); });
+    makeAction(workspace, "page_comp", T("Comp-Seite"), QKeySequence("Shift+3"), [this] { showPage(Page::Comp); });
     makeAction(workspace, "page_color", T("Color-Seite"), QKeySequence("Shift+5"), [this] { showPage(Page::Color); });
     makeAction(workspace, "page_deliver", T("Deliver-Seite"), QKeySequence("Shift+8"), [this] { showPage(Page::Deliver); });
     makeAction(workspace, "toggle_effects", T("Effects Library ein/aus"), QKeySequence(),

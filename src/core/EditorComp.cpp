@@ -202,3 +202,123 @@ bool Editor::setCompOut(int clipId, int node, const CompGraph::KindInfo& kinds, 
         return true;
     }, kinds, err);
 }
+
+namespace {
+
+// The clip's graph and its comp instance in `c` (false = none or broken)
+bool compOf(Clip& c, CompGraph* g, EffectInstance** e)
+{
+    *e = EffectRegistry::instance(c, Comp::kEffectId);
+    return *e && Comp::graphOf(**e, g);
+}
+
+} // namespace
+
+bool Editor::moveCompNodes(int clipId, const QHash<int, QPointF>& places, QString* err)
+{
+    return editComp(clipId, T("Knoten verschieben"), [&](CompGraph& g, EffectInstance&, QString*) {
+        for (CompNode& n : g.nodes)
+            if (places.contains(n.id)) n.pos = places.value(n.id);
+        return true;
+    }, {}, err);
+}
+
+bool Editor::setCompNodeValuesAt(int clipId, int node, const QVariantMap& values, int frame, const QString& mergeKey,
+                                 QString* err)
+{
+    const Clip* found = TimelineOps::findClip(m_project->timeline(), clipId);
+    CompGraph g;
+    const EffectInstance* e = found ? EffectRegistry::instance(*found, Comp::kEffectId) : nullptr;
+    if (!e || !Comp::graphOf(*e, &g)) return failWith(err, QStringLiteral("clip %1 has no compositing graph").arg(clipId));
+    if (!g.node(node)) return failWith(err, QStringLiteral("no node %1 in the graph").arg(node));
+    if (editable({clipId}).isEmpty()) return failWith(err, QStringLiteral("clip %1 is on a locked track").arg(clipId));
+    modifyClips({clipId}, T("Knoten ändern"), [&](Clip& c) {
+        EffectInstance* inst = EffectRegistry::instance(c, Comp::kEffectId);
+        if (!inst) return;
+        const int t = std::clamp(frame - c.start, 0, std::max(0, c.length() - 1));
+        for (auto it = values.begin(); it != values.end(); ++it) {
+            const QString key = CompGraph::paramKey(node, it.key());
+            const AnimParam p = Keys::effectParam(Comp::kEffectId, key);
+            if (Keys::animated(c, p)) Keys::setKey(c, p, t, it.value().toDouble());
+            else inst->params[key] = it.value();
+        }
+    }, mergeKey);
+    return true;
+}
+
+bool Editor::setCompNodeKeyframe(int clipId, int node, const QString& key, int frame, bool on, double value, QString* err)
+{
+    const Clip* c = TimelineOps::findClip(m_project->timeline(), clipId);
+    CompGraph g;
+    const EffectInstance* e = c ? EffectRegistry::instance(*c, Comp::kEffectId) : nullptr;
+    if (!e || !Comp::graphOf(*e, &g)) return failWith(err, QStringLiteral("clip %1 has no compositing graph").arg(clipId));
+    if (!g.node(node)) return failWith(err, QStringLiteral("no node %1 in the graph").arg(node));
+    if (editable({clipId}).isEmpty()) return failWith(err, QStringLiteral("clip %1 is on a locked track").arg(clipId));
+    const QString full = CompGraph::paramKey(node, key);
+    const AnimParam p = Keys::effectParam(Comp::kEffectId, full);
+    const int t = std::clamp(frame - c->start, 0, std::max(0, c->length() - 1));
+    const bool has = Keys::keyAt(*c, p, t) != nullptr;
+    if (!on && !has) return true; // nothing to remove: no empty undo step
+    modifyClips({clipId}, on ? T("Keyframe setzen") : T("Keyframe entfernen"), [&](Clip& clip) {
+        if (!on) {
+            Keys::removeKey(clip, p, t);
+            return;
+        }
+        // The first keyframe: the static value becomes the value shown (a default is not stored)
+        if (!Keys::animated(clip, p))
+            if (EffectInstance* inst = EffectRegistry::instance(clip, Comp::kEffectId)) inst->params[full] = value;
+        Keys::setKey(clip, p, t, value);
+    });
+    return true;
+}
+
+int Editor::duplicateCompNode(int clipId, int node, const QPointF& pos, QString* err)
+{
+    int added = 0;
+    TrackRef ref;
+    const Clip* found = TimelineOps::findClip(m_project->timeline(), clipId, &ref);
+    if (!found) {
+        failWith(err, QStringLiteral("no clip with id %1").arg(clipId));
+        return 0;
+    }
+    if (editable({clipId}).isEmpty()) {
+        failWith(err, QStringLiteral("clip %1 is on a locked track").arg(clipId));
+        return 0;
+    }
+    Clip next = *found;
+    CompGraph g;
+    EffectInstance* e = nullptr;
+    if (!compOf(next, &g, &e)) {
+        failWith(err, QStringLiteral("clip %1 has no compositing graph").arg(clipId));
+        return 0;
+    }
+    const CompNode* src = g.node(node);
+    if (!src) {
+        failWith(err, QStringLiteral("no node %1 in the graph").arg(node));
+        return 0;
+    }
+    CompNode copy = *src;
+    copy.id = g.nextId();
+    copy.pos = pos;
+    g.nodes << copy;
+    const QString prefix = CompGraph::paramKey(node, {});
+    const QVariantMap params = e->params;
+    for (auto it = params.begin(); it != params.end(); ++it)
+        if (it.key().startsWith(prefix)) e->params[CompGraph::paramKey(copy.id, it.key().mid(prefix.size()))] = it.value();
+    Comp::setGraph(*e, g);
+    const auto keys = next.keys;
+    for (auto it = keys.begin(); it != keys.end(); ++it) {
+        QString effectId, key;
+        int id = 0;
+        QString sub;
+        if (Keys::effectParamOf(it.key(), &effectId, &key) && effectId == QLatin1String(Comp::kEffectId)
+            && CompGraph::splitParamKey(key, &id, &sub) && id == node)
+            next.keys[Keys::effectParam(Comp::kEffectId, CompGraph::paramKey(copy.id, sub))] = it.value();
+    }
+    modifyClips({clipId}, T("Knoten duplizieren"), [&](Clip& c) {
+        c.effects = next.effects;
+        c.keys = next.keys;
+    });
+    added = copy.id;
+    return added;
+}

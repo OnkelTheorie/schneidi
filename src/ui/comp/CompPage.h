@@ -1,0 +1,76 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+#pragma once
+// The Comp page (between Edit and Color): one clip's compositing graph. Viewer (inserted by MainWindow) with the
+// selected node's handles, the node Inspector on the right, the shared timeline in the middle and below it the graph -
+// as layers (a merge chain, top to bottom) or as nodes on a canvas; a switch toggles both. The viewer shows the
+// output or the selected node's picture, "Matte" its alpha as gray (CompUi::viewTimeline; MainWindow plays that).
+// The page follows every project change (undo/redo, the CLI's @app edits) and keeps the selected node while it exists.
+
+#include <QWidget>
+
+class Editor;
+class CompCanvas;
+class CompInspector;
+class CompLayers;
+class CompOverlay;
+class QLabel;
+class QPushButton;
+class QSplitter;
+class QStackedWidget;
+class QToolButton;
+
+class CompPage : public QWidget {
+    Q_OBJECT
+public:
+    explicit CompPage(Editor* editor, QWidget* parent = nullptr);
+
+    QSplitter* main() const { return m_main; } // MainWindow puts the timeline at index 1
+    QSplitter* top() const { return m_top; }   // ... and the viewer at index 0
+
+    void setClip(int clipId); // the clip whose graph is shown (0 = none); keeps the node when it is the same clip
+    int clip() const { return m_clipId; }
+    void setPlayhead(int frame);
+    void selectNode(int node);
+    int selectedNode() const { return m_selected; }
+    void refresh(); // the project changed
+
+    enum class View { Layers, Nodes };
+    void setView(View v);
+    View view() const;
+    // What the viewer shows: the selected node (true) or the output; the alpha as gray
+    void setShowNode(bool on);
+    bool showNode() const;
+    void setMatte(bool on);
+    bool matte() const;
+    int viewNode() const; // node the viewer shows (0 = the output)
+
+    CompCanvas* canvas() const { return m_canvas; }
+    CompLayers* layers() const { return m_layers; }
+    CompInspector* inspector() const { return m_inspector; }
+    CompOverlay* overlay() const { return m_overlay; }
+
+signals:
+    void viewChanged(); // the viewer should show another node / the matte
+    void keyPickRequested(int clipId, int node, const QString& key);
+    void message(const QString& text);
+
+private:
+    void updateHeader();
+
+    Editor* m_editor;
+    int m_clipId = 0, m_selected = 0, m_playhead = 0;
+    QSplitter* m_main;
+    QSplitter* m_top;
+    CompInspector* m_inspector;
+    CompCanvas* m_canvas;
+    CompLayers* m_layers;
+    CompOverlay* m_overlay;
+    QStackedWidget* m_stack;
+    QToolButton* m_layersButton;
+    QToolButton* m_nodesButton;
+    QToolButton* m_showNode;
+    QToolButton* m_matte;
+    QPushButton* m_create;
+    QLabel* m_clipLabel;
+    QLabel* m_message;
+};

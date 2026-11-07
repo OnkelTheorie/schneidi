@@ -56,6 +56,8 @@ signals:
     // Green Screen pipette switched on for this clip resp. off again (MainWindow shows the picker in the viewer)
     void keyPickRequested(int clipId);
     void keyPickCancelled();
+    // "Comp: N Knoten – Öffnen" of a clip with a compositing graph: show it on the Comp page
+    void compOpenRequested(int clipId);
 
 private:
     using Field = std::function<double&(Clip&)>;
@@ -178,6 +180,8 @@ private:
     std::function<void()> m_stabilizeRefresh; // only the analysis row (progress ticks)
     QWidget* m_gradeRow = nullptr; // Color page grade/LUT: shown here, edited on the Color page
     QLabel* m_gradeText = nullptr;
+    QWidget* m_compRow = nullptr;  // compositing graph: shown here, edited on the Comp page
+    QLabel* m_compText = nullptr;
     int m_fxCount = 0;             // effects of the shown clip (tab label; a new one opens the tab)
     int effectCount(const Clip& c) const;
     QStringList m_fxOrder; // last displayed order
