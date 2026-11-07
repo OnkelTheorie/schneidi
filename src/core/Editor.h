@@ -344,15 +344,21 @@ public:
     int streamTrackStart(const Timeline& tl, const MediaInfo& m, int aTrack, int start, int length) const;
     // The audio track of each placed stream of file m (index = StreamPresets::placements(m), -1 = not placed: locked)
     // for such an edit with the picture on video track vTrack (-1 = none):
-    // - over material (overwrite, replace, a drop onto clips): the streams take the tracks of the sound linked to
-    //   the pictures they cover (same file and stream first), the rest one after another from streamTrackStart as
-    //   before, so nothing of the old clip is left under the new picture;
-    // - into empty space: one after another from streamTrackStart while that fits; when the file's streams already
-    //   have tracks (a clip of the stream, or the track named after it) that are free there but that layout would
-    //   pass them by (tracks deleted or moved since: AI test run 2026-11-07 made five new tracks for every further
-    //   piece), each stream goes to its own track again, the rest to free unnamed tracks (new ones at the bottom).
+    // - one stream, or over material (the picture's range on vTrack holds clips; without a picture: the target audio
+    //   track): one after another from streamTrackStart, as always (overwrite, replace, fit to fill, ripple
+    //   overwrite, a drop onto clips)
+    // - into empty space: that layout while it lands on nothing and passes no free track of the file's streams;
+    //   else each stream on its own track (a clip of the stream, or the track named after it) where that is free,
+    //   the rest on free unnamed tracks from the target on, else new ones at the bottom - never onto material
+    //   (AI test run 2026-11-07: tracks deleted or moved since the first piece made five new tracks for each further
+    //   piece)
     QVector<int> streamTracks(const Timeline& tl, const MediaInfo& m, int aTrack, int start, int length,
                               int vTrack = -1) const;
+    // The audio track of each placed stream of file m dropped from the Media Pool onto V/A[track] at `start` (addMediaAt
+    // and its drop preview): -1 = no sound there (locked target audio track, locked further track)
+    QVector<int> dropStreamTracks(const Timeline& tl, const MediaInfo& m, int track, int start) const;
+    // The streams one after another from streamTrackStart (further streams on locked tracks -1)
+    QVector<int> streamTracksInOrder(const Timeline& tl, const MediaInfo& m, int aTrack, int start, int length) const;
     int targetVideoTrack() const { return m_targetVideo; }
     int targetAudioTrack() const { return m_targetAudio; }
     void setTargetTracks(int video, int audio);
