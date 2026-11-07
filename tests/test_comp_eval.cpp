@@ -470,6 +470,35 @@ void testPassThrough()
     }
 }
 
+// A compound track is painted straight onto the merge reading it only when that merge is its one reader
+void testFusedTrack()
+{
+    std::printf("compound track fused into a merge\n");
+    Env env;
+    env.size = QSize(32, 16);
+    Buf whole = solid(32, 16, {QColor(1, 2, 3)});
+    env.clipPicture = [&]() -> const Buf* { return &whole; };
+    int painted = 0;
+    env.paintTrack = [&](int track, Buf& onto) {
+        ++painted;
+        for (size_t i = 0; i < onto.px.size(); i += 4)
+            if ((i / 4) % 3 == size_t(track)) onto.px[i] = 250, onto.px[i + 3] = 255;
+        return true;
+    };
+    const QVariantMap v{{"n1.track", 0}, {"n2.color", QColor(0, 0, 90)}, {"n4.radius", 1}};
+    // track -> fg of a merge over a color: fused (painted once, onto the color)
+    Buf fused;
+    CHECK(evaluate(comp({"clip", "color", "merge"}, {{2, 3, "bg"}, {1, 3, "fg"}}, 3, v), env, nullptr, &fused)
+          && painted == 1 && fused.px[2] == 90 && fused.px[0] == 250);
+    // The same track also read by a blur: a picture of the track alone that both read
+    painted = 0;
+    Buf shared;
+    CHECK(evaluate(comp({"clip", "color", "merge", "blur", "merge"},
+                        {{2, 3, "bg"}, {1, 3, "fg"}, {1, 4, "src"}, {3, 5, "bg"}, {4, 5, "fg"}}, 5, v),
+                   env, nullptr, &shared)
+          && painted == 1 && !shared.isNull());
+}
+
 // A node following a tracker (numOf) is cached only while the tracker's values are fixed, and keyed by them: an
 // analysed tracker (keyframes) moves it per frame, a new analysis or another value is seen with a cache
 void testFollowCached()
@@ -722,6 +751,7 @@ int main(int argc, char** argv)
     testChoiceValues();
     testFollowCached();
     testPassThrough();
+    testFusedTrack();
     bench();
     if (!Check::haveFfmpeg()) return Check::skip("ffmpeg nicht gefunden");
     QTemporaryDir tmp;

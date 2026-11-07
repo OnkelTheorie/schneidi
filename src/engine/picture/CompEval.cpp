@@ -209,7 +209,9 @@ bool evaluate(const EffectInstance& comp, const Env& env, Cache* cache, Buf* out
     if (env.paintTrack)
         for (int id : order) {
             NodeState& s = state[id];
-            if (!s.kind || s.kind->id != QLatin1String("merge") || g.linkInto(id, "mask")) continue;
+            // Only a merge that is evaluated: its read is then the track's only one (readers counts no other)
+            if (!s.needed || s.hit || !s.kind || s.kind->id != QLatin1String("merge") || g.linkInto(id, "mask"))
+                continue;
             const CompLink* fg = g.linkInto(id, "fg");
             if (!fg || !state.contains(fg->from)) continue;
             NodeState& f = state[fg->from];
