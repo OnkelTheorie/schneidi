@@ -151,6 +151,18 @@ bool evaluate(const EffectInstance& comp, const Env& env, Cache* cache, Buf* out
         if (!s.node) continue;
         bool isStatic = s.kind && !s.kind->varying && !animated.contains(id);
         uint64_t key = isStatic ? ownHash(s.node->type, values.value(id), env) : 0;
+        // A follower reads the followed node's values (numOf): static only while they are fixed, keyed by them (a new
+        // analysis or another value is a new key)
+        if (isStatic && s.kind->param(QStringLiteral("follow"))) {
+            // (a fractional id: kinds round it differently, so never static)
+            if (const double fv = valueOf(id, s.kind, QStringLiteral("follow")); fv >= 0.5) {
+                const int f = int(fv);
+                const CompNode* fn = g.node(f);
+                const NodeType* fk = fn ? find(fn->type) : nullptr;
+                if (fv != f || animated.contains(f) || (fk && fk->varying)) isStatic = false;
+                else key = mix(key, ownHash(fn ? fn->type : QString(), values.value(f), env));
+            }
+        }
         for (const CompLink& l : g.links)
             if (l.to == id) {
                 const auto it = state.constFind(l.from);

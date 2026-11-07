@@ -426,6 +426,48 @@ void testEngine()
     CHECK(evaluate(comp(kinds, links, 5, follow), env, nullptr, &moved) && moved.px != plain.px);
 }
 
+// A node following a tracker (numOf) is cached only while the tracker's values are fixed, and keyed by them: an
+// analysed tracker (keyframes) moves it per frame, a new analysis or another value is seen with a cache
+void testFollowCached()
+{
+    std::printf("follower with a cache\n");
+    for (const QString& follower : {QString("transform"), QString("mask")}) {
+        // A white square (transform of a smaller white picture / a mask shape) on black
+        const bool isMask = follower == "mask";
+        const QStringList kinds = isMask ? QStringList{"tracker", "color", "mask", "color", "merge"}
+                                         : QStringList{"tracker", "color", "transform", "color", "merge"};
+        const QVector<CompLink> links = isMask ? QVector<CompLink>{{4, 5, "bg"}, {2, 5, "fg"}, {3, 5, "mask"}}
+                                               : QVector<CompLink>{{2, 3, "src"}, {4, 5, "bg"}, {3, 5, "fg"}};
+        QVariantMap v{{"n2.color", QColor(255, 255, 255)}, {"n4.color", QColor(0, 0, 0)}, {"n3.follow", 1}};
+        if (isMask) v.insert("n3.w", 0.2), v.insert("n3.h", 0.2);
+        else v.insert("n3.size", 0.2);
+        Env env;
+        env.size = QSize(64, 32);
+        Cache cache;
+        Clip k;
+        const AnimParam kx = Keys::effectParam(::Comp::kEffectId, "n1.x");
+        k.keys[kx] = {Keyframe{0, 0.3}, Keyframe{10, 0.7}};
+        env.clip = &k;
+        Buf f0, f10, again;
+        CHECK(evaluate(comp(kinds, links, 5, v), env, &cache, &f0));
+        env.t = 10;
+        CHECK(evaluate(comp(kinds, links, 5, v), env, &cache, &f10) && f10.px != f0.px);
+        // Analysed anew: other keyframes, the same frame shows the new place
+        k.keys[kx] = {Keyframe{0, 0.3}, Keyframe{10, 0.4}};
+        CHECK(evaluate(comp(kinds, links, 5, v), env, &cache, &again) && again.px != f10.px);
+        // No keyframes: static (cached at another frame), but another tracker value is not taken from the cache
+        env.clip = nullptr;
+        v.insert("n1.x", 0.3);
+        Buf a, b, c;
+        Stats s1, s2;
+        CHECK(evaluate(comp(kinds, links, 5, v), env, &cache, &a));
+        env.t = 3;
+        CHECK(evaluate(comp(kinds, links, 5, v), env, &cache, &b, &s1) && s1.cached >= 1 && a.px == b.px);
+        v.insert("n1.x", 0.7);
+        CHECK(evaluate(comp(kinds, links, 5, v), env, &cache, &c, &s2) && c.px != a.px);
+    }
+}
+
 // Choice values given as an index (a number or digits) mean the same as the choice id, for every kind
 void testChoiceValues()
 {
@@ -634,6 +676,7 @@ int main(int argc, char** argv)
     testSimpleNodes();
     testEngine();
     testChoiceValues();
+    testFollowCached();
     bench();
     if (!Check::haveFfmpeg()) return Check::skip("ffmpeg nicht gefunden");
     QTemporaryDir tmp;

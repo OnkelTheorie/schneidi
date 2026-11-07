@@ -177,8 +177,8 @@ void registerMaskNodes(QVector<NodeType>& out)
                           "mit der Maske am Eingang verbinden, einem Tracker folgen");
         k.inputs = {"mask"};
         k.output = Buf::Mask;
-        // May follow a tracker (numOf): the kind cannot say so per node, so it is never cached as static
-        k.varying = true;
+        // Following a tracker (numOf) the engine caches it only while the tracker's values are fixed
+        k.varying = false;
         k.params.append(choice("shape", T("Form"), {"rect", "ellipse", "polygon", "bezier", "linear", "radial"},
                                {T("Rechteck"), T("Ellipse"), T("Polygon"), T("Kurve"), T("Linearer Verlauf"),
                                 T("Radialer Verlauf")}));
