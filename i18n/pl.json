@@ -2500,5 +2500,22 @@
  "Punkte": "Punkty",
  "Radialer Verlauf": "Gradient radialny",
  "Schnittmenge": "Część wspólna",
- "Verbinden": "Połącz"
+ "Verbinden": "Połącz",
+ "In Pixeln: macht die Kante der Matte weich": "W pikselach: zmiękcza krawędź maski",
+ "In Pixeln: positiv lässt die Matte wachsen, negativ schrumpfen": "W pikselach: dodatnia wartość powiększa maskę, ujemna ją zmniejsza",
+ "Kante verschieben": "Przesuń krawędź",
+ "Key": "Kluczowanie",
+ "Luma-Key: Breite des Übergangs an den Grenzen": "Kluczowanie jasności: szerokość przejścia na granicach",
+ "Luma-Key: was dunkler ist, wird durchsichtig": "Kluczowanie jasności: co ciemniejsze, staje się przezroczyste",
+ "Luma-Key: was heller ist, wird durchsichtig": "Kluczowanie jasności: co jaśniejsze, staje się przezroczyste",
+ "Matte verfeinern": "Dopracuj maskę",
+ "Nimmt den Schimmer der Key-Farbe aus dem ganzen Bild (nur bei einem Bild, nicht bei einer Maske)": "Usuwa poświatę koloru kluczowania z całego obrazu (tylko dla obrazu, nie dla maski)",
+ "Obere Grenze": "Górna granica",
+ "Schwarz abschneiden": "Przytnij czerń",
+ "Stellt frei: nach einer Farbe (Green Screen) oder nach der Helligkeit; das Ergebnis ist das Bild mit dem Key im Alpha-Kanal": "Wycina według koloru (green screen) lub jasności; wynikiem jest obraz z kluczem w kanale alfa",
+ "Untere Grenze": "Dolna granica",
+ "Verfeinert eine Matte (Alpha eines Bildes oder eine Maske): Schwarz und Weiß abschneiden, Kante schrumpfen oder wachsen lassen, weich machen, Farbsaum entfernen": "Dopracowuje maskę (alfa obrazu lub maska): przycina czerń i biel, zmniejsza lub powiększa krawędź, zmiękcza ją, usuwa poświatę koloru",
+ "Was deckender ist, wird ganz deckend (schließt Löcher im Motiv)": "Co bardziej kryjące, staje się w pełni kryjące (zamyka dziury w obiekcie)",
+ "Was durchsichtiger ist, wird ganz durchsichtig (Schleier im Hintergrund)": "Co bardziej przezroczyste, staje się w pełni przezroczyste (mgiełka w tle)",
+ "Weiß abschneiden": "Przytnij biel"
 }

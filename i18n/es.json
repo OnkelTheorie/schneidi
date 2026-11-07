@@ -2500,5 +2500,22 @@
  "Punkte": "Puntos",
  "Radialer Verlauf": "Degradado radial",
  "Schnittmenge": "Intersección",
- "Verbinden": "Combinar"
+ "Verbinden": "Combinar",
+ "In Pixeln: macht die Kante der Matte weich": "En píxeles: suaviza el borde del mate",
+ "In Pixeln: positiv lässt die Matte wachsen, negativ schrumpfen": "En píxeles: positivo agranda el mate, negativo lo encoge",
+ "Kante verschieben": "Desplazar borde",
+ "Key": "Incrustación",
+ "Luma-Key: Breite des Übergangs an den Grenzen": "Clave de luminancia: ancho de la transición en los límites",
+ "Luma-Key: was dunkler ist, wird durchsichtig": "Clave de luminancia: lo más oscuro se vuelve transparente",
+ "Luma-Key: was heller ist, wird durchsichtig": "Clave de luminancia: lo más claro se vuelve transparente",
+ "Matte verfeinern": "Refinar mate",
+ "Nimmt den Schimmer der Key-Farbe aus dem ganzen Bild (nur bei einem Bild, nicht bei einer Maske)": "Quita el reflejo del color clave de toda la imagen (solo en una imagen, no en una máscara)",
+ "Obere Grenze": "Límite superior",
+ "Schwarz abschneiden": "Recortar negro",
+ "Stellt frei: nach einer Farbe (Green Screen) oder nach der Helligkeit; das Ergebnis ist das Bild mit dem Key im Alpha-Kanal": "Recorta por un color (pantalla verde) o por la luminosidad; el resultado es la imagen con la clave en el canal alfa",
+ "Untere Grenze": "Límite inferior",
+ "Verfeinert eine Matte (Alpha eines Bildes oder eine Maske): Schwarz und Weiß abschneiden, Kante schrumpfen oder wachsen lassen, weich machen, Farbsaum entfernen": "Refina un mate (alfa de una imagen o una máscara): recortar negro y blanco, encoger o agrandar el borde, suavizarlo, quitar el reflejo de color",
+ "Was deckender ist, wird ganz deckend (schließt Löcher im Motiv)": "Lo más opaco se vuelve totalmente opaco (cierra huecos en el sujeto)",
+ "Was durchsichtiger ist, wird ganz durchsichtig (Schleier im Hintergrund)": "Lo más transparente se vuelve totalmente transparente (velo en el fondo)",
+ "Weiß abschneiden": "Recortar blanco"
 }

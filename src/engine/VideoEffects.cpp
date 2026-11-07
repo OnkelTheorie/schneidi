@@ -115,21 +115,27 @@ void boxCols(const T* src, T* dst, int w, int h, int ch, int r)
     }
 }
 
+// Radii of three boxes with the same variance as a Gaussian of sigma (box of width 2r+1: variance r(r+1)/3)
+void blurRadii(double sigma, int radii[3])
+{
+    const double target = sigma * sigma;
+    const int r = std::max(1, int(std::floor((std::sqrt(1 + 4 * target) - 1) / 2)));
+    radii[0] = radii[1] = radii[2] = r;
+    for (int i = 0; i < 3; ++i) { // widen single boxes until the sum of the variances reaches the target
+        double sum = 0;
+        for (int k = 0; k < 3; ++k) sum += radii[k] * (radii[k] + 1) / 3.0;
+        if (sum >= target) break;
+        ++radii[i];
+    }
+}
+
 // Gaussian blur with sigma (pixels) on interleaved channels
 template <typename T>
 void blur(T* buf, int w, int h, int ch, double sigma)
 {
     if (sigma < 0.5 || w <= 0 || h <= 0) return;
-    // Radii of three boxes with the same variance as the Gaussian (box of width 2r+1: variance r(r+1)/3)
-    const double target = sigma * sigma;
-    const int r = std::max(1, int(std::floor((std::sqrt(1 + 4 * target) - 1) / 2)));
-    int radii[3] = {r, r, r};
-    for (int i = 0; i < 3; ++i) { // widen single boxes until the sum of the variances reaches the target
-        double sum = 0;
-        for (int x : radii) sum += x * (x + 1) / 3.0;
-        if (sum >= target) break;
-        ++radii[i];
-    }
+    int radii[3];
+    blurRadii(sigma, radii);
     std::vector<T> tmp(size_t(w) * h * ch);
     for (int rad : radii) {
         boxRows(buf, tmp.data(), w, h, ch, std::min(rad, w));
@@ -787,5 +793,127 @@ void gaussian(uint8_t* rgba, int w, int h, double sigma)
 }
 
 bool isOwn(const QString& effectId) { return entry(effectId) != nullptr; }
+
+// ---- Keyer and matte operations of the compositing nodes ----
+
+void lumaKey(uint8_t* rgba, int width, int height, const LumaKeyParams& p)
+{
+    if (!rgba || width <= 0 || height <= 0) return;
+    // Alpha per luma level (8-bit table, so the pixel loop stays integer only)
+    const float low = float(std::clamp(p.low, 0.0, 1.0)), high = float(std::clamp(p.high, 0.0, 1.0));
+    const float soft = float(std::clamp(p.soft, 0.0, 1.0));
+    constexpr float eps = 1e-6f; // a level exactly at a threshold counts as inside
+    uint8_t table[256];
+    for (int v = 0; v < 256; ++v) {
+        const float y = v / 255.0f;
+        float a;
+        if (y >= low - eps && y <= high + eps) a = 1;
+        else if (soft <= 0) a = 0;
+        else if (y < low) a = 1 - smoothstep(0, soft, low - y);
+        else a = 1 - smoothstep(0, soft, y - high);
+        if (high < low) a = 0; // empty range
+        if (p.invert) a = 1 - a;
+        table[v] = byte(255.0f * a);
+    }
+    const size_t n = size_t(width) * height;
+    for (size_t i = 0; i < n; ++i, rgba += 4) {
+        const int y = (rgba[0] * 54 + rgba[1] * 183 + rgba[2] * 19) >> 8; // Rec. 709 luma, weights add up to 256
+        rgba[3] = uint8_t((rgba[3] * table[y] * 257 + 32896) >> 16);   // a * alpha / 255, rounded
+    }
+}
+
+void matteMinMaxRows(uint8_t* plane, int width, int rows, int radius, bool grow)
+{
+    if (!plane || width <= 0 || rows <= 0 || radius <= 0) return;
+    minMaxRows(plane, width, rows, radius, grow);
+}
+
+bool matteBlurRadii(double sigma, int radii[3])
+{
+    if (sigma < 0.5) return false;
+    blurRadii(sigma, radii);
+    return true;
+}
+
+void matteBoxRows(const uint8_t* src, uint8_t* dst, int width, int rows, int radius)
+{
+    if (src && dst && width > 0 && rows > 0) boxRows(src, dst, width, rows, 1, std::min(radius, width));
+}
+
+void matteBoxCols(const uint8_t* src, uint8_t* dst, int width, int height, int x0, int x1, int radius)
+{
+    // boxCols on the columns x0..x1 only (same sums and rounding, so the bands together give blur()'s picture)
+    x0 = std::max(0, x0), x1 = std::min(width, x1);
+    if (!src || !dst || x1 <= x0 || height <= 0) return;
+    const int r = std::min(radius, height);
+    const int n = x1 - x0;
+    const int div = 2 * r + 1;
+    const uint32_t inv = (65536u + uint32_t(div) / 2) / uint32_t(div);
+    std::vector<uint32_t> sum(size_t(n), 0);
+    const auto row = [&](int y) { return src + size_t(std::clamp(y, 0, height - 1)) * width + x0; };
+    for (int k = -r; k <= r; ++k) {
+        const uint8_t* s = row(k);
+        for (int i = 0; i < n; ++i) sum[size_t(i)] += s[i];
+    }
+    for (int y = 0; y < height; ++y) {
+        uint8_t* d = dst + size_t(y) * width + x0;
+        for (int i = 0; i < n; ++i) d[i] = uint8_t(std::min<uint32_t>(255, (sum[size_t(i)] * inv + 32768) >> 16));
+        const uint8_t* add = row(y + r + 1);
+        const uint8_t* sub = row(y - r);
+        for (int i = 0; i < n; ++i) sum[size_t(i)] += uint32_t(add[i]) - sub[i];
+    }
+}
+
+namespace {
+
+// Change of a color by its chroma that takes the key's tint out (steps of 2 levels, as the keyer's spill)
+struct DespillTable {
+    QRgb color = 0;
+    float amount = -1;
+    std::vector<KeyEntry> entries;
+    void build(const KeyGeometry& g, float a)
+    {
+        amount = a;
+        entries.resize(size_t(kChroma) * kChroma);
+        for (int i = 0; i < kChroma; ++i)
+            for (int j = 0; j < kChroma; ++j) {
+                float p = 0;
+                g.chromaDistance(float(i - 128), float(j - 128), &p);
+                KeyEntry& e = entries[size_t(i) * kChroma + j];
+                e.alpha = 255;
+                e.dr = e.dg = e.db = 0;
+                if (p > 0) { // the whole share along the key's hue, brightness kept
+                    const float f = a * p;
+                    const float dR = -kCr * f * g.kr, dB = -kCb * f * g.kb;
+                    const float dG = -(kR * dR + kB * dB) / kG;
+                    e.dr = halfStep(dR), e.dg = halfStep(dG), e.db = halfStep(dB);
+                }
+            }
+    }
+};
+
+} // namespace
+
+void despill(uint8_t* rgba, int width, int height, const QColor& keyColor, double amount)
+{
+    if (!rgba || width <= 0 || height <= 0) return;
+    const float a = float(std::clamp(amount, 0.0, 1.0));
+    const KeyGeometry g(keyColor);
+    if (a <= 0 || !g.chroma) return;
+    thread_local DespillTable table;
+    if (table.color != keyColor.rgb() || table.amount != a) {
+        table.color = keyColor.rgb();
+        table.build(g, a);
+    }
+    const KeyEntry* entries = table.entries.data();
+    const size_t n = size_t(width) * height;
+    for (size_t i = 0; i < n; ++i, rgba += 4) {
+        const int r = rgba[0], gr = rgba[1], b = rgba[2];
+        const KeyEntry e = entries[(chromaB(r, gr, b) + 128) * kChroma + chromaR(r, gr, b) + 128];
+        rgba[0] = clampByte(r + 2 * e.dr);
+        rgba[1] = clampByte(gr + 2 * e.dg);
+        rgba[2] = clampByte(b + 2 * e.db);
+    }
+}
 
 } // namespace VideoEffects

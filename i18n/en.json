@@ -2500,5 +2500,22 @@
  "Punkte": "Points",
  "Radialer Verlauf": "Radial gradient",
  "Schnittmenge": "Intersect",
- "Verbinden": "Combine"
+ "Verbinden": "Combine",
+ "In Pixeln: macht die Kante der Matte weich": "In pixels: softens the edge of the matte",
+ "In Pixeln: positiv lässt die Matte wachsen, negativ schrumpfen": "In pixels: positive grows the matte, negative shrinks it",
+ "Kante verschieben": "Shift edge",
+ "Key": "Key",
+ "Luma-Key: Breite des Übergangs an den Grenzen": "Luma key: width of the transition at the limits",
+ "Luma-Key: was dunkler ist, wird durchsichtig": "Luma key: what is darker becomes transparent",
+ "Luma-Key: was heller ist, wird durchsichtig": "Luma key: what is brighter becomes transparent",
+ "Matte verfeinern": "Refine matte",
+ "Nimmt den Schimmer der Key-Farbe aus dem ganzen Bild (nur bei einem Bild, nicht bei einer Maske)": "Takes the tint of the key color out of the whole picture (only for a picture, not for a mask)",
+ "Obere Grenze": "Upper limit",
+ "Schwarz abschneiden": "Clip black",
+ "Stellt frei: nach einer Farbe (Green Screen) oder nach der Helligkeit; das Ergebnis ist das Bild mit dem Key im Alpha-Kanal": "Cuts out by a color (green screen) or by brightness; the result is the picture with the key in its alpha channel",
+ "Untere Grenze": "Lower limit",
+ "Verfeinert eine Matte (Alpha eines Bildes oder eine Maske): Schwarz und Weiß abschneiden, Kante schrumpfen oder wachsen lassen, weich machen, Farbsaum entfernen": "Refines a matte (alpha of a picture or a mask): clip black and white, shrink or grow the edge, soften it, remove spill",
+ "Was deckender ist, wird ganz deckend (schließt Löcher im Motiv)": "What is more opaque becomes fully opaque (closes holes in the subject)",
+ "Was durchsichtiger ist, wird ganz durchsichtig (Schleier im Hintergrund)": "What is more transparent becomes fully transparent (haze in the background)",
+ "Weiß abschneiden": "Clip white"
 }

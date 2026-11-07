@@ -2500,5 +2500,22 @@
  "Punkte": "Точки",
  "Radialer Verlauf": "Радиальный градиент",
  "Schnittmenge": "Пересечение",
- "Verbinden": "Объединить"
+ "Verbinden": "Объединить",
+ "In Pixeln: macht die Kante der Matte weich": "В пикселях: смягчает край маски",
+ "In Pixeln: positiv lässt die Matte wachsen, negativ schrumpfen": "В пикселях: положительное значение расширяет маску, отрицательное сужает",
+ "Kante verschieben": "Сдвиг края",
+ "Key": "Кеинг",
+ "Luma-Key: Breite des Übergangs an den Grenzen": "Кеинг по яркости: ширина перехода на границах",
+ "Luma-Key: was dunkler ist, wird durchsichtig": "Кеинг по яркости: что темнее, становится прозрачным",
+ "Luma-Key: was heller ist, wird durchsichtig": "Кеинг по яркости: что светлее, становится прозрачным",
+ "Matte verfeinern": "Уточнить маску",
+ "Nimmt den Schimmer der Key-Farbe aus dem ganzen Bild (nur bei einem Bild, nicht bei einer Maske)": "Убирает оттенок цвета кеинга со всего изображения (только для изображения, не для маски)",
+ "Obere Grenze": "Верхняя граница",
+ "Schwarz abschneiden": "Отсечь чёрное",
+ "Stellt frei: nach einer Farbe (Green Screen) oder nach der Helligkeit; das Ergebnis ist das Bild mit dem Key im Alpha-Kanal": "Вырезает по цвету (хромакей) или по яркости; результат — изображение с ключом в альфа-канале",
+ "Untere Grenze": "Нижняя граница",
+ "Verfeinert eine Matte (Alpha eines Bildes oder eine Maske): Schwarz und Weiß abschneiden, Kante schrumpfen oder wachsen lassen, weich machen, Farbsaum entfernen": "Уточняет маску (альфа изображения или маска): отсечь чёрное и белое, сузить или расширить край, смягчить его, убрать цветной ореол",
+ "Was deckender ist, wird ganz deckend (schließt Löcher im Motiv)": "Что непрозрачнее, становится полностью непрозрачным (закрывает дыры в объекте)",
+ "Was durchsichtiger ist, wird ganz durchsichtig (Schleier im Hintergrund)": "Что прозрачнее, становится полностью прозрачным (дымка на фоне)",
+ "Weiß abschneiden": "Отсечь белое"
 }

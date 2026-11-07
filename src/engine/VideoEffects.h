@@ -84,4 +84,26 @@ void gaussian(uint8_t* rgba, int width, int height, double sigma);
 // Is the effect one of these (by effect id, e.g. "chromakey", "frei0r.glow")?
 bool isOwn(const QString& effectId);
 
+// ---- Keyer and matte operations of the compositing nodes (0.19, engine/picture/CompNodesKey.cpp) ----
+// Luma key: what is as bright as low..high (Rec. 709 luma, 0..1) stays, the rest becomes transparent; soft = width of
+// the ramp outside the range (0 = hard); invert = the range becomes transparent. The color stays as it is
+struct LumaKeyParams {
+    double low = 0.1, high = 1.0, soft = 0.1;
+    bool invert = false;
+};
+void lumaKey(uint8_t* rgba, int width, int height, const LumaKeyParams& p);
+// Row pass of a square minimum (grow = false: the matte shrinks) or maximum (grow) of radius r pixels on a band of
+// rows of one 8-bit plane, as alphaOps' shrink/grow (the column pass is the same on the transposed plane, so the
+// caller can spread both over threads)
+void matteMinMaxRows(uint8_t* plane, int width, int rows, int radius, bool grow);
+// Gaussian blur of one 8-bit plane in bands for threads, the same bytes as alphaOps' blur: for each of the three
+// radii (false = sigma below half a pixel, no blur) the box along the rows on bands of rows (src -> dst), then the box
+// along the columns on bands of columns x0..x1 of the whole height (dst -> src)
+bool matteBlurRadii(double sigma, int radii[3]);
+void matteBoxRows(const uint8_t* src, uint8_t* dst, int width, int rows, int radius);
+void matteBoxCols(const uint8_t* src, uint8_t* dst, int width, int height, int x0, int x1, int radius);
+// Takes the key color's tint out of every color (amount 0..1; the share along the key's hue in the chroma plane,
+// brightness kept): a green fringe turns neutral, colors without green in them stay. Nothing for a gray key
+void despill(uint8_t* rgba, int width, int height, const QColor& key, double amount);
+
 } // namespace VideoEffects
