@@ -833,13 +833,12 @@ void MainWindow::buildActions()
 
 void MainWindow::editBrandKit()
 {
-    BrandKitDialog dlg(Brand::global(), m_project->brand(), this);
+    const BrandKit opened = Brand::global();
+    BrandKitDialog dlg(opened, m_project->brand(), this);
     if (dlg.exec() != QDialog::Accepted) return;
-    const BrandKit global = dlg.global();
-    if (global != Brand::global()) {
-        QString err;
-        if (!Brand::setGlobal(global, &err)) QMessageBox::warning(this, T("Brand-Kit"), err);
-    }
+    // Only what the user changed, onto the kit as it is now (an AI's `brand set` meanwhile keeps its fields)
+    QString err;
+    if (!Brand::changeGlobal(opened, dlg.global(), &err)) QMessageBox::warning(this, T("Brand-Kit"), err);
     // The project's own kit (changed: set + applied as one step) or the global one applied
     if (dlg.project() != m_project->brand()) m_editor->setProjectBrand(dlg.project());
     else m_editor->applyBrand();

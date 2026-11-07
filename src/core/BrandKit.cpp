@@ -156,6 +156,28 @@ std::unique_ptr<QLockFile> lockGlobal(int timeoutMs)
     return l;
 }
 
+bool changeGlobal(const BrandKit& before, const BrandKit& after, QString* err, int timeoutMs)
+{
+    if (before == after) return true;
+    const std::unique_ptr<QLockFile> lock = lockGlobal(timeoutMs);
+    if (!lock) {
+        if (err) *err = QStringLiteral("The global brand kit is being changed by another schneidi, try again.");
+        return false;
+    }
+    BrandKit kit = global();
+    const auto take = [](auto& field, const auto& was, const auto& now) {
+        if (was != now) field = now;
+    };
+    take(kit.logo, before.logo, after.logo);
+    take(kit.logoCorner, before.logoCorner, after.logoCorner);
+    take(kit.logoSize, before.logoSize, after.logoSize);
+    take(kit.colors, before.colors, after.colors);
+    take(kit.fonts, before.fonts, after.fonts);
+    take(kit.intro, before.intro, after.intro);
+    take(kit.outro, before.outro, after.outro);
+    return setGlobal(kit, err);
+}
+
 BrandKit effective(const std::optional<BrandKit>& projectBrand) { return projectBrand ? *projectBrand : global(); }
 
 BrandKit effective(const ProjectData& project) { return effective(project.brand); }

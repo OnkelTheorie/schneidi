@@ -576,6 +576,42 @@ void testGlobalLock()
     CHECK(Brand::setGlobal({}));
 }
 
+// The app's brand kit dialog: what the user changed there lands on the kit as it is now (a CLI `brand set` made while
+// the dialog was open keeps its fields), under the lock; a kit locked for too long is reported, not overwritten
+void testChangeGlobal()
+{
+    BrandKit start;
+    start.colors = {QColor("#111111")};
+    CHECK(Brand::setGlobal(start));
+    // The dialog opened with `start`; meanwhile a CLI sets a font
+    BrandKit cli = start;
+    cli.fonts = {"DejaVu Sans"};
+    CHECK(Brand::setGlobal(cli));
+    // The user changed the colour only
+    BrandKit edited = start;
+    edited.colors = {QColor("#222222")};
+    QString err;
+    CHECK(Brand::changeGlobal(start, edited, &err));
+    BrandKit k = Brand::global();
+    CHECK_EQ(k.colors.value(0).name(), QString("#222222"));
+    CHECK_EQ(k.fonts, QStringList{"DejaVu Sans"});
+    // Nothing changed in the dialog: the file stays as it is
+    CHECK(Brand::changeGlobal(edited, edited, &err));
+    CHECK_EQ(Brand::global().fonts, QStringList{"DejaVu Sans"});
+    // Locked by another schneidi: false + why, the kit untouched
+    {
+        std::unique_ptr<QLockFile> held = Brand::lockGlobal(0);
+        if (CHECK(held)) {
+            BrandKit other = edited;
+            other.logoSize = 0.3;
+            CHECK(!Brand::changeGlobal(edited, other, &err, 100));
+            CHECK(!err.isEmpty());
+            CHECK_EQ(Brand::global().logoSize, k.logoSize);
+        }
+    }
+    CHECK(Brand::setGlobal({}));
+}
+
 int main(int argc, char** argv)
 {
     Check::initEnv();
@@ -593,6 +629,7 @@ int main(int argc, char** argv)
     testLogoAndIntro(dir.path());
     testCli(dir.path());
     testGlobalLock();
+    testChangeGlobal();
     testDialog(dir.path());
     testInspector();
     return Check::result();

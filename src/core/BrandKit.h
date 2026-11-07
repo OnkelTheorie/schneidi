@@ -57,6 +57,10 @@ bool setGlobal(const BrandKit& kit, QString* err = nullptr);
 // Held around reading, changing and writing back the global kit (`brand set` of two AIs at once must not drop the
 // other's fields): a lock file next to it, stale only when its process is gone. nullptr = still taken after timeoutMs.
 std::unique_ptr<QLockFile> lockGlobal(int timeoutMs = 10000);
+// The fields changed from `before` to `after` (the brand kit dialog: what it opened with and what the user made of
+// it) written onto the global kit as it is now, under lockGlobal: a change made meanwhile elsewhere (CLI `brand set`)
+// keeps its other fields. False + err when the lock stays taken (timeoutMs) or writing fails.
+bool changeGlobal(const BrandKit& before, const BrandKit& after, QString* err = nullptr, int timeoutMs = 2000);
 
 // What applies to a project: its own kit, else the global one
 BrandKit effective(const ProjectData& project);
