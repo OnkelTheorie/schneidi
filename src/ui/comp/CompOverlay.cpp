@@ -7,6 +7,7 @@
 #include "core/Keyframes.h"
 #include "core/Project.h"
 #include "core/TimelineOps.h"
+#include "engine/Tracker.h"
 #include "engine/picture/CompNodes.h"
 #include "ui/comp/CompShared.h"
 
@@ -110,9 +111,14 @@ QVector<CompOverlay::Handle> CompOverlay::handles() const
     } else if (k->id == QLatin1String("transform")) {
         out << Handle{Handle::Point, "x", "y", at("x", "y"), {}};
     } else if (k->id == QLatin1String("tracker")) {
-        out << Handle{Handle::Point, "ax", "ay", at("ax", "ay"), QStringLiteral("A")};
+        // 0..1 of the clip's own picture (without bars), as trackNode reads them
+        const QRectF r = Tracker::pictureRect(m_editor->project()->timelineFormat(), *c);
+        const auto own = [&](const QString& kx, const QString& ky) {
+            return r.topLeft() + QPointF(num(kx) * r.width(), num(ky) * r.height());
+        };
+        out << Handle{Handle::Point, "ax", "ay", own("ax", "ay"), QStringLiteral("A"), true};
         if (PC::textValue(*k, values, QStringLiteral("mode")) == QLatin1String("two"))
-            out << Handle{Handle::Point, "bx", "by", at("bx", "by"), QStringLiteral("B")};
+            out << Handle{Handle::Point, "bx", "by", own("bx", "by"), QStringLiteral("B"), true};
     }
     return out;
 }
@@ -239,6 +245,10 @@ bool CompOverlay::mouseMove(QMouseEvent* e, const QRectF& frame)
         const QPointF l = lt.inverted().map(pos);
         values.insert(h.kx, std::abs(l.x()) * 2 / pic.width());
         values.insert(h.ky, std::abs(l.y()) * 2 / pic.width());
+    } else if (h.ownPicture) {
+        const QRectF r = Tracker::pictureRect(m_editor->project()->timelineFormat(), *clip());
+        values.insert(h.kx, (pos.x() - r.left()) / std::max(1.0, r.width()));
+        values.insert(h.ky, (pos.y() - r.top()) / std::max(1.0, r.height()));
     } else {
         values.insert(h.kx, pos.x() / pic.width());
         values.insert(h.ky, pos.y() / pic.height());

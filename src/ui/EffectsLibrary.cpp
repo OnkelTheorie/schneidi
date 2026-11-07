@@ -2,6 +2,7 @@
 #include "ui/EffectsLibrary.h"
 
 #include "app/Theme.h"
+#include "core/CompRecipes.h"
 #include "core/EffectRegistry.h"
 #include "core/I18n.h"
 #include "core/Presets.h"
@@ -11,9 +12,13 @@
 #include "engine/Lumas.h"
 #include "engine/VideoEffects.h"
 #include "ui/MediaPool.h"
+#include "ui/comp/CompShared.h"
 
 #include <QDateTime>
 #include <QDesktopServices>
+#include <QFileDialog>
+#include <QMenu>
+#include <QMessageBox>
 #include <QDir>
 #include <QDirIterator>
 #include <QFileInfo>
@@ -51,7 +56,7 @@ enum Category {
     PresetsAll, PresetGroup,                                      // Shotcut/Kdenlive presets (own folder only)
     AudioFx,                                                      // audio effects (DaVinci: Audio FX → Fairlight FX)
     SoundsAll, BuiltinSounds, PackSounds, Sounds, SoundGroup,     // effect sounds: built-in, packs, own folder
-    CompRecipes,                                                  // compositing recipes (0.19, op `comp recipe`)
+    RecipesCat,                                                   // compositing recipes (0.19, op `comp recipe`)
     // Luts/Transitions = own effects folder, …Group = its subfolder
     // (numbers are saved with the collapsed state: append new categories at the end)
 };
@@ -123,7 +128,7 @@ protected:
         else if (d == kProgressData) data->setData(MediaPool::MimeType, QByteArray(MediaPool::ProgressItem));
         else if (d.startsWith(kEffectPrefix)) data->setData(EffectsLibrary::EffectMimeType, d.mid(3).toUtf8());
         else if (d.startsWith(kSoundPrefix)) data->setData(EffectsLibrary::SoundMimeType, d.mid(6).toUtf8());
-        else if (d.startsWith(EffectFolders::LutPrefix) || d.startsWith(Presets::Prefix))
+        else if (d.startsWith(EffectFolders::LutPrefix) || d.startsWith(Presets::Prefix) || CompUi::isRecipe(d))
             data->setData(EffectsLibrary::EffectMimeType, d.toUtf8());
         else data->setData(EffectsLibrary::MimeType, d.toUtf8());
         return data;
@@ -357,6 +362,30 @@ QPixmap effectIcon(const QString& id)
     return pm;
 }
 
+// Recipe: three small nodes wired into one (built-in teal, own orange like the sounds)
+QPixmap recipeIcon(bool own)
+{
+    QPixmap pm(kIcon);
+    pm.fill(QColor(0x2a, 0x2a, 0x30));
+    QPainter p(&pm);
+    p.setRenderHint(QPainter::Antialiasing);
+    const QColor c = own ? QColor(0xc8, 0x8a, 0x3c) : QColor(0x3b, 0x9a, 0x8a);
+    const QRectF a(5, 4, 13, 7), b(5, 16, 13, 7), out(30, 10, 13, 7);
+    p.setPen(QPen(QColor(0xd0, 0xd0, 0xd8), 1.2));
+    for (const QRectF& from : {a, b}) {
+        QPainterPath w(QPointF(from.right(), from.center().y()));
+        w.cubicTo(from.right() + 7, from.center().y(), out.left() - 7, out.center().y(), out.left(), out.center().y());
+        p.drawPath(w);
+    }
+    p.setPen(Qt::NoPen);
+    p.setBrush(c);
+    for (const QRectF& r : {a, b, out}) p.drawRoundedRect(r, 2, 2);
+    p.setPen(QColor(0, 0, 0, 120));
+    p.setBrush(Qt::NoBrush);
+    p.drawRect(QRectF(pm.rect()).adjusted(0, 0, -1, -1));
+    return pm;
+}
+
 // Preset: tile with the program's initial and the number of effects it brings
 QPixmap presetIcon(const QString& source, int effects)
 {
@@ -494,7 +523,7 @@ EffectsLibrary::EffectsLibrary(QWidget* parent) : QWidget(parent)
     add(lumas, T("Mitgeliefert"), BuiltinTransitions);
     m_transRoot = add(lumas, T("Eigene"), Transitions);
     m_transRoot->setToolTip(0, QDir::toNativeSeparators(EffectFolders::transitionDir()));
-    add(m_categories, T("Comp-Rezepte"), CompRecipes)
+    add(m_categories, T("Comp-Rezepte"), RecipesCat)
         ->setToolTip(0, T("Fertige Compositing-Graphen (Green Screen, Text hinter Person …) für einen Clip"));
     m_presetRoot = add(m_categories, QStringLiteral("Presets"), PresetsAll);
     m_presetRoot->setToolTip(0, T("Mitgelieferte Looks und Presets aus Kdenlive und Shotcut\n%1").arg(QDir::toNativeSeparators(EffectFolders::presetDir())));
@@ -527,13 +556,55 @@ EffectsLibrary::EffectsLibrary(QWidget* parent) : QWidget(parent)
             if (const QString file = soundFile(d.mid(6).toUtf8()); !file.isEmpty()) emit soundPreviewRequested(file);
             return;
         }
-        if (d.startsWith(EffectFolders::LutPrefix) || d.startsWith(Presets::Prefix)) { // LUT/preset -> like a filter
+        if (d.startsWith(EffectFolders::LutPrefix) || d.startsWith(Presets::Prefix) || CompUi::isRecipe(d)) {
+            // LUT/preset/recipe -> like a filter
             emit effectRequested(d);
             return;
         }
         TrackKind kind;
         TransitionStyle style;
         if (parseTransition(d.toUtf8(), &kind, &style)) emit transitionRequested(kind, style);
+    });
+
+    // Recipes: share as ZIP, take one in, remove an own one
+    m_list->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_list, &QWidget::customContextMenuRequested, this, [this](const QPoint& pos) {
+        const QTreeWidgetItem* cur = m_categories->currentItem();
+        if (!cur || cur->data(0, Qt::UserRole).toInt() != RecipesCat) return;
+        const QListWidgetItem* it = m_list->itemAt(pos);
+        const QString d = it ? it->data(Qt::UserRole).toString() : QString();
+        const QString id = CompUi::isRecipe(d) ? d.mid(int(qstrlen(CompUi::kRecipePrefix))) : QString();
+        const std::optional<CompRecipe> r = id.isEmpty() ? std::nullopt : CompRecipes::find(id);
+        QMenu menu(this);
+        if (r) {
+            menu.addAction(T("Als ZIP exportieren…"), this, [this, r] {
+                const QString file = QFileDialog::getSaveFileName(this, T("Rezept exportieren"), r->id + ".zip",
+                                                                  T("ZIP-Archiv (*.zip)"));
+                if (file.isEmpty()) return;
+                QString err;
+                if (!exportRecipe(r->id, file, &err)) QMessageBox::warning(this, T("Rezept exportieren"), err);
+            });
+        }
+        menu.addAction(T("Rezept importieren (ZIP)…"), this, [this] {
+            const QString file = QFileDialog::getOpenFileName(this, T("Rezept importieren"), {}, T("ZIP-Archiv (*.zip)"));
+            if (file.isEmpty()) return;
+            QString err;
+            if (importRecipe(file, &err).isEmpty()) QMessageBox::warning(this, T("Rezept importieren"), err);
+        });
+        if (r && !r->builtIn) {
+            menu.addSeparator();
+            menu.addAction(T("Rezept löschen…"), this, [this, r] {
+                if (QMessageBox::question(this, T("Rezept löschen"),
+                                          T("Das eigene Rezept „%1“ samt seinen Dateien löschen? Das lässt sich nicht "
+                                            "rückgängig machen.").arg(CompRecipes::shownName(*r)))
+                    != QMessageBox::Yes)
+                    return;
+                QString err;
+                if (!CompRecipes::remove(r->id, &err)) QMessageBox::warning(this, T("Rezept löschen"), err);
+                rebuild();
+            });
+        }
+        menu.exec(m_list->viewport()->mapToGlobal(pos));
     });
 
     auto* split = new QSplitter(Qt::Horizontal);
@@ -560,6 +631,39 @@ EffectsLibrary::EffectsLibrary(QWidget* parent) : QWidget(parent)
     connect(m_search, &QLineEdit::textChanged, this, &EffectsLibrary::rebuild);
     EffectFolders::ensure();
     rescanFolders();
+}
+
+void EffectsLibrary::refreshRecipes()
+{
+    const QTreeWidgetItem* cur = m_categories->currentItem();
+    if (cur && cur->data(0, Qt::UserRole).toInt() == RecipesCat) rebuild();
+}
+
+void EffectsLibrary::showRecipes()
+{
+    for (QTreeWidgetItemIterator it(m_categories); *it; ++it)
+        if ((*it)->data(0, Qt::UserRole).toInt() == RecipesCat) m_categories->setCurrentItem(*it);
+}
+
+bool EffectsLibrary::exportRecipe(const QString& id, const QString& zipPath, QString* err)
+{
+    QString why, code;
+    if (CompRecipes::exportZip(id, zipPath, true, &why, &code)) return true;
+    if (err) *err = T("Das Rezept lässt sich nicht exportieren: %1").arg(why);
+    return false;
+}
+
+QString EffectsLibrary::importRecipe(const QString& zipPath, QString* err)
+{
+    QString why, code;
+    const std::optional<CompRecipe> r = CompRecipes::importZip(zipPath, false, &why, &code);
+    if (!r) {
+        if (err) *err = T("Das Rezept lässt sich nicht importieren: %1").arg(why);
+        return {};
+    }
+    showRecipes();
+    rebuild();
+    return r->id;
 }
 
 void EffectsLibrary::saveCollapsed()
@@ -814,10 +918,21 @@ void EffectsLibrary::rebuild()
     case PackSounds: groups = {{{}, packSounds()}}; break;
     case Sounds:
     case SoundGroup: groups = {{{}, soundFiles(m_userSounds, true)}}; break;
-    case CompRecipes:
-        // TODO(0.19 package I): the built-in recipes (assets/comp/*.json) as entries; data "recipe:<id>", dragging one
-        // onto a clip / double-click = op `comp recipe` on it (one undo step)
+    case RecipesCat: {
+        // Built-in and own recipes (CompRecipes::all); dragged onto a clip / double-clicked = applied (one undo step)
+        QVector<Entry> builtIn, own;
+        for (const CompRecipe& r : CompRecipes::all()) {
+            QStringList tip{CompRecipes::shownDescription(r)};
+            QStringList slotIds;
+            for (const CompRecipeSlot& slot : r.slotList) slotIds << slot.id;
+            if (!slotIds.isEmpty()) tip << T("Einstellbar: %1").arg(slotIds.join(", "));
+            if (!r.builtIn) tip << QDir::toNativeSeparators(r.dir);
+            (r.builtIn ? builtIn : own) << Entry{CompRecipes::shownName(r), CompUi::kRecipePrefix + r.id,
+                                                 recipeIcon(!r.builtIn), tip.join('\n')};
+        }
+        groups = {{T("Mitgeliefert"), builtIn}, {T("Eigene"), own}};
         break;
+    }
     }
 
     for (const Group& g : groups) {
@@ -853,7 +968,7 @@ void EffectsLibrary::rebuild()
         if (shown == Sounds || shown == SoundGroup)
             hint = T("Noch keine eigenen Klänge – „Effekte importieren…“ öffnet den Ordner (Unterordner „Sounds“)");
         if (shown == PackSounds) hint = T("Noch keine Klangpakete installiert");
-        if (shown == CompRecipes) hint = T("Noch keine Comp-Rezepte");
+        if (shown == RecipesCat) hint = T("Noch keine Comp-Rezepte");
         if (!hint.isEmpty()) {
             auto* h = new QListWidgetItem(hint);
             h->setFlags(Qt::NoItemFlags);

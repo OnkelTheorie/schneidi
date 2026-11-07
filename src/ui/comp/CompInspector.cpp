@@ -6,7 +6,12 @@
 #include "core/I18n.h"
 #include "core/Project.h"
 #include "core/TimelineOps.h"
+#include "core/EffectRegistry.h"
 #include "engine/picture/CompNodes.h"
+#include "engine/PersonMatte.h"
+#include "engine/picture/CompCutout.h"
+#include "engine/picture/CompTrack.h"
+#include "engine/picture/CustomEffects.h"
 #include "ui/ScrubField.h"
 #include "ui/comp/CompShared.h"
 
@@ -18,9 +23,13 @@
 #include <QGridLayout>
 #include <QLabel>
 #include <QLineEdit>
+#include <QPlainTextEdit>
+#include <QPushButton>
 #include <QRegularExpression>
 #include <QSignalBlocker>
 #include <QToolButton>
+#include <QPointer>
+#include <QThreadPool>
 #include <QVBoxLayout>
 
 namespace PC = Picture::Comp;
@@ -90,6 +99,11 @@ CompInspector::CompInspector(Editor* editor, QWidget* parent) : QScrollArea(pare
     refresh();
 }
 
+CompInspector::~CompInspector()
+{
+    cancelAnalysis(); // the thread keeps its own copy of everything; it only stops early
+}
+
 void CompInspector::setTarget(int clipId, int node)
 {
     if (clipId == m_clipId && node == m_node) return;
@@ -111,13 +125,30 @@ const Clip* CompInspector::clip() const
     return m_clipId ? TimelineOps::findClip(m_editor->project()->timeline(), m_clipId) : nullptr;
 }
 
+std::shared_ptr<const PC::NodeType> CompInspector::shownKind(const Clip& c) const
+{
+    CompGraph g;
+    if (!CompUi::graphOf(c, &g)) return {};
+    const CompNode* n = g.node(m_node);
+    const PC::NodeType* k = n ? PC::find(n->type) : nullptr;
+    if (!k) return {};
+    auto out = std::make_shared<PC::NodeType>(*k);
+    if (k->id == QLatin1String("fx")) {
+        const QString effect = PC::textValue(*k, CompUi::nodeValues(c, m_node), QStringLiteral("effect"));
+        if (const EffectDescriptor* d = EffectRegistry::find(effect))
+            for (EffectParam p : d->params) {
+                p.key = QStringLiteral("e_") + p.key;
+                out->params << p;
+            }
+    }
+    return out;
+}
+
 QStringList CompInspector::shownKeys(const Clip& c) const
 {
     QStringList keys;
-    CompGraph g;
-    if (!CompUi::graphOf(c, &g)) return keys;
-    const CompNode* n = g.node(m_node);
-    const PC::NodeType* k = n ? PC::find(n->type) : nullptr;
+    const std::shared_ptr<const PC::NodeType> kp = shownKind(c);
+    const PC::NodeType* k = kp.get();
     if (!k) return keys;
     const QVariantMap values = CompUi::nodeValues(c, m_node);
     int points = 0;
@@ -160,6 +191,7 @@ void CompInspector::refresh()
         rebuild(*c, keys);
     }
     for (const auto& u : m_updates) u(*c);
+    updateAnalysisRow();
 }
 
 void CompInspector::set(const QString& key, const QVariant& value, bool drag)
@@ -174,6 +206,9 @@ void CompInspector::rebuild(const Clip& c, const QStringList& keys)
 {
     m_updates.clear();
     m_keys = keys;
+    m_analyzeButton = nullptr;
+    m_analyzeStatus = nullptr;
+    m_extensionsButton = nullptr;
     while (QLayoutItem* it = m_grid->takeAt(0)) {
         if (QWidget* w = it->widget()) { // gone from findChild right away (tests, the value pass below)
             w->hide();
@@ -182,9 +217,8 @@ void CompInspector::rebuild(const Clip& c, const QStringList& keys)
         }
         delete it;
     }
-    CompGraph g;
-    const CompNode* n = CompUi::graphOf(c, &g) ? g.node(m_node) : nullptr;
-    const PC::NodeType* k = n ? PC::find(n->type) : nullptr;
+    const std::shared_ptr<const PC::NodeType> kp = shownKind(c);
+    const PC::NodeType* k = kp.get();
     if (!k) return;
     const QStringList files = Comp::fileKeys(k->id);
     int row = 0;
@@ -216,8 +250,8 @@ void CompInspector::rebuild(const Clip& c, const QStringList& keys)
             });
             m_grid->addWidget(field, row, 1);
             m_grid->addWidget(diamond, row, 2);
-            m_updates << [this, field, diamond, node, key, kind](const Clip& cl) {
-                const PC::NodeType* kt = PC::find(kind);
+            m_updates << [this, field, diamond, node, key, kp](const Clip& cl) {
+                const PC::NodeType* kt = kp.get();
                 if (!kt) return;
                 const int t = CompUi::clipFrame(cl, m_playhead);
                 field->setValue(CompUi::number(cl, node, *kt, key, t));
@@ -233,8 +267,8 @@ void CompInspector::rebuild(const Clip& c, const QStringList& keys)
             box->setObjectName("comp_param_" + key);
             connect(box, &QCheckBox::toggled, this, [this, key](bool on) { set(key, on, false); });
             m_grid->addWidget(box, row, 1, 1, 2);
-            m_updates << [box, node, key, kind](const Clip& cl) {
-                const PC::NodeType* kt = PC::find(kind);
+            m_updates << [box, node, key, kp](const Clip& cl) {
+                const PC::NodeType* kt = kp.get();
                 if (!kt) return;
                 const QSignalBlocker block(box);
                 box->setChecked(PC::numValue(*kt, CompUi::nodeValues(cl, node), key) != 0);
@@ -249,8 +283,8 @@ void CompInspector::rebuild(const Clip& c, const QStringList& keys)
             connect(combo, &QComboBox::activated, this,
                     [this, key, combo](int i) { set(key, combo->itemData(i).toString(), false); });
             m_grid->addWidget(combo, row, 1, 1, 2);
-            m_updates << [combo, node, key, kind](const Clip& cl) {
-                const PC::NodeType* kt = PC::find(kind);
+            m_updates << [combo, node, key, kp](const Clip& cl) {
+                const PC::NodeType* kt = kp.get();
                 if (!kt) return;
                 const QSignalBlocker block(combo);
                 combo->setCurrentIndex(PC::choiceValue(*kt, CompUi::nodeValues(cl, node), key));
@@ -262,9 +296,9 @@ void CompInspector::rebuild(const Clip& c, const QStringList& keys)
             swatch->setObjectName("comp_param_" + key);
             swatch->setFixedHeight(20);
             swatch->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-            connect(swatch, &QToolButton::clicked, this, [this, key, node, kind] {
+            connect(swatch, &QToolButton::clicked, this, [this, key, node, kp] {
                 const Clip* cl = clip();
-                const PC::NodeType* kt = PC::find(kind);
+                const PC::NodeType* kt = kp.get();
                 if (!cl || !kt) return;
                 const QColor now = PC::colorValue(*kt, CompUi::nodeValues(*cl, node), key);
                 const QColor c = QColorDialog::getColor(now, this, T("Farbe wählen"), QColorDialog::ShowAlphaChannel);
@@ -280,9 +314,8 @@ void CompInspector::rebuild(const Clip& c, const QStringList& keys)
                 connect(pipette, &QToolButton::clicked, this, [this, key] { emit keyPickRequested(m_node, key); });
                 m_grid->addWidget(pipette, row, 2);
             }
-            m_updates << [swatch, node, key, kind](const Clip& cl) {
-                const PC::NodeType* kt = PC::find(kind);
-                if (kt) paintSwatch(swatch, PC::colorValue(*kt, CompUi::nodeValues(cl, node), key));
+            m_updates << [swatch, node, key, kp](const Clip& cl) {
+                paintSwatch(swatch, PC::colorValue(*kp, CompUi::nodeValues(cl, node), key));
             };
             break;
         }
@@ -305,15 +338,193 @@ void CompInspector::rebuild(const Clip& c, const QStringList& keys)
                 });
                 m_grid->addWidget(browse, row, 2);
             }
-            m_updates << [edit, node, key, kind](const Clip& cl) {
-                const PC::NodeType* kt = PC::find(kind);
+            m_updates << [edit, node, key, kp](const Clip& cl) {
+                const PC::NodeType* kt = kp.get();
                 if (!kt || edit->hasFocus()) return;
                 const QSignalBlocker block(edit);
                 edit->setText(PC::textValue(*kt, CompUi::nodeValues(cl, node), key));
             };
             break;
         }
+        case EffectParam::Text: { // a filter chain / shader code: typed, then checked and set with "Anwenden"
+            label->setAlignment(Qt::AlignLeft | Qt::AlignTop);
+            auto* edit = new QPlainTextEdit;
+            edit->setObjectName("comp_param_" + key);
+            edit->setToolTip(p->description);
+            edit->setTabChangesFocus(true);
+            edit->setMinimumHeight(90);
+            QFont mono = edit->font();
+            mono.setFamily(QStringLiteral("monospace"));
+            mono.setStyleHint(QFont::Monospace);
+            edit->setFont(mono);
+            auto* applyButton = new QPushButton(T("Anwenden"));
+            applyButton->setObjectName("comp_apply_" + key);
+            auto* error = new QLabel;
+            error->setObjectName("comp_error_" + key);
+            error->setWordWrap(true);
+            error->setTextInteractionFlags(Qt::TextSelectableByMouse);
+            error->setStyleSheet(QString("color: %1;").arg(Theme::warning.name()));
+            error->hide();
+            connect(applyButton, &QPushButton::clicked, this, [this, key, edit, error] {
+                const QString text = edit->toPlainText();
+                // The same check as the CLI's node values (cli/EditOpsComp.cpp)
+                QString why;
+                if (key == QLatin1String("e_chain")) why = Picture::Custom::checkFilter(text);
+                else if (key == QLatin1String("e_code")) why = Picture::Custom::checkShader(text);
+                error->setText(why);
+                error->setVisible(!why.isEmpty());
+                if (why.isEmpty()) set(key, text, false);
+            });
+            m_grid->addWidget(edit, row, 1, 1, 2);
+            ++row;
+            auto* buttons = new QHBoxLayout;
+            buttons->addStretch(1);
+            buttons->addWidget(applyButton);
+            auto* buttonRow = new QWidget;
+            buttonRow->setLayout(buttons);
+            buttons->setContentsMargins(0, 0, 0, 0);
+            m_grid->addWidget(buttonRow, row, 1, 1, 2);
+            ++row;
+            m_grid->addWidget(error, row, 0, 1, 3);
+            m_updates << [edit, node, key, kp](const Clip& cl) {
+                if (edit->hasFocus()) return;
+                const QString now = PC::textValue(*kp, CompUi::nodeValues(cl, node), key);
+                if (edit->toPlainText() != now) edit->setPlainText(now);
+            };
+            break;
+        }
         }
         ++row;
     }
+    if (k->id == QLatin1String(PC::kCutoutType) || k->id == QLatin1String(::Comp::kTrackerType))
+        row = addAnalysisRow(row, k->id);
+}
+
+int CompInspector::addAnalysisRow(int row, const QString& kind)
+{
+    const bool cutout = kind == QLatin1String(PC::kCutoutType);
+    m_analyzeButton = new QPushButton(cutout ? T("Freistellen analysieren") : T("Tracken"));
+    m_analyzeButton->setObjectName("comp_analyze");
+    m_analyzeButton->setToolTip(cutout ? T("Sucht die Person einmal im ganzen Clip (KI-Modell); danach stellt der "
+                                           "Knoten sie in jedem Bild frei")
+                                       : T("Verfolgt die Startpunkte vom Playhead bis zum Clipende; das Ergebnis "
+                                           "sind Keyframes, denen andere Knoten folgen"));
+    connect(m_analyzeButton, &QPushButton::clicked, this, [this] {
+        if (m_job && m_job->clipId == m_clipId && m_job->node == m_node) cancelAnalysis();
+        else startAnalysis();
+    });
+    m_analyzeStatus = new QLabel;
+    m_analyzeStatus->setObjectName("comp_analyze_status");
+    m_analyzeStatus->setWordWrap(true);
+    m_extensionsButton = new QPushButton(T("Erweiterungen öffnen…"));
+    m_extensionsButton->setObjectName("comp_open_extensions");
+    connect(m_extensionsButton, &QPushButton::clicked, this, &CompInspector::extensionsRequested);
+    m_grid->addWidget(m_analyzeButton, row++, 0, 1, 3);
+    m_grid->addWidget(m_analyzeStatus, row++, 0, 1, 3);
+    m_grid->addWidget(m_extensionsButton, row++, 0, 1, 3, Qt::AlignLeft);
+    updateAnalysisRow();
+    return row;
+}
+
+void CompInspector::updateAnalysisRow()
+{
+    if (!m_analyzeButton) return;
+    const bool cutout = m_type == QLatin1String(PC::kCutoutType);
+    const bool mine = m_job && m_job->clipId == m_clipId && m_job->node == m_node;
+    QString why;
+    const bool missing = cutout && !PersonMatte::available(&why);
+    m_analyzeButton->setText(mine ? T("Abbrechen") : cutout ? T("Freistellen analysieren") : T("Tracken"));
+    m_analyzeButton->setEnabled(mine || (!m_job && !missing));
+    QString text;
+    QColor color = Theme::textDim;
+    if (mine) {
+        text = m_job->total > 0 ? T("Analysiert … %1 %").arg(100 * m_job->done / m_job->total) : T("Analysiert …");
+    } else if (missing) {
+        text = PersonMatte::needsExtension();
+        color = Theme::warning;
+    } else if (m_noteNode == m_node && !m_analysisNote.isEmpty()) {
+        text = m_analysisNote;
+    } else if (m_job) {
+        text = T("Eine andere Analyse läuft noch.");
+    } else if (cutout) {
+        if (const Clip* c = clip()) {
+            const QString cache = CompUi::nodeValues(*c, m_node).value(QString::fromLatin1(PC::kCutoutCacheKey)).toString();
+            const QString hint = PC::cutoutHint(cache);
+            text = hint.isEmpty() ? T("Analysiert – erneut analysieren ersetzt das Ergebnis") : hint;
+        }
+    }
+    m_analyzeStatus->setText(text);
+    m_analyzeStatus->setStyleSheet(QString("color: %1;").arg(color.name()));
+    m_analyzeStatus->setVisible(!text.isEmpty());
+    m_extensionsButton->setVisible(missing);
+}
+
+void CompInspector::startAnalysis()
+{
+    const Clip* c = clip();
+    if (!c || m_job || (m_type != QLatin1String(PC::kCutoutType) && m_type != QLatin1String(::Comp::kTrackerType))) return;
+    Job job;
+    job.clipId = m_clipId;
+    job.node = m_node;
+    job.kind = m_type;
+    job.cancel = std::make_shared<std::atomic<bool>>(false);
+    m_job = job;
+    m_analysisNote.clear();
+    updateAnalysisRow();
+    const Clip copy = *c; // the thread works on its own copy (the timeline may change meanwhile)
+    const ProjectFormat format = m_editor->project()->timelineFormat();
+    const int last = std::max(0, copy.length() - 1);
+    const int from = m_type == QLatin1String(::Comp::kTrackerType) ? CompUi::clipFrame(copy, m_playhead) : 0;
+    QPointer<CompInspector> guard(this);
+    const auto progress = [guard](int done, int total) {
+        QMetaObject::invokeMethod(guard, [guard, done, total] {
+            if (!guard || !guard->m_job) return;
+            guard->m_job->done = done;
+            guard->m_job->total = total;
+            guard->updateAnalysisRow();
+        }, Qt::QueuedConnection);
+    };
+    QThreadPool::globalInstance()->start([guard, copy, format, from, last, job, progress] {
+        QString cache, error, note;
+        QVector<::Comp::TrackPoint> points;
+        if (job.kind == QLatin1String(PC::kCutoutType)) {
+            const PC::CutoutRun r = PC::cutoutNode(format, copy, job.node, 0, last, progress, job.cancel.get());
+            error = r.canceled ? T("Abgebrochen") : r.error;
+            if (error.isEmpty() && r.frames <= 0) error = T("Nichts analysiert");
+            cache = r.cacheId;
+        } else {
+            const PC::TrackRun r = PC::trackNode(format, copy, job.node, from, last, progress, job.cancel.get());
+            error = r.canceled ? T("Abgebrochen") : r.error;
+            if (error.isEmpty() && r.points.isEmpty()) error = T("Nichts verfolgt");
+            points = r.points;
+            if (r.gaveUp) note = T("Zu lange verloren: die Spur endet dort");
+        }
+        QMetaObject::invokeMethod(guard, [guard, job, cache, points, error, note] {
+            if (guard) guard->analysisDone(job.clipId, job.node, job.kind, cache, points, error, note);
+        }, Qt::QueuedConnection);
+    });
+}
+
+void CompInspector::cancelAnalysis()
+{
+    if (m_job) m_job->cancel->store(true);
+}
+
+void CompInspector::analysisDone(int clipId, int node, const QString& kind, const QString& cache,
+                                 const QVector<::Comp::TrackPoint>& points, const QString& error, const QString& note)
+{
+    m_job.reset();
+    m_noteNode = node;
+    if (!error.isEmpty()) {
+        m_analysisNote = error;
+    } else if (kind == QLatin1String(PC::kCutoutType)) {
+        QString err;
+        m_analysisNote = m_editor->cutoutCompNode(clipId, node, cache, &err) ? T("Fertig") : err;
+    } else {
+        m_analysisNote = m_editor->trackCompNode(clipId, node, points) ? T("Fertig: %1 Bilder verfolgt").arg(points.size())
+                                                                       : T("Das Ergebnis lässt sich nicht speichern");
+        if (!note.isEmpty()) m_analysisNote += " – " + note;
+    }
+    refresh();
+    updateAnalysisRow();
 }

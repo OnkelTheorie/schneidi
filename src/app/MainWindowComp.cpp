@@ -3,6 +3,8 @@
 // pipette of a key node.
 #include "app/MainWindow.h"
 
+#include "app/ExtensionsDialog.h"
+#include "core/CompRecipes.h"
 #include "core/EffectRegistry.h"
 #include "core/I18n.h"
 #include "core/Project.h"
@@ -11,6 +13,7 @@
 #include "engine/Engine.h"
 #include "engine/picture/CompNodes.h"
 #include "ui/ColorPanel.h"
+#include "ui/EffectsLibrary.h"
 #include "ui/KeyColorPicker.h"
 #include "ui/KeyPickWindow.h"
 #include "ui/Viewer.h"
@@ -31,7 +34,7 @@ void MainWindow::ensureCompPage()
     if (m_compPage) return;
     m_compPage = new CompPage(m_editor);
     m_pages->addWidget(m_compPage);
-    watchSizes(m_compPage->main(), "compPage");
+    watchSizes(m_compPage->main(), "compMain");
     watchSizes(m_compPage->top(), "compTop");
     m_compPage->setPlayhead(m_timeline->view()->playhead());
     connect(m_engine, &Engine::positionChanged, m_compPage, [this](int f) {
@@ -40,11 +43,25 @@ void MainWindow::ensureCompPage()
     connect(m_compPage, &CompPage::viewChanged, this, &MainWindow::updatePreview);
     connect(m_compPage, &CompPage::message, this, [this](const QString& t) { statusBar()->showMessage(t, 5000); });
     connect(m_compPage, &CompPage::keyPickRequested, this, &MainWindow::startCompKeyPick);
+    connect(m_compPage, &CompPage::recipeSaved, m_effects, &EffectsLibrary::refreshRecipes);
+    connect(m_compPage, &CompPage::extensionsRequested, this, [this] {
+        ExtensionsDialog ext(this);
+        ext.exec();
+        m_compPage->refresh(); // the model may be there now
+    });
     // Another video clip selected while the page shows: its graph
     connect(m_selection, &Selection::changed, m_compPage, [this] {
         if (m_page != Page::Comp) return;
         if (const int id = selectedVideoClip()) m_compPage->setClip(id);
     });
+}
+
+void MainWindow::applyRecipe(const QVector<int>& ids, const QString& recipe)
+{
+    if (CompUi::applyRecipeAsking(this, m_editor, ids, recipe).isNull()) return;
+    const std::optional<CompRecipe> r = CompRecipes::find(recipe);
+    statusBar()->showMessage(T("Rezept „%1“ angewendet – die Werte stellst du auf der Comp-Seite ein")
+                                 .arg(r ? CompRecipes::shownName(*r) : recipe), 6000);
 }
 
 int MainWindow::selectedVideoClip() const

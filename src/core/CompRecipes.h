@@ -87,6 +87,12 @@ std::optional<CompRecipe> open(const QString& path, QString* error = nullptr);
 bool apply(const CompRecipe& r, const QVariantMap& with, CompGraph* graph, QHash<int, QVariantMap>* values,
            QString* error = nullptr);
 
+// Shown name / description in language `lang` (default: the UI language): the recipe file's optional
+// "name_<lang>" / "description_<lang>" (the built-in ones have de, en, es, fr, pl, ru), else "name" / "description".
+// "name" itself stays English for the AI. core/CompRecipeText.cpp (reads the file again, cached by its time)
+QString shownName(const CompRecipe& r, const QString& lang = {});
+QString shownDescription(const CompRecipe& r, const QString& lang = {});
+
 // Folder name of an own recipe of this name (safe on every system)
 QString idForName(const QString& name);
 

@@ -1,6 +1,18 @@
 {
     "name": "Sticker on a surface",
     "description": "A logo, picture or video stuck onto a surface in the clip: it follows two tracked points (moves, scales and turns with them).",
+    "name_de": "Sticker auf einer Fläche",
+    "description_de": "Ein Logo, Bild oder Video klebt auf einer Fläche im Clip: es folgt zwei getrackten Punkten (bewegt, skaliert und dreht sich mit).",
+    "name_en": "Sticker on a surface",
+    "description_en": "A logo, picture or video stuck onto a surface in the clip: it follows two tracked points (moves, scales and turns with them).",
+    "name_es": "Pegatina sobre una superficie",
+    "description_es": "Un logotipo, una imagen o un vídeo pegado a una superficie del clip: sigue dos puntos rastreados (se mueve, escala y gira con ellos).",
+    "name_fr": "Autocollant sur une surface",
+    "description_fr": "Un logo, une image ou une vidéo collé sur une surface du clip : il suit deux points suivis (se déplace, change d'échelle et tourne avec eux).",
+    "name_pl": "Naklejka na powierzchni",
+    "description_pl": "Logo, obraz lub film przyklejony do powierzchni w klipie: podąża za dwoma śledzonymi punktami (przesuwa się, skaluje i obraca razem z nimi).",
+    "name_ru": "Наклейка на поверхности",
+    "description_ru": "Логотип, картинка или видео, приклеенные к поверхности в клипе: следуют за двумя отслеживаемыми точками (двигаются, масштабируются и поворачиваются вместе с ними).",
     "note": "Run {op:'track_node', clip, node:2} so the sticker follows the surface; the two points start left and right of x, y.",
     "graph": {
         "nodes": [

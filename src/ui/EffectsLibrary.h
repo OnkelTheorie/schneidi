@@ -40,6 +40,15 @@ public:
 
     explicit EffectsLibrary(QWidget* parent = nullptr);
 
+    // Compositing recipes ("Comp-Rezepte", entry data "recipe:<id>" sent through effectRequested / the effect drag):
+    // the list anew after an own recipe was saved, the category shown, sharing as ZIP (core/CompRecipes.h; the
+    // context menu asks for the file). importRecipe returns the new recipe's id (empty + err = refused)
+    void refreshRecipes();
+    void showRecipes();
+    bool exportRecipe(const QString& id, const QString& zipPath, QString* err = nullptr);
+    QString importRecipe(const QString& zipPath, QString* err = nullptr);
+    QListWidget* list() const { return m_list; } // tests
+
 signals:
     void transitionRequested(TrackKind kind, const TransitionStyle& style);
     void titleRequested(int kind); // TitleKind

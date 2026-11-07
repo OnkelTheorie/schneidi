@@ -4,6 +4,8 @@
 #include "core/I18n.h"
 #include "core/ProjectFile.h"
 #include "engine/ProxyCleanup.h"
+#include "engine/picture/CompCutout.h"
+#include "engine/picture/CutoutCleanup.h"
 #include "engine/ProxyManager.h"
 
 #include <QApplication>
@@ -27,15 +29,25 @@ QStringList keepList(const ProjectData& open)
     return ProxyCleanup::projectMedia(open) + ProxyCleanup::mediaOfProjects(ProxyCleanup::recentProjects());
 }
 
+// Cutout analyses that stay: the ones the open project's and the recent projects' cutout nodes name
+QStringList keepCutouts(const ProjectData& open)
+{
+    return Picture::Comp::cutoutCachesOf(open) + Picture::Comp::cutoutCachesOfProjects(ProxyCleanup::recentProjects());
+}
+
 } // namespace
 
 qint64 run(QWidget* parent, const ProjectData& open, const ProxyManager* proxies)
 {
     QApplication::setOverrideCursor(Qt::WaitCursor); // reads the recent projects from disk
     const ProxyCleanup::Plan plan = ProxyCleanup::plan(keepList(open), {proxies->writing()});
+    // Cutout analyses (0.19) no project names any more go along (they can always be made again)
+    const QVector<Picture::Comp::CutoutCacheFile> cutouts = Picture::Comp::unusedCutoutCaches(keepCutouts(open));
+    qint64 cutoutBytes = 0;
+    for (const auto& c : cutouts) cutoutBytes += c.bytes;
     QApplication::restoreOverrideCursor();
 
-    if (plan.items.isEmpty()) {
+    if (plan.items.isEmpty() && cutouts.isEmpty()) {
         QMessageBox box(parent);
         box.setWindowTitle(T("Proxy-Medien aufräumen"));
         box.setIcon(QMessageBox::Information);
@@ -57,7 +69,11 @@ qint64 run(QWidget* parent, const ProjectData& open, const ProxyManager* proxies
         T("%1 von %2 Proxy-Dateien braucht weder das offene noch ein zuletzt geöffnetes Projekt (zusammen %3).")
             .arg(unused)
             .arg(unused + plan.kept)
-            .arg(ProxyCleanup::sizeText(plan.bytes)));
+            .arg(ProxyCleanup::sizeText(plan.bytes))
+        + (cutouts.isEmpty() ? QString()
+                             : " " + T("Dazu %1 Freistell-Analysen, die kein Projekt mehr nutzt (%2).")
+                                         .arg(cutouts.size())
+                                         .arg(ProxyCleanup::sizeText(cutoutBytes))));
     summary->setObjectName("summary");
     summary->setWordWrap(true);
     layout->addWidget(summary);
@@ -76,6 +92,12 @@ qint64 run(QWidget* parent, const ProjectData& open, const ProxyManager* proxies
         row->setTextAlignment(2, Qt::AlignRight | Qt::AlignVCenter);
         row->setToolTip(0, it.original.isEmpty() ? it.file : it.original + "\n→ " + it.file);
     }
+    for (const Picture::Comp::CutoutCacheFile& c : cutouts) {
+        auto* row = new QTreeWidgetItem(list, {QFileInfo(c.file).fileName(), T("Freistell-Analyse, die kein Projekt nutzt"),
+                                               ProxyCleanup::sizeText(c.bytes)});
+        row->setTextAlignment(2, Qt::AlignRight | Qt::AlignVCenter);
+        row->setToolTip(0, c.file);
+    }
     list->header()->setStretchLastSection(false);
     list->header()->setSectionResizeMode(0, QHeaderView::Stretch);
     list->header()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
@@ -92,7 +114,7 @@ qint64 run(QWidget* parent, const ProjectData& open, const ProxyManager* proxies
 
     auto* buttons = new QDialogButtonBox;
     QPushButton* remove =
-        buttons->addButton(T("%1 freigeben").arg(ProxyCleanup::sizeText(plan.bytes)), QDialogButtonBox::DestructiveRole);
+        buttons->addButton(T("%1 freigeben").arg(ProxyCleanup::sizeText(plan.bytes + cutoutBytes)), QDialogButtonBox::DestructiveRole);
     remove->setObjectName("free");
     remove->setAutoDefault(false);
     QPushButton* cancel = buttons->addButton(T("Abbrechen"), QDialogButtonBox::RejectRole);
@@ -104,7 +126,11 @@ qint64 run(QWidget* parent, const ProjectData& open, const ProxyManager* proxies
 
     if (dialog.exec() != QDialog::Accepted) return 0;
     // The project may have changed while the dialog was open (an AI session imports): its proxies still stay
-    return ProxyCleanup::apply(plan, {proxies->writing()}, keepList(open));
+    qint64 freed = ProxyCleanup::apply(plan, {proxies->writing()}, keepList(open));
+    const QStringList stillUsed = keepCutouts(open); // checked again: the project may have changed meanwhile
+    for (const Picture::Comp::CutoutCacheFile& c : cutouts)
+        if (!stillUsed.contains(c.id) && Picture::Comp::removeCutoutCache(c.id)) freed += c.bytes;
+    return freed;
 }
 
 } // namespace ProxyCleanupDialog

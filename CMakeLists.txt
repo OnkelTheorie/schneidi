@@ -155,6 +155,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/core/GradeWindows.h       src/core/GradeWindows.cpp
     src/core/CompGraph.h          src/core/CompGraph.cpp
     src/core/CompRecipes.h        src/core/CompRecipes.cpp
+    src/core/CompRecipeText.cpp
     src/core/NameBlur.h           src/core/NameBlur.cpp
     src/core/Retime.h             src/core/Retime.cpp
     src/core/ProjectFormat.h      src/core/ProjectFormat.cpp
@@ -287,6 +288,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/engine/MaskRaster.h       src/engine/MaskRaster.cpp
     src/engine/picture/CompTrack.h src/engine/picture/CompTrack.cpp
     src/engine/picture/CompNodesCutout.cpp src/engine/picture/CompCutout.h src/engine/picture/CompCutout.cpp
+    src/engine/picture/CutoutCleanup.h src/engine/picture/CutoutCleanup.cpp
     src/engine/PersonMatte.h src/engine/PersonMatte.cpp
     src/engine/picture/CompEval.h src/engine/picture/CompEval.cpp src/engine/video/Blend.h
     src/engine/picture/ReviewOverlay.h src/engine/picture/ReviewOverlay.cpp

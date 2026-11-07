@@ -1,10 +1,18 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "ui/comp/CompShared.h"
 
+#include "core/CompRecipes.h"
+#include "core/Editor.h"
 #include "core/EffectRegistry.h"
 #include "core/I18n.h"
 #include "core/Keyframes.h"
+#include "core/Project.h"
 #include "engine/picture/CompNodes.h"
+
+#include <QFileDialog>
+#include <QFileInfo>
+#include <QMessageBox>
+#include <QUndoStack>
 
 #include <algorithm>
 
@@ -60,6 +68,42 @@ QString nodeName(const CompNode& n)
     return QStringLiteral("%1 %2").arg(k ? k->name : n.type).arg(n.id);
 }
 
+QString nodeSummary(const Clip& c, const CompNode& n)
+{
+    const PC::NodeType* k = PC::find(n.type);
+    if (!k) return {};
+    const QVariantMap v = nodeValues(c, n.id);
+    const auto choice = [&](const QString& key) {
+        const EffectParam* p = k->param(key);
+        return p ? p->choiceText(PC::textValue(*k, v, key)) : QString();
+    };
+    const auto number = [&](double x, int decimals) {
+        return QString::number(x, 'f', decimals).replace('.', I18n::decimalPoint());
+    };
+    const auto oneLine = [](QString t) { return t.replace('\n', ' ').simplified(); };
+    const QString id = k->id;
+    if (id == QLatin1String("merge")) {
+        const double opacity = PC::numValue(*k, v, QStringLiteral("opacity"));
+        return opacity < 0.9995 ? QStringLiteral("%1 · %2 %").arg(choice("mode"), number(opacity * 100, 0)) : choice("mode");
+    }
+    if (id == QLatin1String("fx")) {
+        const QString effect = PC::textValue(*k, v, QStringLiteral("effect"));
+        const EffectDescriptor* d = EffectRegistry::find(effect);
+        return d ? d->name : effect;
+    }
+    if (id == QLatin1String("text") || id == QLatin1String("text3d"))
+        return QStringLiteral("„%1“").arg(oneLine(PC::textValue(*k, v, QStringLiteral("text"))));
+    if (id == QLatin1String("color")) return PC::colorValue(*k, v, QStringLiteral("color")).name().toUpper();
+    if (id == QLatin1String("blur")) return T("Radius %1").arg(number(PC::numValue(*k, v, QStringLiteral("radius")), 1));
+    // Otherwise: a file's name, else the first choice (mask shape, key mode, tracker mode …)
+    for (const EffectParam& p : k->params)
+        if (p.type == EffectParam::Path && Comp::fileKeys(id).contains(p.key))
+            if (const QString f = PC::textValue(*k, v, p.key); !f.isEmpty()) return QFileInfo(f).fileName();
+    for (const EffectParam& p : k->params)
+        if (p.type == EffectParam::Choice) return choice(p.key);
+    return {};
+}
+
 Timeline viewTimeline(Timeline tl, int clipId, int node, bool matte)
 {
     if (node == 0 && !matte) return tl;
@@ -96,6 +140,44 @@ Timeline viewTimeline(Timeline tl, int clipId, int node, bool matte)
             return tl;
         }
     return tl;
+}
+
+bool applyRecipe(Editor* editor, const QVector<int>& ids, const QString& idOrName, const QVariantMap& with, QString* err)
+{
+    QString why;
+    const std::optional<CompRecipe> r = CompRecipes::find(idOrName, &why);
+    CompGraph g;
+    QHash<int, QVariantMap> values;
+    if (!r || !CompRecipes::apply(*r, with, &g, &values, &why)) {
+        if (err) *err = why;
+        return false;
+    }
+    QUndoStack* undo = editor->project()->undoStack();
+    const int before = undo->index();
+    undo->beginMacro(T("Rezept „%1“ anwenden").arg(CompRecipes::shownName(*r)));
+    const bool ok = editor->setCompGraph(ids, g, values, kinds(), &why);
+    undo->endMacro();
+    if (!ok && undo->index() > before) undo->undo(); // an empty macro: gone again
+    if (!ok && err) *err = why;
+    return ok;
+}
+
+QString applyRecipeAsking(QWidget* parent, Editor* editor, const QVector<int>& ids, const QString& idOrName)
+{
+    QString err;
+    const std::optional<CompRecipe> r = CompRecipes::find(idOrName, &err);
+    QVariantMap with;
+    if (r)
+        for (const CompRecipeSlot& slot : r->slotList) {
+            if (!slot.required || (slot.type != QLatin1String("media") && slot.type != QLatin1String("file"))) continue;
+            const QString file = QFileDialog::getOpenFileName(
+                parent, T("Rezept „%1“: %2").arg(CompRecipes::shownName(*r), slot.description.isEmpty() ? slot.id : slot.description));
+            if (file.isEmpty()) return {};
+            with.insert(slot.id, file);
+        }
+    if (r && applyRecipe(editor, ids, r->id, with, &err)) return r->note.isNull() ? QStringLiteral("") : r->note;
+    QMessageBox::warning(parent, T("Rezept anwenden"), T("Das Rezept lässt sich nicht anwenden: %1").arg(err));
+    return {};
 }
 
 } // namespace CompUi

@@ -107,6 +107,7 @@ public:
     Project* liveProject() override { return m_project; }
     QString liveProjectPath() const override { return m_projectPath; }
     Selection* liveSelection() override { return m_selection; }
+    Editor* editor() const { return m_editor; } // tests
     int livePlayhead() const override;
     bool livePlaying() const override;
     void liveSeek(int frame) override;
@@ -156,6 +157,9 @@ public:
     // An effect sound dropped from the Effects Library ("Klänge"): op 'sfx' with its moment at `frame` (one undo step,
     // the op's rules: own SFX track, spacing); a sound the rules leave out says why in the status bar
     void placeSound(const QByteArray& sound, int frame);
+    // A compositing recipe from the Effects Library (double-click or dropped on a clip) onto video clips `ids`: its
+    // required files asked for, one undo step, a failure in a message box (CompUi::applyRecipeAsking)
+    void applyRecipe(const QVector<int>& ids, const QString& recipe);
     class AiChat* aiChat() const { return m_chat; }
     class AiChatPanel* aiChatPanel() const { return m_chatPanel; }
     void showAiChat(bool on);

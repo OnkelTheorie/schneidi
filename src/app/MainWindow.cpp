@@ -46,6 +46,7 @@
 #include "engine/Exporter.h"
 #include "engine/RenderQueue.h"
 #include "ui/EffectsLibrary.h"
+#include "ui/comp/CompShared.h"
 #include "ui/MediaStorage.h"
 #include "ui/ColorPanel.h"
 #include "ui/ScopesPanel.h"
@@ -265,6 +266,10 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
     connect(tv, &TimelineView::dropRequested, this, &MainWindow::onDrop);
     // Drag-fill of a template placeholder: what was done, briefly
     connect(tv, &TimelineView::slotFilled, this, [this](const QString& message, bool) { statusBar()->showMessage(message, 6000); });
+    // Recipe dropped on a clip: applied after the drop (it may ask for a file)
+    connect(tv, &TimelineView::recipeDropped, this, [this](int clipId, const QString& recipe) {
+        QTimer::singleShot(0, this, [this, clipId, recipe] { applyRecipe({clipId}, recipe); });
+    });
     // After the drop (the drag source waits until dropEvent returns; a message box there would block it)
     connect(tv, &TimelineView::soundDropRequested, this, [this](const QByteArray& sound, int frame) {
         QTimer::singleShot(0, this, [this, sound, frame] { placeSound(sound, frame); });
@@ -418,7 +423,12 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
             [this, tv](int kind) { m_editor->addTitle(tv->playhead(), -1, 0, TitleKind(kind)); });
     // Filters: onto the selected clips of the effect's kind, without a selection onto the clip at the playhead
     connect(m_effects, &EffectsLibrary::effectRequested, this, [this, tv](const QString& id) {
-        m_editor->addEffect(m_editor->effectTargets(tv->playhead(), Editor::effectKind(id)), id);
+        const QVector<int> targets = m_editor->effectTargets(tv->playhead(), Editor::effectKind(id));
+        if (CompUi::isRecipe(id)) { // a compositing recipe: its graph onto the clips (one undo step)
+            if (!targets.isEmpty()) applyRecipe(targets, id.mid(int(qstrlen(CompUi::kRecipePrefix))));
+            return;
+        }
+        m_editor->addEffect(targets, id);
     });
     // Sounds: listen in the Viewer (the source, from its start); placing is dragging them into the timeline
     connect(m_effects, &EffectsLibrary::soundPreviewRequested, this, [this](const QString& file) {

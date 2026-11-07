@@ -1,6 +1,18 @@
 {
     "name": "Green screen",
     "description": "Keys out the green behind the subject and puts a background picture or video there (without a background the tracks below show through).",
+    "name_de": "Green Screen",
+    "description_de": "Stanzt das Grün hinter der Person aus und setzt dort ein Hintergrundbild oder -video ein (ohne Hintergrund scheinen die Spuren darunter durch).",
+    "name_en": "Green screen",
+    "description_en": "Keys out the green behind the subject and puts a background picture or video there (without a background the tracks below show through).",
+    "name_es": "Pantalla verde",
+    "description_es": "Elimina el verde detrás del sujeto y coloca allí una imagen o un vídeo de fondo (sin fondo se ven las pistas de abajo).",
+    "name_fr": "Fond vert",
+    "description_fr": "Détoure le vert derrière le sujet et place à la place une image ou une vidéo d'arrière-plan (sans arrière-plan, les pistes en dessous apparaissent).",
+    "name_pl": "Green screen",
+    "description_pl": "Usuwa zieleń za osobą i wstawia tam obraz lub film tła (bez tła widać ścieżki poniżej).",
+    "name_ru": "Хромакей",
+    "description_ru": "Вырезает зелёный фон за объектом и ставит туда фоновую картинку или видео (без фона просвечивают дорожки ниже).",
     "graph": {
         "nodes": [
             {"id": 1, "type": "clip", "x": 0, "y": 0},
