@@ -177,6 +177,7 @@ public:
         int layersSkipped = 0;     // clip pictures not fetched because a layer above covered the frame
         int framesGpu = 0;         // frames composited on the graphics card
         int layersCpu = 0;         // layers of GPU frames rendered on the CPU (what the card cannot draw yet)
+        int layersCompGpu = 0;     // clips whose compositing graph the card evaluated (only its sources on the CPU)
     };
     Stats stats() const;
 

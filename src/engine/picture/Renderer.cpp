@@ -20,6 +20,7 @@
 #include "engine/picture/Effects.h"
 #include "engine/picture/Interpolate.h"
 #include "engine/picture/TitleLook.h"
+#include "engine/picture/gpu/CompGpu.h"
 #include "engine/picture/gpu/Gpu.h"
 #include "engine/video/Compose.h"
 #include "engine/video/Convert.h"
@@ -309,6 +310,17 @@ thread_local int64_t t_frame = -1;
 thread_local const RenderHints* t_hints = nullptr;
 thread_local bool t_exact = true;
 
+// GPU path (0.19): a clip whose compositing graph the card may evaluate. clipLayer() of that clip plans the graph
+// (gpu/CompGpu) instead of evaluating it, and hands back where the result goes instead of drawing it
+struct CompCapture {
+    const Clip* clip = nullptr;
+    Picture::Gpu::CompPlanPtr plan;
+    Compose::Affine m; // result picture -> output pixels
+    QRectF crop;       // result pixels kept (empty = all)
+    double opacity = 1;
+};
+thread_local CompCapture* t_compCapture = nullptr;
+
 // Preview: what a decoder keeps of the pictures decoded on the way to a jump's target (steps back after a jump)
 constexpr int64_t kSeekWindowBytes = 96ll * 1024 * 1024;
 
@@ -374,7 +386,7 @@ struct Renderer::Impl {
     // Static parts of compositing graphs (text, flat colors, stills without keyframes), shared by all frames
     Comp::Cache compCache;
 
-    std::atomic<int> framesRendered{0}, layersDecoded{0}, layersSkipped{0}, framesGpu{0}, layersCpu{0};
+    std::atomic<int> framesRendered{0}, layersDecoded{0}, layersSkipped{0}, framesGpu{0}, layersCpu{0}, layersCompGpu{0};
     // GPU path (Options::gpu and a hardware device), looked up by the renders (GUI app: CPU until the GPU has started)
     std::atomic<Gpu::Service*> gpu{nullptr};
     std::atomic<bool> gpuDecided{false};
@@ -733,6 +745,13 @@ struct Renderer::Impl {
             Compose::draw(b.data(), b.w, b.h, pic.data(), fw, fh, a, 1.0);
             return b;
         };
+        if (t_compCapture && t_compCapture->clip == &c && !t_compCapture->plan) {
+            // The card evaluates the graph (its CPU nodes are evaluated and kept in the plan here); img stays
+            if ((t_compCapture->plan = Gpu::planComp(comp, env, &compCache))) {
+                img.px.swap(clip.px);
+                return true;
+            }
+        }
         Comp::Buf out;
         Comp::Stats stats;
         const bool ok = Comp::evaluate(comp, env, &compCache, &out, &stats);
@@ -1224,6 +1243,28 @@ struct Renderer::Impl {
 
         auto val = [&](AnimParam p) { return Keys::valueAt(c, p, t); };
         const double opacity = Keys::hasOpacity(c) ? std::clamp(val(AnimParam::Opacity) / 100.0, 0.0, 1.0) : 1.0;
+        if (t_compCapture && t_compCapture->clip == &c && t_compCapture->plan) {
+            // The graph's picture is made on the card: only where it goes (as below; no blur fill, keep frame, part)
+            CompCapture& cap = *t_compCapture;
+            cap.opacity = opacity;
+            if (!transform && !crop) {
+                cap.m = {};
+                cap.m.c = (W - src.w) / 2;
+                cap.m.f = (H - src.h) / 2;
+                return {};
+            }
+            if (crop)
+                cap.crop = QRectF(QPointF(val(AnimParam::CropLeft) / fit.width() * src.w, val(AnimParam::CropTop) / fit.height() * src.h),
+                                  QPointF((1 - val(AnimParam::CropRight) / fit.width()) * src.w,
+                                          (1 - val(AnimParam::CropBottom) / fit.height()) * src.h));
+            const double zx = transform ? val(AnimParam::ZoomX) : 1.0, zy = transform ? val(AnimParam::ZoomY) : 1.0;
+            const double x = transform ? val(AnimParam::PosX) : 0.0, y = transform ? val(AnimParam::PosY) : 0.0;
+            const double w = fit.width() * zx, h = fit.height() * zy;
+            cap.m = Compose::placement(((ctx.PW - w) / 2 + x) * sx, ((ctx.PH - h) / 2 - y) * sy, w * sx, h * sy,
+                                       transform ? -val(AnimParam::Rotation) : 0.0, src.w, src.h, true, true);
+            if (crop && (cap.crop.width() <= 0 || cap.crop.height() <= 0)) cap.opacity = 0;
+            return {};
+        }
         if (!transform && !crop) {
             if (src.w == W && src.h == H) {
                 layer = std::move(src);
@@ -1914,6 +1955,7 @@ struct Renderer::Impl {
         std::shared_ptr<StillSource> still;
         std::shared_ptr<Image> rgba; // made on the CPU (straight alpha, or premultiplied)
         bool premultiplied = false;
+        Gpu::CompPlanPtr comp; // a compositing graph evaluated on the card (gpu/CompGpu)
         bool mips = false;
         Compose::Affine m;
         double opacity = 1;
@@ -2096,6 +2138,37 @@ struct Renderer::Impl {
         return op;
     }
 
+    // A clip the card does not draw by itself (clipLayer on the CPU), opacity times k; with a compositing graph the
+    // card can evaluate, only the graph's sources are made on the CPU. false = nothing to draw
+    bool layerOp(const Clip& c, int f, const QString& lane, const Ctx& ctx, const Timeline& tl, int depth, double k,
+                 GpuOp& op)
+    {
+        CompCapture cap;
+        CompCapture* const outer = t_compCapture;
+        const EffectInstance* comp = EffectRegistry::instance(c, ::Comp::kEffectId);
+        Gpu::Service* gpu = this->gpu.load(std::memory_order_relaxed);
+        if (comp && comp->enabled && gpu && gpu->info().comp && !c.transform.hasBlurFill() && c.keepRegion.isEmpty()
+            && !c.isTitle()) {
+            cap.clip = &c;
+            t_compCapture = &cap;
+        }
+        Image img = clipLayer(c, f, lane, ctx, tl, depth);
+        t_compCapture = outer;
+        if (cap.plan) {
+            if (cap.opacity <= 0) return false;
+            op = GpuOp();
+            op.comp = std::move(cap.plan);
+            op.m = cap.m;
+            op.crop = cap.crop;
+            op.opacity = cap.opacity * k;
+            layersCompGpu.fetch_add(1, std::memory_order_relaxed);
+            return true;
+        }
+        if (img.empty()) return false;
+        op = cpuOp(std::move(img), k);
+        return true;
+    }
+
     // One side of a transition: its draw (GPU or CPU layer), opacity times k; false = nothing
     bool gpuSide(std::vector<GpuOp>& out, const Clip* c, int f, const QString& lane, const Ctx& ctx, const Timeline& tl,
                  int depth, double k)
@@ -2108,9 +2181,9 @@ struct Renderer::Impl {
             out.push_back(std::move(op));
             return true;
         }
-        Image img = clipLayer(*c, f, lane, ctx, tl, depth);
-        if (img.empty()) return false;
-        out.push_back(cpuOp(std::move(img), k));
+        GpuOp op;
+        if (!layerOp(*c, f, lane, ctx, tl, depth, k, op)) return false;
+        out.push_back(std::move(op));
         return true;
     }
 
@@ -2253,8 +2326,8 @@ struct Renderer::Impl {
             ops.push_back(cpuOp(std::move(part), 1.0, box.x(), box.y()));
             return;
         }
-        Image layer = clipLayer(*c, f, lane, ctx, tl, depth);
-        if (!layer.empty()) ops.push_back(cpuOp(std::move(layer), fade));
+        GpuOp op;
+        if (layerOp(*c, f, lane, ctx, tl, depth, fade, op)) ops.push_back(std::move(op));
     }
 
     bool subtitleVisible(const Timeline& tl, int f) const
@@ -2356,6 +2429,12 @@ struct Renderer::Impl {
                     }
                 } else if (op.rgba && !op.rgba->empty()) {
                     src = g.uploadRgba(op.rgba->data(), op.rgba->w, op.rgba->h, op.premultiplied);
+                } else if (op.comp) {
+                    src = Gpu::runComp(g, *op.comp, &keep.textures);
+                    if (!src) {
+                        static std::once_flag warned;
+                        std::call_once(warned, [] { qWarning("Picture engine: compositing graph refused by the card"); });
+                    }
                 }
                 if (!src) break;
                 Gpu::LutPtr lut = op.graded ? luts.get(g, op) : nullptr;
@@ -2681,6 +2760,7 @@ Renderer::Stats Renderer::stats() const
     s.layersSkipped = d->layersSkipped;
     s.framesGpu = d->framesGpu;
     s.layersCpu = d->layersCpu;
+    s.layersCompGpu = d->layersCompGpu;
     std::lock_guard lock(d->sourceMutex);
     s.sourcesOpen = int(d->sources.size());
     return s;
