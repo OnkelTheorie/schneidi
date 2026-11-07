@@ -68,7 +68,7 @@ QVector<EffectParam> text3dParams()
         color("color", N_("Farbe"), d.color),
         color("side_color", N_("Seitenfarbe"), v.side),
         num("depth", N_("Tiefe"), 30, 0, 1000, 0.5, 1),
-        num("bevel", N_("Fase"), 3, 0, 100, 0.1, 1),
+        num("bevel", N_("Fase"), 2, 0, 100, 0.1, 1),
         num("rot_x", N_("Drehung X"), 15, -360, 360, 0.5, 1),
         num("rot_y", N_("Drehung Y"), -25, -360, 360, 0.5, 1),
         num("rot_z", N_("Drehung Z"), 0, -360, 360, 0.5, 1),

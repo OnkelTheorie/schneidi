@@ -105,7 +105,7 @@ const QString kLookFields =
     "shadow {x, y (offset in pixels, y down, default 6, 6), soft (blur, default 6), color, opacity (0..1, default "
     "0.6)} or true/false. glow: {radius (default 16), color, strength (0..1, default 0.5)} or true/false. A group "
     "object switches it on unless it says on:false. text3d: real 3D letters (extruded, beveled, turned, lit; replace the "
-    "flat letters, the box stays) {depth (pixels, default 30), bevel (default 3), rot_x (top away, default 15), rot_y "
+    "flat letters, the box stays) {depth (pixels, default 30), bevel (default 2, in the front color), rot_x (top away, default 15), rot_y "
     "(right side away, default -25), rot_z (clockwise), fov (degrees, default 35), distance (1 = 2D size), light_angle "
     "(-90 = from the top), light_height (degrees, default 45), side (color of walls/bevel), shine, metal (0..1)} or "
     "true/false; animated 3D text: the comp node text3d (keyframes comp.n<id>.rot_y). All off by default; outline and "

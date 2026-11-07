@@ -7,6 +7,7 @@
 #include "check.h"
 
 #include "core/CompGraph.h"
+#include "core/Keyframes.h"
 #include "core/ProjectFile.h"
 #include "core/TitleLookJson.h"
 #include "engine/picture/CompEval.h"
@@ -20,6 +21,7 @@
 #include <QImage>
 #include <QPainter>
 #include <QTemporaryDir>
+#include <QThread>
 
 #include <algorithm>
 #include <cmath>
@@ -381,6 +383,36 @@ void testTitle()
     CHECK(!TitleLookJson::read(QJsonObject{{"text3d", QJsonObject{{"fov", 500}}}}, cli, false, &err) && !err.isEmpty());
 }
 
+// SCHNEIDI_PICTURE_DUMP: a few pictures of the node to look at
+void dump()
+{
+    const QString dir = qEnvironmentVariable("SCHNEIDI_PICTURE_DUMP");
+    if (dir.isEmpty()) return;
+    const QVector<QPair<QString, QVariantMap>> cases{
+        {"front", {{"text", "3D Ok"}, {"rot_x", 0.0}, {"rot_y", 0.0}, {"bevel", 0.0}}},
+        {"front-bevel", {{"text", "3D Ok"}, {"rot_x", 0.0}, {"rot_y", 0.0}}},
+        {"turned-flat", {{"text", "3D Ok"}, {"bevel", 0.0}}},
+        {"turned", {{"text", "3D Ok"}}},
+        {"metal", {{"text", "3D Ok"}, {"color", QColor(230, 180, 60)}, {"side_color", QColor(150, 100, 30)},
+                   {"metal", 1.0}, {"shine", 0.8}, {"rot_x", 25.0}, {"rot_y", 30.0}, {"depth", 50.0}}},
+        {"thin", {{"text", "3D"}, {"bold", false}, {"depth", 40.0}, {"rot_y", -40.0}, {"color", QColor(250, 200, 0)},
+                  {"side_color", QColor(40, 90, 200)}}},
+        {"thin-flat", {{"text", "3D"}, {"bold", false}, {"depth", 40.0}, {"rot_y", -40.0}, {"bevel", 0.0},
+                       {"color", QColor(250, 200, 0)}, {"side_color", QColor(40, 90, 200)}}},
+    };
+    for (const auto& [name, v] : cases) {
+        QVariantMap p = v;
+        p["size"] = 110.0;
+        const Buf b = run(p, QSize(640, 360));
+        if (b.isNull()) continue;
+        QImage img(b.data(), b.w, b.h, b.stride(), QImage::Format_RGBA8888);
+        QImage onGrey(img.size(), QImage::Format_RGB32);
+        onGrey.fill(QColor(60, 70, 80));
+        QPainter(&onGrey).drawImage(0, 0, img);
+        onGrey.save(QString("%1/text3d-node-%2.png").arg(dir, name));
+    }
+}
+
 void bench()
 {
     if (qEnvironmentVariable("TEXT3D_BENCH").isEmpty()) return;
@@ -421,6 +453,7 @@ int main(int argc, char** argv)
     testCacheAndProject();
     testOldTitle();
     testTitle();
+    dump();
     bench();
-    return Check::testResult();
+    return Check::result();
 }

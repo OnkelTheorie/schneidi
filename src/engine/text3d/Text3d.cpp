@@ -250,7 +250,8 @@ Mesh extrude(const QPainterPath& path, double depth, double bevel)
             if (QPointF::dotProduct(a, b) < kSmooth) return Vec{a.x(), a.y(), 0};
             return norm(Vec{a.x() + b.x(), a.y() + b.y(), 0});
         };
-        auto band = [&](const Contour& p0, double z0, const Contour& p1, double z1, double tilt0, double tilt1) {
+        auto band = [&](const Contour& p0, double z0, const Contour& p1, double z1, double tilt0, double tilt1,
+                        Mesh::Part part) {
             // Quads between p0 at z0 and p1 at z1; normal = outward + tilt along z (bevel bands lean toward the cap)
             for (size_t i = 0; i < cnt; ++i) {
                 const size_t j = (i + 1) % cnt;
@@ -259,16 +260,16 @@ Mesh extrude(const QPainterPath& path, double depth, double bevel)
                 const Vec n1i = norm({ni.x, ni.y, tilt1}), n1j = norm({nj.x, nj.y, tilt1});
                 const Vec a{p0[i].x(), p0[i].y(), z0}, b{p0[j].x(), p0[j].y(), z0};
                 const Vec cc{p1[j].x(), p1[j].y(), z1}, d{p1[i].x(), p1[i].y(), z1};
-                addTri(m, Mesh::Side, {a, b, cc}, {n0i, n0j, n1j});
-                addTri(m, Mesh::Side, {a, cc, d}, {n0i, n1j, n1i});
+                addTri(m, part, {a, b, cc}, {n0i, n0j, n1j});
+                addTri(m, part, {a, cc, d}, {n0i, n1j, n1i});
             }
         };
         if (bevel > 0) {
-            band(inset[k], 0, c, bevel, -1, -1);
-            band(c, bevel, c, depth - bevel, 0, 0);
-            band(c, depth - bevel, inset[k], depth, 1, 1);
+            band(inset[k], 0, c, bevel, -1, -1, Mesh::Bevel);
+            band(c, bevel, c, depth - bevel, 0, 0, Mesh::Side);
+            band(c, depth - bevel, inset[k], depth, 1, 1, Mesh::Bevel);
         } else {
-            band(c, 0, c, depth, 0, 0);
+            band(c, 0, c, depth, 0, 0, Mesh::Side);
         }
     }
     return m;
@@ -338,7 +339,7 @@ QRect render(const Mesh& m, const View& v, uint8_t* rgba, int w, int h)
     const Vec L = norm({std::cos(le) * std::cos(la), std::cos(le) * std::sin(la), -std::sin(le)});
     const double amb = std::clamp(v.ambient, 0.0, 1.0), shine = std::clamp(v.shine, 0.0, 1.0),
                  metal = std::clamp(v.metal, 0.0, 1.0);
-    const QColor colors[3] = {v.front, v.back.isValid() ? v.back : v.front, v.side};
+    const QColor colors[4] = {v.front, v.back.isValid() ? v.back : v.front, v.side, v.front};
 
     // Vertices to the picture (pixels) and their lit colour
     const int T = m.triangles();
@@ -397,7 +398,7 @@ QRect render(const Mesh& m, const View& v, uint8_t* rgba, int w, int h)
 
     // Triangle setup in sample coordinates of the box, bucketed by band
     std::vector<Tri> tris;
-    std::vector<std::vector<int>> inBand(size_t(bands));
+    std::vector<std::vector<int>> inBand(static_cast<size_t>(bands));
     tris.reserve(size_t(T));
     for (int t = 0; t < T; ++t) {
         if (!ok[size_t(t)]) continue;

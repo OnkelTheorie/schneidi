@@ -23,7 +23,7 @@
 namespace Text3d {
 
 struct Mesh {
-    enum Part : uint8_t { Front, Back, Side };
+    enum Part : uint8_t { Front, Back, Side, Bevel }; // Bevel: the bands between the caps and the walls
     // Triangle soup: 3 vertices per triangle (pos/nrm: xyz per vertex), part per triangle
     std::vector<float> pos, nrm;
     std::vector<uint8_t> part;
@@ -48,7 +48,7 @@ struct View {
     double distance = 1; // camera distance: 1 = the front cap at its 2D size when not turned, 2 = half as large
     double lightAngle = -90; // where the light comes from in the picture plane (degrees clockwise, -90 = from the top)
     double lightHeight = 45; // its height over the picture plane (90 = from the camera, 0 = grazing)
-    QColor front = Qt::white, side{140, 140, 140}, back; // back invalid = front
+    QColor front = Qt::white, side{140, 140, 140}, back; // back invalid = front; bevels in the cap colour
     double ambient = 0.35; // 0..1: light everywhere
     double shine = 0.3;    // 0..1: strength of the highlight
     double metal = 0;      // 0..1: the highlight in the material colour instead of white
