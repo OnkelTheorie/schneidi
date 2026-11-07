@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 #include "core/BrandKit.h"
+#include "core/CompTrack.h"
 #include "core/Ducking.h"
 #include "core/GradeWindows.h"
 #include "core/NameBlur.h"
@@ -391,6 +392,10 @@ public:
     // Tracking result: window n of the clip follows the points (keyframes for x/y on every point; keyframes there and
     // between `from` and the last point are replaced, `from` keeps its position as a keyframe). One undo step.
     void setGradeWindowPath(int clipId, int n, int from, const QVector<GradeWindows::PathPoint>& points);
+    // Tracking result of a tracker node of the clip's "comp" graph: keyframes of n<node>.x/.y/.scale/.angle on every
+    // point (keyframes between the first and the last point are replaced, others stay). One undo step. false = no
+    // such clip, comp effect or tracker node, or no points
+    bool trackCompNode(int clipId, int node, const QVector<Comp::TrackPoint>& points);
     // Hide names (core/NameBlur): every clip's masks become new rectangle windows with fill "blur" or "pixelate" of
     // strength `amount`, their place and size keyed along the mask (off = size 0 and amount 0). Free window numbers
     // only; masks beyond them are left out and counted in `dropped` (their names stay visible). Clips on locked tracks

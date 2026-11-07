@@ -439,3 +439,7 @@ foreach(_rnn_src nnet.c nnet_default.c)
             -I${PROJECT_SOURCE_DIR}/third_party/rnnoise/src -I${PROJECT_SOURCE_DIR}/third_party/rnnoise/include
             ${PROJECT_SOURCE_DIR}/third_party/rnnoise/src/${_rnn_src})
 endforeach()
+# Tracker node (0.19, package D): one point, two points (size, rotation), occlusion, faces by a stand-in, keyframes + undo
+schneidi_test(test_comp_tracker)
+# The same in face mode with the real YuNet model; 77 without the extension
+schneidi_test(test_comp_tracker_face)

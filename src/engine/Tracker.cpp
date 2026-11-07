@@ -146,11 +146,11 @@ double PointTracker::ncc(const Gray& f, int x0, int y0) const
     return cross / (std::sqrt(var) * m_tNorm);
 }
 
-bool PointTracker::next(const Gray& f)
+bool PointTracker::next(const Gray& f, int radius)
 {
     if (!valid() || f.width < m_tw || f.height < m_th || f.channels != m_channels) return false;
     // Search around the last position; fast movements up to ~60 % of the template size per frame
-    const int r = std::max(8, int(0.6 * std::max(m_tw, m_th)));
+    const int r = radius > 0 ? radius : std::max(8, int(0.6 * std::max(m_tw, m_th)));
     const int cx = int(std::lround(m_center.x() - m_tw / 2.0)), cy = int(std::lround(m_center.y() - m_th / 2.0));
     const int xa = std::max(0, cx - r), xb = std::min(f.width - m_tw, cx + r);
     const int ya = std::max(0, cy - r), yb = std::min(f.height - m_th, cy + r);
@@ -181,8 +181,72 @@ bool PointTracker::next(const Gray& f)
     if (bx > xa && bx < xb) dx = vertex(score(bx - 1, by), best, score(bx + 1, by));
     if (by > ya && by < yb) dy = vertex(score(bx, by - 1), best, score(bx, by + 1));
     m_center = QPointF(bx + dx + m_tw / 2.0, by + dy + m_th / 2.0);
-    takeTemplate(f, bx + dx, by + dy, best > kUpdate ? kMixSlow : kMixFast);
+    if (best > kUpdate || m_adaptUnsure) takeTemplate(f, bx + dx, by + dy, best > kUpdate ? kMixSlow : kMixFast);
     return true;
+}
+
+TwoPointTracker::TwoPointTracker(const Gray& first, const QRectF& a, const QRectF& b) : m_a(first, a), m_b(first, b)
+{
+    const QPointF d = m_b.center() - m_a.center();
+    m_dist0 = std::hypot(d.x(), d.y());
+    m_angle0 = std::atan2(d.y(), d.x());
+}
+
+bool TwoPointTracker::next(const Gray& f, int radius)
+{
+    if (!valid()) return false;
+    const QPointF pa = m_a.center(), pb = m_b.center();
+    const bool okA = m_a.next(f, radius), okB = m_b.next(f, radius);
+    m_outlier = false;
+    if (!okA && !okB) {
+        m_a.moveTo(pa);
+        m_b.moveTo(pb);
+        return false;
+    }
+    const auto measure = [this](QPointF a, QPointF b, double* scale, double* angle) {
+        const QPointF d = b - a;
+        *scale = std::hypot(d.x(), d.y()) / m_dist0;
+        double turn = (std::atan2(d.y(), d.x()) - m_angle0) * 180 / M_PI;
+        // Continue from the last angle (no jump at +-180)
+        turn -= 360 * std::round((turn - m_angle) / 360);
+        *angle = turn;
+    };
+    double scale = m_scale, angle = m_angle;
+    bool good = okA && okB;
+    if (good) {
+        measure(m_a.center(), m_b.center(), &scale, &angle);
+        good = std::abs(scale / m_scale - 1) <= kMaxScaleStep && std::abs(angle - m_angle) <= kMaxTurnStep;
+    }
+    if (good) {
+        m_scale = scale;
+        m_angle = angle;
+        return true;
+    }
+    // Outlier: the better point leads, the other one follows it with size and rotation kept
+    m_outlier = true;
+    const bool leadA = okA && (!okB || m_a.score() >= m_b.score());
+    if (leadA) m_b.moveTo(pb + (m_a.center() - pa));
+    else m_a.moveTo(pa + (m_b.center() - pb));
+    return true;
+}
+
+std::function<QImage(int, int)> clipFrames(const ProjectFormat& format, const Clip& c)
+{
+    // The clip alone, without what the Color page and Inspector do to it, starting at frame 0
+    Clip plain = c;
+    plain.start = 0;
+    plain.effects.clear();
+    plain.keys.clear();
+    plain.transform = ClipTransform{};
+    plain.transIn = plain.transOut = plain.fadeIn = plain.fadeOut = 0;
+    plain.renderCache = false;
+    plain.enabled = true;
+    plain.linkId = 0;
+    Timeline tl;
+    tl.video.resize(1);
+    tl.video[0].clips << plain;
+    std::shared_ptr<Snapshot::Source> source = Snapshot::Source::timeline(format, tl);
+    return [source](int frame, int maxEdge) { return source->frame(frame, maxEdge); };
 }
 
 Result trackWindow(const ProjectFormat& format, const Clip& c, int n, int from, int to,
@@ -201,21 +265,8 @@ Result trackWindow(const ProjectFormat& format, const Clip& c, int n, int from, 
     to = std::clamp(to, 0, c.length() - 1);
     if (from == to) return res;
 
-    // The clip alone, without what the Color page and Inspector do to it, starting at frame 0
-    Clip plain = c;
-    plain.start = 0;
-    plain.effects.clear();
-    plain.keys.clear();
-    plain.transform = ClipTransform{};
-    plain.transIn = plain.transOut = plain.fadeIn = plain.fadeOut = 0;
-    plain.renderCache = false;
-    plain.enabled = true;
-    plain.linkId = 0;
-    Timeline tl;
-    tl.video.resize(1);
-    tl.video[0].clips << plain;
-    auto source = Snapshot::Source::timeline(format, tl);
-    const QImage first = source->frame(from, kPictureEdge);
+    const auto source = clipFrames(format, c);
+    const QImage first = source(from, kPictureEdge);
     if (first.isNull()) {
         res.error = T("Kein Bild vom Clip");
         return res;
@@ -247,7 +298,7 @@ Result trackWindow(const ProjectFormat& format, const Clip& c, int n, int from, 
             res.canceled = true;
             break;
         }
-        const QImage img = source->frame(f, kPictureEdge);
+        const QImage img = source(f, kPictureEdge);
         if (img.isNull() || !tracker.next(gray(img))) {
             res.lost = true;
             res.lostAt = f;
