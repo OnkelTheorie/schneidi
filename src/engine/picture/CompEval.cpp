@@ -139,11 +139,21 @@ bool evaluate(const EffectInstance& comp, const Env& env, Cache* cache, Buf* out
         s.node = g.node(id);
         s.kind = s.node ? find(s.node->type) : nullptr;
     }
+    // Lookups without copying a node's values (read per parameter per frame)
+    static const QVariantMap kNoValues;
+    auto valuesOf = [&](int id) -> const QVariantMap& {
+        const auto it = values.constFind(id);
+        return it == values.cend() ? kNoValues : *it;
+    };
+    auto isAnimated = [&](int id, const QString& key) {
+        const auto it = animated.constFind(id);
+        return it != animated.cend() && it->contains(key);
+    };
     auto valueOf = [&](int id, const NodeType* k, const QString& key) -> double {
-        if (env.clip && animated.value(id).contains(key))
+        if (env.clip && isAnimated(id, key))
             return Keys::valueAt(*env.clip, Keys::effectParam(::Comp::kEffectId, CompGraph::paramKey(id, key)), env.t);
-        if (!k) return values.value(id).value(key).toDouble();
-        return numValue(*k, values.value(id), key);
+        if (!k) return valuesOf(id).value(key).toDouble();
+        return numValue(*k, valuesOf(id), key);
     };
 
     // Static: kind not varying, no keyframes, every connected input static; keyed by its values and the inputs' keys
@@ -151,7 +161,7 @@ bool evaluate(const EffectInstance& comp, const Env& env, Cache* cache, Buf* out
         NodeState& s = state[id];
         if (!s.node) continue;
         bool isStatic = s.kind && !s.kind->varying && !animated.contains(id);
-        uint64_t key = isStatic ? ownHash(s.node->type, values.value(id), env) : 0;
+        uint64_t key = isStatic ? ownHash(s.node->type, valuesOf(id), env) : 0;
         // A follower reads the followed node's values (numOf): static only while they are fixed, keyed by them (a new
         // analysis or another value is a new key)
         if (isStatic && s.kind->param(QStringLiteral("follow"))) {
@@ -161,7 +171,7 @@ bool evaluate(const EffectInstance& comp, const Env& env, Cache* cache, Buf* out
                 const CompNode* fn = g.node(f);
                 const NodeType* fk = fn ? find(fn->type) : nullptr;
                 if (fv != f || animated.contains(f) || (fk && fk->varying)) isStatic = false;
-                else key = mix(key, ownHash(fn ? fn->type : QString(), values.value(f), env));
+                else key = mix(key, ownHash(fn ? fn->type : QString(), valuesOf(f), env));
             }
         }
         for (const CompLink& l : g.links)
@@ -205,8 +215,8 @@ bool evaluate(const EffectInstance& comp, const Env& env, Cache* cache, Buf* out
             NodeState& f = state[fg->from];
             if (!f.kind || f.kind->id != QLatin1String("clip") || f.readers != 1) continue;
             const int track = int(std::lround(valueOf(fg->from, f.kind, "track")));
-            if (track < 0 || animated.value(fg->from).contains("track")) continue;
-            if (numValue(*s.kind, values.value(id), "mode") != 0 || animated.value(id).contains("opacity")
+            if (track < 0 || isAnimated(fg->from, QStringLiteral("track"))) continue;
+            if (numValue(*s.kind, valuesOf(id), "mode") != 0 || isAnimated(id, QStringLiteral("opacity"))
                 || valueOf(id, s.kind, "opacity") < 1.0)
                 continue;
             f.fusedInto = true;
@@ -239,6 +249,13 @@ bool evaluate(const EffectInstance& comp, const Env& env, Cache* cache, Buf* out
         if (!l) return nullptr;
         const auto it = state.constFind(l->from);
         return it == state.cend() ? nullptr : it->pic;
+    };
+    // The compound track painted straight onto merge id (no copy of a NodeState)
+    auto fusedFg = [&](int id) -> const NodeState* {
+        const CompLink* l = g.linkInto(id, "fg");
+        if (!l) return nullptr;
+        const auto it = state.constFind(l->from);
+        return it != state.cend() && it->fusedInto ? &*it : nullptr;
     };
     // A node whose picture is its input's: no copy; the node owning the picture stays alive for this one's readers
     auto passOn = [&](NodeState& s, const CompLink* l) {
@@ -299,9 +316,8 @@ bool evaluate(const EffectInstance& comp, const Env& env, Cache* cache, Buf* out
                 if (env.paintTrack(track, s.own)) s.pic = &s.own;
                 if (stats) ++stats->evaluated;
             }
-        } else if (s.kind->id == QLatin1String("merge") && g.linkInto(id, "fg")
-                   && state.value(g.linkInto(id, "fg")->from).fusedInto) {
-            const NodeState& f = state[g.linkInto(id, "fg")->from];
+        } else if (const NodeState* fused = s.kind->id == QLatin1String("merge") ? fusedFg(id) : nullptr) {
+            const NodeState& f = *fused;
             const Buf* bg = inputOf(id, "bg");
             s.own = take(Buf::Rgba);
             if (bg && bg->kind == Buf::Rgba && bg->px.size() == s.own.px.size())
@@ -319,10 +335,10 @@ bool evaluate(const EffectInstance& comp, const Env& env, Cache* cache, Buf* out
             ctx.fps = env.fps;
             ctx.cancel = env.cancel;
             const NodeType* k = s.kind;
-            const QVariantMap& own = values[id];
+            const QVariantMap& own = valuesOf(id);
             ctx.num = [&, id, k](const QString& key) { return valueOf(id, k, key); };
             ctx.color = [&, id, k](const QString& key) {
-                if (env.clip && animated.value(id).contains(key)) return Keys::toColor(valueOf(id, k, key));
+                if (env.clip && isAnimated(id, key)) return Keys::toColor(valueOf(id, k, key));
                 return colorValue(*k, own, key);
             };
             ctx.text = [&own, k](const QString& key) { return textValue(*k, own, key); };
@@ -332,8 +348,8 @@ bool evaluate(const EffectInstance& comp, const Env& env, Cache* cache, Buf* out
                 // A tracker that was not analyzed yet (no x/y value, no keyframes) is at its start point, so a
                 // follower drawn relative to (ax, ay) does not jump (Picture::Comp::trackerValue)
                 if (o && o->type == QLatin1String(::Comp::kTrackerType)
-                    && (key == QLatin1String("x") || key == QLatin1String("y")) && !values.value(other).contains(key)
-                    && !animated.value(other).contains(key))
+                    && (key == QLatin1String("x") || key == QLatin1String("y")) && !valuesOf(other).contains(key)
+                    && !isAnimated(other, key))
                     return valueOf(other, ok, key == QLatin1String("x") ? QStringLiteral("ax") : QStringLiteral("ay"));
                 return valueOf(other, ok, key);
             };
