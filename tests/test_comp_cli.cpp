@@ -199,7 +199,7 @@ int main(int argc, char** argv)
         QJsonObject g = op(R"({"op":"comp","graph":{"nodes":[{"id":1,"type":"clip"},{"id":2,"type":"sparkle"}],"links":[[1,2]]}})");
         g["clips"] = QJsonArray{clip};
         CHECK(editError({g}).contains("unknown node type 'sparkle'"));
-        CHECK(editError({QJsonObject{{"op", "comp"}, {"clips", QJsonArray{clip}}, {"recipe", "greenscreen"}}}).contains("NOT_SUPPORTED"));
+        CHECK(editError({QJsonObject{{"op", "comp"}, {"clips", QJsonArray{clip}}, {"recipe", "bogus"}}}).contains("no recipe 'bogus'"));
     }
 
     // frames at a node: the clip node shows the clip, the key's matte is white on the figure and black on the screen

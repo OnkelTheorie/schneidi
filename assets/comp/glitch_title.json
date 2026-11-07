@@ -1,0 +1,24 @@
+{
+    "name": "Glitch title",
+    "description": "A title with a mild digital glitch (color offset, shifted blocks) over the clip.",
+    "graph": {
+        "nodes": [
+            {"id": 1, "type": "clip", "x": 0, "y": 0},
+            {"id": 2, "type": "text", "x": 0, "y": 120, "params": {"text": "Title"}},
+            {"id": 3, "type": "glitch", "x": 160, "y": 120, "params": {"strength": 0.2}},
+            {"id": 4, "type": "merge", "x": 320, "y": 60}
+        ],
+        "links": [[2, 3, "src"], [1, 4, "bg"], [3, 4, "fg"]],
+        "out": 4
+    },
+    "slots": {
+        "text": {"type": "text", "description": "the words", "targets": ["2.text"]},
+        "color": {"type": "color", "description": "text color", "targets": ["2.color"]},
+        "font": {"type": "text", "description": "font family", "targets": ["2.font"]},
+        "size": {"type": "number", "description": "text size in project pixels", "targets": ["2.size"]},
+        "x": {"type": "number", "description": "position 0..1 from the left", "targets": ["2.x"]},
+        "y": {"type": "number", "description": "position 0..1 from the top", "targets": ["2.y"]},
+        "strength": {"type": "number", "description": "glitch strength 0..1 (0 = off)", "targets": ["3.strength"]},
+        "seed": {"type": "number", "description": "another pattern of the glitch", "targets": ["3.seed"]}
+    }
+}

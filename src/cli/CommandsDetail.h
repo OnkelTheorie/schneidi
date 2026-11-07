@@ -26,6 +26,7 @@ namespace Beats {
 struct Result;
 }
 struct BrandKit;
+struct CompRecipe;
 
 namespace Cli::detail {
 
@@ -83,6 +84,9 @@ public:
     // edit's answer. opIndex = the op of the edit list being applied (-1 = an op another command runs)
     QJsonArray why;
     int opIndex = -1;
+    // The edit only shows what it would do (dry_run, plan): ops with effects outside the project (a recipe saved to
+    // the library) leave those out
+    bool dryRun = false;
     // How the recordings of the multicam clips made in this session were synced (sequence id -> placement); the
     // model keeps only the positions, so `synced`/`via`/`confidence` show in the answer of that edit only
     QHash<int, QVector<Multicam::Angle>> multicamSync;
@@ -167,6 +171,9 @@ void addTalkOps(QVector<OpDef>& ops);  // EditOpsTalk.cpp: talking head / interv
 void addCompOps(QVector<OpDef>& ops);
 // `effects kind:'nodes'`: every node kind with inputs, output and parameters (key, type, default, range, choices)
 QJsonArray compNodeKindsJson();
+// Compositing recipes (core/CompRecipes.h) for `effects kind:'recipes'`: id, name, slots with type and default
+QJsonArray recipesJson();
+QJsonArray recipeSlotsJson(const ::CompRecipe& r);
 // A clip's graph for `info` and answers: nodes with their values, links [from, to, input], out, unused (nodes not
 // reaching out), cost_ms (rough estimate at the format's size, ExportCheck::compCostMs)
 QJsonObject compJson(const EffectInstance& comp, const ProjectFormat& f);

@@ -5,6 +5,23 @@ picture that replaces the clip's (after its other effects, before crop/transform
 track above is not enough: a key over a background file, a blur only inside a moving mask, text behind a person, a
 picture-in-picture with a frame, a glitch only on a title.
 
+## Recipes first
+Most wishes have a ready graph: `{"op":"comp","clips":[4],"recipe":"greenscreen","with":{"background":"/videos/beach.jpg"}}`.
+`effects` with `kind:'recipes'` lists them with their slots (type, default). Built in:
+- `greenscreen` - key the screen, background file behind (slots background, color, tolerance, softness, spill, grow,
+  soften). Without a background the tracks below show through.
+- `text_behind` - a title between background and the keyed subject (background, text, color, font, size, x, y,
+  key_color, tolerance).
+- `blur_face` - a blurred ellipse that follows a face (x, y = the face at the clip's start, size, radius, soft,
+  track face|point); then `{"op":"track_node","clip":4,"node":2}`.
+- `pip_frame` - the clip small with a frame and drop shadow (x, y, size, frame_color, shadow).
+- `glitch_title` - a title with a mild glitch (text, color, font, size, x, y, strength, seed).
+- `sticker_track` - a logo/picture stuck onto a surface with a two-point tracker (sticker = file, required; x, y,
+  size, opacity); then `track_node` on node 2.
+Missing slots keep the recipe's values; `"3.size"` in `with` sets any node value. The answer's notes give the graph
+and the next step; refine it node by node afterwards. `{"op":"comp","clips":[4],"save_recipe":"My look"}` keeps a
+graph as own recipe (files copied along); `effects` kind recipes with `export`/`to` and `import` shares it as ZIP.
+
 ## Which node for what
 `effects` with `kind:'nodes'` lists every type with its inputs and parameters (ranges, defaults, choices).
 - **Sources:** `clip` (the clip's own picture; in a compound clip `track` = one inner track), `media` (a file:
@@ -53,4 +70,4 @@ where it lost the point (`lost_at`, `found_at`, `gave_up`): run it again from th
 `check` reports `comp_unused_input` (nodes not reaching the output: a forgotten link), `comp_slow` (estimated above
 40 ms per frame: playback may stutter - a smaller blur radius or fewer nodes, or tell the user to switch on the
 render cache for that clip in the app; export is only slower) and `key_edges` (a key with many
-half-transparent pixels inside the subject). Ready-made recipes (green screen, text behind, blur face …) come later.
+half-transparent pixels inside the subject).
