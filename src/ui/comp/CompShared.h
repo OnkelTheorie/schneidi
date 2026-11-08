@@ -38,6 +38,9 @@ bool animated(const Clip& c, int node, const QString& key);
 QString nodeName(const CompNode& n);
 // An input port as the canvas shows it ("bg" -> "Hintergrund"; the stored name stays) and what it is for (tooltip)
 QString portLabel(const QString& input);
+// A new node from the node search: linked behind the selected one (default) or only added (the user wires it)
+bool autoLink();
+void setAutoLink(bool on);
 QString portHelp(const QString& input);
 
 // One line about what the node does, for its box on the canvas: the kind's key value (merge mode and opacity,

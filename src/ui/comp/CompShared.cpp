@@ -16,6 +16,7 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QMessageBox>
+#include <QSettings>
 #include <QUndoStack>
 
 #include <algorithm>
@@ -71,6 +72,10 @@ QString nodeName(const CompNode& n)
     const PC::NodeType* k = PC::find(n.type);
     return QStringLiteral("%1 %2").arg(k ? k->name : n.type).arg(n.id);
 }
+
+bool autoLink() { return QSettings().value("comp/autoLink", true).toBool(); }
+
+void setAutoLink(bool on) { QSettings().setValue("comp/autoLink", on); }
 
 QString portLabel(const QString& input)
 {

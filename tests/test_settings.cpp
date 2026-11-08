@@ -223,6 +223,15 @@ void testProjectFolder()
     CHECK_EQ(SettingsDialog::storedFolder(), QDir::fromNativeSeparators(QDir::toNativeSeparators("/tmp/meine-projekte")));
     CHECK(SettingsDialog(AiSettings{}).findChild<QCheckBox*>("project_own_folder")->isChecked());
     QSettings().remove("project");
+    // Compositing: new nodes linked at once, on by default
+    QSettings().remove("comp");
+    SettingsDialog dlg(AiSettings{});
+    auto* link = dlg.findChild<QCheckBox*>("comp_auto_link");
+    if (CHECK(link)) {
+        CHECK(link->isChecked() && dlg.autoLinkNodes());
+        link->setChecked(false);
+        CHECK(!dlg.autoLinkNodes());
+    }
 }
 
 void testMainWindow()

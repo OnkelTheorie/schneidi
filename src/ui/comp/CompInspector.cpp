@@ -343,6 +343,9 @@ void CompInspector::rebuild(const Clip& c, const QStringList& keys)
             });
             m_grid->addWidget(both, row, 1);
             m_grid->addWidget(diamond, row, 2);
+            // The visible range is a time itself: no keyframes (one there would override the value the "Hier" sets)
+            if (key == QLatin1String("from") || key == QLatin1String("until") || key == QLatin1String("fade"))
+                diamond->setVisible(false);
             m_updates << [this, field, slider, diamond, node, key, kp, lo, hi](const Clip& cl) {
                 const PC::NodeType* kt = kp.get();
                 if (!kt) return;

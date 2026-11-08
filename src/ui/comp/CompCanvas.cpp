@@ -308,7 +308,9 @@ void CompCanvas::addNode(const QString& type)
     const CompNode* f = m_graph.node(from);
     const PC::NodeType* fk = f ? PC::find(f->type) : nullptr;
     const bool maskBehindPicture = k && k->output == PC::Buf::Mask && (!fk || fk->output != PC::Buf::Mask);
-    const QString input = inputs.isEmpty() || (maskBehindPicture && !m_graph.isEmpty()) ? QString() : inputs.first();
+    const QString input = inputs.isEmpty() || (maskBehindPicture && !m_graph.isEmpty()) || !CompUi::autoLink()
+                              ? QString()
+                              : inputs.first();
     // Its place: right of `from` in a chain, left below it when only added (it mostly feeds `from`: a merge's fg);
     // further down while that is taken. Placed in the same undo step (an unplaced graph gets every shown place, as a
     // node drag does)

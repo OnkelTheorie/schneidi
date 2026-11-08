@@ -196,6 +196,16 @@ int main(int argc, char** argv)
     g = graphOf(project, clipId);
     CHECK(g.linkInto(merge, "mask") && g.linkInto(merge, "mask")->from == mask);
 
+    // Settings: new nodes only added, not linked - nothing reads the blur, the output stays
+    CompUi::setAutoLink(false);
+    canvas->setSelected(merge);
+    const int loose = addBySearch(canvas, project, clipId, "blur");
+    CHECK(loose > 0);
+    g = graphOf(project, clipId);
+    CHECK(!g.linkInto(loose, "src") && g.out == merge);
+    CompUi::setAutoLink(true);
+    project->undoStack()->undo();
+
     // Layer view: color over the clip with the mask
     page->setView(CompPage::View::Layers);
     settle();

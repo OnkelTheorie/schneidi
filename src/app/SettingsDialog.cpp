@@ -7,6 +7,7 @@
 #include "app/UpdateCheck.h"
 #include "core/I18n.h"
 #include "engine/Background.h"
+#include "ui/comp/CompShared.h"
 #include "ui/WheelGuard.h"
 
 #include <QCheckBox>
@@ -188,9 +189,22 @@ QWidget* SettingsDialog::buildGeneral()
                           "keine Projektdateien zwischen deinen Aufnahmen.")));
     lay->addWidget(projects);
 
+    // Compositing: new nodes from the node search linked at once (default) or only added
+    auto* comp = new QGroupBox(T("Compositing"));
+    auto* cform = new QFormLayout(comp);
+    m_autoLink = new QCheckBox(T("Neue Knoten automatisch verbinden"));
+    m_autoLink->setObjectName("comp_auto_link");
+    m_autoLink->setChecked(CompUi::autoLink());
+    cform->addRow(m_autoLink);
+    cform->addRow(hint(T("An: ein neuer Knoten kommt hinter den gewählten (oder den Ausgang). Aus: er wird nur "
+                         "hingelegt, du verbindest ihn selbst.")));
+    lay->addWidget(comp);
+
     lay->addStretch(1);
     return page;
 }
+
+bool SettingsDialog::autoLinkNodes() const { return m_autoLink->isChecked(); }
 
 bool SettingsDialog::ownProjectFolder() const { return m_ownFolder->isChecked(); }
 
