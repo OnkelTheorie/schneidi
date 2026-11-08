@@ -49,6 +49,7 @@ QString diffData(const ProjectData& a, const ProjectData& b)
 {
     if (a.format != b.format) return "format";
     if (a.playhead != b.playhead) return "playhead";
+    if (a.views != b.views) return "views";
     if (a.lastClipId != b.lastClipId || a.lastLinkId != b.lastLinkId) return "lastClipId/lastLinkId";
     if (a.media.size() != b.media.size()) return "media.size";
     for (int i = 0; i < a.media.size(); ++i) {
@@ -98,6 +99,7 @@ ProjectData fullProject(const QString& dir)
     d.format.height = 1920;
     d.format.rate = {30000, 1001};
     d.playhead = 1234;
+    d.views = {SavedView{0, 2.5, 120.5, 30, 1234}, SavedView{7, 0.25, 0, 0, 50}}; // zoom per timeline
     d.media = {MediaInfo{a, "a.mp4", 500, true, true, false, 10, 200},
                MediaInfo{b, "b.mov", 300, true, true, false, -1, 99},
                MediaInfo{m, "musik.wav", 900, false, true, false, 5, -1},

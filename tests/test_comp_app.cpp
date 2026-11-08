@@ -12,6 +12,7 @@
 #include "core/EffectRegistry.h"
 #include "core/I18n.h"
 #include "core/Project.h"
+#include "core/ProjectFile.h"
 #include "core/Selection.h"
 #include "core/TimelineOps.h"
 #include "engine/Engine.h"
@@ -304,6 +305,36 @@ int main(int argc, char** argv)
             settle();
             CHECK_EQ(int(project->timeline().video[0].clips.size()), before);
         }
+    }
+
+    // ---- Opening a project: each timeline's zoom/scroll/playhead as saved; a file without them shows it whole ----
+    {
+        ProjectData d = project->data();
+        d.views = {SavedView{project->currentSequence(), 7.5, 40, 0, 60}};
+        const QString saved = dir.path() + "/views.schneidi", plain = dir.path() + "/plain.schneidi";
+        QString err;
+        CHECK(ProjectFile::save(d, saved, &err));
+        d.views.clear();
+        CHECK(ProjectFile::save(d, plain, &err));
+        TimelineView* view = w.findChild<TimelineView*>();
+        if (CHECK(view) && CHECK(w.openProject(saved))) {
+            settle();
+            QTest::qWait(20);
+            settle();
+            CHECK(std::abs(view->view().pxPerFrame - 7.5) < 1e-9);
+            CHECK(std::abs(view->view().leftFrame - 40) < 1e-9);
+            CHECK(w.openProject(plain));
+            settle();
+            QTest::qWait(20);
+            settle();
+            CHECK(std::abs(view->view().pxPerFrame - 7.5) > 1e-6); // fitted to the whole timeline
+            CHECK_EQ(view->view().leftFrame, 0.0);
+        }
+        // Back to the test's project (the blocks below use its clips)
+        CHECK(w.openProject(saved));
+        settle();
+        project = w.liveProject();
+        undo = project->undoStack();
     }
 
     // ---- The Comp page follows the playhead: the clip under it; opening a clip moves the playhead into it ----

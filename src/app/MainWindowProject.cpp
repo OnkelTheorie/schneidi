@@ -162,6 +162,7 @@ void MainWindow::checkProjectFile()
     QString error;
     if (!ProjectFile::load(m_projectPath, &data, &error)) return; // half written by a foreign program: wait for the next change
     data.playhead = m_timeline->view()->playhead(); // stay where the person is
+    data.views = savedViews(); // and see what they saw: a change from outside never moves the zoom (core rule)
     applyLoaded(std::move(data), m_projectPath, false);
 }
 
@@ -459,8 +460,49 @@ bool MainWindow::applyLoaded(ProjectData data, const QString& path, bool ask)
     m_sourcePos.clear();
     m_engine->showTimeline(data.playhead);
     m_timeline->view()->setPlayhead(data.playhead);
+    restoreViews(data);
     setProjectPath(path);
     return true;
+}
+
+QVector<SavedView> MainWindow::savedViews() const
+{
+    QVector<SavedView> out;
+    const TimelineView* tv = m_timeline->view();
+    const auto add = [&](int seq, const ViewState& v, int playhead) {
+        out << SavedView{seq, v.pxPerFrame, v.leftFrame, v.scrollY, playhead};
+    };
+    add(m_project->currentSequence(), tv->view(), tv->playhead());
+    for (auto it = m_sequenceView.cbegin(); it != m_sequenceView.cend(); ++it)
+        if (it.key() != m_project->currentSequence() && m_project->sequence(it.key()))
+            add(it.key(), it.value(), m_sequencePos.value(it.key(), 0));
+    return out;
+}
+
+void MainWindow::restoreViews(const ProjectData& data)
+{
+    // The timelines as they were shown when saved (zoom, scroll, playhead); a file without that (older, made by the
+    // CLI): the whole timeline in view - opening is the user's step, edits later never touch the zoom
+    m_sequenceView.clear();
+    m_sequencePos.clear();
+    m_shownSequence = m_project->currentSequence();
+    TimelineView* tv = m_timeline->view();
+    bool shown = false;
+    for (const SavedView& v : data.views) {
+        ViewState s = tv->view();
+        s.pxPerFrame = v.pxPerFrame;
+        s.leftFrame = v.leftFrame;
+        s.scrollY = v.scrollY;
+        if (v.sequence == m_shownSequence) {
+            tv->setZoomAndScroll(s.pxPerFrame, s.leftFrame, s.scrollY);
+            shown = true;
+        } else {
+            m_sequenceView[v.sequence] = s;
+            m_sequencePos[v.sequence] = v.playhead;
+        }
+    }
+    if (!shown) // after the layout: the view's width is known then
+        QTimer::singleShot(0, tv, [tv] { tv->zoomToFit(); });
 }
 
 // Load a backup (like DaVinci "Project Backups"): opens as an untitled project so that it is never
@@ -505,6 +547,7 @@ bool MainWindow::saveTo(const QString& path)
 {
     ProjectData data = m_project->data();
     data.playhead = m_timeline->view()->playhead();
+    data.views = savedViews();
     QString error;
     // schneidi-cli may be writing the same file right now: wait for it (it takes milliseconds)
     const std::unique_ptr<QLockFile> lock = ProjectFile::lock(path);
@@ -534,6 +577,7 @@ void MainWindow::autosave()
     if (!m_project->isModified()) return;
     ProjectData data = m_project->data();
     data.playhead = m_timeline->view()->playhead();
+    data.views = savedViews();
     QDir().mkpath(QFileInfo(autosavePath()).absolutePath());
     if (const QString path = autosavePath(); ProjectFile::save(data, path, nullptr))
         QSettings().setValue(autosaveKey(), m_projectPath); // where the backup belongs

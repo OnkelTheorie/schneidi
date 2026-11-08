@@ -404,7 +404,9 @@ private:
     QHash<QString, MediaInfo> m_probeCache;
     QHash<QString, int> m_sourcePos; // source playhead per file (this session only)
     QHash<int, int> m_sequencePos;   // playhead per timeline/compound clip (this session only)
-    QHash<int, ViewState> m_sequenceView; // zoom/scroll per timeline/compound clip (this session only)
+    QHash<int, ViewState> m_sequenceView; // zoom/scroll per timeline/compound clip (saved in the project: views)
+    QVector<SavedView> savedViews() const; // every timeline's zoom/scroll/playhead for the project file
+    void restoreViews(const ProjectData& data);
     int m_shownSequence = 0;         // last shown sequence (for m_sequencePos)
     class MediaCache* m_mediaCache = nullptr;
 

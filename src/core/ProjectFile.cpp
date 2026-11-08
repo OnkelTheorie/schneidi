@@ -957,6 +957,14 @@ QByteArray toJson(const ProjectData& data, const QString& projectPath)
         {"media", media},           {"bins", bins},
         {"timeline", current}, // opened timeline (older versions read only this one)
     };
+    if (!data.views.isEmpty()) { // how each timeline was shown (optional; older versions ignore it)
+        QJsonArray views;
+        for (const SavedView& v : data.views)
+            if (v.pxPerFrame > 0)
+                views << QJsonObject{{"sequence", v.sequence}, {"pxPerFrame", v.pxPerFrame}, {"leftFrame", v.leftFrame},
+                                     {"scrollY", v.scrollY}, {"playhead", v.playhead}};
+        if (!views.isEmpty()) root["views"] = views;
+    }
     if (!seqs.isEmpty()) {
         root["sequences"] = seqs;
         root["currentSequence"] = data.currentSequence;
@@ -1043,6 +1051,16 @@ bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* d
     d.format.rate.den = fmt.value("fpsDen").toInt(1);
     d.format = withinLimits(d.format);
     d.playhead = intOf(root.value("playhead"));
+    for (const QJsonValue& v : root.value("views").toArray()) {
+        const QJsonObject o = v.toObject();
+        SavedView s;
+        s.sequence = intOf(o.value("sequence"));
+        s.pxPerFrame = o.value("pxPerFrame").toDouble();
+        s.leftFrame = std::max(0.0, o.value("leftFrame").toDouble());
+        s.scrollY = std::max(0, intOf(o.value("scrollY")));
+        s.playhead = std::max(0, intOf(o.value("playhead")));
+        if (s.pxPerFrame > 0 && std::isfinite(s.pxPerFrame) && std::isfinite(s.leftFrame)) d.views << s;
+    }
     d.lastClipId = intOf(root.value("lastClipId"));
     d.lastLinkId = intOf(root.value("lastLinkId"));
     d.lastSequenceId = std::max(0, intOf(root.value("lastSequenceId")));
