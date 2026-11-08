@@ -242,7 +242,7 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
     form->addRow(T("Audio-Bittiefe"), m_audioBits);
     form->addRow(T("Untertitel"), m_subtitles);
     form->addRow(QString(), m_embed);
-    form->addRow(T("Intelligentes Rendern"), m_smart);
+    form->addRow(T("Schnellexport"), m_smart);
     form->addRow(T("Prüfen"), m_review);
     form->addRow(T("Bereich"), m_range);
     form->addRow(T("CPU-Threads"), m_threads);

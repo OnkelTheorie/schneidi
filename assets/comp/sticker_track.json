@@ -1,8 +1,8 @@
 {
     "name": "Sticker on a surface",
     "description": "A logo, picture or video stuck onto a surface in the clip: it follows two tracked points (moves, scales and turns with them).",
-    "name_de": "Sticker auf einer Fläche",
-    "description_de": "Ein Logo, Bild oder Video klebt auf einer Fläche im Clip: es folgt zwei getrackten Punkten (bewegt, skaliert und dreht sich mit).",
+    "name_de": "Aufkleber auf einer Fläche",
+    "description_de": "Ein Logo, Bild oder Video klebt auf einer Fläche im Clip: es folgt zwei verfolgten Punkten (bewegt, skaliert und dreht sich mit).",
     "name_en": "Sticker on a surface",
     "description_en": "A logo, picture or video stuck onto a surface in the clip: it follows two tracked points (moves, scales and turns with them).",
     "name_es": "Pegatina sobre una superficie",

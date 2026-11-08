@@ -422,7 +422,7 @@ void testProjectFile()
     ed.addMediaAt({"/x/a.mp4"}, 0);
     ed.selectAll();
     const int seq = ed.createCompoundClip();
-    CHECK_EQ(p.sequenceName(seq), QString("Compound Clip 1"));
+    CHECK_EQ(p.sequenceName(seq), QString("Verbundclip 1"));
     const int bin = p.addBin(0);
     const int second = p.addTimeline("Zweite", bin);
     CHECK(ed.addSequenceAt(seq, 30));

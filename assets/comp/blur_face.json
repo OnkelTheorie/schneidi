@@ -2,7 +2,7 @@
     "name": "Blur a face",
     "description": "Blurs an ellipse around a face that follows the face through the clip (tracker in face mode). Before tracking the ellipse stays where it is put.",
     "name_de": "Gesicht unkenntlich machen",
-    "description_de": "Macht eine Ellipse um ein Gesicht unscharf, die dem Gesicht durch den Clip folgt (Tracker im Gesichtsmodus). Vor dem Tracken bleibt die Ellipse, wo sie steht.",
+    "description_de": "Macht eine Ellipse um ein Gesicht unscharf, die dem Gesicht durch den Clip folgt (Verfolgung im Gesichtsmodus). Vor dem Tracken bleibt die Ellipse, wo sie steht.",
     "name_en": "Blur a face",
     "description_en": "Blurs an ellipse around a face that follows the face through the clip (tracker in face mode). Before tracking the ellipse stays where it is put.",
     "name_es": "Difuminar una cara",

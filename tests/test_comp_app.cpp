@@ -188,7 +188,7 @@ int main(int argc, char** argv)
         CHECK_EQ(undo->index(), idx2 + 1);
         CHECK(!graphOf(project, clip2).isEmpty());
         CHECK(graphOf(project, clipId).isEmpty());
-        CHECK_EQ(undo->undoText(), QString("Rezept „Green Screen“ anwenden"));
+        CHECK_EQ(undo->undoText(), QString("Rezept „Greenscreen“ anwenden"));
         // The recipe's slot values are normal node values afterwards (the key colour of the green screen)
         const Clip* c2 = TimelineOps::findClip(project->timeline(), clip2);
         CHECK(CompUi::nodeValues(*c2, 2).value("color").toString().compare("#ff00ff00", Qt::CaseInsensitive) == 0);
