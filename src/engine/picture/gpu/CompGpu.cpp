@@ -248,6 +248,7 @@ CompPlanPtr planComp(const EffectInstance& comp, const Comp::Env& env, Comp::Cac
             return true;
         }
         if (t == QLatin1String("key")) {
+            if (num(id, *k, "mode") < 0.5 && num(id, *k, "invert") > 0.5) return fail(reason, "inverted color key");
             return keyTableOf(id, *k) || fail(reason, "gray key");
         }
         if (t == QLatin1String("blur")) {

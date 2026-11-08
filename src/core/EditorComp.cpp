@@ -198,6 +198,11 @@ bool Editor::linkCompNodes(int clipId, const CompLink& l, bool on, const CompGra
                         if (on) { // replaces what was in that input
                             g.links.removeIf([&](const CompLink& x) { return x.to == l.to && x.input == l.input; });
                             g.links << l;
+                            // The output wired into a picture input of a node nothing reads: the output moves on to
+                            // it, so the node just wired in is what the clip shows (else it would hang in the air)
+                            const bool readByNone = std::none_of(g.links.cbegin(), g.links.cend(),
+                                                                 [&](const CompLink& x) { return x.from == l.to; });
+                            if (l.from == g.out && l.input != QLatin1String("mask") && readByNone) g.out = l.to;
                             return true;
                         }
                         // Only the link from l.from (into l.input, or into any input when it is empty)

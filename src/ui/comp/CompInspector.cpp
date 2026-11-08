@@ -13,6 +13,7 @@
 #include "engine/picture/CompCutout.h"
 #include "engine/picture/CompTrack.h"
 #include "engine/picture/CustomEffects.h"
+#include "ui/InspectorDetail.h"
 #include "ui/ScrubField.h"
 #include "ui/comp/CompShared.h"
 
@@ -365,9 +366,9 @@ void CompInspector::rebuild(const Clip& c, const QStringList& keys)
             if (kind == QLatin1String("key")) { // the key color from the picture
                 auto* pipette = new QToolButton;
                 pipette->setObjectName("comp_pipette_" + key);
-                pipette->setText(QStringLiteral("⊙"));
-                pipette->setAutoRaise(true);
-                pipette->setToolTip(T("Farbe im Bild aufnehmen"));
+                pipette->setIcon(InspectorDetail::pipetteIcon()); // the same pipette as the Green Screen in the Inspector
+                pipette->setFixedSize(26, 18);
+                pipette->setToolTip(T("Key-Farbe mit der Pipette aus dem Bild picken"));
                 connect(pipette, &QToolButton::clicked, this, [this, key] { emit keyPickRequested(m_node, key); });
                 m_grid->addWidget(pipette, row, 2);
             }

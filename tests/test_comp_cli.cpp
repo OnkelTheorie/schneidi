@@ -514,6 +514,28 @@ int main(int argc, char** argv)
         CHECK_EQ(p.undoStack()->count(), now + 1);
         while (p.undoStack()->index() > steps) p.undoStack()->undo();
         CHECK(Check::dump(p.timeline()) == before);
+        // Wiring the output into a node nothing reads moves the output on (the node does not hang in the air); a
+        // mask input or a node that is read already keeps it
+        {
+            const auto outOf = [&] {
+                CompGraph g;
+                const Clip* c = TimelineOps::findClip(p.timeline(), id);
+                const EffectInstance* e = c ? EffectRegistry::instance(*c, Comp::kEffectId) : nullptr;
+                return e && Comp::graphOf(*e, &g) ? g.out : -1;
+            };
+            const int out = outOf();
+            const int loose = ed.addCompNode(id, "blur", {}, 0, QString(), kinds); // only added
+            CHECK(loose > 0 && outOf() == out);
+            CHECK(ed.linkCompNodes(id, {out, loose, "mask"}, true, kinds));
+            CHECK_EQ(outOf(), out); // into a mask: stays
+            CHECK(ed.linkCompNodes(id, {out, loose, "src"}, true, kinds));
+            CHECK_EQ(outOf(), loose);
+            const int other = ed.addCompNode(id, "blur", {}, 0, QString(), kinds);
+            CHECK(ed.linkCompNodes(id, {other, loose, "mask"}, true, kinds));
+            CHECK(ed.linkCompNodes(id, {loose, other, "src"}, true, kinds, &err) == false); // a cycle is refused
+            while (p.undoStack()->index() > steps) p.undoStack()->undo();
+            CHECK(Check::dump(p.timeline()) == before);
+        }
         // A graph with a newer version's node kind stays editable (only new nodes must be known)
         ed.modifyClips({id}, "future", [&](Clip& c) {
             EffectInstance* e = EffectRegistry::instance(c, Comp::kEffectId);

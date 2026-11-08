@@ -71,7 +71,17 @@ bool evalKey(NodeCtx& ctx, Buf* out)
         p.tolerance = ctx.num("tolerance");
         p.softness = ctx.num("softness");
         p.spill = ctx.num("spill");
-        onRows(b, [&](int y0, int y1) { VideoEffects::key(px + size_t(y0) * w * 4, w, y1 - y0, p); });
+        const bool invert = ctx.num("invert") > 0.5; // the key color solid, the rest transparent (a mask of it)
+        const bool sameSize = src->px.size() == b.px.size();
+        onRows(b, [&](int y0, int y1) {
+            uint8_t* row = px + size_t(y0) * w * 4;
+            VideoEffects::key(row, w, y1 - y0, p);
+            if (!invert) return;
+            // keyed alpha = a * k, so a * (1 - k) = a - keyed (a = the alpha the picture came with)
+            const uint8_t* in = sameSize ? src->data() + size_t(y0) * w * 4 : nullptr;
+            for (size_t i = 3, n = size_t(y1 - y0) * w * 4; i < n; i += 4)
+                row[i] = uint8_t((in ? in[i] : 255) - row[i]);
+        });
     }
     *out = std::move(b);
     return true;

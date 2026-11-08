@@ -446,7 +446,8 @@ public:
     // Removes a node with its links, values and keyframes; what read it reads the node's first connected input
     // instead (src, bg, fg …), so a chain stays a chain; the output moves the same way
     bool removeCompNode(int clipId, int node, const CompGraph::KindInfo& kinds, QString* err = nullptr);
-    // on: link `l` (replaces a link already in that input); off: removes the link into l.to's input l.input
+    // on: link `l` (replaces a link already in that input); linking the output node into a picture input (not mask) of
+    // a node nothing reads makes that node the output. off: removes the link into l.to's input l.input
     bool linkCompNodes(int clipId, const CompLink& l, bool on, const CompGraph::KindInfo& kinds, QString* err = nullptr);
     // Makes `node` the output node
     bool setCompOut(int clipId, int node, const CompGraph::KindInfo& kinds, QString* err = nullptr);

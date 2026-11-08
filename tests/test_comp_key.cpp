@@ -85,6 +85,13 @@ void testChroma()
     CHECK(soft >= 2);
     CHECK(monotone);
     CHECK_EQ(fringe, 0);
+    // Inverted: the green solid, the figure transparent (a mask of the key color, e.g. to blur only the screen)
+    Buf inv;
+    if (CHECK(runNode("key", {{"color", kScreen}, {"invert", true}}, {{"src", src}}, sized(src), &inv))) {
+        CHECK_EQ(int(px(inv, 5, 5)[3]), 255);
+        CHECK_EQ(int(px(inv, 160, 90)[3]), 0);
+        for (int x = 160 + 60; x >= 160 + 40; --x) CHECK_EQ(int(px(inv, x, 90)[3]), 255 - int(px(out, x, 90)[3]));
+    }
     // No key node input = nothing
     CHECK(!runNode("key", {}, {}, sized(src), &out));
 }
