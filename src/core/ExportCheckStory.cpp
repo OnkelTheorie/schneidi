@@ -305,7 +305,7 @@ QVector<Issue> story(const Timeline& tl, int from, int to, const ProjectFormat& 
             else if (first < 0 && strongKnown)
                 out << issue(sev, "story_hook_late",
                              T("Kein starker Moment (Treffer, lauter Moment, Wort oder Text) gefunden – der Anfang "
-                               "braucht einen Aufhänger"),
+                               "braucht einen Hook"),
                              from, std::min(to, from + framesOf(limit, f)));
         }
     }

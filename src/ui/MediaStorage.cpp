@@ -154,7 +154,7 @@ MediaStorage::MediaStorage(QWidget* parent) : QWidget(parent)
     m_thumbPool->setMaxThreadCount(1);
     m_thumbPool->setThreadPriority(QThread::LowPriority);
 
-    auto* title = new QLabel(T("Media Storage"));
+    auto* title = new QLabel(T("Dateibrowser"));
     title->setObjectName("PanelTitle");
     auto* addBtn = new QToolButton;
     addBtn->setText(T("+ Ordner"));
@@ -521,7 +521,7 @@ void MediaStorage::showFileMenu(const QPoint& pos)
     const QStringList files = selectedFiles();
     QMenu menu(this);
     if (!files.isEmpty()) {
-        menu.addAction(T("In den Media Pool importieren"), this, [this, files] { emit importRequested(files); });
+        menu.addAction(T("In den Medienpool importieren"), this, [this, files] { emit importRequested(files); });
     }
     if (at && !at->data(kDirRole).toBool()) {
         const QString file = at->data(kPathRole).toString();
@@ -533,9 +533,9 @@ void MediaStorage::showFileMenu(const QPoint& pos)
         menu.addAction(T("Ordner öffnen"), this, [this, dir] { setFolder(dir); });
         menu.addAction(T("Im Dateimanager zeigen"), this, [dir] { FileManager::reveal(dir); });
         const QStringList media = mediaIn(dir);
-        QAction* a = menu.addAction(T("Ordnerinhalt in den Media Pool importieren"), this, [this, media] { emit importRequested(media); });
+        QAction* a = menu.addAction(T("Ordnerinhalt in den Medienpool importieren"), this, [this, media] { emit importRequested(media); });
         a->setEnabled(!media.isEmpty());
-        menu.addAction(T("Ordner mit Unterordnern als Bins importieren"), this, [this, dir] { emit folderImportRequested(dir); });
+        menu.addAction(T("Ordner mit Unterordnern importieren"), this, [this, dir] { emit folderImportRequested(dir); });
         menu.addAction(T("Diesen Ordner überwachen…"), this, [this, dir] { emit watchFolderRequested(dir); });
         if (!m_locations.contains(dir))
             menu.addAction(T("Als Speicherort hinzufügen"), this, [this, dir] {
@@ -549,7 +549,7 @@ void MediaStorage::showFileMenu(const QPoint& pos)
         QAction* a = menu.addAction(T("Alle Clips dieses Ordners importieren"), this, [this, media] { emit importRequested(media); });
         a->setEnabled(!media.isEmpty());
         if (!m_folder.isEmpty()) {
-            menu.addAction(T("Ordner mit Unterordnern als Bins importieren"), this,
+            menu.addAction(T("Ordner mit Unterordnern importieren"), this,
                            [this, dir = m_folder] { emit folderImportRequested(dir); });
             menu.addAction(T("Diesen Ordner überwachen…"), this, [this, dir = m_folder] { emit watchFolderRequested(dir); });
             menu.addAction(T("Ordner im Dateimanager öffnen"), this, [dir = m_folder] { FileManager::open(dir); });
@@ -577,9 +577,9 @@ void MediaStorage::showLocationMenu(const QPoint& pos)
                 selectFolderInTree(m_folder);
             });
         const QStringList media = mediaIn(dir);
-        QAction* a = menu.addAction(T("Ordnerinhalt in den Media Pool importieren"), this, [this, media] { emit importRequested(media); });
+        QAction* a = menu.addAction(T("Ordnerinhalt in den Medienpool importieren"), this, [this, media] { emit importRequested(media); });
         a->setEnabled(!media.isEmpty());
-        menu.addAction(T("Ordner mit Unterordnern als Bins importieren"), this, [this, dir] { emit folderImportRequested(dir); });
+        menu.addAction(T("Ordner mit Unterordnern importieren"), this, [this, dir] { emit folderImportRequested(dir); });
         menu.addAction(T("Diesen Ordner überwachen…"), this, [this, dir] { emit watchFolderRequested(dir); });
         menu.addAction(T("Im Dateimanager zeigen"), this, [dir] { FileManager::reveal(dir); });
     }
@@ -672,10 +672,10 @@ void MediaStorage::updateItem(QListWidgetItem* it)
     const QString path = it->data(kPathRole).toString();
     QPixmap pm = path == m_hoverPath ? m_hoverPixmap : m_shown.value(path);
     QString tip = QDir::toNativeSeparators(path) + "\n"
-                  + T("Klick zeigt die Datei im Viewer, Doppelklick importiert, in Media Pool oder Timeline ziehen");
+                  + T("Klick zeigt die Datei in der Vorschau, Doppelklick importiert, in Medienpool oder Timeline ziehen");
     if (inPool(path)) {
         drawPoolMark(pm, m_listMode);
-        tip += "\n" + T("Schon im Media Pool");
+        tip += "\n" + T("Schon im Medienpool");
     }
     it->setIcon(QIcon(pm));
     it->setToolTip(tip);

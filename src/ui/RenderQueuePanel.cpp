@@ -246,7 +246,7 @@ void RenderQueuePanel::rebuild()
         if (m_queue->isRunning() && m_queue->currentJob() == j.id) item->setFlags(item->flags() & ~Qt::ItemIsDragEnabled);
         auto* card = new JobCard;
         const QFileInfo fi(j.path);
-        card->title->setFullText(T("Job %1").arg(j.id) + QStringLiteral(" · ") + fi.fileName());
+        card->title->setFullText(T("Auftrag %1").arg(j.id) + QStringLiteral(" · ") + fi.fileName());
         QString itemTip = j.preset.isEmpty() ? T("Eigene Einstellungen") : j.preset;
         if (j.status == RenderStatus::Done) itemTip += '\n' + T("Doppelklick: im Dateimanager zeigen");
         item->setToolTip(itemTip); // the list shows it (the card lets the mouse through)

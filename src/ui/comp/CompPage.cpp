@@ -64,12 +64,12 @@ CompPage::CompPage(Editor* editor, QWidget* parent) : QWidget(parent), m_editor(
     m_clipLabel->setStyleSheet("font-weight: 600;");
     m_message = new QLabel;
     m_message->setStyleSheet(QString("color: %1;").arg(Theme::warning.name()));
-    m_create = new QPushButton(T("Comp anlegen"));
+    m_create = new QPushButton(T("Compositing anlegen"));
     m_create->setObjectName("comp_create");
     m_create->setToolTip(T("Gibt dem Clip einen Graphen: sein Bild geht unverändert zum Ausgang"));
-    m_showNode = toggle("comp_view_node", T("Knoten zeigen"), T("Der Viewer zeigt das Bild des gewählten Knotens statt "
+    m_showNode = toggle("comp_view_node", T("Knoten zeigen"), T("Die Vorschau zeigt das Bild des gewählten Knotens statt "
                                                                 "des Ausgangs (Doppelklick auf einen Knoten)"));
-    m_matte = toggle("comp_view_matte", T("Matte"), T("Der Viewer zeigt die Deckkraft (Alpha) als Grau"));
+    m_matte = toggle("comp_view_matte", T("Alphamaske"), T("Die Vorschau zeigt die Deckkraft (Alpha) als Grau"));
     auto* fit = m_fit = new QToolButton;
     fit->setVisible(false); // node view only
     fit->setText(T("Einpassen"));
@@ -86,7 +86,7 @@ CompPage::CompPage(Editor* editor, QWidget* parent) : QWidget(parent), m_editor(
     m_saveRecipe = new QToolButton;
     m_saveRecipe->setObjectName("comp_save_recipe");
     m_saveRecipe->setText(T("Als Rezept speichern…"));
-    m_saveRecipe->setToolTip(T("Speichert diesen Graphen als eigenes Rezept (Effects Library › Comp-Rezepte): auf "
+    m_saveRecipe->setToolTip(T("Speichert diesen Graphen als eigenes Rezept (Effektbibliothek › Compositing-Rezepte): auf "
                                "andere Clips ziehen, als ZIP weitergeben"));
     m_saveRecipe->setFocusPolicy(Qt::NoFocus);
     connect(m_saveRecipe, &QToolButton::clicked, this, [this] {
@@ -245,7 +245,7 @@ QString CompPage::saveRecipe(const QString& name, bool replace, QString* err, QS
     const Clip* c = m_clipId ? TimelineOps::findClip(m_editor->project()->timeline(), m_clipId) : nullptr;
     const EffectInstance* e = c ? EffectRegistry::instance(*c, Comp::kEffectId) : nullptr;
     if (!e) {
-        if (err) *err = T("Der Clip hat keinen Comp-Graphen");
+        if (err) *err = T("Der Clip hat keinen Compositing-Graphen");
         return {};
     }
     CompRecipes::SaveOptions o;

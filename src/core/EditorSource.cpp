@@ -493,7 +493,7 @@ int Editor::sourceEdit(SourceEditMode mode, const QString& path, int srcPos, int
     case M::Overwrite: text = T("Clip überschreiben: %1"); break;
     case M::Replace: text = T("Clip ersetzen: %1"); break;
     case M::PlaceOnTop: text = T("Oben platzieren: %1"); break;
-    case M::RippleOverwrite: text = T("Ripple-Überschreiben: %1"); break;
+    case M::RippleOverwrite: text = T("Überschreiben mit Nachrücken: %1"); break;
     case M::AppendAtEnd: text = T("Am Ende anhängen: %1"); break;
     case M::FitToFill: text = T("Einpassen: %1"); break;
     }

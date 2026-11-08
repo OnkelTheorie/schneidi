@@ -46,7 +46,7 @@ MulticamDialog::MulticamDialog(const Project* project, const QStringList& files,
     m_method->addItem(T("In-Punkt"), int(Method::InPoint));
     m_method->addItem(T("Anfang"), int(Method::Start));
     m_method->setToolTip(T("Ton: gemeinsame Geräusche (Rundenstart, Ansagen) finden. Marker: die ersten Quell-Marker "
-                           "(M im Quell-Viewer) liegen übereinander. In-Punkt: die Quell-In-Punkte liegen übereinander."));
+                           "(M in der Quellvorschau) liegen übereinander. In-Punkt: die Quell-In-Punkte liegen übereinander."));
     m_method->setCurrentIndex(std::max(0, m_method->findData(settings.value("multicam/syncMethod", 0).toInt())));
     form->addRow(T("Winkel synchronisieren"), m_method);
 

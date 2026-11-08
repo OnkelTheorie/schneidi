@@ -458,7 +458,7 @@ public:
             ms->addWidget(b);
             return b;
         };
-        mute = makeButton("M", Theme::warning, T("Stumm (Mute)"));
+        mute = makeButton("M", Theme::warning, T("Stumm"));
         solo = makeButton("S", Theme::meterMid, T("Solo: nur Spuren mit „S“ sind zu hören, die anderen werden "
                                                    "stumm (ausgegraut)"));
         if (!master) {
@@ -734,7 +734,7 @@ public:
         view->setToolTip(name->toolTip());
         lay->addWidget(view, 1, Qt::AlignHCenter);
         reset = new QToolButton;
-        reset->setText(T("Reset"));
+        reset->setText(T("Zurücksetzen"));
         reset->setFocusPolicy(Qt::NoFocus);
         reset->setToolTip(T("Messung neu beginnen (Integrated, LRA, True Peak)"));
         reset->setFixedHeight(18);
@@ -763,7 +763,7 @@ Mixer::Mixer(Project* project, Engine* engine, QWidget* parent)
     auto* titleLay = new QHBoxLayout(titleRow);
     titleLay->setContentsMargins(0, 0, 6, 0);
     titleLay->setSpacing(6);
-    auto* title = new QLabel(T("Mixer"));
+    auto* title = new QLabel(T("Mischpult"));
     title->setObjectName("PanelTitle");
     titleLay->addWidget(title);
     titleLay->addStretch(1);
@@ -775,7 +775,7 @@ Mixer::Mixer(Project* project, Engine* engine, QWidget* parent)
     m_record->setText("● " + T("Voiceover"));
     m_record->setCheckable(true);
     m_record->setFocusPolicy(Qt::NoFocus);
-    m_record->setToolTip(T("Voiceover aufnehmen: die Timeline spielt ab dem Playhead, die Aufnahme landet auf der "
+    m_record->setToolTip(T("Voiceover aufnehmen: die Timeline spielt ab dem Abspielkopf, die Aufnahme landet auf der "
                            "Spur mit „R“ (Esc oder Leertaste beendet)"));
     m_record->setStyleSheet(QString("QToolButton { background: %1; color: %2; padding: 1px 6px; }"
                                     "QToolButton:checked { background: %3; color: %4; }")
@@ -837,7 +837,7 @@ Mixer::Mixer(Project* project, Engine* engine, QWidget* parent)
     connect(m_master->limiter, &QToolButton::clicked, this, [this](bool on) { m_editor->setMasterLimiter(on); });
     connect(m_master->limiter, &QWidget::customContextMenuRequested, this, [this](const QPoint& pos) {
         QMenu menu(this);
-        menu.addSection(T("Limiter-Ceiling"));
+        menu.addSection(T("Limiter-Obergrenze"));
         const double current = m_project->timeline().masterLimiterDb;
         for (double db : {0.0, -0.1, -0.3, -0.5, -1.0, -2.0, -3.0, -6.0}) {
             QAction* a = menu.addAction(QString("%1 dBFS").arg(db, 0, 'f', 1));
@@ -1093,7 +1093,7 @@ void Mixer::sync()
     }
     m_master->setVolume(tl.masterVolumeDb);
     m_master->limiter->setChecked(tl.masterLimiter);
-    m_master->limiter->setToolTip(T("Limiter am Master (Ceiling %1 dBFS)\nKlick = an/aus, Rechtsklick = Ceiling")
+    m_master->limiter->setToolTip(T("Limiter am Master (Obergrenze %1 dBFS)\nKlick = an/aus, Rechtsklick = Obergrenze")
                                       .arg(tl.masterLimiterDb, 0, 'f', 1));
 }
 

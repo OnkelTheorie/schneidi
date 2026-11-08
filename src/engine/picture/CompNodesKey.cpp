@@ -195,8 +195,8 @@ void registerKeyNodes(QVector<NodeType>& out)
     {
         NodeType k;
         k.id = "key";
-        k.name = T("Key");
-        k.description = T("Stellt frei: nach einer Farbe (Green Screen) oder nach der Helligkeit; das Ergebnis ist das "
+        k.name = T("Keyer");
+        k.description = T("Stellt frei: nach einer Farbe (Greenscreen) oder nach der Helligkeit; das Ergebnis ist das "
                           "Bild mit dem Key im Alpha-Kanal");
         k.inputs = {"src"};
         EffectParam mode{"mode", T("Art"), {}, EffectParam::Choice, QString("chroma")};
@@ -219,7 +219,7 @@ void registerKeyNodes(QVector<NodeType>& out)
              T("Luma-Key: Breite des Übergangs an den Grenzen")},
             {"invert", T("Invertieren"), {}, EffectParam::Bool, false, 0, 0, AnimParam::Count, 0, 0, {},
              T("Dreht den Key um: was sonst durchsichtig wird (die Key-Farbe), bleibt sichtbar, der Rest wird durchsichtig – "
-               "z. B. als Maske, um nur den Green Screen weichzuzeichnen")},
+               "z. B. als Maske, um nur den Greenscreen weichzuzeichnen")},
         };
         k.output = Buf::Rgba;
         k.eval = evalKey;
@@ -228,8 +228,8 @@ void registerKeyNodes(QVector<NodeType>& out)
     {
         NodeType k;
         k.id = "matte_tune";
-        k.name = T("Matte verfeinern");
-        k.description = T("Verfeinert eine Matte (Alpha eines Bildes oder eine Maske): Schwarz und Weiß abschneiden, "
+        k.name = T("Alphamaske verfeinern");
+        k.description = T("Verfeinert eine Alphamaske (Alpha eines Bildes oder eine Maske): Schwarz und Weiß abschneiden, "
                           "Kante schrumpfen oder wachsen lassen, weich machen, Farbsaum entfernen");
         k.inputs = {"src"};
         k.params = {
@@ -238,9 +238,9 @@ void registerKeyNodes(QVector<NodeType>& out)
             {"white", T("Weiß abschneiden"), {}, EffectParam::Double, 1.0, 0.0, 1.0, AnimParam::Count, 0.002, 3, {},
              T("Was deckender ist, wird ganz deckend (schließt Löcher im Motiv)")},
             {"grow", T("Kante verschieben"), {}, EffectParam::Double, 0.0, -100.0, 100.0, AnimParam::Count, 0.1, 1, {},
-             T("In Pixeln: positiv lässt die Matte wachsen, negativ schrumpfen")},
+             T("In Pixeln: positiv lässt die Alphamaske wachsen, negativ schrumpfen")},
             {"soft", T("Weiche Kante"), {}, EffectParam::Double, 0.0, 0.0, 100.0, AnimParam::Count, 0.1, 1, {},
-             T("In Pixeln: macht die Kante der Matte weich")},
+             T("In Pixeln: macht die Kante der Alphamaske weich")},
             {"despill", T("Farbsaum entfernen"), {}, EffectParam::Double, 0.0, 0.0, 1.0, AnimParam::Count, 0.002, 3, {},
              T("Nimmt den Schimmer der Key-Farbe aus dem ganzen Bild (nur bei einem Bild, nicht bei einer Maske)")},
             {"color", T("Farbe"), {}, EffectParam::Color, green, 0, 0},

@@ -109,8 +109,8 @@ QString importedNote(const QStringList& paths, const QString& folder, const QStr
     QString name = QFileInfo(QDir::cleanPath(folder)).fileName();
     if (name.isEmpty()) name = QDir::toNativeSeparators(folder); // a drive or the root
     if (paths.size() == 1)
-        return T("Neue Datei „%1“ aus „%2“ im Bin „%3“").arg(QFileInfo(paths.first()).fileName(), name, bin);
-    return T("%1 neue Dateien aus „%2“ im Bin „%3“").arg(QString::number(paths.size()), name, bin);
+        return T("Neue Datei „%1“ aus „%2“ im Ordner „%3“").arg(QFileInfo(paths.first()).fileName(), name, bin);
+    return T("%1 neue Dateien aus „%2“ im Ordner „%3“").arg(QString::number(paths.size()), name, bin);
 }
 
 QStringList typeNames(const WatchFolder& w)

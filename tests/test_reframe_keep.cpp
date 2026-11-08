@@ -1007,7 +1007,7 @@ void testApp(const QString& game)
         CHECK(near(o.transform.posX, -600.0 * 1080 / fromWidth, 1e-6)); // same place in the frame
         CHECK(!o.keys.contains(AnimParam::PosX));
     }
-    CHECK(w.statusBar()->currentMessage().contains("Overlay"));
+    CHECK(w.statusBar()->currentMessage().contains("Einblendung"));
     QAction* keep = InputBindings::instance().action("reframe_keep_killfeed");
     QAction* reframe = InputBindings::instance().action("auto_reframe");
     if (CHECK(keep && reframe)) {
@@ -1022,7 +1022,7 @@ void testApp(const QString& game)
         CHECK(keptCopy(p->timeline()));
         CHECK_EQ(videoClips(p->timeline()), 3);
         CHECK(near(p->timeline().video[1].clips.value(0).transform.zoomX, 0.25, 1e-9)); // the overlay again
-        CHECK(w.statusBar()->currentMessage().contains("Overlay"));
+        CHECK(w.statusBar()->currentMessage().contains("Einblendung"));
     }
     // A speed point on a selection of the clip and its copy (rubber band): the clip and its copy both get it (the copy
     // first in the selection took the link's turn: only the copy was ramped, its kill feed out of sync)

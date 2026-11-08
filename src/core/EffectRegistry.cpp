@@ -103,7 +103,7 @@ QVector<EffectDescriptor> ownLooks()
          {"strength", T("Stärke"), "strength", EffectParam::Double, 1.0, 0.0, 1.0,
           Keys::effectParam("frei0r.glow", "strength"), 0.002, 3, {},
           T("Anteil des Scheins am Bild (1 = voll)")},
-         {"threshold", T("Schwelle"), "threshold", EffectParam::Double, 0.0, 0.0, 1.0,
+         {"threshold", T("Threshold"), "threshold", EffectParam::Double, 0.0, 0.0, 1.0,
           Keys::effectParam("frei0r.glow", "threshold"), 0.002, 3, {},
           T("Nur was heller ist, leuchtet (0 = das ganze Bild; höher = kein Schleier über dunklen Stellen)")}});
     add("frei0r.colorhalftone", T("Rasterdruck"), T("Farbige Rasterpunkte wie im Zeitungsdruck"),
@@ -147,8 +147,8 @@ QVector<EffectDescriptor> ownLooks()
              f0rOther(EffectParam::Bool, "1", T("Eingangs-Alpha zeigen"), "Display input alpha", false),
              f0rNumber(a, "2", T("Operation"), "Operation", 0.0,
                        T("0 nichts, 0,2 rasieren, 0,3/0,4 verkleinern hart/weich, 0,6/0,7 vergrößern hart/weich, "
-                         "0,8 Schwelle, 1 weichzeichnen")),
-             f0rNumber(a, "3", T("Schwelle"), "Threshold", 0.5),
+                         "0,8 Threshold, 1 weichzeichnen")),
+             f0rNumber(a, "3", T("Threshold"), "Threshold", 0.5),
              f0rNumber(a, "4", T("Stärke"), "Shrink/Grow/Blur amount", 0.333, {}, "amount"),
              f0rOther(EffectParam::Bool, "5", T("Umkehren"), "Invert", false)});
     }
@@ -161,7 +161,7 @@ QVector<EffectDescriptor>& registry()
         // Own keyer (engine/VideoEffects): distance in the chroma plane, soft edge, spill suppression; real
         // transparency. Fixed stage after the grade: it keys the camera picture, the effects then work on the keyed
         // picture. The service and the properties "0"/"1" are those of frei0r.bluescreen0r it replaced (presets).
-        {"chromakey", T("Green Screen"), "frei0r.bluescreen0r", true,
+        {"chromakey", T("Greenscreen"), "frei0r.bluescreen0r", true,
          {
              {"color", T("Farbe"), "0", EffectParam::Color, QColor(0, 255, 0), 0, 0},
              {"distance", T("Toleranz"), "1", EffectParam::Double, 0.3, 0.0, 1.0, AnimParam::Count, 0.002, 3, {},
@@ -207,7 +207,7 @@ QVector<EffectDescriptor>& registry()
              {"accuracy", T("Genauigkeit"), {}, EffectParam::Double, 9.0, 1, 15, AnimParam::Count, 0.05, 0, {},
               T("Genauigkeit der Bewegungserkennung (höher = langsamere Analyse). Neue Analyse"), {}, {}, true},
          },
-         true, T("Beruhigt verwackelte Aufnahmen. Analysiert den Clip im Hintergrund (Fortschritt im Inspector)"),
+         true, T("Beruhigt verwackelte Aufnahmen. Analysiert den Clip im Hintergrund (Fortschritt im Inspektor)"),
          true},
         // Noise reduction for voice recordings (DaVinci: Fairlight FX → Noise Reduction). Engine: own spectral noise
         // suppression (engine/Denoise, real time); defaults work for typical hiss/hum under speech.
@@ -242,26 +242,26 @@ QVector<EffectDescriptor>& registry()
         // Color page (DaVinci "Primaries - Color Wheels", own area instead of Effects Library): values as in DaVinci
         // (Lift/Gamma 0 = neutral, Gain 1, Offset 25, Contrast 1, Pivot 0.435, Saturation 50), plus LUT (.cube).
         // Engine: engine/ColorGrade, applied before all other effects.
-        {"grade", T("Farbkorrektur (Color)"), {}, true,
+        {"grade", T("Farbkorrektur"), {}, true,
          {
-             {"liftY", T("Lift"), {}, EffectParam::Double, 0.0, -1, 1, AnimParam::GradeLiftY, 0.002, 2},
-             {"liftR", T("Lift") + " R", {}, EffectParam::Double, 0.0, -1, 1, AnimParam::GradeLiftR, 0.002, 2},
-             {"liftG", T("Lift") + " G", {}, EffectParam::Double, 0.0, -1, 1, AnimParam::GradeLiftG, 0.002, 2},
-             {"liftB", T("Lift") + " B", {}, EffectParam::Double, 0.0, -1, 1, AnimParam::GradeLiftB, 0.002, 2},
-             {"gammaY", T("Gamma"), {}, EffectParam::Double, 0.0, -1, 1, AnimParam::GradeGammaY, 0.002, 2},
-             {"gammaR", T("Gamma") + " R", {}, EffectParam::Double, 0.0, -1, 1, AnimParam::GradeGammaR, 0.002, 2},
-             {"gammaG", T("Gamma") + " G", {}, EffectParam::Double, 0.0, -1, 1, AnimParam::GradeGammaG, 0.002, 2},
-             {"gammaB", T("Gamma") + " B", {}, EffectParam::Double, 0.0, -1, 1, AnimParam::GradeGammaB, 0.002, 2},
-             {"gainY", T("Gain"), {}, EffectParam::Double, 1.0, 0, 4, AnimParam::GradeGainY, 0.005, 2},
-             {"gainR", T("Gain") + " R", {}, EffectParam::Double, 1.0, 0, 4, AnimParam::GradeGainR, 0.005, 2},
-             {"gainG", T("Gain") + " G", {}, EffectParam::Double, 1.0, 0, 4, AnimParam::GradeGainG, 0.005, 2},
-             {"gainB", T("Gain") + " B", {}, EffectParam::Double, 1.0, 0, 4, AnimParam::GradeGainB, 0.005, 2},
-             {"offsetY", T("Offset"), {}, EffectParam::Double, 25.0, 0, 100, AnimParam::GradeOffsetY, 0.1, 2},
-             {"offsetR", T("Offset") + " R", {}, EffectParam::Double, 25.0, 0, 100, AnimParam::GradeOffsetR, 0.1, 2},
-             {"offsetG", T("Offset") + " G", {}, EffectParam::Double, 25.0, 0, 100, AnimParam::GradeOffsetG, 0.1, 2},
-             {"offsetB", T("Offset") + " B", {}, EffectParam::Double, 25.0, 0, 100, AnimParam::GradeOffsetB, 0.1, 2},
+             {"liftY", T("Tiefen"), {}, EffectParam::Double, 0.0, -1, 1, AnimParam::GradeLiftY, 0.002, 2},
+             {"liftR", T("Tiefen") + " R", {}, EffectParam::Double, 0.0, -1, 1, AnimParam::GradeLiftR, 0.002, 2},
+             {"liftG", T("Tiefen") + " G", {}, EffectParam::Double, 0.0, -1, 1, AnimParam::GradeLiftG, 0.002, 2},
+             {"liftB", T("Tiefen") + " B", {}, EffectParam::Double, 0.0, -1, 1, AnimParam::GradeLiftB, 0.002, 2},
+             {"gammaY", T("Mitten"), {}, EffectParam::Double, 0.0, -1, 1, AnimParam::GradeGammaY, 0.002, 2},
+             {"gammaR", T("Mitten") + " R", {}, EffectParam::Double, 0.0, -1, 1, AnimParam::GradeGammaR, 0.002, 2},
+             {"gammaG", T("Mitten") + " G", {}, EffectParam::Double, 0.0, -1, 1, AnimParam::GradeGammaG, 0.002, 2},
+             {"gammaB", T("Mitten") + " B", {}, EffectParam::Double, 0.0, -1, 1, AnimParam::GradeGammaB, 0.002, 2},
+             {"gainY", T("Lichter"), {}, EffectParam::Double, 1.0, 0, 4, AnimParam::GradeGainY, 0.005, 2},
+             {"gainR", T("Lichter") + " R", {}, EffectParam::Double, 1.0, 0, 4, AnimParam::GradeGainR, 0.005, 2},
+             {"gainG", T("Lichter") + " G", {}, EffectParam::Double, 1.0, 0, 4, AnimParam::GradeGainG, 0.005, 2},
+             {"gainB", T("Lichter") + " B", {}, EffectParam::Double, 1.0, 0, 4, AnimParam::GradeGainB, 0.005, 2},
+             {"offsetY", T("Versatz"), {}, EffectParam::Double, 25.0, 0, 100, AnimParam::GradeOffsetY, 0.1, 2},
+             {"offsetR", T("Versatz") + " R", {}, EffectParam::Double, 25.0, 0, 100, AnimParam::GradeOffsetR, 0.1, 2},
+             {"offsetG", T("Versatz") + " G", {}, EffectParam::Double, 25.0, 0, 100, AnimParam::GradeOffsetG, 0.1, 2},
+             {"offsetB", T("Versatz") + " B", {}, EffectParam::Double, 25.0, 0, 100, AnimParam::GradeOffsetB, 0.1, 2},
              {"contrast", T("Kontrast"), {}, EffectParam::Double, 1.0, 0, 2, AnimParam::GradeContrast, 0.002, 3},
-             {"pivot", T("Pivot"), {}, EffectParam::Double, 0.435, 0, 1, AnimParam::GradePivot, 0.001, 3},
+             {"pivot", T("Mittelpunkt"), {}, EffectParam::Double, 0.435, 0, 1, AnimParam::GradePivot, 0.001, 3},
              {"saturation", T("Sättigung"), {}, EffectParam::Double, 50.0, 0, 100, AnimParam::GradeSaturation, 0.1, 2},
              {"temperature", T("Temperatur"), {}, EffectParam::Double, 0.0, -4000, 4000, AnimParam::GradeTemp, 5, 1},
              {"tint", T("Tönung"), {}, EffectParam::Double, 0.0, -100, 100, AnimParam::GradeTint, 0.1, 2},
@@ -274,7 +274,7 @@ QVector<EffectDescriptor>& registry()
         // its effects; the Inspector's transform/opacity work on the result. The parameters depend on the graph, so
         // the descriptor has none (the node kinds have them, engine/picture/CompNodes.h)
         {"comp", T("Compositing"), {}, true, {}, false,
-         T("Ebenen, Masken, Keying und Tracking als Knoten (Seite Comp)"), true},
+         T("Ebenen, Masken, Keying und Tracking als Knoten (Seite Compositing)"), true},
     }) + ownLooks() // after the built-in ones: the Effects Library lists them behind blur and color correction
                    + customEffects();
     return effects;

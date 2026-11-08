@@ -97,7 +97,7 @@ void testMixTitleDetection()
 {
     for (const char* yes : {"Mix", "mix", " MIX ", "Mix 1", "mix (alles)", "Mix-Spur", "Mix2"})
         CHECK(StreamPresets::isMixTitle(yes));
-    for (const char* no : {"Mixer", "Remix", "Mikrofon", "", "Discord Mix"})
+    for (const char* no : {"Mischpult", "Remix", "Mikrofon", "", "Discord Mix"})
         CHECK(!StreamPresets::isMixTitle(no));
 }
 

@@ -307,7 +307,7 @@ Result trackWindow(const ProjectFormat& format, const Clip& c, int n, int from, 
         return res;
     }
     if (c.isNested() || c.isTitle()) {
-        res.error = T("Tracking geht nur bei Video-Clips (nicht bei Titeln, Compound- und Multicam-Clips)");
+        res.error = T("Tracking geht nur bei Video-Clips (nicht bei Titeln, Verbund- und Multicam-Clips)");
         return res;
     }
     from = std::clamp(from, 0, c.length() - 1);

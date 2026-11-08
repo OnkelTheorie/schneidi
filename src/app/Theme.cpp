@@ -43,11 +43,11 @@ const QList<Role>& designRoles()
 const QList<Role>& signalRoles()
 {
     static const QList<Role> roles = {
-        {"playhead", &playhead, N_("Playhead")},
+        {"playhead", &playhead, N_("Abspielkopf")},
         {"videoClip", &videoClip, N_("Videoclips")},
         {"audioClip", &audioClip, N_("Audioclips")},
         {"titleClip", &titleClip, N_("Titel")},
-        {"compoundClip", &compoundClip, N_("Compound Clips")},
+        {"compoundClip", &compoundClip, N_("Verbundclips")},
         {"subtitleClip", &subtitleClip, N_("Untertitel")},
         {"meterLow", &meterLow, N_("Pegel grün")},
         {"meterMid", &meterMid, N_("Pegel gelb")},

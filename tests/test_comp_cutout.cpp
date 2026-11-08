@@ -375,7 +375,7 @@ void testEditor()
     g.nodes << CompNode{1, "clip", {}} << CompNode{2, "cutout", {}};
     g.links << CompLink{1, 2, "src"};
     g.out = 2;
-    ed.modifyClips({id}, "Comp", [&](Clip& c) {
+    ed.modifyClips({id}, "Compositing", [&](Clip& c) {
         EffectInstance e{::Comp::kEffectId, {}, true};
         ::Comp::setGraph(e, g);
         c.effects << e;

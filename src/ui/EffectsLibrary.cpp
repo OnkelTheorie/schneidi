@@ -523,8 +523,8 @@ EffectsLibrary::EffectsLibrary(QWidget* parent) : QWidget(parent)
     add(lumas, T("Mitgeliefert"), BuiltinTransitions);
     m_transRoot = add(lumas, T("Eigene"), Transitions);
     m_transRoot->setToolTip(0, QDir::toNativeSeparators(EffectFolders::transitionDir()));
-    add(m_categories, T("Comp-Rezepte"), RecipesCat)
-        ->setToolTip(0, T("Fertige Compositing-Graphen (Green Screen, Text hinter Person …) für einen Clip"));
+    add(m_categories, T("Compositing-Rezepte"), RecipesCat)
+        ->setToolTip(0, T("Fertige Compositings (Greenscreen, Text hinter Person …) für einen Clip"));
     m_presetRoot = add(m_categories, QStringLiteral("Presets"), PresetsAll);
     m_presetRoot->setToolTip(0, T("Mitgelieferte Looks und Presets aus Kdenlive und Shotcut\n%1").arg(QDir::toNativeSeparators(EffectFolders::presetDir())));
     for (QTreeWidgetItem* it : {toolbox, openFx, luts, lumas}) it->setExpanded(true);
@@ -538,7 +538,7 @@ EffectsLibrary::EffectsLibrary(QWidget* parent) : QWidget(parent)
     m_list->setSpacing(1);
     m_list->setDragEnabled(true);
     m_list->setDragDropMode(QAbstractItemView::DragOnly);
-    m_list->setToolTip(T("Auf einen Schnitt, einen Clip bzw. in die Timeline ziehen, Doppelklick = am Playhead bzw. "
+    m_list->setToolTip(T("Auf einen Schnitt, einen Clip bzw. in die Timeline ziehen, Doppelklick = am Abspielkopf bzw. "
                          "auf die Auswahl anwenden"));
     connect(m_list, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem* it) {
         const QString d = it->data(Qt::UserRole).toString();
@@ -968,7 +968,7 @@ void EffectsLibrary::rebuild()
         if (shown == Sounds || shown == SoundGroup)
             hint = T("Noch keine eigenen Klänge – „Effekte importieren…“ öffnet den Ordner (Unterordner „Sounds“)");
         if (shown == PackSounds) hint = T("Noch keine Klangpakete installiert");
-        if (shown == RecipesCat) hint = T("Noch keine Comp-Rezepte");
+        if (shown == RecipesCat) hint = T("Noch keine Compositing-Rezepte");
         if (!hint.isEmpty()) {
             auto* h = new QListWidgetItem(hint);
             h->setFlags(Qt::NoItemFlags);

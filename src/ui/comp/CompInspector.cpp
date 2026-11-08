@@ -320,7 +320,7 @@ void CompInspector::rebuild(const Clip& c, const QStringList& keys)
             diamond->setObjectName("comp_key_" + key);
             diamond->setAutoRaise(true);
             diamond->setFocusPolicy(Qt::NoFocus);
-            diamond->setToolTip(T("Keyframe am Playhead setzen/entfernen"));
+            diamond->setToolTip(T("Keyframe am Abspielkopf setzen/entfernen"));
             connect(diamond, &QToolButton::clicked, this, [this, key, field] {
                 const Clip* cl = clip();
                 if (!cl) return;
@@ -493,7 +493,7 @@ int CompInspector::addAnalysisRow(int row, const QString& kind)
     m_analyzeButton->setObjectName("comp_analyze");
     m_analyzeButton->setToolTip(cutout ? T("Sucht die Person einmal im ganzen Clip (KI-Modell); danach stellt der "
                                            "Knoten sie in jedem Bild frei")
-                                       : T("Verfolgt die Startpunkte vom Playhead bis zum Clipende; das Ergebnis "
+                                       : T("Verfolgt die Startpunkte vom Abspielkopf bis zum Clipende; das Ergebnis "
                                            "sind Keyframes, denen andere Knoten folgen"));
     connect(m_analyzeButton, &QPushButton::clicked, this, [this] {
         if (m_job && m_job->clipId == m_clipId && m_job->node == m_node) cancelAnalysis();

@@ -41,7 +41,7 @@ void MainWindow::buildMulticamViewerAction(QMenu* playback)
     m_multicamAction = makeAction(playback, "viewer_multicam", T("Multicam-Ansicht"), QKeySequence(),
                                   [this] { setMulticamMode(m_multicamAction->isChecked()); });
     m_multicamAction->setCheckable(true);
-    m_multicamAction->setToolTip(T("Viewer zeigt alle Winkel des Multicam-Clips am Playhead. Klick: während der Wiedergabe "
+    m_multicamAction->setToolTip(T("Die Vorschau zeigt alle Winkel des Multicam-Clips am Abspielkopf. Klick: während der Wiedergabe "
                                    "Schnitt, im Stand Winkel wechseln (Alt+Klick: Schnitt). 1–9 schneidet, Alt+1–9 "
                                    "wechselt den Winkel."));
 }
@@ -53,7 +53,7 @@ void MainWindow::buildMulticamActions(QMenu* timeline)
         const QStringList paths = m_mediaPool->selectedMedia();
         if (paths.isEmpty()) {
             QMessageBox::information(this, T("Neuer Multicam-Clip"),
-                                     T("Erst die Aufnahmen (eine je Winkel) im Media Pool auswählen."));
+                                     T("Erst die Aufnahmen (eine je Winkel) im Medienpool auswählen."));
             return;
         }
         createMulticamClip(paths);

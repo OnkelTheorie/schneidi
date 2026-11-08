@@ -94,7 +94,7 @@ bool Editor::setCompGraph(const QVector<int>& ids, const CompGraph& graph, const
         if (TimelineOps::findClip(m_project->timeline(), id, &ref) && ref.kind == TrackKind::Video) targets << id;
     }
     if (targets.isEmpty()) return failWith(err, QStringLiteral("no video clip on an unlocked track among the clips"));
-    modifyClips(targets, T("Comp-Graph setzen"), [&](Clip& c) {
+    modifyClips(targets, T("Compositing-Graph setzen"), [&](Clip& c) {
         EffectRegistry::remove(c, Comp::kEffectId); // old values and keyframes go
         EffectRegistry::add(c, Comp::kEffectId);
         EffectInstance* e = EffectRegistry::instance(c, Comp::kEffectId);
@@ -113,7 +113,7 @@ QVector<int> Editor::removeComp(const QVector<int>& ids)
     for (int id : editable(ids))
         if (const Clip* c = TimelineOps::findClip(m_project->timeline(), id); c && EffectRegistry::has(*c, Comp::kEffectId))
             targets << id;
-    modifyClips(targets, T("Comp-Graph entfernen"), [](Clip& c) { EffectRegistry::remove(c, Comp::kEffectId); });
+    modifyClips(targets, T("Compositing-Graph entfernen"), [](Clip& c) { EffectRegistry::remove(c, Comp::kEffectId); });
     return targets;
 }
 

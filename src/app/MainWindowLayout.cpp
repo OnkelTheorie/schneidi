@@ -187,12 +187,12 @@ QWidget* MainWindow::buildTopBar()
         });
         return b;
     };
-    m_poolToggle = makeToggle("▦ " + T("Media Pool"), "mediaPool", true, m_mediaPool);
-    m_effectsToggle = makeToggle("✦ " + T("Effects"), "effects", false, m_effects);
-    m_storageToggle = makeToggle("▤ " + T("Media Storage"), "mediaStorage", false, m_storage);
-    m_storageToggle->setToolTip(T("Ordner durchsuchen und Clips direkt in Media Pool/Timeline ziehen"));
-    m_inspectorToggle = makeToggle("☰ " + T("Inspector"), "inspector", true, m_inspector);
-    m_mixerToggle = makeToggle("▥ " + T("Mixer"), "mixer", false, m_mixer);
+    m_poolToggle = makeToggle("▦ " + T("Medienpool"), "mediaPool", true, m_mediaPool);
+    m_effectsToggle = makeToggle("✦ " + T("Effekte"), "effects", false, m_effects);
+    m_storageToggle = makeToggle("▤ " + T("Dateibrowser"), "mediaStorage", false, m_storage);
+    m_storageToggle->setToolTip(T("Ordner durchsuchen und Clips direkt in Medienpool/Timeline ziehen"));
+    m_inspectorToggle = makeToggle("☰ " + T("Inspektor"), "inspector", true, m_inspector);
+    m_mixerToggle = makeToggle("▥ " + T("Mischpult"), "mixer", false, m_mixer);
     m_transcriptToggle = makeToggle("¶ " + T("Transkript"), "transcript", false, m_transcript);
     m_transcriptToggle->setToolTip(T("Gesprochenen Text der Tonclips zeigen; Wörter löschen schneidet die Timeline"));
     m_chatToggle = makeToggle("✧ " + T("KI"), "aiChat", false, m_chatPanel);
@@ -249,11 +249,11 @@ QWidget* MainWindow::buildPageBar()
 
     m_pageButtons = new QButtonGroup(this);
     const struct { const char* icon; const char* name; Page page; } pages[] = {
-        {"▤", N_("Media"), Page::Media},
-        {"✂", N_("Edit"), Page::Edit},
-        {"◇", N_("Comp"), Page::Comp},
-        {"◐", N_("Color"), Page::Color},
-        {"⇪", N_("Deliver"), Page::Deliver},
+        {"▤", N_("Medien"), Page::Media},
+        {"✂", N_("Schneiden"), Page::Edit},
+        {"◇", N_("Compositing"), Page::Comp},
+        {"◐", N_("Farbe"), Page::Color},
+        {"⇪", N_("Export"), Page::Deliver},
     };
     for (const auto& pg : pages) {
         auto* b = new QToolButton;

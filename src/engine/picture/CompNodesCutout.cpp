@@ -103,8 +103,8 @@ void registerCutoutNodes(QVector<NodeType>& out)
 {
     NodeType k;
     k.id = QString::fromLatin1(kCutoutType);
-    k.name = T("Freistellen");
-    k.description = T("Stellt eine Person ohne Green Screen frei (z. B. Text hinter einer Person). Braucht einmal "
+    k.name = T("Person freistellen");
+    k.description = T("Stellt eine Person ohne Greenscreen frei (z. B. Text hinter einer Person). Braucht einmal "
                       "„Freistellen analysieren“ (CLI: cutout_node) und die Erweiterung „Freistellen (Personen)“; "
                       "ohne Analyse zeigt der Knoten nichts");
     k.inputs = {QStringLiteral("src")};
@@ -115,7 +115,7 @@ void registerCutoutNodes(QVector<NodeType>& out)
     cache.defaultValue = QString();
     cache.description = T("Kennung der Freistell-Analyse; wird von der Analyse gesetzt");
     k.params << cache;
-    k.params << number("threshold", T("Schwelle"), 0.5, 0, 1, 0.01, 2,
+    k.params << number("threshold", T("Threshold"), 0.5, 0, 1, 0.01, 2,
                        T("Ab welcher Sicherheit ein Pixel zur Person gehört (die Kante liegt hier)"))
              << number("soft", T("Weiche Kante"), 0, 0, 100, 0.5, 1, T("Kante weicher machen (Pixel)"))
              << number("grow", T("Wachsen"), 0, -50, 50, 0.5, 1,

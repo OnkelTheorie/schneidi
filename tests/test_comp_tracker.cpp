@@ -358,7 +358,7 @@ void testEditor()
     CompGraph g;
     g.nodes << CompNode{1, "tracker", {}} << CompNode{2, "blur", {}};
     g.out = 1;
-    ed.modifyClips({id}, "Comp", [&](Clip& c) {
+    ed.modifyClips({id}, "Compositing", [&](Clip& c) {
         EffectInstance e{::Comp::kEffectId, {}, true};
         ::Comp::setGraph(e, g);
         c.effects << e;
@@ -428,7 +428,7 @@ void testClip(const QString& media)
     CompGraph g;
     g.nodes << CompNode{3, "tracker", {}};
     g.out = 3;
-    ed.modifyClips({id}, "Comp", [&](Clip& c) {
+    ed.modifyClips({id}, "Compositing", [&](Clip& c) {
         EffectInstance e{::Comp::kEffectId, {}, true};
         ::Comp::setGraph(e, g);
         e.params["n3.ax"] = 130 / 640.0;
@@ -471,7 +471,7 @@ void testPortraitClip(const QString& media)
     CompGraph g;
     g.nodes << CompNode{1, "tracker", {}};
     g.out = 1;
-    ed.modifyClips({id}, "Comp", [&](Clip& c) {
+    ed.modifyClips({id}, "Compositing", [&](Clip& c) {
         EffectInstance e{::Comp::kEffectId, {}, true};
         ::Comp::setGraph(e, g);
         e.params["n1.ax"] = 130 / 360.0;

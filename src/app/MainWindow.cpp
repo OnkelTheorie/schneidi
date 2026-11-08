@@ -322,7 +322,7 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
                 for (int cid : m_editor->clipIdsOf(m_selection->ids()))
                     if (TrackRef r; const Clip* c = TimelineOps::findClip(m_project->timeline(), cid, &r))
                         if (r.kind == TrackKind::Video && frame >= c->start && frame < c->end()) ids << cid;
-                QMenu* accents = menu.addMenu(T("Akzent am Playhead"));
+                QMenu* accents = menu.addMenu(T("Akzent am Abspielkopf"));
                 accents->setEnabled(!ids.isEmpty());
                 for (const Accents::Preset& p : Accents::presets())
                     connect(accents->addAction(T(p.name)), &QAction::triggered, this, [this, ids, frame, p] {
@@ -578,11 +578,11 @@ void MainWindow::createCompoundClip()
     for (const Sequence& s : m_project->sequences()) used.insert(s.name);
     QString def;
     for (int i = 1;; ++i) {
-        def = T("Compound Clip %1").arg(i);
+        def = T("Verbundclip %1").arg(i);
         if (!used.contains(def)) break;
     }
     bool ok = false;
-    const QString name = QInputDialog::getText(this, T("Neuer Compound Clip"), T("Name:"), QLineEdit::Normal, def, &ok);
+    const QString name = QInputDialog::getText(this, T("Neuer Verbundclip"), T("Name:"), QLineEdit::Normal, def, &ok);
     if (ok) m_editor->createCompoundClip(name);
 }
 
@@ -1172,7 +1172,7 @@ void MainWindow::updateProxyHint()
                                    "Der Render-Cache „Smart“ rechnet Clips mit Effekten in Pausen vor, der Export nutzt "
                                    "weiter die Originale")
                                      .arg(qRound(m_slowRate)).arg(qRound(m_slowFps)),
-                                 T("Render-Cache: Smart"));
+                                 T("Render-Cache: Intelligent"));
     const ProxyManager* proxies = m_engine->proxies();
     int missing = 0, pending = 0;
     if (proxies->enabled()) // proxy media switched off: the user wants the originals

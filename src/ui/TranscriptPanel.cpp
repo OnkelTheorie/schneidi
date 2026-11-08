@@ -65,7 +65,7 @@ TranscriptPanel::TranscriptPanel(Project* project, Editor* editor, QWidget* pare
     m_pauses = new QToolButton;
     m_pauses->setText(T("Pausen entfernen"));
     m_pauses->setToolTip(T("Schneidet Pausen zwischen den Wörtern heraus, die länger sind als angegeben "
-                           "(Ripple auf allen Spuren, ein Rückgängig-Schritt)"));
+                           "(Nachrücken auf allen Spuren, ein Rückgängig-Schritt)"));
     connect(m_pauses, &QToolButton::clicked, this, &TranscriptPanel::removePauses);
     m_minPause = new QDoubleSpinBox;
     m_minPause->setRange(0.3, 10);
@@ -78,7 +78,7 @@ TranscriptPanel::TranscriptPanel(Project* project, Editor* editor, QWidget* pare
     m_captions = new QToolButton;
     m_captions->setText(T("Wort-Untertitel"));
     m_captions->setToolTip(T("Neue Untertitelspur aus dem Transkript, Wort für Wort hervorgehoben (Karaoke; Stil im "
-                             "Inspector der Spur)"));
+                             "Inspektor der Spur)"));
     connect(m_captions, &QToolButton::clicked, this, &TranscriptPanel::addCaptions);
     // Two rows: in one, the four controls did not fit the panel's usual width and the buttons were elided
     // ("Wor…ons", "Rem…ses")

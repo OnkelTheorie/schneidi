@@ -337,8 +337,8 @@ void testEditorAndFile(const QString& dir)
     // Target without selection: topmost video clip at the playhead
     CHECK_EQ(ed.effectTargets(10), QVector<int>{v});
     const int s0 = undo->index();
-    ed.setGradeValues({v, a}, {{AnimParam::GradeGainY, 1.3}}, 10, "Gain", "color:gain");
-    ed.setGradeValues({v}, {{AnimParam::GradeGainY, 1.4}}, 10, "Gain", "color:gain"); // dragging = one step
+    ed.setGradeValues({v, a}, {{AnimParam::GradeGainY, 1.3}}, 10, "Lichter", "color:gain");
+    ed.setGradeValues({v}, {{AnimParam::GradeGainY, 1.4}}, 10, "Lichter", "color:gain"); // dragging = one step
     p.closeMerge();
     CHECK_EQ(undo->index(), s0 + 1);
     CHECK(EffectRegistry::has(clip(), "grade"));
@@ -352,7 +352,7 @@ void testEditorAndFile(const QString& dir)
     // Keyframe for the whole correction, then value at another position -> second keyframe
     ed.setGradeKeyframe({v}, 0, true);
     CHECK(Keys::animated(clip(), AnimParam::GradeLiftY) && Keys::animated(clip(), AnimParam::GradeGainY));
-    ed.setGradeValues({v}, {{AnimParam::GradeGainY, 0.8}}, 100, "Gain");
+    ed.setGradeValues({v}, {{AnimParam::GradeGainY, 0.8}}, 100, "Lichter");
     CHECK_EQ(Keys::keyTimes(clip(), {AnimParam::GradeGainY}).size(), 2);
     CHECK(std::abs(Keys::valueAt(clip(), AnimParam::GradeGainY, 50) - 1.1) < 1e-9);
     undo->undo();
@@ -366,7 +366,7 @@ void testEditorAndFile(const QString& dir)
     CHECK(writeFile(lut, cube(2, [](double&, double&, double&) {})));
     ed.setGradeLut({v}, lut);
     CHECK_EQ(EffectRegistry::value(clip(), "grade", "lut").toString(), lut);
-    ed.setGradeValues({v}, {{AnimParam::GradeLiftR, 0.1}, {AnimParam::GradeLiftB, -0.05}}, 10, "Lift");
+    ed.setGradeValues({v}, {{AnimParam::GradeLiftR, 0.1}, {AnimParam::GradeLiftB, -0.05}}, 10, "Tiefen");
     ed.resetGrade({v}, {AnimParam::GradeLiftR, AnimParam::GradeLiftB}, 10, "Lift zurücksetzen");
     CHECK_EQ(Keys::staticValue(clip(), AnimParam::GradeLiftR), 0.0);
     CHECK_EQ(Keys::staticValue(clip(), AnimParam::GradeGainY), 1.4); // rest stays

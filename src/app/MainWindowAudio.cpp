@@ -93,15 +93,15 @@ void MainWindow::duckingDialog()
     if (progress.wasCanceled()) return;
     progress.setValue(1000);
     if (!ranges) {
-        QMessageBox::warning(this, T("Ducking"), T("Der Ton der Spuren ließ sich nicht messen."));
+        QMessageBox::warning(this, T("Musik absenken"), T("Der Ton der Spuren ließ sich nicht messen."));
         return;
     }
     if (ranges->isEmpty()) {
-        QMessageBox::information(this, T("Ducking"), T("Auf den gewählten Spuren ist kein Ton über der Schwelle."));
+        QMessageBox::information(this, T("Musik absenken"), T("Auf den gewählten Spuren ist kein Ton über dem Threshold."));
         return;
     }
     const int ducked = m_editor->duck(dlg.musicIds(), *ranges, params);
-    statusBar()->showMessage(T("Ducking: %1 Clips abgesenkt").arg(ducked), 5000);
+    statusBar()->showMessage(T("Absenken: %1 Clips abgesenkt").arg(ducked), 5000);
 }
 
 void MainWindow::fitMusicDialog()

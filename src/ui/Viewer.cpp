@@ -306,8 +306,8 @@ QToolButton* Viewer::addViewAction(QAction* action, ViewIcon icon)
     b->setAutoRaise(true);
     b->setFocusPolicy(Qt::NoFocus);
     b->setToolTip(icon == ViewIcon::Large
-                      ? T("Großer Viewer: Panels ausblenden, das Bild bekommt ihren Platz (Esc: zurück)")
-                      : T("Viewer im Vollbild: nur das Bild auf dem ganzen Bildschirm (Esc: zurück)"));
+                      ? T("Große Vorschau: Bereiche ausblenden, das Bild bekommt ihren Platz (Esc: zurück)")
+                      : T("Vorschau im Vollbild: nur das Bild auf dem ganzen Bildschirm (Esc: zurück)"));
     // The action decides (it may refuse); the button only shows its state
     connect(b, &QToolButton::clicked, action, [b, action] {
         b->setChecked(action->isChecked());
@@ -344,7 +344,7 @@ void Viewer::addZoomActions(const QList<QAction*>& actions)
     b->setPopupMode(QToolButton::InstantPopup);
     b->setAutoRaise(true);
     b->setFocusPolicy(Qt::NoFocus);
-    b->setToolTip(T("Zoom des Viewers (Strg+Mausrad im Bild, mittlere Maustaste verschiebt)"));
+    b->setToolTip(T("Zoom der Vorschau (Strg+Mausrad im Bild, mittlere Maustaste verschiebt)"));
     b->setStyleSheet(QString("QToolButton { color: %1; padding: 0 4px; } QToolButton::menu-indicator { image: none; }")
                          .arg(Theme::textDim.name()));
     auto* menu = new QMenu(b);

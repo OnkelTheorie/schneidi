@@ -50,8 +50,8 @@ bool footageChanged(const Timeline& tl, const QVector<Clip>& measured)
 // Status text for the overlays a whole-timeline reframe left alone
 QString overlayNote(int n)
 {
-    return n == 1 ? T("1 Overlay (kleineres Bild auf einer oberen Spur, z. B. Webcam) bleibt an seinem Platz im Bild.")
-                  : T("%1 Overlays (kleinere Bilder auf oberen Spuren, z. B. Webcam) bleiben an ihrem Platz im Bild.").arg(n);
+    return n == 1 ? T("1 Einblendung (kleineres Bild auf einer oberen Spur, z. B. Webcam) bleibt an seinem Platz im Bild.")
+                  : T("%1 Einblendungen (kleinere Bilder auf oberen Spuren, z. B. Webcam) bleiben an ihrem Platz im Bild.").arg(n);
 }
 
 } // namespace
@@ -109,7 +109,7 @@ void MainWindow::autoReframe()
     QVector<int> overlays; // left out of a whole timeline (nothing selected)
     const QVector<int> ids = m_editor->reframeTargets(m_editor->clipIdsOf(m_selection->ids()), &overlays);
     if (ids.isEmpty()) {
-        statusBar()->showMessage(T("Auto-Reframe: keine Video-Clips (Titel, Compound- und Multicam-Clips bleiben, wie sie sind)"), 6000);
+        statusBar()->showMessage(T("Auto-Reframe: keine Video-Clips (Titel, Verbund- und Multicam-Clips bleiben, wie sie sind)"), 6000);
         return;
     }
     QVector<Clip> clips;

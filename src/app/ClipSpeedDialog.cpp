@@ -50,7 +50,7 @@ ClipSpeedDialog::ClipSpeedDialog(const Editor::Retime& current, int clipLength, 
     m_freeze->setChecked(current.freeze);
     m_pitch = new QCheckBox(T("Tonhöhe halten"));
     m_pitch->setChecked(current.keepPitch);
-    m_ripple = new QCheckBox(T("Nachfolgende Clips verschieben (Ripple)"));
+    m_ripple = new QCheckBox(T("Nachfolgende Clips verschieben (mit Nachrücken)"));
     m_ripple->setChecked(true);
 
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);

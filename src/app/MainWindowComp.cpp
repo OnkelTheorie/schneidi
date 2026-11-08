@@ -66,7 +66,7 @@ void MainWindow::applyRecipe(const QVector<int>& ids, const QString& recipe)
 {
     if (CompUi::applyRecipeAsking(this, m_editor, ids, recipe).isNull()) return;
     const std::optional<CompRecipe> r = CompRecipes::find(recipe);
-    statusBar()->showMessage(T("Rezept „%1“ angewendet – die Werte stellst du auf der Comp-Seite ein")
+    statusBar()->showMessage(T("Rezept „%1“ angewendet – die Werte stellst du auf der Seite Compositing ein")
                                  .arg(r ? CompRecipes::shownName(*r) : recipe), 6000);
 }
 

@@ -381,7 +381,7 @@ void MainWindow::saveEffectPreset()
     }
     if (!skipped.isEmpty())
         QMessageBox::information(this, T("Effekte als Preset speichern"),
-                                 T("Nicht im Preset (Color-Seite bzw. Plugin fehlt): %1").arg(skipped.join(", ")));
+                                 T("Nicht im Preset (Seite Farbe bzw. Plugin fehlt): %1").arg(skipped.join(", ")));
 }
 
 bool MainWindow::openProject(const QString& path)
@@ -441,7 +441,7 @@ bool MainWindow::applyLoaded(ProjectData data, const QString& path, bool ask)
                         T("%1 Effekt(e) sind nicht verfügbar und werden übersprungen:").arg(fx.size()),
                         QMessageBox::Ok, this);
         box.setInformativeText(fx.mid(0, 15).join('\n') + (fx.size() > 15 ? "\n…" : "") + "\n\n"
-                               + T("Sie bleiben mit ihren Werten im Projekt; der Inspector zeigt sie an."));
+                               + T("Sie bleiben mit ihren Werten im Projekt; der Inspektor zeigt sie an."));
         box.exec();
     }
 

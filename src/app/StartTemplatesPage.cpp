@@ -235,7 +235,7 @@ SaveStartTemplateDialog::SaveStartTemplateDialog(const StartTemplate& t, QWidget
     summary->setTextFormat(Qt::PlainText);
     wl->addWidget(summary);
     wl->addWidget(hint(T("Aus diesem Projekt: Format, die Spuren der offenen Timeline mit Namen, Farben, Zuständen und "
-                         "Mixer (ohne Clips), Master und die eigenen Import-Vorgaben des Projekts. Ob der erste Clip "
+                         "Mischpult (ohne Clips), Master und die eigenen Import-Vorgaben des Projekts. Ob der erste Clip "
                          "das Format noch ändern darf, steht in den Projekteinstellungen.")));
     lay->addWidget(what);
 

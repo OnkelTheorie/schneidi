@@ -141,7 +141,7 @@ void testCore()
     CHECK(p.removeMedia({D}, false));
     CHECK_EQ(paths(p), (QStringList{A, B, C}));
     CHECK_EQ(undo->count(), 1);
-    CHECK_EQ(undo->undoText(), T("„%1“ aus dem Media Pool entfernen").arg("d.mp4"));
+    CHECK_EQ(undo->undoText(), T("„%1“ aus dem Medienpool entfernen").arg("d.mp4"));
     CHECK(p.isModified());
     undo->undo();
     CHECK_EQ(json(p), start);
@@ -151,7 +151,7 @@ void testCore()
     CHECK(p.removeMedia({A, B, C}, true));
     CHECK_EQ(paths(p), QStringList{D});
     CHECK_EQ(undo->count(), 1);
-    CHECK_EQ(undo->undoText(), T("%1 Clips aus dem Media Pool entfernen").arg(3));
+    CHECK_EQ(undo->undoText(), T("%1 Clips aus dem Medienpool entfernen").arg(3));
     CHECK_EQ(clipsOf(p, A) + clipsOf(p, B) + clipsOf(p, C), 0);
     for (const Sequence& s : p.sequences())
         for (const auto* tracks : {&s.timeline.video, &s.timeline.audio})
@@ -355,7 +355,7 @@ void testPool()
     pool.setSaveSettings(false);
     InputBindings& b = InputBindings::instance();
     for (const MediaPool::KeyAction& k : pool.keyActions())
-        b.registerScopedAction(k.action, k.id, T("Media Pool"), k.defaultKey, k.scope, k.defaultKey2);
+        b.registerScopedAction(k.action, k.id, T("Medienpool"), k.defaultKey, k.scope, k.defaultKey2);
     CHECK_EQ(b.inputs("pool_remove_clips"), QStringList({"Del", "Backspace"}));
     window.resize(700, 400);
     pool.resize(700, 400);
@@ -426,7 +426,7 @@ void testPool()
             CHECK(g_question.isEmpty());
             CHECK(!q.sequence(2) && !q.mediaInfo(A));
             CHECK_EQ(q.undoStack()->count(), 1);
-            CHECK_EQ(q.undoStack()->undoText(), T("Aus dem Media Pool entfernen"));
+            CHECK_EQ(q.undoStack()->undoText(), T("Aus dem Medienpool entfernen"));
             q.undoStack()->undo();
             CHECK(q.sequence(2) && q.mediaInfo(A));
         }

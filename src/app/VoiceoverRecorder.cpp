@@ -145,7 +145,7 @@ bool VoiceoverRecorder::stop(QString* error)
     else if (frames <= 0) problem = T("Nichts aufgenommen.");
     else if (!m_import(path)) problem = T("Aufnahme nicht lesbar: %1").arg(QDir::toNativeSeparators(path));
     else placed = m_editor->placeRecording(path, m_armed, fileStart, m_from) != 0;
-    if (written && frames > 0 && !placed && problem.isEmpty()) problem = T("Aufnahme liegt nur im Media Pool.");
+    if (written && frames > 0 && !placed && problem.isEmpty()) problem = T("Aufnahme liegt nur im Medienpool.");
     if (error) *error = problem;
     emit finished(path, placed, problem);
     m_stopping = false;

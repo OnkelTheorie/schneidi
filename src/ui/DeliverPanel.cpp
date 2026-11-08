@@ -207,7 +207,7 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
     // Also with a graphics card encoder: it only compresses, decoding and computing the frames stays on the CPU
     m_threads->setToolTip(T("Wie viele Threads (logische Prozessoren) die Bilder dekodieren und berechnen. Gilt auch mit "
                           "Grafikkarten-Encoder: Die Grafikkarte komprimiert nur, Dekodieren, Effekte und Zusammensetzen "
-                          "macht der Prozessor. Weniger = der Rechner bleibt nebenbei flüssiger. Mit Green Screen wird "
+                          "macht der Prozessor. Weniger = der Rechner bleibt nebenbei flüssiger. Mit Greenscreen wird "
                           "trotzdem nur ein Bild nach dem anderen berechnet."));
     connect(m_threads, qOverload<int>(&QComboBox::currentIndexChanged), this,
             [this] { Exporter::setSavedThreads(m_threads->currentData().toInt()); });
@@ -242,7 +242,7 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
     form->addRow(T("Audio-Bittiefe"), m_audioBits);
     form->addRow(T("Untertitel"), m_subtitles);
     form->addRow(QString(), m_embed);
-    form->addRow(T("Smart Render"), m_smart);
+    form->addRow(T("Schnellexport"), m_smart);
     form->addRow(T("Prüfen"), m_review);
     form->addRow(T("Bereich"), m_range);
     form->addRow(T("CPU-Threads"), m_threads);
@@ -789,7 +789,7 @@ void DeliverPanel::prepareFix(const QVector<ExportCheck::Issue>& sound, double i
         what << T("Master %1%2 dB").arg(fix.change > 0 ? "+" : "")
                     .arg(QString::number(fix.change, 'f', 1).replace('.', I18n::decimalPoint()));
     m_fixBtn->setText(T("Beheben: %1").arg(what.join(", ")));
-    m_fixBtn->setToolTip(T("Ein Rückgängig-Schritt im Mixer: %1. Danach wird neu geprüft.").arg(what.join(", ")));
+    m_fixBtn->setToolTip(T("Ein Rückgängig-Schritt im Mischpult: %1. Danach wird neu geprüft.").arg(what.join(", ")));
     m_fix = [fix](Timeline& t) { ExportCheck::apply(fix, t); };
     m_fixSequence = m_project->currentSequence();
     m_fixBtn->show();

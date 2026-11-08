@@ -136,7 +136,7 @@ void Inspector::buildSubtitlePage(QVBoxLayout* page)
         cue.grid->addWidget(rowLabel(labels[which]), cue.rows, 0);
         cue.grid->addWidget(edit, cue.rows++, 1, Qt::AlignLeft);
     }
-    auto* add = new QPushButton(T("Neuer Untertitel am Playhead"));
+    auto* add = new QPushButton(T("Neuer Untertitel am Abspielkopf"));
     add->setFocusPolicy(Qt::NoFocus);
     connect(add, &QPushButton::clicked, this, [this] {
         int track = -1;

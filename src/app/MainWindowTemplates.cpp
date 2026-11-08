@@ -34,7 +34,7 @@ bool MainWindow::newProjectFromContentTemplate(const ContentTemplate& t)
     ProjectData data;
     QString error;
     if (!TemplateLibrary::load(t, &data, &error)) {
-        QMessageBox::warning(this, T("Neu aus Vorlage"), T("Die Vorlage „%1“ ließ sich nicht öffnen:\n%2").arg(t.name, error));
+        QMessageBox::warning(this, T("Neu aus Vorlage wählen"), T("Die Vorlage „%1“ ließ sich nicht öffnen:\n%2").arg(t.name, error));
         return false;
     }
     // A new project like a copy: no template of its own, unsaved (saving asks where). Until then it uses the
@@ -43,7 +43,7 @@ bool MainWindow::newProjectFromContentTemplate(const ContentTemplate& t)
     if (!applyLoaded(std::move(data), {})) return false;
     m_templateDir = t.dir;
     removeAutosave();
-    statusBar()->showMessage(T("Neues Projekt aus „%1“: Dateien aus dem Media Pool auf die Platzhalter ziehen").arg(t.name), 8000);
+    statusBar()->showMessage(T("Neues Projekt aus „%1“: Dateien aus dem Medienpool auf die Platzhalter ziehen").arg(t.name), 8000);
     return true;
 }
 
@@ -131,7 +131,7 @@ void MainWindow::saveContentTemplate()
     o.copyMedia = dlg.copyMedia();
     const QString id = TemplateLibrary::idForName(dlg.name());
     if (QFileInfo::exists(QDir(TemplateLibrary::dir()).filePath(id))) {
-        if (QMessageBox::question(this, T("Als Vorlage speichern"), T("Eine Vorlage „%1“ gibt es schon. Ersetzen?").arg(dlg.name()))
+        if (QMessageBox::question(this, T("Projekt als Vorlage mit Platzhaltern speichern"), T("Eine Vorlage „%1“ gibt es schon. Ersetzen?").arg(dlg.name()))
             != QMessageBox::Yes)
             return;
         o.replace = true;
@@ -151,7 +151,7 @@ void MainWindow::saveContentTemplate()
     QString error, code;
     const std::optional<ContentTemplate> saved = TemplateLibrary::save(data, dlg.name(), o, &error, &code);
     if (!saved) {
-        QMessageBox::warning(this, T("Als Vorlage speichern"),
+        QMessageBox::warning(this, T("Projekt als Vorlage mit Platzhaltern speichern"),
                              code == "BUSY" ? TemplateBrowserDialog::busyText()
                                             : T("Die Vorlage ließ sich nicht speichern:\n%1").arg(error));
         return;

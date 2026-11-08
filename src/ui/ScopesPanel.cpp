@@ -197,15 +197,15 @@ private:
 ScopesPanel::ScopesPanel(QWidget* parent) : QWidget(parent)
 {
     setObjectName("Panel");
-    auto* title = new QLabel(T("Scopes"));
+    auto* title = new QLabel(T("Messanzeigen"));
     title->setObjectName("PanelTitle");
     m_combo = new QComboBox;
-    m_combo->addItem(T("Waveform"), int(Scopes::Type::Waveform));
+    m_combo->addItem(T("Wellenform"), int(Scopes::Type::Waveform));
     m_combo->addItem(T("Parade"), int(Scopes::Type::Parade));
-    m_combo->addItem(T("RGB-Overlay"), int(Scopes::Type::Overlay));
+    m_combo->addItem(T("RGB-Überlagerung"), int(Scopes::Type::Overlay));
     m_combo->addItem(T("Vektorskop"), int(Scopes::Type::Vectorscope));
     m_combo->addItem(T("Histogramm"), int(Scopes::Type::Histogram));
-    m_combo->setToolTip(T("Art des Scopes (berechnet aus dem Vorschaubild nach der Farbkorrektur)"));
+    m_combo->setToolTip(T("Art der Messanzeige (berechnet aus dem Vorschaubild nach der Farbkorrektur)"));
     m_combo->setFocusPolicy(Qt::NoFocus);
     auto* head = new QHBoxLayout;
     head->setContentsMargins(0, 0, 8, 0);

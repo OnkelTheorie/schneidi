@@ -49,13 +49,13 @@ int main(int argc, char** argv)
     const int b1 = p.addBin(0);
     const int b2 = p.addBin(0, "  Zeug  ");
     const int sub = p.addBin(b1, "Unter");
-    CHECK_EQ(p.binName(b1), QString("Bin 1"));
+    CHECK_EQ(p.binName(b1), QString("Ordner 1"));
     CHECK_EQ(p.binName(b2), QString("Zeug"));
     CHECK_EQ(p.binName(0), QString("Master"));
     CHECK_EQ(p.childBins(0), (QVector<int>{b1, b2}));
     CHECK_EQ(p.childBins(b1), QVector<int>{sub});
     CHECK(p.binInside(sub, b1) && p.binInside(sub, 0) && !p.binInside(b1, sub));
-    CHECK_EQ(p.binName(p.addBin(0)), QString("Bin 2")); // first free number
+    CHECK_EQ(p.binName(p.addBin(0)), QString("Ordner 2")); // first free number
     undo->undo();
     CHECK_EQ(p.bins().size(), 3);
 

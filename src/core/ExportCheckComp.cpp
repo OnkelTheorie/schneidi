@@ -70,12 +70,12 @@ QVector<Issue> comp(const Timeline& tl, int from, int to, const ProjectFormat& f
                     unused << QStringLiteral("%1 (%2)").arg(n.id).arg(n.type);
             if (!unused.isEmpty())
                 out << Issue{Severity::Info, QStringLiteral("comp_unused_input"),
-                             T("Comp-Graph: Knoten %1 erreichen die Ausgabe nicht und wirken nicht").arg(unused.join(", ")),
+                             T("Compositing-Graph: Knoten %1 erreichen die Ausgabe nicht und wirken nicht").arg(unused.join(", ")),
                              a, b, c.id};
             const double ms = compCostMs(*e, f.size());
             if (ms > kCompBudgetMs && !c.renderCache)
                 out << Issue{Severity::Info, QStringLiteral("comp_slow"),
-                             T("Comp-Graph rechnet etwa %1 ms je Bild (mehr als %2 ms): Render-Cache für diesen Clip "
+                             T("Compositing-Graph rechnet etwa %1 ms je Bild (mehr als %2 ms): Render-Cache für diesen Clip "
                                "einschalten, damit die Wiedergabe flüssig bleibt")
                                  .arg(num(ms), num(kCompBudgetMs)),
                              a, b, c.id};
