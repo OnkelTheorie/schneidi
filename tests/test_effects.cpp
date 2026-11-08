@@ -123,7 +123,7 @@ int main(int argc, char** argv)
     editor.modifyClips({vid}, "t", [](Clip& x) { std::swap(x.effects[0], x.effects[1]); });
     app.processEvents();
     CHECK(!insp.grab().isNull());
-    // Effects Library: Open FX -> Filter
+    // Effects Library: Videoeffekte -> Filter
     EffectsLibrary lib;
     lib.resize(420, 260);
     auto* tree = lib.findChild<QTreeWidget*>();

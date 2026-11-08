@@ -570,7 +570,7 @@ int main(int argc, char** argv)
     }
 
     // Inspector (stabilization state, border choice with labels; noise reduction in the Audio tab) and Effects
-    // Library (Audio FX). Pictures: STABILIZE_DUMP=<folder> build-tests/tests/test_stabilize_denoise
+    // Library (Audioeffekte). Pictures: STABILIZE_DUMP=<folder> build-tests/tests/test_stabilize_denoise
     {
         const QString dump = QString::fromLocal8Bit(qgetenv("STABILIZE_DUMP"));
         Project project;
@@ -626,7 +626,7 @@ int main(int argc, char** argv)
             for (int i = 0; i < list->count(); ++i) out << list->item(i)->text();
             return out;
         };
-        const auto audioFx = tree->findItems("Audio FX", Qt::MatchExactly | Qt::MatchRecursive);
+        const auto audioFx = tree->findItems("Audioeffekte", Qt::MatchExactly | Qt::MatchRecursive);
         if (CHECK(audioFx.size() == 1)) {
             tree->setCurrentItem(audioFx.first());
             CHECK(names().contains(T("Rauschunterdrückung")) && !names().contains(T("Stabilisieren")));
