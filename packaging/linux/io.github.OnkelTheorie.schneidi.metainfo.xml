@@ -109,6 +109,13 @@
   </requires>
 
   <releases>
+    <release version="0.19.1" date="2026-11-08">
+      <description>
+        <p>Bug fix release: switching the large viewer off brings back the panel sizes exactly again; the mixer beside
+        the timeline came back a few pixels narrower each time.</p>
+      </description>
+      <url type="details">https://github.com/OnkelTheorie/schneidi/releases/tag/v0.19.1</url>
+    </release>
     <release version="0.19.0" date="2026-11-08">
       <description>
         <p>Compositing Update: a new Comp page with a layer view and a node canvas, masks (shapes, curves, gradients),

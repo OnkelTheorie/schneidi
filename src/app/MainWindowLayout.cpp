@@ -424,7 +424,18 @@ void MainWindow::setViewerLarge(bool on)
             for (const QPointer<QWidget>& w : was.hidden)
                 if (w) w->show();
             // Scroll positions too: a panel laid out at another size on the way back loses them (the Inspector)
-            auto restore = [sizes = was.sizes, scrolls = was.scrolls] {
+            // Outer splitters first: an inner one restored before its parent has its width back scales its sizes to
+            // the width it has then and loses pixels to rounding
+            auto depth = [](QWidget* w) {
+                int d = 0;
+                for (; w; w = w->parentWidget()) ++d;
+                return d;
+            };
+            auto sizes = was.sizes;
+            std::stable_sort(sizes.begin(), sizes.end(), [&depth](const auto& a, const auto& b) {
+                return depth(a.first) < depth(b.first);
+            });
+            auto restore = [sizes, scrolls = was.scrolls] {
                 for (const auto& [splitter, list] : sizes)
                     if (splitter) splitter->setSizes(list);
                 for (const auto& [bar, value] : scrolls)
@@ -447,12 +458,16 @@ void MainWindow::setViewerLarge(bool on)
                 for (QWidget* w = k->parentWidget(); w && w != this; w = w->parentWidget())
                     if (auto* s = qobject_cast<QSplitter*>(w); s && !splitters.contains(s)) splitters << s;
             m_large.active = true;
+            // Every splitter's sizes before any of them changes: giving an outer splitter's room to the viewer's side
+            // widens the inner ones at once (the timeline's splitter beside the mixer), their sizes then are not the
+            // ones to come back to
+            QHash<QSplitter*, QList<int>> original;
+            for (QSplitter* s : splitters) original.insert(s, s->sizes());
             QSize viewer = m_viewer->size(); // its size once the room is given (the layout follows later)
             QSplitter* shared = nullptr;     // the splitter with the viewer above the timeline
             int viewerAt = -1, timelineAt = -1;
             for (QSplitter* s : splitters) {
-                const QList<int> before = s->sizes();
-                QList<int> after = before;
+                QList<int> after = s->sizes();
                 int freed = 0, gainer = -1, timelineIndex = -1;
                 for (int i = 0; i < s->count(); ++i) {
                     QWidget* w = s->widget(i);
@@ -470,7 +485,7 @@ void MainWindow::setViewerLarge(bool on)
                     std::tie(shared, viewerAt, timelineAt) = std::tuple(s, gainer, timelineIndex);
                 if (gainer < 0) gainer = timelineIndex;
                 if (freed == 0 || gainer < 0) continue;
-                m_large.sizes.append({s, before});
+                m_large.sizes.append({s, original.value(s)});
                 after[gainer] += freed;
                 s->setSizes(after);
                 if (s->widget(gainer)->isAncestorOf(m_viewer) || s->widget(gainer) == m_viewer)
@@ -488,7 +503,7 @@ void MainWindow::setViewerLarge(bool on)
                 if (take > 0) {
                     if (std::none_of(m_large.sizes.begin(), m_large.sizes.end(),
                                      [shared](const auto& entry) { return entry.first == shared; }))
-                        m_large.sizes.append({shared, sizes});
+                        m_large.sizes.append({shared, original.value(shared)});
                     sizes[timelineAt] -= take;
                     sizes[viewerAt] += take;
                     shared->setSizes(sizes);
