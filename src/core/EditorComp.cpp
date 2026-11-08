@@ -135,6 +135,11 @@ int Editor::addCompNode(int clipId, const QString& type, const QVariantMap& valu
         if (g.isEmpty()) { // a fresh graph starts with the clip's own picture as its output
             g.nodes << CompNode{1, QStringLiteral("clip"), {}};
             g.out = 1;
+            if (type == QLatin1String("clip")) { // that is the node asked for: one, not "clip -> clip"
+                for (auto it = values.begin(); it != values.end(); ++it) e.params[CompGraph::paramKey(1, it.key())] = it.value();
+                added = 1;
+                return true;
+            }
         }
         int from = after;
         if (from == 0) from = g.out;

@@ -536,6 +536,18 @@ int main(int argc, char** argv)
             while (p.undoStack()->index() > steps) p.undoStack()->undo();
             CHECK(Check::dump(p.timeline()) == before);
         }
+        // A clip without a graph: adding a "clip" node gives one clip node (the output), not "clip -> clip"
+        {
+            const int steps0 = p.undoStack()->index();
+            CHECK(ed.removeComp({id}).contains(id));
+            CHECK_EQ(ed.addCompNode(id, "clip", {}, 0, QString(), kinds), 1); // a clip node has no input
+            const Clip* c = TimelineOps::findClip(p.timeline(), id);
+            CompGraph g;
+            if (CHECK(c && Comp::graphOf(*EffectRegistry::instance(*c, Comp::kEffectId), &g)))
+                CHECK(g.nodes.size() == 1 && g.out == 1 && g.links.isEmpty());
+            while (p.undoStack()->index() > steps0) p.undoStack()->undo();
+            CHECK(Check::dump(p.timeline()) == before);
+        }
         // A graph with a newer version's node kind stays editable (only new nodes must be known)
         ed.modifyClips({id}, "future", [&](Clip& c) {
             EffectInstance* e = EffectRegistry::instance(c, Comp::kEffectId);
