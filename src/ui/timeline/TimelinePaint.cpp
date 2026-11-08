@@ -524,6 +524,14 @@ void TimelineView::drawClip(QPainter& p, const QRect& r, const Clip& c, TrackKin
         if (c.isCompound()) drawCompoundBody(p, bodyRect, base);
         else if (kind == TrackKind::Video && !c.isTitle()) drawFilmstrip(p, bodyRect, c); // Title: color only
         else if (kind == TrackKind::Audio) drawWaveform(p, bodyRect, c, spans, color);
+        // Disabled (D): pictures and waveform dimmed with a hatch, so it reads "off" at a glance (the gray bar alone
+        // was missed next to a selection's outline)
+        if (!c.enabled) {
+            p.fillRect(bodyRect, QColor(0, 0, 0, 150));
+            p.setBrush(QBrush(QColor(255, 255, 255, 40), Qt::BDiagPattern));
+            p.setPen(Qt::NoPen);
+            p.drawRect(bodyRect);
+        }
         p.setRenderHint(QPainter::Antialiasing);
     }
     // Volume line like in DaVinci (for dragging up/down)

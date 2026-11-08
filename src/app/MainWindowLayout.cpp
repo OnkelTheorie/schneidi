@@ -320,6 +320,7 @@ void MainWindow::showPage(Page page)
         m_pages->setCurrentWidget(m_deliverPage);
         break;
     case Page::Color:
+        if (before != Page::Color) playheadInto(selectedVideoClip()); // the viewer shows the clip being graded
         m_colorPage->insertWidget(0, m_viewer);
         m_colorPage->insertWidget(1, m_timeline);
         m_colorPage->setStretchFactor(0, 1);
@@ -329,9 +330,11 @@ void MainWindow::showPage(Page page)
     case Page::Comp:
         // Built on the first showing; the selected video clip is opened (openComp sets its own after this)
         ensureCompPage();
-        if (before != Page::Comp) // the clip under the playhead (a selected one there first)
+        if (before != Page::Comp) { // the selected clip (the playhead goes into it), else the one under the playhead
+            playheadInto(selectedVideoClip());
             if (const int id = compClipAt(m_timeline->view()->playhead()); id && id != m_compPage->clip())
                 m_compPage->setClip(id);
+        }
         m_compPage->top()->insertWidget(0, m_viewer);
         applySizes(m_compPage->top(), {500, 420});
         m_compPage->main()->setStretchFactor(0, 1);

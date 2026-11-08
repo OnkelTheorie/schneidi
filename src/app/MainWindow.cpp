@@ -57,6 +57,8 @@
 #include "ui/MediaPool.h"
 #include "ui/Viewer.h"
 #include "ui/timeline/TimelinePanel.h"
+#include "ui/comp/CompCanvas.h"
+#include "ui/comp/CompPage.h"
 #include "ui/timeline/TimelineView.h"
 
 #include <QAction>
@@ -195,6 +197,7 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
     connect(m_inspector, &Inspector::compOpenRequested, this, &MainWindow::openComp);
     connect(m_selection, &Selection::changed, this, [this] {
         if (m_keyPicker) stopKeyPick();
+        if (m_page == Page::Color) playheadInto(selectedVideoClip()); // the viewer shows the clip being graded
     });
     connect(m_engine, &Engine::positionChanged, this, [this](int f) {
         if (m_engine->timelinePositions()) m_colorPanel->setPlayhead(f);
@@ -776,6 +779,13 @@ void MainWindow::stopKeyPick()
         window->hide();
         window->deleteLater();
         activateWindow();
+        // Keys go back to the work area (graph or timeline), not to whatever Inspector field Qt picks next: typed
+        // letters there hit shortcuts (Tab after a pick opened no node search, "d" disabled the clip). Deferred: the
+        // Inspector rebuilds its rows for the new color first
+        QTimer::singleShot(0, this, [this] {
+            if (m_page == Page::Comp && m_compPage) m_compPage->canvas()->setFocus(Qt::OtherFocusReason);
+            else m_timeline->view()->setFocus(Qt::OtherFocusReason);
+        });
     }
     if (!m_keyPicker) return;
     qApp->removeEventFilter(m_keyPicker); // its Esc filter ends now, not when deleteLater gets to it

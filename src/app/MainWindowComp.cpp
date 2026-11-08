@@ -56,6 +56,7 @@ void MainWindow::ensureCompPage()
     // Another video clip selected while the page shows: its graph when it is under the playhead
     connect(m_selection, &Selection::changed, m_compPage, [this] {
         if (m_page != Page::Comp) return;
+        playheadInto(selectedVideoClip()); // the viewer shows what the page works on
         if (const int id = compClipAt(m_timeline->view()->playhead()); id && id != m_compPage->clip())
             m_compPage->setClip(id);
     });
@@ -95,16 +96,20 @@ int MainWindow::compClipAt(int frame) const
     return 0;
 }
 
+void MainWindow::playheadInto(int clipId)
+{
+    const Clip* c = clipId ? TimelineOps::findClip(m_project->timeline(), clipId) : nullptr;
+    if (!c) return;
+    const int at = m_timeline->view()->playhead();
+    if (at >= c->start && at < c->end()) return;
+    if (m_engine->mode() == Engine::Mode::Source) m_engine->showTimeline(c->start);
+    else m_engine->seek(c->start);
+}
+
 void MainWindow::openComp(int clipId)
 {
     // The page follows the playhead: it goes into the clip first (else the next frame would show another one)
-    if (const Clip* c = TimelineOps::findClip(m_project->timeline(), clipId)) {
-        const int at = m_timeline->view()->playhead();
-        if (at < c->start || at >= c->end()) {
-            if (m_engine->mode() == Engine::Mode::Source) m_engine->showTimeline(c->start);
-            else m_engine->seek(c->start);
-        }
-    }
+    playheadInto(clipId);
     if (m_page != Page::Comp) showPage(Page::Comp);
     m_compPage->setClip(clipId);
 }

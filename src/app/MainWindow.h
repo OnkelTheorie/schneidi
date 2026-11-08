@@ -69,6 +69,9 @@ public:
     // The video clip the Comp page works on at timeline frame `frame`: a selected one under it, else the topmost shown
     // one there (0 = none, a gap)
     int compClipAt(int frame) const;
+    // Comp and Color pages work on what the viewer shows: a selected clip the playhead is not in brings the playhead
+    // to its start (nothing when it is already inside)
+    void playheadInto(int clipId);
     void openCompForSelection();
     void compFromSelection();
     class CompPage* compPage() const { return m_compPage; } // nullptr until the page was shown

@@ -306,6 +306,12 @@ int main(int argc, char** argv)
             settle();
             CHECK_EQ(w.compPage()->clip(), clipId);
             CHECK(engine.position() >= startA && engine.position() < startB);
+            // Selecting another clip on the page: the playhead goes into it, the page shows it
+            w.liveSelection()->set({clip2});
+            QTest::qWait(50);
+            settle();
+            CHECK(engine.position() >= startB);
+            CHECK_EQ(w.compPage()->clip(), clip2);
         }
     }
 
