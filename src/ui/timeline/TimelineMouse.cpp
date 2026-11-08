@@ -127,8 +127,44 @@ void TimelineView::autoScrollStep()
     dragMove(pos, m_dragMods);
 }
 
+TimelineView::GapPick TimelineView::gapAt(const TrackRef& ref, double frame) const
+{
+    GapPick g;
+    const Timeline& tl = m_editor->project()->timeline();
+    if (ref.index < 0 || ref.index >= tl.tracks(ref.kind).size() || frame < 0) return g;
+    int from = 0, to = -1;
+    for (const Clip& c : tl.track(ref).clips) {
+        if (c.start <= frame && frame < c.end()) return g; // on a clip
+        if (c.end() <= frame) from = std::max(from, c.end());
+        else if (to < 0 || c.start < to) to = c.start;
+    }
+    if (to <= from) return g; // nothing after it: no gap, just the end of the track
+    g.on = true;
+    g.ref = ref;
+    g.from = from;
+    g.to = to;
+    return g;
+}
+
+bool TimelineView::closeSelectedGap()
+{
+    if (!m_gap.on) return false;
+    const GapPick g = std::exchange(m_gap, {});
+    QString why;
+    if (!m_editor->closeGap(g.ref, g.from, g.to, &why)) {
+        m_gap = g; // stays picked: lock the track and press Delete again
+        if (!why.isEmpty()) emit message(why);
+    }
+    update();
+    return true;
+}
+
 void TimelineView::mousePressEvent(QMouseEvent* e)
 {
+    if (e->button() == Qt::LeftButton && m_gap.on) {
+        m_gap = {};
+        update();
+    }
     if (e->button() != Qt::LeftButton) return;
     const QPoint pos = e->position().toPoint();
     m_pressPos = pos;
@@ -625,6 +661,12 @@ void TimelineView::mouseReleaseEvent(QMouseEvent* e)
     if (m_drag == Drag::Rubber) {
         m_drag = Drag::None;
         m_rubberBase.clear();
+        // A click (no frame drawn) into the empty part of a track between clips: that gap is picked
+        const QPoint at = e->position().toPoint();
+        if (QRect(m_pressPos, at).normalized().width() < kDragStartPx && std::abs(at.y() - m_pressPos.y()) < kDragStartPx
+            && m_pressPos.x() >= kHeaderW)
+            if (const auto row = rowAt(m_pressPos.y()); row && !isLocked(*row))
+                m_gap = gapAt(row->ref, xToFrame(m_pressPos.x()));
         updateHoverCursor(e->position().toPoint());
         update();
         return;

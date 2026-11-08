@@ -179,11 +179,17 @@ void MainWindow::buildActions()
         if (dlg.exec() == QDialog::Accepted) m_editor->pasteAttributes(dlg.attributes());
     });
     edit->addSeparator();
-    makeAction(edit, "delete", T("Löschen (Lücke bleibt)"), QKeySequence(Qt::Key_Backspace), [this] { m_editor->deleteSelection(); });
-    makeAction(edit, "delete_alt", T("Löschen (Entf)"), QKeySequence(Qt::Key_Delete), [this] { m_editor->deleteSelection(); });
-    makeAction(edit, "ripple_delete", T("Löschen mit Ripple"), QKeySequence("Shift+Del"), [this] { m_editor->rippleDeleteSelection(); });
+    // A gap picked in the timeline: every delete key closes it (DaVinci/Premiere habit), else the selection
+    const auto gapOr = [this](void (Editor::*fn)()) {
+        return [this, fn] {
+            if (!m_timeline->view()->closeSelectedGap()) (m_editor->*fn)();
+        };
+    };
+    makeAction(edit, "delete", T("Löschen (Lücke bleibt)"), QKeySequence(Qt::Key_Backspace), gapOr(&Editor::deleteSelection));
+    makeAction(edit, "delete_alt", T("Löschen (Entf)"), QKeySequence(Qt::Key_Delete), gapOr(&Editor::deleteSelection));
+    makeAction(edit, "ripple_delete", T("Löschen mit Ripple"), QKeySequence("Shift+Del"), gapOr(&Editor::rippleDeleteSelection));
     makeAction(edit, "ripple_delete_alt", T("Löschen mit Ripple (Rücktaste)"), QKeySequence("Shift+Backspace"),
-               [this] { m_editor->rippleDeleteSelection(); });
+               gapOr(&Editor::rippleDeleteSelection));
     edit->addSeparator();
     // Edits from the source Viewer like DaVinci (Edit → Insert/Overwrite/Replace/Place on Top …)
     using SE = Editor::SourceEditMode;

@@ -269,6 +269,7 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
     connect(tv, &TimelineView::dropRequested, this, &MainWindow::onDrop);
     // Drag-fill of a template placeholder: what was done, briefly
     connect(tv, &TimelineView::slotFilled, this, [this](const QString& message, bool) { statusBar()->showMessage(message, 6000); });
+    connect(tv, &TimelineView::message, this, [this](const QString& text) { statusBar()->showMessage(text, 6000); });
     // Recipe dropped on a clip: applied after the drop (it may ask for a file)
     connect(tv, &TimelineView::recipeDropped, this, [this](int clipId, const QString& recipe) {
         QTimer::singleShot(0, this, [this, clipId, recipe] { applyRecipe({clipId}, recipe); });

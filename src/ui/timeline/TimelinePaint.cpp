@@ -73,6 +73,21 @@ void TimelineView::paintEvent(QPaintEvent*)
     drawTrackDrop(p);
     drawRubber(p);
     drawRuler(p);
+    if (m_gap.on) // the picked gap: Delete closes it
+        for (const Row& row : rows())
+            if (row.ref == m_gap.ref) {
+                const int x0 = std::max(kHeaderW, int(std::lround(frameToX(m_gap.from))));
+                const int x1 = int(std::lround(frameToX(m_gap.to)));
+                if (x1 > x0) {
+                    const QRect r(x0, row.y + 1, x1 - x0, row.h - row.lane - 2);
+                    QColor fill = Theme::primary;
+                    fill.setAlpha(55);
+                    p.fillRect(r, fill);
+                    p.setPen(QPen(Theme::primary, 1));
+                    p.setBrush(Qt::NoBrush);
+                    p.drawRect(r.adjusted(0, 0, -1, -1));
+                }
+            }
     drawPlayhead(p);
     drawAiArrows(p);
 }

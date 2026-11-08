@@ -193,6 +193,10 @@ public:
     // Remove the time range [from, to) on all unlocked tracks (clips are cut at both ends); ripple = everything
     // after it moves up, otherwise a gap stays. One undo step. Used by schneidi-cli (cutting out pauses).
     void deleteRange(int from, int to, bool ripple);
+    // Closes the gap [from, to) on track `on` (a gap clicked in the timeline, then Delete): everything after it moves up
+    // on all unlocked tracks, so they stay in sync. Refused (false, *why translated) when an unlocked track has
+    // something inside that range - closing would cut it or move tracks apart (lock that track to close it anyway).
+    bool closeGap(TrackRef on, int from, int to, QString* why = nullptr);
     // Several ranges [from, to) in one undo step `text` (Transcript panel: removed words, pauses); ranges may overlap
     void deleteRanges(const QVector<QPair<int, int>>& ranges, bool ripple, const QString& text);
     // Ctrl+A: every clip and subtitle on unlocked tracks

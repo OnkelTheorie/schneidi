@@ -140,7 +140,10 @@ TimelineView::TimelineView(Editor* editor, QWidget* parent) : QWidget(parent), m
         update();
         emit viewChanged(); // only so that the scrollbar may get more room
     });
-    connect(editor->selection(), &Selection::changed, this, qOverload<>(&QWidget::update));
+    connect(editor->selection(), &Selection::changed, this, [this] {
+        if (m_gap.on && !m_editor->selection()->ids().isEmpty()) m_gap = {}; // a clip picked: Delete means the clip
+        update();
+    });
     connect(editor, &Editor::targetTracksChanged, this, qOverload<>(&QWidget::update));
     // Clip color/flags changed in the Media Pool -> redraw clips
     connect(editor->project(), &Project::poolChanged, this, qOverload<>(&QWidget::update));

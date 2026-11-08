@@ -512,6 +512,36 @@ void Editor::deleteRange(int from, int to, bool ripple)
     deleteRanges({{from, to}}, ripple, ripple ? T("Bereich löschen mit Ripple") : T("Bereich löschen"));
 }
 
+bool Editor::closeGap(TrackRef on, int from, int to, QString* why)
+{
+    const Timeline& now = m_project->timeline();
+    from = std::max(0, from);
+    if (to <= from || on.index < 0 || on.index >= now.tracks(on.kind).size()) return false;
+    for (TrackKind k : {TrackKind::Video, TrackKind::Audio}) {
+        const QVector<Track>& tracks = now.tracks(k);
+        for (int i = 0; i < tracks.size(); ++i) {
+            if (tracks[i].locked) continue;
+            for (const Clip& c : tracks[i].clips)
+                if (c.start < to && c.end() > from) {
+                    if (why)
+                        *why = T("Auf %1 liegt in der Lücke etwas – die Spur sperren, dann lässt sich die Lücke schließen")
+                                   .arg(trackShortName({k, i}));
+                    return false;
+                }
+        }
+    }
+    for (const SubtitleTrack& st : now.subtitles) {
+        if (st.locked) continue;
+        for (const SubtitleCue& cue : st.cues)
+            if (cue.start < to && cue.end > from) {
+                if (why) *why = T("In der Lücke liegt ein Untertitel – die Untertitelspur sperren, dann geht es");
+                return false;
+            }
+    }
+    m_project->edit(T("Lücke schließen"), [&](Timeline& tl) { TimelineOps::rippleTracks(tl, {{to, from - to}}, {}); });
+    return true;
+}
+
 void Editor::deleteRanges(const QVector<QPair<int, int>>& input, bool ripple, const QString& text)
 {
     const QVector<QPair<int, int>> ranges = TranscriptCut::mergeRanges(input);

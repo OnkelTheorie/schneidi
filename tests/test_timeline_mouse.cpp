@@ -102,6 +102,44 @@ void testRubber()
     CHECK(f.sel.ids() == QSet<int>{3});
 }
 
+// A click into a gap picks it (highlight); Delete closes it on all unlocked tracks - refused while another
+// unlocked track has something inside it (lock that track); a clip click drops the gap
+void testGap()
+{
+    Fixture f;
+    QString said;
+    QObject::connect(&f.tv, &TimelineView::message, [&](const QString& m) { said = m; });
+    mouse(f.tv, QEvent::MouseButtonPress, {f.x(130), 120}, Qt::LeftButton);
+    mouse(f.tv, QEvent::MouseButtonRelease, {f.x(130), 120}, Qt::NoButton);
+    CHECK(f.tv.hasGap());
+    // V2's clip (50..120) reaches into V1's gap 100..150: not closed, a note why, the gap stays picked
+    CHECK(f.tv.closeSelectedGap());
+    CHECK(said.contains("V2"));
+    CHECK_EQ(f.project.timeline().video[0].clips[1].start, 150);
+    CHECK(f.tv.hasGap());
+    // V2 locked: closed in one undo step, V1's later clip moves up, the locked V2 stays
+    f.editor.toggleTrackLock({TrackKind::Video, 1});
+    const int steps = f.project.undoStack()->index();
+    CHECK(f.tv.closeSelectedGap());
+    CHECK_EQ(f.project.timeline().video[0].clips[1].start, 100);
+    CHECK_EQ(f.project.timeline().video[1].clips[0].start, 50);
+    CHECK_EQ(f.project.undoStack()->index(), steps + 1);
+    CHECK(!f.tv.hasGap());
+    f.project.undoStack()->undo();
+    CHECK_EQ(f.project.timeline().video[0].clips[1].start, 150);
+    // No gap behind the last clip; a clip click drops a picked gap; nothing picked = Delete is not taken
+    mouse(f.tv, QEvent::MouseButtonPress, {f.x(400), 120}, Qt::LeftButton);
+    mouse(f.tv, QEvent::MouseButtonRelease, {f.x(400), 120}, Qt::NoButton);
+    CHECK(!f.tv.hasGap());
+    mouse(f.tv, QEvent::MouseButtonPress, {f.x(130), 120}, Qt::LeftButton);
+    mouse(f.tv, QEvent::MouseButtonRelease, {f.x(130), 120}, Qt::NoButton);
+    CHECK(f.tv.hasGap());
+    mouse(f.tv, QEvent::MouseButtonPress, {f.x(50), 120}, Qt::LeftButton);
+    mouse(f.tv, QEvent::MouseButtonRelease, {f.x(50), 120}, Qt::NoButton);
+    CHECK(!f.tv.hasGap());
+    CHECK(!f.tv.closeSelectedGap());
+}
+
 void testAutoScroll()
 {
     Fixture f;
@@ -532,6 +570,7 @@ int main(int argc, char** argv)
     I18n::install("de");
     Theme::apply(app);
     testRubber();
+    testGap();
     testAutoScroll();
     testTrackMove();
     testSelectFromPlayhead();

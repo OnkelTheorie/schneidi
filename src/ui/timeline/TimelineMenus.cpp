@@ -209,6 +209,15 @@ void TimelineView::contextMenuEvent(QContextMenuEvent* e)
             emit clipMenuRequested(e->globalPos());
         } else if (e->pos().y() >= kRulerH && !rowAt(e->pos().y())) {
             emptyAreaMenu(e->globalPos()); // empty area below/between the tracks
+        } else if (const auto row = rowAt(e->pos().y()); row && !isLocked(*row)) {
+            // A gap between clips: pick it and offer to close it
+            const GapPick g = gapAt(row->ref, xToFrame(e->pos().x()));
+            if (!g.on) return;
+            m_gap = g;
+            update();
+            QMenu menu(this);
+            connect(menu.addAction(T("Lücke schließen")), &QAction::triggered, this, [this] { closeSelectedGap(); });
+            menu.exec(e->globalPos());
         }
         return;
     }
