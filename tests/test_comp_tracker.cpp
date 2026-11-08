@@ -339,7 +339,7 @@ void testNode()
     CHECK_EQ(trackerValue(fresh, "scale"), 1.0);
     CHECK_EQ(trackerValue(fresh, "angle"), 0.0);
     CHECK_EQ(trackerValue({}, "x"), 0.5);
-    const QVariantMap done{{"ax", 0.3}, {"x", 0.42}, {"y", 0.1}, {"angle", 12.5}};
+    const QVariantMap done{{"mode", "two"}, {"ax", 0.3}, {"x", 0.42}, {"y", 0.1}, {"angle", 12.5}}; // two points turn
     CHECK_EQ(trackerValue(done, "x"), 0.42);
     CHECK_EQ(trackerValue(done, "y"), 0.1);
     CHECK_EQ(trackerValue(done, "angle"), 12.5);
@@ -496,12 +496,24 @@ void testPortraitClip(const QString& media)
 
 } // namespace
 
+// One point moves followers only: size/turn keys an earlier two-point run left behind do not scale or turn them
+void testPointIgnoresScale()
+{
+    const auto has = [](const QString&) { return true; };
+    const auto value = [](const QString& k) { return k == QLatin1String("scale") ? 15.0 : k == QLatin1String("angle") ? 30.0 : 0.4; };
+    CHECK_EQ(::Comp::followValue("scale", "point", has, value), 1.0);
+    CHECK_EQ(::Comp::followValue("angle", "point", has, value), 0.0);
+    CHECK_EQ(::Comp::followValue("x", "point", has, value), 0.4);
+    CHECK_EQ(::Comp::followValue("scale", "two", has, value), 15.0);
+}
+
 int main(int argc, char** argv)
 {
     Check::initEnv();
     QGuiApplication app(argc, argv);
     testNode();
     testPoint();
+    testPointIgnoresScale();
     testTwoPoints();
     testOcclusion();
     testOutlier();
