@@ -542,6 +542,17 @@ bool Editor::closeGap(TrackRef on, int from, int to, QString* why)
                 return false;
             }
     }
+    // A clip that moves up but is linked to one that stays (its sound on a locked track) would come apart from it
+    QSet<int> staying, moving;
+    for (TrackKind k : {TrackKind::Video, TrackKind::Audio})
+        for (const Track& t : now.tracks(k))
+            for (const Clip& c : t.clips)
+                if (c.linkId) (!t.locked && c.start >= to ? moving : staying).insert(c.linkId);
+    if (staying.intersects(moving)) {
+        if (why) *why = T("Hinter der Lücke liegt ein Clip, dessen Ton (oder Bild) auf einer gesperrten Spur liegt – er würde "
+                          "auseinanderlaufen; die Spur entsperren");
+        return false;
+    }
     m_project->edit(T("Lücke schließen"), [&](Timeline& tl) { TimelineOps::rippleTracks(tl, {{to, from - to}}, {}); });
     return true;
 }

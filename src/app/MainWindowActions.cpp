@@ -194,7 +194,7 @@ void MainWindow::buildActions()
     edit->addSeparator();
     // Edits from the source Viewer like DaVinci (Edit → Insert/Overwrite/Replace/Place on Top …)
     using SE = Editor::SourceEditMode;
-    makeAction(edit, "insert_clip", T("Clip einfügen"), QKeySequence(Qt::Key_F9), [this] { sourceEdit(SE::Insert); });
+    makeAction(edit, "insert_clip", T("Am Abspielkopf einfügen"), QKeySequence(Qt::Key_F9), [this] { sourceEdit(SE::Insert); });
     makeAction(edit, "overwrite_clip", T("Clip überschreiben"), QKeySequence(Qt::Key_F10), [this] { sourceEdit(SE::Overwrite); });
     makeAction(edit, "replace_clip", T("Clip ersetzen"), QKeySequence(Qt::Key_F11), [this] { sourceEdit(SE::Replace); });
     // Target tracks like DaVinci (Destination Controls): Alt+1…8 video, Ctrl+Alt+1…8 audio; also click on the track label
@@ -211,7 +211,7 @@ void MainWindow::buildActions()
                    [this, i] { m_editor->setTargetTracks(m_editor->targetVideoTrack(), i); });
     }
     makeAction(edit, "fit_to_fill", T("Auf Länge einpassen"), QKeySequence("Shift+F11"), [this] { sourceEdit(SE::FitToFill); });
-    makeAction(edit, "place_on_top", T("Oben platzieren"), QKeySequence(Qt::Key_F12), [this] { sourceEdit(SE::PlaceOnTop); });
+    makeAction(edit, "place_on_top", T("Am Abspielkopf auf freie Spur legen"), QKeySequence(Qt::Key_F12), [this] { sourceEdit(SE::PlaceOnTop); });
     makeAction(edit, "ripple_overwrite", T("Überschreiben mit Nachrücken"), QKeySequence("Shift+F10"),
                [this] { sourceEdit(SE::RippleOverwrite); });
     makeAction(edit, "append_at_end", T("Am Ende der Timeline anhängen"), QKeySequence("Shift+F12"),
@@ -495,7 +495,7 @@ void MainWindow::buildActions()
     makeAction(timeline, "speech", T("Sprechertext…"), QKeySequence(), [this] { speechDialog(); });
 
     QMenu* play = menuBar()->addMenu(T("&Wiedergabe"));
-    makeAction(play, "play_pause", T("Play/Pause"), QKeySequence(Qt::Key_Space), [this] { m_engine->togglePlay(); });
+    makeAction(play, "play_pause", T("Abspielen/Pause"), QKeySequence(Qt::Key_Space), [this] { m_engine->togglePlay(); });
     makeAction(play, "shuttle_back", T("Rückwärts (J)"), QKeySequence("J"), [this] { shuttle(-1); });
     makeAction(play, "stop", T("Stopp (K)"), QKeySequence("K"), [this] { m_engine->pause(); });
     makeAction(play, "shuttle_fwd", T("Vorwärts (L)"), QKeySequence("L"), [this] { shuttle(1); });

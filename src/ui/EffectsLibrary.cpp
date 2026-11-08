@@ -505,9 +505,9 @@ EffectsLibrary::EffectsLibrary(QWidget* parent) : QWidget(parent)
     add(toolbox, T("Audioübergänge"), AudioTransitions);
     add(toolbox, T("Titel-Vorlagen"), Titles);
     // Open FX → Filters (like DaVinci: the ResolveFX filters live there)
-    auto* openFx = add(m_categories, QStringLiteral("Open FX"), OpenFx);
-    add(openFx, T("Filter"), Filters);
-    add(m_categories, QStringLiteral("Audio FX"), AudioFx)->setToolTip(0, T("Effekte für Audioclips"));
+    auto* openFx = add(m_categories, T("Videoeffekte"), OpenFx);
+    add(openFx, T("Filter"), Filters); // "Filter" is German too
+    add(m_categories, T("Audioeffekte"), AudioFx)->setToolTip(0, T("Effekte für Audioclips"));
     auto* sounds = add(m_categories, T("Klänge"), SoundsAll);
     sounds->setToolTip(0, T("Effekt-Klänge: Doppelklick = anhören, in die Timeline ziehen = an dieser Stelle einfügen"));
     add(sounds, T("Mitgeliefert"), BuiltinSounds);

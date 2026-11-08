@@ -67,7 +67,7 @@ CompPage::CompPage(Editor* editor, QWidget* parent) : QWidget(parent), m_editor(
     m_create = new QPushButton(T("Compositing anlegen"));
     m_create->setObjectName("comp_create");
     m_create->setToolTip(T("Gibt dem Clip einen Graphen: sein Bild geht unverändert zum Ausgang"));
-    m_showNode = toggle("comp_view_node", T("Knoten zeigen"), T("Die Vorschau zeigt das Bild des gewählten Knotens statt "
+    m_showNode = toggle("comp_view_node", T("Bild des Knotens"), T("Die Vorschau zeigt das Bild des gewählten Knotens statt "
                                                                 "des Ausgangs (Doppelklick auf einen Knoten)"));
     m_matte = toggle("comp_view_matte", T("Alphamaske"), T("Die Vorschau zeigt die Deckkraft (Alpha) als Grau"));
     auto* fit = m_fit = new QToolButton;

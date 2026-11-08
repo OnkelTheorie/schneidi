@@ -162,6 +162,21 @@ void testGap()
     CHECK(f.tv.closeSelectedGap());
     CHECK(said.contains("V1"));
     CHECK_EQ(f.project.timeline().video[0].clips[1].start, 150);
+    f.editor.toggleTrackLock({TrackKind::Video, 0});
+    // A clip behind the gap whose linked sound lies on a locked track: refused (they would come apart)
+    f.project.edit("link", [](Timeline& tl) {
+        tl.video[0].clips[1].linkId = 7;
+        Clip a = tl.audio[0].clips[0];
+        a.id = 20, a.start = 150, a.linkId = 7;
+        tl.audio[0].clips << a;
+    });
+    f.editor.toggleTrackLock({TrackKind::Audio, 0});
+    mouse(f.tv, QEvent::MouseButtonPress, {f.x(130), 120}, Qt::LeftButton);
+    mouse(f.tv, QEvent::MouseButtonRelease, {f.x(130), 120}, Qt::NoButton);
+    said.clear();
+    CHECK(f.tv.closeSelectedGap());
+    CHECK(said.contains("gesperrten Spur"));
+    CHECK_EQ(f.project.timeline().video[0].clips[1].start, 150);
 }
 
 void testAutoScroll()

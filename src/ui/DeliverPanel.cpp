@@ -179,7 +179,7 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
     m_smart->setToolTip(smartTip());
     // Review render: a small fast video to check the edit, with its marks burned in (never part of a preset: a normal
     // export never gets them)
-    m_review = new QCheckBox(T("Prüf-Render (klein, mit Markierungen)"));
+    m_review = new QCheckBox(T("Prüf-Render")); // the tooltip says what it is (the long label was cut off)
     m_review->setObjectName("renderReview");
     m_review->setToolTip(T("Schnelle kleine Fassung (540p) zum Prüfen des Schnitts: Zeitcode und Bildnummer, "
                            "Abschnitte, Beat-Raster der Musikspur, Schnitte mit Clipnamen, Treffer und offene Notizen "
