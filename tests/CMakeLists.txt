@@ -445,6 +445,7 @@ schneidi_test(test_title_style) # title looks: gradient/texture fill, 2.5D edge,
 target_link_libraries(test_title_style PRIVATE schneidi_cli_lib)
 schneidi_test(test_comp_masks) # mask nodes (0.19): shapes, soft edge, invert, combine, follow, matte, rect/ellipse == Color page window, timing
 schneidi_test(test_comp_key) # keyer nodes (0.19): chroma = effect chromakey, luma thresholds, matte_tune grow/shrink/clip/soft/despill
+schneidi_test(test_comp_tilt) # tilting in depth (0.20): homography, tilted placement, projective draw = affine draw, transform node tilt
 # Tracker node (0.19, package D): one point, two points (size, rotation), occlusion, faces by a stand-in, keyframes + undo
 schneidi_test(test_comp_tracker)
 # The same in face mode with the real YuNet model; 77 without the extension
