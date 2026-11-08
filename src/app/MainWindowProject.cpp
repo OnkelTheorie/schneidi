@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // MainWindow: project file (new, open, save, autosave, backups, recent files, presets).
 #include "app/MainWindow.h"
+#include "app/SettingsDialog.h"
 
 #include "app/InputBindings.h"
 #include "app/Theme.h"
@@ -532,12 +533,16 @@ bool MainWindow::save()
 
 bool MainWindow::saveAs()
 {
-    QString path = QFileDialog::getSaveFileName(
-        this, T("Projekt speichern unter"),
-        !m_projectPath.isEmpty()     ? m_projectPath
-        : !m_saveSuggestion.isEmpty() ? m_saveSuggestion
-                                      : QDir::home().filePath(T("Unbenannt.%1").arg(ProjectFile::Extension)),
-        fileFilter());
+    QString suggestion = !m_projectPath.isEmpty()     ? m_projectPath
+                         : !m_saveSuggestion.isEmpty() ? m_saveSuggestion
+                                                       : QDir::home().filePath(T("Unbenannt.%1").arg(ProjectFile::Extension));
+    // A new project and the user chose a folder of their own for projects (Settings): its name there
+    if (m_projectPath.isEmpty() && SettingsDialog::storedOwnFolder()) {
+        const QString folder = SettingsDialog::storedFolder();
+        QDir().mkpath(folder);
+        suggestion = QDir(folder).filePath(QFileInfo(suggestion).fileName());
+    }
+    QString path = QFileDialog::getSaveFileName(this, T("Projekt speichern unter"), suggestion, fileFilter());
     if (path.isEmpty()) return false;
     if (QFileInfo(path).suffix() != ProjectFile::Extension) path += QString(".%1").arg(ProjectFile::Extension);
     return saveTo(path);

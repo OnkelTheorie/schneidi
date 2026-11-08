@@ -54,6 +54,10 @@ void MainWindow::settingsDialog(int tab)
         QMessageBox::warning(this, T("Einstellungen"), T("Schlüssel nicht gespeichert: %1").arg(error));
     setAiSettings(dlg.aiSettings());
     if (dlg.updateHint() != UpdateCheck::enabled() && !m_autosaveDisabled) UpdateCheck::setEnabled(dlg.updateHint());
+    if (!m_autosaveDisabled
+        && (dlg.ownProjectFolder() != SettingsDialog::storedOwnFolder()
+            || (dlg.ownProjectFolder() && dlg.projectFolder() != SettingsDialog::storedFolder())))
+        SettingsDialog::store(dlg.ownProjectFolder(), dlg.projectFolder());
     if (dlg.backgroundThreads() != Background::chosenThreads() && !m_autosaveDisabled)
         Background::setChosenThreads(dlg.backgroundThreads()); // takes effect with the next job
     // Language like from the menu (Workspace › Language): takes effect after a restart; test runs keep the setting

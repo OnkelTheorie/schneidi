@@ -13,12 +13,17 @@
 #include <QComboBox>
 #include <QCoreApplication>
 #include <QDialogButtonBox>
+#include <QDir>
+#include <QFileDialog>
 #include <QFormLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QLineEdit>
 #include <QPushButton>
 #include <QScrollArea>
+#include <QSettings>
+#include <QStandardPaths>
 #include <QTabWidget>
 #include <QThread>
 #include <QVBoxLayout>
@@ -154,8 +159,58 @@ QWidget* SettingsDialog::buildGeneral()
                          "Den Export stellst du auf der Deliver-Seite ein.")));
     lay->addWidget(performance);
 
+    // Projects: "Save as" next to the footage (default) or in a folder of their own, only if the user wants that
+    auto* projects = new QGroupBox(T("Projekte"));
+    auto* prform = new QFormLayout(projects);
+    prform->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
+    m_ownFolder = new QCheckBox(T("Neue Projekte in einem eigenen Ordner speichern"));
+    m_ownFolder->setObjectName("project_own_folder");
+    m_ownFolder->setChecked(storedOwnFolder());
+    prform->addRow(m_ownFolder);
+    auto* folderRow = new QHBoxLayout;
+    m_folder = new QLineEdit(storedFolder());
+    m_folder->setObjectName("project_folder");
+    auto* browse = new QPushButton(T("Wählen…"));
+    connect(browse, &QPushButton::clicked, this, [this] {
+        const QString dir = QFileDialog::getExistingDirectory(this, T("Ordner für Projekte"), m_folder->text());
+        if (!dir.isEmpty()) m_folder->setText(QDir::toNativeSeparators(dir));
+    });
+    folderRow->addWidget(m_folder, 1);
+    folderRow->addWidget(browse);
+    prform->addRow(T("Ordner"), folderRow);
+    const auto enable = [this, browse](bool on) {
+        m_folder->setEnabled(on);
+        browse->setEnabled(on);
+    };
+    enable(m_ownFolder->isChecked());
+    connect(m_ownFolder, &QCheckBox::toggled, this, enable);
+    prform->addRow(hint(T("Aus: „Speichern unter“ schlägt den Ordner des ersten Clips vor. An: dieser Ordner, so landen "
+                          "keine Projektdateien zwischen deinen Aufnahmen.")));
+    lay->addWidget(projects);
+
     lay->addStretch(1);
     return page;
+}
+
+bool SettingsDialog::ownProjectFolder() const { return m_ownFolder->isChecked(); }
+
+QString SettingsDialog::projectFolder() const { return QDir::fromNativeSeparators(m_folder->text().trimmed()); }
+
+bool SettingsDialog::storedOwnFolder() { return QSettings().value("project/ownFolder", false).toBool(); }
+
+QString SettingsDialog::storedFolder()
+{
+    const QString stored = QSettings().value("project/folder").toString();
+    if (!stored.isEmpty()) return stored;
+    const QString movies = QStandardPaths::writableLocation(QStandardPaths::MoviesLocation);
+    return QDir(movies.isEmpty() ? QDir::homePath() : movies).filePath("schneidi");
+}
+
+void SettingsDialog::store(bool own, const QString& folder)
+{
+    QSettings s;
+    s.setValue("project/ownFolder", own);
+    s.setValue("project/folder", folder);
 }
 
 bool SettingsDialog::updateHint() const { return m_updateHint->isChecked(); }

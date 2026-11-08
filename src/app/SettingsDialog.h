@@ -8,6 +8,7 @@ class AiSettingsPage;
 class QCheckBox;
 class QComboBox;
 class QLabel;
+class QLineEdit;
 class QPushButton;
 class QTabWidget;
 class StartTemplatesPage;
@@ -31,6 +32,13 @@ public:
     QString language() const; // code, as I18n::language()
     bool updateHint() const;  // look for new versions at the start (UpdateCheck::enabled)
     int backgroundThreads() const; // Background::chosenThreads (0 = automatic)
+    // Where "Save as" suggests a new project: off = next to its first clip; on = this folder (the user's choice)
+    bool ownProjectFolder() const;
+    QString projectFolder() const;
+    // The stored choice (QSettings "project/ownFolder", "project/folder"); folder() = the default when none is stored
+    static bool storedOwnFolder();
+    static QString storedFolder();
+    static void store(bool own, const QString& folder);
     AiSettingsPage* aiPage() const { return m_aiPage; }
     StartTemplatesPage* startTemplatesPage() const { return m_templatesPage; }
 
@@ -50,6 +58,8 @@ private:
     StartTemplatesPage* m_templatesPage = nullptr;
     QComboBox* m_language = nullptr;
     QComboBox* m_threads = nullptr;
+    QCheckBox* m_ownFolder = nullptr;
+    QLineEdit* m_folder = nullptr;
     QCheckBox* m_updateHint = nullptr;
     QPushButton* m_checkNow = nullptr;
     QLabel* m_updateResult = nullptr;
