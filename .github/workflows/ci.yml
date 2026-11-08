@@ -42,10 +42,10 @@ jobs:
           cmake --build build
           ccache --show-stats
       - name: Test
-        # Widget tests and fonts need an X server; the runner has 4 cores
+        # Widget tests and fonts need an X server (-j4 was no faster: the heavy tests encode with several threads themselves)
         env:
           LANG: de_DE.UTF-8
-        run: xvfb-run -a ctest --test-dir build --output-on-failure -j4
+        run: xvfb-run -a ctest --test-dir build --output-on-failure -j2
 
   # Without Qt RHI (no qt6-base-private-dev: some distributions, Windows without the private headers) the GPU parts
   # compile to stubs; nothing else builds them, so a stub that drifts from its header went unnoticed (b8a99b2)

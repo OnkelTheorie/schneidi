@@ -73,6 +73,26 @@ QImage nextFrame(Engine& engine, const std::function<void()>& action, int ms = 3
     return got;
 }
 
+// Like nextFrame, but waits for a frame that `wanted` accepts (a frame already on its way when `action` ran shows
+// the picture from before; seen on a loaded CI runner) and returns the last one seen
+QImage frameWhere(Engine& engine, const std::function<void()>& action, const std::function<bool(const QImage&)>& wanted,
+                  int ms = 3000)
+{
+    QImage got;
+    bool found = false;
+    const auto c = QObject::connect(&engine, &Engine::frameReady, [&](const QImage& i) {
+        if (found) return;
+        got = i.copy();
+        found = wanted(got);
+    });
+    action();
+    QElapsedTimer t;
+    t.start();
+    while (!found && !t.hasExpired(ms)) QApplication::processEvents(QEventLoop::AllEvents, 10);
+    QObject::disconnect(c);
+    return got;
+}
+
 // `b` is the negative of `a` where `a` has strong colors (at least one such place)
 bool negativeOf(const QImage& a, const QImage& b)
 {
@@ -160,9 +180,10 @@ int main(int argc, char** argv)
         CHECK(CompUi::nodeSummary(*clip(), g.nodes[1]).endsWith("nicht ausgeführt"));
         const int idx = undo->index();
         // The paused picture shows the code at once, without a seek (trust is part of what the engine draws)
-        const QImage after = nextFrame(engine, [&] { allow->click(); });
-        if (effect == QLatin1String("ffmpeg_filter") && Picture::Custom::filterAvailable())
-            CHECK(negativeOf(before, after));
+        const bool negates = effect == QLatin1String("ffmpeg_filter") && Picture::Custom::filterAvailable();
+        const QImage after = frameWhere(engine, [&] { allow->click(); },
+                                        [&](const QImage& i) { return !negates || negativeOf(before, i); });
+        if (negates) CHECK(negativeOf(before, after));
         settle();
         CHECK(CodeTrust::isTrusted(code));
         CHECK_EQ(undo->index(), idx); // trust is no project change
