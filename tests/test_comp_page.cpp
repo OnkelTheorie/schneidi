@@ -62,12 +62,13 @@ CompGraph graphOf(Project* p, int clipId)
     return g;
 }
 
-// Adds a node of `type` through the Tab search (typed text, Enter); returns the new id (0 = none)
-int addBySearch(CompCanvas* canvas, Project* p, int clipId, const QString& text)
+// Adds a node of `type` through the node search (Tab or Shift+Space) (typed text, Enter); returns the new id (0 = none)
+int addBySearch(CompCanvas* canvas, Project* p, int clipId, const QString& text, bool shiftSpace = false)
 {
     const int before = graphOf(p, clipId).nextId();
     canvas->setFocus();
-    QTest::keyClick(canvas, Qt::Key_Tab);
+    if (shiftSpace) QTest::keyClick(canvas, Qt::Key_Space, Qt::ShiftModifier); // as in other node compositors
+    else QTest::keyClick(canvas, Qt::Key_Tab);
     settle();
     CompNodeSearch* search = canvas->search();
     if (!CHECK(search && search->isVisible())) return 0;
@@ -171,7 +172,7 @@ int main(int argc, char** argv)
 
     // A color generator, only added; wired into the merge's fg by dragging from its output (one undo step)
     idx = undo->index();
-    const int color = addBySearch(canvas, project, clipId, "color");
+    const int color = addBySearch(canvas, project, clipId, "color", true);
     CHECK(color > 0);
     CHECK(graphOf(project, clipId).linkInto(merge, "fg") == nullptr);
     canvas->fit();

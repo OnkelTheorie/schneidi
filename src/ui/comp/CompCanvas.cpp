@@ -114,7 +114,7 @@ CompCanvas::CompCanvas(Editor* editor, QWidget* parent) : QWidget(parent), m_edi
     setFocusPolicy(Qt::StrongFocus);
     setMouseTracking(true);
     setMinimumHeight(120);
-    setToolTip(T("Tab: Knoten hinzufügen · Entf: entfernen · Strg+D: duplizieren · Ausgang auf Eingang ziehen: "
+    setToolTip(T("Tab oder Umschalt+Leertaste: Knoten hinzufügen · Entf: entfernen · Strg+D: duplizieren · Ausgang auf Eingang ziehen: "
                  "verbinden · Mausrad: zoomen · leere Fläche ziehen: verschieben"));
 }
 
@@ -571,13 +571,22 @@ void CompCanvas::wheelEvent(QWheelEvent* e)
     e->accept();
 }
 
+namespace {
+// The node search: Tab, or Shift+Space as in other node compositors (those who switch find it where they look)
+bool isSearchKey(const QKeyEvent* k)
+{
+    const Qt::KeyboardModifiers m = k->modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::ShiftModifier);
+    return (k->key() == Qt::Key_Tab && m == Qt::NoModifier) || (k->key() == Qt::Key_Space && m == Qt::ShiftModifier);
+}
+} // namespace
+
 bool CompCanvas::event(QEvent* e)
 {
     if (e->type() == QEvent::ShortcutOverride) {
         const auto* k = static_cast<QKeyEvent*>(e);
         const bool ctrlD = k->key() == Qt::Key_D && (k->modifiers() & Qt::ControlModifier);
         const bool plain = !(k->modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::ShiftModifier));
-        if (ctrlD || (plain && (k->key() == Qt::Key_Delete || k->key() == Qt::Key_Backspace || k->key() == Qt::Key_Tab
+        if (ctrlD || isSearchKey(k) || (plain && (k->key() == Qt::Key_Delete || k->key() == Qt::Key_Backspace || k->key() == Qt::Key_Tab
                                 || k->key() == Qt::Key_F))) {
             e->accept();
             return true;
@@ -588,7 +597,7 @@ bool CompCanvas::event(QEvent* e)
 
 void CompCanvas::keyPressEvent(QKeyEvent* e)
 {
-    if (e->key() == Qt::Key_Tab) {
+    if (isSearchKey(e)) {
         openSearch();
         return;
     }
