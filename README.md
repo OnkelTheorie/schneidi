@@ -257,11 +257,12 @@ What we are working on next. Plans can still change; the order within a version 
 Layers, masks, keying, tracking – with nodes or as layers. A Comp page with a layer view and a node canvas, masks, a keyer, an AI cutout (extension), a basic tracker (one point, two points, faces – more in the next update), title looks (gradient, texture, 2.5D edge, shadow, glow), real 3D text, six recipes, own effects as an FFmpeg filter chain or a GLSL shader (with a trust question for shared projects), common graphs on the graphics card, and all of it for an AI through the command line and MCP – done, being tested for release.
 
 ### Next: 0.20 – Newcomer Update
-Guided tours in the app (first steps, editing, color, compositing; green screen and tracker guides), preview on a second monitor, clips tilted in 3D, better tracking (fade out when the point is lost, text behind a wall), Premiere/Final Cut key presets, export for Shotcut/Kdenlive and Final Cut, apt repository.
+Guided tours in the app (first steps, editing, color, compositing; green screen and tracker guides), hide pages you don't use, preview on a second monitor, clips tilted in 3D, Premiere/Final Cut key presets.
 
 ### Later
-- **0.21 – Studio:** a page for sound – a big mixer, large waveforms, volume curves to draw, EQ and compressor per track, voice cleanup, loudness, recording
-- **0.22 – Color Update 2:** curves on the Color page, qualifier (select by hue, saturation and lightness), more scope overlays
+- **0.21 – Tracking Update:** better tracking: fade out when the point is lost, a node's time range on the timeline, text behind a wall, four-corner tracking, a shared camera for 2.5D
+- **0.22 – Studio:** a page for sound – a big mixer, large waveforms, volume curves to draw, EQ and compressor per track, voice cleanup, loudness, recording
+- **0.23 – Color Update 2:** curves on the Color page, qualifier (select by hue, saturation and lightness), more scope overlays
 
 ## Building
 
