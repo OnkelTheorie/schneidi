@@ -147,6 +147,16 @@ void testNode()
     if (a.isNull()) return;
     CHECK(px(a, 160, 90)[3] == 0);
     CHECK(a.area.contains(160, 90) && a.area.width() > 40 && a.area.width() < 150);
+    { // opacity: the same picture at half the alpha
+        QVariantMap half = front;
+        half["opacity"] = 0.5;
+        const Buf h = run(half);
+        if (CHECK(h.px.size() == a.px.size())) {
+            int worst = 0;
+            for (size_t i = 3; i < a.px.size(); i += 4) worst = std::max(worst, std::abs(int(h.px[i]) - (int(a.px[i]) + 1) / 2));
+            CHECK(worst <= 1);
+        }
+    }
     int partial = 0, opaque = 0;
     for (size_t i = 3; i < a.px.size(); i += 4) partial += a.px[i] > 0 && a.px[i] < 255, opaque += a.px[i] == 255;
     CHECK(partial > 20 && opaque > 500);

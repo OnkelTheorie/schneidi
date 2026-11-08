@@ -476,6 +476,15 @@ void testTextNode()
     };
     CHECK(at(ink.top() + 1)[0] > 3 * at(ink.top() + 1)[2]);
     CHECK(at(ink.bottom() - 1)[2] > 3 * at(ink.bottom() - 1)[0]);
+    // Opacity 0.5: the same text at half the alpha (fades a label in and out); 0 = invisible
+    QVariantMap half = params;
+    half["opacity"] = 0.5;
+    Buf faded;
+    if (CHECK(Picture::Comp::runNode("text", half, {}, o, &faded)) && CHECK(faded.px.size() == out.px.size())) {
+        int worst = 0;
+        for (size_t i = 3; i < out.px.size(); i += 4) worst = std::max(worst, std::abs(int(faded.px[i]) - (int(out.px[i]) + 1) / 2));
+        CHECK(worst <= 1);
+    }
     // No text: nothing
     CHECK(!Picture::Comp::runNode("text", {{"text", " "}}, {}, o, &out));
 }

@@ -80,6 +80,7 @@ QVector<EffectParam> text3dParams()
         num("shine", N_("Glanz"), v.shine, 0, 1, 0.01, 2),
         num("metal", N_("Metall"), v.metal, 0, 1, 0.01, 2),
         num("aa", N_("Kantenglättung"), v.aa, 1, 4, 1, 0),
+        num("opacity", N_("Deckkraft"), 1, 0, 1, 0.01, 2),
     };
 }
 
@@ -131,6 +132,7 @@ bool evalText3d(NodeCtx& ctx, Buf* out)
     v.aa = int(std::lround(ctx.num("aa")));
     *out = ctx.take(Buf::Rgba);
     out->area = Text3d::render(mesh, v, out->data(), out->w, out->h);
+    fadeContent(*out, ctx.num("opacity"));
     return !out->area.isEmpty();
 }
 

@@ -151,6 +151,9 @@ bool varies(const NodeType& k, const QVariantMap& values);
 int choiceValue(const NodeType& k, const QVariantMap& values, const QString& key);
 
 // Registration functions, one per package file (CompNodes.cpp calls each once)
+// The alpha of a picture's content area scaled by `opacity` (0..1; a generator's "opacity": fade a text in or out)
+void fadeContent(Buf& b, double opacity);
+
 void registerCoreNodes(QVector<NodeType>& out);  // A: clip, media, color, gradient, merge, transform, crop, blur, color grade, fx
 void registerMaskNodes(QVector<NodeType>& out);  // B: mask, matte
 void registerKeyNodes(QVector<NodeType>& out);   // C: key, matte_tune

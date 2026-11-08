@@ -109,7 +109,8 @@ QVector<EffectParam> textParams()
       << num("shadow_opacity", N_("Deckkraft"), l.shadowOpacity, 0, 1, 0.01, 2) << flag("glow", N_("Glühen"), false)
       << num("glow_radius", N_("Radius"), l.glowRadius, 0, 500, 0.5, 1)
       << color("glow_color", N_("Glühfarbe"), l.glowColor)
-      << num("glow_strength", N_("Stärke"), l.glowStrength, 0, 1, 0.01, 2);
+      << num("glow_strength", N_("Stärke"), l.glowStrength, 0, 1, 0.01, 2)
+      << num("opacity", N_("Deckkraft"), 1, 0, 1, 0.01, 2);
     return p;
 }
 
@@ -220,6 +221,7 @@ bool evalText(NodeCtx& ctx, Buf* out)
     if (outline) layer(true);
     layer(false);
     out->area = area & QRect(0, 0, out->w, out->h);
+    fadeContent(*out, ctx.num("opacity"));
     return !out->area.isEmpty();
 }
 

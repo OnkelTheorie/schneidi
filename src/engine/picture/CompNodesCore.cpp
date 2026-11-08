@@ -208,6 +208,21 @@ Compose::Affine transformOf(NodeCtx& ctx, bool* identity)
     return m;
 }
 
+} // namespace
+
+void fadeContent(Buf& b, double opacity)
+{
+    if (b.kind != Buf::Rgba || opacity >= 1.0) return;
+    const uint32_t k = uint32_t(std::lround(std::clamp(opacity, 0.0, 1.0) * 256));
+    const QRect a = b.contentArea().intersected(QRect(0, 0, b.w, b.h));
+    for (int y = a.top(); y <= a.bottom(); ++y) {
+        uint8_t* p = b.data() + (size_t(y) * b.w + a.left()) * 4 + 3;
+        for (int x = a.left(); x <= a.right(); ++x, p += 4) *p = uint8_t((*p * k + 128) >> 8);
+    }
+}
+
+namespace {
+
 bool evalTransform(NodeCtx& ctx, Buf* out)
 {
     const Buf* src = ctx.input("src");
