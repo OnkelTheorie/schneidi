@@ -258,6 +258,10 @@ QJsonObject transformToJson(const ClipTransform& t)
             if (f.fill == t.fill) o["fill"] = f.id;
     if (t.fillBlur != def.fillBlur) o["fillBlur"] = t.fillBlur;
     if (t.fillDim != def.fillDim) o["fillDim"] = t.fillDim;
+    // Tilt in depth (0.20): likewise only when set (missing = flat)
+    if (t.tiltX != def.tiltX) o["tiltX"] = t.tiltX;
+    if (t.tiltY != def.tiltY) o["tiltY"] = t.tiltY;
+    if (t.fov != def.fov) o["fov"] = t.fov;
     return o;
 }
 
@@ -281,6 +285,9 @@ ClipTransform transformFromJson(const QJsonObject& o)
         if (o.value("fill").toString() == QLatin1String(f.id)) t.fill = f.fill;
     t.fillBlur = o.value("fillBlur").toDouble(t.fillBlur);
     t.fillDim = o.value("fillDim").toDouble(t.fillDim);
+    t.tiltX = o.value("tiltX").toDouble(t.tiltX);
+    t.tiltY = o.value("tiltY").toDouble(t.tiltY);
+    t.fov = o.value("fov").toDouble(t.fov);
     return t;
 }
 

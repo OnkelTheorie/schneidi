@@ -485,10 +485,11 @@ QJsonObject clipJson(const Project& p, const Clip& c, TrackRef ref)
         QJsonObject to;
         const QPair<const char*, double> fields[] = {
             {"zoom_x", t.zoomX}, {"zoom_y", t.zoomY}, {"x", t.posX}, {"y", t.posY}, {"rotation", t.rotation},
+            {"tilt_x", t.tiltX}, {"tilt_y", t.tiltY}, {"fov", t.fov},
             {"crop_left", t.cropLeft}, {"crop_right", t.cropRight}, {"crop_top", t.cropTop},
             {"crop_bottom", t.cropBottom}, {"opacity", t.opacity}};
-        const double defaults[] = {def.zoomX, def.zoomY, def.posX, def.posY, def.rotation, def.cropLeft,
-                                   def.cropRight, def.cropTop, def.cropBottom, def.opacity};
+        const double defaults[] = {def.zoomX, def.zoomY, def.posX, def.posY, def.rotation, def.tiltX, def.tiltY,
+                                   def.fov, def.cropLeft, def.cropRight, def.cropTop, def.cropBottom, def.opacity};
         for (int i = 0; i < int(std::size(fields)); ++i)
             if (fields[i].second != defaults[i]) to[fields[i].first] = fields[i].second;
         if (!t.transformOn) to["transform_on"] = false;

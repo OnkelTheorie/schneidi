@@ -22,6 +22,9 @@ constexpr Keys::ParamInfo kParams[] = {
     {AnimParam::PosX, "posX", false, N_("Position X"), -kBig, kBig},
     {AnimParam::PosY, "posY", false, N_("Position Y"), -kBig, kBig},
     {AnimParam::Rotation, "rotation", false, N_("Rotation"), -kBig, kBig},
+    {AnimParam::TiltX, "tiltX", false, N_("Kippen X"), -89, 89},
+    {AnimParam::TiltY, "tiltY", false, N_("Kippen Y"), -89, 89},
+    {AnimParam::Fov, "fov", false, N_("Perspektive"), 5, 120},
     {AnimParam::CropLeft, "cropLeft", false, N_("Beschneiden links"), 0, kBig},
     {AnimParam::CropRight, "cropRight", false, N_("Beschneiden rechts"), 0, kBig},
     {AnimParam::CropTop, "cropTop", false, N_("Beschneiden oben"), 0, kBig},
@@ -291,6 +294,9 @@ double staticValue(const Clip& c, AnimParam p)
     case AnimParam::PosX: return t.posX;
     case AnimParam::PosY: return t.posY;
     case AnimParam::Rotation: return t.rotation;
+    case AnimParam::TiltX: return t.tiltX;
+    case AnimParam::TiltY: return t.tiltY;
+    case AnimParam::Fov: return t.fov;
     case AnimParam::CropLeft: return t.cropLeft;
     case AnimParam::CropRight: return t.cropRight;
     case AnimParam::CropTop: return t.cropTop;
@@ -322,6 +328,9 @@ void setStaticValue(Clip& c, AnimParam p, double v)
     case AnimParam::PosX: t.posX = v; break;
     case AnimParam::PosY: t.posY = v; break;
     case AnimParam::Rotation: t.rotation = v; break;
+    case AnimParam::TiltX: t.tiltX = v; break;
+    case AnimParam::TiltY: t.tiltY = v; break;
+    case AnimParam::Fov: t.fov = v; break;
     case AnimParam::CropLeft: t.cropLeft = v; break;
     case AnimParam::CropRight: t.cropRight = v; break;
     case AnimParam::CropTop: t.cropTop = v; break;
@@ -679,9 +688,16 @@ bool hasTransform(const Clip& c)
 {
     if (!c.transform.transformOn) return false;
     if (c.transform.hasTransform()) return true;
-    for (AnimParam p : {AnimParam::ZoomX, AnimParam::ZoomY, AnimParam::PosX, AnimParam::PosY, AnimParam::Rotation})
+    for (AnimParam p : {AnimParam::ZoomX, AnimParam::ZoomY, AnimParam::PosX, AnimParam::PosY, AnimParam::Rotation,
+                        AnimParam::TiltX, AnimParam::TiltY})
         if (animated(c, p)) return true;
     return false;
+}
+
+bool hasTilt(const Clip& c)
+{
+    if (!c.transform.transformOn) return false;
+    return c.transform.hasTilt() || animated(c, AnimParam::TiltX) || animated(c, AnimParam::TiltY);
 }
 
 bool hasCrop(const Clip& c)

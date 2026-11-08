@@ -407,7 +407,7 @@ Clip keepCopy(const Clip& base, const Keep& k, double mediaAspect, QSizeF frame,
     c.renderCache = false;
     c.keepRegion = k.id.isEmpty() ? QStringLiteral("custom") : k.id;
     for (AnimParam a : {AnimParam::ZoomX, AnimParam::ZoomY, AnimParam::PosX, AnimParam::PosY, AnimParam::Rotation,
-                        AnimParam::CropLeft, AnimParam::CropRight, AnimParam::CropTop, AnimParam::CropBottom})
+                        AnimParam::TiltX, AnimParam::TiltY, AnimParam::Fov, AnimParam::CropLeft, AnimParam::CropRight, AnimParam::CropTop, AnimParam::CropBottom})
         c.keys.remove(a);
     const QRectF r = valid(k.region);
     if (mediaAspect <= 0 && !frame.isEmpty()) mediaAspect = frame.width() / frame.height();
