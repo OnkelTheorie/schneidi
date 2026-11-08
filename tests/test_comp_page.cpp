@@ -74,7 +74,9 @@ int addBySearch(CompCanvas* canvas, Project* p, int clipId, const QString& text,
     if (!CHECK(search && search->isVisible())) return 0;
     auto* field = search->findChild<QLineEdit*>("comp_node_search_text");
     if (!CHECK(field)) return 0;
+    const int full = search->height();
     QTest::keyClicks(field, text);
+    CHECK(search->height() < full); // fitted to its hits, not a tall empty list
     QTest::keyClick(field, Qt::Key_Return);
     settle();
     return graphOf(p, clipId).node(before) ? before : 0;

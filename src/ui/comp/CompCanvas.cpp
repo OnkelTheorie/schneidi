@@ -57,7 +57,9 @@ CompNodeSearch::CompNodeSearch(QWidget* parent) : QWidget(parent, Qt::Popup)
         item->setToolTip(k.description);
         m_list->addItem(item);
     }
-    resize(240, 300);
+    // Its size follows the content: 232 px wide, the list as tall as its hits (filter())
+    lay->setSizeConstraint(QLayout::SetFixedSize);
+    m_list->setFixedWidth(232);
     connect(m_field, &QLineEdit::textChanged, this, &CompNodeSearch::filter);
     connect(m_field, &QLineEdit::returnPressed, this, &CompNodeSearch::choose);
     connect(m_list, &QListWidget::itemActivated, this, &CompNodeSearch::choose);
@@ -77,6 +79,13 @@ void CompNodeSearch::filter(const QString& text)
         if (show && !first) first = it;
     }
     m_list->setCurrentItem(first);
+    // As tall as its hits (up to 12 rows): one hit is a small box, not a tall empty list
+    int shown = 0;
+    for (int i = 0; i < m_list->count(); ++i) shown += !m_list->item(i)->isHidden();
+    const int row = std::max(16, m_list->sizeHintForRow(0));
+    const int list = std::clamp(shown, 1, 12) * row + 2 * m_list->frameWidth() + 2;
+    m_list->setFixedHeight(list);
+    layout()->activate(); // the fixed size constraint resizes the popup now, not on the next event round
 }
 
 void CompNodeSearch::choose()
@@ -274,7 +283,14 @@ void CompCanvas::openSearch()
     }
     m_search->field()->clear();
     const QPoint at = rect().contains(m_mouse.toPoint()) ? m_mouse.toPoint() : rect().center();
-    m_search->move(mapToGlobal(at));
+    // Inside the graph area: near the bottom it opens upward, near the right edge to the left (it ran over the page
+    // tabs below the graph)
+    const QSize s = m_search->size();
+    QPoint g = mapToGlobal(at);
+    const QRect area(mapToGlobal(QPoint(0, 0)), size());
+    if (g.y() + s.height() > area.bottom()) g.setY(std::max(area.top(), g.y() - s.height()));
+    if (g.x() + s.width() > area.right()) g.setX(std::max(area.left(), g.x() - s.width()));
+    m_search->move(g);
     m_search->show();
     m_search->field()->setFocus();
 }
