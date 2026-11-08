@@ -517,6 +517,10 @@ bool Editor::closeGap(TrackRef on, int from, int to, QString* why)
     const Timeline& now = m_project->timeline();
     from = std::max(0, from);
     if (to <= from || on.index < 0 || on.index >= now.tracks(on.kind).size()) return false;
+    if (now.tracks(on.kind)[on.index].locked) { // the others would move, this one not: out of sync
+        if (why) *why = T("Die Spur %1 ist gesperrt – entsperren, dann lässt sich die Lücke schließen").arg(trackShortName(on));
+        return false;
+    }
     for (TrackKind k : {TrackKind::Video, TrackKind::Audio}) {
         const QVector<Track>& tracks = now.tracks(k);
         for (int i = 0; i < tracks.size(); ++i) {

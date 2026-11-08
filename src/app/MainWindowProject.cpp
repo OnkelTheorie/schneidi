@@ -494,8 +494,8 @@ void MainWindow::restoreViews(const ProjectData& data)
         s.pxPerFrame = v.pxPerFrame;
         s.leftFrame = v.leftFrame;
         s.scrollY = v.scrollY;
-        if (v.sequence == m_shownSequence) {
-            tv->setZoomAndScroll(s.pxPerFrame, s.leftFrame, s.scrollY);
+        if (v.sequence == m_shownSequence) { // after the layout too: the scroll range needs the view's real height
+            QTimer::singleShot(0, tv, [tv, s] { tv->setZoomAndScroll(s.pxPerFrame, s.leftFrame, s.scrollY); });
             shown = true;
         } else {
             m_sequenceView[v.sequence] = s;

@@ -140,10 +140,21 @@ TimelineView::TimelineView(Editor* editor, QWidget* parent) : QWidget(parent), m
         update();
         emit viewChanged(); // only so that the scrollbar may get more room
     });
+    // Any other selection (clips, edit points, keyframes) drops a picked gap: Delete then means that
     connect(editor->selection(), &Selection::changed, this, [this] {
-        if (m_gap.on && !m_editor->selection()->ids().isEmpty()) m_gap = {}; // a clip picked: Delete means the clip
+        if (m_gap.on && !m_pickingGap) m_gap = {};
         update();
     });
+    // The timeline changed (an undo, an AI edit): the gap stays picked only while it is still exactly there (locking
+    // another track, as the refusal note suggests, keeps it); another timeline or project drops it
+    connect(editor->project(), &Project::timelineChanged, this, [this] {
+        if (!m_gap.on) return;
+        const GapPick now = gapAt(m_gap.ref, m_gap.from);
+        if (!now.on || now.from != m_gap.from || now.to != m_gap.to) m_gap = {};
+        update();
+    });
+    for (auto signal : {&Project::currentSequenceChanged, &Project::loaded})
+        connect(editor->project(), signal, this, [this] { m_gap = {}; });
     connect(editor, &Editor::targetTracksChanged, this, qOverload<>(&QWidget::update));
     // Clip color/flags changed in the Media Pool -> redraw clips
     connect(editor->project(), &Project::poolChanged, this, qOverload<>(&QWidget::update));

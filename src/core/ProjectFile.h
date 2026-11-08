@@ -30,7 +30,6 @@ struct SavedView {
 struct ProjectData {
     ProjectFormat format; // old files without this: 1920 x 1080, 25 fps
     int playhead = 0;
-    QVector<SavedView> views; // per timeline (optional; UI state, not part of the edit)
     QVector<MediaInfo> media;
     QVector<MediaBin> bins; // Media Pool bins (without Master)
     Timeline timeline; // opened timeline (sequence currentSequence)
@@ -59,6 +58,7 @@ struct ProjectData {
     std::optional<BrandKit> brand;
     // A content template's own description (core/TemplateLibrary.h, optional; "templateInfo" in the file)
     std::optional<TemplateInfo> templateInfo;
+    QVector<SavedView> views; // per timeline (optional; UI state, not part of the edit)
 };
 
 namespace ProjectFile {

@@ -182,6 +182,7 @@ void MainWindow::buildActions()
     // A gap picked in the timeline: every delete key closes it (DaVinci/Premiere habit), else the selection
     const auto gapOr = [this](void (Editor::*fn)()) {
         return [this, fn] {
+            if (m_page == Page::Comp) return; // no timeline on that page: the graph takes its own Delete
             if (!m_timeline->view()->closeSelectedGap()) (m_editor->*fn)();
         };
     };

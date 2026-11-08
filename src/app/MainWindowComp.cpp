@@ -91,7 +91,7 @@ int MainWindow::compClipAt(int frame) const
     for (qsizetype t = tl.video.size() - 1; t >= 0; --t) { // the topmost track first
         if (tl.video[t].hidden) continue;
         for (const Clip& c : tl.video[t].clips)
-            if (under(c)) return c.id;
+            if (c.enabled && under(c)) return c.id; // a disabled clip is not in the picture
     }
     return 0;
 }

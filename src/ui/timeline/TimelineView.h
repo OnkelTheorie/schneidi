@@ -169,6 +169,9 @@ private:
         int from = 0, to = 0; // [from, to) between two clips (or from 0 to the first one)
     };
     GapPick m_gap;
+    bool m_pickingGap = false; // pickGap() clears the selection: that change must not drop the new gap
+    // Picks a gap: the clip selection goes (Delete then means the gap only)
+    void pickGap(const GapPick& g);
     // The gap on `row` at frame `frame` (on = false when a clip is there or nothing follows)
     GapPick gapAt(const TrackRef& ref, double frame) const;
 

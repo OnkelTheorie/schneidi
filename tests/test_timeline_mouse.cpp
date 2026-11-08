@@ -138,6 +138,30 @@ void testGap()
     mouse(f.tv, QEvent::MouseButtonRelease, {f.x(50), 120}, Qt::NoButton);
     CHECK(!f.tv.hasGap());
     CHECK(!f.tv.closeSelectedGap());
+    // Picking a gap drops the clip selection (Delete then means the gap); selecting a clip drops the gap
+    f.sel.set({1});
+    mouse(f.tv, QEvent::MouseButtonPress, {f.x(130), 120}, Qt::LeftButton, Qt::ControlModifier);
+    mouse(f.tv, QEvent::MouseButtonRelease, {f.x(130), 120}, Qt::NoButton, Qt::ControlModifier);
+    CHECK(f.tv.hasGap() && f.sel.isEmpty());
+    f.sel.set({1});
+    CHECK(!f.tv.hasGap());
+    // The gap filled by an edit (a clip moved into it): no longer picked, Delete is not taken
+    mouse(f.tv, QEvent::MouseButtonPress, {f.x(130), 120}, Qt::LeftButton);
+    mouse(f.tv, QEvent::MouseButtonRelease, {f.x(130), 120}, Qt::NoButton);
+    CHECK(f.tv.hasGap());
+    f.project.edit("fill", [](Timeline& tl) { tl.video[0].clips[1].start = 100; });
+    CHECK(!f.tv.hasGap());
+    f.project.undoStack()->undo();
+    // The gap's own track locked: refused with a note (the others would move, it not)
+    mouse(f.tv, QEvent::MouseButtonPress, {f.x(130), 120}, Qt::LeftButton);
+    mouse(f.tv, QEvent::MouseButtonRelease, {f.x(130), 120}, Qt::NoButton);
+    CHECK(f.tv.hasGap());
+    f.editor.toggleTrackLock({TrackKind::Video, 0});
+    said.clear();
+    CHECK(f.tv.hasGap()); // locking keeps the pick (the gap is still there)
+    CHECK(f.tv.closeSelectedGap());
+    CHECK(said.contains("V1"));
+    CHECK_EQ(f.project.timeline().video[0].clips[1].start, 150);
 }
 
 void testAutoScroll()

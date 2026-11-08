@@ -146,13 +146,27 @@ TimelineView::GapPick TimelineView::gapAt(const TrackRef& ref, double frame) con
     return g;
 }
 
+void TimelineView::pickGap(const GapPick& g)
+{
+    m_pickingGap = true;
+    m_editor->selection()->clear();
+    m_pickingGap = false;
+    m_gap = g;
+    update();
+}
+
 bool TimelineView::closeSelectedGap()
 {
     if (!m_gap.on) return false;
     const GapPick g = std::exchange(m_gap, {});
+    const GapPick now = gapAt(g.ref, g.from); // still the same gap? (safety net; changes drop the pick already)
+    if (!now.on || now.from != g.from || now.to != g.to) {
+        update();
+        return false;
+    }
     QString why;
     if (!m_editor->closeGap(g.ref, g.from, g.to, &why)) {
-        m_gap = g; // stays picked: lock the track and press Delete again
+        m_gap = g; // stays picked: lock the other track and press Delete again
         if (!why.isEmpty()) emit message(why);
     }
     update();
@@ -666,7 +680,7 @@ void TimelineView::mouseReleaseEvent(QMouseEvent* e)
         if (QRect(m_pressPos, at).normalized().width() < kDragStartPx && std::abs(at.y() - m_pressPos.y()) < kDragStartPx
             && m_pressPos.x() >= kHeaderW)
             if (const auto row = rowAt(m_pressPos.y()); row && !isLocked(*row))
-                m_gap = gapAt(row->ref, xToFrame(m_pressPos.x()));
+                if (const GapPick g = gapAt(row->ref, xToFrame(m_pressPos.x())); g.on) pickGap(g);
         updateHoverCursor(e->position().toPoint());
         update();
         return;

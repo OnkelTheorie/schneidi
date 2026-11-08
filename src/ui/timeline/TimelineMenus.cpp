@@ -213,8 +213,7 @@ void TimelineView::contextMenuEvent(QContextMenuEvent* e)
             // A gap between clips: pick it and offer to close it
             const GapPick g = gapAt(row->ref, xToFrame(e->pos().x()));
             if (!g.on) return;
-            m_gap = g;
-            update();
+            pickGap(g);
             QMenu menu(this);
             connect(menu.addAction(T("Lücke schließen")), &QAction::triggered, this, [this] { closeSelectedGap(); });
             menu.exec(e->globalPos());
