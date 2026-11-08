@@ -260,7 +260,8 @@ Layers, masks, keying, tracking – with nodes or as layers. A Comp page with a 
 Guided tours in the app (first steps, editing, color, compositing; green screen and tracker guides), preview on a second monitor, clips tilted in 3D, better tracking (fade out when the point is lost, text behind a wall), Premiere/Final Cut key presets, export for Shotcut/Kdenlive and Final Cut, apt repository.
 
 ### Later
-- **0.21 – Color Update 2:** curves on the Color page, qualifier (select by hue, saturation and lightness), more scope overlays
+- **0.21 – Studio:** a page for sound – a big mixer, large waveforms, volume curves to draw, EQ and compressor per track, voice cleanup, loudness, recording
+- **0.22 – Color Update 2:** curves on the Color page, qualifier (select by hue, saturation and lightness), more scope overlays
 
 ## Building
 
