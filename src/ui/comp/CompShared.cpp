@@ -72,6 +72,25 @@ QString nodeName(const CompNode& n)
     return QStringLiteral("%1 %2").arg(k ? k->name : n.type).arg(n.id);
 }
 
+QString portLabel(const QString& input)
+{
+    if (input == QLatin1String("src")) return T("Quelle");
+    if (input == QLatin1String("bg")) return T("Hintergrund");
+    if (input == QLatin1String("fg")) return T("Vordergrund");
+    if (input == QLatin1String("mask")) return T("Maske");
+    return input;
+}
+
+QString portHelp(const QString& input)
+{
+    if (input == QLatin1String("src")) return T("Quelle: das Bild, das in diesen Knoten hineingeht");
+    if (input == QLatin1String("bg")) return T("Hintergrund: das Bild, das unten liegt");
+    if (input == QLatin1String("fg")) return T("Vordergrund: das Bild, das oben auf den Hintergrund gelegt wird");
+    if (input == QLatin1String("mask"))
+        return T("Maske: wo der Knoten wirkt – weiß = hier ja, schwarz = hier nicht (leer = überall)");
+    return input;
+}
+
 QString nodeSummary(const Clip& c, const CompNode& n)
 {
     const PC::NodeType* k = PC::find(n.type);

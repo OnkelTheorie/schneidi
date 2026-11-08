@@ -17,6 +17,8 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <QUndoStack>
+#include <QHelpEvent>
+#include <QToolTip>
 #include <QVBoxLayout>
 #include <QWheelEvent>
 #include <algorithm>
@@ -442,7 +444,9 @@ void CompCanvas::paintEvent(QPaintEvent*)
             p.setBrush(linked ? Theme::secondary : Theme::controlOff);
             p.drawEllipse(pt, kPort * z, kPort * z);
             p.setPen(Theme::textDim);
-            p.drawText(QRectF(pt.x() + 9 * z, pt.y() - kRow * z / 2, r.width() / 2, kRow * z), Qt::AlignVCenter, in);
+            const QRectF label(pt.x() + 9 * z, pt.y() - kRow * z / 2, r.width() * (out ? 0.55 : 0.85), kRow * z);
+            p.drawText(label, Qt::AlignVCenter,
+                       QFontMetrics(small).elidedText(CompUi::portLabel(in), Qt::ElideRight, int(label.width())));
         }
         // What the node does (its key value), in the last row
         if (const Clip* c = clipPtr) {
@@ -598,6 +602,20 @@ bool isSearchKey(const QKeyEvent* k)
 
 bool CompCanvas::event(QEvent* e)
 {
+    // Tooltips: what a port is for, what a node does (else the canvas' own tooltip: the keys)
+    if (e->type() == QEvent::ToolTip) {
+        const auto* h = static_cast<QHelpEvent*>(e);
+        QString input, text;
+        if (inputAt(h->pos(), &input)) text = CompUi::portHelp(input);
+        else if (outputAt(h->pos())) text = T("Ausgang des Knotens: von hier zum Eingang eines anderen Knotens ziehen");
+        else if (const int id = nodeAt(h->pos()))
+            if (const CompNode* n = m_graph.node(id))
+                if (const PC::NodeType* k = PC::find(n->type)) text = k->description;
+        if (!text.isEmpty()) {
+            QToolTip::showText(h->globalPos(), text, this);
+            return true;
+        }
+    }
     if (e->type() == QEvent::ShortcutOverride) {
         const auto* k = static_cast<QKeyEvent*>(e);
         const bool ctrlD = k->key() == Qt::Key_D && (k->modifiers() & Qt::ControlModifier);

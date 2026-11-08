@@ -36,6 +36,9 @@ bool keyAt(const Clip& c, int node, const QString& key, int t);
 bool animated(const Clip& c, int node, const QString& key);
 // Shown name of a node: its kind's name and id ("Maske 3"); unknown kinds by their id
 QString nodeName(const CompNode& n);
+// An input port as the canvas shows it ("bg" -> "Hintergrund"; the stored name stays) and what it is for (tooltip)
+QString portLabel(const QString& input);
+QString portHelp(const QString& input);
 
 // One line about what the node does, for its box on the canvas: the kind's key value (merge mode and opacity,
 // mask shape, the text, the wrapped effect's name, the media file, a color …); empty = nothing to say
