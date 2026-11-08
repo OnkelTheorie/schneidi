@@ -111,6 +111,7 @@ QVector<EffectParam> textParams()
       << color("glow_color", N_("Glühfarbe"), l.glowColor)
       << num("glow_strength", N_("Stärke"), l.glowStrength, 0, 1, 0.01, 2)
       << num("opacity", N_("Deckkraft"), 1, 0, 1, 0.01, 2);
+    p << visibleRangeParams();
     return p;
 }
 
@@ -171,7 +172,8 @@ QImage toImage(const Buf& b)
 bool evalText(NodeCtx& ctx, Buf* out)
 {
     const TitleStyle st = styleOf(ctx);
-    if (st.text.trimmed().isEmpty() || ctx.size.isEmpty()) return false;
+    const double shown = visibleWeight(ctx);
+    if (st.text.trimmed().isEmpty() || ctx.size.isEmpty() || shown <= 0) return false;
     const double s = ctx.scale;
     QFont font(st.fontFamily());
     font.setPixelSize(std::max(1, int(std::lround(st.size * s))));
@@ -221,7 +223,7 @@ bool evalText(NodeCtx& ctx, Buf* out)
     if (outline) layer(true);
     layer(false);
     out->area = area & QRect(0, 0, out->w, out->h);
-    fadeContent(*out, ctx.num("opacity"));
+    fadeContent(*out, ctx.num("opacity") * shown);
     return !out->area.isEmpty();
 }
 
@@ -373,6 +375,7 @@ void registerStyleNodes(QVector<NodeType>& out)
     text.description = T("Text wie ein Titel-Clip: Schrift, Farbe, Umrandung, Füllung mit Verlauf oder Textur, "
                          "3D-Kante, Schatten und Glühen");
     text.params = textParams();
+    text.isVarying = [](const NodeType&, const QVariantMap& values) { return rangeVaries(values); };
     text.eval = evalText;
     out << text;
 

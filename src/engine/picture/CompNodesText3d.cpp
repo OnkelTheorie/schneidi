@@ -56,7 +56,7 @@ QVector<EffectParam> text3dParams()
     EffectParam align = param("align", N_("Ausrichtung"), EffectParam::Choice, QStringLiteral("center"));
     align.choices = {"center", "left", "right"};
     align.choiceLabels = {T("Zentriert"), T("Linksbündig"), T("Rechtsbündig")};
-    return {
+    QVector<EffectParam> p{
         param("text", N_("Text"), EffectParam::Path, QStringLiteral("Titel")),
         param("font", N_("Schriftart"), EffectParam::Path, d.font),
         num("size", N_("Größe"), d.size, 1, 1000, 0.5, 1),
@@ -82,12 +82,15 @@ QVector<EffectParam> text3dParams()
         num("aa", N_("Kantenglättung"), v.aa, 1, 4, 1, 0),
         num("opacity", N_("Deckkraft"), 1, 0, 1, 0.01, 2),
     };
+    p << visibleRangeParams();
+    return p;
 }
 
 bool evalText3d(NodeCtx& ctx, Buf* out)
 {
     const QString text = ctx.text("text");
-    if (text.trimmed().isEmpty() || ctx.size.isEmpty()) return false;
+    const double shown = visibleWeight(ctx);
+    if (text.trimmed().isEmpty() || ctx.size.isEmpty() || shown <= 0) return false;
     const double s = ctx.scale;
     TitleStyle st; // only for the font family rule (Sans on Windows)
     st.font = ctx.text("font");
@@ -132,7 +135,7 @@ bool evalText3d(NodeCtx& ctx, Buf* out)
     v.aa = int(std::lround(ctx.num("aa")));
     *out = ctx.take(Buf::Rgba);
     out->area = Text3d::render(mesh, v, out->data(), out->w, out->h);
-    fadeContent(*out, ctx.num("opacity"));
+    fadeContent(*out, ctx.num("opacity") * shown);
     return !out->area.isEmpty();
 }
 
@@ -146,6 +149,7 @@ void registerText3dNodes(QVector<NodeType>& out)
     k.description = T("Echter 3D-Text: Buchstaben mit Tiefe und Fase, im Raum gedreht, mit Licht und Glanz; "
                       "Drehung, Tiefe, Kamera, Licht und Farben animierbar");
     k.params = text3dParams();
+    k.isVarying = [](const NodeType&, const QVariantMap& values) { return rangeVaries(values); };
     k.eval = evalText3d;
     out << k;
 }

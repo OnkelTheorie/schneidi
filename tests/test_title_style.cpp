@@ -485,6 +485,29 @@ void testTextNode()
         for (size_t i = 3; i < out.px.size(); i += 4) worst = std::max(worst, std::abs(int(faded.px[i]) - (int(out.px[i]) + 1) / 2));
         CHECK(worst <= 1);
     }
+    // Visible range (seconds from the clip start, fade 0.5 s): nothing before/after, half in the middle of the fade
+    {
+        QVariantMap ranged = params;
+        ranged["from"] = 2.0;
+        ranged["until"] = 4.0;
+        ranged["fade"] = 0.5;
+        const auto alphaAt = [&](double seconds) {
+            Picture::Comp::RunOptions at = o;
+            at.fps = 25;
+            at.t = seconds * 25;
+            Buf b;
+            if (!Picture::Comp::runNode("text", ranged, {}, at, &b)) return -1;
+            int best = 0;
+            for (size_t i = 3; i < b.px.size(); i += 4) best = std::max(best, int(b.px[i]));
+            return best;
+        };
+        CHECK_EQ(alphaAt(1.0), -1);  // before: the node makes nothing
+        CHECK_EQ(alphaAt(4.5), -1);  // after
+        CHECK_EQ(alphaAt(3.0), 255); // inside
+        CHECK(std::abs(alphaAt(2.25) - 128) <= 2); // half way into the fade-in
+        const Picture::Comp::NodeType* k = Picture::Comp::find("text");
+        CHECK(k && Picture::Comp::varies(*k, ranged) && !Picture::Comp::varies(*k, params)); // cached only without a range
+    }
     // No text: nothing
     CHECK(!Picture::Comp::runNode("text", {{"text", " "}}, {}, o, &out));
 }

@@ -151,6 +151,13 @@ bool varies(const NodeType& k, const QVariantMap& values);
 int choiceValue(const NodeType& k, const QVariantMap& values, const QString& key);
 
 // Registration functions, one per package file (CompNodes.cpp calls each once)
+// When a generator node (text, 3D text) shows within its clip: values "from"/"until" (seconds from the clip start,
+// until 0 = to the end) and "fade" (seconds in and out). visibleRangeParams() = those three values,
+// visibleWeight() = 0 outside, 1 inside, a ramp in the fades; rangeVaries() = the node changes with time because of it
+QVector<EffectParam> visibleRangeParams();
+double visibleWeight(const NodeCtx& ctx);
+bool rangeVaries(const QVariantMap& values);
+
 // The alpha of a picture's content area scaled by `opacity` (0..1; a generator's "opacity": fade a text in or out)
 void fadeContent(Buf& b, double opacity);
 

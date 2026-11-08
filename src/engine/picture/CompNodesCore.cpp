@@ -210,6 +210,38 @@ Compose::Affine transformOf(NodeCtx& ctx, bool* identity)
 
 } // namespace
 
+QVector<EffectParam> visibleRangeParams()
+{
+    return {
+        {"from", T("Sichtbar ab"), {}, EffectParam::Double, 0.0, 0.0, 36000.0, AnimParam::Count, 0.01, 2, {},
+         T("Sekunden ab Clipanfang, ab denen der Knoten etwas zeigt (Knopf „Hier“: der Abspielkopf)")},
+        {"until", T("Sichtbar bis"), {}, EffectParam::Double, 0.0, 0.0, 36000.0, AnimParam::Count, 0.01, 2, {},
+         T("Sekunden ab Clipanfang, bis zu denen der Knoten etwas zeigt; 0 = bis zum Ende (Knopf „Hier“: der Abspielkopf)")},
+        {"fade", T("Ein-/Ausblenden"), {}, EffectParam::Double, 0.25, 0.0, 10.0, AnimParam::Count, 0.01, 2, {},
+         T("Sekunden, in denen er am Anfang und Ende des sichtbaren Bereichs weich kommt und geht")},
+    };
+}
+
+double visibleWeight(const NodeCtx& ctx)
+{
+    const double from = std::max(0.0, ctx.num("from")), until = ctx.num("until");
+    if (from <= 0 && until <= 0) return 1.0; // the whole clip
+    const double s = ctx.t / std::max(1.0, ctx.fps), fade = std::max(0.0, ctx.num("fade"));
+    const double end = until > 0 ? until : 1e12;
+    if (s < from || s >= end || end <= from) return 0.0;
+    double w = 1.0;
+    if (fade > 0) {
+        if (from > 0) w = std::min(w, (s - from) / fade);
+        if (until > 0) w = std::min(w, (end - s) / fade);
+    }
+    return std::clamp(w, 0.0, 1.0);
+}
+
+bool rangeVaries(const QVariantMap& values)
+{
+    return values.value("from").toDouble() > 0 || values.value("until").toDouble() > 0;
+}
+
 void fadeContent(Buf& b, double opacity)
 {
     if (b.kind != Buf::Rgba || opacity >= 1.0) return;

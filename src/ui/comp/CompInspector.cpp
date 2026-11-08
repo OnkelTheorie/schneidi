@@ -316,6 +316,20 @@ void CompInspector::rebuild(const Clip& c, const QStringList& keys)
             box->setSpacing(8);
             box->addWidget(slider, 1);
             box->addWidget(field);
+            if (key == QLatin1String("from") || key == QLatin1String("until")) { // the visible range: from the playhead
+                auto* here = new QToolButton;
+                here->setObjectName("comp_here_" + key);
+                here->setText(T("Hier"));
+                here->setToolTip(key == QLatin1String("from") ? T("Ab dem Abspielkopf sichtbar")
+                                                              : T("Bis zum Abspielkopf sichtbar"));
+                connect(here, &QToolButton::clicked, this, [this, key] {
+                    const Clip* cl = clip();
+                    if (!cl) return;
+                    const double fps = std::max(1, m_editor->project()->fps());
+                    set(key, std::round(CompUi::clipFrame(*cl, m_playhead) / fps * 100) / 100, false);
+                });
+                box->addWidget(here);
+            }
             auto* diamond = new QToolButton;
             diamond->setObjectName("comp_key_" + key);
             diamond->setAutoRaise(true);
