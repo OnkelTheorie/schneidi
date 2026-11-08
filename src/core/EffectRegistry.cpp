@@ -103,7 +103,7 @@ QVector<EffectDescriptor> ownLooks()
          {"strength", T("Stärke"), "strength", EffectParam::Double, 1.0, 0.0, 1.0,
           Keys::effectParam("frei0r.glow", "strength"), 0.002, 3, {},
           T("Anteil des Scheins am Bild (1 = voll)")},
-         {"threshold", T("Schwelle"), "threshold", EffectParam::Double, 0.0, 0.0, 1.0,
+         {"threshold", T("Threshold"), "threshold", EffectParam::Double, 0.0, 0.0, 1.0,
           Keys::effectParam("frei0r.glow", "threshold"), 0.002, 3, {},
           T("Nur was heller ist, leuchtet (0 = das ganze Bild; höher = kein Schleier über dunklen Stellen)")}});
     add("frei0r.colorhalftone", T("Rasterdruck"), T("Farbige Rasterpunkte wie im Zeitungsdruck"),
@@ -147,8 +147,8 @@ QVector<EffectDescriptor> ownLooks()
              f0rOther(EffectParam::Bool, "1", T("Eingangs-Alpha zeigen"), "Display input alpha", false),
              f0rNumber(a, "2", T("Operation"), "Operation", 0.0,
                        T("0 nichts, 0,2 rasieren, 0,3/0,4 verkleinern hart/weich, 0,6/0,7 vergrößern hart/weich, "
-                         "0,8 Schwelle, 1 weichzeichnen")),
-             f0rNumber(a, "3", T("Schwelle"), "Threshold", 0.5),
+                         "0,8 Threshold, 1 weichzeichnen")),
+             f0rNumber(a, "3", T("Threshold"), "Threshold", 0.5),
              f0rNumber(a, "4", T("Stärke"), "Shrink/Grow/Blur amount", 0.333, {}, "amount"),
              f0rOther(EffectParam::Bool, "5", T("Umkehren"), "Invert", false)});
     }
@@ -165,11 +165,11 @@ QVector<EffectDescriptor>& registry()
          {
              {"color", T("Farbe"), "0", EffectParam::Color, QColor(0, 255, 0), 0, 0},
              {"distance", T("Toleranz"), "1", EffectParam::Double, 0.3, 0.0, 1.0, AnimParam::Count, 0.002, 3, {},
-              T("Wie weit eine Farbe von der Freistellfarbe entfernt sein darf und noch durchsichtig wird")},
+              T("Wie weit eine Farbe von der Key-Farbe entfernt sein darf und noch durchsichtig wird")},
              {"softness", T("Weiche Kante"), "softness", EffectParam::Double, 0.2, 0.0, 1.0, AnimParam::Count, 0.002, 3,
               {}, T("Breite des Übergangs zwischen durchsichtig und sichtbar")},
              {"spill", T("Farbsaum entfernen"), "spill", EffectParam::Double, 1.0, 0.0, 1.0, AnimParam::Count, 0.002, 3,
-              {}, T("Nimmt den Schimmer der Freistellfarbe (grüner Rand, Widerschein) aus dem, was sichtbar bleibt")},
+              {}, T("Nimmt den Schimmer der Key-Farbe (grüner Rand, Widerschein) aus dem, was sichtbar bleibt")},
          },
          false, {}, true},
         // Simple color correction (all values -100..+100, 0 = unchanged). Engine: avfilter.colorchannelmixer
@@ -232,7 +232,7 @@ QVector<EffectDescriptor>& registry()
              {"clicks", T("Klicks und Stöße dämpfen"), {}, EffectParam::Bool, true, 0, 0, AnimParam::Count, 1, 2, {},
               T("Dämpft Stöße gegen das Mikrofon und Klicks von Tastatur und Maus, wenn gerade niemand spricht")},
              {"shape", T("Stimme formen"), {}, EffectParam::Bool, true, 0, 0, AnimParam::Count, 1, 2, {},
-              T("Hochpass, Präsenz, Kompressor, De-Esser und Begrenzer für eine gleichmäßig verständliche Stimme")},
+              T("Hochpass, Präsenz, Kompressor, De-Esser und Limiter für eine gleichmäßig verständliche Stimme")},
              {"room", T("Raumklang"), {}, EffectParam::Double, -60.0, -80, -40, AnimParam::Count, 0.1, 0, {},
               T("Wie laut der Klang des Raums unter der Stimme bleibt (dBFS), damit Pausen nicht tot still klingen; "
                 "immer mindestens 12 dB leiser als im Original")},
@@ -273,8 +273,8 @@ QVector<EffectDescriptor>& registry()
         // Fixed stage after every other effect, before crop/transform: its input "clip" is the clip's picture with all
         // its effects; the Inspector's transform/opacity work on the result. The parameters depend on the graph, so
         // the descriptor has none (the node kinds have them, engine/picture/CompNodes.h)
-        {"comp", T("Knoten-Komposition"), {}, true, {}, false,
-         T("Ebenen, Masken, Freistellen und Verfolgung als Knoten (Seite Komposition)"), true},
+        {"comp", T("Compositing"), {}, true, {}, false,
+         T("Ebenen, Masken, Keying und Tracking als Knoten (Seite Compositing)"), true},
     }) + ownLooks() // after the built-in ones: the Effects Library lists them behind blur and color correction
                    + customEffects();
     return effects;

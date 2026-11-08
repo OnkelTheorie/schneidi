@@ -96,7 +96,7 @@ void KeyColorPicker::paint(QPainter& p, const QRectF& frame)
     const QRectF visible = frame.intersected(QRectF(p.viewport()));
 
     // Hint at the top
-    const QString text = T("Pipette: Klick ins Bild übernimmt die Freistellfarbe, Mausrad zoomt, mittlere Maustaste "
+    const QString text = T("Pipette: Klick ins Bild übernimmt die Key-Farbe, Mausrad zoomt, mittlere Maustaste "
                            "verschiebt, Rechtsklick oder Esc bricht ab");
     QFont font = p.font();
     font.setPointSizeF(std::max(7.0, font.pointSizeF() - 1));

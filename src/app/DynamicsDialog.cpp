@@ -53,12 +53,12 @@ DynamicsDialog::DynamicsDialog(Editor* editor, int track, QWidget* parent)
         connect(e, &QLineEdit::editingFinished, this, &DynamicsDialog::commit);
         return e;
     };
-    m_threshold = field("threshold", T("Schwelle"), "dB", T("Ab diesem Pegel wird komprimiert (-60 … 0 dB)"));
-    m_ratio = field("ratio", T("Verhältnis"), ": 1", T("Wie stark über der Schwelle verringert wird (1 … 100)"));
-    m_attack = field("attack", T("Ansprechzeit"), "ms", T("Wie schnell der Kompressor auf lauten Ton reagiert"));
-    m_release = field("release", T("Rückstellzeit"), "ms", T("Wie schnell er danach wieder loslässt"));
-    m_knee = field("knee", T("Knie"), "dB", T("Weicher Übergang um die Schwelle (0 = hart)"));
-    m_makeup = field("makeup", T("Pegelausgleich"), "dB", T("Verstärkung nach dem Komprimieren"));
+    m_threshold = field("threshold", T("Threshold"), "dB", T("Ab diesem Pegel wird komprimiert (-60 … 0 dB)"));
+    m_ratio = field("ratio", T("Ratio"), ": 1", T("Wie stark über dem Threshold verringert wird (1 … 100)"));
+    m_attack = field("attack", T("Attack"), "ms", T("Wie schnell der Kompressor auf lauten Ton reagiert"));
+    m_release = field("release", T("Release"), "ms", T("Wie schnell er danach wieder loslässt"));
+    m_knee = field("knee", T("Knee"), "dB", T("Weicher Übergang um den Threshold (0 = hart)"));
+    m_makeup = field("makeup", T("Make-up"), "dB", T("Verstärkung nach dem Komprimieren"));
     root->addLayout(form);
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Close);
     connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);

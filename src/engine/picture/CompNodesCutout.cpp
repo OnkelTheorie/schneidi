@@ -115,7 +115,7 @@ void registerCutoutNodes(QVector<NodeType>& out)
     cache.defaultValue = QString();
     cache.description = T("Kennung der Freistell-Analyse; wird von der Analyse gesetzt");
     k.params << cache;
-    k.params << number("threshold", T("Schwelle"), 0.5, 0, 1, 0.01, 2,
+    k.params << number("threshold", T("Threshold"), 0.5, 0, 1, 0.01, 2,
                        T("Ab welcher Sicherheit ein Pixel zur Person gehört (die Kante liegt hier)"))
              << number("soft", T("Weiche Kante"), 0, 0, 100, 0.5, 1, T("Kante weicher machen (Pixel)"))
              << number("grow", T("Wachsen"), 0, -50, 50, 0.5, 1,

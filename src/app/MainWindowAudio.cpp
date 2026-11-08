@@ -97,7 +97,7 @@ void MainWindow::duckingDialog()
         return;
     }
     if (ranges->isEmpty()) {
-        QMessageBox::information(this, T("Musik absenken"), T("Auf den gewählten Spuren ist kein Ton über der Schwelle."));
+        QMessageBox::information(this, T("Musik absenken"), T("Auf den gewählten Spuren ist kein Ton über dem Threshold."));
         return;
     }
     const int ducked = m_editor->duck(dlg.musicIds(), *ranges, params);

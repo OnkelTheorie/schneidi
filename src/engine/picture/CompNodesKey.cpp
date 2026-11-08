@@ -195,9 +195,9 @@ void registerKeyNodes(QVector<NodeType>& out)
     {
         NodeType k;
         k.id = "key";
-        k.name = T("Farbe freistellen");
+        k.name = T("Keyer");
         k.description = T("Stellt frei: nach einer Farbe (Greenscreen) oder nach der Helligkeit; das Ergebnis ist das "
-                          "Bild mit der Freistellung im Alpha-Kanal");
+                          "Bild mit dem Key im Alpha-Kanal");
         k.inputs = {"src"};
         EffectParam mode{"mode", T("Art"), {}, EffectParam::Choice, QString("chroma")};
         mode.choices = {"chroma", "luma"};
@@ -206,19 +206,19 @@ void registerKeyNodes(QVector<NodeType>& out)
             mode,
             {"color", T("Farbe"), {}, EffectParam::Color, green, 0, 0},
             {"tolerance", T("Toleranz"), {}, EffectParam::Double, 0.3, 0.0, 1.0, AnimParam::Count, 0.002, 3, {},
-             T("Wie weit eine Farbe von der Freistellfarbe entfernt sein darf und noch durchsichtig wird")},
+             T("Wie weit eine Farbe von der Key-Farbe entfernt sein darf und noch durchsichtig wird")},
             {"softness", T("Weiche Kante"), {}, EffectParam::Double, 0.2, 0.0, 1.0, AnimParam::Count, 0.002, 3, {},
              T("Breite des Übergangs zwischen durchsichtig und sichtbar")},
             {"spill", T("Farbsaum entfernen"), {}, EffectParam::Double, 1.0, 0.0, 1.0, AnimParam::Count, 0.002, 3, {},
-             T("Nimmt den Schimmer der Freistellfarbe (grüner Rand, Widerschein) aus dem, was sichtbar bleibt")},
+             T("Nimmt den Schimmer der Key-Farbe (grüner Rand, Widerschein) aus dem, was sichtbar bleibt")},
             {"low", T("Untere Grenze"), {}, EffectParam::Double, 0.1, 0.0, 1.0, AnimParam::Count, 0.002, 3, {},
-             T("Helligkeits-Freistellung: was dunkler ist, wird durchsichtig")},
+             T("Luma-Key: was dunkler ist, wird durchsichtig")},
             {"high", T("Obere Grenze"), {}, EffectParam::Double, 1.0, 0.0, 1.0, AnimParam::Count, 0.002, 3, {},
-             T("Helligkeits-Freistellung: was heller ist, wird durchsichtig")},
+             T("Luma-Key: was heller ist, wird durchsichtig")},
             {"soft", T("Weiche Kante"), {}, EffectParam::Double, 0.1, 0.0, 1.0, AnimParam::Count, 0.002, 3, {},
-             T("Helligkeits-Freistellung: Breite des Übergangs an den Grenzen")},
+             T("Luma-Key: Breite des Übergangs an den Grenzen")},
             {"invert", T("Invertieren"), {}, EffectParam::Bool, false, 0, 0, AnimParam::Count, 0, 0, {},
-             T("Dreht den Key um: was sonst durchsichtig wird (die Freistellfarbe), bleibt sichtbar, der Rest wird durchsichtig – "
+             T("Dreht den Key um: was sonst durchsichtig wird (die Key-Farbe), bleibt sichtbar, der Rest wird durchsichtig – "
                "z. B. als Maske, um nur den Greenscreen weichzuzeichnen")},
         };
         k.output = Buf::Rgba;
@@ -242,7 +242,7 @@ void registerKeyNodes(QVector<NodeType>& out)
             {"soft", T("Weiche Kante"), {}, EffectParam::Double, 0.0, 0.0, 100.0, AnimParam::Count, 0.1, 1, {},
              T("In Pixeln: macht die Kante der Alphamaske weich")},
             {"despill", T("Farbsaum entfernen"), {}, EffectParam::Double, 0.0, 0.0, 1.0, AnimParam::Count, 0.002, 3, {},
-             T("Nimmt den Schimmer der Freistellfarbe aus dem ganzen Bild (nur bei einem Bild, nicht bei einer Maske)")},
+             T("Nimmt den Schimmer der Key-Farbe aus dem ganzen Bild (nur bei einem Bild, nicht bei einer Maske)")},
             {"color", T("Farbe"), {}, EffectParam::Color, green, 0, 0},
         };
         k.output = Buf::Rgba; // a mask at src gives a mask

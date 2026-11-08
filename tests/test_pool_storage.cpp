@@ -141,7 +141,7 @@ void testFilterButton(const QString& dump)
     QMenu* flags = nullptr;
     for (QAction* a : menu->actions()) {
         if (a->text() == T("Video")) video = a;
-        if (a->menu() && a->text().startsWith(T("Flaggen"))) flags = a->menu();
+        if (a->menu() && a->text().startsWith(T("Flags"))) flags = a->menu();
     }
     if (!CHECK(video && flags)) return;
     video->trigger();
@@ -153,7 +153,7 @@ void testFilterButton(const QString& dump)
     CHECK(video->isChecked());
     CHECK(b.styleSheet() != inactiveStyle); // an active filter is clearly visible
     CHECK(b.toolTip().contains(T("Rot")));
-    CHECK_EQ(flags->title(), T("Flaggen (%1)").arg(1));
+    CHECK_EQ(flags->title(), T("Flags (%1)").arg(1));
     if (!dump.isEmpty()) {
         menu->popup(QPoint(0, 0));
         QApplication::processEvents();

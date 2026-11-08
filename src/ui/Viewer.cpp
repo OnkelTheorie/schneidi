@@ -193,7 +193,7 @@ Viewer::Viewer(Engine* engine, QWidget* parent) : QWidget(parent), m_engine(engi
     };
     auto* startBtn = makeBtn("⏮", T("Zum Anfang (Home)"));
     auto* backBtn = makeBtn("◀◀", T("Rückwärts (J)"));
-    m_playBtn = makeBtn("▶", T("Abspielen/Pause (Leertaste)"));
+    m_playBtn = makeBtn("▶", T("Play/Pause (Leertaste)"));
     auto* fwdBtn = makeBtn("▶▶", T("Vorwärts (L)"));
 
     connect(startBtn, &QToolButton::clicked, this, [this] { m_engine->pause(); m_engine->seek(0); });
@@ -460,7 +460,7 @@ void Viewer::setSource(const QString& path, const QString& name)
 void Viewer::updateModeText()
 {
     QString text = !m_sourcePath.isEmpty() ? T("Quelle – %1").arg(m_sourceName)
-                   : m_multicamOn         ? T("Timeline – Multikamera")
+                   : m_multicamOn         ? T("Timeline – Multicam")
                                           : T("Timeline");
     if (m_engine->colorBypass()) text += T("  (Farbkorrektur umgangen)");
     m_mode->setTextFormat(m_recording ? Qt::RichText : Qt::PlainText);

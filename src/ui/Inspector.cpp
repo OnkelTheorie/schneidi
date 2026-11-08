@@ -318,12 +318,12 @@ Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
     auto* swatch = new QToolButton;
     swatch->setFixedSize(46, 18);
     swatch->setFocusPolicy(Qt::NoFocus);
-    swatch->setToolTip(T("Freistellfarbe wählen"));
+    swatch->setToolTip(T("Key-Farbe wählen"));
     connect(swatch, &QToolButton::clicked, this, [this] {
         const Clip* c = primary(TrackKind::Video);
         if (!c) return;
         const QColor col = QColorDialog::getColor(effectParam(*c, "chromakey", "color").value<QColor>(), this,
-                                                  T("Freistellfarbe wählen"));
+                                                  T("Key-Farbe wählen"));
         if (col.isValid()) applyKeyColor(col);
     });
     // Pipette: the viewer shows the clip without its key, a click there picks the color (MainWindow, KeyColorPicker)
@@ -331,7 +331,7 @@ Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
     m_keyPipette->setObjectName("KeyPipette");
     m_keyPipette->setFixedSize(26, 18);
     m_keyPipette->setIcon(pipetteIcon());
-    m_keyPipette->setToolTip(T("Freistellfarbe mit der Pipette aus dem Bild in der Vorschau picken"));
+    m_keyPipette->setToolTip(T("Key-Farbe mit der Pipette aus dem Bild in der Vorschau picken"));
     connect(m_keyPipette, &QToolButton::toggled, this, [this](bool on) {
         const Clip* c = primary(TrackKind::Video);
         if (on && c) emit keyPickRequested(c->id);
@@ -363,7 +363,7 @@ Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
     tol->edit->onChange = [this, tol](double v) {
         const QSignalBlocker b(tol->slider);
         tol->slider->setValue(sliderPos(v, tol->min, tol->max));
-        apply(TrackKind::Video, "keyTolerance", T("Freistell-Toleranz"), [v](Clip& c) {
+        apply(TrackKind::Video, "keyTolerance", T("Key-Toleranz"), [v](Clip& c) {
             EffectInstance& e = ensureEffect(c, "chromakey");
             e.params["distance"] = v / 100.0;
             e.enabled = true;
@@ -411,7 +411,7 @@ Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
     auto* compOpen = new QPushButton(T("Öffnen"));
     compOpen->setObjectName("inspector_comp_open");
     compOpen->setFocusPolicy(Qt::NoFocus);
-    compOpen->setToolTip(T("Den Graphen auf der Seite Komposition bearbeiten"));
+    compOpen->setToolTip(T("Den Graphen auf der Seite Compositing bearbeiten"));
     connect(compOpen, &QPushButton::clicked, this, [this] {
         if (const Clip* c = primary(TrackKind::Video)) emit compOpenRequested(c->id);
     });
@@ -508,7 +508,7 @@ void Inspector::setFrameSize(const QSize& size)
 
 void Inspector::applyKeyColor(const QColor& color)
 {
-    apply(TrackKind::Video, {}, T("Freistellfarbe"), [color](Clip& clip) {
+    apply(TrackKind::Video, {}, T("Key-Farbe"), [color](Clip& clip) {
         EffectInstance& e = ensureEffect(clip, "chromakey");
         e.params["color"] = color;
         e.enabled = true;

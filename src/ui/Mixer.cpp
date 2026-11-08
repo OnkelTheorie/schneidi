@@ -727,7 +727,7 @@ public:
         name->setAlignment(Qt::AlignCenter);
         name->setStyleSheet(QString("color: %1; font-weight: 600; font-size: 8pt; background: %2; padding: 2px;")
                                 .arg(Theme::text.name(), Theme::panelHeader.name()));
-        name->setToolTip(T("Lautheitsmesser (ITU-R BS.1770-4, LUFS) und True Peak (dBTP) am Master\n"
+        name->setToolTip(T("Loudness-Meter (ITU-R BS.1770-4, LUFS) und True Peak (dBTP) am Master\n"
                            "Misst bei Wiedergabe der Timeline. Rechtsklick = Ziellautheit, True-Peak-Grenze"));
         lay->addWidget(name);
         view = new LoudnessView;
@@ -837,7 +837,7 @@ Mixer::Mixer(Project* project, Engine* engine, QWidget* parent)
     connect(m_master->limiter, &QToolButton::clicked, this, [this](bool on) { m_editor->setMasterLimiter(on); });
     connect(m_master->limiter, &QWidget::customContextMenuRequested, this, [this](const QPoint& pos) {
         QMenu menu(this);
-        menu.addSection(T("Begrenzer-Obergrenze"));
+        menu.addSection(T("Limiter-Obergrenze"));
         const double current = m_project->timeline().masterLimiterDb;
         for (double db : {0.0, -0.1, -0.3, -0.5, -1.0, -2.0, -3.0, -6.0}) {
             QAction* a = menu.addAction(QString("%1 dBFS").arg(db, 0, 'f', 1));
@@ -1093,7 +1093,7 @@ void Mixer::sync()
     }
     m_master->setVolume(tl.masterVolumeDb);
     m_master->limiter->setChecked(tl.masterLimiter);
-    m_master->limiter->setToolTip(T("Begrenzer am Master (Obergrenze %1 dBFS)\nKlick = an/aus, Rechtsklick = Obergrenze")
+    m_master->limiter->setToolTip(T("Limiter am Master (Obergrenze %1 dBFS)\nKlick = an/aus, Rechtsklick = Obergrenze")
                                       .arg(tl.masterLimiterDb, 0, 'f', 1));
 }
 

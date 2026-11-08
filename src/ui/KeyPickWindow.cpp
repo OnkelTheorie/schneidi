@@ -18,7 +18,7 @@ KeyPickWindow::KeyPickWindow(KeyColorPicker* picker, const QSize& picture, QWidg
       m_center(QPointF(picture.width(), picture.height()) / 2)
 {
     setObjectName("KeyPickWindow");
-    setWindowTitle(T("Freistellfarbe wählen"));
+    setWindowTitle(T("Key-Farbe wählen"));
     setWindowModality(Qt::WindowModal); // the timeline and the Inspector wait until the color is picked
     setAttribute(Qt::WA_OpaquePaintEvent);
     setAttribute(Qt::WA_QuitOnClose, false);

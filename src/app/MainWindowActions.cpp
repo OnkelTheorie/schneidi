@@ -331,7 +331,7 @@ void MainWindow::buildActions()
             QApplication::beep(); // no keyframes
     });
     curves->setCheckable(true);
-    makeAction(clipMenu, "speed_point_add", T("Tempo-Punkt hinzufügen"), QKeySequence(), [this] {
+    makeAction(clipMenu, "speed_point_add", T("Speed-Punkt hinzufügen"), QKeySequence(), [this] {
         // at the playhead position in the selected clips (resp. the video clip below), show the controls
         const int frame = m_timeline->view()->playhead();
         QVector<int> ids = m_editor->clipIdsOf(m_selection->ids());
@@ -360,7 +360,7 @@ void MainWindow::buildActions()
     makeAction(clipMenu, "normalize_audio", T("Audiopegel normalisieren…"), QKeySequence(), [this] { normalizeAudioDialog(); });
     makeAction(clipMenu, "audio_ducking", T("Musik absenken…"), QKeySequence(), [this] { duckingDialog(); });
     makeAction(clipMenu, "stream_presets_learn", T("Spur-Einstellungen merken"), QKeySequence(), [this] { rememberStreamSettings(); });
-    makeAction(clipMenu, "save_effect_preset", T("Effekte als Voreinstellung speichern…"), QKeySequence(),
+    makeAction(clipMenu, "save_effect_preset", T("Effekte als Preset speichern…"), QKeySequence(),
                [this] { saveEffectPreset(); });
     makeAction(clipMenu, "link_clips", T("Clips verknüpfen/trennen"), QKeySequence("Ctrl+Alt+L"),
                [this] { m_editor->toggleLinkSelection(); });
@@ -379,7 +379,7 @@ void MainWindow::buildActions()
         cacheClip->setEnabled(state >= 0);
         cacheClip->setChecked(state == 1);
     });
-    makeAction(clipMenu, "auto_reframe", T("Auto-Ausschnitt"), QKeySequence(), [this] { autoReframe(); });
+    makeAction(clipMenu, "auto_reframe", T("Auto-Reframe"), QKeySequence(), [this] { autoReframe(); });
     makeAction(clipMenu, "blur_names", T("Namen verwischen…"), QKeySequence(), [this] { blurNames(); });
     makeAction(clipMenu, "crop_bars", T("Schwarze Balken wegschneiden"), QKeySequence(), [this] { cropBlackBars(); });
     QAction* stretched = makeAction(clipMenu, "stretched_43", T("Gestrecktes 4:3 entzerren"), QKeySequence(), [] {});
@@ -394,7 +394,7 @@ void MainWindow::buildActions()
         }));
     });
     // Auto-Reframe of game footage: its kill feed as a second picture at the top (Reframe::KeepChoice)
-    QAction* keepFeed = makeAction(clipMenu, "reframe_keep_killfeed", T("Auto-Ausschnitt: Killfeed oben behalten"),
+    QAction* keepFeed = makeAction(clipMenu, "reframe_keep_killfeed", T("Auto-Reframe: Killfeed oben behalten"),
                                    QKeySequence(), [] {});
     keepFeed->setCheckable(true);
     keepFeed->setChecked(QSettings().value(QStringLiteral("reframe/keepKillFeed"), true).toBool());
@@ -403,8 +403,8 @@ void MainWindow::buildActions()
     // A song cut to a length on its phrases (op fit_music): timeline, In/Out range or a number
     makeAction(clipMenu, "fit_music", T("Musik auf Länge…"), QKeySequence(), [this] { fitMusicDialog(); });
     // Compositing graph of a clip on the Comp page (0.19)
-    makeAction(clipMenu, "comp_open", T("In Komposition öffnen"), QKeySequence(), [this] { openCompForSelection(); });
-    makeAction(clipMenu, "comp_from", T("Komposition aus Auswahl"), QKeySequence(), [this] { compFromSelection(); });
+    makeAction(clipMenu, "comp_open", T("In Compositing öffnen"), QKeySequence(), [this] { openCompForSelection(); });
+    makeAction(clipMenu, "comp_from", T("Compositing aus Auswahl"), QKeySequence(), [this] { compFromSelection(); });
     QMenu* compoundMenu = timeline->addMenu(T("Verbundclip"));
     makeAction(compoundMenu, "compound_create", T("Neuer Verbundclip…"), QKeySequence(), [this] { createCompoundClip(); });
     makeAction(compoundMenu, "compound_open", T("Verbundclip in Timeline öffnen"), QKeySequence(),
@@ -494,7 +494,7 @@ void MainWindow::buildActions()
     makeAction(timeline, "speech", T("Sprechertext…"), QKeySequence(), [this] { speechDialog(); });
 
     QMenu* play = menuBar()->addMenu(T("&Wiedergabe"));
-    makeAction(play, "play_pause", T("Abspielen/Pause"), QKeySequence(Qt::Key_Space), [this] { m_engine->togglePlay(); });
+    makeAction(play, "play_pause", T("Play/Pause"), QKeySequence(Qt::Key_Space), [this] { m_engine->togglePlay(); });
     makeAction(play, "shuttle_back", T("Rückwärts (J)"), QKeySequence("J"), [this] { shuttle(-1); });
     makeAction(play, "stop", T("Stopp (K)"), QKeySequence("K"), [this] { m_engine->pause(); });
     makeAction(play, "shuttle_fwd", T("Vorwärts (L)"), QKeySequence("L"), [this] { shuttle(1); });
@@ -564,7 +564,7 @@ void MainWindow::buildActions()
     QMenu* cacheMenu = play->addMenu(T("Render-Cache"));
     auto* cacheGroup = new QActionGroup(cacheMenu);
     for (const auto& [id, text, mode] : {std::tuple{"render_cache_off", N_("Aus"), RenderCache::Mode::Off},
-                                         std::tuple{"render_cache_smart", N_("Intelligent"), RenderCache::Mode::Smart},
+                                         std::tuple{"render_cache_smart", N_("Smart"), RenderCache::Mode::Smart},
                                          std::tuple{"render_cache_user", N_("Benutzer"), RenderCache::Mode::User}}) {
         const RenderCache::Mode m = mode;
         QAction* a = makeAction(play, id, T("Render-Cache: %1").arg(T(text)), QKeySequence(),
@@ -682,7 +682,7 @@ void MainWindow::buildActions()
     QMenu* workspace = menuBar()->addMenu(T("&Arbeitsbereich"));
     makeAction(workspace, "page_media", T("Seite Medien"), QKeySequence("Shift+2"), [this] { showPage(Page::Media); });
     makeAction(workspace, "page_edit", T("Seite Schneiden"), QKeySequence("Shift+4"), [this] { showPage(Page::Edit); });
-    makeAction(workspace, "page_comp", T("Seite Komposition"), QKeySequence("Shift+3"), [this] { showPage(Page::Comp); });
+    makeAction(workspace, "page_comp", T("Seite Compositing"), QKeySequence("Shift+3"), [this] { showPage(Page::Comp); });
     makeAction(workspace, "page_color", T("Seite Farbe"), QKeySequence("Shift+5"), [this] { showPage(Page::Color); });
     makeAction(workspace, "page_deliver", T("Seite Export"), QKeySequence("Shift+8"), [this] { showPage(Page::Deliver); });
     makeAction(workspace, "toggle_effects", T("Effektbibliothek ein/aus"), QKeySequence(),
@@ -768,13 +768,13 @@ void MainWindow::buildActions()
     });
     // Brand kit (0.18): the global kit or the project's own; titles that reference it follow (one undo step). Logo and
     // intro/outro go into the timeline only when asked for here.
-    QMenu* brandMenu = workspace->addMenu(T("Markenpaket"));
-    makeAction(brandMenu, "brand_kit", T("Markenpaket…"), QKeySequence(), [this] { editBrandKit(); });
+    QMenu* brandMenu = workspace->addMenu(T("Branding"));
+    makeAction(brandMenu, "brand_kit", T("Branding…"), QKeySequence(), [this] { editBrandKit(); });
     brandMenu->addSeparator();
     // A kit file into the Media Pool (the Editor ops place only what is there); false = no such file
     auto brandMedia = [this](const QString& path, const QString& none) {
         if (path.isEmpty() || !QFileInfo::exists(path)) {
-            QMessageBox::information(this, T("Markenpaket"),
+            QMessageBox::information(this, T("Branding"),
                                      path.isEmpty() ? none : T("Datei nicht gefunden: %1").arg(path));
             return false;
         }
@@ -782,14 +782,14 @@ void MainWindow::buildActions()
         return m_project->mediaInfo(path) != nullptr;
     };
     makeAction(brandMenu, "brand_logo", T("Logo einfügen"), QKeySequence(), [this, brandMedia] {
-        if (!brandMedia(m_project->effectiveBrand().logo, T("Das Markenpaket hat kein Logo."))) return;
+        if (!brandMedia(m_project->effectiveBrand().logo, T("Das Branding hat kein Logo."))) return;
         if (!m_editor->addBrandLogo())
-            QMessageBox::information(this, T("Markenpaket"), T("Die Timeline ist leer: das Logo kommt über ihre ganze Länge."));
+            QMessageBox::information(this, T("Branding"), T("Die Timeline ist leer: das Logo kommt über ihre ganze Länge."));
     });
     makeAction(brandMenu, "brand_intro_outro", T("Intro/Outro einfügen"), QKeySequence(), [this, brandMedia] {
         const BrandKit kit = m_project->effectiveBrand();
         if (kit.intro.isEmpty() && kit.outro.isEmpty()) {
-            brandMedia({}, T("Das Markenpaket hat kein Intro und kein Outro."));
+            brandMedia({}, T("Das Branding hat kein Intro und kein Outro."));
             return;
         }
         if (!kit.intro.isEmpty() && !brandMedia(kit.intro, {})) return;
@@ -855,7 +855,7 @@ void MainWindow::editBrandKit()
     if (dlg.exec() != QDialog::Accepted) return;
     // Only what the user changed, onto the kit as it is now (an AI's `brand set` meanwhile keeps its fields)
     QString err;
-    if (!Brand::changeGlobal(opened, dlg.global(), &err)) QMessageBox::warning(this, T("Markenpaket"), err);
+    if (!Brand::changeGlobal(opened, dlg.global(), &err)) QMessageBox::warning(this, T("Branding"), err);
     // The project's own kit (changed: set + applied as one step) or the global one applied
     if (dlg.project() != m_project->brand()) m_editor->setProjectBrand(dlg.project());
     else m_editor->applyBrand();

@@ -1107,7 +1107,7 @@ void MediaPool::updateItem(const QString& path)
             x += fs + 2;
             names << T(f->name);
         }
-        if (!names.isEmpty()) tip += "\n" + T("Flaggen: %1").arg(names.join(", "));
+        if (!names.isEmpty()) tip += "\n" + T("Flags: %1").arg(names.join(", "));
         // Several audio streams (OBS): count at the bottom left, names in the tooltip
         if (const int n = info->audioStreamCount(); n > 1) {
             QFont f = p.font();
@@ -1226,7 +1226,7 @@ void MediaPool::updateSequenceItems()
         const ProjectFormat own = m_project->sequenceFormat(id);
         const QString size = resolutionLabel(own.width, own.height);
         const QString tip =
-            (q->multicam ? T("Multikamera-Clip – in die Timeline ziehen legt ihn ab, Doppelklick öffnet die Winkel")
+            (q->multicam ? T("Multicam-Clip – in die Timeline ziehen legt ihn ab, Doppelklick öffnet die Winkel")
              : q->compound ? T("Verbundclip – Doppelklick öffnet ihn, in die Timeline ziehen legt ihn ab")
                            : T("Timeline – Doppelklick öffnet sie, in eine andere Timeline ziehen verschachtelt sie"))
             + "\n" + (q->hasOwnSize() ? T("Eigene Auflösung: %1").arg(size) : T("Auflösung: %1 (Projekteinstellungen)").arg(size));
@@ -1303,7 +1303,7 @@ void MediaPool::removeSelected()
         QString info = T("„Mit ihren Clips entfernen“ nimmt diese Clips auch aus den Timelines (ein "
                          "Rückgängig-Schritt holt alles zurück).");
         if (referenced)
-            info += ' ' + T("Wird eine Datei nur in einer Komposition oder als Titel-Textur benutzt, bleibt der Clip; nur dieser "
+            info += ' ' + T("Wird eine Datei nur im Compositing oder als Titel-Textur benutzt, bleibt der Clip; nur dieser "
                             "Verweis wird geleert.");
         box.setInformativeText(info);
         QPushButton* withClips = box.addButton(T("Mit ihren Clips entfernen"), QMessageBox::DestructiveRole);
@@ -1347,7 +1347,7 @@ void MediaPool::addClipColorMenu(QMenu* menu, Project* project, const QStringLis
 
 void MediaPool::addFlagsMenu(QMenu* menu, Project* project, const QStringList& paths)
 {
-    QMenu* flags = menu->addMenu(T("Flaggen"));
+    QMenu* flags = menu->addMenu(T("Flags"));
     flags->setEnabled(!paths.isEmpty());
     QVector<const MediaInfo*> infos;
     for (const QString& path : paths)
@@ -1366,7 +1366,7 @@ void MediaPool::addFlagsMenu(QMenu* menu, Project* project, const QStringList& p
         QObject::connect(a, &QAction::triggered, project, [project, paths, id, all] { project->setFlag(paths, id, !all); });
     }
     flags->addSeparator();
-    QAction* clear = flags->addAction(T("Alle Flaggen entfernen"));
+    QAction* clear = flags->addAction(T("Alle Flags entfernen"));
     clear->setEnabled(any);
     QObject::connect(clear, &QAction::triggered, project, [project, paths] { project->clearFlags(paths); });
 }
@@ -1425,7 +1425,7 @@ void MediaPool::showContextMenu(const QPoint& pos)
             if (!m_list->item(row)->isSelected() || !paths.contains(path)) continue;
             if (const MediaInfo* m = m_project->mediaInfo(path); m && !m->isImage) recordings << path;
         }
-        menu.addAction(T("Multikamera-Clip aus ausgewählten Clips erstellen…"), this,
+        menu.addAction(T("Multicam-Clip aus ausgewählten Clips erstellen…"), this,
                        [this, recordings] { emit multicamRequested(recordings); })
             ->setEnabled(!recordings.isEmpty());
         // Stretched 4:3 game footage: these files (their tiles and new clips) and their clips in the open timeline at

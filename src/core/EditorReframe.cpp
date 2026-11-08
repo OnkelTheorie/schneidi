@@ -91,7 +91,7 @@ int Editor::reframeClips(const QVector<int>& ids, Reframe::Mode mode, const QHas
     if (targets.isEmpty()) return 0;
     const QSizeF frame = m_project->timelineFormat().size();
     Project* p = m_project;
-    m_project->edit(T("Auto-Ausschnitt"), [&](Timeline& tl) {
+    m_project->edit(T("Auto-Reframe"), [&](Timeline& tl) {
         for (int id : targets)
             if (Clip* c = TimelineOps::findClip(tl, id))
                 Reframe::apply(*c, mode, paths.value(id), MediaAspect::ofClip(*c), frame,

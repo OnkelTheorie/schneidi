@@ -45,7 +45,7 @@ bool Editor::applyBrand()
     for (Sequence& s : after) changed |= resolveTimeline(s.timeline, kit);
     if (!changed) return false;
     m_project->closeMerge();
-    m_project->editSequences(T("Markenpaket anwenden"), [&](QVector<Sequence>& seqs, int&) { seqs = after; });
+    m_project->editSequences(T("Branding anwenden"), [&](QVector<Sequence>& seqs, int&) { seqs = after; });
     return true;
 }
 
@@ -55,7 +55,7 @@ void Editor::setProjectBrand(const std::optional<BrandKit>& brand)
     if (b == m_project->brand()) return;
     QUndoStack* undo = m_project->undoStack();
     m_project->closeMerge();
-    undo->beginMacro(b ? T("Markenpaket des Projekts") : T("Globales Markenpaket verwenden"));
+    undo->beginMacro(b ? T("Branding des Projekts") : T("Globales Branding verwenden"));
     m_project->setBrand(b);
     applyBrand();
     undo->endMacro();

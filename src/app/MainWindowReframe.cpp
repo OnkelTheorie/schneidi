@@ -71,7 +71,7 @@ bool MainWindow::measureReframe(const QVector<Clip>& clips, const ProjectFormat&
         *result = ReframeAnalysis::paths(clips, format, 0.5, [lengths](const QString& p) { return lengths.value(p); },
                                          errors.get(), cancel.get(), progress.get(), bars.get());
     });
-    QProgressDialog dialog(T("Auto-Ausschnitt: Bild wird analysiert …"), T("Abbrechen"), 0, 1000, this);
+    QProgressDialog dialog(T("Auto-Reframe: Bild wird analysiert …"), T("Abbrechen"), 0, 1000, this);
     dialog.setWindowModality(Qt::WindowModal);
     dialog.setMinimumDuration(400);
     connect(&dialog, &QProgressDialog::canceled, this, [cancel] { cancel->store(true); });
@@ -97,7 +97,7 @@ bool MainWindow::measureReframe(const QVector<Clip>& clips, const ProjectFormat&
     dialog.reset();
     if (cancel->load()) return false;
     if (!errors->isEmpty())
-        QMessageBox::warning(this, T("Auto-Ausschnitt"),
+        QMessageBox::warning(this, T("Auto-Reframe"),
                              T("Nicht alle Clips ließen sich analysieren, sie bleiben mittig:\n%1").arg(errors->join('\n')));
     *paths = *result;
     if (contents) *contents = *bars;
@@ -109,7 +109,7 @@ void MainWindow::autoReframe()
     QVector<int> overlays; // left out of a whole timeline (nothing selected)
     const QVector<int> ids = m_editor->reframeTargets(m_editor->clipIdsOf(m_selection->ids()), &overlays);
     if (ids.isEmpty()) {
-        statusBar()->showMessage(T("Auto-Ausschnitt: keine Video-Clips (Titel, Verbund- und Multikamera-Clips bleiben, wie sie sind)"), 6000);
+        statusBar()->showMessage(T("Auto-Reframe: keine Video-Clips (Titel, Verbund- und Multicam-Clips bleiben, wie sie sind)"), 6000);
         return;
     }
     QVector<Clip> clips;
@@ -121,14 +121,14 @@ void MainWindow::autoReframe()
     if (!measureReframe(clips, m_project->timelineFormat(), &paths, &contents)) return;
     // Another timeline opened or the clips changed meanwhile
     if (m_project->currentSequence() != sequence || footageChanged(m_project->timeline(), clips)) {
-        statusBar()->showMessage(T("Auto-Ausschnitt abgebrochen: die Timeline hat sich während der Analyse geändert"), 6000);
+        statusBar()->showMessage(T("Auto-Reframe abgebrochen: die Timeline hat sich während der Analyse geändert"), 6000);
         return;
     }
     const auto keeps = m_editor->reframeKeeps(ids, Reframe::Mode::Auto, contents, reframeKeepChoice());
     const int n = m_editor->reframeClips(ids, Reframe::Mode::Auto, paths, contents, &keeps);
     const bool kept = std::any_of(keeps.begin(), keeps.end(), [](const QVector<Reframe::Keep>& k) { return !k.isEmpty(); });
-    QString text = kept ? T("Auto-Ausschnitt: %1 Clips folgen ihrem Motiv, der Killfeed bleibt oben lesbar").arg(n)
-                        : T("Auto-Ausschnitt: %1 Clips folgen ihrem Motiv").arg(n);
+    QString text = kept ? T("Auto-Reframe: %1 Clips folgen ihrem Motiv, der Killfeed bleibt oben lesbar").arg(n)
+                        : T("Auto-Reframe: %1 Clips folgen ihrem Motiv").arg(n);
     if (!overlays.isEmpty()) text += " " + overlayNote(int(overlays.size()));
     statusBar()->showMessage(text, overlays.isEmpty() ? 5000 : 8000);
 }
@@ -154,7 +154,7 @@ void MainWindow::reframedCopy(int sequenceId)
     if (!clips.isEmpty() && !measureReframe(clips, format, &paths, &contents)) return;
     q = m_project->sequence(sequenceId);
     if (!q || footageChanged(q->timeline, clips)) {
-        statusBar()->showMessage(T("Auto-Ausschnitt abgebrochen: die Timeline hat sich während der Analyse geändert"), 6000);
+        statusBar()->showMessage(T("Auto-Reframe abgebrochen: die Timeline hat sich während der Analyse geändert"), 6000);
         return;
     }
     const Timeline source = q->timeline;

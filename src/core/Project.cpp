@@ -996,7 +996,7 @@ void Project::setBrand(const std::optional<BrandKit>& brand)
 {
     const std::optional<BrandKit> b = brand ? std::optional<BrandKit>(brand->clamped()) : std::nullopt;
     if (b == m_brand) return;
-    m_undo.push(new BrandCommand(this, b ? T("Markenpaket des Projekts") : T("Globales Markenpaket verwenden"), m_brand, b));
+    m_undo.push(new BrandCommand(this, b ? T("Branding des Projekts") : T("Globales Branding verwenden"), m_brand, b));
 }
 
 void Project::applyBrand(const std::optional<BrandKit>& brand)
@@ -1275,7 +1275,7 @@ void Project::setClipColor(const QStringList& paths, const QString& colorId)
 void Project::setFlag(const QStringList& paths, const QString& flagId, bool on)
 {
     if (!flagColorInfo(flagId)) return;
-    editPool(on ? T("Flagge hinzufügen") : T("Flagge entfernen"), [&](PoolState& s) {
+    editPool(on ? T("Flag hinzufügen") : T("Flag entfernen"), [&](PoolState& s) {
         for (const QString& p : paths) {
             if (!s.media.contains(p)) continue;
             QStringList& flags = s.media[p].flags;
@@ -1303,7 +1303,7 @@ void Project::setMediaPictureAspect(const QStringList& paths, double aspect)
 
 void Project::clearFlags(const QStringList& paths)
 {
-    editPool(T("Alle Flaggen entfernen"), [&](PoolState& s) {
+    editPool(T("Alle Flags entfernen"), [&](PoolState& s) {
         for (const QString& p : paths)
             if (s.media.contains(p)) s.media[p].flags.clear();
     });

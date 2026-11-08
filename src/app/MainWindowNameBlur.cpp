@@ -87,7 +87,7 @@ void MainWindow::blurNames()
         for (const Clip& c : t.clips)
             if ((ids.isEmpty() || ids.contains(c.id)) && !c.isTitle() && !c.isNested()) clips << c;
     if (clips.isEmpty()) {
-        statusBar()->showMessage(T("Namen verwischen: keine Video-Clips (Titel, Verbund- und Multikamera-Clips nicht)"), 6000);
+        statusBar()->showMessage(T("Namen verwischen: keine Video-Clips (Titel, Verbund- und Multicam-Clips nicht)"), 6000);
         return;
     }
     Choice choice;

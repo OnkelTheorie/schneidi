@@ -70,12 +70,12 @@ QVector<Issue> comp(const Timeline& tl, int from, int to, const ProjectFormat& f
                     unused << QStringLiteral("%1 (%2)").arg(n.id).arg(n.type);
             if (!unused.isEmpty())
                 out << Issue{Severity::Info, QStringLiteral("comp_unused_input"),
-                             T("Kompositionsgraph: Knoten %1 erreichen die Ausgabe nicht und wirken nicht").arg(unused.join(", ")),
+                             T("Compositing-Graph: Knoten %1 erreichen die Ausgabe nicht und wirken nicht").arg(unused.join(", ")),
                              a, b, c.id};
             const double ms = compCostMs(*e, f.size());
             if (ms > kCompBudgetMs && !c.renderCache)
                 out << Issue{Severity::Info, QStringLiteral("comp_slow"),
-                             T("Kompositionsgraph rechnet etwa %1 ms je Bild (mehr als %2 ms): Render-Cache für diesen Clip "
+                             T("Compositing-Graph rechnet etwa %1 ms je Bild (mehr als %2 ms): Render-Cache für diesen Clip "
                                "einschalten, damit die Wiedergabe flüssig bleibt")
                                  .arg(num(ms), num(kCompBudgetMs)),
                              a, b, c.id};
@@ -107,7 +107,7 @@ std::optional<Issue> keyEdges(const uint8_t* alpha, int w, int h, int clip, int 
     const double share = double(half) / std::max(1, all);
     if (share <= 0.08) return std::nullopt;
     return Issue{Severity::Info, QStringLiteral("key_edges"),
-                 T("Freistellung unsauber: %1 % halbdurchsichtige Pixel im Motiv (Freistellwerte nachstellen oder matte_tune)")
+                 T("Key unsauber: %1 % halbdurchsichtige Pixel im Motiv (Key-Werte nachstellen oder matte_tune)")
                      .arg(num(share * 100)),
                  from, to, clip};
 }

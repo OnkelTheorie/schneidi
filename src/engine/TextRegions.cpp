@@ -262,7 +262,7 @@ Result analyze(const ProjectFormat& format, const Clip& c, const std::atomic<boo
 {
     Result res;
     if (c.isNested() || c.isTitle() || c.mediaPath.isEmpty()) {
-        res.error = T("Namen verwischen geht nur bei Video-Clips (nicht bei Titeln, Verbund- und Multikamera-Clips)");
+        res.error = T("Namen verwischen geht nur bei Video-Clips (nicht bei Titeln, Verbund- und Multicam-Clips)");
         return res;
     }
     const int step = sampleStep(format.rate);

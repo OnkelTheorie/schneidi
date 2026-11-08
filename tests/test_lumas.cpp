@@ -274,7 +274,7 @@ void testWidget()
         CHECK_EQ(realItems(), int(EffectFolders::builtinLuts().size()));
     }
     // Toolbox -> Video Transitions contains the bundled gradients, not the empty style "Gradient wipe"
-    tree->setCurrentItem(top("Werkzeugkasten")->child(0));
+    tree->setCurrentItem(top("Toolbox")->child(0));
     CHECK_EQ(realItems(), int(std::size(kTransitionTypes)) - 1 + builtin);
 
     // Own transitions including subfolders
@@ -286,20 +286,20 @@ void testWidget()
     }
 
     // Collapse: arrows visible, state is saved and restored next time
-    CHECK(tree->rootIsDecorated() && top("Werkzeugkasten")->isExpanded());
-    top("Werkzeugkasten")->setExpanded(false);
+    CHECK(tree->rootIsDecorated() && top("Toolbox")->isExpanded());
+    top("Toolbox")->setExpanded(false);
     {
         EffectsLibrary again;
         auto* t2 = again.findChild<QTreeWidget*>();
         bool found = false;
         for (int i = 0; t2 && i < t2->topLevelItemCount(); ++i)
-            if (t2->topLevelItem(i)->text(0) == "Werkzeugkasten") {
+            if (t2->topLevelItem(i)->text(0) == "Toolbox") {
                 found = true;
                 CHECK(!t2->topLevelItem(i)->isExpanded());
             }
         CHECK(found);
     }
-    top("Werkzeugkasten")->setExpanded(true);
+    top("Toolbox")->setExpanded(true);
     CHECK(!lib.grab().isNull());
 }
 

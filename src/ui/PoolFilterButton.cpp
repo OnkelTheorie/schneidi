@@ -96,7 +96,7 @@ PoolFilterButton::PoolFilterButton(QWidget* parent) : QToolButton(parent)
         m_kindActions.insert(a, k.kind);
     }
     m_menu->addSeparator();
-    m_flagMenu = new StayOpenMenu(T("Flaggen"), m_menu);
+    m_flagMenu = new StayOpenMenu(T("Flags"), m_menu);
     for (const auto& f : kFlagColors) {
         QAction* a = m_flagMenu->addAction(QIcon(flagIcon(QColor::fromRgba(f.rgb))), T(f.name));
         a->setCheckable(true);
@@ -155,7 +155,7 @@ void PoolFilterButton::sync()
     for (auto it = m_colorActions.cbegin(); it != m_colorActions.cend(); ++it)
         it.key()->setChecked(m_filter.colors.contains(it.value()));
     // Submenus say how much is ticked inside them
-    m_flagMenu->setTitle(m_filter.flags.isEmpty() ? T("Flaggen") : T("Flaggen (%1)").arg(m_filter.flags.size()));
+    m_flagMenu->setTitle(m_filter.flags.isEmpty() ? T("Flags") : T("Flags (%1)").arg(m_filter.flags.size()));
     m_colorMenu->setTitle(m_filter.colors.isEmpty() ? T("Clipfarbe") : T("Clipfarbe (%1)").arg(m_filter.colors.size()));
     const bool active = m_filter.active();
     m_reset->setEnabled(active);
@@ -163,5 +163,5 @@ void PoolFilterButton::sync()
     setStyleSheet(active ? QString("QToolButton { background: %1; } QToolButton:hover { background: %2; }")
                                .arg(Theme::primary.name(), Theme::primary.lighter(115).name())
                          : QString());
-    setToolTip(active ? T("Filter: %1").arg(m_filter.summary()) : T("Clips filtern (Art, Flagge, Clipfarbe)"));
+    setToolTip(active ? T("Filter: %1").arg(m_filter.summary()) : T("Clips filtern (Art, Flag, Clipfarbe)"));
 }

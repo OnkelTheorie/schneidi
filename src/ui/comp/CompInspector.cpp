@@ -394,7 +394,7 @@ void CompInspector::rebuild(const Clip& c, const QStringList& keys)
                 pipette->setObjectName("comp_pipette_" + key);
                 pipette->setIcon(InspectorDetail::pipetteIcon()); // the same pipette as the Green Screen in the Inspector
                 pipette->setFixedSize(26, 18);
-                pipette->setToolTip(T("Freistellfarbe mit der Pipette aus dem Bild picken"));
+                pipette->setToolTip(T("Key-Farbe mit der Pipette aus dem Bild picken"));
                 connect(pipette, &QToolButton::clicked, this, [this, key] { emit keyPickRequested(m_node, key); });
                 m_grid->addWidget(pipette, row, 2);
             }

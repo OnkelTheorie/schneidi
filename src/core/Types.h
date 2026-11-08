@@ -95,9 +95,9 @@ enum class MotionEase { Linear, In, Out, InOut };
 struct MotionEaseInfo { MotionEase ease; const char* id; const char* name; };
 inline constexpr MotionEaseInfo kMotionEases[] = {
     {MotionEase::Linear, "linear", N_("Linear")},
-    {MotionEase::In, "in", N_("Sanft beginnen")},
-    {MotionEase::Out, "out", N_("Sanft enden")},
-    {MotionEase::InOut, "in_out", N_("Sanft beginnen und enden")},
+    {MotionEase::In, "in", N_("Ease In")},
+    {MotionEase::Out, "out", N_("Ease Out")},
+    {MotionEase::InOut, "in_out", N_("Ease In and Out")},
 };
 inline const MotionEaseInfo& motionEaseInfo(MotionEase e)
 {
@@ -386,8 +386,8 @@ enum class KeyEase { Linear, EaseIn, EaseOut, EaseInOut, Bezier };
 // Names in the ease menus (Inspector diamond, timeline keyframes, curve editor)
 struct KeyEaseInfo { KeyEase ease; const char* name; };
 inline constexpr KeyEaseInfo kKeyEases[] = {
-    {KeyEase::Linear, N_("Linear")}, {KeyEase::EaseIn, N_("Sanft beginnen")}, {KeyEase::EaseOut, N_("Sanft enden")},
-    {KeyEase::EaseInOut, N_("Sanft beginnen und enden")}, {KeyEase::Bezier, N_("Bézier")}};
+    {KeyEase::Linear, N_("Linear")}, {KeyEase::EaseIn, N_("Ease In")}, {KeyEase::EaseOut, N_("Ease Out")},
+    {KeyEase::EaseInOut, N_("Ease In and Out")}, {KeyEase::Bezier, N_("Bézier")}};
 struct Keyframe {
     int frame = 0;      // source frame (like Clip::in) -> trimming at the start leaves the keyframes at the source
     double value = 0;
@@ -558,7 +558,7 @@ struct Clip {
     QString displayName() const
     {
         if (isCompound()) return T("Verbundclip");
-        if (isMulticam()) return T("Multikamera-Clip");
+        if (isMulticam()) return T("Multicam-Clip");
         return isTitle() ? title.firstLine() : QFileInfo(mediaPath).fileName();
     }
 };

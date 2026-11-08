@@ -97,11 +97,11 @@ DuckingDialog::DuckingDialog(Editor* editor, const QVector<int>& musicIds, QWidg
     };
     m_amount = field("amount", T("Absenken um"), "dB", settings.value("ducking/amount", def.amountDb).toDouble(),
                      T("Wie weit die Musik leiser wird"));
-    m_threshold = field("threshold", T("Schwelle"), "dBFS", settings.value("ducking/threshold", def.thresholdDb).toDouble(),
+    m_threshold = field("threshold", T("Threshold"), "dBFS", settings.value("ducking/threshold", def.thresholdDb).toDouble(),
                         T("Ab diesem Pegel zählt es auf den Spuren als Ton"));
-    m_attack = field("attack", T("Ansprechzeit"), "s", settings.value("ducking/attack", 0.15).toDouble(),
+    m_attack = field("attack", T("Attack"), "s", settings.value("ducking/attack", 0.15).toDouble(),
                      T("Rampe nach unten vor dem Ton"));
-    m_release = field("release", T("Rückstellzeit"), "s", settings.value("ducking/release", 0.4).toDouble(),
+    m_release = field("release", T("Release"), "s", settings.value("ducking/release", 0.4).toDouble(),
                       T("Rampe nach oben nach dem Ton"));
     m_hold = field("hold", T("Halten"), "s", settings.value("ducking/hold", 0.5).toDouble(),
                    T("Kürzere Pausen bleiben abgesenkt"));

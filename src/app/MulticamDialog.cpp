@@ -21,7 +21,7 @@ MulticamDialog::MulticamDialog(const Project* project, const QStringList& files,
                                QWidget* parent)
     : QDialog(parent)
 {
-    setWindowTitle(T("Neuer Multikamera-Clip"));
+    setWindowTitle(T("Neuer Multicam-Clip"));
     QSettings settings;
     auto* form = new QFormLayout;
 
@@ -74,7 +74,7 @@ MulticamDialog::MulticamDialog(const Project* project, const QStringList& files,
     updateStream();
 
     auto* hint = new QLabel(T("Was sich nicht synchronisieren lässt, kommt an den Anfang und wird gemeldet. "
-                              "Winkel lassen sich nachträglich in der Multikamera-Timeline verschieben."));
+                              "Winkel lassen sich nachträglich in der Multicam-Timeline verschieben."));
     hint->setWordWrap(true);
     hint->setObjectName("hint");
 

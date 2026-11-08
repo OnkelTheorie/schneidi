@@ -251,7 +251,7 @@ QWidget* MainWindow::buildPageBar()
     const struct { const char* icon; const char* name; Page page; } pages[] = {
         {"▤", N_("Medien"), Page::Media},
         {"✂", N_("Schneiden"), Page::Edit},
-        {"◇", N_("Komposition"), Page::Comp},
+        {"◇", N_("Compositing"), Page::Comp},
         {"◐", N_("Farbe"), Page::Color},
         {"⇪", N_("Export"), Page::Deliver},
     };

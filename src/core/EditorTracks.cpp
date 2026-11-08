@@ -193,7 +193,7 @@ void Editor::setMasterLimiter(bool on)
 {
     if (m_project->timeline().masterLimiter == on) return;
     emit mixerOnlyEdit();
-    m_project->edit(on ? T("Begrenzer an") : T("Begrenzer aus"), [&](Timeline& t) { t.masterLimiter = on; });
+    m_project->edit(on ? T("Limiter an") : T("Limiter aus"), [&](Timeline& t) { t.masterLimiter = on; });
 }
 
 void Editor::setMasterLimiterCeiling(double db)
@@ -202,7 +202,7 @@ void Editor::setMasterLimiterCeiling(double db)
     const Timeline& tl = m_project->timeline();
     if (tl.masterLimiterDb == db && tl.masterLimiter) return;
     emit mixerOnlyEdit();
-    m_project->edit(T("Begrenzer-Obergrenze"), [&](Timeline& t) {
+    m_project->edit(T("Limiter-Obergrenze"), [&](Timeline& t) {
         t.masterLimiterDb = db;
         t.masterLimiter = true;
     });

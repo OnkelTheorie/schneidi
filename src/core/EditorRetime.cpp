@@ -204,7 +204,7 @@ void Editor::addSpeedPoint(int clipId, int frame)
     const Clip* c = TimelineOps::findClip(m_project->timeline(), clipId);
     if (!c || frame <= c->start || frame >= c->end()) return;
     const int m = c->in + frame - c->start;
-    editRamp(T("Tempo-Punkt hinzufügen"), clipId, [m](Clip& x, const RetimeMap& map, int) {
+    editRamp(T("Speed-Punkt hinzufügen"), clipId, [m](Clip& x, const RetimeMap& map, int) {
         const double s = map.sourceAt(m);
         for (const SpeedPoint& p : x.ramp)
             if (std::abs(p.source - s) < 1) return false;
@@ -222,7 +222,7 @@ void Editor::addSpeedPoint(int clipId, int frame)
 
 void Editor::removeSpeedPoint(int clipId, int index)
 {
-    editRamp(T("Tempo-Punkt entfernen"), clipId, [index](Clip& x, const RetimeMap&, int) {
+    editRamp(T("Speed-Punkt entfernen"), clipId, [index](Clip& x, const RetimeMap&, int) {
         if (index < 0 || index >= x.ramp.size()) return false;
         x.ramp.removeAt(index);
         return true;
@@ -232,7 +232,7 @@ void Editor::removeSpeedPoint(int clipId, int index)
 void Editor::moveSpeedPoint(int clipId, int index, int delta)
 {
     if (delta == 0) return;
-    editRamp(T("Tempo-Punkt verschieben"), clipId, [index, delta](Clip& x, const RetimeMap&, int L) {
+    editRamp(T("Speed-Punkt verschieben"), clipId, [index, delta](Clip& x, const RetimeMap&, int L) {
         if (index < 0 || index >= x.ramp.size()) return false;
         // Speed before continues or ends earlier -> new source position from the speed of the section before
         const double before = ::Retime::segmentSpeed(x, index);
@@ -258,7 +258,7 @@ void Editor::setSegmentSpeed(int clipId, int segment, double speed)
 
 void Editor::setSpeedPointSmooth(int clipId, int index, int frames)
 {
-    editRamp(T("Übergang des Tempo-Punkts"), clipId, [index, frames](Clip& x, const RetimeMap&, int) {
+    editRamp(T("Übergang des Speed-Punkts"), clipId, [index, frames](Clip& x, const RetimeMap&, int) {
         if (index < 0 || index >= x.ramp.size() || x.ramp[index].smooth == std::max(0, frames)) return false;
         x.ramp[index].smooth = std::max(0, frames);
         return true;

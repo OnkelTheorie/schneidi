@@ -134,7 +134,7 @@ int Editor::createCompound(const QString& name, bool comp)
     const int seqId = p->newSequenceId();
     const int parentId = p->currentSequence();
     QSet<int> selectIds;
-    p->editSequences(comp ? T("Komposition aus Auswahl") : T("Verbundclip erstellen"), [&](QVector<Sequence>& list, int&) {
+    p->editSequences(comp ? T("Compositing aus Auswahl") : T("Verbundclip erstellen"), [&](QVector<Sequence>& list, int&) {
         Timeline* tl = timelineOf(list, parentId);
         if (!tl) return;
         const Timeline before = *tl;

@@ -261,7 +261,7 @@ void RenderQueuePanel::rebuild()
         card->status->setStyleSheet(QString("color: %1; font-size: 8pt;").arg(statusColor(j.status)));
         QStringList tip;
         if (!j.message.isEmpty()) tip << j.message;
-        if (j.status == RenderStatus::Done && !j.encoderUsed.isEmpty()) tip << T("Video-Kodierer: %1").arg(j.encoderUsed);
+        if (j.status == RenderStatus::Done && !j.encoderUsed.isEmpty()) tip << T("Video-Encoder: %1").arg(j.encoderUsed);
         card->status->setToolTip(tip.join('\n'));
         card->status->setMaximumWidth(140);
         // Which timeline (like DaVinci in the job card); a deleted timeline stays as a hint

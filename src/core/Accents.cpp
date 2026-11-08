@@ -17,7 +17,7 @@ const QVector<Preset>& presets()
 {
     // Strengths measured on a 1080x1920 gameplay edit: +1.2 stops read as "mild", ±30 px as "visible but mild"
     static const QVector<Preset> list{
-        {"punch", N_("Zoom-Stoß"), "zoom punch: 15 % bigger on the hit, lands back in 0.25 s", {0.15, 0, 0, 0.25}},
+        {"punch", N_("Zoom-Punch"), "zoom punch: 15 % bigger on the hit, lands back in 0.25 s", {0.15, 0, 0, 0.25}},
         {"flash", N_("Blitz"), "exposure flash: +2 stops on the hit, gone in 0.2 s", {0, 2.0, 0, 0.2}},
         {"shake", N_("Erschütterung"),
          "camera shake: jumps of up to 3 % of the frame that die down in 0.25 s (on a clip that just fills the frame "

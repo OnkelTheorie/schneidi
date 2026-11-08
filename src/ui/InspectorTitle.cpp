@@ -769,7 +769,7 @@ QToolButton* Inspector::brandButton(bool font, const QString& text, const std::f
             const QString label = n ? QString("B%1").arg(n) : QStringLiteral("B");
             if (button->text() != label) button->setText(label);
             const QString tip = n ? (font ? T("Brand-Schrift %1").arg(n) : T("Brand-Farbe %1").arg(n))
-                                  : T("Fester Wert (nicht aus dem Markenpaket)");
+                                  : T("Fester Wert (nicht aus dem Branding)");
             if (button->toolTip() != tip) button->setToolTip(tip);
             const QString css = n ? QString("QToolButton { color: %1; font-weight: bold; }").arg(Theme::primary.name())
                                   : QString("QToolButton { color: %1; }").arg(Theme::textDim.name());

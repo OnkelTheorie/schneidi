@@ -124,7 +124,7 @@ void noJump(const char* name, const QVariantMap& tracker, const TrackRun& run)
     p.addMedia({"/x/a.mp4", "a.mp4", 100, true, true, false});
     ed.addMediaAt({"/x/a.mp4"}, 0, 0);
     const int id = p.timeline().video[0].clips[0].id;
-    ed.modifyClips({id}, "Komposition", [&](Clip& c) { c.effects << maskGraph(tracker); });
+    ed.modifyClips({id}, "Compositing", [&](Clip& c) { c.effects << maskGraph(tracker); });
     const Clip* c = TimelineOps::findClip(p.timeline(), id);
     const int start = run.points.first().frame, last = run.points.last().frame;
     const Buf before = evalAt(*c, start);

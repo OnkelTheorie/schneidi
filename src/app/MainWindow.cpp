@@ -1169,7 +1169,7 @@ void MainWindow::updateProxyHint()
 {
     if (offersRenderCache())
         return m_viewer->setHint(T("Die Wiedergabe ruckelt (%1 von %2 Bildern/s): Hier kosten die Effekte am meisten. "
-                                   "Der Render-Cache „Intelligent“ rechnet Clips mit Effekten in Pausen vor, der Export nutzt "
+                                   "Der Render-Cache „Smart“ rechnet Clips mit Effekten in Pausen vor, der Export nutzt "
                                    "weiter die Originale")
                                      .arg(qRound(m_slowRate)).arg(qRound(m_slowFps)),
                                  T("Render-Cache: Intelligent"));

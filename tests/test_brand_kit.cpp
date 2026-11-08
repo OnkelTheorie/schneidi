@@ -529,7 +529,7 @@ void testInspector()
     // Brand colour 1 for the first one (the font button comes first, then text colour): its menu, entry "Brand colour 1"
     bool picked = false;
     for (QToolButton* b : buttons) {
-        if (!b->toolTip().contains(T("Fester Wert (nicht aus dem Markenpaket)"))) continue;
+        if (!b->toolTip().contains(T("Fester Wert (nicht aus dem Branding)"))) continue;
         emit b->menu()->aboutToShow();
         const QList<QAction*> actions = b->menu()->actions();
         for (QAction* a : actions)

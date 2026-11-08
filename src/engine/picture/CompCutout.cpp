@@ -510,7 +510,7 @@ CutoutRun cutoutNode(const ProjectFormat& format, const Clip& c, int node, int f
         return run;
     }
     if (c.isNested() || c.isTitle()) {
-        run.error = T("Freistellen geht nur bei Video-Clips (nicht bei Titeln, Verbund- und Multikamera-Clips)");
+        run.error = T("Freistellen geht nur bei Video-Clips (nicht bei Titeln, Verbund- und Multicam-Clips)");
         return run;
     }
     std::optional<PersonMatte::Segmenter> own;

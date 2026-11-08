@@ -591,13 +591,13 @@ void registerCoreNodes(QVector<NodeType>& out)
         NodeType k;
         k.id = "transform";
         k.name = T("Transformieren");
-        k.description = T("Verschieben, vergrößern und drehen (folgt auf Wunsch einer Verfolgung)");
+        k.description = T("Verschieben, vergrößern und drehen (folgt auf Wunsch einem Tracker)");
         k.inputs = {"src"};
         k.params = {num("x", T("Position X"), 0.5, -2, 3), num("y", T("Position Y"), 0.5, -2, 3),
                     num("size", T("Größe"), 1, 0, 20), num("angle", T("Drehung"), 0, -3600, 3600, 0.1, 2),
                     num("ax", T("Ankerpunkt X"), 0.5, -1, 2), num("ay", T("Ankerpunkt Y"), 0.5, -1, 2),
-                    num("follow", T("Folgt Verfolgung"), 0, 0, 1e6, 1, 0,
-                        T("Id eines Verfolgungsknotens (0 = keiner); die Position zählt dann als Versatz"))};
+                    num("follow", T("Folgt Tracker"), 0, 0, 1e6, 1, 0,
+                        T("Id eines Tracker-Knotens (0 = keiner); die Position zählt dann als Versatz"))};
         k.eval = evalTransform;
         out << k;
     }

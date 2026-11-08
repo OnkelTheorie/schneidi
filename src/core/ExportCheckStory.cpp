@@ -305,7 +305,7 @@ QVector<Issue> story(const Timeline& tl, int from, int to, const ProjectFormat& 
             else if (first < 0 && strongKnown)
                 out << issue(sev, "story_hook_late",
                              T("Kein starker Moment (Treffer, lauter Moment, Wort oder Text) gefunden – der Anfang "
-                               "braucht einen Aufhänger"),
+                               "braucht einen Hook"),
                              from, std::min(to, from + framesOf(limit, f)));
         }
     }
@@ -337,8 +337,8 @@ QVector<Issue> story(const Timeline& tl, int from, int to, const ProjectFormat& 
         const StorySection* hook = firstOf(StoryKind::Hook);
         if (!hook || hook->from > from + framesOf(0.5, f))
             out << issue(Severity::Warning, "story_no_hook",
-                         hook ? T("Der Aufhänger beginnt erst bei %1 s – an den Anfang legen").arg(at(*hook))
-                              : T("Kein Aufhänger-Abschnitt am Anfang – die ersten Sekunden entscheiden, ob jemand bleibt"),
+                         hook ? T("Der Hook beginnt erst bei %1 s – an den Anfang legen").arg(at(*hook))
+                              : T("Kein Hook-Abschnitt am Anfang – die ersten Sekunden entscheiden, ob jemand bleibt"),
                          from, hook ? hook->from : std::min(to, from + framesOf(o.hookLateShortS, f)));
     }
 

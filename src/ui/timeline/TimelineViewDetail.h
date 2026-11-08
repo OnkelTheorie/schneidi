@@ -53,7 +53,7 @@ inline QString clipLabel(const Project* project, const Clip& c, TrackKind kind)
         && std::all_of(c.ramp.begin(), c.ramp.end(), [](const SpeedPoint& p) { return p.speed == 1.0; }))
         return name; // speed points without speed change
     const QString speed = c.freeze     ? T("Standbild")
-                          : c.hasRamp() ? T("Tempo-Rampe")
+                          : c.hasRamp() ? T("Speed Ramp")
                                         : QString("%1%2 %").arg(c.reverse ? "-" : "").arg(QLocale().toString(c.speed * 100, 'g', 4));
     return QString("%1 (%2)").arg(name, speed);
 }

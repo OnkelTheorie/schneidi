@@ -427,13 +427,13 @@ QVector<Issue> sound(const std::vector<float>& framePeaks, int offset, double in
     if (truePeakDb > 0)
         out << issue(Severity::Error, "clipping",
                      (limiter ? T("Übersteuert: True Peak %1 dBTP (über 0 dB verzerrt)")
-                              : T("Übersteuert: True Peak %1 dBTP (über 0 dB verzerrt) – Begrenzer im Mischpult einschalten "
+                              : T("Übersteuert: True Peak %1 dBTP (über 0 dB verzerrt) – Limiter im Mischpult einschalten "
                                   "oder leiser mischen"))
                          .arg(num(truePeakDb)));
     else if (truePeakDb > o.maxTruePeakDb)
         out << issue(Severity::Warning, "true_peak",
                      (limiter ? T("True Peak %1 dBTP liegt über %2 dBTP (Codecs können übersteuern)")
-                              : T("True Peak %1 dBTP liegt über %2 dBTP (Codecs können übersteuern) – Begrenzer im "
+                              : T("True Peak %1 dBTP liegt über %2 dBTP (Codecs können übersteuern) – Limiter im "
                                   "Mischpult einschalten"))
                          .arg(num(truePeakDb), num(o.maxTruePeakDb)));
     if (std::abs(integratedLufs - o.targetLufs) > o.toleranceLu)

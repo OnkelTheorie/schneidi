@@ -44,7 +44,7 @@ void Editor::addEffect(const QVector<int>& ids, const QString& effectId)
         const Presets::Preset p = Presets::load(effectId.mid(int(qstrlen(Presets::Prefix))));
         const Presets::Mapped m = Presets::map(p, m_project->frameRate());
         if (!p.error.isEmpty() || m.empty()) return;
-        modifyClips(targets, T("Voreinstellung „%1“ anwenden").arg(p.name), [&](Clip& c) { Presets::apply(c, m); });
+        modifyClips(targets, T("Preset „%1“ anwenden").arg(p.name), [&](Clip& c) { Presets::apply(c, m); });
         return;
     }
     const EffectDescriptor* d = EffectRegistry::find(effectId);

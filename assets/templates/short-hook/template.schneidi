@@ -77,8 +77,8 @@
   }
  ],
  "templateInfo": {
-  "description": "Hochformat-Kurzvideo: Aufhänger-Text über dem ersten Clip, drei Clips, Musik darunter.",
-  "name": "Kurzvideo mit Aufhänger",
+  "description": "Hochformat-Short: Hook-Text über dem ersten Clip, drei Clips, Musik darunter.",
+  "name": "Short mit Hook",
   "tags": [
    "short",
    "9:16",

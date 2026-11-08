@@ -368,7 +368,7 @@ QString makeBuiltIns(const QString& root)
 {
     QString err;
     for (const auto& [id, name, w, h, color] :
-         {std::tuple{"short-hook", "Kurzvideo mit Aufhänger", 1080, 1920, QColor(0xc0, 0x50, 0x40)},
+         {std::tuple{"short-hook", "Short mit Hook", 1080, 1920, QColor(0xc0, 0x50, 0x40)},
           std::tuple{"gaming", "Gaming-Highlight", 1920, 1080, QColor(0x40, 0x60, 0xb0)},
           std::tuple{"product", "Produktclip 15 s", 1080, 1080, QColor(0x40, 0x90, 0x60)}}) {
         ProjectData d = withFiles(project(), QDir(root).filePath("files"));
@@ -404,7 +404,7 @@ void testBrowserAndWindow(const QString& tmp)
         const QStringList names = dlg.shownNames();
         // Built-in ones first, then own, then the start templates
         CHECK_EQ(names.value(0), QString("Gaming-Highlight"));
-        CHECK(names.indexOf("Mein Podcast") > names.indexOf("Kurzvideo mit Aufhänger"));
+        CHECK(names.indexOf("Mein Podcast") > names.indexOf("Short mit Hook"));
         CHECK(names.contains(T("Neutral")));
         CHECK(names.indexOf(T("Neutral")) > names.indexOf("Mein Podcast"));
         // Filter by shape and tag
@@ -413,7 +413,7 @@ void testBrowserAndWindow(const QString& tmp)
         if (CHECK(aspect && tag)) {
             aspect->setCurrentIndex(aspect->findData("9:16"));
             emit aspect->activated(aspect->currentIndex());
-            CHECK(dlg.shownNames().contains("Kurzvideo mit Aufhänger") && !dlg.shownNames().contains("Gaming-Highlight"));
+            CHECK(dlg.shownNames().contains("Short mit Hook") && !dlg.shownNames().contains("Gaming-Highlight"));
             aspect->setCurrentIndex(0);
             emit aspect->activated(0);
             tag->setCurrentIndex(tag->findData("gaming"));
@@ -429,14 +429,14 @@ void testBrowserAndWindow(const QString& tmp)
         CHECK(!edit->isEnabled() && !remove->isEnabled());
         CHECK(dlg.select("Mein Podcast"));
         CHECK(edit->isEnabled() && remove->isEnabled());
-        CHECK(dlg.select("Kurzvideo mit Aufhänger"));
+        CHECK(dlg.select("Short mit Hook"));
         dlg.resize(840, 560);
         dlg.show();
         QApplication::processEvents();
         dump(&dlg, "template-browser.png");
         dlg.findChild<QPushButton*>("template_new")->click();
         CHECK(dlg.choice() == TemplateBrowserDialog::Choice::NewContent);
-        CHECK_EQ(dlg.content().name, QString("Kurzvideo mit Aufhänger"));
+        CHECK_EQ(dlg.content().name, QString("Short mit Hook"));
     }
 
     Engine engine;
