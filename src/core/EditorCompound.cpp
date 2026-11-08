@@ -127,14 +127,14 @@ int Editor::createCompound(const QString& name, bool comp)
         QSet<QString> used;
         for (const Sequence& s : p->sequences()) used.insert(s.name);
         for (int i = 1;; ++i) {
-            n = T("Compound Clip %1").arg(i);
+            n = T("Verbundclip %1").arg(i);
             if (!used.contains(n)) break;
         }
     }
     const int seqId = p->newSequenceId();
     const int parentId = p->currentSequence();
     QSet<int> selectIds;
-    p->editSequences(comp ? T("Comp aus Auswahl") : T("Compound Clip erstellen"), [&](QVector<Sequence>& list, int&) {
+    p->editSequences(comp ? T("Komposition aus Auswahl") : T("Verbundclip erstellen"), [&](QVector<Sequence>& list, int&) {
         Timeline* tl = timelineOf(list, parentId);
         if (!tl) return;
         const Timeline before = *tl;
@@ -231,7 +231,7 @@ bool Editor::decomposeCompoundClips(const QVector<int>& ids)
     if (compounds.isEmpty()) return false;
 
     QSet<int> selectIds;
-    p->edit(T("Compound Clip auflösen"), [&](Timeline& tl) {
+    p->edit(T("Verbundclip auflösen"), [&](Timeline& tl) {
         auto newId = [p] { return p->newClipId(); };
         // Links inside are kept but get their own ids (per compound group)
         QHash<QPair<int, int>, int> links; // (group, old linkId) -> new

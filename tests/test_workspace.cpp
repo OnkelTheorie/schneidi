@@ -30,9 +30,9 @@ int main(int argc, char** argv)
     InputBindings& b = InputBindings::instance();
     b.load();
     QAction split, play, extra;
-    b.registerAction(&split, "split", "Edit", QKeySequence("Ctrl+B"));
+    b.registerAction(&split, "split", "Schneiden", QKeySequence("Ctrl+B"));
     b.registerAction(&play, "play", "Playback", QKeySequence("Space"));
-    b.registerAction(&extra, "extra", "Edit", QKeySequence());
+    b.registerAction(&extra, "extra", "Schneiden", QKeySequence());
     b.saveIfIncomplete();
 
     // Defaults: the key in slot 1, split also has the rear side button
@@ -125,7 +125,7 @@ int main(int argc, char** argv)
 
     // Built-in sets: beginner changes keys, wheel and keeps the side button; standard brings back every default
     QAction trim;
-    b.registerAction(&trim, "tool_trim", "Edit", QKeySequence("T"));
+    b.registerAction(&trim, "tool_trim", "Schneiden", QKeySequence("T"));
     b.setInput("play", 1, "mouse:forward");
     CHECK_EQ(InputBindings::presetIds(), QStringList({"standard", "beginner"}));
     b.applyPreset("beginner");
@@ -204,7 +204,7 @@ int main(int argc, char** argv)
     // itself (matches), Qt never fires them; the same key as a window action is no conflict, within a scope it is.
     {
         QAction windowDel, panelDel, panelOther;
-        b.registerAction(&windowDel, "delete_alt", "Edit", QKeySequence(Qt::Key_Delete));
+        b.registerAction(&windowDel, "delete_alt", "Schneiden", QKeySequence(Qt::Key_Delete));
         b.registerPanelAction(&panelDel, "render_queue_delete", "Render", "render_queue", QKeySequence(Qt::Key_Delete),
                               QKeySequence(Qt::Key_Backspace));
         b.registerPanelAction(&panelOther, "render_queue_other", "Render", "render_queue", QKeySequence());

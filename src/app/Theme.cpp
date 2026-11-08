@@ -43,11 +43,11 @@ const QList<Role>& designRoles()
 const QList<Role>& signalRoles()
 {
     static const QList<Role> roles = {
-        {"playhead", &playhead, N_("Playhead")},
+        {"playhead", &playhead, N_("Abspielkopf")},
         {"videoClip", &videoClip, N_("Videoclips")},
         {"audioClip", &audioClip, N_("Audioclips")},
         {"titleClip", &titleClip, N_("Titel")},
-        {"compoundClip", &compoundClip, N_("Compound Clips")},
+        {"compoundClip", &compoundClip, N_("Verbundclips")},
         {"subtitleClip", &subtitleClip, N_("Untertitel")},
         {"meterLow", &meterLow, N_("Pegel grün")},
         {"meterMid", &meterMid, N_("Pegel gelb")},
@@ -56,7 +56,7 @@ const QList<Role>& signalRoles()
         {"quiet", &quiet, N_("Lautheit zu leise")},
         {"cacheReady", &cacheReady, N_("Render-Cache fertig")},
         {"cacheMissing", &cacheMissing, N_("Render-Cache fehlt")},
-        {"multicamActive", &multicamActive, N_("Multicam: aktiver Winkel")},
+        {"multicamActive", &multicamActive, N_("Multikamera: aktiver Winkel")},
         {"recording", &recording, N_("Voiceover-Aufnahme")},
     };
     return roles;

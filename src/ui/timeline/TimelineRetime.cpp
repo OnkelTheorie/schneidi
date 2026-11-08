@@ -180,7 +180,7 @@ void TimelineView::segmentMenu(const RetimeHit& hit, int frame, const QPoint& gl
         if (ok) m_editor->setSegmentSpeed(hit.clipId, hit.segment, v / 100.0);
     });
     menu.addSeparator();
-    QAction* add = menu.addAction(T("Speed-Punkt hinzufügen"));
+    QAction* add = menu.addAction(T("Tempo-Punkt hinzufügen"));
     add->setEnabled(frame > c->start && frame < c->end());
     connect(add, &QAction::triggered, this, [this, id = hit.clipId, frame] { m_editor->addSpeedPoint(id, frame); });
     QAction* reset = menu.addAction(T("Geschwindigkeit zurücksetzen"));
@@ -213,7 +213,7 @@ void TimelineView::speedPointMenu(const RetimeHit& hit, const QPoint& globalPos)
                 [this, hit, frames] { m_editor->setSpeedPointSmooth(hit.clipId, hit.point, frames); });
     }
     menu.addSeparator();
-    connect(menu.addAction(T("Speed-Punkt entfernen")), &QAction::triggered, this,
+    connect(menu.addAction(T("Tempo-Punkt entfernen")), &QAction::triggered, this,
             [this, hit] { m_editor->removeSpeedPoint(hit.clipId, hit.point); });
     menu.exec(globalPos);
 }

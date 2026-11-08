@@ -155,7 +155,7 @@ ProxyJob prepareJob(const QString& original, const QString& part)
     // alpha in WebM, which the reader decodes with libvpx - written under the usual <hash>.mp4 name (cleanup, lookup;
     // the reader goes by the content, not the name).
     if (info.alpha && !avcodec_find_encoder_by_name("libvpx-vp9")) {
-        job.error = T("Für Video mit Transparenz lässt sich kein Proxy erzeugen (VP9-Encoder fehlt).");
+        job.error = T("Für Video mit Transparenz lässt sich kein Proxy erzeugen (VP9-Kodierer fehlt).");
         return job;
     }
     QStringList args{"-hide_banner", "-nostdin", "-y", "-i", original,

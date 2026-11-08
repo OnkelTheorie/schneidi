@@ -384,7 +384,7 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
     // say so instead of failing without a reason
     if (!s.videoCodec.isEmpty() && !avcodec_find_encoder_by_name(s.videoCodec.toUtf8().constData())
         && HardwareEncoders::externalProgram(s.videoCodec).isEmpty()) {
-        if (error) *error = T("Video-Encoder %1 ist in diesem Build nicht verfügbar.").arg(s.videoCodec);
+        if (error) *error = T("Video-Kodierer %1 ist in diesem Build nicht verfügbar.").arg(s.videoCodec);
         return false;
     }
     // The mixer gets the timeline as it is (it handles mute/solo itself), the renderer no sound
@@ -393,7 +393,7 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
     if (sound) {
         sampleFormat = encoderSampleFormat(s.audioCodec, s.audioSampleFormat);
         if (sampleFormat.isEmpty()) {
-            if (error) *error = T("Audio-Encoder %1 nicht verfügbar.").arg(s.audioCodec);
+            if (error) *error = T("Audio-Kodierer %1 nicht verfügbar.").arg(s.audioCodec);
             return false;
         }
     }
@@ -620,12 +620,12 @@ bool Exporter::fallBackToSoftware(QString* error)
     const QString failed = m_usedCodec.isEmpty() ? m_settings.videoCodec : m_usedCodec;
     const QString next = fallbackCodec(failed);
     if (next.isEmpty() || next == failed) {
-        if (error) *error = T("Hardware-Encoder %1 funktioniert nicht.").arg(failed);
+        if (error) *error = T("Hardware-Kodierer %1 funktioniert nicht.").arg(failed);
         return false;
     }
     qWarning("Export: encoder %s failed, rendering with %s", qPrintable(failed), qPrintable(next));
     m_note = HardwareEncoders::isHardwareCodec(failed)
-                 ? T("Hardware-Encoder %1 funktioniert nicht, mit Software gerendert.")
+                 ? T("Hardware-Kodierer %1 funktioniert nicht, mit Software gerendert.")
                        .arg(videoEncoderLabel(HardwareEncoders::encoderOfCodec(failed)))
                  : T("Die Erweiterung x264/x265 funktioniert nicht, mit %1 gerendert.").arg(next);
     return startWriter(next, error);
@@ -783,7 +783,7 @@ void Exporter::pollWriter()
         if (const int copied = m_writer->framesCopied(); copied > 0) {
             m_copiedPercent = std::clamp(int(std::lround(copied * 100.0 / std::max(1, m_length))), 1, 100);
             qInfo("Export: smart render copied %d of %d frames", copied, m_length);
-            const QString smart = T("Smart Render: %1 % kopiert, %2 % kodiert").arg(m_copiedPercent).arg(100 - m_copiedPercent);
+            const QString smart = T("Intelligentes Rendern: %1 % kopiert, %2 % kodiert").arg(m_copiedPercent).arg(100 - m_copiedPercent);
             m_note = m_note.isEmpty() ? smart : m_note + " · " + smart;
             if (copied >= m_length) m_usedCodec = "copy"; // the encoder wrote no frame
         }

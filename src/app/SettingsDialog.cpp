@@ -116,7 +116,7 @@ QWidget* SettingsDialog::buildGeneral()
     checkRow->addWidget(m_updateResult, 1);
     uform->addRow(checkRow);
     uform->addRow(hint(T("Fragt GitHub nach der neuesten Version; mit geht nur die Versionsnummer, nichts über deine "
-                         "Projekte. Neue Versionen gibt es auf der Release-Seite.")));
+                         "Projekte. Neue Versionen gibt es auf der Download-Seite.")));
     lay->addWidget(updates);
     m_updates = new UpdateCheck(this);
     const QString current = UpdateCheck::runningVersion(QCoreApplication::applicationVersion());
@@ -128,7 +128,7 @@ QWidget* SettingsDialog::buildGeneral()
     connect(m_updates, &UpdateCheck::newer, this, [this](const UpdateCheck::Release& r, const QString& cur) {
         m_checkNow->setEnabled(true);
         m_updateResult->setText(T("schneidi %1 ist da (du hast %2).").arg(r.version, cur) + QString(" <a href=\"%1\">%2</a>")
-                                    .arg(r.page.toString().toHtmlEscaped(), T("Release-Seite öffnen")));
+                                    .arg(r.page.toString().toHtmlEscaped(), T("Download-Seite öffnen")));
     });
     connect(m_updates, &UpdateCheck::upToDate, this, [this](const QString& cur) {
         m_checkNow->setEnabled(true);
@@ -151,7 +151,7 @@ QWidget* SettingsDialog::buildGeneral()
     pform->addRow(T("Threads für Hintergrundarbeit"), m_threads);
     pform->addRow(hint(T("Transkription (Whisper), Analysen, Proxys und das Einlesen beim Import. Weniger Threads: "
                          "Musik, Spiele und andere Programme laufen nebenbei flüssiger, die Arbeit dauert länger. "
-                         "Den Export stellst du auf der Deliver-Seite ein.")));
+                         "Den Export stellst du auf der Seite Export ein.")));
     lay->addWidget(performance);
 
     lay->addStretch(1);

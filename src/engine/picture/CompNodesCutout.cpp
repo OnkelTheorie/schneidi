@@ -103,8 +103,8 @@ void registerCutoutNodes(QVector<NodeType>& out)
 {
     NodeType k;
     k.id = QString::fromLatin1(kCutoutType);
-    k.name = T("Freistellen");
-    k.description = T("Stellt eine Person ohne Green Screen frei (z. B. Text hinter einer Person). Braucht einmal "
+    k.name = T("Person freistellen");
+    k.description = T("Stellt eine Person ohne Greenscreen frei (z. B. Text hinter einer Person). Braucht einmal "
                       "„Freistellen analysieren“ (CLI: cutout_node) und die Erweiterung „Freistellen (Personen)“; "
                       "ohne Analyse zeigt der Knoten nichts");
     k.inputs = {QStringLiteral("src")};

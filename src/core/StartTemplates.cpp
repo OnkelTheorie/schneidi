@@ -93,7 +93,7 @@ QVector<StartTemplate> builtIn()
     // user's own import presets (their rules per stream stay); the limiter catches shots and explosions.
     StartTemplate game = make("game", N_("Spielaufnahme"),
                               N_("Für Aufnahmen mit mehreren Ton-Streams (z. B. OBS): Der Mix-Stream kommt stumm in "
-                                 "die Timeline, wenn es Einzelspuren gibt – so ist nichts doppelt zu hören. Limiter "
+                                 "die Timeline, wenn es Einzelspuren gibt – so ist nichts doppelt zu hören. Begrenzer "
                                  "auf dem Master gegen Übersteuern."));
     StreamPresets presets = StreamPresets::load();
     presets.muteMix = true;
@@ -105,7 +105,7 @@ QVector<StartTemplate> builtIn()
     // Names `check` and the AI understand (voice and music tracks: under_music, duck) in every language
     StartTemplate podcast = make("podcast", N_("Podcast / Interview"),
                                  N_("Benannte Audiospuren für zwei Stimmen und die Musik (so merkt die Prüfung vor dem "
-                                    "Export, wenn die Musik eine Stimme übertönt). Limiter auf dem Master."));
+                                    "Export, wenn die Musik eine Stimme übertönt). Begrenzer auf dem Master."));
     podcast.data.timeline.audio = {track(TrackKind::Audio, T("Stimme 1")), track(TrackKind::Audio, T("Stimme 2")),
                                    track(TrackKind::Audio, T("Musik"), "purple")};
     podcast.data.timeline.masterLimiter = true;
@@ -347,7 +347,7 @@ QStringList summary(const StartTemplate& t)
     lines << T("Spuren: %1").arg(tracks.join(", "));
 
     QStringList more;
-    if (d.timeline.masterLimiter) more << T("Limiter auf dem Master (%1 dB)").arg(decibels(d.timeline.masterLimiterDb));
+    if (d.timeline.masterLimiter) more << T("Begrenzer auf dem Master (%1 dB)").arg(decibels(d.timeline.masterLimiterDb));
     if (d.timeline.masterVolumeDb != 0) more << T("Master %1 dB").arg(decibels(d.timeline.masterVolumeDb));
     if (d.importPresets) {
         if (d.importPresets->muteMix) more << T("Mix-Stream stumm, wenn es Einzelspuren gibt");

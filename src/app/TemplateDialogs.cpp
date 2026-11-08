@@ -52,7 +52,7 @@ double seconds(int frames, double fps) { return frames / std::max(1.0, fps); }
 
 SaveTemplateDialog::SaveTemplateDialog(const TemplateInfo& info, QWidget* parent) : QDialog(parent)
 {
-    setWindowTitle(T("Als Vorlage speichern"));
+    setWindowTitle(T("Projekt als Vorlage mit Platzhaltern speichern"));
     auto* lay = new QVBoxLayout(this);
     auto* hint = new QLabel(T("Eine Vorlage ist dieses Projekt mit seinen Platzhaltern (Clip › Als Platzhalter "
                               "markieren…). Neue Projekte aus ihr bekommen alles, was in ihr zu sehen ist."));
@@ -75,7 +75,7 @@ SaveTemplateDialog::SaveTemplateDialog(const TemplateInfo& info, QWidget* parent
     m_copy->setObjectName("template_copy_media");
     m_copy->setChecked(true);
     m_copy->setToolTip(T("Aus: die Vorlage verweist auf die Dateien, wo sie jetzt liegen (geht nur auf diesem Rechner)"));
-    m_preview = new QCheckBox(T("Bild am Playhead als Vorschau"));
+    m_preview = new QCheckBox(T("Bild am Abspielkopf als Vorschau"));
     m_preview->setObjectName("template_preview");
     m_preview->setChecked(true);
     lay->addWidget(m_copy);
@@ -101,7 +101,7 @@ bool SaveTemplateDialog::preview() const { return m_preview->isChecked(); }
 TemplateBrowserDialog::TemplateBrowserDialog(QWidget* parent, std::function<QImage(const QString&, const QSize&)> thumbnail)
     : QDialog(parent), m_thumbnail(std::move(thumbnail))
 {
-    setWindowTitle(T("Neu aus Vorlage"));
+    setWindowTitle(T("Neu aus Vorlage wählen"));
     auto* lay = new QVBoxLayout(this);
     auto* filters = new QHBoxLayout;
     m_aspect = new QComboBox;

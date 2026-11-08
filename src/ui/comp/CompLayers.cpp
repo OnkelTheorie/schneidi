@@ -128,7 +128,7 @@ void CompLayers::refresh()
     m_listBox->setVisible(pure);
     if (!pure) {
         m_hintText->setText(!m_clipId ? T("Kein Clip ausgewählt.")
-                            : !has    ? T("Dieser Clip hat noch keinen Comp-Graphen.")
+                            : !has    ? T("Dieser Clip hat noch keinen Kompositionsgraphen.")
                                       : T("Dieser Graph ist keine reine Ebenen-Folge – er lässt sich nur in der "
                                           "Knoten-Ansicht ganz zeigen."));
         m_layers.clear();

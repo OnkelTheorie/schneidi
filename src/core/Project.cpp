@@ -630,7 +630,7 @@ void Project::renameSequence(int id, const QString& name)
     const QString n = name.trimmed();
     const Sequence* s = sequence(id);
     if (n.isEmpty() || !s || s->name == n) return;
-    editSequences(s->compound ? T("Compound Clip umbenennen") : T("Timeline umbenennen"),
+    editSequences(s->compound ? T("Verbundclip umbenennen") : T("Timeline umbenennen"),
                   [&](QVector<Sequence>& list, int&) {
                       for (Sequence& x : list)
                           if (x.id == id) x.name = n;
@@ -657,7 +657,7 @@ int Project::duplicateSequence(int id)
             }
     for (SubtitleTrack& t : copy.timeline.subtitles)
         for (SubtitleCue& c : t.cues) c.id = newClipId();
-    editSequences(src->compound ? T("Compound Clip duplizieren") : T("Timeline duplizieren"),
+    editSequences(src->compound ? T("Verbundclip duplizieren") : T("Timeline duplizieren"),
                   [&](QVector<Sequence>& list, int&) { list << copy; });
     return copy.id;
 }
@@ -674,7 +674,7 @@ bool Project::removeSequence(int id)
 {
     if (!canRemoveSequence(id)) return false;
     const bool compound = sequence(id)->compound;
-    editSequences(compound ? T("Compound Clip löschen") : T("Timeline löschen"),
+    editSequences(compound ? T("Verbundclip löschen") : T("Timeline löschen"),
                   [&](QVector<Sequence>& list, int& cur) {
                       const int idx = int(std::find_if(list.begin(), list.end(),
                                                        [&](const Sequence& s) { return s.id == id; })
@@ -884,8 +884,8 @@ bool Project::removeMedia(const QStringList& paths, bool withClips)
         if (std::none_of(ignored.begin(), ignored.end(), [&](const QString& p) { return WatchFolders::samePath(p, m.path); }))
             change.ignore << qMakePair(m_watchFolders[w].path, m.path);
     }
-    const QString text = change.out.size() == 1 ? T("„%1“ aus dem Media Pool entfernen").arg(change.out.first().second.name)
-                                                : T("%1 Clips aus dem Media Pool entfernen").arg(change.out.size());
+    const QString text = change.out.size() == 1 ? T("„%1“ aus dem Medienpool entfernen").arg(change.out.first().second.name)
+                                                : T("%1 Clips aus dem Medienpool entfernen").arg(change.out.size());
     closeMerge(); // never part of a slider series of the user
     auto* step = new QUndoCommand(text);
     if (!usage.isEmpty()) {
@@ -996,7 +996,7 @@ void Project::setBrand(const std::optional<BrandKit>& brand)
 {
     const std::optional<BrandKit> b = brand ? std::optional<BrandKit>(brand->clamped()) : std::nullopt;
     if (b == m_brand) return;
-    m_undo.push(new BrandCommand(this, b ? T("Brand-Kit des Projekts") : T("Globales Brand-Kit verwenden"), m_brand, b));
+    m_undo.push(new BrandCommand(this, b ? T("Markenpaket des Projekts") : T("Globales Markenpaket verwenden"), m_brand, b));
 }
 
 void Project::applyBrand(const std::optional<BrandKit>& brand)
@@ -1206,12 +1206,12 @@ int Project::addBin(int parent, const QString& name)
         QSet<QString> used;
         for (const MediaBin& b : m_bins) used.insert(b.name);
         for (int i = 1;; ++i) {
-            n = T("Bin %1").arg(i);
+            n = T("Ordner %1").arg(i);
             if (!used.contains(n)) break;
         }
     }
     const int id = m_lastBinId + 1;
-    editPool(T("Neuer Bin"), [&](PoolState& s) { s.bins << MediaBin{id, parent, n}; });
+    editPool(T("Neuer Ordner"), [&](PoolState& s) { s.bins << MediaBin{id, parent, n}; });
     return id;
 }
 
@@ -1219,7 +1219,7 @@ void Project::renameBin(int id, const QString& name)
 {
     const QString n = name.trimmed();
     if (n.isEmpty() || !bin(id)) return;
-    editPool(T("Bin umbenennen"), [&](PoolState& s) {
+    editPool(T("Ordner umbenennen"), [&](PoolState& s) {
         for (MediaBin& b : s.bins)
             if (b.id == id) b.name = n;
     });
@@ -1230,7 +1230,7 @@ void Project::removeBin(int id)
     const MediaBin* b = bin(id);
     if (!b) return;
     const int parent = b->parent;
-    editPool(T("Bin entfernen"), [&](PoolState& s) {
+    editPool(T("Ordner entfernen"), [&](PoolState& s) {
         s.bins.erase(std::remove_if(s.bins.begin(), s.bins.end(), [&](const MediaBin& x) { return x.id == id; }),
                      s.bins.end());
         for (MediaBin& x : s.bins)
@@ -1246,7 +1246,7 @@ void Project::moveBin(int id, int parent)
 {
     const MediaBin* b = bin(id);
     if (!b || b->parent == parent || (parent != 0 && !bin(parent)) || binInside(parent, id)) return;
-    editPool(T("Bin verschieben"), [&](PoolState& s) {
+    editPool(T("Ordner verschieben"), [&](PoolState& s) {
         for (MediaBin& x : s.bins)
             if (x.id == id) x.parent = parent;
     });
@@ -1255,7 +1255,7 @@ void Project::moveBin(int id, int parent)
 void Project::moveMediaToBin(const QStringList& paths, int binId, const QVector<int>& sequences)
 {
     if (binId != 0 && !bin(binId)) return;
-    editPool(T("In Bin verschieben"), [&](PoolState& s) {
+    editPool(T("In Ordner verschieben"), [&](PoolState& s) {
         for (const QString& p : paths)
             if (s.media.contains(p)) s.media[p].bin = binId;
         for (int id : sequences)
@@ -1275,7 +1275,7 @@ void Project::setClipColor(const QStringList& paths, const QString& colorId)
 void Project::setFlag(const QStringList& paths, const QString& flagId, bool on)
 {
     if (!flagColorInfo(flagId)) return;
-    editPool(on ? T("Flag hinzufügen") : T("Flag entfernen"), [&](PoolState& s) {
+    editPool(on ? T("Flagge hinzufügen") : T("Flagge entfernen"), [&](PoolState& s) {
         for (const QString& p : paths) {
             if (!s.media.contains(p)) continue;
             QStringList& flags = s.media[p].flags;
@@ -1303,7 +1303,7 @@ void Project::setMediaPictureAspect(const QStringList& paths, double aspect)
 
 void Project::clearFlags(const QStringList& paths)
 {
-    editPool(T("Alle Flags entfernen"), [&](PoolState& s) {
+    editPool(T("Alle Flaggen entfernen"), [&](PoolState& s) {
         for (const QString& p : paths)
             if (s.media.contains(p)) s.media[p].flags.clear();
     });

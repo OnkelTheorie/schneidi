@@ -262,9 +262,9 @@ void testProject()
     // One file: named, no "file(s)"
     CHECK_EQ(undo->undoText(), T("Überwachter Ordner „%1“: neue Datei „%2“").arg("rec", "c.mp4"));
     CHECK_EQ(WatchFolders::importedNote({"/rec/c.mp4"}, "/rec", "Master"),
-             T("Neue Datei „%1“ aus „%2“ im Bin „%3“").arg("c.mp4", "rec", "Master"));
+             T("Neue Datei „%1“ aus „%2“ im Ordner „%3“").arg("c.mp4", "rec", "Master"));
     CHECK_EQ(WatchFolders::importedNote({"/rec/a.mp4", "/rec/b.mp4"}, "/rec/", "Aufnahmen"),
-             T("%1 neue Dateien aus „%2“ im Bin „%3“").arg("2", "rec", "Aufnahmen"));
+             T("%1 neue Dateien aus „%2“ im Ordner „%3“").arg("2", "rec", "Aufnahmen"));
 }
 
 void testProjectFile(const QString& root)

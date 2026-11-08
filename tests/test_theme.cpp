@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Designs: built-in JSON files complete, "Dark Orange" = default in code, signal colors the same in all designs,
+// Designs: built-in JSON files complete, "Dunkelorange" = default in code, signal colors the same in all designs,
 // saving/loading the user's choice (primary/secondary color per design, signal colors for all), design dialog.
 // DESIGN_DUMP=folder saves images of the dialog per design.
 #include "check.h"
@@ -39,7 +39,7 @@ int main(int argc, char** argv)
     Check::initApp("theme");
     clearSettings();
 
-    // --- Default in code (before load) = design "Dark Orange"
+    // --- Default in code (before load) = design "Dunkelorange"
     const QColor window0 = Theme::window, primary0 = Theme::primary, lane0 = Theme::lane, playhead0 = Theme::playhead;
     const Theme::Colors dark = Theme::defaults("dark-orange");
     CHECK_EQ(dark.value("window"), window0);

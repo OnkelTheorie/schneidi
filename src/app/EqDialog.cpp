@@ -34,8 +34,8 @@ QString bandName(EqBand::Kind k)
 {
     switch (k) {
     case EqBand::Kind::HighPass: return T("Hochpass");
-    case EqBand::Kind::LowShelf: return T("Low Shelf");
-    case EqBand::Kind::HighShelf: return T("High Shelf");
+    case EqBand::Kind::LowShelf: return T("Tiefenanhebung (Shelf)");
+    case EqBand::Kind::HighShelf: return T("Höhenanhebung (Shelf)");
     case EqBand::Kind::LowPass: return T("Tiefpass");
     case EqBand::Kind::Bell: break;
     }

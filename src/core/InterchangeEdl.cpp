@@ -269,7 +269,7 @@ Sequence readEdl(const QByteArray& data, FrameRate rate)
             bool sorted = std::is_sorted(td.items.begin(), td.items.end(), [](const Item& a, const Item& b) { return a.start < b.start; });
             if (!sorted) seq.warnings << T("EDL: Ereignisse auf %1 nicht in zeitlicher Reihenfolge").arg(td.name);
         }
-    if (wipes) seq.warnings << T("EDL: Wischblenden und Keys als Überblendung gelesen");
+    if (wipes) seq.warnings << T("EDL: Wischblenden und Freisteller als Überblendung gelesen");
     seq.warnings << T("EDL: keine Framerate in der Datei, mit %1 fps gelesen").arg(rate.label());
     return seq;
 }

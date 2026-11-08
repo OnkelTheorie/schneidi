@@ -389,7 +389,7 @@ void registerStyleNodes(QVector<NodeType>& out)
 
     NodeType glitch;
     glitch.id = "glitch";
-    glitch.name = T("Glitch");
+    glitch.name = T("Bildstörung");
     glitch.description = T("Digitale Störung: Farbversatz, verschobene Blöcke, Zeilen, Rauschen; jedes Bild neu aus "
                            "dem Startwert. Stärke 0 = aus");
     glitch.inputs = {"src"};

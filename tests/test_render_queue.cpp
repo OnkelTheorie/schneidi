@@ -987,7 +987,7 @@ int main(int argc, char** argv)
             if (const QByteArray dump = qgetenv("CHECK_DUMP"); !dump.isEmpty())
                 panel.grab().save(QString::fromLocal8Bit(dump).replace(".png", "-fix.png"));
             if (CHECK(fix && !fix->isHidden())) {
-                CHECK(fix->text().contains(T("Limiter an (%1 dBTP)").arg(QString("-1,2").replace(',', I18n::decimalPoint()))));
+                CHECK(fix->text().contains(T("Begrenzer an (%1 dBTP)").arg(QString("-1,2").replace(',', I18n::decimalPoint()))));
                 const int steps = q.undoStack()->count();
                 fix->click();
                 QApplication::processEvents(); // the check runs again

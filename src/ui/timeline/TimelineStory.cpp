@@ -47,7 +47,7 @@ QColor kindColor(StoryKind k)
 const char* kindLabel(StoryKind k)
 {
     switch (k) {
-    case StoryKind::Hook: return N_("Hook");
+    case StoryKind::Hook: return N_("Aufhänger");
     case StoryKind::Build: return N_("Aufbau");
     case StoryKind::Question: return N_("Frage");
     case StoryKind::Turn: return N_("Wendung");

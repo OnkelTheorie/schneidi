@@ -281,7 +281,7 @@ void MulticamView::updateProxyHint()
 
 QString MulticamView::message() const
 {
-    return m_sequence ? QString() : T("Kein Multicam-Clip am Playhead");
+    return m_sequence ? QString() : T("Kein Multikamera-Clip am Abspielkopf");
 }
 
 void MulticamView::refresh()

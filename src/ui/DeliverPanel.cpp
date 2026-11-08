@@ -69,7 +69,7 @@ bool sameOutput(const RenderSettings& a, const RenderSettings& b, QSize timeline
 
 QString smartTip()
 {
-    return T("Smart Render: Wo ein Clip ohne Effekt, Übergang oder Titel läuft und die Datei schon passt "
+    return T("Intelligentes Rendern: Wo ein Clip ohne Effekt, Übergang oder Titel läuft und die Datei schon passt "
              "(gleicher Codec, Größe, Bildrate), werden ihre Bilder verlustfrei übernommen statt neu kodiert – "
              "um ein Vielfaches schneller. Nur Schnitte bis zum nächsten Schlüsselbild und Stellen mit Effekten "
              "werden kodiert. Passt etwas nicht, wird automatisch normal kodiert.");
@@ -206,8 +206,8 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
     m_threads->setCurrentIndex(std::max(0, m_threads->findData(Exporter::savedThreads())));
     // Also with a graphics card encoder: it only compresses, decoding and computing the frames stays on the CPU
     m_threads->setToolTip(T("Wie viele Threads (logische Prozessoren) die Bilder dekodieren und berechnen. Gilt auch mit "
-                          "Grafikkarten-Encoder: Die Grafikkarte komprimiert nur, Dekodieren, Effekte und Zusammensetzen "
-                          "macht der Prozessor. Weniger = der Rechner bleibt nebenbei flüssiger. Mit Green Screen wird "
+                          "Grafikkarten-Kodierer: Die Grafikkarte komprimiert nur, Dekodieren, Effekte und Zusammensetzen "
+                          "macht der Prozessor. Weniger = der Rechner bleibt nebenbei flüssiger. Mit Greenscreen wird "
                           "trotzdem nur ein Bild nach dem anderen berechnet."));
     connect(m_threads, qOverload<int>(&QComboBox::currentIndexChanged), this,
             [this] { Exporter::setSavedThreads(m_threads->currentData().toInt()); });
@@ -222,7 +222,7 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
     form->addRow(T("Auflösung"), m_resolution);
     form->addRow(T("Bildrate"), m_rate);
     form->addRow(T("Qualität"), m_quality);
-    form->addRow(T("Encoder"), m_encoder);
+    form->addRow(T("Kodierer"), m_encoder);
     m_betterRow = new QWidget;
     m_betterRow->setObjectName("renderBetterEncoder");
     auto* betterLayout = new QHBoxLayout(m_betterRow);
@@ -242,7 +242,7 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
     form->addRow(T("Audio-Bittiefe"), m_audioBits);
     form->addRow(T("Untertitel"), m_subtitles);
     form->addRow(QString(), m_embed);
-    form->addRow(T("Smart Render"), m_smart);
+    form->addRow(T("Intelligentes Rendern"), m_smart);
     form->addRow(T("Prüfen"), m_review);
     form->addRow(T("Bereich"), m_range);
     form->addRow(T("CPU-Threads"), m_threads);
@@ -629,7 +629,7 @@ void DeliverPanel::updateEncoders()
     const bool better = f.hardware && probed && m_wantedEncoder != VideoEncoder::Nvenc && m_wantedEncoder != VideoEncoder::Vaapi
                         && m_wantedEncoder != VideoEncoder::Qsv && HardwareEncoders::needsBetterEncoder(f.id);
     if (better)
-        m_betterText->setText(T("Ohne Grafikkarten-Encoder kodiert %1 mit %2: bei gleicher Qualität etwa doppelt so "
+        m_betterText->setText(T("Ohne Grafikkarten-Kodierer kodiert %1 mit %2: bei gleicher Qualität etwa doppelt so "
                                 "große Dateien.")
                                   .arg(QLatin1String(f.id) == QLatin1String("h265") ? "H.265" : "H.264",
                                        QLatin1String(f.id) == QLatin1String("h265") ? "kvazaar" : "OpenH264"));
@@ -638,7 +638,7 @@ void DeliverPanel::updateEncoders()
     m_encoder->setToolTip(!f.hardware ? T("Bei diesem Format fest")
                           : !probed     ? T("Grafikkarte wird noch geprüft …")
                                         : T("Prozessor (Software) = der Prozessor komprimiert das Video: kleinste "
-                                            "Datei bei gleicher Qualität, aber langsamer. Die Hardware-Encoder der "
+                                            "Datei bei gleicher Qualität, aber langsamer. Die Hardware-Kodierer der "
                                             "Grafikkarte komprimieren viel schneller, die Datei wird etwas größer. "
                                             "Klappt einer nicht, rechnet der Prozessor."));
 }
@@ -784,12 +784,12 @@ void DeliverPanel::prepareFix(const QVector<ExportCheck::Issue>& sound, double i
     if (!fix.any()) return;
     QStringList what;
     if (fix.limiter)
-        what << T("Limiter an (%1 dBTP)").arg(QString::number(fix.ceiling, 'f', 1).replace('.', I18n::decimalPoint()));
+        what << T("Begrenzer an (%1 dBTP)").arg(QString::number(fix.ceiling, 'f', 1).replace('.', I18n::decimalPoint()));
     if (fix.level)
         what << T("Master %1%2 dB").arg(fix.change > 0 ? "+" : "")
                     .arg(QString::number(fix.change, 'f', 1).replace('.', I18n::decimalPoint()));
     m_fixBtn->setText(T("Beheben: %1").arg(what.join(", ")));
-    m_fixBtn->setToolTip(T("Ein Rückgängig-Schritt im Mixer: %1. Danach wird neu geprüft.").arg(what.join(", ")));
+    m_fixBtn->setToolTip(T("Ein Rückgängig-Schritt im Mischpult: %1. Danach wird neu geprüft.").arg(what.join(", ")));
     m_fix = [fix](Timeline& t) { ExportCheck::apply(fix, t); };
     m_fixSequence = m_project->currentSequence();
     m_fixBtn->show();

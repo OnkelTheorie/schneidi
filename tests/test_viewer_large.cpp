@@ -178,7 +178,7 @@ void testEditPage(MainWindow& w, Engine& engine)
     if (!CHECK(large && viewer && timeline && inspector && pool && button)) return;
     w.showPage(MainWindow::Page::Edit);
     // Many panels on: pool, effects, inspector, mixer, transcript, AI chat
-    for (const char* t : {"Effects", "Mixer", "Inspector", "Media Pool"})
+    for (const char* t : {"Effekte", "Mischpult", "Inspektor", "Medienpool"})
         if (QToolButton* tb = toggleNamed(w, T(t))) tb->setChecked(true);
     w.showAiChat(true);
     settle();
@@ -261,7 +261,7 @@ void testEditPage(MainWindow& w, Engine& engine)
     // A panel button ends it: the layout comes back with that panel switched as asked
     large->trigger();
     settle();
-    QToolButton* inspectorToggle = toggleNamed(w, T("Inspector"));
+    QToolButton* inspectorToggle = toggleNamed(w, T("Inspektor"));
     if (CHECK(inspectorToggle)) {
         inspectorToggle->click();
         settle();

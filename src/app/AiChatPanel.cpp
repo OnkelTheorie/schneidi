@@ -798,7 +798,7 @@ QWidget* AiChatPanel::buildSetup()
         const QString key = m_setupKey->text().trimmed();
         const bool keyElsewhere = m_keyHint && !m_keyHint(provider).isEmpty();
         if (p && p->needsKey && key.isEmpty() && !keyElsewhere) {
-            m_setupMessage->setText(T("Bitte den Schlüssel (API-Key) eingeben."));
+            m_setupMessage->setText(T("Bitte den API-Schlüssel eingeben."));
             m_setupKey->setFocus();
             return;
         }
@@ -850,7 +850,7 @@ void AiChatPanel::setupProviderChanged()
     if (!hint.isEmpty()) m_setupKeyHint->setText(hint);
     else if (p && !p->needsKey) m_setupKeyHint->setText(T("Kein Schlüssel nötig."));
     else
-        m_setupKeyHint->setText(T("Den Schlüssel (API-Key) bekommst du auf der Website des Anbieters. Oder setze die "
+        m_setupKeyHint->setText(T("Den API-Schlüssel bekommst du auf der Website des Anbieters. Oder setze die "
                                   "Umgebungsvariable %1.")
                                     .arg(p && !p->keyEnv.isEmpty() ? p->keyEnv : QString("SCHNEIDI_AI_KEY")));
 }

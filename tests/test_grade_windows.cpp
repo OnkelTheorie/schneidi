@@ -270,7 +270,7 @@ void testModel(const QString& dir)
     ed.addGradeWindow({id1}, 1, "ellipse");
     const Clip* c1 = TimelineOps::findClip(p.timeline(), id1);
     CHECK(GradeWindows::exists(*c1, 1));
-    ed.setGradeValues({id1, id2}, {{GradeWindows::param(1, "saturation"), 0.0}}, 0, "Color");
+    ed.setGradeValues({id1, id2}, {{GradeWindows::param(1, "saturation"), 0.0}}, 0, "Farbe");
     CHECK_EQ(ColorGrade::windowAt(*TimelineOps::findClip(p.timeline(), id1), 1, 0).saturation, 0.0);
     // clip 2 has no window 1: no stray values
     const Clip* c2 = TimelineOps::findClip(p.timeline(), id2);

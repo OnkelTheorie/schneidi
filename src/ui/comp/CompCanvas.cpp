@@ -639,7 +639,7 @@ void CompCanvas::contextMenuEvent(QContextMenuEvent* e)
     const int node = nodeAt(e->pos());
     if (node) {
         setSelected(node);
-        connect(menu.addAction(T("Im Viewer zeigen")), &QAction::triggered, this, [this, node] { emit showRequested(node); });
+        connect(menu.addAction(T("In der Vorschau zeigen")), &QAction::triggered, this, [this, node] { emit showRequested(node); });
         QAction* out = menu.addAction(T("Als Ausgang setzen"));
         out->setEnabled(node != m_graph.out);
         connect(out, &QAction::triggered, this, [this, node] { setOut(node); });

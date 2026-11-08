@@ -246,7 +246,7 @@ void RenderQueuePanel::rebuild()
         if (m_queue->isRunning() && m_queue->currentJob() == j.id) item->setFlags(item->flags() & ~Qt::ItemIsDragEnabled);
         auto* card = new JobCard;
         const QFileInfo fi(j.path);
-        card->title->setFullText(T("Job %1").arg(j.id) + QStringLiteral(" · ") + fi.fileName());
+        card->title->setFullText(T("Auftrag %1").arg(j.id) + QStringLiteral(" · ") + fi.fileName());
         QString itemTip = j.preset.isEmpty() ? T("Eigene Einstellungen") : j.preset;
         if (j.status == RenderStatus::Done) itemTip += '\n' + T("Doppelklick: im Dateimanager zeigen");
         item->setToolTip(itemTip); // the list shows it (the card lets the mouse through)
@@ -261,7 +261,7 @@ void RenderQueuePanel::rebuild()
         card->status->setStyleSheet(QString("color: %1; font-size: 8pt;").arg(statusColor(j.status)));
         QStringList tip;
         if (!j.message.isEmpty()) tip << j.message;
-        if (j.status == RenderStatus::Done && !j.encoderUsed.isEmpty()) tip << T("Video-Encoder: %1").arg(j.encoderUsed);
+        if (j.status == RenderStatus::Done && !j.encoderUsed.isEmpty()) tip << T("Video-Kodierer: %1").arg(j.encoderUsed);
         card->status->setToolTip(tip.join('\n'));
         card->status->setMaximumWidth(140);
         // Which timeline (like DaVinci in the job card); a deleted timeline stays as a hint

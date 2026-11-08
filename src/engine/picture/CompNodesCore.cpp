@@ -529,7 +529,7 @@ void registerCoreNodes(QVector<NodeType>& out)
         NodeType k;
         k.id = "clip";
         k.name = T("Clip");
-        k.description = T("Das Bild des Clips mit seinen Effekten (bei einem Compound auch eine einzelne Spur)");
+        k.description = T("Das Bild des Clips mit seinen Effekten (bei einem Verbund auch eine einzelne Spur)");
         k.params = {num("track", T("Spur"), -1, -1, 99, 1, 0,
                         T("Nur diese Spur der inneren Sequenz (0 = unterste); -1 = das ganze Bild"))};
         k.varying = true;
@@ -591,13 +591,13 @@ void registerCoreNodes(QVector<NodeType>& out)
         NodeType k;
         k.id = "transform";
         k.name = T("Transformieren");
-        k.description = T("Verschieben, vergrößern und drehen (folgt auf Wunsch einem Tracker)");
+        k.description = T("Verschieben, vergrößern und drehen (folgt auf Wunsch einer Verfolgung)");
         k.inputs = {"src"};
         k.params = {num("x", T("Position X"), 0.5, -2, 3), num("y", T("Position Y"), 0.5, -2, 3),
                     num("size", T("Größe"), 1, 0, 20), num("angle", T("Drehung"), 0, -3600, 3600, 0.1, 2),
                     num("ax", T("Ankerpunkt X"), 0.5, -1, 2), num("ay", T("Ankerpunkt Y"), 0.5, -1, 2),
-                    num("follow", T("Folgt Tracker"), 0, 0, 1e6, 1, 0,
-                        T("Id eines Tracker-Knotens (0 = keiner); die Position zählt dann als Versatz"))};
+                    num("follow", T("Folgt Verfolgung"), 0, 0, 1e6, 1, 0,
+                        T("Id eines Verfolgungsknotens (0 = keiner); die Position zählt dann als Versatz"))};
         k.eval = evalTransform;
         out << k;
     }
@@ -626,7 +626,7 @@ void registerCoreNodes(QVector<NodeType>& out)
         NodeType k;
         k.id = "grade";
         k.name = T("Farbkorrektur");
-        k.description = T("Die Werte der Color-Seite und eine LUT, auf Wunsch nur in einer Maske");
+        k.description = T("Die Werte der Seite Farbe und eine LUT, auf Wunsch nur in einer Maske");
         k.inputs = {"src", "mask"};
         const ColorGrade::Params neutral;
         for (int i = 0; i < 4; ++i) {
@@ -639,7 +639,7 @@ void registerCoreNodes(QVector<NodeType>& out)
                 k.params << p;
             }
         }
-        k.params << num("contrast", T("Kontrast"), neutral.contrast, 0, 2) << num("pivot", T("Pivot"), neutral.pivot, 0, 1)
+        k.params << num("contrast", T("Kontrast"), neutral.contrast, 0, 2) << num("pivot", T("Mittelpunkt"), neutral.pivot, 0, 1)
                  << num("saturation", T("Sättigung"), neutral.saturation, 0, 100, 0.1, 1)
                  << num("temperature", T("Temperatur"), neutral.temperature, -4000, 4000, 1, 0)
                  << num("tint", T("Tönung"), neutral.tint, -100, 100, 0.1, 1)

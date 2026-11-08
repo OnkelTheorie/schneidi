@@ -283,7 +283,7 @@ void AiSettingsPage::addChatSection(Ai::Keys* keys)
     QGroupBox* box = addSection(T("KI-Chat"), 0);
     box->setObjectName("ai_chat_section");
     QFormLayout* f = formOf(box);
-    f->addRow(hint(T("Im Panel „KI“ bearbeitet eine KI das offene Projekt auf Zuruf, mit denselben Werkzeugen wie jede "
+    f->addRow(hint(T("Im Bereich „KI“ bearbeitet eine KI das offene Projekt auf Zuruf, mit denselben Werkzeugen wie jede "
                      "andere KI. Jede Änderung lässt sich rückgängig machen.")));
     m_chatProvider = new QComboBox;
     m_chatProvider->setObjectName("ai_chat_provider");

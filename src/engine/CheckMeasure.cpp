@@ -210,7 +210,7 @@ QVector<ExportCheck::Issue> bars(const ProjectFormat& f, const Timeline& tl, int
                 continue;
             ExportCheck::Issue i{ExportCheck::Severity::Warning, "black_bars",
                                  T("Die Aufnahme hat schwarze Balken, die im Bild zu sehen sind (4:3-Spiel in 16:9?): "
-                                   "„Schwarze Balken wegschneiden“ im Clip-Menü oder Auto-Reframe schneidet sie weg")};
+                                   "„Schwarze Balken wegschneiden“ im Clip-Menü oder Auto-Ausschnitt schneidet sie weg")};
             i.from = std::max(from, c.start);
             i.to = std::min(to, c.end());
             i.clip = c.id;

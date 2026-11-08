@@ -38,22 +38,22 @@ constexpr int kTargetTracks = 8;
 void MainWindow::buildMulticamViewerAction(QMenu* playback)
 {
     // Like DaVinci (View → Viewer Mode → Multicam): the viewer shows the grid of the multicam clip at the playhead
-    m_multicamAction = makeAction(playback, "viewer_multicam", T("Multicam-Ansicht"), QKeySequence(),
+    m_multicamAction = makeAction(playback, "viewer_multicam", T("Multikamera-Ansicht"), QKeySequence(),
                                   [this] { setMulticamMode(m_multicamAction->isChecked()); });
     m_multicamAction->setCheckable(true);
-    m_multicamAction->setToolTip(T("Viewer zeigt alle Winkel des Multicam-Clips am Playhead. Klick: während der Wiedergabe "
+    m_multicamAction->setToolTip(T("Die Vorschau zeigt alle Winkel des Multikamera-Clips am Abspielkopf. Klick: während der Wiedergabe "
                                    "Schnitt, im Stand Winkel wechseln (Alt+Klick: Schnitt). 1–9 schneidet, Alt+1–9 "
                                    "wechselt den Winkel."));
 }
 
 void MainWindow::buildMulticamActions(QMenu* timeline)
 {
-    QMenu* menu = timeline->addMenu(T("Multicam"));
-    makeAction(menu, "multicam_create", T("Multicam-Clip aus ausgewählten Clips erstellen…"), QKeySequence(), [this] {
+    QMenu* menu = timeline->addMenu(T("Multikamera"));
+    makeAction(menu, "multicam_create", T("Multikamera-Clip aus ausgewählten Clips erstellen…"), QKeySequence(), [this] {
         const QStringList paths = m_mediaPool->selectedMedia();
         if (paths.isEmpty()) {
-            QMessageBox::information(this, T("Neuer Multicam-Clip"),
-                                     T("Erst die Aufnahmen (eine je Winkel) im Media Pool auswählen."));
+            QMessageBox::information(this, T("Neuer Multikamera-Clip"),
+                                     T("Erst die Aufnahmen (eine je Winkel) im Medienpool auswählen."));
             return;
         }
         createMulticamClip(paths);
@@ -75,7 +75,7 @@ void MainWindow::buildMulticamActions(QMenu* timeline)
         sw->setEnabled(false);
     }
     menu->addSeparator();
-    makeAction(menu, "multicam_flatten", T("Multicam-Clip glätten"), QKeySequence(), [this] {
+    makeAction(menu, "multicam_flatten", T("Multikamera-Clip glätten"), QKeySequence(), [this] {
         // Like DaVinci "Flatten Multicam Clip": the selected segments, without a selection the one at the playhead
         QVector<int> ids;
         for (int id : m_editor->clipIdsOf(m_selection->ids()))
@@ -207,7 +207,7 @@ void MainWindow::addMulticamMenu(QMenu* menu)
         if (current < 0 || ref.kind == TrackKind::Video) current = c->angle;
     }
     // Like DaVinci "Switch Multicam Clip Angle" (mode of the multicam view: picture and/or sound)
-    QMenu* sub = menu->addMenu(T("Multicam-Winkel wechseln"));
+    QMenu* sub = menu->addMenu(T("Multikamera-Winkel wechseln"));
     const Multicam::Mode mode = m_multicam->mode();
     for (int i = 0; i < s->angles.size(); ++i) {
         QAction* a = sub->addAction(QString("%1  %2").arg(i + 1).arg(s->angles[i].name));
@@ -228,7 +228,7 @@ void MainWindow::createMulticamClip(const QStringList& paths)
     for (const Sequence& s : m_project->sequences()) used.insert(s.name);
     QString def;
     for (int i = 1;; ++i) {
-        def = T("Multicam-Clip %1").arg(i);
+        def = T("Multikamera-Clip %1").arg(i);
         if (!used.contains(def)) break;
     }
     MulticamDialog dlg(m_project, files, def, this);
@@ -241,7 +241,7 @@ void MainWindow::createMulticamClip(const QStringList& paths)
     if (dlg.method() == Multicam::SyncMethod::Sound) {
         // Decoding hours of sound takes a while: progress + cancel
         QProgressDialog progress(T("Ton wird synchronisiert…"), T("Abbrechen"), 0, 1000, this);
-        progress.setWindowTitle(T("Neuer Multicam-Clip"));
+        progress.setWindowTitle(T("Neuer Multikamera-Clip"));
         progress.setWindowModality(Qt::WindowModal);
         progress.setMinimumDuration(300);
         QVector<SoundSync::Input> inputs;
@@ -260,7 +260,7 @@ void MainWindow::createMulticamClip(const QStringList& paths)
     const QVector<Multicam::Angle> angles = Multicam::resolve(*m_project, sources, dlg.method(), sound);
     const int seq = m_editor->createMulticamClip(dlg.name(), angles, m_mediaPool->currentBin());
     if (!seq) {
-        QMessageBox::warning(this, T("Neuer Multicam-Clip"), T("Keine der Aufnahmen lässt sich als Winkel verwenden."));
+        QMessageBox::warning(this, T("Neuer Multikamera-Clip"), T("Keine der Aufnahmen lässt sich als Winkel verwenden."));
         return;
     }
     QStringList unsynced;
@@ -268,8 +268,8 @@ void MainWindow::createMulticamClip(const QStringList& paths)
         for (const Multicam::FilePlacement& f : a.files)
             if (!f.synced) unsynced << QFileInfo(f.path).fileName();
     if (!unsynced.isEmpty())
-        QMessageBox::information(this, T("Neuer Multicam-Clip"),
-                                 T("Nicht synchron (am Anfang platziert, in der Multicam-Timeline von Hand verschieben "
+        QMessageBox::information(this, T("Neuer Multikamera-Clip"),
+                                 T("Nicht synchron (am Anfang platziert, in der Multikamera-Timeline von Hand verschieben "
                                    "oder per Marker synchronisieren):\n%1")
                                      .arg(unsynced.join('\n')));
 }

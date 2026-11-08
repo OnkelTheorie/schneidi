@@ -479,7 +479,7 @@ EffectsLibrary::EffectsLibrary(QWidget* parent) : QWidget(parent)
     import->setText(T("Effekte importieren…"));
     import->setToolTip(T("Öffnet den Effekte-Ordner. LUTs (.cube, .3dl, .csp, Hald-CLUT) in den Ordner „LUTs“, "
                          "Übergänge (Graustufenbilder) in den Ordner „Transitions“ legen, Unterordner werden zu "
-                         "Kategorien. Presets aus Kdenlive/Shotcut in den Ordner „Presets“.\n%1")
+                         "Kategorien. Voreinstellungen aus Kdenlive/Shotcut in den Ordner „Voreinstellungen“.\n%1")
                            .arg(QDir::toNativeSeparators(EffectFolders::root())));
     connect(import, &QToolButton::clicked, this, [] {
         EffectFolders::ensure();
@@ -500,7 +500,7 @@ EffectsLibrary::EffectsLibrary(QWidget* parent) : QWidget(parent)
         it->setData(0, Qt::UserRole, cat);
         return it;
     };
-    auto* toolbox = add(m_categories, T("Toolbox"), All);
+    auto* toolbox = add(m_categories, T("Werkzeugkasten"), All);
     add(toolbox, T("Videoübergänge"), VideoTransitions);
     add(toolbox, T("Audioübergänge"), AudioTransitions);
     add(toolbox, T("Titel-Vorlagen"), Titles);
@@ -523,10 +523,10 @@ EffectsLibrary::EffectsLibrary(QWidget* parent) : QWidget(parent)
     add(lumas, T("Mitgeliefert"), BuiltinTransitions);
     m_transRoot = add(lumas, T("Eigene"), Transitions);
     m_transRoot->setToolTip(0, QDir::toNativeSeparators(EffectFolders::transitionDir()));
-    add(m_categories, T("Comp-Rezepte"), RecipesCat)
-        ->setToolTip(0, T("Fertige Compositing-Graphen (Green Screen, Text hinter Person …) für einen Clip"));
+    add(m_categories, T("Kompositionsrezepte"), RecipesCat)
+        ->setToolTip(0, T("Fertige Kompositionen (Greenscreen, Text hinter Person …) für einen Clip"));
     m_presetRoot = add(m_categories, QStringLiteral("Presets"), PresetsAll);
-    m_presetRoot->setToolTip(0, T("Mitgelieferte Looks und Presets aus Kdenlive und Shotcut\n%1").arg(QDir::toNativeSeparators(EffectFolders::presetDir())));
+    m_presetRoot->setToolTip(0, T("Mitgelieferte Looks und Voreinstellungen aus Kdenlive und Shotcut\n%1").arg(QDir::toNativeSeparators(EffectFolders::presetDir())));
     for (QTreeWidgetItem* it : {toolbox, openFx, luts, lumas}) it->setExpanded(true);
     m_categories->setCurrentItem(toolbox);
     connect(m_categories, &QTreeWidget::itemExpanded, this, &EffectsLibrary::saveCollapsed);
@@ -538,7 +538,7 @@ EffectsLibrary::EffectsLibrary(QWidget* parent) : QWidget(parent)
     m_list->setSpacing(1);
     m_list->setDragEnabled(true);
     m_list->setDragDropMode(QAbstractItemView::DragOnly);
-    m_list->setToolTip(T("Auf einen Schnitt, einen Clip bzw. in die Timeline ziehen, Doppelklick = am Playhead bzw. "
+    m_list->setToolTip(T("Auf einen Schnitt, einen Clip bzw. in die Timeline ziehen, Doppelklick = am Abspielkopf bzw. "
                          "auf die Auswahl anwenden"));
     connect(m_list, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem* it) {
         const QString d = it->data(Qt::UserRole).toString();
@@ -964,11 +964,11 @@ void EffectsLibrary::rebuild()
         if (shown == Transitions || shown == TransitionGroup)
             hint = T("Noch keine Verlaufsblenden – „Effekte importieren…“ öffnet den Ordner");
         if (shown == PresetGroup)
-            hint = T("Noch keine Presets – „Effekte importieren…“ öffnet den Ordner");
+            hint = T("Noch keine Voreinstellungen – „Effekte importieren…“ öffnet den Ordner");
         if (shown == Sounds || shown == SoundGroup)
             hint = T("Noch keine eigenen Klänge – „Effekte importieren…“ öffnet den Ordner (Unterordner „Sounds“)");
         if (shown == PackSounds) hint = T("Noch keine Klangpakete installiert");
-        if (shown == RecipesCat) hint = T("Noch keine Comp-Rezepte");
+        if (shown == RecipesCat) hint = T("Noch keine Kompositionsrezepte");
         if (!hint.isEmpty()) {
             auto* h = new QListWidgetItem(hint);
             h->setFlags(Qt::NoItemFlags);
@@ -990,7 +990,7 @@ const EffectsLibrary::PresetEntry& EffectsLibrary::presetEntry(const QString& pa
     const Presets::Mapped m = Presets::map(p);
     e.name = p.name;
     QStringList tip;
-    if (!p.source.isEmpty()) tip << T("Preset aus %1").arg(p.source);
+    if (!p.source.isEmpty()) tip << T("Voreinstellung aus %1").arg(p.source);
     if (!p.description.isEmpty()) tip << p.description;
     QStringList names;
     for (const EffectInstance& x : m.effects)

@@ -118,7 +118,7 @@ QWidget* MainWindow::buildUpdateBar()
         lay->addWidget(b);
         return b;
     };
-    QToolButton* now = button("update_now", T("Jetzt"), T("Release-Seite mit den Downloads öffnen"));
+    QToolButton* now = button("update_now", T("Jetzt"), T("Download-Seite öffnen"));
     now->setStyleSheet("QToolButton { font-weight: 600; }");
     QToolButton* later = button("update_later", T("Später"), T("Morgen wieder fragen"));
     QToolButton* never = button("update_never", T("Nicht mehr fragen"),

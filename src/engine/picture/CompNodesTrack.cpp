@@ -52,7 +52,7 @@ void registerTrackNodes(QVector<NodeType>& out)
 {
     NodeType k;
     k.id = QString::fromLatin1(::Comp::kTrackerType);
-    k.name = T("Tracker");
+    k.name = T("Verfolgung");
     k.description = T("Verfolgt einen Punkt, zwei Punkte (Größe und Drehung) oder ein Gesicht; andere Knoten folgen "
                       "ihm. Das Bild geht unverändert durch");
     k.inputs = {QStringLiteral("src")};

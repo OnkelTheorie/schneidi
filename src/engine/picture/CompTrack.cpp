@@ -266,11 +266,11 @@ TrackRun trackNode(const ProjectFormat& format, const Clip& c, int node, int fro
     CompGraph g;
     const NodeType* k = find(::Comp::kTrackerType);
     if (!k || !e || !::Comp::graphOf(*e, &g) || !g.node(node) || g.node(node)->type != QLatin1String(::Comp::kTrackerType)) {
-        run.error = T("Der Clip hat keinen Tracker-Knoten %1").arg(node);
+        run.error = T("Der Clip hat keinen Verfolgungsknoten %1").arg(node);
         return run;
     }
     if (c.isNested() || c.isTitle()) {
-        run.error = T("Tracking geht nur bei Video-Clips (nicht bei Titeln, Compound- und Multicam-Clips)");
+        run.error = T("Verfolgung geht nur bei Video-Clips (nicht bei Titeln, Verbund- und Multikamera-Clips)");
         return run;
     }
     from = std::clamp(from, 0, c.length() - 1);

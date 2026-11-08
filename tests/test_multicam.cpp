@@ -133,7 +133,7 @@ void testCreateMulticamSequence()
     CHECK_EQ(TimelineOps::endFrame(f.p.timeline()), 0);
     const Sequence* s = f.p.sequence(seq);
     if (!CHECK(s && s->multicam)) return;
-    CHECK_EQ(f.p.sequenceName(seq), T("Multicam-Clip %1").arg(1));
+    CHECK_EQ(f.p.sequenceName(seq), T("Multikamera-Clip %1").arg(1));
     // Offsets normalized: the earliest recording (pov2, -20) starts at frame 0
     CHECK_EQ(Check::dump(s->timeline), QString("V1: pov1[20-1020|0-999]  V2: pov2[0-1000|0-999]  V3: pov3[120-920|0-799]  "
                                                "A1: pov1[20-1020|0-999]  A2: pov2[0-1000|0-999]  A3: pov3[120-920|0-799]"));
@@ -164,7 +164,7 @@ void testCreateMulticamSequence()
     CHECK_EQ(f.p.sequenceName(named), QString("Finale"));
     CHECK_EQ(f.p.sequence(named)->bin, bin);
     const int third = f.ed.createMulticamClip({}, threeAngles());
-    CHECK_EQ(f.p.sequenceName(third), T("Multicam-Clip %1").arg(2));
+    CHECK_EQ(f.p.sequenceName(third), T("Multikamera-Clip %1").arg(2));
 }
 
 void testCreateWithMultiStreamAngles()

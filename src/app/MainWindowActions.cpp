@@ -112,24 +112,24 @@ void MainWindow::buildActions()
     QMenu* file = menuBar()->addMenu(T("&Datei"));
     makeAction(file, "project_new", T("Neues Projekt"), QKeySequence("Ctrl+N"), [this] { newProject(); });
     // Start templates (core/StartTemplates.h): built-in and own ones, built when the menu opens
-    m_templateMenu = file->addMenu(T("Neues Projekt aus Vorlage"));
+    m_templateMenu = file->addMenu(T("Neues Projekt aus Startvorlage"));
     m_templateMenu->setObjectName("template_menu");
     m_templateMenu->setToolTipsVisible(true);
     connect(m_templateMenu, &QMenu::aboutToShow, this, &MainWindow::rebuildTemplateMenu);
     rebuildTemplateMenu();
-    makeAction(file, "template_browser", T("Neu aus Vorlage…"), QKeySequence(), [this] { templateBrowser(); });
+    makeAction(file, "template_browser", T("Alle Vorlagen anzeigen…"), QKeySequence(), [this] { templateBrowser(); });
     makeAction(file, "project_open", T("Projekt öffnen…"), QKeySequence("Ctrl+O"), [this] { openProjectDialog(); });
     makeAction(file, "project_open_video", T("Video als Projekt öffnen…"), QKeySequence(), [this] { openMediaAsProjectDialog(); });
     m_recentMenu = file->addMenu(T("Zuletzt geöffnet"));
     rebuildRecentMenu();
     makeAction(file, "project_save", T("Projekt speichern"), QKeySequence("Ctrl+S"), [this] { save(); });
     makeAction(file, "project_save_as", T("Projekt speichern unter…"), QKeySequence("Ctrl+Shift+S"), [this] { saveAs(); });
-    makeAction(file, "template_save", T("Als Startvorlage speichern…"), QKeySequence(), [this] { saveStartTemplate(this); });
-    makeAction(file, "content_template_save", T("Als Vorlage speichern…"), QKeySequence(), [this] { saveContentTemplate(); });
+    makeAction(file, "template_save", T("Format und Spuren als Startvorlage speichern…"), QKeySequence(), [this] { saveStartTemplate(this); });
+    makeAction(file, "content_template_save", T("Projekt als Vorlage mit Platzhaltern speichern…"), QKeySequence(), [this] { saveContentTemplate(); });
     makeAction(file, "project_backup_open", T("Sicherungskopie öffnen…"), QKeySequence(), [this] { openBackupDialog(); });
     file->addSeparator();
     makeAction(file, "import", T("Medien importieren…"), QKeySequence("Ctrl+I"), [this] { m_mediaPool->importDialog(); });
-    makeAction(file, "new_bin", T("Neuer Bin"), QKeySequence("Ctrl+Shift+N"), [this] { m_mediaPool->newBin(); });
+    makeAction(file, "new_bin", T("Neuer Ordner"), QKeySequence("Ctrl+Shift+N"), [this] { m_mediaPool->newBin(); });
     makeAction(file, "new_timeline", T("Neue Timeline"), QKeySequence("Ctrl+Alt+N"), [this] { m_mediaPool->newTimeline(); });
     makeAction(file, "import_subtitles", T("Untertitel importieren (SRT)…"), QKeySequence(), [this] { importSubtitlesDialog(); });
     makeAction(file, "export_subtitles", T("Untertitel exportieren (SRT/VTT)…"), QKeySequence(), [this] { exportSubtitlesDialog(); });
@@ -162,7 +162,7 @@ void MainWindow::buildActions()
         if (m_page == Page::Color) m_colorPanel->copyGrade();
         else m_editor->copySelection();
     });
-    makeAction(edit, "paste", T("Einfügen am Playhead"), QKeySequence("Ctrl+V"), [this, tv] {
+    makeAction(edit, "paste", T("Einfügen am Abspielkopf"), QKeySequence("Ctrl+V"), [this, tv] {
         if (m_page == Page::Color) m_colorPanel->pasteGrade();
         else m_editor->paste(tv->playhead());
     });
@@ -186,9 +186,9 @@ void MainWindow::buildActions()
         };
     };
     makeAction(edit, "delete", T("Löschen (Lücke bleibt)"), QKeySequence(Qt::Key_Backspace), gapOr(&Editor::deleteSelection));
-    makeAction(edit, "delete_alt", T("Löschen (Entf)"), QKeySequence(Qt::Key_Delete), gapOr(&Editor::deleteSelection));
-    makeAction(edit, "ripple_delete", T("Löschen mit Ripple"), QKeySequence("Shift+Del"), gapOr(&Editor::rippleDeleteSelection));
-    makeAction(edit, "ripple_delete_alt", T("Löschen mit Ripple (Rücktaste)"), QKeySequence("Shift+Backspace"),
+    makeAction(edit, "delete_alt", T("Löschen (Lücke bleibt, Zweitbelegung)"), QKeySequence(Qt::Key_Delete), gapOr(&Editor::deleteSelection));
+    makeAction(edit, "ripple_delete", T("Löschen mit Nachrücken"), QKeySequence("Shift+Del"), gapOr(&Editor::rippleDeleteSelection));
+    makeAction(edit, "ripple_delete_alt", T("Löschen mit Nachrücken (Zweitbelegung)"), QKeySequence("Shift+Backspace"),
                gapOr(&Editor::rippleDeleteSelection));
     edit->addSeparator();
     // Edits from the source Viewer like DaVinci (Edit → Insert/Overwrite/Replace/Place on Top …)
@@ -209,23 +209,23 @@ void MainWindow::buildActions()
                    QKeySequence(QString("Ctrl+Alt+%1").arg(i + 1)),
                    [this, i] { m_editor->setTargetTracks(m_editor->targetVideoTrack(), i); });
     }
-    makeAction(edit, "fit_to_fill", T("Einpassen (Fit to Fill)"), QKeySequence("Shift+F11"), [this] { sourceEdit(SE::FitToFill); });
+    makeAction(edit, "fit_to_fill", T("Auf Länge einpassen"), QKeySequence("Shift+F11"), [this] { sourceEdit(SE::FitToFill); });
     makeAction(edit, "place_on_top", T("Oben platzieren"), QKeySequence(Qt::Key_F12), [this] { sourceEdit(SE::PlaceOnTop); });
-    makeAction(edit, "ripple_overwrite", T("Ripple-Überschreiben"), QKeySequence("Shift+F10"),
+    makeAction(edit, "ripple_overwrite", T("Überschreiben mit Nachrücken"), QKeySequence("Shift+F10"),
                [this] { sourceEdit(SE::RippleOverwrite); });
     makeAction(edit, "append_at_end", T("Am Ende der Timeline anhängen"), QKeySequence("Shift+F12"),
                [this] { sourceEdit(SE::AppendAtEnd); });
     edit->addSeparator();
     makeAction(edit, "select_all", T("Alles auswählen"), QKeySequence("Ctrl+A"), [this] { m_editor->selectAll(); });
     makeAction(edit, "deselect", T("Auswahl aufheben"), QKeySequence("Ctrl+Shift+A"), [this] { m_selection->clear(); });
-    QMenu* selectMenu = edit->addMenu(T("Ab Playhead auswählen"));
-    makeAction(selectMenu, "select_forward", T("Clips ab Playhead nach rechts (diese Spur)"), QKeySequence("Y"),
+    QMenu* selectMenu = edit->addMenu(T("Ab dem Abspielkopf auswählen"));
+    makeAction(selectMenu, "select_forward", T("Clips ab dem Abspielkopf nach rechts (diese Spur)"), QKeySequence("Y"),
                [this, tv] { m_editor->selectFromPlayhead(tv->playhead(), true, false); });
-    makeAction(selectMenu, "select_backward", T("Clips ab Playhead nach links (diese Spur)"), QKeySequence("Ctrl+Y"),
+    makeAction(selectMenu, "select_backward", T("Clips ab dem Abspielkopf nach links (diese Spur)"), QKeySequence("Ctrl+Y"),
                [this, tv] { m_editor->selectFromPlayhead(tv->playhead(), false, false); });
-    makeAction(selectMenu, "select_forward_all", T("Clips ab Playhead nach rechts (alle Spuren)"), QKeySequence("Alt+Y"),
+    makeAction(selectMenu, "select_forward_all", T("Clips ab dem Abspielkopf nach rechts (alle Spuren)"), QKeySequence("Alt+Y"),
                [this, tv] { m_editor->selectFromPlayhead(tv->playhead(), true, true); });
-    makeAction(selectMenu, "select_backward_all", T("Clips ab Playhead nach links (alle Spuren)"),
+    makeAction(selectMenu, "select_backward_all", T("Clips ab dem Abspielkopf nach links (alle Spuren)"),
                QKeySequence("Ctrl+Alt+Y"), [this, tv] { m_editor->selectFromPlayhead(tv->playhead(), false, true); });
     edit->addSeparator();
     makeAction(edit, "edit_keybindings", T("Tastenbelegung…"), QKeySequence("Ctrl+Alt+K"), [this] {
@@ -236,9 +236,9 @@ void MainWindow::buildActions()
     // Organized like DaVinci: the most frequent commands on top, the rest in submenus (otherwise the menu fills the screen).
     // Key bindings category stays "Timeline" (makeAction takes the topmost menu).
     QMenu* timeline = menuBar()->addMenu(T("&Timeline"));
-    makeAction(timeline, "split", T("Clip am Playhead teilen"), QKeySequence("Ctrl+B"),
+    makeAction(timeline, "split", T("Clip am Abspielkopf teilen"), QKeySequence("Ctrl+B"),
                [this, tv] { m_editor->splitAtPlayhead(tv->playhead()); });
-    makeAction(timeline, "add_transition", T("Übergang hinzufügen (Cross Dissolve)"), QKeySequence("Ctrl+T"),
+    makeAction(timeline, "add_transition", T("Übergang hinzufügen (Überblendung)"), QKeySequence("Ctrl+T"),
                [this, tv] {
                    const bool trim = !m_editor->transitionsLackingHandles(tv->playhead()).isEmpty()
                                      && TimelineView::confirmTrimForTransition(this);
@@ -255,10 +255,10 @@ void MainWindow::buildActions()
     makeAction(toolsMenu, "tool_select", T("Auswahl-Werkzeug"), QKeySequence("A"), [tv] { tv->setTool(TimelineView::Tool::Select); });
     makeAction(toolsMenu, "tool_trim", T("Trim-Modus"), QKeySequence("T"), [tv] { tv->setTool(TimelineView::Tool::Trim); });
     // No default keys: Y and U (Premiere's) select from the playhead and switch the edit point side here
-    makeAction(toolsMenu, "tool_slip", T("Slip-Werkzeug"), QKeySequence(), [tv] { tv->setTool(TimelineView::Tool::Slip); });
-    makeAction(toolsMenu, "tool_slide", T("Slide-Werkzeug"), QKeySequence(), [tv] { tv->setTool(TimelineView::Tool::Slide); });
+    makeAction(toolsMenu, "tool_slip", T("Inhalt-Werkzeug"), QKeySequence(), [tv] { tv->setTool(TimelineView::Tool::Slip); });
+    makeAction(toolsMenu, "tool_slide", T("Gleiten-Werkzeug"), QKeySequence(), [tv] { tv->setTool(TimelineView::Tool::Slide); });
     makeAction(toolsMenu, "tool_blade", T("Klingen-Werkzeug"), QKeySequence("B"), [tv] { tv->setTool(TimelineView::Tool::Blade); });
-    makeAction(toolsMenu, "snapping", T("Snapping an/aus"), QKeySequence("N"), [tv] { tv->setSnapping(!tv->snapping()); });
+    makeAction(toolsMenu, "snapping", T("Einrasten an/aus"), QKeySequence("N"), [tv] { tv->setSnapping(!tv->snapping()); });
     auto* linked = makeAction(toolsMenu, "linked_selection", T("Verknüpfte Auswahl"), QKeySequence("Ctrl+Shift+L"), [] {});
     linked->setCheckable(true);
     linked->setToolTip(T("Verknüpfte Auswahl (Strg+Shift+L): an = Video und Ton eines Clips bewegen sich zusammen, "
@@ -283,9 +283,9 @@ void MainWindow::buildActions()
     QMenu* trimMenu = timeline->addMenu(T("Teilen, Trimmen und Verschieben"));
     makeAction(trimMenu, "split_alt", T("Clip teilen (alternativ)"), QKeySequence("Ctrl+\\"),
                [this, tv] { m_editor->splitAtPlayhead(tv->playhead()); });
-    makeAction(trimMenu, "trim_start", T("Anfang bis Playhead trimmen"), QKeySequence("Shift+["),
+    makeAction(trimMenu, "trim_start", T("Anfang bis zum Abspielkopf trimmen"), QKeySequence("Shift+["),
                [this, tv] { m_editor->trimToPlayhead(TimelineOps::Edge::Start, tv->playhead()); });
-    makeAction(trimMenu, "trim_end", T("Ende bis Playhead trimmen"), QKeySequence("Shift+]"),
+    makeAction(trimMenu, "trim_end", T("Ende bis zum Abspielkopf trimmen"), QKeySequence("Shift+]"),
                [this, tv] { m_editor->trimToPlayhead(TimelineOps::Edge::End, tv->playhead()); });
     // Selected edit point (V): , and . trim it. Otherwise trim mode and slip tool: slip the selection (like DaVinci),
     // slide tool: slide it, otherwise move
@@ -331,7 +331,7 @@ void MainWindow::buildActions()
             QApplication::beep(); // no keyframes
     });
     curves->setCheckable(true);
-    makeAction(clipMenu, "speed_point_add", T("Speed-Punkt hinzufügen"), QKeySequence(), [this] {
+    makeAction(clipMenu, "speed_point_add", T("Tempo-Punkt hinzufügen"), QKeySequence(), [this] {
         // at the playhead position in the selected clips (resp. the video clip below), show the controls
         const int frame = m_timeline->view()->playhead();
         QVector<int> ids = m_editor->clipIdsOf(m_selection->ids());
@@ -358,9 +358,9 @@ void MainWindow::buildActions()
     makeAction(clipMenu, "slot_remove", T("Platzhalter entfernen"), QKeySequence(), [this] { removePlaceholders(); });
     makeAction(clipMenu, "slot_check", T("Felder prüfen…"), QKeySequence(), [this] { checkPlaceholders(); });
     makeAction(clipMenu, "normalize_audio", T("Audiopegel normalisieren…"), QKeySequence(), [this] { normalizeAudioDialog(); });
-    makeAction(clipMenu, "audio_ducking", T("Ducking…"), QKeySequence(), [this] { duckingDialog(); });
+    makeAction(clipMenu, "audio_ducking", T("Musik absenken…"), QKeySequence(), [this] { duckingDialog(); });
     makeAction(clipMenu, "stream_presets_learn", T("Spur-Einstellungen merken"), QKeySequence(), [this] { rememberStreamSettings(); });
-    makeAction(clipMenu, "save_effect_preset", T("Effekte als Preset speichern…"), QKeySequence(),
+    makeAction(clipMenu, "save_effect_preset", T("Effekte als Voreinstellung speichern…"), QKeySequence(),
                [this] { saveEffectPreset(); });
     makeAction(clipMenu, "link_clips", T("Clips verknüpfen/trennen"), QKeySequence("Ctrl+Alt+L"),
                [this] { m_editor->toggleLinkSelection(); });
@@ -379,7 +379,7 @@ void MainWindow::buildActions()
         cacheClip->setEnabled(state >= 0);
         cacheClip->setChecked(state == 1);
     });
-    makeAction(clipMenu, "auto_reframe", T("Auto-Reframe"), QKeySequence(), [this] { autoReframe(); });
+    makeAction(clipMenu, "auto_reframe", T("Auto-Ausschnitt"), QKeySequence(), [this] { autoReframe(); });
     makeAction(clipMenu, "blur_names", T("Namen verwischen…"), QKeySequence(), [this] { blurNames(); });
     makeAction(clipMenu, "crop_bars", T("Schwarze Balken wegschneiden"), QKeySequence(), [this] { cropBlackBars(); });
     QAction* stretched = makeAction(clipMenu, "stretched_43", T("Gestrecktes 4:3 entzerren"), QKeySequence(), [] {});
@@ -394,7 +394,7 @@ void MainWindow::buildActions()
         }));
     });
     // Auto-Reframe of game footage: its kill feed as a second picture at the top (Reframe::KeepChoice)
-    QAction* keepFeed = makeAction(clipMenu, "reframe_keep_killfeed", T("Auto-Reframe: Killfeed oben behalten"),
+    QAction* keepFeed = makeAction(clipMenu, "reframe_keep_killfeed", T("Auto-Ausschnitt: Killfeed oben behalten"),
                                    QKeySequence(), [] {});
     keepFeed->setCheckable(true);
     keepFeed->setChecked(QSettings().value(QStringLiteral("reframe/keepKillFeed"), true).toBool());
@@ -403,13 +403,13 @@ void MainWindow::buildActions()
     // A song cut to a length on its phrases (op fit_music): timeline, In/Out range or a number
     makeAction(clipMenu, "fit_music", T("Musik auf Länge…"), QKeySequence(), [this] { fitMusicDialog(); });
     // Compositing graph of a clip on the Comp page (0.19)
-    makeAction(clipMenu, "comp_open", T("In Comp öffnen"), QKeySequence(), [this] { openCompForSelection(); });
-    makeAction(clipMenu, "comp_from", T("Comp aus Auswahl"), QKeySequence(), [this] { compFromSelection(); });
-    QMenu* compoundMenu = timeline->addMenu(T("Compound Clip"));
-    makeAction(compoundMenu, "compound_create", T("Neuer Compound Clip…"), QKeySequence(), [this] { createCompoundClip(); });
-    makeAction(compoundMenu, "compound_open", T("Compound Clip in Timeline öffnen"), QKeySequence(),
+    makeAction(clipMenu, "comp_open", T("In Komposition öffnen"), QKeySequence(), [this] { openCompForSelection(); });
+    makeAction(clipMenu, "comp_from", T("Komposition aus Auswahl"), QKeySequence(), [this] { compFromSelection(); });
+    QMenu* compoundMenu = timeline->addMenu(T("Verbundclip"));
+    makeAction(compoundMenu, "compound_create", T("Neuer Verbundclip…"), QKeySequence(), [this] { createCompoundClip(); });
+    makeAction(compoundMenu, "compound_open", T("Verbundclip in Timeline öffnen"), QKeySequence(),
                [this] { openSelectedCompound(); });
-    makeAction(compoundMenu, "compound_decompose", T("Compound Clip auflösen"), QKeySequence(), [this] {
+    makeAction(compoundMenu, "compound_decompose", T("Verbundclip auflösen"), QKeySequence(), [this] {
         m_editor->decomposeCompoundClips(m_editor->clipIdsOf(m_selection->ids()));
     });
     makeAction(compoundMenu, "timeline_back", T("Zurück zur übergeordneten Timeline"), QKeySequence(),
@@ -494,7 +494,7 @@ void MainWindow::buildActions()
     makeAction(timeline, "speech", T("Sprechertext…"), QKeySequence(), [this] { speechDialog(); });
 
     QMenu* play = menuBar()->addMenu(T("&Wiedergabe"));
-    makeAction(play, "play_pause", T("Play/Pause"), QKeySequence(Qt::Key_Space), [this] { m_engine->togglePlay(); });
+    makeAction(play, "play_pause", T("Abspielen/Pause"), QKeySequence(Qt::Key_Space), [this] { m_engine->togglePlay(); });
     makeAction(play, "shuttle_back", T("Rückwärts (J)"), QKeySequence("J"), [this] { shuttle(-1); });
     makeAction(play, "stop", T("Stopp (K)"), QKeySequence("K"), [this] { m_engine->pause(); });
     makeAction(play, "shuttle_fwd", T("Vorwärts (L)"), QKeySequence("L"), [this] { shuttle(1); });
@@ -510,7 +510,7 @@ void MainWindow::buildActions()
         m_engine->pause();
         m_engine->seek(TimelineOps::endFrame(m_project->timeline()));
     });
-    makeAction(play, "show_timeline", T("Timeline im Viewer zeigen"), QKeySequence("Q"),
+    makeAction(play, "show_timeline", T("Timeline in der Vorschau zeigen"), QKeySequence("Q"),
               [this, tv] { m_engine->showTimeline(tv->playhead()); });
     buildMulticamViewerAction(play);
     // Like DaVinci "Grab Still" (Ctrl+Alt+G), here saved directly as PNG
@@ -564,7 +564,7 @@ void MainWindow::buildActions()
     QMenu* cacheMenu = play->addMenu(T("Render-Cache"));
     auto* cacheGroup = new QActionGroup(cacheMenu);
     for (const auto& [id, text, mode] : {std::tuple{"render_cache_off", N_("Aus"), RenderCache::Mode::Off},
-                                         std::tuple{"render_cache_smart", N_("Smart"), RenderCache::Mode::Smart},
+                                         std::tuple{"render_cache_smart", N_("Intelligent"), RenderCache::Mode::Smart},
                                          std::tuple{"render_cache_user", N_("Benutzer"), RenderCache::Mode::User}}) {
         const RenderCache::Mode m = mode;
         QAction* a = makeAction(play, id, T("Render-Cache: %1").arg(T(text)), QKeySequence(),
@@ -657,15 +657,15 @@ void MainWindow::buildActions()
     buildVoiceoverActions(play, audioMenu);
 
     // Color menu like DaVinci (Color → Apply Grade from One/Two Clips Prior); works on the Color page
-    QMenu* colorMenu = menuBar()->addMenu(T("&Color"));
-    makeAction(colorMenu, "grade_copy", T("Grade kopieren (Color-Seite: Strg+C)"), QKeySequence(),
+    QMenu* colorMenu = menuBar()->addMenu(T("&Farbe"));
+    makeAction(colorMenu, "grade_copy", T("Farbkorrektur kopieren (Seite Farbe: Strg+C)"), QKeySequence(),
                [this] { m_colorPanel->copyGrade(); });
-    makeAction(colorMenu, "grade_paste", T("Grade einfügen (Color-Seite: Strg+V)"), QKeySequence(),
+    makeAction(colorMenu, "grade_paste", T("Farbkorrektur einfügen (Seite Farbe: Strg+V)"), QKeySequence(),
                [this] { m_colorPanel->pasteGrade(); });
-    makeAction(colorMenu, "grade_prev", T("Grade vom vorigen Clip übernehmen"), QKeySequence("="), [this] {
+    makeAction(colorMenu, "grade_prev", T("Farbkorrektur vom vorigen Clip übernehmen"), QKeySequence("="), [this] {
         if (m_page == Page::Color) m_colorPanel->gradeFromPrevious(1);
     });
-    makeAction(colorMenu, "grade_prev2", T("Grade vom vorvorigen Clip übernehmen"), QKeySequence("-"), [this] {
+    makeAction(colorMenu, "grade_prev2", T("Farbkorrektur vom vorvorigen Clip übernehmen"), QKeySequence("-"), [this] {
         if (m_page == Page::Color) m_colorPanel->gradeFromPrevious(2);
     });
     colorMenu->addSeparator();
@@ -680,21 +680,21 @@ void MainWindow::buildActions()
     });
 
     QMenu* workspace = menuBar()->addMenu(T("&Arbeitsbereich"));
-    makeAction(workspace, "page_media", T("Media-Seite"), QKeySequence("Shift+2"), [this] { showPage(Page::Media); });
-    makeAction(workspace, "page_edit", T("Edit-Seite"), QKeySequence("Shift+4"), [this] { showPage(Page::Edit); });
-    makeAction(workspace, "page_comp", T("Comp-Seite"), QKeySequence("Shift+3"), [this] { showPage(Page::Comp); });
-    makeAction(workspace, "page_color", T("Color-Seite"), QKeySequence("Shift+5"), [this] { showPage(Page::Color); });
-    makeAction(workspace, "page_deliver", T("Deliver-Seite"), QKeySequence("Shift+8"), [this] { showPage(Page::Deliver); });
-    makeAction(workspace, "toggle_effects", T("Effects Library ein/aus"), QKeySequence(),
+    makeAction(workspace, "page_media", T("Seite Medien"), QKeySequence("Shift+2"), [this] { showPage(Page::Media); });
+    makeAction(workspace, "page_edit", T("Seite Schneiden"), QKeySequence("Shift+4"), [this] { showPage(Page::Edit); });
+    makeAction(workspace, "page_comp", T("Seite Komposition"), QKeySequence("Shift+3"), [this] { showPage(Page::Comp); });
+    makeAction(workspace, "page_color", T("Seite Farbe"), QKeySequence("Shift+5"), [this] { showPage(Page::Color); });
+    makeAction(workspace, "page_deliver", T("Seite Export"), QKeySequence("Shift+8"), [this] { showPage(Page::Deliver); });
+    makeAction(workspace, "toggle_effects", T("Effektbibliothek ein/aus"), QKeySequence(),
                [this] { if (m_effectsToggle->isEnabled()) m_effectsToggle->toggle(); });
-    makeAction(workspace, "toggle_media_storage", T("Media Storage ein/aus"), QKeySequence(),
+    makeAction(workspace, "toggle_media_storage", T("Dateibrowser ein/aus"), QKeySequence(),
                [this] { if (m_storageToggle->isEnabled()) m_storageToggle->toggle(); });
-    makeAction(workspace, "toggle_mixer", T("Mixer ein/aus"), QKeySequence(),
+    makeAction(workspace, "toggle_mixer", T("Mischpult ein/aus"), QKeySequence(),
                [this] { if (m_mixerToggle->isEnabled()) m_mixerToggle->toggle(); });
     makeAction(workspace, "toggle_transcript", T("Transkript ein/aus"), QKeySequence(),
                [this] { if (m_transcriptToggle->isEnabled()) m_transcriptToggle->toggle(); });
     // DaVinci: Workspace > Video Scopes (Ctrl+Shift+W); here the scope panel of the Color page
-    makeAction(workspace, "toggle_scopes", T("Video-Scopes ein/aus"), QKeySequence("Ctrl+Shift+W"), [this] {
+    makeAction(workspace, "toggle_scopes", T("Messanzeigen ein/aus"), QKeySequence("Ctrl+Shift+W"), [this] {
         m_scopes->setVisible(!m_scopes->isVisibleTo(m_colorBottom));
         QSettings().setValue("color/scopesVisible", m_scopes->isVisibleTo(m_colorBottom));
         if (m_scopes->isVisibleTo(m_colorBottom)) showPage(Page::Color);
@@ -702,28 +702,28 @@ void MainWindow::buildActions()
     workspace->addSeparator();
     // Large viewer (DaVinci: Enhanced Viewer, Premiere: Maximize Frame): the side panels hide, the viewer takes their
     // room. No default key: DaVinci's Alt+F opens the File menu where it is "&File" (English, French)
-    m_largeAction = makeAction(workspace, "viewer_large", T("Großer Viewer"), QKeySequence(),
+    m_largeAction = makeAction(workspace, "viewer_large", T("Große Vorschau"), QKeySequence(),
                                [this] { setViewerLarge(m_largeAction->isChecked()); });
     m_largeAction->setCheckable(true);
     m_viewer->addViewAction(m_largeAction, Viewer::ViewIcon::Large);
     m_largeEscape = new QShortcut(QKeySequence(Qt::Key_Escape), this, [this] { setViewerLarge(false); });
     m_largeEscape->setEnabled(false);
     // Full-screen viewer (DaVinci: Cinema Viewer, Ctrl+F there too): only the picture on the whole screen
-    m_fullScreenAction = makeAction(workspace, "viewer_full_screen", T("Viewer im Vollbild"), QKeySequence("Ctrl+F"),
+    m_fullScreenAction = makeAction(workspace, "viewer_full_screen", T("Vorschau im Vollbild"), QKeySequence("Ctrl+F"),
                                     [this] { setViewerFullScreen(m_fullScreenAction->isChecked()); });
     m_fullScreenAction->setCheckable(true);
     m_viewer->addViewAction(m_fullScreenAction, Viewer::ViewIcon::FullScreen);
     // Panel sets of the Edit page and panel sizes (remembered per page, MainWindow::applySizes)
-    QMenu* panels = workspace->addMenu(T("Panels"));
-    makeAction(panels, "panels_standard", T("Standard (Media Pool, Inspector)"), QKeySequence(),
+    QMenu* panels = workspace->addMenu(T("Bereiche"));
+    makeAction(panels, "panels_standard", T("Standard (Medienpool, Inspektor)"), QKeySequence(),
                [this] { applyPanelSet(true, false, false, false, false, true); });
-    makeAction(panels, "panels_simple", T("Einfach (nur Media Pool)"), QKeySequence(),
+    makeAction(panels, "panels_simple", T("Einfach (nur Medienpool)"), QKeySequence(),
                [this] { applyPanelSet(true, false, false, false, false, false); });
     makeAction(panels, "panels_transcript", T("Schnitt nach Text (mit Transkript)"), QKeySequence(),
                [this] { applyPanelSet(true, false, false, true, false, true); });
-    makeAction(panels, "panels_audio", T("Ton (mit Mixer)"), QKeySequence(),
+    makeAction(panels, "panels_audio", T("Ton (mit Mischpult)"), QKeySequence(),
                [this] { applyPanelSet(true, true, false, false, true, true); });
-    makeAction(panels, "panels_all", T("Alle Panels"), QKeySequence(),
+    makeAction(panels, "panels_all", T("Alle Bereiche"), QKeySequence(),
                [this] { applyPanelSet(true, true, true, true, true, true); });
     panels->addSeparator();
     // The AI chat beside all pages, docked left or right
@@ -737,7 +737,7 @@ void MainWindow::buildActions()
         emit m_chatPanel->sideRequested(false);
     });
     panels->addSeparator();
-    makeAction(panels, "layout_reset", T("Panelgrößen zurücksetzen"), QKeySequence(), [this] { resetSizes(); });
+    makeAction(panels, "layout_reset", T("Bereichsgrößen zurücksetzen"), QKeySequence(), [this] { resetSizes(); });
     // What AIs connected to the app did (also opens with a click on the AI indicator)
     makeAction(workspace, "ai_log", T("KI-Protokoll…"), QKeySequence(), [this] { showAiLog(); });
     makeAction(workspace, "extensions", T("Erweiterungen…"), QKeySequence(), [this] {
@@ -768,13 +768,13 @@ void MainWindow::buildActions()
     });
     // Brand kit (0.18): the global kit or the project's own; titles that reference it follow (one undo step). Logo and
     // intro/outro go into the timeline only when asked for here.
-    QMenu* brandMenu = workspace->addMenu(T("Brand-Kit"));
-    makeAction(brandMenu, "brand_kit", T("Brand-Kit…"), QKeySequence(), [this] { editBrandKit(); });
+    QMenu* brandMenu = workspace->addMenu(T("Markenpaket"));
+    makeAction(brandMenu, "brand_kit", T("Markenpaket…"), QKeySequence(), [this] { editBrandKit(); });
     brandMenu->addSeparator();
     // A kit file into the Media Pool (the Editor ops place only what is there); false = no such file
     auto brandMedia = [this](const QString& path, const QString& none) {
         if (path.isEmpty() || !QFileInfo::exists(path)) {
-            QMessageBox::information(this, T("Brand-Kit"),
+            QMessageBox::information(this, T("Markenpaket"),
                                      path.isEmpty() ? none : T("Datei nicht gefunden: %1").arg(path));
             return false;
         }
@@ -782,14 +782,14 @@ void MainWindow::buildActions()
         return m_project->mediaInfo(path) != nullptr;
     };
     makeAction(brandMenu, "brand_logo", T("Logo einfügen"), QKeySequence(), [this, brandMedia] {
-        if (!brandMedia(m_project->effectiveBrand().logo, T("Das Brand-Kit hat kein Logo."))) return;
+        if (!brandMedia(m_project->effectiveBrand().logo, T("Das Markenpaket hat kein Logo."))) return;
         if (!m_editor->addBrandLogo())
-            QMessageBox::information(this, T("Brand-Kit"), T("Die Timeline ist leer: das Logo kommt über ihre ganze Länge."));
+            QMessageBox::information(this, T("Markenpaket"), T("Die Timeline ist leer: das Logo kommt über ihre ganze Länge."));
     });
     makeAction(brandMenu, "brand_intro_outro", T("Intro/Outro einfügen"), QKeySequence(), [this, brandMedia] {
         const BrandKit kit = m_project->effectiveBrand();
         if (kit.intro.isEmpty() && kit.outro.isEmpty()) {
-            brandMedia({}, T("Das Brand-Kit hat kein Intro und kein Outro."));
+            brandMedia({}, T("Das Markenpaket hat kein Intro und kein Outro."));
             return;
         }
         if (!kit.intro.isEmpty() && !brandMedia(kit.intro, {})) return;
@@ -799,7 +799,7 @@ void MainWindow::buildActions()
     // Viewer zoom (pure display; the timeline view is not touched): fit, 50/100/200 %, menu also on the viewer's bar.
     // Alt+digits target tracks/multicam angles, so only fit has a default key (Ctrl+wheel over the picture zooms)
     // At 100 % and more the preview comes at the project size instead of scaled down
-    QMenu* zoomMenu = workspace->addMenu(T("Viewer-Zoom"));
+    QMenu* zoomMenu = workspace->addMenu(T("Vorschau-Zoom"));
     auto* zoomGroup = new QActionGroup(zoomMenu);
     QList<QAction*> zoomActions;
     for (const auto& [id, text, key, factor] :
@@ -831,7 +831,7 @@ void MainWindow::buildActions()
     // Media Pool keys: only while their widget has the focus, there they win over the window's keys (Delete in the bin
     // list removes the bin, never timeline clips)
     for (const MediaPool::KeyAction& k : m_mediaPool->keyActions())
-        InputBindings::instance().registerScopedAction(k.action, k.id, T("Media Pool"), k.defaultKey, k.scope,
+        InputBindings::instance().registerScopedAction(k.action, k.id, T("Medienpool"), k.defaultKey, k.scope,
                                                        k.defaultKey2);
     // Panel keys: only while the panel has the focus, there they win over the window's (InputBindings::registerPanelAction)
     InputBindings::instance().registerPanelAction(m_deliver->queuePanel()->deleteAction(), "render_queue_delete",
@@ -855,7 +855,7 @@ void MainWindow::editBrandKit()
     if (dlg.exec() != QDialog::Accepted) return;
     // Only what the user changed, onto the kit as it is now (an AI's `brand set` meanwhile keeps its fields)
     QString err;
-    if (!Brand::changeGlobal(opened, dlg.global(), &err)) QMessageBox::warning(this, T("Brand-Kit"), err);
+    if (!Brand::changeGlobal(opened, dlg.global(), &err)) QMessageBox::warning(this, T("Markenpaket"), err);
     // The project's own kit (changed: set + applied as one step) or the global one applied
     if (dlg.project() != m_project->brand()) m_editor->setProjectBrand(dlg.project());
     else m_editor->applyBrand();

@@ -145,7 +145,7 @@ void testEditorDuckOneUndoStep()
     const QString before = ProjectFile::toJson(p.data(), "/x/p.schneidi");
     CHECK_EQ(ed.duck({m1, m2}, {{50, 75}, {150, 175}}, Ducking::defaults(25)), 1); // the locked one stays
     CHECK_EQ(p.undoStack()->count(), steps + 1);
-    CHECK_EQ(p.undoStack()->undoText(), T("Ducking"));
+    CHECK_EQ(p.undoStack()->undoText(), T("Musik absenken"));
     CHECK(Keys::animated(p.timeline().audio[1].clips[0], AnimParam::Volume));
     CHECK(!Keys::animated(p.timeline().audio[2].clips[0], AnimParam::Volume));
     p.undoStack()->undo();

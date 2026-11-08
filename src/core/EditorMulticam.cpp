@@ -195,13 +195,13 @@ int Editor::createMulticamClip(const QString& name, const QVector<Multicam::Angl
         QSet<QString> used;
         for (const Sequence& s : p->sequences()) used.insert(s.name);
         for (int i = 1;; ++i) {
-            n = T("Multicam-Clip %1").arg(i);
+            n = T("Multikamera-Clip %1").arg(i);
             if (!used.contains(n)) break;
         }
     }
     if (bin != 0 && !p->bin(bin)) bin = 0;
     const int seqId = p->newSequenceId();
-    p->editSequences(T("Multicam-Clip erstellen"), [&](QVector<Sequence>& seqs, int&) {
+    p->editSequences(T("Multikamera-Clip erstellen"), [&](QVector<Sequence>& seqs, int&) {
         Sequence s{seqId, n, true, bin, inner};
         s.multicam = true;
         s.angles = table;
@@ -253,7 +253,7 @@ bool Editor::multicamCut(int frame, int angle, Multicam::Mode mode)
     };
     if (std::none_of(parts.begin(), parts.end(), wants)) return false;
     const QString angleName = s->angles[angle].name;
-    p->edit(T("Multicam-Schnitt: %1").arg(angleName), [&](Timeline& tl) {
+    p->edit(T("Multikamera-Schnitt: %1").arg(angleName), [&](Timeline& tl) {
         QVector<int> split;
         for (const Part& x : parts)
             if (x.start < frame) split << x.id;
@@ -277,7 +277,7 @@ bool Editor::multicamSwitch(int frame, int angle, Multicam::Mode mode)
         return modeHas(mode, x.ref.kind) && Multicam::angleHas(*s, angle, x.ref.kind) && x.angle != angle;
     };
     if (std::none_of(parts.begin(), parts.end(), wants)) return false;
-    p->edit(T("Multicam-Winkel: %1").arg(s->angles[angle].name), [&](Timeline& tl) {
+    p->edit(T("Multikamera-Winkel: %1").arg(s->angles[angle].name), [&](Timeline& tl) {
         for (const Part& x : parts)
             if (wants(x))
                 if (Clip* c = TimelineOps::findClip(tl, x.id)) c->angle = angle;
@@ -301,7 +301,7 @@ void Editor::setMulticamAngle(const QVector<int>& ids, int angle, Multicam::Mode
         if (const Sequence* s = p->sequence(c->sequenceId); s && Multicam::angleHas(*s, angle, ref.kind)) change << id;
     }
     if (change.isEmpty()) return;
-    p->edit(T("Multicam-Winkel ändern"), [&](Timeline& tl) {
+    p->edit(T("Multikamera-Winkel ändern"), [&](Timeline& tl) {
         for (int id : change)
             if (Clip* c = TimelineOps::findClip(tl, id)) c->angle = angle;
     });
@@ -330,7 +330,7 @@ bool Editor::flattenMulticamClips(const QVector<int>& ids)
     if (groups.isEmpty()) return false;
 
     QSet<int> created;
-    p->edit(T("Multicam-Clip glätten"), [&](Timeline& tl) {
+    p->edit(T("Multikamera-Clip glätten"), [&](Timeline& tl) {
         auto newId = [p] { return p->newClipId(); };
         for (const QVector<int>& g : groups) {
             QVector<QPair<Clip, TrackRef>> parts;

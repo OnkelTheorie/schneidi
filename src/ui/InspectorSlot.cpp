@@ -143,7 +143,7 @@ void Inspector::buildSlotSection(QVBoxLayout* page, TrackKind kind)
         return b;
     };
     QCheckBox* reframe = check("reframe", T("Andere Bildform anpassen"),
-                               T("Ein Bild anderer Form als die Timeline wird auf den Ausschnitt gebracht (Reframe)"),
+                               T("Ein Bild anderer Form als die Timeline wird auf den Ausschnitt gebracht"),
                                [](ClipSlot& sl) -> bool& { return sl.reframe; });
     const Row reframeRow = addRow({}, reframe);
 

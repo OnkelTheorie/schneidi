@@ -149,7 +149,7 @@ int main(int argc, char** argv)
 
     // ---- Recipes in the Effects Library: German names, double-click applies (one undo step) ----
     {
-        CHECK_EQ(CompRecipes::shownName(*CompRecipes::find("greenscreen"), "de"), QString("Green Screen"));
+        CHECK_EQ(CompRecipes::shownName(*CompRecipes::find("greenscreen"), "de"), QString("Greenscreen"));
         CHECK_EQ(CompRecipes::shownName(*CompRecipes::find("pip_frame"), "fr"), QString("Incrustation d'image"));
         CHECK_EQ(CompRecipes::find("pip_frame")->name, QString("Picture in picture")); // English for the AI
         auto* lib = w.findChild<EffectsLibrary*>();
@@ -160,7 +160,7 @@ int main(int argc, char** argv)
         if (!CHECK(pip)) return Check::result();
         CHECK_EQ(pip->text(), QString("Bild im Bild"));
         CHECK(pip->toolTip().contains("Ecke"));
-        CHECK(entry(lib, "recipe:greenscreen") && entry(lib, "recipe:greenscreen")->text() == "Green Screen");
+        CHECK(entry(lib, "recipe:greenscreen") && entry(lib, "recipe:greenscreen")->text() == "Greenscreen");
         // The drag data is the effect form "recipe:<id>"
         std::unique_ptr<QMimeData> mime(lib->list()->model()->mimeData({lib->list()->indexFromItem(pip)}));
         CHECK_EQ(QString::fromUtf8(mime->data(EffectsLibrary::EffectMimeType)), QString("recipe:pip_frame"));

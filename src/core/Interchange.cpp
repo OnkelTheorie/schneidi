@@ -163,7 +163,7 @@ Sequence fromTimeline(const Project& project, int sequenceId)
     const auto warn = [&out](const QStringList& names, const QString& what) {
         if (!names.isEmpty()) out.warnings << clipList(names) + ": " + what;
     };
-    warn(skipped, T("Titel, Compound- und Multicam-Clips weggelassen"));
+    warn(skipped, T("Titel, Verbund- und Multikamera-Clips weggelassen"));
     warn(ramps, T("Geschwindigkeitsrampe als erste Geschwindigkeit des Clips geschrieben"));
     warn(freezes, T("Standbild als normaler Clip geschrieben"));
     warn(effects, T("Effekte und Farbkorrektur nicht übernommen"));

@@ -351,7 +351,7 @@ void MainWindow::saveEffectPreset()
 {
     const Clip* found = presetClip();
     if (!found) {
-        QMessageBox::information(this, T("Effekte als Preset speichern"), T("Der Clip hat keine Effekte."));
+        QMessageBox::information(this, T("Effekte als Voreinstellung speichern"), T("Der Clip hat keine Effekte."));
         return;
     }
     const Clip clip = *found; // pointers into the timeline do not survive dialogs
@@ -362,24 +362,24 @@ void MainWindow::saveEffectPreset()
             break;
         }
     bool ok = false;
-    const QString name = QInputDialog::getText(this, T("Effekte als Preset speichern"), T("Name des Presets:"),
+    const QString name = QInputDialog::getText(this, T("Effekte als Voreinstellung speichern"), T("Name der Voreinstellung:"),
                                                QLineEdit::Normal, def, &ok).trimmed();
     if (!ok || name.isEmpty()) return;
     const QString path = Presets::userPresetPath(name);
     if (QFileInfo::exists(path)
-        && QMessageBox::question(this, T("Effekte als Preset speichern"),
-                                 T("Ein Preset „%1“ gibt es schon. Ersetzen?").arg(name)) != QMessageBox::Yes)
+        && QMessageBox::question(this, T("Effekte als Voreinstellung speichern"),
+                                 T("Eine Voreinstellung „%1“ gibt es schon. Ersetzen?").arg(name)) != QMessageBox::Yes)
         return;
     QString error;
     QStringList skipped;
     if (!Presets::save(clip, name, path, &error, &skipped)) {
-        QMessageBox::warning(this, T("Effekte als Preset speichern"),
+        QMessageBox::warning(this, T("Effekte als Voreinstellung speichern"),
                              T("%1 konnte nicht gespeichert werden:\n%2").arg(QDir::toNativeSeparators(path), error));
         return;
     }
     if (!skipped.isEmpty())
-        QMessageBox::information(this, T("Effekte als Preset speichern"),
-                                 T("Nicht im Preset (Color-Seite bzw. Plugin fehlt): %1").arg(skipped.join(", ")));
+        QMessageBox::information(this, T("Effekte als Voreinstellung speichern"),
+                                 T("Nicht in der Voreinstellung (Seite Farbe bzw. Plugin fehlt): %1").arg(skipped.join(", ")));
 }
 
 bool MainWindow::openProject(const QString& path)
@@ -439,7 +439,7 @@ bool MainWindow::applyLoaded(ProjectData data, const QString& path, bool ask)
                         T("%1 Effekt(e) sind nicht verfügbar und werden übersprungen:").arg(fx.size()),
                         QMessageBox::Ok, this);
         box.setInformativeText(fx.mid(0, 15).join('\n') + (fx.size() > 15 ? "\n…" : "") + "\n\n"
-                               + T("Sie bleiben mit ihren Werten im Projekt; der Inspector zeigt sie an."));
+                               + T("Sie bleiben mit ihren Werten im Projekt; der Inspektor zeigt sie an."));
         box.exec();
     }
 

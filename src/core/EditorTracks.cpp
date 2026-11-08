@@ -172,7 +172,7 @@ void Editor::setTrackPan(int track, double pan, const QString& mergeKey)
     pan = std::clamp(pan, -100.0, 100.0);
     if (m_project->timeline().audio[track].pan == pan) return;
     emit mixerOnlyEdit();
-    m_project->edit(T("Spur-Pan"), [&](Timeline& t) { t.audio[track].pan = pan; }, mergeKey);
+    m_project->edit(T("Spur-Panorama"), [&](Timeline& t) { t.audio[track].pan = pan; }, mergeKey);
 }
 
 void Editor::setTrackMuted(int track, bool on)
@@ -193,7 +193,7 @@ void Editor::setMasterLimiter(bool on)
 {
     if (m_project->timeline().masterLimiter == on) return;
     emit mixerOnlyEdit();
-    m_project->edit(on ? T("Limiter an") : T("Limiter aus"), [&](Timeline& t) { t.masterLimiter = on; });
+    m_project->edit(on ? T("Begrenzer an") : T("Begrenzer aus"), [&](Timeline& t) { t.masterLimiter = on; });
 }
 
 void Editor::setMasterLimiterCeiling(double db)
@@ -202,7 +202,7 @@ void Editor::setMasterLimiterCeiling(double db)
     const Timeline& tl = m_project->timeline();
     if (tl.masterLimiterDb == db && tl.masterLimiter) return;
     emit mixerOnlyEdit();
-    m_project->edit(T("Limiter-Ceiling"), [&](Timeline& t) {
+    m_project->edit(T("Begrenzer-Obergrenze"), [&](Timeline& t) {
         t.masterLimiterDb = db;
         t.masterLimiter = true;
     });

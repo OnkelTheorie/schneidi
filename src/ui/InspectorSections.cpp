@@ -483,7 +483,7 @@ void Inspector::addRemoveButton(const Section& s, const QString& id)
                 connect(menu.addAction(T("Effekt entfernen")), &QAction::triggered, this, remove);
                 if (video) { // presets hold video effects
                     menu.addSeparator();
-                    connect(menu.addAction(T("Effekte als Preset speichern…")), &QAction::triggered, this,
+                    connect(menu.addAction(T("Effekte als Voreinstellung speichern…")), &QAction::triggered, this,
                             &Inspector::savePresetRequested);
                 }
                 menu.exec(header->mapToGlobal(pos));
@@ -645,15 +645,15 @@ void Inspector::arrangeEffectSections()
     m_gradeRow->setVisible(grade);
     if (grade) {
         const QString lut = ColorGrade::lutPath(*c);
-        m_gradeText->setText(T("Farbkorrektur der Color-Seite") +
+        m_gradeText->setText(T("Farbkorrektur der Seite Farbe") +
                              (lut.isEmpty() ? QString() : "\n" + T("LUT: %1").arg(QFileInfo(lut).completeBaseName())));
     }
     CompGraph graph;
     const EffectInstance* comp = c ? EffectRegistry::instance(*c, Comp::kEffectId) : nullptr;
     m_compRow->setVisible(comp != nullptr);
     if (comp)
-        m_compText->setText(Comp::graphOf(*comp, &graph) ? T("Comp: %1 Knoten").arg(graph.nodes.size())
-                                                         : T("Comp: Graph nicht lesbar"));
+        m_compText->setText(Comp::graphOf(*comp, &graph) ? T("Komposition: %1 Knoten").arg(graph.nodes.size())
+                                                         : T("Komposition: Graph nicht lesbar"));
     for (TrackKind kind : {TrackKind::Video, TrackKind::Audio}) {
         const bool video = kind == TrackKind::Video;
         QVBoxLayout* lay = video ? m_fxLay : m_audioFxLay;

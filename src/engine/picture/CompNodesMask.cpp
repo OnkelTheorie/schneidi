@@ -176,7 +176,7 @@ void registerMaskNodes(QVector<NodeType>& out)
         k.id = "mask";
         k.name = T("Maske");
         k.description = T("Form als Maske: Rechteck, Ellipse, Polygon, Kurve oder Verlauf; weiche Kante, umkehren, "
-                          "mit der Maske am Eingang verbinden, einem Tracker folgen");
+                          "mit der Maske am Eingang verbinden, einer Verfolgung folgen");
         k.inputs = {"mask"};
         k.output = Buf::Mask;
         // Following a tracker (numOf) the engine caches it only while the tracker's values are fixed
@@ -193,7 +193,7 @@ void registerMaskNodes(QVector<NodeType>& out)
         k.params.append(flag("invert", T("Umkehren")));
         k.params.append(choice("combine", T("Verbinden"), {"add", "subtract", "intersect"},
                                {T("Hinzufügen"), T("Abziehen"), T("Schnittmenge")}));
-        k.params.append(number("follow", T("Folgt Tracker"), 0, 0, 9999, 1, 0));
+        k.params.append(number("follow", T("Folgt Verfolgung"), 0, 0, 9999, 1, 0));
         k.params.append(number("points", T("Punkte"), 4, 3, Masks::kMaxPoints, 1, 0));
         for (int i = 0; i < Masks::kMaxPoints; ++i) {
             const QString p = QStringLiteral("p%1").arg(i);
@@ -214,8 +214,8 @@ void registerMaskNodes(QVector<NodeType>& out)
     {
         NodeType k;
         k.id = "matte";
-        k.name = T("Matte");
-        k.description = T("Maske aus der Helligkeit oder dem Alpha eines Bildes (Track-Matte, Text als Fenster)");
+        k.name = T("Alphamaske");
+        k.description = T("Maske aus der Helligkeit oder dem Alpha eines Bildes (Spurmaske, Text als Fenster)");
         k.inputs = {"src"};
         k.output = Buf::Mask;
         k.params.append(choice("channel", T("Kanal"), {"luma", "alpha"}, {T("Helligkeit"), T("Alpha")}));

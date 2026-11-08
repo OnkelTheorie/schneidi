@@ -141,7 +141,7 @@ void testFilterButton(const QString& dump)
     QMenu* flags = nullptr;
     for (QAction* a : menu->actions()) {
         if (a->text() == T("Video")) video = a;
-        if (a->menu() && a->text().startsWith(T("Flags"))) flags = a->menu();
+        if (a->menu() && a->text().startsWith(T("Flaggen"))) flags = a->menu();
     }
     if (!CHECK(video && flags)) return;
     video->trigger();
@@ -153,7 +153,7 @@ void testFilterButton(const QString& dump)
     CHECK(video->isChecked());
     CHECK(b.styleSheet() != inactiveStyle); // an active filter is clearly visible
     CHECK(b.toolTip().contains(T("Rot")));
-    CHECK_EQ(flags->title(), T("Flags (%1)").arg(1));
+    CHECK_EQ(flags->title(), T("Flaggen (%1)").arg(1));
     if (!dump.isEmpty()) {
         menu->popup(QPoint(0, 0));
         QApplication::processEvents();
@@ -347,7 +347,7 @@ void testPoolKeys(QWidget* windowKeys, const int* windowDeletes)
     pool.setSaveSettings(false);
     InputBindings& b = InputBindings::instance();
     for (const MediaPool::KeyAction& k : pool.keyActions())
-        b.registerScopedAction(k.action, k.id, T("Media Pool"), k.defaultKey, k.scope, k.defaultKey2);
+        b.registerScopedAction(k.action, k.id, T("Medienpool"), k.defaultKey, k.scope, k.defaultKey2);
     // The timeline's Delete as a window key in the same window
     windowKeys->resize(700, 400);
     pool.setParent(windowKeys);
@@ -437,7 +437,7 @@ void testPoolKeys(QWidget* windowKeys, const int* windowDeletes)
                 if (id == "pool_remove_bin") CHECK_EQ(table->item(r, 3)->text(), QKeySequence(Qt::Key_Backspace).toString(QKeySequence::NativeText));
                 CHECK(id != "pool_remove_bin_alt");
                 if (id == "test_window_delete") windowTip = table->item(r, 2)->toolTip();
-                if (id == "pool_remove_bin") CHECK_EQ(table->item(r, 0)->text(), T("Media Pool"));
+                if (id == "pool_remove_bin") CHECK_EQ(table->item(r, 0)->text(), T("Medienpool"));
             }
             CHECK(poolTip.isEmpty());
             CHECK(!windowTip.isEmpty());
@@ -463,7 +463,7 @@ void testStorageMarks(const QString& dir, const QString& dump)
     QListWidgetItem* ia = itemNamed(list, a);
     QListWidgetItem* ib = itemNamed(list, b);
     if (!CHECK(ia && ib)) return;
-    const QString mark = T("Schon im Media Pool");
+    const QString mark = T("Schon im Medienpool");
     CHECK(!ia->toolTip().contains(mark));
     const qint64 before = ia->icon().cacheKey();
     storage.setPoolFiles({a});

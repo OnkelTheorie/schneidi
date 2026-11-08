@@ -356,7 +356,7 @@ int Editor::duck(const QVector<int>& ids, const Ducking::Ranges& ranges, const D
     }
     if (music.isEmpty() || ranges.isEmpty()) return 0;
     int ducked = 0;
-    m_project->edit(T("Ducking"), [&](Timeline& tl) {
+    m_project->edit(T("Musik absenken"), [&](Timeline& tl) {
         for (int id : music)
             if (Clip* c = TimelineOps::findClip(tl, id); c && Ducking::apply(*c, ranges, params)) ++ducked;
     });
@@ -476,7 +476,7 @@ void Editor::splitAtPlayhead(int frame)
     }
     if (ids.isEmpty() && cueTracks.isEmpty()) return;
     Project* p = m_project;
-    p->edit(T("Schnitt am Playhead"), [&](Timeline& tl) {
+    p->edit(T("Schnitt am Abspielkopf"), [&](Timeline& tl) {
         TimelineOps::splitAt(tl, ids, frame, [p] { return p->newClipId(); },
                              [p] { return p->newLinkId(); });
         for (int t : cueTracks) Subtitles::splitAt(tl.subtitles[t], frame, [p] { return p->newClipId(); });
@@ -509,7 +509,7 @@ void Editor::modifyClips(const QVector<int>& idsIn, const QString& text, const s
 
 void Editor::deleteRange(int from, int to, bool ripple)
 {
-    deleteRanges({{from, to}}, ripple, ripple ? T("Bereich löschen mit Ripple") : T("Bereich löschen"));
+    deleteRanges({{from, to}}, ripple, ripple ? T("Bereich löschen mit Nachrücken") : T("Bereich löschen"));
 }
 
 bool Editor::closeGap(TrackRef on, int from, int to, QString* why)
@@ -571,7 +571,7 @@ void Editor::rippleDeleteSelection()
     const QVector<int> cues = selectedSubtitles();
     const QVector<int> ids = withCopies(editable(clipIdsOf(m_selection->ids())));
     if (ids.isEmpty() && cues.isEmpty()) return;
-    m_project->edit(T("Löschen mit Ripple"), [&](Timeline& tl) {
+    m_project->edit(T("Löschen mit Nachrücken"), [&](Timeline& tl) {
         removeCues(tl, cues); // subtitles: without ripple (gap stays)
         if (ids.isEmpty()) return;
         TimelineOps::detachTransitions(tl, ids);

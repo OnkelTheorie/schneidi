@@ -105,7 +105,7 @@ void Inspector::buildTransitionPage(QVBoxLayout* page)
     // Gradient wipe: gradient image and invert
     m_transLuma = combo();
     m_transLuma->setToolTip(T("Verlaufsbild: dunkle Stellen wechseln zuerst. Eigene Bilder in den Ordner "
-                              "„Transitions“ (Effects Library → „Effekte importieren…“)"));
+                              "„Transitions“ (Effektbibliothek → „Effekte importieren…“)"));
     addRow(T("Verlauf"), m_transLuma, &m_lumaRows);
     connect(m_transLuma, &QComboBox::activated, this, [this] {
         const QString path = m_transLuma->currentData().toString();
@@ -264,7 +264,7 @@ bool Inspector::refreshTransition()
         m_transLuma->setCurrentIndex(i);
         m_transLuma->setToolTip(EffectFolders::isBuiltin(span.style.luma)
                                     ? T("Verlaufsbild: dunkle Stellen wechseln zuerst. Eigene Bilder in den Ordner "
-                                        "„Transitions“ (Effects Library → „Effekte importieren…“)")
+                                        "„Transitions“ (Effektbibliothek → „Effekte importieren…“)")
                                     : QDir::toNativeSeparators(span.style.luma));
         m_transInvert->setChecked(span.style.invert);
     }

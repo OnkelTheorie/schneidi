@@ -40,7 +40,7 @@ QString PoolFilter::summary() const
     names.clear();
     for (const auto& f : kFlagColors) // in the order of the flag menu
         if (flags.contains(QLatin1String(f.id))) names << T(f.name);
-    if (!names.isEmpty()) parts << T("Flag: %1").arg(names.join(", "));
+    if (!names.isEmpty()) parts << T("Flagge: %1").arg(names.join(", "));
     names.clear();
     if (colors.contains(QLatin1String(NoColor))) names << T("ohne");
     for (const auto& c : kTrackColors)
