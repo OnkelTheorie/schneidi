@@ -5,6 +5,7 @@
 
 #include "core/I18n.h"
 #include "core/JumpCut.h"
+#include "core/Keyframes.h"
 #include "core/TimelineOps.h"
 
 #include <QRegularExpression>
@@ -91,9 +92,14 @@ QVector<Change> changes(const Timeline& tl, int from, int to, const ProjectForma
             add(c.start, edge, c.id);
             if (c.end() > from && c.end() < to) ends << Change{c.end(), edge, c.id};
             // Keyframes where the value moves (a single one, or one between equal neighbours, holds still)
-            for (AnimParam p : kMoving) {
-                const auto it = c.keys.constFind(p);
-                if (it == c.keys.constEnd()) continue;
+            // Also every animated value of the clip's compositing graph (a 3D text turning, a mask sweeping, a glitch
+            // burst): on screen that is motion like a zoom
+            for (auto it = c.keys.constBegin(); it != c.keys.constEnd(); ++it) {
+                const AnimParam p = it.key();
+                QString effect;
+                const bool moving = std::find(std::begin(kMoving), std::end(kMoving), p) != std::end(kMoving)
+                                    || (Keys::effectParamOf(p, &effect, nullptr) && effect == QLatin1String("comp"));
+                if (!moving) continue;
                 const KeyTrack& keys = *it;
                 for (int i = 0; i < keys.size(); ++i) {
                     const bool before = i > 0 && std::abs(keys[i].value - keys[i - 1].value) > 1e-6;
