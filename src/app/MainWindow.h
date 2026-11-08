@@ -66,6 +66,9 @@ public:
     // `clipId` there; "Open in Comp" gives the first selected video clip an empty graph (clip -> output) if it has
     // none; "Comp from Selection" = Editor::compFrom, then opens it
     void openComp(int clipId);
+    // The video clip the Comp page works on at timeline frame `frame`: a selected one under it, else the topmost shown
+    // one there (0 = none, a gap)
+    int compClipAt(int frame) const;
     void openCompForSelection();
     void compFromSelection();
     class CompPage* compPage() const { return m_compPage; } // nullptr until the page was shown

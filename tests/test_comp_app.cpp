@@ -287,6 +287,28 @@ int main(int argc, char** argv)
         CHECK(ins->findChild<QWidget*>("comp_param_effect") != nullptr);
     }
 
+    // ---- The Comp page follows the playhead: the clip under it; opening a clip moves the playhead into it ----
+    {
+        const Clip* a = TimelineOps::findClip(project->timeline(), clipId);
+        const Clip* b = TimelineOps::findClip(project->timeline(), clip2);
+        if (CHECK(a && b && b->start >= a->end())) {
+            const int startB = b->start, startA = a->start;
+            w.openComp(clipId);
+            settle();
+            CHECK_EQ(w.compPage()->clip(), clipId);
+            engine.seek(startB + 1);
+            QTest::qWait(50);
+            settle();
+            CHECK_EQ(w.compPage()->clip(), clip2);
+            CHECK_EQ(w.compClipAt(startA), clipId);
+            w.openComp(clipId); // the playhead is in clip 2: it goes to clip 1's start
+            QTest::qWait(50);
+            settle();
+            CHECK_EQ(w.compPage()->clip(), clipId);
+            CHECK(engine.position() >= startA && engine.position() < startB);
+        }
+    }
+
     // ---- key node: only the values of the chosen kind (chroma or luma), no two "soft edge" rows ----
     {
         CompGraph g;

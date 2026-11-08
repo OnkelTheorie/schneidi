@@ -329,8 +329,9 @@ void MainWindow::showPage(Page page)
     case Page::Comp:
         // Built on the first showing; the selected video clip is opened (openComp sets its own after this)
         ensureCompPage();
-        if (before != Page::Comp)
-            if (const int id = selectedVideoClip(); id && id != m_compPage->clip()) m_compPage->setClip(id);
+        if (before != Page::Comp) // the clip under the playhead (a selected one there first)
+            if (const int id = compClipAt(m_timeline->view()->playhead()); id && id != m_compPage->clip())
+                m_compPage->setClip(id);
         m_compPage->top()->insertWidget(0, m_viewer);
         applySizes(m_compPage->top(), {500, 420});
         m_compPage->main()->setStretchFactor(0, 1);

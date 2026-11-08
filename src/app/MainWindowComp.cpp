@@ -38,7 +38,11 @@ void MainWindow::ensureCompPage()
     watchSizes(m_compPage->top(), "compLeft");
     m_compPage->setPlayhead(m_timeline->view()->playhead());
     connect(m_engine, &Engine::positionChanged, m_compPage, [this](int f) {
-        if (m_engine->timelinePositions()) m_compPage->setPlayhead(f);
+        if (!m_engine->timelinePositions()) return;
+        // The page follows the playhead: the clip under it (in a gap the last one stays)
+        if (m_page == Page::Comp)
+            if (const int id = compClipAt(f); id && id != m_compPage->clip()) m_compPage->setClip(id);
+        m_compPage->setPlayhead(f);
     });
     connect(m_compPage, &CompPage::viewChanged, this, &MainWindow::updatePreview);
     connect(m_compPage, &CompPage::message, this, [this](const QString& t) { statusBar()->showMessage(t, 5000); });
@@ -49,10 +53,11 @@ void MainWindow::ensureCompPage()
         ext.exec();
         m_compPage->refresh(); // the model may be there now
     });
-    // Another video clip selected while the page shows: its graph
+    // Another video clip selected while the page shows: its graph when it is under the playhead
     connect(m_selection, &Selection::changed, m_compPage, [this] {
         if (m_page != Page::Comp) return;
-        if (const int id = selectedVideoClip()) m_compPage->setClip(id);
+        if (const int id = compClipAt(m_timeline->view()->playhead()); id && id != m_compPage->clip())
+            m_compPage->setClip(id);
     });
 }
 
@@ -76,9 +81,31 @@ int MainWindow::selectedVideoClip() const
     return best ? best->id : 0;
 }
 
+int MainWindow::compClipAt(int frame) const
+{
+    const Timeline& tl = m_project->timeline();
+    const auto under = [frame](const Clip& c) { return c.start <= frame && frame < c.end(); };
+    if (const int id = selectedVideoClip())
+        if (const Clip* c = TimelineOps::findClip(tl, id); c && under(*c)) return id;
+    for (qsizetype t = tl.video.size() - 1; t >= 0; --t) { // the topmost track first
+        if (tl.video[t].hidden) continue;
+        for (const Clip& c : tl.video[t].clips)
+            if (under(c)) return c.id;
+    }
+    return 0;
+}
+
 void MainWindow::openComp(int clipId)
 {
-    if (m_page != Page::Comp) showPage(Page::Comp); // may open the selected clip first
+    // The page follows the playhead: it goes into the clip first (else the next frame would show another one)
+    if (const Clip* c = TimelineOps::findClip(m_project->timeline(), clipId)) {
+        const int at = m_timeline->view()->playhead();
+        if (at < c->start || at >= c->end()) {
+            if (m_engine->mode() == Engine::Mode::Source) m_engine->showTimeline(c->start);
+            else m_engine->seek(c->start);
+        }
+    }
+    if (m_page != Page::Comp) showPage(Page::Comp);
     m_compPage->setClip(clipId);
 }
 
