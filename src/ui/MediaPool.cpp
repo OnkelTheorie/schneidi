@@ -1397,6 +1397,14 @@ void MediaPool::showContextMenu(const QPoint& pos)
         menu.setToolTipsVisible(true);
         menu.addSeparator();
     }
+    if (paths.size() == 1) { // onto the timeline without dragging (the keys F9/F12/Shift+F12 do the same)
+        const QString path = paths.first();
+        menu.addAction(T("Am Playhead einfügen") + "\tF9", this, [this, path] { emit editRequested(path, 0); });
+        menu.addAction(T("Am Playhead auf freie Spur legen") + "\tF12", this, [this, path] { emit editRequested(path, 1); });
+        menu.addAction(T("Ans Ende der Timeline anhängen") + "\tShift+F12", this,
+                       [this, path] { emit editRequested(path, 2); });
+        menu.addSeparator();
+    }
     menu.addAction(T("Neue Timeline"), this, &MediaPool::newTimeline);
     // A short next to the edit: its own 9:16 resolution, the project and the other timelines stay
     menu.addAction(T("Neue Hochformat-Timeline (9:16)"), this,

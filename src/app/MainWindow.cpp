@@ -656,7 +656,11 @@ QString MainWindow::editSource() const
 
 void MainWindow::sourceEdit(Editor::SourceEditMode mode)
 {
-    const QString path = editSource();
+    sourceEditPath(mode, editSource());
+}
+
+void MainWindow::sourceEditPath(Editor::SourceEditMode mode, const QString& path)
+{
     if (path.isEmpty()) return;
     // Looked at in the Media Storage without importing: into the selected bin first (no undo step, like every
     // import; the edit is one). Not probed yet (just clicked): nothing to place yet.
@@ -666,7 +670,7 @@ void MainWindow::sourceEdit(Editor::SourceEditMode mode)
     }
     offerClipFormat({path}, true); // first clip in an empty timeline: adapt project format?
     TimelineView* tv = m_timeline->view();
-    const int srcPos = sourceActive() ? m_engine->position() : m_sourcePos.value(path, 0);
+    const int srcPos = sourceActive() && m_engine->sourcePath() == path ? m_engine->position() : m_sourcePos.value(path, 0);
     const int end = m_editor->sourceEdit(mode, path, srcPos, tv->playhead());
     if (end < 0) {
         QApplication::beep(); // no clip under the playhead resp. too little material

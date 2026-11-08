@@ -532,6 +532,10 @@ void MainWindow::buildActions()
             statusBar()->showMessage(T("Proxy-Medien aufgeräumt: %1 frei").arg(ProxyCleanup::sizeText(freed)), 8000);
     });
     connect(m_mediaPool, &MediaPool::proxyCleanupRequested, cleanProxies, &QAction::trigger);
+    connect(m_mediaPool, &MediaPool::editRequested, this, [this](const QString& path, int how) {
+        using SE = Editor::SourceEditMode;
+        sourceEditPath(how == 0 ? SE::Insert : how == 1 ? SE::PlaceOnTop : SE::AppendAtEnd, path);
+    });
     // Before/After like DaVinci (Shift+D, Bypass Color Grades): preview only, export always with correction
     auto* bypass = makeAction(play, "color_bypass", T("Farbkorrektur umgehen (Vorher/Nachher)"), QKeySequence("Shift+D"),
                               [] {});

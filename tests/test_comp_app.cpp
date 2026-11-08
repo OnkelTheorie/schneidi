@@ -28,6 +28,7 @@
 #include "ui/comp/CompOverlay.h"
 #include "ui/comp/CompPage.h"
 #include "ui/comp/CompShared.h"
+#include "ui/MediaPool.h"
 #include "ui/timeline/TimelinePanel.h"
 #include "ui/timeline/TimelineView.h"
 
@@ -285,6 +286,24 @@ int main(int argc, char** argv)
         const EffectDescriptor* glow = EffectRegistry::find("frei0r.glow");
         for (const EffectParam& q : glow->params) CHECK(ins->findChild<QWidget*>("comp_param_e_" + q.key) != nullptr);
         CHECK(ins->findChild<QWidget*>("comp_param_effect") != nullptr);
+    }
+
+    // ---- Media Pool right-click: "append at the end" puts the file behind the last clip, one undo step ----
+    {
+        auto* pool = w.findChild<MediaPool*>();
+        if (CHECK(pool)) {
+            const int before = int(project->timeline().video[0].clips.size());
+            const int end = project->timeline().video[0].clips.last().end();
+            const int idx = undo->index();
+            emit pool->editRequested(file, 2);
+            settle();
+            CHECK_EQ(int(project->timeline().video[0].clips.size()), before + 1);
+            CHECK_EQ(project->timeline().video[0].clips.last().start, end);
+            CHECK_EQ(undo->index(), idx + 1);
+            undo->undo();
+            settle();
+            CHECK_EQ(int(project->timeline().video[0].clips.size()), before);
+        }
     }
 
     // ---- The Comp page follows the playhead: the clip under it; opening a clip moves the playhead into it ----
