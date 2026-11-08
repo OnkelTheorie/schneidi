@@ -123,6 +123,7 @@ void CompLayers::refresh()
     QVector<Layer> layers;
     const bool has = c && CompUi::graphOf(*c, &g);
     const bool pure = has && layersOf(g, &layers);
+    m_onlyNodes = has && !pure;
     m_hint->setVisible(!pure);
     m_listBox->setVisible(pure);
     if (!pure) {

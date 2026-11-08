@@ -269,7 +269,7 @@ int main(int argc, char** argv)
         QTest::qWait(20);
         settle();
         CompCanvas* canvas = page->canvas();
-        // The graph area is the biggest part of the page (the timeline a slim strip)
+        // The graph area is a big part of the page (no timeline on the Comp page)
         CHECK(canvas->height() >= 380);
         canvas->fit();
         settle();

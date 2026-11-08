@@ -26,6 +26,8 @@ public:
     void setPlayhead(int frame) { m_playhead = frame; }
     void setSelected(int node);
     void refresh();
+    // The clip has a graph that is not a plain layer stack (it only shows as nodes)
+    bool onlyNodes() const { return m_onlyNodes; }
 
     // One layer of a merge chain, top first; the last one is the base picture (merge = 0)
     struct Layer {
@@ -52,5 +54,6 @@ private:
     QVBoxLayout* m_list;
     QWidget* m_listBox;
     QWidget* m_hint;
+    bool m_onlyNodes = false;
     QLabel* m_hintText;
 };

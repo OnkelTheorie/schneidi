@@ -280,7 +280,6 @@ void MainWindow::showPage(Page page)
         m_compPage->overlay()->setVisible(false);
         m_viewer->setOverlay(m_colorPanel->overlay());
         if (m_compPage->viewNode() || m_compPage->matte()) updatePreview(); // the output again
-        m_timeline->view()->setSlim(false);
     }
     switch (page) {
     case Page::Media:
@@ -333,13 +332,9 @@ void MainWindow::showPage(Page page)
         if (before != Page::Comp)
             if (const int id = selectedVideoClip(); id && id != m_compPage->clip()) m_compPage->setClip(id);
         m_compPage->top()->insertWidget(0, m_viewer);
-        m_compPage->top()->setStretchFactor(0, 1);
-        applySizes(m_compPage->top(), {1200, 340});
-        m_compPage->main()->insertWidget(1, m_timeline);
+        applySizes(m_compPage->top(), {500, 420});
         m_compPage->main()->setStretchFactor(0, 1);
-        // The timeline as a slim strip (playhead, the clip): the room goes to the graph
-        m_timeline->view()->setSlim(true);
-        applySizes(m_compPage->main(), {400, 150, 420});
+        applySizes(m_compPage->main(), {1240, 360});
         m_viewer->setOverlay(m_compPage->overlay());
         m_compPage->overlay()->setVisible(true);
         m_pages->setCurrentWidget(m_compPage);

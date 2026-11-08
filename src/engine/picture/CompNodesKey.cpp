@@ -217,7 +217,9 @@ void registerKeyNodes(QVector<NodeType>& out)
              T("Luma-Key: was heller ist, wird durchsichtig")},
             {"soft", T("Weiche Kante"), {}, EffectParam::Double, 0.1, 0.0, 1.0, AnimParam::Count, 0.002, 3, {},
              T("Luma-Key: Breite des Übergangs an den Grenzen")},
-            {"invert", T("Invertieren"), {}, EffectParam::Bool, false},
+            {"invert", T("Invertieren"), {}, EffectParam::Bool, false, 0, 0, AnimParam::Count, 0, 0, {},
+             T("Dreht den Key um: was sonst durchsichtig wird (die Key-Farbe), bleibt sichtbar, der Rest wird durchsichtig – "
+               "z. B. als Maske, um nur den Green Screen weichzuzeichnen")},
         };
         k.output = Buf::Rgba;
         k.eval = evalKey;

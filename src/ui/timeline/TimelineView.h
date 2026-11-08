@@ -89,7 +89,6 @@ public:
     // Returns info on a (possibly not yet imported) file for the drop preview
     void setProbe(std::function<MediaInfo(const QString&)> probe) { m_probe = std::move(probe); }
     // Slim strip (the Comp page: ruler, playhead, the clip; the graph gets the room): a lower minimum height
-    void setSlim(bool on) { setMinimumHeight(on ? 48 : 160); }
     // Source for filmstrips and waveforms (optional)
     void setMediaCache(MediaCache* cache);
     // Render cache like DaVinci: thin bar at the top of the ruler, red = not yet cached, blue = cached

@@ -24,8 +24,8 @@ class CompPage : public QWidget {
 public:
     explicit CompPage(Editor* editor, QWidget* parent = nullptr);
 
-    QSplitter* main() const { return m_main; } // MainWindow puts the timeline at index 1
-    QSplitter* top() const { return m_top; }   // ... and the viewer at index 0
+    QSplitter* main() const { return m_main; } // the left column | the inspector
+    QSplitter* top() const { return m_top; }   // left column: MainWindow puts the viewer at index 0, the graph below
 
     void setClip(int clipId); // the clip whose graph is shown (0 = none); keeps the node when it is the same clip
     int clip() const { return m_clipId; }

@@ -28,6 +28,8 @@
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QRegularExpression>
+#include <QSlider>
+#include <QHBoxLayout>
 #include <QSignalBlocker>
 #include <QToolButton>
 #include <QPointer>
@@ -189,11 +191,11 @@ QStringList CompInspector::shownKeys(const Clip& c) const
                  : shape == QLatin1String("linear") || shape == QLatin1String("radial") ? 2
                                                                                          : 0;
     }
-    // Key: only the values of the chosen kind (chroma: color/tolerance/softness/spill, luma: low/high/soft/invert)
+    // Key: only the values of the chosen kind (chroma: color/tolerance/softness/spill, luma: low/high/soft; both: invert)
     const bool key = k->id == QLatin1String("key");
     const bool luma = key && PC::textValue(*k, values, QStringLiteral("mode")) == QLatin1String("luma");
     static const QStringList chromaKeys{"color", "tolerance", "softness", "spill"};
-    static const QStringList lumaKeys{"low", "high", "soft", "invert"};
+    static const QStringList lumaKeys{"low", "high", "soft"};
     for (const EffectParam& p : k->params) {
         int index = 0;
         if (key && (luma ? chromaKeys : lumaKeys).contains(p.key)) continue;
@@ -295,6 +297,25 @@ void CompInspector::rebuild(const Clip& c, const QStringList& keys)
             field->setToolTip(p->description);
             field->onChange = [this, key](double v) { set(key, v, true); };
             field->onFinish = [this] { m_editor->project()->closeMerge(); };
+            // Slider + number like the Inspector's effect rows (the same control for the same kind of value)
+            auto* slider = new QSlider(Qt::Horizontal);
+            slider->setObjectName("comp_slider_" + key);
+            slider->setRange(0, InspectorDetail::kSliderSteps);
+            slider->setFocusPolicy(Qt::NoFocus); // arrow keys stay with the timeline
+            slider->setToolTip(p->description);
+            const double lo = p->min, hi = p->max;
+            connect(slider, &QSlider::valueChanged, this, [this, key, field, lo, hi](int v) {
+                const double value = lo + (hi - lo) * v / InspectorDetail::kSliderSteps;
+                field->setValue(value);
+                set(key, value, true);
+            });
+            connect(slider, &QSlider::sliderReleased, this, [this] { m_editor->project()->closeMerge(); });
+            auto* both = new QWidget; // one widget in the grid: a rebuild removes it with its children
+            auto* box = new QHBoxLayout(both);
+            box->setContentsMargins(0, 0, 0, 0);
+            box->setSpacing(8);
+            box->addWidget(slider, 1);
+            box->addWidget(field);
             auto* diamond = new QToolButton;
             diamond->setObjectName("comp_key_" + key);
             diamond->setAutoRaise(true);
@@ -306,13 +327,18 @@ void CompInspector::rebuild(const Clip& c, const QStringList& keys)
                 const bool on = !CompUi::keyAt(*cl, m_node, key, CompUi::clipFrame(*cl, m_playhead));
                 m_editor->setCompNodeKeyframe(m_clipId, m_node, key, m_playhead, on, field->value());
             });
-            m_grid->addWidget(field, row, 1);
+            m_grid->addWidget(both, row, 1);
             m_grid->addWidget(diamond, row, 2);
-            m_updates << [this, field, diamond, node, key, kp](const Clip& cl) {
+            m_updates << [this, field, slider, diamond, node, key, kp, lo, hi](const Clip& cl) {
                 const PC::NodeType* kt = kp.get();
                 if (!kt) return;
                 const int t = CompUi::clipFrame(cl, m_playhead);
-                field->setValue(CompUi::number(cl, node, *kt, key, t));
+                const double value = CompUi::number(cl, node, *kt, key, t);
+                field->setValue(value);
+                if (!slider->isSliderDown()) {
+                    const QSignalBlocker block(slider);
+                    slider->setValue(InspectorDetail::sliderPos(value, lo, hi));
+                }
                 const bool at = CompUi::keyAt(cl, node, key, t), any = CompUi::animated(cl, node, key);
                 diamond->setText(at ? QStringLiteral("◆") : QStringLiteral("◇"));
                 diamond->setStyleSheet(QString("QToolButton { color: %1; border: none; }")

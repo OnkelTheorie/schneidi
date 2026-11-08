@@ -123,13 +123,15 @@ CompPage::CompPage(Editor* editor, QWidget* parent) : QWidget(parent), m_editor(
     bottomLay->addWidget(bar);
     bottomLay->addWidget(m_stack, 1);
 
-    m_top = new QSplitter(Qt::Horizontal);
-    m_top->setObjectName("compTop");
-    m_top->addWidget(m_inspector);
-    m_main = new QSplitter(Qt::Vertical);
-    m_main->setObjectName("compMain"); // 0.19 polish: own key, the slim timeline as the new default
+    // Left the picture over the graph, right the inspector over the whole height. No timeline: the viewer's own bar
+    // has the time and the transport, so the graph gets the room (a compositor works on one clip at a time)
+    m_top = new QSplitter(Qt::Vertical);
+    m_top->setObjectName("compLeft"); // 0.19: own keys for the layout without a timeline
+    m_top->addWidget(bottom);
+    m_main = new QSplitter(Qt::Horizontal);
+    m_main->setObjectName("compRoot");
     m_main->addWidget(m_top);
-    m_main->addWidget(bottom);
+    m_main->addWidget(m_inspector);
     auto* lay = new QVBoxLayout(this);
     lay->setContentsMargins(0, 0, 0, 0);
     lay->addWidget(m_main);
@@ -184,6 +186,7 @@ void CompPage::setClip(int clipId)
     m_inspector->setTarget(clipId, 0);
     m_overlay->setTarget(clipId, 0, m_playhead);
     refresh();
+    if (m_layers->onlyNodes()) m_nodesButton->setChecked(true); // the layer view would only say "use the nodes"
     emit viewChanged();
 }
 
