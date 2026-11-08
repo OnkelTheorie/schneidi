@@ -182,6 +182,21 @@ int main(int argc, char** argv)
         same("3 tracks preview", tl, {10}, 2.0, 30, Picture::Mode::Preview, QSize(960, 540));
     }
 
+    // A clip tilted in depth over a plain one: the card leaves it to the CPU (homography), the frame stays the same
+    {
+        Timeline tl;
+        tl.video.resize(2);
+        tl.video[0].clips << media(1, g_c, 0, 30);
+        Clip tilted = media(2, g_a, 0, 30);
+        tilted.transform.zoomX = tilted.transform.zoomY = 0.7;
+        tilted.transform.tiltX = 20;
+        tilted.transform.tiltY = -35;
+        tilted.transform.rotation = 5;
+        tl.video[1].clips << tilted;
+        same("tilted clip", tl, {4}, 1.5, 30);
+        same("tilted clip preview", tl, {9}, 2.0, 30, Picture::Mode::Preview, QSize(640, 360));
+    }
+
     // A kept region (Reframe::keepCopy, the kill feed above a short) on its thin dark frame, faded to 80 %
     {
         Timeline tl;
