@@ -8,6 +8,7 @@
 #include "core/Keyframes.h"
 #include "core/Project.h"
 #include "core/TimelineOps.h"
+#include "ui/TiltTransform.h"
 
 #include <QMouseEvent>
 #include <QPainter>
@@ -66,17 +67,20 @@ bool WindowOverlay::transforms(const QRectF& frame, QTransform* clipToWidget, QT
     // The window's picture = the clip before transform, filling the frame (a source of another aspect ratio sits
     // inside with bars; the window then refers to the whole frame as well)
     const double iw = W, ih = H;
-    QTransform ct;
-    ct.translate(frame.left(), frame.top());
-    ct.scale(frame.width() / W, frame.height() / H);
+    QTransform ct, view;
+    view.translate(frame.left(), frame.top());
+    view.scale(frame.width() / W, frame.height() / H);
     if (Keys::hasTransform(*c)) {
         // Inspector transform like the picture engine: zoom around the center, position Y upward, rotation
-        // counterclockwise
-        ct.translate(W / 2 + Keys::valueAt(*c, AnimParam::PosX, t), H / 2 - Keys::valueAt(*c, AnimParam::PosY, t));
-        ct.rotate(-Keys::valueAt(*c, AnimParam::Rotation, t));
-        ct.scale(Keys::valueAt(*c, AnimParam::ZoomX, t), Keys::valueAt(*c, AnimParam::ZoomY, t));
-        ct.translate(-iw / 2, -ih / 2);
+        // counterclockwise, then the tilt in depth
+        QTransform flat;
+        flat.translate(W / 2 + Keys::valueAt(*c, AnimParam::PosX, t), H / 2 - Keys::valueAt(*c, AnimParam::PosY, t));
+        flat.rotate(-Keys::valueAt(*c, AnimParam::Rotation, t));
+        flat.scale(Keys::valueAt(*c, AnimParam::ZoomX, t), Keys::valueAt(*c, AnimParam::ZoomY, t));
+        flat.translate(-iw / 2, -ih / 2);
+        ct = TiltTransform::apply(flat, *c, t, iw, ih, W, H);
     }
+    ct = ct * view;
     const GradeWindows::Geometry g = GradeWindows::geometryAt(*c, m_window, t);
     QTransform lt;
     lt.translate(g.x / 100 * iw, g.y / 100 * ih);
