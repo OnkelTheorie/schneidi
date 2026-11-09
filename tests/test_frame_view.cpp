@@ -378,8 +378,14 @@ void testViewer(const QString& clipDir)
     fit->trigger();
     CHECK_EQ(viewer->zoom(), FrameView::kFit);
     CHECK_EQ(button->text(), QString("Einpassen"));
-    QTest::qWaitFor([&] { return viewer->picture().size() == small; }, 10000);
-    CHECK_EQ(viewer->picture().size(), small);
+    // Back to the small preview: "Automatic" follows the viewer's own size (since 0.20), which may differ from the
+    // first picture (rendered before the viewer had a size) - smaller than the frame, never above 960
+    const auto smallAgain = [&] {
+        const QSize s = viewer->picture().size();
+        return !s.isEmpty() && s != engine.frameSize() && s.width() <= 960;
+    };
+    QTest::qWaitFor(smallAgain, 10000);
+    CHECK(smallAgain());
 }
 
 } // namespace
