@@ -253,14 +253,13 @@ claude mcp add --transport http schneidi http://127.0.0.1:8642/mcp
 
 What we are working on next. Plans can still change; the order within a version is not fixed.
 
-### 0.19 – Compositing Update (in testing)
-Layers, masks, keying, tracking – with nodes or as layers. A Comp page with a layer view and a node canvas, masks, a keyer, an AI cutout (extension), a basic tracker (one point, two points, faces – more in the next update), title looks (gradient, texture, 2.5D edge, shadow, glow), real 3D text, six recipes, own effects as an FFmpeg filter chain or a GLSL shader (with a trust question for shared projects), common graphs on the graphics card, and all of it for an AI through the command line and MCP – done, being tested for release.
+### 0.20 – Newcomer Update (released)
+Guided tours on a built-in practice project (first steps, editing, color, compositing, task guides), hide pages you don't use, the preview on a second monitor with a chosen resolution, Premiere/Final Cut key sets with `.kys` import and a key trainer, clips tilted in 3D, voice-over straight onto a track with a live take, a draggable In/Out range with loop playback, proxies easier to make and see, and a much faster start.
 
-### Next: 0.20 – Newcomer Update
-Guided tours in the app (first steps, editing, color, compositing; green screen and tracker guides), hide pages you don't use, preview on a second monitor, clips tilted in 3D, Premiere/Final Cut key presets.
+### Next: 0.21 – Languages, then Tracking
+Ten more languages (Ukrainian, Japanese, Portuguese (Brazil), Chinese (Simplified), Italian, Hindi, Dutch, Turkish, Korean, Indonesian – translations by AI, improvements by native speakers welcome as issues), x264/x265 in the downloads, then better tracking: fade out when the point is lost, a node's time range on the timeline, text behind a wall, four-corner tracking, a shared camera for 2.5D.
 
 ### Later
-- **0.21 – Tracking Update:** better tracking: fade out when the point is lost, a node's time range on the timeline, text behind a wall, four-corner tracking, a shared camera for 2.5D
 - **0.22 – Studio:** a page for sound – a big mixer, large waveforms, volume curves to draw, EQ and compressor per track, voice cleanup, loudness, recording
 - **0.23 – Color Update 2:** curves on the Color page, qualifier (select by hue, saturation and lightness), more scope overlays
 

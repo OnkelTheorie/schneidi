@@ -63,6 +63,7 @@ large project, all threads: s / peak RAM (MB) | memory peak / after giving back 
 | 0.17.0 (791ddfd) | 2026-11-05 | 4.3 | 391 / 400 | 0.32 | 31.8 / 33.5 | 143 / 212 | 59.7 / 22.8 | 2.17 | 37.88 / 1917 | 1169 / 634 | 18.79 / 30.71 |
 | 0.18.0 (13e0e58d) [d] | 2026-11-06 | 0.3 | 418 / 433 | 0.42 | 31.9 / 33.2 | 152 / 214 | 60.7 / 22.9 | 2.17 | 39.23 / 1570 | 1277 / 670 | 19.4 / 31.12 |
 | 0.19.0 (b5197a8c) [e] | 2026-11-07 | 0.1 | 453 / 443 | 0.33 | 32 / 33.5 | 113 / 248 | 57.1 / 23.4 | 2.15 | 37.45 / 1554 | 1168 / 651 | 21.84 / 35.48 |
+| 0.20.0 (4208f321) [f] | 2026-11-09 | 1.0 | 403 / 385 | 0.43 | 32.3 / 33.6 | 134 / 228 | 60.2 / 23.8 | 1.88 | 37.83 / 1552 | 1167 / 635 | 19.57 / 30.86 |
 
 Notes on rows:
 
@@ -95,6 +96,7 @@ Notes on rows:
 - **[e]** 0.19.0: the comparison script flagged the project export peak (1112 MB) and compose (+13 %). Two A/B runs each
   of 0.18.1 and 0.19.0, one after the other, gave 1109 / 835 MB and 844 / 834 MB for the export peak and 19.3 / 19.5 ms
   and 18.8 / 19.0 ms for compose (RGBA 1080p) – the same in both versions, so both are noise.
+- **[f]** 0.20.0: the window comes up without waiting for the splash any more – measured offscreen (no splash there), so the gain on a desktop is larger than these numbers show. With one core and 1 GB (`--cpuset-cpus=0 --memory 1g`): 388 / 390 ms. The first run had the project render at 2.8 s / 1037 MB with the container daemon busy in the background; a rerun in calm gave 1.88 s / 701 MB (the number in the table).
 
 ## Raspberry Pi Zero 2 W
 
@@ -179,6 +181,19 @@ behind. Conclusion: 4K on the Pi works only with a proxy, and the proxy only whi
 The CS2 short is CPU-bound on the Pi (decoding 39 Mbit/s 1080p60 and scaling up 3.2 times, about 3 s of CPU per frame for
 646 frames) and still pages memory out; the project's goal for the Pi is "runs stably", not speed on long shorts. The
 low-memory rule (limits threads by available RAM) was built and measured in this series on development branches.
+
+## Android phone (Galaxy A51, 0.20.0, 2026-11-09)
+
+0.19.0 and 0.20.0 one after the other on the same phone (battery 26 °C), same clip and jobs, single runs.
+
+| Job | 0.19.0 | 0.20.0 |
+|---|---|---|
+| `probe` | 0.62 s / 69 MB | 0.62 s / 69 MB |
+| `render` 10 s 1080p, Smart Render | 23.5 s / 1080 MB | 24.1 s / 1084 MB |
+| `render` 10 s 1080p, full re-encode | 108.7 s / 1214 MB | 110.1 s / **826 MB** |
+| `short` 9:16, 15 s, no captions | 173.8 s / 1278 MB | 171.9 s / **903 MB** |
+
+Same speed (±2 %), about 30 % less peak memory for full renders and shorts. The output files are the same size to the byte.
 
 ## Android phone (Galaxy A51, 0.19.0, 2026-11-08)
 
