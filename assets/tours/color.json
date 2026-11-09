@@ -7,7 +7,7 @@
   {"target": "color_wheel_0|color_wheel_1|color_wheel_2|color_wheel_3", "page": "color", "text": "Die Farbräder: Tiefen wirken auf die dunklen Stellen, Mitten auf die mittleren, Lichter auf die hellen, Versatz auf alles."},
   {"target": "color_wheel_2", "page": "color", "text": "Zieh den Punkt in einem Rad zu einer Farbe hin: Dieser Bereich wird so eingefärbt. Doppelklick setzt das Rad zurück."},
   {"target": "color_slider_5|color_slider_2", "page": "color", "text": "Belichtung macht das ganze Bild heller oder dunkler, Sättigung die Farben kräftiger oder blasser."},
-  {"target": "color_lut", "page": "color", "text": "Fertige Looks liegen in den Effekten unter Looks. Eine eigene LUT lädst du hier."},
+  {"target": "color_lut", "page": "color", "text": "Eine LUT gibt dem Bild einen fertigen Look: Hier wählst du eine LUT-Datei für den Clip."},
   {"target": "scopes", "page": "color", "text": "Die Messanzeigen zeigen, was im Bild steckt. In der Wellenform ist oben hell und unten dunkel: Was oben anstößt, ist überbelichtet."},
   {"target": "color_windows", "page": "color", "text": "Fenster wirken nur auf einen Bildteil, etwa um ein Gesicht aufzuhellen: Rechteck oder Ellipse hinzufügen und im Bild verschieben."}
  ]

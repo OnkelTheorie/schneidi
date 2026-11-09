@@ -310,6 +310,39 @@ void testRecipeDrop(Engine& engine)
     CHECK(!w->liveSelection()->ids().contains(a));
 }
 
+// The key's pipette: the tour's bubble steps aside while the picture window is open, then comes back
+void testPipette(Engine& engine)
+{
+    auto w = window(engine);
+    if (!CHECK(startTour(*w, "guide_greenscreen"))) return;
+    const Timeline& tl = w->liveProject()->timeline();
+    if (!CHECK(tl.video.size() >= 2 && !tl.video[1].clips.isEmpty())) return;
+    const int clip = tl.video[1].clips[0].id;
+    emit w->findChild<TimelineView*>()->recipeDropped(clip, "greenscreen");
+    QTest::qWait(50);
+    CompGraph g;
+    const Clip* c = TimelineOps::findClip(w->liveProject()->timeline(), clip);
+    if (!CHECK(c && CompUi::graphOf(*c, &g))) return;
+    int key = 0;
+    for (const CompNode& n : g.nodes)
+        if (n.type == "key") key = n.id;
+    if (!CHECK(key)) return;
+    w->openComp(clip);
+    QTest::qWait(30);
+    TourOverlay* o = w->tours()->overlay();
+    CHECK(o->isVisible());
+    emit w->compPage()->keyPickRequested(clip, key, "color");
+    QTest::qWait(30);
+    auto* pick = w->findChild<KeyPickWindow*>();
+    if (!CHECK(pick)) return;
+    CHECK(!o->isVisible() && !o->bubble()->isVisible());
+    CHECK(w->tours()->runner()->running());
+    emit pick->closeRequested();
+    QTest::qWait(30);
+    CHECK(o->isVisible() && o->bubble()->isVisible());
+    w->tours()->stop();
+}
+
 // Closed during a tour (both histories hold steps): no slot runs on the half-destroyed window
 void testCloseInTour(Engine& engine)
 {
@@ -341,6 +374,7 @@ int main(int argc, char** argv)
     testUserState(engine);
     testPracticeProject(engine);
     testRecipeDrop(engine);
+    testPipette(engine);
     testCloseInTour(engine);
     return Check::result();
 }
