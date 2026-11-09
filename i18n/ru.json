@@ -2844,6 +2844,7 @@
  "Du kommst von Premiere Pro oder Final Cut Pro? Wähl hier deren Vorlage, dann gelten die gewohnten Tasten. Üben: Hilfe › Tasten üben.": "Переходишь с Premiere Pro или Final Cut Pro? Выбери здесь его набор, и привычные клавиши заработают. Тренировка: Справка › Тренировка клавиш.",
  "Gewählte Zeile auf die Vorlage zurücksetzen": "Сбросить выбранную строку на значение набора",
  "Keine Premiere-Tastenbelegung in der Datei": "В файле нет сочетаний клавиш Premiere",
+ "Die Datei ist zu groß für eine Tastenbelegung.": "Файл слишком велик для набора сочетаний клавиш.",
  "Nochmal": "Ещё раз",
  "Premiere-Tastenbelegung (*.kys)": "Сочетания клавиш Premiere (*.kys)",
  "Richtig: %1": "Верно: %1",

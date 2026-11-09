@@ -177,6 +177,18 @@ void testImport()
     CHECK(b.importKys(junk, nullptr, &error).isEmpty());
     CHECK(!error.isEmpty());
     CHECK_EQ(b.currentPreset(), id);
+    // Larger than any shortcut file (5 MB): refused before reading
+    const QString huge = QDir(tmp.path()).filePath("huge.kys");
+    QFile h(huge);
+    if (CHECK(h.open(QIODevice::WriteOnly))) {
+        h.write("<PremiereData><shortcuts>");
+        h.resize(6 * 1024 * 1024);
+        h.close();
+    }
+    error.clear();
+    CHECK(b.importKys(huge, nullptr, &error).isEmpty());
+    CHECK_EQ(error, T("Die Datei ist zu groß für eine Tastenbelegung."));
+    CHECK_EQ(b.currentPreset(), id);
     b.applyPreset("standard");
 }
 

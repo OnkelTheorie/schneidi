@@ -2844,6 +2844,7 @@
  "Du kommst von Premiere Pro oder Final Cut Pro? Wähl hier deren Vorlage, dann gelten die gewohnten Tasten. Üben: Hilfe › Tasten üben.": "Przechodzisz z Premiere Pro lub Final Cut Pro? Wybierz tu jego zestaw, a znane klawisze zadziałają. Ćwiczenie: Pomoc › Ćwicz klawisze.",
  "Gewählte Zeile auf die Vorlage zurücksetzen": "Przywróć wybrany wiersz z zestawu",
  "Keine Premiere-Tastenbelegung in der Datei": "W pliku nie ma skrótów Premiere",
+ "Die Datei ist zu groß für eine Tastenbelegung.": "Plik jest za duży jak na skróty klawiszowe.",
  "Nochmal": "Jeszcze raz",
  "Premiere-Tastenbelegung (*.kys)": "Skróty Premiere (*.kys)",
  "Richtig: %1": "Dobrze: %1",

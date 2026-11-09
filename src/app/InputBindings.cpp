@@ -770,6 +770,12 @@ QString InputBindings::importKys(const QString& path, KysResult* result, QString
         if (error) *error = f.errorString();
         return {};
     }
+    // Premiere's own files are well under 1 MB: a huge file is something else, not read into memory
+    constexpr qint64 kMaxKysBytes = 5 * 1024 * 1024;
+    if (f.size() > kMaxKysBytes) {
+        if (error) *error = T("Die Datei ist zu groß für eine Tastenbelegung.");
+        return {};
+    }
     KysResult r = readKys(f.readAll());
     if (result) *result = r;
     if (!r.ok || r.taken == 0) {

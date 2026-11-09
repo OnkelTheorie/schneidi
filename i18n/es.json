@@ -2844,6 +2844,7 @@
  "Du kommst von Premiere Pro oder Final Cut Pro? Wähl hier deren Vorlage, dann gelten die gewohnten Tasten. Üben: Hilfe › Tasten üben.": "¿Vienes de Premiere Pro o Final Cut Pro? Elige aquí su preajuste y funcionarán las teclas de siempre. Practicar: Ayuda › Practicar teclas.",
  "Gewählte Zeile auf die Vorlage zurücksetzen": "Restablecer la fila seleccionada al preajuste",
  "Keine Premiere-Tastenbelegung in der Datei": "El archivo no contiene atajos de Premiere",
+ "Die Datei ist zu groß für eine Tastenbelegung.": "El archivo es demasiado grande para ser un conjunto de atajos.",
  "Nochmal": "Otra vez",
  "Premiere-Tastenbelegung (*.kys)": "Atajos de Premiere (*.kys)",
  "Richtig: %1": "Correcto: %1",

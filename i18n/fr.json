@@ -2844,6 +2844,7 @@
  "Du kommst von Premiere Pro oder Final Cut Pro? Wähl hier deren Vorlage, dann gelten die gewohnten Tasten. Üben: Hilfe › Tasten üben.": "Tu viens de Premiere Pro ou de Final Cut Pro ? Choisis ici son préréglage et tes touches habituelles marchent. S’entraîner : Aide › S’entraîner aux touches.",
  "Gewählte Zeile auf die Vorlage zurücksetzen": "Rétablir la ligne sélectionnée selon le préréglage",
  "Keine Premiere-Tastenbelegung in der Datei": "Aucun raccourci Premiere dans le fichier",
+ "Die Datei ist zu groß für eine Tastenbelegung.": "Le fichier est trop volumineux pour des raccourcis clavier.",
  "Nochmal": "Recommencer",
  "Premiere-Tastenbelegung (*.kys)": "Raccourcis Premiere (*.kys)",
  "Richtig: %1": "Juste : %1",
