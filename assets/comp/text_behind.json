@@ -16,13 +16,13 @@
     "note": "The subject is cut out by the key (node 2). With footage without a screen, a cutout node can take the key's place once it is available.",
     "graph": {
         "nodes": [
-            {"id": 1, "type": "clip", "x": 0, "y": 0},
-            {"id": 2, "type": "key", "x": 160, "y": 0, "params": {"mode": "chroma", "color": "#ff00ff00"}},
-            {"id": 3, "type": "matte_tune", "x": 320, "y": 0},
-            {"id": 4, "type": "media", "x": 160, "y": 120},
-            {"id": 5, "type": "text", "x": 160, "y": 240, "params": {"text": "Title"}},
-            {"id": 6, "type": "merge", "x": 320, "y": 180},
-            {"id": 7, "type": "merge", "x": 480, "y": 90}
+            {"id": 1, "type": "clip", "x": 0, "y": 240},
+            {"id": 2, "type": "key", "x": 160, "y": 240, "params": {"mode": "chroma", "color": "#ff00ff00"}},
+            {"id": 3, "type": "matte_tune", "x": 320, "y": 240},
+            {"id": 4, "type": "media", "x": 160, "y": 0},
+            {"id": 5, "type": "text", "x": 160, "y": 120, "params": {"text": "Title"}},
+            {"id": 6, "type": "merge", "x": 320, "y": 60},
+            {"id": 7, "type": "merge", "x": 480, "y": 150}
         ],
         "links": [[1, 2, "src"], [2, 3, "src"], [4, 6, "bg"], [5, 6, "fg"], [6, 7, "bg"], [3, 7, "fg"]],
         "out": 7

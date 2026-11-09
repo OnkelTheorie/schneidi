@@ -415,6 +415,18 @@ int main(int argc, char** argv)
         p.undoStack()->undo();
         CHECK(Check::dump(p.timeline()) == before);
     }
+    // Layout of the built-in recipes: a merge's background comes from a node placed above its foreground, so the
+    // wires into "Hintergrund" (top port) and "Vordergrund" (below it) never cross
+    for (const CompRecipe& r : CompRecipes::builtIn()) {
+        const CompGraph& g = r.graph; // as laid out in the recipe (apply would need the required slots)
+        QHash<int, double> y;
+        for (const CompNode& n : g.nodes) y[n.id] = n.pos.y();
+        QHash<int, QHash<QString, int>> into;
+        for (const CompLink& l : g.links) into[l.to][l.input] = l.from;
+        for (auto it = into.cbegin(); it != into.cend(); ++it)
+            if (it->contains("bg") && it->contains("fg"))
+                if (!CHECK(y[it->value("bg")] < y[it->value("fg")])) qInfo("crossing wires in recipe %s", qPrintable(r.id));
+    }
     QDir(CompRecipes::dir()).removeRecursively();
     return Check::result();
 }

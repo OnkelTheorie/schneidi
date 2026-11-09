@@ -15,10 +15,10 @@
     "description_ru": "Вырезает зелёный фон за объектом и ставит туда фоновую картинку или видео (без фона просвечивают дорожки ниже).",
     "graph": {
         "nodes": [
-            {"id": 1, "type": "clip", "x": 0, "y": 0},
-            {"id": 2, "type": "key", "x": 160, "y": 0, "params": {"mode": "chroma", "color": "#ff00ff00"}},
-            {"id": 3, "type": "matte_tune", "x": 320, "y": 0},
-            {"id": 4, "type": "media", "x": 320, "y": 120},
+            {"id": 1, "type": "clip", "x": 0, "y": 120},
+            {"id": 2, "type": "key", "x": 160, "y": 120, "params": {"mode": "chroma", "color": "#ff00ff00"}},
+            {"id": 3, "type": "matte_tune", "x": 320, "y": 120},
+            {"id": 4, "type": "media", "x": 320, "y": 0},
             {"id": 5, "type": "merge", "x": 480, "y": 60}
         ],
         "links": [[1, 2, "src"], [2, 3, "src"], [4, 5, "bg"], [3, 5, "fg"]],
