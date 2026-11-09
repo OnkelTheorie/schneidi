@@ -2914,5 +2914,9 @@
  "Wähl eine Vorlage, etwa YouTube, und klick auf „Zur Render-Warteschlange hinzufügen“. „Alle rendern“ speichert dann dein Video.": "Elige una plantilla, por ejemplo YouTube, y haz clic en «Añadir a la cola de render». «Renderizar todo» guarda después tu vídeo.",
  "Der Rundgang startet nach der Aufnahme – erst die Aufnahme beenden (Esc).": "El recorrido empieza después de la grabación: termina primero la grabación (Esc).",
  "Aufnahme ersetzt 1 Clip – Strg+Z holt ihn zurück": "La grabación reemplazó 1 clip: Ctrl+Z lo recupera",
- "Aufnahme ersetzt %1 Clips – Strg+Z holt sie zurück": "La grabación reemplazó %1 clips: Ctrl+Z los recupera"
+ "Aufnahme ersetzt %1 Clips – Strg+Z holt sie zurück": "La grabación reemplazó %1 clips: Ctrl+Z los recupera",
+ "Aufnahme nach Absturz gefunden": "Grabación encontrada tras un cierre inesperado",
+ "Eine Voiceover-Aufnahme wurde nicht beendet: %1\nIn den Medienpool holen?": "Una grabación de voz en off no se terminó: %1\n¿Añadirla a la biblioteca de medios?",
+ "In den Medienpool": "A la biblioteca de medios",
+ "Nein": "No"
 }

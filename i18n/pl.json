@@ -2914,5 +2914,9 @@
  "Wähl eine Vorlage, etwa YouTube, und klick auf „Zur Render-Warteschlange hinzufügen“. „Alle rendern“ speichert dann dein Video.": "Wybierz szablon, na przykład YouTube, i kliknij „Dodaj do kolejki renderowania”. „Renderuj wszystkie” zapisze potem film.",
  "Der Rundgang startet nach der Aufnahme – erst die Aufnahme beenden (Esc).": "Przewodnik zacznie się po nagraniu – najpierw zakończ nagrywanie (Esc).",
  "Aufnahme ersetzt 1 Clip – Strg+Z holt ihn zurück": "Nagranie zastąpiło 1 klip – Ctrl+Z go przywraca",
- "Aufnahme ersetzt %1 Clips – Strg+Z holt sie zurück": "Nagranie zastąpiło klipy (%1) – Ctrl+Z je przywraca"
+ "Aufnahme ersetzt %1 Clips – Strg+Z holt sie zurück": "Nagranie zastąpiło klipy (%1) – Ctrl+Z je przywraca",
+ "Aufnahme nach Absturz gefunden": "Znaleziono nagranie po awarii",
+ "Eine Voiceover-Aufnahme wurde nicht beendet: %1\nIn den Medienpool holen?": "Nagranie lektora nie zostało zakończone: %1\nDodać je do biblioteki multimediów?",
+ "In den Medienpool": "Do biblioteki multimediów",
+ "Nein": "Nie"
 }

@@ -53,6 +53,9 @@ public:
     // Ends it and places the take; false = nothing placed (*error says why, empty = nothing recorded)
     bool stop(QString* error = nullptr);
     void cancel(); // ends it without placing anything (the file stays)
+    // A take that was running when the app ended without stopping it (a crash, a power cut): its file, once ("" =
+    // none). The WAV header follows while recording (Audio::Capture), so the file reads to about where it ended.
+    static QString runningTake();
     void inputChanged(); // the input setting changed: the armed track's meter listens to the new one
     // The armed track's meter may listen (the timeline is shown). It never does while the app is in the background:
     // an open input keeps a Bluetooth headset in its call profile (poor sound for everything else)

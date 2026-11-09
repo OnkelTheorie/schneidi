@@ -11,11 +11,17 @@
 
 #include <QDateTime>
 #include <QDir>
+#include <QFileInfo>
+#include <QSettings>
 #include <QGuiApplication>
 #include <QTimer>
 
 #include <cmath>
 #include <utility>
+
+namespace {
+constexpr char kRunningKey[] = "voiceover/running"; // the file of the take running now (QSettings)
+} // namespace
 
 VoiceoverRecorder::VoiceoverRecorder(Engine* engine, Project* project, Editor* editor,
                                      std::function<QString()> projectPath, std::function<bool(const QString&)> import,
@@ -59,7 +65,10 @@ VoiceoverRecorder::VoiceoverRecorder(Engine* engine, Project* project, Editor* e
 
 VoiceoverRecorder::~VoiceoverRecorder()
 {
-    if (m_capture) m_capture->stop(); // closing the window mid-take: the file stays complete, no signals any more
+    if (m_capture) { // closing the window mid-take: the file stays complete, no signals any more
+        m_capture->stop();
+        QSettings().remove(kRunningKey);
+    }
     m_meter.reset();
 }
 
@@ -107,6 +116,14 @@ void VoiceoverRecorder::inputChanged()
     m_meterTimer->stop();
     m_meter.reset();
     updateMeter();
+}
+
+QString VoiceoverRecorder::runningTake()
+{
+    QSettings settings;
+    const QString path = settings.value(kRunningKey).toString();
+    settings.remove(kRunningKey); // offered once
+    return !path.isEmpty() && QFileInfo(path).size() > 44 ? path : QString(); // more than a header: sound in it
 }
 
 void VoiceoverRecorder::setMeterShown(bool shown)
@@ -176,6 +193,7 @@ bool VoiceoverRecorder::start(QString* error)
         return false;
     }
     qInfo("Voiceover: %s -> %s", qPrintable(m_capture->name()), qPrintable(m_capture->path()));
+    QSettings().setValue(kRunningKey, m_capture->path()); // a crash before the end: offered next time (runningTake)
     m_alignment = {};
     m_sequence = m_project->currentSequence();
     m_trackKey = Voiceover::trackKey(m_project->timeline(), m_track);
@@ -257,6 +275,7 @@ bool VoiceoverRecorder::stop(QString* error)
     const int rate = m_capture->rate();
     const long long frames = m_capture->frames(), dropped = m_capture->dropped();
     m_capture.reset();
+    QSettings().remove(kRunningKey);
     if (std::exchange(m_live, false)) emit liveChanged(false);
     emit recordingChanged(false);
     updateMeter();
@@ -310,6 +329,7 @@ void VoiceoverRecorder::cancel()
     m_timer->stop();
     m_capture->stop();
     m_capture.reset();
+    QSettings().remove(kRunningKey);
     if (m_playing) m_engine->pause();
     m_engine->setOpenEnd(false);
     m_stopping = false;

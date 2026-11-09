@@ -38,6 +38,8 @@
 
 #include <QSettings>
 #include <QShortcut>
+#include <QMessageBox>
+#include <QAbstractButton>
 #include <QStatusBar>
 
 #include <QApplication>
@@ -583,6 +585,28 @@ int main(int argc, char** argv)
             CHECK(Voiceover::isVoiceoverTrack(project->timeline().audio[tracks - 1]));
         while (project->undoStack()->index() > undo) project->undoStack()->undo();
         recorder->setArmedTrack(-1);
+    }
+
+    // Review 2026-11-09: a take a crash left running (its file named in the settings) is offered once, not modal
+    if (const QString crashed = e2e ? QString()
+                                    : Check::makeMedia(dir.path() + "/voiceover-crashed.wav",
+                                                       {"-f", "lavfi", "-i", "sine=frequency=500:duration=1", "-c:a",
+                                                        "pcm_s16le"});
+        !crashed.isEmpty()) {
+        QSettings().setValue("voiceover/running", crashed);
+        w.offerCrashedTake(); // as at the start
+        auto* box = w.findChild<QMessageBox*>("voiceover_crashed_take");
+        if (CHECK(box && box->isVisible() && !box->isModal())) {
+            QAbstractButton* import = nullptr;
+            for (QAbstractButton* b : box->buttons())
+                if (box->buttonRole(b) == QMessageBox::AcceptRole) import = b;
+            if (CHECK(import)) import->click();
+            CHECK(project->mediaInfo(crashed) != nullptr);
+        }
+        CHECK(!QSettings().contains("voiceover/running")); // once
+        w.offerCrashedTake();
+        wait(50);
+        CHECK(!w.findChild<QMessageBox*>("voiceover_crashed_take"));
     }
 
     // Quitting while recording: the take is placed first (so "save changes?" sees it), the file is complete

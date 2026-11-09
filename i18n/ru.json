@@ -2914,5 +2914,9 @@
  "Wähl eine Vorlage, etwa YouTube, und klick auf „Zur Render-Warteschlange hinzufügen“. „Alle rendern“ speichert dann dein Video.": "Выберите шаблон, например YouTube, и нажмите «Добавить в очередь рендеринга». «Рендерить все» затем сохранит видео.",
  "Der Rundgang startet nach der Aufnahme – erst die Aufnahme beenden (Esc).": "Тур начнётся после записи – сначала завершите запись (Esc).",
  "Aufnahme ersetzt 1 Clip – Strg+Z holt ihn zurück": "Запись заменила 1 клип – Ctrl+Z вернёт его",
- "Aufnahme ersetzt %1 Clips – Strg+Z holt sie zurück": "Запись заменила клипы (%1) – Ctrl+Z вернёт их"
+ "Aufnahme ersetzt %1 Clips – Strg+Z holt sie zurück": "Запись заменила клипы (%1) – Ctrl+Z вернёт их",
+ "Aufnahme nach Absturz gefunden": "Найдена запись после сбоя",
+ "Eine Voiceover-Aufnahme wurde nicht beendet: %1\nIn den Medienpool holen?": "Запись закадрового голоса не была завершена: %1\nДобавить её в медиатеку?",
+ "In den Medienpool": "В медиатеку",
+ "Nein": "Нет"
 }
