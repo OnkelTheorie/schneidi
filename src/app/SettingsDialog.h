@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 #include "app/AiSettings.h"
+#include "ui/SecondScreen.h"
 
 #include <QDialog>
 
@@ -34,6 +35,8 @@ public:
     int backgroundThreads() const; // Background::chosenThreads (0 = automatic)
     // Where "Save as" suggests a new project: off = next to its first clip; on = this folder (the user's choice)
     bool autoLinkNodes() const; // Compositing: new nodes linked at once (CompUi::autoLink)
+    // Preview on a second monitor: the main window keeps the viewer's area or closes it up (MainWindow)
+    SecondScreenPlan::Mode secondScreenMode() const;
     bool ownProjectFolder() const;
     QString projectFolder() const;
     // The stored choice (QSettings "project/ownFolder", "project/folder"); folder() = the default when none is stored
@@ -61,6 +64,7 @@ private:
     QComboBox* m_threads = nullptr;
     QCheckBox* m_ownFolder = nullptr;
     QCheckBox* m_autoLink = nullptr;
+    QComboBox* m_secondScreen = nullptr;
     QLineEdit* m_folder = nullptr;
     QCheckBox* m_updateHint = nullptr;
     QPushButton* m_checkNow = nullptr;

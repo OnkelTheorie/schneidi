@@ -719,6 +719,16 @@ void MainWindow::buildActions()
                                     [this] { setViewerFullScreen(m_fullScreenAction->isChecked()); });
     m_fullScreenAction->setCheckable(true);
     m_viewer->addViewAction(m_fullScreenAction, Viewer::ViewIcon::FullScreen);
+    // Preview on a second monitor (ui/SecondScreen): the key moves it on to the next monitor, after the last one back
+    m_secondScreenAction = makeAction(workspace, "viewer_second_screen", T("Vorschau auf zweitem Monitor"),
+                                      QKeySequence("Ctrl+Shift+F"), [this] {
+                                          moveViewerToNextScreen();
+                                          m_secondScreenAction->setChecked(m_output != nullptr);
+                                      });
+    m_secondScreenAction->setCheckable(true);
+    connect(m_engine, &Engine::frameReady, this, &MainWindow::feedPreviewOutput);
+    connect(qGuiApp, &QGuiApplication::screenAdded, this, [this] { screensChanged(nullptr); });
+    connect(qGuiApp, &QGuiApplication::screenRemoved, this, &MainWindow::screensChanged);
     // Panel sets of the Edit page and panel sizes (remembered per page, MainWindow::applySizes)
     QMenu* panels = workspace->addMenu(T("Bereiche"));
     makeAction(panels, "panels_standard", T("Standard (Medienpool, Inspektor)"), QKeySequence(),

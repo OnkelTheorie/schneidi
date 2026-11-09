@@ -45,6 +45,7 @@
 #include "ui/MediaPool.h"
 #include "ui/MulticamView.h"
 #include "ui/FullScreenViewer.h"
+#include "ui/SecondScreen.h"
 #include "ui/Viewer.h"
 #include "ui/comp/CompOverlay.h"
 #include "ui/comp/CompPage.h"
@@ -80,7 +81,9 @@
 #include <QPushButton>
 #include <QScrollBar>
 #include <QSettings>
+#include <QScreen>
 #include <QShortcut>
+#include <QStatusBar>
 #include <QInputDialog>
 #include <QStandardPaths>
 #include <QTimer>
@@ -358,6 +361,7 @@ void MainWindow::updatePageButtons()
 void MainWindow::showPage(Page page)
 {
     setViewerLarge(false); // the page's own layout first, then the switch
+    restoreViewerArea();   // the viewer moves to the new page's place: closed up there again at the end
     const Page before = m_page;
     m_page = page;
     if (before == Page::Comp && page != Page::Comp && m_compPage) { // the Color page's windows over the viewer again
@@ -438,6 +442,7 @@ void MainWindow::showPage(Page page)
     m_inspectorToggle->setEnabled(edit);
     m_mixerToggle->setEnabled(edit);
     m_transcriptToggle->setEnabled(edit);
+    updateViewerArea();
 }
 
 void MainWindow::watchSizes(QSplitter* s, const QString& name)
@@ -502,6 +507,7 @@ void MainWindow::updateLeftColumn()
 
 void MainWindow::setViewerLarge(bool on)
 {
+    if (on && m_viewerAway.active) on = false; // no viewer in the window to enlarge (second monitor)
     if (on != m_large.active) {
         if (!on) {
             // Back as it was: the panels it hid, then the sizes (no splitterMoved: the saved layout stays as it is)
@@ -601,6 +607,29 @@ void MainWindow::setViewerLarge(bool on)
     if (m_largeEscape) m_largeEscape->setEnabled(m_large.active && !(m_voiceover && m_voiceover->recording()));
 }
 
+namespace {
+
+// The keys of these window actions work in the preview's own windows too (full screen, second monitor): an action's
+// window shortcut counts in every window it is added to
+QList<QAction*> previewWindowActions()
+{
+    QList<QAction*> out;
+    for (const char* id : {"play_pause", "shuttle_back", "stop", "shuttle_fwd", "frame_prev", "frame_next", "second_prev",
+                           "second_next", "edit_prev", "edit_next", "go_start", "go_end", "mark_in", "mark_out"})
+        if (QAction* a = InputBindings::instance().action(id)) out << a;
+    return out;
+}
+
+QVector<SecondScreenPlan::Screen> screenList(const QScreen* without = nullptr)
+{
+    QVector<SecondScreenPlan::Screen> out;
+    for (QScreen* s : QGuiApplication::screens())
+        if (s != without) out.append({s->name(), s->geometry()});
+    return out;
+}
+
+} // namespace
+
 void MainWindow::setViewerFullScreen(bool on)
 {
     if (on && !m_fullScreen) {
@@ -608,23 +637,21 @@ void MainWindow::setViewerFullScreen(bool on)
         connect(m_fullScreen, &FullScreenViewer::exitRequested, this, [this] { setViewerFullScreen(false); });
         // The keys of these window actions work in the full-screen window too (an action's window shortcut counts in
         // every window it is added to)
-        for (const char* id : {"play_pause", "shuttle_back", "stop", "shuttle_fwd", "frame_prev", "frame_next",
-                               "second_prev", "second_next", "edit_prev", "edit_next", "go_start", "go_end", "mark_in",
-                               "mark_out", "viewer_full_screen"})
-            if (QAction* a = InputBindings::instance().action(id)) m_fullScreen->addAction(a);
+        m_fullScreen->addActions(previewWindowActions());
+        if (QAction* a = InputBindings::instance().action("viewer_full_screen")) m_fullScreen->addAction(a);
         m_focusBeforeFullScreen = QApplication::focusWidget();
         m_fullScreen->showOn(screen());
         // Belongs to the main window for the window manager (no own taskbar entry, stays with it) - set after the
         // first show, the parentless window's surface is fixed by then (FullScreenViewer.h)
         if (QWindow* w = m_fullScreen->windowHandle()) w->setTransientParent(windowHandle());
         // The picture as sharp as the screen (the viewer's small preview enlarged looked soft), rendered no larger
-        m_engine->setPreviewEdge(m_fullScreen->wantedPreviewEdge());
-        connect(m_fullScreen, &FullScreenViewer::previewEdgeWanted, m_engine, &Engine::setPreviewEdge);
+        updatePreviewEdge();
+        connect(m_fullScreen, &FullScreenViewer::previewEdgeWanted, this, &MainWindow::updatePreviewEdge);
     } else if (!on && m_fullScreen) {
         FullScreenViewer* fs = std::exchange(m_fullScreen, nullptr);
         fs->hide();
         fs->deleteLater();
-        m_engine->setPreviewEdge(0); // back to the viewer's own size
+        updatePreviewEdge(); // back to the viewer's own size (or the second monitor's)
         raise();
         activateWindow();
         // Without a parent nothing hands the focus back: the main window's focus widget stayed unfocused
@@ -636,4 +663,124 @@ void MainWindow::setViewerFullScreen(bool on)
 FullScreenViewer* MainWindow::fullScreenViewer() const
 {
     return m_fullScreen;
+}
+
+void MainWindow::updatePreviewEdge()
+{
+    int edge = 0;
+    if (m_fullScreen) edge = m_fullScreen->wantedPreviewEdge();
+    if (m_output) edge = std::max(edge, m_output->wantedPreviewEdge());
+    m_engine->setPreviewEdge(edge);
+}
+
+void MainWindow::moveViewerToNextScreen()
+{
+    m_screenPlan.setScreens(screenList());
+    const QString next = m_screenPlan.next(screen() ? screen()->name() : QString());
+    QScreen* target = nullptr;
+    for (QScreen* s : QGuiApplication::screens())
+        if (s->name() == next) target = s;
+    if (!target && !m_output) statusBar()->showMessage(T("Kein zweiter Monitor gefunden."), 5000);
+    showPreviewOn(target);
+}
+
+void MainWindow::showPreviewOn(QScreen* screen)
+{
+    if (m_output) {
+        PreviewOutput* old = std::exchange(m_output, nullptr);
+        old->disconnect(this);
+        delete old; // hides its window at once (a removed monitor: before Qt moves it over the main window)
+    }
+    if (screen) {
+        auto* out = new ScreenOutput(m_engine, screen, m_programFrame.isNull() ? m_viewer->picture() : m_programFrame, this);
+        out->addActions(previewWindowActions());
+        if (m_secondScreenAction) out->addActions({m_secondScreenAction});
+        // Deleted later by showPreviewOn: lost() may come from inside its own window's event
+        connect(out, &PreviewOutput::lost, this, [this, out] {
+            if (m_output != out) return;
+            m_output = nullptr;
+            out->disconnect(this);
+            out->deleteLater();
+            showPreviewOn(nullptr);
+        });
+        connect(out, &PreviewOutput::previewEdgeWanted, this, &MainWindow::updatePreviewEdge);
+        m_output = out;
+        m_screenPlan.setScreens(screenList());
+        m_screenPlan.setTarget(screen->name());
+        statusBar()->showMessage(T("Vorschau auf %1").arg(screen->name()), 4000);
+    } else {
+        m_screenPlan.setTarget({});
+    }
+    updateViewerArea();
+    updatePreviewEdge();
+    if (m_secondScreenAction) m_secondScreenAction->setChecked(m_output != nullptr);
+}
+
+void MainWindow::screensChanged(QScreen* removed)
+{
+    // A screen coming never moves the preview; one going takes it back into the window (ScreenOutput says lost() too)
+    if (m_screenPlan.setScreens(screenList(removed)) && m_output) showPreviewOn(nullptr);
+}
+
+void MainWindow::feedPreviewOutput(const QImage& frame)
+{
+    const bool source = m_engine->mode() == Engine::Mode::Source;
+    if (!source) m_programFrame = frame; // shared, not copied
+    if (m_output && !SecondScreenPlan::holdsTimeline(m_secondScreenMode, source))
+        m_output->showFrame(frame, m_engine->frameSize());
+}
+
+void MainWindow::setSecondScreenMode(SecondScreenPlan::Mode mode)
+{
+    if (mode == m_secondScreenMode) return;
+    m_secondScreenMode = mode;
+    if (!m_autosaveDisabled) SecondScreenPlan::storeMode(mode);
+    updateViewerArea();
+    // Now the source belongs onto the monitor too (or no longer): the current picture
+    if (m_output) m_output->showFrame(SecondScreenPlan::holdsTimeline(mode, m_engine->mode() == Engine::Mode::Source)
+                                          ? m_programFrame : m_viewer->picture(),
+                                      m_engine->frameSize());
+}
+
+void MainWindow::updateViewerArea()
+{
+    const bool inWindow = SecondScreenPlan::viewerInWindow(m_secondScreenMode, m_output != nullptr);
+    if (inWindow == !m_viewerAway.active) return;
+    if (inWindow) restoreViewerArea();
+    else hideViewerArea();
+}
+
+void MainWindow::hideViewerArea()
+{
+    if (m_viewerAway.active) return;
+    setViewerLarge(false);
+    m_viewerAway.active = true;
+    // The viewer, and every splitter it leaves without a visible widget (the Edit page's top row with the side panels
+    // off): the room goes to what is left beside/below it - the timeline keeps its zoom and scroll (core rule)
+    QWidget* gone = m_viewer;
+    while (auto* s = qobject_cast<QSplitter*>(gone->parentWidget())) {
+        m_viewerAway.sizes.append({s, s->sizes()});
+        gone->hide();
+        m_viewerAway.hidden << gone;
+        bool others = false;
+        for (int i = 0; i < s->count(); ++i)
+            others = others || (s->widget(i) != gone && !s->widget(i)->isHidden());
+        if (others) break;
+        gone = s;
+    }
+    if (m_viewerAway.hidden.isEmpty()) { // not in a splitter (not built yet)
+        m_viewer->hide();
+        m_viewerAway.hidden << m_viewer;
+    }
+}
+
+void MainWindow::restoreViewerArea()
+{
+    if (!m_viewerAway.active) return;
+    const ViewerAway was = std::exchange(m_viewerAway, {});
+    for (const QPointer<QWidget>& w : was.hidden)
+        if (w) w->show();
+    // Outer splitters first (see setViewerLarge: an inner one restored first is scaled again)
+    for (auto it = was.sizes.crbegin(); it != was.sizes.crend(); ++it)
+        if (it->first) it->first->setSizes(it->second);
 }

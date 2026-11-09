@@ -12,7 +12,7 @@
 #include <algorithm>
 #include <climits>
 
-FullScreenViewer::FullScreenViewer(Engine* engine, const QImage& picture)
+FullScreenViewer::FullScreenViewer(Engine* engine, const QImage& picture, bool followEngine)
     : QWidget(nullptr, Qt::Window | Qt::FramelessWindowHint)
 {
     setObjectName("FullScreenViewer");
@@ -29,12 +29,8 @@ FullScreenViewer::FullScreenViewer(Engine* engine, const QImage& picture)
     auto* lay = new QVBoxLayout(this);
     lay->setContentsMargins(0, 0, 0, 0);
     lay->addWidget(m_view);
-    connect(engine, &Engine::frameReady, this, [this, engine](const QImage& img) {
-        const bool other = m_view->frameSize() != engine->frameSize(); // project format changed
-        m_view->setFrameSize(engine->frameSize());
-        m_view->setFrame(img);
-        if (other) emit previewEdgeWanted(wantedPreviewEdge());
-    });
+    if (followEngine)
+        connect(engine, &Engine::frameReady, this, [this, engine](const QImage& img) { setPicture(img, engine->frameSize()); });
     connect(m_view, &FrameView::zoomChanged, this, [this] { emit previewEdgeWanted(wantedPreviewEdge()); });
     m_hideCursor.setSingleShot(true);
     m_hideCursor.setInterval(1500);
@@ -45,16 +41,27 @@ FullScreenViewer::FullScreenViewer(Engine* engine, const QImage& picture)
     });
 }
 
-void FullScreenViewer::showOn(QScreen* screen)
+void FullScreenViewer::setPicture(const QImage& picture, const QSize& frameSize)
+{
+    const bool other = m_view->frameSize() != frameSize; // project format changed
+    m_view->setFrameSize(frameSize);
+    m_view->setFrame(picture);
+    if (other) emit previewEdgeWanted(wantedPreviewEdge());
+}
+
+void FullScreenViewer::showOn(QScreen* screen, bool activate)
 {
     if (screen) {
         setScreen(screen); // not winId() + windowHandle()->setScreen(): see the header (native window)
         setGeometry(screen->geometry()); // also without a window manager that knows full screen
     }
+    if (!activate) setAttribute(Qt::WA_ShowWithoutActivating);
     showFullScreen();
-    raise();
-    activateWindow();
-    setFocus();
+    if (activate) {
+        raise();
+        activateWindow();
+        setFocus();
+    }
     m_hideCursor.start();
 }
 

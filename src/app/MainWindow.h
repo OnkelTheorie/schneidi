@@ -9,9 +9,11 @@
 #include "core/Types.h"
 
 #include <QElapsedTimer>
+#include "ui/SecondScreen.h"
 #include "ui/timeline/ViewState.h"
 
 #include <QHash>
+#include <QImage>
 #include <QLockFile>
 #include <QMainWindow>
 #include <QPointer>
@@ -200,6 +202,18 @@ public:
     // Playback goes on across the switch.
     void setViewerFullScreen(bool on);
     class FullScreenViewer* fullScreenViewer() const; // nullptr while it is off
+    // Preview on a second monitor (Workspace menu, Ctrl+Shift+F; ui/SecondScreen, MainWindowLayout.cpp): the key moves
+    // it to the next monitor other than the one the main window is on, after the last one back into the window (two
+    // monitors: on/off). Full screen there, letterboxed; it does not take the keyboard focus. The main window keeps
+    // the viewer's area for source clips or closes it up (Settings: secondScreenMode). An unplugged monitor brings it
+    // back into the window; plugging one in never moves it by itself. Timeline zoom/scroll stay untouched.
+    void moveViewerToNextScreen();
+    // The preview on `screen` (nullptr = back into the main window). Any screen, also the main window's own (tests)
+    void showPreviewOn(class QScreen* screen);
+    class PreviewOutput* previewOutput() const { return m_output; }
+    void setSecondScreenMode(SecondScreenPlan::Mode mode);
+    SecondScreenPlan::Mode secondScreenMode() const { return m_secondScreenMode; }
+    const SecondScreenPlan& screenPlan() const { return m_screenPlan; }
 
 protected:
     bool eventFilter(QObject* obj, QEvent* event) override;
@@ -412,6 +426,23 @@ private:
     QAction* m_fullScreenAction = nullptr;
     QPointer<class FullScreenViewer> m_fullScreen; // while the full-screen viewer is on
     QPointer<QWidget> m_focusBeforeFullScreen;      // gets the keyboard focus back when it ends
+    // Second monitor (MainWindowLayout.cpp)
+    void screensChanged(class QScreen* removed); // the plan learns the screens; the preview comes back if its went
+    void feedPreviewOutput(const QImage& frame);
+    void updatePreviewEdge(); // the largest wish of the full-screen viewer and the output (Engine::setPreviewEdge)
+    void hideViewerArea();    // the viewer and the splitters left empty by it go, their sizes are remembered
+    void restoreViewerArea(); // back as it was before hideViewerArea
+    void updateViewerArea();  // hidden or back, as the mode and the output say
+    QAction* m_secondScreenAction = nullptr;
+    QPointer<class PreviewOutput> m_output;
+    SecondScreenPlan m_screenPlan;
+    SecondScreenPlan::Mode m_secondScreenMode = SecondScreenPlan::storedMode();
+    QImage m_programFrame; // the engine's last frame not of a source clip (the output starts with it)
+    struct ViewerAway {
+        bool active = false;
+        QVector<QPointer<QWidget>> hidden;                     // the viewer, then the splitters left empty
+        QVector<QPair<QPointer<QSplitter>, QList<int>>> sizes; // their sizes before, innermost first
+    } m_viewerAway;
 
     QHash<QString, MediaInfo> m_probeCache;
     QHash<QString, int> m_sourcePos; // source playhead per file (this session only)
