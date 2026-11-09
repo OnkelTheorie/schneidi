@@ -1817,7 +1817,7 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
             }
             // Teamkills (review 9.11.: a teamkill counted as a kill): long lines "killer  weapon  victim" with the
             // names in team colours (T yellow, CT blue). A at 1 s: T kills CT, a kill. B at 1.6 s: T kills T, a
-            // teamkill inside A's moment (lowers its score). C at 4 s: CT kills CT, a teamkill on its own (no moment)
+            // teamkill inside A's moment (lowers its score). C at 4 s: T kills T again, a teamkill on its own (no moment)
             const auto named = [](int y, const QString& when, const QString& killer, const QString& victim) {
                 return QString("drawbox=x=1510:y=%1:w=400:h=31:c=0x181818:t=fill:enable='%2',"
                                "drawbox=x=1510:y=%1:w=400:h=31:c=0xd8444a:t=1:enable='%2',"
@@ -1834,7 +1834,7 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
                 dir.filePath("cs2_teamkill.mkv"),
                 {"-f", "lavfi", "-i",
                  "color=c=0x707070:s=1920x1080:d=6:r=25," + named(74, "gte(t,1)", t, ct) + ","
-                     + named(108, "gte(t,1.6)", t, t) + "," + named(142, "gte(t,4)", ct, ct),
+                     + named(108, "gte(t,1.6)", t, t) + "," + named(142, "gte(t,4)", t, t),
                  "-c:v", "ffv1", "-pix_fmt", "bgr0"});
             const QJsonObject ht = run("highlights", {{"file", team}});
             if (CHECK_EQ(ht["candidates"].toArray().size(), 1)) {
@@ -1851,6 +1851,19 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
                 CHECK(std::abs(ht["teamkills"][1].toDouble() - 4.0) < 0.15);
             }
             CHECK(ht["teamkills_note"].isString());
+            // Deathmatch: the player comes back in the other team's colours, every line is a kill (T kills T, then CT
+            // kills CT)
+            const QString dm = Check::makeMedia(
+                dir.filePath("cs2_deathmatch.mkv"),
+                {"-f", "lavfi", "-i",
+                 "color=c=0x707070:s=1920x1080:d=5:r=25," + named(74, "gte(t,1)", t, t) + ","
+                     + named(108, "gte(t,2.5)", ct, ct),
+                 "-c:v", "ffv1", "-pix_fmt", "bgr0"});
+            const QJsonObject hd = run("highlights", {{"file", dm}});
+            int dmKills = 0;
+            for (const QJsonValue& c : hd["candidates"].toArray()) dmKills += c["kills"].toInt();
+            CHECK_EQ(dmKills, 2);
+            CHECK(!hd.contains("teamkills"));
         }
         // Without sound: the frame the line began to show
         if (const QJsonObject c = hl["candidates"][0].toObject(); CHECK(c["hit_s"].isArray())) {
