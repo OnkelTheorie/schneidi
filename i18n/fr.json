@@ -2911,5 +2911,13 @@
  "Rundgang Farbe starten": "Lancer la visite Couleur",
  "Unten wechselst du die Seiten. Wenn du fertig bist: Geh unten auf Export und render dein Video.": "En bas, tu changes de page. Quand tu as fini : va en bas sur Export et fais le rendu de ta vidéo.",
  "Schneiden: {key:split} teilt den Clip am Abspielkopf. Oder nimm das Klingen-Werkzeug ({key:tool_blade}) und klick auf den Clip. Probier es aus!": "Couper : {key:split} coupe le clip à la tête de lecture. Ou prends le Mode lame ({key:tool_blade}) et clique sur le clip. Essaie !",
- "Wähl eine Vorlage, etwa YouTube, und klick auf „Zur Render-Warteschlange hinzufügen“. „Alle rendern“ speichert dann dein Video.": "Choisis un préréglage, par exemple YouTube, et clique sur « Ajouter à la file de rendu ». « Tout rendre » enregistre ensuite ta vidéo."
+ "Wähl eine Vorlage, etwa YouTube, und klick auf „Zur Render-Warteschlange hinzufügen“. „Alle rendern“ speichert dann dein Video.": "Choisis un préréglage, par exemple YouTube, et clique sur « Ajouter à la file de rendu ». « Tout rendre » enregistre ensuite ta vidéo.",
+ "In/Out setzen": "Définir entrée/sortie",
+ "In-Punkt %1 – Länge %2": "Entrée %1 – durée %2",
+ "In-Punkt %1": "Entrée %1",
+ "Out-Punkt %1 – Länge %2": "Sortie %1 – durée %2",
+ "Out-Punkt %1": "Sortie %1",
+ "In/Out %1 – %2, Länge %3": "Entrée/sortie %1 – %2, durée %3",
+ "In-Punkt hier setzen": "Marquer l’entrée ici",
+ "Out-Punkt hier setzen": "Marquer la sortie ici"
 }

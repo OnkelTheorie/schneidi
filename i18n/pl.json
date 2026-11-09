@@ -2911,5 +2911,13 @@
  "Rundgang Farbe starten": "Rozpocznij przewodnik po kolorze",
  "Unten wechselst du die Seiten. Wenn du fertig bist: Geh unten auf Export und render dein Video.": "Na dole przełączasz strony. Gdy skończysz: przejdź na dole do Eksportu i wyrenderuj film.",
  "Schneiden: {key:split} teilt den Clip am Abspielkopf. Oder nimm das Klingen-Werkzeug ({key:tool_blade}) und klick auf den Clip. Probier es aus!": "Cięcie: {key:split} dzieli klip w miejscu głowicy. Albo weź Narzędzie brzytwy ({key:tool_blade}) i kliknij klip. Spróbuj!",
- "Wähl eine Vorlage, etwa YouTube, und klick auf „Zur Render-Warteschlange hinzufügen“. „Alle rendern“ speichert dann dein Video.": "Wybierz szablon, na przykład YouTube, i kliknij „Dodaj do kolejki renderowania”. „Renderuj wszystkie” zapisze potem film."
+ "Wähl eine Vorlage, etwa YouTube, und klick auf „Zur Render-Warteschlange hinzufügen“. „Alle rendern“ speichert dann dein Video.": "Wybierz szablon, na przykład YouTube, i kliknij „Dodaj do kolejki renderowania”. „Renderuj wszystkie” zapisze potem film.",
+ "In/Out setzen": "Ustaw wejście/wyjście",
+ "In-Punkt %1 – Länge %2": "Wejście %1 – długość %2",
+ "In-Punkt %1": "Wejście %1",
+ "Out-Punkt %1 – Länge %2": "Wyjście %1 – długość %2",
+ "Out-Punkt %1": "Wyjście %1",
+ "In/Out %1 – %2, Länge %3": "Wejście/wyjście %1 – %2, długość %3",
+ "In-Punkt hier setzen": "Ustaw tu punkt wejścia",
+ "Out-Punkt hier setzen": "Ustaw tu punkt wyjścia"
 }

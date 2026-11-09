@@ -14,6 +14,7 @@
 class Editor;
 class MediaCache;
 namespace Voiceover { class LiveTake; }
+class QMenu;
 class QLineEdit;
 class QMimeData;
 class QTimer;
@@ -205,7 +206,7 @@ private:
     };
     enum class Drag { None, Scrub, MaybeMove, Move, Trim, TrimEdit, Volume, TransitionLength, Fade, Keyframe,
                       CueMaybeMove, CueMove, CueTrim, SpeedPoint, CurvePoint, CurveHandle,
-                      TrackMaybeMove, TrackMove, Rubber, SectionEdge };
+                      TrackMaybeMove, TrackMove, Rubber, SectionEdge, Marks };
     // Retime bar: speed point (point >= 0) or section (segment >= 0) under the mouse
     struct RetimeHit {
         int clipId = 0;
@@ -337,6 +338,23 @@ private:
     int m_sectionDrag = -1;   // index of the dragged section
     bool m_sectionLeft = false; // its left edge (else the right one)
     int m_sectionDrags = 0;     // counts the drags: each one is its own undo step
+    // In/Out range in the ruler (I/O): a handle at each edge drags that point, the lower half of the range moves the
+    // whole range, Alt-drag on the ruler draws a new one; snapping (playhead, clip edges, markers) unless Shift.
+    // Right-click: In/Out here, remove. Tooltip: timecode and length. One undo step per drag. TimelineMarks.cpp
+    enum class MarkGrab { None, In, Out, Range, Create };
+    MarkGrab markGrabAt(const QPoint& pos) const; // In/Out handle or the range's lower half (no Create)
+    void drawMarks(QPainter& p);
+    bool marksPress(const QPoint& pos, Qt::KeyboardModifiers mods); // false = nothing to grab (the ruler scrubs)
+    void marksDrag(const QPoint& pos, Qt::KeyboardModifiers mods);
+    void marksRelease();
+    int marksSnap(const QVector<int>& edges, Qt::KeyboardModifiers mods) const; // correction, 0 = none
+    QString marksToolTip(MarkGrab grab) const;
+    void addMarksActions(QMenu& menu, int frame);
+    MarkGrab m_markGrab = MarkGrab::None;  // what the running drag holds
+    MarkGrab m_markHover = MarkGrab::None; // what the mouse is over (highlighted)
+    bool m_markMoved = false;              // the drag went past kDragStartPx (else a click: the playhead jumps)
+    int m_markStartIn = -1, m_markStartOut = -1, m_markAnchor = 0;
+    int m_markDrags = 0; // counts the drags: each one is its own undo step
     void drawTracks(QPainter& p);
     // spans: audio transitions of the track (waveform follows the crossfade); color: track color (invalid = default)
     void drawClip(QPainter& p, const QRect& r, const Clip& c, TrackKind kind, bool selected, bool ghost,

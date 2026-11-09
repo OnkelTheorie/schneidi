@@ -2911,5 +2911,13 @@
  "Rundgang Farbe starten": "Начать тур по цвету",
  "Unten wechselst du die Seiten. Wenn du fertig bist: Geh unten auf Export und render dein Video.": "Внизу переключаются страницы. Когда закончите: откройте внизу Экспорт и отрендерите видео.",
  "Schneiden: {key:split} teilt den Clip am Abspielkopf. Oder nimm das Klingen-Werkzeug ({key:tool_blade}) und klick auf den Clip. Probier es aus!": "Разрезка: {key:split} делит клип в месте указателя. Или возьмите инструмент «Лезвие» ({key:tool_blade}) и щёлкните по клипу. Попробуйте!",
- "Wähl eine Vorlage, etwa YouTube, und klick auf „Zur Render-Warteschlange hinzufügen“. „Alle rendern“ speichert dann dein Video.": "Выберите шаблон, например YouTube, и нажмите «Добавить в очередь рендеринга». «Рендерить все» затем сохранит видео."
+ "Wähl eine Vorlage, etwa YouTube, und klick auf „Zur Render-Warteschlange hinzufügen“. „Alle rendern“ speichert dann dein Video.": "Выберите шаблон, например YouTube, и нажмите «Добавить в очередь рендеринга». «Рендерить все» затем сохранит видео.",
+ "In/Out setzen": "Задать вход/выход",
+ "In-Punkt %1 – Länge %2": "Вход %1 – длина %2",
+ "In-Punkt %1": "Вход %1",
+ "Out-Punkt %1 – Länge %2": "Выход %1 – длина %2",
+ "Out-Punkt %1": "Выход %1",
+ "In/Out %1 – %2, Länge %3": "Вход/выход %1 – %2, длина %3",
+ "In-Punkt hier setzen": "Поставить вход здесь",
+ "Out-Punkt hier setzen": "Поставить выход здесь"
 }

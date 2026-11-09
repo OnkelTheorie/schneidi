@@ -2911,5 +2911,13 @@
  "Rundgang Farbe starten": "Start the Color Tour",
  "Unten wechselst du die Seiten. Wenn du fertig bist: Geh unten auf Export und render dein Video.": "At the bottom you switch pages. When you are done: go to Deliver at the bottom and render your video.",
  "Schneiden: {key:split} teilt den Clip am Abspielkopf. Oder nimm das Klingen-Werkzeug ({key:tool_blade}) und klick auf den Clip. Probier es aus!": "Cutting: {key:split} splits the clip at the playhead. Or take Blade Edit Mode ({key:tool_blade}) and click on the clip. Try it!",
- "Wähl eine Vorlage, etwa YouTube, und klick auf „Zur Render-Warteschlange hinzufügen“. „Alle rendern“ speichert dann dein Video.": "Choose a preset, for example YouTube, and click “Add to Render Queue”. “Render All” then saves your video."
+ "Wähl eine Vorlage, etwa YouTube, und klick auf „Zur Render-Warteschlange hinzufügen“. „Alle rendern“ speichert dann dein Video.": "Choose a preset, for example YouTube, and click “Add to Render Queue”. “Render All” then saves your video.",
+ "In/Out setzen": "Set In/Out",
+ "In-Punkt %1 – Länge %2": "In %1 – length %2",
+ "In-Punkt %1": "In %1",
+ "Out-Punkt %1 – Länge %2": "Out %1 – length %2",
+ "Out-Punkt %1": "Out %1",
+ "In/Out %1 – %2, Länge %3": "In/Out %1 – %2, length %3",
+ "In-Punkt hier setzen": "Mark In here",
+ "Out-Punkt hier setzen": "Mark Out here"
 }

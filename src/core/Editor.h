@@ -229,9 +229,12 @@ public:
     // Is the clip linked to another clip (sound, picture), not only to its own kill feed copies?
     bool hasPartner(int id) const;
     void toggleMarker(int frame);
-    // In/out point (I/O like DaVinci); -1 = remove. If out is before in, the other point is discarded.
+    // In/out point (I/O); -1 = remove. If out is before in, the other point is discarded.
     void setMarkIn(int frame);
     void setMarkOut(int frame);
+    // Both points at once (the ruler's handles: drag an edge, move the range, Alt-drag a new one). Out is the last
+    // frame inside the range and is clamped to >= in; -1 leaves that point unset. mergeKey: one undo step per drag.
+    void setMarks(int in, int out, const QString& mergeKey = {});
     void clearMarks();
 
     // Transitions (Cross Dissolve, Ctrl+T) with default length 1 s: at both edges of the selected clips,
