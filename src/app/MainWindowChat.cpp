@@ -30,12 +30,8 @@ namespace {
 // The model answers in the language of the interface
 QString languageName(const QString& code)
 {
-    static const QHash<QString, QString> names{{"de", "German"}, {"en", "English"}, {"es", "Spanish"},
-                                               {"fr", "French"}, {"pl", "Polish"},  {"ru", "Russian"}};
-    if (names.contains(code)) return names.value(code);
-    for (const I18n::Language& l : I18n::languages())
-        if (l.code == code) return l.name;
-    return "English";
+    const QString name = code == "en" ? QStringLiteral("English") : I18n::englishName(code);
+    return name.isEmpty() || name == "C" ? QStringLiteral("English") : name;
 }
 
 constexpr int kChatWidth = 380;

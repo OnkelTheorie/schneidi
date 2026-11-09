@@ -22,8 +22,13 @@ int main(int argc, char** argv)
     CHECK_EQ(codes.value(0), QString("de"));
     for (const char* code : {"en", "es", "fr", "pl", "ru"}) CHECK(codes.contains(code));
     CHECK(names.contains("English"));
-    CHECK(names.contains("Polski"));
-    CHECK(names.contains("Русский"));
+    // The name in the language itself, then in English
+    CHECK(names.contains("Deutsch (German)"));
+    CHECK(names.contains("Polski (Polish)"));
+    CHECK(names.contains("Русский (Russian)"));
+    CHECK_EQ(I18n::displayName("ja"), QString("日本語 (Japanese)"));
+    CHECK_EQ(I18n::displayName("pt"), QString("Português (Portuguese, Brazil)"));
+    CHECK_EQ(I18n::displayName("zh"), QString("简体中文 (Chinese, Simplified)"));
 
     const char* hint = "Die Sprache ändert sich nach dem Neustart von schneidi.";
     CHECK_EQ(I18n::translate("de", hint), QString(hint));
