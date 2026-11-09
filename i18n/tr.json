@@ -2937,5 +2937,13 @@
  "%1 ist jetzt kürzer: 1 Clip reicht über sein Ende hinaus": "%1 artık daha kısa: 1 klip sonunun ötesine uzanıyor",
  "%1 ist jetzt kürzer: %2 Clips reichen über sein Ende hinaus": "%1 artık daha kısa: %2 klip sonunun ötesine uzanıyor",
  "Stimme gesäubert (%1 Clips) – Strg+Z nimmt es zurück": "Ses temizlendi (%1 klip) – Ctrl+Z geri alır",
- "Nichts zu säubern: wähl Tonclips aus oder leg sie auf die Spur A%1": "Temizlenecek bir şey yok: ses kliplerini seç ya da A%1 izine koy"
+ "Nichts zu säubern: wähl Tonclips aus oder leg sie auf die Spur A%1": "Temizlenecek bir şey yok: ses kliplerini seç ya da A%1 izine koy",
+ "An: Clips mit Bild kommen ohne ihren Ton in die Timeline (Ziehen, Einfügen, F9–F12). Einmalig: beim Ziehen Shift = nur Bild, Strg = nur Ton": "Açık: görüntülü klipler timeline'a sesleri olmadan girer (sürükleme, ekleme, F9–F12). Tek seferlik: sürüklerken Shift = yalnızca görüntü, Ctrl = yalnızca ses",
+ "Nur Bild am Abspielkopf platzieren": "Yalnızca görüntüyü oynatma kafasına yerleştir",
+ "Nur Ton am Abspielkopf platzieren": "Yalnızca sesi oynatma kafasına yerleştir",
+ "Ohne Bild – auch: beim Ziehen in die Timeline Strg halten": "Görüntüsüz – timeline'a sürüklerken Ctrl basılı tutmak da olur",
+ "Ohne Ton – auch: beim Ziehen in die Timeline Shift halten": "Sessiz – timeline'a sürüklerken Shift basılı tutmak da olur",
+ "Ton beim Einfügen weglassen": "Eklerken sesi dışarıda bırak",
+ "Ziehen: nur das Bild in die Timeline, ohne Ton": "Sürükle: yalnızca görüntüyü timeline'a, ses olmadan",
+ "Ziehen: nur den Ton in die Timeline, ohne Bild": "Sürükle: yalnızca sesi timeline'a, görüntü olmadan"
 }

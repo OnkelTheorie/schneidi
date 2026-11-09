@@ -2937,5 +2937,13 @@
  "%1 ist jetzt kürzer: 1 Clip reicht über sein Ende hinaus": "%1 sekarang lebih pendek: 1 klip melewati akhirnya",
  "%1 ist jetzt kürzer: %2 Clips reichen über sein Ende hinaus": "%1 sekarang lebih pendek: %2 klip melewati akhirnya",
  "Stimme gesäubert (%1 Clips) – Strg+Z nimmt es zurück": "Suara dibersihkan (%1 klip) – Ctrl+Z membatalkannya",
- "Nichts zu säubern: wähl Tonclips aus oder leg sie auf die Spur A%1": "Tidak ada yang perlu dibersihkan: pilih klip suara atau taruh di trek A%1"
+ "Nichts zu säubern: wähl Tonclips aus oder leg sie auf die Spur A%1": "Tidak ada yang perlu dibersihkan: pilih klip suara atau taruh di trek A%1",
+ "An: Clips mit Bild kommen ohne ihren Ton in die Timeline (Ziehen, Einfügen, F9–F12). Einmalig: beim Ziehen Shift = nur Bild, Strg = nur Ton": "Aktif: klip bergambar masuk ke timeline tanpa audionya (seret, sisip, F9–F12). Sekali saja: saat menyeret Shift = hanya gambar, Ctrl = hanya audio",
+ "Nur Bild am Abspielkopf platzieren": "Taruh hanya gambar di playhead",
+ "Nur Ton am Abspielkopf platzieren": "Taruh hanya audio di playhead",
+ "Ohne Bild – auch: beim Ziehen in die Timeline Strg halten": "Tanpa gambar – atau tahan Ctrl saat menyeret ke timeline",
+ "Ohne Ton – auch: beim Ziehen in die Timeline Shift halten": "Tanpa audio – atau tahan Shift saat menyeret ke timeline",
+ "Ton beim Einfügen weglassen": "Abaikan audio saat menyisipkan",
+ "Ziehen: nur das Bild in die Timeline, ohne Ton": "Seret: hanya gambar ke timeline, tanpa audio",
+ "Ziehen: nur den Ton in die Timeline, ohne Bild": "Seret: hanya audio ke timeline, tanpa gambar"
 }

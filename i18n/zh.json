@@ -2937,5 +2937,13 @@
  "%1 ist jetzt kürzer: 1 Clip reicht über sein Ende hinaus": "%1 现在更短了:有 1 个片段超出其结尾",
  "%1 ist jetzt kürzer: %2 Clips reichen über sein Ende hinaus": "%1 现在更短了:有 %2 个片段超出其结尾",
  "Stimme gesäubert (%1 Clips) – Strg+Z nimmt es zurück": "人声已净化(%1 个片段)― Ctrl+Z 可撤销",
- "Nichts zu säubern: wähl Tonclips aus oder leg sie auf die Spur A%1": "没有可净化的内容:请选择声音片段,或把它们放到轨道 A%1 上"
+ "Nichts zu säubern: wähl Tonclips aus oder leg sie auf die Spur A%1": "没有可净化的内容:请选择声音片段,或把它们放到轨道 A%1 上",
+ "An: Clips mit Bild kommen ohne ihren Ton in die Timeline (Ziehen, Einfügen, F9–F12). Einmalig: beim Ziehen Shift = nur Bild, Strg = nur Ton": "开启：带画面的片段放入时间线时不带音频（拖动、插入、F9–F12）。单次：拖动时 Shift = 仅画面，Ctrl = 仅音频",
+ "Nur Bild am Abspielkopf platzieren": "仅在播放头放置画面",
+ "Nur Ton am Abspielkopf platzieren": "仅在播放头放置音频",
+ "Ohne Bild – auch: beim Ziehen in die Timeline Strg halten": "不带画面 – 也可在拖入时间线时按住 Ctrl",
+ "Ohne Ton – auch: beim Ziehen in die Timeline Shift halten": "不带音频 – 也可在拖入时间线时按住 Shift",
+ "Ton beim Einfügen weglassen": "插入时不带音频",
+ "Ziehen: nur das Bild in die Timeline, ohne Ton": "拖动：仅将画面放入时间线，不含音频",
+ "Ziehen: nur den Ton in die Timeline, ohne Bild": "拖动：仅将音频放入时间线，不含画面"
 }

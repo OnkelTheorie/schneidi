@@ -2937,5 +2937,13 @@
  "%1 ist jetzt kürzer: 1 Clip reicht über sein Ende hinaus": "%1이(가) 이제 더 짧아요: 클립 1개가 끝을 넘어가요",
  "%1 ist jetzt kürzer: %2 Clips reichen über sein Ende hinaus": "%1이(가) 이제 더 짧아요: 클립 %2개가 끝을 넘어가요",
  "Stimme gesäubert (%1 Clips) – Strg+Z nimmt es zurück": "목소리를 정리했어요 (클립 %1개) – Ctrl+Z로 되돌릴 수 있어요",
- "Nichts zu säubern: wähl Tonclips aus oder leg sie auf die Spur A%1": "정리할 게 없어요: 소리 클립을 선택하거나 트랙 A%1에 놓으세요"
+ "Nichts zu säubern: wähl Tonclips aus oder leg sie auf die Spur A%1": "정리할 게 없어요: 소리 클립을 선택하거나 트랙 A%1에 놓으세요",
+ "An: Clips mit Bild kommen ohne ihren Ton in die Timeline (Ziehen, Einfügen, F9–F12). Einmalig: beim Ziehen Shift = nur Bild, Strg = nur Ton": "켜짐: 영상이 있는 클립은 오디오 없이 타임라인에 들어가요 (드래그, 삽입, F9–F12). 한 번만: 드래그할 때 Shift = 영상만, Ctrl = 오디오만",
+ "Nur Bild am Abspielkopf platzieren": "재생 헤드에 영상만 배치",
+ "Nur Ton am Abspielkopf platzieren": "재생 헤드에 오디오만 배치",
+ "Ohne Bild – auch: beim Ziehen in die Timeline Strg halten": "영상 없이 – 타임라인으로 드래그할 때 Ctrl을 눌러도 돼요",
+ "Ohne Ton – auch: beim Ziehen in die Timeline Shift halten": "오디오 없이 – 타임라인으로 드래그할 때 Shift를 눌러도 돼요",
+ "Ton beim Einfügen weglassen": "삽입할 때 오디오 빼기",
+ "Ziehen: nur das Bild in die Timeline, ohne Ton": "드래그: 영상만 타임라인으로 (오디오 없이)",
+ "Ziehen: nur den Ton in die Timeline, ohne Bild": "드래그: 오디오만 타임라인으로 (영상 없이)"
 }

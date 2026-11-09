@@ -2937,5 +2937,13 @@
  "%1 ist jetzt kürzer: 1 Clip reicht über sein Ende hinaus": "%1 is nu korter: 1 clip reikt voorbij zijn einde",
  "%1 ist jetzt kürzer: %2 Clips reichen über sein Ende hinaus": "%1 is nu korter: %2 clips reiken voorbij zijn einde",
  "Stimme gesäubert (%1 Clips) – Strg+Z nimmt es zurück": "Stem opgeschoond (%1 clips) – Ctrl+Z maakt het ongedaan",
- "Nichts zu säubern: wähl Tonclips aus oder leg sie auf die Spur A%1": "Niets op te schonen: selecteer geluidsclips of zet ze op spoor A%1"
+ "Nichts zu säubern: wähl Tonclips aus oder leg sie auf die Spur A%1": "Niets op te schonen: selecteer geluidsclips of zet ze op spoor A%1",
+ "An: Clips mit Bild kommen ohne ihren Ton in die Timeline (Ziehen, Einfügen, F9–F12). Einmalig: beim Ziehen Shift = nur Bild, Strg = nur Ton": "Aan: clips met beeld komen zonder hun geluid in de timeline (slepen, invoegen, F9–F12). Eenmalig: bij het slepen Shift = alleen beeld, Ctrl = alleen geluid",
+ "Nur Bild am Abspielkopf platzieren": "Alleen beeld op de afspeelkop plaatsen",
+ "Nur Ton am Abspielkopf platzieren": "Alleen geluid op de afspeelkop plaatsen",
+ "Ohne Bild – auch: beim Ziehen in die Timeline Strg halten": "Zonder beeld – of houd Ctrl ingedrukt bij het slepen naar de timeline",
+ "Ohne Ton – auch: beim Ziehen in die Timeline Shift halten": "Zonder geluid – of houd Shift ingedrukt bij het slepen naar de timeline",
+ "Ton beim Einfügen weglassen": "Geluid weglaten bij invoegen",
+ "Ziehen: nur das Bild in die Timeline, ohne Ton": "Slepen: alleen het beeld naar de timeline, zonder geluid",
+ "Ziehen: nur den Ton in die Timeline, ohne Bild": "Slepen: alleen het geluid naar de timeline, zonder beeld"
 }

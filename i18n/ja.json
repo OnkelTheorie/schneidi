@@ -2937,5 +2937,13 @@
  "%1 ist jetzt kürzer: 1 Clip reicht über sein Ende hinaus": "%1 が短くなりました: 1 個のクリップが終端を超えています",
  "%1 ist jetzt kürzer: %2 Clips reichen über sein Ende hinaus": "%1 が短くなりました: %2 個のクリップが終端を超えています",
  "Stimme gesäubert (%1 Clips) – Strg+Z nimmt es zurück": "声をきれいにしました(%1 クリップ)― Ctrl+Z で元に戻せます",
- "Nichts zu säubern: wähl Tonclips aus oder leg sie auf die Spur A%1": "きれいにするものがありません: サウンドクリップを選択するか、トラック A%1 に置いてください"
+ "Nichts zu säubern: wähl Tonclips aus oder leg sie auf die Spur A%1": "きれいにするものがありません: サウンドクリップを選択するか、トラック A%1 に置いてください",
+ "An: Clips mit Bild kommen ohne ihren Ton in die Timeline (Ziehen, Einfügen, F9–F12). Einmalig: beim Ziehen Shift = nur Bild, Strg = nur Ton": "オン：映像のあるクリップは音声なしでタイムラインに入ります（ドラッグ、挿入、F9–F12）。一度だけ：ドラッグ中に Shift = 映像のみ、Ctrl = 音声のみ",
+ "Nur Bild am Abspielkopf platzieren": "再生ヘッドに映像のみを配置",
+ "Nur Ton am Abspielkopf platzieren": "再生ヘッドに音声のみを配置",
+ "Ohne Bild – auch: beim Ziehen in die Timeline Strg halten": "映像なし – タイムラインへドラッグ中に Ctrl を押しても可",
+ "Ohne Ton – auch: beim Ziehen in die Timeline Shift halten": "音声なし – タイムラインへドラッグ中に Shift を押しても可",
+ "Ton beim Einfügen weglassen": "挿入時に音声を含めない",
+ "Ziehen: nur das Bild in die Timeline, ohne Ton": "ドラッグ：映像のみをタイムラインへ（音声なし）",
+ "Ziehen: nur den Ton in die Timeline, ohne Bild": "ドラッグ：音声のみをタイムラインへ（映像なし）"
 }

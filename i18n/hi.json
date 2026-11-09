@@ -2937,5 +2937,13 @@
  "%1 ist jetzt kürzer: 1 Clip reicht über sein Ende hinaus": "%1 अब छोटा है: 1 क्लिप उसके अंत से आगे तक जाती है",
  "%1 ist jetzt kürzer: %2 Clips reichen über sein Ende hinaus": "%1 अब छोटा है: %2 क्लिप उसके अंत से आगे तक जाती हैं",
  "Stimme gesäubert (%1 Clips) – Strg+Z nimmt es zurück": "आवाज़ साफ़ की गई (%1 क्लिप) – Ctrl+Z इसे वापस ले लेता है",
- "Nichts zu säubern: wähl Tonclips aus oder leg sie auf die Spur A%1": "साफ़ करने को कुछ नहीं: ध्वनि क्लिप चुनें या उन्हें ट्रैक A%1 पर रखें"
+ "Nichts zu säubern: wähl Tonclips aus oder leg sie auf die Spur A%1": "साफ़ करने को कुछ नहीं: ध्वनि क्लिप चुनें या उन्हें ट्रैक A%1 पर रखें",
+ "An: Clips mit Bild kommen ohne ihren Ton in die Timeline (Ziehen, Einfügen, F9–F12). Einmalig: beim Ziehen Shift = nur Bild, Strg = nur Ton": "चालू: वीडियो वाले क्लिप बिना अपने ऑडियो के टाइमलाइन में आते हैं (खींचना, डालना, F9–F12)। एक बार के लिए: खींचते समय Shift = सिर्फ़ वीडियो, Ctrl = सिर्फ़ ऑडियो",
+ "Nur Bild am Abspielkopf platzieren": "प्लेहेड पर सिर्फ़ वीडियो रखें",
+ "Nur Ton am Abspielkopf platzieren": "प्लेहेड पर सिर्फ़ ऑडियो रखें",
+ "Ohne Bild – auch: beim Ziehen in die Timeline Strg halten": "बिना वीडियो – या टाइमलाइन में खींचते समय Ctrl दबाए रखें",
+ "Ohne Ton – auch: beim Ziehen in die Timeline Shift halten": "बिना ऑडियो – या टाइमलाइन में खींचते समय Shift दबाए रखें",
+ "Ton beim Einfügen weglassen": "डालते समय ऑडियो छोड़ दें",
+ "Ziehen: nur das Bild in die Timeline, ohne Ton": "खींचें: टाइमलाइन में सिर्फ़ वीडियो, बिना ऑडियो",
+ "Ziehen: nur den Ton in die Timeline, ohne Bild": "खींचें: टाइमलाइन में सिर्फ़ ऑडियो, बिना वीडियो"
 }

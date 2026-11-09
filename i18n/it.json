@@ -2937,5 +2937,13 @@
  "%1 ist jetzt kürzer: 1 Clip reicht über sein Ende hinaus": "%1 ora è più corto: 1 clip supera la sua fine",
  "%1 ist jetzt kürzer: %2 Clips reichen über sein Ende hinaus": "%1 ora è più corto: %2 clip superano la sua fine",
  "Stimme gesäubert (%1 Clips) – Strg+Z nimmt es zurück": "Voce pulita (%1 clip) – Ctrl+Z la annulla",
- "Nichts zu säubern: wähl Tonclips aus oder leg sie auf die Spur A%1": "Niente da pulire: seleziona clip audio o mettile sulla traccia A%1"
+ "Nichts zu säubern: wähl Tonclips aus oder leg sie auf die Spur A%1": "Niente da pulire: seleziona clip audio o mettile sulla traccia A%1",
+ "An: Clips mit Bild kommen ohne ihren Ton in die Timeline (Ziehen, Einfügen, F9–F12). Einmalig: beim Ziehen Shift = nur Bild, Strg = nur Ton": "Attivo: i clip con video arrivano nella timeline senza il loro audio (trascinamento, inserimento, F9–F12). Una volta sola: trascinando, Shift = solo video, Ctrl = solo audio",
+ "Nur Bild am Abspielkopf platzieren": "Inserisci solo il video sulla testina",
+ "Nur Ton am Abspielkopf platzieren": "Inserisci solo l'audio sulla testina",
+ "Ohne Bild – auch: beim Ziehen in die Timeline Strg halten": "Senza video – oppure tieni premuto Ctrl trascinando nella timeline",
+ "Ohne Ton – auch: beim Ziehen in die Timeline Shift halten": "Senza audio – oppure tieni premuto Shift trascinando nella timeline",
+ "Ton beim Einfügen weglassen": "Ometti l'audio durante l'inserimento",
+ "Ziehen: nur das Bild in die Timeline, ohne Ton": "Trascina: solo il video nella timeline, senza audio",
+ "Ziehen: nur den Ton in die Timeline, ohne Bild": "Trascina: solo l'audio nella timeline, senza video"
 }

@@ -2937,5 +2937,13 @@
  "%1 ist jetzt kürzer: 1 Clip reicht über sein Ende hinaus": "%1 тепер коротший: 1 кліп виходить за його кінець",
  "%1 ist jetzt kürzer: %2 Clips reichen über sein Ende hinaus": "%1 тепер коротший: кліпів, що виходять за його кінець: %2",
  "Stimme gesäubert (%1 Clips) – Strg+Z nimmt es zurück": "Голос очищено (кліпів: %1) – Ctrl+Z скасовує",
- "Nichts zu säubern: wähl Tonclips aus oder leg sie auf die Spur A%1": "Нічого очищати: вибери звукові кліпи або поклади їх на доріжку A%1"
+ "Nichts zu säubern: wähl Tonclips aus oder leg sie auf die Spur A%1": "Нічого очищати: вибери звукові кліпи або поклади їх на доріжку A%1",
+ "An: Clips mit Bild kommen ohne ihren Ton in die Timeline (Ziehen, Einfügen, F9–F12). Einmalig: beim Ziehen Shift = nur Bild, Strg = nur Ton": "Увімкнено: кліпи із зображенням потрапляють на таймлайн без свого звуку (перетягування, вставлення, F9–F12). Разово: під час перетягування Shift = лише зображення, Ctrl = лише звук",
+ "Nur Bild am Abspielkopf platzieren": "Лише зображення на курсор відтворення",
+ "Nur Ton am Abspielkopf platzieren": "Лише звук на курсор відтворення",
+ "Ohne Bild – auch: beim Ziehen in die Timeline Strg halten": "Без зображення – або утримуйте Ctrl під час перетягування на таймлайн",
+ "Ohne Ton – auch: beim Ziehen in die Timeline Shift halten": "Без звуку – або утримуйте Shift під час перетягування на таймлайн",
+ "Ton beim Einfügen weglassen": "Не додавати звук під час вставлення",
+ "Ziehen: nur das Bild in die Timeline, ohne Ton": "Перетягнути: лише зображення на таймлайн, без звуку",
+ "Ziehen: nur den Ton in die Timeline, ohne Bild": "Перетягнути: лише звук на таймлайн, без зображення"
 }

@@ -2937,5 +2937,13 @@
  "%1 ist jetzt kürzer: 1 Clip reicht über sein Ende hinaus": "%1 está mais curto agora: 1 clipe ultrapassa o fim dele",
  "%1 ist jetzt kürzer: %2 Clips reichen über sein Ende hinaus": "%1 está mais curto agora: %2 clipes ultrapassam o fim dele",
  "Stimme gesäubert (%1 Clips) – Strg+Z nimmt es zurück": "Voz limpa (%1 clipes) – Ctrl+Z desfaz",
- "Nichts zu säubern: wähl Tonclips aus oder leg sie auf die Spur A%1": "Nada para limpar: selecione clipes de som ou coloque-os na trilha A%1"
+ "Nichts zu säubern: wähl Tonclips aus oder leg sie auf die Spur A%1": "Nada para limpar: selecione clipes de som ou coloque-os na trilha A%1",
+ "An: Clips mit Bild kommen ohne ihren Ton in die Timeline (Ziehen, Einfügen, F9–F12). Einmalig: beim Ziehen Shift = nur Bild, Strg = nur Ton": "Ativado: clipes com imagem entram na timeline sem o áudio (arrastar, inserir, F9–F12). Só uma vez: ao arrastar, Shift = só imagem, Ctrl = só áudio",
+ "Nur Bild am Abspielkopf platzieren": "Colocar só a imagem no cursor de reprodução",
+ "Nur Ton am Abspielkopf platzieren": "Colocar só o áudio no cursor de reprodução",
+ "Ohne Bild – auch: beim Ziehen in die Timeline Strg halten": "Sem imagem – ou segure Ctrl ao arrastar para a timeline",
+ "Ohne Ton – auch: beim Ziehen in die Timeline Shift halten": "Sem áudio – ou segure Shift ao arrastar para a timeline",
+ "Ton beim Einfügen weglassen": "Deixar o áudio de fora ao inserir",
+ "Ziehen: nur das Bild in die Timeline, ohne Ton": "Arrastar: só a imagem para a timeline, sem áudio",
+ "Ziehen: nur den Ton in die Timeline, ohne Bild": "Arrastar: só o áudio para a timeline, sem imagem"
 }
