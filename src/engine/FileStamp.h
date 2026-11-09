@@ -31,6 +31,9 @@ Stamp now(const QString& path);
 Stamp recent(const QString& path);
 // Is `path` seen changing without the change having settled yet? (Callers look again after kSettleMs)
 bool changing(const QString& path);
+// Has `path` a stamp yet? (The first sighting is the baseline: a file never stamped before it was overwritten is
+// never seen changing - files are stamped when they come into the timeline, Engine::applyTimeline)
+bool known(const QString& path);
 
 // Called with the path whose stamp changed (not on the first sighting). Returns an id for removeObserver, which
 // waits for a call of it running on another thread (it may be called from inside the observer itself).

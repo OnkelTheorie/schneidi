@@ -11,6 +11,8 @@
 #include "engine/Bundle.h"
 #include "engine/Exporter.h"
 #include "engine/FileStamp.h"
+
+#include <QThreadPool>
 #include "engine/MediaProbe.h"
 #include "engine/OpenMedia.h"
 #include "engine/PreviewResolution.h"
@@ -505,6 +507,26 @@ std::shared_ptr<const Picture::Pump::Content> Engine::rendererContent(std::share
 
 void Engine::applyTimeline(const Timeline& tl)
 {
+    // Every file of the timeline gets its stamp now, as it is (in the background: no stat on the UI thread). The sound
+    // mix opens its readers without one, and the first look is the baseline: an audio-only file overwritten while the
+    // app was in the background would be taken as it is then, its change never seen.
+    {
+        QStringList fresh;
+        const auto collect = [&fresh](const Timeline& t) {
+            for (const auto* tracks : {&t.video, &t.audio})
+                for (const Track& track : *tracks)
+                    for (const Clip& c : track.clips)
+                        if (!c.mediaPath.isEmpty() && !fresh.contains(c.mediaPath) && !FileStamp::known(c.mediaPath))
+                            fresh << c.mediaPath;
+        };
+        collect(tl);
+        if (tl.nested)
+            for (const Timeline& inner : *tl.nested) collect(inner);
+        if (!fresh.isEmpty())
+            QThreadPool::globalInstance()->start([fresh] {
+                for (const QString& f : fresh) FileStamp::recent(f);
+            });
+    }
     // Own picture engine: the renderer takes every change as a new snapshot (no rebuild, playback goes on);
     // files open lazily in the render threads, the window never waits for them
     if (m_mode == Mode::Timeline) m_player->setTimeline(tl, m_format.rate);

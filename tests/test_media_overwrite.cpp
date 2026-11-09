@@ -216,6 +216,37 @@ void testEngine(Engine& engine, const QString& file, const QString& red, const Q
     FileStamp::removeObserver(id);
 }
 
+// Review 2026-11-09: an audio-only file nobody stamped (the sound mix opens readers without a stamp), overwritten
+// while the app was in the background: stamped when the timeline came, so the next look sees the change
+void testUnstamped(Engine& engine, const QString& file, const QString& loud, const QString& quiet)
+{
+    std::printf("-- unstamped\n");
+    if (!CHECK(overwrite(loud, file, 51))) return;
+    FileStamp::forget();
+    Timeline tl;
+    tl.audio.resize(1);
+    Clip c;
+    c.id = 1;
+    c.mediaPath = file;
+    c.out = 50;
+    tl.audio[0].kind = TrackKind::Audio;
+    tl.audio[0].clips << c;
+    engine.updateTimeline(tl);
+    QElapsedTimer t;
+    t.start();
+    while (!FileStamp::known(file) && t.elapsed() < 3000) QTest::qWait(10);
+    CHECK(FileStamp::known(file));
+    int seen = 0;
+    const int id = FileStamp::addObserver([&](const QString& path) { seen += path == file; });
+    if (CHECK(overwrite(quiet, file, 52))) {
+        engine.checkFiles(); // the app active again
+        t.restart();
+        while (seen == 0 && t.elapsed() < FileStamp::kSettleMs + 3000) QTest::qWait(50);
+        CHECK_EQ(seen, 1);
+    }
+    FileStamp::removeObserver(id);
+}
+
 // A recording that still grows: no change while it grows (readers are not reopened every look), exactly one once it
 // has stopped
 void testGrowing(const QString& file)
@@ -402,5 +433,6 @@ int main(int argc, char** argv)
         if (!CHECK(!wav.last().isEmpty())) return Check::result();
     }
     testSound(dir.filePath("sound.wav"), wav[0], wav[1]);
+    testUnstamped(engine, dir.filePath("unstamped.wav"), wav[0], wav[1]);
     return Check::result();
 }

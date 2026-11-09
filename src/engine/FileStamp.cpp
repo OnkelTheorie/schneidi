@@ -122,6 +122,12 @@ bool changing(const QString& path)
     return state().entries.value(path).changing;
 }
 
+bool known(const QString& path)
+{
+    std::lock_guard lock(state().mutex);
+    return state().entries.contains(path);
+}
+
 int addObserver(std::function<void(const QString&)> fn)
 {
     auto o = std::make_shared<Observer>();
