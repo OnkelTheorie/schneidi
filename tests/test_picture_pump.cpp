@@ -397,6 +397,40 @@ void testShuttleReachesEnd()
     }, 2000));
 }
 
+// Stopped behind the content's end (the playhead past the timeline's last clip): what the content gives there (black),
+// not the frame shown before
+void testStillPastEnd()
+{
+    std::mutex m;
+    std::vector<std::pair<int64_t, int>> shown; // position, red (-1 = null image)
+    Picture::Pump pump([] { return NAN; }, [&](const QImage& img, int64_t pos, double) {
+        std::lock_guard l(m);
+        shown.push_back({pos, img.isNull() ? -1 : qRed(img.pixel(0, 0))});
+    }, 2);
+    auto c = std::make_shared<Picture::Pump::Content>();
+    c->render = [](int64_t f) {
+        if (f > 100) return QImage(); // nothing there
+        QImage i(4, 4, QImage::Format_RGBA8888);
+        i.fill(QColor(100, 0, 0));
+        return i;
+    };
+    c->last = [] { return int64_t(100); };
+    c->fps = 25;
+    pump.setContent(c, 0, 0);
+    pump.seek(50, false);
+    CHECK(waitFor([&] {
+        std::lock_guard l(m);
+        return !shown.empty() && shown.back().first == 50;
+    }, 1000));
+    pump.seek(300, false);
+    CHECK(waitFor([&] {
+        std::lock_guard l(m);
+        return !shown.empty() && shown.back().first == 300;
+    }, 1000));
+    std::lock_guard l(m);
+    CHECK(!shown.empty() && shown.back().first == 300 && shown.back().second == -1);
+}
+
 int main(int argc, char** argv)
 {
     Check::initEnv();
@@ -405,6 +439,8 @@ int main(int argc, char** argv)
     testPump();
     std::printf("scrub, then play\n");
     testScrubThenPlay();
+    std::printf("still past the end\n");
+    testStillPastEnd();
     std::printf("shuttle to the end\n");
     testShuttleReachesEnd();
     if (Check::haveFfmpeg()) {

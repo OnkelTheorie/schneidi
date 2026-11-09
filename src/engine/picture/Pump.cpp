@@ -112,7 +112,8 @@ struct Pump::Impl {
     {
         if (!content || !content->render) return -1;
         if (speed == 0) {
-            if (pendingStill && !frames.count(next) && !inflight.count(next) && inside(next)) return next;
+            // A still behind the end too: the content shows what is there (nothing: black), never the frame shown before
+            if (pendingStill && !frames.count(next) && !inflight.count(next) && next >= 0) return next;
             return -1;
         }
         const int64_t s = step() * direction();
@@ -372,7 +373,7 @@ struct Pump::Impl {
             any = true;
         };
         if (speed == 0) {
-            if (pendingStill && inside(next)) take(next);
+            if (pendingStill && next >= 0) take(next);
             return any;
         }
         const int64_t s = step() * direction();
