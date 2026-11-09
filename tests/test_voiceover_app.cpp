@@ -18,6 +18,7 @@
 #include "check.h"
 
 #include "app/MainWindow.h"
+#include "app/TourManager.h"
 #include "app/VoiceoverRecorder.h"
 #include "core/EffectRegistry.h"
 #include "core/I18n.h"
@@ -479,8 +480,56 @@ int main(int argc, char** argv)
         qputenv("SCHNEIDI_AUDIO_INPUT", "sine:440");
     }
 
-    // Quitting while recording: the take is placed first (so "save changes?" sees it), the file is complete
+    // ---- Review 2026-11-09: another timeline opened during a take: the take lands in the timeline it began in
     project->edit("unlock", [](Timeline& t) { t.audio[0].locked = false; });
+    {
+        recorder->setArmedTrack(-1);
+        w.liveSelection()->clear();
+        const int first = project->currentSequence();
+        const int undo = project->undoStack()->index();
+        const int clipsBefore = [&] {
+            int n = 0;
+            for (const Track& t : project->timeline().audio) n += int(t.clips.size());
+            return n;
+        }();
+        engine.seek(25);
+        wait(100);
+        CHECK(recorder->start());
+        CHECK(waitLive(recorder));
+        wait(300);
+        // A second timeline, opened like a tab click
+        const int second = project->addTimeline("B");
+        project->setCurrentSequence(second);
+        wait(100);
+        CHECK(!recorder->recording());
+        CHECK_EQ(project->currentSequence(), second);
+        int inSecond = 0;
+        for (const Track& t : project->timeline().audio) inSecond += int(t.clips.size());
+        CHECK_EQ(inSecond, 0); // nothing landed in the empty timeline
+        int inFirst = 0;
+        if (const Sequence* s = project->sequence(first))
+            for (const Track& t : s->timeline.audio) inFirst += int(t.clips.size());
+        CHECK_EQ(inFirst, clipsBefore + 1); // the take is in the timeline it was recorded in
+        project->setCurrentSequence(first);
+        while (project->undoStack()->index() > undo) project->undoStack()->undo();
+        project->setCurrentSequence(first);
+        wait(50);
+
+        // No tour starts in the middle of a take (it would swap the project); the take goes on
+        engine.seek(25);
+        wait(100);
+        CHECK(recorder->start());
+        wait(200);
+        w.tours()->start("first_steps");
+        wait(100);
+        CHECK(recorder->recording());
+        CHECK(!w.tours()->runner()->running());
+        CHECK_EQ(project->currentSequence(), first);
+        CHECK(recorder->stop());
+        while (project->undoStack()->index() > undo) project->undoStack()->undo();
+    }
+
+    // Quitting while recording: the take is placed first (so "save changes?" sees it), the file is complete
     recorder->setArmedTrack(1);
     engine.seek(25);
     wait(100);

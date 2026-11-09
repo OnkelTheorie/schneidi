@@ -32,11 +32,17 @@ VoiceoverRecorder::VoiceoverRecorder(Engine* engine, Project* project, Editor* e
     connect(m_timer, &QTimer::timeout, this, &VoiceoverRecorder::tick);
     // Playback stopped (Space, Stop; the end of the timeline does not: open end) or turned (J, faster) ends the
     // recording; so does a seek (a click in the ruler, Home, arrow keys): a take only runs forward from its start
+    // These end it from the event loop: a pause or seek may come from inside an undo step (one in another timeline
+    // opens that one), and placing the take pushes a step of its own
     connect(m_engine, &Engine::speedChanged, this, [this](double speed) {
-        if (speed != 1.0 && m_capture && m_playing && !m_stopping && !m_starting) stop();
+        if (speed != 1.0 && m_capture && m_playing && !m_stopping && !m_starting) stopLater();
     });
     connect(m_engine, &Engine::seeked, this, [this] {
-        if (m_capture && !m_stopping && !m_starting) stop();
+        if (m_capture && !m_stopping && !m_starting) stopLater();
+    });
+    // Another timeline opened (a tab, an undo there, an AI): the take ends and goes to the timeline it began in
+    connect(m_project, &Project::currentSequenceChanged, this, [this] {
+        if (m_capture && !m_stopping) stopLater();
     });
     // A track that is gone cannot stay armed
     connect(m_project, &Project::timelineChanged, this, [this] {
@@ -128,6 +134,8 @@ bool VoiceoverRecorder::start(QString* error)
     }
     qInfo("Voiceover: %s -> %s", qPrintable(m_capture->name()), qPrintable(m_capture->path()));
     m_alignment = {};
+    m_sequence = m_project->currentSequence();
+    ++m_takeNumber;
     m_stopping = false;
     m_starting = true;
     m_engine->pause();
@@ -155,6 +163,13 @@ bool VoiceoverRecorder::start(QString* error)
     emit recordingChanged(true); // "Gleich …": the take shows once the timeline is heard (tick)
     if (!m_playing) goLive();
     return true;
+}
+
+void VoiceoverRecorder::stopLater()
+{
+    QMetaObject::invokeMethod(this, [this, take = m_takeNumber] {
+        if (m_capture && !m_stopping && take == m_takeNumber) stop();
+    }, Qt::QueuedConnection);
 }
 
 void VoiceoverRecorder::tick()
@@ -225,7 +240,7 @@ bool VoiceoverRecorder::stop(QString* error)
     if (!written) problem = T("Aufnahme nicht gespeichert: %1").arg(why);
     else if (frames <= 0) problem = T("Nichts aufgenommen.");
     else if (!m_import(path)) problem = T("Aufnahme nicht lesbar: %1").arg(QDir::toNativeSeparators(path));
-    else placed = m_editor->placeRecording(path, m_track, fileStart, m_headFrom, &m_placedTrack) != 0;
+    else placed = m_editor->placeRecording(path, m_track, fileStart, m_headFrom, &m_placedTrack, m_sequence) != 0;
     if (written && frames > 0 && !placed && problem.isEmpty()) problem = T("Aufnahme liegt nur im Medienpool.");
     if (error) *error = problem;
     emit finished(path, placed, problem);

@@ -3,6 +3,7 @@
 #include "app/MainWindow.h"
 
 #include "app/TourManager.h"
+#include "app/VoiceoverRecorder.h"
 #include "core/Project.h"
 #include "core/TimelineOps.h"
 #include "core/I18n.h"
@@ -111,6 +112,12 @@ void MainWindow::setupTours(QMenu* help)
     host.leave = [this] { leaveTourMode(); };
     host.unsaved = [this] { return m_project->isModified() && !m_autosaveDisabled; }; // test runs never ask
     host.save = [this] { return save(); };
+    // A tour swaps the project: not in the middle of a voice-over take (it would end and land in the practice project)
+    host.busy = [this] {
+        if (!m_voiceover || !m_voiceover->recording()) return false;
+        statusBar()->showMessage(T("Der Rundgang startet nach der Aufnahme – erst die Aufnahme beenden (Esc)."), 8000);
+        return true;
+    };
     // The timeline's ruler (click there = playhead) and the playhead line, in window coordinates
     using Area = TourManager::Host::Area;
     host.areas["ruler"] = [this]() -> Area {
@@ -367,6 +374,7 @@ QVector<QToolButton*> MainWindow::tourToggles() const
 void MainWindow::enterTourMode(const Tour& tour)
 {
     if (m_tourSaved.active) leaveTourMode();
+    endVoiceover(); // a take running still goes into the project it was recorded in
     if (!m_autosaveDisabled) autosave(); // the backup up to date: a crash during the tour still restores the user's work
     // The user's project as it is (unsaved changes included) and how the window looks, kept aside
     TourSaved& s = m_tourSaved;
@@ -448,6 +456,7 @@ void MainWindow::buildPracticeProject(const QString& practice)
 void MainWindow::leaveTourMode()
 {
     if (!m_tourSaved.active) return;
+    endVoiceover(); // before the practice project goes
     TourSaved s = std::exchange(m_tourSaved, {});
     m_engine->pause();
     // The user's project back as it was: unsaved changes still unsaved, the same file, playhead, zoom and selection

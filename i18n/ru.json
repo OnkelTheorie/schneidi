@@ -2911,5 +2911,6 @@
  "Rundgang Farbe starten": "Начать тур по цвету",
  "Unten wechselst du die Seiten. Wenn du fertig bist: Geh unten auf Export und render dein Video.": "Внизу переключаются страницы. Когда закончите: откройте внизу Экспорт и отрендерите видео.",
  "Schneiden: {key:split} teilt den Clip am Abspielkopf. Oder nimm das Klingen-Werkzeug ({key:tool_blade}) und klick auf den Clip. Probier es aus!": "Разрезка: {key:split} делит клип в месте указателя. Или возьмите инструмент «Лезвие» ({key:tool_blade}) и щёлкните по клипу. Попробуйте!",
- "Wähl eine Vorlage, etwa YouTube, und klick auf „Zur Render-Warteschlange hinzufügen“. „Alle rendern“ speichert dann dein Video.": "Выберите шаблон, например YouTube, и нажмите «Добавить в очередь рендеринга». «Рендерить все» затем сохранит видео."
+ "Wähl eine Vorlage, etwa YouTube, und klick auf „Zur Render-Warteschlange hinzufügen“. „Alle rendern“ speichert dann dein Video.": "Выберите шаблон, например YouTube, и нажмите «Добавить в очередь рендеринга». «Рендерить все» затем сохранит видео.",
+ "Der Rundgang startet nach der Aufnahme – erst die Aufnahme beenden (Esc).": "Тур начнётся после записи – сначала завершите запись (Esc)."
 }

@@ -52,6 +52,8 @@ public:
         std::function<void()> leave;
         // The user's project has unsaved changes (asked about before a tour), save = save it (false = not saved)
         std::function<bool()> unsaved;
+        // Something must not be interrupted now (a voice-over take): true = no tour starts (the host says why)
+        std::function<bool()> busy;
         std::function<bool()> save;
     };
     TourManager(QMainWindow* window, Project* project, Host host);

@@ -43,6 +43,8 @@ public:
     // While recording: the growing take and the audio track it lands on now (>= the track count = a new one below)
     const Voiceover::LiveTake& take() const { return m_take; }
     int liveTrack() const { return m_liveTrack; }
+    // The timeline the take runs in / the last take went to
+    int sequence() const { return m_sequence; }
     // The track the last take was placed on (-1 = none)
     int placedTrack() const { return m_placedTrack; }
     // Ends it and places the take; false = nothing placed (*error says why, empty = nothing recorded)
@@ -60,6 +62,7 @@ signals:
 
 private:
     void tick();
+    void stopLater(); // stop() from the event loop (once, for this take)
     void updateMeter(); // the armed track's level meter on/off
     void goLive();
     Engine* m_engine;
@@ -81,6 +84,8 @@ private:
     int m_track = -1;       // the track the take goes to, fixed at the start (>= the track count: a new one)
     bool m_starting = false; // start() seeks and plays itself: that does not end the take
     int m_liveTrack = -1;
+    int m_sequence = 0;     // the timeline the take began in: it goes there, also when another one is open by then
+    int m_takeNumber = 0;
     int m_placedTrack = -1;
     int m_from = 0;         // playhead when recording started (the clip starts here)
     double m_playFrom = 0;  // where playback started (pre-roll before m_from)

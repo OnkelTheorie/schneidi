@@ -136,6 +136,7 @@ void TourManager::start(const QString& id)
 {
     const Tour t = Tours::find(id);
     if (t.id.isEmpty()) return;
+    if (m_host.busy && m_host.busy()) return;
     if (m_runner.running()) m_runner.finish(); // the one running first ends (and gives the user's project back)
     m_asking.clear();
     TourState::markShown(id);
