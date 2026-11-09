@@ -11,6 +11,7 @@
 #include <QHash>
 #include <QSet>
 #include <QUndoCommand>
+#include <utility>
 #include <algorithm>
 
 namespace {
@@ -252,7 +253,7 @@ Timeline emptyTimeline()
 Project::Project(QObject* parent) : QObject(parent)
 {
     m_sequences << Sequence{1, T("Timeline %1").arg(1), false, 0, emptyTimeline()};
-    connect(&m_undo, &QUndoStack::cleanChanged, this, [this] { emit modifiedChanged(isModified()); });
+    connect(m_undo, &QUndoStack::cleanChanged, this, [this] { emit modifiedChanged(isModified()); });
 }
 
 Sequence& Project::current()
@@ -296,7 +297,7 @@ ProjectData Project::data() const
 void Project::load(const ProjectData& d)
 {
     ++m_generation;
-    m_undo.clear();
+    m_undo->clear();
     m_format = d.format;
     m_media = d.media;
     m_bins = d.bins;
@@ -417,7 +418,7 @@ void Project::reset()
 void Project::markSaved()
 {
     m_mediaDirty = false;
-    m_undo.setClean();
+    m_undo->setClean();
     emit modifiedChanged(false);
 }
 
@@ -438,20 +439,20 @@ void Project::edit(const QString& text, const std::function<void(Timeline&)>& fn
         return;
     }
     const QString key = mergeKey.isEmpty() ? QString() : QString("%1#%2").arg(mergeKey).arg(m_mergeSession);
-    m_undo.push(new SnapshotCommand(this, text, m_current, timeline(), after, key)); // push calls redo()
+    m_undo->push(new SnapshotCommand(this, text, m_current, timeline(), after, key)); // push calls redo()
 }
 
 void Project::combineSteps(int fromIndex, const QString& text)
 {
-    if (fromIndex < 0 || m_undo.index() <= fromIndex) return;
+    if (fromIndex < 0 || m_undo->index() <= fromIndex) return;
     closeMerge();
     CombinedCommand::State after = CombinedCommand::capture(*this);
     const QVector<MediaInfo> mediaAfter = m_media;
     const QVector<WatchFolder> watchesAfter = m_watchFolders;
-    m_undo.setIndex(fromIndex); // undoes them: the state before
+    m_undo->setIndex(fromIndex); // undoes them: the state before
     // Only what the steps did to the media list (they are undone now): files imported meanwhile are in both lists
     MediaChange media = mediaChange(m_media, m_watchFolders, mediaAfter, watchesAfter);
-    m_undo.push(new CombinedCommand(this, text, CombinedCommand::capture(*this), std::move(after),
+    m_undo->push(new CombinedCommand(this, text, CombinedCommand::capture(*this), std::move(after),
                                     std::move(media))); // push calls redo()
     closeMerge();
 }
@@ -475,7 +476,7 @@ void Project::setFormat(const ProjectFormat& format)
         if (!s.hasOwnSize()) scaleTimeline(s.timeline, m_format.size(), f.size()); // own resolution: stays
         retimeTimeline(s.timeline, m_format.rate, f.rate); // subtitles, markers, in/out (clips lock the rate)
     }
-    m_undo.push(new FormatCommand(this, m_format, f, m_sequences, after)); // push calls redo()
+    m_undo->push(new FormatCommand(this, m_format, f, m_sequences, after)); // push calls redo()
 }
 
 void Project::applyFormat(const ProjectFormat& format, const QVector<Sequence>& sequences)
@@ -579,7 +580,7 @@ void Project::editSequences(const QString& text, const std::function<void(QVecto
     if (after.isEmpty()) return;
     for (Sequence& seq : after) TimelineOps::resolvePendingLinks(seq.timeline, [this] { return newLinkId(); });
     if (std::none_of(after.begin(), after.end(), [&](const Sequence& s) { return s.id == cur; })) cur = after[0].id;
-    m_undo.push(new SequencesCommand(this, text, m_sequences, m_current, after, cur)); // push calls redo()
+    m_undo->push(new SequencesCommand(this, text, m_sequences, m_current, after, cur)); // push calls redo()
 }
 
 void Project::applySequences(const QVector<Sequence>& sequences, int cur)
@@ -911,7 +912,7 @@ bool Project::removeMedia(const QStringList& paths, bool withClips)
         new SequencesCommand(this, text, m_sequences, m_current, after, m_current, step);
     }
     new MediaCommand(this, std::move(change), step);
-    m_undo.push(step); // push calls redo()
+    m_undo->push(step); // push calls redo()
     closeMerge();
     return true;
 }
@@ -996,7 +997,7 @@ void Project::setBrand(const std::optional<BrandKit>& brand)
 {
     const std::optional<BrandKit> b = brand ? std::optional<BrandKit>(brand->clamped()) : std::nullopt;
     if (b == m_brand) return;
-    m_undo.push(new BrandCommand(this, b ? T("Branding des Projekts") : T("Globales Branding verwenden"), m_brand, b));
+    m_undo->push(new BrandCommand(this, b ? T("Branding des Projekts") : T("Globales Branding verwenden"), m_brand, b));
 }
 
 void Project::applyBrand(const std::optional<BrandKit>& brand)
@@ -1041,7 +1042,7 @@ QVector<WatchArrival> Project::addWatchedMedia(const QVector<WatchImport>& files
                              ? T("Überwachter Ordner „%1“: neue Datei „%2“").arg(folder, QFileInfo(add.first().media.path).fileName())
                              : T("Überwachter Ordner „%1“: %2 neue Dateien").arg(folder, QString::number(add.size()));
     closeMerge(); // never part of a slider series of the user
-    m_undo.push(new WatchImportCommand(this, text, add)); // push calls redo()
+    m_undo->push(new WatchImportCommand(this, text, add)); // push calls redo()
     closeMerge();
     return arrivals;
 }
@@ -1073,6 +1074,23 @@ void Project::applyWatchedMedia(const QVector<WatchImport>& files, bool in)
     if (!in) m_mediaDirty = true;
     emit mediaChanged();
     if (watches) emit watchFoldersChanged();
+    emit modifiedChanged(isModified());
+}
+
+void Project::setHistoryAside(bool aside)
+{
+    if (aside == historyAside()) return;
+    if (aside) {
+        m_asideUndo = std::make_unique<QUndoStack>();
+        connect(m_asideUndo.get(), &QUndoStack::cleanChanged, this, [this] { emit modifiedChanged(isModified()); });
+        m_undo = m_asideUndo.get();
+        m_asideMediaDirty = std::exchange(m_mediaDirty, false);
+    } else {
+        m_undo = &m_ownUndo;
+        m_mediaDirty = m_asideMediaDirty;
+        m_asideUndo.reset(); // the practice steps go
+    }
+    emit undoStackChanged();
     emit modifiedChanged(isModified());
 }
 
@@ -1195,7 +1213,7 @@ void Project::editPool(const QString& text, const std::function<void(PoolState&)
     fn(after);
     const PoolState before = poolState();
     if (after == before) return;
-    m_undo.push(new PoolCommand(this, text, before, after)); // push calls redo()
+    m_undo->push(new PoolCommand(this, text, before, after)); // push calls redo()
 }
 
 int Project::addBin(int parent, const QString& name)

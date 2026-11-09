@@ -159,6 +159,9 @@ public:
                          const std::function<void(int ms)>& idleLimit);
     // Settings (File › Settings…, MainWindowSettings.cpp); test runs apply them without saving
     void settingsDialog(int tab = 0);
+    // What AIs on the live connection hear while the app cannot take their commands (Cli::Live::Server::setWaiting;
+    // main.cpp hands it in): a tour runs on a practice project, nothing of an AI may land there
+    void setLiveWaiting(const std::function<void(const QString& message)>& waiting) { m_liveWaiting = waiting; }
     const AiSettings& aiSettings() const { return m_aiSettings; }
     void setAiSettings(const AiSettings& s);
     // AI chat (the "AI" panel, MainWindowChat.cpp): main.cpp hands in its tool server (`schneidi-cli mcp`; the app
@@ -491,6 +494,7 @@ private:
     void runChatPlan(const QString& id, const QVector<int>& steps); // plan card: the ticked steps, one undo step
     void discardChatPlan(const QString& id);
     std::function<QJsonObject(const QString&, const QJsonObject&)> m_chatRunner;
+    std::function<void(const QString&)> m_liveWaiting;
     UserRunner m_userRunner;
     class AiChat* m_chat = nullptr;
     class AiChatPanel* m_chatPanel = nullptr;

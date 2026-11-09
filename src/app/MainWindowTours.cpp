@@ -239,6 +239,11 @@ void MainWindow::enterTourMode(const Tour& tour)
     applySizes(m_colorBottom, {1100, 420});
     updatePageButtons();
 
+    // AIs wait meanwhile (APP_WAITING with this text): their edits would land in the practice project
+    if (m_liveWaiting)
+        m_liveWaiting("a tour runs in the schneidi app (the user is learning on a practice project, the real project is "
+                      "set aside); try again once the user ended it");
+    m_project->setHistoryAside(true); // the user's undo history waits untouched; the practice project gets its own
     buildPracticeProject(tour.practice);
     showPage(Page::Edit); // the defaults of the Edit page; each step shows its own page
 }
@@ -276,11 +281,12 @@ void MainWindow::leaveTourMode()
     TourSaved s = std::exchange(m_tourSaved, {});
     m_engine->pause();
     // The user's project back as it was: unsaved changes still unsaved, the same file, playhead, zoom and selection
-    applyLoaded(std::move(s.data), s.path, false);
+    applyLoaded(std::move(s.data), s.path, false); // clears only the practice history
+    m_project->setHistoryAside(false);             // the user's undo and redo steps back, its clean state too
     m_saveSuggestion = s.saveSuggestion;
     m_templateDir = s.templateDir;
     m_templateCopies = s.templateCopies;
-    if (s.modified) m_project->markModified();
+    if (s.modified && !m_project->isModified()) m_project->markModified();
     updateTitle();
     m_selection->set(s.selection);
     // The panels and sizes as they were (still in tour mode while the toggles go back: their settings stay untouched)
@@ -295,4 +301,5 @@ void MainWindow::leaveTourMode()
     for (const auto& [sp, sizes] : s.sizes)
         if (sp && sp->count() == sizes.size()) sp->setSizes(sizes);
     if (s.large) setViewerLarge(true);
+    if (m_liveWaiting) m_liveWaiting({}); // AIs may work on the user's project again
 }

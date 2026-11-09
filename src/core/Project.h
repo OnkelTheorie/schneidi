@@ -7,6 +7,7 @@
 #include <QObject>
 #include <QUndoStack>
 #include <functional>
+#include <memory>
 
 // Empty timeline with the default tracks (new project, new timeline)
 Timeline emptyTimeline();
@@ -68,7 +69,13 @@ public:
     void applyFormat(const ProjectFormat& format, const QVector<Sequence>& sequences); // only for undo
     // The currently opened timeline (sequence currentSequence()); all edits act on it
     const Timeline& timeline() const { return current().timeline; }
-    QUndoStack* undoStack() { return &m_undo; }
+    QUndoStack* undoStack() { return m_undo; } // the history in use (see setHistoryAside)
+    // Tour mode (app/MainWindowTours.cpp): aside = the user's undo history (and their unsaved media changes) set
+    // aside untouched and a fresh, empty history in use for what comes now (the tour's practice project); back = the
+    // fresh one dropped, the user's history in use again exactly as it was (undo and redo). load() clears only the
+    // history in use: set it aside before loading the other project, back after loading the user's again.
+    void setHistoryAside(bool aside);
+    bool historyAside() const { return m_undo != &m_ownUndo; }
 
     // mergeKey: consecutive edits with the same key become one undo step
     // (e.g. dragging a slider in the Inspector). closeMerge() ends the series.
@@ -207,7 +214,7 @@ public:
     // Counts the projects this object held: load()/reset() count up (work started on one project, such as a background
     // analysis, must not land in the next)
     quint64 generation() const { return m_generation; }
-    bool isModified() const { return m_mediaDirty || !m_undo.isClean(); }
+    bool isModified() const { return m_mediaDirty || !m_undo->isClean(); }
     void markSaved();
     void markModified();
 
@@ -231,6 +238,7 @@ signals:
     void importPresetsChanged(); // own import presets set/removed, or another project loaded
     void brandChanged();         // own brand kit set/removed, or another project loaded
     void watchFoldersChanged(); // the list of watch folders (also after load())
+    void undoStackChanged(); // undoStack() is another one now (setHistoryAside)
     void loaded(); // another project (or a new empty one) replaced everything, after the other signals of load()
 
 private:
@@ -251,7 +259,10 @@ private:
     std::optional<BrandKit> m_brand;
     std::optional<TemplateInfo> m_templateInfo;
     int m_lastBinId = 0;
-    QUndoStack m_undo;
+    QUndoStack m_ownUndo;
+    std::unique_ptr<QUndoStack> m_asideUndo; // while the user's history is aside: the one in use
+    QUndoStack* m_undo = &m_ownUndo;
+    bool m_asideMediaDirty = false;
     quint64 m_generation = 0;
     int m_lastClipId = 0;
     int m_lastLinkId = 0;

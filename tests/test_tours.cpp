@@ -16,7 +16,9 @@
 
 #include "check.h"
 
+#include "app/InputBindings.h"
 #include "app/MainWindow.h"
+#include "cli/Live.h"
 #include "app/Theme.h"
 #include "app/TourManager.h"
 #include "core/Editor.h"
@@ -523,6 +525,74 @@ void testMenuAndQuestions(MainWindow& w)
     }
 }
 
+QAction* bound(const char* id)
+{
+    for (const auto& e : InputBindings::instance().entries())
+        if (e.id == QLatin1String(id)) return e.action;
+    return nullptr;
+}
+
+// "Never lose work": the user's undo and redo steps survive a tour (the practice project has a history of its own,
+// Ctrl+Z there never reaches the user's steps); an AI on the live connection waits while the tour runs
+void testHistoryAndLive(MainWindow& w)
+{
+    Project* p = w.liveProject();
+    TourManager* tours = w.tours();
+    QAction* undo = bound("undo");
+    QAction* redo = bound("redo");
+    if (!CHECK(undo && redo)) return;
+    Cli::Live::Server server(&w); // not listening: the app's own chat path (runForChat) asks the same waiting
+    server.setAllowed(true);
+    w.setLiveWaiting([&server](const QString& m) { server.setWaiting(m); });
+    const int clips0 = clipCount(p);
+    const int base = p->undoStack()->index();
+    for (int f : {300, 600, 900}) w.editor()->addTitle(f, 0, 30, TitleKind::Text); // three edits
+    CHECK_EQ(clipCount(p), clips0 + 3);
+    undo->trigger(); // one of them undone: a redo step waits too
+    CHECK_EQ(clipCount(p), clips0 + 2);
+    const int count = p->undoStack()->count();
+    const bool modified = p->isModified();
+
+    tours->start("editing");
+    if (QPushButton* keep = button(tours->overlay(), "tour_keep")) keep->click();
+    if (!CHECK(tours->runner()->running())) return;
+    QTest::qWait(20);
+    // In the practice project: its own history, empty at first; Ctrl+Z there leaves the practice project alone
+    const int practiceClips = clipCount(p);
+    CHECK(!p->undoStack()->canUndo());
+    CHECK(!undo->isEnabled());
+    undo->trigger();
+    CHECK_EQ(clipCount(p), practiceClips);
+    w.editor()->addTitle(0, 1, 30, TitleKind::Text); // an edit in the practice project, undone and done again
+    CHECK(undo->isEnabled());
+    undo->trigger();
+    CHECK_EQ(clipCount(p), practiceClips);
+    redo->trigger();
+    CHECK_EQ(clipCount(p), practiceClips + 1);
+    // An AI meanwhile: told to wait, nothing lands in the practice project
+    const QJsonObject r = server.runForChat("info", {});
+    CHECK_EQ(r.value("error").toObject().value("code").toString(), QString("APP_WAITING"));
+    CHECK(r.value("error").toObject().value("message").toString().contains("tour"));
+    tours->stop();
+
+    // The user's project with its whole history: three steps back to before, three forward again
+    CHECK_EQ(clipCount(p), clips0 + 2);
+    CHECK_EQ(p->undoStack()->index(), base + 2);
+    CHECK_EQ(p->undoStack()->count(), count);
+    CHECK_EQ(p->isModified(), modified);
+    CHECK(undo->isEnabled() && redo->isEnabled());
+    redo->trigger();
+    CHECK_EQ(clipCount(p), clips0 + 3);
+    for (int i = 0; i < 3; ++i) undo->trigger();
+    CHECK_EQ(clipCount(p), clips0);
+    CHECK_EQ(p->undoStack()->index(), base);
+    for (int i = 0; i < 3; ++i) redo->trigger(); // Ctrl+Shift+Z
+    CHECK_EQ(clipCount(p), clips0 + 3);
+    for (int i = 0; i < 3; ++i) undo->trigger(); // as the other checks expect it
+    CHECK(server.waiting().isEmpty()); // AIs may work again
+    w.setLiveWaiting({});
+}
+
 // The user's own project: a clip of its own (a title: no media at all), unsaved, selected, the playhead moved
 void ownProject(MainWindow& w)
 {
@@ -575,6 +645,7 @@ void runWindow(Engine& engine, const QString& run, const QString& settingsFile, 
         QTest::qWait(30);
         sameLook(before, look(w), run + " after " + t.id);
     }
+    testHistoryAndLive(w);
     // Back in the user's project after the tours: the same clip, still unsaved, still selected
     CHECK(w.liveProject()->isModified());
     CHECK(w.liveProject()->media().isEmpty());
