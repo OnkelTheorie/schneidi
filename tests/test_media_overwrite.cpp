@@ -116,6 +116,39 @@ void testFile(const QString& file, const QString& red, const QString& blue, cons
     CHECK_COLOR(stills.frame(file, 0, QSize(160, 90)), Color::Green);
 }
 
+// Review 2026-11-09: the file read in two lanes (V1 and V2): a change seen in one drops the other's source of the old
+// content too (mediaLength takes the length from any lane: a stale one brought the old length back)
+void testLanes(const QString& file, const QString& red, const QString& blue)
+{
+    std::printf("-- lanes\n");
+    if (!CHECK(overwrite(red, file, 41))) return;
+    FileStamp::now(file);
+    Timeline tl;
+    tl.video.resize(2);
+    for (int i = 0; i < 2; ++i) {
+        Clip c;
+        c.id = i + 1;
+        c.mediaPath = file;
+        c.start = i * 25;
+        c.out = 24;
+        tl.video[i].kind = TrackKind::Video;
+        tl.video[i].clips << c;
+    }
+    Picture::Options o;
+    o.format.width = 320;
+    o.format.height = 180;
+    o.mode = Picture::Mode::Still;
+    Picture::Renderer renderer(tl, o);
+    CHECK_COLOR(renderer.render(0).toImage(), Color::Red);
+    CHECK_COLOR(renderer.render(30).toImage(), Color::Red);
+    CHECK_EQ(renderer.stats().sourcesOpen, 2);
+    if (!CHECK(overwrite(blue, file, 42))) return;
+    settle(file);
+    CHECK_COLOR(renderer.render(0).toImage(), Color::Blue);
+    CHECK_EQ(renderer.stats().sourcesOpen, 1); // V2's source of the red file is gone as well
+    CHECK_COLOR(renderer.render(30).toImage(), Color::Blue);
+}
+
 // Waits until fn() gives a picture of `want` (events processed); the last picture's color is reported
 bool waitFor(const std::function<QImage()>& fn, Color want, int ms = 10000)
 {
@@ -336,6 +369,7 @@ int main(int argc, char** argv)
     }
     testFile(dir.filePath("still.png"), png[0], png[1], png[2]);
     testCaches(dir.filePath("still-cache.png"), png[0], png[1]);
+    testLanes(dir.filePath("lanes.png"), png[0], png[1]);
 
     Engine engine;
     QString err;
