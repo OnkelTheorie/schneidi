@@ -16,6 +16,7 @@
 #include "core/ProxyChoice.h"
 #include "core/Selection.h"
 #include "core/TimelineOps.h"
+#include "core/WatchFolders.h"
 #include "engine/Engine.h"
 #include "engine/ProxyManager.h"
 #include "ui/timeline/TimelinePanel.h"
@@ -240,6 +241,30 @@ void testApp(MainWindow& w, Engine& engine, const Files& f)
     CHECK(waitFor([&] { return proxies->isPending(f.uhd2); }));
     CHECK(!proxies->isPending(f.hd2));
     proxies->cancelAll();
+    settle();
+    // Undo/redo never import: the 4K file out of the pool and back by undo; a watch folder's new file (an import)
+    // undone and redone
+    if (const MediaInfo* m = project->mediaInfo(f.uhd2); CHECK(m)) {
+        const MediaInfo uhd = *m;
+        CHECK(project->removeMedia({f.uhd2}, false));
+        settle();
+        project->undoStack()->undo();
+        CHECK(project->mediaInfo(f.uhd2));
+        QTest::qWait(1500);
+        CHECK(!proxies->isPending(f.uhd2));
+        project->undoStack()->redo();
+        CHECK(!project->mediaInfo(f.uhd2));
+        project->addWatchedMedia({WatchImport{uhd, QFileInfo(f.uhd2).absolutePath()}});
+        CHECK(waitFor([&] { return proxies->isPending(f.uhd2); }));
+        proxies->cancelAll();
+        settle();
+        project->undoStack()->undo();
+        CHECK(!project->mediaInfo(f.uhd2));
+        project->undoStack()->redo();
+        CHECK(project->mediaInfo(f.uhd2));
+        QTest::qWait(1500);
+        CHECK(!proxies->isPending(f.uhd2));
+    }
     ProxyManager::setImportRule(ProxyManager::ImportRule::Never);
 
     // Settings: the choice in the dialog, never first

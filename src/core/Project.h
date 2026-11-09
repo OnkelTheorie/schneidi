@@ -230,6 +230,9 @@ signals:
     // formatChanged/currentSequenceChanged and before the corresponding timelineChanged()
     void timelineFormatChanged();
     void mediaChanged();
+    // Files came into the Media Pool as an import (addMedia; a watch folder's new files, addWatchedMedia) - never by
+    // undo/redo or by loading a project (proxies on import)
+    void mediaImported(const QStringList& paths);
     void poolChanged(); // bins/clip colors/flags changed (media list unchanged)
     void mediaMarksChanged(const QString& path); // source in/out changed (without mediaChanged)
     void transcriptChanged(const QString& path);

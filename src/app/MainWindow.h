@@ -413,10 +413,9 @@ private:
     QStringList m_slowFiles; // playback was too slow with these files (proxy hint); empty = no hint
     double m_slowRate = 0, m_slowFps = 0;
     bool m_proxyHintClosed = false; // closed: not again in this session
-    // Media files of the project as last seen: new ones are imports (proxies on import, ProxyManager::importedFiles);
-    // set from scratch when another project is loaded
-    QSet<QString> m_knownMedia;
-    bool m_knownMediaCheck = false; // a check is queued
+    // Files imported since the last pass to ProxyManager::importedFiles (proxies on import): one probe per import
+    // of several files
+    QStringList m_importedMedia;
     bool m_slowEffects = false;     // clips with effects played: the hint offers the smart render cache first
     Inspector* m_inspector = nullptr;
     ColorPanel* m_colorPanel = nullptr;
