@@ -2931,5 +2931,7 @@
  "Aufnahme nach Absturz gefunden": "Recording found after a crash",
  "Eine Voiceover-Aufnahme wurde nicht beendet: %1\nIn den Medienpool holen?": "A voice-over recording was not finished: %1\nBring it into the Media Pool?",
  "In den Medienpool": "Into the Media Pool",
- "Nein": "No"
+ "Nein": "No",
+ "%1 ist jetzt kürzer: 1 Clip reicht über sein Ende hinaus": "%1 is shorter now: 1 clip reaches past its end",
+ "%1 ist jetzt kürzer: %2 Clips reichen über sein Ende hinaus": "%1 is shorter now: %2 clips reach past its end"
 }

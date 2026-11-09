@@ -203,6 +203,9 @@ signals:
     void framePosition(int frame, int epoch);
     // Files are being opened in the background (setOpenInBackground) / done and built
     void openingChanged(bool opening); // never emitted any more (files open lazily)
+    // Media files were overwritten under their names (FileStamp, a change that has settled); the caches have
+    // dropped the old content. Their length, streams … may differ: the app probes them again.
+    void mediaFilesChanged(const QStringList& paths);
 
 private:
     void createPump();
@@ -282,6 +285,7 @@ private:
     std::shared_ptr<Resolved> m_resolved;
     int m_stampObserver = 0;
     bool m_fileChangeQueued = false;
+    QStringList m_changedFiles; // seen changed since the last mediaFilesChanged
     bool m_recheckQueued = false;
     int m_recheckRounds = 0;                // looks again at a changing file since the last checkFiles()
     static constexpr int kRecheckRounds = 5; // then a file that keeps growing waits for the next activation

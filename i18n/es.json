@@ -2931,5 +2931,7 @@
  "Aufnahme nach Absturz gefunden": "Grabación encontrada tras un cierre inesperado",
  "Eine Voiceover-Aufnahme wurde nicht beendet: %1\nIn den Medienpool holen?": "Una grabación de voz en off no se terminó: %1\n¿Añadirla a la biblioteca de medios?",
  "In den Medienpool": "A la biblioteca de medios",
- "Nein": "No"
+ "Nein": "No",
+ "%1 ist jetzt kürzer: 1 Clip reicht über sein Ende hinaus": "%1 ahora es más corto: 1 clip llega más allá de su final",
+ "%1 ist jetzt kürzer: %2 Clips reichen über sein Ende hinaus": "%1 ahora es más corto: %2 clips llegan más allá de su final"
 }

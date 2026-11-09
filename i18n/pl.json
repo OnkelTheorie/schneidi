@@ -2931,5 +2931,7 @@
  "Aufnahme nach Absturz gefunden": "Znaleziono nagranie po awarii",
  "Eine Voiceover-Aufnahme wurde nicht beendet: %1\nIn den Medienpool holen?": "Nagranie lektora nie zostało zakończone: %1\nDodać je do biblioteki multimediów?",
  "In den Medienpool": "Do biblioteki multimediów",
- "Nein": "Nie"
+ "Nein": "Nie",
+ "%1 ist jetzt kürzer: 1 Clip reicht über sein Ende hinaus": "%1 jest teraz krótszy: 1 klip wychodzi poza jego koniec",
+ "%1 ist jetzt kürzer: %2 Clips reichen über sein Ende hinaus": "%1 jest teraz krótszy: klipy wychodzące poza jego koniec: %2"
 }

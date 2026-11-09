@@ -2931,5 +2931,7 @@
  "Aufnahme nach Absturz gefunden": "Найдена запись после сбоя",
  "Eine Voiceover-Aufnahme wurde nicht beendet: %1\nIn den Medienpool holen?": "Запись закадрового голоса не была завершена: %1\nДобавить её в медиатеку?",
  "In den Medienpool": "В медиатеку",
- "Nein": "Нет"
+ "Nein": "Нет",
+ "%1 ist jetzt kürzer: 1 Clip reicht über sein Ende hinaus": "%1 теперь короче: 1 клип выходит за его конец",
+ "%1 ist jetzt kürzer: %2 Clips reichen über sein Ende hinaus": "%1 теперь короче: клипов за его концом: %2"
 }

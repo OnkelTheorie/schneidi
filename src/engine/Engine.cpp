@@ -177,7 +177,10 @@ Engine::Engine(QObject* parent)
             std::lock_guard lock(resolved->mutex);
             if (auto it = resolved->proxies.find(path); it != resolved->proxies.end()) *it = path;
         }
-        QMetaObject::invokeMethod(this, [this] { mediaFileChanged(); }, Qt::QueuedConnection);
+        QMetaObject::invokeMethod(this, [this, path] {
+            if (!m_changedFiles.contains(path)) m_changedFiles << path;
+            mediaFileChanged();
+        }, Qt::QueuedConnection);
     });
     // Back in the app (a file re-rendered in another program meanwhile): look at the files at once
     if (auto* gui = qobject_cast<QGuiApplication*>(QCoreApplication::instance()))
@@ -240,6 +243,7 @@ void Engine::mediaFileChanged()
         if (m_pump) m_pump->dropRecent();
         m_player->reopenFiles(); // the sound mix keeps its readers otherwise
         refresh();
+        emit mediaFilesChanged(std::exchange(m_changedFiles, {})); // their length/streams may differ now
     });
 }
 

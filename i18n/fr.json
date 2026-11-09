@@ -2931,5 +2931,7 @@
  "Aufnahme nach Absturz gefunden": "Enregistrement trouvé après un plantage",
  "Eine Voiceover-Aufnahme wurde nicht beendet: %1\nIn den Medienpool holen?": "Un enregistrement de voix off n'a pas été terminé : %1\nL'ajouter à la médiathèque ?",
  "In den Medienpool": "Dans la médiathèque",
- "Nein": "Non"
+ "Nein": "Non",
+ "%1 ist jetzt kürzer: 1 Clip reicht über sein Ende hinaus": "%1 est plus court maintenant : 1 clip dépasse sa fin",
+ "%1 ist jetzt kürzer: %2 Clips reichen über sein Ende hinaus": "%1 est plus court maintenant : %2 clips dépassent sa fin"
 }

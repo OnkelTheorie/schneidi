@@ -151,6 +151,31 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
     };
     connect(m_project, &Project::mediaChanged, this, mediaLengths);
     mediaLengths();
+    // A file overwritten under its name (re-rendered elsewhere): its length, picture/sound and streams again, probed
+    // in the background; the pool entry follows without an undo step. Clips now reaching past its end are said.
+    connect(m_engine, &Engine::mediaFilesChanged, this, [this](const QStringList& paths) {
+        for (const QString& path : paths) m_probeCache.remove(path);
+        QStringList pooled;
+        for (const QString& path : paths)
+            if (m_project->mediaInfo(path)) pooled << path;
+        if (pooled.isEmpty()) return;
+        QThreadPool::globalInstance()->start([guard = QPointer<MainWindow>(this), format = m_project->format(), pooled] {
+            QVector<MediaInfo> probed;
+            for (const QString& path : pooled) probed << Engine::probe(format, path);
+            QMetaObject::invokeMethod(qApp, [guard, format, probed] {
+                if (!guard || guard->m_project->format() != format) return; // counted in another frame rate now
+                for (const MediaInfo& m : probed) {
+                    if (!guard->m_project->refreshMedia(m)) continue;
+                    if (const int past = guard->m_project->clipsPastEnd(m.path); past > 0)
+                        guard->statusBar()->showMessage(
+                            past == 1 ? T("%1 ist jetzt kürzer: 1 Clip reicht über sein Ende hinaus").arg(QFileInfo(m.path).fileName())
+                                      : T("%1 ist jetzt kürzer: %2 Clips reichen über sein Ende hinaus")
+                                            .arg(QFileInfo(m.path).fileName()).arg(past),
+                            15000);
+                }
+            }, Qt::QueuedConnection);
+        });
+    });
     connect(m_project, &Project::timelineChanged, this, [this] {
         if (m_engine->mixerOnlyPending()) m_engine->updateTimeline(previewTimeline());
         else if (!m_engineTimer.isActive()) m_engineTimer.start();
