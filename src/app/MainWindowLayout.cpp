@@ -177,9 +177,11 @@ void MainWindow::buildLayout()
         {m_colorBottom, "colorBottom"}};
     for (const auto& [sp, name] : splitters) watchSizes(sp, name);
     applySizes(m_colorBottom, {1100, 420});
+    StartupTrace::mark("  splitters");
 
     // The AI chat beside the pages (all of them), left or right (MainWindowChat.cpp)
     buildChat();
+    StartupTrace::mark("  buildChat");
 
     auto* root = new QWidget;
     root->setObjectName("Root");
@@ -187,11 +189,14 @@ void MainWindow::buildLayout()
     lay->setContentsMargins(0, 0, 0, 0);
     lay->setSpacing(0);
     lay->addWidget(buildTopBar());
+    StartupTrace::mark("  topbar");
     lay->addWidget(buildUpdateBar());
     lay->addWidget(m_chatSplit, 1);
     lay->addWidget(buildPageBar());
+    StartupTrace::mark("  pagebar");
     setCentralWidget(root);
     statusBar(); // made now, not on the first message: the layout never shifts by its height later
+    StartupTrace::mark("  statusbar");
 
     // The Edit page, or the nearest shown one when Edit is hidden
     const QString start = m_pageVisibility.nearestVisible(pageId(Page::Edit));

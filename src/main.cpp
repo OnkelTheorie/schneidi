@@ -28,7 +28,8 @@
 #include <QLockFile>
 #include <QMessageBox>
 #include <QPainter>
-#include <QSplashScreen>
+#include <QScreen>
+#include <QSettings>
 #include <QProcess>
 #include <QFileInfo>
 #include <QRegularExpression>
@@ -79,6 +80,50 @@ QPixmap splashPixmap()
                T("Version %1").arg(QCoreApplication::applicationVersion()));
     return pm;
 }
+
+// Startup time of the last run (ms to the shown window): a splash only when it was slower than this
+constexpr const char* kLastStartKey = "startup/lastWindowMs";
+constexpr qint64 kSplashAboveMs = 900;
+
+// A splash that never blocks: QSplashScreen waits up to a second for the window system to expose it (on show and in
+// finish()), which made every start a second slower. This one paints when it gets the chance - a short, bounded look
+// at the event queue after show() - and goes away with the main window's show.
+class SplashWindow : public QWidget {
+public:
+    explicit SplashWindow(const QPixmap& pixmap)
+        : QWidget(nullptr, Qt::SplashScreen | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint), m_pixmap(pixmap)
+    {
+        setAttribute(Qt::WA_OpaquePaintEvent);
+        setFixedSize(pixmap.deviceIndependentSize().toSize());
+        if (const QScreen* screen = QGuiApplication::primaryScreen())
+            move(screen->availableGeometry().center() - rect().center());
+    }
+    void showNow(const QString& message)
+    {
+        m_message = message;
+        show();
+        // At most ~60 ms for the expose (a local display answers in a few): enough for the picture on screen, never
+        // the full second QSplashScreen allows
+        QElapsedTimer t;
+        t.start();
+        while (windowHandle() && !windowHandle()->isExposed() && t.elapsed() < 60)
+            QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents, 10);
+        if (windowHandle() && windowHandle()->isExposed()) repaint();
+    }
+
+protected:
+    void paintEvent(QPaintEvent*) override
+    {
+        QPainter p(this);
+        p.drawPixmap(0, 0, m_pixmap);
+        p.setPen(Theme::textDim);
+        p.drawText(rect().adjusted(8, 0, -8, -10), Qt::AlignLeft | Qt::AlignBottom, m_message);
+    }
+
+private:
+    QPixmap m_pixmap;
+    QString m_message;
+};
 
 // SCHNEIDI_STARTUP_TRACE: marks the window's first expose and first paint (startup phase table)
 class FirstPaintTrace : public QObject {
@@ -167,17 +212,13 @@ int main(int argc, char* argv[])
     InputBindings::instance().load();
     StartupTrace::mark("log, i18n, theme, bindings");
 
-    // Splash window while the window is built (Windows at first start: the virus scanner looks at every DLL)
-    std::unique_ptr<QSplashScreen> splash;
-    const auto status = [&splash](const QString& text) {
-        if (!splash) return;
-        splash->showMessage("  " + text + "\n", Qt::AlignLeft | Qt::AlignBottom, Theme::textDim);
-        QCoreApplication::processEvents();
-    };
-    if (screenshot.isEmpty()) {
-        splash = std::make_unique<QSplashScreen>(splashPixmap());
-        splash->show();
-        status(T("Öffne Fenster…"));
+    // Splash window while the window is built (Windows at first start: the virus scanner looks at every DLL; weak
+    // hardware). Only when the previous start was slow (or there was none): on a fast machine the window itself comes
+    // before a splash would be worth its round trip to the window system.
+    std::unique_ptr<SplashWindow> splash;
+    if (screenshot.isEmpty() && QSettings().value(kLastStartKey, kSplashAboveMs + 1).toLongLong() > kSplashAboveMs) {
+        splash = std::make_unique<SplashWindow>(splashPixmap());
+        splash->showNow(T("Öffne Fenster…"));
     }
     StartupTrace::mark("splash shown");
 
@@ -216,9 +257,10 @@ int main(int argc, char* argv[])
     if (app.arguments().contains("--screenshot")) w.show();
     else w.showMaximized();
     StartupTrace::mark("window show() returned");
-    if (splash) splash->finish(&w);
+    splash.reset(); // never waits for the window system: the main window covers the spot anyway
     StartupTrace::mark("splash finished");
     qInfo("Startzeit: Engine %lld ms, Fenster sichtbar nach %lld ms", afterEngine - beforeEngine, startTimer.elapsed());
+    if (screenshot.isEmpty()) QSettings().setValue(kLastStartKey, startTimer.elapsed()); // decides the next splash
 
     // Files from the command line directly into the Media Pool
     const QStringList args = app.arguments().mid(1);
