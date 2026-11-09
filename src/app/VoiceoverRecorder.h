@@ -6,7 +6,8 @@
 // else a free unnamed one, else one new track. A take right after the one before butts against it. While it runs the
 // take grows in the timeline (take(), liveTrack()). Stopping (the record key, Esc, Space) - or anything else moving
 // the playhead (a seek, J, a speed change) - puts it into the Media Pool and onto that track, as one undo step.
-// An armed track's input level is measured before recording too (a capture without a file).
+// An armed track's input level is measured before recording too (a capture without a file) - only while the app is
+// active and the timeline shown.
 
 #include "core/Voiceover.h"
 
@@ -53,6 +54,10 @@ public:
     bool stop(QString* error = nullptr);
     void cancel(); // ends it without placing anything (the file stays)
     void inputChanged(); // the input setting changed: the armed track's meter listens to the new one
+    // The armed track's meter may listen (the timeline is shown). It never does while the app is in the background:
+    // an open input keeps a Bluetooth headset in its call profile (poor sound for everything else)
+    void setMeterShown(bool shown);
+    bool metering() const { return m_meter != nullptr; }
 
 signals:
     void armedChanged(int track);
@@ -98,4 +103,6 @@ private:
     double m_playFrom = 0;  // where playback started (pre-roll before m_from)
     bool m_playing = false; // the timeline plays along (open end: also behind its last clip)
     bool m_stopping = false;
+    bool m_meterShown = true;
+    bool m_appActive = true;
 };

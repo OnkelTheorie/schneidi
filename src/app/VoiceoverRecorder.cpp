@@ -11,6 +11,7 @@
 
 #include <QDateTime>
 #include <QDir>
+#include <QGuiApplication>
 #include <QTimer>
 
 #include <cmath>
@@ -44,6 +45,14 @@ VoiceoverRecorder::VoiceoverRecorder(Engine* engine, Project* project, Editor* e
     connect(m_project, &Project::currentSequenceChanged, this, [this] {
         if (m_capture && !m_stopping) stopLater();
     });
+    // The level meter closes its input while the app is in the background (setMeterShown)
+    if (auto* gui = qobject_cast<QGuiApplication*>(QCoreApplication::instance())) {
+        m_appActive = gui->applicationState() == Qt::ApplicationActive || QGuiApplication::platformName() == "offscreen";
+        connect(gui, &QGuiApplication::applicationStateChanged, this, [this](Qt::ApplicationState state) {
+            m_appActive = state == Qt::ApplicationActive;
+            updateMeter();
+        });
+    }
     // Tracks added or removed (an undo, an AI's edit): the armed track and the take's track follow their track
     connect(m_project, &Project::timelineChanged, this, &VoiceoverRecorder::followTracks);
 }
@@ -100,9 +109,15 @@ void VoiceoverRecorder::inputChanged()
     updateMeter();
 }
 
+void VoiceoverRecorder::setMeterShown(bool shown)
+{
+    m_meterShown = shown;
+    updateMeter();
+}
+
 void VoiceoverRecorder::updateMeter()
 {
-    const bool want = m_armed >= 0 && !m_capture;
+    const bool want = m_armed >= 0 && !m_capture && m_meterShown && m_appActive;
     if (want == (m_meter != nullptr)) return;
     if (!want) {
         m_meterTimer->stop();

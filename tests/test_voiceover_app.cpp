@@ -218,8 +218,20 @@ int main(int argc, char** argv)
         CHECK(levels > 0);
         if (const QString dump = qEnvironmentVariable("VOICEOVER_TIMELINE_DUMP"); !dump.isEmpty())
             view->grab(QRect(0, mic.top() - 6, TimelineView::kHeaderW, 52)).save(dump + "-header.png");
+        // Review 2026-11-09: the meter's input closes while the app is in the background or the timeline is not
+        // shown (an open input keeps a Bluetooth headset in its call profile) and opens again after
+        CHECK(recorder->metering());
+        emit qApp->applicationStateChanged(Qt::ApplicationInactive);
+        CHECK(!recorder->metering());
+        emit qApp->applicationStateChanged(Qt::ApplicationActive);
+        CHECK(recorder->metering());
+        w.showPage(MainWindow::Page::Media);
+        CHECK(!recorder->metering());
+        w.showPage(MainWindow::Page::Edit);
+        CHECK(recorder->metering());
         QTest::mouseClick(view, Qt::LeftButton, {}, mic.center());
         CHECK_EQ(recorder->armedTrack(), -1);
+        CHECK(!recorder->metering());
     }
     QObject::disconnect(levelConn);
 
