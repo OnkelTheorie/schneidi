@@ -424,6 +424,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/ui/InspectorDetail.h
     src/ui/InspectorSections.cpp
     src/ui/InspectorTitle.cpp
+    src/ui/LazyFontBox.cpp
     src/ui/InspectorSlot.cpp
     src/ui/SlotText.h src/ui/SlotText.cpp
     src/ui/InspectorTransition.cpp
