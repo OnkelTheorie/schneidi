@@ -43,11 +43,15 @@ private:
     void growToFit();    // widen the mixer in its splitter so all strips fit
     void resizeEvent(class QResizeEvent* e) override;
     void showEvent(class QShowEvent* e) override;
+    void hideEvent(class QHideEvent* e) override;
     void onLevels(const QVector<float>& db);
     void tick();         // let levels decay, peak hold
     void syncArm();      // "R" buttons from the recorder
 
     Project* m_project;
+    // Shown the next time by the user (first show, toggled on after being hidden itself): growToFit then. Not when
+    // only its page comes back - the width the user gave the column stays
+    bool m_growOnShow = true;
     Engine* m_engine;
     Editor* m_editor = nullptr;
     QHBoxLayout* m_stripLayout = nullptr;
