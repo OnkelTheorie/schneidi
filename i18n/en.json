@@ -2771,7 +2771,7 @@
  "Beispiel anlegen": "Create Example",
  "Beispielclips laden": "Load Sample Clips",
  "Belichtung macht das ganze Bild heller oder dunkler, Sättigung die Farben kräftiger oder blasser.": "Exposure makes the whole picture brighter or darker, saturation makes the colors stronger or paler.",
- "Bewegt sich die Stelle? Setz an mehreren Zeitpunkten einen Keyframe, dann folgt das Fenster.": "Does the spot move? Set a keyframe at several moments and the window follows.",
+ "Bewegt sich die Stelle? Verfolgen lässt das Fenster dem Objekt folgen. Oder setz an mehreren Zeitpunkten einen Keyframe.": "Does the spot move? Track makes the window follow the object. Or set a keyframe at several moments.",
  "Bild im Bild": "Picture in Picture",
  "Das Bild fließt von links nach rechts durch die Knoten, jeder verändert es ein Stück. Tab oder Umschalt+Leertaste holt einen neuen Knoten.": "The picture flows from left to right through the nodes; each one changes it a little. Tab or Shift+Space adds a new node.",
  "Das Rezept verkleinert den Clip, gibt ihm einen Rahmen und legt ihn mit einem Mischen-Knoten über die Spuren darunter.": "The recipe makes the clip smaller, gives it a frame and lays it over the tracks below with a merge node.",
@@ -2812,7 +2812,7 @@
  "Soll ich dir das kurz zeigen? (ca. 1 Minute)": "Shall I show you around? (about 1 minute)",
  "Strg+S speichert. Zusätzlich sichert schneidi regelmäßig von selbst; Datei › Sicherungskopie öffnen holt einen älteren Stand zurück.": "Ctrl+S saves. schneidi also makes backups on its own; File › Open Project Backup brings back an older state.",
  "Titel und Übergänge findest du unter Effekte und im Menü Timeline. Zieh sie einfach auf die Timeline.": "Titles and transitions are under Effects and in the Timeline menu. Just drag them onto the timeline.",
- "Trimmen: Fass einen Clip am linken oder rechten Rand und zieh. So kürzt du Anfang oder Ende.": "Trimming: grab a clip by its left or right edge and drag. That shortens its start or end.",
+ "Trimmen: Fass den Clip am rechten Rand und zieh ihn nach links. So kürzt du sein Ende, am linken Rand den Anfang. Probier es aus!": "Trimming: grab the clip by its right edge and drag it to the left. That shortens its end; the left edge shortens its start. Try it!",
  "Unten wechselst du die Seiten: Medien, Schneiden, Compositing, Farbe und Export.": "At the bottom you switch pages: Media, Edit, Compositing, Color and Deliver.",
  "Unter Füllung wählst du Unschärfe oder Verpixeln. Weichheit macht den Rand sanft.": "Under Fill choose Blur or Pixelate. Softness makes the edge gentle.",
  "Wechsle auf die Seite Farbe.": "Switch to the Color page.",
@@ -2824,8 +2824,8 @@
  "Zieh jetzt einen Clip aus dem Medienpool in die Timeline. Ich warte hier.": "Now drag a clip from the Media Pool into the timeline. I’ll wait here.",
  "Zum Prüfen zeigt Alphamaske Weiß, wo das Bild bleibt, und Schwarz, wo es durchsichtig ist. Mit der Pipette im Inspektor wählst du die Farbe genauer.": "To check, Matte shows white where the picture stays and black where it is transparent. The eyedropper in the Inspector picks the color more precisely.",
  "Zurück": "Back",
- "Öffne die Effekte, dort die Compositing-Rezepte, und zieh Bild im Bild auf den Clip.": "Open the Effects, then Comp recipes, and drag Picture in Picture onto the clip.",
- "Öffne die Effekte, dort die Compositing-Rezepte, und zieh Greenscreen auf den Clip.": "Open the Effects, then Comp recipes, and drag Green Screen onto the clip.",
+ "Unter Compositing-Rezepte liegt Bild im Bild: Zieh es auf den oberen Clip.": "Under Comp recipes you find Picture in picture: drag it onto the upper clip.",
+ "Unter Compositing-Rezepte liegt Greenscreen: Zieh es auf den oberen Clip.": "Under Comp recipes you find Green screen: drag it onto the upper clip.",
  "Überspringen": "Skip",
  "Im Hauptfenster": "In the main window",
  "Kein zweiter Monitor gefunden.": "No second monitor found.",
@@ -2884,5 +2884,6 @@
  "Der Rundgang läuft in einem Übungsprojekt. Dein Projekt hat ungespeicherte Änderungen: Es kommt nach dem Rundgang genau so zurück, wie es jetzt ist.": "The tour runs in a practice project. Your project has unsaved changes: after the tour it comes back exactly as it is now.",
  "Erst speichern": "Save First",
  "Für mich erledigen": "Do It for Me",
- "Rundgang starten": "Start Tour"
+ "Rundgang starten": "Start Tour",
+ "Öffne oben die Effekte.": "Open the Effects at the top."
 }

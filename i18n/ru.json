@@ -2771,7 +2771,7 @@
  "Beispiel anlegen": "Создать пример",
  "Beispielclips laden": "Загрузить примеры клипов",
  "Belichtung macht das ganze Bild heller oder dunkler, Sättigung die Farben kräftiger oder blasser.": "Экспозиция делает весь кадр светлее или темнее, насыщенность — цвета ярче или бледнее.",
- "Bewegt sich die Stelle? Setz an mehreren Zeitpunkten einen Keyframe, dann folgt das Fenster.": "Участок двигается? Поставьте ключевые кадры в нескольких моментах, и окно будет следовать за ним.",
+ "Bewegt sich die Stelle? Verfolgen lässt das Fenster dem Objekt folgen. Oder setz an mehreren Zeitpunkten einen Keyframe.": "Участок двигается? Отслеживание заставит окно следовать за объектом. Или поставьте ключевые кадры в нескольких моментах.",
  "Bild im Bild": "Картинка в картинке",
  "Das Bild fließt von links nach rechts durch die Knoten, jeder verändert es ein Stück. Tab oder Umschalt+Leertaste holt einen neuen Knoten.": "Кадр проходит через узлы слева направо, каждый немного его меняет. Tab или Shift+Пробел добавляет новый узел.",
  "Das Rezept verkleinert den Clip, gibt ihm einen Rahmen und legt ihn mit einem Mischen-Knoten über die Spuren darunter.": "Рецепт уменьшает клип, добавляет рамку и накладывает его узлом «Смешать» поверх дорожек ниже.",
@@ -2812,7 +2812,7 @@
  "Soll ich dir das kurz zeigen? (ca. 1 Minute)": "Показать, как это работает? (около 1 минуты)",
  "Strg+S speichert. Zusätzlich sichert schneidi regelmäßig von selbst; Datei › Sicherungskopie öffnen holt einen älteren Stand zurück.": "Ctrl+S сохраняет. Кроме того, schneidi сам делает резервные копии; Файл › Открыть резервную копию возвращает прежнее состояние.",
  "Titel und Übergänge findest du unter Effekte und im Menü Timeline. Zieh sie einfach auf die Timeline.": "Титры и переходы находятся в разделе Эффекты и в меню Монтажный стол. Просто перетащите их на монтажный стол.",
- "Trimmen: Fass einen Clip am linken oder rechten Rand und zieh. So kürzt du Anfang oder Ende.": "Подрезка: возьмите клип за левый или правый край и тяните. Так укорачивается начало или конец.",
+ "Trimmen: Fass den Clip am rechten Rand und zieh ihn nach links. So kürzt du sein Ende, am linken Rand den Anfang. Probier es aus!": "Подрезка: возьмите клип за правый край и потяните влево. Так укорачивается конец, левым краем — начало. Попробуйте!",
  "Unten wechselst du die Seiten: Medien, Schneiden, Compositing, Farbe und Export.": "Внизу переключаются страницы: Медиа, Монтаж, Композитинг, Цвет и Экспорт.",
  "Unter Füllung wählst du Unschärfe oder Verpixeln. Weichheit macht den Rand sanft.": "В разделе «Заливка» выберите «Размытие» или «Пикселизация». «Мягкость» смягчает край.",
  "Wechsle auf die Seite Farbe.": "Перейдите на страницу Цвет.",
@@ -2824,8 +2824,8 @@
  "Zieh jetzt einen Clip aus dem Medienpool in die Timeline. Ich warte hier.": "Теперь перетащите клип из медиатеки на монтажный стол. Я подожду.",
  "Zum Prüfen zeigt Alphamaske Weiß, wo das Bild bleibt, und Schwarz, wo es durchsichtig ist. Mit der Pipette im Inspektor wählst du die Farbe genauer.": "Для проверки «Подложка» показывает белым то, что остаётся, и чёрным прозрачное. Пипеткой в инспекторе цвет выбирается точнее.",
  "Zurück": "Назад",
- "Öffne die Effekte, dort die Compositing-Rezepte, und zieh Bild im Bild auf den Clip.": "Откройте Эффекты, затем «Рецепты comp», и перетащите «Картинку в картинке» на клип.",
- "Öffne die Effekte, dort die Compositing-Rezepte, und zieh Greenscreen auf den Clip.": "Откройте Эффекты, затем «Рецепты comp», и перетащите «Хромакей» на клип.",
+ "Unter Compositing-Rezepte liegt Bild im Bild: Zieh es auf den oberen Clip.": "В «Рецептах comp» есть «Картинка в картинке»: перетащите её на верхний клип.",
+ "Unter Compositing-Rezepte liegt Greenscreen: Zieh es auf den oberen Clip.": "В «Рецептах comp» есть «Хромакей»: перетащите его на верхний клип.",
  "Überspringen": "Пропустить",
  "Im Hauptfenster": "В главном окне",
  "Kein zweiter Monitor gefunden.": "Второй монитор не найден.",
@@ -2884,5 +2884,6 @@
  "Der Rundgang läuft in einem Übungsprojekt. Dein Projekt hat ungespeicherte Änderungen: Es kommt nach dem Rundgang genau so zurück, wie es jetzt ist.": "Тур проходит в учебном проекте. В твоём проекте есть несохранённые изменения: после тура он вернётся точно таким, как сейчас.",
  "Erst speichern": "Сначала сохранить",
  "Für mich erledigen": "Сделать за меня",
- "Rundgang starten": "Начать тур"
+ "Rundgang starten": "Начать тур",
+ "Öffne oben die Effekte.": "Откройте вверху Эффекты."
 }

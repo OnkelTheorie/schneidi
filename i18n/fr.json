@@ -2771,7 +2771,7 @@
  "Beispiel anlegen": "Créer un exemple",
  "Beispielclips laden": "Charger des clips d’exemple",
  "Belichtung macht das ganze Bild heller oder dunkler, Sättigung die Farben kräftiger oder blasser.": "L’exposition éclaircit ou assombrit toute l’image, la saturation rend les couleurs plus vives ou plus pâles.",
- "Bewegt sich die Stelle? Setz an mehreren Zeitpunkten einen Keyframe, dann folgt das Fenster.": "L’endroit bouge ? Place une image clé à plusieurs moments, la fenêtre suivra.",
+ "Bewegt sich die Stelle? Verfolgen lässt das Fenster dem Objekt folgen. Oder setz an mehreren Zeitpunkten einen Keyframe.": "L’endroit bouge ? Suivre fait suivre l’objet à la fenêtre. Ou place une image clé à plusieurs moments.",
  "Bild im Bild": "Incrustation d'image",
  "Das Bild fließt von links nach rechts durch die Knoten, jeder verändert es ein Stück. Tab oder Umschalt+Leertaste holt einen neuen Knoten.": "L’image traverse les nœuds de gauche à droite, chacun la modifie un peu. Tab ou Maj+Espace ajoute un nouveau nœud.",
  "Das Rezept verkleinert den Clip, gibt ihm einen Rahmen und legt ihn mit einem Mischen-Knoten über die Spuren darunter.": "La recette réduit le clip, lui ajoute un cadre et le pose sur les pistes en dessous avec un nœud Fusionner.",
@@ -2812,7 +2812,7 @@
  "Soll ich dir das kurz zeigen? (ca. 1 Minute)": "Je te montre en vitesse ? (env. 1 minute)",
  "Strg+S speichert. Zusätzlich sichert schneidi regelmäßig von selbst; Datei › Sicherungskopie öffnen holt einen älteren Stand zurück.": "Ctrl+S enregistre. schneidi fait aussi des sauvegardes tout seul ; Fichier › Ouvrir la copie de sauvegarde du projet ramène un état plus ancien.",
  "Titel und Übergänge findest du unter Effekte und im Menü Timeline. Zieh sie einfach auf die Timeline.": "Les titres et transitions sont dans Effets et dans le menu Timeline. Glisse-les simplement sur la timeline.",
- "Trimmen: Fass einen Clip am linken oder rechten Rand und zieh. So kürzt du Anfang oder Ende.": "Rogner : attrape un clip par son bord gauche ou droit et fais glisser. Tu raccourcis ainsi le début ou la fin.",
+ "Trimmen: Fass den Clip am rechten Rand und zieh ihn nach links. So kürzt du sein Ende, am linken Rand den Anfang. Probier es aus!": "Rogner : attrape le clip par son bord droit et fais-le glisser vers la gauche. Tu raccourcis ainsi sa fin ; le bord gauche raccourcit le début. Essaie !",
  "Unten wechselst du die Seiten: Medien, Schneiden, Compositing, Farbe und Export.": "En bas, tu changes de page : Médias, Montage, Compositing, Couleur et Export.",
  "Unter Füllung wählst du Unschärfe oder Verpixeln. Weichheit macht den Rand sanft.": "Sous Remplissage, choisis Flou ou Pixeliser. Douceur adoucit le bord.",
  "Wechsle auf die Seite Farbe.": "Passe à la page Couleur.",
@@ -2824,8 +2824,8 @@
  "Zieh jetzt einen Clip aus dem Medienpool in die Timeline. Ich warte hier.": "Glisse maintenant un clip de la médiathèque dans la timeline. Je t’attends ici.",
  "Zum Prüfen zeigt Alphamaske Weiß, wo das Bild bleibt, und Schwarz, wo es durchsichtig ist. Mit der Pipette im Inspektor wählst du die Farbe genauer.": "Pour vérifier, Cache montre en blanc ce qui reste et en noir ce qui est transparent. La pipette de l’inspecteur choisit la couleur plus précisément.",
  "Zurück": "Retour",
- "Öffne die Effekte, dort die Compositing-Rezepte, und zieh Bild im Bild auf den Clip.": "Ouvre les Effets, puis Recettes de comp, et fais glisser Incrustation d’image sur le clip.",
- "Öffne die Effekte, dort die Compositing-Rezepte, und zieh Greenscreen auf den Clip.": "Ouvre les Effets, puis Recettes de comp, et fais glisser Fond vert sur le clip.",
+ "Unter Compositing-Rezepte liegt Bild im Bild: Zieh es auf den oberen Clip.": "Dans Recettes de comp se trouve Incrustation d'image : fais-la glisser sur le clip du haut.",
+ "Unter Compositing-Rezepte liegt Greenscreen: Zieh es auf den oberen Clip.": "Dans Recettes de comp se trouve Fond vert : fais-le glisser sur le clip du haut.",
  "Überspringen": "Passer",
  "Im Hauptfenster": "Dans la fenêtre principale",
  "Kein zweiter Monitor gefunden.": "Aucun second moniteur trouvé.",
@@ -2884,5 +2884,6 @@
  "Der Rundgang läuft in einem Übungsprojekt. Dein Projekt hat ungespeicherte Änderungen: Es kommt nach dem Rundgang genau so zurück, wie es jetzt ist.": "La visite se déroule dans un projet d’entraînement. Ton projet contient des modifications non enregistrées : après la visite, il revient exactement tel qu’il est maintenant.",
  "Erst speichern": "Enregistrer d’abord",
  "Für mich erledigen": "Le faire pour moi",
- "Rundgang starten": "Commencer la visite"
+ "Rundgang starten": "Commencer la visite",
+ "Öffne oben die Effekte.": "Ouvre les Effets en haut."
 }
