@@ -2937,5 +2937,13 @@
  "%1 ist jetzt kürzer: 1 Clip reicht über sein Ende hinaus": "%1 is shorter now: 1 clip reaches past its end",
  "%1 ist jetzt kürzer: %2 Clips reichen über sein Ende hinaus": "%1 is shorter now: %2 clips reach past its end",
  "Stimme gesäubert (%1 Clips) – Strg+Z nimmt es zurück": "Voice cleaned (%1 clips) – Ctrl+Z undoes it",
- "Nichts zu säubern: wähl Tonclips aus oder leg sie auf die Spur A%1": "Nothing to clean: select sound clips or put them on track A%1"
+ "Nichts zu säubern: wähl Tonclips aus oder leg sie auf die Spur A%1": "Nothing to clean: select sound clips or put them on track A%1",
+ "An: Clips mit Bild kommen ohne ihren Ton in die Timeline (Ziehen, Einfügen, F9–F12). Einmalig: beim Ziehen Shift = nur Bild, Strg = nur Ton": "On: clips with a picture go onto the timeline without their sound (dragging, inserting, F9–F12). Just once: hold Shift while dragging = picture only, Ctrl = sound only",
+ "Nur Bild am Abspielkopf platzieren": "Place picture only at the playhead",
+ "Nur Ton am Abspielkopf platzieren": "Place sound only at the playhead",
+ "Ohne Bild – auch: beim Ziehen in die Timeline Strg halten": "Without picture – also: hold Ctrl while dragging into the timeline",
+ "Ohne Ton – auch: beim Ziehen in die Timeline Shift halten": "Without sound – also: hold Shift while dragging into the timeline",
+ "Ton beim Einfügen weglassen": "Leave out sound when placing",
+ "Ziehen: nur das Bild in die Timeline, ohne Ton": "Drag: only the picture into the timeline, without sound",
+ "Ziehen: nur den Ton in die Timeline, ohne Bild": "Drag: only the sound into the timeline, without picture"
 }

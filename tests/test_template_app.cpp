@@ -228,7 +228,7 @@ void testDropFill()
     QObject::connect(&tv, &TimelineView::slotFilled, [&](const QString& m, bool ok) {
         if (ok) messages << m;
     });
-    QObject::connect(&tv, &TimelineView::dropRequested, [&](const QStringList& paths, int, int) { normal << paths; });
+    QObject::connect(&tv, &TimelineView::dropRequested, [&](const QStringList& paths, int, int, PlaceParts) { normal << paths; });
     const int before = project.undoStack()->count();
     // The placeholder clip 1 on V1 at the front: find its row
     int hitY = -1;

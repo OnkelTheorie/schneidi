@@ -477,6 +477,7 @@ int Editor::sourceEdit(SourceEditMode mode, const QString& path, int srcPos, int
     if (len <= 0) return -1;
     // Locked target track: this part is dropped (as when dropping), locked tracks never move
     MediaInfo m2 = m;
+    if (placeParts(m, PlaceParts::Both) == PlaceParts::Picture) m2.hasAudio = false; // sound left out
     if (m2.hasVideo && isTrackLocked(TrackRef{TrackKind::Video, vTrack})) m2.hasVideo = false;
     if (m2.hasAudio && isTrackLocked(TrackRef{TrackKind::Audio, aTrack})) m2.hasAudio = false;
     if (!m2.hasVideo && !m2.hasAudio) return -1;
@@ -546,7 +547,13 @@ int Editor::sourceEdit(SourceEditMode mode, const QString& path, int srcPos, int
     return mode == M::Replace ? playhead : start + len;
 }
 
-int Editor::placeSourceRange(const QString& path, int in, int out, int frame, int track, double speed, bool audioOnly)
+Editor::PlaceParts Editor::placeParts(const MediaInfo& m, PlaceParts parts) const
+{
+    if (parts == PlaceParts::Both && m_leaveOutSound && m.hasVideo) return PlaceParts::Picture;
+    return parts;
+}
+
+int Editor::placeSourceRange(const QString& path, int in, int out, int frame, int track, double speed, PlaceParts parts)
 {
     importPreviewSource(path, m_preview.bin); // looked at in the Media Storage: into the Media Pool first
     const MediaInfo* info = m_project->mediaInfo(path);
@@ -554,10 +561,11 @@ int Editor::placeSourceRange(const QString& path, int in, int out, int frame, in
     const MediaInfo m = *info;
     in = std::clamp(in, 0, m.length - 1);
     out = m.isImage ? std::max(out, in) : std::clamp(out, in, m.length - 1); // a still takes any length (as trimmed)
-    MediaInfo m2 = m; // locked track: this part is dropped
+    MediaInfo m2 = m; // locked track or a part not asked for: this part is dropped
     track = std::max(0, track);
-    if (m2.hasVideo && (audioOnly || isTrackLocked(TrackRef{TrackKind::Video, track}))) m2.hasVideo = false;
-    if (m2.hasAudio && isTrackLocked(TrackRef{TrackKind::Audio, track})) m2.hasAudio = false;
+    parts = placeParts(m, parts);
+    if (m2.hasVideo && (parts == PlaceParts::Sound || isTrackLocked(TrackRef{TrackKind::Video, track}))) m2.hasVideo = false;
+    if (m2.hasAudio && (parts == PlaceParts::Picture || isTrackLocked(TrackRef{TrackKind::Audio, track}))) m2.hasAudio = false;
     if (!m2.hasVideo && !m2.hasAudio) return 0;
     // Retimed: in and length in material frames (file frame / speed, see Clip::speed); a still has no speed
     if (m.isImage || speed <= 0) speed = 1.0;

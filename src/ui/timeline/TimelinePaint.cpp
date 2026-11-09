@@ -176,7 +176,9 @@ void TimelineView::drawTracks(QPainter& p)
 {
     // Trim mode: draw the timeline as it looks after release
     const bool trimEdit = m_drag == Drag::TrimEdit && m_trimPreview;
-    const Timeline& tl = trimEdit ? *m_trimPreview : m_editor->project()->timeline();
+    // Edge drag: likewise (the clip may overwrite its neighbor)
+    const bool trimEdge = m_drag == Drag::Trim && m_trimPreview;
+    const Timeline& tl = trimEdit || trimEdge ? *m_trimPreview : m_editor->project()->timeline();
     const auto& sel = m_editor->selection()->ids();
     const QSet<int> dragSet(m_dragIds.begin(), m_dragIds.end());
     // also while subtitles are dragged: the selected clips move along
@@ -196,7 +198,13 @@ void TimelineView::drawTracks(QPainter& p)
         p.setOpacity(track.muted || track.hidden ? 0.4 : 1.0);
         QSet<int> hidden; // hide transitions of clips that are currently being dragged/trimmed
         if (moving) hidden = dragSet;
-        if (m_drag == Drag::Trim) hidden = QSet<int>(m_trimIds.begin(), m_trimIds.end());
+        if (m_drag == Drag::Trim) {
+            hidden = QSet<int>(m_trimIds.begin(), m_trimIds.end());
+            bool affected = false; // the trimmed clip's track: a neighbor may be cut, its transitions too
+            for (const Clip& c : track.clips) affected |= hidden.contains(c.id);
+            if (affected)
+                for (const Clip& o : track.clips) hidden.insert(o.id);
+        }
         if (trimEdit) {
             // Track may change -> hide transitions (ripple moves all unlocked tracks)
             bool affected = m_trimEdit.kind == TimelineOps::TrimKind::Ripple && !track.locked;
@@ -211,7 +219,7 @@ void TimelineView::drawTracks(QPainter& p)
                 if (!hidden.contains(s.leftId) && !hidden.contains(s.rightId)) audioSpans << s;
         for (Clip c : track.clips) {
             if (moving && dragSet.contains(c.id)) continue; // is drawn shifted below
-            if (m_drag == Drag::Trim && m_trimIds.contains(c.id)) {
+            if (m_drag == Drag::Trim && !trimEdge && m_trimIds.contains(c.id)) {
                 if (m_trim.edge == TimelineOps::Edge::Start) {
                     c.start += m_trimDelta;
                     c.in += m_trimDelta;
@@ -284,10 +292,17 @@ void TimelineView::drawTracks(QPainter& p)
         int start = m_dropFrame;
         for (const DropItem& it : m_dropItems) {
             const int x1 = int(frameToX(start)), x2 = int(frameToX(start + it.length));
-            if (it.video && vRow) p.fillRect(QRect(x1, vRow->y + 1, x2 - x1, vRow->h - 3), Theme::alpha(Theme::videoClip, 150));
+            // Shift/Ctrl or the "leave out sound" setting: the picture or the sound only (Editor::placeParts)
+            MediaInfo parts = it.info;
+            parts.hasVideo = it.video;
+            const PlaceParts take = m_editor->placeParts(parts, m_dropParts);
+            if (it.video && vRow && take != PlaceParts::Sound)
+                p.fillRect(QRect(x1, vRow->y + 1, x2 - x1, vRow->h - 3), Theme::alpha(Theme::videoClip, 150));
             // The same tracks the drop takes (Editor::addMediaAt); a file without probe info: its target track
             QVector<int> tracks;
-            if (it.info.hasAudio) {
+            if (take == PlaceParts::Picture) {
+                // no sound
+            } else if (it.info.hasAudio) {
                 MediaInfo m = it.info;
                 m.length = it.length;
                 tracks = m_editor->dropStreamTracks(tl, m, m_dropTrack, start);
@@ -358,8 +373,8 @@ void TimelineView::drawTracks(QPainter& p)
     }
 
     // Trimming: mark edge + show offset (like DaVinci)
-    if (m_drag == Drag::Trim) {
-        if (const Clip* c = TimelineOps::findClip(tl, m_trim.clipId)) {
+    if (m_drag == Drag::Trim) { // the clip before the drag (tl may be the preview, already trimmed)
+        if (const Clip* c = TimelineOps::findClip(m_editor->project()->timeline(), m_trim.clipId)) {
             const int edgeFrame = m_trim.edge == TimelineOps::Edge::Start ? c->start + m_trimDelta : c->end() + m_trimDelta;
             const int x = int(frameToX(edgeFrame));
             p.setPen(QPen(Theme::primary, 1));

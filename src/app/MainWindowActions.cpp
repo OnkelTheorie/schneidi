@@ -281,6 +281,19 @@ void MainWindow::buildActions()
         if (!m_autosaveDisabled) QSettings().setValue("edit/linkedSelection", on);
     });
     m_timeline->addToolAction(linked, TimelinePanel::Icon::Link);
+    // Sticky, default off (the sound comes along unless the user leaves it out); the Media Pool keeps the sound
+    auto* noSound = makeAction(toolsMenu, "leave_out_sound", T("Ton beim Einfügen weglassen"), QKeySequence(), [] {});
+    noSound->setCheckable(true);
+    noSound->setToolTip(T("An: Clips mit Bild kommen ohne ihren Ton in die Timeline (Ziehen, Einfügen, F9–F12). "
+                          "Einmalig: beim Ziehen Shift = nur Bild, Strg = nur Ton"));
+    noSound->setChecked(QSettings().value("edit/leaveOutSound", false).toBool());
+    m_editor->setLeaveOutSound(noSound->isChecked());
+    connect(noSound, &QAction::toggled, this, [this](bool on) {
+        m_editor->setLeaveOutSound(on);
+        if (!m_autosaveDisabled) QSettings().setValue("edit/leaveOutSound", on);
+        m_timeline->view()->update(); // the drop preview
+    });
+    m_mediaPool->setLeaveOutSoundAction(noSound);
     auto* splitTracks = makeAction(toolsMenu, "split_on_tracks", T("Teilen auf ganzer Spur der Auswahl"), QKeySequence(), [] {});
     splitTracks->setCheckable(true);
     splitTracks->setToolTip(T("An: Strg+B/Maustaste teilt auch den Nachbarclip auf der Spur des ausgewählten Clips. "
@@ -588,6 +601,11 @@ void MainWindow::buildActions()
             statusBar()->showMessage(T("Proxy-Medien aufgeräumt: %1 frei").arg(ProxyCleanup::sizeText(freed)), 8000);
     });
     connect(m_mediaPool, &MediaPool::proxyCleanupRequested, cleanProxies, &QAction::trigger);
+    connect(m_mediaPool, &MediaPool::partsRequested, this, [this](const QStringList& paths, PlaceParts parts) {
+        offerClipFormat(paths, true); // first clip in an empty timeline: adapt project format?
+        const int track = parts == PlaceParts::Sound ? m_editor->targetAudioTrack() : m_editor->targetVideoTrack();
+        m_editor->addMediaAt(paths, m_timeline->view()->playhead(), track, parts);
+    });
     connect(m_mediaPool, &MediaPool::editRequested, this, [this](const QString& path, int how) {
         using SE = Editor::SourceEditMode;
         sourceEditPath(how == 0 ? SE::Insert : how == 1 ? SE::PlaceOnTop : SE::AppendAtEnd, path);

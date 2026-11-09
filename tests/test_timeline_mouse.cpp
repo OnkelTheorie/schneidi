@@ -532,9 +532,13 @@ void testSplitEdit()
         CHECK_EQ(f.project.undoStack()->count(), 1);
         f.project.undoStack()->undo();
         CHECK_EQ(f.dump(), original);
-        // Without Alt the linked edges trim together: into the neighbours nothing moves
+        // Without Alt the linked edges trim together and overwrite the neighbours (their ends go)
         drag(f.tv, {f.x(100) + 2, 125}, {f.x(100) + 2 - f.frames(10), 125});
-        CHECK_EQ(f.dump(), original);
+        CHECK_EQ(f.c(4).start, 90);
+        CHECK_EQ(f.c(2).start, 90);
+        CHECK_EQ(f.c(2).in, 490);
+        CHECK_EQ(f.c(1).end(), 90);
+        CHECK_EQ(f.c(3).end(), 90);
     }
     {
         // Trim tool, Alt on the picture cut: only the picture rolls (the sound runs on: an L cut seen from the picture)
@@ -550,6 +554,85 @@ void testSplitEdit()
         drag(f.tv, {f.x(100) + 1, 60}, {f.x(100) + 1 + f.frames(10), 60});
         CHECK_EQ(f.c(2).start, 110);
         CHECK_EQ(f.c(4).start, 110);
+    }
+}
+
+// Select tool: an edge dragged into the neighbour overwrites it (shortened, or removed where all of it is covered) -
+// one undo step, the linked sound alike; the neighbour's edge snaps but does not stop the drag. The trim tool keeps
+// its ripple.
+void testTrimOverwrite()
+{
+    struct Over : ToolFixture {
+        Over()
+        {
+            Timeline tl;
+            tl.video.resize(1);
+            tl.audio.resize(1);
+            auto at = [](int id, int start, int len, int in, int link) {
+                Clip c = clip(id, start, len);
+                c.in = in;
+                c.out = in + len - 1;
+                c.linkId = link;
+                return c;
+            };
+            // V1: 1 [0,100) 2 [100,160) 3 [160,260); A1: their sounds 4, 5, 6
+            tl.video[0].clips << at(1, 0, 100, 0, 1) << at(2, 100, 60, 500, 2) << at(3, 160, 100, 1000, 3);
+            tl.audio[0].clips << at(4, 0, 100, 0, 1) << at(5, 100, 60, 500, 2) << at(6, 160, 100, 1000, 3);
+            project.load(ProjectData{ProjectFormat{}, 0, project.media(), {}, tl, 6, 3});
+            project.undoStack()->clear();
+            QApplication::processEvents();
+        }
+        const Clip* c(int id) const { return TimelineOps::findClip(project.timeline(), id); }
+    };
+    {
+        // End of 1 dragged 30 frames into 2: 2 (and its sound) starts later, its content stays in place
+        Over f;
+        const QString original = f.dump();
+        drag(f.tv, {f.x(100) - 2, 60}, {f.x(100) - 2 + f.frames(30), 60});
+        CHECK_EQ(f.c(1)->end(), 130);
+        CHECK_EQ(f.c(4)->end(), 130);
+        CHECK(f.c(2) && f.c(2)->start == 130 && f.c(2)->in == 530 && f.c(2)->end() == 160);
+        CHECK(f.c(5) && f.c(5)->start == 130 && f.c(5)->in == 530);
+        CHECK_EQ(f.c(3)->start, 160);
+        CHECK_EQ(f.project.undoStack()->count(), 1);
+        f.project.undoStack()->undo();
+        CHECK_EQ(f.dump(), original);
+    }
+    {
+        // Over all of 2 and into 3: 2 and its sound are gone, 3 is shortened at its start
+        Over f;
+        drag(f.tv, {f.x(100) - 2, 60}, {f.x(100) - 2 + f.frames(80), 60});
+        CHECK(!f.c(2) && !f.c(5));
+        CHECK_EQ(f.c(1)->end(), 180);
+        CHECK(f.c(3)->start == 180 && f.c(3)->in == 1020);
+        CHECK(f.c(6)->start == 180 && f.c(6)->in == 1020);
+        CHECK_EQ(f.project.undoStack()->count(), 1);
+    }
+    {
+        // Start of 3 dragged left over 2 into 1: the neighbours' ends go
+        Over f;
+        drag(f.tv, {f.x(160) + 2, 60}, {f.x(160) + 2 - f.frames(70), 60});
+        CHECK(f.c(3)->start == 90 && f.c(3)->in == 930);
+        CHECK(!f.c(2) && !f.c(5));
+        CHECK_EQ(f.c(1)->end(), 90);
+        CHECK_EQ(f.c(4)->end(), 90);
+    }
+    {
+        // Close to the neighbour's end the edge snaps onto it (exactly covered: gone, nothing of it left)
+        Over f;
+        drag(f.tv, {f.x(100) - 2, 60}, {f.x(160) - 2 + 3, 60});
+        CHECK(!f.c(2));
+        CHECK_EQ(f.c(1)->end(), 160);
+        CHECK_EQ(f.c(3)->start, 160);
+    }
+    {
+        // The trim tool still ripples: 2 and 3 move right, nothing is overwritten
+        Over f;
+        f.tv.setTool(TimelineView::Tool::Trim);
+        drag(f.tv, {f.x(100) - 6, 60}, {f.x(100) - 6 + f.frames(30), 60});
+        CHECK_EQ(f.c(1)->end(), 130);
+        CHECK(f.c(2) && f.c(2)->start == 130 && f.c(2)->in == 500);
+        CHECK_EQ(f.c(3)->start, 190);
     }
 }
 
@@ -616,6 +699,7 @@ int main(int argc, char** argv)
     testEditPoints();
     testSlipSlideTools();
     testSplitEdit();
+    testTrimOverwrite();
     testStoryBand();
     return Check::result();
 }

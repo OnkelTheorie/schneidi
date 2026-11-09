@@ -2937,5 +2937,13 @@
  "%1 ist jetzt kürzer: 1 Clip reicht über sein Ende hinaus": "%1 jest teraz krótszy: 1 klip wychodzi poza jego koniec",
  "%1 ist jetzt kürzer: %2 Clips reichen über sein Ende hinaus": "%1 jest teraz krótszy: klipy wychodzące poza jego koniec: %2",
  "Stimme gesäubert (%1 Clips) – Strg+Z nimmt es zurück": "Głos oczyszczony (klipy: %1) – Ctrl+Z cofa",
- "Nichts zu säubern: wähl Tonclips aus oder leg sie auf die Spur A%1": "Nic do oczyszczenia: zaznacz klipy dźwiękowe albo umieść je na ścieżce A%1"
+ "Nichts zu säubern: wähl Tonclips aus oder leg sie auf die Spur A%1": "Nic do oczyszczenia: zaznacz klipy dźwiękowe albo umieść je na ścieżce A%1",
+ "An: Clips mit Bild kommen ohne ihren Ton in die Timeline (Ziehen, Einfügen, F9–F12). Einmalig: beim Ziehen Shift = nur Bild, Strg = nur Ton": "Włączone: klipy z obrazem trafiają na oś czasu bez dźwięku (przeciąganie, wstawianie, F9–F12). Jednorazowo: podczas przeciągania Shift = tylko obraz, Ctrl = tylko dźwięk",
+ "Nur Bild am Abspielkopf platzieren": "Umieść tylko obraz przy głowicy",
+ "Nur Ton am Abspielkopf platzieren": "Umieść tylko dźwięk przy głowicy",
+ "Ohne Bild – auch: beim Ziehen in die Timeline Strg halten": "Bez obrazu – także: przytrzymaj Ctrl podczas przeciągania na oś czasu",
+ "Ohne Ton – auch: beim Ziehen in die Timeline Shift halten": "Bez dźwięku – także: przytrzymaj Shift podczas przeciągania na oś czasu",
+ "Ton beim Einfügen weglassen": "Pomijaj dźwięk przy wstawianiu",
+ "Ziehen: nur das Bild in die Timeline, ohne Ton": "Przeciągnij: tylko obraz na oś czasu, bez dźwięku",
+ "Ziehen: nur den Ton in die Timeline, ohne Bild": "Przeciągnij: tylko dźwięk na oś czasu, bez obrazu"
 }

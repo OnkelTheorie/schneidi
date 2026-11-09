@@ -543,12 +543,11 @@ void TimelineView::dragMove(const QPoint& pos, Qt::KeyboardModifiers mods)
         const int edgeFrame = m_trim.edge == TimelineOps::Edge::Start ? c->start : c->end();
         const QSet<int> exclude(m_trimIds.begin(), m_trimIds.end());
         delta += snapDelta({edgeFrame + delta}, exclude);
-        const int clamped = m_editor->clampTrim(m_trim.clipId, m_trim.edge, delta);
-        if (clamped != m_trimDelta) { // trim view: same edge trim on a copy (no ripple)
-            Timeline preview = m_editor->project()->timeline();
-            // already clamped -> source length not needed again
-            TimelineOps::trimClips(preview, m_trimIds, m_trim.edge, clamped, [](const Clip&) { return 0; });
-            updateTrimFrames(preview, {TimelineOps::TrimKind::Ripple, m_trimIds, {}, m_trim.edge}, clamped);
+        // the edge runs over a neighbor (overwrite); its edge only snaps
+        const int clamped = m_editor->clampTrim(m_trim.clipId, m_trim.edge, delta, true);
+        if (clamped != m_trimDelta || !m_trimPreview) { // timeline and trim view: as after release (no ripple)
+            m_trimPreview = m_editor->previewTrim(m_trim.clipId, m_trim.edge, clamped, true);
+            updateTrimFrames(*m_trimPreview, {TimelineOps::TrimKind::Ripple, m_trimIds, {}, m_trim.edge}, clamped);
         }
         m_trimDelta = clamped;
         update();
@@ -740,7 +739,7 @@ void TimelineView::mouseReleaseEvent(QMouseEvent* e)
     m_drag = Drag::None; // before trimClip, so the preview is not applied twice
     if (ramp && m_rampDelta != 0) m_editor->moveSpeedPoint(m_rampDrag.clipId, m_rampDrag.point, m_rampDelta);
     m_rampDelta = 0;
-    if (trimmed && m_trimDelta != 0) m_editor->trimClip(m_trim.clipId, m_trim.edge, m_trimDelta);
+    if (trimmed && m_trimDelta != 0) m_editor->trimClip(m_trim.clipId, m_trim.edge, m_trimDelta, true);
     if (trimEdit && m_trimEditDelta != 0) m_editor->applyTrimEdit(m_trimEdit, m_trimEditDelta);
     m_trimPreview.reset();
     m_trimEditDelta = 0;

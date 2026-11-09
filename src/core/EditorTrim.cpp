@@ -30,16 +30,29 @@ TimelineOps::SourceLength Editor::sourceLength() const
     };
 }
 
-int Editor::clampTrim(int clipId, TimelineOps::Edge edge, int delta) const
+int Editor::clampTrim(int clipId, TimelineOps::Edge edge, int delta, bool overwrite) const
 {
-    return TimelineOps::clampTrim(m_project->timeline(), withFollowers({clipId}), edge, delta, sourceLength());
+    return TimelineOps::clampTrim(m_project->timeline(), withFollowers({clipId}), edge, delta, sourceLength(), overwrite);
 }
 
-void Editor::trimClip(int clipId, TimelineOps::Edge edge, int delta)
+void Editor::trimClip(int clipId, TimelineOps::Edge edge, int delta, bool overwrite)
 {
     const QVector<int> ids = withFollowers({clipId});
-    if (TimelineOps::clampTrim(m_project->timeline(), ids, edge, delta, sourceLength()) == 0) return;
-    m_project->edit(T("Trimmen"), [&](Timeline& tl) { TimelineOps::trimClips(tl, ids, edge, delta, sourceLength()); });
+    if (TimelineOps::clampTrim(m_project->timeline(), ids, edge, delta, sourceLength(), overwrite) == 0) return;
+    m_project->edit(T("Trimmen"), [&](Timeline& tl) {
+        if (overwrite) TimelineOps::trimClipsOver(tl, ids, edge, delta, sourceLength(), [this] { return m_project->newClipId(); });
+        else TimelineOps::trimClips(tl, ids, edge, delta, sourceLength());
+    });
+}
+
+Timeline Editor::previewTrim(int clipId, TimelineOps::Edge edge, int delta, bool overwrite) const
+{
+    Timeline tl = m_project->timeline();
+    const QVector<int> ids = withFollowers({clipId});
+    int nextId = -1; // a preview never keeps its ids (and an extended edge splits no neighbor)
+    if (overwrite) TimelineOps::trimClipsOver(tl, ids, edge, delta, sourceLength(), [&nextId] { return nextId--; });
+    else TimelineOps::trimClips(tl, ids, edge, delta, sourceLength());
+    return tl;
 }
 
 TimelineOps::TrimEdit Editor::trimEdit(TimelineOps::TrimKind kind, int clipId, TimelineOps::Edge edge) const

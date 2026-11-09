@@ -65,9 +65,18 @@ public:
     QVector<int> editable(const QVector<int>& ids) const;
     bool isTrackLocked(TrackRef ref) const;
 
+    // Which parts of a file a placement takes (core/Types.h). A file without the asked part places nothing.
+    using PlaceParts = ::PlaceParts;
+    // Leave out the sound when placing (sticky app setting, default off): a placement of Both then takes only the
+    // picture of a file that has one (a sound-only file keeps its sound). Media stay in the pool with their sound.
+    bool leaveOutSound() const { return m_leaveOutSound; }
+    void setLeaveOutSound(bool on) { m_leaveOutSound = on; }
+    // The parts a placement of `m` takes (leaveOutSound applied to Both)
+    PlaceParts placeParts(const MediaInfo& m, PlaceParts parts) const;
+
     // Places media: video on V[track], audio on A[track] (like DaVinci, V2 <-> A2).
-    // Missing tracks are created. Several files end up one after another.
-    void addMediaAt(const QStringList& paths, int frame, int track = 0);
+    // Missing tracks are created. Several files end up one after another. parts: picture/sound only (placeParts).
+    void addMediaAt(const QStringList& paths, int frame, int track = 0, PlaceParts parts = PlaceParts::Both);
     // A voice-over recording (core/Voiceover.h) from the Media Pool onto A[track]: file frame 0 lies at timeline
     // frame `fileStart` (fractional, latency already taken off), the clip starts at the first file frame at or after
     // `from` (the playhead where recording started; the pre-roll is cut off) and sits there to 1/100 frame
@@ -134,10 +143,13 @@ public:
     void moveClips(const QVector<int>& ids, int deltaFrames, TrackKind kind, int trackDelta);
     // Move in 1/100 frame (fine position of audio clips, Clip::subframe); whole frames like moveClips
     void moveClipsFine(const QVector<int>& ids, int fine, TrackKind kind, int trackDelta);
-    // Drag the edge of a clip (and linked partners), without ripple
-    void trimClip(int clipId, TimelineOps::Edge edge, int delta);
+    // Drag the edge of a clip (and linked partners), without ripple. overwrite: the edge may run over the neighbors
+    // (they are shortened or removed where the clip now lies, TimelineOps::trimClipsOver), otherwise it stops there
+    void trimClip(int clipId, TimelineOps::Edge edge, int delta, bool overwrite = false);
     // How far the edge can actually be moved (for the live preview)
-    int clampTrim(int clipId, TimelineOps::Edge edge, int delta) const;
+    int clampTrim(int clipId, TimelineOps::Edge edge, int delta, bool overwrite = false) const;
+    // The timeline as trimClip would leave it (for the live preview)
+    Timeline previewTrim(int clipId, TimelineOps::Edge edge, int delta, bool overwrite = false) const;
     // Trim mode (T): build the edit for the grabbed clip (with linked partners).
     // Ripple: edge `edge`; Roll: cut at this edge (clips on both sides on the partners' tracks); Slip/Slide: clip.
     TimelineOps::TrimEdit trimEdit(TimelineOps::TrimKind kind, int clipId, TimelineOps::Edge edge = TimelineOps::Edge::End) const;
@@ -337,12 +349,14 @@ public:
     // removed afterwards (like DaVinci). srcPos = source playhead (for Replace without source in).
     // Video/audio linked onto the target tracks, one undo step. Return value: end of the new clip (new playhead),
     // -1 = nothing happened (no clip under the playhead, too little material).
+    // leaveOutSound: the picture only.
     int sourceEdit(SourceEditMode mode, const QString& path, int srcPos, int playhead);
     // Overwrite source range [in, out] at frame `frame` on track index `track` (V[n]/A[n]) (drag from the viewer);
     // speed != 1: the same file frames retimed (speed 0.5 = twice as long). Returns the timeline frames it took (0 =
     // nothing placed)
-    // audioOnly: its sound only (op 'sfx': a video file as an effect sound leaves the picture alone)
-    int placeSourceRange(const QString& path, int in, int out, int frame, int track, double speed = 1.0, bool audioOnly = false);
+    // parts: picture or sound only (placeParts; op 'sfx': a video file as an effect sound leaves the picture alone)
+    int placeSourceRange(const QString& path, int in, int out, int frame, int track, double speed = 1.0,
+                         PlaceParts parts = PlaceParts::Both);
     // Target tracks for F9/F10 ... (like DaVinci Destination Controls), index 0 = V1/A1
     // Import presets for files with several audio streams (core/StreamPresets.h): used by every edit that makes
     // clips from files; changing them leaves the timeline as it is (not in the undo)
@@ -739,6 +753,7 @@ private:
     Project* m_project;
     Selection* m_selection;
     bool m_linkedSelection = true;
+    bool m_leaveOutSound = false;
     bool m_splitOnSelectedTracks = true;
     int m_targetVideo = 0, m_targetAudio = 0;
     // What the lock key last locked from a selection, valid while the undo stack, the open timeline and the target

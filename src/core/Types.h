@@ -21,6 +21,8 @@
 #include <memory>
 
 enum class TrackKind { Video, Audio };
+// Which parts of a file a placement takes (Editor::addMediaAt, placeSourceRange): both, the picture or the sound only
+enum class PlaceParts { Both, Picture, Sound };
 
 // Effect on a clip (Open FX like DaVinci); each kind at most once per clip, order = render order
 struct EffectInstance {

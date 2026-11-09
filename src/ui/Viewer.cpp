@@ -124,6 +124,42 @@ private:
     QVector<int> m_markers;
 };
 
+namespace {
+
+// Below the picture: drag only the picture or only the sound of the source into the timeline
+class PartHandle : public QLabel {
+public:
+    PartHandle(const QString& text, const QString& tip, std::function<QMimeData*()> data)
+        : QLabel(text), m_data(std::move(data))
+    {
+        setToolTip(tip);
+        setCursor(Qt::OpenHandCursor);
+        setStyleSheet(QString("QLabel { color: %1; border: 1px solid %2; border-radius: 3px; padding: 0 6px; margin: 2px; }"
+                              "QLabel:hover { color: %3; border-color: %3; }")
+                          .arg(Theme::textDim.name(), Theme::border.name(), Theme::primary.name()));
+    }
+
+protected:
+    void mousePressEvent(QMouseEvent* e) override { m_press = e->pos(); }
+    void mouseMoveEvent(QMouseEvent* e) override
+    {
+        if (!(e->buttons() & Qt::LeftButton) || m_press.x() < 0) return;
+        if ((e->pos() - m_press).manhattanLength() < QApplication::startDragDistance()) return;
+        m_press = QPoint(-1, -1);
+        QMimeData* mime = m_data();
+        if (!mime) return;
+        auto* drag = new QDrag(this);
+        drag->setMimeData(mime);
+        drag->exec(Qt::CopyAction);
+    }
+
+private:
+    std::function<QMimeData*()> m_data;
+    QPoint m_press{-1, -1};
+};
+
+} // namespace
+
 Viewer::Viewer(Engine* engine, QWidget* parent) : QWidget(parent), m_engine(engine)
 {
     setObjectName("Panel");
@@ -294,6 +330,16 @@ Viewer::Viewer(Engine* engine, QWidget* parent) : QWidget(parent), m_engine(engi
     transport->addSpacerItem(m_barBalance);
     m_barRight = new QHBoxLayout;
     m_barRight->setSpacing(0);
+    m_partHandles = new QWidget;
+    auto* handles = new QHBoxLayout(m_partHandles);
+    handles->setContentsMargins(0, 0, 4, 0);
+    handles->setSpacing(0);
+    handles->addWidget(new PartHandle(T("Bild"), T("Ziehen: nur das Bild in die Timeline, ohne Ton"),
+                                      [this] { return dragData("picture"); }));
+    handles->addWidget(new PartHandle(T("Ton"), T("Ziehen: nur den Ton in die Timeline, ohne Bild"),
+                                      [this] { return dragData("sound"); }));
+    m_partHandles->hide();
+    m_barRight->addWidget(m_partHandles);
     m_barRight->addWidget(bypass);
     transport->addLayout(m_barRight);
     m_barBalance->changeSize(std::max(0, m_timecode->sizeHint().width() - m_barRight->sizeHint().width()), 0,
@@ -619,6 +665,10 @@ void Viewer::setSource(const QString& path, const QString& name)
     // Only a source can be dragged into the timeline; in the timeline view a left drag pans the zoomed picture
     if (path.isEmpty()) m_screen->dragData = nullptr;
     else m_screen->dragData = [this] { return dragData(); };
+    m_partHandles->setVisible(!path.isEmpty());
+    m_barBalance->changeSize(std::max(0, m_timecode->sizeHint().width() - m_barRight->sizeHint().width()), 0,
+                             QSizePolicy::Fixed, QSizePolicy::Minimum);
+    if (layout()) layout()->invalidate();
 }
 
 void Viewer::updateModeText()
@@ -642,7 +692,7 @@ void Viewer::setRecording(bool on)
     updateModeText();
 }
 
-QMimeData* Viewer::dragData() const
+QMimeData* Viewer::dragData(const QByteArray& part) const
 {
     if (m_sourcePath.isEmpty() || m_length <= 0) return nullptr;
     const int in = m_in >= 0 ? m_in : 0;
@@ -651,6 +701,7 @@ QMimeData* Viewer::dragData() const
     auto* mime = new QMimeData;
     mime->setData(MediaPool::MimeType, m_sourcePath.toUtf8());
     mime->setData(RangeMimeType, QString("%1 %2").arg(in).arg(out).toUtf8());
+    if (!part.isEmpty()) mime->setData(PartsMimeType, part);
     return mime;
 }
 

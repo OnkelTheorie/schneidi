@@ -174,7 +174,7 @@ int runTests(int argc, char** argv)
             return messageOf("edit", {{"project", g_path}, {"ops", "[" + op + "]"}});
         };
         const QString trim = message(R"({"op":"trim","clip":1,"star":5})");
-        CHECK(trim.startsWith("BAD_ARGUMENT: op 0 (trim): unknown key 'star' (keys: clip, edge, by, to, mode, clips;"));
+        CHECK(trim.startsWith("BAD_ARGUMENT: op 0 (trim): unknown key 'star' (keys: clip, edge, by, to, mode, overwrite, clips;"));
         for (const char* op : {R"({"op":"split","at":10,"clips":[1]})", R"({"op":"transform","clips":[1],"zom":2})",
                                R"({"op":"volume","clips":[2],"db":-3,"gain":2})",
                                R"({"op":"append","media":"/x/a.mp4","lenght":5})",
@@ -841,6 +841,20 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
         CHECK_EQ(fit["start"].toInt(), 40);
         CHECK_EQ(fit["end"].toInt(), 45);
         CHECK_EQ(fit["speed"].toDouble(), 2.0);
+    }
+
+    // place/append with video_only (the sound left out) or audio_only; the media keep both
+    {
+        const auto ed = [](const QString& ops) { return run("edit", {{"project", g_path}, {"ops", ops}}); };
+        ed(R"([{"op":"clear"},{"op":"place","media":"/x/a.mp4","at":0,"in":0,"out":10,"video_only":true}])");
+        CHECK_EQ(saved().section("  ", 0, 0), QString("V1: a[0-10|0-9]"));
+        CHECK(!saved().contains("A1: a"));
+        ed(R"([{"op":"append","media":"/x/a.mp4","in":0,"out":10,"audio_only":true}])");
+        CHECK(saved().contains("A1: a[10-20|0-9]"));
+        CHECK_EQ(saved().section("  ", 0, 0), QString("V1: a[0-10|0-9]")); // no picture at 10
+        CHECK_EQ(errorOf("edit", {{"project", g_path},
+                                  {"ops", R"([{"op":"place","media":"/x/a.mp4","at":0,"video_only":true,"audio_only":true}])"}}),
+                 QString("BAD_ARGUMENT"));
     }
 
     // Titles with a duration, slip with keyframes (AI test runs 2026-10-25)

@@ -366,7 +366,7 @@ void opTrim(Session& s, const QJsonObject& op)
     else if (by.isString()) delta = parseTime(by, s.format(), "by");
     if (mode == "normal") {
         if (op.contains("to")) delta = timeOf(s, op, "to") - (edge == TimelineOps::Edge::Start ? c.start : c.end());
-        s.editor.trimClip(c.id, edge, delta);
+        s.editor.trimClip(c.id, edge, delta, op.value("overwrite").toBool());
         return;
     }
     TimelineOps::TrimKind kind;
@@ -949,10 +949,11 @@ void addEditOps(QVector<OpDef>& ops)
                      + ". Example counter: {op:'title', kind:'counter', from:0, to:1000, suffix:' kills', at:'2s', "
                        "duration:'3s', size:160}.",
                  opTitle, kStyleKeys + kGeneratorKeys + TitleLookJson::keys()}
-        << OpDef{"trim", "{op:'trim', clip, edge?:'start'|'end', by|to, mode?}",
+        << OpDef{"trim", "{op:'trim', clip, edge?:'start'|'end', by|to, mode?, overwrite?}",
                  "move a clip edge; mode normal (default, no ripple), ripple, roll (the cut), slip (content, by only), "
                  "slide (clip between its neighbours)",
-                 "by/to in frames (or times). slip shows other source frames in the same place: by > 0 = later "
+                 "by/to in frames (or times). normal stops at a neighbouring clip; overwrite:true runs over it instead "
+                 "(the neighbour is shortened or removed where the clip now lies, like dragging an edge in the app). slip shows other source frames in the same place: by > 0 = later "
                  "material; the clip's keyframes stay where they are in the clip (an animation keeps its timing, "
                  "they never leave the clip). Only the place of Color page windows (x, y, size, rotation) moves with the "
                  "content, so a window tracked to a face stays on it.",

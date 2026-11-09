@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 #include "core/PoolFilter.h"
+#include "core/Types.h"
 
 #include <QHash>
 #include <QImage>
@@ -37,6 +38,8 @@ class TimelinePosters;
 class MediaPool : public QWidget {
     Q_OBJECT
 public:
+    // The app's sticky "leave out sound when placing" toggle, shown in the context menu too
+    void setLeaveOutSoundAction(QAction* a) { m_leaveOutSound = a; }
     static constexpr const char* MimeType = "application/x-schneidi-media";
     // All dragged Media Pool clips (paths, one line per clip) – for moving into a bin
     static constexpr const char* ListMimeType = "application/x-schneidi-media-list";
@@ -138,6 +141,8 @@ signals:
     // Context menu: put this file onto the timeline - 0 insert at the playhead, 1 place on a free track at the playhead,
     // 2 append at the end
     void editRequested(const QString& path, int how);
+    // Context menu: only the picture or only the sound of these files at the playhead
+    void partsRequested(const QStringList& paths, PlaceParts parts);
     // Right-click "Stretched 4:3": the clips of these files in the open timeline at 4:3 (on) or their file's shape
     void stretchedRequested(const QStringList& paths, bool on);
 
@@ -146,6 +151,7 @@ protected:
     void dropEvent(QDropEvent* e) override;
 
 private:
+    QAction* m_leaveOutSound = nullptr;
     void rebuild();      // media list changed: view anew (thumbnails of new media come from requestThumb)
     void rebuildBins();  // bin list anew (selection/expanded bins stay)
     void rebuildClips(); // clips of the selected bin (sorted)
