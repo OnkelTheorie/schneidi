@@ -1031,8 +1031,11 @@ void Mixer::resizeEvent(QResizeEvent* e)
 void Mixer::fitStrips()
 {
     // Never wider than all strips + master + loudness: a wider splitter share (dragged, restored, window
-    // maximized) left an empty area on the right; the splitter gives the rest to the timeline
-    setMaximumWidth(int(m_strips.size()) * kStripW + fixedWidth());
+    // maximized) left an empty area on the right; the splitter gives the rest to the timeline. Not in a column (below
+    // the Inspector): the column would take that limit and squeeze the panel above
+    auto* sp = qobject_cast<QSplitter*>(parentWidget());
+    setMaximumWidth(sp && sp->orientation() == Qt::Vertical ? QWIDGETSIZE_MAX
+                                                             : int(m_strips.size()) * kStripW + fixedWidth());
     if (m_strips.isEmpty()) {
         m_stripScroll->setFixedWidth(0);
         return;
@@ -1047,14 +1050,20 @@ void Mixer::fitStrips()
 
 int Mixer::fixedWidth() const { return m_master->minimumWidth() + m_loudness->minimumSizeHint().width(); }
 
-// Widen the mixer in its splitter (taking from the timeline) until all strips fit, at most to 45 % of the
-// splitter. Only grows, so a mixer the user made narrower stays narrower until it is shown again.
+// Widen the mixer (or the column it is in) in the nearest side-by-side splitter (taking from the timeline) until all
+// strips fit, at most to 45 % of the splitter. Only grows, so a mixer the user made narrower stays narrower until it is
+// shown again.
 void Mixer::growToFit()
 {
+    QWidget* item = this;
     auto* sp = qobject_cast<QSplitter*>(parentWidget());
+    while (sp && sp->orientation() != Qt::Horizontal) {
+        item = sp;
+        sp = qobject_cast<QSplitter*>(sp->parentWidget());
+    }
     if (!sp || !isVisible() || sp->count() < 2) return;
     QList<int> sizes = sp->sizes();
-    const int idx = sp->indexOf(this), other = idx == 0 ? 1 : 0;
+    const int idx = sp->indexOf(item), other = idx == 0 ? 1 : 0;
     const int want = std::min(int(m_strips.size()) * kStripW + fixedWidth(), (sizes[idx] + sizes[other]) * 45 / 100);
     if (sizes[idx] >= want) return;
     sizes[other] -= want - sizes[idx];

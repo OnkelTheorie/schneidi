@@ -240,7 +240,7 @@ void testEditPage(MainWindow& w, Engine& engine)
         settle();
     }
     for (auto it = once.sizes.begin(); it != once.sizes.end(); ++it) CHECK(it.key()->sizes() == it.value());
-    CHECK(once.sizes.size() >= 4); // editTop, editMain, editBottom, the chat's
+    CHECK(once.sizes.size() >= 4); // editTop, editMain, editRow, the chat's
     // Off and on again at once (before the layout's second pass): stays large
     large->trigger();
     settle();

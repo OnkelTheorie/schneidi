@@ -122,10 +122,17 @@ void MainWindow::buildLayout()
     m_editLeft->addWidget(m_effects);
     m_editMain = new QSplitter(Qt::Vertical);
     m_editMain->addWidget(m_editTop);
-    m_editBottom = new QSplitter(Qt::Horizontal); // mixer to the right of the timeline like in DaVinci
-    m_editBottom->addWidget(m_mixer);
-    m_editBottom->setStretchFactor(0, 1);
-    m_editMain->addWidget(m_editBottom);
+    // The mixer on the right below the Inspector, in a column of its own: the handle above the timeline moves only the
+    // timeline, the mixer keeps its height (and the Inspector comes down to it)
+    m_editRight = new QSplitter(Qt::Vertical);
+    m_editRight->addWidget(m_mixer);
+    m_editRight->hide();
+    m_editRow = new QSplitter(Qt::Horizontal);
+    m_editRow->addWidget(m_editMain);
+    m_editRow->addWidget(m_editRight);
+    m_editRow->setStretchFactor(0, 1);
+    m_inspectorSlot = new QWidget(this); // not in any layout while unused
+    m_inspectorSlot->hide();
     // Media page like DaVinci: Media Storage | Viewer on top, the Media Pool below
     m_mediaPage = new QSplitter(Qt::Vertical);
     m_mediaTop = new QSplitter(Qt::Horizontal);
@@ -138,7 +145,7 @@ void MainWindow::buildLayout()
 
     m_pages = new QStackedWidget;
     m_pages->addWidget(m_mediaPage);
-    m_pages->addWidget(m_editMain);
+    m_pages->addWidget(m_editRow);
     m_pages->addWidget(m_deliverPage);
     // Color page like DaVinci (slimmed down): viewer on top, timeline in the middle, color wheels below
     // and the scopes right of them (DaVinci's scope panel); the scopes analyse each preview frame after the grade
@@ -151,7 +158,7 @@ void MainWindow::buildLayout()
     m_pages->addWidget(m_colorPage);
     const QPair<QSplitter*, const char*> splitters[] = {
         {m_editTop, "editTop"},         {m_editMain, "editMain"},
-        {m_editBottom, "editBottom"},   {m_mediaPage, "mediaPage"},   {m_mediaTop, "mediaTop"},
+        {m_editRow, "editRow"},         {m_editRight, "editRight"},   {m_mediaPage, "mediaPage"},   {m_mediaTop, "mediaTop"},
         {m_deliverPage, "deliverPage"}, {m_deliverRight, "deliverRight"}, {m_colorPage, "colorPage"},
         {m_colorBottom, "colorBottom"}};
     for (const auto& [sp, name] : splitters) watchSizes(sp, name);
@@ -195,6 +202,7 @@ QWidget* MainWindow::buildTopBar()
             setViewerLarge(false); // the layout comes back, with this panel as asked
             panel->setVisible(on);
             updateLeftColumn();
+            updateRightColumn();
             // After the layout (and after the large viewer's own restore, also a zero timer): still at size 0?
             if (on) QTimer::singleShot(0, panel, [panel] { uncollapse(panel); });
             if (!m_autosaveDisabled && !m_tourSaved.active) QSettings().setValue("panels/" + key, on); // a tour sets its own
@@ -397,17 +405,18 @@ void MainWindow::showPage(Page page)
         m_editTop->insertWidget(0, m_editLeft);
         m_editTop->insertWidget(1, m_viewer);
         m_editTop->insertWidget(2, m_transcript);
-        m_editTop->insertWidget(3, m_inspector);
-        m_editBottom->insertWidget(0, m_timeline);
-        m_editBottom->setStretchFactor(0, 1);
-        applySizes(m_editBottom, {1300, 300});
+        if (m_editTop->indexOf(m_inspector) < 0 && m_editTop->indexOf(m_inspectorSlot) < 0)
+            m_editTop->insertWidget(3, m_inspector); // else there, or its slot (updateRightColumn)
+        m_editMain->insertWidget(1, m_timeline);
         m_editTop->setStretchFactor(1, 1);
         applySizes(m_editTop, {360, 880, 320, 360});
         applySizes(m_editMain, {480, 420});
         m_mediaPool->setVisible(m_poolToggle->isChecked());
         m_storage->setVisible(m_storageToggle->isChecked());
         updateLeftColumn();
-        m_pages->setCurrentWidget(m_editMain);
+        updateRightColumn();
+        if (m_editRight->isVisibleTo(m_editRow)) applySizes(m_editRight, m_editMain->sizes());
+        m_pages->setCurrentWidget(m_editRow);
         break;
     case Page::Deliver:
         m_deliverRight->insertWidget(0, m_viewer);
@@ -536,6 +545,42 @@ void MainWindow::updateLeftColumn()
 {
     if (m_page == Page::Edit) m_editLeft->setVisible(m_poolToggle->isChecked() || m_effectsToggle->isChecked()
                                                   || m_storageToggle->isChecked());
+}
+
+void MainWindow::updateRightColumn()
+{
+    // The Inspector's place in the top row stays (its slot), so the row keeps its saved sizes either way
+    const bool column = m_mixerToggle && m_mixerToggle->isChecked();
+    if (column == (m_inspector->parentWidget() == m_editRight)) {
+        m_editRight->setVisible(column);
+        return;
+    }
+    const bool shown = m_inspectorToggle->isChecked();
+    if (column) {
+        const int at = m_editTop->indexOf(m_inspector);
+        const int width = at >= 0 && shown ? m_editTop->sizes().value(at) : 0;
+        if (at >= 0) m_editTop->replaceWidget(at, m_inspectorSlot); // same size, the inspector comes out
+        m_inspectorSlot->hide();
+        m_editRight->insertWidget(0, m_inspector);
+        m_inspector->setVisible(shown);
+        m_editRight->show();
+        // The column as wide as the Inspector was (else as the mixer's own), the saved width if there is one
+        const int total = std::max(m_editRow->width(), 1000);
+        const int right = width > 0 ? width : std::max(360, m_mixer->minimumWidth());
+        applySizes(m_editRow, {total - right - m_editRow->handleWidth(), right});
+        applySizes(m_editRight, m_editMain->sizes()); // the mixer's top level with the timeline's
+    } else {
+        const int at = m_editTop->indexOf(m_inspectorSlot);
+        if (at >= 0) {
+            m_editTop->replaceWidget(at, m_inspector);
+            m_inspectorSlot->setParent(this);
+            m_inspectorSlot->hide();
+        } else {
+            m_editTop->insertWidget(3, m_inspector);
+        }
+        m_inspector->setVisible(shown);
+        m_editRight->hide();
+    }
 }
 
 void MainWindow::setViewerLarge(bool on)
@@ -848,6 +893,21 @@ void MainWindow::hideViewerArea()
     m_viewerAway.active = true;
     // The viewer, and every splitter it leaves without a visible widget (the Edit page's top row with the side panels
     // off): the room goes to what is left beside/below it - the timeline keeps its zoom and scroll (core rule)
+    if (m_viewer->parentWidget() == m_editTop && m_page == Page::Edit) {
+        // The Edit page: the timeline moves up into the viewer's place, from the top bar down between the left column
+        // and the Inspector (their widths stay); the mixer keeps its own column and height
+        m_viewerAway.sizes.append({m_editTop, m_editTop->sizes()});
+        m_viewerAway.sizes.append({m_editMain, m_editMain->sizes()});
+        QWidget* focus = QApplication::focusWidget();
+        m_editTop->replaceWidget(m_editTop->indexOf(m_viewer), m_timeline); // same size; the viewer comes out
+        m_editMain->insertWidget(1, m_viewer);                              // ... into the timeline's old place
+        m_viewer->hide();
+        m_timeline->show();
+        m_viewerAway.hidden << m_viewer;
+        m_viewerAway.timelineUp = true;
+        if (focus && m_timeline->isAncestorOf(focus)) focus->setFocus(); // moving a widget takes its focus
+        return;
+    }
     QWidget* gone = m_viewer;
     while (auto* s = qobject_cast<QSplitter*>(gone->parentWidget())) {
         m_viewerAway.sizes.append({s, s->sizes()});
@@ -869,6 +929,13 @@ void MainWindow::restoreViewerArea()
 {
     if (!m_viewerAway.active) return;
     const ViewerAway was = std::exchange(m_viewerAway, {});
+    if (was.timelineUp && m_editTop->indexOf(m_timeline) >= 0) { // the viewer and the timeline swap back
+        QWidget* focus = QApplication::focusWidget();
+        m_editTop->replaceWidget(m_editTop->indexOf(m_timeline), m_viewer);
+        m_editMain->insertWidget(1, m_timeline);
+        m_timeline->show();
+        if (focus && m_timeline->isAncestorOf(focus)) focus->setFocus();
+    }
     for (const QPointer<QWidget>& w : was.hidden)
         if (w) w->show();
     // Outer splitters first (see setViewerLarge: an inner one restored first is scaled again)
