@@ -635,6 +635,7 @@ private:
         bool scopes = true;
         QVector<QPair<QPointer<QSplitter>, QList<int>>> sizes;
         QSize window; // the window's size (a page's minimum could have grown it during the tour)
+        int tool = 0; // the timeline tool (TimelineView::Tool): a step may switch it
     } m_tourSaved;
     QVector<QToolButton*> tourToggles() const; // the panel toggles the tour sets (pool, effects, storage, ...)
     class QShortcut* m_voiceoverEscape = nullptr;

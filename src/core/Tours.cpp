@@ -41,6 +41,7 @@ Tour parse(const QByteArray& json, QString* error)
         step.offer = s.value("offer").toString();
         step.action = s.value("action").toString();
         step.keep = s.value("keep").toString();
+        step.tool = s.value("tool").toString();
         if (step.text.isEmpty()) {
             if (error) *error = QStringLiteral("step %1 without text").arg(t.steps.size() + 1);
             return {};

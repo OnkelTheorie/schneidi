@@ -187,6 +187,7 @@ void TourManager::enterStep()
     const TourStep* s = m_runner.step();
     if (!s) return;
     if (!s->page.isEmpty() && m_host.page && m_host.showPage && m_host.page() != s->page) m_host.showPage(s->page);
+    if (!s->tool.isEmpty() && m_host.setTool) m_host.setTool(s->tool);
     if (const auto it = m_host.actions.constFind(s->action); !s->action.isEmpty() && it != m_host.actions.cend()) (*it)();
     // Targets inside a scroll area (the Color page's controls on a low screen) scrolled into view: a panel's own
     // scrolling, not the timeline's; once more after the new page's layout
@@ -318,7 +319,9 @@ QWidget* TourManager::widgetFor(const QString& part) const
     const QList<QWidget*> all = m_window->findChildren<QWidget*>();
     const auto pick = [&](bool byProperty) -> QWidget* {
         for (QWidget* w : all) {
-            if (w == m_overlay || m_overlay->isAncestorOf(w) || !w->isVisible()) continue;
+            if (w == m_overlay || m_overlay->isAncestorOf(w) || w == m_overlay->bubble()
+                || m_overlay->bubble()->isAncestorOf(w) || !w->isVisible())
+                continue;
             if (byProperty ? w->property("tourTarget").toString() == part : w->objectName() == part) return w;
         }
         return nullptr;

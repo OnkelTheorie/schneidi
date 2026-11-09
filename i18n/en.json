@@ -2904,13 +2904,12 @@
  "Die Spur ist gesperrt.": "The track is locked.",
  "Voiceover: gleich …": "Voice-over: about to start …",
  "Bewegt sich die Stelle? Verfolgen lässt das Fenster dem Objekt folgen. Oder setz an mehreren Zeitpunkten einen Keyframe.": "Does the spot move? Track makes the window follow the object. Or set a keyframe at several moments.",
- "Trimmen: Fass den Clip am rechten Rand und zieh ihn nach links. So kürzt du sein Ende, am linken Rand den Anfang. Probier es aus!": "Trimming: grab the clip by its right edge and drag it to the left. That shortens its end; the left edge shortens its start. Try it!",
+ "Trimmen: Mit dem Auswahl-Werkzeug ({key:tool_select}) fasst du den Clip am rechten Rand und ziehst ihn nach links. So kürzt du sein Ende, am linken Rand den Anfang. Probier es aus!": "Trimming: in Selection Mode ({key:tool_select}) grab the clip by its right edge and drag it to the left. That shortens its end; the left edge shortens its start. Try it!",
  "Unter Compositing-Rezepte liegt Bild im Bild: Zieh es auf den oberen Clip.": "Under Comp recipes you find Picture in picture: drag it onto the upper clip.",
  "Unter Compositing-Rezepte liegt Greenscreen: Zieh es auf den oberen Clip.": "Under Comp recipes you find Green screen: drag it onto the upper clip.",
  "Öffne oben die Effekte.": "Open the Effects at the top.",
  "Rundgang Farbe starten": "Start the Color Tour",
- "Setz den Abspielkopf in einen Clip und drück {key:split}: Der Clip wird dort geteilt. Probier es aus!": "Put the playhead inside a clip and press {key:split}: the clip is split there. Try it!",
  "Unten wechselst du die Seiten. Wenn du fertig bist: Geh unten auf Export und render dein Video.": "At the bottom you switch pages. When you are done: go to Deliver at the bottom and render your video.",
- "Hier sind die Werkzeuge. Zum Schneiden: Setz den Abspielkopf an die Stelle und drück {key:split}. Der Clip wird dort geteilt. Probier es aus!": "These are the tools. To cut: put the playhead where you want and press {key:split}. The clip is split there. Try it!",
+ "Schneiden: {key:split} teilt den Clip am Abspielkopf. Oder nimm das Klingen-Werkzeug ({key:tool_blade}) und klick auf den Clip. Probier es aus!": "Cutting: {key:split} splits the clip at the playhead. Or take Blade Edit Mode ({key:tool_blade}) and click on the clip. Try it!",
  "Wähl eine Vorlage, etwa YouTube, und klick auf „Zur Render-Warteschlange hinzufügen“. „Alle rendern“ speichert dann dein Video.": "Choose a preset, for example YouTube, and click “Add to Render Queue”. “Render All” then saves your video."
 }

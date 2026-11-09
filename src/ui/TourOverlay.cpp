@@ -27,8 +27,12 @@ constexpr int kNear = 140;   // a bubble this far from its target still belongs 
 TourOverlay::TourOverlay(QWidget* window) : QWidget(window)
 {
     setObjectName("tour_overlay");
+    // Only a picture: every click, drag, wheel turn and key reaches the real window below (the highlight guides, it
+    // never locks anything away). The bubble is a widget of the window above this layer, so it takes its clicks
+    setAttribute(Qt::WA_TransparentForMouseEvents);
     hide();
-    m_bubble = new QFrame(this);
+    m_bubble = new QFrame(window);
+    m_bubble->hide();
     m_bubble->setObjectName("tour_bubble");
     m_bubble->setStyleSheet(QString("QFrame#tour_bubble { background: %1; border: 1px solid %2; border-radius: 8px; }"
                                     "QLabel { background: transparent; border: none; }")
@@ -254,6 +258,8 @@ void TourOverlay::showStep(const QString& text, int index, int count, bool waiti
     setGeometry(parentWidget()->rect());
     show();
     raise();
+    m_bubble->show();
+    m_bubble->raise();
     relayout();
     QTimer::singleShot(0, this, &TourOverlay::relayout); // again once the labels have their final font and width
     next->setFocus();
@@ -287,6 +293,8 @@ void TourOverlay::showQuestion(const QString& title, const QString& text, const 
     setGeometry(parentWidget()->rect());
     this->show();
     raise();
+    m_bubble->show();
+    m_bubble->raise();
     relayout();
     QTimer::singleShot(0, this, &TourOverlay::relayout);
     if (focus) focus->setFocus();
@@ -299,6 +307,7 @@ void TourOverlay::end()
     m_follow.stop();
     qApp->removeEventFilter(this);
     hide();
+    m_bubble->hide();
 }
 
 QRect TourOverlay::bubbleGeometry() const { return m_bubble->geometry(); }
@@ -398,22 +407,8 @@ void TourOverlay::relayout()
     const QRect home = !m_question && m_home ? m_home() : QRect();
     const QRect bubble = placeBubble(rect(), holes, size, 14, keep, avoid, home);
     if (holes != m_holes || bubble != m_bubble->geometry()) {
-        // What was a hole or the bubble before is painted anew below (a masked-out part keeps old pixels otherwise:
-        // a ghost frame around the last step's target, a bubble's edge)
-        QRegion old;
-        for (const QRect& h : std::as_const(m_holes)) old += h.adjusted(-kFeather - 2, -kFeather - 2, kFeather + 2, kFeather + 2);
-        old += m_bubble->geometry().adjusted(-2, -2, 2, 2);
         m_holes = holes;
         m_bubble->setGeometry(bubble);
-        parentWidget()->update(old);
-        for (QWidget* w : parentWidget()->findChildren<QWidget*>())
-            if (w != this && !isAncestorOf(w) && w->isVisible())
-                if (const QRegion r = old.translated(-w->mapTo(parentWidget(), QPoint(0, 0))) & w->rect(); !r.isEmpty())
-                    w->update(r);
-        // Clicks inside a hole go to the widget below
-        QRegion mask(rect());
-        for (const QRect& h : holes) mask -= QRegion(h, QRegion::Rectangle);
-        setMask(mask);
         update();
     }
 }

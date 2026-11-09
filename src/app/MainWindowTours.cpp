@@ -102,8 +102,8 @@ void MainWindow::setupTours(QMenu* help)
                 if (!first && c.kind == ClipKind::Media) first = c.id;
             }
         if (const Clip* c = first ? TimelineOps::findClip(m_project->timeline(), first) : nullptr) {
-            m_engine->seek(c->start + std::min(c->length() / 2, 15));
-            m_timeline->view()->setPlayhead(c->start + std::min(c->length() / 2, 15));
+            m_engine->seek(c->start + c->length() / 2);
+            m_timeline->view()->setPlayhead(c->start + c->length() / 2);
         }
     };
     // Tour mode: a practice project and a fixed layout; the user's project and layout come back at the end
@@ -230,6 +230,12 @@ void MainWindow::setupTours(QMenu* help)
     };
     // Where the bubble had better not sit: the bars with the controls the steps name (menus, panel tabs, page bar,
     // the timeline's tools, ruler and track headers, the viewer's transport) and the Comp graph's nodes
+    host.setTool = [this](const QString& tool) {
+        const QPair<const char*, TimelineView::Tool> tools[] = {
+            {"select", TimelineView::Tool::Select}, {"trim", TimelineView::Tool::Trim}, {"blade", TimelineView::Tool::Blade}};
+        for (const auto& [name, t] : tools)
+            if (tool == QLatin1String(name)) m_timeline->view()->setTool(t);
+    };
     host.home = [this] { return QRect(m_pages->mapTo(this, QPoint(0, 0)), m_pages->size()); };
     host.avoid = [this] {
         QVector<QRect> out;
@@ -382,6 +388,7 @@ void MainWindow::enterTourMode(const Tour& tour)
     s.scopes = !m_scopes->isHidden();
     for (QSplitter* sp : findChildren<QSplitter*>()) s.sizes.push_back({sp, sp->sizes()});
     s.window = size();
+    s.tool = int(m_timeline->view()->tool());
 
     // The tour's layout: the default panels at their default sizes, every page reachable (the settings stay as they are)
     setViewerLarge(false);
@@ -465,5 +472,6 @@ void MainWindow::leaveTourMode()
         if (sp && sp->count() == sizes.size()) sp->setSizes(sizes);
     if (s.large) setViewerLarge(true);
     if (!isMaximized() && !isFullScreen() && s.window.isValid() && size() != s.window) resize(s.window);
+    m_timeline->view()->setTool(TimelineView::Tool(s.tool)); // the user's tool, whatever the steps chose
     if (m_liveWaiting) m_liveWaiting({}); // AIs may work on the user's project again
 }
