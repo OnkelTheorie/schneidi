@@ -329,7 +329,7 @@ bool MainWindow::isPageHidden(Page page) const { return m_pageVisibility.isHidde
 void MainWindow::setPageHidden(Page page, bool hidden)
 {
     if (!m_pageVisibility.setHidden(pageId(page), hidden)) return;
-    m_pageVisibility.save();
+    if (!m_autosaveDisabled && !m_tourSaved.active) m_pageVisibility.save(); // test runs and tours: not the user's
     if (hidden && page == m_page) { // away from the page that just went
         const QString next = m_pageVisibility.nearestVisible(pageId(page));
         for (Page p : {Page::Media, Page::Edit, Page::Comp, Page::Color, Page::Deliver})
@@ -341,7 +341,7 @@ void MainWindow::setPageHidden(Page page, bool hidden)
 void MainWindow::showAllPages()
 {
     m_pageVisibility.showAll();
-    m_pageVisibility.save();
+    if (!m_autosaveDisabled && !m_tourSaved.active) m_pageVisibility.save();
     updatePageButtons();
 }
 
