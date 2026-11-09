@@ -14,6 +14,7 @@
 
 #include "app/InputBindings.h"
 #include "app/MainWindow.h"
+#include "app/SettingsDialog.h"
 #include "engine/Engine.h"
 #include "ui/FrameView.h"
 #include "ui/FullScreenViewer.h"
@@ -24,6 +25,7 @@
 
 #include <QAction>
 #include <QApplication>
+#include <QComboBox>
 #include <QScreen>
 #include <QSplitter>
 #include <QTemporaryDir>
@@ -325,7 +327,18 @@ void testApp(MainWindow& w, Engine& engine, const QString& clip)
     settle();
     CHECK(!w.previewOutput());
 
-    // Settings: the choice is in the dialog and stored
+    // Settings: the choice is in the dialog ("Fläche bleibt" first, the default)
+    {
+        SettingsDialog dlg(AiSettings{});
+        auto* combo = dlg.findChild<QComboBox*>("second_screen_mode");
+        if (CHECK(combo)) {
+            CHECK_EQ(combo->count(), 2);
+            CHECK_EQ(combo->itemData(0).toInt(), int(Plan::Mode::KeepArea));
+            CHECK(dlg.secondScreenMode() == Plan::storedMode());
+            combo->setCurrentIndex(1);
+            CHECK(dlg.secondScreenMode() == Plan::Mode::HideViewer);
+        }
+    }
     w.setSecondScreenMode(Plan::Mode::KeepArea);
     CHECK(viewer->isVisible());
     CHECK(tv->view().pxPerFrame == view.pxPerFrame && tv->view().leftFrame == view.leftFrame);
