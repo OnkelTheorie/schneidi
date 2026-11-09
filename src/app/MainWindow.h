@@ -9,6 +9,7 @@
 #include "core/Types.h"
 
 #include <QElapsedTimer>
+#include "engine/PreviewResolution.h"
 #include "ui/SecondScreen.h"
 #include "ui/timeline/ViewState.h"
 
@@ -226,6 +227,13 @@ public:
     void setSecondScreenMode(SecondScreenPlan::Mode mode);
     SecondScreenPlan::Mode secondScreenMode() const { return m_secondScreenMode; }
     const SecondScreenPlan& screenPlan() const { return m_screenPlan; }
+    // Preview resolution (engine/PreviewResolution), main window and second monitor separately; stored, applies at
+    // once (Workspace › Preview Resolution, the viewer's right-click, Settings)
+    void setPreviewResolution(PreviewResolution::Target target, PreviewResolution::Choice choice);
+    PreviewResolution::Choice previewResolution(PreviewResolution::Target target) const
+    {
+        return target == PreviewResolution::Target::Viewer ? m_viewerRes : m_monitorRes;
+    }
 
 protected:
     bool eventFilter(QObject* obj, QEvent* event) override;
@@ -445,7 +453,9 @@ private:
     // Second monitor (MainWindowLayout.cpp)
     void screensChanged(class QScreen* removed); // the plan learns the screens; the preview comes back if its went
     void feedPreviewOutput(const QImage& frame);
-    void updatePreviewEdge(); // the largest wish of the full-screen viewer and the output (Engine::setPreviewEdge)
+    // The largest wish of the viewer, the full-screen viewer and the output, each after its PreviewResolution choice
+    // (Engine::setPreviewEdge: one preview, the larger size wins)
+    void updatePreviewEdge();
     void hideViewerArea();    // the viewer and the splitters left empty by it go, their sizes are remembered
     void restoreViewerArea(); // back as it was before hideViewerArea
     void updateViewerArea();  // hidden or back, as the mode and the output say
@@ -453,6 +463,9 @@ private:
     QPointer<class PreviewOutput> m_output;
     SecondScreenPlan m_screenPlan;
     SecondScreenPlan::Mode m_secondScreenMode = SecondScreenPlan::storedMode();
+    PreviewResolution::Choice m_viewerRes = PreviewResolution::stored(PreviewResolution::Target::Viewer);
+    PreviewResolution::Choice m_monitorRes = PreviewResolution::stored(PreviewResolution::Target::Monitor);
+    QAction* m_resolutionActions[2][3] = {}; // [Target][Choice]: the menu's check marks
     QImage m_programFrame; // the engine's last frame not of a source clip (the output starts with it)
     struct ViewerAway {
         bool active = false;

@@ -10,6 +10,7 @@
 #include <QSettings>
 
 #include <algorithm>
+#include <climits>
 
 bool SecondScreenPlan::setScreens(const QVector<Screen>& screens)
 {
@@ -62,6 +63,8 @@ ScreenOutput::ScreenOutput(Engine* engine, QScreen* screen, const QImage& pictur
 {
     m_window = new FullScreenViewer(engine, picture, false); // no parent: see FullScreenViewer.h; deleted here
     m_window->setObjectName("SecondScreenViewer");
+    // Its real pixels (a 4K monitor with a 4K project: 4K); the user may choose less (PreviewResolution)
+    m_window->setPreviewEdgeCap(INT_MAX);
     m_window->setWindowTitle(T("schneidi – Vorschau"));
     m_window->showOn(screen, false);
     connect(m_window, &FullScreenViewer::exitRequested, this, &PreviewOutput::lost);

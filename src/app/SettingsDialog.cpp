@@ -215,10 +215,31 @@ QWidget* SettingsDialog::buildGeneral()
                          "hingelegt, du verbindest ihn selbst.")));
     lay->addWidget(comp);
 
+    // Preview resolution (engine/PreviewResolution): automatic by default, playback speed first
+    const auto resolutionBox = [](const char* name, PreviewResolution::Target target) {
+        auto* box = new QComboBox;
+        box->setObjectName(name);
+        box->addItem(T("Automatisch (passend zur Anzeige)"), int(PreviewResolution::Choice::Auto));
+        box->addItem(T("Halbe Auflösung"), int(PreviewResolution::Choice::Half));
+        box->addItem(T("Volle Projektauflösung"), int(PreviewResolution::Choice::Full));
+        box->setCurrentIndex(std::max(0, box->findData(int(PreviewResolution::stored(target)))));
+        return box;
+    };
+    auto* viewerBox = new QGroupBox(T("Vorschau"));
+    auto* rform = new QFormLayout(viewerBox);
+    rform->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
+    m_viewerResolution = resolutionBox("viewer_resolution", PreviewResolution::Target::Viewer);
+    rform->addRow(T("Auflösung"), m_viewerResolution);
+    rform->addRow(hint(T("Automatisch: so groß, wie die Vorschau gerade angezeigt wird. Volle Auflösung ist schärfer, "
+                         "braucht aber einen schnellen Rechner. Der Export nutzt immer die volle Auflösung.")));
+    lay->addWidget(viewerBox);
+
     // Preview on a second monitor (Workspace menu): what the main window does with the viewer's area meanwhile
     auto* preview = new QGroupBox(T("Vorschau auf zweitem Monitor"));
     auto* vform = new QFormLayout(preview);
     vform->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
+    m_monitorResolution = resolutionBox("monitor_resolution", PreviewResolution::Target::Monitor);
+    vform->addRow(T("Auflösung auf dem Monitor"), m_monitorResolution);
     m_secondScreen = new QComboBox;
     m_secondScreen->setObjectName("second_screen_mode");
     m_secondScreen->addItem(T("Quellclips zeigen"), int(SecondScreenPlan::Mode::KeepArea));
@@ -239,6 +260,12 @@ bool SettingsDialog::autoLinkNodes() const { return m_autoLink->isChecked(); }
 SecondScreenPlan::Mode SettingsDialog::secondScreenMode() const
 {
     return SecondScreenPlan::Mode(m_secondScreen->currentData().toInt());
+}
+
+PreviewResolution::Choice SettingsDialog::previewResolution(PreviewResolution::Target target) const
+{
+    const QComboBox* box = target == PreviewResolution::Target::Viewer ? m_viewerResolution : m_monitorResolution;
+    return PreviewResolution::Choice(box->currentData().toInt());
 }
 
 ProxyManager::ImportRule SettingsDialog::proxyImportRule() const

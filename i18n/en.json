@@ -2851,5 +2851,14 @@
  "Proxy-Medien werden erzeugt: %1 Dateien": "Generating proxy media: %1 files",
  "für alle Clips der Timeline": "for all clips of the timeline",
  "für alle Medien im Pool": "for all media in the pool",
- "für ausgewählte Clips": "for selected clips"
+ "für ausgewählte Clips": "for selected clips",
+ "Auflösung auf dem Monitor": "Resolution on the monitor",
+ "Automatisch (passend zur Anzeige)": "Automatic (fits the display)",
+ "Automatisch: so groß, wie die Vorschau gerade angezeigt wird. Volle Auflösung ist schärfer, braucht aber einen schnellen Rechner. Der Export nutzt immer die volle Auflösung.": "Automatic: as large as the preview is shown right now. Full resolution is sharper but needs a fast computer. The export always uses the full resolution.",
+ "Halbe Auflösung": "Half resolution",
+ "Hauptfenster": "Main window",
+ "Volle Projektauflösung": "Full project resolution",
+ "Vorschau": "Preview",
+ "Vorschau-Auflösung": "Preview Resolution",
+ "Zweiter Monitor": "Second monitor"
 }

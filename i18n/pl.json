@@ -2851,5 +2851,14 @@
  "Proxy-Medien werden erzeugt: %1 Dateien": "Tworzenie mediów proxy: %1 plików",
  "für alle Clips der Timeline": "dla wszystkich klipów osi czasu",
  "für alle Medien im Pool": "dla wszystkich mediów w bibliotece",
- "für ausgewählte Clips": "dla zaznaczonych klipów"
+ "für ausgewählte Clips": "dla zaznaczonych klipów",
+ "Auflösung auf dem Monitor": "Rozdzielczość na monitorze",
+ "Automatisch (passend zur Anzeige)": "Automatycznie (do wyświetlacza)",
+ "Automatisch: so groß, wie die Vorschau gerade angezeigt wird. Volle Auflösung ist schärfer, braucht aber einen schnellen Rechner. Der Export nutzt immer die volle Auflösung.": "Automatycznie: tak duży, jak podgląd jest właśnie wyświetlany. Pełna rozdzielczość jest ostrzejsza, ale wymaga szybkiego komputera. Eksport zawsze używa pełnej rozdzielczości.",
+ "Halbe Auflösung": "Połowa rozdzielczości",
+ "Hauptfenster": "Okno główne",
+ "Volle Projektauflösung": "Pełna rozdzielczość projektu",
+ "Vorschau": "Podgląd",
+ "Vorschau-Auflösung": "Rozdzielczość podglądu",
+ "Zweiter Monitor": "Drugi monitor"
 }

@@ -678,10 +678,21 @@ FullScreenViewer* MainWindow::fullScreenViewer() const
 
 void MainWindow::updatePreviewEdge()
 {
+    using namespace PreviewResolution;
+    const QSize project = m_engine->frameSize();
     int edge = 0;
-    if (m_fullScreen) edge = m_fullScreen->wantedPreviewEdge();
-    if (m_output) edge = std::max(edge, m_output->wantedPreviewEdge());
+    if (!m_viewerAway.active) edge = PreviewResolution::edge(m_viewerRes, 0, project); // 0: the engine's default
+    if (m_fullScreen) edge = std::max(edge, PreviewResolution::edge(m_viewerRes, m_fullScreen->wantedPreviewEdge(), project));
+    if (m_output) edge = std::max(edge, PreviewResolution::edge(m_monitorRes, m_output->wantedPreviewEdge(), project));
     m_engine->setPreviewEdge(edge);
+}
+
+void MainWindow::setPreviewResolution(PreviewResolution::Target target, PreviewResolution::Choice choice)
+{
+    (target == PreviewResolution::Target::Viewer ? m_viewerRes : m_monitorRes) = choice;
+    if (!m_autosaveDisabled) PreviewResolution::store(target, choice);
+    if (QAction* a = m_resolutionActions[int(target)][int(choice)]) a->setChecked(true);
+    updatePreviewEdge();
 }
 
 void MainWindow::moveViewerToNextScreen()
@@ -759,6 +770,7 @@ void MainWindow::updateViewerArea()
     if (inWindow == !m_viewerAway.active) return;
     if (inWindow) restoreViewerArea();
     else hideViewerArea();
+    updatePreviewEdge(); // the viewer's own wish counts only while it is there
 }
 
 void MainWindow::hideViewerArea()

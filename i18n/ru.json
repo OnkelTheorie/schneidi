@@ -2851,5 +2851,14 @@
  "Proxy-Medien werden erzeugt: %1 Dateien": "Создаются прокси-медиа: файлов: %1",
  "für alle Clips der Timeline": "для всех клипов монтажного стола",
  "für alle Medien im Pool": "для всех файлов медиатеки",
- "für ausgewählte Clips": "для выбранных клипов"
+ "für ausgewählte Clips": "для выбранных клипов",
+ "Auflösung auf dem Monitor": "Разрешение на мониторе",
+ "Automatisch (passend zur Anzeige)": "Автоматически (по экрану)",
+ "Automatisch: so groß, wie die Vorschau gerade angezeigt wird. Volle Auflösung ist schärfer, braucht aber einen schnellen Rechner. Der Export nutzt immer die volle Auflösung.": "Автоматически: такой размер, в каком просмотр сейчас показан. Полное разрешение чётче, но требует быстрого компьютера. Экспорт всегда использует полное разрешение.",
+ "Halbe Auflösung": "Половинное разрешение",
+ "Hauptfenster": "Главное окно",
+ "Volle Projektauflösung": "Полное разрешение проекта",
+ "Vorschau": "Просмотр",
+ "Vorschau-Auflösung": "Разрешение просмотра",
+ "Zweiter Monitor": "Второй монитор"
 }

@@ -895,6 +895,7 @@ void MainWindow::onTimelineFormatChanged()
 {
     const ProjectFormat f = m_project->timelineFormat();
     m_engine->setFormat(f); // nothing when the same; the timeline rebuilds in the following timelineChanged()
+    updatePreviewEdge();    // "half" depends on the project's size
     m_mediaCache->setFormat(f); // thumbnails in the timeline's shape
     m_inspector->setFrameSize(f.size());
 }

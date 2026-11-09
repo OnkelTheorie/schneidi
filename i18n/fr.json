@@ -2851,5 +2851,14 @@
  "Proxy-Medien werden erzeugt: %1 Dateien": "Création des médias proxy : %1 fichiers",
  "für alle Clips der Timeline": "pour tous les clips de la timeline",
  "für alle Medien im Pool": "pour tous les médias de la médiathèque",
- "für ausgewählte Clips": "pour les clips sélectionnés"
+ "für ausgewählte Clips": "pour les clips sélectionnés",
+ "Auflösung auf dem Monitor": "Résolution sur le moniteur",
+ "Automatisch (passend zur Anzeige)": "Automatique (selon l’affichage)",
+ "Automatisch: so groß, wie die Vorschau gerade angezeigt wird. Volle Auflösung ist schärfer, braucht aber einen schnellen Rechner. Der Export nutzt immer die volle Auflösung.": "Automatique : aussi grand que l’aperçu est affiché. La pleine résolution est plus nette mais demande un ordinateur rapide. L’export utilise toujours la pleine résolution.",
+ "Halbe Auflösung": "Demi-résolution",
+ "Hauptfenster": "Fenêtre principale",
+ "Volle Projektauflösung": "Pleine résolution du projet",
+ "Vorschau": "Aperçu",
+ "Vorschau-Auflösung": "Résolution de l’aperçu",
+ "Zweiter Monitor": "Second moniteur"
 }

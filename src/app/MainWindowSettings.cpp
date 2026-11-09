@@ -61,6 +61,8 @@ void MainWindow::settingsDialog(int tab)
         SettingsDialog::store(dlg.ownProjectFolder(), dlg.projectFolder());
     if (!m_autosaveDisabled && dlg.autoLinkNodes() != CompUi::autoLink()) CompUi::setAutoLink(dlg.autoLinkNodes());
     setSecondScreenMode(dlg.secondScreenMode());
+    for (const auto target : {PreviewResolution::Target::Viewer, PreviewResolution::Target::Monitor})
+        setPreviewResolution(target, dlg.previewResolution(target));
     if (!m_autosaveDisabled && dlg.proxyImportRule() != ProxyManager::importRule())
         ProxyManager::setImportRule(dlg.proxyImportRule());
     if (dlg.backgroundThreads() != Background::chosenThreads() && !m_autosaveDisabled)

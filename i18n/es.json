@@ -2851,5 +2851,14 @@
  "Proxy-Medien werden erzeugt: %1 Dateien": "Generando medios proxy: %1 archivos",
  "für alle Clips der Timeline": "para todos los clips de la línea de tiempo",
  "für alle Medien im Pool": "para todos los medios de la biblioteca",
- "für ausgewählte Clips": "para los clips seleccionados"
+ "für ausgewählte Clips": "para los clips seleccionados",
+ "Auflösung auf dem Monitor": "Resolución en el monitor",
+ "Automatisch (passend zur Anzeige)": "Automática (según la pantalla)",
+ "Automatisch: so groß, wie die Vorschau gerade angezeigt wird. Volle Auflösung ist schärfer, braucht aber einen schnellen Rechner. Der Export nutzt immer die volle Auflösung.": "Automática: tan grande como se muestra la vista previa en ese momento. La resolución completa es más nítida, pero necesita un ordenador rápido. La exportación siempre usa la resolución completa.",
+ "Halbe Auflösung": "Media resolución",
+ "Hauptfenster": "Ventana principal",
+ "Volle Projektauflösung": "Resolución completa del proyecto",
+ "Vorschau": "Vista previa",
+ "Vorschau-Auflösung": "Resolución de la vista previa",
+ "Zweiter Monitor": "Segundo monitor"
 }

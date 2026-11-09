@@ -864,6 +864,29 @@ void MainWindow::buildActions()
         for (QAction* a : zoomActions) a->setChecked(a->data().toDouble() == z); // Ctrl+wheel: maybe no step checked
     });
     connect(m_viewer, &Viewer::fullSizeWanted, m_engine, &Engine::setPreviewFullSize);
+    // Preview resolution, main window and second monitor separately (engine/PreviewResolution); also on the viewer's
+    // right-click
+    QMenu* resMenu = workspace->addMenu(T("Vorschau-Auflösung"));
+    resMenu->setObjectName("preview_resolution_menu");
+    for (const auto& [target, title, prefix] :
+         {std::tuple{PreviewResolution::Target::Viewer, N_("Hauptfenster"), "preview_res_viewer"},
+          std::tuple{PreviewResolution::Target::Monitor, N_("Zweiter Monitor"), "preview_res_monitor"}}) {
+        QMenu* sub = resMenu->addMenu(T(title));
+        auto* group = new QActionGroup(sub);
+        for (const auto& [choice, text, suffix] :
+             {std::tuple{PreviewResolution::Choice::Auto, N_("Automatisch (passend zur Anzeige)"), "_auto"},
+              std::tuple{PreviewResolution::Choice::Half, N_("Halbe Auflösung"), "_half"},
+              std::tuple{PreviewResolution::Choice::Full, N_("Volle Projektauflösung"), "_full"}}) {
+            QAction* a = makeAction(sub, QString(prefix) + suffix, T(text), QKeySequence(),
+                                    [this, t = target, c = choice] { setPreviewResolution(t, c); });
+            a->setCheckable(true);
+            a->setChecked(previewResolution(target) == choice);
+            group->addAction(a);
+            m_resolutionActions[int(target)][int(choice)] = a;
+        }
+    }
+    m_viewer->addAction(resMenu->menuAction());
+    updatePreviewEdge();
 
     // Help: log file for error messages (Windows has no terminal)
     QMenu* help = menuBar()->addMenu(T("&Hilfe"));
