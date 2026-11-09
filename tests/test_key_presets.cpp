@@ -23,6 +23,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLabel>
+#include <QPointer>
 #include <QPushButton>
 #include <QSignalSpy>
 #include <QTemporaryDir>
@@ -361,8 +362,26 @@ void testTrainer(MainWindow& w)
     t->findChild<QPushButton*>("trainer_again")->click();
     CHECK_EQ(t->round(), 0);
     CHECK_EQ(t->hits(), 0);
-    t->close();
+    // A symbol that needs Shift on the keyboard (a German "=" is Shift+0): right with Shift too
+    const QString asked = t->currentId();
+    const QStringList kept = b.inputs(asked);
+    b.setInputs(asked, {"=", ""});
+    QTest::keyClick(t, Qt::Key_Equal, Qt::ShiftModifier);
     QApplication::processEvents();
+    CHECK_EQ(t->round(), 1);
+    CHECK_EQ(t->hits(), 1);
+    b.setInputs(asked, kept);
+    // ... but a letter with Shift is another key
+    b.setInputs(t->currentId(), {"K", ""});
+    QTest::keyClick(t, Qt::Key_K, Qt::ShiftModifier);
+    QApplication::processEvents();
+    CHECK_EQ(t->round(), 1);
+    // Esc closes the card
+    QPointer<KeyTrainer> card = t;
+    QTest::keyClick(t, Qt::Key_Escape);
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    QApplication::processEvents();
+    CHECK(!card);
     b.applyPreset("standard");
 }
 
