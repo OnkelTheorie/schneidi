@@ -686,6 +686,11 @@ void MainWindow::buildActions()
     makeAction(workspace, "page_comp", T("Seite Compositing"), QKeySequence("Shift+3"), [this] { showPage(Page::Comp); });
     makeAction(workspace, "page_color", T("Seite Farbe"), QKeySequence("Shift+5"), [this] { showPage(Page::Color); });
     makeAction(workspace, "page_deliver", T("Seite Export"), QKeySequence("Shift+8"), [this] { showPage(Page::Deliver); });
+    // The same checkboxes as the right-click on the page bar
+    QMenu* visiblePages = workspace->addMenu(T("Sichtbare Seiten"));
+    visiblePages->setObjectName("visiblePagesMenu");
+    connect(visiblePages, &QMenu::aboutToShow, this, [this, visiblePages] { fillPagesMenu(visiblePages); });
+    fillPagesMenu(visiblePages); // filled from the start: menu searches and tests find the entries
     makeAction(workspace, "toggle_effects", T("Effektbibliothek ein/aus"), QKeySequence(),
                [this] { if (m_effectsToggle->isEnabled()) m_effectsToggle->toggle(); });
     makeAction(workspace, "toggle_media_storage", T("Dateibrowser ein/aus"), QKeySequence(),
