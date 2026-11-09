@@ -24,6 +24,7 @@
 #include "core/Timecode.h"
 #include "core/Presets.h"
 #include "core/Project.h"
+#include "core/ProxyChoice.h"
 #include "core/Selection.h"
 #include "core/Subtitles.h"
 #include "core/TimelineOps.h"
@@ -525,6 +526,33 @@ void MainWindow::buildActions()
     useProxy->setCheckable(true);
     useProxy->setChecked(m_engine->proxies()->enabled());
     connect(useProxy, &QAction::toggled, m_engine->proxies(), &ProxyManager::setEnabled);
+    // Generate proxies without the Media Pool: the selected clips, the whole timeline, the whole pool. The count of
+    // missing files (or why there is nothing to do) in each entry's text, updated when the menu opens
+    QMenu* proxyMenu = play->addMenu(T("Proxy-Medien erzeugen"));
+    proxyMenu->setObjectName("proxy_generate_menu");
+    struct ProxyEntry {
+        const char* id;
+        const char* text;
+        ProxyChoice::Scope scope;
+    };
+    static constexpr ProxyEntry kProxyEntries[] = {
+        {"proxy_generate_selected", N_("für ausgewählte Clips"), ProxyChoice::Scope::Selected},
+        {"proxy_generate_timeline", N_("für alle Clips der Timeline"), ProxyChoice::Scope::Timeline},
+        {"proxy_generate_pool", N_("für alle Medien im Pool"), ProxyChoice::Scope::Pool},
+    };
+    for (const ProxyEntry& e : kProxyEntries)
+        makeAction(proxyMenu, e.id, T(e.text), QKeySequence(), [this, scope = e.scope] { generateProxies(int(scope)); });
+    connect(proxyMenu, &QMenu::aboutToShow, this, [this, proxyMenu] {
+        const QList<QAction*> actions = proxyMenu->actions();
+        for (int i = 0; i < actions.size() && i < int(std::size(kProxyEntries)); ++i) {
+            const QStringList files = proxyFiles(int(kProxyEntries[i].scope));
+            const int missing = int(m_engine->proxies()->missing(files).size());
+            int pending = 0;
+            for (const QString& f : files) pending += m_engine->proxies()->isPending(f) ? 1 : 0;
+            actions[i]->setText(ProxyChoice::label(T(kProxyEntries[i].text), int(files.size()), missing, pending));
+            actions[i]->setEnabled(missing > 0);
+        }
+    });
     // Proxy files no open or recent project needs: list, size, delete after asking (also in the Media Pool's menu)
     auto* cleanProxies = makeAction(play, "proxy_cleanup", T("Proxy-Medien aufräumen…"), QKeySequence(), [this] {
         // The open project as it is when deleting (it may change while the dialog is open) and its autosave
@@ -728,6 +756,8 @@ void MainWindow::buildActions()
                                       });
     m_secondScreenAction->setCheckable(true);
     connect(m_engine, &Engine::frameReady, this, &MainWindow::feedPreviewOutput);
+    // The viewer's page while the program is on the monitor: its button brings the preview back
+    connect(m_viewer, &Viewer::programBackWanted, this, [this] { showPreviewOn(nullptr); });
     connect(qGuiApp, &QGuiApplication::screenAdded, this, [this] { screensChanged(nullptr); });
     connect(qGuiApp, &QGuiApplication::screenRemoved, this, &MainWindow::screensChanged);
     // Panel sets of the Edit page and panel sizes (remembered per page, MainWindow::applySizes)
@@ -835,6 +865,29 @@ void MainWindow::buildActions()
         for (QAction* a : zoomActions) a->setChecked(a->data().toDouble() == z); // Ctrl+wheel: maybe no step checked
     });
     connect(m_viewer, &Viewer::fullSizeWanted, m_engine, &Engine::setPreviewFullSize);
+    // Preview resolution, main window and second monitor separately (engine/PreviewResolution); also on the viewer's
+    // right-click
+    QMenu* resMenu = workspace->addMenu(T("Vorschau-Auflösung"));
+    resMenu->setObjectName("preview_resolution_menu");
+    for (const auto& [target, title, prefix] :
+         {std::tuple{PreviewResolution::Target::Viewer, N_("Hauptfenster"), "preview_res_viewer"},
+          std::tuple{PreviewResolution::Target::Monitor, N_("Zweiter Monitor"), "preview_res_monitor"}}) {
+        QMenu* sub = resMenu->addMenu(T(title));
+        auto* group = new QActionGroup(sub);
+        for (const auto& [choice, text, suffix] :
+             {std::tuple{PreviewResolution::Choice::Auto, N_("Automatisch (passend zur Anzeige)"), "_auto"},
+              std::tuple{PreviewResolution::Choice::Half, N_("Halbe Auflösung"), "_half"},
+              std::tuple{PreviewResolution::Choice::Full, N_("Volle Projektauflösung"), "_full"}}) {
+            QAction* a = makeAction(sub, QString(prefix) + suffix, T(text), QKeySequence(),
+                                    [this, t = target, c = choice] { setPreviewResolution(t, c); });
+            a->setCheckable(true);
+            a->setChecked(previewResolution(target) == choice);
+            group->addAction(a);
+            m_resolutionActions[int(target)][int(choice)] = a;
+        }
+    }
+    m_viewer->addAction(resMenu->menuAction());
+    updatePreviewEdge();
 
     // Help: log file for error messages (Windows has no terminal)
     QMenu* help = menuBar()->addMenu(T("&Hilfe"));

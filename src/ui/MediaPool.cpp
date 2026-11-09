@@ -7,6 +7,7 @@
 #include "core/IndexSearch.h"
 #include "core/MediaAspect.h"
 #include "core/Project.h"
+#include "core/ProxyChoice.h"
 #include "core/Timecode.h"
 #include "core/TimelineOps.h"
 #include "engine/Engine.h"
@@ -1455,7 +1456,10 @@ void MediaPool::showContextMenu(const QPoint& pos)
             else if (proxies->hasProxy(path)) withProxy << path;
             else if (m && m->hasVideo && !m->isImage && QFileInfo::exists(path)) canGenerate << path;
         }
-        menu.addAction(T("Proxy-Medien erzeugen"), this, [proxies, canGenerate] { proxies->generate(canGenerate); })
+        // Greyed out with the reason in its text (no video, all there, being made)
+        menu.addAction(ProxyChoice::label(T("Proxy-Medien erzeugen"), canGenerate.size() + withProxy.size() + pending.size(),
+                                          canGenerate.size(), pending.size()),
+                       this, [proxies, canGenerate] { proxies->generate(canGenerate); })
             ->setEnabled(!canGenerate.isEmpty());
         menu.addAction(T("Proxy-Medien löschen"), this, [proxies, withProxy] { proxies->remove(withProxy); })
             ->setEnabled(!withProxy.isEmpty());

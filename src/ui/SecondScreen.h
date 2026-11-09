@@ -2,8 +2,9 @@
 #pragma once
 // Preview on a second monitor (Workspace › Preview on Second Monitor, Ctrl+Shift+F): the picture full screen on
 // another screen, without window chrome, letterboxed by the timeline's aspect (a portrait-rotated monitor shows a
-// 9:16 timeline filling it). Two ways for the main window (Settings › General): the viewer's area stays and shows
-// source clips there (the monitor keeps the timeline's picture meanwhile) - or the viewer goes away and the panels
+// 9:16 timeline filling it). The timeline's picture is then only on the monitor. Two ways for the main window
+// (Settings › General): the viewer's area stays as a source viewer (source clips opened by double click, else an empty
+// page with a button to bring the preview back - Viewer::setProgramElsewhere) - or the viewer goes away and the panels
 // around it take its room.
 // SecondScreenPlan holds the choices (which screen next, what is left after a monitor went away, what the main window
 // shows) without any QScreen, so the tests can feed it made-up screens (several, portrait, unplugged). ScreenOutput
@@ -28,7 +29,7 @@ public:
     };
     // What the main window does with its viewer while the preview is on another screen
     enum class Mode {
-        KeepArea,   // the area stays: the viewer shows source clips there, the timeline when no source is shown
+        KeepArea,   // "show source clips": the area stays as a source viewer, the timeline only on the monitor
         HideViewer, // the viewer goes, the panels beside/below it close up
     };
 
@@ -49,6 +50,8 @@ public:
     static QRectF fitted(const QSizeF& area, const QSizeF& frame);
     // Does the main window show its viewer?
     static bool viewerInWindow(Mode mode, bool outputOn) { return !outputOn || mode == Mode::KeepArea; }
+    // Does the main window's viewer leave the timeline's picture to the output (shows source clips only)?
+    static bool programElsewhere(Mode mode, bool outputOn) { return outputOn && mode == Mode::KeepArea; }
     // Does the output keep its last timeline picture instead of the engine's frame? While the engine shows a source
     // clip and the viewer's area stays (the source belongs into the main window, the monitor is the program)
     static bool holdsTimeline(Mode mode, bool sourceShown) { return mode == Mode::KeepArea && sourceShown; }

@@ -5,8 +5,9 @@
 // the main window's and then back into the window; an unplugged monitor clears the target, plugging it in again does
 // not set one; the picture is letterboxed (a portrait monitor filled by a 9:16 timeline).
 // In the app (on the only screen there is): a frameless full-screen window without the focus, fed with the engine's
-// frames; "Fläche bleibt" keeps the viewer (source clips there, the monitor keeps the timeline's picture), "Vorschau
-// weg" hides it and the panels close up - across page switches; Esc in the window, the key again or the monitor
+// frames; "show source clips" keeps the viewer's area as a source viewer (the timeline's picture only on the monitor:
+// an empty page with a button to bring it back, a source clip opened there, its frame kept while the timeline plays
+// on the monitor), "hide the preview area" hides it and the panels close up - across page switches; Esc in the window, the key again or the monitor
 // going away bring back exactly the layout before; the timeline's zoom/scroll never change (core rule).
 // SECOND_SCREEN_DUMP=<folder>: pictures of the main window in both modes and of the monitor's window.
 
@@ -15,6 +16,7 @@
 #include "app/InputBindings.h"
 #include "app/MainWindow.h"
 #include "app/SettingsDialog.h"
+#include "core/I18n.h"
 #include "engine/Engine.h"
 #include "ui/FrameView.h"
 #include "ui/FullScreenViewer.h"
@@ -30,6 +32,7 @@
 #include <QSplitter>
 #include <QTemporaryDir>
 #include <QTest>
+#include <QToolButton>
 #include <clocale>
 
 namespace {
@@ -116,6 +119,9 @@ void testPlanPicture()
     CHECK(Plan::holdsTimeline(Plan::Mode::KeepArea, true));
     CHECK(!Plan::holdsTimeline(Plan::Mode::KeepArea, false));
     CHECK(!Plan::holdsTimeline(Plan::Mode::HideViewer, true));
+    CHECK(Plan::programElsewhere(Plan::Mode::KeepArea, true));
+    CHECK(!Plan::programElsewhere(Plan::Mode::KeepArea, false));
+    CHECK(!Plan::programElsewhere(Plan::Mode::HideViewer, true));
 }
 
 // The window's picture on a portrait monitor (the window at a portrait size: offscreen has no rotated screen)
@@ -217,7 +223,7 @@ void testApp(MainWindow& w, Engine& engine, const QString& clip)
     const Sizes before = Sizes::of(&w); // with the status bar the message made
     dump(&w, "window-before");
 
-    // "Fläche bleibt" (the default): the viewer stays, the monitor gets the picture
+    // "Show source clips" (the default): the viewer's area stays, the monitor gets the picture
     CHECK(w.secondScreenMode() == Plan::Mode::KeepArea);
     QScreen* screen = QGuiApplication::primaryScreen();
     w.showPreviewOn(screen);
@@ -231,15 +237,23 @@ void testApp(MainWindow& w, Engine& engine, const QString& clip)
     CHECK(fs->geometry() == screen->geometry());
     CHECK(fs->testAttribute(Qt::WA_ShowWithoutActivating)); // the main window keeps the keyboard
     CHECK(viewer->isVisible());
+    // ... not the timeline's picture a second time: the empty page says where it is
+    CHECK(viewer->programElsewhere());
+    CHECK(viewer->programAwayPageShown());
+    CHECK(w.findChild<QToolButton*>("viewer_program_back"));
     CHECK(!fs->picture().isNull());
     // Sharp: preview frames with the monitor's pixels
     CHECK_EQ(engine.previewEdge(), out->wantedPreviewEdge());
     CHECK(out->wantedPreviewEdge() > 0);
-    // The engine's frames reach it - the same image as the viewer's (nothing rendered twice)
+    // The engine's frames reach it, the viewer keeps what it had (the frame before the monitor came)
+    const qint64 viewerBefore = viewer->picture().cacheKey();
     engine.seek(20);
     settle();
-    CHECK_EQ(fs->picture().cacheKey(), viewer->picture().cacheKey());
+    QTest::qWait(100);
     const qint64 program = fs->picture().cacheKey();
+    CHECK(program != viewerBefore);
+    CHECK_EQ(viewer->picture().cacheKey(), viewerBefore);
+    CHECK(viewer->programAwayPageShown());
     dump(&w, "keep-area");
     dump(fs, "monitor");
     // A source clip: in the viewer, the monitor keeps the timeline's picture
@@ -250,18 +264,24 @@ void testApp(MainWindow& w, Engine& engine, const QString& clip)
     CHECK(viewer->isVisible());
     CHECK_EQ(fs->picture().cacheKey(), program);
     CHECK(viewer->picture().cacheKey() != program);
+    CHECK(!viewer->programAwayPageShown());
+    const qint64 sourceFrame = viewer->picture().cacheKey();
     dump(&w, "keep-area-source");
-    // Back to the timeline: the monitor follows again
+    // Back to the timeline (played/sought): the monitor follows, the viewer keeps the source frame, paused
     engine.showTimeline(30);
     settle();
     QTest::qWait(200);
-    CHECK_EQ(fs->picture().cacheKey(), viewer->picture().cacheKey());
+    CHECK(fs->picture().cacheKey() != program);
+    CHECK_EQ(viewer->picture().cacheKey(), sourceFrame);
+    CHECK(!viewer->programAwayPageShown());
+    dump(&w, "keep-area-source-kept");
     CHECK(tv->view().pxPerFrame == view.pxPerFrame && tv->view().leftFrame == view.leftFrame);
 
     // "Vorschau weg": the viewer goes, the panels close up; the timeline keeps zoom and scroll
     w.setSecondScreenMode(Plan::Mode::HideViewer);
     settle();
     CHECK(viewer->isHidden());
+    CHECK(!viewer->programElsewhere());
     CHECK(timeline->isVisible());
     CHECK(tv->view().pxPerFrame == view.pxPerFrame && tv->view().leftFrame == view.leftFrame);
     // The viewer's room went to the others: no empty row where it was
@@ -334,6 +354,7 @@ void testApp(MainWindow& w, Engine& engine, const QString& clip)
         if (CHECK(combo)) {
             CHECK_EQ(combo->count(), 2);
             CHECK_EQ(combo->itemData(0).toInt(), int(Plan::Mode::KeepArea));
+            CHECK_EQ(combo->itemText(0), T("Quellclips zeigen"));
             CHECK(dlg.secondScreenMode() == Plan::storedMode());
             combo->setCurrentIndex(1);
             CHECK(dlg.secondScreenMode() == Plan::Mode::HideViewer);
@@ -341,6 +362,26 @@ void testApp(MainWindow& w, Engine& engine, const QString& clip)
     }
     w.setSecondScreenMode(Plan::Mode::KeepArea);
     CHECK(viewer->isVisible());
+    CHECK(tv->view().pxPerFrame == view.pxPerFrame && tv->view().leftFrame == view.leftFrame);
+
+    // The empty page's button brings the preview back: the timeline's picture in the viewer again
+    w.showPreviewOn(screen);
+    settle();
+    CHECK(viewer->programAwayPageShown());
+    engine.seek(15);
+    settle();
+    QTest::qWait(100);
+    auto* back = w.findChild<QToolButton*>("viewer_program_back");
+    if (CHECK(back && back->isVisible())) {
+        QTest::mouseClick(back, Qt::LeftButton);
+        settle();
+        CHECK(!w.previewOutput() && !action->isChecked());
+        CHECK(!viewer->programElsewhere() && !viewer->programAwayPageShown());
+        engine.seek(16);
+        settle();
+        QTest::qWait(100);
+        CHECK(!viewer->picture().isNull());
+    }
     CHECK(tv->view().pxPerFrame == view.pxPerFrame && tv->view().leftFrame == view.leftFrame);
 }
 

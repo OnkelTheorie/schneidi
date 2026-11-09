@@ -144,6 +144,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/core/CodeTrust.h          src/core/CodeTrust.cpp
     src/core/Timecode.h
     src/core/TimelineOps.h        src/core/TimelineOps.cpp
+    src/core/ProxyChoice.h        src/core/ProxyChoice.cpp
     src/core/TrimFrames.h         src/core/TrimFrames.cpp
     src/core/Keyframes.h          src/core/Keyframes.cpp
     src/core/Accents.h            src/core/Accents.cpp

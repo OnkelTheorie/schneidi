@@ -166,9 +166,33 @@ Viewer::Viewer(Engine* engine, QWidget* parent) : QWidget(parent), m_engine(engi
     m_screen->setMinimumSize(320, 180);
 
     m_trim = new TrimView;
+    // The program is on another monitor and no source clip was opened since (setProgramElsewhere)
+    m_awayPage = new QWidget;
+    m_awayPage->setObjectName("viewer_program_away");
+    m_awayPage->setAttribute(Qt::WA_StyledBackground);
+    m_awayPage->setStyleSheet(QString("#viewer_program_away { background: %1; }").arg(m_screen->background().name()));
+    {
+        auto* awayLay = new QVBoxLayout(m_awayPage);
+        awayLay->setContentsMargins(16, 16, 16, 16);
+        awayLay->addStretch(1);
+        auto* text = new QLabel(T("Das Programm läuft auf dem zweiten Monitor.") + "\n"
+                                + T("Doppelklick auf einen Clip zeigt ihn hier."));
+        text->setAlignment(Qt::AlignCenter);
+        text->setWordWrap(true);
+        text->setStyleSheet(QString("color: %1;").arg(Theme::textDim.name()));
+        awayLay->addWidget(text);
+        auto* back = new QToolButton;
+        back->setObjectName("viewer_program_back");
+        back->setText(T("Vorschau zurückholen"));
+        back->setFocusPolicy(Qt::NoFocus);
+        connect(back, &QToolButton::clicked, this, &Viewer::programBackWanted);
+        awayLay->addWidget(back, 0, Qt::AlignHCenter);
+        awayLay->addStretch(1);
+    }
     m_stack = new QStackedWidget;
     m_stack->addWidget(m_screen);
     m_stack->addWidget(m_trim);
+    m_stack->addWidget(m_awayPage);
     connect(m_engine->stills(), &StillFetcher::ready, m_trim,
             [this](const QString& path, int frame, const QImage& img) { m_trim->setImage(path, frame, img); });
 
@@ -245,6 +269,9 @@ Viewer::Viewer(Engine* engine, QWidget* parent) : QWidget(parent), m_engine(engi
     lay->addLayout(transport);
 
     connect(m_engine, &Engine::frameReady, m_screen, [this](const QImage& img) {
+        const bool program = m_engine->mode() != Engine::Mode::Source;
+        if (program) m_programFrame = img; // shared, not copied
+        if (program && m_programAway) return; // the program goes to the other monitor only
         m_screen->setFrameSize(m_engine->frameSize()); // the zoom steps refer to the project frame
         m_screen->setFrame(img);
     });
@@ -408,7 +435,8 @@ void Viewer::endTrim()
 {
     m_engine->stills()->request({}); // nothing more to decode
     m_trim->setView({});
-    m_stack->setCurrentWidget(m_multicamOn && m_multicam ? m_multicam : m_screen);
+    m_stack->setCurrentWidget(m_screen); // not the trim view any more: updatePage chooses
+    updatePage();
 }
 
 void Viewer::setMulticamView(QWidget* view)
@@ -421,8 +449,40 @@ void Viewer::showMulticam(bool on)
 {
     if (on == m_multicamOn) return;
     m_multicamOn = on;
-    if (!trimShown()) m_stack->setCurrentWidget(on && m_multicam ? m_multicam : m_screen);
+    updatePage();
     updateModeText();
+}
+
+void Viewer::setProgramElsewhere(bool on)
+{
+    if (on == m_programAway) return;
+    m_programAway = on;
+    m_keptSource = on && !m_sourcePath.isEmpty() ? m_sourceName : QString();
+    // Back home on the timeline: its picture instead of the source frame kept meanwhile
+    if (!on && m_sourcePath.isEmpty() && !m_programFrame.isNull()) m_screen->setFrame(m_programFrame);
+    updatePage();
+    updateModeText();
+}
+
+bool Viewer::programAwayPageShown() const
+{
+    return m_stack->currentWidget() == m_awayPage;
+}
+
+bool Viewer::keepsPicture() const
+{
+    return m_programAway && m_sourcePath.isEmpty();
+}
+
+void Viewer::updatePage()
+{
+    // The overlay's handles belong to the timeline's picture: not over a kept source frame
+    if (ViewerOverlay* want = keepsPicture() ? nullptr : m_overlay; m_screen->overlay() != want) m_screen->setOverlay(want);
+    if (trimShown()) return; // endTrim comes back here
+    QWidget* page = m_screen;
+    if (m_multicamOn && m_multicam) page = m_multicam; // the angles stay in the main window (program on the monitor)
+    else if (keepsPicture() && m_keptSource.isEmpty()) page = m_awayPage;
+    m_stack->setCurrentWidget(page);
 }
 
 void Viewer::setMarkers(const QVector<int>& markers)
@@ -435,8 +495,13 @@ bool Viewer::trimShown() const
     return m_stack->currentWidget() == m_trim;
 }
 
-void Viewer::setOverlay(ViewerOverlay* overlay) { m_screen->setOverlay(overlay); }
-ViewerOverlay* Viewer::overlay() const { return m_screen->overlay(); }
+void Viewer::setOverlay(ViewerOverlay* overlay)
+{
+    m_overlay = overlay;
+    m_screen->setOverlay(keepsPicture() ? nullptr : overlay);
+}
+
+ViewerOverlay* Viewer::overlay() const { return m_overlay; }
 
 void Viewer::setRange(int length, int markIn, int markOut)
 {
@@ -450,6 +515,8 @@ void Viewer::setSource(const QString& path, const QString& name)
 {
     m_sourcePath = path;
     m_sourceName = name;
+    if (m_programAway && !path.isEmpty()) m_keptSource = name;
+    updatePage();
     updateModeText();
     m_screen->setIdleCursor(path.isEmpty() ? Qt::ArrowCursor : Qt::OpenHandCursor);
     // Only a source can be dragged into the timeline; in the timeline view a left drag pans the zoomed picture
@@ -461,7 +528,9 @@ void Viewer::updateModeText()
 {
     QString text = !m_sourcePath.isEmpty() ? T("Quelle – %1").arg(m_sourceName)
                    : m_multicamOn         ? T("Timeline – Multicam")
-                                          : T("Timeline");
+                   : !m_programAway       ? T("Timeline")
+                   : m_keptSource.isEmpty() ? T("Timeline auf dem zweiten Monitor")
+                                            : T("Quelle – %1 (angehalten)").arg(m_keptSource);
     if (m_engine->colorBypass()) text += T("  (Farbkorrektur umgangen)");
     m_mode->setTextFormat(m_recording ? Qt::RichText : Qt::PlainText);
     if (m_recording)

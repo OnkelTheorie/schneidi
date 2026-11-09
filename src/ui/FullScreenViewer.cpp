@@ -71,12 +71,12 @@ int FullScreenViewer::wantedPreviewEdge() const
     if (z != FrameView::kFit && z >= 1.0) return INT_MAX; // the project size
     // Fit: as many pixels as the picture covers on the screen - not more (a 4K project on a 1080p screen renders
     // 1920 wide, a portrait project there ~608 x 1080), at most 1920: playback speed comes first, 4K screens get
-    // twice the viewer's preview
+    // twice the viewer's preview (the second monitor: no cap, PreviewResolution chooses)
     const QSize px = (screen() ? screen()->geometry().size() : size()) * devicePixelRatioF();
     QSize project = m_view->frameSize();
     if (project.isEmpty()) project = px;
     const QSize covered = project.scaled(px, Qt::KeepAspectRatio);
-    return std::min(kMaxPreviewEdge, std::max(covered.width(), covered.height()));
+    return std::min(m_edgeCap, std::max(covered.width(), covered.height()));
 }
 
 const QImage& FullScreenViewer::picture() const

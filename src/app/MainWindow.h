@@ -9,6 +9,7 @@
 #include "core/Types.h"
 
 #include <QElapsedTimer>
+#include "engine/PreviewResolution.h"
 #include "ui/SecondScreen.h"
 #include "ui/timeline/ViewState.h"
 
@@ -17,6 +18,7 @@
 #include <QLockFile>
 #include <QMainWindow>
 #include <QPointer>
+#include <QSet>
 #include <QTimer>
 #include <QUrl>
 #include <functional>
@@ -61,6 +63,12 @@ public:
     void editBrandKit();
     // Timeline of another editor (FCP7 XML, OTIO, EDL) as a new timeline; false = not readable (message shown)
     bool importTimelineFile(const QString& path);
+
+    // Playback › Generate Proxy Media and the timeline clip menu: the video files meant (core/ProxyChoice; "selected":
+    // the timeline's selected clips, without any the Media Pool's selected files) and queueing the missing ones
+    // (returns how many were queued)
+    QStringList proxyFiles(int scope) const; // ProxyChoice::Scope
+    int generateProxies(int scope);
 
     // Pages like in DaVinci (switchable at the bottom). New page: add here + in showPage().
     enum class Page { Media, Edit, Deliver, Color, Comp };
@@ -219,6 +227,13 @@ public:
     void setSecondScreenMode(SecondScreenPlan::Mode mode);
     SecondScreenPlan::Mode secondScreenMode() const { return m_secondScreenMode; }
     const SecondScreenPlan& screenPlan() const { return m_screenPlan; }
+    // Preview resolution (engine/PreviewResolution), main window and second monitor separately; stored, applies at
+    // once (Workspace › Preview Resolution, the viewer's right-click, Settings)
+    void setPreviewResolution(PreviewResolution::Target target, PreviewResolution::Choice choice);
+    PreviewResolution::Choice previewResolution(PreviewResolution::Target target) const
+    {
+        return target == PreviewResolution::Target::Viewer ? m_viewerRes : m_monitorRes;
+    }
 
 protected:
     bool eventFilter(QObject* obj, QEvent* event) override;
@@ -387,6 +402,10 @@ private:
     QStringList m_slowFiles; // playback was too slow with these files (proxy hint); empty = no hint
     double m_slowRate = 0, m_slowFps = 0;
     bool m_proxyHintClosed = false; // closed: not again in this session
+    // Media files of the project as last seen: new ones are imports (proxies on import, ProxyManager::importedFiles);
+    // set from scratch when another project is loaded
+    QSet<QString> m_knownMedia;
+    bool m_knownMediaCheck = false; // a check is queued
     bool m_slowEffects = false;     // clips with effects played: the hint offers the smart render cache first
     Inspector* m_inspector = nullptr;
     ColorPanel* m_colorPanel = nullptr;
@@ -435,7 +454,9 @@ private:
     // Second monitor (MainWindowLayout.cpp)
     void screensChanged(class QScreen* removed); // the plan learns the screens; the preview comes back if its went
     void feedPreviewOutput(const QImage& frame);
-    void updatePreviewEdge(); // the largest wish of the full-screen viewer and the output (Engine::setPreviewEdge)
+    // The largest wish of the viewer, the full-screen viewer and the output, each after its PreviewResolution choice
+    // (Engine::setPreviewEdge: one preview, the larger size wins)
+    void updatePreviewEdge();
     void hideViewerArea();    // the viewer and the splitters left empty by it go, their sizes are remembered
     void restoreViewerArea(); // back as it was before hideViewerArea
     void updateViewerArea();  // hidden or back, as the mode and the output say
@@ -443,6 +464,9 @@ private:
     QPointer<class PreviewOutput> m_output;
     SecondScreenPlan m_screenPlan;
     SecondScreenPlan::Mode m_secondScreenMode = SecondScreenPlan::storedMode();
+    PreviewResolution::Choice m_viewerRes = PreviewResolution::stored(PreviewResolution::Target::Viewer);
+    PreviewResolution::Choice m_monitorRes = PreviewResolution::stored(PreviewResolution::Target::Monitor);
+    QAction* m_resolutionActions[2][3] = {}; // [Target][Choice]: the menu's check marks
     QImage m_programFrame; // the engine's last frame not of a source clip (the output starts with it)
     struct ViewerAway {
         bool active = false;

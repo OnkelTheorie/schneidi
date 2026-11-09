@@ -36,6 +36,22 @@ public:
     void setEnabled(bool on);
 
     void generate(const QStringList& originals); // into the queue (existing/waiting ones are skipped)
+    // Of `originals` the ones without a proxy that are not waiting or running (what "Generate" would queue)
+    QStringList missing(const QStringList& originals) const;
+
+    // Proxies made right on import (Settings › General, "proxy/onImport"): never (the default), for heavy video only
+    // (heavyVideo) or for every video file
+    enum class ImportRule { Never, Heavy, Always };
+    static ImportRule importRule();
+    static void setImportRule(ImportRule rule);
+    // Video the preview struggles with: 4K and more (longer edge from 3840 px), H.265/HEVC or AV1, more than 8 bits
+    static bool heavyVideo(int width, int height, const QString& codec, int bitDepth);
+    // Does `rule` want a proxy of this file? Reads its description (no picture decoded): stills, sound-only files
+    // and unreadable files never
+    static bool wantedOnImport(ImportRule rule, const QString& path);
+    // Newly imported files (app: the Media Pool, drag and drop, watch folders, the live MCP/CLI import): queues the
+    // ones the stored rule wants. The files are read in a helper thread; the queue fills a moment later.
+    void importedFiles(const QStringList& paths);
     void remove(const QStringList& originals);   // delete proxy (a running generation is canceled)
     void cancel(const QStringList& originals);
     void cancelAll();

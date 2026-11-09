@@ -189,6 +189,21 @@ QWidget* SettingsDialog::buildGeneral()
                           "keine Projektdateien zwischen deinen Aufnahmen.")));
     lay->addWidget(projects);
 
+    // Proxy media on import: never by default (the user decides; Playback › Generate Proxy Media, right-click on clips)
+    auto* proxyBox = new QGroupBox(T("Proxy-Medien"));
+    auto* xform = new QFormLayout(proxyBox);
+    xform->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
+    m_proxyImport = new QComboBox;
+    m_proxyImport->setObjectName("proxy_import_rule");
+    m_proxyImport->addItem(T("Nie"), int(ProxyManager::ImportRule::Never));
+    m_proxyImport->addItem(T("Ab 4K, H.265, AV1 oder 10 Bit"), int(ProxyManager::ImportRule::Heavy));
+    m_proxyImport->addItem(T("Immer"), int(ProxyManager::ImportRule::Always));
+    m_proxyImport->setCurrentIndex(std::max(0, m_proxyImport->findData(int(ProxyManager::importRule()))));
+    xform->addRow(T("Beim Import erzeugen"), m_proxyImport);
+    xform->addRow(hint(T("Proxy-Medien sind kleine Kopien für eine flüssige Vorschau, der Export nutzt immer die "
+                         "Originale. Von Hand: Wiedergabe › Proxy-Medien erzeugen oder Rechtsklick auf einen Clip.")));
+    lay->addWidget(proxyBox);
+
     // Compositing: new nodes from the node search linked at once (default) or only added
     auto* comp = new QGroupBox(T("Compositing"));
     auto* cform = new QFormLayout(comp);
@@ -200,18 +215,40 @@ QWidget* SettingsDialog::buildGeneral()
                          "hingelegt, du verbindest ihn selbst.")));
     lay->addWidget(comp);
 
+    // Preview resolution (engine/PreviewResolution): automatic by default, playback speed first
+    const auto resolutionBox = [](const char* name, PreviewResolution::Target target) {
+        auto* box = new QComboBox;
+        box->setObjectName(name);
+        box->addItem(T("Automatisch (passend zur Anzeige)"), int(PreviewResolution::Choice::Auto));
+        box->addItem(T("Halbe Auflösung"), int(PreviewResolution::Choice::Half));
+        box->addItem(T("Volle Projektauflösung"), int(PreviewResolution::Choice::Full));
+        box->setCurrentIndex(std::max(0, box->findData(int(PreviewResolution::stored(target)))));
+        return box;
+    };
+    auto* viewerBox = new QGroupBox(T("Vorschau"));
+    auto* rform = new QFormLayout(viewerBox);
+    rform->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
+    m_viewerResolution = resolutionBox("viewer_resolution", PreviewResolution::Target::Viewer);
+    rform->addRow(T("Auflösung"), m_viewerResolution);
+    rform->addRow(hint(T("Automatisch: so groß, wie die Vorschau gerade angezeigt wird. Volle Auflösung ist schärfer, "
+                         "braucht aber einen schnellen Rechner. Der Export nutzt immer die volle Auflösung.")));
+    lay->addWidget(viewerBox);
+
     // Preview on a second monitor (Workspace menu): what the main window does with the viewer's area meanwhile
     auto* preview = new QGroupBox(T("Vorschau auf zweitem Monitor"));
     auto* vform = new QFormLayout(preview);
     vform->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
+    m_monitorResolution = resolutionBox("monitor_resolution", PreviewResolution::Target::Monitor);
+    vform->addRow(T("Auflösung auf dem Monitor"), m_monitorResolution);
     m_secondScreen = new QComboBox;
     m_secondScreen->setObjectName("second_screen_mode");
-    m_secondScreen->addItem(T("Fläche bleibt"), int(SecondScreenPlan::Mode::KeepArea));
-    m_secondScreen->addItem(T("Vorschau weg"), int(SecondScreenPlan::Mode::HideViewer));
+    m_secondScreen->addItem(T("Quellclips zeigen"), int(SecondScreenPlan::Mode::KeepArea));
+    m_secondScreen->addItem(T("Vorschau-Fläche ausblenden"), int(SecondScreenPlan::Mode::HideViewer));
     m_secondScreen->setCurrentIndex(std::max(0, m_secondScreen->findData(int(SecondScreenPlan::storedMode()))));
     vform->addRow(T("Im Hauptfenster"), m_secondScreen);
-    vform->addRow(hint(T("Fläche bleibt: die Vorschau im Hauptfenster zeigt Quellclips, der Monitor behält das Bild der "
-                         "Timeline. Vorschau weg: die Bereiche daneben bekommen den Platz.")));
+    vform->addRow(hint(T("Die Timeline läuft dann nur auf dem Monitor. Quellclips zeigen: die Vorschau-Fläche im "
+                         "Hauptfenster zeigt Clips, die du per Doppelklick öffnest. Ausblenden: die Bereiche daneben "
+                         "bekommen den Platz.")));
     lay->addWidget(preview);
 
     lay->addStretch(1);
@@ -223,6 +260,17 @@ bool SettingsDialog::autoLinkNodes() const { return m_autoLink->isChecked(); }
 SecondScreenPlan::Mode SettingsDialog::secondScreenMode() const
 {
     return SecondScreenPlan::Mode(m_secondScreen->currentData().toInt());
+}
+
+PreviewResolution::Choice SettingsDialog::previewResolution(PreviewResolution::Target target) const
+{
+    const QComboBox* box = target == PreviewResolution::Target::Viewer ? m_viewerResolution : m_monitorResolution;
+    return PreviewResolution::Choice(box->currentData().toInt());
+}
+
+ProxyManager::ImportRule SettingsDialog::proxyImportRule() const
+{
+    return ProxyManager::ImportRule(m_proxyImport->currentData().toInt());
 }
 
 bool SettingsDialog::ownProjectFolder() const { return m_ownFolder->isChecked(); }

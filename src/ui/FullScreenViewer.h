@@ -35,6 +35,8 @@ public:
     // kMaxPreviewEdge), the project size when zoomed in to 100 % or more (Ctrl+wheel). Engine::setPreviewEdge
     int wantedPreviewEdge() const;
     static constexpr int kMaxPreviewEdge = 1920;
+    // The cap of wantedPreviewEdge when fitted (kMaxPreviewEdge; the second monitor: none, its real pixels)
+    void setPreviewEdgeCap(int px) { m_edgeCap = px; }
 
 signals:
     void exitRequested();
@@ -49,5 +51,6 @@ protected:
 
 private:
     class FrameView* m_view; // the picture (GPU or QPainter, see there)
+    int m_edgeCap = kMaxPreviewEdge;
     QTimer m_hideCursor; // the pointer goes away when the mouse rests
 };
