@@ -70,7 +70,7 @@ void testParse()
     CHECK_EQ(tours.value(0).offerOn, QString("start"));
     for (const Tour& t : tours) {
         CHECK(!t.title.isEmpty());
-        Check::report(t.steps.size() >= 5 && t.steps.size() <= 8, "5-8 steps", __FILE__, __LINE__, t.id); // short
+        Check::report(t.steps.size() >= 5 && t.steps.size() <= 9, "5-9 steps", __FILE__, __LINE__, t.id); // short
         for (const TourStep& s : t.steps) CHECK(!s.text.isEmpty());
     }
     QString err;
@@ -479,6 +479,9 @@ void walk(MainWindow& w, const Tour& t, const QString& run, bool dumpIt)
     QTest::qWait(30);
     const Zoom zoom = zoomOf(w); // core rule: only the user zooms or scrolls the timeline, never a tour step
     const QSize size = w.size();
+    QRect lastBubble;
+    int moves = 0;
+    QStringList movesText;
     for (int i = 0; i < t.steps.size(); ++i) {
         const QString where = QString("%1 %2 step %3").arg(run, t.id).arg(i + 1);
         if (!Check::report(r->index() == i, "step", __FILE__, __LINE__, where + QString(" (at %1)").arg(r->index() + 1)))
@@ -502,6 +505,26 @@ void walk(MainWindow& w, const Tour& t, const QString& run, bool dumpIt)
         if (auto* counter = o->findChild<QLabel*>("tour_counter"))
             CHECK_EQ(counter->text(), QString("%1/%2").arg(i + 1).arg(t.steps.size()));
         if (dumpIt) dump(&w, QString("%1-%2-%3").arg(run, t.id).arg(i + 1));
+        // The bubble stays put where it can (its home corner); the same step puts it at the same place on a revisit
+        const QRect at = o->bubbleGeometry();
+        if (qEnvironmentVariableIsSet("TOURS_TRACE"))
+            qInfo("%s %d: %d,%d %dx%d", qPrintable(t.id), i + 1, at.x(), at.y(), at.width(), at.height());
+        if (i > 0 && at != lastBubble) {
+            ++moves;
+            movesText << QString("%1:(%2,%3)").arg(i + 1).arg(at.x()).arg(at.y());
+        }
+        lastBubble = at;
+        if (i > 0) {
+            if (auto* back = button(o, "tour_back"); CHECK(back)) back->click();
+            QTest::qWait(30);
+            if (auto* next = button(o, "tour_next"); CHECK(next)) next->click();
+            QTest::qWait(30);
+            o->refresh();
+            Check::report(r->index() == i && o->bubbleGeometry() == at, "same place on a revisit", __FILE__, __LINE__,
+                          QString("%1: (%2,%3) -> (%4,%5)").arg(where).arg(at.x()).arg(at.y())
+                              .arg(o->bubbleGeometry().x()).arg(o->bubbleGeometry().y()));
+            if (r->index() != i) break;
+        }
         // The empty graph's own tour button never sits in the spotlight, nor the page's own "Create Compositing"
         if (CompPage* page = w.compPage()) {
             CHECK(!page->canvas()->tourButton()->isVisible());
@@ -519,6 +542,18 @@ void walk(MainWindow& w, const Tour& t, const QString& run, bool dumpIt)
                 const Timeline& tl = w.liveProject()->timeline();
                 if (CHECK(!tl.video.isEmpty() && !tl.video[0].clips.isEmpty()))
                     w.editor()->trimClip(tl.video[0].clips[0].id, TimelineOps::Edge::End, -10);
+            } else if (s.wait == "clip_added") { // the playhead into the first clip, then the split key
+                const Timeline& tl = w.liveProject()->timeline();
+                auto* tv = w.findChild<TimelineView*>();
+                QAction* split = nullptr;
+                for (const auto& e : InputBindings::instance().entries())
+                    if (e.id == QLatin1String("split")) split = e.action;
+                if (CHECK(tv && split && !tl.video.isEmpty() && !tl.video[0].clips.isEmpty())) {
+                    const Clip& c = tl.video[0].clips[0];
+                    emit tv->seekRequested(c.start + c.length() / 2);
+                    QTest::qWait(30);
+                    split->trigger();
+                }
             } else if (s.wait == "playhead_moved") { // a click into the ruler
                 auto* tv = w.findChild<TimelineView*>();
                 if (CHECK(tv)) emit tv->seekRequested(tv->playhead() + 5);
@@ -554,6 +589,11 @@ void walk(MainWindow& w, const Tour& t, const QString& run, bool dumpIt)
     }
     CHECK(!r->running());
     CHECK(!o->isVisible());
+    // Few moves: the bubble leaves its home only for a target or a named control there
+    qInfo("%s %s: bubble moved %d times in %d steps %s", qPrintable(run), qPrintable(t.id), moves, int(t.steps.size()),
+          qPrintable(movesText.join(' ')));
+    Check::report(moves <= std::max(2, int(t.steps.size()) / 2), "bubble moves", __FILE__, __LINE__,
+                  QString("%1 %2: %3 moves: %4").arg(run, t.id).arg(moves).arg(movesText.join(' ')));
     Check::report(dialogs.seen.isEmpty(), "no dialog in the tour", __FILE__, __LINE__, run + " " + t.id + ": " + dialogs.seen.join(", "));
 }
 
@@ -602,6 +642,32 @@ void testColorTourButton(MainWindow& w)
     w.tours()->stop();
     QTest::qWait(20);
     if (auto* edit = w.findChild<QAbstractButton*>("pageButton_edit")) edit->click();
+}
+
+// "{key:split}" in a step's text: the split key of the user's current key set, in bold; its name when it has none
+void testKeyPlaceholder(MainWindow& w)
+{
+    InputBindings& b = InputBindings::instance();
+    TourStep step;
+    step.text = "drück {key:split}: geteilt";
+    QStringList seen;
+    for (const char* preset : {"standard", "premiere"}) {
+        b.applyPreset(preset);
+        const QString key = b.current("split").toString(QKeySequence::NativeText);
+        CHECK(!key.isEmpty());
+        const QString text = w.tours()->stepText(step);
+        Check::report(text.contains("<b>" + key.toHtmlEscaped() + "</b>") && !text.contains("{key"), "key in the text",
+                      __FILE__, __LINE__, QString("%1: %2 / %3").arg(preset, key, text));
+        seen << key;
+    }
+    CHECK(seen.value(0) != seen.value(1)); // Ctrl+B, Ctrl+K: the text follows the preset
+    b.setInputs("split", {QString(), QString()}); // no key at all: the action's name
+    const QString none = w.tours()->stepText(step);
+    CHECK(none.contains("<b>") && !none.contains("{key") && !none.contains("<b></b>"));
+    // The real tour text too (translated, the placeholder kept by the dictionaries)
+    b.applyPreset("standard");
+    for (const Tour& t : Tours::builtIn())
+        for (const TourStep& s : t.steps) CHECK(!w.tours()->stepText(s).contains("{key"));
 }
 
 // The menu and the questions (the default run only)
@@ -777,6 +843,7 @@ void runWindow(Engine& engine, const QString& run, const QString& settingsFile, 
     TourOverlay* o = tours->overlay();
     if (!user) testPanelToggles(w);
     if (!user) testColorTourButton(w);
+    if (!user) testKeyPlaceholder(w);
     if (!user) testMenuAndQuestions(w);
     ownProject(w);
     if (user) { // the user's panels as in the settings file

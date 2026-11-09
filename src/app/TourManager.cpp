@@ -9,6 +9,7 @@
 #include <QMainWindow>
 #include <QMenu>
 #include <QMenuBar>
+#include <QRegularExpression>
 #include <QScrollArea>
 #include <QTimer>
 #include <utility>
@@ -41,6 +42,7 @@ TourManager::TourManager(QMainWindow* window, Project* project, Host host)
             return s && !s->keep.isEmpty() ? resolve(s->keep) : QVector<QRect>{};
         },
         [this]() -> QVector<QRect> { return m_host.avoid ? m_host.avoid() : QVector<QRect>{}; });
+    m_overlay->setHome([this] { return m_host.home ? m_host.home() : QRect(); });
     connect(m_project, &Project::timelineChanged, this, &TourManager::poke);
     connect(m_project, &Project::mediaChanged, this, &TourManager::poke);
 }
@@ -161,6 +163,14 @@ void TourManager::launch(const Tour& t)
 {
     m_startPage = m_host.page ? m_host.page() : QString();
     if (m_host.enter) m_host.enter(t);
+    // One bubble size for the whole tour (its buttons stay where they are from step to step)
+    QStringList texts, offers;
+    for (const TourStep& s : t.steps) {
+        texts << stepText(s);
+        if (const auto it = m_host.offers.constFind(s.offer); !s.offer.isEmpty() && it != m_host.offers.cend())
+            offers << T(it->text);
+    }
+    m_overlay->measureSteps(texts, offers);
     emit runningChanged(true);
     m_runner.start(t);
 }
@@ -203,7 +213,7 @@ void TourManager::showStep()
     QString offer;
     if (const auto it = m_host.offers.constFind(s->offer); !s->offer.isEmpty() && it != m_host.offers.cend())
         if (!it->needed || it->needed()) offer = T(it->text);
-    m_overlay->showStep(T(s->text), m_runner.index(), m_runner.count(), m_runner.waiting(), offer);
+    m_overlay->showStep(stepText(*s), m_runner.index(), m_runner.count(), m_runner.waiting(), offer);
 }
 
 void TourManager::finished(bool)
@@ -260,6 +270,27 @@ bool TourManager::holds(const QString& c) const
     if (const auto it = m_host.conditions.constFind(c); it != m_host.conditions.cend()) return (*it)();
     qWarning("Tour condition unknown: %s", qPrintable(c));
     return true; // an unknown condition never blocks a tour
+}
+
+QString TourManager::stepText(const TourStep& step) const
+{
+    // The dictionaries keep the placeholder as it is: only the key itself depends on the user (preset, own keys)
+    static const QRegularExpression placeholder(QStringLiteral("\\{key:([A-Za-z0-9_]+)\\}"));
+    const QString text = T(step.text);
+    QString out;
+    qsizetype at = 0;
+    for (auto it = placeholder.globalMatch(text); it.hasNext();) {
+        const QRegularExpressionMatch m = it.next();
+        out += text.mid(at, m.capturedStart() - at).toHtmlEscaped();
+        const QString id = m.captured(1);
+        const QKeySequence key = InputBindings::instance().current(id);
+        QString shown = key.toString(QKeySequence::NativeText);
+        if (shown.isEmpty()) // no key: the action's name (the tool, the menu entry)
+            if (QAction* a = findAction(id)) shown = a->text().remove('&');
+        out += "<b>" + (shown.isEmpty() ? id : shown).toHtmlEscaped() + "</b>";
+        at = m.capturedEnd();
+    }
+    return out + text.mid(at).toHtmlEscaped();
 }
 
 QAction* TourManager::findAction(const QString& id) const

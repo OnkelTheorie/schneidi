@@ -78,6 +78,42 @@ void TourOverlay::setTargets(std::function<QVector<QRect>()> targets)
     if (isVisible()) relayout();
 }
 
+void TourOverlay::setHome(std::function<QRect()> home) { m_home = std::move(home); }
+
+void TourOverlay::measureSteps(const QStringList& texts, const QStringList& offers)
+{
+    // Every step's text with the most buttons a step can have: the bubble's size for the whole tour
+    setGeometry(parentWidget()->rect());
+    m_question = false;
+    m_title->hide();
+    m_hint->hide();
+    m_counter->setText("88/88");
+    m_text->setTextFormat(Qt::RichText);
+    m_counter->show();
+    QString offer;
+    for (const QString& o : offers)
+        if (o.size() > offer.size()) offer = o;
+    QString next = T("Überspringen");
+    for (const QString& t : {T("Weiter"), T("Fertig")})
+        if (QFontMetrics(font()).horizontalAdvance(t) > QFontMetrics(font()).horizontalAdvance(next)) next = t;
+    clearButtons();
+    addButton("tour_end", T("Rundgang beenden"), false, true)->setFlat(true);
+    if (!offer.isEmpty()) addButton("tour_offer", offer, false, false);
+    addButton("tour_back", T("Zurück"), false, false);
+    addButton("tour_next", next, true, false);
+    QSize steady;
+    for (const QString& t : texts) {
+        m_text->setText(t);
+        steady = steady.expandedTo(bubbleSize());
+    }
+    for (const QString& t : texts) { // the widest one sets the width: the heights again at that width
+        m_text->setText(t);
+        steady = steady.expandedTo(bubbleSize(steady.width()));
+    }
+    clearButtons();
+    m_steady = steady;
+}
+
 void TourOverlay::setKeepFree(std::function<QVector<QRect>()> keep, std::function<QVector<QRect>()> avoid)
 {
     m_keep = std::move(keep);
@@ -192,10 +228,11 @@ QSize TourOverlay::bubbleSize(int atLeast)
 
 void TourOverlay::showStep(const QString& text, int index, int count, bool waiting, const QString& offer)
 {
-    if (m_question || index == 0) m_steady = {}; // a new tour
+    if (m_question) m_steady = {};
     m_question = false;
     m_title->hide();
     m_counter->setText(QString("%1/%2").arg(index + 1).arg(count));
+    m_text->setTextFormat(Qt::RichText); // the step's text comes as rich text (a key in bold)
     m_counter->show();
     m_text->setText(text);
     m_hint->hide();
@@ -232,6 +269,7 @@ void TourOverlay::showQuestion(const QString& title, const QString& text, const 
     m_title->setText(title);
     m_title->setVisible(!title.isEmpty());
     m_counter->hide();
+    m_text->setTextFormat(Qt::PlainText);
     m_text->setText(text);
     m_hint->setText(hint);
     m_hint->setVisible(!hint.isEmpty());
@@ -267,12 +305,12 @@ QRect TourOverlay::bubbleGeometry() const { return m_bubble->geometry(); }
 QWidget* TourOverlay::bubble() const { return m_bubble; }
 
 QRect TourOverlay::placeBubble(const QRect& area, const QVector<QRect>& holes, const QSize& size, int gap,
-                               const QVector<QRect>& keep, const QVector<QRect>& avoid, const QRect& previous)
+                               const QVector<QRect>& keep, const QVector<QRect>& avoid, const QRect& home)
 {
     const QRect inner = area.adjusted(gap, gap, -gap, -gap);
     QRect all;
     for (const QRect& h : holes) all = all.united(h);
-    if (!all.isValid()) {
+    if (!all.isValid() && !home.isValid()) {
         QRect r(QPoint(0, 0), size);
         r.moveCenter(area.center());
         return r;
@@ -288,11 +326,17 @@ QRect TourOverlay::placeBubble(const QRect& area, const QVector<QRect>& holes, c
         return inner.contains(r) && clear(r, holes) && clear(r, keep) && (!strict || clear(r, avoid));
     };
     const QRect main = holes.value(0).isValid() ? holes.value(0) : all;
-    // The place of the step before, if it still fits beside this step's main hole
-    if (previous.isValid()) {
-        const QRect r(previous.topLeft(), size);
-        const QRect near = main.adjusted(-kNear, -kNear, kNear, kNear);
-        if (free(r, true) && near.intersects(r)) return r;
+    // The bubble's home first (a fixed corner of `home`): the same place step after step, the buttons where they were;
+    // the other corners of `home` next, then beside the target
+    if (home.isValid()) {
+        const QRect h = home.adjusted(gap, gap, -gap, -gap);
+        const QPoint corners[] = {{h.right() - size.width() + 1, h.bottom() - size.height() + 1}, // bottom right
+                                  {h.left(), h.bottom() - size.height() + 1},                     // bottom left
+                                  {h.left(), h.top()},                                            // top left
+                                  {h.right() - size.width() + 1, h.top()}};                       // top right
+        for (const bool strict : {true, false})
+            for (const QPoint& c : corners)
+                if (const QRect r(c, size); free(r, strict)) return r;
     }
     // Beside the main hole first (far apart targets: the bubble belongs to the first, not between them), then beside
     // all of them together; free of the places to avoid if it can be, else only off the holes and the kept controls
@@ -302,21 +346,6 @@ QRect TourOverlay::placeBubble(const QRect& area, const QVector<QRect>& holes, c
             const int cx = clampX(target.center().x() - size.width() / 2);
             const int cy = clampY(target.center().y() - size.height() / 2);
             QVector<QRect> places;
-            if (previous.isValid()) { // the previous line first: below/above at its x, right/left at its y
-                const int px = clampX(previous.left()), py = clampY(previous.top());
-                const QRect side[] = {QRect(QPoint(px, target.bottom() + gap), size),
-                                      QRect(QPoint(px, target.top() - gap - size.height()), size),
-                                      QRect(QPoint(target.right() + gap, py), size),
-                                      QRect(QPoint(target.left() - gap - size.width(), py), size)};
-                // Its side first: where it sat relative to this target
-                const int first = previous.top() > target.bottom() ? 0
-                                  : previous.bottom() < target.top() ? 1
-                                  : previous.left() > target.right() ? 2
-                                  : previous.right() < target.left() ? 3 : 0;
-                places << side[first];
-                for (int i = 0; i < 4; ++i)
-                    if (i != first) places << side[i];
-            }
             places << QRect(QPoint(cx, target.bottom() + gap), size)              // below
                    << QRect(QPoint(cx, target.top() - gap - size.height()), size) // above
                    << QRect(QPoint(target.right() + gap, cy), size)               // right
@@ -357,7 +386,7 @@ void TourOverlay::relayout()
     if (!m_question && m_keep)
         for (const QRect& k : m_keep()) keep << k.adjusted(-kPad, -kPad, kPad, kPad);
     if (!m_question && m_avoid) avoid = m_avoid();
-    // The steady size: never smaller than the tour's bubbles before (its height; its width when it fits the window)
+    // The steady size: the tour's largest bubble (measured for all its steps when it began), never smaller
     QSize size = bubbleSize();
     if (!m_question) {
         if (size.width() < m_steady.width() && m_steady.width() <= width() - 28) {
@@ -366,11 +395,21 @@ void TourOverlay::relayout()
         size.setHeight(std::max(size.height(), m_steady.height()));
         m_steady = m_steady.expandedTo(size);
     }
-    const QRect previous = m_bubble->isVisible() && !m_question ? m_bubble->geometry() : QRect();
-    const QRect bubble = placeBubble(rect(), holes, size, 14, keep, avoid, previous);
+    const QRect home = !m_question && m_home ? m_home() : QRect();
+    const QRect bubble = placeBubble(rect(), holes, size, 14, keep, avoid, home);
     if (holes != m_holes || bubble != m_bubble->geometry()) {
+        // What was a hole or the bubble before is painted anew below (a masked-out part keeps old pixels otherwise:
+        // a ghost frame around the last step's target, a bubble's edge)
+        QRegion old;
+        for (const QRect& h : std::as_const(m_holes)) old += h.adjusted(-kFeather - 2, -kFeather - 2, kFeather + 2, kFeather + 2);
+        old += m_bubble->geometry().adjusted(-2, -2, 2, 2);
         m_holes = holes;
         m_bubble->setGeometry(bubble);
+        parentWidget()->update(old);
+        for (QWidget* w : parentWidget()->findChildren<QWidget*>())
+            if (w != this && !isAncestorOf(w) && w->isVisible())
+                if (const QRegion r = old.translated(-w->mapTo(parentWidget(), QPoint(0, 0))) & w->rect(); !r.isEmpty())
+                    w->update(r);
         // Clicks inside a hole go to the widget below
         QRegion mask(rect());
         for (const QRect& h : holes) mask -= QRegion(h, QRegion::Rectangle);

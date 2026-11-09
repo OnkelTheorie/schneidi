@@ -88,6 +88,7 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
     title->setObjectName("PanelTitle");
 
     m_preset = new QComboBox;
+    m_preset->setObjectName("renderPreset"); // the tours point at it
     m_presetMenu = new QToolButton;
     m_presetMenu->setText("⋯");
     m_presetMenu->setToolTip(T("Vorlage speichern oder löschen"));
@@ -248,6 +249,7 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
     form->addRow(T("CPU-Threads"), m_threads);
 
     m_addBtn = new QPushButton(T("Zur Render-Warteschlange hinzufügen"));
+    m_addBtn->setObjectName("renderAdd");
     m_addBtn->setMinimumHeight(30);
     m_addBtn->setStyleSheet(Theme::primaryButtonStyle());
     m_checkBtn = new QPushButton(T("Vor dem Export prüfen"));

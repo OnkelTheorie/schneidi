@@ -2816,11 +2816,9 @@
  "Rundgänge": "Туры",
  "Rundgänge anbieten": "Предлагать туры",
  "Schnittgrundlagen": "Монтаж",
- "Setz den Abspielkopf in einen Clip und drück Strg+B: Der Clip wird dort geteilt. Probier es aus!": "Поставьте указатель внутрь клипа и нажмите Ctrl+B: клип разрежется в этом месте. Попробуйте!",
  "Soll ich dir das kurz zeigen? (ca. 1 Minute)": "Показать, как это работает? (около 1 минуты)",
  "Strg+S speichert. Zusätzlich sichert schneidi regelmäßig von selbst; Datei › Sicherungskopie öffnen holt einen älteren Stand zurück.": "Ctrl+S сохраняет. Кроме того, schneidi сам делает резервные копии; Файл › Открыть резервную копию возвращает прежнее состояние.",
  "Titel und Übergänge findest du unter Effekte und im Menü Timeline. Zieh sie einfach auf die Timeline.": "Титры и переходы находятся в разделе Эффекты и в меню Монтажный стол. Просто перетащите их на монтажный стол.",
- "Unten wechselst du die Seiten: Medien, Schneiden, Compositing, Farbe und Export.": "Внизу переключаются страницы: Медиа, Монтаж, Композитинг, Цвет и Экспорт.",
  "Unter Füllung wählst du Unschärfe oder Verpixeln. Weichheit macht den Rand sanft.": "В разделе «Заливка» выберите «Размытие» или «Пикселизация». «Мягкость» смягчает край.",
  "Wechsle auf die Seite Farbe.": "Перейдите на страницу Цвет.",
  "Weiter": "Далее",
@@ -2910,5 +2908,9 @@
  "Unter Compositing-Rezepte liegt Bild im Bild: Zieh es auf den oberen Clip.": "В «Рецептах comp» есть «Картинка в картинке»: перетащите её на верхний клип.",
  "Unter Compositing-Rezepte liegt Greenscreen: Zieh es auf den oberen Clip.": "В «Рецептах comp» есть «Хромакей»: перетащите его на верхний клип.",
  "Öffne oben die Effekte.": "Откройте вверху Эффекты.",
- "Rundgang Farbe starten": "Начать тур по цвету"
+ "Rundgang Farbe starten": "Начать тур по цвету",
+ "Setz den Abspielkopf in einen Clip und drück {key:split}: Der Clip wird dort geteilt. Probier es aus!": "Поставьте указатель внутрь клипа и нажмите {key:split}: клип разрежется в этом месте. Попробуйте!",
+ "Unten wechselst du die Seiten. Wenn du fertig bist: Geh unten auf Export und render dein Video.": "Внизу переключаются страницы. Когда закончите: откройте внизу Экспорт и отрендерите видео.",
+ "Hier sind die Werkzeuge. Zum Schneiden: Setz den Abspielkopf an die Stelle und drück {key:split}. Der Clip wird dort geteilt. Probier es aus!": "Здесь инструменты. Чтобы разрезать: поставьте указатель в нужное место и нажмите {key:split}. Клип разрежется там. Попробуйте!",
+ "Wähl eine Vorlage, etwa YouTube, und klick auf „Zur Render-Warteschlange hinzufügen“. „Alle rendern“ speichert dann dein Video.": "Выберите шаблон, например YouTube, и нажмите «Добавить в очередь рендеринга». «Рендерить все» затем сохранит видео."
 }

@@ -2816,11 +2816,9 @@
  "Rundgänge": "Visites guidées",
  "Rundgänge anbieten": "Proposer des visites",
  "Schnittgrundlagen": "Montage",
- "Setz den Abspielkopf in einen Clip und drück Strg+B: Der Clip wird dort geteilt. Probier es aus!": "Place la tête de lecture dans un clip et appuie sur Ctrl+B : le clip est coupé à cet endroit. Essaie !",
  "Soll ich dir das kurz zeigen? (ca. 1 Minute)": "Je te montre en vitesse ? (env. 1 minute)",
  "Strg+S speichert. Zusätzlich sichert schneidi regelmäßig von selbst; Datei › Sicherungskopie öffnen holt einen älteren Stand zurück.": "Ctrl+S enregistre. schneidi fait aussi des sauvegardes tout seul ; Fichier › Ouvrir la copie de sauvegarde du projet ramène un état plus ancien.",
  "Titel und Übergänge findest du unter Effekte und im Menü Timeline. Zieh sie einfach auf die Timeline.": "Les titres et transitions sont dans Effets et dans le menu Timeline. Glisse-les simplement sur la timeline.",
- "Unten wechselst du die Seiten: Medien, Schneiden, Compositing, Farbe und Export.": "En bas, tu changes de page : Médias, Montage, Compositing, Couleur et Export.",
  "Unter Füllung wählst du Unschärfe oder Verpixeln. Weichheit macht den Rand sanft.": "Sous Remplissage, choisis Flou ou Pixeliser. Douceur adoucit le bord.",
  "Wechsle auf die Seite Farbe.": "Passe à la page Couleur.",
  "Weiter": "Suivant",
@@ -2910,5 +2908,9 @@
  "Unter Compositing-Rezepte liegt Bild im Bild: Zieh es auf den oberen Clip.": "Dans Recettes de comp se trouve Incrustation d'image : fais-la glisser sur le clip du haut.",
  "Unter Compositing-Rezepte liegt Greenscreen: Zieh es auf den oberen Clip.": "Dans Recettes de comp se trouve Fond vert : fais-le glisser sur le clip du haut.",
  "Öffne oben die Effekte.": "Ouvre les Effets en haut.",
- "Rundgang Farbe starten": "Lancer la visite Couleur"
+ "Rundgang Farbe starten": "Lancer la visite Couleur",
+ "Setz den Abspielkopf in einen Clip und drück {key:split}: Der Clip wird dort geteilt. Probier es aus!": "Place la tête de lecture dans un clip et appuie sur {key:split} : le clip est coupé à cet endroit. Essaie !",
+ "Unten wechselst du die Seiten. Wenn du fertig bist: Geh unten auf Export und render dein Video.": "En bas, tu changes de page. Quand tu as fini : va en bas sur Export et fais le rendu de ta vidéo.",
+ "Hier sind die Werkzeuge. Zum Schneiden: Setz den Abspielkopf an die Stelle und drück {key:split}. Der Clip wird dort geteilt. Probier es aus!": "Voici les outils. Pour couper : place la tête de lecture à l’endroit voulu et appuie sur {key:split}. Le clip est coupé là. Essaie !",
+ "Wähl eine Vorlage, etwa YouTube, und klick auf „Zur Render-Warteschlange hinzufügen“. „Alle rendern“ speichert dann dein Video.": "Choisis un préréglage, par exemple YouTube, et clique sur « Ajouter à la file de rendu ». « Tout rendre » enregistre ensuite ta vidéo."
 }

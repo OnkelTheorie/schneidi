@@ -10,8 +10,9 @@
   {"target": "area:pool_clip", "page": "edit", "text": "Ruckelt die Wiedergabe bei großen Videos? Rechtsklick auf einen Clip › Proxy-Medien erzeugen macht leichte Arbeitskopien. Exportiert wird trotzdem das Original."},
   {"target": "area:pool_clip|area:track_v1", "page": "edit", "wait": "clip_on_timeline", "text": "Zieh jetzt einen Clip aus dem Medienpool in die Timeline. Ich warte hier."},
   {"target": "viewer|area:ruler", "page": "edit", "wait": "playhead_moved", "text": "Oben siehst du die Vorschau. Klick in die Zeitleiste über den Spuren, um den Abspielkopf zu setzen; die Leertaste spielt ab.", "action": "playhead_in_clip"},
-  {"target": "area:page_buttons", "text": "Unten wechselst du die Seiten: Medien, Schneiden, Compositing, Farbe und Export."},
+  {"target": "tool_blade|area:timeline_tools", "page": "edit", "wait": "clip_added", "text": "Hier sind die Werkzeuge. Zum Schneiden: Setz den Abspielkopf an die Stelle und drück {key:split}. Der Clip wird dort geteilt. Probier es aus!"},
   {"target": "menu:project_save", "keep": "TopBar", "text": "Strg+S speichert. Zusätzlich sichert schneidi regelmäßig von selbst; Datei › Sicherungskopie öffnen holt einen älteren Stand zurück."},
-  {"target": "ai_chat_toggle", "keep": "panelToggle_mediaPool|panelToggle_effects|panelToggle_inspector", "text": "Hier öffnest du den KI-Chat: Sag in einem Satz, was passieren soll, zum Beispiel „Schneide die Pausen raus“."}
+  {"target": "ai_chat_toggle", "keep": "panelToggle_mediaPool|panelToggle_effects|panelToggle_inspector", "text": "Hier öffnest du den KI-Chat: Sag in einem Satz, was passieren soll, zum Beispiel „Schneide die Pausen raus“."},
+  {"target": "pageButton_deliver|area:page_buttons", "text": "Unten wechselst du die Seiten. Wenn du fertig bist: Geh unten auf Export und render dein Video."}
  ]
 }

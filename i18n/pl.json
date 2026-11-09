@@ -2816,11 +2816,9 @@
  "Rundgänge": "Przewodniki",
  "Rundgänge anbieten": "Proponuj przewodniki",
  "Schnittgrundlagen": "Montaż",
- "Setz den Abspielkopf in einen Clip und drück Strg+B: Der Clip wird dort geteilt. Probier es aus!": "Ustaw głowicę w klipie i naciśnij Ctrl+B: klip zostanie tam podzielony. Spróbuj!",
  "Soll ich dir das kurz zeigen? (ca. 1 Minute)": "Pokazać ci to krótko? (ok. 1 minuty)",
  "Strg+S speichert. Zusätzlich sichert schneidi regelmäßig von selbst; Datei › Sicherungskopie öffnen holt einen älteren Stand zurück.": "Ctrl+S zapisuje. schneidi dodatkowo sam robi kopie zapasowe; Plik › Otwórz kopię zapasową przywraca wcześniejszy stan.",
  "Titel und Übergänge findest du unter Effekte und im Menü Timeline. Zieh sie einfach auf die Timeline.": "Napisy i przejścia znajdziesz w Efektach i w menu Oś czasu. Po prostu przeciągnij je na oś czasu.",
- "Unten wechselst du die Seiten: Medien, Schneiden, Compositing, Farbe und Export.": "Na dole przełączasz strony: Media, Montaż, Kompozycja, Kolor i Eksport.",
  "Unter Füllung wählst du Unschärfe oder Verpixeln. Weichheit macht den Rand sanft.": "W Wypełnieniu wybierz Rozmycie lub Pikselizację. Miękkość wygładza krawędź.",
  "Wechsle auf die Seite Farbe.": "Przejdź na stronę Kolor.",
  "Weiter": "Dalej",
@@ -2910,5 +2908,9 @@
  "Unter Compositing-Rezepte liegt Bild im Bild: Zieh es auf den oberen Clip.": "W Przepisach comp jest Obraz w obrazie: przeciągnij go na górny klip.",
  "Unter Compositing-Rezepte liegt Greenscreen: Zieh es auf den oberen Clip.": "W Przepisach comp jest Zielony ekran: przeciągnij go na górny klip.",
  "Öffne oben die Effekte.": "Otwórz u góry Efekty.",
- "Rundgang Farbe starten": "Rozpocznij przewodnik po kolorze"
+ "Rundgang Farbe starten": "Rozpocznij przewodnik po kolorze",
+ "Setz den Abspielkopf in einen Clip und drück {key:split}: Der Clip wird dort geteilt. Probier es aus!": "Ustaw głowicę w klipie i naciśnij {key:split}: klip zostanie tam podzielony. Spróbuj!",
+ "Unten wechselst du die Seiten. Wenn du fertig bist: Geh unten auf Export und render dein Video.": "Na dole przełączasz strony. Gdy skończysz: przejdź na dole do Eksportu i wyrenderuj film.",
+ "Hier sind die Werkzeuge. Zum Schneiden: Setz den Abspielkopf an die Stelle und drück {key:split}. Der Clip wird dort geteilt. Probier es aus!": "Tu są narzędzia. Aby ciąć: ustaw głowicę w wybranym miejscu i naciśnij {key:split}. Klip zostanie tam podzielony. Spróbuj!",
+ "Wähl eine Vorlage, etwa YouTube, und klick auf „Zur Render-Warteschlange hinzufügen“. „Alle rendern“ speichert dann dein Video.": "Wybierz szablon, na przykład YouTube, i kliknij „Dodaj do kolejki renderowania”. „Renderuj wszystkie” zapisze potem film."
 }

@@ -177,6 +177,7 @@ void MainWindow::buildLayout()
     lay->addWidget(m_chatSplit, 1);
     lay->addWidget(buildPageBar());
     setCentralWidget(root);
+    statusBar(); // made now, not on the first message: the layout never shifts by its height later
 
     // The Edit page, or the nearest shown one when Edit is hidden
     const QString start = m_pageVisibility.nearestVisible(pageId(Page::Edit));
