@@ -22,6 +22,7 @@
 #include "core/EffectRegistry.h"
 #include "core/I18n.h"
 #include "core/Project.h"
+#include "core/TimelineOps.h"
 #include "core/Voiceover.h"
 #include "engine/Engine.h"
 #include "engine/audio/Device.h"
@@ -207,9 +208,12 @@ int main(int argc, char** argv)
     }
     QObject::disconnect(levelConn);
 
-    // Nothing armed or selected: Shift+R records onto a new track; the take grows while it runs
+    // Nothing armed or selected: Shift+R records onto the first free track without a name (A2 here, no new one); the
+    // take grows while it runs
     w.liveSelection()->clear();
     const int tracks = int(project->timeline().audio.size());
+    const int free = 1;
+    CHECK(tracks >= 2 && project->timeline().audio[free].clips.isEmpty() && project->timeline().audio[free].name.isEmpty());
     engine.seek(25);
     wait(100);
     const int undoKey = project->undoStack()->index();
@@ -222,7 +226,7 @@ int main(int argc, char** argv)
     QTest::keyClick(view, Qt::Key_R, Qt::ShiftModifier);
     CHECK(recorder->recording());
     CHECK(key && key->isChecked()); // the toolbar's mic is lit
-    CHECK_EQ(recorder->liveTrack(), tracks);
+    CHECK_EQ(recorder->liveTrack(), free);
     wait(500);
     const double midway = recorder->take().lengthFrames();
     CHECK(midway > 3); // the clip in the timeline has grown (25 fps: ~12 frames by now)
@@ -243,11 +247,11 @@ int main(int argc, char** argv)
     CHECK(key && !key->isChecked());
     QObject::disconnect(growConn);
     CHECK_EQ(project->undoStack()->index(), undoKey + 1);
-    CHECK_EQ(int(project->timeline().audio.size()), tracks + 1);
-    CHECK_EQ(recorder->placedTrack(), tracks);
-    if (project->timeline().audio.size() == tracks + 1 && CHECK(project->timeline().audio[tracks].clips.size() == 1)) {
+    CHECK_EQ(int(project->timeline().audio.size()), tracks);
+    CHECK_EQ(recorder->placedTrack(), free);
+    if (CHECK(project->timeline().audio[free].clips.size() == 1)) {
         // Exactly the recorded length: the file holds every sample the take counted
-        const Clip& c = project->timeline().audio[tracks].clips[0];
+        const Clip& c = project->timeline().audio[free].clips[0];
         const MediaInfo* m = project->mediaInfo(c.mediaPath);
         const double recorded = double(recorder->take().samples()) / recorder->take().rate() * project->frameRate();
         CHECK(m && std::abs(m->length - recorded) < 1.0);
@@ -255,38 +259,27 @@ int main(int argc, char** argv)
         CHECK(m && c.out == m->length - 1);
         CHECK(recorded > midway);
     }
-    project->undoStack()->undo(); // one step: the clip and its new track
-    CHECK_EQ(int(project->timeline().audio.size()), tracks);
+    project->undoStack()->undo(); // one step
+    CHECK(project->timeline().audio[free].clips.isEmpty());
     CHECK_EQ(project->undoStack()->index(), undoKey);
 
-    // A selected clip on A1 makes A1 "the" track - but its sound lies under the playhead: a new track again
+    // A selected clip on A1 makes A1 "the" track - but its sound lies under the playhead: the free track instead
     if (!project->timeline().audio[0].clips.isEmpty()) {
         w.liveSelection()->set({project->timeline().audio[0].clips[0].id});
         engine.seek(25);
         wait(100);
         QTest::keyClick(view, Qt::Key_R, Qt::ShiftModifier);
-        CHECK_EQ(recorder->liveTrack(), tracks);
+        CHECK_EQ(recorder->liveTrack(), free);
         wait(300);
         engine.pause();
         wait(50);
         CHECK(!recorder->recording());
-        CHECK_EQ(int(project->timeline().audio.size()), tracks + 1);
+        CHECK_EQ(int(project->timeline().audio.size()), tracks);
         CHECK_EQ(project->timeline().audio[0].clips.size(), qsizetype(1)); // A1's sound stays whole
         project->undoStack()->undo();
     }
 
-    // A locked track is not recorded over: the take gets a new track
-    recorder->setArmedTrack(0);
-    project->edit("lock", [](Timeline& t) { t.audio[0].locked = true; });
-    QString error;
-    engine.seek(25);
-    wait(100);
-    CHECK(recorder->start(&error));
-    CHECK_EQ(recorder->liveTrack(), tracks);
-    wait(300);
-    CHECK(recorder->stop(&error));
-    CHECK_EQ(recorder->placedTrack(), tracks);
-    project->undoStack()->undo();
+
     // ---- Recording does not stop at the timeline's end: it plays on (open end), the playhead and the take run on
     {
         const double fps = project->frameRate();
@@ -334,6 +327,113 @@ int main(int argc, char** argv)
         project->undoStack()->undo(); // emptied
         project->undoStack()->undo(); // trimmed
         CHECK_EQ(project->undoStack()->index(), undoTrim);
+    }
+
+    // ---- Track bookkeeping (user report 2026-11-09: 24 takes made 10 new tracks): back-to-back takes, the same spot
+    // again, a seek during a take, free tracks reused, armed = punch-in, locked armed = refused, cancel = nothing
+    {
+        recorder->setArmedTrack(-1);
+        w.liveSelection()->clear();
+        const int undoStart = project->undoStack()->index();
+        const int tracks0 = int(project->timeline().audio.size());
+        auto take = [&](int ms) {
+            QString e;
+            if (!CHECK(recorder->start(&e))) std::printf("       start: %s\n", qPrintable(e));
+            wait(ms);
+            recorder->stop(&e);
+            wait(50);
+            return recorder->placedTrack();
+        };
+        auto clipsOn = [&](int track) {
+            const Timeline& tl = project->timeline();
+            return track >= 0 && track < tl.audio.size() ? tl.audio[track].clips : QVector<Clip>{};
+        };
+        // 5 takes back to back from 1 s (A1 has sound there), nothing armed: all on one track, butted
+        engine.seek(25);
+        wait(100);
+        int track = -1;
+        for (int i = 0; i < 5; ++i) {
+            const int t = take(400);
+            if (i == 0) track = t;
+            if (!CHECK_EQ(t, track)) std::printf("       back-to-back take %d on track %d, first on %d\n", i, t, track);
+        }
+        CHECK(int(project->timeline().audio.size()) <= tracks0 + 1);
+        {
+            const QVector<Clip> clips = clipsOn(track);
+            CHECK_EQ(clips.size(), qsizetype(5));
+            for (const Clip& c : clips) std::printf("back-to-back take %d..%d in %d\n", c.start, c.end(), c.in);
+            for (int i = 1; i < clips.size(); ++i)
+                if (!CHECK(clips[i].start == clips[i - 1].end()))
+                    std::printf("       take %d ends %d, take %d starts %d\n", i - 1, clips[i - 1].end(), i, clips[i].start);
+        }
+        // The same spot five more times: no further track
+        for (int i = 0; i < 5; ++i) {
+            engine.seek(25);
+            wait(100);
+            take(300);
+        }
+        CHECK(int(project->timeline().audio.size()) <= tracks0 + 1);
+        // A seek during a take ends it (placed); no further track
+        engine.seek(25);
+        wait(100);
+        CHECK(recorder->start());
+        wait(300);
+        engine.seek(5);
+        wait(50);
+        CHECK(!recorder->recording());
+        CHECK(int(project->timeline().audio.size()) <= tracks0 + 1);
+        // Cancelled: no track, no step
+        const int beforeCancel = project->undoStack()->index();
+        const int tracksCancel = int(project->timeline().audio.size());
+        CHECK(recorder->start());
+        wait(200);
+        recorder->cancel();
+        CHECK_EQ(project->undoStack()->index(), beforeCancel);
+        CHECK_EQ(int(project->timeline().audio.size()), tracksCancel);
+        while (project->undoStack()->index() > undoStart) project->undoStack()->undo();
+        CHECK_EQ(int(project->timeline().audio.size()), tracks0);
+
+        // The user's project: empty tracks named Discord/Mikrofon … and a muted one get no take; one new Voiceover
+        // track, the next take (back to back) goes onto it too
+        project->edit("tracks", [](Timeline& t) {
+            TimelineOps::ensureTracks(t, TrackKind::Audio, int(t.audio.size()) + 2);
+            const int n = int(t.audio.size());
+            for (int i = 1; i < n - 2; ++i) t.audio[i].name = "Discord";
+            t.audio[n - 2].muted = true;
+            t.audio[n - 1].name = "Mikrofon";
+        });
+        const int tracks1 = int(project->timeline().audio.size());
+        recorder->setArmedTrack(-1);
+        w.liveSelection()->clear();
+        engine.seek(25);
+        wait(100);
+        CHECK_EQ(take(300), tracks1);
+        CHECK_EQ(take(300), tracks1);
+        CHECK_EQ(int(project->timeline().audio.size()), tracks1 + 1);
+        project->undoStack()->undo();
+        project->undoStack()->undo();
+
+        // Armed track with sound: the take replaces that range (punch-in), one undo step restores it
+        recorder->setArmedTrack(0);
+        const int beforePunch = project->undoStack()->index();
+        engine.seek(25);
+        wait(100);
+        CHECK_EQ(take(400), 0);
+        CHECK_EQ(project->undoStack()->index(), beforePunch + 1);
+        CHECK_EQ(clipsOn(0).size(), qsizetype(3)); // a.mp4 | take | a.mp4
+        CHECK_EQ(int(project->timeline().audio.size()), tracks1);
+        project->undoStack()->undo();
+        CHECK_EQ(clipsOn(0).size(), qsizetype(1));
+        // Locked armed track: refused, no new track
+        project->edit("lock", [](Timeline& t) { t.audio[0].locked = true; });
+        QString error;
+        w.liveSelection()->clear();
+        CHECK(!recorder->start(&error));
+        CHECK(!error.isEmpty());
+        CHECK_EQ(int(project->timeline().audio.size()), tracks1);
+        while (project->undoStack()->index() > undoStart) project->undoStack()->undo();
+        CHECK_EQ(int(project->timeline().audio.size()), tracks0);
+        recorder->setArmedTrack(-1);
     }
 
     // Quitting while recording: the take is placed first (so "save changes?" sees it), the file is complete

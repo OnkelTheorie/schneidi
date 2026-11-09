@@ -2896,5 +2896,6 @@
  "Aufnahmebereit": "Armée pour l’enregistrement",
  "Eingang wählen": "Choisir l’entrée",
  "Aufnahmebereit: die Aufnahmetaste nimmt auf dieser Spur auf (Rechtsklick: Eingang wählen)": "Armée : la touche d’enregistrement enregistre sur cette piste (clic droit : choisir l’entrée)",
- "Voiceover aufnehmen: auf der Spur mit dem Mikrofon (sonst der gewählten Tonspur oder einer neuen) ab dem Abspielkopf; die Timeline spielt mit": "Enregistrer une voix off : sur la piste au micro (sinon la piste audio sélectionnée ou une nouvelle) depuis la tête de lecture ; la timeline joue en même temps"
+ "Voiceover aufnehmen: auf der Spur mit dem Mikrofon (sonst der gewählten Tonspur oder einer neuen) ab dem Abspielkopf; die Timeline spielt mit": "Enregistrer une voix off : sur la piste au micro (sinon la piste audio sélectionnée ou une nouvelle) depuis la tête de lecture ; la timeline joue en même temps",
+ "Die Spur ist gesperrt.": "La piste est verrouillée."
 }

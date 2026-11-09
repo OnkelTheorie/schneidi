@@ -2896,5 +2896,6 @@
  "Aufnahmebereit": "Preparada para grabar",
  "Eingang wählen": "Elegir entrada",
  "Aufnahmebereit: die Aufnahmetaste nimmt auf dieser Spur auf (Rechtsklick: Eingang wählen)": "Preparada: la tecla de grabación graba en esta pista (clic derecho: elegir entrada)",
- "Voiceover aufnehmen: auf der Spur mit dem Mikrofon (sonst der gewählten Tonspur oder einer neuen) ab dem Abspielkopf; die Timeline spielt mit": "Grabar una voz en off: en la pista con el micrófono (si no, en la pista de audio seleccionada o en una nueva) desde el cabezal; la línea de tiempo se reproduce a la vez"
+ "Voiceover aufnehmen: auf der Spur mit dem Mikrofon (sonst der gewählten Tonspur oder einer neuen) ab dem Abspielkopf; die Timeline spielt mit": "Grabar una voz en off: en la pista con el micrófono (si no, en la pista de audio seleccionada o en una nueva) desde el cabezal; la línea de tiempo se reproduce a la vez",
+ "Die Spur ist gesperrt.": "La pista está bloqueada."
 }

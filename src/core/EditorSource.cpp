@@ -288,9 +288,10 @@ int Editor::placeRecording(const QString& path, int track, double fileStart, int
     if (!m || !m->hasAudio || m->length <= 0) return 0;
     const std::optional<Voiceover::Placement> at = Voiceover::place(fileStart, std::max(0, from), m->length);
     if (!at) return 0;
-    // The clip's range (a subframe reaches into one more frame)
-    const int end = at->start + (m->length - at->in) + (at->subframe > 0 ? 1 : 0);
-    const int target = Voiceover::recordTrack(m_project->timeline(), track, at->start, end);
+    // Never more than one new track per take
+    const int target = std::min(track, int(m_project->timeline().audio.size()));
+    if (target < 0 || (target < m_project->timeline().audio.size() && isTrackLocked({TrackKind::Audio, target})))
+        return 0;
     int id = 0;
     m_project->edit(T("Voiceover aufnehmen"), [&](Timeline& tl) {
         const bool fresh = target >= tl.audio.size();
