@@ -229,8 +229,9 @@ void testMainWindow(const QString& dir)
     const Clip* clip = videoClip(project);
     if (!CHECK(viewer && inspector && pipette && clip)) return;
     const int id = clip->id;
+    // The viewer's overlay before the pipette (the Color page's, or none while that page was never built): the
+    // pipette must leave it as it found it
     ViewerOverlay* colorOverlay = viewer->overlay();
-    CHECK(colorOverlay != nullptr);
     // The pipette's window while it is on (a closed one waits hidden for its deletion)
     const auto pickWindow = [&w]() -> KeyPickWindow* {
         for (KeyPickWindow* k : w.findChildren<KeyPickWindow*>())
