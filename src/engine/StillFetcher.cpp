@@ -2,6 +2,7 @@
 #include "engine/StillFetcher.h"
 #include "engine/picture/MediaStills.h"
 
+#include "engine/FileStamp.h"
 #include "engine/ProxyManager.h"
 
 #include <QFileInfo>
@@ -16,12 +17,22 @@ constexpr int kCacheKB = 64 * 1024; // ~40 frames at 960x540
 StillFetcher::StillFetcher(QObject* parent) : QObject(parent)
 {
     m_cache.setMaxCost(kCacheKB);
+    // A file overwritten under its name: its old pictures go (its reader in the worker opens it anew by itself)
+    m_stampObserver = FileStamp::addObserver([this](const QString& path) {
+        QMutexLocker lock(&m_mutex);
+        ++m_fileGeneration[path]; // a picture of it under way is dropped
+        const QString prefix = path + QChar(0);
+        const QList<QString> keys = m_cache.keys();
+        for (const QString& k : keys)
+            if (k.startsWith(prefix)) m_cache.remove(k);
+    });
     m_thread = QThread::create([this] { loop(); });
     m_thread->start();
 }
 
 StillFetcher::~StillFetcher()
 {
+    FileStamp::removeObserver(m_stampObserver);
     {
         QMutexLocker lock(&m_mutex);
         m_quit = true;
@@ -63,6 +74,8 @@ QImage StillFetcher::cached(const QString& path, int frame) const
 
 void StillFetcher::request(const QVector<Request>& requests)
 {
+    for (const Request& r : requests) // an overwritten file is noticed here too (throttled, outside the lock)
+        if (!r.path.isEmpty()) FileStamp::recent(r.path);
     QMutexLocker lock(&m_mutex);
     m_jobs.clear();
     for (const Request& r : requests) {
@@ -95,7 +108,7 @@ void StillFetcher::loop()
     for (;;) {
         Request job;
         ProjectFormat format;
-        int gen = 0, maxEdge = 0;
+        int gen = 0, maxEdge = 0, fileGen = 0;
         {
             QMutexLocker lock(&m_mutex);
             while (!m_quit && m_jobs.isEmpty()) m_cond.wait(&m_mutex);
@@ -104,6 +117,7 @@ void StillFetcher::loop()
             format = m_format;
             gen = m_generation;
             maxEdge = m_maxEdge;
+            fileGen = m_fileGeneration.value(job.path);
         }
         if (gen != generation) { // new project format
             own = std::make_unique<Picture::MediaStills>(format, &ProxyManager::decodeSource);
@@ -116,7 +130,7 @@ void StillFetcher::loop()
 
         {
             QMutexLocker lock(&m_mutex);
-            if (gen != m_generation) continue; // format changed meanwhile
+            if (gen != m_generation || fileGen != m_fileGeneration.value(job.path)) continue; // changed meanwhile
             ++m_decoded;
             if (!img.isNull())
                 m_cache.insert(key(job.path, job.frame), new QImage(img), int(img.sizeInBytes() / 1024) + 1);

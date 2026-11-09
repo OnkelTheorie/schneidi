@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "engine/picture/Renderer.h"
+#include "engine/FileStamp.h"
 
 #include "core/Captions.h"
 #include "core/CodeTrust.h"
@@ -304,6 +305,7 @@ struct Source {
     std::shared_ptr<VideoSource> video;
     std::shared_ptr<StillSource> still;
     bool failed = false;
+    FileStamp::Stamp stamp; // of the media file when opened: another one = the file was overwritten, open it again
     std::chrono::steady_clock::time_point used;
     int64_t usedFrame = -1; // last output frame that asked for it (export: dropped once rendering went past it)
 };
@@ -474,18 +476,31 @@ struct Renderer::Impl {
 
     Source source(const QString& path, const QString& lane)
     {
+        // Before the proxy lookup: a change seen here re-resolves the file's proxy first (Engine's observer)
+        const FileStamp::Stamp stamp = FileStamp::recent(path);
         const QString file = options.proxy ? options.proxy(path) : path;
         const QString key = lane + '|' + file;
         {
+            Source stale; // closed outside the lock
             std::lock_guard lock(sourceMutex);
             auto it = sources.find(key);
-            if (it != sources.end()) {
+            if (it != sources.end() && it->second.stamp == stamp) {
                 it->second.used = std::chrono::steady_clock::now();
                 it->second.usedFrame = std::max(it->second.usedFrame, t_frame);
                 return it->second;
             }
+            if (it != sources.end()) { // overwritten under the same name: everything kept of the old content goes
+                stale = std::move(it->second);
+                sources.erase(it);
+                {
+                    std::lock_guard lengthLock(lengthMutex);
+                    lengths.erase(file);
+                }
+                compCache.clear(); // static media pictures of graphs
+            }
         }
         Source s;
+        s.stamp = stamp;
         if (looksLikeStill(file)) {
             QImageReader reader(file);
             reader.setAutoTransform(true);

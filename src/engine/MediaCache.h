@@ -55,6 +55,9 @@ public:
     // -> discard everything computed (waveforms on disk are separated by frame rate)
     void setFormat(const ProjectFormat& format);
 
+    // Drops what was computed of `path` (overwritten under its name: FileStamp tells); its pictures come again
+    void invalidateFile(const QString& path);
+
     // Filmstrip tiles with each clip's Color page grade (engine/GradedThumbs); its updates come as updated()
     GradedThumbs* graded() const { return m_graded; }
 
@@ -83,6 +86,11 @@ private:
     bool m_quit = false;
     ProjectFormat m_format;
     int m_generation = 0; // counts format changes; older results from the threads are discarded
+    QHash<QString, int> m_fileGeneration; // per file: counts invalidateFile(); older results of it are discarded
+    bool stale(int gen, const QString& path, int fileGen) const // m_mutex held
+    {
+        return gen != m_generation || fileGen != m_fileGeneration.value(path);
+    }
 
     QCache<QString, QImage> m_thumbs;
     std::deque<ThumbJob> m_thumbJobs; // front = newest request (processed first)
@@ -100,4 +108,5 @@ private:
     QThread* m_stripThread = nullptr;
     QThread* m_waveThread = nullptr;
     GradedThumbs* m_graded = nullptr;
+    int m_stampObserver = 0;
 };

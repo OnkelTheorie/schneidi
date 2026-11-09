@@ -86,6 +86,10 @@ public:
     RenderCache* renderCache() const { return m_renderCache; }
     // Single frames from media files in their own thread (trim view while dragging an edit); follows setFormat()
     StillFetcher* stills() const { return m_stills; }
+    // Looks at the shown timeline's media files on the disk now (FileStamp::now): one overwritten under its name
+    // (re-rendered elsewhere) is read again everywhere. Called when the app becomes active again; renderers also
+    // notice it by themselves (throttled) while they draw.
+    void checkFiles();
     // Gives the picture pools and the free heap back once nothing renders (after stopping, rebuilds, exports)
     IdleRelease* idleRelease() const { return m_idleRelease; }
     // What renders right now: playback, an export, the render cache (MemoryRelease's policy)
@@ -198,6 +202,7 @@ private:
     void applyPreviewSize(); // m_previewSize from full/edge, renderers at the new size
 
     void refresh();
+    void mediaFileChanged(); // FileStamp saw a media file change (UI thread)
     void applyAudioState();
     void applyTimeline(const Timeline& tl);
     void emitLevels();
@@ -267,4 +272,7 @@ private:
     std::shared_ptr<std::atomic<int64_t>> m_lastFrame = std::make_shared<std::atomic<int64_t>>(0);
     struct Resolved;
     std::shared_ptr<Resolved> m_resolved;
+    int m_stampObserver = 0;
+    bool m_fileChangeQueued = false;
+    bool m_recheckQueued = false;
 };

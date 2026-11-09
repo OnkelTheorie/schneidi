@@ -165,7 +165,12 @@ void MainWindow::buildLayout()
     lay->addWidget(buildPageBar());
     setCentralWidget(root);
 
-    showPage(Page::Edit);
+    // The Edit page, or the nearest shown one when Edit is hidden
+    const QString start = m_pageVisibility.nearestVisible(pageId(Page::Edit));
+    Page first = Page::Edit;
+    for (Page p : {Page::Media, Page::Edit, Page::Comp, Page::Color, Page::Deliver})
+        if (pageId(p) == start) first = p;
+    showPage(first);
 }
 
 QWidget* MainWindow::buildTopBar()
@@ -247,6 +252,16 @@ QWidget* MainWindow::buildPageBar()
     lay->addWidget(brand);
     lay->addStretch(1);
 
+    // Right-click on the bar or a page button: which pages it shows
+    m_pageVisibility.load();
+    auto pagesMenu = [this](QWidget* from, const QPoint& pos) {
+        QMenu menu(this);
+        fillPagesMenu(&menu);
+        menu.exec(from->mapToGlobal(pos));
+    };
+    bar->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(bar, &QWidget::customContextMenuRequested, this, [bar, pagesMenu](const QPoint& pos) { pagesMenu(bar, pos); });
+
     m_pageButtons = new QButtonGroup(this);
     const struct { const char* icon; const char* name; Page page; } pages[] = {
         {"▤", N_("Medien"), Page::Media},
@@ -263,12 +278,81 @@ QWidget* MainWindow::buildPageBar()
         b->setChecked(pg.page == m_page);
         const Page page = pg.page;
         connect(b, &QToolButton::clicked, this, [this, page] { showPage(page); });
+        b->setObjectName("pageButton_" + pageId(page)); // stable: tours point at it
+        b->setToolTip(T("Rechtsklick: Seiten ein- und ausblenden"));
+        b->setContextMenuPolicy(Qt::CustomContextMenu);
+        connect(b, &QWidget::customContextMenuRequested, this, [b, pagesMenu](const QPoint& pos) { pagesMenu(b, pos); });
         m_pageButtons->addButton(b, int(pg.page));
         lay->addWidget(b);
     }
     lay->addStretch(1);
     lay->addSpacing(brand->sizeHint().width());
+    updatePageButtons();
     return bar;
+}
+
+QString MainWindow::pageId(Page page)
+{
+    switch (page) {
+    case Page::Media: return "media";
+    case Page::Edit: return "edit";
+    case Page::Comp: return "comp";
+    case Page::Color: return "color";
+    case Page::Deliver: return "deliver";
+    }
+    return {};
+}
+
+bool MainWindow::isPageHidden(Page page) const { return m_pageVisibility.isHidden(pageId(page)); }
+
+void MainWindow::setPageHidden(Page page, bool hidden)
+{
+    if (!m_pageVisibility.setHidden(pageId(page), hidden)) return;
+    m_pageVisibility.save();
+    if (hidden && page == m_page) { // away from the page that just went
+        const QString next = m_pageVisibility.nearestVisible(pageId(page));
+        for (Page p : {Page::Media, Page::Edit, Page::Comp, Page::Color, Page::Deliver})
+            if (pageId(p) == next) showPage(p);
+    }
+    updatePageButtons();
+}
+
+void MainWindow::showAllPages()
+{
+    m_pageVisibility.showAll();
+    m_pageVisibility.save();
+    updatePageButtons();
+}
+
+void MainWindow::fillPagesMenu(QMenu* menu)
+{
+    menu->clear();
+    const struct { const char* name; Page page; } pages[] = {
+        {N_("Medien"), Page::Media},     {N_("Schneiden"), Page::Edit}, {N_("Compositing"), Page::Comp},
+        {N_("Farbe"), Page::Color},      {N_("Export"), Page::Deliver},
+    };
+    for (const auto& pg : pages) {
+        const Page page = pg.page;
+        QAction* a = menu->addAction(T(pg.name));
+        a->setObjectName("pageVisible_" + pageId(page));
+        a->setCheckable(true);
+        a->setChecked(!isPageHidden(page));
+        a->setEnabled(isPageHidden(page) || m_pageVisibility.canHide(pageId(page))); // the last shown page stays
+        connect(a, &QAction::toggled, this, [this, page](bool on) { setPageHidden(page, !on); });
+    }
+    menu->addSeparator();
+    QAction* all = menu->addAction(T("Alle Seiten zeigen"), this, [this] { showAllPages(); });
+    all->setObjectName("pageVisible_all");
+    all->setEnabled(m_pageVisibility.visibleCount() < int(m_pageVisibility.order().size()));
+}
+
+void MainWindow::updatePageButtons()
+{
+    if (!m_pageButtons) return;
+    for (QAbstractButton* b : m_pageButtons->buttons()) {
+        const Page page = Page(m_pageButtons->id(b));
+        b->setVisible(!isPageHidden(page) || page == m_page); // a key to a hidden page shows it while it is current
+    }
 }
 
 void MainWindow::showPage(Page page)
@@ -346,6 +430,7 @@ void MainWindow::showPage(Page page)
         break;
     }
     if (auto* b = m_pageButtons->button(int(page))) b->setChecked(true);
+    updatePageButtons();
     const bool edit = page == Page::Edit;
     m_poolToggle->setEnabled(edit);
     m_effectsToggle->setEnabled(edit);

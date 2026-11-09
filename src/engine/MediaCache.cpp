@@ -6,6 +6,7 @@
 #include "engine/ProxyManager.h"
 #include "engine/audio/Reader.h"
 #include "engine/Background.h"
+#include "engine/FileStamp.h"
 #include "engine/GradedThumbs.h"
 #include "engine/video/Thumbnails.h"
 
@@ -108,6 +109,10 @@ MediaCache::MediaCache(QObject* parent) : QObject(parent)
     m_thumbs.setMaxCost(kThumbCacheKB);
     m_graded = new GradedThumbs(this);
     connect(m_graded, &GradedThumbs::updated, this, &MediaCache::updated);
+    // A media file overwritten under its name (seen by any reader, any thread): drop it all on the UI thread
+    m_stampObserver = FileStamp::addObserver([this](const QString& path) {
+        QMetaObject::invokeMethod(this, [this, path] { invalidateFile(path); }, Qt::QueuedConnection);
+    });
     m_thumbThread = QThread::create([this] {
         Background::lowerThisThread(Background::Level::Low);
         thumbLoop();
@@ -127,6 +132,7 @@ MediaCache::MediaCache(QObject* parent) : QObject(parent)
 
 MediaCache::~MediaCache()
 {
+    FileStamp::removeObserver(m_stampObserver);
     {
         QMutexLocker lock(&m_mutex);
         m_quit = true;
@@ -156,6 +162,7 @@ QImage MediaCache::cachedThumbnail(const QString& path, int frame)
 
 QImage MediaCache::thumbnail(const QString& path, int frame, int tolerance)
 {
+    FileStamp::recent(path); // an overwritten file is noticed (throttled; outside the lock: observers take it)
     QMutexLocker lock(&m_mutex);
     if (const QImage* img = m_thumbs.object(thumbKey(path, frame))) return *img;
 
@@ -216,10 +223,34 @@ void MediaCache::setFormat(const ProjectFormat& format)
     emit updated();
 }
 
+void MediaCache::invalidateFile(const QString& path)
+{
+    {
+        QMutexLocker lock(&m_mutex);
+        ++m_fileGeneration[path]; // results of it under way are dropped
+        const QString thumbPrefix = path + '#';
+        const QList<QString> thumbs = m_thumbs.keys();
+        for (const QString& k : thumbs)
+            if (k.startsWith(thumbPrefix)) m_thumbs.remove(k);
+        std::erase_if(m_thumbJobs, [&](const ThumbJob& j) { return j.path == path; });
+        for (auto it = m_thumbPending.begin(); it != m_thumbPending.end();)
+            it = it->startsWith(thumbPrefix) ? m_thumbPending.erase(it) : std::next(it);
+        m_keys.remove(path);
+        std::erase(m_stripJobs, path);
+        const auto ofFile = [&](const QString& k) { return k == path || k.startsWith(path + QChar(0)); };
+        for (auto it = m_waves.begin(); it != m_waves.end();) it = ofFile(it.key()) ? m_waves.erase(it) : std::next(it);
+        std::erase_if(m_waveJobs, ofFile);
+        for (auto it = m_waveRequested.begin(); it != m_waveRequested.end();)
+            it = ofFile(*it) ? m_waveRequested.erase(it) : std::next(it);
+    }
+    emit updated(); // the timeline asks again
+}
+
 std::shared_ptr<const Waveform> MediaCache::waveform(const QString& path, int stream)
 {
     // Key: path, for further streams with an appended number (\0 does not occur in paths)
     const QString key = stream > 0 ? path + QChar(0) + QString::number(stream) : path;
+    FileStamp::recent(path); // as thumbnail()
     QMutexLocker lock(&m_mutex);
     if (!m_waveRequested.contains(key)) {
         m_waveRequested.insert(key);
@@ -238,7 +269,7 @@ void MediaCache::thumbLoop()
     for (;;) {
         ThumbJob job;
         ProjectFormat format;
-        int gen = 0;
+        int gen = 0, fileGen = 0;
         {
             QMutexLocker lock(&m_mutex);
             while (!m_quit && m_thumbJobs.empty()) m_thumbCond.wait(&m_mutex);
@@ -247,6 +278,7 @@ void MediaCache::thumbLoop()
             m_thumbJobs.pop_front();
             format = m_format;
             gen = m_generation;
+            fileGen = m_fileGeneration.value(job.path);
         }
         Background::yieldToForeground();
         if (gen != generation) { // new project format
@@ -259,7 +291,7 @@ void MediaCache::thumbLoop()
 
         {
             QMutexLocker lock(&m_mutex);
-            if (gen != m_generation) continue; // new format in the meantime
+            if (stale(gen, job.path, fileGen)) continue; // new format or file in the meantime
             const QString key = thumbKey(job.path, job.frame);
             m_thumbPending.remove(key);
             if (!img.isNull()) m_thumbs.insert(key, new QImage(img), int(img.sizeInBytes() / 1024) + 1);
@@ -275,7 +307,7 @@ void MediaCache::stripLoop()
     for (;;) {
         QString path;
         ProjectFormat format;
-        int gen = 0;
+        int gen = 0, fileGen = 0;
         {
             QMutexLocker lock(&m_mutex);
             while (!m_quit && m_stripJobs.empty()) m_stripCond.wait(&m_mutex);
@@ -284,6 +316,7 @@ void MediaCache::stripLoop()
             m_stripJobs.pop_front();
             format = m_format;
             gen = m_generation;
+            fileGen = m_fileGeneration.value(path);
         }
         Background::yieldToForeground();
         const double fps = format.rate.fps();
@@ -296,7 +329,7 @@ void MediaCache::stripLoop()
             const int frame = std::max(0, int(std::lround(seconds * fps)));
             {
                 QMutexLocker lock(&m_mutex);
-                if (m_quit || gen != m_generation) {
+                if (m_quit || stale(gen, path, fileGen)) {
                     aborted = true;
                     return false;
                 }
@@ -316,7 +349,7 @@ void MediaCache::stripLoop()
         if (aborted) continue;
         {
             QMutexLocker lock(&m_mutex);
-            if (gen != m_generation) continue;
+            if (stale(gen, path, fileGen)) continue;
             KeyIndex& ki = m_keys[path];
             ki.done = true;
             ki.failed = count == 0; // no video / unreadable -> exact frames through the decoder
@@ -333,7 +366,7 @@ void MediaCache::waveLoop()
         QString key, path;
         int stream = 0;
         ProjectFormat format;
-        int gen = 0;
+        int gen = 0, fileGen = 0;
         {
             QMutexLocker lock(&m_mutex);
             while (!m_quit && m_waveJobs.empty()) m_waveCond.wait(&m_mutex);
@@ -350,12 +383,13 @@ void MediaCache::waveLoop()
             }
             format = m_format;
             gen = m_generation;
+            fileGen = m_fileGeneration.value(path);
         }
         // Waveform counts frames in the project frame rate
         auto publish = [&](std::shared_ptr<const Waveform> w) {
             {
                 QMutexLocker lock(&m_mutex);
-                if (gen != m_generation) return; // new format in the meantime
+                if (stale(gen, path, fileGen)) return; // new format or file in the meantime
                 m_waves.insert(key, std::move(w));
             }
             emit updated();
@@ -424,7 +458,7 @@ void MediaCache::waveLoop()
         for (int i = 0; i < length; ++i) {
             if (i % 256 == 0) {
                 QMutexLocker lock(&m_mutex);
-                if (m_quit || gen != m_generation) {
+                if (m_quit || stale(gen, path, fileGen)) {
                     aborted = true;
                     break;
                 }

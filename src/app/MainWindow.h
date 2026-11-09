@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 #include "app/AiSettings.h"
+#include "app/PageVisibility.h"
 #include "core/Editor.h"
 #include "core/LiveHost.h"
 #include "core/PlaybackMeter.h"
@@ -62,6 +63,15 @@ public:
     // Pages like in DaVinci (switchable at the bottom). New page: add here + in showPage().
     enum class Page { Media, Edit, Deliver, Color, Comp };
     void showPage(Page page);
+    Page currentPage() const { return m_page; }
+    // Hiding pages (right-click on the page bar, Workspace › Visible Pages; PageVisibility.h): a hidden current page
+    // switches to the nearest shown one; the last shown page cannot be hidden. Saved right away.
+    void setPageHidden(Page page, bool hidden);
+    bool isPageHidden(Page page) const;
+    void showAllPages();
+    // The menu: one checkbox per page + "Show all pages" (cleared first)
+    void fillPagesMenu(QMenu* menu);
+    static QString pageId(Page page); // stable id: settings, objectName pageButton_<id>
     // Comp page (MainWindowComp.cpp): the clip's compositing graph; built on its first showing. openComp shows clip
     // `clipId` there; "Open in Comp" gives the first selected video clip an empty graph (clip -> output) if it has
     // none; "Comp from Selection" = Editor::compFrom, then opens it
@@ -199,6 +209,7 @@ private:
     void buildLayout();
     QWidget* buildTopBar();
     QWidget* buildPageBar();
+    void updatePageButtons(); // hidden pages' buttons go, the current page's button always stays
     void updateLeftColumn(); // show the left column only if Media Pool or Effects is on
     // Panel sizes per page are remembered (settings layout/<splitter>); defaults when nothing is saved yet
     void watchSizes(QSplitter* s, const QString& name);
@@ -382,6 +393,7 @@ private:
     QSplitter* m_colorBottom = nullptr; // color wheels | scopes
     QHash<QSplitter*, QList<int>> m_defaultSizes;
     QButtonGroup* m_pageButtons = nullptr;
+    PageVisibility m_pageVisibility{{"media", "edit", "comp", "color", "deliver"}}; // bar order
     QToolButton* m_poolToggle = nullptr;
     QToolButton* m_effectsToggle = nullptr;
     QToolButton* m_storageToggle = nullptr;

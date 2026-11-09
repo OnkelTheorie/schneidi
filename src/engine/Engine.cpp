@@ -10,6 +10,7 @@
 #include "engine/Background.h"
 #include "engine/Bundle.h"
 #include "engine/Exporter.h"
+#include "engine/FileStamp.h"
 #include "engine/MediaProbe.h"
 #include "engine/OpenMedia.h"
 #include "engine/MemoryRelease.h"
@@ -24,6 +25,7 @@
 #include "ui/MulticamGrid.h"
 
 #include <QCoreApplication>
+#include <QGuiApplication>
 #include <QImageReader>
 #include <QDir>
 #include <QFileInfo>
@@ -164,10 +166,71 @@ Engine::Engine(QObject* parent)
         emit positionChanged(frame);
         stopAtEnd();
     }, Qt::QueuedConnection);
+
+    // A media file overwritten under its name. Seen by a renderer (any thread), which asks for the file's proxy right
+    // after: the old content's proxy must not be read again (a proxy of the new content cannot exist yet). The rest -
+    // render cache, frames kept for stepping back, the still shown - on the UI thread.
+    m_resolved = std::make_shared<Resolved>(); // made once here: the observer keeps it
+    m_resolved->bypass = m_gradeBypass;
+    m_stampObserver = FileStamp::addObserver([this, resolved = m_resolved](const QString& path) {
+        {
+            std::lock_guard lock(resolved->mutex);
+            if (auto it = resolved->proxies.find(path); it != resolved->proxies.end()) *it = path;
+        }
+        QMetaObject::invokeMethod(this, [this] { mediaFileChanged(); }, Qt::QueuedConnection);
+    });
+    // Back in the app (a file re-rendered in another program meanwhile): look at the files at once
+    if (auto* gui = qobject_cast<QGuiApplication*>(QCoreApplication::instance()))
+        connect(gui, &QGuiApplication::applicationStateChanged, this, [this](Qt::ApplicationState state) {
+            if (state == Qt::ApplicationActive) checkFiles();
+        });
+}
+
+void Engine::checkFiles()
+{
+    QSet<QString> files;
+    const auto collect = [&files](const Timeline& t) {
+        for (const auto* tracks : {&t.video, &t.audio})
+            for (const Track& track : *tracks)
+                for (const Clip& c : track.clips)
+                    if (!c.mediaPath.isEmpty()) files.insert(c.mediaPath);
+    };
+    collect(m_built);
+    if (m_built.nested)
+        for (const Timeline& inner : *m_built.nested) collect(inner);
+    bool changing = false;
+    for (const QString& f : std::as_const(files)) {
+        FileStamp::now(f); // a settled change calls the observers
+        changing |= FileStamp::changing(f);
+    }
+    // A file still being written (or just overwritten): look again once it may have settled
+    if (changing && !m_recheckQueued) {
+        m_recheckQueued = true;
+        QTimer::singleShot(FileStamp::kSettleMs + 200, this, [this] {
+            m_recheckQueued = false;
+            checkFiles();
+        });
+    }
+}
+
+void Engine::mediaFileChanged()
+{
+    // Coalesced: several files (or several renderers seeing one) in one go
+    if (m_fileChangeQueued) return;
+    m_fileChangeQueued = true;
+    QTimer::singleShot(0, this, [this] {
+        m_fileChangeQueued = false;
+        resolveFiles(m_built, true);  // proxies and render cache files of the new content
+        m_renderCache->sync(m_built); // clip outputs of the old content go, new ones are queued
+        if (m_pump) m_pump->dropRecent();
+        m_player->reopenFiles(); // the sound mix keeps its readers otherwise
+        refresh();
+    });
 }
 
 Engine::~Engine()
 {
+    FileStamp::removeObserver(m_stampObserver);
     m_pump.reset(); // its threads use the renderers
     m_timelineContent.reset();
     m_gridRenderers.clear();
