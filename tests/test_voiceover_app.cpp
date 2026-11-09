@@ -287,6 +287,55 @@ int main(int argc, char** argv)
     CHECK(recorder->stop(&error));
     CHECK_EQ(recorder->placedTrack(), tracks);
     project->undoStack()->undo();
+    // ---- Recording does not stop at the timeline's end: it plays on (open end), the playhead and the take run on
+    {
+        const double fps = project->frameRate();
+        recorder->setArmedTrack(-1);
+        w.liveSelection()->clear();
+        // Only 1 s of content, recording from 0.5 s for 2 s: a clip from 0.5 s to 2.5 s
+        const int undoTrim = project->undoStack()->index();
+        project->edit("trim", [&](Timeline& t) {
+            for (Track& tr : t.video) for (Clip& c : tr.clips) c.out = c.in + int(fps) - 1;
+            for (Track& tr : t.audio) for (Clip& c : tr.clips) c.out = c.in + int(fps) - 1;
+        });
+        auto takeFor2s = [&](int from, const char* what) {
+            engine.seek(from);
+            wait(100);
+            QTest::keyClick(view, Qt::Key_R, Qt::ShiftModifier);
+            CHECK(recorder->recording());
+            CHECK(engine.openEnd());
+            wait(2000);
+            CHECK(recorder->recording()); // the end of the content did not end it
+            CHECK(engine.position() > from + int(1.5 * fps)); // the playhead ran on
+            QTest::keyClick(view, Qt::Key_R, Qt::ShiftModifier);
+            CHECK(!recorder->recording());
+            CHECK(!engine.openEnd());
+            const int track = recorder->placedTrack();
+            const Timeline& tl = project->timeline();
+            if (!CHECK(track >= 0 && track < tl.audio.size() && tl.audio[track].clips.size() == 1)) return;
+            const Clip& c = tl.audio[track].clips[0];
+            const int length = c.out - c.in + 1;
+            const double recorded = double(recorder->take().samples()) / recorder->take().rate() * fps;
+            std::printf("%s: clip %d..%d (%d frames, recorded %.1f)\n", what, c.start, c.start + length, length,
+                        recorded);
+            CHECK_EQ(c.start, from);
+            CHECK(std::abs(c.in + length - recorded) < 1.0);
+            CHECK(length >= int(1.8 * fps) && length <= int(2.8 * fps)); // ~2 s (a busy machine: a bit more)
+        };
+        takeFor2s(int(fps / 2), "1 s of content, from 0.5 s");
+        project->undoStack()->undo();
+        // An empty timeline: the playhead runs, a clip of 2 s at 0
+        project->edit("empty", [](Timeline& t) {
+            for (Track& tr : t.video) tr.clips.clear();
+            for (Track& tr : t.audio) tr.clips.clear();
+        });
+        takeFor2s(0, "empty timeline");
+        project->undoStack()->undo(); // the take
+        project->undoStack()->undo(); // emptied
+        project->undoStack()->undo(); // trimmed
+        CHECK_EQ(project->undoStack()->index(), undoTrim);
+    }
+
     // Quitting while recording: the take is placed first (so "save changes?" sees it), the file is complete
     project->edit("unlock", [](Timeline& t) { t.audio[0].locked = false; });
     recorder->setArmedTrack(1);

@@ -29,7 +29,7 @@ VoiceoverRecorder::VoiceoverRecorder(Engine* engine, Project* project, Editor* e
     });
     m_timer->setInterval(10); // pairs for the lining up: the finer, the closer the best one (Voiceover::Alignment)
     connect(m_timer, &QTimer::timeout, this, &VoiceoverRecorder::tick);
-    // Playback stopped (Space, Stop, the end of the timeline) ends the recording
+    // Playback stopped (Space, Stop; the end of the timeline does not: open end) ends the recording
     connect(m_engine, &Engine::speedChanged, this, [this](double speed) {
         if (speed == 0.0 && m_capture && m_playing && !m_stopping) stop();
     });
@@ -120,15 +120,14 @@ bool VoiceoverRecorder::start(QString* error)
     m_stopping = false;
     m_engine->pause();
     m_from = m_engine->position();
-    // Past the end of the timeline nothing plays along (play would start from the front)
-    m_playing = m_from < TimelineOps::endFrame(m_project->timeline());
-    m_playFrom = m_from;
-    if (m_playing) {
-        const int preroll = int(std::lround(m_settings.prerollSeconds * m_project->frameRate()));
-        m_playFrom = std::max(0, m_from - preroll);
-        if (m_playFrom != m_from) m_engine->seek(int(m_playFrom));
-        m_engine->play();
-    }
+    // The timeline plays along also behind its last clip and on an empty one (open end: black picture, silence, the
+    // playhead and the take run on) - recording does not stop at the end
+    m_engine->setOpenEnd(true);
+    const int preroll = int(std::lround(m_settings.prerollSeconds * m_project->frameRate()));
+    m_playFrom = std::max(0, m_from - preroll);
+    if (m_playFrom != m_from) m_engine->seek(int(m_playFrom));
+    m_engine->play();
+    m_playing = m_engine->speed() != 0.0;
     m_take = Voiceover::LiveTake(m_playFrom, m_from, m_project->frameRate(), m_capture->rate());
     m_liveTrack = Voiceover::recordTrack(m_project->timeline(), m_preferred, m_from, m_from + 1);
     m_timer->start();
@@ -166,6 +165,7 @@ bool VoiceoverRecorder::stop(QString* error)
     tick(); // one more pair
     m_timer->stop();
     if (m_playing) m_engine->pause();
+    m_engine->setOpenEnd(false);
     QString why;
     const bool written = m_capture->stop(&why);
     const QString path = m_capture->path();
@@ -178,8 +178,8 @@ bool VoiceoverRecorder::stop(QString* error)
     if (dropped > 0) qWarning("Voiceover: %lld von %lld Samples verloren", dropped, frames);
 
     const double fps = m_project->frameRate();
-    // Where file sample 0 lies in the timeline: from the pairs taken while playing; nothing played along (past the
-    // end, stopped at once): where playback started
+    // Where file sample 0 lies in the timeline: from the pairs taken while playing; none (stopped at once, no
+    // sound output): where playback started
     // The input's buffer size is not its delay: a block reaches the callback as soon as it is full, its newest sample
     // only a moment old. Taking the buffer off put the take 2048 samples (43 ms) early (measured: timeline played into
     // a PipeWire sink, its monitor recorded, take cross-correlated with the timeline sound: +45 ms with, +2.4 to +4 ms
@@ -215,6 +215,7 @@ void VoiceoverRecorder::cancel()
     m_capture->stop();
     m_capture.reset();
     if (m_playing) m_engine->pause();
+    m_engine->setOpenEnd(false);
     m_stopping = false;
     emit recordingChanged(false);
     updateMeter();

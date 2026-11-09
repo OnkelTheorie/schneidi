@@ -3,8 +3,8 @@
 // Voice-over recording in the app (core/Voiceover.h, engine/audio/Capture.h): record while the timeline plays from
 // the playhead (after an optional pre-roll) onto the armed audio track (the mic in its header), else the track of the
 // selected audio clips, else a new one; a track with sound in the way also gets a new one (Voiceover::recordTrack).
-// While it runs the take grows in the timeline (take(), liveTrack()); stopping (the record key, Esc, Space, the end
-// of the timeline) puts it into the Media Pool and onto that track where the playhead stood, as one undo step.
+// While it runs the take grows in the timeline (take(), liveTrack()); stopping (the record key, Esc, Space; not the end
+// of the timeline: it plays on behind it while recording) puts it into the Media Pool and onto that track where the playhead stood, as one undo step.
 // An armed track's input level is measured before recording too (a capture without a file).
 
 #include "core/Voiceover.h"
@@ -74,6 +74,6 @@ private:
     int m_placedTrack = -1;
     int m_from = 0;         // playhead when recording started (the clip starts here)
     double m_playFrom = 0;  // where playback started (pre-roll before m_from)
-    bool m_playing = false; // the timeline plays along (not past its end)
+    bool m_playing = false; // the timeline plays along (open end: also behind its last clip)
     bool m_stopping = false;
 };
