@@ -208,6 +208,53 @@ Compose::Affine transformOf(NodeCtx& ctx, bool* identity)
     return m;
 }
 
+} // namespace
+
+QVector<EffectParam> visibleRangeParams()
+{
+    return {
+        {"from", T("Sichtbar ab"), {}, EffectParam::Double, 0.0, 0.0, 36000.0, AnimParam::Count, 0.01, 2, {},
+         T("Sekunden ab Clipanfang, ab denen der Knoten etwas zeigt (Knopf „Hier“: der Abspielkopf)")},
+        {"until", T("Sichtbar bis"), {}, EffectParam::Double, 0.0, 0.0, 36000.0, AnimParam::Count, 0.01, 2, {},
+         T("Sekunden ab Clipanfang, bis zu denen der Knoten etwas zeigt; 0 = bis zum Ende (Knopf „Hier“: der Abspielkopf)")},
+        {"fade", T("Ein-/Ausblenden"), {}, EffectParam::Double, 0.25, 0.0, 10.0, AnimParam::Count, 0.01, 2, {},
+         T("Sekunden, in denen er am Anfang und Ende des sichtbaren Bereichs weich kommt und geht")},
+    };
+}
+
+double visibleWeight(const NodeCtx& ctx)
+{
+    const double from = std::max(0.0, ctx.num("from")), until = ctx.num("until");
+    if (from <= 0 && until <= 0) return 1.0; // the whole clip
+    const double s = ctx.t / std::max(1.0, ctx.fps), fade = std::max(0.0, ctx.num("fade"));
+    const double end = until > 0 ? until : 1e12;
+    if (s < from || s >= end || end <= from) return 0.0;
+    double w = 1.0;
+    if (fade > 0) {
+        if (from > 0) w = std::min(w, (s - from) / fade);
+        if (until > 0) w = std::min(w, (end - s) / fade);
+    }
+    return std::clamp(w, 0.0, 1.0);
+}
+
+bool rangeVaries(const QVariantMap& values)
+{
+    return values.value("from").toDouble() > 0 || values.value("until").toDouble() > 0;
+}
+
+void fadeContent(Buf& b, double opacity)
+{
+    if (b.kind != Buf::Rgba || opacity >= 1.0) return;
+    const uint32_t k = uint32_t(std::lround(std::clamp(opacity, 0.0, 1.0) * 256));
+    const QRect a = b.contentArea().intersected(QRect(0, 0, b.w, b.h));
+    for (int y = a.top(); y <= a.bottom(); ++y) {
+        uint8_t* p = b.data() + (size_t(y) * b.w + a.left()) * 4 + 3;
+        for (int x = a.left(); x <= a.right(); ++x, p += 4) *p = uint8_t((*p * k + 128) >> 8);
+    }
+}
+
+namespace {
+
 bool evalTransform(NodeCtx& ctx, Buf* out)
 {
     const Buf* src = ctx.input("src");
@@ -524,7 +571,7 @@ void registerCoreNodes(QVector<NodeType>& out)
         NodeType k;
         k.id = "clip";
         k.name = T("Clip");
-        k.description = T("Das Bild des Clips mit seinen Effekten (bei einem Compound auch eine einzelne Spur)");
+        k.description = T("Das Bild des Clips mit seinen Effekten (bei einem Verbund auch eine einzelne Spur)");
         k.params = {num("track", T("Spur"), -1, -1, 99, 1, 0,
                         T("Nur diese Spur der inneren Sequenz (0 = unterste); -1 = das ganze Bild"))};
         k.varying = true;
@@ -627,7 +674,7 @@ void registerCoreNodes(QVector<NodeType>& out)
         NodeType k;
         k.id = "grade";
         k.name = T("Farbkorrektur");
-        k.description = T("Die Werte der Color-Seite und eine LUT, auf Wunsch nur in einer Maske");
+        k.description = T("Die Werte der Seite Farbe und eine LUT, auf Wunsch nur in einer Maske");
         k.inputs = {"src", "mask"};
         const ColorGrade::Params neutral;
         for (int i = 0; i < 4; ++i) {
@@ -640,7 +687,7 @@ void registerCoreNodes(QVector<NodeType>& out)
                 k.params << p;
             }
         }
-        k.params << num("contrast", T("Kontrast"), neutral.contrast, 0, 2) << num("pivot", T("Pivot"), neutral.pivot, 0, 1)
+        k.params << num("contrast", T("Kontrast"), neutral.contrast, 0, 2) << num("pivot", T("Mittelpunkt"), neutral.pivot, 0, 1)
                  << num("saturation", T("Sättigung"), neutral.saturation, 0, 100, 0.1, 1)
                  << num("temperature", T("Temperatur"), neutral.temperature, -4000, 4000, 1, 0)
                  << num("tint", T("Tönung"), neutral.tint, -100, 100, 0.1, 1)

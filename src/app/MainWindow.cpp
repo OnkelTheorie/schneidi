@@ -57,6 +57,8 @@
 #include "ui/MediaPool.h"
 #include "ui/Viewer.h"
 #include "ui/timeline/TimelinePanel.h"
+#include "ui/comp/CompCanvas.h"
+#include "ui/comp/CompPage.h"
 #include "ui/timeline/TimelineView.h"
 
 #include <QAction>
@@ -195,6 +197,7 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
     connect(m_inspector, &Inspector::compOpenRequested, this, &MainWindow::openComp);
     connect(m_selection, &Selection::changed, this, [this] {
         if (m_keyPicker) stopKeyPick();
+        if (m_page == Page::Color) playheadInto(selectedVideoClip()); // the viewer shows the clip being graded
     });
     connect(m_engine, &Engine::positionChanged, this, [this](int f) {
         if (m_engine->timelinePositions()) m_colorPanel->setPlayhead(f);
@@ -266,6 +269,7 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
     connect(tv, &TimelineView::dropRequested, this, &MainWindow::onDrop);
     // Drag-fill of a template placeholder: what was done, briefly
     connect(tv, &TimelineView::slotFilled, this, [this](const QString& message, bool) { statusBar()->showMessage(message, 6000); });
+    connect(tv, &TimelineView::message, this, [this](const QString& text) { statusBar()->showMessage(text, 6000); });
     // Recipe dropped on a clip: applied after the drop (it may ask for a file)
     connect(tv, &TimelineView::recipeDropped, this, [this](int clipId, const QString& recipe) {
         QTimer::singleShot(0, this, [this, clipId, recipe] { applyRecipe({clipId}, recipe); });
@@ -318,7 +322,7 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
                 for (int cid : m_editor->clipIdsOf(m_selection->ids()))
                     if (TrackRef r; const Clip* c = TimelineOps::findClip(m_project->timeline(), cid, &r))
                         if (r.kind == TrackKind::Video && frame >= c->start && frame < c->end()) ids << cid;
-                QMenu* accents = menu.addMenu(T("Akzent am Playhead"));
+                QMenu* accents = menu.addMenu(T("Akzent am Abspielkopf"));
                 accents->setEnabled(!ids.isEmpty());
                 for (const Accents::Preset& p : Accents::presets())
                     connect(accents->addAction(T(p.name)), &QAction::triggered, this, [this, ids, frame, p] {
@@ -574,11 +578,11 @@ void MainWindow::createCompoundClip()
     for (const Sequence& s : m_project->sequences()) used.insert(s.name);
     QString def;
     for (int i = 1;; ++i) {
-        def = T("Compound Clip %1").arg(i);
+        def = T("Verbundclip %1").arg(i);
         if (!used.contains(def)) break;
     }
     bool ok = false;
-    const QString name = QInputDialog::getText(this, T("Neuer Compound Clip"), T("Name:"), QLineEdit::Normal, def, &ok);
+    const QString name = QInputDialog::getText(this, T("Neuer Verbundclip"), T("Name:"), QLineEdit::Normal, def, &ok);
     if (ok) m_editor->createCompoundClip(name);
 }
 
@@ -652,7 +656,11 @@ QString MainWindow::editSource() const
 
 void MainWindow::sourceEdit(Editor::SourceEditMode mode)
 {
-    const QString path = editSource();
+    sourceEditPath(mode, editSource());
+}
+
+void MainWindow::sourceEditPath(Editor::SourceEditMode mode, const QString& path)
+{
     if (path.isEmpty()) return;
     // Looked at in the Media Storage without importing: into the selected bin first (no undo step, like every
     // import; the edit is one). Not probed yet (just clicked): nothing to place yet.
@@ -662,7 +670,7 @@ void MainWindow::sourceEdit(Editor::SourceEditMode mode)
     }
     offerClipFormat({path}, true); // first clip in an empty timeline: adapt project format?
     TimelineView* tv = m_timeline->view();
-    const int srcPos = sourceActive() ? m_engine->position() : m_sourcePos.value(path, 0);
+    const int srcPos = sourceActive() && m_engine->sourcePath() == path ? m_engine->position() : m_sourcePos.value(path, 0);
     const int end = m_editor->sourceEdit(mode, path, srcPos, tv->playhead());
     if (end < 0) {
         QApplication::beep(); // no clip under the playhead resp. too little material
@@ -776,6 +784,13 @@ void MainWindow::stopKeyPick()
         window->hide();
         window->deleteLater();
         activateWindow();
+        // Keys go back to the work area (graph or timeline), not to whatever Inspector field Qt picks next: typed
+        // letters there hit shortcuts (Tab after a pick opened no node search, "d" disabled the clip). Deferred: the
+        // Inspector rebuilds its rows for the new color first
+        QTimer::singleShot(0, this, [this] {
+            if (m_page == Page::Comp && m_compPage) m_compPage->canvas()->setFocus(Qt::OtherFocusReason);
+            else m_timeline->view()->setFocus(Qt::OtherFocusReason);
+        });
     }
     if (!m_keyPicker) return;
     qApp->removeEventFilter(m_keyPicker); // its Esc filter ends now, not when deleteLater gets to it
@@ -1157,7 +1172,7 @@ void MainWindow::updateProxyHint()
                                    "Der Render-Cache „Smart“ rechnet Clips mit Effekten in Pausen vor, der Export nutzt "
                                    "weiter die Originale")
                                      .arg(qRound(m_slowRate)).arg(qRound(m_slowFps)),
-                                 T("Render-Cache: Smart"));
+                                 T("Render-Cache: Intelligent"));
     const ProxyManager* proxies = m_engine->proxies();
     int missing = 0, pending = 0;
     if (proxies->enabled()) // proxy media switched off: the user wants the originals

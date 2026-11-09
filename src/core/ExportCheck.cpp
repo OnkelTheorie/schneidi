@@ -427,14 +427,14 @@ QVector<Issue> sound(const std::vector<float>& framePeaks, int offset, double in
     if (truePeakDb > 0)
         out << issue(Severity::Error, "clipping",
                      (limiter ? T("Übersteuert: True Peak %1 dBTP (über 0 dB verzerrt)")
-                              : T("Übersteuert: True Peak %1 dBTP (über 0 dB verzerrt) – Limiter im Mixer einschalten "
+                              : T("Übersteuert: True Peak %1 dBTP (über 0 dB verzerrt) – Limiter im Mischpult einschalten "
                                   "oder leiser mischen"))
                          .arg(num(truePeakDb)));
     else if (truePeakDb > o.maxTruePeakDb)
         out << issue(Severity::Warning, "true_peak",
                      (limiter ? T("True Peak %1 dBTP liegt über %2 dBTP (Codecs können übersteuern)")
                               : T("True Peak %1 dBTP liegt über %2 dBTP (Codecs können übersteuern) – Limiter im "
-                                  "Mixer einschalten"))
+                                  "Mischpult einschalten"))
                          .arg(num(truePeakDb), num(o.maxTruePeakDb)));
     if (std::abs(integratedLufs - o.targetLufs) > o.toleranceLu)
         out << issue(Severity::Warning, "loudness",
@@ -685,7 +685,7 @@ QVector<Issue> mix(const Timeline& tl, const QVector<TrackSound>& sounds, int fr
                 const QString label = audioTrackLabel(tl, s.track);
                 out << issue(Severity::Warning, "under_music",
                              T("%1 geht unter der Musik unter: %2 LU leiser als %3 – %1 lauter stellen oder die Musik "
-                               "absenken (Ducking)")
+                               "absenken")
                                  .arg(label, num(under), musicNames.join(", ")),
                              from + int(std::lround(both[i] * 0.1 * fps)),
                              from + int(std::lround((both[j] * 0.1 + 0.4) * fps)));

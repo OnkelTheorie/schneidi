@@ -69,6 +69,9 @@ public:
     // The video clip the Comp page works on at timeline frame `frame`: a selected one under it, else the topmost shown
     // one there (0 = none, a gap)
     int compClipAt(int frame) const;
+    // Comp and Color pages work on what the viewer shows: a selected clip the playhead is not in brings the playhead
+    // to its start (nothing when it is already inside)
+    void playheadInto(int clipId);
     void openCompForSelection();
     void compFromSelection();
     class CompPage* compPage() const { return m_compPage; } // nullptr until the page was shown
@@ -247,6 +250,7 @@ private:
     bool sourceActive() const; // Viewer shows the source -> I/O apply to the source In/Out
     QString editSource() const; // source for F9/F10 …: source view, otherwise selection in the Media Pool
     void sourceEdit(Editor::SourceEditMode mode);
+    void sourceEditPath(Editor::SourceEditMode mode, const QString& path); // a given file (Media Pool menu)
     void updateViewer();        // scrubber range, In/Out and title of the Viewer
     void jumpToEdit(int direction);
     void jumpToMarker(int direction);
@@ -400,7 +404,9 @@ private:
     QHash<QString, MediaInfo> m_probeCache;
     QHash<QString, int> m_sourcePos; // source playhead per file (this session only)
     QHash<int, int> m_sequencePos;   // playhead per timeline/compound clip (this session only)
-    QHash<int, ViewState> m_sequenceView; // zoom/scroll per timeline/compound clip (this session only)
+    QHash<int, ViewState> m_sequenceView; // zoom/scroll per timeline/compound clip (saved in the project: views)
+    QVector<SavedView> savedViews() const; // every timeline's zoom/scroll/playhead for the project file
+    void restoreViews(const ProjectData& data);
     int m_shownSequence = 0;         // last shown sequence (for m_sequencePos)
     class MediaCache* m_mediaCache = nullptr;
 

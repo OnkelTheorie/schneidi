@@ -214,8 +214,8 @@ void registerMaskNodes(QVector<NodeType>& out)
     {
         NodeType k;
         k.id = "matte";
-        k.name = T("Matte");
-        k.description = T("Maske aus der Helligkeit oder dem Alpha eines Bildes (Track-Matte, Text als Fenster)");
+        k.name = T("Alphamaske");
+        k.description = T("Maske aus der Helligkeit oder dem Alpha eines Bildes (Spurmaske, Text als Fenster)");
         k.inputs = {"src"};
         k.output = Buf::Mask;
         k.params.append(choice("channel", T("Kanal"), {"luma", "alpha"}, {T("Helligkeit"), T("Alpha")}));

@@ -23,7 +23,7 @@ struct Builtin {
 };
 constexpr Builtin kBuiltins[] = {
     {"teal-orange", N_("Teal & Orange")},
-    {"edit", N_("Edit-Look")}, // the color of the look "Edit" (kLooks) without its glow
+    {"edit", N_("Social-Media-Look")}, // the color of the look "Edit" (kLooks) without its glow
     {"kino", N_("Kino-Kontrast")},
     {"bleach-bypass", N_("Bleach Bypass")},
     {"verblasst", N_("Verblasst")},
@@ -72,8 +72,8 @@ struct Look {
     const char* description;
 };
 constexpr Look kLooks[] = {
-    {"edit", N_("Edit-Look"),
-     N_("Wie in Social-Media-Edits: kräftigere Farben, Schatten türkis, Lichter orange, leichtes Glühen; Hauttöne "
+    {"edit", N_("Social-Media-Look"),
+     N_("Wie in Social-Media-Videos: kräftigere Farben, Schatten türkis, Lichter orange, leichtes Glühen; Hauttöne "
         "bleiben natürlich")},
 };
 
@@ -140,8 +140,8 @@ void ensure()
     f.write(T("Effekte für schneidi\n"
               "\n"
               "LUTs: Dateien (.cube, .3dl, .csp oder Hald-CLUT-Bilder .png/.tif) in den Ordner „LUTs“ legen.\n"
-              "Unterordner werden zu eigenen Kategorien in der Effects Library. Neue Dateien erscheinen sofort.\n"
-              "Eine LUT auf einen Clip ziehen legt sie in dessen Farbkorrektur (Color-Seite) ab.\n"
+              "Unterordner werden zu eigenen Kategorien in der Effektbibliothek. Neue Dateien erscheinen sofort.\n"
+              "Eine LUT auf einen Clip ziehen legt sie in dessen Farbkorrektur (Seite Farbe) ab.\n"
               "\n"
               "Übergänge: Graustufenbilder (.png, .jpg, .pgm, .bmp, .tif) in den Ordner „Transitions“ legen\n"
               "(z. B. Luma-Übergänge aus Kdenlive, Shotcut oder OpenShot). Dunkle Stellen wechseln zuerst.\n"
@@ -149,7 +149,7 @@ void ensure()
               "\n"
               "Presets: Effekt-Presets aus Kdenlive (eigene Effekte .xml, Effektgruppen) und Shotcut-Filter-Sets\n"
               "in den Ordner „Presets“ legen. Shotcut-Filter-Presets samt ihrem Ordner kopieren (der Ordnername\n"
-              "ist der Filter). Übernommen werden frei0r-Filter, Green Screen und LUTs; Keyframes nur mit dem\n"
+              "ist der Filter). Übernommen werden frei0r-Filter, Greenscreen und LUTs; Keyframes nur mit dem\n"
               "ersten Wert. Ein Preset auf einen Clip ziehen hängt dessen Effekte an.\n")
                 .toUtf8());
 }

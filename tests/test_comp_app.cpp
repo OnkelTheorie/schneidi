@@ -12,6 +12,7 @@
 #include "core/EffectRegistry.h"
 #include "core/I18n.h"
 #include "core/Project.h"
+#include "core/ProjectFile.h"
 #include "core/Selection.h"
 #include "core/TimelineOps.h"
 #include "engine/Engine.h"
@@ -28,6 +29,7 @@
 #include "ui/comp/CompOverlay.h"
 #include "ui/comp/CompPage.h"
 #include "ui/comp/CompShared.h"
+#include "ui/MediaPool.h"
 #include "ui/timeline/TimelinePanel.h"
 #include "ui/timeline/TimelineView.h"
 
@@ -148,7 +150,7 @@ int main(int argc, char** argv)
 
     // ---- Recipes in the Effects Library: German names, double-click applies (one undo step) ----
     {
-        CHECK_EQ(CompRecipes::shownName(*CompRecipes::find("greenscreen"), "de"), QString("Green Screen"));
+        CHECK_EQ(CompRecipes::shownName(*CompRecipes::find("greenscreen"), "de"), QString("Greenscreen"));
         CHECK_EQ(CompRecipes::shownName(*CompRecipes::find("pip_frame"), "fr"), QString("Incrustation d'image"));
         CHECK_EQ(CompRecipes::find("pip_frame")->name, QString("Picture in picture")); // English for the AI
         auto* lib = w.findChild<EffectsLibrary*>();
@@ -159,7 +161,7 @@ int main(int argc, char** argv)
         if (!CHECK(pip)) return Check::result();
         CHECK_EQ(pip->text(), QString("Bild im Bild"));
         CHECK(pip->toolTip().contains("Ecke"));
-        CHECK(entry(lib, "recipe:greenscreen") && entry(lib, "recipe:greenscreen")->text() == "Green Screen");
+        CHECK(entry(lib, "recipe:greenscreen") && entry(lib, "recipe:greenscreen")->text() == "Greenscreen");
         // The drag data is the effect form "recipe:<id>"
         std::unique_ptr<QMimeData> mime(lib->list()->model()->mimeData({lib->list()->indexFromItem(pip)}));
         CHECK_EQ(QString::fromUtf8(mime->data(EffectsLibrary::EffectMimeType)), QString("recipe:pip_frame"));
@@ -187,7 +189,7 @@ int main(int argc, char** argv)
         CHECK_EQ(undo->index(), idx2 + 1);
         CHECK(!graphOf(project, clip2).isEmpty());
         CHECK(graphOf(project, clipId).isEmpty());
-        CHECK_EQ(undo->undoText(), QString("Rezept „Green Screen“ anwenden"));
+        CHECK_EQ(undo->undoText(), QString("Rezept „Greenscreen“ anwenden"));
         // The recipe's slot values are normal node values afterwards (the key colour of the green screen)
         const Clip* c2 = TimelineOps::findClip(project->timeline(), clip2);
         CHECK(CompUi::nodeValues(*c2, 2).value("color").toString().compare("#ff00ff00", Qt::CaseInsensitive) == 0);
@@ -287,6 +289,54 @@ int main(int argc, char** argv)
         CHECK(ins->findChild<QWidget*>("comp_param_effect") != nullptr);
     }
 
+    // ---- Media Pool right-click: "append at the end" puts the file behind the last clip, one undo step ----
+    {
+        auto* pool = w.findChild<MediaPool*>();
+        if (CHECK(pool)) {
+            const int before = int(project->timeline().video[0].clips.size());
+            const int end = project->timeline().video[0].clips.last().end();
+            const int idx = undo->index();
+            emit pool->editRequested(file, 2);
+            settle();
+            CHECK_EQ(int(project->timeline().video[0].clips.size()), before + 1);
+            CHECK_EQ(project->timeline().video[0].clips.last().start, end);
+            CHECK_EQ(undo->index(), idx + 1);
+            undo->undo();
+            settle();
+            CHECK_EQ(int(project->timeline().video[0].clips.size()), before);
+        }
+    }
+
+    // ---- Opening a project: each timeline's zoom/scroll/playhead as saved; a file without them shows it whole ----
+    {
+        ProjectData d = project->data();
+        d.views = {SavedView{project->currentSequence(), 7.5, 40, 0, 60}};
+        const QString saved = dir.path() + "/views.schneidi", plain = dir.path() + "/plain.schneidi";
+        QString err;
+        CHECK(ProjectFile::save(d, saved, &err));
+        d.views.clear();
+        CHECK(ProjectFile::save(d, plain, &err));
+        TimelineView* view = w.findChild<TimelineView*>();
+        if (CHECK(view) && CHECK(w.openProject(saved))) {
+            settle();
+            QTest::qWait(20);
+            settle();
+            CHECK(std::abs(view->view().pxPerFrame - 7.5) < 1e-9);
+            CHECK(std::abs(view->view().leftFrame - 40) < 1e-9);
+            CHECK(w.openProject(plain));
+            settle();
+            QTest::qWait(20);
+            settle();
+            CHECK(std::abs(view->view().pxPerFrame - 7.5) > 1e-6); // fitted to the whole timeline
+            CHECK_EQ(view->view().leftFrame, 0.0);
+        }
+        // Back to the test's project (the blocks below use its clips)
+        CHECK(w.openProject(saved));
+        settle();
+        project = w.liveProject();
+        undo = project->undoStack();
+    }
+
     // ---- The Comp page follows the playhead: the clip under it; opening a clip moves the playhead into it ----
     {
         const Clip* a = TimelineOps::findClip(project->timeline(), clipId);
@@ -306,6 +356,12 @@ int main(int argc, char** argv)
             settle();
             CHECK_EQ(w.compPage()->clip(), clipId);
             CHECK(engine.position() >= startA && engine.position() < startB);
+            // Selecting another clip on the page: the playhead goes into it, the page shows it
+            w.liveSelection()->set({clip2});
+            QTest::qWait(50);
+            settle();
+            CHECK(engine.position() >= startB);
+            CHECK_EQ(w.compPage()->clip(), clip2);
         }
     }
 

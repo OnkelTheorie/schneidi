@@ -53,7 +53,7 @@ TrustDialog::TrustDialog(const QVector<CodeTrust::Item>& items, QWidget* parent,
     code->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
     code->setMinimumSize(480, 160);
     layout->addWidget(code);
-    auto* note = new QLabel(T("Nicht ausgeführte Effekte bleiben im Projekt; im Inspector kannst du sie später erlauben."), this);
+    auto* note = new QLabel(T("Nicht ausgeführte Effekte bleiben im Projekt; im Inspektor kannst du sie später erlauben."), this);
     note->setWordWrap(true);
     layout->addWidget(note);
 

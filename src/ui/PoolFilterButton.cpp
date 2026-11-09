@@ -88,7 +88,7 @@ PoolFilterButton::PoolFilterButton(QWidget* parent) : QToolButton(parent)
         {PoolFilter::Video, N_("Video")},
         {PoolFilter::Audio, N_("Audio")},
         {PoolFilter::Image, N_("Standbilder")},
-        {PoolFilter::Timeline, N_("Timelines und Compound Clips")},
+        {PoolFilter::Timeline, N_("Timelines und Verbundclips")},
     };
     for (const auto& k : kinds) {
         QAction* a = m_menu->addAction(T(k.name));

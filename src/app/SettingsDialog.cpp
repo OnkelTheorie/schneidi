@@ -7,18 +7,24 @@
 #include "app/UpdateCheck.h"
 #include "core/I18n.h"
 #include "engine/Background.h"
+#include "ui/comp/CompShared.h"
 #include "ui/WheelGuard.h"
 
 #include <QCheckBox>
 #include <QComboBox>
 #include <QCoreApplication>
 #include <QDialogButtonBox>
+#include <QDir>
+#include <QFileDialog>
 #include <QFormLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QLineEdit>
 #include <QPushButton>
 #include <QScrollArea>
+#include <QSettings>
+#include <QStandardPaths>
 #include <QTabWidget>
 #include <QThread>
 #include <QVBoxLayout>
@@ -116,7 +122,7 @@ QWidget* SettingsDialog::buildGeneral()
     checkRow->addWidget(m_updateResult, 1);
     uform->addRow(checkRow);
     uform->addRow(hint(T("Fragt GitHub nach der neuesten Version; mit geht nur die Versionsnummer, nichts über deine "
-                         "Projekte. Neue Versionen gibt es auf der Release-Seite.")));
+                         "Projekte. Neue Versionen gibt es auf der Download-Seite.")));
     lay->addWidget(updates);
     m_updates = new UpdateCheck(this);
     const QString current = UpdateCheck::runningVersion(QCoreApplication::applicationVersion());
@@ -128,7 +134,7 @@ QWidget* SettingsDialog::buildGeneral()
     connect(m_updates, &UpdateCheck::newer, this, [this](const UpdateCheck::Release& r, const QString& cur) {
         m_checkNow->setEnabled(true);
         m_updateResult->setText(T("schneidi %1 ist da (du hast %2).").arg(r.version, cur) + QString(" <a href=\"%1\">%2</a>")
-                                    .arg(r.page.toString().toHtmlEscaped(), T("Release-Seite öffnen")));
+                                    .arg(r.page.toString().toHtmlEscaped(), T("Download-Seite öffnen")));
     });
     connect(m_updates, &UpdateCheck::upToDate, this, [this](const QString& cur) {
         m_checkNow->setEnabled(true);
@@ -151,11 +157,74 @@ QWidget* SettingsDialog::buildGeneral()
     pform->addRow(T("Threads für Hintergrundarbeit"), m_threads);
     pform->addRow(hint(T("Transkription (Whisper), Analysen, Proxys und das Einlesen beim Import. Weniger Threads: "
                          "Musik, Spiele und andere Programme laufen nebenbei flüssiger, die Arbeit dauert länger. "
-                         "Den Export stellst du auf der Deliver-Seite ein.")));
+                         "Den Export stellst du auf der Seite Export ein.")));
     lay->addWidget(performance);
+
+    // Projects: "Save as" next to the footage (default) or in a folder of their own, only if the user wants that
+    auto* projects = new QGroupBox(T("Projekte"));
+    auto* prform = new QFormLayout(projects);
+    prform->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
+    m_ownFolder = new QCheckBox(T("Neue Projekte in einem eigenen Ordner speichern"));
+    m_ownFolder->setObjectName("project_own_folder");
+    m_ownFolder->setChecked(storedOwnFolder());
+    prform->addRow(m_ownFolder);
+    auto* folderRow = new QHBoxLayout;
+    m_folder = new QLineEdit(storedFolder());
+    m_folder->setObjectName("project_folder");
+    auto* browse = new QPushButton(T("Wählen…"));
+    connect(browse, &QPushButton::clicked, this, [this] {
+        const QString dir = QFileDialog::getExistingDirectory(this, T("Ordner für Projekte"), m_folder->text());
+        if (!dir.isEmpty()) m_folder->setText(QDir::toNativeSeparators(dir));
+    });
+    folderRow->addWidget(m_folder, 1);
+    folderRow->addWidget(browse);
+    prform->addRow(T("Ordner"), folderRow);
+    const auto enable = [this, browse](bool on) {
+        m_folder->setEnabled(on);
+        browse->setEnabled(on);
+    };
+    enable(m_ownFolder->isChecked());
+    connect(m_ownFolder, &QCheckBox::toggled, this, enable);
+    prform->addRow(hint(T("Aus: „Speichern unter“ schlägt den Ordner des ersten Clips vor. An: dieser Ordner, so landen "
+                          "keine Projektdateien zwischen deinen Aufnahmen.")));
+    lay->addWidget(projects);
+
+    // Compositing: new nodes from the node search linked at once (default) or only added
+    auto* comp = new QGroupBox(T("Compositing"));
+    auto* cform = new QFormLayout(comp);
+    m_autoLink = new QCheckBox(T("Neue Knoten automatisch verbinden"));
+    m_autoLink->setObjectName("comp_auto_link");
+    m_autoLink->setChecked(CompUi::autoLink());
+    cform->addRow(m_autoLink);
+    cform->addRow(hint(T("An: ein neuer Knoten kommt hinter den gewählten (oder den Ausgang). Aus: er wird nur "
+                         "hingelegt, du verbindest ihn selbst.")));
+    lay->addWidget(comp);
 
     lay->addStretch(1);
     return page;
+}
+
+bool SettingsDialog::autoLinkNodes() const { return m_autoLink->isChecked(); }
+
+bool SettingsDialog::ownProjectFolder() const { return m_ownFolder->isChecked(); }
+
+QString SettingsDialog::projectFolder() const { return QDir::fromNativeSeparators(m_folder->text().trimmed()); }
+
+bool SettingsDialog::storedOwnFolder() { return QSettings().value("project/ownFolder", false).toBool(); }
+
+QString SettingsDialog::storedFolder()
+{
+    const QString stored = QSettings().value("project/folder").toString();
+    if (!stored.isEmpty()) return stored;
+    const QString movies = QStandardPaths::writableLocation(QStandardPaths::MoviesLocation);
+    return QDir(movies.isEmpty() ? QDir::homePath() : movies).filePath("schneidi");
+}
+
+void SettingsDialog::store(bool own, const QString& folder)
+{
+    QSettings s;
+    s.setValue("project/ownFolder", own);
+    s.setValue("project/folder", folder);
 }
 
 bool SettingsDialog::updateHint() const { return m_updateHint->isChecked(); }

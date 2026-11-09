@@ -270,7 +270,7 @@ TrackRun trackNode(const ProjectFormat& format, const Clip& c, int node, int fro
         return run;
     }
     if (c.isNested() || c.isTitle()) {
-        run.error = T("Tracking geht nur bei Video-Clips (nicht bei Titeln, Compound- und Multicam-Clips)");
+        run.error = T("Tracking geht nur bei Video-Clips (nicht bei Titeln, Verbund- und Multicam-Clips)");
         return run;
     }
     from = std::clamp(from, 0, c.length() - 1);

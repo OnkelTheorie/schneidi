@@ -297,7 +297,7 @@ MediaPool::MediaPool(Project* project, Engine* engine, QWidget* parent)
     m_sortKey = sort == "date" ? SortKey::Date : sort == "duration" ? SortKey::Duration : SortKey::Name;
     m_sortAscending = settings.value("mediaPool/sortAscending", true).toBool();
 
-    auto* title = new QLabel(T("Media Pool"));
+    auto* title = new QLabel(T("Medienpool"));
     title->setObjectName("PanelTitle");
     auto* importBtn = new QToolButton;
     importBtn->setText(T("Importieren…"));
@@ -504,7 +504,7 @@ MediaPool::MediaPool(Project* project, Engine* engine, QWidget* parent)
     m_indexHits->setIconSize(kListIcon);
     m_indexHits->setUniformItemSizes(true);
     m_indexHits->setContextMenuPolicy(Qt::CustomContextMenu);
-    m_indexHits->setToolTip(T("Doppelklick: im Quell-Viewer an dieser Stelle zeigen"));
+    m_indexHits->setToolTip(T("Doppelklick: in der Quellvorschau an dieser Stelle zeigen"));
     connect(m_indexHits, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem* it) {
         emit sourceRequestedAt(it->data(Qt::UserRole).toString(), it->data(Qt::UserRole + 1).toInt());
     });
@@ -542,7 +542,7 @@ MediaPool::MediaPool(Project* project, Engine* engine, QWidget* parent)
 
     // Keys (bindable, MainWindow registers them): they act only in their widget, Delete in the bin list never
     // reaches the timeline
-    m_removeBinKey = new QAction(T("Ausgewählten Bin entfernen"), this);
+    m_removeBinKey = new QAction(T("Ausgewählten Ordner entfernen"), this);
     m_removeBinKey->setShortcuts({QKeySequence(Qt::Key_Delete), QKeySequence(Qt::Key_Backspace)});
     connect(m_removeBinKey, &QAction::triggered, this, [this] {
         if (QTreeWidgetItem* it = m_bins->currentItem()) removeBin(it->data(0, Qt::UserRole).toInt());
@@ -550,7 +550,7 @@ MediaPool::MediaPool(Project* project, Engine* engine, QWidget* parent)
     m_closeSearchKey = new QAction(T("Suche schließen"), this);
     m_closeSearchKey->setShortcut(QKeySequence(Qt::Key_Escape));
     connect(m_closeSearchKey, &QAction::triggered, this, [this] { m_searchBtn->setChecked(false); }); // clears and closes
-    m_removeClipsKey = new QAction(T("Aus dem Media Pool entfernen"), this);
+    m_removeClipsKey = new QAction(T("Aus dem Medienpool entfernen"), this);
     m_removeClipsKey->setShortcuts({QKeySequence(Qt::Key_Delete), QKeySequence(Qt::Key_Backspace)});
     connect(m_removeClipsKey, &QAction::triggered, this, &MediaPool::removeSelected);
 
@@ -1005,7 +1005,7 @@ void MediaPool::rebuildClips()
         if (!offline && m_offline.remove(m->path)) m_thumbs.remove(m->path); // file is back
         if (!m_thumbs.contains(m->path)) {
             if (offline) {
-                m_thumbs.insert(m->path, placeholderThumb(T("Media Offline")));
+                m_thumbs.insert(m->path, placeholderThumb(T("Datei fehlt")));
                 m_offline.insert(m->path);
             } else if (m->hasVideo) {
                 m_thumbs.insert(m->path, placeholderThumb(QString())); // until the worker delivers
@@ -1227,7 +1227,7 @@ void MediaPool::updateSequenceItems()
         const QString size = resolutionLabel(own.width, own.height);
         const QString tip =
             (q->multicam ? T("Multicam-Clip – in die Timeline ziehen legt ihn ab, Doppelklick öffnet die Winkel")
-             : q->compound ? T("Compound Clip – Doppelklick öffnet ihn, in die Timeline ziehen legt ihn ab")
+             : q->compound ? T("Verbundclip – Doppelklick öffnet ihn, in die Timeline ziehen legt ihn ab")
                            : T("Timeline – Doppelklick öffnet sie, in eine andere Timeline ziehen verschachtelt sie"))
             + "\n" + (q->hasOwnSize() ? T("Eigene Auflösung: %1").arg(size) : T("Auflösung: %1 (Projekteinstellungen)").arg(size));
         if (it->toolTip() != tip) it->setToolTip(tip);
@@ -1247,7 +1247,7 @@ void MediaPool::renameSequence(int id)
     const Sequence* q = m_project->sequence(id);
     if (!q) return;
     bool ok = false;
-    const QString name = QInputDialog::getText(this, q->compound ? T("Compound Clip umbenennen") : T("Timeline umbenennen"),
+    const QString name = QInputDialog::getText(this, q->compound ? T("Verbundclip umbenennen") : T("Timeline umbenennen"),
                                                T("Name:"), QLineEdit::Normal, q->name, &ok);
     if (ok) m_project->renameSequence(id, name);
 }
@@ -1299,11 +1299,11 @@ void MediaPool::removeSelected()
         for (const auto& [sequence, clips] : usage)
             text += "\n• " + (clips == 1 ? T("%1: 1 Clip").arg(m_project->sequenceName(sequence))
                                          : T("%1: %2 Clips").arg(m_project->sequenceName(sequence)).arg(clips));
-        QMessageBox box(QMessageBox::Question, T("Aus dem Media Pool entfernen"), text, QMessageBox::NoButton, this);
+        QMessageBox box(QMessageBox::Question, T("Aus dem Medienpool entfernen"), text, QMessageBox::NoButton, this);
         QString info = T("„Mit ihren Clips entfernen“ nimmt diese Clips auch aus den Timelines (ein "
                          "Rückgängig-Schritt holt alles zurück).");
         if (referenced)
-            info += ' ' + T("Wird eine Datei nur in einer Comp oder als Titel-Textur benutzt, bleibt der Clip; nur dieser "
+            info += ' ' + T("Wird eine Datei nur im Compositing oder als Titel-Textur benutzt, bleibt der Clip; nur dieser "
                             "Verweis wird geleert.");
         box.setInformativeText(info);
         QPushButton* withClips = box.addButton(T("Mit ihren Clips entfernen"), QMessageBox::DestructiveRole);
@@ -1314,7 +1314,7 @@ void MediaPool::removeSelected()
     }
     QUndoStack* undo = m_project->undoStack();
     const bool several = !sequences.isEmpty() && (sequences.size() > 1 || !paths.isEmpty());
-    if (several) undo->beginMacro(T("Aus dem Media Pool entfernen"));
+    if (several) undo->beginMacro(T("Aus dem Medienpool entfernen"));
     // A compound clip inside a timeline that goes too can go after that timeline
     for (bool progress = true; progress;) {
         progress = false;
@@ -1397,15 +1397,23 @@ void MediaPool::showContextMenu(const QPoint& pos)
         menu.setToolTipsVisible(true);
         menu.addSeparator();
     }
+    if (paths.size() == 1) { // onto the timeline without dragging (the keys F9/F12/Shift+F12 do the same)
+        const QString path = paths.first();
+        menu.addAction(T("Am Abspielkopf einfügen") + "\tF9", this, [this, path] { emit editRequested(path, 0); });
+        menu.addAction(T("Am Abspielkopf auf freie Spur legen") + "\tF12", this, [this, path] { emit editRequested(path, 1); });
+        menu.addAction(T("Ans Ende der Timeline anhängen") + "\tShift+F12", this,
+                       [this, path] { emit editRequested(path, 2); });
+        menu.addSeparator();
+    }
     menu.addAction(T("Neue Timeline"), this, &MediaPool::newTimeline);
     // A short next to the edit: its own 9:16 resolution, the project and the other timelines stay
     menu.addAction(T("Neue Hochformat-Timeline (9:16)"), this,
                    [this] { m_project->addTimeline({}, m_currentBin, QSize(1080, 1920)); });
-    menu.addAction(T("Neuer Bin"), this, &MediaPool::newBin);
+    menu.addAction(T("Neuer Ordner"), this, &MediaPool::newBin);
     if (!paths.isEmpty()) {
-        menu.addAction(T("Neuer Bin mit ausgewählten Clips"), this, [this, paths] {
+        menu.addAction(T("Neuer Ordner mit ausgewählten Clips"), this, [this, paths] {
             QUndoStack* undo = m_project->undoStack();
-            undo->beginMacro(T("Neuer Bin mit ausgewählten Clips"));
+            undo->beginMacro(T("Neuer Ordner mit ausgewählten Clips"));
             const int id = m_project->addBin(m_currentBin);
             m_project->moveMediaToBin(paths, id);
             undo->endMacro();
@@ -1470,7 +1478,7 @@ void MediaPool::showContextMenu(const QPoint& pos)
         menu.addAction(T("Mit Standardprogramm öffnen"), this, [file] { FileManager::open(file); })->setEnabled(exists);
         menu.addAction(T("Im Dateimanager zeigen"), this, [file] { FileManager::reveal(file); })->setEnabled(exists);
         menu.addSeparator();
-        QAction* remove = menu.addAction(T("Aus dem Media Pool entfernen"), this, &MediaPool::removeSelected);
+        QAction* remove = menu.addAction(T("Aus dem Medienpool entfernen"), this, &MediaPool::removeSelected);
         remove->setShortcuts(m_removeClipsKey->shortcuts()); // shows the key (acts only while the menu is open)
     }
     menu.addSeparator();
@@ -1484,10 +1492,10 @@ void MediaPool::showBinMenu(const QPoint& pos)
     if (it) m_bins->setCurrentItem(it); // selects the bin (like DaVinci)
     const int id = it ? it->data(0, Qt::UserRole).toInt() : 0;
     QMenu menu(this);
-    menu.addAction(T("Neuer Bin"), this, &MediaPool::newBin);
+    menu.addAction(T("Neuer Ordner"), this, &MediaPool::newBin);
     if (id != 0) {
-        menu.addAction(T("Bin umbenennen"), this, [this, it] { m_bins->editItem(it); });
-        menu.addAction(T("Bin entfernen"), this, [this, id] { removeBin(id); });
+        menu.addAction(T("Ordner umbenennen"), this, [this, it] { m_bins->editItem(it); });
+        menu.addAction(T("Ordner entfernen"), this, [this, id] { removeBin(id); });
     }
     menu.addSeparator();
     menu.addAction(T("Ordner überwachen…"), this, [this, id] { emit watchFolderRequested(id); });
@@ -1505,8 +1513,8 @@ void MediaPool::removeBin(int id)
         if (m.bin != 0 && m_project->binInside(m.bin, id)) ++clips;
     // DaVinci deletes the clips too; here they (and sub-bins) move into the parent bin -> nothing gets lost
     if (clips > 0
-        && QMessageBox::question(this, T("Bin entfernen"),
-                                 T("Bin „%1“ enthält %2 Clip(s). Sie werden in „%3“ verschoben.")
+        && QMessageBox::question(this, T("Ordner entfernen"),
+                                 T("Ordner „%1“ enthält %2 Clip(s). Sie werden in „%3“ verschoben.")
                                      .arg(name, QString::number(clips), m_project->binName(parent)),
                                  QMessageBox::Ok | QMessageBox::Cancel) != QMessageBox::Ok)
         return;
@@ -1669,7 +1677,7 @@ void MediaPool::showHitMenu(const QPoint& pos)
     const QString path = it->data(Qt::UserRole).toString();
     const int frame = it->data(Qt::UserRole + 1).toInt(), shot = it->data(Qt::UserRole + 2).toInt();
     QMenu menu(this);
-    menu.addAction(T("Im Quell-Viewer zeigen"), this, [this, path, frame] { emit sourceRequestedAt(path, frame); });
+    menu.addAction(T("In der Quellvorschau zeigen"), this, [this, path, frame] { emit sourceRequestedAt(path, frame); });
     menu.addAction(T("Beschreibung bearbeiten…"), this, [this, path, shot] { editHitNote(path, shot); });
     menu.exec(m_indexHits->viewport()->mapToGlobal(pos));
 }

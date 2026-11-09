@@ -356,7 +356,7 @@ int Editor::duck(const QVector<int>& ids, const Ducking::Ranges& ranges, const D
     }
     if (music.isEmpty() || ranges.isEmpty()) return 0;
     int ducked = 0;
-    m_project->edit(T("Ducking"), [&](Timeline& tl) {
+    m_project->edit(T("Musik absenken"), [&](Timeline& tl) {
         for (int id : music)
             if (Clip* c = TimelineOps::findClip(tl, id); c && Ducking::apply(*c, ranges, params)) ++ducked;
     });
@@ -476,7 +476,7 @@ void Editor::splitAtPlayhead(int frame)
     }
     if (ids.isEmpty() && cueTracks.isEmpty()) return;
     Project* p = m_project;
-    p->edit(T("Schnitt am Playhead"), [&](Timeline& tl) {
+    p->edit(T("Schnitt am Abspielkopf"), [&](Timeline& tl) {
         TimelineOps::splitAt(tl, ids, frame, [p] { return p->newClipId(); },
                              [p] { return p->newLinkId(); });
         for (int t : cueTracks) Subtitles::splitAt(tl.subtitles[t], frame, [p] { return p->newClipId(); });
@@ -509,7 +509,52 @@ void Editor::modifyClips(const QVector<int>& idsIn, const QString& text, const s
 
 void Editor::deleteRange(int from, int to, bool ripple)
 {
-    deleteRanges({{from, to}}, ripple, ripple ? T("Bereich löschen mit Ripple") : T("Bereich löschen"));
+    deleteRanges({{from, to}}, ripple, ripple ? T("Bereich löschen mit Nachrücken") : T("Bereich löschen"));
+}
+
+bool Editor::closeGap(TrackRef on, int from, int to, QString* why)
+{
+    const Timeline& now = m_project->timeline();
+    from = std::max(0, from);
+    if (to <= from || on.index < 0 || on.index >= now.tracks(on.kind).size()) return false;
+    if (now.tracks(on.kind)[on.index].locked) { // the others would move, this one not: out of sync
+        if (why) *why = T("Die Spur %1 ist gesperrt – entsperren, dann lässt sich die Lücke schließen").arg(trackShortName(on));
+        return false;
+    }
+    for (TrackKind k : {TrackKind::Video, TrackKind::Audio}) {
+        const QVector<Track>& tracks = now.tracks(k);
+        for (int i = 0; i < tracks.size(); ++i) {
+            if (tracks[i].locked) continue;
+            for (const Clip& c : tracks[i].clips)
+                if (c.start < to && c.end() > from) {
+                    if (why)
+                        *why = T("Auf %1 liegt in der Lücke etwas – die Spur sperren, dann lässt sich die Lücke schließen")
+                                   .arg(trackShortName({k, i}));
+                    return false;
+                }
+        }
+    }
+    for (const SubtitleTrack& st : now.subtitles) {
+        if (st.locked) continue;
+        for (const SubtitleCue& cue : st.cues)
+            if (cue.start < to && cue.end > from) {
+                if (why) *why = T("In der Lücke liegt ein Untertitel – die Untertitelspur sperren, dann geht es");
+                return false;
+            }
+    }
+    // A clip that moves up but is linked to one that stays (its sound on a locked track) would come apart from it
+    QSet<int> staying, moving;
+    for (TrackKind k : {TrackKind::Video, TrackKind::Audio})
+        for (const Track& t : now.tracks(k))
+            for (const Clip& c : t.clips)
+                if (c.linkId) (!t.locked && c.start >= to ? moving : staying).insert(c.linkId);
+    if (staying.intersects(moving)) {
+        if (why) *why = T("Hinter der Lücke liegt ein Clip, dessen Ton (oder Bild) auf einer gesperrten Spur liegt – er würde "
+                          "auseinanderlaufen; die Spur entsperren");
+        return false;
+    }
+    m_project->edit(T("Lücke schließen"), [&](Timeline& tl) { TimelineOps::rippleTracks(tl, {{to, from - to}}, {}); });
+    return true;
 }
 
 void Editor::deleteRanges(const QVector<QPair<int, int>>& input, bool ripple, const QString& text)
@@ -541,7 +586,7 @@ void Editor::rippleDeleteSelection()
     const QVector<int> cues = selectedSubtitles();
     const QVector<int> ids = withCopies(editable(clipIdsOf(m_selection->ids())));
     if (ids.isEmpty() && cues.isEmpty()) return;
-    m_project->edit(T("Löschen mit Ripple"), [&](Timeline& tl) {
+    m_project->edit(T("Löschen mit Nachrücken"), [&](Timeline& tl) {
         removeCues(tl, cues); // subtitles: without ripple (gap stays)
         if (ids.isEmpty()) return;
         TimelineOps::detachTransitions(tl, ids);

@@ -20,17 +20,29 @@ jobs:
             qt6-base-dev qt6-base-private-dev \
             libavformat-dev libavcodec-dev libswresample-dev libswscale-dev libavutil-dev libminiaudio-dev \
             libavfilter-dev qt6-shader-baker \
-            ffmpeg xvfb xauth locales
+            ffmpeg xvfb xauth locales ccache
           # Locale-aware sorting and German number format are tested; default "C" locale breaks them
           sed -i 's/^# *de_DE.UTF-8/de_DE.UTF-8/' /etc/locale.gen
           locale-gen
       - uses: actions/checkout@v5
+      # ccache between runs: only the files changed since the last run are compiled again (CMakeLists.txt uses ccache
+      # when it is installed). A new key each run, restored from the newest one before
+      - name: Compiler cache
+        uses: actions/cache@v4
+        with:
+          path: .ccache
+          key: ccache-linux-${{ github.run_id }}
+          restore-keys: ccache-linux-
       - name: Configure
         run: cmake -S . -B build -G Ninja -DSCHNEIDI_TESTS=ON
       - name: Build
-        run: cmake --build build
+        # $PWD, not github.workspace: in a container job that expression is the host's path
+        run: |
+          export CCACHE_DIR="$PWD/.ccache" CCACHE_BASEDIR="$PWD" CCACHE_MAXSIZE=1500M
+          cmake --build build
+          ccache --show-stats
       - name: Test
-        # Widget tests and fonts need an X server
+        # Widget tests and fonts need an X server (-j4 was no faster: the heavy tests encode with several threads themselves)
         env:
           LANG: de_DE.UTF-8
         run: xvfb-run -a ctest --test-dir build --output-on-failure -j2
@@ -46,9 +58,21 @@ jobs:
           apt-get update
           apt-get install -y --no-install-recommends \
             build-essential cmake ninja-build pkg-config git ca-certificates qt6-base-dev \
-            libavformat-dev libavcodec-dev libswresample-dev libswscale-dev libavutil-dev libminiaudio-dev
+            libavformat-dev libavcodec-dev libswresample-dev libswscale-dev libavutil-dev libminiaudio-dev ccache
       - uses: actions/checkout@v5
+      # ccache between runs: only the files changed since the last run are compiled again (CMakeLists.txt uses ccache
+      # when it is installed). A new key each run, restored from the newest one before
+      - name: Compiler cache
+        uses: actions/cache@v4
+        with:
+          path: .ccache
+          key: ccache-no-rhi-${{ github.run_id }}
+          restore-keys: ccache-no-rhi-
       - name: Configure
         run: cmake -S . -B build -G Ninja -DSCHNEIDI_RHI=OFF
       - name: Build
-        run: cmake --build build
+        # $PWD, not github.workspace: in a container job that expression is the host's path
+        run: |
+          export CCACHE_DIR="$PWD/.ccache" CCACHE_BASEDIR="$PWD" CCACHE_MAXSIZE=1500M
+          cmake --build build
+          ccache --show-stats

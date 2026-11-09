@@ -736,7 +736,7 @@ QString AiChat::toolLine(const QString& tool, const QJsonObject& args)
         {"new", N_("Legt ein Projekt an")},             {"import", N_("Importiert")},
         {"backups", N_("Sieht sich die Sicherungen an")}, {"restore", N_("Stellt einen gesicherten Stand her")},
         {"templates", N_("Sieht sich die Startvorlagen an")},
-        {"watch", N_("Sieht in überwachten Ordnern nach")}, {"brand", N_("Arbeitet mit dem Brand-Kit")},
+        {"watch", N_("Sieht in überwachten Ordnern nach")}, {"brand", N_("Arbeitet mit dem Branding")},
     };
     QString line;
     const QString plan = args["plan_id"].toString().trimmed();

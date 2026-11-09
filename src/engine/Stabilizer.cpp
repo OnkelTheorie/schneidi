@@ -231,7 +231,7 @@ QString Stabilizer::cacheDir()
 QString Stabilizer::unsupportedReason(const Clip& c)
 {
     if (c.isTitle()) return T("Titel lassen sich nicht stabilisieren.");
-    if (c.isCompound()) return T("Compound Clips lassen sich nicht stabilisieren.");
+    if (c.isCompound()) return T("Verbundclips lassen sich nicht stabilisieren.");
     if (c.isMulticam()) return T("Multicam-Clips lassen sich nicht stabilisieren.");
     if (c.mediaPath.isEmpty()) return T("Kein Medium.");
     if (c.freeze) return T("Standbilder lassen sich nicht stabilisieren.");

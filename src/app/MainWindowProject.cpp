@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // MainWindow: project file (new, open, save, autosave, backups, recent files, presets).
 #include "app/MainWindow.h"
+#include "app/SettingsDialog.h"
 
 #include "app/InputBindings.h"
 #include "app/Theme.h"
@@ -162,6 +163,7 @@ void MainWindow::checkProjectFile()
     QString error;
     if (!ProjectFile::load(m_projectPath, &data, &error)) return; // half written by a foreign program: wait for the next change
     data.playhead = m_timeline->view()->playhead(); // stay where the person is
+    data.views = savedViews(); // and see what they saw: a change from outside never moves the zoom (core rule)
     applyLoaded(std::move(data), m_projectPath, false);
 }
 
@@ -379,7 +381,7 @@ void MainWindow::saveEffectPreset()
     }
     if (!skipped.isEmpty())
         QMessageBox::information(this, T("Effekte als Preset speichern"),
-                                 T("Nicht im Preset (Color-Seite bzw. Plugin fehlt): %1").arg(skipped.join(", ")));
+                                 T("Nicht im Preset (Seite Farbe bzw. Plugin fehlt): %1").arg(skipped.join(", ")));
 }
 
 bool MainWindow::openProject(const QString& path)
@@ -439,7 +441,7 @@ bool MainWindow::applyLoaded(ProjectData data, const QString& path, bool ask)
                         T("%1 Effekt(e) sind nicht verfügbar und werden übersprungen:").arg(fx.size()),
                         QMessageBox::Ok, this);
         box.setInformativeText(fx.mid(0, 15).join('\n') + (fx.size() > 15 ? "\n…" : "") + "\n\n"
-                               + T("Sie bleiben mit ihren Werten im Projekt; der Inspector zeigt sie an."));
+                               + T("Sie bleiben mit ihren Werten im Projekt; der Inspektor zeigt sie an."));
         box.exec();
     }
 
@@ -459,8 +461,49 @@ bool MainWindow::applyLoaded(ProjectData data, const QString& path, bool ask)
     m_sourcePos.clear();
     m_engine->showTimeline(data.playhead);
     m_timeline->view()->setPlayhead(data.playhead);
+    restoreViews(data);
     setProjectPath(path);
     return true;
+}
+
+QVector<SavedView> MainWindow::savedViews() const
+{
+    QVector<SavedView> out;
+    const TimelineView* tv = m_timeline->view();
+    const auto add = [&](int seq, const ViewState& v, int playhead) {
+        out << SavedView{seq, v.pxPerFrame, v.leftFrame, v.scrollY, playhead};
+    };
+    add(m_project->currentSequence(), tv->view(), tv->playhead());
+    for (auto it = m_sequenceView.cbegin(); it != m_sequenceView.cend(); ++it)
+        if (it.key() != m_project->currentSequence() && m_project->sequence(it.key()))
+            add(it.key(), it.value(), m_sequencePos.value(it.key(), 0));
+    return out;
+}
+
+void MainWindow::restoreViews(const ProjectData& data)
+{
+    // The timelines as they were shown when saved (zoom, scroll, playhead); a file without that (older, made by the
+    // CLI): the whole timeline in view - opening is the user's step, edits later never touch the zoom
+    m_sequenceView.clear();
+    m_sequencePos.clear();
+    m_shownSequence = m_project->currentSequence();
+    TimelineView* tv = m_timeline->view();
+    bool shown = false;
+    for (const SavedView& v : data.views) {
+        ViewState s = tv->view();
+        s.pxPerFrame = v.pxPerFrame;
+        s.leftFrame = v.leftFrame;
+        s.scrollY = v.scrollY;
+        if (v.sequence == m_shownSequence) { // after the layout too: the scroll range needs the view's real height
+            QTimer::singleShot(0, tv, [tv, s] { tv->setZoomAndScroll(s.pxPerFrame, s.leftFrame, s.scrollY); });
+            shown = true;
+        } else {
+            m_sequenceView[v.sequence] = s;
+            m_sequencePos[v.sequence] = v.playhead;
+        }
+    }
+    if (!shown) // after the layout: the view's width is known then
+        QTimer::singleShot(0, tv, [tv] { tv->zoomToFit(); });
 }
 
 // Load a backup (like DaVinci "Project Backups"): opens as an untitled project so that it is never
@@ -490,12 +533,16 @@ bool MainWindow::save()
 
 bool MainWindow::saveAs()
 {
-    QString path = QFileDialog::getSaveFileName(
-        this, T("Projekt speichern unter"),
-        !m_projectPath.isEmpty()     ? m_projectPath
-        : !m_saveSuggestion.isEmpty() ? m_saveSuggestion
-                                      : QDir::home().filePath(T("Unbenannt.%1").arg(ProjectFile::Extension)),
-        fileFilter());
+    QString suggestion = !m_projectPath.isEmpty()     ? m_projectPath
+                         : !m_saveSuggestion.isEmpty() ? m_saveSuggestion
+                                                       : QDir::home().filePath(T("Unbenannt.%1").arg(ProjectFile::Extension));
+    // A new project and the user chose a folder of their own for projects (Settings): its name there
+    if (m_projectPath.isEmpty() && SettingsDialog::storedOwnFolder()) {
+        const QString folder = SettingsDialog::storedFolder();
+        QDir().mkpath(folder);
+        suggestion = QDir(folder).filePath(QFileInfo(suggestion).fileName());
+    }
+    QString path = QFileDialog::getSaveFileName(this, T("Projekt speichern unter"), suggestion, fileFilter());
     if (path.isEmpty()) return false;
     if (QFileInfo(path).suffix() != ProjectFile::Extension) path += QString(".%1").arg(ProjectFile::Extension);
     return saveTo(path);
@@ -505,6 +552,7 @@ bool MainWindow::saveTo(const QString& path)
 {
     ProjectData data = m_project->data();
     data.playhead = m_timeline->view()->playhead();
+    data.views = savedViews();
     QString error;
     // schneidi-cli may be writing the same file right now: wait for it (it takes milliseconds)
     const std::unique_ptr<QLockFile> lock = ProjectFile::lock(path);
@@ -534,6 +582,7 @@ void MainWindow::autosave()
     if (!m_project->isModified()) return;
     ProjectData data = m_project->data();
     data.playhead = m_timeline->view()->playhead();
+    data.views = savedViews();
     QDir().mkpath(QFileInfo(autosavePath()).absolutePath());
     if (const QString path = autosavePath(); ProjectFile::save(data, path, nullptr))
         QSettings().setValue(autosaveKey(), m_projectPath); // where the backup belongs

@@ -530,7 +530,7 @@ void opBestTakes(Session& s, const QJsonObject& op)
         s.notes << "best_takes: no sentence was said twice in a row - nothing cut";
         return;
     }
-    s.editor.deleteRanges(cut, true, T("Beste Takes behalten"));
+    s.editor.deleteRanges(cut, true, T("Beste Aufnahmen behalten"));
     s.notes << QJsonObject{{"best_takes", out}};
 }
 

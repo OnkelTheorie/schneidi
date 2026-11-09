@@ -172,16 +172,16 @@ ColorPanel::ColorPanel(Editor* editor, QWidget* parent) : QWidget(parent), m_edi
     setObjectName("Panel");
     using P = AnimParam;
     m_wheels = {
-        {N_("Lift"), {P::GradeLiftY, P::GradeLiftR, P::GradeLiftG, P::GradeLiftB}, 0.0, 0.25},
-        {N_("Gamma"), {P::GradeGammaY, P::GradeGammaR, P::GradeGammaG, P::GradeGammaB}, 0.0, 0.25},
-        {N_("Gain"), {P::GradeGainY, P::GradeGainR, P::GradeGainG, P::GradeGainB}, 1.0, 0.5},
-        {N_("Offset"), {P::GradeOffsetY, P::GradeOffsetR, P::GradeOffsetG, P::GradeOffsetB}, 25.0, 25.0},
+        {N_("Tiefen"), {P::GradeLiftY, P::GradeLiftR, P::GradeLiftG, P::GradeLiftB}, 0.0, 0.25},
+        {N_("Mitten"), {P::GradeGammaY, P::GradeGammaR, P::GradeGammaG, P::GradeGammaB}, 0.0, 0.25},
+        {N_("Lichter"), {P::GradeGainY, P::GradeGainR, P::GradeGainG, P::GradeGainB}, 1.0, 0.5},
+        {N_("Versatz"), {P::GradeOffsetY, P::GradeOffsetR, P::GradeOffsetG, P::GradeOffsetB}, 25.0, 25.0},
     };
 
     m_overlay = new WindowOverlay(m_editor, [this] { return targets(); }, this);
 
     // Header row: title, clip name, on/off, keyframes, reset all
-    auto* title = new QLabel(T("Primaries – Farbräder"));
+    auto* title = new QLabel(T("Grundkorrektur – Farbräder"));
     title->setObjectName("PanelTitle");
     m_title = title;
     m_clipName = new QLabel;
@@ -241,7 +241,7 @@ ColorPanel::ColorPanel(Editor* editor, QWidget* parent) : QWidget(parent), m_edi
     // Sliders below the wheels (like the bar under the DaVinci wheels), two under each wheel, the LUT under Offset
     m_sliders = {{P::GradeContrast}, {P::GradePivot}, {P::GradeSaturation},
                  {P::GradeTemp},     {P::GradeTint},  {P::GradeExposure}};
-    const QString sliderNames[] = {T("Kontrast"), T("Pivot"), T("Sättigung"), T("Temperatur"), T("Tönung"), T("Belichtung")};
+    const QString sliderNames[] = {T("Kontrast"), T("Mittelpunkt"), T("Sättigung"), T("Temperatur"), T("Tönung"), T("Belichtung")};
     const double ranges[][4] = {{0, 2, 0.002, 3}, {0, 1, 0.001, 3}, {0, 100, 0.1, 2},
                                 {-4000, 4000, 5, 1}, {-100, 100, 0.1, 2}, {-4, 4, 0.01, 2}};
 
@@ -308,7 +308,7 @@ ColorPanel::ColorPanel(Editor* editor, QWidget* parent) : QWidget(parent), m_edi
     outer->addWidget(line);
     outer->addWidget(buildWindows());
 
-    m_empty = new QLabel(T("Kein Videoclip ausgewählt oder am Playhead"));
+    m_empty = new QLabel(T("Kein Videoclip ausgewählt oder am Abspielkopf"));
     m_empty->setAlignment(Qt::AlignCenter);
     m_empty->setStyleSheet(QString("color: %1;").arg(Theme::textDim.name()));
 
@@ -748,10 +748,10 @@ QWidget* ColorPanel::buildWindows()
     // Tracker like DaVinci's window tracker (position): from the playhead backwards / forwards
     m_trackBack = new QToolButton;
     m_trackBack->setText(T("◀ Verfolgen"));
-    m_trackBack->setToolTip(T("Fenster folgt dem Objekt darunter, vom Playhead rückwärts zum Clipanfang"));
+    m_trackBack->setToolTip(T("Fenster folgt dem Objekt darunter, vom Abspielkopf rückwärts zum Clipanfang"));
     m_trackForward = new QToolButton;
     m_trackForward->setText(T("Verfolgen ▶"));
-    m_trackForward->setToolTip(T("Fenster folgt dem Objekt darunter, vom Playhead vorwärts zum Clipende"));
+    m_trackForward->setToolTip(T("Fenster folgt dem Objekt darunter, vom Abspielkopf vorwärts zum Clipende"));
     m_trackStop = smallButton("■", T("Verfolgen anhalten"));
     for (QToolButton* b : {m_trackBack, m_trackForward}) b->setFocusPolicy(Qt::NoFocus);
     connect(m_trackBack, &QToolButton::clicked, this, [this] { startTracking(false); });
@@ -787,7 +787,7 @@ QWidget* ColorPanel::buildWindows()
     lay->addWidget(m_windowControls);
 
     auto* hint = new QLabel(T("Ein Fenster begrenzt Räder und Regler auf einen Bildteil, die Füllung verdeckt ihn. "
-                              "Im Viewer ziehen: verschieben, Griffe = Größe, oberer Punkt = drehen."));
+                              "In der Vorschau ziehen: verschieben, Griffe = Größe, oberer Punkt = drehen."));
     hint->setWordWrap(true);
     hint->setStyleSheet(dim + " font-size: 8pt;");
     hint->setObjectName("WindowHint");
@@ -825,7 +825,7 @@ void ColorPanel::refreshWindows(const Clip* c, int t)
     }
     m_addRect->setEnabled(GradeWindows::freeNumber(*c) != 0);
     m_addEllipse->setEnabled(GradeWindows::freeNumber(*c) != 0);
-    m_title->setText(m_layer > 0 ? T("Primaries – Fenster %1").arg(m_layer) : T("Primaries – Farbräder"));
+    m_title->setText(m_layer > 0 ? T("Grundkorrektur – Fenster %1").arg(m_layer) : T("Grundkorrektur – Farbräder"));
     m_windowControls->setVisible(m_layer > 0);
     if (QLabel* hint = findChild<QLabel*>("WindowHint")) hint->setVisible(m_layer == 0);
     m_overlay->setTarget(c->id, m_layer, m_playhead);

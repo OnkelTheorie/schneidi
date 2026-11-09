@@ -42,11 +42,11 @@ PasteAttributesDialog::PasteAttributesDialog(int available, const QString& sourc
                                           {Editor::AttrCrop, T("Beschneiden")},
                                           {Editor::AttrComposite, T("Deckkraft")},
                                           {Editor::AttrEffects, T("Effekte")},
-                                          {Editor::AttrColor, T("Farbkorrektur (Color)")}}));
+                                          {Editor::AttrColor, T("Farbkorrektur")}}));
     columns->addWidget(group(T("Audio"), {{Editor::AttrVolume, T("Lautstärke")}, {Editor::AttrPan, T("Panorama")},
                                           {Editor::AttrAudioEffects, T("Effekte")}}));
     columns->addWidget(group(T("Allgemein"), {{Editor::AttrSpeed, T("Geschwindigkeit")},
-                                              {Editor::AttrFades, T("Ein-/Ausblenden (Fades)")}}));
+                                              {Editor::AttrFades, T("Ein-/Ausblenden")}}));
     layout->addLayout(columns);
     layout->addWidget(new QLabel(T("Keyframes werden mit übernommen (gleiche Zeitpunkte).")));
 

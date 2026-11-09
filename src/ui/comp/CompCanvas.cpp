@@ -17,6 +17,8 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <QUndoStack>
+#include <QHelpEvent>
+#include <QToolTip>
 #include <QVBoxLayout>
 #include <QWheelEvent>
 #include <algorithm>
@@ -57,7 +59,9 @@ CompNodeSearch::CompNodeSearch(QWidget* parent) : QWidget(parent, Qt::Popup)
         item->setToolTip(k.description);
         m_list->addItem(item);
     }
-    resize(240, 300);
+    // Its size follows the content: 232 px wide, the list as tall as its hits (filter())
+    lay->setSizeConstraint(QLayout::SetFixedSize);
+    m_list->setFixedWidth(232);
     connect(m_field, &QLineEdit::textChanged, this, &CompNodeSearch::filter);
     connect(m_field, &QLineEdit::returnPressed, this, &CompNodeSearch::choose);
     connect(m_list, &QListWidget::itemActivated, this, &CompNodeSearch::choose);
@@ -77,6 +81,13 @@ void CompNodeSearch::filter(const QString& text)
         if (show && !first) first = it;
     }
     m_list->setCurrentItem(first);
+    // As tall as its hits (up to 12 rows): one hit is a small box, not a tall empty list
+    int shown = 0;
+    for (int i = 0; i < m_list->count(); ++i) shown += !m_list->item(i)->isHidden();
+    const int row = std::max(16, m_list->sizeHintForRow(0));
+    const int list = std::clamp(shown, 1, 12) * row + 2 * m_list->frameWidth() + 2;
+    m_list->setFixedHeight(list);
+    layout()->activate(); // the fixed size constraint resizes the popup now, not on the next event round
 }
 
 void CompNodeSearch::choose()
@@ -274,7 +285,14 @@ void CompCanvas::openSearch()
     }
     m_search->field()->clear();
     const QPoint at = rect().contains(m_mouse.toPoint()) ? m_mouse.toPoint() : rect().center();
-    m_search->move(mapToGlobal(at));
+    // Inside the graph area: near the bottom it opens upward, near the right edge to the left (it ran over the page
+    // tabs below the graph)
+    const QSize s = m_search->size();
+    QPoint g = mapToGlobal(at);
+    const QRect area(mapToGlobal(QPoint(0, 0)), size());
+    if (g.y() + s.height() > area.bottom()) g.setY(std::max(area.top(), g.y() - s.height()));
+    if (g.x() + s.width() > area.right()) g.setX(std::max(area.left(), g.x() - s.width()));
+    m_search->move(g);
     m_search->show();
     m_search->field()->setFocus();
 }
@@ -290,7 +308,9 @@ void CompCanvas::addNode(const QString& type)
     const CompNode* f = m_graph.node(from);
     const PC::NodeType* fk = f ? PC::find(f->type) : nullptr;
     const bool maskBehindPicture = k && k->output == PC::Buf::Mask && (!fk || fk->output != PC::Buf::Mask);
-    const QString input = inputs.isEmpty() || (maskBehindPicture && !m_graph.isEmpty()) ? QString() : inputs.first();
+    const QString input = inputs.isEmpty() || (maskBehindPicture && !m_graph.isEmpty()) || !CompUi::autoLink()
+                              ? QString()
+                              : inputs.first();
     // Its place: right of `from` in a chain, left below it when only added (it mostly feeds `from`: a merge's fg);
     // further down while that is taken. Placed in the same undo step (an unplaced graph gets every shown place, as a
     // node drag does)
@@ -426,7 +446,9 @@ void CompCanvas::paintEvent(QPaintEvent*)
             p.setBrush(linked ? Theme::secondary : Theme::controlOff);
             p.drawEllipse(pt, kPort * z, kPort * z);
             p.setPen(Theme::textDim);
-            p.drawText(QRectF(pt.x() + 9 * z, pt.y() - kRow * z / 2, r.width() / 2, kRow * z), Qt::AlignVCenter, in);
+            const QRectF label(pt.x() + 9 * z, pt.y() - kRow * z / 2, r.width() * (out ? 0.55 : 0.85), kRow * z);
+            p.drawText(label, Qt::AlignVCenter,
+                       QFontMetrics(small).elidedText(CompUi::portLabel(in), Qt::ElideRight, int(label.width())));
         }
         // What the node does (its key value), in the last row
         if (const Clip* c = clipPtr) {
@@ -582,6 +604,20 @@ bool isSearchKey(const QKeyEvent* k)
 
 bool CompCanvas::event(QEvent* e)
 {
+    // Tooltips: what a port is for, what a node does (else the canvas' own tooltip: the keys)
+    if (e->type() == QEvent::ToolTip) {
+        const auto* h = static_cast<QHelpEvent*>(e);
+        QString input, text;
+        if (inputAt(h->pos(), &input)) text = CompUi::portHelp(input);
+        else if (outputAt(h->pos())) text = T("Ausgang des Knotens: von hier zum Eingang eines anderen Knotens ziehen");
+        else if (const int id = nodeAt(h->pos()))
+            if (const CompNode* n = m_graph.node(id))
+                if (const PC::NodeType* k = PC::find(n->type)) text = k->description;
+        if (!text.isEmpty()) {
+            QToolTip::showText(h->globalPos(), text, this);
+            return true;
+        }
+    }
     if (e->type() == QEvent::ShortcutOverride) {
         const auto* k = static_cast<QKeyEvent*>(e);
         const bool ctrlD = k->key() == Qt::Key_D && (k->modifiers() & Qt::ControlModifier);
@@ -623,7 +659,7 @@ void CompCanvas::contextMenuEvent(QContextMenuEvent* e)
     const int node = nodeAt(e->pos());
     if (node) {
         setSelected(node);
-        connect(menu.addAction(T("Im Viewer zeigen")), &QAction::triggered, this, [this, node] { emit showRequested(node); });
+        connect(menu.addAction(T("In der Vorschau zeigen")), &QAction::triggered, this, [this, node] { emit showRequested(node); });
         QAction* out = menu.addAction(T("Als Ausgang setzen"));
         out->setEnabled(node != m_graph.out);
         connect(out, &QAction::triggered, this, [this, node] { setOut(node); });

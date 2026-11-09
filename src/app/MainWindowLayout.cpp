@@ -187,12 +187,12 @@ QWidget* MainWindow::buildTopBar()
         });
         return b;
     };
-    m_poolToggle = makeToggle("▦ " + T("Media Pool"), "mediaPool", true, m_mediaPool);
-    m_effectsToggle = makeToggle("✦ " + T("Effects"), "effects", false, m_effects);
-    m_storageToggle = makeToggle("▤ " + T("Media Storage"), "mediaStorage", false, m_storage);
-    m_storageToggle->setToolTip(T("Ordner durchsuchen und Clips direkt in Media Pool/Timeline ziehen"));
-    m_inspectorToggle = makeToggle("☰ " + T("Inspector"), "inspector", true, m_inspector);
-    m_mixerToggle = makeToggle("▥ " + T("Mixer"), "mixer", false, m_mixer);
+    m_poolToggle = makeToggle("▦ " + T("Medienpool"), "mediaPool", true, m_mediaPool);
+    m_effectsToggle = makeToggle("✦ " + T("Effekte"), "effects", false, m_effects);
+    m_storageToggle = makeToggle("▤ " + T("Dateibrowser"), "mediaStorage", false, m_storage);
+    m_storageToggle->setToolTip(T("Ordner durchsuchen und Clips direkt in Medienpool/Timeline ziehen"));
+    m_inspectorToggle = makeToggle("☰ " + T("Inspektor"), "inspector", true, m_inspector);
+    m_mixerToggle = makeToggle("▥ " + T("Mischpult"), "mixer", false, m_mixer);
     m_transcriptToggle = makeToggle("¶ " + T("Transkript"), "transcript", false, m_transcript);
     m_transcriptToggle->setToolTip(T("Gesprochenen Text der Tonclips zeigen; Wörter löschen schneidet die Timeline"));
     m_chatToggle = makeToggle("✧ " + T("KI"), "aiChat", false, m_chatPanel);
@@ -249,11 +249,11 @@ QWidget* MainWindow::buildPageBar()
 
     m_pageButtons = new QButtonGroup(this);
     const struct { const char* icon; const char* name; Page page; } pages[] = {
-        {"▤", N_("Media"), Page::Media},
-        {"✂", N_("Edit"), Page::Edit},
-        {"◇", N_("Comp"), Page::Comp},
-        {"◐", N_("Color"), Page::Color},
-        {"⇪", N_("Deliver"), Page::Deliver},
+        {"▤", N_("Medien"), Page::Media},
+        {"✂", N_("Schneiden"), Page::Edit},
+        {"◇", N_("Compositing"), Page::Comp},
+        {"◐", N_("Farbe"), Page::Color},
+        {"⇪", N_("Export"), Page::Deliver},
     };
     for (const auto& pg : pages) {
         auto* b = new QToolButton;
@@ -320,6 +320,7 @@ void MainWindow::showPage(Page page)
         m_pages->setCurrentWidget(m_deliverPage);
         break;
     case Page::Color:
+        if (before != Page::Color) playheadInto(selectedVideoClip()); // the viewer shows the clip being graded
         m_colorPage->insertWidget(0, m_viewer);
         m_colorPage->insertWidget(1, m_timeline);
         m_colorPage->setStretchFactor(0, 1);
@@ -329,9 +330,11 @@ void MainWindow::showPage(Page page)
     case Page::Comp:
         // Built on the first showing; the selected video clip is opened (openComp sets its own after this)
         ensureCompPage();
-        if (before != Page::Comp) // the clip under the playhead (a selected one there first)
+        if (before != Page::Comp) { // the selected clip (the playhead goes into it), else the one under the playhead
+            playheadInto(selectedVideoClip());
             if (const int id = compClipAt(m_timeline->view()->playhead()); id && id != m_compPage->clip())
                 m_compPage->setClip(id);
+        }
         m_compPage->top()->insertWidget(0, m_viewer);
         applySizes(m_compPage->top(), {500, 420});
         m_compPage->main()->setStretchFactor(0, 1);
@@ -421,7 +424,18 @@ void MainWindow::setViewerLarge(bool on)
             for (const QPointer<QWidget>& w : was.hidden)
                 if (w) w->show();
             // Scroll positions too: a panel laid out at another size on the way back loses them (the Inspector)
-            auto restore = [sizes = was.sizes, scrolls = was.scrolls] {
+            // Outer splitters first: an inner one restored before its parent has its width back scales its sizes to
+            // the width it has then and loses pixels to rounding
+            auto depth = [](QWidget* w) {
+                int d = 0;
+                for (; w; w = w->parentWidget()) ++d;
+                return d;
+            };
+            auto sizes = was.sizes;
+            std::stable_sort(sizes.begin(), sizes.end(), [&depth](const auto& a, const auto& b) {
+                return depth(a.first) < depth(b.first);
+            });
+            auto restore = [sizes, scrolls = was.scrolls] {
                 for (const auto& [splitter, list] : sizes)
                     if (splitter) splitter->setSizes(list);
                 for (const auto& [bar, value] : scrolls)
@@ -444,12 +458,16 @@ void MainWindow::setViewerLarge(bool on)
                 for (QWidget* w = k->parentWidget(); w && w != this; w = w->parentWidget())
                     if (auto* s = qobject_cast<QSplitter*>(w); s && !splitters.contains(s)) splitters << s;
             m_large.active = true;
+            // Every splitter's sizes before any of them changes: giving an outer splitter's room to the viewer's side
+            // widens the inner ones at once (the timeline's splitter beside the mixer), their sizes then are not the
+            // ones to come back to
+            QHash<QSplitter*, QList<int>> original;
+            for (QSplitter* s : splitters) original.insert(s, s->sizes());
             QSize viewer = m_viewer->size(); // its size once the room is given (the layout follows later)
             QSplitter* shared = nullptr;     // the splitter with the viewer above the timeline
             int viewerAt = -1, timelineAt = -1;
             for (QSplitter* s : splitters) {
-                const QList<int> before = s->sizes();
-                QList<int> after = before;
+                QList<int> after = s->sizes();
                 int freed = 0, gainer = -1, timelineIndex = -1;
                 for (int i = 0; i < s->count(); ++i) {
                     QWidget* w = s->widget(i);
@@ -467,7 +485,7 @@ void MainWindow::setViewerLarge(bool on)
                     std::tie(shared, viewerAt, timelineAt) = std::tuple(s, gainer, timelineIndex);
                 if (gainer < 0) gainer = timelineIndex;
                 if (freed == 0 || gainer < 0) continue;
-                m_large.sizes.append({s, before});
+                m_large.sizes.append({s, original.value(s)});
                 after[gainer] += freed;
                 s->setSizes(after);
                 if (s->widget(gainer)->isAncestorOf(m_viewer) || s->widget(gainer) == m_viewer)
@@ -485,7 +503,7 @@ void MainWindow::setViewerLarge(bool on)
                 if (take > 0) {
                     if (std::none_of(m_large.sizes.begin(), m_large.sizes.end(),
                                      [shared](const auto& entry) { return entry.first == shared; }))
-                        m_large.sizes.append({shared, sizes});
+                        m_large.sizes.append({shared, original.value(shared)});
                     sizes[timelineAt] -= take;
                     sizes[viewerAt] += take;
                     shared->setSizes(sizes);

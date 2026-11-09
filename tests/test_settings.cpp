@@ -20,11 +20,13 @@
 #include <QApplication>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QDir>
 #include <QDoubleSpinBox>
 #include <QElapsedTimer>
 #include <QFormLayout>
 #include <QGroupBox>
 #include <QJsonObject>
+#include <QLineEdit>
 #include <QLabel>
 #include <QPushButton>
 #include <QSpinBox>
@@ -198,6 +200,40 @@ void testBackgroundThreads()
     QSettings().remove("performance");
 }
 
+// Projects folder: off by default (next to the footage); on = the chosen folder, shown again next time
+void testProjectFolder()
+{
+    QSettings().remove("project");
+    CHECK(!SettingsDialog::storedOwnFolder());
+    CHECK(SettingsDialog::storedFolder().endsWith("schneidi"));
+    {
+        SettingsDialog dlg(AiSettings{});
+        auto* own = dlg.findChild<QCheckBox*>("project_own_folder");
+        auto* folder = dlg.findChild<QLineEdit*>("project_folder");
+        if (CHECK(own && folder)) {
+            CHECK(!own->isChecked() && !folder->isEnabled());
+            own->setChecked(true);
+            CHECK(folder->isEnabled());
+            folder->setText("/tmp/meine-projekte");
+            CHECK(dlg.ownProjectFolder());
+            SettingsDialog::store(dlg.ownProjectFolder(), dlg.projectFolder());
+        }
+    }
+    CHECK(SettingsDialog::storedOwnFolder());
+    CHECK_EQ(SettingsDialog::storedFolder(), QDir::fromNativeSeparators(QDir::toNativeSeparators("/tmp/meine-projekte")));
+    CHECK(SettingsDialog(AiSettings{}).findChild<QCheckBox*>("project_own_folder")->isChecked());
+    QSettings().remove("project");
+    // Compositing: new nodes linked at once, on by default
+    QSettings().remove("comp");
+    SettingsDialog dlg(AiSettings{});
+    auto* link = dlg.findChild<QCheckBox*>("comp_auto_link");
+    if (CHECK(link)) {
+        CHECK(link->isChecked() && dlg.autoLinkNodes());
+        link->setChecked(false);
+        CHECK(!dlg.autoLinkNodes());
+    }
+}
+
 void testMainWindow()
 {
     QSettings().remove("ai");
@@ -287,6 +323,7 @@ int main(int argc, char** argv)
     testSettings();
     testDialog();
     testBackgroundThreads();
+    testProjectFolder();
     testMainWindow();
     return Check::result();
 }

@@ -645,15 +645,15 @@ void Inspector::arrangeEffectSections()
     m_gradeRow->setVisible(grade);
     if (grade) {
         const QString lut = ColorGrade::lutPath(*c);
-        m_gradeText->setText(T("Farbkorrektur der Color-Seite") +
+        m_gradeText->setText(T("Farbkorrektur der Seite Farbe") +
                              (lut.isEmpty() ? QString() : "\n" + T("LUT: %1").arg(QFileInfo(lut).completeBaseName())));
     }
     CompGraph graph;
     const EffectInstance* comp = c ? EffectRegistry::instance(*c, Comp::kEffectId) : nullptr;
     m_compRow->setVisible(comp != nullptr);
     if (comp)
-        m_compText->setText(Comp::graphOf(*comp, &graph) ? T("Comp: %1 Knoten").arg(graph.nodes.size())
-                                                         : T("Comp: Graph nicht lesbar"));
+        m_compText->setText(Comp::graphOf(*comp, &graph) ? T("Compositing: %1 Knoten").arg(graph.nodes.size())
+                                                         : T("Compositing: Graph nicht lesbar"));
     for (TrackKind kind : {TrackKind::Video, TrackKind::Audio}) {
         const bool video = kind == TrackKind::Video;
         QVBoxLayout* lay = video ? m_fxLay : m_audioFxLay;

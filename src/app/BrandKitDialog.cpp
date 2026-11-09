@@ -34,7 +34,7 @@ BrandKitDialog::BrandKitDialog(const BrandKit& global, const std::optional<Brand
     : QDialog(parent), m_global(global.clamped()), m_project(project ? project->clamped() : global.clamped()),
       m_projectOnly(project.has_value()), m_hadOwn(project.has_value())
 {
-    setWindowTitle(T("Brand-Kit"));
+    setWindowTitle(T("Branding"));
     auto* layout = new QVBoxLayout(this);
 
     // Which kit: the global one (all projects) or this project's own
@@ -136,8 +136,8 @@ BrandKitDialog::BrandKitDialog(const BrandKit& global, const std::optional<Brand
     fileRow(clips, 1, "outro", T("Outro"));
     layout->addWidget(clipBox);
 
-    auto* note = new QLabel(T("Titel, deren Farbe oder Schrift auf das Brand-Kit verweist (Inspector), übernehmen "
-                              "Änderungen. Logo und Intro/Outro fügt Workspace › Brand-Kit in die Timeline ein."));
+    auto* note = new QLabel(T("Titel, deren Farbe oder Schrift auf das Branding verweist (Inspektor), übernehmen "
+                              "Änderungen. Logo und Intro/Outro fügt Arbeitsbereich › Branding in die Timeline ein."));
     note->setWordWrap(true);
     note->setStyleSheet(QString("color: %1;").arg(Theme::textDim.name()));
     layout->addWidget(note);
@@ -215,9 +215,9 @@ void BrandKitDialog::load()
     const BrandKit& k = kit();
     m_globalButton->setChecked(!m_projectOnly);
     m_projectButton->setChecked(m_projectOnly);
-    m_scopeHint->setText(m_projectOnly ? T("Dieses Projekt hat ein eigenes Brand-Kit. „Global“ verwendet wieder das "
+    m_scopeHint->setText(m_projectOnly ? T("Dieses Projekt hat ein eigenes Branding. „Global“ verwendet wieder das "
                                            "globale.")
-                                       : T("Gilt für alle Projekte ohne eigenes Brand-Kit."));
+                                       : T("Gilt für alle Projekte ohne eigenes Branding."));
     for (const auto& [which, path] : {std::pair{QString("logo"), k.logo}, std::pair{QString("intro"), k.intro},
                                       std::pair{QString("outro"), k.outro}}) {
         QLabel* l = m_files.value(which);

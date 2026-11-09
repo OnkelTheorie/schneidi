@@ -47,7 +47,7 @@ using namespace InspectorDetail;
 Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_editor(editor)
 {
     setObjectName("Panel");
-    auto* title = new QLabel(T("Inspector"));
+    auto* title = new QLabel(T("Inspektor"));
     title->setObjectName("PanelTitle");
 
     m_empty = new QLabel(T("Kein Clip ausgewählt"));
@@ -297,7 +297,7 @@ Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
     };
 
     // ---- Composite ----
-    Section comp = addSection(videoLay, V, T("Composite"), [](Clip& c) {
+    Section comp = addSection(videoLay, V, T("Überlagerung"), [](Clip& c) {
         c.transform.opacity = 100;
         c.transform.compositeOn = true;
         Keys::clear(c, AnimParam::Opacity);
@@ -331,7 +331,7 @@ Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
     };
 
     // ---- Green Screen (effect from the EffectRegistry) ----
-    Section key = addSection(videoLay, V, T("Green Screen"), [](Clip& c) {
+    Section key = addSection(videoLay, V, T("Greenscreen"), [](Clip& c) {
         c.effects.removeIf([](const EffectInstance& x) { return x.effectId == "chromakey"; });
     }, [](Clip& c) -> bool& { return ensureEffect(c, "chromakey").enabled; });
     auto* swatch = new QToolButton;
@@ -350,7 +350,7 @@ Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
     m_keyPipette->setObjectName("KeyPipette");
     m_keyPipette->setFixedSize(26, 18);
     m_keyPipette->setIcon(pipetteIcon());
-    m_keyPipette->setToolTip(T("Key-Farbe mit der Pipette aus dem Bild im Viewer picken"));
+    m_keyPipette->setToolTip(T("Key-Farbe mit der Pipette aus dem Bild in der Vorschau picken"));
     connect(m_keyPipette, &QToolButton::toggled, this, [this](bool on) {
         const Clip* c = primary(TrackKind::Video);
         if (on && c) emit keyPickRequested(c->id);
@@ -430,7 +430,7 @@ Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
     auto* compOpen = new QPushButton(T("Öffnen"));
     compOpen->setObjectName("inspector_comp_open");
     compOpen->setFocusPolicy(Qt::NoFocus);
-    compOpen->setToolTip(T("Den Graphen auf der Comp-Seite bearbeiten"));
+    compOpen->setToolTip(T("Den Graphen auf der Seite Compositing bearbeiten"));
     connect(compOpen, &QPushButton::clicked, this, [this] {
         if (const Clip* c = primary(TrackKind::Video)) emit compOpenRequested(c->id);
     });

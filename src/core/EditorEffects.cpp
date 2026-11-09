@@ -401,6 +401,9 @@ bool Editor::trackCompNode(int clipId, int node, const QVector<Comp::TrackPoint>
         EffectInstance* inst = EffectRegistry::instance(c, Comp::kEffectId);
         const QString rx = CompGraph::paramKey(node, Comp::kRefKeys[0]), ry = CompGraph::paramKey(node, Comp::kRefKeys[1]);
         double scale0 = oldScale, angle0 = oldAngle;
+        // One point has no size or turn: an earlier two-point or face run's must not carry over (scaled followers 15x)
+        if (inst && inst->params.value(CompGraph::paramKey(node, QStringLiteral("mode"))).toString() == QLatin1String("point"))
+            scale0 = 1, angle0 = 0;
         if (inst && (Keys::keyTimes(c, {params[0]}).isEmpty() || !inst->params.contains(rx) || !inst->params.contains(ry))) {
             inst->params[rx] = points.first().x;
             inst->params[ry] = points.first().y;

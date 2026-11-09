@@ -138,11 +138,11 @@ TimelinePanel::TimelinePanel(Editor* editor, QWidget* parent) : QWidget(parent),
         return b;
     };
     auto* selectBtn = makeTool(Icon::Select, T("Auswahl-Werkzeug (A)"));
-    auto* trimBtn = makeTool(Icon::Trim, T("Trim-Modus (T): Kante = Ripple, Schnitt = Roll, Clip = Slip, Titelleiste = Slide"));
-    auto* slipBtn = makeTool(Icon::Slip, T("Slip-Werkzeug: Clip ziehen verschiebt seinen Inhalt, Lage und Länge bleiben"));
-    auto* slideBtn = makeTool(Icon::Slide, T("Slide-Werkzeug: Clip ziehen verschiebt ihn zwischen seinen Nachbarn"));
+    auto* trimBtn = makeTool(Icon::Trim, T("Trimmen-Modus (T): Kante = mit Nachrücken, Schnitt = Schnittpunkt verschieben, Clip = Inhalt verschieben, Titelleiste = Clip gleiten"));
+    auto* slipBtn = makeTool(Icon::Slip, T("Inhalt-Werkzeug: Clip ziehen verschiebt seinen Inhalt, Lage und Länge bleiben"));
+    auto* slideBtn = makeTool(Icon::Slide, T("Gleiten-Werkzeug: Clip ziehen verschiebt ihn zwischen seinen Nachbarn"));
     auto* bladeBtn = makeTool(Icon::Blade, T("Klingen-Werkzeug (B)"));
-    auto* snapBtn = makeTool(Icon::Snap, T("Snapping an/aus (N)"));
+    auto* snapBtn = makeTool(Icon::Snap, T("Einrasten an/aus (N)"));
     selectBtn->setChecked(true);
     snapBtn->setChecked(m_view->snapping());
 

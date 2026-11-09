@@ -9,6 +9,7 @@
 #include "app/DesignDialog.h"
 #include "app/KeyBindingsDialog.h"
 #include "app/SettingsDialog.h"
+#include "ui/comp/CompShared.h"
 #include "app/StartTemplatesPage.h"
 #include "app/Theme.h"
 #include "app/UpdateCheck.h"
@@ -54,6 +55,11 @@ void MainWindow::settingsDialog(int tab)
         QMessageBox::warning(this, T("Einstellungen"), T("Schlüssel nicht gespeichert: %1").arg(error));
     setAiSettings(dlg.aiSettings());
     if (dlg.updateHint() != UpdateCheck::enabled() && !m_autosaveDisabled) UpdateCheck::setEnabled(dlg.updateHint());
+    if (!m_autosaveDisabled
+        && (dlg.ownProjectFolder() != SettingsDialog::storedOwnFolder()
+            || (dlg.ownProjectFolder() && dlg.projectFolder() != SettingsDialog::storedFolder())))
+        SettingsDialog::store(dlg.ownProjectFolder(), dlg.projectFolder());
+    if (!m_autosaveDisabled && dlg.autoLinkNodes() != CompUi::autoLink()) CompUi::setAutoLink(dlg.autoLinkNodes());
     if (dlg.backgroundThreads() != Background::chosenThreads() && !m_autosaveDisabled)
         Background::setChosenThreads(dlg.backgroundThreads()); // takes effect with the next job
     // Language like from the menu (Workspace › Language): takes effect after a restart; test runs keep the setting
@@ -118,7 +124,7 @@ QWidget* MainWindow::buildUpdateBar()
         lay->addWidget(b);
         return b;
     };
-    QToolButton* now = button("update_now", T("Jetzt"), T("Release-Seite mit den Downloads öffnen"));
+    QToolButton* now = button("update_now", T("Jetzt"), T("Download-Seite öffnen"));
     now->setStyleSheet("QToolButton { font-weight: 600; }");
     QToolButton* later = button("update_later", T("Später"), T("Morgen wieder fragen"));
     QToolButton* never = button("update_never", T("Nicht mehr fragen"),

@@ -316,11 +316,25 @@ void CompInspector::rebuild(const Clip& c, const QStringList& keys)
             box->setSpacing(8);
             box->addWidget(slider, 1);
             box->addWidget(field);
+            if (key == QLatin1String("from") || key == QLatin1String("until")) { // the visible range: from the playhead
+                auto* here = new QToolButton;
+                here->setObjectName("comp_here_" + key);
+                here->setText(T("Hier"));
+                here->setToolTip(key == QLatin1String("from") ? T("Ab dem Abspielkopf sichtbar")
+                                                              : T("Bis zum Abspielkopf sichtbar"));
+                connect(here, &QToolButton::clicked, this, [this, key] {
+                    const Clip* cl = clip();
+                    if (!cl) return;
+                    const double fps = std::max(1, m_editor->project()->fps());
+                    set(key, std::round(CompUi::clipFrame(*cl, m_playhead) / fps * 100) / 100, false);
+                });
+                box->addWidget(here);
+            }
             auto* diamond = new QToolButton;
             diamond->setObjectName("comp_key_" + key);
             diamond->setAutoRaise(true);
             diamond->setFocusPolicy(Qt::NoFocus);
-            diamond->setToolTip(T("Keyframe am Playhead setzen/entfernen"));
+            diamond->setToolTip(T("Keyframe am Abspielkopf setzen/entfernen"));
             connect(diamond, &QToolButton::clicked, this, [this, key, field] {
                 const Clip* cl = clip();
                 if (!cl) return;
@@ -329,6 +343,9 @@ void CompInspector::rebuild(const Clip& c, const QStringList& keys)
             });
             m_grid->addWidget(both, row, 1);
             m_grid->addWidget(diamond, row, 2);
+            // The visible range is a time itself: no keyframes (one there would override the value the "Hier" sets)
+            if (key == QLatin1String("from") || key == QLatin1String("until") || key == QLatin1String("fade"))
+                diamond->setVisible(false);
             m_updates << [this, field, slider, diamond, node, key, kp, lo, hi](const Clip& cl) {
                 const PC::NodeType* kt = kp.get();
                 if (!kt) return;
@@ -493,7 +510,7 @@ int CompInspector::addAnalysisRow(int row, const QString& kind)
     m_analyzeButton->setObjectName("comp_analyze");
     m_analyzeButton->setToolTip(cutout ? T("Sucht die Person einmal im ganzen Clip (KI-Modell); danach stellt der "
                                            "Knoten sie in jedem Bild frei")
-                                       : T("Verfolgt die Startpunkte vom Playhead bis zum Clipende; das Ergebnis "
+                                       : T("Verfolgt die Startpunkte vom Abspielkopf bis zum Clipende; das Ergebnis "
                                            "sind Keyframes, denen andere Knoten folgen"));
     connect(m_analyzeButton, &QPushButton::clicked, this, [this] {
         if (m_job && m_job->clipId == m_clipId && m_job->node == m_node) cancelAnalysis();

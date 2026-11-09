@@ -51,6 +51,12 @@ inline QPointF impliedReference(const QString& mode, QPointF a, QPointF b)
 inline double followValue(const QString& key, const QString& mode, const std::function<bool(const QString&)>& has,
                           const std::function<double(const QString&)>& value)
 {
+    // One point follows a position only: size and turn stay as they are (keys an earlier two-point run left behind
+    // would otherwise scale the follower up to 15 times - text flew out of the picture)
+    if (mode == QLatin1String("point")) {
+        if (key == QLatin1String("scale")) return 1.0;
+        if (key == QLatin1String("angle")) return 0.0;
+    }
     const bool isX = key == QLatin1String("x"), isY = key == QLatin1String("y");
     const bool isRx = key == QLatin1String("rx"), isRy = key == QLatin1String("ry");
     if (!(isX || isY || isRx || isRy) || has(key)) return value(key);

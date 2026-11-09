@@ -39,7 +39,7 @@ double parsed(const QLineEdit* e, double fallback, double lo, double hi)
 DuckingDialog::DuckingDialog(Editor* editor, const QVector<int>& musicIds, QWidget* parent)
     : QDialog(parent), m_editor(editor)
 {
-    setWindowTitle(T("Ducking"));
+    setWindowTitle(T("Musik absenken"));
     const Project* p = editor->project();
     const Timeline& tl = p->timeline();
     m_fps = p->format().rate.fps();
@@ -97,7 +97,7 @@ DuckingDialog::DuckingDialog(Editor* editor, const QVector<int>& musicIds, QWidg
     };
     m_amount = field("amount", T("Absenken um"), "dB", settings.value("ducking/amount", def.amountDb).toDouble(),
                      T("Wie weit die Musik leiser wird"));
-    m_threshold = field("threshold", T("Schwelle"), "dBFS", settings.value("ducking/threshold", def.thresholdDb).toDouble(),
+    m_threshold = field("threshold", T("Threshold"), "dBFS", settings.value("ducking/threshold", def.thresholdDb).toDouble(),
                         T("Ab diesem Pegel zählt es auf den Spuren als Ton"));
     m_attack = field("attack", T("Attack"), "s", settings.value("ducking/attack", 0.15).toDouble(),
                      T("Rampe nach unten vor dem Ton"));

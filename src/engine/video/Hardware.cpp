@@ -15,7 +15,7 @@ extern "C" {
 #include <mutex>
 #include <vector>
 
-#if defined(Q_OS_LINUX)
+#if defined(Q_OS_LINUX) && !defined(__ANDROID__) // bionic declares setpriority differently and has no NVIDIA decoder
 #include <sys/resource.h>
 #include <sys/syscall.h>
 #include <unistd.h>

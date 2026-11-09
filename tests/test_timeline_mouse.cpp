@@ -102,6 +102,83 @@ void testRubber()
     CHECK(f.sel.ids() == QSet<int>{3});
 }
 
+// A click into a gap picks it (highlight); Delete closes it on all unlocked tracks - refused while another
+// unlocked track has something inside it (lock that track); a clip click drops the gap
+void testGap()
+{
+    Fixture f;
+    QString said;
+    QObject::connect(&f.tv, &TimelineView::message, [&](const QString& m) { said = m; });
+    mouse(f.tv, QEvent::MouseButtonPress, {f.x(130), 120}, Qt::LeftButton);
+    mouse(f.tv, QEvent::MouseButtonRelease, {f.x(130), 120}, Qt::NoButton);
+    CHECK(f.tv.hasGap());
+    // V2's clip (50..120) reaches into V1's gap 100..150: not closed, a note why, the gap stays picked
+    CHECK(f.tv.closeSelectedGap());
+    CHECK(said.contains("V2"));
+    CHECK_EQ(f.project.timeline().video[0].clips[1].start, 150);
+    CHECK(f.tv.hasGap());
+    // V2 locked: closed in one undo step, V1's later clip moves up, the locked V2 stays
+    f.editor.toggleTrackLock({TrackKind::Video, 1});
+    const int steps = f.project.undoStack()->index();
+    CHECK(f.tv.closeSelectedGap());
+    CHECK_EQ(f.project.timeline().video[0].clips[1].start, 100);
+    CHECK_EQ(f.project.timeline().video[1].clips[0].start, 50);
+    CHECK_EQ(f.project.undoStack()->index(), steps + 1);
+    CHECK(!f.tv.hasGap());
+    f.project.undoStack()->undo();
+    CHECK_EQ(f.project.timeline().video[0].clips[1].start, 150);
+    // No gap behind the last clip; a clip click drops a picked gap; nothing picked = Delete is not taken
+    mouse(f.tv, QEvent::MouseButtonPress, {f.x(400), 120}, Qt::LeftButton);
+    mouse(f.tv, QEvent::MouseButtonRelease, {f.x(400), 120}, Qt::NoButton);
+    CHECK(!f.tv.hasGap());
+    mouse(f.tv, QEvent::MouseButtonPress, {f.x(130), 120}, Qt::LeftButton);
+    mouse(f.tv, QEvent::MouseButtonRelease, {f.x(130), 120}, Qt::NoButton);
+    CHECK(f.tv.hasGap());
+    mouse(f.tv, QEvent::MouseButtonPress, {f.x(50), 120}, Qt::LeftButton);
+    mouse(f.tv, QEvent::MouseButtonRelease, {f.x(50), 120}, Qt::NoButton);
+    CHECK(!f.tv.hasGap());
+    CHECK(!f.tv.closeSelectedGap());
+    // Picking a gap drops the clip selection (Delete then means the gap); selecting a clip drops the gap
+    f.sel.set({1});
+    mouse(f.tv, QEvent::MouseButtonPress, {f.x(130), 120}, Qt::LeftButton, Qt::ControlModifier);
+    mouse(f.tv, QEvent::MouseButtonRelease, {f.x(130), 120}, Qt::NoButton, Qt::ControlModifier);
+    CHECK(f.tv.hasGap() && f.sel.isEmpty());
+    f.sel.set({1});
+    CHECK(!f.tv.hasGap());
+    // The gap filled by an edit (a clip moved into it): no longer picked, Delete is not taken
+    mouse(f.tv, QEvent::MouseButtonPress, {f.x(130), 120}, Qt::LeftButton);
+    mouse(f.tv, QEvent::MouseButtonRelease, {f.x(130), 120}, Qt::NoButton);
+    CHECK(f.tv.hasGap());
+    f.project.edit("fill", [](Timeline& tl) { tl.video[0].clips[1].start = 100; });
+    CHECK(!f.tv.hasGap());
+    f.project.undoStack()->undo();
+    // The gap's own track locked: refused with a note (the others would move, it not)
+    mouse(f.tv, QEvent::MouseButtonPress, {f.x(130), 120}, Qt::LeftButton);
+    mouse(f.tv, QEvent::MouseButtonRelease, {f.x(130), 120}, Qt::NoButton);
+    CHECK(f.tv.hasGap());
+    f.editor.toggleTrackLock({TrackKind::Video, 0});
+    said.clear();
+    CHECK(f.tv.hasGap()); // locking keeps the pick (the gap is still there)
+    CHECK(f.tv.closeSelectedGap());
+    CHECK(said.contains("V1"));
+    CHECK_EQ(f.project.timeline().video[0].clips[1].start, 150);
+    f.editor.toggleTrackLock({TrackKind::Video, 0});
+    // A clip behind the gap whose linked sound lies on a locked track: refused (they would come apart)
+    f.project.edit("link", [](Timeline& tl) {
+        tl.video[0].clips[1].linkId = 7;
+        Clip a = tl.audio[0].clips[0];
+        a.id = 20, a.start = 150, a.linkId = 7;
+        tl.audio[0].clips << a;
+    });
+    f.editor.toggleTrackLock({TrackKind::Audio, 0});
+    mouse(f.tv, QEvent::MouseButtonPress, {f.x(130), 120}, Qt::LeftButton);
+    mouse(f.tv, QEvent::MouseButtonRelease, {f.x(130), 120}, Qt::NoButton);
+    said.clear();
+    CHECK(f.tv.closeSelectedGap());
+    CHECK(said.contains("gesperrten Spur"));
+    CHECK_EQ(f.project.timeline().video[0].clips[1].start, 150);
+}
+
 void testAutoScroll()
 {
     Fixture f;
@@ -532,6 +609,7 @@ int main(int argc, char** argv)
     I18n::install("de");
     Theme::apply(app);
     testRubber();
+    testGap();
     testAutoScroll();
     testTrackMove();
     testSelectFromPlayhead();

@@ -44,7 +44,7 @@ protected:
         p.fillRect(0, 0, W, 16, c("topBar"));
         p.fillRect(0, 16, W, 1, c("border"));
         p.setPen(primary);
-        p.drawText(QRect(6, 0, 70, 16), Qt::AlignVCenter, T("Media Pool"));
+        p.drawText(QRect(6, 0, 70, 16), Qt::AlignVCenter, T("Medienpool"));
         p.setPen(c("text"));
         p.drawText(QRect(82, 0, 60, 16), Qt::AlignVCenter, T("Effekte"));
 
@@ -53,7 +53,7 @@ protected:
         p.fillRect(panel, c("panel"));
         p.fillRect(panel.left(), panel.top(), panel.width(), 15, c("panelHeader"));
         p.setPen(c("text"));
-        p.drawText(QRect(6, panel.top(), 100, 15), Qt::AlignVCenter, T("Media Pool"));
+        p.drawText(QRect(6, panel.top(), 100, 15), Qt::AlignVCenter, T("Medienpool"));
         const char* items[] = {"Interview.mp4", "Drohne.mov", "Musik.wav"};
         for (int i = 0; i < 3; ++i) {
             const QRect r(4, panel.top() + 20 + i * 18, panel.width() - 8, 16);
@@ -151,7 +151,7 @@ protected:
             };
             if (i == 0) {
                 clip(0.18, 0.46, c("titleClip"), false, T("Titel"));
-                clip(0.62, 0.9, c("compoundClip"), false, "Compound");
+                clip(0.62, 0.9, c("compoundClip"), false, T("Verbundclip"));
             } else if (i == 1) {
                 clip(0.0, 0.4, c("videoClip"), false, "Interview.mp4");
                 clip(0.4, 0.78, c("videoClip"), true, "Drohne.mov");

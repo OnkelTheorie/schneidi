@@ -233,7 +233,7 @@ void Editor::pasteGrade(const QVector<int>& ids)
         TrackRef ref;
         if (id != src.id && TimelineOps::findClip(tl, id, &ref) && ref.kind == TrackKind::Video) targets << id;
     }
-    if (!targets.isEmpty()) modifyClips(targets, T("Grade einfügen"), [&](Clip& c) { pasteColor(c, src); });
+    if (!targets.isEmpty()) modifyClips(targets, T("Farbkorrektur einfügen"), [&](Clip& c) { pasteColor(c, src); });
 }
 
 bool Editor::applyGradeFromPrevious(int clipId, int back)
@@ -253,6 +253,6 @@ bool Editor::applyGradeFromPrevious(int clipId, int back)
     if (it == order.end() || it - order.begin() < back || back < 1) return false;
     if (editable({clipId}).isEmpty()) return false;
     const Clip src = *(it - back)->clip;
-    modifyClips({clipId}, T("Grade vom vorigen Clip"), [&](Clip& c) { pasteColor(c, src); });
+    modifyClips({clipId}, T("Farbkorrektur vom vorigen Clip"), [&](Clip& c) { pasteColor(c, src); });
     return true;
 }

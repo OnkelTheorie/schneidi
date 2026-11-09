@@ -127,8 +127,58 @@ void TimelineView::autoScrollStep()
     dragMove(pos, m_dragMods);
 }
 
+TimelineView::GapPick TimelineView::gapAt(const TrackRef& ref, double frame) const
+{
+    GapPick g;
+    const Timeline& tl = m_editor->project()->timeline();
+    if (ref.index < 0 || ref.index >= tl.tracks(ref.kind).size() || frame < 0) return g;
+    int from = 0, to = -1;
+    for (const Clip& c : tl.track(ref).clips) {
+        if (c.start <= frame && frame < c.end()) return g; // on a clip
+        if (c.end() <= frame) from = std::max(from, c.end());
+        else if (to < 0 || c.start < to) to = c.start;
+    }
+    if (to <= from) return g; // nothing after it: no gap, just the end of the track
+    g.on = true;
+    g.ref = ref;
+    g.from = from;
+    g.to = to;
+    return g;
+}
+
+void TimelineView::pickGap(const GapPick& g)
+{
+    m_pickingGap = true;
+    m_editor->selection()->clear();
+    m_pickingGap = false;
+    m_gap = g;
+    update();
+}
+
+bool TimelineView::closeSelectedGap()
+{
+    if (!m_gap.on) return false;
+    const GapPick g = std::exchange(m_gap, {});
+    const GapPick now = gapAt(g.ref, g.from); // still the same gap? (safety net; changes drop the pick already)
+    if (!now.on || now.from != g.from || now.to != g.to) {
+        update();
+        return false;
+    }
+    QString why;
+    if (!m_editor->closeGap(g.ref, g.from, g.to, &why)) {
+        m_gap = g; // stays picked: lock the other track and press Delete again
+        if (!why.isEmpty()) emit message(why);
+    }
+    update();
+    return true;
+}
+
 void TimelineView::mousePressEvent(QMouseEvent* e)
 {
+    if (e->button() == Qt::LeftButton && m_gap.on) {
+        m_gap = {};
+        update();
+    }
     if (e->button() != Qt::LeftButton) return;
     const QPoint pos = e->position().toPoint();
     m_pressPos = pos;
@@ -625,6 +675,12 @@ void TimelineView::mouseReleaseEvent(QMouseEvent* e)
     if (m_drag == Drag::Rubber) {
         m_drag = Drag::None;
         m_rubberBase.clear();
+        // A click (no frame drawn) into the empty part of a track between clips: that gap is picked
+        const QPoint at = e->position().toPoint();
+        if (QRect(m_pressPos, at).normalized().width() < kDragStartPx && std::abs(at.y() - m_pressPos.y()) < kDragStartPx
+            && m_pressPos.x() >= kHeaderW)
+            if (const auto row = rowAt(m_pressPos.y()); row && !isLocked(*row))
+                if (const GapPick g = gapAt(row->ref, xToFrame(m_pressPos.x())); g.on) pickGap(g);
         updateHoverCursor(e->position().toPoint());
         update();
         return;

@@ -308,7 +308,7 @@ void Inspector::buildLookSections(QVBoxLayout* page)
     picture->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
     picture->setMinimumContentsLength(8);
     picture->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
-    picture->setToolTip(T("Ein Bild aus dem Media Pool füllt die Buchstaben"));
+    picture->setToolTip(T("Ein Bild aus dem Medienpool füllt die Buchstaben"));
     connect(picture, &QComboBox::activated, this, [this, V, picture] {
         const QString path = picture->currentData().toString();
         apply(V, {}, T("Textur"), [path](Clip& c) {
@@ -769,7 +769,7 @@ QToolButton* Inspector::brandButton(bool font, const QString& text, const std::f
             const QString label = n ? QString("B%1").arg(n) : QStringLiteral("B");
             if (button->text() != label) button->setText(label);
             const QString tip = n ? (font ? T("Brand-Schrift %1").arg(n) : T("Brand-Farbe %1").arg(n))
-                                  : T("Fester Wert (nicht aus dem Brand-Kit)");
+                                  : T("Fester Wert (nicht aus dem Branding)");
             if (button->toolTip() != tip) button->setToolTip(tip);
             const QString css = n ? QString("QToolButton { color: %1; font-weight: bold; }").arg(Theme::primary.name())
                                   : QString("QToolButton { color: %1; }").arg(Theme::textDim.name());

@@ -73,6 +73,21 @@ void TimelineView::paintEvent(QPaintEvent*)
     drawTrackDrop(p);
     drawRubber(p);
     drawRuler(p);
+    if (m_gap.on) // the picked gap: Delete closes it
+        for (const Row& row : rows())
+            if (row.ref == m_gap.ref) {
+                const int x0 = std::max(kHeaderW, int(std::lround(frameToX(m_gap.from))));
+                const int x1 = int(std::lround(frameToX(m_gap.to)));
+                if (x1 > x0) {
+                    const QRect r(x0, row.y + 1, x1 - x0, row.h - row.lane - 2);
+                    QColor fill = Theme::primary;
+                    fill.setAlpha(55);
+                    p.fillRect(r, fill);
+                    p.setPen(QPen(Theme::primary, 1));
+                    p.setBrush(Qt::NoBrush);
+                    p.drawRect(r.adjusted(0, 0, -1, -1));
+                }
+            }
     drawPlayhead(p);
     drawAiArrows(p);
 }
@@ -524,6 +539,14 @@ void TimelineView::drawClip(QPainter& p, const QRect& r, const Clip& c, TrackKin
         if (c.isCompound()) drawCompoundBody(p, bodyRect, base);
         else if (kind == TrackKind::Video && !c.isTitle()) drawFilmstrip(p, bodyRect, c); // Title: color only
         else if (kind == TrackKind::Audio) drawWaveform(p, bodyRect, c, spans, color);
+        // Disabled (D): pictures and waveform dimmed with a hatch, so it reads "off" at a glance (the gray bar alone
+        // was missed next to a selection's outline)
+        if (!c.enabled) {
+            p.fillRect(bodyRect, QColor(0, 0, 0, 150));
+            p.setBrush(QBrush(QColor(255, 255, 255, 40), Qt::BDiagPattern));
+            p.setPen(Qt::NoPen);
+            p.drawRect(bodyRect);
+        }
         p.setRenderHint(QPainter::Antialiasing);
     }
     // Volume line like in DaVinci (for dragging up/down)

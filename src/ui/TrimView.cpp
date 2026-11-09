@@ -17,10 +17,10 @@ QString kindName(TimelineOps::TrimKind k)
 {
     using TimelineOps::TrimKind;
     switch (k) {
-    case TrimKind::Ripple: return T("Ripple");
-    case TrimKind::Roll: return T("Roll");
-    case TrimKind::Slip: return T("Slip");
-    case TrimKind::Slide: return T("Slide");
+    case TrimKind::Ripple: return T("Nachrücken");
+    case TrimKind::Roll: return T("Schnittpunkt verschieben");
+    case TrimKind::Slip: return T("Inhalt verschieben");
+    case TrimKind::Slide: return T("Clip gleiten");
     }
     return {};
 }

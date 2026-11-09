@@ -16,6 +16,7 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QMessageBox>
+#include <QSettings>
 #include <QUndoStack>
 
 #include <algorithm>
@@ -70,6 +71,29 @@ QString nodeName(const CompNode& n)
 {
     const PC::NodeType* k = PC::find(n.type);
     return QStringLiteral("%1 %2").arg(k ? k->name : n.type).arg(n.id);
+}
+
+bool autoLink() { return QSettings().value("comp/autoLink", true).toBool(); }
+
+void setAutoLink(bool on) { QSettings().setValue("comp/autoLink", on); }
+
+QString portLabel(const QString& input)
+{
+    if (input == QLatin1String("src")) return T("Quelle");
+    if (input == QLatin1String("bg")) return T("Hintergrund");
+    if (input == QLatin1String("fg")) return T("Vordergrund");
+    if (input == QLatin1String("mask")) return T("Maske");
+    return input;
+}
+
+QString portHelp(const QString& input)
+{
+    if (input == QLatin1String("src")) return T("Quelle: das Bild, das in diesen Knoten hineingeht");
+    if (input == QLatin1String("bg")) return T("Hintergrund: das Bild, das unten liegt");
+    if (input == QLatin1String("fg")) return T("Vordergrund: das Bild, das oben auf den Hintergrund gelegt wird");
+    if (input == QLatin1String("mask"))
+        return T("Maske: wo der Knoten wirkt – weiß = hier ja, schwarz = hier nicht (leer = überall)");
+    return input;
 }
 
 QString nodeSummary(const Clip& c, const CompNode& n)

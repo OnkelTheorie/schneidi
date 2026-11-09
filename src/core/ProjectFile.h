@@ -17,6 +17,16 @@
 #include <memory>
 #include <optional>
 
+// How a timeline was shown when the project was saved (zoom, scroll, playhead), so it opens the same way
+struct SavedView {
+    int sequence = 0;        // the timeline / compound clip
+    double pxPerFrame = 0;   // timeline zoom (0 = not saved)
+    double leftFrame = 0;    // frame at the left edge
+    int scrollY = 0;         // pixels down through the tracks
+    int playhead = 0;
+    bool operator==(const SavedView&) const = default;
+};
+
 struct ProjectData {
     ProjectFormat format; // old files without this: 1920 x 1080, 25 fps
     int playhead = 0;
@@ -48,6 +58,7 @@ struct ProjectData {
     std::optional<BrandKit> brand;
     // A content template's own description (core/TemplateLibrary.h, optional; "templateInfo" in the file)
     std::optional<TemplateInfo> templateInfo;
+    QVector<SavedView> views; // per timeline (optional; UI state, not part of the edit)
 };
 
 namespace ProjectFile {

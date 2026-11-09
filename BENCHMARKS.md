@@ -10,6 +10,7 @@ measured appear; versions without a run have no row. Dates are ISO.
 |---|---|
 | PC | Ryzen 5 5600X, GTX 1070, 16 GB RAM, Linux |
 | Server | Ryzen 5 PRO 2400G (4 cores / 8 threads, Vega 11), 16 GB RAM, Linux, measured inside a Docker container, no GPU decoding or encoding |
+| Phone | Samsung Galaxy A51 (Exynos 9611: 4 x 2.3 GHz Cortex-A73 + 4 x 1.7 GHz Cortex-A53, 4 GB RAM, 3.5 GB usable), Android 13, Termux, CPU only (no hardware encoder/decoder used yet) |
 | Pi | Raspberry Pi Zero 2 W: 4 x 1 GHz Cortex-A53, 512 MB RAM (415 MB usable) + swap on SD card, Debian 13 ARM64, no hardware decoding |
 
 ## Method
@@ -27,7 +28,7 @@ measured appear; versions without a run have no row. Dates are ISO.
 - **Build.** `RelWithDebInfo`, built from the commit named in the row; the server runs use Docker for constant conditions.
 - **Load.** The run records the system load before it starts. Rows with a high load are marked; their time numbers are not
   reliable (RAM and compose numbers hold up better).
-- **Raspberry Pi and PC tests** are single measurements on real hardware with the tools named in the sections below, not
+- **Raspberry Pi, phone and PC tests** are single measurements on real hardware with the tools named in the sections below, not
   runs of the suite.
 
 ### Reproduce
@@ -178,6 +179,26 @@ behind. Conclusion: 4K on the Pi works only with a proxy, and the proxy only whi
 The CS2 short is CPU-bound on the Pi (decoding 39 Mbit/s 1080p60 and scaling up 3.2 times, about 3 s of CPU per frame for
 646 frames) and still pages memory out; the project's goal for the Pi is "runs stably", not speed on long shorts. The
 low-memory rule (limits threads by available RAM) was built and measured in this series on development branches.
+
+## Android phone (Galaxy A51, 0.19.0, 2026-11-08)
+
+First run on a phone: the same code as on the PC, built with the Android NDK and run in Termux (no Android app yet).
+Everything runs on the CPU; the phone's hardware encoder and decoder are not used yet. Material: the 1080p60 CS2 clip
+(30 s, 5 audio tracks, 133 MB). Single runs, wall time and peak RAM.
+
+| Job | Time | Peak RAM |
+|---|---|---|
+| `schneidi-cli --version` | 0.21 s | 34 MB |
+| `probe` | 0.62 s | 69 MB |
+| `new` / `info` / `edit` | 0.2–0.5 s each | 35–69 MB |
+| `render` 10 s 1080p H.264, Smart Render (80 % copied) | 21.9 s | 694 MB |
+| `render` 10 s 1080p H.264, full re-encode (grade, x264) | 101.8 s | 826 MB |
+| `highlights` (30 s clip) | 13.7 s | 183 MB |
+| `short` 9:16, 15 s output, no captions | 186.5 s | 906 MB |
+
+The desktop interface also runs on the phone as a quick test (Termux:X11, CPU viewer without GPU): window after 2.4–3.3 s,
+190–260 MB idle, about 590 MB while playing the 1080p60 clip, playback in real time without a proxy (with occasional
+stutters). A touch app of its own is planned; with the hardware encoder the full re-encode should get several times faster.
 
 ## 4K and 8K on the PC (Ryzen 5 5600X, GTX 1070, 16 GB), 2026-11-06
 

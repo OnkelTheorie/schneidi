@@ -90,10 +90,10 @@ void Editor::applyTrimEdit(const TimelineOps::TrimEdit& e, int delta)
 {
     using TimelineOps::TrimKind;
     if (e.isNull() || clampTrimEdit(e, delta) == 0) return;
-    const QString text = e.kind == TrimKind::Ripple ? T("Ripple-Trimmen")
-                         : e.kind == TrimKind::Roll ? T("Schnitt verschieben (Roll)")
-                         : e.kind == TrimKind::Slip ? T("Inhalt verschieben (Slip)")
-                                                    : T("Clip verschieben (Slide)");
+    const QString text = e.kind == TrimKind::Ripple ? T("Trimmen mit Nachrücken")
+                         : e.kind == TrimKind::Roll ? T("Schnittpunkt verschieben")
+                         : e.kind == TrimKind::Slip ? T("Inhalt im Clip verschieben")
+                                                    : T("Clip zwischen den Nachbarn gleiten lassen");
     m_project->edit(text, [&](Timeline& tl) { TimelineOps::applyTrimEdit(tl, e, delta, sourceLength()); });
 }
 

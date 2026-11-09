@@ -10,6 +10,7 @@
 // cut 6.8 s before a drop at 7 s; the help names the new ids and the output.
 #include "cli/Commands.h"
 #include "core/ExportCheck.h"
+#include "core/Keyframes.h"
 #include "core/Project.h"
 #include "core/ProjectFile.h"
 
@@ -115,6 +116,13 @@ void testChanges()
     const QVector<ExportCheck::Change> m = ExportCheck::changes(k, 0, 150, f);
     CHECK_EQ(framesOf(m), (QVector<int>{50, 100, 110}));
     if (!m.isEmpty()) CHECK(m[0].kind == ChangeKind::Motion);
+    // A value of the compositing graph that moves (a 3D text turning) is motion too; other effects' keys are not
+    Timeline g = oneTrack({media(1, 0, 150)});
+    g.video[0].clips[0].keys[Keys::effectParam("comp", "n3.rot_y")] = {{40, -70}, {90, 20}};
+    g.video[0].clips[0].keys[Keys::effectParam("blur", "radius")] = {{60, 0}, {70, 9}};
+    const QVector<ExportCheck::Change> gm = ExportCheck::changes(g, 0, 150, f);
+    CHECK_EQ(framesOf(gm), (QVector<int>{40, 90}));
+    if (!gm.isEmpty()) CHECK(gm[0].kind == ChangeKind::Motion);
 }
 
 void testPace()

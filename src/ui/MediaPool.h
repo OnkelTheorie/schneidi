@@ -133,6 +133,9 @@ signals:
     void watchFolderRequested(int bin);
     // Right-click "Clean up proxy media…": the main window asks and deletes (app/ProxyCleanupDialog)
     void proxyCleanupRequested();
+    // Context menu: put this file onto the timeline - 0 insert at the playhead, 1 place on a free track at the playhead,
+    // 2 append at the end
+    void editRequested(const QString& path, int how);
     // Right-click "Stretched 4:3": the clips of these files in the open timeline at 4:3 (on) or their file's shape
     void stretchedRequested(const QStringList& paths, bool on);
 

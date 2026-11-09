@@ -54,7 +54,7 @@ QString kindsText(const WatchFolder& w)
 
 QString binText(const Project& p, const WatchFolder& w)
 {
-    if (w.bin == WatchFolderDialog::kNewBin) return T("Neuer Bin „%1“").arg(folderName(w.path));
+    if (w.bin == WatchFolderDialog::kNewBin) return T("Neuer Ordner „%1“").arg(folderName(w.path));
     return binLabel(p, p.bin(w.bin) ? w.bin : 0);
 }
 
@@ -67,7 +67,7 @@ WatchFolderDialog::WatchFolderDialog(const Project& project, const WatchFolder& 
 {
     setWindowTitle(adding ? T("Ordner überwachen") : T("Überwachten Ordner bearbeiten"));
     auto* layout = new QVBoxLayout(this);
-    auto* intro = new QLabel(T("Neue Mediendateien in diesem Ordner kommen von selbst in den Media Pool, sobald sie fertig "
+    auto* intro = new QLabel(T("Neue Mediendateien in diesem Ordner kommen von selbst in den Medienpool, sobald sie fertig "
                                "geschrieben sind – z. B. Aufnahmen eines Bildschirmrekorders oder Clips eines "
                                "Spiele-Tools. Überwacht wird, solange das Projekt offen ist; was in der Zwischenzeit "
                                "dazukommt, wird beim Öffnen nachgeholt."));
@@ -110,8 +110,8 @@ WatchFolderDialog::WatchFolderDialog(const Project& project, const WatchFolder& 
 
     m_bin = new QComboBox;
     m_bin->setObjectName("watchBin");
-    m_bin->setToolTip(T("Bin im Media Pool, in den die neuen Dateien kommen"));
-    form->addRow(T("Ziel-Bin:"), m_bin);
+    m_bin->setToolTip(T("Ordner im Medienpool, in den die neuen Dateien kommen"));
+    form->addRow(T("Zielordner:"), m_bin);
     m_chosenBin = folder.bin;
     connect(m_bin, &QComboBox::activated, this, [this] { m_chosenBin = m_bin->currentData().toInt(); });
     fillBins();
@@ -153,7 +153,7 @@ void WatchFolderDialog::fillBins()
 {
     const QString folder = QDir::fromNativeSeparators(m_path->text().trimmed());
     m_bin->clear();
-    if (!folder.isEmpty()) m_bin->addItem(T("Neuer Bin „%1“").arg(folderName(folder)), kNewBin);
+    if (!folder.isEmpty()) m_bin->addItem(T("Neuer Ordner „%1“").arg(folderName(folder)), kNewBin);
     m_bin->addItem(binLabel(m_project, 0), 0);
     QVector<std::pair<QString, int>> bins;
     for (const MediaBin& b : m_project.bins()) bins << std::pair{binLabel(m_project, b.id), b.id};
@@ -197,7 +197,7 @@ WatchFoldersDialog::WatchFoldersDialog(const Project& project, QWidget* parent)
 {
     setWindowTitle(T("Überwachte Ordner"));
     auto* layout = new QVBoxLayout(this);
-    auto* intro = new QLabel(T("Neue Mediendateien dieser Ordner kommen von selbst in den Media Pool (ein Rückgängig-"
+    auto* intro = new QLabel(T("Neue Mediendateien dieser Ordner kommen von selbst in den Medienpool (ein Rückgängig-"
                                "Schritt je Schwung). Ohne Eintrag wird nichts überwacht."));
     intro->setWordWrap(true);
     intro->setStyleSheet(QString("color: %1;").arg(Theme::textDim.name()));
@@ -207,7 +207,7 @@ WatchFoldersDialog::WatchFoldersDialog(const Project& project, QWidget* parent)
     m_table->setObjectName("watchList");
     m_table->setRootIsDecorated(false);
     m_table->setTextElideMode(Qt::ElideMiddle); // a long path keeps its end: the folder's own name
-    m_table->setHeaderLabels({T("Ordner"), T("Ziel-Bin"), T("Medien"), T("Unterordner")});
+    m_table->setHeaderLabels({T("Ordner"), T("Zielordner"), T("Medien"), T("Unterordner")});
     m_table->header()->setSectionResizeMode(0, QHeaderView::Stretch);
     m_table->header()->setStretchLastSection(false);
     layout->addWidget(m_table, 1);
