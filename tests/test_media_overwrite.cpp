@@ -23,6 +23,7 @@
 #include <QImage>
 #include <QTemporaryDir>
 #include <QTest>
+#include <QThread>
 #include <clocale>
 #include <cmath>
 #include <thread>
@@ -162,6 +163,34 @@ bool waitFor(const std::function<QImage()>& fn, Color want, int ms = 10000)
     }
     std::printf("  got %s, want %s\n", name(got), name(want));
     return false;
+}
+
+// Review 2026-11-09: thumbnails, waveforms and trim stills are asked for on the UI thread: their look at the disk
+// (a stat, slow on a network share) runs on a pool thread - the change is seen there
+void testLookLater(const QString& file, const QString& red, const QString& blue)
+{
+    std::printf("-- look later\n");
+    if (!CHECK(overwrite(red, file, 61))) return;
+    FileStamp::now(file);
+    QThread* seenOn = nullptr;
+    int seen = 0;
+    const int id = FileStamp::addObserver([&](const QString& path) {
+        if (path != file) return;
+        ++seen;
+        seenOn = QThread::currentThread();
+    });
+    if (CHECK(overwrite(blue, file, 62))) {
+        MediaCache cache;
+        QElapsedTimer t;
+        t.start();
+        while (seen == 0 && t.elapsed() < 5000) {
+            cache.thumbnail(file, 0); // looks at most every kRecheckMs, settles after kSettle
+            QTest::qWait(50);
+        }
+        CHECK_EQ(seen, 1);
+        CHECK(seenOn && seenOn != QThread::currentThread());
+    }
+    FileStamp::removeObserver(id);
 }
 
 void testCaches(const QString& file, const QString& red, const QString& blue)
@@ -401,6 +430,7 @@ int main(int argc, char** argv)
     testFile(dir.filePath("still.png"), png[0], png[1], png[2]);
     testCaches(dir.filePath("still-cache.png"), png[0], png[1]);
     testLanes(dir.filePath("lanes.png"), png[0], png[1]);
+    testLookLater(dir.filePath("later.png"), png[0], png[1]);
 
     Engine engine;
     QString err;

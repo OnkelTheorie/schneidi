@@ -162,7 +162,7 @@ QImage MediaCache::cachedThumbnail(const QString& path, int frame)
 
 QImage MediaCache::thumbnail(const QString& path, int frame, int tolerance)
 {
-    FileStamp::recent(path); // an overwritten file is noticed (throttled; outside the lock: observers take it)
+    FileStamp::lookLater(path); // an overwritten file is noticed (throttled, on a pool thread: no stat here)
     QMutexLocker lock(&m_mutex);
     if (const QImage* img = m_thumbs.object(thumbKey(path, frame))) return *img;
 
@@ -250,7 +250,7 @@ std::shared_ptr<const Waveform> MediaCache::waveform(const QString& path, int st
 {
     // Key: path, for further streams with an appended number (\0 does not occur in paths)
     const QString key = stream > 0 ? path + QChar(0) + QString::number(stream) : path;
-    FileStamp::recent(path); // as thumbnail()
+    FileStamp::lookLater(path); // as thumbnail()
     QMutexLocker lock(&m_mutex);
     if (!m_waveRequested.contains(key)) {
         m_waveRequested.insert(key);
