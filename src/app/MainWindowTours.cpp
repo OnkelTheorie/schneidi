@@ -66,7 +66,7 @@ void MainWindow::setupTours(QMenu* help)
     m_inspector->setProperty("tourTarget", "inspector");
     m_effectsToggle->setProperty("tourTarget", "effectsToggle");
     m_effects->setProperty("tourTarget", "effects");
-    m_scopes->setProperty("tourTarget", "scopes");
+    // the scopes' target: ensureColorPage (built on the first use)
     for (QAbstractButton* b : m_pageButtons->buttons()) // page buttons: the same names the page bar uses elsewhere
         if (b->objectName().isEmpty()) b->setObjectName("pageButton_" + pageName(Page(m_pageButtons->id(b))));
 
@@ -133,7 +133,7 @@ void MainWindow::setupTours(QMenu* help)
             return T("Rundgang erst nach dem Rendern – oder das Rendern abbrechen.");
         if (m_review.active)
             return T("Rundgang erst, wenn die Änderungen der KI übernommen oder verworfen sind.");
-        if (m_colorPanel->tracking()) return T("Rundgang erst, wenn das Verfolgen des Fensters fertig ist.");
+        if (m_colorPanel && m_colorPanel->tracking()) return T("Rundgang erst, wenn das Verfolgen des Fensters fertig ist.");
         return {};
     };
     // The timeline's ruler (click there = playhead) and the playhead line, in window coordinates
@@ -231,7 +231,7 @@ void MainWindow::setupTours(QMenu* help)
     };
     host.conditions["color_has_window"] = hasWindow;
     host.offers["color_window"] = {N_("Für mich erledigen"), [hasWindow] { return !hasWindow(); },
-                                   [this] { m_colorPanel->addWindow("rectangle"); }};
+                                   [this] { colorPanel()->addWindow("rectangle"); }};
     host.actions["effects_recipes"] = [this] { m_effects->showRecipes(); };
     // The Comp page: a node selected (the Inspector shows its settings), the key's pipette there
     for (const QString& type : {QStringLiteral("key"), QStringLiteral("merge"), QStringLiteral("transform")})
@@ -292,9 +292,8 @@ void MainWindow::setupTours(QMenu* help)
     // The page's own "Create Compositing" too: it builds an empty graph, not the tour's example
     connect(m_tours, &TourManager::runningChanged, this, [this](bool on) {
         if (m_compPage) m_compPage->setTourRunning(on);
-        m_colorPanel->setTourButtonAllowed(!on);
+        if (m_colorPanel) m_colorPanel->setTourButtonAllowed(!on);
     });
-    connect(m_colorPanel, &ColorPanel::tourRequested, m_tours, [this] { m_tours->start("color"); });
     // A page or a panel the user opens may be what a step waits for
     connect(m_effectsToggle, &QToolButton::toggled, m_tours, &TourManager::poke, Qt::QueuedConnection);
     // Queued: the timeline takes the new playhead in a slot connected later
@@ -397,6 +396,7 @@ void MainWindow::enterTourMode(const Tour& tour)
     m_engine->pause();
     if (!m_autosaveDisabled) autosave(); // the backup up to date: a crash during the tour still restores the user's work
     // The user's project as it is (unsaved changes included) and how the window looks, kept aside
+    ensureColorPage(); // its panels' state is part of what a tour sets aside and restores
     TourSaved& s = m_tourSaved;
     s = {};
     s.active = true;

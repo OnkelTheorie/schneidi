@@ -119,14 +119,8 @@ void MainWindow::buildLayout()
     StartupTrace::mark("ctor Mixer");
     m_mixer->setEditor(m_editor);
     m_mixer->hide();
-    m_colorPanel = new ColorPanel(m_editor);
-    StartupTrace::mark("ctor ColorPanel");
-    m_viewer->setOverlay(m_colorPanel->overlay()); // window outline, only while the Color page shows
     m_transcript = new TranscriptPanel(m_project, m_editor);
     StartupTrace::mark("ctor TranscriptPanel");
-    m_scopes = new ScopesPanel;
-    StartupTrace::mark("ctor ScopesPanel");
-    m_scopes->setVisible(QSettings().value("color/scopesVisible", true).toBool());
 
     StartupTrace::mark("layout panels done");
     // Pages; the shared panels (pool, viewer, timeline) move along when switching
@@ -161,22 +155,12 @@ void MainWindow::buildLayout()
     m_pages->addWidget(m_mediaPage);
     m_pages->addWidget(m_editRow);
     m_pages->addWidget(m_deliverPage);
-    // Color page like DaVinci (slimmed down): viewer on top, timeline in the middle, color wheels below
-    // and the scopes right of them (DaVinci's scope panel); the scopes analyse each preview frame after the grade
-    m_colorPage = new QSplitter(Qt::Vertical);
-    m_colorBottom = new QSplitter(Qt::Horizontal);
-    m_colorBottom->addWidget(m_colorPanel);
-    m_colorBottom->addWidget(m_scopes);
-    m_colorBottom->setStretchFactor(0, 1);
-    m_colorPage->addWidget(m_colorBottom);
-    m_pages->addWidget(m_colorPage);
     const QPair<QSplitter*, const char*> splitters[] = {
         {m_editTop, "editTop"},         {m_editMain, "editMain"},
         {m_editRow, "editRow"},         {m_editRight, "editRight"},   {m_mediaPage, "mediaPage"},   {m_mediaTop, "mediaTop"},
-        {m_deliverPage, "deliverPage"}, {m_deliverRight, "deliverRight"}, {m_colorPage, "colorPage"},
-        {m_colorBottom, "colorBottom"}};
+        {m_deliverPage, "deliverPage"}, {m_deliverRight, "deliverRight"}};
     for (const auto& [sp, name] : splitters) watchSizes(sp, name);
-    applySizes(m_colorBottom, {1100, 420});
+    // The Color page (color wheels, scopes) is built on its first showing: ensureColorPage()
     StartupTrace::mark("  splitters");
 
     // The AI chat beside the pages (all of them), left or right (MainWindowChat.cpp)
@@ -406,7 +390,7 @@ void MainWindow::showPage(Page page)
     m_page = page;
     if (before == Page::Comp && page != Page::Comp && m_compPage) { // the Color page's windows over the viewer again
         m_compPage->overlay()->setVisible(false);
-        m_viewer->setOverlay(m_colorPanel->overlay());
+        m_viewer->setOverlay(m_colorPanel ? m_colorPanel->overlay() : nullptr);
         if (m_compPage->viewNode() || m_compPage->matte()) updatePreview(); // the output again
     }
     switch (page) {
@@ -448,6 +432,7 @@ void MainWindow::showPage(Page page)
         m_pages->setCurrentWidget(m_deliverPage);
         break;
     case Page::Color:
+        ensureColorPage();
         if (before != Page::Color) playheadInto(selectedVideoClip()); // the viewer shows the clip being graded
         m_colorPage->insertWidget(0, m_viewer);
         m_colorPage->insertWidget(1, m_timeline);
@@ -484,6 +469,32 @@ void MainWindow::showPage(Page page)
     m_transcriptToggle->setEnabled(edit);
     updateViewerArea();
     if (m_tours) QMetaObject::invokeMethod(m_tours, &TourManager::poke, Qt::QueuedConnection); // a step may wait for it
+}
+
+void MainWindow::ensureColorPage()
+{
+    if (m_colorPanel) return;
+    // Built on the first use (Color page, a grade shortcut, a tour): the wheels and scopes are a good part of the
+    // start's widgets, and most sessions never open them
+    m_colorPanel = new ColorPanel(m_editor);
+    m_scopes = new ScopesPanel;
+    m_scopes->setVisible(QSettings().value("color/scopesVisible", true).toBool());
+    m_scopes->setProperty("tourTarget", "scopes");
+    // Color page (slimmed down): viewer on top, timeline in the middle, color wheels below and the scopes right of
+    // them; the scopes analyse each preview frame after the grade
+    m_colorPage = new QSplitter(Qt::Vertical);
+    m_colorBottom = new QSplitter(Qt::Horizontal);
+    m_colorBottom->addWidget(m_colorPanel);
+    m_colorBottom->addWidget(m_scopes);
+    m_colorBottom->setStretchFactor(0, 1);
+    m_colorPage->addWidget(m_colorBottom);
+    m_pages->addWidget(m_colorPage);
+    watchSizes(m_colorPage, "colorPage");
+    watchSizes(m_colorBottom, "colorBottom");
+    applySizes(m_colorBottom, {1100, 420});
+    // The window outline over the viewer (only while the Color page shows); the Comp page keeps its own meanwhile
+    if (m_page != Page::Comp) m_viewer->setOverlay(m_colorPanel->overlay());
+    connectColorPage();
 }
 
 void MainWindow::watchSizes(QSplitter* s, const QString& name)
@@ -547,7 +558,7 @@ void MainWindow::resetSizes()
     settings.beginGroup("layout");
     settings.remove("");
     settings.endGroup();
-    applySizes(m_colorBottom, {1100, 420});
+    if (m_colorBottom) applySizes(m_colorBottom, {1100, 420});
     showPage(m_page); // sets the page's defaults again
     if (m_editRight->isVisibleTo(m_editRow)) applySizes(m_editRight, m_editMain->sizes());
 }

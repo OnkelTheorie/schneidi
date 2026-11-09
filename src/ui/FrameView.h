@@ -50,6 +50,14 @@ public:
     static Backend chooseBackend(const QString& env, const QString& setting, const QString& platform, bool rhiCompiled,
                                  const std::function<Probe()>& probe, QString* why = nullptr);
     static bool rhiCompiled();
+    // The app's start: views take the previous run's GPU check (settings) instead of making a device to check now;
+    // checkCachedGpu() checks for real after the window is up (a device that went away: the painter) and stores the
+    // answer for the next start. Without a stored check (first start) the view checks right away as always. The
+    // picture is the same on both backends.
+    static void setUseCachedGpuCheck(bool use);
+    static void checkCachedGpu();
+    // Took the stored check, the real one is still to come (tests)
+    bool gpuPending() const { return m_gpuPending; }
 
     // The frame to show (implicitly shared, no copy). Its pixel size may be smaller than the project frame (preview
     // scale): the zoom refers to frameSize()
@@ -105,6 +113,7 @@ private:
     void repaintPicture();
     void repaintOverlay();
     void fallBackToPainter(const QString& why); // the GPU surface failed
+    void makeRhiSurface();
     QPointF clampedPan(const QPointF& pan) const;
     double scale() const; // widget pixels per frameSize() pixel
 
@@ -112,6 +121,7 @@ private:
     QString m_backendInfo;
     QWidget* m_surface = nullptr;      // GPU: the QRhiWidget
     QWidget* m_overlayLayer = nullptr; // GPU: transparent widget above it that paints the overlay
+    bool m_gpuPending = false;         // backend from the stored GPU check, the real one comes later
     QImage m_image;
     QSize m_frameSize;
     QColor m_background;

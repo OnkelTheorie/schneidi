@@ -22,6 +22,8 @@ public:
 
     // Creates a device of the platform's API once (cached): does a hardware RHI work here, and which device is it
     static FrameView::Probe probe();
+    // probe() has run (its answer is known without touching the GPU)
+    static bool probed();
     // The API QRhiWidget is set to (the same one the probe tried)
     static QRhiWidget::Api platformApi();
 

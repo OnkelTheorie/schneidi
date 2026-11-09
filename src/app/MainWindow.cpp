@@ -213,10 +213,6 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
         if (m_page == Page::Color) playheadInto(selectedVideoClip()); // the viewer shows the clip being graded
     });
     connect(m_engine, &Engine::positionChanged, this, [this](int f) {
-        if (m_engine->timelinePositions()) m_colorPanel->setPlayhead(f);
-    });
-    connect(m_colorPanel, &ColorPanel::seekRequested, tv, &TimelineView::seekRequested);
-    connect(m_engine, &Engine::positionChanged, this, [this](int f) {
         if (m_engine->timelinePositions()) m_transcript->setPlayhead(f);
     });
     connect(m_transcript, &TranscriptPanel::seekRequested, tv, &TimelineView::seekRequested);
@@ -230,7 +226,6 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
         ExtensionsDialog ext(this);
         ext.exec();
     });
-    connect(m_engine, &Engine::frameReady, m_scopes, &ScopesPanel::setFrame);
     connect(m_mediaPool, &MediaPool::sourceRequested, this, &MainWindow::showSource);
     connect(m_mediaPool, &MediaPool::sourceRequestedAt, this, [this](const QString& path, int frame) {
         m_sourcePos.insert(path, frame); // a hit of the material search: the source viewer opens there
@@ -512,6 +507,19 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
         m_engine->showTimeline(0);
     }
     StartupTrace::mark("MainWindow ctor end");
+}
+
+void MainWindow::connectColorPage()
+{
+    TimelineView* tv = m_timeline->view();
+    m_colorPanel->setPlayhead(tv->playhead());
+    connect(m_engine, &Engine::positionChanged, m_colorPanel, [this](int f) {
+        if (m_engine->timelinePositions()) m_colorPanel->setPlayhead(f);
+    });
+    connect(m_colorPanel, &ColorPanel::seekRequested, tv, &TimelineView::seekRequested);
+    connect(m_engine, &Engine::frameReady, m_scopes, &ScopesPanel::setFrame);
+    m_colorPanel->setTourButtonAllowed(!m_tourSaved.active);
+    if (m_tours) connect(m_colorPanel, &ColorPanel::tourRequested, m_tours, [this] { m_tours->start("color"); });
 }
 
 void MainWindow::importFiles(const QStringList& paths, bool placeOnTimeline, bool adoptFormat)

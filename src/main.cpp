@@ -10,6 +10,7 @@
 #include "cli/Commands.h"
 #include "cli/Live.h"
 #include "cli/Setup.h"
+#include "ui/FrameView.h"
 #include "ui/MediaStorage.h"
 #include "app/Theme.h"
 #include "core/CodeTrust.h"
@@ -241,6 +242,8 @@ int main(int argc, char* argv[])
     RenderQueue::setReviewMarks([](const ProjectData& data, int sequence, const std::atomic<bool>& cancel) {
         return Cli::reviewOverlay(data, sequence, &cancel);
     });
+    // The viewer trusts the last run's GPU check; the real one (a throwaway OpenGL/D3D device) comes after the window
+    FrameView::setUseCachedGpuCheck(true);
     MainWindow w(&engine);
     StartupTrace::mark("MainWindow constructed");
     // Menu entries that map onto an edit op of the command layer ("Musik auf Länge…"): the user's own undo step
@@ -257,6 +260,12 @@ int main(int argc, char* argv[])
     if (app.arguments().contains("--screenshot")) w.show();
     else w.showMaximized();
     StartupTrace::mark("window show() returned");
+    // The real GPU check once the window is on screen and idle (a stored one decided the viewer's start), at the
+    // latest after the first interactions have had their turn
+    QTimer::singleShot(1500, &w, [] {
+        FrameView::checkCachedGpu();
+        StartupTrace::mark("viewer GPU check done");
+    });
     splash.reset(); // never waits for the window system: the main window covers the spot anyway
     StartupTrace::mark("splash finished");
     qInfo("Startzeit: Engine %lld ms, Fenster sichtbar nach %lld ms", afterEngine - beforeEngine, startTimer.elapsed());

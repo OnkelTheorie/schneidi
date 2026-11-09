@@ -168,11 +168,11 @@ void MainWindow::buildActions()
     makeAction(edit, "cut", T("Ausschneiden"), QKeySequence("Ctrl+X"), [this] { m_editor->cutSelection(); });
     // On the Color page Ctrl+C/Ctrl+V copy and paste the grade, like DaVinci
     makeAction(edit, "copy", T("Kopieren"), QKeySequence("Ctrl+C"), [this] {
-        if (m_page == Page::Color) m_colorPanel->copyGrade();
+        if (m_page == Page::Color) colorPanel()->copyGrade();
         else m_editor->copySelection();
     });
     makeAction(edit, "paste", T("Einfügen am Abspielkopf"), QKeySequence("Ctrl+V"), [this, tv] {
-        if (m_page == Page::Color) m_colorPanel->pasteGrade();
+        if (m_page == Page::Color) colorPanel()->pasteGrade();
         else m_editor->paste(tv->playhead());
     });
     makeAction(edit, "paste_attributes", T("Attribute einfügen…"), QKeySequence("Alt+V"), [this] {
@@ -696,24 +696,24 @@ void MainWindow::buildActions()
     // Color menu like DaVinci (Color → Apply Grade from One/Two Clips Prior); works on the Color page
     QMenu* colorMenu = menuBar()->addMenu(T("&Farbe"));
     makeAction(colorMenu, "grade_copy", T("Farbkorrektur kopieren (Seite Farbe: Strg+C)"), QKeySequence(),
-               [this] { m_colorPanel->copyGrade(); });
+               [this] { colorPanel()->copyGrade(); });
     makeAction(colorMenu, "grade_paste", T("Farbkorrektur einfügen (Seite Farbe: Strg+V)"), QKeySequence(),
-               [this] { m_colorPanel->pasteGrade(); });
+               [this] { colorPanel()->pasteGrade(); });
     makeAction(colorMenu, "grade_prev", T("Farbkorrektur vom vorigen Clip übernehmen"), QKeySequence("="), [this] {
-        if (m_page == Page::Color) m_colorPanel->gradeFromPrevious(1);
+        if (m_page == Page::Color) colorPanel()->gradeFromPrevious(1);
     });
     makeAction(colorMenu, "grade_prev2", T("Farbkorrektur vom vorvorigen Clip übernehmen"), QKeySequence("-"), [this] {
-        if (m_page == Page::Color) m_colorPanel->gradeFromPrevious(2);
+        if (m_page == Page::Color) colorPanel()->gradeFromPrevious(2);
     });
     colorMenu->addSeparator();
     // Windows of the Color page: choose the next layer (whole picture → window 1 → …), add one at the playhead clip
     makeAction(colorMenu, "color_next_layer", T("Nächstes Fenster wählen"), QKeySequence(), [this] {
         showPage(Page::Color);
-        m_colorPanel->nextLayer();
+        colorPanel()->nextLayer();
     });
     makeAction(colorMenu, "color_add_window", T("Fenster hinzufügen"), QKeySequence(), [this] {
         showPage(Page::Color);
-        m_colorPanel->addWindow("ellipse");
+        colorPanel()->addWindow("ellipse");
     });
 
     QMenu* workspace = menuBar()->addMenu(T("&Arbeitsbereich"));
@@ -737,6 +737,7 @@ void MainWindow::buildActions()
                [this] { if (m_transcriptToggle->isEnabled()) m_transcriptToggle->toggle(); });
     // DaVinci: Workspace > Video Scopes (Ctrl+Shift+W); here the scope panel of the Color page
     makeAction(workspace, "toggle_scopes", T("Messanzeigen ein/aus"), QKeySequence("Ctrl+Shift+W"), [this] {
+        ensureColorPage();
         m_scopes->setVisible(!m_scopes->isVisibleTo(m_colorBottom));
         QSettings().setValue("color/scopesVisible", m_scopes->isVisibleTo(m_colorBottom));
         if (m_scopes->isVisibleTo(m_colorBottom)) showPage(Page::Color);
