@@ -869,8 +869,8 @@ int main(int argc, char** argv)
     runWindow(engine, "default-en", {}, "en", QSize(1600, 950), false);
     runWindow(engine, "user-en", user, "en", QSize(1920, 1050), true);
     runWindow(engine, "user-ru", user, "ru", QSize(1920, 1050), true);
-    // A narrow laptop screen (not 768 high: the Color page with a clip needs ~860 px in Russian, a bug of its own)
-    runWindow(engine, "default-ru", {}, "ru", QSize(1366, 900), false);
+    // A small laptop screen (the Color page scrolls its controls: the window never grows past it)
+    runWindow(engine, "default-ru", {}, "ru", QSize(1366, 768), false);
     return Check::result();
 }
 
