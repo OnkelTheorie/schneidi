@@ -12,6 +12,7 @@
 #include "engine/Exporter.h"
 #include "engine/FileStamp.h"
 
+#include <QPointer>
 #include <QThreadPool>
 #include "engine/MediaProbe.h"
 #include "engine/OpenMedia.h"
@@ -187,29 +188,44 @@ Engine::Engine(QObject* parent)
 
 void Engine::checkFiles()
 {
-    QSet<QString> files;
+    m_recheckRounds = 0; // the app became active (or a caller asks): a file that kept growing is looked at again
+    lookAtFiles();
+}
+
+void Engine::lookAtFiles()
+{
+    QStringList files;
     const auto collect = [&files](const Timeline& t) {
         for (const auto* tracks : {&t.video, &t.audio})
             for (const Track& track : *tracks)
                 for (const Clip& c : track.clips)
-                    if (!c.mediaPath.isEmpty()) files.insert(c.mediaPath);
+                    if (!c.mediaPath.isEmpty() && !files.contains(c.mediaPath)) files << c.mediaPath;
     };
     collect(m_built);
     if (m_built.nested)
         for (const Timeline& inner : *m_built.nested) collect(inner);
-    bool changing = false;
-    for (const QString& f : std::as_const(files)) {
-        FileStamp::now(f); // a settled change calls the observers
-        changing |= FileStamp::changing(f);
-    }
-    // A file still being written (or just overwritten): look again once it may have settled
-    if (changing && !m_recheckQueued) {
-        m_recheckQueued = true;
-        QTimer::singleShot(FileStamp::kSettleMs + 200, this, [this] {
-            m_recheckQueued = false;
-            checkFiles();
-        });
-    }
+    if (files.isEmpty()) return;
+    // On the disk in the background (a slow share must not stall the window); a settled change calls the observers
+    // there (they hand their work to the UI thread)
+    QThreadPool::globalInstance()->start([files, self = QPointer<Engine>(this)] {
+        bool changing = false;
+        for (const QString& f : files) {
+            FileStamp::now(f);
+            changing |= FileStamp::changing(f);
+        }
+        if (!changing) return;
+        QMetaObject::invokeMethod(qApp, [self] {
+            // A file still being written (or just overwritten): look again once it may have settled - a few rounds;
+            // one that keeps growing (a recorder's output) waits for the next activation
+            if (!self || self->m_recheckQueued || self->m_recheckRounds >= kRecheckRounds) return;
+            ++self->m_recheckRounds;
+            self->m_recheckQueued = true;
+            QTimer::singleShot(FileStamp::kSettleMs + 200, self, [self] {
+                self->m_recheckQueued = false;
+                self->lookAtFiles();
+            });
+        }, Qt::QueuedConnection);
+    });
 }
 
 void Engine::mediaFileChanged()

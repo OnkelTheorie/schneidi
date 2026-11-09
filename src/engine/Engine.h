@@ -86,7 +86,7 @@ public:
     RenderCache* renderCache() const { return m_renderCache; }
     // Single frames from media files in their own thread (trim view while dragging an edit); follows setFormat()
     StillFetcher* stills() const { return m_stills; }
-    // Looks at the shown timeline's media files on the disk now (FileStamp::now): one overwritten under its name
+    // Looks at the shown timeline's media files on the disk (FileStamp::now, in the background): one overwritten under its name
     // (re-rendered elsewhere) is read again everywhere. Called when the app becomes active again; renderers also
     // notice it by themselves (throttled) while they draw.
     void checkFiles();
@@ -283,4 +283,7 @@ private:
     int m_stampObserver = 0;
     bool m_fileChangeQueued = false;
     bool m_recheckQueued = false;
+    int m_recheckRounds = 0;                // looks again at a changing file since the last checkFiles()
+    static constexpr int kRecheckRounds = 5; // then a file that keeps growing waits for the next activation
+    void lookAtFiles();                     // checkFiles without resetting the rounds
 };
