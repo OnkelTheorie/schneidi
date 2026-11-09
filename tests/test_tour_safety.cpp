@@ -269,6 +269,32 @@ void testUserState(Engine& engine)
                       .arg(tv->view().pxPerFrame).arg(tv->view().leftFrame).arg(tv->view().scrollY));
 }
 
+// The practice clips have handles (a transition on a cut needs no question); the Inspector's step selects a clip
+void testPracticeProject(Engine& engine)
+{
+    auto w = window(engine);
+    if (!CHECK(startTour(*w))) return;
+    const Timeline& tl = w->liveProject()->timeline();
+    if (!CHECK(!tl.video.isEmpty() && tl.video[0].clips.size() >= 2)) return;
+    const Clip& a = tl.video[0].clips[0];
+    const Clip& b = tl.video[0].clips[1];
+    CHECK(a.in > 0 && b.in > 0);
+    CHECK_EQ(b.start, a.end()); // still one after another
+    CHECK(w->editor()->transitionsLackingHandles(b.start, TransitionStyle{}, TrackKind::Video).isEmpty());
+    // To the Inspector's step with nothing selected: it selects a clip
+    TourRunner* r = w->tours()->runner();
+    while (r->running() && r->index() < 5)
+        if (QPushButton* next = button(w->tours()->overlay(), "tour_next"); CHECK(next)) {
+            w->liveSelection()->clear();
+            next->click();
+            QTest::qWait(20);
+        } else {
+            break;
+        }
+    if (CHECK(r->step()) && CHECK_EQ(r->step()->target, QString("inspector"))) CHECK(!w->liveSelection()->ids().isEmpty());
+    w->tours()->stop();
+}
+
 // A recipe dropped on a clip selects that clip (the Comp page and the Inspector show it next)
 void testRecipeDrop(Engine& engine)
 {
@@ -313,6 +339,7 @@ int main(int argc, char** argv)
     testOutsideChange(engine, dir);
     testEscape(engine);
     testUserState(engine);
+    testPracticeProject(engine);
     testRecipeDrop(engine);
     testCloseInTour(engine);
     return Check::result();

@@ -111,6 +111,15 @@ void MainWindow::setupTours(QMenu* help)
             m_timeline->view()->setPlayhead(c->start + c->length() / 2);
         }
     };
+    // The Inspector shows a clip: the first video clip selected when none is
+    host.actions["select_clip"] = [this] {
+        if (!m_selection->ids().isEmpty()) return;
+        for (const Track& t : m_project->timeline().video)
+            if (!t.clips.isEmpty()) {
+                m_selection->set({t.clips.first().id});
+                return;
+            }
+    };
     // Tour mode: a practice project and a fixed layout; the user's project and layout come back at the end
     host.enter = [this](const Tour& t) { enterTourMode(t); };
     host.leave = [this] { leaveTourMode(); };
@@ -449,6 +458,21 @@ void MainWindow::buildPracticeProject(const QString& practice)
     // (set once here, as the tour begins: no step and no drop changes it, core rule)
     ProjectData d = m_project->data();
     const double fps = m_project->timelineFormat().rate.fps();
+    // Handles: each clip starts a little into its file and ends a little before its end, so a transition dropped on
+    // a cut finds material to overlap (no "trim the clips?" question in the tour); the clips stay one after another
+    const int handle = m_project->timelineFormat().rate.timebase() / 3;
+    for (QVector<Track>* tracks : {&d.timeline.video, &d.timeline.audio})
+        for (Track& t : *tracks) {
+            int at = t.clips.isEmpty() ? 0 : t.clips.first().start;
+            for (Clip& c : t.clips) {
+                if (c.kind == ClipKind::Media && c.out - c.in > 6 * handle) {
+                    c.in += handle;
+                    c.out -= handle;
+                }
+                c.start = at;
+                at = c.end();
+            }
+        }
     d.playhead = onTimeline ? m_project->timelineFormat().rate.timebase() / 2 : 0;
     SavedView view;
     view.sequence = m_project->currentSequence();
