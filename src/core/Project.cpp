@@ -970,6 +970,44 @@ void Project::replaceMedia(const QVector<MediaInfo>& media)
     emit mediaChanged();
 }
 
+bool Project::refreshMedia(const MediaInfo& probed)
+{
+    if (probed.length <= 0 && !probed.hasVideo && !probed.hasAudio) return false;
+    for (MediaInfo& m : m_media) {
+        if (m.path != probed.path) continue;
+        MediaInfo next = m;
+        next.length = probed.length;
+        next.hasVideo = probed.hasVideo;
+        next.hasAudio = probed.hasAudio;
+        next.isImage = probed.isImage;
+        next.audioStreams = probed.audioStreams;
+        const int last = std::max(0, next.length - 1);
+        if (next.markIn > last) next.markIn = -1;
+        if (next.markOut > last) next.markOut = next.markIn >= 0 ? last : -1;
+        next.markers.removeIf([last](int f) { return f > last; });
+        if (next.length == m.length && next.hasVideo == m.hasVideo && next.hasAudio == m.hasAudio
+            && next.isImage == m.isImage && next.audioStreams == m.audioStreams && next.markIn == m.markIn
+            && next.markOut == m.markOut && next.markers == m.markers)
+            return false;
+        m = next;
+        emit mediaChanged();
+        return true;
+    }
+    return false;
+}
+
+int Project::clipsPastEnd(const QString& path) const
+{
+    const MediaInfo* m = mediaInfo(path);
+    if (!m || m->isImage || m->length <= 0) return 0;
+    int n = 0;
+    for (const Sequence& s : m_sequences)
+        for (const auto* tracks : {&s.timeline.video, &s.timeline.audio})
+            for (const Track& t : *tracks)
+                for (const Clip& c : t.clips) n += c.mediaPath == path && c.out >= m->length;
+    return n;
+}
+
 void Project::setRenderQueue(const QVector<RenderJob>& jobs)
 {
     if (jobs == m_renderQueue) return;

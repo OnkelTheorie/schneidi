@@ -2933,5 +2933,7 @@
  "In den Medienpool": "Dans la médiathèque",
  "Nein": "Non",
  "Im Bereich wiederholen": "Boucler dans la plage",
- "Play/Pause (Leertaste) – wiederholt im In/Out-Bereich": "Lecture/Pause (barre d’espace) – boucle dans la plage d’entrée/sortie"
+ "Play/Pause (Leertaste) – wiederholt im In/Out-Bereich": "Lecture/Pause (barre d’espace) – boucle dans la plage d’entrée/sortie",
+ "%1 ist jetzt kürzer: 1 Clip reicht über sein Ende hinaus": "%1 est plus court maintenant : 1 clip dépasse sa fin",
+ "%1 ist jetzt kürzer: %2 Clips reichen über sein Ende hinaus": "%1 est plus court maintenant : %2 clips dépassent sa fin"
 }

@@ -4,6 +4,8 @@
 #include <QDateTime>
 #include <QFileInfo>
 #include <QHash>
+#include <QSet>
+#include <QThreadPool>
 #include <QMap>
 #include <atomic>
 #include <chrono>
@@ -34,6 +36,7 @@ struct Observer {
 struct State {
     std::mutex mutex;
     QHash<QString, Entry> entries;
+    QSet<QString> looking; // lookLater: a pool thread looks at these now
     std::mutex observerMutex;
     QMap<int, std::shared_ptr<Observer>> observers;
     int nextId = 1;
@@ -114,6 +117,22 @@ Stamp recent(const QString& path)
         if (it != state().entries.cend() && t - it->checked < std::chrono::milliseconds(kRecheckMs)) return it->stamp;
     }
     return now(path);
+}
+
+void lookLater(const QString& path)
+{
+    {
+        std::lock_guard lock(state().mutex);
+        const auto it = state().entries.constFind(path);
+        if (it != state().entries.cend() && Clock::now() - it->checked < std::chrono::milliseconds(kRecheckMs)) return;
+        if (state().looking.contains(path)) return;
+        state().looking.insert(path);
+    }
+    QThreadPool::globalInstance()->start([path] {
+        now(path);
+        std::lock_guard lock(state().mutex);
+        state().looking.remove(path);
+    });
 }
 
 bool changing(const QString& path)

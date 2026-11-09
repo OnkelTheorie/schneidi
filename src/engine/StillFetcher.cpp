@@ -74,8 +74,8 @@ QImage StillFetcher::cached(const QString& path, int frame) const
 
 void StillFetcher::request(const QVector<Request>& requests)
 {
-    for (const Request& r : requests) // an overwritten file is noticed here too (throttled, outside the lock)
-        if (!r.path.isEmpty()) FileStamp::recent(r.path);
+    for (const Request& r : requests) // an overwritten file is noticed here too (throttled, on a pool thread)
+        if (!r.path.isEmpty()) FileStamp::lookLater(r.path);
     QMutexLocker lock(&m_mutex);
     m_jobs.clear();
     for (const Request& r : requests) {

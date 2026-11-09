@@ -135,6 +135,13 @@ public:
     void setTranscript(const QString& path, const MediaTranscript& transcript);
     // Replace media info (e.g. lengths after a new frame rate), does not count as a change
     void replaceMedia(const QVector<MediaInfo>& media);
+    // A file overwritten under its name, probed again (`probed`, Engine::probe): its pool entry takes the file's
+    // length, picture/sound and streams; what the user set (marks within the new length, bin, color, flags, markers,
+    // transcripts, picture shape) stays. Not in the undo history and no change of the project (as replaceMedia).
+    // false = not in the pool, unreadable (an empty probe: the file being written) or nothing different.
+    bool refreshMedia(const MediaInfo& probed);
+    // Clips in any timeline whose used range of `path` reaches past its end (the file got shorter)
+    int clipsPastEnd(const QString& path) const;
     // After a frame rate change (from `oldRate` to the current one): media lengths, source in/out and source markers
     // counted anew. `probeLength` = a file's real length in the new rate (0 = unknown: offline files are scaled).
     // App and CLI both call this after setFormat.

@@ -2933,5 +2933,7 @@
  "In den Medienpool": "Do biblioteki multimediów",
  "Nein": "Nie",
  "Im Bereich wiederholen": "Zapętl w zakresie",
- "Play/Pause (Leertaste) – wiederholt im In/Out-Bereich": "Odtwarzaj/Pauza (spacja) – zapętla w zakresie wejścia/wyjścia"
+ "Play/Pause (Leertaste) – wiederholt im In/Out-Bereich": "Odtwarzaj/Pauza (spacja) – zapętla w zakresie wejścia/wyjścia",
+ "%1 ist jetzt kürzer: 1 Clip reicht über sein Ende hinaus": "%1 jest teraz krótszy: 1 klip wychodzi poza jego koniec",
+ "%1 ist jetzt kürzer: %2 Clips reichen über sein Ende hinaus": "%1 jest teraz krótszy: klipy wychodzące poza jego koniec: %2"
 }

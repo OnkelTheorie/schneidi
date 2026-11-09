@@ -29,6 +29,9 @@ constexpr int kSettleMs = 2000;
 Stamp now(const QString& path);
 // The same from memory, looked up on the disk again when older than kRecheckMs; first call per path = now()
 Stamp recent(const QString& path);
+// recent() without touching the disk on the calling thread (the UI: thumbnails, waveforms, trim stills): when the
+// stamp is older than kRecheckMs (or unknown) the look is done on a pool thread; observers are called there
+void lookLater(const QString& path);
 // Is `path` seen changing without the change having settled yet? (Callers look again after kSettleMs)
 bool changing(const QString& path);
 // Has `path` a stamp yet? (The first sighting is the baseline: a file never stamped before it was overwritten is

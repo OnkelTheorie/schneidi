@@ -2933,5 +2933,7 @@
  "In den Medienpool": "A la biblioteca de medios",
  "Nein": "No",
  "Im Bereich wiederholen": "Repetir en el rango",
- "Play/Pause (Leertaste) – wiederholt im In/Out-Bereich": "Reproducir/Pausa (barra espaciadora) – repite en el rango de entrada/salida"
+ "Play/Pause (Leertaste) – wiederholt im In/Out-Bereich": "Reproducir/Pausa (barra espaciadora) – repite en el rango de entrada/salida",
+ "%1 ist jetzt kürzer: 1 Clip reicht über sein Ende hinaus": "%1 ahora es más corto: 1 clip llega más allá de su final",
+ "%1 ist jetzt kürzer: %2 Clips reichen über sein Ende hinaus": "%1 ahora es más corto: %2 clips llegan más allá de su final"
 }
