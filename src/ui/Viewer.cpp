@@ -322,6 +322,10 @@ Viewer::Viewer(Engine* engine, QWidget* parent) : QWidget(parent), m_engine(engi
     connect(m_engine, &Engine::positionChanged, this, &Viewer::updateTimecode);
     connect(m_engine, &Engine::speedChanged, this,
             [this](double s) { m_playBtn->setText(s == 0.0 ? "▶" : "⏸"); });
+    // Loop playback in the In/Out range (ruler menu, Playback menu): the button says so
+    connect(m_engine, &Engine::loopChanged, this, [this](bool on) {
+        m_playBtn->setToolTip(on ? T("Play/Pause (Leertaste) – wiederholt im In/Out-Bereich") : T("Play/Pause (Leertaste)"));
+    });
     updateTimecode(0);
 }
 

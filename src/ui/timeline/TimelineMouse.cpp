@@ -182,7 +182,13 @@ void TimelineView::mousePressEvent(QMouseEvent* e)
         m_gap = {};
         update();
     }
+    // Right button on the ruler: dragging draws a new In/Out range, a click opens the ruler menu (on release)
+    if (e->button() == Qt::RightButton) {
+        marksRightPress(e->position().toPoint());
+        return;
+    }
     if (e->button() != Qt::LeftButton) return;
+    if (m_drag == Drag::Marks && m_markRight) return; // the right button's drag runs: the left one waits
     const QPoint pos = e->position().toPoint();
     m_pressPos = pos;
     if (subtitlePress(e, pos)) return;
@@ -207,7 +213,7 @@ void TimelineView::mousePressEvent(QMouseEvent* e)
     }
     if (pos.y() < kRulerH) {
         if (sectionPress(pos)) return; // the edge of a story section
-        if (marksPress(pos, e->modifiers())) return; // In/Out handles, the range, Alt-drag: a new range
+        if (marksPress(pos, e->modifiers())) return; // In/Out handles, the range's grip
         m_drag = Drag::Scrub;
         m_scrubFrame = std::max(0, int(std::lround(xToFrame(pos.x()))));
         emit seekRequested(m_scrubFrame);
@@ -673,7 +679,9 @@ void TimelineView::dragMove(const QPoint& pos, Qt::KeyboardModifiers mods)
 
 void TimelineView::mouseReleaseEvent(QMouseEvent* e)
 {
-    if (e->button() != Qt::LeftButton) return;
+    // The right button's drag (a new In/Out range) ends with that button only, the left one's never with it
+    if ((m_drag == Drag::Marks && m_markRight) != (e->button() == Qt::RightButton)) return;
+    if (e->button() != Qt::LeftButton && e->button() != Qt::RightButton) return;
     m_autoScroll->stop();
     if (m_drag == Drag::SectionEdge) {
         m_drag = Drag::None;

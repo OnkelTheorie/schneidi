@@ -152,7 +152,10 @@ bool TimelineView::eventFilter(QObject* obj, QEvent* e)
 // Right-click on a transition: kind, alignment, delete (like DaVinci)
 void TimelineView::contextMenuEvent(QContextMenuEvent* e)
 {
-    if (rulerMenu(e->pos(), e->globalPos())) return; // story sections and notes (TimelineStory.cpp)
+    // The ruler: a right-click with the mouse opens its menu on release (the right button drags a new In/Out range
+    // there, so the menu cannot open on press); the context menu key opens it here
+    if (e->reason() == QContextMenuEvent::Mouse && e->pos().x() >= kHeaderW && e->pos().y() < kRulerH) return;
+    if (rulerMenu(e->pos(), e->globalPos())) return; // In/Out, story sections and notes (TimelineStory.cpp)
     if (const auto sub = subRowAt(e->pos().y())) {
         if (e->pos().x() < kHeaderW) subtitleHeaderMenu(sub->index, e->globalPos());
         else subtitleTrackMenu(e->pos(), e->globalPos());

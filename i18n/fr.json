@@ -2931,5 +2931,7 @@
  "Aufnahme nach Absturz gefunden": "Enregistrement trouvé après un plantage",
  "Eine Voiceover-Aufnahme wurde nicht beendet: %1\nIn den Medienpool holen?": "Un enregistrement de voix off n'a pas été terminé : %1\nL'ajouter à la médiathèque ?",
  "In den Medienpool": "Dans la médiathèque",
- "Nein": "Non"
+ "Nein": "Non",
+ "Im Bereich wiederholen": "Boucler dans la plage",
+ "Play/Pause (Leertaste) – wiederholt im In/Out-Bereich": "Lecture/Pause (barre d’espace) – boucle dans la plage d’entrée/sortie"
 }

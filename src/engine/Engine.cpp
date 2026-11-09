@@ -166,6 +166,7 @@ Engine::Engine(QObject* parent)
         emit positionChanged(frame);
         stopAtEnd();
     }, Qt::QueuedConnection);
+    connect(this, &Engine::loopWrapDue, this, &Engine::loopBack, Qt::QueuedConnection);
 
     // A media file overwritten under its name. Seen by a renderer (any thread), which asks for the file's proxy right
     // after: the old content's proxy must not be read again (a proxy of the new content cannot exist yet). The rest -
@@ -743,8 +744,13 @@ void Engine::showContent(std::shared_ptr<const Picture::Pump::Content> content, 
 void Engine::onPumpShown(const QImage& image, int64_t position, double speed)
 {
     if (speed != 0.0) m_player->release(); // the picture is there: the sound may start
-    if (!image.isNull()) emit frameReady(image);       // queued -> UI thread
     const int shown = int(position) + m_offset;        // timeline frame
+    // Loop playback: a frame after the range's end is never shown; the clock reached it, so jump back now (once)
+    if (speed > 0 && loopCrossed(shown)) {
+        if (!m_loopWrap.exchange(true)) emit loopWrapDue(m_seekEpoch);
+        return;
+    }
+    if (!image.isNull()) emit frameReady(image);       // queued -> UI thread
     if (speed != 0.0 && shown != m_position.exchange(shown)) emit framePosition(shown, m_seekEpoch);
     if (speed != 0.0 && m_mode == Mode::Timeline) emitLevels();
 }
@@ -919,6 +925,31 @@ void Engine::setOpenEnd(bool on)
     stopAtEnd(); // closed again while playing behind the end
 }
 
+void Engine::setLoopRange(int in, int out)
+{
+    if (in < 0 || out < in) in = out = -1;
+    if (in == m_loopIn && out == m_loopOut) return;
+    const bool was = looping();
+    m_loopOut = out; // before In: the pump thread tests In first
+    m_loopIn = in;
+    if (was != looping()) emit loopChanged(looping());
+}
+
+bool Engine::loopCrossed(int shown) const
+{
+    const int in = m_loopIn, out = m_loopOut;
+    // From inside or before the range (the frame on screen is not behind it yet): the next one past `out` wraps
+    return in >= 0 && m_mode == Mode::Timeline && shown > out && m_position <= out;
+}
+
+void Engine::loopBack(int epoch)
+{
+    m_loopWrap = false;
+    // A jump, a stop or the loop switched off since the pump asked: nothing to do (the pump shows on as usual)
+    if (epoch != m_seekEpoch || m_speed <= 0.0 || !looping() || m_mode != Mode::Timeline) return;
+    seek(m_loopIn); // the usual jump: the sound fades out and in at the new place, the pump renders from there
+}
+
 bool Engine::atEnd(double speed) const
 {
     if (m_mode == Mode::Multicam) return false;
@@ -929,7 +960,14 @@ bool Engine::atEnd(double speed) const
 // playing, and the next rebuild (an edit, an import) played on by itself (user report 2026-10-24). Stop for real.
 void Engine::stopAtEnd()
 {
-    if (m_speed != 0.0 && connected() && atEnd(m_speed)) pause();
+    if (m_speed == 0.0 || !connected() || !atEnd(m_speed)) return;
+    // Loop playback whose range reaches up to (or past) the end: the end is where it wraps (not when the whole range
+    // lies behind the end: the jump would land there again; a range before the end was played past: ends as usual)
+    if (m_speed > 0 && looping() && m_mode == Mode::Timeline && m_loopIn < lastFrame() && m_loopOut >= lastFrame()) {
+        seek(m_loopIn);
+        return;
+    }
+    pause();
 }
 
 void Engine::setSpeed(double speed)
@@ -938,7 +976,8 @@ void Engine::setSpeed(double speed)
     if (speed != 0.0 && m_speed == 0.0 && atEnd(speed)) {
         // Play at the end starts from the front (Premiere, Final Cut); backwards at the start there is nothing
         if (speed < 0 || lastFrame() <= 0) return;
-        seek(0);
+        // Loop playback reaching the end: from the range's start
+        seek(looping() && m_mode == Mode::Timeline && m_loopIn < lastFrame() ? m_loopIn.load() : 0);
     }
     const bool wasPlaying = m_speed != 0.0;
     const double before = m_speed;

@@ -2931,5 +2931,7 @@
  "Aufnahme nach Absturz gefunden": "Найдена запись после сбоя",
  "Eine Voiceover-Aufnahme wurde nicht beendet: %1\nIn den Medienpool holen?": "Запись закадрового голоса не была завершена: %1\nДобавить её в медиатеку?",
  "In den Medienpool": "В медиатеку",
- "Nein": "Нет"
+ "Nein": "Нет",
+ "Im Bereich wiederholen": "Повторять в диапазоне",
+ "Play/Pause (Leertaste) – wiederholt im In/Out-Bereich": "Воспроизведение/Пауза (пробел) – повтор в диапазоне входа/выхода"
 }

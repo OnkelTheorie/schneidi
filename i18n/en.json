@@ -2931,5 +2931,7 @@
  "Aufnahme nach Absturz gefunden": "Recording found after a crash",
  "Eine Voiceover-Aufnahme wurde nicht beendet: %1\nIn den Medienpool holen?": "A voice-over recording was not finished: %1\nBring it into the Media Pool?",
  "In den Medienpool": "Into the Media Pool",
- "Nein": "No"
+ "Nein": "No",
+ "Im Bereich wiederholen": "Loop in range",
+ "Play/Pause (Leertaste) – wiederholt im In/Out-Bereich": "Play/Pause (Space) – loops in the In/Out range"
 }

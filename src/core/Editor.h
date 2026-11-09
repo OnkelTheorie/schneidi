@@ -235,7 +235,7 @@ public:
     // In/out point (I/O); -1 = remove. If out is before in, the other point is discarded.
     void setMarkIn(int frame);
     void setMarkOut(int frame);
-    // Both points at once (the ruler's handles: drag an edge, move the range, Alt-drag a new one). Out is the last
+    // Both points at once (the ruler's handles: drag an edge, move the range, right-drag a new one). Out is the last
     // frame inside the range and is clamped to >= in; -1 leaves that point unset. mergeKey: one undo step per drag.
     void setMarks(int in, int out, const QString& mergeKey = {});
     void clearMarks();

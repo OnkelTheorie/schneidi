@@ -2931,5 +2931,7 @@
  "Aufnahme nach Absturz gefunden": "Znaleziono nagranie po awarii",
  "Eine Voiceover-Aufnahme wurde nicht beendet: %1\nIn den Medienpool holen?": "Nagranie lektora nie zostało zakończone: %1\nDodać je do biblioteki multimediów?",
  "In den Medienpool": "Do biblioteki multimediów",
- "Nein": "Nie"
+ "Nein": "Nie",
+ "Im Bereich wiederholen": "Zapętl w zakresie",
+ "Play/Pause (Leertaste) – wiederholt im In/Out-Bereich": "Odtwarzaj/Pauza (spacja) – zapętla w zakresie wejścia/wyjścia"
 }

@@ -58,6 +58,7 @@
 
 #include <QAction>
 #include <QActionGroup>
+#include <climits>
 #include <tuple>
 #include <QApplication>
 #include <QMouseEvent>
@@ -520,6 +521,24 @@ void MainWindow::buildActions()
         m_engine->pause();
         m_engine->seek(TimelineOps::endFrame(m_project->timeline()));
     });
+    // Loop playback in the In/Out range (per session, off at every start; export unaffected): only while a range
+    // exists, removing it switches the loop off (nothing loops by accident). No default key.
+    auto* loop = makeAction(play, "loop_inout", T("Im Bereich wiederholen"), QKeySequence(), [] {});
+    loop->setCheckable(true);
+    auto applyLoop = [this, tv, loop] {
+        const Timeline& tl = m_project->timeline();
+        const bool range = tl.markIn >= 0 || tl.markOut >= 0;
+        if (!range && loop->isChecked()) loop->setChecked(false); // comes back here through toggled
+        loop->setEnabled(range);
+        const bool on = loop->isChecked() && range;
+        tv->setLoopInOut(on);
+        if (on) m_engine->setLoopRange(std::max(0, tl.markIn), tl.markOut >= 0 ? tl.markOut : INT_MAX);
+        else m_engine->setLoopRange(-1, -1);
+    };
+    connect(loop, &QAction::toggled, this, applyLoop);
+    connect(tv, &TimelineView::loopInOutRequested, loop, &QAction::setChecked);
+    connect(m_project, &Project::timelineChanged, this, applyLoop);
+    applyLoop();
     makeAction(play, "show_timeline", T("Timeline in der Vorschau zeigen"), QKeySequence("Q"),
               [this, tv] { m_engine->showTimeline(tv->playhead()); });
     buildMulticamViewerAction(play);

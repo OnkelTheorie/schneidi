@@ -131,6 +131,10 @@ public slots:
     // View like DaVinci's timeline view options: clip name resp. duration in the title bar
     void setShowClipNames(bool on);
     void setShowClipDurations(bool on);
+    // Loop playback in the In/Out range is on (MainWindow, per session): a loop symbol on the range, the ruler menu's
+    // entry checked
+    void setLoopInOut(bool on);
+    bool loopInOut() const { return m_loopInOut; }
 
     // A gap clicked on a track (highlighted; cleared by any other click or a clip selection)
     bool hasGap() const { return m_gap.on; }
@@ -141,6 +145,8 @@ signals:
     // A short note for the status bar (why a gap cannot be closed)
     void message(const QString& text);
     void seekRequested(int frame);
+    // The ruler menu's "loop in the range" entry was switched
+    void loopInOutRequested(bool on);
     void viewChanged();
     void toolChanged(TimelineView::Tool tool);
     void snappingChanged(bool on);
@@ -338,15 +344,19 @@ private:
     int m_sectionDrag = -1;   // index of the dragged section
     bool m_sectionLeft = false; // its left edge (else the right one)
     int m_sectionDrags = 0;     // counts the drags: each one is its own undo step
-    // In/Out range in the ruler (I/O): a handle at each edge drags that point, the lower half of the range moves the
-    // whole range, Alt-drag on the ruler draws a new one; snapping (playhead, clip edges, markers) unless Shift.
-    // Right-click: In/Out here, remove. Tooltip: timecode and length. One undo step per drag. TimelineMarks.cpp
+    // In/Out range in the ruler (I/O): a handle at each edge drags that point, the grip in the middle of the range's
+    // lower half moves the whole range, a right-button drag on the ruler draws a new one; snapping (playhead, clip
+    // edges, markers) unless Shift. A right-click without dragging: the ruler menu (In/Out here, remove, loop).
+    // Tooltip: timecode and length. One undo step per drag. TimelineMarks.cpp
     enum class MarkGrab { None, In, Out, Range, Create };
-    MarkGrab markGrabAt(const QPoint& pos) const; // In/Out handle or the range's lower half (no Create)
+    MarkGrab markGrabAt(const QPoint& pos) const; // In/Out handle or the range's grip (no Create)
     void drawMarks(QPainter& p);
     bool marksPress(const QPoint& pos, Qt::KeyboardModifiers mods); // false = nothing to grab (the ruler scrubs)
+    bool marksRightPress(const QPoint& pos); // right button on the ruler: a new range once it drags
     void marksDrag(const QPoint& pos, Qt::KeyboardModifiers mods);
     void marksRelease();
+    bool m_markRight = false; // the running Marks drag is the right button's (a click opens the menu)
+    bool m_loopInOut = false;
     int marksSnap(const QVector<int>& edges, Qt::KeyboardModifiers mods) const; // correction, 0 = none
     QString marksToolTip(MarkGrab grab) const;
     void addMarksActions(QMenu& menu, int frame);
