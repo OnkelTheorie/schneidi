@@ -1213,8 +1213,17 @@ void MainWindow::setupProxyHint()
     // timeline, watch folders, the live MCP/CLI import) says mediaImported; undo/redo and loading a project do not
     connect(m_project, &Project::mediaImported, this, [this, proxies](const QStringList& paths) {
         if (m_importedMedia.isEmpty())
-            QTimer::singleShot(0, this, [this, proxies] { proxies->importedFiles(std::exchange(m_importedMedia, {})); });
+            QTimer::singleShot(0, this, [this, proxies] {
+                proxies->importedFiles(std::exchange(m_importedMedia, {}),
+                                       [project = QPointer<Project>(m_project)](const QString& path) {
+                                           return project && project->mediaInfo(path);
+                                       });
+            });
         m_importedMedia << paths;
+    });
+    connect(m_project, &Project::loaded, proxies, [this, proxies] {
+        m_importedMedia.clear();
+        proxies->dropImports();
     });
 }
 

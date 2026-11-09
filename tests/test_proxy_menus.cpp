@@ -265,6 +265,31 @@ void testApp(MainWindow& w, Engine& engine, const Files& f)
         QTest::qWait(1500);
         CHECK(!proxies->isPending(f.uhd2));
     }
+    // Canceled, another project or the file gone again while its import is still being read: nothing queued
+    proxies->importedFiles({f.uhd2});
+    proxies->cancelAll();
+    QTest::qWait(1500);
+    CHECK(!proxies->isPending(f.uhd2));
+    proxies->importedFiles({f.uhd2});
+    proxies->dropImports();
+    QTest::qWait(1500);
+    CHECK(!proxies->isPending(f.uhd2));
+    proxies->importedFiles({f.uhd2}, [](const QString&) { return false; });
+    QTest::qWait(1500);
+    CHECK(!proxies->isPending(f.uhd2));
+    // In the app: imported and taken out of the pool at once
+    CHECK(project->removeMedia({f.uhd2}, false));
+    settle();
+    w.importFiles({f.uhd2});
+    CHECK(project->mediaInfo(f.uhd2));
+    CHECK(project->removeMedia({f.uhd2}, false));
+    QTest::qWait(1500);
+    CHECK(!proxies->isPending(f.uhd2));
+    // ... and the plain case still queues
+    proxies->importedFiles({f.uhd2});
+    CHECK(waitFor([&] { return proxies->isPending(f.uhd2); }));
+    proxies->cancelAll();
+    settle();
     ProxyManager::setImportRule(ProxyManager::ImportRule::Never);
 
     // Settings: the choice in the dialog, never first
