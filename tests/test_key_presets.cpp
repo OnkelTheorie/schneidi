@@ -123,6 +123,18 @@ void testPresets()
     b.applyPreset("standard");
     CHECK_EQ(in("split").value(0), QString("Ctrl+B"));
     CHECK_EQ(in("select_edit_point").value(0), QString("V"));
+
+    // KEY_PRESETS_LIST=1: which keys schneidi's actions lose per preset (for the docs)
+    if (qEnvironmentVariableIsSet("KEY_PRESETS_LIST"))
+        for (const char* preset : {"premiere", "finalcut"}) {
+            const auto set = b.presetInputs(preset);
+            for (const auto& e : b.entries())
+                for (int s = 0; s < InputBindings::kSlots; ++s) {
+                    const QString was = b.defaultInputs(e.id)[s], now = set.value(e.id).value(s);
+                    if (!was.isEmpty() && now.isEmpty())
+                        std::printf("%s: %s loses %s\n", preset, qPrintable(e.id), qPrintable(was));
+                }
+        }
 }
 
 void testImport()
