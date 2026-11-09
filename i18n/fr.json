@@ -2764,5 +2764,12 @@
  "♪ Audio": "♪ Audio",
  "Alle Seiten zeigen": "Afficher toutes les pages",
  "Rechtsklick: Seiten ein- und ausblenden": "Clic droit : afficher ou masquer des pages",
- "Sichtbare Seiten": "Pages visibles"
+ "Sichtbare Seiten": "Pages visibles",
+ "Fläche bleibt": "La zone reste",
+ "Fläche bleibt: die Vorschau im Hauptfenster zeigt Quellclips, der Monitor behält das Bild der Timeline. Vorschau weg: die Bereiche daneben bekommen den Platz.": "La zone reste : l’aperçu de la fenêtre principale montre les clips source, le moniteur garde l’image de la timeline. Sans aperçu : les panneaux voisins prennent la place.",
+ "Im Hauptfenster": "Dans la fenêtre principale",
+ "Kein zweiter Monitor gefunden.": "Aucun second moniteur trouvé.",
+ "Vorschau auf zweitem Monitor": "Aperçu sur un second moniteur",
+ "Vorschau weg": "Sans aperçu",
+ "schneidi – Vorschau": "schneidi – Aperçu"
 }

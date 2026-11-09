@@ -2764,5 +2764,12 @@
  "♪ Audio": "♪ Audio",
  "Alle Seiten zeigen": "Mostrar todas las páginas",
  "Rechtsklick: Seiten ein- und ausblenden": "Clic derecho: mostrar u ocultar páginas",
- "Sichtbare Seiten": "Páginas visibles"
+ "Sichtbare Seiten": "Páginas visibles",
+ "Fläche bleibt": "El área se queda",
+ "Fläche bleibt: die Vorschau im Hauptfenster zeigt Quellclips, der Monitor behält das Bild der Timeline. Vorschau weg: die Bereiche daneben bekommen den Platz.": "El área se queda: la vista previa de la ventana principal muestra clips de origen, el monitor conserva la imagen de la línea de tiempo. Sin vista previa: los paneles de al lado ocupan el espacio.",
+ "Im Hauptfenster": "En la ventana principal",
+ "Kein zweiter Monitor gefunden.": "No se encontró un segundo monitor.",
+ "Vorschau auf zweitem Monitor": "Vista previa en el segundo monitor",
+ "Vorschau weg": "Sin vista previa",
+ "schneidi – Vorschau": "schneidi – Vista previa"
 }

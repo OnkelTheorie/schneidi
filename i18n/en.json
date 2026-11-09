@@ -2764,5 +2764,12 @@
  "♪ Audio": "♪ Audio",
  "Alle Seiten zeigen": "Show all pages",
  "Rechtsklick: Seiten ein- und ausblenden": "Right-click: show or hide pages",
- "Sichtbare Seiten": "Visible pages"
+ "Sichtbare Seiten": "Visible pages",
+ "Fläche bleibt": "Area stays",
+ "Fläche bleibt: die Vorschau im Hauptfenster zeigt Quellclips, der Monitor behält das Bild der Timeline. Vorschau weg: die Bereiche daneben bekommen den Platz.": "Area stays: the preview in the main window shows source clips, the monitor keeps the timeline's picture. Preview gone: the panels beside it get the room.",
+ "Im Hauptfenster": "In the main window",
+ "Kein zweiter Monitor gefunden.": "No second monitor found.",
+ "Vorschau auf zweitem Monitor": "Preview on second monitor",
+ "Vorschau weg": "Preview gone",
+ "schneidi – Vorschau": "schneidi – Preview"
 }

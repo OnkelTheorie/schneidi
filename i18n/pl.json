@@ -2764,5 +2764,12 @@
  "♪ Audio": "♪ Dźwięk",
  "Alle Seiten zeigen": "Pokaż wszystkie strony",
  "Rechtsklick: Seiten ein- und ausblenden": "Prawy przycisk: pokaż lub ukryj strony",
- "Sichtbare Seiten": "Widoczne strony"
+ "Sichtbare Seiten": "Widoczne strony",
+ "Fläche bleibt": "Obszar zostaje",
+ "Fläche bleibt: die Vorschau im Hauptfenster zeigt Quellclips, der Monitor behält das Bild der Timeline. Vorschau weg: die Bereiche daneben bekommen den Platz.": "Obszar zostaje: podgląd w oknie głównym pokazuje klipy źródłowe, monitor zachowuje obraz osi czasu. Bez podglądu: sąsiednie panele zajmują miejsce.",
+ "Im Hauptfenster": "W oknie głównym",
+ "Kein zweiter Monitor gefunden.": "Nie znaleziono drugiego monitora.",
+ "Vorschau auf zweitem Monitor": "Podgląd na drugim monitorze",
+ "Vorschau weg": "Bez podglądu",
+ "schneidi – Vorschau": "schneidi – Podgląd"
 }

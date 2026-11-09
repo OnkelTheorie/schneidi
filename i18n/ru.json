@@ -2764,5 +2764,12 @@
  "♪ Audio": "♪ Аудио",
  "Alle Seiten zeigen": "Показать все страницы",
  "Rechtsklick: Seiten ein- und ausblenden": "Правый щелчок: показать или скрыть страницы",
- "Sichtbare Seiten": "Видимые страницы"
+ "Sichtbare Seiten": "Видимые страницы",
+ "Fläche bleibt": "Область остаётся",
+ "Fläche bleibt: die Vorschau im Hauptfenster zeigt Quellclips, der Monitor behält das Bild der Timeline. Vorschau weg: die Bereiche daneben bekommen den Platz.": "Область остаётся: просмотр в главном окне показывает исходные клипы, монитор сохраняет изображение таймлайна. Без просмотра: соседние панели занимают место.",
+ "Im Hauptfenster": "В главном окне",
+ "Kein zweiter Monitor gefunden.": "Второй монитор не найден.",
+ "Vorschau auf zweitem Monitor": "Просмотр на втором мониторе",
+ "Vorschau weg": "Без просмотра",
+ "schneidi – Vorschau": "schneidi – Просмотр"
 }

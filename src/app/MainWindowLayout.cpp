@@ -620,11 +620,18 @@ QList<QAction*> previewWindowActions()
     return out;
 }
 
+// A screen's name for SecondScreenPlan: QScreen::name(), its place on the desktop where the platform gives none
+QString screenId(const QScreen* s)
+{
+    if (!s) return {};
+    return s->name().isEmpty() ? QString("@%1,%2").arg(s->geometry().x()).arg(s->geometry().y()) : s->name();
+}
+
 QVector<SecondScreenPlan::Screen> screenList(const QScreen* without = nullptr)
 {
     QVector<SecondScreenPlan::Screen> out;
     for (QScreen* s : QGuiApplication::screens())
-        if (s != without) out.append({s->name(), s->geometry()});
+        if (s != without) out.append({screenId(s), s->geometry()});
     return out;
 }
 
@@ -676,10 +683,10 @@ void MainWindow::updatePreviewEdge()
 void MainWindow::moveViewerToNextScreen()
 {
     m_screenPlan.setScreens(screenList());
-    const QString next = m_screenPlan.next(screen() ? screen()->name() : QString());
+    const QString next = m_screenPlan.next(screenId(screen()));
     QScreen* target = nullptr;
     for (QScreen* s : QGuiApplication::screens())
-        if (s->name() == next) target = s;
+        if (!next.isEmpty() && screenId(s) == next) target = s; // empty = back into the window
     if (!target && !m_output) statusBar()->showMessage(T("Kein zweiter Monitor gefunden."), 5000);
     showPreviewOn(target);
 }
@@ -706,8 +713,7 @@ void MainWindow::showPreviewOn(QScreen* screen)
         connect(out, &PreviewOutput::previewEdgeWanted, this, &MainWindow::updatePreviewEdge);
         m_output = out;
         m_screenPlan.setScreens(screenList());
-        m_screenPlan.setTarget(screen->name());
-        statusBar()->showMessage(T("Vorschau auf %1").arg(screen->name()), 4000);
+        m_screenPlan.setTarget(screenId(screen));
     } else {
         m_screenPlan.setTarget({});
     }
