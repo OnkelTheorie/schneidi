@@ -260,6 +260,8 @@ CompPlanPtr planComp(const EffectInstance& comp, const Comp::Env& env, Comp::Cac
         }
         if (t == QLatin1String("transform")) {
             if (::Comp::followId(num(id, *k, "follow")) > 0) return fail(reason, "transform follows a tracker");
+            if (std::abs(num(id, *k, "tilt_x")) > 1e-6 || std::abs(num(id, *k, "tilt_y")) > 1e-6)
+                return fail(reason, "transform tilted in depth");
             if (std::abs(num(id, *k, "size")) < 0.5) return fail(reason, "transform shrinks below 1/2");
             return true;
         }

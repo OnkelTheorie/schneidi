@@ -27,6 +27,22 @@ Affine placement(double x, double y, double w, double h, double angle, int sw, i
 // premultiplied alpha, shrinking by 2:1 or more averages 2x2 blocks of texels first (mip steps) (no skipped texels: fine
 // patterns do not flicker); outside the source counts as transparent (soft one-pixel edge).
 void draw(uint8_t* dst, int dw, int dh, const uint8_t* src, int sw, int sh, const Affine& m, double opacity);
+// Projective map from source pixel coordinates to destination ones (a picture tilted in depth):
+// x' = (m[0]*x + m[1]*y + m[2]) / w, y' = (m[3]*x + m[4]*y + m[5]) / w, w = m[6]*x + m[7]*y + m[8]
+struct Homography {
+    double m[9] = {1, 0, 0, 0, 1, 0, 0, 0, 1};
+};
+// The homography taking the source rectangle's corners (0,0) (sw,0) (sw,sh) (0,sh) onto the four destination points
+// `to` (x, y pairs in that order); false if they do not make a quad (three on a line, crossed)
+bool homography(int sw, int sh, const double to[8], Homography* out);
+// The affine placement `m` of a sw x sh source, tilted in depth around the destination point (px, py): tiltX turns
+// about the horizontal axis (positive = the top goes away), tiltY about the vertical one (positive = the right side
+// goes away), both in degrees; seen by a camera with vertical field of view fov (degrees) centered on the dw x dh
+// picture. False when a corner would be behind the camera (nothing to draw).
+bool tilted(const Affine& m, int sw, int sh, double px, double py, double tiltX, double tiltY, double fov, int dw,
+            int dh, Homography* out);
+// draw() through a homography: the same sampling (bilinear, mip steps by the overall shrink), soft one-pixel edge
+void draw(uint8_t* dst, int dw, int dh, const uint8_t* src, int sw, int sh, const Homography& h, double opacity);
 // Source over of two pictures of the same size w x h (RGBA, straight alpha)
 void over(uint8_t* dst, const uint8_t* src, int w, int h, double opacity);
 // Keep the rectangle (x0, y0) - (x1, y1) (pixels, fractional) of an RGBA picture, the rest becomes color (RGBA,

@@ -411,7 +411,8 @@ TimelinePosters::Source TimelinePosters::sourceOf(const Project& project, const 
     s.transform.opacity = 100;
     constexpr AnimParam kPlaced[] = {AnimParam::ZoomX,    AnimParam::ZoomY,     AnimParam::PosX,
                                      AnimParam::PosY,     AnimParam::Rotation,  AnimParam::CropLeft,
-                                     AnimParam::CropRight, AnimParam::CropTop,  AnimParam::CropBottom};
+                                     AnimParam::CropRight, AnimParam::CropTop,  AnimParam::CropBottom,
+                                     AnimParam::TiltX,    AnimParam::TiltY,     AnimParam::Fov};
     for (AnimParam p : kPlaced)
         if (Keys::animated(*best, p)) {
             const double v = Keys::valueAt(*best, p, 0);
@@ -422,6 +423,9 @@ TimelinePosters::Source TimelinePosters::sourceOf(const Project& project, const 
             case AnimParam::PosX: t.posX = v; break;
             case AnimParam::PosY: t.posY = v; break;
             case AnimParam::Rotation: t.rotation = v; break;
+            case AnimParam::TiltX: t.tiltX = v; break;
+            case AnimParam::TiltY: t.tiltY = v; break;
+            case AnimParam::Fov: t.fov = v; break;
             case AnimParam::CropLeft: t.cropLeft = v; break;
             case AnimParam::CropRight: t.cropRight = v; break;
             case AnimParam::CropTop: t.cropTop = v; break;

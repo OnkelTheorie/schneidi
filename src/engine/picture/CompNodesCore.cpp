@@ -262,6 +262,17 @@ bool evalTransform(NodeCtx& ctx, Buf* out)
     bool identity = false;
     const Compose::Affine m = transformOf(ctx, &identity);
     *out = ctx.take(Buf::Rgba);
+    // Clamped like a clip's tilt (a hand-edited project may hold 90: edge-on, a degenerate quad)
+    const double tiltX = std::clamp(ctx.num("tilt_x"), -89.0, 89.0), tiltY = std::clamp(ctx.num("tilt_y"), -89.0, 89.0);
+    if (std::abs(tiltX) > 1e-6 || std::abs(tiltY) > 1e-6) { // tilted in depth: a projective draw around the position
+        // The pivot: where the anchor lands (the position, also when it follows a tracker)
+        const double ax = ctx.num("ax") * ctx.size.width(), ay = ctx.num("ay") * ctx.size.height();
+        Compose::Homography h;
+        if (Compose::tilted(m, src->w, src->h, m.a * ax + m.b * ay + m.c, m.d * ax + m.e * ay + m.f, tiltX, tiltY,
+                            std::clamp(ctx.num("fov"), 5.0, 120.0), out->w, out->h, &h))
+            Compose::draw(out->data(), out->w, out->h, src->data(), src->w, src->h, h, 1.0);
+        return true;
+    }
     if (identity) {
         copyBuf(*src, *out);
         return true;
@@ -628,6 +639,12 @@ void registerCoreNodes(QVector<NodeType>& out)
         k.params = {num("x", T("Position X"), 0.5, -2, 3), num("y", T("Position Y"), 0.5, -2, 3),
                     num("size", T("Größe"), 1, 0, 20), num("angle", T("Drehung"), 0, -3600, 3600, 0.1, 2),
                     num("ax", T("Ankerpunkt X"), 0.5, -1, 2), num("ay", T("Ankerpunkt Y"), 0.5, -1, 2),
+                    num("tilt_x", T("Kippen X"), 0, -89, 89, 0.1, 1,
+                        T("Neigt das Bild in die Tiefe um die waagrechte Achse (Grad; positiv = oben nach hinten)")),
+                    num("tilt_y", T("Kippen Y"), 0, -89, 89, 0.1, 1,
+                        T("Dreht das Bild in die Tiefe um die senkrechte Achse (Grad; positiv = rechts nach hinten)")),
+                    num("fov", T("Perspektive"), 40, 5, 120, 0.1, 1,
+                        T("Blickwinkel der Kamera beim Kippen (Grad): klein = flach, groß = starke Verzerrung")),
                     num("follow", T("Folgt Tracker"), 0, 0, 1e6, 1, 0,
                         T("Id eines Tracker-Knotens (0 = keiner); die Position zählt dann als Versatz"))};
         k.eval = evalTransform;

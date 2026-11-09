@@ -114,7 +114,43 @@ TrackDynamics dynamicsFromJson(const QJsonObject& o)
 //     only when a clip uses one of them (writtenVersion). Likewise the rest of 0.16 that 0.15 would open without a
 //     word and show or export differently: a recording's own picture shape, a kept region, counter/progress titles,
 //     push/whip transitions, in-between pictures in slow motion, word captions.
-constexpr int kFormatVersion = 6;
+//  7: pictures tilted in depth (clip transform tiltX/tiltY, comp transform node tilt_x/tilt_y, 0.20). Older versions
+//     would show and export them flat without a word. Written only when something is tilted (writtenVersion).
+constexpr int kFormatVersion = 7;
+
+// Tilted in depth anywhere (a static value or a keyframe off 0): the clip transform or a comp transform node
+bool usesTilt(const Clip& c)
+{
+    const auto off = [](double v) { return std::abs(v) > 1e-9; };
+    for (AnimParam p : {AnimParam::TiltX, AnimParam::TiltY}) {
+        if (off(Keys::staticValue(c, p))) return true;
+        for (const Keyframe& k : c.keys.value(p))
+            if (off(k.value)) return true;
+    }
+    const auto tiltKey = [](const QString& key) {
+        return key.endsWith(QLatin1String(".tilt_x")) || key.endsWith(QLatin1String(".tilt_y"));
+    };
+    if (const EffectInstance* comp = EffectRegistry::instance(c, Comp::kEffectId)) {
+        for (auto it = comp->params.cbegin(); it != comp->params.cend(); ++it)
+            if (tiltKey(it.key()) && off(it.value().toDouble())) return true;
+    }
+    for (auto it = c.keys.cbegin(); it != c.keys.cend(); ++it) {
+        QString effect, key;
+        if (!Keys::effectParamOf(it.key(), &effect, &key) || effect != QLatin1String(Comp::kEffectId) || !tiltKey(key))
+            continue;
+        for (const Keyframe& k : it.value())
+            if (off(k.value)) return true;
+    }
+    return false;
+}
+
+bool usesVersion7(const Timeline& t)
+{
+    for (const Track& track : t.video)
+        for (const Clip& c : track.clips)
+            if (usesTilt(c)) return true;
+    return false;
+}
 
 bool usesVersion6(const Timeline& t)
 {
@@ -137,6 +173,9 @@ bool usesVersion6(const Timeline& t)
 // The version a file is written with: the newest one only when it uses what needs it
 int writtenVersion(const ProjectData& d)
 {
+    if (usesVersion7(d.timeline)
+        || std::any_of(d.sequences.begin(), d.sequences.end(), [](const Sequence& s) { return usesVersion7(s.timeline); }))
+        return 7;
     if (usesVersion6(d.timeline)
         || std::any_of(d.sequences.begin(), d.sequences.end(), [](const Sequence& s) { return usesVersion6(s.timeline); })
         // A recording's picture shape on the pool entry or watch folder (its new clips): 0.15 would drop it
@@ -157,6 +196,7 @@ const std::array<Migration, kFormatVersion - 1> kMigrations = {
     [](QJsonObject&) {}, // 3 -> 4: pixelate amounts are converted while reading (convertPixelate, keyframes too)
     [](QJsonObject&) {}, // 4 -> 5: nothing to convert (sequences without "width"/"height" use the project's)
     [](QJsonObject&) {}, // 5 -> 6: nothing to convert (windows 5 to 8 are new)
+    [](QJsonObject&) {}, // 6 -> 7: nothing to convert (tilt in depth is new)
 };
 
 // Format 4: pixelate windows have a finer scale (GradeWindows::pixelBlock: amount 100 = 1/50 of the picture height,
@@ -258,6 +298,10 @@ QJsonObject transformToJson(const ClipTransform& t)
             if (f.fill == t.fill) o["fill"] = f.id;
     if (t.fillBlur != def.fillBlur) o["fillBlur"] = t.fillBlur;
     if (t.fillDim != def.fillDim) o["fillDim"] = t.fillDim;
+    // Tilt in depth (0.20): likewise only when set (missing = flat)
+    if (t.tiltX != def.tiltX) o["tiltX"] = t.tiltX;
+    if (t.tiltY != def.tiltY) o["tiltY"] = t.tiltY;
+    if (t.fov != def.fov) o["fov"] = t.fov;
     return o;
 }
 
@@ -281,6 +325,9 @@ ClipTransform transformFromJson(const QJsonObject& o)
         if (o.value("fill").toString() == QLatin1String(f.id)) t.fill = f.fill;
     t.fillBlur = o.value("fillBlur").toDouble(t.fillBlur);
     t.fillDim = o.value("fillDim").toDouble(t.fillDim);
+    t.tiltX = o.value("tiltX").toDouble(t.tiltX);
+    t.tiltY = o.value("tiltY").toDouble(t.tiltY);
+    t.fov = o.value("fov").toDouble(t.fov);
     return t;
 }
 

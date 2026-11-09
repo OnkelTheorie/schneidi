@@ -82,7 +82,8 @@ QVector<Change> changes(const Timeline& tl, int from, int to, const ProjectForma
         if (frame > from && frame < to) all << Change{frame, kind, clip};
     };
     static constexpr AnimParam kMoving[] = {AnimParam::ZoomX, AnimParam::ZoomY,    AnimParam::PosX,
-                                            AnimParam::PosY,  AnimParam::Rotation, AnimParam::GradeExposure};
+                                            AnimParam::PosY,  AnimParam::Rotation, AnimParam::TiltX,
+                                            AnimParam::TiltY, AnimParam::GradeExposure};
     for (int t = 0; t < tl.video.size(); ++t) {
         const Track& track = tl.video[t];
         if (track.hidden) continue;

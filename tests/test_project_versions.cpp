@@ -321,6 +321,41 @@ void testVersion6Features(const QString& tmp)
     });
 }
 
+// A picture tilted in depth (0.20) needs version 7 (older versions would show and export it flat): the clip's tilt,
+// a tilt keyframe or a comp transform node's tilt; a field of view alone or a tilt of 0 keeps the old version
+void testVersion7Tilt(const QString& tmp)
+{
+    ProjectData base;
+    QString err;
+    if (!CHECK(ProjectFile::load(kData() + "/v3-0.14dev-pixelate.schneidi", &base, &err))) return;
+    const QString path = tmp + "/tilt.schneidi";
+    const auto version = [&](const ProjectData& d) {
+        return QJsonDocument::fromJson(ProjectFile::toJson(d, path)).object().value("version").toInt();
+    };
+    const auto with = [&](const char* what, int expected, const std::function<void(Clip&)>& change) {
+        ProjectData d = base;
+        change(d.timeline.video[0].clips[0]);
+        if (!CHECK_EQ(version(d), expected)) std::printf("       %s\n", what);
+    };
+    with("field of view alone", 4, [](Clip& c) { c.transform.fov = 80; });
+    with("tilt 0 keyframes", 4, [](Clip& c) { c.keys[AnimParam::TiltX] = {Keyframe{0, 0.0}, Keyframe{10, 0.0}}; });
+    with("tilt x", 7, [](Clip& c) { c.transform.tiltX = 20; });
+    with("tilt y", 7, [](Clip& c) { c.transform.tiltY = -5; });
+    with("tilt keyframe", 7, [](Clip& c) { c.keys[AnimParam::TiltY] = {Keyframe{0, 0.0}, Keyframe{10, 30.0}}; });
+    with("comp node tilt", 7, [](Clip& c) {
+        EffectInstance comp;
+        comp.effectId = "comp";
+        comp.params["n2.tilt_x"] = 15.0;
+        c.effects << comp;
+    });
+    with("comp node tilt keyframe", 7, [](Clip& c) {
+        EffectInstance comp;
+        comp.effectId = "comp";
+        c.effects << comp;
+        c.keys[Keys::effectParam("comp", "n2.tilt_y")] = {Keyframe{0, 0.0}, Keyframe{5, -20.0}};
+    });
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -336,5 +371,6 @@ int main(int argc, char** argv)
     testVersion3Pixelate();
     testVersion6Windows(tmp.path());
     testVersion6Features(tmp.path());
+    testVersion7Tilt(tmp.path());
     return Check::result();
 }

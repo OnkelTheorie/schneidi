@@ -356,6 +356,52 @@ QStringList wrapSubtitle(const QString& text, const QFontMetricsF& fm, double ma
     return out;
 }
 
+// A clip's tilt in depth at clip frame t (Inspector Kippen X/Y, Perspektive) around the pivot (px, py) in output
+// pixels: the clip's center after its position, the point the rotation turns around. Off when not tilted (then every
+// draw stays the flat affine one, bit for bit as before).
+struct Tilt {
+    double x = 0, y = 0, fov = 40, px = 0, py = 0;
+    bool on() const { return std::abs(x) > 1e-9 || std::abs(y) > 1e-9; }
+};
+
+// Tilted at some frame (a static tilt or a keyframe off 0): such a clip is drawn by the CPU and from its own size
+bool tiltedEver(const Clip& c)
+{
+    if (!Keys::hasTilt(c)) return false;
+    for (AnimParam p : {AnimParam::TiltX, AnimParam::TiltY}) {
+        if (std::abs(Keys::staticValue(c, p)) > 1e-9) return true;
+        for (const Keyframe& k : c.keys.value(p))
+            if (std::abs(k.value) > 1e-9) return true;
+    }
+    return false;
+}
+
+Tilt tiltOf(const Clip& c, int t, double px, double py)
+{
+    Tilt tl;
+    if (!Keys::hasTilt(c)) return tl;
+    tl.x = std::clamp(Keys::valueAt(c, AnimParam::TiltX, t), -89.0, 89.0);
+    tl.y = std::clamp(Keys::valueAt(c, AnimParam::TiltY, t), -89.0, 89.0);
+    tl.fov = std::clamp(Keys::valueAt(c, AnimParam::Fov, t), 5.0, 120.0);
+    tl.px = px;
+    tl.py = py;
+    return tl;
+}
+
+// Compose::draw of src through the flat placement m, tilted in depth by tl when that is on (nothing drawn when the
+// tilt puts the picture behind the camera)
+void drawTilted(uint8_t* dst, int dw, int dh, const uint8_t* src, int sw, int sh, const Compose::Affine& m,
+                const Tilt& tl, double opacity)
+{
+    if (!tl.on()) {
+        Compose::draw(dst, dw, dh, src, sw, sh, m, opacity);
+        return;
+    }
+    Compose::Homography h;
+    if (Compose::tilted(m, sw, sh, tl.px, tl.py, tl.x, tl.y, tl.fov, dw, dh, &h))
+        Compose::draw(dst, dw, dh, src, sw, sh, h, opacity);
+}
+
 } // namespace
 
 // ---- Frame ----
@@ -1201,7 +1247,8 @@ struct Renderer::Impl {
         const double rx = (ctx.PW - fw) / 2 + x, ry = (ctx.PH - fh) / 2 - y;
         const double angle = transform ? -val(AnimParam::Rotation) : 0.0;
         const Compose::Affine m = Compose::placement(rx * sx, ry * sy, fw * sx, fh * sy, angle, w, h, true, true);
-        Compose::draw(onto.data(), onto.w, onto.h, px, w, h, m, opacity * fade);
+        const Tilt tilt = transform ? tiltOf(c, t, (ctx.PW / 2 + x) * sx, (ctx.PH / 2 - y) * sy) : Tilt{};
+        drawTilted(onto.data(), onto.w, onto.h, px, w, h, m, tilt, opacity * fade);
     }
 
     // One clip's picture at timeline frame f on a transparent output-size layer; empty = nothing visible.
@@ -1322,7 +1369,9 @@ struct Renderer::Impl {
                     for (const Keyframe& k : c.keys.value(p)) zoom = std::max(zoom, std::abs(k.value));
                 }
                 if (!transform || zoom <= 0) zoom = 1;
-                const double scale = std::max(double(W) / nw, double(H) / nh) * zoom * 1.1;
+                double scale = std::max(double(W) / nw, double(H) / nh) * zoom * 1.1;
+                // Tilted in depth: the near side shows larger than the zoom says; kept at its own size
+                if (transform && tiltedEver(c)) scale = 1.0;
                 const int dw = scale < 1.0 ? std::max(2, int(std::ceil(nw * scale))) : nw;
                 const int dh = scale < 1.0 ? std::max(2, int(std::ceil(nh * scale))) : nh;
                 if (onto && s.still && dw == nw && dh == nh && !crop && !c.transform.hasBlurFill()) {
@@ -1419,8 +1468,10 @@ struct Renderer::Impl {
                             && keepFrame(m, QRectF(QPointF(shares[0] * fullW, shares[1] * fullH),
                                                    QPointF((1 - shares[2]) * fullW, (1 - shares[3]) * fullH)),
                                          kKeepFrame * std::min(W, H), QSize(W, H), kf);
-        if (framed) Compose::draw(layer.data(), W, H, kf.img.data(), kf.img.w, kf.img.h, kf.m, 1.0);
-        Compose::draw(layer.data(), W, H, src.data(), src.w, src.h, m, blurFill || framed ? 1.0 : opacity);
+        // Tilted in depth: the frame goes through the same camera (one plane, so it stays around the picture)
+        const Tilt tilt = transform ? tiltOf(c, t, (ctx.PW / 2 + x) * sx, (ctx.PH / 2 - y) * sy) : Tilt{};
+        if (framed) drawTilted(layer.data(), W, H, kf.img.data(), kf.img.w, kf.img.h, kf.m, tilt, 1.0);
+        drawTilted(layer.data(), W, H, src.data(), src.w, src.h, m, tilt, blurFill || framed ? 1.0 : opacity);
         if (framed) scaleAlpha(layer, opacity);
         if (bg) {
             BlurFill::composite(layer.data(), W, H, *bg);
@@ -1559,7 +1610,7 @@ struct Renderer::Impl {
         const bool transformed = Keys::hasTransform(*c);
         if (transformed) {
             const ClipTransform& t = c->transform;
-            if (t.rotation != 0 || t.hasBlurFill()) return false;
+            if (t.rotation != 0 || t.hasBlurFill() || tiltedEver(*c)) return false;
             for (AnimParam p : {AnimParam::ZoomX, AnimParam::ZoomY, AnimParam::PosX, AnimParam::PosY, AnimParam::Rotation})
                 if (Keys::animated(*c, p)) return false;
         }
@@ -2129,6 +2180,8 @@ struct Renderer::Impl {
             if (e.enabled && e.effectId != QLatin1String(ColorGrade::EffectId)) return false;
         if (ColorGrade::active(c) && !ctx.bypassGrade && !ColorGrade::windowsAt(c, t).isEmpty()) return false;
         if (StabilizeCorrection::of(c, options.format.rate, ctx.PH > 0 ? ctx.PW / ctx.PH : 0.0)) return false;
+        // Tilted in depth: the card draws affine placements only; the CPU draws it through its homography
+        if (tiltedEver(c)) return false;
         const Source s = source(c.mediaPath, lane);
         if (s.still) return true;
         // In-between pictures of slow motion come from the CPU (engine/picture/Interpolate)
@@ -2296,8 +2349,9 @@ struct Renderer::Impl {
         CompCapture* const outer = t_compCapture;
         const EffectInstance* comp = EffectRegistry::instance(c, ::Comp::kEffectId);
         Gpu::Service* gpu = this->gpu.load(std::memory_order_relaxed);
+        // (a tilted clip: the graph's result is placed through a homography, which only the CPU path draws)
         if (comp && comp->enabled && gpu && gpu->info().comp && !c.transform.hasBlurFill() && c.keepRegion.isEmpty()
-            && !c.isTitle()) {
+            && !c.isTitle() && !tiltedEver(c)) {
             cap.clip = &c;
             t_compCapture = &cap;
         }

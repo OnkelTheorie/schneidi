@@ -625,6 +625,7 @@ void opHideJumps(Session& s, const QJsonObject& op)
         s.editor.modifyClips({id}, T("Sprünge kaschieren"), [&](Clip& clip) {
             if (!clip.transform.transformOn) { // values kept while it was off (a rotation) would come back
                 clip.transform.rotation = 0;
+                clip.transform.tiltX = clip.transform.tiltY = 0;
                 clip.transform.transformOn = true;
             }
             clip.transform.zoomX = clip.transform.zoomY = zoom;

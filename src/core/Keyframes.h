@@ -101,6 +101,8 @@ void split(const Clip& original, Clip& left, Clip& right);
 
 // Range active and (static or animated) not neutral
 bool hasTransform(const Clip& c);
+// Tilted in depth (Kippen X/Y, also by keyframes; the Transform section on)
+bool hasTilt(const Clip& c);
 bool hasCrop(const Clip& c);
 bool hasOpacity(const Clip& c);
 

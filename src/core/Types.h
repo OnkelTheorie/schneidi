@@ -59,6 +59,11 @@ struct ClipTransform {
     double zoomX = 1.0, zoomY = 1.0; // 1 = the picture fitted into the frame, keeping its shape
     double posX = 0, posY = 0;  // pixels, Y positive upward (like DaVinci)
     double rotation = 0;        // degrees, positive = counterclockwise
+    // Tilt in depth around the clip's center after position (the point rotation turns around), degrees -89..89:
+    // tiltX about the horizontal axis (positive = the top goes away), tiltY about the vertical one (positive = the
+    // right side goes away), seen by a camera with vertical field of view fov (degrees, 5..120)
+    double tiltX = 0, tiltY = 0;
+    double fov = 40;
     // Timeline pixels on the picture as it fits into the frame at zoom 1, cut off its own edges (not the frame's):
     // a 1920x1080 clip in a 1080x1920 timeline is 1080x607.5 there, so 1 = 1920/1080 source pixels. Applied before
     // zoom/position/rotation (a zoomed clip shows its crop zoomed too); the cut area is transparent. Project format 3;
@@ -76,9 +81,11 @@ struct ClipTransform {
     double fillDim = 20;
 
     bool hasBlurFill() const { return transformOn && fill == FitFill::Blur; }
+    bool hasTilt() const { return transformOn && (tiltX != 0 || tiltY != 0); }
     bool hasTransform() const
     {
-        return transformOn && (zoomX != 1.0 || zoomY != 1.0 || posX != 0 || posY != 0 || rotation != 0 || hasBlurFill());
+        return transformOn && (zoomX != 1.0 || zoomY != 1.0 || posX != 0 || posY != 0 || rotation != 0 || hasTilt()
+                               || hasBlurFill());
     }
     bool hasCrop() const
     {
@@ -365,6 +372,7 @@ enum class ClipKind { Media, Title, Compound, Multicam };
 // (Clip::transform, Clip::title, Clip::volumeDb ...). Functions for it in core/Keyframes.h.
 enum class AnimParam {
     ZoomX, ZoomY, PosX, PosY, Rotation,               // Transform
+    TiltX, TiltY, Fov,                                // Transform: tilt in depth (values are saved by name, not number)
     CropLeft, CropRight, CropTop, CropBottom,         // Crop
     Opacity,                                          // Composite
     TitleSize, TitlePosX, TitlePosY, TitleColor,      // title (color as ARGB number)

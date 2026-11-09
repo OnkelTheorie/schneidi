@@ -33,7 +33,8 @@ bool sameFraming(const Clip& a, const Clip& b)
         if (!c.transform.transformOn) return p == AnimParam::ZoomX || p == AnimParam::ZoomY ? 1.0 : 0.0;
         return Keys::valueAt(c, p, end ? c.length() - 1 : 0);
     };
-    for (AnimParam p : {AnimParam::ZoomX, AnimParam::ZoomY, AnimParam::PosX, AnimParam::PosY, AnimParam::Rotation})
+    for (AnimParam p : {AnimParam::ZoomX, AnimParam::ZoomY, AnimParam::PosX, AnimParam::PosY, AnimParam::Rotation,
+                        AnimParam::TiltX, AnimParam::TiltY})
         if (std::abs(at(a, p, true) - at(b, p, false)) > 1e-3) return false;
     return true;
 }

@@ -169,7 +169,10 @@ void Editor::pasteAttributes(int attrs)
             }
             if (attrs & AttrRotation) {
                 t.rotation = st.rotation;
-                copyKeys(c, *s, {AnimParam::Rotation});
+                t.tiltX = st.tiltX; // tilt in depth goes with the rotation
+                t.tiltY = st.tiltY;
+                t.fov = st.fov;
+                copyKeys(c, *s, {AnimParam::Rotation, AnimParam::TiltX, AnimParam::TiltY, AnimParam::Fov});
             }
             if (attrs & AttrCrop) {
                 t.cropLeft = st.cropLeft;

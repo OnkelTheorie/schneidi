@@ -138,11 +138,15 @@ Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
         c.transform.posX = d.posX;
         c.transform.posY = d.posY;
         c.transform.rotation = d.rotation;
+        c.transform.tiltX = d.tiltX;
+        c.transform.tiltY = d.tiltY;
+        c.transform.fov = d.fov;
         c.transform.fill = d.fill;
         c.transform.fillBlur = d.fillBlur;
         c.transform.fillDim = d.fillDim;
         c.transform.transformOn = true;
-        for (AnimParam p : {AnimParam::ZoomX, AnimParam::ZoomY, AnimParam::PosX, AnimParam::PosY, AnimParam::Rotation})
+        for (AnimParam p : {AnimParam::ZoomX, AnimParam::ZoomY, AnimParam::PosX, AnimParam::PosY, AnimParam::Rotation,
+                            AnimParam::TiltX, AnimParam::TiltY, AnimParam::Fov})
             Keys::clear(c, p);
     }, [](Clip& c) -> bool& { return c.transform.transformOn; });
 
@@ -180,6 +184,21 @@ Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
           [](Clip& c) -> double& { return c.transform.posY; }, nullptr, AnimParam::PosX, AnimParam::PosY);
     addSlider(tr, "rotation", T("Rotation"), -360, 360, 0, 0.2, 3, [](Clip& c) -> double& { return c.transform.rotation; },
               AnimParam::Rotation);
+    // Tilt in depth around the same point the rotation turns around, and the camera's field of view for it
+    const auto tip = [&tr](Param* p, const QString& text) {
+        if (QLayoutItem* l = tr.grid->itemAtPosition(tr.rows - 1, 0); l && l->widget()) l->widget()->setToolTip(text);
+        p->slider->setToolTip(text);
+        p->edit->setToolTip(text);
+    };
+    tip(addSlider(tr, "tiltX", T("Kippen X"), -89, 89, 0, 0.1, 1, [](Clip& c) -> double& { return c.transform.tiltX; },
+                  AnimParam::TiltX),
+        T("Neigt das Bild in die Tiefe um die waagrechte Achse (Grad; positiv = oben nach hinten)"));
+    tip(addSlider(tr, "tiltY", T("Kippen Y"), -89, 89, 0, 0.1, 1, [](Clip& c) -> double& { return c.transform.tiltY; },
+                  AnimParam::TiltY),
+        T("Dreht das Bild in die Tiefe um die senkrechte Achse (Grad; positiv = rechts nach hinten)"));
+    tip(addSlider(tr, "fov", T("Perspektive"), 5, 120, ClipTransform().fov, 0.1, 1,
+                  [](Clip& c) -> double& { return c.transform.fov; }, AnimParam::Fov),
+        T("Blickwinkel der Kamera beim Kippen (Grad): klein = flach, groß = starke Verzerrung"));
     // Around the fitted picture (bars of another shape, zoom < 1): transparent or a blurred copy of the same picture
     // (a 16:9 clip in a 9:16 timeline without a second track); titles fill the frame and take none
     auto* fillBox = new QComboBox;

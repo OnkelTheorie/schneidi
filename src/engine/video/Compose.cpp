@@ -198,6 +198,49 @@ void draw(uint8_t* dst, int dw, int dh, const uint8_t* src, int sw, int sh, cons
 
 namespace {
 
+// One destination pixel from the source at (U, V) (16.16 fixed point, relative to texel centers): bilinear in
+// premultiplied alpha, texels outside are transparent, source over with opacity op (0..256)
+inline void texelOver(uint8_t* d, const uint8_t* src, int sw, int sh, size_t stride, int64_t U, int64_t V, uint32_t op)
+{
+    const int xi = int(U >> 16), yi = int(V >> 16);
+    if (xi < -1 || xi >= sw || yi < -1 || yi >= sh) return;
+    const uint32_t fx = uint32_t(U >> 9) & 127, fy = uint32_t(V >> 9) & 127;
+    const uint8_t *p00, *p10, *p01, *p11;
+    if (xi >= 0 && yi >= 0 && xi + 1 < sw && yi + 1 < sh) {
+        p00 = src + size_t(yi) * stride + size_t(xi) * 4;
+        p10 = p00 + 4;
+        p01 = p00 + stride;
+        p11 = p01 + 4;
+    } else { // edge: texels outside are transparent
+        auto at = [&](int x, int yy) {
+            return x >= 0 && yy >= 0 && x < sw && yy < sh ? src + size_t(yy) * stride + size_t(x) * 4 : kClear;
+        };
+        p00 = at(xi, yi);
+        p10 = at(xi + 1, yi);
+        p01 = at(xi, yi + 1);
+        p11 = at(xi + 1, yi + 1);
+    }
+    const uint32_t w00 = (128 - fx) * (128 - fy), w10 = fx * (128 - fy), w01 = (128 - fx) * fy, w11 = fx * fy;
+    if (op == 256 && (p00[3] & p10[3] & p01[3] & p11[3]) == 255 && (d[3] == 255 || d[3] == 0)) {
+        // opaque texels (most of a video): plain bilinear color
+        for (int c = 0; c < 3; ++c)
+            d[c] = uint8_t((w00 * p00[c] + w10 * p10[c] + w01 * p01[c] + w11 * p11[c] + 8192) >> 14);
+        d[3] = 255;
+        return;
+    }
+    const uint32_t a00 = w00 * p00[3], a10 = w10 * p10[3], a01 = w01 * p01[3], a11 = w11 * p11[3];
+    uint32_t A = a00 + a10 + a01 + a11;
+    if (A == 0) return;
+    uint32_t R[3];
+    for (int c = 0; c < 3; ++c) R[c] = a00 * p00[c] + a10 * p10[c] + a01 * p01[c] + a11 * p11[c];
+    if (op != 256) {
+        A = uint32_t((uint64_t(A) * op) >> 8);
+        for (uint32_t& r : R) r = uint32_t((uint64_t(r) * op) >> 8);
+        if (A == 0) return;
+    }
+    put(d, A, R);
+}
+
 void drawBilinear(uint8_t* dst, int dw, int dh, const uint8_t* src, int sw, int sh, const Affine& m, double opacity)
 {
     const uint32_t op = uint32_t(std::lround(std::clamp(opacity, 0.0, 1.0) * 256));
@@ -237,49 +280,145 @@ void drawBilinear(uint8_t* dst, int dw, int dh, const uint8_t* src, int sw, int 
             const int64_t dU = std::llround(ia * 65536.0), dV = std::llround(id * 65536.0);
             uint8_t* d = dst + (size_t(y) * dw + bx0 + from) * 4;
             for (int i = from; i < to; ++i, U += dU, V += dV, d += 4) {
-                const int xi = int(U >> 16), yi = int(V >> 16);
-                if (xi < -1 || xi >= sw || yi < -1 || yi >= sh) continue;
-                const uint32_t fx = uint32_t(U >> 9) & 127, fy = uint32_t(V >> 9) & 127;
-                const uint8_t *p00, *p10, *p01, *p11;
-                if (xi >= 0 && yi >= 0 && xi + 1 < sw && yi + 1 < sh) {
-                    p00 = src + size_t(yi) * stride + size_t(xi) * 4;
-                    p10 = p00 + 4;
-                    p01 = p00 + stride;
-                    p11 = p01 + 4;
-                } else { // edge: texels outside are transparent
-                    auto at = [&](int x, int yy) {
-                        return x >= 0 && yy >= 0 && x < sw && yy < sh ? src + size_t(yy) * stride + size_t(x) * 4 : kClear;
-                    };
-                    p00 = at(xi, yi);
-                    p10 = at(xi + 1, yi);
-                    p01 = at(xi, yi + 1);
-                    p11 = at(xi + 1, yi + 1);
-                }
-                const uint32_t w00 = (128 - fx) * (128 - fy), w10 = fx * (128 - fy), w01 = (128 - fx) * fy, w11 = fx * fy;
-                if (op == 256 && (p00[3] & p10[3] & p01[3] & p11[3]) == 255 && (d[3] == 255 || d[3] == 0)) {
-                    // opaque texels (most of a video): plain bilinear color
-                    for (int c = 0; c < 3; ++c)
-                        d[c] = uint8_t((w00 * p00[c] + w10 * p10[c] + w01 * p01[c] + w11 * p11[c] + 8192) >> 14);
-                    d[3] = 255;
-                    continue;
-                }
-                const uint32_t a00 = w00 * p00[3], a10 = w10 * p10[3], a01 = w01 * p01[3], a11 = w11 * p11[3];
-                uint32_t A = a00 + a10 + a01 + a11;
-                if (A == 0) continue;
-                uint32_t R[3];
-                for (int c = 0; c < 3; ++c) R[c] = a00 * p00[c] + a10 * p10[c] + a01 * p01[c] + a11 * p11[c];
-                if (op != 256) {
-                    A = uint32_t((uint64_t(A) * op) >> 8);
-                    for (uint32_t& r : R) r = uint32_t((uint64_t(r) * op) >> 8);
-                    if (A == 0) continue;
-                }
-                put(d, A, R);
+                texelOver(d, src, sw, sh, stride, U, V, op);
             }
         }
     });
 }
 
 } // namespace
+
+bool homography(int sw, int sh, const double to[8], Homography* out)
+{
+    // 8 unknowns (m[8] = 1): for each corner (x, y) -> (X, Y): X*(g x + h y + 1) = a x + b y + c, likewise for Y
+    const double from[8] = {0, 0, double(sw), 0, double(sw), double(sh), 0, double(sh)};
+    double A[8][9] = {};
+    for (int i = 0; i < 4; ++i) {
+        const double x = from[2 * i], y = from[2 * i + 1], X = to[2 * i], Y = to[2 * i + 1];
+        double* r = A[2 * i];
+        r[0] = x, r[1] = y, r[2] = 1, r[6] = -X * x, r[7] = -X * y, r[8] = X;
+        r = A[2 * i + 1];
+        r[3] = x, r[4] = y, r[5] = 1, r[6] = -Y * x, r[7] = -Y * y, r[8] = Y;
+    }
+    for (int c = 0; c < 8; ++c) { // Gauss-Jordan with partial pivoting
+        int piv = c;
+        for (int r = c + 1; r < 8; ++r)
+            if (std::abs(A[r][c]) > std::abs(A[piv][c])) piv = r;
+        if (std::abs(A[piv][c]) < 1e-12) return false;
+        if (piv != c)
+            for (int k = 0; k < 9; ++k) std::swap(A[c][k], A[piv][k]);
+        for (int r = 0; r < 8; ++r) {
+            if (r == c) continue;
+            const double f = A[r][c] / A[c][c];
+            for (int k = c; k < 9; ++k) A[r][k] -= f * A[c][k];
+        }
+    }
+    Homography h;
+    for (int i = 0; i < 8; ++i) h.m[i] = A[i][8] / A[i][i];
+    h.m[8] = 1;
+    // A crossed or folded quad: the denominator must keep its sign over the whole source
+    for (int i = 0; i < 4; ++i)
+        if (h.m[6] * from[2 * i] + h.m[7] * from[2 * i + 1] + h.m[8] <= 1e-9) return false;
+    *out = h;
+    return true;
+}
+
+bool tilted(const Affine& m, int sw, int sh, double px, double py, double tiltX, double tiltY, double fov, int dw,
+            int dh, Homography* out)
+{
+    const double rx = tiltX * std::numbers::pi / 180.0, ry = tiltY * std::numbers::pi / 180.0;
+    const double cx = std::cos(rx), sx = std::sin(rx), cy = std::cos(ry), sy = std::sin(ry);
+    const double half = std::clamp(fov, 1.0, 150.0) * std::numbers::pi / 360.0;
+    const double dist = dh / 2.0 / std::tan(half); // camera distance in pixels: the frame fills the field of view
+    const double ox = dw / 2.0, oy = dh / 2.0;
+    double to[8];
+    const double corners[8] = {0, 0, double(sw), 0, double(sw), double(sh), 0, double(sh)};
+    for (int i = 0; i < 4; ++i) {
+        const double sxp = corners[2 * i], syp = corners[2 * i + 1];
+        // The corner where the flat placement puts it, relative to the pivot (y down, z away from the viewer)
+        const double x0 = m.a * sxp + m.b * syp + m.c - px, y0 = m.d * sxp + m.e * syp + m.f - py;
+        // About the horizontal axis (positive: the top, y < 0, goes away), then about the vertical one (positive:
+        // the right side, x > 0, goes away)
+        const double y1 = y0 * cx, z1 = -y0 * sx;
+        const double x2 = x0 * cy - z1 * sy, z2 = x0 * sy + z1 * cy;
+        const double depth = dist + z2;
+        if (depth < dist * 0.02) return false; // at or behind the camera
+        const double k = dist / depth;
+        to[2 * i] = ox + (px + x2 - ox) * k;
+        to[2 * i + 1] = oy + (py + y1 - oy) * k;
+    }
+    return homography(sw, sh, to, out);
+}
+
+void draw(uint8_t* dst, int dw, int dh, const uint8_t* src, int sw, int sh, const Homography& hm, double opacity)
+{
+    if (!dst || !src || dw <= 0 || dh <= 0 || sw <= 0 || sh <= 0) return;
+    const uint32_t op = uint32_t(std::lround(std::clamp(opacity, 0.0, 1.0) * 256));
+    if (op == 0) return;
+    const double* m = hm.m;
+    auto map = [m](double x, double y, double* X, double* Y) {
+        const double w = m[6] * x + m[7] * y + m[8];
+        *X = (m[0] * x + m[1] * y + m[2]) / w;
+        *Y = (m[3] * x + m[4] * y + m[5]) / w;
+    };
+    double q[8];
+    const double corners[8] = {0, 0, double(sw), 0, double(sw), double(sh), 0, double(sh)};
+    for (int i = 0; i < 4; ++i) map(corners[2 * i], corners[2 * i + 1], &q[2 * i], &q[2 * i + 1]);
+    // Mip steps by the overall shrink (the quad's area against the source's): a far, small picture averages texels first
+    double area = 0;
+    for (int i = 0; i < 4; ++i) {
+        const int j = (i + 1) % 4;
+        area += q[2 * i] * q[2 * j + 1] - q[2 * j] * q[2 * i + 1];
+    }
+    area = std::abs(area) / 2;
+    if (area < 0.25) return;
+    const double shrink = std::sqrt(double(sw) * sh / area);
+    std::vector<uint8_t> buf[2];
+    const uint8_t* cur = src;
+    int cw = sw, ch = sh, f = 1, i = 0;
+    while (shrink >= 2.0 * f && cw > 1 && ch > 1) {
+        int rw = 0, rh = 0;
+        halve<2, 2>(cur, cw, ch, buf[i], rw, rh);
+        cur = buf[i].data();
+        cw = rw;
+        ch = rh;
+        f *= 2;
+        i ^= 1;
+    }
+    // Inverse (adjugate; the scale does not matter): destination -> source pixel of the full-size picture
+    const double inv[9] = {m[4] * m[8] - m[5] * m[7], m[2] * m[7] - m[1] * m[8], m[1] * m[5] - m[2] * m[4],
+                           m[5] * m[6] - m[3] * m[8], m[0] * m[8] - m[2] * m[6], m[2] * m[3] - m[0] * m[5],
+                           m[3] * m[7] - m[4] * m[6], m[1] * m[6] - m[0] * m[7], m[0] * m[4] - m[1] * m[3]};
+    double x0 = 1e18, x1 = -1e18, y0 = 1e18, y1 = -1e18;
+    for (int k = 0; k < 4; ++k) {
+        x0 = std::min(x0, q[2 * k]);
+        x1 = std::max(x1, q[2 * k]);
+        y0 = std::min(y0, q[2 * k + 1]);
+        y1 = std::max(y1, q[2 * k + 1]);
+    }
+    const int bx0 = std::max(0, int(std::floor(std::max(-1e9, x0))) - 1);
+    const int bx1 = std::min(dw, int(std::ceil(std::min(1e9, x1))) + 1);
+    const int by0 = std::max(0, int(std::floor(std::max(-1e9, y0))) - 1);
+    const int by1 = std::min(dh, int(std::ceil(std::min(1e9, y1))) + 1);
+    if (bx0 >= bx1 || by0 >= by1) return;
+    const size_t stride = size_t(cw) * 4;
+    const double scale = 1.0 / f;
+    forRows(by1 - by0, 32, [&](int r0, int r1) {
+        for (int y = by0 + r0; y < by0 + r1; ++y) {
+            const double yc = y + 0.5;
+            uint8_t* d = dst + (size_t(y) * dw + bx0) * 4;
+            for (int x = bx0; x < bx1; ++x, d += 4) {
+                const double xc = x + 0.5;
+                const double w = inv[6] * xc + inv[7] * yc + inv[8];
+                if (std::abs(w) < 1e-12) continue;
+                const double u = (inv[0] * xc + inv[1] * yc + inv[2]) / w * scale - 0.5;
+                const double v = (inv[3] * xc + inv[4] * yc + inv[5]) / w * scale - 0.5;
+                if (u < -1.5 || v < -1.5 || u > cw + 0.5 || v > ch + 0.5) continue;
+                texelOver(d, cur, cw, ch, stride, std::llround(u * 65536.0), std::llround(v * 65536.0), op);
+            }
+        }
+    });
+}
 
 void over(uint8_t* dst, const uint8_t* src, int w, int h, double opacity)
 {

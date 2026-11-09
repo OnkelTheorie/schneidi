@@ -40,7 +40,9 @@ struct NamedParam {
 constexpr NamedParam kNamed[] = {
     {"zoom_x", AnimParam::ZoomX},           {"zoom_y", AnimParam::ZoomY},
     {"x", AnimParam::PosX},                 {"y", AnimParam::PosY},
-    {"rotation", AnimParam::Rotation},      {"crop_left", AnimParam::CropLeft},
+    {"rotation", AnimParam::Rotation},      {"tilt_x", AnimParam::TiltX},
+    {"tilt_y", AnimParam::TiltY},           {"fov", AnimParam::Fov},
+    {"crop_left", AnimParam::CropLeft},
     {"crop_right", AnimParam::CropRight},   {"crop_top", AnimParam::CropTop},
     {"crop_bottom", AnimParam::CropBottom}, {"opacity", AnimParam::Opacity},
     {"title_size", AnimParam::TitleSize},   {"title_x", AnimParam::TitlePosX},
@@ -454,7 +456,9 @@ void opTransform(Session& s, const QJsonObject& op)
     }
     const QPair<const char*, P> fields[] = {{"zoom_x", P::ZoomX},         {"zoom_y", P::ZoomY},
                                             {"x", P::PosX},               {"y", P::PosY},
-                                            {"rotation", P::Rotation},    {"crop_left", P::CropLeft},
+                                            {"rotation", P::Rotation},    {"tilt_x", P::TiltX},
+                                            {"tilt_y", P::TiltY},         {"fov", P::Fov},
+                                            {"crop_left", P::CropLeft},
                                             {"crop_right", P::CropRight}, {"crop_top", P::CropTop},
                                             {"crop_bottom", P::CropBottom}, {"opacity", P::Opacity}};
     for (const auto& [name, p] : fields)
@@ -488,7 +492,7 @@ void opTransform(Session& s, const QJsonObject& op)
             fail("BAD_ARGUMENT", "fit is for clips with a picture; titles fill the frame");
     }
     if (values.isEmpty() && !reset && !anySwitch && !anyFill)
-        fail("BAD_ARGUMENT", "nothing to set (zoom, x, y, rotation, crop_*, opacity, fit, fit_blur, fit_dim, *_on or reset)");
+        fail("BAD_ARGUMENT", "nothing to set (zoom, x, y, rotation, tilt_x, tilt_y, fov, crop_*, opacity, fit, fit_blur, fit_dim, *_on or reset)");
     const bool hasAt = op.contains("at");
     const int at = hasAt ? timeOf(s, op, "at") : 0;
     s.editor.modifyClips(ids, "Transform", [&](Clip& c) {
@@ -996,13 +1000,17 @@ void addLookOps(QVector<OpDef>& ops)
                  "{op:'window', clips, window, remove:true}. Measuring takes about as long as playing the clip "
                  "(cached per file).",
                  opBlurNames, kClipKeys}
-        << OpDef{"transform", "{op:'transform', clips, zoom?, zoom_x?, zoom_y?, x?, y?, rotation?, crop_left?, "
+        << OpDef{"transform", "{op:'transform', clips, zoom?, zoom_x?, zoom_y?, x?, y?, rotation?, tilt_x?, tilt_y?, fov?, crop_left?, "
                               "crop_right?, crop_top?, crop_bottom?, opacity?, fit?, fit_blur?, fit_dim?, transform_on?, "
                               "crop_on?, opacity_on?, reset?, at?}",
                  "Inspector transform/crop/opacity of video clips; fit:'blur' = blurred background (9:16 from 16:9)",
                  "zoom 1 = the clip's picture fitted into the frame keeping its shape (a 1920x1080 clip in a "
                  "1080x1920 timeline is 1080x607.5 wide/high, centered, with transparent bars above and below); x/y "
-                 "in pixels of the timeline from the center, y up; rotation in degrees, counterclockwise. crop_* = "
+                 "in pixels of the timeline from the center, y up; rotation in degrees, counterclockwise. tilt_x/tilt_y "
+                 "tilt the picture in depth around the same point rotation turns around (its center after x/y), in "
+                 "degrees -89..89: tilt_x about the horizontal axis (positive = the top goes away), tilt_y about the "
+                 "vertical one (positive = the right side goes away); fov = the camera's field of view for it in "
+                 "degrees 5..120 (default 40; small = flat, large = strong perspective). crop_* = "
                  "timeline pixels on that fitted picture at zoom 1, cut off the picture's own edges (not the frame's), "
                  "the same unit at every zoom and timeline shape: crop px = source px * fitted width / source width "
                  "(1920x1080 clip: * 1 in a 1920x1080 timeline, * 0.5625 in 1080x1920, * 0.5 in 960x540). Crop "
@@ -1078,7 +1086,7 @@ void addLookOps(QVector<OpDef>& ops)
                              "param, clear:true}",
                  "animate a value",
                  "param: zoom (zoom_x and zoom_y together; `info` shows them as zoom while they match), zoom_x, "
-                 "zoom_y, x, y, rotation, crop_left, crop_right, crop_top, crop_bottom, opacity, "
+                 "zoom_y, x, y, rotation, tilt_x, tilt_y, fov, crop_left, crop_right, crop_top, crop_bottom, opacity, "
                  "title_size, title_x, title_y, title_color (\"#rrggbb\"), volume (dB, audio clips), pan (-100..100, "
                  "audio clips) or an effect parameter \"<effect>.<key>\" (keys: `effects <id>`; grade values: "
                  "grade.liftY, grade.gainR, grade.saturation, …). at = timeline frame inside the clip (its end counts as "

@@ -9,6 +9,7 @@
 #include "core/TimelineOps.h"
 #include "engine/Tracker.h"
 #include "engine/picture/CompNodes.h"
+#include "ui/TiltTransform.h"
 #include "ui/comp/CompShared.h"
 
 #include <QMouseEvent>
@@ -63,16 +64,18 @@ bool CompOverlay::clipToWidget(const QRectF& frame, QTransform* out) const
     const QSizeF pic = pictureSize();
     const double W = pic.width(), H = pic.height();
     const double t = CompUi::clipFrame(*c, m_playhead);
-    QTransform ct;
-    ct.translate(frame.left(), frame.top());
-    ct.scale(frame.width() / W, frame.height() / H);
+    QTransform ct, view;
+    view.translate(frame.left(), frame.top());
+    view.scale(frame.width() / W, frame.height() / H);
     if (Keys::hasTransform(*c)) { // the clip's own transform after the graph, as the picture engine applies it
-        ct.translate(W / 2 + Keys::valueAt(*c, AnimParam::PosX, t), H / 2 - Keys::valueAt(*c, AnimParam::PosY, t));
-        ct.rotate(-Keys::valueAt(*c, AnimParam::Rotation, t));
-        ct.scale(Keys::valueAt(*c, AnimParam::ZoomX, t), Keys::valueAt(*c, AnimParam::ZoomY, t));
-        ct.translate(-W / 2, -H / 2);
+        QTransform flat;
+        flat.translate(W / 2 + Keys::valueAt(*c, AnimParam::PosX, t), H / 2 - Keys::valueAt(*c, AnimParam::PosY, t));
+        flat.rotate(-Keys::valueAt(*c, AnimParam::Rotation, t));
+        flat.scale(Keys::valueAt(*c, AnimParam::ZoomX, t), Keys::valueAt(*c, AnimParam::ZoomY, t));
+        flat.translate(-W / 2, -H / 2);
+        ct = TiltTransform::apply(flat, *c, t, W, H, W, H);
     }
-    *out = ct;
+    *out = ct * view;
     return true;
 }
 
