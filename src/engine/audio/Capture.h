@@ -8,7 +8,7 @@
 //
 // Kinds like Audio::Device: an input through miniaudio (PulseAudio/PipeWire/ALSA/JACK, WASAPI/DirectSound,
 // CoreAudio) or a stand-in paced by a timer (tests, no microphone): the environment variable SCHNEIDI_AUDIO_INPUT =
-// "null" (silence) or "sine:<Hz>" (a tone at -12 dBFS), or the backend "null". The input is never heard (no
+// "null" (silence), "sine:<Hz>" (a tone at -12 dBFS) or "burst:<ms>" (1 kHz for the first <ms> ms, then silence), or the backend "null". The input is never heard (no
 // monitoring: a microphone next to speakers would feed back).
 
 #include "engine/audio/Device.h"

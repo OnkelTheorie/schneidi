@@ -95,12 +95,12 @@ void MainWindow::setupVoiceover()
     connect(m_voiceover, &VoiceoverRecorder::armedChanged, this, syncView);
     connect(m_voiceover, &VoiceoverRecorder::inputLevel, view, &TimelineView::setInputLevel);
     connect(m_voiceover, &VoiceoverRecorder::takeChanged, this, [this, view] {
-        if (m_voiceover->recording()) view->setLiveTake(&m_voiceover->take(), m_voiceover->liveTrack());
+        if (m_voiceover->live()) view->setLiveTake(&m_voiceover->take(), m_voiceover->liveTrack());
     });
     connect(m_voiceover, &VoiceoverRecorder::recordingChanged, this, [this, view, syncView](bool on) {
         syncView();
         if (!on) view->setLiveTake(nullptr, -1);
-        if (m_voiceoverAction) m_voiceoverAction->setChecked(on);
+        if (m_voiceoverAction && !on) m_voiceoverAction->setChecked(false);
     });
     syncView();
     connect(m_mixer, &Mixer::recordRequested, this, [this] {
@@ -115,12 +115,18 @@ void MainWindow::setupVoiceover()
     });
     m_voiceoverEscape->setEnabled(false);
     connect(m_voiceover, &VoiceoverRecorder::recordingChanged, this, [this](bool on) {
-        m_viewer->setRecording(on);
         m_voiceoverEscape->setEnabled(on);
         if (m_largeEscape) m_largeEscape->setEnabled(m_large.active && !on); // see setViewerLarge
-        if (on)
-            statusBar()->showMessage(T("Voiceover: Aufnahme auf %1 läuft – Esc oder Leertaste beendet")
-                                         .arg(trackShortName({TrackKind::Audio, m_voiceover->liveTrack()})));
+        if (on) statusBar()->showMessage(T("Voiceover: gleich …")); // the input runs, the timeline not yet heard
+        else m_viewer->setRecording(false);
+    });
+    // Red (viewer sign, toolbar mic, the take in the timeline) only once the take really runs
+    connect(m_voiceover, &VoiceoverRecorder::liveChanged, this, [this](bool on) {
+        if (!on) return;
+        m_viewer->setRecording(true);
+        if (m_voiceoverAction) m_voiceoverAction->setChecked(true);
+        statusBar()->showMessage(T("Voiceover: Aufnahme auf %1 läuft – Esc oder Leertaste beendet")
+                                     .arg(trackShortName({TrackKind::Audio, m_voiceover->liveTrack()})));
     });
     connect(m_voiceover, &VoiceoverRecorder::finished, this,
             [this](const QString& path, bool placed, const QString& error) {
@@ -165,7 +171,7 @@ void MainWindow::buildVoiceoverActions(QMenu* play, QMenu* audioMenu)
     m_voiceoverAction = makeAction(play, "voiceover_record", T("Voiceover aufnehmen / beenden"), QKeySequence("Shift+R"),
                                    [this] {
                                        toggleVoiceover();
-                                       m_voiceoverAction->setChecked(m_voiceover && m_voiceover->recording());
+                                       m_voiceoverAction->setChecked(m_voiceover && m_voiceover->live());
                                    });
     m_voiceoverAction->setCheckable(true);
     m_voiceoverAction->setToolTip(T("Voiceover aufnehmen: auf der Spur mit dem Mikrofon (sonst der gewählten "

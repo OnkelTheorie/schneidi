@@ -55,6 +55,15 @@ void wait(int ms)
     while (t.elapsed() < ms) QApplication::processEvents(QEventLoop::AllEvents, 10);
 }
 
+// The take shows as recording once the timeline is heard ("Gleich …" before)
+bool waitLive(const VoiceoverRecorder* r)
+{
+    QElapsedTimer t;
+    t.start();
+    while (!r->live() && t.elapsed() < 3000) QApplication::processEvents(QEventLoop::AllEvents, 10);
+    return r->live();
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -108,6 +117,8 @@ int main(int argc, char** argv)
     record->click();
     CHECK(recorder->recording());
     CHECK(record->isChecked());
+    CHECK(!recorder->live() || viewer->recording()); // red only once it really runs
+    CHECK(waitLive(recorder));
     CHECK(viewer->recording());
     CHECK(engine.speed() == 1.0); // the timeline plays along
     if (const QString dump = qEnvironmentVariable("VOICEOVER_DUMP"); !dump.isEmpty()) {
@@ -131,8 +142,9 @@ int main(int argc, char** argv)
         CHECK(m && m->hasAudio && !m->hasVideo);
         CHECK(QFileInfo(c.mediaPath).fileName().startsWith("voiceover-"));
         CHECK_EQ(QFileInfo(c.mediaPath).absolutePath(), QFileInfo(Voiceover::folder(QString())).absoluteFilePath());
-        CHECK_EQ(c.start, 25);
-        CHECK(c.in >= 0 && c.in <= 25);
+        // What was recorded before the timeline was heard lies before the playhead: nothing of the take is cut
+        CHECK(c.start <= 25 && c.start >= 0);
+        CHECK_EQ(c.in, 0);
         CHECK(m && c.out == m->length - 1);
         // ~1.5 s recorded (a busy machine: more)
         if (!e2e) CHECK(m && m->length >= 30 && m->length <= 80);
@@ -177,6 +189,7 @@ int main(int argc, char** argv)
     record->click();
     wait(50);
     CHECK(recorder->recording());
+    CHECK(waitLive(recorder));
     CHECK(viewer->recording());
     wait(500);
     engine.pause();
@@ -225,6 +238,7 @@ int main(int argc, char** argv)
     CHECK(key && key->shortcut() == QKeySequence("Shift+R"));
     QTest::keyClick(view, Qt::Key_R, Qt::ShiftModifier);
     CHECK(recorder->recording());
+    CHECK(waitLive(recorder));
     CHECK(key && key->isChecked()); // the toolbar's mic is lit
     CHECK_EQ(recorder->liveTrack(), free);
     wait(500);
@@ -255,7 +269,7 @@ int main(int argc, char** argv)
         const MediaInfo* m = project->mediaInfo(c.mediaPath);
         const double recorded = double(recorder->take().samples()) / recorder->take().rate() * project->frameRate();
         CHECK(m && std::abs(m->length - recorded) < 1.0);
-        CHECK_EQ(c.start, 25);
+        CHECK(c.start <= 25 && c.in == 0);
         CHECK(m && c.out == m->length - 1);
         CHECK(recorded > midway);
     }
@@ -311,7 +325,8 @@ int main(int argc, char** argv)
             const double recorded = double(recorder->take().samples()) / recorder->take().rate() * fps;
             std::printf("%s: clip %d..%d (%d frames, recorded %.1f)\n", what, c.start, c.start + length, length,
                         recorded);
-            CHECK_EQ(c.start, from);
+            CHECK(c.start <= from && c.start >= from - int(fps)); // the head before the first heard frame is kept
+            CHECK(c.in == 0 || c.start == 0);                     // cut only at the timeline's start
             CHECK(std::abs(c.in + length - recorded) < 1.0);
             CHECK(length >= int(1.8 * fps) && length <= int(2.8 * fps)); // ~2 s (a busy machine: a bit more)
         };
@@ -434,6 +449,34 @@ int main(int argc, char** argv)
         while (project->undoStack()->index() > undoStart) project->undoStack()->undo();
         CHECK_EQ(int(project->timeline().audio.size()), tracks0);
         recorder->setArmedTrack(-1);
+    }
+
+    // ---- Words right at the key press are kept: a burst in the first 100 ms of the input lies in the placed clip
+    {
+        qputenv("SCHNEIDI_AUDIO_INPUT", "burst:100");
+        recorder->setArmedTrack(-1);
+        w.liveSelection()->clear();
+        const int undo = project->undoStack()->index();
+        engine.seek(50);
+        wait(100);
+        CHECK(recorder->start());
+        CHECK(waitLive(recorder));
+        wait(600);
+        CHECK(recorder->stop());
+        const int track = recorder->placedTrack();
+        const Timeline& tl = project->timeline();
+        if (CHECK(track >= 0 && track < tl.audio.size() && tl.audio[track].clips.size() == 1)) {
+            const Clip& c = tl.audio[track].clips[0];
+            std::printf("burst take: start %d (playhead 50) in %d\n", c.start, c.in);
+            CHECK_EQ(c.in, 0);             // file sample 0 on: the burst (samples 0..4800) is in the clip
+            CHECK(c.start <= 50 && c.start >= 25);
+            float first = 0;
+            for (int i = 0; i < 10 && i < recorder->take().peaks().size(); ++i)
+                first = std::max(first, recorder->take().peaks()[i]);
+            CHECK(first > 0.2f); // the burst came in
+        }
+        while (project->undoStack()->index() > undo) project->undoStack()->undo();
+        qputenv("SCHNEIDI_AUDIO_INPUT", "sine:440");
     }
 
     // Quitting while recording: the take is placed first (so "save changes?" sees it), the file is complete

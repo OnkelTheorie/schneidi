@@ -103,6 +103,15 @@ int recordTrack(const Timeline& tl, int armed, int selected, int from, int end)
     return count;
 }
 
+int headLimit(const Timeline& tl, int track, int from)
+{
+    int limit = 0;
+    if (track >= 0 && track < tl.audio.size())
+        for (const Clip& c : tl.audio[track].clips)
+            if (c.start < from) limit = std::max(limit, std::min(c.end(), from));
+    return std::min(limit, std::max(0, from));
+}
+
 int buttStart(const Timeline& tl, int track, int from, int tolerance)
 {
     if (track < 0 || track >= tl.audio.size()) return from;
@@ -148,7 +157,7 @@ double LiveTake::end() const
 
 double LiveTake::lengthFrames() const
 {
-    return std::max(0.0, end() - m_from);
+    return std::max(0.0, end() - start());
 }
 
 float LiveTake::peak(double a, double b) const

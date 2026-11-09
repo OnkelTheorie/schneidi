@@ -2897,5 +2897,6 @@
  "Eingang wählen": "Choose Input",
  "Aufnahmebereit: die Aufnahmetaste nimmt auf dieser Spur auf (Rechtsklick: Eingang wählen)": "Armed: the record key records onto this track (right-click: choose input)",
  "Voiceover aufnehmen: auf der Spur mit dem Mikrofon (sonst der gewählten Tonspur oder einer neuen) ab dem Abspielkopf; die Timeline spielt mit": "Record a voice-over: onto the track with the microphone (else the selected audio track or a new one) from the playhead; the timeline plays along",
- "Die Spur ist gesperrt.": "The track is locked."
+ "Die Spur ist gesperrt.": "The track is locked.",
+ "Voiceover: gleich …": "Voice-over: about to start …"
 }
