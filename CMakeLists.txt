@@ -254,6 +254,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/engine/MediaCache.h       src/engine/MediaCache.cpp
     src/engine/StillFetcher.h     src/engine/StillFetcher.cpp
     src/engine/ScrubFrames.h      src/engine/ScrubFrames.cpp
+    src/engine/FileStamp.h        src/engine/FileStamp.cpp
     src/engine/ProxyManager.h     src/engine/ProxyManager.cpp
     src/engine/ProxyCleanup.h     src/engine/ProxyCleanup.cpp
     src/engine/MemoryRelease.h    src/engine/MemoryRelease.cpp

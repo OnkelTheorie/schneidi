@@ -9,6 +9,7 @@
 #include "core/ProjectFormat.h"
 
 #include <QCache>
+#include <QHash>
 #include <QImage>
 #include <QMutex>
 #include <QObject>
@@ -56,9 +57,11 @@ private:
     bool m_quit = false;
     ProjectFormat m_format;
     int m_generation = 0; // counts format changes; results for an older format are dropped
+    QHash<QString, int> m_fileGeneration; // per file: counts overwrites (FileStamp); older results are dropped
     int m_maxEdge = 960;
     QVector<Request> m_jobs; // front = next
     QCache<QString, QImage> m_cache;
     int m_decoded = 0;
     QThread* m_thread = nullptr;
+    int m_stampObserver = 0; // FileStamp: a media file overwritten under its name drops what is kept
 };
