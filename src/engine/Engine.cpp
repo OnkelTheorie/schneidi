@@ -949,6 +949,7 @@ void Engine::seek(int frame)
     m_lastSeek.start();
     m_position = frame;
     emit positionChanged(frame);
+    emit seeked(frame);
     stopAtEnd(); // a click behind the end while playing: nothing to show there, stop instead of playing over nothing
 }
 

@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Voice-over recording in the app (core/Voiceover.h, engine/audio/Capture.h): record while the timeline plays from
-// the playhead (after an optional pre-roll) onto the armed audio track (the mic in its header), else the track of the
-// selected audio clips, else a new one; a track with sound in the way also gets a new one (Voiceover::recordTrack).
-// While it runs the take grows in the timeline (take(), liveTrack()); stopping (the record key, Esc, Space; not the end
-// of the timeline: it plays on behind it while recording) puts it into the Media Pool and onto that track where the playhead stood, as one undo step.
+// the playhead (after an optional pre-roll, also behind its end) onto the track Voiceover::recordTrack picks once at
+// the start: the armed one (mic in its header; punch-in), else the selected clips' free track, else a Voiceover track,
+// else a free unnamed one, else one new track. A take right after the one before butts against it. While it runs the
+// take grows in the timeline (take(), liveTrack()). Stopping (the record key, Esc, Space) - or anything else moving
+// the playhead (a seek, J, a speed change) - puts it into the Media Pool and onto that track, as one undo step.
 // An armed track's input level is measured before recording too (a capture without a file).
 
 #include "core/Voiceover.h"
@@ -69,7 +70,8 @@ private:
     Voiceover::Settings m_settings;
     Voiceover::LiveTake m_take;
     int m_armed = -1;
-    int m_preferred = -1;   // the track asked for at the start (armed/selected; -1 = a new one)
+    int m_track = -1;       // the track the take goes to, fixed at the start (>= the track count: a new one)
+    bool m_starting = false; // start() seeks and plays itself: that does not end the take
     int m_liveTrack = -1;
     int m_placedTrack = -1;
     int m_from = 0;         // playhead when recording started (the clip starts here)

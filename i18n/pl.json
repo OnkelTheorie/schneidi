@@ -2896,5 +2896,6 @@
  "Aufnahmebereit": "Gotowa do nagrywania",
  "Eingang wählen": "Wybierz wejście",
  "Aufnahmebereit: die Aufnahmetaste nimmt auf dieser Spur auf (Rechtsklick: Eingang wählen)": "Gotowa: klawisz nagrywania nagrywa na tę ścieżkę (prawy przycisk: wybierz wejście)",
- "Voiceover aufnehmen: auf der Spur mit dem Mikrofon (sonst der gewählten Tonspur oder einer neuen) ab dem Abspielkopf; die Timeline spielt mit": "Nagraj lektora: na ścieżkę z mikrofonem (w przeciwnym razie na wybraną ścieżkę audio lub nową) od głowicy; oś czasu odtwarza się równocześnie"
+ "Voiceover aufnehmen: auf der Spur mit dem Mikrofon (sonst der gewählten Tonspur oder einer neuen) ab dem Abspielkopf; die Timeline spielt mit": "Nagraj lektora: na ścieżkę z mikrofonem (w przeciwnym razie na wybraną ścieżkę audio lub nową) od głowicy; oś czasu odtwarza się równocześnie",
+ "Die Spur ist gesperrt.": "Ścieżka jest zablokowana."
 }

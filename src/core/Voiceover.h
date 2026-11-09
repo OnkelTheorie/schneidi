@@ -15,9 +15,11 @@
 #include <QString>
 #include <QVector>
 
+#include <climits>
 #include <optional>
 
 struct Timeline;
+struct Track;
 
 namespace Voiceover {
 
@@ -49,12 +51,24 @@ struct Placement {
 // (to 1/100 frame) where it was heard. nullopt = nothing of a `fileFrames` long file lies at or after `from`.
 std::optional<Placement> place(double fileStart, int from, int fileFrames);
 
-// Which audio track a take goes to (0.20 "record where you are"): the armed track, else the one audio track the
-// selected clips lie on (ids = the selection; clips on several audio tracks or none: no track), -1 = none
-int preferredTrack(const Timeline& tl, int armed, const QVector<int>& selected);
-// The track a take of timeline frames [start, end) lands on: `preferred` when it exists, is not locked and has no
-// clip in that range, else a new track (= tl.audio.size(); the caller creates it)
-int recordTrack(const Timeline& tl, int preferred, int start, int end);
+// Which audio track a take goes to (0.20 "record where you are"; reworked after a user's 24 takes made 10 new tracks):
+// - an armed track is the user's explicit choice: the take goes there and replaces what lies in its range (punch-in);
+//   a locked armed track refuses (-1)
+// - else the track of the selected clips (selectedTrack) when it is free from `from` to `end` and may take a take
+// - else the first track named Voiceover (the ones a take creates): new takes replace earlier ones there
+// - else the first free track without a user-given name
+// - else one new track (= tl.audio.size(); placing creates it, named Voiceover)
+// "May take a take": not locked, not muted, no name or the name Voiceover - a track the user named (Discord, Mix,
+// Mikrofon …) only gets a take when it is armed. `end`: the take's end when known (CLI), else open.
+int recordTrack(const Timeline& tl, int armed, int selected, int from, int end = INT_MAX);
+// The one audio track the selected clips (ids) lie on; clips on several audio tracks or none: -1
+int selectedTrack(const Timeline& tl, const QVector<int>& ids);
+// A track a take created (named Voiceover, in German or the UI language)
+bool isVoiceoverTrack(const Track& t);
+// Where a take from `from` starts on `track`: a clip there ending within `tolerance` frames of `from` (before or after:
+// the playhead stops a frame or two off the previous take's end) -> right at its end, so takes in a row butt against
+// each other without overlap or gap; else `from`
+int buttStart(const Timeline& tl, int track, int from, int tolerance);
 
 // The take while it is being recorded (the growing clip in the timeline): how far it reaches and its waveform, from
 // the blocks the input delivers. File sample 0 lies at timeline frame `fileStart` (the live estimate; the final place

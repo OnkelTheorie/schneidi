@@ -193,6 +193,7 @@ signals:
     void frameReady(const QImage& image);
     void positionChanged(int frame);
     void speedChanged(double speed);
+    void seeked(int frame); // the playhead was moved (seek), not by playing
     void colorBypassChanged(bool on);
     void modeChanged(Engine::Mode mode);
     // Only during playback: peak levels in dBFS, [A1 L, A1 R, A2 L, …, Master L, Master R];

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "core/Voiceover.h"
 
+#include "core/I18n.h"
 #include "core/Types.h"
 
 #include <QDir>
@@ -63,27 +64,57 @@ std::optional<Placement> place(double fileStart, int from, int fileFrames)
     return p;
 }
 
-int preferredTrack(const Timeline& tl, int armed, const QVector<int>& selected)
+int selectedTrack(const Timeline& tl, const QVector<int>& ids)
 {
-    if (armed >= 0 && armed < tl.audio.size()) return armed;
     int track = -1;
     for (int i = 0; i < tl.audio.size(); ++i)
         for (const Clip& c : tl.audio[i].clips)
-            if (selected.contains(c.id)) {
+            if (ids.contains(c.id)) {
                 if (track >= 0 && track != i) return -1; // clips on several tracks: none of them is "the" track
                 track = i;
             }
     return track;
 }
 
-int recordTrack(const Timeline& tl, int preferred, int start, int end)
+bool isVoiceoverTrack(const Track& t)
 {
-    const int fresh = int(tl.audio.size());
-    if (preferred < 0 || preferred >= fresh || tl.audio[preferred].locked) return fresh;
-    end = std::max(end, start + 1);
-    for (const Clip& c : tl.audio[preferred].clips)
-        if (c.start < end && c.end() > start) return fresh; // never over existing sound
-    return preferred;
+    return t.name == "Voiceover" || t.name == T("Voiceover");
+}
+
+int recordTrack(const Timeline& tl, int armed, int selected, int from, int end)
+{
+    const int count = int(tl.audio.size());
+    if (armed >= 0 && armed < count) return tl.audio[armed].locked ? -1 : armed;
+    end = std::max(end, from + 1);
+    const auto open = [&](int i) {
+        const Track& t = tl.audio[i];
+        return !t.locked && !t.muted && (t.name.isEmpty() || isVoiceoverTrack(t));
+    };
+    const auto freeFrom = [&](int i) {
+        for (const Clip& c : tl.audio[i].clips)
+            if (c.start < end && c.end() > from) return false;
+        return true;
+    };
+    if (selected >= 0 && selected < count && open(selected) && freeFrom(selected)) return selected;
+    for (int i = 0; i < count; ++i)
+        if (open(i) && isVoiceoverTrack(tl.audio[i])) return i; // its earlier takes in the range are replaced
+    for (int i = 0; i < count; ++i)
+        if (open(i) && freeFrom(i)) return i;
+    return count;
+}
+
+int buttStart(const Timeline& tl, int track, int from, int tolerance)
+{
+    if (track < 0 || track >= tl.audio.size()) return from;
+    int best = from, distance = tolerance + 1;
+    for (const Clip& c : tl.audio[track].clips) {
+        const int d = std::abs(c.end() - from);
+        if (d < distance && c.start < from) { // a clip that ends near the playhead (not one starting there)
+            distance = d;
+            best = c.end();
+        }
+    }
+    return best;
 }
 
 LiveTake::LiveTake(double fileStart, int from, double fps, int rate)

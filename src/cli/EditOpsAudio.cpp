@@ -9,6 +9,7 @@
 #include "core/Loudness.h"
 #include "core/Speech.h"
 #include "core/TimelineOps.h"
+#include "core/Voiceover.h"
 #include "engine/AudioAnalysis.h"
 #include "engine/Extensions.h"
 #include "engine/Tts.h"
@@ -874,8 +875,8 @@ void opSpeak(Session& s, const QJsonObject& op)
 
 // ---------- voiceover ----------
 
-// A recorded voice (the app records it; here any audio file) at `at` onto an audio track: the given one when it is
-// free there for the whole take, else a new track (Editor::placeRecording, the same rule as recording in the app)
+// A recorded voice (the app records it; here any audio file) at `at` onto an audio track: the given one (like an armed
+// track: replaces what lies there), else the app's rule (Voiceover::recordTrack)
 void opVoiceover(Session& s, const QJsonObject& op)
 {
     const QString file = op.value("file").toString();
@@ -883,21 +884,25 @@ void opVoiceover(Session& s, const QJsonObject& op)
     const MediaInfo& m = s.media(absolute(file));
     if (!m.hasAudio || m.length <= 0) fail("BAD_ARGUMENT", "the file has no sound: " + file);
     const int at = op.contains("at") ? timeOf(s, op, "at") : s.app.value("playhead").toInt(0);
+    const Timeline& tl = s.project.timeline();
     int track = -1;
-    if (op.contains("track") && op.value("track").toString() != "new") {
+    if (op.value("track").toString() == "new") {
+        track = int(tl.audio.size());
+    } else if (op.contains("track")) {
         TrackKind k = TrackKind::Audio;
         track = parseTrack(op.value("track"), &k);
         if (k != TrackKind::Audio) fail("BAD_ARGUMENT", "track must be an audio track (A1 …) or 'new'");
+        if (track < tl.audio.size() && tl.audio[track].locked) fail("FAILED", trackName({TrackKind::Audio, track}) + " is locked");
+    } else {
+        track = Voiceover::recordTrack(tl, -1, -1, at, at + m.length);
     }
+    const int before = int(tl.audio.size());
     int placed = -1;
     if (!s.editor.placeRecording(m.path, track, at, at, &placed)) fail("FAILED", "could not place the recording");
     s.notes << QString("voiceover %1 (%2 s) on %3%4 at %5")
                    .arg(QFileInfo(m.path).fileName())
                    .arg(m.length / s.project.frameRate(), 0, 'f', 2)
-                   .arg(trackName({TrackKind::Audio, placed}),
-                        track >= 0 && placed != track ? QString(" (a new track: %1 has sound there or is locked)")
-                                                            .arg(trackName({TrackKind::Audio, track}))
-                                                      : QString())
+                   .arg(trackName({TrackKind::Audio, placed}), placed >= before ? QString(" (a new track)") : QString())
                    .arg(tc(at, s.format()));
 }
 
@@ -1005,12 +1010,14 @@ void addAudioOps(QVector<OpDef>& ops)
                  "are measured by whisper when it is installed, else estimated from the text (the notes say which).",
                  opSpeak}
         << OpDef{"voiceover", "{op:'voiceover', file, at?, track?}",
-                 "a recorded voice (or any audio file) at `at` on an audio track, never over existing sound",
+                 "a recorded voice (or any audio file) at `at` on an audio track",
                  "The step the app's voice-over recording ends with, for a take recorded elsewhere. at: default the "
-                 "app's playhead (0 on a file). track: an audio track ('A2') - used when it has no clip anywhere in "
-                 "the take's range and is not locked; otherwise, or with track 'new' or none, the take goes onto a "
-                 "new audio track named Voiceover below the others. One undo step (track and clip together); the "
-                 "new clip is selected. The notes name the track it landed on.",
+                 "app's playhead (0 on a file). track: an audio track ('A2') = like an armed track in the app: the "
+                 "take goes there and replaces what lies in its range (punch-in); a locked one fails. track 'new': a "
+                 "new track. No track: the app's rule - the first track named Voiceover (earlier takes in the range "
+                 "are replaced), else the first free track without a user-given name (not muted or locked), else one "
+                 "new track named Voiceover. Tracks the user named (Discord, Mix …) only get it when given. One "
+                 "undo step (track and clip together); the new clip is selected. The notes name the track.",
                  opVoiceover};
 }
 

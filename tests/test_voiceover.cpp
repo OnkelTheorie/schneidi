@@ -9,6 +9,7 @@
 #include "core/ProjectFile.h"
 #include "core/Project.h"
 #include "core/Selection.h"
+#include "core/TimelineOps.h"
 #include "core/Voiceover.h"
 #include "engine/Engine.h"
 #include "engine/audio/Capture.h"
@@ -269,10 +270,10 @@ int main(int argc, char** argv)
         CHECK(std::abs(*b.fileStartSeconds(0, 48000, 0) - 2.0) < 1e-9);
     }
 
-    // ---- Which track a take goes to: armed, else the selected clips' audio track, else none (= a new one)
+    // ---- Which track a take goes to (user report: 24 takes made 10 new tracks next to five empty ones)
     {
         Timeline tl;
-        tl.audio.resize(3);
+        tl.audio.resize(4);
         Clip a;
         a.id = 1;
         a.mediaPath = "/x/a.wav";
@@ -283,22 +284,47 @@ int main(int argc, char** argv)
         b.id = 2;
         b.start = 0; // [0, 50) on A3
         tl.audio[2].clips << b;
-        CHECK_EQ(Voiceover::preferredTrack(tl, 1, {}), 1);      // armed
-        CHECK_EQ(Voiceover::preferredTrack(tl, 1, {1}), 1);     // armed before the selection
-        CHECK_EQ(Voiceover::preferredTrack(tl, -1, {1}), 0);    // selected clip on A1
-        CHECK_EQ(Voiceover::preferredTrack(tl, -1, {}), -1);    // nothing
-        CHECK_EQ(Voiceover::preferredTrack(tl, -1, {1, 2}), -1); // clips on two tracks: none of them
-        CHECK_EQ(Voiceover::preferredTrack(tl, 7, {2}), 2);     // an armed track that is gone does not count
-        // Free there: that track; sound in the way, locked, none or a missing one: a new track (= the count)
-        CHECK_EQ(Voiceover::recordTrack(tl, 0, 10, 50), 0);  // ends right where the clip starts
-        CHECK_EQ(Voiceover::recordTrack(tl, 0, 10, 51), 3);  // reaches into it
-        CHECK_EQ(Voiceover::recordTrack(tl, 0, 60, 61), 3);  // starts on it
-        CHECK_EQ(Voiceover::recordTrack(tl, 0, 100, 400), 0); // after it
-        CHECK_EQ(Voiceover::recordTrack(tl, 1, 0, 1000), 1);
-        CHECK_EQ(Voiceover::recordTrack(tl, -1, 0, 10), 3);
-        CHECK_EQ(Voiceover::recordTrack(tl, 9, 0, 10), 3);
-        tl.audio[1].locked = true;
-        CHECK_EQ(Voiceover::recordTrack(tl, 1, 0, 10), 3);
+        CHECK_EQ(Voiceover::selectedTrack(tl, {1}), 0);
+        CHECK_EQ(Voiceover::selectedTrack(tl, {}), -1);
+        CHECK_EQ(Voiceover::selectedTrack(tl, {1, 2}), -1); // clips on two tracks: none of them
+        // Armed: there, also over sound (punch-in); locked armed: refused
+        CHECK_EQ(Voiceover::recordTrack(tl, 0, -1, 60), 0);
+        // Selected and free from the start on: there; not free: the first free unnamed track
+        CHECK_EQ(Voiceover::recordTrack(tl, -1, 2, 60), 2);
+        CHECK_EQ(Voiceover::recordTrack(tl, -1, 0, 60), 1);
+        CHECK_EQ(Voiceover::recordTrack(tl, -1, 0, 100), 0); // after its clip
+        CHECK_EQ(Voiceover::recordTrack(tl, -1, -1, 10), 1);
+        // Empty tracks the user named (Discord, Mikrofon …) and muted or locked ones get no take unless armed
+        tl.audio[1].name = "Discord";
+        tl.audio[3].muted = true;
+        CHECK_EQ(Voiceover::recordTrack(tl, -1, -1, 10), 4); // nothing fits: one new track
+        CHECK_EQ(Voiceover::recordTrack(tl, 1, -1, 10), 1);  // armed: the user's choice
+        tl.audio[3].muted = false;
+        tl.audio[3].locked = true;
+        CHECK_EQ(Voiceover::recordTrack(tl, -1, -1, 10), 4);
+        CHECK_EQ(Voiceover::recordTrack(tl, 3, -1, 10), -1);
+        // A Voiceover track (made by an earlier take) is the place for takes, also over its earlier ones
+        tl.audio[3].locked = false;
+        tl.audio[3].name = "Voiceover";
+        Clip v = a;
+        v.id = 3;
+        v.start = 0;
+        tl.audio[3].clips << v; // [0, 50)
+        CHECK_EQ(Voiceover::recordTrack(tl, -1, -1, 10), 3);
+        CHECK_EQ(Voiceover::recordTrack(tl, -1, 3, 10), 3);
+        CHECK(Voiceover::isVoiceoverTrack(tl.audio[3]) && !Voiceover::isVoiceoverTrack(tl.audio[1]));
+        // Known length (CLI): a free unnamed track must be free to the end
+        Timeline t2;
+        t2.audio.resize(2);
+        t2.audio[0].clips << a; // [50, 100)
+        CHECK_EQ(Voiceover::recordTrack(t2, -1, -1, 10, 40), 0);
+        CHECK_EQ(Voiceover::recordTrack(t2, -1, -1, 10, 60), 1);
+        // Takes in a row butt: a clip ending within the tolerance before or after the playhead -> its end
+        CHECK_EQ(Voiceover::buttStart(tl, 3, 48, 3), 50);
+        CHECK_EQ(Voiceover::buttStart(tl, 3, 52, 3), 50);
+        CHECK_EQ(Voiceover::buttStart(tl, 3, 54, 3), 54);
+        CHECK_EQ(Voiceover::buttStart(tl, 3, 0, 3), 0); // a clip starting there is no previous take
+        CHECK_EQ(Voiceover::buttStart(tl, 9, 48, 3), 48);
     }
 
     // ---- The growing take: a fake source feeds blocks, the waveform and the length follow, the end is exact
@@ -341,7 +367,7 @@ int main(int argc, char** argv)
         CHECK(std::abs(take.peak(29, 39) - 0.8f) < 1e-6);
     }
 
-    // ---- Editor::placeRecording: onto the track at the playhead, never over sound (a new track instead, one step)
+    // ---- Editor::placeRecording: onto the given track (punch-in), a new one at most one past the last, one step
     {
         Project p;
         Selection sel;
@@ -356,66 +382,48 @@ int main(int argc, char** argv)
             tl.audio[0].clips << a;
         });
         const int undoBefore = p.undoStack()->index();
-        // Recorded on A2 (missing track is created) from frame 20, file 0.5 frames late
+        const int tracks = int(p.timeline().audio.size());
         int placed = -9;
-        const int id = ed.placeRecording("/x/vo.wav", 1, 19.5, 20, &placed);
+        // Onto the track after the last (a new one) from frame 20, file 0.5 frames late
+        const int id = ed.placeRecording("/x/vo.wav", tracks, 19.5, 20, &placed);
         CHECK(id > 0);
-        CHECK_EQ(placed, 1);
-        const Timeline& tl = p.timeline();
-        CHECK(tl.audio.size() >= 2);
-        if (tl.audio.size() >= 2 && tl.audio[1].clips.size() == 1) {
-            const Clip& c = tl.audio[1].clips[0];
+        CHECK_EQ(placed, tracks);
+        if (CHECK_EQ(int(p.timeline().audio.size()), tracks + 1) && p.timeline().audio[tracks].clips.size() == 1) {
+            const Clip& c = p.timeline().audio[tracks].clips[0];
             CHECK_EQ(c.id, id);
             CHECK_EQ(c.start, 20);
             CHECK_EQ(c.subframe, 50);
             CHECK_EQ(c.in, 1);
             CHECK_EQ(c.out, 59);
             CHECK_EQ(c.linkId, 0);
-        } else {
-            CHECK(false);
+            CHECK_EQ(p.timeline().audio[tracks].name, QString("Voiceover"));
         }
         CHECK(sel.ids() == QSet<int>{id});
         CHECK_EQ(p.undoStack()->index(), undoBefore + 1);
-        CHECK_EQ(tl.audio[0].clips.size(), qsizetype(1)); // A1 untouched
-        p.undoStack()->undo();
-        CHECK(p.timeline().audio.size() < 2 || p.timeline().audio[1].clips.isEmpty());
-        // A1 has sound at frame 30: a new track below the others, named Voiceover, with the clip in one step;
-        // the sound on A1 stays
-        const int tracks = int(p.timeline().audio.size());
-        const int id2 = ed.placeRecording("/x/vo.wav", 0, 30.0, 30, &placed);
-        CHECK(id2 > 0);
-        CHECK_EQ(placed, tracks);
-        CHECK_EQ(int(p.timeline().audio.size()), tracks + 1);
-        CHECK_EQ(p.timeline().audio[0].clips.size(), qsizetype(1));
-        if (placed >= 0 && placed < p.timeline().audio.size()) {
-            CHECK_EQ(p.timeline().audio[placed].name, QString("Voiceover"));
-            CHECK(p.timeline().audio[placed].clips.size() == 1 && p.timeline().audio[placed].clips[0].start == 30);
-        }
-        CHECK_EQ(p.undoStack()->index(), undoBefore + 1);
         p.undoStack()->undo(); // one step takes the track and the clip away
         CHECK_EQ(int(p.timeline().audio.size()), tracks);
-        CHECK_EQ(p.timeline().audio[0].clips.size(), qsizetype(1));
-        // No track asked for (nothing armed or selected): a new one
-        CHECK(ed.placeRecording("/x/vo.wav", -1, 0, 0, &placed) > 0);
+        // Far past the last track: still only one new track
+        CHECK(ed.placeRecording("/x/vo.wav", tracks + 5, 0, 0, &placed) > 0);
         CHECK_EQ(placed, tracks);
+        CHECK_EQ(int(p.timeline().audio.size()), tracks + 1);
         p.undoStack()->undo();
-        // A free track after the clip: that one
-        CHECK(ed.placeRecording("/x/vo.wav", 0, 100, 100, &placed) > 0);
+        // Punch-in on A1 over its sound: a[0-30] vo[30-90] a[90-100], one undo restores it
+        CHECK(ed.placeRecording("/x/vo.wav", 0, 30.0, 30, &placed) > 0);
         CHECK_EQ(placed, 0);
-        CHECK_EQ(p.timeline().audio[0].clips.size(), qsizetype(2));
+        CHECK_EQ(p.timeline().audio[0].clips.size(), qsizetype(3));
         p.undoStack()->undo();
-        // Not in the pool, nothing after the start: no clip, no step. A locked track: a new one
+        CHECK_EQ(p.timeline().audio[0].clips.size(), qsizetype(1));
+        // Not in the pool, nothing after the start, a locked track: no clip, no step
         const int index = p.undoStack()->index();
         CHECK_EQ(ed.placeRecording("/x/none.wav", 0, 0, 0), 0);
         CHECK_EQ(ed.placeRecording("/x/vo.wav", 0, 0, 200), 0);
-        CHECK_EQ(p.undoStack()->index(), index);
+        CHECK_EQ(ed.placeRecording("/x/vo.wav", -1, 0, 0), 0);
         p.edit("lock", [](Timeline& t) { t.audio[0].locked = true; });
-        CHECK(ed.placeRecording("/x/vo.wav", 0, 200, 200, &placed) > 0);
-        CHECK_EQ(placed, tracks);
-        CHECK_EQ(p.undoStack()->index(), index + 2);
+        CHECK_EQ(ed.placeRecording("/x/vo.wav", 0, 0, 0), 0);
+        CHECK_EQ(p.undoStack()->index(), index + 1);
     }
 
-    // ---- CLI op 'voiceover': a recorded file at a time, on the given track when free, else a new one
+    // ---- CLI op 'voiceover': a given track = armed (punch-in), else the app's rule, 'new' = one new track
     if (QFileInfo::exists(tmp.filePath("take.wav"))) {
         const QString path = tmp.filePath("cli.schneidi");
         Project p;
@@ -426,6 +434,7 @@ int main(int argc, char** argv)
             a.mediaPath = "/x/a.mp4";
             a.out = 99;
             tl.audio[0].clips << a;
+            TimelineOps::ensureTracks(tl, TrackKind::Audio, 2); // A2 empty, no name
         });
         QString error;
         CHECK(ProjectFile::save(p.data(), path, &error));
@@ -440,20 +449,20 @@ int main(int argc, char** argv)
         };
         const int tracks = int(p.timeline().audio.size());
         const QString take = tmp.filePath("take.wav");
-        // A1 has sound at 2 s: a new track
-        QJsonObject r = edit(QString(R"([{"op":"voiceover","file":"%1","at":"2s","track":"A1"}])").arg(take));
-        CHECK(QJsonDocument(r).toJson().contains("a new track"));
+        // No track: A1 has sound at 2 s, A2 is free and unnamed: there, no new track
+        QJsonObject r = edit(QString(R"([{"op":"voiceover","file":"%1","at":"2s"}])").arg(take));
         Timeline tl = loaded();
-        CHECK_EQ(int(tl.audio.size()), tracks + 1);
-        CHECK(tl.audio[tracks].clips.size() == 1 && tl.audio[tracks].clips[0].start == 50);
-        CHECK_EQ(tl.audio[0].clips.size(), qsizetype(1));
-        // After A1's clip: on A1
-        edit(QString(R"([{"op":"voiceover","file":"%1","at":"5s","track":"A1"}])").arg(take));
+        CHECK_EQ(int(tl.audio.size()), tracks);
+        CHECK(tl.audio[1].clips.size() == 1 && tl.audio[1].clips[0].start == 50);
+        // track A1 = armed: punch-in over its sound (a | take | a)
+        edit(QString(R"([{"op":"voiceover","file":"%1","at":"1s","track":"A1"}])").arg(take));
         tl = loaded();
-        CHECK_EQ(tl.audio[0].clips.size(), qsizetype(2));
-        // track 'new': another new track; a video track is refused
-        edit(QString(R"([{"op":"voiceover","file":"%1","at":0,"track":"new"}])").arg(take));
-        CHECK_EQ(int(loaded().audio.size()), tracks + 2);
+        CHECK_EQ(tl.audio[0].clips.size(), qsizetype(3));
+        // track 'new': one new track; a video track is refused
+        const int now = int(tl.audio.size());
+        r = edit(QString(R"([{"op":"voiceover","file":"%1","at":0,"track":"new"}])").arg(take));
+        CHECK(QJsonDocument(r).toJson().contains("a new track"));
+        CHECK_EQ(int(loaded().audio.size()), now + 1);
         QString code;
         edit(QString(R"([{"op":"voiceover","file":"%1","track":"V1"}])").arg(take), &code);
         CHECK_EQ(code, QString("BAD_ARGUMENT"));
