@@ -2,7 +2,8 @@
 #pragma once
 // Own audio engine: sound input (voice-over). A capture device hands interleaved float samples to a callback in its
 // real-time thread; that only copies them into a ring buffer, a writer thread puts them into a WAV file (24-bit PCM)
-// as they come. Nothing is lost while the file grows: the header gets its sizes when the recording stops. A writer that
+// as they come. Nothing is lost while the file grows: the header's sizes follow every ~2 s (a crash leaves a file that
+// reads to there) and are exact when the recording stops. A writer that
 // falls further behind than the ring buffer holds (a stalled disk) loses blocks; those become silence of the same
 // length in the file, so everything after them stays in time with the picture.
 //

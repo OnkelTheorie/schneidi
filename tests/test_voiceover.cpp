@@ -129,6 +129,31 @@ int main(int argc, char** argv)
             CHECK(std::abs(m.length - int(std::lround(double(frames) / 48000 * ProjectFormat{}.rate.fps()))) <= 1);
         }
     }
+    // ---- Review 2026-11-09: the header's sizes follow while recording (a crash mid-take leaves a readable file)
+    {
+        const QString path = tmp.filePath("growing.wav");
+        Audio::Capture::Config config;
+        config.rate = 48000;
+        config.channels = 1;
+        auto capture = Audio::Capture::start(config, path);
+        if (CHECK(capture != nullptr)) {
+            QThread::msleep(2600);
+            QFile f(path);
+            quint32 data = 0, riff = 0;
+            if (CHECK(f.open(QIODevice::ReadOnly))) {
+                const QByteArray head = f.read(44);
+                if (CHECK(head.size() == 44)) {
+                    riff = qFromLittleEndian<quint32>(head.constData() + 4);
+                    data = qFromLittleEndian<quint32>(head.constData() + 40);
+                }
+            }
+            std::printf("header while recording: data %u bytes (file %lld)\n", data, f.size());
+            CHECK(data >= 48000 * 3 && data % 3 == 0); // at least a second, whole frames
+            CHECK(data <= f.size() - 44);
+            CHECK_EQ(riff, 36 + data + (data & 1));
+            capture->stop();
+        }
+    }
     // ---- A stalled writer (a disk that hangs): blocks lost beyond the ring buffer become silence of the same length,
     // the file keeps frames() and everything after a gap lies where it was heard. Two gaps in one take (mono), then a
     // take that stops while the writer still stalls (stereo: the lost end is silence too)
