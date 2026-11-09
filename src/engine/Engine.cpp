@@ -924,8 +924,8 @@ void Engine::stopAtEnd()
 {
     if (m_speed == 0.0 || !connected() || !atEnd(m_speed)) return;
     // Loop playback whose range reaches up to (or past) the end: the end is where it wraps (not when the whole range
-    // lies behind the end: the jump would land there again)
-    if (m_speed > 0 && looping() && m_mode == Mode::Timeline && m_loopIn < lastFrame() && m_position >= m_loopIn) {
+    // lies behind the end: the jump would land there again; a range before the end was played past: ends as usual)
+    if (m_speed > 0 && looping() && m_mode == Mode::Timeline && m_loopIn < lastFrame() && m_loopOut >= lastFrame()) {
         seek(m_loopIn);
         return;
     }

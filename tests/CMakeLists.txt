@@ -261,6 +261,7 @@ schneidi_test(test_audio_analysis)
 schneidi_test(test_audio_player)
 set_tests_properties(test_audio_player PROPERTIES RUN_SERIAL TRUE) # real time
 schneidi_test(test_play_end) # playback stops at the end and stays stopped
+schneidi_test(test_play_loop) # loop playback in the In/Out range: wraps Out -> In, no click, off/removed plays to the end
 set_tests_properties(test_av_sync PROPERTIES RUN_SERIAL TRUE) # preview timing
 schneidi_test(test_dynamics_eq)
 target_link_libraries(test_dynamics_eq PRIVATE schneidi_cli_lib)
@@ -340,12 +341,12 @@ foreach(name test_stabilize_denoise test_retime test_effects_render test_effect_
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen;SCHNEIDI_AUDIO_DEVICE=null;SCHNEIDI_GPU=0;LC_ALL=de_DE.UTF-8;LANG=de_DE.UTF-8")
 endforeach()
 
-set_tests_properties(test_av_sync test_preview_audio test_play_end PROPERTIES RUN_SERIAL TRUE) # preview timing
+set_tests_properties(test_av_sync test_preview_audio test_play_end test_play_loop PROPERTIES RUN_SERIAL TRUE) # preview timing
 
 # Label "timing": tests that measure real time or wait for other processes. They fail when the machine is busy (other
 # builds, a game, a parallel ctest), not when the code is wrong. tools/run_tests.py runs everything else in parallel,
 # then these one by one, and once more what failed (ctest -LE timing / -L timing work by hand too).
-set_tests_properties(test_av_sync test_preview_audio test_play_end test_audio_player test_speed test_serve
+set_tests_properties(test_av_sync test_preview_audio test_play_end test_play_loop test_audio_player test_speed test_serve
                      test_watch_folders test_voiceover test_voiceover_app test_handover
                      PROPERTIES LABELS timing)
 
