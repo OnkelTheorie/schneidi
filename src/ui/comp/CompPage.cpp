@@ -226,9 +226,16 @@ void CompPage::refresh()
     m_layers->refresh();
     m_inspector->refresh();
     m_overlay->refresh();
-    m_create->setVisible(c && !has);
+    m_create->setVisible(c && !has && !m_tourRunning);
     m_saveRecipe->setVisible(has);
     updateHeader();
+}
+
+void CompPage::setTourRunning(bool on)
+{
+    m_tourRunning = on;
+    m_canvas->setTourButtonAllowed(!on);
+    refresh();
 }
 
 void CompPage::updateHeader()

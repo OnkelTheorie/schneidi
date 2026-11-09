@@ -305,6 +305,25 @@ std::optional<TimelineView::TrimHit> TimelineView::trimHitAt(const QPoint& pos) 
     return std::nullopt;
 }
 
+QRect TimelineView::clipArea(int clipId) const
+{
+    const Timeline& tl = m_editor->project()->timeline();
+    for (const Row& row : rows()) {
+        if (row.ref.index >= tl.tracks(row.ref.kind).size()) continue;
+        for (const Clip& c : tl.track(row.ref).clips)
+            if (c.id == clipId) return clipRect(row, c).intersected(QRect(kHeaderW, kRulerH, width() - kHeaderW, height() - kRulerH));
+    }
+    return {};
+}
+
+QRect TimelineView::trackArea(TrackRef track) const
+{
+    for (const Row& row : rows())
+        if (row.ref == track)
+            return QRect(kHeaderW, row.y, width() - kHeaderW, row.h).intersected(QRect(kHeaderW, kRulerH, width() - kHeaderW, height() - kRulerH));
+    return {};
+}
+
 QRect TimelineView::clipRect(const Row& row, const Clip& c) const
 {
     return QRect(QPoint(int(frameToX(c.pos())), row.y + 1),

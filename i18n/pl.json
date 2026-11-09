@@ -2770,7 +2770,6 @@
  "Beispiel anlegen": "Utwórz przykład",
  "Beispielclips laden": "Wczytaj przykładowe klipy",
  "Belichtung macht das ganze Bild heller oder dunkler, Sättigung die Farben kräftiger oder blasser.": "Ekspozycja rozjaśnia lub przyciemnia cały obraz, nasycenie sprawia, że kolory są mocniejsze lub bledsze.",
- "Bewegt sich die Stelle? Setz an mehreren Zeitpunkten einen Keyframe, dann folgt das Fenster.": "Miejsce się porusza? Ustaw klatki kluczowe w kilku momentach, a okno podąży za nim.",
  "Bild im Bild": "Obraz w obrazie",
  "Das Bild fließt von links nach rechts durch die Knoten, jeder verändert es ein Stück. Tab oder Umschalt+Leertaste holt einen neuen Knoten.": "Obraz płynie przez węzły od lewej do prawej, każdy trochę go zmienia. Tab lub Shift+Spacja dodaje nowy węzeł.",
  "Das Rezept verkleinert den Clip, gibt ihm einen Rahmen und legt ihn mit einem Mischen-Knoten über die Spuren darunter.": "Przepis zmniejsza klip, dodaje ramkę i nakłada go węzłem Scal na ścieżki poniżej.",
@@ -2811,7 +2810,6 @@
  "Soll ich dir das kurz zeigen? (ca. 1 Minute)": "Pokazać ci to krótko? (ok. 1 minuty)",
  "Strg+S speichert. Zusätzlich sichert schneidi regelmäßig von selbst; Datei › Sicherungskopie öffnen holt einen älteren Stand zurück.": "Ctrl+S zapisuje. schneidi dodatkowo sam robi kopie zapasowe; Plik › Otwórz kopię zapasową przywraca wcześniejszy stan.",
  "Titel und Übergänge findest du unter Effekte und im Menü Timeline. Zieh sie einfach auf die Timeline.": "Napisy i przejścia znajdziesz w Efektach i w menu Oś czasu. Po prostu przeciągnij je na oś czasu.",
- "Trimmen: Fass einen Clip am linken oder rechten Rand und zieh. So kürzt du Anfang oder Ende.": "Przycinanie: chwyć klip za lewą lub prawą krawędź i przeciągnij. Tak skrócisz początek albo koniec.",
  "Unten wechselst du die Seiten: Medien, Schneiden, Compositing, Farbe und Export.": "Na dole przełączasz strony: Media, Montaż, Kompozycja, Kolor i Eksport.",
  "Unter Füllung wählst du Unschärfe oder Verpixeln. Weichheit macht den Rand sanft.": "W Wypełnieniu wybierz Rozmycie lub Pikselizację. Miękkość wygładza krawędź.",
  "Wechsle auf die Seite Farbe.": "Przejdź na stronę Kolor.",
@@ -2823,8 +2821,6 @@
  "Zieh jetzt einen Clip aus dem Medienpool in die Timeline. Ich warte hier.": "Teraz przeciągnij klip z biblioteki multimediów na oś czasu. Poczekam tutaj.",
  "Zum Prüfen zeigt Alphamaske Weiß, wo das Bild bleibt, und Schwarz, wo es durchsichtig ist. Mit der Pipette im Inspektor wählst du die Farbe genauer.": "Do sprawdzenia: Matowa maska pokazuje na biało to, co zostaje, a na czarno to, co przezroczyste. Pipetą w Inspektorze wybierzesz kolor dokładniej.",
  "Zurück": "Wstecz",
- "Öffne die Effekte, dort die Compositing-Rezepte, und zieh Bild im Bild auf den Clip.": "Otwórz Efekty, a w nich Przepisy comp, i przeciągnij Obraz w obrazie na klip.",
- "Öffne die Effekte, dort die Compositing-Rezepte, und zieh Greenscreen auf den Clip.": "Otwórz Efekty, a w nich Przepisy comp, i przeciągnij Zielony ekran na klip.",
  "Überspringen": "Pomiń",
  "Im Hauptfenster": "W oknie głównym",
  "Kein zweiter Monitor gefunden.": "Nie znaleziono drugiego monitora.",
@@ -2898,5 +2894,11 @@
  "Aufnahmebereit: die Aufnahmetaste nimmt auf dieser Spur auf (Rechtsklick: Eingang wählen)": "Gotowa: klawisz nagrywania nagrywa na tę ścieżkę (prawy przycisk: wybierz wejście)",
  "Voiceover aufnehmen: auf der Spur mit dem Mikrofon (sonst der gewählten Tonspur oder einer neuen) ab dem Abspielkopf; die Timeline spielt mit": "Nagraj lektora: na ścieżkę z mikrofonem (w przeciwnym razie na wybraną ścieżkę audio lub nową) od głowicy; oś czasu odtwarza się równocześnie",
  "Die Spur ist gesperrt.": "Ścieżka jest zablokowana.",
- "Voiceover: gleich …": "Lektor: zaraz start …"
+ "Voiceover: gleich …": "Lektor: zaraz start …",
+ "Bewegt sich die Stelle? Verfolgen lässt das Fenster dem Objekt folgen. Oder setz an mehreren Zeitpunkten einen Keyframe.": "Miejsce się porusza? Śledź sprawia, że okno podąża za obiektem. Albo ustaw klatki kluczowe w kilku momentach.",
+ "Trimmen: Fass den Clip am rechten Rand und zieh ihn nach links. So kürzt du sein Ende, am linken Rand den Anfang. Probier es aus!": "Przycinanie: chwyć klip za prawą krawędź i przeciągnij w lewo. Tak skrócisz jego koniec, lewą krawędzią początek. Spróbuj!",
+ "Unter Compositing-Rezepte liegt Bild im Bild: Zieh es auf den oberen Clip.": "W Przepisach comp jest Obraz w obrazie: przeciągnij go na górny klip.",
+ "Unter Compositing-Rezepte liegt Greenscreen: Zieh es auf den oberen Clip.": "W Przepisach comp jest Zielony ekran: przeciągnij go na górny klip.",
+ "Öffne oben die Effekte.": "Otwórz u góry Efekty.",
+ "Rundgang Farbe starten": "Rozpocznij przewodnik po kolorze"
 }

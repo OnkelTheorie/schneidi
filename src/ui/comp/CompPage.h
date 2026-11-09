@@ -49,6 +49,10 @@ public:
     // The button asks for the name and whether to replace
     QString saveRecipe(const QString& name, bool replace, QString* err = nullptr, QString* code = nullptr);
 
+    // While a tour runs: no "Create Compositing" (an empty graph, not the tour's example) and no tour button in the
+    // empty graph (both would sit beside the tour's own button)
+    void setTourRunning(bool on);
+
     CompCanvas* canvas() const { return m_canvas; }
     CompLayers* layers() const { return m_layers; }
     CompInspector* inspector() const { return m_inspector; }
@@ -79,6 +83,7 @@ private:
     QToolButton* m_matte;
     QToolButton* m_fit;
     QPushButton* m_create;
+    bool m_tourRunning = false;
     QToolButton* m_saveRecipe;
     QLabel* m_clipLabel;
     QLabel* m_message;

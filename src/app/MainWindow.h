@@ -252,6 +252,9 @@ private:
     // Panel sizes per page are remembered (settings layout/<splitter>); defaults when nothing is saved yet
     void watchSizes(QSplitter* s, const QString& name);
     void applySizes(QSplitter* s, const QList<int>& defaults);
+    // A panel just switched on that its splitter still holds at size 0 (sizes restored while it was hidden collapse
+    // it): an equal share of the room, taken from the others
+    static void uncollapse(QWidget* panel);
     void resetSizes();
     // Panel set of the Edit page (Workspace → Panels): which toggles are on
     void applyPanelSet(bool pool, bool effects, bool storage, bool transcript, bool mixer, bool inspector);
@@ -619,6 +622,7 @@ private:
         QVector<bool> toggles; // tourToggles(), in that order
         bool scopes = true;
         QVector<QPair<QPointer<QSplitter>, QList<int>>> sizes;
+        QSize window; // the window's size (a page's minimum could have grown it during the tour)
     } m_tourSaved;
     QVector<QToolButton*> tourToggles() const; // the panel toggles the tour sets (pool, effects, storage, ...)
     class QShortcut* m_voiceoverEscape = nullptr;

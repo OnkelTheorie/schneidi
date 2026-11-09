@@ -5,10 +5,11 @@
  "order": 12,
  "practice": "stack",
  "steps": [
-  {"target": "timeline", "page": "edit", "text": "Leg das kleine Video auf eine Spur über das große und wähle es aus."},
-  {"target": "effectsToggle", "page": "edit", "wait": "timeline_has_merge", "offer": "recipe_pip", "text": "Öffne die Effekte, dort die Compositing-Rezepte, und zieh Bild im Bild auf den Clip."},
+  {"target": "area:clip_v2", "page": "edit", "text": "Leg das kleine Video auf eine Spur über das große und wähle es aus."},
+  {"target": "effectsToggle", "page": "edit", "wait": "effects_open", "keep": "panelToggle_mediaPool", "text": "Öffne oben die Effekte."},
+  {"target": "area:recipe_pip_frame|area:clip_v2", "page": "edit", "action": "effects_recipes", "keep": "effects", "wait": "timeline_has_merge", "offer": "recipe_pip", "text": "Unter Compositing-Rezepte liegt Bild im Bild: Zieh es auf den oberen Clip."},
   {"target": "area:comp_node_merge", "page": "comp", "action": "comp_nodes", "text": "Das Rezept verkleinert den Clip, gibt ihm einen Rahmen und legt ihn mit einem Mischen-Knoten über die Spuren darunter."},
-  {"target": "area:comp_node_transform", "page": "comp", "action": "comp_nodes", "text": "Klick den Transformieren-Knoten an: Im Inspektor stellst du Größe und Position ein."},
+  {"target": "area:comp_node_transform|comp_inspector", "page": "comp", "action": "comp_select_transform", "text": "Klick den Transformieren-Knoten an: Im Inspektor stellst du Größe und Position ein."},
   {"target": "comp_save_recipe", "page": "comp", "text": "Gefällt dir das Ergebnis? Als Rezept speichern merkt es sich für andere Clips."}
  ]
 }

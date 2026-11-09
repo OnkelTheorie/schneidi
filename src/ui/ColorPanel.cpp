@@ -28,6 +28,8 @@
 #include <QGridLayout>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QPushButton>
+#include <QScrollArea>
 #include <QMessageBox>
 #include <QMouseEvent>
 #include <QPainter>
@@ -256,6 +258,8 @@ ColorPanel::ColorPanel(Editor* editor, QWidget* parent) : QWidget(parent), m_edi
     lutLabel->setAlignment(Qt::AlignCenter);
     m_lutName = new ElidedLabel; // a long file name ends in "…" instead of widening Offset's column
     m_lutName->setMaximumWidth(110);
+    // "None" always whole (it was squeezed to "No…" beside the button): only a file name gets cut
+    m_lutName->setMinimumWidth(m_lutName->fontMetrics().horizontalAdvance(T("Keine")) + 2);
     auto* lutLoad = new QToolButton;
     lutLoad->setText(T("Laden…"));
     lutLoad->setToolTip(T("LUT (.cube, .3dl, .csp, Hald-CLUT) für diesen Clip laden, wird nach der Korrektur angewendet"));
@@ -313,15 +317,34 @@ ColorPanel::ColorPanel(Editor* editor, QWidget* parent) : QWidget(parent), m_edi
     outer->addWidget(line);
     outer->addWidget(buildWindows());
 
-    m_empty = new QLabel(T("Kein Videoclip ausgewählt oder am Abspielkopf"));
-    m_empty->setAlignment(Qt::AlignCenter);
-    m_empty->setStyleSheet(QString("color: %1;").arg(Theme::textDim.name()));
+    // No clip: what to do, and the Color tour (like the empty graph on the Comp page)
+    m_empty = new QWidget;
+    auto* emptyLay = new QVBoxLayout(m_empty);
+    emptyLay->addStretch(1);
+    auto* emptyText = new QLabel(T("Kein Videoclip ausgewählt oder am Abspielkopf"));
+    emptyText->setAlignment(Qt::AlignCenter);
+    emptyText->setStyleSheet(QString("color: %1;").arg(Theme::textDim.name()));
+    emptyLay->addWidget(emptyText);
+    m_tourButton = new QPushButton(T("Rundgang Farbe starten"));
+    m_tourButton->setObjectName("color_tour_button");
+    m_tourButton->setFocusPolicy(Qt::NoFocus);
+    connect(m_tourButton, &QPushButton::clicked, this, &ColorPanel::tourRequested);
+    emptyLay->addWidget(m_tourButton, 0, Qt::AlignHCenter);
+    emptyLay->addStretch(1);
 
     auto* lay = new QVBoxLayout(this);
     lay->setContentsMargins(0, 0, 0, 0);
     lay->setSpacing(0);
     lay->addLayout(head);
-    lay->addWidget(m_body, 1);
+    // Scrolls when the page gives it little height: its controls (a window's fields, the wheels in long languages) never
+    // set a minimum height for the whole window (it grew past the screen, the page bar went off it)
+    auto* scroll = new QScrollArea;
+    scroll->setFrameShape(QFrame::NoFrame);
+    scroll->setWidgetResizable(true);
+    scroll->setWidget(m_body);
+    scroll->setMinimumHeight(60);
+    m_bodyScroll = scroll;
+    lay->addWidget(scroll, 1);
     lay->addWidget(m_empty, 1);
 
     Project* project = m_editor->project();
@@ -541,7 +564,7 @@ bool ColorPanel::eventFilter(QObject* obj, QEvent* e)
 void ColorPanel::refresh()
 {
     const Clip* c = current();
-    m_body->setVisible(c);
+    m_bodyScroll->setVisible(c);
     m_empty->setVisible(!c);
     for (QWidget* w : {static_cast<QWidget*>(m_enabled), static_cast<QWidget*>(m_keyPrev),
                        static_cast<QWidget*>(m_keyDiamond), static_cast<QWidget*>(m_keyNext)})
@@ -759,6 +782,8 @@ QWidget* ColorPanel::buildWindows()
     m_trackForward->setText(T("Verfolgen ▶"));
     m_trackForward->setToolTip(T("Fenster folgt dem Objekt darunter, vom Abspielkopf vorwärts zum Clipende"));
     m_trackStop = smallButton("■", T("Verfolgen anhalten"));
+    m_trackBack->setObjectName("color_track_back"); // the tours point at them
+    m_trackForward->setObjectName("color_track_forward");
     for (QToolButton* b : {m_trackBack, m_trackForward}) b->setFocusPolicy(Qt::NoFocus);
     connect(m_trackBack, &QToolButton::clicked, this, [this] { startTracking(false); });
     connect(m_trackForward, &QToolButton::clicked, this, [this] { startTracking(true); });
@@ -809,6 +834,11 @@ void ColorPanel::nextLayer()
     const QVector<int> list = GradeWindows::list(*c);
     const auto next = std::upper_bound(list.begin(), list.end(), m_layer);
     setLayer(next == list.end() ? 0 : *next);
+}
+
+void ColorPanel::setTourButtonAllowed(bool on)
+{
+    m_tourButton->setVisible(on);
 }
 
 void ColorPanel::addWindow(const QString& shape)

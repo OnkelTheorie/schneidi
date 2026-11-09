@@ -51,6 +51,8 @@ public:
     // Another project replaces this one: stop and drop the result (clip ids start over in every project)
     void discardTracking();
     bool tracking() const { return m_trackThread != nullptr; }
+    // "Start the Color tour" where no clip is shown; off while a tour runs (it would sit beside the tour's bubble)
+    void setTourButtonAllowed(bool on);
 
 public slots:
     void setPlayhead(int frame);
@@ -58,6 +60,7 @@ public slots:
 signals:
     void seekRequested(int frame); // keyframe arrows
     void trackingFinished();
+    void tourRequested(); // the button shown without a clip: the Color tour
 
 protected:
     void showEvent(QShowEvent* e) override;
@@ -106,7 +109,9 @@ private:
     QToolButton* m_keyDiamond = nullptr;
     QToolButton* m_keyNext = nullptr;
     QWidget* m_body = nullptr;
-    QLabel* m_empty = nullptr;
+    QWidget* m_bodyScroll = nullptr; // m_body in a scroll area
+    QWidget* m_empty = nullptr;
+    class QPushButton* m_tourButton = nullptr;
     QLabel* m_title = nullptr;
 
     // Windows

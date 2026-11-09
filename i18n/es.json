@@ -2770,7 +2770,6 @@
  "Beispiel anlegen": "Crear ejemplo",
  "Beispielclips laden": "Cargar clips de ejemplo",
  "Belichtung macht das ganze Bild heller oder dunkler, Sättigung die Farben kräftiger oder blasser.": "La exposición aclara u oscurece toda la imagen; la saturación hace los colores más intensos o más pálidos.",
- "Bewegt sich die Stelle? Setz an mehreren Zeitpunkten einen Keyframe, dann folgt das Fenster.": "¿Se mueve la zona? Pon un fotograma clave en varios momentos y la ventana la seguirá.",
  "Bild im Bild": "Imagen en imagen",
  "Das Bild fließt von links nach rechts durch die Knoten, jeder verändert es ein Stück. Tab oder Umschalt+Leertaste holt einen neuen Knoten.": "La imagen fluye de izquierda a derecha por los nodos; cada uno la cambia un poco. Tab o Mayús+Espacio añade un nodo nuevo.",
  "Das Rezept verkleinert den Clip, gibt ihm einen Rahmen und legt ihn mit einem Mischen-Knoten über die Spuren darunter.": "La receta reduce el clip, le pone un marco y lo coloca sobre las pistas de abajo con un nodo Fusionar.",
@@ -2811,7 +2810,6 @@
  "Soll ich dir das kurz zeigen? (ca. 1 Minute)": "¿Te lo enseño rápidamente? (aprox. 1 minuto)",
  "Strg+S speichert. Zusätzlich sichert schneidi regelmäßig von selbst; Datei › Sicherungskopie öffnen holt einen älteren Stand zurück.": "Ctrl+S guarda. Además schneidi hace copias de seguridad por sí solo; Archivo › Abrir copia de seguridad del proyecto recupera un estado anterior.",
  "Titel und Übergänge findest du unter Effekte und im Menü Timeline. Zieh sie einfach auf die Timeline.": "Los títulos y transiciones están en Efectos y en el menú Línea de tiempo. Solo arrástralos a la línea de tiempo.",
- "Trimmen: Fass einen Clip am linken oder rechten Rand und zieh. So kürzt du Anfang oder Ende.": "Recortar: agarra un clip por el borde izquierdo o derecho y arrastra. Así acortas el inicio o el final.",
  "Unten wechselst du die Seiten: Medien, Schneiden, Compositing, Farbe und Export.": "Abajo cambias de página: Medios, Edición, Composición, Color y Exportar.",
  "Unter Füllung wählst du Unschärfe oder Verpixeln. Weichheit macht den Rand sanft.": "En Relleno elige Desenfoque o Pixelar. Suavidad hace el borde más suave.",
  "Wechsle auf die Seite Farbe.": "Cambia a la página Color.",
@@ -2823,8 +2821,6 @@
  "Zieh jetzt einen Clip aus dem Medienpool in die Timeline. Ich warte hier.": "Ahora arrastra un clip de la biblioteca de medios a la línea de tiempo. Te espero aquí.",
  "Zum Prüfen zeigt Alphamaske Weiß, wo das Bild bleibt, und Schwarz, wo es durchsichtig ist. Mit der Pipette im Inspektor wählst du die Farbe genauer.": "Para comprobarlo, Mate muestra en blanco lo que se queda y en negro lo transparente. Con el cuentagotas del Inspector eliges el color con más precisión.",
  "Zurück": "Atrás",
- "Öffne die Effekte, dort die Compositing-Rezepte, und zieh Bild im Bild auf den Clip.": "Abre Efectos, luego Recetas de comp, y arrastra Imagen en imagen al clip.",
- "Öffne die Effekte, dort die Compositing-Rezepte, und zieh Greenscreen auf den Clip.": "Abre Efectos, luego Recetas de comp, y arrastra Pantalla verde al clip.",
  "Überspringen": "Omitir",
  "Im Hauptfenster": "En la ventana principal",
  "Kein zweiter Monitor gefunden.": "No se encontró un segundo monitor.",
@@ -2898,5 +2894,11 @@
  "Aufnahmebereit: die Aufnahmetaste nimmt auf dieser Spur auf (Rechtsklick: Eingang wählen)": "Preparada: la tecla de grabación graba en esta pista (clic derecho: elegir entrada)",
  "Voiceover aufnehmen: auf der Spur mit dem Mikrofon (sonst der gewählten Tonspur oder einer neuen) ab dem Abspielkopf; die Timeline spielt mit": "Grabar una voz en off: en la pista con el micrófono (si no, en la pista de audio seleccionada o en una nueva) desde el cabezal; la línea de tiempo se reproduce a la vez",
  "Die Spur ist gesperrt.": "La pista está bloqueada.",
- "Voiceover: gleich …": "Voz en off: a punto de empezar …"
+ "Voiceover: gleich …": "Voz en off: a punto de empezar …",
+ "Bewegt sich die Stelle? Verfolgen lässt das Fenster dem Objekt folgen. Oder setz an mehreren Zeitpunkten einen Keyframe.": "¿Se mueve la zona? Rastrear hace que la ventana siga al objeto. O pon un fotograma clave en varios momentos.",
+ "Trimmen: Fass den Clip am rechten Rand und zieh ihn nach links. So kürzt du sein Ende, am linken Rand den Anfang. Probier es aus!": "Recortar: agarra el clip por su borde derecho y arrástralo hacia la izquierda. Así acortas su final; con el borde izquierdo, el inicio. ¡Pruébalo!",
+ "Unter Compositing-Rezepte liegt Bild im Bild: Zieh es auf den oberen Clip.": "En Recetas de comp está Imagen en imagen: arrástrala al clip de arriba.",
+ "Unter Compositing-Rezepte liegt Greenscreen: Zieh es auf den oberen Clip.": "En Recetas de comp está Pantalla verde: arrástrala al clip de arriba.",
+ "Öffne oben die Effekte.": "Abre Efectos arriba.",
+ "Rundgang Farbe starten": "Iniciar el recorrido de color"
 }

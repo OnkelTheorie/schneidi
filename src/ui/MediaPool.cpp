@@ -1183,6 +1183,15 @@ void MediaPool::updateProxyStatus()
     m_proxyStatus->setToolTip(text);
 }
 
+QRect MediaPool::itemArea(const QString& path) const
+{
+    QListWidgetItem* it = m_items.value(path);
+    if (!it || it->isHidden() || !m_list->isVisible()) return {};
+    const QRect r = m_list->visualItemRect(it).intersected(m_list->viewport()->rect());
+    if (r.isEmpty()) return {};
+    return QRect(m_list->viewport()->mapTo(this, r.topLeft()), r.size());
+}
+
 QStringList MediaPool::selectedMedia() const
 {
     QStringList paths;

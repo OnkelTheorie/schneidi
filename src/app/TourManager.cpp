@@ -9,6 +9,8 @@
 #include <QMainWindow>
 #include <QMenu>
 #include <QMenuBar>
+#include <QScrollArea>
+#include <QTimer>
 #include <utility>
 
 TourManager::TourManager(QMainWindow* window, Project* project, Host host)
@@ -33,6 +35,12 @@ TourManager::TourManager(QMainWindow* window, Project* project, Host host)
         const TourStep* s = m_runner.step();
         return s ? resolve(s->target) : QVector<QRect>{};
     });
+    m_overlay->setKeepFree(
+        [this]() -> QVector<QRect> {
+            const TourStep* s = m_runner.step();
+            return s && !s->keep.isEmpty() ? resolve(s->keep) : QVector<QRect>{};
+        },
+        [this]() -> QVector<QRect> { return m_host.avoid ? m_host.avoid() : QVector<QRect>{}; });
     connect(m_project, &Project::timelineChanged, this, &TourManager::poke);
     connect(m_project, &Project::mediaChanged, this, &TourManager::poke);
 }
@@ -170,6 +178,21 @@ void TourManager::enterStep()
     if (!s) return;
     if (!s->page.isEmpty() && m_host.page && m_host.showPage && m_host.page() != s->page) m_host.showPage(s->page);
     if (const auto it = m_host.actions.constFind(s->action); !s->action.isEmpty() && it != m_host.actions.cend()) (*it)();
+    // Targets inside a scroll area (the Color page's controls on a low screen) scrolled into view: a panel's own
+    // scrolling, not the timeline's; once more after the new page's layout
+    const auto reveal = [this, target = s->target] {
+        for (const QString& part : target.split('|', Qt::SkipEmptyParts)) {
+            QWidget* w = widgetFor(part);
+            for (QWidget* p = w ? w->parentWidget() : nullptr; p; p = p->parentWidget())
+                if (auto* area = qobject_cast<QScrollArea*>(p)) {
+                    area->ensureWidgetVisible(w, 0, 0);
+                    break;
+                }
+        }
+    };
+    reveal();
+    QTimer::singleShot(0, this, reveal);
+    begin(*s); // what the page switch or the action did (the playhead into a clip) is not the user's doing
     showStep();
 }
 
@@ -209,10 +232,21 @@ int TourManager::clipCount() const
     return n;
 }
 
+QVector<int> TourManager::timelineShape() const
+{
+    QVector<int> out;
+    const Timeline& tl = m_project->timeline();
+    for (const QVector<Track>* tracks : {&tl.video, &tl.audio})
+        for (const Track& t : *tracks)
+            for (const Clip& c : t.clips) out << c.id << c.start << c.length();
+    return out;
+}
+
 void TourManager::begin(const TourStep&)
 {
     m_basePlayhead = m_host.playhead ? m_host.playhead() : 0;
     m_baseClips = clipCount();
+    m_baseTimeline = timelineShape();
 }
 
 bool TourManager::holds(const QString& c) const
@@ -220,6 +254,7 @@ bool TourManager::holds(const QString& c) const
     if (c == "media_imported") return !m_project->media().isEmpty();
     if (c == "clip_on_timeline") return clipCount() > 0;
     if (c == "clip_added") return clipCount() > m_baseClips; // e.g. split: one clip more than when the step began
+    if (c == "clip_trimmed") return clipCount() == m_baseClips && timelineShape() != m_baseTimeline; // same clips, moved edges
     if (c == "playhead_moved") return m_host.playhead && m_host.playhead() != m_basePlayhead;
     if (c.startsWith("page:")) return m_host.page && m_host.page() == c.mid(5);
     if (const auto it = m_host.conditions.constFind(c); it != m_host.conditions.cend()) return (*it)();
@@ -245,6 +280,22 @@ bool menuHolds(QMenu* menu, QAction* action)
 }
 } // namespace
 
+QWidget* TourManager::widgetFor(const QString& part) const
+{
+    if (part.startsWith("area:") || part.startsWith("menu:")) return nullptr;
+    // A widget: its "tourTarget" property, else its objectName; the first one that shows
+    const QList<QWidget*> all = m_window->findChildren<QWidget*>();
+    const auto pick = [&](bool byProperty) -> QWidget* {
+        for (QWidget* w : all) {
+            if (w == m_overlay || m_overlay->isAncestorOf(w) || !w->isVisible()) continue;
+            if (byProperty ? w->property("tourTarget").toString() == part : w->objectName() == part) return w;
+        }
+        return nullptr;
+    };
+    QWidget* w = pick(true);
+    return w ? w : pick(false);
+}
+
 QVector<QRect> TourManager::resolve(const QString& target) const
 {
     QVector<QRect> rects;
@@ -257,7 +308,11 @@ QVector<TourManager::Target> TourManager::targets(const QString& target) const
     QVector<Target> out;
     const auto add = [&](const QString& part, QWidget* w, const QRect& local) {
         if (!w || !local.isValid()) return;
-        const QRect r = QRect(w->mapTo(m_window, local.topLeft()), local.size()).intersected(m_window->rect());
+        // Only what shows of it: every parent cuts it (a scroll area's viewport, a splitter)
+        QRect r = QRect(w->mapTo(m_window, local.topLeft()), local.size());
+        for (QWidget* p = w->parentWidget(); p && p != m_window; p = p->parentWidget())
+            r = r.intersected(QRect(p->mapTo(m_window, QPoint(0, 0)), p->size()));
+        r = r.intersected(m_window->rect());
         if (r.isValid()) out.push_back({part, r, w});
     };
     for (const QString& part : target.split('|', Qt::SkipEmptyParts)) {
@@ -280,17 +335,7 @@ QVector<TourManager::Target> TourManager::targets(const QString& target) const
                 }
             continue;
         }
-        // A widget: its "tourTarget" property, else its objectName; the first one that shows
-        const QList<QWidget*> all = m_window->findChildren<QWidget*>();
-        const auto pick = [&](bool byProperty) -> QWidget* {
-            for (QWidget* w : all) {
-                if (w == m_overlay || m_overlay->isAncestorOf(w) || !w->isVisible()) continue;
-                if (byProperty ? w->property("tourTarget").toString() == part : w->objectName() == part) return w;
-            }
-            return nullptr;
-        };
-        QWidget* w = pick(true);
-        if (!w) w = pick(false);
+        QWidget* w = widgetFor(part);
         if (w && w->width() > 0 && w->height() > 0) add(part, w, w->rect());
     }
     return out;

@@ -61,6 +61,8 @@ public:
     // Selected media (without title and sequence entries)
     QStringList selectedMedia() const;
     QVector<int> selectedSequences() const; // selected timelines/compound clips
+    // Where a clip's entry is shown, in this widget (tours point at it; empty = not in view)
+    QRect itemArea(const QString& path) const;
     int currentBin() const { return m_currentBin; }
     void setCurrentBin(int id);
     void setViewMode(ViewMode mode);

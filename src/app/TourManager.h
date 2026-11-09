@@ -33,6 +33,8 @@ public:
         };
         QHash<QString, std::function<Area()>> areas;
         QHash<QString, std::function<bool()>> conditions; // wait conditions beyond the built-in ones
+        // Where the bubble had better not sit (toolbars, tabs, the page bar, the graph's nodes), window coordinates
+        std::function<QVector<QRect>()> avoid;
         QHash<QString, std::function<void()>> actions;    // a step's "action", done when it is entered
         // A step's "offer": the button's text (German key), whether it is needed now, what it does
         struct Offer {
@@ -88,7 +90,9 @@ private:
     bool holds(const QString& condition) const;
     void begin(const TourStep& step);
     int clipCount() const;
+    QVector<int> timelineShape() const;
     QAction* findAction(const QString& id) const;
+    QWidget* widgetFor(const QString& part) const; // a widget target ("<name>"), the first visible one
 
     QMainWindow* m_window;
     Project* m_project;
@@ -100,5 +104,6 @@ private:
     // What "changed" compares with, taken when a step is entered
     int m_basePlayhead = 0;
     int m_baseClips = 0;
+    QVector<int> m_baseTimeline; // every clip's place and length (a trim changes it)
     QPointer<QAction> m_offerAction;
 };
