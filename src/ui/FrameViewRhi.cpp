@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+#include "core/StartupTrace.h"
 #include "ui/FrameViewRhi.h"
 
 #include <QFile>
@@ -59,6 +60,7 @@ FrameView::Probe FrameViewRhiSurface::probe()
         p.device = QString::fromUtf8(rhi->driverInfo().deviceName);
         p.software = softwareDevice(rhi->driverInfo());
         rhi.reset(); // before the fallback surface (OpenGL) goes: the QRhi needs it to shut down
+        StartupTrace::mark("viewer RHI probe");
         return p;
     }();
     return result;

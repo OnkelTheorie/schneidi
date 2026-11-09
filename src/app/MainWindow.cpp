@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "app/MainWindow.h"
+#include "core/StartupTrace.h"
 #include "app/TourManager.h"
 #include "ui/TourOverlay.h"
 #include "app/AiKeys.h"
@@ -126,9 +127,13 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
     connect(m_project, &Project::importPresetsChanged, this, importPresets);
     importPresets();
 
+    StartupTrace::mark("MainWindow ctor begin");
     buildLayout();
+    StartupTrace::mark("buildLayout");
     buildActions();
+    StartupTrace::mark("buildActions");
     setupChat();
+    StartupTrace::mark("setupChat");
     applyAiMarkStyle();
     qApp->installEventFilter(this); // Mouse side buttons -> actions (keybindings.json, section "mouse")
 
@@ -506,6 +511,7 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
         m_project->load(d);
         m_engine->showTimeline(0);
     }
+    StartupTrace::mark("MainWindow ctor end");
 }
 
 void MainWindow::importFiles(const QStringList& paths, bool placeOnTimeline, bool adoptFormat)

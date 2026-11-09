@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+#include "core/StartupTrace.h"
 #include "engine/picture/gpu/Gpu.h"
 
 #include "engine/ColorGrade.h"
@@ -1117,6 +1118,7 @@ Service* Service::instance()
         auto* s = new Service;
         s->d = d;
         g_service = s;
+        StartupTrace::mark("GPU picture engine ready");
         qInfo("GPU picture engine: %s on %s (%lld ms to start)", qPrintable(d->info.api), qPrintable(d->info.device),
               started.elapsed());
         // End the thread with the application (its GL context goes before the platform's display connection)

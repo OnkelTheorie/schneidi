@@ -4,6 +4,7 @@
 #include "app/InputBindings.h"
 #include "app/LaunchArgs.h"
 #include "app/Log.h"
+#include "core/StartupTrace.h"
 #include "core/ProjectFile.h"
 #include "app/MainWindow.h"
 #include "cli/Commands.h"
@@ -32,6 +33,7 @@
 #include <QFileInfo>
 #include <QRegularExpression>
 #include <QTimer>
+#include <QWindow>
 #include <clocale>
 #include <memory>
 
@@ -78,10 +80,32 @@ QPixmap splashPixmap()
     return pm;
 }
 
+// SCHNEIDI_STARTUP_TRACE: marks the window's first expose and first paint (startup phase table)
+class FirstPaintTrace : public QObject {
+public:
+    using QObject::QObject;
+    bool eventFilter(QObject* o, QEvent* e) override
+    {
+        if (e->type() == QEvent::Expose && !m_exposed) {
+            m_exposed = true;
+            StartupTrace::mark("first expose");
+        } else if (e->type() == QEvent::Paint && !m_painted && o == parent()) {
+            m_painted = true;
+            StartupTrace::mark("first paint (main window)");
+            QTimer::singleShot(0, this, [] { StartupTrace::mark("event loop idle after first paint"); });
+        }
+        return false;
+    }
+
+private:
+    bool m_exposed = false, m_painted = false;
+};
+
 } // namespace
 
 int main(int argc, char* argv[])
 {
+    StartupTrace::start();
     QElapsedTimer startTimer;
     startTimer.start();
     SettingsIsolation::apply(); // test runs only (SCHNEIDI_TEST_SETTINGS): never the user's settings, before any use
@@ -116,6 +140,7 @@ int main(int argc, char* argv[])
 #endif
     I18n::prepareEnvironment(langOverride);
     QApplication app(argc, argv);
+    StartupTrace::mark("QApplication");
     QApplication::setApplicationVersion(QString::fromUtf8(SCHNEIDI_VERSION_LABEL) + (*SCHNEIDI_BUILD ? QString(" (%1)").arg(SCHNEIDI_BUILD) : QString())); // version from CMakeLists, Git state, see cmake/BuildInfo.cmake
     // Already running: hand the files over to that app (a double-click in the file manager, a recorder passing its
     // clip on: `schneidi --open <file>` or just `schneidi <file>`) and quit before anything of this process shows or
@@ -140,6 +165,7 @@ int main(int argc, char* argv[])
     Theme::load(designArg);
     Theme::apply(app);
     InputBindings::instance().load();
+    StartupTrace::mark("log, i18n, theme, bindings");
 
     // Splash window while the window is built (Windows at first start: the virus scanner looks at every DLL)
     std::unique_ptr<QSplashScreen> splash;
@@ -153,6 +179,7 @@ int main(int argc, char* argv[])
         splash->show();
         status(T("Öffne Fenster…"));
     }
+    StartupTrace::mark("splash shown");
 
     FfmpegLog::install([](bool error, const QString& text) { Log::message(error ? "AV-E" : "AV-W", text); });
     // The GPU picture engine's OpenGL surface from the event loop, not on the way to the first window
@@ -167,20 +194,30 @@ int main(int argc, char* argv[])
         return 1;
     }
     const qint64 afterEngine = startTimer.elapsed();
+    StartupTrace::mark("engine init");
 
     // Deliver › Prüf-Render: the marks of `render review:"video"` (the command layer, which the app's library does not link)
     RenderQueue::setReviewMarks([](const ProjectData& data, int sequence, const std::atomic<bool>& cancel) {
         return Cli::reviewOverlay(data, sequence, &cancel);
     });
     MainWindow w(&engine);
+    StartupTrace::mark("MainWindow constructed");
     // Menu entries that map onto an edit op of the command layer ("Musik auf Länge…"): the user's own undo step
     w.setUserRunner([&w](const QString& command, const QJsonObject& args, const QString& undoText) {
         return Cli::Live::runForUser(&w, command, args, undoText);
     });
+    if (StartupTrace::enabled()) {
+        auto* trace = new FirstPaintTrace(&w);
+        w.installEventFilter(trace);
+        w.winId(); // the native window exists now: its expose reaches the filter
+        w.windowHandle()->installEventFilter(trace);
+    }
     // Start maximized like DaVinci; screenshot test runs (offscreen) keep the fixed size from MainWindow
     if (app.arguments().contains("--screenshot")) w.show();
     else w.showMaximized();
+    StartupTrace::mark("window show() returned");
     if (splash) splash->finish(&w);
+    StartupTrace::mark("splash finished");
     qInfo("Startzeit: Engine %lld ms, Fenster sichtbar nach %lld ms", afterEngine - beforeEngine, startTimer.elapsed());
 
     // Files from the command line directly into the Media Pool

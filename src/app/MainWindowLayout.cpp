@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // MainWindow: layout, top bar, page bar and pages.
 #include "app/MainWindow.h"
+#include "core/StartupTrace.h"
 
 #include "app/AiChatPanel.h"
 
@@ -97,24 +98,37 @@
 void MainWindow::buildLayout()
 {
     m_mediaPool = new MediaPool(m_project, m_engine);
+    StartupTrace::mark("ctor MediaPool");
     m_effects = new EffectsLibrary;
+    StartupTrace::mark("ctor EffectsLibrary");
     m_storage = new MediaStorage;
+    StartupTrace::mark("ctor MediaStorage");
     m_viewer = new Viewer(m_engine);
+    StartupTrace::mark("ctor Viewer");
     m_multicam = new MulticamView(m_project, m_selection, m_editor);
+    StartupTrace::mark("ctor MulticamView");
     m_viewer->setMulticamView(m_multicam);
     m_inspector = new Inspector(m_editor);
+    StartupTrace::mark("ctor Inspector");
     m_inspector->setFrameSize(m_project->timelineFormat().size());
     m_timeline = new TimelinePanel(m_editor);
+    StartupTrace::mark("ctor TimelinePanel");
     m_deliver = new DeliverPanel(m_project);
+    StartupTrace::mark("ctor DeliverPanel");
     m_mixer = new Mixer(m_project, m_engine);
+    StartupTrace::mark("ctor Mixer");
     m_mixer->setEditor(m_editor);
     m_mixer->hide();
     m_colorPanel = new ColorPanel(m_editor);
+    StartupTrace::mark("ctor ColorPanel");
     m_viewer->setOverlay(m_colorPanel->overlay()); // window outline, only while the Color page shows
     m_transcript = new TranscriptPanel(m_project, m_editor);
+    StartupTrace::mark("ctor TranscriptPanel");
     m_scopes = new ScopesPanel;
+    StartupTrace::mark("ctor ScopesPanel");
     m_scopes->setVisible(QSettings().value("color/scopesVisible", true).toBool());
 
+    StartupTrace::mark("layout panels done");
     // Pages; the shared panels (pool, viewer, timeline) move along when switching
     m_editTop = new QSplitter(Qt::Horizontal);
     m_editLeft = new QSplitter(Qt::Vertical);
@@ -184,7 +198,9 @@ void MainWindow::buildLayout()
     Page first = Page::Edit;
     for (Page p : {Page::Media, Page::Edit, Page::Comp, Page::Color, Page::Deliver})
         if (pageId(p) == start) first = p;
+    StartupTrace::mark("pages assembled");
     showPage(first);
+    StartupTrace::mark("showPage");
 }
 
 QWidget* MainWindow::buildTopBar()
