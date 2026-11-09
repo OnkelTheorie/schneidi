@@ -137,7 +137,8 @@ public:
 
     // Live connection (cli/Live.h, started in main.cpp): what an AI session sees and controls (MainWindowLive.cpp)
     Project* liveProject() override { return m_project; }
-    QString liveProjectPath() const override { return m_projectPath; }
+    // During a tour the user's file (AIs wait meanwhile; the practice project has none)
+    QString liveProjectPath() const override { return m_tourSaved.active ? m_tourSaved.path : m_projectPath; }
     Selection* liveSelection() override { return m_selection; }
     Editor* editor() const { return m_editor; } // tests
     int livePlayhead() const override;
@@ -636,7 +637,13 @@ private:
         QVector<QPair<QPointer<QSplitter>, QList<int>>> sizes;
         QSize window; // the window's size (a page's minimum could have grown it during the tour)
         int tool = 0; // the timeline tool (TimelineView::Tool): a step may switch it
+        QByteArray fingerprint; // the project file as last loaded/saved here: an outside change meanwhile is noticed
+        int compClip = 0;       // the clip the Comp page showed
+        std::shared_ptr<const Editor::Clipboards> clipboards; // the user's copied clips and grade
+        QVector<SavedView> views; // the timelines' zoom and scroll, set again once the layout is back
     } m_tourSaved;
+    bool m_tourSwap = false; // the user's project and the practice project trade places: no "another project" effects
+    void closePopups(); // open context menus closed (before the project under them changes)
     QVector<QToolButton*> tourToggles() const; // the panel toggles the tour sets (pool, effects, storage, ...)
     class QShortcut* m_voiceoverEscape = nullptr;
 };

@@ -2911,5 +2911,8 @@
  "Rundgang Farbe starten": "Iniciar el recorrido de color",
  "Unten wechselst du die Seiten. Wenn du fertig bist: Geh unten auf Export und render dein Video.": "Abajo cambias de página. Cuando termines: ve abajo a Exportar y renderiza tu vídeo.",
  "Schneiden: {key:split} teilt den Clip am Abspielkopf. Oder nimm das Klingen-Werkzeug ({key:tool_blade}) und klick auf den Clip. Probier es aus!": "Cortar: {key:split} divide el clip en el cabezal. O usa el Modo cuchilla ({key:tool_blade}) y haz clic en el clip. ¡Pruébalo!",
- "Wähl eine Vorlage, etwa YouTube, und klick auf „Zur Render-Warteschlange hinzufügen“. „Alle rendern“ speichert dann dein Video.": "Elige una plantilla, por ejemplo YouTube, y haz clic en «Añadir a la cola de render». «Renderizar todo» guarda después tu vídeo."
+ "Wähl eine Vorlage, etwa YouTube, und klick auf „Zur Render-Warteschlange hinzufügen“. „Alle rendern“ speichert dann dein Video.": "Elige una plantilla, por ejemplo YouTube, y haz clic en «Añadir a la cola de render». «Renderizar todo» guarda después tu vídeo.",
+ "Rundgang erst nach dem Rendern – oder das Rendern abbrechen.": "Recorrido después del renderizado, o cancela el renderizado.",
+ "Rundgang erst, wenn die Änderungen der KI übernommen oder verworfen sind.": "Recorrido cuando los cambios de la IA estén aceptados o descartados.",
+ "Rundgang erst, wenn das Verfolgen des Fensters fertig ist.": "Recorrido cuando termine el seguimiento de la ventana."
 }

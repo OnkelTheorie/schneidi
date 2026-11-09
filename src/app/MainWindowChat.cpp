@@ -46,7 +46,9 @@ MainWindow::~MainWindow()
 {
     // The project is a child QObject and dies only in ~QWidget, after this destructor: clearing its undo stack there
     // emits indexChanged into our slots (chatUndoChanged …) on a half-destroyed window (UBSan "downcast", clang)
+    // Both histories: during a tour the user's one is aside and still connected
     m_project->undoStack()->blockSignals(true);
+    m_project->ownUndoStack()->blockSignals(true);
     m_project->blockSignals(true);
     delete m_fullScreen; // a window without a parent (FullScreenViewer.h)
     delete m_output;     // its window has no parent either
@@ -57,7 +59,10 @@ void MainWindow::buildChat()
     m_aiKeys = std::make_unique<Ai::Keys>();
     m_chat = new AiChat(this);
     // Plans belong to the project they were made on: another one opened, their cards cannot run any more
-    connect(m_project, &Project::loaded, m_chat, [this] { m_chat->stopPlans(T("Nicht mehr gültig: ein anderes Projekt wurde geöffnet.")); });
+    // (Not when a tour trades the user's project for its practice project and back: the plans are still the user's)
+    connect(m_project, &Project::loaded, m_chat, [this] {
+        if (!m_tourSwap) m_chat->stopPlans(T("Nicht mehr gültig: ein anderes Projekt wurde geöffnet."));
+    });
     m_chat->setLanguage(languageName(I18n::language()));
     m_chat->setCompact(m_aiSettings.compact);
     m_chatPanel = new AiChatPanel(m_chat);
@@ -436,6 +441,10 @@ void MainWindow::chatTurnFinished()
 {
     rememberChatState();
     if (!m_review.active) return;
+    if (m_tourSaved.active) { // no review in a tour's practice project: its steps are not the user's
+        m_review = {};
+        return;
+    }
     const int index = m_project->undoStack()->index();
     if (m_review.broken || index <= m_review.start) {
         if (m_review.broken)
@@ -452,7 +461,7 @@ void MainWindow::chatTurnFinished()
 
 void MainWindow::acceptChatChanges()
 {
-    if (!m_review.pending) return;
+    if (!m_review.pending || m_tourSaved.active) return; // the undo stack in use is the practice project's
     const int start = m_review.start;
     m_review = {}; // before the undo stack moves
     QString request = m_chat->request().simplified();
@@ -464,7 +473,7 @@ void MainWindow::acceptChatChanges()
 
 void MainWindow::discardChatChanges()
 {
-    if (!m_review.pending) return;
+    if (!m_review.pending || m_tourSaved.active) return; // the undo stack in use is the practice project's
     const int start = m_review.start;
     m_review = {};
     m_project->undoStack()->setIndex(start);

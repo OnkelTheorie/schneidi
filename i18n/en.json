@@ -2911,5 +2911,8 @@
  "Rundgang Farbe starten": "Start the Color Tour",
  "Unten wechselst du die Seiten. Wenn du fertig bist: Geh unten auf Export und render dein Video.": "At the bottom you switch pages. When you are done: go to Deliver at the bottom and render your video.",
  "Schneiden: {key:split} teilt den Clip am Abspielkopf. Oder nimm das Klingen-Werkzeug ({key:tool_blade}) und klick auf den Clip. Probier es aus!": "Cutting: {key:split} splits the clip at the playhead. Or take Blade Edit Mode ({key:tool_blade}) and click on the clip. Try it!",
- "Wähl eine Vorlage, etwa YouTube, und klick auf „Zur Render-Warteschlange hinzufügen“. „Alle rendern“ speichert dann dein Video.": "Choose a preset, for example YouTube, and click “Add to Render Queue”. “Render All” then saves your video."
+ "Wähl eine Vorlage, etwa YouTube, und klick auf „Zur Render-Warteschlange hinzufügen“. „Alle rendern“ speichert dann dein Video.": "Choose a preset, for example YouTube, and click “Add to Render Queue”. “Render All” then saves your video.",
+ "Rundgang erst nach dem Rendern – oder das Rendern abbrechen.": "Tour after the render – or cancel the render.",
+ "Rundgang erst, wenn die Änderungen der KI übernommen oder verworfen sind.": "Tour once the AI's changes are accepted or discarded.",
+ "Rundgang erst, wenn das Verfolgen des Fensters fertig ist.": "Tour once the window tracking is done."
 }

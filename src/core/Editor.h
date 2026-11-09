@@ -19,6 +19,7 @@
 #include <QObject>
 #include <algorithm>
 #include <functional>
+#include <memory>
 #include <optional>
 
 class Project;
@@ -503,6 +504,10 @@ public:
     bool copyGrade(int clipId);           // false = no video clip
     bool hasCopiedGrade() const { return m_gradeClipboard.has_value(); }
     void pasteGrade(const QVector<int>& ids);
+    // Both clipboards as they are, and put back (a tour keeps the user's aside while its practice project is open)
+    struct Clipboards;
+    std::shared_ptr<const Clipboards> clipboards() const;
+    void setClipboards(const std::shared_ptr<const Clipboards>& c);
     // Grade of the video clip `back` places before `clipId` in timeline order (start, then lower track first);
     // false = there is no such clip
     bool applyGradeFromPrevious(int clipId, int back);

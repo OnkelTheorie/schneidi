@@ -2911,5 +2911,8 @@
  "Rundgang Farbe starten": "Rozpocznij przewodnik po kolorze",
  "Unten wechselst du die Seiten. Wenn du fertig bist: Geh unten auf Export und render dein Video.": "Na dole przełączasz strony. Gdy skończysz: przejdź na dole do Eksportu i wyrenderuj film.",
  "Schneiden: {key:split} teilt den Clip am Abspielkopf. Oder nimm das Klingen-Werkzeug ({key:tool_blade}) und klick auf den Clip. Probier es aus!": "Cięcie: {key:split} dzieli klip w miejscu głowicy. Albo weź Narzędzie brzytwy ({key:tool_blade}) i kliknij klip. Spróbuj!",
- "Wähl eine Vorlage, etwa YouTube, und klick auf „Zur Render-Warteschlange hinzufügen“. „Alle rendern“ speichert dann dein Video.": "Wybierz szablon, na przykład YouTube, i kliknij „Dodaj do kolejki renderowania”. „Renderuj wszystkie” zapisze potem film."
+ "Wähl eine Vorlage, etwa YouTube, und klick auf „Zur Render-Warteschlange hinzufügen“. „Alle rendern“ speichert dann dein Video.": "Wybierz szablon, na przykład YouTube, i kliknij „Dodaj do kolejki renderowania”. „Renderuj wszystkie” zapisze potem film.",
+ "Rundgang erst nach dem Rendern – oder das Rendern abbrechen.": "Przewodnik dopiero po renderowaniu – albo przerwij renderowanie.",
+ "Rundgang erst, wenn die Änderungen der KI übernommen oder verworfen sind.": "Przewodnik, gdy zmiany AI zostaną przyjęte lub odrzucone.",
+ "Rundgang erst, wenn das Verfolgen des Fensters fertig ist.": "Przewodnik po zakończeniu śledzenia okna."
 }

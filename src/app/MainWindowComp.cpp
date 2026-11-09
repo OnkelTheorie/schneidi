@@ -104,8 +104,8 @@ int MainWindow::compClipAt(int frame) const
 
 void MainWindow::playheadInto(int clipId)
 {
-    const Clip* c = clipId ? TimelineOps::findClip(m_project->timeline(), clipId) : nullptr;
-    if (!c) return;
+    const Clip* c = clipId && !m_tourSwap ? TimelineOps::findClip(m_project->timeline(), clipId) : nullptr;
+    if (!c) return; // also while a tour gives the user's project back: their playhead stays
     const int at = m_timeline->view()->playhead();
     if (at >= c->start && at < c->end()) return;
     if (m_engine->mode() == Engine::Mode::Source) m_engine->showTimeline(c->start);
