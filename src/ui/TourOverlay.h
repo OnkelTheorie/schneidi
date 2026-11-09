@@ -31,8 +31,13 @@ public:
     void setTargets(std::function<QVector<QRect>()> targets);
     // Where the bubble should not go (same coordinates, asked with the targets): `keep` never while there is room (the
     // controls the step's text names), `avoid` if it can (toolbars, tabs, the page bar)
+    // The area whose corners are the bubble's home (window coordinates; empty = beside the target)
+    void setHome(std::function<QRect()> home);
+    // A tour begins: its bubble gets the size that fits every step's text (and the most buttons a step has), kept for
+    // the whole tour
+    void measureSteps(const QStringList& texts, const QStringList& offers);
     void setKeepFree(std::function<QVector<QRect>()> keep, std::function<QVector<QRect>()> avoid);
-    // A tour step: text, "index+1/count", which buttons. waiting = the step waits for the user ("Skip" instead of
+    // A tour step: text (rich text), "index+1/count", which buttons. waiting = the step waits for the user ("Skip" instead of
     // "Next"), offer = the text of an extra button (empty = none; "Load sample clips")
     void showStep(const QString& text, int index, int count, bool waiting, const QString& offer = {});
     // A question (no hole, bubble in the middle): its answers as buttons, left to right; `flat` ones go to the left
@@ -52,11 +57,12 @@ public:
     // Where the bubble of `size` goes: beside the first (main) hole - below, above, right, left, the first place that
     // fits `area` without covering any hole -, else the same around all holes together, else clamped into `area`; no
     // hole = centered. `keep` counts like holes (never covered while there is room); `avoid` is kept free if
-    // possible. `previous` (the bubble of the step before): its place again when it is still free and near the main
-    // hole, else its side and its line first - the bubble and its buttons do not jump around between steps
+    // possible. `home` (the window's working area): a fixed corner of it first - bottom right, bottom left, top right,
+    // top left -, so the bubble and its buttons stay put; a corner that would cover a hole or a kept control is
+    // skipped; beside the target only when no corner is free
     static QRect placeBubble(const QRect& area, const QVector<QRect>& holes, const QSize& size, int gap = 14,
                              const QVector<QRect>& keep = {}, const QVector<QRect>& avoid = {},
-                             const QRect& previous = {});
+                             const QRect& home = {});
     // Narrowest and widest bubble (it grows from the narrowest for long texts and for its buttons)
     static constexpr int kMinWidth = 320;
     static constexpr int kMaxWidth = 520;
@@ -97,6 +103,7 @@ private:
     int m_arranged = 0;             // how the buttons are arranged now: 0 = not yet, 1 = one row, 2 = two rows
     std::function<QVector<QRect>()> m_targets;
     std::function<QVector<QRect>()> m_keep, m_avoid;
+    std::function<QRect()> m_home;
     QSize m_steady; // the largest bubble of this tour so far: it never shrinks between steps (the buttons stay put)
     QVector<QRect> m_holes;
     QTimer m_follow;

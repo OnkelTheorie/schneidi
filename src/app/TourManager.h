@@ -35,6 +35,8 @@ public:
         QHash<QString, std::function<bool()>> conditions; // wait conditions beyond the built-in ones
         // Where the bubble had better not sit (toolbars, tabs, the page bar, the graph's nodes), window coordinates
         std::function<QVector<QRect>()> avoid;
+        // The working area (the pages, without the bars): the bubble's home is one of its corners
+        std::function<QRect()> home;
         QHash<QString, std::function<void()>> actions;    // a step's "action", done when it is entered
         // A step's "offer": the button's text (German key), whether it is needed now, what it does
         struct Offer {
@@ -64,6 +66,9 @@ public:
     void stop(); // ends a running tour or question quietly
     bool asking() const { return !m_asking.isEmpty(); }
     TourRunner* runner() { return &m_runner; }
+    // A step's text as the bubble shows it (rich text): translated, "{key:<action id>}" replaced by the action's key in
+    // the user's current key set (bold), or by the action's name when it has no key
+    QString stepText(const TourStep& step) const;
     TourOverlay* overlay() const { return m_overlay; }
     // The rectangles a target string stands for (window coordinates; empty = nothing visible of it)
     QVector<QRect> resolve(const QString& target) const;

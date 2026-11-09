@@ -2806,11 +2806,11 @@
  "Rundgänge": "Recorridos",
  "Rundgänge anbieten": "Ofrecer recorridos",
  "Schnittgrundlagen": "Edición",
- "Setz den Abspielkopf in einen Clip und drück Strg+B: Der Clip wird dort geteilt. Probier es aus!": "Coloca el cabezal dentro de un clip y pulsa Ctrl+B: el clip se divide ahí. ¡Pruébalo!",
+ "Setz den Abspielkopf in einen Clip und drück {key:split}: Der Clip wird dort geteilt. Probier es aus!": "Coloca el cabezal dentro de un clip y pulsa {key:split}: el clip se divide ahí. ¡Pruébalo!",
  "Soll ich dir das kurz zeigen? (ca. 1 Minute)": "¿Te lo enseño rápidamente? (aprox. 1 minuto)",
  "Strg+S speichert. Zusätzlich sichert schneidi regelmäßig von selbst; Datei › Sicherungskopie öffnen holt einen älteren Stand zurück.": "Ctrl+S guarda. Además schneidi hace copias de seguridad por sí solo; Archivo › Abrir copia de seguridad del proyecto recupera un estado anterior.",
  "Titel und Übergänge findest du unter Effekte und im Menü Timeline. Zieh sie einfach auf die Timeline.": "Los títulos y transiciones están en Efectos y en el menú Línea de tiempo. Solo arrástralos a la línea de tiempo.",
- "Unten wechselst du die Seiten: Medien, Schneiden, Compositing, Farbe und Export.": "Abajo cambias de página: Medios, Edición, Composición, Color y Exportar.",
+ "Unten wechselst du die Seiten. Wenn du fertig bist: Geh unten auf Export und render dein Video.": "Abajo cambias de página. Cuando termines: ve abajo a Exportar y renderiza tu vídeo.",
  "Unter Füllung wählst du Unschärfe oder Verpixeln. Weichheit macht den Rand sanft.": "En Relleno elige Desenfoque o Pixelar. Suavidad hace el borde más suave.",
  "Wechsle auf die Seite Farbe.": "Cambia a la página Color.",
  "Weiter": "Siguiente",
@@ -2900,5 +2900,7 @@
  "Unter Compositing-Rezepte liegt Bild im Bild: Zieh es auf den oberen Clip.": "En Recetas de comp está Imagen en imagen: arrástrala al clip de arriba.",
  "Unter Compositing-Rezepte liegt Greenscreen: Zieh es auf den oberen Clip.": "En Recetas de comp está Pantalla verde: arrástrala al clip de arriba.",
  "Öffne oben die Effekte.": "Abre Efectos arriba.",
- "Rundgang Farbe starten": "Iniciar el recorrido de color"
+ "Rundgang Farbe starten": "Iniciar el recorrido de color",
+ "Hier sind die Werkzeuge. Zum Schneiden: Setz den Abspielkopf an die Stelle und drück {key:split}. Der Clip wird dort geteilt. Probier es aus!": "Estas son las herramientas. Para cortar: coloca el cabezal en el punto y pulsa {key:split}. El clip se divide ahí. ¡Pruébalo!",
+ "Wähl eine Vorlage, etwa YouTube, und klick auf „Zur Render-Warteschlange hinzufügen“. „Alle rendern“ speichert dann dein Video.": "Elige una plantilla, por ejemplo YouTube, y haz clic en «Añadir a la cola de render». «Renderizar todo» guarda después tu vídeo."
 }

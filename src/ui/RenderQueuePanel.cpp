@@ -181,6 +181,7 @@ RenderQueuePanel::RenderQueuePanel(Project* project, RenderQueue* queue, QWidget
     m_empty->setStyleSheet(QString("color: %1;").arg(Theme::textDim.name()));
 
     m_renderBtn = new QPushButton;
+    m_renderBtn->setObjectName("renderStart"); // the tours point at it
     m_renderBtn->setMinimumHeight(30);
     m_renderBtn->setStyleSheet(Theme::primaryButtonStyle());
 

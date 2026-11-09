@@ -24,6 +24,7 @@
 
 #include <QAbstractButton>
 #include <QListWidget>
+#include <QStackedWidget>
 #include <QMenuBar>
 #include <QButtonGroup>
 #include <QDir>
@@ -37,7 +38,6 @@
 #include <QToolButton>
 
 namespace {
-constexpr double kTourPxPerSecond = 60; // the practice timeline's zoom: ~20 s in view on a laptop
 const QPair<MainWindow::Page, const char*> kPageNames[] = {{MainWindow::Page::Media, "media"},
                                                            {MainWindow::Page::Edit, "edit"},
                                                            {MainWindow::Page::Comp, "comp"},
@@ -124,7 +124,7 @@ void MainWindow::setupTours(QMenu* help)
         return {tv, QRect(x - 5, 0, 11, tv->height())};
     };
     // Parts of the Comp page's graph (CompCanvas::tourArea): the output node, the ports
-    for (const QString& part : {QStringLiteral("output"), QStringLiteral("node:merge"), QStringLiteral("node:transform"), QStringLiteral("port:src"),
+    for (const QString& part : {QStringLiteral("output"), QStringLiteral("node:merge"), QStringLiteral("node:transform"), QStringLiteral("node:key"), QStringLiteral("port:src"),
                                 QStringLiteral("port:bg"), QStringLiteral("port:fg"), QStringLiteral("port:mask")})
         host.areas["comp_" + QString(part).replace(':', '_')] = [this, part]() -> Area {
             if (!m_compPage) return {};
@@ -163,7 +163,9 @@ void MainWindow::setupTours(QMenu* help)
     host.areas["clip_v1_edge"] = [this, clipOn]() -> Area {
         const QRect c = m_timeline->view()->clipArea(clipOn({TrackKind::Video, 0}, 0));
         if (c.isEmpty()) return {};
-        return {m_timeline->view(), QRect(c.right() - 14, c.top(), 28, c.height())};
+        // The clip's last fifth and a little beyond its edge: easy to grab
+        const int w = std::max(28, c.width() / 5);
+        return {m_timeline->view(), QRect(c.right() - w, c.top(), w + 12, c.height())};
     };
     // The first gap between two clips on V1 (a trim leaves one), else the second clip
     host.areas["gap_v1"] = [this, clipOn]() -> Area {
@@ -177,6 +179,12 @@ void MainWindow::setupTours(QMenu* help)
                 return {tv, QRect(QPoint(a.right() + 2, a.top()), QPoint(b.left() - 2, a.bottom()))};
         }
         return {tv, tv->clipArea(clipOn({TrackKind::Video, 0}, 1))};
+    };
+    // The timeline's tool bar (select, trim, blade ...), above its ruler
+    host.areas["timeline_tools"] = [this]() -> Area {
+        TimelineView* tv = m_timeline->view();
+        const int top = tv->mapTo(m_timeline, QPoint(0, 0)).y();
+        return {m_timeline, QRect(0, 0, m_timeline->width(), top)};
     };
     host.areas["track_v1"] = [this]() -> Area { return {m_timeline->view(), m_timeline->view()->trackArea({TrackKind::Video, 0})}; };
     host.areas["track_a1"] = [this]() -> Area { return {m_timeline->view(), m_timeline->view()->trackArea({TrackKind::Audio, 0})}; };
@@ -222,6 +230,7 @@ void MainWindow::setupTours(QMenu* help)
     };
     // Where the bubble had better not sit: the bars with the controls the steps name (menus, panel tabs, page bar,
     // the timeline's tools, ruler and track headers, the viewer's transport) and the Comp graph's nodes
+    host.home = [this] { return QRect(m_pages->mapTo(this, QPoint(0, 0)), m_pages->size()); };
     host.avoid = [this] {
         QVector<QRect> out;
         const auto add = [&](QWidget* w, const QRect& local) {
@@ -412,7 +421,12 @@ void MainWindow::buildPracticeProject(const QString& practice)
     d.playhead = onTimeline ? m_project->timelineFormat().rate.timebase() / 2 : 0;
     SavedView view;
     view.sequence = m_project->currentSequence();
-    view.pxPerFrame = kTourPxPerSecond / fps;
+    // The sample clips fill about 60 % of the timeline's width (wide enough to grab a clip's edge), the rest stays
+    // free for the bubble
+    double seconds = 0;
+    for (const MediaInfo& m : m_project->media()) seconds += m.length / fps;
+    const int lane = std::max(400, m_timeline->view()->width() - TimelineView::kHeaderW);
+    view.pxPerFrame = std::clamp(0.6 * lane / std::max(1.0, seconds), 40.0, 240.0) / fps;
     view.playhead = d.playhead;
     d.views = {view};
     applyLoaded(std::move(d), {}, false);
