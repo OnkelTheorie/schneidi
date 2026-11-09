@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The In/Out range in the timeline ruler (offscreen): handles at both edges drag the points (snapping onto clip
 // edges and markers, Shift drags freely, In never past Out), the range's lower half moves the whole range (its
-// length stays), Alt-drag draws a new range, a click still moves the playhead, one undo step per drag, the hover
-// cursor and tooltip, the right-click actions. RULER_SHOT_DIR=<dir> saves a picture of the ruler (RULER_LANG=de/ru).
+// length stays), a right-button drag draws a new range (a right-click without dragging opens the menu), a click still
+// moves the playhead, no other left click or drag ever changes the range, one undo step per drag, the hover cursor
+// and tooltip, the right-click actions (loop playback in the range). RULER_SHOT_DIR=<dir> saves a picture of the
+// ruler (RULER_LANG=de/ru).
 #include "check.h"
 
 #include "app/Theme.h"
@@ -25,6 +27,8 @@
 #include <QToolTip>
 #include <QUndoStack>
 #include <cmath>
+#include <cstdio>
+#include <functional>
 
 namespace {
 
@@ -39,19 +43,48 @@ Clip clip(int id, int start, int length)
     return c;
 }
 
-void mouse(QWidget& w, QEvent::Type type, QPoint pt, Qt::MouseButtons buttons, Qt::KeyboardModifiers mods = {})
+void mouse(QWidget& w, QEvent::Type type, QPoint pt, Qt::MouseButtons buttons, Qt::KeyboardModifiers mods = {},
+           Qt::MouseButton button = Qt::LeftButton)
 {
-    QMouseEvent e(type, pt, w.mapToGlobal(pt), type == QEvent::MouseMove ? Qt::NoButton : Qt::LeftButton, buttons, mods);
+    QMouseEvent e(type, pt, w.mapToGlobal(pt), type == QEvent::MouseMove ? Qt::NoButton : button, buttons, mods);
     QApplication::sendEvent(&w, &e);
 }
 
-void drag(QWidget& w, QPoint from, QPoint to, Qt::KeyboardModifiers mods = {})
+void drag(QWidget& w, QPoint from, QPoint to, Qt::KeyboardModifiers mods = {}, Qt::MouseButton button = Qt::LeftButton)
 {
-    mouse(w, QEvent::MouseButtonPress, from, Qt::LeftButton, mods);
-    mouse(w, QEvent::MouseMove, (from * 2 + to) / 3, Qt::LeftButton, mods);
-    mouse(w, QEvent::MouseMove, (from + to * 2) / 3, Qt::LeftButton, mods);
-    mouse(w, QEvent::MouseMove, to, Qt::LeftButton, mods);
-    mouse(w, QEvent::MouseButtonRelease, to, Qt::NoButton, mods);
+    mouse(w, QEvent::MouseButtonPress, from, button, mods, button);
+    // Like X11: the context menu event follows the right button's press (Windows: its release)
+    if (button == Qt::RightButton) {
+        QContextMenuEvent c(QContextMenuEvent::Mouse, from, w.mapToGlobal(from));
+        QApplication::sendEvent(&w, &c);
+    }
+    mouse(w, QEvent::MouseMove, (from * 2 + to) / 3, button, mods);
+    mouse(w, QEvent::MouseMove, (from + to * 2) / 3, button, mods);
+    mouse(w, QEvent::MouseMove, to, button, mods);
+    mouse(w, QEvent::MouseButtonRelease, to, Qt::NoButton, mods, button);
+}
+
+// The ruler menu that is open now (a timer while it runs): runs `use` on it and closes it; false = none opened
+bool withMenu(const std::function<void()>& open, const std::function<void(QMenu*)>& use)
+{
+    bool found = false;
+    QTimer::singleShot(100, [&] {
+        if (auto* menu = qobject_cast<QMenu*>(QApplication::activePopupWidget())) {
+            found = true;
+            use(menu);
+            menu->close();
+        }
+    });
+    open();
+    QApplication::processEvents();
+    return found;
+}
+
+QAction* menuAction(QMenu* menu, const QString& text)
+{
+    for (QAction* a : menu->actions())
+        if (a->text() == text) return a;
+    return nullptr;
 }
 
 constexpr int kBarY = TimelineView::kRulerH - 4;   // lower half of the In/Out bar (handles and the range's middle)
@@ -161,28 +194,72 @@ void testRange()
     CHECK_EQ(f.out(), 39);
 }
 
-// Alt-drag on the ruler draws a new range (either direction); a plain drag there only scrubs
+// A right-button drag on the ruler draws a new range (either direction, snapping, Shift = free); one undo step
 void testCreate()
 {
     Fixture f;
-    drag(f.tv, {f.x(160), kUpperY}, {f.x(200), kUpperY});
-    CHECK_EQ(f.in(), -1);
     QUndoStack* undo = f.project.undoStack();
     const int steps = undo->index();
-    drag(f.tv, {f.x(160), kUpperY}, {f.x(200), kUpperY}, Qt::AltModifier);
+    drag(f.tv, {f.x(160), kUpperY}, {f.x(200), kUpperY}, {}, Qt::RightButton);
     CHECK_EQ(f.in(), 160);
     CHECK_EQ(f.out(), 199);
     CHECK_EQ(undo->index(), steps + 1);
-    drag(f.tv, {f.x(300), kUpperY}, {f.x(251), kUpperY}, Qt::AltModifier); // backwards; 251 snaps onto 250
+    CHECK(f.seeks.isEmpty()); // drawing a range does not move the playhead
+    undo->undo();
+    CHECK_EQ(f.in(), -1);
+    CHECK_EQ(f.out(), -1);
+    undo->redo();
+    drag(f.tv, {f.x(300), kBarY}, {f.x(251), kBarY}, {}, Qt::RightButton); // backwards; 251 snaps onto 250
     CHECK_EQ(f.in(), 250);
     CHECK_EQ(f.out(), 299);
     CHECK_EQ(undo->index(), steps + 2);
-    // An Alt-click without dragging changes nothing but the playhead
+    drag(f.tv, {f.x(300), kBarY}, {f.x(251), kBarY}, Qt::ShiftModifier, Qt::RightButton); // Shift: no snap
+    CHECK_EQ(f.in(), 251);
+    CHECK_EQ(undo->index(), steps + 3);
+    // A right-button drag over an existing range (even from its handle) draws a new one as well
+    drag(f.tv, {f.x(251) + 1, kBarY}, {f.x(271) + 1, kBarY}, Qt::ShiftModifier, Qt::RightButton);
+    CHECK_EQ(f.in(), 251);
+    CHECK_EQ(f.out(), 270);
+    // The left button never starts a range: neither a plain nor an Alt-drag on the ruler (Alt-drag used to)
+    f.editor.clearMarks();
+    for (const Qt::KeyboardModifiers mods : {Qt::KeyboardModifiers{}, Qt::KeyboardModifiers{Qt::AltModifier}})
+        for (const int y : {kUpperY, kBarY, 3}) {
+            drag(f.tv, {f.x(160), y}, {f.x(200), y}, mods);
+            CHECK_EQ(f.in(), -1);
+            CHECK_EQ(f.out(), -1);
+        }
+    // A right-click without dragging: the menu, no range, the playhead stays
     f.seeks.clear();
-    mouse(f.tv, QEvent::MouseButtonPress, {f.x(400), kUpperY}, Qt::LeftButton, Qt::AltModifier);
-    mouse(f.tv, QEvent::MouseButtonRelease, {f.x(400), kUpperY}, Qt::NoButton, Qt::AltModifier);
-    CHECK(f.seeks == QVector<int>{400});
-    CHECK_EQ(f.in(), 250);
+    const QPoint at(f.x(400), kUpperY);
+    CHECK(withMenu([&] { drag(f.tv, at, at, {}, Qt::RightButton); },
+                   [&](QMenu* m) { CHECK(menuAction(m, T("In-Punkt hier setzen")) != nullptr); }));
+    CHECK_EQ(f.in(), -1);
+    CHECK(f.seeks.isEmpty());
+    // A jitter of a pixel or two is still a click
+    CHECK(withMenu([&] { drag(f.tv, at, at + QPoint(2, 0), {}, Qt::RightButton); }, [](QMenu*) {}));
+    CHECK_EQ(f.in(), -1);
+}
+
+// Left clicks and drags on the ruler change the range only from its handles and the grip in its middle: inside the
+// range but away from the grip they scrub, like everywhere else in the ruler
+void testLeftNeverChanges()
+{
+    Fixture f;
+    f.editor.setMarks(20, 219); // wide: the grip sits at 120
+    QUndoStack* undo = f.project.undoStack();
+    const int steps = undo->index();
+    for (const int y : {kUpperY, kBarY, 3})
+        for (const int from : {40, 80, 180, 300}) {
+            f.seeks.clear();
+            drag(f.tv, {f.x(from), y}, {f.x(from + 25), y});
+            CHECK_EQ(f.in(), 20);
+            CHECK_EQ(f.out(), 219);
+            CHECK(!f.seeks.isEmpty() && f.seeks.last() == from + 25);
+        }
+    CHECK_EQ(undo->index(), steps);
+    drag(f.tv, {f.x(120), kBarY}, {f.x(130), kBarY}, Qt::ShiftModifier); // the grip moves it
+    CHECK_EQ(f.in(), 30);
+    CHECK_EQ(f.out(), 229);
 }
 
 // Hover: the resize cursor over a handle, the hand over the range; the tooltip names timecode and length
@@ -204,36 +281,51 @@ void testHoverAndTip()
     QToolTip::hideText();
 }
 
-// Right-click on the ruler: In here, Out here, remove
+// Right-click on the ruler: In here, Out here, remove, loop playback in the range
 void testMenu()
 {
     Fixture f;
     auto pick = [&](int frame, const QString& text) {
         bool found = false;
-        QTimer::singleShot(100, [&] {
-            if (auto* menu = qobject_cast<QMenu*>(QApplication::activePopupWidget())) {
-                for (QAction* a : menu->actions())
-                    if (a->text() == text && a->isEnabled()) {
-                        found = true;
-                        a->trigger();
-                    }
-                menu->close();
+        const QPoint at(f.x(frame) + 1, kUpperY);
+        withMenu([&] { drag(f.tv, at, at, {}, Qt::RightButton); }, [&](QMenu* m) {
+            if (QAction* a = menuAction(m, text); a && a->isEnabled()) {
+                found = true;
+                a->trigger();
             }
         });
-        const QPoint at(f.x(frame) + 1, kUpperY);
-        QContextMenuEvent e(QContextMenuEvent::Mouse, at, f.tv.mapToGlobal(at));
-        QApplication::sendEvent(&f.tv, &e);
-        QApplication::processEvents();
         return found;
     };
     CHECK(pick(30, T("In-Punkt hier setzen")));
     CHECK_EQ(f.in(), 30);
     CHECK(pick(90, T("Out-Punkt hier setzen")));
     CHECK_EQ(f.out(), 90);
+    // Loop: the entry asks for it (MainWindow switches it), checked once the view shows it on
+    QVector<bool> loops;
+    QObject::connect(&f.tv, &TimelineView::loopInOutRequested, [&](bool on) { loops << on; });
+    CHECK(pick(60, T("Im Bereich wiederholen")));
+    CHECK(loops == QVector<bool>{true});
+    f.tv.setLoopInOut(true);
+    bool checked = false;
+    const QPoint at(f.x(60), kUpperY);
+    withMenu([&] { drag(f.tv, at, at, {}, Qt::RightButton); },
+             [&](QMenu* m) { checked = menuAction(m, T("Im Bereich wiederholen"))->isChecked(); });
+    CHECK(checked);
+    f.tv.setLoopInOut(false);
     CHECK(pick(60, T("In/Out entfernen")));
     CHECK_EQ(f.in(), -1);
     CHECK_EQ(f.out(), -1);
     CHECK(!pick(60, T("In/Out entfernen"))); // nothing to remove: disabled
+    CHECK(!pick(60, T("Im Bereich wiederholen"))); // no range to loop in: disabled
+    // A mouse context menu event alone opens nothing (the menu comes with the release); the menu key opens it
+    CHECK(!withMenu([&] {
+        QContextMenuEvent e(QContextMenuEvent::Mouse, at, f.tv.mapToGlobal(at));
+        QApplication::sendEvent(&f.tv, &e);
+    }, [](QMenu*) {}));
+    CHECK(withMenu([&] {
+        QContextMenuEvent e(QContextMenuEvent::Keyboard, at, f.tv.mapToGlobal(at));
+        QApplication::sendEvent(&f.tv, &e);
+    }, [](QMenu*) {}));
 }
 
 // The handles are drawn (and a picture for a look by eye)
@@ -242,6 +334,7 @@ void testPicture()
     Fixture f;
     f.editor.setMarks(40, 139);
     f.editor.toggleMarker(170);
+    f.tv.setLoopInOut(true); // the loop symbol after the In handle
     mouse(f.tv, QEvent::MouseMove, {f.x(140) - 2, kBarY}, Qt::NoButton); // the Out handle lit
     QApplication::processEvents();
     const QImage shot = f.tv.grab().toImage();
@@ -249,6 +342,19 @@ void testPicture()
     const QColor inside = shot.pixelColor(f.x(90) + 10, TimelineView::kRulerH - 9);
     CHECK(handle != inside);
     CHECK(handle.blue() > 150); // Theme::secondary
+    // The loop symbol: lighter strokes right after the In handle, none there without loop
+    auto lit = [&](const QImage& img) {
+        int n = 0;
+        for (int x = f.x(40) + 11; x < f.x(40) + 23; ++x)
+            for (int y = TimelineView::kRulerH - 14; y < TimelineView::kRulerH - 2; ++y) n += qGray(img.pixel(x, y)) > 150;
+        return n;
+    };
+    const int withLoop = lit(shot);
+    f.tv.setLoopInOut(false);
+    QApplication::processEvents();
+    const int without = lit(f.tv.grab().toImage());
+    std::printf("       Schleifensymbol: %d helle Pixel, ohne %d\n", withLoop, without);
+    CHECK(withLoop > without + 10);
     const QString dir = qEnvironmentVariable("RULER_SHOT_DIR");
     if (!dir.isEmpty()) {
         QDir().mkpath(dir);
@@ -270,6 +376,7 @@ int main(int argc, char** argv)
     testOutHandle();
     testRange();
     testCreate();
+    testLeftNeverChanges();
     testHoverAndTip();
     testMenu();
     testPicture();

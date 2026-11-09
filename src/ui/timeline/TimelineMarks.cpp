@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Timeline view: the In/Out range (I/O) in the ruler. A handle at each edge drags that point (In never past Out:
-// clamped), the lower half of the shaded range moves the whole range (its length stays), Alt-drag on the ruler draws
-// a new range. Dragging snaps to the playhead, clip edges and markers; Shift drags freely. A click without dragging
-// still moves the playhead, like everywhere in the ruler. Right-click: In/Out point here, remove. Each drag is one
-// undo step through Editor::setMarks.
+// clamped), the grip in the middle of the range's lower half moves the whole range (its length stays), a drag with
+// the right button on the ruler draws a new range (not Alt-drag: window managers take that for moving windows).
+// Dragging snaps to the playhead, clip edges and markers; Shift drags freely. A left click without dragging still
+// moves the playhead, like everywhere in the ruler; anywhere else a left click or drag never touches the range
+// (scrubbing must not change it by accident). A right-click without dragging: the ruler menu (In/Out point here,
+// remove, loop playback in the range). Each drag is one undo step through Editor::setMarks.
 #include "app/Theme.h"
 #include "core/Editor.h"
 #include "core/I18n.h"
@@ -27,6 +29,11 @@ namespace {
 constexpr int kHandlePx = 5;  // grab distance of a handle (px each side of the edge)
 constexpr int kHandleW = 8;   // drawn width of a handle (inside the range)
 constexpr int kBarH = 16;     // height of the range's bar at the bottom of the ruler
+constexpr int kGripPx = 14;   // grab distance of the grip (px each side of the range's middle)
+constexpr int kGripMinW = 4 * kHandleW + 12; // narrower ranges draw no grip: their whole lower half grabs
+
+// Whether the range (its edges' x) is wide enough to draw the grip in its middle
+bool gripShown(double xIn, double xOut) { return xOut - xIn > kGripMinW; }
 
 } // namespace
 
@@ -40,9 +47,10 @@ TimelineView::MarkGrab TimelineView::markGrabAt(const QPoint& pos) const
     const double dIn = std::abs(pos.x() - xIn), dOut = std::abs(pos.x() - xOut);
     // A narrow range: the nearer handle (Out wins a tie right of the middle, so both stay reachable)
     if (dIn <= kHandlePx || dOut <= kHandlePx) return dIn < dOut || (dIn == dOut && pos.x() < (xIn + xOut) / 2) ? MarkGrab::In : MarkGrab::Out;
-    // The whole range moves only with both points set (else its length is open) and only from the bar's lower
-    // half: the upper part of the ruler keeps scrubbing the playhead inside the range
-    if (tl.markIn >= 0 && tl.markOut >= 0 && pos.x() > xIn && pos.x() < xOut && pos.y() >= kRulerH - kBarH / 2)
+    // The whole range moves only with both points set (else its length is open) and only from the grip in the
+    // middle of the bar's lower half: the rest of the ruler keeps scrubbing the playhead inside the range
+    if (tl.markIn >= 0 && tl.markOut >= 0 && pos.x() > xIn && pos.x() < xOut && pos.y() >= kRulerH - kBarH / 2 &&
+        (!gripShown(xIn, xOut) || std::abs(pos.x() - (xIn + xOut) / 2) <= kGripPx))
         return MarkGrab::Range;
     return MarkGrab::None;
 }
@@ -56,9 +64,9 @@ void TimelineView::drawMarks(QPainter& p)
     const MarkGrab lit = m_drag == Drag::Marks ? m_markGrab : m_markHover;
     const bool rangeLit = lit == MarkGrab::Range || lit == MarkGrab::Create;
     const double top = kRulerH - kBarH;
-    p.fillRect(QRectF(xIn, top, xOut - xIn, kBarH), Theme::alpha(Theme::secondary, rangeLit ? 70 : 45));
+    p.fillRect(QRectF(xIn, top, xOut - xIn, kBarH), Theme::alpha(Theme::secondary, rangeLit ? 70 : m_loopInOut ? 60 : 45));
     // Grip in the middle of the lower half: the range can be moved from there
-    if (tl.markIn >= 0 && tl.markOut >= 0 && xOut - xIn > 4 * kHandleW + 12) {
+    if (tl.markIn >= 0 && tl.markOut >= 0 && gripShown(xIn, xOut)) {
         const double cx = (xIn + xOut) / 2, cy = kRulerH - kBarH / 4.0;
         for (int i = -1; i <= 1; ++i)
             p.fillRect(QRectF(cx + i * 4 - 1, cy - 1, 2, 2), Theme::alpha(Theme::secondary, rangeLit ? 255 : 170));
@@ -78,6 +86,23 @@ void TimelineView::drawMarks(QPainter& p)
             p.drawLine(QPointF(rx, r.top() + 3), QPointF(rx, r.bottom() - 3));
         }
     };
+    // Loop playback on: a circling arrow inside the range, right after the In handle (or the visible start)
+    if (m_loopInOut) {
+        const double left = std::max<double>(xIn, kHeaderW) + (tl.markIn >= 0 ? kHandleW + 3 : 3);
+        if (xOut - left >= 14) {
+            const QRectF ring(left, top + 3, 10, 10);
+            p.setPen(QPen(Theme::secondary.lighter(150), 1.6, Qt::SolidLine, Qt::RoundCap));
+            p.setBrush(Qt::NoBrush);
+            p.drawArc(ring, 40 * 16, 290 * 16); // open at the upper right, where the arrow head sits
+            QPainterPath head; // pointing back down into the circle (clockwise)
+            const QPointF tip(ring.right() + 0.5, ring.center().y() - 0.5);
+            head.moveTo(tip + QPointF(-3.2, -3.4));
+            head.lineTo(tip + QPointF(1.6, -3.6));
+            head.lineTo(tip + QPointF(0.2, 0.9));
+            head.closeSubpath();
+            p.fillPath(head, Theme::secondary.lighter(150));
+        }
+    }
     if (tl.markIn >= 0) handle(xIn, true, lit == MarkGrab::In);
     if (tl.markOut >= 0) handle(xOut, false, lit == MarkGrab::Out);
     p.restore();
@@ -103,21 +128,38 @@ int TimelineView::marksSnap(const QVector<int>& edges, Qt::KeyboardModifiers mod
 
 bool TimelineView::marksPress(const QPoint& pos, Qt::KeyboardModifiers mods)
 {
-    MarkGrab grab = markGrabAt(pos);
-    if (grab == MarkGrab::None && (mods & Qt::AltModifier) && pos.x() >= kHeaderW) grab = MarkGrab::Create;
+    Q_UNUSED(mods);
+    const MarkGrab grab = markGrabAt(pos); // a left press never starts a new range
     if (grab == MarkGrab::None) return false;
     const Timeline& tl = m_editor->project()->timeline();
     m_markGrab = grab;
+    m_markRight = false;
     m_markMoved = false;
     m_markStartIn = tl.markIn;
     m_markStartOut = tl.markOut;
     m_markAnchor = std::max(0, int(std::lround(xToFrame(pos.x()))));
-    if (grab == MarkGrab::Create) m_markAnchor += marksSnap({m_markAnchor}, mods);
     static int drags = 0; // over all views: a new view must not merge into an older drag's undo step
     m_markDrags = ++drags;
     m_drag = Drag::Marks;
     if (grab == MarkGrab::Range) setCursor(Qt::ClosedHandCursor);
     update(0, 0, width(), kRulerH);
+    return true;
+}
+
+bool TimelineView::marksRightPress(const QPoint& pos)
+{
+    if (m_drag != Drag::None || pos.x() < kHeaderW || pos.y() >= kRulerH) return false;
+    const Timeline& tl = m_editor->project()->timeline();
+    m_pressPos = pos;
+    m_markGrab = MarkGrab::Create;
+    m_markRight = true;
+    m_markMoved = false;
+    m_markStartIn = tl.markIn;
+    m_markStartOut = tl.markOut;
+    m_markAnchor = std::max(0, int(std::lround(xToFrame(pos.x())))); // snapped once it drags (Shift may change)
+    static int drags = 0; // see marksPress
+    m_markDrags = 1000000 + ++drags;
+    m_drag = Drag::Marks;
     return true;
 }
 
@@ -155,12 +197,13 @@ void TimelineView::marksDrag(const QPoint& pos, Qt::KeyboardModifiers mods)
         break;
     }
     case MarkGrab::Create: {
+        const int anchor = std::max(0, m_markAnchor + marksSnap({m_markAnchor}, mods));
         int edge = std::max(0, m_markAnchor + delta);
         edge += marksSnap({edge}, mods);
         edge = std::max(0, edge);
-        if (edge == m_markAnchor) return; // no range yet
-        in = std::min(edge, m_markAnchor);
-        out = std::max(edge, m_markAnchor) - 1;
+        if (edge == anchor) return; // no range yet
+        in = std::min(edge, anchor);
+        out = std::max(edge, anchor) - 1;
         break;
     }
     case MarkGrab::None: return;
@@ -172,11 +215,14 @@ void TimelineView::marksDrag(const QPoint& pos, Qt::KeyboardModifiers mods)
 
 void TimelineView::marksRelease()
 {
-    // A click (no drag) moves the playhead as everywhere else in the ruler
-    if (!m_markMoved) emit seekRequested(std::max(0, int(std::lround(xToFrame(m_pressPos.x())))));
+    const bool click = !m_markMoved, right = std::exchange(m_markRight, false);
     m_markGrab = MarkGrab::None;
     m_markMoved = false;
     update(0, 0, width(), kRulerH);
+    if (!click) return;
+    // A right-click (no drag) opens the ruler menu; a left click moves the playhead as everywhere else in the ruler
+    if (right) rulerMenu(m_pressPos, mapToGlobal(m_pressPos));
+    else emit seekRequested(std::max(0, int(std::lround(xToFrame(m_pressPos.x())))));
 }
 
 QString TimelineView::marksToolTip(MarkGrab grab) const
@@ -211,5 +257,17 @@ void TimelineView::addMarksActions(QMenu& menu, int frame)
     QAction* clear = menu.addAction(T("In/Out entfernen"));
     clear->setEnabled(tl.markIn >= 0 || tl.markOut >= 0);
     connect(clear, &QAction::triggered, this, [this] { m_editor->clearMarks(); });
-    // No "loop playback in the range" here: the player has no loop mode yet
+    // Loop playback in the range (per session, MainWindow's action "loop_inout"): only with a range to loop in
+    QAction* loop = menu.addAction(T("Im Bereich wiederholen"));
+    loop->setCheckable(true);
+    loop->setChecked(m_loopInOut);
+    loop->setEnabled(tl.markIn >= 0 || tl.markOut >= 0);
+    connect(loop, &QAction::toggled, this, &TimelineView::loopInOutRequested);
+}
+
+void TimelineView::setLoopInOut(bool on)
+{
+    if (on == m_loopInOut) return;
+    m_loopInOut = on;
+    update(0, 0, width(), kRulerH);
 }

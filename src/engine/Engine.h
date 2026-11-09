@@ -156,6 +156,14 @@ public:
     // the sound (silence) run on over a black picture until paused. Off again: the end counts as before.
     void setOpenEnd(bool on);
     bool openEnd() const { return m_openEnd; }
+    // Loop playback in a range of the timeline (the In/Out range, per session; export unaffected). Playing forward
+    // across `out` (the last frame inside) jumps back to `in` through the usual jump (the sound fades out and in, no
+    // click); a frame after `out` is never shown. Playback that starts behind `out` plays on as usual; out = INT_MAX:
+    // up to the end of the timeline. in < 0 = off. Timeline only (not the source view or the multicam grid).
+    void setLoopRange(int in, int out);
+    bool looping() const { return m_loopIn >= 0; }
+    int loopIn() const { return m_loopIn; }
+    int loopOut() const { return m_loopOut; }
     void togglePlay();
     void setSpeed(double speed);
     double speed() const { return m_speed; }
@@ -195,12 +203,15 @@ signals:
     void speedChanged(double speed);
     void seeked(int frame); // the playhead was moved (seek), not by playing
     void colorBypassChanged(bool on);
+    void loopChanged(bool on); // setLoopRange switched loop playback on or off
     void modeChanged(Engine::Mode mode);
     // Only during playback: peak levels in dBFS, [A1 L, A1 R, A2 L, …, Master L, Master R];
     // the master measures true peak (dBTP, BS.1770 4x oversampled) like the delivery check
     void audioLevels(const QVector<float>& db);
     // internal: position from the pump thread, epoch = jump counter when displaying (older ones are discarded)
     void framePosition(int frame, int epoch);
+    // internal: loop playback crossed the range's end (pump thread) -> jump back on the UI thread
+    void loopWrapDue(int epoch);
     // Files are being opened in the background (setOpenInBackground) / done and built
     void openingChanged(bool opening); // never emitted any more (files open lazily)
 
@@ -277,6 +288,11 @@ private:
     std::shared_ptr<const Picture::Pump::Content> m_timelineContent;        // Pump::Content of m_renderer
     int m_sourceLength = 0;
     bool m_openEnd = false;
+    // Loop playback (setLoopRange): read on the pump's thread. m_loopWrap: a jump back to the start is on its way.
+    std::atomic<int> m_loopIn{-1}, m_loopOut{-1};
+    std::atomic<bool> m_loopWrap{false};
+    bool loopCrossed(int shown) const; // playing forward from inside/before the range past its end
+    void loopBack(int epoch);
     std::shared_ptr<std::atomic<int64_t>> m_lastFrame = std::make_shared<std::atomic<int64_t>>(0);
     struct Resolved;
     std::shared_ptr<Resolved> m_resolved;
