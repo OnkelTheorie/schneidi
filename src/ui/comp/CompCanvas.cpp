@@ -483,11 +483,16 @@ void CompCanvas::paintEvent(QPaintEvent*)
                       n.id == m_selected || out ? 2 : 1));
         p.setBrush(Qt::NoBrush);
         p.drawPath(box);
-        p.setFont(bold);
         p.setPen(Theme::text);
         const QRectF titleRect(r.left() + 7 * z, r.top(), r.width() - 14 * z, kHeader * z);
+        // A long name ("Alphamaske verfeinern 3", Russian names) in a smaller font first, cut off only below 75 %
+        QFont title = bold;
+        const QString name = CompUi::nodeName(n);
+        if (const int w = QFontMetrics(bold).horizontalAdvance(name); w > titleRect.width() && bold.pointSizeF() > 0)
+            title.setPointSizeF(bold.pointSizeF() * std::max(0.75, titleRect.width() / w));
+        p.setFont(title);
         p.drawText(titleRect, Qt::AlignVCenter | Qt::AlignLeft,
-                   QFontMetrics(bold).elidedText(CompUi::nodeName(n), Qt::ElideRight, int(titleRect.width())));
+                   QFontMetrics(title).elidedText(name, Qt::ElideRight, int(titleRect.width())));
         p.setFont(small);
         if (out) {
             p.setPen(Theme::secondary);

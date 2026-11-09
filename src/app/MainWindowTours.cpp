@@ -60,6 +60,7 @@ void MainWindow::setupTours(QMenu* help)
     m_timeline->setProperty("tourTarget", "timeline");
     m_inspector->setProperty("tourTarget", "inspector");
     m_effectsToggle->setProperty("tourTarget", "effectsToggle");
+    m_effects->setProperty("tourTarget", "effects");
     m_scopes->setProperty("tourTarget", "scopes");
     for (QAbstractButton* b : m_pageButtons->buttons()) // page buttons: the same names the page bar uses elsewhere
         if (b->objectName().isEmpty()) b->setObjectName("pageButton_" + pageName(Page(m_pageButtons->id(b))));
@@ -251,7 +252,9 @@ void MainWindow::setupTours(QMenu* help)
     // The page's own "Create Compositing" too: it builds an empty graph, not the tour's example
     connect(m_tours, &TourManager::runningChanged, this, [this](bool on) {
         if (m_compPage) m_compPage->setTourRunning(on);
+        m_colorPanel->setTourButtonAllowed(!on);
     });
+    connect(m_colorPanel, &ColorPanel::tourRequested, m_tours, [this] { m_tours->start("color"); });
     // A page or a panel the user opens may be what a step waits for
     connect(m_effectsToggle, &QToolButton::toggled, m_tours, &TourManager::poke, Qt::QueuedConnection);
     // Queued: the timeline takes the new playhead in a slot connected later

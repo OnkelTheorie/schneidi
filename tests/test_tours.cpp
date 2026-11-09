@@ -49,6 +49,7 @@
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTimer>
+#include <QTranslator>
 #include <cmath>
 #include <clocale>
 
@@ -583,6 +584,26 @@ void testPanelToggles(MainWindow& w)
         if (left->widget(i)->isVisible()) CHECK(left->widget(i)->height() >= left->height() - 10);
 }
 
+// The Color page without a clip: "Start the Color tour" starts it (and hides while it runs)
+void testColorTourButton(MainWindow& w)
+{
+    auto* color = w.findChild<QAbstractButton*>("pageButton_color");
+    auto* start = w.findChild<QPushButton*>("color_tour_button");
+    if (!CHECK(color && start)) return;
+    color->click();
+    if (QPushButton* later = button(w.tours()->overlay(), "tour_later")) later->click(); // the page's own question
+    QTest::qWait(20);
+    CHECK(start->isVisible());
+    dump(&w, "color-empty");
+    start->click();
+    CHECK(w.tours()->runner()->running());
+    CHECK_EQ(w.tours()->runner()->tour().id, QString("color"));
+    CHECK(!start->isVisible());
+    w.tours()->stop();
+    QTest::qWait(20);
+    if (auto* edit = w.findChild<QAbstractButton*>("pageButton_edit")) edit->click();
+}
+
 // The menu and the questions (the default run only)
 void testMenuAndQuestions(MainWindow& w)
 {
@@ -736,6 +757,12 @@ void runWindow(Engine& engine, const QString& run, const QString& settingsFile, 
         QSettings to;
         for (const QString& k : from.allKeys()) to.setValue(k, from.value(k));
     }
+    // Only this run's language (the translators of the runs before stay installed otherwise: German would show the
+    // last one)
+    for (QTranslator* t : qApp->findChildren<QTranslator*>()) {
+        QCoreApplication::removeTranslator(t);
+        delete t;
+    }
     I18n::install(lang);
     const bool user = !settingsFile.isEmpty();
     MainWindow w(&engine);
@@ -749,6 +776,7 @@ void runWindow(Engine& engine, const QString& run, const QString& settingsFile, 
     if (!CHECK(tours)) return;
     TourOverlay* o = tours->overlay();
     if (!user) testPanelToggles(w);
+    if (!user) testColorTourButton(w);
     if (!user) testMenuAndQuestions(w);
     ownProject(w);
     if (user) { // the user's panels as in the settings file
@@ -836,9 +864,9 @@ int main(int argc, char** argv)
     const QString user = Check::testData() + "/tours/user-settings.conf";
     // Default settings and the user's (Media Pool off, Effects on, own sizes) on the user's screen size, English and
     // Russian (long words)
-    runWindow(engine, "default-en", {}, "en", QSize(1600, 950), false);
     // German with fresh settings on the screen of a real walkthrough (the bubble texts as written)
     runWindow(engine, "default-de", {}, "de", QSize(1600, 960), true);
+    runWindow(engine, "default-en", {}, "en", QSize(1600, 950), false);
     runWindow(engine, "user-en", user, "en", QSize(1920, 1050), true);
     runWindow(engine, "user-ru", user, "ru", QSize(1920, 1050), true);
     // A narrow laptop screen (not 768 high: the Color page with a clip needs ~860 px in Russian, a bug of its own)

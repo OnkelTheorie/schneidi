@@ -21,6 +21,7 @@ constexpr int kPad = 6;      // the hole is this much larger than its target
 constexpr int kFeather = 14; // soft edge: from clear to dim over this many pixels
 constexpr int kRadius = 8;
 constexpr int kDim = 150;    // alpha of the dim layer
+constexpr int kNear = 140;   // a bubble this far from its target still belongs to it
 } // namespace
 
 TourOverlay::TourOverlay(QWidget* window) : QWidget(window)
@@ -290,7 +291,7 @@ QRect TourOverlay::placeBubble(const QRect& area, const QVector<QRect>& holes, c
     // The place of the step before, if it still fits beside this step's main hole
     if (previous.isValid()) {
         const QRect r(previous.topLeft(), size);
-        const QRect near = main.adjusted(-gap - 120, -gap - 120, gap + 120, gap + 120);
+        const QRect near = main.adjusted(-kNear, -kNear, kNear, kNear);
         if (free(r, true) && near.intersects(r)) return r;
     }
     // Beside the main hole first (far apart targets: the bubble belongs to the first, not between them), then beside
@@ -320,8 +321,25 @@ QRect TourOverlay::placeBubble(const QRect& area, const QVector<QRect>& holes, c
                    << QRect(QPoint(cx, target.top() - gap - size.height()), size) // above
                    << QRect(QPoint(target.right() + gap, cy), size)               // right
                    << QRect(QPoint(target.left() - gap - size.width(), cy), size); // left
-            for (const QRect& r : std::as_const(places))
-                if (free(r, strict)) return r;
+            // A place that would cover a bar (the panel tabs below a menu) slides on past it, staying near the target
+            const QRect near = target.adjusted(-kNear, -kNear, kNear, kNear);
+            for (int i = 0; i < places.size(); ++i) {
+                const int side = i % 4; // below, above, right, left (both groups are in that order)
+                QRect r = places[i];
+                for (int step = 0; step < 6 && !free(r, strict); ++step) {
+                    QRect in;
+                    for (const QVector<QRect>* rects : {&holes, &keep, &avoid})
+                        if (rects != &avoid || strict)
+                            for (const QRect& h : *rects)
+                                if (h.intersects(r)) in = in.united(h);
+                    if (!in.isValid()) break; // outside the window: sliding does not help
+                    if (side == 0) r.moveTop(in.bottom() + gap);
+                    else if (side == 1) r.moveBottom(in.top() - gap);
+                    else if (side == 2) r.moveLeft(in.right() + gap);
+                    else r.moveRight(in.left() - gap);
+                }
+                if (free(r, strict) && near.intersects(r)) return r;
+            }
         }
     // A target filling (nearly) the whole window: inside it, at its lower part, still in the window
     return QRect(QPoint(clampX(main.center().x() - size.width() / 2), clampY(main.bottom() - gap - size.height())), size);
