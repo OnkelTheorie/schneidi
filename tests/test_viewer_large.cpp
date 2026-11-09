@@ -156,13 +156,16 @@ void testKeys(MainWindow& w)
         fileMenu |= QKeySequence::mnemonic(I18n::translate(lang, "&Datei")) == QKeySequence("Alt+F");
     CHECK(fileMenu);
 
-    // Full screen: Ctrl+F (DaVinci's Cinema Viewer key) in every built-in set, used by nothing else there
+    // Full screen: Ctrl+F in schneidi's own sets; the sets of other editors use their key (Premiere Ctrl+`,
+    // Final Cut Ctrl+Shift+F). Either way the key belongs to full screen alone
     CHECK(b.action("viewer_full_screen") != nullptr);
+    const QHash<QString, QString> fullScreenKey{{"premiere", "Ctrl+`"}, {"finalcut", "Ctrl+Shift+F"}};
     for (const QString& preset : InputBindings::presetIds()) {
         b.applyPreset(preset);
-        CHECK_EQ(b.inputs("viewer_full_screen").value(0), QString("Ctrl+F"));
+        const QString key = fullScreenKey.value(preset, "Ctrl+F");
+        CHECK_EQ(b.inputs("viewer_full_screen").value(0), key);
         for (const auto& e : b.entries())
-            if (e.id != "viewer_full_screen" && e.scope.isEmpty()) CHECK(!b.inputs(e.id).contains("Ctrl+F"));
+            if (e.id != "viewer_full_screen" && e.scope.isEmpty()) CHECK(!b.inputs(e.id).contains(key));
     }
     b.applyPreset("standard");
 }

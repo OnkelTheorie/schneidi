@@ -127,7 +127,7 @@ int main(int argc, char** argv)
     QAction trim;
     b.registerAction(&trim, "tool_trim", "Schneiden", QKeySequence("T"));
     b.setInput("play", 1, "mouse:forward");
-    CHECK_EQ(InputBindings::presetIds(), QStringList({"standard", "beginner"}));
+    CHECK_EQ(InputBindings::presetIds(), QStringList({"standard", "beginner", "premiere", "finalcut"}));
     b.applyPreset("beginner");
     CHECK_EQ(split.shortcut(), QKeySequence("S"));
     CHECK_EQ(trim.shortcut(), QKeySequence());
