@@ -11,7 +11,7 @@
 
 // Tour file (assets/tours/<id>.json; tools/i18n_check.py collects "title" and every step's "text"):
 // {
-//   "id": "first_steps", "title": "Erste Schritte", "order": 1, "offerOn": "start", "group": "",
+//   "id": "first_steps", "title": "Erste Schritte", "order": 1, "offerOn": "start", "group": "", "practice": "pool",
 //   "steps": [
 //     {"target": "mediaPool", "page": "edit", "text": "Hier liegen deine Clips."},
 //     {"target": "mediaPool|timeline", "wait": "clip_on_timeline", "offer": "clips", "text": "Zieh einen Clip ..."},
@@ -50,6 +50,7 @@ Tour parse(const QByteArray& json, QString* error)
     t.order = o.value("order").toInt();
     t.offerOn = o.value("offerOn").toString();
     t.group = o.value("group").toString();
+    t.practice = o.value("practice").toString(t.practice);
     if (t.steps.isEmpty() || t.title.isEmpty()) {
         if (error) *error = QStringLiteral("no title or no steps");
         return {};

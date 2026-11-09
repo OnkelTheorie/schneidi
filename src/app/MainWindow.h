@@ -15,6 +15,7 @@
 #include <QLockFile>
 #include <QMainWindow>
 #include <QPointer>
+#include <QSet>
 #include <QTimer>
 #include <QUrl>
 #include <functional>
@@ -36,6 +37,7 @@ class Mixer;
 class TimelinePanel;
 class QMenu;
 class QSplitter;
+struct Tour;
 class QStackedWidget;
 class QButtonGroup;
 class QToolButton;
@@ -529,8 +531,32 @@ private:
     // In-app tours (MainWindowTours.cpp)
     void setupTours(QMenu* help); // target names, the manager, Help › Tours
     void loadTourSample();        // the built-in sample clips into the Media Pool (a tour on an empty project)
-    void tourCompExample();       // Compositing tour: a video clip gets the built-in picture-in-picture graph
+    // Compositing tour and guides: the selected video clip (else the one at the playhead, the first one) gets a built-in
+    // recipe's graph ("pip_frame", "greenscreen"), the Comp page shows it
+    void tourCompExample(const QString& recipe);
     bool compHasMerge() const;    // the Comp page's clip has a merge node (what the Compositing tour explains)
+    bool timelineHas(const QString& nodeType) const; // a clip of the timeline has a node of that type (the guides)
+    QStringList tourSampleFiles();  // the sample clips, copied out of the resources (nothing is downloaded)
+    // Tour mode (TourManager::Host enter/leave): the user's project, page, panels and splitter sizes kept aside, the
+    // tour's practice project and a fixed layout shown; leave gives everything back as it was (unsaved state too).
+    // While it is on, the panel toggles and dragged splitters never write the settings and the defaults count.
+    void enterTourMode(const Tour& tour);
+    void leaveTourMode();
+    void buildPracticeProject(const QString& practice); // Tour::practice: "pool", "timeline", "stack"
     class TourManager* m_tours = nullptr;
+    struct TourSaved {
+        bool active = false;
+        ProjectData data; // the user's project (with playhead and views)
+        QString path, saveSuggestion, templateDir;
+        QHash<QString, QString> templateCopies;
+        bool modified = false;
+        QSet<int> selection;
+        Page page = Page::Edit;
+        bool large = false;
+        QVector<bool> toggles; // tourToggles(), in that order
+        bool scopes = true;
+        QVector<QPair<QPointer<QSplitter>, QList<int>>> sizes;
+    } m_tourSaved;
+    QVector<QToolButton*> tourToggles() const; // the panel toggles the tour sets (pool, effects, storage, ...)
     class QShortcut* m_voiceoverEscape = nullptr;
 };

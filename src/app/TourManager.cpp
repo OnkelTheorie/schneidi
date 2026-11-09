@@ -29,23 +29,6 @@ TourManager::TourManager(QMainWindow* window, Project* project, Host host)
         showStep(); // the button goes away once it is not needed any more
         poke();
     });
-    connect(m_overlay, &TourOverlay::showMe, this, [this] {
-        const QString id = m_asking;
-        TourState::answer(id, TourState::Answer::Show);
-        m_asking.clear();
-        start(id);
-    });
-    connect(m_overlay, &TourOverlay::later, this, [this] {
-        TourState::answer(m_asking, TourState::Answer::Later);
-        m_asking.clear();
-        m_overlay->end();
-    });
-    connect(m_overlay, &TourOverlay::never, this, [this] {
-        TourState::answer(m_asking, TourState::Answer::Never);
-        if (m_offerAction) m_offerAction->setChecked(false);
-        m_asking.clear();
-        m_overlay->end();
-    });
     m_overlay->setTargets([this]() -> QVector<QRect> {
         const TourStep* s = m_runner.step();
         return s ? resolve(s->target) : QVector<QRect>{};
@@ -112,16 +95,65 @@ void TourManager::ask(const Tour& tour, bool firstStart)
     m_asking = tour.id;
     const QString text = firstStart ? T("Neu hier? Soll ich dir schneidi kurz zeigen? (ca. 1 Minute)")
                                     : T("Soll ich dir das kurz zeigen? (ca. 1 Minute)");
-    m_overlay->showQuestion(T(tour.title), text, firstStart);
+    QVector<TourOverlay::Choice> choices;
+    if (firstStart)
+        choices.push_back({"tour_never", T("Keine Rundgänge anbieten"),
+                           [this] {
+                               TourState::answer(m_asking, TourState::Answer::Never);
+                               if (m_offerAction) m_offerAction->setChecked(false);
+                               m_asking.clear();
+                               m_overlay->end();
+                           },
+                           false, true});
+    const auto later = [this] {
+        TourState::answer(m_asking, TourState::Answer::Later);
+        m_asking.clear();
+        m_overlay->end();
+    };
+    choices.push_back({"tour_later", T("Später"), later, false, false, true});
+    choices.push_back({"tour_show", T("Zeig's mir"),
+                       [this] {
+                           const QString id = m_asking;
+                           TourState::answer(id, TourState::Answer::Show);
+                           m_asking.clear();
+                           start(id);
+                       },
+                       true});
+    m_overlay->showQuestion(T(tour.title), text, T("Du findest alle Rundgänge jederzeit unter Hilfe › Rundgänge."), choices);
 }
 
 void TourManager::start(const QString& id)
 {
     const Tour t = Tours::find(id);
     if (t.id.isEmpty()) return;
+    if (m_runner.running()) m_runner.finish(); // the one running first ends (and gives the user's project back)
     m_asking.clear();
     TourState::markShown(id);
+    if (!m_host.unsaved || !m_host.unsaved()) {
+        launch(t);
+        return;
+    }
+    // The tour runs in a practice project: the user's unsaved changes stay (in memory, back after the tour), saving
+    // first is offered
+    const auto cancel = [this] { m_overlay->end(); };
+    m_overlay->showQuestion(
+        T(t.title),
+        T("Der Rundgang läuft in einem Übungsprojekt. Dein Projekt hat ungespeicherte Änderungen: Es kommt nach dem "
+          "Rundgang genau so zurück, wie es jetzt ist."),
+        {},
+        {{"tour_cancel", T("Abbrechen"), cancel, false, true, true},
+         {"tour_save", T("Erst speichern"),
+          [this, t] {
+              if (m_host.save && m_host.save()) launch(t);
+          }},
+         {"tour_keep", T("Rundgang starten"), [this, t] { launch(t); }, true}});
+}
+
+void TourManager::launch(const Tour& t)
+{
     m_startPage = m_host.page ? m_host.page() : QString();
+    if (m_host.enter) m_host.enter(t);
+    emit runningChanged(true);
     m_runner.start(t);
 }
 
@@ -136,21 +168,9 @@ void TourManager::enterStep()
 {
     const TourStep* s = m_runner.step();
     if (!s) return;
-    unreveal();
     if (!s->page.isEmpty() && m_host.page && m_host.showPage && m_host.page() != s->page) m_host.showPage(s->page);
     if (const auto it = m_host.actions.constFind(s->action); !s->action.isEmpty() && it != m_host.actions.cend()) (*it)();
-    // Panels the user switched off: shown for this step only
-    if (m_host.reveal)
-        for (const QString& part : s->target.split('|', Qt::SkipEmptyParts))
-            if (!part.contains(':'))
-                if (auto undo = m_host.reveal(part)) m_revealed << undo;
     showStep();
-}
-
-void TourManager::unreveal()
-{
-    const auto undo = std::exchange(m_revealed, {});
-    for (auto it = undo.rbegin(); it != undo.rend(); ++it) (*it)();
 }
 
 void TourManager::showStep()
@@ -165,11 +185,13 @@ void TourManager::showStep()
 
 void TourManager::finished(bool)
 {
-    unreveal();
     m_overlay->end();
-    // Back where the tour began (it may have shown other pages)
-    if (!m_startPage.isEmpty() && m_host.page && m_host.showPage && m_host.page() != m_startPage)
-        m_host.showPage(m_startPage);
+    if (m_host.leave) {
+        m_host.leave(); // the user's project, page and layout back
+    } else if (!m_startPage.isEmpty() && m_host.page && m_host.showPage && m_host.page() != m_startPage) {
+        m_host.showPage(m_startPage); // back where the tour began (it may have shown other pages)
+    }
+    emit runningChanged(false);
 }
 
 void TourManager::poke()
@@ -226,12 +248,24 @@ bool menuHolds(QMenu* menu, QAction* action)
 QVector<QRect> TourManager::resolve(const QString& target) const
 {
     QVector<QRect> rects;
+    for (const Target& t : targets(target)) rects << t.rect;
+    return rects;
+}
+
+QVector<TourManager::Target> TourManager::targets(const QString& target) const
+{
+    QVector<Target> out;
+    const auto add = [&](const QString& part, QWidget* w, const QRect& local) {
+        if (!w || !local.isValid()) return;
+        const QRect r = QRect(w->mapTo(m_window, local.topLeft()), local.size()).intersected(m_window->rect());
+        if (r.isValid()) out.push_back({part, r, w});
+    };
     for (const QString& part : target.split('|', Qt::SkipEmptyParts)) {
         if (part.startsWith("area:")) {
             const auto it = m_host.areas.constFind(part.mid(5));
             if (it != m_host.areas.cend()) {
-                const QRect r = (*it)();
-                if (r.isValid()) rects << r;
+                const Host::Area a = (*it)();
+                if (a.widget && a.widget->isVisible()) add(part, a.widget, a.rect);
             }
             continue;
         }
@@ -241,8 +275,7 @@ QVector<QRect> TourManager::resolve(const QString& target) const
             if (!action || !bar || !bar->isVisible()) continue;
             for (QAction* top : bar->actions())
                 if (top->menu() && menuHolds(top->menu(), action)) {
-                    const QRect r = bar->actionGeometry(top);
-                    if (r.isValid()) rects << QRect(bar->mapTo(m_window, r.topLeft()), r.size());
+                    add(part, bar, bar->actionGeometry(top));
                     break;
                 }
             continue;
@@ -258,10 +291,7 @@ QVector<QRect> TourManager::resolve(const QString& target) const
         };
         QWidget* w = pick(true);
         if (!w) w = pick(false);
-        if (!w || w->width() <= 0 || w->height() <= 0) continue;
-        QRect r(w->mapTo(m_window, QPoint(0, 0)), w->size());
-        r = r.intersected(m_window->rect());
-        if (r.isValid()) rects << r;
+        if (w && w->width() > 0 && w->height() > 0) add(part, w, w->rect());
     }
-    return rects;
+    return out;
 }

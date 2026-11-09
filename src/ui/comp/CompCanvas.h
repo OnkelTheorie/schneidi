@@ -63,6 +63,7 @@ public:
     // = the first node of a kind, "port:<input>" = the first input port of that name (a merge's for bg/fg/mask)
     QRect tourArea(const QString& what) const;
     class QPushButton* tourButton() const { return m_tourButton; } // "Start the Compositing tour" in an empty graph
+    void setTourButtonAllowed(bool on); // off while a tour runs (the button would sit in its spotlight)
     double zoom() const { return m_view.zoom; }
     QPointF offset() const { return m_view.offset; }
 
@@ -117,6 +118,7 @@ private:
     QPointer<CompNodeSearch> m_search;
     class QPushButton* m_tourButton = nullptr;
     void placeTourButton();
+    bool m_tourButtonAllowed = true;
 
     enum class Drag { None, Node, Pan, Wire };
     Drag m_drag = Drag::None;

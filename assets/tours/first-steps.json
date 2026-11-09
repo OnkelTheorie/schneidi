@@ -3,6 +3,7 @@
  "title": "Erste Schritte",
  "order": 1,
  "offerOn": "start",
+ "practice": "pool",
  "steps": [
   {"text": "Willkommen bei schneidi! In einer Minute zeige ich dir die wichtigsten Stellen. Esc beendet den Rundgang jederzeit.", "page": "edit"},
   {"target": "mediaPool", "page": "edit", "wait": "media_imported", "offer": "clips", "text": "Das ist der Medienpool. Zieh Videos aus dem Dateimanager hierher oder nimm Datei › Medien importieren (Strg+I)."},
