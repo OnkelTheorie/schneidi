@@ -143,6 +143,13 @@ void testNode()
     while (right > 0 && covered(right) == 0) --right;
     CHECK(right > left + 20);
     CHECK(covered(right - 2) < covered(left + 2));
+    // Out of range (a hand-edited project): 90 counts as 89 (edge-on would be a degenerate quad), fov 0 as 5
+    Buf over, at89;
+    if (!CHECK(runNode("transform", {{"size", 0.8}, {"tilt_x", 90.0}, {"fov", 0.0}}, {{"src", src}}, sized(W, H), &over)))
+        return;
+    if (!CHECK(runNode("transform", {{"size", 0.8}, {"tilt_x", 89.0}, {"fov", 5.0}}, {{"src", src}}, sized(W, H), &at89)))
+        return;
+    CHECK(over.px == at89.px);
 }
 
 } // namespace

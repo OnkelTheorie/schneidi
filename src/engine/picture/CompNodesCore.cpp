@@ -262,13 +262,14 @@ bool evalTransform(NodeCtx& ctx, Buf* out)
     bool identity = false;
     const Compose::Affine m = transformOf(ctx, &identity);
     *out = ctx.take(Buf::Rgba);
-    const double tiltX = ctx.num("tilt_x"), tiltY = ctx.num("tilt_y");
+    // Clamped like a clip's tilt (a hand-edited project may hold 90: edge-on, a degenerate quad)
+    const double tiltX = std::clamp(ctx.num("tilt_x"), -89.0, 89.0), tiltY = std::clamp(ctx.num("tilt_y"), -89.0, 89.0);
     if (std::abs(tiltX) > 1e-6 || std::abs(tiltY) > 1e-6) { // tilted in depth: a projective draw around the position
         // The pivot: where the anchor lands (the position, also when it follows a tracker)
         const double ax = ctx.num("ax") * ctx.size.width(), ay = ctx.num("ay") * ctx.size.height();
         Compose::Homography h;
         if (Compose::tilted(m, src->w, src->h, m.a * ax + m.b * ay + m.c, m.d * ax + m.e * ay + m.f, tiltX, tiltY,
-                            ctx.num("fov"), out->w, out->h, &h))
+                            std::clamp(ctx.num("fov"), 5.0, 120.0), out->w, out->h, &h))
             Compose::draw(out->data(), out->w, out->h, src->data(), src->w, src->h, h, 1.0);
         return true;
     }
