@@ -247,6 +247,7 @@ ColorPanel::ColorPanel(Editor* editor, QWidget* parent) : QWidget(parent), m_edi
 
     // LUT: label above like the sliders, the file name with its buttons below
     auto* lutBox = new QWidget;
+    lutBox->setProperty("tourTarget", "color_lut"); // the in-app tours point at it (app/TourManager)
     auto* lutLay = new QVBoxLayout(lutBox);
     lutLay->setContentsMargins(0, 0, 0, 0);
     lutLay->setSpacing(1);
@@ -277,14 +278,18 @@ ColorPanel::ColorPanel(Editor* editor, QWidget* parent) : QWidget(parent), m_edi
     for (int i = 0; i < m_wheels.size(); ++i) {
         const int col = 2 * i;
         if (i) grid->setColumnStretch(col - 1, 1);
-        grid->addWidget(buildWheel(m_wheels[i]), 0, col);
+        QWidget* wheel = buildWheel(m_wheels[i]);
+        wheel->setProperty("tourTarget", QString("color_wheel_%1").arg(i)); // tours: 0 Lift .. 3 Offset
+        grid->addWidget(wheel, 0, col);
         auto* under = new QHBoxLayout;
         under->setSpacing(14);
         if (2 * i + 1 < m_sliders.size()) {
-            under->addWidget(buildSlider(m_sliders[2 * i], sliderNames[2 * i], ranges[2 * i][0], ranges[2 * i][1],
-                                         ranges[2 * i][2], int(ranges[2 * i][3])));
-            under->addWidget(buildSlider(m_sliders[2 * i + 1], sliderNames[2 * i + 1], ranges[2 * i + 1][0],
-                                         ranges[2 * i + 1][1], ranges[2 * i + 1][2], int(ranges[2 * i + 1][3])));
+            for (const int k : {2 * i, 2 * i + 1}) {
+                QWidget* slider = buildSlider(m_sliders[k], sliderNames[k], ranges[k][0], ranges[k][1], ranges[k][2],
+                                              int(ranges[k][3]));
+                slider->setProperty("tourTarget", QString("color_slider_%1").arg(k)); // tours: 2 saturation, 5 exposure
+                under->addWidget(slider);
+            }
         } else {
             under->addWidget(lutBox);
         }
@@ -628,6 +633,7 @@ QVector<AnimParam> ColorPanel::layerParams() const
 QWidget* ColorPanel::buildWindows()
 {
     auto* box = new QWidget;
+    box->setProperty("tourTarget", "color_windows");
     box->setFixedWidth(250);
     auto* lay = new QVBoxLayout(box);
     lay->setContentsMargins(8, 0, 0, 0);

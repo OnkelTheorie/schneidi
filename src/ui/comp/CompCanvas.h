@@ -59,10 +59,15 @@ public:
     QRectF nodeRect(int node) const;
     QPointF outputPos(int node) const;
     QPointF inputPos(int node, const QString& input) const;
+    // Parts the in-app tours point at (widget coordinates, empty = not there): "output" = the output node, "node:<type>"
+    // = the first node of a kind, "port:<input>" = the first input port of that name (a merge's for bg/fg/mask)
+    QRect tourArea(const QString& what) const;
+    class QPushButton* tourButton() const { return m_tourButton; } // "Start the Compositing tour" in an empty graph
     double zoom() const { return m_view.zoom; }
     QPointF offset() const { return m_view.offset; }
 
 signals:
+    void tourRequested(); // the button in the empty graph: the Compositing tour
     void selectedChanged(int node);
     void showRequested(int node); // double-click: show the node's picture in the viewer
     void message(const QString& text);
@@ -78,6 +83,7 @@ protected:
     void keyPressEvent(QKeyEvent*) override;
     void contextMenuEvent(QContextMenuEvent*) override;
     bool focusNextPrevChild(bool) override { return false; } // Tab opens the search
+    void resizeEvent(QResizeEvent*) override;
 
 private:
     struct View {
@@ -109,6 +115,8 @@ private:
     View m_view;
     QHash<int, View> m_views; // per clip, this session
     QPointer<CompNodeSearch> m_search;
+    class QPushButton* m_tourButton = nullptr;
+    void placeTourButton();
 
     enum class Drag { None, Node, Pan, Wire };
     Drag m_drag = Drag::None;

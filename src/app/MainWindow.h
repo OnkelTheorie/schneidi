@@ -85,6 +85,11 @@ public:
     void openCompForSelection();
     void compFromSelection();
     class CompPage* compPage() const { return m_compPage; } // nullptr until the page was shown
+    // In-app tours (MainWindowTours.cpp, app/TourManager.h): Help › Tours; offerTours = the one question at the end of
+    // the start (main.cpp, never in test runs); pageName = a page's name in the tour files ("media", "edit", ...)
+    void offerTours();
+    class TourManager* tours() const { return m_tours; }
+    static QString pageName(Page page);
 
     // Project file (.schneidi): only references to the original media + edit
     bool openProject(const QString& path);
@@ -520,5 +525,12 @@ private:
     // A take still running is placed before the project is left or the app quits ("save changes?" must see it)
     void endVoiceover();
     class VoiceoverRecorder* m_voiceover = nullptr;
+
+    // In-app tours (MainWindowTours.cpp)
+    void setupTours(QMenu* help); // target names, the manager, Help › Tours
+    void loadTourSample();        // the built-in sample clips into the Media Pool (a tour on an empty project)
+    void tourCompExample();       // Compositing tour: a video clip gets the built-in picture-in-picture graph
+    bool compHasMerge() const;    // the Comp page's clip has a merge node (what the Compositing tour explains)
+    class TourManager* m_tours = nullptr;
     class QShortcut* m_voiceoverEscape = nullptr;
 };

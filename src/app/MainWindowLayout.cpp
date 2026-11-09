@@ -15,6 +15,7 @@
 #include "app/VoiceoverRecorder.h"
 #include "core/Loudness.h"
 #include "app/ProjectSettingsDialog.h"
+#include "app/TourManager.h"
 #include "core/Editor.h"
 #include "core/EffectRegistry.h"
 #include "core/Keyframes.h"
@@ -277,7 +278,10 @@ QWidget* MainWindow::buildPageBar()
         b->setCheckable(true);
         b->setChecked(pg.page == m_page);
         const Page page = pg.page;
-        connect(b, &QToolButton::clicked, this, [this, page] { showPage(page); });
+        connect(b, &QToolButton::clicked, this, [this, page] {
+            showPage(page);
+            if (m_tours) m_tours->pageOpened(pageName(page)); // the user opened it: its tour's question, once
+        });
         b->setObjectName("pageButton_" + pageId(page)); // stable: tours point at it
         b->setToolTip(T("Rechtsklick: Seiten ein- und ausblenden"));
         b->setContextMenuPolicy(Qt::CustomContextMenu);

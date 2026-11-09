@@ -1,0 +1,16 @@
+{
+ "id": "first_steps",
+ "title": "Erste Schritte",
+ "order": 1,
+ "offerOn": "start",
+ "steps": [
+  {"text": "Willkommen bei schneidi! In einer Minute zeige ich dir die wichtigsten Stellen. Esc beendet den Rundgang jederzeit.", "page": "edit"},
+  {"target": "mediaPool", "page": "edit", "wait": "media_imported", "offer": "clips", "text": "Das ist der Medienpool. Zieh Videos aus dem Dateimanager hierher oder nimm Datei › Medien importieren (Strg+I)."},
+  {"target": "mediaPool", "page": "edit", "text": "Ruckelt die Wiedergabe bei großen Videos? Rechtsklick auf einen Clip › Proxy-Medien erzeugen macht leichte Arbeitskopien. Exportiert wird trotzdem das Original."},
+  {"target": "mediaPool|timeline", "page": "edit", "wait": "clip_on_timeline", "text": "Zieh jetzt einen Clip aus dem Medienpool in die Timeline. Ich warte hier."},
+  {"target": "viewer|area:ruler", "page": "edit", "wait": "playhead_moved", "text": "Oben siehst du die Vorschau. Klick in die Zeitleiste über den Spuren, um den Abspielkopf zu setzen; die Leertaste spielt ab."},
+  {"target": "PageBar", "text": "Unten wechselst du die Seiten: Medien, Schneiden, Compositing, Farbe und Export."},
+  {"target": "menu:project_save", "text": "Strg+S speichert. Zusätzlich sichert schneidi regelmäßig von selbst; Datei › Sicherungskopie öffnen holt einen älteren Stand zurück."},
+  {"target": "ai_chat_toggle", "text": "Hier öffnest du den KI-Chat: Sag in einem Satz, was passieren soll, zum Beispiel „Schneide die Pausen raus“."}
+ ]
+}

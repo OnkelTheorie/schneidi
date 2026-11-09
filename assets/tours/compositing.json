@@ -1,0 +1,16 @@
+{
+ "id": "compositing",
+ "title": "Compositing",
+ "order": 4,
+ "offerOn": "page:comp",
+ "steps": [
+  {"target": "comp_canvas", "page": "comp", "action": "comp_nodes", "offer": "comp_example", "wait": "comp_has_merge", "text": "Compositing baut ein Bild aus mehreren Teilen. Für diesen Rundgang lege ich dir ein kleines Beispiel an: Bild im Bild."},
+  {"target": "comp_canvas", "page": "comp", "action": "comp_nodes", "text": "Das Bild fließt von links nach rechts durch die Knoten, jeder verändert es ein Stück. Tab oder Umschalt+Leertaste holt einen neuen Knoten."},
+  {"target": "area:comp_output", "page": "comp", "action": "comp_nodes", "text": "Der Ausgang ist der Knoten, dessen Bild im Video landet. Rechtsklick › Als Ausgang setzen macht einen anderen dazu."},
+  {"target": "area:comp_port_src", "page": "comp", "action": "comp_nodes", "text": "Links an jedem Knoten sitzen die Eingänge. Quelle ist das Bild, das in den Knoten hineingeht."},
+  {"target": "area:comp_node_merge", "page": "comp", "action": "comp_nodes", "text": "Der Mischen-Knoten legt den Vordergrund auf den Hintergrund: Aus zwei Bildern wird eins. Mischmodus und Deckkraft stellst du im Inspektor ein."},
+  {"target": "area:comp_port_bg|area:comp_port_fg", "page": "comp", "action": "comp_nodes", "text": "Hintergrund ist, was unten liegt, Vordergrund, was oben drauf kommt. Verbinden: vom Ausgang eines Knotens auf einen Eingang ziehen."},
+  {"target": "area:comp_port_mask", "page": "comp", "action": "comp_nodes", "text": "Die Maske bestimmt, wo der Knoten wirkt: Weiß heißt ja, Schwarz heißt nein."},
+  {"target": "comp_view_layers", "page": "comp", "text": "Lieber einfacher? Die Ansicht Ebenen zeigt denselben Graphen wie Ebenen in einem Bildprogramm."}
+ ]
+}
