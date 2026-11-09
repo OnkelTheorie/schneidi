@@ -2829,11 +2829,16 @@
  "Öffne die Effekte, dort die Compositing-Rezepte, und zieh Bild im Bild auf den Clip.": "Open the Effects, then Comp recipes, and drag Picture in Picture onto the clip.",
  "Öffne die Effekte, dort die Compositing-Rezepte, und zieh Greenscreen auf den Clip.": "Open the Effects, then Comp recipes, and drag Green Screen onto the clip.",
  "Überspringen": "Skip",
- "Fläche bleibt": "Area stays",
- "Fläche bleibt: die Vorschau im Hauptfenster zeigt Quellclips, der Monitor behält das Bild der Timeline. Vorschau weg: die Bereiche daneben bekommen den Platz.": "Area stays: the preview in the main window shows source clips, the monitor keeps the timeline's picture. Preview gone: the panels beside it get the room.",
  "Im Hauptfenster": "In the main window",
  "Kein zweiter Monitor gefunden.": "No second monitor found.",
  "Vorschau auf zweitem Monitor": "Preview on second monitor",
- "Vorschau weg": "Preview gone",
- "schneidi – Vorschau": "schneidi – Preview"
+ "schneidi – Vorschau": "schneidi – Preview",
+ "Quellclips zeigen": "Show source clips",
+ "Vorschau-Fläche ausblenden": "Hide the preview area",
+ "Die Timeline läuft dann nur auf dem Monitor. Quellclips zeigen: die Vorschau-Fläche im Hauptfenster zeigt Clips, die du per Doppelklick öffnest. Ausblenden: die Bereiche daneben bekommen den Platz.": "The timeline then plays only on the monitor. Show source clips: the preview area in the main window shows clips you open with a double click. Hide: the panels beside it get the room.",
+ "Das Programm läuft auf dem zweiten Monitor.": "The program is playing on the second monitor.",
+ "Doppelklick auf einen Clip zeigt ihn hier.": "Double-click a clip to show it here.",
+ "Vorschau zurückholen": "Bring the preview back",
+ "Timeline auf dem zweiten Monitor": "Timeline on the second monitor",
+ "Quelle – %1 (angehalten)": "Source – %1 (paused)"
 }

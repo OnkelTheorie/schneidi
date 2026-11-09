@@ -755,6 +755,7 @@ void MainWindow::setSecondScreenMode(SecondScreenPlan::Mode mode)
 void MainWindow::updateViewerArea()
 {
     const bool inWindow = SecondScreenPlan::viewerInWindow(m_secondScreenMode, m_output != nullptr);
+    m_viewer->setProgramElsewhere(SecondScreenPlan::programElsewhere(m_secondScreenMode, m_output != nullptr));
     if (inWindow == !m_viewerAway.active) return;
     if (inWindow) restoreViewerArea();
     else hideViewerArea();

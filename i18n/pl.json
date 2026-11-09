@@ -2829,11 +2829,16 @@
  "Öffne die Effekte, dort die Compositing-Rezepte, und zieh Bild im Bild auf den Clip.": "Otwórz Efekty, a w nich Przepisy comp, i przeciągnij Obraz w obrazie na klip.",
  "Öffne die Effekte, dort die Compositing-Rezepte, und zieh Greenscreen auf den Clip.": "Otwórz Efekty, a w nich Przepisy comp, i przeciągnij Zielony ekran na klip.",
  "Überspringen": "Pomiń",
- "Fläche bleibt": "Obszar zostaje",
- "Fläche bleibt: die Vorschau im Hauptfenster zeigt Quellclips, der Monitor behält das Bild der Timeline. Vorschau weg: die Bereiche daneben bekommen den Platz.": "Obszar zostaje: podgląd w oknie głównym pokazuje klipy źródłowe, monitor zachowuje obraz osi czasu. Bez podglądu: sąsiednie panele zajmują miejsce.",
  "Im Hauptfenster": "W oknie głównym",
  "Kein zweiter Monitor gefunden.": "Nie znaleziono drugiego monitora.",
  "Vorschau auf zweitem Monitor": "Podgląd na drugim monitorze",
- "Vorschau weg": "Bez podglądu",
- "schneidi – Vorschau": "schneidi – Podgląd"
+ "schneidi – Vorschau": "schneidi – Podgląd",
+ "Quellclips zeigen": "Pokazuj klipy źródłowe",
+ "Vorschau-Fläche ausblenden": "Ukryj obszar podglądu",
+ "Die Timeline läuft dann nur auf dem Monitor. Quellclips zeigen: die Vorschau-Fläche im Hauptfenster zeigt Clips, die du per Doppelklick öffnest. Ausblenden: die Bereiche daneben bekommen den Platz.": "Oś czasu jest wtedy odtwarzana tylko na monitorze. Pokazuj klipy źródłowe: obszar podglądu w oknie głównym pokazuje klipy otwarte dwuklikiem. Ukryj: sąsiednie panele zajmują miejsce.",
+ "Das Programm läuft auf dem zweiten Monitor.": "Program jest odtwarzany na drugim monitorze.",
+ "Doppelklick auf einen Clip zeigt ihn hier.": "Kliknij dwukrotnie klip, aby go tu pokazać.",
+ "Vorschau zurückholen": "Przywróć podgląd",
+ "Timeline auf dem zweiten Monitor": "Oś czasu na drugim monitorze",
+ "Quelle – %1 (angehalten)": "Źródło – %1 (wstrzymane)"
 }

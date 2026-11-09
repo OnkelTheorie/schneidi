@@ -206,12 +206,13 @@ QWidget* SettingsDialog::buildGeneral()
     vform->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
     m_secondScreen = new QComboBox;
     m_secondScreen->setObjectName("second_screen_mode");
-    m_secondScreen->addItem(T("Fläche bleibt"), int(SecondScreenPlan::Mode::KeepArea));
-    m_secondScreen->addItem(T("Vorschau weg"), int(SecondScreenPlan::Mode::HideViewer));
+    m_secondScreen->addItem(T("Quellclips zeigen"), int(SecondScreenPlan::Mode::KeepArea));
+    m_secondScreen->addItem(T("Vorschau-Fläche ausblenden"), int(SecondScreenPlan::Mode::HideViewer));
     m_secondScreen->setCurrentIndex(std::max(0, m_secondScreen->findData(int(SecondScreenPlan::storedMode()))));
     vform->addRow(T("Im Hauptfenster"), m_secondScreen);
-    vform->addRow(hint(T("Fläche bleibt: die Vorschau im Hauptfenster zeigt Quellclips, der Monitor behält das Bild der "
-                         "Timeline. Vorschau weg: die Bereiche daneben bekommen den Platz.")));
+    vform->addRow(hint(T("Die Timeline läuft dann nur auf dem Monitor. Quellclips zeigen: die Vorschau-Fläche im "
+                         "Hauptfenster zeigt Clips, die du per Doppelklick öffnest. Ausblenden: die Bereiche daneben "
+                         "bekommen den Platz.")));
     lay->addWidget(preview);
 
     lay->addStretch(1);

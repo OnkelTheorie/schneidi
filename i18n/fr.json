@@ -2829,11 +2829,16 @@
  "Öffne die Effekte, dort die Compositing-Rezepte, und zieh Bild im Bild auf den Clip.": "Ouvre les Effets, puis Recettes de comp, et fais glisser Incrustation d’image sur le clip.",
  "Öffne die Effekte, dort die Compositing-Rezepte, und zieh Greenscreen auf den Clip.": "Ouvre les Effets, puis Recettes de comp, et fais glisser Fond vert sur le clip.",
  "Überspringen": "Passer",
- "Fläche bleibt": "La zone reste",
- "Fläche bleibt: die Vorschau im Hauptfenster zeigt Quellclips, der Monitor behält das Bild der Timeline. Vorschau weg: die Bereiche daneben bekommen den Platz.": "La zone reste : l’aperçu de la fenêtre principale montre les clips source, le moniteur garde l’image de la timeline. Sans aperçu : les panneaux voisins prennent la place.",
  "Im Hauptfenster": "Dans la fenêtre principale",
  "Kein zweiter Monitor gefunden.": "Aucun second moniteur trouvé.",
  "Vorschau auf zweitem Monitor": "Aperçu sur un second moniteur",
- "Vorschau weg": "Sans aperçu",
- "schneidi – Vorschau": "schneidi – Aperçu"
+ "schneidi – Vorschau": "schneidi – Aperçu",
+ "Quellclips zeigen": "Afficher les clips source",
+ "Vorschau-Fläche ausblenden": "Masquer la zone d’aperçu",
+ "Die Timeline läuft dann nur auf dem Monitor. Quellclips zeigen: die Vorschau-Fläche im Hauptfenster zeigt Clips, die du per Doppelklick öffnest. Ausblenden: die Bereiche daneben bekommen den Platz.": "La timeline ne passe alors que sur le moniteur. Afficher les clips source : la zone d’aperçu de la fenêtre principale montre les clips ouverts par double-clic. Masquer : les panneaux voisins prennent la place.",
+ "Das Programm läuft auf dem zweiten Monitor.": "Le programme passe sur le second moniteur.",
+ "Doppelklick auf einen Clip zeigt ihn hier.": "Double-cliquez sur un clip pour l’afficher ici.",
+ "Vorschau zurückholen": "Ramener l’aperçu",
+ "Timeline auf dem zweiten Monitor": "Timeline sur le second moniteur",
+ "Quelle – %1 (angehalten)": "Source – %1 (en pause)"
 }

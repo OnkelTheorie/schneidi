@@ -38,6 +38,16 @@ public:
     void showMulticam(bool on);
     bool multicamShown() const { return m_multicamOn; }
 
+    // The timeline's picture is on another monitor (ui/SecondScreen, "main window shows source clips"): the viewer
+    // becomes the source viewer - it shows source clips only, never the timeline (no duplicate of the monitor). Back
+    // in the timeline it keeps the last source frame (paused; the engine has one preview, it plays the timeline onto
+    // the monitor now); without one an empty page says where the program is, with a button to bring it back
+    // (programBackWanted)
+    void setProgramElsewhere(bool on);
+    bool programElsewhere() const { return m_programAway; }
+    // The empty page is shown (program elsewhere, no source clip opened since)
+    bool programAwayPageShown() const;
+
     // Trim view like DaVinci: while an edit is dragged, show the frames on both sides of it (two-up/four-up,
     // fetched in the background via Engine::stills()); endTrim() goes back to the normal picture
     void showTrim(const TrimFrames::View& view);
@@ -78,11 +88,14 @@ signals:
     void zoomChanged(double zoom);
     // Zoomed to 100 % or more: the preview should come at the project size (Engine::setPreviewFullSize)
     void fullSizeWanted(bool full);
+    void programBackWanted(); // the empty page's button (program elsewhere)
 
 private:
     void updateTimecode(int frame);
     void updateModeText(); // "Timeline"/"Quelle – …", hint when the color correction is bypassed
     QMimeData* dragData() const;
+    void updatePage();        // which page the stack shows (trim, multicam, picture, program-away page)
+    bool keepsPicture() const; // program elsewhere and the engine on the timeline: the picture is not replaced
 
     Engine* m_engine;
     class FrameView* m_screen;
@@ -99,6 +112,11 @@ private:
     class QSpacerItem* m_barBalance; // keeps the transport buttons centered (left: timecode, right: m_barRight)
     QWidget* m_multicam = nullptr;
     bool m_multicamOn = false;
+    QWidget* m_awayPage;
+    bool m_programAway = false;
+    QString m_keptSource;        // program elsewhere: name of the source clip whose frame the picture still shows
+    class ViewerOverlay* m_overlay = nullptr; // given by setOverlay; off the picture while it keeps a source frame
+    QImage m_programFrame;       // the timeline's last frame: back on screen when the program comes home
     QString m_sourcePath, m_sourceName;
     int m_length = 0, m_in = -1, m_out = -1;
     bool m_recording = false;

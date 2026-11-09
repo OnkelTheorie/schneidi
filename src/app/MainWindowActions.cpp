@@ -727,6 +727,8 @@ void MainWindow::buildActions()
                                       });
     m_secondScreenAction->setCheckable(true);
     connect(m_engine, &Engine::frameReady, this, &MainWindow::feedPreviewOutput);
+    // The viewer's page while the program is on the monitor: its button brings the preview back
+    connect(m_viewer, &Viewer::programBackWanted, this, [this] { showPreviewOn(nullptr); });
     connect(qGuiApp, &QGuiApplication::screenAdded, this, [this] { screensChanged(nullptr); });
     connect(qGuiApp, &QGuiApplication::screenRemoved, this, &MainWindow::screensChanged);
     // Panel sets of the Edit page and panel sizes (remembered per page, MainWindow::applySizes)

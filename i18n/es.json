@@ -2829,11 +2829,16 @@
  "Öffne die Effekte, dort die Compositing-Rezepte, und zieh Bild im Bild auf den Clip.": "Abre Efectos, luego Recetas de comp, y arrastra Imagen en imagen al clip.",
  "Öffne die Effekte, dort die Compositing-Rezepte, und zieh Greenscreen auf den Clip.": "Abre Efectos, luego Recetas de comp, y arrastra Pantalla verde al clip.",
  "Überspringen": "Omitir",
- "Fläche bleibt": "El área se queda",
- "Fläche bleibt: die Vorschau im Hauptfenster zeigt Quellclips, der Monitor behält das Bild der Timeline. Vorschau weg: die Bereiche daneben bekommen den Platz.": "El área se queda: la vista previa de la ventana principal muestra clips de origen, el monitor conserva la imagen de la línea de tiempo. Sin vista previa: los paneles de al lado ocupan el espacio.",
  "Im Hauptfenster": "En la ventana principal",
  "Kein zweiter Monitor gefunden.": "No se encontró un segundo monitor.",
  "Vorschau auf zweitem Monitor": "Vista previa en el segundo monitor",
- "Vorschau weg": "Sin vista previa",
- "schneidi – Vorschau": "schneidi – Vista previa"
+ "schneidi – Vorschau": "schneidi – Vista previa",
+ "Quellclips zeigen": "Mostrar clips de origen",
+ "Vorschau-Fläche ausblenden": "Ocultar el área de vista previa",
+ "Die Timeline läuft dann nur auf dem Monitor. Quellclips zeigen: die Vorschau-Fläche im Hauptfenster zeigt Clips, die du per Doppelklick öffnest. Ausblenden: die Bereiche daneben bekommen den Platz.": "La línea de tiempo se reproduce entonces solo en el monitor. Mostrar clips de origen: el área de vista previa de la ventana principal muestra los clips que abres con doble clic. Ocultar: los paneles de al lado ocupan el espacio.",
+ "Das Programm läuft auf dem zweiten Monitor.": "El programa se reproduce en el segundo monitor.",
+ "Doppelklick auf einen Clip zeigt ihn hier.": "Haz doble clic en un clip para verlo aquí.",
+ "Vorschau zurückholen": "Recuperar la vista previa",
+ "Timeline auf dem zweiten Monitor": "Línea de tiempo en el segundo monitor",
+ "Quelle – %1 (angehalten)": "Origen – %1 (en pausa)"
 }
