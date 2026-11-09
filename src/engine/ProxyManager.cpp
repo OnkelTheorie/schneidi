@@ -24,6 +24,7 @@ extern "C" {
 #include <QSettings>
 #include <QStandardPaths>
 #include <QThread>
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <memory>
@@ -33,6 +34,7 @@ extern "C" {
 namespace {
 
 constexpr const char* kSettingKey = "playback/useProxy";
+constexpr const char* kImportKey = "proxy/onImport";
 
 // What ffmpeg needs to know about the source; read with the own decoder (engine/video/Reader), which interprets the
 // file the way the preview does (same frame rate, same color matrix)
@@ -282,6 +284,66 @@ void ProxyManager::generate(const QStringList& originals)
     emit queueChanged();
     for (const QString& p : originals) emit progress(p, progressOf(p));
     if (m_current.isEmpty()) startNext();
+}
+
+QStringList ProxyManager::missing(const QStringList& originals) const
+{
+    QStringList out;
+    for (const QString& p : originals)
+        if (!isPending(p) && !hasProxy(p) && QFileInfo::exists(p) && !out.contains(p)) out << p;
+    return out;
+}
+
+ProxyManager::ImportRule ProxyManager::importRule()
+{
+    const QString v = QSettings().value(kImportKey).toString();
+    return v == "always" ? ImportRule::Always : v == "heavy" ? ImportRule::Heavy : ImportRule::Never;
+}
+
+void ProxyManager::setImportRule(ImportRule rule)
+{
+    QSettings().setValue(kImportKey, rule == ImportRule::Always ? "always" : rule == ImportRule::Heavy ? "heavy" : "never");
+}
+
+bool ProxyManager::heavyVideo(int width, int height, const QString& codec, int bitDepth)
+{
+    if (std::max(width, height) >= 3840) return true;
+    const QString c = codec.toLower(); // decoder names: hevc, hevc_cuvid, av1, libdav1d, libaom-av1 …
+    if (c.contains("hevc") || c.contains("265") || c.contains("av1")) return true;
+    return bitDepth > 8;
+}
+
+bool ProxyManager::wantedOnImport(ImportRule rule, const QString& path)
+{
+    if (rule == ImportRule::Never) return false;
+    const std::optional<MediaInfo> media = MediaProbe::read(path, FrameRate{25, 1});
+    if (!media || media->isImage || !media->hasVideo) return false;
+    if (rule == ImportRule::Always) return true;
+    Video::Reader::Options options;
+    options.hardware = false; // only the stream's description is read
+    const std::unique_ptr<Video::Reader> reader = Video::Reader::open(path, options);
+    if (!reader) return false;
+    const Video::Info& in = reader->info();
+    const AVPixFmtDescriptor* desc = av_pix_fmt_desc_get(in.format);
+    return heavyVideo(in.width, in.height, in.codec, desc ? desc->comp[0].depth : 8);
+}
+
+void ProxyManager::importedFiles(const QStringList& paths)
+{
+    const ImportRule rule = importRule();
+    if (rule == ImportRule::Never || paths.isEmpty()) return;
+    auto wanted = std::make_shared<QStringList>();
+    QThread* thread = QThread::create([rule, paths, wanted] {
+        Background::lowerThisThread(Background::Level::Low);
+        for (const QString& p : paths)
+            if (wantedOnImport(rule, p)) *wanted << p;
+    });
+    thread->setParent(this); // the destructor waits for it
+    connect(thread, &QThread::finished, this, [this, thread, wanted] {
+        thread->deleteLater();
+        if (!wanted->isEmpty()) generate(*wanted);
+    });
+    thread->start();
 }
 
 void ProxyManager::remove(const QStringList& originals)

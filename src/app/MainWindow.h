@@ -17,6 +17,7 @@
 #include <QLockFile>
 #include <QMainWindow>
 #include <QPointer>
+#include <QSet>
 #include <QTimer>
 #include <QUrl>
 #include <functional>
@@ -61,6 +62,12 @@ public:
     void editBrandKit();
     // Timeline of another editor (FCP7 XML, OTIO, EDL) as a new timeline; false = not readable (message shown)
     bool importTimelineFile(const QString& path);
+
+    // Playback › Generate Proxy Media and the timeline clip menu: the video files meant (core/ProxyChoice; "selected":
+    // the timeline's selected clips, without any the Media Pool's selected files) and queueing the missing ones
+    // (returns how many were queued)
+    QStringList proxyFiles(int scope) const; // ProxyChoice::Scope
+    int generateProxies(int scope);
 
     // Pages like in DaVinci (switchable at the bottom). New page: add here + in showPage().
     enum class Page { Media, Edit, Deliver, Color, Comp };
@@ -387,6 +394,10 @@ private:
     QStringList m_slowFiles; // playback was too slow with these files (proxy hint); empty = no hint
     double m_slowRate = 0, m_slowFps = 0;
     bool m_proxyHintClosed = false; // closed: not again in this session
+    // Media files of the project as last seen: new ones are imports (proxies on import, ProxyManager::importedFiles);
+    // set from scratch when another project is loaded
+    QSet<QString> m_knownMedia;
+    bool m_knownMediaCheck = false; // a check is queued
     bool m_slowEffects = false;     // clips with effects played: the hint offers the smart render cache first
     Inspector* m_inspector = nullptr;
     ColorPanel* m_colorPanel = nullptr;

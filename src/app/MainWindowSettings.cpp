@@ -61,6 +61,8 @@ void MainWindow::settingsDialog(int tab)
         SettingsDialog::store(dlg.ownProjectFolder(), dlg.projectFolder());
     if (!m_autosaveDisabled && dlg.autoLinkNodes() != CompUi::autoLink()) CompUi::setAutoLink(dlg.autoLinkNodes());
     setSecondScreenMode(dlg.secondScreenMode());
+    if (!m_autosaveDisabled && dlg.proxyImportRule() != ProxyManager::importRule())
+        ProxyManager::setImportRule(dlg.proxyImportRule());
     if (dlg.backgroundThreads() != Background::chosenThreads() && !m_autosaveDisabled)
         Background::setChosenThreads(dlg.backgroundThreads()); // takes effect with the next job
     // Language like from the menu (Workspace › Language): takes effect after a restart; test runs keep the setting

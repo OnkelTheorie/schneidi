@@ -29,6 +29,7 @@
 #include "core/Timecode.h"
 #include "core/Presets.h"
 #include "core/Project.h"
+#include "core/ProxyChoice.h"
 #include "core/Selection.h"
 #include "core/StartTemplates.h"
 #include "core/Subtitles.h"
@@ -306,14 +307,40 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
             }));
             k->setChecked(std::any_of(ids.begin(), ids.end(), [tv](int id) { return tv->curveEditorShown(id); }));
         }
+        // Proxy media of the clips' files (as in the Media Pool's menu; compound/multicam clips: the files inside)
+        const auto addProxyEntries = [this, &menu] {
+            const QStringList files = proxyFiles(int(ProxyChoice::Scope::Selected));
+            if (files.isEmpty()) return;
+            ProxyManager* proxies = m_engine->proxies();
+            const QStringList missing = proxies->missing(files);
+            QStringList withProxy, pending;
+            for (const QString& f : files) {
+                if (proxies->isPending(f)) pending << f;
+                else if (proxies->hasProxy(f)) withProxy << f;
+            }
+            QAction* make = menu.addAction(ProxyChoice::label(T("Proxy-Medien erzeugen"), int(files.size()),
+                                                              int(missing.size()), int(pending.size())),
+                                           this, [this] { generateProxies(int(ProxyChoice::Scope::Selected)); });
+            make->setObjectName("clip_proxy_generate");
+            make->setEnabled(!missing.isEmpty());
+            if (!withProxy.isEmpty())
+                menu.addAction(T("Proxy-Medien löschen"), this, [proxies, withProxy] { proxies->remove(withProxy); })
+                    ->setObjectName("clip_proxy_remove");
+            if (!pending.isEmpty())
+                menu.addAction(T("Proxy-Erzeugung abbrechen"), this, [proxies, pending] { proxies->cancel(pending); });
+        };
         for (const char* id : {"clip_speed", "retime_controls", "clip_speed_reset", "curve_editor", "accents", "auto_reframe", "crop_bars", "stretched_43", "blur_names",
                                "normalize_audio", "audio_ducking", "fit_music", "stream_presets_learn", "",
                                "slot_mark", "slot_remove", "",
                                "toggle_enabled", "link_clips",
-                               "render_cache_clip", "save_effect_preset", "", "comp_open", "comp_from", "compound_create", "compound_open", "compound_decompose", "",
+                               "render_cache_clip", "proxies", "save_effect_preset", "", "comp_open", "comp_from", "compound_create", "compound_open", "compound_decompose", "",
                                "delete", "ripple_delete"}) {
             if (!*id) {
                 menu.addSeparator();
+                continue;
+            }
+            if (QString(id) == "proxies") {
+                addProxyEntries();
                 continue;
             }
             if (QString(id) == "accents") { // zoom punch, flash, shake as keyframes on the selected clips there
@@ -1156,6 +1183,28 @@ void MainWindow::setupProxyHint()
     connect(proxies, &ProxyManager::queueChanged, this, &MainWindow::updateProxyHint);
     connect(proxies, &ProxyManager::proxyChanged, this, &MainWindow::updateProxyHint);
     connect(proxies, &ProxyManager::enabledChanged, this, &MainWindow::updateProxyHint);
+
+    // Proxies on import (Settings › General): every way a file comes into the open project (Media Pool, drop on the
+    // timeline, watch folders, the live MCP/CLI import) changes the media list; a loaded project only sets the list
+    const auto mediaPaths = [this] {
+        QSet<QString> out;
+        for (const MediaInfo& m : m_project->media()) out.insert(m.path);
+        return out;
+    };
+    m_knownMedia = mediaPaths();
+    connect(m_project, &Project::mediaChanged, this, [this, proxies, mediaPaths] {
+        if (std::exchange(m_knownMediaCheck, true)) return;
+        QTimer::singleShot(0, this, [this, proxies, mediaPaths] { // after load() said loaded()
+            m_knownMediaCheck = false;
+            const QSet<QString> now = mediaPaths();
+            QStringList added;
+            for (const MediaInfo& m : m_project->media())
+                if (!m_knownMedia.contains(m.path)) added << m.path;
+            m_knownMedia = now;
+            proxies->importedFiles(added);
+        });
+    });
+    connect(m_project, &Project::loaded, this, [this, mediaPaths] { m_knownMedia = mediaPaths(); });
 }
 
 bool MainWindow::offersRenderCache() const
@@ -1203,6 +1252,29 @@ bool MainWindow::expensiveAtPlayhead() const
             if (c.kind == ClipKind::Media && c.enabled && c.start <= at && at < c.end() && RenderCache::isExpensive(c))
                 return true;
     return false;
+}
+
+QStringList MainWindow::proxyFiles(int scope) const
+{
+    const auto sc = ProxyChoice::Scope(scope);
+    if (sc != ProxyChoice::Scope::Selected || !m_selection->isEmpty())
+        return ProxyChoice::files(*m_project, sc, m_selection->ids());
+    const QStringList chosen = m_mediaPool->selectedMedia();
+    QStringList out;
+    for (const QString& f : ProxyChoice::files(*m_project, ProxyChoice::Scope::Pool))
+        if (chosen.contains(f)) out << f;
+    return out;
+}
+
+int MainWindow::generateProxies(int scope)
+{
+    ProxyManager* proxies = m_engine->proxies();
+    const QStringList queue = proxies->missing(proxyFiles(scope));
+    proxies->generate(queue);
+    statusBar()->showMessage(queue.isEmpty() ? T("Keine fehlenden Proxy-Medien.")
+                                             : T("Proxy-Medien werden erzeugt: %1 Dateien").arg(queue.size()),
+                             5000);
+    return int(queue.size());
 }
 
 QStringList MainWindow::playingVideoFiles() const

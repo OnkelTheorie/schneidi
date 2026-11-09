@@ -189,6 +189,21 @@ QWidget* SettingsDialog::buildGeneral()
                           "keine Projektdateien zwischen deinen Aufnahmen.")));
     lay->addWidget(projects);
 
+    // Proxy media on import: never by default (the user decides; Playback › Generate Proxy Media, right-click on clips)
+    auto* proxyBox = new QGroupBox(T("Proxy-Medien"));
+    auto* xform = new QFormLayout(proxyBox);
+    xform->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
+    m_proxyImport = new QComboBox;
+    m_proxyImport->setObjectName("proxy_import_rule");
+    m_proxyImport->addItem(T("Nie"), int(ProxyManager::ImportRule::Never));
+    m_proxyImport->addItem(T("Ab 4K, H.265, AV1 oder 10 Bit"), int(ProxyManager::ImportRule::Heavy));
+    m_proxyImport->addItem(T("Immer"), int(ProxyManager::ImportRule::Always));
+    m_proxyImport->setCurrentIndex(std::max(0, m_proxyImport->findData(int(ProxyManager::importRule()))));
+    xform->addRow(T("Beim Import erzeugen"), m_proxyImport);
+    xform->addRow(hint(T("Proxy-Medien sind kleine Kopien für eine flüssige Vorschau, der Export nutzt immer die "
+                         "Originale. Von Hand: Wiedergabe › Proxy-Medien erzeugen oder Rechtsklick auf einen Clip.")));
+    lay->addWidget(proxyBox);
+
     // Compositing: new nodes from the node search linked at once (default) or only added
     auto* comp = new QGroupBox(T("Compositing"));
     auto* cform = new QFormLayout(comp);
@@ -224,6 +239,11 @@ bool SettingsDialog::autoLinkNodes() const { return m_autoLink->isChecked(); }
 SecondScreenPlan::Mode SettingsDialog::secondScreenMode() const
 {
     return SecondScreenPlan::Mode(m_secondScreen->currentData().toInt());
+}
+
+ProxyManager::ImportRule SettingsDialog::proxyImportRule() const
+{
+    return ProxyManager::ImportRule(m_proxyImport->currentData().toInt());
 }
 
 bool SettingsDialog::ownProjectFolder() const { return m_ownFolder->isChecked(); }

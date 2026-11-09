@@ -2840,5 +2840,16 @@
  "Doppelklick auf einen Clip zeigt ihn hier.": "Kliknij dwukrotnie klip, aby go tu pokazać.",
  "Vorschau zurückholen": "Przywróć podgląd",
  "Timeline auf dem zweiten Monitor": "Oś czasu na drugim monitorze",
- "Quelle – %1 (angehalten)": "Źródło – %1 (wstrzymane)"
+ "Quelle – %1 (angehalten)": "Źródło – %1 (wstrzymane)",
+ "(keine Videodateien)": "(brak plików wideo)",
+ "(schon vorhanden)": "(już istnieją)",
+ "(werden erzeugt)": "(w trakcie tworzenia)",
+ "Ab 4K, H.265, AV1 oder 10 Bit": "Od 4K, H.265, AV1 lub 10 bitów",
+ "Beim Import erzeugen": "Twórz przy imporcie",
+ "Keine fehlenden Proxy-Medien.": "Nie brakuje żadnych mediów proxy.",
+ "Proxy-Medien sind kleine Kopien für eine flüssige Vorschau, der Export nutzt immer die Originale. Von Hand: Wiedergabe › Proxy-Medien erzeugen oder Rechtsklick auf einen Clip.": "Media proxy to małe kopie dla płynnego podglądu; eksport zawsze używa oryginałów. Ręcznie: Odtwarzanie › Generuj media proxy lub prawy klik na klipie.",
+ "Proxy-Medien werden erzeugt: %1 Dateien": "Tworzenie mediów proxy: %1 plików",
+ "für alle Clips der Timeline": "dla wszystkich klipów osi czasu",
+ "für alle Medien im Pool": "dla wszystkich mediów w bibliotece",
+ "für ausgewählte Clips": "dla zaznaczonych klipów"
 }

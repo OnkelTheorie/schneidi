@@ -2840,5 +2840,16 @@
  "Doppelklick auf einen Clip zeigt ihn hier.": "Double-cliquez sur un clip pour l’afficher ici.",
  "Vorschau zurückholen": "Ramener l’aperçu",
  "Timeline auf dem zweiten Monitor": "Timeline sur le second moniteur",
- "Quelle – %1 (angehalten)": "Source – %1 (en pause)"
+ "Quelle – %1 (angehalten)": "Source – %1 (en pause)",
+ "(keine Videodateien)": "(aucun fichier vidéo)",
+ "(schon vorhanden)": "(déjà présents)",
+ "(werden erzeugt)": "(en cours de création)",
+ "Ab 4K, H.265, AV1 oder 10 Bit": "À partir de 4K, H.265, AV1 ou 10 bits",
+ "Beim Import erzeugen": "Créer à l’importation",
+ "Keine fehlenden Proxy-Medien.": "Aucun média proxy manquant.",
+ "Proxy-Medien sind kleine Kopien für eine flüssige Vorschau, der Export nutzt immer die Originale. Von Hand: Wiedergabe › Proxy-Medien erzeugen oder Rechtsklick auf einen Clip.": "Les médias proxy sont de petites copies pour un aperçu fluide ; l’export utilise toujours les originaux. À la main : Lecture › Générer les médias proxy ou clic droit sur un clip.",
+ "Proxy-Medien werden erzeugt: %1 Dateien": "Création des médias proxy : %1 fichiers",
+ "für alle Clips der Timeline": "pour tous les clips de la timeline",
+ "für alle Medien im Pool": "pour tous les médias de la médiathèque",
+ "für ausgewählte Clips": "pour les clips sélectionnés"
 }

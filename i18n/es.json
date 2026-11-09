@@ -2840,5 +2840,16 @@
  "Doppelklick auf einen Clip zeigt ihn hier.": "Haz doble clic en un clip para verlo aquí.",
  "Vorschau zurückholen": "Recuperar la vista previa",
  "Timeline auf dem zweiten Monitor": "Línea de tiempo en el segundo monitor",
- "Quelle – %1 (angehalten)": "Origen – %1 (en pausa)"
+ "Quelle – %1 (angehalten)": "Origen – %1 (en pausa)",
+ "(keine Videodateien)": "(sin archivos de vídeo)",
+ "(schon vorhanden)": "(ya existen)",
+ "(werden erzeugt)": "(generándose)",
+ "Ab 4K, H.265, AV1 oder 10 Bit": "Desde 4K, H.265, AV1 o 10 bits",
+ "Beim Import erzeugen": "Generar al importar",
+ "Keine fehlenden Proxy-Medien.": "No falta ningún medio proxy.",
+ "Proxy-Medien sind kleine Kopien für eine flüssige Vorschau, der Export nutzt immer die Originale. Von Hand: Wiedergabe › Proxy-Medien erzeugen oder Rechtsklick auf einen Clip.": "Los medios proxy son copias pequeñas para una vista previa fluida; la exportación siempre usa los originales. A mano: Reproducción › Generar medios proxy o clic derecho en un clip.",
+ "Proxy-Medien werden erzeugt: %1 Dateien": "Generando medios proxy: %1 archivos",
+ "für alle Clips der Timeline": "para todos los clips de la línea de tiempo",
+ "für alle Medien im Pool": "para todos los medios de la biblioteca",
+ "für ausgewählte Clips": "para los clips seleccionados"
 }
