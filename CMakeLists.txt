@@ -445,6 +445,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/ui/timeline/TimelineMenus.cpp
     src/ui/timeline/TimelineSubtitles.cpp
     src/ui/timeline/TimelineStory.cpp
+    src/ui/timeline/TimelineMarks.cpp
     src/ui/timeline/TimelineRetime.cpp
     src/ui/timeline/TimelineViewDetail.h
     src/ui/timeline/TimelinePanel.h   src/ui/timeline/TimelinePanel.cpp

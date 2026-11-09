@@ -85,8 +85,10 @@ void TimelineView::updateAutoScroll(const QPoint& pos)
 {
     // Only drags where scrolling along makes sense (not volume, fades, curves …)
     const bool horizontal = m_drag == Drag::Rubber || m_drag == Drag::Move || m_drag == Drag::Trim ||
-                            m_drag == Drag::TrimEdit || m_drag == Drag::CueMove || m_drag == Drag::CueTrim;
-    const bool vertical = horizontal || m_drag == Drag::TrackMove;
+                            m_drag == Drag::TrimEdit || m_drag == Drag::CueMove || m_drag == Drag::CueTrim ||
+                            m_drag == Drag::Marks;
+    // The In/Out range lives in the ruler: only sideways (the ruler is always in the vertical edge zone)
+    const bool vertical = (horizontal && m_drag != Drag::Marks) || m_drag == Drag::TrackMove;
     if (m_drag == Drag::Rubber && (pos - m_pressPos).manhattanLength() < kDragStartPx) return;
     const bool atX = horizontal && (pos.x() < kHeaderW + kAutoScrollZone || pos.x() >= width() - kAutoScrollZone);
     const bool atY = vertical && (pos.y() < kRulerH + kAutoScrollZone || pos.y() >= height() - kAutoScrollZone);
@@ -112,7 +114,8 @@ void TimelineView::autoScrollStep()
         if (pos.x() < kHeaderW + kAutoScrollZone) dx = -speed(kHeaderW + kAutoScrollZone - pos.x());
         else if (pos.x() >= width() - kAutoScrollZone) dx = speed(pos.x() - (width() - kAutoScrollZone));
     }
-    if (pos.y() < kRulerH + kAutoScrollZone) dy = -speed(kRulerH + kAutoScrollZone - pos.y());
+    if (m_drag == Drag::Marks) {} // sideways only
+    else if (pos.y() < kRulerH + kAutoScrollZone) dy = -speed(kRulerH + kAutoScrollZone - pos.y());
     else if (pos.y() >= height() - kAutoScrollZone) dy = speed(pos.y() - (height() - kAutoScrollZone));
 
     // Scroll whole pixels and shift the press point by the same pixels: all drag computations
@@ -204,6 +207,7 @@ void TimelineView::mousePressEvent(QMouseEvent* e)
     }
     if (pos.y() < kRulerH) {
         if (sectionPress(pos)) return; // the edge of a story section
+        if (marksPress(pos, e->modifiers())) return; // In/Out handles, the range, Alt-drag: a new range
         m_drag = Drag::Scrub;
         m_scrubFrame = std::max(0, int(std::lround(xToFrame(pos.x()))));
         emit seekRequested(m_scrubFrame);
@@ -405,6 +409,9 @@ void TimelineView::dragMove(const QPoint& pos, Qt::KeyboardModifiers mods)
     }
     case Drag::SectionEdge:
         sectionDrag(pos);
+        return;
+    case Drag::Marks:
+        marksDrag(pos, mods);
         return;
     case Drag::Scrub: {
         // Only jump on a new frame: every jump discards the buffer during playback and decodes anew –
@@ -674,6 +681,12 @@ void TimelineView::mouseReleaseEvent(QMouseEvent* e)
         updateHoverCursor(e->position().toPoint());
         return;
     }
+    if (m_drag == Drag::Marks) {
+        m_drag = Drag::None;
+        marksRelease();
+        updateHoverCursor(e->position().toPoint());
+        return;
+    }
     if (m_drag == Drag::Rubber) {
         m_drag = Drag::None;
         m_rubberBase.clear();
@@ -772,6 +785,10 @@ void TimelineView::mouseDoubleClickEvent(QMouseEvent* e)
 
 void TimelineView::leaveEvent(QEvent*)
 {
+    if (m_markHover != MarkGrab::None && m_drag == Drag::None) {
+        m_markHover = MarkGrab::None;
+        update(0, 0, width(), kRulerH);
+    }
     if (m_hoverClip && m_drag == Drag::None) {
         m_hoverClip = 0;
         update();

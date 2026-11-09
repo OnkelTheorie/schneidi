@@ -453,6 +453,19 @@ int TimelineView::volumeLineAt(const QPoint& pos) const
 
 void TimelineView::updateHoverCursor(const QPoint& pos)
 {
+    // The In/Out range's handles and its lower half (highlighted under the mouse)
+    if (const MarkGrab g = markGrabAt(pos); g != m_markHover) {
+        m_markHover = g;
+        update(0, 0, width(), kRulerH);
+    }
+    if (m_markHover == MarkGrab::In || m_markHover == MarkGrab::Out) {
+        setCursor(Qt::SizeHorCursor);
+        return;
+    }
+    if (m_markHover == MarkGrab::Range) {
+        setCursor(Qt::OpenHandCursor);
+        return;
+    }
     if (pos.y() < kRulerH && sectionEdgeAt(pos, nullptr) >= 0) { // a story section's edge can be dragged
         setCursor(Qt::SizeHorCursor);
         return;

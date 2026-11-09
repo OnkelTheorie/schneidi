@@ -793,6 +793,19 @@ void Editor::setMarkOut(int frame)
     });
 }
 
+void Editor::setMarks(int in, int out, const QString& mergeKey)
+{
+    in = std::max(-1, in);
+    out = std::max(-1, out);
+    if (in >= 0 && out >= 0) out = std::max(out, in);
+    const Timeline& t = m_project->timeline();
+    if (in == t.markIn && out == t.markOut) return;
+    m_project->edit(T("In/Out setzen"), [&](Timeline& tl) {
+        tl.markIn = in;
+        tl.markOut = out;
+    }, mergeKey);
+}
+
 void Editor::clearMarks()
 {
     const Timeline& t = m_project->timeline();

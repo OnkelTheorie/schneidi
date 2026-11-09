@@ -2914,5 +2914,13 @@
  "Wähl eine Vorlage, etwa YouTube, und klick auf „Zur Render-Warteschlange hinzufügen“. „Alle rendern“ speichert dann dein Video.": "Choose a preset, for example YouTube, and click “Add to Render Queue”. “Render All” then saves your video.",
  "Rundgang erst nach dem Rendern – oder das Rendern abbrechen.": "Tour after the render – or cancel the render.",
  "Rundgang erst, wenn die Änderungen der KI übernommen oder verworfen sind.": "Tour once the AI's changes are accepted or discarded.",
- "Rundgang erst, wenn das Verfolgen des Fensters fertig ist.": "Tour once the window tracking is done."
+ "Rundgang erst, wenn das Verfolgen des Fensters fertig ist.": "Tour once the window tracking is done.",
+ "In/Out setzen": "Set In/Out",
+ "In-Punkt %1 – Länge %2": "In %1 – length %2",
+ "In-Punkt %1": "In %1",
+ "Out-Punkt %1 – Länge %2": "Out %1 – length %2",
+ "Out-Punkt %1": "Out %1",
+ "In/Out %1 – %2, Länge %3": "In/Out %1 – %2, length %3",
+ "In-Punkt hier setzen": "Mark In here",
+ "Out-Punkt hier setzen": "Mark Out here"
 }

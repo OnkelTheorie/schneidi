@@ -139,6 +139,7 @@ bool TimelineView::event(QEvent* e)
     if (e->type() == QEvent::ToolTip) {
         const auto* help = static_cast<QHelpEvent*>(e);
         QString tip = storyToolTip(help->pos());
+        if (tip.isEmpty()) tip = marksToolTip(markGrabAt(help->pos())); // In/Out: timecode and length
         if (help->pos().x() < kHeaderW)
             if (const auto row = rowAt(help->pos().y()); row && micButton(*row).contains(help->pos()))
                 tip = T("Aufnahmebereit: die Aufnahmetaste nimmt auf dieser Spur auf (Rechtsklick: Eingang wählen)");
@@ -161,6 +162,8 @@ bool TimelineView::rulerMenu(const QPoint& pos, const QPoint& globalPos)
     const int frame = std::max(0, int(std::floor(xToFrame(pos.x()))));
     const int fps = std::max(1, m_editor->project()->fps());
     QMenu menu(this);
+    addMarksActions(menu, frame); // In/Out here, remove (TimelineMarks.cpp)
+    menu.addSeparator();
     const int section = Story::at(tl.sections, frame);
     if (section < 0) {
         // A new section from here: 2 s, up to the next section or the end of the timeline

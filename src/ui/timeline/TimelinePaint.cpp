@@ -138,22 +138,7 @@ void TimelineView::drawRuler(QPainter& p)
         p.fillRect(QRectF(x0, 0, xd - x0, 3), Theme::cacheReady);
         p.fillRect(QRectF(xd, 0, x1 - xd, 3), Theme::cacheMissing);
     }
-    // In/Out range (I/O): bar in the secondary color in the ruler with brackets at the ends
-    const Timeline& tlm = m_editor->project()->timeline();
-    if (tlm.markIn >= 0 || tlm.markOut >= 0) {
-        const double xIn = tlm.markIn >= 0 ? frameToX(tlm.markIn) : kHeaderW - 1;
-        const double xOut = tlm.markOut >= 0 ? frameToX(tlm.markOut + 1) : width() + 1;
-        p.fillRect(QRectF(xIn, kRulerH - 16, xOut - xIn, 16), Theme::alpha(Theme::secondary, 45));
-        p.setPen(QPen(Theme::secondary, 2));
-        if (tlm.markIn >= 0) {
-            p.drawLine(QPointF(xIn + 1, kRulerH - 16), QPointF(xIn + 1, kRulerH - 1));
-            p.drawLine(QPointF(xIn + 1, kRulerH - 15), QPointF(xIn + 5, kRulerH - 15));
-        }
-        if (tlm.markOut >= 0) {
-            p.drawLine(QPointF(xOut - 1, kRulerH - 16), QPointF(xOut - 1, kRulerH - 1));
-            p.drawLine(QPointF(xOut - 1, kRulerH - 15), QPointF(xOut - 5, kRulerH - 15));
-        }
-    }
+    drawMarks(p); // In/Out range with its handles (TimelineMarks.cpp)
     drawStory(p); // story sections and notes (TimelineStory.cpp)
     // Markers (M) as small flags like in DaVinci (secondary color)
     p.setRenderHint(QPainter::Antialiasing);

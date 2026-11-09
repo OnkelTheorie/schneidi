@@ -2914,5 +2914,13 @@
  "Wähl eine Vorlage, etwa YouTube, und klick auf „Zur Render-Warteschlange hinzufügen“. „Alle rendern“ speichert dann dein Video.": "Choisis un préréglage, par exemple YouTube, et clique sur « Ajouter à la file de rendu ». « Tout rendre » enregistre ensuite ta vidéo.",
  "Rundgang erst nach dem Rendern – oder das Rendern abbrechen.": "Visite guidée après le rendu – ou annule le rendu.",
  "Rundgang erst, wenn die Änderungen der KI übernommen oder verworfen sind.": "Visite guidée une fois les modifications de l'IA acceptées ou rejetées.",
- "Rundgang erst, wenn das Verfolgen des Fensters fertig ist.": "Visite guidée une fois le suivi de la fenêtre terminé."
+ "Rundgang erst, wenn das Verfolgen des Fensters fertig ist.": "Visite guidée une fois le suivi de la fenêtre terminé.",
+ "In/Out setzen": "Définir entrée/sortie",
+ "In-Punkt %1 – Länge %2": "Entrée %1 – durée %2",
+ "In-Punkt %1": "Entrée %1",
+ "Out-Punkt %1 – Länge %2": "Sortie %1 – durée %2",
+ "Out-Punkt %1": "Sortie %1",
+ "In/Out %1 – %2, Länge %3": "Entrée/sortie %1 – %2, durée %3",
+ "In-Punkt hier setzen": "Marquer l’entrée ici",
+ "Out-Punkt hier setzen": "Marquer la sortie ici"
 }

@@ -2914,5 +2914,13 @@
  "Wähl eine Vorlage, etwa YouTube, und klick auf „Zur Render-Warteschlange hinzufügen“. „Alle rendern“ speichert dann dein Video.": "Elige una plantilla, por ejemplo YouTube, y haz clic en «Añadir a la cola de render». «Renderizar todo» guarda después tu vídeo.",
  "Rundgang erst nach dem Rendern – oder das Rendern abbrechen.": "Recorrido después del renderizado, o cancela el renderizado.",
  "Rundgang erst, wenn die Änderungen der KI übernommen oder verworfen sind.": "Recorrido cuando los cambios de la IA estén aceptados o descartados.",
- "Rundgang erst, wenn das Verfolgen des Fensters fertig ist.": "Recorrido cuando termine el seguimiento de la ventana."
+ "Rundgang erst, wenn das Verfolgen des Fensters fertig ist.": "Recorrido cuando termine el seguimiento de la ventana.",
+ "In/Out setzen": "Fijar entrada/salida",
+ "In-Punkt %1 – Länge %2": "Entrada %1 – duración %2",
+ "In-Punkt %1": "Entrada %1",
+ "Out-Punkt %1 – Länge %2": "Salida %1 – duración %2",
+ "Out-Punkt %1": "Salida %1",
+ "In/Out %1 – %2, Länge %3": "Entrada/salida %1 – %2, duración %3",
+ "In-Punkt hier setzen": "Marcar entrada aquí",
+ "Out-Punkt hier setzen": "Marcar salida aquí"
 }
