@@ -684,18 +684,57 @@ void MainWindow::updatePreviewEdge()
     using namespace PreviewResolution;
     const QSize project = m_engine->frameSize();
     int edge = 0;
-    if (!m_viewerAway.active) edge = PreviewResolution::edge(m_viewerRes, 0, project); // 0: the engine's default
+    // The viewer's automatic: the pixels its picture covers (0 before it is shown: the engine's default)
+    if (!m_viewerAway.active && m_viewer) edge = PreviewResolution::edge(m_viewerRes, m_viewer->wantedPreviewEdge(), project);
     if (m_fullScreen) edge = std::max(edge, PreviewResolution::edge(m_viewerRes, m_fullScreen->wantedPreviewEdge(), project));
     if (m_output) edge = std::max(edge, PreviewResolution::edge(m_monitorRes, m_output->wantedPreviewEdge(), project));
     m_engine->setPreviewEdge(edge);
+    updateResolutionMenus();
+}
+
+void MainWindow::updateResolutionMenus()
+{
+    using namespace PreviewResolution;
+    const QSize project = m_engine->frameSize();
+    for (const Target target : {Target::Viewer, Target::Monitor}) {
+        int autoEdge = 0; // what the display wants right now (0 = not shown)
+        if (target == Target::Viewer) autoEdge = m_fullScreen ? m_fullScreen->wantedPreviewEdge() : m_viewer ? m_viewer->wantedPreviewEdge() : 0;
+        else if (m_output) autoEdge = m_output->wantedPreviewEdge();
+        const Choice chosen = target == Target::Viewer ? m_viewerRes : m_monitorRes;
+        for (const Choice choice : kChoices) {
+            QAction* a = m_resolutionActions[int(target)][int(choice)];
+            if (!a) continue;
+            const bool larger = largerThanProject(choice, project);
+            const QString size = sizeText(resultSize(choice, autoEdge, project));
+            a->setText(larger ? T("%1 (größer als das Projekt)").arg(label(choice)) : label(choice));
+            a->setEnabled(!larger || choice == chosen); // a stored choice stays visible (it gives the project size)
+            if (choice == Choice::Auto)
+                a->setToolTip(autoEdge > 0 ? T("So groß, wie die Vorschau gerade angezeigt wird: jetzt %1, höchstens %2 "
+                                               "Pixel an der längeren Seite").arg(size).arg(kAutoCap)
+                                           : T("So groß, wie die Vorschau gerade angezeigt wird"));
+            else if (choice == Choice::Project)
+                a->setToolTip(T("Vorschau: %1, so groß wie das Projekt. Am schärfsten, braucht aber einen schnellen "
+                                "Rechner.").arg(size));
+            else if (larger)
+                a->setToolTip(T("Das Projekt hat nur %1: größer wird die Vorschau nie.").arg(sizeText(project)));
+            else
+                a->setToolTip(T("Vorschau: %1. Die kürzere Seite hat %2 Pixel, die längere folgt dem Seitenverhältnis "
+                                "des Projekts (ein 9:16-Projekt bei 1080p: 1080×1920).").arg(size).arg(lines(choice)));
+        }
+    }
 }
 
 void MainWindow::setPreviewResolution(PreviewResolution::Target target, PreviewResolution::Choice choice)
 {
-    (target == PreviewResolution::Target::Viewer ? m_viewerRes : m_monitorRes) = choice;
-    if (!m_autosaveDisabled) PreviewResolution::store(target, choice);
+    PreviewResolution::Choice& current = target == PreviewResolution::Target::Viewer ? m_viewerRes : m_monitorRes;
+    const bool changed = current != choice;
+    current = choice;
+    if (!m_autosaveDisabled && changed) PreviewResolution::store(target, choice);
     if (QAction* a = m_resolutionActions[int(target)][int(choice)]) a->setChecked(true);
     updatePreviewEdge();
+    // What the choice did, for ~2 s over the picture: the size the engine renders now (the larger wish of main window
+    // and monitor, the project size while zoomed to 100 %)
+    if (changed && m_viewer) m_viewer->showNotice(T("Vorschau: %1").arg(PreviewResolution::sizeText(m_engine->previewSize())));
 }
 
 void MainWindow::moveViewerToNextScreen()

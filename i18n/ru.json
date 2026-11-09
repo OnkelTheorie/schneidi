@@ -2872,10 +2872,7 @@
  "für ausgewählte Clips": "для выбранных клипов",
  "Auflösung auf dem Monitor": "Разрешение на мониторе",
  "Automatisch (passend zur Anzeige)": "Автоматически (по экрану)",
- "Automatisch: so groß, wie die Vorschau gerade angezeigt wird. Volle Auflösung ist schärfer, braucht aber einen schnellen Rechner. Der Export nutzt immer die volle Auflösung.": "Автоматически: такой размер, в каком просмотр сейчас показан. Полное разрешение чётче, но требует быстрого компьютера. Экспорт всегда использует полное разрешение.",
- "Halbe Auflösung": "Половинное разрешение",
  "Hauptfenster": "Главное окно",
- "Volle Projektauflösung": "Полное разрешение проекта",
  "Vorschau": "Просмотр",
  "Vorschau-Auflösung": "Разрешение просмотра",
  "Zweiter Monitor": "Второй монитор",
@@ -2884,5 +2881,16 @@
  "Der Rundgang läuft in einem Übungsprojekt. Dein Projekt hat ungespeicherte Änderungen: Es kommt nach dem Rundgang genau so zurück, wie es jetzt ist.": "Тур проходит в учебном проекте. В твоём проекте есть несохранённые изменения: после тура он вернётся точно таким, как сейчас.",
  "Erst speichern": "Сначала сохранить",
  "Für mich erledigen": "Сделать за меня",
- "Rundgang starten": "Начать тур"
+ "Rundgang starten": "Начать тур",
+ "%1 (größer als das Projekt)": "%1 (больше проекта)",
+ "%1p (4K)": "%1p (4K)",
+ "Automatisch: so groß, wie die Vorschau gerade angezeigt wird. Mehr Pixel sind schärfer, brauchen aber einen schnellen Rechner. Der Export nutzt immer die volle Auflösung.": "Автоматически: такого размера, как предпросмотр показан сейчас. Больше пикселей — резче, но нужен быстрый компьютер. Экспорт всегда использует полное разрешение.",
+ "Das Projekt hat nur %1: größer wird die Vorschau nie.": "В проекте только %1: предпросмотр никогда не бывает больше.",
+ "Feste Größen nennen die kürzere Seite, die längere folgt dem Seitenverhältnis des Projekts (ein 9:16-Projekt bei 1080p: 1080×1920).": "Фиксированные размеры задают короткую сторону, длинная следует пропорциям проекта (проект 9:16 при 1080p: 1080×1920).",
+ "Projektauflösung": "Разрешение проекта",
+ "So groß, wie die Vorschau gerade angezeigt wird": "Такого размера, как предпросмотр показан сейчас",
+ "So groß, wie die Vorschau gerade angezeigt wird: jetzt %1, höchstens %2 Pixel an der längeren Seite": "Такого размера, как предпросмотр показан сейчас: сейчас %1, не больше %2 пикселей по длинной стороне",
+ "Vorschau: %1": "Предпросмотр: %1",
+ "Vorschau: %1, so groß wie das Projekt. Am schärfsten, braucht aber einen schnellen Rechner.": "Предпросмотр: %1, как у проекта. Самый резкий, но нужен быстрый компьютер.",
+ "Vorschau: %1. Die kürzere Seite hat %2 Pixel, die längere folgt dem Seitenverhältnis des Projekts (ein 9:16-Projekt bei 1080p: 1080×1920).": "Предпросмотр: %1. Короткая сторона — %2 пикселей, длинная следует пропорциям проекта (проект 9:16 при 1080p: 1080×1920)."
 }

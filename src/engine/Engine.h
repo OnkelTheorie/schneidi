@@ -161,6 +161,8 @@ public:
     int position() const { return m_position; }
     // Counters of the preview's frame pump (tests, benchmarks)
     Picture::Pump::Stats pictureStats() const;
+    // Frames of the timeline preview the graphics card composited so far (tests: which path drew the picture)
+    int timelineFramesOnGpu() const;
     // While playing: the frame heard right now (fractional, in positions like position()); NaN when stopped.
     // position() = the frame on screen, which follows it.
     double soundFrame() const;

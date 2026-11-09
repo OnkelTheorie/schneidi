@@ -2872,10 +2872,7 @@
  "für ausgewählte Clips": "for selected clips",
  "Auflösung auf dem Monitor": "Resolution on the monitor",
  "Automatisch (passend zur Anzeige)": "Automatic (fits the display)",
- "Automatisch: so groß, wie die Vorschau gerade angezeigt wird. Volle Auflösung ist schärfer, braucht aber einen schnellen Rechner. Der Export nutzt immer die volle Auflösung.": "Automatic: as large as the preview is shown right now. Full resolution is sharper but needs a fast computer. The export always uses the full resolution.",
- "Halbe Auflösung": "Half resolution",
  "Hauptfenster": "Main window",
- "Volle Projektauflösung": "Full project resolution",
  "Vorschau": "Preview",
  "Vorschau-Auflösung": "Preview Resolution",
  "Zweiter Monitor": "Second monitor",
@@ -2884,5 +2881,16 @@
  "Der Rundgang läuft in einem Übungsprojekt. Dein Projekt hat ungespeicherte Änderungen: Es kommt nach dem Rundgang genau so zurück, wie es jetzt ist.": "The tour runs in a practice project. Your project has unsaved changes: after the tour it comes back exactly as it is now.",
  "Erst speichern": "Save First",
  "Für mich erledigen": "Do It for Me",
- "Rundgang starten": "Start Tour"
+ "Rundgang starten": "Start Tour",
+ "%1 (größer als das Projekt)": "%1 (larger than the project)",
+ "%1p (4K)": "%1p (4K)",
+ "Automatisch: so groß, wie die Vorschau gerade angezeigt wird. Mehr Pixel sind schärfer, brauchen aber einen schnellen Rechner. Der Export nutzt immer die volle Auflösung.": "Automatic: as large as the preview is shown right now. More pixels are sharper but need a fast computer. Export always uses the full resolution.",
+ "Das Projekt hat nur %1: größer wird die Vorschau nie.": "The project is only %1: the preview never gets larger.",
+ "Feste Größen nennen die kürzere Seite, die längere folgt dem Seitenverhältnis des Projekts (ein 9:16-Projekt bei 1080p: 1080×1920).": "Fixed sizes name the shorter side; the longer one follows the project's aspect ratio (a 9:16 project at 1080p: 1080×1920).",
+ "Projektauflösung": "Project resolution",
+ "So groß, wie die Vorschau gerade angezeigt wird": "As large as the preview is shown right now",
+ "So groß, wie die Vorschau gerade angezeigt wird: jetzt %1, höchstens %2 Pixel an der längeren Seite": "As large as the preview is shown right now: currently %1, at most %2 pixels on the longer side",
+ "Vorschau: %1": "Preview: %1",
+ "Vorschau: %1, so groß wie das Projekt. Am schärfsten, braucht aber einen schnellen Rechner.": "Preview: %1, as large as the project. Sharpest, but needs a fast computer.",
+ "Vorschau: %1. Die kürzere Seite hat %2 Pixel, die längere folgt dem Seitenverhältnis des Projekts (ein 9:16-Projekt bei 1080p: 1080×1920).": "Preview: %1. The shorter side has %2 pixels, the longer one follows the project's aspect ratio (a 9:16 project at 1080p: 1080×1920)."
 }

@@ -75,6 +75,12 @@ schneidi_test(test_launch_args) # app command line: options (also Qt's X11 -geom
 schneidi_test(test_picture_gpu_render) # Renderer's GPU path vs its CPU path, whole frames (skips without a GPU)
 # The GPU decides by itself here (every other test runs the CPU path: SCHNEIDI_GPU=0)
 set_tests_properties(test_picture_gpu_render PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;SCHNEIDI_AUDIO_DEVICE=null")
+# Preview resolution: the same program once more with the GPU deciding by itself (the frame reaching the viewer on the
+# card's path too; says so and checks the CPU path only where there is no usable GPU)
+schneidi_test(test_preview_resolution)
+add_test(NAME test_preview_resolution_gpu COMMAND test_preview_resolution)
+set_tests_properties(test_preview_resolution_gpu PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 300
+    RESOURCE_LOCK test_preview_resolution ENVIRONMENT "QT_QPA_PLATFORM=offscreen;SCHNEIDI_AUDIO_DEVICE=null")
 schneidi_test(test_own_effects)
 # Custom effects (0.19): FFmpeg filter chain (pixels, refused filters, errors, comp fx node), shader compile errors,
 # project file round trip; through the CLI

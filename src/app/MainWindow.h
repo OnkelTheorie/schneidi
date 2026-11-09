@@ -468,9 +468,12 @@ private:
     QPointer<class PreviewOutput> m_output;
     SecondScreenPlan m_screenPlan;
     SecondScreenPlan::Mode m_secondScreenMode = SecondScreenPlan::storedMode();
-    PreviewResolution::Choice m_viewerRes = PreviewResolution::stored(PreviewResolution::Target::Viewer);
-    PreviewResolution::Choice m_monitorRes = PreviewResolution::stored(PreviewResolution::Target::Monitor);
-    QAction* m_resolutionActions[2][3] = {}; // [Target][Choice]: the menu's check marks
+    // Read in the constructor with the format known at start (an old "half" becomes the fixed size nearest to half of it)
+    PreviewResolution::Choice m_viewerRes = PreviewResolution::Choice::Auto;
+    PreviewResolution::Choice m_monitorRes = PreviewResolution::Choice::Auto;
+    // [Target][Choice]: the menu's entries (check marks, disabled above the project, tooltips with the size)
+    QAction* m_resolutionActions[2][PreviewResolution::kChoiceCount] = {};
+    void updateResolutionMenus(); // texts, enabled state and tooltips for the current project
     QImage m_programFrame; // the engine's last frame not of a source clip (the output starts with it)
     struct ViewerAway {
         bool active = false;
