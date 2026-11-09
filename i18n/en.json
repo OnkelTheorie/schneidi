@@ -2935,5 +2935,7 @@
  "Im Bereich wiederholen": "Loop in range",
  "Play/Pause (Leertaste) – wiederholt im In/Out-Bereich": "Play/Pause (Space) – loops in the In/Out range",
  "%1 ist jetzt kürzer: 1 Clip reicht über sein Ende hinaus": "%1 is shorter now: 1 clip reaches past its end",
- "%1 ist jetzt kürzer: %2 Clips reichen über sein Ende hinaus": "%1 is shorter now: %2 clips reach past its end"
+ "%1 ist jetzt kürzer: %2 Clips reichen über sein Ende hinaus": "%1 is shorter now: %2 clips reach past its end",
+ "Stimme gesäubert (%1 Clips) – Strg+Z nimmt es zurück": "Voice cleaned (%1 clips) – Ctrl+Z undoes it",
+ "Nichts zu säubern: wähl Tonclips aus oder leg sie auf die Spur A%1": "Nothing to clean: select sound clips or put them on track A%1"
 }

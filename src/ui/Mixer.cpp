@@ -24,6 +24,7 @@
 #include <QSplitter>
 #include <QTimer>
 #include <QToolButton>
+#include <QToolTip>
 #include <QVBoxLayout>
 #include <algorithm>
 #include <cmath>
@@ -793,9 +794,20 @@ Mixer::Mixer(Project* project, Engine* engine, QWidget* parent)
     m_cleanVoice->setStyleSheet(QString("QToolButton { background: %1; color: %2; padding: 1px 6px; }")
                                     .arg(Theme::control.name(), Theme::text.name()));
     connect(m_cleanVoice, &QToolButton::clicked, this, [this] {
-        const int armed = m_recorder ? m_recorder->armedTrack() : -1;
-        const int track = armed >= 0 ? armed : editor()->targetAudioTrack();
-        editor()->cleanVoice(editor()->audioTrackClips(track));
+        // The selected sound clips first, else the whole armed track, else the target audio track; nothing to clean
+        // says so at the button instead of doing nothing without a word
+        const QSet<int>& selected = editor()->selection()->ids();
+        QVector<int> done = editor()->cleanVoice(QVector<int>(selected.cbegin(), selected.cend()));
+        int track = -1;
+        if (done.isEmpty()) {
+            const int armed = m_recorder ? m_recorder->armedTrack() : -1;
+            track = armed >= 0 ? armed : editor()->targetAudioTrack();
+            done = editor()->cleanVoice(editor()->audioTrackClips(track));
+        }
+        const QString text = !done.isEmpty() ? T("Stimme gesäubert (%1 Clips) – Strg+Z nimmt es zurück").arg(done.size())
+                                              : T("Nichts zu säubern: wähl Tonclips aus oder leg sie auf die Spur A%1")
+                                                    .arg(track + 1);
+        QToolTip::showText(m_cleanVoice->mapToGlobal(QPoint(0, m_cleanVoice->height())), text, m_cleanVoice);
     });
     titleLay->addWidget(m_cleanVoice);
     titleLay->addWidget(m_record);

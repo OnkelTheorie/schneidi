@@ -2935,5 +2935,7 @@
  "Im Bereich wiederholen": "Повторять в диапазоне",
  "Play/Pause (Leertaste) – wiederholt im In/Out-Bereich": "Воспроизведение/Пауза (пробел) – повтор в диапазоне входа/выхода",
  "%1 ist jetzt kürzer: 1 Clip reicht über sein Ende hinaus": "%1 теперь короче: 1 клип выходит за его конец",
- "%1 ist jetzt kürzer: %2 Clips reichen über sein Ende hinaus": "%1 теперь короче: клипов за его концом: %2"
+ "%1 ist jetzt kürzer: %2 Clips reichen über sein Ende hinaus": "%1 теперь короче: клипов за его концом: %2",
+ "Stimme gesäubert (%1 Clips) – Strg+Z nimmt es zurück": "Голос очищен (клипов: %1) – Ctrl+Z отменяет",
+ "Nichts zu säubern: wähl Tonclips aus oder leg sie auf die Spur A%1": "Нечего очищать: выбери аудиоклипы или положи их на дорожку A%1"
 }

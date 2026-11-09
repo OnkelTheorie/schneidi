@@ -2935,5 +2935,7 @@
  "Im Bereich wiederholen": "Zapętl w zakresie",
  "Play/Pause (Leertaste) – wiederholt im In/Out-Bereich": "Odtwarzaj/Pauza (spacja) – zapętla w zakresie wejścia/wyjścia",
  "%1 ist jetzt kürzer: 1 Clip reicht über sein Ende hinaus": "%1 jest teraz krótszy: 1 klip wychodzi poza jego koniec",
- "%1 ist jetzt kürzer: %2 Clips reichen über sein Ende hinaus": "%1 jest teraz krótszy: klipy wychodzące poza jego koniec: %2"
+ "%1 ist jetzt kürzer: %2 Clips reichen über sein Ende hinaus": "%1 jest teraz krótszy: klipy wychodzące poza jego koniec: %2",
+ "Stimme gesäubert (%1 Clips) – Strg+Z nimmt es zurück": "Głos oczyszczony (klipy: %1) – Ctrl+Z cofa",
+ "Nichts zu säubern: wähl Tonclips aus oder leg sie auf die Spur A%1": "Nic do oczyszczenia: zaznacz klipy dźwiękowe albo umieść je na ścieżce A%1"
 }

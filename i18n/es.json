@@ -2935,5 +2935,7 @@
  "Im Bereich wiederholen": "Repetir en el rango",
  "Play/Pause (Leertaste) – wiederholt im In/Out-Bereich": "Reproducir/Pausa (barra espaciadora) – repite en el rango de entrada/salida",
  "%1 ist jetzt kürzer: 1 Clip reicht über sein Ende hinaus": "%1 ahora es más corto: 1 clip llega más allá de su final",
- "%1 ist jetzt kürzer: %2 Clips reichen über sein Ende hinaus": "%1 ahora es más corto: %2 clips llegan más allá de su final"
+ "%1 ist jetzt kürzer: %2 Clips reichen über sein Ende hinaus": "%1 ahora es más corto: %2 clips llegan más allá de su final",
+ "Stimme gesäubert (%1 Clips) – Strg+Z nimmt es zurück": "Voz limpiada (%1 clips) – Ctrl+Z lo deshace",
+ "Nichts zu säubern: wähl Tonclips aus oder leg sie auf die Spur A%1": "Nada que limpiar: selecciona clips de audio o colócalos en la pista A%1"
 }

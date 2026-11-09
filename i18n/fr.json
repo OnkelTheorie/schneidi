@@ -2935,5 +2935,7 @@
  "Im Bereich wiederholen": "Boucler dans la plage",
  "Play/Pause (Leertaste) – wiederholt im In/Out-Bereich": "Lecture/Pause (barre d’espace) – boucle dans la plage d’entrée/sortie",
  "%1 ist jetzt kürzer: 1 Clip reicht über sein Ende hinaus": "%1 est plus court maintenant : 1 clip dépasse sa fin",
- "%1 ist jetzt kürzer: %2 Clips reichen über sein Ende hinaus": "%1 est plus court maintenant : %2 clips dépassent sa fin"
+ "%1 ist jetzt kürzer: %2 Clips reichen über sein Ende hinaus": "%1 est plus court maintenant : %2 clips dépassent sa fin",
+ "Stimme gesäubert (%1 Clips) – Strg+Z nimmt es zurück": "Voix nettoyée (%1 clips) – Ctrl+Z l'annule",
+ "Nichts zu säubern: wähl Tonclips aus oder leg sie auf die Spur A%1": "Rien à nettoyer : sélectionne des clips audio ou place-les sur la piste A%1"
 }
