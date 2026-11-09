@@ -67,7 +67,7 @@ void MainWindow::setupTours(QMenu* help)
     m_inspector->setProperty("tourTarget", "inspector");
     m_effectsToggle->setProperty("tourTarget", "effectsToggle");
     m_effects->setProperty("tourTarget", "effects");
-    m_scopes->setProperty("tourTarget", "scopes");
+    // the scopes' target: ensureColorPage (built on the first use)
     for (QAbstractButton* b : m_pageButtons->buttons()) // page buttons: the same names the page bar uses elsewhere
         if (b->objectName().isEmpty()) b->setObjectName("pageButton_" + pageName(Page(m_pageButtons->id(b))));
 
@@ -137,7 +137,7 @@ void MainWindow::setupTours(QMenu* help)
             return T("Rundgang erst nach dem Rendern – oder das Rendern abbrechen.");
         if (m_review.active)
             return T("Rundgang erst, wenn die Änderungen der KI übernommen oder verworfen sind.");
-        if (m_colorPanel->tracking()) return T("Rundgang erst, wenn das Verfolgen des Fensters fertig ist.");
+        if (m_colorPanel && m_colorPanel->tracking()) return T("Rundgang erst, wenn das Verfolgen des Fensters fertig ist.");
         return {};
     };
     // The timeline's ruler (click there = playhead) and the playhead line, in window coordinates
@@ -235,7 +235,7 @@ void MainWindow::setupTours(QMenu* help)
     };
     host.conditions["color_has_window"] = hasWindow;
     host.offers["color_window"] = {N_("Für mich erledigen"), [hasWindow] { return !hasWindow(); },
-                                   [this] { m_colorPanel->addWindow("rectangle"); }};
+                                   [this] { colorPanel()->addWindow("rectangle"); }};
     host.actions["effects_recipes"] = [this] { m_effects->showRecipes(); };
     // The Comp page: a node selected (the Inspector shows its settings), the key's pipette there
     for (const QString& type : {QStringLiteral("key"), QStringLiteral("merge"), QStringLiteral("transform")})
@@ -296,9 +296,8 @@ void MainWindow::setupTours(QMenu* help)
     // The page's own "Create Compositing" too: it builds an empty graph, not the tour's example
     connect(m_tours, &TourManager::runningChanged, this, [this](bool on) {
         if (m_compPage) m_compPage->setTourRunning(on);
-        m_colorPanel->setTourButtonAllowed(!on);
+        if (m_colorPanel) m_colorPanel->setTourButtonAllowed(!on);
     });
-    connect(m_colorPanel, &ColorPanel::tourRequested, m_tours, [this] { m_tours->start("color"); });
     // A page or a panel the user opens may be what a step waits for
     connect(m_effectsToggle, &QToolButton::toggled, m_tours, &TourManager::poke, Qt::QueuedConnection);
     // Queued: the timeline takes the new playhead in a slot connected later
@@ -416,7 +415,7 @@ void MainWindow::enterTourMode(const Tour& tour)
     s.page = m_page;
     s.large = m_large.active;
     for (QToolButton* b : tourToggles()) s.toggles << b->isChecked();
-    s.scopes = !m_scopes->isHidden();
+    s.scopes = m_scopes ? !m_scopes->isHidden() : QSettings().value("color/scopesVisible", true).toBool();
     for (QSplitter* sp : findChildren<QSplitter*>()) s.sizes.push_back({sp, sp->sizes()});
     s.window = size();
     s.tool = int(m_timeline->view()->tool());
@@ -430,8 +429,10 @@ void MainWindow::enterTourMode(const Tour& tour)
     const bool defaults[] = {true, false, false, true, false, false, false}; // tourToggles() order
     const QVector<QToolButton*> toggles = tourToggles();
     for (int i = 0; i < toggles.size(); ++i) toggles[i]->setChecked(defaults[i]);
-    m_scopes->setVisible(true);
-    applySizes(m_colorBottom, {1100, 420});
+    if (m_scopes) { // not built yet: ensureColorPage shows them during a tour
+        m_scopes->setVisible(true);
+        applySizes(m_colorBottom, {1100, 420});
+    }
     updatePageButtons();
 
     // AIs wait meanwhile (APP_WAITING with this text): their edits would land in the practice project
@@ -524,9 +525,9 @@ void MainWindow::leaveTourMode()
     m_tourSaved.active = true;
     const QVector<QToolButton*> toggles = tourToggles();
     for (int i = 0; i < toggles.size() && i < s.toggles.size(); ++i) toggles[i]->setChecked(s.toggles[i]);
-    m_scopes->setVisible(s.scopes);
+    if (m_scopes) m_scopes->setVisible(s.scopes);
     m_tourSaved.active = false;
-    applySizes(m_colorBottom, {1100, 420});
+    if (m_colorBottom) applySizes(m_colorBottom, {1100, 420});
     m_tourSwap = true; // the page as it was: no page entry moves the user's playhead or changes the Comp clip
     showPage(s.page);
     m_tourSwap = false;

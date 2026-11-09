@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Inspector: subtitle page.
 #include "ui/Inspector.h"
+#include "ui/LazyFontBox.h"
 
 #include "app/Theme.h"
 #include "core/Captions.h"
@@ -21,7 +22,6 @@
 #include <QColorDialog>
 #include <QDir>
 #include <QComboBox>
-#include <QFontComboBox>
 #include <QFileInfo>
 #include <QGridLayout>
 #include <QHBoxLayout>
@@ -254,12 +254,8 @@ void Inspector::buildSubtitlePage(QVBoxLayout* page)
         return m_editor->project()->timeline().subtitles[track].style;
     };
 
-    auto* fontBox = new QFontComboBox;
-    fontBox->setFocusPolicy(Qt::ClickFocus);
-    fontBox->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
-    fontBox->setMinimumContentsLength(8);
-    fontBox->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
-    connect(fontBox, &QFontComboBox::currentFontChanged, this, [this](const QFont& f) {
+    auto* fontBox = new LazyFontBox; // the real QFontComboBox on the first showing (start time)
+    connect(fontBox, &LazyFontBox::currentFontChanged, this, [this](const QFont& f) {
         const QString family = f.family();
         changeSubtitleStyle(T("Schriftart"), [family](TitleStyle& t) { t.font = family; });
     });

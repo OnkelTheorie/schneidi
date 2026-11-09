@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Inspector: title page.
 #include "ui/Inspector.h"
+#include "ui/LazyFontBox.h"
 
 #include "app/Theme.h"
 #include "core/BrandKit.h"
@@ -21,7 +22,6 @@
 #include <QColorDialog>
 #include <QDir>
 #include <QComboBox>
-#include <QFontComboBox>
 #include <QFileInfo>
 #include <QGridLayout>
 #include <QHBoxLayout>
@@ -107,12 +107,8 @@ void Inspector::buildTitlePage(QVBoxLayout* page)
     txt.grid->addWidget(edit, txt.rows++, 0, 1, 3);
     const int fontRow = txt.rows;
 
-    auto* fontBox = new QFontComboBox;
-    fontBox->setFocusPolicy(Qt::ClickFocus);
-    fontBox->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon); // otherwise the list blows the width
-    fontBox->setMinimumContentsLength(8);
-    fontBox->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
-    connect(fontBox, &QFontComboBox::currentFontChanged, this, [this, V](const QFont& f) {
+    auto* fontBox = new LazyFontBox; // the real QFontComboBox on the first showing (start time)
+    connect(fontBox, &LazyFontBox::currentFontChanged, this, [this, V](const QFont& f) {
         const QString family = f.family();
         apply(V, {}, T("Schriftart"), [family](Clip& c) {
             c.title.font = family;

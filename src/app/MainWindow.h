@@ -353,6 +353,13 @@ private:
     void createCompoundClip(); // ask for the name like DaVinci
     // Comp page (MainWindowComp.cpp)
     void ensureCompPage();
+    void ensureColorPage(); // the Color page's widgets (color wheels, scopes), built on the first use
+    void connectColorPage(); // its connections (MainWindow.cpp, beside the other panels')
+    ColorPanel* colorPanel()
+    {
+        ensureColorPage();
+        return m_colorPanel;
+    }
     int selectedVideoClip() const; // first selected video clip (0 = none)
     // What the viewer plays: the project, on the Comp page with the graph cut at the shown node / its matte
     Timeline previewTimeline() const;

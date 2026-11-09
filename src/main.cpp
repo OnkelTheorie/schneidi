@@ -4,11 +4,13 @@
 #include "app/InputBindings.h"
 #include "app/LaunchArgs.h"
 #include "app/Log.h"
+#include "core/StartupTrace.h"
 #include "core/ProjectFile.h"
 #include "app/MainWindow.h"
 #include "cli/Commands.h"
 #include "cli/Live.h"
 #include "cli/Setup.h"
+#include "ui/FrameView.h"
 #include "ui/MediaStorage.h"
 #include "app/Theme.h"
 #include "core/CodeTrust.h"
@@ -27,11 +29,13 @@
 #include <QLockFile>
 #include <QMessageBox>
 #include <QPainter>
-#include <QSplashScreen>
+#include <QScreen>
+#include <QSettings>
 #include <QProcess>
 #include <QFileInfo>
 #include <QRegularExpression>
 #include <QTimer>
+#include <QWindow>
 #include <clocale>
 #include <memory>
 
@@ -78,10 +82,76 @@ QPixmap splashPixmap()
     return pm;
 }
 
+// Startup time of the last run (ms to the shown window): a splash only when it was slower than this
+constexpr const char* kLastStartKey = "startup/lastWindowMs";
+constexpr qint64 kSplashAboveMs = 900;
+
+// A splash that never blocks: QSplashScreen waits up to a second for the window system to expose it (on show and in
+// finish()), which made every start a second slower. This one paints when it gets the chance - a short, bounded look
+// at the event queue after show() - and goes away with the main window's show.
+class SplashWindow : public QWidget {
+public:
+    explicit SplashWindow(const QPixmap& pixmap)
+        : QWidget(nullptr, Qt::SplashScreen | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint), m_pixmap(pixmap)
+    {
+        setAttribute(Qt::WA_OpaquePaintEvent);
+        setFixedSize(pixmap.deviceIndependentSize().toSize());
+        if (const QScreen* screen = QGuiApplication::primaryScreen())
+            move(screen->availableGeometry().center() - rect().center());
+    }
+    void showNow(const QString& message)
+    {
+        m_message = message;
+        show();
+        // At most ~60 ms for the expose (a local display answers in a few): enough for the picture on screen, never
+        // the full second QSplashScreen allows
+        QElapsedTimer t;
+        t.start();
+        while (windowHandle() && !windowHandle()->isExposed() && t.elapsed() < 60)
+            QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents, 10);
+        if (windowHandle() && windowHandle()->isExposed()) repaint();
+    }
+
+protected:
+    void paintEvent(QPaintEvent*) override
+    {
+        QPainter p(this);
+        p.drawPixmap(0, 0, m_pixmap);
+        p.setPen(Theme::textDim);
+        p.drawText(rect().adjusted(8, 0, -8, -10), Qt::AlignLeft | Qt::AlignBottom, m_message);
+    }
+
+private:
+    QPixmap m_pixmap;
+    QString m_message;
+};
+
+// SCHNEIDI_STARTUP_TRACE: marks the window's first expose and first paint (startup phase table)
+class FirstPaintTrace : public QObject {
+public:
+    using QObject::QObject;
+    bool eventFilter(QObject* o, QEvent* e) override
+    {
+        if (e->type() == QEvent::Expose && !m_exposed) {
+            m_exposed = true;
+            StartupTrace::mark("first expose");
+        } else if (e->type() == QEvent::Paint && !m_painted && o == parent()) {
+            m_painted = true;
+            StartupTrace::mark("first paint (main window)");
+            QTimer::singleShot(0, this, [] { StartupTrace::mark("event loop idle after first paint"); });
+        }
+        return false;
+    }
+
+private:
+    bool m_exposed = false, m_painted = false;
+};
+
 } // namespace
 
 int main(int argc, char* argv[])
 {
+    StartupTrace::start();
     QElapsedTimer startTimer;
     startTimer.start();
     SettingsIsolation::apply(); // test runs only (SCHNEIDI_TEST_SETTINGS): never the user's settings, before any use
@@ -116,6 +186,7 @@ int main(int argc, char* argv[])
 #endif
     I18n::prepareEnvironment(langOverride);
     QApplication app(argc, argv);
+    StartupTrace::mark("QApplication");
     QApplication::setApplicationVersion(QString::fromUtf8(SCHNEIDI_VERSION_LABEL) + (*SCHNEIDI_BUILD ? QString(" (%1)").arg(SCHNEIDI_BUILD) : QString())); // version from CMakeLists, Git state, see cmake/BuildInfo.cmake
     // Already running: hand the files over to that app (a double-click in the file manager, a recorder passing its
     // clip on: `schneidi --open <file>` or just `schneidi <file>`) and quit before anything of this process shows or
@@ -140,19 +211,17 @@ int main(int argc, char* argv[])
     Theme::load(designArg);
     Theme::apply(app);
     InputBindings::instance().load();
+    StartupTrace::mark("log, i18n, theme, bindings");
 
-    // Splash window while the window is built (Windows at first start: the virus scanner looks at every DLL)
-    std::unique_ptr<QSplashScreen> splash;
-    const auto status = [&splash](const QString& text) {
-        if (!splash) return;
-        splash->showMessage("  " + text + "\n", Qt::AlignLeft | Qt::AlignBottom, Theme::textDim);
-        QCoreApplication::processEvents();
-    };
-    if (screenshot.isEmpty()) {
-        splash = std::make_unique<QSplashScreen>(splashPixmap());
-        splash->show();
-        status(T("Öffne Fenster…"));
+    // Splash window while the window is built (Windows at first start: the virus scanner looks at every DLL; weak
+    // hardware). Only when the previous start was slow (or there was none): on a fast machine the window itself comes
+    // before a splash would be worth its round trip to the window system.
+    std::unique_ptr<SplashWindow> splash;
+    if (screenshot.isEmpty() && QSettings().value(kLastStartKey, kSplashAboveMs + 1).toLongLong() > kSplashAboveMs) {
+        splash = std::make_unique<SplashWindow>(splashPixmap());
+        splash->showNow(T("Öffne Fenster…"));
     }
+    StartupTrace::mark("splash shown");
 
     FfmpegLog::install([](bool error, const QString& text) { Log::message(error ? "AV-E" : "AV-W", text); });
     // The GPU picture engine's OpenGL surface from the event loop, not on the way to the first window
@@ -167,21 +236,40 @@ int main(int argc, char* argv[])
         return 1;
     }
     const qint64 afterEngine = startTimer.elapsed();
+    StartupTrace::mark("engine init");
 
     // Deliver › Prüf-Render: the marks of `render review:"video"` (the command layer, which the app's library does not link)
     RenderQueue::setReviewMarks([](const ProjectData& data, int sequence, const std::atomic<bool>& cancel) {
         return Cli::reviewOverlay(data, sequence, &cancel);
     });
+    // The viewer trusts the last run's GPU check; the real one (a throwaway OpenGL/D3D device) comes after the window
+    FrameView::setUseCachedGpuCheck(true);
     MainWindow w(&engine);
+    StartupTrace::mark("MainWindow constructed");
     // Menu entries that map onto an edit op of the command layer ("Musik auf Länge…"): the user's own undo step
     w.setUserRunner([&w](const QString& command, const QJsonObject& args, const QString& undoText) {
         return Cli::Live::runForUser(&w, command, args, undoText);
     });
+    if (StartupTrace::enabled()) {
+        auto* trace = new FirstPaintTrace(&w);
+        w.installEventFilter(trace);
+        w.winId(); // the native window exists now: its expose reaches the filter
+        w.windowHandle()->installEventFilter(trace);
+    }
     // Start maximized like DaVinci; screenshot test runs (offscreen) keep the fixed size from MainWindow
     if (app.arguments().contains("--screenshot")) w.show();
     else w.showMaximized();
-    if (splash) splash->finish(&w);
+    StartupTrace::mark("window show() returned");
+    // The real GPU check once the window is on screen and idle (a stored one decided the viewer's start), at the
+    // latest after the first interactions have had their turn
+    QTimer::singleShot(1500, &w, [] {
+        FrameView::checkCachedGpu();
+        StartupTrace::mark("viewer GPU check done");
+    });
+    splash.reset(); // never waits for the window system: the main window covers the spot anyway
+    StartupTrace::mark("splash finished");
     qInfo("Startzeit: Engine %lld ms, Fenster sichtbar nach %lld ms", afterEngine - beforeEngine, startTimer.elapsed());
+    if (screenshot.isEmpty()) QSettings().setValue(kLastStartKey, startTimer.elapsed()); // decides the next splash
 
     // Files from the command line directly into the Media Pool
     const QStringList args = app.arguments().mid(1);

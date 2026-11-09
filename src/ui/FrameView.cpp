@@ -20,6 +20,8 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <optional>
+#include <utility>
 
 namespace {
 
@@ -79,6 +81,23 @@ FrameView::Backend FrameView::chooseBackend(const QString& env, const QString& s
     return result(Backend::Rhi, p.device);
 }
 
+namespace {
+// Startup without the GPU check: the previous run's answer (settings), checked again after the window is up
+bool g_cachedGpu = false;
+constexpr const char* kProbeKey = "viewer/gpuCheck"; // "ok|software|device" of the last check
+QList<QPointer<FrameView>>& cachedViews()
+{
+    static QList<QPointer<FrameView>> views;
+    return views;
+}
+std::optional<FrameView::Probe> cachedProbe()
+{
+    const QStringList parts = QSettings().value(kProbeKey).toString().split('|');
+    if (parts.size() < 3) return std::nullopt;
+    return FrameView::Probe{parts[0] == "1", parts[1] == "1", parts.mid(2).join('|')};
+}
+} // namespace
+
 FrameView::FrameView(QWidget* parent) : QWidget(parent), m_background(Theme::viewerBg)
 {
     setMouseTracking(true);
@@ -86,20 +105,61 @@ FrameView::FrameView(QWidget* parent) : QWidget(parent), m_background(Theme::vie
     std::function<Probe()> probe;
 #ifdef SCHNEIDI_HAVE_RHI
     probe = [] { return FrameViewRhiSurface::probe(); };
+    // The app's start: the last run's check instead of a device made and thrown away now (an OpenGL/D3D context,
+    // 50-300 ms with the driver load); the real check follows after the window is up (checkCachedGpu)
+    if (g_cachedGpu && !FrameViewRhiSurface::probed())
+        if (const std::optional<Probe> cached = cachedProbe())
+            probe = [this, p = *cached] {
+                m_gpuPending = true; // only when the choice needed it (not for a painter wish or a headless platform)
+                cachedViews() << this;
+                return p;
+            };
 #endif
     // Compatibility mode (CpuPath): the painter unless SCHNEIDI_VIEWER asks for something else
     m_backend = chooseBackend(qEnvironmentVariable("SCHNEIDI_VIEWER"),
                               CpuPath::on() ? QStringLiteral("painter") : QSettings().value("viewer/renderer").toString(),
                               QGuiApplication::platformName(),
                               rhiCompiled(), probe, &m_backendInfo);
+    if (m_backend == Backend::Rhi) makeRhiSurface();
+}
+
+void FrameView::setUseCachedGpuCheck(bool use)
+{
+    g_cachedGpu = use;
+}
+
+void FrameView::checkCachedGpu()
+{
+    g_cachedGpu = false;
 #ifdef SCHNEIDI_HAVE_RHI
-    if (m_backend == Backend::Rhi) {
-        auto* surface = new FrameViewRhiSurface(this);
-        m_surface = surface;
-        m_overlayLayer = new FrameViewOverlayLayer(this);
-        m_overlayLayer->raise();
-        connect(surface, &QRhiWidget::renderFailed, this, [this] { fallBackToPainter("RHI render failed"); });
+    const QList<QPointer<FrameView>> views = std::exchange(cachedViews(), {});
+    // Nothing took the stored check and nothing checked: nothing to learn (painter wished, headless, tests)
+    if (views.isEmpty() && !FrameViewRhiSurface::probed()) return;
+    const Probe p = FrameViewRhiSurface::probe(); // free when a view checked at its start
+    QSettings().setValue(kProbeKey, QString("%1|%2|%3").arg(p.ok ? 1 : 0).arg(p.software ? 1 : 0).arg(p.device));
+    for (const QPointer<FrameView>& v : views) {
+        if (!v) continue;
+        v->m_gpuPending = false;
+        // The device went away (driver, VM): the painter now. One that came is taken from the next start on - a
+        // window that composites without the GPU cannot take a GPU surface while it is shown.
+        const Backend now = chooseBackend(qEnvironmentVariable("SCHNEIDI_VIEWER"),
+                                          CpuPath::on() ? QStringLiteral("painter")
+                                                        : QSettings().value("viewer/renderer").toString(),
+                                          QGuiApplication::platformName(), rhiCompiled(), [p] { return p; });
+        if (v->m_backend == Backend::Rhi && now == Backend::Painter) v->fallBackToPainter("GPU check after the start");
     }
+#endif
+}
+
+void FrameView::makeRhiSurface()
+{
+#ifdef SCHNEIDI_HAVE_RHI
+    auto* surface = new FrameViewRhiSurface(this);
+    m_surface = surface;
+    m_overlayLayer = new FrameViewOverlayLayer(this);
+    m_overlayLayer->setGeometry(rect());
+    m_overlayLayer->raise();
+    connect(surface, &QRhiWidget::renderFailed, this, [this] { fallBackToPainter("RHI render failed"); });
 #endif
 }
 

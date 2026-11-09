@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "ui/FrameViewRhi.h"
 
+#include "core/StartupTrace.h"
+
 #include <QFile>
 #include <QOffscreenSurface>
 #include <rhi/qrhi.h>
 
+#include <atomic>
 #include <cstring>
 
 namespace {
@@ -37,6 +40,15 @@ QRhiWidget::Api FrameViewRhiSurface::platformApi()
 #endif
 }
 
+namespace {
+std::atomic<bool> g_probed{false};
+} // namespace
+
+bool FrameViewRhiSurface::probed()
+{
+    return g_probed.load();
+}
+
 FrameView::Probe FrameViewRhiSurface::probe()
 {
     static const FrameView::Probe result = [] {
@@ -59,8 +71,10 @@ FrameView::Probe FrameViewRhiSurface::probe()
         p.device = QString::fromUtf8(rhi->driverInfo().deviceName);
         p.software = softwareDevice(rhi->driverInfo());
         rhi.reset(); // before the fallback surface (OpenGL) goes: the QRhi needs it to shut down
+        StartupTrace::mark("viewer RHI probe");
         return p;
     }();
+    g_probed = true;
     return result;
 }
 

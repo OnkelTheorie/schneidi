@@ -382,8 +382,11 @@ Look look(MainWindow& w)
         if (k.startsWith("panels/") || k.startsWith("layout/") || k.startsWith("color/")) l.settings[k] = s.value(k);
     for (const char* name : kToggles)
         if (auto* b = w.findChild<QToolButton*>(name); CHECK(b)) l.toggles << b->isChecked();
-    for (const char* name : {"editTop", "editMain", "editRow", "colorBottom"})
-        if (auto* sp = w.findChild<QSplitter*>(name); CHECK(sp) && sp->isVisible()) l.sizes[name] = sp->sizes();
+    for (const char* name : {"editTop", "editMain", "editRow", "colorBottom"}) {
+        auto* sp = w.findChild<QSplitter*>(name);
+        if (!sp && qstrcmp(name, "colorBottom") == 0) continue; // the Color page is built on its first showing
+        if (CHECK(sp) && sp->isVisible()) l.sizes[name] = sp->sizes();
+    }
     l.window = w.size();
     for (QAbstractButton* b : w.findChildren<QAbstractButton*>())
         if (b->objectName().startsWith("pageButton_") && b->isChecked()) l.page = b->objectName();
@@ -671,9 +674,10 @@ void testPanelToggles(MainWindow& w)
 void testColorTourButton(MainWindow& w)
 {
     auto* color = w.findChild<QAbstractButton*>("pageButton_color");
+    if (!CHECK(color)) return;
+    color->click(); // builds the page (ensureColorPage)
     auto* start = w.findChild<QPushButton*>("color_tour_button");
-    if (!CHECK(color && start)) return;
-    color->click();
+    if (!CHECK(start)) return;
     if (QPushButton* later = button(w.tours()->overlay(), "tour_later")) later->click(); // the page's own question
     QTest::qWait(20);
     CHECK(start->isVisible());
