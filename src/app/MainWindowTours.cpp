@@ -396,7 +396,6 @@ void MainWindow::enterTourMode(const Tour& tour)
     m_engine->pause();
     if (!m_autosaveDisabled) autosave(); // the backup up to date: a crash during the tour still restores the user's work
     // The user's project as it is (unsaved changes included) and how the window looks, kept aside
-    ensureColorPage(); // its panels' state is part of what a tour sets aside and restores
     TourSaved& s = m_tourSaved;
     s = {};
     s.active = true;
@@ -412,7 +411,7 @@ void MainWindow::enterTourMode(const Tour& tour)
     s.page = m_page;
     s.large = m_large.active;
     for (QToolButton* b : tourToggles()) s.toggles << b->isChecked();
-    s.scopes = !m_scopes->isHidden();
+    s.scopes = m_scopes ? !m_scopes->isHidden() : QSettings().value("color/scopesVisible", true).toBool();
     for (QSplitter* sp : findChildren<QSplitter*>()) s.sizes.push_back({sp, sp->sizes()});
     s.window = size();
     s.tool = int(m_timeline->view()->tool());
@@ -426,8 +425,10 @@ void MainWindow::enterTourMode(const Tour& tour)
     const bool defaults[] = {true, false, false, true, false, false, false}; // tourToggles() order
     const QVector<QToolButton*> toggles = tourToggles();
     for (int i = 0; i < toggles.size(); ++i) toggles[i]->setChecked(defaults[i]);
-    m_scopes->setVisible(true);
-    applySizes(m_colorBottom, {1100, 420});
+    if (m_scopes) { // not built yet: ensureColorPage shows them during a tour
+        m_scopes->setVisible(true);
+        applySizes(m_colorBottom, {1100, 420});
+    }
     updatePageButtons();
 
     // AIs wait meanwhile (APP_WAITING with this text): their edits would land in the practice project
@@ -519,9 +520,9 @@ void MainWindow::leaveTourMode()
     m_tourSaved.active = true;
     const QVector<QToolButton*> toggles = tourToggles();
     for (int i = 0; i < toggles.size() && i < s.toggles.size(); ++i) toggles[i]->setChecked(s.toggles[i]);
-    m_scopes->setVisible(s.scopes);
+    if (m_scopes) m_scopes->setVisible(s.scopes);
     m_tourSaved.active = false;
-    applySizes(m_colorBottom, {1100, 420});
+    if (m_colorBottom) applySizes(m_colorBottom, {1100, 420});
     m_tourSwap = true; // the page as it was: no page entry moves the user's playhead or changes the Comp clip
     showPage(s.page);
     m_tourSwap = false;

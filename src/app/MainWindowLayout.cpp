@@ -478,7 +478,6 @@ void MainWindow::ensureColorPage()
     // start's widgets, and most sessions never open them
     m_colorPanel = new ColorPanel(m_editor);
     m_scopes = new ScopesPanel;
-    m_scopes->setVisible(QSettings().value("color/scopesVisible", true).toBool());
     m_scopes->setProperty("tourTarget", "scopes");
     // Color page (slimmed down): viewer on top, timeline in the middle, color wheels below and the scopes right of
     // them; the scopes analyse each preview frame after the grade
@@ -487,6 +486,9 @@ void MainWindow::ensureColorPage()
     m_colorBottom->addWidget(m_colorPanel);
     m_colorBottom->addWidget(m_scopes);
     m_colorBottom->setStretchFactor(0, 1);
+    // A tour shows them (its steps point at them); otherwise as the user left them. Hidden only once in the splitter:
+    // setVisible on the parentless panel would show it as a window of its own and take the activation from this one
+    if (!m_tourSaved.active && !QSettings().value("color/scopesVisible", true).toBool()) m_scopes->hide();
     m_colorPage->addWidget(m_colorBottom);
     m_pages->addWidget(m_colorPage);
     watchSizes(m_colorPage, "colorPage");
