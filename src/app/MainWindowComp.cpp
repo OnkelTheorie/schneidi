@@ -68,12 +68,13 @@ void MainWindow::ensureCompPage()
     });
 }
 
-void MainWindow::applyRecipe(const QVector<int>& ids, const QString& recipe)
+bool MainWindow::applyRecipe(const QVector<int>& ids, const QString& recipe)
 {
-    if (CompUi::applyRecipeAsking(this, m_editor, ids, recipe).isNull()) return;
+    if (CompUi::applyRecipeAsking(this, m_editor, ids, recipe).isNull()) return false;
     const std::optional<CompRecipe> r = CompRecipes::find(recipe);
     statusBar()->showMessage(T("Rezept „%1“ angewendet – die Werte stellst du auf der Seite Compositing ein")
                                  .arg(r ? CompRecipes::shownName(*r) : recipe), 6000);
+    return true;
 }
 
 int MainWindow::selectedVideoClip() const

@@ -196,7 +196,7 @@ public:
     void placeSound(const QByteArray& sound, int frame);
     // A compositing recipe from the Effects Library (double-click or dropped on a clip) onto video clips `ids`: its
     // required files asked for, one undo step, a failure in a message box (CompUi::applyRecipeAsking)
-    void applyRecipe(const QVector<int>& ids, const QString& recipe);
+    bool applyRecipe(const QVector<int>& ids, const QString& recipe); // false = not applied
     class AiChat* aiChat() const { return m_chat; }
     class AiChatPanel* aiChatPanel() const { return m_chatPanel; }
     void showAiChat(bool on);

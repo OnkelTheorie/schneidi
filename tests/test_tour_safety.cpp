@@ -269,6 +269,21 @@ void testUserState(Engine& engine)
                       .arg(tv->view().pxPerFrame).arg(tv->view().leftFrame).arg(tv->view().scrollY));
 }
 
+// A recipe dropped on a clip selects that clip (the Comp page and the Inspector show it next)
+void testRecipeDrop(Engine& engine)
+{
+    auto w = window(engine);
+    w->importFiles({sampleClip(), sampleClip()}, true, true);
+    const Timeline& tl = w->liveProject()->timeline();
+    if (!CHECK(!tl.video.isEmpty() && tl.video[0].clips.size() == 2)) return;
+    const int a = tl.video[0].clips[0].id, b = tl.video[0].clips[1].id;
+    w->liveSelection()->set({a});
+    emit w->findChild<TimelineView*>()->recipeDropped(b, "pip_frame");
+    QTest::qWait(50);
+    CHECK(w->liveSelection()->ids().contains(b));
+    CHECK(!w->liveSelection()->ids().contains(a));
+}
+
 // Closed during a tour (both histories hold steps): no slot runs on the half-destroyed window
 void testCloseInTour(Engine& engine)
 {
@@ -298,6 +313,7 @@ int main(int argc, char** argv)
     testOutsideChange(engine, dir);
     testEscape(engine);
     testUserState(engine);
+    testRecipeDrop(engine);
     testCloseInTour(engine);
     return Check::result();
 }
