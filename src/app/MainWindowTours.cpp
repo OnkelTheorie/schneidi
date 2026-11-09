@@ -209,6 +209,7 @@ QVector<QToolButton*> MainWindow::tourToggles() const
 void MainWindow::enterTourMode(const Tour& tour)
 {
     if (m_tourSaved.active) leaveTourMode();
+    if (!m_autosaveDisabled) autosave(); // the backup up to date: a crash during the tour still restores the user's work
     // The user's project as it is (unsaved changes included) and how the window looks, kept aside
     TourSaved& s = m_tourSaved;
     s = {};
