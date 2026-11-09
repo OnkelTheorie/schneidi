@@ -1435,8 +1435,25 @@ void MediaPool::showContextMenu(const QPoint& pos)
         menu.addAction(T("Am Abspielkopf auf freie Spur legen") + "\tF12", this, [this, path] { emit editRequested(path, 1); });
         menu.addAction(T("Ans Ende der Timeline anhängen") + "\tShift+F12", this,
                        [this, path] { emit editRequested(path, 2); });
-        menu.addSeparator();
     }
+    // Picture or sound only (a recording whose sound the edit does not need): at the playhead, overwriting
+    bool picture = false, sound = false;
+    for (const QString& p : paths)
+        if (const MediaInfo* m = m_project->mediaInfo(p)) {
+            picture |= m->hasVideo;
+            sound |= m->hasAudio;
+        }
+    if (picture && sound) {
+        menu.addAction(T("Nur Bild am Abspielkopf platzieren"), this,
+                       [this, paths] { emit partsRequested(paths, PlaceParts::Picture); })
+            ->setToolTip(T("Ohne Ton – auch: beim Ziehen in die Timeline Shift halten"));
+        menu.addAction(T("Nur Ton am Abspielkopf platzieren"), this,
+                       [this, paths] { emit partsRequested(paths, PlaceParts::Sound); })
+            ->setToolTip(T("Ohne Bild – auch: beim Ziehen in die Timeline Strg halten"));
+        menu.setToolTipsVisible(true);
+    }
+    if (m_leaveOutSound) menu.addAction(m_leaveOutSound);
+    if (!paths.isEmpty()) menu.addSeparator();
     menu.addAction(T("Neue Timeline"), this, &MediaPool::newTimeline);
     // A short next to the edit: its own 9:16 resolution, the project and the other timelines stay
     menu.addAction(T("Neue Hochformat-Timeline (9:16)"), this,

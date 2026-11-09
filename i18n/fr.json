@@ -2937,5 +2937,13 @@
  "%1 ist jetzt kürzer: 1 Clip reicht über sein Ende hinaus": "%1 est plus court maintenant : 1 clip dépasse sa fin",
  "%1 ist jetzt kürzer: %2 Clips reichen über sein Ende hinaus": "%1 est plus court maintenant : %2 clips dépassent sa fin",
  "Stimme gesäubert (%1 Clips) – Strg+Z nimmt es zurück": "Voix nettoyée (%1 clips) – Ctrl+Z l'annule",
- "Nichts zu säubern: wähl Tonclips aus oder leg sie auf die Spur A%1": "Rien à nettoyer : sélectionne des clips audio ou place-les sur la piste A%1"
+ "Nichts zu säubern: wähl Tonclips aus oder leg sie auf die Spur A%1": "Rien à nettoyer : sélectionne des clips audio ou place-les sur la piste A%1",
+ "An: Clips mit Bild kommen ohne ihren Ton in die Timeline (Ziehen, Einfügen, F9–F12). Einmalig: beim Ziehen Shift = nur Bild, Strg = nur Ton": "Activé : les clips avec image arrivent dans la timeline sans leur son (glisser, insérer, F9–F12). Une seule fois : en glissant, Maj = image seule, Ctrl = son seul",
+ "Nur Bild am Abspielkopf platzieren": "Placer seulement l'image à la tête de lecture",
+ "Nur Ton am Abspielkopf platzieren": "Placer seulement le son à la tête de lecture",
+ "Ohne Bild – auch: beim Ziehen in die Timeline Strg halten": "Sans image – aussi : maintenir Ctrl en glissant dans la timeline",
+ "Ohne Ton – auch: beim Ziehen in die Timeline Shift halten": "Sans son – aussi : maintenir Maj en glissant dans la timeline",
+ "Ton beim Einfügen weglassen": "Omettre le son au placement",
+ "Ziehen: nur das Bild in die Timeline, ohne Ton": "Glisser : seulement l'image dans la timeline, sans son",
+ "Ziehen: nur den Ton in die Timeline, ohne Bild": "Glisser : seulement le son dans la timeline, sans image"
 }

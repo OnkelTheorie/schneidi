@@ -67,6 +67,16 @@ bool TimelineView::dropRange(const QMimeData* mime, int* in, int* out)
     return *out >= *in;
 }
 
+PlaceParts TimelineView::dropParts(const QMimeData* mime, Qt::KeyboardModifiers mods)
+{
+    const QByteArray handle = mime->data(Viewer::PartsMimeType);
+    if (handle == "picture") return PlaceParts::Picture;
+    if (handle == "sound") return PlaceParts::Sound;
+    if (mods & Qt::ShiftModifier) return PlaceParts::Picture;
+    if (mods & Qt::ControlModifier) return PlaceParts::Sound;
+    return PlaceParts::Both;
+}
+
 int TimelineView::dropTrackAt(int y) const
 {
     // V2 and A2 belong together -> index of the track under the mouse, whether video or audio
@@ -203,7 +213,9 @@ void TimelineView::dragEnterEvent(QDragEnterEvent* e)
         }
     }
     if (m_dropItems.isEmpty()) return;
-    e->acceptProposedAction();
+    // Always a copy: Shift/Ctrl pick the parts here, not a move (a move would take the item out of the Media Pool list)
+    e->setDropAction(Qt::CopyAction);
+    e->accept();
 }
 
 void TimelineView::dragMoveEvent(QDragMoveEvent* e)
@@ -246,7 +258,9 @@ void TimelineView::dragMoveEvent(QDragMoveEvent* e)
     frame += snapDelta({frame, frame + total}, {});
     m_dropFrame = std::max(0, frame);
     m_dropTrack = dropTrackAt(pos.y());
-    e->acceptProposedAction();
+    m_dropParts = dropParts(e->mimeData(), e->modifiers());
+    e->setDropAction(Qt::CopyAction); // see dragEnterEvent
+    e->accept();
     update();
 }
 
@@ -316,13 +330,15 @@ void TimelineView::dropEvent(QDropEvent* e)
     m_slotDropClip = 0;
     int in = 0, out = 0;
     const QStringList paths = dropPaths(e->mimeData());
+    const PlaceParts parts = dropParts(e->mimeData(), e->modifiers());
     if (m_dropFrame >= 0 && paths.size() == 1 && dropRange(e->mimeData(), &in, &out))
-        emit rangeDropRequested(paths.first(), in, out, m_dropFrame, m_dropTrack);
+        emit rangeDropRequested(paths.first(), in, out, m_dropFrame, m_dropTrack, parts);
     else if (m_dropFrame >= 0)
-        emit dropRequested(paths, m_dropFrame, m_dropTrack);
+        emit dropRequested(paths, m_dropFrame, m_dropTrack, parts);
     m_dropFrame = -1;
     m_dropItems.clear();
-    e->acceptProposedAction();
+    e->setDropAction(Qt::CopyAction); // see dragEnterEvent
+    e->accept();
     update();
 }
 

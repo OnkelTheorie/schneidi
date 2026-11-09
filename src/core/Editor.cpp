@@ -139,29 +139,37 @@ QVector<int> Editor::dropStreamTracks(const Timeline& tl, const MediaInfo& m, in
     return out;
 }
 
-void Editor::addMediaAt(const QStringList& paths, int frame, int track)
+void Editor::addMediaAt(const QStringList& paths, int frame, int track, PlaceParts parts)
 {
     Project* p = m_project;
-    QVector<const MediaInfo*> infos;
-    for (const QString& path : paths)
-        if (const MediaInfo* info = p->mediaInfo(path); info && info->length > 0) infos << info;
+    QVector<MediaInfo> infos; // copies: the parts not placed are taken off
+    for (const QString& path : paths) {
+        const MediaInfo* info = p->mediaInfo(path);
+        if (!info || info->length <= 0) continue;
+        MediaInfo m = *info;
+        const PlaceParts take = placeParts(m, parts);
+        if (take == PlaceParts::Sound) m.hasVideo = false;
+        if (take == PlaceParts::Picture) m.hasAudio = false;
+        infos << m;
+    }
     if (infos.isEmpty()) return;
     // a locked target track gets nothing (like DaVinci); missing tracks are created unlocked
     const int idx0 = std::max(0, track);
     const bool videoOk = !isTrackLocked({TrackKind::Video, idx0});
     const bool audioOk = !isTrackLocked({TrackKind::Audio, idx0});
     infos.erase(std::remove_if(infos.begin(), infos.end(),
-                               [&](const MediaInfo* i) { return !(i->hasVideo && videoOk) && !(i->hasAudio && audioOk); }),
+                               [&](const MediaInfo& i) { return !(i.hasVideo && videoOk) && !(i.hasAudio && audioOk); }),
                 infos.end());
     if (infos.isEmpty()) return;
 
-    const QString text = infos.size() == 1 ? T("Einfügen: %1").arg(infos.first()->name)
+    const QString text = infos.size() == 1 ? T("Einfügen: %1").arg(infos.first().name)
                                            : T("%1 Clips einfügen").arg(infos.size());
     p->edit(text, [&](Timeline& tl) {
         auto newId = [p] { return p->newClipId(); };
         const int idx = std::max(0, track);
         int start = std::max(0, frame);
-        for (const MediaInfo* info : infos) {
+        for (const MediaInfo& m : infos) {
+            const MediaInfo* info = &m;
             Clip c;
             c.mediaPath = info->path;
             c.start = start;

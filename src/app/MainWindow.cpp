@@ -442,16 +442,17 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
         menu.exec(pos);
     });
     // Source range dragged from the Viewer into the timeline: overwrite there (like DaVinci)
-    connect(tv, &TimelineView::rangeDropRequested, this, [this](const QString& path, int in, int out, int frame, int track) {
+    connect(tv, &TimelineView::rangeDropRequested, this,
+            [this](const QString& path, int in, int out, int frame, int track, PlaceParts parts) {
         // Looked at in the Media Storage without importing: into the selected bin first
         if (!m_editor->importPreviewSource(path, m_mediaPool->currentBin())) return;
         if (m_project->frameRateLocked()) {
-            m_editor->placeSourceRange(path, in, out, frame, track);
+            m_editor->placeSourceRange(path, in, out, frame, track, 1.0, parts);
             return;
         }
-        QTimer::singleShot(0, this, [this, path, in, out, frame, track] { // confirmation only after the drop (see onDrop)
+        QTimer::singleShot(0, this, [this, path, in, out, frame, track, parts] { // confirmation only after the drop (see onDrop)
             offerClipFormat({path}, true);
-            m_editor->placeSourceRange(path, in, out, frame, track);
+            m_editor->placeSourceRange(path, in, out, frame, track, 1.0, parts);
         });
     });
     // Viewer: scrubber (length, In/Out) and title depending on source/timeline
@@ -563,7 +564,7 @@ MediaInfo MainWindow::probeCached(const QString& path)
     return *it;
 }
 
-void MainWindow::onDrop(const QStringList& paths, int frame, int track)
+void MainWindow::onDrop(const QStringList& paths, int frame, int track, PlaceParts parts)
 {
     if (paths.size() == 1 && MediaPool::isTitleItem(paths.first())) {
         const QString& p = paths.first();
@@ -584,7 +585,7 @@ void MainWindow::onDrop(const QStringList& paths, int frame, int track)
     if (!subtitles.isEmpty()) {
         QTimer::singleShot(0, this, [this, subtitles] { importSubtitleFiles(subtitles); }); // messages not inside the drop
         if (media.isEmpty()) return;
-        onDrop(media, frame, track);
+        onDrop(media, frame, track, parts);
         return;
     }
     // Directly from the file manager: first into the Media Pool, then onto the timeline (like DaVinci)
@@ -593,14 +594,14 @@ void MainWindow::onDrop(const QStringList& paths, int frame, int track)
         if (!m_project->mediaInfo(p)) unknown << p;
     if (!unknown.isEmpty()) m_mediaPool->importFiles(unknown);
     if (m_project->frameRateLocked()) {
-        m_editor->addMediaAt(paths, frame, track);
+        m_editor->addMediaAt(paths, frame, track, parts);
         return;
     }
     // Empty timeline: possibly ask about the project format – only after the drop (no modal query in the middle
     // of drag & drop, the source, e.g. the file manager, would otherwise wait)
-    QTimer::singleShot(0, this, [this, paths, frame, track] {
+    QTimer::singleShot(0, this, [this, paths, frame, track, parts] {
         offerClipFormat(paths, true);
-        m_editor->addMediaAt(paths, frame, track);
+        m_editor->addMediaAt(paths, frame, track, parts);
     });
 }
 

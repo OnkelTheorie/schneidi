@@ -114,12 +114,17 @@ using SourceLength = std::function<int(const Clip& clip)>;
 
 // Limits a trim delta so that for all clips: not beyond the source material,
 // at least 1 frame long, not before frame 0 and not into the neighboring clip (no overwriting).
+// overwrite: neighbors do not limit (see trimClipsOver)
 int clampTrim(const Timeline& tl, const QVector<int>& clipIds, Edge edge, int delta,
-              const SourceLength& sourceLength);
+              const SourceLength& sourceLength, bool overwrite = false);
 
 // Moves the edge (start or end) of the clips by delta. No ripple: nothing moves up.
 void trimClips(Timeline& tl, const QVector<int>& clipIds, Edge edge, int delta,
                const SourceLength& sourceLength);
+// Like trimClips, but an edge may run over neighboring clips (overwrite): where the longer clip now lies they are
+// shortened or removed (clearRange). Nothing moves up.
+void trimClipsOver(Timeline& tl, const QVector<int>& clipIds, Edge edge, int delta,
+                   const SourceLength& sourceLength, const IdGen& newId);
 
 // Trim mode (T) like DaVinci. All variants leave the view alone and never overwrite a neighbor.
 enum class TrimKind {

@@ -561,7 +561,7 @@ void walk(MainWindow& w, const Tour& t, const QString& run, bool dumpIt)
             bool did = true;
             if (s.wait == "clip_on_timeline") { // dragged from the Media Pool onto the timeline (the drop's own path)
                 auto* tv = w.findChild<TimelineView*>();
-                if (CHECK(tv)) emit tv->dropRequested({w.liveProject()->media().value(0).path}, 0, 0);
+                if (CHECK(tv)) emit tv->dropRequested({w.liveProject()->media().value(0).path}, 0, 0, PlaceParts::Both);
             } else if (s.wait == "clip_trimmed") { // the first clip's end dragged to the left with the mouse
                 auto* tv = w.findChild<TimelineView*>();
                 const Timeline& tl = w.liveProject()->timeline();

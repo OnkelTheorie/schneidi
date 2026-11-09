@@ -478,7 +478,7 @@ void moveClips(Timeline& tl, const QVector<int>& clipIds, int deltaFrames,
 }
 
 int clampTrim(const Timeline& tl, const QVector<int>& clipIds, Edge edge, int delta,
-              const SourceLength& sourceLength)
+              const SourceLength& sourceLength, bool overwrite)
 {
     for (int id : clipIds) {
         TrackRef ref;
@@ -487,14 +487,14 @@ int clampTrim(const Timeline& tl, const QVector<int>& clipIds, Edge edge, int de
         const auto& clips = tl.track(ref).clips;
         const int idx = int(c - clips.constData());
         if (edge == Edge::Start) {
-            const int prevEnd = idx > 0 ? clips[idx - 1].end() : 0;
+            const int prevEnd = idx > 0 && !overwrite ? clips[idx - 1].end() : 0;
             if (!c->isTitle()) delta = std::max(delta, -c->in); // not before the start of the material
-            delta = std::max(delta, prevEnd - c->start);  // not into the left neighbor
+            delta = std::max(delta, prevEnd - c->start);  // not into the left neighbor (nor before frame 0)
             delta = std::min(delta, c->length() - 1);     // at least 1 frame
         } else {
             const int len = sourceLength ? sourceLength(*c) : 0;
             if (len > 0) delta = std::min(delta, len - 1 - c->out);
-            if (idx + 1 < clips.size()) delta = std::min(delta, clips[idx + 1].start - c->end());
+            if (idx + 1 < clips.size() && !overwrite) delta = std::min(delta, clips[idx + 1].start - c->end());
             delta = std::max(delta, 1 - c->length());
         }
     }
@@ -515,6 +515,28 @@ void trimClips(Timeline& tl, const QVector<int>& clipIds, Edge edge, int delta,
         } else {
             c->out += delta;
         }
+    }
+}
+
+void trimClipsOver(Timeline& tl, const QVector<int>& clipIds, Edge edge, int delta,
+                   const SourceLength& sourceLength, const IdGen& newId)
+{
+    delta = clampTrim(tl, clipIds, edge, delta, sourceLength, true);
+    if (delta == 0) return;
+    for (int id : clipIds) {
+        TrackRef ref;
+        const Clip* c = findClip(tl, id, &ref);
+        if (!c) continue;
+        Clip trimmed = *c;
+        if (edge == Edge::Start) {
+            trimmed.start += delta;
+            trimmed.in += delta;
+        } else {
+            trimmed.out += delta;
+        }
+        Track& track = tl.track(ref);
+        track.clips.removeIf([id](const Clip& o) { return o.id == id; });
+        placeClip(track, trimmed, newId); // overwrites what the longer clip covers now
     }
 }
 

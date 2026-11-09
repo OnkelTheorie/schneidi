@@ -151,9 +151,10 @@ signals:
     void toolChanged(TimelineView::Tool tool);
     void snappingChanged(bool on);
     // Files (from Media Pool or file manager) were dropped onto track index `track`
-    void dropRequested(const QStringList& paths, int frame, int track);
+    // parts: Shift held = the picture only, Ctrl = the sound only (or a Viewer handle's part, dropParts)
+    void dropRequested(const QStringList& paths, int frame, int track, PlaceParts parts);
     // Source range [in, out] from the Viewer dropped (overwrite like DaVinci)
-    void rangeDropRequested(const QString& path, int in, int out, int frame, int track);
+    void rangeDropRequested(const QString& path, int in, int out, int frame, int track, PlaceParts parts);
     // An effect sound from the Effects Library dropped at `frame` (EffectsLibrary::SoundMimeType data): op 'sfx' there
     void soundDropRequested(const QByteArray& sound, int frame);
     // A compositing recipe from the Effects Library dropped onto video clip `clipId` (MainWindow applies it)
@@ -404,6 +405,9 @@ private:
     QStringList dropPaths(const QMimeData* mime) const;
     // Source range from the Viewer ("in out"), false = normal drag from Media Pool/file manager
     static bool dropRange(const QMimeData* mime, int* in, int* out);
+    // The parts a drop takes: a Viewer handle's part (Viewer::PartsMimeType), else Shift = the picture only, Ctrl =
+    // the sound only, else both (the Editor's "leave out sound" setting still applies)
+    static PlaceParts dropParts(const QMimeData* mime, Qt::KeyboardModifiers mods);
     int dropTrackAt(int y) const;
 
     Editor* m_editor;
@@ -489,6 +493,7 @@ private:
     QVector<DropItem> m_dropItems;
     int m_dropFrame = -1;
     int m_dropTrack = 0;
+    PlaceParts m_dropParts = PlaceParts::Both; // what the drop takes (dropParts)
 
     // Drag subtitles: entries, track offset (anchor = grabbed track), edge
     QVector<int> m_cueIds;

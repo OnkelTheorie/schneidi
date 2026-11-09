@@ -22,6 +22,8 @@ class Viewer : public QWidget {
 public:
     // Drag from the Viewer: path as with the Media Pool (MediaPool::MimeType), plus the source range "in out"
     static constexpr const char* RangeMimeType = "application/x-schneidi-source-range";
+    // Dragged by a handle below the picture: "picture" or "sound" (only that part is placed)
+    static constexpr const char* PartsMimeType = "application/x-schneidi-source-parts";
 
     explicit Viewer(Engine* engine, QWidget* parent = nullptr);
 
@@ -106,7 +108,8 @@ protected:
 private:
     void updateTimecode(int frame);
     void updateModeText(); // "Timeline"/"Quelle – …", hint when the color correction is bypassed
-    QMimeData* dragData() const;
+    // part: Viewer::PartsMimeType content ("picture", "sound"), empty = both
+    QMimeData* dragData(const QByteArray& part = {}) const;
     void updatePage();        // which page the stack shows (trim, multicam, picture, program-away page)
     bool keepsPicture() const; // program elsewhere and the engine on the timeline: the picture is not replaced
 
@@ -122,6 +125,7 @@ private:
     QLabel* m_timecode;
     QToolButton* m_playBtn;
     QHBoxLayout* m_barRight;        // Before/After and the view buttons
+    QWidget* m_partHandles = nullptr; // with a source: drag only its picture / only its sound
     class QSpacerItem* m_barBalance; // keeps the transport buttons centered (left: timecode, right: m_barRight)
     QWidget* m_multicam = nullptr;
     bool m_multicamOn = false;

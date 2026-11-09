@@ -2937,5 +2937,13 @@
  "%1 ist jetzt kürzer: 1 Clip reicht über sein Ende hinaus": "%1 теперь короче: 1 клип выходит за его конец",
  "%1 ist jetzt kürzer: %2 Clips reichen über sein Ende hinaus": "%1 теперь короче: клипов за его концом: %2",
  "Stimme gesäubert (%1 Clips) – Strg+Z nimmt es zurück": "Голос очищен (клипов: %1) – Ctrl+Z отменяет",
- "Nichts zu säubern: wähl Tonclips aus oder leg sie auf die Spur A%1": "Нечего очищать: выбери аудиоклипы или положи их на дорожку A%1"
+ "Nichts zu säubern: wähl Tonclips aus oder leg sie auf die Spur A%1": "Нечего очищать: выбери аудиоклипы или положи их на дорожку A%1",
+ "An: Clips mit Bild kommen ohne ihren Ton in die Timeline (Ziehen, Einfügen, F9–F12). Einmalig: beim Ziehen Shift = nur Bild, Strg = nur Ton": "Вкл.: клипы с изображением попадают на таймлайн без звука (перетаскивание, вставка, F9–F12). Разово: при перетаскивании Shift = только изображение, Ctrl = только звук",
+ "Nur Bild am Abspielkopf platzieren": "Поместить только изображение у плейхеда",
+ "Nur Ton am Abspielkopf platzieren": "Поместить только звук у плейхеда",
+ "Ohne Bild – auch: beim Ziehen in die Timeline Strg halten": "Без изображения – также: удерживайте Ctrl при перетаскивании на таймлайн",
+ "Ohne Ton – auch: beim Ziehen in die Timeline Shift halten": "Без звука – также: удерживайте Shift при перетаскивании на таймлайн",
+ "Ton beim Einfügen weglassen": "Не добавлять звук при размещении",
+ "Ziehen: nur das Bild in die Timeline, ohne Ton": "Перетащите: только изображение на таймлайн, без звука",
+ "Ziehen: nur den Ton in die Timeline, ohne Bild": "Перетащите: только звук на таймлайн, без изображения"
 }

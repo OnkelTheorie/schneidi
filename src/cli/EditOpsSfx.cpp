@@ -312,7 +312,7 @@ void opSfx(Session& s, const QJsonObject& op)
         std::optional<AudioAnalysis::Loudness> mix;
         if (!volumeGiven) mix = AudioAnalysis::timelineLoudness(f, withoutSounds(s.project.timeline()), from, to);
         // Only its sound (a video file as the sound must not overwrite the picture)
-        if (s.editor.placeSourceRange(m.path, 0, m.length - 1, start, track, 1.0, true) <= 0)
+        if (s.editor.placeSourceRange(m.path, 0, m.length - 1, start, track, 1.0, Editor::PlaceParts::Sound) <= 0)
             fail("FAILED", QString("could not place the sound on A%1 (locked?)").arg(track + 1));
         int clipId = -1;
         for (const Clip& c : s.project.timeline().audio[track].clips)
