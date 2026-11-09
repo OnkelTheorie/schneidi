@@ -54,6 +54,7 @@ Hit hitBefore(const ColorEvent& e, const LoudPeaks& sound, double fps)
 struct Candidate {
     int from, to;          // source frames, with lead-in and lead-out
     QVector<int> kills;    // frames of the kill feed events inside
+    QVector<int> teamkills; // frames of teamkill lines inside (not kills: they lower the score)
     QVector<Hit> hits;     // the hit behind each of them
     int peaks = 0;         // loud moments inside
     double loudest = -200; // dBFS of the loudest of them
@@ -110,7 +111,7 @@ QJsonObject highlightsOne(const QJsonObject& given, Context& ctx)
     };
 
     // Kill feed: a new line of the player's colour; sound: loud moments (shots, explosions, shouts)
-    QVector<int> kills, banners;
+    QVector<int> kills, banners, teamkills;
     QVector<ColorEvent> killEvents;
     double most = 0;
     if (feed) {
@@ -120,11 +121,18 @@ QJsonObject highlightsOne(const QJsonObject& given, Context& ctx)
         // A game whose lines are framed (CS2): by that shape, the game picture behind does not count
         const auto pictureProgress = progress(0.0, m.info.hasAudio ? 0.85 : 1.0);
         const ColorEvents ce = framed ? framedLineEvents(m, game->frameArea, QColor(game->color), game->frameHeight,
-                                                         game->frameRight, pictureProgress)
+                                                         game->frameRight, game->frameLeft, pictureProgress)
                                       : colorEvents(m, ca, pictureProgress);
+        // A teamkill is not a highlight: listed, not counted as a kill
         for (const ColorEvent& e : ce.events) {
-            (e.area > kBannerArea ? banners : kills) << e.frame;
-            if (e.area <= kBannerArea) killEvents << e;
+            if (e.area > kBannerArea) {
+                banners << e.frame;
+            } else if (e.teamkill) {
+                teamkills << e.frame;
+            } else {
+                kills << e.frame;
+                killEvents << e;
+            }
         }
         most = ce.most;
     }
@@ -154,6 +162,8 @@ QJsonObject highlightsOne(const QJsonObject& given, Context& ctx)
                 c.kills << e.frame;
                 c.hits << (sound.db.empty() ? Hit{e.onset, false} : hitBefore(e, sound, f.rate.fps()));
             }
+        for (const int t : teamkills)
+            if (t >= c.from && t < c.to) c.teamkills << t;
         for (const Peak& p : sound.peaks)
             if (p.frame >= c.from && p.frame < c.to) {
                 ++c.peaks;
@@ -161,7 +171,8 @@ QJsonObject highlightsOne(const QJsonObject& given, Context& ctx)
             }
         // A kill counts most, a multi kill more than its kills; sound breaks ties (a fight, a loud reaction)
         const int n = int(c.kills.size());
-        c.score = feed ? n * 10.0 + std::max(0, n - 1) * 5.0 + std::min(c.peaks, 10) * 0.5
+        // A teamkill in the moment takes a little away (the kill it was not)
+        c.score = feed ? n * 10.0 + std::max(0, n - 1) * 5.0 + std::min(c.peaks, 10) * 0.5 - c.teamkills.size() * 5.0
                        : c.peaks + std::max(0.0, c.loudest - sound.thresholdDb) / 3;
     }
 
@@ -211,6 +222,14 @@ QJsonObject highlightsOne(const QJsonObject& given, Context& ctx)
             o["hit_s"] = hitS;
             o["hit_by"] = hitBy;
             reasons << (c.kills.size() == 1 ? QString("1 kill") : QString("%1 kills (multi kill)").arg(c.kills.size()));
+            if (!c.teamkills.isEmpty()) {
+                QJsonArray ts;
+                for (int k : c.teamkills) ts << seconds(k, f);
+                o["teamkills"] = int(c.teamkills.size());
+                o["teamkill_s"] = ts;
+                reasons << (c.teamkills.size() == 1 ? QString("Teamkill (not counted)")
+                                                    : QString("%1 teamkills (not counted)").arg(c.teamkills.size()));
+            }
         }
         o["loud_moments"] = c.peaks;
         if (c.peaks > 0) {
@@ -249,6 +268,14 @@ QJsonObject highlightsOne(const QJsonObject& given, Context& ctx)
                             "itself: the last shot in the sound before the line began (hit_by 'sound'), or the frame "
                             "the line began to show (hit_by 'feed', no shot heard). Put accents and beats on hit_s";
     }
+    if (!teamkills.isEmpty()) {
+        QJsonArray times;
+        for (int t : teamkills) times << seconds(t, f);
+        out["teamkills"] = times;
+        out["teamkills_note"] = "the player's own kill feed lines whose victim has the player's team colour (a "
+                                "teamkill): not counted in 'kills', not a moment of their own; inside a moment they "
+                                "lower its score";
+    }
     if (!banners.isEmpty()) {
         QJsonArray times;
         for (int b : banners) times << seconds(b, f);
@@ -260,7 +287,7 @@ QJsonObject highlightsOne(const QJsonObject& given, Context& ctx)
 }
 
 // Raise when the analysis gives other results for the same file and settings (old cache entries are then ignored)
-constexpr int kCacheVersion = 5; // 4, 5: CS2 kill feed lines by their frame (2 and 3 were experiments)
+constexpr int kCacheVersion = 6; // 4, 5: CS2 kill feed lines by their frame (2 and 3 were experiments); 6: teamkills
 
 QString cacheFile(const QString& key)
 {

@@ -23,6 +23,8 @@ A fixed shape the user wants every time (title, five clips with the Edit look, s
   before the line, ~0.1-0.3 s earlier). Put accents, sounds and beats on `hit_s`, never on `kill_s` - an effect after
   the kill looks late. `hit_by` "feed" means no shot was heard (a silent first audio stream: pass `audio_stream`
   of the game sound).
+- CS2 teamkills (the victim's name in the player's own team colour) are not kills: they are listed in `teamkills`
+  (seconds), and a candidate with one has `teamkills` + `teamkill_s` and a lower score. Don't put a kill accent on them.
 - Look at the top candidates (`frames` with `at` around each kill time, or a cropped sheet) before you trust them.
   Drop near-duplicates and moments that only are loud. Banners in the kill feed's colour (a yellow "BUY PHASE")
   are not counted as kills but listed in `banners`; a `kill_feed_most_pct` far above the other files still means:

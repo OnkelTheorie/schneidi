@@ -36,10 +36,32 @@ constexpr int kCameBack = kRate;
 constexpr double kSameLine = 0.8; // ... when this part of their bright pixels (text, icons) match
 constexpr int kBright = 170;      // luma of text and icons on the line
 
+// Team colours of the names (CS2: T yellow-orange, CT blue; icons are white, the frame red): a pixel of the text band
+// that is clearly coloured and bright is warm (red and green well above blue: not the red frame) or cool (blue above
+// red and green). Only the side of the hue counts, not the exact colour (it changes with the background shining through)
+constexpr int kTeamBright = 110; // brightest channel of a name's pixel
+constexpr int kTeamSat = 50;     // brightest minus darkest channel
+constexpr int kTeamPixels = 4;   // a name side needs this many pixels of its colour, twice as many as of the other
+constexpr int kTeamAbove = 40;  // a name's pixel is this much brighter (luma) than the middle of its line
+constexpr int kTeamGap = 3;      // the frame's top edge may break for this many outline widths (`near`) going left
+
+int teamOf(const uchar* p)
+{
+    const int r = p[0], g = p[1], b = p[2];
+    const int hi = std::max({r, g, b}), lo = std::min({r, g, b});
+    if (hi < kTeamBright || hi - lo < kTeamSat) return 0;
+    if (b >= r + 40 && b >= g) return -1;
+    if (r >= b + 50 && g >= b + 20 && g * 100 >= r * 55) return 1;
+    return 0;
+}
+
 struct Found {
     int top, bottom;        // rows of the edges, in the sampled area
     double strength;        // how clearly it is a line (for picking one of neighbouring finds)
     std::vector<uchar> sig; // bright pixels inside (sigW x sigH): the line's text and icons
+    // Team colour of the first name (the killer) and the last one (the victim): 1 warm, -1 cool, 0 not clear (white
+    // text, only one name, cut off)
+    int killer = 0, victim = 0;
 };
 
 struct Track {
@@ -79,7 +101,7 @@ double sameContent(const std::vector<uchar>& a, const std::vector<uchar>& b, int
 // the tint can hide them for a moment); one that nothing explains is new. A line the game took away and showed
 // again (it reorders the feed when the player dies) has the same text as the one that went: not new.
 ColorEvents framedLineEvents(const MediaSource& m, const QRectF& region, const QColor& color, double lineHeight,
-                             double rightEdge, const std::function<void(double)>& progress)
+                             double rightEdge, double lineLeft, const std::function<void(double)>& progress)
 {
     const ProjectFormat f = pictureFormat(m);
     const QSize full(std::max(2, f.width), std::max(2, f.height));
@@ -90,8 +112,10 @@ ColorEvents framedLineEvents(const MediaSource& m, const QRectF& region, const Q
     const int near = scaled(kNear, 2), reach = scaled(kSideReach, 2), down = scaled(kDown, 1), inset = scaled(3, 1);
     // The region and a margin for the neighbours of its outermost pixels and the right edge, in picture pixels
     const double pad = (near + reach + 1) / q;
-    const QRectF want(region.x() * full.width() - pad, region.y() * full.height() - pad,
-                      std::max(region.width() * full.width(), (rightEdge - region.x()) * full.width()) + 2 * pad,
+    // From `lineLeft` on: the names at the left of long lines (the killer's team colour)
+    const double left = std::min(region.x(), lineLeft);
+    const QRectF want(left * full.width() - pad, region.y() * full.height() - pad,
+                      std::max(region.right(), rightEdge) * full.width() - left * full.width() + 2 * pad,
                       region.height() * full.height() + 2 * pad);
     const QRect r = want.toAlignedRect().intersected(QRect(QPoint(0, 0), full));
     if (r.width() < 8 || r.height() < 8) fail("BAD_ARGUMENT", "the kill feed region is outside the picture");
@@ -135,6 +159,7 @@ ColorEvents framedLineEvents(const MediaSource& m, const QRectF& region, const Q
     pictureSamples(
         m, part, QSize(w, h), kRate, filter,
         [&](int sample, const uchar* p) {
+            const uchar* const rgb = p;
             std::vector<float> s(size_t(w) * h);
             std::vector<uchar> bright(size_t(w) * h);
             for (int i = 0; i < w * h; ++i, p += 3) {
@@ -161,6 +186,75 @@ ColorEvents framedLineEvents(const MediaSource& m, const QRectF& region, const Q
                 for (int x = std::max(near, edge - reach); x < std::min(w - near, edge + reach) && !side[size_t(y)]; ++x)
                     side[size_t(y)] = thin(x, y, 1, 0);
             const int need = int(std::ceil(kEdgeRow * (x1 - x0)));
+            // The team colours of a line's first and last name: the line's left end where its top or bottom edge
+            // ends, then the coloured pixels of the text band (the middle of the line) in each column up to the right
+            // edge; the first name is the first two line heights of coloured text, the last name the last two
+            const auto teams = [&](Found& l) {
+                int from = x0;
+                for (int x = x0, miss = 0; x >= near && miss <= kTeamGap * near; --x) {
+                    const bool on = thin(x, l.top, 0, 1) || thin(x, l.bottom, 0, 1)
+                                    || (l.top + 1 < h - near && thin(x, l.top + 1, 0, 1))
+                                    || (l.bottom - 1 >= near && thin(x, l.bottom - 1, 0, 1));
+                    if (on) {
+                        from = x;
+                        miss = 0;
+                    } else {
+                        ++miss;
+                    }
+                }
+                if (from <= near) return; // the line goes on past the sampled area: its first name is not there
+                // The edge rows may run on into the game picture (a roof edge, a cable): the line ends at its left
+                // side, the leftmost thin vertical line of the colour between its edges
+                int leftSide = -1;
+                for (int x = std::max(near, from - reach); x <= x0 && leftSide < 0; ++x) {
+                    int sides = 0;
+                    for (int k = l.top + inset; k <= l.bottom - inset; ++k) sides += thin(x, k, 1, 0);
+                    if (sides >= kSide * std::max(1, l.bottom - l.top - 2 * inset + 1)) leftSide = x;
+                }
+                if (leftSide < 0) return;
+                from = leftSide;
+                const int a = from + near + 1, b = edge - reach;
+                const int ya = l.top + int(std::lround(span * 0.25)), yb = std::min(h, l.top + int(std::lround(span * 0.8)));
+                if (b - a < 4 * span) return;
+                // Names stand out of the line's background: over a bright picture (the sky) the see-through box
+                // takes its colour, which is no name
+                const auto luma = [&](int x, int y) {
+                    const uchar* q = rgb + size_t(y * w + x) * 3;
+                    return (299 * q[0] + 587 * q[1] + 114 * q[2]) / 1000;
+                };
+                std::vector<int> band;
+                band.reserve(size_t(b - a) * std::max(0, yb - ya));
+                for (int y = ya; y < yb; ++y)
+                    for (int x = a; x < b; ++x) band.push_back(luma(x, y));
+                if (band.empty()) return;
+                std::nth_element(band.begin(), band.begin() + band.size() / 2, band.end());
+                const int above = band[band.size() / 2] + kTeamAbove;
+                std::vector<int> warm(size_t(b - a), 0), cool(size_t(b - a), 0);
+                int first = -1, last = -1;
+                for (int x = a; x < b; ++x) {
+                    for (int y = ya; y < yb; ++y) {
+                        const int t = luma(x, y) >= above ? teamOf(rgb + size_t(y * w + x) * 3) : 0;
+                        warm[size_t(x - a)] += t > 0;
+                        cool[size_t(x - a)] += t < 0;
+                    }
+                    if (warm[size_t(x - a)] + cool[size_t(x - a)] > 0) {
+                        if (first < 0) first = x - a;
+                        last = x - a;
+                    }
+                }
+                const int width = 2 * span;
+                if (first < 0 || last - first < 2 * width) return; // one name only (a suicide) or none
+                const auto side = [&](int x, int y) {
+                    int ww = 0, cc = 0;
+                    for (int k = x; k < y; ++k) {
+                        ww += warm[size_t(k)];
+                        cc += cool[size_t(k)];
+                    }
+                    return ww >= kTeamPixels && ww >= 2 * cc ? 1 : cc >= kTeamPixels && cc >= 2 * ww ? -1 : 0;
+                };
+                l.killer = side(first, first + width);
+                l.victim = side(last + 1 - width, last + 1);
+            };
             std::vector<Found> lines;
             for (int y = y0; y + span + 1 < y1 + near; ++y) {
                 if (rows[size_t(y)] < need) continue;
@@ -190,6 +284,7 @@ ColorEvents framedLineEvents(const MediaSource& m, const QRectF& region, const Q
                         if (const int py = l.top + sigY0 + y, px = sigX0 + x; py < h && px < w)
                             l.sig[size_t(y * sigW + x)] = bright[size_t(py * w + px)];
                 pixels += rows[size_t(l.top)] + rows[size_t(l.bottom)];
+                teams(l);
             }
             std::lock_guard lock(mutex);
             if (size_t(sample) >= found.size()) {
@@ -272,7 +367,26 @@ ColorEvents framedLineEvents(const MediaSource& m, const QRectF& region, const Q
 
     // New lines: not there from the start, found in 3 of their first 4 samples (not a flicker of the background),
     // and not a line that went away and came back
-    std::vector<int> fresh;
+    // A teamkill: the victim's name in the killer's team colour in most of the line's first samples where both are
+    // clear (it fades in; a flash or the tint may hide the colours for a moment). 1 warm, -1 cool, 0 not one
+    const auto sameTeam = [](const Track& tr) {
+        int same = 0, other = 0, warm = 0;
+        for (size_t k = 0; k < std::min<size_t>(tr.at.size(), 15); ++k)
+            if (const Found& x = *tr.at[k]; x.killer != 0 && x.victim != 0) {
+                (x.killer == x.victim ? same : other)++;
+                warm += x.killer == x.victim && x.killer > 0;
+            }
+        return same >= 3 && same > 2 * other ? (2 * warm > same ? 1 : -1) : 0;
+    };
+    // Free for all (deathmatch: the player comes back in either team's colours, every other player is an enemy):
+    // same-colour lines of both colours, or more of them than a team game tolerates (it kicks a player after a few
+    // teamkills). Then the colours say nothing about teams
+    int warmSame = 0, coolSame = 0;
+    for (const Track& tr : tracks)
+        if (const int c = sameTeam(tr); c != 0) (c > 0 ? warmSame : coolSame)++;
+    const bool teams = !(warmSame > 0 && coolSame > 0) && warmSame + coolSame < 3;
+
+    std::vector<std::pair<int, bool>> fresh; // first sample, teamkill
     for (const Track& tr : tracks) {
         if (tr.old) continue;
         if (std::count_if(tr.seen.begin(), tr.seen.end(), [&](int k) { return k < tr.first + 4; }) < 3) continue;
@@ -288,7 +402,7 @@ ColorEvents framedLineEvents(const MediaSource& m, const QRectF& region, const Q
             return &g != &tr && g.last < tr.first && tr.first - g.last <= kCameBack
                    && lastLooks(g) >= kSameLine;
         });
-        if (!cameBack) fresh.push_back(tr.first);
+        if (!cameBack) fresh.push_back({tr.first, teams && sameTeam(tr) != 0});
     }
     std::sort(fresh.begin(), fresh.end());
 
@@ -300,7 +414,7 @@ ColorEvents framedLineEvents(const MediaSource& m, const QRectF& region, const Q
     };
     // The outline of a 1080p line: two edges across the region and the right edge
     const double area = (2.0 * (x1 - x0) + span) / (q * q) / (double(full.width()) * full.height());
-    for (const int t : fresh) out.events << ColorEvent{frameOf(t), true, area, frameOf(t)};
+    for (const auto& [t, teamkill] : fresh) out.events << ColorEvent{frameOf(t), true, area, frameOf(t), teamkill};
     return out;
 }
 
