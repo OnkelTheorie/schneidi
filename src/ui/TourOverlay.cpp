@@ -332,8 +332,8 @@ QRect TourOverlay::placeBubble(const QRect& area, const QVector<QRect>& holes, c
         const QRect h = home.adjusted(gap, gap, -gap, -gap);
         const QPoint corners[] = {{h.right() - size.width() + 1, h.bottom() - size.height() + 1}, // bottom right
                                   {h.left(), h.bottom() - size.height() + 1},                     // bottom left
-                                  {h.right() - size.width() + 1, h.top()},                        // top right
-                                  {h.left(), h.top()}};                                           // top left
+                                  {h.left(), h.top()},                                            // top left
+                                  {h.right() - size.width() + 1, h.top()}};                       // top right
         for (const bool strict : {true, false})
             for (const QPoint& c : corners)
                 if (const QRect r(c, size); free(r, strict)) return r;

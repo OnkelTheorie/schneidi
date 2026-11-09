@@ -57,8 +57,9 @@ public:
     // Where the bubble of `size` goes: beside the first (main) hole - below, above, right, left, the first place that
     // fits `area` without covering any hole -, else the same around all holes together, else clamped into `area`; no
     // hole = centered. `keep` counts like holes (never covered while there is room); `avoid` is kept free if
-    // possible. `home` (the window's working area): a fixed corner of it first - bottom right, bottom left, top right,
-    // top left -, so the bubble and its buttons stay put; a corner that would cover a hole or a kept control is
+    // possible. `home` (the window's working area): a fixed corner of it first - bottom right, bottom left, top left,
+    // top right (the viewer's right half shows the picture-in-picture example) -, so the bubble and its buttons
+    // stay put; a corner that would cover a hole or a kept control is
     // skipped; beside the target only when no corner is free
     static QRect placeBubble(const QRect& area, const QVector<QRect>& holes, const QSize& size, int gap = 14,
                              const QVector<QRect>& keep = {}, const QVector<QRect>& avoid = {},
