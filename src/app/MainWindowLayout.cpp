@@ -840,6 +840,9 @@ void MainWindow::showPreviewOn(QScreen* screen)
             showPreviewOn(nullptr);
         });
         connect(out, &PreviewOutput::previewEdgeWanted, this, &MainWindow::updatePreviewEdge);
+        // The main window moved onto the preview's monitor (dragged, or its own monitor went away)
+        if (QWindow* handle = windowHandle())
+            connect(handle, &QWindow::screenChanged, out, [this] { screensChanged(nullptr); });
         m_output = out;
         m_screenPlan.setScreens(screenList());
         m_screenPlan.setTarget(screenId(screen));
@@ -854,8 +857,10 @@ void MainWindow::showPreviewOn(QScreen* screen)
 
 void MainWindow::screensChanged(QScreen* removed)
 {
-    // A screen coming never moves the preview; one going takes it back into the window (ScreenOutput says lost() too)
-    if (m_screenPlan.setScreens(screenList(removed)) && m_output) showPreviewOn(nullptr);
+    // A screen coming never moves the preview; one going takes it back into the window (ScreenOutput says lost() too),
+    // and so does the main window ending up on the preview's monitor (it would be covered)
+    const bool gone = m_screenPlan.setScreens(screenList(removed));
+    if (m_output && (gone || m_screenPlan.coversMain(screenId(screen())))) showPreviewOn(nullptr);
 }
 
 void MainWindow::feedPreviewOutput(const QImage& frame)
