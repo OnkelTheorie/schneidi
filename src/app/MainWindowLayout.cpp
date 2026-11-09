@@ -195,7 +195,8 @@ QWidget* MainWindow::buildTopBar()
             setViewerLarge(false); // the layout comes back, with this panel as asked
             panel->setVisible(on);
             updateLeftColumn();
-            if (on) uncollapse(panel);
+            // After the layout (and after the large viewer's own restore, also a zero timer): still at size 0?
+            if (on) QTimer::singleShot(0, panel, [panel] { uncollapse(panel); });
             if (!m_autosaveDisabled && !m_tourSaved.active) QSettings().setValue("panels/" + key, on); // a tour sets its own
         });
         return b;
@@ -492,8 +493,7 @@ void MainWindow::applySizes(QSplitter* s, const QList<int>& defaults)
 void MainWindow::uncollapse(QWidget* panel)
 {
     auto* s = qobject_cast<QSplitter*>(panel->parentWidget());
-    if (!s || !s->isVisible()) return;
-    s->refresh();
+    if (!s || !s->isVisible() || panel->isHidden()) return;
     const int index = s->indexOf(panel);
     QList<int> sizes = s->sizes();
     if (index < 0 || sizes.value(index) > 0) return;
