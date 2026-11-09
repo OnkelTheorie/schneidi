@@ -26,9 +26,11 @@
 #include "core/Project.h"
 #include "core/Tours.h"
 #include "engine/Engine.h"
+#include "ui/EffectsLibrary.h"
 #include "ui/TourOverlay.h"
 #include "ui/comp/CompCanvas.h"
 #include "ui/comp/CompPage.h"
+#include "ui/timeline/TimelineView.h"
 
 #include <QAbstractButton>
 #include <QApplication>
@@ -45,6 +47,8 @@
 #include <QSplitter>
 #include <QTemporaryDir>
 #include <QTest>
+#include <QTimer>
+#include <cmath>
 #include <clocale>
 
 namespace {
@@ -406,7 +410,45 @@ void sameLook(const Look& a, const Look& b, const QString& where)
     Check::report(a.title == b.title, "title back", __FILE__, __LINE__, where + ": " + a.title + " -> " + b.title);
 }
 
-// One tour from start to end, acting like the user where it waits (the clip onto the timeline, the offered button)
+// The timeline's zoom and scroll in seconds (a frame rate change would change them on screen too)
+struct Zoom {
+    double pxPerSecond = 0, leftSecond = 0;
+    int scrollY = 0;
+    bool operator==(const Zoom& o) const
+    {
+        return std::abs(pxPerSecond - o.pxPerSecond) < 1e-6 && std::abs(leftSecond - o.leftSecond) < 1e-6
+            && scrollY == o.scrollY;
+    }
+    QString text() const { return QString("%1 px/s, left %2 s, y %3").arg(pxPerSecond).arg(leftSecond).arg(scrollY); }
+};
+
+Zoom zoomOf(MainWindow& w)
+{
+    auto* tv = w.findChild<TimelineView*>();
+    if (!tv) return {};
+    const double fps = w.liveProject()->timelineFormat().rate.fps();
+    return {tv->view().pxPerFrame * fps, tv->view().leftFrame / fps, tv->view().scrollY};
+}
+
+// A dialog that pops up meanwhile (the format question on the first drop): noted and closed
+struct DialogWatch {
+    QStringList seen;
+    QTimer timer;
+    DialogWatch()
+    {
+        timer.setInterval(5);
+        QObject::connect(&timer, &QTimer::timeout, [this] {
+            if (QWidget* m = QApplication::activeModalWidget()) {
+                seen << (m->windowTitle() + ": " + describe(m));
+                m->close();
+            }
+        });
+        timer.start();
+    }
+};
+
+// One tour from start to end, acting like the user where it waits (the clip onto the timeline, the page button, the
+// panel toggle, the offered button)
 void walk(MainWindow& w, const Tour& t, const QString& run, bool dumpIt)
 {
     TourManager* tours = w.tours();
@@ -422,30 +464,61 @@ void walk(MainWindow& w, const Tour& t, const QString& run, bool dumpIt)
         keep->click();
     }
     if (!CHECK(r->running())) return;
+    DialogWatch dialogs;
     // The practice project: the sample clips, never the user's own
     const QString sample = QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation) + "/tour-sample";
     CHECK_EQ(w.liveProject()->media().size(), qsizetype(3));
     for (const MediaInfo& m : w.liveProject()->media()) CHECK(m.path.startsWith(sample));
     CHECK_EQ(clipCount(w.liveProject()) == 0, t.practice == "pool");
+    QTest::qWait(30);
+    const Zoom zoom = zoomOf(w); // core rule: only the user zooms or scrolls the timeline, never a tour step
+    const QSize size = w.size();
     for (int i = 0; i < t.steps.size(); ++i) {
         const QString where = QString("%1 %2 step %3").arg(run, t.id).arg(i + 1);
         if (!Check::report(r->index() == i, "step", __FILE__, __LINE__, where + QString(" (at %1)").arg(r->index() + 1)))
             break;
         QTest::qWait(30);
         checkStep(w, where);
+        Check::report(zoomOf(w) == zoom, "timeline zoom untouched", __FILE__, __LINE__,
+                      where + ": " + zoom.text() + " -> " + zoomOf(w).text());
+        Check::report(w.size() == size, "window size untouched", __FILE__, __LINE__,
+                      QString("%1: %2x%3 -> %4x%5").arg(where).arg(size.width()).arg(size.height()).arg(w.width()).arg(w.height()));
         const TourStep& s = t.steps[i];
         if (!s.page.isEmpty()) // the tour shows the step's page
             if (auto* b = w.findChild<QAbstractButton*>("pageButton_" + s.page); CHECK(b)) CHECK(b->isChecked());
         if (auto* counter = o->findChild<QLabel*>("tour_counter"))
             CHECK_EQ(counter->text(), QString("%1/%2").arg(i + 1).arg(t.steps.size()));
         if (dumpIt) dump(&w, QString("%1-%2-%3").arg(run, t.id).arg(i + 1));
-        // The empty graph's own tour button never sits in the spotlight
-        if (CompPage* page = w.compPage()) CHECK(!page->canvas()->tourButton()->isVisible());
-        if (r->waiting() && s.wait == "clip_on_timeline") { // the user drags a sample clip onto the timeline
-            w.editor()->sourceEdit(Editor::SourceEditMode::AppendAtEnd, w.liveProject()->media().value(0).path, 0, 0);
-            QTest::qWait(30);
-            Check::report(r->index() == i + 1, "goes on by itself", __FILE__, __LINE__, where);
-            continue;
+        // The empty graph's own tour button never sits in the spotlight, nor the page's own "Create Compositing"
+        if (CompPage* page = w.compPage()) {
+            CHECK(!page->canvas()->tourButton()->isVisible());
+            if (auto* create = page->findChild<QPushButton*>("comp_create")) CHECK(!create->isVisible());
+        }
+        if (r->waiting()) { // what the user does here: the step goes on by itself
+            QAbstractButton* click = nullptr;
+            if (s.wait.startsWith("page:")) click = w.findChild<QAbstractButton*>("pageButton_" + s.wait.mid(5));
+            if (s.wait == "effects_open") click = w.findChild<QAbstractButton*>("panelToggle_effects");
+            if (s.wait == "clip_on_timeline") { // dragged from the Media Pool onto the timeline (the drop's own path)
+                auto* tv = w.findChild<TimelineView*>();
+                if (CHECK(tv)) emit tv->dropRequested({w.liveProject()->media().value(0).path}, 0, 0);
+            } else if (click) {
+                click->click();
+            }
+            if (s.wait == "clip_on_timeline" || click) {
+                QTest::qWait(60);
+                Check::report(r->index() == i + 1, "goes on by itself", __FILE__, __LINE__, where + ": " + s.wait);
+                Check::report(dialogs.seen.isEmpty(), "no dialog in the tour", __FILE__, __LINE__,
+                              where + ": " + dialogs.seen.join(", "));
+                if (s.wait == "effects_open")
+                    if (auto* lib = w.findChild<EffectsLibrary*>(); CHECK(lib))
+                        Check::report(lib->isVisible() && lib->height() >= 150, "effects shown", __FILE__, __LINE__,
+                                      where + QString(": %1 px").arg(lib->height()));
+                if (r->index() == i + 1) {
+                    Check::report(zoomOf(w) == zoom, "timeline zoom untouched by the user's step", __FILE__, __LINE__,
+                                  where + ": " + zoom.text() + " -> " + zoomOf(w).text());
+                    continue;
+                }
+            }
         }
         if (QPushButton* offer = button(o, "tour_offer")) { // the button the step offers ("Create Example")
             offer->click();
@@ -458,6 +531,7 @@ void walk(MainWindow& w, const Tour& t, const QString& run, bool dumpIt)
     }
     CHECK(!r->running());
     CHECK(!o->isVisible());
+    Check::report(dialogs.seen.isEmpty(), "no dialog in the tour", __FILE__, __LINE__, run + " " + t.id + ": " + dialogs.seen.join(", "));
 }
 
 // Fresh settings: a left panel that was never shown comes up with a usable height when its toggle is switched on

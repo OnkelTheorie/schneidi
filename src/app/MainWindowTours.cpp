@@ -12,6 +12,7 @@
 #include "ui/comp/CompPage.h"
 #include "ui/comp/CompShared.h"
 #include "engine/Engine.h"
+#include "ui/EffectsLibrary.h"
 #include "ui/Inspector.h"
 #include "ui/ScopesPanel.h"
 #include "ui/MediaPool.h"
@@ -32,6 +33,7 @@
 #include <QToolButton>
 
 namespace {
+constexpr double kTourPxPerSecond = 60; // the practice timeline's zoom: ~20 s in view on a laptop
 const QPair<MainWindow::Page, const char*> kPageNames[] = {{MainWindow::Page::Media, "media"},
                                                            {MainWindow::Page::Edit, "edit"},
                                                            {MainWindow::Page::Comp, "comp"},
@@ -83,6 +85,22 @@ void MainWindow::setupTours(QMenu* help)
     };
     host.conditions["timeline_has_merge"] = [this] { return timelineHas("merge"); };
     host.conditions["timeline_has_key"] = [this] { return timelineHas("key"); };
+    host.conditions["effects_open"] = [this] { return m_effectsToggle->isChecked() && m_effects->isVisible(); };
+    // The viewer shows a picture: the playhead into the first video clip if it is not on one (the user dropped the
+    // clip further right)
+    host.actions["playhead_in_clip"] = [this] {
+        const int at = m_timeline->view()->playhead();
+        int first = 0;
+        for (const Track& t : m_project->timeline().video)
+            for (const Clip& c : t.clips) {
+                if (at >= c.start && at < c.end()) return;
+                if (!first && c.kind == ClipKind::Media) first = c.id;
+            }
+        if (const Clip* c = first ? TimelineOps::findClip(m_project->timeline(), first) : nullptr) {
+            m_engine->seek(c->start + std::min(c->length() / 2, 15));
+            m_timeline->view()->setPlayhead(c->start + std::min(c->length() / 2, 15));
+        }
+    };
     // Tour mode: a practice project and a fixed layout; the user's project and layout come back at the end
     host.enter = [this](const Tour& t) { enterTourMode(t); };
     host.leave = [this] { leaveTourMode(); };
@@ -111,9 +129,12 @@ void MainWindow::setupTours(QMenu* help)
     m_tours = new TourManager(this, m_project, host);
     m_tours->addMenu(help);
     // The empty graph's "Start the Compositing tour" stays away while a tour runs (it would sit in the spotlight)
+    // The page's own "Create Compositing" too: it builds an empty graph, not the tour's example
     connect(m_tours, &TourManager::runningChanged, this, [this](bool on) {
-        if (m_compPage) m_compPage->canvas()->setTourButtonAllowed(!on);
+        if (m_compPage) m_compPage->setTourRunning(on);
     });
+    // A page or a panel the user opens may be what a step waits for
+    connect(m_effectsToggle, &QToolButton::toggled, m_tours, &TourManager::poke, Qt::QueuedConnection);
     // Queued: the timeline takes the new playhead in a slot connected later
     connect(m_engine, &Engine::positionChanged, m_tours, &TourManager::poke, Qt::QueuedConnection);
 }
@@ -259,15 +280,20 @@ void MainWindow::buildPracticeProject(const QString& practice)
     if (files.isEmpty()) return;
     const bool onTimeline = practice != QLatin1String("pool");
     importFiles(files, onTimeline, true); // the project takes the clips' format
-    if (!onTimeline) {
-        m_project->markSaved(); // a fresh practice project: nothing to save
-        return;
-    }
+    if (!onTimeline) offerClipFormat(files, false); // also with the clips only in the pool: no format question on the drop
     if (practice == QLatin1String("stack") && files.size() > 1) m_editor->addMediaAt({files[1]}, 0, 1); // V2 over V1
-    // Loaded once more: no undo steps of its own making, the playhead inside the first clip
+    // Loaded once more: no undo steps of its own making, the playhead inside the first clip, a fixed timeline view
+    // (set once here, as the tour begins: no step and no drop changes it, core rule)
     ProjectData d = m_project->data();
-    d.playhead = m_project->timelineFormat().rate.timebase() / 2;
+    const double fps = m_project->timelineFormat().rate.fps();
+    d.playhead = onTimeline ? m_project->timelineFormat().rate.timebase() / 2 : 0;
+    SavedView view;
+    view.sequence = m_project->currentSequence();
+    view.pxPerFrame = kTourPxPerSecond / fps;
+    view.playhead = d.playhead;
+    d.views = {view};
     applyLoaded(std::move(d), {}, false);
+    m_timeline->view()->setZoomAndScroll(view.pxPerFrame, 0, 0);
     // The clip the tour works on selected: the upper one of a stack, else the first one
     int clip = 0;
     for (const Track& t : m_project->timeline().video)

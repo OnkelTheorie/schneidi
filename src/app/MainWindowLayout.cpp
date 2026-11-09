@@ -4,6 +4,7 @@
 
 #include "app/AiChatPanel.h"
 
+#include "app/TourManager.h"
 #include "app/InputBindings.h"
 #include "app/Theme.h"
 #include "app/KeyBindingsDialog.h"
@@ -451,6 +452,7 @@ void MainWindow::showPage(Page page)
     m_mixerToggle->setEnabled(edit);
     m_transcriptToggle->setEnabled(edit);
     updateViewerArea();
+    if (m_tours) QMetaObject::invokeMethod(m_tours, &TourManager::poke, Qt::QueuedConnection); // a step may wait for it
 }
 
 void MainWindow::watchSizes(QSplitter* s, const QString& name)

@@ -47,7 +47,7 @@ void MainWindow::ensureCompPage()
         m_compPage->setPlayhead(f);
     });
     connect(m_compPage, &CompPage::viewChanged, this, &MainWindow::updatePreview);
-    m_compPage->canvas()->setTourButtonAllowed(!m_tourSaved.active);
+    m_compPage->setTourRunning(m_tourSaved.active);
     connect(m_compPage->canvas(), &CompCanvas::tourRequested, this, [this] { // the button in an empty graph
         if (m_tours) m_tours->start("compositing");
     });

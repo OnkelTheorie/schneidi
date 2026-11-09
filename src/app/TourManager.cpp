@@ -170,6 +170,7 @@ void TourManager::enterStep()
     if (!s) return;
     if (!s->page.isEmpty() && m_host.page && m_host.showPage && m_host.page() != s->page) m_host.showPage(s->page);
     if (const auto it = m_host.actions.constFind(s->action); !s->action.isEmpty() && it != m_host.actions.cend()) (*it)();
+    begin(*s); // what the page switch or the action did (the playhead into a clip) is not the user's doing
     showStep();
 }
 
