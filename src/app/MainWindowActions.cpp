@@ -108,7 +108,6 @@ QAction* MainWindow::makeAction(QMenu* menu, const QString& id, const QString& t
 void MainWindow::buildActions()
 {
     TimelineView* tv = m_timeline->view();
-    QUndoStack* undo = m_project->undoStack();
 
     // Bindings after DaVinci Resolve (defaults), overridable in keybindings.json
     QMenu* file = menuBar()->addMenu(T("&Datei"));
@@ -151,10 +150,18 @@ void MainWindow::buildActions()
     makeAction(file, "quit", T("Beenden"), QKeySequence("Ctrl+Q"), [this] { close(); });
 
     QMenu* edit = menuBar()->addMenu(T("&Bearbeiten"));
-    QAction* undoAct = makeAction(edit, "undo", T("Rückgängig"), QKeySequence("Ctrl+Z"), [undo] { undo->undo(); });
-    QAction* redoAct = makeAction(edit, "redo", T("Wiederholen"), QKeySequence("Ctrl+Shift+Z"), [undo] { undo->redo(); });
-    connect(undo, &QUndoStack::canUndoChanged, undoAct, &QAction::setEnabled);
-    connect(undo, &QUndoStack::canRedoChanged, redoAct, &QAction::setEnabled);
+    // The history in use when pressed (a tour sets the user's aside: Project::setHistoryAside)
+    QAction* undoAct = makeAction(edit, "undo", T("Rückgängig"), QKeySequence("Ctrl+Z"), [this] { m_project->undoStack()->undo(); });
+    QAction* redoAct = makeAction(edit, "redo", T("Wiederholen"), QKeySequence("Ctrl+Shift+Z"), [this] { m_project->undoStack()->redo(); });
+    const auto followUndo = [this, undoAct, redoAct] {
+        QUndoStack* u = m_project->undoStack();
+        connect(u, &QUndoStack::canUndoChanged, undoAct, &QAction::setEnabled, Qt::UniqueConnection);
+        connect(u, &QUndoStack::canRedoChanged, redoAct, &QAction::setEnabled, Qt::UniqueConnection);
+        undoAct->setEnabled(u->canUndo());
+        redoAct->setEnabled(u->canRedo());
+    };
+    followUndo();
+    connect(m_project, &Project::undoStackChanged, this, followUndo);
     undoAct->setEnabled(false);
     redoAct->setEnabled(false);
     edit->addSeparator();

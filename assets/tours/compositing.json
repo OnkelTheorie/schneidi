@@ -4,7 +4,7 @@
  "order": 4,
  "offerOn": "page:comp",
  "steps": [
-  {"target": "comp_canvas", "page": "comp", "action": "comp_nodes", "offer": "comp_example", "wait": "comp_has_merge", "text": "Compositing baut ein Bild aus mehreren Teilen. Für diesen Rundgang lege ich dir ein kleines Beispiel an: Bild im Bild."},
+  {"target": "comp_canvas", "page": "comp", "action": "comp_nodes", "offer": "comp_example", "wait": "comp_has_merge", "text": "Compositing baut ein Bild aus mehreren Teilen. Klick auf „Beispiel anlegen“: Dann lege ich dir ein kleines Beispiel an, Bild im Bild."},
   {"target": "comp_canvas", "page": "comp", "action": "comp_nodes", "text": "Das Bild fließt von links nach rechts durch die Knoten, jeder verändert es ein Stück. Tab oder Umschalt+Leertaste holt einen neuen Knoten."},
   {"target": "area:comp_output", "page": "comp", "action": "comp_nodes", "text": "Der Ausgang ist der Knoten, dessen Bild im Video landet. Rechtsklick › Als Ausgang setzen macht einen anderen dazu."},
   {"target": "area:comp_port_src", "page": "comp", "action": "comp_nodes", "text": "Links an jedem Knoten sitzen die Eingänge. Quelle ist das Bild, das in den Knoten hineingeht."},

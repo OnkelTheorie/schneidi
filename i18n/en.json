@@ -2773,7 +2773,6 @@
  "Belichtung macht das ganze Bild heller oder dunkler, Sättigung die Farben kräftiger oder blasser.": "Exposure makes the whole picture brighter or darker, saturation makes the colors stronger or paler.",
  "Bewegt sich die Stelle? Setz an mehreren Zeitpunkten einen Keyframe, dann folgt das Fenster.": "Does the spot move? Set a keyframe at several moments and the window follows.",
  "Bild im Bild": "Picture in Picture",
- "Compositing baut ein Bild aus mehreren Teilen. Für diesen Rundgang lege ich dir ein kleines Beispiel an: Bild im Bild.": "Compositing builds one picture from several parts. For this tour I’ll create a small example for you: picture in picture.",
  "Das Bild fließt von links nach rechts durch die Knoten, jeder verändert es ein Stück. Tab oder Umschalt+Leertaste holt einen neuen Knoten.": "The picture flows from left to right through the nodes; each one changes it a little. Tab or Shift+Space adds a new node.",
  "Das Rezept verkleinert den Clip, gibt ihm einen Rahmen und legt ihn mit einem Mischen-Knoten über die Spuren darunter.": "The recipe makes the clip smaller, gives it a frame and lays it over the tracks below with a merge node.",
  "Das ist der Medienpool. Zieh Videos aus dem Dateimanager hierher oder nimm Datei › Medien importieren (Strg+I).": "This is the Media Pool. Drag videos here from your file manager or use File › Import Media (Ctrl+I).",
@@ -2879,5 +2878,11 @@
  "Volle Projektauflösung": "Full project resolution",
  "Vorschau": "Preview",
  "Vorschau-Auflösung": "Preview Resolution",
- "Zweiter Monitor": "Second monitor"
+ "Zweiter Monitor": "Second monitor",
+ "Compositing baut ein Bild aus mehreren Teilen. Klick auf „Beispiel anlegen“: Dann lege ich dir ein kleines Beispiel an, Bild im Bild.": "Compositing builds one picture from several parts. Click “Create Example” and I’ll set up a small example for you: picture in picture.",
+ "Das Übungsprojekt eines Rundgangs wird nicht gespeichert.": "A tour’s practice project is not saved.",
+ "Der Rundgang läuft in einem Übungsprojekt. Dein Projekt hat ungespeicherte Änderungen: Es kommt nach dem Rundgang genau so zurück, wie es jetzt ist.": "The tour runs in a practice project. Your project has unsaved changes: after the tour it comes back exactly as it is now.",
+ "Erst speichern": "Save First",
+ "Für mich erledigen": "Do It for Me",
+ "Rundgang starten": "Start Tour"
 }

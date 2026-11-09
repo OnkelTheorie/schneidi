@@ -2773,7 +2773,6 @@
  "Belichtung macht das ganze Bild heller oder dunkler, Sättigung die Farben kräftiger oder blasser.": "Ekspozycja rozjaśnia lub przyciemnia cały obraz, nasycenie sprawia, że kolory są mocniejsze lub bledsze.",
  "Bewegt sich die Stelle? Setz an mehreren Zeitpunkten einen Keyframe, dann folgt das Fenster.": "Miejsce się porusza? Ustaw klatki kluczowe w kilku momentach, a okno podąży za nim.",
  "Bild im Bild": "Obraz w obrazie",
- "Compositing baut ein Bild aus mehreren Teilen. Für diesen Rundgang lege ich dir ein kleines Beispiel an: Bild im Bild.": "Kompozycja tworzy jeden obraz z kilku części. Na potrzeby przewodnika utworzę mały przykład: obraz w obrazie.",
  "Das Bild fließt von links nach rechts durch die Knoten, jeder verändert es ein Stück. Tab oder Umschalt+Leertaste holt einen neuen Knoten.": "Obraz płynie przez węzły od lewej do prawej, każdy trochę go zmienia. Tab lub Shift+Spacja dodaje nowy węzeł.",
  "Das Rezept verkleinert den Clip, gibt ihm einen Rahmen und legt ihn mit einem Mischen-Knoten über die Spuren darunter.": "Przepis zmniejsza klip, dodaje ramkę i nakłada go węzłem Scal na ścieżki poniżej.",
  "Das ist der Medienpool. Zieh Videos aus dem Dateimanager hierher oder nimm Datei › Medien importieren (Strg+I).": "To jest biblioteka multimediów. Przeciągnij tu filmy z menedżera plików albo użyj Plik › Importuj media (Ctrl+I).",
@@ -2879,5 +2878,11 @@
  "Volle Projektauflösung": "Pełna rozdzielczość projektu",
  "Vorschau": "Podgląd",
  "Vorschau-Auflösung": "Rozdzielczość podglądu",
- "Zweiter Monitor": "Drugi monitor"
+ "Zweiter Monitor": "Drugi monitor",
+ "Compositing baut ein Bild aus mehreren Teilen. Klick auf „Beispiel anlegen“: Dann lege ich dir ein kleines Beispiel an, Bild im Bild.": "Kompozycja tworzy jeden obraz z kilku części. Kliknij „Utwórz przykład”, a przygotuję mały przykład: obraz w obrazie.",
+ "Das Übungsprojekt eines Rundgangs wird nicht gespeichert.": "Projekt ćwiczeniowy przewodnika nie jest zapisywany.",
+ "Der Rundgang läuft in einem Übungsprojekt. Dein Projekt hat ungespeicherte Änderungen: Es kommt nach dem Rundgang genau so zurück, wie es jetzt ist.": "Przewodnik działa w projekcie ćwiczeniowym. Twój projekt ma niezapisane zmiany: po przewodniku wróci dokładnie taki, jaki jest teraz.",
+ "Erst speichern": "Najpierw zapisz",
+ "Für mich erledigen": "Zrób to za mnie",
+ "Rundgang starten": "Rozpocznij przewodnik"
 }

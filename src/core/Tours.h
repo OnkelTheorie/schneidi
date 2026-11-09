@@ -36,6 +36,11 @@ struct Tour {
     // empty = only from the menu
     QString offerOn;
     QString group; // where Help › Tours lists it: empty = the tours, "guides" = the submenu with the task guides
+    // The practice project the tour runs on (never the user's own clips; the window builds it from the built-in sample
+    // clips, app/MainWindowTours.cpp): "pool" = the clips in the Media Pool and an empty timeline, "timeline" (default)
+    // = also one after another on the timeline with the playhead in the first, "stack" = like "timeline" plus a clip on
+    // a track above the first one (picture in picture, keys)
+    QString practice = QStringLiteral("timeline");
     QVector<TourStep> steps;
 };
 

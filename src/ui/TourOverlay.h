@@ -5,7 +5,10 @@
 // Clicks inside a hole reach the real widget below (wait steps: "drag a clip into the timeline"), clicks on the dim
 // part do nothing. The bubble keeps out of the targets and inside the window. The targets are asked again whenever the
 // window changes size and a few times a second (a panel that moves, a splitter dragged), the hole follows.
-// The same layer asks the tour question (setQuestion): "Shall I show you?" with Show me / Later (/ Don't offer tours).
+// The same layer asks questions (showQuestion): "Shall I show you?" with Show me / Later (/ Don't offer tours), and
+// before a tour whether to save the user's unsaved project.
+// The bubble's size comes from its content: wide enough for its buttons (they never elide; a second row when one row
+// would get too wide), its height from the layout at that width.
 
 #include <QPointer>
 #include <QRect>
@@ -29,13 +32,27 @@ public:
     // A tour step: text, "index+1/count", which buttons. waiting = the step waits for the user ("Skip" instead of
     // "Next"), offer = the text of an extra button (empty = none; "Load sample clips")
     void showStep(const QString& text, int index, int count, bool waiting, const QString& offer = {});
-    // The question before a tour (no hole, bubble in the middle); firstStart adds "Don't offer tours"
-    void showQuestion(const QString& title, const QString& text, bool firstStart);
+    // A question (no hole, bubble in the middle): its answers as buttons, left to right; `flat` ones go to the left
+    // side, the primary one is the default; Esc picks the one marked `escape`
+    struct Choice {
+        QString name; // objectName of its button ("tour_later")
+        QString text;
+        std::function<void()> run;
+        bool primary = false;
+        bool flat = false;
+        bool escape = false;
+    };
+    void showQuestion(const QString& title, const QString& text, const QString& hint, const QVector<Choice>& choices);
     void end(); // hide
+    void refresh() { relayout(); } // targets and bubble anew now (tests; it also follows on a timer)
 
-    // Where the bubble of `size` goes: below the targets' bounding box, else above, right, left (the first place that
-    // fits `area` without covering the target), else clamped into `area`; no target = centered
-    static QRect placeBubble(const QRect& area, const QRect& target, const QSize& size, int gap = 14);
+    // Where the bubble of `size` goes: beside the first (main) hole - below, above, right, left, the first place that
+    // fits `area` without covering any hole -, else the same around all holes together, else clamped into `area`; no
+    // hole = centered
+    static QRect placeBubble(const QRect& area, const QVector<QRect>& holes, const QSize& size, int gap = 14);
+    // Narrowest and widest bubble (it grows from the narrowest for long texts and for its buttons)
+    static constexpr int kMinWidth = 320;
+    static constexpr int kMaxWidth = 520;
 
     QVector<QRect> holes() const { return m_holes; }
     QRect bubbleGeometry() const;
@@ -46,9 +63,6 @@ signals:
     void backClicked();
     void endClicked();   // End tour, Esc
     void offerClicked();
-    void showMe();       // question answers
-    void later();
-    void never();
 
 protected:
     void paintEvent(QPaintEvent*) override;
@@ -57,13 +71,23 @@ protected:
 private:
     void relayout();
     void clearButtons();
-    QPushButton* addButton(const QString& text, bool primary);
+    QPushButton* addButton(const QString& name, const QString& text, bool primary, bool left);
+    void arrangeButtons(bool twoRows); // the buttons into one row or two (left ones above)
+    QSize bubbleSize();                // the bubble's size for its content (arranges the buttons)
     QFrame* m_bubble = nullptr;
     QLabel* m_title = nullptr;
     QLabel* m_counter = nullptr;
     QLabel* m_text = nullptr;
     QLabel* m_hint = nullptr; // question: where the tours are found later
-    class QHBoxLayout* m_buttons = nullptr;
+    class QHBoxLayout* m_row1 = nullptr; // one row: all buttons; two rows: the left ones (End tour)
+    class QHBoxLayout* m_row2 = nullptr; // two rows: the rest, right-aligned
+    struct Button {
+        QPushButton* button;
+        bool left;
+    };
+    QVector<Button> m_buttonList;
+    std::function<void()> m_escape; // the question's Esc answer
+    int m_arranged = 0;             // how the buttons are arranged now: 0 = not yet, 1 = one row, 2 = two rows
     std::function<QVector<QRect>()> m_targets;
     QVector<QRect> m_holes;
     QTimer m_follow;

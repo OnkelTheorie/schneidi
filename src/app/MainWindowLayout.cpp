@@ -183,6 +183,7 @@ QWidget* MainWindow::buildTopBar()
     // Visibility is saved (panels/<key>); test runs do not change the setting
     auto makeToggle = [this](const QString& text, const QString& key, bool def, QWidget* panel) {
         auto* b = new QToolButton;
+        b->setObjectName("panelToggle_" + key);
         b->setText(text);
         b->setCheckable(true);
         b->setChecked(QSettings().value("panels/" + key, def).toBool());
@@ -192,7 +193,7 @@ QWidget* MainWindow::buildTopBar()
             setViewerLarge(false); // the layout comes back, with this panel as asked
             panel->setVisible(on);
             updateLeftColumn();
-            if (!m_autosaveDisabled) QSettings().setValue("panels/" + key, on);
+            if (!m_autosaveDisabled && !m_tourSaved.active) QSettings().setValue("panels/" + key, on); // a tour sets its own
         });
         return b;
     };
@@ -358,7 +359,8 @@ void MainWindow::updatePageButtons()
     if (!m_pageButtons) return;
     for (QAbstractButton* b : m_pageButtons->buttons()) {
         const Page page = Page(m_pageButtons->id(b));
-        b->setVisible(!isPageHidden(page) || page == m_page); // a key to a hidden page shows it while it is current
+        // A key to a hidden page shows it while it is current; a tour shows every page (it points at their buttons)
+        b->setVisible(!isPageHidden(page) || page == m_page || m_tourSaved.active);
     }
 }
 
@@ -453,7 +455,7 @@ void MainWindow::watchSizes(QSplitter* s, const QString& name)
 {
     s->setObjectName(name);
     connect(s, &QSplitter::splitterMoved, this, [this, s] {
-        if (m_autosaveDisabled) return; // test runs leave the user's layout alone
+        if (m_autosaveDisabled || m_tourSaved.active) return; // test runs and tours leave the user's layout alone
         // Hidden panels report 0: keep their last size so they come back as they were
         const QString key = "layout/" + s->objectName();
         QList<int> sizes = s->sizes();
@@ -472,7 +474,8 @@ void MainWindow::watchSizes(QSplitter* s, const QString& name)
 void MainWindow::applySizes(QSplitter* s, const QList<int>& defaults)
 {
     m_defaultSizes[s] = defaults;
-    const QVariantList saved = QSettings().value("layout/" + s->objectName()).toList();
+    // A tour shows the defaults (its targets where it expects them); the user's sizes come back after it
+    const QVariantList saved = m_tourSaved.active ? QVariantList() : QSettings().value("layout/" + s->objectName()).toList();
     if (saved.size() != defaults.size() || s->count() != defaults.size()) {
         s->setSizes(defaults);
         return;

@@ -140,9 +140,15 @@ void CompCanvas::resizeEvent(QResizeEvent*) { placeTourButton(); }
 
 void CompCanvas::placeTourButton()
 {
-    m_tourButton->setVisible(m_clipId && m_graph.isEmpty());
+    m_tourButton->setVisible(m_tourButtonAllowed && m_clipId && m_graph.isEmpty());
     m_tourButton->adjustSize();
     m_tourButton->move((width() - m_tourButton->width()) / 2, height() / 2 + 18);
+}
+
+void CompCanvas::setTourButtonAllowed(bool on)
+{
+    m_tourButtonAllowed = on;
+    placeTourButton();
 }
 
 QRect CompCanvas::tourArea(const QString& what) const

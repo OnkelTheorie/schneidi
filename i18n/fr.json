@@ -2773,7 +2773,6 @@
  "Belichtung macht das ganze Bild heller oder dunkler, Sättigung die Farben kräftiger oder blasser.": "L’exposition éclaircit ou assombrit toute l’image, la saturation rend les couleurs plus vives ou plus pâles.",
  "Bewegt sich die Stelle? Setz an mehreren Zeitpunkten einen Keyframe, dann folgt das Fenster.": "L’endroit bouge ? Place une image clé à plusieurs moments, la fenêtre suivra.",
  "Bild im Bild": "Incrustation d'image",
- "Compositing baut ein Bild aus mehreren Teilen. Für diesen Rundgang lege ich dir ein kleines Beispiel an: Bild im Bild.": "Le compositing assemble une image à partir de plusieurs éléments. Pour cette visite, je te crée un petit exemple : une incrustation d’image.",
  "Das Bild fließt von links nach rechts durch die Knoten, jeder verändert es ein Stück. Tab oder Umschalt+Leertaste holt einen neuen Knoten.": "L’image traverse les nœuds de gauche à droite, chacun la modifie un peu. Tab ou Maj+Espace ajoute un nouveau nœud.",
  "Das Rezept verkleinert den Clip, gibt ihm einen Rahmen und legt ihn mit einem Mischen-Knoten über die Spuren darunter.": "La recette réduit le clip, lui ajoute un cadre et le pose sur les pistes en dessous avec un nœud Fusionner.",
  "Das ist der Medienpool. Zieh Videos aus dem Dateimanager hierher oder nimm Datei › Medien importieren (Strg+I).": "Voici la médiathèque. Glisse des vidéos ici depuis le gestionnaire de fichiers ou utilise Fichier › Importer des médias (Ctrl+I).",
@@ -2879,5 +2878,11 @@
  "Volle Projektauflösung": "Pleine résolution du projet",
  "Vorschau": "Aperçu",
  "Vorschau-Auflösung": "Résolution de l’aperçu",
- "Zweiter Monitor": "Second moniteur"
+ "Zweiter Monitor": "Second moniteur",
+ "Compositing baut ein Bild aus mehreren Teilen. Klick auf „Beispiel anlegen“: Dann lege ich dir ein kleines Beispiel an, Bild im Bild.": "Le compositing assemble une image à partir de plusieurs éléments. Clique sur « Créer un exemple » et je te prépare un petit exemple : une incrustation d’image.",
+ "Das Übungsprojekt eines Rundgangs wird nicht gespeichert.": "Le projet d’entraînement d’une visite n’est pas enregistré.",
+ "Der Rundgang läuft in einem Übungsprojekt. Dein Projekt hat ungespeicherte Änderungen: Es kommt nach dem Rundgang genau so zurück, wie es jetzt ist.": "La visite se déroule dans un projet d’entraînement. Ton projet contient des modifications non enregistrées : après la visite, il revient exactement tel qu’il est maintenant.",
+ "Erst speichern": "Enregistrer d’abord",
+ "Für mich erledigen": "Le faire pour moi",
+ "Rundgang starten": "Commencer la visite"
 }

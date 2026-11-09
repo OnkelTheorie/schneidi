@@ -2773,7 +2773,6 @@
  "Belichtung macht das ganze Bild heller oder dunkler, Sättigung die Farben kräftiger oder blasser.": "La exposición aclara u oscurece toda la imagen; la saturación hace los colores más intensos o más pálidos.",
  "Bewegt sich die Stelle? Setz an mehreren Zeitpunkten einen Keyframe, dann folgt das Fenster.": "¿Se mueve la zona? Pon un fotograma clave en varios momentos y la ventana la seguirá.",
  "Bild im Bild": "Imagen en imagen",
- "Compositing baut ein Bild aus mehreren Teilen. Für diesen Rundgang lege ich dir ein kleines Beispiel an: Bild im Bild.": "La composición crea una imagen a partir de varias partes. Para este recorrido te preparo un pequeño ejemplo: imagen en imagen.",
  "Das Bild fließt von links nach rechts durch die Knoten, jeder verändert es ein Stück. Tab oder Umschalt+Leertaste holt einen neuen Knoten.": "La imagen fluye de izquierda a derecha por los nodos; cada uno la cambia un poco. Tab o Mayús+Espacio añade un nodo nuevo.",
  "Das Rezept verkleinert den Clip, gibt ihm einen Rahmen und legt ihn mit einem Mischen-Knoten über die Spuren darunter.": "La receta reduce el clip, le pone un marco y lo coloca sobre las pistas de abajo con un nodo Fusionar.",
  "Das ist der Medienpool. Zieh Videos aus dem Dateimanager hierher oder nimm Datei › Medien importieren (Strg+I).": "Esta es la biblioteca de medios. Arrastra vídeos aquí desde el explorador de archivos o usa Archivo › Importar medios (Ctrl+I).",
@@ -2879,5 +2878,11 @@
  "Volle Projektauflösung": "Resolución completa del proyecto",
  "Vorschau": "Vista previa",
  "Vorschau-Auflösung": "Resolución de la vista previa",
- "Zweiter Monitor": "Segundo monitor"
+ "Zweiter Monitor": "Segundo monitor",
+ "Compositing baut ein Bild aus mehreren Teilen. Klick auf „Beispiel anlegen“: Dann lege ich dir ein kleines Beispiel an, Bild im Bild.": "La composición crea una imagen a partir de varias partes. Haz clic en «Crear ejemplo» y te preparo un pequeño ejemplo: imagen en imagen.",
+ "Das Übungsprojekt eines Rundgangs wird nicht gespeichert.": "El proyecto de práctica de un recorrido no se guarda.",
+ "Der Rundgang läuft in einem Übungsprojekt. Dein Projekt hat ungespeicherte Änderungen: Es kommt nach dem Rundgang genau so zurück, wie es jetzt ist.": "El recorrido se hace en un proyecto de práctica. Tu proyecto tiene cambios sin guardar: después del recorrido vuelve exactamente como está ahora.",
+ "Erst speichern": "Guardar primero",
+ "Für mich erledigen": "Hazlo por mí",
+ "Rundgang starten": "Iniciar recorrido"
 }

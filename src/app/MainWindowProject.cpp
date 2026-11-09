@@ -80,6 +80,7 @@
 #include <QInputDialog>
 #include <QStandardPaths>
 #include <QStatusBar>
+#include "app/TourManager.h"
 #include <QTimer>
 
 // ---- Project file ---------------------------------------------------------------
@@ -196,6 +197,7 @@ bool MainWindow::maybeSave()
 
 bool MainWindow::maybeLeaveProject()
 {
+    if (m_tourSaved.active && m_tours) m_tours->stop(); // the user's project back first: that is the one being left
     endVoiceover();
     RenderQueue* queue = m_deliver->renderQueue();
     if (queue->isRunning() && !m_autosaveDisabled) {
@@ -528,11 +530,16 @@ void MainWindow::openBackupDialog()
 
 bool MainWindow::save()
 {
+    if (m_tourSaved.active) { // the practice project of a tour is never saved (the user's comes back after it)
+        statusBar()->showMessage(T("Das Übungsprojekt eines Rundgangs wird nicht gespeichert."), 5000);
+        return false;
+    }
     return m_projectPath.isEmpty() ? saveAs() : saveTo(m_projectPath);
 }
 
 bool MainWindow::saveAs()
 {
+    if (m_tourSaved.active) return save(); // says why not
     QString suggestion = !m_projectPath.isEmpty()     ? m_projectPath
                          : !m_saveSuggestion.isEmpty() ? m_saveSuggestion
                                                        : QDir::home().filePath(T("Unbenannt.%1").arg(ProjectFile::Extension));
@@ -579,7 +586,7 @@ bool MainWindow::saveTo(const QString& path)
 
 void MainWindow::autosave()
 {
-    if (!m_project->isModified()) return;
+    if (!m_project->isModified() || m_tourSaved.active) return; // a tour's practice project: the user's backup stays
     ProjectData data = m_project->data();
     data.playhead = m_timeline->view()->playhead();
     data.views = savedViews();
@@ -675,6 +682,7 @@ void MainWindow::closeEvent(QCloseEvent* event)
         event->ignore();
         return;
     }
+    if (m_tourSaved.active && m_tours) m_tours->stop(); // the user's project back: asked about, not the practice one
     endVoiceover();
     if (!maybeSave()) {
         event->ignore();

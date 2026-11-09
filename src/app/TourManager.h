@@ -26,7 +26,12 @@ public:
         std::function<QString()> page;                    // the shown page ("media", "edit", "comp", "color", "deliver")
         std::function<void(const QString&)> showPage;     // switch to a page
         std::function<int()> playhead;                    // timeline frame
-        QHash<QString, std::function<QRect()>> areas;     // "area:<name>" targets
+        // "area:<name>" targets: a part of a widget (in that widget's coordinates; no widget = not there)
+        struct Area {
+            QWidget* widget = nullptr;
+            QRect rect;
+        };
+        QHash<QString, std::function<Area()>> areas;
         QHash<QString, std::function<bool()>> conditions; // wait conditions beyond the built-in ones
         QHash<QString, std::function<void()>> actions;    // a step's "action", done when it is entered
         // A step's "offer": the button's text (German key), whether it is needed now, what it does
@@ -36,9 +41,13 @@ public:
             std::function<void()> run;
         };
         QHash<QString, Offer> offers;
-        // A target the user switched off (a panel): shown for the step; returns how to hide it again (empty = it
-        // showed already)
-        std::function<std::function<void()>(const QString& target)> reveal;
+        // Tour mode: enter = the tour's practice project (Tour::practice) and a fixed layout instead of the user's
+        // project and panels; leave = the user's project, page, panels and sizes back exactly as they were
+        std::function<void(const Tour&)> enter;
+        std::function<void()> leave;
+        // The user's project has unsaved changes (asked about before a tour), save = save it (false = not saved)
+        std::function<bool()> unsaved;
+        std::function<bool()> save;
     };
     TourManager(QMainWindow* window, Project* project, Host host);
 
@@ -56,16 +65,26 @@ public:
     TourOverlay* overlay() const { return m_overlay; }
     // The rectangles a target string stands for (window coordinates; empty = nothing visible of it)
     QVector<QRect> resolve(const QString& target) const;
+    // The same with the widget each one belongs to (the widget itself, the one holding an area, the menu bar)
+    struct Target {
+        QString part; // the part of the target string
+        QRect rect;   // window coordinates
+        QWidget* widget = nullptr;
+    };
+    QVector<Target> targets(const QString& target) const;
+
+signals:
+    void runningChanged(bool running); // a tour began / ended (after leave)
 
 public slots:
     void poke(); // something changed a wait condition could depend on (project, playhead, page)
 
 private:
     void ask(const Tour& tour, bool firstStart);
-    void enterStep(); // a step entered: its page, its action, its hidden targets shown
+    void launch(const Tour& tour); // into tour mode and the first step
+    void enterStep(); // a step entered: its page, its action
     void showStep();  // the bubble for the step as it is now (waiting, offer)
     void finished(bool completed);
-    void unreveal();  // hides again what the last step showed
     bool holds(const QString& condition) const;
     void begin(const TourStep& step);
     int clipCount() const;
@@ -82,5 +101,4 @@ private:
     int m_basePlayhead = 0;
     int m_baseClips = 0;
     QPointer<QAction> m_offerAction;
-    QVector<std::function<void()>> m_revealed; // undo of what the current step showed
 };
