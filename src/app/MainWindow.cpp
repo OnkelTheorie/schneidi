@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "app/MainWindow.h"
+#include "app/TourManager.h"
+#include "ui/TourOverlay.h"
 #include "app/AiKeys.h"
 #include "app/AiLog.h"
 #include "app/ExtensionsDialog.h"
@@ -814,6 +816,7 @@ void MainWindow::startKeyPick(int clipId)
 void MainWindow::stopKeyPick()
 {
     m_inspector->setKeyPicking(false);
+    if (m_tours) m_tours->overlay()->setPaused(false); // the tour's bubble back
     if (KeyPickWindow* window = std::exchange(m_keyPickWindow, nullptr)) {
         window->disconnect(this);
         window->hide();

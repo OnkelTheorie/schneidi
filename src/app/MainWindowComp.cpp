@@ -2,6 +2,7 @@
 // MainWindow: the Comp page (0.19) - built lazily, opened for a clip, the viewer's picture of a node or matte, the
 // pipette of a key node.
 #include "app/MainWindow.h"
+#include "ui/TourOverlay.h"
 #include "app/TourManager.h"
 
 #include "app/ExtensionsDialog.h"
@@ -197,5 +198,6 @@ void MainWindow::startCompKeyPick(int clipId, int node, const QString& key)
     connect(m_keyPicker, &KeyColorPicker::cancelled, this, &MainWindow::stopKeyPick);
     m_keyPickWindow = new KeyPickWindow(m_keyPicker, picture.size(), this);
     connect(m_keyPickWindow, &KeyPickWindow::closeRequested, this, &MainWindow::stopKeyPick);
+    if (m_tours) m_tours->overlay()->setPaused(true); // the bubble would cover the picture
     m_keyPickWindow->showOn(screen());
 }

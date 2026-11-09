@@ -302,8 +302,28 @@ void TourOverlay::showQuestion(const QString& title, const QString& text, const 
     qApp->installEventFilter(this);
 }
 
+void TourOverlay::setPaused(bool paused)
+{
+    if (paused == m_paused) return;
+    if (paused && !isVisible()) return; // nothing shown: nothing to bring back
+    m_paused = paused;
+    if (paused) {
+        m_follow.stop();
+        hide();
+        m_bubble->hide();
+        return;
+    }
+    show();
+    raise();
+    m_bubble->show();
+    m_bubble->raise();
+    relayout();
+    if (!m_question) m_follow.start();
+}
+
 void TourOverlay::end()
 {
+    m_paused = false;
     m_follow.stop();
     qApp->removeEventFilter(this);
     hide();
