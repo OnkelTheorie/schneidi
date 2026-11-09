@@ -344,7 +344,12 @@ int main(int argc, char** argv)
             CHECK(c.start <= from && c.start >= from - int(fps)); // the head before the first heard frame is kept
             CHECK(c.in == 0 || c.start == 0);                     // cut only at the timeline's start
             CHECK(std::abs(c.in + length - recorded) < 1.0);
-            CHECK(length >= int(1.8 * fps) && length <= int(2.8 * fps)); // ~2 s (a busy machine: a bit more)
+            // ~2 s recorded (a busy machine: a bit more). What the input took before the timeline was heard lies
+            // before `from`; at the timeline's start there is no room for it and it is cut (c.in) - the longer the
+            // player waits for its first picture (a loaded machine: up to ~0.4 s), the more. So the whole file is
+            // ~2 s, the clip that much shorter, the cut head less than a second.
+            CHECK(c.in + length >= int(1.8 * fps) && c.in + length <= int(2.8 * fps));
+            CHECK(c.in < int(fps));
         };
         takeFor2s(int(fps / 2), "1 s of content, from 0.5 s");
         project->undoStack()->undo();
