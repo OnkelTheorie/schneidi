@@ -106,6 +106,20 @@ void testPlanRemoval()
     CHECK_EQ(plan.next("DP-1"), QString("DP-2"));
 }
 
+// The main window on the preview's monitor (dragged there, or its own monitor went away): covered -> back
+void testPlanCover()
+{
+    Plan plan;
+    plan.setScreens({kMain, kPortrait});
+    CHECK(!plan.coversMain("DP-1")); // no preview out
+    plan.setTarget("DP-2");
+    CHECK(!plan.coversMain("DP-1"));
+    CHECK(plan.coversMain("DP-2"));
+    // The main window's monitor unplugged: the screen list still has the preview's, but the window is there now
+    CHECK(!plan.setScreens({kPortrait}));
+    CHECK(plan.coversMain("DP-2"));
+}
+
 void testPlanPicture()
 {
     // A 9:16 timeline fills a portrait monitor
@@ -350,6 +364,24 @@ void testApp(MainWindow& w, Engine& engine, const QString& clip)
     emit qGuiApp->screenAdded(screen);
     settle();
     CHECK(!w.previewOutput());
+    // The main window lands on the preview's monitor (offscreen: both are on the only screen): back as well - when
+    // Qt says the window's screen changed, and when the screens change
+    w.showPreviewOn(screen);
+    settle();
+    if (CHECK(w.previewOutput() && w.windowHandle())) {
+        emit w.windowHandle()->screenChanged(screen);
+        settle();
+        CHECK(!w.previewOutput() && !action->isChecked());
+        CHECK(viewer->isVisible());
+    }
+    w.showPreviewOn(screen);
+    settle();
+    CHECK(w.previewOutput());
+    emit qGuiApp->screenAdded(screen);
+    settle();
+    CHECK(!w.previewOutput());
+    CHECK(w.screenPlan().target().isEmpty());
+    same(before, Sizes::of(&w), "covered");
 
     // Settings: the choice is in the dialog ("Fläche bleibt" first, the default)
     {
@@ -442,6 +474,25 @@ void testApp(MainWindow& w, Engine& engine, const QString& clip)
     CHECK(tv->view().pxPerFrame == view.pxPerFrame && tv->view().leftFrame == view.leftFrame);
 }
 
+// Closing the main window with the preview on the monitor: the monitor's window goes too (it never keeps the app
+// running: no quit-on-close of its own)
+void testCloseWithOutput(MainWindow& w)
+{
+    w.showPreviewOn(QGuiApplication::primaryScreen());
+    settle();
+    auto* out = qobject_cast<ScreenOutput*>(w.previewOutput());
+    if (!CHECK(out && out->window())) return;
+    QPointer<FullScreenViewer> fs = out->window();
+    CHECK(!fs->testAttribute(Qt::WA_QuitOnClose));
+    CHECK(fs->isVisible());
+    CHECK(w.close());
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    settle();
+    CHECK(!w.previewOutput());
+    CHECK(!fs || !fs->isVisible());
+    CHECK(!fs); // deleted, not only hidden
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -451,6 +502,7 @@ int main(int argc, char** argv)
     Check::initApp("second-screen");
     testPlanOrder();
     testPlanRemoval();
+    testPlanCover();
     testPlanPicture();
     QTemporaryDir dir;
     Engine engine;
@@ -478,5 +530,6 @@ int main(int argc, char** argv)
     w.importFiles({file}, true);
     settle();
     testApp(w, engine, file);
+    testCloseWithOutput(w);
     return Check::result();
 }

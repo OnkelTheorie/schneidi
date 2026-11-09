@@ -2922,5 +2922,7 @@
  "Out-Punkt %1": "Wyjście %1",
  "In/Out %1 – %2, Länge %3": "Wejście/wyjście %1 – %2, długość %3",
  "In-Punkt hier setzen": "Ustaw tu punkt wejścia",
- "Out-Punkt hier setzen": "Ustaw tu punkt wyjścia"
+ "Out-Punkt hier setzen": "Ustaw tu punkt wyjścia",
+ "Die Datei ist zu groß für eine Tastenbelegung.": "Plik jest za duży jak na skróty klawiszowe.",
+ "%1 Tasten weggelassen (nur für ein anderes Premiere-Fenster oder schon von einem anderen Befehl belegt).": "Pominięto klawisze: %1 (tylko dla innego panelu Premiere albo już przypisane do innego polecenia)."
 }

@@ -2922,5 +2922,7 @@
  "Out-Punkt %1": "Выход %1",
  "In/Out %1 – %2, Länge %3": "Вход/выход %1 – %2, длина %3",
  "In-Punkt hier setzen": "Поставить вход здесь",
- "Out-Punkt hier setzen": "Поставить выход здесь"
+ "Out-Punkt hier setzen": "Поставить выход здесь",
+ "Die Datei ist zu groß für eine Tastenbelegung.": "Файл слишком велик для набора сочетаний клавиш.",
+ "%1 Tasten weggelassen (nur für ein anderes Premiere-Fenster oder schon von einem anderen Befehl belegt).": "Пропущено клавиш: %1 (только для другой панели Premiere или уже заняты другой командой)."
 }

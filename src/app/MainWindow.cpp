@@ -1216,26 +1216,21 @@ void MainWindow::setupProxyHint()
     connect(proxies, &ProxyManager::enabledChanged, this, &MainWindow::updateProxyHint);
 
     // Proxies on import (Settings › General): every way a file comes into the open project (Media Pool, drop on the
-    // timeline, watch folders, the live MCP/CLI import) changes the media list; a loaded project only sets the list
-    const auto mediaPaths = [this] {
-        QSet<QString> out;
-        for (const MediaInfo& m : m_project->media()) out.insert(m.path);
-        return out;
-    };
-    m_knownMedia = mediaPaths();
-    connect(m_project, &Project::mediaChanged, this, [this, proxies, mediaPaths] {
-        if (std::exchange(m_knownMediaCheck, true)) return;
-        QTimer::singleShot(0, this, [this, proxies, mediaPaths] { // after load() said loaded()
-            m_knownMediaCheck = false;
-            const QSet<QString> now = mediaPaths();
-            QStringList added;
-            for (const MediaInfo& m : m_project->media())
-                if (!m_knownMedia.contains(m.path)) added << m.path;
-            m_knownMedia = now;
-            proxies->importedFiles(added);
-        });
+    // timeline, watch folders, the live MCP/CLI import) says mediaImported; undo/redo and loading a project do not
+    connect(m_project, &Project::mediaImported, this, [this, proxies](const QStringList& paths) {
+        if (m_importedMedia.isEmpty())
+            QTimer::singleShot(0, this, [this, proxies] {
+                proxies->importedFiles(std::exchange(m_importedMedia, {}),
+                                       [project = QPointer<Project>(m_project)](const QString& path) {
+                                           return project && project->mediaInfo(path);
+                                       });
+            });
+        m_importedMedia << paths;
     });
-    connect(m_project, &Project::loaded, this, [this, mediaPaths] { m_knownMedia = mediaPaths(); });
+    connect(m_project, &Project::loaded, proxies, [this, proxies] {
+        m_importedMedia.clear();
+        proxies->dropImports();
+    });
 }
 
 bool MainWindow::offersRenderCache() const

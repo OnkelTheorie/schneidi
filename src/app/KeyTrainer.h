@@ -8,7 +8,8 @@ class QPushButton;
 
 // Help › Practice keys: a small card that asks for the key of a common action ("Press the key for: Split clip") with the
 // binding of the current set, 10 rounds, skippable. Non-modal and quiet (no sound); while it has the focus it takes
-// every key itself, so nothing in the window fires (Space does not start playback). Nothing runs in the background.
+// every key itself, so nothing in the window fires (Space does not start playback); Esc closes it. Nothing runs in the
+// background.
 class KeyTrainer : public QFrame {
     Q_OBJECT
 public:
@@ -33,6 +34,7 @@ protected:
 private:
     void showRound();
     void pressed(const QString& input); // PortableText of the key pressed
+    bool fits(const QString& input) const; // one of the keys of the action asked for
 
     QStringList m_ids;
     int m_round = 0;

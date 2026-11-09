@@ -414,10 +414,9 @@ private:
     QStringList m_slowFiles; // playback was too slow with these files (proxy hint); empty = no hint
     double m_slowRate = 0, m_slowFps = 0;
     bool m_proxyHintClosed = false; // closed: not again in this session
-    // Media files of the project as last seen: new ones are imports (proxies on import, ProxyManager::importedFiles);
-    // set from scratch when another project is loaded
-    QSet<QString> m_knownMedia;
-    bool m_knownMediaCheck = false; // a check is queued
+    // Files imported since the last pass to ProxyManager::importedFiles (proxies on import): one probe per import
+    // of several files
+    QStringList m_importedMedia;
     bool m_slowEffects = false;     // clips with effects played: the hint offers the smart render cache first
     Inspector* m_inspector = nullptr;
     ColorPanel* m_colorPanel = nullptr;
@@ -474,7 +473,8 @@ private:
     // (Engine::setPreviewEdge: one preview, the larger size wins)
     void updatePreviewEdge();
     void hideViewerArea();    // the viewer and the splitters left empty by it go, their sizes are remembered
-    void restoreViewerArea(); // back as it was before hideViewerArea
+    void restoreViewerArea(); // back as it was before hideViewerArea, but with what the user dragged meanwhile
+    void watchViewerAwaySplitters(); // notes the splitters of m_viewerAway the user drags meanwhile
     void updateViewerArea();  // hidden or back, as the mode and the output say
     QAction* m_secondScreenAction = nullptr;
     QAction* m_secondScreenModeActions[2] = {}; // Workspace › Main Window with a Second Monitor, by Mode
@@ -495,6 +495,8 @@ private:
         QVector<QPair<QPointer<QSplitter>, QList<int>>> sizes; // their sizes before, innermost first
         bool timelineUp = false; // Edit page: the timeline took the viewer's place in the top row
         QSizePolicy timelinePolicy; // its own before (the viewer's stretch while up there)
+        QSet<QSplitter*> moved; // of `sizes`: dragged by the user meanwhile (their new sizes stay)
+        QVector<QMetaObject::Connection> watches; // splitterMoved of `sizes`
     } m_viewerAway;
 
     QHash<QString, MediaInfo> m_probeCache;

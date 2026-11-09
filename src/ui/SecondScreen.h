@@ -44,6 +44,9 @@ public:
     // in the order of the screen list; after the last one back into the main window (empty). With two screens that is
     // simply on/off.
     QString next(const QString& mainScreen) const;
+    // The preview is on the monitor the main window is on (the window was dragged there, or its own monitor went away
+    // and Qt moved it there): it would cover the main window, so it comes back into it
+    bool coversMain(const QString& mainScreen) const { return !m_target.isEmpty() && m_target == mainScreen; }
     const Screen* screen(const QString& name) const;
 
     // The picture's rectangle on an area: as large as fits, the aspect kept, centered (black bars around)

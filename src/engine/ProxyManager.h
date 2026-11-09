@@ -11,6 +11,8 @@
 #include <QString>
 #include <QStringList>
 
+#include <functional>
+
 class QProcess;
 
 class ProxyManager : public QObject {
@@ -50,8 +52,11 @@ public:
     // and unreadable files never
     static bool wantedOnImport(ImportRule rule, const QString& path);
     // Newly imported files (app: the Media Pool, drag and drop, watch folders, the live MCP/CLI import): queues the
-    // ones the stored rule wants. The files are read in a helper thread; the queue fills a moment later.
-    void importedFiles(const QStringList& paths);
+    // ones the stored rule wants. The files are read in a helper thread; the queue fills a moment later - without the
+    // files `stillThere` says are gone by then (removed again, another project), and nothing at all after cancelAll()
+    // or dropImports() meanwhile
+    void importedFiles(const QStringList& paths, std::function<bool(const QString&)> stillThere = {});
+    void dropImports() { ++m_importRun; } // another project: the files being read are not its imports
     void remove(const QStringList& originals);   // delete proxy (a running generation is canceled)
     void cancel(const QStringList& originals);
     void cancelAll();
@@ -89,4 +94,5 @@ private:
     QProcess* m_process = nullptr;
     class QThread* m_probeThread = nullptr; // probes the next source
     int m_job = 0;                          // counted up on start/cancel; stale probes expire
+    int m_importRun = 0;                    // counted up by cancelAll/dropImports: import probes running expire
 };

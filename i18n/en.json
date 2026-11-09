@@ -2922,5 +2922,7 @@
  "Out-Punkt %1": "Out %1",
  "In/Out %1 – %2, Länge %3": "In/Out %1 – %2, length %3",
  "In-Punkt hier setzen": "Mark In here",
- "Out-Punkt hier setzen": "Mark Out here"
+ "Out-Punkt hier setzen": "Mark Out here",
+ "Die Datei ist zu groß für eine Tastenbelegung.": "The file is too large for keyboard shortcuts.",
+ "%1 Tasten weggelassen (nur für ein anderes Premiere-Fenster oder schon von einem anderen Befehl belegt).": "%1 keys left out (only for another Premiere panel, or already used by another command)."
 }

@@ -137,4 +137,5 @@ private:
     class QTimer* m_noticeTimer = nullptr;
     class QTimer* m_edgeTimer = nullptr; // bundles resize steps before previewEdgeWanted
     int m_lastEdge = 0;
+    mutable int m_shownEdge = 0; // wantedPreviewEdge() while the picture was shown: kept while trim/multicam cover it
 };

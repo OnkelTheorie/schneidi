@@ -437,13 +437,23 @@ int Viewer::heightFor(int width) const
 
 int Viewer::wantedPreviewEdge() const
 {
-    if (!m_screen->isVisible() || m_screen->width() <= 0 || m_screen->height() <= 0) return 0;
+    // The trim or multicam view in the picture's place (the viewer itself still there): the size the picture had, so
+    // a trim drag does not flip the engine's preview size. 0 while the viewer is away or minimized, or shows the
+    // "preview on the monitor" page
+    if (!m_screen->isVisible()) {
+        const bool replaced = m_stack->isVisible() && m_stack->currentWidget() != m_screen
+                              && m_stack->currentWidget() != m_awayPage
+                              && !(window()->windowState() & Qt::WindowMinimized);
+        return replaced ? m_shownEdge : 0;
+    }
+    if (m_screen->width() <= 0 || m_screen->height() <= 0) return 0;
     const QSize px = m_screen->size() * m_screen->devicePixelRatioF();
     QSize project = m_engine->frameSize();
     if (project.isEmpty()) project = px;
     const QSize covered = project.scaled(px, Qt::KeepAspectRatio);
     const int longer = std::max(covered.width(), covered.height());
-    return std::clamp((longer + 63) / 64 * 64, 64, PreviewResolution::kAutoCap);
+    m_shownEdge = std::clamp((longer + 63) / 64 * 64, 64, PreviewResolution::kAutoCap);
+    return m_shownEdge;
 }
 
 bool Viewer::eventFilter(QObject* obj, QEvent* event)

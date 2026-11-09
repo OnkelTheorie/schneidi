@@ -2922,5 +2922,7 @@
  "Out-Punkt %1": "Salida %1",
  "In/Out %1 – %2, Länge %3": "Entrada/salida %1 – %2, duración %3",
  "In-Punkt hier setzen": "Marcar entrada aquí",
- "Out-Punkt hier setzen": "Marcar salida aquí"
+ "Out-Punkt hier setzen": "Marcar salida aquí",
+ "Die Datei ist zu groß für eine Tastenbelegung.": "El archivo es demasiado grande para ser un conjunto de atajos.",
+ "%1 Tasten weggelassen (nur für ein anderes Premiere-Fenster oder schon von einem anderen Befehl belegt).": "%1 teclas omitidas (solo para otro panel de Premiere o ya asignadas a otro comando)."
 }

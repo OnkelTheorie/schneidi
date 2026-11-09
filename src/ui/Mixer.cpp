@@ -28,6 +28,7 @@
 #include <algorithm>
 #include <cmath>
 #include <functional>
+#include <utility>
 
 namespace {
 
@@ -1052,7 +1053,7 @@ int Mixer::fixedWidth() const { return m_master->minimumWidth() + m_loudness->mi
 
 // Widen the mixer (or the column it is in) in the nearest side-by-side splitter (taking from the timeline) until all
 // strips fit, at most to 45 % of the splitter. Only grows, so a mixer the user made narrower stays narrower until it is
-// shown again.
+// toggled on again (a page switch keeps it).
 void Mixer::growToFit()
 {
     QWidget* item = this;
@@ -1074,7 +1075,14 @@ void Mixer::growToFit()
 void Mixer::showEvent(QShowEvent* e)
 {
     QWidget::showEvent(e);
-    QTimer::singleShot(0, this, &Mixer::growToFit); // after the splitter has laid out the page
+    if (std::exchange(m_growOnShow, false))
+        QTimer::singleShot(0, this, &Mixer::growToFit); // after the splitter has laid out the page
+}
+
+void Mixer::hideEvent(QHideEvent* e)
+{
+    QWidget::hideEvent(e);
+    if (isHidden()) m_growOnShow = true; // hidden itself (toggled off), not only its page
 }
 
 void Mixer::sync()

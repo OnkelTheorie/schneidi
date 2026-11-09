@@ -315,7 +315,10 @@ bool KeyBindingsDialog::importFile(const QString& path)
     m_summary->setText(T("„%1“ importiert: %2 übernommen, %3 unbekannt (die fehlen in schneidi und bleiben weg).")
                            .arg(InputBindings::presetName(id))
                            .arg(r.taken)
-                           .arg(r.unknown));
+                           .arg(r.unknown)
+                       + (r.dropped > 0 ? ' ' + T("%1 Tasten weggelassen (nur für ein anderes Premiere-Fenster oder schon "
+                                                  "von einem anderen Befehl belegt).").arg(r.dropped)
+                                        : QString()));
     m_summary->show();
     fill();
     return true;

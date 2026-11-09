@@ -214,18 +214,37 @@ void KeyTrainer::keyPressEvent(QKeyEvent* e)
     if (e->isAutoRepeat()) return;
     const Qt::KeyboardModifiers mods =
         e->modifiers() & (Qt::ShiftModifier | Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier);
-    pressed(QKeySequence(QKeyCombination(mods, Qt::Key(e->key()))).toString(QKeySequence::PortableText));
+    const auto text = [](Qt::KeyboardModifiers m, int key) {
+        return QKeySequence(QKeyCombination(m, Qt::Key(key))).toString(QKeySequence::PortableText);
+    };
+    // Esc closes the card - unless Esc is the key asked for
+    if (e->key() == Qt::Key_Escape && mods == Qt::NoModifier && !fits(text(mods, e->key()))) {
+        close();
+        return;
+    }
+    QString input = text(mods, e->key());
+    // A symbol that needs Shift on this keyboard ("=" is Shift+0 on a German one) comes with Shift: the window's
+    // shortcuts take it as the bare symbol too, so does the trainer
+    const bool symbol = e->key() >= 0x21 && e->key() <= 0xff && !QChar(e->key()).isLetterOrNumber();
+    if (symbol && (mods & Qt::ShiftModifier) && !fits(input) && fits(text(mods & ~Qt::ShiftModifier, e->key())))
+        input = text(mods & ~Qt::ShiftModifier, e->key());
+    pressed(input);
+}
+
+bool KeyTrainer::fits(const QString& input) const
+{
+    if (finished()) return false;
+    const QStringList keys = keysOf(m_ids[m_round]);
+    return std::any_of(keys.begin(), keys.end(), [&](const QString& k) {
+        return QKeySequence::fromString(k, QKeySequence::PortableText)
+               == QKeySequence::fromString(input, QKeySequence::PortableText);
+    });
 }
 
 void KeyTrainer::pressed(const QString& input)
 {
     if (finished()) return;
-    const QStringList keys = keysOf(m_ids[m_round]);
-    const bool right = std::any_of(keys.begin(), keys.end(), [&](const QString& k) {
-        return QKeySequence::fromString(k, QKeySequence::PortableText)
-               == QKeySequence::fromString(input, QKeySequence::PortableText);
-    });
-    if (!right) {
+    if (!fits(input)) {
         m_missed = true;
         m_feedback->setStyleSheet(QString("color: %1;").arg(Theme::warning.name()));
         m_feedback->setText(T("Das war %1. Nochmal!").arg(keyText(input)));

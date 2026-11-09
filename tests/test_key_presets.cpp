@@ -23,6 +23,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLabel>
+#include <QPointer>
 #include <QPushButton>
 #include <QSignalSpy>
 #include <QTemporaryDir>
@@ -56,6 +57,80 @@ void testReadKys()
     CHECK(!InputBindings::readKys("not xml at all").ok);
     CHECK(!InputBindings::readKys(R"({"shortcuts": {}})").ok);
     CHECK(!InputBindings::readKys("<html><body>hi</body></html>").ok);
+}
+
+// Premiere's contexts: one key may do one thing in the timeline and another one elsewhere. Only the global and the
+// timeline context count, the global one wins; a key twice is kept for the first command only
+const char* kContexts = R"(<?xml version="1.0" encoding="UTF-8" ?>
+<PremiereData Version="3"><shortcuts>
+  <context.timeline>
+    <item><commandname>cmd.marker.setin</commandname><virtualkey>75</virtualkey></item>
+    <item><commandname>cmd.sequence.snap</commandname><virtualkey>78</virtualkey></item>
+  </context.timeline>
+  <context.global>
+    <item><commandname>cmd.edit.undo</commandname><virtualkey>90</virtualkey><modifier.ctrl>true</modifier.ctrl></item>
+    <item><commandname>cmd.sequence.addedit</commandname><virtualkey>75</virtualkey></item>
+  </context.global>
+  <context.panel.project>
+    <item><commandname>cmd.sequence.zoomin</commandname><virtualkey>78</virtualkey></item>
+    <item><commandname>cmd.tool.pen</commandname><virtualkey>80</virtualkey></item>
+  </context.panel.project>
+</shortcuts></PremiereData>
+)";
+
+// No two actions of one scope on the same key (the multicam angle keys share Alt+1..9 with the video target tracks
+// on purpose: only one of them is enabled at a time)
+void checkUniqueKeys(const char* where)
+{
+    const InputBindings& b = InputBindings::instance();
+    QHash<QString, QString> owner;
+    for (const InputBindings::Entry& e : b.entries())
+        for (const QString& input : b.inputs(e.id)) {
+            if (input.isEmpty()) continue;
+            const QString key = e.scope + '\n' + input;
+            const bool angle = e.id.startsWith("multicam_switch_")
+                               && owner.value(key) == "target_video_" + e.id.mid(int(strlen("multicam_switch_")));
+            if (owner.contains(key) && !angle)
+                Check::report(false, "a key on two actions", __FILE__, __LINE__,
+                              QString("%1: %2 on %3 and %4").arg(where, input, owner[key], e.id));
+            owner.insert(key, e.id);
+        }
+}
+
+void testKysContexts()
+{
+    const auto r = InputBindings::readKys(kContexts);
+    CHECK(r.ok);
+    CHECK_EQ(r.keys.value("split"), QStringList({"K"})); // global before the timeline's K
+    CHECK(!r.keys.contains("mark_in"));
+    CHECK_EQ(r.keys.value("snapping"), QStringList({"N"}));
+    CHECK(!r.keys.contains("zoom_in")); // only in the project panel there
+    CHECK_EQ(r.taken, 3);
+    CHECK_EQ(r.unknown, 0); // the pen in another panel is not counted at all
+    CHECK_EQ(r.dropped, 2);
+
+    // Imported: one action per key, the summary says what was left out
+    InputBindings& b = InputBindings::instance();
+    b.applyPreset("standard");
+    QTemporaryDir tmp;
+    const QString path = QDir(tmp.path()).filePath("contexts.kys");
+    QFile f(path);
+    if (!CHECK(f.open(QIODevice::WriteOnly))) return;
+    f.write(kContexts);
+    f.close();
+    KeyBindingsDialog dlg;
+    auto* summary = dlg.findChild<QLabel*>("key_import_summary");
+    if (!CHECK(summary && dlg.importFile(path))) return;
+    CHECK(summary->text().contains(T("%1 Tasten weggelassen (nur für ein anderes Premiere-Fenster oder schon "
+                                     "von einem anderen Befehl belegt).").arg(2)));
+    CHECK_EQ(in("split"), QStringList({"K", ""}));
+    CHECK(!in("mark_in").contains("K"));
+    checkUniqueKeys("contexts.kys");
+    for (const char* preset : {"standard", "beginner", "premiere", "finalcut"}) {
+        b.applyPreset(preset);
+        checkUniqueKeys(preset);
+    }
+    b.applyPreset("standard");
 }
 
 void testPresets()
@@ -177,6 +252,48 @@ void testImport()
     CHECK(b.importKys(junk, nullptr, &error).isEmpty());
     CHECK(!error.isEmpty());
     CHECK_EQ(b.currentPreset(), id);
+    // The preset file cannot be written (a folder in its place): an error, the set in memory stays as it was
+    {
+        const QStringList split = in("split");
+        QDir(InputBindings::customPresetDir()).mkpath("blocked.json");
+        const QString blocked = QDir(tmp.path()).filePath("blocked.kys");
+        QFile::copy(fixture(), blocked);
+        error.clear();
+        CHECK(b.importKys(blocked, nullptr, &error).isEmpty());
+        CHECK(!error.isEmpty());
+        CHECK_EQ(b.currentPreset(), id);
+        CHECK_EQ(in("split"), split);
+        CHECK_EQ(in("tool_blade").value(0), QString("C"));
+        QFile set(b.filePath());
+        if (CHECK(set.open(QIODevice::ReadOnly)))
+            CHECK_EQ(QJsonDocument::fromJson(set.readAll()).object().value("preset").toString(), id);
+        b.load(); // what the file has, which must be the same
+        CHECK_EQ(b.currentPreset(), id);
+        CHECK_EQ(in("split"), split);
+        QDir(InputBindings::customPresetDir()).rmdir("blocked.json");
+    }
+    // Names Windows cannot have as a file: made safe
+    for (const auto& [file, want] : {std::pair<QString, QString>{"con.kys", "con_"}, {"LPT1.old.kys", "LPT1_.old"},
+                                     {"set. .kys", "set"}, {"console.kys", "console"}}) {
+        const QString p = QDir(tmp.path()).filePath(file);
+        QFile::copy(fixture(), p);
+        error.clear();
+        CHECK_EQ(b.importKys(p, nullptr, &error), "custom:" + want);
+        CHECK(QFileInfo::exists(QDir(InputBindings::customPresetDir()).filePath(want + ".json")));
+    }
+    b.applyPreset(id);
+    // Larger than any shortcut file (5 MB): refused before reading
+    const QString huge = QDir(tmp.path()).filePath("huge.kys");
+    QFile h(huge);
+    if (CHECK(h.open(QIODevice::WriteOnly))) {
+        h.write("<PremiereData><shortcuts>");
+        h.resize(6 * 1024 * 1024);
+        h.close();
+    }
+    error.clear();
+    CHECK(b.importKys(huge, nullptr, &error).isEmpty());
+    CHECK_EQ(error, T("Die Datei ist zu groß für eine Tastenbelegung."));
+    CHECK_EQ(b.currentPreset(), id);
     b.applyPreset("standard");
 }
 
@@ -245,8 +362,26 @@ void testTrainer(MainWindow& w)
     t->findChild<QPushButton*>("trainer_again")->click();
     CHECK_EQ(t->round(), 0);
     CHECK_EQ(t->hits(), 0);
-    t->close();
+    // A symbol that needs Shift on the keyboard (a German "=" is Shift+0): right with Shift too
+    const QString asked = t->currentId();
+    const QStringList kept = b.inputs(asked);
+    b.setInputs(asked, {"=", ""});
+    QTest::keyClick(t, Qt::Key_Equal, Qt::ShiftModifier);
     QApplication::processEvents();
+    CHECK_EQ(t->round(), 1);
+    CHECK_EQ(t->hits(), 1);
+    b.setInputs(asked, kept);
+    // ... but a letter with Shift is another key
+    b.setInputs(t->currentId(), {"K", ""});
+    QTest::keyClick(t, Qt::Key_K, Qt::ShiftModifier);
+    QApplication::processEvents();
+    CHECK_EQ(t->round(), 1);
+    // Esc closes the card
+    QPointer<KeyTrainer> card = t;
+    QTest::keyClick(t, Qt::Key_Escape);
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    QApplication::processEvents();
+    CHECK(!card);
     b.applyPreset("standard");
 }
 
@@ -346,6 +481,7 @@ int main(int argc, char** argv)
         QApplication::processEvents();
         testPresets();
         testImport();
+        testKysContexts();
         testTrainer(w);
     }
     testLanguages(engine);

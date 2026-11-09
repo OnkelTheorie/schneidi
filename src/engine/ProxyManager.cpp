@@ -328,7 +328,7 @@ bool ProxyManager::wantedOnImport(ImportRule rule, const QString& path)
     return heavyVideo(in.width, in.height, in.codec, desc ? desc->comp[0].depth : 8);
 }
 
-void ProxyManager::importedFiles(const QStringList& paths)
+void ProxyManager::importedFiles(const QStringList& paths, std::function<bool(const QString&)> stillThere)
 {
     const ImportRule rule = importRule();
     if (rule == ImportRule::Never || paths.isEmpty()) return;
@@ -339,8 +339,10 @@ void ProxyManager::importedFiles(const QStringList& paths)
             if (wantedOnImport(rule, p)) *wanted << p;
     });
     thread->setParent(this); // the destructor waits for it
-    connect(thread, &QThread::finished, this, [this, thread, wanted] {
+    connect(thread, &QThread::finished, this, [this, thread, wanted, stillThere, run = m_importRun] {
         thread->deleteLater();
+        if (run != m_importRun) return; // canceled or another project meanwhile
+        if (stillThere) wanted->removeIf([&](const QString& p) { return !stillThere(p); });
         if (!wanted->isEmpty()) generate(*wanted);
     });
     thread->start();
@@ -377,6 +379,7 @@ void ProxyManager::cancel(const QStringList& originals)
 
 void ProxyManager::cancelAll()
 {
+    ++m_importRun; // files of an import still being read are not queued afterwards
     QStringList all = m_queue;
     if (!m_current.isEmpty()) all << m_current;
     cancel(all);

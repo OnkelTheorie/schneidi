@@ -82,6 +82,7 @@ public:
         QHash<QString, QStringList> keys; // action id -> keys (PortableText), at most kSlots
         int taken = 0;                    // commands with a key that schneidi has
         int unknown = 0;                  // commands with a key that schneidi lacks (ignored)
+        int dropped = 0;                  // keys left out: another panel's (context) or one a command has already
         bool ok = false;                  // a readable shortcut file
     };
     static KysResult readKys(const QByteArray& xml);

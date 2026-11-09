@@ -785,6 +785,7 @@ void Project::addMedia(const MediaInfo& info)
     if (m_media.last().bin != 0 && !bin(m_media.last().bin)) m_media.last().bin = 0;
     m_mediaDirty = true;
     emit mediaChanged();
+    emit mediaImported({info.path});
     emit modifiedChanged(true);
 }
 
@@ -1044,6 +1045,9 @@ QVector<WatchArrival> Project::addWatchedMedia(const QVector<WatchImport>& files
     closeMerge(); // never part of a slider series of the user
     m_undo->push(new WatchImportCommand(this, text, add)); // push calls redo()
     closeMerge();
+    QStringList paths;
+    for (const WatchImport& f : add) paths << f.media.path;
+    emit mediaImported(paths); // only now: a redo of this step brings the files back, it does not import them
     return arrivals;
 }
 

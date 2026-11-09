@@ -110,7 +110,8 @@ void testWindow(Engine& engine)
         CHECK(w.isPageHidden(Page::Edit));
         CHECK(w.currentPage() == Page::Comp);
         CHECK(!button(w, "edit")->isVisible());
-        CHECK(QSettings().value(PageVisibility::kSettingsKey).toStringList() == QStringList({"edit"}));
+        // A test run (screenshots too) never writes the user's settings
+        CHECK(!QSettings().contains(PageVisibility::kSettingsKey));
 
         // Hide all but Deliver: its checkbox is disabled
         w.setPageHidden(Page::Media, true);
@@ -159,6 +160,15 @@ void testWindow(Engine& engine)
             dump(bar, "media-deliver");
         }
     }
+    // A normal window saves what it hides (Edit, Comp, Color: Media and Deliver are left for the next window)
+    {
+        MainWindow w(&engine);
+        w.show();
+        CHECK(QTest::qWaitForWindowExposed(&w));
+        for (Page p : {Page::Edit, Page::Comp, Page::Color}) w.setPageHidden(p, true);
+        CHECK(QSettings().value(PageVisibility::kSettingsKey).toStringList() == QStringList({"edit", "comp", "color"}));
+        w.disableAutosave();
+    }
     // A new window reads it again and starts on the page nearest to Edit (Media)
     {
         MainWindow w(&engine);
@@ -171,7 +181,8 @@ void testWindow(Engine& engine)
         CHECK(!button(w, "edit")->isVisible());
         w.showAllPages();
         for (const char* id : {"media", "edit", "comp", "color", "deliver"}) CHECK(button(w, id)->isVisible());
-        CHECK(!QSettings().contains(PageVisibility::kSettingsKey));
+        CHECK(QSettings().value(PageVisibility::kSettingsKey).toStringList().size() == 3); // a test run: unchanged
+        QSettings().remove(PageVisibility::kSettingsKey);
     }
 }
 

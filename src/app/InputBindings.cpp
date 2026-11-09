@@ -630,14 +630,21 @@ void InputBindings::overlay(const QHash<QString, QStringList>& keys)
 {
     QSet<QPair<QString, int>> fixed; // (id, slot) set by `keys`
     QSet<QString> taken;             // scope + '\n' + input
-    for (auto it = keys.begin(); it != keys.end(); ++it) {
-        QStringList binds = inputs(it.key());
-        for (int slot = 0; slot < kSlots && slot < it->size(); ++slot) {
-            binds[slot] = normalizeInput(it->at(slot));
-            fixed.insert({it.key(), slot});
-            if (!binds[slot].isEmpty()) taken.insert(scope(it.key()) + '\n' + binds[slot]);
+    // In a fixed order (by id): one key twice in `keys` stays with the first action only
+    QStringList order = keys.keys();
+    order.sort();
+    for (const QString& id : order) {
+        const QStringList& set = keys[id];
+        QStringList binds = inputs(id);
+        for (int slot = 0; slot < kSlots && slot < set.size(); ++slot) {
+            binds[slot] = normalizeInput(set[slot]);
+            fixed.insert({id, slot});
+            if (binds[slot].isEmpty()) continue;
+            const QString key = scope(id) + '\n' + binds[slot];
+            if (taken.contains(key)) binds[slot].clear();
+            else taken.insert(key);
         }
-        m_inputs[it.key()] = binds;
+        m_inputs[id] = binds;
     }
     // The other actions (and the kept second slots) give up keys the set uses now
     QStringList ids = m_inputs.keys();
@@ -705,12 +712,21 @@ InputBindings::KysResult InputBindings::readKys(const QByteArray& xml)
 {
     // Premiere writes one element per key, e.g. <item><commandname>cmd.edit.undo</commandname>
     // <virtualkey>90</virtualkey><modifier.ctrl>true</modifier.ctrl></item>. Tolerant: element names in any case,
-    // "command"/"key" spellings, macOS modifier names
+    // "command"/"key" spellings, macOS modifier names.
+    // The items sit in contexts (<context.global>, <context.timeline>, panels...): one key may do different things in
+    // different panels there, schneidi's actions have one key each. Only the global and the timeline context count,
+    // the global one first; a key already given to another command is left out (the file's order decides)
     KysResult r;
-    QSet<QString> taken, unknown;
+    QSet<QString> unknown;
+    struct Binding {
+        int rank; // 0 global (or no context), 1 timeline
+        QString command, id, input;
+    };
+    QVector<Binding> bindings;
     QXmlStreamReader x(xml);
     QHash<QString, QString> item; // child element -> text of the open item
-    int depth = 0, itemDepth = -1;
+    int depth = 0, itemDepth = -1, contextDepth = -1;
+    int rank = 0; // of the open context; -1 = a context that does not count
     QString root;
     while (!x.atEnd()) {
         x.readNext();
@@ -718,7 +734,10 @@ InputBindings::KysResult InputBindings::readKys(const QByteArray& xml)
             ++depth;
             const QString name = x.name().toString().toLower();
             if (root.isEmpty()) root = name;
-            if (itemDepth < 0 && (name == "item" || name == "shortcut")) {
+            if (itemDepth < 0 && contextDepth < 0 && name.startsWith("context")) {
+                contextDepth = depth;
+                rank = name == "context.global" || name == "context" ? 0 : name.contains("timeline") ? 1 : -1;
+            } else if (itemDepth < 0 && (name == "item" || name == "shortcut")) {
                 itemDepth = depth;
                 item.clear();
             } else if (itemDepth >= 0 && depth == itemDepth + 1) {
@@ -747,15 +766,34 @@ InputBindings::KysResult InputBindings::readKys(const QByteArray& xml)
                 if (input.isEmpty()) {
                     // a key schneidi cannot name: not counted
                 } else if (id.isEmpty()) {
-                    unknown.insert(command);
+                    if (rank >= 0) unknown.insert(command);
+                } else if (rank < 0) {
+                    ++r.dropped; // another panel's key
                 } else {
-                    taken.insert(command);
-                    QStringList& keys = r.keys[id];
-                    if (!keys.contains(input) && keys.size() < kSlots) keys << input;
+                    bindings.append({rank, command, id, input});
                 }
+            }
+            if (depth == contextDepth) {
+                contextDepth = -1;
+                rank = 0;
             }
             --depth;
         }
+    }
+    std::stable_sort(bindings.begin(), bindings.end(), [](const Binding& a, const Binding& b) { return a.rank < b.rank; });
+    QSet<QString> taken;
+    QHash<QString, QString> owner; // input -> id
+    for (const Binding& b : bindings) {
+        const QString first = owner.value(b.input);
+        if (!first.isEmpty() && first != b.id) {
+            ++r.dropped; // the key does something else already
+            continue;
+        }
+        QStringList& keys = r.keys[b.id];
+        if (keys.contains(b.input) || keys.size() >= kSlots) continue;
+        keys << b.input;
+        owner.insert(b.input, b.id);
+        taken.insert(b.command);
     }
     r.ok = !x.hasError() && !root.isEmpty() && (root.contains("premiere") || root.contains("shortcut"));
     r.taken = int(taken.size());
@@ -770,6 +808,12 @@ QString InputBindings::importKys(const QString& path, KysResult* result, QString
         if (error) *error = f.errorString();
         return {};
     }
+    // Premiere's own files are well under 1 MB: a huge file is something else, not read into memory
+    constexpr qint64 kMaxKysBytes = 5 * 1024 * 1024;
+    if (f.size() > kMaxKysBytes) {
+        if (error) *error = T("Die Datei ist zu groß für eine Tastenbelegung.");
+        return {};
+    }
     KysResult r = readKys(f.readAll());
     if (result) *result = r;
     if (!r.ok || r.taken == 0) {
@@ -777,23 +821,33 @@ QString InputBindings::importKys(const QString& path, KysResult* result, QString
         return {};
     }
     // Premiere's set underneath: what the file leaves out works like in Premiere. A command with one key in the file
-    // has only that one (the second slot is cleared)
-    loadPreset("premiere");
+    // has only that one (the second slot is cleared). Built on a copy: the current set changes only once the preset
+    // file is written
+    InputBindings set(*this);
+    set.loadPreset("premiere");
     for (QStringList& keys : r.keys)
         while (keys.size() < kSlots) keys << QString();
-    overlay(r.keys);
+    set.overlay(r.keys);
     QString name = QFileInfo(path).completeBaseName().simplified();
     name.replace(QRegularExpression(R"([\\/:*?"<>|])"), "_");
+    // Windows drops trailing dots and spaces and reserves device names, also before a dot ("con.x.json" -> "con_.x")
+    while (name.endsWith('.') || name.endsWith(' ')) name.chop(1);
+    static const QRegularExpression reserved(R"(^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?$)",
+                                             QRegularExpression::CaseInsensitiveOption);
+    if (const QRegularExpressionMatch m = reserved.match(name); m.hasMatch()) name.insert(m.capturedEnd(1), '_');
     if (name.isEmpty()) name = "Premiere";
     QDir().mkpath(customPresetDir());
     const QString id = "custom:" + name;
-    m_preset = id;
+    set.m_preset = id;
     QFile out(QDir(customPresetDir()).filePath(name + ".json"));
-    if (!out.open(QIODevice::WriteOnly) || out.write(QJsonDocument(toJson()).toJson()) <= 0) {
+    if (!out.open(QIODevice::WriteOnly) || out.write(QJsonDocument(set.toJson()).toJson()) <= 0) {
         if (error) *error = T("Die Datei lässt sich nicht schreiben.");
         return {};
     }
     out.close();
+    m_inputs = set.m_inputs;
+    m_wheel = set.m_wheel;
+    m_preset = id;
     for (const Entry& e : m_entries) apply(e);
     rebuildMouse();
     save();
