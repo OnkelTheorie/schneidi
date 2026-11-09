@@ -76,6 +76,7 @@ public:
     // history in use: set it aside before loading the other project, back after loading the user's again.
     void setHistoryAside(bool aside);
     bool historyAside() const { return m_undo != &m_ownUndo; }
+    QUndoStack* ownUndoStack() { return &m_ownUndo; } // the user's history, also while it is aside
 
     // mergeKey: consecutive edits with the same key become one undo step
     // (e.g. dragging a slider in the Inspector). closeMerge() ends the series.

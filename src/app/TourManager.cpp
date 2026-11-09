@@ -9,6 +9,7 @@
 #include <QMainWindow>
 #include <QMenu>
 #include <QMenuBar>
+#include <QStatusBar>
 #include <QRegularExpression>
 #include <QScrollArea>
 #include <QTimer>
@@ -136,6 +137,12 @@ void TourManager::start(const QString& id)
 {
     const Tour t = Tours::find(id);
     if (t.id.isEmpty()) return;
+    if (const QString why = m_host.blocked ? m_host.blocked() : QString(); !why.isEmpty()) {
+        m_asking.clear();
+        m_overlay->end();
+        m_window->statusBar()->showMessage(why, 6000);
+        return;
+    }
     if (m_runner.running()) m_runner.finish(); // the one running first ends (and gives the user's project back)
     m_asking.clear();
     TourState::markShown(id);

@@ -2,6 +2,7 @@
 // MainWindow: the Comp page (0.19) - built lazily, opened for a clip, the viewer's picture of a node or matte, the
 // pipette of a key node.
 #include "app/MainWindow.h"
+#include "ui/TourOverlay.h"
 #include "app/TourManager.h"
 
 #include "app/ExtensionsDialog.h"
@@ -68,12 +69,13 @@ void MainWindow::ensureCompPage()
     });
 }
 
-void MainWindow::applyRecipe(const QVector<int>& ids, const QString& recipe)
+bool MainWindow::applyRecipe(const QVector<int>& ids, const QString& recipe)
 {
-    if (CompUi::applyRecipeAsking(this, m_editor, ids, recipe).isNull()) return;
+    if (CompUi::applyRecipeAsking(this, m_editor, ids, recipe).isNull()) return false;
     const std::optional<CompRecipe> r = CompRecipes::find(recipe);
     statusBar()->showMessage(T("Rezept „%1“ angewendet – die Werte stellst du auf der Seite Compositing ein")
                                  .arg(r ? CompRecipes::shownName(*r) : recipe), 6000);
+    return true;
 }
 
 int MainWindow::selectedVideoClip() const
@@ -104,8 +106,8 @@ int MainWindow::compClipAt(int frame) const
 
 void MainWindow::playheadInto(int clipId)
 {
-    const Clip* c = clipId ? TimelineOps::findClip(m_project->timeline(), clipId) : nullptr;
-    if (!c) return;
+    const Clip* c = clipId && !m_tourSwap ? TimelineOps::findClip(m_project->timeline(), clipId) : nullptr;
+    if (!c) return; // also while a tour gives the user's project back: their playhead stays
     const int at = m_timeline->view()->playhead();
     if (at >= c->start && at < c->end()) return;
     if (m_engine->mode() == Engine::Mode::Source) m_engine->showTimeline(c->start);
@@ -196,5 +198,6 @@ void MainWindow::startCompKeyPick(int clipId, int node, const QString& key)
     connect(m_keyPicker, &KeyColorPicker::cancelled, this, &MainWindow::stopKeyPick);
     m_keyPickWindow = new KeyPickWindow(m_keyPicker, picture.size(), this);
     connect(m_keyPickWindow, &KeyPickWindow::closeRequested, this, &MainWindow::stopKeyPick);
+    if (m_tours) m_tours->overlay()->setPaused(true); // the bubble would cover the picture
     m_keyPickWindow->showOn(screen());
 }

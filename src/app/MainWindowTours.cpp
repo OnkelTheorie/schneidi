@@ -23,6 +23,11 @@
 #include "ui/timeline/TimelineView.h"
 
 #include <QAbstractButton>
+#include <QApplication>
+#include <QTimer>
+#include "engine/RenderQueue.h"
+#include "ui/DeliverPanel.h"
+#include "ui/RenderQueuePanel.h"
 #include <QListWidget>
 #include <QStackedWidget>
 #include <QMenuBar>
@@ -106,11 +111,31 @@ void MainWindow::setupTours(QMenu* help)
             m_timeline->view()->setPlayhead(c->start + c->length() / 2);
         }
     };
+    // The Inspector shows a clip: the first video clip selected when none is
+    host.actions["select_clip"] = [this] {
+        if (!m_selection->ids().isEmpty()) return;
+        for (const Track& t : m_project->timeline().video)
+            if (!t.clips.isEmpty()) {
+                m_selection->set({t.clips.first().id});
+                return;
+            }
+    };
     // Tour mode: a practice project and a fixed layout; the user's project and layout come back at the end
     host.enter = [this](const Tour& t) { enterTourMode(t); };
     host.leave = [this] { leaveTourMode(); };
     host.unsaved = [this] { return m_project->isModified() && !m_autosaveDisabled; }; // test runs never ask
     host.save = [this] { return save(); };
+    // What a swap to the practice project would break: a render of the user's queue (its job ids are per project),
+    // AI changes waiting for review (Accept would act on the practice history), a window tracking on the user's clip
+    host.blocked = [this]() -> QString {
+        if (m_tourSaved.active) return {}; // one tour after the other: the first one's project goes away anyway
+        if (m_deliver->renderQueue()->isRunning())
+            return T("Rundgang erst nach dem Rendern – oder das Rendern abbrechen.");
+        if (m_review.active)
+            return T("Rundgang erst, wenn die Änderungen der KI übernommen oder verworfen sind.");
+        if (m_colorPanel->tracking()) return T("Rundgang erst, wenn das Verfolgen des Fensters fertig ist.");
+        return {};
+    };
     // The timeline's ruler (click there = playhead) and the playhead line, in window coordinates
     using Area = TourManager::Host::Area;
     host.areas["ruler"] = [this]() -> Area {
@@ -367,12 +392,14 @@ QVector<QToolButton*> MainWindow::tourToggles() const
 void MainWindow::enterTourMode(const Tour& tour)
 {
     if (m_tourSaved.active) leaveTourMode();
+    closePopups(); // a context menu still open would act on practice clips with the same ids
+    endVoiceover();
+    m_engine->pause();
     if (!m_autosaveDisabled) autosave(); // the backup up to date: a crash during the tour still restores the user's work
     // The user's project as it is (unsaved changes included) and how the window looks, kept aside
     TourSaved& s = m_tourSaved;
     s = {};
     s.active = true;
-    m_engine->pause();
     s.data = m_project->data();
     s.data.playhead = m_timeline->view()->playhead();
     s.data.views = savedViews();
@@ -389,6 +416,10 @@ void MainWindow::enterTourMode(const Tour& tour)
     for (QSplitter* sp : findChildren<QSplitter*>()) s.sizes.push_back({sp, sp->sizes()});
     s.window = size();
     s.tool = int(m_timeline->view()->tool());
+    s.fingerprint = m_projectFingerprint;
+    s.compClip = m_compPage ? m_compPage->clip() : 0;
+    s.clipboards = m_editor->clipboards();
+    s.views = s.data.views;
 
     // The tour's layout: the default panels at their default sizes, every page reachable (the settings stay as they are)
     setViewerLarge(false);
@@ -404,7 +435,9 @@ void MainWindow::enterTourMode(const Tour& tour)
         m_liveWaiting("a tour runs in the schneidi app (the user is learning on a practice project, the real project is "
                       "set aside); try again once the user ended it");
     m_project->setHistoryAside(true); // the user's undo history waits untouched; the practice project gets its own
+    m_tourSwap = true;
     buildPracticeProject(tour.practice);
+    m_tourSwap = false;
     showPage(Page::Edit); // the defaults of the Edit page; each step shows its own page
 }
 
@@ -425,6 +458,21 @@ void MainWindow::buildPracticeProject(const QString& practice)
     // (set once here, as the tour begins: no step and no drop changes it, core rule)
     ProjectData d = m_project->data();
     const double fps = m_project->timelineFormat().rate.fps();
+    // Handles: each clip starts a little into its file and ends a little before its end, so a transition dropped on
+    // a cut finds material to overlap (no "trim the clips?" question in the tour); the clips stay one after another
+    const int handle = m_project->timelineFormat().rate.timebase() / 3;
+    for (QVector<Track>* tracks : {&d.timeline.video, &d.timeline.audio})
+        for (Track& t : *tracks) {
+            int at = t.clips.isEmpty() ? 0 : t.clips.first().start;
+            for (Clip& c : t.clips) {
+                if (c.kind == ClipKind::Media && c.out - c.in > 6 * handle) {
+                    c.in += handle;
+                    c.out -= handle;
+                }
+                c.start = at;
+                at = c.end();
+            }
+        }
     d.playhead = onTimeline ? m_project->timelineFormat().rate.timebase() / 2 : 0;
     SavedView view;
     view.sequence = m_project->currentSequence();
@@ -448,11 +496,19 @@ void MainWindow::buildPracticeProject(const QString& practice)
 void MainWindow::leaveTourMode()
 {
     if (!m_tourSaved.active) return;
+    closePopups(); // a menu on a practice clip must not act on the user's clip with the same id
+    m_deliver->renderQueue()->cancel(); // a practice render: its jobs' ids would mark the user's jobs
     TourSaved s = std::exchange(m_tourSaved, {});
     m_engine->pause();
     // The user's project back as it was: unsaved changes still unsaved, the same file, playhead, zoom and selection
+    m_tourSwap = true;
     applyLoaded(std::move(s.data), s.path, false); // clears only the practice history
+    m_tourSwap = false;
     m_project->setHistoryAside(false);             // the user's undo and redo steps back, its clean state too
+    m_editor->setClipboards(s.clipboards);
+    // The file as the user last loaded or saved it (not as it is now): a change from outside during the tour is
+    // noticed below instead of being overwritten by the next save
+    m_projectFingerprint = s.fingerprint;
     m_saveSuggestion = s.saveSuggestion;
     m_templateDir = s.templateDir;
     m_templateCopies = s.templateCopies;
@@ -466,12 +522,32 @@ void MainWindow::leaveTourMode()
     m_scopes->setVisible(s.scopes);
     m_tourSaved.active = false;
     applySizes(m_colorBottom, {1100, 420});
+    m_tourSwap = true; // the page as it was: no page entry moves the user's playhead or changes the Comp clip
     showPage(s.page);
+    m_tourSwap = false;
+    if (m_compPage) m_compPage->setClip(s.compClip);
     updatePageButtons();
     for (const auto& [sp, sizes] : s.sizes)
         if (sp && sp->count() == sizes.size()) sp->setSizes(sizes);
     if (s.large) setViewerLarge(true);
     if (!isMaximized() && !isFullScreen() && s.window.isValid() && size() != s.window) resize(s.window);
     m_timeline->view()->setTool(TimelineView::Tool(s.tool)); // the user's tool, whatever the steps chose
+    // The zoom and scroll last, once the page's layout settled (the scroll range needs the view's real height; set
+    // earlier, a scroll further down came back clamped). Core rule: as the user left them.
+    const auto restoreView = [this, views = s.views, seq = m_project->currentSequence()] {
+        for (const SavedView& v : views)
+            if (v.sequence == seq && v.sequence == m_project->currentSequence())
+                m_timeline->view()->setZoomAndScroll(v.pxPerFrame, v.leftFrame, v.scrollY);
+    };
+    restoreView();
+    QTimer::singleShot(0, m_timeline->view(), restoreView); // after restoreViews' own (queued) one and the layout
     if (m_liveWaiting) m_liveWaiting({}); // AIs may work on the user's project again
+    checkProjectFile();
+}
+
+void MainWindow::closePopups()
+{
+    for (int guard = 0; guard < 10; ++guard) // nested menus: the innermost first
+        if (QWidget* popup = QApplication::activePopupWidget()) popup->close();
+        else break;
 }

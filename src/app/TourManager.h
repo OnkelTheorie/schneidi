@@ -53,6 +53,8 @@ public:
         // The user's project has unsaved changes (asked about before a tour), save = save it (false = not saved)
         std::function<bool()> unsaved;
         std::function<bool()> save;
+        // Why no tour can start now (a render, an AI change waiting for review ...; shown in the status bar), empty = it can
+        std::function<QString()> blocked;
     };
     TourManager(QMainWindow* window, Project* project, Host host);
 

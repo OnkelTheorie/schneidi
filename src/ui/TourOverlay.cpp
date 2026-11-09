@@ -302,8 +302,28 @@ void TourOverlay::showQuestion(const QString& title, const QString& text, const 
     qApp->installEventFilter(this);
 }
 
+void TourOverlay::setPaused(bool paused)
+{
+    if (paused == m_paused) return;
+    if (paused && !isVisible()) return; // nothing shown: nothing to bring back
+    m_paused = paused;
+    if (paused) {
+        m_follow.stop();
+        hide();
+        m_bubble->hide();
+        return;
+    }
+    show();
+    raise();
+    m_bubble->show();
+    m_bubble->raise();
+    relayout();
+    if (!m_question) m_follow.start();
+}
+
 void TourOverlay::end()
 {
+    m_paused = false;
     m_follow.stop();
     qApp->removeEventFilter(this);
     hide();
@@ -443,9 +463,15 @@ bool TourOverlay::eventFilter(QObject* obj, QEvent* e)
 {
     if (obj == parentWidget() && e->type() == QEvent::Resize && isVisible()) relayout();
     if (e->type() == QEvent::KeyPress && isVisible() && static_cast<QKeyEvent*>(e)->key() == Qt::Key_Escape) {
-        // Only while our window is the active one (a dialog of its own keeps its Esc)
+        // Only while our window is the active one (a dialog of its own keeps its Esc) and nothing else wants the key:
+        // an open menu or popup (it closes), an editor (a track's name, a search field), a drag (it is canceled)
         const QWidget* active = QApplication::activeWindow();
-        if (!active || active == window()) {
+        const QWidget* focus = QApplication::focusWidget();
+        const bool editor = focus && !m_bubble->isAncestorOf(focus)
+                            && (focus->inherits("QLineEdit") || focus->inherits("QAbstractSpinBox")
+                                || focus->inherits("QTextEdit") || focus->inherits("QPlainTextEdit"));
+        const bool taken = QApplication::activePopupWidget() || editor || QApplication::mouseButtons() != Qt::NoButton;
+        if ((!active || active == window()) && !taken) {
             if (!m_question) emit endClicked();
             else if (const auto escape = m_escape) escape(); // a copy: the answer may ask the next question
             return true;

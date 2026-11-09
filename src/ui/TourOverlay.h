@@ -52,6 +52,9 @@ public:
     };
     void showQuestion(const QString& title, const QString& text, const QString& hint, const QVector<Choice>& choices);
     void end(); // hide
+    // Out of the way for a while (the pipette's picture window): hidden, then back as it was
+    void setPaused(bool paused);
+    bool paused() const { return m_paused; }
     void refresh() { relayout(); } // targets and bubble anew now (tests; it also follows on a timer)
 
     // Where the bubble of `size` goes: beside the first (main) hole - below, above, right, left, the first place that
@@ -109,4 +112,5 @@ private:
     QVector<QRect> m_holes;
     QTimer m_follow;
     bool m_question = false;
+    bool m_paused = false;
 };

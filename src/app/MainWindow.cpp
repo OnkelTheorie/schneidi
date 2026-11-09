@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "app/MainWindow.h"
+#include "app/TourManager.h"
+#include "ui/TourOverlay.h"
 #include "app/AiKeys.h"
 #include "app/AiLog.h"
 #include "app/ExtensionsDialog.h"
@@ -278,7 +280,10 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
     connect(tv, &TimelineView::message, this, [this](const QString& text) { statusBar()->showMessage(text, 6000); });
     // Recipe dropped on a clip: applied after the drop (it may ask for a file)
     connect(tv, &TimelineView::recipeDropped, this, [this](int clipId, const QString& recipe) {
-        QTimer::singleShot(0, this, [this, clipId, recipe] { applyRecipe({clipId}, recipe); });
+        // The clip that got it selected: the Comp page and the Inspector show it next (not another one selected before)
+        QTimer::singleShot(0, this, [this, clipId, recipe] {
+            if (applyRecipe({clipId}, recipe)) m_selection->set({clipId});
+        });
     });
     // After the drop (the drag source waits until dropEvent returns; a message box there would block it)
     connect(tv, &TimelineView::soundDropRequested, this, [this](const QByteArray& sound, int frame) {
@@ -811,6 +816,7 @@ void MainWindow::startKeyPick(int clipId)
 void MainWindow::stopKeyPick()
 {
     m_inspector->setKeyPicking(false);
+    if (m_tours) m_tours->overlay()->setPaused(false); // the tour's bubble back
     if (KeyPickWindow* window = std::exchange(m_keyPickWindow, nullptr)) {
         window->disconnect(this);
         window->hide();

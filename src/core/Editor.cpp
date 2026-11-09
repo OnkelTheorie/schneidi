@@ -63,6 +63,27 @@ Editor::Editor(Project* project, Selection* selection, QObject* parent)
     m_clipboardRate = m_project->format().rate;
 }
 
+struct Editor::Clipboards {
+    QVector<ClipboardItem> clips;
+    std::optional<Clip> grade;
+    FrameRate rate;
+    QSize size;
+};
+
+std::shared_ptr<const Editor::Clipboards> Editor::clipboards() const
+{
+    return std::make_shared<const Clipboards>(Clipboards{m_clipboard, m_gradeClipboard, m_clipboardRate, m_clipboardSize});
+}
+
+void Editor::setClipboards(const std::shared_ptr<const Clipboards>& c)
+{
+    if (!c) return;
+    m_clipboard = c->clips;
+    m_gradeClipboard = c->grade;
+    m_clipboardRate = c->rate;
+    m_clipboardSize = c->size;
+}
+
 void Editor::keepClipboardFitting(bool otherProject)
 {
     // Clip times and keyframes count in frames of the rate they were copied at: another rate empties the clipboards

@@ -437,7 +437,7 @@ void MainWindow::showPage(Page page)
     case Page::Comp:
         // Built on the first showing; the selected video clip is opened (openComp sets its own after this)
         ensureCompPage();
-        if (before != Page::Comp) { // the selected clip (the playhead goes into it), else the one under the playhead
+        if (before != Page::Comp && !m_tourSwap) { // the selected clip (the playhead goes into it), else the one under the playhead
             playheadInto(selectedVideoClip());
             if (const int id = compClipAt(m_timeline->view()->playhead()); id && id != m_compPage->clip())
                 m_compPage->setClip(id);
