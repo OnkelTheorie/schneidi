@@ -454,6 +454,8 @@ void MainWindow::showPage(Page page)
     }
     if (auto* b = m_pageButtons->button(int(page))) b->setChecked(true);
     updatePageButtons();
+    // The armed track's level meter listens only where the timeline (its mic) is shown
+    if (m_voiceover) m_voiceover->setMeterShown(page != Page::Media && page != Page::Comp);
     const bool edit = page == Page::Edit;
     m_poolToggle->setEnabled(edit);
     m_effectsToggle->setEnabled(edit);

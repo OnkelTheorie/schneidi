@@ -282,18 +282,26 @@ void Editor::placeSource(Timeline& tl, const MediaInfo& m, int sIn, int len, int
     muteRepeatedSound(tl, sound);
 }
 
-int Editor::placeRecording(const QString& path, int track, double fileStart, int from, int* placed)
+int Editor::placeRecording(const QString& path, int track, double fileStart, int from, int* placed, int sequence,
+                           int* replaced)
 {
+    if (placed) *placed = -1;
+    if (replaced) *replaced = 0;
     const MediaInfo* m = m_project->mediaInfo(path);
     if (!m || !m->hasAudio || m->length <= 0) return 0;
     const std::optional<Voiceover::Placement> at = Voiceover::place(fileStart, std::max(0, from), m->length);
     if (!at) return 0;
+    // Another timeline than the open one (the take began there, then the tab changed): placed there, which stays
+    // in the background
+    const bool other = sequence > 0 && sequence != m_project->currentSequence();
+    const Sequence* seq = other ? m_project->sequence(sequence) : nullptr;
+    if (other && !seq) return 0; // that timeline is gone
+    const Timeline& before = other ? seq->timeline : m_project->timeline();
     // Never more than one new track per take
-    const int target = std::min(track, int(m_project->timeline().audio.size()));
-    if (target < 0 || (target < m_project->timeline().audio.size() && isTrackLocked({TrackKind::Audio, target})))
-        return 0;
+    const int target = std::min(track, int(before.audio.size()));
+    if (target < 0 || (target < before.audio.size() && before.audio[target].locked)) return 0;
     int id = 0;
-    m_project->edit(T("Voiceover aufnehmen"), [&](Timeline& tl) {
+    const auto place = [&](Timeline& tl) {
         const bool fresh = target >= tl.audio.size();
         TimelineOps::ensureTracks(tl, TrackKind::Audio, target + 1);
         Track& t = tl.audio[target];
@@ -307,10 +315,21 @@ int Editor::placeRecording(const QString& path, int track, double fileStart, int
         c.out = m->length - 1;
         TimelineOps::clearDissolveAt(t, c.start);
         TimelineOps::clearDissolveAt(t, c.end());
+        if (replaced)
+            for (const Clip& o : t.clips) *replaced += o.start < c.end() && o.end() > c.start;
         TimelineOps::placeClip(t, c, [this] { return m_project->newClipId(); });
-    });
-    if (id) m_selection->set({id});
+    };
+    if (!other) {
+        m_project->edit(T("Voiceover aufnehmen"), place);
+        if (id) m_selection->set({id});
+    } else {
+        m_project->editSequences(T("Voiceover aufnehmen"), [&](QVector<Sequence>& all, int&) {
+            for (Sequence& s : all)
+                if (s.id == sequence) place(s.timeline);
+        });
+    }
     if (placed) *placed = id ? target : -1;
+    if (replaced && !id) *replaced = 0;
     return id;
 }
 

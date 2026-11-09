@@ -6,7 +6,8 @@
 // else a free unnamed one, else one new track. A take right after the one before butts against it. While it runs the
 // take grows in the timeline (take(), liveTrack()). Stopping (the record key, Esc, Space) - or anything else moving
 // the playhead (a seek, J, a speed change) - puts it into the Media Pool and onto that track, as one undo step.
-// An armed track's input level is measured before recording too (a capture without a file).
+// An armed track's input level is measured before recording too (a capture without a file) - only while the app is
+// active and the timeline shown.
 
 #include "core/Voiceover.h"
 
@@ -43,12 +44,23 @@ public:
     // While recording: the growing take and the audio track it lands on now (>= the track count = a new one below)
     const Voiceover::LiveTake& take() const { return m_take; }
     int liveTrack() const { return m_liveTrack; }
+    // The timeline the take runs in / the last take went to
+    int sequence() const { return m_sequence; }
     // The track the last take was placed on (-1 = none)
     int placedTrack() const { return m_placedTrack; }
+    // How many clips the last take cut into or replaced (an armed track: punch-in; earlier takes)
+    int replaced() const { return m_replaced; }
     // Ends it and places the take; false = nothing placed (*error says why, empty = nothing recorded)
     bool stop(QString* error = nullptr);
     void cancel(); // ends it without placing anything (the file stays)
+    // A take that was running when the app ended without stopping it (a crash, a power cut): its file, once ("" =
+    // none). The WAV header follows while recording (Audio::Capture), so the file reads to about where it ended.
+    static QString runningTake();
     void inputChanged(); // the input setting changed: the armed track's meter listens to the new one
+    // The armed track's meter may listen (the timeline is shown). It never does while the app is in the background:
+    // an open input keeps a Bluetooth headset in its call profile (poor sound for everything else)
+    void setMeterShown(bool shown);
+    bool metering() const { return m_meter != nullptr; }
 
 signals:
     void armedChanged(int track);
@@ -60,6 +72,8 @@ signals:
 
 private:
     void tick();
+    void stopLater(); // stop() from the event loop (once, for this take)
+    void followTracks(); // the timeline changed: the armed track and the take's track follow theirs (Voiceover::findTrack)
     void updateMeter(); // the armed track's level meter on/off
     void goLive();
     Engine* m_engine;
@@ -75,15 +89,23 @@ private:
     Voiceover::Settings m_settings;
     Voiceover::LiveTake m_take;
     int m_armed = -1;
+    Voiceover::TrackKey m_armedKey; // which track m_armed is (tracks added/removed above it)
+    int m_armedSequence = 0;        // in which timeline
     int m_headFrom = 0;      // the take may reach back to here (Voiceover::headLimit)
     bool m_live = false;
     QElapsedTimer m_sinceStart;
     int m_track = -1;       // the track the take goes to, fixed at the start (>= the track count: a new one)
     bool m_starting = false; // start() seeks and plays itself: that does not end the take
     int m_liveTrack = -1;
+    int m_sequence = 0;     // the timeline the take began in: it goes there, also when another one is open by then
+    int m_takeNumber = 0;
+    Voiceover::TrackKey m_trackKey; // which track m_track is
     int m_placedTrack = -1;
+    int m_replaced = 0;
     int m_from = 0;         // playhead when recording started (the clip starts here)
     double m_playFrom = 0;  // where playback started (pre-roll before m_from)
     bool m_playing = false; // the timeline plays along (open end: also behind its last clip)
     bool m_stopping = false;
+    bool m_meterShown = true;
+    bool m_appActive = true;
 };

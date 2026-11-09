@@ -74,6 +74,8 @@ public:
     // Pages like in DaVinci (switchable at the bottom). New page: add here + in showPage().
     enum class Page { Media, Edit, Deliver, Color, Comp };
     void showPage(Page page);
+    // A voice-over take a crash left unfinished: into the Media Pool? (once, not modal; also at the start)
+    void offerCrashedTake();
     Page currentPage() const { return m_page; }
     // Hiding pages (right-click on the page bar, Workspace › Visible Pages; PageVisibility.h): a hidden current page
     // switches to the nearest shown one; the last shown page cannot be hidden. Saved right away.

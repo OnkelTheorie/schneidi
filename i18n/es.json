@@ -2924,5 +2924,12 @@
  "In-Punkt hier setzen": "Marcar entrada aquí",
  "Out-Punkt hier setzen": "Marcar salida aquí",
  "Die Datei ist zu groß für eine Tastenbelegung.": "El archivo es demasiado grande para ser un conjunto de atajos.",
- "%1 Tasten weggelassen (nur für ein anderes Premiere-Fenster oder schon von einem anderen Befehl belegt).": "%1 teclas omitidas (solo para otro panel de Premiere o ya asignadas a otro comando)."
+ "%1 Tasten weggelassen (nur für ein anderes Premiere-Fenster oder schon von einem anderen Befehl belegt).": "%1 teclas omitidas (solo para otro panel de Premiere o ya asignadas a otro comando).",
+ "Der Rundgang startet nach der Aufnahme – erst die Aufnahme beenden (Esc).": "El recorrido empieza después de la grabación: termina primero la grabación (Esc).",
+ "Aufnahme ersetzt 1 Clip – Strg+Z holt ihn zurück": "La grabación reemplazó 1 clip: Ctrl+Z lo recupera",
+ "Aufnahme ersetzt %1 Clips – Strg+Z holt sie zurück": "La grabación reemplazó %1 clips: Ctrl+Z los recupera",
+ "Aufnahme nach Absturz gefunden": "Grabación encontrada tras un cierre inesperado",
+ "Eine Voiceover-Aufnahme wurde nicht beendet: %1\nIn den Medienpool holen?": "Una grabación de voz en off no se terminó: %1\n¿Añadirla a la biblioteca de medios?",
+ "In den Medienpool": "A la biblioteca de medios",
+ "Nein": "No"
 }

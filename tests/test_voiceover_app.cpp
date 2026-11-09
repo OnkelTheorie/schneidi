@@ -18,6 +18,7 @@
 #include "check.h"
 
 #include "app/MainWindow.h"
+#include "app/TourManager.h"
 #include "app/VoiceoverRecorder.h"
 #include "core/EffectRegistry.h"
 #include "core/I18n.h"
@@ -37,6 +38,9 @@
 
 #include <QSettings>
 #include <QShortcut>
+#include <QMessageBox>
+#include <QAbstractButton>
+#include <QStatusBar>
 
 #include <QApplication>
 #include <QElapsedTimer>
@@ -216,8 +220,20 @@ int main(int argc, char** argv)
         CHECK(levels > 0);
         if (const QString dump = qEnvironmentVariable("VOICEOVER_TIMELINE_DUMP"); !dump.isEmpty())
             view->grab(QRect(0, mic.top() - 6, TimelineView::kHeaderW, 52)).save(dump + "-header.png");
+        // Review 2026-11-09: the meter's input closes while the app is in the background or the timeline is not
+        // shown (an open input keeps a Bluetooth headset in its call profile) and opens again after
+        CHECK(recorder->metering());
+        emit qApp->applicationStateChanged(Qt::ApplicationInactive);
+        CHECK(!recorder->metering());
+        emit qApp->applicationStateChanged(Qt::ApplicationActive);
+        CHECK(recorder->metering());
+        w.showPage(MainWindow::Page::Media);
+        CHECK(!recorder->metering());
+        w.showPage(MainWindow::Page::Edit);
+        CHECK(recorder->metering());
         QTest::mouseClick(view, Qt::LeftButton, {}, mic.center());
         CHECK_EQ(recorder->armedTrack(), -1);
+        CHECK(!recorder->metering());
     }
     QObject::disconnect(levelConn);
 
@@ -435,6 +451,8 @@ int main(int argc, char** argv)
         wait(100);
         CHECK_EQ(take(400), 0);
         CHECK_EQ(project->undoStack()->index(), beforePunch + 1);
+        CHECK_EQ(recorder->replaced(), 1);
+        CHECK_EQ(w.statusBar()->currentMessage(), T("Aufnahme ersetzt 1 Clip – Strg+Z holt ihn zurück"));
         CHECK_EQ(clipsOn(0).size(), qsizetype(3)); // a.mp4 | take | a.mp4
         CHECK_EQ(int(project->timeline().audio.size()), tracks1);
         project->undoStack()->undo();
@@ -479,8 +497,119 @@ int main(int argc, char** argv)
         qputenv("SCHNEIDI_AUDIO_INPUT", "sine:440");
     }
 
-    // Quitting while recording: the take is placed first (so "save changes?" sees it), the file is complete
+    // ---- Review 2026-11-09: another timeline opened during a take: the take lands in the timeline it began in
     project->edit("unlock", [](Timeline& t) { t.audio[0].locked = false; });
+    {
+        recorder->setArmedTrack(-1);
+        w.liveSelection()->clear();
+        const int first = project->currentSequence();
+        const int undo = project->undoStack()->index();
+        const int clipsBefore = [&] {
+            int n = 0;
+            for (const Track& t : project->timeline().audio) n += int(t.clips.size());
+            return n;
+        }();
+        engine.seek(25);
+        wait(100);
+        CHECK(recorder->start());
+        CHECK(waitLive(recorder));
+        wait(300);
+        // A second timeline, opened like a tab click
+        const int second = project->addTimeline("B");
+        project->setCurrentSequence(second);
+        wait(100);
+        CHECK(!recorder->recording());
+        CHECK_EQ(project->currentSequence(), second);
+        int inSecond = 0;
+        for (const Track& t : project->timeline().audio) inSecond += int(t.clips.size());
+        CHECK_EQ(inSecond, 0); // nothing landed in the empty timeline
+        int inFirst = 0;
+        if (const Sequence* s = project->sequence(first))
+            for (const Track& t : s->timeline.audio) inFirst += int(t.clips.size());
+        CHECK_EQ(inFirst, clipsBefore + 1); // the take is in the timeline it was recorded in
+        project->setCurrentSequence(first);
+        while (project->undoStack()->index() > undo) project->undoStack()->undo();
+        project->setCurrentSequence(first);
+        wait(50);
+
+        // No tour starts in the middle of a take (it would swap the project); the take goes on
+        engine.seek(25);
+        wait(100);
+        CHECK(recorder->start());
+        wait(200);
+        w.tours()->start("first_steps");
+        wait(100);
+        CHECK(recorder->recording());
+        CHECK(!w.tours()->runner()->running());
+        CHECK_EQ(project->currentSequence(), first);
+        CHECK(recorder->stop());
+        while (project->undoStack()->index() > undo) project->undoStack()->undo();
+    }
+
+    // ---- Review 2026-11-09: a track added or removed above the armed track during a take (an undo, an AI): the
+    // take and the mic stay on their track; the armed track removed: a new track, never someone else's
+    {
+        w.liveSelection()->clear();
+        const int undo = project->undoStack()->index();
+        const int tracks = int(project->timeline().audio.size());
+        recorder->setArmedTrack(0); // A1, with the clip's sound
+        const int a1Clip = project->timeline().audio[0].clips.value(0).id;
+        engine.seek(25);
+        wait(100);
+        CHECK(recorder->start());
+        CHECK(waitLive(recorder));
+        wait(200);
+        project->edit("track above", [](Timeline& t) { t.audio.insert(0, Track{TrackKind::Audio}); });
+        CHECK_EQ(recorder->liveTrack(), 1);
+        CHECK_EQ(recorder->armedTrack(), 1);
+        wait(200);
+        CHECK(recorder->stop());
+        CHECK_EQ(recorder->placedTrack(), 1);
+        CHECK(project->timeline().audio[0].clips.isEmpty()); // the new top track got nothing
+        CHECK(Voiceover::selectedTrack(project->timeline(), {a1Clip}) == 1);
+        CHECK_EQ(recorder->armedTrack(), 1);
+        while (project->undoStack()->index() > undo) project->undoStack()->undo();
+        CHECK_EQ(recorder->armedTrack(), 0); // undo removed the track above: back on A1
+
+        // The armed track removed during the take: onto one new track below the others
+        engine.seek(25);
+        wait(100);
+        CHECK(recorder->start());
+        wait(200);
+        project->edit("remove A1", [](Timeline& t) { t.audio.removeAt(0); });
+        CHECK_EQ(recorder->armedTrack(), -1);
+        CHECK(recorder->stop());
+        CHECK_EQ(recorder->placedTrack(), tracks - 1);
+        CHECK_EQ(int(project->timeline().audio.size()), tracks);
+        if (CHECK(int(project->timeline().audio.size()) == tracks))
+            CHECK(Voiceover::isVoiceoverTrack(project->timeline().audio[tracks - 1]));
+        while (project->undoStack()->index() > undo) project->undoStack()->undo();
+        recorder->setArmedTrack(-1);
+    }
+
+    // Review 2026-11-09: a take a crash left running (its file named in the settings) is offered once, not modal
+    if (const QString crashed = e2e ? QString()
+                                    : Check::makeMedia(dir.path() + "/voiceover-crashed.wav",
+                                                       {"-f", "lavfi", "-i", "sine=frequency=500:duration=1", "-c:a",
+                                                        "pcm_s16le"});
+        !crashed.isEmpty()) {
+        QSettings().setValue("voiceover/running", crashed);
+        w.offerCrashedTake(); // as at the start
+        auto* box = w.findChild<QMessageBox*>("voiceover_crashed_take");
+        if (CHECK(box && box->isVisible() && !box->isModal())) {
+            QAbstractButton* import = nullptr;
+            for (QAbstractButton* b : box->buttons())
+                if (box->buttonRole(b) == QMessageBox::AcceptRole) import = b;
+            if (CHECK(import)) import->click();
+            CHECK(project->mediaInfo(crashed) != nullptr);
+        }
+        CHECK(!QSettings().contains("voiceover/running")); // once
+        w.offerCrashedTake();
+        wait(50);
+        CHECK(!w.findChild<QMessageBox*>("voiceover_crashed_take"));
+    }
+
+    // Quitting while recording: the take is placed first (so "save changes?" sees it), the file is complete
     recorder->setArmedTrack(1);
     engine.seek(25);
     wait(100);

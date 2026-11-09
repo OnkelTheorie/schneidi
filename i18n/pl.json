@@ -2924,5 +2924,12 @@
  "In-Punkt hier setzen": "Ustaw tu punkt wejścia",
  "Out-Punkt hier setzen": "Ustaw tu punkt wyjścia",
  "Die Datei ist zu groß für eine Tastenbelegung.": "Plik jest za duży jak na skróty klawiszowe.",
- "%1 Tasten weggelassen (nur für ein anderes Premiere-Fenster oder schon von einem anderen Befehl belegt).": "Pominięto klawisze: %1 (tylko dla innego panelu Premiere albo już przypisane do innego polecenia)."
+ "%1 Tasten weggelassen (nur für ein anderes Premiere-Fenster oder schon von einem anderen Befehl belegt).": "Pominięto klawisze: %1 (tylko dla innego panelu Premiere albo już przypisane do innego polecenia).",
+ "Der Rundgang startet nach der Aufnahme – erst die Aufnahme beenden (Esc).": "Przewodnik zacznie się po nagraniu – najpierw zakończ nagrywanie (Esc).",
+ "Aufnahme ersetzt 1 Clip – Strg+Z holt ihn zurück": "Nagranie zastąpiło 1 klip – Ctrl+Z go przywraca",
+ "Aufnahme ersetzt %1 Clips – Strg+Z holt sie zurück": "Nagranie zastąpiło klipy (%1) – Ctrl+Z je przywraca",
+ "Aufnahme nach Absturz gefunden": "Znaleziono nagranie po awarii",
+ "Eine Voiceover-Aufnahme wurde nicht beendet: %1\nIn den Medienpool holen?": "Nagranie lektora nie zostało zakończone: %1\nDodać je do biblioteki multimediów?",
+ "In den Medienpool": "Do biblioteki multimediów",
+ "Nein": "Nie"
 }

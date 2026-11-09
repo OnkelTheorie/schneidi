@@ -7,7 +7,8 @@
 // still grows (a watch folder, a recorder's output on the timeline) is left alone - its readers are not reopened every
 // second - until it stops growing. Then the observers are told (on the calling thread, no FileStamp lock held: they
 // may take their own locks and add or remove observers) so caches drop what they keep of that file. Readers that open
-// a file store the confirmed stamp and compare it with recent() when they are reused.
+// a file store the confirmed stamp and compare it with recent() when they are reused. A file that went missing is no
+// change (a network share dropping out must not drop every cache); it counts once it is back with other content.
 
 #include <QString>
 #include <QtGlobal>
@@ -30,6 +31,9 @@ Stamp now(const QString& path);
 Stamp recent(const QString& path);
 // Is `path` seen changing without the change having settled yet? (Callers look again after kSettleMs)
 bool changing(const QString& path);
+// Has `path` a stamp yet? (The first sighting is the baseline: a file never stamped before it was overwritten is
+// never seen changing - files are stamped when they come into the timeline, Engine::applyTimeline)
+bool known(const QString& path);
 
 // Called with the path whose stamp changed (not on the first sighting). Returns an id for removeObserver, which
 // waits for a call of it running on another thread (it may be called from inside the observer itself).

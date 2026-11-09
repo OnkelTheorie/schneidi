@@ -481,7 +481,7 @@ struct Renderer::Impl {
         const QString file = options.proxy ? options.proxy(path) : path;
         const QString key = lane + '|' + file;
         {
-            Source stale; // closed outside the lock
+            std::vector<Source> stale; // closed outside the lock
             std::lock_guard lock(sourceMutex);
             auto it = sources.find(key);
             if (it != sources.end() && it->second.stamp == stamp) {
@@ -489,9 +489,18 @@ struct Renderer::Impl {
                 it->second.usedFrame = std::max(it->second.usedFrame, t_frame);
                 return it->second;
             }
-            if (it != sources.end()) { // overwritten under the same name: everything kept of the old content goes
-                stale = std::move(it->second);
-                sources.erase(it);
+            // Overwritten under the same name: everything kept of the old content goes - in every lane (mediaLength
+            // reads any lane's source: one of the old content would bring the old length back)
+            const QString suffix = '|' + file;
+            for (auto o = sources.begin(); o != sources.end();) {
+                if (o->second.stamp != stamp && o->first.endsWith(suffix)) {
+                    stale.push_back(std::move(o->second));
+                    o = sources.erase(o);
+                } else {
+                    ++o;
+                }
+            }
+            if (!stale.empty()) {
                 {
                     std::lock_guard lengthLock(lengthMutex);
                     lengths.erase(file);

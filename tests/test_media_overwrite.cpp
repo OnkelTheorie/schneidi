@@ -116,6 +116,39 @@ void testFile(const QString& file, const QString& red, const QString& blue, cons
     CHECK_COLOR(stills.frame(file, 0, QSize(160, 90)), Color::Green);
 }
 
+// Review 2026-11-09: the file read in two lanes (V1 and V2): a change seen in one drops the other's source of the old
+// content too (mediaLength takes the length from any lane: a stale one brought the old length back)
+void testLanes(const QString& file, const QString& red, const QString& blue)
+{
+    std::printf("-- lanes\n");
+    if (!CHECK(overwrite(red, file, 41))) return;
+    FileStamp::now(file);
+    Timeline tl;
+    tl.video.resize(2);
+    for (int i = 0; i < 2; ++i) {
+        Clip c;
+        c.id = i + 1;
+        c.mediaPath = file;
+        c.start = i * 25;
+        c.out = 24;
+        tl.video[i].kind = TrackKind::Video;
+        tl.video[i].clips << c;
+    }
+    Picture::Options o;
+    o.format.width = 320;
+    o.format.height = 180;
+    o.mode = Picture::Mode::Still;
+    Picture::Renderer renderer(tl, o);
+    CHECK_COLOR(renderer.render(0).toImage(), Color::Red);
+    CHECK_COLOR(renderer.render(30).toImage(), Color::Red);
+    CHECK_EQ(renderer.stats().sourcesOpen, 2);
+    if (!CHECK(overwrite(blue, file, 42))) return;
+    settle(file);
+    CHECK_COLOR(renderer.render(0).toImage(), Color::Blue);
+    CHECK_EQ(renderer.stats().sourcesOpen, 1); // V2's source of the red file is gone as well
+    CHECK_COLOR(renderer.render(30).toImage(), Color::Blue);
+}
+
 // Waits until fn() gives a picture of `want` (events processed); the last picture's color is reported
 bool waitFor(const std::function<QImage()>& fn, Color want, int ms = 10000)
 {
@@ -183,6 +216,37 @@ void testEngine(Engine& engine, const QString& file, const QString& red, const Q
     FileStamp::removeObserver(id);
 }
 
+// Review 2026-11-09: an audio-only file nobody stamped (the sound mix opens readers without a stamp), overwritten
+// while the app was in the background: stamped when the timeline came, so the next look sees the change
+void testUnstamped(Engine& engine, const QString& file, const QString& loud, const QString& quiet)
+{
+    std::printf("-- unstamped\n");
+    if (!CHECK(overwrite(loud, file, 51))) return;
+    FileStamp::forget();
+    Timeline tl;
+    tl.audio.resize(1);
+    Clip c;
+    c.id = 1;
+    c.mediaPath = file;
+    c.out = 50;
+    tl.audio[0].kind = TrackKind::Audio;
+    tl.audio[0].clips << c;
+    engine.updateTimeline(tl);
+    QElapsedTimer t;
+    t.start();
+    while (!FileStamp::known(file) && t.elapsed() < 3000) QTest::qWait(10);
+    CHECK(FileStamp::known(file));
+    int seen = 0;
+    const int id = FileStamp::addObserver([&](const QString& path) { seen += path == file; });
+    if (CHECK(overwrite(quiet, file, 52))) {
+        engine.checkFiles(); // the app active again
+        t.restart();
+        while (seen == 0 && t.elapsed() < FileStamp::kSettleMs + 3000) QTest::qWait(50);
+        CHECK_EQ(seen, 1);
+    }
+    FileStamp::removeObserver(id);
+}
+
 // A recording that still grows: no change while it grows (readers are not reopened every look), exactly one once it
 // has stopped
 void testGrowing(const QString& file)
@@ -208,6 +272,40 @@ void testGrowing(const QString& file)
     CHECK_EQ(seen, 1);
     CHECK(!FileStamp::changing(file));
     settle(file); // nothing new
+    CHECK_EQ(seen, 1);
+    FileStamp::removeObserver(id);
+}
+
+// Review 2026-11-09: a file that goes missing for longer than the settle time (a NAS dropping out) is no change -
+// caches and the preview's proxy stay; back as it was: still none; back with other content: one
+void testMissing(const QString& file)
+{
+    std::printf("-- missing\n");
+    QFile f(file);
+    if (!CHECK(f.open(QIODevice::WriteOnly))) return;
+    f.write("abc");
+    f.close();
+    FileStamp::now(file);
+    const FileStamp::Stamp before = FileStamp::now(file);
+    int seen = 0;
+    const int id = FileStamp::addObserver([&](const QString& path) { seen += path == file; });
+    const QString away = file + ".away";
+    CHECK(QFile::rename(file, away));
+    settle(file);
+    settle(file);
+    CHECK_EQ(seen, 0);
+    CHECK(FileStamp::now(file) == before); // readers keep comparing with the stamp they opened
+    CHECK(!FileStamp::changing(file));
+    CHECK(QFile::rename(away, file));
+    settle(file);
+    CHECK_EQ(seen, 0); // back as it was
+    CHECK(QFile::remove(file));
+    settle(file);
+    if (CHECK(f.open(QIODevice::WriteOnly))) {
+        f.write("other content");
+        f.close();
+    }
+    settle(file);
     CHECK_EQ(seen, 1);
     FileStamp::removeObserver(id);
 }
@@ -302,6 +400,7 @@ int main(int argc, char** argv)
     }
     testFile(dir.filePath("still.png"), png[0], png[1], png[2]);
     testCaches(dir.filePath("still-cache.png"), png[0], png[1]);
+    testLanes(dir.filePath("lanes.png"), png[0], png[1]);
 
     Engine engine;
     QString err;
@@ -309,6 +408,7 @@ int main(int argc, char** argv)
     testEngine(engine, dir.filePath("engine.png"), png[0], png[1]);
     testGrowing(dir.filePath("growing.mkv"));
     testObservers(dir.filePath("observed.bin"));
+    testMissing(dir.filePath("missing.bin"));
 
     if (!Check::haveFfmpeg()) {
         std::printf("no ffmpeg: video cases skipped\n");
@@ -333,5 +433,6 @@ int main(int argc, char** argv)
         if (!CHECK(!wav.last().isEmpty())) return Check::result();
     }
     testSound(dir.filePath("sound.wav"), wav[0], wav[1]);
+    testUnstamped(engine, dir.filePath("unstamped.wav"), wav[0], wav[1]);
     return Check::result();
 }

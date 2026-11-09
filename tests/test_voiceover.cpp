@@ -129,6 +129,31 @@ int main(int argc, char** argv)
             CHECK(std::abs(m.length - int(std::lround(double(frames) / 48000 * ProjectFormat{}.rate.fps()))) <= 1);
         }
     }
+    // ---- Review 2026-11-09: the header's sizes follow while recording (a crash mid-take leaves a readable file)
+    {
+        const QString path = tmp.filePath("growing.wav");
+        Audio::Capture::Config config;
+        config.rate = 48000;
+        config.channels = 1;
+        auto capture = Audio::Capture::start(config, path);
+        if (CHECK(capture != nullptr)) {
+            QThread::msleep(2600);
+            QFile f(path);
+            quint32 data = 0, riff = 0;
+            if (CHECK(f.open(QIODevice::ReadOnly))) {
+                const QByteArray head = f.read(44);
+                if (CHECK(head.size() == 44)) {
+                    riff = qFromLittleEndian<quint32>(head.constData() + 4);
+                    data = qFromLittleEndian<quint32>(head.constData() + 40);
+                }
+            }
+            std::printf("header while recording: data %u bytes (file %lld)\n", data, f.size());
+            CHECK(data >= 48000 * 3 && data % 3 == 0); // at least a second, whole frames
+            CHECK(data <= f.size() - 44);
+            CHECK_EQ(riff, 36 + data + (data & 1));
+            capture->stop();
+        }
+    }
     // ---- A stalled writer (a disk that hangs): blocks lost beyond the ring buffer become silence of the same length,
     // the file keeps frames() and everything after a gap lies where it was heard. Two gaps in one take (mono), then a
     // take that stops while the writer still stalls (stereo: the lost end is silence too)
@@ -310,8 +335,15 @@ int main(int argc, char** argv)
         v.id = 3;
         v.start = 0;
         tl.audio[3].clips << v; // [0, 50)
-        CHECK_EQ(Voiceover::recordTrack(tl, -1, -1, 10), 3);
-        CHECK_EQ(Voiceover::recordTrack(tl, -1, 3, 10), 3);
+        CHECK_EQ(Voiceover::recordTrack(tl, -1, -1, 10, INT_MAX, "/x"), 3); // "/x": the take folder
+        CHECK_EQ(Voiceover::recordTrack(tl, -1, 3, 10, INT_MAX, "/x"), 3);
+        // Review 2026-11-09: anything else on it (the user's own sound) is never replaced by a take nobody armed: the
+        // next free spot or a new track; after it the Voiceover track is fine again
+        CHECK_EQ(Voiceover::recordTrack(tl, -1, -1, 10), 4);
+        CHECK_EQ(Voiceover::recordTrack(tl, -1, -1, 10, INT_MAX, "/elsewhere"), 4);
+        CHECK_EQ(Voiceover::recordTrack(tl, -1, -1, 50), 3);
+        CHECK(Voiceover::isTake("/x/a.wav", "/x") && !Voiceover::isTake("/x/a.wav", "/y"));
+        CHECK(Voiceover::isTake(Voiceover::folder(QString()) + "/voiceover-1.wav", "/y")); // taken before saving
         CHECK(Voiceover::isVoiceoverTrack(tl.audio[3]) && !Voiceover::isVoiceoverTrack(tl.audio[1]));
         // Known length (CLI): a free unnamed track must be free to the end
         Timeline t2;
@@ -336,6 +368,46 @@ int main(int argc, char** argv)
         CHECK(back.start() == 46.5);
         Voiceover::LiveTake clamped(36.0, 40, 25.0, 48000);
         CHECK(clamped.start() == 40.0);
+    }
+
+    // ---- Review 2026-11-09: the armed track / the take's track follows its track when tracks come or go above it
+    {
+        Timeline tl;
+        tl.audio.resize(3);
+        for (Track& t : tl.audio) t.kind = TrackKind::Audio;
+        Clip a;
+        a.id = 1;
+        a.out = 49;
+        tl.audio[0].clips << a; // A1 [0, 50)
+        Clip b = a;
+        b.id = 2;
+        tl.audio[1].clips << b; // A2: the marked one
+        const Voiceover::TrackKey key = Voiceover::trackKey(tl, 1);
+        CHECK_EQ(Voiceover::findTrack(tl, key), 1);
+        Timeline above = tl; // a track inserted at the top
+        above.audio.insert(0, Track{TrackKind::Audio});
+        CHECK_EQ(Voiceover::findTrack(above, key), 2);
+        Timeline removed = tl; // A1 removed
+        removed.audio.removeAt(0);
+        CHECK_EQ(Voiceover::findTrack(removed, key), 0);
+        Timeline gone = tl; // the marked one removed: not some other track
+        gone.audio.removeAt(1);
+        CHECK_EQ(Voiceover::findTrack(gone, key), -1);
+        Timeline below = tl; // added below: unchanged
+        below.audio << Track{TrackKind::Audio};
+        CHECK_EQ(Voiceover::findTrack(below, key), 1);
+        // An empty marked track (A3) with a track added above it
+        const Voiceover::TrackKey empty = Voiceover::trackKey(tl, 2);
+        Timeline named = tl;
+        Track discord{TrackKind::Audio};
+        discord.name = "Discord";
+        discord.clips << a;
+        named.audio.insert(1, discord);
+        CHECK_EQ(Voiceover::findTrack(named, empty), 3);
+        // A new track (index = count) stays a new one, also when the user added one meanwhile
+        const Voiceover::TrackKey fresh = Voiceover::trackKey(tl, 3);
+        CHECK_EQ(Voiceover::findTrack(below, fresh), 4);
+        CHECK_EQ(Voiceover::findTrack(tl, Voiceover::trackKey(tl, -1)), -1);
     }
 
     // ---- The growing take: a fake source feeds blocks, the waveform and the length follow, the end is exact
@@ -396,8 +468,10 @@ int main(int argc, char** argv)
         const int tracks = int(p.timeline().audio.size());
         int placed = -9;
         // Onto the track after the last (a new one) from frame 20, file 0.5 frames late
-        const int id = ed.placeRecording("/x/vo.wav", tracks, 19.5, 20, &placed);
+        int nothing = -1;
+        const int id = ed.placeRecording("/x/vo.wav", tracks, 19.5, 20, &placed, 0, &nothing);
         CHECK(id > 0);
+        CHECK_EQ(nothing, 0);
         CHECK_EQ(placed, tracks);
         if (CHECK_EQ(int(p.timeline().audio.size()), tracks + 1) && p.timeline().audio[tracks].clips.size() == 1) {
             const Clip& c = p.timeline().audio[tracks].clips[0];
@@ -419,8 +493,10 @@ int main(int argc, char** argv)
         CHECK_EQ(int(p.timeline().audio.size()), tracks + 1);
         p.undoStack()->undo();
         // Punch-in on A1 over its sound: a[0-30] vo[30-90] a[90-100], one undo restores it
-        CHECK(ed.placeRecording("/x/vo.wav", 0, 30.0, 30, &placed) > 0);
+        int replaced = -1;
+        CHECK(ed.placeRecording("/x/vo.wav", 0, 30.0, 30, &placed, 0, &replaced) > 0);
         CHECK_EQ(placed, 0);
+        CHECK_EQ(replaced, 1); // said in the status bar
         CHECK_EQ(p.timeline().audio[0].clips.size(), qsizetype(3));
         p.undoStack()->undo();
         CHECK_EQ(p.timeline().audio[0].clips.size(), qsizetype(1));

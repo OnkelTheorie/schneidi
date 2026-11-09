@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <vector>
 
 namespace Voiceover {
 
@@ -81,7 +82,15 @@ bool isVoiceoverTrack(const Track& t)
     return t.name == "Voiceover" || t.name == T("Voiceover");
 }
 
-int recordTrack(const Timeline& tl, int armed, int selected, int from, int end)
+bool isTake(const QString& mediaPath, const QString& takes)
+{
+    if (mediaPath.isEmpty()) return false;
+    const QString dir = QDir::cleanPath(QFileInfo(mediaPath).absolutePath());
+    const auto in = [&](const QString& f) { return !f.isEmpty() && dir == QDir::cleanPath(QFileInfo(f).absoluteFilePath()); };
+    return in(takes) || in(folder(QString()));
+}
+
+int recordTrack(const Timeline& tl, int armed, int selected, int from, int end, const QString& takes)
 {
     const int count = int(tl.audio.size());
     if (armed >= 0 && armed < count) return tl.audio[armed].locked ? -1 : armed;
@@ -96,11 +105,61 @@ int recordTrack(const Timeline& tl, int armed, int selected, int from, int end)
         return true;
     };
     if (selected >= 0 && selected < count && open(selected) && freeFrom(selected)) return selected;
+    const auto onlyTakes = [&](int i) {
+        for (const Clip& c : tl.audio[i].clips)
+            if (c.start < end && c.end() > from && !isTake(c.mediaPath, takes)) return false;
+        return true;
+    };
     for (int i = 0; i < count; ++i)
-        if (open(i) && isVoiceoverTrack(tl.audio[i])) return i; // its earlier takes in the range are replaced
+        if (open(i) && isVoiceoverTrack(tl.audio[i]) && onlyTakes(i)) return i; // earlier takes there are replaced
     for (int i = 0; i < count; ++i)
         if (open(i) && freeFrom(i)) return i;
     return count;
+}
+
+TrackKey trackKey(const Timeline& tl, int track)
+{
+    TrackKey k;
+    k.index = track;
+    for (const Track& t : tl.audio) {
+        k.names << t.name;
+        QVector<int> ids;
+        for (const Clip& c : t.clips) ids << c.id;
+        k.clips << ids;
+    }
+    return k;
+}
+
+int findTrack(const Timeline& tl, const TrackKey& key)
+{
+    const TrackKey now = trackKey(tl, -1);
+    const int n = int(key.clips.size()), m = int(now.clips.size());
+    if (key.index < 0) return -1;
+    if (key.index >= n) return m; // one new track: still a new one
+    if (n == m) return key.index;
+    const auto same = [&](int i, int j) {
+        const QVector<int>& a = key.clips[i];
+        const QVector<int>& b = now.clips[j];
+        if (a.isEmpty() || b.isEmpty()) return a.isEmpty() && b.isEmpty() && key.names[i] == now.names[j];
+        return std::any_of(a.begin(), a.end(), [&](int id) { return b.contains(id); });
+    };
+    // Longest common subsequence of the two track lists (a handful of tracks: the table is small)
+    std::vector<std::vector<int>> run(n + 1, std::vector<int>(m + 1, 0));
+    for (int i = n - 1; i >= 0; --i)
+        for (int j = m - 1; j >= 0; --j)
+            run[i][j] = same(i, j) ? run[i + 1][j + 1] + 1 : std::max(run[i + 1][j], run[i][j + 1]);
+    for (int i = 0, j = 0; i < n && j < m;) {
+        if (same(i, j) && run[i][j] == run[i + 1][j + 1] + 1) {
+            if (i == key.index) return j;
+            ++i, ++j;
+        } else if (run[i + 1][j] >= run[i][j + 1]) {
+            if (i == key.index) return -1; // left out: removed or changed
+            ++i;
+        } else {
+            ++j;
+        }
+    }
+    return -1;
 }
 
 int headLimit(const Timeline& tl, int track, int from)

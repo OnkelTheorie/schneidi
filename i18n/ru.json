@@ -2924,5 +2924,12 @@
  "In-Punkt hier setzen": "Поставить вход здесь",
  "Out-Punkt hier setzen": "Поставить выход здесь",
  "Die Datei ist zu groß für eine Tastenbelegung.": "Файл слишком велик для набора сочетаний клавиш.",
- "%1 Tasten weggelassen (nur für ein anderes Premiere-Fenster oder schon von einem anderen Befehl belegt).": "Пропущено клавиш: %1 (только для другой панели Premiere или уже заняты другой командой)."
+ "%1 Tasten weggelassen (nur für ein anderes Premiere-Fenster oder schon von einem anderen Befehl belegt).": "Пропущено клавиш: %1 (только для другой панели Premiere или уже заняты другой командой).",
+ "Der Rundgang startet nach der Aufnahme – erst die Aufnahme beenden (Esc).": "Тур начнётся после записи – сначала завершите запись (Esc).",
+ "Aufnahme ersetzt 1 Clip – Strg+Z holt ihn zurück": "Запись заменила 1 клип – Ctrl+Z вернёт его",
+ "Aufnahme ersetzt %1 Clips – Strg+Z holt sie zurück": "Запись заменила клипы (%1) – Ctrl+Z вернёт их",
+ "Aufnahme nach Absturz gefunden": "Найдена запись после сбоя",
+ "Eine Voiceover-Aufnahme wurde nicht beendet: %1\nIn den Medienpool holen?": "Запись закадрового голоса не была завершена: %1\nДобавить её в медиатеку?",
+ "In den Medienpool": "В медиатеку",
+ "Nein": "Нет"
 }

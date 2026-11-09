@@ -2924,5 +2924,12 @@
  "In-Punkt hier setzen": "Marquer l’entrée ici",
  "Out-Punkt hier setzen": "Marquer la sortie ici",
  "Die Datei ist zu groß für eine Tastenbelegung.": "Le fichier est trop volumineux pour des raccourcis clavier.",
- "%1 Tasten weggelassen (nur für ein anderes Premiere-Fenster oder schon von einem anderen Befehl belegt).": "%1 touches ignorées (seulement pour un autre panneau de Premiere ou déjà prises par une autre commande)."
+ "%1 Tasten weggelassen (nur für ein anderes Premiere-Fenster oder schon von einem anderen Befehl belegt).": "%1 touches ignorées (seulement pour un autre panneau de Premiere ou déjà prises par une autre commande).",
+ "Der Rundgang startet nach der Aufnahme – erst die Aufnahme beenden (Esc).": "La visite commence après l'enregistrement – termine d'abord l'enregistrement (Échap).",
+ "Aufnahme ersetzt 1 Clip – Strg+Z holt ihn zurück": "L'enregistrement a remplacé 1 clip – Ctrl+Z le rétablit",
+ "Aufnahme ersetzt %1 Clips – Strg+Z holt sie zurück": "L'enregistrement a remplacé %1 clips – Ctrl+Z les rétablit",
+ "Aufnahme nach Absturz gefunden": "Enregistrement trouvé après un plantage",
+ "Eine Voiceover-Aufnahme wurde nicht beendet: %1\nIn den Medienpool holen?": "Un enregistrement de voix off n'a pas été terminé : %1\nL'ajouter à la médiathèque ?",
+ "In den Medienpool": "Dans la médiathèque",
+ "Nein": "Non"
 }

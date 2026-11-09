@@ -71,6 +71,7 @@ struct Capture::Impl {
     std::atomic<long long> gap{0}; // frames lost since the last marker (written by the device thread only)
     bool writeFailed = false, stopped = false;
     long long dataBytes = 0;
+    static constexpr int kHeaderEveryMs = 2000; // the header's sizes brought up to date while recording
 
     std::thread writer, timer;
     ma_context maContext{};
@@ -158,10 +159,36 @@ struct Capture::Impl {
         write(pcm.data() + (at - r) * 3, (w - at) * 3);
     }
 
+    // Writer thread: the header's sizes as far as the file is written (whole sample frames), so a recording cut off
+    // by a crash or a power cut still reads to that point
+    void updateHeader()
+    {
+        if (path.isEmpty() || writeFailed) return;
+        const long long block = 3LL * config.channels;
+        const long long limit = 0xffffffffLL - 37;
+        const quint32 bytes = quint32(std::min(dataBytes - dataBytes % block, limit - limit % block));
+        const qint64 end = file.pos();
+        if (!file.seek(0) || file.write(wavHeader(config.rate, config.channels, bytes)) != 44 || !file.seek(end)) {
+            writeFailed = true;
+            return;
+        }
+        file.flush();
+    }
+
     void writerLoop()
     {
+        auto header = std::chrono::steady_clock::now();
+        long long headerBytes = 0;
         while (!stopWriter.load()) {
-            if (!hold.load(std::memory_order_relaxed)) drain();
+            if (!hold.load(std::memory_order_relaxed)) {
+                drain();
+                if (std::chrono::steady_clock::now() - header >= std::chrono::milliseconds(kHeaderEveryMs)
+                    && dataBytes != headerBytes) {
+                    updateHeader();
+                    headerBytes = dataBytes;
+                    header = std::chrono::steady_clock::now();
+                }
+            }
             sleepFor(std::chrono::milliseconds(20));
         }
         drain();

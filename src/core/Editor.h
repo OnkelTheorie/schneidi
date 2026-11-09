@@ -74,8 +74,10 @@ public:
     // (Clip::subframe). It replaces what lies in its range on that track (punch-in; Voiceover::recordTrack chooses the
     // track). track >= the track count: one new audio track named Voiceover below the others, created with the clip in
     // one undo step. The new clip is selected. Returns the clip id (*placed = its track), 0 = file not in the pool,
-    // locked track or nothing after `from`.
-    int placeRecording(const QString& path, int track, double fileStart, int from, int* placed = nullptr);
+    // locked track or nothing after `from`. sequence > 0 and not the open one: placed in that timeline (the take began
+    // there; it is not opened and the clip not selected), 0 = gone. *replaced = how many clips it cut into or replaced.
+    int placeRecording(const QString& path, int track, double fileStart, int from, int* placed = nullptr,
+                       int sequence = 0, int* replaced = nullptr);
     // Audio clips made elsewhere (core/MusicFit: a song cut to a length, its parts with transitions) onto audio track
     // `track` (missing tracks are created), overwriting what lies there; clip `replace` (> 0, e.g. the song before it
     // was cut) is removed first. They get new ids and are selected. One undo step `text`. Returns the ids (empty =

@@ -2924,5 +2924,12 @@
  "In-Punkt hier setzen": "Mark In here",
  "Out-Punkt hier setzen": "Mark Out here",
  "Die Datei ist zu groß für eine Tastenbelegung.": "The file is too large for keyboard shortcuts.",
- "%1 Tasten weggelassen (nur für ein anderes Premiere-Fenster oder schon von einem anderen Befehl belegt).": "%1 keys left out (only for another Premiere panel, or already used by another command)."
+ "%1 Tasten weggelassen (nur für ein anderes Premiere-Fenster oder schon von einem anderen Befehl belegt).": "%1 keys left out (only for another Premiere panel, or already used by another command).",
+ "Der Rundgang startet nach der Aufnahme – erst die Aufnahme beenden (Esc).": "The tour starts after the recording – end the recording first (Esc).",
+ "Aufnahme ersetzt 1 Clip – Strg+Z holt ihn zurück": "The recording replaced 1 clip – Ctrl+Z brings it back",
+ "Aufnahme ersetzt %1 Clips – Strg+Z holt sie zurück": "The recording replaced %1 clips – Ctrl+Z brings them back",
+ "Aufnahme nach Absturz gefunden": "Recording found after a crash",
+ "Eine Voiceover-Aufnahme wurde nicht beendet: %1\nIn den Medienpool holen?": "A voice-over recording was not finished: %1\nBring it into the Media Pool?",
+ "In den Medienpool": "Into the Media Pool",
+ "Nein": "No"
 }

@@ -24,8 +24,10 @@
 #include <QInputDialog>
 #include <QMenu>
 #include <QMessageBox>
+#include <QPushButton>
 #include <QShortcut>
 #include <QStatusBar>
+#include <QTimer>
 #include <QUrl>
 
 namespace {
@@ -70,6 +72,7 @@ void MainWindow::setupVoiceover()
         },
         this);
     m_mixer->setRecorder(m_voiceover);
+    QTimer::singleShot(0, this, &MainWindow::offerCrashedTake); // after the window is up
     // The timeline: mic buttons in the audio track headers, the growing take, the input level of the armed track
     TimelineView* view = m_timeline->view();
     connect(view, &TimelineView::armToggled, this, [this](int track) {
@@ -130,7 +133,13 @@ void MainWindow::setupVoiceover()
     });
     connect(m_voiceover, &VoiceoverRecorder::finished, this,
             [this](const QString& path, bool placed, const QString& error) {
-                if (placed)
+                // Whenever a take replaced something, say so (and how to get it back)
+                const int replaced = m_voiceover->replaced();
+                if (placed && replaced > 0)
+                    statusBar()->showMessage(replaced == 1 ? T("Aufnahme ersetzt 1 Clip – Strg+Z holt ihn zurück")
+                                                           : T("Aufnahme ersetzt %1 Clips – Strg+Z holt sie zurück").arg(replaced),
+                                             10000);
+                else if (placed)
                     statusBar()->showMessage(T("Voiceover auf %1 gelegt: %2")
                                                  .arg(trackShortName({TrackKind::Audio, m_voiceover->placedTrack()}),
                                                       QFileInfo(path).fileName()),
@@ -138,6 +147,24 @@ void MainWindow::setupVoiceover()
                 else if (!error.isEmpty())
                     statusBar()->showMessage(T("Voiceover: %1").arg(error), 8000);
             });
+}
+
+void MainWindow::offerCrashedTake()
+{
+    const QString path = VoiceoverRecorder::runningTake();
+    if (path.isEmpty()) return;
+    // Not modal: the app is usable meanwhile (the project may still be loading or restoring its backup)
+    auto* box = new QMessageBox(QMessageBox::Question, T("Aufnahme nach Absturz gefunden"),
+                                T("Eine Voiceover-Aufnahme wurde nicht beendet: %1\nIn den Medienpool holen?")
+                                    .arg(QDir::toNativeSeparators(path)),
+                                QMessageBox::NoButton, this);
+    box->setObjectName("voiceover_crashed_take");
+    box->setAttribute(Qt::WA_DeleteOnClose);
+    box->setModal(false);
+    QPushButton* import = box->addButton(T("In den Medienpool"), QMessageBox::AcceptRole);
+    box->addButton(T("Nein"), QMessageBox::RejectRole);
+    connect(import, &QPushButton::clicked, this, [this, path] { m_mediaPool->importFiles({path}); });
+    box->show();
 }
 
 void MainWindow::toggleVoiceover()

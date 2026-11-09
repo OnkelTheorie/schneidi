@@ -3,6 +3,7 @@
 #include "app/MainWindow.h"
 
 #include "app/TourManager.h"
+#include "app/VoiceoverRecorder.h"
 #include "core/Project.h"
 #include "core/TimelineOps.h"
 #include "core/I18n.h"
@@ -129,6 +130,9 @@ void MainWindow::setupTours(QMenu* help)
     // AI changes waiting for review (Accept would act on the practice history), a window tracking on the user's clip
     host.blocked = [this]() -> QString {
         if (m_tourSaved.active) return {}; // one tour after the other: the first one's project goes away anyway
+        // A voice-over take would end and land in the practice project
+        if (m_voiceover && m_voiceover->recording())
+            return T("Der Rundgang startet nach der Aufnahme – erst die Aufnahme beenden (Esc).");
         if (m_deliver->renderQueue()->isRunning())
             return T("Rundgang erst nach dem Rendern – oder das Rendern abbrechen.");
         if (m_review.active)
@@ -497,6 +501,7 @@ void MainWindow::leaveTourMode()
 {
     if (!m_tourSaved.active) return;
     closePopups(); // a menu on a practice clip must not act on the user's clip with the same id
+    endVoiceover(); // before the practice project goes
     m_deliver->renderQueue()->cancel(); // a practice render: its jobs' ids would mark the user's jobs
     TourSaved s = std::exchange(m_tourSaved, {});
     m_engine->pause();
