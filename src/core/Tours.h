@@ -26,6 +26,9 @@ struct TourStep {
     // empty project, "comp_example" = a small example graph; the window knows the names, app/MainWindowTours.cpp)
     QString offer;
     QString action; // done by the window when the step is entered (e.g. "comp_nodes": the Comp page's node view)
+    // Controls the text tells the user to use beside the target (same form as `target`, no hole): the bubble keeps
+    // off them
+    QString keep;
 };
 
 struct Tour {

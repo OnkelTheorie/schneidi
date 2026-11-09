@@ -24,6 +24,7 @@
 #include "core/Editor.h"
 #include "core/I18n.h"
 #include "core/Project.h"
+#include "core/TimelineOps.h"
 #include "core/Tours.h"
 #include "engine/Engine.h"
 #include "ui/EffectsLibrary.h"
@@ -341,6 +342,10 @@ void checkStep(MainWindow& w, const QString& where)
     const QString p = bubbleProblems(o);
     Check::report(p.isEmpty(), "bubble fits", __FILE__, __LINE__, where + ": " + p);
     Check::report(insideAndOff(o), "bubble in the window and off the holes", __FILE__, __LINE__, where);
+    // The controls the text tells the user to use beside the target (the step's "keep"): the bubble keeps off them
+    for (const TourManager::Target& k : tours->targets(s->keep))
+        Check::report(!o->bubbleGeometry().intersects(k.rect), "bubble off the named controls", __FILE__, __LINE__,
+                      where + ": " + k.part);
 }
 
 // What a tour must give back: the settings it could touch, the panels, the sizes, the page, the project
@@ -484,6 +489,13 @@ void walk(MainWindow& w, const Tour& t, const QString& run, bool dumpIt)
         Check::report(w.size() == size, "window size untouched", __FILE__, __LINE__,
                       QString("%1: %2x%3 -> %4x%5").arg(where).arg(size.width()).arg(size.height()).arg(w.width()).arg(w.height()));
         const TourStep& s = t.steps[i];
+        if (s.target.contains("viewer") && clipCount(w.liveProject()) > 0) { // the viewer shows a picture, not black
+            const int at = w.findChild<TimelineView*>()->playhead();
+            bool onClip = false;
+            for (const Track& tr : w.liveProject()->timeline().video)
+                for (const Clip& c : tr.clips) onClip |= at >= c.start && at < c.end();
+            Check::report(onClip, "playhead on a clip where the viewer is shown", __FILE__, __LINE__, where);
+        }
         if (!s.page.isEmpty()) // the tour shows the step's page
             if (auto* b = w.findChild<QAbstractButton*>("pageButton_" + s.page); CHECK(b)) CHECK(b->isChecked());
         if (auto* counter = o->findChild<QLabel*>("tour_counter"))
@@ -498,13 +510,23 @@ void walk(MainWindow& w, const Tour& t, const QString& run, bool dumpIt)
             QAbstractButton* click = nullptr;
             if (s.wait.startsWith("page:")) click = w.findChild<QAbstractButton*>("pageButton_" + s.wait.mid(5));
             if (s.wait == "effects_open") click = w.findChild<QAbstractButton*>("panelToggle_effects");
+            bool did = true;
             if (s.wait == "clip_on_timeline") { // dragged from the Media Pool onto the timeline (the drop's own path)
                 auto* tv = w.findChild<TimelineView*>();
                 if (CHECK(tv)) emit tv->dropRequested({w.liveProject()->media().value(0).path}, 0, 0);
+            } else if (s.wait == "clip_trimmed") { // the first clip's end dragged to the left
+                const Timeline& tl = w.liveProject()->timeline();
+                if (CHECK(!tl.video.isEmpty() && !tl.video[0].clips.isEmpty()))
+                    w.editor()->trimClip(tl.video[0].clips[0].id, TimelineOps::Edge::End, -10);
+            } else if (s.wait == "playhead_moved") { // a click into the ruler
+                auto* tv = w.findChild<TimelineView*>();
+                if (CHECK(tv)) emit tv->seekRequested(tv->playhead() + 5);
             } else if (click) {
                 click->click();
+            } else {
+                did = false;
             }
-            if (s.wait == "clip_on_timeline" || click) {
+            if (did) {
                 QTest::qWait(60);
                 Check::report(r->index() == i + 1, "goes on by itself", __FILE__, __LINE__, where + ": " + s.wait);
                 Check::report(dialogs.seen.isEmpty(), "no dialog in the tour", __FILE__, __LINE__,
@@ -815,6 +837,8 @@ int main(int argc, char** argv)
     // Default settings and the user's (Media Pool off, Effects on, own sizes) on the user's screen size, English and
     // Russian (long words)
     runWindow(engine, "default-en", {}, "en", QSize(1600, 950), false);
+    // German with fresh settings on the screen of a real walkthrough (the bubble texts as written)
+    runWindow(engine, "default-de", {}, "de", QSize(1600, 960), true);
     runWindow(engine, "user-en", user, "en", QSize(1920, 1050), true);
     runWindow(engine, "user-ru", user, "ru", QSize(1920, 1050), true);
     // A narrow laptop screen (not 768 high: the Color page with a clip needs ~860 px in Russian, a bug of its own)

@@ -28,6 +28,7 @@
 #include <QGridLayout>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QScrollArea>
 #include <QMessageBox>
 #include <QMouseEvent>
 #include <QPainter>
@@ -321,7 +322,15 @@ ColorPanel::ColorPanel(Editor* editor, QWidget* parent) : QWidget(parent), m_edi
     lay->setContentsMargins(0, 0, 0, 0);
     lay->setSpacing(0);
     lay->addLayout(head);
-    lay->addWidget(m_body, 1);
+    // Scrolls when the page gives it little height: its controls (a window's fields, the wheels in long languages) never
+    // set a minimum height for the whole window (it grew past the screen, the page bar went off it)
+    auto* scroll = new QScrollArea;
+    scroll->setFrameShape(QFrame::NoFrame);
+    scroll->setWidgetResizable(true);
+    scroll->setWidget(m_body);
+    scroll->setMinimumHeight(60);
+    m_bodyScroll = scroll;
+    lay->addWidget(scroll, 1);
     lay->addWidget(m_empty, 1);
 
     Project* project = m_editor->project();
@@ -541,7 +550,7 @@ bool ColorPanel::eventFilter(QObject* obj, QEvent* e)
 void ColorPanel::refresh()
 {
     const Clip* c = current();
-    m_body->setVisible(c);
+    m_bodyScroll->setVisible(c);
     m_empty->setVisible(!c);
     for (QWidget* w : {static_cast<QWidget*>(m_enabled), static_cast<QWidget*>(m_keyPrev),
                        static_cast<QWidget*>(m_keyDiamond), static_cast<QWidget*>(m_keyNext)})
@@ -759,6 +768,8 @@ QWidget* ColorPanel::buildWindows()
     m_trackForward->setText(T("Verfolgen ▶"));
     m_trackForward->setToolTip(T("Fenster folgt dem Objekt darunter, vom Abspielkopf vorwärts zum Clipende"));
     m_trackStop = smallButton("■", T("Verfolgen anhalten"));
+    m_trackBack->setObjectName("color_track_back"); // the tours point at them
+    m_trackForward->setObjectName("color_track_forward");
     for (QToolButton* b : {m_trackBack, m_trackForward}) b->setFocusPolicy(Qt::NoFocus);
     connect(m_trackBack, &QToolButton::clicked, this, [this] { startTracking(false); });
     connect(m_trackForward, &QToolButton::clicked, this, [this] { startTracking(true); });

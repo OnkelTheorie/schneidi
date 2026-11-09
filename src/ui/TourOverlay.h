@@ -29,6 +29,9 @@ public:
 
     // Targets in this widget's coordinates, asked on every layout change (empty = no hole, the bubble in the middle)
     void setTargets(std::function<QVector<QRect>()> targets);
+    // Where the bubble should not go (same coordinates, asked with the targets): `keep` never while there is room (the
+    // controls the step's text names), `avoid` if it can (toolbars, tabs, the page bar)
+    void setKeepFree(std::function<QVector<QRect>()> keep, std::function<QVector<QRect>()> avoid);
     // A tour step: text, "index+1/count", which buttons. waiting = the step waits for the user ("Skip" instead of
     // "Next"), offer = the text of an extra button (empty = none; "Load sample clips")
     void showStep(const QString& text, int index, int count, bool waiting, const QString& offer = {});
@@ -48,8 +51,12 @@ public:
 
     // Where the bubble of `size` goes: beside the first (main) hole - below, above, right, left, the first place that
     // fits `area` without covering any hole -, else the same around all holes together, else clamped into `area`; no
-    // hole = centered
-    static QRect placeBubble(const QRect& area, const QVector<QRect>& holes, const QSize& size, int gap = 14);
+    // hole = centered. `keep` counts like holes (never covered while there is room); `avoid` is kept free if
+    // possible. `previous` (the bubble of the step before): its place again when it is still free and near the main
+    // hole, else its side and its line first - the bubble and its buttons do not jump around between steps
+    static QRect placeBubble(const QRect& area, const QVector<QRect>& holes, const QSize& size, int gap = 14,
+                             const QVector<QRect>& keep = {}, const QVector<QRect>& avoid = {},
+                             const QRect& previous = {});
     // Narrowest and widest bubble (it grows from the narrowest for long texts and for its buttons)
     static constexpr int kMinWidth = 320;
     static constexpr int kMaxWidth = 520;
@@ -73,7 +80,7 @@ private:
     void clearButtons();
     QPushButton* addButton(const QString& name, const QString& text, bool primary, bool left);
     void arrangeButtons(bool twoRows); // the buttons into one row or two (left ones above)
-    QSize bubbleSize();                // the bubble's size for its content (arranges the buttons)
+    QSize bubbleSize(int atLeast = 0); // the bubble's size for its content (arranges the buttons), at least that wide
     QFrame* m_bubble = nullptr;
     QLabel* m_title = nullptr;
     QLabel* m_counter = nullptr;
@@ -89,6 +96,8 @@ private:
     std::function<void()> m_escape; // the question's Esc answer
     int m_arranged = 0;             // how the buttons are arranged now: 0 = not yet, 1 = one row, 2 = two rows
     std::function<QVector<QRect>()> m_targets;
+    std::function<QVector<QRect>()> m_keep, m_avoid;
+    QSize m_steady; // the largest bubble of this tour so far: it never shrinks between steps (the buttons stay put)
     QVector<QRect> m_holes;
     QTimer m_follow;
     bool m_question = false;

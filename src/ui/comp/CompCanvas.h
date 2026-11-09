@@ -62,6 +62,7 @@ public:
     // Parts the in-app tours point at (widget coordinates, empty = not there): "output" = the output node, "node:<type>"
     // = the first node of a kind, "port:<input>" = the first input port of that name (a merge's for bg/fg/mask)
     QRect tourArea(const QString& what) const;
+    QVector<QRect> nodeRects() const; // every node as shown (tours keep their bubble off them)
     class QPushButton* tourButton() const { return m_tourButton; } // "Start the Compositing tour" in an empty graph
     void setTourButtonAllowed(bool on); // off while a tour runs (the button would sit in its spotlight)
     double zoom() const { return m_view.zoom; }

@@ -106,6 +106,7 @@ private:
     QToolButton* m_keyDiamond = nullptr;
     QToolButton* m_keyNext = nullptr;
     QWidget* m_body = nullptr;
+    QWidget* m_bodyScroll = nullptr; // m_body in a scroll area
     QLabel* m_empty = nullptr;
     QLabel* m_title = nullptr;
 

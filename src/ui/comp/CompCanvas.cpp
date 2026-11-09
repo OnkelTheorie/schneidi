@@ -151,6 +151,13 @@ void CompCanvas::setTourButtonAllowed(bool on)
     placeTourButton();
 }
 
+QVector<QRect> CompCanvas::nodeRects() const
+{
+    QVector<QRect> out;
+    for (const CompNode& n : m_graph.nodes) out << nodeRect(n.id).toAlignedRect().intersected(rect());
+    return out;
+}
+
 QRect CompCanvas::tourArea(const QString& what) const
 {
     if (what == QLatin1String("output")) return nodeRect(m_graph.out).toAlignedRect();
@@ -168,10 +175,12 @@ QRect CompCanvas::tourArea(const QString& what) const
                 if (n.type == QLatin1String("merge")) break;
             }
         if (!found) return {};
-        // The port and its name beside it, inside the node
+        // The port and its name beside it, inside the node's row (the hole's margin around it stays off the rows
+        // above and below)
         const QPointF p = inputPos(found, input);
         const double z = m_view.zoom;
-        return QRectF(p.x() - 9 * z, p.y() - kRow * z / 2, 80 * z, kRow * z).toAlignedRect();
+        const double left = p.x() - 4 * z;
+        return QRectF(left, p.y() - kRow * z / 2 + 3, nodeRect(found).right() - 6 * z - left, kRow * z - 6).toAlignedRect();
     }
     return {};
 }

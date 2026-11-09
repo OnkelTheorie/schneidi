@@ -43,6 +43,9 @@ public:
     int playhead() const { return m_playhead; }
     // The playhead line's x in this widget (tours point at it); may lie outside the widget when scrolled away
     int playheadX() const { return int(frameToX(m_playhead)); }
+    // Where a clip / a track's lane (right of the headers) is drawn, in this widget (tours point at them; empty = none)
+    QRect clipArea(int clipId) const;
+    QRect trackArea(TrackRef track) const;
     // What an AI just changed (live connection) lights up and fades out: new clips filled, edited ones outlined,
     // deleted ones as a ghost at their old place. Outside the visible area a small arrow at the edge points there;
     // the view never scrolls to it (core rule). Several changes in a row each fade on their own.

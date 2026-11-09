@@ -52,6 +52,7 @@ TourOverlay::TourOverlay(QWidget* window) : QWidget(window)
     m_text->setWordWrap(true);
     m_text->setTextFormat(Qt::PlainText);
     lay->addWidget(m_text);
+    lay->addStretch(1); // a bubble kept at the tour's steady size: the room above the buttons
     m_row1 = new QHBoxLayout;
     m_row1->setSpacing(6);
     lay->addLayout(m_row1);
@@ -74,6 +75,12 @@ void TourOverlay::setTargets(std::function<QVector<QRect>()> targets)
 {
     m_targets = std::move(targets);
     if (isVisible()) relayout();
+}
+
+void TourOverlay::setKeepFree(std::function<QVector<QRect>()> keep, std::function<QVector<QRect>()> avoid)
+{
+    m_keep = std::move(keep);
+    m_avoid = std::move(avoid);
 }
 
 namespace {
@@ -134,7 +141,7 @@ void TourOverlay::arrangeButtons(bool twoRows)
         if (!b.left) right->addWidget(b.button);
 }
 
-QSize TourOverlay::bubbleSize()
+QSize TourOverlay::bubbleSize(int atLeast)
 {
     m_bubble->ensurePolished();
     for (QWidget* w : m_bubble->findChildren<QWidget*>()) w->ensurePolished(); // the style sheet's fonts and paddings
@@ -167,7 +174,7 @@ QSize TourOverlay::bubbleSize()
         w = std::max(base, (twoRows ? std::max(leftW, rightW) : oneRow) + extra);
         w = std::min(w, windowMax);
     }
-    w = std::clamp(w, kMinWidth, std::max(kMinWidth, windowMax));
+    w = std::clamp(std::max(w, atLeast), kMinWidth, std::max(kMinWidth, windowMax));
     if (m_arranged != (twoRows ? 2 : 1)) { // only when it changed (this runs a few times a second)
         arrangeButtons(twoRows);
         m_arranged = twoRows ? 2 : 1;
@@ -184,6 +191,7 @@ QSize TourOverlay::bubbleSize()
 
 void TourOverlay::showStep(const QString& text, int index, int count, bool waiting, const QString& offer)
 {
+    if (m_question || index == 0) m_steady = {}; // a new tour
     m_question = false;
     m_title->hide();
     m_counter->setText(QString("%1/%2").arg(index + 1).arg(count));
@@ -219,6 +227,7 @@ void TourOverlay::showQuestion(const QString& title, const QString& text, const 
                                const QVector<Choice>& choices)
 {
     m_question = true;
+    m_steady = {};
     m_title->setText(title);
     m_title->setVisible(!title.isEmpty());
     m_counter->hide();
@@ -256,7 +265,8 @@ void TourOverlay::end()
 QRect TourOverlay::bubbleGeometry() const { return m_bubble->geometry(); }
 QWidget* TourOverlay::bubble() const { return m_bubble; }
 
-QRect TourOverlay::placeBubble(const QRect& area, const QVector<QRect>& holes, const QSize& size, int gap)
+QRect TourOverlay::placeBubble(const QRect& area, const QVector<QRect>& holes, const QSize& size, int gap,
+                               const QVector<QRect>& keep, const QVector<QRect>& avoid, const QRect& previous)
 {
     const QRect inner = area.adjusted(gap, gap, -gap, -gap);
     QRect all;
@@ -268,29 +278,52 @@ QRect TourOverlay::placeBubble(const QRect& area, const QVector<QRect>& holes, c
     }
     const auto clampX = [&](int x) { return std::clamp(x, inner.left(), std::max(inner.left(), inner.right() - size.width() + 1)); };
     const auto clampY = [&](int y) { return std::clamp(y, inner.top(), std::max(inner.top(), inner.bottom() - size.height() + 1)); };
-    const auto free = [&](const QRect& r) {
-        if (!inner.contains(r)) return false;
-        for (const QRect& h : holes)
+    const auto clear = [&](const QRect& r, const QVector<QRect>& rects) {
+        for (const QRect& h : rects)
             if (h.intersects(r)) return false;
         return true;
     };
-    // Beside the main hole first (far apart targets: the bubble belongs to the first, not between them), then beside
-    // all of them together
-    for (const QRect& target : {holes.value(0), all}) {
-        if (!target.isValid()) continue;
-        const int cx = clampX(target.center().x() - size.width() / 2);
-        const int cy = clampY(target.center().y() - size.height() / 2);
-        const QRect places[] = {
-            QRect(QPoint(cx, target.bottom() + gap), size),              // below
-            QRect(QPoint(cx, target.top() - gap - size.height()), size), // above
-            QRect(QPoint(target.right() + gap, cy), size),               // right
-            QRect(QPoint(target.left() - gap - size.width(), cy), size), // left
-        };
-        for (const QRect& r : places)
-            if (free(r)) return r;
-    }
-    // A target filling (nearly) the whole window: inside it, at its lower part, still in the window
+    const auto free = [&](const QRect& r, bool strict) {
+        return inner.contains(r) && clear(r, holes) && clear(r, keep) && (!strict || clear(r, avoid));
+    };
     const QRect main = holes.value(0).isValid() ? holes.value(0) : all;
+    // The place of the step before, if it still fits beside this step's main hole
+    if (previous.isValid()) {
+        const QRect r(previous.topLeft(), size);
+        const QRect near = main.adjusted(-gap - 120, -gap - 120, gap + 120, gap + 120);
+        if (free(r, true) && near.intersects(r)) return r;
+    }
+    // Beside the main hole first (far apart targets: the bubble belongs to the first, not between them), then beside
+    // all of them together; free of the places to avoid if it can be, else only off the holes and the kept controls
+    for (const bool strict : {true, false})
+        for (const QRect& target : {main, all}) {
+            if (!target.isValid()) continue;
+            const int cx = clampX(target.center().x() - size.width() / 2);
+            const int cy = clampY(target.center().y() - size.height() / 2);
+            QVector<QRect> places;
+            if (previous.isValid()) { // the previous line first: below/above at its x, right/left at its y
+                const int px = clampX(previous.left()), py = clampY(previous.top());
+                const QRect side[] = {QRect(QPoint(px, target.bottom() + gap), size),
+                                      QRect(QPoint(px, target.top() - gap - size.height()), size),
+                                      QRect(QPoint(target.right() + gap, py), size),
+                                      QRect(QPoint(target.left() - gap - size.width(), py), size)};
+                // Its side first: where it sat relative to this target
+                const int first = previous.top() > target.bottom() ? 0
+                                  : previous.bottom() < target.top() ? 1
+                                  : previous.left() > target.right() ? 2
+                                  : previous.right() < target.left() ? 3 : 0;
+                places << side[first];
+                for (int i = 0; i < 4; ++i)
+                    if (i != first) places << side[i];
+            }
+            places << QRect(QPoint(cx, target.bottom() + gap), size)              // below
+                   << QRect(QPoint(cx, target.top() - gap - size.height()), size) // above
+                   << QRect(QPoint(target.right() + gap, cy), size)               // right
+                   << QRect(QPoint(target.left() - gap - size.width(), cy), size); // left
+            for (const QRect& r : std::as_const(places))
+                if (free(r, strict)) return r;
+        }
+    // A target filling (nearly) the whole window: inside it, at its lower part, still in the window
     return QRect(QPoint(clampX(main.center().x() - size.width() / 2), clampY(main.bottom() - gap - size.height())), size);
 }
 
@@ -302,7 +335,21 @@ void TourOverlay::relayout()
     if (!m_question && m_targets)
         for (const QRect& t : m_targets())
             if (t.isValid()) holes << t.adjusted(-kPad, -kPad, kPad, kPad).intersected(rect());
-    const QRect bubble = placeBubble(rect(), holes, bubbleSize());
+    QVector<QRect> keep, avoid;
+    if (!m_question && m_keep)
+        for (const QRect& k : m_keep()) keep << k.adjusted(-kPad, -kPad, kPad, kPad);
+    if (!m_question && m_avoid) avoid = m_avoid();
+    // The steady size: never smaller than the tour's bubbles before (its height; its width when it fits the window)
+    QSize size = bubbleSize();
+    if (!m_question) {
+        if (size.width() < m_steady.width() && m_steady.width() <= width() - 28) {
+            size = bubbleSize(m_steady.width());
+        }
+        size.setHeight(std::max(size.height(), m_steady.height()));
+        m_steady = m_steady.expandedTo(size);
+    }
+    const QRect previous = m_bubble->isVisible() && !m_question ? m_bubble->geometry() : QRect();
+    const QRect bubble = placeBubble(rect(), holes, size, 14, keep, avoid, previous);
     if (holes != m_holes || bubble != m_bubble->geometry()) {
         m_holes = holes;
         m_bubble->setGeometry(bubble);

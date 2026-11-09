@@ -14,6 +14,8 @@
 #include "engine/Engine.h"
 #include "ui/EffectsLibrary.h"
 #include "ui/Inspector.h"
+#include "ui/ColorPanel.h"
+#include "core/GradeWindows.h"
 #include "ui/ScopesPanel.h"
 #include "ui/MediaPool.h"
 #include "ui/Viewer.h"
@@ -21,6 +23,8 @@
 #include "ui/timeline/TimelineView.h"
 
 #include <QAbstractButton>
+#include <QListWidget>
+#include <QMenuBar>
 #include <QButtonGroup>
 #include <QDir>
 #include <QFile>
@@ -126,6 +130,121 @@ void MainWindow::setupTours(QMenu* help)
             CompCanvas* c = m_compPage->canvas();
             return {c, c->tourArea(part).intersected(c->rect())};
         };
+    // The page buttons (not the whole bar: the hole of a bar as wide as the window was a thin line at its top)
+    host.areas["page_buttons"] = [this]() -> Area {
+        QRect r;
+        QWidget* bar = nullptr;
+        for (QAbstractButton* b : m_pageButtons->buttons())
+            if (b->isVisible()) {
+                bar = b->parentWidget();
+                r = r.united(b->geometry());
+            }
+        return {bar, r};
+    };
+    // One clip of the practice project: its entry in the Media Pool, the first and second clip on V1 (and the right
+    // edge of the first one: trimming), the clip on V2, a track's lane
+    const auto mediaPath = [this](int i) { return i < m_project->media().size() ? m_project->media()[i].path : QString(); };
+    host.areas["pool_clip"] = [this, mediaPath]() -> Area { return {m_mediaPool, m_mediaPool->itemArea(mediaPath(0))}; };
+    const auto clipOn = [this](TrackRef track, int i) {
+        const Timeline& tl = m_project->timeline();
+        if (track.index >= tl.tracks(track.kind).size() || i >= tl.track(track).clips.size()) return 0;
+        return tl.track(track).clips[i].id;
+    };
+    host.areas["clip_v1"] = [this, clipOn]() -> Area {
+        return {m_timeline->view(), m_timeline->view()->clipArea(clipOn({TrackKind::Video, 0}, 0))};
+    };
+    host.areas["clip_v1_second"] = [this, clipOn]() -> Area {
+        return {m_timeline->view(), m_timeline->view()->clipArea(clipOn({TrackKind::Video, 0}, 1))};
+    };
+    host.areas["clip_v2"] = [this, clipOn]() -> Area {
+        return {m_timeline->view(), m_timeline->view()->clipArea(clipOn({TrackKind::Video, 1}, 0))};
+    };
+    host.areas["clip_v1_edge"] = [this, clipOn]() -> Area {
+        const QRect c = m_timeline->view()->clipArea(clipOn({TrackKind::Video, 0}, 0));
+        if (c.isEmpty()) return {};
+        return {m_timeline->view(), QRect(c.right() - 14, c.top(), 28, c.height())};
+    };
+    // The first gap between two clips on V1 (a trim leaves one), else the second clip
+    host.areas["gap_v1"] = [this, clipOn]() -> Area {
+        TimelineView* tv = m_timeline->view();
+        const Timeline& tl = m_project->timeline();
+        if (tl.video.isEmpty()) return {};
+        const QVector<Clip>& clips = tl.video[0].clips;
+        for (int i = 1; i < clips.size(); ++i) {
+            const QRect a = tv->clipArea(clips[i - 1].id), b = tv->clipArea(clips[i].id);
+            if (clips[i].start > clips[i - 1].end() && a.isValid() && b.isValid() && b.left() - a.right() >= 6)
+                return {tv, QRect(QPoint(a.right() + 2, a.top()), QPoint(b.left() - 2, a.bottom()))};
+        }
+        return {tv, tv->clipArea(clipOn({TrackKind::Video, 0}, 1))};
+    };
+    host.areas["track_v1"] = [this]() -> Area { return {m_timeline->view(), m_timeline->view()->trackArea({TrackKind::Video, 0})}; };
+    host.areas["track_a1"] = [this]() -> Area { return {m_timeline->view(), m_timeline->view()->trackArea({TrackKind::Audio, 0})}; };
+    // A recipe in the Effects Library (its "Compositing recipes" category shown by the action "effects_recipes")
+    for (const QString& recipe : {QStringLiteral("greenscreen"), QStringLiteral("pip_frame")})
+        host.areas["recipe_" + recipe] = [this, recipe]() -> Area {
+            QListWidget* list = m_effects->list();
+            for (int i = 0; i < list->count(); ++i)
+                if (list->item(i)->data(Qt::UserRole).toString() == CompUi::kRecipePrefix + recipe && !list->item(i)->isHidden()) {
+                    const QRect r = list->visualItemRect(list->item(i)).intersected(list->viewport()->rect());
+                    return {list->viewport(), r};
+                }
+            return {};
+        };
+    // The blur guide: a window on the clip (the step's "do it for me" adds a rectangle)
+    const auto hasWindow = [this] {
+        const Clip* c = TimelineOps::findClip(m_project->timeline(), selectedVideoClip());
+        return c && !GradeWindows::list(*c).isEmpty();
+    };
+    host.conditions["color_has_window"] = hasWindow;
+    host.offers["color_window"] = {N_("Für mich erledigen"), [hasWindow] { return !hasWindow(); },
+                                   [this] { m_colorPanel->addWindow("rectangle"); }};
+    host.actions["effects_recipes"] = [this] { m_effects->showRecipes(); };
+    // The Comp page: a node selected (the Inspector shows its settings), the key's pipette there
+    for (const QString& type : {QStringLiteral("key"), QStringLiteral("merge"), QStringLiteral("transform")})
+        host.actions["comp_select_" + type] = [this, type] {
+            ensureCompPage();
+            if (auto* b = m_compPage->findChild<QToolButton*>("comp_view_nodes")) b->setChecked(true);
+            CompGraph g;
+            const Clip* c = m_compPage->clip() ? TimelineOps::findClip(m_project->timeline(), m_compPage->clip()) : nullptr;
+            if (!c || !CompUi::graphOf(*c, &g)) return;
+            for (const CompNode& n : g.nodes)
+                if (n.type == type) {
+                    m_compPage->selectNode(n.id);
+                    return;
+                }
+        };
+    host.areas["comp_pipette"] = [this]() -> Area {
+        if (!m_compPage) return {};
+        for (QToolButton* b : m_compPage->findChildren<QToolButton*>())
+            if (b->objectName().startsWith("comp_pipette_") && b->isVisible()) return {b, b->rect()};
+        return {};
+    };
+    // Where the bubble had better not sit: the bars with the controls the steps name (menus, panel tabs, page bar,
+    // the timeline's tools, ruler and track headers, the viewer's transport) and the Comp graph's nodes
+    host.avoid = [this] {
+        QVector<QRect> out;
+        const auto add = [&](QWidget* w, const QRect& local) {
+            if (w && w->isVisible() && !local.isEmpty()) out << QRect(w->mapTo(this, local.topLeft()), local.size());
+        };
+        add(menuBar(), menuBar()->rect());
+        for (const char* name : {"TopBar", "PageBar"}) add(findChild<QWidget*>(name), findChild<QWidget*>(name) ? findChild<QWidget*>(name)->rect() : QRect());
+        TimelineView* tv = m_timeline->view();
+        if (tv->isVisible()) {
+            const QPoint top = tv->mapTo(m_timeline, QPoint(0, 0));
+            add(m_timeline, QRect(0, 0, m_timeline->width(), top.y() + TimelineView::kRulerH)); // tools and ruler
+            add(tv, QRect(0, 0, TimelineView::kHeaderW, tv->height()));                     // track headers
+        }
+        if (auto* screen = m_viewer->findChild<QWidget*>("viewer_screen"); screen && screen->isVisible()) {
+            const int below = screen->mapTo(m_viewer, QPoint(0, screen->height())).y();
+            add(m_viewer, QRect(0, below, m_viewer->width(), m_viewer->height() - below));
+        }
+        if (m_compPage && m_compPage->isVisible()) {
+            if (auto* create = m_compPage->findChild<QWidget*>("comp_save_recipe"); create && create->parentWidget())
+                add(create->parentWidget(), create->parentWidget()->rect()); // the Comp page's bar
+            for (const QRect& n : m_compPage->canvas()->nodeRects()) add(m_compPage->canvas(), n);
+        }
+        return out;
+    };
     m_tours = new TourManager(this, m_project, host);
     m_tours->addMenu(help);
     // The empty graph's "Start the Compositing tour" stays away while a tour runs (it would sit in the spotlight)
@@ -250,6 +369,7 @@ void MainWindow::enterTourMode(const Tour& tour)
     for (QToolButton* b : tourToggles()) s.toggles << b->isChecked();
     s.scopes = !m_scopes->isHidden();
     for (QSplitter* sp : findChildren<QSplitter*>()) s.sizes.push_back({sp, sp->sizes()});
+    s.window = size();
 
     // The tour's layout: the default panels at their default sizes, every page reachable (the settings stay as they are)
     setViewerLarge(false);
@@ -327,5 +447,6 @@ void MainWindow::leaveTourMode()
     for (const auto& [sp, sizes] : s.sizes)
         if (sp && sp->count() == sizes.size()) sp->setSizes(sizes);
     if (s.large) setViewerLarge(true);
+    if (!isMaximized() && !isFullScreen() && s.window.isValid() && size() != s.window) resize(s.window);
     if (m_liveWaiting) m_liveWaiting({}); // AIs may work on the user's project again
 }

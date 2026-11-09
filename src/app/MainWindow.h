@@ -618,6 +618,7 @@ private:
         QVector<bool> toggles; // tourToggles(), in that order
         bool scopes = true;
         QVector<QPair<QPointer<QSplitter>, QList<int>>> sizes;
+        QSize window; // the window's size (a page's minimum could have grown it during the tour)
     } m_tourSaved;
     QVector<QToolButton*> tourToggles() const; // the panel toggles the tour sets (pool, effects, storage, ...)
     class QShortcut* m_voiceoverEscape = nullptr;
