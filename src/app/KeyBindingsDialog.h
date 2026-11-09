@@ -2,6 +2,8 @@
 #pragma once
 #include <QDialog>
 
+class QComboBox;
+class QLabel;
 class QTableWidget;
 class QLineEdit;
 
@@ -12,6 +14,9 @@ class KeyBindingsDialog : public QDialog {
     Q_OBJECT
 public:
     explicit KeyBindingsDialog(QWidget* parent = nullptr);
+    // Import a Premiere .kys file as a preset of its own and apply it; shows "N taken, M unknown" (the "Import…" button
+    // after its file dialog)
+    bool importFile(const QString& path);
 
 private:
     void fill();
@@ -21,4 +26,7 @@ private:
 
     QLineEdit* m_filter;
     QTableWidget* m_table;
+    QComboBox* m_preset;
+    QLabel* m_comeFrom;
+    QLabel* m_summary;
 };

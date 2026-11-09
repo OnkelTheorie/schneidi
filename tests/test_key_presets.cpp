@@ -1,0 +1,341 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Key presets for people coming from other editors: Premiere Pro and Final Cut Pro on schneidi's actions (keys schneidi's
+// own actions lose when the preset takes them, second monitor reachable in every set), the preset stored in
+// keybindings.json, a Premiere .kys file imported as a preset of its own ("7 taken, 3 unknown"), the key settings
+// dialog (preset combo, import) and the key trainer (rounds, hits, skip, its keys never fire window actions). The dialog
+// and the trainer in English and Russian with a 1.25x font: every button's text fits.
+// KEY_PRESETS_DUMP=<dir> saves screenshots.
+#include "check.h"
+
+#include "app/InputBindings.h"
+#include "app/KeyBindingsDialog.h"
+#include "app/KeyTrainer.h"
+#include "app/MainWindow.h"
+#include "app/Theme.h"
+#include "core/I18n.h"
+#include "engine/Engine.h"
+
+#include <QAction>
+#include <QApplication>
+#include <QComboBox>
+#include <QDir>
+#include <QFile>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QLabel>
+#include <QPushButton>
+#include <QSignalSpy>
+#include <QTemporaryDir>
+#include <QTest>
+#include <clocale>
+#include <memory>
+
+namespace {
+
+QString dumpDir() { return qEnvironmentVariable("KEY_PRESETS_DUMP"); }
+
+QString fixture() { return QDir(Check::testData()).filePath("premiere-shortcuts.kys"); }
+
+QStringList in(const QString& id) { return InputBindings::instance().inputs(id); }
+
+void testReadKys()
+{
+    QFile f(fixture());
+    if (!CHECK(f.open(QIODevice::ReadOnly))) return;
+    const auto r = InputBindings::readKys(f.readAll());
+    CHECK(r.ok);
+    CHECK_EQ(r.taken, 7);   // undo, add edit, play, in, zoom in, snap, ripple delete
+    CHECK_EQ(r.unknown, 3); // match frame, pen, lift (find has no key: not counted)
+    CHECK_EQ(r.keys.value("split"), QStringList({"D", "Ctrl+K"}));
+    CHECK_EQ(r.keys.value("zoom_in"), QStringList({"=", "+"})); // number pad + counts as +
+    CHECK_EQ(r.keys.value("snapping"), QStringList({"Shift+N"}));
+    CHECK_EQ(r.keys.value("ripple_delete"), QStringList({"Alt+Del"}));
+    CHECK_EQ(r.keys.value("undo"), QStringList({"Ctrl+Z"}));
+    CHECK(!r.keys.contains("find"));
+
+    CHECK(!InputBindings::readKys("not xml at all").ok);
+    CHECK(!InputBindings::readKys(R"({"shortcuts": {}})").ok);
+    CHECK(!InputBindings::readKys("<html><body>hi</body></html>").ok);
+}
+
+void testPresets()
+{
+    InputBindings& b = InputBindings::instance();
+    const QStringList ids = InputBindings::presetIds();
+    for (const char* id : {"standard", "beginner", "premiere", "finalcut"}) CHECK(ids.contains(id));
+    CHECK_EQ(InputBindings::presetName("premiere"), QString("Premiere Pro"));
+    CHECK_EQ(InputBindings::presetName("finalcut"), QString("Final Cut Pro"));
+
+    // The second monitor stays reachable in every set
+    for (const QString& id : ids) {
+        b.applyPreset(id);
+        CHECK(!b.current("viewer_second_screen").isEmpty());
+        CHECK_EQ(b.currentPreset(), id);
+    }
+
+    b.applyPreset("premiere");
+    CHECK_EQ(in("split").value(0), QString("Ctrl+K"));
+    CHECK_EQ(in("split").value(1), QString("mouse:back")); // the default side button stays
+    CHECK_EQ(in("tool_blade").value(0), QString("C"));
+    CHECK_EQ(in("tool_select").value(0), QString("V"));
+    CHECK_EQ(in("mark_in").value(0), QString("I"));
+    CHECK_EQ(in("insert_clip").value(0), QString(","));
+    CHECK_EQ(in("snapping").value(0), QString("S"));
+    CHECK_EQ(in("zoom_in").value(0), QString("="));
+    CHECK_EQ(in("viewer_second_screen").value(0), QString("Ctrl+Shift+F"));
+    // schneidi's own actions keep their key while it is free, else they have none
+    CHECK_EQ(in("select_edit_point"), QStringList({"", ""}));    // V = Selection Tool
+    CHECK_EQ(in("grade_prev"), QStringList({"", ""}));           // = zooms
+    CHECK_EQ(in("show_timeline"), QStringList({"", ""}));        // Q = Ripple Trim Previous
+    CHECK_EQ(in("import_timeline"), QStringList({"", ""}));      // Ctrl+Shift+I clears the in point
+    CHECK_EQ(in("curve_editor").value(0), QString("Shift+C"));   // free: stays
+    CHECK_EQ(in("color_bypass").value(0), QString("Shift+D"));
+    // Takes effect on the actions right away
+    CHECK(b.action("split")->shortcuts().contains(QKeySequence("Ctrl+K")));
+    CHECK(b.action("select_edit_point")->shortcuts().isEmpty());
+
+    b.applyPreset("finalcut");
+    CHECK_EQ(in("split").value(0), QString("Ctrl+B"));
+    CHECK_EQ(in("ripple_delete").value(0), QString("Backspace"));
+    CHECK_EQ(in("delete").value(0), QString("Shift+Backspace"));
+    CHECK_EQ(in("insert_clip").value(0), QString("W"));
+    CHECK_EQ(in("overwrite_clip").value(0), QString("D"));
+    CHECK_EQ(in("toggle_enabled").value(0), QString("V"));
+    CHECK_EQ(in("viewer_full_screen").value(0), QString("Ctrl+Shift+F"));
+    CHECK_EQ(in("viewer_second_screen").value(0), QString("Ctrl+F12"));
+    CHECK_EQ(in("select_edit_point"), QStringList({"", ""}));
+
+    // The preset is remembered in the file (optional field) and comes back with load()
+    QFile f(b.filePath());
+    if (CHECK(f.open(QIODevice::ReadOnly)))
+        CHECK_EQ(QJsonDocument::fromJson(f.readAll()).object().value("preset").toString(), QString("finalcut"));
+    f.close();
+    b.load();
+    CHECK_EQ(b.currentPreset(), QString("finalcut"));
+
+    // presetInputs is a dry run: neither the actions nor the current set change
+    const auto premiere = b.presetInputs("premiere");
+    CHECK_EQ(premiere.value("split").value(0), QString("Ctrl+K"));
+    CHECK_EQ(in("split").value(0), QString("Ctrl+B"));
+    CHECK(b.action("split")->shortcuts().contains(QKeySequence("Ctrl+B")));
+    CHECK_EQ(b.currentPreset(), QString("finalcut"));
+
+    b.applyPreset("standard");
+    CHECK_EQ(in("split").value(0), QString("Ctrl+B"));
+    CHECK_EQ(in("select_edit_point").value(0), QString("V"));
+}
+
+void testImport()
+{
+    InputBindings& b = InputBindings::instance();
+    b.applyPreset("standard");
+    KeyBindingsDialog dlg;
+    auto* combo = dlg.findChild<QComboBox*>("key_preset");
+    auto* summary = dlg.findChild<QLabel*>("key_import_summary");
+    if (!CHECK(combo && summary)) return;
+    CHECK_EQ(combo->currentData().toString(), QString("standard"));
+    CHECK(dlg.importFile(fixture()));
+    const QString id = "custom:premiere-shortcuts";
+    CHECK_EQ(b.currentPreset(), id);
+    CHECK(InputBindings::presetIds().contains(id));
+    CHECK_EQ(combo->currentData().toString(), id);
+    CHECK(combo->findData(id) >= 0);
+    CHECK(summary->text().contains("7") && summary->text().contains("3"));
+    CHECK_EQ(in("split"), QStringList({"D", "Ctrl+K"}));   // both keys of the file, no side button
+    CHECK_EQ(in("snapping"), QStringList({"Shift+N", ""}));
+    CHECK_EQ(in("ripple_delete"), QStringList({"Alt+Del", ""}));
+    CHECK_EQ(in("tool_blade").value(0), QString("C")); // not in the file: Premiere's
+    CHECK_EQ(in("toggle_enabled").value(0), QString("Shift+E"));
+
+    // A preset of its own: another set and back
+    b.applyPreset("standard");
+    CHECK_EQ(in("split").value(0), QString("Ctrl+B"));
+    b.applyPreset(id);
+    CHECK_EQ(in("split"), QStringList({"D", "Ctrl+K"}));
+    CHECK_EQ(b.currentPreset(), id);
+
+    // Not a shortcut file: an error, the set stays
+    QTemporaryDir tmp;
+    const QString junk = QDir(tmp.path()).filePath("junk.kys");
+    QFile j(junk);
+    j.open(QIODevice::WriteOnly);
+    j.write("<html/>");
+    j.close();
+    QString error;
+    CHECK(b.importKys(junk, nullptr, &error).isEmpty());
+    CHECK(!error.isEmpty());
+    CHECK_EQ(b.currentPreset(), id);
+    b.applyPreset("standard");
+}
+
+QKeyCombination comboOf(const QString& input)
+{
+    return QKeySequence::fromString(input, QKeySequence::PortableText)[0];
+}
+
+void press(QWidget* w, const QString& input)
+{
+    const QKeyCombination k = comboOf(input);
+    QTest::keyClick(w, k.key(), k.keyboardModifiers());
+    QApplication::processEvents();
+}
+
+void testTrainer(MainWindow& w)
+{
+    InputBindings& b = InputBindings::instance();
+    for (const QString& preset : {QString("standard"), QString("premiere"), QString("finalcut")}) {
+        b.applyPreset(preset);
+        CHECK(KeyTrainer::candidates().size() >= KeyTrainer::kRounds);
+    }
+    b.applyPreset("premiere");
+    auto* t = new KeyTrainer(&w, 42);
+    t->show();
+    t->activateWindow();
+    t->setFocus();
+    QApplication::processEvents();
+    CHECK_EQ(t->round(), 0);
+    CHECK(!t->currentId().isEmpty());
+
+    // Window actions stay quiet while the card has the focus (Space does not play)
+    QSignalSpy played(b.action("play_pause"), &QAction::triggered);
+    QSignalSpy split(b.action("split"), &QAction::triggered);
+
+    // Round 1: a wrong key first (no hit), then the right one
+    const QString first = t->currentId();
+    press(t, "F7");
+    CHECK_EQ(t->round(), 0);
+    press(t, b.inputs(first).value(0));
+    CHECK_EQ(t->round(), 1);
+    CHECK_EQ(t->hits(), 0);
+    // Round 2 skipped
+    t->findChild<QPushButton*>("trainer_skip")->click();
+    CHECK_EQ(t->round(), 2);
+    // The rest right on the first try
+    while (!t->finished()) {
+        const QString id = t->currentId();
+        QString key;
+        for (const QString& k : b.inputs(id))
+            if (!k.isEmpty() && InputBindings::inputMouseButton(k) == Qt::NoButton) {
+                key = k;
+                break;
+            }
+        if (!CHECK(!key.isEmpty())) break;
+        const int round = t->round();
+        press(t, key);
+        if (!CHECK_EQ(t->round(), round + 1)) break;
+    }
+    CHECK(t->finished());
+    CHECK_EQ(t->hits(), KeyTrainer::kRounds - 2);
+    CHECK_EQ(played.count(), 0);
+    CHECK_EQ(split.count(), 0);
+    CHECK(!t->findChild<QPushButton*>("trainer_skip")->isVisible());
+    CHECK(t->findChild<QPushButton*>("trainer_again")->isVisible());
+    t->findChild<QPushButton*>("trainer_again")->click();
+    CHECK_EQ(t->round(), 0);
+    CHECK_EQ(t->hits(), 0);
+    t->close();
+    QApplication::processEvents();
+    b.applyPreset("standard");
+}
+
+// Every button's text fits into the button (font metrics against its width), every label is wide enough for one
+// word at least
+void checkFits(QWidget* root, const QString& where)
+{
+    for (QPushButton* p : root->findChildren<QPushButton*>()) {
+        if (!p->isVisible() || p->text().isEmpty()) continue;
+        const int need = p->fontMetrics().horizontalAdvance(QString(p->text()).remove('&')) + 8;
+        Check::report(need <= p->width(), "button text cut", __FILE__, __LINE__,
+                      QString("%1: \"%2\" needs %3 px, has %4").arg(where, p->text()).arg(need).arg(p->width()));
+    }
+    for (QLabel* l : root->findChildren<QLabel*>()) {
+        if (!l->isVisible() || l->text().isEmpty() || l->wordWrap()) continue;
+        const int need = l->fontMetrics().horizontalAdvance(l->text());
+        Check::report(need <= l->contentsRect().width() + 1, "label text cut", __FILE__, __LINE__,
+                      QString("%1: \"%2\" needs %3 px, has %4").arg(where, l->text()).arg(need).arg(l->width()));
+    }
+    for (QComboBox* c : root->findChildren<QComboBox*>()) {
+        if (!c->isVisible()) continue;
+        const int need = c->fontMetrics().horizontalAdvance(c->currentText()) + 30;
+        Check::report(need <= c->width(), "combo text cut", __FILE__, __LINE__,
+                      QString("%1: \"%2\" needs %3 px, has %4").arg(where, c->currentText()).arg(need).arg(c->width()));
+    }
+}
+
+void testLanguages(Engine& engine)
+{
+    const QFont normal = QApplication::font();
+    QFont big = normal;
+    big.setPointSizeF(normal.pointSizeF() * 1.25);
+    QApplication::setFont(big);
+    for (const char* lang : {"en", "ru"}) {
+        I18n::install(lang);
+        auto w = std::make_unique<MainWindow>(&engine);
+        w->disableAutosave();
+        w->resize(1600, 950);
+        w->show();
+        QApplication::processEvents();
+        InputBindings::instance().applyPreset("premiere");
+
+        {
+            KeyBindingsDialog dlg(w.get());
+            dlg.show();
+            QApplication::processEvents();
+            dlg.importFile(fixture()); // the summary line shows
+            QApplication::processEvents();
+            checkFits(&dlg, QString("dialog %1").arg(lang));
+            if (!dumpDir().isEmpty()) dlg.grab().save(dumpDir() + QString("/keys-dialog-%1.png").arg(lang));
+        }
+
+        auto* t = new KeyTrainer(w.get(), 7);
+        t->show();
+        QApplication::processEvents();
+        press(t, "F7"); // the "that was F7" line
+        QApplication::processEvents();
+        checkFits(t, QString("trainer %1").arg(lang));
+        if (!dumpDir().isEmpty()) t->grab().save(dumpDir() + QString("/trainer-%1.png").arg(lang));
+        while (!t->finished()) t->skip();
+        QApplication::processEvents();
+        checkFits(t, QString("trainer end %1").arg(lang));
+        if (!dumpDir().isEmpty()) t->grab().save(dumpDir() + QString("/trainer-end-%1.png").arg(lang));
+        t->close();
+        InputBindings::instance().applyPreset("standard");
+        w->close();
+        w.reset();
+        QApplication::processEvents();
+    }
+    QApplication::setFont(normal);
+    I18n::install("de");
+}
+
+} // namespace
+
+int main(int argc, char** argv)
+{
+    Check::initEnv();
+    QApplication app(argc, argv);
+    Check::initApp("key_presets");
+    I18n::install("de");
+    Theme::apply(app);
+    InputBindings::instance().load();
+    testReadKys();
+
+    Check::initEngine();
+    Engine engine;
+    QString err;
+    if (!CHECK(engine.init(&err))) return Check::result();
+    std::setlocale(LC_NUMERIC, "C");
+    {
+        MainWindow w(&engine);
+        w.disableAutosave();
+        w.resize(1600, 950);
+        w.show();
+        w.activateWindow();
+        QApplication::processEvents();
+        testPresets();
+        testImport();
+        testTrainer(w);
+    }
+    testLanguages(engine);
+    return Check::result();
+}

@@ -357,6 +357,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/app/MainWindowTemplates.cpp
     src/app/MainWindowVoiceover.cpp
     src/app/KeyBindingsDialog.h   src/app/KeyBindingsDialog.cpp
+    src/app/KeyTrainer.h          src/app/KeyTrainer.cpp
     src/app/ProjectSettingsDialog.h src/app/ProjectSettingsDialog.cpp
     src/app/ClipSpeedDialog.h src/app/ClipSpeedDialog.cpp
     src/app/FitMusicDialog.h src/app/FitMusicDialog.cpp

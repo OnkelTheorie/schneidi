@@ -7,6 +7,7 @@
 #include "app/InputBindings.h"
 #include "app/Theme.h"
 #include "app/KeyBindingsDialog.h"
+#include "app/KeyTrainer.h"
 #include "app/ClipSpeedDialog.h"
 #include "app/BrandKitDialog.h"
 #include "app/DesignDialog.h"
@@ -841,6 +842,19 @@ void MainWindow::buildActions()
                [] { QDesktopServices::openUrl(QUrl::fromLocalFile(Log::directory())); });
     makeAction(help, "check_updates", T("Nach Updates suchen…"), QKeySequence(), [this] { checkForUpdates(true); });
     setupTours(help); // Help › Tours
+    // Practice keys (0.20): a quiet card, not modal; it takes the keys only while it has the focus
+    makeAction(help, "key_trainer", T("Tasten üben"), QKeySequence(), [this] {
+        if (!m_keyTrainer) {
+            m_keyTrainer = new KeyTrainer(this);
+            m_keyTrainer->adjustSize();
+            const QPoint at = mapToGlobal(QPoint(width() - m_keyTrainer->width() - 40, 80));
+            m_keyTrainer->move(at);
+        }
+        m_keyTrainer->show();
+        m_keyTrainer->raise();
+        m_keyTrainer->activateWindow();
+        m_keyTrainer->setFocus();
+    });
 
     // Keys of panels (scope): only while the panel has the focus, there before the window's keys (Delete)
     InputBindings::instance().registerAction(m_transcript->cutAction(), "transcript_cut", T("Transkript"),

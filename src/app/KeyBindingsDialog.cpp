@@ -5,7 +5,10 @@
 #include "app/Theme.h"
 #include "core/I18n.h"
 
+#include <QComboBox>
 #include <QHBoxLayout>
+#include <QSignalBlocker>
+#include <algorithm>
 #include <QHash>
 #include <QHeaderView>
 #include <QKeyEvent>
@@ -126,8 +129,46 @@ KeyBindingsDialog::KeyBindingsDialog(QWidget* parent) : QDialog(parent)
     hint->setWordWrap(true);
     hint->setStyleSheet(QString("color: %1;").arg(Theme::textDim.name()));
 
-    auto* resetOne = new QPushButton(T("Standard"));
-    resetOne->setToolTip(T("Gewählte Zeile auf Standard zurücksetzen"));
+    // Presets: built-in sets (schneidi's standard, beginner, Premiere Pro, Final Cut Pro) and the user's own ones,
+    // e.g. an imported Premiere .kys file
+    m_preset = new QComboBox;
+    m_preset->setObjectName("key_preset");
+    m_preset->setToolTip(T("Fertige Tastenbelegung laden (ersetzt die jetzige)"));
+    connect(m_preset, &QComboBox::activated, this, [this](int index) {
+        const QString id = m_preset->itemData(index).toString();
+        if (id == InputBindings::instance().currentPreset()) return;
+        if (QMessageBox::question(this, T("Tastenbelegung"),
+                                  T("Vorlage „%1“ laden? Die jetzige Belegung (auch Maustasten und Mausrad) "
+                                    "wird ersetzt.")
+                                      .arg(InputBindings::presetName(id)))
+            == QMessageBox::Yes)
+            InputBindings::instance().applyPreset(id);
+        fill();
+    });
+    auto* importKys = new QPushButton(T("Importieren…"));
+    importKys->setObjectName("key_import");
+    importKys->setToolTip(T("Tastenbelegung aus Premiere Pro (.kys) übernehmen"));
+    connect(importKys, &QPushButton::clicked, this, [this] {
+        const QString path = QFileDialog::getOpenFileName(this, T("Tastenbelegung importieren"), setDir(),
+                                                          T("Premiere-Tastenbelegung (*.kys)"));
+        if (path.isEmpty()) return;
+        QSettings().setValue("keys/setDir", QFileInfo(path).absolutePath());
+        importFile(path);
+    });
+    auto* presetLabel = new QLabel(T("Vorlage:"));
+    presetLabel->setBuddy(m_preset);
+    // For people coming from another editor (the first-start question belongs to the tours: no popup of its own)
+    m_comeFrom = new QLabel(T("Du kommst von Premiere Pro oder Final Cut Pro? Wähl hier deren Vorlage, dann gelten "
+                              "die gewohnten Tasten. Üben: Hilfe › Tasten üben."));
+    m_comeFrom->setWordWrap(true);
+    m_comeFrom->setStyleSheet(QString("color: %1;").arg(Theme::textDim.name()));
+    m_summary = new QLabel;
+    m_summary->setObjectName("key_import_summary");
+    m_summary->setWordWrap(true);
+    m_summary->hide();
+
+    auto* resetOne = new QPushButton(T("Zurücksetzen"));
+    resetOne->setToolTip(T("Gewählte Zeile auf die Vorlage zurücksetzen"));
     connect(resetOne, &QPushButton::clicked, this, [this] { resetRow(m_table->currentRow()); });
     auto* clearOne = new QPushButton(T("Entfernen"));
     clearOne->setToolTip(T("Gewählte Taste entfernen (Spalte Taste 1 oder 2, sonst beide)"));
@@ -141,26 +182,12 @@ KeyBindingsDialog::KeyBindingsDialog(QWidget* parent) : QDialog(parent)
         fill();
     });
     auto* resetAll = new QPushButton(T("Alle zurücksetzen"));
+    resetAll->setToolTip(T("Alle Tasten auf die gewählte Vorlage zurücksetzen"));
     connect(resetAll, &QPushButton::clicked, this, [this] {
-        InputBindings::instance().resetAll();
+        auto& bindings = InputBindings::instance();
+        bindings.applyPreset(bindings.currentPreset().isEmpty() ? QString("standard") : bindings.currentPreset());
         fill();
     });
-    // Built-in sets (standard like DaVinci, beginner)
-    auto* preset = new QPushButton(T("Vorlage"));
-    preset->setToolTip(T("Fertige Tastenbelegung laden (ersetzt die jetzige)"));
-    auto* presetMenu = new QMenu(preset);
-    for (const QString& id : InputBindings::presetIds())
-        presetMenu->addAction(InputBindings::presetName(id), this, [this, id] {
-            if (QMessageBox::question(this, T("Tastenbelegung"),
-                                      T("Vorlage „%1“ laden? Die jetzige Belegung (auch Maustasten und Mausrad) "
-                                        "wird ersetzt.")
-                                          .arg(InputBindings::presetName(id)))
-                != QMessageBox::Yes)
-                return;
-            InputBindings::instance().applyPreset(id);
-            fill();
-        });
-    preset->setMenu(presetMenu);
     // Whole sets (to another computer, several setups): same format as keybindings.json
     auto* loadSet = new QPushButton(T("Satz laden…"));
     loadSet->setToolTip(T("Ganze Tastenbelegung aus einer Datei laden (ersetzt die jetzige)"));
@@ -196,13 +223,20 @@ KeyBindingsDialog::KeyBindingsDialog(QWidget* parent) : QDialog(parent)
     buttons->addWidget(clearOne);
     buttons->addWidget(resetAll);
     buttons->addSpacing(12);
-    buttons->addWidget(preset);
     buttons->addWidget(loadSet);
     buttons->addWidget(saveSet);
     buttons->addStretch(1);
     buttons->addWidget(close);
 
+    auto* presetRow = new QHBoxLayout;
+    presetRow->addWidget(presetLabel);
+    presetRow->addWidget(m_preset, 1);
+    presetRow->addWidget(importKys);
+
     auto* lay = new QVBoxLayout(this);
+    lay->addLayout(presetRow);
+    lay->addWidget(m_comeFrom);
+    lay->addWidget(m_summary);
     lay->addWidget(m_filter);
     lay->addWidget(m_table, 1);
     lay->addWidget(hint);
@@ -215,6 +249,16 @@ void KeyBindingsDialog::fill()
 {
     const auto& bindings = InputBindings::instance();
     const auto& entries = bindings.entries();
+
+    const QString current = bindings.currentPreset().isEmpty() ? QString("standard") : bindings.currentPreset();
+    {
+        const QSignalBlocker block(m_preset);
+        m_preset->clear();
+        for (const QString& id : InputBindings::presetIds()) m_preset->addItem(InputBindings::presetName(id), id);
+        m_preset->setCurrentIndex(std::max(0, m_preset->findData(current)));
+    }
+    // Bold = differs from the preset the set came from
+    const QHash<QString, QStringList> preset = bindings.presetInputs(current);
 
     // Key or mouse button -> number of actions (mark conflicts). Keys count per scope: a panel's key wins in the panel
     // (InputBindings::registerPanelAction/registerScopedAction), the same key in the window is no conflict. A mouse
@@ -240,7 +284,7 @@ void KeyBindingsDialog::fill()
         m_table->setItem(i, ColText, text);
 
         const QStringList inputs = bindings.inputs(e.id);
-        const QStringList defaults = bindings.defaultInputs(e.id);
+        const QStringList defaults = preset.value(e.id, bindings.defaultInputs(e.id));
         for (int s = 0; s < InputBindings::kSlots; ++s) {
             auto* item = new QTableWidgetItem(InputBindings::inputText(inputs[s]));
             if (inputs[s] != defaults[s]) {
@@ -258,6 +302,25 @@ void KeyBindingsDialog::fill()
     applyFilter();
 }
 
+bool KeyBindingsDialog::importFile(const QString& path)
+{
+    InputBindings::KysResult r;
+    QString error;
+    const QString id = InputBindings::instance().importKys(path, &r, &error);
+    if (id.isEmpty()) {
+        m_summary->hide();
+        QMessageBox::warning(this, T("Tastenbelegung importieren"), error);
+        return false;
+    }
+    m_summary->setText(T("„%1“ importiert: %2 übernommen, %3 unbekannt (die fehlen in schneidi und bleiben weg).")
+                           .arg(InputBindings::presetName(id))
+                           .arg(r.taken)
+                           .arg(r.unknown));
+    m_summary->show();
+    fill();
+    return true;
+}
+
 void KeyBindingsDialog::applyFilter()
 {
     const QString f = m_filter->text().trimmed();
@@ -272,7 +335,9 @@ void KeyBindingsDialog::resetRow(int row)
 {
     if (row < 0) return;
     const QString id = m_table->item(row, ColText)->data(Qt::UserRole).toString();
-    InputBindings::instance().setInputs(id, InputBindings::instance().defaultInputs(id));
+    auto& bindings = InputBindings::instance();
+    const QString preset = bindings.currentPreset().isEmpty() ? QString("standard") : bindings.currentPreset();
+    bindings.setInputs(id, bindings.presetInputs(preset).value(id, bindings.defaultInputs(id)));
     fill();
 }
 
