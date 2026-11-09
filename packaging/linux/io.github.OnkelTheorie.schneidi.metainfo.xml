@@ -109,6 +109,16 @@
   </requires>
 
   <releases>
+    <release version="0.20.0" date="2026-11-09">
+      <description>
+        <p>Newcomer Update: in-app tours on a built-in practice project (first steps, editing, color, compositing, task
+        guides), hide pages you don't use, the preview on a second monitor with a chosen resolution, key sets for
+        Premiere Pro and Final Cut Pro (with .kys import and a key trainer), clips tilted in 3D, voice-over straight
+        onto a track with a live take in the timeline, draggable In/Out range with loop playback, proxies easier to
+        make and see, and a much faster start.</p>
+      </description>
+      <url type="details">https://github.com/OnkelTheorie/schneidi/releases/tag/v0.20.0</url>
+    </release>
     <release version="0.19.1" date="2026-11-08">
       <description>
         <p>Bug fix release: switching the large viewer off brings back the panel sizes exactly again; the mixer beside
