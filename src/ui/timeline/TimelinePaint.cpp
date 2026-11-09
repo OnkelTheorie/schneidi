@@ -1053,7 +1053,7 @@ void TimelineView::drawLiveTake(QPainter& p)
 {
     const auto row = liveTakeRow();
     if (!row || m_liveTake->lengthFrames() <= 0) return;
-    const double from = m_liveTake->from(), end = m_liveTake->end();
+    const double from = m_liveTake->start(), end = m_liveTake->end();
     const int x0 = int(frameToX(from)), x1 = std::max(x0 + 1, int(frameToX(end)));
     if (x1 < kHeaderW || x0 > width()) return;
     const QRect r(QPoint(x0, row->y + 1), QPoint(x1 - 1, row->y + row->h - row->lane - 3));

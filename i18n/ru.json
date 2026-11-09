@@ -2897,5 +2897,6 @@
  "Eingang wählen": "Выбрать вход",
  "Aufnahmebereit: die Aufnahmetaste nimmt auf dieser Spur auf (Rechtsklick: Eingang wählen)": "Готова: клавиша записи записывает на эту дорожку (правый клик: выбрать вход)",
  "Voiceover aufnehmen: auf der Spur mit dem Mikrofon (sonst der gewählten Tonspur oder einer neuen) ab dem Abspielkopf; die Timeline spielt mit": "Записать закадровый голос: на дорожку с микрофоном (иначе на выбранную аудиодорожку или новую) от указателя воспроизведения; таймлайн играет одновременно",
- "Die Spur ist gesperrt.": "Дорожка заблокирована."
+ "Die Spur ist gesperrt.": "Дорожка заблокирована.",
+ "Voiceover: gleich …": "Закадровый голос: сейчас начнётся …"
 }

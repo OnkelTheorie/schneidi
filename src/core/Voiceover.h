@@ -15,6 +15,7 @@
 #include <QString>
 #include <QVector>
 
+#include <algorithm>
 #include <climits>
 #include <optional>
 
@@ -65,6 +66,10 @@ int recordTrack(const Timeline& tl, int armed, int selected, int from, int end =
 int selectedTrack(const Timeline& tl, const QVector<int>& ids);
 // A track a take created (named Voiceover, in German or the UI language)
 bool isVoiceoverTrack(const Track& t);
+// How far before `from` a take on `track` may reach with what the input recorded before the timeline was heard (the
+// player waits for the first picture; words said right at the key press lie there): back to the end of the clip
+// before it on the track, not before 0; a clip lying over `from` (punch-in) keeps it at `from`
+int headLimit(const Timeline& tl, int track, int from);
 // Where a take from `from` starts on `track`: a clip there ending within `tolerance` frames of `from` (before or after:
 // the playhead stops a frame or two off the previous take's end) -> right at its end, so takes in a row butt against
 // each other without overlap or gap; else `from`
@@ -91,7 +96,10 @@ public:
     void setFileStart(double frame) { m_fileStart = frame; }
     // Timeline frame (fractional) the take reaches now
     double end() const;
-    // Frames shown from `from` on (0 while the pre-roll runs)
+    // Timeline frame the clip shows from: `from`, or the file's start when that lies after it (the take reaches back
+    // to `from` at most)
+    double start() const { return std::max(double(m_from), m_fileStart); }
+    // Frames shown from start() on (0 while the pre-roll runs)
     double lengthFrames() const;
     // Loudest peak (0..1) in timeline frames [a, b); 0 where nothing was recorded
     float peak(double a, double b) const;

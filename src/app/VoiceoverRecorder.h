@@ -10,6 +10,7 @@
 
 #include "core/Voiceover.h"
 
+#include <QElapsedTimer>
 #include <QObject>
 #include <QString>
 
@@ -35,6 +36,8 @@ public:
     int armedTrack() const { return m_armed; }
     void setArmedTrack(int track);
     bool recording() const { return m_capture != nullptr; }
+    // The take really runs: the timeline is heard (until then the UI says "Gleich …"; what is said meanwhile is kept)
+    bool live() const { return m_live; }
     // Starts recording (track: see above); false = no input (*error says why)
     bool start(QString* error = nullptr);
     // While recording: the growing take and the audio track it lands on now (>= the track count = a new one below)
@@ -51,12 +54,14 @@ signals:
     void armedChanged(int track);
     void recordingChanged(bool on);
     void inputLevel(float db); // while armed or recording, ~30 times a second
-    void takeChanged();        // the take grew (while recording, with each block)
+    void takeChanged();        // the take grew (while live, with each block)
+    void liveChanged(bool on); // the take really runs (the first heard frame) / ended
     void finished(const QString& path, bool placed, const QString& error);
 
 private:
     void tick();
     void updateMeter(); // the armed track's level meter on/off
+    void goLive();
     Engine* m_engine;
     Project* m_project;
     Editor* m_editor;
@@ -70,6 +75,9 @@ private:
     Voiceover::Settings m_settings;
     Voiceover::LiveTake m_take;
     int m_armed = -1;
+    int m_headFrom = 0;      // the take may reach back to here (Voiceover::headLimit)
+    bool m_live = false;
+    QElapsedTimer m_sinceStart;
     int m_track = -1;       // the track the take goes to, fixed at the start (>= the track count: a new one)
     bool m_starting = false; // start() seeks and plays itself: that does not end the take
     int m_liveTrack = -1;

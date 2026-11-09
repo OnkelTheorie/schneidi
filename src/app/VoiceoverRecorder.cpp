@@ -14,6 +14,7 @@
 #include <QTimer>
 
 #include <cmath>
+#include <utility>
 
 VoiceoverRecorder::VoiceoverRecorder(Engine* engine, Project* project, Editor* editor,
                                      std::function<QString()> projectPath, std::function<bool(const QString&)> import,
@@ -142,11 +143,17 @@ bool VoiceoverRecorder::start(QString* error)
     m_engine->play();
     m_playing = m_engine->speed() != 0.0;
     m_starting = false;
-    m_take = Voiceover::LiveTake(m_playFrom, m_from, m_project->frameRate(), m_capture->rate());
+    // What the input recorded before the timeline was heard (the player waits for the first picture; words said
+    // right at the key press) is kept: the take reaches back before the playhead, to the clip before it on the track.
+    // With a pre-roll the take starts at the playhead (the pre-roll is for listening in).
+    m_headFrom = preroll > 0 ? m_from : Voiceover::headLimit(m_project->timeline(), m_track, m_from);
+    m_take = Voiceover::LiveTake(m_playFrom, m_headFrom, m_project->frameRate(), m_capture->rate());
     m_liveTrack = m_track;
+    m_live = false;
+    m_sinceStart.start();
     m_timer->start();
-    emit recordingChanged(true);
-    emit takeChanged();
+    emit recordingChanged(true); // "Gleich …": the take shows once the timeline is heard (tick)
+    if (!m_playing) goLive();
     return true;
 }
 
@@ -163,8 +170,17 @@ void VoiceoverRecorder::tick()
     // ends at the playhead instead of running ahead of it
     if (const auto s = m_alignment.fileStartSeconds(0, m_capture->rate(), m_settings.offsetMs))
         m_take.setFileStart(*s * m_project->frameRate());
-    if (m_take.samples() != before) emit takeChanged();
+    // Live once the timeline sound runs (the first pair counted) - or after a moment without sound output
+    if (!m_live && (!m_alignment.empty() || m_sinceStart.elapsed() > 1500)) goLive();
+    if (m_live && m_take.samples() != before) emit takeChanged();
     emit inputLevel(peak > 0 ? 20.f * std::log10(peak) : -100.f);
+}
+
+void VoiceoverRecorder::goLive()
+{
+    m_live = true;
+    emit liveChanged(true);
+    emit takeChanged();
 }
 
 bool VoiceoverRecorder::stop(QString* error)
@@ -182,6 +198,7 @@ bool VoiceoverRecorder::stop(QString* error)
     const int rate = m_capture->rate();
     const long long frames = m_capture->frames(), dropped = m_capture->dropped();
     m_capture.reset();
+    if (std::exchange(m_live, false)) emit liveChanged(false);
     emit recordingChanged(false);
     updateMeter();
     if (dropped > 0) qWarning("Voiceover: %lld von %lld Samples verloren", dropped, frames);
@@ -208,7 +225,7 @@ bool VoiceoverRecorder::stop(QString* error)
     if (!written) problem = T("Aufnahme nicht gespeichert: %1").arg(why);
     else if (frames <= 0) problem = T("Nichts aufgenommen.");
     else if (!m_import(path)) problem = T("Aufnahme nicht lesbar: %1").arg(QDir::toNativeSeparators(path));
-    else placed = m_editor->placeRecording(path, m_track, fileStart, m_from, &m_placedTrack) != 0;
+    else placed = m_editor->placeRecording(path, m_track, fileStart, m_headFrom, &m_placedTrack) != 0;
     if (written && frames > 0 && !placed && problem.isEmpty()) problem = T("Aufnahme liegt nur im Medienpool.");
     if (error) *error = problem;
     emit finished(path, placed, problem);
@@ -226,6 +243,7 @@ void VoiceoverRecorder::cancel()
     if (m_playing) m_engine->pause();
     m_engine->setOpenEnd(false);
     m_stopping = false;
+    if (std::exchange(m_live, false)) emit liveChanged(false);
     emit recordingChanged(false);
     updateMeter();
 }

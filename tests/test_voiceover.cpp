@@ -325,6 +325,17 @@ int main(int argc, char** argv)
         CHECK_EQ(Voiceover::buttStart(tl, 3, 54, 3), 54);
         CHECK_EQ(Voiceover::buttStart(tl, 3, 0, 3), 0); // a clip starting there is no previous take
         CHECK_EQ(Voiceover::buttStart(tl, 9, 48, 3), 48);
+        // The head recorded before the timeline was heard: back to the clip before on the track, not before 0, not
+        // into a clip lying over the start (punch-in)
+        CHECK_EQ(Voiceover::headLimit(tl, 3, 80), 50); // Voiceover clip [0, 50)
+        CHECK_EQ(Voiceover::headLimit(tl, 3, 30), 30); // inside it
+        CHECK_EQ(Voiceover::headLimit(tl, 1, 30), 0);  // empty track
+        CHECK_EQ(Voiceover::headLimit(tl, 9, 30), 0);
+        // A take that reaches back: shown from the file's start when that lies after the limit
+        Voiceover::LiveTake back(46.5, 40, 25.0, 48000);
+        CHECK(back.start() == 46.5);
+        Voiceover::LiveTake clamped(36.0, 40, 25.0, 48000);
+        CHECK(clamped.start() == 40.0);
     }
 
     // ---- The growing take: a fake source feeds blocks, the waveform and the length follow, the end is exact

@@ -169,8 +169,9 @@ struct Capture::Impl {
         writeSilence(gap.exchange(0, std::memory_order_relaxed));
     }
 
-    // Stand-in input paced by a timer: silence or a sine
-    void timerLoop(double hz)
+    // Stand-in input paced by a timer: silence or a sine; burstFrames > 0: the sine only for that many first frames
+    // (a word said right at the key press), then silence
+    void timerLoop(double hz, long long burstFrames = 0)
     {
         const int period = std::max(64, config.buffer / 2);
         std::vector<float> block(size_t(period) * config.channels);
@@ -181,8 +182,8 @@ struct Capture::Impl {
             sleepUntil(due);
             if (stopInput.load()) break;
             for (int i = 0; i < period; ++i, ++n) {
-                const float s = hz > 0 ? float(0.25 * std::sin(2 * std::numbers::pi * hz * double(n) / config.rate))
-                                       : 0.f;
+                const bool on = hz > 0 && (burstFrames <= 0 || n < burstFrames);
+                const float s = on ? float(0.25 * std::sin(2 * std::numbers::pi * hz * double(n) / config.rate)) : 0.f;
                 for (int c = 0; c < config.channels; ++c) block[size_t(i) * config.channels + c] = s;
             }
             push(block.data(), period);
@@ -289,11 +290,14 @@ std::unique_ptr<Capture> Capture::start(const Config& config, const QString& pat
     Impl* raw = impl.get();
 
     const QString stand = qEnvironmentVariable("SCHNEIDI_AUDIO_INPUT");
-    if (stand == "null" || stand.startsWith("sine:") || plainName(config.backend) == "null") {
-        const double hz = stand.startsWith("sine:") ? stand.mid(5).toDouble() : 0.0;
+    if (stand == "null" || stand.startsWith("sine:") || stand.startsWith("burst:") || plainName(config.backend) == "null") {
+        // "burst:<ms>": a 1 kHz tone for the first <ms> ms, then silence
+        const bool burst = stand.startsWith("burst:");
+        const double hz = burst ? 1000.0 : stand.startsWith("sine:") ? stand.mid(5).toDouble() : 0.0;
+        const long long burstFrames = burst ? std::llround(stand.mid(6).toDouble() * impl->config.rate / 1000.0) : 0;
         impl->latency = std::max(64, impl->config.buffer / 2);
         impl->name = hz > 0 ? QString("Testton %1 Hz").arg(hz) : QString("Stille");
-        impl->timer = std::thread([raw, hz] { raw->timerLoop(hz); });
+        impl->timer = std::thread([raw, hz, burstFrames] { raw->timerLoop(hz, burstFrames); });
     } else if (!impl->openCard(error)) {
         if (!path.isEmpty()) {
             impl->file.close();
