@@ -18,6 +18,7 @@
 #include <deque>
 #include <mutex>
 #include <optional>
+#include <utility>
 #include <thread>
 
 namespace Audio {
@@ -76,6 +77,7 @@ struct Player::Impl {
     double pausedAt = 0;
     int64_t heardMax = 0; // clock of the generation never runs back (position())
     std::optional<std::pair<Timeline, FrameRate>> pending;
+    bool reopen = false; // reopenFiles(): the next mix opens its files anew
     QHash<QString, int> projectLengths; // setFileLengths()
     bool deviceDirty = false;
     bool quit = false;
@@ -143,6 +145,7 @@ struct Player::Impl {
         QHash<QString, int> project;  // file lengths the project knows (frames of the project rate)
         QHash<QString, int> lengths; // measured file lengths in frames ("num/den:path")
         std::unique_ptr<Mixer> mixer, old; // old: crossfading out (forward)
+        std::optional<Timeline> timeline;  // what the mixer mixes (reopenFiles builds it again)
         int xfade = 0;
         FrameRate fps;
         uint32_t gen = ~0u;
@@ -169,7 +172,8 @@ struct Player::Impl {
     void watch();
 
     void feed();
-    void takeTimeline(Feed& f, const Timeline& tl, FrameRate fps, bool playingForward);
+    // fresh = a new mixer even if the running one could take it live (files overwritten: it keeps their readers)
+    void takeTimeline(Feed& f, const Timeline& tl, FrameRate fps, bool playingForward, bool fresh = false);
     void startGeneration(Feed& f, const Command& c);
     void produce(Feed& f, float* const* out, int n);
     void mixForward(Feed& f, int n, float* const* out);
@@ -364,13 +368,14 @@ void Player::Impl::feed()
     float planar[kChannels][kBlock];
     std::unique_lock<std::mutex> lock(mutex);
     while (!quit) {
-        if (pending) {
-            auto [tl, fps] = std::move(*pending);
+        if (pending || (reopen && f.timeline)) {
+            const bool fresh = std::exchange(reopen, false);
+            auto [tl, fps] = pending ? std::move(*pending) : std::pair{*f.timeline, f.fps};
             pending.reset();
             f.project = projectLengths;
             const bool forward = cmd.playing && cmd.speed > 0 && cmd.gen == f.gen;
             lock.unlock();
-            takeTimeline(f, tl, fps, forward);
+            takeTimeline(f, tl, fps, forward, fresh);
             lock.lock();
             continue;
         }
@@ -404,9 +409,11 @@ void Player::Impl::feed()
     }
 }
 
-void Player::Impl::takeTimeline(Feed& f, const Timeline& tl, FrameRate fps, bool playingForward)
+void Player::Impl::takeTimeline(Feed& f, const Timeline& tl, FrameRate fps, bool playingForward, bool fresh)
 {
-    if (f.mixer && fps == f.fps && f.mixer->updateMix(tl)) {
+    f.timeline = tl;
+    if (fresh) f.lengths.clear(); // measured from the old contents
+    if (!fresh && f.mixer && fps == f.fps && f.mixer->updateMix(tl)) {
         ++liveUpdates;
         return;
     }
@@ -700,6 +707,15 @@ void Player::setTimeline(const Timeline& timeline, FrameRate fps)
     {
         std::lock_guard<std::mutex> lock(d->mutex);
         d->pending.emplace(timeline, fps);
+    }
+    d->wake.notify_all();
+}
+
+void Player::reopenFiles()
+{
+    {
+        std::lock_guard<std::mutex> lock(d->mutex);
+        d->reopen = true;
     }
     d->wake.notify_all();
 }

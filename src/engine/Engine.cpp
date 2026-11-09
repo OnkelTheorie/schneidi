@@ -223,6 +223,7 @@ void Engine::mediaFileChanged()
         resolveFiles(m_built, true);  // proxies and render cache files of the new content
         m_renderCache->sync(m_built); // clip outputs of the old content go, new ones are queued
         if (m_pump) m_pump->dropRecent();
+        m_player->reopenFiles(); // the sound mix keeps its readers otherwise
         refresh();
     });
 }

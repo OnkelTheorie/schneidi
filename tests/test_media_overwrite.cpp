@@ -4,15 +4,16 @@
 // again at most every kRecheckMs). Each case: write file A (red), read a frame, overwrite it with other content
 // (blue, then green) and a different modification time set explicitly, read again -> the new content.
 // Covered: a renderer that keeps its source open (viewer, export, comp Media node: Renderer::source), MediaStills
-// (thumbnail/trim workers), StillFetcher, MediaCache thumbnails, Engine::checkFiles; stills (PNG) and video. A file
-// that still grows is no change until it has held still for the settle time (kSettleMs, shortened here); observers
-// may add/remove observers from inside.
+// (thumbnail/trim workers), StillFetcher, MediaCache thumbnails, Engine::checkFiles; stills (PNG) and video; the sound
+// mix (Audio::Player::reopenFiles: a new mix reads the new samples). A file that still grows is no change until it
+// has held still for the settle time (kSettleMs, shortened here); observers may add/remove observers from inside.
 
 #include "render_check.h"
 
 #include "engine/FileStamp.h"
 #include "engine/MediaCache.h"
 #include "engine/StillFetcher.h"
+#include "engine/audio/Player.h"
 #include "engine/picture/MediaStills.h"
 
 #include <QApplication>
@@ -243,6 +244,42 @@ void testObservers(const QString& file)
     FileStamp::removeObserver(secondId);
 }
 
+// The sound mix reads the new samples of an overwritten WAV (it kept its readers across live updates)
+void testSound(const QString& file, const QString& loud, const QString& quiet)
+{
+    std::printf("-- sound\n");
+    if (!CHECK(overwrite(loud, file, 31))) return;
+    FileStamp::now(file);
+    Timeline tl;
+    tl.audio.resize(1);
+    Clip c;
+    c.id = 1;
+    c.mediaPath = file;
+    c.out = 90;
+    tl.audio[0].clips << c;
+    Audio::Player player;
+    player.setTimeline(tl, FrameRate{30, 1});
+    // Master peak (the last two values) of a short stretch from the start
+    auto peak = [&] {
+        player.takeLevels();
+        player.play(0, 1.0);
+        player.release();
+        QTest::qWait(400);
+        const std::vector<float> l = player.takeLevels();
+        player.pause();
+        QTest::qWait(50);
+        return l.size() >= 2 ? std::max(l[l.size() - 1], l[l.size() - 2]) : 0.f;
+    };
+    const float before = peak();
+    CHECK(before > 0.6f);
+    if (!CHECK(overwrite(quiet, file, 32))) return;
+    player.setTimeline(tl, FrameRate{30, 1}); // the same timeline: a live update keeps the readers
+    player.reopenFiles();                     // what Engine::mediaFileChanged does
+    QTest::qWait(100);
+    const float after = peak();
+    if (!CHECK(after > 0.05f && after < 0.25f)) std::printf("  peak before %.3f, after %.3f\n", before, after);
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -287,5 +324,14 @@ int main(int argc, char** argv)
     testFile(dir.filePath("clip.mp4"), mp4[0], mp4[1], mp4[2]);
     testCaches(dir.filePath("clip-cache.mp4"), mp4[0], mp4[1]);
 
+    QStringList wav;
+    for (const char* amp : {"0.8", "0.15"}) {
+        wav << Check::makeMedia(dir.filePath(QString("tone%1.wav").arg(amp)),
+                                {"-f", "lavfi", "-i", QString("aevalsrc=%1*sin(2*PI*440*t)|%1*sin(2*PI*440*t):s=48000:d=3")
+                                                          .arg(amp),
+                                 "-c:a", "pcm_s16le"});
+        if (!CHECK(!wav.last().isEmpty())) return Check::result();
+    }
+    testSound(dir.filePath("sound.wav"), wav[0], wav[1]);
     return Check::result();
 }

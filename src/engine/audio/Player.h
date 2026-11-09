@@ -50,6 +50,9 @@ public:
     // Lengths of media files in frames as the project knows them (the export's ExportSettings::mediaLengths): the
     // mix must place reversed clips and transition handles like the export. Files missing here are measured.
     void setFileLengths(const QHash<QString, int>& lengths);
+    // Media files were overwritten under their names (FileStamp): the mix is built again with its files opened anew
+    // (a live update would keep the old readers); while playing it crossfades like any new mix
+    void reopenFiles();
     // Device settings; an open device is reopened with them at once (a short gap while playing)
     void setDevice(int buffer, const QString& backend, const QString& output);
 
