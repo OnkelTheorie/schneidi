@@ -488,6 +488,7 @@ private:
         QVector<QPointer<QWidget>> hidden;                     // the viewer, then the splitters left empty
         QVector<QPair<QPointer<QSplitter>, QList<int>>> sizes; // their sizes before, innermost first
         bool timelineUp = false; // Edit page: the timeline took the viewer's place in the top row
+        QSizePolicy timelinePolicy; // its own before (the viewer's stretch while up there)
     } m_viewerAway;
 
     QHash<QString, MediaInfo> m_probeCache;

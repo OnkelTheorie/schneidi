@@ -414,8 +414,7 @@ void MainWindow::showPage(Page page)
         m_mediaPool->setVisible(m_poolToggle->isChecked());
         m_storage->setVisible(m_storageToggle->isChecked());
         updateLeftColumn();
-        updateRightColumn();
-        if (m_editRight->isVisibleTo(m_editRow)) applySizes(m_editRight, m_editMain->sizes());
+        updateRightColumn(); // its sizes when the mixer comes (a page switch keeps the ones it has)
         m_pages->setCurrentWidget(m_editRow);
         break;
     case Page::Deliver:
@@ -528,6 +527,7 @@ void MainWindow::resetSizes()
     settings.endGroup();
     applySizes(m_colorBottom, {1100, 420});
     showPage(m_page); // sets the page's defaults again
+    if (m_editRight->isVisibleTo(m_editRow)) applySizes(m_editRight, m_editMain->sizes());
 }
 
 void MainWindow::applyPanelSet(bool pool, bool effects, bool storage, bool transcript, bool mixer, bool inspector)
@@ -896,13 +896,19 @@ void MainWindow::hideViewerArea()
     if (m_viewer->parentWidget() == m_editTop && m_page == Page::Edit) {
         // The Edit page: the timeline moves up into the viewer's place, from the top bar down between the left column
         // and the Inspector (their widths stay); the mixer keeps its own column and height
-        m_viewerAway.sizes.append({m_editTop, m_editTop->sizes()});
+        const QList<int> top = m_editTop->sizes();
+        m_viewerAway.sizes.append({m_editTop, top});
         m_viewerAway.sizes.append({m_editMain, m_editMain->sizes()});
-        QWidget* focus = QApplication::focusWidget();
-        m_editTop->replaceWidget(m_editTop->indexOf(m_viewer), m_timeline); // same size; the viewer comes out
-        m_editMain->insertWidget(1, m_viewer);                              // ... into the timeline's old place
+        QWidget* focus = focusWidget(); // the window's, also while the monitor's window is the active one
+        const int at = m_editTop->indexOf(m_viewer);
+        m_viewerAway.timelinePolicy = m_timeline->sizePolicy();
+        m_editTop->replaceWidget(at, m_timeline); // the viewer comes out ...
+        m_editMain->insertWidget(1, m_viewer);    // ... into the timeline's old place
         m_viewer->hide();
         m_timeline->show();
+        // The viewer's stretch and width: else the splitter shares the row out anew and the side panels grow
+        m_editTop->setStretchFactor(at, 1);
+        m_editTop->setSizes(top);
         m_viewerAway.hidden << m_viewer;
         m_viewerAway.timelineUp = true;
         if (focus && m_timeline->isAncestorOf(focus)) focus->setFocus(); // moving a widget takes its focus
@@ -930,9 +936,10 @@ void MainWindow::restoreViewerArea()
     if (!m_viewerAway.active) return;
     const ViewerAway was = std::exchange(m_viewerAway, {});
     if (was.timelineUp && m_editTop->indexOf(m_timeline) >= 0) { // the viewer and the timeline swap back
-        QWidget* focus = QApplication::focusWidget();
+        QWidget* focus = focusWidget(); // the window's, also while the monitor's window is the active one
         m_editTop->replaceWidget(m_editTop->indexOf(m_timeline), m_viewer);
         m_editMain->insertWidget(1, m_timeline);
+        m_timeline->setSizePolicy(was.timelinePolicy);
         m_timeline->show();
         if (focus && m_timeline->isAncestorOf(focus)) focus->setFocus();
     }
