@@ -20,10 +20,15 @@ public:
     // Under a native main window that happens in QWidget's constructor already (the attribute is inherited), before
     // the GPU picture (QRhiWidget) is a child - a raster surface, "No QRhi", the picture froze. The same with winId()
     // before the first show. The owner deletes it.
-    FullScreenViewer(Engine* engine, const QImage& picture);
+    // `followEngine` false: the frames come only through setPicture (the second monitor: ui/SecondScreen holds the
+    // timeline picture there while the main window's viewer shows a source clip)
+    FullScreenViewer(Engine* engine, const QImage& picture, bool followEngine = true);
 
-    // Full screen on `screen` (the one the main window is on), active, with the keyboard focus
-    void showOn(QScreen* screen);
+    // Full screen on `screen` (the one the main window is on). `activate`: active with the keyboard focus (the
+    // second monitor's window does not take the focus from the main window)
+    void showOn(QScreen* screen, bool activate = true);
+    // A new frame; `frameSize` = the project format (zoom steps, letterboxing)
+    void setPicture(const QImage& picture, const QSize& frameSize);
     const QImage& picture() const;
     QRectF pictureRect() const; // where the picture is drawn (empty without one)
     // Longer edge of the preview frames this window wants: the screen pixels the fitted picture covers (at most

@@ -398,6 +398,8 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/engine/Bundle.h           src/engine/Bundle.cpp
     src/ui/Viewer.h               src/ui/Viewer.cpp
     src/ui/FullScreenViewer.h     src/ui/FullScreenViewer.cpp
+    src/ui/PreviewOutput.h
+    src/ui/SecondScreen.h         src/ui/SecondScreen.cpp
     src/ui/ViewerOverlay.h
     src/ui/KeyColorPicker.h       src/ui/KeyColorPicker.cpp
     src/ui/KeyPickWindow.h        src/ui/KeyPickWindow.cpp

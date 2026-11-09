@@ -11,6 +11,7 @@
 #include "core/I18n.h"
 #include "core/Project.h"
 #include "ui/FullScreenViewer.h"
+#include "ui/PreviewOutput.h"
 
 #include <QHBoxLayout>
 #include <QJsonArray>
@@ -48,6 +49,7 @@ MainWindow::~MainWindow()
     m_project->undoStack()->blockSignals(true);
     m_project->blockSignals(true);
     delete m_fullScreen; // a window without a parent (FullScreenViewer.h)
+    delete m_output;     // its window has no parent either
 }
 
 void MainWindow::buildChat()

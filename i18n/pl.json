@@ -2828,5 +2828,12 @@
  "Zurück": "Wstecz",
  "Öffne die Effekte, dort die Compositing-Rezepte, und zieh Bild im Bild auf den Clip.": "Otwórz Efekty, a w nich Przepisy comp, i przeciągnij Obraz w obrazie na klip.",
  "Öffne die Effekte, dort die Compositing-Rezepte, und zieh Greenscreen auf den Clip.": "Otwórz Efekty, a w nich Przepisy comp, i przeciągnij Zielony ekran na klip.",
- "Überspringen": "Pomiń"
+ "Überspringen": "Pomiń",
+ "Fläche bleibt": "Obszar zostaje",
+ "Fläche bleibt: die Vorschau im Hauptfenster zeigt Quellclips, der Monitor behält das Bild der Timeline. Vorschau weg: die Bereiche daneben bekommen den Platz.": "Obszar zostaje: podgląd w oknie głównym pokazuje klipy źródłowe, monitor zachowuje obraz osi czasu. Bez podglądu: sąsiednie panele zajmują miejsce.",
+ "Im Hauptfenster": "W oknie głównym",
+ "Kein zweiter Monitor gefunden.": "Nie znaleziono drugiego monitora.",
+ "Vorschau auf zweitem Monitor": "Podgląd na drugim monitorze",
+ "Vorschau weg": "Bez podglądu",
+ "schneidi – Vorschau": "schneidi – Podgląd"
 }
