@@ -117,6 +117,7 @@ void MainWindow::buildLayout()
     // Pages; the shared panels (pool, viewer, timeline) move along when switching
     m_editTop = new QSplitter(Qt::Horizontal);
     m_editLeft = new QSplitter(Qt::Vertical);
+    m_editLeft->setObjectName("editLeft");
     m_editLeft->addWidget(m_effects);
     m_editMain = new QSplitter(Qt::Vertical);
     m_editMain->addWidget(m_editTop);
@@ -193,6 +194,7 @@ QWidget* MainWindow::buildTopBar()
             setViewerLarge(false); // the layout comes back, with this panel as asked
             panel->setVisible(on);
             updateLeftColumn();
+            if (on) uncollapse(panel);
             if (!m_autosaveDisabled && !m_tourSaved.active) QSettings().setValue("panels/" + key, on); // a tour sets its own
         });
         return b;
@@ -482,6 +484,28 @@ void MainWindow::applySizes(QSplitter* s, const QList<int>& defaults)
     }
     QList<int> sizes;
     for (const QVariant& v : saved) sizes << std::max(0, v.toInt());
+    s->setSizes(sizes);
+}
+
+void MainWindow::uncollapse(QWidget* panel)
+{
+    auto* s = qobject_cast<QSplitter*>(panel->parentWidget());
+    if (!s || !s->isVisible()) return;
+    s->refresh();
+    const int index = s->indexOf(panel);
+    QList<int> sizes = s->sizes();
+    if (index < 0 || sizes.value(index) > 0) return;
+    int total = 0, shown = 0;
+    for (int i = 0; i < sizes.size(); ++i)
+        if (!s->widget(i)->isHidden()) {
+            total += sizes[i];
+            ++shown;
+        }
+    if (shown < 2 || total <= 0) return;
+    const int share = total / shown;
+    for (int i = 0; i < sizes.size(); ++i)
+        if (!s->widget(i)->isHidden() && i != index) sizes[i] = sizes[i] * (total - share) / total;
+    sizes[index] = share;
     s->setSizes(sizes);
 }
 

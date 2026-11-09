@@ -460,6 +460,33 @@ void walk(MainWindow& w, const Tour& t, const QString& run, bool dumpIt)
     CHECK(!o->isVisible());
 }
 
+// Fresh settings: a left panel that was never shown comes up with a usable height when its toggle is switched on
+// (it once kept the size 0 it had in the splitter: the toggle lit up, nothing appeared)
+void testPanelToggles(MainWindow& w)
+{
+    auto* left = w.findChild<QSplitter*>("editLeft");
+    if (!CHECK(left)) return;
+    for (const char* key : {"effects", "mediaStorage"}) {
+        auto* toggle = w.findChild<QToolButton*>(QString("panelToggle_") + key);
+        if (!CHECK(toggle)) continue;
+        CHECK(!toggle->isChecked());
+        toggle->click();
+        QTest::qWait(30);
+        int shown = 0;
+        for (int i = 0; i < left->count(); ++i)
+            if (left->widget(i)->isVisible()) {
+                ++shown;
+                Check::report(left->widget(i)->height() >= 150, "panel usable height", __FILE__, __LINE__,
+                              QString("%1: %2 is %3 px").arg(key, describe(left->widget(i))).arg(left->widget(i)->height()));
+            }
+        CHECK(shown >= 2);
+        toggle->click();
+        QTest::qWait(30);
+    }
+    for (int i = 0; i < left->count(); ++i) // the Media Pool alone again, the whole column
+        if (left->widget(i)->isVisible()) CHECK(left->widget(i)->height() >= left->height() - 10);
+}
+
 // The menu and the questions (the default run only)
 void testMenuAndQuestions(MainWindow& w)
 {
@@ -625,6 +652,7 @@ void runWindow(Engine& engine, const QString& run, const QString& settingsFile, 
     TourManager* tours = w.tours();
     if (!CHECK(tours)) return;
     TourOverlay* o = tours->overlay();
+    if (!user) testPanelToggles(w);
     if (!user) testMenuAndQuestions(w);
     ownProject(w);
     if (user) { // the user's panels as in the settings file
@@ -645,6 +673,7 @@ void runWindow(Engine& engine, const QString& run, const QString& settingsFile, 
         QTest::qWait(30);
         sameLook(before, look(w), run + " after " + t.id);
     }
+    if (!user) testPanelToggles(w); // after the tours (they put every splitter's sizes back) too
     testHistoryAndLive(w);
     // Back in the user's project after the tours: the same clip, still unsaved, still selected
     CHECK(w.liveProject()->isModified());
