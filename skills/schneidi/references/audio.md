@@ -43,9 +43,11 @@ look at `info` after placing such a file: if "Mix" and its parts are all enabled
 (usually the Mix, so the voice and game stay separately adjustable) and confirm with `loudness`.
 
 ## Voice-over
-You cannot speak: a voice-over comes from a file the user gives (`import`, then place it on its own audio track like
-any clip) or the user records it in the app - Mixer: "R" arms a track, "● Voiceover" (or Shift+R) plays the timeline
-from the playhead and records; the take lands on the armed track at the playhead. Takes are WAV files named
+You cannot speak: a voice-over comes from a file the user gives (`{"op":"voiceover","file":"…","at":"2s"}` puts it at
+`at` on the given audio track when that is free there, else on a new track "Voiceover") or the user records it in the
+app - the mic in an audio track's header arms it, Shift+R (or the mic in the timeline toolbar) plays the timeline from
+the playhead and records, the take grows live in the timeline; it lands on the armed track (else the selected clips'
+audio track, else a new one; a track with sound in the way gets a new one too) at the playhead. Takes are WAV files named
 `voiceover-<date>-<time>.wav` in the folder `<project name>-voiceover` next to the project; in `info` they are plain
 audio clips. Treat them like speech: `clean_voice` on that track (the Mixer's "Stimme säubern" button does the same for the
 armed track), `normalize`, `duck` the music under that track.

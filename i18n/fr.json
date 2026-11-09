@@ -667,7 +667,6 @@
  "Die Sequenz enthält kein <media>": "La séquence ne contient pas de <media>",
  "Die Sprache ändert sich nach dem Neustart von schneidi.": "La langue changera après le redémarrage de schneidi.",
  "Die Spur %1 ist gesperrt – entsperren, dann lässt sich die Lücke schließen": "La piste %1 est verrouillée – déverrouille-la pour fermer le vide",
- "Die Spur ist gesperrt.": "La piste est verrouillée.",
  "Die Timeline enthält keine Untertitel.": "La timeline ne contient aucun sous-titre.",
  "Die Timeline gibt es nicht mehr.": "La timeline n’existe plus.",
  "Die Timeline hat kein Bild (nur Ton)": "La timeline n'a pas d'image (son uniquement)",
@@ -2884,5 +2883,10 @@
  "Der Rundgang läuft in einem Übungsprojekt. Dein Projekt hat ungespeicherte Änderungen: Es kommt nach dem Rundgang genau so zurück, wie es jetzt ist.": "La visite se déroule dans un projet d’entraînement. Ton projet contient des modifications non enregistrées : après la visite, il revient exactement tel qu’il est maintenant.",
  "Erst speichern": "Enregistrer d’abord",
  "Für mich erledigen": "Le faire pour moi",
- "Rundgang starten": "Commencer la visite"
+ "Rundgang starten": "Commencer la visite",
+ "Neue Spur": "Nouvelle piste",
+ "Aufnahmebereit": "Armée pour l’enregistrement",
+ "Eingang wählen": "Choisir l’entrée",
+ "Aufnahmebereit: die Aufnahmetaste nimmt auf dieser Spur auf (Rechtsklick: Eingang wählen)": "Armée : la touche d’enregistrement enregistre sur cette piste (clic droit : choisir l’entrée)",
+ "Voiceover aufnehmen: auf der Spur mit dem Mikrofon (sonst der gewählten Tonspur oder einer neuen) ab dem Abspielkopf; die Timeline spielt mit": "Enregistrer une voix off : sur la piste au micro (sinon la piste audio sélectionnée ou une nouvelle) depuis la tête de lecture ; la timeline joue en même temps"
 }

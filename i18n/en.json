@@ -667,7 +667,6 @@
  "Die Sequenz enthält kein <media>": "The sequence has no <media>",
  "Die Sprache ändert sich nach dem Neustart von schneidi.": "The language changes after restarting schneidi.",
  "Die Spur %1 ist gesperrt – entsperren, dann lässt sich die Lücke schließen": "Track %1 is locked – unlock it to close the gap",
- "Die Spur ist gesperrt.": "The track is locked.",
  "Die Timeline enthält keine Untertitel.": "The timeline contains no subtitles.",
  "Die Timeline gibt es nicht mehr.": "The timeline no longer exists.",
  "Die Timeline hat kein Bild (nur Ton)": "The timeline has no picture (sound only)",
@@ -2884,5 +2883,10 @@
  "Der Rundgang läuft in einem Übungsprojekt. Dein Projekt hat ungespeicherte Änderungen: Es kommt nach dem Rundgang genau so zurück, wie es jetzt ist.": "The tour runs in a practice project. Your project has unsaved changes: after the tour it comes back exactly as it is now.",
  "Erst speichern": "Save First",
  "Für mich erledigen": "Do It for Me",
- "Rundgang starten": "Start Tour"
+ "Rundgang starten": "Start Tour",
+ "Neue Spur": "New Track",
+ "Aufnahmebereit": "Armed for Recording",
+ "Eingang wählen": "Choose Input",
+ "Aufnahmebereit: die Aufnahmetaste nimmt auf dieser Spur auf (Rechtsklick: Eingang wählen)": "Armed: the record key records onto this track (right-click: choose input)",
+ "Voiceover aufnehmen: auf der Spur mit dem Mikrofon (sonst der gewählten Tonspur oder einer neuen) ab dem Abspielkopf; die Timeline spielt mit": "Record a voice-over: onto the track with the microphone (else the selected audio track or a new one) from the playhead; the timeline plays along"
 }

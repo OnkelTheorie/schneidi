@@ -67,12 +67,14 @@ public:
     // Places media: video on V[track], audio on A[track] (like DaVinci, V2 <-> A2).
     // Missing tracks are created. Several files end up one after another.
     void addMediaAt(const QStringList& paths, int frame, int track = 0);
-    // A voice-over recording (core/Voiceover.h) from the Media Pool onto A[track] (missing tracks are created): file
-    // frame 0 lies at timeline frame `fileStart` (fractional, latency already taken off), the clip starts at the
-    // first file frame at or after `from` (the playhead where recording started; the pre-roll is cut off) and sits
-    // there to 1/100 frame (Clip::subframe). Overwrites what lies there; the new clip is selected. One undo step.
-    // Returns the clip id, 0 = file not in the pool, locked track or nothing after `from`.
-    int placeRecording(const QString& path, int track, double fileStart, int from);
+    // A voice-over recording (core/Voiceover.h) from the Media Pool onto A[track]: file frame 0 lies at timeline
+    // frame `fileStart` (fractional, latency already taken off), the clip starts at the first file frame at or after
+    // `from` (the playhead where recording started; the pre-roll is cut off) and sits there to 1/100 frame
+    // (Clip::subframe). Never over existing sound: track < 0, a locked track or one with a clip in the take's range
+    // gets a new audio track below the others instead (Voiceover::recordTrack), together with the clip in one undo
+    // step. The new clip is selected. Returns the clip id (*placed = its track), 0 = file not in the pool or nothing
+    // after `from`.
+    int placeRecording(const QString& path, int track, double fileStart, int from, int* placed = nullptr);
     // Audio clips made elsewhere (core/MusicFit: a song cut to a length, its parts with transitions) onto audio track
     // `track` (missing tracks are created), overwriting what lies there; clip `replace` (> 0, e.g. the song before it
     // was cut) is removed first. They get new ids and are selected. One undo step `text`. Returns the ids (empty =

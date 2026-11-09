@@ -282,16 +282,21 @@ void Editor::placeSource(Timeline& tl, const MediaInfo& m, int sIn, int len, int
     muteRepeatedSound(tl, sound);
 }
 
-int Editor::placeRecording(const QString& path, int track, double fileStart, int from)
+int Editor::placeRecording(const QString& path, int track, double fileStart, int from, int* placed)
 {
     const MediaInfo* m = m_project->mediaInfo(path);
-    if (!m || !m->hasAudio || m->length <= 0 || track < 0 || isTrackLocked({TrackKind::Audio, track})) return 0;
+    if (!m || !m->hasAudio || m->length <= 0) return 0;
     const std::optional<Voiceover::Placement> at = Voiceover::place(fileStart, std::max(0, from), m->length);
     if (!at) return 0;
+    // The clip's range (a subframe reaches into one more frame)
+    const int end = at->start + (m->length - at->in) + (at->subframe > 0 ? 1 : 0);
+    const int target = Voiceover::recordTrack(m_project->timeline(), track, at->start, end);
     int id = 0;
     m_project->edit(T("Voiceover aufnehmen"), [&](Timeline& tl) {
-        TimelineOps::ensureTracks(tl, TrackKind::Audio, track + 1);
-        Track& t = tl.audio[track];
+        const bool fresh = target >= tl.audio.size();
+        TimelineOps::ensureTracks(tl, TrackKind::Audio, target + 1);
+        Track& t = tl.audio[target];
+        if (fresh) t.name = T("Voiceover");
         Clip c;
         c.id = id = m_project->newClipId();
         c.mediaPath = m->path;
@@ -304,6 +309,7 @@ int Editor::placeRecording(const QString& path, int track, double fileStart, int
         TimelineOps::placeClip(t, c, [this] { return m_project->newClipId(); });
     });
     if (id) m_selection->set({id});
+    if (placed) *placed = id ? target : -1;
     return id;
 }
 

@@ -642,6 +642,42 @@ QRect TimelineView::lockButton(const Row& row) const
     return QRect(kHeaderW - 54, row.y + 6, 20, 16);
 }
 
+QRect TimelineView::micButton(const Row& row) const
+{
+    if (row.ref.kind != TrackKind::Audio) return {};
+    return QRect(kHeaderW - 78, row.y + 6, 20, 16);
+}
+
+QRect TimelineView::micButtonRect(int track) const
+{
+    const auto row = rowFor({TrackKind::Audio, track});
+    return row ? micButton(*row) : QRect();
+}
+
+void TimelineView::setVoiceoverState(int armedTrack, bool recording)
+{
+    if (armedTrack == m_armedTrack && recording == m_recordingVo) return;
+    m_armedTrack = armedTrack;
+    m_recordingVo = recording;
+    m_inputDb = -100.f;
+    update(0, kRulerH, kHeaderW, height() - kRulerH);
+}
+
+void TimelineView::setInputLevel(float db)
+{
+    const float next = std::max(db, m_inputDb - 1.5f); // ~45 dB/s fall at 30 updates per second (like the Mixer's)
+    if (next == m_inputDb) return;
+    m_inputDb = next;
+    if (const auto row = rowFor({TrackKind::Audio, m_armedTrack})) update(0, row->y, kHeaderW, row->h);
+}
+
+void TimelineView::setLiveTake(const Voiceover::LiveTake* take, int track)
+{
+    m_liveTake = take;
+    m_liveTrack = track;
+    update();
+}
+
 QRect TimelineView::shortNameRect(const Row& row) const
 {
     return QRect(10, row.y + 6, 26, 16);
@@ -650,7 +686,8 @@ QRect TimelineView::shortNameRect(const Row& row) const
 QRect TimelineView::nameRect(const Row& row) const
 {
     const int left = 42;
-    return QRect(left, row.y + 5, lockButton(row).left() - 4 - left, 18);
+    const int right = row.ref.kind == TrackKind::Audio ? micButton(row).left() : lockButton(row).left();
+    return QRect(left, row.y + 5, right - 4 - left, 18);
 }
 
 bool TimelineView::isLocked(const Row& row) const

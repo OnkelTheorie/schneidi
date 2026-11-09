@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // MainWindow: voice-over recording (app/VoiceoverRecorder.h) - the recorder, its menu (input, pre-roll, offset), the
-// record button in the Mixer, the sign in the viewer, Esc to stop
+// mic buttons in the timeline's audio track headers (arm, right-click = input), the record button in the timeline's
+// toolbar and in the Mixer, the growing take in the timeline, the sign in the viewer, Esc to stop
 #include "app/MainWindow.h"
 #include "app/VoiceoverRecorder.h"
 
@@ -12,8 +13,11 @@
 #include "ui/MediaPool.h"
 #include "ui/Mixer.h"
 #include "ui/Viewer.h"
+#include "ui/timeline/TimelinePanel.h"
+#include "ui/timeline/TimelineView.h"
 
 #include <QActionGroup>
+#include <functional>
 #include <QDesktopServices>
 #include <QDir>
 #include <QFileInfo>
@@ -23,6 +27,38 @@
 #include <QShortcut>
 #include <QStatusBar>
 #include <QUrl>
+
+namespace {
+
+// The input devices (like the output): read when the menu opens, devices come and go. changed: after a choice
+void fillInputMenu(QMenu* menu, const std::function<void()>& changed)
+{
+    menu->clear();
+    auto* group = new QActionGroup(menu);
+    const QString current = Voiceover::Settings::load().input;
+    auto add = [&](const QString& id, const QString& text) {
+        QAction* a = menu->addAction(text);
+        a->setCheckable(true);
+        a->setChecked(id == current);
+        group->addAction(a);
+        QObject::connect(a, &QAction::triggered, menu, [id, changed] {
+            Voiceover::Settings s = Voiceover::Settings::load();
+            s.input = id;
+            s.save();
+            if (changed) changed();
+        });
+    };
+    add(QString(), T("Systemstandard"));
+    menu->addSeparator();
+    bool found = current.isEmpty();
+    for (const Audio::Device::Output& o : Audio::Capture::inputs(Engine::audioDriver())) {
+        add(o.id, o.name);
+        found = found || o.id == current;
+    }
+    if (!found) add(current, T("%1 (nicht angeschlossen)").arg(current));
+}
+
+} // namespace
 
 void MainWindow::setupVoiceover()
 {
@@ -34,6 +70,39 @@ void MainWindow::setupVoiceover()
         },
         this);
     m_mixer->setRecorder(m_voiceover);
+    // The timeline: mic buttons in the audio track headers, the growing take, the input level of the armed track
+    TimelineView* view = m_timeline->view();
+    connect(view, &TimelineView::armToggled, this, [this](int track) {
+        m_voiceover->setArmedTrack(m_voiceover->armedTrack() == track ? -1 : track);
+    });
+    connect(view, &TimelineView::armMenuRequested, this, [this](int track, const QPoint& globalPos) {
+        QMenu menu(this);
+        QAction* arm = menu.addAction(T("Aufnahmebereit"));
+        arm->setCheckable(true);
+        arm->setChecked(m_voiceover->armedTrack() == track);
+        arm->setEnabled(!m_voiceover->recording());
+        connect(arm, &QAction::triggered, this, [this, track](bool on) { m_voiceover->setArmedTrack(on ? track : -1); });
+        QMenu* input = menu.addMenu(T("Eingang wählen"));
+        fillInputMenu(input, [this] { m_voiceover->inputChanged(); });
+        menu.addAction(T("Aufnahmeordner öffnen"), this, [this] {
+            const QString dir = Voiceover::folder(m_projectPath);
+            QDir().mkpath(dir);
+            QDesktopServices::openUrl(QUrl::fromLocalFile(dir));
+        });
+        menu.exec(globalPos);
+    });
+    auto syncView = [this, view] { view->setVoiceoverState(m_voiceover->armedTrack(), m_voiceover->recording()); };
+    connect(m_voiceover, &VoiceoverRecorder::armedChanged, this, syncView);
+    connect(m_voiceover, &VoiceoverRecorder::inputLevel, view, &TimelineView::setInputLevel);
+    connect(m_voiceover, &VoiceoverRecorder::takeChanged, this, [this, view] {
+        if (m_voiceover->recording()) view->setLiveTake(&m_voiceover->take(), m_voiceover->liveTrack());
+    });
+    connect(m_voiceover, &VoiceoverRecorder::recordingChanged, this, [this, view, syncView](bool on) {
+        syncView();
+        if (!on) view->setLiveTake(nullptr, -1);
+        if (m_voiceoverAction) m_voiceoverAction->setChecked(on);
+    });
+    syncView();
     connect(m_mixer, &Mixer::recordRequested, this, [this] {
         if (!m_voiceover->recording()) toggleVoiceover();
     });
@@ -51,13 +120,13 @@ void MainWindow::setupVoiceover()
         if (m_largeEscape) m_largeEscape->setEnabled(m_large.active && !on); // see setViewerLarge
         if (on)
             statusBar()->showMessage(T("Voiceover: Aufnahme auf %1 läuft – Esc oder Leertaste beendet")
-                                         .arg(trackShortName({TrackKind::Audio, m_voiceover->armedTrack()})));
+                                         .arg(trackShortName({TrackKind::Audio, m_voiceover->liveTrack()})));
     });
     connect(m_voiceover, &VoiceoverRecorder::finished, this,
             [this](const QString& path, bool placed, const QString& error) {
                 if (placed)
                     statusBar()->showMessage(T("Voiceover auf %1 gelegt: %2")
-                                                 .arg(trackShortName({TrackKind::Audio, m_voiceover->armedTrack()}),
+                                                 .arg(trackShortName({TrackKind::Audio, m_voiceover->placedTrack()}),
                                                       QFileInfo(path).fileName()),
                                              8000);
                 else if (!error.isEmpty())
@@ -83,36 +152,25 @@ void MainWindow::endVoiceover()
 
 void MainWindow::buildVoiceoverActions(QMenu* play, QMenu* audioMenu)
 {
-    // Input device (like the output): read when the menu opens, devices come and go
     QMenu* inputMenu = audioMenu->addMenu(T("Eingabegerät (Voiceover)"));
     connect(inputMenu, &QMenu::aboutToShow, this, [this, inputMenu] {
-        inputMenu->clear();
-        auto* group = new QActionGroup(inputMenu);
-        const QString current = Voiceover::Settings::load().input;
-        auto add = [&](const QString& id, const QString& text) {
-            QAction* a = inputMenu->addAction(text);
-            a->setCheckable(true);
-            a->setChecked(id == current);
-            group->addAction(a);
-            connect(a, &QAction::triggered, this, [id] {
-                Voiceover::Settings s = Voiceover::Settings::load();
-                s.input = id;
-                s.save();
-            });
-        };
-        add(QString(), T("Systemstandard"));
-        inputMenu->addSeparator();
-        bool found = current.isEmpty();
-        for (const Audio::Device::Output& o : Audio::Capture::inputs(Engine::audioDriver())) {
-            add(o.id, o.name);
-            found = found || o.id == current;
-        }
-        if (!found) add(current, T("%1 (nicht angeschlossen)").arg(current));
+        fillInputMenu(inputMenu, [this] {
+            if (m_voiceover) m_voiceover->inputChanged();
+        });
     });
 
     play->addSeparator();
-    makeAction(play, "voiceover_record", T("Voiceover aufnehmen / beenden"), QKeySequence("Shift+R"),
-               [this] { toggleVoiceover(); });
+    // Records onto the armed track (mic in its header), else the selected clips' audio track, else a new one; also
+    // a button in the timeline's toolbar (red while recording)
+    m_voiceoverAction = makeAction(play, "voiceover_record", T("Voiceover aufnehmen / beenden"), QKeySequence("Shift+R"),
+                                   [this] {
+                                       toggleVoiceover();
+                                       m_voiceoverAction->setChecked(m_voiceover && m_voiceover->recording());
+                                   });
+    m_voiceoverAction->setCheckable(true);
+    m_voiceoverAction->setToolTip(T("Voiceover aufnehmen: auf der Spur mit dem Mikrofon (sonst der gewählten "
+                                    "Tonspur oder einer neuen) ab dem Abspielkopf; die Timeline spielt mit"));
+    m_timeline->addToolAction(m_voiceoverAction, TimelinePanel::Icon::Record);
     QMenu* options = play->addMenu(T("Voiceover-Optionen"));
     QMenu* preroll = options->addMenu(T("Vorlauf"));
     auto* prerollGroup = new QActionGroup(preroll);

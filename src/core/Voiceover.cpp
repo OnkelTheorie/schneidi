@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "core/Voiceover.h"
 
+#include "core/Types.h"
+
 #include <QDir>
 #include <QFileInfo>
 #include <QSettings>
@@ -58,6 +60,74 @@ std::optional<Placement> place(double fileStart, int from, int fileFrames)
     p.start = int(std::floor(at + tolerance));
     p.subframe = std::clamp(int(std::lround((at - p.start) * 100)), 0, 99);
     if (p.start < 0) return std::nullopt; // only with from < 0
+    return p;
+}
+
+int preferredTrack(const Timeline& tl, int armed, const QVector<int>& selected)
+{
+    if (armed >= 0 && armed < tl.audio.size()) return armed;
+    int track = -1;
+    for (int i = 0; i < tl.audio.size(); ++i)
+        for (const Clip& c : tl.audio[i].clips)
+            if (selected.contains(c.id)) {
+                if (track >= 0 && track != i) return -1; // clips on several tracks: none of them is "the" track
+                track = i;
+            }
+    return track;
+}
+
+int recordTrack(const Timeline& tl, int preferred, int start, int end)
+{
+    const int fresh = int(tl.audio.size());
+    if (preferred < 0 || preferred >= fresh || tl.audio[preferred].locked) return fresh;
+    end = std::max(end, start + 1);
+    for (const Clip& c : tl.audio[preferred].clips)
+        if (c.start < end && c.end() > start) return fresh; // never over existing sound
+    return preferred;
+}
+
+LiveTake::LiveTake(double fileStart, int from, double fps, int rate)
+    : m_fileStart(fileStart), m_fps(fps > 0 ? fps : 25), m_from(from), m_rate(std::max(1, rate))
+{
+}
+
+void LiveTake::add(long long totalFrames, float peak)
+{
+    if (totalFrames <= m_samples) return;
+    const auto bucket = [this](long long sample) { return int(sample * kPeaksPerSecond / m_rate); };
+    const int first = bucket(m_samples), last = bucket(totalFrames - 1);
+    if (m_peaks.size() <= last) m_peaks.resize(last + 1, 0.f);
+    peak = std::clamp(std::isfinite(peak) ? peak : 0.f, 0.f, 1.f);
+    for (int i = first; i <= last; ++i) m_peaks[i] = std::max(m_peaks[i], peak);
+    m_samples = totalFrames;
+}
+
+void LiveTake::addSamples(const float* samples, int count)
+{
+    if (count <= 0) return;
+    float p = 0.f;
+    for (int i = 0; i < count; ++i) p = std::max(p, std::abs(samples[i]));
+    add(m_samples + count, p);
+}
+
+double LiveTake::end() const
+{
+    return m_fileStart + double(m_samples) / m_rate * m_fps;
+}
+
+double LiveTake::lengthFrames() const
+{
+    return std::max(0.0, end() - m_from);
+}
+
+float LiveTake::peak(double a, double b) const
+{
+    // Timeline frames -> buckets of the file
+    const double perFrame = double(kPeaksPerSecond) / m_fps;
+    const int i0 = std::max(0, int(std::floor((a - m_fileStart) * perFrame)));
+    const int i1 = std::min(int(m_peaks.size()), int(std::ceil((b - m_fileStart) * perFrame)));
+    float p = 0.f;
+    for (int i = i0; i < i1; ++i) p = std::max(p, m_peaks[i]);
     return p;
 }
 

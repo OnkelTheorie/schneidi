@@ -8,19 +8,31 @@
 // monitor of a test sink), VOICEOVER_E2E_OUTPUT=<that sink> and VOICEOVER_E2E_MEDIA=<file with sound> play the file
 // into the sink and record its monitor; the placement is printed for comparing the take with the file (the take
 // must sit exactly on the timeline's own sound). SCHNEIDI_AUDIO_DEVICE and SCHNEIDI_AUDIO_INPUT must be set empty.
-// VOICEOVER_DUMP=<png>: picture of the Mixer and the viewer while recording.
+// VOICEOVER_DUMP=<png>: picture of the Mixer and the viewer while recording; VOICEOVER_TIMELINE_DUMP=<png>: the
+// timeline with the growing take (and <png>-header.png: the armed track's header with its mic and meter).
+//
+// 0.20 "record where you are": the mic in an audio track's header arms it (its level shows there), Shift+R records
+// and stops, the take grows live in the timeline (fed by the stand-in input) and ends at exactly the recorded
+// length; nothing armed or selected, sound in the way or a locked track: a new track, one undo step with the clip.
 
 #include "check.h"
 
 #include "app/MainWindow.h"
 #include "app/VoiceoverRecorder.h"
 #include "core/EffectRegistry.h"
+#include "core/I18n.h"
 #include "core/Project.h"
 #include "core/Voiceover.h"
 #include "engine/Engine.h"
 #include "engine/audio/Device.h"
+#include "app/InputBindings.h"
+#include "core/Selection.h"
 #include "ui/Mixer.h"
 #include "ui/Viewer.h"
+#include "ui/timeline/TimelinePanel.h"
+#include "ui/timeline/TimelineView.h"
+
+#include <QTest>
 
 #include <QSettings>
 #include <QShortcut>
@@ -53,6 +65,8 @@ int main(int argc, char** argv)
     if (!e2e) qputenv("SCHNEIDI_AUDIO_INPUT", "sine:440");
     QApplication app(argc, argv);
     Check::initApp("voiceover-app");
+    // Pictures in another language (VOICEOVER_LANG=ru; QT_FONT_DPI=120 for 1.25x text)
+    if (const QString lang = qEnvironmentVariable("VOICEOVER_LANG"); !lang.isEmpty()) I18n::install(lang);
     if (!Check::haveFfmpeg()) return Check::skip("ffmpeg fehlt");
     if (e2e) {
         // Only into the named sink: it must be listed, else stop before anything plays (the fallback would be the
@@ -172,13 +186,107 @@ int main(int argc, char** argv)
     CHECK_EQ(project->undoStack()->index(), undoBefore + 1);
     project->undoStack()->undo();
 
-    // A locked track does not record
+    // ---- 0.20: the mic in the timeline's track header, the key, the growing take, the track choice
+    auto* view = w.findChild<TimelineView*>();
+    if (!CHECK(view)) return Check::result();
+    recorder->setArmedTrack(-1);
+    // A click on A1's mic arms it, a second one disarms; armed, its input level comes in (before recording)
+    int levels = 0;
+    const auto levelConn = QObject::connect(recorder, &VoiceoverRecorder::inputLevel, [&](float db) { levels += db > -40; });
+    const QRect mic = view->micButtonRect(0);
+    if (CHECK(!mic.isEmpty())) {
+        QTest::mouseClick(view, Qt::LeftButton, {}, mic.center());
+        CHECK_EQ(recorder->armedTrack(), 0);
+        CHECK_EQ(view->armedTrack(), 0);
+        wait(300);
+        CHECK(levels > 0);
+        if (const QString dump = qEnvironmentVariable("VOICEOVER_TIMELINE_DUMP"); !dump.isEmpty())
+            view->grab(QRect(0, mic.top() - 6, TimelineView::kHeaderW, 52)).save(dump + "-header.png");
+        QTest::mouseClick(view, Qt::LeftButton, {}, mic.center());
+        CHECK_EQ(recorder->armedTrack(), -1);
+    }
+    QObject::disconnect(levelConn);
+
+    // Nothing armed or selected: Shift+R records onto a new track; the take grows while it runs
+    w.liveSelection()->clear();
+    const int tracks = int(project->timeline().audio.size());
+    engine.seek(25);
+    wait(100);
+    const int undoKey = project->undoStack()->index();
+    int grew = 0;
+    const auto growConn = QObject::connect(recorder, &VoiceoverRecorder::takeChanged, [&] { ++grew; });
+    w.activateWindow();
+    view->setFocus();
+    QAction* key = InputBindings::instance().action("voiceover_record");
+    CHECK(key && key->shortcut() == QKeySequence("Shift+R"));
+    QTest::keyClick(view, Qt::Key_R, Qt::ShiftModifier);
+    CHECK(recorder->recording());
+    CHECK(key && key->isChecked()); // the toolbar's mic is lit
+    CHECK_EQ(recorder->liveTrack(), tracks);
+    wait(500);
+    const double midway = recorder->take().lengthFrames();
+    CHECK(midway > 3); // the clip in the timeline has grown (25 fps: ~12 frames by now)
+    CHECK(grew > 5);
+    float loudest = 0;
+    for (float p : recorder->take().peaks()) loudest = std::max(loudest, p);
+    CHECK(loudest > 0.2f); // the stand-in tone (-12 dBFS) in the live waveform
+    CHECK(engine.position() > 25); // the playhead runs along
+    if (const QString dump = qEnvironmentVariable("VOICEOVER_TIMELINE_DUMP"); !dump.isEmpty()) {
+        wait(400);
+        view->update();
+        wait(50);
+        w.findChild<TimelinePanel*>()->grab().save(dump);
+    }
+    wait(300);
+    QTest::keyClick(view, Qt::Key_R, Qt::ShiftModifier); // the same key stops
+    CHECK(!recorder->recording());
+    CHECK(key && !key->isChecked());
+    QObject::disconnect(growConn);
+    CHECK_EQ(project->undoStack()->index(), undoKey + 1);
+    CHECK_EQ(int(project->timeline().audio.size()), tracks + 1);
+    CHECK_EQ(recorder->placedTrack(), tracks);
+    if (project->timeline().audio.size() == tracks + 1 && CHECK(project->timeline().audio[tracks].clips.size() == 1)) {
+        // Exactly the recorded length: the file holds every sample the take counted
+        const Clip& c = project->timeline().audio[tracks].clips[0];
+        const MediaInfo* m = project->mediaInfo(c.mediaPath);
+        const double recorded = double(recorder->take().samples()) / recorder->take().rate() * project->frameRate();
+        CHECK(m && std::abs(m->length - recorded) < 1.0);
+        CHECK_EQ(c.start, 25);
+        CHECK(m && c.out == m->length - 1);
+        CHECK(recorded > midway);
+    }
+    project->undoStack()->undo(); // one step: the clip and its new track
+    CHECK_EQ(int(project->timeline().audio.size()), tracks);
+    CHECK_EQ(project->undoStack()->index(), undoKey);
+
+    // A selected clip on A1 makes A1 "the" track - but its sound lies under the playhead: a new track again
+    if (!project->timeline().audio[0].clips.isEmpty()) {
+        w.liveSelection()->set({project->timeline().audio[0].clips[0].id});
+        engine.seek(25);
+        wait(100);
+        QTest::keyClick(view, Qt::Key_R, Qt::ShiftModifier);
+        CHECK_EQ(recorder->liveTrack(), tracks);
+        wait(300);
+        engine.pause();
+        wait(50);
+        CHECK(!recorder->recording());
+        CHECK_EQ(int(project->timeline().audio.size()), tracks + 1);
+        CHECK_EQ(project->timeline().audio[0].clips.size(), qsizetype(1)); // A1's sound stays whole
+        project->undoStack()->undo();
+    }
+
+    // A locked track is not recorded over: the take gets a new track
     recorder->setArmedTrack(0);
     project->edit("lock", [](Timeline& t) { t.audio[0].locked = true; });
     QString error;
-    CHECK(!recorder->start(&error));
-    CHECK(!error.isEmpty());
-    CHECK(!recorder->recording());
+    engine.seek(25);
+    wait(100);
+    CHECK(recorder->start(&error));
+    CHECK_EQ(recorder->liveTrack(), tracks);
+    wait(300);
+    CHECK(recorder->stop(&error));
+    CHECK_EQ(recorder->placedTrack(), tracks);
+    project->undoStack()->undo();
     // Quitting while recording: the take is placed first (so "save changes?" sees it), the file is complete
     project->edit("unlock", [](Timeline& t) { t.audio[0].locked = false; });
     recorder->setArmedTrack(1);

@@ -139,6 +139,9 @@ bool TimelineView::event(QEvent* e)
     if (e->type() == QEvent::ToolTip) {
         const auto* help = static_cast<QHelpEvent*>(e);
         QString tip = storyToolTip(help->pos());
+        if (help->pos().x() < kHeaderW)
+            if (const auto row = rowAt(help->pos().y()); row && micButton(*row).contains(help->pos()))
+                tip = T("Aufnahmebereit: die Aufnahmetaste nimmt auf dieser Spur auf (Rechtsklick: Eingang wählen)");
         // A template placeholder: its label, hint and rules
         if (tip.isEmpty() && help->pos().x() >= kHeaderW && help->pos().y() >= kRulerH)
             if (const int id = clipAt(help->pos()))

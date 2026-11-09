@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
-// Voice-over recording (0.16): speak over the timeline while it plays, the recording lands as a clip on the armed
-// audio track where the playhead stood. The sound input itself is Audio::Capture (engine); this part is the pure
+// Voice-over recording (0.16, 0.20 straight onto a track): speak over the timeline while it plays, the recording
+// lands as a clip where the playhead stood: on the armed (or selected) audio track when it is free there, else on a
+// new audio track. The sound input itself is Audio::Capture (engine); this part is the pure
 // bookkeeping the app and the tests share: where recordings go, how the file lines up with the timeline and where
 // the clip goes (Editor::placeRecording places it as one undo step).
 //
@@ -12,8 +13,11 @@
 
 #include <QDateTime>
 #include <QString>
+#include <QVector>
 
 #include <optional>
+
+struct Timeline;
 
 namespace Voiceover {
 
@@ -44,6 +48,47 @@ struct Placement {
 // the first file frame at or after timeline frame `from` (the pre-roll is cut off) so that the file sits exactly
 // (to 1/100 frame) where it was heard. nullopt = nothing of a `fileFrames` long file lies at or after `from`.
 std::optional<Placement> place(double fileStart, int from, int fileFrames);
+
+// Which audio track a take goes to (0.20 "record where you are"): the armed track, else the one audio track the
+// selected clips lie on (ids = the selection; clips on several audio tracks or none: no track), -1 = none
+int preferredTrack(const Timeline& tl, int armed, const QVector<int>& selected);
+// The track a take of timeline frames [start, end) lands on: `preferred` when it exists, is not locked and has no
+// clip in that range, else a new track (= tl.audio.size(); the caller creates it)
+int recordTrack(const Timeline& tl, int preferred, int start, int end);
+
+// The take while it is being recorded (the growing clip in the timeline): how far it reaches and its waveform, from
+// the blocks the input delivers. File sample 0 lies at timeline frame `fileStart` (the live estimate; the final place
+// comes from the Alignment), the clip shows from `from` on (the playhead at the start; the pre-roll is not shown).
+class LiveTake {
+public:
+    static constexpr int kPeaksPerSecond = 100; // waveform resolution (a bucket = 10 ms)
+    LiveTake() = default;
+    LiveTake(double fileStart, int from, double fps, int rate);
+    // The input has delivered `totalFrames` sample frames so far; `peak` (linear 0..1) is the loudest of the frames
+    // since the call before (Audio::Capture::takePeak). Frames that went back are ignored.
+    void add(long long totalFrames, float peak);
+    // A block of mono samples (a stand-in source, tests)
+    void addSamples(const float* samples, int count);
+    long long samples() const { return m_samples; }
+    int rate() const { return m_rate; }
+    int from() const { return m_from; }
+    double fileStart() const { return m_fileStart; }
+    // A better estimate of where file sample 0 lies (the Alignment's pairs while the timeline plays)
+    void setFileStart(double frame) { m_fileStart = frame; }
+    // Timeline frame (fractional) the take reaches now
+    double end() const;
+    // Frames shown from `from` on (0 while the pre-roll runs)
+    double lengthFrames() const;
+    // Loudest peak (0..1) in timeline frames [a, b); 0 where nothing was recorded
+    float peak(double a, double b) const;
+    const QVector<float>& peaks() const { return m_peaks; }
+
+private:
+    double m_fileStart = 0, m_fps = 25;
+    int m_from = 0, m_rate = 48000;
+    long long m_samples = 0;
+    QVector<float> m_peaks; // per 1/kPeaksPerSecond s of the file
+};
 
 // Pairs of (frames the input delivered, timeline seconds heard) while recording (see above)
 class Alignment {

@@ -667,7 +667,6 @@
  "Die Sequenz enthält kein <media>": "La secuencia no contiene <media>",
  "Die Sprache ändert sich nach dem Neustart von schneidi.": "El idioma cambiará al reiniciar schneidi.",
  "Die Spur %1 ist gesperrt – entsperren, dann lässt sich die Lücke schließen": "La pista %1 está bloqueada: desbloquéala para cerrar el hueco",
- "Die Spur ist gesperrt.": "La pista está bloqueada.",
  "Die Timeline enthält keine Untertitel.": "La línea de tiempo no contiene subtítulos.",
  "Die Timeline gibt es nicht mehr.": "La línea de tiempo ya no existe.",
  "Die Timeline hat kein Bild (nur Ton)": "La línea de tiempo no tiene imagen (solo sonido)",
@@ -2884,5 +2883,10 @@
  "Der Rundgang läuft in einem Übungsprojekt. Dein Projekt hat ungespeicherte Änderungen: Es kommt nach dem Rundgang genau so zurück, wie es jetzt ist.": "El recorrido se hace en un proyecto de práctica. Tu proyecto tiene cambios sin guardar: después del recorrido vuelve exactamente como está ahora.",
  "Erst speichern": "Guardar primero",
  "Für mich erledigen": "Hazlo por mí",
- "Rundgang starten": "Iniciar recorrido"
+ "Rundgang starten": "Iniciar recorrido",
+ "Neue Spur": "Pista nueva",
+ "Aufnahmebereit": "Preparada para grabar",
+ "Eingang wählen": "Elegir entrada",
+ "Aufnahmebereit: die Aufnahmetaste nimmt auf dieser Spur auf (Rechtsklick: Eingang wählen)": "Preparada: la tecla de grabación graba en esta pista (clic derecho: elegir entrada)",
+ "Voiceover aufnehmen: auf der Spur mit dem Mikrofon (sonst der gewählten Tonspur oder einer neuen) ab dem Abspielkopf; die Timeline spielt mit": "Grabar una voz en off: en la pista con el micrófono (si no, en la pista de audio seleccionada o en una nueva) desde el cabezal; la línea de tiempo se reproduce a la vez"
 }

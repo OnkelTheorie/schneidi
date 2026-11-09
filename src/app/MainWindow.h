@@ -586,6 +586,7 @@ private:
     // A take still running is placed before the project is left or the app quits ("save changes?" must see it)
     void endVoiceover();
     class VoiceoverRecorder* m_voiceover = nullptr;
+    class QAction* m_voiceoverAction = nullptr; // record / stop (key, menu, timeline toolbar)
 
     // In-app tours (MainWindowTours.cpp)
     void setupTours(QMenu* help); // target names, the manager, Help › Tours
