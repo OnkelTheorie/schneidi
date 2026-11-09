@@ -177,6 +177,36 @@ void testImport()
     CHECK(b.importKys(junk, nullptr, &error).isEmpty());
     CHECK(!error.isEmpty());
     CHECK_EQ(b.currentPreset(), id);
+    // The preset file cannot be written (a folder in its place): an error, the set in memory stays as it was
+    {
+        const QStringList split = in("split");
+        QDir(InputBindings::customPresetDir()).mkpath("blocked.json");
+        const QString blocked = QDir(tmp.path()).filePath("blocked.kys");
+        QFile::copy(fixture(), blocked);
+        error.clear();
+        CHECK(b.importKys(blocked, nullptr, &error).isEmpty());
+        CHECK(!error.isEmpty());
+        CHECK_EQ(b.currentPreset(), id);
+        CHECK_EQ(in("split"), split);
+        CHECK_EQ(in("tool_blade").value(0), QString("C"));
+        QFile set(b.filePath());
+        if (CHECK(set.open(QIODevice::ReadOnly)))
+            CHECK_EQ(QJsonDocument::fromJson(set.readAll()).object().value("preset").toString(), id);
+        b.load(); // what the file has, which must be the same
+        CHECK_EQ(b.currentPreset(), id);
+        CHECK_EQ(in("split"), split);
+        QDir(InputBindings::customPresetDir()).rmdir("blocked.json");
+    }
+    // Names Windows cannot have as a file: made safe
+    for (const auto& [file, want] : {std::pair<QString, QString>{"con.kys", "con_"}, {"LPT1.old.kys", "LPT1_.old"},
+                                     {"set. .kys", "set"}, {"console.kys", "console"}}) {
+        const QString p = QDir(tmp.path()).filePath(file);
+        QFile::copy(fixture(), p);
+        error.clear();
+        CHECK_EQ(b.importKys(p, nullptr, &error), "custom:" + want);
+        CHECK(QFileInfo::exists(QDir(InputBindings::customPresetDir()).filePath(want + ".json")));
+    }
+    b.applyPreset(id);
     // Larger than any shortcut file (5 MB): refused before reading
     const QString huge = QDir(tmp.path()).filePath("huge.kys");
     QFile h(huge);

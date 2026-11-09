@@ -783,23 +783,33 @@ QString InputBindings::importKys(const QString& path, KysResult* result, QString
         return {};
     }
     // Premiere's set underneath: what the file leaves out works like in Premiere. A command with one key in the file
-    // has only that one (the second slot is cleared)
-    loadPreset("premiere");
+    // has only that one (the second slot is cleared). Built on a copy: the current set changes only once the preset
+    // file is written
+    InputBindings set(*this);
+    set.loadPreset("premiere");
     for (QStringList& keys : r.keys)
         while (keys.size() < kSlots) keys << QString();
-    overlay(r.keys);
+    set.overlay(r.keys);
     QString name = QFileInfo(path).completeBaseName().simplified();
     name.replace(QRegularExpression(R"([\\/:*?"<>|])"), "_");
+    // Windows drops trailing dots and spaces and reserves device names, also before a dot ("con.x.json" -> "con_.x")
+    while (name.endsWith('.') || name.endsWith(' ')) name.chop(1);
+    static const QRegularExpression reserved(R"(^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?$)",
+                                             QRegularExpression::CaseInsensitiveOption);
+    if (const QRegularExpressionMatch m = reserved.match(name); m.hasMatch()) name.insert(m.capturedEnd(1), '_');
     if (name.isEmpty()) name = "Premiere";
     QDir().mkpath(customPresetDir());
     const QString id = "custom:" + name;
-    m_preset = id;
+    set.m_preset = id;
     QFile out(QDir(customPresetDir()).filePath(name + ".json"));
-    if (!out.open(QIODevice::WriteOnly) || out.write(QJsonDocument(toJson()).toJson()) <= 0) {
+    if (!out.open(QIODevice::WriteOnly) || out.write(QJsonDocument(set.toJson()).toJson()) <= 0) {
         if (error) *error = T("Die Datei lässt sich nicht schreiben.");
         return {};
     }
     out.close();
+    m_inputs = set.m_inputs;
+    m_wheel = set.m_wheel;
+    m_preset = id;
     for (const Entry& e : m_entries) apply(e);
     rebuildMouse();
     save();
