@@ -27,8 +27,8 @@ public:
     // Targets in this widget's coordinates, asked on every layout change (empty = no hole, the bubble in the middle)
     void setTargets(std::function<QVector<QRect>()> targets);
     // A tour step: text, "index+1/count", which buttons. waiting = the step waits for the user ("Skip" instead of
-    // "Next"), sample = an extra button "Load sample clips"
-    void showStep(const QString& text, int index, int count, bool waiting, bool sample);
+    // "Next"), offer = the text of an extra button (empty = none; "Load sample clips")
+    void showStep(const QString& text, int index, int count, bool waiting, const QString& offer = {});
     // The question before a tour (no hole, bubble in the middle); firstStart adds "Don't offer tours"
     void showQuestion(const QString& title, const QString& text, bool firstStart);
     void end(); // hide
@@ -45,7 +45,7 @@ signals:
     void nextClicked();
     void backClicked();
     void endClicked();   // End tour, Esc
-    void sampleClicked();
+    void offerClicked();
     void showMe();       // question answers
     void later();
     void never();

@@ -1,0 +1,13 @@
+{
+ "id": "guide_blur_mask",
+ "title": "Nur einen Bildteil weichzeichnen",
+ "group": "guides",
+ "order": 11,
+ "steps": [
+  {"target": "timeline", "page": "edit", "text": "Wähl den Clip aus, in dem eine Stelle unscharf werden soll."},
+  {"target": "pageButton_color", "wait": "page:color", "text": "Wechsle auf die Seite Farbe."},
+  {"target": "color_windows", "page": "color", "text": "Füg ein Rechteck- oder Ellipsen-Fenster hinzu und schieb es im Bild über die Stelle."},
+  {"target": "color_windows", "page": "color", "text": "Unter Füllung wählst du Unschärfe oder Verpixeln. Weichheit macht den Rand sanft."},
+  {"target": "viewer", "page": "color", "text": "Bewegt sich die Stelle? Setz an mehreren Zeitpunkten einen Keyframe, dann folgt das Fenster."}
+ ]
+}

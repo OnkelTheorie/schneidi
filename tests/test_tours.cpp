@@ -21,6 +21,8 @@
 #include "core/Tours.h"
 #include "engine/Engine.h"
 #include "ui/TourOverlay.h"
+#include "ui/comp/CompCanvas.h"
+#include "ui/comp/CompPage.h"
 
 #include <QAbstractButton>
 #include <QApplication>
@@ -30,6 +32,9 @@
 #include <QMenuBar>
 #include <QPushButton>
 #include <QSettings>
+#include <QStandardPaths>
+#include <QToolButton>
+#include "core/Selection.h"
 #include <QTemporaryDir>
 #include <QTest>
 #include <clocale>
@@ -51,16 +56,19 @@ void testParse()
     CHECK_EQ(tours.value(0).offerOn, QString("start"));
     for (const Tour& t : tours) {
         CHECK(!t.title.isEmpty());
-        CHECK(t.steps.size() >= 5 && t.steps.size() <= 8); // short: 5-8 steps
+        Check::report(t.steps.size() >= 5 && t.steps.size() <= 8, "5-8 steps", __FILE__, __LINE__, t.id); // short
         for (const TourStep& s : t.steps) CHECK(!s.text.isEmpty());
     }
     QString err;
     CHECK(Tours::parse("{\"id\":\"x\",\"title\":\"X\",\"steps\":[{\"target\":\"a\"}]}", &err).id.isEmpty()); // no text
     CHECK(!err.isEmpty());
-    const Tour t = Tours::parse(R"({"id":"x","title":"X","steps":[{"text":"a","wait":"clip_added","sample":true}]})");
+    const Tour t = Tours::parse(
+        R"({"id":"x","title":"X","group":"guides","steps":[{"text":"a","wait":"clip_added","offer":"clips","action":"comp_nodes"}]})");
     CHECK_EQ(t.id, QString("x"));
+    CHECK_EQ(t.group, QString("guides"));
     CHECK_EQ(t.steps.value(0).wait, QString("clip_added"));
-    CHECK(t.steps.value(0).sample);
+    CHECK_EQ(t.steps.value(0).offer, QString("clips"));
+    CHECK_EQ(t.steps.value(0).action, QString("comp_nodes"));
     CHECK(Tours::find("nope").id.isEmpty());
 }
 
@@ -193,18 +201,57 @@ bool insideAndOff(TourOverlay* o)
     return ok;
 }
 
+// The visible one (buttons of an earlier step are deleted later)
+QPushButton* button(TourOverlay* o, const char* name)
+{
+    for (QPushButton* b : o->findChildren<QPushButton*>(name))
+        if (!b->isHidden()) return b;
+    return nullptr;
+}
+
+// First Steps on an empty project: the sample clips come from the resources, and the step waiting for media goes on
+void testSample(MainWindow& w)
+{
+    TourManager* tours = w.tours();
+    TourOverlay* o = tours->overlay();
+    CHECK(w.liveProject()->media().isEmpty());
+    tours->start("first_steps");
+    tours->runner()->next(); // step 2: the Media Pool, waits for media, offers the sample clips
+    CHECK(tours->runner()->waiting());
+    QPushButton* offer = button(o, "tour_offer");
+    if (!CHECK(offer)) return;
+    CHECK_EQ(offer->text(), T("Beispielclips laden"));
+    dump(&w, "first_steps-2-empty");
+    offer->click();
+    QTest::qWait(50);
+    const QString dir = QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation) + "/tour-sample";
+    CHECK_EQ(w.liveProject()->media().size(), qsizetype(3));
+    for (const MediaInfo& m : w.liveProject()->media()) {
+        CHECK(m.path.startsWith(dir)); // copied from the built-in resources, nothing downloaded
+        QFile copy(m.path), res(":/templates/gaming-highlight/media/" + QFileInfo(m.path).fileName());
+        if (CHECK(copy.open(QIODevice::ReadOnly) && res.open(QIODevice::ReadOnly))) CHECK(copy.readAll() == res.readAll());
+        CHECK(m.hasVideo);
+    }
+    CHECK_EQ(tours->runner()->index(), 2); // the wait step went on by itself
+    CHECK(!button(o, "tour_offer"));       // not offered again once there are clips
+    tours->stop();
+}
+
 void testWindow(MainWindow& w)
 {
     TourManager* tours = w.tours();
     if (!CHECK(tours)) return;
     TourOverlay* o = tours->overlay();
-    // Help › Tours lists every tour
+    // Help › Tours lists every tour, the guides in their submenu
     QMenu* menu = w.menuBar()->findChild<QMenu*>("tours_menu");
     if (CHECK(menu)) {
-        int n = 0;
-        for (QAction* a : menu->actions())
+        int n = 0, guides = 0;
+        for (QAction* a : menu->findChildren<QAction*>())
             if (a->objectName().startsWith("tour_")) ++n;
+        if (QMenu* g = menu->findChild<QMenu*>("tours_guides"); CHECK(g))
+            for (QAction* a : g->actions()) guides += a->objectName().startsWith("tour_");
         CHECK_EQ(n, int(Tours::builtIn().size()));
+        CHECK(guides >= 3);
     }
 
     // The question: once, with the third button at the first start
@@ -212,10 +259,10 @@ void testWindow(MainWindow& w)
     tours->offerAtStart();
     CHECK(tours->asking());
     CHECK(o->isVisible());
-    CHECK(o->findChild<QPushButton*>("tour_never"));
+    CHECK(button(o, "tour_never"));
     QTest::qWait(50);
     dump(&w, "question");
-    if (auto* later = o->findChild<QPushButton*>("tour_later")) later->click();
+    if (auto* later = button(o, "tour_later")) later->click();
     CHECK(!o->isVisible());
     CHECK_EQ(TourState::state("first_steps"), QString("later"));
     tours->offerAtStart(); // never twice
@@ -232,32 +279,17 @@ void testWindow(MainWindow& w)
     QApplication::sendEvent(o, &esc);
     CHECK(!o->isVisible());
     CHECK_EQ(TourState::state("first_steps"), QString("later"));
-
-    // Every step of every tour: its targets are found (except a menu-only fallback), the bubble in the window
-    for (const Tour& t : Tours::builtIn()) {
-        tours->start(t.id);
-        TourRunner* r = tours->runner();
-        for (int i = 0; i < t.steps.size(); ++i) {
-            if (!CHECK_EQ(r->index(), i)) break;
-            QTest::qWait(30);
-            const TourStep& s = t.steps[i];
-            const QVector<QRect> holes = tours->resolve(s.target);
-            if (!s.target.isEmpty())
-                Check::report(holes.size() == s.target.count('|') + 1, "all targets found", __FILE__, __LINE__,
-                              t.id + " step " + QString::number(i + 1) + ": " + s.target);
-            CHECK(o->isVisible());
-            CHECK(insideAndOff(o));
-            if (!s.page.isEmpty()) // the tour shows the step's page
-                if (auto* b = w.findChild<QAbstractButton*>("pageButton_" + s.page); CHECK(b)) CHECK(b->isChecked());
-            auto* counter = o->findChild<QLabel*>("tour_counter");
-            if (counter) CHECK_EQ(counter->text(), QString("%1/%2").arg(i + 1).arg(t.steps.size()));
-            dump(&w, QString("%1-%2").arg(t.id).arg(i + 1));
-            auto* next = o->findChild<QPushButton*>("tour_next");
-            if (!CHECK(next)) break;
-            next->click(); // also skips a waiting step
-        }
-        CHECK(!r->running());
-        CHECK(!o->isVisible());
+    // A page opened by the user asks about its tour once (the Comp page: Compositing; no question while one runs)
+    if (auto* b = w.findChild<QAbstractButton*>("pageButton_comp"); CHECK(b)) {
+        b->click();
+        CHECK(tours->asking());
+        dump(&w, "question-comp");
+        if (auto* later = button(o, "tour_later")) later->click();
+        CHECK_EQ(TourState::state("compositing"), QString("later"));
+        if (auto* edit = w.findChild<QAbstractButton*>("pageButton_edit")) edit->click();
+        b->click();
+        CHECK(!tours->asking());
+        if (auto* edit = w.findChild<QAbstractButton*>("pageButton_edit")) edit->click();
     }
 
     // A wait step that goes on when the user does it: a clip onto the timeline (first_steps step 4)
@@ -269,16 +301,93 @@ void testWindow(MainWindow& w)
         tours->start("first_steps");
         while (tours->runner()->index() < clipStep) tours->runner()->next();
         CHECK(tours->runner()->waiting());
-        auto* next = o->findChild<QPushButton*>("tour_next");
-        if (CHECK(next)) CHECK_EQ(next->text(), T("Überspringen"));
-        w.editor()->addTitle(0, -1, 50); // any clip on the timeline
+        if (auto* next = button(o, "tour_next"); CHECK(next)) CHECK_EQ(next->text(), T("Überspringen"));
+        // The real clip the other tours work on: a sample clip at the start of the timeline
+        w.editor()->sourceEdit(Editor::SourceEditMode::AppendAtEnd, w.liveProject()->media().value(0).path, 0, 0);
         QTest::qWait(30);
         CHECK_EQ(tours->runner()->index(), clipStep + 1);
-        // Esc ends it
-        QKeyEvent esc2(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
+        QKeyEvent esc2(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier); // Esc ends it
         QApplication::sendEvent(&w, &esc2);
         CHECK(!tours->runner()->running());
         CHECK(!o->isVisible());
+    }
+
+    // A panel the user switched off is shown for its step and hidden again afterwards (toggle and setting untouched)
+    QToolButton* poolToggle = nullptr;
+    for (QToolButton* b : w.findChildren<QToolButton*>())
+        if (b->text().endsWith(T("Medienpool"))) poolToggle = b;
+    QWidget* pool = nullptr;
+    for (QWidget* c : w.findChildren<QWidget*>())
+        if (c->property("tourTarget").toString() == "mediaPool") pool = c;
+    if (CHECK(poolToggle && pool)) {
+        poolToggle->click();
+        CHECK(!pool->isVisible());
+        tours->start("first_steps");
+        tours->runner()->next();
+        CHECK(pool->isVisible());
+        CHECK(!poolToggle->isChecked());
+        CHECK_EQ(tours->resolve("mediaPool").size(), qsizetype(1));
+        tours->runner()->next(); // step 3 shows it too, step 4 as well
+        CHECK(pool->isVisible());
+        tours->stop();
+        CHECK(!pool->isVisible());
+        CHECK(!poolToggle->isChecked());
+        poolToggle->click();
+        CHECK(pool->isVisible());
+    }
+
+    // Every step of every tour: its targets are found, the bubble in the window and off the holes
+    for (const Tour& t : Tours::builtIn()) {
+        w.liveSelection()->clear();
+        tours->start(t.id);
+        TourRunner* r = tours->runner();
+        for (int i = 0; i < t.steps.size(); ++i) {
+            if (!CHECK_EQ(r->index(), i)) break;
+            QTest::qWait(30);
+            if (i == 0 && t.id == "compositing") { // the example graph: built, and the waiting step goes on
+                QPushButton* ex = button(o, "tour_offer");
+                if (CHECK(ex)) {
+                    dump(&w, t.id + "-1");
+                    ex->click();
+                    QTest::qWait(50);
+                    if (!CHECK_EQ(r->index(), 1)) break;
+                    continue;
+                }
+            }
+            const TourStep& s = t.steps[i];
+            const QVector<QRect> holes = tours->resolve(s.target);
+            if (!s.target.isEmpty())
+                Check::report(holes.size() == s.target.count('|') + 1, "all targets found", __FILE__, __LINE__,
+                              t.id + " step " + QString::number(i + 1) + ": " + s.target);
+            CHECK(o->isVisible());
+            CHECK(insideAndOff(o));
+            if (!s.page.isEmpty()) // the tour shows the step's page
+                if (auto* b = w.findChild<QAbstractButton*>("pageButton_" + s.page); CHECK(b)) CHECK(b->isChecked());
+            if (auto* counter = o->findChild<QLabel*>("tour_counter"))
+                CHECK_EQ(counter->text(), QString("%1/%2").arg(i + 1).arg(t.steps.size()));
+            dump(&w, QString("%1-%2").arg(t.id).arg(i + 1));
+            auto* next = button(o, "tour_next");
+            if (!CHECK(next)) break;
+            next->click(); // also skips a waiting step
+        }
+        CHECK(!r->running());
+        CHECK(!o->isVisible());
+    }
+    // The empty graph's button starts the Compositing tour
+    w.openComp(w.liveProject()->timeline().video.value(0).clips.value(0).id);
+    w.liveProject()->undoStack()->undo(); // the example graph away: the clip has none
+    QTest::qWait(30);
+    if (CompPage* page = w.compPage(); CHECK(page)) {
+        if (auto* nodes = page->findChild<QToolButton*>("comp_view_nodes")) nodes->setChecked(true);
+        page->canvas()->refresh();
+        QTest::qWait(30);
+        QPushButton* start = page->canvas()->tourButton();
+        CHECK(start->isVisible());
+        dump(&w, "comp-empty-graph");
+        start->click();
+        CHECK(tours->runner()->running());
+        CHECK_EQ(tours->runner()->tour().id, QString("compositing"));
+        tours->stop();
     }
 }
 
@@ -307,12 +416,7 @@ int main(int argc, char** argv)
     w.show();
     w.activateWindow();
     CHECK(QTest::qWaitForWindowActive(&w));
-    if (Check::haveFfmpeg()) {
-        const QString file = Check::makeMedia(dir.path() + "/clip.mp4",
-            {"-f", "lavfi", "-i", "testsrc2=size=640x360:rate=25:duration=2", "-c:v", "libx264", "-preset",
-             "ultrafast", "-pix_fmt", "yuv420p"});
-        if (CHECK(!file.isEmpty())) w.importFiles({file}, false);
-    }
+    testSample(w);
     testWindow(w);
     return Check::result();
 }

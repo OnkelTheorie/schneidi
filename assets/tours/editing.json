@@ -1,6 +1,6 @@
 {
  "id": "editing",
- "title": "Schneiden",
+ "title": "Schnittgrundlagen",
  "order": 2,
  "steps": [
   {"target": "timeline|menu:split", "page": "edit", "wait": "clip_added", "text": "Setz den Abspielkopf in einen Clip und drück Strg+B: Der Clip wird dort geteilt. Probier es aus!"},

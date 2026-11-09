@@ -9,20 +9,24 @@
 #include <QMainWindow>
 #include <QMenu>
 #include <QMenuBar>
+#include <utility>
 
 TourManager::TourManager(QMainWindow* window, Project* project, Host host)
     : QObject(window), m_window(window), m_project(project), m_host(std::move(host)), m_overlay(new TourOverlay(window))
 {
     m_runner.setConditions([this](const TourStep& s) { begin(s); }, [this](const QString& c) { return holds(c); });
-    connect(&m_runner, &TourRunner::stepChanged, this, &TourManager::showStep);
+    connect(&m_runner, &TourRunner::stepChanged, this, &TourManager::enterStep);
     connect(&m_runner, &TourRunner::waitingChanged, this, &TourManager::showStep);
     connect(&m_runner, &TourRunner::finished, this, &TourManager::finished);
     connect(m_overlay, &TourOverlay::nextClicked, &m_runner, &TourRunner::next);
     connect(m_overlay, &TourOverlay::backClicked, &m_runner, &TourRunner::back);
     connect(m_overlay, &TourOverlay::endClicked, &m_runner, &TourRunner::finish);
-    connect(m_overlay, &TourOverlay::sampleClicked, this, [this] {
-        if (m_host.loadSample) m_host.loadSample();
-        showStep(); // the button goes away once there are clips
+    connect(m_overlay, &TourOverlay::offerClicked, this, [this] {
+        const TourStep* step = m_runner.step();
+        if (!step) return;
+        const auto it = m_host.offers.constFind(step->offer);
+        if (it != m_host.offers.cend() && it->run) it->run();
+        showStep(); // the button goes away once it is not needed any more
         poke();
     });
     connect(m_overlay, &TourOverlay::showMe, this, [this] {
@@ -54,8 +58,17 @@ void TourManager::addMenu(QMenu* help)
 {
     QMenu* menu = help->addMenu(T("Rundgänge"));
     menu->setObjectName("tours_menu");
+    QMenu* guides = nullptr; // Help › Tours › Guides: short tours that build one result
     for (const Tour& t : Tours::builtIn()) {
-        QAction* a = menu->addAction(T(t.title), this, [this, id = t.id] { start(id); });
+        QMenu* in = menu;
+        if (t.group == QLatin1String("guides")) {
+            if (!guides) {
+                guides = menu->addMenu(T("Anleitungen"));
+                guides->setObjectName("tours_guides");
+            }
+            in = guides;
+        }
+        QAction* a = in->addAction(T(t.title), this, [this, id = t.id] { start(id); });
         a->setObjectName("tour_" + t.id);
     }
     menu->addSeparator();
@@ -119,17 +132,40 @@ void TourManager::stop()
     m_overlay->end();
 }
 
+void TourManager::enterStep()
+{
+    const TourStep* s = m_runner.step();
+    if (!s) return;
+    unreveal();
+    if (!s->page.isEmpty() && m_host.page && m_host.showPage && m_host.page() != s->page) m_host.showPage(s->page);
+    if (const auto it = m_host.actions.constFind(s->action); !s->action.isEmpty() && it != m_host.actions.cend()) (*it)();
+    // Panels the user switched off: shown for this step only
+    if (m_host.reveal)
+        for (const QString& part : s->target.split('|', Qt::SkipEmptyParts))
+            if (!part.contains(':'))
+                if (auto undo = m_host.reveal(part)) m_revealed << undo;
+    showStep();
+}
+
+void TourManager::unreveal()
+{
+    const auto undo = std::exchange(m_revealed, {});
+    for (auto it = undo.rbegin(); it != undo.rend(); ++it) (*it)();
+}
+
 void TourManager::showStep()
 {
     const TourStep* s = m_runner.step();
     if (!s) return;
-    if (!s->page.isEmpty() && m_host.page && m_host.showPage && m_host.page() != s->page) m_host.showPage(s->page);
-    const bool sample = s->sample && m_project->media().isEmpty() && m_host.loadSample;
-    m_overlay->showStep(T(s->text), m_runner.index(), m_runner.count(), m_runner.waiting(), sample);
+    QString offer;
+    if (const auto it = m_host.offers.constFind(s->offer); !s->offer.isEmpty() && it != m_host.offers.cend())
+        if (!it->needed || it->needed()) offer = T(it->text);
+    m_overlay->showStep(T(s->text), m_runner.index(), m_runner.count(), m_runner.waiting(), offer);
 }
 
 void TourManager::finished(bool)
 {
+    unreveal();
     m_overlay->end();
     // Back where the tour began (it may have shown other pages)
     if (!m_startPage.isEmpty() && m_host.page && m_host.showPage && m_host.page() != m_startPage)
@@ -164,6 +200,7 @@ bool TourManager::holds(const QString& c) const
     if (c == "clip_added") return clipCount() > m_baseClips; // e.g. split: one clip more than when the step began
     if (c == "playhead_moved") return m_host.playhead && m_host.playhead() != m_basePlayhead;
     if (c.startsWith("page:")) return m_host.page && m_host.page() == c.mid(5);
+    if (const auto it = m_host.conditions.constFind(c); it != m_host.conditions.cend()) return (*it)();
     qWarning("Tour condition unknown: %s", qPrintable(c));
     return true; // an unknown condition never blocks a tour
 }

@@ -16,6 +16,7 @@
 #include <QMenu>
 #include <QPainter>
 #include <QPainterPath>
+#include <QPushButton>
 #include <QUndoStack>
 #include <QHelpEvent>
 #include <QToolTip>
@@ -127,6 +128,46 @@ CompCanvas::CompCanvas(Editor* editor, QWidget* parent) : QWidget(parent), m_edi
     setMinimumHeight(120);
     setToolTip(T("Tab oder Umschalt+Leertaste: Knoten hinzufügen · Entf: entfernen · Strg+D: duplizieren · Ausgang auf Eingang ziehen: "
                  "verbinden · Mausrad: zoomen · leere Fläche ziehen: verschieben"));
+    // Empty graph: besides "Tab adds a node" a way into the tour that explains nodes and ports
+    m_tourButton = new QPushButton(T("Rundgang Compositing starten"), this);
+    m_tourButton->setObjectName("comp_tour_button");
+    m_tourButton->setFocusPolicy(Qt::NoFocus);
+    m_tourButton->hide();
+    connect(m_tourButton, &QPushButton::clicked, this, &CompCanvas::tourRequested);
+}
+
+void CompCanvas::resizeEvent(QResizeEvent*) { placeTourButton(); }
+
+void CompCanvas::placeTourButton()
+{
+    m_tourButton->setVisible(m_clipId && m_graph.isEmpty());
+    m_tourButton->adjustSize();
+    m_tourButton->move((width() - m_tourButton->width()) / 2, height() / 2 + 18);
+}
+
+QRect CompCanvas::tourArea(const QString& what) const
+{
+    if (what == QLatin1String("output")) return nodeRect(m_graph.out).toAlignedRect();
+    if (what.startsWith(QLatin1String("node:"))) {
+        for (const CompNode& n : m_graph.nodes)
+            if (n.type == what.mid(5)) return nodeRect(n.id).toAlignedRect();
+        return {};
+    }
+    if (what.startsWith(QLatin1String("port:"))) {
+        const QString input = what.mid(5);
+        int found = 0;
+        for (const CompNode& n : m_graph.nodes)
+            if (inputsOf(n).contains(input) && (!found || n.type == QLatin1String("merge"))) {
+                found = n.id;
+                if (n.type == QLatin1String("merge")) break;
+            }
+        if (!found) return {};
+        // The port and its name beside it, inside the node
+        const QPointF p = inputPos(found, input);
+        const double z = m_view.zoom;
+        return QRectF(p.x() - 9 * z, p.y() - kRow * z / 2, 80 * z, kRow * z).toAlignedRect();
+    }
+    return {};
 }
 
 void CompCanvas::setClip(int clipId)
@@ -151,6 +192,7 @@ void CompCanvas::refresh()
     // the view)
     // (only when shown: a hidden canvas has no real size yet and the fit would cut nodes off)
     if (!m_view.set && !m_graph.isEmpty() && isVisible() && width() > 0) fit();
+    placeTourButton();
     update();
 }
 

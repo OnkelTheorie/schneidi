@@ -11,10 +11,11 @@
 
 // Tour file (assets/tours/<id>.json; tools/i18n_check.py collects "title" and every step's "text"):
 // {
-//   "id": "first_steps", "title": "Erste Schritte", "order": 1, "offerOn": "start",
+//   "id": "first_steps", "title": "Erste Schritte", "order": 1, "offerOn": "start", "group": "",
 //   "steps": [
 //     {"target": "mediaPool", "page": "edit", "text": "Hier liegen deine Clips."},
-//     {"target": "mediaPool|timeline", "wait": "clip_on_timeline", "sample": true, "text": "Zieh einen Clip ..."}
+//     {"target": "mediaPool|timeline", "wait": "clip_on_timeline", "offer": "clips", "text": "Zieh einen Clip ..."},
+//     {"target": "comp_canvas", "page": "comp", "action": "comp_nodes", "text": "..."}
 //   ]
 // }
 
@@ -37,7 +38,8 @@ Tour parse(const QByteArray& json, QString* error)
         step.text = s.value("text").toString();
         step.page = s.value("page").toString();
         step.wait = s.value("wait").toString();
-        step.sample = s.value("sample").toBool();
+        step.offer = s.value("offer").toString();
+        step.action = s.value("action").toString();
         if (step.text.isEmpty()) {
             if (error) *error = QStringLiteral("step %1 without text").arg(t.steps.size() + 1);
             return {};
@@ -47,6 +49,7 @@ Tour parse(const QByteArray& json, QString* error)
     t.title = o.value("title").toString();
     t.order = o.value("order").toInt();
     t.offerOn = o.value("offerOn").toString();
+    t.group = o.value("group").toString();
     if (t.steps.isEmpty() || t.title.isEmpty()) {
         if (error) *error = QStringLiteral("no title or no steps");
         return {};

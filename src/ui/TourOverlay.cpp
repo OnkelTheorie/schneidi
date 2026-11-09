@@ -73,7 +73,10 @@ void TourOverlay::setTargets(std::function<QVector<QRect>()> targets)
 void TourOverlay::clearButtons()
 {
     while (QLayoutItem* item = m_buttons->takeAt(0)) {
-        delete item->widget();
+        if (QWidget* w = item->widget()) { // later: the button clicked may be the one asking for new buttons
+            w->hide();
+            w->deleteLater();
+        }
         delete item;
     }
 }
@@ -88,10 +91,11 @@ QPushButton* TourOverlay::addButton(const QString& text, bool primary)
                              .arg(Theme::primary.name(), Theme::onPrimary.name()));
     }
     m_buttons->addWidget(b);
+    b->show(); // the bubble may be showing already (the next step)
     return b;
 }
 
-void TourOverlay::showStep(const QString& text, int index, int count, bool waiting, bool sample)
+void TourOverlay::showStep(const QString& text, int index, int count, bool waiting, const QString& offer)
 {
     m_question = false;
     m_title->hide();
@@ -105,10 +109,10 @@ void TourOverlay::showStep(const QString& text, int index, int count, bool waiti
     endB->setFlat(true);
     connect(endB, &QPushButton::clicked, this, &TourOverlay::endClicked);
     m_buttons->addStretch(1);
-    if (sample) {
-        auto* s = addButton(T("Beispielclips laden"), false);
-        s->setObjectName("tour_sample");
-        connect(s, &QPushButton::clicked, this, &TourOverlay::sampleClicked);
+    if (!offer.isEmpty()) {
+        auto* o = addButton(offer, false);
+        o->setObjectName("tour_offer");
+        connect(o, &QPushButton::clicked, this, &TourOverlay::offerClicked);
     }
     if (index > 0) {
         auto* back = addButton(T("Zurück"), false);

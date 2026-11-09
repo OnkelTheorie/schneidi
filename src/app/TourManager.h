@@ -26,8 +26,19 @@ public:
         std::function<QString()> page;                    // the shown page ("media", "edit", "comp", "color", "deliver")
         std::function<void(const QString&)> showPage;     // switch to a page
         std::function<int()> playhead;                    // timeline frame
-        std::function<void()> loadSample;                 // the built-in sample clips into the Media Pool
         QHash<QString, std::function<QRect()>> areas;     // "area:<name>" targets
+        QHash<QString, std::function<bool()>> conditions; // wait conditions beyond the built-in ones
+        QHash<QString, std::function<void()>> actions;    // a step's "action", done when it is entered
+        // A step's "offer": the button's text (German key), whether it is needed now, what it does
+        struct Offer {
+            QString text;
+            std::function<bool()> needed;
+            std::function<void()> run;
+        };
+        QHash<QString, Offer> offers;
+        // A target the user switched off (a panel): shown for the step; returns how to hide it again (empty = it
+        // showed already)
+        std::function<std::function<void()>(const QString& target)> reveal;
     };
     TourManager(QMainWindow* window, Project* project, Host host);
 
@@ -51,8 +62,10 @@ public slots:
 
 private:
     void ask(const Tour& tour, bool firstStart);
-    void showStep();
+    void enterStep(); // a step entered: its page, its action, its hidden targets shown
+    void showStep();  // the bubble for the step as it is now (waiting, offer)
     void finished(bool completed);
+    void unreveal();  // hides again what the last step showed
     bool holds(const QString& condition) const;
     void begin(const TourStep& step);
     int clipCount() const;
@@ -69,4 +82,5 @@ private:
     int m_basePlayhead = 0;
     int m_baseClips = 0;
     QPointer<QAction> m_offerAction;
+    QVector<std::function<void()>> m_revealed; // undo of what the current step showed
 };

@@ -22,7 +22,10 @@ struct TourStep {
     // Condition the step waits for (empty = none): the tour goes on by itself once it holds; "Skip" goes on anyway.
     // The window knows the names (app/TourManager.cpp: media_imported, clip_on_timeline, playhead_moved, ...)
     QString wait;
-    bool sample = false; // a project without media offers the built-in sample clips on this step
+    // An extra button the step offers while the window says it is needed ("clips" = the built-in sample clips in an
+    // empty project, "comp_example" = a small example graph; the window knows the names, app/MainWindowTours.cpp)
+    QString offer;
+    QString action; // done by the window when the step is entered (e.g. "comp_nodes": the Comp page's node view)
 };
 
 struct Tour {
@@ -32,6 +35,7 @@ struct Tour {
     // When it is offered unasked (once): "start" = at the first start, "page:<id>" = when that page first opens,
     // empty = only from the menu
     QString offerOn;
+    QString group; // where Help › Tours lists it: empty = the tours, "guides" = the submenu with the task guides
     QVector<TourStep> steps;
 };
 

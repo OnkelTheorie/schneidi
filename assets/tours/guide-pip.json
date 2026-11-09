@@ -1,0 +1,13 @@
+{
+ "id": "guide_pip",
+ "title": "Bild im Bild",
+ "group": "guides",
+ "order": 12,
+ "steps": [
+  {"target": "timeline", "page": "edit", "text": "Leg das kleine Video auf eine Spur über das große und wähle es aus."},
+  {"target": "effectsToggle", "page": "edit", "text": "Öffne die Effekte, dort die Compositing-Rezepte, und zieh Bild im Bild auf den Clip."},
+  {"target": "area:comp_node_merge", "page": "comp", "action": "comp_nodes", "text": "Das Rezept verkleinert den Clip, gibt ihm einen Rahmen und legt ihn mit einem Mischen-Knoten über die Spuren darunter."},
+  {"target": "area:comp_node_transform", "page": "comp", "action": "comp_nodes", "text": "Klick den Transformieren-Knoten an: Im Inspektor stellst du Größe und Position ein."},
+  {"target": "comp_save_recipe", "page": "comp", "text": "Gefällt dir das Ergebnis? Als Rezept speichern merkt es sich für andere Clips."}
+ ]
+}

@@ -1,0 +1,13 @@
+{
+ "id": "guide_greenscreen",
+ "title": "Greenscreen",
+ "group": "guides",
+ "order": 10,
+ "steps": [
+  {"target": "timeline", "page": "edit", "text": "Leg dein Greenscreen-Video auf eine Spur über den Hintergrund und wähle es aus."},
+  {"target": "effectsToggle", "page": "edit", "text": "Öffne die Effekte, dort die Compositing-Rezepte, und zieh Greenscreen auf den Clip."},
+  {"target": "comp_canvas", "page": "comp", "action": "comp_nodes", "text": "Auf der Seite Compositing siehst du, was das Rezept gebaut hat: Der Keyer macht das Grün durchsichtig."},
+  {"target": "comp_view_matte", "page": "comp", "text": "Zum Prüfen zeigt Alphamaske Weiß, wo das Bild bleibt, und Schwarz, wo es durchsichtig ist. Mit der Pipette im Inspektor wählst du die Farbe genauer."},
+  {"target": "comp_save_recipe", "page": "comp", "text": "Gefällt dir das Ergebnis? Als Rezept speichern merkt es sich für andere Clips."}
+ ]
+}

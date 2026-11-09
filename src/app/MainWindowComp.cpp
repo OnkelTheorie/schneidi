@@ -2,6 +2,7 @@
 // MainWindow: the Comp page (0.19) - built lazily, opened for a clip, the viewer's picture of a node or matte, the
 // pipette of a key node.
 #include "app/MainWindow.h"
+#include "app/TourManager.h"
 
 #include "app/ExtensionsDialog.h"
 #include "core/CompRecipes.h"
@@ -17,6 +18,7 @@
 #include "ui/KeyColorPicker.h"
 #include "ui/KeyPickWindow.h"
 #include "ui/Viewer.h"
+#include "ui/comp/CompCanvas.h"
 #include "ui/comp/CompInspector.h"
 #include "ui/comp/CompOverlay.h"
 #include "ui/comp/CompPage.h"
@@ -45,6 +47,9 @@ void MainWindow::ensureCompPage()
         m_compPage->setPlayhead(f);
     });
     connect(m_compPage, &CompPage::viewChanged, this, &MainWindow::updatePreview);
+    connect(m_compPage->canvas(), &CompCanvas::tourRequested, this, [this] { // the button in an empty graph
+        if (m_tours) m_tours->start("compositing");
+    });
     connect(m_compPage, &CompPage::message, this, [this](const QString& t) { statusBar()->showMessage(t, 5000); });
     connect(m_compPage, &CompPage::keyPickRequested, this, &MainWindow::startCompKeyPick);
     connect(m_compPage, &CompPage::recipeSaved, m_effects, &EffectsLibrary::refreshRecipes);
