@@ -894,7 +894,7 @@ void opVoiceover(Session& s, const QJsonObject& op)
         if (k != TrackKind::Audio) fail("BAD_ARGUMENT", "track must be an audio track (A1 …) or 'new'");
         if (track < tl.audio.size() && tl.audio[track].locked) fail("FAILED", trackName({TrackKind::Audio, track}) + " is locked");
     } else {
-        track = Voiceover::recordTrack(tl, -1, -1, at, at + m.length);
+        track = Voiceover::recordTrack(tl, -1, -1, at, at + m.length, Voiceover::folder(s.path));
     }
     const int before = int(tl.audio.size());
     int placed = -1;

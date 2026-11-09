@@ -2912,5 +2912,7 @@
  "Unten wechselst du die Seiten. Wenn du fertig bist: Geh unten auf Export und render dein Video.": "At the bottom you switch pages. When you are done: go to Deliver at the bottom and render your video.",
  "Schneiden: {key:split} teilt den Clip am Abspielkopf. Oder nimm das Klingen-Werkzeug ({key:tool_blade}) und klick auf den Clip. Probier es aus!": "Cutting: {key:split} splits the clip at the playhead. Or take Blade Edit Mode ({key:tool_blade}) and click on the clip. Try it!",
  "Wähl eine Vorlage, etwa YouTube, und klick auf „Zur Render-Warteschlange hinzufügen“. „Alle rendern“ speichert dann dein Video.": "Choose a preset, for example YouTube, and click “Add to Render Queue”. “Render All” then saves your video.",
- "Der Rundgang startet nach der Aufnahme – erst die Aufnahme beenden (Esc).": "The tour starts after the recording – end the recording first (Esc)."
+ "Der Rundgang startet nach der Aufnahme – erst die Aufnahme beenden (Esc).": "The tour starts after the recording – end the recording first (Esc).",
+ "Aufnahme ersetzt 1 Clip – Strg+Z holt ihn zurück": "The recording replaced 1 clip – Ctrl+Z brings it back",
+ "Aufnahme ersetzt %1 Clips – Strg+Z holt sie zurück": "The recording replaced %1 clips – Ctrl+Z brings them back"
 }

@@ -38,6 +38,7 @@
 
 #include <QSettings>
 #include <QShortcut>
+#include <QStatusBar>
 
 #include <QApplication>
 #include <QElapsedTimer>
@@ -436,6 +437,8 @@ int main(int argc, char** argv)
         wait(100);
         CHECK_EQ(take(400), 0);
         CHECK_EQ(project->undoStack()->index(), beforePunch + 1);
+        CHECK_EQ(recorder->replaced(), 1);
+        CHECK_EQ(w.statusBar()->currentMessage(), T("Aufnahme ersetzt 1 Clip – Strg+Z holt ihn zurück"));
         CHECK_EQ(clipsOn(0).size(), qsizetype(3)); // a.mp4 | take | a.mp4
         CHECK_EQ(int(project->timeline().audio.size()), tracks1);
         project->undoStack()->undo();

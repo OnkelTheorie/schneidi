@@ -47,6 +47,8 @@ public:
     int sequence() const { return m_sequence; }
     // The track the last take was placed on (-1 = none)
     int placedTrack() const { return m_placedTrack; }
+    // How many clips the last take cut into or replaced (an armed track: punch-in; earlier takes)
+    int replaced() const { return m_replaced; }
     // Ends it and places the take; false = nothing placed (*error says why, empty = nothing recorded)
     bool stop(QString* error = nullptr);
     void cancel(); // ends it without placing anything (the file stays)
@@ -91,6 +93,7 @@ private:
     int m_takeNumber = 0;
     Voiceover::TrackKey m_trackKey; // which track m_track is
     int m_placedTrack = -1;
+    int m_replaced = 0;
     int m_from = 0;         // playhead when recording started (the clip starts here)
     double m_playFrom = 0;  // where playback started (pre-roll before m_from)
     bool m_playing = false; // the timeline plays along (open end: also behind its last clip)

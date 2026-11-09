@@ -57,12 +57,16 @@ std::optional<Placement> place(double fileStart, int from, int fileFrames);
 // - an armed track is the user's explicit choice: the take goes there and replaces what lies in its range (punch-in);
 //   a locked armed track refuses (-1)
 // - else the track of the selected clips (selectedTrack) when it is free from `from` to `end` and may take a take
-// - else the first track named Voiceover (the ones a take creates): new takes replace earlier ones there
+// - else the first track named Voiceover (the ones a take creates) where only earlier takes (isTake) lie from `from`
+//   to `end`: new takes replace those - never anything else the user put there
 // - else the first free track without a user-given name
 // - else one new track (= tl.audio.size(); placing creates it, named Voiceover)
 // "May take a take": not locked, not muted, no name or the name Voiceover - a track the user named (Discord, Mix,
-// Mikrofon …) only gets a take when it is armed. `end`: the take's end when known (CLI), else open.
-int recordTrack(const Timeline& tl, int armed, int selected, int from, int end = INT_MAX);
+// Mikrofon …) only gets a take when it is armed. `end`: the take's end when known (CLI), else open. `takes`: the
+// project's take folder (folder()).
+int recordTrack(const Timeline& tl, int armed, int selected, int from, int end = INT_MAX, const QString& takes = {});
+// A clip of an earlier take: its file lies in `takes` or in the folder of takes made before saving (folder(""))
+bool isTake(const QString& mediaPath, const QString& takes);
 // The one audio track the selected clips (ids) lie on; clips on several audio tracks or none: -1
 int selectedTrack(const Timeline& tl, const QVector<int>& ids);
 // A track a take created (named Voiceover, in German or the UI language)

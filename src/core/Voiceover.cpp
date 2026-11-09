@@ -82,7 +82,15 @@ bool isVoiceoverTrack(const Track& t)
     return t.name == "Voiceover" || t.name == T("Voiceover");
 }
 
-int recordTrack(const Timeline& tl, int armed, int selected, int from, int end)
+bool isTake(const QString& mediaPath, const QString& takes)
+{
+    if (mediaPath.isEmpty()) return false;
+    const QString dir = QDir::cleanPath(QFileInfo(mediaPath).absolutePath());
+    const auto in = [&](const QString& f) { return !f.isEmpty() && dir == QDir::cleanPath(QFileInfo(f).absoluteFilePath()); };
+    return in(takes) || in(folder(QString()));
+}
+
+int recordTrack(const Timeline& tl, int armed, int selected, int from, int end, const QString& takes)
 {
     const int count = int(tl.audio.size());
     if (armed >= 0 && armed < count) return tl.audio[armed].locked ? -1 : armed;
@@ -97,8 +105,13 @@ int recordTrack(const Timeline& tl, int armed, int selected, int from, int end)
         return true;
     };
     if (selected >= 0 && selected < count && open(selected) && freeFrom(selected)) return selected;
+    const auto onlyTakes = [&](int i) {
+        for (const Clip& c : tl.audio[i].clips)
+            if (c.start < end && c.end() > from && !isTake(c.mediaPath, takes)) return false;
+        return true;
+    };
     for (int i = 0; i < count; ++i)
-        if (open(i) && isVoiceoverTrack(tl.audio[i])) return i; // its earlier takes in the range are replaced
+        if (open(i) && isVoiceoverTrack(tl.audio[i]) && onlyTakes(i)) return i; // earlier takes there are replaced
     for (int i = 0; i < count; ++i)
         if (open(i) && freeFrom(i)) return i;
     return count;

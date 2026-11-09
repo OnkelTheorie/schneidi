@@ -310,8 +310,15 @@ int main(int argc, char** argv)
         v.id = 3;
         v.start = 0;
         tl.audio[3].clips << v; // [0, 50)
-        CHECK_EQ(Voiceover::recordTrack(tl, -1, -1, 10), 3);
-        CHECK_EQ(Voiceover::recordTrack(tl, -1, 3, 10), 3);
+        CHECK_EQ(Voiceover::recordTrack(tl, -1, -1, 10, INT_MAX, "/x"), 3); // "/x": the take folder
+        CHECK_EQ(Voiceover::recordTrack(tl, -1, 3, 10, INT_MAX, "/x"), 3);
+        // Review 2026-11-09: anything else on it (the user's own sound) is never replaced by a take nobody armed: the
+        // next free spot or a new track; after it the Voiceover track is fine again
+        CHECK_EQ(Voiceover::recordTrack(tl, -1, -1, 10), 4);
+        CHECK_EQ(Voiceover::recordTrack(tl, -1, -1, 10, INT_MAX, "/elsewhere"), 4);
+        CHECK_EQ(Voiceover::recordTrack(tl, -1, -1, 50), 3);
+        CHECK(Voiceover::isTake("/x/a.wav", "/x") && !Voiceover::isTake("/x/a.wav", "/y"));
+        CHECK(Voiceover::isTake(Voiceover::folder(QString()) + "/voiceover-1.wav", "/y")); // taken before saving
         CHECK(Voiceover::isVoiceoverTrack(tl.audio[3]) && !Voiceover::isVoiceoverTrack(tl.audio[1]));
         // Known length (CLI): a free unnamed track must be free to the end
         Timeline t2;
@@ -436,8 +443,10 @@ int main(int argc, char** argv)
         const int tracks = int(p.timeline().audio.size());
         int placed = -9;
         // Onto the track after the last (a new one) from frame 20, file 0.5 frames late
-        const int id = ed.placeRecording("/x/vo.wav", tracks, 19.5, 20, &placed);
+        int nothing = -1;
+        const int id = ed.placeRecording("/x/vo.wav", tracks, 19.5, 20, &placed, 0, &nothing);
         CHECK(id > 0);
+        CHECK_EQ(nothing, 0);
         CHECK_EQ(placed, tracks);
         if (CHECK_EQ(int(p.timeline().audio.size()), tracks + 1) && p.timeline().audio[tracks].clips.size() == 1) {
             const Clip& c = p.timeline().audio[tracks].clips[0];
@@ -459,8 +468,10 @@ int main(int argc, char** argv)
         CHECK_EQ(int(p.timeline().audio.size()), tracks + 1);
         p.undoStack()->undo();
         // Punch-in on A1 over its sound: a[0-30] vo[30-90] a[90-100], one undo restores it
-        CHECK(ed.placeRecording("/x/vo.wav", 0, 30.0, 30, &placed) > 0);
+        int replaced = -1;
+        CHECK(ed.placeRecording("/x/vo.wav", 0, 30.0, 30, &placed, 0, &replaced) > 0);
         CHECK_EQ(placed, 0);
+        CHECK_EQ(replaced, 1); // said in the status bar
         CHECK_EQ(p.timeline().audio[0].clips.size(), qsizetype(3));
         p.undoStack()->undo();
         CHECK_EQ(p.timeline().audio[0].clips.size(), qsizetype(1));

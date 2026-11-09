@@ -130,7 +130,13 @@ void MainWindow::setupVoiceover()
     });
     connect(m_voiceover, &VoiceoverRecorder::finished, this,
             [this](const QString& path, bool placed, const QString& error) {
-                if (placed)
+                // Whenever a take replaced something, say so (and how to get it back)
+                const int replaced = m_voiceover->replaced();
+                if (placed && replaced > 0)
+                    statusBar()->showMessage(replaced == 1 ? T("Aufnahme ersetzt 1 Clip – Strg+Z holt ihn zurück")
+                                                           : T("Aufnahme ersetzt %1 Clips – Strg+Z holt sie zurück").arg(replaced),
+                                             10000);
+                else if (placed)
                     statusBar()->showMessage(T("Voiceover auf %1 gelegt: %2")
                                                  .arg(trackShortName({TrackKind::Audio, m_voiceover->placedTrack()}),
                                                       QFileInfo(path).fileName()),

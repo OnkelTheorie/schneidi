@@ -282,9 +282,11 @@ void Editor::placeSource(Timeline& tl, const MediaInfo& m, int sIn, int len, int
     muteRepeatedSound(tl, sound);
 }
 
-int Editor::placeRecording(const QString& path, int track, double fileStart, int from, int* placed, int sequence)
+int Editor::placeRecording(const QString& path, int track, double fileStart, int from, int* placed, int sequence,
+                           int* replaced)
 {
     if (placed) *placed = -1;
+    if (replaced) *replaced = 0;
     const MediaInfo* m = m_project->mediaInfo(path);
     if (!m || !m->hasAudio || m->length <= 0) return 0;
     const std::optional<Voiceover::Placement> at = Voiceover::place(fileStart, std::max(0, from), m->length);
@@ -313,6 +315,8 @@ int Editor::placeRecording(const QString& path, int track, double fileStart, int
         c.out = m->length - 1;
         TimelineOps::clearDissolveAt(t, c.start);
         TimelineOps::clearDissolveAt(t, c.end());
+        if (replaced)
+            for (const Clip& o : t.clips) *replaced += o.start < c.end() && o.end() > c.start;
         TimelineOps::placeClip(t, c, [this] { return m_project->newClipId(); });
     };
     if (!other) {
@@ -325,6 +329,7 @@ int Editor::placeRecording(const QString& path, int track, double fileStart, int
         });
     }
     if (placed) *placed = id ? target : -1;
+    if (replaced && !id) *replaced = 0;
     return id;
 }
 

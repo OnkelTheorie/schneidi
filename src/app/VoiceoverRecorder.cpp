@@ -131,7 +131,7 @@ bool VoiceoverRecorder::start(QString* error)
     const QSet<int> selected = m_editor->selection()->ids();
     const Timeline& tl = m_project->timeline();
     m_track = Voiceover::recordTrack(tl, m_armed, Voiceover::selectedTrack(tl, QVector<int>(selected.begin(), selected.end())),
-                                     m_engine->position());
+                                     m_engine->position(), INT_MAX, Voiceover::folder(m_projectPath()));
     if (m_track < 0) {
         if (error) *error = T("Die Spur ist gesperrt.");
         return false;
@@ -266,6 +266,7 @@ bool VoiceoverRecorder::stop(QString* error)
     QString problem;
     bool placed = false;
     m_placedTrack = -1;
+    m_replaced = 0;
     if (!written) problem = T("Aufnahme nicht gespeichert: %1").arg(why);
     else if (frames <= 0) problem = T("Nichts aufgenommen.");
     else if (!m_import(path)) problem = T("Aufnahme nicht lesbar: %1").arg(QDir::toNativeSeparators(path));
@@ -277,7 +278,8 @@ bool VoiceoverRecorder::stop(QString* error)
             m_track = Voiceover::findTrack(tl, m_trackKey);
             if (m_track < 0) m_track = int(tl.audio.size());
         }
-        placed = m_editor->placeRecording(path, m_track, fileStart, m_headFrom, &m_placedTrack, m_sequence) != 0;
+        placed = m_editor->placeRecording(path, m_track, fileStart, m_headFrom, &m_placedTrack, m_sequence,
+                                          &m_replaced) != 0;
     }
     if (written && frames > 0 && !placed && problem.isEmpty()) problem = T("Aufnahme liegt nur im Medienpool.");
     if (error) *error = problem;
