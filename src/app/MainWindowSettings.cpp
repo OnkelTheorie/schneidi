@@ -13,6 +13,7 @@
 #include "app/StartTemplatesPage.h"
 #include "app/Theme.h"
 #include "app/UpdateCheck.h"
+#include "engine/Engine.h"
 #include "core/I18n.h"
 #include "core/StartTemplates.h"
 #include "engine/Background.h"
@@ -45,6 +46,7 @@ void MainWindow::settingsDialog(int tab)
         const QString id = saveStartTemplate(&dlg, &madeDefault);
         if (!id.isEmpty()) templates->reload(madeDefault ? id : QString());
     });
+    dlg.setPreviewProject(m_engine->frameSize());
     if (dlg.exec() != QDialog::Accepted) return;
     // Start templates: the template new projects start with, whether New Project asks (test runs keep the settings)
     if (!m_autosaveDisabled) {

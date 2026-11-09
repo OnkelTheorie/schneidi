@@ -2872,10 +2872,7 @@
  "für ausgewählte Clips": "pour les clips sélectionnés",
  "Auflösung auf dem Monitor": "Résolution sur le moniteur",
  "Automatisch (passend zur Anzeige)": "Automatique (selon l’affichage)",
- "Automatisch: so groß, wie die Vorschau gerade angezeigt wird. Volle Auflösung ist schärfer, braucht aber einen schnellen Rechner. Der Export nutzt immer die volle Auflösung.": "Automatique : aussi grand que l’aperçu est affiché. La pleine résolution est plus nette mais demande un ordinateur rapide. L’export utilise toujours la pleine résolution.",
- "Halbe Auflösung": "Demi-résolution",
  "Hauptfenster": "Fenêtre principale",
- "Volle Projektauflösung": "Pleine résolution du projet",
  "Vorschau": "Aperçu",
  "Vorschau-Auflösung": "Résolution de l’aperçu",
  "Zweiter Monitor": "Second moniteur",
@@ -2884,5 +2881,16 @@
  "Der Rundgang läuft in einem Übungsprojekt. Dein Projekt hat ungespeicherte Änderungen: Es kommt nach dem Rundgang genau so zurück, wie es jetzt ist.": "La visite se déroule dans un projet d’entraînement. Ton projet contient des modifications non enregistrées : après la visite, il revient exactement tel qu’il est maintenant.",
  "Erst speichern": "Enregistrer d’abord",
  "Für mich erledigen": "Le faire pour moi",
- "Rundgang starten": "Commencer la visite"
+ "Rundgang starten": "Commencer la visite",
+ "%1 (größer als das Projekt)": "%1 (plus grand que le projet)",
+ "%1p (4K)": "%1p (4K)",
+ "Automatisch: so groß, wie die Vorschau gerade angezeigt wird. Mehr Pixel sind schärfer, brauchen aber einen schnellen Rechner. Der Export nutzt immer die volle Auflösung.": "Automatique : aussi grand que l'aperçu est affiché en ce moment. Plus de pixels, c'est plus net, mais il faut un ordinateur rapide. L'export utilise toujours la pleine résolution.",
+ "Das Projekt hat nur %1: größer wird die Vorschau nie.": "Le projet ne fait que %1 : l'aperçu n'est jamais plus grand.",
+ "Feste Größen nennen die kürzere Seite, die längere folgt dem Seitenverhältnis des Projekts (ein 9:16-Projekt bei 1080p: 1080×1920).": "Les tailles fixes indiquent le petit côté ; le grand suit le format du projet (un projet 9:16 en 1080p : 1080×1920).",
+ "Projektauflösung": "Résolution du projet",
+ "So groß, wie die Vorschau gerade angezeigt wird": "Aussi grand que l'aperçu est affiché en ce moment",
+ "So groß, wie die Vorschau gerade angezeigt wird: jetzt %1, höchstens %2 Pixel an der längeren Seite": "Aussi grand que l'aperçu est affiché en ce moment : actuellement %1, au plus %2 pixels sur le grand côté",
+ "Vorschau: %1": "Aperçu : %1",
+ "Vorschau: %1, so groß wie das Projekt. Am schärfsten, braucht aber einen schnellen Rechner.": "Aperçu : %1, aussi grand que le projet. Le plus net, mais il faut un ordinateur rapide.",
+ "Vorschau: %1. Die kürzere Seite hat %2 Pixel, die längere folgt dem Seitenverhältnis des Projekts (ein 9:16-Projekt bei 1080p: 1080×1920).": "Aperçu : %1. Le petit côté fait %2 pixels, le grand suit le format du projet (un projet 9:16 en 1080p : 1080×1920)."
 }

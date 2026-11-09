@@ -13,6 +13,7 @@
 #include "engine/FileStamp.h"
 #include "engine/MediaProbe.h"
 #include "engine/OpenMedia.h"
+#include "engine/PreviewResolution.h"
 #include "engine/MemoryRelease.h"
 #include "engine/ProxyManager.h"
 #include "engine/RenderCache.h"
@@ -86,17 +87,13 @@ QImage frameImage(const Picture::Frame& f)
                   [](void* p) { delete static_cast<Picture::Frame*>(p); }, keep);
 }
 
-// Preview size: the project format scaled down to a longer edge of 960 (even; larger when `edge` asks for it, e.g. the
-// full-screen viewer's screen, never beyond the project), the full size when the viewer zooms to 100 % or more (full)
-// or with SCHNEIDI_FULLRES_PREVIEW
+// Preview size: the project format scaled down to the longer `edge` the display or the user's choice asks for (0 = a
+// longer edge of 960; engine/PreviewResolution, never beyond the project), the full size when the viewer zooms to 100 %
+// or more (full) or with SCHNEIDI_FULLRES_PREVIEW
 QSize previewSizeOf(const ProjectFormat& format, bool full, int edge)
 {
     if (full || qEnvironmentVariableIsSet("SCHNEIDI_FULLRES_PREVIEW")) return format.size();
-    const QSize project = format.size();
-    if (edge >= std::max(project.width(), project.height())) return project;
-    const int longer = std::max(960, edge);
-    const QSize fit = project.scaled(longer, longer, Qt::KeepAspectRatio);
-    return QSize(std::max(2, fit.width() & ~1), std::max(2, fit.height() & ~1));
+    return PreviewResolution::sizeFor(format.size(), edge);
 }
 
 } // namespace
@@ -950,6 +947,11 @@ void Engine::seek(int frame)
 Picture::Pump::Stats Engine::pictureStats() const
 {
     return m_pump ? m_pump->stats() : Picture::Pump::Stats{};
+}
+
+int Engine::timelineFramesOnGpu() const
+{
+    return m_renderer ? m_renderer->stats().framesGpu : 0;
 }
 
 void Engine::emitLevels()

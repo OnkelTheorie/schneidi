@@ -881,11 +881,10 @@ void MainWindow::buildActions()
           std::tuple{PreviewResolution::Target::Monitor, N_("Zweiter Monitor"), "preview_res_monitor"}}) {
         QMenu* sub = resMenu->addMenu(T(title));
         auto* group = new QActionGroup(sub);
-        for (const auto& [choice, text, suffix] :
-             {std::tuple{PreviewResolution::Choice::Auto, N_("Automatisch (passend zur Anzeige)"), "_auto"},
-              std::tuple{PreviewResolution::Choice::Half, N_("Halbe Auflösung"), "_half"},
-              std::tuple{PreviewResolution::Choice::Full, N_("Volle Projektauflösung"), "_full"}}) {
-            QAction* a = makeAction(sub, QString(prefix) + suffix, T(text), QKeySequence(),
+        sub->setToolTipsVisible(true); // the size each entry gives (updateResolutionMenus)
+        for (const PreviewResolution::Choice choice : PreviewResolution::kChoices) {
+            const QString suffix = "_" + PreviewResolution::toStored(choice);
+            QAction* a = makeAction(sub, QString(prefix) + suffix, PreviewResolution::label(choice), QKeySequence(),
                                     [this, t = target, c = choice] { setPreviewResolution(t, c); });
             a->setCheckable(true);
             a->setChecked(previewResolution(target) == choice);
@@ -894,6 +893,7 @@ void MainWindow::buildActions()
         }
     }
     m_viewer->addAction(resMenu->menuAction());
+    connect(m_viewer, &Viewer::previewEdgeWanted, this, &MainWindow::updatePreviewEdge); // automatic follows its size
     updatePreviewEdge();
 
     // Help: log file for error messages (Windows has no terminal)

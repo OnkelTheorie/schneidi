@@ -81,6 +81,14 @@ public:
     class FrameView* screen() const { return m_screen; }
     // Height of the whole viewer (bars included) at which the picture fills `width` (0 = no frame size known)
     int heightFor(int width) const;
+    // Longer edge of the preview the fitted picture needs to look sharp here: the physical pixels it covers
+    // (devicePixelRatio included), rounded up to a step of 64, at most PreviewResolution::kAutoCap; 0 = not shown yet
+    // (PreviewResolution "automatic"; Engine::setPreviewEdge)
+    int wantedPreviewEdge() const;
+    // A short note over the picture (e.g. "Vorschau: 1280×720"), gone after `ms`; notice() = the shown text, empty
+    // when none is shown
+    void showNotice(const QString& text, int ms = 2000);
+    QString notice() const;
 
 signals:
     void hintAccepted(); // the hint's button
@@ -89,6 +97,10 @@ signals:
     // Zoomed to 100 % or more: the preview should come at the project size (Engine::setPreviewFullSize)
     void fullSizeWanted(bool full);
     void programBackWanted(); // the empty page's button (program elsewhere)
+    void previewEdgeWanted(); // wantedPreviewEdge() changed (picture area resized, other screen)
+
+protected:
+    bool eventFilter(QObject* obj, QEvent* event) override;
 
 private:
     void updateTimecode(int frame);
@@ -120,4 +132,8 @@ private:
     QString m_sourcePath, m_sourceName;
     int m_length = 0, m_in = -1, m_out = -1;
     bool m_recording = false;
+    QLabel* m_notice = nullptr;       // showNotice
+    class QTimer* m_noticeTimer = nullptr;
+    class QTimer* m_edgeTimer = nullptr; // bundles resize steps before previewEdgeWanted
+    int m_lastEdge = 0;
 };

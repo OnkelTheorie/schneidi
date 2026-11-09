@@ -39,7 +39,9 @@ public:
     bool autoLinkNodes() const; // Compositing: new nodes linked at once (CompUi::autoLink)
     // Preview on a second monitor: the main window keeps the viewer's area or closes it up (MainWindow)
     SecondScreenPlan::Mode secondScreenMode() const;
-    // Preview resolution of the main window resp. the second monitor
+    // Preview resolution of the main window resp. the second monitor; setPreviewProject: fixed sizes above this
+    // project's are shown disabled
+    void setPreviewProject(const QSize& project);
     PreviewResolution::Choice previewResolution(PreviewResolution::Target target) const;
     // Proxy media made right on import (ProxyManager::importRule)
     ProxyManager::ImportRule proxyImportRule() const;

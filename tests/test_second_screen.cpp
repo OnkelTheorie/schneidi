@@ -320,7 +320,7 @@ void testApp(MainWindow& w, Engine& engine, const QString& clip)
     settle();
     CHECK(!w.previewOutput() && !action->isChecked());
     CHECK(viewer->isVisible());
-    CHECK_EQ(engine.previewEdge(), 0);
+    CHECK_EQ(engine.previewEdge(), viewer->wantedPreviewEdge()); // the viewer's own size again
     same(before, Sizes::of(&w), "esc");
     CHECK(tv->view().pxPerFrame == view.pxPerFrame && tv->view().leftFrame == view.leftFrame);
 

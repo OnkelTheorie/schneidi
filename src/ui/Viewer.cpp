@@ -5,6 +5,7 @@
 #include "core/I18n.h"
 #include "core/Timecode.h"
 #include "engine/Engine.h"
+#include "engine/PreviewResolution.h"
 #include "engine/StillFetcher.h"
 #include "ui/TrimView.h"
 #include "ui/MediaPool.h"
@@ -25,6 +26,7 @@
 #include <QPointer>
 #include <QSignalBlocker>
 #include <QStackedWidget>
+#include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
 #include <algorithm>
@@ -164,6 +166,27 @@ Viewer::Viewer(Engine* engine, QWidget* parent) : QWidget(parent), m_engine(engi
     m_screen = new FrameView;
     m_screen->setObjectName("viewer_screen");
     m_screen->setMinimumSize(320, 180);
+    m_screen->installEventFilter(this); // resized / other screen: the automatic preview size follows
+    m_edgeTimer = new QTimer(this);
+    m_edgeTimer->setSingleShot(true);
+    m_edgeTimer->setInterval(150); // a splitter drag asks once at its end, not per pixel
+    connect(m_edgeTimer, &QTimer::timeout, this, [this] {
+        const int edge = wantedPreviewEdge();
+        if (edge != m_lastEdge) {
+            m_lastEdge = edge;
+            emit previewEdgeWanted();
+        }
+    });
+    m_notice = new QLabel(m_screen);
+    m_notice->setObjectName("viewer_notice");
+    m_notice->setAttribute(Qt::WA_TransparentForMouseEvents);
+    m_notice->setStyleSheet(QString("QLabel { background: rgba(0, 0, 0, 170); color: %1; border-radius: 6px; "
+                                    "padding: 6px 12px; font-weight: 600; }")
+                                .arg(Theme::text.name()));
+    m_notice->hide();
+    m_noticeTimer = new QTimer(this);
+    m_noticeTimer->setSingleShot(true);
+    connect(m_noticeTimer, &QTimer::timeout, m_notice, &QWidget::hide);
 
     m_trim = new TrimView;
     // The program is on another monitor and no source clip was opened since (setProgramElsewhere)
@@ -393,6 +416,49 @@ int Viewer::heightFor(int width) const
     const QSize frame = m_engine->frameSize();
     if (frame.isEmpty()) return 0;
     return height() - m_stack->height() + int(std::ceil(double(width) * frame.height() / frame.width()));
+}
+
+int Viewer::wantedPreviewEdge() const
+{
+    if (!m_screen->isVisible() || m_screen->width() <= 0 || m_screen->height() <= 0) return 0;
+    const QSize px = m_screen->size() * m_screen->devicePixelRatioF();
+    QSize project = m_engine->frameSize();
+    if (project.isEmpty()) project = px;
+    const QSize covered = project.scaled(px, Qt::KeepAspectRatio);
+    const int longer = std::max(covered.width(), covered.height());
+    return std::clamp((longer + 63) / 64 * 64, 64, PreviewResolution::kAutoCap);
+}
+
+bool Viewer::eventFilter(QObject* obj, QEvent* event)
+{
+    if (obj == m_screen) {
+        switch (event->type()) {
+        case QEvent::Resize:
+        case QEvent::Show:
+        case QEvent::Hide:
+        case QEvent::DevicePixelRatioChange:
+            m_edgeTimer->start();
+            if (m_notice->isVisible()) m_notice->move((m_screen->width() - m_notice->width()) / 2, 12);
+            break;
+        default: break;
+        }
+    }
+    return QWidget::eventFilter(obj, event);
+}
+
+void Viewer::showNotice(const QString& text, int ms)
+{
+    m_notice->setText(text);
+    m_notice->adjustSize();
+    m_notice->move((m_screen->width() - m_notice->width()) / 2, 12);
+    m_notice->show();
+    m_notice->raise(); // above the GPU surface and the overlay layer
+    m_noticeTimer->start(ms);
+}
+
+QString Viewer::notice() const
+{
+    return m_notice->isHidden() ? QString() : m_notice->text();
 }
 
 void Viewer::setHint(const QString& text, const QString& button)

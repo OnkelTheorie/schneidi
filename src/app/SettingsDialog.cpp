@@ -12,6 +12,7 @@
 
 #include <QCheckBox>
 #include <QComboBox>
+#include <QStandardItemModel>
 #include <QCoreApplication>
 #include <QDialogButtonBox>
 #include <QDir>
@@ -219,9 +220,10 @@ QWidget* SettingsDialog::buildGeneral()
     const auto resolutionBox = [](const char* name, PreviewResolution::Target target) {
         auto* box = new QComboBox;
         box->setObjectName(name);
-        box->addItem(T("Automatisch (passend zur Anzeige)"), int(PreviewResolution::Choice::Auto));
-        box->addItem(T("Halbe Auflösung"), int(PreviewResolution::Choice::Half));
-        box->addItem(T("Volle Projektauflösung"), int(PreviewResolution::Choice::Full));
+        for (const PreviewResolution::Choice c : PreviewResolution::kChoices)
+            box->addItem(PreviewResolution::label(c), int(c));
+        box->setToolTip(T("Feste Größen nennen die kürzere Seite, die längere folgt dem Seitenverhältnis des "
+                          "Projekts (ein 9:16-Projekt bei 1080p: 1080×1920)."));
         box->setCurrentIndex(std::max(0, box->findData(int(PreviewResolution::stored(target)))));
         return box;
     };
@@ -230,8 +232,8 @@ QWidget* SettingsDialog::buildGeneral()
     rform->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
     m_viewerResolution = resolutionBox("viewer_resolution", PreviewResolution::Target::Viewer);
     rform->addRow(T("Auflösung"), m_viewerResolution);
-    rform->addRow(hint(T("Automatisch: so groß, wie die Vorschau gerade angezeigt wird. Volle Auflösung ist schärfer, "
-                         "braucht aber einen schnellen Rechner. Der Export nutzt immer die volle Auflösung.")));
+    rform->addRow(hint(T("Automatisch: so groß, wie die Vorschau gerade angezeigt wird. Mehr Pixel sind schärfer, "
+                         "brauchen aber einen schnellen Rechner. Der Export nutzt immer die volle Auflösung.")));
     lay->addWidget(viewerBox);
 
     // Preview on a second monitor (Workspace menu): what the main window does with the viewer's area meanwhile
@@ -260,6 +262,21 @@ bool SettingsDialog::autoLinkNodes() const { return m_autoLink->isChecked(); }
 SecondScreenPlan::Mode SettingsDialog::secondScreenMode() const
 {
     return SecondScreenPlan::Mode(m_secondScreen->currentData().toInt());
+}
+
+void SettingsDialog::setPreviewProject(const QSize& project)
+{
+    for (QComboBox* box : {m_viewerResolution, m_monitorResolution}) {
+        auto* model = qobject_cast<QStandardItemModel*>(box->model());
+        for (int i = 0; i < box->count(); ++i) {
+            const auto c = PreviewResolution::Choice(box->itemData(i).toInt());
+            const bool larger = PreviewResolution::largerThanProject(c, project);
+            box->setItemText(i, larger ? T("%1 (größer als das Projekt)").arg(PreviewResolution::label(c))
+                                       : PreviewResolution::label(c));
+            if (QStandardItem* item = model ? model->item(i) : nullptr)
+                item->setEnabled(!larger || i == box->currentIndex());
+        }
+    }
 }
 
 PreviewResolution::Choice SettingsDialog::previewResolution(PreviewResolution::Target target) const

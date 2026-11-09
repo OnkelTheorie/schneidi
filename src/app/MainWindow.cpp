@@ -109,6 +109,8 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
     setWindowTitle(appName());
     resize(1600, 950);
     m_aiSettings = AiSettings::load(); // Settings › AI (MainWindowSettings.cpp)
+    m_viewerRes = PreviewResolution::stored(PreviewResolution::Target::Viewer, m_engine->frameSize());
+    m_monitorRes = PreviewResolution::stored(PreviewResolution::Target::Monitor, m_engine->frameSize());
     m_aiLog = new AiLog(this);
     m_aiLog->setLimit(m_aiSettings.logLength);
 

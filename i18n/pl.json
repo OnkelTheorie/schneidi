@@ -2872,10 +2872,7 @@
  "für ausgewählte Clips": "dla zaznaczonych klipów",
  "Auflösung auf dem Monitor": "Rozdzielczość na monitorze",
  "Automatisch (passend zur Anzeige)": "Automatycznie (do wyświetlacza)",
- "Automatisch: so groß, wie die Vorschau gerade angezeigt wird. Volle Auflösung ist schärfer, braucht aber einen schnellen Rechner. Der Export nutzt immer die volle Auflösung.": "Automatycznie: tak duży, jak podgląd jest właśnie wyświetlany. Pełna rozdzielczość jest ostrzejsza, ale wymaga szybkiego komputera. Eksport zawsze używa pełnej rozdzielczości.",
- "Halbe Auflösung": "Połowa rozdzielczości",
  "Hauptfenster": "Okno główne",
- "Volle Projektauflösung": "Pełna rozdzielczość projektu",
  "Vorschau": "Podgląd",
  "Vorschau-Auflösung": "Rozdzielczość podglądu",
  "Zweiter Monitor": "Drugi monitor",
@@ -2884,5 +2881,16 @@
  "Der Rundgang läuft in einem Übungsprojekt. Dein Projekt hat ungespeicherte Änderungen: Es kommt nach dem Rundgang genau so zurück, wie es jetzt ist.": "Przewodnik działa w projekcie ćwiczeniowym. Twój projekt ma niezapisane zmiany: po przewodniku wróci dokładnie taki, jaki jest teraz.",
  "Erst speichern": "Najpierw zapisz",
  "Für mich erledigen": "Zrób to za mnie",
- "Rundgang starten": "Rozpocznij przewodnik"
+ "Rundgang starten": "Rozpocznij przewodnik",
+ "%1 (größer als das Projekt)": "%1 (większa niż projekt)",
+ "%1p (4K)": "%1p (4K)",
+ "Automatisch: so groß, wie die Vorschau gerade angezeigt wird. Mehr Pixel sind schärfer, brauchen aber einen schnellen Rechner. Der Export nutzt immer die volle Auflösung.": "Automatycznie: tak duży, jak podgląd jest teraz wyświetlany. Więcej pikseli to większa ostrość, ale potrzeba szybkiego komputera. Eksport zawsze używa pełnej rozdzielczości.",
+ "Das Projekt hat nur %1: größer wird die Vorschau nie.": "Projekt ma tylko %1: podgląd nigdy nie jest większy.",
+ "Feste Größen nennen die kürzere Seite, die längere folgt dem Seitenverhältnis des Projekts (ein 9:16-Projekt bei 1080p: 1080×1920).": "Stałe rozmiary podają krótszy bok; dłuższy wynika z proporcji projektu (projekt 9:16 przy 1080p: 1080×1920).",
+ "Projektauflösung": "Rozdzielczość projektu",
+ "So groß, wie die Vorschau gerade angezeigt wird": "Tak duży, jak podgląd jest teraz wyświetlany",
+ "So groß, wie die Vorschau gerade angezeigt wird: jetzt %1, höchstens %2 Pixel an der längeren Seite": "Tak duży, jak podgląd jest teraz wyświetlany: teraz %1, najwyżej %2 pikseli na dłuższym boku",
+ "Vorschau: %1": "Podgląd: %1",
+ "Vorschau: %1, so groß wie das Projekt. Am schärfsten, braucht aber einen schnellen Rechner.": "Podgląd: %1, tak duży jak projekt. Najostrzejszy, ale potrzebuje szybkiego komputera.",
+ "Vorschau: %1. Die kürzere Seite hat %2 Pixel, die längere folgt dem Seitenverhältnis des Projekts (ein 9:16-Projekt bei 1080p: 1080×1920).": "Podgląd: %1. Krótszy bok ma %2 pikseli, dłuższy wynika z proporcji projektu (projekt 9:16 przy 1080p: 1080×1920)."
 }

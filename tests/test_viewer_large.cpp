@@ -454,7 +454,7 @@ void testFullScreen(MainWindow& w, Engine& engine)
     QTest::qWait(50);
     CHECK(!w.fullScreenViewer() && !full->isChecked() && !button->isChecked());
     CHECK(engine.speed() > 0.0);
-    CHECK_EQ(engine.previewEdge(), 0);
+    CHECK_EQ(engine.previewEdge(), viewer->wantedPreviewEdge()); // back to the viewer's own size
     engine.pause();
     settle();
     sameLayout(before, Layout::of(&w), "full screen");

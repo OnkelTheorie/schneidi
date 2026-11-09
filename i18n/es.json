@@ -2872,10 +2872,7 @@
  "für ausgewählte Clips": "para los clips seleccionados",
  "Auflösung auf dem Monitor": "Resolución en el monitor",
  "Automatisch (passend zur Anzeige)": "Automática (según la pantalla)",
- "Automatisch: so groß, wie die Vorschau gerade angezeigt wird. Volle Auflösung ist schärfer, braucht aber einen schnellen Rechner. Der Export nutzt immer die volle Auflösung.": "Automática: tan grande como se muestra la vista previa en ese momento. La resolución completa es más nítida, pero necesita un ordenador rápido. La exportación siempre usa la resolución completa.",
- "Halbe Auflösung": "Media resolución",
  "Hauptfenster": "Ventana principal",
- "Volle Projektauflösung": "Resolución completa del proyecto",
  "Vorschau": "Vista previa",
  "Vorschau-Auflösung": "Resolución de la vista previa",
  "Zweiter Monitor": "Segundo monitor",
@@ -2884,5 +2881,16 @@
  "Der Rundgang läuft in einem Übungsprojekt. Dein Projekt hat ungespeicherte Änderungen: Es kommt nach dem Rundgang genau so zurück, wie es jetzt ist.": "El recorrido se hace en un proyecto de práctica. Tu proyecto tiene cambios sin guardar: después del recorrido vuelve exactamente como está ahora.",
  "Erst speichern": "Guardar primero",
  "Für mich erledigen": "Hazlo por mí",
- "Rundgang starten": "Iniciar recorrido"
+ "Rundgang starten": "Iniciar recorrido",
+ "%1 (größer als das Projekt)": "%1 (mayor que el proyecto)",
+ "%1p (4K)": "%1p (4K)",
+ "Automatisch: so groß, wie die Vorschau gerade angezeigt wird. Mehr Pixel sind schärfer, brauchen aber einen schnellen Rechner. Der Export nutzt immer die volle Auflösung.": "Automático: tan grande como se muestra la vista previa ahora. Más píxeles dan más nitidez, pero necesitan un ordenador rápido. La exportación siempre usa la resolución completa.",
+ "Das Projekt hat nur %1: größer wird die Vorschau nie.": "El proyecto solo tiene %1: la vista previa nunca es mayor.",
+ "Feste Größen nennen die kürzere Seite, die längere folgt dem Seitenverhältnis des Projekts (ein 9:16-Projekt bei 1080p: 1080×1920).": "Los tamaños fijos indican el lado corto; el largo sigue la relación de aspecto del proyecto (un proyecto 9:16 a 1080p: 1080×1920).",
+ "Projektauflösung": "Resolución del proyecto",
+ "So groß, wie die Vorschau gerade angezeigt wird": "Tan grande como se muestra la vista previa ahora",
+ "So groß, wie die Vorschau gerade angezeigt wird: jetzt %1, höchstens %2 Pixel an der längeren Seite": "Tan grande como se muestra la vista previa ahora: ahora %1, como máximo %2 píxeles en el lado largo",
+ "Vorschau: %1": "Vista previa: %1",
+ "Vorschau: %1, so groß wie das Projekt. Am schärfsten, braucht aber einen schnellen Rechner.": "Vista previa: %1, tan grande como el proyecto. Lo más nítido, pero necesita un ordenador rápido.",
+ "Vorschau: %1. Die kürzere Seite hat %2 Pixel, die längere folgt dem Seitenverhältnis des Projekts (ein 9:16-Projekt bei 1080p: 1080×1920).": "Vista previa: %1. El lado corto tiene %2 píxeles, el largo sigue la relación de aspecto del proyecto (un proyecto 9:16 a 1080p: 1080×1920)."
 }
