@@ -472,7 +472,8 @@ private:
     // (Engine::setPreviewEdge: one preview, the larger size wins)
     void updatePreviewEdge();
     void hideViewerArea();    // the viewer and the splitters left empty by it go, their sizes are remembered
-    void restoreViewerArea(); // back as it was before hideViewerArea
+    void restoreViewerArea(); // back as it was before hideViewerArea, but with what the user dragged meanwhile
+    void watchViewerAwaySplitters(); // notes the splitters of m_viewerAway the user drags meanwhile
     void updateViewerArea();  // hidden or back, as the mode and the output say
     QAction* m_secondScreenAction = nullptr;
     QAction* m_secondScreenModeActions[2] = {}; // Workspace › Main Window with a Second Monitor, by Mode
@@ -493,6 +494,8 @@ private:
         QVector<QPair<QPointer<QSplitter>, QList<int>>> sizes; // their sizes before, innermost first
         bool timelineUp = false; // Edit page: the timeline took the viewer's place in the top row
         QSizePolicy timelinePolicy; // its own before (the viewer's stretch while up there)
+        QSet<QSplitter*> moved; // of `sizes`: dragged by the user meanwhile (their new sizes stay)
+        QVector<QMetaObject::Connection> watches; // splitterMoved of `sizes`
     } m_viewerAway;
 
     QHash<QString, MediaInfo> m_probeCache;

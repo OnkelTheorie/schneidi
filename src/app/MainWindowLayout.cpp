@@ -920,6 +920,7 @@ void MainWindow::hideViewerArea()
         m_viewerAway.hidden << m_viewer;
         m_viewerAway.timelineUp = true;
         if (focus && m_timeline->isAncestorOf(focus)) focus->setFocus(); // moving a widget takes its focus
+        watchViewerAwaySplitters();
         return;
     }
     QWidget* gone = m_viewer;
@@ -937,12 +938,40 @@ void MainWindow::hideViewerArea()
         m_viewer->hide();
         m_viewerAway.hidden << m_viewer;
     }
+    watchViewerAwaySplitters();
+}
+
+void MainWindow::watchViewerAwaySplitters()
+{
+    for (const auto& [splitter, sizes] : m_viewerAway.sizes)
+        if (QSplitter* s = splitter)
+            m_viewerAway.watches << connect(s, &QSplitter::splitterMoved, this, [this, s] { m_viewerAway.moved.insert(s); });
 }
 
 void MainWindow::restoreViewerArea()
 {
     if (!m_viewerAway.active) return;
     const ViewerAway was = std::exchange(m_viewerAway, {});
+    for (const QMetaObject::Connection& c : was.watches) disconnect(c);
+    // The splitters the user dragged meanwhile keep that: their sizes now for what stayed in view, the saved size only
+    // for what comes back (the other widths shrink in proportion to make room)
+    QHash<QSplitter*, QList<int>> dragged;
+    for (const auto& [splitter, saved] : was.sizes) {
+        QSplitter* s = splitter;
+        if (!s || !was.moved.contains(s) || s->count() != saved.size()) continue;
+        QList<int> now = s->sizes();
+        int back = 0, stayed = 0;
+        for (int i = 0; i < now.size(); ++i) {
+            if (s->widget(i)->isHidden()) back += saved[i];
+            else stayed += now[i];
+        }
+        const int total = std::accumulate(now.begin(), now.end(), 0);
+        for (int i = 0; i < now.size(); ++i)
+            now[i] = s->widget(i)->isHidden() ? saved[i]
+                     : stayed > 0         ? int(qint64(now[i]) * std::max(0, total - back) / stayed)
+                                          : now[i];
+        dragged.insert(s, now);
+    }
     if (was.timelineUp && m_editTop->indexOf(m_timeline) >= 0) { // the viewer and the timeline swap back
         QWidget* focus = focusWidget(); // the window's, also while the monitor's window is the active one
         m_editTop->replaceWidget(m_editTop->indexOf(m_timeline), m_viewer);
@@ -955,5 +984,5 @@ void MainWindow::restoreViewerArea()
         if (w) w->show();
     // Outer splitters first (see setViewerLarge: an inner one restored first is scaled again)
     for (auto it = was.sizes.crbegin(); it != was.sizes.crend(); ++it)
-        if (it->first) it->first->setSizes(it->second);
+        if (it->first) it->first->setSizes(dragged.value(it->first, it->second));
 }

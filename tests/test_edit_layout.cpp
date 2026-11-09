@@ -25,6 +25,7 @@
 #include <QScreen>
 #include <QSettings>
 #include <QSplitter>
+#include <QSplitterHandle>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QToolButton>
@@ -206,6 +207,33 @@ void testLayout(MainWindow& w, const QSize& size)
         same(before, Sizes::of(&w), "back " + name);
         CHECK(sameView(tv->view(), view));
         w.setSecondScreenMode(Plan::Mode::KeepArea);
+    }
+    // The left column widened by the user while the viewer is hidden (a drag on its handle): it keeps that width when
+    // the viewer comes back, the viewer takes its old place
+    {
+        w.setSecondScreenMode(Plan::Mode::HideViewer);
+        w.showPreviewOn(QGuiApplication::primaryScreen());
+        settle();
+        const int at = ui.editTop->indexOf(ui.timeline);
+        if (CHECK(ui.viewer->isHidden() && at > 0)) {
+            const int poolWidth = ui.editTop->widget(at - 1)->width();
+            QSplitterHandle* handle = ui.editTop->handle(at);
+            const QPoint mid(handle->width() / 2, handle->height() / 2);
+            QTest::mousePress(handle, Qt::LeftButton, {}, mid);
+            QTest::mouseMove(handle, mid + QPoint(40, 0));
+            QTest::mouseRelease(handle, Qt::LeftButton, {}, mid + QPoint(40, 0));
+            settle();
+            const int widened = ui.editTop->widget(at - 1)->width();
+            CHECK(widened > poolWidth + 20);
+            w.showPreviewOn(nullptr);
+            settle();
+            CHECK(ui.viewer->isVisible());
+            CHECK(ui.editTop->indexOf(ui.viewer) == at);
+            CHECK(std::abs(ui.editTop->widget(at - 1)->width() - widened) <= 1);
+            CHECK(sameView(tv->view(), view));
+        }
+        w.setSecondScreenMode(Plan::Mode::KeepArea);
+        settle();
     }
     // The mixer's column made narrower by the user: a page switch keeps that width (it only grows when toggled on)
     {
