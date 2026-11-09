@@ -77,7 +77,10 @@ bool store(const QString& path, const Stamp& stamp, Clock::time_point at)
         return false;
     }
     it->checked = at;
-    if (stamp == it->stamp) { // as it was (or back to it)
+    // Gone (a network share dropping out, a moment between a delete and a new file): never a change by itself - the
+    // caches keep what they have, the preview stays on its proxy. A file back as it was is no change either; one back
+    // with other content is.
+    if (stamp == it->stamp || (stamp.size < 0 && it->stamp.size >= 0)) {
         it->changing = false;
         return false;
     }

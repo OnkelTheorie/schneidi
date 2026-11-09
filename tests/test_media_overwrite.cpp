@@ -212,6 +212,40 @@ void testGrowing(const QString& file)
     FileStamp::removeObserver(id);
 }
 
+// Review 2026-11-09: a file that goes missing for longer than the settle time (a NAS dropping out) is no change -
+// caches and the preview's proxy stay; back as it was: still none; back with other content: one
+void testMissing(const QString& file)
+{
+    std::printf("-- missing\n");
+    QFile f(file);
+    if (!CHECK(f.open(QIODevice::WriteOnly))) return;
+    f.write("abc");
+    f.close();
+    FileStamp::now(file);
+    const FileStamp::Stamp before = FileStamp::now(file);
+    int seen = 0;
+    const int id = FileStamp::addObserver([&](const QString& path) { seen += path == file; });
+    const QString away = file + ".away";
+    CHECK(QFile::rename(file, away));
+    settle(file);
+    settle(file);
+    CHECK_EQ(seen, 0);
+    CHECK(FileStamp::now(file) == before); // readers keep comparing with the stamp they opened
+    CHECK(!FileStamp::changing(file));
+    CHECK(QFile::rename(away, file));
+    settle(file);
+    CHECK_EQ(seen, 0); // back as it was
+    CHECK(QFile::remove(file));
+    settle(file);
+    if (CHECK(f.open(QIODevice::WriteOnly))) {
+        f.write("other content");
+        f.close();
+    }
+    settle(file);
+    CHECK_EQ(seen, 1);
+    FileStamp::removeObserver(id);
+}
+
 // Observers are called without a FileStamp lock held: one may add another and remove itself from inside
 void testObservers(const QString& file)
 {
@@ -309,6 +343,7 @@ int main(int argc, char** argv)
     testEngine(engine, dir.filePath("engine.png"), png[0], png[1]);
     testGrowing(dir.filePath("growing.mkv"));
     testObservers(dir.filePath("observed.bin"));
+    testMissing(dir.filePath("missing.bin"));
 
     if (!Check::haveFfmpeg()) {
         std::printf("no ffmpeg: video cases skipped\n");
