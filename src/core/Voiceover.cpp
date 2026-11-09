@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <vector>
 
 namespace Voiceover {
 
@@ -101,6 +102,51 @@ int recordTrack(const Timeline& tl, int armed, int selected, int from, int end)
     for (int i = 0; i < count; ++i)
         if (open(i) && freeFrom(i)) return i;
     return count;
+}
+
+TrackKey trackKey(const Timeline& tl, int track)
+{
+    TrackKey k;
+    k.index = track;
+    for (const Track& t : tl.audio) {
+        k.names << t.name;
+        QVector<int> ids;
+        for (const Clip& c : t.clips) ids << c.id;
+        k.clips << ids;
+    }
+    return k;
+}
+
+int findTrack(const Timeline& tl, const TrackKey& key)
+{
+    const TrackKey now = trackKey(tl, -1);
+    const int n = int(key.clips.size()), m = int(now.clips.size());
+    if (key.index < 0) return -1;
+    if (key.index >= n) return m; // one new track: still a new one
+    if (n == m) return key.index;
+    const auto same = [&](int i, int j) {
+        const QVector<int>& a = key.clips[i];
+        const QVector<int>& b = now.clips[j];
+        if (a.isEmpty() || b.isEmpty()) return a.isEmpty() && b.isEmpty() && key.names[i] == now.names[j];
+        return std::any_of(a.begin(), a.end(), [&](int id) { return b.contains(id); });
+    };
+    // Longest common subsequence of the two track lists (a handful of tracks: the table is small)
+    std::vector<std::vector<int>> run(n + 1, std::vector<int>(m + 1, 0));
+    for (int i = n - 1; i >= 0; --i)
+        for (int j = m - 1; j >= 0; --j)
+            run[i][j] = same(i, j) ? run[i + 1][j + 1] + 1 : std::max(run[i + 1][j], run[i][j + 1]);
+    for (int i = 0, j = 0; i < n && j < m;) {
+        if (same(i, j) && run[i][j] == run[i + 1][j + 1] + 1) {
+            if (i == key.index) return j;
+            ++i, ++j;
+        } else if (run[i + 1][j] >= run[i][j + 1]) {
+            if (i == key.index) return -1; // left out: removed or changed
+            ++i;
+        } else {
+            ++j;
+        }
+    }
+    return -1;
 }
 
 int headLimit(const Timeline& tl, int track, int from)

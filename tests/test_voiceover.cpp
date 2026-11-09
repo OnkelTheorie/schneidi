@@ -338,6 +338,46 @@ int main(int argc, char** argv)
         CHECK(clamped.start() == 40.0);
     }
 
+    // ---- Review 2026-11-09: the armed track / the take's track follows its track when tracks come or go above it
+    {
+        Timeline tl;
+        tl.audio.resize(3);
+        for (Track& t : tl.audio) t.kind = TrackKind::Audio;
+        Clip a;
+        a.id = 1;
+        a.out = 49;
+        tl.audio[0].clips << a; // A1 [0, 50)
+        Clip b = a;
+        b.id = 2;
+        tl.audio[1].clips << b; // A2: the marked one
+        const Voiceover::TrackKey key = Voiceover::trackKey(tl, 1);
+        CHECK_EQ(Voiceover::findTrack(tl, key), 1);
+        Timeline above = tl; // a track inserted at the top
+        above.audio.insert(0, Track{TrackKind::Audio});
+        CHECK_EQ(Voiceover::findTrack(above, key), 2);
+        Timeline removed = tl; // A1 removed
+        removed.audio.removeAt(0);
+        CHECK_EQ(Voiceover::findTrack(removed, key), 0);
+        Timeline gone = tl; // the marked one removed: not some other track
+        gone.audio.removeAt(1);
+        CHECK_EQ(Voiceover::findTrack(gone, key), -1);
+        Timeline below = tl; // added below: unchanged
+        below.audio << Track{TrackKind::Audio};
+        CHECK_EQ(Voiceover::findTrack(below, key), 1);
+        // An empty marked track (A3) with a track added above it
+        const Voiceover::TrackKey empty = Voiceover::trackKey(tl, 2);
+        Timeline named = tl;
+        Track discord{TrackKind::Audio};
+        discord.name = "Discord";
+        discord.clips << a;
+        named.audio.insert(1, discord);
+        CHECK_EQ(Voiceover::findTrack(named, empty), 3);
+        // A new track (index = count) stays a new one, also when the user added one meanwhile
+        const Voiceover::TrackKey fresh = Voiceover::trackKey(tl, 3);
+        CHECK_EQ(Voiceover::findTrack(below, fresh), 4);
+        CHECK_EQ(Voiceover::findTrack(tl, Voiceover::trackKey(tl, -1)), -1);
+    }
+
     // ---- The growing take: a fake source feeds blocks, the waveform and the length follow, the end is exact
     {
         // 25 fps, 48 kHz: 1920 samples a frame. File sample 0 at frame 18 (2 frames pre-roll), the clip from 20 on

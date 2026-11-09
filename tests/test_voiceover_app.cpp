@@ -529,6 +529,47 @@ int main(int argc, char** argv)
         while (project->undoStack()->index() > undo) project->undoStack()->undo();
     }
 
+    // ---- Review 2026-11-09: a track added or removed above the armed track during a take (an undo, an AI): the
+    // take and the mic stay on their track; the armed track removed: a new track, never someone else's
+    {
+        w.liveSelection()->clear();
+        const int undo = project->undoStack()->index();
+        const int tracks = int(project->timeline().audio.size());
+        recorder->setArmedTrack(0); // A1, with the clip's sound
+        const int a1Clip = project->timeline().audio[0].clips.value(0).id;
+        engine.seek(25);
+        wait(100);
+        CHECK(recorder->start());
+        CHECK(waitLive(recorder));
+        wait(200);
+        project->edit("track above", [](Timeline& t) { t.audio.insert(0, Track{TrackKind::Audio}); });
+        CHECK_EQ(recorder->liveTrack(), 1);
+        CHECK_EQ(recorder->armedTrack(), 1);
+        wait(200);
+        CHECK(recorder->stop());
+        CHECK_EQ(recorder->placedTrack(), 1);
+        CHECK(project->timeline().audio[0].clips.isEmpty()); // the new top track got nothing
+        CHECK(Voiceover::selectedTrack(project->timeline(), {a1Clip}) == 1);
+        CHECK_EQ(recorder->armedTrack(), 1);
+        while (project->undoStack()->index() > undo) project->undoStack()->undo();
+        CHECK_EQ(recorder->armedTrack(), 0); // undo removed the track above: back on A1
+
+        // The armed track removed during the take: onto one new track below the others
+        engine.seek(25);
+        wait(100);
+        CHECK(recorder->start());
+        wait(200);
+        project->edit("remove A1", [](Timeline& t) { t.audio.removeAt(0); });
+        CHECK_EQ(recorder->armedTrack(), -1);
+        CHECK(recorder->stop());
+        CHECK_EQ(recorder->placedTrack(), tracks - 1);
+        CHECK_EQ(int(project->timeline().audio.size()), tracks);
+        if (CHECK(int(project->timeline().audio.size()) == tracks))
+            CHECK(Voiceover::isVoiceoverTrack(project->timeline().audio[tracks - 1]));
+        while (project->undoStack()->index() > undo) project->undoStack()->undo();
+        recorder->setArmedTrack(-1);
+    }
+
     // Quitting while recording: the take is placed first (so "save changes?" sees it), the file is complete
     recorder->setArmedTrack(1);
     engine.seek(25);

@@ -13,6 +13,7 @@
 
 #include <QDateTime>
 #include <QString>
+#include <QStringList>
 #include <QVector>
 
 #include <algorithm>
@@ -66,6 +67,23 @@ int recordTrack(const Timeline& tl, int armed, int selected, int from, int end =
 int selectedTrack(const Timeline& tl, const QVector<int>& ids);
 // A track a take created (named Voiceover, in German or the UI language)
 bool isVoiceoverTrack(const Track& t);
+// Which audio track a mark (the armed track, a running take's track) means after the timeline changed: tracks have no
+// ids, so a track added or removed above it (an undo, an AI's edit) would shift a plain index onto another track.
+// A key remembers the index and what every audio track looked like then (name and clip ids); findTrack gives the same
+// index while the number of tracks is the same, else lines the tracks then up with the tracks now (longest common
+// run; a track matches one with a clip of it, an empty one an empty one of the same name) and gives where the marked
+// one is now, -1 = not there any more (removed, or emptied together with tracks added or removed).
+// Two empty tracks without a name look alike: one added next to an empty marked track may take the mark - both are
+// empty, nothing is lost. A key of a track that is not there yet (index >= the count: one new track) always means one
+// new track below the others (the count now) - never one the user added meanwhile.
+struct TrackKey {
+    int index = -1;
+    QStringList names;          // per audio track
+    QVector<QVector<int>> clips; // per audio track: the ids of its clips
+    bool operator==(const TrackKey&) const = default;
+};
+TrackKey trackKey(const Timeline& tl, int track);
+int findTrack(const Timeline& tl, const TrackKey& key);
 // How far before `from` a take on `track` may reach with what the input recorded before the timeline was heard (the
 // player waits for the first picture; words said right at the key press lie there): back to the end of the clip
 // before it on the track, not before 0; a clip lying over `from` (punch-in) keeps it at `from`

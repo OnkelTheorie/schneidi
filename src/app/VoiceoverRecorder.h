@@ -63,6 +63,7 @@ signals:
 private:
     void tick();
     void stopLater(); // stop() from the event loop (once, for this take)
+    void followTracks(); // the timeline changed: the armed track and the take's track follow theirs (Voiceover::findTrack)
     void updateMeter(); // the armed track's level meter on/off
     void goLive();
     Engine* m_engine;
@@ -78,6 +79,8 @@ private:
     Voiceover::Settings m_settings;
     Voiceover::LiveTake m_take;
     int m_armed = -1;
+    Voiceover::TrackKey m_armedKey; // which track m_armed is (tracks added/removed above it)
+    int m_armedSequence = 0;        // in which timeline
     int m_headFrom = 0;      // the take may reach back to here (Voiceover::headLimit)
     bool m_live = false;
     QElapsedTimer m_sinceStart;
@@ -86,6 +89,7 @@ private:
     int m_liveTrack = -1;
     int m_sequence = 0;     // the timeline the take began in: it goes there, also when another one is open by then
     int m_takeNumber = 0;
+    Voiceover::TrackKey m_trackKey; // which track m_track is
     int m_placedTrack = -1;
     int m_from = 0;         // playhead when recording started (the clip starts here)
     double m_playFrom = 0;  // where playback started (pre-roll before m_from)
