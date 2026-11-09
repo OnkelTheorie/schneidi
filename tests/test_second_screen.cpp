@@ -442,6 +442,25 @@ void testApp(MainWindow& w, Engine& engine, const QString& clip)
     CHECK(tv->view().pxPerFrame == view.pxPerFrame && tv->view().leftFrame == view.leftFrame);
 }
 
+// Closing the main window with the preview on the monitor: the monitor's window goes too (it never keeps the app
+// running: no quit-on-close of its own)
+void testCloseWithOutput(MainWindow& w)
+{
+    w.showPreviewOn(QGuiApplication::primaryScreen());
+    settle();
+    auto* out = qobject_cast<ScreenOutput*>(w.previewOutput());
+    if (!CHECK(out && out->window())) return;
+    QPointer<FullScreenViewer> fs = out->window();
+    CHECK(!fs->testAttribute(Qt::WA_QuitOnClose));
+    CHECK(fs->isVisible());
+    CHECK(w.close());
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    settle();
+    CHECK(!w.previewOutput());
+    CHECK(!fs || !fs->isVisible());
+    CHECK(!fs); // deleted, not only hidden
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -478,5 +497,6 @@ int main(int argc, char** argv)
     w.importFiles({file}, true);
     settle();
     testApp(w, engine, file);
+    testCloseWithOutput(w);
     return Check::result();
 }

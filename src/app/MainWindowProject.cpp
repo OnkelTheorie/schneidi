@@ -689,5 +689,7 @@ void MainWindow::closeEvent(QCloseEvent* event)
         return;
     }
     removeAutosave(); // quit normally -> nothing to restore
+    // The preview on the second monitor goes with the main window (its window is a top-level of its own)
+    if (m_output) showPreviewOn(nullptr);
     event->accept();
 }
