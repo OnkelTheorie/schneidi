@@ -2855,6 +2855,7 @@
  "Vorlage:": "Набор:",
  "Übersprungen: %1": "Пропущено: %1",
  "„%1“ importiert: %2 übernommen, %3 unbekannt (die fehlen in schneidi und bleiben weg).": "«%1» импортирован: перенесено %2, неизвестно %3 (их нет в schneidi, они пропущены).",
+ "%1 Tasten weggelassen (nur für ein anderes Premiere-Fenster oder schon von einem anderen Befehl belegt).": "Пропущено клавиш: %1 (только для другой панели Premiere или уже заняты другой командой).",
  "Quellclips zeigen": "Показывать исходные клипы",
  "Vorschau-Fläche ausblenden": "Скрыть область просмотра",
  "Die Timeline läuft dann nur auf dem Monitor. Quellclips zeigen: die Vorschau-Fläche im Hauptfenster zeigt Clips, die du per Doppelklick öffnest. Ausblenden: die Bereiche daneben bekommen den Platz.": "Монтажный стол тогда виден только на мониторе. Показывать исходные клипы: область просмотра в главном окне показывает клипы, открытые двойным щелчком. Скрыть: соседние панели занимают место.",

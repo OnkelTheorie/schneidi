@@ -2855,6 +2855,7 @@
  "Vorlage:": "Preset:",
  "Übersprungen: %1": "Skipped: %1",
  "„%1“ importiert: %2 übernommen, %3 unbekannt (die fehlen in schneidi und bleiben weg).": "“%1” imported: %2 taken over, %3 unknown (schneidi lacks those, they are left out).",
+ "%1 Tasten weggelassen (nur für ein anderes Premiere-Fenster oder schon von einem anderen Befehl belegt).": "%1 keys left out (only for another Premiere panel, or already used by another command).",
  "Quellclips zeigen": "Show source clips",
  "Vorschau-Fläche ausblenden": "Hide the preview area",
  "Die Timeline läuft dann nur auf dem Monitor. Quellclips zeigen: die Vorschau-Fläche im Hauptfenster zeigt Clips, die du per Doppelklick öffnest. Ausblenden: die Bereiche daneben bekommen den Platz.": "The timeline then plays only on the monitor. Show source clips: the preview area in the main window shows clips you open with a double click. Hide: the panels beside it get the room.",

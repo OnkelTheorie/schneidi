@@ -630,14 +630,21 @@ void InputBindings::overlay(const QHash<QString, QStringList>& keys)
 {
     QSet<QPair<QString, int>> fixed; // (id, slot) set by `keys`
     QSet<QString> taken;             // scope + '\n' + input
-    for (auto it = keys.begin(); it != keys.end(); ++it) {
-        QStringList binds = inputs(it.key());
-        for (int slot = 0; slot < kSlots && slot < it->size(); ++slot) {
-            binds[slot] = normalizeInput(it->at(slot));
-            fixed.insert({it.key(), slot});
-            if (!binds[slot].isEmpty()) taken.insert(scope(it.key()) + '\n' + binds[slot]);
+    // In a fixed order (by id): one key twice in `keys` stays with the first action only
+    QStringList order = keys.keys();
+    order.sort();
+    for (const QString& id : order) {
+        const QStringList& set = keys[id];
+        QStringList binds = inputs(id);
+        for (int slot = 0; slot < kSlots && slot < set.size(); ++slot) {
+            binds[slot] = normalizeInput(set[slot]);
+            fixed.insert({id, slot});
+            if (binds[slot].isEmpty()) continue;
+            const QString key = scope(id) + '\n' + binds[slot];
+            if (taken.contains(key)) binds[slot].clear();
+            else taken.insert(key);
         }
-        m_inputs[it.key()] = binds;
+        m_inputs[id] = binds;
     }
     // The other actions (and the kept second slots) give up keys the set uses now
     QStringList ids = m_inputs.keys();
@@ -705,12 +712,21 @@ InputBindings::KysResult InputBindings::readKys(const QByteArray& xml)
 {
     // Premiere writes one element per key, e.g. <item><commandname>cmd.edit.undo</commandname>
     // <virtualkey>90</virtualkey><modifier.ctrl>true</modifier.ctrl></item>. Tolerant: element names in any case,
-    // "command"/"key" spellings, macOS modifier names
+    // "command"/"key" spellings, macOS modifier names.
+    // The items sit in contexts (<context.global>, <context.timeline>, panels...): one key may do different things in
+    // different panels there, schneidi's actions have one key each. Only the global and the timeline context count,
+    // the global one first; a key already given to another command is left out (the file's order decides)
     KysResult r;
-    QSet<QString> taken, unknown;
+    QSet<QString> unknown;
+    struct Binding {
+        int rank; // 0 global (or no context), 1 timeline
+        QString command, id, input;
+    };
+    QVector<Binding> bindings;
     QXmlStreamReader x(xml);
     QHash<QString, QString> item; // child element -> text of the open item
-    int depth = 0, itemDepth = -1;
+    int depth = 0, itemDepth = -1, contextDepth = -1;
+    int rank = 0; // of the open context; -1 = a context that does not count
     QString root;
     while (!x.atEnd()) {
         x.readNext();
@@ -718,7 +734,10 @@ InputBindings::KysResult InputBindings::readKys(const QByteArray& xml)
             ++depth;
             const QString name = x.name().toString().toLower();
             if (root.isEmpty()) root = name;
-            if (itemDepth < 0 && (name == "item" || name == "shortcut")) {
+            if (itemDepth < 0 && contextDepth < 0 && name.startsWith("context")) {
+                contextDepth = depth;
+                rank = name == "context.global" || name == "context" ? 0 : name.contains("timeline") ? 1 : -1;
+            } else if (itemDepth < 0 && (name == "item" || name == "shortcut")) {
                 itemDepth = depth;
                 item.clear();
             } else if (itemDepth >= 0 && depth == itemDepth + 1) {
@@ -747,15 +766,34 @@ InputBindings::KysResult InputBindings::readKys(const QByteArray& xml)
                 if (input.isEmpty()) {
                     // a key schneidi cannot name: not counted
                 } else if (id.isEmpty()) {
-                    unknown.insert(command);
+                    if (rank >= 0) unknown.insert(command);
+                } else if (rank < 0) {
+                    ++r.dropped; // another panel's key
                 } else {
-                    taken.insert(command);
-                    QStringList& keys = r.keys[id];
-                    if (!keys.contains(input) && keys.size() < kSlots) keys << input;
+                    bindings.append({rank, command, id, input});
                 }
+            }
+            if (depth == contextDepth) {
+                contextDepth = -1;
+                rank = 0;
             }
             --depth;
         }
+    }
+    std::stable_sort(bindings.begin(), bindings.end(), [](const Binding& a, const Binding& b) { return a.rank < b.rank; });
+    QSet<QString> taken;
+    QHash<QString, QString> owner; // input -> id
+    for (const Binding& b : bindings) {
+        const QString first = owner.value(b.input);
+        if (!first.isEmpty() && first != b.id) {
+            ++r.dropped; // the key does something else already
+            continue;
+        }
+        QStringList& keys = r.keys[b.id];
+        if (keys.contains(b.input) || keys.size() >= kSlots) continue;
+        keys << b.input;
+        owner.insert(b.input, b.id);
+        taken.insert(b.command);
     }
     r.ok = !x.hasError() && !root.isEmpty() && (root.contains("premiere") || root.contains("shortcut"));
     r.taken = int(taken.size());

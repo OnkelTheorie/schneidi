@@ -2855,6 +2855,7 @@
  "Vorlage:": "Preajuste:",
  "Übersprungen: %1": "Omitida: %1",
  "„%1“ importiert: %2 übernommen, %3 unbekannt (die fehlen in schneidi und bleiben weg).": "«%1» importado: %2 adoptados, %3 desconocidos (schneidi no los tiene, se omiten).",
+ "%1 Tasten weggelassen (nur für ein anderes Premiere-Fenster oder schon von einem anderen Befehl belegt).": "%1 teclas omitidas (solo para otro panel de Premiere o ya asignadas a otro comando).",
  "Quellclips zeigen": "Mostrar clips de origen",
  "Vorschau-Fläche ausblenden": "Ocultar el área de vista previa",
  "Die Timeline läuft dann nur auf dem Monitor. Quellclips zeigen: die Vorschau-Fläche im Hauptfenster zeigt Clips, die du per Doppelklick öffnest. Ausblenden: die Bereiche daneben bekommen den Platz.": "La línea de tiempo se reproduce entonces solo en el monitor. Mostrar clips de origen: el área de vista previa de la ventana principal muestra los clips que abres con doble clic. Ocultar: los paneles de al lado ocupan el espacio.",

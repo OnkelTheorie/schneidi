@@ -2855,6 +2855,7 @@
  "Vorlage:": "Zestaw:",
  "Übersprungen: %1": "Pominięto: %1",
  "„%1“ importiert: %2 übernommen, %3 unbekannt (die fehlen in schneidi und bleiben weg).": "„%1” zaimportowano: %2 przejęto, %3 nieznanych (schneidi ich nie ma, pominięto).",
+ "%1 Tasten weggelassen (nur für ein anderes Premiere-Fenster oder schon von einem anderen Befehl belegt).": "Pominięto klawisze: %1 (tylko dla innego panelu Premiere albo już przypisane do innego polecenia).",
  "Quellclips zeigen": "Pokazuj klipy źródłowe",
  "Vorschau-Fläche ausblenden": "Ukryj obszar podglądu",
  "Die Timeline läuft dann nur auf dem Monitor. Quellclips zeigen: die Vorschau-Fläche im Hauptfenster zeigt Clips, die du per Doppelklick öffnest. Ausblenden: die Bereiche daneben bekommen den Platz.": "Oś czasu jest wtedy odtwarzana tylko na monitorze. Pokazuj klipy źródłowe: obszar podglądu w oknie głównym pokazuje klipy otwarte dwuklikiem. Ukryj: sąsiednie panele zajmują miejsce.",

@@ -2855,6 +2855,7 @@
  "Vorlage:": "Préréglage :",
  "Übersprungen: %1": "Passée : %1",
  "„%1“ importiert: %2 übernommen, %3 unbekannt (die fehlen in schneidi und bleiben weg).": "« %1 » importé : %2 repris, %3 inconnus (absents de schneidi, ignorés).",
+ "%1 Tasten weggelassen (nur für ein anderes Premiere-Fenster oder schon von einem anderen Befehl belegt).": "%1 touches ignorées (seulement pour un autre panneau de Premiere ou déjà prises par une autre commande).",
  "Quellclips zeigen": "Afficher les clips source",
  "Vorschau-Fläche ausblenden": "Masquer la zone d’aperçu",
  "Die Timeline läuft dann nur auf dem Monitor. Quellclips zeigen: die Vorschau-Fläche im Hauptfenster zeigt Clips, die du per Doppelklick öffnest. Ausblenden: die Bereiche daneben bekommen den Platz.": "La timeline ne passe alors que sur le moniteur. Afficher les clips source : la zone d’aperçu de la fenêtre principale montre les clips ouverts par double-clic. Masquer : les panneaux voisins prennent la place.",

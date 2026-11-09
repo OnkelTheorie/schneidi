@@ -58,6 +58,80 @@ void testReadKys()
     CHECK(!InputBindings::readKys("<html><body>hi</body></html>").ok);
 }
 
+// Premiere's contexts: one key may do one thing in the timeline and another one elsewhere. Only the global and the
+// timeline context count, the global one wins; a key twice is kept for the first command only
+const char* kContexts = R"(<?xml version="1.0" encoding="UTF-8" ?>
+<PremiereData Version="3"><shortcuts>
+  <context.timeline>
+    <item><commandname>cmd.marker.setin</commandname><virtualkey>75</virtualkey></item>
+    <item><commandname>cmd.sequence.snap</commandname><virtualkey>78</virtualkey></item>
+  </context.timeline>
+  <context.global>
+    <item><commandname>cmd.edit.undo</commandname><virtualkey>90</virtualkey><modifier.ctrl>true</modifier.ctrl></item>
+    <item><commandname>cmd.sequence.addedit</commandname><virtualkey>75</virtualkey></item>
+  </context.global>
+  <context.panel.project>
+    <item><commandname>cmd.sequence.zoomin</commandname><virtualkey>78</virtualkey></item>
+    <item><commandname>cmd.tool.pen</commandname><virtualkey>80</virtualkey></item>
+  </context.panel.project>
+</shortcuts></PremiereData>
+)";
+
+// No two actions of one scope on the same key (the multicam angle keys share Alt+1..9 with the video target tracks
+// on purpose: only one of them is enabled at a time)
+void checkUniqueKeys(const char* where)
+{
+    const InputBindings& b = InputBindings::instance();
+    QHash<QString, QString> owner;
+    for (const InputBindings::Entry& e : b.entries())
+        for (const QString& input : b.inputs(e.id)) {
+            if (input.isEmpty()) continue;
+            const QString key = e.scope + '\n' + input;
+            const bool angle = e.id.startsWith("multicam_switch_")
+                               && owner.value(key) == "target_video_" + e.id.mid(int(strlen("multicam_switch_")));
+            if (owner.contains(key) && !angle)
+                Check::report(false, "a key on two actions", __FILE__, __LINE__,
+                              QString("%1: %2 on %3 and %4").arg(where, input, owner[key], e.id));
+            owner.insert(key, e.id);
+        }
+}
+
+void testKysContexts()
+{
+    const auto r = InputBindings::readKys(kContexts);
+    CHECK(r.ok);
+    CHECK_EQ(r.keys.value("split"), QStringList({"K"})); // global before the timeline's K
+    CHECK(!r.keys.contains("mark_in"));
+    CHECK_EQ(r.keys.value("snapping"), QStringList({"N"}));
+    CHECK(!r.keys.contains("zoom_in")); // only in the project panel there
+    CHECK_EQ(r.taken, 3);
+    CHECK_EQ(r.unknown, 0); // the pen in another panel is not counted at all
+    CHECK_EQ(r.dropped, 2);
+
+    // Imported: one action per key, the summary says what was left out
+    InputBindings& b = InputBindings::instance();
+    b.applyPreset("standard");
+    QTemporaryDir tmp;
+    const QString path = QDir(tmp.path()).filePath("contexts.kys");
+    QFile f(path);
+    if (!CHECK(f.open(QIODevice::WriteOnly))) return;
+    f.write(kContexts);
+    f.close();
+    KeyBindingsDialog dlg;
+    auto* summary = dlg.findChild<QLabel*>("key_import_summary");
+    if (!CHECK(summary && dlg.importFile(path))) return;
+    CHECK(summary->text().contains(T("%1 Tasten weggelassen (nur für ein anderes Premiere-Fenster oder schon "
+                                     "von einem anderen Befehl belegt).").arg(2)));
+    CHECK_EQ(in("split"), QStringList({"K", ""}));
+    CHECK(!in("mark_in").contains("K"));
+    checkUniqueKeys("contexts.kys");
+    for (const char* preset : {"standard", "beginner", "premiere", "finalcut"}) {
+        b.applyPreset(preset);
+        checkUniqueKeys(preset);
+    }
+    b.applyPreset("standard");
+}
+
 void testPresets()
 {
     InputBindings& b = InputBindings::instance();
@@ -388,6 +462,7 @@ int main(int argc, char** argv)
         QApplication::processEvents();
         testPresets();
         testImport();
+        testKysContexts();
         testTrainer(w);
     }
     testLanguages(engine);
