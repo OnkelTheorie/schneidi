@@ -368,6 +368,8 @@ private:
     // Playback too slow for the originals: hint above the picture with "Generate proxies" (never unasked)
     void setupProxyHint();
     void updateProxyHint();
+    // Background work at the bottom right of the status bar (ui/BackgroundJobs): proxies today
+    void setupBackgroundJobs();
     bool offersRenderCache() const; // the hint offers "Render-Cache: Smart" instead of proxies
     QStringList playingVideoFiles() const; // video files of what plays (timeline incl. nested clips, or the source)
     bool expensiveAtPlayhead() const;      // a clip with effects or changed speed plays here (RenderCache::isExpensive)
@@ -396,6 +398,7 @@ private:
     Editor* m_editor;
 
     MediaPool* m_mediaPool = nullptr;
+    class BackgroundJobs* m_backgroundJobs = nullptr;
     EffectsLibrary* m_effects = nullptr;
     MediaStorage* m_storage = nullptr;
     Viewer* m_viewer = nullptr;
@@ -468,6 +471,8 @@ private:
     void restoreViewerArea(); // back as it was before hideViewerArea
     void updateViewerArea();  // hidden or back, as the mode and the output say
     QAction* m_secondScreenAction = nullptr;
+    QAction* m_secondScreenModeActions[2] = {}; // Workspace › Main Window with a Second Monitor, by Mode
+    QMenu* m_viewerScreenModeMenu = nullptr;     // the same on the viewer's right-click (only while the output is on)
     QPointer<class PreviewOutput> m_output;
     SecondScreenPlan m_screenPlan;
     SecondScreenPlan::Mode m_secondScreenMode = SecondScreenPlan::storedMode();

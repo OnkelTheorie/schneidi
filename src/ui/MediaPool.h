@@ -172,6 +172,7 @@ private:
     QListWidget* m_list;
     QLabel* m_proxyStatus;
     QToolButton* m_proxyCancel;
+    class QProgressBar* m_proxyBar;
     QToolButton* m_thumbView;
     QToolButton* m_listView;
     QToolButton* m_sortBtn;

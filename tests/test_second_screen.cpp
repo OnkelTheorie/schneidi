@@ -9,7 +9,10 @@
 // an empty page with a button to bring it back, a source clip opened there, its frame kept while the timeline plays
 // on the monitor), "hide the preview area" hides it and the panels close up - across page switches; Esc in the window, the key again or the monitor
 // going away bring back exactly the layout before; the timeline's zoom/scroll never change (core rule).
-// SECOND_SCREEN_DUMP=<folder>: pictures of the main window in both modes and of the monitor's window.
+// Workspace › Main Window with a Second Monitor and the viewer's right-click switch the mode live; the empty page's
+// second button closes up the area.
+// SECOND_SCREEN_DUMP=<folder>: pictures of the main window in both modes and of the monitor's window;
+// SECOND_SCREEN_LANG=ru (another language), SECOND_SCREEN_FONT=1.25 (larger font) to check that the texts fit.
 
 #include "check.h"
 
@@ -28,6 +31,7 @@
 #include <QAction>
 #include <QApplication>
 #include <QComboBox>
+#include <QMenu>
 #include <QScreen>
 #include <QSplitter>
 #include <QTemporaryDir>
@@ -383,6 +387,59 @@ void testApp(MainWindow& w, Engine& engine, const QString& clip)
         CHECK(!viewer->picture().isNull());
     }
     CHECK(tv->view().pxPerFrame == view.pxPerFrame && tv->view().leftFrame == view.leftFrame);
+
+    // Workspace › Main Window with a Second Monitor: the settings' choice as radio entries beside the toggle, applied
+    // live; the same entries on the viewer's right-click, only while the preview is on the monitor
+    QAction* keep = InputBindings::instance().action("second_screen_keep_area");
+    QAction* hide = InputBindings::instance().action("second_screen_hide_viewer");
+    auto* viewerMenu = w.findChild<QMenu*>("viewer_second_screen_mode_menu");
+    if (!CHECK(keep && hide && viewerMenu)) return;
+    CHECK(keep->isCheckable() && hide->isCheckable());
+    CHECK(keep->isChecked() && !hide->isChecked());
+    CHECK_EQ(keep->text(), T("Quellclips zeigen"));
+    CHECK_EQ(hide->text(), T("Vorschau-Fläche ausblenden"));
+    CHECK(viewer->actions().contains(viewerMenu->menuAction()));
+    CHECK(viewerMenu->actions().contains(keep) && viewerMenu->actions().contains(hide));
+    CHECK(!viewerMenu->menuAction()->isVisible());
+    w.showPreviewOn(screen);
+    settle();
+    CHECK(viewerMenu->menuAction()->isVisible());
+    CHECK(viewer->isVisible() && viewer->programAwayPageShown());
+    hide->trigger();
+    settle();
+    CHECK(w.secondScreenMode() == Plan::Mode::HideViewer);
+    CHECK(hide->isChecked() && !keep->isChecked());
+    CHECK(viewer->isHidden());
+    CHECK(tv->view().pxPerFrame == view.pxPerFrame && tv->view().leftFrame == view.leftFrame);
+    keep->trigger();
+    settle();
+    CHECK(w.secondScreenMode() == Plan::Mode::KeepArea);
+    CHECK(keep->isChecked() && !hide->isChecked());
+    CHECK(viewer->isVisible() && viewer->programAwayPageShown());
+    // The settings' way (setSecondScreenMode) moves the radio mark too
+    w.setSecondScreenMode(Plan::Mode::HideViewer);
+    CHECK(hide->isChecked());
+    w.setSecondScreenMode(Plan::Mode::KeepArea);
+    settle();
+    CHECK(keep->isChecked());
+    // The empty page's second button: the area closes up
+    auto* hideArea = w.findChild<QToolButton*>("viewer_program_hide_area");
+    if (CHECK(hideArea && hideArea->isVisible())) {
+        dump(&w, "away-page-buttons");
+        QTest::mouseClick(hideArea, Qt::LeftButton);
+        settle();
+        CHECK(w.secondScreenMode() == Plan::Mode::HideViewer);
+        CHECK(hide->isChecked());
+        CHECK(viewer->isHidden());
+        CHECK(w.previewOutput()); // the preview stays on the monitor
+    }
+    w.showPreviewOn(nullptr);
+    settle();
+    CHECK(!viewerMenu->menuAction()->isVisible());
+    CHECK(viewer->isVisible());
+    w.setSecondScreenMode(Plan::Mode::KeepArea);
+    same(before, Sizes::of(&w), "mode-menu");
+    CHECK(tv->view().pxPerFrame == view.pxPerFrame && tv->view().leftFrame == view.leftFrame);
 }
 
 } // namespace
@@ -402,6 +459,12 @@ int main(int argc, char** argv)
     std::setlocale(LC_NUMERIC, "C");
     testPortraitWindow(engine);
     if (!Check::haveFfmpeg()) return Check::result();
+    if (qEnvironmentVariableIsSet("SECOND_SCREEN_LANG")) I18n::install(qEnvironmentVariable("SECOND_SCREEN_LANG"));
+    if (const double scale = qEnvironmentVariable("SECOND_SCREEN_FONT").toDouble(); scale > 0) {
+        QFont font = QApplication::font();
+        font.setPointSizeF(font.pointSizeF() * scale);
+        QApplication::setFont(font);
+    }
     MainWindow w(&engine);
     w.disableAutosave();
     w.resize(1600, 950);

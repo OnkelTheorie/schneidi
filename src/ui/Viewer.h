@@ -97,6 +97,7 @@ signals:
     // Zoomed to 100 % or more: the preview should come at the project size (Engine::setPreviewFullSize)
     void fullSizeWanted(bool full);
     void programBackWanted(); // the empty page's button (program elsewhere)
+    void areaHideWanted();    // its second button: the main window closes up the viewer's area
     void previewEdgeWanted(); // wantedPreviewEdge() changed (picture area resized, other screen)
 
 protected:

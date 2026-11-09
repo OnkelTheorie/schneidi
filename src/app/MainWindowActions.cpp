@@ -762,9 +762,29 @@ void MainWindow::buildActions()
                                           m_secondScreenAction->setChecked(m_output != nullptr);
                                       });
     m_secondScreenAction->setCheckable(true);
+    // What the main window does meanwhile (the same choice as Settings › General), right beside the toggle and on the
+    // viewer's right-click while the preview is on the monitor
+    QMenu* screenMode = workspace->addMenu(T("Hauptfenster bei zweitem Monitor"));
+    screenMode->setObjectName("second_screen_mode_menu");
+    auto* screenModeGroup = new QActionGroup(screenMode);
+    for (const auto& [mode, id, text] :
+         {std::tuple{SecondScreenPlan::Mode::KeepArea, "second_screen_keep_area", N_("Quellclips zeigen")},
+          std::tuple{SecondScreenPlan::Mode::HideViewer, "second_screen_hide_viewer", N_("Vorschau-Fläche ausblenden")}}) {
+        QAction* a = makeAction(screenMode, id, T(text), QKeySequence(), [this, m = mode] { setSecondScreenMode(m); });
+        a->setCheckable(true);
+        a->setChecked(m_secondScreenMode == mode);
+        screenModeGroup->addAction(a);
+        m_secondScreenModeActions[int(mode)] = a;
+    }
+    m_viewerScreenModeMenu = new QMenu(T("Hauptfenster bei zweitem Monitor"), m_viewer);
+    m_viewerScreenModeMenu->setObjectName("viewer_second_screen_mode_menu");
+    m_viewerScreenModeMenu->addActions(screenModeGroup->actions());
+    m_viewerScreenModeMenu->menuAction()->setVisible(false); // only while the preview is on the monitor
+    m_viewer->addAction(m_viewerScreenModeMenu->menuAction());
     connect(m_engine, &Engine::frameReady, this, &MainWindow::feedPreviewOutput);
     // The viewer's page while the program is on the monitor: its button brings the preview back
     connect(m_viewer, &Viewer::programBackWanted, this, [this] { showPreviewOn(nullptr); });
+    connect(m_viewer, &Viewer::areaHideWanted, this, [this] { setSecondScreenMode(SecondScreenPlan::Mode::HideViewer); });
     connect(qGuiApp, &QGuiApplication::screenAdded, this, [this] { screensChanged(nullptr); });
     connect(qGuiApp, &QGuiApplication::screenRemoved, this, &MainWindow::screensChanged);
     // Panel sets of the Edit page and panel sizes (remembered per page, MainWindow::applySizes)

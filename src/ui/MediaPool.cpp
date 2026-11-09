@@ -17,6 +17,7 @@
 #include "ui/FileManager.h"
 #include "ui/HoverScrub.h"
 #include "ui/MediaStorage.h"
+#include "ui/ProxyProgress.h"
 #include "ui/ElidedLabel.h"
 #include "ui/PoolFilterButton.h"
 #include "ui/TimelineFormatDialog.h"
@@ -43,6 +44,7 @@
 #include <QMessageBox>
 #include <QMimeData>
 #include <QPainter>
+#include <QProgressBar>
 #include <QPainterPath>
 #include <QPushButton>
 #include <QScrollBar>
@@ -58,6 +60,7 @@
 #include <QVBoxLayout>
 
 #include <algorithm>
+#include <cmath>
 #include <functional>
 
 namespace {
@@ -349,9 +352,23 @@ MediaPool::MediaPool(Project* project, Engine* engine, QWidget* parent)
     m_proxyStatus->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
     m_proxyStatus->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred); // do not push the pool wider
     m_proxyCancel = new QToolButton;
-    m_proxyCancel->setText(T("Abbrechen"));
+    m_proxyCancel->setObjectName("pool_proxy_cancel");
+    m_proxyCancel->setText("✕"); // small: the header is narrow, the text beside it says what runs
+    m_proxyCancel->setAutoRaise(true);
     m_proxyCancel->setToolTip(T("Proxy-Erzeugung abbrechen"));
     connect(m_proxyCancel, &QToolButton::clicked, m_engine->proxies(), &ProxyManager::cancelAll);
+    // The batch's overall progress as a thin line under the header (never widens the pool)
+    m_proxyBar = new QProgressBar;
+    m_proxyBar->setObjectName("pool_proxy_bar");
+    m_proxyBar->setRange(0, 1000);
+    m_proxyBar->setTextVisible(false);
+    m_proxyBar->setFixedHeight(2);
+    m_proxyBar->setMinimumWidth(0);
+    m_proxyBar->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+    m_proxyBar->setStyleSheet(QString("QProgressBar { background: transparent; border: none; }"
+                                      "QProgressBar::chunk { background: %1; }")
+                                  .arg(Theme::primary.name()));
+    m_proxyBar->hide();
 
     // Search: magnifier shows the field, Esc resp. another click clears and closes it
     m_search = new QLineEdit;
@@ -539,6 +556,7 @@ MediaPool::MediaPool(Project* project, Engine* engine, QWidget* parent)
     lay->setContentsMargins(0, 0, 0, 0);
     lay->setSpacing(0);
     lay->addLayout(header);
+    lay->addWidget(m_proxyBar);
     lay->addWidget(split, 1);
 
     // Keys (bindable, MainWindow registers them): they act only in their widget, Delete in the bin list never
@@ -616,6 +634,7 @@ MediaPool::MediaPool(Project* project, Engine* engine, QWidget* parent)
     connect(proxies, &ProxyManager::progress, this, [this](const QString& path, int) { updateItem(path); });
     connect(proxies, &ProxyManager::proxyChanged, this, &MediaPool::updateItem);
     connect(proxies, &ProxyManager::queueChanged, this, &MediaPool::updateProxyStatus);
+    connect(ProxyProgress::of(proxies), &ProxyProgress::changed, this, &MediaPool::updateProxyStatus);
     connect(proxies, &ProxyManager::failed, this, [this](const QString& path, const QString& msg) {
         QMessageBox::warning(this, T("Proxy-Medien"), QFileInfo(path).fileName() + "\n" + msg);
     });
@@ -1175,7 +1194,10 @@ void MediaPool::updateProxyStatus()
     const int n = proxies->pendingCount();
     m_proxyStatus->setVisible(n > 0);
     m_proxyCancel->setVisible(n > 0);
+    m_proxyBar->setVisible(n > 0);
     if (n == 0) return;
+    const ProxyProgress* batch = ProxyProgress::of(m_engine->proxies());
+    m_proxyBar->setValue(int(std::lround(batch->fraction() * 1000)));
     QString text = T("Proxy: %1 – %2 %").arg(QFileInfo(proxies->current()).fileName())
                        .arg(proxies->progressOf(proxies->current()));
     if (n > 1) text += " " + T("(+%1 wartend)").arg(n - 1);

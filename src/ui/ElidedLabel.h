@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 #include <QLabel>
+#include <QFontMetricsF>
 #include <QPainter>
+#include <cmath>
 
 // One line of text that never widens its layout: too long, it ends in "…" (or loses its middle, ElideMiddle) and the
 // tooltip holds all of it. setFullText() instead of setText(); the contents margins are kept free.
@@ -17,7 +19,12 @@ public:
     }
     const QString& fullText() const { return m_text; }
     QSize minimumSizeHint() const override { return QSize(0, fontMetrics().height()) + margins(); }
-    QSize sizeHint() const override { return QSize(fontMetrics().horizontalAdvance(m_text), fontMetrics().height()) + margins(); }
+    // Rounded up and one pixel more: at exactly the integer advance elidedText() may already cut the text
+    QSize sizeHint() const override
+    {
+        const int w = m_text.isEmpty() ? 0 : int(std::ceil(QFontMetricsF(font()).horizontalAdvance(m_text))) + 1;
+        return QSize(w, fontMetrics().height()) + margins();
+    }
 
 protected:
     void paintEvent(QPaintEvent*) override
