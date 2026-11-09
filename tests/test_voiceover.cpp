@@ -3,7 +3,10 @@
 // a timer, never the microphone), a level meter without a file, lining the file up with the timeline, the track a
 // take goes to (armed, selected, none or sound in the way -> a new one), placing it (one undo step), the growing take
 // (live waveform, exact length), file names, settings
+#include "cli/Commands.h"
+#include "cli/CommandsDetail.h"
 #include "core/Editor.h"
+#include "core/ProjectFile.h"
 #include "core/Project.h"
 #include "core/Selection.h"
 #include "core/Voiceover.h"
@@ -16,6 +19,8 @@
 #include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
+#include <QJsonArray>
+#include <QJsonDocument>
 #include <QSettings>
 #include <QTemporaryDir>
 #include <QThread>
@@ -25,6 +30,20 @@
 #include <numbers>
 
 namespace {
+
+QJsonObject cli(const QString& name, const QJsonObject& raw0, QString* error = nullptr)
+{
+    QJsonObject raw = raw0;
+    if (name == "edit") raw["full"] = true;
+    const Cli::Command* cmd = Cli::find(name);
+    Cli::Context ctx;
+    try {
+        return cmd->run(Cli::normalize(*cmd, raw), ctx);
+    } catch (const Cli::Error& e) {
+        if (error) *error = e.code;
+        return {};
+    }
+}
 
 struct Wav {
     int rate = 0, channels = 0, bits = 0;
@@ -394,6 +413,54 @@ int main(int argc, char** argv)
         CHECK(ed.placeRecording("/x/vo.wav", 0, 200, 200, &placed) > 0);
         CHECK_EQ(placed, tracks);
         CHECK_EQ(p.undoStack()->index(), index + 2);
+    }
+
+    // ---- CLI op 'voiceover': a recorded file at a time, on the given track when free, else a new one
+    if (QFileInfo::exists(tmp.filePath("take.wav"))) {
+        const QString path = tmp.filePath("cli.schneidi");
+        Project p;
+        p.addMedia({"/x/a.mp4", "a.mp4", 100, true, true, false});
+        p.edit("setup", [&](Timeline& tl) {
+            Clip a;
+            a.id = p.newClipId();
+            a.mediaPath = "/x/a.mp4";
+            a.out = 99;
+            tl.audio[0].clips << a;
+        });
+        QString error;
+        CHECK(ProjectFile::save(p.data(), path, &error));
+        auto edit = [&](const QString& ops, QString* err = nullptr) {
+            return cli("edit", {{"project", path}, {"ops", ops}}, err);
+        };
+        auto loaded = [&] {
+            ProjectData x;
+            QString e;
+            ProjectFile::load(path, &x, &e);
+            return x.timeline;
+        };
+        const int tracks = int(p.timeline().audio.size());
+        const QString take = tmp.filePath("take.wav");
+        // A1 has sound at 2 s: a new track
+        QJsonObject r = edit(QString(R"([{"op":"voiceover","file":"%1","at":"2s","track":"A1"}])").arg(take));
+        CHECK(QJsonDocument(r).toJson().contains("a new track"));
+        Timeline tl = loaded();
+        CHECK_EQ(int(tl.audio.size()), tracks + 1);
+        CHECK(tl.audio[tracks].clips.size() == 1 && tl.audio[tracks].clips[0].start == 50);
+        CHECK_EQ(tl.audio[0].clips.size(), qsizetype(1));
+        // After A1's clip: on A1
+        edit(QString(R"([{"op":"voiceover","file":"%1","at":"5s","track":"A1"}])").arg(take));
+        tl = loaded();
+        CHECK_EQ(tl.audio[0].clips.size(), qsizetype(2));
+        // track 'new': another new track; a video track is refused
+        edit(QString(R"([{"op":"voiceover","file":"%1","at":0,"track":"new"}])").arg(take));
+        CHECK_EQ(int(loaded().audio.size()), tracks + 2);
+        QString code;
+        edit(QString(R"([{"op":"voiceover","file":"%1","track":"V1"}])").arg(take), &code);
+        CHECK_EQ(code, QString("BAD_ARGUMENT"));
+        edit(R"([{"op":"voiceover"}])", &code);
+        CHECK_EQ(code, QString("BAD_ARGUMENT"));
+    } else {
+        CHECK(false);
     }
 
     // ---- File names: next to the project, never over an earlier take

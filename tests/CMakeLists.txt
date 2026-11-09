@@ -50,7 +50,8 @@ schneidi_test(test_output_color) # RGBA -> encoder formats (all layouts, 8/10 bi
 schneidi_test(test_preview_export)
 schneidi_test(test_audio)
 schneidi_test(test_preview_audio)
-schneidi_test(test_voiceover) # voice-over: sound input into a WAV (stand-in input), lining up, placing on the armed track
+schneidi_test(test_voiceover) # voice-over: sound input into a WAV (stand-in input), lining up, track choice, live take, placing, CLI op
+target_link_libraries(test_voiceover PRIVATE schneidi_cli_lib)
 schneidi_test(test_voiceover_app) # voice-over in the app: arm, record button, stop by playback, take on the track, undo
 # plays in real time: under parallel load the preview could fall behind (gaps in the sound = false clicks)
 set_tests_properties(test_preview_audio PROPERTIES RUN_SERIAL TRUE)
