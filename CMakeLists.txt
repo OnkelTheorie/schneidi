@@ -230,6 +230,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/core/Speech.h             src/core/Speech.cpp
     src/core/ContactSheet.h       src/core/ContactSheet.cpp
     src/core/ReviewSheet.h        src/core/ReviewSheet.cpp
+    src/core/Tours.h              src/core/Tours.cpp
     src/core/PoolFilter.h         src/core/PoolFilter.cpp
     src/core/IndexSearch.h        src/core/IndexSearch.cpp
     src/core/WatchFolders.h       src/core/WatchFolders.cpp
@@ -335,6 +336,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/app/AiSettings.h src/app/AiSettings.cpp
     src/app/AiSettingsPage.h src/app/AiSettingsPage.cpp
     src/app/UpdateCheck.h src/app/UpdateCheck.cpp
+    src/app/TourManager.h src/app/TourManager.cpp
     src/app/AiLog.h src/app/AiLog.cpp
     src/app/AiProvider.h src/app/AiProvider.cpp
     src/app/AiClient.h src/app/AiClient.cpp
@@ -349,6 +351,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/app/MainWindowReframe.cpp
     src/app/MainWindowNameBlur.cpp
     src/app/MainWindowWatch.cpp
+    src/app/MainWindowTours.cpp
     src/app/MainWindowTemplates.cpp
     src/app/MainWindowVoiceover.cpp
     src/app/KeyBindingsDialog.h   src/app/KeyBindingsDialog.cpp
@@ -396,6 +399,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/ui/KeyColorPicker.h       src/ui/KeyColorPicker.cpp
     src/ui/KeyPickWindow.h        src/ui/KeyPickWindow.cpp
     src/ui/WindowOverlay.h        src/ui/WindowOverlay.cpp
+    src/ui/TourOverlay.h          src/ui/TourOverlay.cpp
     src/ui/comp/CompShared.h      src/ui/comp/CompShared.cpp
     src/ui/comp/CompCanvas.h      src/ui/comp/CompCanvas.cpp
     src/ui/comp/CompLayers.h      src/ui/comp/CompLayers.cpp
@@ -467,6 +471,9 @@ endif()
 # Built-in compositing recipes (core/CompRecipes.h): one JSON per recipe, read from the resources
 file(GLOB SCHNEIDI_COMP_RECIPES RELATIVE ${PROJECT_SOURCE_DIR} CONFIGURE_DEPENDS ${PROJECT_SOURCE_DIR}/assets/comp/*.json)
 qt_add_resources(schneidi_lib "comp" PREFIX "/" BASE assets FILES ${SCHNEIDI_COMP_RECIPES})
+# In-app tours (core/Tours.h): one JSON per tour
+file(GLOB SCHNEIDI_TOURS RELATIVE ${PROJECT_SOURCE_DIR} CONFIGURE_DEPENDS ${PROJECT_SOURCE_DIR}/assets/tours/*.json)
+qt_add_resources(schneidi_lib "tours" PREFIX "/" BASE assets FILES ${SCHNEIDI_TOURS})
 target_include_directories(schneidi_lib PUBLIC src)
 # SYSTEM: no warnings from the (possibly bundled) third-party header
 target_include_directories(schneidi_lib SYSTEM PRIVATE ${MINIAUDIO_INCLUDE_DIR})

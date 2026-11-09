@@ -14,6 +14,7 @@
 #include "core/CodeTrust.h"
 #include "core/I18n.h"
 #include "core/SettingsIsolation.h"
+#include "core/Tours.h"
 #include "engine/Engine.h"
 #include "engine/Extensions.h"
 #include "engine/RenderQueue.h"
@@ -198,6 +199,8 @@ int main(int argc, char* argv[])
     // Test runs (--demo/--actions) leave the user's automatic backup alone
     const bool testRun = demo || !actions.isEmpty() || !screenshot.isEmpty();
     if (testRun) w.disableAutosave();
+    // In-app tours never ask in test runs or without a screen (core/Tours.h)
+    if (testRun || QGuiApplication::platformName() == QLatin1String("offscreen")) TourState::setSuppressed(true);
     // Settings › AI › "Connect with Claude": the same as `schneidi-cli setup claude` (Claude Code and Desktop)
     w.setClaudeSetup([](bool remove) {
         Cli::Setup::Options o;
@@ -244,6 +247,8 @@ int main(int argc, char* argv[])
     if (!testRun) QTimer::singleShot(0, &w, [&w] { CrashReport::offer(&w); }); // crashed last time: show the report
     if (!testRun) w.startUpdateCheck(); // at most once a day, a few seconds from now
     if (!testRun) CodeTrust::prune(); // trust records of deleted files (at most once a day)
+    // The first start's tour question, once, after the window settled (the overlay does not block an AI or the app)
+    if (!testRun) QTimer::singleShot(1200, &w, [&w] { w.offerTours(); });
     if (!formatArg.isEmpty()) {
         const QStringList parts = formatArg.split(QRegularExpression("[x@]"));
         ProjectFormat f;

@@ -825,6 +825,7 @@ void MainWindow::buildActions()
     makeAction(help, "open_log_folder", T("Log-Ordner öffnen"), QKeySequence(),
                [] { QDesktopServices::openUrl(QUrl::fromLocalFile(Log::directory())); });
     makeAction(help, "check_updates", T("Nach Updates suchen…"), QKeySequence(), [this] { checkForUpdates(true); });
+    setupTours(help); // Help › Tours
 
     // Keys of panels (scope): only while the panel has the focus, there before the window's keys (Delete)
     InputBindings::instance().registerAction(m_transcript->cutAction(), "transcript_cut", T("Transkript"),

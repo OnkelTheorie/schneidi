@@ -1,0 +1,14 @@
+{
+ "id": "editing",
+ "title": "Schneiden",
+ "order": 2,
+ "steps": [
+  {"target": "timeline|menu:split", "page": "edit", "wait": "clip_added", "text": "Setz den Abspielkopf in einen Clip und drück Strg+B: Der Clip wird dort geteilt. Probier es aus!"},
+  {"target": "timeline", "page": "edit", "text": "Trimmen: Fass einen Clip am linken oder rechten Rand und zieh. So kürzt du Anfang oder Ende."},
+  {"target": "timeline", "page": "edit", "text": "Eine Lücke anklicken und Entf drücken schließt sie. Umschalt+Entf löscht einen Clip und rückt alles danach nach."},
+  {"target": "effectsToggle|menu:add_title", "page": "edit", "text": "Titel und Übergänge findest du unter Effekte und im Menü Timeline. Zieh sie einfach auf die Timeline."},
+  {"target": "timeline", "page": "edit", "text": "Musik ziehst du wie jeden Clip auf eine Tonspur. Die Lautstärke stellst du an der Linie im Clip oder im Inspektor ein."},
+  {"target": "inspector", "page": "edit", "text": "Im Inspektor änderst du alles am ausgewählten Clip: Größe, Position, Tempo, Ton und Effekte."},
+  {"target": "pageButton_deliver", "text": "Fertig geschnitten? Auf der Seite Export wählst du eine Vorgabe, etwa YouTube oder TikTok, und speicherst dein Video."}
+ ]
+}
