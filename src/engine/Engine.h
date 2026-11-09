@@ -274,4 +274,5 @@ private:
     std::shared_ptr<Resolved> m_resolved;
     int m_stampObserver = 0;
     bool m_fileChangeQueued = false;
+    bool m_recheckQueued = false;
 };

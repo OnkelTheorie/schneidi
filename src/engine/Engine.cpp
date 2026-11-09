@@ -198,7 +198,19 @@ void Engine::checkFiles()
     collect(m_built);
     if (m_built.nested)
         for (const Timeline& inner : *m_built.nested) collect(inner);
-    for (const QString& f : std::as_const(files)) FileStamp::now(f); // a change calls the observers
+    bool changing = false;
+    for (const QString& f : std::as_const(files)) {
+        FileStamp::now(f); // a settled change calls the observers
+        changing |= FileStamp::changing(f);
+    }
+    // A file still being written (or just overwritten): look again once it may have settled
+    if (changing && !m_recheckQueued) {
+        m_recheckQueued = true;
+        QTimer::singleShot(FileStamp::kSettleMs + 200, this, [this] {
+            m_recheckQueued = false;
+            checkFiles();
+        });
+    }
 }
 
 void Engine::mediaFileChanged()
