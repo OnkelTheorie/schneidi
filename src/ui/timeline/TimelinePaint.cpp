@@ -16,6 +16,7 @@
 #include "core/Subtitles.h"
 #include "core/Timecode.h"
 #include "core/TimelineOps.h"
+#include "core/Voiceover.h"
 #include "engine/GradedThumbs.h"
 #include "engine/MediaCache.h"
 #include "ui/EffectsLibrary.h"
@@ -257,6 +258,7 @@ void TimelineView::drawTracks(QPainter& p)
 
     p.setOpacity(1.0);
     drawAiGhosts(p);
+    if (m_liveTake) drawLiveTake(p);
 
     // Moved clips at the target position
     if (moving) {
@@ -990,8 +992,96 @@ void TimelineView::drawHeaders(QPainter& p)
         p.setBrush(t.locked ? Theme::primary : Theme::control);
         p.drawRoundedRect(lb, 3, 3);
         drawLock(p, lb, t.locked ? Theme::onPrimary : Theme::textDim);
+        // Voice-over mic: armed = red; while it records the lit one is the track that records. Armed: the input
+        // level as a thin meter at the bottom right
+        if (row.ref.kind == TrackKind::Audio) {
+            const QRect mb = micButton(row);
+            const bool armed = row.ref.index == m_armedTrack;
+            p.setPen(Qt::NoPen);
+            p.setBrush(armed ? Theme::recording : Theme::control);
+            p.drawRoundedRect(mb, 3, 3);
+            drawMic(p, mb, armed ? Theme::readableOn(Theme::recording) : Theme::textDim);
+            if (armed) {
+                const QRect meter(mb.left(), row.y + row.h - 12, kHeaderW - 10 - mb.left(), 5);
+                if (meter.top() > mb.bottom() + 2) {
+                    p.setRenderHint(QPainter::Antialiasing, false);
+                    p.fillRect(meter, Theme::well);
+                    constexpr float floor = -60.f;
+                    const double level = std::clamp((m_inputDb - floor) / -floor, 0.f, 1.f);
+                    const QColor c = m_inputDb > -3.f ? Theme::meterHigh : m_inputDb > -12.f ? Theme::meterMid : Theme::meterLow;
+                    p.fillRect(QRectF(meter.left(), meter.top(), level * meter.width(), meter.height()), c);
+                }
+            }
+        }
         p.setRenderHint(QPainter::Antialiasing, false);
     }
+    // A take that gets a new track: that track's header as a ghost below the others
+    if (m_liveTake) {
+        const Timeline& now = m_editor->project()->timeline();
+        if (const auto row = liveTakeRow(); row && m_liveTrack >= now.audio.size()) {
+            const QRect r(0, row->y, kHeaderW - 1, row->h - 1);
+            p.fillRect(r, Theme::alpha(Theme::recording, 40));
+            p.setPen(QPen(Theme::recording, 1, Qt::DashLine));
+            p.setBrush(Qt::NoBrush);
+            p.drawRect(r.adjusted(0, 0, -1, -1));
+            QFont f = font();
+            f.setPointSizeF(8.5);
+            p.setFont(f);
+            p.setPen(Theme::text);
+            p.drawText(r.adjusted(10, 0, -6, 0), Qt::AlignVCenter | Qt::AlignLeft,
+                       trackShortName({TrackKind::Audio, m_liveTrack}) + "  " + T("Neue Spur"));
+        }
+    }
+    p.restore();
+}
+
+std::optional<TimelineView::Row> TimelineView::liveTakeRow() const
+{
+    if (!m_liveTake || m_liveTrack < 0) return std::nullopt;
+    if (auto r = rowFor({TrackKind::Audio, m_liveTrack})) return r;
+    const auto all = rows();
+    if (all.isEmpty()) return std::nullopt;
+    const Row& last = all.last();
+    const int missing = std::max(0, m_liveTrack - int(m_editor->project()->timeline().audio.size()));
+    return Row{{TrackKind::Audio, m_liveTrack}, last.y + last.h + missing * m_view.audioTrackHeight,
+               m_view.audioTrackHeight};
+}
+
+// The take while it is recorded: a red clip from the playhead to where the input has got, its waveform from the
+// blocks that came in (Voiceover::LiveTake)
+void TimelineView::drawLiveTake(QPainter& p)
+{
+    const auto row = liveTakeRow();
+    if (!row || m_liveTake->lengthFrames() <= 0) return;
+    const double from = m_liveTake->from(), end = m_liveTake->end();
+    const int x0 = int(frameToX(from)), x1 = std::max(x0 + 1, int(frameToX(end)));
+    if (x1 < kHeaderW || x0 > width()) return;
+    const QRect r(QPoint(x0, row->y + 1), QPoint(x1 - 1, row->y + row->h - row->lane - 3));
+    p.save();
+    p.setClipRect(kHeaderW, kRulerH, width() - kHeaderW, height() - kRulerH);
+    p.fillRect(r, Theme::alpha(Theme::recording, 170));
+    p.setPen(QPen(Theme::recording, 1));
+    p.setBrush(Qt::NoBrush);
+    p.drawRect(r.adjusted(0, 0, -1, -1));
+    // Waveform: one line per pixel column, the loudest block in it
+    const int top = r.top() + 14, bottom = r.bottom() - 2;
+    const int mid = (top + bottom) / 2, half = std::max(1, (bottom - top) / 2);
+    QVector<QLine> lines;
+    const int c0 = std::max(r.left(), kHeaderW), c1 = std::min(r.right(), width());
+    for (int x = c0; x <= c1; ++x) {
+        const float v = m_liveTake->peak(std::max(from, xToFrame(x)), std::min(end, xToFrame(x + 1)));
+        if (v <= 0) continue;
+        const int h = std::max(1, int(std::sqrt(v) * half)); // like a level meter: quiet speech stays visible
+        lines << QLine(x, mid - h, x, mid + h);
+    }
+    p.setPen(Theme::alpha(Theme::readableOn(Theme::recording), 220));
+    p.drawLines(lines);
+    QFont f = font();
+    f.setPointSizeF(7.5);
+    f.setBold(true);
+    p.setFont(f);
+    p.drawText(QRect(std::max(r.left(), kHeaderW) + 4, r.top() + 1, std::max(0, r.width() - 6), 13),
+               Qt::AlignLeft | Qt::AlignVCenter, "● " + T("Aufnahme"));
     p.restore();
 }
 

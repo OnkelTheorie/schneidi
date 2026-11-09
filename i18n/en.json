@@ -667,7 +667,6 @@
  "Die Sequenz enthält kein <media>": "The sequence has no <media>",
  "Die Sprache ändert sich nach dem Neustart von schneidi.": "The language changes after restarting schneidi.",
  "Die Spur %1 ist gesperrt – entsperren, dann lässt sich die Lücke schließen": "Track %1 is locked – unlock it to close the gap",
- "Die Spur ist gesperrt.": "The track is locked.",
  "Die Timeline enthält keine Untertitel.": "The timeline contains no subtitles.",
  "Die Timeline gibt es nicht mehr.": "The timeline no longer exists.",
  "Die Timeline hat kein Bild (nur Ton)": "The timeline has no picture (sound only)",
@@ -2892,5 +2891,10 @@
  "So groß, wie die Vorschau gerade angezeigt wird: jetzt %1, höchstens %2 Pixel an der längeren Seite": "As large as the preview is shown right now: currently %1, at most %2 pixels on the longer side",
  "Vorschau: %1": "Preview: %1",
  "Vorschau: %1, so groß wie das Projekt. Am schärfsten, braucht aber einen schnellen Rechner.": "Preview: %1, as large as the project. Sharpest, but needs a fast computer.",
- "Vorschau: %1. Die kürzere Seite hat %2 Pixel, die längere folgt dem Seitenverhältnis des Projekts (ein 9:16-Projekt bei 1080p: 1080×1920).": "Preview: %1. The shorter side has %2 pixels, the longer one follows the project's aspect ratio (a 9:16 project at 1080p: 1080×1920)."
+ "Vorschau: %1. Die kürzere Seite hat %2 Pixel, die längere folgt dem Seitenverhältnis des Projekts (ein 9:16-Projekt bei 1080p: 1080×1920).": "Preview: %1. The shorter side has %2 pixels, the longer one follows the project's aspect ratio (a 9:16 project at 1080p: 1080×1920).",
+ "Neue Spur": "New Track",
+ "Aufnahmebereit": "Armed for Recording",
+ "Eingang wählen": "Choose Input",
+ "Aufnahmebereit: die Aufnahmetaste nimmt auf dieser Spur auf (Rechtsklick: Eingang wählen)": "Armed: the record key records onto this track (right-click: choose input)",
+ "Voiceover aufnehmen: auf der Spur mit dem Mikrofon (sonst der gewählten Tonspur oder einer neuen) ab dem Abspielkopf; die Timeline spielt mit": "Record a voice-over: onto the track with the microphone (else the selected audio track or a new one) from the playhead; the timeline plays along"
 }

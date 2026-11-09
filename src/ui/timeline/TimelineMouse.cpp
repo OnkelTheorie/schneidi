@@ -185,7 +185,9 @@ void TimelineView::mousePressEvent(QMouseEvent* e)
     if (subtitlePress(e, pos)) return;
 
     if (pos.x() < kHeaderW) { // track headers
-        if (const auto row = rowAt(pos.y()); row && headerButton(*row).contains(pos)) {
+        if (const auto row = rowAt(pos.y()); row && micButton(*row).contains(pos)) {
+            emit armToggled(row->ref.index);
+        } else if (row && headerButton(*row).contains(pos)) {
             if (row->ref.kind == TrackKind::Video) m_editor->toggleTrackHidden(row->ref);
             else m_editor->toggleTrackMute(row->ref);
         } else if (row && lockButton(*row).contains(pos)) {

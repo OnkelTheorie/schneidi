@@ -152,6 +152,10 @@ public:
 
     void play();
     void pause();
+    // Open end (voice-over recording): timeline playback does not stop at the last clip, the clock, the playhead and
+    // the sound (silence) run on over a black picture until paused. Off again: the end counts as before.
+    void setOpenEnd(bool on);
+    bool openEnd() const { return m_openEnd; }
     void togglePlay();
     void setSpeed(double speed);
     double speed() const { return m_speed; }
@@ -271,6 +275,7 @@ private:
     std::vector<std::shared_ptr<Picture::Renderer>> m_gridRenderers; // multicam cells of the shown page
     std::shared_ptr<const Picture::Pump::Content> m_timelineContent;        // Pump::Content of m_renderer
     int m_sourceLength = 0;
+    bool m_openEnd = false;
     std::shared_ptr<std::atomic<int64_t>> m_lastFrame = std::make_shared<std::atomic<int64_t>>(0);
     struct Resolved;
     std::shared_ptr<Resolved> m_resolved;

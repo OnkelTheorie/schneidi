@@ -104,6 +104,20 @@ QPixmap drawIcon(TimelinePanel::Icon icon, const QColor& c)
         p.drawPolyline(QPolygonF{{16.3, 7.8}, {18.5, 10}, {16.3, 12.2}});
         break;
     }
+    case I::Record: { // microphone: record a voice-over onto the armed/selected track
+        p.setBrush(c);
+        p.setPen(Qt::NoPen);
+        p.drawRoundedRect(QRectF(7.5, 2.5, 5, 9.5), 2.5, 2.5);
+        p.setPen(pen);
+        p.setBrush(Qt::NoBrush);
+        QPainterPath holder;
+        holder.moveTo(5, 9);
+        holder.arcTo(QRectF(5, 5, 10, 9), 180, 180);
+        p.drawPath(holder);
+        p.drawLine(QPointF(10, 14), QPointF(10, 17));
+        p.drawLine(QPointF(7, 17), QPointF(13, 17));
+        break;
+    }
     }
     return pm;
 }
@@ -113,7 +127,9 @@ QIcon TimelinePanel::toolIcon(Icon icon)
 {
     // off = gray, on = bright (selection arrow in the primary color)
     const QColor off = Theme::textDim, hover = Theme::mix(Theme::textDim, Theme::text, 0.75);
-    const QColor on = icon == Icon::Select ? Theme::primary : Theme::mix(Theme::text, Theme::readableOn(Theme::panelHeader), 0.5);
+    const QColor on = icon == Icon::Select   ? Theme::primary
+                      : icon == Icon::Record ? Theme::recording // red while it records
+                                             : Theme::mix(Theme::text, Theme::readableOn(Theme::panelHeader), 0.5);
     QIcon ic;
     ic.addPixmap(drawIcon(icon, off), QIcon::Normal, QIcon::Off);
     ic.addPixmap(drawIcon(icon, hover), QIcon::Active, QIcon::Off);

@@ -159,7 +159,9 @@ void TimelineView::contextMenuEvent(QContextMenuEvent* e)
         return;
     }
     if (e->pos().x() < kHeaderW && e->pos().y() >= kRulerH) {
-        if (const auto row = rowAt(e->pos().y())) headerMenu(*row, e->globalPos());
+        if (const auto row = rowAt(e->pos().y()); row && micButton(*row).contains(e->pos()))
+            emit armMenuRequested(row->ref.index, e->globalPos());
+        else if (row) headerMenu(*row, e->globalPos());
         else emptyAreaMenu(e->globalPos());
         return;
     }

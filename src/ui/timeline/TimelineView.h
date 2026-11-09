@@ -13,6 +13,7 @@
 
 class Editor;
 class MediaCache;
+namespace Voiceover { class LiveTake; }
 class QLineEdit;
 class QMimeData;
 class QTimer;
@@ -108,6 +109,17 @@ public:
     void setCurveEditor(const QVector<int>& ids, bool on, AnimParam param = AnimParam::Count);
     bool curveEditorShown(int clipId) const;
 
+    // Voice-over (app/VoiceoverRecorder): the armed audio track (its mic in the header lit, -1 = none), whether it
+    // records, and the input level shown in that header (dBFS, while armed)
+    void setVoiceoverState(int armedTrack, bool recording);
+    void setInputLevel(float db);
+    int armedTrack() const { return m_armedTrack; }
+    // The take being recorded, growing on audio track `track` (>= the track count: a new one below the others,
+    // drawn as a ghost row); nullptr = none. The take must live until it is taken away again.
+    void setLiveTake(const Voiceover::LiveTake* take, int track);
+    // The mic button of audio track `track` in widget coordinates (tests, tours); empty = not visible
+    QRect micButtonRect(int track) const;
+
 public slots:
     void setPlayhead(int frame);
     void setTool(TimelineView::Tool tool);
@@ -140,6 +152,9 @@ signals:
     void clipMenuRequested(const QPoint& globalPos);
     // Double-click on a subtitle: edit the text in the Inspector
     void subtitleEditRequested(int cueId);
+    // The mic button in an audio track's header: click = arm/disarm it, right-click = its input menu
+    void armToggled(int track);
+    void armMenuRequested(int track, const QPoint& globalPos);
     // A Media Pool file dropped onto a template placeholder filled it (Editor::fillSlot; message = what was done,
     // translated; ok = filled)
     void slotFilled(const QString& message, bool ok);
@@ -336,6 +351,7 @@ private:
     QRect headerButton(const Row& row) const;
     // Track header like DaVinci: label "V1", name (double-click = rename), lock, eye/M
     QRect lockButton(const Row& row) const;
+    QRect micButton(const Row& row) const; // audio tracks only (empty for video): voice-over arm
     QRect nameRect(const Row& row) const;
     QRect shortNameRect(const Row& row) const; // label "V1" = target track button
     bool isLocked(const Row& row) const; // locked track: nothing on it grabbable
@@ -505,6 +521,14 @@ private:
     int slotDropClipAt(const QPoint& pos, Qt::KeyboardModifiers mods) const;
     // Fills the placeholder of clip `clipId` with the dropped file (one undo step) and reports it (slotFilled)
     void fillSlotFromDrop(int clipId, const QMimeData* mime);
+    // Voice-over: armed track, recording, input level (decays like a meter), the growing take
+    int m_armedTrack = -1;
+    bool m_recordingVo = false;
+    float m_inputDb = -100.f;
+    const Voiceover::LiveTake* m_liveTake = nullptr;
+    int m_liveTrack = -1;
+    std::optional<Row> liveTakeRow() const; // its row (a ghost row below the last audio track for a new one)
+    void drawLiveTake(QPainter& p);
     // Drag an effect sound ("Klänge"): its moment where the mouse is (the line shows it)
     QByteArray m_soundDragging;
     int m_soundDropFrame = -1;

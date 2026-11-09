@@ -667,7 +667,6 @@
  "Die Sequenz enthält kein <media>": "La séquence ne contient pas de <media>",
  "Die Sprache ändert sich nach dem Neustart von schneidi.": "La langue changera après le redémarrage de schneidi.",
  "Die Spur %1 ist gesperrt – entsperren, dann lässt sich die Lücke schließen": "La piste %1 est verrouillée – déverrouille-la pour fermer le vide",
- "Die Spur ist gesperrt.": "La piste est verrouillée.",
  "Die Timeline enthält keine Untertitel.": "La timeline ne contient aucun sous-titre.",
  "Die Timeline gibt es nicht mehr.": "La timeline n’existe plus.",
  "Die Timeline hat kein Bild (nur Ton)": "La timeline n'a pas d'image (son uniquement)",
@@ -2892,5 +2891,10 @@
  "So groß, wie die Vorschau gerade angezeigt wird: jetzt %1, höchstens %2 Pixel an der längeren Seite": "Aussi grand que l'aperçu est affiché en ce moment : actuellement %1, au plus %2 pixels sur le grand côté",
  "Vorschau: %1": "Aperçu : %1",
  "Vorschau: %1, so groß wie das Projekt. Am schärfsten, braucht aber einen schnellen Rechner.": "Aperçu : %1, aussi grand que le projet. Le plus net, mais il faut un ordinateur rapide.",
- "Vorschau: %1. Die kürzere Seite hat %2 Pixel, die längere folgt dem Seitenverhältnis des Projekts (ein 9:16-Projekt bei 1080p: 1080×1920).": "Aperçu : %1. Le petit côté fait %2 pixels, le grand suit le format du projet (un projet 9:16 en 1080p : 1080×1920)."
+ "Vorschau: %1. Die kürzere Seite hat %2 Pixel, die längere folgt dem Seitenverhältnis des Projekts (ein 9:16-Projekt bei 1080p: 1080×1920).": "Aperçu : %1. Le petit côté fait %2 pixels, le grand suit le format du projet (un projet 9:16 en 1080p : 1080×1920).",
+ "Neue Spur": "Nouvelle piste",
+ "Aufnahmebereit": "Armée pour l’enregistrement",
+ "Eingang wählen": "Choisir l’entrée",
+ "Aufnahmebereit: die Aufnahmetaste nimmt auf dieser Spur auf (Rechtsklick: Eingang wählen)": "Armée : la touche d’enregistrement enregistre sur cette piste (clic droit : choisir l’entrée)",
+ "Voiceover aufnehmen: auf der Spur mit dem Mikrofon (sonst der gewählten Tonspur oder einer neuen) ab dem Abspielkopf; die Timeline spielt mit": "Enregistrer une voix off : sur la piste au micro (sinon la piste audio sélectionnée ou une nouvelle) depuis la tête de lecture ; la timeline joue en même temps"
 }

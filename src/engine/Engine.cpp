@@ -508,7 +508,7 @@ void Engine::applyTimeline(const Timeline& tl)
     // Own picture engine: the renderer takes every change as a new snapshot (no rebuild, playback goes on);
     // files open lazily in the render threads, the window never waits for them
     if (m_mode == Mode::Timeline) m_player->setTimeline(tl, m_format.rate);
-    m_lastFrame->store(std::max(0, TimelineOps::endFrame(tl) - 1));
+    m_lastFrame->store(m_openEnd ? -1 : std::max(0, TimelineOps::endFrame(tl) - 1)); // -1: the pump has no end
     const bool files = resolveFiles(tl, true);
     // Code trusted meanwhile (core/CodeTrust.h): the same timeline draws another picture
     const quint64 trust = CodeTrust::epoch();
@@ -866,11 +866,19 @@ void Engine::togglePlay() { setSpeed(m_speed == 0.0 ? 1.0 : 0.0); }
 int Engine::lastFrame() const
 {
     switch (m_mode) {
-    case Mode::Timeline: return TimelineOps::endFrame(m_built) - 1;
+    case Mode::Timeline: return m_openEnd ? INT_MAX : TimelineOps::endFrame(m_built) - 1;
     case Mode::Source: return m_sourceRenderer ? m_sourceLength - 1 : -1;
     case Mode::Multicam: break;
     }
     return INT_MAX;
+}
+
+void Engine::setOpenEnd(bool on)
+{
+    if (on == m_openEnd) return;
+    m_openEnd = on;
+    m_lastFrame->store(on ? -1 : std::max(0, TimelineOps::endFrame(m_built) - 1));
+    stopAtEnd(); // closed again while playing behind the end
 }
 
 bool Engine::atEnd(double speed) const

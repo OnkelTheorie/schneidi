@@ -4,6 +4,7 @@
 #include "core/Editor.h"
 #include "core/I18n.h"
 #include "core/Project.h"
+#include "core/Selection.h"
 #include "core/TimelineOps.h"
 #include "engine/Engine.h"
 #include "engine/audio/Capture.h"
@@ -18,11 +19,17 @@ VoiceoverRecorder::VoiceoverRecorder(Engine* engine, Project* project, Editor* e
                                      std::function<QString()> projectPath, std::function<bool(const QString&)> import,
                                      QObject* parent)
     : QObject(parent), m_engine(engine), m_project(project), m_editor(editor), m_projectPath(std::move(projectPath)),
-      m_import(std::move(import)), m_timer(new QTimer(this))
+      m_import(std::move(import)), m_timer(new QTimer(this)), m_meterTimer(new QTimer(this))
 {
+    m_meterTimer->setInterval(33);
+    connect(m_meterTimer, &QTimer::timeout, this, [this] {
+        if (!m_meter) return;
+        const float peak = m_meter->takePeak();
+        emit inputLevel(peak > 0 ? 20.f * std::log10(peak) : -100.f);
+    });
     m_timer->setInterval(10); // pairs for the lining up: the finer, the closer the best one (Voiceover::Alignment)
     connect(m_timer, &QTimer::timeout, this, &VoiceoverRecorder::tick);
-    // Playback stopped (Space, Stop, the end of the timeline) ends the recording
+    // Playback stopped (Space, Stop; the end of the timeline does not: open end) ends the recording
     connect(m_engine, &Engine::speedChanged, this, [this](double speed) {
         if (speed == 0.0 && m_capture && m_playing && !m_stopping) stop();
     });
@@ -35,13 +42,43 @@ VoiceoverRecorder::VoiceoverRecorder(Engine* engine, Project* project, Editor* e
 VoiceoverRecorder::~VoiceoverRecorder()
 {
     if (m_capture) m_capture->stop(); // closing the window mid-take: the file stays complete, no signals any more
+    m_meter.reset();
 }
 
 void VoiceoverRecorder::setArmedTrack(int track)
 {
     if (m_capture || track == m_armed) return; // the track does not change in the middle of a take
     m_armed = track;
+    updateMeter();
     emit armedChanged(track);
+}
+
+void VoiceoverRecorder::inputChanged()
+{
+    if (!m_meter) return;
+    m_meterTimer->stop();
+    m_meter.reset();
+    updateMeter();
+}
+
+void VoiceoverRecorder::updateMeter()
+{
+    const bool want = m_armed >= 0 && !m_capture;
+    if (want == (m_meter != nullptr)) return;
+    if (!want) {
+        m_meterTimer->stop();
+        m_meter.reset();
+        emit inputLevel(-100.f);
+        return;
+    }
+    Audio::Capture::Config config;
+    config.rate = 48000;
+    config.channels = 1;
+    config.backend = Engine::audioDriver();
+    config.input = Voiceover::Settings::load().input;
+    config.buffer = Engine::audioBuffer();
+    m_meter = Audio::Capture::start(config, QString()); // no input: no meter, recording says why
+    if (m_meter) m_meterTimer->start();
 }
 
 bool VoiceoverRecorder::start(QString* error)
@@ -51,11 +88,9 @@ bool VoiceoverRecorder::start(QString* error)
         if (error) *error = T("Voiceover nimmt nur in der Timeline auf.");
         return false;
     }
-    if (m_armed < 0) setArmedTrack(0);
-    if (m_editor->isTrackLocked({TrackKind::Audio, m_armed})) {
-        if (error) *error = T("Die Spur ist gesperrt.");
-        return false;
-    }
+    // A locked or occupied track is not recorded over: the take gets a new track (Voiceover::recordTrack)
+    const QSet<int> selected = m_editor->selection()->ids();
+    m_preferred = Voiceover::preferredTrack(m_project->timeline(), m_armed, QVector<int>(selected.begin(), selected.end()));
     m_settings = Voiceover::Settings::load();
     const QString dir = Voiceover::folder(m_projectPath());
     if (!QDir().mkpath(dir)) {
@@ -72,9 +107,12 @@ bool VoiceoverRecorder::start(QString* error)
     // Pausing below emits speedChanged(0): with m_playing still true from the take before, that ended this take
     // at once (every second take recorded nothing and left the red sign on)
     m_playing = false;
+    m_meterTimer->stop();
+    m_meter.reset(); // one input at a time
     m_capture = Audio::Capture::start(config, Voiceover::uniquePath(dir, QDateTime::currentDateTime()), &why);
     if (!m_capture) {
         if (error) *error = T("Kein Eingang: %1").arg(why);
+        updateMeter();
         return false;
     }
     qInfo("Voiceover: %s -> %s", qPrintable(m_capture->name()), qPrintable(m_capture->path()));
@@ -82,17 +120,19 @@ bool VoiceoverRecorder::start(QString* error)
     m_stopping = false;
     m_engine->pause();
     m_from = m_engine->position();
-    // Past the end of the timeline nothing plays along (play would start from the front)
-    m_playing = m_from < TimelineOps::endFrame(m_project->timeline());
-    m_playFrom = m_from;
-    if (m_playing) {
-        const int preroll = int(std::lround(m_settings.prerollSeconds * m_project->frameRate()));
-        m_playFrom = std::max(0, m_from - preroll);
-        if (m_playFrom != m_from) m_engine->seek(int(m_playFrom));
-        m_engine->play();
-    }
+    // The timeline plays along also behind its last clip and on an empty one (open end: black picture, silence, the
+    // playhead and the take run on) - recording does not stop at the end
+    m_engine->setOpenEnd(true);
+    const int preroll = int(std::lround(m_settings.prerollSeconds * m_project->frameRate()));
+    m_playFrom = std::max(0, m_from - preroll);
+    if (m_playFrom != m_from) m_engine->seek(int(m_playFrom));
+    m_engine->play();
+    m_playing = m_engine->speed() != 0.0;
+    m_take = Voiceover::LiveTake(m_playFrom, m_from, m_project->frameRate(), m_capture->rate());
+    m_liveTrack = Voiceover::recordTrack(m_project->timeline(), m_preferred, m_from, m_from + 1);
     m_timer->start();
     emit recordingChanged(true);
+    emit takeChanged();
     return true;
 }
 
@@ -103,6 +143,18 @@ void VoiceoverRecorder::tick()
     if (m_playing && std::isfinite(heard))
         m_alignment.add(m_capture->frames(), heard / m_project->frameRate(), m_capture->rate());
     const float peak = m_capture->takePeak();
+    const long long before = m_take.samples();
+    m_take.add(m_capture->frames(), peak);
+    // The player starts a moment after the input (it waits for the picture): placed by the pairs, the growing clip
+    // ends at the playhead instead of running ahead of it
+    if (const auto s = m_alignment.fileStartSeconds(0, m_capture->rate(), m_settings.offsetMs))
+        m_take.setFileStart(*s * m_project->frameRate());
+    if (m_take.samples() != before) {
+        // The take reaching the next clip on its track moves it onto a new one (as placing it will)
+        m_liveTrack = Voiceover::recordTrack(m_project->timeline(), m_preferred, m_from,
+                                             std::max(m_from + 1, int(std::ceil(m_take.end()))));
+        emit takeChanged();
+    }
     emit inputLevel(peak > 0 ? 20.f * std::log10(peak) : -100.f);
 }
 
@@ -113,6 +165,7 @@ bool VoiceoverRecorder::stop(QString* error)
     tick(); // one more pair
     m_timer->stop();
     if (m_playing) m_engine->pause();
+    m_engine->setOpenEnd(false);
     QString why;
     const bool written = m_capture->stop(&why);
     const QString path = m_capture->path();
@@ -121,11 +174,12 @@ bool VoiceoverRecorder::stop(QString* error)
     const long long frames = m_capture->frames(), dropped = m_capture->dropped();
     m_capture.reset();
     emit recordingChanged(false);
+    updateMeter();
     if (dropped > 0) qWarning("Voiceover: %lld von %lld Samples verloren", dropped, frames);
 
     const double fps = m_project->frameRate();
-    // Where file sample 0 lies in the timeline: from the pairs taken while playing; nothing played along (past the
-    // end, stopped at once): where playback started
+    // Where file sample 0 lies in the timeline: from the pairs taken while playing; none (stopped at once, no
+    // sound output): where playback started
     // The input's buffer size is not its delay: a block reaches the callback as soon as it is full, its newest sample
     // only a moment old. Taking the buffer off put the take 2048 samples (43 ms) early (measured: timeline played into
     // a PipeWire sink, its monitor recorded, take cross-correlated with the timeline sound: +45 ms with, +2.4 to +4 ms
@@ -141,10 +195,11 @@ bool VoiceoverRecorder::stop(QString* error)
 
     QString problem;
     bool placed = false;
+    m_placedTrack = -1;
     if (!written) problem = T("Aufnahme nicht gespeichert: %1").arg(why);
     else if (frames <= 0) problem = T("Nichts aufgenommen.");
     else if (!m_import(path)) problem = T("Aufnahme nicht lesbar: %1").arg(QDir::toNativeSeparators(path));
-    else placed = m_editor->placeRecording(path, m_armed, fileStart, m_from) != 0;
+    else placed = m_editor->placeRecording(path, m_preferred, fileStart, m_from, &m_placedTrack) != 0;
     if (written && frames > 0 && !placed && problem.isEmpty()) problem = T("Aufnahme liegt nur im Medienpool.");
     if (error) *error = problem;
     emit finished(path, placed, problem);
@@ -160,6 +215,8 @@ void VoiceoverRecorder::cancel()
     m_capture->stop();
     m_capture.reset();
     if (m_playing) m_engine->pause();
+    m_engine->setOpenEnd(false);
     m_stopping = false;
     emit recordingChanged(false);
+    updateMeter();
 }

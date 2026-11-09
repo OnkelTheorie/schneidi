@@ -667,7 +667,6 @@
  "Die Sequenz enthält kein <media>": "В секвенции нет <media>",
  "Die Sprache ändert sich nach dem Neustart von schneidi.": "Язык изменится после перезапуска schneidi.",
  "Die Spur %1 ist gesperrt – entsperren, dann lässt sich die Lücke schließen": "Дорожка %1 заблокирована – разблокируйте её, чтобы закрыть промежуток",
- "Die Spur ist gesperrt.": "Дорожка заблокирована.",
  "Die Timeline enthält keine Untertitel.": "Монтажный стол не содержит субтитров.",
  "Die Timeline gibt es nicht mehr.": "Этого монтажного стола больше не существует.",
  "Die Timeline hat kein Bild (nur Ton)": "На таймлайне нет изображения (только звук)",
@@ -2892,5 +2891,10 @@
  "So groß, wie die Vorschau gerade angezeigt wird: jetzt %1, höchstens %2 Pixel an der längeren Seite": "Такого размера, как предпросмотр показан сейчас: сейчас %1, не больше %2 пикселей по длинной стороне",
  "Vorschau: %1": "Предпросмотр: %1",
  "Vorschau: %1, so groß wie das Projekt. Am schärfsten, braucht aber einen schnellen Rechner.": "Предпросмотр: %1, как у проекта. Самый резкий, но нужен быстрый компьютер.",
- "Vorschau: %1. Die kürzere Seite hat %2 Pixel, die längere folgt dem Seitenverhältnis des Projekts (ein 9:16-Projekt bei 1080p: 1080×1920).": "Предпросмотр: %1. Короткая сторона — %2 пикселей, длинная следует пропорциям проекта (проект 9:16 при 1080p: 1080×1920)."
+ "Vorschau: %1. Die kürzere Seite hat %2 Pixel, die längere folgt dem Seitenverhältnis des Projekts (ein 9:16-Projekt bei 1080p: 1080×1920).": "Предпросмотр: %1. Короткая сторона — %2 пикселей, длинная следует пропорциям проекта (проект 9:16 при 1080p: 1080×1920).",
+ "Neue Spur": "Новая дорожка",
+ "Aufnahmebereit": "Готова к записи",
+ "Eingang wählen": "Выбрать вход",
+ "Aufnahmebereit: die Aufnahmetaste nimmt auf dieser Spur auf (Rechtsklick: Eingang wählen)": "Готова: клавиша записи записывает на эту дорожку (правый клик: выбрать вход)",
+ "Voiceover aufnehmen: auf der Spur mit dem Mikrofon (sonst der gewählten Tonspur oder einer neuen) ab dem Abspielkopf; die Timeline spielt mit": "Записать закадровый голос: на дорожку с микрофоном (иначе на выбранную аудиодорожку или новую) от указателя воспроизведения; таймлайн играет одновременно"
 }

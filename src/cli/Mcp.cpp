@@ -58,7 +58,7 @@ QString instructions(const Options& opt)
                 "drops, `index` knows every shot - quality, speech, sounds, descriptions you write - and finds "
                 "\"the calm wide shot of the shop\"), `edit` changes a "
                 "timeline (see its 'ops' description, `help` with command 'edit' and op '<name>' has details "
-                "per op; op 'speak' turns text into a spoken voice clip; ops 'comp'/'node' build a compositing graph on a "
+                "per op; op 'speak' turns text into a spoken voice clip, op 'voiceover' places a recorded voice; ops 'comp'/'node' build a compositing graph on a "
                 "clip - keys, masks, merges, text - and `frames` with clip/node shows the picture at a node; `effects` "
                 "lists effects, LUTs, transitions, accents, effect sounds and with kind 'nodes' the node types; an effect "
                 "schneidi lacks you write yourself: effect 'ffmpeg_filter' (a filter chain) or 'shader' (GLSL)), `info` shows the "

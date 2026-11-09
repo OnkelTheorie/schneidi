@@ -91,6 +91,26 @@ inline QColor clipColor(const Project* project, const Clip& c, const Track* t)
     return t ? trackColor(*t) : QColor();
 }
 
+// Microphone icon centered in r (voice-over arm): capsule, holder arc, stand
+inline void drawMic(QPainter& p, const QRectF& r, const QColor& color)
+{
+    const double cx = r.center().x(), cy = r.center().y();
+    p.save();
+    p.setRenderHint(QPainter::Antialiasing);
+    p.setPen(Qt::NoPen);
+    p.setBrush(color);
+    p.drawRoundedRect(QRectF(cx - 2.2, cy - 6, 4.4, 7.6), 2.2, 2.2);
+    p.setPen(QPen(color, 1.2, Qt::SolidLine, Qt::RoundCap));
+    p.setBrush(Qt::NoBrush);
+    QPainterPath holder;
+    holder.moveTo(cx - 4, cy - 1.5);
+    holder.arcTo(QRectF(cx - 4, cy - 4.5, 8, 7.5), 180, 180);
+    p.drawPath(holder);
+    p.drawLine(QPointF(cx, cy + 3), QPointF(cx, cy + 5.5));
+    p.drawLine(QPointF(cx - 2.5, cy + 5.5), QPointF(cx + 2.5, cy + 5.5));
+    p.restore();
+}
+
 // Lock icon (padlock) centered in r
 inline void drawLock(QPainter& p, const QRectF& r, const QColor& color)
 {

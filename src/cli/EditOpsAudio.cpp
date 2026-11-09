@@ -872,6 +872,35 @@ void opSpeak(Session& s, const QJsonObject& op)
                               "times: `extensions` install:'whisper,small')"));
 }
 
+// ---------- voiceover ----------
+
+// A recorded voice (the app records it; here any audio file) at `at` onto an audio track: the given one when it is
+// free there for the whole take, else a new track (Editor::placeRecording, the same rule as recording in the app)
+void opVoiceover(Session& s, const QJsonObject& op)
+{
+    const QString file = op.value("file").toString();
+    if (file.isEmpty()) fail("BAD_ARGUMENT", "missing 'file': the recorded audio file");
+    const MediaInfo& m = s.media(absolute(file));
+    if (!m.hasAudio || m.length <= 0) fail("BAD_ARGUMENT", "the file has no sound: " + file);
+    const int at = op.contains("at") ? timeOf(s, op, "at") : s.app.value("playhead").toInt(0);
+    int track = -1;
+    if (op.contains("track") && op.value("track").toString() != "new") {
+        TrackKind k = TrackKind::Audio;
+        track = parseTrack(op.value("track"), &k);
+        if (k != TrackKind::Audio) fail("BAD_ARGUMENT", "track must be an audio track (A1 …) or 'new'");
+    }
+    int placed = -1;
+    if (!s.editor.placeRecording(m.path, track, at, at, &placed)) fail("FAILED", "could not place the recording");
+    s.notes << QString("voiceover %1 (%2 s) on %3%4 at %5")
+                   .arg(QFileInfo(m.path).fileName())
+                   .arg(m.length / s.project.frameRate(), 0, 'f', 2)
+                   .arg(trackName({TrackKind::Audio, placed}),
+                        track >= 0 && placed != track ? QString(" (a new track: %1 has sound there or is locked)")
+                                                            .arg(trackName({TrackKind::Audio, track}))
+                                                      : QString())
+                   .arg(tc(at, s.format()));
+}
+
 } // namespace
 
 QJsonObject prepareSpeech(const QJsonObject& editArgs, Context& ctx)
@@ -974,7 +1003,15 @@ void addAudioOps(QVector<OpDef>& ops)
                  "same text, voice and options again take that file (instant). captions:true or a style ('karaoke', "
                  "'word', 'lines') also makes word captions of it (as op 'captions'; max_words, name); the word times "
                  "are measured by whisper when it is installed, else estimated from the text (the notes say which).",
-                 opSpeak};
+                 opSpeak}
+        << OpDef{"voiceover", "{op:'voiceover', file, at?, track?}",
+                 "a recorded voice (or any audio file) at `at` on an audio track, never over existing sound",
+                 "The step the app's voice-over recording ends with, for a take recorded elsewhere. at: default the "
+                 "app's playhead (0 on a file). track: an audio track ('A2') - used when it has no clip anywhere in "
+                 "the take's range and is not locked; otherwise, or with track 'new' or none, the take goes onto a "
+                 "new audio track named Voiceover below the others. One undo step (track and clip together); the "
+                 "new clip is selected. The notes name the track it landed on.",
+                 opVoiceover};
 }
 
 } // namespace Cli::detail

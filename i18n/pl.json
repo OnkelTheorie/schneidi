@@ -667,7 +667,6 @@
  "Die Sequenz enthält kein <media>": "Sekwencja nie zawiera <media>",
  "Die Sprache ändert sich nach dem Neustart von schneidi.": "Język zmieni się po ponownym uruchomieniu schneidi.",
  "Die Spur %1 ist gesperrt – entsperren, dann lässt sich die Lücke schließen": "Ścieżka %1 jest zablokowana – odblokuj ją, aby zamknąć lukę",
- "Die Spur ist gesperrt.": "Ścieżka jest zablokowana.",
  "Die Timeline enthält keine Untertitel.": "Oś czasu nie zawiera napisów.",
  "Die Timeline gibt es nicht mehr.": "Ta oś czasu już nie istnieje.",
  "Die Timeline hat kein Bild (nur Ton)": "Oś czasu nie ma obrazu (tylko dźwięk)",
@@ -2892,5 +2891,10 @@
  "So groß, wie die Vorschau gerade angezeigt wird: jetzt %1, höchstens %2 Pixel an der längeren Seite": "Tak duży, jak podgląd jest teraz wyświetlany: teraz %1, najwyżej %2 pikseli na dłuższym boku",
  "Vorschau: %1": "Podgląd: %1",
  "Vorschau: %1, so groß wie das Projekt. Am schärfsten, braucht aber einen schnellen Rechner.": "Podgląd: %1, tak duży jak projekt. Najostrzejszy, ale potrzebuje szybkiego komputera.",
- "Vorschau: %1. Die kürzere Seite hat %2 Pixel, die längere folgt dem Seitenverhältnis des Projekts (ein 9:16-Projekt bei 1080p: 1080×1920).": "Podgląd: %1. Krótszy bok ma %2 pikseli, dłuższy wynika z proporcji projektu (projekt 9:16 przy 1080p: 1080×1920)."
+ "Vorschau: %1. Die kürzere Seite hat %2 Pixel, die längere folgt dem Seitenverhältnis des Projekts (ein 9:16-Projekt bei 1080p: 1080×1920).": "Podgląd: %1. Krótszy bok ma %2 pikseli, dłuższy wynika z proporcji projektu (projekt 9:16 przy 1080p: 1080×1920).",
+ "Neue Spur": "Nowa ścieżka",
+ "Aufnahmebereit": "Gotowa do nagrywania",
+ "Eingang wählen": "Wybierz wejście",
+ "Aufnahmebereit: die Aufnahmetaste nimmt auf dieser Spur auf (Rechtsklick: Eingang wählen)": "Gotowa: klawisz nagrywania nagrywa na tę ścieżkę (prawy przycisk: wybierz wejście)",
+ "Voiceover aufnehmen: auf der Spur mit dem Mikrofon (sonst der gewählten Tonspur oder einer neuen) ab dem Abspielkopf; die Timeline spielt mit": "Nagraj lektora: na ścieżkę z mikrofonem (w przeciwnym razie na wybraną ścieżkę audio lub nową) od głowicy; oś czasu odtwarza się równocześnie"
 }

@@ -32,7 +32,8 @@ public:
     };
 
     // Opens the input and records into `path` (created/overwritten) until stop() or destruction. nullptr = no input
-    // opened or the file cannot be written; *error says why.
+    // opened or the file cannot be written; *error says why. An empty path keeps nothing: only the level (takePeak)
+    // and the frame count (an armed track's meter before recording).
     static std::unique_ptr<Capture> start(const Config& config, const QString& path, QString* error = nullptr);
     ~Capture();
 

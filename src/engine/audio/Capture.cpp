@@ -110,7 +110,7 @@ struct Capture::Impl {
     // Writer thread. Only what reached the file counts (a full disk: the header must not claim more than is there)
     void write(const char* data, qint64 size)
     {
-        if (size <= 0) return;
+        if (size <= 0 || path.isEmpty()) return; // a level meter only: nothing is kept
         const qint64 n = file.write(data, size);
         if (n != size) writeFailed = true;
         if (n > 0) dataBytes += n;
@@ -278,12 +278,14 @@ std::unique_ptr<Capture> Capture::start(const Config& config, const QString& pat
     const long long ring = std::max<long long>(std::lround(impl->config.rate * std::clamp(config.ringSeconds, 0.0, 60.0)),
                                                4LL * std::max(64, impl->config.buffer));
     impl->ring.assign(size_t(ring) * impl->config.channels, 0.f);
-    impl->file.setFileName(path);
-    if (!impl->file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-        if (error) *error = impl->file.errorString();
-        return nullptr;
+    if (!path.isEmpty()) {
+        impl->file.setFileName(path);
+        if (!impl->file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+            if (error) *error = impl->file.errorString();
+            return nullptr;
+        }
+        impl->file.write(wavHeader(impl->config.rate, impl->config.channels, 0));
     }
-    impl->file.write(wavHeader(impl->config.rate, impl->config.channels, 0));
     Impl* raw = impl.get();
 
     const QString stand = qEnvironmentVariable("SCHNEIDI_AUDIO_INPUT");
@@ -293,8 +295,10 @@ std::unique_ptr<Capture> Capture::start(const Config& config, const QString& pat
         impl->name = hz > 0 ? QString("Testton %1 Hz").arg(hz) : QString("Stille");
         impl->timer = std::thread([raw, hz] { raw->timerLoop(hz); });
     } else if (!impl->openCard(error)) {
-        impl->file.close();
-        QFile::remove(path);
+        if (!path.isEmpty()) {
+            impl->file.close();
+            QFile::remove(path);
+        }
         return nullptr;
     }
     impl->writer = std::thread([raw] { raw->writerLoop(); });
@@ -308,6 +312,7 @@ bool Capture::stop(QString* error)
     d->stopInputs();
     d->stopWriter.store(true);
     if (d->writer.joinable()) d->writer.join();
+    if (d->path.isEmpty()) return true; // a level meter: no file
     // Whole sample frames only (a write cut short by a full disk can end inside one). WAV sizes are 32 bit: a
     // longer recording keeps the maximum (readers take the rest from the file length)
     const long long block = 3LL * d->config.channels;

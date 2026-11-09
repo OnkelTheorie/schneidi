@@ -667,7 +667,6 @@
  "Die Sequenz enthält kein <media>": "La secuencia no contiene <media>",
  "Die Sprache ändert sich nach dem Neustart von schneidi.": "El idioma cambiará al reiniciar schneidi.",
  "Die Spur %1 ist gesperrt – entsperren, dann lässt sich die Lücke schließen": "La pista %1 está bloqueada: desbloquéala para cerrar el hueco",
- "Die Spur ist gesperrt.": "La pista está bloqueada.",
  "Die Timeline enthält keine Untertitel.": "La línea de tiempo no contiene subtítulos.",
  "Die Timeline gibt es nicht mehr.": "La línea de tiempo ya no existe.",
  "Die Timeline hat kein Bild (nur Ton)": "La línea de tiempo no tiene imagen (solo sonido)",
@@ -2892,5 +2891,10 @@
  "So groß, wie die Vorschau gerade angezeigt wird: jetzt %1, höchstens %2 Pixel an der längeren Seite": "Tan grande como se muestra la vista previa ahora: ahora %1, como máximo %2 píxeles en el lado largo",
  "Vorschau: %1": "Vista previa: %1",
  "Vorschau: %1, so groß wie das Projekt. Am schärfsten, braucht aber einen schnellen Rechner.": "Vista previa: %1, tan grande como el proyecto. Lo más nítido, pero necesita un ordenador rápido.",
- "Vorschau: %1. Die kürzere Seite hat %2 Pixel, die längere folgt dem Seitenverhältnis des Projekts (ein 9:16-Projekt bei 1080p: 1080×1920).": "Vista previa: %1. El lado corto tiene %2 píxeles, el largo sigue la relación de aspecto del proyecto (un proyecto 9:16 a 1080p: 1080×1920)."
+ "Vorschau: %1. Die kürzere Seite hat %2 Pixel, die längere folgt dem Seitenverhältnis des Projekts (ein 9:16-Projekt bei 1080p: 1080×1920).": "Vista previa: %1. El lado corto tiene %2 píxeles, el largo sigue la relación de aspecto del proyecto (un proyecto 9:16 a 1080p: 1080×1920).",
+ "Neue Spur": "Pista nueva",
+ "Aufnahmebereit": "Preparada para grabar",
+ "Eingang wählen": "Elegir entrada",
+ "Aufnahmebereit: die Aufnahmetaste nimmt auf dieser Spur auf (Rechtsklick: Eingang wählen)": "Preparada: la tecla de grabación graba en esta pista (clic derecho: elegir entrada)",
+ "Voiceover aufnehmen: auf der Spur mit dem Mikrofon (sonst der gewählten Tonspur oder einer neuen) ab dem Abspielkopf; die Timeline spielt mit": "Grabar una voz en off: en la pista con el micrófono (si no, en la pista de audio seleccionada o en una nueva) desde el cabezal; la línea de tiempo se reproduce a la vez"
 }
