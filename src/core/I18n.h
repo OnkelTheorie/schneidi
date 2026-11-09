@@ -14,6 +14,9 @@ struct Language {
     QString name; // native name for the language menu
 };
 
+// "日本語 (Japanese)": the language in itself and in English; englishName: "Japanese" (for an AI prompt)
+QString displayName(const QString& code);
+QString englishName(const QString& code);
 QList<Language> languages();           // German plus one language per dictionary in i18n/, German first
 QString language();                    // code of the current UI language
 void setLanguage(const QString& lang); // only stores it, takes effect on the next start

@@ -64,16 +64,33 @@ bool known(const QString& lang)
 
 namespace I18n {
 
+QString englishName(const QString& code)
+{
+    if (code == "pt") return "Portuguese, Brazil";
+    if (code == "zh") return "Chinese, Simplified";
+    if (code == "de") return "German";
+    return QLocale::languageToString(QLocale(code).language());
+}
+
+QString displayName(const QString& code)
+{
+    if (code == "en") return "English";
+    QString native = code == "pt"   ? QStringLiteral("Português")
+                     : code == "zh" ? QStringLiteral("简体中文")
+                                    : QLocale(code).nativeLanguageName();
+    if (native.isEmpty()) native = code;
+    native[0] = native[0].toUpper(); // "polski" -> "Polski"
+    return native + " (" + englishName(code) + ")";
+}
+
 QList<Language> languages()
 {
-    QList<Language> list = {{"de", "Deutsch"}};
+    // The name in the language itself, then in English, so everyone finds their own even in a script they can't
+    // read: "日本語 (Japanese)". English alone; "pt" is Brazilian Portuguese, "zh" Simplified Chinese
+    QList<Language> list = {{"de", "Deutsch (German)"}};
     for (const QString& file : QDir(":/i18n").entryList({"*.json"}, QDir::Files, QDir::Name)) {
         const QString code = file.chopped(5);
-        // Qt calls English "American English"; otherwise the native name, capitalised ("polski" -> "Polski")
-        QString name = code == "en" ? QString("English") : QLocale(code).nativeLanguageName();
-        if (name.isEmpty()) name = code;
-        name[0] = name[0].toUpper();
-        list.append({code, name});
+        list.append({code, displayName(code)});
     }
     return list;
 }
