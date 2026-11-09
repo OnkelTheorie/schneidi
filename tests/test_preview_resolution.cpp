@@ -12,6 +12,8 @@
 
 #include "check.h"
 
+#include "core/TrimFrames.h"
+
 #include "app/MainWindow.h"
 #include "app/SettingsDialog.h"
 #include "engine/Engine.h"
@@ -243,6 +245,20 @@ void testViewerChoices(MainWindow& w, Engine& engine, const QSize& project, cons
     }
     w.resize(w.width() - 400, w.height() - 250);
     QTest::qWait(400);
+
+    // The trim view in the picture's place (a trim drag): the preview size stays, also when it ends
+    const QSize kept = engine.previewSize();
+    TrimFrames::View trim;
+    trim.main = {TrimFrames::Pane{}, TrimFrames::Pane{}};
+    viewer->showTrim(trim);
+    QTest::qWait(400);
+    CHECK(viewer->trimShown());
+    CHECK(viewer->wantedPreviewEdge() > 0);
+    CHECK_EQ(engine.previewSize(), kept);
+    viewer->showTrim({});
+    QTest::qWait(400);
+    CHECK(!viewer->trimShown());
+    CHECK_EQ(engine.previewSize(), kept);
 }
 
 void testMonitor(MainWindow& w, Engine& engine, const QSize& project)
