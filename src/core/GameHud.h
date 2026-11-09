@@ -26,6 +26,9 @@ struct Game {
     QRectF frameArea;
     double frameHeight = 0;
     double frameRight = 0;
+    // How far left a framed line can reach (long names, an assist: "A + B  weapon  C"), part of the width: the names'
+    // team colours are read up to there (a teamkill: the victim in the player's own team colour)
+    double frameLeft = 0;
 };
 
 const QVector<Game>& games();

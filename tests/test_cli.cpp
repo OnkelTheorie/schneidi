@@ -1815,6 +1815,42 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
                 CHECK(std::abs(slotKills[0] - 1.0) < 0.15);
                 CHECK(std::abs(slotKills[1] - 3.5) < 0.15);
             }
+            // Teamkills (review 9.11.: a teamkill counted as a kill): long lines "killer  weapon  victim" with the
+            // names in team colours (T yellow, CT blue). A at 1 s: T kills CT, a kill. B at 1.6 s: T kills T, a
+            // teamkill inside A's moment (lowers its score). C at 4 s: CT kills CT, a teamkill on its own (no moment)
+            const auto named = [](int y, const QString& when, const QString& killer, const QString& victim) {
+                return QString("drawbox=x=1510:y=%1:w=400:h=31:c=0x181818:t=fill:enable='%2',"
+                               "drawbox=x=1510:y=%1:w=400:h=31:c=0xd8444a:t=1:enable='%2',"
+                               "drawbox=x=1530:y=%3:w=90:h=12:c=%4:t=fill:enable='%2',"
+                               "drawbox=x=1680:y=%3:w=50:h=12:c=white:t=fill:enable='%2',"
+                               "drawbox=x=1790:y=%3:w=100:h=12:c=%5:t=fill:enable='%2'")
+                    .arg(y)
+                    .arg(when)
+                    .arg(y + 10)
+                    .arg(killer, victim);
+            };
+            const QString t = "0xe8c060", ct = "0x70a0e8";
+            const QString team = Check::makeMedia(
+                dir.filePath("cs2_teamkill.mkv"),
+                {"-f", "lavfi", "-i",
+                 "color=c=0x707070:s=1920x1080:d=6:r=25," + named(74, "gte(t,1)", t, ct) + ","
+                     + named(108, "gte(t,1.6)", t, t) + "," + named(142, "gte(t,4)", ct, ct),
+                 "-c:v", "ffv1", "-pix_fmt", "bgr0"});
+            const QJsonObject ht = run("highlights", {{"file", team}});
+            if (CHECK_EQ(ht["candidates"].toArray().size(), 1)) {
+                const QJsonObject c = ht["candidates"][0].toObject();
+                CHECK_EQ(c["kills"].toInt(), 1);
+                CHECK(std::abs(c["kill_s"][0].toDouble() - 1.0) < 0.15);
+                CHECK_EQ(c["teamkills"].toInt(), 1);
+                CHECK(std::abs(c["teamkill_s"][0].toDouble() - 1.6) < 0.15);
+                CHECK(std::abs(c["score"].toDouble() - 5.0) < 0.01); // 10 for the kill, -5 for the teamkill
+                CHECK(c["reasons"].toArray().contains(QJsonValue("Teamkill (not counted)")));
+            }
+            if (CHECK_EQ(ht["teamkills"].toArray().size(), 2)) {
+                CHECK(std::abs(ht["teamkills"][0].toDouble() - 1.6) < 0.15);
+                CHECK(std::abs(ht["teamkills"][1].toDouble() - 4.0) < 0.15);
+            }
+            CHECK(ht["teamkills_note"].isString());
         }
         // Without sound: the frame the line began to show
         if (const QJsonObject c = hl["candidates"][0].toObject(); CHECK(c["hit_s"].isArray())) {

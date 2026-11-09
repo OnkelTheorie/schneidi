@@ -118,6 +118,7 @@ struct ColorEvent {
     bool appear;
     double area; // part of the whole picture
     int onset;   // the first frame where the change began to show (a kill feed line slides in over a few frames)
+    bool teamkill = false; // a kill feed line whose victim is in the killer's team colour (framedLineEvents)
 };
 struct ColorEvents {
     QVector<ColorEvent> events; // in time order
@@ -132,8 +133,10 @@ ColorEvents colorEvents(const MediaSource& m, const QJsonObject& a, const std::f
 
 // New kill feed lines with a thin outline of `color` (CS2): top and bottom edge `lineHeight` apart (part of the
 // picture height), the right edge at `rightEdge` (part of the width), inside `region` (fractions). Only appear events.
+// Lines may reach left to `lineLeft` (part of the width): there their names' team colours are read, a line whose victim
+// has the killer's team colour is a teamkill (ColorEvent::teamkill).
 ColorEvents framedLineEvents(const MediaSource& m, const QRectF& region, const QColor& color, double lineHeight,
-                             double rightEdge, const std::function<void(double)>& progress);
+                             double rightEdge, double lineLeft, const std::function<void(double)>& progress);
 
 // ---------- Highlights (AnalysisHighlights.cpp) ----------
 
