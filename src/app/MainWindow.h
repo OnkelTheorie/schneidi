@@ -468,6 +468,8 @@ private:
     void restoreViewerArea(); // back as it was before hideViewerArea
     void updateViewerArea();  // hidden or back, as the mode and the output say
     QAction* m_secondScreenAction = nullptr;
+    QAction* m_secondScreenModeActions[2] = {}; // Workspace › Main Window with a Second Monitor, by Mode
+    QMenu* m_viewerScreenModeMenu = nullptr;     // the same on the viewer's right-click (only while the output is on)
     QPointer<class PreviewOutput> m_output;
     SecondScreenPlan m_screenPlan;
     SecondScreenPlan::Mode m_secondScreenMode = SecondScreenPlan::storedMode();

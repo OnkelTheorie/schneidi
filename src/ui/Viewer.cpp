@@ -209,7 +209,24 @@ Viewer::Viewer(Engine* engine, QWidget* parent) : QWidget(parent), m_engine(engi
         back->setText(T("Vorschau zurückholen"));
         back->setFocusPolicy(Qt::NoFocus);
         connect(back, &QToolButton::clicked, this, &Viewer::programBackWanted);
-        awayLay->addWidget(back, 0, Qt::AlignHCenter);
+        // Or give the area to the panels beside/below (Settings › General, the Workspace menu: the same choice)
+        auto* hideArea = new QToolButton;
+        hideArea->setObjectName("viewer_program_hide_area");
+        hideArea->setText(T("Fläche ausblenden"));
+        hideArea->setToolTip(T("Die Vorschau-Fläche im Hauptfenster schließen, solange die Vorschau auf dem zweiten "
+                               "Monitor ist"));
+        hideArea->setFocusPolicy(Qt::NoFocus);
+        QFont small = hideArea->font(); // the smaller one of the two, it follows a larger font
+        small.setPointSizeF(small.pointSizeF() * 0.85);
+        hideArea->setFont(small);
+        connect(hideArea, &QToolButton::clicked, this, &Viewer::areaHideWanted);
+        auto* buttons = new QHBoxLayout;
+        buttons->setSpacing(6);
+        buttons->addStretch(1);
+        buttons->addWidget(back);
+        buttons->addWidget(hideArea);
+        buttons->addStretch(1);
+        awayLay->addLayout(buttons);
         awayLay->addStretch(1);
     }
     m_stack = new QStackedWidget;

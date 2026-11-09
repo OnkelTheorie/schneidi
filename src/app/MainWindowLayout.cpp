@@ -803,6 +803,7 @@ void MainWindow::showPreviewOn(QScreen* screen)
     updateViewerArea();
     updatePreviewEdge();
     if (m_secondScreenAction) m_secondScreenAction->setChecked(m_output != nullptr);
+    if (m_viewerScreenModeMenu) m_viewerScreenModeMenu->menuAction()->setVisible(m_output != nullptr);
 }
 
 void MainWindow::screensChanged(QScreen* removed)
@@ -824,6 +825,7 @@ void MainWindow::setSecondScreenMode(SecondScreenPlan::Mode mode)
     if (mode == m_secondScreenMode) return;
     m_secondScreenMode = mode;
     if (!m_autosaveDisabled) SecondScreenPlan::storeMode(mode);
+    if (QAction* a = m_secondScreenModeActions[int(mode)]) a->setChecked(true); // also when Settings changed it
     updateViewerArea();
     // Now the source belongs onto the monitor too (or no longer): the current picture
     if (m_output) m_output->showFrame(SecondScreenPlan::holdsTimeline(mode, m_engine->mode() == Engine::Mode::Source)
