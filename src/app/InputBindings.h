@@ -2,7 +2,7 @@
 #pragma once
 // Key and mouse wheel bindings, customizable via keybindings.json in the config folder
 // (Linux: ~/.config/schneidi/, Windows: %APPDATA%/schneidi/).
-// Defaults follow DaVinci Resolve.
+// Defaults follow DaVinci Resolve; built-in presets for people coming from Premiere Pro and Final Cut Pro.
 
 #include <QHash>
 #include <QJsonObject>
@@ -62,12 +62,32 @@ public:
     // their default) and takes effect immediately
     bool exportSet(const QString& path) const;
     bool importSet(const QString& path, QString* error);
-    // Built-in sets: "standard" (like DaVinci Resolve, the defaults) and "beginner" (few, telling keys: S splits,
-    // Ctrl+1-4 switch pages, no single-letter keys for special tools; Ctrl+wheel zooms). Replaces the current set
+    // Built-in sets: "standard" (like DaVinci Resolve, the defaults), "beginner" (few, telling keys: S splits,
+    // Ctrl+1-4 switch pages, no single-letter keys for special tools; Ctrl+wheel zooms), "premiere" and "finalcut"
+    // (the well-known default keys of those programs on schneidi's actions, Cmd = Ctrl). Plus the user's own sets
+    // ("custom:<name>", e.g. an imported Premiere .kys file) from the keypresets folder. Replaces the current set
     // including mouse buttons and wheel, takes effect immediately and is saved
     static QStringList presetIds();
     static QString presetName(const QString& id);
     void applyPreset(const QString& id);
+    // The inputs of every registered action in a preset (for the dialog: what is "own", reset one row)
+    QHash<QString, QStringList> presetInputs(const QString& id) const;
+    // The preset the current set came from (empty if unknown, e.g. a file from before 0.20)
+    QString currentPreset() const { return m_preset; }
+    // Folder of the user's own sets (custom:<name> = <folder>/<name>.json)
+    static QString customPresetDir();
+
+    // A Premiere Pro keyboard shortcut file (.kys, XML): its commands mapped onto schneidi's actions
+    struct KysResult {
+        QHash<QString, QStringList> keys; // action id -> keys (PortableText), at most kSlots
+        int taken = 0;                    // commands with a key that schneidi has
+        int unknown = 0;                  // commands with a key that schneidi lacks (ignored)
+        bool ok = false;                  // a readable shortcut file
+    };
+    static KysResult readKys(const QByteArray& xml);
+    // Imports a .kys file as a custom preset (the Premiere set plus the file's keys), applies and saves it. Returns the
+    // preset id, empty on error (then `error` says why)
+    QString importKys(const QString& path, KysResult* result, QString* error);
 
     // Extra mouse buttons (side buttons) -> action, e.g. rear side button = cut at the playhead
     static const QVector<Qt::MouseButton>& bindableMouseButtons();
@@ -114,10 +134,16 @@ private:
     void rebuildMouse();
     QJsonObject toJson() const;
     void applyJson(const QJsonObject& root, bool withWheel); // shortcuts, mouse (and wheel) from a file
+    // Put `keys` (action id -> "Key" or "Key1|Key2") on top of the current set: a single key replaces the first slot,
+    // the second keeps its default. Every other action loses a key one of them now uses in the same scope (schneidi's
+    // own actions keep their key only while it is free)
+    void loadPreset(const QString& id); // m_inputs, m_wheel and m_preset of a preset (applyPreset without applying)
+    void overlay(const QHash<QString, QStringList>& keys);
 
     QHash<QString, QStringList> m_inputs;      // actionId -> slots (from the file or changed; else the defaults)
     QVector<Entry> m_entries;                  // registered actions in menu order
     QHash<int, QString> m_mouse;               // Qt::MouseButton -> actionId (cache of the slots)
     QHash<QString, WheelAction> m_wheel;       // "none"/"shift"/"ctrl+alt" -> action
     bool m_fileExisted = false;
+    QString m_preset;                          // see currentPreset()
 };

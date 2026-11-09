@@ -6,12 +6,16 @@
 #include <QAction>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QKeyEvent>
+#include <QRegularExpression>
+#include <QSet>
 #include <QStandardPaths>
 #include <QWidget>
+#include <QXmlStreamReader>
 #include <algorithm>
 
 namespace {
@@ -106,6 +110,250 @@ const QHash<QString, QString>& beginnerKeys()
     return keys;
 }
 
+
+using KeyTable = QHash<QString, QStringList>; // action id -> slots ("" = none); one entry = first slot only
+
+// Premiere Pro's default keys (Windows; on macOS Cmd = Ctrl) on schneidi's actions. What Premiere has no key for keeps
+// schneidi's key if it is free (InputBindings::overlay)
+const KeyTable& premiereKeys()
+{
+    static const KeyTable keys = {
+        // Edit
+        {"split", {"Ctrl+K"}}, // Add Edit
+        {"split_on_tracks", {"Ctrl+Shift+K"}}, // Add Edit to All Tracks
+        {"ripple_delete", {"Shift+Del"}},
+        {"delete", {"Del"}},
+        {"delete_alt", {"Backspace"}},
+        {"insert_clip", {","}},
+        {"overwrite_clip", {"."}},
+        {"trim_start", {"Q"}}, // Ripple Trim Previous Edit to Playhead
+        {"trim_end", {"W"}},   // Ripple Trim Next Edit to Playhead
+        {"nudge_left", {"Alt+Left"}},
+        {"nudge_right", {"Alt+Right"}},
+        {"nudge_left_multi", {"Alt+Shift+Left"}},
+        {"nudge_right_multi", {"Alt+Shift+Right"}},
+        {"toggle_enabled", {"Shift+E"}},
+        {"add_transition", {"Ctrl+D"}}, // Apply Video Transition
+        {"link_clips", {"Ctrl+L"}},
+        {"paste_attributes", {"Ctrl+Alt+V"}},
+        // Tools
+        {"tool_select", {"V"}},
+        {"tool_blade", {"C"}}, // Razor
+        {"tool_trim", {"B"}},  // Ripple Edit
+        {"tool_slip", {"Y"}},
+        {"tool_slide", {"U"}},
+        {"select_forward", {"A"}}, // Track Select Forward
+        {"select_backward", {"Shift+A"}},
+        {"snapping", {"S"}},
+        // Marks and markers
+        {"mark_in", {"I"}},
+        {"mark_out", {"O"}},
+        {"clear_in", {"Ctrl+Shift+I"}},
+        {"clear_out", {"Ctrl+Shift+O"}},
+        {"clear_in_out", {"Ctrl+Shift+X"}},
+        {"goto_in", {"Shift+I"}},
+        {"goto_out", {"Shift+O"}},
+        {"add_marker", {"M"}},
+        {"marker_next", {"Shift+M"}},
+        {"marker_prev", {"Ctrl+Shift+M"}},
+        // Playback and view
+        {"play_pause", {"Space"}},
+        {"shuttle_back", {"J"}},
+        {"stop", {"K"}},
+        {"shuttle_fwd", {"L"}},
+        {"frame_prev", {"Left"}},
+        {"frame_next", {"Right"}},
+        {"edit_prev", {"Up"}},
+        {"edit_next", {"Down"}},
+        {"go_start", {"Home"}},
+        {"go_end", {"End"}},
+        {"zoom_in", {"="}},
+        {"zoom_out", {"-"}},
+        {"zoom_fit", {"\\"}},
+        {"viewer_large", {"`"}},              // Maximize Frame
+        {"viewer_full_screen", {"Ctrl+`"}},   // Toggle Full Screen
+        {"viewer_second_screen", {"Ctrl+Shift+F"}}, // schneidi's own, kept reachable
+        // File
+        {"project_new", {"Ctrl+Alt+N"}},
+        {"new_timeline", {"Ctrl+N"}}, // New Sequence
+        {"new_bin", {"Ctrl+B"}},
+        {"page_deliver", {"Ctrl+M"}}, // Export Media
+        {"grab_still", {"Ctrl+Shift+E"}}, // Export Frame
+    };
+    return keys;
+}
+
+// Final Cut Pro's default keys (Cmd = Ctrl, Option = Alt)
+const KeyTable& finalCutKeys()
+{
+    static const KeyTable keys = {
+        // Edit
+        {"split", {"Ctrl+B"}},                // Blade
+        {"split_on_tracks", {"Ctrl+Shift+B"}}, // Blade All
+        {"ripple_delete", {"Backspace"}},     // Delete in the storyline closes the gap
+        {"ripple_delete_alt", {"Del"}},
+        {"delete", {"Shift+Backspace"}},      // Replace with Gap
+        {"delete_alt", {"Shift+Del"}},
+        {"insert_clip", {"W"}},
+        {"overwrite_clip", {"D"}},
+        {"append_at_end", {"E"}},
+        {"place_on_top", {"Q"}}, // Connect
+        {"replace_clip", {"Shift+R"}},
+        {"trim_start", {"Alt+["}},
+        {"trim_end", {"Alt+]"}},
+        {"nudge_left", {","}},
+        {"nudge_right", {"."}},
+        {"nudge_left_multi", {"Shift+,"}},
+        {"nudge_right_multi", {"Shift+."}},
+        {"toggle_enabled", {"V"}},
+        {"add_transition", {"Ctrl+T"}},
+        {"paste_attributes", {"Ctrl+Shift+V"}},
+        {"clip_speed", {"Ctrl+R"}},        // Retime
+        {"clip_speed_reset", {"Ctrl+Alt+R"}}, // Normal Speed
+        {"voiceover_record", {"Alt+Shift+A"}},
+        // Tools
+        {"tool_select", {"A"}},
+        {"tool_trim", {"T"}},
+        {"tool_blade", {"B"}},
+        {"snapping", {"N"}},
+        // Marks and markers
+        {"mark_in", {"I"}},
+        {"mark_out", {"O"}},
+        {"clear_in", {"Alt+I"}},
+        {"clear_out", {"Alt+O"}},
+        {"clear_in_out", {"Alt+X"}},
+        {"goto_in", {"Shift+I"}},
+        {"goto_out", {"Shift+O"}},
+        {"add_marker", {"M"}},
+        {"marker_next", {"Ctrl+'"}},
+        {"marker_prev", {"Ctrl+;"}},
+        // Playback and view
+        {"play_pause", {"Space"}},
+        {"shuttle_back", {"J"}},
+        {"stop", {"K"}},
+        {"shuttle_fwd", {"L"}},
+        {"frame_prev", {"Left"}},
+        {"frame_next", {"Right"}},
+        {"edit_prev", {"Up"}},
+        {"edit_next", {"Down"}},
+        {"go_start", {"Home"}},
+        {"go_end", {"End"}},
+        {"zoom_in", {"Ctrl+="}},
+        {"zoom_out", {"Ctrl+-"}},
+        {"zoom_fit", {"Shift+Z"}},
+        {"toggle_scopes", {"Ctrl+7"}},
+        {"viewer_full_screen", {"Ctrl+Shift+F"}},
+        {"viewer_second_screen", {"Ctrl+F12"}}, // A/V Output on/off; Ctrl+Shift+F is full screen in Final Cut
+        // File
+        {"import", {"Ctrl+I"}},
+        {"page_deliver", {"Ctrl+E"}}, // Share
+    };
+    return keys;
+}
+
+// Premiere command names (.kys) -> action ids. Several spellings where versions differ
+const QHash<QString, QString>& kysCommands()
+{
+    static const QHash<QString, QString> commands = {
+        {"cmd.file.new.project", "project_new"},
+        {"cmd.file.new.sequence", "new_timeline"},
+        {"cmd.file.new.bin", "new_bin"},
+        {"cmd.file.open", "project_open"},
+        {"cmd.file.openproject", "project_open"},
+        {"cmd.file.save", "project_save"},
+        {"cmd.file.saveas", "project_save_as"},
+        {"cmd.file.import", "import"},
+        {"cmd.file.export.media", "page_deliver"},
+        {"cmd.file.export.frame", "grab_still"},
+        {"cmd.app.quit", "quit"},
+        {"cmd.file.exit", "quit"},
+        {"cmd.edit.undo", "undo"},
+        {"cmd.edit.redo", "redo"},
+        {"cmd.edit.cut", "cut"},
+        {"cmd.edit.copy", "copy"},
+        {"cmd.edit.paste", "paste"},
+        {"cmd.edit.pasteattributes", "paste_attributes"},
+        {"cmd.edit.clear", "delete"},
+        {"cmd.edit.rippledelete", "ripple_delete"},
+        {"cmd.edit.selectall", "select_all"},
+        {"cmd.edit.deselectall", "deselect"},
+        {"cmd.edit.keyboardshortcuts", "edit_keybindings"},
+        {"cmd.clip.enable", "toggle_enabled"},
+        {"cmd.clip.link", "link_clips"},
+        {"cmd.clip.speedduration", "clip_speed"},
+        {"cmd.sequence.addedit", "split"},
+        {"cmd.sequence.razor", "split"},
+        {"cmd.sequence.addedittoalltracks", "split_on_tracks"},
+        {"cmd.sequence.razoralltracks", "split_on_tracks"},
+        {"cmd.sequence.rippletrimprevious", "trim_start"},
+        {"cmd.sequence.rippletrimnext", "trim_end"},
+        {"cmd.sequence.applyvideotransition", "add_transition"},
+        {"cmd.sequence.snap", "snapping"},
+        {"cmd.sequence.zoomin", "zoom_in"},
+        {"cmd.sequence.zoomout", "zoom_out"},
+        {"cmd.sequence.zoomtofit", "zoom_fit"},
+        {"cmd.sequence.nudgeleft", "nudge_left"},
+        {"cmd.sequence.nudgeright", "nudge_right"},
+        {"cmd.sequence.nudgeleftfive", "nudge_left_multi"},
+        {"cmd.sequence.nudgerightfive", "nudge_right_multi"},
+        {"cmd.source.insert", "insert_clip"},
+        {"cmd.source.overwrite", "overwrite_clip"},
+        {"cmd.marker.add", "add_marker"},
+        {"cmd.marker.next", "marker_next"},
+        {"cmd.marker.previous", "marker_prev"},
+        {"cmd.marker.gotonext", "marker_next"},
+        {"cmd.marker.gotoprevious", "marker_prev"},
+        {"cmd.marker.markin", "mark_in"},
+        {"cmd.marker.markout", "mark_out"},
+        {"cmd.marker.setin", "mark_in"},
+        {"cmd.marker.setout", "mark_out"},
+        {"cmd.marker.clearin", "clear_in"},
+        {"cmd.marker.clearout", "clear_out"},
+        {"cmd.marker.clearinout", "clear_in_out"},
+        {"cmd.marker.gotoin", "goto_in"},
+        {"cmd.marker.gotoout", "goto_out"},
+        {"cmd.transport.play", "play_pause"},
+        {"cmd.transport.playstop", "play_pause"},
+        {"cmd.transport.shuttleleft", "shuttle_back"},
+        {"cmd.transport.shuttlestop", "stop"},
+        {"cmd.transport.shuttleright", "shuttle_fwd"},
+        {"cmd.transport.stepback", "frame_prev"},
+        {"cmd.transport.stepforward", "frame_next"},
+        {"cmd.transport.gotoprevedit", "edit_prev"},
+        {"cmd.transport.gotonextedit", "edit_next"},
+        {"cmd.transport.gotostart", "go_start"},
+        {"cmd.transport.gotoend", "go_end"},
+        {"cmd.tool.selection", "tool_select"},
+        {"cmd.tool.razor", "tool_blade"},
+        {"cmd.tool.ripple", "tool_trim"},
+        {"cmd.tool.slip", "tool_slip"},
+        {"cmd.tool.slide", "tool_slide"},
+        {"cmd.tool.trackselectforward", "select_forward"},
+        {"cmd.tool.trackselectbackward", "select_backward"},
+        {"cmd.window.maximizeframe", "viewer_large"},
+        {"cmd.window.fullscreen", "viewer_full_screen"},
+    };
+    return commands;
+}
+
+// Windows virtual key code (Premiere stores those, also on macOS) -> key name
+QString virtualKeyName(int vk)
+{
+    if ((vk >= 'A' && vk <= 'Z') || (vk >= '0' && vk <= '9')) return QString(QChar(vk));
+    if (vk >= 0x70 && vk <= 0x7B) return QString("F%1").arg(vk - 0x70 + 1);       // F1-F12
+    if (vk >= 0x60 && vk <= 0x69) return QString(QChar('0' + vk - 0x60));          // number pad digits
+    static const QHash<int, QString> names = {
+        {0x08, "Backspace"}, {0x09, "Tab"},  {0x0D, "Return"}, {0x1B, "Esc"},  {0x20, "Space"},
+        {0x21, "PgUp"},      {0x22, "PgDown"}, {0x23, "End"},  {0x24, "Home"}, {0x25, "Left"},
+        {0x26, "Up"},        {0x27, "Right"}, {0x28, "Down"},  {0x2D, "Ins"},  {0x2E, "Del"},
+        {0x6A, "*"},         {0x6B, "+"},     {0x6D, "-"},     {0x6E, "."},    {0x6F, "/"},
+        {0xBA, ";"},         {0xBB, "="},     {0xBC, ","},     {0xBD, "-"},    {0xBE, "."},
+        {0xBF, "/"},         {0xC0, "`"},     {0xDB, "["},     {0xDC, "\\"},   {0xDD, "]"},
+        {0xDE, "'"},
+    };
+    return names.value(vk);
+}
+
 } // namespace
 
 InputBindings& InputBindings::instance()
@@ -140,6 +388,7 @@ void InputBindings::load()
 
 void InputBindings::applyJson(const QJsonObject& root, bool withWheel)
 {
+    m_preset = root.value("preset").toString();
     const QJsonObject wheel = root.value("wheel").toObject();
     for (auto it = wheel.begin(); it != wheel.end() && withWheel; ++it)
         m_wheel[it.key().toLower()] = wheelNames().value(it.value().toString(), WheelAction::None);
@@ -288,6 +537,7 @@ void InputBindings::rebuildMouse()
 void InputBindings::resetAll()
 {
     m_inputs.clear();
+    m_preset = "standard";
     for (const Entry& e : m_entries) apply(e);
     rebuildMouse();
     save();
@@ -312,7 +562,9 @@ QJsonObject InputBindings::toJson() const
         if (binds.mid(1).join(QString()).isEmpty()) keys[id] = binds[0]; // one slot: plain string like before
         else keys[id] = QJsonArray::fromStringList(binds);
     }
-    return {{"version", kVersion}, {"wheel", wheel}, {"shortcuts", keys}};
+    QJsonObject root{{"version", kVersion}, {"wheel", wheel}, {"shortcuts", keys}};
+    if (!m_preset.isEmpty()) root["preset"] = m_preset; // optional, older versions ignore it
+    return root;
 }
 
 void InputBindings::save()
@@ -352,18 +604,75 @@ bool InputBindings::importSet(const QString& path, QString* error)
     return true;
 }
 
+QString InputBindings::customPresetDir()
+{
+    return QDir(QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation)).filePath("keypresets");
+}
+
 QStringList InputBindings::presetIds()
 {
-    return {"standard", "beginner"};
+    QStringList ids{"standard", "beginner", "premiere", "finalcut"};
+    for (const QFileInfo& f : QDir(customPresetDir()).entryInfoList({"*.json"}, QDir::Files, QDir::Name))
+        ids << "custom:" + f.completeBaseName();
+    return ids;
 }
 
 QString InputBindings::presetName(const QString& id)
 {
     if (id == "beginner") return T("Einsteiger");
+    if (id == "premiere") return "Premiere Pro";
+    if (id == "finalcut") return "Final Cut Pro";
+    if (id.startsWith("custom:")) return id.mid(7);
     return T("Standard");
 }
 
+void InputBindings::overlay(const QHash<QString, QStringList>& keys)
+{
+    QSet<QPair<QString, int>> fixed; // (id, slot) set by `keys`
+    QSet<QString> taken;             // scope + '\n' + input
+    for (auto it = keys.begin(); it != keys.end(); ++it) {
+        QStringList binds = inputs(it.key());
+        for (int slot = 0; slot < kSlots && slot < it->size(); ++slot) {
+            binds[slot] = normalizeInput(it->at(slot));
+            fixed.insert({it.key(), slot});
+            if (!binds[slot].isEmpty()) taken.insert(scope(it.key()) + '\n' + binds[slot]);
+        }
+        m_inputs[it.key()] = binds;
+    }
+    // The other actions (and the kept second slots) give up keys the set uses now
+    QStringList ids = m_inputs.keys();
+    for (const Entry& e : m_entries) ids << e.id;
+    ids.removeDuplicates();
+    for (const QString& id : ids) {
+        QStringList binds = inputs(id);
+        bool changed = false;
+        for (int slot = 0; slot < kSlots; ++slot)
+            if (!fixed.contains({id, slot}) && !binds[slot].isEmpty() && taken.contains(scope(id) + '\n' + binds[slot])) {
+                binds[slot].clear();
+                changed = true;
+            }
+        if (changed) m_inputs[id] = binds;
+    }
+}
+
 void InputBindings::applyPreset(const QString& id)
+{
+    loadPreset(id);
+    for (const Entry& e : m_entries) apply(e);
+    rebuildMouse();
+    save();
+}
+
+QHash<QString, QStringList> InputBindings::presetInputs(const QString& id) const
+{
+    InputBindings set(*this); // a copy: nothing reaches the actions or the file
+    set.loadPreset(id);
+    QHash<QString, QStringList> inputs;
+    for (const Entry& e : m_entries) inputs[e.id] = set.inputs(e.id);
+    return inputs;
+}
+
+void InputBindings::loadPreset(const QString& id)
 {
     m_inputs.clear();
     m_wheel = defaultWheel();
@@ -381,10 +690,114 @@ void InputBindings::applyPreset(const QString& id)
             {"shift", WheelAction::ScrollHorizontal},
             {"alt", WheelAction::TrackHeight},
         };
+    } else if (id == "premiere") {
+        overlay(premiereKeys()); // Alt+wheel zooms there too (the default)
+    } else if (id == "finalcut") {
+        overlay(finalCutKeys());
+    } else if (id.startsWith("custom:")) {
+        QFile f(QDir(customPresetDir()).filePath(id.mid(7) + ".json"));
+        if (f.open(QIODevice::ReadOnly)) applyJson(QJsonDocument::fromJson(f.readAll()).object(), true);
     }
+    m_preset = id;
+}
+
+InputBindings::KysResult InputBindings::readKys(const QByteArray& xml)
+{
+    // Premiere writes one element per key, e.g. <item><commandname>cmd.edit.undo</commandname>
+    // <virtualkey>90</virtualkey><modifier.ctrl>true</modifier.ctrl></item>. Tolerant: element names in any case,
+    // "command"/"key" spellings, macOS modifier names
+    KysResult r;
+    QSet<QString> taken, unknown;
+    QXmlStreamReader x(xml);
+    QHash<QString, QString> item; // child element -> text of the open item
+    int depth = 0, itemDepth = -1;
+    QString root;
+    while (!x.atEnd()) {
+        x.readNext();
+        if (x.isStartElement()) {
+            ++depth;
+            const QString name = x.name().toString().toLower();
+            if (root.isEmpty()) root = name;
+            if (itemDepth < 0 && (name == "item" || name == "shortcut")) {
+                itemDepth = depth;
+                item.clear();
+            } else if (itemDepth >= 0 && depth == itemDepth + 1) {
+                item[name] = x.readElementText(QXmlStreamReader::SkipChildElements).trimmed();
+                --depth; // readElementText consumed the end element
+            }
+        } else if (x.isEndElement()) {
+            if (depth == itemDepth) {
+                itemDepth = -1;
+                const QString command = item.value("commandname", item.value("command")).toLower();
+                QString key = item.contains("virtualkey") ? virtualKeyName(item.value("virtualkey").toInt())
+                                                          : item.value("key");
+                if (command.isEmpty() || key.isEmpty()) {
+                    --depth;
+                    continue;
+                }
+                auto on = [&](const char* m) { return item.value(m).compare("true", Qt::CaseInsensitive) == 0; };
+                QStringList mods;
+                if (on("modifier.ctrl") || on("modifier.command") || on("modifier.cmd")) mods << "Ctrl";
+                if (on("modifier.alt") || on("modifier.option")) mods << "Alt";
+                if (on("modifier.shift")) mods << "Shift";
+                if (on("modifier.control")) mods << "Meta"; // macOS Control (Ctrl there is Cmd)
+                mods << key;
+                const QString input = normalizeInput(mods.join('+'));
+                const QString id = kysCommands().value(command);
+                if (input.isEmpty()) {
+                    // a key schneidi cannot name: not counted
+                } else if (id.isEmpty()) {
+                    unknown.insert(command);
+                } else {
+                    taken.insert(command);
+                    QStringList& keys = r.keys[id];
+                    if (!keys.contains(input) && keys.size() < kSlots) keys << input;
+                }
+            }
+            --depth;
+        }
+    }
+    r.ok = !x.hasError() && !root.isEmpty() && (root.contains("premiere") || root.contains("shortcut"));
+    r.taken = int(taken.size());
+    r.unknown = int(unknown.size());
+    return r;
+}
+
+QString InputBindings::importKys(const QString& path, KysResult* result, QString* error)
+{
+    QFile f(path);
+    if (!f.open(QIODevice::ReadOnly)) {
+        if (error) *error = f.errorString();
+        return {};
+    }
+    KysResult r = readKys(f.readAll());
+    if (result) *result = r;
+    if (!r.ok || r.taken == 0) {
+        if (error) *error = T("Keine Premiere-Tastenbelegung in der Datei");
+        return {};
+    }
+    // Premiere's set underneath: what the file leaves out works like in Premiere. A command with one key in the file
+    // has only that one (the second slot is cleared)
+    loadPreset("premiere");
+    for (QStringList& keys : r.keys)
+        while (keys.size() < kSlots) keys << QString();
+    overlay(r.keys);
+    QString name = QFileInfo(path).completeBaseName().simplified();
+    name.replace(QRegularExpression(R"([\\/:*?"<>|])"), "_");
+    if (name.isEmpty()) name = "Premiere";
+    QDir().mkpath(customPresetDir());
+    const QString id = "custom:" + name;
+    m_preset = id;
+    QFile out(QDir(customPresetDir()).filePath(name + ".json"));
+    if (!out.open(QIODevice::WriteOnly) || out.write(QJsonDocument(toJson()).toJson()) <= 0) {
+        if (error) *error = T("Die Datei lässt sich nicht schreiben.");
+        return {};
+    }
+    out.close();
     for (const Entry& e : m_entries) apply(e);
     rebuildMouse();
     save();
+    return id;
 }
 
 QString InputBindings::modifierKey(Qt::KeyboardModifiers mods)

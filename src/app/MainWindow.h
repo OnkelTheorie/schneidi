@@ -390,6 +390,7 @@ private:
     bool m_slowEffects = false;     // clips with effects played: the hint offers the smart render cache first
     Inspector* m_inspector = nullptr;
     ColorPanel* m_colorPanel = nullptr;
+    QPointer<class KeyTrainer> m_keyTrainer;     // Help › Practice keys, while open
     QPointer<class KeyColorPicker> m_keyPicker; // while the pipette is on
     QPointer<class KeyPickWindow> m_keyPickWindow; // its large picture, while the pipette is on
     TranscriptPanel* m_transcript = nullptr;

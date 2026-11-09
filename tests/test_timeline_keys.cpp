@@ -116,7 +116,8 @@ void testBindings()
         }
         // The transcript's keys do not clash with the timeline's Delete (other scope) and keep them in every set
         CHECK_EQ(b.inputs("transcript_cut"), QStringList({"Del", "Backspace"}));
-        CHECK_EQ(b.inputs("tool_slip"), QStringList({"", ""}));
+        // Premiere has Y for Slip (and Track Select Forward on A instead)
+        CHECK_EQ(b.inputs("tool_slip"), QStringList({preset == "premiere" ? "Y" : "", ""}));
     }
     b.applyPreset("standard");
 }
