@@ -29,6 +29,9 @@ struct TourStep {
     // Controls the text tells the user to use beside the target (same form as `target`, no hole): the bubble keeps
     // off them
     QString keep;
+    // The timeline tool the step needs, switched to when it is entered ("select", "trim", "blade"; empty = as it is).
+    // The user's own tool comes back when the tour ends
+    QString tool;
 };
 
 struct Tour {

@@ -2904,13 +2904,12 @@
  "Die Spur ist gesperrt.": "La piste est verrouillée.",
  "Voiceover: gleich …": "Voix off : ça commence …",
  "Bewegt sich die Stelle? Verfolgen lässt das Fenster dem Objekt folgen. Oder setz an mehreren Zeitpunkten einen Keyframe.": "L’endroit bouge ? Suivre fait suivre l’objet à la fenêtre. Ou place une image clé à plusieurs moments.",
- "Trimmen: Fass den Clip am rechten Rand und zieh ihn nach links. So kürzt du sein Ende, am linken Rand den Anfang. Probier es aus!": "Rogner : attrape le clip par son bord droit et fais-le glisser vers la gauche. Tu raccourcis ainsi sa fin ; le bord gauche raccourcit le début. Essaie !",
+ "Trimmen: Mit dem Auswahl-Werkzeug ({key:tool_select}) fasst du den Clip am rechten Rand und ziehst ihn nach links. So kürzt du sein Ende, am linken Rand den Anfang. Probier es aus!": "Rogner : en Mode sélection ({key:tool_select}), attrape le clip par son bord droit et fais-le glisser vers la gauche. Tu raccourcis ainsi sa fin ; le bord gauche raccourcit le début. Essaie !",
  "Unter Compositing-Rezepte liegt Bild im Bild: Zieh es auf den oberen Clip.": "Dans Recettes de comp se trouve Incrustation d'image : fais-la glisser sur le clip du haut.",
  "Unter Compositing-Rezepte liegt Greenscreen: Zieh es auf den oberen Clip.": "Dans Recettes de comp se trouve Fond vert : fais-le glisser sur le clip du haut.",
  "Öffne oben die Effekte.": "Ouvre les Effets en haut.",
  "Rundgang Farbe starten": "Lancer la visite Couleur",
- "Setz den Abspielkopf in einen Clip und drück {key:split}: Der Clip wird dort geteilt. Probier es aus!": "Place la tête de lecture dans un clip et appuie sur {key:split} : le clip est coupé à cet endroit. Essaie !",
  "Unten wechselst du die Seiten. Wenn du fertig bist: Geh unten auf Export und render dein Video.": "En bas, tu changes de page. Quand tu as fini : va en bas sur Export et fais le rendu de ta vidéo.",
- "Hier sind die Werkzeuge. Zum Schneiden: Setz den Abspielkopf an die Stelle und drück {key:split}. Der Clip wird dort geteilt. Probier es aus!": "Voici les outils. Pour couper : place la tête de lecture à l’endroit voulu et appuie sur {key:split}. Le clip est coupé là. Essaie !",
+ "Schneiden: {key:split} teilt den Clip am Abspielkopf. Oder nimm das Klingen-Werkzeug ({key:tool_blade}) und klick auf den Clip. Probier es aus!": "Couper : {key:split} coupe le clip à la tête de lecture. Ou prends le Mode lame ({key:tool_blade}) et clique sur le clip. Essaie !",
  "Wähl eine Vorlage, etwa YouTube, und klick auf „Zur Render-Warteschlange hinzufügen“. „Alle rendern“ speichert dann dein Video.": "Choisis un préréglage, par exemple YouTube, et clique sur « Ajouter à la file de rendu ». « Tout rendre » enregistre ensuite ta vidéo."
 }

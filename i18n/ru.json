@@ -2904,13 +2904,12 @@
  "Die Spur ist gesperrt.": "Дорожка заблокирована.",
  "Voiceover: gleich …": "Закадровый голос: сейчас начнётся …",
  "Bewegt sich die Stelle? Verfolgen lässt das Fenster dem Objekt folgen. Oder setz an mehreren Zeitpunkten einen Keyframe.": "Участок двигается? Отслеживание заставит окно следовать за объектом. Или поставьте ключевые кадры в нескольких моментах.",
- "Trimmen: Fass den Clip am rechten Rand und zieh ihn nach links. So kürzt du sein Ende, am linken Rand den Anfang. Probier es aus!": "Подрезка: возьмите клип за правый край и потяните влево. Так укорачивается конец, левым краем — начало. Попробуйте!",
+ "Trimmen: Mit dem Auswahl-Werkzeug ({key:tool_select}) fasst du den Clip am rechten Rand und ziehst ihn nach links. So kürzt du sein Ende, am linken Rand den Anfang. Probier es aus!": "Подрезка: инструментом выделения ({key:tool_select}) возьмите клип за правый край и потяните влево. Так укорачивается конец, левым краем — начало. Попробуйте!",
  "Unter Compositing-Rezepte liegt Bild im Bild: Zieh es auf den oberen Clip.": "В «Рецептах comp» есть «Картинка в картинке»: перетащите её на верхний клип.",
  "Unter Compositing-Rezepte liegt Greenscreen: Zieh es auf den oberen Clip.": "В «Рецептах comp» есть «Хромакей»: перетащите его на верхний клип.",
  "Öffne oben die Effekte.": "Откройте вверху Эффекты.",
  "Rundgang Farbe starten": "Начать тур по цвету",
- "Setz den Abspielkopf in einen Clip und drück {key:split}: Der Clip wird dort geteilt. Probier es aus!": "Поставьте указатель внутрь клипа и нажмите {key:split}: клип разрежется в этом месте. Попробуйте!",
  "Unten wechselst du die Seiten. Wenn du fertig bist: Geh unten auf Export und render dein Video.": "Внизу переключаются страницы. Когда закончите: откройте внизу Экспорт и отрендерите видео.",
- "Hier sind die Werkzeuge. Zum Schneiden: Setz den Abspielkopf an die Stelle und drück {key:split}. Der Clip wird dort geteilt. Probier es aus!": "Здесь инструменты. Чтобы разрезать: поставьте указатель в нужное место и нажмите {key:split}. Клип разрежется там. Попробуйте!",
+ "Schneiden: {key:split} teilt den Clip am Abspielkopf. Oder nimm das Klingen-Werkzeug ({key:tool_blade}) und klick auf den Clip. Probier es aus!": "Разрезка: {key:split} делит клип в месте указателя. Или возьмите инструмент «Лезвие» ({key:tool_blade}) и щёлкните по клипу. Попробуйте!",
  "Wähl eine Vorlage, etwa YouTube, und klick auf „Zur Render-Warteschlange hinzufügen“. „Alle rendern“ speichert dann dein Video.": "Выберите шаблон, например YouTube, и нажмите «Добавить в очередь рендеринга». «Рендерить все» затем сохранит видео."
 }

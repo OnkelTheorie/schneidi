@@ -37,6 +37,7 @@ public:
         std::function<QVector<QRect>()> avoid;
         // The working area (the pages, without the bars): the bubble's home is one of its corners
         std::function<QRect()> home;
+        std::function<void(const QString&)> setTool; // a step's timeline tool ("select", "trim", "blade")
         QHash<QString, std::function<void()>> actions;    // a step's "action", done when it is entered
         // A step's "offer": the button's text (German key), whether it is needed now, what it does
         struct Offer {

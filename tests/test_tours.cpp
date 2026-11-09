@@ -49,6 +49,7 @@
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTimer>
+#include <QWindow>
 #include <QTranslator>
 #include <cmath>
 #include <clocale>
@@ -214,7 +215,7 @@ void testPlace()
 // The visible one (buttons of an earlier step are deleted later)
 QPushButton* button(TourOverlay* o, const char* name)
 {
-    for (QPushButton* b : o->findChildren<QPushButton*>(name))
+    for (QPushButton* b : o->bubble()->findChildren<QPushButton*>(name))
         if (!b->isHidden()) return b;
     return nullptr;
 }
@@ -416,6 +417,25 @@ void sameLook(const Look& a, const Look& b, const QString& where)
     Check::report(a.title == b.title, "title back", __FILE__, __LINE__, where + ": " + a.title + " -> " + b.title);
 }
 
+// Mouse input through the window as the user's would come (the tour's layer above everything): a click, a drag
+QPoint inWindow(MainWindow& w, QWidget* widget, QPoint local) { return widget->mapTo(&w, local); }
+
+void windowClick(MainWindow& w, QWidget* widget, QPoint local)
+{
+    QTest::mouseClick(w.windowHandle(), Qt::LeftButton, {}, inWindow(w, widget, local));
+    QTest::qWait(20);
+}
+
+void windowDrag(MainWindow& w, QWidget* widget, QPoint from, QPoint to)
+{
+    QWindow* win = w.windowHandle();
+    QTest::mousePress(win, Qt::LeftButton, {}, inWindow(w, widget, from));
+    for (int i = 1; i <= 8; ++i)
+        QTest::mouseMove(win, inWindow(w, widget, from + (to - from) * i / 8));
+    QTest::mouseRelease(win, Qt::LeftButton, {}, inWindow(w, widget, to));
+    QTest::qWait(30);
+}
+
 // The timeline's zoom and scroll in seconds (a frame rate change would change them on screen too)
 struct Zoom {
     double pxPerSecond = 0, leftSecond = 0;
@@ -460,6 +480,7 @@ void walk(MainWindow& w, const Tour& t, const QString& run, bool dumpIt)
     TourManager* tours = w.tours();
     TourOverlay* o = tours->overlay();
     TourRunner* r = tours->runner();
+    const int toolBefore = w.findChild<TimelineView*>() ? int(w.findChild<TimelineView*>()->tool()) : 0;
     tours->start(t.id);
     if (QPushButton* keep = button(o, "tour_keep")) { // unsaved changes: asked first, the project kept for later
         QTest::qWait(20);
@@ -502,7 +523,7 @@ void walk(MainWindow& w, const Tour& t, const QString& run, bool dumpIt)
         }
         if (!s.page.isEmpty()) // the tour shows the step's page
             if (auto* b = w.findChild<QAbstractButton*>("pageButton_" + s.page); CHECK(b)) CHECK(b->isChecked());
-        if (auto* counter = o->findChild<QLabel*>("tour_counter"))
+        if (auto* counter = o->bubble()->findChild<QLabel*>("tour_counter"))
             CHECK_EQ(counter->text(), QString("%1/%2").arg(i + 1).arg(t.steps.size()));
         if (dumpIt) dump(&w, QString("%1-%2-%3").arg(run, t.id).arg(i + 1));
         // The bubble stays put where it can (its home corner); the same step puts it at the same place on a revisit
@@ -538,27 +559,47 @@ void walk(MainWindow& w, const Tour& t, const QString& run, bool dumpIt)
             if (s.wait == "clip_on_timeline") { // dragged from the Media Pool onto the timeline (the drop's own path)
                 auto* tv = w.findChild<TimelineView*>();
                 if (CHECK(tv)) emit tv->dropRequested({w.liveProject()->media().value(0).path}, 0, 0);
-            } else if (s.wait == "clip_trimmed") { // the first clip's end dragged to the left
+            } else if (s.wait == "clip_trimmed") { // the first clip's end dragged to the left with the mouse
+                auto* tv = w.findChild<TimelineView*>();
                 const Timeline& tl = w.liveProject()->timeline();
-                if (CHECK(!tl.video.isEmpty() && !tl.video[0].clips.isEmpty()))
-                    w.editor()->trimClip(tl.video[0].clips[0].id, TimelineOps::Edge::End, -10);
-            } else if (s.wait == "clip_added") { // the playhead into the first clip, then the split key
+                // The tool the step needs is on (the blade was active before), a tool button outside the hole works
+                if (CHECK(tv)) CHECK(tv->tool() == TimelineView::Tool::Select);
+                if (auto* trim = w.findChild<QAbstractButton*>("tool_trim"); CHECK(trim && tv)) {
+                    windowClick(w, trim, trim->rect().center());
+                    CHECK(tv->tool() == TimelineView::Tool::Trim);
+                    if (auto* sel = w.findChild<QAbstractButton*>("tool_select"); CHECK(sel))
+                        windowClick(w, sel, sel->rect().center());
+                    CHECK(tv->tool() == TimelineView::Tool::Select);
+                }
+                if (CHECK(tv && !tl.video.isEmpty() && !tl.video[0].clips.isEmpty())) {
+                    const QRect c = tv->clipArea(tl.video[0].clips[0].id);
+                    windowDrag(w, tv, QPoint(c.right() - 2, c.center().y()), QPoint(c.right() - 2 - c.width() / 4, c.center().y()));
+                }
+            } else if (s.wait == "clip_added") { // a split, as the user does it
                 const Timeline& tl = w.liveProject()->timeline();
                 auto* tv = w.findChild<TimelineView*>();
-                QAction* split = nullptr;
-                for (const auto& e : InputBindings::instance().entries())
-                    if (e.id == QLatin1String("split")) split = e.action;
-                if (CHECK(tv && split && !tl.video.isEmpty() && !tl.video[0].clips.isEmpty())) {
-                    const Clip& c = tl.video[0].clips[0];
-                    emit tv->seekRequested(c.start + c.length() / 2);
-                    QTest::qWait(30);
-                    split->trigger();
+                if (CHECK(tv && !tl.video.isEmpty() && !tl.video[0].clips.isEmpty())) {
+                    const QRect c = tv->clipArea(tl.video[0].clips[0].id);
+                    CHECK(tv->tool() == TimelineView::Tool::Select);
+                    if (t.id == "first_steps") { // a click into the ruler (dimmed or not), then the split key
+                        const int x = c.left() + c.width() / 3;
+                        const int before = tv->playhead();
+                        windowClick(w, tv, QPoint(x, TimelineView::kRulerH / 2));
+                        QTest::qWait(30);
+                        Check::report(tv->playhead() != before, "ruler click sets the playhead", __FILE__, __LINE__, where);
+                        QTest::keyClick(w.windowHandle(), Qt::Key_B, Qt::ControlModifier);
+                    } else { // the blade tool, then a click on the clip
+                        if (auto* blade = w.findChild<QAbstractButton*>("tool_blade"); CHECK(blade))
+                            windowClick(w, blade, blade->rect().center());
+                        CHECK(tv->tool() == TimelineView::Tool::Blade);
+                        windowClick(w, tv, QPoint(c.left() + c.width() / 3, c.center().y()));
+                    }
                 }
             } else if (s.wait == "playhead_moved") { // a click into the ruler
                 auto* tv = w.findChild<TimelineView*>();
                 if (CHECK(tv)) emit tv->seekRequested(tv->playhead() + 5);
-            } else if (click) {
-                click->click();
+            } else if (click) { // through the window: a page button or a toggle outside the hole works too
+                windowClick(w, click, click->rect().center());
             } else {
                 did = false;
             }
@@ -589,6 +630,8 @@ void walk(MainWindow& w, const Tour& t, const QString& run, bool dumpIt)
     }
     CHECK(!r->running());
     CHECK(!o->isVisible());
+    if (auto* tv = w.findChild<TimelineView*>()) // the user's tool back, whatever the steps chose
+        Check::report(int(tv->tool()) == toolBefore, "tool back after the tour", __FILE__, __LINE__, run + " " + t.id);
     // Few moves: the bubble leaves its home only for a target or a named control there
     qInfo("%s %s: bubble moved %d times in %d steps %s", qPrintable(run), qPrintable(t.id), moves, int(t.steps.size()),
           qPrintable(movesText.join(' ')));
@@ -846,6 +889,8 @@ void runWindow(Engine& engine, const QString& run, const QString& settingsFile, 
     if (!user) testKeyPlaceholder(w);
     if (!user) testMenuAndQuestions(w);
     ownProject(w);
+    if (user) // the user works with another tool: it comes back after every tour
+        if (auto* tv = w.findChild<TimelineView*>()) tv->setTool(TimelineView::Tool::Trim);
     if (user) { // the user's panels as in the settings file
         if (auto* pool = w.findChild<QToolButton*>("panelToggle_mediaPool")) CHECK(!pool->isChecked());
         if (auto* fx = w.findChild<QToolButton*>("panelToggle_effects")) CHECK(fx->isChecked());

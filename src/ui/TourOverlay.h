@@ -2,8 +2,8 @@
 #pragma once
 // Spotlight of the in-app tours (core/Tours.h, app/TourManager): a dim layer over the whole window with a soft-edged
 // hole around each target, and a bubble beside it with the step's text, "3/7" and the buttons (End tour, Back, Next).
-// Clicks inside a hole reach the real widget below (wait steps: "drag a clip into the timeline"), clicks on the dim
-// part do nothing. The bubble keeps out of the targets and inside the window. The targets are asked again whenever the
+// The layer is only a picture: clicks, drags, wheel and keys reach the real window everywhere, dim or not (a tool
+// outside the hole stays usable). The bubble (a widget of the window, above the layer) keeps out of the targets and inside the window. The targets are asked again whenever the
 // window changes size and a few times a second (a panel that moves, a splitter dragged), the hole follows.
 // The same layer asks questions (showQuestion): "Shall I show you?" with Show me / Later (/ Don't offer tours), and
 // before a tour whether to save the user's unsaved project.
