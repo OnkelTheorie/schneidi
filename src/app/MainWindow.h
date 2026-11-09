@@ -249,6 +249,7 @@ private:
     QWidget* buildPageBar();
     void updatePageButtons(); // hidden pages' buttons go, the current page's button always stays
     void updateLeftColumn(); // show the left column only if Media Pool or Effects is on
+    void updateRightColumn(); // the Inspector above the Mixer in their own column while the Mixer is on
     // Panel sizes per page are remembered (settings layout/<splitter>); defaults when nothing is saved yet
     void watchSizes(QSplitter* s, const QString& name);
     void applySizes(QSplitter* s, const QList<int>& defaults);
@@ -431,9 +432,13 @@ private:
 
     QStackedWidget* m_pages = nullptr;
     QSplitter* m_editTop = nullptr;
-    QSplitter* m_editLeft = nullptr;   // Media Pool above Effects Library (like DaVinci)
-    QSplitter* m_editMain = nullptr;
-    QSplitter* m_editBottom = nullptr; // Timeline | Mixer
+    QSplitter* m_editLeft = nullptr;   // Media Pool above Effects Library
+    QSplitter* m_editMain = nullptr;   // the top row above the timeline
+    // The Edit page: the main column beside the right column (Inspector above the Mixer, only while the Mixer is on).
+    // Each has its own height there: making the timeline taller does not drag the mixer along
+    QSplitter* m_editRow = nullptr;
+    QSplitter* m_editRight = nullptr;
+    QWidget* m_inspectorSlot = nullptr; // the Inspector's place in the top row while it is in the right column
     QSplitter* m_mediaPage = nullptr;
     QSplitter* m_mediaTop = nullptr;
     QSplitter* m_deliverPage = nullptr;
@@ -487,6 +492,8 @@ private:
         bool active = false;
         QVector<QPointer<QWidget>> hidden;                     // the viewer, then the splitters left empty
         QVector<QPair<QPointer<QSplitter>, QList<int>>> sizes; // their sizes before, innermost first
+        bool timelineUp = false; // Edit page: the timeline took the viewer's place in the top row
+        QSizePolicy timelinePolicy; // its own before (the viewer's stretch while up there)
     } m_viewerAway;
 
     QHash<QString, MediaInfo> m_probeCache;

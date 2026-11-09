@@ -381,7 +381,7 @@ Look look(MainWindow& w)
         if (k.startsWith("panels/") || k.startsWith("layout/") || k.startsWith("color/")) l.settings[k] = s.value(k);
     for (const char* name : kToggles)
         if (auto* b = w.findChild<QToolButton*>(name); CHECK(b)) l.toggles << b->isChecked();
-    for (const char* name : {"editTop", "editMain", "editBottom", "colorBottom"})
+    for (const char* name : {"editTop", "editMain", "editRow", "colorBottom"})
         if (auto* sp = w.findChild<QSplitter*>(name); CHECK(sp) && sp->isVisible()) l.sizes[name] = sp->sizes();
     l.window = w.size();
     for (QAbstractButton* b : w.findChildren<QAbstractButton*>())
