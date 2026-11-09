@@ -44,6 +44,8 @@
 #include "engine/Stabilizer.h"
 #include "ui/DeliverPanel.h"
 #include "ui/RenderQueuePanel.h"
+#include "ui/BackgroundJobs.h"
+#include "ui/ProxyProgress.h"
 #include "engine/Exporter.h"
 #include "engine/RenderQueue.h"
 #include "ui/EffectsLibrary.h"
@@ -164,6 +166,7 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
     });
     connect(proxies, &ProxyManager::enabledChanged, this, proxiesChanged);
     setupProxyHint();
+    setupBackgroundJobs();
     // Before/After: cached clips contain the correction -> rebuild the preview so they come from the original
     connect(m_engine, &Engine::colorBypassChanged, this, [this] {
         if (m_engine->renderCache()->mode() != RenderCache::Mode::Off) m_engine->updateTimeline(m_project->renderTimeline());
@@ -1144,6 +1147,25 @@ void MainWindow::exportSubtitlesDialog()
             return;
         }
     }
+}
+
+void MainWindow::setupBackgroundJobs()
+{
+    m_backgroundJobs = new BackgroundJobs;
+    statusBar()->addPermanentWidget(m_backgroundJobs);
+    ProxyManager* proxies = m_engine->proxies();
+    ProxyProgress* progress = ProxyProgress::of(proxies);
+    connect(progress, &ProxyProgress::changed, m_backgroundJobs, [this, proxies, progress] {
+        if (!progress->active()) return;
+        BackgroundJobs::Job job;
+        job.text = progress->text();
+        job.fraction = progress->fraction();
+        job.toolTip = progress->waitingText();
+        job.cancel = [proxies] { proxies->cancelAll(); }; // the same as the Media Pool's cancel
+        m_backgroundJobs->setJob("proxies", job);
+    });
+    connect(progress, &ProxyProgress::finished, m_backgroundJobs,
+            [this, progress] { m_backgroundJobs->finishJob("proxies", progress->finishedText()); });
 }
 
 void MainWindow::setupProxyHint()

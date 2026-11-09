@@ -60,6 +60,7 @@ public:
     int progressOf(const QString& original) const; // 0..100, -1 = not in progress
     int pendingCount() const { return m_queue.size() + (m_current.isEmpty() ? 0 : 1); }
     QString current() const { return m_current; }
+    QStringList queued() const { return m_queue; } // waiting, in order (without the current one)
     // File being written right now (half-finished proxy; empty = none): cleaning up never touches it
     QString writing() const { return m_currentPart; }
 
