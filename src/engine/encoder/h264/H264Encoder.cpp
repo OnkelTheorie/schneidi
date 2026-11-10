@@ -1408,11 +1408,38 @@ void Encoder::encodeMbP(BitWriter& bw, int mbx, int mby, int& skipRun)
         saveMb(mbx, mby, interState);
     }
 
-    // ---- Candidate 3: intra.
+    // ---- Candidate 3: intra, only when a cheap Intra 16x16 SATD estimate beats the motion search.
     BitWriter intraBits;
-    encodeMbIntra(intraBits, mbx, mby);
-    setMbInfo(0, 0, -1);
-    const double costIntra = double(mbSsd(mbx, mby)) + lambda * double(intraBits.bitCount() + seBits(0));
+    double costIntra = 1e300;
+    {
+        const bool left = mbx > 0, top = topMbAvailable(mby);
+        uint8_t src[256], cand[256];
+        for (int y = 0; y < 16; ++y)
+            std::memcpy(src + y * 16, &srcY_[lumaOff + size_t(y) * padW_], 16);
+        int intraEstimate = 1 << 30;
+        for (int mode = 0; mode < 4; ++mode) {
+            if ((mode == 0 && !top) || (mode == 1 && !left) || (mode == 3 && !(top && left)))
+                continue;
+            predictLuma16(mode, &recY_[lumaOff], padW_, left, top, cand);
+            int sum = 0;
+            for (int b = 0; b < 16; ++b) {
+                const int ox = (b & 3) * 4, oy = (b >> 2) * 4;
+                int diff[16];
+                for (int y = 0; y < 4; ++y)
+                    for (int x = 0; x < 4; ++x)
+                        diff[y * 4 + x] = int(src[(oy + y) * 16 + ox + x]) - int(cand[(oy + y) * 16 + ox + x]);
+                sum += satd4x4(diff);
+            }
+            intraEstimate = std::min(intraEstimate, sum);
+        }
+        // Note: recY_ of this macroblock holds the inter reconstruction here, but Intra 16x16
+        // prediction only reads the neighbours above and to the left.
+        if (double(intraEstimate) < best * 2.0) {
+            encodeMbIntra(intraBits, mbx, mby);
+            setMbInfo(0, 0, -1);
+            costIntra = double(mbSsd(mbx, mby)) + lambda * double(intraBits.bitCount() + seBits(0));
+        }
+    }
 
     if (costSkip <= costInter && costSkip <= costIntra) {
         restoreMb(mbx, mby, skipState);
@@ -1540,10 +1567,20 @@ void Encoder::mcLuma(int x0, int y0, int fx, int fy, uint8_t* out) const
 
 int Encoder::sadLuma(int mbx, int mby, int mvx, int mvy, bool satd) const
 {
-    uint8_t pred[256];
-    mcLuma(mbx * 16 + (mvx >> 2), mby * 16 + (mvy >> 2), mvx & 3, mvy & 3, pred);
     const size_t lo = size_t(mby * 16) * padW_ + mbx * 16;
     int s = 0;
+    if (!satd && !(mvx & 3) && !(mvy & 3)) { // full-pel: read the reference directly
+        const uint8_t* ref = &extF_[size_t(mby * 16 + (mvy >> 2) + kMargin) * extW_ + size_t(mbx * 16 + (mvx >> 2) + kMargin)];
+        for (int y = 0; y < 16; ++y) {
+            const uint8_t* src = &srcY_[lo + size_t(y) * padW_];
+            const uint8_t* r = ref + size_t(y) * extW_;
+            for (int x = 0; x < 16; ++x)
+                s += std::abs(int(src[x]) - int(r[x]));
+        }
+        return s;
+    }
+    uint8_t pred[256];
+    mcLuma(mbx * 16 + (mvx >> 2), mby * 16 + (mvy >> 2), mvx & 3, mvy & 3, pred);
     if (satd) {
         for (int b = 0; b < 16; ++b) {
             const int ox = (b & 3) * 4, oy = (b >> 2) * 4;
