@@ -1,0 +1,119 @@
+// h264-proto: test driver for schneidi's own H.264 encoder.
+//   h264-proto selftest
+//   h264-proto encode <in.yuv> <width> <height> <out.h264> [--qp N] [--mode pcm|i16]
+//                     [--frames N] [--no-deblock] [--recon out.yuv]
+// Input is raw yuv420p. Prints size, speed and PSNR of the encoder's reconstruction.
+#include "engine/encoder/h264/Cavlc.h"
+#include "engine/encoder/h264/H264Encoder.h"
+
+#include <chrono>
+#include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <string>
+#include <vector>
+
+using namespace schneidi::h264;
+
+static double psnr(const uint8_t* a, int strideA, const uint8_t* b, int strideB, int w, int h)
+{
+    double sse = 0;
+    for (int y = 0; y < h; ++y)
+        for (int x = 0; x < w; ++x) {
+            const int d = int(a[size_t(y) * strideA + x]) - int(b[size_t(y) * strideB + x]);
+            sse += double(d * d);
+        }
+    if (sse == 0)
+        return 99.0;
+    return 10.0 * std::log10(255.0 * 255.0 * w * h / sse);
+}
+
+int main(int argc, char** argv)
+{
+    if (argc >= 2 && std::strcmp(argv[1], "selftest") == 0) {
+        const bool ok = selfTestTables();
+        std::printf("tables: %s\n", ok ? "ok" : "FAILED");
+        return ok ? 0 : 1;
+    }
+    if (argc < 6 || std::strcmp(argv[1], "encode") != 0) {
+        std::fprintf(stderr, "usage: h264-proto selftest | encode <in.yuv> <w> <h> <out.h264> [--qp N] "
+                             "[--mode pcm|i16] [--frames N] [--no-deblock] [--recon out.yuv]\n");
+        return 2;
+    }
+    EncoderConfig cfg;
+    const char* inPath = argv[2];
+    cfg.width = std::atoi(argv[3]);
+    cfg.height = std::atoi(argv[4]);
+    const char* outPath = argv[5];
+    int maxFrames = 1 << 30;
+    const char* reconPath = nullptr;
+    for (int i = 6; i < argc; ++i) {
+        const std::string a = argv[i];
+        if (a == "--qp" && i + 1 < argc)
+            cfg.qp = std::atoi(argv[++i]);
+        else if (a == "--mode" && i + 1 < argc)
+            cfg.mode = std::string(argv[++i]) == "pcm" ? IntraMode::Pcm : IntraMode::Intra16;
+        else if (a == "--frames" && i + 1 < argc)
+            maxFrames = std::atoi(argv[++i]);
+        else if (a == "--no-deblock")
+            cfg.deblock = false;
+        else if (a == "--recon" && i + 1 < argc)
+            reconPath = argv[++i];
+    }
+
+    FILE* in = std::fopen(inPath, "rb");
+    FILE* out = std::fopen(outPath, "wb");
+    FILE* recon = reconPath ? std::fopen(reconPath, "wb") : nullptr;
+    if (!in || !out || (reconPath && !recon)) {
+        std::fprintf(stderr, "cannot open files\n");
+        return 1;
+    }
+
+    Encoder enc(cfg);
+    const auto hdr = enc.headers();
+    std::fwrite(hdr.data(), 1, hdr.size(), out);
+    size_t totalBytes = hdr.size();
+
+    const int w = cfg.width, h = cfg.height, cw = w / 2, ch = h / 2;
+    std::vector<uint8_t> frame(size_t(w) * h * 3 / 2);
+    int frames = 0;
+    double psnrY = 0, psnrU = 0, psnrV = 0, seconds = 0;
+    while (frames < maxFrames && std::fread(frame.data(), 1, frame.size(), in) == frame.size()) {
+        Picture pic;
+        pic.y = frame.data();
+        pic.u = pic.y + size_t(w) * h;
+        pic.v = pic.u + size_t(cw) * ch;
+        pic.strideY = w;
+        pic.strideC = cw;
+        const auto t0 = std::chrono::steady_clock::now();
+        const auto au = enc.encode(pic);
+        seconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+        std::fwrite(au.data(), 1, au.size(), out);
+        totalBytes += au.size();
+
+        const int pw = enc.paddedWidth();
+        psnrY += psnr(pic.y, w, enc.reconY().data(), pw, w, h);
+        psnrU += psnr(pic.u, cw, enc.reconU().data(), pw / 2, cw, ch);
+        psnrV += psnr(pic.v, cw, enc.reconV().data(), pw / 2, cw, ch);
+        if (recon) {
+            for (int y = 0; y < h; ++y)
+                std::fwrite(enc.reconY().data() + size_t(y) * pw, 1, size_t(w), recon);
+            for (const auto* p : {&enc.reconU(), &enc.reconV()})
+                for (int y = 0; y < ch; ++y)
+                    std::fwrite(p->data() + size_t(y) * (pw / 2), 1, size_t(cw), recon);
+        }
+        ++frames;
+    }
+    std::fclose(in);
+    std::fclose(out);
+    if (recon)
+        std::fclose(recon);
+    if (!frames) {
+        std::fprintf(stderr, "no frames read\n");
+        return 1;
+    }
+    std::printf("frames %d  bytes %zu (%.1f KB/frame)  %.2f fps  PSNR Y %.2f U %.2f V %.2f\n", frames, totalBytes,
+                totalBytes / 1024.0 / frames, frames / seconds, psnrY / frames, psnrU / frames, psnrV / frames);
+    return 0;
+}
