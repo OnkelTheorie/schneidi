@@ -264,6 +264,14 @@ Encoder::Encoder(const EncoderConfig& config)
     recV_.resize(srcU_.size());
     nzLuma_.resize(size_t(mbW_ * 4) * (mbH_ * 4));
     modes4x4_.resize(nzLuma_.size());
+    refY_.resize(recY_.size());
+    refU_.resize(recU_.size());
+    refV_.resize(recV_.size());
+    mvX_.resize(size_t(mbW_) * mbH_);
+    mvY_.resize(mvX_.size());
+    refIdx_.resize(mvX_.size());
+    if (cfg_.gop > 1)
+        cfg_.deblock = false; // the encoder does not run the loop filter on its references yet
     nzChroma_[0].resize(size_t(mbW_ * 2) * (mbH_ * 2));
     nzChroma_[1].resize(nzChroma_[0].size());
 }
@@ -344,34 +352,64 @@ std::vector<uint8_t> Encoder::encode(const Picture& picture)
     std::fill(nzChroma_[0].begin(), nzChroma_[0].end(), 0);
     std::fill(nzChroma_[1].begin(), nzChroma_[1].end(), 0);
 
+    std::fill(mvX_.begin(), mvX_.end(), int16_t(0));
+    std::fill(mvY_.begin(), mvY_.end(), int16_t(0));
+    std::fill(refIdx_.begin(), refIdx_.end(), int8_t(-1));
+
+    const bool idr = cfg_.gop <= 1 || frameIndex_ % cfg_.gop == 0;
+    pSlice_ = !idr;
+    mbTypeOffset_ = idr ? 0 : 5;
+
     BitWriter bw;
-    // slice_header (7.3.3), IDR I slice
-    bw.ue(0);                               // first_mb_in_slice
-    bw.ue(7);                               // slice_type: I (all slices)
-    bw.ue(0);                               // pic_parameter_set_id
-    bw.u(0, 4);                             // frame_num
-    bw.ue(uint32_t(frameIndex_ & 0xFFFF));  // idr_pic_id (differs between neighbours)
-    bw.flag(false);                         // no_output_of_prior_pics_flag
-    bw.flag(false);                         // long_term_reference_flag
-    bw.se(cfg_.qp - 26);                    // slice_qp_delta
-    bw.ue(cfg_.deblock ? 0 : 1);            // disable_deblocking_filter_idc
+    // slice_header (7.3.3)
+    bw.ue(0);              // first_mb_in_slice
+    bw.ue(idr ? 7 : 5);    // slice_type: I or P (all slices)
+    bw.ue(0);              // pic_parameter_set_id
+    bw.u(idr ? 0 : uint32_t((frameIndex_ % cfg_.gop) & 15), 4); // frame_num
+    if (idr) {
+        bw.ue(uint32_t(idrCount_ & 0xFFFF)); // idr_pic_id (differs between neighbours)
+    } else {
+        bw.flag(false); // num_ref_idx_active_override_flag
+        bw.flag(false); // ref_pic_list_modification_flag_l0
+    }
+    if (idr) {
+        bw.flag(false); // no_output_of_prior_pics_flag
+        bw.flag(false); // long_term_reference_flag
+    } else {
+        bw.flag(false); // adaptive_ref_pic_marking_mode_flag
+    }
+    bw.se(cfg_.qp - 26);         // slice_qp_delta
+    bw.ue(cfg_.deblock ? 0 : 1); // disable_deblocking_filter_idc
     if (cfg_.deblock) {
         bw.se(0); // slice_alpha_c0_offset_div2
         bw.se(0); // slice_beta_offset_div2
     }
 
+    int skipRun = 0;
     for (int mby = 0; mby < mbH_; ++mby) {
         for (int mbx = 0; mbx < mbW_; ++mbx) {
             if (cfg_.mode == IntraMode::Pcm)
                 encodeMbPcm(bw, mbx, mby);
+            else if (pSlice_)
+                encodeMbP(bw, mbx, mby, skipRun);
             else
                 encodeMbIntra(bw, mbx, mby);
         }
     }
+    if (skipRun)
+        bw.ue(uint32_t(skipRun));
     bw.rbspTrailing();
 
     std::vector<uint8_t> out;
-    appendNal(out, 3, 5, bw.bytes());
+    if (idr)
+        appendNal(out, 3, 5, bw.bytes());
+    else
+        appendNal(out, 2, 1, bw.bytes());
+    refY_ = recY_;
+    refU_ = recU_;
+    refV_ = recV_;
+    if (idr)
+        ++idrCount_;
     ++frameIndex_;
     return out;
 }
@@ -542,7 +580,7 @@ struct Encoder::ChromaMb {
     int ac[2][4][16];
 };
 
-void Encoder::analyseChroma(int mbx, int mby, ChromaMb& ch)
+void Encoder::analyseChroma(int mbx, int mby, ChromaMb& ch, const uint8_t (*interPred)[64])
 {
     const bool left = mbx > 0, top = mby > 0;
     const int cw = padW_ / 2;
@@ -556,7 +594,11 @@ void Encoder::analyseChroma(int mbx, int mby, ChromaMb& ch)
 
     uint8_t cpred[2][64], ccand[2][64];
     int bestCost = 1 << 30;
-    for (int mode = 0; mode < 4; ++mode) {
+    if (interPred) {
+        ch.mode = 0;
+        std::memcpy(cpred, interPred, sizeof(cpred));
+    }
+    for (int mode = 0; mode < 4 && !interPred; ++mode) {
         if ((mode == 1 && !left) || (mode == 2 && !top) || (mode == 3 && !(top && left)))
             continue;
         int cost = 0;
@@ -574,7 +616,7 @@ void Encoder::analyseChroma(int mbx, int mby, ChromaMb& ch)
     const int qpc = chromaQp(cfg_.qp);
     const int qpcDiv = qpc / 6, qpcMod = qpc % 6;
     const int cqbits = 15 + qpcDiv;
-    const int cOffset = (1 << cqbits) / 3;
+    const int cOffset = (1 << cqbits) / (interPred ? 6 : 3);
     bool anyDc = false, anyAc = false;
     for (int c = 0; c < 2; ++c) {
         int ccoef[4][16];
@@ -720,7 +762,7 @@ void Encoder::encodeLuma16(BitWriter& bw, int mbx, int mby, const ChromaMb& ch)
     }
 
     // Syntax (7.3.5).
-    bw.ue(uint32_t(1 + bestMode + 4 * ch.cbp + (cbpLuma ? 12 : 0))); // mb_type I_16x16_*
+    bw.ue(uint32_t(mbTypeOffset_ + 1 + bestMode + 4 * ch.cbp + (cbpLuma ? 12 : 0))); // mb_type I_16x16_*
     bw.ue(uint32_t(ch.mode)); // intra_chroma_pred_mode
     bw.se(0);                 // mb_qp_delta
 
@@ -843,7 +885,7 @@ void Encoder::encodeLuma4(BitWriter& bw, int mbx, int mby, const ChromaMb& ch)
     }
 
     // Syntax (7.3.5): I_NxN.
-    bw.ue(0);
+    bw.ue(uint32_t(mbTypeOffset_));
     for (int blkIdx = 0; blkIdx < 16; ++blkIdx) {
         if (modes[blkIdx] == predModes[blkIdx]) {
             bw.flag(true);
@@ -936,6 +978,387 @@ void Encoder::encodeMbIntra(BitWriter& bw, int mbx, int mby)
         bw.append(a);
     } else {
         bw.append(b);
+    }
+}
+
+
+namespace {
+
+// coded_block_pattern codeNum -> cbp for inter macroblocks (table 9-4, 4:2:0).
+constexpr int kInterCbpFromCode[48] = {0,  16, 1,  2,  4,  8,  32, 3,  5,  10, 12, 15, 47, 7,  11, 13,
+                                       14, 6,  9,  31, 35, 37, 42, 44, 33, 34, 36, 40, 39, 43, 45, 46,
+                                       17, 18, 20, 24, 19, 21, 26, 28, 23, 27, 29, 30, 22, 25, 38, 41};
+
+int interCbpCode(int cbp)
+{
+    static const auto table = [] {
+        std::array<int, 48> t{};
+        for (int code = 0; code < 48; ++code)
+            t[size_t(kInterCbpFromCode[code])] = code;
+        return t;
+    }();
+    return table[size_t(cbp)];
+}
+
+int seBits(int v)
+{
+    const uint32_t k = v > 0 ? uint32_t(2 * v - 1) : uint32_t(-2 * v);
+    int len = 0;
+    while (((k + 1) >> len) > 1)
+        ++len;
+    return 2 * len + 1;
+}
+
+int median3(int a, int b, int c) { return std::max(std::min(a, b), std::min(std::max(a, b), c)); }
+
+} // namespace
+
+struct Encoder::MbState {
+    uint8_t y[256];
+    uint8_t c[2][64];
+    uint8_t nz[16];
+    int8_t modes[16];
+    uint8_t nzc[2][4];
+    int16_t mvx, mvy;
+    int8_t ref;
+};
+
+void Encoder::saveMb(int mbx, int mby, MbState& s) const
+{
+    const size_t lo = size_t(mby * 16) * padW_ + mbx * 16;
+    for (int y = 0; y < 16; ++y)
+        std::memcpy(s.y + y * 16, &recY_[lo + size_t(y) * padW_], 16);
+    const int cw = padW_ / 2;
+    const size_t co = size_t(mby * 8) * cw + mbx * 8;
+    for (int y = 0; y < 8; ++y) {
+        std::memcpy(s.c[0] + y * 8, &recU_[co + size_t(y) * cw], 8);
+        std::memcpy(s.c[1] + y * 8, &recV_[co + size_t(y) * cw], 8);
+    }
+    const int lw = mbW_ * 4, chw = mbW_ * 2;
+    for (int y = 0; y < 4; ++y)
+        for (int x = 0; x < 4; ++x) {
+            const size_t o = size_t(mby * 4 + y) * lw + mbx * 4 + x;
+            s.nz[y * 4 + x] = nzLuma_[o];
+            s.modes[y * 4 + x] = modes4x4_[o];
+        }
+    for (int c = 0; c < 2; ++c)
+        for (int b = 0; b < 4; ++b)
+            s.nzc[c][b] = nzChroma_[c][size_t(mby * 2 + (b >> 1)) * chw + mbx * 2 + (b & 1)];
+    const size_t m = size_t(mby) * mbW_ + mbx;
+    s.mvx = mvX_[m];
+    s.mvy = mvY_[m];
+    s.ref = refIdx_[m];
+}
+
+void Encoder::restoreMb(int mbx, int mby, const MbState& s)
+{
+    const size_t lo = size_t(mby * 16) * padW_ + mbx * 16;
+    for (int y = 0; y < 16; ++y)
+        std::memcpy(&recY_[lo + size_t(y) * padW_], s.y + y * 16, 16);
+    const int cw = padW_ / 2;
+    const size_t co = size_t(mby * 8) * cw + mbx * 8;
+    for (int y = 0; y < 8; ++y) {
+        std::memcpy(&recU_[co + size_t(y) * cw], s.c[0] + y * 8, 8);
+        std::memcpy(&recV_[co + size_t(y) * cw], s.c[1] + y * 8, 8);
+    }
+    const int lw = mbW_ * 4, chw = mbW_ * 2;
+    for (int y = 0; y < 4; ++y)
+        for (int x = 0; x < 4; ++x) {
+            const size_t o = size_t(mby * 4 + y) * lw + mbx * 4 + x;
+            nzLuma_[o] = s.nz[y * 4 + x];
+            modes4x4_[o] = s.modes[y * 4 + x];
+        }
+    for (int c = 0; c < 2; ++c)
+        for (int b = 0; b < 4; ++b)
+            nzChroma_[c][size_t(mby * 2 + (b >> 1)) * chw + mbx * 2 + (b & 1)] = s.nzc[c][b];
+    const size_t m = size_t(mby) * mbW_ + mbx;
+    mvX_[m] = s.mvx;
+    mvY_[m] = s.mvy;
+    refIdx_[m] = s.ref;
+}
+
+int64_t Encoder::mbSsd(int mbx, int mby) const
+{
+    int64_t s = 0;
+    const size_t lo = size_t(mby * 16) * padW_ + mbx * 16;
+    for (int y = 0; y < 16; ++y)
+        for (int x = 0; x < 16; ++x) {
+            const size_t o = lo + size_t(y) * padW_ + x;
+            const int d = int(srcY_[o]) - int(recY_[o]);
+            s += d * d;
+        }
+    const int cw = padW_ / 2;
+    const size_t co = size_t(mby * 8) * cw + mbx * 8;
+    for (int y = 0; y < 8; ++y)
+        for (int x = 0; x < 8; ++x) {
+            const size_t o = co + size_t(y) * cw + x;
+            const int du = int(srcU_[o]) - int(recU_[o]);
+            const int dv = int(srcV_[o]) - int(recV_[o]);
+            s += du * du + dv * dv;
+        }
+    return s;
+}
+
+// Motion vector prediction for a 16x16 partition (8.4.1.3).
+void Encoder::predictMv(int mbx, int mby, int& mvx, int& mvy) const
+{
+    auto get = [&](int x, int y, bool& avail, int& ref, int& vx, int& vy) {
+        avail = x >= 0 && y >= 0 && x < mbW_;
+        ref = -1;
+        vx = vy = 0;
+        if (!avail)
+            return;
+        const size_t m = size_t(y) * mbW_ + x;
+        ref = refIdx_[m];
+        if (ref >= 0) {
+            vx = mvX_[m];
+            vy = mvY_[m];
+        }
+    };
+    bool aA, aB, aC;
+    int rA, rB, rC, ax, ay, bx, by, cx, cy;
+    get(mbx - 1, mby, aA, rA, ax, ay);
+    get(mbx, mby - 1, aB, rB, bx, by);
+    get(mbx + 1, mby - 1, aC, rC, cx, cy);
+    if (!aC)
+        get(mbx - 1, mby - 1, aC, rC, cx, cy); // D replaces C
+    if (!aB && !aC && aA) {
+        rB = rC = rA;
+        bx = cx = ax;
+        by = cy = ay;
+    }
+    const int matches = (rA == 0) + (rB == 0) + (rC == 0);
+    if (matches == 1) {
+        if (rA == 0) { mvx = ax; mvy = ay; }
+        else if (rB == 0) { mvx = bx; mvy = by; }
+        else { mvx = cx; mvy = cy; }
+        return;
+    }
+    mvx = median3(ax, bx, cx);
+    mvy = median3(ay, by, cy);
+}
+
+void Encoder::motionCompensate(int mbx, int mby, int mvx, int mvy, uint8_t* luma, uint8_t (*chroma)[64]) const
+{
+    // Luma: full-pel vectors only (mv multiple of 4).
+    const int dx = mvx >> 2, dy = mvy >> 2;
+    for (int y = 0; y < 16; ++y) {
+        const int sy = std::clamp(mby * 16 + y + dy, 0, padH_ - 1);
+        for (int x = 0; x < 16; ++x) {
+            const int sx = std::clamp(mbx * 16 + x + dx, 0, padW_ - 1);
+            luma[y * 16 + x] = refY_[size_t(sy) * padW_ + sx];
+        }
+    }
+    // Chroma: eighth-pel bilinear (8.4.2.2.2).
+    const int cw = padW_ / 2, chh = padH_ / 2;
+    const int xF = mvx & 7, yF = mvy & 7;
+    const std::vector<uint8_t>* planes[2] = {&refU_, &refV_};
+    for (int c = 0; c < 2; ++c) {
+        const std::vector<uint8_t>& p = *planes[c];
+        for (int y = 0; y < 8; ++y) {
+            const int yi = mby * 8 + y + (mvy >> 3);
+            const int y0 = std::clamp(yi, 0, chh - 1), y1 = std::clamp(yi + 1, 0, chh - 1);
+            for (int x = 0; x < 8; ++x) {
+                const int xi = mbx * 8 + x + (mvx >> 3);
+                const int x0 = std::clamp(xi, 0, cw - 1), x1 = std::clamp(xi + 1, 0, cw - 1);
+                const int A = p[size_t(y0) * cw + x0], B = p[size_t(y0) * cw + x1];
+                const int C = p[size_t(y1) * cw + x0], D = p[size_t(y1) * cw + x1];
+                chroma[c][y * 8 + x] = uint8_t(((8 - xF) * (8 - yF) * A + xF * (8 - yF) * B + (8 - xF) * yF * C +
+                                                xF * yF * D + 32) >> 6);
+            }
+        }
+    }
+}
+
+void Encoder::encodeMbP(BitWriter& bw, int mbx, int mby, int& skipRun)
+{
+    const size_t m = size_t(mby) * mbW_ + mbx;
+    const int lw = mbW_ * 4, chw = mbW_ * 2;
+    const int qp = cfg_.qp;
+    const double lambda = 0.85 * std::pow(2.0, (qp - 12) / 3.0);
+    const double lambdaSad = std::sqrt(lambda);
+
+    int mvpX, mvpY;
+    predictMv(mbx, mby, mvpX, mvpY);
+
+    // P_Skip vector (8.4.1.1).
+    int skipX = mvpX, skipY = mvpY;
+    if (mbx == 0 || mby == 0) {
+        skipX = skipY = 0;
+    } else {
+        const size_t a = m - 1, b = m - size_t(mbW_);
+        if ((refIdx_[a] == 0 && mvX_[a] == 0 && mvY_[a] == 0) || (refIdx_[b] == 0 && mvX_[b] == 0 && mvY_[b] == 0))
+            skipX = skipY = 0;
+    }
+
+    auto setMbInfo = [&](int vx, int vy, int ref) {
+        mvX_[m] = int16_t(vx);
+        mvY_[m] = int16_t(vy);
+        refIdx_[m] = int8_t(ref);
+    };
+    auto clearNz = [&] {
+        for (int y = 0; y < 4; ++y)
+            for (int x = 0; x < 4; ++x) {
+                const size_t o = size_t(mby * 4 + y) * lw + mbx * 4 + x;
+                nzLuma_[o] = 0;
+                modes4x4_[o] = -1;
+            }
+        for (int c = 0; c < 2; ++c)
+            for (int b = 0; b < 4; ++b)
+                nzChroma_[c][size_t(mby * 2 + (b >> 1)) * chw + mbx * 2 + (b & 1)] = 0;
+    };
+
+    // ---- Candidate 1: P_Skip.
+    uint8_t lp[256], cp[2][64];
+    motionCompensate(mbx, mby, skipX, skipY, lp, cp);
+    {
+        const size_t lo = size_t(mby * 16) * padW_ + mbx * 16;
+        for (int y = 0; y < 16; ++y)
+            std::memcpy(&recY_[lo + size_t(y) * padW_], lp + y * 16, 16);
+        const int cw = padW_ / 2;
+        const size_t co = size_t(mby * 8) * cw + mbx * 8;
+        for (int y = 0; y < 8; ++y) {
+            std::memcpy(&recU_[co + size_t(y) * cw], cp[0] + y * 8, 8);
+            std::memcpy(&recV_[co + size_t(y) * cw], cp[1] + y * 8, 8);
+        }
+    }
+    clearNz();
+    setMbInfo(skipX, skipY, 0);
+    const double costSkip = double(mbSsd(mbx, mby)) + lambda * 1.0;
+    MbState skipState;
+    saveMb(mbx, mby, skipState);
+
+    // ---- Candidate 2: P_L0_16x16 with a full-pel diamond search.
+    const size_t lumaOff = size_t(mby * 16) * padW_ + mbx * 16;
+    auto sadAt = [&](int dx, int dy) {
+        int s = 0;
+        for (int y = 0; y < 16; ++y) {
+            const int sy = std::clamp(mby * 16 + y + dy, 0, padH_ - 1);
+            const uint8_t* src = &srcY_[lumaOff + size_t(y) * padW_];
+            for (int x = 0; x < 16; ++x) {
+                const int sx = std::clamp(mbx * 16 + x + dx, 0, padW_ - 1);
+                s += std::abs(int(src[x]) - int(refY_[size_t(sy) * padW_ + sx]));
+            }
+        }
+        return s;
+    };
+    auto meCost = [&](int dx, int dy) {
+        return double(sadAt(dx, dy)) + lambdaSad * (seBits(dx * 4 - mvpX) + seBits(dy * 4 - mvpY));
+    };
+    const int range = 64;
+    int bestX = 0, bestY = 0;
+    double best = meCost(0, 0);
+    for (auto [cx, cy] : {std::pair{mvpX >> 2, mvpY >> 2}, std::pair{skipX >> 2, skipY >> 2}}) {
+        cx = std::clamp(cx, -range, range);
+        cy = std::clamp(cy, -range, range);
+        const double c = meCost(cx, cy);
+        if (c < best) {
+            best = c;
+            bestX = cx;
+            bestY = cy;
+        }
+    }
+    for (int step : {8, 4, 2, 1}) {
+        for (int iter = 0; iter < 16; ++iter) {
+            bool moved = false;
+            static constexpr int kDir[4][2] = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
+            for (const auto& d : kDir) {
+                const int cx = bestX + d[0] * step, cy = bestY + d[1] * step;
+                if (std::abs(cx) > range || std::abs(cy) > range)
+                    continue;
+                const double c = meCost(cx, cy);
+                if (c < best) {
+                    best = c;
+                    bestX = cx;
+                    bestY = cy;
+                    moved = true;
+                }
+            }
+            if (!moved)
+                break;
+        }
+    }
+    const int mvx = bestX * 4, mvy = bestY * 4;
+
+    BitWriter interBits;
+    double costInter = 1e300;
+    MbState interState;
+    {
+        motionCompensate(mbx, mby, mvx, mvy, lp, cp);
+        const int qpDiv = qp / 6, qpMod = qp % 6;
+        const int qbits = 15 + qpDiv;
+        const int interOffset = (1 << qbits) / 6;
+        int levels[16][16];
+        int cbpLuma = 0;
+        for (int blkIdx = 0; blkIdx < 16; ++blkIdx) {
+            const int ox = kBlkX[blkIdx] * 4, oy = kBlkY[blkIdx] * 4;
+            int res[16], coef[16];
+            for (int y = 0; y < 4; ++y)
+                for (int x = 0; x < 4; ++x)
+                    res[y * 4 + x] = int(srcY_[lumaOff + size_t(oy + y) * padW_ + ox + x]) - int(lp[(oy + y) * 16 + ox + x]);
+            forward4x4(res, coef);
+            bool any = false;
+            int d[16];
+            for (int i = 0; i < 16; ++i) {
+                levels[blkIdx][i] = quantize(coef[i], kQuantMf[qpMod][posClass(i)], qbits, interOffset);
+                any |= levels[blkIdx][i] != 0;
+                d[i] = (levels[blkIdx][i] * kDequantV[qpMod][posClass(i)]) << qpDiv;
+            }
+            if (any)
+                cbpLuma |= 1 << (blkIdx >> 2);
+            int r[16];
+            inverse4x4(d, r);
+            for (int y = 0; y < 4; ++y)
+                for (int x = 0; x < 4; ++x)
+                    recY_[lumaOff + size_t(oy + y) * padW_ + ox + x] = clip1(lp[(oy + y) * 16 + ox + x] + r[y * 4 + x]);
+        }
+        ChromaMb ch;
+        analyseChroma(mbx, mby, ch, cp);
+        clearNz();
+        setMbInfo(mvx, mvy, 0);
+
+        interBits.ue(0); // mb_type P_L0_16x16
+        interBits.se(mvx - mvpX);
+        interBits.se(mvy - mvpY);
+        const int cbp = cbpLuma | (ch.cbp << 4);
+        interBits.ue(uint32_t(interCbpCode(cbp)));
+        if (cbp)
+            interBits.se(0); // mb_qp_delta
+        for (int blkIdx = 0; blkIdx < 16; ++blkIdx) {
+            const int bx = mbx * 4 + kBlkX[blkIdx], by = mby * 4 + kBlkY[blkIdx];
+            int total = 0;
+            if (cbpLuma & (1 << (blkIdx >> 2))) {
+                int scan[16];
+                for (int k = 0; k < 16; ++k)
+                    scan[k] = levels[blkIdx][kZigzag[k]];
+                total = writeResidualBlock(interBits, scan, 16, lumaNc(bx, by));
+            }
+            nzLuma_[size_t(by) * lw + bx] = uint8_t(total);
+        }
+        writeChroma(interBits, mbx, mby, ch);
+        // A skip_run ends here: count its codeword to be fair against skip.
+        costInter = double(mbSsd(mbx, mby)) + lambda * double(interBits.bitCount() + seBits(0));
+        saveMb(mbx, mby, interState);
+    }
+
+    // ---- Candidate 3: intra.
+    BitWriter intraBits;
+    encodeMbIntra(intraBits, mbx, mby);
+    setMbInfo(0, 0, -1);
+    const double costIntra = double(mbSsd(mbx, mby)) + lambda * double(intraBits.bitCount() + seBits(0));
+
+    if (costSkip <= costInter && costSkip <= costIntra) {
+        restoreMb(mbx, mby, skipState);
+        ++skipRun;
+        return;
+    }
+    bw.ue(uint32_t(skipRun));
+    skipRun = 0;
+    if (costInter <= costIntra) {
+        restoreMb(mbx, mby, interState);
+        bw.append(interBits);
+    } else {
+        bw.append(intraBits); // state is already the intra one
     }
 }
 

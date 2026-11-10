@@ -22,7 +22,8 @@ struct EncoderConfig {
     int height = 0; // even
     int qp = 26;    // 0..51 (values below ~10 may clip levels)
     IntraMode mode = IntraMode::Auto;
-    bool deblock = true; // decoder-side loop filter (does not affect intra prediction)
+    bool deblock = true; // decoder-side loop filter (does not affect intra prediction); forced off with P frames
+    int gop = 1;         // keyframe distance; > 1 adds P frames (full-pel motion, 16x16)
 };
 
 struct Picture {
@@ -39,7 +40,7 @@ public:
 
     // SPS + PPS as Annex B.
     std::vector<uint8_t> headers() const;
-    // One access unit (one IDR picture) as Annex B.
+    // One access unit (IDR or P picture) as Annex B.
     std::vector<uint8_t> encode(const Picture& picture);
 
     // Reconstruction of the last encoded picture before deblocking (padded size).
@@ -54,10 +55,18 @@ private:
     void encodeMbPcm(BitWriter& bw, int mbx, int mby);
     struct ChromaMb;
     void encodeMbIntra(BitWriter& bw, int mbx, int mby);
-    void analyseChroma(int mbx, int mby, ChromaMb& ch);
+    // interPred: motion-compensated prediction (inter macroblock); nullptr = intra.
+    void analyseChroma(int mbx, int mby, ChromaMb& ch, const uint8_t (*interPred)[64] = nullptr);
     void writeChroma(BitWriter& bw, int mbx, int mby, const ChromaMb& ch);
     void encodeLuma16(BitWriter& bw, int mbx, int mby, const ChromaMb& ch);
     void encodeLuma4(BitWriter& bw, int mbx, int mby, const ChromaMb& ch);
+    void encodeMbP(BitWriter& bw, int mbx, int mby, int& skipRun);
+    void predictMv(int mbx, int mby, int& mvx, int& mvy) const;
+    void motionCompensate(int mbx, int mby, int mvx, int mvy, uint8_t* luma, uint8_t (*chroma)[64]) const;
+    int64_t mbSsd(int mbx, int mby) const;
+    struct MbState;
+    void saveMb(int mbx, int mby, MbState& s) const;
+    void restoreMb(int mbx, int mby, const MbState& s);
     int lumaNc(int bx, int by) const;
     int chromaNc(int c, int bx, int by) const;
 
@@ -69,6 +78,12 @@ private:
     std::vector<uint8_t> nzLuma_;      // TotalCoeff per 4x4 luma block
     std::vector<int8_t> modes4x4_;     // Intra 4x4 mode per 4x4 block, -1 = macroblock not Intra 4x4
     std::vector<uint8_t> nzChroma_[2]; // TotalCoeff per 4x4 chroma AC block
+    std::vector<uint8_t> refY_, refU_, refV_; // previous reconstruction (reference for P)
+    std::vector<int16_t> mvX_, mvY_;        // per macroblock, quarter-pel units
+    std::vector<int8_t> refIdx_;            // per macroblock: 0 inter, -1 intra
+    int mbTypeOffset_ = 0;                  // 5 for intra macroblocks in P slices
+    bool pSlice_ = false;
+    int idrCount_ = 0;
 };
 
 } // namespace schneidi::h264
