@@ -276,6 +276,8 @@ Encoder::Encoder(const EncoderConfig& config)
     refIdx_.resize(mvX_.size());
     sliceTopOfRow_.resize(size_t(mbH_));
     cabKind_.resize(size_t(mbW_) * mbH_);
+    cabacByTop_.resize(size_t(mbH_));
+    prevQpNzByTop_.resize(size_t(mbH_));
     cabCbp_.resize(cabKind_.size());
     cabChromaMode_.resize(cabKind_.size());
     cabCbfDc_.resize(cabKind_.size());
@@ -487,6 +489,8 @@ std::vector<uint8_t> Encoder::encode(const Picture& picture, bool forceKeyframe)
                 bw.u(1, 1); // cabac_alignment_one_bit
             cabacEngine.start(&bw, cfg_.qp, pSlice_ ? 0 : -1);
         }
+        cabacByTop_[size_t(sliceTop[size_t(s)])] = cabac ? &cabacEngine : nullptr;
+        prevQpNzByTop_[size_t(sliceTop[size_t(s)])] = &prevQpNonZero;
         for (int mby = sliceTop[size_t(s)]; mby < sliceTop[size_t(s) + 1]; ++mby) {
             for (int mbx = 0; mbx < mbW_; ++mbx) {
                 if (cfg_.mode == IntraMode::Pcm) {
@@ -1192,11 +1196,11 @@ bool Encoder::encodeMbIntra(MbOut& out, int mbx, int mby)
     const double lambda = 0.85 * std::pow(2.0, (mbQp_[size_t(mby) * mbW_ + mbx] - 12) / 3.0);
     MbOut a, b;
     const bool deltaA = encodeLuma16(a, mbx, mby, ch);
-    const double costA = double(ssd()) + lambda * double(a.bw.bitCount());
+    const double costA = double(ssd()) + lambda * mbBits(a, mbx, mby, double(a.bw.bitCount()));
     Snapshot snapA;
     save(snapA);
     const bool deltaB = encodeLuma4(b, mbx, mby, ch);
-    const double costB = double(ssd()) + lambda * double(b.bw.bitCount());
+    const double costB = double(ssd()) + lambda * mbBits(b, mbx, mby, double(b.bw.bitCount()));
     if (costA <= costB) {
         restore(snapA);
         out = std::move(a);
@@ -1546,7 +1550,7 @@ bool Encoder::encodeMbP(MbOut& result, int mbx, int mby)
     }
     clearNz();
     setBlocks(0, 0, 4, 4, skipX, skipY, 0);
-    const double costSkip = double(mbSsd(mbx, mby)) + lambda * 1.0;
+    const double costSkip = double(mbSsd(mbx, mby)) + lambda * skipBits(mbx, mby);
     MbState skipState;
     saveMb(mbx, mby, skipState);
 
@@ -1814,7 +1818,7 @@ bool Encoder::encodeMbP(MbOut& result, int mbx, int mby)
         }
         writeChroma(io, mbx, mby, ch);
         // A skip_run ends here: count its codeword to be fair against skip.
-        return double(mbSsd(mbx, mby)) + lambda * double(interBits.bitCount() + seBits(0));
+        return double(mbSsd(mbx, mby)) + lambda * mbBits(io, mbx, mby, double(interBits.bitCount() + seBits(0)));
     };
     MbOut interBits;
     double costInter = encodeInter(whole, interBits);
@@ -1861,7 +1865,7 @@ bool Encoder::encodeMbP(MbOut& result, int mbx, int mby)
         if (double(intraEstimate) < best.cost * 2.0) {
             intraDelta = encodeMbIntra(intraBits, mbx, mby);
             setBlocks(0, 0, 4, 4, 0, 0, -1);
-            costIntra = double(mbSsd(mbx, mby)) + lambda * double(intraBits.bw.bitCount() + seBits(0));
+            costIntra = double(mbSsd(mbx, mby)) + lambda * mbBits(intraBits, mbx, mby, double(intraBits.bw.bitCount() + seBits(0)));
         }
     }
 
@@ -2358,6 +2362,36 @@ bool Encoder::skipResidualIsZero(int mbx, int mby, const uint8_t* lp, const uint
                 return false;
     }
     return true;
+}
+
+
+// Bits of a candidate macroblock: the CAVLC count, or with CABAC a dry run on a copy of the
+// slice's current context states.
+double Encoder::mbBits(const MbOut& o, int mbx, int mby, double cavlcBits)
+{
+    const size_t top = size_t(sliceTopOfRow_[size_t(mby)]);
+    const CabacEncoder* live = cabacByTop_[top];
+    if (!live)
+        return cavlcBits;
+    CabacEncoder probe = *live;
+    probe.startCounting();
+    bool prev = *prevQpNzByTop_[top];
+    cabacWriteMb(probe, mbx, mby, o.syn, prev);
+    return probe.countedBits();
+}
+
+double Encoder::skipBits(int mbx, int mby)
+{
+    const size_t top = size_t(sliceTopOfRow_[size_t(mby)]);
+    const CabacEncoder* live = cabacByTop_[top];
+    if (!live)
+        return 1.0;
+    CabacEncoder probe = *live;
+    probe.startCounting();
+    MbSyntax skip;
+    bool prev = false;
+    cabacWriteMb(probe, mbx, mby, skip, prev);
+    return probe.countedBits();
 }
 
 } // namespace schneidi::h264

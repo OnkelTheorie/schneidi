@@ -4,6 +4,7 @@
 #include "BitWriter.h"
 #include "CabacTables.h"
 
+#include <cmath>
 #include <cstdint>
 
 namespace schneidi::h264 {
@@ -34,10 +35,29 @@ public:
         }
     }
 
+    // Turns this (copied) engine into a bit counter: no output, contexts keep adapting.
+    void startCounting()
+    {
+        counting_ = true;
+        cost_ = 0;
+    }
+    double countedBits() const { return cost_ / 256.0; }
+
     // EncodeDecision (9.3.4.2).
     void decision(int ctx, int bin)
     {
         const int s = state_[ctx];
+        if (counting_) {
+            cost_ += costTable().v[s][bin == mps_[ctx] ? 1 : 0];
+            if (bin != mps_[ctx]) {
+                if (s == 0)
+                    mps_[ctx] = uint8_t(1 - mps_[ctx]);
+                state_[ctx] = kTransIdxLps[s];
+            } else {
+                state_[ctx] = kTransIdxMps[s];
+            }
+            return;
+        }
         const uint32_t lps = kRangeTabLps[s][(range_ >> 6) & 3];
         range_ -= lps;
         if (bin != mps_[ctx]) {
@@ -55,6 +75,10 @@ public:
     // EncodeBypass (9.3.4.4).
     void bypass(int bin)
     {
+        if (counting_) {
+            cost_ += 256;
+            return;
+        }
         low_ <<= 1;
         if (bin)
             low_ += range_;
@@ -72,6 +96,10 @@ public:
     // EncodeTerminate (9.3.4.5); bin 1 also flushes (the last bit written is the rbsp_stop_one_bit).
     void terminate(int bin)
     {
+        if (counting_) {
+            cost_ += bin ? 7 * 256 : 0;
+            return;
+        }
         range_ -= 2;
         if (bin) {
             low_ += range_;
@@ -85,6 +113,24 @@ public:
     }
 
 private:
+    // Bits per bin in 1/256 units: pLPS(s) ~= 0.5 * (0.01875 / 0.5)^(s / 63) (the design rule of 9.3.3.2).
+    struct CostTable {
+        uint32_t v[64][2]; // [state][isMps]
+        CostTable()
+        {
+            for (int s = 0; s < 64; ++s) {
+                const double lps = 0.5 * std::pow(0.01875 / 0.5, s / 63.0);
+                v[s][0] = uint32_t(std::lround(-std::log2(lps) * 256));
+                v[s][1] = uint32_t(std::lround(-std::log2(1 - lps) * 256));
+            }
+        }
+    };
+    static const CostTable& costTable()
+    {
+        static const CostTable t;
+        return t;
+    }
+
     void renorm()
     {
         while (range_ < 256) {
@@ -113,6 +159,8 @@ private:
         }
     }
 
+    bool counting_ = false;
+    uint64_t cost_ = 0;
     BitWriter* out_ = nullptr;
     uint32_t low_ = 0, range_ = 510;
     bool firstBit_ = true;

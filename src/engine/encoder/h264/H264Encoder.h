@@ -121,6 +121,10 @@ private:
     void deblockMb(int mbx, int mby);
     void cabacWriteMb(CabacEncoder& ce, int mbx, int mby, const MbSyntax& s, bool& prevQpNonZero);
     bool useCabac() const { return cfg_.cabac && cfg_.mode != IntraMode::Pcm; }
+    double mbBits(const MbOut& o, int mbx, int mby, double cavlcBits);
+    double skipBits(int mbx, int mby);
+    std::vector<CabacEncoder*> cabacByTop_; // live CABAC engine of each slice (by first row), for bit estimates
+    std::vector<bool*> prevQpNzByTop_;
     // CABAC neighbour state (written in slice order by cabacWriteMb).
     std::vector<uint8_t> cabKind_, cabCbp_, cabChromaMode_, cabCbfDc_; // per macroblock
     std::vector<uint8_t> cabCbfLuma_;                                  // per 4x4 luma block
