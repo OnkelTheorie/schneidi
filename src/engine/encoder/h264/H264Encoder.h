@@ -100,6 +100,8 @@ private:
     std::vector<uint8_t> refY_, refU_, refV_; // previous reconstruction (reference for P)
     std::vector<int16_t> mvX_, mvY_;        // per 4x4 block, quarter-pel units
     std::vector<int8_t> refIdx_;            // per 4x4 block: 0 inter, -1 intra
+    std::vector<int16_t> prevMvX_, prevMvY_; // vectors of the previous picture (search start points)
+    std::vector<int8_t> prevRefIdx_;
     // Reference luma with a margin: full-pel, horizontal half, vertical half, centre half (8.4.2.2.1).
     static constexpr int kMargin = 96;
     int extW_ = 0, extH_ = 0;

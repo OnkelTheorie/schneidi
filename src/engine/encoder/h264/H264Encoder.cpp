@@ -378,6 +378,8 @@ std::vector<uint8_t> Encoder::encode(const Picture& picture)
             qp = std::clamp(6.0 * std::log2(rcComplexity_[1] / budget), rcQp_ - 2.0, rcQp_ + 2.0);
         }
         cfg_.qp = std::clamp(int(std::lround(qp)), 10, 51);
+    } else if (idr && cfg_.gop > 1) {
+        cfg_.qp = std::clamp(baseQp - 3, 0, 51); // keyframes are references for the whole GOP
     }
     lastQp_ = cfg_.qp;
     mbTypeOffset_ = idr ? 0 : 5;
@@ -448,12 +450,17 @@ std::vector<uint8_t> Encoder::encode(const Picture& picture)
     }
     if (cfg_.deblock)
         deblockPicture();
+    prevMvX_ = mvX_;
+    prevMvY_ = mvY_;
+    prevRefIdx_ = refIdx_;
     if (cfg_.gop > 1) {
         refY_ = recY_;
         refU_ = recU_;
         refV_ = recV_;
         buildRefPlanes();
     }
+    if (cfg_.bitrateKbps <= 0)
+        cfg_.qp = baseQp;
     if (cfg_.bitrateKbps > 0) {
         const double bits = double(out.size()) * 8.0;
         if (!idr) {
@@ -1325,7 +1332,20 @@ void Encoder::encodeMbP(BitWriter& bw, int mbx, int mby, int& skipRun)
     // ---- Candidate 2: inter with 16x16, 16x8, 8x16 or 8x8 partitions.
     const int range = 64 * 4;
     // Motion search for one partition: diamond full-pel, then half/quarter-pel with SATD.
+    // Start points: neighbours' vectors and the same macroblock in the previous P frame.
+    std::vector<std::pair<int, int>> starts = {{skipX, skipY}};
+    for (auto [nx, ny] : {std::pair{-1, 0}, std::pair{0, -1}, std::pair{4, -1}}) {
+        const MvNb n = mvNeighbour(mbx, mby, nx, ny, none);
+        if (n.ref == 0)
+            starts.push_back({n.mvx, n.mvy});
+    }
+    {
+        const size_t o = size_t(mby * 4) * lw + mbx * 4;
+        if (prevRefIdx_.size() == refIdx_.size() && prevRefIdx_[o] == 0)
+            starts.push_back({prevMvX_[o], prevMvY_[o]});
+    }
     auto search = [&](int x4, int y4, int w4, int h4, int pX, int pY, int& outX, int& outY) {
+        starts.push_back({pX, pY});
         bool useSatd = false;
         auto cost = [&](int vx, int vy) {
             return double(sadPart(mbx, mby, x4, y4, w4, h4, vx, vy, useSatd)) +
@@ -1333,9 +1353,9 @@ void Encoder::encodeMbP(BitWriter& bw, int mbx, int mby, int& skipRun)
         };
         int bx = 0, by = 0;
         double best = cost(0, 0);
-        for (auto [cx, cy] : {std::pair{pX & ~3, pY & ~3}, std::pair{skipX & ~3, skipY & ~3}}) {
-            cx = std::clamp(cx, -range, range);
-            cy = std::clamp(cy, -range, range);
+        for (auto [cx, cy] : starts) {
+            cx = std::clamp(cx & ~3, -range, range);
+            cy = std::clamp(cy & ~3, -range, range);
             const double c = cost(cx, cy);
             if (c < best) {
                 best = c;
@@ -1382,6 +1402,7 @@ void Encoder::encodeMbP(BitWriter& bw, int mbx, int mby, int& skipRun)
                     }
                 }
         }
+        starts.pop_back();
         outX = bx;
         outY = by;
         return best;
