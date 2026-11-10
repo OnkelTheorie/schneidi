@@ -1543,10 +1543,12 @@ void Encoder::encodeMbP(BitWriter& bw, int mbx, int mby, int& skipRun)
     Choice split;
     if (cfg_.effort > 0) {
         split = tryLayout(3);
-        for (int li : {1, 2}) {
-            const Choice c = tryLayout(li);
-            if (c.cost < split.cost)
-                split = c;
+        if (split.cost < whole.cost * 1.1) { // 16x8 / 8x16 only where splitting looks worth it
+            for (int li : {1, 2}) {
+                const Choice c = tryLayout(li);
+                if (c.cost < split.cost)
+                    split = c;
+            }
         }
     }
 
