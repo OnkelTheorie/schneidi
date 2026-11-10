@@ -1452,22 +1452,17 @@ void Encoder::encodeMbP(BitWriter& bw, int mbx, int mby, int& skipRun)
         }
         return ch;
     };
-    Choice best = tryLayout(0);
-    const Choice split = tryLayout(3);
-    if (split.cost < best.cost) {
-        best = split;
-        for (int li : {1, 2}) {
-            const Choice c = tryLayout(li);
-            if (c.cost < best.cost)
-                best = c;
-        }
+    const Choice whole = tryLayout(0);
+    Choice split = tryLayout(3);
+    for (int li : {1, 2}) {
+        const Choice c = tryLayout(li);
+        if (c.cost < split.cost)
+            split = c;
     }
-    const Layout& layout = kLayouts[best.layout];
 
-    BitWriter interBits;
-    double costInter = 1e300;
-    MbState interState;
-    {
+    // Encodes one inter choice; leaves its state in the macroblock and returns SSD + lambda * bits.
+    auto encodeInter = [&](const Choice& best, BitWriter& interBits) {
+        const Layout& layout = kLayouts[best.layout];
         for (int p = 0; p < layout.count; ++p) {
             const Part& P = layout.parts[p];
             motionCompensate(mbx, mby, P.x4, P.y4, P.w4, P.h4, best.mv[p][0], best.mv[p][1], lp, cp);
@@ -1545,8 +1540,23 @@ void Encoder::encodeMbP(BitWriter& bw, int mbx, int mby, int& skipRun)
         }
         writeChroma(interBits, mbx, mby, ch);
         // A skip_run ends here: count its codeword to be fair against skip.
-        costInter = double(mbSsd(mbx, mby)) + lambda * double(interBits.bitCount() + seBits(0));
-        saveMb(mbx, mby, interState);
+        return double(mbSsd(mbx, mby)) + lambda * double(interBits.bitCount() + seBits(0));
+    };
+    BitWriter interBits;
+    double costInter = encodeInter(whole, interBits);
+    MbState interState;
+    saveMb(mbx, mby, interState);
+    Choice best = whole;
+    // Try the split for real when its estimate is close or better.
+    if (split.cost < whole.cost * 1.1) {
+        BitWriter splitBits;
+        const double costSplit = encodeInter(split, splitBits);
+        if (costSplit < costInter) {
+            costInter = costSplit;
+            interBits = std::move(splitBits);
+            saveMb(mbx, mby, interState);
+            best = split;
+        }
     }
 
     // ---- Candidate 3: intra, only when a cheap Intra 16x16 SATD estimate beats the motion search.
