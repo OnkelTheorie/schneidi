@@ -22,7 +22,7 @@ struct EncoderConfig {
     int height = 0; // even
     int qp = 26;    // 0..51 (values below ~10 may clip levels)
     IntraMode mode = IntraMode::Auto;
-    bool deblock = true; // decoder-side loop filter (does not affect intra prediction); forced off with P frames
+    bool deblock = true; // in-loop deblocking filter (8.7), run by the encoder too
     int gop = 1;         // keyframe distance; > 1 adds P frames (quarter-pel motion, 16x16)
 };
 
@@ -43,7 +43,7 @@ public:
     // One access unit (IDR or P picture) as Annex B.
     std::vector<uint8_t> encode(const Picture& picture);
 
-    // Reconstruction of the last encoded picture before deblocking (padded size).
+    // Reconstruction of the last encoded picture as the decoder outputs it (padded size).
     const std::vector<uint8_t>& reconY() const { return recY_; }
     const std::vector<uint8_t>& reconU() const { return recU_; }
     const std::vector<uint8_t>& reconV() const { return recV_; }
@@ -65,6 +65,8 @@ private:
     void motionCompensate(int mbx, int mby, int mvx, int mvy, uint8_t* luma, uint8_t (*chroma)[64]) const;
     int64_t mbSsd(int mbx, int mby) const;
     void buildRefPlanes();
+    void deblockPicture();
+    int boundaryStrength(int pbx, int pby, int qbx, int qby, bool mbEdge) const;
     void mcLuma(int x0, int y0, int fx, int fy, uint8_t* out) const;
     int sadLuma(int mbx, int mby, int mvx, int mvy) const;
     struct MbState;

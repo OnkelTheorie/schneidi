@@ -270,8 +270,8 @@ Encoder::Encoder(const EncoderConfig& config)
     mvX_.resize(size_t(mbW_) * mbH_);
     mvY_.resize(mvX_.size());
     refIdx_.resize(mvX_.size());
-    if (cfg_.gop > 1)
-        cfg_.deblock = false; // the encoder does not run the loop filter on its references yet
+    if (cfg_.mode == IntraMode::Pcm)
+        cfg_.deblock = false; // the filter below assumes every macroblock uses the slice QP
     nzChroma_[0].resize(size_t(mbW_ * 2) * (mbH_ * 2));
     nzChroma_[1].resize(nzChroma_[0].size());
 }
@@ -405,6 +405,8 @@ std::vector<uint8_t> Encoder::encode(const Picture& picture)
         appendNal(out, 3, 5, bw.bytes());
     else
         appendNal(out, 2, 1, bw.bytes());
+    if (cfg_.deblock)
+        deblockPicture();
     if (cfg_.gop > 1) {
         refY_ = recY_;
         refU_ = recU_;
@@ -1445,6 +1447,147 @@ int Encoder::sadLuma(int mbx, int mby, int mvx, int mvy) const
             s += std::abs(int(src[x]) - int(pred[y * 16 + x]));
     }
     return s;
+}
+
+
+namespace {
+
+// Table 8-16 (alpha', beta') and 8-17 (tC0 by bS 1..3), by indexA / indexB.
+constexpr uint8_t kAlpha[52] = {0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,   0,   0,   0,   4,   4,
+                                5,  6,  7,  8,  9,  10, 12, 13, 15, 17, 20, 22, 25,  28,  32,  36,  40,  45,
+                                50, 56, 63, 71, 80, 90, 101, 113, 127, 144, 162, 182, 203, 226, 255, 255};
+constexpr uint8_t kBeta[52] = {0, 0, 0, 0, 0, 0, 0, 0, 0,  0,  0,  0,  0,  0,  0,  0,  2,  2,
+                               2, 3, 3, 3, 3, 4, 4, 4, 6,  6,  7,  7,  8,  8,  9,  9,  10, 10,
+                               11, 11, 12, 12, 13, 13, 14, 14, 15, 15, 16, 16, 17, 17, 18, 18};
+constexpr uint8_t kTc0[52][3] = {
+    {0, 0, 0}, {0, 0, 0}, {0, 0, 0}, {0, 0, 0}, {0, 0, 0}, {0, 0, 0}, {0, 0, 0}, {0, 0, 0}, {0, 0, 0},
+    {0, 0, 0}, {0, 0, 0}, {0, 0, 0}, {0, 0, 0}, {0, 0, 0}, {0, 0, 0}, {0, 0, 0}, {0, 0, 0}, {0, 0, 1},
+    {0, 0, 1}, {0, 0, 1}, {0, 0, 1}, {0, 1, 1}, {0, 1, 1}, {1, 1, 1}, {1, 1, 1}, {1, 1, 1}, {1, 1, 1},
+    {1, 1, 2}, {1, 1, 2}, {1, 1, 2}, {1, 1, 2}, {1, 2, 3}, {1, 2, 3}, {2, 2, 3}, {2, 2, 4}, {2, 3, 4},
+    {2, 3, 4}, {3, 3, 5}, {3, 4, 6}, {3, 4, 6}, {4, 5, 7}, {4, 5, 8}, {4, 6, 9}, {5, 7, 10}, {6, 8, 11},
+    {6, 8, 13}, {7, 10, 14}, {8, 11, 16}, {9, 12, 18}, {10, 13, 20}, {11, 15, 23}, {13, 17, 25},
+};
+
+// Filters one line across an edge. q points at q0, step is the distance between samples across the edge.
+inline void filterLine(uint8_t* q, int step, int bS, int alpha, int beta, int indexA, bool chroma)
+{
+    const int p0 = q[-step], p1 = q[-2 * step], q0 = q[0], q1 = q[step];
+    if (!(std::abs(p0 - q0) < alpha && std::abs(p1 - p0) < beta && std::abs(q1 - q0) < beta))
+        return;
+    if (chroma) {
+        if (bS < 4) {
+            const int tc = kTc0[indexA][bS - 1] + 1;
+            const int delta = std::clamp((((q0 - p0) << 2) + (p1 - q1) + 4) >> 3, -tc, tc);
+            q[-step] = clip1(p0 + delta);
+            q[0] = clip1(q0 - delta);
+        } else {
+            q[-step] = uint8_t((2 * p1 + p0 + q1 + 2) >> 2);
+            q[0] = uint8_t((2 * q1 + q0 + p1 + 2) >> 2);
+        }
+        return;
+    }
+    const int p2 = q[-3 * step], q2 = q[2 * step];
+    const int ap = std::abs(p2 - p0), aq = std::abs(q2 - q0);
+    if (bS < 4) {
+        const int tc0 = kTc0[indexA][bS - 1];
+        const int tc = tc0 + (ap < beta) + (aq < beta);
+        const int delta = std::clamp((((q0 - p0) << 2) + (p1 - q1) + 4) >> 3, -tc, tc);
+        q[-step] = clip1(p0 + delta);
+        q[0] = clip1(q0 - delta);
+        if (ap < beta)
+            q[-2 * step] = uint8_t(p1 + std::clamp((p2 + ((p0 + q0 + 1) >> 1) - (p1 << 1)) >> 1, -tc0, tc0));
+        if (aq < beta)
+            q[step] = uint8_t(q1 + std::clamp((q2 + ((p0 + q0 + 1) >> 1) - (q1 << 1)) >> 1, -tc0, tc0));
+    } else {
+        const int p3 = q[-4 * step], q3 = q[3 * step];
+        const bool strong = std::abs(p0 - q0) < ((alpha >> 2) + 2);
+        if (ap < beta && strong) {
+            q[-step] = uint8_t((p2 + 2 * p1 + 2 * p0 + 2 * q0 + q1 + 4) >> 3);
+            q[-2 * step] = uint8_t((p2 + p1 + p0 + q0 + 2) >> 2);
+            q[-3 * step] = uint8_t((2 * p3 + 3 * p2 + p1 + p0 + q0 + 4) >> 3);
+        } else {
+            q[-step] = uint8_t((2 * p1 + p0 + q1 + 2) >> 2);
+        }
+        if (aq < beta && strong) {
+            q[0] = uint8_t((p1 + 2 * p0 + 2 * q0 + 2 * q1 + q2 + 4) >> 3);
+            q[step] = uint8_t((p0 + q0 + q1 + q2 + 2) >> 2);
+            q[2 * step] = uint8_t((2 * q3 + 3 * q2 + q1 + q0 + p0 + 4) >> 3);
+        } else {
+            q[0] = uint8_t((2 * q1 + q0 + p1 + 2) >> 2);
+        }
+    }
+}
+
+} // namespace
+
+// Boundary strength between two 4x4 luma blocks (8.7.2.1), positions in 4x4 units.
+int Encoder::boundaryStrength(int pbx, int pby, int qbx, int qby, bool mbEdge) const
+{
+    const size_t mp = size_t(pby / 4) * mbW_ + pbx / 4, mq = size_t(qby / 4) * mbW_ + qbx / 4;
+    if (refIdx_[mp] < 0 || refIdx_[mq] < 0)
+        return mbEdge ? 4 : 3;
+    const int lw = mbW_ * 4;
+    if (nzLuma_[size_t(pby) * lw + pbx] || nzLuma_[size_t(qby) * lw + qbx])
+        return 2;
+    if (std::abs(mvX_[mp] - mvX_[mq]) >= 4 || std::abs(mvY_[mp] - mvY_[mq]) >= 4)
+        return 1;
+    return 0;
+}
+
+void Encoder::deblockPicture()
+{
+    const int qp = cfg_.qp, qpc = chromaQp(qp);
+    const int alphaY = kAlpha[qp], betaY = kBeta[qp];
+    const int alphaC = kAlpha[qpc], betaC = kBeta[qpc];
+    const int cw = padW_ / 2;
+    for (int mby = 0; mby < mbH_; ++mby) {
+        for (int mbx = 0; mbx < mbW_; ++mbx) {
+            int bsV[4][4], bsH[4][4]; // [edge][segment]
+            for (int e = 0; e < 4; ++e)
+                for (int s = 0; s < 4; ++s) {
+                    const int bx = mbx * 4 + e, by = mby * 4 + s;
+                    bsV[e][s] = bx == 0 ? 0 : boundaryStrength(bx - 1, by, bx, by, e == 0);
+                    const int hx = mbx * 4 + s, hy = mby * 4 + e;
+                    bsH[e][s] = hy == 0 ? 0 : boundaryStrength(hx, hy - 1, hx, hy, e == 0);
+                }
+            // Luma: vertical edges left to right, then horizontal edges top to bottom.
+            for (int e = 0; e < 4; ++e)
+                for (int s = 0; s < 4; ++s) {
+                    if (!bsV[e][s])
+                        continue;
+                    for (int k = 0; k < 4; ++k) {
+                        uint8_t* q = &recY_[size_t(mby * 16 + s * 4 + k) * padW_ + mbx * 16 + e * 4];
+                        filterLine(q, 1, bsV[e][s], alphaY, betaY, qp, false);
+                    }
+                }
+            for (int e = 0; e < 4; ++e)
+                for (int s = 0; s < 4; ++s) {
+                    if (!bsH[e][s])
+                        continue;
+                    for (int k = 0; k < 4; ++k) {
+                        uint8_t* q = &recY_[size_t(mby * 16 + e * 4) * padW_ + mbx * 16 + s * 4 + k];
+                        filterLine(q, padW_, bsH[e][s], alphaY, betaY, qp, false);
+                    }
+                }
+            // Chroma: edges 0 and 4 use the strength of luma edges 0 and 2.
+            for (std::vector<uint8_t>* plane : {&recU_, &recV_}) {
+                for (int ce = 0; ce < 2; ++ce)
+                    for (int k = 0; k < 8; ++k) {
+                        const int bS = bsV[ce * 2][k >> 1];
+                        if (bS)
+                            filterLine(&(*plane)[size_t(mby * 8 + k) * cw + mbx * 8 + ce * 4], 1, bS, alphaC, betaC, qpc,
+                                       true);
+                    }
+                for (int ce = 0; ce < 2; ++ce)
+                    for (int k = 0; k < 8; ++k) {
+                        const int bS = bsH[ce * 2][k >> 1];
+                        if (bS)
+                            filterLine(&(*plane)[size_t(mby * 8 + ce * 4) * cw + mbx * 8 + k], cw, bS, alphaC, betaC, qpc,
+                                       true);
+                    }
+            }
+        }
+    }
 }
 
 } // namespace schneidi::h264
