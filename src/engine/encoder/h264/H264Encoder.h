@@ -25,6 +25,7 @@ struct EncoderConfig {
     bool deblock = true; // in-loop deblocking filter (8.7), run by the encoder too
     int gop = 1;         // keyframe distance; > 1 adds P frames (quarter-pel motion, 16x16)
     int threads = 1;     // one slice per thread (rows of macroblocks)
+    int effort = 1;      // 0 = fast (16x16 motion only), 1 = default (partitions, more RD)
     int bitrateKbps = 0; // > 0: frame-level rate control towards this bitrate, qp is the start value
     double fps = 60.0;   // for the rate control
 };

@@ -1,7 +1,7 @@
 // h264-proto: test driver for schneidi's own H.264 encoder.
 //   h264-proto selftest
 //   h264-proto encode <in.yuv> <width> <height> <out.h264> [--qp N] [--mode pcm|i16|i4|auto]
-//                     [--frames N] [--gop N] [--threads N] [--bitrate kbps] [--no-deblock] [--recon out.yuv]
+//                     [--frames N] [--gop N] [--threads N] [--bitrate kbps] [--effort 0|1] [--no-deblock] [--recon out.yuv]
 // Input is raw yuv420p ("-" reads stdin). Prints size, speed and PSNR of the encoder's reconstruction.
 #include "engine/encoder/h264/Cavlc.h"
 #include "engine/encoder/h264/H264Encoder.h"
@@ -38,7 +38,7 @@ int main(int argc, char** argv)
     }
     if (argc < 6 || std::strcmp(argv[1], "encode") != 0) {
         std::fprintf(stderr, "usage: h264-proto selftest | encode <in.yuv> <w> <h> <out.h264> [--qp N] "
-                             "[--mode pcm|i16|i4|auto] [--frames N] [--gop N] [--threads N] [--bitrate kbps] [--no-deblock] [--recon out.yuv]\n");
+                             "[--mode pcm|i16|i4|auto] [--frames N] [--gop N] [--threads N] [--bitrate kbps] [--effort 0|1] [--no-deblock] [--recon out.yuv]\n");
         return 2;
     }
     EncoderConfig cfg;
@@ -65,6 +65,8 @@ int main(int argc, char** argv)
             cfg.threads = std::atoi(argv[++i]);
         else if (a == "--bitrate" && i + 1 < argc)
             cfg.bitrateKbps = std::atoi(argv[++i]);
+        else if (a == "--effort" && i + 1 < argc)
+            cfg.effort = std::atoi(argv[++i]);
         else if (a == "--no-deblock")
             cfg.deblock = false;
         else if (a == "--recon" && i + 1 < argc)

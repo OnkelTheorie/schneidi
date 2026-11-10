@@ -1453,11 +1453,14 @@ void Encoder::encodeMbP(BitWriter& bw, int mbx, int mby, int& skipRun)
         return ch;
     };
     const Choice whole = tryLayout(0);
-    Choice split = tryLayout(3);
-    for (int li : {1, 2}) {
-        const Choice c = tryLayout(li);
-        if (c.cost < split.cost)
-            split = c;
+    Choice split;
+    if (cfg_.effort > 0) {
+        split = tryLayout(3);
+        for (int li : {1, 2}) {
+            const Choice c = tryLayout(li);
+            if (c.cost < split.cost)
+                split = c;
+        }
     }
 
     // Encodes one inter choice; leaves its state in the macroblock and returns SSD + lambda * bits.
