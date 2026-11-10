@@ -82,6 +82,53 @@ int residualBlock(CabacEncoder& ce, int cat, const int* list, int count, int cbf
 
 enum : uint8_t { kKindSkip = 0, kKindI16 = 1, kKindI4 = 2, kKindInter = 3 };
 
+// Table 9-43: ctxIdxInc of significant/last_significant_coeff_flag for 8x8 blocks (frame).
+constexpr uint8_t kSig8[63] = {0,  1,  2,  3,  4,  5,  5,  4,  4,  3,  3,  4,  4,  4,  5,  5,  4,  4,  4,  4,  3,
+                               3,  6,  7,  7,  7,  8,  9,  10, 9,  8,  7,  7,  6,  11, 12, 13, 11, 6,  7,  8,  9,
+                               14, 10, 9,  8,  6,  11, 12, 13, 11, 6,  9,  14, 10, 9,  11, 12, 13, 11, 14, 10, 12};
+constexpr uint8_t kLast8[63] = {0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
+                                2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 3, 4, 4, 4, 4, 4, 4, 4, 4, 5, 5, 5, 5, 6, 6,
+                                6, 6, 7, 7, 7, 7, 8, 8, 8};
+
+// residual_block_cabac for an 8x8 block (ctxBlockCat 5): no coded_block_flag (inferred 1).
+void residualBlock8x8(CabacEncoder& ce, const int* list)
+{
+    int last = -1;
+    for (int i = 0; i < 64; ++i)
+        if (list[i])
+            last = i;
+    for (int i = 0; i < 63; ++i) {
+        const int sig = list[i] != 0;
+        ce.decision(402 + kSig8[i], sig);
+        if (sig) {
+            ce.decision(417 + kLast8[i], i == last);
+            if (i == last)
+                break;
+        }
+    }
+    int eq1 = 0, gt1 = 0;
+    for (int i = last; i >= 0; --i) {
+        if (!list[i])
+            continue;
+        const int a = std::abs(list[i]) - 1;
+        const int ctx0 = 426 + (gt1 ? 0 : std::min(4, 1 + eq1));
+        const int ctxN = 426 + 5 + std::min(4, gt1);
+        const int prefix = std::min(a, 14);
+        ce.decision(ctx0, prefix > 0);
+        for (int b = 1; b < prefix; ++b)
+            ce.decision(ctxN, 1);
+        if (prefix > 0 && prefix < 14)
+            ce.decision(ctxN, 0);
+        if (a >= 14)
+            expGolombBypass(ce, unsigned(a - 14), 0);
+        ce.bypass(list[i] < 0);
+        if (a == 0)
+            ++eq1;
+        else
+            ++gt1;
+    }
+}
+
 } // namespace
 
 void Encoder::cabacWriteMb(CabacEncoder& ce, int mbx, int mby, const MbSyntax& s, bool& prevQpNonZero)
@@ -112,6 +159,7 @@ void Encoder::cabacWriteMb(CabacEncoder& ce, int mbx, int mby, const MbSyntax& s
         cabCbp_[m] = 0;
         cabChromaMode_[m] = 0;
         cabCbfDc_[m] = 0;
+        cabT8_[m] = 0;
         for (int y = 0; y < 4; ++y)
             for (int x = 0; x < 4; ++x) {
                 const size_t o = size_t(mby * 4 + y) * lw + mbx * 4 + x;
@@ -136,6 +184,8 @@ void Encoder::cabacWriteMb(CabacEncoder& ce, int mbx, int mby, const MbSyntax& s
         const int inc0 = pSlice_ ? 0 : (hasL && cabKind_[mL] != kKindI4) + (hasT && cabKind_[mT] != kKindI4);
         if (s.kind == K::I4) {
             ce.decision(base + inc0, 0);
+            if (useT8()) // transform_size_8x8_flag: always 4x4 for intra here
+                ce.decision(399 + (hasL && cabT8_[mL]) + (hasT && cabT8_[mT]), 0);
         } else {
             ce.decision(base + inc0, 1);
             ce.terminate(0); // not I_PCM
@@ -286,6 +336,10 @@ void Encoder::cabacWriteMb(CabacEncoder& ce, int mbx, int mby, const MbSyntax& s
             ce.decision(81 + condC(hasL, mL, 2) + 2 * condC(hasT, mT, 2), s.cbpChroma == 2);
     }
     cabCbp_[m] = uint8_t(s.cbpLuma | (s.cbpChroma << 4));
+    const bool t8 = s.kind == K::Inter && s.t8 && s.cbpLuma;
+    if (s.kind == K::Inter && s.cbpLuma && useT8())
+        ce.decision(399 + (hasL && cabT8_[mL]) + (hasT && cabT8_[mT]), t8);
+    cabT8_[m] = t8;
 
     // mb_qp_delta
     if (s.kind == K::I16 || s.cbpLuma || s.cbpChroma) {
@@ -320,7 +374,15 @@ void Encoder::cabacWriteMb(CabacEncoder& ce, int mbx, int mby, const MbSyntax& s
         };
         dcFlags |= uint8_t(residualBlock(ce, 0, s.lumaDc, 16, cond(hasL, mL) + 2 * cond(hasT, mT)));
     }
-    for (int blk = 0; blk < 16; ++blk) {
+    for (int blk = 0; blk < 16 && t8; ++blk) {
+        // 8x8 blocks are coded once per 8x8; their 4x4 blocks count as coded for neighbours.
+        const int bx = mbx * 4 + kBlkX[blk], by = mby * 4 + kBlkY[blk];
+        const bool coded = (s.cbpLuma >> (blk >> 2)) & 1;
+        if ((blk & 3) == 0 && coded)
+            residualBlock8x8(ce, s.luma8[blk >> 2]);
+        cabCbfLuma_[size_t(by) * lw + bx] = coded;
+    }
+    for (int blk = 0; blk < 16 && !t8; ++blk) {
         const int bx = mbx * 4 + kBlkX[blk], by = mby * 4 + kBlkY[blk];
         uint8_t& flag = cabCbfLuma_[size_t(by) * lw + bx];
         flag = 0;

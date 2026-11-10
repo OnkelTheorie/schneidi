@@ -180,6 +180,11 @@ int main()
         c.aqStrength = 3; // large per-macroblock QP jumps (mb_qp_delta, deblocking across QPs)
         CHECK(roundTrip(c, 6));
     }
+    if (gCabac) { // Main profile without the 8x8 transform
+        EncoderConfig c = config(176, 144, IntraMode::Auto, 8, 2);
+        c.transform8x8 = false;
+        CHECK(roundTrip(c, 6));
+    }
     // A keyframe the caller asks for (a cut in the timeline) in the middle of a GOP
     CHECK(roundTrip(config(176, 144, IntraMode::Auto, 30), 10, nullptr, 4));
     for (int refs : {2, 3}) { // several reference pictures (ref_idx te(v)/ue(v), sliding window)

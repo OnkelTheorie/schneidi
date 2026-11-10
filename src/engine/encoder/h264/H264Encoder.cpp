@@ -276,6 +276,7 @@ Encoder::Encoder(const EncoderConfig& config)
     refIdx_.resize(mvX_.size());
     sliceTopOfRow_.resize(size_t(mbH_));
     cabKind_.resize(size_t(mbW_) * mbH_);
+    cabT8_.resize(cabKind_.size());
     cabacByTop_.resize(size_t(mbH_));
     prevQpNzByTop_.resize(size_t(mbH_));
     cabCbp_.resize(cabKind_.size());
@@ -300,7 +301,10 @@ std::vector<uint8_t> Encoder::headers() const
     std::vector<uint8_t> out;
     {
         BitWriter bw; // seq_parameter_set_rbsp (7.3.2.1.1)
-        if (useCabac()) {
+        if (useT8()) {
+            bw.u(100, 8); // profile_idc: High
+            bw.u(0, 8);
+        } else if (useCabac()) {
             bw.u(77, 8);   // profile_idc: Main
             bw.u(0x40, 8); // constraint_set1: decodable by Main decoders
         } else {
@@ -309,6 +313,13 @@ std::vector<uint8_t> Encoder::headers() const
         }
         bw.u(40, 8);   // level_idc 4.0
         bw.ue(0);      // seq_parameter_set_id
+        if (useT8()) {
+            bw.ue(1);       // chroma_format_idc 4:2:0
+            bw.ue(0);       // bit_depth_luma_minus8
+            bw.ue(0);       // bit_depth_chroma_minus8
+            bw.flag(false); // qpprime_y_zero_transform_bypass_flag
+            bw.flag(false); // seq_scaling_matrix_present_flag
+        }
         bw.ue(0);      // log2_max_frame_num_minus4
         bw.ue(2);      // pic_order_cnt_type: output order = decode order
         bw.ue(uint32_t(std::max(1, cfg_.refs))); // max_num_ref_frames
@@ -371,6 +382,11 @@ std::vector<uint8_t> Encoder::headers() const
         bw.flag(true);  // deblocking_filter_control_present_flag
         bw.flag(false); // constrained_intra_pred_flag
         bw.flag(false); // redundant_pic_cnt_present_flag
+        if (useT8()) {
+            bw.flag(true);  // transform_8x8_mode_flag
+            bw.flag(false); // pic_scaling_matrix_present_flag
+            bw.se(0);       // second_chroma_qp_index_offset
+        }
         bw.rbspTrailing();
         appendNal(out, 3, 8, bw.bytes());
     }
@@ -1238,6 +1254,130 @@ int seBits(int v)
     return 2 * len + 1;
 }
 
+// ---- 8x8 transform (High profile), 8.5.11.
+// 8x8 frame zig-zag (table 8-14): scan index -> raster index (row * 8 + column).
+constexpr int kZigzag8[64] = {0,  1,  8,  16, 9,  2,  3,  10, 17, 24, 32, 25, 18, 11, 4,  5,  12, 19, 26, 33, 40, 48,
+                              41, 34, 27, 20, 13, 6,  7,  14, 21, 28, 35, 42, 49, 56, 57, 50, 43, 36, 29, 22, 15, 23,
+                              30, 37, 44, 51, 58, 59, 52, 45, 38, 31, 39, 46, 53, 60, 61, 54, 47, 55, 62, 63};
+// normAdjust8x8 (8-317) by QP % 6 and position class.
+constexpr int kDequantV8[6][6] = {{20, 18, 32, 19, 25, 24}, {22, 19, 35, 21, 28, 26}, {26, 23, 42, 24, 33, 31},
+                                  {28, 25, 45, 26, 35, 33}, {32, 28, 51, 30, 40, 38}, {36, 32, 58, 34, 46, 43}};
+constexpr int posClass8(int raster)
+{
+    const int i = raster >> 3, j = raster & 7;
+    if (i % 4 == 0 && j % 4 == 0)
+        return 0;
+    if (i % 2 == 1 && j % 2 == 1)
+        return 1;
+    if (i % 4 == 2 && j % 4 == 2)
+        return 2;
+    if ((i % 4 == 0 && j % 2 == 1) || (i % 2 == 1 && j % 4 == 0))
+        return 3;
+    if ((i % 4 == 0 && j % 4 == 2) || (i % 4 == 2 && j % 4 == 0))
+        return 4;
+    return 5;
+}
+
+// One-dimensional inverse 8x8 transform (8-361..8-384), integer exact or real-valued.
+template <typename T>
+void inverse8Line(const T* d, T* g, bool exact)
+{
+    auto half = [&](T v) { return exact ? T(int64_t(v) >> 1) : v / 2; };
+    auto quarter = [&](T v) { return exact ? T(int64_t(v) >> 2) : v / 4; };
+    const T e0 = d[0] + d[4], e1 = -d[3] + d[5] - d[7] - half(d[7]), e2 = d[0] - d[4];
+    const T e3 = d[1] + d[7] - d[3] - half(d[3]), e4 = half(d[2]) - d[6], e5 = -d[1] + d[7] + d[5] + half(d[5]);
+    const T e6 = d[2] + half(d[6]), e7 = d[3] + d[5] + d[1] + half(d[1]);
+    const T f0 = e0 + e6, f1 = e1 + quarter(e7), f2 = e2 + e4, f3 = e3 + quarter(e5);
+    const T f4 = e2 - e4, f5 = quarter(e3) - e5, f6 = e0 - e6, f7 = e7 - quarter(e1);
+    g[0] = f0 + f7;
+    g[1] = f2 + f5;
+    g[2] = f4 + f3;
+    g[3] = f6 + f1;
+    g[4] = f6 - f1;
+    g[5] = f4 - f3;
+    g[6] = f2 - f5;
+    g[7] = f0 - f7;
+}
+
+// Decoder-exact inverse: rows, then columns, then (x + 32) >> 6.
+void inverse8x8(const int* d, int* out)
+{
+    int t[64];
+    for (int i = 0; i < 8; ++i)
+        inverse8Line<int>(d + i * 8, t + i * 8, true);
+    for (int j = 0; j < 8; ++j) {
+        int col[8], res[8];
+        for (int i = 0; i < 8; ++i)
+            col[i] = t[i * 8 + j];
+        inverse8Line<int>(col, res, true);
+        for (int i = 0; i < 8; ++i)
+            out[i * 8 + j] = (res[i] + 32) >> 6;
+    }
+}
+
+// Real-valued basis of the inverse (basis[k][x] = output sample x for a unit coefficient k)
+// and its squared norms; the encoder's forward transform is its transpose.
+struct Basis8 {
+    double b[8][8];
+    double norm[8];
+    Basis8()
+    {
+        for (int k = 0; k < 8; ++k) {
+            double d[8] = {}, g[8];
+            d[k] = 1;
+            inverse8Line<double>(d, g, false);
+            norm[k] = 0;
+            for (int x = 0; x < 8; ++x) {
+                b[k][x] = g[x];
+                norm[k] += g[x] * g[x];
+            }
+        }
+    }
+};
+const Basis8& basis8()
+{
+    static const Basis8 b;
+    return b;
+}
+
+// Quantises an 8x8 residual (raster) for QP; deadzone offset as a fraction of a step.
+void quantize8x8(const int* residual, int qp, double offset, int* levels)
+{
+    const Basis8& B = basis8();
+    double tmp[64];
+    for (int y = 0; y < 8; ++y)
+        for (int j = 0; j < 8; ++j) {
+            double s = 0;
+            for (int x = 0; x < 8; ++x)
+                s += B.b[j][x] * residual[y * 8 + x];
+            tmp[y * 8 + j] = s;
+        }
+    const double step2 = std::pow(2.0, qp / 6);
+    for (int i = 0; i < 8; ++i)
+        for (int j = 0; j < 8; ++j) {
+            double w = 0;
+            for (int y = 0; y < 8; ++y)
+                w += B.b[i][y] * tmp[y * 8 + j];
+            // Decoder: r = B^T (Z * v8 * 2^(qp/6 - 2)) B / 64, so Z = 256 * W / (n_i n_j v8 2^(qp/6)).
+            const int k = i * 8 + j;
+            const double x = 256.0 * w / (B.norm[i] * B.norm[j] * kDequantV8[qp % 6][posClass8(k)] * step2);
+            const int mag = std::min(int(std::abs(x) + offset), kMaxLevel);
+            levels[k] = x < 0 ? -mag : mag;
+        }
+}
+
+void dequant8x8(const int* levels, int qp, int* d)
+{
+    const int qpDiv = qp / 6, qpMod = qp % 6;
+    for (int k = 0; k < 64; ++k) {
+        const int ls = 16 * kDequantV8[qpMod][posClass8(k)];
+        if (qpDiv >= 6)
+            d[k] = (levels[k] * ls) << (qpDiv - 6);
+        else
+            d[k] = (levels[k] * ls + (1 << (5 - qpDiv))) >> (6 - qpDiv);
+    }
+}
+
 // x264-style decimation score of a 4x4 block (raster levels, scanned in zig-zag order).
 int decimateScore(const int* levels)
 {
@@ -1712,7 +1852,7 @@ bool Encoder::encodeMbP(MbOut& result, int mbx, int mby)
 
     // Encodes one inter choice; leaves its state in the macroblock and returns SSD + lambda * bits.
     bool interDelta = false;
-    auto encodeInter = [&](const Choice& best, MbOut& io) {
+    auto encodeInter = [&](const Choice& best, MbOut& io, bool t8) {
         BitWriter& interBits = io.bw;
         const Layout& layout = kLayouts[best.layout];
         for (int p = 0; p < layout.count; ++p) {
@@ -1726,7 +1866,37 @@ bool Encoder::encodeMbP(MbOut& result, int mbx, int mby)
         const int interOffset = (1 << qbits) / 6;
         int levels[16][16];
         int cbpLuma = 0;
-        for (int blkIdx = 0; blkIdx < 16; ++blkIdx) {
+        int levels8[4][64] = {};
+        if (t8) {
+            // No decimation here: measured, it costs more quality than it saves for 8x8 blocks.
+            for (int b8 = 0; b8 < 4; ++b8) {
+                const int ox = (b8 & 1) * 8, oy = (b8 >> 1) * 8;
+                int res[64];
+                for (int y = 0; y < 8; ++y)
+                    for (int x = 0; x < 8; ++x)
+                        res[y * 8 + x] = int(srcY_[lumaOff + size_t(oy + y) * padW_ + ox + x]) - int(lp[(oy + y) * 16 + ox + x]);
+                quantize8x8(res, qp, 1.0 / 6.0, levels8[b8]);
+            }
+            for (int b8 = 0; b8 < 4; ++b8) {
+                const int ox = (b8 & 1) * 8, oy = (b8 >> 1) * 8;
+                int count = 0;
+                for (int k = 0; k < 64; ++k)
+                    count += levels8[b8][k] != 0;
+                if (count)
+                    cbpLuma |= 1 << b8;
+                int d[64], r[64];
+                dequant8x8(levels8[b8], qp, d);
+                inverse8x8(d, r);
+                for (int y = 0; y < 8; ++y)
+                    for (int x = 0; x < 8; ++x)
+                        recY_[lumaOff + size_t(oy + y) * padW_ + ox + x] = clip1(lp[(oy + y) * 16 + ox + x] + r[y * 8 + x]);
+                for (int k = 0; k < 64; ++k)
+                    io.syn.luma8[b8][k] = levels8[b8][kZigzag8[k]];
+            }
+            for (int b = 0; b < 16; ++b)
+                std::fill(levels[b], levels[b] + 16, 0);
+        }
+        for (int blkIdx = 0; blkIdx < 16 && !t8; ++blkIdx) {
             const int ox = kBlkX[blkIdx] * 4, oy = kBlkY[blkIdx] * 4;
             int res[16], coef[16];
             for (int y = 0; y < 4; ++y)
@@ -1745,17 +1915,17 @@ bool Encoder::encodeMbP(MbOut& result, int mbx, int mby)
         }
         // Decimation: a few lone +-1 levels cost more bits than they bring back.
         int scores[16], mbScore = 0;
-        for (int blkIdx = 0; blkIdx < 16; ++blkIdx) {
+        for (int blkIdx = 0; blkIdx < 16 && !t8; ++blkIdx) {
             scores[blkIdx] = decimateScore(levels[blkIdx]);
             mbScore += scores[blkIdx];
         }
-        for (int b8 = 0; b8 < 4; ++b8) {
+        for (int b8 = 0; b8 < 4 && !t8; ++b8) {
             const int s = scores[b8 * 4] + scores[b8 * 4 + 1] + scores[b8 * 4 + 2] + scores[b8 * 4 + 3];
             if (s < 4 || mbScore < 6)
                 for (int k = 0; k < 4; ++k)
                     std::fill(levels[b8 * 4 + k], levels[b8 * 4 + k] + 16, 0);
         }
-        for (int blkIdx = 0; blkIdx < 16; ++blkIdx) {
+        for (int blkIdx = 0; blkIdx < 16 && !t8; ++blkIdx) {
             const int ox = kBlkX[blkIdx] * 4, oy = kBlkY[blkIdx] * 4;
             bool any = false;
             int d[16];
@@ -1800,6 +1970,7 @@ bool Encoder::encodeMbP(MbOut& result, int mbx, int mby)
         const int cbp = cbpLuma | (ch.cbp << 4);
         interBits.ue(uint32_t(interCbpCode(cbp)));
         io.syn.cbpLuma = cbpLuma;
+        io.syn.t8 = t8 && cbpLuma != 0;
         io.syn.hasQpDelta = cbp != 0;
         io.syn.qpDelta = qp - qpPredOf(mby);
         if (cbp)
@@ -1812,16 +1983,21 @@ bool Encoder::encodeMbP(MbOut& result, int mbx, int mby)
             for (int k = 0; k < 16; ++k)
                 scan[k] = levels[blkIdx][kZigzag[k]];
             std::memcpy(io.syn.luma[blkIdx], scan, sizeof(scan));
-            if (cbpLuma & (1 << (blkIdx >> 2)))
+            if (t8) {
+                // 8x8 transform (CABAC only): the four 4x4 blocks carry the 8x8 block's count (bS, nC).
+                for (int k = 0; k < 64; ++k)
+                    total += levels8[blkIdx >> 2][k] != 0;
+            } else if (cbpLuma & (1 << (blkIdx >> 2))) {
                 total = writeResidualBlock(interBits, scan, 16, lumaNc(bx, by));
-            nzLuma_[size_t(by) * lw + bx] = uint8_t(total);
+            }
+            nzLuma_[size_t(by) * lw + bx] = uint8_t(std::min(total, 255));
         }
         writeChroma(io, mbx, mby, ch);
         // A skip_run ends here: count its codeword to be fair against skip.
         return double(mbSsd(mbx, mby)) + lambda * mbBits(io, mbx, mby, double(interBits.bitCount() + seBits(0)));
     };
     MbOut interBits;
-    double costInter = encodeInter(whole, interBits);
+    double costInter = encodeInter(whole, interBits, false);
     bool chosenInterDelta = interDelta;
     MbState interState;
     saveMb(mbx, mby, interState);
@@ -1829,13 +2005,24 @@ bool Encoder::encodeMbP(MbOut& result, int mbx, int mby)
     // Try the split for real when its estimate is close or better.
     if (split.cost < whole.cost * 1.1) {
         MbOut splitBits;
-        const double costSplit = encodeInter(split, splitBits);
+        const double costSplit = encodeInter(split, splitBits, false);
         if (costSplit < costInter) {
             costInter = costSplit;
             chosenInterDelta = interDelta;
             interBits = std::move(splitBits);
             saveMb(mbx, mby, interState);
             best = split;
+        }
+    }
+    // 8x8 transform for the chosen layout (High profile).
+    if (useT8() && cfg_.effort > 0) {
+        MbOut t8Bits;
+        const double costT8 = encodeInter(best, t8Bits, true);
+        if (costT8 < costInter) {
+            costInter = costT8;
+            chosenInterDelta = interDelta;
+            interBits = std::move(t8Bits);
+            saveMb(mbx, mby, interState);
         }
     }
 
@@ -2188,10 +2375,12 @@ void Encoder::deblockMb(int mbx, int mby)
                     const int hx = mbx * 4 + s, hy = mby * 4 + e;
                     bsH[e][s] = hy == 0 ? 0 : boundaryStrength(hx, hy - 1, hx, hy, e == 0);
                 }
-            // Luma: vertical edges left to right, then horizontal edges top to bottom.
+            // Luma: vertical edges left to right, then horizontal edges top to bottom
+            // (with the 8x8 transform only edges 0 and 2).
+            const bool t8 = cabT8_[size_t(mby) * mbW_ + mbx] != 0;
             for (int e = 0; e < 4; ++e)
                 for (int s = 0; s < 4; ++s) {
-                    if (!bsV[e][s])
+                    if (!bsV[e][s] || (t8 && (e & 1)))
                         continue;
                     for (int k = 0; k < 4; ++k) {
                         uint8_t* q = &recY_[size_t(mby * 16 + s * 4 + k) * padW_ + mbx * 16 + e * 4];
@@ -2201,7 +2390,7 @@ void Encoder::deblockMb(int mbx, int mby)
                 }
             for (int e = 0; e < 4; ++e)
                 for (int s = 0; s < 4; ++s) {
-                    if (!bsH[e][s])
+                    if (!bsH[e][s] || (t8 && (e & 1)))
                         continue;
                     for (int k = 0; k < 4; ++k) {
                         uint8_t* q = &recY_[size_t(mby * 16 + e * 4) * padW_ + mbx * 16 + s * 4 + k];

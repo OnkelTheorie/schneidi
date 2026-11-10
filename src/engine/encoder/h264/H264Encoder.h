@@ -35,6 +35,7 @@ struct EncoderConfig {
     int refs = 1;        // reference pictures for P frames (1..16)
     bool sceneCut = true; // keyframe on detected scene changes
     bool cabac = true;    // CABAC entropy coding (Main profile); false = CAVLC (Baseline)
+    bool transform8x8 = true; // 8x8 transform for inter macroblocks (High profile; needs CABAC)
 };
 
 struct Picture {
@@ -77,6 +78,8 @@ private:
         int qpDelta = 0;
         int lumaDc[16] = {};         // Intra 16x16 DC, scan order
         int luma[16][16] = {};       // per luma4x4BlkIdx, scan order (Intra 16x16: 15 AC levels)
+        bool t8 = false;             // 8x8 transform (inter, CABAC only)
+        int luma8[4][64] = {};       // per 8x8 block, scan order
         int chromaDc[2][4] = {};
         int chromaAc[2][4][15] = {};
     };
@@ -121,12 +124,13 @@ private:
     void deblockMb(int mbx, int mby);
     void cabacWriteMb(CabacEncoder& ce, int mbx, int mby, const MbSyntax& s, bool& prevQpNonZero);
     bool useCabac() const { return cfg_.cabac && cfg_.mode != IntraMode::Pcm; }
+    bool useT8() const { return useCabac() && cfg_.transform8x8; }
     double mbBits(const MbOut& o, int mbx, int mby, double cavlcBits);
     double skipBits(int mbx, int mby);
     std::vector<CabacEncoder*> cabacByTop_; // live CABAC engine of each slice (by first row), for bit estimates
     std::vector<bool*> prevQpNzByTop_;
     // CABAC neighbour state (written in slice order by cabacWriteMb).
-    std::vector<uint8_t> cabKind_, cabCbp_, cabChromaMode_, cabCbfDc_; // per macroblock
+    std::vector<uint8_t> cabKind_, cabCbp_, cabChromaMode_, cabCbfDc_, cabT8_; // per macroblock
     std::vector<uint8_t> cabCbfLuma_;                                  // per 4x4 luma block
     std::vector<std::array<uint8_t, 2>> cabMvd_;                       // |mvd| per 4x4 block, x and y
     std::vector<uint8_t> cabCbfChroma_[2];                             // per 4x4 chroma block
