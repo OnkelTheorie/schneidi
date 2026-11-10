@@ -24,6 +24,7 @@ struct EncoderConfig {
     IntraMode mode = IntraMode::Auto;
     bool deblock = true; // in-loop deblocking filter (8.7), run by the encoder too
     int gop = 1;         // keyframe distance; > 1 adds P frames (quarter-pel motion, 16x16)
+    int threads = 1;     // one slice per thread (rows of macroblocks)
 };
 
 struct Picture {
@@ -73,6 +74,8 @@ private:
     void saveMb(int mbx, int mby, MbState& s) const;
     void restoreMb(int mbx, int mby, const MbState& s);
     int lumaNc(int bx, int by) const;
+    // The macroblock row above belongs to the same slice.
+    bool topMbAvailable(int mby) const { return mby > sliceTopOfRow_[size_t(mby)]; }
     int chromaNc(int c, int bx, int by) const;
 
     EncoderConfig cfg_;
@@ -90,6 +93,7 @@ private:
     static constexpr int kMargin = 96;
     int extW_ = 0, extH_ = 0;
     std::vector<uint8_t> extF_, extB_, extV_, extJ_;
+    std::vector<int> sliceTopOfRow_;        // first macroblock row of the slice of each row
     int mbTypeOffset_ = 0;                  // 5 for intra macroblocks in P slices
     bool pSlice_ = false;
     int idrCount_ = 0;

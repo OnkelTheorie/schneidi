@@ -10,6 +10,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
+#include <thread>
 
 namespace schneidi::h264 {
 namespace {
@@ -270,6 +271,7 @@ Encoder::Encoder(const EncoderConfig& config)
     mvX_.resize(size_t(mbW_) * mbH_);
     mvY_.resize(mvX_.size());
     refIdx_.resize(mvX_.size());
+    sliceTopOfRow_.resize(size_t(mbH_));
     if (cfg_.mode == IntraMode::Pcm)
         cfg_.deblock = false; // the filter below assumes every macroblock uses the slice QP
     nzChroma_[0].resize(size_t(mbW_ * 2) * (mbH_ * 2));
@@ -360,51 +362,70 @@ std::vector<uint8_t> Encoder::encode(const Picture& picture)
     pSlice_ = !idr;
     mbTypeOffset_ = idr ? 0 : 5;
 
-    BitWriter bw;
-    // slice_header (7.3.3)
-    bw.ue(0);              // first_mb_in_slice
-    bw.ue(idr ? 7 : 5);    // slice_type: I or P (all slices)
-    bw.ue(0);              // pic_parameter_set_id
-    bw.u(idr ? 0 : uint32_t((frameIndex_ % cfg_.gop) & 15), 4); // frame_num
-    if (idr) {
-        bw.ue(uint32_t(idrCount_ & 0xFFFF)); // idr_pic_id (differs between neighbours)
-    } else {
-        bw.flag(false); // num_ref_idx_active_override_flag
-        bw.flag(false); // ref_pic_list_modification_flag_l0
-    }
-    if (idr) {
-        bw.flag(false); // no_output_of_prior_pics_flag
-        bw.flag(false); // long_term_reference_flag
-    } else {
-        bw.flag(false); // adaptive_ref_pic_marking_mode_flag
-    }
-    bw.se(cfg_.qp - 26);         // slice_qp_delta
-    bw.ue(cfg_.deblock ? 0 : 1); // disable_deblocking_filter_idc
-    if (cfg_.deblock) {
-        bw.se(0); // slice_alpha_c0_offset_div2
-        bw.se(0); // slice_beta_offset_div2
-    }
+    const int sliceCount = std::clamp(cfg_.threads, 1, mbH_);
+    std::vector<BitWriter> slices(static_cast<size_t>(sliceCount));
+    std::vector<int> sliceTop(size_t(sliceCount) + 1);
+    for (int s = 0; s <= sliceCount; ++s)
+        sliceTop[size_t(s)] = s * mbH_ / sliceCount;
+    for (int s = 0; s < sliceCount; ++s)
+        for (int r = sliceTop[size_t(s)]; r < sliceTop[size_t(s) + 1]; ++r)
+            sliceTopOfRow_[size_t(r)] = sliceTop[size_t(s)];
 
-    int skipRun = 0;
-    for (int mby = 0; mby < mbH_; ++mby) {
-        for (int mbx = 0; mbx < mbW_; ++mbx) {
-            if (cfg_.mode == IntraMode::Pcm)
-                encodeMbPcm(bw, mbx, mby);
-            else if (pSlice_)
-                encodeMbP(bw, mbx, mby, skipRun);
-            else
-                encodeMbIntra(bw, mbx, mby);
+    auto encodeSlice = [&](int s) {
+        BitWriter& bw = slices[size_t(s)];
+        // slice_header (7.3.3)
+        bw.ue(uint32_t(sliceTop[size_t(s)] * mbW_)); // first_mb_in_slice
+        bw.ue(idr ? 7 : 5);                         // slice_type: I or P (all slices)
+        bw.ue(0);                                   // pic_parameter_set_id
+        bw.u(idr ? 0 : uint32_t((frameIndex_ % cfg_.gop) & 15), 4); // frame_num
+        if (idr) {
+            bw.ue(uint32_t(idrCount_ & 0xFFFF)); // idr_pic_id (differs between neighbours)
+        } else {
+            bw.flag(false); // num_ref_idx_active_override_flag
+            bw.flag(false); // ref_pic_list_modification_flag_l0
         }
-    }
-    if (skipRun)
-        bw.ue(uint32_t(skipRun));
-    bw.rbspTrailing();
+        if (idr) {
+            bw.flag(false); // no_output_of_prior_pics_flag
+            bw.flag(false); // long_term_reference_flag
+        } else {
+            bw.flag(false); // adaptive_ref_pic_marking_mode_flag
+        }
+        bw.se(cfg_.qp - 26);         // slice_qp_delta
+        bw.ue(cfg_.deblock ? 0 : 1); // disable_deblocking_filter_idc (0 filters across slice edges too)
+        if (cfg_.deblock) {
+            bw.se(0); // slice_alpha_c0_offset_div2
+            bw.se(0); // slice_beta_offset_div2
+        }
+        int skipRun = 0;
+        for (int mby = sliceTop[size_t(s)]; mby < sliceTop[size_t(s) + 1]; ++mby) {
+            for (int mbx = 0; mbx < mbW_; ++mbx) {
+                if (cfg_.mode == IntraMode::Pcm)
+                    encodeMbPcm(bw, mbx, mby);
+                else if (pSlice_)
+                    encodeMbP(bw, mbx, mby, skipRun);
+                else
+                    encodeMbIntra(bw, mbx, mby);
+            }
+        }
+        if (skipRun)
+            bw.ue(uint32_t(skipRun));
+        bw.rbspTrailing();
+    };
+    // Slices only look at macroblocks of their own slice, so they run in parallel.
+    std::vector<std::thread> workers;
+    for (int s = 1; s < sliceCount; ++s)
+        workers.emplace_back(encodeSlice, s);
+    encodeSlice(0);
+    for (auto& t : workers)
+        t.join();
 
     std::vector<uint8_t> out;
-    if (idr)
-        appendNal(out, 3, 5, bw.bytes());
-    else
-        appendNal(out, 2, 1, bw.bytes());
+    for (const BitWriter& bw : slices) {
+        if (idr)
+            appendNal(out, 3, 5, bw.bytes());
+        else
+            appendNal(out, 2, 1, bw.bytes());
+    }
     if (cfg_.deblock)
         deblockPicture();
     if (cfg_.gop > 1) {
@@ -451,7 +472,7 @@ void Encoder::encodeMbPcm(BitWriter& bw, int mbx, int mby)
 int Encoder::lumaNc(int bx, int by) const
 {
     const int w = mbW_ * 4;
-    const bool hasA = bx > 0, hasB = by > 0;
+    const bool hasA = bx > 0, hasB = (by & 3) ? true : topMbAvailable(by >> 2);
     const int nA = hasA ? nzLuma_[size_t(by) * w + bx - 1] : 0;
     const int nB = hasB ? nzLuma_[size_t(by - 1) * w + bx] : 0;
     if (hasA && hasB)
@@ -462,7 +483,7 @@ int Encoder::lumaNc(int bx, int by) const
 int Encoder::chromaNc(int c, int bx, int by) const
 {
     const int w = mbW_ * 2;
-    const bool hasA = bx > 0, hasB = by > 0;
+    const bool hasA = bx > 0, hasB = (by & 1) ? true : topMbAvailable(by >> 1);
     const int nA = hasA ? nzChroma_[c][size_t(by) * w + bx - 1] : 0;
     const int nB = hasB ? nzChroma_[c][size_t(by - 1) * w + bx] : 0;
     if (hasA && hasB)
@@ -587,7 +608,7 @@ struct Encoder::ChromaMb {
 
 void Encoder::analyseChroma(int mbx, int mby, ChromaMb& ch, const uint8_t (*interPred)[64])
 {
-    const bool left = mbx > 0, top = mby > 0;
+    const bool left = mbx > 0, top = topMbAvailable(mby);
     const int cw = padW_ / 2;
     const size_t chromaOff = size_t(mby * 8) * cw + mbx * 8;
     const std::vector<uint8_t>* csrc[2] = {&srcU_, &srcV_};
@@ -693,7 +714,7 @@ void Encoder::writeChroma(BitWriter& bw, int mbx, int mby, const ChromaMb& ch)
 
 void Encoder::encodeLuma16(BitWriter& bw, int mbx, int mby, const ChromaMb& ch)
 {
-    const bool left = mbx > 0, top = mby > 0;
+    const bool left = mbx > 0, top = topMbAvailable(mby);
     const int qp = cfg_.qp;
     const int qpDiv = qp / 6, qpMod = qp % 6;
 
@@ -812,7 +833,7 @@ void Encoder::encodeLuma4(BitWriter& bw, int mbx, int mby, const ChromaMb& ch)
         const int bxIn = kBlkX[blkIdx], byIn = kBlkY[blkIdx];
         const int bx = mbx * 4 + bxIn, by = mby * 4 + byIn;
         const int px = bx * 4, py = by * 4;
-        const bool left = px > 0, top = py > 0;
+        const bool left = px > 0, top = byIn > 0 || topMbAvailable(mby);
         bool topRight;
         if (byIn == 0)
             topRight = top && (bxIn < 3 || mbx + 1 < mbW_);
@@ -1132,7 +1153,7 @@ int64_t Encoder::mbSsd(int mbx, int mby) const
 void Encoder::predictMv(int mbx, int mby, int& mvx, int& mvy) const
 {
     auto get = [&](int x, int y, bool& avail, int& ref, int& vx, int& vy) {
-        avail = x >= 0 && y >= 0 && x < mbW_;
+        avail = x >= 0 && x < mbW_ && (y == mby || (y >= 0 && topMbAvailable(mby)));
         ref = -1;
         vx = vy = 0;
         if (!avail)
@@ -1204,7 +1225,7 @@ void Encoder::encodeMbP(BitWriter& bw, int mbx, int mby, int& skipRun)
 
     // P_Skip vector (8.4.1.1).
     int skipX = mvpX, skipY = mvpY;
-    if (mbx == 0 || mby == 0) {
+    if (mbx == 0 || !topMbAvailable(mby)) {
         skipX = skipY = 0;
     } else {
         const size_t a = m - 1, b = m - size_t(mbW_);
