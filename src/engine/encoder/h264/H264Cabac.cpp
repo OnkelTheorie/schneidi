@@ -432,4 +432,106 @@ void Encoder::cabacWriteMb(CabacEncoder& ce, int mbx, int mby, const MbSyntax& s
     }
 }
 
+
+// Trellis quantisation with CABAC costs (in the spirit of x264's trellis): dynamic programming
+// over the coefficients in reverse scan order. Nodes are the 8 states of the coeff_abs_level
+// contexts (4 for "no level > 1 yet" by count of ones, 4 by count of levels > 1) plus "nothing
+// coded yet"; each coefficient may become 0, floor(|x|) or floor(|x|) + 1. Distortion is the
+// pixel-domain SSD (scale = pixel error per level unit), rate the live contexts' bin costs.
+// x: real-valued levels in scan order; cat 2 (luma 4x4) or 5 (luma 8x8). Returns levels in scan order.
+void cabacTrellis(const CabacEncoder& ce, int cat, const double* x, const double* scale, int count, double lambda,
+                  int cbfInc, int* out)
+{
+    constexpr int kEmpty = 8;
+    const bool cat5 = cat == 5;
+    const int absBase = cat5 ? 426 : 227 + kAbsOffset[cat];
+    auto sigCtx = [&](int k) { return cat5 ? 402 + kSig8[k] : 105 + kSigOffset[cat] + k; };
+    auto lastCtx = [&](int k) { return cat5 ? 417 + kLast8[k] : 166 + kSigOffset[cat] + k; };
+    auto levelBits = [&](int state, int a) { // a = |level| - 1, in 1/256 bits
+        const int ctx0 = absBase + (state < 4 ? std::min(4, 1 + state) : 0);
+        const int ctxN = absBase + 5 + std::min(4, state < 4 ? 0 : state - 3);
+        const int prefix = std::min(a, 14);
+        uint32_t bits = ce.binCost(ctx0, prefix > 0) + 256; // + sign
+        if (prefix > 1)
+            bits += uint32_t(prefix - 1) * ce.binCost(ctxN, 1);
+        if (prefix > 0 && prefix < 14)
+            bits += ce.binCost(ctxN, 0);
+        if (a >= 14) {
+            unsigned v = unsigned(a - 14);
+            int k = 0;
+            while (v >= (1u << k)) {
+                v -= 1u << k;
+                ++k;
+            }
+            bits += 256u * unsigned(2 * k + 1);
+        }
+        return bits;
+    };
+    auto next = [](int state, int mag) {
+        if (mag == 1)
+            return state < 4 ? std::min(state + 1, 3) : state;
+        return state < 4 ? 4 : std::min(state + 1, 7);
+    };
+    // Costs per node; the path is kept as (previous node, level) per position and traced back.
+    double cost[9], fresh[9];
+    uint8_t from[64][9];
+    int16_t mags[64][9];
+    std::fill(cost, cost + 9, 1e300);
+    cost[kEmpty] = 0;
+    const double l256 = lambda / 256.0;
+    for (int k = count - 1; k >= 0; --k) {
+        const double ax = std::abs(x[k]);
+        int cand[3] = {0, 0, 0}, nc = 1;
+        if (ax >= 0.5) {
+            const int fl = int(ax);
+            if (fl >= 1)
+                cand[nc++] = fl;
+            cand[nc++] = fl + 1;
+        }
+        std::fill(fresh, fresh + 9, 1e300);
+        for (int n = 0; n < 9; ++n) {
+            if (cost[n] >= 1e299)
+                continue;
+            const bool empty = n == kEmpty;
+            for (int ci = 0; ci < nc; ++ci) {
+                const int mag = cand[ci];
+                const double err = (ax - mag) * scale[k];
+                double cst = cost[n] + err * err;
+                int to;
+                if (mag == 0) {
+                    if (!empty)
+                        cst += l256 * ce.binCost(sigCtx(k), 0);
+                    to = n;
+                } else {
+                    uint32_t bits = levelBits(empty ? 0 : n, mag - 1);
+                    if (k < count - 1)
+                        bits += ce.binCost(sigCtx(k), 1) + ce.binCost(lastCtx(k), empty ? 1 : 0);
+                    cst += l256 * bits;
+                    to = next(empty ? 0 : n, mag);
+                }
+                if (cst < fresh[to]) {
+                    fresh[to] = cst;
+                    from[k][to] = uint8_t(n);
+                    mags[k][to] = int16_t(mag);
+                }
+            }
+        }
+        std::copy(fresh, fresh + 9, cost);
+    }
+    int best = kEmpty;
+    double bestCost = cost[kEmpty] + (cat5 ? 0.0 : l256 * ce.binCost(85 + kCbfOffset[cat] + cbfInc, 0));
+    for (int n = 0; n < 8; ++n) {
+        const double c = cost[n] + (cat5 ? 0.0 : l256 * ce.binCost(85 + kCbfOffset[cat] + cbfInc, 1));
+        if (c < bestCost) {
+            bestCost = c;
+            best = n;
+        }
+    }
+    for (int k = 0, n = best; k < count; ++k) {
+        const int mag = mags[k][n];
+        out[k] = x[k] < 0 ? -mag : mag;
+        n = from[k][n];
+    }
+}
+
 } // namespace schneidi::h264

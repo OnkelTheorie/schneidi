@@ -42,6 +42,8 @@ public:
         cost_ = 0;
     }
     double countedBits() const { return cost_ / 256.0; }
+    // Cost of one bin in the current state, in 1/256 bits (no adaptation).
+    uint32_t binCost(int ctx, int bin) const { return costTable().v[state_[ctx]][bin == mps_[ctx] ? 1 : 0]; }
 
     // EncodeDecision (9.3.4.2).
     void decision(int ctx, int bin)

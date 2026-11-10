@@ -19,6 +19,11 @@
 #endif
 
 namespace schneidi::h264 {
+
+// H264Cabac.cpp
+void cabacTrellis(const CabacEncoder& ce, int cat, const double* x, const double* scale, int count, double lambda,
+                  int cbfInc, int* out);
+
 namespace {
 
 // 4x4 frame zig-zag scan: scan index -> raster index (y * 4 + x).
@@ -1341,7 +1346,7 @@ const Basis8& basis8()
 }
 
 // Quantises an 8x8 residual (raster) for QP; deadzone offset as a fraction of a step.
-void quantize8x8(const int* residual, int qp, double offset, int* levels)
+void quantize8x8(const int* residual, int qp, double offset, int* levels, double* real = nullptr)
 {
     const Basis8& B = basis8();
     double tmp[64];
@@ -1363,6 +1368,8 @@ void quantize8x8(const int* residual, int qp, double offset, int* levels)
             const double x = 256.0 * w / (B.norm[i] * B.norm[j] * kDequantV8[qp % 6][posClass8(k)] * step2);
             const int mag = std::min(int(std::abs(x) + offset), kMaxLevel);
             levels[k] = x < 0 ? -mag : mag;
+            if (real)
+                real[k] = x;
         }
 }
 
@@ -1875,7 +1882,23 @@ bool Encoder::encodeMbP(MbOut& result, int mbx, int mby)
                 for (int y = 0; y < 8; ++y)
                     for (int x = 0; x < 8; ++x)
                         res[y * 8 + x] = int(srcY_[lumaOff + size_t(oy + y) * padW_ + ox + x]) - int(lp[(oy + y) * 16 + ox + x]);
-                quantize8x8(res, qp, 1.0 / 6.0, levels8[b8]);
+                const CabacEncoder* live = cabacByTop_[size_t(sliceTopOfRow_[size_t(mby)])];
+                double real[64];
+                quantize8x8(res, qp, 1.0 / 6.0, levels8[b8], real);
+                if (live && cfg_.effort > 0) {
+                    const Basis8& B = basis8();
+                    double xs[64], sc[64];
+                    for (int s = 0; s < 64; ++s) {
+                        const int r = kZigzag8[s];
+                        xs[s] = real[r];
+                        sc[s] = kDequantV8[qpMod][posClass8(r)] * std::pow(2.0, qpDiv - 2) *
+                                std::sqrt(B.norm[r >> 3] * B.norm[r & 7]) / 64.0;
+                    }
+                    int scanLv[64];
+                    cabacTrellis(*live, 5, xs, sc, 64, lambda, 0, scanLv);
+                    for (int s = 0; s < 64; ++s)
+                        levels8[b8][kZigzag8[s]] = std::clamp(scanLv[s], -kMaxLevel, kMaxLevel);
+                }
             }
             for (int b8 = 0; b8 < 4; ++b8) {
                 const int ox = (b8 & 1) * 8, oy = (b8 >> 1) * 8;
@@ -1903,7 +1926,21 @@ bool Encoder::encodeMbP(MbOut& result, int mbx, int mby)
                 for (int x = 0; x < 4; ++x)
                     res[y * 4 + x] = int(srcY_[lumaOff + size_t(oy + y) * padW_ + ox + x]) - int(lp[(oy + y) * 16 + ox + x]);
             forward4x4(res, coef);
-            if (cfg_.effort > 0) {
+            const CabacEncoder* live = cabacByTop_[size_t(sliceTopOfRow_[size_t(mby)])];
+            if (cfg_.effort > 0 && live) {
+                // Trellis with CABAC costs on real-valued levels.
+                double xs[16], sc[16];
+                static constexpr double kNorm4[4] = {4.0, 2.5, 4.0, 2.5};
+                for (int s = 0; s < 16; ++s) {
+                    const int r = kZigzag[s];
+                    xs[s] = double(coef[r]) * kQuantMf[qpMod][posClass(r)] / double(1 << qbits);
+                    sc[s] = kDequantV[qpMod][posClass(r)] * double(1 << qpDiv) * std::sqrt(kNorm4[r >> 2] * kNorm4[r & 3]) / 64.0;
+                }
+                int scanLv[16];
+                cabacTrellis(*live, 2, xs, sc, 16, lambda, 1, scanLv);
+                for (int s = 0; s < 16; ++s)
+                    levels[blkIdx][kZigzag[s]] = std::clamp(scanLv[s], -kMaxLevel, kMaxLevel);
+            } else if (cfg_.effort > 0) {
                 // Round to nearest, then let the rate-distortion pass decide which levels to lower.
                 for (int i = 0; i < 16; ++i)
                     levels[blkIdx][i] = quantize(coef[i], kQuantMf[qpMod][posClass(i)], qbits, (1 << qbits) / 2);
