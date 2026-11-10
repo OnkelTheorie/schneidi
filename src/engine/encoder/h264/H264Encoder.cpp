@@ -1477,6 +1477,14 @@ void Encoder::encodeMbP(BitWriter& bw, int mbx, int mby, int& skipRun)
     MbState skipState;
     saveMb(mbx, mby, skipState);
 
+    // Early skip: if the skip residual quantises to nothing anyway, skip is all but certain
+    // to win; spare the motion search.
+    if (skipResidualIsZero(mbx, mby, lp, cp, qp)) {
+        ++skipRun;
+        mbQpFinal_[mbIndex] = int8_t(qpPredOf(mby));
+        return;
+    }
+
     // ---- Candidate 2: inter with 16x16, 16x8, 8x16 or 8x8 partitions.
     const int range = 64 * 4;
     // Motion search for one partition: diamond full-pel, then half/quarter-pel with SATD.
@@ -2185,6 +2193,54 @@ bool Encoder::detectSceneCut()
     }
     prevThumb_ = std::move(thumb);
     return cut;
+}
+
+
+// True when the residual against this prediction would quantise to zero everywhere (inter
+// rounding), luma 4x4 blocks and chroma DC/AC alike.
+bool Encoder::skipResidualIsZero(int mbx, int mby, const uint8_t* lp, const uint8_t (*cp)[64], int qp) const
+{
+    const int qpDiv = qp / 6, qpMod = qp % 6;
+    const int qbits = 15 + qpDiv;
+    const int offset = (1 << qbits) / 6;
+    const size_t lumaOff = size_t(mby * 16) * padW_ + mbx * 16;
+    for (int b = 0; b < 16; ++b) {
+        const int ox = (b & 3) * 4, oy = (b >> 2) * 4;
+        int res[16], coef[16];
+        for (int y = 0; y < 4; ++y)
+            for (int x = 0; x < 4; ++x)
+                res[y * 4 + x] = int(srcY_[lumaOff + size_t(oy + y) * padW_ + ox + x]) - int(lp[(oy + y) * 16 + ox + x]);
+        forward4x4(res, coef);
+        for (int i = 0; i < 16; ++i)
+            if (quantize(coef[i], kQuantMf[qpMod][posClass(i)], qbits, offset) != 0)
+                return false;
+    }
+    const int qpc = chromaQp(qp);
+    const int cDiv = qpc / 6, cMod = qpc % 6, cqbits = 15 + cDiv, cOffset = (1 << cqbits) / 6;
+    const int cw = padW_ / 2;
+    const size_t co = size_t(mby * 8) * cw + mbx * 8;
+    for (int c = 0; c < 2; ++c) {
+        const std::vector<uint8_t>& src = c ? srcV_ : srcU_;
+        int dc[4];
+        for (int b = 0; b < 4; ++b) {
+            const int ox = (b & 1) * 4, oy = (b >> 1) * 4;
+            int res[16], coef[16];
+            for (int y = 0; y < 4; ++y)
+                for (int x = 0; x < 4; ++x)
+                    res[y * 4 + x] = int(src[co + size_t(oy + y) * cw + ox + x]) - int(cp[c][(oy + y) * 8 + ox + x]);
+            forward4x4(res, coef);
+            dc[b] = coef[0];
+            for (int i = 1; i < 16; ++i)
+                if (quantize(coef[i], kQuantMf[cMod][posClass(i)], cqbits, cOffset) != 0)
+                    return false;
+        }
+        const int f[4] = {dc[0] + dc[1] + dc[2] + dc[3], dc[0] - dc[1] + dc[2] - dc[3], dc[0] + dc[1] - dc[2] - dc[3],
+                          dc[0] - dc[1] - dc[2] + dc[3]};
+        for (int v : f)
+            if (quantize(v, kQuantMf[cMod][0], cqbits + 1, 2 * cOffset) != 0)
+                return false;
+    }
+    return true;
 }
 
 } // namespace schneidi::h264

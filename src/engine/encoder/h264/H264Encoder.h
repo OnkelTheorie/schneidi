@@ -80,6 +80,7 @@ private:
     bool encodeLuma4(BitWriter& bw, int mbx, int mby, const ChromaMb& ch);
     void encodeMbP(BitWriter& bw, int mbx, int mby, int& skipRun);
     void rdoQuantize(int* levels, const int* residual, int qp, double lambda, int nC) const;
+    bool skipResidualIsZero(int mbx, int mby, const uint8_t* lp, const uint8_t (*cp)[64], int qp) const;
     struct MvNb {
         bool avail = false;
         int ref = -1;
