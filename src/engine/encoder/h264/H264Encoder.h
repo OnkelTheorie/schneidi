@@ -61,6 +61,25 @@ public:
     int lastQp() const { return lastQp_; }
 
 private:
+    // Syntax elements of one coded macroblock, kept so the entropy coder can run after the decision.
+    struct MbSyntax {
+        enum class Kind : uint8_t { Skip, I16, I4, Inter } kind = Kind::Skip;
+        int i16Mode = 0, chromaMode = 0;
+        int i4Mode[16] = {}, i4Pred[16] = {};
+        int interType = 0; // 0 16x16, 1 16x8, 2 8x16, 3 8x8
+        int ref[4] = {}, mvd[4][2] = {};
+        int cbpLuma = 0, cbpChroma = 0;
+        bool hasQpDelta = false;
+        int qpDelta = 0;
+        int lumaDc[16] = {};         // Intra 16x16 DC, scan order
+        int luma[16][16] = {};       // per luma4x4BlkIdx, scan order (Intra 16x16: 15 AC levels)
+        int chromaDc[2][4] = {};
+        int chromaAc[2][4][15] = {};
+    };
+    struct MbOut {
+        BitWriter bw; // CAVLC (also the bit estimate for decisions)
+        MbSyntax syn;
+    };
     struct RefPic {
         std::vector<uint8_t> y, u, v;    // reconstruction (padded size)
         std::vector<uint8_t> F, B, V, J; // luma with margin: full, horizontal/vertical/centre half
@@ -68,17 +87,18 @@ private:
     void loadSource(const Picture& picture);
     void encodeMbPcm(BitWriter& bw, int mbx, int mby);
     struct ChromaMb;
-    bool encodeMbIntra(BitWriter& bw, int mbx, int mby);
+    bool encodeMbIntra(MbOut& out, int mbx, int mby);
     void commitQp(int mbx, int mby, bool codedDelta);
     void planMacroblockQp();
     int qpPredOf(int mby) const { return qpPredByTop_[size_t(sliceTopOfRow_[size_t(mby)])]; }
     // interPred: motion-compensated prediction (inter macroblock); nullptr = intra.
     void analyseChroma(int mbx, int mby, ChromaMb& ch, const uint8_t (*interPred)[64] = nullptr);
-    void writeChroma(BitWriter& bw, int mbx, int mby, const ChromaMb& ch);
+    void writeChroma(MbOut& o, int mbx, int mby, const ChromaMb& ch);
     // Return whether the macroblock sent mb_qp_delta.
-    bool encodeLuma16(BitWriter& bw, int mbx, int mby, const ChromaMb& ch);
-    bool encodeLuma4(BitWriter& bw, int mbx, int mby, const ChromaMb& ch);
-    void encodeMbP(BitWriter& bw, int mbx, int mby, int& skipRun);
+    bool encodeLuma16(MbOut& o, int mbx, int mby, const ChromaMb& ch);
+    bool encodeLuma4(MbOut& o, int mbx, int mby, const ChromaMb& ch);
+    // Returns false for a skipped macroblock.
+    bool encodeMbP(MbOut& result, int mbx, int mby);
     void rdoQuantize(int* levels, const int* residual, int qp, double lambda, int nC) const;
     bool skipResidualIsZero(int mbx, int mby, const uint8_t* lp, const uint8_t (*cp)[64], int qp) const;
     struct MvNb {

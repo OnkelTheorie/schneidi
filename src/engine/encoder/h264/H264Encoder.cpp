@@ -465,12 +465,25 @@ std::vector<uint8_t> Encoder::encode(const Picture& picture, bool forceKeyframe)
         qpPredByTop_[size_t(sliceTop[size_t(s)])] = cfg_.qp;
         for (int mby = sliceTop[size_t(s)]; mby < sliceTop[size_t(s) + 1]; ++mby) {
             for (int mbx = 0; mbx < mbW_; ++mbx) {
-                if (cfg_.mode == IntraMode::Pcm)
+                if (cfg_.mode == IntraMode::Pcm) {
                     encodeMbPcm(bw, mbx, mby);
-                else if (pSlice_)
-                    encodeMbP(bw, mbx, mby, skipRun);
+                    continue;
+                }
+                MbOut mb;
+                bool coded = true;
+                if (pSlice_)
+                    coded = encodeMbP(mb, mbx, mby);
                 else
-                    commitQp(mbx, mby, encodeMbIntra(bw, mbx, mby));
+                    commitQp(mbx, mby, encodeMbIntra(mb, mbx, mby));
+                if (!coded) {
+                    ++skipRun;
+                    continue;
+                }
+                if (pSlice_) {
+                    bw.ue(uint32_t(skipRun));
+                    skipRun = 0;
+                }
+                bw.append(mb.bw);
             }
         }
         if (skipRun)
@@ -821,8 +834,11 @@ void Encoder::analyseChroma(int mbx, int mby, ChromaMb& ch, const uint8_t (*inte
     }
 }
 
-void Encoder::writeChroma(BitWriter& bw, int mbx, int mby, const ChromaMb& ch)
+void Encoder::writeChroma(MbOut& o, int mbx, int mby, const ChromaMb& ch)
 {
+    BitWriter& bw = o.bw;
+    o.syn.cbpChroma = ch.cbp;
+    std::memcpy(o.syn.chromaDc, ch.dc, sizeof(o.syn.chromaDc));
     if (ch.cbp) {
         for (int c = 0; c < 2; ++c)
             writeResidualBlock(bw, ch.dc[c], 4, -1);
@@ -836,15 +852,19 @@ void Encoder::writeChroma(BitWriter& bw, int mbx, int mby, const ChromaMb& ch)
                 int scan[15];
                 for (int k = 1; k < 16; ++k)
                     scan[k - 1] = ch.ac[c][blk][kZigzag[k]];
+                std::memcpy(o.syn.chromaAc[c][blk], scan, sizeof(scan));
                 total = writeResidualBlock(bw, scan, 15, chromaNc(c, bx, by));
+            } else {
+                std::memset(o.syn.chromaAc[c][blk], 0, sizeof(o.syn.chromaAc[c][blk]));
             }
             nzChroma_[c][size_t(by) * chw + bx] = uint8_t(total);
         }
     }
 }
 
-bool Encoder::encodeLuma16(BitWriter& bw, int mbx, int mby, const ChromaMb& ch)
+bool Encoder::encodeLuma16(MbOut& o, int mbx, int mby, const ChromaMb& ch)
 {
+    BitWriter& bw = o.bw;
     const bool left = mbx > 0, top = topMbAvailable(mby);
     const int qp = mbQp_[size_t(mby) * mbW_ + mbx];
     const int qpDiv = qp / 6, qpMod = qp % 6;
@@ -919,6 +939,12 @@ bool Encoder::encodeLuma16(BitWriter& bw, int mbx, int mby, const ChromaMb& ch)
     }
 
     // Syntax (7.3.5).
+    o.syn.kind = MbSyntax::Kind::I16;
+    o.syn.i16Mode = bestMode;
+    o.syn.chromaMode = ch.mode;
+    o.syn.cbpLuma = cbpLuma;
+    o.syn.hasQpDelta = true;
+    o.syn.qpDelta = qp - qpPredOf(mby);
     bw.ue(uint32_t(mbTypeOffset_ + 1 + bestMode + 4 * ch.cbp + (cbpLuma ? 12 : 0))); // mb_type I_16x16_*
     bw.ue(uint32_t(ch.mode)); // intra_chroma_pred_mode
     bw.se(qp - qpPredOf(mby)); // mb_qp_delta (always present for Intra 16x16)
@@ -928,6 +954,7 @@ bool Encoder::encodeLuma16(BitWriter& bw, int mbx, int mby, const ChromaMb& ch)
         int scan[16];
         for (int k = 0; k < 16; ++k)
             scan[k] = dcLevel[kZigzag[k]];
+        std::memcpy(o.syn.lumaDc, scan, sizeof(scan));
         writeResidualBlock(bw, scan, 16, lumaNc(mbBx, mbBy));
     }
     for (int blkIdx = 0; blkIdx < 16; ++blkIdx) {
@@ -938,17 +965,21 @@ bool Encoder::encodeLuma16(BitWriter& bw, int mbx, int mby, const ChromaMb& ch)
             int scan[15];
             for (int k = 1; k < 16; ++k)
                 scan[k - 1] = acLevel[b][kZigzag[k]];
+            std::memcpy(o.syn.luma[blkIdx], scan, sizeof(scan));
             total = writeResidualBlock(bw, scan, 15, lumaNc(bx, by));
+        } else {
+            std::memset(o.syn.luma[blkIdx], 0, sizeof(o.syn.luma[blkIdx]));
         }
         nzLuma_[size_t(by) * lw + bx] = uint8_t(total);
         modes4x4_[size_t(by) * lw + bx] = -1;
     }
-    writeChroma(bw, mbx, mby, ch);
+    writeChroma(o, mbx, mby, ch);
     return true;
 }
 
-bool Encoder::encodeLuma4(BitWriter& bw, int mbx, int mby, const ChromaMb& ch)
+bool Encoder::encodeLuma4(MbOut& o, int mbx, int mby, const ChromaMb& ch)
 {
+    BitWriter& bw = o.bw;
     const int qp = mbQp_[size_t(mby) * mbW_ + mbx];
     const int qpDiv = qp / 6, qpMod = qp % 6;
     const int qbits = 15 + qpDiv;
@@ -1040,6 +1071,11 @@ bool Encoder::encodeLuma4(BitWriter& bw, int mbx, int mby, const ChromaMb& ch)
     }
 
     // Syntax (7.3.5): I_NxN.
+    o.syn.kind = MbSyntax::Kind::I4;
+    std::memcpy(o.syn.i4Mode, modes, sizeof(modes));
+    std::memcpy(o.syn.i4Pred, predModes, sizeof(predModes));
+    o.syn.chromaMode = ch.mode;
+    o.syn.cbpLuma = cbpLuma;
     bw.ue(uint32_t(mbTypeOffset_));
     for (int blkIdx = 0; blkIdx < 16; ++blkIdx) {
         if (modes[blkIdx] == predModes[blkIdx]) {
@@ -1052,31 +1088,33 @@ bool Encoder::encodeLuma4(BitWriter& bw, int mbx, int mby, const ChromaMb& ch)
     bw.ue(uint32_t(ch.mode));
     const int cbp = cbpLuma | (ch.cbp << 4);
     bw.ue(uint32_t(intraCbpCode(cbp)));
+    o.syn.hasQpDelta = cbp != 0;
+    o.syn.qpDelta = qp - qpPredOf(mby);
     if (cbp)
         bw.se(qp - qpPredOf(mby)); // mb_qp_delta
     for (int blkIdx = 0; blkIdx < 16; ++blkIdx) {
         const int bx = mbx * 4 + kBlkX[blkIdx], by = mby * 4 + kBlkY[blkIdx];
         int total = 0;
-        if (cbpLuma & (1 << (blkIdx >> 2))) {
-            int scan[16];
-            for (int k = 0; k < 16; ++k)
-                scan[k] = levels[blkIdx][kZigzag[k]];
+        int scan[16];
+        for (int k = 0; k < 16; ++k)
+            scan[k] = levels[blkIdx][kZigzag[k]];
+        std::memcpy(o.syn.luma[blkIdx], scan, sizeof(scan));
+        if (cbpLuma & (1 << (blkIdx >> 2)))
             total = writeResidualBlock(bw, scan, 16, lumaNc(bx, by));
-        }
         nzLuma_[size_t(by) * lw + bx] = uint8_t(total);
     }
-    writeChroma(bw, mbx, mby, ch);
+    writeChroma(o, mbx, mby, ch);
     return cbp != 0;
 }
 
-bool Encoder::encodeMbIntra(BitWriter& bw, int mbx, int mby)
+bool Encoder::encodeMbIntra(MbOut& out, int mbx, int mby)
 {
     ChromaMb ch;
     analyseChroma(mbx, mby, ch);
     if (cfg_.mode == IntraMode::Intra16)
-        return encodeLuma16(bw, mbx, mby, ch);
+        return encodeLuma16(out, mbx, mby, ch);
     if (cfg_.mode == IntraMode::Intra4)
-        return encodeLuma4(bw, mbx, mby, ch);
+        return encodeLuma4(out, mbx, mby, ch);
 
     // Try both, keep the one with the lower SSD + lambda * bits.
     const size_t lumaOff = size_t(mby * 16) * padW_ + mbx * 16;
@@ -1118,19 +1156,19 @@ bool Encoder::encodeMbIntra(BitWriter& bw, int mbx, int mby)
     };
 
     const double lambda = 0.85 * std::pow(2.0, (mbQp_[size_t(mby) * mbW_ + mbx] - 12) / 3.0);
-    BitWriter a, b;
+    MbOut a, b;
     const bool deltaA = encodeLuma16(a, mbx, mby, ch);
-    const double costA = double(ssd()) + lambda * double(a.bitCount());
+    const double costA = double(ssd()) + lambda * double(a.bw.bitCount());
     Snapshot snapA;
     save(snapA);
     const bool deltaB = encodeLuma4(b, mbx, mby, ch);
-    const double costB = double(ssd()) + lambda * double(b.bitCount());
+    const double costB = double(ssd()) + lambda * double(b.bw.bitCount());
     if (costA <= costB) {
         restore(snapA);
-        bw.append(a);
+        out = std::move(a);
         return deltaA;
     }
-    bw.append(b);
+    out = std::move(b);
     return deltaB;
 }
 
@@ -1417,7 +1455,7 @@ void Encoder::rdoQuantize(int* levels, const int* residual, int qp, double lambd
     }
 }
 
-void Encoder::encodeMbP(BitWriter& bw, int mbx, int mby, int& skipRun)
+bool Encoder::encodeMbP(MbOut& result, int mbx, int mby)
 {
     const int lw = mbW_ * 4, chw = mbW_ * 2;
     const size_t mbIndex = size_t(mby) * mbW_ + mbx;
@@ -1481,9 +1519,9 @@ void Encoder::encodeMbP(BitWriter& bw, int mbx, int mby, int& skipRun)
     // Early skip: if the skip residual quantises to nothing anyway, skip is all but certain
     // to win; spare the motion search.
     if (skipResidualIsZero(mbx, mby, lp, cp, qp)) {
-        ++skipRun;
+        result.syn.kind = MbSyntax::Kind::Skip;
         mbQpFinal_[mbIndex] = int8_t(qpPredOf(mby));
-        return;
+        return false;
     }
 
     // ---- Candidate 2: inter with 16x16, 16x8, 8x16 or 8x8 partitions.
@@ -1636,7 +1674,8 @@ void Encoder::encodeMbP(BitWriter& bw, int mbx, int mby, int& skipRun)
 
     // Encodes one inter choice; leaves its state in the macroblock and returns SSD + lambda * bits.
     bool interDelta = false;
-    auto encodeInter = [&](const Choice& best, BitWriter& interBits) {
+    auto encodeInter = [&](const Choice& best, MbOut& io) {
+        BitWriter& interBits = io.bw;
         const Layout& layout = kLayouts[best.layout];
         for (int p = 0; p < layout.count; ++p) {
             const Part& P = layout.parts[p];
@@ -1698,6 +1737,13 @@ void Encoder::encodeMbP(BitWriter& bw, int mbx, int mby, int& skipRun)
         analyseChroma(mbx, mby, ch, cp);
         clearNz();
 
+        io.syn.kind = MbSyntax::Kind::Inter;
+        io.syn.interType = layout.mbType;
+        for (int p = 0; p < layout.count; ++p) {
+            io.syn.ref[p] = best.ref[p];
+            io.syn.mvd[p][0] = best.mv[p][0] - best.mvp[p][0];
+            io.syn.mvd[p][1] = best.mv[p][1] - best.mvp[p][1];
+        }
         interBits.ue(uint32_t(layout.mbType));
         if (layout.mbType == 3)
             for (int p = 0; p < 4; ++p)
@@ -1715,25 +1761,28 @@ void Encoder::encodeMbP(BitWriter& bw, int mbx, int mby, int& skipRun)
         }
         const int cbp = cbpLuma | (ch.cbp << 4);
         interBits.ue(uint32_t(interCbpCode(cbp)));
+        io.syn.cbpLuma = cbpLuma;
+        io.syn.hasQpDelta = cbp != 0;
+        io.syn.qpDelta = qp - qpPredOf(mby);
         if (cbp)
             interBits.se(qp - qpPredOf(mby)); // mb_qp_delta
         interDelta = cbp != 0;
         for (int blkIdx = 0; blkIdx < 16; ++blkIdx) {
             const int bx = mbx * 4 + kBlkX[blkIdx], by = mby * 4 + kBlkY[blkIdx];
             int total = 0;
-            if (cbpLuma & (1 << (blkIdx >> 2))) {
-                int scan[16];
-                for (int k = 0; k < 16; ++k)
-                    scan[k] = levels[blkIdx][kZigzag[k]];
+            int scan[16];
+            for (int k = 0; k < 16; ++k)
+                scan[k] = levels[blkIdx][kZigzag[k]];
+            std::memcpy(io.syn.luma[blkIdx], scan, sizeof(scan));
+            if (cbpLuma & (1 << (blkIdx >> 2)))
                 total = writeResidualBlock(interBits, scan, 16, lumaNc(bx, by));
-            }
             nzLuma_[size_t(by) * lw + bx] = uint8_t(total);
         }
-        writeChroma(interBits, mbx, mby, ch);
+        writeChroma(io, mbx, mby, ch);
         // A skip_run ends here: count its codeword to be fair against skip.
         return double(mbSsd(mbx, mby)) + lambda * double(interBits.bitCount() + seBits(0));
     };
-    BitWriter interBits;
+    MbOut interBits;
     double costInter = encodeInter(whole, interBits);
     bool chosenInterDelta = interDelta;
     MbState interState;
@@ -1741,7 +1790,7 @@ void Encoder::encodeMbP(BitWriter& bw, int mbx, int mby, int& skipRun)
     Choice best = whole;
     // Try the split for real when its estimate is close or better.
     if (split.cost < whole.cost * 1.1) {
-        BitWriter splitBits;
+        MbOut splitBits;
         const double costSplit = encodeInter(split, splitBits);
         if (costSplit < costInter) {
             costInter = costSplit;
@@ -1753,7 +1802,7 @@ void Encoder::encodeMbP(BitWriter& bw, int mbx, int mby, int& skipRun)
     }
 
     // ---- Candidate 3: intra, only when a cheap Intra 16x16 SATD estimate beats the motion search.
-    BitWriter intraBits;
+    MbOut intraBits;
     double costIntra = 1e300;
     bool intraDelta = false;
     {
@@ -1778,28 +1827,27 @@ void Encoder::encodeMbP(BitWriter& bw, int mbx, int mby, int& skipRun)
         if (double(intraEstimate) < best.cost * 2.0) {
             intraDelta = encodeMbIntra(intraBits, mbx, mby);
             setBlocks(0, 0, 4, 4, 0, 0, -1);
-            costIntra = double(mbSsd(mbx, mby)) + lambda * double(intraBits.bitCount() + seBits(0));
+            costIntra = double(mbSsd(mbx, mby)) + lambda * double(intraBits.bw.bitCount() + seBits(0));
         }
     }
 
     if (costSkip <= costInter && costSkip <= costIntra) {
         restoreMb(mbx, mby, skipState);
-        ++skipRun;
+        result.syn.kind = MbSyntax::Kind::Skip;
         mbQpFinal_[mbIndex] = int8_t(qpPredOf(mby));
-        return;
+        return false;
     }
-    bw.ue(uint32_t(skipRun));
-    skipRun = 0;
     bool coded;
     if (costInter <= costIntra) {
         restoreMb(mbx, mby, interState);
-        bw.append(interBits);
+        result = std::move(interBits);
         coded = chosenInterDelta;
     } else {
-        bw.append(intraBits); // state is already the intra one
+        result = std::move(intraBits); // state is already the intra one
         coded = intraDelta;
     }
     commitQp(mbx, mby, coded);
+    return true;
 }
 
 // After a macroblock is chosen: its QP is the planned one if it sent mb_qp_delta, else the predictor.
