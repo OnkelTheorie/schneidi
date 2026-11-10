@@ -1014,6 +1014,30 @@ int seBits(int v)
     return 2 * len + 1;
 }
 
+// x264-style decimation score of a 4x4 block (raster levels, scanned in zig-zag order).
+int decimateScore(const int* levels)
+{
+    static constexpr int kTable[16] = {3, 2, 2, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+    int scan[16];
+    for (int k = 0; k < 16; ++k)
+        scan[k] = levels[kZigzag[k]];
+    int last = 15;
+    while (last >= 0 && scan[last] == 0)
+        --last;
+    int score = 0;
+    while (last >= 0) {
+        if (std::abs(scan[last--]) > 1)
+            return 9;
+        int run = 0;
+        while (last >= 0 && scan[last] == 0) {
+            --last;
+            ++run;
+        }
+        score += kTable[run];
+    }
+    return score;
+}
+
 int median3(int a, int b, int c) { return std::max(std::min(a, b), std::min(std::max(a, b), c)); }
 
 } // namespace
@@ -1227,8 +1251,9 @@ void Encoder::encodeMbP(BitWriter& bw, int mbx, int mby, int& skipRun)
 
     // ---- Candidate 2: P_L0_16x16 with a full-pel diamond search.
     const size_t lumaOff = size_t(mby * 16) * padW_ + mbx * 16;
+    bool useSatd = false;
     auto meCost = [&](int vx, int vy) { // quarter-pel units
-        return double(sadLuma(mbx, mby, vx, vy)) + lambdaSad * (seBits(vx - mvpX) + seBits(vy - mvpY));
+        return double(sadLuma(mbx, mby, vx, vy, useSatd)) + lambdaSad * (seBits(vx - mvpX) + seBits(vy - mvpY));
     };
     const int range = 64 * 4;
     int bestX = 0, bestY = 0;
@@ -1264,6 +1289,8 @@ void Encoder::encodeMbP(BitWriter& bw, int mbx, int mby, int& skipRun)
                 break;
         }
     }
+    useSatd = true;
+    best = meCost(bestX, bestY);
     for (int step : {2, 1}) {
         const int cx0 = bestX, cy0 = bestY;
         for (int dy = -1; dy <= 1; ++dy)
@@ -1300,10 +1327,26 @@ void Encoder::encodeMbP(BitWriter& bw, int mbx, int mby, int& skipRun)
                 for (int x = 0; x < 4; ++x)
                     res[y * 4 + x] = int(srcY_[lumaOff + size_t(oy + y) * padW_ + ox + x]) - int(lp[(oy + y) * 16 + ox + x]);
             forward4x4(res, coef);
+            for (int i = 0; i < 16; ++i)
+                levels[blkIdx][i] = quantize(coef[i], kQuantMf[qpMod][posClass(i)], qbits, interOffset);
+        }
+        // Decimation: a few lone +-1 levels cost more bits than they bring back.
+        int scores[16], mbScore = 0;
+        for (int blkIdx = 0; blkIdx < 16; ++blkIdx) {
+            scores[blkIdx] = decimateScore(levels[blkIdx]);
+            mbScore += scores[blkIdx];
+        }
+        for (int b8 = 0; b8 < 4; ++b8) {
+            const int s = scores[b8 * 4] + scores[b8 * 4 + 1] + scores[b8 * 4 + 2] + scores[b8 * 4 + 3];
+            if (s < 4 || mbScore < 6)
+                for (int k = 0; k < 4; ++k)
+                    std::fill(levels[b8 * 4 + k], levels[b8 * 4 + k] + 16, 0);
+        }
+        for (int blkIdx = 0; blkIdx < 16; ++blkIdx) {
+            const int ox = kBlkX[blkIdx] * 4, oy = kBlkY[blkIdx] * 4;
             bool any = false;
             int d[16];
             for (int i = 0; i < 16; ++i) {
-                levels[blkIdx][i] = quantize(coef[i], kQuantMf[qpMod][posClass(i)], qbits, interOffset);
                 any |= levels[blkIdx][i] != 0;
                 d[i] = (levels[blkIdx][i] * kDequantV[qpMod][posClass(i)]) << qpDiv;
             }
@@ -1435,12 +1478,23 @@ void Encoder::mcLuma(int x0, int y0, int fx, int fy, uint8_t* out) const
     }
 }
 
-int Encoder::sadLuma(int mbx, int mby, int mvx, int mvy) const
+int Encoder::sadLuma(int mbx, int mby, int mvx, int mvy, bool satd) const
 {
     uint8_t pred[256];
     mcLuma(mbx * 16 + (mvx >> 2), mby * 16 + (mvy >> 2), mvx & 3, mvy & 3, pred);
     const size_t lo = size_t(mby * 16) * padW_ + mbx * 16;
     int s = 0;
+    if (satd) {
+        for (int b = 0; b < 16; ++b) {
+            const int ox = (b & 3) * 4, oy = (b >> 2) * 4;
+            int diff[16];
+            for (int y = 0; y < 4; ++y)
+                for (int x = 0; x < 4; ++x)
+                    diff[y * 4 + x] = int(srcY_[lo + size_t(oy + y) * padW_ + ox + x]) - int(pred[(oy + y) * 16 + ox + x]);
+            s += satd4x4(diff);
+        }
+        return s;
+    }
     for (int y = 0; y < 16; ++y) {
         const uint8_t* src = &srcY_[lo + size_t(y) * padW_];
         for (int x = 0; x < 16; ++x)

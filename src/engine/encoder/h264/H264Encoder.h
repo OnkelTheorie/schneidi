@@ -68,7 +68,7 @@ private:
     void deblockPicture();
     int boundaryStrength(int pbx, int pby, int qbx, int qby, bool mbEdge) const;
     void mcLuma(int x0, int y0, int fx, int fy, uint8_t* out) const;
-    int sadLuma(int mbx, int mby, int mvx, int mvy) const;
+    int sadLuma(int mbx, int mby, int mvx, int mvy, bool satd) const;
     struct MbState;
     void saveMb(int mbx, int mby, MbState& s) const;
     void restoreMb(int mbx, int mby, const MbState& s);
