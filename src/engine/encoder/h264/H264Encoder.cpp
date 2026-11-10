@@ -405,9 +405,12 @@ std::vector<uint8_t> Encoder::encode(const Picture& picture)
         appendNal(out, 3, 5, bw.bytes());
     else
         appendNal(out, 2, 1, bw.bytes());
-    refY_ = recY_;
-    refU_ = recU_;
-    refV_ = recV_;
+    if (cfg_.gop > 1) {
+        refY_ = recY_;
+        refU_ = recU_;
+        refV_ = recV_;
+        buildRefPlanes();
+    }
     if (idr)
         ++idrCount_;
     ++frameIndex_;
@@ -1140,15 +1143,7 @@ void Encoder::predictMv(int mbx, int mby, int& mvx, int& mvy) const
 
 void Encoder::motionCompensate(int mbx, int mby, int mvx, int mvy, uint8_t* luma, uint8_t (*chroma)[64]) const
 {
-    // Luma: full-pel vectors only (mv multiple of 4).
-    const int dx = mvx >> 2, dy = mvy >> 2;
-    for (int y = 0; y < 16; ++y) {
-        const int sy = std::clamp(mby * 16 + y + dy, 0, padH_ - 1);
-        for (int x = 0; x < 16; ++x) {
-            const int sx = std::clamp(mbx * 16 + x + dx, 0, padW_ - 1);
-            luma[y * 16 + x] = refY_[size_t(sy) * padW_ + sx];
-        }
-    }
+    mcLuma(mbx * 16 + (mvx >> 2), mby * 16 + (mvy >> 2), mvx & 3, mvy & 3, luma);
     // Chroma: eighth-pel bilinear (8.4.2.2.2).
     const int cw = padW_ / 2, chh = padH_ / 2;
     const int xF = mvx & 7, yF = mvy & 7;
@@ -1230,25 +1225,13 @@ void Encoder::encodeMbP(BitWriter& bw, int mbx, int mby, int& skipRun)
 
     // ---- Candidate 2: P_L0_16x16 with a full-pel diamond search.
     const size_t lumaOff = size_t(mby * 16) * padW_ + mbx * 16;
-    auto sadAt = [&](int dx, int dy) {
-        int s = 0;
-        for (int y = 0; y < 16; ++y) {
-            const int sy = std::clamp(mby * 16 + y + dy, 0, padH_ - 1);
-            const uint8_t* src = &srcY_[lumaOff + size_t(y) * padW_];
-            for (int x = 0; x < 16; ++x) {
-                const int sx = std::clamp(mbx * 16 + x + dx, 0, padW_ - 1);
-                s += std::abs(int(src[x]) - int(refY_[size_t(sy) * padW_ + sx]));
-            }
-        }
-        return s;
+    auto meCost = [&](int vx, int vy) { // quarter-pel units
+        return double(sadLuma(mbx, mby, vx, vy)) + lambdaSad * (seBits(vx - mvpX) + seBits(vy - mvpY));
     };
-    auto meCost = [&](int dx, int dy) {
-        return double(sadAt(dx, dy)) + lambdaSad * (seBits(dx * 4 - mvpX) + seBits(dy * 4 - mvpY));
-    };
-    const int range = 64;
+    const int range = 64 * 4;
     int bestX = 0, bestY = 0;
     double best = meCost(0, 0);
-    for (auto [cx, cy] : {std::pair{mvpX >> 2, mvpY >> 2}, std::pair{skipX >> 2, skipY >> 2}}) {
+    for (auto [cx, cy] : {std::pair{mvpX & ~3, mvpY & ~3}, std::pair{skipX & ~3, skipY & ~3}}) {
         cx = std::clamp(cx, -range, range);
         cy = std::clamp(cy, -range, range);
         const double c = meCost(cx, cy);
@@ -1258,7 +1241,8 @@ void Encoder::encodeMbP(BitWriter& bw, int mbx, int mby, int& skipRun)
             bestY = cy;
         }
     }
-    for (int step : {8, 4, 2, 1}) {
+    // Full-pel diamond, then half- and quarter-pel refinement on all 8 neighbours.
+    for (int step : {32, 16, 8, 4}) {
         for (int iter = 0; iter < 16; ++iter) {
             bool moved = false;
             static constexpr int kDir[4][2] = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
@@ -1278,7 +1262,24 @@ void Encoder::encodeMbP(BitWriter& bw, int mbx, int mby, int& skipRun)
                 break;
         }
     }
-    const int mvx = bestX * 4, mvy = bestY * 4;
+    for (int step : {2, 1}) {
+        const int cx0 = bestX, cy0 = bestY;
+        for (int dy = -1; dy <= 1; ++dy)
+            for (int dx = -1; dx <= 1; ++dx) {
+                if (!dx && !dy)
+                    continue;
+                const int cx = cx0 + dx * step, cy = cy0 + dy * step;
+                if (std::abs(cx) > range || std::abs(cy) > range)
+                    continue;
+                const double c = meCost(cx, cy);
+                if (c < best) {
+                    best = c;
+                    bestX = cx;
+                    bestY = cy;
+                }
+            }
+    }
+    const int mvx = bestX, mvy = bestY;
 
     BitWriter interBits;
     double costInter = 1e300;
@@ -1360,6 +1361,90 @@ void Encoder::encodeMbP(BitWriter& bw, int mbx, int mby, int& skipRun)
     } else {
         bw.append(intraBits); // state is already the intra one
     }
+}
+
+
+void Encoder::buildRefPlanes()
+{
+    const int M = kMargin;
+    extW_ = padW_ + 2 * M;
+    extH_ = padH_ + 2 * M;
+    const size_t n = size_t(extW_) * extH_;
+    extF_.resize(n);
+    extB_.resize(n);
+    extV_.resize(n);
+    extJ_.resize(n);
+    for (int y = 0; y < extH_; ++y) {
+        const int sy = std::clamp(y - M, 0, padH_ - 1);
+        for (int x = 0; x < extW_; ++x)
+            extF_[size_t(y) * extW_ + x] = refY_[size_t(sy) * padW_ + std::clamp(x - M, 0, padW_ - 1)];
+    }
+    auto F = [&](int x, int y) {
+        return int(extF_[size_t(std::clamp(y, 0, extH_ - 1)) * extW_ + std::clamp(x, 0, extW_ - 1)]);
+    };
+    std::vector<int> v1(n); // vertical intermediate (unclipped)
+    for (int y = 0; y < extH_; ++y)
+        for (int x = 0; x < extW_; ++x) {
+            const int vv = F(x, y - 2) - 5 * F(x, y - 1) + 20 * F(x, y) + 20 * F(x, y + 1) - 5 * F(x, y + 2) + F(x, y + 3);
+            v1[size_t(y) * extW_ + x] = vv;
+            extV_[size_t(y) * extW_ + x] = clip1((vv + 16) >> 5);
+            const int bb = F(x - 2, y) - 5 * F(x - 1, y) + 20 * F(x, y) + 20 * F(x + 1, y) - 5 * F(x + 2, y) + F(x + 3, y);
+            extB_[size_t(y) * extW_ + x] = clip1((bb + 16) >> 5);
+        }
+    auto V1 = [&](int x, int y) { return v1[size_t(y) * extW_ + std::clamp(x, 0, extW_ - 1)]; };
+    for (int y = 0; y < extH_; ++y)
+        for (int x = 0; x < extW_; ++x) {
+            const int jj = V1(x - 2, y) - 5 * V1(x - 1, y) + 20 * V1(x, y) + 20 * V1(x + 1, y) - 5 * V1(x + 2, y) + V1(x + 3, y);
+            extJ_[size_t(y) * extW_ + x] = clip1((jj + 512) >> 10);
+        }
+}
+
+// Luma prediction for a 16x16 block at integer position (x0, y0) plus quarter offset (fx, fy), table 8-12.
+void Encoder::mcLuma(int x0, int y0, int fx, int fy, uint8_t* out) const
+{
+    const int M = kMargin;
+    const int W = extW_;
+    for (int y = 0; y < 16; ++y) {
+        const size_t row = size_t(y0 + y + M) * W + size_t(x0 + M);
+        for (int x = 0; x < 16; ++x) {
+            const size_t o = row + size_t(x);
+            const int G = extF_[o];
+            int v;
+            switch (fy * 4 + fx) {
+            case 0: v = G; break;                                        // G
+            case 1: v = (G + extB_[o] + 1) >> 1; break;                  // a
+            case 2: v = extB_[o]; break;                                 // b
+            case 3: v = (extF_[o + 1] + extB_[o] + 1) >> 1; break;       // c
+            case 4: v = (G + extV_[o] + 1) >> 1; break;                  // d
+            case 5: v = (extB_[o] + extV_[o] + 1) >> 1; break;           // e
+            case 6: v = (extB_[o] + extJ_[o] + 1) >> 1; break;           // f
+            case 7: v = (extB_[o] + extV_[o + 1] + 1) >> 1; break;       // g
+            case 8: v = extV_[o]; break;                                 // h
+            case 9: v = (extV_[o] + extJ_[o] + 1) >> 1; break;           // i
+            case 10: v = extJ_[o]; break;                                // j
+            case 11: v = (extJ_[o] + extV_[o + 1] + 1) >> 1; break;      // k
+            case 12: v = (extF_[o + W] + extV_[o] + 1) >> 1; break;      // n
+            case 13: v = (extV_[o] + extB_[o + W] + 1) >> 1; break;      // p
+            case 14: v = (extJ_[o] + extB_[o + W] + 1) >> 1; break;      // q
+            default: v = (extV_[o + 1] + extB_[o + W] + 1) >> 1; break;  // r
+            }
+            out[y * 16 + x] = uint8_t(v);
+        }
+    }
+}
+
+int Encoder::sadLuma(int mbx, int mby, int mvx, int mvy) const
+{
+    uint8_t pred[256];
+    mcLuma(mbx * 16 + (mvx >> 2), mby * 16 + (mvy >> 2), mvx & 3, mvy & 3, pred);
+    const size_t lo = size_t(mby * 16) * padW_ + mbx * 16;
+    int s = 0;
+    for (int y = 0; y < 16; ++y) {
+        const uint8_t* src = &srcY_[lo + size_t(y) * padW_];
+        for (int x = 0; x < 16; ++x)
+            s += std::abs(int(src[x]) - int(pred[y * 16 + x]));
+    }
+    return s;
 }
 
 } // namespace schneidi::h264

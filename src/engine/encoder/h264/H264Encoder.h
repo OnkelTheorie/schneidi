@@ -23,7 +23,7 @@ struct EncoderConfig {
     int qp = 26;    // 0..51 (values below ~10 may clip levels)
     IntraMode mode = IntraMode::Auto;
     bool deblock = true; // decoder-side loop filter (does not affect intra prediction); forced off with P frames
-    int gop = 1;         // keyframe distance; > 1 adds P frames (full-pel motion, 16x16)
+    int gop = 1;         // keyframe distance; > 1 adds P frames (quarter-pel motion, 16x16)
 };
 
 struct Picture {
@@ -64,6 +64,9 @@ private:
     void predictMv(int mbx, int mby, int& mvx, int& mvy) const;
     void motionCompensate(int mbx, int mby, int mvx, int mvy, uint8_t* luma, uint8_t (*chroma)[64]) const;
     int64_t mbSsd(int mbx, int mby) const;
+    void buildRefPlanes();
+    void mcLuma(int x0, int y0, int fx, int fy, uint8_t* out) const;
+    int sadLuma(int mbx, int mby, int mvx, int mvy) const;
     struct MbState;
     void saveMb(int mbx, int mby, MbState& s) const;
     void restoreMb(int mbx, int mby, const MbState& s);
@@ -81,6 +84,10 @@ private:
     std::vector<uint8_t> refY_, refU_, refV_; // previous reconstruction (reference for P)
     std::vector<int16_t> mvX_, mvY_;        // per macroblock, quarter-pel units
     std::vector<int8_t> refIdx_;            // per macroblock: 0 inter, -1 intra
+    // Reference luma with a margin: full-pel, horizontal half, vertical half, centre half (8.4.2.2.1).
+    static constexpr int kMargin = 96;
+    int extW_ = 0, extH_ = 0;
+    std::vector<uint8_t> extF_, extB_, extV_, extJ_;
     int mbTypeOffset_ = 0;                  // 5 for intra macroblocks in P slices
     bool pSlice_ = false;
     int idrCount_ = 0;
