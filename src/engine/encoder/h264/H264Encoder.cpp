@@ -307,7 +307,32 @@ std::vector<uint8_t> Encoder::headers() const
             bw.ue(0);
             bw.ue(uint32_t((padH_ - cfg_.height) / 2));
         }
-        bw.flag(false); // vui_parameters_present_flag
+        // VUI (E.1.1): only timing, so containers and players know the frame rate.
+        bw.flag(true); // vui_parameters_present_flag
+        bw.flag(false); // aspect_ratio_info_present_flag
+        bw.flag(false); // overscan_info_present_flag
+        bw.flag(false); // video_signal_type_present_flag
+        bw.flag(false); // chroma_loc_info_present_flag
+        bw.flag(true);  // timing_info_present_flag
+        // Frame rate = time_scale / (2 * num_units_in_tick); 1001-based rates stay exact.
+        const double fps = cfg_.fps > 0 ? cfg_.fps : 60.0;
+        const bool ntsc = std::abs(fps * 1.001 - std::round(fps * 1.001)) < 1e-3 && std::abs(fps - std::round(fps)) > 1e-3;
+        const uint32_t units = ntsc ? 1001u : 1000u;
+        const uint32_t scale = uint32_t(std::lround(fps * units * 2.0));
+        bw.u(units, 32); // num_units_in_tick
+        bw.u(scale, 32); // time_scale
+        bw.flag(true);   // fixed_frame_rate_flag
+        bw.flag(false);  // nal_hrd_parameters_present_flag
+        bw.flag(false);  // vcl_hrd_parameters_present_flag
+        bw.flag(false);  // pic_struct_present_flag
+        bw.flag(true);   // bitstream_restriction_flag: no reordering, so decoders output at once
+        bw.flag(true);   // motion_vectors_over_pic_boundaries_flag
+        bw.ue(0);        // max_bytes_per_pic_denom
+        bw.ue(0);        // max_bits_per_mb_denom
+        bw.ue(16);       // log2_max_mv_length_horizontal
+        bw.ue(16);       // log2_max_mv_length_vertical
+        bw.ue(0);        // max_num_reorder_frames
+        bw.ue(1);        // max_dec_frame_buffering
         bw.rbspTrailing();
         appendNal(out, 3, 7, bw.bytes());
     }
