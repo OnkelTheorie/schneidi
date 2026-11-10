@@ -578,7 +578,49 @@ int intraCbpCode(int cbp)
 
 constexpr int blkIdxAt(int x, int y) { return (y >> 1) * 8 + (x >> 1) * 4 + (y & 1) * 2 + (x & 1); }
 
-int satd4x4(const int* diff)
+[[maybe_unused]] int satd4x4(const int* diff);
+
+// SATD of a 4x4 block between two 8-bit images; same result as satd4x4 on their difference.
+inline int satdU8(const uint8_t* a, int strideA, const uint8_t* b, int strideB)
+{
+#if defined(__SSE2__) || defined(_M_X64)
+    const __m128i zero = _mm_setzero_si128();
+    auto row = [&](int i) {
+        int32_t wa, wb;
+        std::memcpy(&wa, a + i * strideA, 4);
+        std::memcpy(&wb, b + i * strideB, 4);
+        return _mm_sub_epi16(_mm_unpacklo_epi8(_mm_cvtsi32_si128(wa), zero), _mm_unpacklo_epi8(_mm_cvtsi32_si128(wb), zero));
+    };
+    const __m128i r0 = row(0), r1 = row(1), r2 = row(2), r3 = row(3);
+    // Vertical 4-point Hadamard (lanes = columns).
+    const __m128i s01 = _mm_add_epi16(r0, r1), d01 = _mm_sub_epi16(r0, r1);
+    const __m128i s23 = _mm_add_epi16(r2, r3), d23 = _mm_sub_epi16(r2, r3);
+    const __m128i t0 = _mm_add_epi16(s01, s23), t1 = _mm_sub_epi16(s01, s23);
+    const __m128i t2 = _mm_sub_epi16(d01, d23), t3 = _mm_add_epi16(d01, d23);
+    // Transpose: v0 = columns 0|1, v1 = columns 2|3.
+    const __m128i u0 = _mm_unpacklo_epi16(t0, t1), u1 = _mm_unpacklo_epi16(t2, t3);
+    const __m128i v0 = _mm_unpacklo_epi32(u0, u1), v1 = _mm_unpackhi_epi32(u0, u1);
+    const __m128i c1 = _mm_unpackhi_epi64(v0, v0), c3 = _mm_unpackhi_epi64(v1, v1);
+    // Horizontal 4-point Hadamard on the columns.
+    const __m128i ha = _mm_add_epi16(v0, c1), hb = _mm_sub_epi16(v0, c1);
+    const __m128i hc = _mm_add_epi16(v1, c3), hd = _mm_sub_epi16(v1, c3);
+    const __m128i o01 = _mm_unpacklo_epi64(_mm_add_epi16(ha, hc), _mm_sub_epi16(ha, hc));
+    const __m128i o23 = _mm_unpacklo_epi64(_mm_sub_epi16(hb, hd), _mm_add_epi16(hb, hd));
+    auto absv = [&](__m128i x) { return _mm_max_epi16(x, _mm_sub_epi16(zero, x)); };
+    const __m128i sum = _mm_madd_epi16(_mm_add_epi16(absv(o01), absv(o23)), _mm_set1_epi16(1));
+    const __m128i s2 = _mm_add_epi32(sum, _mm_shuffle_epi32(sum, _MM_SHUFFLE(1, 0, 3, 2)));
+    const __m128i s1 = _mm_add_epi32(s2, _mm_shuffle_epi32(s2, _MM_SHUFFLE(2, 3, 0, 1)));
+    return (_mm_cvtsi128_si32(s1) + 1) >> 1;
+#else
+    int diff[16];
+    for (int y = 0; y < 4; ++y)
+        for (int x = 0; x < 4; ++x)
+            diff[y * 4 + x] = int(a[y * strideA + x]) - int(b[y * strideB + x]);
+    return satd4x4(diff);
+#endif
+}
+
+[[maybe_unused]] int satd4x4(const int* diff)
 {
     int t[16];
     hadamard4x4(diff, t);
@@ -943,10 +985,7 @@ void Encoder::encodeLuma4(BitWriter& bw, int mbx, int mby, const ChromaMb& ch)
             if ((needsTop && !top) || (needsLeft && !left) || (needsBoth && !(top && left)))
                 continue;
             predict4x4(mode, T, L, left, top, cand);
-            int diff[16];
-            for (int i = 0; i < 16; ++i)
-                diff[i] = src[i] - cand[i];
-            const int cost = satd4x4(diff) + lambda * (mode == predMode ? 1 : 4);
+            const int cost = satdU8(&srcY_[size_t(py) * padW_ + px], padW_, cand, 4) + lambda * (mode == predMode ? 1 : 4);
             if (cost < bestCost) {
                 bestCost = cost;
                 bestMode = mode;
@@ -1674,11 +1713,7 @@ void Encoder::encodeMbP(BitWriter& bw, int mbx, int mby, int& skipRun)
             int sum = 0;
             for (int b = 0; b < 16; ++b) {
                 const int ox = (b & 3) * 4, oy = (b >> 2) * 4;
-                int diff[16];
-                for (int y = 0; y < 4; ++y)
-                    for (int x = 0; x < 4; ++x)
-                        diff[y * 4 + x] = int(src[(oy + y) * 16 + ox + x]) - int(cand[(oy + y) * 16 + ox + x]);
-                sum += satd4x4(diff);
+                sum += satdU8(src + oy * 16 + ox, 16, cand + oy * 16 + ox, 16);
             }
             intraEstimate = std::min(intraEstimate, sum);
         }
@@ -1844,12 +1879,7 @@ int Encoder::sadPart(int mbx, int mby, int x4, int y4, int w4, int h4, int mvx, 
     if (satd) {
         for (int by = 0; by < h4; ++by)
             for (int bx = 0; bx < w4; ++bx) {
-                int diff[16];
-                for (int y = 0; y < 4; ++y)
-                    for (int x = 0; x < 4; ++x)
-                        diff[y * 4 + x] = int(srcY_[lo + size_t(by * 4 + y) * padW_ + bx * 4 + x]) -
-                                          int(pred[(by * 4 + y) * 16 + bx * 4 + x]);
-                s += satd4x4(diff);
+                s += satdU8(&srcY_[lo + size_t(by * 4) * padW_ + bx * 4], padW_, pred + by * 4 * 16 + bx * 4, 16);
             }
         return s;
     }
