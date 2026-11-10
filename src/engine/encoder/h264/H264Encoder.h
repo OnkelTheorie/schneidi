@@ -94,6 +94,7 @@ private:
     int64_t mbSsd(int mbx, int mby) const;
     void buildRefPlanes(RefPic& R);
     void deblockPicture();
+    void deblockMb(int mbx, int mby);
     int boundaryStrength(int pbx, int pby, int qbx, int qby, bool mbEdge) const;
     void mcLuma(const RefPic& R, int x0, int y0, int fx, int fy, int w, int h, uint8_t* out) const;
     int sadPart(const RefPic& R, int mbx, int mby, int x4, int y4, int w4, int h4, int mvx, int mvy, bool satd) const;

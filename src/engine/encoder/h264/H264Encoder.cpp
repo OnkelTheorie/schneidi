@@ -9,6 +9,7 @@
 #include <array>
 #include <cmath>
 #include <cstdlib>
+#include <atomic>
 #include <cstring>
 #include <thread>
 
@@ -2044,9 +2045,43 @@ int Encoder::boundaryStrength(int pbx, int pby, int qbx, int qby, bool mbEdge) c
 
 void Encoder::deblockPicture()
 {
+    // Wavefront: macroblock x of a row may be filtered once the row above has finished
+    // macroblocks up to x + 1 (whose edges touch the samples shared with it). That keeps
+    // the raster-order result of 8.7 exactly.
+    const int threads = std::clamp(cfg_.threads, 1, mbH_);
+    std::vector<std::atomic<int>> done(static_cast<size_t>(mbH_));
+    for (auto& d : done)
+        d.store(0, std::memory_order_relaxed);
+    std::atomic<int> nextRow{0};
+    auto worker = [&] {
+        for (;;) {
+            const int mby = nextRow.fetch_add(1);
+            if (mby >= mbH_)
+                return;
+            for (int mbx = 0; mbx < mbW_; ++mbx) {
+                if (mby > 0) {
+                    const int need = std::min(mbx + 2, mbW_);
+                    while (done[size_t(mby - 1)].load(std::memory_order_acquire) < need)
+                        std::this_thread::yield();
+                }
+                deblockMb(mbx, mby);
+                done[size_t(mby)].store(mbx + 1, std::memory_order_release);
+            }
+        }
+    };
+    std::vector<std::thread> pool;
+    for (int t = 1; t < threads; ++t)
+        pool.emplace_back(worker);
+    worker();
+    for (auto& t : pool)
+        t.join();
+}
+
+void Encoder::deblockMb(int mbx, int mby)
+{
     const int cw = padW_ / 2;
-    for (int mby = 0; mby < mbH_; ++mby) {
-        for (int mbx = 0; mbx < mbW_; ++mbx) {
+    {
+        {
             // Filter strength per edge from the average QP of both sides (8.7.2.2).
             const int qpQ = mbQpFinal_[size_t(mby) * mbW_ + mbx];
             const int qpLeft = mbx > 0 ? mbQpFinal_[size_t(mby) * mbW_ + mbx - 1] : qpQ;
