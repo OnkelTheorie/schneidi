@@ -25,6 +25,8 @@ struct EncoderConfig {
     bool deblock = true; // in-loop deblocking filter (8.7), run by the encoder too
     int gop = 1;         // keyframe distance; > 1 adds P frames (quarter-pel motion, 16x16)
     int threads = 1;     // one slice per thread (rows of macroblocks)
+    int bitrateKbps = 0; // > 0: frame-level rate control towards this bitrate, qp is the start value
+    double fps = 60.0;   // for the rate control
 };
 
 struct Picture {
@@ -50,6 +52,7 @@ public:
     const std::vector<uint8_t>& reconV() const { return recV_; }
     int paddedWidth() const { return padW_; }
     int paddedHeight() const { return padH_; }
+    int lastQp() const { return lastQp_; }
 
 private:
     void loadSource(const Picture& picture);
@@ -79,6 +82,7 @@ private:
     int chromaNc(int c, int bx, int by) const;
 
     EncoderConfig cfg_;
+    int lastQp_ = 0;
     int mbW_ = 0, mbH_ = 0, padW_ = 0, padH_ = 0;
     int frameIndex_ = 0;
     std::vector<uint8_t> srcY_, srcU_, srcV_;
@@ -98,6 +102,10 @@ private:
     int mbTypeOffset_ = 0;                  // 5 for intra macroblocks in P slices
     bool pSlice_ = false;
     int idrCount_ = 0;
+    // Rate control state.
+    double rcQp_ = 0;               // QP for P frames (I frames use 3 less)
+    double rcBits_ = 0, rcTarget_ = 0; // produced / wanted bits so far
+    double rcComplexity_[2] = {0, 0};  // [1]: bits * 2^(qp/6) of the last P frame
 };
 
 } // namespace schneidi::h264

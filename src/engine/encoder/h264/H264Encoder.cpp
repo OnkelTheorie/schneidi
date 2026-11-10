@@ -360,6 +360,26 @@ std::vector<uint8_t> Encoder::encode(const Picture& picture)
 
     const bool idr = cfg_.gop <= 1 || frameIndex_ % cfg_.gop == 0;
     pSlice_ = !idr;
+
+    // Frame-level rate control: P frames predict their bits from the last P frame (bits roughly
+    // halve per +6 QP) and pay back over- or undershoot over about one second; I frames
+    // follow the P QP (3 lower) and their cost is paid back by the P frames.
+    const int baseQp = cfg_.qp;
+    if (cfg_.bitrateKbps > 0) {
+        if (frameIndex_ == 0)
+            rcQp_ = baseQp;
+        double qp = rcQp_;
+        if (idr) {
+            qp = rcQp_ - 3;
+        } else if (rcComplexity_[1] > 0) {
+            const double perFrame = cfg_.bitrateKbps * 1000.0 / cfg_.fps;
+            const double debt = rcBits_ - rcTarget_;
+            const double budget = std::clamp(perFrame - debt / std::max(1.0, cfg_.fps), perFrame * 0.5, perFrame * 2.0);
+            qp = std::clamp(6.0 * std::log2(rcComplexity_[1] / budget), rcQp_ - 2.0, rcQp_ + 2.0);
+        }
+        cfg_.qp = std::clamp(int(std::lround(qp)), 10, 51);
+    }
+    lastQp_ = cfg_.qp;
     mbTypeOffset_ = idr ? 0 : 5;
 
     const int sliceCount = std::clamp(cfg_.threads, 1, mbH_);
@@ -433,6 +453,16 @@ std::vector<uint8_t> Encoder::encode(const Picture& picture)
         refU_ = recU_;
         refV_ = recV_;
         buildRefPlanes();
+    }
+    if (cfg_.bitrateKbps > 0) {
+        const double bits = double(out.size()) * 8.0;
+        if (!idr) {
+            rcComplexity_[1] = bits * std::pow(2.0, cfg_.qp / 6.0);
+            rcQp_ = cfg_.qp;
+        }
+        rcBits_ += bits;
+        rcTarget_ += cfg_.bitrateKbps * 1000.0 / cfg_.fps;
+        cfg_.qp = baseQp;
     }
     if (idr)
         ++idrCount_;

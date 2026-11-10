@@ -1,8 +1,8 @@
 // h264-proto: test driver for schneidi's own H.264 encoder.
 //   h264-proto selftest
 //   h264-proto encode <in.yuv> <width> <height> <out.h264> [--qp N] [--mode pcm|i16|i4|auto]
-//                     [--frames N] [--gop N] [--threads N] [--no-deblock] [--recon out.yuv]
-// Input is raw yuv420p. Prints size, speed and PSNR of the encoder's reconstruction.
+//                     [--frames N] [--gop N] [--threads N] [--bitrate kbps] [--no-deblock] [--recon out.yuv]
+// Input is raw yuv420p ("-" reads stdin). Prints size, speed and PSNR of the encoder's reconstruction.
 #include "engine/encoder/h264/Cavlc.h"
 #include "engine/encoder/h264/H264Encoder.h"
 
@@ -38,7 +38,7 @@ int main(int argc, char** argv)
     }
     if (argc < 6 || std::strcmp(argv[1], "encode") != 0) {
         std::fprintf(stderr, "usage: h264-proto selftest | encode <in.yuv> <w> <h> <out.h264> [--qp N] "
-                             "[--mode pcm|i16|i4|auto] [--frames N] [--gop N] [--threads N] [--no-deblock] [--recon out.yuv]\n");
+                             "[--mode pcm|i16|i4|auto] [--frames N] [--gop N] [--threads N] [--bitrate kbps] [--no-deblock] [--recon out.yuv]\n");
         return 2;
     }
     EncoderConfig cfg;
@@ -63,13 +63,15 @@ int main(int argc, char** argv)
             cfg.gop = std::atoi(argv[++i]);
         else if (a == "--threads" && i + 1 < argc)
             cfg.threads = std::atoi(argv[++i]);
+        else if (a == "--bitrate" && i + 1 < argc)
+            cfg.bitrateKbps = std::atoi(argv[++i]);
         else if (a == "--no-deblock")
             cfg.deblock = false;
         else if (a == "--recon" && i + 1 < argc)
             reconPath = argv[++i];
     }
 
-    FILE* in = std::fopen(inPath, "rb");
+    FILE* in = std::strcmp(inPath, "-") == 0 ? stdin : std::fopen(inPath, "rb"); // "-" = stdin
     FILE* out = std::fopen(outPath, "wb");
     FILE* recon = reconPath ? std::fopen(reconPath, "wb") : nullptr;
     if (!in || !out || (reconPath && !recon)) {
@@ -97,6 +99,8 @@ int main(int argc, char** argv)
         const auto au = enc.encode(pic);
         seconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
         std::fwrite(au.data(), 1, au.size(), out);
+        if (std::getenv("H264_PROTO_TRACE"))
+            std::fprintf(stderr, "frame %d qp %d bytes %zu\n", frames, enc.lastQp(), au.size());
         totalBytes += au.size();
 
         const int pw = enc.paddedWidth();
@@ -120,6 +124,7 @@ int main(int argc, char** argv)
         std::fprintf(stderr, "no frames read\n");
         return 1;
     }
+    std::printf("last qp %d  ", enc.lastQp());
     std::printf("frames %d  bytes %zu (%.1f KB/frame)  %.2f fps  PSNR Y %.2f U %.2f V %.2f\n", frames, totalBytes,
                 totalBytes / 1024.0 / frames, frames / seconds, psnrY / frames, psnrU / frames, psnrV / frames);
     return 0;
