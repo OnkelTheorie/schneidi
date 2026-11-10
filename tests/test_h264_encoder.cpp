@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // schneidi's own H.264 encoder (prototype): every stream must decode with FFmpeg's decoder to exactly the
-// pictures the encoder reconstructed (I and P frames, all intra/inter modes, slices, rate control, odd sizes).
+// pictures the encoder reconstructed (I and P frames, all intra/inter modes, slices, adaptive QP, rate control,
+// odd sizes).
 
 #include "check.h"
 
@@ -166,6 +167,13 @@ int main()
         EncoderConfig c = config(176, 144, IntraMode::Auto, 30);
         c.effort = 0;
         CHECK(roundTrip(c, 8));
+    }
+    {
+        EncoderConfig c = config(176, 144, IntraMode::Auto, 8, 2);
+        c.aqStrength = 0; // all macroblocks at the slice QP
+        CHECK(roundTrip(c, 6));
+        c.aqStrength = 3; // large per-macroblock QP jumps (mb_qp_delta, deblocking across QPs)
+        CHECK(roundTrip(c, 6));
     }
     for (int qp : {12, 40, 51}) {
         EncoderConfig c = config(176, 144, IntraMode::Auto, 10);

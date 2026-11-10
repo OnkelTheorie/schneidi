@@ -27,7 +27,8 @@ struct EncoderConfig {
     int threads = 1;     // one slice per thread (rows of macroblocks)
     int effort = 1;      // 0 = fast (16x16 motion only), 1 = default (partitions, more RD)
     int bitrateKbps = 0; // > 0: frame-level rate control towards this bitrate, qp is the start value
-    double fps = 60.0;   // for the rate control
+    double fps = 60.0;   // for the rate control and the VUI timing
+    double aqStrength = 1.0; // adaptive quantisation (finer QP on flat areas); 0 = off
 };
 
 struct Picture {
@@ -59,12 +60,16 @@ private:
     void loadSource(const Picture& picture);
     void encodeMbPcm(BitWriter& bw, int mbx, int mby);
     struct ChromaMb;
-    void encodeMbIntra(BitWriter& bw, int mbx, int mby);
+    bool encodeMbIntra(BitWriter& bw, int mbx, int mby);
+    void commitQp(int mbx, int mby, bool codedDelta);
+    void planMacroblockQp();
+    int qpPredOf(int mby) const { return qpPredByTop_[size_t(sliceTopOfRow_[size_t(mby)])]; }
     // interPred: motion-compensated prediction (inter macroblock); nullptr = intra.
     void analyseChroma(int mbx, int mby, ChromaMb& ch, const uint8_t (*interPred)[64] = nullptr);
     void writeChroma(BitWriter& bw, int mbx, int mby, const ChromaMb& ch);
-    void encodeLuma16(BitWriter& bw, int mbx, int mby, const ChromaMb& ch);
-    void encodeLuma4(BitWriter& bw, int mbx, int mby, const ChromaMb& ch);
+    // Return whether the macroblock sent mb_qp_delta.
+    bool encodeLuma16(BitWriter& bw, int mbx, int mby, const ChromaMb& ch);
+    bool encodeLuma4(BitWriter& bw, int mbx, int mby, const ChromaMb& ch);
     void encodeMbP(BitWriter& bw, int mbx, int mby, int& skipRun);
     void rdoQuantize(int* levels, const int* residual, int qp, double lambda, int nC) const;
     struct MvNb {
@@ -110,6 +115,9 @@ private:
     std::vector<uint8_t> extF_, extB_, extV_, extJ_;
     std::vector<int> vInter_; // vertical 6-tap intermediate (unclipped)
     std::vector<int> sliceTopOfRow_;        // first macroblock row of the slice of each row
+    std::vector<int> qpPredByTop_;          // QP predictor of each slice, indexed by its first row
+    std::vector<int8_t> mbQp_, mbQpFinal_;  // planned QP per macroblock / QP it really has
+    std::vector<float> mbEnergy_;
     int mbTypeOffset_ = 0;                  // 5 for intra macroblocks in P slices
     bool pSlice_ = false;
     int idrCount_ = 0;
