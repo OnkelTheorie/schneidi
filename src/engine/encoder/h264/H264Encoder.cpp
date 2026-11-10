@@ -376,7 +376,7 @@ void Encoder::loadSource(const Picture& pic)
     copyPlane(pic.v, pic.strideC, cfg_.width / 2, cfg_.height / 2, srcV_, padW_ / 2, padH_ / 2);
 }
 
-std::vector<uint8_t> Encoder::encode(const Picture& picture)
+std::vector<uint8_t> Encoder::encode(const Picture& picture, bool forceKeyframe)
 {
     loadSource(picture);
     std::fill(nzLuma_.begin(), nzLuma_.end(), 0);
@@ -388,7 +388,13 @@ std::vector<uint8_t> Encoder::encode(const Picture& picture)
     std::fill(mvY_.begin(), mvY_.end(), int16_t(0));
     std::fill(refIdx_.begin(), refIdx_.end(), int8_t(-1));
 
-    const bool idr = cfg_.gop <= 1 || frameIndex_ % cfg_.gop == 0;
+    // Keyframe on schedule, on request (a cut the caller knows) or on a detected scene change.
+    const bool sceneChange = cfg_.sceneCut && cfg_.gop > 1 && detectSceneCut(); // keeps its thumbnail current
+    const bool cut = sceneChange && frameIndex_ > 0 && framesSinceIdr_ >= 6;
+    const bool idr = cfg_.gop <= 1 || frameIndex_ == 0 || framesSinceIdr_ >= cfg_.gop || forceKeyframe || cut;
+    if (idr)
+        framesSinceIdr_ = 0;
+    lastWasSceneCut_ = cut;
     pSlice_ = !idr;
     if (idr)
         refs_.clear(); // an IDR picture marks all references unused
@@ -433,7 +439,7 @@ std::vector<uint8_t> Encoder::encode(const Picture& picture)
         bw.ue(uint32_t(sliceTop[size_t(s)] * mbW_)); // first_mb_in_slice
         bw.ue(idr ? 7 : 5);                         // slice_type: I or P (all slices)
         bw.ue(0);                                   // pic_parameter_set_id
-        bw.u(idr ? 0 : uint32_t((frameIndex_ % cfg_.gop) & 15), 4); // frame_num
+        bw.u(uint32_t(framesSinceIdr_ & 15), 4); // frame_num (0 for IDR)
         if (idr) {
             bw.ue(uint32_t(idrCount_ & 0xFFFF)); // idr_pic_id (differs between neighbours)
         } else {
@@ -518,6 +524,7 @@ std::vector<uint8_t> Encoder::encode(const Picture& picture)
     if (idr)
         ++idrCount_;
     ++frameIndex_;
+    ++framesSinceIdr_;
     return out;
 }
 
@@ -2127,6 +2134,57 @@ void Encoder::planMacroblockQp()
         const double offset = std::clamp(cfg_.aqStrength * (mbEnergy_[size_t(m)] - mean) * 0.5, -8.0, 8.0);
         mbQp_[size_t(m)] = int8_t(std::clamp(int(std::lround(cfg_.qp + offset)), 0, 51));
     }
+}
+
+
+// Scene change: on quarter-size thumbnails, compare the best small-motion SAD of each 8x8
+// block with its SAD against its own mean (a crude intra cost). When motion no longer helps
+// for most of the picture, a keyframe is cheaper and looks better than a P frame.
+bool Encoder::detectSceneCut()
+{
+    const int tw = padW_ / 4, th = padH_ / 4;
+    std::vector<uint8_t> thumb(size_t(tw) * th);
+    for (int y = 0; y < th; ++y)
+        for (int x = 0; x < tw; ++x) {
+            int s = 0;
+            for (int dy = 0; dy < 4; ++dy)
+                for (int dx = 0; dx < 4; ++dx)
+                    s += srcY_[size_t(y * 4 + dy) * padW_ + x * 4 + dx];
+            thumb[size_t(y) * tw + x] = uint8_t((s + 8) >> 4);
+        }
+    bool cut = false;
+    constexpr int kRange = 8; // thumbnail pixels = 32 picture pixels
+    if (prevThumb_.size() == thumb.size()) {
+        int64_t interCost = 0, intraCost = 0;
+        for (int by = 0; by + 8 <= th; by += 8)
+            for (int bx = 0; bx + 8 <= tw; bx += 8) {
+                int sum = 0;
+                for (int y = 0; y < 8; ++y)
+                    for (int x = 0; x < 8; ++x)
+                        sum += thumb[size_t(by + y) * tw + bx + x];
+                const int mean = (sum + 32) >> 6;
+                int intra = 0;
+                for (int y = 0; y < 8; ++y)
+                    for (int x = 0; x < 8; ++x)
+                        intra += std::abs(thumb[size_t(by + y) * tw + bx + x] - mean);
+                int best = 1 << 30;
+                for (int my = -kRange; my <= kRange; ++my)
+                    for (int mx = -kRange; mx <= kRange; ++mx) {
+                        if (by + my < 0 || bx + mx < 0 || by + my + 8 > th || bx + mx + 8 > tw)
+                            continue;
+                        int s = 0;
+                        for (int y = 0; y < 8; ++y)
+                            s += sadRow(&thumb[size_t(by + y) * tw + bx], &prevThumb_[size_t(by + my + y) * tw + bx + mx], 8);
+                        best = std::min(best, s);
+                    }
+                interCost += std::min(best, intra);
+                intraCost += intra + 16; // a little bias so flat pictures do not count as cuts
+            }
+        // Real cuts measured ~0.92-0.95, fast game motion up to ~0.72.
+        cut = interCost * 100 > intraCost * 85;
+    }
+    prevThumb_ = std::move(thumb);
+    return cut;
 }
 
 } // namespace schneidi::h264

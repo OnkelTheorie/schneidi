@@ -55,7 +55,7 @@ Yuv synthFrame(int w, int h, int t)
 }
 
 // Encodes `frames` pictures, decodes them with libavcodec and compares with the reconstruction.
-bool roundTrip(const EncoderConfig& cfg, int frames, size_t* bytesOut = nullptr)
+bool roundTrip(const EncoderConfig& cfg, int frames, size_t* bytesOut = nullptr, int keyframeAt = -1)
 {
     Encoder enc(cfg);
     const AVCodec* codec = avcodec_find_decoder(AV_CODEC_ID_H264);
@@ -97,7 +97,7 @@ bool roundTrip(const EncoderConfig& cfg, int frames, size_t* bytesOut = nullptr)
         const Yuv src = synthFrame(cfg.width, cfg.height, t);
         Picture pic{src.y.data(), src.u.data(), src.v.data(), src.w, src.w / 2};
         std::vector<uint8_t> au = t == 0 ? enc.headers() : std::vector<uint8_t>{};
-        const auto data = enc.encode(pic);
+        const auto data = enc.encode(pic, t == keyframeAt);
         au.insert(au.end(), data.begin(), data.end());
         bytes += au.size();
 
@@ -175,6 +175,8 @@ int main()
         c.aqStrength = 3; // large per-macroblock QP jumps (mb_qp_delta, deblocking across QPs)
         CHECK(roundTrip(c, 6));
     }
+    // A keyframe the caller asks for (a cut in the timeline) in the middle of a GOP
+    CHECK(roundTrip(config(176, 144, IntraMode::Auto, 30), 10, nullptr, 4));
     for (int refs : {2, 3}) { // several reference pictures (ref_idx te(v)/ue(v), sliding window)
         EncoderConfig c = config(176, 144, IntraMode::Auto, 10, 2);
         c.refs = refs;

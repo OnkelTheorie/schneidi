@@ -71,6 +71,8 @@ int main(int argc, char** argv)
             cfg.aqStrength = std::atof(argv[++i]);
         else if (a == "--refs" && i + 1 < argc)
             cfg.refs = std::atoi(argv[++i]);
+        else if (a == "--no-scenecut")
+            cfg.sceneCut = false;
         else if (a == "--no-deblock")
             cfg.deblock = false;
         else if (a == "--recon" && i + 1 < argc)
@@ -106,7 +108,8 @@ int main(int argc, char** argv)
         seconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
         std::fwrite(au.data(), 1, au.size(), out);
         if (std::getenv("H264_PROTO_TRACE"))
-            std::fprintf(stderr, "frame %d qp %d bytes %zu\n", frames, enc.lastQp(), au.size());
+            std::fprintf(stderr, "frame %d qp %d bytes %zu%s\n", frames, enc.lastQp(), au.size(),
+                         enc.lastWasSceneCut() ? " scene cut" : "");
         totalBytes += au.size();
 
         const int pw = enc.paddedWidth();

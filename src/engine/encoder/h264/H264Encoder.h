@@ -30,6 +30,7 @@ struct EncoderConfig {
     double fps = 60.0;   // for the rate control and the VUI timing
     double aqStrength = 1.0; // adaptive quantisation (finer QP on flat areas); 0 = off
     int refs = 1;        // reference pictures for P frames (1..16)
+    bool sceneCut = true; // keyframe on detected scene changes
 };
 
 struct Picture {
@@ -46,8 +47,10 @@ public:
 
     // SPS + PPS as Annex B.
     std::vector<uint8_t> headers() const;
-    // One access unit (IDR or P picture) as Annex B.
-    std::vector<uint8_t> encode(const Picture& picture);
+    // One access unit (IDR or P picture) as Annex B. forceKeyframe: start a new GOP here
+    // (e.g. a cut in the timeline).
+    std::vector<uint8_t> encode(const Picture& picture, bool forceKeyframe = false);
+    bool lastWasSceneCut() const { return lastWasSceneCut_; }
 
     // Reconstruction of the last encoded picture as the decoder outputs it (padded size).
     const std::vector<uint8_t>& reconY() const { return recY_; }
@@ -127,6 +130,10 @@ private:
     int mbTypeOffset_ = 0;                  // 5 for intra macroblocks in P slices
     bool pSlice_ = false;
     int idrCount_ = 0;
+    int framesSinceIdr_ = 0;
+    bool lastWasSceneCut_ = false;
+    std::vector<uint8_t> prevThumb_; // quarter-size luma of the previous picture
+    bool detectSceneCut();
     // Rate control state.
     double rcQp_ = 0;               // QP for P frames (I frames use 3 less)
     double rcBits_ = 0, rcTarget_ = 0; // produced / wanted bits so far
