@@ -29,6 +29,7 @@ struct EncoderConfig {
     int bitrateKbps = 0; // > 0: frame-level rate control towards this bitrate, qp is the start value
     double fps = 60.0;   // for the rate control and the VUI timing
     double aqStrength = 1.0; // adaptive quantisation (finer QP on flat areas); 0 = off
+    int refs = 1;        // reference pictures for P frames (1..16)
 };
 
 struct Picture {
@@ -57,6 +58,10 @@ public:
     int lastQp() const { return lastQp_; }
 
 private:
+    struct RefPic {
+        std::vector<uint8_t> y, u, v;    // reconstruction (padded size)
+        std::vector<uint8_t> F, B, V, J; // luma with margin: full, horizontal/vertical/centre half
+    };
     void loadSource(const Picture& picture);
     void encodeMbPcm(BitWriter& bw, int mbx, int mby);
     struct ChromaMb;
@@ -78,15 +83,16 @@ private:
         int mvx = 0, mvy = 0;
     };
     MvNb mvNeighbour(int mbx, int mby, int x4, int y4, const bool* decoded) const;
-    void predictMvPart(int mbx, int mby, int x4, int y4, int w4, int shape, const bool* decoded, int& mvx, int& mvy) const;
-    void motionCompensate(int mbx, int mby, int x4, int y4, int w4, int h4, int mvx, int mvy, uint8_t* luma,
-                          uint8_t (*chroma)[64]) const;
+    void predictMvPart(int mbx, int mby, int x4, int y4, int w4, int shape, int refIdx, const bool* decoded, int& mvx,
+                       int& mvy) const;
+    void motionCompensate(const RefPic& R, int mbx, int mby, int x4, int y4, int w4, int h4, int mvx, int mvy,
+                          uint8_t* luma, uint8_t (*chroma)[64]) const;
     int64_t mbSsd(int mbx, int mby) const;
-    void buildRefPlanes();
+    void buildRefPlanes(RefPic& R);
     void deblockPicture();
     int boundaryStrength(int pbx, int pby, int qbx, int qby, bool mbEdge) const;
-    void mcLuma(int x0, int y0, int fx, int fy, int w, int h, uint8_t* out) const;
-    int sadPart(int mbx, int mby, int x4, int y4, int w4, int h4, int mvx, int mvy, bool satd) const;
+    void mcLuma(const RefPic& R, int x0, int y0, int fx, int fy, int w, int h, uint8_t* out) const;
+    int sadPart(const RefPic& R, int mbx, int mby, int x4, int y4, int w4, int h4, int mvx, int mvy, bool satd) const;
     struct MbState;
     void saveMb(int mbx, int mby, MbState& s) const;
     void restoreMb(int mbx, int mby, const MbState& s);
@@ -104,7 +110,6 @@ private:
     std::vector<uint8_t> nzLuma_;      // TotalCoeff per 4x4 luma block
     std::vector<int8_t> modes4x4_;     // Intra 4x4 mode per 4x4 block, -1 = macroblock not Intra 4x4
     std::vector<uint8_t> nzChroma_[2]; // TotalCoeff per 4x4 chroma AC block
-    std::vector<uint8_t> refY_, refU_, refV_; // previous reconstruction (reference for P)
     std::vector<int16_t> mvX_, mvY_;        // per 4x4 block, quarter-pel units
     std::vector<int8_t> refIdx_;            // per 4x4 block: 0 inter, -1 intra
     std::vector<int16_t> prevMvX_, prevMvY_; // vectors of the previous picture (search start points)
@@ -112,7 +117,8 @@ private:
     // Reference luma with a margin: full-pel, horizontal half, vertical half, centre half (8.4.2.2.1).
     static constexpr int kMargin = 96;
     int extW_ = 0, extH_ = 0;
-    std::vector<uint8_t> extF_, extB_, extV_, extJ_;
+    std::vector<RefPic> refs_; // reference list, newest first
+    int activeRefs_ = 0;
     std::vector<int> vInter_; // vertical 6-tap intermediate (unclipped)
     std::vector<int> sliceTopOfRow_;        // first macroblock row of the slice of each row
     std::vector<int> qpPredByTop_;          // QP predictor of each slice, indexed by its first row

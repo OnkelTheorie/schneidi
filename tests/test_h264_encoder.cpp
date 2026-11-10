@@ -175,6 +175,11 @@ int main()
         c.aqStrength = 3; // large per-macroblock QP jumps (mb_qp_delta, deblocking across QPs)
         CHECK(roundTrip(c, 6));
     }
+    for (int refs : {2, 3}) { // several reference pictures (ref_idx te(v)/ue(v), sliding window)
+        EncoderConfig c = config(176, 144, IntraMode::Auto, 10, 2);
+        c.refs = refs;
+        CHECK(roundTrip(c, 12));
+    }
     for (int qp : {12, 40, 51}) {
         EncoderConfig c = config(176, 144, IntraMode::Auto, 10);
         c.qp = qp;
