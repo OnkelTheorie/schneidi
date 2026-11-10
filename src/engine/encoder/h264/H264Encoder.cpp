@@ -1319,6 +1319,43 @@ void Encoder::motionCompensate(int mbx, int mby, int x4, int y4, int w4, int h4,
     }
 }
 
+// Greedy rate-distortion quantisation of one 4x4 block (raster levels, 16 coefficients):
+// from high to low frequency, lower each level by one step while SSD + lambda * bits drops.
+void Encoder::rdoQuantize(int* levels, const int* residual, int qp, double lambda, int nC) const
+{
+    const int qpDiv = qp / 6, qpMod = qp % 6;
+    auto evaluate = [&](const int* lv) {
+        int d[16], r[16];
+        for (int i = 0; i < 16; ++i)
+            d[i] = (lv[i] * kDequantV[qpMod][posClass(i)]) << qpDiv;
+        inverse4x4(d, r);
+        int64_t ssd = 0;
+        for (int i = 0; i < 16; ++i)
+            ssd += int64_t(residual[i] - r[i]) * (residual[i] - r[i]);
+        int scan[16];
+        for (int k = 0; k < 16; ++k)
+            scan[k] = lv[kZigzag[k]];
+        BitWriter bits;
+        writeResidualBlock(bits, scan, 16, nC);
+        return double(ssd) + lambda * double(bits.bitCount());
+    };
+    double best = evaluate(levels);
+    for (int k = 15; k >= 0; --k) {
+        const int i = kZigzag[k];
+        while (levels[i] != 0) {
+            const int old = levels[i];
+            levels[i] = old > 0 ? old - 1 : old + 1;
+            const double cost = evaluate(levels);
+            if (cost < best) {
+                best = cost;
+            } else {
+                levels[i] = old;
+                break;
+            }
+        }
+    }
+}
+
 void Encoder::encodeMbP(BitWriter& bw, int mbx, int mby, int& skipRun)
 {
     const int lw = mbW_ * 4, chw = mbW_ * 2;
@@ -1533,8 +1570,15 @@ void Encoder::encodeMbP(BitWriter& bw, int mbx, int mby, int& skipRun)
                 for (int x = 0; x < 4; ++x)
                     res[y * 4 + x] = int(srcY_[lumaOff + size_t(oy + y) * padW_ + ox + x]) - int(lp[(oy + y) * 16 + ox + x]);
             forward4x4(res, coef);
-            for (int i = 0; i < 16; ++i)
-                levels[blkIdx][i] = quantize(coef[i], kQuantMf[qpMod][posClass(i)], qbits, interOffset);
+            if (cfg_.effort > 0) {
+                // Round to nearest, then let the rate-distortion pass decide which levels to lower.
+                for (int i = 0; i < 16; ++i)
+                    levels[blkIdx][i] = quantize(coef[i], kQuantMf[qpMod][posClass(i)], qbits, (1 << qbits) / 2);
+                rdoQuantize(levels[blkIdx], res, qp, lambda, lumaNc(mbx * 4 + kBlkX[blkIdx], mby * 4 + kBlkY[blkIdx]));
+            } else {
+                for (int i = 0; i < 16; ++i)
+                    levels[blkIdx][i] = quantize(coef[i], kQuantMf[qpMod][posClass(i)], qbits, interOffset);
+            }
         }
         // Decimation: a few lone +-1 levels cost more bits than they bring back.
         int scores[16], mbScore = 0;
