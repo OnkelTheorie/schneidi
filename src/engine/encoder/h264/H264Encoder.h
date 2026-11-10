@@ -93,6 +93,7 @@ private:
     static constexpr int kMargin = 96;
     int extW_ = 0, extH_ = 0;
     std::vector<uint8_t> extF_, extB_, extV_, extJ_;
+    std::vector<int> vInter_; // vertical 6-tap intermediate (unclipped)
     std::vector<int> sliceTopOfRow_;        // first macroblock row of the slice of each row
     int mbTypeOffset_ = 0;                  // 5 for intra macroblocks in P slices
     bool pSlice_ = false;

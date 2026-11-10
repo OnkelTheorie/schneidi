@@ -1440,29 +1440,68 @@ void Encoder::buildRefPlanes()
     extB_.resize(n);
     extV_.resize(n);
     extJ_.resize(n);
-    for (int y = 0; y < extH_; ++y) {
-        const int sy = std::clamp(y - M, 0, padH_ - 1);
-        for (int x = 0; x < extW_; ++x)
-            extF_[size_t(y) * extW_ + x] = refY_[size_t(sy) * padW_ + std::clamp(x - M, 0, padW_ - 1)];
-    }
-    auto F = [&](int x, int y) {
-        return int(extF_[size_t(std::clamp(y, 0, extH_ - 1)) * extW_ + std::clamp(x, 0, extW_ - 1)]);
+    vInter_.resize(n);
+    const int W = extW_, H = extH_;
+
+    // Runs fn(y0, y1) over row ranges on cfg_.threads threads.
+    auto parallelRows = [&](auto&& fn) {
+        const int parts = std::clamp(cfg_.threads, 1, H);
+        std::vector<std::thread> workers;
+        for (int p = 1; p < parts; ++p)
+            workers.emplace_back([&, p] { fn(p * H / parts, (p + 1) * H / parts); });
+        fn(0, H / parts);
+        for (auto& t : workers)
+            t.join();
     };
-    std::vector<int> v1(n); // vertical intermediate (unclipped)
-    for (int y = 0; y < extH_; ++y)
-        for (int x = 0; x < extW_; ++x) {
-            const int vv = F(x, y - 2) - 5 * F(x, y - 1) + 20 * F(x, y) + 20 * F(x, y + 1) - 5 * F(x, y + 2) + F(x, y + 3);
-            v1[size_t(y) * extW_ + x] = vv;
-            extV_[size_t(y) * extW_ + x] = clip1((vv + 16) >> 5);
-            const int bb = F(x - 2, y) - 5 * F(x - 1, y) + 20 * F(x, y) + 20 * F(x + 1, y) - 5 * F(x + 2, y) + F(x + 3, y);
-            extB_[size_t(y) * extW_ + x] = clip1((bb + 16) >> 5);
+    auto tap6 = [](int a, int b, int c, int d, int e, int f) { return a - 5 * b + 20 * c + 20 * d - 5 * e + f; };
+
+    parallelRows([&](int y0, int y1) {
+        for (int y = y0; y < y1; ++y) {
+            const uint8_t* src = &refY_[size_t(std::clamp(y - M, 0, padH_ - 1)) * padW_];
+            uint8_t* dst = &extF_[size_t(y) * W];
+            std::memset(dst, src[0], size_t(M));
+            std::memcpy(dst + M, src, size_t(padW_));
+            std::memset(dst + M + padW_, src[padW_ - 1], size_t(M));
         }
-    auto V1 = [&](int x, int y) { return v1[size_t(y) * extW_ + std::clamp(x, 0, extW_ - 1)]; };
-    for (int y = 0; y < extH_; ++y)
-        for (int x = 0; x < extW_; ++x) {
-            const int jj = V1(x - 2, y) - 5 * V1(x - 1, y) + 20 * V1(x, y) + 20 * V1(x + 1, y) - 5 * V1(x + 2, y) + V1(x + 3, y);
-            extJ_[size_t(y) * extW_ + x] = clip1((jj + 512) >> 10);
+    });
+    parallelRows([&](int y0, int y1) {
+        for (int y = y0; y < y1; ++y) {
+            const uint8_t* r[6];
+            for (int k = 0; k < 6; ++k)
+                r[k] = &extF_[size_t(std::clamp(y - 2 + k, 0, H - 1)) * W];
+            const uint8_t* row = r[2];
+            int* vi = &vInter_[size_t(y) * W];
+            uint8_t* vb = &extV_[size_t(y) * W];
+            uint8_t* hb = &extB_[size_t(y) * W];
+            for (int x = 0; x < W; ++x) {
+                const int vv = tap6(r[0][x], r[1][x], r[2][x], r[3][x], r[4][x], r[5][x]);
+                vi[x] = vv;
+                vb[x] = clip1((vv + 16) >> 5);
+                int bb;
+                if (x >= 2 && x + 3 < W)
+                    bb = tap6(row[x - 2], row[x - 1], row[x], row[x + 1], row[x + 2], row[x + 3]);
+                else
+                    bb = tap6(row[std::clamp(x - 2, 0, W - 1)], row[std::clamp(x - 1, 0, W - 1)], row[x],
+                              row[std::min(x + 1, W - 1)], row[std::min(x + 2, W - 1)], row[std::min(x + 3, W - 1)]);
+                hb[x] = clip1((bb + 16) >> 5);
+            }
         }
+    });
+    parallelRows([&](int y0, int y1) {
+        for (int y = y0; y < y1; ++y) {
+            const int* v = &vInter_[size_t(y) * W];
+            uint8_t* j = &extJ_[size_t(y) * W];
+            for (int x = 0; x < W; ++x) {
+                int jj;
+                if (x >= 2 && x + 3 < W)
+                    jj = tap6(v[x - 2], v[x - 1], v[x], v[x + 1], v[x + 2], v[x + 3]);
+                else
+                    jj = tap6(v[std::clamp(x - 2, 0, W - 1)], v[std::clamp(x - 1, 0, W - 1)], v[x],
+                              v[std::min(x + 1, W - 1)], v[std::min(x + 2, W - 1)], v[std::min(x + 3, W - 1)]);
+                j[x] = clip1((jj + 512) >> 10);
+            }
+        }
+    });
 }
 
 // Luma prediction for a 16x16 block at integer position (x0, y0) plus quarter offset (fx, fy), table 8-12.
