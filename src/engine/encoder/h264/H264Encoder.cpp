@@ -895,7 +895,7 @@ void Encoder::writeChroma(MbOut& o, int mbx, int mby, const ChromaMb& ch)
     std::memcpy(o.syn.chromaDc, ch.dc, sizeof(o.syn.chromaDc));
     if (ch.cbp) {
         for (int c = 0; c < 2; ++c)
-            writeResidualBlock(bw, ch.dc[c], 4, -1);
+            residual(bw, ch.dc[c], 4, -1);
     }
     const int chw = mbW_ * 2;
     for (int c = 0; c < 2; ++c) {
@@ -907,7 +907,7 @@ void Encoder::writeChroma(MbOut& o, int mbx, int mby, const ChromaMb& ch)
                 for (int k = 1; k < 16; ++k)
                     scan[k - 1] = ch.ac[c][blk][kZigzag[k]];
                 std::memcpy(o.syn.chromaAc[c][blk], scan, sizeof(scan));
-                total = writeResidualBlock(bw, scan, 15, chromaNc(c, bx, by));
+                total = residual(bw, scan, 15, chromaNc(c, bx, by));
             } else {
                 std::memset(o.syn.chromaAc[c][blk], 0, sizeof(o.syn.chromaAc[c][blk]));
             }
@@ -1009,7 +1009,7 @@ bool Encoder::encodeLuma16(MbOut& o, int mbx, int mby, const ChromaMb& ch)
         for (int k = 0; k < 16; ++k)
             scan[k] = dcLevel[kZigzag[k]];
         std::memcpy(o.syn.lumaDc, scan, sizeof(scan));
-        writeResidualBlock(bw, scan, 16, lumaNc(mbBx, mbBy));
+        residual(bw, scan, 16, lumaNc(mbBx, mbBy));
     }
     for (int blkIdx = 0; blkIdx < 16; ++blkIdx) {
         const int bx = mbBx + kBlkX[blkIdx], by = mbBy + kBlkY[blkIdx];
@@ -1020,7 +1020,7 @@ bool Encoder::encodeLuma16(MbOut& o, int mbx, int mby, const ChromaMb& ch)
             for (int k = 1; k < 16; ++k)
                 scan[k - 1] = acLevel[b][kZigzag[k]];
             std::memcpy(o.syn.luma[blkIdx], scan, sizeof(scan));
-            total = writeResidualBlock(bw, scan, 15, lumaNc(bx, by));
+            total = residual(bw, scan, 15, lumaNc(bx, by));
         } else {
             std::memset(o.syn.luma[blkIdx], 0, sizeof(o.syn.luma[blkIdx]));
         }
@@ -1154,7 +1154,7 @@ bool Encoder::encodeLuma4(MbOut& o, int mbx, int mby, const ChromaMb& ch)
             scan[k] = levels[blkIdx][kZigzag[k]];
         std::memcpy(o.syn.luma[blkIdx], scan, sizeof(scan));
         if (cbpLuma & (1 << (blkIdx >> 2)))
-            total = writeResidualBlock(bw, scan, 16, lumaNc(bx, by));
+            total = residual(bw, scan, 16, lumaNc(bx, by));
         nzLuma_[size_t(by) * lw + bx] = uint8_t(total);
     }
     writeChroma(o, mbx, mby, ch);
@@ -1988,7 +1988,7 @@ bool Encoder::encodeMbP(MbOut& result, int mbx, int mby)
                 for (int k = 0; k < 64; ++k)
                     total += levels8[blkIdx >> 2][k] != 0;
             } else if (cbpLuma & (1 << (blkIdx >> 2))) {
-                total = writeResidualBlock(interBits, scan, 16, lumaNc(bx, by));
+                total = residual(interBits, scan, 16, lumaNc(bx, by));
             }
             nzLuma_[size_t(by) * lw + bx] = uint8_t(std::min(total, 255));
         }
@@ -2581,6 +2581,18 @@ double Encoder::skipBits(int mbx, int mby)
     bool prev = false;
     cabacWriteMb(probe, mbx, mby, skip, prev);
     return probe.countedBits();
+}
+
+
+// A CAVLC residual block, or with CABAC only its coefficient count (the CAVLC bits are not used then).
+int Encoder::residual(BitWriter& bw, const int* coeffs, int count, int nC) const
+{
+    if (!useCabac())
+        return writeResidualBlock(bw, coeffs, count, nC);
+    int total = 0;
+    for (int i = 0; i < count; ++i)
+        total += coeffs[i] != 0;
+    return total;
 }
 
 } // namespace schneidi::h264

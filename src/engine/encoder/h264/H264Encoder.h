@@ -125,6 +125,7 @@ private:
     void cabacWriteMb(CabacEncoder& ce, int mbx, int mby, const MbSyntax& s, bool& prevQpNonZero);
     bool useCabac() const { return cfg_.cabac && cfg_.mode != IntraMode::Pcm; }
     bool useT8() const { return useCabac() && cfg_.transform8x8; }
+    int residual(BitWriter& bw, const int* coeffs, int count, int nC) const;
     double mbBits(const MbOut& o, int mbx, int mby, double cavlcBits);
     double skipBits(int mbx, int mby);
     std::vector<CabacEncoder*> cabacByTop_; // live CABAC engine of each slice (by first row), for bit estimates
