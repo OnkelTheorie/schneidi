@@ -12,6 +12,10 @@
 #include <cstring>
 #include <thread>
 
+#if defined(__SSE2__) || defined(_M_X64)
+#include <emmintrin.h>
+#endif
+
 namespace schneidi::h264 {
 namespace {
 
@@ -1096,6 +1100,27 @@ int decimateScore(const int* levels)
     return score;
 }
 
+// SAD of one row of 8 or 16 samples (SSE2 where available, plain C elsewhere).
+inline int sadRow(const uint8_t* a, const uint8_t* b, int w)
+{
+#if defined(__SSE2__) || defined(_M_X64)
+    if (w == 16) {
+        const __m128i s = _mm_sad_epu8(_mm_loadu_si128(reinterpret_cast<const __m128i*>(a)),
+                                       _mm_loadu_si128(reinterpret_cast<const __m128i*>(b)));
+        return _mm_cvtsi128_si32(s) + _mm_extract_epi16(s, 4);
+    }
+    if (w == 8) {
+        const __m128i s = _mm_sad_epu8(_mm_loadl_epi64(reinterpret_cast<const __m128i*>(a)),
+                                       _mm_loadl_epi64(reinterpret_cast<const __m128i*>(b)));
+        return _mm_cvtsi128_si32(s);
+    }
+#endif
+    int s = 0;
+    for (int x = 0; x < w; ++x)
+        s += std::abs(int(a[x]) - int(b[x]));
+    return s;
+}
+
 int median3(int a, int b, int c) { return std::max(std::min(a, b), std::min(std::max(a, b), c)); }
 
 } // namespace
@@ -1690,31 +1715,42 @@ void Encoder::mcLuma(int x0, int y0, int fx, int fy, int w, int h, uint8_t* out)
 {
     const int M = kMargin;
     const int W = extW_;
+    const size_t base = size_t(y0 + M) * W + size_t(x0 + M);
+    // Each quarter position is one plane or the rounded average of two (table 8-12):
+    // pick both sources once per block so the row loops stay simple.
+    const uint8_t* a = nullptr;
+    const uint8_t* b = nullptr;
+    const uint8_t* F = extF_.data() + base;
+    const uint8_t* B = extB_.data() + base;
+    const uint8_t* V = extV_.data() + base;
+    const uint8_t* J = extJ_.data() + base;
+    switch (fy * 4 + fx) {
+    case 0: a = F; break;
+    case 1: a = F; b = B; break;
+    case 2: a = B; break;
+    case 3: a = F + 1; b = B; break;
+    case 4: a = F; b = V; break;
+    case 5: a = B; b = V; break;
+    case 6: a = B; b = J; break;
+    case 7: a = B; b = V + 1; break;
+    case 8: a = V; break;
+    case 9: a = V; b = J; break;
+    case 10: a = J; break;
+    case 11: a = J; b = V + 1; break;
+    case 12: a = F + W; b = V; break;
+    case 13: a = V; b = B + W; break;
+    case 14: a = J; b = B + W; break;
+    default: a = V + 1; b = B + W; break;
+    }
     for (int y = 0; y < h; ++y) {
-        const size_t row = size_t(y0 + y + M) * W + size_t(x0 + M);
-        for (int x = 0; x < w; ++x) {
-            const size_t o = row + size_t(x);
-            const int G = extF_[o];
-            int v;
-            switch (fy * 4 + fx) {
-            case 0: v = G; break;                                        // G
-            case 1: v = (G + extB_[o] + 1) >> 1; break;                  // a
-            case 2: v = extB_[o]; break;                                 // b
-            case 3: v = (extF_[o + 1] + extB_[o] + 1) >> 1; break;       // c
-            case 4: v = (G + extV_[o] + 1) >> 1; break;                  // d
-            case 5: v = (extB_[o] + extV_[o] + 1) >> 1; break;           // e
-            case 6: v = (extB_[o] + extJ_[o] + 1) >> 1; break;           // f
-            case 7: v = (extB_[o] + extV_[o + 1] + 1) >> 1; break;       // g
-            case 8: v = extV_[o]; break;                                 // h
-            case 9: v = (extV_[o] + extJ_[o] + 1) >> 1; break;           // i
-            case 10: v = extJ_[o]; break;                                // j
-            case 11: v = (extJ_[o] + extV_[o + 1] + 1) >> 1; break;      // k
-            case 12: v = (extF_[o + W] + extV_[o] + 1) >> 1; break;      // n
-            case 13: v = (extV_[o] + extB_[o + W] + 1) >> 1; break;      // p
-            case 14: v = (extJ_[o] + extB_[o + W] + 1) >> 1; break;      // q
-            default: v = (extV_[o + 1] + extB_[o + W] + 1) >> 1; break;  // r
-            }
-            out[y * 16 + x] = uint8_t(v);
+        const uint8_t* ra = a + size_t(y) * W;
+        uint8_t* o = out + y * 16;
+        if (b) {
+            const uint8_t* rb = b + size_t(y) * W;
+            for (int x = 0; x < w; ++x)
+                o[x] = uint8_t((ra[x] + rb[x] + 1) >> 1);
+        } else {
+            std::memcpy(o, ra, size_t(w));
         }
     }
 }
@@ -1728,12 +1764,8 @@ int Encoder::sadPart(int mbx, int mby, int x4, int y4, int w4, int h4, int mvx, 
     int s = 0;
     if (!satd && !(mvx & 3) && !(mvy & 3)) {
         const uint8_t* ref = &extF_[size_t(py + (mvy >> 2) + kMargin) * extW_ + size_t(px + (mvx >> 2) + kMargin)];
-        for (int y = 0; y < h; ++y) {
-            const uint8_t* src = &srcY_[lo + size_t(y) * padW_];
-            const uint8_t* r = ref + size_t(y) * extW_;
-            for (int x = 0; x < w; ++x)
-                s += std::abs(int(src[x]) - int(r[x]));
-        }
+        for (int y = 0; y < h; ++y)
+            s += sadRow(&srcY_[lo + size_t(y) * padW_], ref + size_t(y) * extW_, w);
         return s;
     }
     uint8_t pred[256];
@@ -1750,11 +1782,8 @@ int Encoder::sadPart(int mbx, int mby, int x4, int y4, int w4, int h4, int mvx, 
             }
         return s;
     }
-    for (int y = 0; y < h; ++y) {
-        const uint8_t* src = &srcY_[lo + size_t(y) * padW_];
-        for (int x = 0; x < w; ++x)
-            s += std::abs(int(src[x]) - int(pred[y * 16 + x]));
-    }
+    for (int y = 0; y < h; ++y)
+        s += sadRow(&srcY_[lo + size_t(y) * padW_], pred + y * 16, w);
     return s;
 }
 
