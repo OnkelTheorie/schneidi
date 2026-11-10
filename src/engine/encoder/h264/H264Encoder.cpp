@@ -268,8 +268,8 @@ Encoder::Encoder(const EncoderConfig& config)
     refY_.resize(recY_.size());
     refU_.resize(recU_.size());
     refV_.resize(recV_.size());
-    mvX_.resize(size_t(mbW_) * mbH_);
-    mvY_.resize(mvX_.size());
+    mvX_.resize(nzLuma_.size());
+    mvY_.resize(nzLuma_.size());
     refIdx_.resize(mvX_.size());
     sliceTopOfRow_.resize(size_t(mbH_));
     if (cfg_.mode == IntraMode::Pcm)
@@ -1099,8 +1099,8 @@ struct Encoder::MbState {
     uint8_t nz[16];
     int8_t modes[16];
     uint8_t nzc[2][4];
-    int16_t mvx, mvy;
-    int8_t ref;
+    int16_t mvx[16], mvy[16];
+    int8_t ref[16];
 };
 
 void Encoder::saveMb(int mbx, int mby, MbState& s) const
@@ -1120,14 +1120,13 @@ void Encoder::saveMb(int mbx, int mby, MbState& s) const
             const size_t o = size_t(mby * 4 + y) * lw + mbx * 4 + x;
             s.nz[y * 4 + x] = nzLuma_[o];
             s.modes[y * 4 + x] = modes4x4_[o];
+            s.mvx[y * 4 + x] = mvX_[o];
+            s.mvy[y * 4 + x] = mvY_[o];
+            s.ref[y * 4 + x] = refIdx_[o];
         }
     for (int c = 0; c < 2; ++c)
         for (int b = 0; b < 4; ++b)
             s.nzc[c][b] = nzChroma_[c][size_t(mby * 2 + (b >> 1)) * chw + mbx * 2 + (b & 1)];
-    const size_t m = size_t(mby) * mbW_ + mbx;
-    s.mvx = mvX_[m];
-    s.mvy = mvY_[m];
-    s.ref = refIdx_[m];
 }
 
 void Encoder::restoreMb(int mbx, int mby, const MbState& s)
@@ -1147,14 +1146,13 @@ void Encoder::restoreMb(int mbx, int mby, const MbState& s)
             const size_t o = size_t(mby * 4 + y) * lw + mbx * 4 + x;
             nzLuma_[o] = s.nz[y * 4 + x];
             modes4x4_[o] = s.modes[y * 4 + x];
+            mvX_[o] = s.mvx[y * 4 + x];
+            mvY_[o] = s.mvy[y * 4 + x];
+            refIdx_[o] = s.ref[y * 4 + x];
         }
     for (int c = 0; c < 2; ++c)
         for (int b = 0; b < 4; ++b)
             nzChroma_[c][size_t(mby * 2 + (b >> 1)) * chw + mbx * 2 + (b & 1)] = s.nzc[c][b];
-    const size_t m = size_t(mby) * mbW_ + mbx;
-    mvX_[m] = s.mvx;
-    mvY_[m] = s.mvy;
-    refIdx_[m] = s.ref;
 }
 
 int64_t Encoder::mbSsd(int mbx, int mby) const
@@ -1179,58 +1177,80 @@ int64_t Encoder::mbSsd(int mbx, int mby) const
     return s;
 }
 
-// Motion vector prediction for a 16x16 partition (8.4.1.3).
-void Encoder::predictMv(int mbx, int mby, int& mvx, int& mvy) const
+// Neighbouring 4x4 block (x4, y4 relative to the macroblock, may be -1 or 4) for motion
+// vector prediction (8.4.1.3.2). `decoded` marks blocks of the current macroblock that
+// already have their vector.
+Encoder::MvNb Encoder::mvNeighbour(int mbx, int mby, int x4, int y4, const bool* decoded) const
 {
-    auto get = [&](int x, int y, bool& avail, int& ref, int& vx, int& vy) {
-        avail = x >= 0 && x < mbW_ && (y == mby || (y >= 0 && topMbAvailable(mby)));
-        ref = -1;
-        vx = vy = 0;
-        if (!avail)
-            return;
-        const size_t m = size_t(y) * mbW_ + x;
-        ref = refIdx_[m];
-        if (ref >= 0) {
-            vx = mvX_[m];
-            vy = mvY_[m];
-        }
-    };
-    bool aA, aB, aC;
-    int rA, rB, rC, ax, ay, bx, by, cx, cy;
-    get(mbx - 1, mby, aA, rA, ax, ay);
-    get(mbx, mby - 1, aB, rB, bx, by);
-    get(mbx + 1, mby - 1, aC, rC, cx, cy);
-    if (!aC)
-        get(mbx - 1, mby - 1, aC, rC, cx, cy); // D replaces C
-    if (!aB && !aC && aA) {
-        rB = rC = rA;
-        bx = cx = ax;
-        by = cy = ay;
+    MvNb n;
+    bool avail;
+    if (y4 < 0) {
+        const bool top = topMbAvailable(mby);
+        avail = top && (x4 < 0 ? mbx > 0 : x4 >= 4 ? mbx + 1 < mbW_ : true);
+    } else if (x4 < 0) {
+        avail = mbx > 0;
+    } else if (x4 >= 4) {
+        avail = false; // the macroblock to the right is not coded yet
+    } else {
+        avail = decoded[y4 * 4 + x4];
     }
-    const int matches = (rA == 0) + (rB == 0) + (rC == 0);
-    if (matches == 1) {
-        if (rA == 0) { mvx = ax; mvy = ay; }
-        else if (rB == 0) { mvx = bx; mvy = by; }
-        else { mvx = cx; mvy = cy; }
-        return;
+    n.avail = avail;
+    if (!avail)
+        return n;
+    const size_t o = size_t(mby * 4 + y4) * (mbW_ * 4) + size_t(mbx * 4 + x4);
+    n.ref = refIdx_[o];
+    if (n.ref >= 0) {
+        n.mvx = mvX_[o];
+        n.mvy = mvY_[o];
     }
-    mvx = median3(ax, bx, cx);
-    mvy = median3(ay, by, cy);
+    return n;
 }
 
-void Encoder::motionCompensate(int mbx, int mby, int mvx, int mvy, uint8_t* luma, uint8_t (*chroma)[64]) const
+// Motion vector prediction (8.4.1.3) for a partition at (x4, y4) of w4 x h4 blocks.
+// shape: 0 = median, 1/2 = 16x8 top/bottom, 3/4 = 8x16 left/right.
+void Encoder::predictMvPart(int mbx, int mby, int x4, int y4, int w4, int shape, const bool* decoded, int& mvx,
+                            int& mvy) const
 {
-    mcLuma(mbx * 16 + (mvx >> 2), mby * 16 + (mvy >> 2), mvx & 3, mvy & 3, luma);
+    MvNb a = mvNeighbour(mbx, mby, x4 - 1, y4, decoded);
+    MvNb b = mvNeighbour(mbx, mby, x4, y4 - 1, decoded);
+    MvNb c = mvNeighbour(mbx, mby, x4 + w4, y4 - 1, decoded);
+    if (!c.avail)
+        c = mvNeighbour(mbx, mby, x4 - 1, y4 - 1, decoded); // D replaces C
+    const MvNb* directional = shape == 1 ? &b : shape == 2 ? &a : shape == 3 ? &a : shape == 4 ? &c : nullptr;
+    if (directional && directional->ref == 0) {
+        mvx = directional->mvx;
+        mvy = directional->mvy;
+        return;
+    }
+    if (!b.avail && !c.avail && a.avail)
+        b = c = a;
+    const int matches = (a.ref == 0) + (b.ref == 0) + (c.ref == 0);
+    if (matches == 1) {
+        const MvNb& only = a.ref == 0 ? a : b.ref == 0 ? b : c;
+        mvx = only.mvx;
+        mvy = only.mvy;
+        return;
+    }
+    mvx = median3(a.mvx, b.mvx, c.mvx);
+    mvy = median3(a.mvy, b.mvy, c.mvy);
+}
+
+// Motion compensation of one partition into macroblock-sized prediction buffers.
+void Encoder::motionCompensate(int mbx, int mby, int x4, int y4, int w4, int h4, int mvx, int mvy, uint8_t* luma,
+                               uint8_t (*chroma)[64]) const
+{
+    mcLuma(mbx * 16 + x4 * 4 + (mvx >> 2), mby * 16 + y4 * 4 + (mvy >> 2), mvx & 3, mvy & 3, w4 * 4, h4 * 4,
+           luma + y4 * 4 * 16 + x4 * 4);
     // Chroma: eighth-pel bilinear (8.4.2.2.2).
     const int cw = padW_ / 2, chh = padH_ / 2;
     const int xF = mvx & 7, yF = mvy & 7;
     const std::vector<uint8_t>* planes[2] = {&refU_, &refV_};
     for (int c = 0; c < 2; ++c) {
         const std::vector<uint8_t>& p = *planes[c];
-        for (int y = 0; y < 8; ++y) {
+        for (int y = y4 * 2; y < (y4 + h4) * 2; ++y) {
             const int yi = mby * 8 + y + (mvy >> 3);
             const int y0 = std::clamp(yi, 0, chh - 1), y1 = std::clamp(yi + 1, 0, chh - 1);
-            for (int x = 0; x < 8; ++x) {
+            for (int x = x4 * 2; x < (x4 + w4) * 2; ++x) {
                 const int xi = mbx * 8 + x + (mvx >> 3);
                 const int x0 = std::clamp(xi, 0, cw - 1), x1 = std::clamp(xi + 1, 0, cw - 1);
                 const int A = p[size_t(y0) * cw + x0], B = p[size_t(y0) * cw + x1];
@@ -1244,29 +1264,20 @@ void Encoder::motionCompensate(int mbx, int mby, int mvx, int mvy, uint8_t* luma
 
 void Encoder::encodeMbP(BitWriter& bw, int mbx, int mby, int& skipRun)
 {
-    const size_t m = size_t(mby) * mbW_ + mbx;
     const int lw = mbW_ * 4, chw = mbW_ * 2;
     const int qp = cfg_.qp;
     const double lambda = 0.85 * std::pow(2.0, (qp - 12) / 3.0);
     const double lambdaSad = std::sqrt(lambda);
+    const size_t lumaOff = size_t(mby * 16) * padW_ + mbx * 16;
 
-    int mvpX, mvpY;
-    predictMv(mbx, mby, mvpX, mvpY);
-
-    // P_Skip vector (8.4.1.1).
-    int skipX = mvpX, skipY = mvpY;
-    if (mbx == 0 || !topMbAvailable(mby)) {
-        skipX = skipY = 0;
-    } else {
-        const size_t a = m - 1, b = m - size_t(mbW_);
-        if ((refIdx_[a] == 0 && mvX_[a] == 0 && mvY_[a] == 0) || (refIdx_[b] == 0 && mvX_[b] == 0 && mvY_[b] == 0))
-            skipX = skipY = 0;
-    }
-
-    auto setMbInfo = [&](int vx, int vy, int ref) {
-        mvX_[m] = int16_t(vx);
-        mvY_[m] = int16_t(vy);
-        refIdx_[m] = int8_t(ref);
+    auto setBlocks = [&](int x4, int y4, int w4, int h4, int vx, int vy, int ref) {
+        for (int y = y4; y < y4 + h4; ++y)
+            for (int x = x4; x < x4 + w4; ++x) {
+                const size_t o = size_t(mby * 4 + y) * lw + mbx * 4 + x;
+                mvX_[o] = int16_t(vx);
+                mvY_[o] = int16_t(vy);
+                refIdx_[o] = int8_t(ref);
+            }
     };
     auto clearNz = [&] {
         for (int y = 0; y < 4; ++y)
@@ -1280,13 +1291,24 @@ void Encoder::encodeMbP(BitWriter& bw, int mbx, int mby, int& skipRun)
                 nzChroma_[c][size_t(mby * 2 + (b >> 1)) * chw + mbx * 2 + (b & 1)] = 0;
     };
 
+    const bool none[16] = {};
+    int mvpX, mvpY;
+    predictMvPart(mbx, mby, 0, 0, 4, 0, none, mvpX, mvpY);
+
+    // P_Skip vector (8.4.1.1).
+    int skipX = mvpX, skipY = mvpY;
+    {
+        const MvNb a = mvNeighbour(mbx, mby, -1, 0, none), b = mvNeighbour(mbx, mby, 0, -1, none);
+        if (!a.avail || !b.avail || (a.ref == 0 && a.mvx == 0 && a.mvy == 0) || (b.ref == 0 && b.mvx == 0 && b.mvy == 0))
+            skipX = skipY = 0;
+    }
+
     // ---- Candidate 1: P_Skip.
     uint8_t lp[256], cp[2][64];
-    motionCompensate(mbx, mby, skipX, skipY, lp, cp);
+    motionCompensate(mbx, mby, 0, 0, 4, 4, skipX, skipY, lp, cp);
     {
-        const size_t lo = size_t(mby * 16) * padW_ + mbx * 16;
         for (int y = 0; y < 16; ++y)
-            std::memcpy(&recY_[lo + size_t(y) * padW_], lp + y * 16, 16);
+            std::memcpy(&recY_[lumaOff + size_t(y) * padW_], lp + y * 16, 16);
         const int cw = padW_ / 2;
         const size_t co = size_t(mby * 8) * cw + mbx * 8;
         for (int y = 0; y < 8; ++y) {
@@ -1295,77 +1317,141 @@ void Encoder::encodeMbP(BitWriter& bw, int mbx, int mby, int& skipRun)
         }
     }
     clearNz();
-    setMbInfo(skipX, skipY, 0);
+    setBlocks(0, 0, 4, 4, skipX, skipY, 0);
     const double costSkip = double(mbSsd(mbx, mby)) + lambda * 1.0;
     MbState skipState;
     saveMb(mbx, mby, skipState);
 
-    // ---- Candidate 2: P_L0_16x16 with a full-pel diamond search.
-    const size_t lumaOff = size_t(mby * 16) * padW_ + mbx * 16;
-    bool useSatd = false;
-    auto meCost = [&](int vx, int vy) { // quarter-pel units
-        return double(sadLuma(mbx, mby, vx, vy, useSatd)) + lambdaSad * (seBits(vx - mvpX) + seBits(vy - mvpY));
-    };
+    // ---- Candidate 2: inter with 16x16, 16x8, 8x16 or 8x8 partitions.
     const int range = 64 * 4;
-    int bestX = 0, bestY = 0;
-    double best = meCost(0, 0);
-    for (auto [cx, cy] : {std::pair{mvpX & ~3, mvpY & ~3}, std::pair{skipX & ~3, skipY & ~3}}) {
-        cx = std::clamp(cx, -range, range);
-        cy = std::clamp(cy, -range, range);
-        const double c = meCost(cx, cy);
-        if (c < best) {
-            best = c;
-            bestX = cx;
-            bestY = cy;
+    // Motion search for one partition: diamond full-pel, then half/quarter-pel with SATD.
+    auto search = [&](int x4, int y4, int w4, int h4, int pX, int pY, int& outX, int& outY) {
+        bool useSatd = false;
+        auto cost = [&](int vx, int vy) {
+            return double(sadPart(mbx, mby, x4, y4, w4, h4, vx, vy, useSatd)) +
+                   lambdaSad * (seBits(vx - pX) + seBits(vy - pY));
+        };
+        int bx = 0, by = 0;
+        double best = cost(0, 0);
+        for (auto [cx, cy] : {std::pair{pX & ~3, pY & ~3}, std::pair{skipX & ~3, skipY & ~3}}) {
+            cx = std::clamp(cx, -range, range);
+            cy = std::clamp(cy, -range, range);
+            const double c = cost(cx, cy);
+            if (c < best) {
+                best = c;
+                bx = cx;
+                by = cy;
+            }
+        }
+        for (int step : {32, 16, 8, 4}) {
+            for (int iter = 0; iter < 16; ++iter) {
+                bool moved = false;
+                static constexpr int kDir[4][2] = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
+                for (const auto& d : kDir) {
+                    const int cx = bx + d[0] * step, cy = by + d[1] * step;
+                    if (std::abs(cx) > range || std::abs(cy) > range)
+                        continue;
+                    const double c = cost(cx, cy);
+                    if (c < best) {
+                        best = c;
+                        bx = cx;
+                        by = cy;
+                        moved = true;
+                    }
+                }
+                if (!moved)
+                    break;
+            }
+        }
+        useSatd = true;
+        best = cost(bx, by);
+        for (int step : {2, 1}) {
+            const int cx0 = bx, cy0 = by;
+            for (int dy = -1; dy <= 1; ++dy)
+                for (int dx = -1; dx <= 1; ++dx) {
+                    if (!dx && !dy)
+                        continue;
+                    const int cx = cx0 + dx * step, cy = cy0 + dy * step;
+                    if (std::abs(cx) > range || std::abs(cy) > range)
+                        continue;
+                    const double c = cost(cx, cy);
+                    if (c < best) {
+                        best = c;
+                        bx = cx;
+                        by = cy;
+                    }
+                }
+        }
+        outX = bx;
+        outY = by;
+        return best;
+    };
+
+    struct Part {
+        int x4, y4, w4, h4, shape;
+    };
+    struct Layout {
+        int mbType;
+        int typeBits;
+        int count;
+        Part parts[4];
+    };
+    static constexpr Layout kLayouts[4] = {
+        {0, 1, 1, {{0, 0, 4, 4, 0}}},                                              // P_L0_16x16
+        {1, 3, 2, {{0, 0, 4, 2, 1}, {0, 2, 4, 2, 2}}},                             // P_L0_L0_16x8
+        {2, 3, 2, {{0, 0, 2, 4, 3}, {2, 0, 2, 4, 4}}},                             // P_L0_L0_8x16
+        {3, 9, 4, {{0, 0, 2, 2, 0}, {2, 0, 2, 2, 0}, {0, 2, 2, 2, 0}, {2, 2, 2, 2, 0}}}, // P_8x8, all P_L0_8x8
+    };
+    struct Choice {
+        double cost = 1e300;
+        int layout = 0;
+        int mv[4][2] = {};
+        int mvp[4][2] = {};
+    };
+    auto tryLayout = [&](int li) {
+        const Layout& L = kLayouts[li];
+        Choice ch;
+        ch.layout = li;
+        ch.cost = lambdaSad * L.typeBits;
+        bool decoded[16] = {};
+        for (int p = 0; p < L.count; ++p) {
+            const Part& P = L.parts[p];
+            int pX, pY;
+            predictMvPart(mbx, mby, P.x4, P.y4, P.w4, P.shape, decoded, pX, pY);
+            int vx, vy;
+            ch.cost += search(P.x4, P.y4, P.w4, P.h4, pX, pY, vx, vy);
+            ch.mv[p][0] = vx;
+            ch.mv[p][1] = vy;
+            ch.mvp[p][0] = pX;
+            ch.mvp[p][1] = pY;
+            setBlocks(P.x4, P.y4, P.w4, P.h4, vx, vy, 0);
+            for (int y = P.y4; y < P.y4 + P.h4; ++y)
+                for (int x = P.x4; x < P.x4 + P.w4; ++x)
+                    decoded[y * 4 + x] = true;
+        }
+        return ch;
+    };
+    Choice best = tryLayout(0);
+    const Choice split = tryLayout(3);
+    if (split.cost < best.cost) {
+        best = split;
+        for (int li : {1, 2}) {
+            const Choice c = tryLayout(li);
+            if (c.cost < best.cost)
+                best = c;
         }
     }
-    // Full-pel diamond, then half- and quarter-pel refinement on all 8 neighbours.
-    for (int step : {32, 16, 8, 4}) {
-        for (int iter = 0; iter < 16; ++iter) {
-            bool moved = false;
-            static constexpr int kDir[4][2] = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
-            for (const auto& d : kDir) {
-                const int cx = bestX + d[0] * step, cy = bestY + d[1] * step;
-                if (std::abs(cx) > range || std::abs(cy) > range)
-                    continue;
-                const double c = meCost(cx, cy);
-                if (c < best) {
-                    best = c;
-                    bestX = cx;
-                    bestY = cy;
-                    moved = true;
-                }
-            }
-            if (!moved)
-                break;
-        }
-    }
-    useSatd = true;
-    best = meCost(bestX, bestY);
-    for (int step : {2, 1}) {
-        const int cx0 = bestX, cy0 = bestY;
-        for (int dy = -1; dy <= 1; ++dy)
-            for (int dx = -1; dx <= 1; ++dx) {
-                if (!dx && !dy)
-                    continue;
-                const int cx = cx0 + dx * step, cy = cy0 + dy * step;
-                if (std::abs(cx) > range || std::abs(cy) > range)
-                    continue;
-                const double c = meCost(cx, cy);
-                if (c < best) {
-                    best = c;
-                    bestX = cx;
-                    bestY = cy;
-                }
-            }
-    }
-    const int mvx = bestX, mvy = bestY;
+    const Layout& layout = kLayouts[best.layout];
 
     BitWriter interBits;
     double costInter = 1e300;
     MbState interState;
     {
-        motionCompensate(mbx, mby, mvx, mvy, lp, cp);
+        for (int p = 0; p < layout.count; ++p) {
+            const Part& P = layout.parts[p];
+            motionCompensate(mbx, mby, P.x4, P.y4, P.w4, P.h4, best.mv[p][0], best.mv[p][1], lp, cp);
+            setBlocks(P.x4, P.y4, P.w4, P.h4, best.mv[p][0], best.mv[p][1], 0);
+        }
         const int qpDiv = qp / 6, qpMod = qp % 6;
         const int qbits = 15 + qpDiv;
         const int interOffset = (1 << qbits) / 6;
@@ -1412,11 +1498,15 @@ void Encoder::encodeMbP(BitWriter& bw, int mbx, int mby, int& skipRun)
         ChromaMb ch;
         analyseChroma(mbx, mby, ch, cp);
         clearNz();
-        setMbInfo(mvx, mvy, 0);
 
-        interBits.ue(0); // mb_type P_L0_16x16
-        interBits.se(mvx - mvpX);
-        interBits.se(mvy - mvpY);
+        interBits.ue(uint32_t(layout.mbType));
+        if (layout.mbType == 3)
+            for (int p = 0; p < 4; ++p)
+                interBits.ue(0); // sub_mb_type P_L0_8x8
+        for (int p = 0; p < layout.count; ++p) {
+            interBits.se(best.mv[p][0] - best.mvp[p][0]);
+            interBits.se(best.mv[p][1] - best.mvp[p][1]);
+        }
         const int cbp = cbpLuma | (ch.cbp << 4);
         interBits.ue(uint32_t(interCbpCode(cbp)));
         if (cbp)
@@ -1462,11 +1552,11 @@ void Encoder::encodeMbP(BitWriter& bw, int mbx, int mby, int& skipRun)
             }
             intraEstimate = std::min(intraEstimate, sum);
         }
-        // Note: recY_ of this macroblock holds the inter reconstruction here, but Intra 16x16
+        // recY_ of this macroblock holds the inter reconstruction here, but Intra 16x16
         // prediction only reads the neighbours above and to the left.
-        if (double(intraEstimate) < best * 2.0) {
+        if (double(intraEstimate) < best.cost * 2.0) {
             encodeMbIntra(intraBits, mbx, mby);
-            setMbInfo(0, 0, -1);
+            setBlocks(0, 0, 4, 4, 0, 0, -1);
             costIntra = double(mbSsd(mbx, mby)) + lambda * double(intraBits.bitCount() + seBits(0));
         }
     }
@@ -1485,7 +1575,6 @@ void Encoder::encodeMbP(BitWriter& bw, int mbx, int mby, int& skipRun)
         bw.append(intraBits); // state is already the intra one
     }
 }
-
 
 void Encoder::buildRefPlanes()
 {
@@ -1561,14 +1650,15 @@ void Encoder::buildRefPlanes()
     });
 }
 
-// Luma prediction for a 16x16 block at integer position (x0, y0) plus quarter offset (fx, fy), table 8-12.
-void Encoder::mcLuma(int x0, int y0, int fx, int fy, uint8_t* out) const
+// Luma prediction of a w x h block at integer position (x0, y0) plus quarter offset (fx, fy),
+// table 8-12. Output stride is 16.
+void Encoder::mcLuma(int x0, int y0, int fx, int fy, int w, int h, uint8_t* out) const
 {
     const int M = kMargin;
     const int W = extW_;
-    for (int y = 0; y < 16; ++y) {
+    for (int y = 0; y < h; ++y) {
         const size_t row = size_t(y0 + y + M) * W + size_t(x0 + M);
-        for (int x = 0; x < 16; ++x) {
+        for (int x = 0; x < w; ++x) {
             const size_t o = row + size_t(x);
             const int G = extF_[o];
             int v;
@@ -1595,41 +1685,44 @@ void Encoder::mcLuma(int x0, int y0, int fx, int fy, uint8_t* out) const
     }
 }
 
-int Encoder::sadLuma(int mbx, int mby, int mvx, int mvy, bool satd) const
+// SAD (full-pel fast path) or SATD of a partition against the reference.
+int Encoder::sadPart(int mbx, int mby, int x4, int y4, int w4, int h4, int mvx, int mvy, bool satd) const
 {
-    const size_t lo = size_t(mby * 16) * padW_ + mbx * 16;
+    const int px = mbx * 16 + x4 * 4, py = mby * 16 + y4 * 4;
+    const int w = w4 * 4, h = h4 * 4;
+    const size_t lo = size_t(py) * padW_ + px;
     int s = 0;
-    if (!satd && !(mvx & 3) && !(mvy & 3)) { // full-pel: read the reference directly
-        const uint8_t* ref = &extF_[size_t(mby * 16 + (mvy >> 2) + kMargin) * extW_ + size_t(mbx * 16 + (mvx >> 2) + kMargin)];
-        for (int y = 0; y < 16; ++y) {
+    if (!satd && !(mvx & 3) && !(mvy & 3)) {
+        const uint8_t* ref = &extF_[size_t(py + (mvy >> 2) + kMargin) * extW_ + size_t(px + (mvx >> 2) + kMargin)];
+        for (int y = 0; y < h; ++y) {
             const uint8_t* src = &srcY_[lo + size_t(y) * padW_];
             const uint8_t* r = ref + size_t(y) * extW_;
-            for (int x = 0; x < 16; ++x)
+            for (int x = 0; x < w; ++x)
                 s += std::abs(int(src[x]) - int(r[x]));
         }
         return s;
     }
     uint8_t pred[256];
-    mcLuma(mbx * 16 + (mvx >> 2), mby * 16 + (mvy >> 2), mvx & 3, mvy & 3, pred);
+    mcLuma(px + (mvx >> 2), py + (mvy >> 2), mvx & 3, mvy & 3, w, h, pred);
     if (satd) {
-        for (int b = 0; b < 16; ++b) {
-            const int ox = (b & 3) * 4, oy = (b >> 2) * 4;
-            int diff[16];
-            for (int y = 0; y < 4; ++y)
-                for (int x = 0; x < 4; ++x)
-                    diff[y * 4 + x] = int(srcY_[lo + size_t(oy + y) * padW_ + ox + x]) - int(pred[(oy + y) * 16 + ox + x]);
-            s += satd4x4(diff);
-        }
+        for (int by = 0; by < h4; ++by)
+            for (int bx = 0; bx < w4; ++bx) {
+                int diff[16];
+                for (int y = 0; y < 4; ++y)
+                    for (int x = 0; x < 4; ++x)
+                        diff[y * 4 + x] = int(srcY_[lo + size_t(by * 4 + y) * padW_ + bx * 4 + x]) -
+                                          int(pred[(by * 4 + y) * 16 + bx * 4 + x]);
+                s += satd4x4(diff);
+            }
         return s;
     }
-    for (int y = 0; y < 16; ++y) {
+    for (int y = 0; y < h; ++y) {
         const uint8_t* src = &srcY_[lo + size_t(y) * padW_];
-        for (int x = 0; x < 16; ++x)
+        for (int x = 0; x < w; ++x)
             s += std::abs(int(src[x]) - int(pred[y * 16 + x]));
     }
     return s;
 }
-
 
 namespace {
 
@@ -1704,10 +1797,10 @@ inline void filterLine(uint8_t* q, int step, int bS, int alpha, int beta, int in
 // Boundary strength between two 4x4 luma blocks (8.7.2.1), positions in 4x4 units.
 int Encoder::boundaryStrength(int pbx, int pby, int qbx, int qby, bool mbEdge) const
 {
-    const size_t mp = size_t(pby / 4) * mbW_ + pbx / 4, mq = size_t(qby / 4) * mbW_ + qbx / 4;
+    const int lw = mbW_ * 4;
+    const size_t mp = size_t(pby) * lw + pbx, mq = size_t(qby) * lw + qbx;
     if (refIdx_[mp] < 0 || refIdx_[mq] < 0)
         return mbEdge ? 4 : 3;
-    const int lw = mbW_ * 4;
     if (nzLuma_[size_t(pby) * lw + pbx] || nzLuma_[size_t(qby) * lw + qbx])
         return 2;
     if (std::abs(mvX_[mp] - mvX_[mq]) >= 4 || std::abs(mvY_[mp] - mvY_[mq]) >= 4)

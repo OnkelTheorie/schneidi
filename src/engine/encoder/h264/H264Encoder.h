@@ -1,6 +1,6 @@
 // schneidi's own H.264 encoder (prototype).
 // Pure C++20, no external libraries: YUV 4:2:0 8-bit frames in, Annex B H.264 out.
-// Current state: Baseline profile, CAVLC, intra-only (I_PCM, Intra 16x16, Intra 4x4).
+// Baseline profile, CAVLC: I (I_PCM, Intra 16x16, Intra 4x4) and P frames (16x16..8x8, quarter-pel).
 #pragma once
 
 #include "BitWriter.h"
@@ -65,14 +65,21 @@ private:
     void encodeLuma16(BitWriter& bw, int mbx, int mby, const ChromaMb& ch);
     void encodeLuma4(BitWriter& bw, int mbx, int mby, const ChromaMb& ch);
     void encodeMbP(BitWriter& bw, int mbx, int mby, int& skipRun);
-    void predictMv(int mbx, int mby, int& mvx, int& mvy) const;
-    void motionCompensate(int mbx, int mby, int mvx, int mvy, uint8_t* luma, uint8_t (*chroma)[64]) const;
+    struct MvNb {
+        bool avail = false;
+        int ref = -1;
+        int mvx = 0, mvy = 0;
+    };
+    MvNb mvNeighbour(int mbx, int mby, int x4, int y4, const bool* decoded) const;
+    void predictMvPart(int mbx, int mby, int x4, int y4, int w4, int shape, const bool* decoded, int& mvx, int& mvy) const;
+    void motionCompensate(int mbx, int mby, int x4, int y4, int w4, int h4, int mvx, int mvy, uint8_t* luma,
+                          uint8_t (*chroma)[64]) const;
     int64_t mbSsd(int mbx, int mby) const;
     void buildRefPlanes();
     void deblockPicture();
     int boundaryStrength(int pbx, int pby, int qbx, int qby, bool mbEdge) const;
-    void mcLuma(int x0, int y0, int fx, int fy, uint8_t* out) const;
-    int sadLuma(int mbx, int mby, int mvx, int mvy, bool satd) const;
+    void mcLuma(int x0, int y0, int fx, int fy, int w, int h, uint8_t* out) const;
+    int sadPart(int mbx, int mby, int x4, int y4, int w4, int h4, int mvx, int mvy, bool satd) const;
     struct MbState;
     void saveMb(int mbx, int mby, MbState& s) const;
     void restoreMb(int mbx, int mby, const MbState& s);
@@ -91,8 +98,8 @@ private:
     std::vector<int8_t> modes4x4_;     // Intra 4x4 mode per 4x4 block, -1 = macroblock not Intra 4x4
     std::vector<uint8_t> nzChroma_[2]; // TotalCoeff per 4x4 chroma AC block
     std::vector<uint8_t> refY_, refU_, refV_; // previous reconstruction (reference for P)
-    std::vector<int16_t> mvX_, mvY_;        // per macroblock, quarter-pel units
-    std::vector<int8_t> refIdx_;            // per macroblock: 0 inter, -1 intra
+    std::vector<int16_t> mvX_, mvY_;        // per 4x4 block, quarter-pel units
+    std::vector<int8_t> refIdx_;            // per 4x4 block: 0 inter, -1 intra
     // Reference luma with a margin: full-pel, horizontal half, vertical half, centre half (8.4.2.2.1).
     static constexpr int kMargin = 96;
     int extW_ = 0, extH_ = 0;
