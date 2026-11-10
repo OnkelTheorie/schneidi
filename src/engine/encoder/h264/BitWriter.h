@@ -47,6 +47,14 @@ public:
         u(1, 1);
         alignZero();
     }
+    // Appends everything another writer holds (bit-exact, any alignment).
+    void append(const BitWriter& other)
+    {
+        for (uint8_t byte : other.bytes_)
+            u(byte, 8);
+        if (other.pending_)
+            u(uint32_t(other.acc_ & ((uint64_t(1) << other.pending_) - 1)), other.pending_);
+    }
     size_t bitCount() const { return bytes_.size() * 8 + size_t(pending_); }
 
     // Only valid when byte aligned.

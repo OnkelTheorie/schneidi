@@ -1,6 +1,6 @@
 // schneidi's own H.264 encoder (prototype).
 // Pure C++20, no external libraries: YUV 4:2:0 8-bit frames in, Annex B H.264 out.
-// Current state: Baseline profile, CAVLC, intra-only (I_PCM or Intra 16x16).
+// Current state: Baseline profile, CAVLC, intra-only (I_PCM, Intra 16x16, Intra 4x4).
 #pragma once
 
 #include "BitWriter.h"
@@ -13,13 +13,15 @@ namespace schneidi::h264 {
 enum class IntraMode {
     Pcm,     // raw samples, only to prove the bitstream structure
     Intra16, // Intra 16x16 prediction + 4x4 transform + CAVLC
+    Intra4,  // Intra 4x4 prediction (9 directions per 4x4 block)
+    Auto,    // per macroblock the cheaper of Intra16 and Intra4 (rate-distortion)
 };
 
 struct EncoderConfig {
     int width = 0;  // even
     int height = 0; // even
     int qp = 26;    // 0..51 (values below ~10 may clip levels)
-    IntraMode mode = IntraMode::Intra16;
+    IntraMode mode = IntraMode::Auto;
     bool deblock = true; // decoder-side loop filter (does not affect intra prediction)
 };
 
@@ -50,7 +52,12 @@ public:
 private:
     void loadSource(const Picture& picture);
     void encodeMbPcm(BitWriter& bw, int mbx, int mby);
-    void encodeMbIntra16(BitWriter& bw, int mbx, int mby);
+    struct ChromaMb;
+    void encodeMbIntra(BitWriter& bw, int mbx, int mby);
+    void analyseChroma(int mbx, int mby, ChromaMb& ch);
+    void writeChroma(BitWriter& bw, int mbx, int mby, const ChromaMb& ch);
+    void encodeLuma16(BitWriter& bw, int mbx, int mby, const ChromaMb& ch);
+    void encodeLuma4(BitWriter& bw, int mbx, int mby, const ChromaMb& ch);
     int lumaNc(int bx, int by) const;
     int chromaNc(int c, int bx, int by) const;
 
@@ -60,6 +67,7 @@ private:
     std::vector<uint8_t> srcY_, srcU_, srcV_;
     std::vector<uint8_t> recY_, recU_, recV_;
     std::vector<uint8_t> nzLuma_;      // TotalCoeff per 4x4 luma block
+    std::vector<int8_t> modes4x4_;     // Intra 4x4 mode per 4x4 block, -1 = macroblock not Intra 4x4
     std::vector<uint8_t> nzChroma_[2]; // TotalCoeff per 4x4 chroma AC block
 };
 

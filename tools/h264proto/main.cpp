@@ -1,6 +1,6 @@
 // h264-proto: test driver for schneidi's own H.264 encoder.
 //   h264-proto selftest
-//   h264-proto encode <in.yuv> <width> <height> <out.h264> [--qp N] [--mode pcm|i16]
+//   h264-proto encode <in.yuv> <width> <height> <out.h264> [--qp N] [--mode pcm|i16|i4|auto]
 //                     [--frames N] [--no-deblock] [--recon out.yuv]
 // Input is raw yuv420p. Prints size, speed and PSNR of the encoder's reconstruction.
 #include "engine/encoder/h264/Cavlc.h"
@@ -38,7 +38,7 @@ int main(int argc, char** argv)
     }
     if (argc < 6 || std::strcmp(argv[1], "encode") != 0) {
         std::fprintf(stderr, "usage: h264-proto selftest | encode <in.yuv> <w> <h> <out.h264> [--qp N] "
-                             "[--mode pcm|i16] [--frames N] [--no-deblock] [--recon out.yuv]\n");
+                             "[--mode pcm|i16|i4|auto] [--frames N] [--no-deblock] [--recon out.yuv]\n");
         return 2;
     }
     EncoderConfig cfg;
@@ -53,7 +53,10 @@ int main(int argc, char** argv)
         if (a == "--qp" && i + 1 < argc)
             cfg.qp = std::atoi(argv[++i]);
         else if (a == "--mode" && i + 1 < argc)
-            cfg.mode = std::string(argv[++i]) == "pcm" ? IntraMode::Pcm : IntraMode::Intra16;
+            {
+                const std::string m = argv[++i];
+                cfg.mode = m == "pcm" ? IntraMode::Pcm : m == "i16" ? IntraMode::Intra16 : m == "i4" ? IntraMode::Intra4 : IntraMode::Auto;
+            }
         else if (a == "--frames" && i + 1 < argc)
             maxFrames = std::atoi(argv[++i]);
         else if (a == "--no-deblock")
