@@ -5,10 +5,13 @@
 
 #include "BitWriter.h"
 
+#include <array>
 #include <cstdint>
 #include <vector>
 
 namespace schneidi::h264 {
+
+class CabacEncoder;
 
 enum class IntraMode {
     Pcm,     // raw samples, only to prove the bitstream structure
@@ -31,6 +34,7 @@ struct EncoderConfig {
     double aqStrength = 1.0; // adaptive quantisation (finer QP on flat areas); 0 = off
     int refs = 1;        // reference pictures for P frames (1..16)
     bool sceneCut = true; // keyframe on detected scene changes
+    bool cabac = true;    // CABAC entropy coding (Main profile); false = CAVLC (Baseline)
 };
 
 struct Picture {
@@ -115,6 +119,13 @@ private:
     void buildRefPlanes(RefPic& R);
     void deblockPicture();
     void deblockMb(int mbx, int mby);
+    void cabacWriteMb(CabacEncoder& ce, int mbx, int mby, const MbSyntax& s, bool& prevQpNonZero);
+    bool useCabac() const { return cfg_.cabac && cfg_.mode != IntraMode::Pcm; }
+    // CABAC neighbour state (written in slice order by cabacWriteMb).
+    std::vector<uint8_t> cabKind_, cabCbp_, cabChromaMode_, cabCbfDc_; // per macroblock
+    std::vector<uint8_t> cabCbfLuma_;                                  // per 4x4 luma block
+    std::vector<std::array<uint8_t, 2>> cabMvd_;                       // |mvd| per 4x4 block, x and y
+    std::vector<uint8_t> cabCbfChroma_[2];                             // per 4x4 chroma block
     int boundaryStrength(int pbx, int pby, int qbx, int qby, bool mbEdge) const;
     void mcLuma(const RefPic& R, int x0, int y0, int fx, int fy, int w, int h, uint8_t* out) const;
     int sadPart(const RefPic& R, int mbx, int mby, int x4, int y4, int w4, int h4, int mvx, int mvy, bool satd) const;

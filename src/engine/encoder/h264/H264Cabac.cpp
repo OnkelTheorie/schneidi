@@ -1,0 +1,373 @@
+// schneidi's own H.264 encoder: CABAC macroblock layer (ITU-T H.264 clauses 9.3.2 and 9.3.3.1).
+// Serialises the syntax elements the macroblock coders chose; context selection follows the
+// neighbour rules of 9.3.3.1.1 (availability stops at slice edges like everywhere else).
+#include "Cabac.h"
+#include "H264Encoder.h"
+
+#include <algorithm>
+#include <cstdlib>
+
+namespace schneidi::h264 {
+namespace {
+
+constexpr int kBlkX[16] = {0, 1, 0, 1, 2, 3, 2, 3, 0, 1, 0, 1, 2, 3, 2, 3};
+constexpr int kBlkY[16] = {0, 0, 1, 1, 0, 0, 1, 1, 2, 2, 3, 3, 2, 2, 3, 3};
+
+// Table 9-31: offsets per ctxBlockCat (0 luma DC, 1 luma AC, 2 luma 4x4, 3 chroma DC, 4 chroma AC).
+constexpr int kCbfOffset[5] = {0, 4, 8, 12, 16};
+constexpr int kSigOffset[5] = {0, 15, 29, 44, 47};
+constexpr int kAbsOffset[5] = {0, 10, 20, 30, 39};
+
+// k-th order Exp-Golomb suffix in bypass bins (9.3.2.3).
+void expGolombBypass(CabacEncoder& ce, unsigned v, int k)
+{
+    for (;;) {
+        if (v >= (1u << k)) {
+            ce.bypass(1);
+            v -= 1u << k;
+            ++k;
+        } else {
+            ce.bypass(0);
+            while (k--)
+                ce.bypass(int((v >> k) & 1));
+            return;
+        }
+    }
+}
+
+// residual_block_cabac (7.3.5.3.3) for one coefficient list; returns coded_block_flag.
+int residualBlock(CabacEncoder& ce, int cat, const int* list, int count, int cbfInc)
+{
+    int last = -1;
+    for (int i = 0; i < count; ++i)
+        if (list[i])
+            last = i;
+    ce.decision(85 + kCbfOffset[cat] + cbfInc, last >= 0);
+    if (last < 0)
+        return 0;
+    const int sigBase = 105 + kSigOffset[cat], lastBase = 166 + kSigOffset[cat], absBase = 227 + kAbsOffset[cat];
+    for (int i = 0; i < count - 1; ++i) {
+        const int inc = cat == 3 ? std::min(i, 2) : i;
+        const int sig = list[i] != 0;
+        ce.decision(sigBase + inc, sig);
+        if (sig) {
+            ce.decision(lastBase + inc, i == last);
+            if (i == last)
+                break;
+        }
+    }
+    int eq1 = 0, gt1 = 0;
+    for (int i = last; i >= 0; --i) {
+        if (!list[i])
+            continue;
+        const int a = std::abs(list[i]) - 1; // coeff_abs_level_minus1: UEG0, uCoff 14
+        const int ctx0 = absBase + (gt1 ? 0 : std::min(4, 1 + eq1));
+        const int ctxN = absBase + 5 + std::min(4 - (cat == 3 ? 1 : 0), gt1);
+        const int prefix = std::min(a, 14);
+        ce.decision(ctx0, prefix > 0);
+        for (int b = 1; b < prefix; ++b)
+            ce.decision(ctxN, 1);
+        if (prefix > 0 && prefix < 14)
+            ce.decision(ctxN, 0);
+        if (a >= 14)
+            expGolombBypass(ce, unsigned(a - 14), 0);
+        ce.bypass(list[i] < 0); // coeff_sign_flag
+        if (a == 0)
+            ++eq1;
+        else
+            ++gt1;
+    }
+    return 1;
+}
+
+enum : uint8_t { kKindSkip = 0, kKindI16 = 1, kKindI4 = 2, kKindInter = 3 };
+
+} // namespace
+
+void Encoder::cabacWriteMb(CabacEncoder& ce, int mbx, int mby, const MbSyntax& s, bool& prevQpNonZero)
+{
+    using K = MbSyntax::Kind;
+    const size_t m = size_t(mby) * mbW_ + mbx;
+    const bool hasL = mbx > 0, hasT = topMbAvailable(mby);
+    const size_t mL = m - 1, mT = m - size_t(mbW_);
+    const int lw = mbW_ * 4, chw = mbW_ * 2;
+    const bool intra = s.kind == K::I16 || s.kind == K::I4;
+    // Neighbour macroblock of a luma 4x4 position (picture coordinates in 4x4 units); -1 = unavailable.
+    auto mbOf4 = [&](int bx, int by) -> long {
+        if (bx < 0 || by < 0)
+            return -1;
+        const int nx = bx >> 2, ny = by >> 2;
+        if (ny != mby && !topMbAvailable(mby))
+            return -1;
+        return long(ny) * mbW_ + nx;
+    };
+
+    // mb_skip_flag (P slices)
+    if (pSlice_) {
+        const int inc = (hasL && cabKind_[mL] != kKindSkip) + (hasT && cabKind_[mT] != kKindSkip);
+        ce.decision(11 + inc, s.kind == K::Skip);
+    }
+    if (s.kind == K::Skip) {
+        cabKind_[m] = kKindSkip;
+        cabCbp_[m] = 0;
+        cabChromaMode_[m] = 0;
+        cabCbfDc_[m] = 0;
+        for (int y = 0; y < 4; ++y)
+            for (int x = 0; x < 4; ++x) {
+                const size_t o = size_t(mby * 4 + y) * lw + mbx * 4 + x;
+                cabCbfLuma_[o] = 0;
+                cabMvd_[o][0] = cabMvd_[o][1] = 0;
+            }
+        for (int c = 0; c < 2; ++c)
+            for (int b = 0; b < 4; ++b)
+                cabCbfChroma_[c][size_t(mby * 2 + (b >> 1)) * chw + mbx * 2 + (b & 1)] = 0;
+        prevQpNonZero = false;
+        return;
+    }
+    cabKind_[m] = s.kind == K::I16 ? kKindI16 : s.kind == K::I4 ? kKindI4 : kKindInter;
+
+    // mb_type (9.3.2.5, tables 9-36/9-37)
+    if (intra) {
+        int base = 3;
+        if (pSlice_) {
+            ce.decision(14, 1); // prefix: intra macroblock in a P slice
+            base = 17;
+        }
+        const int inc0 = pSlice_ ? 0 : (hasL && cabKind_[mL] != kKindI4) + (hasT && cabKind_[mT] != kKindI4);
+        if (s.kind == K::I4) {
+            ce.decision(base + inc0, 0);
+        } else {
+            ce.decision(base + inc0, 1);
+            ce.terminate(0); // not I_PCM
+            const int ctxLuma = pSlice_ ? 18 : 6, ctxChroma = pSlice_ ? 19 : 7;
+            const int ctxChroma2 = pSlice_ ? 19 : 8, ctxMode0 = pSlice_ ? 20 : 9, ctxMode1 = pSlice_ ? 20 : 10;
+            ce.decision(ctxLuma, s.cbpLuma != 0);
+            ce.decision(ctxChroma, s.cbpChroma != 0);
+            if (s.cbpChroma)
+                ce.decision(ctxChroma2, s.cbpChroma == 2);
+            ce.decision(ctxMode0, (s.i16Mode >> 1) & 1);
+            ce.decision(ctxMode1, s.i16Mode & 1);
+        }
+    } else {
+        static constexpr int kBins[4][3] = {{0, 0, 0}, {0, 1, 1}, {0, 1, 0}, {0, 0, 1}};
+        const int* b = kBins[s.interType];
+        ce.decision(14, b[0]);
+        ce.decision(15, b[1]);
+        ce.decision(b[1] != 1 ? 16 : 17, b[2]);
+        if (s.interType == 3)
+            for (int p = 0; p < 4; ++p)
+                ce.decision(21, 1); // sub_mb_type P_L0_8x8
+    }
+
+    // mb_pred: intra modes
+    if (s.kind == K::I4) {
+        for (int blk = 0; blk < 16; ++blk) {
+            const bool same = s.i4Mode[blk] == s.i4Pred[blk];
+            ce.decision(68, same);
+            if (!same) {
+                const int rem = s.i4Mode[blk] < s.i4Pred[blk] ? s.i4Mode[blk] : s.i4Mode[blk] - 1;
+                for (int bit = 0; bit < 3; ++bit)
+                    ce.decision(69, (rem >> bit) & 1);
+            }
+        }
+    }
+    if (intra) {
+        auto cond = [&](bool avail, size_t n) {
+            return avail && (cabKind_[n] == kKindI16 || cabKind_[n] == kKindI4) && cabChromaMode_[n] != 0;
+        };
+        const int v = s.chromaMode;
+        ce.decision(64 + cond(hasL, mL) + cond(hasT, mT), v > 0);
+        if (v > 0)
+            ce.decision(67, v > 1);
+        if (v > 1)
+            ce.decision(67, v > 2);
+        cabChromaMode_[m] = uint8_t(v);
+    } else {
+        cabChromaMode_[m] = 0;
+    }
+
+    // mb_pred / sub_mb_pred: ref_idx_l0 and mvd_l0
+    struct Part {
+        int x4, y4, w4, h4;
+    };
+    static constexpr Part kParts[4][4] = {
+        {{0, 0, 4, 4}},
+        {{0, 0, 4, 2}, {0, 2, 4, 2}},
+        {{0, 0, 2, 4}, {2, 0, 2, 4}},
+        {{0, 0, 2, 2}, {2, 0, 2, 2}, {0, 2, 2, 2}, {2, 2, 2, 2}},
+    };
+    static constexpr int kPartCount[4] = {1, 2, 2, 4};
+    for (int y = 0; y < 4; ++y)
+        for (int x = 0; x < 4; ++x) {
+            const size_t o = size_t(mby * 4 + y) * lw + mbx * 4 + x;
+            cabMvd_[o][0] = cabMvd_[o][1] = 0;
+        }
+    if (!intra) {
+        const int count = kPartCount[s.interType];
+        // Neighbour 4x4 block info for ref_idx / mvd contexts: inter macroblocks only.
+        auto interNeighbour = [&](int bx, int by, size_t& o) {
+            const long n = mbOf4(bx, by);
+            if (n < 0)
+                return false;
+            if (size_t(n) != m && cabKind_[size_t(n)] != kKindInter)
+                return false;
+            o = size_t(by) * lw + size_t(bx);
+            return true;
+        };
+        if (activeRefs_ > 1) {
+            for (int p = 0; p < count; ++p) {
+                const Part& P = kParts[s.interType][p];
+                const int bx = mbx * 4 + P.x4, by = mby * 4 + P.y4;
+                size_t o;
+                const int a = interNeighbour(bx - 1, by, o) && refIdx_[o] > 0;
+                const int b = interNeighbour(bx, by - 1, o) && refIdx_[o] > 0;
+                const int r = s.ref[p];
+                for (int i = 0; i <= r; ++i) {
+                    const int ctx = i == 0 ? 54 + a + 2 * b : i == 1 ? 58 : 59;
+                    ce.decision(ctx, i < r);
+                }
+            }
+        }
+        for (int p = 0; p < count; ++p) {
+            const Part& P = kParts[s.interType][p];
+            const int bx = mbx * 4 + P.x4, by = mby * 4 + P.y4;
+            for (int c = 0; c < 2; ++c) {
+                size_t o;
+                int sum = 0;
+                if (interNeighbour(bx - 1, by, o))
+                    sum += cabMvd_[o][c];
+                if (interNeighbour(bx, by - 1, o))
+                    sum += cabMvd_[o][c];
+                const int inc = sum < 3 ? 0 : sum > 32 ? 2 : 1;
+                const int base = c ? 47 : 40;
+                const int v = s.mvd[p][c], av = std::abs(v);
+                const int prefix = std::min(av, 9); // UEG3, uCoff 9
+                for (int i = 0; i < prefix; ++i)
+                    ce.decision(base + (i == 0 ? inc : std::min(i + 2, 6)), 1);
+                if (av < 9)
+                    ce.decision(base + (prefix == 0 ? inc : std::min(prefix + 2, 6)), 0);
+                else
+                    expGolombBypass(ce, unsigned(av - 9), 3);
+                if (av)
+                    ce.bypass(v < 0);
+                const uint8_t stored = uint8_t(std::min(av, 255));
+                for (int y = P.y4; y < P.y4 + P.h4; ++y)
+                    for (int x = P.x4; x < P.x4 + P.w4; ++x)
+                        cabMvd_[size_t(mby * 4 + y) * lw + mbx * 4 + x][c] = stored;
+            }
+        }
+    }
+
+    // coded_block_pattern (not for Intra 16x16)
+    if (s.kind != K::I16) {
+        for (int b8 = 0; b8 < 4; ++b8) {
+            const int x8 = b8 & 1, y8 = b8 >> 1;
+            auto cond = [&](bool inside, int b8Inside, bool avail, size_t n, int b8N) {
+                if (inside)
+                    return ((s.cbpLuma >> b8Inside) & 1) == 0 ? 1 : 0;
+                if (!avail)
+                    return 0;
+                if (cabKind_[n] == kKindSkip)
+                    return 1;
+                return ((cabCbp_[n] >> b8N) & 1) == 0 ? 1 : 0;
+            };
+            const int a = cond(x8 == 1, b8 - 1, hasL, mL, b8 + 1);
+            const int b = cond(y8 == 1, b8 - 2, hasT, mT, b8 + 2);
+            ce.decision(73 + a + 2 * b, (s.cbpLuma >> b8) & 1);
+        }
+        auto condC = [&](bool avail, size_t n, int need) {
+            if (!avail || cabKind_[n] == kKindSkip)
+                return 0;
+            const int cc = cabCbp_[n] >> 4;
+            return need == 1 ? (cc != 0 ? 1 : 0) : (cc == 2 ? 1 : 0);
+        };
+        ce.decision(77 + condC(hasL, mL, 1) + 2 * condC(hasT, mT, 1), s.cbpChroma != 0);
+        if (s.cbpChroma)
+            ce.decision(81 + condC(hasL, mL, 2) + 2 * condC(hasT, mT, 2), s.cbpChroma == 2);
+    }
+    cabCbp_[m] = uint8_t(s.cbpLuma | (s.cbpChroma << 4));
+
+    // mb_qp_delta
+    if (s.kind == K::I16 || s.cbpLuma || s.cbpChroma) {
+        const int v = s.qpDelta;
+        const int k = v > 0 ? 2 * v - 1 : -2 * v;
+        for (int i = 0; i <= k; ++i)
+            ce.decision(i == 0 ? 60 + (prevQpNonZero ? 1 : 0) : i == 1 ? 62 : 63, i < k);
+        prevQpNonZero = v != 0;
+    } else {
+        prevQpNonZero = false;
+    }
+
+    // residual
+    // coded_block_flag condition of a neighbouring luma 4x4 block (9.3.3.1.1.9).
+    auto lumaCbfCond = [&](int bx, int by) {
+        const long n = mbOf4(bx, by);
+        if (n < 0)
+            return intra ? 1 : 0;
+        const int b8 = ((by & 3) >> 1) * 2 + ((bx & 3) >> 1);
+        if (size_t(n) == m)
+            return ((s.cbpLuma >> b8) & 1) ? int(cabCbfLuma_[size_t(by) * lw + bx]) : 0;
+        if (cabKind_[size_t(n)] == kKindSkip || ((cabCbp_[size_t(n)] >> b8) & 1) == 0)
+            return 0;
+        return int(cabCbfLuma_[size_t(by) * lw + bx]);
+    };
+    uint8_t dcFlags = 0;
+    if (s.kind == K::I16) {
+        auto cond = [&](bool avail, size_t n) {
+            if (!avail)
+                return 1; // current macroblock is intra
+            return cabKind_[n] == kKindI16 ? (cabCbfDc_[n] & 1) : 0;
+        };
+        dcFlags |= uint8_t(residualBlock(ce, 0, s.lumaDc, 16, cond(hasL, mL) + 2 * cond(hasT, mT)));
+    }
+    for (int blk = 0; blk < 16; ++blk) {
+        const int bx = mbx * 4 + kBlkX[blk], by = mby * 4 + kBlkY[blk];
+        uint8_t& flag = cabCbfLuma_[size_t(by) * lw + bx];
+        flag = 0;
+        if (!((s.cbpLuma >> (blk >> 2)) & 1))
+            continue;
+        const int inc = lumaCbfCond(bx - 1, by) + 2 * lumaCbfCond(bx, by - 1);
+        if (s.kind == K::I16)
+            flag = uint8_t(residualBlock(ce, 1, s.luma[blk], 15, inc));
+        else
+            flag = uint8_t(residualBlock(ce, 2, s.luma[blk], 16, inc));
+    }
+    if (s.cbpChroma) {
+        for (int c = 0; c < 2; ++c) {
+            auto cond = [&](bool avail, size_t n) {
+                if (!avail)
+                    return intra ? 1 : 0;
+                if (cabKind_[n] == kKindSkip || (cabCbp_[n] >> 4) == 0)
+                    return 0;
+                return (cabCbfDc_[n] >> (1 + c)) & 1;
+            };
+            dcFlags |= uint8_t(residualBlock(ce, 3, s.chromaDc[c], 4, cond(hasL, mL) + 2 * cond(hasT, mT)) << (1 + c));
+        }
+    }
+    cabCbfDc_[m] = dcFlags;
+    for (int c = 0; c < 2; ++c) {
+        for (int blk = 0; blk < 4; ++blk) {
+            const int bx = mbx * 2 + (blk & 1), by = mby * 2 + (blk >> 1);
+            uint8_t& flag = cabCbfChroma_[c][size_t(by) * chw + bx];
+            flag = 0;
+            if (s.cbpChroma != 2)
+                continue;
+            auto cond = [&](int nx, int ny) {
+                if (nx < 0 || ny < 0)
+                    return intra ? 1 : 0;
+                const int mx = nx >> 1, my = ny >> 1;
+                if (my != mby && !topMbAvailable(mby))
+                    return intra ? 1 : 0;
+                const size_t n = size_t(my) * mbW_ + mx;
+                if (n == m)
+                    return int(cabCbfChroma_[c][size_t(ny) * chw + nx]);
+                if (cabKind_[n] == kKindSkip || (cabCbp_[n] >> 4) != 2)
+                    return 0;
+                return int(cabCbfChroma_[c][size_t(ny) * chw + nx]);
+            };
+            flag = uint8_t(residualBlock(ce, 4, s.chromaAc[c][blk], 15, cond(bx - 1, by) + 2 * cond(bx, by - 1)));
+        }
+    }
+}
+
+} // namespace schneidi::h264

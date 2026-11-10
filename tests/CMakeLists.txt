@@ -40,7 +40,8 @@ schneidi_test(test_project_versions)
 schneidi_test(test_undo)
 schneidi_test(test_h264_encoder) # own H.264 encoder prototype: bit-exact against FFmpeg's decoder
 target_sources(test_h264_encoder PRIVATE ${CMAKE_SOURCE_DIR}/src/engine/encoder/h264/Cavlc.cpp
-    ${CMAKE_SOURCE_DIR}/src/engine/encoder/h264/H264Encoder.cpp)
+    ${CMAKE_SOURCE_DIR}/src/engine/encoder/h264/H264Encoder.cpp
+    ${CMAKE_SOURCE_DIR}/src/engine/encoder/h264/H264Cabac.cpp)
 schneidi_test(test_tracks)
 schneidi_test(test_source_edits)
 schneidi_test(test_effects)

@@ -3,6 +3,7 @@
 // reconstruction exactly (8.3, 8.5), so later P frames can reference it.
 #include "H264Encoder.h"
 
+#include "Cabac.h"
 #include "Cavlc.h"
 
 #include <algorithm>
@@ -274,6 +275,14 @@ Encoder::Encoder(const EncoderConfig& config)
     mvY_.resize(nzLuma_.size());
     refIdx_.resize(mvX_.size());
     sliceTopOfRow_.resize(size_t(mbH_));
+    cabKind_.resize(size_t(mbW_) * mbH_);
+    cabCbp_.resize(cabKind_.size());
+    cabChromaMode_.resize(cabKind_.size());
+    cabCbfDc_.resize(cabKind_.size());
+    cabCbfLuma_.resize(size_t(mbW_ * 4) * (mbH_ * 4));
+    cabMvd_.resize(size_t(mbW_ * 4) * (mbH_ * 4));
+    cabCbfChroma_[0].resize(size_t(mbW_ * 2) * (mbH_ * 2));
+    cabCbfChroma_[1].resize(size_t(mbW_ * 2) * (mbH_ * 2));
     qpPredByTop_.resize(size_t(mbH_));
     mbQp_.resize(size_t(mbW_) * mbH_);
     mbQpFinal_.resize(mbQp_.size());
@@ -289,8 +298,13 @@ std::vector<uint8_t> Encoder::headers() const
     std::vector<uint8_t> out;
     {
         BitWriter bw; // seq_parameter_set_rbsp (7.3.2.1.1)
-        bw.u(66, 8);   // profile_idc: Baseline
-        bw.u(0xC0, 8); // constraint_set0 + constraint_set1 (constrained baseline)
+        if (useCabac()) {
+            bw.u(77, 8);   // profile_idc: Main
+            bw.u(0x40, 8); // constraint_set1: decodable by Main decoders
+        } else {
+            bw.u(66, 8);   // profile_idc: Baseline
+            bw.u(0xC0, 8); // constraint_set0 + constraint_set1 (constrained baseline)
+        }
         bw.u(40, 8);   // level_idc 4.0
         bw.ue(0);      // seq_parameter_set_id
         bw.ue(0);      // log2_max_frame_num_minus4
@@ -342,7 +356,7 @@ std::vector<uint8_t> Encoder::headers() const
         BitWriter bw; // pic_parameter_set_rbsp (7.3.2.2)
         bw.ue(0);       // pic_parameter_set_id
         bw.ue(0);       // seq_parameter_set_id
-        bw.flag(false); // entropy_coding_mode_flag: CAVLC
+        bw.flag(useCabac()); // entropy_coding_mode_flag
         bw.flag(false); // bottom_field_pic_order_in_frame_present_flag
         bw.ue(0);       // num_slice_groups_minus1
         bw.ue(0);       // num_ref_idx_l0_default_active_minus1
@@ -454,6 +468,8 @@ std::vector<uint8_t> Encoder::encode(const Picture& picture, bool forceKeyframe)
             bw.flag(false); // long_term_reference_flag
         } else {
             bw.flag(false); // adaptive_ref_pic_marking_mode_flag
+            if (useCabac())
+                bw.ue(0); // cabac_init_idc
         }
         bw.se(cfg_.qp - 26);         // slice_qp_delta
         bw.ue(cfg_.deblock ? 0 : 1); // disable_deblocking_filter_idc (0 filters across slice edges too)
@@ -463,6 +479,14 @@ std::vector<uint8_t> Encoder::encode(const Picture& picture, bool forceKeyframe)
         }
         int skipRun = 0;
         qpPredByTop_[size_t(sliceTop[size_t(s)])] = cfg_.qp;
+        CabacEncoder cabacEngine;
+        bool prevQpNonZero = false;
+        const bool cabac = useCabac();
+        if (cabac) {
+            while (!bw.byteAligned())
+                bw.u(1, 1); // cabac_alignment_one_bit
+            cabacEngine.start(&bw, cfg_.qp, pSlice_ ? 0 : -1);
+        }
         for (int mby = sliceTop[size_t(s)]; mby < sliceTop[size_t(s) + 1]; ++mby) {
             for (int mbx = 0; mbx < mbW_; ++mbx) {
                 if (cfg_.mode == IntraMode::Pcm) {
@@ -475,6 +499,12 @@ std::vector<uint8_t> Encoder::encode(const Picture& picture, bool forceKeyframe)
                     coded = encodeMbP(mb, mbx, mby);
                 else
                     commitQp(mbx, mby, encodeMbIntra(mb, mbx, mby));
+                if (cabac) {
+                    cabacWriteMb(cabacEngine, mbx, mby, mb.syn, prevQpNonZero);
+                    const bool last = mby + 1 == sliceTop[size_t(s) + 1] && mbx + 1 == mbW_;
+                    cabacEngine.terminate(last); // end_of_slice_flag
+                    continue;
+                }
                 if (!coded) {
                     ++skipRun;
                     continue;
@@ -486,9 +516,13 @@ std::vector<uint8_t> Encoder::encode(const Picture& picture, bool forceKeyframe)
                 bw.append(mb.bw);
             }
         }
-        if (skipRun)
-            bw.ue(uint32_t(skipRun));
-        bw.rbspTrailing();
+        if (cabac) {
+            bw.alignZero(); // the flush wrote the rbsp_stop_one_bit
+        } else {
+            if (skipRun)
+                bw.ue(uint32_t(skipRun));
+            bw.rbspTrailing();
+        }
     };
     // Slices only look at macroblocks of their own slice, so they run in parallel.
     std::vector<std::thread> workers;

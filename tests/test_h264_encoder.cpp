@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // schneidi's own H.264 encoder (prototype): every stream must decode with FFmpeg's decoder to exactly the
-// pictures the encoder reconstructed (I and P frames, all intra/inter modes, slices, adaptive QP, rate control,
-// odd sizes).
+// pictures the encoder reconstructed (CAVLC and CABAC; I and P frames, all intra/inter modes, slices, adaptive QP,
+// rate control, odd sizes).
 
 #include "check.h"
 
@@ -131,9 +131,12 @@ bool roundTrip(const EncoderConfig& cfg, int frames, size_t* bytesOut = nullptr,
     return ok;
 }
 
+bool gCabac = true; // every case runs with both entropy coders
+
 EncoderConfig config(int w, int h, IntraMode mode, int gop, int threads = 1)
 {
     EncoderConfig c;
+    c.cabac = gCabac;
     c.width = w;
     c.height = h;
     c.mode = mode;
@@ -149,6 +152,8 @@ int main()
 {
     Check::initEnv();
     CHECK(selfTestTables());
+    for (const bool cabac : {false, true}) {
+    gCabac = cabac;
 
     // Intra only
     CHECK(roundTrip(config(176, 144, IntraMode::Pcm, 1), 2));
@@ -196,6 +201,7 @@ int main()
         CHECK(roundTrip(c, 60, &bytes));
         const double kbps = bytes * 8.0 / 2.0 / 1000.0; // 60 frames at 30 fps
         CHECK(std::abs(kbps - 1000.0) < 250.0);
+    }
     }
     return Check::result();
 }
