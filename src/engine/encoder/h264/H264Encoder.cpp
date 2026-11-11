@@ -3287,14 +3287,33 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
     bool interDelta = false;
     const bool trellisLast = gExp & 32; // experiment: candidates with plain quantisation, the winner again with the trellis
     bool trellisNow = !trellisLast;
+    // Prediction and chroma coding of a layout do not depend on the transform size: kept for
+    // the second coding of the same layout (8x8 transform).
+    struct PredCache {
+        bool valid = false;
+        uint8_t lp[256], cp[2][64], recU[64], recV[64];
+        ChromaMb ch;
+    };
+    PredCache predCache[2]; // whole, split
+    const int cw = padW_ / 2;
+    const size_t chromaOff = size_t(mby * 8) * cw + mbx * 8;
     auto encodeInter = [&](const Choice& best, MbOut& io, bool t8) {
         BitWriter& interBits = io.bw;
         const Layout& layout = kLayouts[best.layout];
+        PredCache& pc = predCache[best.layout == 0 ? 0 : 1];
         for (int p = 0; p < layout.count; ++p) {
             const Part& P = layout.parts[p];
-            motionCompensate(*refs_[size_t(best.ref[p])], mbx, mby, P.x4, P.y4, P.w4, P.h4, best.mv[p][0], best.mv[p][1], lp,
-                             cp);
+            if (!pc.valid)
+                motionCompensate(*refs_[size_t(best.ref[p])], mbx, mby, P.x4, P.y4, P.w4, P.h4, best.mv[p][0], best.mv[p][1],
+                                 lp, cp);
             setBlocks(P.x4, P.y4, P.w4, P.h4, best.mv[p][0], best.mv[p][1], best.ref[p]);
+        }
+        if (pc.valid) {
+            std::memcpy(lp, pc.lp, sizeof(lp));
+            std::memcpy(cp, pc.cp, sizeof(cp));
+        } else {
+            std::memcpy(pc.lp, lp, sizeof(lp));
+            std::memcpy(pc.cp, cp, sizeof(cp));
         }
         const int qpDiv = qp / 6, qpMod = qp % 6;
         const int qbits = 15 + qpDiv;
@@ -3423,7 +3442,21 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
                     recY_[lumaOff + size_t(oy + y) * padW_ + ox + x] = clip1(lp[(oy + y) * 16 + ox + x] + r[y * 4 + x]);
         }
         ChromaMb ch;
-        analyseChroma(mbx, mby, ch, cp);
+        if (pc.valid) {
+            ch = pc.ch;
+            for (int y = 0; y < 8; ++y) {
+                std::memcpy(&recU_[chromaOff + size_t(y) * cw], pc.recU + y * 8, 8);
+                std::memcpy(&recV_[chromaOff + size_t(y) * cw], pc.recV + y * 8, 8);
+            }
+        } else {
+            analyseChroma(mbx, mby, ch, cp);
+            pc.ch = ch;
+            for (int y = 0; y < 8; ++y) {
+                std::memcpy(pc.recU + y * 8, &recU_[chromaOff + size_t(y) * cw], 8);
+                std::memcpy(pc.recV + y * 8, &recV_[chromaOff + size_t(y) * cw], 8);
+            }
+            pc.valid = true;
+        }
         clearNz();
 
         io.syn.kind = MbSyntax::Kind::Inter;
