@@ -27,6 +27,9 @@ public:
     // The size is part of the proxy's name: another quality means other files (old ones are "other size" for cleanup).
     enum class Quality { Small, Medium, Large, Full };
     static Quality quality(); // the stored one (read once, then kept)
+    // Reads the stored quality again (the app may have changed it since: a long-running schneidi-cli/MCP process
+    // before cleaning up the proxy folder)
+    static void reloadQuality();
     static int maxSizeOf(Quality q);
     static int maxSize() { return maxSizeOf(quality()); }
     // Short name for the viewer and the settings: "540p", "720p", "1080p", "volle Auflösung"

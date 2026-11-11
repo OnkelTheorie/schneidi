@@ -86,10 +86,12 @@ void MainWindow::setProxyQuality(ProxyManager::Quality quality)
     // their originals until proxies are made by hand)
     QStringList files;
     for (const MediaInfo& m : m_project->media()) files << m.path;
-    const QStringList had = ProxyManager::withProxy(files, ProxyManager::maxSize());
+    QStringList had = ProxyManager::withProxy(files, ProxyManager::maxSize());
+    // … without those that have one at the new size already (switching back), nor when proxies are off
+    for (const QString& p : ProxyManager::withProxy(had, ProxyManager::maxSizeOf(quality))) had.removeAll(p);
     ProxyManager* proxies = m_engine->proxies();
     proxies->setQuality(quality);
-    if (had.isEmpty()) return;
+    if (had.isEmpty() || !proxies->enabled()) return;
     const QString count = had.size() == 1 ? T("Eine Datei dieses Projekts hat Proxy-Medien in der alten Qualität.")
                                           : T("%1 Dateien dieses Projekts haben Proxy-Medien in der alten Qualität.")
                                                 .arg(had.size());

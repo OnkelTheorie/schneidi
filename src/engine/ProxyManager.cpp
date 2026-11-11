@@ -267,6 +267,13 @@ ProxyManager::Quality ProxyManager::quality()
     return Quality(q);
 }
 
+void ProxyManager::reloadQuality()
+{
+    QSettings settings;
+    settings.sync(); // picks up what another process wrote
+    g_quality.store(-1, std::memory_order_relaxed);
+}
+
 int ProxyManager::maxSizeOf(Quality q)
 {
     switch (q) {
@@ -479,6 +486,16 @@ void ProxyManager::stopCurrent()
 void ProxyManager::startNext()
 {
     if (!m_current.isEmpty()) return;
+    if (m_queue.isEmpty()) {
+        emit queueChanged();
+        return;
+    }
+    // Already there at the current size (the quality was switched back meanwhile): nothing to make
+    while (!m_queue.isEmpty() && hasProxy(m_queue.first())) {
+        const QString done = m_queue.takeFirst();
+        emit progress(done, -1);
+        emit proxyChanged(done);
+    }
     if (m_queue.isEmpty()) {
         emit queueChanged();
         return;

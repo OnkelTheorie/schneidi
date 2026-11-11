@@ -242,8 +242,8 @@ private:
     // true = something changed; timeline = the render cache's files too (else only proxies are added)
     bool resolveFiles(const Timeline& tl, bool timeline);
     // m_showsProxy for the current mode from the resolved files; shownTimeline = the timeline being shown when m_built
-    // is not set yet
-    void updateShowsProxy(const Timeline* shownTimeline = nullptr);
+    // is not set yet; locked = the caller holds m_resolved->mutex
+    void updateShowsProxy(const Timeline* shownTimeline = nullptr, bool locked = false);
     bool m_showsProxy = false;
     QImage ownStill(const Timeline& tl, int position, bool transparent);
     // The clock in frames of what is shown, where playback of `frame` (content frame) starts in samples, and what

@@ -121,6 +121,33 @@ void testSizes(const QString& dir)
     CHECK_EQ(otherSize, 3);
     CHECK_EQ(plan.kept, 1);
 
+    // Another process (the app) set Medium meanwhile; this one (a long-running schneidi-cli/MCP) still has Large
+    // cached: cleaning up follows the stored level - it keeps the 720p proxy and calls the 1080p one "other size"
+    {
+        QSettings().setValue("proxy/quality", "medium");
+        const ProxyCleanup::Plan p2 = ProxyCleanup::plan({original});
+        CHECK_EQ(p2.kept, 1);
+        for (const ProxyCleanup::Item& it : p2.items)
+            CHECK(it.file != QFileInfo(ProxyManager::proxyPath(original, 1280)).absoluteFilePath());
+        CHECK(ProxyManager::quality() == Q::Medium);
+        pm.setQuality(Q::Large);
+    }
+
+    // Switching back while a proxy is being made for the new level: the one of the old level is there, nothing is made
+    // again (it would overwrite a good proxy)
+    {
+        pm.setQuality(Q::Medium);
+        pm.remove({original});
+        pm.setQuality(Q::Small);
+        const QDateTime before = QFileInfo(ProxyManager::proxyPath(original, 960)).lastModified();
+        pm.setQuality(Q::Medium);
+        pm.generate({original});
+        CHECK(pm.isPending(original));
+        pm.setQuality(Q::Small);
+        CHECK(!pm.isPending(original));
+        CHECK_EQ(QFileInfo(ProxyManager::proxyPath(original, 960)).lastModified(), before);
+    }
+
     // Changing the level while a proxy is being made: it is made again at the new size (not the old size under the
     // new name)
     pm.remove({original});
@@ -177,9 +204,8 @@ void testMainWindow(const QString& dir)
     CHECK(engine.showsProxy());
     CHECK(modeText(viewer).contains("Proxy 540p"));
 
-    // "Use proxy media" off: the original plays, no note
+    // "Use proxy media" off: the original plays, no note (the source view reopens its file by itself)
     proxies->setEnabled(false);
-    engine.showSource(a);
     CHECK(!engine.showsProxy());
     CHECK(!modeText(viewer).contains("Proxy"));
     proxies->setEnabled(true);
@@ -196,12 +222,15 @@ void testMainWindow(const QString& dir)
     CHECK(asked.contains("Eine Datei"));
     CHECK(asked.contains("720p"));
     CHECK(proxies->isPending(a));
+    // Meanwhile the source view plays the original (it does not keep reading the 540p file under a "720p" note)
+    CHECK(!engine.showsProxy());
+    CHECK(!modeText(viewer).contains("Proxy"));
     waitDone(*proxies, a);
     CHECK_EQ(pictureSize(ProxyManager::proxyPath(a)), QSize(1280, 720));
     engine.showSource(a);
     CHECK(modeText(viewer).contains("Proxy 720p"));
 
-    // Back to Small: the 540p proxy is still there; asked about the 720p one, No makes nothing
+    // Back to Small: the 540p proxy is still there - nothing to ask, the source view takes it at once
     asked.clear();
     QTimer::singleShot(0, [&] {
         auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget());
@@ -210,9 +239,10 @@ void testMainWindow(const QString& dir)
         box->button(QMessageBox::No)->click();
     });
     w.setProxyQuality(Q::Small);
-    CHECK(!asked.isEmpty()); // the 720p one exists, the project's file had a proxy at the old level
+    QApplication::processEvents();
+    CHECK(asked.isEmpty());
     CHECK(!proxies->isPending(a));
-    engine.showSource(a);
+    CHECK(engine.showsProxy());
     CHECK(modeText(viewer).contains("Proxy 540p"));
     w.close();
 }
