@@ -186,7 +186,6 @@ private:
     int extW_ = 0, extH_ = 0;
     std::vector<RefPic> refs_; // reference list, newest first
     int activeRefs_ = 0;
-    std::vector<int> vInter_; // vertical 6-tap intermediate (unclipped)
     std::vector<int> sliceTopOfRow_;        // first macroblock row of the slice of each row
     std::vector<int> rowKey_;               // per row: index of its live CABAC / QP predictor state (slice top, or the row itself in the wavefront)
     std::vector<MbSyntax> mbSyn_;           // wavefront: chosen syntax of every macroblock, written in raster order afterwards
@@ -195,6 +194,7 @@ private:
     std::vector<float> mbEnergy_;
     int mbTypeOffset_ = 0;                  // 5 for intra macroblocks in P slices
     bool pSlice_ = false;
+    bool deblockedInline_ = false; // the wavefront filtered the picture already
     bool intraSkip8_ = false, intraSkip16_ = false; // intra try in a P picture without Intra 8x8 / 16x16 (experiments)
     int idrCount_ = 0;
     int framesSinceIdr_ = 0;

@@ -59,6 +59,57 @@ void Lookahead::analyse(LookaheadFrame& f, const LookaheadFrame* prev) const
                     f.half.data() + size_t(kMargin + halfH_ + y) * stride);
     }
 
+    // Scene change: on quarter-size thumbnails, compare the best small-motion SAD of each 8x8
+    // block with its SAD against its own mean (a crude intra cost). When motion no longer helps
+    // for most of the picture, a keyframe is cheaper and looks better than a P frame.
+    {
+        const int tw = mbW_ * 4, th = mbH_ * 4;
+        f.thumb.assign(size_t(tw) * th, 0);
+        for (int y = 0; y < th; ++y)
+            for (int x = 0; x < tw; ++x) {
+                int sum = 0;
+                for (int dy = 0; dy < 4; ++dy) {
+                    const uint8_t* row = f.y.data() + size_t(std::min(y * 4 + dy, height_ - 1)) * width_;
+                    for (int dx = 0; dx < 4; ++dx)
+                        sum += row[std::min(x * 4 + dx, width_ - 1)];
+                }
+                f.thumb[size_t(y) * tw + x] = uint8_t((sum + 8) >> 4);
+            }
+        f.sceneChange = false;
+        constexpr int kRange = 8; // thumbnail pixels = 32 picture pixels
+        if (prev && prev->thumb.size() == f.thumb.size()) {
+            const std::vector<uint8_t>& thumb = f.thumb;
+            const std::vector<uint8_t>& prevThumb = prev->thumb;
+            int64_t interCost = 0, intraCost = 0;
+            for (int by = 0; by + 8 <= th; by += 8)
+                for (int bx = 0; bx + 8 <= tw; bx += 8) {
+                    int sum = 0;
+                    for (int y = 0; y < 8; ++y)
+                        for (int x = 0; x < 8; ++x)
+                            sum += thumb[size_t(by + y) * tw + bx + x];
+                    const int mean = (sum + 32) >> 6;
+                    int intra = 0;
+                    for (int y = 0; y < 8; ++y)
+                        for (int x = 0; x < 8; ++x)
+                            intra += std::abs(thumb[size_t(by + y) * tw + bx + x] - mean);
+                    int best = 1 << 30;
+                    for (int my = -kRange; my <= kRange; ++my)
+                        for (int mx = -kRange; mx <= kRange; ++mx) {
+                            if (by + my < 0 || bx + mx < 0 || by + my + 8 > th || bx + mx + 8 > tw)
+                                continue;
+                            int sad = 0;
+                            for (int y = 0; y < 8; ++y)
+                                sad += sadRow(&thumb[size_t(by + y) * tw + bx], &prevThumb[size_t(by + my + y) * tw + bx + mx], 8);
+                            best = std::min(best, sad);
+                        }
+                    interCost += std::min(best, intra);
+                    intraCost += intra + 16; // a little bias so flat pictures do not count as cuts
+                }
+            // Real cuts measured ~0.92-0.95, fast game motion up to ~0.72.
+            f.sceneChange = interCost * 100 > intraCost * 85;
+        }
+    }
+
     const size_t n = size_t(mbW_) * mbH_;
     f.intraCost.assign(n, 0);
     f.interCost.assign(n, 0);

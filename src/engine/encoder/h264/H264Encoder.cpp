@@ -37,6 +37,23 @@ std::atomic<long> gStatIntraTry[4] = {}, gStatIntraWin[4] = {}; // by ratio of t
 // Experiments (H264_EXP bit mask), for A/B measurements only.
 const int gExp = std::getenv("H264_EXP") ? std::atoi(std::getenv("H264_EXP")) : 0;
 const double gIntraFactor = std::getenv("H264_INTRAF") ? std::atof(std::getenv("H264_INTRAF")) : 2.0;
+// Phase timing per picture (H264_TIMING=1): where the serial parts are.
+const bool gTiming = std::getenv("H264_TIMING") != nullptr;
+struct PhaseClock {
+    std::chrono::steady_clock::time_point t = std::chrono::steady_clock::now();
+    double ms[8] = {};
+    void lap(int phase)
+    {
+        if (!gTiming)
+            return;
+        const auto now = std::chrono::steady_clock::now();
+        ms[phase] += std::chrono::duration<double, std::milli>(now - t).count();
+        t = now;
+    }
+};
+double gPhaseMs[8] = {};
+double gWaitMs = 0; // summed over threads
+int gPhaseFrames = 0;
 
 // 4x4 frame zig-zag scan: scan index -> raster index (y * 4 + x).
 constexpr int kZigzag[16] = {0, 1, 4, 8, 5, 2, 3, 6, 9, 12, 13, 10, 7, 11, 14, 15};
@@ -70,6 +87,15 @@ int chromaQp(int qp)
 }
 
 inline uint8_t clip1(int v) { return uint8_t(v < 0 ? 0 : v > 255 ? 255 : v); }
+
+// One step of a spin wait: a pause for the hyperthread sibling, then let others run.
+inline void spinWait()
+{
+#if defined(__SSE2__) || defined(_M_X64)
+    _mm_pause();
+#endif
+    std::this_thread::yield();
+}
 
 // Blocks in luma4x4BlkIdx order -> (x, y) in 4x4 units inside the macroblock.
 constexpr int kBlkX[16] = {0, 1, 0, 1, 2, 3, 2, 3, 0, 1, 0, 1, 2, 3, 2, 3};
@@ -521,7 +547,10 @@ std::vector<uint8_t> Encoder::encodeFrame(LookaheadFrame& frame)
 {
     const bool forceKeyframe = frame.forceKeyframe;
     const Picture picture = pictureOf(frame, cfg_.width);
+    PhaseClock clock;
     loadSource(picture);
+    clock.lap(0);
+    const bool lookaheadFrame = useLookahead() && !queue_.empty() && &queue_.front() == &frame;
     std::fill(nzLuma_.begin(), nzLuma_.end(), 0);
     std::fill(modes4x4_.begin(), modes4x4_.end(), int8_t(-1));
     std::fill(nzChroma_[0].begin(), nzChroma_[0].end(), 0);
@@ -532,7 +561,9 @@ std::vector<uint8_t> Encoder::encodeFrame(LookaheadFrame& frame)
     std::fill(refIdx_.begin(), refIdx_.end(), int8_t(-1));
 
     // Keyframe on schedule, on request (a cut the caller knows) or on a detected scene change.
-    const bool sceneChange = cfg_.sceneCut && cfg_.gop > 1 && detectSceneCut(); // keeps its thumbnail current
+    const bool sceneChange = cfg_.sceneCut && cfg_.gop > 1 &&
+                             (lookaheadFrame ? frame.sceneChange : detectSceneCut()); // keeps its thumbnail current
+    clock.lap(1);
     const bool cut = sceneChange && frameIndex_ > 0 && framesSinceIdr_ >= 6;
     const bool idr = cfg_.gop <= 1 || frameIndex_ == 0 || framesSinceIdr_ >= cfg_.gop || forceKeyframe || cut;
     if (idr)
@@ -550,7 +581,7 @@ std::vector<uint8_t> Encoder::encodeFrame(LookaheadFrame& frame)
     // most 2 away from the last one. I pictures use the P QP - 3. The first picture is probed at a
     // fixed QP so the stream starts near the right QP instead of paying for a huge first picture.
     const int baseQp = cfg_.qp;
-    const bool lookahead = useLookahead() && !queue_.empty() && &queue_.front() == &frame;
+    const bool lookahead = lookaheadFrame;
     double costUsed = 0; // lookahead cost of this picture, for the bit model afterwards
     if (lookahead) {
         markKeyframes();
@@ -568,9 +599,8 @@ std::vector<uint8_t> Encoder::encodeFrame(LookaheadFrame& frame)
         // Rate control with lookahead: bits = k * cost * 2^(-qp/6) with k measured on the pictures
         // coded so far (per picture type, I pictures 3 below the P QP). The P QP is the one at
         // which a picture of average cost (all pictures seen so far, the queued ones included)
-        // meets the per-frame budget - a steady QP is what PSNR likes best - scaled by the bits
-        // over or under the target so far (against a buffer of 3 s), and at most 3 away from
-        // the last one.
+        // meets the per-frame budget - a steady QP is what PSNR likes best - nudged by the bits
+        // over or under the target so far, and at most 3 away from the last one.
         const double perFrame = cfg_.bitrateKbps * 1000.0 / cfg_.fps;
         auto kOf = [&](bool intra) {
             const int t = intra ? 0 : 1;
@@ -632,8 +662,10 @@ std::vector<uint8_t> Encoder::encodeFrame(LookaheadFrame& frame)
             }
             rcQp_ = 0;
         }
+        // The debt only nudges the QP (at most +-3, paid back over 10 s): a quiet passage must not
+        // pull the QP down just to spend its budget, that costs PSNR where it is already high.
         const double debt = rcBits_ - rcTarget_;
-        const double overflow = std::clamp(1.0 + debt / (3.0 * perFrame * cfg_.fps), 0.5, 2.0);
+        const double overflow = std::clamp(1.0 + debt / (10.0 * perFrame * cfg_.fps), 0.7, 1.4);
         double qp = steadyQp() + 6.0 * std::log2(overflow);
         if (std::getenv("H264_RC_TRACE"))
             std::fprintf(stderr, "rc: frame %d overflow %.2f kI %.3f kP %.3f cost %.0f (intra %.0f inter %.0f) qp %.2f\n",
@@ -676,7 +708,9 @@ std::vector<uint8_t> Encoder::encodeFrame(LookaheadFrame& frame)
     lastQp_ = cfg_.qp;
     mbTypeOffset_ = idr ? 0 : 5;
 
+    clock.lap(2); // keyframe decision, macroblock tree, rate control (probe on the first picture)
     planMacroblockQp();
+    clock.lap(3);
     // CABAC: one slice, its rows decided in a wavefront by the threads and entropy coded in raster
     // order afterwards. CAVLC (decisions write bits directly): one slice per thread.
     const bool wave = useCabac();
@@ -763,20 +797,53 @@ std::vector<uint8_t> Encoder::encodeFrame(LookaheadFrame& frame)
         const int rows = mbH_;
         std::vector<CabacEncoder> rowEngine(static_cast<size_t>(rows)), rowSnap(static_cast<size_t>(rows));
         std::unique_ptr<std::atomic<int>[]> progress(new std::atomic<int>[size_t(rows)]);
+        std::unique_ptr<std::atomic<int>[]> deblocked(new std::atomic<int>[size_t(rows)]); // macroblocks filtered per row
+        std::atomic<int> written{0};                                                        // rows the entropy writer has finished
         std::unique_ptr<bool[]> rowPrevNz(new bool[size_t(rows)]);
-        for (int r = 0; r < rows; ++r)
+        for (int r = 0; r < rows; ++r) {
             progress[size_t(r)].store(0, std::memory_order_relaxed);
+            deblocked[size_t(r)].store(0, std::memory_order_relaxed);
+        }
         mbSyn_.resize(size_t(mbW_) * mbH_);
         std::atomic<int> nextRow{0};
+        std::atomic<long> waitMs{0}; // microseconds the threads spent waiting for the row above (H264_TIMING)
+        const int threads = std::clamp(cfg_.threads, 1, rows);
+        // With several threads the row's thread also deblocks the row above, lagging one
+        // macroblock: by then every macroblock that predicts from those unfiltered samples is
+        // decided, the entropy writer has fixed the QPs (skipped macroblocks inherit it) and
+        // the row above that is filtered two macroblocks further (the raster order of 8.7).
+        const bool inlineDeblock = cfg_.deblock && threads > 1;
         auto worker = [&] {
             for (;;) {
                 const int r = nextRow.fetch_add(1);
                 if (r >= rows)
                     return;
                 auto waitAbove = [&](int need) {
-                    if (r > 0)
-                        while (progress[size_t(r - 1)].load(std::memory_order_acquire) < need)
-                            std::this_thread::yield();
+                    if (r == 0 || progress[size_t(r - 1)].load(std::memory_order_acquire) >= need)
+                        return;
+                    const auto t0 = gTiming ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+                    while (progress[size_t(r - 1)].load(std::memory_order_acquire) < need)
+                        spinWait();
+                    if (gTiming)
+                        waitMs.fetch_add(long(std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - t0).count()),
+                                         std::memory_order_relaxed);
+                };
+                int dbNext = 0; // next macroblock of row r - 1 to filter
+                auto deblockBehind = [&](int upTo, bool wait) {
+                    if (!inlineDeblock || r == 0)
+                        return;
+                    while (dbNext < upTo) {
+                        const bool ready = written.load(std::memory_order_acquire) >= r &&
+                                           (r == 1 || deblocked[size_t(r - 2)].load(std::memory_order_acquire) >= std::min(dbNext + 2, mbW_));
+                        if (!ready) {
+                            if (!wait)
+                                return;
+                            spinWait();
+                            continue;
+                        }
+                        deblockMb(dbNext, r - 1);
+                        deblocked[size_t(r - 1)].store(++dbNext, std::memory_order_release);
+                    }
                 };
                 CabacEncoder& eng = rowEngine[size_t(r)];
                 if (r == 0) {
@@ -802,7 +869,9 @@ std::vector<uint8_t> Encoder::encodeFrame(LookaheadFrame& frame)
                     if (mbx == std::min(1, mbW_ - 1))
                         rowSnap[size_t(r)] = eng;
                     progress[size_t(r)].store(mbx + 1, std::memory_order_release);
+                    deblockBehind(mbx, false);
                 }
+                deblockBehind(mbW_, true);
             }
         };
         // Entropy coding in raster order, mb_qp_delta against the real predecessor. It follows
@@ -834,11 +903,11 @@ std::vector<uint8_t> Encoder::encodeFrame(LookaheadFrame& frame)
                     cabacWriteMb(eng, cabWrite_, mbx, r, syn, prevNz);
                     eng.terminate(m + 1 == count); // end_of_slice_flag
                 }
+                written.store(r + 1, std::memory_order_release);
             }
             bw.alignZero();
         };
         std::vector<std::thread> workers;
-        const int threads = std::clamp(cfg_.threads, 1, rows);
         for (int t = 1; t < threads; ++t)
             workers.emplace_back(worker);
         if (threads > 1) {
@@ -847,6 +916,13 @@ std::vector<uint8_t> Encoder::encodeFrame(LookaheadFrame& frame)
             for (auto& t : workers)
                 t.join();
             writer.join();
+            if (inlineDeblock) { // the last row has no row below to filter it
+                for (int mbx = 0; mbx < mbW_; ++mbx)
+                    deblockMb(mbx, rows - 1);
+                deblockedInline_ = true;
+            }
+            if (gTiming)
+                gWaitMs += waitMs.load() / 1000.0;
         } else {
             worker();
             writeSlice();
@@ -861,6 +937,7 @@ std::vector<uint8_t> Encoder::encodeFrame(LookaheadFrame& frame)
             t.join();
     }
 
+    clock.lap(4); // decisions and entropy coding
     std::vector<uint8_t> out;
     for (const BitWriter& bw : slices) {
         if (idr)
@@ -879,8 +956,10 @@ std::vector<uint8_t> Encoder::encodeFrame(LookaheadFrame& frame)
         for (int i = 0; i < 4; ++i)
             gStatIntraTry[i] = gStatIntraWin[i] = 0;
     }
-    if (cfg_.deblock)
+    if (cfg_.deblock && !deblockedInline_)
         deblockPicture();
+    deblockedInline_ = false;
+    clock.lap(5);
     prevMvX_ = mvX_;
     prevMvY_ = mvY_;
     prevRefIdx_ = refIdx_;
@@ -919,6 +998,15 @@ std::vector<uint8_t> Encoder::encodeFrame(LookaheadFrame& frame)
         ++idrCount_;
     ++frameIndex_;
     ++framesSinceIdr_;
+    clock.lap(6); // reference planes
+    if (gTiming) {
+        for (int i = 0; i < 8; ++i)
+            gPhaseMs[i] += clock.ms[i];
+        if (++gPhaseFrames % 20 == 0)
+            std::fprintf(stderr, "timing ms/frame: load %.1f scenecut %.1f tree+rc %.1f aq %.1f encode %.1f (threads waited %.1f) deblock %.1f refplanes %.1f\n",
+                         gPhaseMs[0] / gPhaseFrames, gPhaseMs[1] / gPhaseFrames, gPhaseMs[2] / gPhaseFrames, gPhaseMs[3] / gPhaseFrames,
+                         gPhaseMs[4] / gPhaseFrames, gWaitMs / gPhaseFrames, gPhaseMs[5] / gPhaseFrames, gPhaseMs[6] / gPhaseFrames);
+    }
     return out;
 }
 
@@ -2672,7 +2760,6 @@ void Encoder::buildRefPlanes(RefPic& R)
     R.B.resize(n);
     R.V.resize(n);
     R.J.resize(n);
-    vInter_.resize(n);
     const int W = extW_, H = extH_;
 
     // Runs fn(y0, y1) over row ranges on cfg_.threads threads.
@@ -2697,12 +2784,13 @@ void Encoder::buildRefPlanes(RefPic& R)
         }
     });
     parallelRows([&](int y0, int y1) {
+        std::vector<int> vRow(size_t(W) + 8);
         for (int y = y0; y < y1; ++y) {
             const uint8_t* r[6];
             for (int k = 0; k < 6; ++k)
                 r[k] = &R.F[size_t(std::clamp(y - 2 + k, 0, H - 1)) * W];
             const uint8_t* row = r[2];
-            int* vi = &vInter_[size_t(y) * W];
+            int* vi = vRow.data(); // vertical 6-tap intermediate of this row (unclipped)
             uint8_t* vb = &R.V[size_t(y) * W];
             uint8_t* hb = &R.B[size_t(y) * W];
             int x = 0, hEnd = 2;
@@ -2752,11 +2840,8 @@ void Encoder::buildRefPlanes(RefPic& R)
                               row[std::min(x + 1, W - 1)], row[std::min(x + 2, W - 1)], row[std::min(x + 3, W - 1)]);
                 hb[x] = clip1((bb + 16) >> 5);
             }
-        }
-    });
-    parallelRows([&](int y0, int y1) {
-        for (int y = y0; y < y1; ++y) {
-            const int* v = &vInter_[size_t(y) * W];
+            // Centre half-pel: horizontal 6-tap over the vertical intermediate, same row.
+            const int* v = vRow.data();
             uint8_t* j = &R.J[size_t(y) * W];
             int jEnd = 2;
 #if defined(__SSE2__) || defined(_M_X64)
@@ -2968,7 +3053,7 @@ void Encoder::deblockPicture()
                 if (mby > 0) {
                     const int need = std::min(mbx + 2, mbW_);
                     while (done[size_t(mby - 1)].load(std::memory_order_acquire) < need)
-                        std::this_thread::yield();
+                        spinWait();
                 }
                 deblockMb(mbx, mby);
                 done[size_t(mby)].store(mbx + 1, std::memory_order_release);

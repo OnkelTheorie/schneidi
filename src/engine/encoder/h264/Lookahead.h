@@ -18,6 +18,8 @@ struct LookaheadFrame {
     std::vector<float> propagate;              // macroblock tree: cost that later pictures inherit from this block
     double intraSum = 0, interSum = 0;         // picture totals: all intra / min(intra, inter)
     bool keyframe = false;                     // the schedule or the caller makes this an IDR picture
+    std::vector<uint8_t> thumb;                // quarter-size luma for the scene change detection
+    bool sceneChange = false;                  // motion no longer helps against the previous picture
 };
 
 class Lookahead {
