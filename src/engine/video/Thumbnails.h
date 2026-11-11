@@ -33,6 +33,14 @@ int keyFrames(const QString& path, const KeyFrameOptions& options, const std::fu
 // first picture if the file is shorter. Null if the file has no readable video.
 QImage stillAt(const QString& path, double seconds, const QSize& box);
 
+// A preview picture near `seconds`, fast (Media Storage thumbnails): the key frame at or after `seconds` (the one before
+// if none follows), decoded alone (no pictures around it, no deblocking filter, a smaller picture where the codec can give
+// one), fitted into `box` without borders, upright, in square pixels and the stream's colors like stillAt. The first key
+// frame if the file is not longer than `seconds`. stillAt's exact picture instead when that key frame gives no picture by
+// itself, or when it is a dark one before `seconds` (the black start of a fade-in). Null if the file has no readable
+// video. ~5-10x faster than stillAt on long key frame intervals (no decoding up to `seconds`).
+QImage thumbnailAt(const QString& path, double seconds, const QSize& box);
+
 // Pictures at fixed spots, for analyses that must give the same result every time (black bars): the same file always
 // gives the same pictures, whatever the machine's load (no decoder racing ahead decides which picture answers).
 // `at` = spots as fractions of the duration (ascending). Each spot gets the key frame a seek back from it lands on (its

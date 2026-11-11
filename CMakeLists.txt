@@ -255,6 +255,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/engine/Transcriber.h      src/engine/Transcriber.cpp
     src/engine/Tts.h              src/engine/Tts.cpp
     src/engine/MediaCache.h       src/engine/MediaCache.cpp
+    src/engine/StorageThumbCache.h src/engine/StorageThumbCache.cpp
     src/engine/StillFetcher.h     src/engine/StillFetcher.cpp
     src/engine/ScrubFrames.h      src/engine/ScrubFrames.cpp
     src/engine/FileStamp.h        src/engine/FileStamp.cpp

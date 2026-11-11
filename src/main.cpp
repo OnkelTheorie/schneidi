@@ -21,6 +21,7 @@
 #include "engine/Engine.h"
 #include "engine/Extensions.h"
 #include "engine/RenderQueue.h"
+#include "engine/StorageThumbCache.h"
 #include "engine/FfmpegLog.h"
 #include "engine/picture/gpu/Gpu.h"
 
@@ -38,6 +39,7 @@
 #include <QPointer>
 #include <QPushButton>
 #include <QThread>
+#include <QThreadPool>
 #include <QTimer>
 #include <QWindow>
 #include <clocale>
@@ -397,6 +399,8 @@ int main(int argc, char* argv[])
     if (!testRun) QTimer::singleShot(0, &w, [&w] { CrashReport::offer(&w); }); // crashed last time: show the report
     if (!testRun) w.startUpdateCheck(); // at most once a day, a few seconds from now
     if (!testRun) CodeTrust::prune(); // trust records of deleted files (at most once a day)
+    // Old Media Storage thumbnails (at most once a day, a folder listing: not on the GUI thread)
+    if (!testRun) QThreadPool::globalInstance()->start([] { StorageThumbCache::prune(); });
     // The first start's tour question, once, after the window settled (the overlay does not block an AI or the app)
     if (!testRun) QTimer::singleShot(1200, &w, [&w] { w.offerTours(); });
     if (!formatArg.isEmpty()) {
