@@ -13,7 +13,7 @@ ScrubField::ScrubField(double min, double max, double step, int decimals, QWidge
     : QLineEdit(parent), m_min(min), m_max(max), m_step(step), m_decimals(decimals)
 {
     setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-    setFixedWidth(64);
+    fitWidth();
     setReadOnly(true);
     setCursor(Qt::SizeHorCursor);
     setFocusPolicy(Qt::ClickFocus);
@@ -21,6 +21,31 @@ ScrubField::ScrubField(double min, double max, double step, int decimals, QWidge
                           "QLineEdit:focus { border-color: %2; }")
                       .arg(Theme::field.name(), Theme::primary.name()));
     showValue();
+}
+
+// Room for a value like "100,000" also with a large UI font (a fixed 64 px cut off the first digit there)
+void ScrubField::fitWidth()
+{
+    const int width = std::max(64, fontMetrics().horizontalAdvance(QStringLiteral("100,000")) + 16);
+    if (!m_shrinkable) {
+        setFixedWidth(width);
+        return;
+    }
+    setMinimumWidth(std::min(width, fontMetrics().horizontalAdvance(QStringLiteral("0,000")) + 16));
+    setMaximumWidth(width);
+    setSizePolicy(QSizePolicy::Preferred, sizePolicy().verticalPolicy());
+}
+
+void ScrubField::setShrinkable(bool on)
+{
+    m_shrinkable = on;
+    fitWidth();
+}
+
+void ScrubField::changeEvent(QEvent* e)
+{
+    QLineEdit::changeEvent(e);
+    if (e->type() == QEvent::FontChange || e->type() == QEvent::StyleChange) fitWidth();
 }
 
 void ScrubField::setValue(double v)
