@@ -715,6 +715,41 @@ inline int satdU8(const uint8_t* a, int strideA, const uint8_t* b, int strideB)
 #endif
 }
 
+// satdU8 of the two 4x4 blocks side by side at a and a + 4 (same result as two calls), sharing
+// the vertical transform across eight lanes.
+inline int satd8x4U8(const uint8_t* a, int strideA, const uint8_t* b, int strideB)
+{
+#if defined(__SSE2__) || defined(_M_X64)
+    const __m128i zero = _mm_setzero_si128();
+    auto row = [&](int i) {
+        return _mm_sub_epi16(_mm_unpacklo_epi8(_mm_loadl_epi64(reinterpret_cast<const __m128i*>(a + i * strideA)), zero),
+                             _mm_unpacklo_epi8(_mm_loadl_epi64(reinterpret_cast<const __m128i*>(b + i * strideB)), zero));
+    };
+    const __m128i r0 = row(0), r1 = row(1), r2 = row(2), r3 = row(3);
+    const __m128i s01 = _mm_add_epi16(r0, r1), d01 = _mm_sub_epi16(r0, r1);
+    const __m128i s23 = _mm_add_epi16(r2, r3), d23 = _mm_sub_epi16(r2, r3);
+    const __m128i t0 = _mm_add_epi16(s01, s23), t1 = _mm_sub_epi16(s01, s23);
+    const __m128i t2 = _mm_sub_epi16(d01, d23), t3 = _mm_add_epi16(d01, d23);
+    auto absv = [&](__m128i x) { return _mm_max_epi16(x, _mm_sub_epi16(zero, x)); };
+    auto half = [&](__m128i u0, __m128i u1) { // horizontal stage of one block, returns its |coefficient| sum
+        const __m128i v0 = _mm_unpacklo_epi32(u0, u1), v1 = _mm_unpackhi_epi32(u0, u1);
+        const __m128i c1 = _mm_unpackhi_epi64(v0, v0), c3 = _mm_unpackhi_epi64(v1, v1);
+        const __m128i ha = _mm_add_epi16(v0, c1), hb = _mm_sub_epi16(v0, c1);
+        const __m128i hc = _mm_add_epi16(v1, c3), hd = _mm_sub_epi16(v1, c3);
+        const __m128i o01 = _mm_unpacklo_epi64(_mm_add_epi16(ha, hc), _mm_sub_epi16(ha, hc));
+        const __m128i o23 = _mm_unpacklo_epi64(_mm_sub_epi16(hb, hd), _mm_add_epi16(hb, hd));
+        const __m128i sum = _mm_madd_epi16(_mm_add_epi16(absv(o01), absv(o23)), _mm_set1_epi16(1));
+        const __m128i s2 = _mm_add_epi32(sum, _mm_shuffle_epi32(sum, _MM_SHUFFLE(1, 0, 3, 2)));
+        const __m128i s1 = _mm_add_epi32(s2, _mm_shuffle_epi32(s2, _MM_SHUFFLE(2, 3, 0, 1)));
+        return (_mm_cvtsi128_si32(s1) + 1) >> 1;
+    };
+    return half(_mm_unpacklo_epi16(t0, t1), _mm_unpacklo_epi16(t2, t3)) +
+           half(_mm_unpackhi_epi16(t0, t1), _mm_unpackhi_epi16(t2, t3));
+#else
+    return satdU8(a, strideA, b, strideB) + satdU8(a + 4, strideA, b + 4, strideB);
+#endif
+}
+
 [[maybe_unused]] int satd4x4(const int* diff)
 {
     int t[16];
@@ -1703,6 +1738,24 @@ bool Encoder::encodeMbP(MbOut& result, int mbx, int mby)
 
     // Early skip: if the skip residual quantises to nothing anyway, skip is all but certain
     // to win; spare the motion search.
+    // Intra 16x16 SATD estimate (only the neighbours above and to the left are read).
+    auto intraEstimate16 = [&] {
+        const bool left = mbx > 0, top = topMbAvailable(mby);
+        uint8_t cand[256];
+        int est = 1 << 30;
+        for (int mode = 0; mode < 4; ++mode) {
+            if ((mode == 0 && !top) || (mode == 1 && !left) || (mode == 3 && !(top && left)))
+                continue;
+            predictLuma16(mode, &recY_[lumaOff], padW_, left, top, cand);
+            int sum = 0;
+            for (int b = 0; b < 16; b += 2) {
+                const int ox = (b & 3) * 4, oy = (b >> 2) * 4;
+                sum += satd8x4U8(&srcY_[lumaOff + size_t(oy) * padW_ + ox], padW_, cand + oy * 16 + ox, 16);
+            }
+            est = std::min(est, sum);
+        }
+        return est;
+    };
     if (skipResidualIsZero(mbx, mby, lp, cp, qp)) {
         result.syn.kind = MbSyntax::Kind::Skip;
         mbQpFinal_[mbIndex] = int8_t(qpPredOf(mby));
@@ -2084,22 +2137,7 @@ bool Encoder::encodeMbP(MbOut& result, int mbx, int mby)
     double costIntra = 1e300;
     bool intraDelta = false;
     {
-        const bool left = mbx > 0, top = topMbAvailable(mby);
-        uint8_t src[256], cand[256];
-        for (int y = 0; y < 16; ++y)
-            std::memcpy(src + y * 16, &srcY_[lumaOff + size_t(y) * padW_], 16);
-        int intraEstimate = 1 << 30;
-        for (int mode = 0; mode < 4; ++mode) {
-            if ((mode == 0 && !top) || (mode == 1 && !left) || (mode == 3 && !(top && left)))
-                continue;
-            predictLuma16(mode, &recY_[lumaOff], padW_, left, top, cand);
-            int sum = 0;
-            for (int b = 0; b < 16; ++b) {
-                const int ox = (b & 3) * 4, oy = (b >> 2) * 4;
-                sum += satdU8(src + oy * 16 + ox, 16, cand + oy * 16 + ox, 16);
-            }
-            intraEstimate = std::min(intraEstimate, sum);
-        }
+        const int intraEstimate = intraEstimate16();
         // recY_ of this macroblock holds the inter reconstruction here, but Intra 16x16
         // prediction only reads the neighbours above and to the left.
         if (double(intraEstimate) < best.cost * 2.0) {
@@ -2181,10 +2219,45 @@ void Encoder::buildRefPlanes(RefPic& R)
             int* vi = &vInter_[size_t(y) * W];
             uint8_t* vb = &R.V[size_t(y) * W];
             uint8_t* hb = &R.B[size_t(y) * W];
-            for (int x = 0; x < W; ++x) {
+            int x = 0, hEnd = 2;
+#if defined(__SSE2__) || defined(_M_X64)
+            // Same arithmetic eight samples at a time (16-bit lanes hold -2550..10710).
+            {
+                const __m128i zero = _mm_setzero_si128(), c5 = _mm_set1_epi16(5), c20 = _mm_set1_epi16(20);
+                const __m128i r16 = _mm_set1_epi16(16);
+                auto ld = [&](const uint8_t* p) {
+                    return _mm_unpacklo_epi8(_mm_loadl_epi64(reinterpret_cast<const __m128i*>(p)), zero);
+                };
+                auto tap = [&](__m128i a, __m128i b, __m128i c, __m128i d, __m128i e, __m128i f) {
+                    const __m128i outer = _mm_add_epi16(a, f), mid = _mm_add_epi16(c, d), side = _mm_add_epi16(b, e);
+                    return _mm_sub_epi16(_mm_add_epi16(outer, _mm_mullo_epi16(mid, c20)), _mm_mullo_epi16(side, c5));
+                };
+                for (; x + 8 <= W; x += 8) {
+                    const __m128i vv = tap(ld(r[0] + x), ld(r[1] + x), ld(r[2] + x), ld(r[3] + x), ld(r[4] + x), ld(r[5] + x));
+                    const __m128i sign = _mm_srai_epi16(vv, 15);
+                    _mm_storeu_si128(reinterpret_cast<__m128i*>(vi + x), _mm_unpacklo_epi16(vv, sign));
+                    _mm_storeu_si128(reinterpret_cast<__m128i*>(vi + x + 4), _mm_unpackhi_epi16(vv, sign));
+                    const __m128i v8 = _mm_srai_epi16(_mm_add_epi16(vv, r16), 5);
+                    _mm_storel_epi64(reinterpret_cast<__m128i*>(vb + x), _mm_packus_epi16(v8, v8));
+                }
+                for (; hEnd + 11 <= W; hEnd += 8) {
+                    const uint8_t* q = row + hEnd;
+                    const __m128i bb = tap(ld(q - 2), ld(q - 1), ld(q), ld(q + 1), ld(q + 2), ld(q + 3));
+                    const __m128i b8 = _mm_srai_epi16(_mm_add_epi16(bb, r16), 5);
+                    _mm_storel_epi64(reinterpret_cast<__m128i*>(hb + hEnd), _mm_packus_epi16(b8, b8));
+                }
+            }
+#endif
+            for (; x < W; ++x) {
                 const int vv = tap6(r[0][x], r[1][x], r[2][x], r[3][x], r[4][x], r[5][x]);
                 vi[x] = vv;
                 vb[x] = clip1((vv + 16) >> 5);
+            }
+            for (x = 0; x < W; ++x) {
+                if (x == 2)
+                    x = hEnd; // [2, hEnd) done above
+                if (x >= W)
+                    break;
                 int bb;
                 if (x >= 2 && x + 3 < W)
                     bb = tap6(row[x - 2], row[x - 1], row[x], row[x + 1], row[x + 2], row[x + 3]);
@@ -2199,7 +2272,29 @@ void Encoder::buildRefPlanes(RefPic& R)
         for (int y = y0; y < y1; ++y) {
             const int* v = &vInter_[size_t(y) * W];
             uint8_t* j = &R.J[size_t(y) * W];
+            int jEnd = 2;
+#if defined(__SSE2__) || defined(_M_X64)
+            {
+                auto ld = [&](int x) { return _mm_loadu_si128(reinterpret_cast<const __m128i*>(v + x)); };
+                auto tap = [&](int x) { // 32-bit lanes: up to about 450000
+                    const __m128i outer = _mm_add_epi32(ld(x - 2), ld(x + 3));
+                    const __m128i mid = _mm_add_epi32(ld(x), ld(x + 1)), side = _mm_add_epi32(ld(x - 1), ld(x + 2));
+                    const __m128i mid20 = _mm_add_epi32(_mm_slli_epi32(mid, 4), _mm_slli_epi32(mid, 2));
+                    const __m128i side5 = _mm_add_epi32(_mm_slli_epi32(side, 2), side);
+                    const __m128i jj = _mm_sub_epi32(_mm_add_epi32(outer, mid20), side5);
+                    return _mm_srai_epi32(_mm_add_epi32(jj, _mm_set1_epi32(512)), 10);
+                };
+                for (; jEnd + 11 <= W; jEnd += 8) {
+                    const __m128i w = _mm_packs_epi32(tap(jEnd), tap(jEnd + 4));
+                    _mm_storel_epi64(reinterpret_cast<__m128i*>(j + jEnd), _mm_packus_epi16(w, w));
+                }
+            }
+#endif
             for (int x = 0; x < W; ++x) {
+                if (x == 2)
+                    x = jEnd; // [2, jEnd) done above
+                if (x >= W)
+                    break;
                 int jj;
                 if (x >= 2 && x + 3 < W)
                     jj = tap6(v[x - 2], v[x - 1], v[x], v[x + 1], v[x + 2], v[x + 3]);
@@ -2275,9 +2370,8 @@ int Encoder::sadPart(const RefPic& R, int mbx, int mby, int x4, int y4, int w4, 
     mcLuma(R, px + (mvx >> 2), py + (mvy >> 2), mvx & 3, mvy & 3, w, h, pred);
     if (satd) {
         for (int by = 0; by < h4; ++by)
-            for (int bx = 0; bx < w4; ++bx) {
-                s += satdU8(&srcY_[lo + size_t(by * 4) * padW_ + bx * 4], padW_, pred + by * 4 * 16 + bx * 4, 16);
-            }
+            for (int bx = 0; bx < w4; bx += 2) // partitions are at least 8 wide
+                s += satd8x4U8(&srcY_[lo + size_t(by * 4) * padW_ + bx * 4], padW_, pred + by * 4 * 16 + bx * 4, 16);
         return s;
     }
     for (int y = 0; y < h; ++y)
