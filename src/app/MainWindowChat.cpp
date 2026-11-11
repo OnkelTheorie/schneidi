@@ -57,7 +57,12 @@ void MainWindow::buildChat()
     // Plans belong to the project they were made on: another one opened, their cards cannot run any more
     // (Not when a tour trades the user's project for its practice project and back: the plans are still the user's)
     connect(m_project, &Project::loaded, m_chat, [this] {
-        if (!m_tourSwap) m_chat->stopPlans(T("Nicht mehr gültig: ein anderes Projekt wurde geöffnet."));
+        if (m_tourSwap) return;
+        m_chat->stopPlans(T("Nicht mehr gültig: ein anderes Projekt wurde geöffnet."));
+        // A review counts undo steps of the project it started on: the loaded one has another history, accept and
+        // discard would combine or undo the wrong steps. Nothing to review any more.
+        if (m_review.pending) m_chatPanel->hideApproval();
+        m_review = {};
     });
     m_chat->setLanguage(languageName(I18n::language()));
     m_chat->setCompact(m_aiSettings.compact);
@@ -260,11 +265,8 @@ void MainWindow::liveCommandRunning(bool running, bool ownChat)
 
 bool MainWindow::livePlanOnly() const { return m_aiSettings.approval == AiSettings::Approval::Plan; }
 
-// Also while a request that started in review mode is still open (the setting changed meanwhile)
-bool MainWindow::liveReviewOnly() const
-{
-    return m_aiSettings.approval == AiSettings::Approval::Review || m_review.active;
-}
+// A request that started in review mode is open (also when the setting changed meanwhile)
+bool MainWindow::liveReviewOnly() const { return m_review.active; }
 
 void MainWindow::livePlan(const QString& state, const QJsonObject& plan, bool ownChat)
 {

@@ -638,11 +638,16 @@ QJsonObject Server::runCommand(const QJsonObject& msg, bool ownChat, bool byUser
                                                "`%1` changes the project without one: say in your answer what you would "
                                                "do, the user does it or switches plan mode off")
                                            .arg(name));
-    // Undo, redo and saving stay the user's in plan and review mode: the chat's undo followed by an edit dropped the
-    // user's own steps (a new step clears the redo), and "discard" of review mode then went back to the wrong state
+    // Undo, redo, saving and opening files stay the user's in plan and review mode: the chat's undo followed by an
+    // edit dropped the user's own steps (a new step clears the redo), "discard" of review mode then went back to the
+    // wrong state; an opened project replaces the one under review (and its undo history), opened media come into the
+    // pool without a plan and stay after "discard". Deleting proxy files has no plan either.
     if (ownChat && !byUser && name == "app") {
         const QString action = args.value("action").toString().trimmed().toLower();
-        if (action == "undo" || action == "redo" || action == "save") {
+        if (action == "clean_proxies" && args.value("delete").toBool() && m_host->livePlanOnly())
+            return errorReply("PLAN_MODE", "the user wants to see a plan first (plan mode in the schneidi app): "
+                                           "deleting proxy files is the user's; list them without delete");
+        if (action == "undo" || action == "redo" || action == "save" || action == "open") {
             if (m_host->livePlanOnly())
                 return errorReply("PLAN_MODE", QString("the user wants to see a plan first (plan mode in the schneidi "
                                                        "app): `app %1` is the user's; send changes as a plan "

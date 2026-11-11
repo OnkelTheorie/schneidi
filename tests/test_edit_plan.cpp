@@ -421,9 +421,15 @@ int main(int argc, char* argv[])
             CHECK_EQ(code(cli({"app", action}, chatEnv)), mode);
         CHECK_EQ(fake.project.undoStack()->index(), index);
         CHECK_EQ(fake.saves, saves);
+        // Opening a project replaced the one under review (its undo history cleared), media came into the pool
+        CHECK_EQ(code(cli({"app", "open", "--files", QJsonDocument(QJsonArray{fake.path}).toJson(QJsonDocument::Compact)},
+                          chatEnv)),
+                 mode);
         CHECK_EQ(code(cli({"app", "state"}, chatEnv)), QString("ok"));
     };
     ownSteps("PLAN_MODE");
+    CHECK_EQ(code(cli({"app", "clean_proxies", "--delete"}, chatEnv)), QString("PLAN_MODE")); // deletes files
+    CHECK_EQ(code(cli({"app", "clean_proxies"}, chatEnv)), QString("ok"));                    // only lists them
     fake.planOnly = false;
     fake.reviewOnly = true;
     ownSteps("REVIEW_MODE");
