@@ -57,7 +57,11 @@ const int gExp = std::getenv("H264_EXP") ? std::atoi(std::getenv("H264_EXP")) : 
 // Per thread (rows of a picture run on several threads): intra try in a P picture without Intra
 // 8x8 / 16x16 (experiments).
 thread_local bool tIntraSkip8 = false, tIntraSkip16 = false;
-const double gIntraFactor = std::getenv("H264_INTRAF") ? std::atof(std::getenv("H264_INTRAF")) : 2.0;
+// Intra try in P pictures only when its estimate is below 1.5x the inter cost (2.0 before 11.11.:
+// -10 % instructions for +0.17 % BD-rate), and in the borderline case (estimate above the inter
+// cost) without Intra 8x8 / 16x16 (-8 % for +0.2 %). H264_FULLINTRA=1 restores the full search.
+const bool gFullIntra = std::getenv("H264_FULLINTRA") != nullptr;
+const double gIntraFactor = std::getenv("H264_INTRAF") ? std::atof(std::getenv("H264_INTRAF")) : gFullIntra ? 2.0 : 1.5;
 double gPhaseMs[8] = {};
 double gWaitMs = 0; // summed over threads
 int gPhaseFrames = 0;
@@ -135,11 +139,20 @@ inline uint8_t clip1(int v) { return uint8_t(v < 0 ? 0 : v > 255 ? 255 : v); }
 // Waits until counter >= need: a short spin (the wavefront usually catches up within
 // microseconds), then sleeps in the kernel (atomic wait) instead of burning the hyperthread
 // sibling's time. Writers call notify_all after every store that someone may wait for.
-const int gSpin = std::getenv("H264_SPIN") ? std::atoi(std::getenv("H264_SPIN")) : 128; // experiment
-
-inline void waitAtLeast(const std::atomic<int>& counter, int need)
+// Spin length before sleeping: long while the threads have a core each (sleeping costs latency;
+// 4 threads on 6 cores: +6 % with 8192 instead of 128), short once they share cores with SMT
+// siblings (10 threads on 6 cores: 128 is 4 % faster than 8192). H264_SPIN overrides.
+int spinFor(int threads)
 {
-    for (int i = 0; i < gSpin; ++i) {
+    if (const char* e = std::getenv("H264_SPIN"))
+        return std::atoi(e);
+    const int hw = int(std::thread::hardware_concurrency());
+    return hw > 0 && 2 * threads <= hw ? 8192 : 128;
+}
+
+inline void waitAtLeast(const std::atomic<int>& counter, int need, int spin = 128)
+{
+    for (int i = 0; i < spin; ++i) {
         if (counter.load(std::memory_order_acquire) >= need)
             return;
 #if defined(__SSE2__) || defined(_M_X64)
@@ -1084,6 +1097,7 @@ void FrameCoder::waveBegin(int threads, RefPic* out, bool writerThread)
     WaveState& w = wave_;
     const int rows = mbH_;
     w.rows = rows;
+    w.spin = spinFor(threads);
     w.inlineDeblock = cfg_.deblock && threads > 1;
     w.rowEngine.assign(size_t(rows), CabacEncoder());
     w.rowSnap.assign(size_t(rows), CabacEncoder());
@@ -1129,7 +1143,7 @@ void FrameCoder::waveRow(int r)
             if (ref->rowsReady.load(std::memory_order_acquire) >= need)
                 continue;
             const auto t0 = std::chrono::steady_clock::now();
-            waitAtLeast(ref->rowsReady, need);
+            waitAtLeast(ref->rowsReady, need, w.spin);
             w.refWaitUs.fetch_add(long(std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - t0).count()),
                                   std::memory_order_relaxed);
         }
@@ -1137,7 +1151,7 @@ void FrameCoder::waveRow(int r)
         if (r == 0 || w.progress[size_t(r - 1)].load(std::memory_order_acquire) >= need)
             return;
         const auto t0 = gTiming ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
-        waitAtLeast(w.progress[size_t(r - 1)], need);
+        waitAtLeast(w.progress[size_t(r - 1)], need, w.spin);
         if (gTiming)
             w.waitUs.fetch_add(long(std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - t0).count()),
                                std::memory_order_relaxed);
@@ -1152,9 +1166,9 @@ void FrameCoder::waveRow(int r)
             if (!ready) {
                 if (!wait)
                     return;
-                waitAtLeast(w.written, r);
+                waitAtLeast(w.written, r, w.spin);
                 if (r > 1)
-                    waitAtLeast(w.deblocked[size_t(r - 2)], std::min(dbNext + 2, mbW_));
+                    waitAtLeast(w.deblocked[size_t(r - 2)], std::min(dbNext + 2, mbW_), w.spin);
                 continue;
             }
             deblockMb(dbNext, r - 1);
@@ -3348,11 +3362,11 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
         // recY_ of this macroblock holds the inter reconstruction here, but Intra 16x16
         // prediction only reads the neighbours above and to the left.
         if (double(intraEstimate) < best.cost * gIntraFactor) {
-            // Borderline cases (estimate above the inter cost) rarely win; experiments drop
-            // the dearer intra types there.
+            // Borderline cases (estimate above the inter cost) rarely win: only the cheap
+            // intra types there.
             const bool borderline = double(intraEstimate) >= best.cost;
-            tIntraSkip8 = borderline && (gExp & 2);
-            tIntraSkip16 = borderline && (gExp & 4);
+            tIntraSkip8 = borderline && (!gFullIntra || (gExp & 2));
+            tIntraSkip16 = borderline && (!gFullIntra || (gExp & 4));
             intraDelta = encodeMbIntra(intraBits, mbx, mby);
             tIntraSkip8 = tIntraSkip16 = false;
             setBlocks(0, 0, 4, 4, 0, 0, -1);

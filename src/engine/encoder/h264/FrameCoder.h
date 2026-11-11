@@ -50,7 +50,7 @@ public:
     std::vector<uint8_t> assemble(PhaseClock& clock);
 
     struct WaveState {
-        int rows = 0, allocated = 0;
+        int rows = 0, allocated = 0, spin = 128;
         bool inlineDeblock = false;
         std::vector<CabacEncoder> rowEngine, rowSnap;
         std::unique_ptr<std::atomic<int>[]> progress, deblocked; // macroblocks decided / filtered per row

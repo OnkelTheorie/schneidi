@@ -454,7 +454,9 @@ void FrameCoder::cabacWriteMb(CabacEncoder& ce, CabacState& st, int mbx, int mby
 // coded yet"; each coefficient may become 0, floor(|x|) or floor(|x|) + 1. Distortion is the
 // pixel-domain SSD (scale = pixel error per level unit), rate the live contexts' bin costs.
 // x: real-valued levels in scan order; cat 2 (luma 4x4) or 5 (luma 8x8). Returns levels in scan order.
-static const bool gTrellisTwo = std::getenv("H264_EXP") && (std::atoi(std::getenv("H264_EXP")) & 1);
+// A level of 1.5 or more only rounds down or up, never to zero (-1.1 % instructions, BD-rate
+// -0.08 %); H264_TRELLIS3=1 keeps the zero candidate too (before 11.11.).
+static const bool gTrellisTwo = std::getenv("H264_TRELLIS3") == nullptr;
 
 void cabacTrellis(const CabacEncoder& ce, int cat, const double* x, const double* scale, int count, double lambda,
                   int cbfInc, int* out)
