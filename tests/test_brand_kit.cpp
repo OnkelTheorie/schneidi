@@ -21,13 +21,16 @@
 #include "ui/Inspector.h"
 
 #include <QApplication>
+#include <QComboBox>
 #include <QFile>
+#include <QFontComboBox>
 #include <QImage>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QLockFile>
 #include <QMenu>
 #include <QScrollArea>
+#include <QSpinBox>
 #include <QTemporaryDir>
 #include <QToolButton>
 
@@ -503,6 +506,39 @@ void testDialog(const QString& dir)
     CHECK(own.project() && own.project()->logoCorner == 3);
 }
 
+// A kit made elsewhere (another computer, the CLI): a font not installed here and a logo width between the dialog's whole
+// percents. Changing something else in the dialog keeps both exactly; the missing font is shown as missing, not as the
+// font Qt falls back to
+void testDialogKeepsValues()
+{
+    BrandKit global;
+    global.fonts = {"Schneidi Missing Font Xyz", "Serif"};
+    global.logoSize = 0.125;
+    BrandKitDialog dlg(global, std::nullopt);
+    QComboBox* corner = nullptr;
+    for (QComboBox* c : dlg.findChildren<QComboBox*>())
+        if (!qobject_cast<QFontComboBox*>(c)) corner = c;
+    const QList<QFontComboBox*> fonts = dlg.findChildren<QFontComboBox*>();
+    if (!CHECK(corner && fonts.size() == 2)) return;
+    CHECK(fonts[0]->currentText().contains("Schneidi Missing Font Xyz"));
+    CHECK(fonts[0]->currentText().contains(T("(nicht installiert)")));
+    corner->setCurrentIndex((corner->currentIndex() + 1) % corner->count()); // the user changes the corner only
+    CHECK_EQ(dlg.global().fonts, QStringList({"Schneidi Missing Font Xyz", "Serif"}));
+    CHECK_EQ(dlg.global().logoSize, 0.125);
+    CHECK(dlg.global().logoCorner != 1);
+    // Changing the width or a font box is taken
+    auto* size = dlg.findChild<QSpinBox*>();
+    if (CHECK(size)) {
+        size->setValue(20);
+        CHECK_EQ(dlg.global().logoSize, 0.2);
+    }
+    const QString installed = fonts[0]->itemText(0); // a family of the box's list
+    fonts[0]->setCurrentIndex(0);
+    CHECK_EQ(dlg.global().fonts.value(0), installed);
+    CHECK_EQ(dlg.global().fonts.value(1), QString("Serif"));
+    CHECK(!fonts[0]->currentText().contains(T("(nicht installiert)")));
+}
+
 void testInspector()
 {
     Project p;
@@ -631,6 +667,7 @@ int main(int argc, char** argv)
     testGlobalLock();
     testChangeGlobal();
     testDialog(dir.path());
+    testDialogKeepsValues();
     testInspector();
     return Check::result();
 }

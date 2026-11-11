@@ -12,6 +12,7 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFontComboBox>
+#include <QFontDatabase>
 #include <QGridLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
@@ -22,11 +23,21 @@
 #include <QToolButton>
 #include <QVBoxLayout>
 
+#include <cmath>
+
 namespace {
 
 struct CornerName { int corner; const char* name; };
 const CornerName kCornerNames[] = {{1, N_("Oben rechts")}, {2, N_("Oben links")}, {3, N_("Unten rechts")},
                                    {4, N_("Unten links")}, {0, N_("Mitte")}};
+
+// A font this computer has: an installed family or a generic name the system resolves ("Serif", "Monospace")
+bool installed(const QString& family)
+{
+    static const QStringList generic{"serif", "sans", "sans-serif", "sans serif", "monospace", "mono", "cursive",
+                                     "fantasy", "system-ui"};
+    return QFontDatabase::hasFamily(family) || generic.contains(family.toLower());
+}
 
 } // namespace
 
@@ -121,11 +132,17 @@ BrandKitDialog::BrandKitDialog(const BrandKit& global, const std::optional<Brand
         box->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
         box->setMinimumContentsLength(14);
         connect(on, &QCheckBox::toggled, this, [this] { store(); });
-        connect(box, &QFontComboBox::currentFontChanged, this, [this] { store(); });
+        // Only a font the user picks replaces the kit's (a missing one stays as it is, see load())
+        connect(box, &QFontComboBox::currentFontChanged, this, [this, i](const QFont& f) {
+            if (m_loading) return;
+            m_shownFonts[i] = f.family();
+            store();
+        });
         fonts->addWidget(on, i, 0);
         fonts->addWidget(box, i, 1);
         m_fontOn << on;
         m_fonts << box;
+        m_shownFonts << QString();
     }
     layout->addWidget(fontBox);
 
@@ -241,7 +258,20 @@ void BrandKitDialog::load()
         m_fontOn[i]->setChecked(set);
         m_fontOn[i]->setEnabled(i <= k.fonts.size());
         m_fonts[i]->setEnabled(set);
-        if (set) m_fonts[i]->setCurrentFont(QFont(k.fonts[i]));
+        if (!set) continue;
+        // The kit's font as it is: one not installed here (a kit from another computer, the CLI) shows its name and that
+        // it is missing instead of the font Qt would fall back to, and is kept unless the user picks another one
+        const QString family = k.fonts[i];
+        m_shownFonts[i] = family;
+        if (installed(family)) {
+            m_fonts[i]->setCurrentFont(QFont(family));
+            m_fonts[i]->setToolTip({});
+        } else {
+            m_fonts[i]->setCurrentIndex(-1);
+            m_fonts[i]->setEditText(T("%1 (nicht installiert)").arg(family));
+            m_fonts[i]->setToolTip(T("Diese Schrift ist auf diesem Rechner nicht installiert. Sie bleibt im Branding, "
+                                     "bis du eine andere wählst."));
+        }
     }
     m_loading = false;
 }
@@ -251,11 +281,14 @@ void BrandKitDialog::store()
     if (m_loading) return;
     BrandKit& k = kit();
     k.logoCorner = m_corner->currentData().toInt();
-    k.logoSize = m_size->value() / 100.0;
+    // The box shows whole percents: the kit's width (e.g. 0.125) stays unless the user changed the box
+    if (m_size->value() != int(std::lround(k.logoSize * 100))) k.logoSize = m_size->value() / 100.0;
     QStringList fonts;
     for (int i = 0; i < m_fonts.size(); ++i) {
         if (!m_fontOn[i]->isChecked()) break;
-        fonts << (i < k.fonts.size() && !m_fonts[i]->isEnabled() ? k.fonts[i] : m_fonts[i]->currentFont().family());
+        // The font shown in the box (the kit's own name, or the one the user picked); a box switched on anew takes its font
+        const QString shown = m_shownFonts.value(i);
+        fonts << (shown.isEmpty() ? m_fonts[i]->currentFont().family() : shown);
     }
     k.fonts = fonts;
     load();
