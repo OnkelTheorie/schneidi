@@ -28,6 +28,8 @@
 #include <QApplication>
 #include <QAction>
 #include <QElapsedTimer>
+#include <QDir>
+#include <QLibrary>
 #include <QLockFile>
 #include <QMessageBox>
 #include <QPainter>
@@ -43,7 +45,13 @@
 #include <QTimer>
 #include <QWindow>
 #include <clocale>
+#if defined(Q_OS_UNIX) && !defined(Q_OS_DARWIN) && !defined(Q_OS_ANDROID)
+#include <dlfcn.h>
+#endif
+#include <functional>
 #include <memory>
+#include <utility>
+#include <vector>
 
 namespace {
 
@@ -87,6 +95,42 @@ QPixmap splashPixmap()
                T("Version %1").arg(QCoreApplication::applicationVersion()));
     return pm;
 }
+
+#if defined(Q_OS_UNIX) && !defined(Q_OS_DARWIN) && !defined(Q_OS_ANDROID)
+// KDE's platform theme (plasma-integration) checks while the QApplication is made whether OpenGL works for Qt Quick:
+// a throwaway OpenGL context, 250-350 ms with the NVIDIA driver, before anything of schneidi shows. schneidi has no
+// Qt Quick (its OpenGL is the viewer's own QRhi), and the theme skips the check when a Qt Quick backend is already
+// chosen: chosen here, before the QApplication. Only where that theme loads (it brings Qt Quick along anyway), and
+// without linking Qt Quick: the symbol is looked up, nothing happens without it.
+void skipKdeQuickOpenGlCheck(int argc, char* argv[])
+{
+    // Without a screen (offscreen/minimal: test runs, --screenshot) there is no OpenGL check to skip
+    QByteArray platform = qgetenv("QT_QPA_PLATFORM");
+    for (int i = 1; i + 1 < argc; ++i)
+        if (qstrcmp(argv[i], "-platform") == 0 || qstrcmp(argv[i], "--platform") == 0) platform = argv[i + 1];
+    if (platform.startsWith("offscreen") || platform.startsWith("minimal")) return;
+    const QByteArray theme = qgetenv("QT_QPA_PLATFORMTHEME").toLower();
+    const bool kde = theme.isEmpty() ? qgetenv("XDG_CURRENT_DESKTOP").toUpper().contains("KDE")
+                                           || !qEnvironmentVariableIsEmpty("KDE_FULL_SESSION")
+                                     : theme.contains("kde");
+    if (!kde) return;
+    // The Qt Quick of this Qt only (next to its Qt Core: a bundled Qt never mixes with the system's; where Qt's
+    // libraries live in separate folders the check simply stays)
+    // (looked up in Qt Core itself: &qVersion in the program may be its own call stub)
+    void* coreLib = dlopen("libQt6Core.so.6", RTLD_LAZY | RTLD_NOLOAD);
+    void* coreSymbol = coreLib ? dlsym(coreLib, "qVersion") : nullptr;
+    Dl_info core{};
+    const bool found = coreSymbol && dladdr(coreSymbol, &core) && core.dli_fname;
+    if (coreLib) dlclose(coreLib); // NOLOAD: only the reference this took
+    if (!found) return;
+    QLibrary quick(QFileInfo(QString::fromLocal8Bit(core.dli_fname)).absoluteDir().filePath(
+        QStringLiteral("libQt6Quick.so.6")));
+    using SetBackend = void (*)(const QString&);
+    // static void QQuickWindow::setSceneGraphBackend(const QString&)
+    if (auto set = reinterpret_cast<SetBackend>(quick.resolve("_ZN12QQuickWindow20setSceneGraphBackendERK7QString")))
+        set(QStringLiteral("rhi")); // Qt Quick's default backend, named
+}
+#endif
 
 // Startup time of the last run (ms to the shown window): a splash only when it was slower than this
 constexpr const char* kLastStartKey = "startup/lastWindowMs";
@@ -132,25 +176,66 @@ private:
     QString m_message;
 };
 
-// SCHNEIDI_STARTUP_TRACE: marks the window's first expose and first paint (startup phase table)
-class FirstPaintTrace : public QObject {
+// Work that must not delay the main window's first picture (the GPU picture engine's OpenGL surface: 150+ ms on the
+// GUI thread with the NVIDIA driver): run once the window is painted, at the latest after kAfterFirstPaintMaxMs
+// (a window that is never painted, e.g. started minimized)
+constexpr int kAfterFirstPaintMaxMs = 3000;
+std::vector<std::function<void()>> g_afterFirstPaint;
+bool g_firstPaintDone = false;
+
+void afterFirstPaint(std::function<void()> job)
+{
+    if (g_firstPaintDone) QTimer::singleShot(0, QCoreApplication::instance(), std::move(job));
+    else g_afterFirstPaint.push_back(std::move(job));
+}
+
+void firstPaintDone()
+{
+    if (std::exchange(g_firstPaintDone, true)) return;
+    // Each on its own event loop turn: the painted frame reaches the screen first
+    for (std::function<void()>& job : std::exchange(g_afterFirstPaint, {}))
+        QTimer::singleShot(0, QCoreApplication::instance(), std::move(job));
+}
+
+// The main window's first picture (afterFirstPaint): its first expose, one event loop turn later (Qt paints and
+// flushes the exposed window while handling the expose; the window's own Paint may never come when children cover
+// it, and children paint during show() already). Seen app-wide until then; SCHNEIDI_STARTUP_TRACE also marks the
+// first Paint after the expose.
+class FirstPaintWatch : public QObject {
 public:
-    using QObject::QObject;
+    explicit FirstPaintWatch(QWidget* window) : QObject(window), m_window(window)
+    {
+        QCoreApplication::instance()->installEventFilter(this);
+    }
     bool eventFilter(QObject* o, QEvent* e) override
     {
-        if (e->type() == QEvent::Expose && !m_exposed) {
+        if (e->type() == QEvent::Expose && !m_exposed && o == m_window->windowHandle()
+            && m_window->windowHandle()->isExposed()) {
             m_exposed = true;
             StartupTrace::mark("first expose");
-        } else if (e->type() == QEvent::Paint && !m_painted && o == parent()) {
-            m_painted = true;
+            QTimer::singleShot(0, this, [] {
+                StartupTrace::mark("event loop idle after first paint");
+                firstPaintDone();
+            });
+            // SCHNEIDI_STARTUP_TRACE=2: quits by itself (measuring runs), after the work deferred past the paint;
+            // exit(), not quit(): no window is asked to close (no question about unsaved changes)
+            if (qEnvironmentVariableIntValue("SCHNEIDI_STARTUP_TRACE") == 2)
+                QTimer::singleShot(2500, qApp, [] {
+                    StartupTrace::mark("quit (SCHNEIDI_STARTUP_TRACE=2)");
+                    QCoreApplication::exit(0);
+                });
+            if (!StartupTrace::enabled()) QCoreApplication::instance()->removeEventFilter(this);
+        } else if (e->type() == QEvent::Paint && m_exposed && o->isWidgetType()
+                   && static_cast<QWidget*>(o)->window() == m_window) {
             StartupTrace::mark("first paint (main window)");
-            QTimer::singleShot(0, this, [] { StartupTrace::mark("event loop idle after first paint"); });
+            QCoreApplication::instance()->removeEventFilter(this);
         }
         return false;
     }
 
 private:
-    bool m_exposed = false, m_painted = false;
+    QWidget* m_window;
+    bool m_exposed = false;
 };
 
 // Claude Code or Claude Desktop is on this computer, but not connected to schneidi: asked once on start (Cli::Setup
@@ -241,6 +326,9 @@ int main(int argc, char* argv[])
     QApplication::setOrganizationName("schneidi");
 #endif
     I18n::prepareEnvironment(langOverride);
+#if defined(Q_OS_UNIX) && !defined(Q_OS_DARWIN) && !defined(Q_OS_ANDROID)
+    skipKdeQuickOpenGlCheck(argc, argv); // (--screenshot set the offscreen platform above)
+#endif
     QApplication app(argc, argv);
     StartupTrace::mark("QApplication");
     QApplication::setApplicationVersion(QString::fromUtf8(SCHNEIDI_VERSION_LABEL) + (*SCHNEIDI_BUILD ? QString(" (%1)").arg(SCHNEIDI_BUILD) : QString())); // version from CMakeLists, Git state, see cmake/BuildInfo.cmake
@@ -281,7 +369,7 @@ int main(int argc, char* argv[])
 
     FfmpegLog::install([](bool error, const QString& text) { Log::message(error ? "AV-E" : "AV-W", text); });
     // The GPU picture engine's OpenGL surface from the event loop, not on the way to the first window
-    Picture::Gpu::Service::setDeferredPrepare(true);
+    Picture::Gpu::Service::setDeferredPrepare(true, afterFirstPaint);
     Engine engine;
     QString error;
     const qint64 beforeEngine = startTimer.elapsed();
@@ -306,12 +394,8 @@ int main(int argc, char* argv[])
     w.setUserRunner([&w](const QString& command, const QJsonObject& args, const QString& undoText) {
         return Cli::Live::runForUser(&w, command, args, undoText);
     });
-    if (StartupTrace::enabled()) {
-        auto* trace = new FirstPaintTrace(&w);
-        w.installEventFilter(trace);
-        w.winId(); // the native window exists now: its expose reaches the filter
-        w.windowHandle()->installEventFilter(trace);
-    }
+    new FirstPaintWatch(&w);
+    QTimer::singleShot(kAfterFirstPaintMaxMs, &w, [] { firstPaintDone(); });
     // Start maximized like DaVinci; screenshot test runs (offscreen) keep the fixed size from MainWindow
     if (app.arguments().contains("--screenshot")) w.show();
     else w.showMaximized();
@@ -379,6 +463,7 @@ int main(int argc, char* argv[])
         }
     }
     launchLock.reset(); // registered (or never will be): the next launch may hand its files over
+    StartupTrace::mark("live server");
     // AI chat panel: its tools are this installation's `schneidi-cli mcp`, talking to this app (cli/Live.h). Test runs
     // (and runs without a screen) never send anything to an AI provider.
     // Without the live connection the chat's tools must not reach another schneidi that runs: a server that is not there
@@ -393,6 +478,7 @@ int main(int argc, char* argv[])
     liveWaiting("schneidi is waiting for the user (restore dialog: restore unsaved changes after a crash?); "
                 "try again once it is answered");
     const bool restored = !testRun && w.offerAutosaveRestore();
+    StartupTrace::mark("autosave restore check");
     liveWaiting("schneidi is opening a project; try again in a moment");
     if (!projectFile.isEmpty() && !restored) w.openProject(QFileInfo(projectFile).absoluteFilePath());
     liveWaiting({});
@@ -438,6 +524,7 @@ int main(int argc, char* argv[])
             QApplication::quit();
         });
     }
+    StartupTrace::mark("event loop starts");
     const int rc = app.exec();
     if (g_claudeSetupThread) g_claudeSetupThread->wait(); // a running `claude mcp add` finishes first
     // Restart after design/language change: only here, when the window is closed and everything has been saved
