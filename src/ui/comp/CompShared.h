@@ -12,6 +12,7 @@
 
 class Editor;
 class Project;
+class QUndoStack;
 class QWidget;
 struct CompRecipe;
 
@@ -64,6 +65,10 @@ inline bool isRecipe(const QString& effectId) { return effectId.startsWith(QLati
 // Recipe `idOrName` on the video clips `ids` with the slots of `with` (CompRecipes::apply + Editor::setCompGraph,
 // one undo step named after the recipe). Media/file slot values are taken as absolute paths. False + err when the
 // recipe is missing, a slot does not fit or no clip takes it
+// A step whose edits were all refused (an empty macro on top, above index `before`): taken off the history, also from
+// redo (QUndoCommand::setObsolete), so no "Redo: …" of nothing is left
+void dropRefusedStep(QUndoStack* undo, int before);
+
 bool applyRecipe(Editor* editor, const QVector<int>& ids, const QString& idOrName, const QVariantMap& with = {},
                  QString* err = nullptr);
 // The same from a GUI act: asks for the files of the recipe's required media/file slots first (a file dialog over

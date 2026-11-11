@@ -105,7 +105,7 @@ int Editor::addBrandLogo(int sequence)
             const int track = int(tl.video.size());
             TimelineOps::ensureTracks(tl, TrackKind::Video, track + 1);
             c.id = clipId = m_project->newClipId();
-            TimelineOps::placeClip(tl.video[track], c, [this] { return m_project->newClipId(); });
+            TimelineOps::placeClip(tl.video[track], c, [this] { return m_project->newClipId(); }, tl.frameRate);
         }
     });
     if (clipId && id == m_project->currentSequence()) m_selection->set({clipId});

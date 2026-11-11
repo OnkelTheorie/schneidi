@@ -40,12 +40,15 @@ QVector<QPair<int, const Timeline*>> timelines(const ProjectData& d)
     return out;
 }
 
+// The timeline to edit, with the project's frame rate (comp values in seconds follow its cuts, Comp::followHead)
 Timeline* timelineOf(ProjectData& d, int sequence)
 {
-    if (sequence == d.currentSequence) return &d.timeline;
+    Timeline* tl = nullptr;
+    if (sequence == d.currentSequence) tl = &d.timeline;
     for (Sequence& s : d.sequences)
-        if (s.id == sequence) return &s.timeline;
-    return nullptr;
+        if (!tl && s.id == sequence) tl = &s.timeline;
+    if (tl) tl->frameRate = d.format.rate.fps();
+    return tl;
 }
 
 std::optional<MediaInfo> mediaOf(const ProjectData& d, const Context& ctx, const QString& path)
@@ -147,13 +150,13 @@ void ripple(Timeline& tl, int oldEnd, int delta, const IdGen& newId)
                 QVector<Clip> over;
                 for (int i = int(t.clips.size()) - 1; i >= 0; --i)
                     if (t.clips[i].start < newEnd && t.clips[i].end() >= oldEnd) over << t.clips.takeAt(i);
-                TimelineOps::clearRange(t, newEnd, oldEnd, newId);
+                TimelineOps::clearRange(t, newEnd, oldEnd, newId, tl.frameRate);
                 TimelineOps::shiftFrom(t, oldEnd, delta);
                 for (Clip c : over) {
                     c.out = std::max(c.in, c.out + delta);
                     c.fadeOut = std::min(c.fadeOut, c.length());
                     c.fadeIn = std::min(c.fadeIn, c.length() - c.fadeOut);
-                    TimelineOps::placeClip(t, c, newId);
+                    TimelineOps::placeClip(t, c, newId, tl.frameRate);
                 }
             } else {
                 TimelineOps::shiftFrom(t, oldEnd, delta);
@@ -489,7 +492,7 @@ void followCompounds(ProjectData& d, int sequence, int oldEnd, int delta, const 
                 if (o.out < o.in) continue; // all it showed was taken out
                 o.clip.in = o.in;
                 o.clip.out = o.out;
-                TimelineOps::placeClip(tl->track(o.ref), o.clip, newId);
+                TimelineOps::placeClip(tl->track(o.ref), o.clip, newId, tl->frameRate);
             }
             followCompounds(d, parent, changes[i].at, changes[i].dd, newId, rep, followed, depth + 1);
             i = j;
@@ -662,7 +665,7 @@ void fillMedia(ProjectData& d, Timeline& tl, const SlotRef& r, const MediaInfo& 
             SlotReport once; // the report counts it once (loop repeats get the same zoom)
             keepWidth(c, base, m, frame, ctx, i == 0 ? rep : once);
         }
-        TimelineOps::placeClip(track, c, newId);
+        TimelineOps::placeClip(track, c, newId, tl.frameRate);
         rep.clips << c.id;
     }
     if (video && !sound.isEmpty()) {
@@ -689,7 +692,7 @@ void fillMedia(ProjectData& d, Timeline& tl, const SlotRef& r, const MediaInfo& 
                     a.linkId = p.linkId;
                     if (i > 0) a.transIn = 0, a.fadeIn = 0, a.transInAlone = false;
                     if (i < lastSounding) a.transOut = 0, a.fadeOut = 0, a.transOutAlone = false;
-                    TimelineOps::placeClip(tl.audio[s.track], a, newId);
+                    TimelineOps::placeClip(tl.audio[s.track], a, newId, tl.frameRate);
                 }
             }
         }

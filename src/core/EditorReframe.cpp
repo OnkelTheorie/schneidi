@@ -125,7 +125,7 @@ int Editor::reframeClips(const QVector<int>& ids, Reframe::Mode mode, const QHas
                     else if (Reframe::isKeepAlong(x, base)) along.clips << x;
                     else rest << x;
                 if (rest.size() == t.clips.size()) continue;
-                TimelineOps::clearRange(along, base.start, base.end(), [p] { return p->newClipId(); });
+                TimelineOps::clearRange(along, base.start, base.end(), [p] { return p->newClipId(); }, tl.frameRate);
                 for (const Clip& x : along.clips)
                     if (overAnotherPart(x)) rest << x;
                 std::sort(rest.begin(), rest.end(), [](const Clip& a, const Clip& b) { return a.start < b.start; });
@@ -145,7 +145,7 @@ int Editor::reframeClips(const QVector<int>& ids, Reframe::Mode mode, const QHas
                 };
                 while (busy(track)) ++track;
                 TimelineOps::ensureTracks(tl, TrackKind::Video, track + 1);
-                TimelineOps::placeClip(tl.video[track], copy, [p] { return p->newClipId(); });
+                TimelineOps::placeClip(tl.video[track], copy, [p] { return p->newClipId(); }, tl.frameRate);
             }
         }
     });

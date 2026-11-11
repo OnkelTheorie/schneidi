@@ -1319,7 +1319,7 @@ const QVector<Command>& commands()
                   "(stutter: jumps in the time stamps, see `probe` gaps), black_bars (black bars baked into a "
                   "recording - a 4:3 game in a 16:9 video - that show in a timeline of another shape or a zoomed "
                   "clip; fix: edit op crop_bars, or reframe), compositing graphs (comp_unused_input: nodes that do not "
-                  "reach the output; comp_slow: estimated above 40 ms per frame, playback may stutter; key_edges: a "
+                  "reach the output; comp_output_mask: the output node gives a mask, the graph does nothing; comp_slow: estimated above 40 ms per frame, playback may stutter; key_edges: a "
                   "key's matte with many half-transparent pixels in the subject), and the sound of the mix as exported: no "
                   "sound, clipping, true peak above -1 dBTP, loudness off the target, silence at the end, and "
                   "under_music: a track with events more than 15 LU under the music while its events play (music = "

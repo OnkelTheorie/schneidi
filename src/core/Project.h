@@ -258,6 +258,9 @@ private:
     ProjectFormat m_format;
     ProjectFormat m_timelineFormat; // last announced timelineFormat()
     void noteTimelineFormat(bool always = false); // emits timelineFormatChanged when it changed
+    // Every sequence's Timeline::frameRate = the project's (edits and their previews on a copy shift comp values in
+    // seconds the same way): after loading, undo/redo, a format or sequence change
+    void stampFrameRate();
     QVector<Sequence> m_sequences; // never empty
     int m_current = 1;             // id of the opened sequence
     int m_lastSequenceId = 1;

@@ -788,12 +788,16 @@ struct Timeline {
     // For rendering only, in the entries of `nested`: the sequence's resolution (Project::sequenceFormat). A nested
     // sequence of another size than the timeline it lies in is rendered at its own size and fitted in like a clip.
     QSize frameSize;
+    // For editing only: the project's frame rate, set by Project::edit/editSequences before an edit runs, so that
+    // values in seconds from a clip's start (comp text from/until, Comp::followHead) follow a cut or head trim.
+    // 0 = unknown (a timeline edited outside a Project): those values stay. Never saved, not part of undo.
+    double frameRate = 0;
 
     QVector<Track>& tracks(TrackKind k) { return k == TrackKind::Video ? video : audio; }
     const QVector<Track>& tracks(TrackKind k) const { return k == TrackKind::Video ? video : audio; }
     Track& track(TrackRef r) { return tracks(r.kind)[r.index]; }
     const Track& track(TrackRef r) const { return tracks(r.kind)[r.index]; }
-    // Same cut (without `nested`/`angles`/`frameSize`, which only serve rendering).
+    // Same cut (without `nested`/`angles`/`frameSize`/`frameRate`, which only serve rendering and editing).
     // By hand: enter new fields here, otherwise changes to them do not end up in undo
     bool operator==(const Timeline& o) const
     {

@@ -58,6 +58,12 @@ QVector<Issue> comp(const Timeline& tl, int from, int to, const ProjectFormat& f
             CompGraph g;
             if (!e || !e->enabled || !Comp::graphOf(*e, &g) || g.isEmpty()) continue;
             const int a = std::max(from, c.start), b = std::min(to, c.end());
+            if (const CompNode* o = g.node(g.out); o && Comp::outputsMask(o->type))
+                out << Issue{Severity::Warning, QStringLiteral("comp_output_mask"),
+                             T("Compositing-Graph: der Ausgabe-Knoten %1 (%2) gibt eine Maske aus, kein Bild - der Graph "
+                               "wirkt nicht. Ein Bild-Knoten als Ausgabe (Maske in den Masken-Eingang eines Merge)")
+                                 .arg(o->id).arg(o->type),
+                             a, b, c.id};
             const QVector<int> order = g.evalOrder();
             // A tracker is read through `follow` (a value, not a link): followed nodes count as used
             QSet<int> followed;

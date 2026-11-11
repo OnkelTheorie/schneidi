@@ -188,7 +188,7 @@ void Editor::addMediaAt(const QStringList& paths, int frame, int track, PlacePar
                 Clip v = c;
                 v.id = newId();
                 v.pictureAspect = info->pictureAspect; // the picture only
-                TimelineOps::placeClip(tl.video[idx], v, newId);
+                TimelineOps::placeClip(tl.video[idx], v, newId, tl.frameRate);
             }
             QVector<int> sound;
             for (int k : streams) {
@@ -200,7 +200,7 @@ void Editor::addMediaAt(const QStringList& paths, int frame, int track, PlacePar
                 a.enabled = placed[k].enabled;
                 a.volumeDb = placed[k].volumeDb;
                 if (tl.audio[at].name.isEmpty()) tl.audio[at].name = placed[k].trackLabel;
-                TimelineOps::placeClip(tl.audio[at], a, newId);
+                TimelineOps::placeClip(tl.audio[at], a, newId, tl.frameRate);
                 sound << a.id;
             }
             muteRepeatedSound(tl, sound);
@@ -259,7 +259,7 @@ void Editor::addTitle(int frame, int track, int length, TitleKind kind)
     c.id = p->newClipId();
     p->edit(T("Titel einfügen"), [&](Timeline& tl) {
         TimelineOps::ensureTracks(tl, TrackKind::Video, track + 1);
-        TimelineOps::placeClip(tl.video[track], c, [p] { return p->newClipId(); });
+        TimelineOps::placeClip(tl.video[track], c, [p] { return p->newClipId(); }, tl.frameRate);
     });
     m_selection->set({c.id});
 }
@@ -276,7 +276,7 @@ void Editor::setTitleLength(int clipId, int length)
         Track& t = tl.track(ref);
         t.clips.erase(std::remove_if(t.clips.begin(), t.clips.end(), [&](const Clip& x) { return x.id == clipId; }),
                       t.clips.end());
-        TimelineOps::placeClip(t, c, [p] { return p->newClipId(); }); // a longer title overwrites its new range only
+        TimelineOps::placeClip(t, c, [p] { return p->newClipId(); }, tl.frameRate); // a longer title overwrites its new range only
     });
 }
 
@@ -601,7 +601,7 @@ void Editor::deleteRanges(const QVector<QPair<int, int>>& input, bool ripple, co
                     if (t.locked) continue;
                     TimelineOps::clearDissolveAt(t, from);
                     TimelineOps::clearDissolveAt(t, to);
-                    TimelineOps::clearRange(t, from, to, [p] { return p->newClipId(); });
+                    TimelineOps::clearRange(t, from, to, [p] { return p->newClipId(); }, tl.frameRate);
                 }
             TimelineOps::resolvePendingLinks(tl, [p] { return p->newLinkId(); });
             if (ripple) TimelineOps::rippleTracks(tl, {{to, from - to}}, {});
@@ -1025,7 +1025,7 @@ void Editor::paste(int frame)
                 c.linkId = linkMap[c.linkId];
             }
             TimelineOps::ensureTracks(tl, it.ref.kind, it.ref.index + 1);
-            TimelineOps::placeClip(tl.track(it.ref), c, [p] { return p->newClipId(); });
+            TimelineOps::placeClip(tl.track(it.ref), c, [p] { return p->newClipId(); }, tl.frameRate);
             pasted.insert(c.id);
         }
     });

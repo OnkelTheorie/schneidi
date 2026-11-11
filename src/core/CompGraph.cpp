@@ -1,13 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "core/CompGraph.h"
 
+#include "core/Keyframes.h"
 #include "core/Types.h"
 
+#include <QDebug>
 #include <QHash>
 #include <QSet>
 #include <QVariantList>
 
 #include <algorithm>
+#include <cmath>
 #include <iterator>
 
 const CompNode* CompGraph::node(int id) const
@@ -285,6 +288,58 @@ int redirectMedia(EffectInstance& e, const std::function<QString(const QString&)
         }
     });
     return n;
+}
+
+bool outputsMask(const QString& type)
+{
+    return type == QLatin1String("mask") || type == QLatin1String("matte");
+}
+
+bool maskBehindPicture(const QString& type, const QString& fromType)
+{
+    return outputsMask(type) && (fromType.isEmpty() || !outputsMask(fromType));
+}
+
+void followHead(Clip& c, int frames, double fps)
+{
+    if (frames == 0) return;
+    if (fps <= 0) { // never half a shift (offset moved, titles not): every edit path hands the rate on
+        qDebug() << "Comp::followHead without a frame rate: clip" << c.id << "keeps its graph values";
+        return;
+    }
+    EffectInstance* e = nullptr;
+    for (EffectInstance& x : c.effects)
+        if (x.effectId == QLatin1String(kEffectId)) e = &x;
+    CompGraph g;
+    if (!e || !graphOf(*e, &g)) return;
+    // Node kinds with a visible range from/until (seconds from the clip's start; Picture::Comp::visibleRangeParams)
+    static const QStringList ranged{QString::fromLatin1(kTextType), QStringLiteral("text3d")};
+    for (const CompNode& n : g.nodes) {
+        if (n.type == QLatin1String(kMediaType)) {
+            // It plays frame offset + t * speed at clip frame t (engine defaults: offset 0, speed 1)
+            const QString key = CompGraph::paramKey(n.id, QStringLiteral("offset"));
+            const QString speedKey = CompGraph::paramKey(n.id, QStringLiteral("speed"));
+            // An animated speed: the engine plays offset + t * speed(t), which no single offset keeps for every frame;
+            // the speed at the new first frame (keys are source frames: `c` has its new in already) keeps that one
+            const AnimParam sp = Keys::effectParam(QString::fromLatin1(kEffectId), speedKey);
+            const double speed = Keys::animated(c, sp) ? Keys::valueAt(c, sp, 0) : e->params.value(speedKey, 1.0).toDouble();
+            const double shift = frames * speed;
+            e->params[key] = e->params.value(key, 0.0).toDouble() + shift;
+            const auto k = c.keys.find(Keys::effectParam(QString::fromLatin1(kEffectId), key));
+            if (k != c.keys.end())
+                for (Keyframe& f : *k) f.value += shift;
+        } else if (ranged.contains(n.type)) {
+            // 0 means "from the start" / "to the end" and stays; any other value moves, also below 0 (from < 0 = from
+            // the start, until < 0 = over before the start: invisible; Picture::Comp::visibleWeight), so trimming
+            // back out gives the exact values again. A value landing on 0 stays just below it (not "the end")
+            const double s = frames / fps;
+            const auto moved = [s](double v) { return std::abs(v - s) < 1e-9 ? -1e-9 : v - s; };
+            for (const char* name : {"from", "until"}) {
+                const QString k = CompGraph::paramKey(n.id, QString::fromLatin1(name));
+                if (const double v = e->params.value(k, 0.0).toDouble(); v != 0) e->params[k] = moved(v);
+            }
+        }
+    }
 }
 
 } // namespace Comp

@@ -187,6 +187,16 @@ Timeline viewTimeline(Timeline tl, int clipId, int node, bool matte)
     return tl;
 }
 
+void dropRefusedStep(QUndoStack* undo, int before)
+{
+    if (undo->index() <= before) return;
+    // An empty macro changed nothing: obsolete, undo() deletes it instead of keeping it for redo (one with children is
+    // undone the normal way)
+    if (const QUndoCommand* c = undo->command(undo->index() - 1); c && c->childCount() == 0)
+        const_cast<QUndoCommand*>(c)->setObsolete(true);
+    undo->undo();
+}
+
 bool applyRecipe(Editor* editor, const QVector<int>& ids, const QString& idOrName, const QVariantMap& with, QString* err)
 {
     QString why;
@@ -202,7 +212,7 @@ bool applyRecipe(Editor* editor, const QVector<int>& ids, const QString& idOrNam
     undo->beginMacro(T("Rezept „%1“ anwenden").arg(CompRecipes::shownName(*r)));
     const bool ok = editor->setCompGraph(ids, g, values, kinds(), &why);
     undo->endMacro();
-    if (!ok && undo->index() > before) undo->undo(); // an empty macro: gone again
+    if (!ok) dropRefusedStep(undo, before); // an empty macro: gone again, not left as a redo step
     if (!ok && err) *err = why;
     return ok;
 }

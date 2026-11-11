@@ -277,7 +277,7 @@ void Editor::placeSource(Timeline& tl, const MediaInfo& m, int sIn, int len, int
         }
         TimelineOps::clearDissolveAt(t, x.start);
         TimelineOps::clearDissolveAt(t, x.end());
-        TimelineOps::placeClip(t, x, newId);
+        TimelineOps::placeClip(t, x, newId, tl.frameRate);
     }
     muteRepeatedSound(tl, sound);
 }
@@ -317,7 +317,7 @@ int Editor::placeRecording(const QString& path, int track, double fileStart, int
         TimelineOps::clearDissolveAt(t, c.end());
         if (replaced)
             for (const Clip& o : t.clips) *replaced += o.start < c.end() && o.end() > c.start;
-        TimelineOps::placeClip(t, c, [this] { return m_project->newClipId(); });
+        TimelineOps::placeClip(t, c, [this] { return m_project->newClipId(); }, tl.frameRate);
     };
     if (!other) {
         m_project->edit(T("Voiceover aufnehmen"), place);
@@ -535,7 +535,7 @@ int Editor::sourceEdit(SourceEditMode mode, const QString& path, int srcPos, int
         }
         if (mode == M::RippleOverwrite) {
             for (const TrackRef& r : rippleTracks) {
-                clearRange(tl.track(r), start, replaceEnd, newId);
+                clearRange(tl.track(r), start, replaceEnd, newId, tl.frameRate);
                 shiftFrom(tl.track(r), rippleFrom, rippleDelta);
             }
             // other unlocked tracks stay in sync (stay put if they would overwrite)

@@ -12,6 +12,7 @@
 #include "app/InputBindings.h"
 #include "app/Theme.h"
 #include "app/MainWindow.h"
+#include "core/Editor.h"
 #include "core/EffectRegistry.h"
 #include "core/Keyframes.h"
 #include "core/Project.h"
@@ -205,6 +206,28 @@ int main(int argc, char** argv)
     CHECK(!g.linkInto(loose, "src") && g.out == merge);
     CompUi::setAutoLink(true);
     project->undoStack()->undo();
+
+    // A refused add (the clip's track is locked) leaves no undo step behind, not even an empty one
+    {
+        Editor* ed = w.findChild<Editor*>();
+        TrackRef ref;
+        TimelineOps::findClip(project->timeline(), clipId, &ref);
+        ed->toggleTrackLock(ref);
+        settle();
+        const int at = undo->index(), count = undo->count();
+        canvas->setSelected(merge);
+        CHECK_EQ(addBySearch(canvas, project, clipId, "blur"), 0);
+        CHECK_EQ(undo->index(), at);
+        CHECK_EQ(undo->count(), count);
+        // A recipe refused there neither (no "Redo" of nothing left behind)
+        QString why;
+        CHECK(!CompUi::applyRecipe(ed, {clipId}, "greenscreen", {}, &why));
+        CHECK_EQ(undo->index(), at);
+        CHECK_EQ(undo->count(), count);
+        CHECK(!undo->canRedo());
+        ed->toggleTrackLock(ref);
+        settle();
+    }
 
     // Layer view: color over the clip with the mask
     page->setView(CompPage::View::Layers);

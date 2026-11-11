@@ -14,6 +14,7 @@
 
 #include <functional>
 
+struct Clip;
 struct EffectInstance;
 
 struct CompNode {
@@ -95,6 +96,23 @@ QStringList fileKeys(const QString& type);
 // with the project's resolution (ProjectFormat::scaleTimeline), static value and keyframes. A NEW pixel parameter must
 // be added here (CompGraph.cpp), or it stays as it was on a 1080p -> 4K change. Unknown kind: none
 QStringList pixelKeys(const QString& type);
+
+// The clip's first frame moved `frames` further into its content (a head trim, the right piece of a cut; negative =
+// back out): values that count from the clip's start follow, so the picture stays where it was in the timeline - a
+// media node's offset (frames × its speed - an animated one: the speed at the new first frame; keyframes too) and the visible range of text nodes (from/until in seconds,
+// fps <= 0: nothing moves). from 0 (= from the start) and until 0 (= to the end) stay, others move below 0 too (until < 0
+// = over before the start: invisible), so trimming back out restores them exactly. A NEW node kind with a value counted
+// from the clip start must be added there (CompGraph.cpp)
+void followHead(Clip& c, int frames, double fps);
+
+// Node kinds whose picture is a mask (gray), not RGBA: "mask", "matte" (Picture::Comp::NodeType::output == Mask). Such
+// a node never is the graph's output (the engine would ignore the whole graph). A NEW mask kind goes here
+// (CompGraph.cpp); test_comp_graph compares the table with the engine's kinds
+bool outputsMask(const QString& type);
+// Adding a node of `type` behind a node of `fromType` (empty = none): a mask behind a picture is only added, not wired
+// in (its input combines masks; it goes into a merge's mask input) - else the output would become a mask. The rule of
+// Editor::addCompNode, shared with the node canvas
+bool maskBehindPicture(const QString& type, const QString& fromType);
 
 // Every file the graph reads (fileKeys of its nodes: media, LUTs, textures), in node order, without duplicates
 QStringList mediaPaths(const EffectInstance& e);

@@ -27,7 +27,7 @@ QVector<int> Editor::placeAudioClips(const QVector<Clip>& clips, int track, int 
             c.id = m_project->newClipId();
             ids << c.id;
             c.transIn = c.transOut = 0; // placing the next one would clear a dissolve at its start: set afterwards
-            TimelineOps::placeClip(t, c, [this] { return m_project->newClipId(); });
+            TimelineOps::placeClip(t, c, [this] { return m_project->newClipId(); }, tl.frameRate);
         }
         for (int i = 0; i < clips.size(); ++i)
             TimelineOps::changeClips(

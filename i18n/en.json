@@ -431,7 +431,6 @@
  "Bilder pro Sekunde": "Frames per second",
  "Bilder und Videos (*.png *.jpg *.jpeg *.webp *.svg *.mp4 *.mov *.webm *.mkv)": "Images and videos (*.png *.jpg *.jpeg *.webp *.svg *.mp4 *.mov *.webm *.mkv)",
  "Bilder werden geholt…": "Getting the pictures…",
- "Bilder, um die die Datei später beginnt": "Frames by which the file starts later",
  "Bildform": "Picture shape",
  "Bildform:": "Picture shape:",
  "Bildgröße": "Picture size",
@@ -3000,5 +2999,8 @@
  "Diese Schrift ist auf diesem Rechner nicht installiert. Sie bleibt im Branding, bis du eine andere wählst.": "This font is not installed on this computer. It stays in the brand kit until you pick another one.",
  "Doppelklick auf Taste 1 oder Taste 2, dann die neue Taste oder die Seitentaste der Maus drücken (abbrechen: daneben klicken). Fett = eigene Belegung, rot = doppelt belegt.": "Double-click Key 1 or Key 2, then press the new key or the side button of the mouse (to cancel, click elsewhere). Bold = custom, red = assigned twice.",
  "Esc beendet auch die große Vorschau und eine Sprachaufnahme: solange eine davon läuft, wirkt Esc dort und nicht für diese Funktion": "Esc also ends the large viewer and a voice-over take: while one of them is on, Esc does that and not this function",
- "Taste, Tastenkombination oder Seitentaste der Maus drücken (auch Esc). Abbrechen: daneben klicken": "Press a key, key combination or side button of the mouse (Esc too). To cancel, click elsewhere"
+ "Taste, Tastenkombination oder Seitentaste der Maus drücken (auch Esc). Abbrechen: daneben klicken": "Press a key, key combination or side button of the mouse (Esc too). To cancel, click elsewhere",
+ "Bild der Datei am Clipanfang: so viele Bilder der Datei werden übersprungen (negativ: die Datei beginnt so viele Bilder später)": "File frame shown at the clip's start: that many frames of the file are skipped (negative: the file starts that many frames later)",
+ "Compositing-Graph: der Ausgabe-Knoten %1 (%2) gibt eine Maske aus, kein Bild - der Graph wirkt nicht. Ein Bild-Knoten als Ausgabe (Maske in den Masken-Eingang eines Merge)": "Comp graph: the output node %1 (%2) gives a mask, not a picture - the graph has no effect. Make a picture node the output (the mask into a merge's mask input)",
+ "Der Clip liegt auf einer gesperrten Spur": "The clip lies on a locked track"
 }

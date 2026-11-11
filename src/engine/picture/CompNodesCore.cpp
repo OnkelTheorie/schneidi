@@ -213,9 +213,10 @@ Compose::Affine transformOf(NodeCtx& ctx, bool* identity)
 QVector<EffectParam> visibleRangeParams()
 {
     return {
-        {"from", T("Sichtbar ab"), {}, EffectParam::Double, 0.0, 0.0, 36000.0, AnimParam::Count, 0.01, 2, {},
+        // Below 0 after a head trim or cut (Comp::followHead): from < 0 = from the start, until < 0 = over before it
+        {"from", T("Sichtbar ab"), {}, EffectParam::Double, 0.0, -36000.0, 36000.0, AnimParam::Count, 0.01, 2, {},
          T("Sekunden ab Clipanfang, ab denen der Knoten etwas zeigt (Knopf „Hier“: der Abspielkopf)")},
-        {"until", T("Sichtbar bis"), {}, EffectParam::Double, 0.0, 0.0, 36000.0, AnimParam::Count, 0.01, 2, {},
+        {"until", T("Sichtbar bis"), {}, EffectParam::Double, 0.0, -36000.0, 36000.0, AnimParam::Count, 0.01, 2, {},
          T("Sekunden ab Clipanfang, bis zu denen der Knoten etwas zeigt; 0 = bis zum Ende (Knopf „Hier“: der Abspielkopf)")},
         {"fade", T("Ein-/Ausblenden"), {}, EffectParam::Double, 0.25, 0.0, 10.0, AnimParam::Count, 0.01, 2, {},
          T("Sekunden, in denen er am Anfang und Ende des sichtbaren Bereichs weich kommt und geht")},
@@ -225,6 +226,7 @@ QVector<EffectParam> visibleRangeParams()
 double visibleWeight(const NodeCtx& ctx)
 {
     const double from = std::max(0.0, ctx.num("from")), until = ctx.num("until");
+    if (until < 0) return 0.0;               // over before the clip's start (its head was trimmed or cut off)
     if (from <= 0 && until <= 0) return 1.0; // the whole clip
     const double s = ctx.t / std::max(1.0, ctx.fps), fade = std::max(0.0, ctx.num("fade"));
     const double end = until > 0 ? until : 1e12;
@@ -585,7 +587,9 @@ void registerCoreNodes(QVector<NodeType>& out)
         k.name = T("Medien");
         k.description = T("Eine Datei aus dem Medienpool (Hintergrund, Logo, Textur)");
         k.params = {other(EffectParam::Path, ::Comp::kPathKey, T("Datei"), QString()),
-                    num("offset", T("Versatz"), 0, -1e6, 1e6, 1, 0, T("Bilder, um die die Datei später beginnt")),
+                    num("offset", T("Versatz"), 0, -1e6, 1e6, 1, 2,
+                        T("Bild der Datei am Clipanfang: so viele Bilder der Datei werden übersprungen (negativ: die "
+                          "Datei beginnt so viele Bilder später)")),
                     num("speed", T("Tempo"), 1, -16, 16, 0.01, 2)};
         k.varying = true;
         k.eval = evalMedia;

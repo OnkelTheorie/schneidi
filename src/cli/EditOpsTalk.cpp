@@ -775,7 +775,7 @@ void opBroll(Session& s, const QJsonObject& op)
         b.id = s.project.newClipId();
         s.project.edit(T("Einfügen"), [&](Timeline& tl) {
             TimelineOps::ensureTracks(tl, TrackKind::Video, vt + 1);
-            TimelineOps::placeClip(tl.video[vt], b, [&s] { return s.project.newClipId(); });
+            TimelineOps::placeClip(tl.video[vt], b, [&s] { return s.project.newClipId(); }, tl.frameRate);
         });
         placed << QJsonObject{{"said", line.text.trimmed()}, {"at", line.from}, {"at_s", round2(line.from / fps)},
                               {"length_s", round2(length / fps)}, {"file", best->file}, {"shot", best->n},
