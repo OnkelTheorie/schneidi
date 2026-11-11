@@ -40,6 +40,7 @@
 #include "engine/RenderQueue.h"
 #include "ui/EffectsLibrary.h"
 #include "ui/ElidedLabel.h"
+#include "ui/SplitterMemory.h"
 #include "ui/MediaStorage.h"
 #include "ui/ColorPanel.h"
 #include "ui/TranscriptPanel.h"
@@ -157,7 +158,7 @@ void MainWindow::buildLayout()
     m_pages->addWidget(m_editRow);
     m_pages->addWidget(m_deliverPage);
     const QPair<QSplitter*, const char*> splitters[] = {
-        {m_editTop, "editTop"},         {m_editMain, "editMain"},
+        {m_editTop, "editTop"},         {m_editMain, "editMain"},     {m_editLeft, "editLeft"},
         {m_editRow, "editRow"},         {m_editRight, "editRight"},   {m_mediaPage, "mediaPage"},   {m_mediaTop, "mediaTop"},
         {m_deliverPage, "deliverPage"}, {m_deliverRight, "deliverRight"}};
     for (const auto& [sp, name] : splitters) watchSizes(sp, name);
@@ -454,6 +455,12 @@ void MainWindow::showPage(Page page)
         }
         m_editMain->insertWidget(1, m_timeline);
         m_editTop->setStretchFactor(1, 1);
+        // The user's Media Storage / Media Pool / Effects heights (else as laid out)
+        if (const QVariantList left = QSettings().value("layout/editLeft").toList(); left.size() == m_editLeft->count()) {
+            QList<int> sizes;
+            for (const QVariant& v : left) sizes << std::max(0, v.toInt());
+            m_editLeft->setSizes(sizes);
+        }
         applySizes(m_editTop, {360, 880, 320, 360});
         applySizes(m_editMain, {480, 420});
         m_mediaPool->setVisible(m_poolToggle->isChecked());
@@ -540,6 +547,10 @@ void MainWindow::ensureColorPage()
     connectColorPage();
 }
 
+namespace {
+constexpr const char* kUserSetKey = "layout/userSet"; // splitters the user dragged (their sizes are kept as they are)
+}
+
 void MainWindow::watchSizes(QSplitter* s, const QString& name)
 {
     s->setObjectName(name);
@@ -557,6 +568,13 @@ void MainWindow::watchSizes(QSplitter* s, const QString& name)
             out << sizes[i];
         }
         QSettings().setValue(key, out);
+        // The user's own size from now on: never fitted to the content on start (fitRightColumn), only "Reset panel
+        // sizes" forgets it (it clears the whole layout group)
+        QStringList user = QSettings().value(kUserSetKey).toStringList();
+        if (!user.contains(s->objectName())) {
+            user << s->objectName();
+            QSettings().setValue(kUserSetKey, user);
+        }
     });
 }
 
@@ -604,6 +622,7 @@ void MainWindow::resetSizes()
     settings.remove("");
     settings.endGroup();
     if (m_colorBottom) applySizes(m_colorBottom, {1100, 420});
+    SplitterMemory::resetAll(this); // the splitters inside the panels (Media Pool, Media Storage, Effects)
     showPage(m_page); // sets the page's defaults again
     if (m_editRight->isVisibleTo(m_editRow)) {
         fitRightColumn(m_editRow->sizes(), true); // the column's default: as wide as its content
@@ -644,8 +663,11 @@ void MainWindow::fitRightColumn(QList<int> sizes, bool exact)
     if (sizes.size() == 2) {
         const int total = sizes[0] + sizes[1];
         const int want = std::min(rightColumnWidth(), total * 45 / 100); // many tracks: the strips scroll
-        // A few pixels more are the user's; much more is room the timeline can use
-        if (exact || sizes[1] > want + 16) {
+        // A width the user dragged stays as it is (wider or narrower); one never set by the user (an older version's,
+        // a default) only a few pixels wider than needed, else the room goes to the timeline
+        const bool user = !exact && QSettings().value(kUserSetKey).toStringList().contains(m_editRow->objectName());
+        m_mixer->setKeepWidth(user); // nor widened to fit all strips
+        if (exact || (!user && sizes[1] > want + 16)) {
             sizes[0] = total - want;
             sizes[1] = want;
         }
@@ -671,9 +693,9 @@ void MainWindow::updateRightColumn()
         m_editRight->insertWidget(0, m_inspector);
         m_inspector->setVisible(shown);
         m_editRight->show();
-        // The column as wide as the Inspector was (else as the mixer's own), the saved width if there is one - but not
-        // much wider than its content needs (0.20 saved 520 px for two tracks): the room goes to the timeline. Only
-        // when the column comes; a width the user drags in the session stays
+        // The column as wide as the Inspector was (else as the mixer's own), the saved width if there is one: the
+        // user's dragged width as it is; one never set by the user not much wider than its content needs (0.20 saved
+        // 520 px for two tracks) - the room goes to the timeline. Only when the column comes
         const int total = std::max(m_editRow->width(), 1000);
         const int right = width > 0 ? width : rightColumnWidth();
         fitRightColumn(sizesFor(m_editRow, {total - right - m_editRow->handleWidth(), right}), false);

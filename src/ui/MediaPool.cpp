@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "ui/MediaPool.h"
+#include "ui/SplitterMemory.h"
 
 #include "app/Theme.h"
 #include "core/CompGraph.h"
@@ -543,14 +544,15 @@ MediaPool::MediaPool(Project* project, Engine* engine, QWidget* parent)
     clipSplit->setStretchFactor(0, 3);
     clipSplit->setStretchFactor(1, 2);
     clipSplit->setChildrenCollapsible(false);
+    SplitterMemory::remember(clipSplit, "mediaPoolIndex", {300, 200}); // the user's drag comes back on the next start
     clipLay->addWidget(clipSplit, 1);
 
     auto* split = new QSplitter(Qt::Horizontal);
     split->addWidget(m_bins);
     split->addWidget(clipArea);
     split->setStretchFactor(1, 1);
-    split->setSizes({110, 400});
     split->setChildrenCollapsible(false);
+    SplitterMemory::remember(split, "mediaPoolBins", {110, 400}); // the user's drag comes back on the next start
 
     auto* lay = new QVBoxLayout(this);
     lay->setContentsMargins(0, 0, 0, 0);

@@ -29,6 +29,9 @@ public:
     // All channel strips at their natural width + master + loudness meter: the width the mixer needs (its column is
     // made this wide, MainWindow::updateRightColumn)
     int naturalWidth() const;
+    // The width of its column is the user's (dragged, remembered): showing the mixer does not widen it to fit all
+    // strips (they scroll)
+    void setKeepWidth(bool keep) { m_keepWidth = keep; }
 
 signals:
     void recordRequested();
@@ -55,6 +58,7 @@ private:
     // Shown the next time by the user (first show, toggled on after being hidden itself): growToFit then. Not when
     // only its page comes back - the width the user gave the column stays
     bool m_growOnShow = true;
+    bool m_keepWidth = false; // setKeepWidth
     Engine* m_engine;
     Editor* m_editor = nullptr;
     QHBoxLayout* m_stripLayout = nullptr;

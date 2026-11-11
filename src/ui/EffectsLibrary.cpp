@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "ui/EffectsLibrary.h"
+#include "ui/SplitterMemory.h"
 
 #include "app/Theme.h"
 #include "core/CompRecipes.h"
@@ -611,7 +612,7 @@ EffectsLibrary::EffectsLibrary(QWidget* parent) : QWidget(parent)
     split->addWidget(m_categories);
     split->addWidget(m_list);
     split->setStretchFactor(1, 1);
-    split->setSizes({130, 230});
+    SplitterMemory::remember(split, "effectsCategories", {130, 230}); // the user's drag comes back on the next start
 
     auto* lay = new QVBoxLayout(this);
     lay->setContentsMargins(0, 0, 0, 0);
