@@ -726,11 +726,18 @@ void Context::draw(Texture& dst, const Layer& layer)
     u.inv0[0] = float(ia), u.inv0[1] = float(ib), u.inv0[2] = float(-(ia * m.c + ib * m.f));
     u.inv1[0] = float(id), u.inv1[1] = float(ie), u.inv1[2] = float(-(id * m.c + ie * m.f));
     u.inv0[3] = float(std::lround(std::clamp(layer.opacity, 0.0, 1.0) * 256) / 256.0);
-    // Mip level: Compose::draw halves while 2:1 or more is left (per axis; the card halves both: the smaller one)
-    if (s->mipLevels > 1) {
+    // Compose::draw halves while 2:1 or more is left (per axis). The card: the mip level both axes allow (the smaller
+    // reduction), what is left per axis (no mips: all of it; squeezed: the larger one) averaged by the shader's grid of
+    // taps over the pixel's footprint - bilinear alone skipped texels there (stair-steps)
+    {
         const double ax = std::hypot(m.a, m.d), ay = std::hypot(m.b, m.e);
-        const double n = std::min(ax > 0 ? 1.0 / ax : 1.0, ay > 0 ? 1.0 / ay : 1.0);
-        u.inv1[3] = float(std::clamp(int(std::floor(std::log2(std::max(1.0, n + 1e-9)))), 0, s->mipLevels - 1));
+        const double nx = ax > 0 ? 1.0 / ax : 1.0, ny = ay > 0 ? 1.0 / ay : 1.0;
+        int level = 0;
+        if (s->mipLevels > 1)
+            level = std::clamp(int(std::floor(std::log2(std::max(1.0, std::min(nx, ny) + 1e-9)))), 0, s->mipLevels - 1);
+        u.inv1[3] = float(level);
+        u.lut[2] = float(nx / double(1 << level) + 1e-6);
+        u.lut[3] = float(ny / double(1 << level) + 1e-6);
     }
     u.src[0] = float(sw), u.src[1] = float(sh), u.src[2] = float(s->log2cw), u.src[3] = float(s->log2ch);
     u.chroma[2] = s->sampleScale;

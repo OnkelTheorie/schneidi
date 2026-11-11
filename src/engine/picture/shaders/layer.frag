@@ -1,7 +1,8 @@
 #version 440
 // SPDX-License-Identifier: AGPL-3.0-only
 // Picture engine (GPU): draws one source through an affine map onto the target, like Compose::draw (bilinear in
-// premultiplied alpha, texels outside the source transparent, mip level chosen by the caller for 2:1 and more),
+// premultiplied alpha, texels outside the source transparent, mip level chosen by the caller for 2:1 and more, a grid
+// of taps for what is still 2:1 or more at that level),
 // optionally converting Y'CbCr planes and applying the colour grade (baked 3D LUT) on the way. Output premultiplied;
 // the pipeline blends it "over" (One, OneMinusSrcAlpha).
 // target.w (mode): 0 = RGBA premultiplied, 1 = RGBA straight, 2 = planar Y'CbCr (tex0 Y, tex1 Cb, tex2 Cr),
@@ -16,7 +17,7 @@ layout(std140, binding = 0) uniform Uniforms {
     vec4 src;     // source width, height (of level 0), chroma subsampling log2 x, y
     vec4 chroma;  // chroma offset x, y (chroma texels), sample scale (16-bit planes), grade on (> 0.5)
     mat4 yuv;     // columns: R G B (A unused) = yuv * vec4(Y, U, V, 1)
-    vec4 lut;     // 3D LUT: scale, offset; transition: progress, softness
+    vec4 lut;     // 3D LUT: scale, offset; source texels of the mip level per target pixel along source x, y
     vec4 crop;    // source pixels kept: x0, y0, x1, y1 (x1 < x0 = no crop)
 };
 layout(binding = 1) uniform sampler2D tex0;
@@ -51,6 +52,35 @@ vec4 planeBilinear(int which, vec2 q, int lod)
     return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
 }
 
+// One bilinear sample at texel-centre-relative position q of the mip level: premultiplied colour (RGBA modes,
+// graded later) or, for Y'CbCr, vec4(Y, Cb, Cr, share of the taps inside the picture) with Y'CbCr times that share
+vec4 sampleAt(vec2 q, ivec2 size, int lod, int mode)
+{
+    ivec2 i = ivec2(floor(q));
+    vec2 f = q - vec2(i);
+    vec4 w = vec4((1.0 - f.x) * (1.0 - f.y), f.x * (1.0 - f.y), (1.0 - f.x) * f.y, f.x * f.y);
+    if (mode <= 1) {
+        bool straight = mode == 1;
+        return w.x * rgbaTexel(i, size, lod, straight) + w.y * rgbaTexel(i + ivec2(1, 0), size, lod, straight)
+             + w.z * rgbaTexel(i + ivec2(0, 1), size, lod, straight) + w.w * rgbaTexel(i + ivec2(1, 1), size, lod, straight);
+    }
+    // Luma: the taps inside the picture, weighted (alpha = their share)
+    float ysum = 0.0, alpha = 0.0;
+    for (int k = 0; k < 4; ++k) {
+        ivec2 p = i + ivec2(k & 1, k >> 1);
+        if (p.x < 0 || p.y < 0 || p.x >= size.x || p.y >= size.y) continue;
+        ysum += w[k] * texelFetch(tex0, p, lod).r;
+        alpha += w[k];
+    }
+    if (alpha <= 0.0) return vec4(0.0);
+    // Chroma at its own grid (subsampled, sited by chroma.xy)
+    vec2 cq = (q + 0.5) / exp2(src.zw) - 0.5 + chroma.xy;
+    vec2 uv;
+    if (mode == 2) uv = vec2(planeBilinear(1, cq, lod).r, planeBilinear(2, cq, lod).r);
+    else uv = planeBilinear(1, cq, lod).rg;
+    return vec4(ysum, uv * alpha, alpha);
+}
+
 void main()
 {
     int mode = int(target.w + 0.5);
@@ -60,36 +90,39 @@ void main()
     vec2 s = vec2(dot(inv0.xyz, vec3(dpos, 1.0)), dot(inv1.xyz, vec3(dpos, 1.0)));
     vec2 q = s * scale - 0.5;
     ivec2 size = textureSize(tex0, lod);
-    if (q.x < -1.0 || q.y < -1.0 || q.x >= float(size.x) || q.y >= float(size.y)) discard;
-    ivec2 i = ivec2(floor(q));
-    vec2 f = q - vec2(i);
-    vec4 w = vec4((1.0 - f.x) * (1.0 - f.y), f.x * (1.0 - f.y), (1.0 - f.x) * f.y, f.x * f.y);
+    // Still 2:1 or more along a source axis at this level (no mips, or squeezed more along one axis than the level
+    // covers): average a grid of bilinear taps over the pixel's footprint there, as Compose::draw halves before its
+    // bilinear step - bilinear alone would skip texels (stair-steps, moire). lut.zw: source texels of the level per
+    // target pixel along the source's x and y (below 2: one tap)
+    vec2 foot = max(lut.zw, vec2(1.0));
+    ivec2 taps = clamp(ivec2(floor(foot)), ivec2(1), ivec2(16));
+    vec2 reach = 0.5 * foot * vec2(greaterThan(taps, ivec2(1)));
+    if (q.x < -1.0 - reach.x || q.y < -1.0 - reach.y || q.x >= float(size.x) + reach.x || q.y >= float(size.y) + reach.y)
+        discard;
+    vec4 acc;
+    if (taps.x == 1 && taps.y == 1) { // the usual case (same for every pixel of the draw: no divergence)
+        acc = sampleAt(q, size, lod, mode);
+    } else {
+        acc = vec4(0.0);
+        for (int ty = 0; ty < taps.y; ++ty)
+            for (int tx = 0; tx < taps.x; ++tx) {
+                vec2 o = (vec2(tx, ty) + 0.5) / vec2(taps) - 0.5;
+                acc += sampleAt(q + o * 2.0 * reach, size, lod, mode);
+            }
+        acc /= float(taps.x * taps.y);
+    }
     vec4 color;
     if (mode <= 1) {
-        bool straight = mode == 1;
-        color = w.x * rgbaTexel(i, size, lod, straight) + w.y * rgbaTexel(i + ivec2(1, 0), size, lod, straight)
-              + w.z * rgbaTexel(i + ivec2(0, 1), size, lod, straight) + w.w * rgbaTexel(i + ivec2(1, 1), size, lod, straight);
+        color = acc;
         if (chroma.w > 0.5 && color.a > 0.0) { // grade on straight colour
             vec3 c = clamp(color.rgb / color.a, 0.0, 1.0);
             color.rgb = texture(lut3, c * lut.x + lut.y).rgb * color.a;
         }
     } else {
-        // Luma: the taps inside the picture, weighted (alpha = their share)
-        float ysum = 0.0, alpha = 0.0;
-        for (int k = 0; k < 4; ++k) {
-            ivec2 p = i + ivec2(k & 1, k >> 1);
-            if (p.x < 0 || p.y < 0 || p.x >= size.x || p.y >= size.y) continue;
-            ysum += w[k] * texelFetch(tex0, p, lod).r;
-            alpha += w[k];
-        }
+        float alpha = acc.a;
         if (alpha <= 0.0) discard;
-        float Y = ysum / alpha * chroma.z;
-        // Chroma at its own grid (subsampled, sited by chroma.xy)
-        vec2 cq = (q + 0.5) / exp2(src.zw) - 0.5 + chroma.xy;
-        vec2 uv;
-        if (mode == 2) uv = vec2(planeBilinear(1, cq, lod).r, planeBilinear(2, cq, lod).r);
-        else uv = planeBilinear(1, cq, lod).rg;
-        uv *= chroma.z;
+        float Y = acc.r / alpha * chroma.z;
+        vec2 uv = acc.gb / alpha * chroma.z;
         vec3 c = clamp((yuv * vec4(Y, uv, 1.0)).rgb, 0.0, 1.0);
         if (chroma.w > 0.5) c = texture(lut3, c * lut.x + lut.y).rgb;
         color = vec4(c * alpha, alpha);

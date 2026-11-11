@@ -309,6 +309,95 @@ int main(int argc, char** argv)
         }
     }
 
+    // 4b. Strong downscaling of a fine pattern (zone plate: every frequency up to 1/2 cycle per pixel): the card must
+    // average like Compose::draw's halvings, not pick texels (that is stair-stepping / moire). RGBA (stills, layers made
+    // on the CPU) and Y'CbCr, evenly and along one axis only (squeezed).
+    {
+        const int w = 1024, h = 768;
+        std::vector<uint8_t> plate(size_t(w) * h * 4);
+        for (int y = 0; y < h; ++y)
+            for (int x = 0; x < w; ++x) {
+                const double dx = x - w / 2.0, dy = y - h / 2.0;
+                const uint8_t v = uint8_t(std::lround(127.5 + 127.5 * std::cos(M_PI * (dx * dx + dy * dy) / w)));
+                uint8_t* p = &plate[(size_t(y) * w + x) * 4];
+                p[0] = p[1] = p[2] = v;
+                p[3] = 255;
+            }
+        // The same as Y'CbCr (full range, neutral chroma): toRgba gives back the plate
+        auto yuv = std::make_shared<Video::Picture>();
+        yuv->frame = av_frame_alloc();
+        yuv->frame->format = AV_PIX_FMT_YUVJ444P;
+        yuv->frame->width = w;
+        yuv->frame->height = h;
+        av_frame_get_buffer(yuv->frame, 64);
+        for (int y = 0; y < h; ++y)
+            for (int x = 0; x < w; ++x) {
+                yuv->frame->data[0][size_t(y) * yuv->frame->linesize[0] + x] = plate[(size_t(y) * w + x) * 4];
+                yuv->frame->data[1][size_t(y) * yuv->frame->linesize[1] + x] = 128;
+                yuv->frame->data[2][size_t(y) * yuv->frame->linesize[2] + x] = 128;
+            }
+        const Video::Info yinfo = infoFor(*yuv, 709, true);
+        struct Case {
+            const char* name;
+            double kx, ky;
+            bool planes;
+        };
+        const Case cases[] = {
+            {"zone plate RGBA at 1/4", 0.25, 0.25, false},
+            {"zone plate RGBA at 0.18", 0.18, 0.18, false},
+            {"zone plate RGBA at 1/4 x, 1 y", 0.25, 1.0, false},
+            {"zone plate yuv at 1/4", 0.25, 0.25, true},
+            {"zone plate yuv at 1/4 x, 0.9 y", 0.25, 0.9, true},
+        };
+        for (const Case& c : cases) {
+            const int W = int(std::ceil(w * c.kx)) + 8, H = int(std::ceil(h * c.ky)) + 8;
+            const Compose::Affine m = Compose::placement(4, 4, w * c.kx, h * c.ky, 0, w, h, true, true);
+            std::vector<uint8_t> cpu(size_t(W) * H * 4, 0), out(cpu.size());
+            Compose::draw(cpu.data(), W, H, plate.data(), w, h, m, 1.0);
+            gpu->begin();
+            Gpu::TexturePtr t = c.planes ? gpu->uploadYuv(yuv->frame, yinfo, true) : gpu->uploadRgba(plate.data(), w, h, true);
+            if (!CHECK(t != nullptr)) {
+                gpu->finish();
+                continue;
+            }
+            Gpu::TexturePtr canvas = gpu->target(QSize(W, H));
+            gpu->draw(*canvas, {t.get(), m, 1.0, nullptr, {}});
+            gpu->readRgba(*canvas, out.data());
+            gpu->finish();
+            const Diff d = compare(cpu.data(), out.data(), cpu.size(), 4, 3);
+            show(c.name, d);
+            // Against the plate itself averaged over each target pixel (8x8 points of the formula, inside only): how
+            // much of the moire is left, the card next to the CPU
+            std::vector<uint8_t> ideal, cpuIn, gpuIn;
+            for (int Y = 6; Y < H - 6 && 4 + (Y + 2) / c.ky < 4 + h; ++Y)
+                for (int X = 6; X < W - 6; ++X) {
+                    const double x0 = (X - 4) / c.kx, y0 = (Y - 4) / c.ky;
+                    if (x0 + 1 / c.kx > w - 2 || y0 + 1 / c.ky > h - 2) continue;
+                    double sum = 0;
+                    for (int j = 0; j < 8; ++j)
+                        for (int i = 0; i < 8; ++i) {
+                            const double dx = x0 + (i + 0.5) / 8 / c.kx - 0.5 - w / 2.0, dy = y0 + (j + 0.5) / 8 / c.ky - 0.5 - h / 2.0;
+                            sum += 127.5 + 127.5 * std::cos(M_PI * (dx * dx + dy * dy) / w);
+                        }
+                    ideal.push_back(uint8_t(std::lround(sum / 64)));
+                    cpuIn.push_back(cpu[(size_t(Y) * W + X) * 4]);
+                    gpuIn.push_back(out[(size_t(Y) * W + X) * 4]);
+                }
+            const Diff ci = compare(ideal.data(), cpuIn.data(), ideal.size(), 1), gi = compare(ideal.data(), gpuIn.data(), ideal.size(), 1);
+            std::printf("  %-34s area average: CPU %s, GPU %s\n", "", qPrintable(text(ci)), qPrintable(text(gi)));
+            // Picked texels differ from the average by up to the full contrast in the fine rings (~15 dB both ways
+            // before). Whole halvings: the same picture as the CPU. 0.18 (5.6:1): the CPU halves twice and then
+            // bilinear at 1.4:1 still skips texels; the card averages the whole footprint - closer to the area
+            // average than the CPU, so only that comparison counts there
+            if (c.kx != 0.18) {
+                CHECK(d.psnr >= 40);
+                CHECK(d.mean <= 1.0);
+            }
+            CHECK(gi.psnr >= 32);
+            CHECK(gi.psnr >= ci.psnr - 1.0);
+        }
+    }
+
     // 5. Colour grade: baked correction on the CPU vs the 3D LUT on the card
     {
         const int w = 256, h = 160;
