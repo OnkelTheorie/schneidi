@@ -3,6 +3,7 @@
 #include "core/CodeTrust.h"
 #include "core/TitleLookJson.h"
 #include "core/PathKey.h"
+#include "core/ProjectRefs.h"
 
 #include "core/Captions.h"
 #include "core/CompGraph.h"
@@ -1512,30 +1513,27 @@ QByteArray fingerprint(const QString& path)
 
 namespace {
 
-// Every reference to an old path (media pool, clips of every timeline) to its new one
+// Every reference to an old path to its new one: clips' media here (an offline crop is converted once its file is
+// known), every other file the project names by the one list (core/ProjectRefs: pool, compositing nodes, title
+// textures, transition wipes, effect files, brand kit)
 void redirect(ProjectData* data, const QHash<QString, QString>& moved)
 {
-    for (MediaInfo& m : data->media)
-        if (moved.contains(m.path)) m.path = moved.value(m.path);
     auto relinkTimeline = [&](Timeline& tl) {
         for (QVector<Track>* list : {&tl.video, &tl.audio})
             for (Track& t : *list)
-                for (Clip& c : t.clips) {
-                    // Files of compositing nodes (media pool items too)
-                    for (EffectInstance& e : c.effects)
-                        if (e.effectId == QLatin1String(Comp::kEffectId))
-                            Comp::redirectMedia(e, [&](const QString& p) { return moved.value(p); });
-                    if (c.isTitle() && moved.contains(c.title.look.texture))
-                        c.title.look.texture = moved.value(c.title.look.texture);
+                for (Clip& c : t.clips)
                     if (moved.contains(c.mediaPath)) {
                         c.mediaPath = moved.value(c.mediaPath);
                         // Crop of an old project opened while the file was offline: now its shape is known
                         if (c.cropOnFrame) convertCrop(c, QSizeF(data->format.width, data->format.height));
                     }
-                }
     };
     relinkTimeline(data->timeline);
     for (Sequence& s : data->sequences) relinkTimeline(s.timeline);
+    ProjectRefs::forEach(*data, [&](QString& path, ProjectRefs::Kind kind) {
+        if (kind != ProjectRefs::Kind::ClipMedia && kind != ProjectRefs::Kind::WatchFolder && moved.contains(path))
+            path = moved.value(path);
+    });
 }
 
 // Built-in effect sounds (op 'sfx') live in the cache: made again when they are missing (core/SfxSynth)
@@ -1597,21 +1595,13 @@ QStringList missingMedia(const ProjectData& data)
 
 QStringList unusedMedia(const ProjectData& data)
 {
-    // The references redirect() follows
+    // Everything that renders or plays reads its files through the one list (core/ProjectRefs); brand kit files count
+    // as used (an intro is no less needed for being outside the timelines)
     QSet<QString> used;
-    auto scan = [&](const Timeline& tl) {
-        for (const auto* tracks : {&tl.video, &tl.audio})
-            for (const Track& t : *tracks)
-                for (const Clip& c : t.clips) {
-                    if (!c.mediaPath.isEmpty()) used.insert(c.mediaPath);
-                    if (c.isTitle() && !c.title.look.texture.isEmpty()) used.insert(c.title.look.texture);
-                    for (const EffectInstance& e : c.effects)
-                        if (e.effectId == QLatin1String(Comp::kEffectId))
-                            for (const QString& p : Comp::mediaPaths(e)) used.insert(p);
-                }
-    };
-    scan(data.timeline);
-    for (const Sequence& s : data.sequences) scan(s.timeline);
+    ProjectData copy = data; // forEach may change paths: walked on a copy
+    ProjectRefs::forEach(copy, [&](QString& path, ProjectRefs::Kind kind) {
+        if (kind != ProjectRefs::Kind::PoolMedia && kind != ProjectRefs::Kind::WatchFolder) used.insert(path);
+    });
     QStringList out;
     for (const MediaInfo& m : data.media)
         if (!used.contains(m.path)) out << m.path;

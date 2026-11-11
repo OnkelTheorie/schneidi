@@ -499,6 +499,23 @@ int main(int argc, char** argv)
         d.sequences << other;
         CHECK_EQ(ProjectFile::unusedMedia(d), QStringList({"/weg/c.mp4"}));
         CHECK_EQ(ProjectFile::missingMedia(d).size(), 4); // missing all the same
+        // A transition's wipe picture and a brand kit file are used too (core/ProjectRefs: one list of every path)
+        d.media << d.media[2] << d.media[2];
+        d.media[4].path = "/weg/wipe.png";
+        d.media[5].path = "/weg/logo.png";
+        d.timeline.video[0].clips[0].transOutStyle.luma = "/weg/wipe.png";
+        BrandKit kit;
+        kit.logo = "/weg/logo.png";
+        d.brand = kit;
+        CHECK_EQ(ProjectFile::unusedMedia(d), QStringList({"/weg/c.mp4"}));
+        // ... and relink finds the wipe picture again (it pointed at the old path before)
+        const QString found = tmp.filePath("wischen");
+        QDir().mkpath(found);
+        QFile wipe(found + "/wipe.png");
+        CHECK(wipe.open(QIODevice::WriteOnly));
+        wipe.close();
+        CHECK_EQ(ProjectFile::relink(&d, found), 1);
+        CHECK_EQ(d.timeline.video[0].clips[0].transOutStyle.luma, found + "/wipe.png");
     }
 
     // --- Older file: freeze frame without freezeFrame shows `in` - also after splitting (shifts `in` of the right part)
