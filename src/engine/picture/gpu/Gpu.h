@@ -110,6 +110,9 @@ public:
     bool lost() const;
     // Tests: the current frame's end reports the device lost, and begin() refuses from then on (as a real loss)
     void simulateDeviceLoss();
+    // Tests: the current frame's readbacks come back empty while the frame reports success (Qt's D3D11 backend after
+    // a device removal)
+    void simulateEmptyReadbacks();
 
     // A pooled RGBA8 render target (premultiplied), cleared to `clear` (straight RGBA 0..1) by its first pass
     TexturePtr target(QSize size, const float clear[4] = nullptr);
@@ -211,11 +214,16 @@ public:
     // false = shut down, or the card refused or failed the frame (device lost: the context is made again for the next
     // one): nothing of the job may be used, the caller takes the CPU path
     bool run(const std::function<void(Context&)>& job);
-    // Tests: the next frame with work fails as on a lost device (Context::simulateDeviceLoss)
+    // Tests: the next frame with work fails as on a lost device (Context::simulateDeviceLoss) / its readbacks come
+    // back empty (Context::simulateEmptyReadbacks)
     void simulateDeviceLoss();
+    void simulateEmptyReadbacks();
+    // false: the engine went off (the device was lost and no new context could be made): run() refuses at once
+    bool available() const;
     // The caller is the GPU thread itself (inside a job): run() would wait for itself
     bool onThread() const;
-    const DeviceInfo& info() const;
+    // A copy: renewed when the context is made again after a device loss
+    DeviceInfo info() const;
 
 private:
     Service() = default;

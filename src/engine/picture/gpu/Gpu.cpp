@@ -16,6 +16,12 @@
 #include <QThread>
 #include <QTimer>
 #include <rhi/qrhi.h>
+#ifdef Q_OS_WIN
+#ifndef NOMINMAX
+#define NOMINMAX // windows.h (through d3d11.h) would define min/max macros
+#endif
+#include <d3d11.h>
+#endif
 #endif
 
 extern "C" {
@@ -135,6 +141,9 @@ QSurfaceFormat glFormat()
     QSurfaceFormat format = QSurfaceFormat::defaultFormat();
     format.setVersion(3, 3);
     format.setProfile(QSurfaceFormat::CoreProfile);
+    // A GPU reset (driver crash, hang recovery) is then reported (QRhi::isDeviceLost) instead of every later frame
+    // failing silently
+    format.setOption(QSurfaceFormat::ResetNotification);
     return format;
 }
 
@@ -197,6 +206,7 @@ struct Context::Impl {
     int passes = 0, lastPasses = 0;
     int lutsMade = 0, pipelinesMade = 0;
     bool simulatedLoss = false; // simulateDeviceLoss()
+    bool simulatedEmpty = false; // simulateEmptyReadbacks()
 
     // Texture pool: shared state so textures given out can find it (or know it is gone)
     struct Pool {
@@ -226,7 +236,7 @@ struct Context::Impl {
 
     struct Readback {
         std::unique_ptr<QRhiReadbackResult> result;
-        std::function<void(const QByteArray&)> deliver;
+        std::function<bool(const QByteArray&)> deliver;
     };
     std::vector<Readback> readbacks;
 
@@ -441,7 +451,7 @@ struct Context::Impl {
         cb->endPass();
     }
 
-    void readback(Texture& t, std::function<void(const QByteArray&)> deliver)
+    void readback(Texture& t, std::function<bool(const QByteArray&)> deliver)
     {
         flushClear(t);
         Readback rb;
@@ -548,15 +558,20 @@ bool Context::finish()
     }
     QRhi::FrameOpResult r = d->rhi->endOffscreenFrame(); // waits for the card: readbacks are complete
     if (d->simulatedLoss) r = QRhi::FrameOpDeviceLost;
+    if (std::exchange(d->simulatedEmpty, false))
+        for (auto& rb : d->readbacks) rb.result->data.clear();
     d->recording = false;
     d->lastPasses = d->passes;
     // A failed frame (device lost, driver reset) filled no readback: nothing is delivered, the caller's buffers keep
     // what they had and the jobs count as not run (Service), so nobody takes them for the card's picture
+    // A readback that came back short counts the same: Qt's D3D11 backend reports success after a device removal
+    // (the staging Map fails with a warning only, the data stays empty)
+    bool delivered = true;
     if (r == QRhi::FrameOpSuccess)
-        for (auto& rb : d->readbacks) rb.deliver(rb.result->data);
-    else
+        for (auto& rb : d->readbacks) delivered = rb.deliver(rb.result->data) && delivered;
+    if (r != QRhi::FrameOpSuccess || !delivered)
         qWarning("GPU picture engine: the card failed a frame (%s)",
-                 r == QRhi::FrameOpDeviceLost ? "device lost" : "error");
+                 r == QRhi::FrameOpDeviceLost ? "device lost" : r == QRhi::FrameOpSuccess ? "readback empty" : "error");
     d->readbacks.clear();
     d->retiredPs.clear(); // the frame is done with them
     {
@@ -585,12 +600,23 @@ bool Context::finish()
                     ++it;
                 }
     }
-    return r == QRhi::FrameOpSuccess;
+    return r == QRhi::FrameOpSuccess && delivered;
 }
 
 void Context::simulateDeviceLoss() { d->simulatedLoss = true; }
+void Context::simulateEmptyReadbacks() { d->simulatedEmpty = true; }
 
-bool Context::lost() const { return d->simulatedLoss || d->rhi->isDeviceLost(); }
+bool Context::lost() const
+{
+    if (d->simulatedLoss || d->rhi->isDeviceLost()) return true;
+#ifdef Q_OS_WIN
+    // Qt's D3D11 backend notices a removed device only on a swapchain's Present - offscreen frames never do: ask
+    if (d->rhi->backend() == QRhi::D3D11)
+        if (const auto* h = static_cast<const QRhiD3D11NativeHandles*>(d->rhi->nativeHandles()); h && h->dev)
+            return static_cast<ID3D11Device*>(h->dev)->GetDeviceRemovedReason() != S_OK;
+#endif
+    return false;
+}
 
 TexturePtr Context::target(QSize size, const float clear[4])
 {
@@ -945,7 +971,7 @@ void Context::readRgba(const Texture& t, uint8_t* out)
     d->readback(const_cast<Texture&>(t), [dst = out, sz](const QByteArray& data) {
         uint8_t* out = dst;
         const size_t n = size_t(sz.width()) * sz.height();
-        if (size_t(data.size()) < n * 4) return;
+        if (size_t(data.size()) < n * 4) return false;
         const auto* s = reinterpret_cast<const uint8_t*>(data.constData());
         for (size_t i = 0; i < n; ++i, s += 4, out += 4) { // premultiplied -> straight
             const unsigned a = s[3];
@@ -957,6 +983,7 @@ void Context::readRgba(const Texture& t, uint8_t* out)
             }
             out[3] = uint8_t(a);
         }
+        return true;
     });
 }
 
@@ -1002,9 +1029,10 @@ bool Context::readYuv(const Texture& t, const OutputColor::Target& out)
         // The texture stays referenced by the lambda until delivered (pooled again afterwards)
         d->readback(*packed, [dst, stride, p, packed](const QByteArray& data) {
             const size_t rowBytes = size_t(p.texW) * 4;
-            if (size_t(data.size()) < rowBytes * p.texH) return;
+            if (size_t(data.size()) < rowBytes * p.texH) return false;
             for (int y = 0; y < p.rows; ++y)
                 std::memcpy(dst + size_t(y) * stride, data.constData() + y * rowBytes, size_t(p.bytes));
+            return true;
         });
     }
     return true;
@@ -1063,6 +1091,9 @@ struct Service::Impl {
     };
     std::deque<Job*> queue;
     std::atomic<bool> loseDevice{false}; // simulateDeviceLoss()
+    std::atomic<bool> emptyReadbacks{false}; // simulateEmptyReadbacks()
+    std::atomic<bool> off{false};            // no context any more (available())
+    mutable std::mutex infoMutex;            // info is renewed after a remake (read by the render threads)
     int remade = 0;
 
     // The device is lost: the context (and everything on the card: pools, the callers' caches in userData) is made
@@ -1072,12 +1103,20 @@ struct Service::Impl {
     {
         context.reset();
         constexpr int kRemakes = 3;
-        if (remade >= kRemakes) return false;
+        if (remade >= kRemakes) {
+            off = true;
+            return false;
+        }
         ++remade;
         QString why;
         context = Context::create(surface.get(), &why, envSwitch() == 1);
-        if (context) qWarning("GPU picture engine: device lost, context made again (%d of %d)", remade, kRemakes);
+        if (context) {
+            qWarning("GPU picture engine: device lost, context made again (%d of %d)", remade, kRemakes);
+            std::lock_guard lock(infoMutex); // the new device may take other sizes / formats
+            info = context->info();
+        }
         else qWarning("GPU picture engine off: device lost and no new context (%s)", qPrintable(why));
+        off = context == nullptr;
         return context != nullptr;
     }
 
@@ -1103,9 +1142,10 @@ struct Service::Impl {
             // readbacks are unfilled and must not look like a result - the callers take the CPU path for it
             if (work > 0) {
                 bool begun = context && context->begin();
-                if (!begun && context && remake()) begun = context->begin(); // lost before this frame
+                if (!begun && context && context->lost() && remake()) begun = context->begin(); // lost before
                 if (begun) {
                     if (loseDevice.exchange(false)) context->simulateDeviceLoss();
+                    if (emptyReadbacks.exchange(false)) context->simulateEmptyReadbacks();
                     for (size_t i = 0; i < work; ++i) (*jobs[i]->fn)(*context);
                     const bool ok = context->finish();
                     for (size_t i = 0; i < work; ++i) jobs[i]->ran = ok;
@@ -1338,6 +1378,7 @@ bool Service::run(const std::function<void(Context&)>& job)
 {
     Impl::Job j;
     j.fn = &job;
+    if (d->off.load()) return false; // the engine went off (device lost for good): CPU path, no wait for the thread
     std::unique_lock lock(d->mutex);
     if (d->stopping) return false; // shut down: the caller takes the CPU path
     d->queue.push_back(&j);
@@ -1346,9 +1387,15 @@ bool Service::run(const std::function<void(Context&)>& job)
     return j.ran;
 }
 
-const DeviceInfo& Service::info() const { return d->info; }
+DeviceInfo Service::info() const
+{
+    std::lock_guard lock(d->infoMutex);
+    return d->info;
+}
 
 void Service::simulateDeviceLoss() { d->loseDevice = true; }
+void Service::simulateEmptyReadbacks() { d->emptyReadbacks = true; }
+bool Service::available() const { return !d->off.load(); }
 
 bool Service::onThread() const { return std::this_thread::get_id() == d->thread.get_id(); }
 
@@ -1392,6 +1439,7 @@ const DeviceInfo& Context::info() const { return d->info; }
 bool Context::begin() { return false; }
 bool Context::finish() { return true; }
 void Context::simulateDeviceLoss() {}
+void Context::simulateEmptyReadbacks() {}
 bool Context::lost() const { return false; }
 TexturePtr Context::target(QSize, const float*) { return {}; }
 TexturePtr Context::uploadRgba(const uint8_t*, int, int, bool, bool) { return {}; }
@@ -1420,9 +1468,11 @@ Service* Service::tryInstance(bool* decided)
 }
 void Service::shutdown() {}
 void Service::simulateDeviceLoss() {}
+void Service::simulateEmptyReadbacks() {}
+bool Service::available() const { return false; }
 bool Service::run(const std::function<void(Context&)>&) { return false; }
 bool Service::onThread() const { return false; }
-const DeviceInfo& Service::info() const { return probe(); }
+DeviceInfo Service::info() const { return probe(); }
 
 #endif
 

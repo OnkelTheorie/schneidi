@@ -14,6 +14,7 @@
 
 #include "engine/ClipFormat.h"
 #include "engine/MediaProbe.h"
+#include "engine/video/Convert.h"
 #include "engine/video/Reader.h"
 #include "engine/video/Scan.h"
 
@@ -331,6 +332,51 @@ uint32_t sampleAt(const AVFrame* f, int x, int y)
 }
 
 // A file with a rotation tag comes upright: the plain file's picture turned by a quarter (the tag's direction)
+// Interlaced 4:2:0 converted field by field (chroma row k belongs to field k % 2) in limited and in full range
+// (yuvj420p, or yuv420p marked full): full range went the progressive way before 0.21 - each field's lines took the
+// other field's colour. Top field red, bottom field blue
+void testInterlacedFields()
+{
+    struct Case {
+        AVPixelFormat fmt;
+        bool full;
+    };
+    for (const Case c : {Case{AV_PIX_FMT_YUV420P, false}, Case{AV_PIX_FMT_YUV420P, true}, Case{AV_PIX_FMT_YUVJ420P, true}}) {
+        const int w = 64, h = 32;
+        Video::Picture pic;
+        pic.frame = av_frame_alloc();
+        pic.frame->format = c.fmt;
+        pic.frame->width = w;
+        pic.frame->height = h;
+        if (!CHECK(av_frame_get_buffer(pic.frame, 32) == 0)) return;
+        pic.progressive = false;
+        pic.topFieldFirst = true;
+        // BT.601 red / blue as Y, Cb, Cr
+        const int red[3] = {c.full ? 76 : 81, c.full ? 85 : 90, c.full ? 255 : 240};
+        const int blue[3] = {c.full ? 29 : 41, c.full ? 255 : 240, c.full ? 107 : 110};
+        for (int y = 0; y < h; ++y) std::memset(pic.frame->data[0] + y * pic.frame->linesize[0], (y % 2 ? blue : red)[0], w);
+        for (int y = 0; y < h / 2; ++y)
+            for (int p = 1; p <= 2; ++p) std::memset(pic.frame->data[p] + y * pic.frame->linesize[p], (y % 2 ? blue : red)[p], w / 2);
+        Video::Info info;
+        info.width = w;
+        info.height = h;
+        info.format = c.fmt;
+        info.colorspace = 601;
+        info.fullRange = c.full;
+        std::vector<uint8_t> out(size_t(w) * h * 4);
+        if (!CHECK(Video::toRgba(pic, info, out.data(), w, h, false))) continue;
+        int wrong = 0;
+        for (int y = 4; y < h - 4; ++y) {
+            const uint8_t* px = &out[(size_t(y) * w + w / 2) * 4];
+            const bool isRed = px[0] > 200 && px[2] < 60, isBlue = px[2] > 200 && px[0] < 60;
+            wrong += y % 2 ? !isBlue : !isRed;
+        }
+        std::printf("  interlaced %s %s: %d of %d lines in the wrong colour\n", av_get_pix_fmt_name(c.fmt),
+                    c.full ? "full" : "limited", wrong, h - 8);
+        CHECK_EQ(wrong, 0);
+    }
+}
+
 void testRotation(const QString& plain, const QString& rotated, double degrees, const QString& name = {})
 {
     auto a = Video::Reader::open(plain), b = Video::Reader::open(rotated);
@@ -486,6 +532,7 @@ int main(int argc, char** argv)
         const auto p = r->picture(3);
         CHECK(p && p->progressive);
     }
+    testInterlacedFields();
     testRotation(file("h264.mp4"), file("rotated.mp4"), 90);
     // Formats a quarter turn cannot keep: 4:2:2 (camera files, iPhone ProRes 422 shot in portrait), palette, 1 bit
     struct Turn {

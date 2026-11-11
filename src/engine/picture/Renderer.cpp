@@ -455,7 +455,15 @@ struct Renderer::Impl {
     std::atomic<bool> gpuDecided{false};
     Gpu::Service* gpuService()
     {
-        if (!options.gpu || gpuDecided.load()) return gpu.load();
+        if (!options.gpu) return nullptr;
+        if (gpuDecided.load()) {
+            Gpu::Service* s = gpu.load();
+            if (s && !s->available()) { // went off for good (device lost): no more draws built for nothing
+                gpu = nullptr;
+                return nullptr;
+            }
+            return s;
+        }
         bool decided = false;
         Gpu::Service* s = Gpu::Service::tryInstance(&decided);
         if (decided) {
@@ -2243,11 +2251,13 @@ struct Renderer::Impl {
             op.info = s.video->info;
             nw = op.picture->frame->width;
             nh = op.picture->frame->height;
-            // Interlaced 4:2:0: the chroma rows alternate between the two fields. The CPU converts field by field
-            // (Video::toRgba); the card samples the chroma plane as one picture and blended the fields' colours
-            // (stripes of one field tinted by the other). Converted here, the card draws the RGBA picture
-            const AVPixFmtDescriptor* desc = av_pix_fmt_desc_get(AVPixelFormat(op.picture->frame->format));
-            if (!op.picture->progressive && desc && desc->log2_chroma_h == 1 && nw > 0 && nh > 0) {
+            // Interlaced 8-bit planar 4:2:0: the chroma rows alternate between the two fields. The CPU converts it
+            // field by field (Video::toRgba); the card samples the chroma plane as one picture and blended the
+            // fields' colours (stripes of one field tinted by the other). Converted here, the card draws the RGBA
+            // picture (from the layer pool). Only the formats the CPU converts field by field: the others (NV12, P010
+            // of hardware decoding, 10 bit) the CPU converts as progressive too, the planes upload gives the same
+            const auto fmt = AVPixelFormat(op.picture->frame->format);
+            if (!op.picture->progressive && (fmt == AV_PIX_FMT_YUV420P || fmt == AV_PIX_FMT_YUVJ420P) && nw > 0 && nh > 0) {
                 auto img = std::make_shared<Image>(nw, nh);
                 if (!Video::toRgba(*op.picture, op.info, img->data(), nw, nh, ctx.preview)) return false;
                 op.rgba = std::move(img);

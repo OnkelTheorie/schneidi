@@ -407,7 +407,8 @@ int main(int argc, char** argv)
                 CHECK(d.mean <= 1.0);
             }
             CHECK(gi.psnr >= 32);
-            CHECK(gi.psnr >= ci.psnr - 1.0);
+            // A software rasterizer's generateMips (llvmpipe: box filter) is ~1.3 dB short of the CPU here; cards match
+            CHECK(gi.psnr >= ci.psnr - (gpu->info().software ? 1.5 : 1.0));
         }
     }
 

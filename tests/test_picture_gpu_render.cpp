@@ -469,6 +469,50 @@ int main(int argc, char** argv)
         if (!c.isNull()) CHECK(compare(a.bits(), c.bits(), size_t(a.width()) * a.height() * 4).mean <= 1.0);
     }
 
+    // A readback that comes back short although the frame "succeeded" (Qt's D3D11 backend after a device removal: the
+    // staging Map fails with a warning only, endOffscreenFrame still reports success): not a GPU frame with the stale
+    // pixels of a pooled buffer - the CPU makes it
+    {
+        Timeline tl = oneTrack({media(1, g_a, 0, 30)});
+        Picture::Renderer cpu(tl, options(Picture::Mode::Export, false)), gpu(tl, options(Picture::Mode::Export, true));
+        const Picture::Frame a = cpu.render(8);
+        CHECK(gpu.render(21).gpu());
+        Picture::Gpu::Service::instance()->simulateEmptyReadbacks();
+        const Picture::Frame b = gpu.render(8);
+        CHECK(!b.isNull());
+        CHECK(!b.gpu());
+        if (!b.isNull()) {
+            const Diff d = compare(a.bits(), b.bits(), size_t(a.width()) * a.height() * 4);
+            std::printf("  frame of an empty readback     mean %.3f max %3d\n", d.mean, d.max);
+            CHECK(d.mean <= 0.01);
+        }
+        CHECK(gpu.render(8).gpu());
+    }
+
+    // The device lost again and again: after the last remake the engine is off - run() refuses at once, and a
+    // renderer no longer builds the card's draws first (a layer was decoded twice per frame: GPU try, then CPU)
+    // (last: the GPU stays off in this process)
+    {
+        Timeline tl = oneTrack({media(1, g_a, 0, 30)});
+        Picture::Renderer cpu(tl, options(Picture::Mode::Export, false)), gpu(tl, options(Picture::Mode::Export, true));
+        Picture::Gpu::Service* svc = Picture::Gpu::Service::instance();
+        for (int i = 0; i < 4 && svc->available(); ++i) {
+            svc->simulateDeviceLoss();
+            gpu.render(3 + i);
+        }
+        CHECK(!svc->available());
+        bool called = false;
+        CHECK(!svc->run([&](Picture::Gpu::Context&) { called = true; }));
+        CHECK(!called);
+        gpu.render(10);
+        const int before = gpu.stats().layersDecoded;
+        const Picture::Frame b = gpu.render(11), a = cpu.render(11);
+        std::printf("  layers decoded for a frame with the GPU off: %d\n", gpu.stats().layersDecoded - before);
+        CHECK_EQ(gpu.stats().layersDecoded - before, 1);
+        CHECK(!b.gpu());
+        if (!b.isNull() && !a.isNull()) CHECK(compare(a.bits(), b.bits(), size_t(a.width()) * a.height() * 4).mean <= 0.01);
+    }
+
     if (const int n = qEnvironmentVariableIntValue("PICTURE_GPU_RENDER_BENCH"); n > 0) {
         Timeline tl;
         tl.video.resize(3);
