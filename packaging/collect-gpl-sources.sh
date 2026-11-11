@@ -12,7 +12,7 @@
 #             version>" (AppImage: usr/share/licenses/schneidi/x264-x265-versions.txt, default
 #             build-appimage/AppDir/…; Docker: /usr/share/doc/schneidi/x264-x265-versions.txt in the image)
 #   msys2/    the MSYS2 source packages of x264/x265 of the Windows package, when a versions file is the Windows
-#             licenses/x264-x265-NOTICE.txt (lines "mingw-w64-ucrt-x86_64-x264 <version>")
+#             licenses/x264-x265-NOTICE.txt (lines "mingw-w64-ucrt-x86_64-libx264 <version>")
 # Debian sources come via `apt-get source --download-only` (needs deb-src lines), else from deb.debian.org's pool, else
 # from snapshot.debian.org (any version Debian ever had). Needs curl, sha256sum, tar; python3 only for the snapshot.
 # Runs on Linux (POSIX sh); the Windows parts are plain downloads, so they are gathered here too.
@@ -104,8 +104,10 @@ for h, infos in d["fileinfo"].items():
 }
 
 # --- MSYS2 source packages (Windows) ---
-msys2_source() { # package (mingw-w64-ucrt-x86_64-x264) version (0.165.r3222.b35605a-3, maybe with epoch)
+msys2_source() { # package (mingw-w64-ucrt-x86_64-libx264) version (0.165.r3222.b35605a-3, maybe with epoch)
     base="mingw-w64-${1#mingw-w64-ucrt-x86_64-}"
+    # the source package is named after the pkgbase: libx264 is built by mingw-w64-x264
+    [ "$base" = mingw-w64-libx264 ] && base=mingw-w64-x264
     ver="${2#*:}"
     file="$base-$ver.src.tar.zst"
     [ -f "$OUT/msys2/$file" ] && return 0
@@ -118,7 +120,7 @@ FAILED=0
 for versions in "$@"; do
     [ -f "$versions" ] || { echo "!! no versions file $versions (build the AppImage first)" >&2; exit 1; }
     cp "$versions" "$OUT/versions-$(basename "$(dirname "$versions")")-$(basename "$versions")"
-    # Windows notice: "mingw-w64-ucrt-x86_64-x264 0.165…-3"; Debian: "<binary> <version> <source> <source version>"
+    # Windows notice: "mingw-w64-ucrt-x86_64-libx264 0.165…-3"; Debian: "<binary> <version> <source> <source version>"
     while read -r a b c d; do
         case "$b" in [0-9]*) ;; *) continue ;; esac # versions only (the notice's other lines)
         case "$a" in

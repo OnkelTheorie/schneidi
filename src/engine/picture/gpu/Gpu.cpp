@@ -1329,6 +1329,14 @@ Service* Service::instance()
     return service;
 }
 
+bool Service::starting()
+{
+    if (g_state.load() == 1) return true;
+    std::lock_guard lock(g_surfaceMutex);
+    // A posted prepare() that finds the surface made meanwhile (instance() needed it now) does nothing
+    return g_preparePosted && !g_surface && !g_surfaceTaken;
+}
+
 Service* Service::tryInstance(bool* decided)
 {
     if (g_state.load() == 2) {
@@ -1466,6 +1474,7 @@ Service* Service::tryInstance(bool* decided)
     *decided = true;
     return nullptr;
 }
+bool Service::starting() { return false; }
 void Service::shutdown() {}
 void Service::simulateDeviceLoss() {}
 void Service::simulateEmptyReadbacks() {}

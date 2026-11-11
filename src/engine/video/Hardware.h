@@ -28,6 +28,11 @@ Device deviceFor(const AVCodec* codec);
 // takes 100+ ms: not for estimates on the GUI thread). Thread-safe.
 bool deviceReady(const AVCodec* codec);
 
+// Opens the device the readers will use (the first that works, as deviceFor), in the background: CUDA takes 100-250 ms
+// to open, which the first picture of a project otherwise waits for (Windows' D3D11VA opens in a few). Nothing when
+// hardware decoding is off. A deviceFor() meanwhile waits for it instead of opening a second one. Thread-safe, once.
+void warmUp();
+
 // The setting (Wiedergabe › Grafikkarte zum Dekodieren nutzen); the environment variable wins
 bool enabled();
 void setEnabled(bool on);

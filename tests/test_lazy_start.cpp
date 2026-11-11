@@ -113,6 +113,10 @@ void testCachedGpuCheckHeadless()
     FrameView view;
     CHECK(view.backend() == FrameView::Backend::Painter); // offscreen: the painter before any check
     CHECK(!view.gpuPending());
+    CHECK(!view.surfaceDeferred()); // the deferred GPU surface is for X11 only
+    FrameView::prepareWindow(&view);
+    FrameView::attachDeferredSurfaces();
+    CHECK(view.backend() == FrameView::Backend::Painter);
     FrameView::checkCachedGpu(); // nothing took the stored answer: nothing to check
     CHECK_EQ(QSettings().value("viewer/gpuCheck").toString(), QString("1|0|Some GPU"));
     QSettings().remove("viewer/gpuCheck");

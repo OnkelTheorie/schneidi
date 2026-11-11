@@ -431,6 +431,58 @@ void testStillPastEnd()
     CHECK(!shown.empty() && shown.back().first == 300 && shown.back().second == -1);
 }
 
+// The content shown already, set again while stopped (a project just opened: refresh() for the new timeline, then
+// showTimeline): the render under way is kept, not thrown away and started a second time; a new position is a seek
+void testSameContentAgain()
+{
+    std::mutex m;
+    std::vector<std::pair<int64_t, int>> shown; // position, red
+    Picture::Pump pump([] { return NAN; }, [&](const QImage& img, int64_t pos, double) {
+        std::lock_guard l(m);
+        shown.push_back({pos, img.isNull() ? -1 : qRed(img.pixel(0, 0))});
+    }, 2);
+    std::atomic<int> renders{0}, red{10};
+    auto c = std::make_shared<Picture::Pump::Content>();
+    c->render = [&](int64_t) {
+        ++renders;
+        std::this_thread::sleep_for(150ms);
+        QImage i(4, 4, QImage::Format_RGBA8888);
+        i.fill(QColor(red.load(), 0, 0));
+        return i;
+    };
+    c->last = [] { return int64_t(1000); };
+    c->fps = 25;
+    const auto last = [&] {
+        std::lock_guard l(m);
+        return shown.empty() ? std::pair<int64_t, int>{-1, -1} : shown.back();
+    };
+    pump.setContent(c, 0, 0);
+    CHECK(waitFor([&] { return last().first == 0; }, 2000));
+    // The model changed (red 20 = the new project), then the same content again at the same position
+    renders = 0;
+    red = 20;
+    QElapsedTimer t;
+    t.start();
+    pump.refresh();
+    std::this_thread::sleep_for(30ms); // the render for the refresh is under way
+    pump.setContent(c, 0, 0);
+    CHECK(waitFor([&] { return last() == std::pair<int64_t, int>{0, 20}; }, 2000));
+    std::printf("       same content again: shown after %lld ms, %d render(s)\n", static_cast<long long>(t.elapsed()),
+                renders.load());
+    CHECK_EQ(renders.load(), 1);
+    CHECK(t.elapsed() < 280); // one render (150 ms), not two in a row
+    // Same content, another position: that frame is shown (a seek), the old one does not come back
+    pump.setContent(c, 7, 0);
+    CHECK(waitFor([&] { return last().first == 7; }, 2000));
+    std::this_thread::sleep_for(200ms);
+    CHECK_EQ(last().first, int64_t(7));
+    // Another content object (the same pictures): rendered anew, as before
+    renders = 0;
+    auto other = std::make_shared<Picture::Pump::Content>(*c);
+    pump.setContent(other, 7, 0);
+    CHECK(waitFor([&] { return renders.load() >= 1; }, 2000));
+}
+
 int main(int argc, char** argv)
 {
     Check::initEnv();
@@ -441,6 +493,8 @@ int main(int argc, char** argv)
     testScrubThenPlay();
     std::printf("still past the end\n");
     testStillPastEnd();
+    std::printf("same content again\n");
+    testSameContentAgain();
     std::printf("shuttle to the end\n");
     testShuttleReachesEnd();
     if (Check::haveFfmpeg()) {

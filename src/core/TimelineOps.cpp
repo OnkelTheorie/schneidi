@@ -873,16 +873,19 @@ void applyTrimEdit(Timeline& tl, const TrimEdit& e, int delta, const SourceLengt
     }
 }
 
-QVector<TransitionSpan> transitions(const Track& track, const SourceLength& sourceLength)
+namespace {
+
+// The spans of clips [from, to) of a track, as if the track held only those clips
+QVector<TransitionSpan> transitionsOf(const QVector<Clip>& clips, qsizetype from, qsizetype to,
+                                      const SourceLength& sourceLength)
 {
     QVector<TransitionSpan> spans;
-    const auto& clips = track.clips;
     // Portion of the start that a transition already occupies (dissolve + fade out fit in the clip)
     int usedIn = 0;
-    for (int i = 0; i < clips.size(); ++i) {
+    for (qsizetype i = from; i < to; ++i) {
         const Clip& c = clips[i];
-        const Clip* prev = i > 0 ? &clips[i - 1] : nullptr;
-        const Clip* next = i + 1 < clips.size() ? &clips[i + 1] : nullptr;
+        const Clip* prev = i > from ? &clips[i - 1] : nullptr;
+        const Clip* next = i + 1 < to ? &clips[i + 1] : nullptr;
         const bool dissolveIn = prev && isDissolve(*prev, c);
         if (!dissolveIn) usedIn = 0; // otherwise already set at the predecessor
         if (c.transIn > 0 && !dissolveIn) { // fade in
@@ -919,6 +922,32 @@ QVector<TransitionSpan> transitions(const Track& track, const SourceLength& sour
         const int len = std::min(c.transOut, room); // fade out
         if (len > 0) spans << TransitionSpan{c.id, 0, c.end() - len, c.end(), c.end(), c.transOutStyle};
     }
+    return spans;
+}
+
+} // namespace
+
+QVector<TransitionSpan> transitions(const Track& track, const SourceLength& sourceLength)
+{
+    return transitionsOf(track.clips, 0, track.clips.size(), sourceLength);
+}
+
+QVector<TransitionSpan> transitionsAt(const Track& track, int frame, const SourceLength& sourceLength)
+{
+    const QVector<Clip>& clips = track.clips;
+    // A clip's spans lie within it, a dissolve's up to the end of the next clip: only the last clip starting at or
+    // before the frame and the one before it can have a span there
+    const qsizetype last =
+        std::upper_bound(clips.begin(), clips.end(), frame, [](int f, const Clip& c) { return f < c.start; })
+        - clips.begin() - 1;
+    if (last < 0) return {};
+    // A clip's transitions depend on the dissolves into it: from the start of that chain on (where nothing comes in,
+    // the whole track's walk starts afresh too). The clip after `last` is there as its partner; its own spans start
+    // after the frame and are dropped below.
+    qsizetype from = std::max<qsizetype>(0, last - 1);
+    while (from > 0 && isDissolve(clips[from - 1], clips[from])) --from;
+    QVector<TransitionSpan> spans = transitionsOf(clips, from, std::min(clips.size(), last + 2), sourceLength);
+    spans.removeIf([frame](const TransitionSpan& s) { return frame < s.start || frame >= s.end; });
     return spans;
 }
 

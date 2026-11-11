@@ -362,6 +362,27 @@ void testPumpRecent()
     CHECK_EQ(syn.exactRenders.load(), before + 1);
 }
 
+// The recently shown frames' default budget follows the machine's memory: a fixed 192 MB filled within ~3 s of
+// playback and made a 415-MB Raspberry Pi Zero 2 W swap until the picture stood still
+void testRecentBudgetForMemory()
+{
+    constexpr int64_t MB = 1024ll * 1024;
+    auto budget = [](qint64 totalMb, qint64 limitMb = 0) {
+        SystemMemory::Info m;
+        m.total = totalMb * MB;
+        m.available = m.total / 2;
+        m.limit = limitMb * MB;
+        return Picture::Pump::recentBudgetFor(m) / MB;
+    };
+    CHECK_EQ(budget(16 * 1024), 192); // a usual computer: as before
+    CHECK_EQ(budget(4 * 1024), 192);
+    CHECK_EQ(budget(415), 25);        // Raspberry Pi Zero 2 W: ~13 preview frames instead of ~95
+    CHECK_EQ(budget(1024), 64);       // a 1-GB board
+    CHECK_EQ(budget(128), 16);        // never below 16 MB
+    CHECK_EQ(budget(16 * 1024, 512), 32); // a container or systemd scope with a cap: its limit is the whole
+    CHECK_EQ(budget(0), 192);         // unknown memory: as on a usual computer
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -372,6 +393,8 @@ int main(int argc, char** argv)
     testPumpScrub();
     std::printf("pump recent frames\n");
     testPumpRecent();
+    std::printf("recent frames budget by memory\n");
+    testRecentBudgetForMemory();
     if (Check::haveFfmpeg()) {
         QTemporaryDir dir;
         const QString file = Check::makeMedia(
