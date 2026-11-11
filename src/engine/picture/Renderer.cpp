@@ -1530,8 +1530,7 @@ struct Renderer::Impl {
                 break;
             }
         if (!near) return {};
-        const QVector<TimelineOps::TransitionSpan> spans =
-            TimelineOps::transitions(track, [&](const Clip& c) { return sourceLength(c, tl); });
+        const QVector<TimelineOps::TransitionSpan> spans = spansAt(track, f, tl);
         auto byId = [&](int id) -> const Clip* {
             for (const Clip& c : track.clips)
                 if (c.id == id) return &c;
@@ -1580,6 +1579,15 @@ struct Renderer::Impl {
         for (const Clip& c : track.clips) any = any || c.transIn > 0 || c.transOut > 0;
         if (!any) return {};
         return TimelineOps::transitions(track, [&](const Clip& c) { return sourceLength(c, tl); });
+    }
+
+    // The spans of spansOf() that cover frame f: source lengths only of the clips around f (each can open a file)
+    QVector<TimelineOps::TransitionSpan> spansAt(const Track& track, int f, const Timeline& tl)
+    {
+        bool any = false;
+        for (const Clip& c : track.clips) any = any || c.transIn > 0 || c.transOut > 0;
+        if (!any) return {};
+        return TimelineOps::transitionsAt(track, f, [&](const Clip& c) { return sourceLength(c, tl); });
     }
 
     static const Clip* clipAt(const Track& track, int f)
@@ -1638,7 +1646,7 @@ struct Renderer::Impl {
     bool covers(const Track& track, int trackIndex, int f, const Ctx& ctx, const Timeline& tl, const QString& prefix)
     {
         if (track.hidden) return false;
-        for (const auto& s : spansOf(track, tl))
+        for (const auto& s : spansAt(track, f, tl))
             if (f >= s.start && f < s.end) return false;
         const Clip* c = clipAt(track, f);
         if (!c || !c->enabled || c->isTitle() || c->isNested() || c->mediaPath.isEmpty()) return false;
@@ -1692,7 +1700,7 @@ struct Renderer::Impl {
         for (int i = tl.video.size() - 1; i >= 0 && index < 0; --i) {
             const Track& track = tl.video[i];
             if (track.hidden) continue;
-            for (const auto& span : spansOf(track, tl))
+            for (const auto& span : spansAt(track, f, tl))
                 if (f >= span.start && f < span.end) return false;
             if (const Clip* c = clipAt(track, f); c && c->enabled) index = i;
         }
@@ -1739,7 +1747,7 @@ struct Renderer::Impl {
                    const Timeline& tl, const QString& prefix, int depth)
     {
         if (track.hidden) return;
-        for (const auto& s : spansOf(track, tl))
+        for (const auto& s : spansAt(track, f, tl))
             if (f >= s.start && f < s.end) {
                 Image layer = trackLayer(track, trackIndex, f, ctx, tl, prefix, depth);
                 if (!layer.empty()) Compose::over(canvas.data(), layer.data(), canvas.w, canvas.h, 1.0);
@@ -2516,7 +2524,7 @@ struct Renderer::Impl {
                   const QString& prefix, int depth)
     {
         if (track.hidden) return;
-        for (const auto& s : spansOf(track, tl))
+        for (const auto& s : spansAt(track, f, tl))
             if (f >= s.start && f < s.end) {
                 gpuTransition(ops, track, trackIndex, s, f, ctx, tl, prefix, depth);
                 return;

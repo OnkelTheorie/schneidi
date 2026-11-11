@@ -182,6 +182,9 @@ struct TransitionSpan {
 // Transitions of a track with the length that really fits: Cross Dissolve centered on the cut,
 // shortened if handles (material beyond in/out) or clip length do not suffice; length 0 is dropped.
 QVector<TransitionSpan> transitions(const Track& track, const SourceLength& sourceLength);
+// The spans of transitions() that cover `frame`, asking sourceLength only for the clips around it (a source length
+// can mean opening the file: the first frame of a project with many dissolves waited for all of them)
+QVector<TransitionSpan> transitionsAt(const Track& track, int frame, const SourceLength& sourceLength);
 
 // Fade handle ramp (0..1, linear) at clip frame t (from clip start); fades limited to the clip length.
 // Video uses the value as opacity, audio as a sine curve (audioFadeGain).
