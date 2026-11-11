@@ -16,6 +16,7 @@
 #include "engine/BlurFill.h"
 #include "engine/ColorGrade.h"
 #include "engine/Lumas.h"
+#include "engine/MemoryRelease.h"
 #include "engine/OutputColor.h"
 #include "engine/StabilizeCorrection.h"
 #include "engine/VideoEffects.h"
@@ -44,6 +45,7 @@ extern "C" {
 #include <QHash>
 #include <QImageReader>
 #include <QPainter>
+#include <QSet>
 #include <QStringList>
 
 #include <algorithm>
@@ -2966,10 +2968,68 @@ void Renderer::prepare(int64_t frame)
 
 void Renderer::trim()
 {
-    const auto now = std::chrono::steady_clock::now();
+    trim(std::chrono::steady_clock::now());
+}
+
+void Renderer::trim(std::chrono::steady_clock::time_point now)
+{
+    // Sources stay open over pauses, however long: Play opening its files again waited for the first picture (1080p60
+    // ~260 ms, 4K HEVC ~550 ms; open: 2-15 ms, bench_play_after_pause), and the readers put an unused decoder to sleep
+    // themselves (video/Reader: all but the 4 most recent after 4 s; asleep ~2 MB each). Closed only
+    // - under memory pressure: everything unused for a few seconds
+    // - no longer used by the timeline (project closed, clip deleted, the proxy finished): after 30 s unused (an undo
+    //   right after a delete finds it open)
+    // - beyond kKeepSources by last use, once unused for 10 s: playing through many files does not keep all of them
+    //   (a sleeping reader's thread also keeps up to ~50 MB of glibc arena)
+    using namespace std::chrono;
+    const bool pressure = MemoryRelease::underPressure();
+    std::shared_ptr<const Timeline> tl;
+    {
+        std::lock_guard lock(d->snapMutex);
+        tl = d->snapshot;
+    }
+    // The files the timeline reads: originals, the proxies read for them, rendered clips
+    QSet<QString> used;
+    if (tl) {
+        std::function<void(const Timeline&)> collect = [&](const Timeline& t) {
+            for (const QVector<Track>* tracks : {&t.video, &t.audio})
+                for (const Track& track : *tracks)
+                    for (const Clip& c : track.clips) {
+                        if (c.mediaPath.isEmpty()) continue;
+                        used.insert(c.mediaPath);
+                        if (d->options.proxy) used.insert(d->options.proxy(c.mediaPath));
+                        if (d->options.renderCache && tracks == &t.video)
+                            if (const QString file = d->options.renderCache(c); !file.isEmpty()) used.insert(file);
+                    }
+        };
+        collect(*tl);
+        if (tl->nested)
+            for (const Timeline& n : *tl->nested) collect(n);
+    }
+    std::vector<Source> closed; // closed outside the lock (a reader joins its threads)
     std::lock_guard lock(d->sourceMutex);
-    for (auto it = d->sources.begin(); it != d->sources.end();)
-        it = now - it->second.used > std::chrono::seconds(30) ? d->sources.erase(it) : std::next(it);
+    const auto fileOf = [](const QString& key) { return key.mid(key.indexOf('|') + 1); };
+    for (auto it = d->sources.begin(); it != d->sources.end();) {
+        const auto idle = now - it->second.used;
+        const bool drop = (pressure && idle > seconds(5)) || (idle > seconds(30) && !used.contains(fileOf(it->first)));
+        if (drop) {
+            closed.push_back(std::move(it->second));
+            it = d->sources.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    if (int(d->sources.size()) > kKeepSources) {
+        std::vector<std::pair<steady_clock::time_point, QString>> byUse;
+        for (const auto& [key, s] : d->sources) byUse.emplace_back(s.used, key);
+        std::sort(byUse.begin(), byUse.end()); // least recently used first
+        for (size_t i = 0; i + kKeepSources < byUse.size(); ++i) {
+            if (now - byUse[i].first <= seconds(10)) break; // in use: kept beyond the count
+            auto it = d->sources.find(byUse[i].second);
+            closed.push_back(std::move(it->second));
+            d->sources.erase(it);
+        }
+    }
 }
 
 int64_t Renderer::length() const

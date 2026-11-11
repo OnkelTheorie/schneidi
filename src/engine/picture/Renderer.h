@@ -40,6 +40,7 @@
 #include <QString>
 
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -164,6 +165,9 @@ public:
     void prepare(int64_t frame);
     // Drop decoders and cached pictures not used for a while (memory pressure, idle)
     void trim();
+    void trim(std::chrono::steady_clock::time_point now); // as if it were `now` (tests)
+    // Sources kept open beyond those of the last few seconds (trim)
+    static constexpr int kKeepSources = 8;
 
     // Frames of content (TimelineOps::endFrame of the current snapshot)
     int64_t length() const;
