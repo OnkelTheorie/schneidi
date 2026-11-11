@@ -1215,6 +1215,23 @@ void MainWindow::setupBackgroundJobs()
     });
     connect(progress, &ProxyProgress::finished, m_backgroundJobs,
             [this, progress] { m_backgroundJobs->finishJob("proxies", progress->finishedText()); });
+    // Failed proxies: never a message box (a batch of failures opened one per file and stopped the work) - one line
+    // in the status line, and one entry here that stays with the details per file (ffmpeg's last lines) in its tooltip
+    connect(progress, &ProxyProgress::failuresChanged, m_backgroundJobs, [this, progress] {
+        if (progress->failures().isEmpty()) {
+            m_backgroundJobs->removeJob("proxy_errors");
+            return;
+        }
+        BackgroundJobs::Job job;
+        job.text = progress->failureText();
+        job.toolTip = progress->failureDetails();
+        job.notice = true;
+        job.cancel = [progress] { progress->clearFailures(); };
+        m_backgroundJobs->setJob("proxy_errors", job);
+        statusBar()->showMessage(T("Proxy fehlgeschlagen: %1 – Details unten rechts")
+                                     .arg(QFileInfo(progress->failures().back().file).fileName()),
+                                 8000);
+    });
 }
 
 void MainWindow::setupProxyHint()

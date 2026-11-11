@@ -46,12 +46,25 @@ public:
     // After the batch: "Proxies done" ("done: 2 of 5" when some were canceled or failed, "canceled" when none was made)
     QString finishedText() const;
 
+    // Proxies that failed since the list was last cleared (ProxyManager::failed): shown without blocking anything - one
+    // line for all of them ("Proxy failed: clip.mp4" / "3 proxies failed") and the details per file (ffmpeg's last lines)
+    struct Failure {
+        QString file;    // the original
+        QString message; // why (ProxyManager's text)
+    };
+    const QList<Failure>& failures() const { return m_failures; }
+    QString failureText() const;    // empty without failures
+    QString failureDetails() const; // file name and message per failure (the newest at most 12)
+    void clearFailures();
+
 signals:
     void changed();  // while active: count, file or percent changed
     void finished(); // the queue ran empty (finishedText says how)
+    void failuresChanged(); // a proxy failed, or the list was cleared
 
 private:
     void refresh();
     ProxyManager* m_proxies;
     ProxyBatch m_batch;
+    QList<Failure> m_failures;
 };

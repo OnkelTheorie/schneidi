@@ -4,7 +4,7 @@
 // line of text ("Proxy 2/5 – clip.mp4 – 34 %") and a ✕ that cancels. Any part of the app reports there by an id
 // (proxies today; render queue, transcription and analysis can follow): setJob() while it runs, finishJob() at the
 // end - the done text stays a moment, then the indicator hides once no job is left. Several jobs: the first one is
-// shown, the others counted ("+1"); the tooltip lists all of them.
+// shown, the others counted ("+1"); the tooltip lists all of them. A notice (a failure to report) stays until its ✕.
 
 #include <QString>
 #include <QStringList>
@@ -25,6 +25,9 @@ public:
         double fraction = -1;        // 0..1, below 0 = busy without a known amount
         QString toolTip;             // details (what is waiting)
         std::function<void()> cancel; // empty = no ✕
+        // A message, not work (e.g. "3 proxies failed", details in the tooltip): no bar, not counted as running, shown
+        // when nothing runs, stays until its ✕ (cancel: dismiss it) or removeJob
+        bool notice = false;
     };
 
     explicit BackgroundJobs(QWidget* parent = nullptr);
@@ -50,6 +53,7 @@ private:
         QTimer* timer = nullptr;
     };
     int indexOf(const QString& id) const;
+    const Entry* shownEntry() const; // the one the line shows: the first running job, else a notice, else a done one
     void refresh();
 
     QVector<Entry> m_jobs;
