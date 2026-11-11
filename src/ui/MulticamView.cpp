@@ -379,8 +379,8 @@ void MulticamView::paintEvent(QPaintEvent*)
         p.fillRect(QRect(cell.left(), cell.bottom(), cell.width(), 1), Theme::viewerBg);
         p.fillRect(QRect(cell.right(), cell.top(), 1, cell.height()), Theme::viewerBg);
         if (angle >= n) continue;
-        // Number (= key) and name in the top left corner
-        const QString label = QString("%1  %2").arg(i + 1).arg(angleName(angle));
+        // Number (= key) and name in the top left corner; a cell no key reaches (10-16 of a 4x4 page) only its name
+        const QString label = i < kAngleKeys ? QString("%1  %2").arg(i + 1).arg(angleName(angle)) : angleName(angle);
         const QString text = fm.elidedText(label, Qt::ElideRight, std::max(10, cell.width() - 16));
         const QRect box(cell.left() + 4, cell.top() + 4, fm.horizontalAdvance(text) + 10, fm.height() + 4);
         p.fillRect(box, Theme::alpha(Theme::window, 190));

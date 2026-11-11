@@ -31,7 +31,7 @@
 #include <QSignalBlocker>
 
 namespace {
-constexpr int kAngleKeys = 9; // keys 1-9 like DaVinci
+constexpr int kAngleKeys = MulticamView::kAngleKeys; // keys 1-9: cells 1-9 of the grid's page
 constexpr int kTargetTracks = 8;
 } // namespace
 
