@@ -807,6 +807,11 @@ int main(int argc, char* argv[])
                           {{"Authorization", "Bearer " + kToken}}).status, 400);
             CHECK_EQ(http("PUT", s.base + "/files/in/" + QString(255, 'c'), "x", {{"Authorization", "Bearer " + kToken}}).status,
                      201); // 255 bytes still go
+            // (written under a short name and renamed: QSaveFile's "<name>.XXXXXX" has no room, 500 on Windows)
+            CHECK_EQ(http("PUT", s.base + "/files/in/" + QString(255, 'c'), "yy", {{"Authorization", "Bearer " + kToken}}).status,
+                     200);
+            CHECK(http("GET", s.base + "/files/in/" + QString(255, 'c'), {}, {{"Authorization", "Bearer " + kToken}}).body == "yy");
+            CHECK(QDir(root + "/in").entryList({".schneidi-upload*"}, QDir::Files | QDir::Hidden).isEmpty());
             CHECK_EQ(errorCode(s.call("upload", {{"url", "https://example.com/a.mp4"}, {"path", "in/" + longName}})),
                      QString("NAME_TOO_LONG"));
         }
