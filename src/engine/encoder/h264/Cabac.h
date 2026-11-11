@@ -25,13 +25,7 @@ public:
             const int8_t* mn = cabacInitIdc < 0 ? kCabacInitI[i] : kCabacInitP[cabacInitIdc][i];
             int pre = ((mn[0] * qp) >> 4) + mn[1];
             pre = pre < 1 ? 1 : pre > 126 ? 126 : pre;
-            if (pre <= 63) {
-                state_[i] = uint8_t(63 - pre);
-                mps_[i] = 0;
-            } else {
-                state_[i] = uint8_t(pre - 64);
-                mps_[i] = 1;
-            }
+            ctx_[i] = pre <= 63 ? uint8_t((63 - pre) << 1) : uint8_t(((pre - 64) << 1) | 1);
         }
     }
 
@@ -43,33 +37,22 @@ public:
     }
     double countedBits() const { return cost_ / 256.0; }
     // Cost of one bin in the current state, in 1/256 bits (no adaptation).
-    uint32_t binCost(int ctx, int bin) const { return costTable().v[state_[ctx]][bin == mps_[ctx] ? 1 : 0]; }
+    uint32_t binCost(int ctx, int bin) const { return kFast.cost[ctx_[ctx]][bin]; }
 
     // EncodeDecision (9.3.4.2).
     void decision(int ctx, int bin)
     {
-        const int s = state_[ctx];
+        const uint8_t c = ctx_[ctx];
+        ctx_[ctx] = kFast.next[c][bin];
         if (counting_) {
-            cost_ += costTable().v[s][bin == mps_[ctx] ? 1 : 0];
-            if (bin != mps_[ctx]) {
-                if (s == 0)
-                    mps_[ctx] = uint8_t(1 - mps_[ctx]);
-                state_[ctx] = kTransIdxLps[s];
-            } else {
-                state_[ctx] = kTransIdxMps[s];
-            }
+            cost_ += kFast.cost[c][bin];
             return;
         }
-        const uint32_t lps = kRangeTabLps[s][(range_ >> 6) & 3];
+        const uint32_t lps = kRangeTabLps[c >> 1][(range_ >> 6) & 3];
         range_ -= lps;
-        if (bin != mps_[ctx]) {
+        if (bin != (c & 1)) {
             low_ += range_;
             range_ = lps;
-            if (s == 0)
-                mps_[ctx] = uint8_t(1 - mps_[ctx]);
-            state_[ctx] = kTransIdxLps[s];
-        } else {
-            state_[ctx] = kTransIdxMps[s];
         }
         renorm();
     }
@@ -115,23 +98,33 @@ public:
     }
 
 private:
-    // Bits per bin in 1/256 units: pLPS(s) ~= 0.5 * (0.01875 / 0.5)^(s / 63) (the design rule of 9.3.3.2).
-    struct CostTable {
-        uint32_t v[64][2]; // [state][isMps]
-        CostTable()
+    // Context = state << 1 | MPS. Per context and bin: the next context (9.3.3.2.2) and the cost
+    // in 1/256 bits from pLPS(s) ~= 0.5 * (0.01875 / 0.5)^(s / 63) (the design rule of 9.3.3.2).
+    struct FastTables {
+        uint8_t next[128][2];
+        uint32_t cost[128][2];
+        FastTables()
         {
             for (int s = 0; s < 64; ++s) {
                 const double lps = 0.5 * std::pow(0.01875 / 0.5, s / 63.0);
-                v[s][0] = uint32_t(std::lround(-std::log2(lps) * 256));
-                v[s][1] = uint32_t(std::lround(-std::log2(1 - lps) * 256));
+                const uint32_t costLps = uint32_t(std::lround(-std::log2(lps) * 256));
+                const uint32_t costMps = uint32_t(std::lround(-std::log2(1 - lps) * 256));
+                for (int m = 0; m < 2; ++m) {
+                    const int c = s << 1 | m;
+                    for (int bin = 0; bin < 2; ++bin) {
+                        if (bin == m) {
+                            next[c][bin] = uint8_t(kTransIdxMps[s] << 1 | m);
+                            cost[c][bin] = costMps;
+                        } else {
+                            next[c][bin] = uint8_t(kTransIdxLps[s] << 1 | (s == 0 ? 1 - m : m));
+                            cost[c][bin] = costLps;
+                        }
+                    }
+                }
             }
         }
     };
-    static const CostTable& costTable()
-    {
-        static const CostTable t;
-        return t;
-    }
+    static inline const FastTables kFast{};
 
     void renorm()
     {
@@ -167,8 +160,7 @@ private:
     uint32_t low_ = 0, range_ = 510;
     bool firstBit_ = true;
     int outstanding_ = 0;
-    uint8_t state_[kCabacContexts] = {};
-    uint8_t mps_[kCabacContexts] = {};
+    uint8_t ctx_[kCabacContexts] = {}; // state << 1 | MPS
 };
 
 } // namespace schneidi::h264
