@@ -3329,7 +3329,8 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
     saveMb(mbx, mby, interState);
     Choice best = whole;
     // Try the split for real when its estimate is close or better.
-    if (split.cost < whole.cost * 1.1) {
+    static const double kSplitTry = std::getenv("H264_SPLITF") ? std::atof(std::getenv("H264_SPLITF")) : 1.1; // experiment
+    if (split.cost < whole.cost * kSplitTry) {
         MbOut splitBits;
         const double costSplit = encodeInter(split, splitBits, false);
         if (costSplit < costInter) {
