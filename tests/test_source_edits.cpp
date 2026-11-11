@@ -131,10 +131,40 @@ int main(int argc, char** argv)
         Check::report(f.p.undoStack()->index() == undo && end == 50, "Insert dazwischen: kein Schritt", __FILE__, __LINE__);
         const Editor::Notice n = f.ed.takeNotice();
         Check::report(n.refused && !n.text.isEmpty(), "Insert dazwischen: Meldung", __FILE__, __LINE__, n.text);
+        // No clip lies across anything here: the reason says the pair would move by different amounts
+        Check::report(!n.text.contains("Schnittstelle") && !n.text.contains("nachgerückt"), "Insert dazwischen: Grund",
+                      __FILE__, __LINE__, n.text);
         // After both: as before
         f.ed.sourceEdit(SE::Insert, "/x/b.mp4", 0, 80);
         Check::report(f.p.undoStack()->index() == undo + 1 && !f.ed.takeNotice().refused, "Insert danach", __FILE__,
                       __LINE__);
+    }
+    {
+        // A recorder's sound (another file) linked to the picture, starting after the insert point: it goes with the
+        // right piece and moves with it - no refusal
+        Fixture f;
+        f.p.addMedia({"/x/r.wav", "r.wav", 200, false, true, false});
+        f.guard_p.allowSlip({2}); // made a recorder's sound
+        f.p.edit("x", [&](Timeline& tl) {
+            Clip r = tl.audio[0].clips[0];
+            r.mediaPath = "/x/r.wav";
+            r.start = 20;
+            r.in = 0;
+            r.out = 79;
+            tl.audio[0].clips[0] = r;
+        });
+        f.ed.takeNotice();
+        f.ed.setSourceMarkIn("/x/b.mp4", 10);
+        f.ed.setSourceMarkOut("/x/b.mp4", 29);
+        f.ed.sourceEdit(SE::Insert, "/x/b.mp4", 0, 10);
+        const Editor::Notice n = f.ed.takeNotice();
+        Check::report(!n.refused, "Insert vor dem Recorder-Ton: nicht abgelehnt", __FILE__, __LINE__, n.text);
+        const Timeline& tl = f.p.timeline();
+        const Clip* rec = nullptr;
+        for (const Clip& c : tl.audio[0].clips)
+            if (c.mediaPath == "/x/r.wav") rec = &c;
+        Check::report(rec && rec->start == 40 && tl.video[0].clips.size() == 3 && rec->linkId == tl.video[0].clips[2].linkId,
+                      "Insert vor dem Recorder-Ton: mit dem rechten Stück", __FILE__, __LINE__, dump(tl));
     }
     {
         Fixture f; // Insert audio only

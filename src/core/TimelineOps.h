@@ -52,7 +52,8 @@ void clearRange(Track& track, int start, int end, const IdGen& newId);
 // Replace provisional (negative) linkIds from clearRange with new ones: same provisional id -> same new id. A partner
 // that was not cut (on a track without a right piece) goes with the right piece when it plays in sync with it (same
 // file and playback, same start - in, overlapping in time) and not with the left piece that kept the old link (a
-// delete range over a picture whose sound starts after the range); otherwise it keeps the old link.
+// delete range over a picture whose sound starts after the range); otherwise it keeps the old link. A partner of
+// another file (a recorder's sound to a camera's picture) goes with the piece it lies under more.
 void resolvePendingLinks(Timeline& tl, const IdGen& newLinkId);
 // Linked pairs (ids) in sync in `before` - the same file showing the same frame at the same place, or other files side
 // by side in time - whose offset (start - in) to each other changed in `after`; pairs where one clip is in `ignore`
@@ -102,6 +103,9 @@ void ensureTracks(Timeline& tl, TrackKind kind, int count);
 struct RippleResult {
     int deleted = 0; // frames of deleted time (all tracks together)
     int removed = 0; // frames taken out of the timeline
+    // The time meant to go: of each linked group the time all its deleted clips share (its own J/L tail under the next
+    // clip does not count), of a clip alone its time; and how much of it was taken out (less: other clips stay in it)
+    int meant = 0, meantRemoved = 0;
 };
 RippleResult rippleDelete(Timeline& tl, const QVector<int>& clipIds);
 

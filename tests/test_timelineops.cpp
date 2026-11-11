@@ -251,6 +251,19 @@ int main(int argc, char** argv)
         resolvePendingLinks(t2, newLink);
         CHECK_EQ(findClip(t2, 2)->linkId, 5);
     }
+    // A partner of another file (a recorder's sound to a camera's picture): with the piece it lies under more
+    {
+        Ids ids;
+        int link = 70;
+        Timeline tl = tracks(1, 2);
+        tl.video[0].clips << mk(1, "cam", 0, 100, 0, 5);
+        tl.audio[0].clips << mk(2, "rec", 20, 80, 0, 5);  // under the right piece only
+        tl.audio[1].clips << mk(3, "rec2", 0, 50, 0, 5);  // more under the left piece
+        clearRange(tl.video[0], 30, 40, ids.gen());
+        resolvePendingLinks(tl, [&] { return ++link; });
+        CHECK_EQ(findClip(tl, 2)->linkId, 71);
+        CHECK_EQ(findClip(tl, 3)->linkId, 5);
+    }
     // ... random ranges over linked pictures with sounds that start later (L/J offsets): an uncut sound in sync with
     // exactly one piece and under no other one ends up linked to that piece
     {

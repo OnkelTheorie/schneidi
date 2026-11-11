@@ -179,7 +179,8 @@ namespace {
 // After a cut gave the right pieces of link groups new links (old link -> new link): an uncut partner (on a track
 // without a right piece) goes with the right piece it plays in sync with (same file and playback, same start - in,
 // overlapping in time) - unless it is in sync with the left piece too (it lies under both, or only under the left
-// one): then it stays, as before. The pieces: the clips of the link on the tracks that were cut.
+// one): then it stays, as before. A partner of another file (a recorder's sound to a camera's picture) goes with the
+// piece it lies under more. The pieces: the clips of the link on the tracks that were cut.
 void relinkUncut(Timeline& tl, const QHash<int, int>& rightLinks)
 {
     const auto inSync = [](const Clip& a, const Clip& b) {
@@ -198,11 +199,22 @@ void relinkUncut(Timeline& tl, const QHash<int, int>& rightLinks)
                     else if (c.linkId == oldLink) (cut ? left : partners) << &c;
                 }
             }
-        for (const Clip* c : std::as_const(partners))
-            if (c->keepRegion.isEmpty() // kill feed copies follow their clip their own way (cutCopiesLikeBases)
-                && std::any_of(right.cbegin(), right.cend(), [&](const Clip* r) { return inSync(*c, *r); })
-                && std::none_of(left.cbegin(), left.cend(), [&](const Clip* l) { return inSync(*c, *l); }))
+        const auto overlap = [](const Clip* a, const QVector<const Clip*>& pieces) {
+            int n = 0;
+            for (const Clip* p : pieces) n += std::max(0, std::min(a->end(), p->end()) - std::max(a->start, p->start));
+            return n;
+        };
+        for (const Clip* c : std::as_const(partners)) {
+            if (!c->keepRegion.isEmpty()) continue; // kill feed copies follow their clip their own way (cutCopiesLikeBases)
+            const auto sameFile = [&](const Clip* p) { return p->mediaPath == c->mediaPath; };
+            const bool ofTheFile = std::any_of(right.cbegin(), right.cend(), sameFile)
+                                   || std::any_of(left.cbegin(), left.cend(), sameFile);
+            if (ofTheFile ? std::any_of(right.cbegin(), right.cend(), [&](const Clip* r) { return inSync(*c, *r); })
+                                && std::none_of(left.cbegin(), left.cend(), [&](const Clip* l) { return inSync(*c, *l); })
+                          // another file (camera + recorder): with the piece it lies under more
+                          : overlap(c, right) > overlap(c, left))
                 relink.insert(c->id, newLink);
+        }
     }
     if (!relink.isEmpty())
         changeClips(tl, [&](const Clip& c) { return relink.contains(c.id); }, [&](Clip& c) { c.linkId = relink.value(c.id); });
@@ -481,8 +493,13 @@ RippleResult rippleDelete(Timeline& tl, const QVector<int>& clipIds)
     // Deleted ranges of all tracks combined
     const QVector<TrackRef> edited = tracksOf(tl, clipIds);
     QVector<QPair<int, int>> ranges;
+    struct Span { int start, end, link; };
+    QVector<QPair<int, Span>> spans; // the deleted clips (before)
     for (int id : clipIds)
-        if (const Clip* c = findClip(tl, id)) ranges << qMakePair(c->start, c->end());
+        if (const Clip* c = findClip(tl, id)) {
+            ranges << qMakePair(c->start, c->end());
+            spans << qMakePair(id, Span{c->start, c->end(), c->linkId});
+        }
     std::sort(ranges.begin(), ranges.end());
     QVector<QPair<int, int>> merged;
     for (const auto& r : ranges) {
@@ -535,6 +552,33 @@ RippleResult rippleDelete(Timeline& tl, const QVector<int>& clipIds)
     RippleResult result;
     for (const auto& r : std::as_const(merged)) result.deleted += r.second - r.first;
     for (const auto& s : std::as_const(shifts)) result.removed -= s.second;
+    // The time meant to go: of a linked group the time all its clips share (its own J/L tail under the next clip is
+    // no loss), of a clip alone its time; how much of it went
+    QHash<int, QPair<int, int>> groups; // link -> shared time
+    QVector<QPair<int, int>> meant;
+    for (const auto& [id, span] : std::as_const(spans)) {
+        if (span.link <= 0) {
+            meant << qMakePair(span.start, span.end);
+            continue;
+        }
+        auto g = groups.find(span.link);
+        if (g == groups.end()) groups.insert(span.link, qMakePair(span.start, span.end));
+        else *g = qMakePair(std::max(g->first, span.start), std::min(g->second, span.end));
+    }
+    for (const auto& g : std::as_const(groups))
+        if (g.first < g.second) meant << g;
+    std::sort(meant.begin(), meant.end());
+    QVector<QPair<int, int>> meantMerged;
+    for (const auto& r : std::as_const(meant)) {
+        if (!meantMerged.isEmpty() && r.first <= meantMerged.last().second)
+            meantMerged.last().second = std::max(meantMerged.last().second, r.second);
+        else meantMerged << r;
+    }
+    for (const auto& m : std::as_const(meantMerged)) {
+        result.meant += m.second - m.first;
+        for (const auto& s : std::as_const(shifts)) // the time taken out: [end - length, end)
+            result.meantRemoved += std::max(0, std::min(m.second, s.first) - std::max(m.first, s.first + s.second));
+    }
     return result;
 }
 
