@@ -792,6 +792,27 @@ int main(int argc, char** argv)
                 CHECK_EQ(Check::dump(m->timeline), QString("V1: a[0-100|0-99]  V2:  V3: a[50-150|0-99]  A1:"));
             }
         }
+        // Multicam: overlapping sound moved to a new track stays audible in the angle that heard its track; a second
+        // one goes onto that same new track; a new track is never locked (even from a locked one)
+        {
+            Project p;
+            const QByteArray json = R"({"app":"schneidi","media":[{"name":"a.mp4","path":"/m/a.mp4","hasVideo":true,
+                "hasAudio":true,"length":300}],"currentSequence":1,"sequences":[{"id":1,"name":"T"},
+                {"id":2,"multicam":true,"angles":[{"name":"A","video":0,"audio":[0]},{"name":"B","video":1,"audio":[1]}],
+                 "timeline":{"video":[{"clips":[]},{"clips":[]}],"audio":[{"locked":true,"clips":[
+                 {"id":1,"media":0,"start":0,"in":0,"out":99},{"id":2,"media":0,"start":10,"in":0,"out":9},
+                 {"id":3,"media":0,"start":30,"in":0,"out":9}]},{"clips":[]}]}}]})";
+            CHECK(!opened(json, p).isEmpty());
+            if (const Sequence* m = p.sequence(2); CHECK(m)) {
+                CHECK_TIMELINE(m->timeline);
+                CHECK_EQ(Check::dump(m->timeline), QString("V1:  V2:  A1: a[0-100|0-99]  A2:  A3: a[10-20|0-9] a[30-40|0-9]"));
+                if (CHECK_EQ(int(m->angles.size()), 2)) {
+                    CHECK_EQ(m->angles[0].audioTracks, (QVector<int>{0, 2}));
+                    CHECK_EQ(m->angles[1].audioTracks, (QVector<int>{1}));
+                }
+                if (CHECK_EQ(int(m->timeline.audio.size()), 3)) CHECK(!m->timeline.audio[2].locked);
+            }
+        }
         // A still frame before the file's start: its first frame (was saved without it and came back as `in`)
         {
             Project p;

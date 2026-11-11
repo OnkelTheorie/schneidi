@@ -10,6 +10,7 @@
 #include "core/TimelineOps.h"
 
 #include <QCoreApplication>
+#include <random>
 
 using namespace TimelineOps;
 using Check::dump;
@@ -111,6 +112,16 @@ int main(int argc, char** argv)
         CHECK(v && a && v->linkId == 51 && a->linkId == 51 && findClip(tl, 1)->linkId == 5);
         CHECK(findClip(tl, 1)->transOut == 0 && findClip(tl, 1)->fadeIn == 4 && v->transOut == 12 && v->fadeIn == 0);
         CHECK_EQ(linkedGroup(tl, 1), (QVector<int>{1, 2}));
+        // A sound that starts after the cut (L-cut, not split): goes with the right piece it plays in sync with
+        {
+            Timeline l = tracks(1, 1);
+            l.video[0].clips << mk(1, "a", 0, 100, 0, 5);
+            l.audio[0].clips << mk(2, "a", 60, 40, 60, 5);
+            const QVector<int> r = splitAt(l, {1, 2}, 50, ids.gen(), [&] { return ++link; });
+            CHECK_EQ(r.size(), 1);
+            CHECK_EQ(findClip(l, 2)->linkId, findClip(l, r.value(0))->linkId);
+            CHECK_EQ(findClip(l, 1)->linkId, 5);
+        }
         // at the edge or outside: nothing
         CHECK(splitAt(tl, {1}, 10, ids.gen(), [&] { return ++link; }).isEmpty());
         CHECK(splitAt(tl, {1}, 60, ids.gen(), [&] { return ++link; }).isEmpty());
@@ -173,6 +184,115 @@ int main(int argc, char** argv)
         rippleDelete(tl, {1, 4});
         CHECK_EQ(dump(tl), QString("V1: g[10-20|0-9] e[25-35|0-9]  A1: e[25-35|0-9]  A2: n[25-35|0-9]"));
         CHECK_TIMELINE_SYNC(before, tl);
+    }
+
+    // --- rippleDelete says how much time it took out: all of it, or less where a clip stays in the deleted time
+    {
+        Timeline tl = tracks(1, 2);
+        tl.video[0].clips << mk(1, "b", 0, 50) << mk(2, "s", 50, 50);
+        tl.audio[1].clips << mk(3, "s", 0, 50) << mk(4, "m", 50, 50);
+        const RippleResult r = rippleDelete(tl, {1, 4}); // each covered by the clip staying on the other track
+        CHECK(r.deleted == 100 && r.removed == 0);
+        Timeline t2 = tracks(1, 0);
+        t2.video[0].clips << mk(1, "a", 0, 50) << mk(2, "b", 50, 50);
+        const RippleResult r2 = rippleDelete(t2, {1});
+        CHECK(r2.deleted == 50 && r2.removed == 50);
+    }
+
+    // --- linksApart: linked pairs in sync before and not after; on-purpose changes and other playback left out
+    {
+        Timeline a = tracks(1, 1);
+        a.video[0].clips << mk(1, "x", 0, 100, 0, 5);
+        a.audio[0].clips << mk(2, "x", 0, 100, 0, 5);
+        Timeline b = a;
+        b.audio[0].clips[0].start = 10;
+        CHECK_EQ(linksApart(a, b).size(), 1);
+        CHECK(linksApart(a, b, {2}).isEmpty());
+        b.audio[0].clips[0].in = 10; // slipped along: still in sync
+        CHECK(linksApart(a, b).isEmpty());
+        Timeline c = a;
+        c.audio[0].clips[0].start = 10;
+        c.audio[0].clips[0].speed = 2; // plays otherwise
+        CHECK(linksApart(a, c).isEmpty());
+        Timeline apart = a; // apart before already: not this edit's doing
+        apart.audio[0].clips[0].start = 30;
+        Timeline more = apart;
+        more.audio[0].clips[0].start = 40;
+        CHECK(linksApart(apart, more).isEmpty());
+    }
+
+    // --- resolvePendingLinks: a range over a linked picture whose sound starts after it - the sound stays linked to the
+    // right piece it plays in sync with (it went with the left piece and the right one had no partner)
+    {
+        Ids ids;
+        int link = 50;
+        const auto newLink = [&] { return ++link; };
+        Timeline tl = tracks(1, 3);
+        tl.video[0].clips << mk(1, "v", 1070, 400, 0, 5);
+        tl.audio[0].clips << mk(2, "v", 1213, 257, 143, 5);  // starts after the range, in sync with v
+        tl.audio[1].clips << mk(3, "v", 1213, 257, 143, 5);  // a second stream: the same
+        tl.audio[2].clips << mk(4, "v", 1070, 400, 0, 5);    // under both pieces: stays with the left one
+        clearRange(tl.video[0], 1078, 1137, ids.gen());
+        resolvePendingLinks(tl, newLink);
+        const Clip* left = findClip(tl, 1);
+        const Clip* right = tl.video[0].clips.size() == 2 ? &tl.video[0].clips[1] : nullptr;
+        if (CHECK(left && right)) {
+            CHECK_EQ(left->linkId, 5);
+            CHECK_EQ(right->linkId, 51);
+            CHECK_EQ(findClip(tl, 2)->linkId, 51);
+            CHECK_EQ(findClip(tl, 3)->linkId, 51);
+            CHECK_EQ(findClip(tl, 4)->linkId, 5);
+        }
+        // Not in sync with the right piece (another part of the file): keeps the old link, as before
+        Timeline t2 = tracks(1, 1);
+        t2.video[0].clips << mk(1, "v", 1070, 400, 0, 5);
+        t2.audio[0].clips << mk(2, "v", 1213, 257, 10, 5);
+        clearRange(t2.video[0], 1078, 1137, ids.gen());
+        resolvePendingLinks(t2, newLink);
+        CHECK_EQ(findClip(t2, 2)->linkId, 5);
+    }
+    // A partner of another file (a recorder's sound to a camera's picture): with the piece it lies under more
+    {
+        Ids ids;
+        int link = 70;
+        Timeline tl = tracks(1, 2);
+        tl.video[0].clips << mk(1, "cam", 0, 100, 0, 5);
+        tl.audio[0].clips << mk(2, "rec", 20, 80, 0, 5);  // under the right piece only
+        tl.audio[1].clips << mk(3, "rec2", 0, 50, 0, 5);  // more under the left piece
+        clearRange(tl.video[0], 30, 40, ids.gen());
+        resolvePendingLinks(tl, [&] { return ++link; });
+        CHECK_EQ(findClip(tl, 2)->linkId, 71);
+        CHECK_EQ(findClip(tl, 3)->linkId, 5);
+    }
+    // ... random ranges over linked pictures with sounds that start later (L/J offsets): an uncut sound in sync with
+    // exactly one piece and under no other one ends up linked to that piece
+    {
+        std::mt19937 rng(11);
+        const auto pick = [&](int lo, int hi) { return std::uniform_int_distribution<int>(lo, hi)(rng); };
+        int bad = 0;
+        for (int round = 0; round < 300; ++round) {
+            Ids ids;
+            int link = 100;
+            Timeline tl = tracks(1, 2);
+            const int vs = pick(0, 50), vl = pick(20, 200);
+            tl.video[0].clips << mk(1, "v", vs, vl, 0, 5);
+            for (int k = 0; k < 2; ++k) {
+                const int as = vs + pick(0, vl - 1), al = pick(1, vs + vl - as);
+                tl.audio[k].clips << mk(2 + k, "v", as, al, as - vs, 5);
+            }
+            const int from = pick(0, vs + vl), to = from + pick(1, 60);
+            clearRange(tl.video[0], from, to, ids.gen());
+            resolvePendingLinks(tl, [&] { return ++link; });
+            for (int k = 0; k < 2; ++k) {
+                const Clip& a = tl.audio[k].clips[0];
+                QVector<const Clip*> under;
+                for (const Clip& v : tl.video[0].clips)
+                    if (v.start < a.end() && a.start < v.end()) under << &v;
+                if (under.size() == 1 && a.linkId != under[0]->linkId && ++bad <= 3)
+                    std::printf("       range [%d,%d): %s\n", from, to, qPrintable(TimelineCheck::dumpIds(tl)));
+            }
+        }
+        CHECK_EQ(bad, 0);
     }
 
     // --- insertGap / shiftFrom / clearDissolveAt

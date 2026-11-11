@@ -19,6 +19,7 @@
 #include <QObject>
 #include <algorithm>
 #include <functional>
+#include <utility>
 #include <memory>
 #include <optional>
 
@@ -42,6 +43,13 @@ public:
 
     bool linkedSelection() const { return m_linkedSelection; }
     void setLinkedSelection(bool on) { m_linkedSelection = on; }
+    // Why the last edit was refused (nothing changed) or did not do all of it, for the user: the app shows it
+    // (signal notice), the CLI fails the op resp. adds a note. Taken = cleared.
+    struct Notice {
+        QString text;
+        bool refused = false;
+    };
+    Notice takeNotice() { return std::exchange(m_notice, {}); }
     // Cut at the playhead: on = on all tracks of the selection (also the next clip beside it),
     // off = only the selected clips. Without a selection always all clips under the playhead.
     bool splitOnSelectedTracks() const { return m_splitOnSelectedTracks; }
@@ -155,6 +163,8 @@ public:
     TimelineOps::TrimEdit trimEdit(TimelineOps::TrimKind kind, int clipId, TimelineOps::Edge edge = TimelineOps::Edge::End) const;
     int clampTrimEdit(const TimelineOps::TrimEdit& e, int delta) const;
     Timeline previewTrimEdit(const TimelineOps::TrimEdit& e, int delta) const; // for the live preview
+    // Why applyTrimEdit would refuse this ripple (linked clips apart; empty = it would not): the preview holds still
+    QString trimEditRefusal(const TimelineOps::TrimEdit& e, int delta) const;
     void applyTrimEdit(const TimelineOps::TrimEdit& e, int delta);
     // Split edit (Alt-drag at a cut): a roll of the cut at `edge` of the clip on its own track only; its linked
     // partners keep their cut and stay linked (J/L cut). Kill feed copies of the clips go along.
@@ -701,9 +711,19 @@ signals:
     void targetTracksChanged(); // target tracks (redraw track header marking)
     void mixerOnlyEdit();       // next change affects only the mixer (live preview, without rebuild)
     void previewSourceChanged(); // preview source set, its marks changed, or it was imported
+    void notice(const QString& text); // see takeNotice (status bar)
 
 private:
     TimelineOps::SourceLength sourceLength() const;
+    void tell(const QString& text, bool refused);
+    // A ripple from `before` to `tl` that would take linked clips apart (an unlocked track that cannot follow, e.g. a
+    // clip there lies across the edit point): refused - tl back to `before`, the notice says which track and clip.
+    // `ignore`: clips the edit changes on purpose. True = keeps them together (or it is done anyway: see below).
+    // On a locked track the linked clip stays on purpose (locking is the way to move one side only): done, `note` (or
+    // the notice) says how far apart they are now.
+    bool keepsLinks(const Timeline& before, Timeline& tl, const QSet<int>& ignore, QString* note = nullptr);
+    // The reason keepsLinks would refuse (empty = fine); *note: what happened to clips on locked tracks
+    QString linksRefusal(const Timeline& before, const Timeline& after, const QSet<int>& ignore, QString* note) const;
     // createCompoundClip / compFrom (comp = the video clip gets the graph of its tracks)
     int createCompound(const QString& name, bool comp);
     // One clip's graph changed by fn (on a copy; a clip without one starts empty), checked against kinds, then stored
@@ -753,6 +773,7 @@ private:
     Project* m_project;
     Selection* m_selection;
     bool m_linkedSelection = true;
+    Notice m_notice;
     bool m_leaveOutSound = false;
     bool m_splitOnSelectedTracks = true;
     int m_targetVideo = 0, m_targetAudio = 0;

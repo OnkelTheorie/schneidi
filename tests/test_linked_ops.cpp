@@ -152,6 +152,34 @@ void testFreezeLockedTrack(const QString& file)
 
 } // namespace
 
+// A ripple that would take picture and sound apart fails with OUT_OF_SYNC and a reason (the project stays); one that
+// takes out less time than deleted says so in a note
+void testRippleKeepsSync(const QString& file)
+{
+    setUp(file);
+    edit({QJsonObject{{"op", "append"}, {"media", file}}});
+    Timeline tl = load();
+    QVector<int> c = ids(tl);
+    if (!CHECK_EQ(c.size(), 4)) return;
+    // The first Mix sound alone with ripple: its picture and other streams stay in the deleted time, so V1/A2/A3 cannot
+    // move up while A1 would - the second recording's picture and Mix would come apart
+    QString why;
+    edit({QJsonObject{{"op", "delete"}, {"clips", QJsonArray{c[1]}}, {"ripple", true}, {"linked", false}}}, &why);
+    if (!CHECK(why.startsWith("OUT_OF_SYNC") && why.contains("rec.mkv"))) std::printf("       %s\n", qPrintable(why));
+    CHECK(load() == tl);
+    // All or nothing: an op before it in the same edit is not kept either
+    why.clear();
+    edit({QJsonObject{{"op", "delete"}, {"clips", QJsonArray{ids(tl).value(0)}}, {"linked", false}},
+          QJsonObject{{"op", "delete"}, {"clips", QJsonArray{c[1]}}, {"ripple", true}, {"linked", false}}},
+         &why);
+    CHECK(why.startsWith("OUT_OF_SYNC"));
+    CHECK(load() == tl);
+    // The whole first recording: everything moves up, no note
+    const QJsonObject r = edit({QJsonObject{{"op", "delete"}, {"clips", QJsonArray{c[0]}}, {"ripple", true}}});
+    CHECK_EQ(load().video.value(0).clips.value(0).start, 0);
+    CHECK(!notesOf(r).contains("delete:"));
+}
+
 int main(int argc, char** argv)
 {
     Check::initEnv();
@@ -176,5 +204,6 @@ int main(int argc, char** argv)
     testFreezePictureOnly(file);
     testNextPieceKeepsTheTracks(file);
     testFreezeLockedTrack(file);
+    testRippleKeepsSync(file);
     return Check::result();
 }

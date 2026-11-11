@@ -304,6 +304,8 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
     // Drag-fill of a template placeholder: what was done, briefly
     connect(tv, &TimelineView::slotFilled, this, [this](const QString& message, bool) { statusBar()->showMessage(message, 6000); });
     connect(tv, &TimelineView::message, this, [this](const QString& text) { statusBar()->showMessage(text, 6000); });
+    // An edit refused or only partly done (a ripple that would take picture and sound apart): why
+    connect(m_editor, &Editor::notice, this, [this](const QString& text) { statusBar()->showMessage(text, 8000); });
     // Recipe dropped on a clip: applied after the drop (it may ask for a file)
     connect(tv, &TimelineView::recipeDropped, this, [this](int clipId, const QString& recipe) {
         // The clip that got it selected: the Comp page and the Inspector show it next (not another one selected before)
