@@ -2,6 +2,7 @@
 #include "app/ExtensionsDialog.h"
 
 #include "core/I18n.h"
+#include "engine/HardwareEncoders.h"
 
 #include <QDesktopServices>
 #include <QDir>
@@ -33,6 +34,11 @@ ExtensionsDialog::ExtensionsDialog(QWidget* parent) : QDialog(parent)
     int r = 0;
     for (const Extensions::Item& item : Extensions::catalog()) {
         if (item.kind == Extensions::Kind::WhisperVad) continue; // comes with whisper
+        // x264/x265 already in this package's FFmpeg (the GitHub downloads since 0.21): nothing to download. An
+        // extension installed before still shows up, so it can be removed.
+        if (item.id == "x264" && !Extensions::isInstalled(item) && HardwareEncoders::builtIn("libx264")
+            && HardwareEncoders::builtIn("libx265"))
+            continue;
         auto* name = new QLabel(QString("<b>%1</b><br><small>%2</small>").arg(T(item.name).toHtmlEscaped(),
                                                                              T(item.description).toHtmlEscaped()));
         // No word wrap: a wrapped label in a grid gets a height for the wrong width (second line cut off)

@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
-# Builds dist/schneidi-<version>-x86_64.AppImage (release build + Qt, ffmpeg/ffprobe), without anything GPL (0.16:
-# the only Linux package; x264/x265 are an optional download in the program, engine/Extensions "x264").
-# SCHNEIDI_NO_GPL=0: with the build system's FFmpeg (GPL: x264/x265 built in) -> …-x86_64-gpl.AppImage, for local
-# comparisons only, not for releases
+# Builds dist/schneidi-<version>-x86_64.AppImage (release build + Qt, the own slim FFmpeg with ffmpeg/ffprobe).
+# GPL_ENCODERS (the FFmpeg of packaging/linux/build-ffmpeg-lgpl.sh, FFMPEG_PREFIX, built there if missing):
+#   1 (default, the GitHub download since 0.21): FFmpeg with x264/x265 (GPL-2.0+; build packages libx264-dev
+#     libx265-dev). schneidi's own code is the same as in the GPL-free build; the package carries libx264/libx265,
+#     the GPL-2.0 text and their notices (usr/share/licenses).
+#   0: nothing GPL in the package (SCHNEIDI_NO_GPL: OpenH264/kvazaar instead of x264/x265, which stay an optional
+#     download in the program, engine/Extensions "x264") -> …-x86_64-lgpl.AppImage, checked with
+#     `schneidi-cli --licenses`. SCHNEIDI_NO_GPL=1 in the environment means the same.
 # AppDir layout like the Windows program folder (see src/engine/Bundle.h):
 #   usr/bin/{schneidi,schneidi-cli,ffmpeg,ffprobe}
 # Run from the project folder: packaging/linux/build-appimage.sh
@@ -11,30 +15,51 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 TOOLS="$ROOT/packaging/linux/tools"
-BUILD="$ROOT/build-appimage"
-APPDIR="$BUILD/AppDir"
-DIST="$ROOT/dist"
 ARCH="$(uname -m)"
 MULTIARCH="$(gcc -print-multiarch 2>/dev/null || echo "$ARCH-linux-gnu")"
 
-# Nothing GPL in the package (0.14, the default since 0.16). FFmpeg from packaging/linux/build-ffmpeg-lgpl.sh (OpenH264,
-# kvazaar, SVT-AV1 … instead of x264/x265; FFMPEG_PREFIX, built here if missing), checked at the end with
-# `schneidi-cli --licenses`.
-NO_GPL="${SCHNEIDI_NO_GPL:-1}"
+GPL_ENCODERS="${GPL_ENCODERS:-1}"
+[ "${SCHNEIDI_NO_GPL:-}" = 1 ] && GPL_ENCODERS=0
+case "$GPL_ENCODERS" in 0 | 1) ;; *) echo "!! GPL_ENCODERS must be 0 or 1" >&2; exit 1 ;; esac
+export GPL_ENCODERS # for build-ffmpeg-lgpl.sh
 CMAKE_EXTRA=()
-FFMPEG_BIN_DIR=""
-if [ "$NO_GPL" = 1 ]; then
-    FFMPEG_PREFIX="${FFMPEG_PREFIX:-$ROOT/build-ffmpeg-lgpl/prefix}"
-    [ -x "$FFMPEG_PREFIX/bin/ffmpeg" ] || "$ROOT/packaging/linux/build-ffmpeg-lgpl.sh" "$FFMPEG_PREFIX"
-    export PKG_CONFIG_PATH="$FFMPEG_PREFIX/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
-    # linuxdeploy resolves libavcodec … to these (same sonames as Debian's)
-    export LD_LIBRARY_PATH="$FFMPEG_PREFIX/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-    CMAKE_EXTRA+=(-DSCHNEIDI_NO_GPL=ON)
-    FFMPEG_BIN_DIR="$FFMPEG_PREFIX/bin"
+SUFFIX=""
+if [ "$GPL_ENCODERS" = 1 ]; then
+    BUILD="$ROOT/build-appimage"
+    FFMPEG_PREFIX="${FFMPEG_PREFIX:-$ROOT/build-ffmpeg/prefix}"
+    # schneidi itself is built the same way; only the GPL-free build refuses a GPL FFmpeg
+    CMAKE_EXTRA+=(-DSCHNEIDI_NO_GPL=OFF)
 else
-    BUILD="$ROOT/build-appimage-gpl"
-    APPDIR="$BUILD/AppDir"
+    BUILD="$ROOT/build-appimage-lgpl"
+    FFMPEG_PREFIX="${FFMPEG_PREFIX:-$ROOT/build-ffmpeg-lgpl/prefix}"
+    CMAKE_EXTRA+=(-DSCHNEIDI_NO_GPL=ON)
+    SUFFIX="-lgpl"
 fi
+APPDIR="$BUILD/AppDir"
+DIST="$ROOT/dist"
+# (Built again also when the prefix lacks the licence texts or still has libpostproc: one of a build before 0.21)
+if [ ! -x "$FFMPEG_PREFIX/bin/ffmpeg" ] || [ ! -f "$FFMPEG_PREFIX/share/licenses/ffmpeg/LICENSE.md" ] ||
+    find "$FFMPEG_PREFIX/lib" -name 'libpostproc*' 2>/dev/null | grep -q .; then
+    "$ROOT/packaging/linux/build-ffmpeg-lgpl.sh" "$FFMPEG_PREFIX"
+fi
+# A prefix of the other variant (FFMPEG_PREFIX given by hand) would give a package that is not what its name says
+if [ "$GPL_ENCODERS" = 1 ]; then
+    encoders="$(LD_LIBRARY_PATH="$FFMPEG_PREFIX/lib" "$FFMPEG_PREFIX/bin/ffmpeg" -hide_banner -encoders 2>/dev/null || true)"
+    grep -q ' libx264 ' <<<"$encoders" || { echo "!! $FFMPEG_PREFIX has no libx264 (built with GPL_ENCODERS=0?)" >&2; exit 1; }
+fi
+export PKG_CONFIG_PATH="$FFMPEG_PREFIX/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+# linuxdeploy resolves libavcodec … to these (same sonames as Debian's)
+export LD_LIBRARY_PATH="$FFMPEG_PREFIX/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+FFMPEG_BIN_DIR="$FFMPEG_PREFIX/bin"
+
+# pkg-config results stay in the CMake cache: another FFmpeg than last time -> configure again from scratch
+STAMP="$BUILD/ffmpeg-prefix.txt"
+if [ -f "$BUILD/CMakeCache.txt" ] && [ "$(cat "$STAMP" 2>/dev/null)" != "$FFMPEG_PREFIX" ]; then
+    echo ">> other FFmpeg than the last build: configuring $BUILD again"
+    rm -f "$BUILD/CMakeCache.txt"
+fi
+mkdir -p "$BUILD"
+printf '%s' "$FFMPEG_PREFIX" >"$STAMP"
 
 # --- Werkzeuge (einmalig herunterladen) ---
 mkdir -p "$TOOLS"
@@ -62,9 +87,40 @@ DESTDIR="$APPDIR" cmake --install "$BUILD"
 
 # --- ffmpeg dazulegen ---
 mkdir -p "$APPDIR/usr/bin"
-for t in ffmpeg ffprobe; do
-    if [ -n "$FFMPEG_BIN_DIR" ]; then cp -L "$FFMPEG_BIN_DIR/$t" "$APPDIR/usr/bin/"; else cp -L "$(command -v "$t")" "$APPDIR/usr/bin/"; fi
-done
+for t in ffmpeg ffprobe; do cp -L "$FFMPEG_BIN_DIR/$t" "$APPDIR/usr/bin/"; done
+
+# Licence texts (like the Windows program folder's licenses/): schneidi, the bundled parts, FFmpeg's; for the GPL
+# build also GPL-2.0 and the notices of x264/x265 (the system's copyright files of the libraries that get bundled)
+LICENSES="$APPDIR/usr/share/licenses/schneidi"
+mkdir -p "$LICENSES"
+cp "$ROOT/LICENSE" "$ROOT/THIRD_PARTY.md" "$LICENSES/"
+cp "$ROOT/third_party/earshot/LICENSE" "$LICENSES/earshot-LICENSE.txt"
+cp "$ROOT/third_party/rnnoise/COPYING" "$LICENSES/rnnoise-COPYING.txt"
+cp "$ROOT"/assets/sfx/cc0/LICENSE-* "$ROOT/assets/sfx/cc0/SOURCES.md" "$LICENSES/"
+for f in "$FFMPEG_PREFIX"/share/licenses/ffmpeg/*; do cp "$f" "$LICENSES/ffmpeg-$(basename "$f")"; done
+VERSION="$(sed -n 's/^project(schneidi VERSION \([0-9.]*\).*/\1/p' "$ROOT/CMakeLists.txt")"
+# Where the source of the GPL/LGPL parts is + written offer (release asset made by packaging/collect-gpl-sources.sh)
+sed "s/@VERSION@/${VERSION:-0.1.0}/g" "$ROOT/packaging/SOURCE-OFFER.txt.in" >"$LICENSES/SOURCE-OFFER.txt"
+if [ "$GPL_ENCODERS" = 1 ]; then
+    # x264, x265 and libnuma (x265's, LGPL-2.1) come from Debian packages: their copyright files, and the binary and
+    # source package versions (packaging/collect-gpl-sources.sh fetches exactly those sources)
+    rm -f "$LICENSES/x264-x265-versions.txt"
+    for lib in x264 x265 numa; do
+        so="$(ldd "$FFMPEG_PREFIX/lib/libavcodec.so" | awk -v l="lib$lib.so" '!f && index($1, l) == 1 { print $3; f = 1 }')"
+        [ -n "$so" ] || { echo "!! libavcodec does not link lib$lib" >&2; exit 1; }
+        real="$(realpath "$so")" # merged /usr: dpkg knows the file under /usr/lib or /lib
+        pkg="$({ dpkg -S "$real" || dpkg -S "${real#/usr}"; } 2>/dev/null | head -1 | cut -d: -f1 || true)"
+        if [ -n "$pkg" ] && [ -f "/usr/share/doc/$pkg/copyright" ]; then
+            cp "/usr/share/doc/$pkg/copyright" "$LICENSES/$lib-copyright.txt"
+            dpkg-query -W -f='${Package} ${Version} ${source:Package} ${source:Version}\n' "$pkg" 2>/dev/null | head -1 \
+                >>"$LICENSES/x264-x265-versions.txt"
+        else
+            # GPL-2.0 asks for the notices in every copy: no package without them
+            echo "!! no copyright file for $so (not a Debian package?)" >&2
+            exit 1
+        fi
+    done
+fi
 
 # GL dispatch libraries (libglvnd) as a fallback for systems without a desktop: AppRun adds a folder to the library
 # path only if the system lacks that library (a bundled one could clash with the system's GPU driver)
@@ -85,7 +141,6 @@ QMAKE_BIN="$(command -v qmake6 || true)"
 export QMAKE="$QMAKE_BIN"
 export EXTRA_PLATFORM_PLUGINS="libqwayland-generic.so;libqoffscreen.so" # offscreen: --screenshot-Testlauf
 export EXTRA_QT_MODULES="svg"
-VERSION="$(sed -n 's/^project(schneidi VERSION \([0-9.]*\).*/\1/p' "$ROOT/CMakeLists.txt")"
 export LINUXDEPLOY_OUTPUT_VERSION="${VERSION:-0.1.0}"
 
 # OpenGL under Wayland needs Qt's EGL client integration (the GPU viewer and picture engine); the Qt plugin of
@@ -101,8 +156,11 @@ else
     echo "!! $WAYLAND_EGL not found (qt6-wayland): no OpenGL under Wayland" >&2
 fi
 
-mkdir -p "$DIST"
-cd "$DIST"
+# linuxdeploy names the file by version only: packed in the build folder, then moved to dist/ under the variant's
+# name (so building one variant does not overwrite the other's package)
+mkdir -p "$DIST" "$BUILD/out"
+rm -f "$BUILD"/out/*.AppImage
+cd "$BUILD/out"
 "$TOOLS/linuxdeploy-$ARCH.AppImage" --appdir "$APPDIR" "${DEPLOY_EXTRA[@]}" \
     --executable "$APPDIR/usr/bin/schneidi-cli" \
     --executable "$APPDIR/usr/bin/ffmpeg" --executable "$APPDIR/usr/bin/ffprobe" \
@@ -114,10 +172,10 @@ cd "$DIST"
 # their libraries) out, then packed
 python3 -I "$ROOT/packaging/linux/prune-appdir.py" "$APPDIR"
 "$TOOLS/linuxdeploy-$ARCH.AppImage" --appdir "$APPDIR" --output appimage
-APPIMAGE="$(ls -1t "$DIST"/schneidi*.AppImage | head -1)"
-if [ "$NO_GPL" = 1 ]; then
+APPIMAGE="$(ls -1t "$BUILD"/out/schneidi*.AppImage | head -1)"
+if [ "$GPL_ENCODERS" = 0 ]; then
     # The package itself must load nothing GPL (FFmpeg's license, libraries in the process)
-    if ! QT_QPA_PLATFORM=offscreen "$APPIMAGE" cli --licenses >"$BUILD/licenses.json"; then
+    if ! env -u LD_LIBRARY_PATH QT_QPA_PLATFORM=offscreen "$APPIMAGE" cli --licenses >"$BUILD/licenses.json"; then
         echo "!! GPL parts in the package:" >&2
         cat "$BUILD/licenses.json" >&2
         exit 1
@@ -127,7 +185,14 @@ if [ "$NO_GPL" = 1 ]; then
         exit 1
     fi
 else
-    mv "$APPIMAGE" "${APPIMAGE%.AppImage}-gpl.AppImage"
-    APPIMAGE="${APPIMAGE%.AppImage}-gpl.AppImage"
+    # x264/x265 really in the package and found by schneidi (no download offer)
+    for lib in libx264 libx265; do
+        find "$APPDIR" -name "$lib.so*" | grep -q . || { echo "!! $lib missing in the AppDir" >&2; exit 1; }
+    done
+    env -u LD_LIBRARY_PATH QT_QPA_PLATFORM=offscreen "$APPIMAGE" cli --licenses >"$BUILD/licenses.json" || true
+    grep -q '"x264' "$BUILD/licenses.json" || { echo "!! schneidi-cli --licenses does not list x264" >&2; exit 1; }
 fi
-echo ">> fertig: $APPIMAGE"
+NAME="$(basename "$APPIMAGE" .AppImage)$SUFFIX.AppImage"
+mv -f "$APPIMAGE" "$DIST/$NAME"
+APPIMAGE="$DIST/$NAME"
+echo ">> fertig: $APPIMAGE ($(du -h "$APPIMAGE" | cut -f1))"

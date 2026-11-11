@@ -11,6 +11,10 @@
 #include "engine/Licenses.h"
 #include "engine/RenderQueue.h"
 
+extern "C" {
+#include <libavcodec/avcodec.h>
+}
+
 #include <QApplication>
 #include <QEventLoop>
 #include <QTemporaryDir>
@@ -124,6 +128,19 @@ void testReport()
     }
     std::fflush(stdout);
     CHECK(avcodec);
+    // An FFmpeg with x264/x265 (the GitHub downloads) names them as GPL parts, also when they are linked statically
+    for (const char* name : {"libx264", "libx265"}) {
+        if (!avcodec_find_encoder_by_name(name)) continue;
+        const QString part = QString("%1 (encoder in FFmpeg)").arg(name + 3);
+        Check::report(std::any_of(parts.begin(), parts.end(), [&](const Licenses::Part& p) { return p.name == part && p.gpl; }),
+                      "GPL encoder not in the report", __FILE__, __LINE__, part);
+        // ... once: its loaded library (libx264.so.164, libx265_main10.dll) is not listed a second time
+        const QString shortName = QLatin1String(name + 3);
+        const auto count = std::count_if(parts.begin(), parts.end(),
+                                         [&](const Licenses::Part& p) { return p.name.contains(shortName, Qt::CaseInsensitive); });
+        Check::report(count == 1, "GPL encoder listed more than once", __FILE__, __LINE__,
+                      QString("%1: %2 entries").arg(shortName).arg(count));
+    }
     if (Licenses::builtWithoutGpl() || qEnvironmentVariableIntValue("SCHNEIDI_NO_GPL") > 0)
         for (const Licenses::Part& p : Licenses::gplParts())
             Check::report(false, "GPL part in a SCHNEIDI_NO_GPL build", __FILE__, __LINE__, p.name + " " + p.license);

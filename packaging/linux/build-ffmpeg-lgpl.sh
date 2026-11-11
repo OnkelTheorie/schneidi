@@ -1,13 +1,21 @@
 #!/usr/bin/env bash
-# Builds FFmpeg without any GPL part (LGPL-2.1+ only) for the bundled packages (AppImage, Docker): no x264/x265,
-# no GPL-only filters, no rubberband/vidstab/frei0r. Software H.264 comes from OpenH264 (BSD-2), H.265 from kvazaar
-# (BSD-3), AV1 from SVT-AV1 (BSD), VP9 from libvpx (BSD); hardware encoders (VAAPI, NVENC, Quick Sync) stay.
-# Slim by default: only the components in packaging/ffmpeg-components.txt (what schneidi uses; smaller package,
-# faster start). FFMPEG_FULL=1 builds everything configure allows (for comparisons: tools/ffmpeg-import-check.sh).
-#   packaging/linux/build-ffmpeg-lgpl.sh [prefix]          (default prefix: build-ffmpeg-lgpl/prefix)
+# Builds the slim FFmpeg of the bundled packages (AppImage, Windows program folder, Docker image): only the components
+# in packaging/ffmpeg-components.txt (what schneidi uses; smaller package, faster start).
+#   packaging/linux/build-ffmpeg-lgpl.sh [prefix]
+# Two variants (GPL_ENCODERS):
+#   1 (default, the GitHub downloads since 0.21): with x264 and x265 for the best software H.264/H.265 quality.
+#     FFmpeg is configured with --enable-gpl, so this FFmpeg (and only it: schneidi's own source stays GPL-free) is
+#     GPL-2.0-or-later. x264/x265 come from the system (Debian libx264-dev libx265-dev, MSYS2 mingw-w64-ucrt-x86_64-
+#     x264/x265) and are linked as shared libraries that the packages carry. Default prefix: build-ffmpeg/prefix.
+#   0: without any GPL part (LGPL-2.1+ only), for builds that must stay GPL-free (app stores): no x264/x265, no
+#     GPL-only filters, no rubberband/vidstab/frei0r. Software H.264 comes from OpenH264 (BSD-2), H.265 from kvazaar
+#     (BSD-3). Default prefix: build-ffmpeg-lgpl/prefix.
+# Both: AV1 from SVT-AV1 (BSD), VP9 from libvpx (BSD); hardware encoders (VAAPI, NVENC, Quick Sync) stay.
+# FFMPEG_FULL=1 builds everything configure allows (for comparisons: tools/ffmpeg-import-check.sh).
+# The licence texts FFmpeg's binaries need (and the GPL-2.0 text) go to <prefix>/share/licenses/ffmpeg.
 # Also runs in MSYS2 UCRT64 (Windows program folder; D3D11VA/AMF instead of VAAPI, see packaging/windows).
 # Build packages (Debian 13): see packaging/linux/Dockerfile.ffmpeg-lgpl. Then:
-#   PKG_CONFIG_PATH=<prefix>/lib/pkgconfig LD_LIBRARY_PATH=<prefix>/lib …   (build-appimage.sh does it with SCHNEIDI_NO_GPL=1)
+#   PKG_CONFIG_PATH=<prefix>/lib/pkgconfig LD_LIBRARY_PATH=<prefix>/lib …   (build-appimage.sh does it)
 # The version matches Debian 13's FFmpeg (same library sonames as the system libraries).
 set -euo pipefail
 
@@ -16,7 +24,9 @@ FFMPEG_VERSION="${FFMPEG_VERSION:-7.1.5}"
 FFMPEG_SHA256="${FFMPEG_SHA256:-de668509caf9e35e3cd162473441fdb29538c6d96ed080292b3cf9e6fc5d558f}"
 NVHEADERS_VERSION="12.2.72.0" # NVENC/NVDEC headers (MIT), header-only
 NVHEADERS_SHA256="c295a2ba8a06434d4bdc5c2208f8a825285210d71d91d572329b2c51fd0d4d03"
-WORK="${FFMPEG_WORK:-$ROOT/build-ffmpeg-lgpl}"
+GPL_ENCODERS="${GPL_ENCODERS:-1}"
+case "$GPL_ENCODERS" in 0 | 1) ;; *) echo "!! GPL_ENCODERS must be 0 or 1" >&2; exit 1 ;; esac
+if [ "$GPL_ENCODERS" = 1 ]; then WORK="${FFMPEG_WORK:-$ROOT/build-ffmpeg}"; else WORK="${FFMPEG_WORK:-$ROOT/build-ffmpeg-lgpl}"; fi
 PREFIX="$(realpath -m "${1:-$WORK/prefix}")"
 JOBS="${JOBS:-4}"
 FULL="${FFMPEG_FULL:-0}"
@@ -61,22 +71,26 @@ for f in metadata ametadata; do
         sed -i "s/^enabled fsync_filter .*/&\nenabled ${f}_filter \&\& prepend avfilter_deps \"avformat\"/" "$SRC/configure"
 done
 
-# Optional libraries: only those that are LGPL-compatible (BSD/MIT/LGPL). --enable-gpl and --enable-nonfree stay
-# off, so configure itself refuses every GPL-only part (x264, x265, rubberband, vidstab, frei0r, eq, signalstats …).
+# Optional libraries: BSD/MIT/LGPL ones always. GPL_ENCODERS=0: --enable-gpl and --enable-nonfree stay off, so
+# configure itself refuses every GPL-only part (x264, x265, rubberband, vidstab, frei0r, eq, signalstats …);
 # --enable-version3 is not needed (no Apache/LGPL-3 library), so the result is LGPL-2.1-or-later.
+# GPL_ENCODERS=1: --enable-gpl and x264/x265 on top (configure stops if their libraries are missing); nothing else GPL
+# is enabled (the component list decides), --enable-nonfree stays off (the result may be redistributed).
 OPTS=(
     --prefix="$PREFIX" --libdir="$PREFIX/lib" --enable-shared --disable-static
-    --extra-version=schneidi-lgpl --disable-doc --disable-ffplay --disable-debug
-    --disable-gpl --disable-nonfree
+    --disable-doc --disable-ffplay --disable-debug --disable-nonfree
     --enable-zlib --enable-bzlib --enable-lzma # PNG/TIFF encoders, compressed MP4/MKV headers: required, not optional
     --enable-libopenh264 --enable-libkvazaar --enable-libsvtav1 --enable-libvpx --enable-libdav1d
     --enable-libopus --enable-libmp3lame
     --enable-libvpl --enable-ffnvcodec --enable-nvenc --enable-nvdec
 )
+# --disable-postproc: --enable-gpl would build libpostproc (GPL, unused by schneidi) into the package
+if [ "$GPL_ENCODERS" = 1 ]; then OPTS+=(--extra-version=schneidi --enable-gpl --disable-postproc --enable-libx264 --enable-libx265)
+else OPTS+=(--extra-version=schneidi-lgpl --disable-gpl); fi
 if [ "$WINDOWS" = 1 ]; then OPTS+=(--enable-d3d11va --enable-dxva2)
 else OPTS+=(--enable-vaapi --enable-libdrm); fi
 if [ "$FULL" = 1 ]; then
-    OPTS+=(--enable-libvorbis --enable-libwebp --extra-version=schneidi-lgpl-full)
+    OPTS+=(--enable-libvorbis --enable-libwebp --extra-version=schneidi-full)
 else
     # --disable-everything, then one --enable-<type>=<name> per line of the list (devices: only the lavfi input of the
     # hardware encoder test)
@@ -98,13 +112,38 @@ fi
     cd "$SRC"
     ./configure "${OPTS[@]}" >"$WORK/configure.log" 2>&1 || { tail -30 "$WORK/configure.log" >&2; exit 1; }
     make -j"$JOBS" >"$WORK/make.log" 2>&1 || { tail -40 "$WORK/make.log" >&2; exit 1; }
+    # A prefix of an older build may still hold libpostproc (make install leaves it): out, so it is not bundled
+    rm -rf "$PREFIX"/lib/libpostproc.* "$PREFIX/lib/pkgconfig/libpostproc.pc" "$PREFIX/include/libpostproc" \
+        "$PREFIX"/bin/postproc-*.dll "$PREFIX"/lib/libpostproc.dll.a
     make install >/dev/null
 )
 
-# --- Check: nothing GPL in the result (`ffmpeg -L` prints the license the build ended up with) ---
-if ! LD_LIBRARY_PATH="$PREFIX/lib" "$PREFIX/bin/ffmpeg" -hide_banner -L 2>&1 | grep -q "Lesser General Public License"; then
-    echo "!! FFmpeg is not LGPL:" >&2
-    LD_LIBRARY_PATH="$PREFIX/lib" "$PREFIX/bin/ffmpeg" -hide_banner -L 2>&1 | head -5 >&2
-    exit 1
+# --- Licence texts for the packages (FFmpeg's LICENSE.md names the parts; GPL-2.0 for the GPL build: FFmpeg with
+# x264/x265 as a whole, x264 and x265 themselves) ---
+mkdir -p "$PREFIX/share/licenses/ffmpeg"
+cp "$SRC/LICENSE.md" "$SRC/COPYING.LGPLv2.1" "$PREFIX/share/licenses/ffmpeg/"
+[ "$GPL_ENCODERS" = 1 ] && cp "$SRC/COPYING.GPLv2" "$PREFIX/share/licenses/ffmpeg/"
+
+# libpostproc (GPL) is never part of the packages
+if find "$PREFIX" -iname '*postproc*' | grep -q .; then echo "!! libpostproc in $PREFIX" >&2; exit 1; fi
+
+# --- Check the licence the build ended up with (`ffmpeg -L`) and, for GPL_ENCODERS=1, that x264/x265 are in ---
+LICENSE_TEXT="$(LD_LIBRARY_PATH="$PREFIX/lib" "$PREFIX/bin/ffmpeg" -hide_banner -L 2>&1 | head -12)"
+if [ "$GPL_ENCODERS" = 0 ]; then
+    if ! grep -q "Lesser General Public License" <<<"$LICENSE_TEXT"; then
+        echo "!! FFmpeg is not LGPL:" >&2
+        echo "$LICENSE_TEXT" | head -5 >&2
+        exit 1
+    fi
+else
+    if grep -qi "nonfree\|unredistributable" <<<"$LICENSE_TEXT"; then
+        echo "!! FFmpeg is nonfree (may not be redistributed):" >&2
+        echo "$LICENSE_TEXT" | head -5 >&2
+        exit 1
+    fi
+    ENCODERS="$(LD_LIBRARY_PATH="$PREFIX/lib" "$PREFIX/bin/ffmpeg" -hide_banner -encoders 2>/dev/null)"
+    for e in libx264 libx265; do
+        grep -qE "^ *V[^ ]* +$e " <<<"$ENCODERS" || { echo "!! the GPL_ENCODERS=1 build has no $e encoder" >&2; exit 1; }
+    done
 fi
 echo ">> done: $PREFIX ($(LD_LIBRARY_PATH="$PREFIX/lib" "$PREFIX/bin/ffmpeg" -hide_banner -version | head -1))"

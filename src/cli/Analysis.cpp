@@ -351,7 +351,13 @@ QJsonObject cmdExtensions(const QJsonObject& a, Context& ctx)
         if (!Extensions::remove(*i)) fail("FAILED", "could not remove " + i->id + " (in use? stop running exports, speech and transcriptions first)");
         done << QJsonObject{{"removed", i->id}};
     }
-    const QVector<const Extensions::Item*> install = Extensions::withDependencies(items(a["install"].toString()));
+    // x264/x265 built into this FFmpeg (the GitHub downloads since 0.21): the extension would add nothing
+    const bool x264BuiltIn = HardwareEncoders::builtIn("libx264") && HardwareEncoders::builtIn("libx265");
+    QVector<const Extensions::Item*> install;
+    for (const Extensions::Item* i : Extensions::withDependencies(items(a["install"].toString()))) {
+        if (i->id == "x264" && x264BuiltIn && !a["reinstall"].toBool()) done << QJsonObject{{"built_in", i->id}};
+        else install << i;
+    }
     qint64 total = 0, before = 0;
     for (const Extensions::Item* i : install) total += i->size;
     for (const Extensions::Item* i : install) {
@@ -382,6 +388,7 @@ QJsonObject cmdExtensions(const QJsonObject& a, Context& ctx)
     for (const Extensions::Item& i : Extensions::catalog()) {
         QJsonObject o{{"id", i.id}, {"name", T(i.name)}, {"description", T(i.description)},
                       {"download_mb", std::round(i.size / 1e5) / 10}, {"installed", Extensions::isInstalled(i)}};
+        if (i.id == "x264" && x264BuiltIn) o["built_in"] = true; // not needed: this package has x264/x265
         list << o;
     }
     QJsonObject out{{"extensions", list}, {"folder", Extensions::rootDir()}};
