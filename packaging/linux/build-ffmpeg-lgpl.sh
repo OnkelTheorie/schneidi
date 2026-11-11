@@ -84,7 +84,8 @@ OPTS=(
     --enable-libopus --enable-libmp3lame
     --enable-libvpl --enable-ffnvcodec --enable-nvenc --enable-nvdec
 )
-if [ "$GPL_ENCODERS" = 1 ]; then OPTS+=(--extra-version=schneidi --enable-gpl --enable-libx264 --enable-libx265)
+# --disable-postproc: --enable-gpl would build libpostproc (GPL, unused by schneidi) into the package
+if [ "$GPL_ENCODERS" = 1 ]; then OPTS+=(--extra-version=schneidi --enable-gpl --disable-postproc --enable-libx264 --enable-libx265)
 else OPTS+=(--extra-version=schneidi-lgpl --disable-gpl); fi
 if [ "$WINDOWS" = 1 ]; then OPTS+=(--enable-d3d11va --enable-dxva2)
 else OPTS+=(--enable-vaapi --enable-libdrm); fi
@@ -111,6 +112,9 @@ fi
     cd "$SRC"
     ./configure "${OPTS[@]}" >"$WORK/configure.log" 2>&1 || { tail -30 "$WORK/configure.log" >&2; exit 1; }
     make -j"$JOBS" >"$WORK/make.log" 2>&1 || { tail -40 "$WORK/make.log" >&2; exit 1; }
+    # A prefix of an older build may still hold libpostproc (make install leaves it): out, so it is not bundled
+    rm -rf "$PREFIX"/lib/libpostproc.* "$PREFIX/lib/pkgconfig/libpostproc.pc" "$PREFIX/include/libpostproc" \
+        "$PREFIX"/bin/postproc-*.dll "$PREFIX"/lib/libpostproc.dll.a
     make install >/dev/null
 )
 
@@ -119,6 +123,9 @@ fi
 mkdir -p "$PREFIX/share/licenses/ffmpeg"
 cp "$SRC/LICENSE.md" "$SRC/COPYING.LGPLv2.1" "$PREFIX/share/licenses/ffmpeg/"
 [ "$GPL_ENCODERS" = 1 ] && cp "$SRC/COPYING.GPLv2" "$PREFIX/share/licenses/ffmpeg/"
+
+# libpostproc (GPL) is never part of the packages
+if find "$PREFIX" -iname '*postproc*' | grep -q .; then echo "!! libpostproc in $PREFIX" >&2; exit 1; fi
 
 # --- Check the licence the build ended up with (`ffmpeg -L`) and, for GPL_ENCODERS=1, that x264/x265 are in ---
 LICENSE_TEXT="$(LD_LIBRARY_PATH="$PREFIX/lib" "$PREFIX/bin/ffmpeg" -hide_banner -L 2>&1 | head -12)"

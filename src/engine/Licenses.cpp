@@ -6,6 +6,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QHash>
 #include <QRegularExpression>
 #include <algorithm>
 #include <QSet>
@@ -35,6 +36,7 @@ struct Known {
 constexpr Known kGpl[] = {
     // FFmpeg's GPL dependencies (only linked with --enable-gpl) and other GPL libraries
     {"x264", "GPL-2+"},        {"x265", "GPL-2+"},        {"rubberband", "GPL-2+"},  {"vidstab", "GPL-2+"},
+    {"x265_main10", "GPL-2+"}, {"x265_main12", "GPL-2+"}, // x265's high bit depth libraries when built apart
     {"postproc", "GPL-2+"},    {"xvidcore", "GPL-2+"},    {"frei0r", "GPL-2+"},      {"movit", "GPL-2+"},
     {"sox", "GPL-2+"},         {"fftw3", "GPL-2+"},       {"fftw3f", "GPL-2+"},      {"cdio", "GPL-3+"},
     {"cdio_paranoia", "GPL-3+"}, {"cdio_cdda", "GPL-3+"}, {"dvdread", "GPL-2+"},     {"dvdnav", "GPL-2+"},
@@ -133,19 +135,29 @@ QVector<Part> report()
 
     // GPL encoders inside this FFmpeg (the GitHub downloads since 0.21 bundle an FFmpeg with x264/x265): named also
     // when they are linked statically into libavcodec and so never show up as a library of their own
+    QHash<QString, qsizetype> encoderPart; // "x264" -> its index in out
     for (const char* name : {"libx264", "libx265"})
-        if (avcodec_find_encoder_by_name(name))
+        if (avcodec_find_encoder_by_name(name)) {
+            encoderPart.insert(QLatin1String(name + 3), out.size());
             out << Part{QString("%1 (encoder in FFmpeg)").arg(QLatin1String(name + 3)), "GPL-2+", true, {}};
+        }
 
     // Loaded libraries: GPL ones by name, ONNX Runtime
     for (const QString& path : loadedLibraries()) {
         const QString file = QFileInfo(path).fileName();
-        if (baseName(file) == QLatin1String("onnxruntime")) {
+        const QString base = baseName(file);
+        if (base == QLatin1String("onnxruntime")) {
             out << Part{"ONNX Runtime " + file + " (extension \"onnxruntime\" or Piper's copy)", "MIT", false, path};
             continue;
         }
         const QString gpl = knownGplLicense(file);
         if (gpl.isEmpty()) continue;
+        // The library of an encoder named above: one entry, with the library's path (not x264 twice)
+        static const QRegularExpression bitDepth(R"(_main1[02]$)"); // libx265_main10 belongs to x265
+        if (const auto it = encoderPart.constFind(QString(base).remove(bitDepth)); it != encoderPart.cend()) {
+            if (out[*it].path.isEmpty()) out[*it].path = path;
+            continue;
+        }
         Part p;
         p.name = file;
         p.path = path;

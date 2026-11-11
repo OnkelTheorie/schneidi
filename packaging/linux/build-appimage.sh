@@ -37,7 +37,11 @@ else
 fi
 APPDIR="$BUILD/AppDir"
 DIST="$ROOT/dist"
-[ -x "$FFMPEG_PREFIX/bin/ffmpeg" ] || "$ROOT/packaging/linux/build-ffmpeg-lgpl.sh" "$FFMPEG_PREFIX"
+# (Built again also when the prefix lacks the licence texts or still has libpostproc: one of a build before 0.21)
+if [ ! -x "$FFMPEG_PREFIX/bin/ffmpeg" ] || [ ! -f "$FFMPEG_PREFIX/share/licenses/ffmpeg/LICENSE.md" ] ||
+    find "$FFMPEG_PREFIX/lib" -name 'libpostproc*' 2>/dev/null | grep -q .; then
+    "$ROOT/packaging/linux/build-ffmpeg-lgpl.sh" "$FFMPEG_PREFIX"
+fi
 # A prefix of the other variant (FFMPEG_PREFIX given by hand) would give a package that is not what its name says
 if [ "$GPL_ENCODERS" = 1 ]; then
     encoders="$(LD_LIBRARY_PATH="$FFMPEG_PREFIX/lib" "$FFMPEG_PREFIX/bin/ffmpeg" -hide_banner -encoders 2>/dev/null || true)"
@@ -94,15 +98,22 @@ cp "$ROOT/third_party/earshot/LICENSE" "$LICENSES/earshot-LICENSE.txt"
 cp "$ROOT/third_party/rnnoise/COPYING" "$LICENSES/rnnoise-COPYING.txt"
 cp "$ROOT"/assets/sfx/cc0/LICENSE-* "$ROOT/assets/sfx/cc0/SOURCES.md" "$LICENSES/"
 for f in "$FFMPEG_PREFIX"/share/licenses/ffmpeg/*; do cp "$f" "$LICENSES/ffmpeg-$(basename "$f")"; done
+VERSION="$(sed -n 's/^project(schneidi VERSION \([0-9.]*\).*/\1/p' "$ROOT/CMakeLists.txt")"
+# Where the source of the GPL/LGPL parts is + written offer (release asset made by packaging/collect-gpl-sources.sh)
+sed "s/@VERSION@/${VERSION:-0.1.0}/g" "$ROOT/packaging/SOURCE-OFFER.txt.in" >"$LICENSES/SOURCE-OFFER.txt"
 if [ "$GPL_ENCODERS" = 1 ]; then
-    for lib in x264 x265; do
+    # x264, x265 and libnuma (x265's, LGPL-2.1) come from Debian packages: their copyright files, and the binary and
+    # source package versions (packaging/collect-gpl-sources.sh fetches exactly those sources)
+    rm -f "$LICENSES/x264-x265-versions.txt"
+    for lib in x264 x265 numa; do
         so="$(ldd "$FFMPEG_PREFIX/lib/libavcodec.so" | awk -v l="lib$lib.so" '!f && index($1, l) == 1 { print $3; f = 1 }')"
         [ -n "$so" ] || { echo "!! libavcodec does not link lib$lib" >&2; exit 1; }
         real="$(realpath "$so")" # merged /usr: dpkg knows the file under /usr/lib or /lib
         pkg="$({ dpkg -S "$real" || dpkg -S "${real#/usr}"; } 2>/dev/null | head -1 | cut -d: -f1 || true)"
         if [ -n "$pkg" ] && [ -f "/usr/share/doc/$pkg/copyright" ]; then
             cp "/usr/share/doc/$pkg/copyright" "$LICENSES/$lib-copyright.txt"
-            echo "$pkg $(dpkg-query -W -f='${Version}\n' "$pkg" 2>/dev/null | head -1)" >>"$LICENSES/x264-x265-versions.txt"
+            dpkg-query -W -f='${Package} ${Version} ${source:Package} ${source:Version}\n' "$pkg" 2>/dev/null | head -1 \
+                >>"$LICENSES/x264-x265-versions.txt"
         else
             # GPL-2.0 asks for the notices in every copy: no package without them
             echo "!! no copyright file for $so (not a Debian package?)" >&2
@@ -130,7 +141,6 @@ QMAKE_BIN="$(command -v qmake6 || true)"
 export QMAKE="$QMAKE_BIN"
 export EXTRA_PLATFORM_PLUGINS="libqwayland-generic.so;libqoffscreen.so" # offscreen: --screenshot-Testlauf
 export EXTRA_QT_MODULES="svg"
-VERSION="$(sed -n 's/^project(schneidi VERSION \([0-9.]*\).*/\1/p' "$ROOT/CMakeLists.txt")"
 export LINUXDEPLOY_OUTPUT_VERSION="${VERSION:-0.1.0}"
 
 # OpenGL under Wayland needs Qt's EGL client integration (the GPU viewer and picture engine); the Qt plugin of

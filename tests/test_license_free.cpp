@@ -134,6 +134,12 @@ void testReport()
         const QString part = QString("%1 (encoder in FFmpeg)").arg(name + 3);
         Check::report(std::any_of(parts.begin(), parts.end(), [&](const Licenses::Part& p) { return p.name == part && p.gpl; }),
                       "GPL encoder not in the report", __FILE__, __LINE__, part);
+        // ... once: its loaded library (libx264.so.164, libx265_main10.dll) is not listed a second time
+        const QString shortName = QLatin1String(name + 3);
+        const auto count = std::count_if(parts.begin(), parts.end(),
+                                         [&](const Licenses::Part& p) { return p.name.contains(shortName, Qt::CaseInsensitive); });
+        Check::report(count == 1, "GPL encoder listed more than once", __FILE__, __LINE__,
+                      QString("%1: %2 entries").arg(shortName).arg(count));
     }
     if (Licenses::builtWithoutGpl() || qEnvironmentVariableIntValue("SCHNEIDI_NO_GPL") > 0)
         for (const Licenses::Part& p : Licenses::gplParts())

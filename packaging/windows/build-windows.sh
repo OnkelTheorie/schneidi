@@ -39,7 +39,11 @@ else
     SUFFIX="-lgpl"
     CMAKE_EXTRA+=(-DSCHNEIDI_NO_GPL=ON)
 fi
-[ -x "$FFMPEG_PREFIX/bin/ffmpeg.exe" ] || "$ROOT/packaging/windows/build-ffmpeg-lgpl.sh" "$FFMPEG_PREFIX"
+# (Built again also when the prefix lacks the licence texts or still has postproc: one of a build before 0.21)
+if [ ! -x "$FFMPEG_PREFIX/bin/ffmpeg.exe" ] || [ ! -f "$FFMPEG_PREFIX/share/licenses/ffmpeg/LICENSE.md" ] ||
+    find "$FFMPEG_PREFIX/bin" -iname 'postproc*.dll' 2>/dev/null | grep -q .; then
+    "$ROOT/packaging/windows/build-ffmpeg-lgpl.sh" "$FFMPEG_PREFIX"
+fi
 if [ "$GPL_ENCODERS" = 1 ]; then
     encoders="$("$FFMPEG_PREFIX/bin/ffmpeg.exe" -hide_banner -encoders 2>/dev/null || true)"
     grep -q ' libx264 ' <<<"$encoders" || { echo "!! $FFMPEG_PREFIX has no libx264 (built with GPL_ENCODERS=0?)" >&2; exit 1; }
@@ -75,6 +79,8 @@ cp "$ROOT/third_party/earshot/LICENSE" "$OUT/licenses/earshot-LICENSE.txt"
 cp "$ROOT/third_party/rnnoise/COPYING" "$OUT/licenses/rnnoise-COPYING.txt"
 cp "$ROOT"/assets/sfx/cc0/LICENSE-* "$ROOT/assets/sfx/cc0/SOURCES.md" "$OUT/licenses/"
 for f in "$FFMPEG_PREFIX"/share/licenses/ffmpeg/*; do cp "$f" "$OUT/licenses/ffmpeg-$(basename "$f")"; done
+# Where the source of the GPL/LGPL parts is + written offer (release asset made by packaging/collect-gpl-sources.sh)
+sed "s/@VERSION@/$VERSION/g" "$ROOT/packaging/SOURCE-OFFER.txt.in" >"$OUT/licenses/SOURCE-OFFER.txt"
 if [ "$GPL_ENCODERS" = 1 ]; then
     # x264/x265 (GPL-2.0+, MSYS2 packages): GPL-2.0 text above (ffmpeg-COPYING.GPLv2), their own licence files if the
     # packages have them, and a notice with copyright, version and where the source is
@@ -83,7 +89,7 @@ if [ "$GPL_ENCODERS" = 1 ]; then
         for f in "$UCRT/share/licenses/$lib"/*; do cp "$f" "$OUT/licenses/$lib-$(basename "$f")"; done
     done
     {
-        echo "x264 and x265 in this folder (libx264-*.dll, libx265*.dll; used by FFmpeg's avcodec DLL) are free"
+        echo "x264 and x265 in this folder (the DLLs listed at the end; used by FFmpeg's avcodec DLL) are free"
         echo "software under the GNU General Public License version 2 or later (licenses/ffmpeg-COPYING.GPLv2)."
         echo "Because of them FFmpeg as built here is GPL-2.0-or-later too. schneidi itself is AGPL-3.0-only."
         echo
@@ -92,8 +98,9 @@ if [ "$GPL_ENCODERS" = 1 ]; then
         echo "x265: Copyright (C) 2013 and later MulticoreWare, Inc and the x265 authors (Steve Borho, Min Chen …)."
         echo "      Source: https://bitbucket.org/multicoreware/x265_git"
         echo
-        echo "Built from the MSYS2 packages (sources and build scripts: https://github.com/msys2/MINGW-packages):"
-        pacman -Q mingw-w64-ucrt-x86_64-x264 mingw-w64-ucrt-x86_64-x265 2>/dev/null || true
+        echo "Source: licenses/SOURCE-OFFER.txt. Built from these MSYS2 packages (their source packages:"
+        echo "https://repo.msys2.org/mingw/sources/, build scripts: https://github.com/msys2/MINGW-packages):"
+        pacman -Q mingw-w64-ucrt-x86_64-x264 mingw-w64-ucrt-x86_64-x265
     } >"$OUT/licenses/x264-x265-NOTICE.txt"
 fi
 
@@ -157,9 +164,13 @@ if [ "$GPL_ENCODERS" = 0 ]; then
     echo ">> license check: nothing GPL ($BUILD/licenses.json)"
 else
     # x264/x265 really in the folder and found by schneidi (no download offer)
+    # Every x264/x265 DLL ntldd collected (x265 may come as libx265-*.dll plus libx265_main10/_main12 DLLs) is named
+    # in the notice, and both are there
+    X26X_DLLS="$(find "$OUT" -maxdepth 1 -iname 'libx26[45]*.dll' -printf '%f\n' | sort)"
     for lib in x264 x265; do
-        find "$OUT" -maxdepth 1 -iname "lib$lib*.dll" | grep -q . || { echo "!! lib$lib DLL missing in $OUT" >&2; exit 1; }
+        grep -qi "^lib$lib" <<<"$X26X_DLLS" || { echo "!! lib$lib DLL missing in $OUT" >&2; exit 1; }
     done
+    { echo; echo "The x264/x265 DLLs in this folder:"; echo "$X26X_DLLS"; } >>"$OUT/licenses/x264-x265-NOTICE.txt"
     QT_QPA_PLATFORM=offscreen "$OUT/schneidi-cli.exe" --licenses >"$BUILD/licenses.json" || true
     grep -q '"x264' "$BUILD/licenses.json" || { echo "!! schneidi-cli --licenses does not list x264" >&2; exit 1; }
     echo ">> license check: x264/x265 bundled ($BUILD/licenses.json)"

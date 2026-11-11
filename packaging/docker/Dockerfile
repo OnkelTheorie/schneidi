@@ -32,7 +32,9 @@ RUN NO_GPL=$([ "$GPL_ENCODERS" = 0 ] && echo ON || echo OFF) \
  && cmake --build build --target schneidi-cli \
  && strip build/schneidi-cli \
  && sh packaging/docker/runtime-packages.sh build/schneidi-cli /opt/ffmpeg/bin/ffmpeg > build/runtime-packages \
- && ! grep -E '^libav|^libsw' build/runtime-packages
+ && ! grep -E '^libav|^libsw' build/runtime-packages \
+ && VERSION=$(sed -n 's/^project(schneidi VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt) \
+ && sed "s/@VERSION@/$VERSION/g" packaging/SOURCE-OFFER.txt.in > build/SOURCE-OFFER.txt
 
 # ---------- Runtime ----------
 FROM debian:trixie-slim
@@ -40,10 +42,15 @@ COPY --from=build /src/build/runtime-packages /tmp/runtime-packages
 # The libraries schneidi-cli and ffmpeg link (found in the build stage, FFmpeg's own ones left out; libx264/libx265
 # with their copyright files in /usr/share/doc), a font for titles, tini (signals: `docker stop` ends the server
 # cleanly)
+# (x264-x265-versions.txt: the Debian packages of x264/x265/libnuma in the image, for the source archive of
+# packaging/collect-gpl-sources.sh)
 RUN apt-get update \
  && apt-get install -y --no-install-recommends $(cat /tmp/runtime-packages) \
         fonts-dejavu-core fontconfig ca-certificates tini \
- && rm -rf /var/lib/apt/lists/* /tmp/runtime-packages
+ && rm -rf /var/lib/apt/lists/* /tmp/runtime-packages \
+ && mkdir -p /usr/share/doc/schneidi \
+ && { dpkg-query -W -f='${Package} ${Version} ${source:Package} ${source:Version}\n' 'libx264-*' 'libx265-*' libnuma1 \
+        2>/dev/null || true; } > /usr/share/doc/schneidi/x264-x265-versions.txt
 # The slim FFmpeg: libraries + the ffmpeg program (proxies, render cache, GIF, test clips, whisper input) and its
 # licence texts (GPL-2.0 with x264/x265)
 COPY --from=build /opt/ffmpeg/lib/ /opt/ffmpeg/lib/
@@ -53,7 +60,7 @@ RUN rm -rf /opt/ffmpeg/lib/pkgconfig && echo /opt/ffmpeg/lib > /etc/ld.so.conf.d
  && ldd /usr/local/bin/ffmpeg | grep -q /opt/ffmpeg/lib/libavcodec
 COPY --from=build /src/build/schneidi-cli /usr/local/bin/schneidi-cli
 # Licence texts (MIT/BSD ask for their notice in every copy: earshot's recipe ports, RNNoise; the CC0 sounds' files)
-COPY --from=build /src/LICENSE /src/THIRD_PARTY.md /usr/share/doc/schneidi/
+COPY --from=build /src/LICENSE /src/THIRD_PARTY.md /src/build/SOURCE-OFFER.txt /usr/share/doc/schneidi/
 COPY --from=build /src/third_party/earshot/LICENSE /usr/share/doc/schneidi/earshot-LICENSE.txt
 COPY --from=build /src/third_party/rnnoise/COPYING /usr/share/doc/schneidi/rnnoise-COPYING.txt
 COPY --from=build /src/assets/sfx/cc0/LICENSE-* /src/assets/sfx/cc0/SOURCES.md /usr/share/doc/schneidi/

@@ -16,6 +16,11 @@ code as in the GPL-free build and does not need them. The packages carry the GPL
 `GPL_ENCODERS=0` build the GPL-free variant (`…-lgpl` packages, `SCHNEIDI_NO_GPL`): the FFmpeg is LGPL-2.1+, there is
 no x264/x265, and everything else in the table stays.
 
+Source code: every package carries `SOURCE-OFFER.txt` next to the licence texts. The complete source of the GPL/LGPL
+parts as bundled (the FFmpeg release with the build script and component list, the Debian/MSYS2 source packages of
+x264, x265 and libnuma) is the release asset `schneidi-<version>-gpl-sources.tar` of the same version
+(`packaging/collect-gpl-sources.sh` makes it), with a written offer valid for three years as a fallback.
+
 | Part | License | What for |
 |---|---|---|
 | [Qt 6](https://www.qt.io) (Core, Gui, Widgets, Network, Svg, DBus; platform plugins) | LGPL-3.0 | user interface |
