@@ -30,6 +30,36 @@ schneidi has five pages – Media, Edit, Comp, Color and Deliver – and fewer f
 - **Everything stays on your computer.** Speech recognition (whisper.cpp), text-based editing, sync by sound and rendering work offline – no account, no cloud, no telemetry, open source (AGPL-3.0-only). The only request schneidi makes by itself is a check for a new release on GitHub, at most once a day (off in File › Settings). The AI chat talks only to the provider you pick; with Ollama it stays on your computer too.
 - **Long recordings of one event.** Sync hours of recordings from several PCs or cameras by their sound and cut them in a multicam view that shows up to 16 angles at once.
 
+## Use with AI (MCP)
+
+schneidi is an [MCP](https://modelcontextprotocol.io) server too: Claude Code, Claude Desktop and other MCP clients
+can look at your material, cut, grade, mix and render with it – also in the project you have open in the app, where
+every change is one undo step.
+
+**Connect Claude in one step:** `schneidi-cli setup claude` (AppImage: `./schneidi-<version>-x86_64.AppImage cli setup claude`,
+or in the app File › Settings › AI › Connect with Claude…). It adds the MCP server to Claude Code and Claude Desktop
+with the path of this installation and installs the editing guide as a skill for Claude Code
+([skills/schneidi](skills/schneidi/SKILL.md): workflow and how-tos for highlight reels, talking heads, shorts, ads,
+templates, subtitles, color, compositing, sound). `--only code` / `--only desktop` picks one, `--remove` takes it out
+again. Run it again when the AppImage has a new name after an update.
+
+**By hand** – Claude Code:
+
+```bash
+claude mcp add --scope user schneidi -- schneidi-cli mcp
+```
+
+Claude Desktop (`claude_desktop_config.json`), Cursor and other MCP clients:
+
+```json
+{ "mcpServers": { "schneidi": { "command": "/path/to/schneidi-cli", "args": ["mcp"] } } }
+```
+
+With the AppImage the command is the AppImage itself and the arguments are `["cli", "mcp"]`. The skill by hand: copy
+[skills/schneidi](skills/schneidi) to `~/.claude/skills/schneidi`; every other AI gets the same guide through the
+`guide` tool. More – the commands, live editing in the open app, an MCP server over HTTP on a server – in
+[Command line and AI editing](#command-line-and-ai-editing-mcp).
+
 ## Screenshots
 
 ![Edit page while an AI assistant is connected: transcript, title inspector and timeline](screenshots/edit.png)
@@ -200,9 +230,10 @@ schneidi-cli render talk.schneidi --out talk-cut.mp4 --preset "YouTube 1080p"
 schneidi-cli export_timeline talk.schneidi --out talk.xml       # for Premiere / DaVinci (also .otio, .edl)
 schneidi-cli import talk.schneidi --timeline_file premiere.xml   # a cut from Premiere / DaVinci as a new timeline
 schneidi-cli restore talk.schneidi                           # undo the last change (file mode)
-schneidi-cli help                                            # all commands (JSON)
-schneidi-cli help edit                                       # every edit operation with details
-schneidi-cli help edit --op speed_ramp                       # one edit operation
+schneidi-cli help                                            # the commands in short (JSON)
+schneidi-cli help render                                     # all parameters of one command
+schneidi-cli help edit                                       # every edit operation, what it is for
+schneidi-cli help edit --op speed_ramp                       # the details of one edit operation
 ```
 
 Edit operations cover cutting, inserting and source edits (insert, replace, place on top, fit to fill), moving,
@@ -214,16 +245,8 @@ clips, compositing graphs (`comp` with recipes, `comp_from`, `node`, trackers wi
 "34.2s"}`), so they stay right while earlier operations move clips. Output is JSON on stdout (exit code 0 = ok,
 1 = error, 2 = usage error); every save keeps a backup of the previous state (`backups`, `restore`). `schneidi-cli mcp` runs the same commands as an [MCP](https://modelcontextprotocol.io) server on stdio.
 
-**Connect Claude in one step:** `schneidi-cli setup claude` (AppImage: `./schneidi-<version>-x86_64.AppImage cli setup claude`,
-or File › Settings › AI › Connect with Claude…) adds the MCP server to Claude Code and Claude Desktop with the path of this installation (run it again when the AppImage has a new name after an update), and installs the editing guide as a
-skill for Claude Code ([skills/schneidi](skills/schneidi/SKILL.md): workflow and how-tos for highlight reels, talking
-heads, shorts, ads, templates, subtitles, color, compositing, sound). `--only code` / `--only desktop` picks one, `--remove` takes it out again.
-Every other AI gets the same guide through the `guide` tool. By hand: `claude mcp add --scope user schneidi --
-schneidi-cli mcp`, or in Claude Desktop's `claude_desktop_config.json`:
-
-```json
-{ "mcpServers": { "schneidi": { "command": "/path/to/schneidi-cli", "args": ["mcp"] } } }
-```
+**Connect Claude, Cursor or another MCP client:** `schneidi-cli setup claude`, or by hand – see
+[Use with AI (MCP)](#use-with-ai-mcp).
 
 **Live with the app:** if the project is open in schneidi, every command works on what the app shows (unsaved
 changes included). An `edit` changes the open project as one undo step and does not save; `info` adds the playhead
