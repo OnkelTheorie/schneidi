@@ -136,6 +136,95 @@ int main(int argc, char** argv)
     CHECK(F(p, 32)->transOut == 0 && F(p, 33)->transIn == 0);
     CHECK_EQ(F(p, 34)->start, 300);
 
+    // --- A ripple that would take linked picture and sound apart is refused with a reason (nothing changes, no undo
+    // step): A2 cannot move up (the music lies across the edit point) while V2 can, so x on V2 and its sound on A2
+    // came apart. Ripple delete, speed with ripple, one side deleted alone; locked: also ripple trim.
+    {
+        const auto layout = [&](bool lockA2, bool music) {
+            setup(p);
+            p.edit("x", [&](Timeline& tl) {
+                while (tl.video.size() < 2) tl.video << Track{};
+                tl.video[0].clips = {mk(1, 0, 100, 1), mk(2, 100, 100, 2)};
+                tl.audio[0].clips = {mk(11, 0, 100, 1), mk(12, 100, 100, 2)};
+                tl.video[1].clips = {mk(31, 300, 100, 3)};
+                tl.audio[1].clips = {mk(22, 300, 100, 3)};
+                if (music) tl.audio[1].clips.prepend(mk(21, 50, 250, 0, "/x/m.mp3"));
+                tl.audio[1].locked = lockA2;
+            });
+            ed.takeNotice();
+        };
+        const auto refused = [&](const char* what, const QString& says) {
+            const Editor::Notice n = ed.takeNotice();
+            const bool ok = n.refused && n.text.contains(says);
+            if (!ok) std::printf("       %s: %s\n", what, qPrintable(n.text));
+            return ok;
+        };
+        layout(false, true);
+        Timeline was = p.timeline();
+        int undo = p.undoStack()->index();
+        sel.set({1, 11});
+        ed.rippleDeleteSelection();
+        CHECK(p.timeline() == was && p.undoStack()->index() == undo);
+        CHECK(refused("ripple delete", "A2"));
+        CHECK(sel.contains(1)); // the selection stays
+        ed.setClipSpeed({1}, {2.0, false, false, true}, true);
+        CHECK(p.timeline() == was && p.undoStack()->index() == undo);
+        CHECK(refused("speed", "A2"));
+        ed.setClipSpeed({1}, {2.0, false, false, true}, false); // without ripple nothing moves: fine
+        CHECK_EQ(F(p, 1)->speed, 2.0);
+        CHECK(ed.takeNotice().text.isEmpty());
+        // Only the picture of a linked clip: its sound stays in the deleted time, A1 cannot move up
+        layout(false, false);
+        was = p.timeline();
+        sel.set({1});
+        ed.rippleDeleteSelection();
+        CHECK(p.timeline() == was);
+        CHECK(refused("picture alone", "A1"));
+        // A locked track with a partner
+        layout(true, false);
+        was = p.timeline();
+        sel.set({1, 11});
+        ed.rippleDeleteSelection();
+        CHECK(p.timeline() == was);
+        CHECK(refused("locked", "A2"));
+        const auto e = ed.trimEdit(TimelineOps::TrimKind::Ripple, 1, TimelineOps::Edge::End);
+        ed.applyTrimEdit(e, 30);
+        CHECK(p.timeline() == was);
+        CHECK(refused("ripple trim, locked", "A2"));
+        // Nothing linked on the track that stays: as before (A2 stays, the rest moves up)
+        layout(false, true);
+        p.edit("x", [](Timeline& tl) { tl.audio[1].clips.removeLast(); tl.video[1].clips[0].linkId = 0; });
+        sel.set({1, 11});
+        ed.rippleDeleteSelection();
+        CHECK(F(p, 2)->start == 0 && F(p, 31)->start == 200 && F(p, 21)->start == 50);
+        CHECK(ed.takeNotice().text.isEmpty());
+    }
+    // --- Ripple delete taking out less than was deleted (each deleted clip lies under a clip that stays on the other
+    // track): done, and says why it moved up less (not like a broken command)
+    {
+        setup(p);
+        p.edit("x", [](Timeline& tl) {
+            tl.video[0].clips = {mk(1, 0, 50), mk(2, 50, 50)};
+            tl.audio[0].clips.clear();
+            tl.audio[1].clips = {mk(21, 0, 50, 0, "/x/m.mp3"), mk(22, 50, 50, 0, "/x/m.mp3")};
+        });
+        ed.takeNotice();
+        sel.set({1, 22});
+        ed.rippleDeleteSelection();
+        CHECK(!F(p, 1) && !F(p, 22) && F(p, 2)->start == 50);
+        const Editor::Notice n = ed.takeNotice();
+        CHECK(!n.refused && n.text.contains(T("Nicht nachgerückt")));
+        p.edit("x", [](Timeline& tl) {
+            tl.video[0].clips = {mk(1, 0, 50), mk(2, 50, 50), mk(3, 200, 10)};
+            tl.audio[1].clips = {mk(21, 0, 40, 0, "/x/m.mp3"), mk(22, 150, 10, 0, "/x/m.mp3")};
+        });
+        sel.set({1, 2, 22});
+        ed.rippleDeleteSelection(); // 110 frames deleted, [0,40) under the music that stays: 70 frames out
+        CHECK_EQ(F(p, 3)->start, 130);
+        const Editor::Notice m = ed.takeNotice();
+        CHECK(!m.refused && m.text.contains("70") && m.text.contains("110"));
+    }
+
     // --- Lock: nothing changeable, not selectable
     setup(p);
     ed.toggleTrackLock({TrackKind::Video, 0});

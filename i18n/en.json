@@ -2967,5 +2967,10 @@
  "Die Timeline war leer: Ich habe die Clips mit {key:undo} zurückgeholt.": "The timeline was empty: I brought the clips back with {key:undo}.",
  "Ich habe dir einen Clip in die Timeline gelegt.": "I put a clip on the timeline for you.",
  "Der Clip liegt gerade außerhalb des sichtbaren Teils der Timeline: Scroll hin, dann siehst du den Abspielkopf in seiner Mitte.": "The clip is outside the visible part of the timeline right now: scroll to it to see the playhead in its middle.",
- "Hoppla, alle Clips sind weg. {key:undo} holt sie zurück.": "Oops, all clips are gone. {key:undo} brings them back."
+ "Hoppla, alle Clips sind weg. {key:undo} holt sie zurück.": "Oops, all clips are gone. {key:undo} brings them back.",
+ "Nicht nachgerückt: Auf einer anderen Spur liegt in der gelöschten Zeit noch ein Clip – sonst liefen Bild und Ton auseinander": "Not moved up: a clip on another track still lies in the deleted time – otherwise picture and sound would come apart",
+ "Nur %1 von %2 Bildern nachgerückt: Auf einer anderen Spur liegt in der gelöschten Zeit noch ein Clip – sonst liefen Bild und Ton auseinander": "Moved up by only %1 of %2 frames: a clip on another track still lies in the deleted time – otherwise picture and sound would come apart",
+ "Nicht nachgerückt: Die Spur %1 ist gesperrt – Bild und Ton von „%2“ liefen auseinander. Entsperren, dann geht es": "Not moved up: track %1 is locked – picture and sound of “%2” would come apart. Unlock it, then it works",
+ "Nicht nachgerückt: Auf %1 liegt ein Clip über der Stelle, die Spur kann nicht mitrücken – Bild und Ton von „%2“ liefen auseinander. Den Clip dort kürzen oder verschieben, dann geht es": "Not moved up: on %1 a clip lies across the edit point, so the track cannot move along – picture and sound of “%2” would come apart. Shorten or move the clip there, then it works",
+ "Nicht nachgerückt: Bild und Ton von „%1“ liefen auseinander": "Not moved up: picture and sound of “%1” would come apart"
 }

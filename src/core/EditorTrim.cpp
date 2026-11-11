@@ -107,7 +107,12 @@ void Editor::applyTrimEdit(const TimelineOps::TrimEdit& e, int delta)
                          : e.kind == TrimKind::Roll ? T("Schnittpunkt verschieben")
                          : e.kind == TrimKind::Slip ? T("Inhalt im Clip verschieben")
                                                     : T("Clip zwischen den Nachbarn gleiten lassen");
-    m_project->edit(text, [&](Timeline& tl) { TimelineOps::applyTrimEdit(tl, e, delta, sourceLength()); });
+    m_project->edit(text, [&](Timeline& tl) {
+        const Timeline before = tl;
+        TimelineOps::applyTrimEdit(tl, e, delta, sourceLength());
+        // A ripple that a blocked or locked track cannot follow: refused (the trimmed clips change on purpose)
+        if (e.kind == TrimKind::Ripple) keepsLinks(before, tl, QSet<int>(e.ids.cbegin(), e.ids.cend()));
+    });
 }
 
 TimelineOps::TrimEdit Editor::splitEdit(int clipId, TimelineOps::Edge edge) const

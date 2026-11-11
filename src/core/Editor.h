@@ -19,6 +19,7 @@
 #include <QObject>
 #include <algorithm>
 #include <functional>
+#include <utility>
 #include <memory>
 #include <optional>
 
@@ -42,6 +43,13 @@ public:
 
     bool linkedSelection() const { return m_linkedSelection; }
     void setLinkedSelection(bool on) { m_linkedSelection = on; }
+    // Why the last edit was refused (nothing changed) or did not do all of it, for the user: the app shows it
+    // (signal notice), the CLI fails the op resp. adds a note. Taken = cleared.
+    struct Notice {
+        QString text;
+        bool refused = false;
+    };
+    Notice takeNotice() { return std::exchange(m_notice, {}); }
     // Cut at the playhead: on = on all tracks of the selection (also the next clip beside it),
     // off = only the selected clips. Without a selection always all clips under the playhead.
     bool splitOnSelectedTracks() const { return m_splitOnSelectedTracks; }
@@ -701,9 +709,15 @@ signals:
     void targetTracksChanged(); // target tracks (redraw track header marking)
     void mixerOnlyEdit();       // next change affects only the mixer (live preview, without rebuild)
     void previewSourceChanged(); // preview source set, its marks changed, or it was imported
+    void notice(const QString& text); // see takeNotice (status bar)
 
 private:
     TimelineOps::SourceLength sourceLength() const;
+    void tell(const QString& text, bool refused);
+    // A ripple from `before` to `tl` that would take linked clips apart (a track that cannot move up because a clip
+    // lies across the edit point, or a locked one): refused - tl back to `before`, the notice says which track and
+    // clip. `ignore`: clips the edit changes on purpose. True = keeps them together.
+    bool keepsLinks(const Timeline& before, Timeline& tl, const QSet<int>& ignore);
     // createCompoundClip / compFrom (comp = the video clip gets the graph of its tracks)
     int createCompound(const QString& name, bool comp);
     // One clip's graph changed by fn (on a copy; a clip without one starts empty), checked against kinds, then stored
@@ -753,6 +767,7 @@ private:
     Project* m_project;
     Selection* m_selection;
     bool m_linkedSelection = true;
+    Notice m_notice;
     bool m_leaveOutSound = false;
     bool m_splitOnSelectedTracks = true;
     int m_targetVideo = 0, m_targetAudio = 0;

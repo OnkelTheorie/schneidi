@@ -467,10 +467,12 @@ int main(int argc, char** argv)
     step("Marken löschen", [&] { ed.clearMarks(); });
     step("Quelle einfügen F9", [&] { ed.sourceEdit(Editor::SourceEditMode::Insert, "/x/b.mp4", 0, 20); });
     step("Quelle überschreiben F10", [&] { ed.sourceEdit(Editor::SourceEditMode::Overwrite, "/x/a.mp4", 0, 600); });
-    // Only the picture of a linked clip (its sound on A1 blocks A1's ripple): the clips after it come apart from their
-    // sound on purpose here; the guard checks the structure from now on
-    guard_p.stopSyncCheck();
-    step("Ripple-Löschen", [&] { sel.set({V(p, 0, 1)}); ed.rippleDeleteSelection(); });
+    // Picture and sound (only the picture would be refused: its sound would keep A1 from moving up)
+    step("Ripple-Löschen", [&] {
+        const QVector<int> ids = ed.withLinked({V(p, 0, 1)});
+        sel.set(QSet<int>(ids.cbegin(), ids.cend()));
+        ed.rippleDeleteSelection();
+    });
     step("Löschen", [&] { sel.set({A(p, 1, 0)}); ed.deleteSelection(); });
     step("Verknüpfen lösen", [&] { sel.set({V(p, 0, 0)}); ed.toggleLinkSelection(); });
     step("Spur sperren", [&] { ed.toggleTrackLock({TrackKind::Video, 1}); });

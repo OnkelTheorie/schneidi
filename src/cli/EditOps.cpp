@@ -913,7 +913,10 @@ QVector<OpDef> makeOps()
         {"delete", "{op:'delete', clips:[ids], ripple?:false}", "clips or subtitles",
          "A video clip takes its linked sound along; sound clips named alone go alone (the picture and the other "
          "streams stay, linked). linked:true = all partners, false = exactly the given clips. ripple:true closes the "
-         "gap and takes the partners along unless linked:false.",
+         "gap and takes the partners along unless linked:false; only the deleted time free on all affected tracks is "
+         "taken out (a note says when less), and a ripple that would take linked picture and sound apart (a track that "
+         "cannot move up because a clip lies across the cut, or a locked one) fails with OUT_OF_SYNC (also speed, "
+         "trim with ripple).",
          opDelete, kClipKeys},
         {"delete_range", "{op:'delete_range', from, to, ripple?:true} or {op:'delete_range', ranges:[[from,to],...]}",
          "remove time ranges on all tracks; `ranges` are all timeline times before the cut (e.g. words of "
@@ -1198,7 +1201,14 @@ void applyOp(Session& s, const QJsonObject& given)
                 break;
             }
     s.selection.clear();
+    s.editor.takeNotice(); // (one from an earlier op is not this one's)
     def->run(s, op);
+    // The editor refused (a ripple would take linked clips apart) or did not do all of it: an error the AI can act on,
+    // resp. a note
+    if (const Editor::Notice n = s.editor.takeNotice(); !n.text.isEmpty()) {
+        if (n.refused) fail("OUT_OF_SYNC", QString("%1: %2").arg(name, n.text));
+        s.notes << QString("%1: %2").arg(name, n.text);
+    }
 }
 
 QString editHelp()

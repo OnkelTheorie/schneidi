@@ -88,6 +88,7 @@ void Editor::setClipSpeed(const QVector<int>& ids, const Retime& r, bool ripple)
     const QVector<int> all = r.freeze ? withCopies(editable(ids)) : withFollowers(ids);
     if (all.isEmpty() || r.speed <= 0) return;
     m_project->edit(T("Geschwindigkeit ändern"), [&](Timeline& tl) {
+        const Timeline before = tl;
         QSet<int> touched;
         QVector<QPair<int, int>> shifts; // ripple (from old end, length change)
         QVector<RetimedTrack> retimed;
@@ -163,6 +164,7 @@ void Editor::setClipSpeed(const QVector<int>& ids, const Retime& r, bool ripple)
         }
         rippleRetimed(tl, retimed, shifts);
         fitTransitions(tl, touched, sourceLength());
+        if (!shifts.isEmpty()) keepsLinks(before, tl, touched);
     });
 }
 
@@ -244,6 +246,7 @@ void Editor::editRamp(const QString& text, int clipId, const std::function<bool(
     if (touched.isEmpty()) return;
     rippleRetimed(tl, retimed, shifts);
     fitTransitions(tl, touched, sourceLength());
+    if (!keepsLinks(cur, tl, touched)) return;
     m_project->edit(text, [&](Timeline& t) { t = tl; });
 }
 
