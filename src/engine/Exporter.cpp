@@ -627,23 +627,40 @@ bool Exporter::launch(QString* error)
 
 QVector<int> Exporter::cutFrames(const Timeline& tl, int from, int length, FrameRate timelineRate, FrameRate outputRate)
 {
-    // The lowest visible video track with pictures is the edit's main picture: its hard cuts (no transition at the
-    // clip's start) are where the picture changes as a whole. Titles and overlays above change only a part.
+    // The lowest visible video track with pictures inside the range is the edit's main picture: its hard cuts (no
+    // transition at the clip's start) to another source are where the picture changes as a whole. Titles and overlays
+    // above change only a part. Not forced:
+    // - a cut within the same file right after the clip before it (a split, a talking head's jump cut, the same
+    //   recording a bit later): the picture hardly changes there, a key frame would only cost bits; a real change
+    //   is still found by the encoder's scene detection
+    // - a cut closer than kOwnMinKeyDistance output frames to the last forced key frame (or the first picture): a
+    //   montage of 2-3 frame clips must not become a row of key frames
     QVector<int> cuts;
+    const int end = from + length;
     for (const Track& t : tl.video) {
         if (t.hidden) continue;
-        bool any = false;
-        for (const Clip& c : t.clips) {
-            if (!c.enabled || c.kind == ClipKind::Title) continue;
-            any = true;
-            if (c.transIn > 0 || c.start <= from || c.start >= from + length) continue;
+        QVector<const Clip*> clips;
+        for (const Clip& c : t.clips)
+            if (c.enabled && c.kind != ClipKind::Title && c.start < end && c.end() > from) clips << &c;
+        if (clips.isEmpty()) continue;
+        std::sort(clips.begin(), clips.end(), [](const Clip* a, const Clip* b) { return a->start < b->start; });
+        int lastKey = 0;
+        for (qsizetype i = 0; i < clips.size(); ++i) {
+            const Clip& c = *clips[i];
+            if (c.transIn > 0 || c.start <= from) continue;
+            const Clip* before = i > 0 ? clips[i - 1] : nullptr;
+            if (before && before->end() == c.start && !c.mediaPath.isEmpty() && before->mediaPath == c.mediaPath
+                && before->kind == c.kind)
+                continue;
             // First output frame showing the clip: output frame k shows timeline frame from + floor(k * tl / out)
             const int64_t a = int64_t(c.start - from) * outputRate.num * timelineRate.den;
             const int64_t b = int64_t(outputRate.den) * timelineRate.num;
             const int k = int(b > 0 ? (a + b - 1) / b : 0);
-            if (k > 0 && (cuts.isEmpty() || cuts.last() < k)) cuts << k;
+            if (k - lastKey < kOwnMinKeyDistance) continue;
+            cuts << k;
+            lastKey = k;
         }
-        if (any) break;
+        break;
     }
     return cuts;
 }
@@ -680,6 +697,8 @@ QVector<QPair<QByteArray, QByteArray>> Exporter::lowMemoryOptions(const QString&
     // lookahead 10 too (20-25 at its presets)
     if (codec == "libx264") return {{QByteArrayLiteral("rc-lookahead"), QByteArrayLiteral("10")}};
     if (codec == "libx265") return {{QByteArrayLiteral("x265-params"), QByteArrayLiteral("rc-lookahead=10")}};
+    // The own H.264 encoder keeps whole pictures in its lookahead (40 by default): 10 as well
+    if (ExportWriter::isOwnH264(codec)) return {{QByteArrayLiteral("lookahead"), QByteArrayLiteral("10")}};
     return {};
 }
 
@@ -689,12 +708,12 @@ QVector<QPair<QByteArray, QByteArray>> Exporter::encoderOptions(const QString& c
     QVector<QPair<QByteArray, QByteArray>> o;
     if (s.videoCodec.isEmpty()) return o;
     if (ExportWriter::isOwnH264(codec)) {
-        // Own encoder: a bit rate ("Web": the cap as the target, two passes) or a fixed QP from the quality level
+        // Own encoder: a fixed QP from the quality level; "Web" adds the cap as "bitrate" (the writer keeps the QP when
+        // the clip stays below the cap with it, else it encodes in two passes towards the cap, see ExportWriter)
+        o.append({"qp", QByteArray::number(ExportWriter::ownH264Qp(s.crf > 0 ? s.crf : 20))});
         if (s.maxBitrateK > 0) o.append({"bitrate", QByteArray::number(s.maxBitrateK)});
-        else o.append({"qp", QByteArray::number(ExportWriter::ownH264Qp(s.crf > 0 ? s.crf : 20))});
-        return o;
-    }
-    if (HardwareEncoders::isHardwareCodec(codec)) {
+        if (m_shortLookahead) o += lowMemoryOptions(codec); // (8K, low memory)
+    } else if (HardwareEncoders::isHardwareCodec(codec)) {
         for (const auto& [key, value] : HardwareEncoders::codecOptions(codec, s.crf)) o.append({key.toUtf8(), value.toUtf8()});
     } else {
         const auto own = HardwareEncoders::softwareOptions(codec, s.crf, outputSize(), outputFps());
@@ -708,7 +727,7 @@ QVector<QPair<QByteArray, QByteArray>> Exporter::encoderOptions(const QString& c
         // (shortLookahead, also with threads asked for: 8K, 40 frames = 4 GB): shorter lookahead
         if (m_shortLookahead) o += lowMemoryOptions(codec);
     }
-    if (s.maxBitrateK > 0) { // quality target as before, but capped (VBV)
+    if (s.maxBitrateK > 0 && !ExportWriter::isOwnH264(codec)) { // quality target as before, but capped (VBV)
         o.append({"maxrate", QByteArray::number(s.maxBitrateK) + "k"});
         o.append({"bufsize", QByteArray::number(s.maxBitrateK * 2) + "k"});
     }
