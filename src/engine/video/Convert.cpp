@@ -196,7 +196,8 @@ void convert(const Picture& pic, uint8_t* buffer, int width, int height, const I
     int outStride[4] = {};
     const int flags = swsFlags(width, height, src, width, height, dst);
     av_image_fill_arrays(outData, outStride, buffer, dst, width, height, 1);
-    if (src == AV_PIX_FMT_YUV420P && interlaced) { // field by field
+    // Field by field (limited or full range: withRange makes full-range yuv420p yuvj420p)
+    if ((src == AV_PIX_FMT_YUV420P || src == AV_PIX_FMT_YUVJ420P) && interlaced) {
         const int fieldHeight = height / 2;
         SwsContext* ctx = cachedContext(width, fieldHeight, src, dst, flags);
         if (!ctx) return;

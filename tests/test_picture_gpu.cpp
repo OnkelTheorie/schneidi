@@ -14,7 +14,14 @@
 #include "engine/video/Convert.h"
 
 #include <QElapsedTimer>
+#include <QFile>
 #include <QGuiApplication>
+#include <QProcess>
+#include <QStandardPaths>
+#include <QTemporaryDir>
+#ifdef SCHNEIDI_HAVE_RHI
+#include <rhi/qshader.h>
+#endif
 
 extern "C" {
 #include <libavutil/frame.h>
@@ -256,6 +263,9 @@ int main(int argc, char** argv)
             {"p010 709 1:1", AV_PIX_FMT_P010LE, 709, false},
             // No BT.2020 case: the CPU conversion has no 2020 matrix for swscale (takes the context's last one)
             {"yuv420p 601 1:1", AV_PIX_FMT_YUV420P, 601, false},
+            // Cr before Cb in the shared plane: the shader reads .rg as Cb, Cr (colours swapped before 0.21)
+            {"nv21 709 limited 1:1", AV_PIX_FMT_NV21, 709, false},
+            {"nv42 709 limited 1:1", AV_PIX_FMT_NV42, 709, false},
         };
         const int w = 256, h = 144;
         for (const Case& c : cases) {
@@ -397,7 +407,8 @@ int main(int argc, char** argv)
                 CHECK(d.mean <= 1.0);
             }
             CHECK(gi.psnr >= 32);
-            CHECK(gi.psnr >= ci.psnr - 1.0);
+            // A software rasterizer's generateMips (llvmpipe: box filter) is ~1.3 dB short of the CPU here; cards match
+            CHECK(gi.psnr >= ci.psnr - (gpu->info().software ? 1.5 : 1.0));
         }
     }
 
@@ -608,6 +619,108 @@ int main(int argc, char** argv)
     }
 
     std::printf("passes last frame %d, pooled textures %d\n", gpu->stats().passes, gpu->stats().texturesPooled);
+
+    // A 3D LUT dropped while its frame is still recorded (a cache evicting it: Renderer keeps 16, the compositing
+    // passes 8; up to three jobs share one frame): the draw recorded with it must still read it. Before 0.21 the
+    // texture went at once and the next allocation took its place - the first layer was graded with the second grade
+    {
+        const int w = 128, h = 80;
+        const std::vector<uint8_t> src = testRgba(w, h, false, 21);
+        ColorGrade::Params pa, pb;
+        pa.saturation = 0, pa.gain[0] = 1.3;          // gray and brighter
+        pb.offset[2] = 60, pb.temperature = -2500;    // strongly blue
+        auto ba = ColorGrade::bake(pa, nullptr), bb = ColorGrade::bake(pb, nullptr);
+        std::vector<uint8_t> cpuA = src, cpuB = src, outA(src.size()), outB(src.size());
+        ColorGrade::apply(cpuA.data(), w, h, *ba, 1);
+        ColorGrade::apply(cpuB.data(), w, h, *bb, 1);
+        for (int round = 0; round < 3; ++round) { // the second and third round take pooled LUTs
+            gpu->begin();
+            Gpu::TexturePtr t = gpu->uploadRgba(src.data(), w, h, false);
+            Gpu::TexturePtr ca = gpu->target(QSize(w, h)), cb = gpu->target(QSize(w, h));
+            Gpu::LutPtr la = gpu->gradeLut(*ba);
+            gpu->draw(*ca, {t.get(), {}, 1.0, la.get(), {}});
+            la.reset(); // evicted mid-frame
+            std::vector<Gpu::LutPtr> more;
+            for (int i = 0; i < 4; ++i) more.push_back(gpu->gradeLut(*bb)); // new LUTs while the first is in flight
+            gpu->draw(*cb, {t.get(), {}, 1.0, more.back().get(), {}});
+            gpu->readRgba(*ca, outA.data());
+            gpu->readRgba(*cb, outB.data());
+            CHECK(gpu->finish());
+            const Diff da = compare(cpuA.data(), outA.data(), cpuA.size()), db = compare(cpuB.data(), outB.data(), cpuB.size());
+            show(round ? "LUT dropped mid-frame (pooled)" : "LUT dropped mid-frame", da);
+            CHECK(da.mean <= 1.0 && da.max <= 6);
+            CHECK(db.mean <= 1.0 && db.max <= 6);
+        }
+        // Keyframed grades bake one LUT per frame: the textures are reused, not made anew each frame
+        const int before = gpu->stats().lutsMade;
+        for (int f = 0; f < 10; ++f) {
+            gpu->begin();
+            ColorGrade::Params p;
+            p.saturation = 50 + f;
+            Gpu::LutPtr l = gpu->gradeLut(*ColorGrade::bake(p, nullptr));
+            Gpu::TexturePtr t = gpu->uploadRgba(src.data(), w, h, false);
+            Gpu::TexturePtr c = gpu->target(QSize(w, h));
+            gpu->draw(*c, {t.get(), {}, 1.0, l.get(), {}});
+            gpu->finish();
+        }
+        std::printf("  3D LUT textures made for 10 keyframed frames: %d\n", gpu->stats().lutsMade - before);
+        CHECK(gpu->stats().lutsMade - before <= 2);
+    }
+
+#ifdef SCHNEIDI_HAVE_RHI
+    // Run-time shaders (customPass): more than the 16 kept pipelines in one frame - the one dropped must not be freed
+    // while a pass recorded with it waits for the frame's end; and the kept ones are the recently used (LRU)
+    {
+        const QString qsb = QStandardPaths::findExecutable("qsb", {"/usr/lib/qt6/bin", "/usr/lib/x86_64-linux-gnu/qt6/bin"});
+        QTemporaryDir tmp;
+        auto bake = [&](const char* name, const char* body) {
+            const QString in = tmp.filePath(QString("%1.frag").arg(name)), out = tmp.filePath(QString("%1.qsb").arg(name));
+            QFile f(in);
+            if (!f.open(QIODevice::WriteOnly)) return QShader();
+            f.write("#version 440\nlayout(location = 0) in vec2 dpos;\nlayout(location = 0) out vec4 fragColor;\n"
+                    "layout(std140, binding = 0) uniform Uniforms { vec4 rect; vec4 target; vec4 inv0; vec4 inv1; vec4 src;"
+                    " vec4 chroma; mat4 yuv; vec4 lut; vec4 crop; };\nlayout(binding = 1) uniform sampler2D tex0;\n"
+                    "void main() { ");
+            f.write(body);
+            f.write(" }\n");
+            f.close();
+            QProcess p;
+            p.start(qsb, {"--glsl", "300 es,150,330", "--hlsl", "50", "--msl", "12", "-o", out, in});
+            if (!p.waitForFinished(60000) || p.exitCode() != 0) return QShader();
+            QFile o(out);
+            return o.open(QIODevice::ReadOnly) ? QShader::fromSerialized(o.readAll()) : QShader();
+        };
+        const QShader red = qsb.isEmpty() ? QShader() : bake("red", "fragColor = vec4(1.0, 0.0, 0.0, 1.0);");
+        const QShader blue = qsb.isEmpty() ? QShader() : bake("blue", "fragColor = vec4(0.0, 0.0, 1.0, 1.0);");
+        if (!red.isValid() || !blue.isValid()) {
+            std::printf("  custom shaders: no qsb, skipped\n");
+        } else {
+            const float p[40] = {};
+            const QSize sz(16, 16);
+            std::vector<uint8_t> first(16 * 16 * 4);
+            gpu->begin();
+            Gpu::TexturePtr a = gpu->customPass("red", red, sz, p, nullptr);
+            CHECK(a != nullptr);
+            if (a) gpu->readRgba(*a, first.data());
+            std::vector<Gpu::TexturePtr> keep;
+            for (int i = 0; i < 16; ++i) keep.push_back(gpu->customPass(QByteArray("blue") + QByteArray::number(i), blue, sz, p, nullptr));
+            CHECK(gpu->finish());
+            std::printf("  custom pass before 16 others in one frame: %d %d %d\n", first[0], first[1], first[2]);
+            CHECK(first[0] == 255 && first[2] == 0);
+            // LRU: one shader used every frame next to a new one each frame stays made
+            const int before = gpu->stats().pipelinesMade;
+            for (int f = 0; f < 24; ++f) {
+                gpu->begin();
+                Gpu::TexturePtr h = gpu->customPass("hot", red, sz, p, nullptr);
+                Gpu::TexturePtr o = gpu->customPass(QByteArray("other") + QByteArray::number(f), blue, sz, p, nullptr);
+                gpu->finish();
+            }
+            const int made = gpu->stats().pipelinesMade - before;
+            std::printf("  custom pipelines made for 24 frames of hot + new: %d\n", made);
+            CHECK(made == 25);
+        }
+    }
+#endif
 
     // Pool: textures of sizes nobody asks for any more are released after a while (each title size stayed for good)
     {

@@ -455,7 +455,15 @@ struct Renderer::Impl {
     std::atomic<bool> gpuDecided{false};
     Gpu::Service* gpuService()
     {
-        if (!options.gpu || gpuDecided.load()) return gpu.load();
+        if (!options.gpu) return nullptr;
+        if (gpuDecided.load()) {
+            Gpu::Service* s = gpu.load();
+            if (s && !s->available()) { // went off for good (device lost): no more draws built for nothing
+                gpu = nullptr;
+                return nullptr;
+            }
+            return s;
+        }
         bool decided = false;
         Gpu::Service* s = Gpu::Service::tryInstance(&decided);
         if (decided) {
@@ -2212,7 +2220,12 @@ struct Renderer::Impl {
         // Tilted in depth: the card draws affine placements only; the CPU draws it through its homography
         if (tiltedEver(c)) return false;
         const Source s = source(c.mediaPath, lane);
-        if (s.still) return true;
+        // Larger than the card's largest texture (a panorama still; D3D11 takes 16384 px): drawn on the CPU
+        const Gpu::Service* gpuNow = gpu.load(std::memory_order_relaxed);
+        const int maxTexture = gpuNow ? gpuNow->info().maxTextureSize : 0;
+        auto tooLarge = [maxTexture](int w, int h) { return maxTexture > 0 && std::max(w, h) > maxTexture; };
+        if (s.still) return !tooLarge(s.still->image.width(), s.still->image.height());
+        if (s.video && tooLarge(s.video->info.width, s.video->info.height)) return false;
         // In-between pictures of slow motion come from the CPU (engine/picture/Interpolate)
         int64_t i0 = 0;
         double frac = 0;
@@ -2238,6 +2251,17 @@ struct Renderer::Impl {
             op.info = s.video->info;
             nw = op.picture->frame->width;
             nh = op.picture->frame->height;
+            // Interlaced 8-bit planar 4:2:0: the chroma rows alternate between the two fields. The CPU converts it
+            // field by field (Video::toRgba); the card samples the chroma plane as one picture and blended the
+            // fields' colours (stripes of one field tinted by the other). Converted here, the card draws the RGBA
+            // picture (from the layer pool). Only the formats the CPU converts field by field: the others (NV12, P010
+            // of hardware decoding, 10 bit) the CPU converts as progressive too, the planes upload gives the same
+            const auto fmt = AVPixelFormat(op.picture->frame->format);
+            if (!op.picture->progressive && (fmt == AV_PIX_FMT_YUV420P || fmt == AV_PIX_FMT_YUVJ420P) && nw > 0 && nh > 0) {
+                auto img = std::make_shared<Image>(nw, nh);
+                if (!Video::toRgba(*op.picture, op.info, img->data(), nw, nh, ctx.preview)) return false;
+                op.rgba = std::move(img);
+            }
         }
         if (nw <= 0 || nh <= 0) return false;
         layersDecoded.fetch_add(1, std::memory_order_relaxed);
@@ -2602,6 +2626,7 @@ struct Renderer::Impl {
         std::vector<Gpu::TexturePtr> textures;
         std::vector<std::vector<uint8_t>> buffers;
         bool compRefused = false; // a compositing graph the card did not make: the frame goes the CPU way
+        bool refused = false;     // a picture the card did not take (upload refused): the frame goes the CPU way
     };
 
     // GPU thread: the draws onto dst (size of the output)
@@ -2615,7 +2640,10 @@ struct Renderer::Impl {
             switch (op.kind) {
             case GpuOp::Draw: {
                 Gpu::TexturePtr src;
-                if (op.picture) {
+                const bool upload = (op.rgba && !op.rgba->empty()) || op.picture || op.still;
+                if (op.rgba && !op.rgba->empty()) { // made on the CPU (also an interlaced picture, see gpuMediaOp)
+                    src = g.uploadRgba(op.rgba->data(), op.rgba->w, op.rgba->h, op.premultiplied, op.mips);
+                } else if (op.picture) {
                     src = g.uploadYuv(op.picture->frame, op.info, op.mips);
                     if (!src) { // a format the planes upload does not take after all: converted here
                         const int w = op.picture->frame->width, h = op.picture->frame->height;
@@ -2654,8 +2682,6 @@ struct Renderer::Impl {
                             e = e->second.first.expired() ? stills.erase(e) : std::next(e);
                         if (src) stills[op.still.get()] = {op.still, src};
                     }
-                } else if (op.rgba && !op.rgba->empty()) {
-                    src = g.uploadRgba(op.rgba->data(), op.rgba->w, op.rgba->h, op.premultiplied);
                 } else if (op.comp) {
                     src = Gpu::runComp(g, *op.comp, &keep.textures);
                     if (!src) { // (a pass or a texture refused) not a frame without the clip: the CPU makes it
@@ -2665,7 +2691,13 @@ struct Renderer::Impl {
                         return;
                     }
                 }
-                if (!src) break;
+                if (!src) {
+                    // An upload the card refused (larger than it takes, out of memory): not a frame without the
+                    // layer - the CPU makes the frame
+                    if (!upload) break;
+                    keep.refused = true;
+                    return;
+                }
                 Gpu::LutPtr lut = op.graded ? luts.get(g, op) : nullptr;
                 g.draw(dst, {src.get(), op.m, op.opacity, lut.get(), op.crop});
                 keep.textures.push_back(std::move(src));
@@ -2727,7 +2759,7 @@ struct Renderer::Impl {
             Gpu::TexturePtr canvas = g.target(size, transparent ? nullptr : black);
             if (!canvas) return;
             runOps(g, *canvas, ops, size, keep);
-            if (keep.compRefused) return;
+            if (keep.compRefused || keep.refused) return;
             if (yuv) yuvDone = g.readYuv(*canvas, *yuv);
             if (!yuvDone) {
                 if (!rgba) return; // the card could not write the planes after all: CPU path
@@ -2736,8 +2768,9 @@ struct Renderer::Impl {
             keep.textures.push_back(std::move(canvas));
             ok = true;
         });
-        (void)ran; // shut down or the frame refused: the job did not run, ok stays false
-        if (!ok) {
+        // Not run: shut down, or the card refused or failed the frame (device lost: the job ran, but its readbacks were
+        // never filled - the buffer holds an old picture) -> CPU path
+        if (!ran || !ok) {
             f.m_buffer.reset();
             return false;
         }

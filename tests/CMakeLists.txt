@@ -72,6 +72,10 @@ schneidi_test(test_viewer_large) # large viewer: panels hide and come back exact
 schneidi_test(test_second_screen) # preview on a second monitor: screen choice (fake screens), modes, layout back, unplugged
 schneidi_test(test_frame_view) # viewer picture widget: GPU/painter choice, zoom/pan, overlay mapping, zoom actions
 schneidi_test(test_picture_gpu) # picture engine on the GPU vs the CPU path (skips without a hardware device)
+if(SCHNEIDI_QRHI_HEADER) # QShader for the run-time shader passes
+    target_link_libraries(test_picture_gpu PRIVATE Qt6::GuiPrivate)
+    target_compile_definitions(test_picture_gpu PRIVATE SCHNEIDI_HAVE_RHI)
+endif()
 schneidi_test(test_launch_args) # app command line: options (also Qt's X11 -geometry) are no files to import
 schneidi_test(test_picture_gpu_render) # Renderer's GPU path vs its CPU path, whole frames (skips without a GPU)
 # The GPU decides by itself here (every other test runs the CPU path: SCHNEIDI_GPU=0)
