@@ -438,21 +438,35 @@ std::vector<uint8_t> Encoder::encode(const Picture& picture, bool forceKeyframe)
         refs_.clear(); // an IDR picture marks all references unused
     activeRefs_ = idr ? 0 : int(refs_.size());
 
-    // Frame-level rate control: P frames predict their bits from the last P frame (bits roughly
-    // halve per +6 QP) and pay back over- or undershoot over about one second; I frames
-    // follow the P QP (3 lower) and their cost is paid back by the P frames.
+    // Frame-level rate control (in the spirit of x264's one-pass ABR, aiming at a steady QP, which
+    // is what PSNR likes best): a P picture gets the QP at which the average complexity of all P
+    // pictures so far (bits * 2^(qp/6); bits roughly halve per +6 QP) meets the per-frame budget,
+    // scaled by the bits over or under the target (overflow against a buffer of 5 s of bits) and at
+    // most 2 away from the last one. I pictures use the P QP - 3. The first picture is probed at a
+    // fixed QP so the stream starts near the right QP instead of paying for a huge first picture.
     const int baseQp = cfg_.qp;
     if (cfg_.bitrateKbps > 0) {
-        if (frameIndex_ == 0)
-            rcQp_ = baseQp;
+        const double perFrame = cfg_.bitrateKbps * 1000.0 / cfg_.fps;
+        if (frameIndex_ == 0) {
+            // The probe aims at an I picture of about four P budgets.
+            EncoderConfig pc = cfg_;
+            pc.bitrateKbps = 0;
+            pc.gop = std::max(2, cfg_.gop);
+            Encoder probe(pc);
+            const double bits = double(probe.encode(picture).size()) * 8.0;
+            const double qI = std::clamp((baseQp - 3) + 6.0 * std::log2(bits / (4.0 * perFrame)), 10.0, 48.0);
+            rcQp_ = qI + 3;
+            rcCplxSum_ = perFrame * std::pow(2.0, rcQp_ / 6.0);
+            rcCplxCount_ = 1;
+        }
         double qp = rcQp_;
         if (idr) {
             qp = rcQp_ - 3;
-        } else if (rcComplexity_[1] > 0) {
-            const double perFrame = cfg_.bitrateKbps * 1000.0 / cfg_.fps;
+        } else if (rcCplxCount_ > 0) {
             const double debt = rcBits_ - rcTarget_;
-            const double budget = std::clamp(perFrame - debt / std::max(1.0, cfg_.fps), perFrame * 0.5, perFrame * 2.0);
-            qp = std::clamp(6.0 * std::log2(rcComplexity_[1] / budget), rcQp_ - 2.0, rcQp_ + 2.0);
+            const double overflow = std::clamp(1.0 + debt / (5.0 * perFrame * cfg_.fps), 0.5, 2.0);
+            qp = 6.0 * std::log2(rcCplxSum_ / rcCplxCount_ / perFrame) + 6.0 * std::log2(overflow);
+            qp = std::clamp(qp, rcQp_ - 2.0, rcQp_ + 2.0);
         }
         cfg_.qp = std::clamp(int(std::lround(qp)), 10, 51);
     } else if (idr && cfg_.gop > 1) {
@@ -587,7 +601,8 @@ std::vector<uint8_t> Encoder::encode(const Picture& picture, bool forceKeyframe)
     if (cfg_.bitrateKbps > 0) {
         const double bits = double(out.size()) * 8.0;
         if (!idr) {
-            rcComplexity_[1] = bits * std::pow(2.0, cfg_.qp / 6.0);
+            rcCplxSum_ += bits * std::pow(2.0, cfg_.qp / 6.0);
+            rcCplxCount_ += 1.0;
             rcQp_ = cfg_.qp;
         }
         rcBits_ += bits;

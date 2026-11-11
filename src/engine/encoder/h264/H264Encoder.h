@@ -180,7 +180,7 @@ private:
     // Rate control state.
     double rcQp_ = 0;               // QP for P frames (I frames use 3 less)
     double rcBits_ = 0, rcTarget_ = 0; // produced / wanted bits so far
-    double rcComplexity_[2] = {0, 0};  // [1]: bits * 2^(qp/6) of the last P frame
+    double rcCplxSum_ = 0, rcCplxCount_ = 0; // complexity (bits * 2^(qp/6)) of the P frames so far
 };
 
 } // namespace schneidi::h264
