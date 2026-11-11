@@ -140,8 +140,30 @@ int main(int argc, char** argv)
         CHECK_EQ(dump(tl), QString("V1: x[0-10|0-9] y[30-40|0-9]  A1: x[0-10|0-9] y[30-40|0-9]  A2: n[40-50|0-9]"));
         CHECK_TIMELINE_SYNC(before, tl);
     }
-    // ... unless a clip of an affected track lies across time deleted elsewhere (g on V1 would run into e): then the
-    // affected tracks close only their own gaps, as before - all of them, so e and its sound f stay together
+    // A linked pair with an L-cut (the sound runs 20 frames longer) deleted with ripple: only the time free on both
+    // tracks goes, the next pair stays in sync (y stayed at 100 with a 100-frame hole while its sound went to 0)
+    {
+        Timeline tl = tracks(1, 1);
+        tl.video[0].clips << mk(1, "x", 0, 100, 0, 1) << mk(2, "y", 100, 100, 0, 2);
+        tl.audio[0].clips << mk(3, "x", 0, 120, 0, 1) << mk(4, "y", 120, 80, 20, 2);
+        const Timeline before = tl;
+        rippleDelete(tl, {1, 3});
+        CHECK_EQ(dump(tl), QString("V1: y[0-100|0-99]  A1: y[20-100|20-99]"));
+        CHECK_TIMELINE_SYNC(before, tl);
+    }
+    // Deleted time overlapping across tracks (V1 [0,50), A1 [40,120)): y on V1 lies in A1's deleted time, so only
+    // [0,50) goes - y and its sound stay in sync
+    {
+        Timeline tl = tracks(1, 1);
+        tl.video[0].clips << mk(1, "x", 0, 50) << mk(2, "y", 50, 100, 0, 2);
+        tl.audio[0].clips << mk(3, "m", 40, 80) << mk(4, "y", 120, 30, 70, 2);
+        const Timeline before = tl;
+        rippleDelete(tl, {1, 3});
+        CHECK_EQ(dump(tl), QString("V1: y[0-100|0-99]  A1: y[70-100|70-99]"));
+        CHECK_TIMELINE_SYNC(before, tl);
+    }
+    // A clip of an affected track lies across time deleted on another one (g on V1 in A1's [20,30)): only the part of
+    // that time where nothing stays goes, every track the same - e and its sound f stay together
     {
         Timeline tl = tracks(1, 2);
         tl.video[0].clips << mk(1, "t", 0, 10) << mk(2, "g", 25, 10) << mk(3, "e", 40, 10, 0, 7);
@@ -149,7 +171,7 @@ int main(int argc, char** argv)
         tl.audio[1].clips << mk(6, "n", 40, 10);
         const Timeline before = tl;
         rippleDelete(tl, {1, 4});
-        CHECK_EQ(dump(tl), QString("V1: g[15-25|0-9] e[30-40|0-9]  A1: e[30-40|0-9]  A2: n[20-30|0-9]"));
+        CHECK_EQ(dump(tl), QString("V1: g[10-20|0-9] e[25-35|0-9]  A1: e[25-35|0-9]  A2: n[25-35|0-9]"));
         CHECK_TIMELINE_SYNC(before, tl);
     }
 
