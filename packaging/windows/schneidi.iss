@@ -25,6 +25,9 @@ DefaultDirName={autopf}\schneidi
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 PrivilegesRequiredOverridesAllowed=dialog
+; An update keeps the kind of the installation found (only for me / for all users) without asking: choosing the other
+; kind would leave a second schneidi in "Installed apps"
+UsePreviousPrivileges=yes
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 MinVersion=10.0
@@ -54,6 +57,12 @@ de.EncoderExtension=Bessere Export-Qualität ohne Grafikkarte (x264/x265, GPL-Li
 en.EncoderExtension=Better export quality without a graphics card (x264/x265, GPL license, about 90 MB download)
 de.EncoderDownload=Lade x264/x265 herunter …
 en.EncoderDownload=Downloading x264/x265 …
+de.UpdateFrom=schneidi %1 ist installiert und wird auf %2 aktualisiert. Einstellungen, Projekte und Erweiterungen bleiben erhalten.
+en.UpdateFrom=schneidi %1 is installed and will be updated to %2. Settings, projects and extensions are kept.
+de.Reinstall=schneidi %1 ist bereits installiert und wird neu installiert. Einstellungen, Projekte und Erweiterungen bleiben erhalten.
+en.Reinstall=schneidi %1 is already installed and will be installed again. Settings, projects and extensions are kept.
+de.Downgrade=Achtung: Installiert ist die neuere Version schneidi %1. Sie wird durch die ältere Version %2 ersetzt.
+en.Downgrade=Note: the newer version schneidi %1 is installed. It will be replaced by the older version %2.
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
@@ -96,3 +105,90 @@ Root: HKA; Subkey: "Software\Classes\schneidi.Project\shell\open\command"; Value
 Filename: "{app}\schneidi-cli.exe"; Parameters: "extensions --install x264"; StatusMsg: "{cm:EncoderDownload}"; Flags: runasoriginaluser runhidden waituntilterminated; Tasks: x264
 #endif
 Filename: "{app}\schneidi.exe"; Description: "{cm:LaunchProgram,schneidi}"; Flags: nowait postinstall skipifsilent
+
+[Code]
+const
+  UninstallKey = 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{6FDE4DB7-7D85-4887-A4C7-FE24396BF20A}_is1';
+
+var
+  InstalledVersion: String; // DisplayVersion of the installation found, empty = none
+  ReadyTextShown: Boolean;   // the sentence is on the Ready page already (Back and Next again)
+
+// The installed version: the current mode's entry first (HKCU for "only for me", HKLM for "all users"), then the
+// other one (an update in the other mode still says what is there)
+function FindInstalledVersion(): String;
+begin
+  Result := '';
+  if IsAdminInstallMode() then begin
+    if not RegQueryStringValue(HKLM64, UninstallKey, 'DisplayVersion', Result) then
+      if not RegQueryStringValue(HKLM32, UninstallKey, 'DisplayVersion', Result) then
+        RegQueryStringValue(HKCU, UninstallKey, 'DisplayVersion', Result);
+  end else begin
+    if not RegQueryStringValue(HKCU, UninstallKey, 'DisplayVersion', Result) then
+      if not RegQueryStringValue(HKLM64, UninstallKey, 'DisplayVersion', Result) then
+        RegQueryStringValue(HKLM32, UninstallKey, 'DisplayVersion', Result);
+  end;
+end;
+
+// Next number of a dotted version ("0.20.1"), 0 when none is left; Rest loses it
+function NextPart(var Rest: String): Integer;
+var
+  Dot: Integer;
+begin
+  Dot := Pos('.', Rest);
+  if Dot = 0 then begin
+    Result := StrToIntDef(Rest, 0);
+    Rest := '';
+  end else begin
+    Result := StrToIntDef(Copy(Rest, 1, Dot - 1), 0);
+    Rest := Copy(Rest, Dot + 1, Length(Rest));
+  end;
+end;
+
+// -1: A older than B, 0: same, 1: newer (three parts, missing ones count 0)
+function CompareVersions(A, B: String): Integer;
+var
+  I, X, Y: Integer;
+begin
+  Result := 0;
+  for I := 1 to 3 do begin
+    X := NextPart(A);
+    Y := NextPart(B);
+    if X < Y then begin
+      Result := -1;
+      Exit;
+    end;
+    if X > Y then begin
+      Result := 1;
+      Exit;
+    end;
+  end;
+end;
+
+// The sentence for the "Ready to install" page (and the log); empty for a fresh installation
+function UpdateText(): String;
+begin
+  Result := '';
+  if InstalledVersion = '' then Exit;
+  case CompareVersions(InstalledVersion, '{#Version}') of
+    -1: Result := FmtMessage(CustomMessage('UpdateFrom'), [InstalledVersion, '{#Version}']);
+    0: Result := FmtMessage(CustomMessage('Reinstall'), [InstalledVersion]);
+    1: Result := FmtMessage(CustomMessage('Downgrade'), [InstalledVersion, '{#Version}']);
+  end;
+end;
+
+function InitializeSetup(): Boolean;
+begin
+  InstalledVersion := FindInstalledVersion();
+  if InstalledVersion = '' then Log('schneidi: no installation found')
+  else Log('schneidi: ' + UpdateText());
+  Result := True;
+end;
+
+procedure CurPageChanged(CurPageID: Integer);
+begin
+  if (CurPageID = wpReady) and (InstalledVersion <> '') and not ReadyTextShown then begin
+    WizardForm.ReadyLabel.Caption := UpdateText() + #13#10#13#10 + WizardForm.ReadyLabel.Caption;
+    ReadyTextShown := True;
+  end;
+end;
