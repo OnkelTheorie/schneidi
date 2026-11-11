@@ -86,7 +86,9 @@ struct ChunkPlan {
     // Configuration of chunk i: cfg with its bitrate, first pass, idr_pic_id base and threads.
     EncoderConfig configFor(const EncoderConfig& cfg, int i, int threads) const;
 };
-ChunkPlan planChunks(const FirstPassStats& stats, const EncoderConfig& cfg, int chunks, int minFrames = 60);
+// minFrames: shortest chunk; 0 = 15 s of pictures (each seam costs about 8 %·s of BD-rate over the
+// clip, measured: 15 s chunks stay near 0.5 %). Short clips get one chunk.
+ChunkPlan planChunks(const FirstPassStats& stats, const EncoderConfig& cfg, int chunks, int minFrames = 0);
 
 struct Picture {
     const uint8_t* y = nullptr;
@@ -100,16 +102,20 @@ struct Picture {
 // picture of the clip (a few ms per 1080p picture), without encoding anything.
 class FirstPass {
 public:
-    FirstPass(int width, int height);
+    // threads > 1: pictures are analysed in batches side by side (same numbers).
+    FirstPass(int width, int height, int threads = 1);
     ~FirstPass();
     void add(const Picture& picture, bool forceKeyframe = false);
-    std::shared_ptr<const FirstPassStats> stats() const { return stats_; }
+    std::shared_ptr<const FirstPassStats> stats() const;
 
 private:
-    int width_, height_;
+    void analyseBatch() const;
+    int width_, height_, threads_;
     std::unique_ptr<Lookahead> la_;
-    LookaheadFrame prev_;
-    bool havePrev_ = false;
+    // Pictures waiting for the next batch, and the last analysed one (their predecessor).
+    mutable std::vector<LookaheadFrame> batch_;
+    mutable LookaheadFrame prev_;
+    mutable bool havePrev_ = false;
     std::shared_ptr<FirstPassStats> stats_;
 };
 

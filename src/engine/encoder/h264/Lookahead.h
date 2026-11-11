@@ -28,6 +28,14 @@ public:
 
     // Copies the picture and analyses it against prev (nullptr: the first picture or a keyframe).
     void analyse(LookaheadFrame& f, const LookaheadFrame* prev) const;
+    // The two halves of analyse: the half-resolution picture and thumbnail (independent of other
+    // pictures), then the costs against prev (which must be prepared).
+    void prepare(LookaheadFrame& f) const;
+    void search(LookaheadFrame& f, const LookaheadFrame* prev) const;
+    // search = sceneCut (needs only prev's thumbnail) + costs (starts from prev's vectors, so
+    // pictures go one after another).
+    void sceneCut(LookaheadFrame& f, const LookaheadFrame* prev) const;
+    void costs(LookaheadFrame& f, const LookaheadFrame* prev, int threads = 1) const;
 
     // Macroblock tree over the queue: propagates the cost of every block back through the
     // motion vectors to the blocks it was predicted from, last picture first. Keyframes do not

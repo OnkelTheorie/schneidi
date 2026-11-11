@@ -132,6 +132,22 @@ void intraModeSearch(F&& tryMode, int predMode)
 inline uint8_t clip1(int v) { return uint8_t(v < 0 ? 0 : v > 255 ? 255 : v); }
 
 // One step of a spin wait: a pause for the hyperthread sibling, then let others run.
+// Waits until counter >= need: a short spin (the wavefront usually catches up within
+// microseconds), then sleeps in the kernel (atomic wait) instead of burning the hyperthread
+// sibling's time. Writers call notify_all after every store that someone may wait for.
+inline void waitAtLeast(const std::atomic<int>& counter, int need)
+{
+    for (int i = 0; i < 128; ++i) {
+        if (counter.load(std::memory_order_acquire) >= need)
+            return;
+#if defined(__SSE2__) || defined(_M_X64)
+        _mm_pause();
+#endif
+    }
+    for (int v = counter.load(std::memory_order_acquire); v < need; v = counter.load(std::memory_order_acquire))
+        counter.wait(v, std::memory_order_acquire);
+}
+
 inline void spinWait()
 {
 #if defined(__SSE2__) || defined(_M_X64)
@@ -565,8 +581,9 @@ Picture pictureOf(const LookaheadFrame& f, int w)
 
 } // namespace
 
-FirstPass::FirstPass(int width, int height)
-    : width_(width), height_(height), la_(std::make_unique<Lookahead>(width, height, (width + 15) / 16, (height + 15) / 16)),
+FirstPass::FirstPass(int width, int height, int threads)
+    : width_(width), height_(height), threads_(std::max(1, threads)),
+      la_(std::make_unique<Lookahead>(width, height, (width + 15) / 16, (height + 15) / 16)),
       stats_(std::make_shared<FirstPassStats>())
 {
 }
@@ -576,17 +593,57 @@ FirstPass::~FirstPass() = default;
 void FirstPass::add(const Picture& pic, bool forceKeyframe)
 {
     LookaheadFrame f; // the analysis reads only the luma
+    f.forceKeyframe = forceKeyframe;
     f.y.resize(size_t(width_) * height_);
     for (int y = 0; y < height_; ++y)
         std::memcpy(f.y.data() + size_t(y) * width_, pic.y + size_t(y) * pic.strideY, size_t(width_));
-    la_->analyse(f, havePrev_ ? &prev_ : nullptr);
-    stats_->intraSum.push_back(f.intraSum);
-    stats_->interSum.push_back(f.interSum);
-    stats_->sceneChange.push_back(f.sceneChange ? 1 : 0);
-    stats_->forceKeyframe.push_back(forceKeyframe ? 1 : 0);
-    f.y = {};
-    prev_ = std::move(f);
+    batch_.push_back(std::move(f));
+    if (int(batch_.size()) >= 4 * threads_)
+        analyseBatch();
+}
+
+// Half pictures, thumbnails and scene changes of the whole batch side by side, then the costs
+// in order (each against its predecessor, the last one of the batch before for the first).
+void FirstPass::analyseBatch() const
+{
+    const int n = int(batch_.size());
+    if (!n)
+        return;
+    auto parallel = [&](auto&& fn) {
+        std::atomic<int> next{0};
+        auto run = [&] {
+            for (int i; (i = next.fetch_add(1)) < n;)
+                fn(i);
+        };
+        std::vector<std::thread> workers;
+        for (int t = 1; t < std::min(threads_, n); ++t)
+            workers.emplace_back(run);
+        run();
+        for (auto& t : workers)
+            t.join();
+    };
+    auto prevOf = [&](int i) { return i > 0 ? &batch_[size_t(i) - 1] : havePrev_ ? &prev_ : nullptr; };
+    parallel([&](int i) { la_->prepare(batch_[size_t(i)]); });
+    parallel([&](int i) { la_->sceneCut(batch_[size_t(i)], prevOf(i)); });
+    // The motion search starts from the predecessor's vectors: in order.
+    for (int i = 0; i < n; ++i)
+        la_->costs(batch_[size_t(i)], prevOf(i), threads_);
+    for (LookaheadFrame& f : batch_) {
+        stats_->intraSum.push_back(f.intraSum);
+        stats_->interSum.push_back(f.interSum);
+        stats_->sceneChange.push_back(f.sceneChange ? 1 : 0);
+        stats_->forceKeyframe.push_back(f.forceKeyframe ? 1 : 0);
+    }
+    prev_ = std::move(batch_.back());
+    prev_.y = {};
     havePrev_ = true;
+    batch_.clear();
+}
+
+std::shared_ptr<const FirstPassStats> FirstPass::stats() const
+{
+    analyseBatch();
+    return stats_;
 }
 
 namespace {
@@ -613,6 +670,8 @@ ChunkPlan planChunks(const FirstPassStats& st, const EncoderConfig& cfg, int chu
 {
     ChunkPlan plan;
     const int n = int(st.size());
+    if (minFrames <= 0)
+        minFrames = int(std::lround(15.0 * (cfg.fps > 0 ? cfg.fps : 60.0)));
     chunks = std::clamp(chunks, 1, std::max(1, n / std::max(1, minFrames)));
     const std::vector<uint8_t> key = keyPlan(st, cfg, 0, size_t(n));
     plan.start.push_back(0);
@@ -1068,8 +1127,7 @@ void FrameCoder::waveRow(int r)
             if (ref->rowsReady.load(std::memory_order_acquire) >= need)
                 continue;
             const auto t0 = std::chrono::steady_clock::now();
-            while (ref->rowsReady.load(std::memory_order_acquire) < need)
-                spinWait();
+            waitAtLeast(ref->rowsReady, need);
             w.refWaitUs.fetch_add(long(std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - t0).count()),
                                   std::memory_order_relaxed);
         }
@@ -1077,8 +1135,7 @@ void FrameCoder::waveRow(int r)
         if (r == 0 || w.progress[size_t(r - 1)].load(std::memory_order_acquire) >= need)
             return;
         const auto t0 = gTiming ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
-        while (w.progress[size_t(r - 1)].load(std::memory_order_acquire) < need)
-            spinWait();
+        waitAtLeast(w.progress[size_t(r - 1)], need);
         if (gTiming)
             w.waitUs.fetch_add(long(std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - t0).count()),
                                std::memory_order_relaxed);
@@ -1093,11 +1150,14 @@ void FrameCoder::waveRow(int r)
             if (!ready) {
                 if (!wait)
                     return;
-                spinWait();
+                waitAtLeast(w.written, r);
+                if (r > 1)
+                    waitAtLeast(w.deblocked[size_t(r - 2)], std::min(dbNext + 2, mbW_));
                 continue;
             }
             deblockMb(dbNext, r - 1);
             w.deblocked[size_t(r - 1)].store(++dbNext, std::memory_order_release);
+            w.deblocked[size_t(r - 1)].notify_all();
         }
     };
     CabacEncoder& eng = w.rowEngine[size_t(r)];
@@ -1124,6 +1184,7 @@ void FrameCoder::waveRow(int r)
         if (mbx == std::min(1, mbW_ - 1))
             w.rowSnap[size_t(r)] = eng;
         w.progress[size_t(r)].store(mbx + 1, std::memory_order_release);
+        w.progress[size_t(r)].notify_all();
         deblockBehind(mbx, false);
     }
     deblockBehind(mbW_, true);
@@ -1139,8 +1200,7 @@ void FrameCoder::publishBand(int k)
 {
     WaveState& w = wave_;
     RefPic& R = *w.out;
-    while (R.rowsReady.load(std::memory_order_acquire) < k)
-        spinWait();
+    waitAtLeast(R.rowsReady, k);
     const bool last = k == mbH_ - 1;
     const int M = kMargin;
     const int yLim = last ? padH_ : std::min(padH_, 16 * k + 19);
@@ -1157,6 +1217,7 @@ void FrameCoder::publishBand(int k)
     refHalfRows(R, w.hBuilt, hLim);
     w.hBuilt = hLim;
     R.rowsReady.store(k + 1, std::memory_order_release);
+    R.rowsReady.notify_all();
 }
 
 // Entropy coding in raster order, mb_qp_delta against the real predecessor. It follows the
@@ -1191,6 +1252,7 @@ void FrameCoder::waveWrite()
             eng.terminate(m + 1 == count); // end_of_slice_flag
         }
         w.written.store(r + 1, std::memory_order_release);
+        w.written.notify_all();
     }
     bw.alignZero();
 }
@@ -1521,6 +1583,7 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
             pic->v = fc.recV_;
             fc.buildRefPlanes(*pic);
             pic->rowsReady.store(mbH_, std::memory_order_release);
+            pic->rowsReady.notify_all();
         }
     }
     cfg_.qp = baseQp;

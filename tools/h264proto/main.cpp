@@ -5,7 +5,8 @@
 //                     [--lookahead N] [--no-mbtree] [--mbtree-strength S] [--2pass] [--recon out.yuv]
 // --2pass (with --bitrate): analyse the whole input first (lookahead only), then one QP for the clip.
 // --chunks N: N independent encoders side by side on parts of the clip (planChunks), --threads split
-// between them; implies the first pass. Input must be a file.
+// between them; implies the first pass. Input must be a file. --chunk-min F: shortest chunk in
+// pictures (default 15 s).
 // Input is raw yuv420p ("-" reads stdin). Prints size, speed and PSNR of the encoder's reconstruction.
 #include "engine/encoder/h264/Cavlc.h"
 #include "engine/encoder/h264/H264Encoder.h"
@@ -133,7 +134,7 @@ int main(int argc, char** argv)
     int maxFrames = 1 << 30;
     const char* reconPath = nullptr;
     bool twoPass = false;
-    int chunks = 1;
+    int chunks = 1, chunkMin = 0;
     for (int i = 6; i < argc; ++i) {
         const std::string a = argv[i];
         if (a == "--qp" && i + 1 < argc)
@@ -173,6 +174,8 @@ int main(int argc, char** argv)
             cfg.cabac = false;
         else if (a == "--no-deblock")
             cfg.deblock = false;
+        else if (a == "--chunk-min" && i + 1 < argc)
+            chunkMin = std::atoi(argv[++i]);
         else if (a == "--chunks" && i + 1 < argc)
             chunks = std::max(1, std::atoi(argv[++i]));
         else if (a == "--no-frame-threads")
@@ -201,7 +204,7 @@ int main(int argc, char** argv)
     if (chunks > 1 && in != stdin) {
         // First pass over the whole clip, then the chunks side by side.
         auto t0 = std::chrono::steady_clock::now();
-        FirstPass fp(w, h);
+        FirstPass fp(w, h, cfg.threads);
         for (int n = 0; n < maxFrames && std::fread(frame.data(), 1, frame.size(), in) == frame.size(); ++n) {
             Picture pic;
             pic.y = frame.data();
@@ -210,7 +213,7 @@ int main(int argc, char** argv)
         }
         std::fclose(in);
         const int total = int(fp.stats()->size());
-        const ChunkPlan plan = planChunks(*fp.stats(), cfg, chunks);
+        const ChunkPlan plan = planChunks(*fp.stats(), cfg, chunks, chunkMin);
         firstPassSeconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
         const int count = int(plan.start.size());
         const int per = std::max(1, cfg.threads / count);
@@ -256,7 +259,7 @@ int main(int argc, char** argv)
     }
     if (twoPass && in != stdin) {
         const auto t0 = std::chrono::steady_clock::now();
-        FirstPass fp(w, h);
+        FirstPass fp(w, h, cfg.threads);
         for (int n = 0; n < maxFrames && std::fread(frame.data(), 1, frame.size(), in) == frame.size(); ++n) {
             Picture pic;
             pic.y = frame.data();
