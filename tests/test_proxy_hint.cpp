@@ -3,13 +3,18 @@
 // cannot keep up (pictures shown per second against the frame rate, after a warmup) from one that can; the main
 // window then shows a hint above the picture with "Generate proxy media" – and generates nothing by itself. The
 // hint follows the proxy queue and goes away once the proxies are there; closed, it stays away.
-// PROXY_HINT_DUMP=<png>: picture of the viewer with the hint.
+// A preview the user raised above the automatic size, or one that stays slow although every file has its proxy, gets
+// "Vorschau verkleinern" instead (PreviewResolution::smaller: one step down, reversible in the resolution menu):
+// proxies only make decoding cheaper, effects and compositing cost per preview pixel.
+// PROXY_HINT_DUMP=<png>: picture of the viewer with the hint (LOWER_HINT_DUMP=<png>: with "Vorschau verkleinern").
 
 #include "check.h"
 
 #include "app/MainWindow.h"
+#include "core/I18n.h"
 #include "core/PlaybackMeter.h"
 #include "engine/Engine.h"
+#include "engine/PreviewResolution.h"
 #include "engine/ProxyManager.h"
 #include "ui/Viewer.h"
 
@@ -162,6 +167,116 @@ void testMainWindow(const QString& dir)
     CHECK(!proxies->isPending(a));
 }
 
+// One step down: back to automatic when the user raised the preview above it, else the next fixed size that is
+// noticeably smaller (at most 3/4 of the pixels), never below 360p
+void testSmaller()
+{
+    using PreviewResolution::Choice;
+    using PreviewResolution::smaller;
+    const QSize fhd(1920, 1080);
+    CHECK(smaller(Choice::Project, 960, fhd) == Choice::Auto);
+    CHECK(smaller(Choice::P1080, 960, fhd) == Choice::Auto);
+    CHECK(smaller(Choice::P2160, 960, fhd) == Choice::Auto); // (larger than the project: the project's size)
+    CHECK(smaller(Choice::P1080, 1900, fhd) == Choice::P720); // automatic would be hardly smaller
+    CHECK(smaller(Choice::Project, 0, fhd) == Choice::Auto);  // not shown yet: automatic is the engine's 960
+    CHECK(smaller(Choice::Auto, 1920, fhd) == Choice::P720);
+    CHECK(smaller(Choice::Auto, 1280, fhd) == Choice::P540);
+    CHECK(smaller(Choice::Auto, 960, fhd) == Choice::P360);
+    CHECK(smaller(Choice::P720, 1920, fhd) == Choice::P540);
+    CHECK(smaller(Choice::P540, 1920, fhd) == Choice::P360);
+    CHECK(smaller(Choice::P360, 1920, fhd) == Choice::P360); // nothing smaller
+    CHECK(smaller(Choice::Auto, 600, fhd) == Choice::Auto);  // already below 360p
+    // A small project: nothing is smaller than the project itself
+    CHECK(smaller(Choice::Project, 960, QSize(320, 180)) == Choice::Project);
+    CHECK(smaller(Choice::Auto, 960, QSize(320, 180)) == Choice::Auto);
+    // 9:16: lines are the shorter edge
+    CHECK(smaller(Choice::P1080, 1920, QSize(1080, 1920)) == Choice::P720);
+    CHECK(smaller(Choice::Project, 960, QSize(1080, 1920)) == Choice::Auto);
+}
+
+void testLowerPreview(const QString& dir)
+{
+    if (!Check::haveFfmpeg()) return;
+    const QString hd = Check::makeMedia(dir + "/hd.mp4", {"-f", "lavfi", "-i", "testsrc2=size=1920x1080:rate=25:duration=1",
+                                                          "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p"});
+    if (!CHECK(!hd.isEmpty())) return;
+    using PreviewResolution::Choice;
+    using PreviewResolution::Target;
+    Engine engine;
+    QString err;
+    if (!CHECK(engine.init(&err))) return;
+    std::setlocale(LC_NUMERIC, "C");
+    MainWindow w(&engine);
+    w.disableAutosave();
+    w.resize(1600, 950);
+    w.show();
+    w.importFiles({hd}, true);
+    QApplication::processEvents();
+    ProxyManager* proxies = engine.proxies();
+    proxies->remove({hd});
+    auto* viewer = w.findChild<Viewer*>();
+    auto* button = w.findChild<QToolButton*>("viewer_hint_button");
+    if (!CHECK(viewer && button)) return;
+    const auto pixels = [](QSize s) { return qint64(s.width()) * s.height(); };
+    const int slowFor = PlaybackMeter::kWarmupMs + PlaybackMeter::kWindowMs + 1200;
+
+    // The preview raised to the project's size: slow playback offers the smaller preview first (proxies would leave
+    // the picture as large), the hint names both sizes
+    w.setPreviewResolution(Target::Viewer, Choice::Project);
+    CHECK(engine.previewSize() == QSize(1920, 1080));
+    fakePlayback(engine, 500, slowFor);
+    CHECK(viewer->hint().contains(QStringLiteral("1920×1080")));
+    CHECK(button->isVisible());
+    CHECK_EQ(button->text(), T("Vorschau verkleinern"));
+    if (const QString dump = qEnvironmentVariable("LOWER_HINT_DUMP"); !dump.isEmpty()) viewer->grab().save(dump);
+    button->click();
+    CHECK(w.previewResolution(Target::Viewer) == Choice::Auto);
+    CHECK(pixels(engine.previewSize()) < pixels(QSize(1920, 1080)));
+    CHECK(viewer->hint().isEmpty());
+    CHECK(!proxies->isPending(hd) && !proxies->hasProxy(hd)); // nothing generated
+
+    // Slow again at the automatic size, the file without a proxy: proxies as before
+    fakePlayback(engine, 500, slowFor);
+    CHECK_EQ(button->text(), T("Proxy-Medien erzeugen"));
+    button->click();
+    QElapsedTimer t;
+    t.start();
+    while (!proxies->hasProxy(hd) && t.elapsed() < 60000) QApplication::processEvents(QEventLoop::AllEvents, 50);
+    QApplication::processEvents();
+    CHECK(proxies->hasProxy(hd));
+    CHECK(viewer->hint().isEmpty()); // the proxies are there: no other offer before a new measurement
+
+    // Still slow although every file has its proxy: never proxies again, the next smaller preview. A large viewer
+    // (automatic = the pixels it shows) so that a fixed size noticeably below it exists
+    w.resize(3200, 1800);
+    QElapsedTimer settle;
+    settle.start();
+    while (settle.elapsed() < 800) QApplication::processEvents(QEventLoop::AllEvents, 20);
+    const QSize before = engine.previewSize();
+    CHECK(before.width() > 854); // (precondition: larger than 480p)
+    fakePlayback(engine, 500, slowFor);
+    CHECK(!viewer->hint().isEmpty());
+    CHECK_EQ(button->text(), T("Vorschau verkleinern"));
+    CHECK(viewer->hint().contains(PreviewResolution::sizeText(before)));
+    button->click();
+    const Choice lowered = w.previewResolution(Target::Viewer);
+    CHECK(lowered != Choice::Auto && PreviewResolution::lines(lowered) >= 360);
+    CHECK(pixels(engine.previewSize()) * 4 <= pixels(before) * 3);
+    CHECK(viewer->hint().isEmpty());
+
+    // At the smallest size with all proxies there: nothing left to offer, no hint
+    w.setPreviewResolution(Target::Viewer, Choice::P360);
+    fakePlayback(engine, 500, slowFor);
+    CHECK(viewer->hint().isEmpty());
+
+    // Zoomed to 100 % (the engine renders the project's size whatever the choice): lowering would change nothing
+    w.setPreviewResolution(Target::Viewer, Choice::Project);
+    engine.setPreviewFullSize(true);
+    fakePlayback(engine, 500, slowFor);
+    CHECK(viewer->hint().isEmpty());
+    engine.setPreviewFullSize(false);
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -172,6 +287,8 @@ int main(int argc, char** argv)
     QTemporaryDir dir;
     testMeter();
     testMeterShortDip();
+    testSmaller();
     testMainWindow(dir.path());
+    testLowerPreview(dir.path());
     return Check::result();
 }

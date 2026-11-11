@@ -872,17 +872,34 @@ FullScreenViewer* MainWindow::fullScreenViewer() const
     return m_fullScreen;
 }
 
-void MainWindow::updatePreviewEdge()
+int MainWindow::previewEdgeFor(PreviewResolution::Choice viewerRes) const
 {
-    using namespace PreviewResolution;
     const QSize project = m_engine->frameSize();
     int edge = 0;
     // The viewer's automatic: the pixels its picture covers (0 before it is shown: the engine's default)
-    if (!m_viewerAway.active && m_viewer) edge = PreviewResolution::edge(m_viewerRes, m_viewer->wantedPreviewEdge(), project);
-    if (m_fullScreen) edge = std::max(edge, PreviewResolution::edge(m_viewerRes, m_fullScreen->wantedPreviewEdge(), project));
+    if (!m_viewerAway.active && m_viewer) edge = PreviewResolution::edge(viewerRes, m_viewer->wantedPreviewEdge(), project);
+    if (m_fullScreen) edge = std::max(edge, PreviewResolution::edge(viewerRes, m_fullScreen->wantedPreviewEdge(), project));
     if (m_output) edge = std::max(edge, PreviewResolution::edge(m_monitorRes, m_output->wantedPreviewEdge(), project));
-    m_engine->setPreviewEdge(edge);
+    return edge;
+}
+
+void MainWindow::updatePreviewEdge()
+{
+    m_engine->setPreviewEdge(previewEdgeFor(m_viewerRes));
     updateResolutionMenus();
+}
+
+std::optional<PreviewResolution::Choice> MainWindow::smallerPreview() const
+{
+    if (m_engine->previewFullSize() || m_viewerAway.active || !m_viewer) return std::nullopt;
+    const QSize project = m_engine->frameSize();
+    // The automatic size of what shows the main window's preview now (as updateResolutionMenus)
+    const int autoEdge = m_fullScreen ? m_fullScreen->wantedPreviewEdge() : m_viewer->wantedPreviewEdge();
+    const PreviewResolution::Choice c = PreviewResolution::smaller(m_viewerRes, autoEdge, project);
+    if (c == m_viewerRes) return std::nullopt;
+    const QSize now = m_engine->previewSize(), then = PreviewResolution::sizeFor(project, previewEdgeFor(c));
+    if (qint64(then.width()) * then.height() * 4 > qint64(now.width()) * now.height() * 3) return std::nullopt;
+    return c;
 }
 
 void MainWindow::updateResolutionMenus()

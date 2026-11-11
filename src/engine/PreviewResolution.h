@@ -84,6 +84,24 @@ inline QSize resultSize(Choice choice, int autoEdge, const QSize& project)
     return sizeFor(project, edge(choice, autoEdge, project));
 }
 
+// The next smaller choice for a preview that plays too slowly (the viewer's hint "Vorschau verkleinern",
+// MainWindow::updateProxyHint): automatic when the user raised the preview above it (the default, playback speed
+// first), else the largest fixed size that is noticeably smaller (at most 3/4 of the pixels), never below 360p;
+// `current` itself when nothing is smaller. autoEdge/project as in edge()
+inline Choice smaller(Choice current, int autoEdge, const QSize& project)
+{
+    const auto pixels = [&](Choice c) {
+        const QSize s = resultSize(c, autoEdge, project);
+        return qint64(s.width()) * s.height();
+    };
+    const qint64 now = pixels(current);
+    const auto noticeably = [&](Choice c) { return pixels(c) * 4 <= now * 3; };
+    if (current != Choice::Auto && noticeably(Choice::Auto)) return Choice::Auto;
+    for (int i = kChoiceCount - 1; i >= 0; --i)
+        if (lines(kChoices[i]) > 0 && noticeably(kChoices[i])) return kChoices[i];
+    return current;
+}
+
 // The choice's name in menus and the settings ("Automatisch (passend zur Anzeige)", "720p", "Projektauflösung")
 inline QString label(Choice choice)
 {
