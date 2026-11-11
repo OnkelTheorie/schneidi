@@ -3063,9 +3063,10 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
             best = split;
         }
     }
-    // 8x8 transform for the chosen layout (High profile).
+    // 8x8 transform for the chosen layout (High profile). Experiment (H264_EXP & 128): not when
+    // the 4x4 transform left no luma coefficients.
     bool bestT8 = false;
-    if (useT8() && cfg_.effort > 0) {
+    if (useT8() && cfg_.effort > 0 && !((gExp & 128) && interBits.syn.cbpLuma == 0)) {
         MbOut t8Bits;
         const double costT8 = encodeInter(best, t8Bits, true);
         if (costT8 < costInter) {
