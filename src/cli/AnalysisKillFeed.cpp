@@ -35,6 +35,7 @@ constexpr int kGap = 2;           // a line missing for more samples is only the
 constexpr int kCameBack = kRate;
 constexpr double kSameLine = 0.8; // ... when this part of their bright pixels (text, icons) match
 constexpr int kBright = 170;      // luma of text and icons on the line
+constexpr double kOtherText = 0.7; // a line in the next sample with less of its text in common is another line
 
 // Team colours of the names (CS2: T yellow-orange, CT blue; icons are white, the frame red): a pixel of the text band
 // that is clearly coloured and bright is warm (red and green well above blue: not the red frame) or cool (blue above
@@ -89,6 +90,32 @@ double sameContent(const std::vector<uchar>& a, const std::vector<uchar>& b, int
             if (either > 0) best = std::max(best, double(both) / either);
         }
     return best;
+}
+
+// How much of the smaller text of two lines lies in the other (best of small shifts); -1 when one of them shows too
+// little of its text to tell
+double textShare(const std::vector<uchar>& a, const std::vector<uchar>& b, int w, int h)
+{
+    const int na = int(std::count(a.begin(), a.end(), uchar(1))), nb = int(std::count(b.begin(), b.end(), uchar(1)));
+    if (std::min(na, nb) < std::max(8, w * h / 100)) return -1;
+    int best = 0;
+    for (int dy = -2; dy <= 2; ++dy)
+        for (int dx = -3; dx <= 3; ++dx) {
+            int both = 0;
+            for (int y = std::max(0, dy); y < std::min(h, h + dy); ++y)
+                for (int x = std::max(0, dx); x < std::min(w, w + dx); ++x)
+                    both += a[size_t(y * w + x)] && b[size_t((y - dy) * w + (x - dx))];
+            best = std::max(best, both);
+        }
+    return double(best) / std::min(na, nb);
+}
+
+// Clearly another text: both show enough of it and little of the smaller one lies in the other. A line fading in or
+// out, or under a flash, keeps (part of) its text: not another one
+bool otherText(const std::vector<uchar>& a, const std::vector<uchar>& b, int w, int h)
+{
+    const double share = textShare(a, b, w, h);
+    return share >= 0 && share < kOtherText;
 }
 
 } // namespace
@@ -313,15 +340,17 @@ ColorEvents framedLineEvents(const MediaSource& m, const QRectF& region, const Q
         const int nf = int(now.size()), nl = int(live.size());
         // A find fits a track: up by a line (and a bit) or not moved, not down. After a gap (the line was hidden by a
         // flash or the tint, or it went away) only with the same text: a new line often takes the place of one that
-        // just went
+        // just went. Without a gap not with clearly another text: a new line can show in the very next sample where
+        // the old one was (it went away, or the one below moved up into its place)
         std::vector<char> fit(size_t(nf) * std::max(1, nl), 0);
         for (int i = 0; i < nf; ++i)
             for (int j = 0; j < nl; ++j) {
                 const Track& tr = tracks[size_t(live[size_t(j)])];
                 const int y = now[size_t(i)].top;
+                const std::vector<uchar>& sig = now[size_t(i)].sig;
                 fit[size_t(i * nl + j)] = y >= tr.y - span * 4 / 3 && y <= tr.y + down
-                                          && (t - tr.last <= kGap
-                                              || sameContent(now[size_t(i)].sig, tr.at.back()->sig, sigW, sigH) >= kSameLine);
+                                          && (t - tr.last <= kGap ? !otherText(sig, tr.at.back()->sig, sigW, sigH)
+                                                                  : sameContent(sig, tr.at.back()->sig, sigW, sigH) >= kSameLine);
             }
         const auto fits = [&](int i, int j) { return fit[size_t(i * nl + j)] != 0; };
         // best[i][j]: matches of finds i.. with tracks j.. (count, movement)

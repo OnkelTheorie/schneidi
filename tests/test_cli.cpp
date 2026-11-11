@@ -1857,6 +1857,22 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
                 CHECK(std::abs(slotKills[0] - 1.0) < 0.15);
                 CHECK(std::abs(slotKills[1] - 3.5) < 0.15);
             }
+            // ... and right away (report 9.11.: a new line where an old one just went was taken for the old one,
+            // matched by its place only): another text in the same slot in the next frame is a new line
+            const QString swap = Check::makeMedia(
+                dir.filePath("cs2_swap.mkv"),
+                {"-f", "lavfi", "-i",
+                 "color=c=0x707070:s=1920x1080:d=6:r=25," + line(74, "between(t,1,2.99)", textA) + ","
+                     + line(74, "gte(t,3)", textB),
+                 "-c:v", "ffv1", "-pix_fmt", "bgr0"});
+            QVector<double> swapKills;
+            for (const QJsonValue& c : run("highlights", {{"file", swap}})["candidates"].toArray())
+                for (const QJsonValue& k : c["kill_s"].toArray()) swapKills << k.toDouble();
+            std::sort(swapKills.begin(), swapKills.end());
+            if (CHECK_EQ(swapKills.size(), 2)) {
+                CHECK(std::abs(swapKills[0] - 1.0) < 0.15);
+                CHECK(std::abs(swapKills[1] - 3.0) < 0.15);
+            }
             // Teamkills (review 9.11.: a teamkill counted as a kill): long lines "killer  weapon  victim" with the
             // names in team colours (T yellow, CT blue). A at 1 s: T kills CT, a kill. B at 1.6 s: T kills T, a
             // teamkill inside A's moment (lowers its score). C at 4 s: T kills T again, a teamkill on its own (no moment)
