@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
-// Work running in the background, shown small at the bottom right of the main window's status bar: a slim bar, one
+// Work running in the background, shown small at the bottom right of the main window (its page bar): a slim bar, one
 // line of text ("Proxy 2/5 – clip.mp4 – 34 %") and a ✕ that cancels. Any part of the app reports there by an id
 // (proxies today; render queue, transcription and analysis can follow): setJob() while it runs, finishJob() at the
 // end - the done text stays a moment, then the indicator hides once no job is left. Several jobs: the first one is

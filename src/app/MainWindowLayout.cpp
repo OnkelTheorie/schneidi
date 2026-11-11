@@ -39,6 +39,7 @@
 #include "engine/Exporter.h"
 #include "engine/RenderQueue.h"
 #include "ui/EffectsLibrary.h"
+#include "ui/ElidedLabel.h"
 #include "ui/MediaStorage.h"
 #include "ui/ColorPanel.h"
 #include "ui/TranscriptPanel.h"
@@ -179,7 +180,10 @@ void MainWindow::buildLayout()
     lay->addWidget(buildPageBar());
     StartupTrace::mark("  pagebar");
     setCentralWidget(root);
-    statusBar(); // made now, not on the first message: the layout never shifts by its height later
+    // The status bar's messages show in the page bar (one compact row at the bottom, the room goes to the pages):
+    // the QStatusBar itself stays hidden, every statusBar()->showMessage() lands there through messageChanged
+    statusBar()->hide();
+    connect(statusBar(), &QStatusBar::messageChanged, this, [this](const QString& text) { showStatusText(text); });
     StartupTrace::mark("  statusbar");
 
     // The Edit page, or the nearest shown one when Edit is hidden
@@ -256,24 +260,37 @@ QWidget* MainWindow::buildTopBar()
 
 QWidget* MainWindow::buildPageBar()
 {
-    // Sidebar at the bottom like in DaVinci (Media | Edit | Deliver)
+    // One compact row at the bottom: the status text (or the name and version) on the left, the page buttons in the
+    // middle (icon and name side by side), background work on the right. The status bar's row is gone, its messages
+    // show here (showStatusText) - every pixel the bars do not need goes to the pages
     auto* bar = new QWidget;
     bar->setObjectName("PageBar");
     bar->setStyleSheet(
         QString("QWidget#PageBar { background: %1; border-top: 1px solid %2; }"
-                "QToolButton { color: %3; padding: 4px 18px; border-radius: 0; }"
+                "QToolButton { color: %3; padding: 2px 14px; border-radius: 0; border-bottom: 2px solid transparent; }"
                 "QToolButton:checked { color: %4; background: transparent; border-bottom: 2px solid %4; }"
                 "QToolButton:hover { color: %5; }")
             .arg(Theme::window.name(), Theme::border.name(), Theme::textDim.name(), Theme::primary.name(),
                  Theme::text.name()));
     auto* lay = new QHBoxLayout(bar);
     lay->setContentsMargins(10, 0, 10, 0);
-    lay->setSpacing(4);
+    lay->setSpacing(2);
 
-    auto* brand = new QLabel(appName()); // with the version, like DaVinci (bug reports, screenshots)
-    brand->setStyleSheet(QString("color: %1; font-weight: 600;").arg(Theme::textDim.name()));
-    lay->addWidget(brand);
-    lay->addStretch(1);
+    // Left and right of the buttons equally wide (their size hints ignored): the buttons stay in the middle
+    auto side = [](QWidget* parent) {
+        auto* w = new QWidget(parent);
+        w->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+        auto* l = new QHBoxLayout(w);
+        l->setContentsMargins(0, 0, 0, 0);
+        l->setSpacing(6);
+        return std::pair{w, l};
+    };
+    auto [left, leftLay] = side(bar);
+    m_statusText = new ElidedLabel;
+    m_statusText->setObjectName("statusText");
+    leftLay->addWidget(m_statusText, 1);
+    showStatusText({}); // the name and version (bug reports, screenshots)
+    lay->addWidget(left, 1);
 
     // Right-click on the bar or a page button: which pages it shows
     m_pageVisibility.load();
@@ -295,7 +312,7 @@ QWidget* MainWindow::buildPageBar()
     };
     for (const auto& pg : pages) {
         auto* b = new QToolButton;
-        b->setText(QString("%1\n%2").arg(pg.icon, T(pg.name)));
+        b->setText(QString("%1  %2").arg(pg.icon, T(pg.name)));
         b->setToolButtonStyle(Qt::ToolButtonTextOnly);
         b->setCheckable(true);
         b->setChecked(pg.page == m_page);
@@ -311,10 +328,21 @@ QWidget* MainWindow::buildPageBar()
         m_pageButtons->addButton(b, int(pg.page));
         lay->addWidget(b);
     }
-    lay->addStretch(1);
-    lay->addSpacing(brand->sizeHint().width());
+    auto [right, rightLay] = side(bar);
+    rightLay->addStretch(1);
+    m_pageBarRight = rightLay; // background work (setupBackgroundJobs)
+    lay->addWidget(right, 1);
     updatePageButtons();
     return bar;
+}
+
+void MainWindow::showStatusText(const QString& text)
+{
+    if (!m_statusText) return;
+    // A message in the normal text color, else the name and version dimmed
+    m_statusText->setFullText(text.isEmpty() ? appName() : text);
+    m_statusText->setStyleSheet(text.isEmpty() ? QString("color: %1; font-weight: 600;").arg(Theme::textDim.name())
+                                               : QString("color: %1;").arg(Theme::text.name()));
 }
 
 QString MainWindow::pageId(Page page)
@@ -751,6 +779,29 @@ QVector<SecondScreenPlan::Screen> screenList(const QScreen* without = nullptr)
 }
 
 } // namespace
+
+void MainWindow::setAppFullScreen(bool on)
+{
+    if (on != isFullScreen()) {
+        if (on) {
+            m_maximizedBeforeFullScreen = isMaximized();
+            showFullScreen();
+        } else if (m_maximizedBeforeFullScreen) {
+            showMaximized();
+        } else {
+            showNormal();
+        }
+    }
+    if (m_appFullScreenAction) m_appFullScreenAction->setChecked(isFullScreen());
+}
+
+void MainWindow::changeEvent(QEvent* event)
+{
+    QMainWindow::changeEvent(event);
+    // Left by the window manager (or entered by it): the menu entry shows the state
+    if (event->type() == QEvent::WindowStateChange && m_appFullScreenAction)
+        m_appFullScreenAction->setChecked(isFullScreen());
+}
 
 void MainWindow::setViewerFullScreen(bool on)
 {
