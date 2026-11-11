@@ -12,6 +12,7 @@
 #include <cstdlib>
 #include <atomic>
 #include <cstring>
+#include <memory>
 #include <thread>
 
 #if defined(__SSE2__) || defined(_M_X64)
@@ -280,6 +281,7 @@ Encoder::Encoder(const EncoderConfig& config)
     mvY_.resize(nzLuma_.size());
     refIdx_.resize(mvX_.size());
     sliceTopOfRow_.resize(size_t(mbH_));
+    rowKey_.resize(size_t(mbH_));
     cabKind_.resize(size_t(mbW_) * mbH_);
     cabT8_.resize(cabKind_.size());
     cabacByTop_.resize(size_t(mbH_));
@@ -476,7 +478,10 @@ std::vector<uint8_t> Encoder::encode(const Picture& picture, bool forceKeyframe)
     mbTypeOffset_ = idr ? 0 : 5;
 
     planMacroblockQp();
-    const int sliceCount = std::clamp(cfg_.threads, 1, mbH_);
+    // CABAC: one slice, its rows decided in a wavefront by the threads and entropy coded in raster
+    // order afterwards. CAVLC (decisions write bits directly): one slice per thread.
+    const bool wave = useCabac();
+    const int sliceCount = wave ? 1 : std::clamp(cfg_.threads, 1, mbH_);
     std::vector<BitWriter> slices(static_cast<size_t>(sliceCount));
     std::vector<int> sliceTop(size_t(sliceCount) + 1);
     for (int s = 0; s <= sliceCount; ++s)
@@ -484,9 +489,10 @@ std::vector<uint8_t> Encoder::encode(const Picture& picture, bool forceKeyframe)
     for (int s = 0; s < sliceCount; ++s)
         for (int r = sliceTop[size_t(s)]; r < sliceTop[size_t(s) + 1]; ++r)
             sliceTopOfRow_[size_t(r)] = sliceTop[size_t(s)];
+    for (int r = 0; r < mbH_; ++r)
+        rowKey_[size_t(r)] = wave ? r : sliceTopOfRow_[size_t(r)];
 
-    auto encodeSlice = [&](int s) {
-        BitWriter& bw = slices[size_t(s)];
+    auto sliceHeader = [&](BitWriter& bw, int s) {
         // slice_header (7.3.3)
         bw.ue(uint32_t(sliceTop[size_t(s)] * mbW_)); // first_mb_in_slice
         bw.ue(idr ? 7 : 5);                         // slice_type: I or P (all slices)
@@ -514,17 +520,15 @@ std::vector<uint8_t> Encoder::encode(const Picture& picture, bool forceKeyframe)
             bw.se(0); // slice_alpha_c0_offset_div2
             bw.se(0); // slice_beta_offset_div2
         }
+    };
+    // CAVLC (and I_PCM): the macroblocks write their bits as they are decided.
+    auto encodeSlice = [&](int s) {
+        BitWriter& bw = slices[size_t(s)];
+        sliceHeader(bw, s);
         int skipRun = 0;
         qpPredByTop_[size_t(sliceTop[size_t(s)])] = cfg_.qp;
-        CabacEncoder cabacEngine;
         bool prevQpNonZero = false;
-        const bool cabac = useCabac();
-        if (cabac) {
-            while (!bw.byteAligned())
-                bw.u(1, 1); // cabac_alignment_one_bit
-            cabacEngine.start(&bw, cfg_.qp, pSlice_ ? 0 : -1);
-        }
-        cabacByTop_[size_t(sliceTop[size_t(s)])] = cabac ? &cabacEngine : nullptr;
+        cabacByTop_[size_t(sliceTop[size_t(s)])] = nullptr;
         prevQpNzByTop_[size_t(sliceTop[size_t(s)])] = &prevQpNonZero;
         for (int mby = sliceTop[size_t(s)]; mby < sliceTop[size_t(s) + 1]; ++mby) {
             for (int mbx = 0; mbx < mbW_; ++mbx) {
@@ -538,12 +542,6 @@ std::vector<uint8_t> Encoder::encode(const Picture& picture, bool forceKeyframe)
                     coded = encodeMbP(mb, mbx, mby);
                 else
                     commitQp(mbx, mby, encodeMbIntra(mb, mbx, mby));
-                if (cabac) {
-                    cabacWriteMb(cabacEngine, mbx, mby, mb.syn, prevQpNonZero);
-                    const bool last = mby + 1 == sliceTop[size_t(s) + 1] && mbx + 1 == mbW_;
-                    cabacEngine.terminate(last); // end_of_slice_flag
-                    continue;
-                }
                 if (!coded) {
                     ++skipRun;
                     continue;
@@ -555,21 +553,98 @@ std::vector<uint8_t> Encoder::encode(const Picture& picture, bool forceKeyframe)
                 bw.append(mb.bw);
             }
         }
-        if (cabac) {
-            bw.alignZero(); // the flush wrote the rbsp_stop_one_bit
-        } else {
-            if (skipRun)
-                bw.ue(uint32_t(skipRun));
-            bw.rbspTrailing();
-        }
+        if (skipRun)
+            bw.ue(uint32_t(skipRun));
+        bw.rbspTrailing();
     };
-    // Slices only look at macroblocks of their own slice, so they run in parallel.
-    std::vector<std::thread> workers;
-    for (int s = 1; s < sliceCount; ++s)
-        workers.emplace_back(encodeSlice, s);
-    encodeSlice(0);
-    for (auto& t : workers)
-        t.join();
+    if (wave) {
+        // Decisions: a thread takes the next row and stays two macroblocks behind the row above
+        // (intra prediction and motion vector prediction read above-right). Bit estimates use a
+        // counting CABAC engine per row, started from the row above after its second macroblock.
+        const int rows = mbH_;
+        std::vector<CabacEncoder> rowEngine(static_cast<size_t>(rows)), rowSnap(static_cast<size_t>(rows));
+        std::unique_ptr<std::atomic<int>[]> progress(new std::atomic<int>[size_t(rows)]);
+        std::unique_ptr<bool[]> rowPrevNz(new bool[size_t(rows)]);
+        for (int r = 0; r < rows; ++r)
+            progress[size_t(r)].store(0, std::memory_order_relaxed);
+        mbSyn_.resize(size_t(mbW_) * mbH_);
+        std::atomic<int> nextRow{0};
+        auto worker = [&] {
+            for (;;) {
+                const int r = nextRow.fetch_add(1);
+                if (r >= rows)
+                    return;
+                auto waitAbove = [&](int need) {
+                    if (r > 0)
+                        while (progress[size_t(r - 1)].load(std::memory_order_acquire) < need)
+                            std::this_thread::yield();
+                };
+                CabacEncoder& eng = rowEngine[size_t(r)];
+                if (r == 0) {
+                    eng.start(nullptr, cfg_.qp, pSlice_ ? 0 : -1);
+                    eng.startCounting();
+                } else {
+                    waitAbove(std::min(2, mbW_));
+                    eng = rowSnap[size_t(r - 1)];
+                }
+                qpPredByTop_[size_t(r)] = cfg_.qp;
+                rowPrevNz[size_t(r)] = false;
+                cabacByTop_[size_t(r)] = &eng;
+                prevQpNzByTop_[size_t(r)] = &rowPrevNz[size_t(r)];
+                for (int mbx = 0; mbx < mbW_; ++mbx) {
+                    waitAbove(std::min(mbx + 2, mbW_));
+                    MbOut mb;
+                    if (pSlice_)
+                        encodeMbP(mb, mbx, r);
+                    else
+                        commitQp(mbx, r, encodeMbIntra(mb, mbx, r));
+                    cabacWriteMb(eng, mbx, r, mb.syn, rowPrevNz[size_t(r)]);
+                    mbSyn_[size_t(r) * mbW_ + mbx] = mb.syn;
+                    if (mbx == std::min(1, mbW_ - 1))
+                        rowSnap[size_t(r)] = eng;
+                    progress[size_t(r)].store(mbx + 1, std::memory_order_release);
+                }
+            }
+        };
+        std::vector<std::thread> workers;
+        for (int t = 1; t < std::clamp(cfg_.threads, 1, rows); ++t)
+            workers.emplace_back(worker);
+        worker();
+        for (auto& t : workers)
+            t.join();
+
+        // Entropy coding in raster order; mb_qp_delta against the real predecessor.
+        BitWriter& bw = slices[0];
+        sliceHeader(bw, 0);
+        while (!bw.byteAligned())
+            bw.u(1, 1); // cabac_alignment_one_bit
+        CabacEncoder eng;
+        eng.start(&bw, cfg_.qp, pSlice_ ? 0 : -1);
+        int pred = cfg_.qp;
+        bool prevNz = false;
+        const size_t count = size_t(mbW_) * mbH_;
+        for (size_t m = 0; m < count; ++m) {
+            MbSyntax& syn = mbSyn_[m];
+            using K = MbSyntax::Kind;
+            const bool sends = syn.kind == K::I16 || (syn.kind != K::Skip && (syn.cbpLuma || syn.cbpChroma));
+            if (sends) {
+                syn.qpDelta = mbQp_[m] - pred;
+                pred = mbQp_[m];
+            }
+            mbQpFinal_[m] = int8_t(pred);
+            cabacWriteMb(eng, int(m % size_t(mbW_)), int(m / size_t(mbW_)), syn, prevNz);
+            eng.terminate(m + 1 == count); // end_of_slice_flag
+        }
+        bw.alignZero();
+    } else {
+        // Slices only look at macroblocks of their own slice, so they run in parallel.
+        std::vector<std::thread> workers;
+        for (int s = 1; s < sliceCount; ++s)
+            workers.emplace_back(encodeSlice, s);
+        encodeSlice(0);
+        for (auto& t : workers)
+            t.join();
+    }
 
     std::vector<uint8_t> out;
     for (const BitWriter& bw : slices) {
@@ -2171,7 +2246,7 @@ bool Encoder::encodeMbP(MbOut& result, int mbx, int mby)
                 for (int y = 0; y < 8; ++y)
                     for (int x = 0; x < 8; ++x)
                         res[y * 8 + x] = int(srcY_[lumaOff + size_t(oy + y) * padW_ + ox + x]) - int(lp[(oy + y) * 16 + ox + x]);
-                const CabacEncoder* live = cabacByTop_[size_t(sliceTopOfRow_[size_t(mby)])];
+                const CabacEncoder* live = cabacByTop_[size_t(rowKey_[size_t(mby)])];
                 double real[64];
                 quantize8x8(res, qp, 1.0 / 6.0, levels8[b8], real);
                 if (live && cfg_.effort > 0) {
@@ -2222,7 +2297,7 @@ bool Encoder::encodeMbP(MbOut& result, int mbx, int mby)
                 for (int x = 0; x < 4; ++x)
                     res[y * 4 + x] = int(srcY_[lumaOff + size_t(oy + y) * padW_ + ox + x]) - int(lp[(oy + y) * 16 + ox + x]);
             forward4x4(res, coef);
-            const CabacEncoder* live = cabacByTop_[size_t(sliceTopOfRow_[size_t(mby)])];
+            const CabacEncoder* live = cabacByTop_[size_t(rowKey_[size_t(mby)])];
             if (cfg_.effort > 0 && live) {
                 // Trellis with CABAC costs on real-valued levels.
                 static const auto kScale4 = [] {
@@ -2406,7 +2481,7 @@ bool Encoder::encodeMbP(MbOut& result, int mbx, int mby)
 void Encoder::commitQp(int mbx, int mby, bool codedDelta)
 {
     const size_t m = size_t(mby) * mbW_ + mbx;
-    int& pred = qpPredByTop_[size_t(sliceTopOfRow_[size_t(mby)])];
+    int& pred = qpPredByTop_[size_t(rowKey_[size_t(mby)])];
     if (codedDelta)
         pred = mbQp_[m];
     mbQpFinal_[m] = int8_t(pred);
@@ -2941,7 +3016,7 @@ bool Encoder::skipResidualIsZero(int mbx, int mby, const uint8_t* lp, const uint
 // slice's current context states.
 double Encoder::mbBits(const MbOut& o, int mbx, int mby, double cavlcBits)
 {
-    const size_t top = size_t(sliceTopOfRow_[size_t(mby)]);
+    const size_t top = size_t(rowKey_[size_t(mby)]);
     const CabacEncoder* live = cabacByTop_[top];
     if (!live)
         return cavlcBits;
@@ -2954,7 +3029,7 @@ double Encoder::mbBits(const MbOut& o, int mbx, int mby, double cavlcBits)
 
 double Encoder::skipBits(int mbx, int mby)
 {
-    const size_t top = size_t(sliceTopOfRow_[size_t(mby)]);
+    const size_t top = size_t(rowKey_[size_t(mby)]);
     const CabacEncoder* live = cabacByTop_[top];
     if (!live)
         return 1.0;

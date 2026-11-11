@@ -27,7 +27,7 @@ struct EncoderConfig {
     IntraMode mode = IntraMode::Auto;
     bool deblock = true; // in-loop deblocking filter (8.7), run by the encoder too
     int gop = 1;         // keyframe distance; > 1 adds P frames (quarter-pel motion, 16x16)
-    int threads = 1;     // one slice per thread (rows of macroblocks)
+    int threads = 1;     // CABAC: macroblock rows in a wavefront (one slice); CAVLC: one slice per thread
     int effort = 1;      // 0 = fast (16x16 motion only), 1 = default (partitions, more RD)
     int bitrateKbps = 0; // > 0: frame-level rate control towards this bitrate, qp is the start value
     double fps = 60.0;   // for the rate control and the VUI timing
@@ -97,7 +97,7 @@ private:
     bool encodeMbIntra(MbOut& out, int mbx, int mby);
     void commitQp(int mbx, int mby, bool codedDelta);
     void planMacroblockQp();
-    int qpPredOf(int mby) const { return qpPredByTop_[size_t(sliceTopOfRow_[size_t(mby)])]; }
+    int qpPredOf(int mby) const { return qpPredByTop_[size_t(rowKey_[size_t(mby)])]; }
     // interPred: motion-compensated prediction (inter macroblock); nullptr = intra.
     void analyseChroma(int mbx, int mby, ChromaMb& ch, const uint8_t (*interPred)[64] = nullptr);
     void writeChroma(MbOut& o, int mbx, int mby, const ChromaMb& ch);
@@ -167,6 +167,8 @@ private:
     int activeRefs_ = 0;
     std::vector<int> vInter_; // vertical 6-tap intermediate (unclipped)
     std::vector<int> sliceTopOfRow_;        // first macroblock row of the slice of each row
+    std::vector<int> rowKey_;               // per row: index of its live CABAC / QP predictor state (slice top, or the row itself in the wavefront)
+    std::vector<MbSyntax> mbSyn_;           // wavefront: chosen syntax of every macroblock, written in raster order afterwards
     std::vector<int> qpPredByTop_;          // QP predictor of each slice, indexed by its first row
     std::vector<int8_t> mbQp_, mbQpFinal_;  // planned QP per macroblock / QP it really has
     std::vector<float> mbEnergy_;
