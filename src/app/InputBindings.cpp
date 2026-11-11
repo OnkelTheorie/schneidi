@@ -251,21 +251,20 @@ const KeyTable& finalCutKeys()
     return keys;
 }
 
-// Premiere command names (.kys) -> action ids. Several spellings where versions differ
+// Premiere command names (.kys) -> action ids, as Premiere Pro saves them in a custom shortcut set (checked against a
+// set saved by Premiere on Windows; several names changed between versions, e.g. the transport and In/Out commands)
 const QHash<QString, QString>& kysCommands()
 {
     static const QHash<QString, QString> commands = {
         {"cmd.file.new.project", "project_new"},
         {"cmd.file.new.sequence", "new_timeline"},
         {"cmd.file.new.bin", "new_bin"},
-        {"cmd.file.open", "project_open"},
         {"cmd.file.openproject", "project_open"},
         {"cmd.file.save", "project_save"},
         {"cmd.file.saveas", "project_save_as"},
         {"cmd.file.import", "import"},
-        {"cmd.file.export.media", "page_deliver"},
-        {"cmd.file.export.frame", "grab_still"},
-        {"cmd.app.quit", "quit"},
+        {"cmd.file.export.movie", "page_deliver"},
+        {"cmd.export.frame", "grab_still"},
         {"cmd.file.exit", "quit"},
         {"cmd.edit.undo", "undo"},
         {"cmd.edit.redo", "redo"},
@@ -275,83 +274,80 @@ const QHash<QString, QString>& kysCommands()
         {"cmd.edit.pasteattributes", "paste_attributes"},
         {"cmd.edit.clear", "delete"},
         {"cmd.edit.rippledelete", "ripple_delete"},
+        {"cmd.timeline.ripple.delete", "ripple_delete"},
         {"cmd.edit.selectall", "select_all"},
         {"cmd.edit.deselectall", "deselect"},
         {"cmd.edit.keyboardshortcuts", "edit_keybindings"},
         {"cmd.clip.enable", "toggle_enabled"},
-        {"cmd.clip.link", "link_clips"},
-        {"cmd.clip.speedduration", "clip_speed"},
-        {"cmd.sequence.addedit", "split"},
-        {"cmd.sequence.razor", "split"},
-        {"cmd.sequence.addedittoalltracks", "split_on_tracks"},
-        {"cmd.sequence.razoralltracks", "split_on_tracks"},
-        {"cmd.sequence.rippletrimprevious", "trim_start"},
-        {"cmd.sequence.rippletrimnext", "trim_end"},
-        {"cmd.sequence.applyvideotransition", "add_transition"},
+        {"cmd.clip.linkaudioandvideo", "link_clips"},
+        {"cmd.clip.speed", "clip_speed"},
+        {"cmd.clip.insert", "insert_clip"},
+        {"cmd.clip.overlay", "overwrite_clip"},
+        {"cmd.sequence.razorateditline", "split"},
+        {"cmd.sequence.razorateditline.all", "split_on_tracks"},
+        {"cmd.sequence.rippletrimpreviousedittoplayhead", "trim_start"},
+        {"cmd.sequence.rippletrimnextedittoplayhead", "trim_end"},
+        {"cmd.sequence.applydefaultvideotransition", "add_transition"},
         {"cmd.sequence.snap", "snapping"},
-        {"cmd.sequence.zoomin", "zoom_in"},
-        {"cmd.sequence.zoomout", "zoom_out"},
-        {"cmd.sequence.zoomtofit", "zoom_fit"},
-        {"cmd.sequence.nudgeleft", "nudge_left"},
-        {"cmd.sequence.nudgeright", "nudge_right"},
-        {"cmd.sequence.nudgeleftfive", "nudge_left_multi"},
-        {"cmd.sequence.nudgerightfive", "nudge_right_multi"},
-        {"cmd.source.insert", "insert_clip"},
-        {"cmd.source.overwrite", "overwrite_clip"},
-        {"cmd.marker.add", "add_marker"},
-        {"cmd.marker.next", "marker_next"},
-        {"cmd.marker.previous", "marker_prev"},
-        {"cmd.marker.gotonext", "marker_next"},
-        {"cmd.marker.gotoprevious", "marker_prev"},
-        {"cmd.marker.markin", "mark_in"},
-        {"cmd.marker.markout", "mark_out"},
-        {"cmd.marker.setin", "mark_in"},
-        {"cmd.marker.setout", "mark_out"},
-        {"cmd.marker.clearin", "clear_in"},
-        {"cmd.marker.clearout", "clear_out"},
-        {"cmd.marker.clearinout", "clear_in_out"},
-        {"cmd.marker.gotoin", "goto_in"},
-        {"cmd.marker.gotoout", "goto_out"},
-        {"cmd.transport.play", "play_pause"},
-        {"cmd.transport.playstop", "play_pause"},
-        {"cmd.transport.shuttleleft", "shuttle_back"},
-        {"cmd.transport.shuttlestop", "stop"},
-        {"cmd.transport.shuttleright", "shuttle_fwd"},
-        {"cmd.transport.stepback", "frame_prev"},
-        {"cmd.transport.stepforward", "frame_next"},
-        {"cmd.transport.gotoprevedit", "edit_prev"},
-        {"cmd.transport.gotonextedit", "edit_next"},
-        {"cmd.transport.gotostart", "go_start"},
-        {"cmd.transport.gotoend", "go_end"},
-        {"cmd.tool.selection", "tool_select"},
-        {"cmd.tool.razor", "tool_blade"},
-        {"cmd.tool.ripple", "tool_trim"},
-        {"cmd.tool.slip", "tool_slip"},
-        {"cmd.tool.slide", "tool_slide"},
-        {"cmd.tool.trackselectforward", "select_forward"},
-        {"cmd.tool.trackselectbackward", "select_backward"},
-        {"cmd.window.maximizeframe", "viewer_large"},
-        {"cmd.window.fullscreen", "viewer_full_screen"},
+        {"cmd.zoom.in", "zoom_in"},
+        {"cmd.zoom.out", "zoom_out"},
+        {"cmd.tlnav.zoomto.sequence", "zoom_fit"},
+        {"cmd.timeline.nudge.left.one", "nudge_left"},
+        {"cmd.timeline.nudge.right.one", "nudge_right"},
+        {"cmd.timeline.nudge.left.several", "nudge_left_multi"},
+        {"cmd.timeline.nudge.right.several", "nudge_right_multi"},
+        {"cmd.set.marker", "add_marker"},
+        {"cmd.marker.gotomarker.next", "marker_next"},
+        {"cmd.marker.gotomarker.previous", "marker_prev"},
+        {"cmd.common.setin", "mark_in"},
+        {"cmd.common.setout", "mark_out"},
+        {"cmd.clear.in", "clear_in"},
+        {"cmd.clear.out", "clear_out"},
+        {"cmd.clear.inandout", "clear_in_out"},
+        {"cmd.goto.in", "goto_in"},
+        {"cmd.goto.out", "goto_out"},
+        {"cmd.transport.toggleplay", "play_pause"},
+        {"cmd.transport.shuttle.left", "shuttle_back"},
+        {"cmd.transport.shuttle.stop", "stop"},
+        {"cmd.transport.shuttle.right", "shuttle_fwd"},
+        {"cmd.transport.step.back", "frame_prev"},
+        {"cmd.transport.step.forward", "frame_next"},
+        {"cmd.tlnav.prev.edit", "edit_prev"},
+        {"cmd.tlnav.next.edit", "edit_next"},
+        {"cmd.transport.sequence.start", "go_start"},
+        {"cmd.transport.sequence.end", "go_end"},
+        {"cmd.tools.01pointer", "tool_select"},
+        {"cmd.tools.02trackselectforward", "select_forward"},
+        {"cmd.tools.02_5trackselectbackward", "select_backward"},
+        {"cmd.tools.03ripple", "tool_trim"},
+        {"cmd.tools.06razor", "tool_blade"},
+        {"cmd.tools.07slip", "tool_slip"},
+        {"cmd.tools.08slide", "tool_slide"},
+        {"cmd.toggle.maximize.frame", "viewer_large"},
+        {"cmd.toggle.fullscreen.monitor", "viewer_full_screen"},
     };
     return commands;
 }
 
-// Windows virtual key code (Premiere stores those, also on macOS) -> key name
-QString virtualKeyName(int vk)
+// Premiere's key code (<virtualkey>, the same on Windows and macOS; not a Windows virtual key) -> key name.
+// Characters (letters, digits, punctuation): 0x80000000 + the character; the number pad: 0xC0000000 + its character;
+// every other key a small number of Premiere's own (Space 1, Backspace 2, Tab 3, Return 4, number pad Enter 5,
+// F1-F24 7-30, Del 35, Home 36, End 37, PgUp 38, PgDown 39, arrows 42-45). Empty = a key schneidi cannot name
+QString premiereKeyName(quint32 code)
 {
-    if ((vk >= 'A' && vk <= 'Z') || (vk >= '0' && vk <= '9')) return QString(QChar(vk));
-    if (vk >= 0x70 && vk <= 0x7B) return QString("F%1").arg(vk - 0x70 + 1);       // F1-F12
-    if (vk >= 0x60 && vk <= 0x69) return QString(QChar('0' + vk - 0x60));          // number pad digits
-    static const QHash<int, QString> names = {
-        {0x08, "Backspace"}, {0x09, "Tab"},  {0x0D, "Return"}, {0x1B, "Esc"},  {0x20, "Space"},
-        {0x21, "PgUp"},      {0x22, "PgDown"}, {0x23, "End"},  {0x24, "Home"}, {0x25, "Left"},
-        {0x26, "Up"},        {0x27, "Right"}, {0x28, "Down"},  {0x2D, "Ins"},  {0x2E, "Del"},
-        {0x6A, "*"},         {0x6B, "+"},     {0x6D, "-"},     {0x6E, "."},    {0x6F, "/"},
-        {0xBA, ";"},         {0xBB, "="},     {0xBC, ","},     {0xBD, "-"},    {0xBE, "."},
-        {0xBF, "/"},         {0xC0, "`"},     {0xDB, "["},     {0xDC, "\\"},   {0xDD, "]"},
-        {0xDE, "'"},
+    if (code & 0x80000000u) {
+        const quint32 c = code & 0xFFFFu;
+        if (c < 0x21 || c > 0x7E) return {};
+        const QChar ch{char16_t(c)};
+        if ((code & 0x40000000u) && !(ch.isDigit() || QStringLiteral("*+-./").contains(ch))) return {};
+        return QString(ch.toUpper());
+    }
+    if (code >= 7 && code <= 30) return QString("F%1").arg(code - 6);
+    static const QHash<quint32, QString> names = {
+        {1, "Space"}, {2, "Backspace"}, {3, "Tab"},   {4, "Return"}, {5, "Enter"},  {35, "Del"},  {36, "Home"},
+        {37, "End"},  {38, "PgUp"},     {39, "PgDown"}, {42, "Left"}, {43, "Right"}, {44, "Up"},   {45, "Down"},
     };
-    return names.value(vk);
+    return names.value(code);
 }
 
 } // namespace
@@ -710,8 +706,10 @@ void InputBindings::loadPreset(const QString& id)
 
 InputBindings::KysResult InputBindings::readKys(const QByteArray& xml)
 {
-    // Premiere writes one element per key, e.g. <item><commandname>cmd.edit.undo</commandname>
-    // <virtualkey>90</virtualkey><modifier.ctrl>true</modifier.ctrl></item>. Tolerant: element names in any case,
+    // Premiere writes one numbered element per key in a context, e.g. <context.global Version="1"><itemcount>2
+    // </itemcount><item.0 Version="1"><commandname>cmd.edit.undo</commandname><modifier.shift>false</modifier.shift>
+    // <modifier.alt>false</modifier.alt><modifier.ctrl>true</modifier.ctrl><virtualkey>2147483738</virtualkey>
+    // </item.0>, with its own key codes (premiereKeyName). Tolerant: element names in any case, plain <item>,
     // "command"/"key" spellings, macOS modifier names.
     // The items sit in contexts (<context.global>, <context.timeline>, panels...): one key may do different things in
     // different panels there, schneidi's actions have one key each. Only the global and the timeline context count,
@@ -737,7 +735,7 @@ InputBindings::KysResult InputBindings::readKys(const QByteArray& xml)
             if (itemDepth < 0 && contextDepth < 0 && name.startsWith("context")) {
                 contextDepth = depth;
                 rank = name == "context.global" || name == "context" ? 0 : name.contains("timeline") ? 1 : -1;
-            } else if (itemDepth < 0 && (name == "item" || name == "shortcut")) {
+            } else if (itemDepth < 0 && (name == "item" || name.startsWith("item.") || name == "shortcut")) {
                 itemDepth = depth;
                 item.clear();
             } else if (itemDepth >= 0 && depth == itemDepth + 1) {
@@ -748,8 +746,9 @@ InputBindings::KysResult InputBindings::readKys(const QByteArray& xml)
             if (depth == itemDepth) {
                 itemDepth = -1;
                 const QString command = item.value("commandname", item.value("command")).toLower();
-                QString key = item.contains("virtualkey") ? virtualKeyName(item.value("virtualkey").toInt())
-                                                          : item.value("key");
+                bool numeric = false;
+                const quint32 code = item.value("virtualkey").toUInt(&numeric);
+                QString key = item.contains("virtualkey") ? (numeric ? premiereKeyName(code) : QString()) : item.value("key");
                 if (command.isEmpty() || key.isEmpty()) {
                     --depth;
                     continue;

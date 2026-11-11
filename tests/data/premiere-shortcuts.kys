@@ -1,65 +1,141 @@
-<?xml version="1.0" encoding="UTF-8" ?>
-<!-- Hand-written test fixture in the layout of a Premiere Pro keyboard shortcut file: 7 known commands with a key
-     (two of them twice), 3 commands schneidi lacks, 1 command without a key -->
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Hand-written test fixture in the layout Premiere Pro saves a custom keyboard shortcut set in (Windows): numbered
+     items with an item count per context, Premiere's own key codes (letters, digits and punctuation: 0x80000000 + the
+     character; number pad: 0xC0000000 + the character; other keys a small number: Space 1, Backspace 2, Del 35,
+     arrows 42-45, F1 7). 9 known commands with a key in the global and timeline contexts (one of them with two keys),
+     3 commands schneidi lacks, 1 command without a key, a known command in another panel. -->
 <PremiereData Version="3">
-	<shortcuts>
-		<context.global>
-			<item>
-				<commandname>cmd.edit.undo</commandname>
-				<virtualkey>90</virtualkey>
+	<shortcuts Version="5">
+		<platform>windows</platform>
+		<context.source.monitor Version="1">
+			<itemcount>1</itemcount>
+			<item.0 Version="1">
+				<commandname>cmd.monitor.loop</commandname>
+				<modifier.shift>false</modifier.shift>
+				<modifier.alt>false</modifier.alt>
 				<modifier.ctrl>true</modifier.ctrl>
-			</item>
-			<item>
-				<commandname>cmd.sequence.addedit</commandname>
-				<virtualkey>68</virtualkey>
+				<virtualkey>2147483724</virtualkey>
+			</item.0>
+		</context.source.monitor>
+		<context.markerList Version="1">
+			<itemcount>0</itemcount>
+		</context.markerList>
+		<context.program.monitor Version="1">
+			<itemcount>1</itemcount>
+			<item.0 Version="1">
+				<commandname>cmd.toggle.maximize.frame</commandname>
+				<modifier.shift>false</modifier.shift>
+				<modifier.alt>false</modifier.alt>
 				<modifier.ctrl>false</modifier.ctrl>
-			</item>
-			<item>
-				<commandname>cmd.sequence.addedit</commandname>
-				<virtualkey>75</virtualkey>
+				<virtualkey>2147483744</virtualkey>
+			</item.0>
+		</context.program.monitor>
+		<context.global Version="1">
+			<itemcount>14</itemcount>
+			<item.0 Version="1">
+				<commandname>cmd.edit.undo</commandname>
+				<modifier.shift>false</modifier.shift>
+				<modifier.alt>false</modifier.alt>
 				<modifier.ctrl>true</modifier.ctrl>
-			</item>
-			<item>
-				<commandname>cmd.transport.play</commandname>
-				<virtualkey>32</virtualkey>
-			</item>
-			<item>
-				<commandname>cmd.marker.setin</commandname>
-				<virtualkey>73</virtualkey>
-			</item>
-			<item>
-				<commandname>cmd.sequence.zoomin</commandname>
-				<virtualkey>187</virtualkey>
-			</item>
-			<item>
-				<commandname>cmd.sequence.zoomin</commandname>
-				<virtualkey>107</virtualkey>
-			</item>
-			<item>
+				<virtualkey>2147483738</virtualkey>
+			</item.0>
+			<item.1 Version="1">
+				<commandname>cmd.sequence.razorateditline</commandname>
+				<modifier.shift>false</modifier.shift>
+				<modifier.alt>false</modifier.alt>
+				<modifier.ctrl>false</modifier.ctrl>
+				<virtualkey>2147483716</virtualkey>
+			</item.1>
+			<item.2 Version="1">
+				<commandname>cmd.sequence.razorateditline</commandname>
+				<modifier.shift>false</modifier.shift>
+				<modifier.alt>false</modifier.alt>
+				<modifier.ctrl>true</modifier.ctrl>
+				<virtualkey>2147483723</virtualkey>
+			</item.2>
+			<item.3 Version="1">
+				<commandname>cmd.transport.toggleplay</commandname>
+				<modifier.shift>false</modifier.shift>
+				<modifier.alt>false</modifier.alt>
+				<modifier.ctrl>false</modifier.ctrl>
+				<virtualkey>1</virtualkey>
+			</item.3>
+			<item.4 Version="1">
+				<commandname>cmd.common.setin</commandname>
+				<modifier.shift>false</modifier.shift>
+				<modifier.alt>false</modifier.alt>
+				<modifier.ctrl>false</modifier.ctrl>
+				<virtualkey>2147483721</virtualkey>
+			</item.4>
+			<item.5 Version="1">
+				<commandname>cmd.zoom.in</commandname>
+				<modifier.shift>false</modifier.shift>
+				<modifier.alt>false</modifier.alt>
+				<modifier.ctrl>false</modifier.ctrl>
+				<virtualkey>2147483709</virtualkey>
+			</item.5>
+			<item.6 Version="1">
+				<commandname>cmd.zoom.in</commandname>
+				<modifier.shift>false</modifier.shift>
+				<modifier.alt>false</modifier.alt>
+				<modifier.ctrl>false</modifier.ctrl>
+				<virtualkey>3221225515</virtualkey>
+			</item.6>
+			<item.7 Version="1">
 				<commandname>cmd.sequence.snap</commandname>
-				<virtualkey>78</virtualkey>
 				<modifier.shift>true</modifier.shift>
-			</item>
-			<item>
+				<modifier.alt>false</modifier.alt>
+				<modifier.ctrl>false</modifier.ctrl>
+				<virtualkey>2147483726</virtualkey>
+			</item.7>
+			<item.8 Version="1">
 				<commandname>cmd.edit.rippledelete</commandname>
-				<virtualkey>46</virtualkey>
+				<modifier.shift>false</modifier.shift>
 				<modifier.alt>true</modifier.alt>
-			</item>
-			<item>
+				<modifier.ctrl>false</modifier.ctrl>
+				<virtualkey>35</virtualkey>
+			</item.8>
+			<item.9 Version="1">
+				<commandname>cmd.transport.step.forward</commandname>
+				<modifier.shift>false</modifier.shift>
+				<modifier.alt>false</modifier.alt>
+				<modifier.ctrl>false</modifier.ctrl>
+				<virtualkey>43</virtualkey>
+			</item.9>
+			<item.10 Version="1">
 				<commandname>cmd.sequence.matchframe</commandname>
-				<virtualkey>70</virtualkey>
-			</item>
-			<item>
-				<commandname>cmd.tool.pen</commandname>
-				<virtualkey>80</virtualkey>
-			</item>
-			<item>
-				<commandname>cmd.sequence.lift</commandname>
-				<virtualkey>186</virtualkey>
-			</item>
-			<item>
+				<modifier.shift>false</modifier.shift>
+				<modifier.alt>false</modifier.alt>
+				<modifier.ctrl>false</modifier.ctrl>
+				<virtualkey>2147483718</virtualkey>
+			</item.10>
+			<item.11 Version="1">
+				<commandname>cmd.tools.09pen</commandname>
+				<modifier.shift>false</modifier.shift>
+				<modifier.alt>false</modifier.alt>
+				<modifier.ctrl>false</modifier.ctrl>
+				<virtualkey>2147483728</virtualkey>
+			</item.11>
+			<item.12 Version="1">
+				<commandname>cmd.help.contents</commandname>
+				<modifier.shift>false</modifier.shift>
+				<modifier.alt>false</modifier.alt>
+				<modifier.ctrl>false</modifier.ctrl>
+				<virtualkey>7</virtualkey>
+			</item.12>
+			<item.13 Version="1">
 				<commandname>cmd.edit.find</commandname>
-			</item>
+			</item.13>
 		</context.global>
+		<context.timeline Version="1">
+			<itemcount>1</itemcount>
+			<item.0 Version="1">
+				<commandname>cmd.timeline.ripple.delete</commandname>
+				<modifier.shift>false</modifier.shift>
+				<modifier.alt>true</modifier.alt>
+				<modifier.ctrl>false</modifier.ctrl>
+				<virtualkey>2</virtualkey>
+			</item.0>
+		</context.timeline>
 	</shortcuts>
 </PremiereData>
