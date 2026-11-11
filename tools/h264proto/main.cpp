@@ -175,6 +175,8 @@ int main(int argc, char** argv)
             cfg.deblock = false;
         else if (a == "--chunks" && i + 1 < argc)
             chunks = std::max(1, std::atoi(argv[++i]));
+        else if (a == "--no-frame-threads")
+            cfg.frameThreads = false;
         else if (a == "--bt709")
             cfg.colourPrimaries = cfg.transferCharacteristics = cfg.matrixCoefficients = 1;
         else if (a == "--full-range")
