@@ -3,6 +3,7 @@
 // ripple delete, insert gap, trimming (normal and trim mode ripple/roll/slip/slide), moving,
 // effective transitions at edges, fade/transition curves
 #include "check.h"
+#include "timeline_guard.h"
 
 #include "core/GradeWindows.h"
 #include "core/Keyframes.h"
@@ -67,6 +68,7 @@ int main(int argc, char** argv)
         Timeline tl = tracks(1, 0);
         tl.video[0] = t;
         CHECK_EQ(dump(tl), QString("V1: a[0-40|0-39] b[40-60|0-19] a[60-100|60-99]"));
+        CHECK_TIMELINE(tl);
         CHECK(t.clips[0].id == 1 && t.clips[2].id == 101 && t.clips[2].linkId == -7 && t.clips[0].linkId == 7);
         {
             Timeline pending = tl;
@@ -80,11 +82,14 @@ int main(int argc, char** argv)
         // Cut off end and start, remove completely covered clip
         clearRange(tl.video[0], 30, 70, ids.gen());
         CHECK_EQ(dump(tl), QString("V1: a[0-30|0-29] a[70-100|70-99]"));
+        CHECK_TIMELINE(tl);
         clearRange(tl.video[0], 60, 60, ids.gen()); // empty range: nothing
         clearRange(tl.video[0], 0, 30, ids.gen());
         CHECK_EQ(dump(tl), QString("V1: a[70-100|70-99]"));
+        CHECK_TIMELINE(tl);
         placeClip(tl.video[0], mk(3, "c", 60, 50), ids.gen()); // covers a entirely
         CHECK_EQ(dump(tl), QString("V1: c[60-110|0-49]"));
+        CHECK_TIMELINE(tl);
         CHECK(removeClip(tl, 3) && !removeClip(tl, 3) && tl.video[0].clips.isEmpty());
     }
 
@@ -100,6 +105,7 @@ int main(int argc, char** argv)
         const QVector<int> right = splitAt(tl, {1, 2}, 60, ids.gen(), [&] { return ++link; });
         CHECK_EQ(right.size(), 2);
         CHECK_EQ(dump(tl), QString("V1: a[10-60|20-69] a[60-110|70-119]  A1: a[10-60|20-69] a[60-110|70-119]"));
+        CHECK_TIMELINE(tl);
         const Clip* v = findClip(tl, right[0]);
         const Clip* a = findClip(tl, right[1]);
         CHECK(v && a && v->linkId == 51 && a->linkId == 51 && findClip(tl, 1)->linkId == 5);
@@ -119,6 +125,7 @@ int main(int argc, char** argv)
         tl.video[1].locked = true;
         rippleDelete(tl, {2});
         CHECK_EQ(dump(tl), QString("V1: a[0-50|0-49] c[70-90|0-19]  V2: t[120-130|0-9]  A1: m[60-70|0-9]"));
+        CHECK_TIMELINE(tl);
     }
 
     // --- insertGap / shiftFrom / clearDissolveAt
@@ -132,6 +139,7 @@ int main(int argc, char** argv)
         tl.audio[0].clips << mk(3, "m", 20, 50);
         insertGap(tl, {{TrackKind::Video, 0}, {TrackKind::Audio, 0}}, 40, 25, ids.gen(), [&] { return ++link; });
         CHECK_EQ(dump(tl), QString("V1: a[0-40|0-39] b[65-125|0-59]  A1: m[20-40|0-19] m[65-95|20-49]"));
+        CHECK_TIMELINE(tl);
         CHECK(findClip(tl, 1)->transOut == 0 && findClip(tl, 2)->transIn == 0); // dissolve at the insert point gone
         shiftFrom(tl.video[0], 50, -5);
         CHECK_EQ(tl.video[0].clips[1].start, 60);
@@ -168,6 +176,7 @@ int main(int argc, char** argv)
         trimClips(tl, {1}, Edge::Start, -20, kSrc);
         trimClips(tl, {2}, Edge::End, 100, kSrc);
         CHECK_EQ(dump(tl), QString("V1: a[5-60|0-54] b[80-180|100-199]"));
+        CHECK_TIMELINE(tl);
         // Title: any length, may trim before the "source"
         Clip title = mk(3, "t", 300, 10);
         title.kind = ClipKind::Title;
@@ -189,17 +198,20 @@ int main(int argc, char** argv)
         TrimEdit e{TrimKind::Ripple, {1}, {}, Edge::End};
         applyTrimEdit(tl, e, -10, kSrc);
         CHECK_EQ(dump(tl), QString("V1: a[0-40|50-89] b[40-90|50-99] c[90-140|50-99]  A1: m[110-130|0-19]"));
+        CHECK_TIMELINE(tl);
         // Ripple start: clip stays put, content moves, rest moves up
         tl = base();
         e = TrimEdit{TrimKind::Ripple, {2}, {}, Edge::Start};
         applyTrimEdit(tl, e, 10, kSrc);
         CHECK_EQ(dump(tl), QString("V1: a[0-50|50-99] b[50-90|60-99] c[90-140|50-99]  A1: m[110-130|0-19]"));
+        CHECK_TIMELINE(tl);
         // Ripple with two (linked) clips of the same track: the rear one moves along, nothing overlaps
         // (order of ids does not matter; before, the rear one stayed put and c slid under it)
         for (const QVector<int>& order : {QVector<int>{1, 2}, QVector<int>{2, 1}}) {
             tl = base();
             applyTrimEdit(tl, TrimEdit{TrimKind::Ripple, order, {}, Edge::End}, -10, kSrc);
             CHECK_EQ(dump(tl), QString("V1: a[0-40|50-89] b[40-80|50-89] c[80-130|50-99]  A1: m[100-120|0-19]"));
+            CHECK_TIMELINE(tl);
         }
         // Ripple shortening limited by room on the other track
         tl = base();
@@ -212,6 +224,7 @@ int main(int argc, char** argv)
         CHECK_EQ(clampTrimEdit(tl, e, 100, kSrc), 49);
         applyTrimEdit(tl, e, 20, kSrc);
         CHECK_EQ(dump(tl), QString("V1: a[0-70|50-119] b[70-100|70-99] c[100-150|50-99]  A1: m[120-140|0-19]"));
+        CHECK_TIMELINE(tl);
         // Slip: position stays, content shifted (in >= 0, out <= 199)
         tl = base();
         e = TrimEdit{TrimKind::Slip, {2}, {}, Edge::End};
@@ -219,6 +232,7 @@ int main(int argc, char** argv)
         CHECK_EQ(clampTrimEdit(tl, e, 200, kSrc), 100);
         applyTrimEdit(tl, e, 30, kSrc);
         CHECK_EQ(dump(tl), QString("V1: a[0-50|50-99] b[50-100|80-129] c[100-150|50-99]  A1: m[120-140|0-19]"));
+        CHECK_TIMELINE(tl);
         // Keyframes stay where they are in the clip: stored as source frames they rode along with the content
         // (AI test run 2026-10-25: some ended up behind the clip's end)
         tl = base();
@@ -245,6 +259,7 @@ int main(int argc, char** argv)
         e = TrimEdit{TrimKind::Slide, {2}, {}, Edge::End};
         applyTrimEdit(tl, e, 15, kSrc);
         CHECK_EQ(dump(tl), QString("V1: a[0-65|50-114] b[65-115|50-99] c[115-150|65-99]  A1: m[120-140|0-19]"));
+        CHECK_TIMELINE(tl);
         CHECK_EQ(clampTrimEdit(base(), e, -100, kSrc), -49); // c may be 50 frames before its in, a only up to 1 frame
     }
 
@@ -256,12 +271,14 @@ int main(int argc, char** argv)
         tl.audio[0].clips << mk(3, "a", 0, 50);
         moveClips(tl, {2}, -30, TrackKind::Video, 0, ids.gen());
         CHECK_EQ(dump(tl), QString("V1: a[0-30|0-29] b[30-70|0-39]  A1: a[0-50|0-49]"));
+        CHECK_TIMELINE(tl);
         CHECK_EQ(clampTrackDelta(tl, {1, 3}, TrackKind::Video, -1), 0);
         CHECK_EQ(clampTrackDelta(tl, {1, 3}, TrackKind::Video, 1), 0); // V2 does not exist (yet)
         CHECK_EQ(clampTrackDelta(tl, {1, 3}, TrackKind::Audio, 1), 0);
         tl.video << Track{};
         moveClips(tl, {1, 3}, 0, TrackKind::Video, 1, ids.gen());
         CHECK_EQ(dump(tl), QString("V1: b[30-70|0-39]  V2: a[0-30|0-29]  A1:  A2: a[0-50|0-49]"));
+        CHECK_TIMELINE(tl);
     }
 
     // --- Transitions at edges (effective length)

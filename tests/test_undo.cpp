@@ -2,6 +2,7 @@
 // Test undo/redo chain: many editor operations in a row (each must create an undo step), then everything
 // back = initial state, everything forward = final state; each intermediate step is compared via JSON (project file).
 #include "check.h"
+#include "timeline_guard.h"
 
 #include "core/EffectRegistry.h"
 #include "core/Editor.h"
@@ -59,6 +60,7 @@ void testBrokenDissolves()
     for (int scenario = 0; scenario < 3; ++scenario) {
         fileLen = scenario == 2 ? 130 : 250; // reversed: A (0..99) then has no material left behind it
         Project p;
+        TimelineGuard guard_p{p};
         Selection sel;
         Editor ed(&p, &sel);
         setup(p, sel, ed);
@@ -78,6 +80,7 @@ void testBrokenDissolves()
     {
         fileLen = 250;
         Project p;
+        TimelineGuard guard_p{p};
         Selection sel;
         Editor ed(&p, &sel);
         setup(p, sel, ed);
@@ -104,6 +107,7 @@ void testFadesStayApart()
     auto len = [](const Clip& c) { return c.retimedLength(250); };
     auto spans = [&](const Project& p) { return TimelineOps::transitions(p.timeline().video[0], len); };
     Project p;
+    TimelineGuard guard_p{p};
     Selection sel;
     Editor ed(&p, &sel);
     p.addMedia({"/x/a.mp4", "a.mp4", 250, true, false, false});
@@ -161,6 +165,7 @@ void testFadesStayApart()
 void testFadeAfterTrim()
 {
     Project p;
+    TimelineGuard guard_p{p};
     Selection sel;
     Editor ed(&p, &sel);
     p.addMedia({"/x/a.mp4", "a.mp4", 250, true, false, false});
@@ -177,6 +182,7 @@ void testFadeAfterTrim()
 void testTransitionTrimClips()
 {
     Project p;
+    TimelineGuard guard_p{p};
     Selection sel;
     Editor ed(&p, &sel);
     p.addMedia({"/x/a.mp4", "a.mp4", 250, true, true, false});
@@ -227,6 +233,7 @@ void testTransitionTrimClips()
 void testTransitionTrimWantedLength()
 {
     Project p;
+    TimelineGuard guard_p{p};
     Selection sel;
     Editor ed(&p, &sel);
     p.addMedia({"/x/a.mp4", "a.mp4", 250, true, true, false});
@@ -279,6 +286,7 @@ void testTransitionTrimWantedLength()
 
     // Two clips without spare material, centred 12 frames: 6 frames off each, the timeline 12 frames shorter
     Project q;
+    TimelineGuard guard_q{q};
     Selection sel2;
     Editor ed2(&q, &sel2);
     q.addMedia({"/x/a.mp4", "a.mp4", 250, true, false, false});
@@ -310,6 +318,7 @@ int main(int argc, char** argv)
     testTransitionTrimWantedLength();
 
     Project p;
+    TimelineGuard guard_p{p};
     Selection sel;
     Editor ed(&p, &sel);
     using namespace TimelineOps;
@@ -394,6 +403,9 @@ int main(int argc, char** argv)
     step("Marken löschen", [&] { ed.clearMarks(); });
     step("Quelle einfügen F9", [&] { ed.sourceEdit(Editor::SourceEditMode::Insert, "/x/b.mp4", 0, 20); });
     step("Quelle überschreiben F10", [&] { ed.sourceEdit(Editor::SourceEditMode::Overwrite, "/x/a.mp4", 0, 600); });
+    // Only the picture of a linked clip (its sound on A1 blocks A1's ripple): the clips after it come apart from their
+    // sound on purpose here; the guard checks the structure from now on
+    guard_p.stopSyncCheck();
     step("Ripple-Löschen", [&] { sel.set({V(p, 0, 1)}); ed.rippleDeleteSelection(); });
     step("Löschen", [&] { sel.set({A(p, 1, 0)}); ed.deleteSelection(); });
     step("Verknüpfen lösen", [&] { sel.set({V(p, 0, 0)}); ed.toggleLinkSelection(); });
@@ -460,6 +472,7 @@ int main(int argc, char** argv)
     // sorted, toggling again removes; markers that came unsorted (an imported timeline) are sorted first
     {
         Project q;
+        TimelineGuard guard_q{q};
         q.undoStack()->setUndoLimit(1); // as in schneidi-cli (every step keeps a snapshot of all markers)
         Selection s;
         Editor e(&q, &s);

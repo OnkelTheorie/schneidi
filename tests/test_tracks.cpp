@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Test tracks: add/delete, lock, rename, color, ripple across all unlocked tracks, track header operation (offscreen)
 #include "check.h"
+#include "timeline_guard.h"
 
 #include "core/Editor.h"
 #include "core/I18n.h"
@@ -37,6 +38,7 @@ static const Clip* F(const Project& p, int id) { return TimelineOps::findClip(p.
 static void setup(Project& p)
 {
     p.reset();
+    while (p.newClipId() < 100) {} // the clips below get their ids by hand: new ones (titles, cues) above them
     p.addMedia({"/x/a.mp4", "a.mp4", 1000, true, true, false});
     p.addMedia({"/x/m.mp3", "m.mp3", 1000, false, true, false});
     p.edit("setup", [](Timeline& tl) {
@@ -52,6 +54,7 @@ int main(int argc, char** argv)
     QApplication app(argc, argv);
     Check::initApp("tracks");
     Project p;
+    TimelineGuard guard_p{p};
     Selection sel;
     Editor ed(&p, &sel);
 

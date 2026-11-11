@@ -13,6 +13,7 @@
 #include "core/TimelineOps.h"
 
 #include "check.h"
+#include "timeline_guard.h"
 
 #include <QGuiApplication>
 #include <QJsonArray>
@@ -95,6 +96,7 @@ void testPure()
 void testTeaser()
 {
     Project p;
+    TimelineGuard guard_p{p};
     setup(p);
     Timeline tl = p.timeline();
     tl.sections = {{StoryKind::Build, {}, 0, 300}};
@@ -129,6 +131,7 @@ void testTeaser()
 void testEditor()
 {
     Project p;
+    TimelineGuard guard_p{p};
     Selection sel;
     Editor ed(&p, &sel);
     setup(p);
@@ -208,6 +211,7 @@ void testOps(const QString& dir)
     g_path = dir + "/story.schneidi";
     {
         Project p;
+        TimelineGuard guard_p{p};
         setup(p);
         QString error;
         if (!CHECK(ProjectFile::save(p.data(), g_path, &error))) return;

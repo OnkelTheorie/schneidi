@@ -6,6 +6,7 @@
 // and Effects never removing timeline clips.
 // SLIPSLIDE_SHOT=<dir> saves screenshots (toolbar, slip in progress).
 #include "check.h"
+#include "timeline_guard.h"
 
 #include "app/InputBindings.h"
 #include "app/MainWindow.h"
@@ -175,6 +176,7 @@ void testWindow(const QString& media, const QString& shots)
     auto* p = w.findChild<Project*>();
     auto* sel = w.findChild<Selection*>();
     if (!CHECK(tv && panel && viewer && ed && p && sel)) return;
+    TimelineGuard guard(*p);
 
     // Tools from the menu (keys are bindable), the toolbar follows
     action("tool_slip")->trigger();

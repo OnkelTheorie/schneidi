@@ -2,6 +2,7 @@
 // Test speed ramps (DaVinci Retime Controls): RetimeMap (hard, soft, reversed, inversion), editor edits with
 // ripple/partners/keyframes/undo, project file, rendered frames and sound (which source picture is shown).
 #include "render_check.h"
+#include "timeline_guard.h"
 
 #include "core/Editor.h"
 #include "core/Project.h"
@@ -113,6 +114,7 @@ void testMap()
 void testEditor()
 {
     Project p;
+    TimelineGuard guard_p{p};
     Selection sel;
     Editor ed(&p, &sel);
     QUndoStack* undo = p.undoStack();
@@ -188,6 +190,7 @@ void testEditor()
 void testProjectFile()
 {
     Project p;
+    TimelineGuard guard_p{p};
     p.addMedia(media("/x/a.mp4", 100));
     Selection sel;
     Editor ed(&p, &sel);
@@ -349,6 +352,7 @@ int testRender(const QString& dir)
     const ProjectFormat fmt{64, 64, {25, 1}};
 
     Project p;
+    TimelineGuard guard_p{p};
     p.load([&] {
         ProjectData d;
         d.format = fmt;
@@ -385,6 +389,7 @@ int testRender(const QString& dir)
     // Split a freeze frame/trim at the start: both parts keep showing the same picture
     {
         Project q;
+        TimelineGuard guard_q{q};
         q.load([&] {
             ProjectData d;
             d.format = fmt;
@@ -484,6 +489,7 @@ void testSpeedChangeKeepsFirstPicture()
     for (double speed : {0.5, 0.3, 0.7, 0.25, 0.95, 2.0, 3.0}) {
       for (bool reverse : {false, true}) {
         Project p;
+        TimelineGuard guard_p{p};
         Selection sel;
         Editor ed(&p, &sel);
         p.addMedia(media("/x/a.mp4", 300));

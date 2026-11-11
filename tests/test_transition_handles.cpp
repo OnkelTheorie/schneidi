@@ -5,6 +5,7 @@
 // the cut nearest to the playhead (Editor::addTransitions: the "add transition" action, a transition double-clicked in
 // the effects panel, the CLI op 'transition'), which still made it 1 frame.
 #include "check.h"
+#include "timeline_guard.h"
 
 #include "core/Editor.h"
 #include "core/Project.h"
@@ -47,6 +48,7 @@ int main(int argc, char** argv)
     Check::initEnv();
     QCoreApplication app(argc, argv);
     Project p;
+    TimelineGuard guard_p{p};
     Selection sel;
     Editor ed(&p, &sel);
     const int full = std::max(1, p.fps());
