@@ -3,6 +3,7 @@
 #include "engine/CpuPath.h"
 
 #include <QSettings>
+#include <QThreadPool>
 #include <QtGlobal>
 
 extern "C" {
@@ -117,6 +118,20 @@ Device deviceFor(const AVCodec* codec)
         if (AVBufferRef* ctx = open(type)) return {av_buffer_ref(ctx), type, fmt};
     }
     return {};
+}
+
+void warmUp()
+{
+    static std::once_flag once;
+    std::call_once(once, [] {
+        // The global pool: it is waited for at exit, never a driver call cut off halfway
+        QThreadPool::globalInstance()->start([] {
+            const std::vector<AVHWDeviceType> types = candidates();
+            std::lock_guard lock(g_mutex);
+            for (AVHWDeviceType type : types)
+                if (open(type)) break;
+        });
+    });
 }
 
 bool enabled()

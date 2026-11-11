@@ -6,12 +6,15 @@
 //   project's pool and are selected, a .schneidi opens, also while AIs are refused; queued while the app waits
 // - `app open` of schneidi-cli: the same for an AI, never over unsaved changes
 // - the real program: a second `schneidi --open <file>` hands the file over and quits
+// - File › Open: the picture engine has the opened timeline when openProject returns (not 30 ms later, after the
+//   window's first paint), and switching projects back and forth shows each one's own length
 #include "app/MainWindow.h"
 #include "cli/Live.h"
 #include "core/Project.h"
 #include "core/ProjectFile.h"
 #include "core/Selection.h"
 #include "core/StartTemplates.h"
+#include "core/TimelineOps.h"
 #include "engine/Engine.h"
 #include "ui/MediaPool.h"
 
@@ -21,6 +24,7 @@
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
+#include <QImage>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QProcess>
@@ -28,6 +32,8 @@
 #include <QTemporaryDir>
 #include <QThread>
 #include <QUndoStack>
+
+#include <atomic>
 #include <clocale>
 
 namespace {
@@ -182,6 +188,36 @@ void testWindow(const QString& dir, const QString& clip, const QString& other)
     CHECK_EQ(code(r), QString("ok"));
     CHECK_EQ(r["opened"].toString(), first);
     CHECK_EQ(w.liveProjectPath(), first);
+    CHECK_EQ(videoClips(w), 1);
+
+    // File › Open from an empty project: the first picture the viewer gets is the opened project's, not the empty
+    // timeline's black shown once more (the engine got the new timeline only 30 ms later, after the first paint)
+    CHECK(w.openProject(second));
+    settle(300);
+    // Without an event loop turn (the old hand-over was a timer), the engine sends the opened project's picture: from
+    // the moment the open starts, a picture that is not black comes (the engine may show the old one once more
+    // first, as pausing always did). Direct: frames still queued from before do not count.
+    const auto bright = [](const QImage& img) {
+        int n = 0;
+        for (int y = 0; y < img.height(); y += 8)
+            for (int x = 0; x < img.width(); x += 8) n += qGray(img.pixel(x, y)) > 40;
+        return n > 10; // testsrc2, not black
+    };
+    std::atomic<bool> armed{false}, sawPicture{false};
+    const QMetaObject::Connection shown = QObject::connect(
+        &engine, &Engine::frameReady, &w,
+        [&](const QImage& img) {
+            if (armed && bright(img)) sawPicture = true;
+        },
+        Qt::DirectConnection);
+    armed = true;
+    CHECK(w.openProject(first));
+    QElapsedTimer waited;
+    waited.start();
+    while (!sawPicture && waited.elapsed() < 5000) QThread::msleep(5);
+    QObject::disconnect(shown);
+    CHECK(sawPicture.load());
+    CHECK_EQ(engine.position(), 0);
     CHECK_EQ(videoClips(w), 1);
 }
 

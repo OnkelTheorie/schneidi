@@ -11,6 +11,7 @@
 #include "app/DesignDialog.h"
 #include "app/Log.h"
 #include "app/NormalizeDialog.h"
+#include "app/OpenTrace.h"
 #include "app/PasteAttributesDialog.h"
 #include "core/Loudness.h"
 #include "app/ProjectSettingsDialog.h"
@@ -411,15 +412,27 @@ void MainWindow::saveEffectPreset()
 
 bool MainWindow::openProject(const QString& path)
 {
+    OpenTrace::begin();
     ProjectData data;
     QString error, warning;
     if (!ProjectFile::load(path, &data, &error, &warning)) {
         QMessageBox::warning(this, T("Projekt öffnen"), T("%1 konnte nicht geöffnet werden:\n%2").arg(path, error));
         return false;
     }
+    OpenTrace::mark("file parsed");
+    if (OpenTrace::enabled()) {
+        auto* watch = new OpenTrace::Watch(m_timeline->view(), [this, path] {
+            openProject(qEnvironmentVariable("SCHNEIDI_OPEN_TRACE_NEXT", path));
+        });
+        connect(m_engine, &Engine::frameReady, watch, [](const QImage&) { OpenTrace::Watch::frameEmitted(); },
+                Qt::DirectConnection);
+        connect(m_engine, &Engine::frameReady, watch,
+                [watch](const QImage& img) { watch->frameDelivered(OpenTrace::hasContent(img)); }, Qt::QueuedConnection);
+    }
     if (!applyLoaded(std::move(data), path)) return false;
     removeAutosave();
     showLoadWarning(warning);
+    OpenTrace::mark("openProject returned");
     return true;
 }
 
@@ -491,14 +504,29 @@ bool MainWindow::applyLoaded(ProjectData data, const QString& path, bool ask)
     if (m_colorPanel) m_colorPanel->discardTracking();
     m_chatSeen.reset();
     m_probeCache.clear();
+    OpenTrace::mark("missing media/effects checked");
     m_engine->setFormat(data.format); // media lengths in the file already count at this frame rate
+    OpenTrace::mark("engine format set");
+    // The timeline shown after loading is set up below (restoreViews, the engine): the switch to another timeline
+    // (currentSequenceChanged) has nothing to keep of the old project's and must not seek the engine, which still
+    // has the old timeline - it drew the old project's picture once more before the new one
+    m_shownSequence = data.currentSequence;
     m_project->load(data);
+    OpenTrace::mark("project loaded (signals handled)");
     if (relinked > 0) m_project->markModified(); // new paths are only in the file after saving
     m_sourcePos.clear();
+    // The new timeline reaches the picture engine now, not after the edit debounce (m_engineTimer): its first frame
+    // renders while the window paints, instead of the old project's picture being shown first
+    m_engineTimer.stop();
+    m_engine->updateTimeline(previewTimeline());
+    OpenTrace::timelineSent();
+    updateRenderCacheBar();
     m_engine->showTimeline(data.playhead);
+    OpenTrace::mark("engine showTimeline");
     m_timeline->view()->setPlayhead(data.playhead);
     restoreViews(data);
     setProjectPath(path);
+    OpenTrace::mark("views restored, path set");
     return true;
 }
 

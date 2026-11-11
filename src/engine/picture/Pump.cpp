@@ -451,18 +451,33 @@ void Pump::setContent(std::shared_ptr<const Content> content, int64_t position, 
     {
         std::lock_guard showLock(d->showMutex);
         std::lock_guard lock(d->m);
-        d->content = std::move(content);
-        ++d->generation;
-        ++d->serial;
-        d->forgetRendered();
-        d->scrub = false;
-        d->frames.clear();
-        d->inflight.clear();
-        d->speed = speed;
-        d->next = std::max<int64_t>(0, position);
-        d->pendingStill = speed == 0;
-        d->resetKeepUp();
-        dir = d->direction();
+        // The content shown already, stopped: a seek. Renders under way for this generation stay (a project just
+        // opened: its first frame, started by refresh(), is not thrown away and rendered a second time)
+        if (content && content == d->content && speed == 0 && d->speed == 0) {
+            d->next = std::max<int64_t>(0, position);
+            d->pendingStill = true;
+            d->scrub = false;
+            d->resetKeepUp();
+            ++d->serial;
+            for (auto& [p, cancel] : d->cancels)
+                if (p != d->next) cancel->store(true);
+            d->prune();
+            if (d->takeRecent()) d->ready.notify_all();
+            dir = 0;
+        } else {
+            d->content = std::move(content);
+            ++d->generation;
+            ++d->serial;
+            d->forgetRendered();
+            d->scrub = false;
+            d->frames.clear();
+            d->inflight.clear();
+            d->speed = speed;
+            d->next = std::max<int64_t>(0, position);
+            d->pendingStill = speed == 0;
+            d->resetKeepUp();
+            dir = d->direction();
+        }
     }
     if (c && c->direction) c->direction(dir);
     d->wake.notify_all();
