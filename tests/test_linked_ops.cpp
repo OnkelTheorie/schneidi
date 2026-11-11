@@ -167,6 +167,13 @@ void testRippleKeepsSync(const QString& file)
     edit({QJsonObject{{"op", "delete"}, {"clips", QJsonArray{c[1]}}, {"ripple", true}, {"linked", false}}}, &why);
     if (!CHECK(why.startsWith("OUT_OF_SYNC") && why.contains("rec.mkv"))) std::printf("       %s\n", qPrintable(why));
     CHECK(load() == tl);
+    // All or nothing: an op before it in the same edit is not kept either
+    why.clear();
+    edit({QJsonObject{{"op", "delete"}, {"clips", QJsonArray{ids(tl).value(0)}}, {"linked", false}},
+          QJsonObject{{"op", "delete"}, {"clips", QJsonArray{c[1]}}, {"ripple", true}, {"linked", false}}},
+         &why);
+    CHECK(why.startsWith("OUT_OF_SYNC"));
+    CHECK(load() == tl);
     // The whole first recording: everything moves up, no note
     const QJsonObject r = edit({QJsonObject{{"op", "delete"}, {"clips", QJsonArray{c[0]}}, {"ripple", true}}});
     CHECK_EQ(load().video.value(0).clips.value(0).start, 0);

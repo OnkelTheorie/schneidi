@@ -163,6 +163,8 @@ public:
     TimelineOps::TrimEdit trimEdit(TimelineOps::TrimKind kind, int clipId, TimelineOps::Edge edge = TimelineOps::Edge::End) const;
     int clampTrimEdit(const TimelineOps::TrimEdit& e, int delta) const;
     Timeline previewTrimEdit(const TimelineOps::TrimEdit& e, int delta) const; // for the live preview
+    // Why applyTrimEdit would refuse this ripple (linked clips apart; empty = it would not): the preview holds still
+    QString trimEditRefusal(const TimelineOps::TrimEdit& e, int delta) const;
     void applyTrimEdit(const TimelineOps::TrimEdit& e, int delta);
     // Split edit (Alt-drag at a cut): a roll of the cut at `edge` of the clip on its own track only; its linked
     // partners keep their cut and stay linked (J/L cut). Kill feed copies of the clips go along.
@@ -714,10 +716,14 @@ signals:
 private:
     TimelineOps::SourceLength sourceLength() const;
     void tell(const QString& text, bool refused);
-    // A ripple from `before` to `tl` that would take linked clips apart (a track that cannot move up because a clip
-    // lies across the edit point, or a locked one): refused - tl back to `before`, the notice says which track and
-    // clip. `ignore`: clips the edit changes on purpose. True = keeps them together.
-    bool keepsLinks(const Timeline& before, Timeline& tl, const QSet<int>& ignore);
+    // A ripple from `before` to `tl` that would take linked clips apart (an unlocked track that cannot follow, e.g. a
+    // clip there lies across the edit point): refused - tl back to `before`, the notice says which track and clip.
+    // `ignore`: clips the edit changes on purpose. True = keeps them together (or it is done anyway: see below).
+    // On a locked track the linked clip stays on purpose (locking is the way to move one side only): done, `note` (or
+    // the notice) says how far apart they are now.
+    bool keepsLinks(const Timeline& before, Timeline& tl, const QSet<int>& ignore, QString* note = nullptr);
+    // The reason keepsLinks would refuse (empty = fine); *note: what happened to clips on locked tracks
+    QString linksRefusal(const Timeline& before, const Timeline& after, const QSet<int>& ignore, QString* note) const;
     // createCompoundClip / compFrom (comp = the video clip gets the graph of its tracks)
     int createCompound(const QString& name, bool comp);
     // One clip's graph changed by fn (on a copy; a clip without one starts empty), checked against kinds, then stored

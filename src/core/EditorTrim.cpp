@@ -99,6 +99,12 @@ Timeline Editor::previewTrimEdit(const TimelineOps::TrimEdit& e, int delta) cons
     return tl;
 }
 
+QString Editor::trimEditRefusal(const TimelineOps::TrimEdit& e, int delta) const
+{
+    if (e.kind != TimelineOps::TrimKind::Ripple || e.isNull() || delta == 0) return {};
+    return linksRefusal(m_project->timeline(), previewTrimEdit(e, delta), QSet<int>(e.ids.cbegin(), e.ids.cend()), nullptr);
+}
+
 void Editor::applyTrimEdit(const TimelineOps::TrimEdit& e, int delta)
 {
     using TimelineOps::TrimKind;

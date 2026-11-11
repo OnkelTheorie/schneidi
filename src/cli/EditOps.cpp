@@ -914,9 +914,9 @@ QVector<OpDef> makeOps()
          "A video clip takes its linked sound along; sound clips named alone go alone (the picture and the other "
          "streams stay, linked). linked:true = all partners, false = exactly the given clips. ripple:true closes the "
          "gap and takes the partners along unless linked:false; only the deleted time free on all affected tracks is "
-         "taken out (a note says when less), and a ripple that would take linked picture and sound apart (a track that "
-         "cannot move up because a clip lies across the cut, or a locked one) fails with OUT_OF_SYNC (also speed, "
-         "trim with ripple).",
+         "taken out (a note says when less), and a ripple that would take linked picture and sound apart (an unlocked "
+         "track that cannot follow, e.g. a clip lies across the cut) fails with OUT_OF_SYNC (also speed, trim with "
+         "ripple, insert); a partner on a locked track stays on purpose (a note says how far apart).",
          opDelete, kClipKeys},
         {"delete_range", "{op:'delete_range', from, to, ripple?:true} or {op:'delete_range', ranges:[[from,to],...]}",
          "remove time ranges on all tracks; `ranges` are all timeline times before the cut (e.g. words of "

@@ -583,6 +583,12 @@ void TimelineView::dragMove(const QPoint& pos, Qt::KeyboardModifiers mods)
         }
         if (!edges.isEmpty()) delta += snapDelta(edges, exclude);
         delta = m_editor->clampTrimEdit(m_trimEdit, delta);
+        // A ripple that would take linked picture and sound apart: the preview holds still and says why (releasing
+        // does nothing, instead of moving and snapping back)
+        if (const QString why = m_editor->trimEditRefusal(m_trimEdit, delta); !why.isEmpty()) {
+            delta = 0;
+            emit message(why);
+        }
         if (delta != m_trimEditDelta || !m_trimPreview) {
             m_trimEditDelta = delta;
             m_trimPreview = m_editor->previewTrimEdit(m_trimEdit, delta);

@@ -98,8 +98,11 @@ private:
     };
     static bool together(const Clip& a, const Clip& b)
     {
-        return a.mediaPath == b.mediaPath && a.start - a.in == b.start - b.in && a.speed == b.speed
-               && a.reverse == b.reverse && a.freeze == b.freeze && a.ramp == b.ramp;
+        // Linked to each other and side by side in time: razor-cut pieces of one take (same file, same start - in,
+        // other links) are no group - one offset for them squeezed a piece to a frame
+        return a.linkId > 0 && a.linkId == b.linkId && a.start < b.end() && b.start < a.end() && a.mediaPath == b.mediaPath
+               && a.start - a.in == b.start - b.in && a.speed == b.speed && a.reverse == b.reverse && a.freeze == b.freeze
+               && a.ramp == b.ramp;
     }
     void settle()
     {
@@ -127,6 +130,51 @@ private:
     }
     QVector<Member> m_members;
     bool m_settled = false;
+};
+
+// The length changes of retimed clips, rippled as one per link group: everything after the group moves by the same
+// amount - per clip, picture and sound of an L/J-cut (other ends, other changes) added up and moved what follows by
+// the sum. The group's shift starts at its earliest old end and is the largest change, the least the next clip on
+// each of its tracks needs (slower: a gap after the shorter one; faster: a gap after the longer one).
+class LengthChanges {
+public:
+    void add(int link, int oldEnd, int delta, qsizetype track)
+    {
+        if (delta != 0) m_changes << Change{link, oldEnd, delta, track};
+    }
+    // The shifts for all tracks; each retimed track's own ones (its groups') into `own`
+    QVector<QPair<int, int>> shifts(QVector<RetimedTrack>& tracks) const
+    {
+        QVector<QPair<int, int>> all;
+        QVector<bool> done(m_changes.size(), false);
+        for (qsizetype i = 0; i < m_changes.size(); ++i) {
+            if (done[i]) continue;
+            int from = m_changes[i].oldEnd, by = m_changes[i].delta;
+            QVector<qsizetype> members{i};
+            if (m_changes[i].link > 0)
+                for (qsizetype j = i + 1; j < m_changes.size(); ++j)
+                    if (!done[j] && m_changes[j].link == m_changes[i].link) {
+                        members << j;
+                        from = std::min(from, m_changes[j].oldEnd);
+                        by = std::max(by, m_changes[j].delta);
+                    }
+            const QPair<int, int> shift(from, by);
+            if (!all.contains(shift)) all << shift;
+            for (qsizetype m : std::as_const(members)) {
+                done[m] = true;
+                QVector<QPair<int, int>>& own = tracks[m_changes[m].track].own;
+                if (!own.contains(shift)) own << shift;
+            }
+        }
+        return all;
+    }
+
+private:
+    struct Change {
+        int link, oldEnd, delta;
+        qsizetype track;
+    };
+    QVector<Change> m_changes;
 };
 
 // The tracks of the clips, video first (see SyncedIns)
@@ -161,7 +209,7 @@ void Editor::setClipSpeed(const QVector<int>& ids, const Retime& r, bool ripple)
     m_project->edit(T("Geschwindigkeit ändern"), [&](Timeline& tl) {
         const Timeline before = tl;
         QSet<int> touched;
-        QVector<QPair<int, int>> shifts; // ripple (from old end, length change)
+        LengthChanges changes; // ripple: one shift per link group
         QVector<RetimedTrack> retimed;
         // The new in point of a clip on its own: the first material frame whose picture is the same file frame as
         // before (on direction change: the same piece reversed; rounding could land one before it: a flash of the
@@ -243,14 +291,11 @@ void Editor::setClipSpeed(const QVector<int>& ids, const Retime& r, bool ripple)
                 c.fadeIn = std::min(c.fadeIn, newLen);
                 c.fadeOut = std::min(c.fadeOut, newLen);
                 touched.insert(c.id);
-                if (const int delta = newLen - oldLen; ripple && delta != 0) {
-                    t.own << qMakePair(oldEnd, delta);
-                    // linked partners yield the same offset -> only once
-                    if (!shifts.contains(qMakePair(oldEnd, delta))) shifts << qMakePair(oldEnd, delta);
-                }
+                if (ripple) changes.add(c.linkId, oldEnd, newLen - oldLen, retimed.size());
             }
             retimed << t;
         }
+        const QVector<QPair<int, int>> shifts = changes.shifts(retimed);
         rippleRetimed(tl, retimed, shifts);
         fitTransitions(tl, touched, sourceLength());
         if (!shifts.isEmpty()) keepsLinks(before, tl, touched);
@@ -286,7 +331,7 @@ void Editor::editRamp(const QString& text, int clipId, const std::function<bool(
     }
     Timeline tl = cur;
     QSet<int> touched;
-    QVector<QPair<int, int>> shifts;
+    LengthChanges changes;
     QVector<RetimedTrack> retimed;
     // The new in point of a clip on its own (the same source position); nullopt = the change does not apply
     const auto ownIn = [&](const Clip& c, int* avail) -> std::optional<int> {
@@ -343,14 +388,12 @@ void Editor::editRamp(const QString& text, int clipId, const std::function<bool(
             const int delta = n.length() - c.length();
             t.clips[i] = n;
             touched.insert(n.id);
-            if (delta != 0) {
-                t.own << qMakePair(oldEnd, delta);
-                if (!shifts.contains(qMakePair(oldEnd, delta))) shifts << qMakePair(oldEnd, delta);
-            }
+            changes.add(n.linkId, oldEnd, delta, retimed.size());
         }
         retimed << t;
     }
     if (touched.isEmpty()) return;
+    const QVector<QPair<int, int>> shifts = changes.shifts(retimed);
     rippleRetimed(tl, retimed, shifts);
     fitTransitions(tl, touched, sourceLength());
     if (!keepsLinks(cur, tl, touched)) return;

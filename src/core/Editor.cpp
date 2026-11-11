@@ -617,23 +617,28 @@ void Editor::rippleDeleteSelection()
     if (ids.isEmpty() && cues.isEmpty()) return;
     bool refused = false;
     TimelineOps::RippleResult result;
+    QString note;
     m_project->edit(T("Löschen mit Nachrücken"), [&](Timeline& tl) {
         const Timeline before = tl;
         removeCues(tl, cues); // subtitles: without ripple (gap stays)
         if (ids.isEmpty()) return;
         TimelineOps::detachTransitions(tl, ids);
         result = TimelineOps::rippleDelete(tl, ids);
-        refused = !keepsLinks(before, tl, {});
+        refused = !keepsLinks(before, tl, {}, &note);
     });
     if (refused) return; // the selection stays: the user can change it or the other track
-    if (result.removed < result.deleted)
-        tell(result.removed == 0 ? T("Nicht nachgerückt: Auf einer anderen Spur liegt in der gelöschten Zeit noch ein Clip "
-                                     "– sonst liefen Bild und Ton auseinander")
-                                 : T("Nur %1 von %2 Bildern nachgerückt: Auf einer anderen Spur liegt in der gelöschten Zeit "
-                                     "noch ein Clip – sonst liefen Bild und Ton auseinander")
-                                       .arg(result.removed)
-                                       .arg(result.deleted),
-             false);
+    // Time meant to go that stays because other clips lie in it (not a group's own J/L tail)
+    QStringList says;
+    if (!note.isEmpty()) says << note;
+    if (result.meantRemoved < result.meant)
+        says << (result.meantRemoved == 0
+                     ? T("Nicht nachgerückt: Auf einer anderen Spur liegt in der gelöschten Zeit noch ein Clip – sonst "
+                         "liefen Bild und Ton auseinander")
+                     : T("Nur %1 von %2 Bildern nachgerückt: Auf einer anderen Spur liegt in der gelöschten Zeit noch ein "
+                         "Clip – sonst liefen Bild und Ton auseinander")
+                           .arg(result.meantRemoved)
+                           .arg(result.meant));
+    if (!says.isEmpty()) tell(says.join(" – "), false);
     m_selection->clear();
 }
 
@@ -643,34 +648,81 @@ void Editor::tell(const QString& text, bool refused)
     emit notice(text);
 }
 
-bool Editor::keepsLinks(const Timeline& before, Timeline& tl, const QSet<int>& ignore)
+QString Editor::linksRefusal(const Timeline& before, const Timeline& after, const QSet<int>& ignore, QString* note) const
 {
-    const QVector<QPair<int, int>> apart = TimelineOps::linksApart(before, tl, ignore);
-    if (apart.isEmpty()) return true;
-    // The clip of the first pair that moved less (stayed): its track is the reason
-    const auto moved = [&](int id) {
-        const Clip* was = TimelineOps::findClip(before, id);
-        const Clip* now = TimelineOps::findClip(tl, id);
-        return was && now ? std::abs(now->start - was->start) : 0;
+    const QVector<QPair<int, int>> apart = TimelineOps::linksApart(before, after, ignore);
+    if (apart.isEmpty()) return {};
+    struct Side {
+        int id = 0;
+        TrackRef ref;
+        int moved = 0;
     };
-    const int stay = moved(apart[0].first) <= moved(apart[0].second) ? apart[0].first : apart[0].second;
-    TrackRef ref;
-    const Clip* c = TimelineOps::findClip(before, stay, &ref);
-    const QString name = c ? m_project->clipName(*c) : QString();
-    QString why;
-    if (c && before.track(ref).locked)
-        why = T("Nicht nachgerückt: Die Spur %1 ist gesperrt – Bild und Ton von „%2“ liefen auseinander. Entsperren, dann "
-                "geht es")
-                  .arg(trackShortName(ref), name);
-    else if (c && moved(stay) == 0)
-        why = T("Nicht nachgerückt: Auf %1 liegt ein Clip über der Stelle, die Spur kann nicht mitrücken – Bild und Ton von "
-                "„%2“ liefen auseinander. Den Clip dort kürzen oder verschieben, dann geht es")
-                  .arg(trackShortName(ref), name);
-    else
-        why = T("Nicht nachgerückt: Bild und Ton von „%1“ liefen auseinander").arg(name);
-    tl = before;
-    tell(why, true);
-    return false;
+    const auto side = [&](int id) {
+        Side s{id, {}, 0};
+        const Clip* was = TimelineOps::findClip(before, id, &s.ref);
+        const Clip* now = TimelineOps::findClip(after, id);
+        s.moved = was && now ? std::abs(now->start - was->start) : 0;
+        return s;
+    };
+    const auto nameOf = [&](int id) {
+        const Clip* c = TimelineOps::findClip(before, id);
+        return c ? m_project->clipName(*c) : QString();
+    };
+    // Linked clips on a locked track: locking is the way to move only one side - done, with a note
+    QVector<QPair<Side, Side>> hard, locked;
+    for (const auto& [a, b] : apart) {
+        const Side x = side(a), y = side(b);
+        (before.track(x.ref).locked || before.track(y.ref).locked ? locked : hard) << qMakePair(x, y);
+    }
+    if (hard.isEmpty()) {
+        if (note) {
+            const auto& [x, y] = locked.first();
+            const Side& stay = before.track(x.ref).locked ? x : y;
+            const Clip *x0 = TimelineOps::findClip(before, x.id), *y0 = TimelineOps::findClip(before, y.id);
+            const Clip *x1 = TimelineOps::findClip(after, x.id), *y1 = TimelineOps::findClip(after, y.id);
+            const int by = std::abs(((x1->start - x1->in) - (y1->start - y1->in)) - ((x0->start - x0->in) - (y0->start - y0->in)));
+            *note = T("%1 ist gesperrt und blieb stehen: Bild und Ton von „%2“ sind jetzt um %3 Bilder versetzt")
+                        .arg(trackShortName(stay.ref), nameOf(stay.id))
+                        .arg(by);
+        }
+        return {};
+    }
+    const auto& [x, y] = hard.first();
+    const Side& stay = x.moved <= y.moved ? x : y;
+    // A clip on the staying track across the first place where something moved: that track cannot follow
+    int from = INT_MAX;
+    for (TrackKind k : {TrackKind::Video, TrackKind::Audio})
+        for (const Track& t : before.tracks(k))
+            for (const Clip& c : t.clips)
+                if (const Clip* now = TimelineOps::findClip(after, c.id); now && now->start != c.start) from = std::min(from, c.start);
+    bool across = false;
+    if (stay.moved == 0)
+        for (const Clip& c : before.track(stay.ref).clips)
+            if (const Clip* now = TimelineOps::findClip(after, c.id); now && now->start == c.start && c.start < from && c.end() > from)
+                across = true;
+    if (across)
+        return T("Nicht ausgeführt: Auf %1 liegt ein Clip über der Schnittstelle, die Spur kann nicht mit – Bild und Ton "
+                 "von „%2“ liefen auseinander. Den Clip dort kürzen oder verschieben, dann geht es")
+            .arg(trackShortName(stay.ref), nameOf(stay.id));
+    return T("Nicht ausgeführt: Bild und Ton von „%1“ würden auf %2 und %3 unterschiedlich weit verschoben und liefen "
+             "auseinander")
+        .arg(nameOf(stay.id), trackShortName(x.ref), trackShortName(y.ref));
+}
+
+bool Editor::keepsLinks(const Timeline& before, Timeline& tl, const QSet<int>& ignore, QString* note)
+{
+    QString n;
+    const QString why = linksRefusal(before, tl, ignore, &n);
+    if (!why.isEmpty()) {
+        tl = before;
+        tell(why, true);
+        return false;
+    }
+    if (!n.isEmpty()) {
+        if (note) *note = n;
+        else tell(n, false);
+    }
+    return true;
 }
 
 void Editor::selectAll()
