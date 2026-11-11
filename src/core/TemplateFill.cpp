@@ -147,13 +147,13 @@ void ripple(Timeline& tl, int oldEnd, int delta, const IdGen& newId)
                 QVector<Clip> over;
                 for (int i = int(t.clips.size()) - 1; i >= 0; --i)
                     if (t.clips[i].start < newEnd && t.clips[i].end() >= oldEnd) over << t.clips.takeAt(i);
-                TimelineOps::clearRange(t, newEnd, oldEnd, newId);
+                TimelineOps::clearRange(t, newEnd, oldEnd, newId, tl.frameRate);
                 TimelineOps::shiftFrom(t, oldEnd, delta);
                 for (Clip c : over) {
                     c.out = std::max(c.in, c.out + delta);
                     c.fadeOut = std::min(c.fadeOut, c.length());
                     c.fadeIn = std::min(c.fadeIn, c.length() - c.fadeOut);
-                    TimelineOps::placeClip(t, c, newId);
+                    TimelineOps::placeClip(t, c, newId, tl.frameRate);
                 }
             } else {
                 TimelineOps::shiftFrom(t, oldEnd, delta);
@@ -489,7 +489,7 @@ void followCompounds(ProjectData& d, int sequence, int oldEnd, int delta, const 
                 if (o.out < o.in) continue; // all it showed was taken out
                 o.clip.in = o.in;
                 o.clip.out = o.out;
-                TimelineOps::placeClip(tl->track(o.ref), o.clip, newId);
+                TimelineOps::placeClip(tl->track(o.ref), o.clip, newId, tl->frameRate);
             }
             followCompounds(d, parent, changes[i].at, changes[i].dd, newId, rep, followed, depth + 1);
             i = j;

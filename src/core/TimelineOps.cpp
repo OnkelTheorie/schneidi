@@ -322,6 +322,7 @@ void cutCopiesLikeBases(const Timeline& before, Timeline& after, const IdGen& ne
                 q.out = q.in + (hi - lo) - 1;
                 if (lo > c.start) q.transIn = 0, q.fadeIn = 0;
                 if (hi < c.end()) q.transOut = 0, q.fadeOut = 0;
+                Comp::followHead(q, lo - c.start, after.frameRate);
                 q.linkId = x->linkId;
                 kept = kept || x->id == base->id;
                 q.id = x->id == base->id ? c.id : 0;
@@ -346,7 +347,7 @@ void cutCopiesLikeBases(const Timeline& before, Timeline& after, const IdGen& ne
     }
 }
 
-void clearRange(Track& track, int start, int end, const IdGen& newId)
+void clearRange(Track& track, int start, int end, const IdGen& newId, double fps)
 {
     if (end <= start) return;
     // Nothing there: the track stays untouched (read-only, undo snapshots share its clips)
@@ -370,6 +371,7 @@ void clearRange(Track& track, int start, int end, const IdGen& newId)
             right.start = end;
             right.transIn = 0;
             right.fadeIn = 0;
+            Comp::followHead(right, end - c.start, fps);
             result << left << right;
         } else if (c.start < start) { // cut off the end
             Clip left = c;
@@ -383,6 +385,7 @@ void clearRange(Track& track, int start, int end, const IdGen& newId)
             right.start = end;
             right.transIn = 0;
             right.fadeIn = 0;
+            Comp::followHead(right, end - c.start, fps);
             result << right;
         }
         // otherwise: completely covered -> gone
@@ -391,9 +394,9 @@ void clearRange(Track& track, int start, int end, const IdGen& newId)
     sortTrack(track);
 }
 
-void placeClip(Track& track, const Clip& clip, const IdGen& newId)
+void placeClip(Track& track, const Clip& clip, const IdGen& newId, double fps)
 {
-    clearRange(track, clip.start, clip.end(), newId);
+    clearRange(track, clip.start, clip.end(), newId, fps);
     track.clips << clip;
     sortTrack(track);
 }
@@ -469,6 +472,7 @@ QVector<int> splitAt(Timeline& tl, const QVector<int>& clipIds, int frame,
         }
         c->out = c->in + (frame - c->start) - 1;
         Keys::split(original, *c, right); // split keyframes, interpolated value at the edge
+        Comp::followHead(right, frame - original.start, tl.frameRate); // its graph's picture stays in place
         Track& t = tl.track(ref);
         t.clips << right;
         sortTrack(t);
@@ -615,7 +619,7 @@ void moveClips(Timeline& tl, const QVector<int>& clipIds, int deltaFrames,
         removeClip(tl, m.clip.id);
         ensureTracks(tl, m.target.kind, m.target.index + 1);
     }
-    for (const auto& m : moving) placeClip(tl.track(m.target), m.clip, newId);
+    for (const auto& m : moving) placeClip(tl.track(m.target), m.clip, newId, tl.frameRate);
 }
 
 int clampTrim(const Timeline& tl, const QVector<int>& clipIds, Edge edge, int delta,
@@ -653,6 +657,7 @@ void trimClips(Timeline& tl, const QVector<int>& clipIds, Edge edge, int delta,
         if (edge == Edge::Start) {
             c->start += delta;
             c->in += delta;
+            Comp::followHead(*c, delta, tl.frameRate);
         } else {
             c->out += delta;
         }
@@ -672,12 +677,13 @@ void trimClipsOver(Timeline& tl, const QVector<int>& clipIds, Edge edge, int del
         if (edge == Edge::Start) {
             trimmed.start += delta;
             trimmed.in += delta;
+            Comp::followHead(trimmed, delta, tl.frameRate);
         } else {
             trimmed.out += delta;
         }
         Track& track = tl.track(ref);
         track.clips.removeIf([id](const Clip& o) { return o.id == id; });
-        placeClip(track, trimmed, newId); // overwrites what the longer clip covers now
+        placeClip(track, trimmed, newId, tl.frameRate); // overwrites what the longer clip covers now
     }
 }
 
@@ -809,8 +815,12 @@ void applyTrimEdit(Timeline& tl, const TrimEdit& e, int delta, const SourceLengt
             Clip* c = findClip(tl, id, &ref);
             if (!c) continue;
             const int oldEnd = c->end();
-            if (e.edge == Edge::Start) c->in += delta;
-            else c->out += delta;
+            if (e.edge == Edge::Start) {
+                c->in += delta; // the clip stays, its content moves: like a head trim for the graph
+                Comp::followHead(*c, delta, tl.frameRate);
+            } else {
+                c->out += delta;
+            }
             // further trimmed clips of the same track move too (otherwise, depending on the order, a gap remains
             // or the rest slides under them)
             for (Clip& o : tl.track(ref).clips)
@@ -826,6 +836,7 @@ void applyTrimEdit(Timeline& tl, const TrimEdit& e, int delta, const SourceLengt
             if (Clip* c = findClip(tl, id)) {
                 c->start += delta;
                 c->in += delta;
+                Comp::followHead(*c, delta, tl.frameRate);
             }
         break;
     case TrimKind::Slip:
@@ -853,6 +864,7 @@ void applyTrimEdit(Timeline& tl, const TrimEdit& e, int delta, const SourceLengt
             if (Clip* c = findClip(tl, id)) {
                 c->start += delta;
                 c->in += delta;
+                Comp::followHead(*c, delta, tl.frameRate);
             }
         for (int id : e.ids)
             if (Clip* c = findClip(tl, id)) c->start += delta;

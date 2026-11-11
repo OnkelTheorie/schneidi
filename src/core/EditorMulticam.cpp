@@ -3,6 +3,7 @@
 // resync and change angles afterwards. Model and lookups in core/Multicam.h.
 #include "core/Editor.h"
 
+#include "core/CompGraph.h"
 #include "core/EditorDetail.h"
 #include "core/I18n.h"
 #include "core/Project.h"
@@ -134,15 +135,16 @@ Sequence* sequenceIn(QVector<Sequence>& list, int id)
 
 // What replaces segment `seg` for the part [from, to) (frames of the multicam sequence) of the angle's clip `n`:
 // the file section, with what was set on the segment (transform, effects, volume, fades/transitions at its edges)
-Clip flatClip(const Clip& seg, const Clip& n, int from, int to)
+Clip flatClip(const Clip& seg, const Clip& n, int from, int to, double fps)
 {
     Clip x = n; // file, stream, speed and what was set on the recording inside the multicam clip
     x.start = seg.start + (from - seg.in);
     x.in = n.in + (from - n.start);
     x.out = x.in + (to - from) - 1;
+    Comp::followHead(x, from - n.start, fps);
     x.enabled = seg.enabled && n.enabled;
     const bool atStart = from == seg.in, atEnd = to == seg.out + 1;
-    EditorDetail::takeOuter(x, seg, n.in - n.start, atStart, atEnd);
+    EditorDetail::takeOuter(x, seg, n.in - n.start, atStart, atEnd, from - seg.in, fps);
     x.renderCache = seg.renderCache;
     // A recording's own edges inside the multicam clip are no cuts of the timeline: only the segment's edges count
     x.transIn = atStart ? seg.transIn : 0;
@@ -354,7 +356,7 @@ bool Editor::flattenMulticamClips(const QVector<int>& ids)
                     QVector<Clip> pieces; // linkId still the one inside
                     for (const Clip& n : src[j].clips) {
                         const int from = std::max(n.start, seg.in), to = std::min(n.end(), seg.out + 1);
-                        if (from < to) pieces << flatClip(seg, n, from, to); // gaps of the recording stay empty
+                        if (from < to) pieces << flatClip(seg, n, from, to, tl.frameRate); // gaps of the recording stay empty
                     }
                     if (pieces.isEmpty()) continue;
                     // Lowest track from nextTrack on that is free there and not locked (never overwrite), else a new one
@@ -375,7 +377,7 @@ bool Editor::flattenMulticamClips(const QVector<int>& ids)
                             if (!links.contains(x.linkId)) links.insert(x.linkId, p->newLinkId());
                             x.linkId = links.value(x.linkId);
                         }
-                        TimelineOps::placeClip(tl.tracks(ref.kind)[target], x, newId);
+                        TimelineOps::placeClip(tl.tracks(ref.kind)[target], x, newId, tl.frameRate);
                         created.insert(x.id);
                     }
                 }

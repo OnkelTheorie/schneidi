@@ -535,7 +535,7 @@ int Editor::sourceEdit(SourceEditMode mode, const QString& path, int srcPos, int
         }
         if (mode == M::RippleOverwrite) {
             for (const TrackRef& r : rippleTracks) {
-                clearRange(tl.track(r), start, replaceEnd, newId);
+                clearRange(tl.track(r), start, replaceEnd, newId, tl.frameRate);
                 shiftFrom(tl.track(r), rippleFrom, rippleDelta);
             }
             // other unlocked tracks stay in sync (stay put if they would overwrite)

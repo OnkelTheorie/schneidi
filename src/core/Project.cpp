@@ -426,6 +426,7 @@ void Project::markSaved()
 void Project::edit(const QString& text, const std::function<void(Timeline&)>& fn, const QString& mergeKey)
 {
     Timeline after = timeline();
+    after.frameRate = frameRate(); // seconds-based clip values follow cuts and head trims (Comp::followHead)
     fn(after);
     // A clip overwritten in place: its kill feed copy is cut the same way (every overwrite path at once)
     TimelineOps::cutCopiesLikeBases(timeline(), after, [this] { return newClipId(); });
@@ -576,6 +577,7 @@ void Project::setCurrentSequence(int id)
 void Project::editSequences(const QString& text, const std::function<void(QVector<Sequence>&, int& current)>& fn)
 {
     QVector<Sequence> after = m_sequences;
+    for (Sequence& seq : after) seq.timeline.frameRate = frameRate();
     int cur = m_current;
     fn(after, cur);
     if (after.isEmpty()) return;

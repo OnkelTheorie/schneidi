@@ -5,6 +5,7 @@
 
 #include "core/CompGraph.h"
 #include "core/EditorDetail.h"
+#include "core/EffectRegistry.h"
 #include "core/I18n.h"
 #include "core/Multicam.h"
 #include "core/Project.h"
@@ -13,7 +14,8 @@
 #include <QSet>
 #include <algorithm>
 
-void EditorDetail::takeOuter(Clip& x, const Clip& outer, int sourceShift, bool atStart, bool atEnd)
+void EditorDetail::takeOuter(Clip& x, const Clip& outer, int sourceShift, bool atStart, bool atEnd, int outerShift,
+                             double fps)
 {
     if (outer.transform != ClipTransform{}) x.transform = outer.transform;
     for (const EffectInstance& e : outer.effects) {
@@ -42,6 +44,7 @@ void EditorDetail::takeOuter(Clip& x, const Clip& outer, int sourceShift, bool a
         for (Keyframe& f : k) f.frame += sourceShift;
         x.keys[it.key()] = k;
     }
+    if (EffectRegistry::has(outer, Comp::kEffectId)) Comp::followHead(x, outerShift, fps); // now outer's graph
 }
 
 namespace {
@@ -203,7 +206,7 @@ int Editor::createCompound(const QString& name, bool comp)
                     if (!inner.video[i].clips.isEmpty()) tracks << i;
                 x.effects << compOfTracks(tracks);
             }
-            TimelineOps::placeClip(tl->tracks(kind)[target], x, newId);
+            TimelineOps::placeClip(tl->tracks(kind)[target], x, newId, tl->frameRate);
             selectIds.insert(x.id);
         }
         // Neighbor of a removed clip (outside as well as inside): "standalone" no longer applies
@@ -309,6 +312,7 @@ bool Editor::decomposeCompoundClips(const QVector<int>& ids)
                                 const int d = cc.in - x.start;
                                 x.start += d;
                                 x.in += d;
+                                Comp::followHead(x, d, tl.frameRate);
                                 x.transIn = 0;
                                 x.transInAlone = false;
                                 x.fadeIn = 0;
@@ -322,7 +326,8 @@ bool Editor::decomposeCompoundClips(const QVector<int>& ids)
                             // What was set on the compound clip (grade, zoom, volume, fades at its edges ...) goes
                             // onto its content of the same kind
                             if (kind == part.second.kind)
-                                EditorDetail::takeOuter(x, cc, x.in - x.start, atStart, atEnd);
+                                EditorDetail::takeOuter(x, cc, x.in - x.start, atStart, atEnd, x.start - cc.in,
+                                                        tl.frameRate);
                             x.start += offset;
                             x.id = newId();
                             if (x.linkId) {
@@ -332,7 +337,7 @@ bool Editor::decomposeCompoundClips(const QVector<int>& ids)
                             }
                             if (!cc.enabled) x.enabled = false;
                             TimelineOps::ensureTracks(tl, kind, target + 1);
-                            TimelineOps::placeClip(tl.tracks(kind)[target], x, newId);
+                            TimelineOps::placeClip(tl.tracks(kind)[target], x, newId, tl.frameRate);
                             selectIds.insert(x.id);
                         }
                     }
@@ -384,7 +389,7 @@ bool Editor::addSequenceAt(int sequenceId, int frame, int track)
             TimelineOps::ensureTracks(tl, kind, idx + 1);
             Clip x = c;
             x.id = newId();
-            TimelineOps::placeClip(tl.tracks(kind)[idx], x, newId);
+            TimelineOps::placeClip(tl.tracks(kind)[idx], x, newId, tl.frameRate);
             selectIds.insert(x.id);
         }
     });

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "core/CompGraph.h"
 
+#include "core/Keyframes.h"
 #include "core/Types.h"
 
 #include <QHash>
@@ -285,6 +286,43 @@ int redirectMedia(EffectInstance& e, const std::function<QString(const QString&)
         }
     });
     return n;
+}
+
+void followHead(Clip& c, int frames, double fps)
+{
+    if (frames == 0) return;
+    EffectInstance* e = nullptr;
+    for (EffectInstance& x : c.effects)
+        if (x.effectId == QLatin1String(kEffectId)) e = &x;
+    CompGraph g;
+    if (!e || !graphOf(*e, &g)) return;
+    // Node kinds with a visible range from/until (seconds from the clip's start; Picture::Comp::visibleRangeParams)
+    static const QStringList ranged{QString::fromLatin1(kTextType), QStringLiteral("text3d")};
+    for (const CompNode& n : g.nodes) {
+        if (n.type == QLatin1String(kMediaType)) {
+            // It plays frame offset + t * speed at clip frame t (engine defaults: offset 0, speed 1)
+            const QString key = CompGraph::paramKey(n.id, QStringLiteral("offset"));
+            const double shift = frames * e->params.value(CompGraph::paramKey(n.id, QStringLiteral("speed")), 1.0).toDouble();
+            e->params[key] = e->params.value(key, 0.0).toDouble() + shift;
+            const auto k = c.keys.find(Keys::effectParam(QString::fromLatin1(kEffectId), key));
+            if (k != c.keys.end())
+                for (Keyframe& f : *k) f.value += shift;
+        } else if (fps > 0 && ranged.contains(n.type)) {
+            const QString fk = CompGraph::paramKey(n.id, QStringLiteral("from"));
+            const QString uk = CompGraph::paramKey(n.id, QStringLiteral("until"));
+            const double from = e->params.value(fk, 0.0).toDouble(), until = e->params.value(uk, 0.0).toDouble();
+            if (from <= 0 && until <= 0) continue; // the whole clip
+            const double s = frames / fps;
+            if (until > 0 && until - s <= 1e-9) {
+                // Over before the new start: an empty range (until 0 would mean "to the end", i.e. the whole clip)
+                e->params[fk] = 0.01;
+                e->params[uk] = 0.01;
+                continue;
+            }
+            if (from > 0) e->params[fk] = std::max(0.0, from - s);
+            if (until > 0) e->params[uk] = until - s;
+        }
+    }
 }
 
 } // namespace Comp

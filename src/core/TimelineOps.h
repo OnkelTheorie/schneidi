@@ -48,7 +48,8 @@ QVector<int> repeatedSound(const Timeline& tl, const QVector<int>& clipIds);
 // clips in it are shortened, split or removed. Nothing moves up.
 // If a linked clip is split, the right piece provisionally gets the linkId -old (same on all tracks);
 // resolvePendingLinks (called by Project::edit) turns that into a new common link.
-void clearRange(Track& track, int start, int end, const IdGen& newId);
+// A clip cut off at its start keeps its comp graph's picture in place (Comp::followHead; fps = Timeline::frameRate).
+void clearRange(Track& track, int start, int end, const IdGen& newId, double fps = 0);
 // Replace provisional (negative) linkIds from clearRange with new ones: same provisional id -> same new id. A partner
 // that was not cut (on a track without a right piece) goes with the right piece when it plays in sync with it (same
 // file and playback, same start - in, overlapping in time) and not with the left piece that kept the old link (a
@@ -79,7 +80,7 @@ void changeClips(Timeline& tl, Need need, Apply apply)
 }
 
 // Places a clip on the track in overwrite mode.
-void placeClip(Track& track, const Clip& clip, const IdGen& newId);
+void placeClip(Track& track, const Clip& clip, const IdGen& newId, double fps = 0);
 
 bool removeClip(Timeline& tl, int clipId);
 

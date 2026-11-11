@@ -151,7 +151,7 @@ bool prependTeaser(Timeline& tl, int from, int to, const std::function<int()>& n
             if (!links.contains(p.clip.linkId)) links[p.clip.linkId] = newLinkId();
             p.clip.linkId = links[p.clip.linkId];
         }
-        TimelineOps::placeClip(tl.track(p.ref), p.clip, newClipId);
+        TimelineOps::placeClip(tl.track(p.ref), p.clip, newClipId, tl.frameRate);
     }
     return true;
 }
