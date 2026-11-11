@@ -2374,11 +2374,12 @@ bool Encoder::encodeMbP(MbOut& result, int mbx, int mby)
         }
         useSatd = true;
         best = cost(bx, by);
+        const bool diamond = gExp & 16; // experiment: 4 instead of 8 neighbours per sub-pel step
         for (int step : {2, 1}) {
             const int cx0 = bx, cy0 = by;
             for (int dy = -1; dy <= 1; ++dy)
                 for (int dx = -1; dx <= 1; ++dx) {
-                    if (!dx && !dy)
+                    if ((!dx && !dy) || (diamond && dx && dy))
                         continue;
                     const int cx = cx0 + dx * step, cy = cy0 + dy * step;
                     if (std::abs(cx) > range || std::abs(cy) > range)
@@ -2467,6 +2468,8 @@ bool Encoder::encodeMbP(MbOut& result, int mbx, int mby)
 
     // Encodes one inter choice; leaves its state in the macroblock and returns SSD + lambda * bits.
     bool interDelta = false;
+    const bool trellisLast = gExp & 32; // experiment: candidates with plain quantisation, the winner again with the trellis
+    bool trellisNow = !trellisLast;
     auto encodeInter = [&](const Choice& best, MbOut& io, bool t8) {
         BitWriter& interBits = io.bw;
         const Layout& layout = kLayouts[best.layout];
@@ -2493,7 +2496,7 @@ bool Encoder::encodeMbP(MbOut& result, int mbx, int mby)
                 const CabacEncoder* live = cabacByTop_[size_t(rowKey_[size_t(mby)])];
                 double real[64];
                 quantize8x8(res, qp, 1.0 / 6.0, levels8[b8], real);
-                if (live && cfg_.effort > 0) {
+                if (live && cfg_.effort > 0 && trellisNow) {
                     // Pixel error per level unit, by QP and scan position (computed once).
                     static const auto kScale8 = [] {
                         std::array<std::array<double, 64>, 52> t{};
@@ -2542,7 +2545,7 @@ bool Encoder::encodeMbP(MbOut& result, int mbx, int mby)
                     res[y * 4 + x] = int(srcY_[lumaOff + size_t(oy + y) * padW_ + ox + x]) - int(lp[(oy + y) * 16 + ox + x]);
             forward4x4(res, coef);
             const CabacEncoder* live = cabacByTop_[size_t(rowKey_[size_t(mby)])];
-            if (cfg_.effort > 0 && live) {
+            if (cfg_.effort > 0 && live && trellisNow) {
                 // Trellis with CABAC costs on real-valued levels.
                 static const auto kScale4 = [] {
                     std::array<std::array<double, 16>, 52> t{};
@@ -2564,7 +2567,7 @@ bool Encoder::encodeMbP(MbOut& result, int mbx, int mby)
                 cabacTrellis(*live, 2, xs, kScale4[size_t(qp)].data(), 16, lambda, 1, scanLv);
                 for (int s = 0; s < 16; ++s)
                     levels[blkIdx][kZigzag[s]] = std::clamp(scanLv[s], -kMaxLevel, kMaxLevel);
-            } else if (cfg_.effort > 0) {
+            } else if (cfg_.effort > 0 && !live) {
                 // Round to nearest, then let the rate-distortion pass decide which levels to lower.
                 for (int i = 0; i < 16; ++i)
                     levels[blkIdx][i] = quantize(coef[i], kQuantMf[qpMod][posClass(i)], qbits, (1 << qbits) / 2);
@@ -2676,6 +2679,7 @@ bool Encoder::encodeMbP(MbOut& result, int mbx, int mby)
         }
     }
     // 8x8 transform for the chosen layout (High profile).
+    bool bestT8 = false;
     if (useT8() && cfg_.effort > 0) {
         MbOut t8Bits;
         const double costT8 = encodeInter(best, t8Bits, true);
@@ -2684,7 +2688,16 @@ bool Encoder::encodeMbP(MbOut& result, int mbx, int mby)
             chosenInterDelta = interDelta;
             interBits = std::move(t8Bits);
             saveMb(mbx, mby, interState);
+            bestT8 = true;
         }
+    }
+    if (trellisLast && cfg_.effort > 0) {
+        trellisNow = true;
+        MbOut finalBits;
+        costInter = encodeInter(best, finalBits, bestT8);
+        chosenInterDelta = interDelta;
+        interBits = std::move(finalBits);
+        saveMb(mbx, mby, interState);
     }
 
     // ---- Candidate 3: intra, only when a cheap Intra 16x16 SATD estimate beats the motion search.
