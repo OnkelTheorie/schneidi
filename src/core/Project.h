@@ -270,6 +270,9 @@ private:
     std::optional<BrandKit> m_brand;
     std::optional<TemplateInfo> m_templateInfo;
     int m_lastBinId = 0;
+    // Files imported (outside the undo history) into a bin that an undo then removed: their bin, so that the redo
+    // that brings the bin back puts them in it again (bin ids are never reused)
+    QHash<QString, int> m_binsUndone;
     QUndoStack m_ownUndo;
     std::unique_ptr<QUndoStack> m_asideUndo; // while the user's history is aside: the one in use
     QUndoStack* m_undo = &m_ownUndo;

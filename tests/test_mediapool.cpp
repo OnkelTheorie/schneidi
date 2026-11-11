@@ -110,6 +110,41 @@ int main(int argc, char** argv)
     p.addMedia(d);
     CHECK_EQ(binOf(p, "d.mp4"), 0);
 
+    // --- Imported into a bin right after creating it (the import is not in the history): undo of the bin puts the
+    //     file into Master, redo back into the bin (before: it stayed in Master); also over two levels of bins
+    {
+        Project q;
+        QUndoStack* u = q.undoStack();
+        const int bin = q.addBin(0, "Neu");
+        MediaInfo e = media("e.mp4");
+        e.bin = bin;
+        q.addMedia(e);
+        CHECK_EQ(binOf(q, "e.mp4"), bin);
+        u->undo();
+        CHECK(!q.bin(bin) && binOf(q, "e.mp4") == 0);
+        u->redo();
+        CHECK_EQ(binOf(q, "e.mp4"), bin);
+        const int inner = q.addBin(bin, "Innen");
+        MediaInfo f = media("f.mp4");
+        f.bin = inner;
+        q.addMedia(f);
+        u->undo();
+        u->undo();
+        CHECK(binOf(q, "e.mp4") == 0 && binOf(q, "f.mp4") == 0);
+        u->redo();
+        CHECK(binOf(q, "e.mp4") == bin && binOf(q, "f.mp4") == 0);
+        u->redo();
+        CHECK(binOf(q, "e.mp4") == bin && binOf(q, "f.mp4") == inner);
+        // Moved by hand while its bin was gone: stays where the user put it
+        u->undo();
+        q.moveMediaToBin({"/x/f.mp4"}, bin);
+        CHECK_EQ(binOf(q, "f.mp4"), bin);
+        u->undo();
+        CHECK_EQ(binOf(q, "f.mp4"), 0); // where it was before the move
+        u->redo();
+        CHECK_EQ(binOf(q, "f.mp4"), bin);
+    }
+
     // --- Save -> load: everything the same, new bin ID after loading not duplicated
     {
         ProjectData data = p.data();

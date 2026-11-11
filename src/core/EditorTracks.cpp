@@ -17,13 +17,70 @@
 
 #include <QFileInfo>
 #include <QHash>
+#include <QPointer>
 #include <QSet>
 #include <QUndoStack>
 #include <climits>
+#include <functional>
 #include <utility>
 #include <cmath>
 #include <cstdlib>
 #include <algorithm>
+
+namespace {
+
+// The target track (F9/F10 ...) of a track add/delete/move follows the step through undo and redo: in the step's undo
+// macro next to the timeline snapshot. Unchanged since the step: exactly the value before/after it; chosen by hand
+// meanwhile: that track is mapped along. The editor can be gone (a CLI session editing the app's project): nothing.
+class TargetTrackCommand : public QUndoCommand {
+public:
+    using Map = std::function<int(int)>;
+    TargetTrackCommand(Editor* editor, TrackKind kind, Map forward, Map back, QUndoCommand* parent = nullptr)
+        : QUndoCommand(parent), m_editor(editor), m_kind(kind), m_forward(std::move(forward)), m_back(std::move(back))
+    {
+        m_before = target();
+        m_after = m_forward(m_before);
+    }
+    void redo() override
+    {
+        if (!m_editor) return;
+        const int t = target();
+        set(t == m_before ? m_after : m_forward(t));
+    }
+    void undo() override
+    {
+        if (!m_editor) return;
+        const int t = target();
+        set(t == m_after ? m_before : m_back(t));
+    }
+
+private:
+    int target() const
+    {
+        return m_kind == TrackKind::Video ? m_editor->targetVideoTrack() : m_editor->targetAudioTrack();
+    }
+    void set(int t)
+    {
+        if (m_kind == TrackKind::Video) m_editor->setTargetTracks(t, m_editor->targetAudioTrack());
+        else m_editor->setTargetTracks(m_editor->targetVideoTrack(), t);
+    }
+
+    QPointer<Editor> m_editor;
+    TrackKind m_kind;
+    Map m_forward, m_back;
+    int m_before = 0, m_after = 0;
+};
+
+// Where track index t goes when the track at `from` moves to `to`
+int movedIndex(int t, int from, int to)
+{
+    if (t == from) return to;
+    if (from < t && t <= to) return t - 1;
+    if (to <= t && t < from) return t + 1;
+    return t;
+}
+
+} // namespace
 
 void Editor::toggleTrackMute(TrackRef ref)
 {
@@ -213,17 +270,20 @@ void Editor::addTrack(TrackKind kind, int index)
     const int n = m_project->timeline().tracks(kind).size();
     index = std::clamp(index, 0, n);
     if (inMulticamSequence()) index = n; // the angle table points at the tracks: new ones only on top
-    m_project->edit(kind == TrackKind::Video ? T("Videospur hinzufügen") : T("Audiospur hinzufügen"), [&](Timeline& tl) {
+    const QString text = kind == TrackKind::Video ? T("Videospur hinzufügen") : T("Audiospur hinzufügen");
+    QUndoStack* undo = m_project->undoStack();
+    undo->beginMacro(text);
+    m_project->edit(text, [&](Timeline& tl) {
         Track t;
         t.kind = kind;
         tl.tracks(kind).insert(index, t);
     });
-    // Target track stays on "its" track
-    int& target = kind == TrackKind::Video ? m_targetVideo : m_targetAudio;
-    if (target >= index) {
-        ++target;
-        emit targetTracksChanged();
-    }
+    // Target track stays on "its" track; undo: a target on the new track goes back to where it was before
+    const int before = kind == TrackKind::Video ? m_targetVideo : m_targetAudio;
+    undo->push(new TargetTrackCommand(
+        this, kind, [index](int t) { return t >= index ? t + 1 : t; },
+        [index, before](int t) { return t == index ? before : t > index ? t - 1 : t; }));
+    undo->endMacro();
 }
 
 bool Editor::canRemoveTrack(TrackRef ref) const
@@ -245,13 +305,15 @@ void Editor::removeTrack(TrackRef ref)
         m_selection->clear();
     else if (m_selection->ids().intersects(onTrack))
         m_selection->set(m_selection->ids() - onTrack);
-    m_project->edit(ref.kind == TrackKind::Video ? T("Videospur löschen") : T("Audiospur löschen"),
-                    [&](Timeline& tl) { tl.tracks(ref.kind).removeAt(ref.index); });
-    int& target = ref.kind == TrackKind::Video ? m_targetVideo : m_targetAudio;
-    if (target > ref.index || target >= m_project->timeline().tracks(ref.kind).size()) {
-        target = std::max(0, target - 1);
-        emit targetTracksChanged();
-    }
+    const QString text = ref.kind == TrackKind::Video ? T("Videospur löschen") : T("Audiospur löschen");
+    QUndoStack* undo = m_project->undoStack();
+    undo->beginMacro(text);
+    m_project->edit(text, [&](Timeline& tl) { tl.tracks(ref.kind).removeAt(ref.index); });
+    const int left = m_project->timeline().tracks(ref.kind).size(), index = ref.index;
+    undo->push(new TargetTrackCommand(
+        this, ref.kind, [index, left](int t) { return t > index || t >= left ? std::max(0, t - 1) : t; },
+        [index](int t) { return t >= index ? t + 1 : t; }));
+    undo->endMacro();
 }
 
 void Editor::moveTrack(TrackKind kind, int from, int to)
@@ -260,12 +322,16 @@ void Editor::moveTrack(TrackKind kind, int from, int to)
     if (from < 0 || from >= n || inMulticamSequence()) return;
     to = std::clamp(to, 0, n - 1);
     if (to == from) return;
+    // Equal tracks (empty ones) trade places: no change, no undo step (the macro would be an empty one)
+    QVector<Track> moved = m_project->timeline().tracks(kind);
+    moved.move(from, to);
+    if (moved == m_project->timeline().tracks(kind)) return;
+    QUndoStack* undo = m_project->undoStack();
+    undo->beginMacro(T("Spur verschieben"));
     m_project->edit(T("Spur verschieben"), [&](Timeline& tl) { tl.tracks(kind).move(from, to); });
     // Target track follows its track
-    int& target = kind == TrackKind::Video ? m_targetVideo : m_targetAudio;
-    const int old = target;
-    if (target == from) target = to;
-    else if (from < target && target <= to) --target;
-    else if (to <= target && target < from) ++target;
-    if (target != old) emit targetTracksChanged();
+    undo->push(new TargetTrackCommand(
+        this, kind, [from, to](int t) { return movedIndex(t, from, to); },
+        [from, to](int t) { return movedIndex(t, to, from); }));
+    undo->endMacro();
 }

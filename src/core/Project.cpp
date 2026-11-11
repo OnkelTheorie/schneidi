@@ -301,6 +301,7 @@ void Project::load(const ProjectData& d)
     m_format = d.format;
     m_media = d.media;
     m_bins = d.bins;
+    m_binsUndone.clear();
     m_lastBinId = 0;
     for (const MediaBin& b : m_bins) m_lastBinId = std::max(m_lastBinId, b.id);
     m_sequences = d.sequences;
@@ -781,6 +782,7 @@ const MediaInfo* Project::mediaInfo(const QString& path) const
 void Project::addMedia(const MediaInfo& info)
 {
     if (mediaInfo(info.path)) return;
+    m_binsUndone.remove(info.path); // imported anew: where it goes now counts
     m_media << info;
     if (m_media.last().bin != 0 && !bin(m_media.last().bin)) m_media.last().bin = 0;
     m_mediaDirty = true;
@@ -1199,7 +1201,15 @@ void Project::applyPool(const PoolState& state)
     for (const MediaBin& b : m_bins) m_lastBinId = std::max(m_lastBinId, b.id);
     for (MediaInfo& m : m_media) {
         const auto it = state.media.constFind(m.path);
-        if (it == state.media.cend()) continue; // imported later -> leave unchanged
+        if (it == state.media.cend()) { // imported later -> leave unchanged, but follow its bin through undo/redo
+            if (m.bin != 0 && !bin(m.bin)) m_binsUndone.insert(m.path, m.bin); // sanitizePool puts it into Master
+            else if (const auto b = m_binsUndone.constFind(m.path); m.bin == 0 && b != m_binsUndone.cend() && bin(*b)) {
+                m.bin = *b;
+                m_binsUndone.erase(b);
+            }
+            continue;
+        }
+        m_binsUndone.remove(m.path); // the step knows where it is
         m.bin = it->bin;
         m.clipColor = it->color;
         m.flags = it->flags;
