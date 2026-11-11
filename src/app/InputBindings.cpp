@@ -20,7 +20,17 @@
 
 namespace {
 
-constexpr int kVersion = 3; // increase when defaults or the format change (3: two slots per action)
+// Increase when defaults or the format change (3: two slots per action; 4: layout-neutral second keys, see
+// secondKeysAdded())
+constexpr int kVersion = 4;
+
+// Second keys new in version 4 (the same as their defaults in MainWindowActions): Shift+[ / Shift+] and Ctrl+\ need
+// AltGr on most non-US layouts. A file from before gets them where its second slot is empty and nothing else has the key
+const QHash<QString, QString>& secondKeysAdded()
+{
+    static const QHash<QString, QString> keys{{"trim_start", "Shift+Q"}, {"trim_end", "Shift+W"}, {"split_alt", "Shift+B"}};
+    return keys;
+}
 
 const QHash<QString, WheelAction>& wheelNames()
 {
@@ -401,6 +411,17 @@ void InputBindings::applyJson(const QJsonObject& root, bool withWheel)
             for (const QJsonValue& v : it.value().toArray()) binds << normalizeInput(v.toString());
         else binds << normalizeInput(it.value().toString());
         m_inputs[it.key()] = padded(binds);
+    }
+    if (root.value("version").toInt() < 4 && !keys.isEmpty()) {
+        QSet<QString> used;
+        for (const QStringList& binds : std::as_const(m_inputs))
+            for (const QString& in : binds) used.insert(in);
+        for (auto it = secondKeysAdded().begin(); it != secondKeysAdded().end(); ++it) {
+            if (!m_inputs.contains(it.key()) || !m_inputs[it.key()].value(1).isEmpty() || used.contains(it.value()))
+                continue;
+            m_inputs[it.key()][1] = it.value();
+            used.insert(it.value());
+        }
     }
     // Actions that became the second key of another one (0.13 test builds had Backspace in the bin list as an action of
     // its own): its key moves into the free slot, the old id is gone

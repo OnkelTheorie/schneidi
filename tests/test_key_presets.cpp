@@ -29,6 +29,7 @@
 #include <QTableWidget>
 #include <QTemporaryDir>
 #include <QTest>
+#include <algorithm>
 #include <clocale>
 #include <functional>
 #include <memory>
@@ -138,6 +139,51 @@ void checkUniqueKeys(const char* where)
                               QString("%1: %2 on %3 and %4").arg(where, input, owner[key], e.id));
             owner.insert(key, e.id);
         }
+}
+
+// A key every common keyboard layout can type without a dead key or AltGr: letters, digits, F keys and named keys
+// ([ ] \ ` need AltGr on German, French, Nordic... layouts or sit elsewhere)
+bool layoutNeutral(const QString& input)
+{
+    if (input.isEmpty() || input.startsWith("mouse:")) return false;
+    const QKeyCombination k = QKeySequence::fromString(input, QKeySequence::PortableText)[0];
+    const int key = k.key();
+    const bool plain = (key >= Qt::Key_A && key <= Qt::Key_Z) || (key >= Qt::Key_0 && key <= Qt::Key_9)
+                       || (key >= Qt::Key_F1 && key <= Qt::Key_F24) || key >= 0x01000000;
+    return plain && !(k.keyboardModifiers().testFlags(Qt::ControlModifier | Qt::AltModifier));
+}
+
+// Trim start/end and the alternative split have a second key every layout can type, in every preset (Shift+[ / Shift+]
+// and Ctrl+\ cannot be pressed on QWERTZ and most non-US layouts); a keybindings.json from before gets it too
+void testLayoutNeutralKeys()
+{
+    InputBindings& b = InputBindings::instance();
+    for (const char* preset : {"standard", "beginner", "premiere", "finalcut"}) {
+        b.applyPreset(preset);
+        for (const char* id : {"trim_start", "trim_end", "split_alt"}) {
+            const QStringList keys = in(id);
+            Check::report(std::any_of(keys.begin(), keys.end(), layoutNeutral), "no layout-neutral key", __FILE__,
+                          __LINE__, QString("%1: %2 has %3").arg(preset, id, keys.join(", ")));
+        }
+        checkUniqueKeys(preset);
+    }
+    b.applyPreset("standard");
+    CHECK_EQ(in("trim_start"), QStringList({"Shift+[", "Shift+Q"}));
+    CHECK_EQ(in("trim_end"), QStringList({"Shift+]", "Shift+W"}));
+    CHECK_EQ(in("split_alt"), QStringList({"Ctrl+\\", "Shift+B"}));
+    // A file of version 3: the new second keys come in where the slot is empty and the key is free
+    {
+        QFile f(b.filePath());
+        if (CHECK(f.open(QIODevice::WriteOnly)))
+            f.write(R"({"version": 3, "shortcuts": {"trim_start": "Shift+[", "trim_end": ["Shift+]", "E"],
+                        "split_alt": "Ctrl+\\", "add_marker": "Shift+B"}})");
+    }
+    b.load();
+    CHECK_EQ(in("trim_start"), QStringList({"Shift+[", "Shift+Q"}));
+    CHECK_EQ(in("trim_end"), QStringList({"Shift+]", "E"})); // the user's own second key stays
+    CHECK_EQ(in("split_alt"), QStringList({"Ctrl+\\", ""}));  // Shift+B is the user's marker key
+    CHECK(b.action("trim_start")->shortcuts().contains(QKeySequence("Shift+Q")));
+    b.applyPreset("standard");
 }
 
 // The table row of an action in the key dialog
@@ -614,6 +660,7 @@ int main(int argc, char** argv)
         testImport();
         testKysContexts();
         testDuplicates();
+        testLayoutNeutralKeys();
         testTrainer(w);
     }
     testLanguages(engine);

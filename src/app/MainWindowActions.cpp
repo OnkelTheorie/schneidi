@@ -305,12 +305,26 @@ void MainWindow::buildActions()
         QSettings().setValue("edit/splitOnSelectedTracks", on);
     });
     QMenu* trimMenu = timeline->addMenu(T("Teilen, Trimmen und Verschieben"));
-    makeAction(trimMenu, "split_alt", T("Clip teilen (alternativ)"), QKeySequence("Ctrl+\\"),
-               [this, tv] { m_editor->splitAtPlayhead(tv->playhead()); });
-    makeAction(trimMenu, "trim_start", T("Anfang bis zum Abspielkopf trimmen"), QKeySequence("Shift+["),
-               [this, tv] { m_editor->trimToPlayhead(TimelineOps::Edge::Start, tv->playhead()); });
-    makeAction(trimMenu, "trim_end", T("Ende bis zum Abspielkopf trimmen"), QKeySequence("Shift+]"),
-               [this, tv] { m_editor->trimToPlayhead(TimelineOps::Edge::End, tv->playhead()); });
+    // Second keys every keyboard layout can type: Shift+[ / Shift+] and Ctrl+\ need AltGr on German, French, Nordic
+    // and most other layouts (InputBindings::secondKeysAdded() gives them to older key files too)
+    const auto secondKey = [](QAction* a, const QKeySequence& key2) {
+        InputBindings& b = InputBindings::instance();
+        for (const InputBindings::Entry& e : b.entries())
+            if (e.action == a) {
+                const InputBindings::Entry entry = e;
+                b.registerAction(a, entry.id, entry.category, entry.defaultKey, entry.scope, key2);
+                return;
+            }
+    };
+    secondKey(makeAction(trimMenu, "split_alt", T("Clip teilen (alternativ)"), QKeySequence("Ctrl+\\"),
+                         [this, tv] { m_editor->splitAtPlayhead(tv->playhead()); }),
+              QKeySequence("Shift+B"));
+    secondKey(makeAction(trimMenu, "trim_start", T("Anfang bis zum Abspielkopf trimmen"), QKeySequence("Shift+["),
+                         [this, tv] { m_editor->trimToPlayhead(TimelineOps::Edge::Start, tv->playhead()); }),
+              QKeySequence("Shift+Q"));
+    secondKey(makeAction(trimMenu, "trim_end", T("Ende bis zum Abspielkopf trimmen"), QKeySequence("Shift+]"),
+                         [this, tv] { m_editor->trimToPlayhead(TimelineOps::Edge::End, tv->playhead()); }),
+              QKeySequence("Shift+W"));
     // Selected edit point (V): , and . trim it. Otherwise trim mode and slip tool: slip the selection (like DaVinci),
     // slide tool: slide it, otherwise move
     makeAction(trimMenu, "select_edit_point", T("Nächsten Schnittpunkt auswählen"), QKeySequence("V"),
