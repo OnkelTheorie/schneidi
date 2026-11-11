@@ -25,6 +25,9 @@ DefaultDirName={autopf}\schneidi
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 PrivilegesRequiredOverridesAllowed=dialog
+; An update keeps the kind of the installation found (only for me / for all users) without asking: choosing the other
+; kind would leave a second schneidi in "Installed apps"
+UsePreviousPrivileges=yes
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 MinVersion=10.0
@@ -35,25 +38,73 @@ UninstallDisplayIcon={app}\schneidi.exe
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
+; No language picker: the Windows UI language decides, English if Inno has no translation for it
+ShowLanguageDialog=no
 ChangesAssociations=yes
 ; Läuft schneidi noch, bietet der Installer an, es zu schließen
 CloseApplications=yes
 
 [Languages]
-Name: "de"; MessagesFile: "compiler:Languages\German.isl"
+; Setup follows the Windows UI language (LanguageDetectionMethod=uilanguage, no language dialog). English comes first:
+; Inno uses the first entry when no listed language matches. Then the official Inno Setup translations of the languages
+; schneidi's UI has (Chinese, Hindi, Indonesian have none). Each only if the compiler has the file, so an older Inno
+; Setup still builds the installer.
 Name: "en"; MessagesFile: "compiler:Default.isl"
+#if FileExists(AddBackslash(CompilerPath) + "Languages\German.isl")
+Name: "de"; MessagesFile: "compiler:Languages\German.isl"
+#endif
+#if FileExists(AddBackslash(CompilerPath) + "Languages\Ukrainian.isl")
+Name: "uk"; MessagesFile: "compiler:Languages\Ukrainian.isl"
+#endif
+#if FileExists(AddBackslash(CompilerPath) + "Languages\Russian.isl")
+Name: "ru"; MessagesFile: "compiler:Languages\Russian.isl"
+#endif
+#if FileExists(AddBackslash(CompilerPath) + "Languages\Polish.isl")
+Name: "pl"; MessagesFile: "compiler:Languages\Polish.isl"
+#endif
+#if FileExists(AddBackslash(CompilerPath) + "Languages\French.isl")
+Name: "fr"; MessagesFile: "compiler:Languages\French.isl"
+#endif
+#if FileExists(AddBackslash(CompilerPath) + "Languages\Spanish.isl")
+Name: "es"; MessagesFile: "compiler:Languages\Spanish.isl"
+#endif
+#if FileExists(AddBackslash(CompilerPath) + "Languages\Italian.isl")
+Name: "it"; MessagesFile: "compiler:Languages\Italian.isl"
+#endif
+#if FileExists(AddBackslash(CompilerPath) + "Languages\Dutch.isl")
+Name: "nl"; MessagesFile: "compiler:Languages\Dutch.isl"
+#endif
+#if FileExists(AddBackslash(CompilerPath) + "Languages\Turkish.isl")
+Name: "tr"; MessagesFile: "compiler:Languages\Turkish.isl"
+#endif
+#if FileExists(AddBackslash(CompilerPath) + "Languages\Japanese.isl")
+Name: "ja"; MessagesFile: "compiler:Languages\Japanese.isl"
+#endif
+#if FileExists(AddBackslash(CompilerPath) + "Languages\Korean.isl")
+Name: "ko"; MessagesFile: "compiler:Languages\Korean.isl"
+#endif
+#if FileExists(AddBackslash(CompilerPath) + "Languages\BrazilianPortuguese.isl")
+Name: "ptBR"; MessagesFile: "compiler:Languages\BrazilianPortuguese.isl"
+#endif
 
 [CustomMessages]
+; Unprefixed = English default for every language without its own text (only German has one so far)
 de.AssocProjects=.schneidi-Projekte mit schneidi öffnen
-en.AssocProjects=Open .schneidi projects with schneidi
+AssocProjects=Open .schneidi projects with schneidi
 de.ProjectFile=schneidi-Projekt
-en.ProjectFile=schneidi project
+ProjectFile=schneidi project
 de.ExtraComponents=Zusätzliche Komponenten (optional – schneidi funktioniert auch ohne):
-en.ExtraComponents=Additional components (optional – schneidi works without them):
+ExtraComponents=Additional components (optional – schneidi works without them):
 de.EncoderExtension=Bessere Export-Qualität ohne Grafikkarte (x264/x265, GPL-Lizenz, etwa 90 MB Download)
-en.EncoderExtension=Better export quality without a graphics card (x264/x265, GPL license, about 90 MB download)
+EncoderExtension=Better export quality without a graphics card (x264/x265, GPL license, about 90 MB download)
 de.EncoderDownload=Lade x264/x265 herunter …
-en.EncoderDownload=Downloading x264/x265 …
+EncoderDownload=Downloading x264/x265 …
+de.UpdateFrom=schneidi %1 ist installiert und wird auf %2 aktualisiert. Einstellungen, Projekte und Erweiterungen bleiben erhalten.
+UpdateFrom=schneidi %1 is installed and will be updated to %2. Settings, projects and extensions are kept.
+de.Reinstall=schneidi %1 ist bereits installiert und wird neu installiert. Einstellungen, Projekte und Erweiterungen bleiben erhalten.
+Reinstall=schneidi %1 is already installed and will be installed again. Settings, projects and extensions are kept.
+de.Downgrade=Achtung: Installiert ist die neuere Version schneidi %1. Sie wird durch die ältere Version %2 ersetzt.
+Downgrade=Note: the newer version schneidi %1 is installed. It will be replaced by the older version %2.
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
@@ -96,3 +147,108 @@ Root: HKA; Subkey: "Software\Classes\schneidi.Project\shell\open\command"; Value
 Filename: "{app}\schneidi-cli.exe"; Parameters: "extensions --install x264"; StatusMsg: "{cm:EncoderDownload}"; Flags: runasoriginaluser runhidden waituntilterminated; Tasks: x264
 #endif
 Filename: "{app}\schneidi.exe"; Description: "{cm:LaunchProgram,schneidi}"; Flags: nowait postinstall skipifsilent
+
+[Code]
+const
+  UninstallKey = 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{6FDE4DB7-7D85-4887-A4C7-FE24396BF20A}_is1';
+
+var
+  InstalledVersion: String; // DisplayVersion of the installation found, empty = none
+  ReadyGeometryKnown: Boolean; // the Ready page's original label height and memo position are saved below
+  ReadyLabelHeight, ReadyMemoTop, ReadyMemoBottom: Integer;
+
+// The installed version: the current mode's entry first (HKCU for "only for me", HKLM for "all users"), then the
+// other one (an update in the other mode still says what is there)
+function FindInstalledVersion(): String;
+begin
+  Result := '';
+  if IsAdminInstallMode() then begin
+    if not RegQueryStringValue(HKLM64, UninstallKey, 'DisplayVersion', Result) then
+      if not RegQueryStringValue(HKLM32, UninstallKey, 'DisplayVersion', Result) then
+        RegQueryStringValue(HKCU, UninstallKey, 'DisplayVersion', Result);
+  end else begin
+    if not RegQueryStringValue(HKCU, UninstallKey, 'DisplayVersion', Result) then
+      if not RegQueryStringValue(HKLM64, UninstallKey, 'DisplayVersion', Result) then
+        RegQueryStringValue(HKLM32, UninstallKey, 'DisplayVersion', Result);
+  end;
+end;
+
+// Next number of a dotted version ("0.20.1"), 0 when none is left; Rest loses it
+function NextPart(var Rest: String): Integer;
+var
+  Dot: Integer;
+begin
+  Dot := Pos('.', Rest);
+  if Dot = 0 then begin
+    Result := StrToIntDef(Rest, 0);
+    Rest := '';
+  end else begin
+    Result := StrToIntDef(Copy(Rest, 1, Dot - 1), 0);
+    Rest := Copy(Rest, Dot + 1, Length(Rest));
+  end;
+end;
+
+// -1: A older than B, 0: same, 1: newer (three parts, missing ones count 0)
+function CompareVersions(A, B: String): Integer;
+var
+  I, X, Y: Integer;
+begin
+  Result := 0;
+  for I := 1 to 3 do begin
+    X := NextPart(A);
+    Y := NextPart(B);
+    if X < Y then begin
+      Result := -1;
+      Exit;
+    end;
+    if X > Y then begin
+      Result := 1;
+      Exit;
+    end;
+  end;
+end;
+
+// The sentence for the "Ready to install" page (and the log); empty for a fresh installation
+function UpdateText(): String;
+begin
+  Result := '';
+  if InstalledVersion = '' then Exit;
+  case CompareVersions(InstalledVersion, '{#Version}') of
+    -1: Result := FmtMessage(CustomMessage('UpdateFrom'), [InstalledVersion, '{#Version}']);
+    0: Result := FmtMessage(CustomMessage('Reinstall'), [InstalledVersion]);
+    1: Result := FmtMessage(CustomMessage('Downgrade'), [InstalledVersion, '{#Version}']);
+  end;
+end;
+
+function InitializeSetup(): Boolean;
+begin
+  InstalledVersion := FindInstalledVersion();
+  if InstalledVersion = '' then Log('schneidi: no installation found')
+  else Log('schneidi: ' + UpdateText());
+  Result := True;
+end;
+
+// Setup sets the Ready label's text again on every visit of the page (Back and Next again), so the sentence goes in
+// each time; the label and memo geometry is taken from the first visit, so repeated visits do not shift it further
+procedure CurPageChanged(CurPageID: Integer);
+var
+  Text: String;
+  Delta: Integer;
+begin
+  if (CurPageID <> wpReady) or (InstalledVersion = '') then Exit;
+  if not ReadyGeometryKnown then begin
+    ReadyLabelHeight := WizardForm.ReadyLabel.Height;
+    ReadyMemoTop := WizardForm.ReadyMemo.Top;
+    ReadyMemoBottom := WizardForm.ReadyMemo.Top + WizardForm.ReadyMemo.Height;
+    ReadyGeometryKnown := True;
+  end;
+  Text := UpdateText();
+  if Pos(Text, WizardForm.ReadyLabel.Caption) <> 1 then
+    WizardForm.ReadyLabel.Caption := Text + #13#10#13#10 + WizardForm.ReadyLabel.Caption;
+  // The label is only as high as the original two lines: grow it to the new text and move the memo below down,
+  // otherwise "Click Install to continue ..." disappears behind the memo
+  WizardForm.ReadyLabel.Height := ReadyLabelHeight;
+  Delta := WizardForm.AdjustLabelHeight(WizardForm.ReadyLabel);
+  WizardForm.ReadyMemo.Top := ReadyMemoTop + Delta;
+  WizardForm.ReadyMemo.Height := ReadyMemoBottom - WizardForm.ReadyMemo.Top;
+end;
