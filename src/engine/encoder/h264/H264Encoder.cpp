@@ -88,6 +88,42 @@ int chromaQp(int qp)
     return qp < 30 ? qp : kTable[qp - 30];
 }
 
+// Intra 4x4 / 8x8 direction search: all nine modes in order, or (experiment H264_EXP & 64) DC,
+// vertical, horizontal and the predicted mode first, then only the directions next to the best
+// one (angular order HU - H - HD - DDR - VR - V - VL - DDL). tryMode(mode) returns its cost.
+template <class F>
+void intraModeSearch(F&& tryMode, int predMode)
+{
+    if (!(gExp & 64)) {
+        for (int mode = 0; mode < 9; ++mode)
+            tryMode(mode);
+        return;
+    }
+    int cost[9];
+    std::fill(cost, cost + 9, 1 << 30);
+    for (int mode : {2, 0, 1})
+        cost[mode] = tryMode(mode);
+    if (predMode > 2)
+        cost[predMode] = tryMode(predMode);
+    auto test = [&](int mode) {
+        if (cost[mode] == (1 << 30) && mode != predMode)
+            cost[mode] = tryMode(mode);
+    };
+    if (cost[0] <= cost[1] && cost[0] <= cost[2]) { // vertical: its neighbours, then one further
+        test(5);
+        test(7);
+        test(cost[5] < cost[7] ? 4 : 3);
+    } else if (cost[1] <= cost[2]) { // horizontal
+        test(6);
+        test(8);
+        if (cost[6] < cost[1])
+            test(4);
+    } else { // DC: the two diagonals
+        test(3);
+        test(4);
+    }
+}
+
 inline uint8_t clip1(int v) { return uint8_t(v < 0 ? 0 : v > 255 ? 255 : v); }
 
 // One step of a spin wait: a pause for the hyperthread sibling, then let others run.
@@ -1860,12 +1896,12 @@ bool FrameCoder::encodeLuma4(MbOut& o, int mbx, int mby, const ChromaMb& ch)
 
         uint8_t pred[16], cand[16];
         int bestMode = 2, bestCost = 1 << 30;
-        for (int mode = 0; mode < 9; ++mode) {
+        auto tryMode = [&](int mode) {
             const bool needsTop = mode == 0 || mode == 3 || mode == 7;
             const bool needsLeft = mode == 1 || mode == 8;
             const bool needsBoth = mode >= 4 && mode <= 6;
             if ((needsTop && !top) || (needsLeft && !left) || (needsBoth && !(top && left)))
-                continue;
+                return 1 << 30;
             predict4x4(mode, T, L, left, top, cand);
             const int cost = satdU8(&srcY_[size_t(py) * padW_ + px], padW_, cand, 4) + lambda * (mode == predMode ? 1 : 4);
             if (cost < bestCost) {
@@ -1873,7 +1909,9 @@ bool FrameCoder::encodeLuma4(MbOut& o, int mbx, int mby, const ChromaMb& ch)
                 bestMode = mode;
                 std::memcpy(pred, cand, 16);
             }
-        }
+            return cost;
+        };
+        intraModeSearch(tryMode, predMode);
         modes[blkIdx] = bestMode;
         modes4x4_[size_t(by) * lw + bx] = int8_t(bestMode);
 
@@ -2267,12 +2305,12 @@ bool FrameCoder::encodeLuma8(MbOut& o, int mbx, int mby, const ChromaMb& ch)
 
         uint8_t pred[64], cand[64];
         int bestMode = 2, bestCost = 1 << 30;
-        for (int mode = 0; mode < 9; ++mode) {
+        auto tryMode = [&](int mode) {
             const bool needsTop = mode == 0 || mode == 3 || mode == 7;
             const bool needsLeft = mode == 1 || mode == 8;
             const bool needsBoth = mode >= 4 && mode <= 6;
             if ((needsTop && !top) || (needsLeft && !left) || (needsBoth && !corner))
-                continue;
+                return 1 << 30;
             predict8x8(mode, T, L, left, top, cand);
             int cost = lambda * (mode == predMode ? 1 : 4);
             for (int k = 0; k < 2; ++k)
@@ -2282,7 +2320,9 @@ bool FrameCoder::encodeLuma8(MbOut& o, int mbx, int mby, const ChromaMb& ch)
                 bestMode = mode;
                 std::memcpy(pred, cand, 64);
             }
-        }
+            return cost;
+        };
+        intraModeSearch(tryMode, predMode);
 
         int res[64], levels[64];
         for (int y = 0; y < 8; ++y)
