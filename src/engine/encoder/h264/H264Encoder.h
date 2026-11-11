@@ -24,6 +24,14 @@ enum class IntraMode {
     Auto,    // per macroblock the cheaper of Intra16 and Intra4 (rate-distortion)
 };
 
+// Result of the first pass (FirstPass): per picture the lookahead costs of the whole clip, so the
+// rate control can pick one QP for the target bitrate instead of guessing from what it has seen.
+struct FirstPassStats {
+    std::vector<double> intraSum, interSum; // per picture, like LookaheadFrame
+    std::vector<uint8_t> sceneChange, forceKeyframe;
+    size_t size() const { return intraSum.size(); }
+};
+
 struct EncoderConfig {
     int width = 0;  // even
     int height = 0; // even
@@ -43,6 +51,9 @@ struct EncoderConfig {
     int lookahead = 40;       // pictures analysed ahead for the rate control and the macroblock tree (0 = none)
     bool mbtree = true;       // macroblock tree: finer QP where later pictures reference a block (needs lookahead)
     double mbtreeStrength = 2.0;
+    // Bitrate mode with a first pass over the whole clip (FirstPass): one QP for the clip, only a
+    // small correction while encoding. The pictures must come in the same order as analysed.
+    std::shared_ptr<const FirstPassStats> firstPass;
 };
 
 struct Picture {
@@ -51,6 +62,23 @@ struct Picture {
     const uint8_t* v = nullptr;
     int strideY = 0;
     int strideC = 0;
+};
+
+// Cheap first pass for the bitrate mode: the half-resolution lookahead analysis of every
+// picture of the clip (a few ms per 1080p picture), without encoding anything.
+class FirstPass {
+public:
+    FirstPass(int width, int height);
+    ~FirstPass();
+    void add(const Picture& picture, bool forceKeyframe = false);
+    std::shared_ptr<const FirstPassStats> stats() const { return stats_; }
+
+private:
+    int width_, height_;
+    std::unique_ptr<Lookahead> la_;
+    LookaheadFrame prev_;
+    bool havePrev_ = false;
+    std::shared_ptr<FirstPassStats> stats_;
 };
 
 class Encoder {
@@ -216,6 +244,10 @@ private:
     double rcKSum_[2] = {0, 0}, rcCostSum_[2] = {0, 0}; // [0] I, [1] P
     double rcNeedSeen_ = 0; // predicted bits at QP 0 of the pictures coded so far
     int rcFramesSeen_ = 0;
+    // First-pass rate control: predicted keyframes and the costs of the pictures not coded yet.
+    std::vector<uint8_t> tpKey_;
+    double tpRemI_ = 0, tpRemP_ = 0;
+    double twoPassQp(double kI, double kP) const;
     double frameCost(const LookaheadFrame& f, bool intra) const;
 };
 

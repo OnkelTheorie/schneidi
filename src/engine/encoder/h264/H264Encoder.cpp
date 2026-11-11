@@ -457,6 +457,42 @@ Picture pictureOf(const LookaheadFrame& f, int w)
 
 } // namespace
 
+FirstPass::FirstPass(int width, int height)
+    : width_(width), height_(height), la_(std::make_unique<Lookahead>(width, height, (width + 15) / 16, (height + 15) / 16)),
+      stats_(std::make_shared<FirstPassStats>())
+{
+}
+
+FirstPass::~FirstPass() = default;
+
+void FirstPass::add(const Picture& pic, bool forceKeyframe)
+{
+    LookaheadFrame f; // the analysis reads only the luma
+    f.y.resize(size_t(width_) * height_);
+    for (int y = 0; y < height_; ++y)
+        std::memcpy(f.y.data() + size_t(y) * width_, pic.y + size_t(y) * pic.strideY, size_t(width_));
+    la_->analyse(f, havePrev_ ? &prev_ : nullptr);
+    stats_->intraSum.push_back(f.intraSum);
+    stats_->interSum.push_back(f.interSum);
+    stats_->sceneChange.push_back(f.sceneChange ? 1 : 0);
+    stats_->forceKeyframe.push_back(forceKeyframe ? 1 : 0);
+    f.y = {};
+    prev_ = std::move(f);
+    havePrev_ = true;
+}
+
+// QP for the P pictures at which the pictures not coded yet (first-pass costs, k per picture type
+// from the pictures coded so far) spend exactly the bits that are left of the clip's budget.
+double Encoder::twoPassQp(double kI, double kP) const
+{
+    const FirstPassStats& st = *cfg_.firstPass;
+    const double perFrame = cfg_.bitrateKbps * 1000.0 / cfg_.fps;
+    const double left = double(st.size()) - frameIndex_;
+    const double budget = std::max(double(st.size()) * perFrame - rcBits_, 0.5 * left * perFrame);
+    const double need = kI * tpRemI_ * std::exp2(0.5) + kP * tpRemP_;
+    return 6.0 * std::log2(std::max(1.0, need) / budget);
+}
+
 int Encoder::delay() const { return useLookahead() ? std::max(0, cfg_.lookahead - 1) : 0; }
 
 Encoder::~Encoder() { joinPending(); }
@@ -620,7 +656,30 @@ std::vector<uint8_t> Encoder::encodeFrame(LookaheadFrame& frame)
             return need;
         };
         const bool windowOnly = std::getenv("H264_RC_WINDOW") != nullptr;
+        // First pass: the whole clip's costs are known, one QP for all of it.
+        const bool twoPass = cfg_.firstPass && size_t(frameIndex_) < cfg_.firstPass->size();
+        if (twoPass && frameIndex_ == 0) {
+            // Keyframes as the encoder will place them (schedule, caller, scene cuts).
+            const FirstPassStats& st = *cfg_.firstPass;
+            tpKey_.assign(st.size(), 0);
+            tpRemI_ = tpRemP_ = 0;
+            int since = 0;
+            for (size_t i = 0; i < st.size(); ++i) {
+                const bool key = i == 0 || since >= cfg_.gop || st.forceKeyframe[i] || (cfg_.sceneCut && st.sceneChange[i] && since >= 6);
+                if (key)
+                    since = 0;
+                ++since;
+                tpKey_[i] = key;
+                (key ? tpRemI_ : tpRemP_) += key ? st.intraSum[i] : st.interSum[i];
+            }
+        }
         auto steadyQp = [&] {
+            if (twoPass) {
+                for (const LookaheadFrame& g : queue_)
+                    if (&g == &frame)
+                        costUsed = g.keyframe ? g.intraSum : g.interSum;
+                return twoPassQp(kOf(true), kOf(false));
+            }
             int count;
             const double need = windowNeed(count);
             const double all = windowOnly ? need : need + rcNeedSeen_;
@@ -670,8 +729,22 @@ std::vector<uint8_t> Encoder::encodeFrame(LookaheadFrame& frame)
         if (std::getenv("H264_RC_TRACE"))
             std::fprintf(stderr, "rc: frame %d overflow %.2f kI %.3f kP %.3f cost %.0f (intra %.0f inter %.0f) qp %.2f\n",
                          frameIndex_, overflow, kOf(true), kOf(false), costUsed, frame.intraSum, frame.interSum, qp);
-        if (rcQp_ > 0)
+        if (twoPass) {
+            // The QP stays put; the model's k settles over the first pictures (the probe misses
+            // by up to 2x, so up to 2 QP per picture then) and the leftover budget corrects
+            // slowly (at most half a QP per picture).
+            qp = twoPassQp(kOf(true), kOf(false));
+            const double step = rcFramesSeen_ < 12 ? 2.0 : 0.5;
+            if (rcQp_ > 0)
+                qp = std::clamp(qp, rcQp_ - step, rcQp_ + step);
+            const FirstPassStats& st = *cfg_.firstPass;
+            const size_t i = size_t(frameIndex_);
+            (tpKey_[i] ? tpRemI_ : tpRemP_) -= tpKey_[i] ? st.intraSum[i] : st.interSum[i];
+            if (std::getenv("H264_RC_TRACE"))
+                std::fprintf(stderr, "rc2: frame %d kI %.3f kP %.3f qp %.2f\n", frameIndex_, kOf(true), kOf(false), qp);
+        } else if (rcQp_ > 0) {
             qp = std::clamp(qp, rcQp_ - 3.0, rcQp_ + 3.0);
+        }
         rcQp_ = std::clamp(qp, 10.0, 51.0);
         cfg_.qp = std::clamp(int(std::lround(idr ? qp - 3 : qp)), 10, 51);
         rcNeedSeen_ += kOf(idr) * costUsed * (idr ? std::exp2(0.5) : 1.0);

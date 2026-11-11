@@ -2,7 +2,8 @@
 //   h264-proto selftest
 //   h264-proto encode <in.yuv> <width> <height> <out.h264> [--qp N] [--mode pcm|i16|i4|auto]
 //                     [--frames N] [--gop N] [--threads N] [--bitrate kbps] [--effort 0|1] [--aq strength] [--refs N] [--cavlc] [--no-t8] [--no-deblock]
-//                     [--lookahead N] [--no-mbtree] [--mbtree-strength S] [--recon out.yuv]
+//                     [--lookahead N] [--no-mbtree] [--mbtree-strength S] [--2pass] [--recon out.yuv]
+// --2pass (with --bitrate): analyse the whole input first (lookahead only), then one QP for the clip.
 // Input is raw yuv420p ("-" reads stdin). Prints size, speed and PSNR of the encoder's reconstruction.
 #include "engine/encoder/h264/Cavlc.h"
 #include "engine/encoder/h264/H264Encoder.h"
@@ -50,6 +51,7 @@ int main(int argc, char** argv)
     const char* outPath = argv[5];
     int maxFrames = 1 << 30;
     const char* reconPath = nullptr;
+    bool twoPass = false;
     for (int i = 6; i < argc; ++i) {
         const std::string a = argv[i];
         if (a == "--qp" && i + 1 < argc)
@@ -89,6 +91,8 @@ int main(int argc, char** argv)
             cfg.cabac = false;
         else if (a == "--no-deblock")
             cfg.deblock = false;
+        else if (a == "--2pass")
+            twoPass = true;
         else if (a == "--recon" && i + 1 < argc)
             reconPath = argv[++i];
     }
@@ -101,13 +105,27 @@ int main(int argc, char** argv)
         return 1;
     }
 
+    const int w = cfg.width, h = cfg.height, cw = w / 2, ch = h / 2;
+    std::vector<uint8_t> frame(size_t(w) * h * 3 / 2);
+    double firstPassSeconds = 0;
+    if (twoPass && in != stdin) {
+        const auto t0 = std::chrono::steady_clock::now();
+        FirstPass fp(w, h);
+        for (int n = 0; n < maxFrames && std::fread(frame.data(), 1, frame.size(), in) == frame.size(); ++n) {
+            Picture pic;
+            pic.y = frame.data();
+            pic.strideY = w;
+            fp.add(pic);
+        }
+        cfg.firstPass = fp.stats();
+        std::rewind(in);
+        firstPassSeconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+    }
     Encoder enc(cfg);
     const auto hdr = enc.headers();
     std::fwrite(hdr.data(), 1, hdr.size(), out);
     size_t totalBytes = hdr.size();
 
-    const int w = cfg.width, h = cfg.height, cw = w / 2, ch = h / 2;
-    std::vector<uint8_t> frame(size_t(w) * h * 3 / 2);
     int frames = 0, fed = 0;
     double psnrY = 0, psnrU = 0, psnrV = 0, seconds = 0;
     // The encoder may hold pictures back (lookahead): PSNR against the source picture that came out.
@@ -168,6 +186,8 @@ int main(int argc, char** argv)
         std::fprintf(stderr, "no frames read\n");
         return 1;
     }
+    if (cfg.firstPass)
+        std::printf("first pass %.2f s (%.1f ms/frame)  ", firstPassSeconds, firstPassSeconds * 1000.0 / frames);
     std::printf("last qp %d  ", enc.lastQp());
     std::printf("frames %d  bytes %zu (%.1f KB/frame)  %.2f fps  PSNR Y %.2f U %.2f V %.2f\n", frames, totalBytes,
                 totalBytes / 1024.0 / frames, frames / seconds, psnrY / frames, psnrU / frames, psnrV / frames);

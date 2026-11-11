@@ -233,6 +233,20 @@ int main()
         if (std::abs(kbps - 1000.0) >= 250.0)
             std::fprintf(stderr, "rate control: %.0f kbit/s instead of 1000\n", kbps);
         CHECK(std::abs(kbps - 1000.0) < 250.0);
+        // The same with a first pass over the whole clip (one QP for all of it)
+        FirstPass fp(c.width, c.height);
+        for (int t = 0; t < 60; ++t) {
+            const Yuv src = synthFrame(c.width, c.height, t);
+            fp.add(Picture{src.y.data(), src.u.data(), src.v.data(), src.w, src.w / 2});
+        }
+        c.firstPass = fp.stats();
+        CHECK(c.firstPass->size() == 60);
+        bytes = 0;
+        CHECK(roundTrip(c, 60, &bytes));
+        const double kbps2 = bytes * 8.0 / 2.0 / 1000.0;
+        if (std::abs(kbps2 - 1000.0) >= 250.0)
+            std::fprintf(stderr, "rate control with first pass: %.0f kbit/s instead of 1000\n", kbps2);
+        CHECK(std::abs(kbps2 - 1000.0) < 250.0);
     }
     }
     return Check::result();
