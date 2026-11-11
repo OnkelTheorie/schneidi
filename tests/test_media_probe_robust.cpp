@@ -79,6 +79,18 @@ int main(int argc, char** argv)
         }
     }
 
+    // 2b. Only a cover picture beside sound that cannot be played: nothing to import (the cover is a picture only with
+    // sound)
+    if (CHECK(!Check::makeMedia(in("cover.png"), QStringList{"-f", "lavfi", "-i", "testsrc2=size=64x64", "-frames:v", "1"})
+                   .isEmpty())
+        && CHECK(!Check::makeMedia(in("song.mkv"), a + QStringList{"-c:a", "aac", "-attach", in("cover.png"),
+                                                                   "-metadata:s:t", "mimetype=image/png"})
+                      .isEmpty())
+        && CHECK(patched(in("song.mkv"), in("cover_unknown_sound.mkv"), "A_AAC", "A_QQQ"))) {
+        CHECK(MediaProbe::read(in("song.mkv"), rate).has_value());
+        CHECK(!MediaProbe::read(in("cover_unknown_sound.mkv"), rate).has_value());
+    }
+
     // 3. MPEG-TS whose sound starts 12 s in (a broadcast recording, a camera that adds sound late): the stream
     // analysis (5 s) ends before its first packet, its channels stay unknown. Analysed further, the sound is found.
     if (CHECK(!Check::makeMedia(in("late_sound.ts"),
