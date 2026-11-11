@@ -1602,7 +1602,6 @@
  "Nicht ausgeführte Effekte bleiben im Projekt; im Inspektor kannst du sie später erlauben.": "Effects that are not run stay in the project; you can allow them later in the Inspector.",
  "Nicht gelöscht: %1": "Not deleted: %1",
  "Nicht im Preset (Seite Farbe bzw. Plugin fehlt): %1": "Not in the preset (Color page or plugin missing): %1",
- "Nicht lesbar:": "Could not read:",
  "Nicht mehr fragen": "Don't ask again",
  "Nicht mehr gültig: ein anderes Projekt wurde geöffnet.": "No longer valid: another project was opened.",
  "Nicht mehr nach Updates suchen (wieder einschalten: Einstellungen › Allgemein)": "Stop looking for updates (turn it back on: Settings › General)",
@@ -2983,5 +2982,9 @@
  "Proxy fehlgeschlagen: %1": "Proxy failed: %1",
  "%1 Proxys fehlgeschlagen": "%1 proxies failed",
  "Proxy fehlgeschlagen: %1 – Details unten rechts": "Proxy failed: %1 – details at the bottom right",
- "Meldung schließen": "Dismiss"
+ "Meldung schließen": "Dismiss",
+ "Die Datei ist beschädigt oder enthält nichts, was schneidi abspielen kann. Die Details nennen den Grund.": "The file is damaged or holds nothing schneidi can play. The details say why.",
+ "Die Datei wird vielleicht noch geschrieben (Aufnahme, Download, Kopie) oder ist von einem anderen Programm gesperrt. Erneut versuchen?": "The file may still be being written (recording, download, copy) or is locked by another program. Try again?",
+ "schneidi konnte in %1 kein Bild und keinen Ton finden.": "schneidi found no picture and no sound in %1.",
+ "schneidi konnte in diesen Dateien kein Bild und keinen Ton finden:": "schneidi found no picture and no sound in these files:"
 }

@@ -562,9 +562,7 @@ void MainWindow::importFiles(const QStringList& paths, bool placeOnTimeline, boo
 
 MediaInfo MainWindow::probeCached(const QString& path)
 {
-    auto it = m_probeCache.find(path);
-    if (it == m_probeCache.end()) it = m_probeCache.insert(path, m_engine->probe(path));
-    return *it;
+    return m_probeCache.get(path, [this](const QString& p) { return m_engine->probe(p); });
 }
 
 void MainWindow::onDrop(const QStringList& paths, int frame, int track, PlaceParts parts)
@@ -688,8 +686,8 @@ void MainWindow::previewFile(const QString& path)
     }
     const MediaInfo& before = m_editor->previewSource();
     MediaInfo info;
-    const auto cached = m_probeCache.constFind(path);
-    if (cached != m_probeCache.cend()) {
+    const std::optional<MediaInfo> cached = m_probeCache.find(path);
+    if (cached) {
         info = *cached;
     } else {
         info.path = path;
@@ -703,14 +701,14 @@ void MainWindow::previewFile(const QString& path)
     m_editor->setPreviewSource(info);
     m_engine->pause();
     m_engine->showSource(path, m_sourcePos.value(path, 0));
-    if (cached != m_probeCache.cend()) return;
+    if (cached) return;
     // Probing opens the file once more (mostly ~1 ms, other containers up to ~0.5 s): in the
     // background, the window stays usable
     QThreadPool::globalInstance()->start([guard = QPointer<MainWindow>(this), format = m_project->format(), path] {
         const MediaInfo probed = Engine::probe(format, path);
         QMetaObject::invokeMethod(qApp, [guard, format, probed] {
             if (!guard || guard->m_project->format() != format) return; // lengths count in another frame rate now
-            guard->m_probeCache.insert(probed.path, probed);
+            guard->m_probeCache.insert(probed); // a file not readable (yet) is probed again next time
             const MediaInfo& shown = guard->m_editor->previewSource();
             if (shown.path != probed.path) return; // another file meanwhile, or imported
             MediaInfo info = probed;

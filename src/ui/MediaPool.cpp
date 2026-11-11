@@ -14,6 +14,7 @@
 #include "engine/Engine.h"
 #include "engine/GradedThumbs.h"
 #include "engine/MediaIndex.h"
+#include "engine/MediaProbe.h"
 #include "engine/ProxyManager.h"
 #include "ui/FileManager.h"
 #include "ui/HoverScrub.h"
@@ -41,6 +42,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QMap>
 #include <QMenu>
 #include <QMessageBox>
 #include <QMimeData>
@@ -655,7 +657,7 @@ void MediaPool::importDialog()
     importFiles(files);
 }
 
-QStringList MediaPool::addFiles(const QStringList& paths, int bin)
+QVector<MediaPool::Unreadable> MediaPool::addFiles(const QStringList& paths, int bin)
 {
     // Probing opens every file (~1 ms from the header, other containers up to ~0.5 s) – side
     // by side in threads, otherwise the window stood still for seconds when importing a dozen stills. Added in the
@@ -672,10 +674,10 @@ QStringList MediaPool::addFiles(const QStringList& paths, int bin)
             pool.start([out, &format, &paths, i] { out[i] = Engine::probe(format, paths[i]); });
         pool.waitForDone();
     }
-    QStringList failed;
+    QVector<Unreadable> failed;
     for (MediaInfo& info : infos) {
         if (info.length <= 0 || (!info.hasVideo && !info.hasAudio)) {
-            failed << info.name;
+            failed << Unreadable{info.path, bin};
             continue;
         }
         info.bin = bin;
@@ -695,9 +697,42 @@ void MediaPool::importFiles(const QStringList& paths)
     }
     if (!subtitles.isEmpty()) emit subtitleFilesImported(subtitles);
     if (files.isEmpty()) return;
-    const QStringList failed = addFiles(files, m_currentBin); // like DaVinci: import lands in the selected bin
-    if (!failed.isEmpty())
-        QMessageBox::warning(this, T("Import"), T("Nicht lesbar:") + "\n" + failed.join('\n'));
+    reportUnreadable(addFiles(files, m_currentBin)); // import lands in the selected bin
+}
+
+void MediaPool::reportUnreadable(QVector<Unreadable> failed)
+{
+    while (!failed.isEmpty()) {
+        QStringList names, reasons;
+        bool busy = false;
+        for (const Unreadable& u : failed) {
+            names << QFileInfo(u.path).fileName();
+            reasons << QDir::toNativeSeparators(u.path) + ": " + MediaProbe::whyUnreadable(u.path);
+            busy = busy || MediaProbe::mayBeBusy(u.path);
+        }
+        QMessageBox box(QMessageBox::Warning, T("Import"),
+                        failed.size() == 1 ? T("schneidi konnte in %1 kein Bild und keinen Ton finden.").arg(names.first())
+                                           : T("schneidi konnte in diesen Dateien kein Bild und keinen Ton finden:") + "\n"
+                                                 + names.join('\n'),
+                        QMessageBox::NoButton, this);
+        box.setInformativeText(busy ? T("Die Datei wird vielleicht noch geschrieben (Aufnahme, Download, Kopie) oder ist von "
+                                        "einem anderen Programm gesperrt. Erneut versuchen?")
+                                    : T("Die Datei ist beschädigt oder enthält nichts, was schneidi abspielen kann. Die "
+                                        "Details nennen den Grund."));
+        box.setDetailedText(reasons.join('\n'));
+        QPushButton* retry = box.addButton(T("Erneut versuchen"), QMessageBox::AcceptRole);
+        QPushButton* close = box.addButton(QMessageBox::Close);
+        box.setDefaultButton(busy ? retry : close);
+        box.exec();
+        if (box.clickedButton() != retry) return;
+        // Each into the bin it was meant for, as files of that bin together
+        QVector<Unreadable> still;
+        QMap<int, QStringList> byBin;
+        for (const Unreadable& u : failed) byBin[u.bin] << u.path;
+        for (auto it = byBin.cbegin(); it != byBin.cend(); ++it)
+            still << addFiles(it.value(), it.key() == 0 || m_project->bin(it.key()) ? it.key() : m_currentBin); // a bin left empty went
+        failed = std::move(still);
+    }
 }
 
 namespace {
@@ -717,17 +752,16 @@ bool containsMedia(const QString& dir, int depth)
 void MediaPool::importFolder(const QString& dir)
 {
     if (!containsMedia(dir, 0)) return; // otherwise an empty undo step would remain and the project would count as modified
-    QStringList failed;
+    QVector<Unreadable> failed;
     QUndoStack* undo = m_project->undoStack();
     undo->beginMacro(T("Ordner importieren"));
     importFolderInto(dir, m_currentBin, 0, &failed);
     undo->endMacro();
-    if (!failed.isEmpty())
-        QMessageBox::warning(this, T("Import"), T("Nicht lesbar:") + "\n" + failed.join('\n'));
+    reportUnreadable(failed);
 }
 
 // Only creates the bin if there is media in the folder (or below); returns whether anything was imported
-bool MediaPool::importFolderInto(const QString& dir, int parentBin, int depth, QStringList* failed)
+bool MediaPool::importFolderInto(const QString& dir, int parentBin, int depth, QVector<Unreadable>* failed)
 {
     if (depth > 8) return false; // protection against very deep trees
     const QDir d(dir);
@@ -741,7 +775,7 @@ bool MediaPool::importFolderInto(const QString& dir, int parentBin, int depth, Q
     const int bin = m_project->addBin(parentBin, d.dirName());
     bool any = false;
     if (!files.isEmpty()) {
-        const QStringList bad = addFiles(files, bin);
+        const QVector<Unreadable> bad = addFiles(files, bin);
         *failed << bad;
         any = bad.size() < files.size();
     }

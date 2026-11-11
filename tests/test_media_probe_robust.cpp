@@ -4,6 +4,9 @@
 // - one sound stream the probe could not settle refused the whole file: a stream without a decoder here (an unknown
 //   codec, a codec the slim package's FFmpeg lacks), or one whose values the stream analysis did not find (an MPEG-TS
 //   whose sound starts after the analysed first seconds: 0 channels). The reader only needs the picture stream.
+// - the app kept every probe result of a file not in the Media Pool by path for the whole session (drop preview on the
+//   timeline, Viewer of a Media Storage file): one probed while being written or held by another program stayed
+//   "no picture, no sound", its drop refused (ProbeCache: usable results only, dropped when the file changes)
 // - why such a file is unreadable says when it may only be for now (written a moment ago: still being written, copied
 //   or scanned)
 
@@ -11,6 +14,7 @@
 
 #include "engine/Engine.h"
 #include "engine/MediaProbe.h"
+#include "engine/ProbeCache.h"
 #include "engine/video/Thumbnails.h"
 
 #include <QCoreApplication>
@@ -104,6 +108,45 @@ int main(int argc, char** argv)
         old.close();
         CHECK(!MediaProbe::mayBeBusy(in("fresh.mp4")));
         CHECK(!MediaProbe::mayBeBusy(in("missing.mp4")));
+    }
+
+    // 5. The probe cache keeps only results the timeline can place, and only while the file stays the same
+    {
+        const QString path = in("cached.mp4");
+        QFile f(path);
+        CHECK(f.open(QIODevice::WriteOnly) && f.write("x") == 1);
+        f.close();
+        ProbeCache cache;
+        int probes = 0;
+        bool readable = false;
+        const auto probe = [&](const QString& p) {
+            ++probes;
+            MediaInfo m;
+            m.path = p;
+            if (readable) {
+                m.length = 100;
+                m.hasVideo = true;
+            }
+            return m;
+        };
+        CHECK(!ProbeCache::usable(cache.get(path, probe))); // still being written: nothing found
+        CHECK(!cache.contains(path));
+        readable = true;
+        CHECK(ProbeCache::usable(cache.get(path, probe))); // asked again, found now
+        CHECK_EQ(probes, 2);
+        cache.get(path, probe);
+        CHECK_EQ(probes, 2); // kept
+        // Overwritten (another size): probed again
+        CHECK(f.open(QIODevice::Append) && f.write("more") == 4);
+        f.close();
+        cache.get(path, probe);
+        CHECK_EQ(probes, 3);
+        // A result that turns unusable replaces the kept one
+        readable = false;
+        MediaInfo none;
+        none.path = path;
+        cache.insert(none);
+        CHECK(!cache.find(path).has_value());
     }
 
     return Check::result();

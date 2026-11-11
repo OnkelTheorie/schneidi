@@ -11,6 +11,7 @@
 
 #include <QElapsedTimer>
 #include "engine/PreviewResolution.h"
+#include "engine/ProbeCache.h"
 #include "ui/SecondScreen.h"
 #include "ui/timeline/ViewState.h"
 
@@ -545,7 +546,7 @@ private:
         QVector<QMetaObject::Connection> watches; // splitterMoved of `sizes`
     } m_viewerAway;
 
-    QHash<QString, MediaInfo> m_probeCache;
+    ProbeCache m_probeCache; // files not in the Media Pool: drop preview, Viewer (usable results while unchanged)
     QHash<QString, int> m_sourcePos; // source playhead per file (this session only)
     QHash<int, int> m_sequencePos;   // playhead per timeline/compound clip (this session only)
     QHash<int, ViewState> m_sequenceView; // zoom/scroll per timeline/compound clip (saved in the project: views)

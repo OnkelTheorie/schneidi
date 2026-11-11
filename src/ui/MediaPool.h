@@ -158,8 +158,15 @@ private:
     void showContextMenu(const QPoint& pos);
     void showBinMenu(const QPoint& pos);
     void removeBin(int id); // with confirmation if clips are inside
-    QStringList addFiles(const QStringList& paths, int bin); // returns the unreadable file names
-    bool importFolderInto(const QString& dir, int parentBin, int depth, QStringList* failed);
+    struct Unreadable {
+        QString path;
+        int bin = 0;
+    };
+    QVector<Unreadable> addFiles(const QStringList& paths, int bin); // returns the unreadable files
+    bool importFolderInto(const QString& dir, int parentBin, int depth, QVector<Unreadable>* failed);
+    // Says which files could not be read and why, offering to try again (a file still being written or held by
+    // another program reads a moment later); tried again until they read or the user stops
+    void reportUnreadable(QVector<Unreadable> failed);
     void updateItem(const QString& path);
     // Thumbnail in a worker thread (opens the file and decodes up to a third of it: blocked the window per clip)
     void requestThumb(const QString& path, int frame);
