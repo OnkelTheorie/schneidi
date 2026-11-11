@@ -353,7 +353,9 @@ int main(int argc, char** argv)
     {
         CHECK_EQ(Timecode::parse("00:00:59;29", 30, true), 1799);
         CHECK_EQ(Timecode::parse("00:01:00;02", 30, true), 1800);
-        CHECK_EQ(Timecode::parse("00:01:00;00", 30, true), -1); // a label that does not exist
+        CHECK_EQ(Timecode::parse("00:01:00;00", 30, true), 1800); // a skipped label: the next one that exists
+        CHECK_EQ(Timecode::parse("01;00;00;00", 30, true), 107892); // all separators ';'
+        CHECK_EQ(Timecode::parse("99999999:00:00;00", 30, true), -1); // out of range, no overflow
         CHECK_EQ(Timecode::parse("00:10:00;00", 30, true), 17982);
         CHECK_EQ(Timecode::parse("01:00:00;00", 30, true), 107892);
         CHECK_EQ(Timecode::parse("01:00:00;00", 60, true), 215784);
@@ -393,6 +395,34 @@ int main(int argc, char** argv)
         Seq d3 = read(colons, Format::Edl, ntsc);
         CHECK(d3.dropFrame);
         if (CHECK(!d3.video.isEmpty() && d3.video[0].items.size() == 2)) CHECK_EQ(d3.video[0].items[1].start, 17982);
+        // Mixed (Premiere/Avid): "FCM: DROP FRAME", drop-frame record times, non-drop source times of a non-drop
+        // camera - each label as written; the camera's own non-drop start timecode then gives the right frame
+        const QByteArray mixed = "TITLE: mixed\nFCM: DROP FRAME\n\n"
+                                 "001  AX       V     C        01:00:10:00 01:00:11:00 01:00:00;00 01:00:01;00\n"
+                                 "* SOURCE FILE: /media/a.mp4\n"
+                                 "002  AX       V     C        01:10:00:00 01:10:01:00 01:10:00;00 01:10:01;00\n"
+                                 "* SOURCE FILE: /media/a.mp4\n";
+        Seq mx = read(mixed, Format::Edl, ntsc);
+        CHECK(!mx.dropFrame); // the source times are non-drop
+        if (CHECK(!mx.video.isEmpty() && mx.video[0].items.size() == 2)) {
+            CHECK_EQ(mx.video[0].items[1].start, 17982); // record side drop frame
+            CHECK_EQ(mx.video[0].items[0].length, 30);
+        }
+        Seq mx2 = mx;
+        applyStartTimecodes(mx2, [](const QString&) { return QString("01:00:00:00"); });
+        if (CHECK(!mx2.video.isEmpty() && mx2.video[0].items.size() == 2)) {
+            CHECK_EQ(mx2.video[0].items[0].in, 300);
+            CHECK_EQ(mx2.video[0].items[1].in, 18000);
+        }
+        // … and without the file's timecode the non-drop hour is taken off
+        applyStartTimecodes(mx, {}, [](const QString&) { return 10; });
+        if (CHECK(!mx.video.isEmpty() && !mx.video[0].items.isEmpty())) CHECK_EQ(mx.video[0].items[0].in, 300);
+        // A frame part beyond the rate: read as 0 with a warning, never a negative start
+        Seq bad = read("FCM: DROP FRAME\n001  AX       V     C        01:00:00;45 01:00:01;00 01:00:00;00 01:00:01;00\n"
+                       "* SOURCE FILE: /media/a.mp4\n", Format::Edl, ntsc);
+        CHECK(bad.warnings.join(" ").contains("Bildrate"));
+        if (CHECK(!bad.video.isEmpty() && !bad.video[0].items.isEmpty())) CHECK(bad.video[0].items[0].start >= 0);
+
         // The same EDL read at 30 fps (no drop frame there): ';' only separates, nothing is dropped
         Seq d4 = read(dfEdl, Format::Edl, FrameRate{30, 1});
         CHECK(!d4.dropFrame);

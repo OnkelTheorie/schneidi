@@ -25,13 +25,14 @@ inline bool isDropFrameRate(int num, int den) { return den == 1001 && (num == 30
 
 // Frame number of a drop-frame label at `timebase` 30 or 60: the labels ;00 and ;01 (;00-;03 at 60) are skipped at
 // the start of every minute except each tenth, so the count keeps up with real time (1 h = 107892 frames at 29.97,
-// non-drop would say 108000 - 3.6 s too much). -1 = a label that does not exist (00:01:00;00) or out of range.
+// non-drop would say 108000 - 3.6 s too much). A skipped label (00:01:00;00, written by sloppy tools) counts as the
+// next one that exists; -1 = out of range.
 inline long long dropFrameNumber(long long h, long long m, long long s, long long f, int timebase)
 {
     if (timebase != 30 && timebase != 60) return -1;
     const int drop = timebase / 15; // 2 or 4
-    if (h < 0 || m < 0 || m >= 60 || s < 0 || s >= 60 || f < 0 || f >= timebase) return -1;
-    if (s == 0 && f < drop && m % 10 != 0) return -1;
+    if (h < 0 || h > 100000 || m < 0 || m >= 60 || s < 0 || s >= 60 || f < 0 || f >= timebase) return -1;
+    if (s == 0 && f < drop && m % 10 != 0) f = drop;
     const long long minutes = h * 60 + m;
     return ((h * 3600 + m * 60 + s) * timebase + f) - drop * (minutes - minutes / 10);
 }
@@ -51,7 +52,8 @@ inline int parse(const QString& text, int fps, bool dropFrame = false)
 {
     QString t = text.trimmed();
     if (t.isEmpty() || fps <= 0) return -1;
-    if (dropFrame && t.count(';') == 1 && t.count(':') == 2 && t.indexOf(';') > t.lastIndexOf(':')) {
+    if (dropFrame && t.lastIndexOf(';') > t.lastIndexOf(':') && t.lastIndexOf(';') > t.lastIndexOf('.')
+        && QString(t).replace(';', ':').count(':') == 3) { // "HH:MM:SS;FF" or "HH;MM;SS;FF"
         const QStringList p = QString(t).replace(';', ':').split(':');
         long long v[4];
         for (int i = 0; i < 4; ++i) {
