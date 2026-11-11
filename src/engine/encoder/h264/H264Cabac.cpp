@@ -5,6 +5,7 @@
 #include "H264Encoder.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdlib>
 
 namespace schneidi::h264 {
@@ -443,6 +444,14 @@ void cabacTrellis(const CabacEncoder& ce, int cat, const double* x, const double
                   int cbfInc, int* out)
 {
     constexpr int kEmpty = 8;
+    // Coefficients after the last one that reaches half a level can only become 0: they leave
+    // every path in the "nothing coded yet" node at no cost, so the search starts at that one.
+    int end = count;
+    while (end > 0 && std::abs(x[end - 1]) < 0.5)
+        --end;
+    std::fill(out + end, out + count, 0);
+    if (end == 0)
+        return;
     const bool cat5 = cat == 5;
     const int absBase = cat5 ? 426 : 227 + kAbsOffset[cat];
     auto sigCtx = [&](int k) { return cat5 ? 402 + kSig8[k] : 105 + kSigOffset[cat] + k; };
@@ -479,7 +488,7 @@ void cabacTrellis(const CabacEncoder& ce, int cat, const double* x, const double
     std::fill(cost, cost + 9, 1e300);
     cost[kEmpty] = 0;
     const double l256 = lambda / 256.0;
-    for (int k = count - 1; k >= 0; --k) {
+    for (int k = end - 1; k >= 0; --k) {
         const double ax = std::abs(x[k]);
         int cand[3] = {0, 0, 0}, nc = 1;
         if (ax >= 0.5) {
@@ -527,7 +536,7 @@ void cabacTrellis(const CabacEncoder& ce, int cat, const double* x, const double
             best = n;
         }
     }
-    for (int k = 0, n = best; k < count; ++k) {
+    for (int k = 0, n = best; k < end; ++k) {
         const int mag = mags[k][n];
         out[k] = x[k] < 0 ? -mag : mag;
         n = from[k][n];

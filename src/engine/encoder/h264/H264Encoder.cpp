@@ -1357,7 +1357,7 @@ void quantize8x8(const int* residual, int qp, double offset, int* levels, double
                 s += B.b[j][x] * residual[y * 8 + x];
             tmp[y * 8 + j] = s;
         }
-    const double step2 = std::pow(2.0, qp / 6);
+    const double step2 = double(1 << (qp / 6));
     for (int i = 0; i < 8; ++i)
         for (int j = 0; j < 8; ++j) {
             double w = 0;
@@ -1886,16 +1886,23 @@ bool Encoder::encodeMbP(MbOut& result, int mbx, int mby)
                 double real[64];
                 quantize8x8(res, qp, 1.0 / 6.0, levels8[b8], real);
                 if (live && cfg_.effort > 0) {
-                    const Basis8& B = basis8();
-                    double xs[64], sc[64];
-                    for (int s = 0; s < 64; ++s) {
-                        const int r = kZigzag8[s];
-                        xs[s] = real[r];
-                        sc[s] = kDequantV8[qpMod][posClass8(r)] * std::pow(2.0, qpDiv - 2) *
-                                std::sqrt(B.norm[r >> 3] * B.norm[r & 7]) / 64.0;
-                    }
+                    // Pixel error per level unit, by QP and scan position (computed once).
+                    static const auto kScale8 = [] {
+                        std::array<std::array<double, 64>, 52> t{};
+                        const Basis8& B = basis8();
+                        for (int q = 0; q < 52; ++q)
+                            for (int s = 0; s < 64; ++s) {
+                                const int r = kZigzag8[s];
+                                t[size_t(q)][size_t(s)] = kDequantV8[q % 6][posClass8(r)] * std::pow(2.0, q / 6 - 2) *
+                                                          std::sqrt(B.norm[r >> 3] * B.norm[r & 7]) / 64.0;
+                            }
+                        return t;
+                    }();
+                    double xs[64];
+                    for (int s = 0; s < 64; ++s)
+                        xs[s] = real[kZigzag8[s]];
                     int scanLv[64];
-                    cabacTrellis(*live, 5, xs, sc, 64, lambda, 0, scanLv);
+                    cabacTrellis(*live, 5, xs, kScale8[size_t(qp)].data(), 64, lambda, 0, scanLv);
                     for (int s = 0; s < 64; ++s)
                         levels8[b8][kZigzag8[s]] = std::clamp(scanLv[s], -kMaxLevel, kMaxLevel);
                 }
@@ -1929,15 +1936,24 @@ bool Encoder::encodeMbP(MbOut& result, int mbx, int mby)
             const CabacEncoder* live = cabacByTop_[size_t(sliceTopOfRow_[size_t(mby)])];
             if (cfg_.effort > 0 && live) {
                 // Trellis with CABAC costs on real-valued levels.
-                double xs[16], sc[16];
-                static constexpr double kNorm4[4] = {4.0, 2.5, 4.0, 2.5};
+                static const auto kScale4 = [] {
+                    std::array<std::array<double, 16>, 52> t{};
+                    static constexpr double kNorm4[4] = {4.0, 2.5, 4.0, 2.5};
+                    for (int q = 0; q < 52; ++q)
+                        for (int s = 0; s < 16; ++s) {
+                            const int r = kZigzag[s];
+                            t[size_t(q)][size_t(s)] = kDequantV[q % 6][posClass(r)] * double(1 << (q / 6)) *
+                                                      std::sqrt(kNorm4[r >> 2] * kNorm4[r & 3]) / 64.0;
+                        }
+                    return t;
+                }();
+                double xs[16];
                 for (int s = 0; s < 16; ++s) {
                     const int r = kZigzag[s];
                     xs[s] = double(coef[r]) * kQuantMf[qpMod][posClass(r)] / double(1 << qbits);
-                    sc[s] = kDequantV[qpMod][posClass(r)] * double(1 << qpDiv) * std::sqrt(kNorm4[r >> 2] * kNorm4[r & 3]) / 64.0;
                 }
                 int scanLv[16];
-                cabacTrellis(*live, 2, xs, sc, 16, lambda, 1, scanLv);
+                cabacTrellis(*live, 2, xs, kScale4[size_t(qp)].data(), 16, lambda, 1, scanLv);
                 for (int s = 0; s < 16; ++s)
                     levels[blkIdx][kZigzag[s]] = std::clamp(scanLv[s], -kMaxLevel, kMaxLevel);
             } else if (cfg_.effort > 0) {
