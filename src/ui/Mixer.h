@@ -26,6 +26,9 @@ public:
     // Voice-over: "R" per track arms it, the record button in the title row asks to start/stop (recordRequested /
     // stopRequested: the main window starts it, it shows messages), the input level shows while recording
     void setRecorder(VoiceoverRecorder* recorder);
+    // All channel strips at their natural width + master + loudness meter: the width the mixer needs (its column is
+    // made this wide, MainWindow::updateRightColumn)
+    int naturalWidth() const;
 
 signals:
     void recordRequested();
@@ -62,6 +65,7 @@ private:
     QTimer* m_timer = nullptr;
     QElapsedTimer m_clock, m_lastLevels;
     VoiceoverRecorder* m_recorder = nullptr;
+    QWidget* m_titleRow = nullptr; // title, voice-over level and buttons
     QToolButton* m_record = nullptr;
     QToolButton* m_cleanVoice = nullptr; // "Stimme säubern" on the armed (or target) audio track
     InputMeter* m_inputMeter = nullptr;

@@ -264,9 +264,14 @@ private:
     void updatePageButtons(); // hidden pages' buttons go, the current page's button always stays
     void updateLeftColumn(); // show the left column only if Media Pool or Effects is on
     void updateRightColumn(); // the Inspector above the Mixer in their own column while the Mixer is on
+    int rightColumnWidth() const; // what that column needs: the mixer's strips at natural width, the Inspector usable
+    // Sets that column's splitter to `sizes`, its column at rightColumnWidth(): exact = always (defaults), else only
+    // when it is much wider (a saved width)
+    void fitRightColumn(QList<int> sizes, bool exact);
     // Panel sizes per page are remembered (settings layout/<splitter>); defaults when nothing is saved yet
     void watchSizes(QSplitter* s, const QString& name);
     void applySizes(QSplitter* s, const QList<int>& defaults);
+    QList<int> sizesFor(QSplitter* s, const QList<int>& defaults); // what applySizes sets (saved, else defaults)
     // A panel just switched on that its splitter still holds at size 0 (sizes restored while it was hidden collapse
     // it): an equal share of the room, taken from the others
     static void uncollapse(QWidget* panel);

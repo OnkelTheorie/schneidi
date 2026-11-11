@@ -56,7 +56,10 @@ void testBottomRow(Engine& engine, const QString& lang, const QString& font)
     if (!CHECK(bar && text)) return;
     // One line high: a page button's text plus its padding and mark, not two lines and a status bar below
     const int line = bar->fontMetrics().height();
-    Check::report(bar->height() <= line + 16, "page bar one compact line", __FILE__, __LINE__,
+    // One line high, a comfortable click target (about 34-40 px with the normal font), not two lines and a status bar
+    Check::report(bar->height() <= line + 26, "page bar one compact line", __FILE__, __LINE__,
+                  QString("%1: %2 px for a %3 px line").arg(where).arg(bar->height()).arg(line));
+    Check::report(bar->height() >= std::max(34, line + 14), "page bar tall enough to click", __FILE__, __LINE__,
                   QString("%1: %2 px for a %3 px line").arg(where).arg(bar->height()).arg(line));
     CHECK(w.statusBar()->isHidden());
     // Nothing below it: the bar ends at the window's bottom
@@ -72,6 +75,8 @@ void testBottomRow(Engine& engine, const QString& lang, const QString& font)
                       __FILE__, __LINE__, QString("%1: %2 %3x%4, needs %5x%6").arg(where, id).arg(b->width())
                           .arg(b->height()).arg(b->sizeHint().width()).arg(b->sizeHint().height()));
         CHECK(!b->text().contains('\n')); // icon and name on one line
+        Check::report(b->height() >= bar->height() - 2, "page button as tall as the bar", __FILE__, __LINE__,
+                      QString("%1: %2 px of %3").arg(where).arg(b->height()).arg(bar->height()));
         const QRect r(b->mapTo(bar, QPoint(0, 0)), b->size());
         if (!last.isNull()) CHECK(r.left() > last.right());
         last = r;
