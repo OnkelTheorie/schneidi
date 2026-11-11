@@ -713,3 +713,11 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
 endif()
 find_package(Threads REQUIRED)
 target_link_libraries(h264-proto PRIVATE Threads::Threads)
+if(MINGW)
+    # The encoder's AVX2 kernels keep __m256i on the stack; MinGW GCC does not align the stack to 32 bytes (GCC PR
+    # 54412), so aligned spills could crash: the assembler turns aligned vector moves into unaligned ones. Applies to
+    # every target that compiles these files (h264-proto, schneidi_lib, tests).
+    set_property(SOURCE src/engine/encoder/h264/H264Encoder.cpp src/engine/encoder/h264/Lookahead.cpp
+                        src/engine/encoder/h264/H264Cabac.cpp src/engine/encoder/h264/Cavlc.cpp
+                 APPEND PROPERTY COMPILE_OPTIONS "-Wa,-muse-unaligned-vector-move")
+endif()

@@ -1489,10 +1489,14 @@ std::vector<uint8_t> FrameCoder::code(bool idr, int framesSinceIdr, int idrCount
                 waveRow(r);
             }
         };
-        runOnThreads(threads, worker); // rows catch their own failures
+        try {
+            runOnThreads(threads, worker); // rows catch their own failures
+        } catch (...) {
+            waveFail(); // the writer thread must still end (a joinable std::thread terminates)
+        }
         if (threads == 1)
             waveWriteGuarded();
-        waveEnd();
+        waveEnd(); // joins the writer
         rethrowWaveError();
     } else {
         // Slices only look at macroblocks of their own slice, so they run in parallel.

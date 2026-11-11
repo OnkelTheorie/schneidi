@@ -48,7 +48,9 @@ private:
 };
 
 // Runs fn on `threads` threads (the calling one included), joins them all, then rethrows the
-// first exception any of them threw. fn must not wait for work another thread may abandon.
+// first exception fn threw on any of them (a thread that cannot be started is no failure: fn
+// must take its work from a shared counter, so the started threads do it). fn must not wait for
+// work another thread may abandon.
 template <class F>
 void runOnThreads(int threads, F&& fn)
 {
@@ -64,8 +66,7 @@ void runOnThreads(int threads, F&& fn)
     try {
         for (int t = 1; t < threads; ++t)
             workers.emplace_back(run);
-    } catch (...) { // no thread: the ones there (and this one) do the work
-        errors.capture();
+    } catch (...) { // no further thread: the ones there (and this one) do all the work, nothing failed
     }
     run();
     for (auto& t : workers)
