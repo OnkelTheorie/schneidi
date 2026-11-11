@@ -332,7 +332,9 @@ const QHash<QString, QString>& kysCommands()
 // Premiere's key code (<virtualkey>, the same on Windows and macOS; not a Windows virtual key) -> key name.
 // Characters (letters, digits, punctuation): 0x80000000 + the character; the number pad: 0xC0000000 + its character;
 // every other key a small number of Premiere's own (Space 1, Backspace 2, Tab 3, Return 4, number pad Enter 5,
-// F1-F24 7-30, Del 35, Home 36, End 37, PgUp 38, PgDown 39, arrows 42-45). Empty = a key schneidi cannot name
+// F1-F24 7-30, Del 35, Home 36, End 37, PgUp 38, PgDown 39, arrows 42-45). Empty = a key schneidi cannot name.
+// Not in any source seen: codes for Esc and Ins, and whether Premiere writes characters beyond ASCII (ü, ß on
+// another keyboard layout) the same way - those are left out rather than guessed
 QString premiereKeyName(quint32 code)
 {
     if (code & 0x80000000u) {
@@ -747,7 +749,8 @@ InputBindings::KysResult InputBindings::readKys(const QByteArray& xml)
                 itemDepth = -1;
                 const QString command = item.value("commandname", item.value("command")).toLower();
                 bool numeric = false;
-                const quint32 code = item.value("virtualkey").toUInt(&numeric);
+                // Premiere writes the code unsigned (2147483719); signed (-2147483577) is the same 32 bits
+                const quint32 code = quint32(item.value("virtualkey").toLongLong(&numeric) & 0xFFFFFFFF);
                 QString key = item.contains("virtualkey") ? (numeric ? premiereKeyName(code) : QString()) : item.value("key");
                 if (command.isEmpty() || key.isEmpty()) {
                     --depth;

@@ -61,7 +61,7 @@ void testReadKys()
     CHECK(!r.keys.contains("find"));
 
     // Premiere's key codes: characters with the top bit, the number pad with the next one, other keys by number
-    const auto key = [](quint32 code, const char* mods = "") {
+    const auto key = [](qint64 code, const char* mods = "") {
         const QString item = QString("<item.0 Version=\"1\"><commandname>cmd.edit.undo</commandname>%1"
                                      "<virtualkey>%2</virtualkey></item.0>")
                                  .arg(QString::fromLatin1(mods))
@@ -74,6 +74,8 @@ void testReadKys()
         return r.keys.value("undo").value(0);
     };
     CHECK_EQ(key(0x80000047), QString("G"));
+    CHECK_EQ(key(qint64(qint32(0x80000047))), QString("G")); // the same code written as a signed number
+    CHECK_EQ(key(qint64(qint32(0xC000002B))), QString("+"));
     CHECK_EQ(key(0x80000035, "<modifier.shift>true</modifier.shift>"), QString("Shift+5"));
     CHECK_EQ(key(0x8000002C), QString(","));
     CHECK_EQ(key(0x80000060), QString("`"));
