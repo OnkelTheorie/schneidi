@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // schneidi's own H.264 encoder as the experimental export format "h264_own": never the default, in no preset; a short
 // synthetic timeline into MP4 and MKV (ffprobe sees H.264, frame count, duration, frame rate, decodes without errors,
-// PSNR against the source, a key frame at the cut); the bit rate mode (two passes) lands within 10 % of its target;
+// PSNR against the source, a key frame at the cut, BT.709 limited range in the SPS's VUI and the container, the level
+// from levelIdcFor); the bit rate mode (two passes) lands within 10 % of its target;
 // 10-bit output is refused before starting; a cancel leaves no file behind. Checked with ffprobe/ffmpeg.
 
 #include "check.h"
@@ -10,6 +11,7 @@
 #include "engine/ExportWriter.h"
 #include "engine/Exporter.h"
 #include "engine/HardwareEncoders.h"
+#include "engine/encoder/h264/H264Encoder.h"
 #include "engine/RenderQueue.h"
 
 #include <QApplication>
@@ -18,6 +20,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QMap>
 #include <QRegularExpression>
 #include <QTemporaryDir>
 #include <QTimer>
@@ -120,6 +123,37 @@ QVector<int> keyFrames(const QString& path)
     return keys;
 }
 
+// Fields of the first SPS as FFmpeg's trace_headers reads them from the bitstream (not the container's tags), e.g.
+// "level_idc", "colour_primaries", "video_full_range_flag"; -1 = not present
+QMap<QString, int> spsFields(const QString& path)
+{
+    QProcess p;
+    p.start("ffmpeg", {"-nostdin", "-v", "info", "-i", path, "-map", "0:v:0", "-frames:v", "1", "-c:v", "copy", "-bsf:v",
+                       "trace_headers", "-f", "null", "-"});
+    p.waitForFinished(60000);
+    QMap<QString, int> fields;
+    const QString log = QString::fromUtf8(p.readAllStandardError());
+    // Lines like "[trace_headers @ 0x..] 24          level_idc                                  00011110 = 30"
+    static const QRegularExpression line(R"(^\[trace_headers[^\]]*\]\s+\d+\s+(\w+)\s+[01]+\s+=\s+(-?\d+)\s*$)",
+                                         QRegularExpression::MultilineOption);
+    for (auto it = line.globalMatch(log); it.hasNext();) {
+        const QRegularExpressionMatch m = it.next();
+        if (!fields.contains(m.captured(1))) fields[m.captured(1)] = m.captured(2).toInt();
+    }
+    return fields;
+}
+
+// The level the encoder picks for this export (640x360, 25 fps, defaults otherwise)
+int expectedLevel(int bitrateKbps)
+{
+    schneidi::h264::EncoderConfig c;
+    c.width = kFmt.width;
+    c.height = kFmt.height;
+    c.fps = 25;
+    c.bitrateKbps = bitrateKbps;
+    return schneidi::h264::levelIdcFor(c);
+}
+
 // Decoder messages (empty = decodes cleanly)
 QString decodeErrors(const QString& path)
 {
@@ -180,6 +214,20 @@ void testContainers(const QString& dir)
         const QVector<int> keys = keyFrames(path);
         CHECK(keys.contains(0));
         if (!CHECK(keys.contains(40))) qDebug() << name << "key frames" << keys;
+        // Colour tags as the libx264 path writes them (the export's BT.709, limited range): container ...
+        CHECK_EQ(v.value("color_space").toString(), QString("bt709"));
+        CHECK_EQ(v.value("color_primaries").toString(), QString("bt709"));
+        CHECK_EQ(v.value("color_transfer").toString(), QString("bt709"));
+        CHECK_EQ(v.value("color_range").toString(), QString("tv"));
+        CHECK_EQ(v.value("profile").toString(), QString("High"));
+        // ... and the bitstream itself (VUI of the SPS), with the level from levelIdcFor
+        const QMap<QString, int> sps = spsFields(path);
+        if (!CHECK_EQ(sps.value("level_idc", -1), expectedLevel(0))) qDebug() << name << sps;
+        CHECK_EQ(v.value("level").toInt(), expectedLevel(0));
+        CHECK_EQ(sps.value("colour_primaries", -1), 1);
+        CHECK_EQ(sps.value("transfer_characteristics", -1), 1);
+        CHECK_EQ(sps.value("matrix_coefficients", -1), 1);
+        CHECK_EQ(sps.value("video_full_range_flag", -1), 0);
     }
     CHECK_EQ(Exporter::cutFrames(timeline(g_media, 40), 0, kFrames, {25, 1}, {25, 1}), QVector<int>{40});
     CHECK_EQ(Exporter::cutFrames(timeline(g_media, 40), 0, kFrames, {25, 1}, {50, 1}), QVector<int>{80});
@@ -199,6 +247,9 @@ void testBitrate(const QString& dir)
     const double kbit = QFileInfo(path).size() * 8.0 / 1000 / (kFrames / 25.0);
     if (!CHECK(std::abs(kbit / 1500 - 1) < 0.10)) std::printf("       %.0f kbit/s for 1500\n", kbit);
     CHECK(decodeErrors(path).isEmpty());
+    // The level covers the bit rate (levelIdcFor: 1.5x the target as the peak)
+    CHECK_EQ(spsFields(path).value("level_idc", -1), expectedLevel(1500));
+    CHECK_EQ(v.value("level").toInt(), expectedLevel(1500));
 }
 
 void testRefused(const QString& dir)

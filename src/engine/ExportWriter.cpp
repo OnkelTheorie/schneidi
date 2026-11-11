@@ -331,6 +331,7 @@ struct ExportWriter::Impl {
     std::atomic<int> analysed{0}; // pictures of the first pass
     std::unique_ptr<schneidi::h264::Encoder> ownEnc; // encode thread
     int64_t ownPackets = 0;
+    int ownThreads() const { return s.threads > 0 ? s.threads : std::max(1, int(std::thread::hardware_concurrency())); }
     bool ownKeyAt(int64_t i) const { return i >= 0 && i < int64_t(ownKey.size()) && ownKey[size_t(i)]; }
     static schneidi::h264::Picture ownPicture(const AVFrame* f)
     {
@@ -640,7 +641,7 @@ struct ExportWriter::Impl {
     bool ownFirstPass()
     {
         try {
-            schneidi::h264::FirstPass pass(width, height);
+            schneidi::h264::FirstPass pass(width, height, ownThreads()); // (batches side by side, same numbers)
             pump->run(0, s.length);
             for (int i = 0; i < s.length && !stop; ++i) {
                 AVFrame* f = pump->take(i);
@@ -1063,12 +1064,21 @@ struct ExportWriter::Impl {
         c.qp = ownQp;
         // Key frame at least every 250 pictures (x264's default), cuts and scene changes in between
         c.gop = 250;
-        c.threads = s.threads > 0 ? s.threads : std::max(1, int(std::thread::hardware_concurrency()));
+        c.threads = ownThreads();
         c.fps = fps;
         if (ownBitrateK > 0) {
             c.bitrateKbps = ownBitrateK;
             c.firstPass = ownStats;
         }
+        // The colour tags exactly as an FFmpeg encoder gets them (newVideoEncoder): the VUI of the SPS and the stream's
+        // parameters below say the same (AVColor* values are the H.273 codes the VUI carries)
+        const AVColorSpace matrix = matrixOf(colorspace, height);
+        const AVColorTransferCharacteristic trc = transferOf(colorspace);
+        const AVColorPrimaries primaries = primariesOf(colorspace, height);
+        c.colourPrimaries = int(primaries);
+        c.transferCharacteristics = int(trc);
+        c.matrixCoefficients = int(matrix);
+        c.fullRange = target.fullRange;
         std::vector<uint8_t> header;
         try {
             ownEnc = std::make_unique<schneidi::h264::Encoder>(c);
@@ -1084,18 +1094,18 @@ struct ExportWriter::Impl {
         par->width = width;
         par->height = height;
         par->format = AV_PIX_FMT_YUV420P;
-        par->color_space = matrixOf(colorspace, height);
-        par->color_trc = transferOf(colorspace);
-        par->color_primaries = primariesOf(colorspace, height);
-        par->color_range = AVCOL_RANGE_MPEG;
+        par->color_space = matrix;
+        par->color_trc = trc;
+        par->color_primaries = primaries;
+        par->color_range = c.fullRange ? AVCOL_RANGE_JPEG : AVCOL_RANGE_MPEG;
         par->field_order = AV_FIELD_PROGRESSIVE;
         par->sample_aspect_ratio = aspect;
         par->video_delay = 0; // no B-frames: decode order = picture order
-        // Profile and level from the SPS (after its start code and NAL header)
-        for (size_t i = 0; i + 6 < header.size(); ++i)
+        // Level as the encoder writes it into the SPS; the profile from the SPS (after its start code and NAL header)
+        par->level = schneidi::h264::levelIdcFor(c);
+        for (size_t i = 0; i + 4 < header.size(); ++i)
             if (header[i] == 0 && header[i + 1] == 0 && header[i + 2] == 1 && (header[i + 3] & 0x1f) == 7) {
                 par->profile = header[i + 4];
-                par->level = header[i + 6];
                 break;
             }
         av_freep(&par->extradata);
