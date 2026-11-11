@@ -3,6 +3,8 @@
 // image sequence, SRT next to it), a disk full or write error midway is reported as a failure (not as "export
 // finished" with a cut-off file), an image sequence replaces an older one completely (a shorter one leaves no higher
 // numbers behind), and an odd project size is exported at the nearest even size (4:2:0 encoders refuse odd sizes).
+// An export that cannot go on (no memory for the sound, a video decoder lost for good) fails saying so instead of
+// hanging; a cancel while preparing returns at once; the x264/x265 intermediate of a killed render is removed later.
 
 #include "check.h"
 
@@ -161,14 +163,21 @@ void testStaleParts(const QString& root)
     QDir().mkpath(dir);
     const QString stale = dir + "/out.deadbeef.part.mp4", fresh = dir + "/out.cafe0123.part.mp4",
                   other = dir + "/other.deadbeef.part.mp4";
-    for (const QString& f : {stale, fresh, other}) writeFile(f, kOld);
-    for (const QString& f : {stale, other}) {
+    // The x264/x265 extension's intermediate (ExternalEncoder::intermediatePath of the part file, up to several GB):
+    // a killed render's goes once an hour old - also one of another render into this folder; a running render's
+    // (written all the time) and a user's file of a similar name stay
+    const QString staleNut = dir + "/.out.deadbeef.part.mp4.schneidi-video.nut",
+                  freshNut = dir + "/.out.cafe0123.part.mp4.schneidi-video.nut",
+                  otherNut = dir + "/.clip.0123abcd.part.mkv.schneidi-video.nut", userNut = dir + "/.notes.schneidi-video.nut";
+    for (const QString& f : {stale, fresh, other, staleNut, freshNut, otherNut, userNut}) writeFile(f, kOld);
+    for (const QString& f : {stale, other, staleNut, otherNut, userNut}) {
         QFile file(f);
         if (file.open(QIODevice::ReadWrite))
             CHECK(file.setFileTime(QDateTime::currentDateTime().addSecs(-7200), QFileDevice::FileModificationTime));
     }
     CHECK(run(settings(dir + "/out.mp4")).ok);
-    CHECK_EQ(entries(dir), (QStringList{"other.deadbeef.part.mp4", "out.cafe0123.part.mp4", "out.mp4"}));
+    CHECK_EQ(entries(dir), (QStringList{".notes.schneidi-video.nut", ".out.cafe0123.part.mp4.schneidi-video.nut",
+                                        "other.deadbeef.part.mp4", "out.cafe0123.part.mp4", "out.mp4"}));
 }
 
 void testKeepsOlderFile(const QString& root)

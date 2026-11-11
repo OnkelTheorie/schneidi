@@ -103,16 +103,20 @@ QString partPath(const QString& target, const QString& id)
 
 // Temporary files of renders to `target` that were killed (crash, SIGKILL, power off) stay behind: removed once
 // nothing has written them for an hour (a running render writes its part file all the time; another render to the
-// same name keeps its own).
+// same name keeps its own). The same for the x264/x265 extension's intermediates of every render into this folder
+// (ExternalEncoder::intermediatePath of a part file: ".<part file>.schneidi-video.nut", hidden, up to several GB; its
+// program writes it all the time while encoding).
 void removeStaleParts(const QString& target)
 {
     const QFileInfo fi(target);
     const QString suffix = fi.suffix().isEmpty() ? QString() : "." + fi.suffix();
     const QRegularExpression part("^" + QRegularExpression::escape(fi.completeBaseName()) + "\\.[0-9a-f]{8}\\.part"
                                   + QRegularExpression::escape(suffix) + "$");
+    static const QRegularExpression intermediate("^\\..+\\.[0-9a-f]{8}\\.part(\\.[^.]+)?\\.schneidi-video\\.nut$");
     const QDateTime old = QDateTime::currentDateTime().addSecs(-3600);
     for (const QFileInfo& f : fi.dir().entryInfoList(QDir::Files | QDir::Hidden))
-        if (part.match(f.fileName()).hasMatch() && f.lastModified() < old) QFile::remove(f.absoluteFilePath());
+        if ((part.match(f.fileName()).hasMatch() || intermediate.match(f.fileName()).hasMatch()) && f.lastModified() < old)
+            QFile::remove(f.absoluteFilePath());
 }
 
 // Rename from onto to, replacing an existing file. QFile::rename refuses an existing target: the old file is moved
