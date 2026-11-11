@@ -112,7 +112,8 @@ const
 
 var
   InstalledVersion: String; // DisplayVersion of the installation found, empty = none
-  ReadyTextShown: Boolean;   // the sentence is on the Ready page already (Back and Next again)
+  ReadyGeometryKnown: Boolean; // the Ready page's original label height and memo position are saved below
+  ReadyLabelHeight, ReadyMemoTop, ReadyMemoBottom: Integer;
 
 // The installed version: the current mode's entry first (HKCU for "only for me", HKLM for "all users"), then the
 // other one (an update in the other mode still says what is there)
@@ -185,10 +186,27 @@ begin
   Result := True;
 end;
 
+// Setup sets the Ready label's text again on every visit of the page (Back and Next again), so the sentence goes in
+// each time; the label and memo geometry is taken from the first visit, so repeated visits do not shift it further
 procedure CurPageChanged(CurPageID: Integer);
+var
+  Text: String;
+  Delta: Integer;
 begin
-  if (CurPageID = wpReady) and (InstalledVersion <> '') and not ReadyTextShown then begin
-    WizardForm.ReadyLabel.Caption := UpdateText() + #13#10#13#10 + WizardForm.ReadyLabel.Caption;
-    ReadyTextShown := True;
+  if (CurPageID <> wpReady) or (InstalledVersion = '') then Exit;
+  if not ReadyGeometryKnown then begin
+    ReadyLabelHeight := WizardForm.ReadyLabel.Height;
+    ReadyMemoTop := WizardForm.ReadyMemo.Top;
+    ReadyMemoBottom := WizardForm.ReadyMemo.Top + WizardForm.ReadyMemo.Height;
+    ReadyGeometryKnown := True;
   end;
+  Text := UpdateText();
+  if Pos(Text, WizardForm.ReadyLabel.Caption) <> 1 then
+    WizardForm.ReadyLabel.Caption := Text + #13#10#13#10 + WizardForm.ReadyLabel.Caption;
+  // The label is only as high as the original two lines: grow it to the new text and move the memo below down,
+  // otherwise "Click Install to continue ..." disappears behind the memo
+  WizardForm.ReadyLabel.Height := ReadyLabelHeight;
+  Delta := WizardForm.AdjustLabelHeight(WizardForm.ReadyLabel);
+  WizardForm.ReadyMemo.Top := ReadyMemoTop + Delta;
+  WizardForm.ReadyMemo.Height := ReadyMemoBottom - WizardForm.ReadyMemo.Top;
 end;
