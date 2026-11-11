@@ -419,7 +419,7 @@ void testCliOp(const QString& dir)
                            QJsonObject{{"from", 30}, {"to", 40}, {"text", "drei."}}};
     QJsonObject o = run({QJsonObject{{"op", "captions"}, {"style", "karaoke"}, {"words", words},
                                      {"highlight", "#00ff00"}, {"size", 100}}});
-    CHECK(!o.contains("error"));
+    if (!CHECK(!o.contains("error"))) std::printf("       %s\n", qPrintable(o.value("error").toString()));
     ProjectData back;
     QFile in(path);
     CHECK(in.open(QIODevice::ReadOnly));
