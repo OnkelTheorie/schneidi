@@ -185,8 +185,8 @@ void Encoder::cabacWriteMb(CabacEncoder& ce, int mbx, int mby, const MbSyntax& s
         const int inc0 = pSlice_ ? 0 : (hasL && cabKind_[mL] != kKindI4) + (hasT && cabKind_[mT] != kKindI4);
         if (s.kind == K::I4) {
             ce.decision(base + inc0, 0);
-            if (useT8()) // transform_size_8x8_flag: always 4x4 for intra here
-                ce.decision(399 + (hasL && cabT8_[mL]) + (hasT && cabT8_[mT]), 0);
+            if (useT8()) // transform_size_8x8_flag: Intra 8x8 or 4x4
+                ce.decision(399 + (hasL && cabT8_[mL]) + (hasT && cabT8_[mT]), s.t8);
         } else {
             ce.decision(base + inc0, 1);
             ce.terminate(0); // not I_PCM
@@ -212,7 +212,7 @@ void Encoder::cabacWriteMb(CabacEncoder& ce, int mbx, int mby, const MbSyntax& s
 
     // mb_pred: intra modes
     if (s.kind == K::I4) {
-        for (int blk = 0; blk < 16; ++blk) {
+        for (int blk = 0; blk < (s.t8 ? 4 : 16); ++blk) { // prev_intra{4x4,8x8}_pred_mode share contexts
             const bool same = s.i4Mode[blk] == s.i4Pred[blk];
             ce.decision(68, same);
             if (!same) {
@@ -337,7 +337,7 @@ void Encoder::cabacWriteMb(CabacEncoder& ce, int mbx, int mby, const MbSyntax& s
             ce.decision(81 + condC(hasL, mL, 2) + 2 * condC(hasT, mT, 2), s.cbpChroma == 2);
     }
     cabCbp_[m] = uint8_t(s.cbpLuma | (s.cbpChroma << 4));
-    const bool t8 = s.kind == K::Inter && s.t8 && s.cbpLuma;
+    const bool t8 = (s.kind == K::Inter && s.t8 && s.cbpLuma) || (s.kind == K::I4 && s.t8);
     if (s.kind == K::Inter && s.cbpLuma && useT8())
         ce.decision(399 + (hasL && cabT8_[mL]) + (hasT && cabT8_[mT]), t8);
     cabT8_[m] = t8;

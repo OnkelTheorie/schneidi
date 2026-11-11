@@ -835,6 +835,115 @@ void predict4x4(int mode, const int* T, const int* L, bool left, bool top, uint8
     }
 }
 
+// Reference sample filtering for Intra 8x8 (8.3.2.2.1). T[0] = p[-1,-1], T[1 + x] = p[x,-1]
+// (x = 0..15, the right half already substituted when missing), L[y] = p[-1,y] (y = 0..7).
+void filterIntra8Refs(int* T, int* L, bool left, bool top, bool corner)
+{
+    int t[17], l[8];
+    std::copy(T, T + 17, t);
+    std::copy(L, L + 8, l);
+    if (top) {
+        T[1] = corner ? (t[0] + 2 * t[1] + t[2] + 2) >> 2 : (3 * t[1] + t[2] + 2) >> 2;
+        for (int x = 1; x < 15; ++x)
+            T[1 + x] = (t[x] + 2 * t[1 + x] + t[2 + x] + 2) >> 2;
+        T[16] = (t[15] + 3 * t[16] + 2) >> 2;
+    }
+    if (corner) {
+        if (top && left)
+            T[0] = (t[1] + 2 * t[0] + l[0] + 2) >> 2;
+        else if (top)
+            T[0] = (3 * t[0] + t[1] + 2) >> 2;
+        else if (left)
+            T[0] = (3 * t[0] + l[0] + 2) >> 2;
+    }
+    if (left) {
+        L[0] = corner ? (t[0] + 2 * l[0] + l[1] + 2) >> 2 : (3 * l[0] + l[1] + 2) >> 2;
+        for (int y = 1; y < 7; ++y)
+            L[y] = (l[y - 1] + 2 * l[y] + l[y + 1] + 2) >> 2;
+        L[7] = (l[6] + 3 * l[7] + 2) >> 2;
+    }
+}
+
+// Intra 8x8 prediction (8.3.2.2.2..10) from filtered references (layout as filterIntra8Refs). Output stride 8.
+void predict8x8(int mode, const int* T, const int* L, bool left, bool top, uint8_t* pred)
+{
+    auto t = [&](int x) { return T[x + 1]; };              // x = -1 is the corner
+    auto l = [&](int y) { return y < 0 ? T[0] : L[y]; }; // y = -1 is the corner
+    int dc = 128;
+    if (mode == 2) {
+        int st = 0, sl = 0;
+        for (int i = 0; i < 8; ++i) {
+            st += t(i);
+            sl += l(i);
+        }
+        dc = (top && left) ? (st + sl + 8) >> 4 : left ? (sl + 4) >> 3 : top ? (st + 4) >> 3 : 128;
+    }
+    for (int y = 0; y < 8; ++y) {
+        for (int x = 0; x < 8; ++x) {
+            int v = 128;
+            switch (mode) {
+            case 0: v = t(x); break;
+            case 1: v = l(y); break;
+            case 2: v = dc; break;
+            case 3:
+                v = (x == 7 && y == 7) ? (t(14) + 3 * t(15) + 2) >> 2
+                                       : (t(x + y) + 2 * t(x + y + 1) + t(x + y + 2) + 2) >> 2;
+                break;
+            case 4:
+                if (x > y)
+                    v = (t(x - y - 2) + 2 * t(x - y - 1) + t(x - y) + 2) >> 2;
+                else if (x < y)
+                    v = (l(y - x - 2) + 2 * l(y - x - 1) + l(y - x) + 2) >> 2;
+                else
+                    v = (t(0) + 2 * T[0] + l(0) + 2) >> 2;
+                break;
+            case 5: {
+                const int z = 2 * x - y, k = x - (y >> 1);
+                if (z >= 0 && !(z & 1))
+                    v = (t(k - 1) + t(k) + 1) >> 1;
+                else if (z > 0)
+                    v = (t(k - 2) + 2 * t(k - 1) + t(k) + 2) >> 2;
+                else if (z == -1)
+                    v = (l(0) + 2 * T[0] + t(0) + 2) >> 2;
+                else
+                    v = (l(y - 2 * x - 1) + 2 * l(y - 2 * x - 2) + l(y - 2 * x - 3) + 2) >> 2;
+                break;
+            }
+            case 6: {
+                const int z = 2 * y - x, k = y - (x >> 1);
+                if (z >= 0 && !(z & 1))
+                    v = (l(k - 1) + l(k) + 1) >> 1;
+                else if (z > 0)
+                    v = (l(k - 2) + 2 * l(k - 1) + l(k) + 2) >> 2;
+                else if (z == -1)
+                    v = (l(0) + 2 * T[0] + t(0) + 2) >> 2;
+                else
+                    v = (t(x - 2 * y - 1) + 2 * t(x - 2 * y - 2) + t(x - 2 * y - 3) + 2) >> 2;
+                break;
+            }
+            case 7: {
+                const int k = x + (y >> 1);
+                v = (y & 1) ? (t(k) + 2 * t(k + 1) + t(k + 2) + 2) >> 2 : (t(k) + t(k + 1) + 1) >> 1;
+                break;
+            }
+            case 8: {
+                const int z = x + 2 * y, k = y + (x >> 1);
+                if (z > 13)
+                    v = l(7);
+                else if (z == 13)
+                    v = (l(6) + 3 * l(7) + 2) >> 2;
+                else if (z & 1)
+                    v = (l(k) + 2 * l(k + 1) + l(k + 2) + 2) >> 2;
+                else
+                    v = (l(k) + l(k + 1) + 1) >> 1;
+                break;
+            }
+            }
+            pred[y * 8 + x] = uint8_t(v);
+        }
+    }
+}
+
 } // namespace
 
 struct Encoder::ChromaMb {
@@ -1257,6 +1366,22 @@ bool Encoder::encodeMbIntra(MbOut& out, int mbx, int mby)
     save(snapA);
     const bool deltaB = encodeLuma4(b, mbx, mby, ch);
     const double costB = double(ssd()) + lambda * mbBits(b, mbx, mby, double(b.bw.bitCount()));
+    if (useT8()) {
+        Snapshot snapB;
+        save(snapB);
+        MbOut c;
+        const bool deltaC = encodeLuma8(c, mbx, mby, ch);
+        const double costC = double(ssd()) + lambda * mbBits(c, mbx, mby, 0.0);
+        if (costC < costA && costC < costB) {
+            out = std::move(c);
+            return deltaC;
+        }
+        if (costB <= costA) {
+            restore(snapB);
+            out = std::move(b);
+            return deltaB;
+        }
+    }
     if (costA <= costB) {
         restore(snapA);
         out = std::move(a);
@@ -1468,6 +1593,102 @@ inline int sadRow(const uint8_t* a, const uint8_t* b, int w)
 int median3(int a, int b, int c) { return std::max(std::min(a, b), std::min(std::max(a, b), c)); }
 
 } // namespace
+
+// Intra 8x8 (High profile, CABAC only): four 8x8 blocks, each with its own prediction direction
+// from filtered neighbour samples and an 8x8 transform.
+bool Encoder::encodeLuma8(MbOut& o, int mbx, int mby, const ChromaMb& ch)
+{
+    const int qp = mbQp_[size_t(mby) * mbW_ + mbx];
+    const int lw = mbW_ * 4;
+    const int lambda = std::max(1, int(0.9 * std::pow(2.0, (qp - 12) / 6.0) + 0.5));
+    int cbpLuma = 0;
+    for (int b8 = 0; b8 < 4; ++b8) {
+        const int ox = (b8 & 1) * 8, oy = (b8 >> 1) * 8;
+        const int px = mbx * 16 + ox, py = mby * 16 + oy;
+        const int bx = px / 4, by = py / 4;
+        const bool left = px > 0, top = oy > 0 || topMbAvailable(mby);
+        const bool corner = left && top;
+        const bool topRight = b8 == 0 ? top : b8 == 1 ? top && mbx + 1 < mbW_ : b8 == 2;
+
+        int T[17], L[8];
+        std::fill(T, T + 17, 128);
+        std::fill(L, L + 8, 128);
+        if (top) {
+            const uint8_t* above = &recY_[size_t(py - 1) * padW_ + px];
+            for (int i = 0; i < 8; ++i)
+                T[1 + i] = above[i];
+            for (int i = 8; i < 16; ++i)
+                T[1 + i] = topRight ? above[i] : above[7];
+        }
+        if (left)
+            for (int i = 0; i < 8; ++i)
+                L[i] = recY_[size_t(py + i) * padW_ + px - 1];
+        if (corner)
+            T[0] = recY_[size_t(py - 1) * padW_ + px - 1];
+        filterIntra8Refs(T, L, left, top, corner);
+
+        int predMode = 2;
+        if (left && top) {
+            const int a = modes4x4_[size_t(by) * lw + bx - 1];
+            const int b = modes4x4_[size_t(by - 1) * lw + bx];
+            predMode = std::min(a < 0 ? 2 : a, b < 0 ? 2 : b);
+        }
+
+        uint8_t pred[64], cand[64];
+        int bestMode = 2, bestCost = 1 << 30;
+        for (int mode = 0; mode < 9; ++mode) {
+            const bool needsTop = mode == 0 || mode == 3 || mode == 7;
+            const bool needsLeft = mode == 1 || mode == 8;
+            const bool needsBoth = mode >= 4 && mode <= 6;
+            if ((needsTop && !top) || (needsLeft && !left) || (needsBoth && !corner))
+                continue;
+            predict8x8(mode, T, L, left, top, cand);
+            int cost = lambda * (mode == predMode ? 1 : 4);
+            for (int k = 0; k < 2; ++k)
+                cost += satd8x4U8(&srcY_[size_t(py + k * 4) * padW_ + px], padW_, cand + k * 32, 8);
+            if (cost < bestCost) {
+                bestCost = cost;
+                bestMode = mode;
+                std::memcpy(pred, cand, 64);
+            }
+        }
+
+        int res[64], levels[64];
+        for (int y = 0; y < 8; ++y)
+            for (int x = 0; x < 8; ++x)
+                res[y * 8 + x] = int(srcY_[size_t(py + y) * padW_ + px + x]) - int(pred[y * 8 + x]);
+        quantize8x8(res, qp, 1.0 / 3.0, levels);
+        int count = 0;
+        for (int k = 0; k < 64; ++k) {
+            count += levels[k] != 0;
+            o.syn.luma8[b8][k] = levels[kZigzag8[k]];
+        }
+        if (count)
+            cbpLuma |= 1 << b8;
+        int d[64], r[64];
+        dequant8x8(levels, qp, d);
+        inverse8x8(d, r);
+        for (int y = 0; y < 8; ++y)
+            for (int x = 0; x < 8; ++x)
+                recY_[size_t(py + y) * padW_ + px + x] = clip1(pred[y * 8 + x] + r[y * 8 + x]);
+        for (int y = 0; y < 2; ++y)
+            for (int x = 0; x < 2; ++x) {
+                modes4x4_[size_t(by + y) * lw + bx + x] = int8_t(bestMode);
+                nzLuma_[size_t(by + y) * lw + bx + x] = uint8_t(count);
+            }
+        o.syn.i4Mode[b8] = bestMode;
+        o.syn.i4Pred[b8] = predMode;
+    }
+    o.syn.kind = MbSyntax::Kind::I4;
+    o.syn.t8 = true;
+    o.syn.chromaMode = ch.mode;
+    o.syn.cbpLuma = cbpLuma;
+    const int cbp = cbpLuma | (ch.cbp << 4);
+    o.syn.hasQpDelta = cbp != 0;
+    o.syn.qpDelta = qp - qpPredOf(mby);
+    writeChroma(o, mbx, mby, ch);
+    return cbp != 0;
+}
 
 struct Encoder::MbState {
     uint8_t y[256];

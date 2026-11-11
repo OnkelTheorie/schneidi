@@ -78,7 +78,7 @@ private:
         int qpDelta = 0;
         int lumaDc[16] = {};         // Intra 16x16 DC, scan order
         int luma[16][16] = {};       // per luma4x4BlkIdx, scan order (Intra 16x16: 15 AC levels)
-        bool t8 = false;             // 8x8 transform (inter, CABAC only)
+        bool t8 = false;             // 8x8 transform (CABAC only); with Kind::I4 = Intra 8x8 (modes in i4Mode[0..3])
         int luma8[4][64] = {};       // per 8x8 block, scan order
         int chromaDc[2][4] = {};
         int chromaAc[2][4][15] = {};
@@ -104,6 +104,7 @@ private:
     // Return whether the macroblock sent mb_qp_delta.
     bool encodeLuma16(MbOut& o, int mbx, int mby, const ChromaMb& ch);
     bool encodeLuma4(MbOut& o, int mbx, int mby, const ChromaMb& ch);
+    bool encodeLuma8(MbOut& o, int mbx, int mby, const ChromaMb& ch);
     // Returns false for a skipped macroblock.
     bool encodeMbP(MbOut& result, int mbx, int mby);
     void rdoQuantize(int* levels, const int* residual, int qp, double lambda, int nC) const;
