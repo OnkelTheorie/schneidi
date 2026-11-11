@@ -198,6 +198,23 @@ void firstPaintDone()
         QTimer::singleShot(0, QCoreApplication::instance(), std::move(job));
 }
 
+// The viewer's deferred GPU surface (FrameView::attachDeferredSurfaces, ~300 ms of GL setup on the GUI thread):
+// after the GPU picture engine has set itself up (both at once take longer than one after the other, and the stalls
+// would add up into one), at the latest 3 s after the first paint
+void attachViewerSurface(int waited = 0)
+{
+    constexpr int kStepMs = 50, kMaxWaitMs = 3000;
+    if (Picture::Gpu::Service::starting() && waited < kMaxWaitMs) {
+        QTimer::singleShot(kStepMs, QCoreApplication::instance(), [waited] { attachViewerSurface(waited + kStepMs); });
+        return;
+    }
+    // One more turn of the event loop first (what the engine's start left to paint)
+    QTimer::singleShot(kStepMs, QCoreApplication::instance(), [] {
+        FrameView::attachDeferredSurfaces();
+        StartupTrace::mark("viewer GPU surface attached");
+    });
+}
+
 // The main window's first picture (afterFirstPaint): its first expose, one event loop turn later (Qt paints and
 // flushes the exposed window while handling the expose; the window's own Paint may never come when children cover
 // it, and children paint during show() already). Seen app-wide until then; SCHNEIDI_STARTUP_TRACE also marks the
@@ -219,12 +236,30 @@ public:
                 firstPaintDone();
             });
             // SCHNEIDI_STARTUP_TRACE=2: quits by itself (measuring runs), after the work deferred past the paint;
-            // exit(), not quit(): no window is asked to close (no question about unsaved changes)
-            if (qEnvironmentVariableIntValue("SCHNEIDI_STARTUP_TRACE") == 2)
-                QTimer::singleShot(2500, qApp, [] {
+            // exit(), not quit(): no window is asked to close (no question about unsaved changes). Until then a
+            // 5 ms ticker measures the longest stall of the GUI thread after the first expose (what the user feels
+            // as a frozen window right after it appeared).
+            if (qEnvironmentVariableIntValue("SCHNEIDI_STARTUP_TRACE") == 2) {
+                auto* ticker = new QTimer(this);
+                ticker->setTimerType(Qt::PreciseTimer);
+                ticker->setInterval(5);
+                connect(ticker, &QTimer::timeout, this, [this] {
+                    const qint64 now = StartupTrace::elapsed();
+                    if (m_lastTick >= 0 && now - m_lastTick > m_longestStall) {
+                        m_longestStall = now - m_lastTick;
+                        m_stallEnd = now;
+                    }
+                    m_lastTick = now;
+                });
+                m_lastTick = StartupTrace::elapsed(); // the paint of the expose counts too
+                ticker->start();
+                QTimer::singleShot(2500, qApp, [this] {
+                    std::fprintf(stderr, "startup: longest GUI stall after first expose %lld ms (ended at %lld ms)\n",
+                                 static_cast<long long>(m_longestStall), static_cast<long long>(m_stallEnd));
                     StartupTrace::mark("quit (SCHNEIDI_STARTUP_TRACE=2)");
                     QCoreApplication::exit(0);
                 });
+            }
             if (!StartupTrace::enabled()) QCoreApplication::instance()->removeEventFilter(this);
         } else if (e->type() == QEvent::Paint && m_exposed && o->isWidgetType()
                    && static_cast<QWidget*>(o)->window() == m_window) {
@@ -237,6 +272,7 @@ public:
 private:
     QWidget* m_window;
     bool m_exposed = false;
+    qint64 m_lastTick = -1, m_longestStall = 0, m_stallEnd = 0; // SCHNEIDI_STARTUP_TRACE=2
 };
 
 // Claude Code or Claude Desktop is on this computer, but not connected to schneidi: asked once on start (Cli::Setup
@@ -398,6 +434,10 @@ int main(int argc, char* argv[])
     });
     new FirstPaintWatch(&w);
     QTimer::singleShot(kAfterFirstPaintMaxMs, &w, [] { firstPaintDone(); });
+    // The viewer's GPU surface follows the first picture (X11: the window's GL setup no longer delays it); the window
+    // is made as an OpenGL window right away so that it can take the surface in place
+    FrameView::prepareWindow(&w);
+    afterFirstPaint([] { attachViewerSurface(); });
     // Start maximized like DaVinci; screenshot test runs (offscreen) keep the fixed size from MainWindow
     if (app.arguments().contains("--screenshot")) w.show();
     else w.showMaximized();

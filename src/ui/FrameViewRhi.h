@@ -7,6 +7,7 @@
 #include "ui/FrameView.h"
 
 #include <QRhiWidget>
+#include <QSurface>
 #include <memory>
 
 class QRhiBuffer;
@@ -17,7 +18,8 @@ class QRhiTexture;
 
 class FrameViewRhiSurface : public QRhiWidget {
 public:
-    explicit FrameViewRhiSurface(FrameView* view);
+    // `parented` false: made as a parentless widget, the caller reparents it into `view` (FrameView::makeRhiSurface)
+    explicit FrameViewRhiSurface(FrameView* view, bool parented = true);
     ~FrameViewRhiSurface() override;
 
     // Creates a device of the platform's API once (cached): does a hardware RHI work here, and which device is it
@@ -26,6 +28,13 @@ public:
     static bool probed();
     // The API QRhiWidget is set to (the same one the probe tried)
     static QRhiWidget::Api platformApi();
+    // The native window type a top-level needs for that API's composition
+    static QSurface::SurfaceType surfaceType();
+    // This surface's QRhi (the window's, once it has rendered) answers the GPU check instead of a device made for it
+    // (probe() then returns it); false while it has none or the check is known already
+    bool adoptAsProbe();
+    // Has rendered once: the window's QRhi is known
+    bool hasRhi() const { return rhi() != nullptr; }
 
     // Texture sampled for the picture. Today the uploaded frame; the hook for a texture the picture engine renders
     // into the same QRhi later (then no upload: set it here and skip uploadFrame)
