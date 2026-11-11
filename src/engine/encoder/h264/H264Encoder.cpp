@@ -600,8 +600,13 @@ double Encoder::frameCost(const LookaheadFrame& f, bool intra) const
     return sum;
 }
 
-std::vector<uint8_t> FrameCoder::code(bool idr, int framesSinceIdr, int idrCount, PhaseClock& clock)
+// Per-picture setup: neighbour state, slices (CABAC: one slice in a wavefront; CAVLC, whose
+// decisions write bits directly: one slice per thread).
+void FrameCoder::reset(bool idr, int framesSinceIdr, int idrCount)
 {
+    idr_ = idr;
+    framesSinceIdr_ = framesSinceIdr;
+    idrCount_ = idrCount;
     std::fill(nzLuma_.begin(), nzLuma_.end(), 0);
     std::fill(modes4x4_.begin(), modes4x4_.end(), int8_t(-1));
     std::fill(nzChroma_[0].begin(), nzChroma_[0].end(), 0);
@@ -609,236 +614,302 @@ std::vector<uint8_t> FrameCoder::code(bool idr, int framesSinceIdr, int idrCount
     std::fill(mvX_.begin(), mvX_.end(), int16_t(0));
     std::fill(mvY_.begin(), mvY_.end(), int16_t(0));
     std::fill(refIdx_.begin(), refIdx_.end(), int8_t(-1));
-    // CABAC: one slice, its rows decided in a wavefront by the threads and entropy coded in raster
-    // order afterwards. CAVLC (decisions write bits directly): one slice per thread.
     const bool wave = useCabac();
     const int sliceCount = wave ? 1 : std::clamp(cfg_.threads, 1, mbH_);
-    std::vector<BitWriter> slices(static_cast<size_t>(sliceCount));
-    std::vector<int> sliceTop(size_t(sliceCount) + 1);
+    sliceTop_.assign(size_t(sliceCount) + 1, 0);
     for (int s = 0; s <= sliceCount; ++s)
-        sliceTop[size_t(s)] = s * mbH_ / sliceCount;
+        sliceTop_[size_t(s)] = s * mbH_ / sliceCount;
     for (int s = 0; s < sliceCount; ++s)
-        for (int r = sliceTop[size_t(s)]; r < sliceTop[size_t(s) + 1]; ++r)
-            sliceTopOfRow_[size_t(r)] = sliceTop[size_t(s)];
+        for (int r = sliceTop_[size_t(s)]; r < sliceTop_[size_t(s) + 1]; ++r)
+            sliceTopOfRow_[size_t(r)] = sliceTop_[size_t(s)];
     for (int r = 0; r < mbH_; ++r)
         rowKey_[size_t(r)] = wave ? r : sliceTopOfRow_[size_t(r)];
+    slices_.assign(size_t(sliceCount), BitWriter());
+}
 
-    auto sliceHeader = [&](BitWriter& bw, int s) {
-        // slice_header (7.3.3)
-        bw.ue(uint32_t(sliceTop[size_t(s)] * mbW_)); // first_mb_in_slice
-        bw.ue(idr ? 7 : 5);                         // slice_type: I or P (all slices)
-        bw.ue(0);                                   // pic_parameter_set_id
-        bw.u(uint32_t(framesSinceIdr & 15), 4); // frame_num (0 for IDR)
-        if (idr) {
-            bw.ue(uint32_t(idrCount & 0xFFFF)); // idr_pic_id (differs between neighbours)
-        } else {
-            bw.flag(activeRefs_ > 1); // num_ref_idx_active_override_flag
-            if (activeRefs_ > 1)
-                bw.ue(uint32_t(activeRefs_ - 1)); // num_ref_idx_l0_active_minus1
-            bw.flag(false); // ref_pic_list_modification_flag_l0
-        }
-        if (idr) {
-            bw.flag(false); // no_output_of_prior_pics_flag
-            bw.flag(false); // long_term_reference_flag
-        } else {
-            bw.flag(false); // adaptive_ref_pic_marking_mode_flag
-            if (useCabac())
-                bw.ue(0); // cabac_init_idc
-        }
-        bw.se(cfg_.qp - 26);         // slice_qp_delta
-        bw.ue(cfg_.deblock ? 0 : 1); // disable_deblocking_filter_idc (0 filters across slice edges too)
-        if (cfg_.deblock) {
-            bw.se(0); // slice_alpha_c0_offset_div2
-            bw.se(0); // slice_beta_offset_div2
-        }
-    };
-    // CAVLC (and I_PCM): the macroblocks write their bits as they are decided.
-    auto encodeSlice = [&](int s) {
-        BitWriter& bw = slices[size_t(s)];
-        sliceHeader(bw, s);
-        int skipRun = 0;
-        qpPredByTop_[size_t(sliceTop[size_t(s)])] = cfg_.qp;
-        bool prevQpNonZero = false;
-        cabacByTop_[size_t(sliceTop[size_t(s)])] = nullptr;
-        prevQpNzByTop_[size_t(sliceTop[size_t(s)])] = &prevQpNonZero;
-        for (int mby = sliceTop[size_t(s)]; mby < sliceTop[size_t(s) + 1]; ++mby) {
-            for (int mbx = 0; mbx < mbW_; ++mbx) {
-                if (cfg_.mode == IntraMode::Pcm) {
-                    encodeMbPcm(bw, mbx, mby);
-                    continue;
-                }
-                MbOut mb;
-                bool coded = true;
-                if (pSlice_)
-                    coded = encodeMbP(mb, mbx, mby);
-                else
-                    commitQp(mbx, mby, encodeMbIntra(mb, mbx, mby));
-                if (!coded) {
-                    ++skipRun;
-                    continue;
-                }
-                if (pSlice_) {
-                    bw.ue(uint32_t(skipRun));
-                    skipRun = 0;
-                }
-                bw.append(mb.bw);
-            }
-        }
-        if (skipRun)
-            bw.ue(uint32_t(skipRun));
-        bw.rbspTrailing();
-    };
-    if (wave) {
-        // Decisions: a thread takes the next row and stays two macroblocks behind the row above
-        // (intra prediction and motion vector prediction read above-right). Bit estimates use a
-        // counting CABAC engine per row, started from the row above after its second macroblock.
-        const int rows = mbH_;
-        std::vector<CabacEncoder> rowEngine(static_cast<size_t>(rows)), rowSnap(static_cast<size_t>(rows));
-        std::unique_ptr<std::atomic<int>[]> progress(new std::atomic<int>[size_t(rows)]);
-        std::unique_ptr<std::atomic<int>[]> deblocked(new std::atomic<int>[size_t(rows)]); // macroblocks filtered per row
-        std::atomic<int> written{0};                                                        // rows the entropy writer has finished
-        std::unique_ptr<bool[]> rowPrevNz(new bool[size_t(rows)]);
-        for (int r = 0; r < rows; ++r) {
-            progress[size_t(r)].store(0, std::memory_order_relaxed);
-            deblocked[size_t(r)].store(0, std::memory_order_relaxed);
-        }
-        mbSyn_.resize(size_t(mbW_) * mbH_);
-        std::atomic<int> nextRow{0};
-        std::atomic<long> waitMs{0}; // microseconds the threads spent waiting for the row above (H264_TIMING)
-        const int threads = std::clamp(cfg_.threads, 1, rows);
-        // With several threads the row's thread also deblocks the row above, lagging one
-        // macroblock: by then every macroblock that predicts from those unfiltered samples is
-        // decided, the entropy writer has fixed the QPs (skipped macroblocks inherit it) and
-        // the row above that is filtered two macroblocks further (the raster order of 8.7).
-        const bool inlineDeblock = cfg_.deblock && threads > 1;
-        auto worker = [&] {
-            for (;;) {
-                const int r = nextRow.fetch_add(1);
-                if (r >= rows)
-                    return;
-                auto waitAbove = [&](int need) {
-                    if (r == 0 || progress[size_t(r - 1)].load(std::memory_order_acquire) >= need)
-                        return;
-                    const auto t0 = gTiming ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
-                    while (progress[size_t(r - 1)].load(std::memory_order_acquire) < need)
-                        spinWait();
-                    if (gTiming)
-                        waitMs.fetch_add(long(std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - t0).count()),
-                                         std::memory_order_relaxed);
-                };
-                int dbNext = 0; // next macroblock of row r - 1 to filter
-                auto deblockBehind = [&](int upTo, bool wait) {
-                    if (!inlineDeblock || r == 0)
-                        return;
-                    while (dbNext < upTo) {
-                        const bool ready = written.load(std::memory_order_acquire) >= r &&
-                                           (r == 1 || deblocked[size_t(r - 2)].load(std::memory_order_acquire) >= std::min(dbNext + 2, mbW_));
-                        if (!ready) {
-                            if (!wait)
-                                return;
-                            spinWait();
-                            continue;
-                        }
-                        deblockMb(dbNext, r - 1);
-                        deblocked[size_t(r - 1)].store(++dbNext, std::memory_order_release);
-                    }
-                };
-                CabacEncoder& eng = rowEngine[size_t(r)];
-                if (r == 0) {
-                    eng.start(nullptr, cfg_.qp, pSlice_ ? 0 : -1);
-                    eng.startCounting();
-                } else {
-                    waitAbove(std::min(2, mbW_));
-                    eng = rowSnap[size_t(r - 1)];
-                }
-                qpPredByTop_[size_t(r)] = cfg_.qp;
-                rowPrevNz[size_t(r)] = false;
-                cabacByTop_[size_t(r)] = &eng;
-                prevQpNzByTop_[size_t(r)] = &rowPrevNz[size_t(r)];
-                for (int mbx = 0; mbx < mbW_; ++mbx) {
-                    waitAbove(std::min(mbx + 2, mbW_));
-                    MbOut mb;
-                    if (pSlice_)
-                        encodeMbP(mb, mbx, r);
-                    else
-                        commitQp(mbx, r, encodeMbIntra(mb, mbx, r));
-                    cabacWriteMb(eng, cabWave_, mbx, r, mb.syn, rowPrevNz[size_t(r)]);
-                    mbSyn_[size_t(r) * mbW_ + mbx] = mb.syn;
-                    if (mbx == std::min(1, mbW_ - 1))
-                        rowSnap[size_t(r)] = eng;
-                    progress[size_t(r)].store(mbx + 1, std::memory_order_release);
-                    deblockBehind(mbx, false);
-                }
-                deblockBehind(mbW_, true);
-            }
-        };
-        // Entropy coding in raster order, mb_qp_delta against the real predecessor. It follows
-        // the decisions row by row (its own neighbour state), so with several threads only the
-        // last row's write remains after the wavefront.
-        auto writeSlice = [&] {
-            BitWriter& bw = slices[0];
-            sliceHeader(bw, 0);
-            while (!bw.byteAligned())
-                bw.u(1, 1); // cabac_alignment_one_bit
-            CabacEncoder eng;
-            eng.start(&bw, cfg_.qp, pSlice_ ? 0 : -1);
-            int pred = cfg_.qp;
-            bool prevNz = false;
-            const size_t count = size_t(mbW_) * mbH_;
-            for (int r = 0; r < rows; ++r) {
-                while (progress[size_t(r)].load(std::memory_order_acquire) < mbW_)
-                    std::this_thread::sleep_for(std::chrono::microseconds(100));
-                for (int mbx = 0; mbx < mbW_; ++mbx) {
-                    const size_t m = size_t(r) * mbW_ + mbx;
-                    MbSyntax& syn = mbSyn_[m];
-                    using K = MbSyntax::Kind;
-                    const bool sends = syn.kind == K::I16 || (syn.kind != K::Skip && (syn.cbpLuma || syn.cbpChroma));
-                    if (sends) {
-                        syn.qpDelta = mbQp_[m] - pred;
-                        pred = mbQp_[m];
-                    }
-                    mbQpFinal_[m] = int8_t(pred);
-                    cabacWriteMb(eng, cabWrite_, mbx, r, syn, prevNz);
-                    eng.terminate(m + 1 == count); // end_of_slice_flag
-                }
-                written.store(r + 1, std::memory_order_release);
-            }
-            bw.alignZero();
-        };
-        std::vector<std::thread> workers;
-        for (int t = 1; t < threads; ++t)
-            workers.emplace_back(worker);
-        if (threads > 1) {
-            std::thread writer(writeSlice);
-            worker();
-            for (auto& t : workers)
-                t.join();
-            writer.join();
-            if (inlineDeblock) { // the last row has no row below to filter it
-                for (int mbx = 0; mbx < mbW_; ++mbx)
-                    deblockMb(mbx, rows - 1);
-                deblockedInline_ = true;
-            }
-            if (gTiming)
-                gWaitMs += waitMs.load() / 1000.0;
-        } else {
-            worker();
-            writeSlice();
-        }
+// slice_header (7.3.3)
+void FrameCoder::sliceHeader(BitWriter& bw, int s) const
+{
+    bw.ue(uint32_t(sliceTop_[size_t(s)] * mbW_)); // first_mb_in_slice
+    bw.ue(idr_ ? 7 : 5);                           // slice_type: I or P (all slices)
+    bw.ue(0);                                      // pic_parameter_set_id
+    bw.u(uint32_t(framesSinceIdr_ & 15), 4);       // frame_num (0 for IDR)
+    if (idr_) {
+        bw.ue(uint32_t(idrCount_ & 0xFFFF)); // idr_pic_id (differs between neighbours)
     } else {
-        // Slices only look at macroblocks of their own slice, so they run in parallel.
-        std::vector<std::thread> workers;
-        for (int s = 1; s < sliceCount; ++s)
-            workers.emplace_back(encodeSlice, s);
-        encodeSlice(0);
-        for (auto& t : workers)
-            t.join();
+        bw.flag(activeRefs_ > 1); // num_ref_idx_active_override_flag
+        if (activeRefs_ > 1)
+            bw.ue(uint32_t(activeRefs_ - 1)); // num_ref_idx_l0_active_minus1
+        bw.flag(false); // ref_pic_list_modification_flag_l0
     }
+    if (idr_) {
+        bw.flag(false); // no_output_of_prior_pics_flag
+        bw.flag(false); // long_term_reference_flag
+    } else {
+        bw.flag(false); // adaptive_ref_pic_marking_mode_flag
+        if (useCabac())
+            bw.ue(0); // cabac_init_idc
+    }
+    bw.se(cfg_.qp - 26);         // slice_qp_delta
+    bw.ue(cfg_.deblock ? 0 : 1); // disable_deblocking_filter_idc (0 filters across slice edges too)
+    if (cfg_.deblock) {
+        bw.se(0); // slice_alpha_c0_offset_div2
+        bw.se(0); // slice_beta_offset_div2
+    }
+}
 
+// CAVLC (and I_PCM): the macroblocks write their bits as they are decided.
+void FrameCoder::encodeSlice(int s)
+{
+    BitWriter& bw = slices_[size_t(s)];
+    sliceHeader(bw, s);
+    int skipRun = 0;
+    qpPredByTop_[size_t(sliceTop_[size_t(s)])] = cfg_.qp;
+    bool prevQpNonZero = false;
+    cabacByTop_[size_t(sliceTop_[size_t(s)])] = nullptr;
+    prevQpNzByTop_[size_t(sliceTop_[size_t(s)])] = &prevQpNonZero;
+    for (int mby = sliceTop_[size_t(s)]; mby < sliceTop_[size_t(s) + 1]; ++mby) {
+        for (int mbx = 0; mbx < mbW_; ++mbx) {
+            if (cfg_.mode == IntraMode::Pcm) {
+                encodeMbPcm(bw, mbx, mby);
+                continue;
+            }
+            MbOut mb;
+            bool coded = true;
+            if (pSlice_)
+                coded = encodeMbP(mb, mbx, mby);
+            else
+                commitQp(mbx, mby, encodeMbIntra(mb, mbx, mby));
+            if (!coded) {
+                ++skipRun;
+                continue;
+            }
+            if (pSlice_) {
+                bw.ue(uint32_t(skipRun));
+                skipRun = 0;
+            }
+            bw.append(mb.bw);
+        }
+    }
+    if (skipRun)
+        bw.ue(uint32_t(skipRun));
+    bw.rbspTrailing();
+}
+
+// Wavefront (CABAC): a thread takes the next row and stays two macroblocks behind the row above
+// (intra prediction and motion vector prediction read above-right). Bit estimates use a counting
+// CABAC engine per row, started from the row above after its second macroblock. With several
+// threads the row's thread also deblocks the row above, lagging one macroblock: by then every
+// macroblock that predicts from those unfiltered samples is decided, the entropy writer has fixed
+// the QPs (skipped macroblocks inherit it) and the row above that is filtered two macroblocks
+// further (the raster order of 8.7). With `out`, finished rows go into that reference picture
+// band by band (rowsReady), so the next picture can start before this one is done.
+void FrameCoder::waveBegin(int threads, RefPic* out, bool writerThread)
+{
+    WaveState& w = wave_;
+    const int rows = mbH_;
+    w.rows = rows;
+    w.inlineDeblock = cfg_.deblock && threads > 1;
+    w.rowEngine.assign(size_t(rows), CabacEncoder());
+    w.rowSnap.assign(size_t(rows), CabacEncoder());
+    if (w.allocated != rows) {
+        w.progress.reset(new std::atomic<int>[size_t(rows)]);
+        w.deblocked.reset(new std::atomic<int>[size_t(rows)]);
+        w.rowPrevNz.reset(new bool[size_t(rows)]);
+        w.allocated = rows;
+    }
+    for (int r = 0; r < rows; ++r) {
+        w.progress[size_t(r)].store(0, std::memory_order_relaxed);
+        w.deblocked[size_t(r)].store(0, std::memory_order_relaxed);
+    }
+    w.written.store(0, std::memory_order_relaxed);
+    w.rowsDone.store(0, std::memory_order_relaxed);
+    w.waitUs.store(0, std::memory_order_relaxed);
+    w.out = out;
+    w.yCopied = w.cCopied = w.fBuilt = w.hBuilt = 0;
+    if (out) {
+        const size_t n = size_t(extW_) * extH_;
+        out->y.resize(recY_.size());
+        out->u.resize(recU_.size());
+        out->v.resize(recV_.size());
+        out->F.resize(n);
+        out->B.resize(n);
+        out->V.resize(n);
+        out->J.resize(n);
+        out->rowsReady.store(0, std::memory_order_relaxed);
+    }
+    mbSyn_.resize(size_t(mbW_) * mbH_);
+    if (writerThread)
+        w.writer = std::thread([this] { waveWrite(); });
+    w.nextRow.store(0, std::memory_order_release); // rows may be taken from here on
+}
+
+void FrameCoder::waveRow(int r)
+{
+    WaveState& w = wave_;
+    // Reference rows this row can reach: vectors up to 64 pixels (4 rows) plus the 6-tap filter.
+    if (pSlice_)
+        for (const auto& ref : refs_) {
+            const int need = std::min(mbH_, r + 6);
+            if (ref->rowsReady.load(std::memory_order_acquire) >= need)
+                continue;
+            const auto t0 = std::chrono::steady_clock::now();
+            while (ref->rowsReady.load(std::memory_order_acquire) < need)
+                spinWait();
+            w.refWaitUs.fetch_add(long(std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - t0).count()),
+                                  std::memory_order_relaxed);
+        }
+    auto waitAbove = [&](int need) {
+        if (r == 0 || w.progress[size_t(r - 1)].load(std::memory_order_acquire) >= need)
+            return;
+        const auto t0 = gTiming ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+        while (w.progress[size_t(r - 1)].load(std::memory_order_acquire) < need)
+            spinWait();
+        if (gTiming)
+            w.waitUs.fetch_add(long(std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - t0).count()),
+                               std::memory_order_relaxed);
+    };
+    int dbNext = 0; // next macroblock of row r - 1 to filter
+    auto deblockBehind = [&](int upTo, bool wait) {
+        if (!w.inlineDeblock || r == 0)
+            return;
+        while (dbNext < upTo) {
+            const bool ready = w.written.load(std::memory_order_acquire) >= r &&
+                               (r == 1 || w.deblocked[size_t(r - 2)].load(std::memory_order_acquire) >= std::min(dbNext + 2, mbW_));
+            if (!ready) {
+                if (!wait)
+                    return;
+                spinWait();
+                continue;
+            }
+            deblockMb(dbNext, r - 1);
+            w.deblocked[size_t(r - 1)].store(++dbNext, std::memory_order_release);
+        }
+    };
+    CabacEncoder& eng = w.rowEngine[size_t(r)];
+    if (r == 0) {
+        eng.start(nullptr, cfg_.qp, pSlice_ ? 0 : -1);
+        eng.startCounting();
+    } else {
+        waitAbove(std::min(2, mbW_));
+        eng = w.rowSnap[size_t(r - 1)];
+    }
+    qpPredByTop_[size_t(r)] = cfg_.qp;
+    w.rowPrevNz[size_t(r)] = false;
+    cabacByTop_[size_t(r)] = &eng;
+    prevQpNzByTop_[size_t(r)] = &w.rowPrevNz[size_t(r)];
+    for (int mbx = 0; mbx < mbW_; ++mbx) {
+        waitAbove(std::min(mbx + 2, mbW_));
+        MbOut mb;
+        if (pSlice_)
+            encodeMbP(mb, mbx, r);
+        else
+            commitQp(mbx, r, encodeMbIntra(mb, mbx, r));
+        cabacWriteMb(eng, cabWave_, mbx, r, mb.syn, w.rowPrevNz[size_t(r)]);
+        mbSyn_[size_t(r) * mbW_ + mbx] = mb.syn;
+        if (mbx == std::min(1, mbW_ - 1))
+            w.rowSnap[size_t(r)] = eng;
+        w.progress[size_t(r)].store(mbx + 1, std::memory_order_release);
+        deblockBehind(mbx, false);
+    }
+    deblockBehind(mbW_, true);
+    // Row r - 1 is filtered now, so row r - 2 is final (filtering row r - 1 changed its last lines).
+    if (w.out && w.inlineDeblock && r >= 2)
+        publishBand(r - 2);
+    w.rowsDone.fetch_add(1, std::memory_order_acq_rel);
+}
+
+// Copies the final rows of band k (macroblock row) into the reference picture and builds its
+// planes; bands go out in order (rowsReady), each needs the 3 luma lines below it.
+void FrameCoder::publishBand(int k)
+{
+    WaveState& w = wave_;
+    RefPic& R = *w.out;
+    while (R.rowsReady.load(std::memory_order_acquire) < k)
+        spinWait();
+    const bool last = k == mbH_ - 1;
+    const int M = kMargin;
+    const int yLim = last ? padH_ : std::min(padH_, 16 * k + 19);
+    std::memcpy(&R.y[size_t(w.yCopied) * padW_], &recY_[size_t(w.yCopied) * padW_], size_t(yLim - w.yCopied) * padW_);
+    w.yCopied = yLim;
+    const int cw = padW_ / 2, cLim = last ? padH_ / 2 : 8 * k + 8;
+    std::memcpy(&R.u[size_t(w.cCopied) * cw], &recU_[size_t(w.cCopied) * cw], size_t(cLim - w.cCopied) * cw);
+    std::memcpy(&R.v[size_t(w.cCopied) * cw], &recV_[size_t(w.cCopied) * cw], size_t(cLim - w.cCopied) * cw);
+    w.cCopied = cLim;
+    const int fLim = last ? extH_ : M + yLim;
+    refFullRows(R, w.fBuilt, fLim);
+    w.fBuilt = fLim;
+    const int hLim = last ? extH_ : M + 16 * k + 16;
+    refHalfRows(R, w.hBuilt, hLim);
+    w.hBuilt = hLim;
+    R.rowsReady.store(k + 1, std::memory_order_release);
+}
+
+// Entropy coding in raster order, mb_qp_delta against the real predecessor. It follows the
+// decisions row by row (its own neighbour state), so with several threads only the last row's
+// write remains after the wavefront.
+void FrameCoder::waveWrite()
+{
+    WaveState& w = wave_;
+    BitWriter& bw = slices_[0];
+    sliceHeader(bw, 0);
+    while (!bw.byteAligned())
+        bw.u(1, 1); // cabac_alignment_one_bit
+    CabacEncoder eng;
+    eng.start(&bw, cfg_.qp, pSlice_ ? 0 : -1);
+    int pred = cfg_.qp;
+    bool prevNz = false;
+    const size_t count = size_t(mbW_) * mbH_;
+    for (int r = 0; r < w.rows; ++r) {
+        while (w.progress[size_t(r)].load(std::memory_order_acquire) < mbW_)
+            std::this_thread::sleep_for(std::chrono::microseconds(100));
+        for (int mbx = 0; mbx < mbW_; ++mbx) {
+            const size_t m = size_t(r) * mbW_ + mbx;
+            MbSyntax& syn = mbSyn_[m];
+            using K = MbSyntax::Kind;
+            const bool sends = syn.kind == K::I16 || (syn.kind != K::Skip && (syn.cbpLuma || syn.cbpChroma));
+            if (sends) {
+                syn.qpDelta = mbQp_[m] - pred;
+                pred = mbQp_[m];
+            }
+            mbQpFinal_[m] = int8_t(pred);
+            cabacWriteMb(eng, cabWrite_, mbx, r, syn, prevNz);
+            eng.terminate(m + 1 == count); // end_of_slice_flag
+        }
+        w.written.store(r + 1, std::memory_order_release);
+    }
+    bw.alignZero();
+}
+
+// After every row is decided: the writer's last row, the last row's deblocking and the rest of
+// the reference picture.
+void FrameCoder::waveEnd()
+{
+    WaveState& w = wave_;
+    while (w.rowsDone.load(std::memory_order_acquire) < w.rows)
+        std::this_thread::sleep_for(std::chrono::microseconds(50));
+    if (w.writer.joinable())
+        w.writer.join();
+    if (w.inlineDeblock) { // the last row has no row below to filter it
+        for (int mbx = 0; mbx < mbW_; ++mbx)
+            deblockMb(mbx, w.rows - 1);
+        deblockedInline_ = true;
+    }
+    if (w.out) {
+        for (int k = std::max(0, w.inlineDeblock ? w.rows - 2 : 0); k < w.rows; ++k)
+            publishBand(k);
+    }
+    w.nextRow.store(INT_MAX / 2, std::memory_order_release);
+    if (gTiming)
+        gWaitMs += (w.waitUs.load() + w.refWaitUs.exchange(0)) / 1000.0;
+}
+
+std::vector<uint8_t> FrameCoder::assemble(PhaseClock& clock)
+{
     clock.lap(4); // decisions and entropy coding
     std::vector<uint8_t> out;
-    for (const BitWriter& bw : slices) {
-        if (idr)
+    for (const BitWriter& bw : slices_) {
+        if (idr_)
             appendNal(out, 3, 5, bw.bytes());
         else
             appendNal(out, 2, 1, bw.bytes());
@@ -859,6 +930,43 @@ std::vector<uint8_t> FrameCoder::code(bool idr, int framesSinceIdr, int idrCount
     deblockedInline_ = false;
     clock.lap(5);
     return out;
+}
+
+// Codes the whole picture on cfg_.threads threads and returns it when done.
+std::vector<uint8_t> FrameCoder::code(bool idr, int framesSinceIdr, int idrCount, PhaseClock& clock)
+{
+    reset(idr, framesSinceIdr, idrCount);
+    if (useCabac()) {
+        const int threads = std::clamp(cfg_.threads, 1, mbH_);
+        waveBegin(threads, nullptr, threads > 1);
+        auto worker = [&] {
+            for (;;) {
+                const int r = claimRow();
+                if (r < 0)
+                    return;
+                waveRow(r);
+            }
+        };
+        std::vector<std::thread> workers;
+        for (int t = 1; t < threads; ++t)
+            workers.emplace_back(worker);
+        worker();
+        for (auto& t : workers)
+            t.join();
+        if (threads == 1)
+            waveWrite();
+        waveEnd();
+    } else {
+        // Slices only look at macroblocks of their own slice, so they run in parallel.
+        const int sliceCount = int(slices_.size());
+        std::vector<std::thread> workers;
+        for (int s = 1; s < sliceCount; ++s)
+            workers.emplace_back([this, s] { encodeSlice(s); });
+        encodeSlice(0);
+        for (auto& t : workers)
+            t.join();
+    }
+    return assemble(clock);
 }
 
 std::vector<uint8_t> Encoder::encodeFrame(LookaheadFrame& frame)
@@ -1078,6 +1186,7 @@ std::vector<uint8_t> Encoder::encodeFrame(LookaheadFrame& frame)
         pic->u = fc.recU_;
         pic->v = fc.recV_;
         fc.buildRefPlanes(*pic);
+        pic->rowsReady.store(mbH_, std::memory_order_release);
         refList_.push_front(std::move(pic));
     }
     if (cfg_.bitrateKbps <= 0)
@@ -2889,110 +2998,125 @@ void FrameCoder::buildRefPlanes(RefPic& R)
         for (auto& t : workers)
             t.join();
     };
-    auto tap6 = [](int a, int b, int c, int d, int e, int f) { return a - 5 * b + 20 * c + 20 * d - 5 * e + f; };
+    parallelRows([&](int y0, int y1) { refFullRows(R, y0, y1); });
+    parallelRows([&](int y0, int y1) { refHalfRows(R, y0, y1); });
+}
 
-    parallelRows([&](int y0, int y1) {
-        for (int y = y0; y < y1; ++y) {
-            const uint8_t* src = &R.y[size_t(std::clamp(y - M, 0, padH_ - 1)) * padW_];
-            uint8_t* dst = &R.F[size_t(y) * W];
-            std::memset(dst, src[0], size_t(M));
-            std::memcpy(dst + M, src, size_t(padW_));
-            std::memset(dst + M + padW_, src[padW_ - 1], size_t(M));
-        }
-    });
-    parallelRows([&](int y0, int y1) {
-        std::vector<int> vRow(size_t(W) + 8);
-        for (int y = y0; y < y1; ++y) {
-            const uint8_t* r[6];
-            for (int k = 0; k < 6; ++k)
-                r[k] = &R.F[size_t(std::clamp(y - 2 + k, 0, H - 1)) * W];
-            const uint8_t* row = r[2];
-            int* vi = vRow.data(); // vertical 6-tap intermediate of this row (unclipped)
-            uint8_t* vb = &R.V[size_t(y) * W];
-            uint8_t* hb = &R.B[size_t(y) * W];
-            int x = 0, hEnd = 2;
+// Full-pel luma with the margin (edge samples repeated) for the rows [y0, y1) of the extended plane.
+void FrameCoder::refFullRows(RefPic& R, int y0, int y1) const
+{
+    const int M = kMargin;
+    const int W = extW_, H = extH_;
+    (void)M;
+    (void)H;
+    for (int y = y0; y < y1; ++y) {
+        const uint8_t* src = &R.y[size_t(std::clamp(y - M, 0, padH_ - 1)) * padW_];
+        uint8_t* dst = &R.F[size_t(y) * W];
+        std::memset(dst, src[0], size_t(M));
+        std::memcpy(dst + M, src, size_t(padW_));
+        std::memset(dst + M + padW_, src[padW_ - 1], size_t(M));
+    }
+}
+
+// Half-pel planes B, V, J for the rows [y0, y1); needs the full-pel rows y0 - 2 .. y1 + 2.
+void FrameCoder::refHalfRows(RefPic& R, int y0, int y1) const
+{
+    const int M = kMargin;
+    const int W = extW_, H = extH_;
+    (void)M;
+    (void)H;
+    auto tap6 = [](int a, int b, int c, int d, int e, int f) { return a - 5 * b + 20 * c + 20 * d - 5 * e + f; };
+    std::vector<int> vRow(size_t(W) + 8);
+    for (int y = y0; y < y1; ++y) {
+        const uint8_t* r[6];
+        for (int k = 0; k < 6; ++k)
+            r[k] = &R.F[size_t(std::clamp(y - 2 + k, 0, H - 1)) * W];
+        const uint8_t* row = r[2];
+        int* vi = vRow.data(); // vertical 6-tap intermediate of this row (unclipped)
+        uint8_t* vb = &R.V[size_t(y) * W];
+        uint8_t* hb = &R.B[size_t(y) * W];
+        int x = 0, hEnd = 2;
 #if defined(__SSE2__) || defined(_M_X64)
-            // Same arithmetic eight samples at a time (16-bit lanes hold -2550..10710).
-            {
-                const __m128i zero = _mm_setzero_si128(), c5 = _mm_set1_epi16(5), c20 = _mm_set1_epi16(20);
-                const __m128i r16 = _mm_set1_epi16(16);
-                auto ld = [&](const uint8_t* p) {
-                    return _mm_unpacklo_epi8(_mm_loadl_epi64(reinterpret_cast<const __m128i*>(p)), zero);
-                };
-                auto tap = [&](__m128i a, __m128i b, __m128i c, __m128i d, __m128i e, __m128i f) {
-                    const __m128i outer = _mm_add_epi16(a, f), mid = _mm_add_epi16(c, d), side = _mm_add_epi16(b, e);
-                    return _mm_sub_epi16(_mm_add_epi16(outer, _mm_mullo_epi16(mid, c20)), _mm_mullo_epi16(side, c5));
-                };
-                for (; x + 8 <= W; x += 8) {
-                    const __m128i vv = tap(ld(r[0] + x), ld(r[1] + x), ld(r[2] + x), ld(r[3] + x), ld(r[4] + x), ld(r[5] + x));
-                    const __m128i sign = _mm_srai_epi16(vv, 15);
-                    _mm_storeu_si128(reinterpret_cast<__m128i*>(vi + x), _mm_unpacklo_epi16(vv, sign));
-                    _mm_storeu_si128(reinterpret_cast<__m128i*>(vi + x + 4), _mm_unpackhi_epi16(vv, sign));
-                    const __m128i v8 = _mm_srai_epi16(_mm_add_epi16(vv, r16), 5);
-                    _mm_storel_epi64(reinterpret_cast<__m128i*>(vb + x), _mm_packus_epi16(v8, v8));
-                }
-                for (; hEnd + 11 <= W; hEnd += 8) {
-                    const uint8_t* q = row + hEnd;
-                    const __m128i bb = tap(ld(q - 2), ld(q - 1), ld(q), ld(q + 1), ld(q + 2), ld(q + 3));
-                    const __m128i b8 = _mm_srai_epi16(_mm_add_epi16(bb, r16), 5);
-                    _mm_storel_epi64(reinterpret_cast<__m128i*>(hb + hEnd), _mm_packus_epi16(b8, b8));
-                }
+        // Same arithmetic eight samples at a time (16-bit lanes hold -2550..10710).
+        {
+            const __m128i zero = _mm_setzero_si128(), c5 = _mm_set1_epi16(5), c20 = _mm_set1_epi16(20);
+            const __m128i r16 = _mm_set1_epi16(16);
+            auto ld = [&](const uint8_t* p) {
+                return _mm_unpacklo_epi8(_mm_loadl_epi64(reinterpret_cast<const __m128i*>(p)), zero);
+            };
+            auto tap = [&](__m128i a, __m128i b, __m128i c, __m128i d, __m128i e, __m128i f) {
+                const __m128i outer = _mm_add_epi16(a, f), mid = _mm_add_epi16(c, d), side = _mm_add_epi16(b, e);
+                return _mm_sub_epi16(_mm_add_epi16(outer, _mm_mullo_epi16(mid, c20)), _mm_mullo_epi16(side, c5));
+            };
+            for (; x + 8 <= W; x += 8) {
+                const __m128i vv = tap(ld(r[0] + x), ld(r[1] + x), ld(r[2] + x), ld(r[3] + x), ld(r[4] + x), ld(r[5] + x));
+                const __m128i sign = _mm_srai_epi16(vv, 15);
+                _mm_storeu_si128(reinterpret_cast<__m128i*>(vi + x), _mm_unpacklo_epi16(vv, sign));
+                _mm_storeu_si128(reinterpret_cast<__m128i*>(vi + x + 4), _mm_unpackhi_epi16(vv, sign));
+                const __m128i v8 = _mm_srai_epi16(_mm_add_epi16(vv, r16), 5);
+                _mm_storel_epi64(reinterpret_cast<__m128i*>(vb + x), _mm_packus_epi16(v8, v8));
             }
-#endif
-            for (; x < W; ++x) {
-                const int vv = tap6(r[0][x], r[1][x], r[2][x], r[3][x], r[4][x], r[5][x]);
-                vi[x] = vv;
-                vb[x] = clip1((vv + 16) >> 5);
-            }
-            for (x = 0; x < W; ++x) {
-                if (x == 2)
-                    x = hEnd; // [2, hEnd) done above
-                if (x >= W)
-                    break;
-                int bb;
-                if (x >= 2 && x + 3 < W)
-                    bb = tap6(row[x - 2], row[x - 1], row[x], row[x + 1], row[x + 2], row[x + 3]);
-                else
-                    bb = tap6(row[std::clamp(x - 2, 0, W - 1)], row[std::clamp(x - 1, 0, W - 1)], row[x],
-                              row[std::min(x + 1, W - 1)], row[std::min(x + 2, W - 1)], row[std::min(x + 3, W - 1)]);
-                hb[x] = clip1((bb + 16) >> 5);
-            }
-            // Centre half-pel: horizontal 6-tap over the vertical intermediate, same row.
-            const int* v = vRow.data();
-            uint8_t* j = &R.J[size_t(y) * W];
-            int jEnd = 2;
-#if defined(__SSE2__) || defined(_M_X64)
-            {
-                auto ld = [&](int x) { return _mm_loadu_si128(reinterpret_cast<const __m128i*>(v + x)); };
-                auto tap = [&](int x) { // 32-bit lanes: up to about 450000
-                    const __m128i outer = _mm_add_epi32(ld(x - 2), ld(x + 3));
-                    const __m128i mid = _mm_add_epi32(ld(x), ld(x + 1)), side = _mm_add_epi32(ld(x - 1), ld(x + 2));
-                    const __m128i mid20 = _mm_add_epi32(_mm_slli_epi32(mid, 4), _mm_slli_epi32(mid, 2));
-                    const __m128i side5 = _mm_add_epi32(_mm_slli_epi32(side, 2), side);
-                    const __m128i jj = _mm_sub_epi32(_mm_add_epi32(outer, mid20), side5);
-                    return _mm_srai_epi32(_mm_add_epi32(jj, _mm_set1_epi32(512)), 10);
-                };
-                for (; jEnd + 11 <= W; jEnd += 8) {
-                    const __m128i w = _mm_packs_epi32(tap(jEnd), tap(jEnd + 4));
-                    _mm_storel_epi64(reinterpret_cast<__m128i*>(j + jEnd), _mm_packus_epi16(w, w));
-                }
-            }
-#endif
-            for (int x = 0; x < W; ++x) {
-                if (x == 2)
-                    x = jEnd; // [2, jEnd) done above
-                if (x >= W)
-                    break;
-                int jj;
-                if (x >= 2 && x + 3 < W)
-                    jj = tap6(v[x - 2], v[x - 1], v[x], v[x + 1], v[x + 2], v[x + 3]);
-                else
-                    jj = tap6(v[std::clamp(x - 2, 0, W - 1)], v[std::clamp(x - 1, 0, W - 1)], v[x],
-                              v[std::min(x + 1, W - 1)], v[std::min(x + 2, W - 1)], v[std::min(x + 3, W - 1)]);
-                j[x] = clip1((jj + 512) >> 10);
+            for (; hEnd + 11 <= W; hEnd += 8) {
+                const uint8_t* q = row + hEnd;
+                const __m128i bb = tap(ld(q - 2), ld(q - 1), ld(q), ld(q + 1), ld(q + 2), ld(q + 3));
+                const __m128i b8 = _mm_srai_epi16(_mm_add_epi16(bb, r16), 5);
+                _mm_storel_epi64(reinterpret_cast<__m128i*>(hb + hEnd), _mm_packus_epi16(b8, b8));
             }
         }
-    });
+#endif
+        for (; x < W; ++x) {
+            const int vv = tap6(r[0][x], r[1][x], r[2][x], r[3][x], r[4][x], r[5][x]);
+            vi[x] = vv;
+            vb[x] = clip1((vv + 16) >> 5);
+        }
+        for (x = 0; x < W; ++x) {
+            if (x == 2)
+                x = hEnd; // [2, hEnd) done above
+            if (x >= W)
+                break;
+            int bb;
+            if (x >= 2 && x + 3 < W)
+                bb = tap6(row[x - 2], row[x - 1], row[x], row[x + 1], row[x + 2], row[x + 3]);
+            else
+                bb = tap6(row[std::clamp(x - 2, 0, W - 1)], row[std::clamp(x - 1, 0, W - 1)], row[x],
+                          row[std::min(x + 1, W - 1)], row[std::min(x + 2, W - 1)], row[std::min(x + 3, W - 1)]);
+            hb[x] = clip1((bb + 16) >> 5);
+        }
+        // Centre half-pel: horizontal 6-tap over the vertical intermediate, same row.
+        const int* v = vRow.data();
+        uint8_t* j = &R.J[size_t(y) * W];
+        int jEnd = 2;
+#if defined(__SSE2__) || defined(_M_X64)
+        {
+            auto ld = [&](int x) { return _mm_loadu_si128(reinterpret_cast<const __m128i*>(v + x)); };
+            auto tap = [&](int x) { // 32-bit lanes: up to about 450000
+                const __m128i outer = _mm_add_epi32(ld(x - 2), ld(x + 3));
+                const __m128i mid = _mm_add_epi32(ld(x), ld(x + 1)), side = _mm_add_epi32(ld(x - 1), ld(x + 2));
+                const __m128i mid20 = _mm_add_epi32(_mm_slli_epi32(mid, 4), _mm_slli_epi32(mid, 2));
+                const __m128i side5 = _mm_add_epi32(_mm_slli_epi32(side, 2), side);
+                const __m128i jj = _mm_sub_epi32(_mm_add_epi32(outer, mid20), side5);
+                return _mm_srai_epi32(_mm_add_epi32(jj, _mm_set1_epi32(512)), 10);
+            };
+            for (; jEnd + 11 <= W; jEnd += 8) {
+                const __m128i w = _mm_packs_epi32(tap(jEnd), tap(jEnd + 4));
+                _mm_storel_epi64(reinterpret_cast<__m128i*>(j + jEnd), _mm_packus_epi16(w, w));
+            }
+        }
+#endif
+        for (int x = 0; x < W; ++x) {
+            if (x == 2)
+                x = jEnd; // [2, jEnd) done above
+            if (x >= W)
+                break;
+            int jj;
+            if (x >= 2 && x + 3 < W)
+                jj = tap6(v[x - 2], v[x - 1], v[x], v[x + 1], v[x + 2], v[x + 3]);
+            else
+                jj = tap6(v[std::clamp(x - 2, 0, W - 1)], v[std::clamp(x - 1, 0, W - 1)], v[x],
+                          v[std::min(x + 1, W - 1)], v[std::min(x + 2, W - 1)], v[std::min(x + 3, W - 1)]);
+            j[x] = clip1((jj + 512) >> 10);
+        }
+    }
 }
 
 // Luma prediction of a w x h block at integer position (x0, y0) plus quarter offset (fx, fy),
