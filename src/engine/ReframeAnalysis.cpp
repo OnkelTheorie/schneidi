@@ -282,12 +282,19 @@ std::optional<Samples> measure(const Need& n, QString* error, const std::atomic<
     std::vector<int> hist(32), prevHist(32);
     std::vector<Cells> picked;
     int64_t lastCut = first - minShot, lastSample = first - step;
+    // The file's end in positions (0 = unknown: a repeated picture ends the measuring)
+    const int64_t endFrame = info.duration > 0 ? int64_t(std::ceil(double(info.duration) / AV_TIME_BASE * srcFps)) : 0;
     for (int64_t pos = first; pos <= last; ++pos) {
         if (cancel && cancel->load()) break;
         const auto pic = reader->picture(pos);
         if (!pic || !pic->frame) break;
-        if (pic->position < pos) break; // past the end: the last picture again
-        pos = pic->position;             // positions the file skips
+        if (pic->position < pos) {
+            // The picture before again: past the end of the file, or a gap in its timestamps (variable frame rate:
+            // the reader shows the held picture there) - measured already, go on after it
+            if (endFrame <= 0 || pos >= endFrame) break;
+            continue;
+        }
+        pos = pic->position; // positions the file skips (a reader answers a request before its first picture)
         const AVFrame* f = pic->frame;
         // Only the content (bars cut off): a cropped reference of the picture
         AVFrame* cropped = nullptr;
