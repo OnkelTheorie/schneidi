@@ -888,7 +888,7 @@
  "Es ist noch kein Whisper-Sprachmodell installiert.": "No Whisper language model is installed yet.",
  "Es wird gerade gerendert. Beenden bricht das Rendern ab. Trotzdem beenden?": "A render is in progress. Quitting cancels it. Quit anyway?",
  "Es wird gerade gerendert. Ein anderes Projekt bricht das Rendern ab. Trotzdem fortfahren?": "A render is in progress. Switching projects cancels it. Continue anyway?",
- "Esc beendet auch die große Vorschau und eine Sprachaufnahme: solange eine davon läuft, wirkt Esc gar nicht (doppelt belegt)": "Esc also ends the large viewer and a voice-over take: while one of them is on, Esc does nothing (assigned twice)",
+ "Esc beendet auch die große Vorschau und eine Sprachaufnahme: solange eine davon läuft, wirkt Esc dort und nicht für diese Funktion": "Esc also ends the large viewer and a voice-over take: while one of them is on, Esc does that and not this function",
  "Etwas, worauf sich der Schritt bezieht, gibt es nicht (mehr). Meldung: „%1“": "Something the step refers to does not exist (any more). Message: “%1”",
  "Export": "Deliver",
  "Export abgebrochen.": "Render cancelled.",

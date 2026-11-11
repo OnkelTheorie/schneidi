@@ -319,7 +319,7 @@ void KeyBindingsDialog::fill()
             } else if (e.scope.isEmpty() && internal.contains(inputs[s])) {
                 item->setForeground(Theme::warning);
                 item->setToolTip(T("Esc beendet auch die große Vorschau und eine Sprachaufnahme: solange eine davon "
-                                   "läuft, wirkt Esc gar nicht (doppelt belegt)"));
+                                   "läuft, wirkt Esc dort und nicht für diese Funktion"));
             }
             m_table->setItem(i, ColSlot1 + s, item);
         }

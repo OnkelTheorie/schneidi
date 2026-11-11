@@ -815,7 +815,11 @@ void MainWindow::setViewerLarge(bool on)
     }
     if (m_largeAction) m_largeAction->setChecked(m_large.active);
     // Two enabled Esc shortcuts are ambiguous and neither fires: while recording, Esc ends the take first
-    if (m_largeEscape) m_largeEscape->setEnabled(m_large.active && !(m_voiceover && m_voiceover->recording()));
+    if (m_largeEscape) {
+        m_largeEscape->setEnabled(m_large.active && !(m_voiceover && m_voiceover->recording()));
+        // A window action bound to Esc gives it up meanwhile (InputBindings::holdWindowKey)
+        InputBindings::instance().holdWindowKey("large_viewer", "Esc", m_largeEscape->isEnabled());
+    }
 }
 
 namespace {

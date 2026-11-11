@@ -648,6 +648,37 @@ void press(QWidget* w, const QString& input)
     QApplication::processEvents();
 }
 
+// Esc bound to a window action: while the large viewer is on, its Esc wins (the action gives up Esc for that time,
+// two enabled Esc shortcuts would be ambiguous and neither would fire); afterwards the action has it again
+void testEscapeModesWin(MainWindow& w)
+{
+    InputBindings& b = InputBindings::instance();
+    b.applyPreset("standard");
+    b.setInputs("deselect", {"Ctrl+Shift+A", "Esc"});
+    QAction* deselect = b.action("deselect");
+    QAction* large = b.action("viewer_large");
+    if (!CHECK(deselect && large)) return;
+    CHECK(deselect->shortcuts().contains(QKeySequence(Qt::Key_Escape)));
+    large->trigger();
+    QApplication::processEvents();
+    CHECK(large->isChecked());
+    CHECK(!deselect->shortcuts().contains(QKeySequence(Qt::Key_Escape)));
+    CHECK(deselect->shortcuts().contains(QKeySequence("Ctrl+Shift+A")));
+    CHECK_EQ(in("deselect"), QStringList({"Ctrl+Shift+A", "Esc"})); // the binding itself stays
+    w.activateWindow();
+    if (QTest::qWaitForWindowActive(&w)) {
+        QTest::keyClick(&w, Qt::Key_Escape);
+        QApplication::processEvents();
+        CHECK(!large->isChecked());
+    } else {
+        large->trigger();
+    }
+    QApplication::processEvents();
+    CHECK(!large->isChecked());
+    CHECK(deselect->shortcuts().contains(QKeySequence(Qt::Key_Escape)));
+    b.applyPreset("standard");
+}
+
 void testTrainer(MainWindow& w)
 {
     InputBindings& b = InputBindings::instance();
@@ -826,6 +857,7 @@ int main(int argc, char** argv)
         testCaptureLayouts();
         testCaptureEscape();
         testPresetPreviewKeepsActions();
+        testEscapeModesWin(w);
         testTrainer(w);
     }
     testLanguages(engine);

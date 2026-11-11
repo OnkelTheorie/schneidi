@@ -609,7 +609,7 @@ void InputBindings::apply(const Entry& e) const
     if (!e.action) return;
     QList<QKeySequence> keys;
     for (const QString& in : inputs(e.id))
-        if (!in.isEmpty() && inputMouseButton(in) == Qt::NoButton)
+        if (!in.isEmpty() && inputMouseButton(in) == Qt::NoButton && !(e.scope.isEmpty() && !m_held.value(in).isEmpty()))
             keys << QKeySequence::fromString(in, QKeySequence::PortableText);
     e.action->setShortcuts(keys);
 }
@@ -1189,6 +1189,17 @@ QKeyCombination InputBindings::bindingKey(const QKeyEvent* e, NativeKeys native)
         && (e->nativeModifiers() & 0x42) == 0x42 && !e->text().isEmpty() && e->text().at(0).isPrint())
         mods &= ~(Qt::ControlModifier | Qt::AltModifier);
     return QKeyCombination(mods, Qt::Key(key));
+}
+
+void InputBindings::holdWindowKey(const QString& owner, const QString& key, bool on)
+{
+    const QString in = normalizeInput(key);
+    const bool before = !m_held.value(in).isEmpty();
+    if (on) m_held[in].insert(owner);
+    else if (m_held.contains(in) && m_held[in].remove(owner) && m_held[in].isEmpty()) m_held.remove(in);
+    if (before == !m_held.value(in).isEmpty()) return;
+    for (const Entry& e : m_entries)
+        if (e.scope.isEmpty() && inputs(e.id).contains(in)) apply(e);
 }
 
 QStringList InputBindings::windowInternalKeys()

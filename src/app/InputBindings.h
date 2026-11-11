@@ -8,6 +8,7 @@
 #include <QJsonObject>
 #include <QKeySequence>
 #include <QPointer>
+#include <QSet>
 #include <QString>
 #include <QStringList>
 #include <QVector>
@@ -148,6 +149,10 @@ public:
     // Keys the main window uses itself while a mode is on (Esc ends the large viewer and a voice-over take): bound to a
     // window action they clash there (the key bindings dialog marks them)
     static QStringList windowInternalKeys();
+    // While a mode of the main window uses `key` itself (`owner` "large_viewer"/"voiceover": Esc ends it), window
+    // actions bound to it give it up on their QAction - two enabled Esc shortcuts are ambiguous and neither fires, the
+    // mode wins. The bindings stay; the actions get the key back once no owner holds it
+    void holdWindowKey(const QString& owner, const QString& key, bool on);
     // The action among `actions` whose keys match the key event, else nullptr
     static QAction* matching(const QList<QAction*>& actions, const QKeyEvent* event);
 
@@ -173,4 +178,5 @@ private:
     QHash<QString, WheelAction> m_wheel;       // "none"/"shift"/"ctrl+alt" -> action
     bool m_fileExisted = false;
     QString m_preset;                          // see currentPreset()
+    QHash<QString, QSet<QString>> m_held;      // holdWindowKey: key -> owners
 };
