@@ -76,12 +76,17 @@ QJsonObject parseArgs(const Cli::Command& cmd, const QStringList& args)
     for (int i = 0; i < args.size(); ++i) {
         const QString& a = args[i];
         if (a.startsWith("--") && a.size() > 2) {
-            QString name = a.mid(2).replace('-', '_');
+            // Only the option's name is normalised (--dry-run = --dry_run), never its value: `--media=my-clip.mkv`
+            // became my_clip.mkv
+            QString name = a.mid(2);
             QString value;
-            if (const int eq = name.indexOf('='); eq > 0) {
+            const int eq = name.indexOf('=');
+            if (eq > 0) {
                 value = name.mid(eq + 1);
                 name = name.left(eq);
-            } else {
+            }
+            name.replace('-', '_');
+            if (eq <= 0) {
                 const Cli::Param* p = nullptr;
                 for (const Cli::Param& x : cmd.params)
                     if (x.name == name) p = &x;

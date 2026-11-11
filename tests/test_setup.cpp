@@ -10,6 +10,7 @@
 
 #include <QCoreApplication>
 #include <QDir>
+#include <QFileInfo>
 #include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -82,6 +83,25 @@ int main(int argc, char** argv)
         CHECK(Cli::Guide::installSkill(dir.filePath("schneidi"), &error));
         CHECK(readFile(dir.filePath("schneidi/SKILL.md")).startsWith("---\nname: schneidi"));
         CHECK(QFile::exists(dir.filePath("schneidi/references/ad.md")));
+    }
+
+    // --- Option names are normalised (--dry-run = --dry_run), their values are not: `new --media=<path>` turned the
+    // hyphens of the path into underscores (report 9.11.), the project file too
+    {
+        QTemporaryDir dir;
+        const QString media = Check::makeMedia(dir.filePath("my-clip-2026-11-03.mkv"),
+                                               {"-f", "lavfi", "-i", "color=c=gray:s=160x90:d=1:r=25", "-c:v", "ffv1"});
+        const QString project = dir.filePath("my-cut.schneidi");
+        QProcess p;
+        QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+        env.insert("QT_QPA_PLATFORM", "offscreen");
+        p.setProcessEnvironment(env);
+        p.start(Check::cliPath(), {"new", "--project=" + project, "--media=" + media});
+        CHECK(p.waitForFinished(60000));
+        CHECK_EQ(p.exitCode(), 0);
+        CHECK(QFile::exists(project));
+        CHECK(!QFile::exists(dir.filePath("my_cut.schneidi")));
+        CHECK(readFile(project).contains(QFileInfo(media).fileName().toUtf8()));
     }
 
 #ifdef Q_OS_WIN
