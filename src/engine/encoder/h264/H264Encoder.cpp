@@ -135,9 +135,11 @@ inline uint8_t clip1(int v) { return uint8_t(v < 0 ? 0 : v > 255 ? 255 : v); }
 // Waits until counter >= need: a short spin (the wavefront usually catches up within
 // microseconds), then sleeps in the kernel (atomic wait) instead of burning the hyperthread
 // sibling's time. Writers call notify_all after every store that someone may wait for.
+const int gSpin = std::getenv("H264_SPIN") ? std::atoi(std::getenv("H264_SPIN")) : 128; // experiment
+
 inline void waitAtLeast(const std::atomic<int>& counter, int need)
 {
-    for (int i = 0; i < 128; ++i) {
+    for (int i = 0; i < gSpin; ++i) {
         if (counter.load(std::memory_order_acquire) >= need)
             return;
 #if defined(__SSE2__) || defined(_M_X64)
@@ -1676,34 +1678,42 @@ int intraCbpCode(int cbp)
 constexpr int blkIdxAt(int x, int y) { return (y >> 1) * 8 + (x >> 1) * 4 + (y & 1) * 2 + (x & 1); }
 
 // Intra 4x4 prediction (8.3.1.2). T[0] = p[-1,-1], T[1 + x] = p[x,-1] (x = 0..7), L[y] = p[-1,y].
-void predict4x4(int mode, const int* T, const int* L, bool left, bool top, uint8_t* pred)
+template <int Mode>
+inline void predict4x4Mode(const int* T, const int* L, bool left, bool top, int dc, uint8_t* pred)
 {
+    (void)left;
+    (void)top;
+    (void)dc;
     auto t = [&](int x) { return T[x + 1]; };              // x = -1 is the corner
     auto l = [&](int y) { return y < 0 ? T[0] : L[y]; }; // y = -1 is the corner
-    for (int y = 0; y < 4; ++y) {
+    (void)t;
+    (void)l;
+    for (int y = 0; y < 4; ++y)
         for (int x = 0; x < 4; ++x) {
             int v = 128;
-            switch (mode) {
-            case 0: v = t(x); break;
-            case 1: v = l(y); break;
-            case 2: {
+            if constexpr (Mode == 0) {
+                v = t(x);
+            }
+            if constexpr (Mode == 1) {
+                v = l(y);
+            }
+            if constexpr (Mode == 2) {
                 const int st = t(0) + t(1) + t(2) + t(3), sl = l(0) + l(1) + l(2) + l(3);
                 v = (top && left) ? (st + sl + 4) >> 3 : left ? (sl + 2) >> 2 : top ? (st + 2) >> 2 : 128;
-                break;
             }
-            case 3:
+            if constexpr (Mode == 3) {
                 v = (x == 3 && y == 3) ? (t(6) + 3 * t(7) + 2) >> 2
                                        : (t(x + y) + 2 * t(x + y + 1) + t(x + y + 2) + 2) >> 2;
-                break;
-            case 4:
+            }
+            if constexpr (Mode == 4) {
                 if (x > y)
                     v = (t(x - y - 2) + 2 * t(x - y - 1) + t(x - y) + 2) >> 2;
                 else if (x < y)
                     v = (l(y - x - 2) + 2 * l(y - x - 1) + l(y - x) + 2) >> 2;
                 else
                     v = (t(0) + 2 * T[0] + l(0) + 2) >> 2;
-                break;
-            case 5: {
+            }
+            if constexpr (Mode == 5) {
                 const int z = 2 * x - y, k = x - (y >> 1);
                 if (z >= 0 && !(z & 1))
                     v = (t(k - 1) + t(k) + 1) >> 1;
@@ -1713,9 +1723,8 @@ void predict4x4(int mode, const int* T, const int* L, bool left, bool top, uint8
                     v = (l(0) + 2 * T[0] + t(0) + 2) >> 2;
                 else
                     v = (l(y - 1) + 2 * l(y - 2) + l(y - 3) + 2) >> 2;
-                break;
             }
-            case 6: {
+            if constexpr (Mode == 6) {
                 const int z = 2 * y - x, k = y - (x >> 1);
                 if (z >= 0 && !(z & 1))
                     v = (l(k - 1) + l(k) + 1) >> 1;
@@ -1725,14 +1734,12 @@ void predict4x4(int mode, const int* T, const int* L, bool left, bool top, uint8
                     v = (l(0) + 2 * T[0] + t(0) + 2) >> 2;
                 else
                     v = (t(x - 1) + 2 * t(x - 2) + t(x - 3) + 2) >> 2;
-                break;
             }
-            case 7: {
+            if constexpr (Mode == 7) {
                 const int k = x + (y >> 1);
                 v = (y & 1) ? (t(k) + 2 * t(k + 1) + t(k + 2) + 2) >> 2 : (t(k) + t(k + 1) + 1) >> 1;
-                break;
             }
-            case 8: {
+            if constexpr (Mode == 8) {
                 const int z = x + 2 * y, k = y + (x >> 1);
                 if (z > 5)
                     v = l(3);
@@ -1742,11 +1749,25 @@ void predict4x4(int mode, const int* T, const int* L, bool left, bool top, uint8
                     v = (l(k) + 2 * l(k + 1) + l(k + 2) + 2) >> 2;
                 else
                     v = (l(k) + l(k + 1) + 1) >> 1;
-                break;
-            }
             }
             pred[y * 4 + x] = uint8_t(v);
         }
+}
+
+// One loop per mode (the mode switch outside the sample loops).
+void predict4x4(int mode, const int* T, const int* L, bool left, bool top, uint8_t* pred)
+{
+    const int dc = 0; // Mode 2 sums its own neighbours
+    switch (mode) {
+    case 0: predict4x4Mode<0>(T, L, left, top, dc, pred); break;
+    case 1: predict4x4Mode<1>(T, L, left, top, dc, pred); break;
+    case 2: predict4x4Mode<2>(T, L, left, top, dc, pred); break;
+    case 3: predict4x4Mode<3>(T, L, left, top, dc, pred); break;
+    case 4: predict4x4Mode<4>(T, L, left, top, dc, pred); break;
+    case 5: predict4x4Mode<5>(T, L, left, top, dc, pred); break;
+    case 6: predict4x4Mode<6>(T, L, left, top, dc, pred); break;
+    case 7: predict4x4Mode<7>(T, L, left, top, dc, pred); break;
+    case 8: predict4x4Mode<8>(T, L, left, top, dc, pred); break;
     }
 }
 
@@ -1780,6 +1801,81 @@ void filterIntra8Refs(int* T, int* L, bool left, bool top, bool corner)
 }
 
 // Intra 8x8 prediction (8.3.2.2.2..10) from filtered references (layout as filterIntra8Refs). Output stride 8.
+template <int Mode>
+inline void predict8x8Mode(const int* T, const int* L, bool left, bool top, int dc, uint8_t* pred)
+{
+    (void)left;
+    (void)top;
+    (void)dc;
+    auto t = [&](int x) { return T[x + 1]; };              // x = -1 is the corner
+    auto l = [&](int y) { return y < 0 ? T[0] : L[y]; }; // y = -1 is the corner
+    (void)t;
+    (void)l;
+    for (int y = 0; y < 8; ++y)
+        for (int x = 0; x < 8; ++x) {
+            int v = 128;
+            if constexpr (Mode == 0) {
+                v = t(x);
+            }
+            if constexpr (Mode == 1) {
+                v = l(y);
+            }
+            if constexpr (Mode == 2) {
+                v = dc;
+            }
+            if constexpr (Mode == 3) {
+                v = (x == 7 && y == 7) ? (t(14) + 3 * t(15) + 2) >> 2
+                                       : (t(x + y) + 2 * t(x + y + 1) + t(x + y + 2) + 2) >> 2;
+            }
+            if constexpr (Mode == 4) {
+                if (x > y)
+                    v = (t(x - y - 2) + 2 * t(x - y - 1) + t(x - y) + 2) >> 2;
+                else if (x < y)
+                    v = (l(y - x - 2) + 2 * l(y - x - 1) + l(y - x) + 2) >> 2;
+                else
+                    v = (t(0) + 2 * T[0] + l(0) + 2) >> 2;
+            }
+            if constexpr (Mode == 5) {
+                const int z = 2 * x - y, k = x - (y >> 1);
+                if (z >= 0 && !(z & 1))
+                    v = (t(k - 1) + t(k) + 1) >> 1;
+                else if (z > 0)
+                    v = (t(k - 2) + 2 * t(k - 1) + t(k) + 2) >> 2;
+                else if (z == -1)
+                    v = (l(0) + 2 * T[0] + t(0) + 2) >> 2;
+                else
+                    v = (l(y - 2 * x - 1) + 2 * l(y - 2 * x - 2) + l(y - 2 * x - 3) + 2) >> 2;
+            }
+            if constexpr (Mode == 6) {
+                const int z = 2 * y - x, k = y - (x >> 1);
+                if (z >= 0 && !(z & 1))
+                    v = (l(k - 1) + l(k) + 1) >> 1;
+                else if (z > 0)
+                    v = (l(k - 2) + 2 * l(k - 1) + l(k) + 2) >> 2;
+                else if (z == -1)
+                    v = (l(0) + 2 * T[0] + t(0) + 2) >> 2;
+                else
+                    v = (t(x - 2 * y - 1) + 2 * t(x - 2 * y - 2) + t(x - 2 * y - 3) + 2) >> 2;
+            }
+            if constexpr (Mode == 7) {
+                const int k = x + (y >> 1);
+                v = (y & 1) ? (t(k) + 2 * t(k + 1) + t(k + 2) + 2) >> 2 : (t(k) + t(k + 1) + 1) >> 1;
+            }
+            if constexpr (Mode == 8) {
+                const int z = x + 2 * y, k = y + (x >> 1);
+                if (z > 13)
+                    v = l(7);
+                else if (z == 13)
+                    v = (l(6) + 3 * l(7) + 2) >> 2;
+                else if (z & 1)
+                    v = (l(k) + 2 * l(k + 1) + l(k + 2) + 2) >> 2;
+                else
+                    v = (l(k) + l(k + 1) + 1) >> 1;
+            }
+            pred[y * 8 + x] = uint8_t(v);
+        }
+}
+
 void predict8x8(int mode, const int* T, const int* L, bool left, bool top, uint8_t* pred)
 {
     auto t = [&](int x) { return T[x + 1]; };              // x = -1 is the corner
@@ -1793,69 +1889,16 @@ void predict8x8(int mode, const int* T, const int* L, bool left, bool top, uint8
         }
         dc = (top && left) ? (st + sl + 8) >> 4 : left ? (sl + 4) >> 3 : top ? (st + 4) >> 3 : 128;
     }
-    for (int y = 0; y < 8; ++y) {
-        for (int x = 0; x < 8; ++x) {
-            int v = 128;
-            switch (mode) {
-            case 0: v = t(x); break;
-            case 1: v = l(y); break;
-            case 2: v = dc; break;
-            case 3:
-                v = (x == 7 && y == 7) ? (t(14) + 3 * t(15) + 2) >> 2
-                                       : (t(x + y) + 2 * t(x + y + 1) + t(x + y + 2) + 2) >> 2;
-                break;
-            case 4:
-                if (x > y)
-                    v = (t(x - y - 2) + 2 * t(x - y - 1) + t(x - y) + 2) >> 2;
-                else if (x < y)
-                    v = (l(y - x - 2) + 2 * l(y - x - 1) + l(y - x) + 2) >> 2;
-                else
-                    v = (t(0) + 2 * T[0] + l(0) + 2) >> 2;
-                break;
-            case 5: {
-                const int z = 2 * x - y, k = x - (y >> 1);
-                if (z >= 0 && !(z & 1))
-                    v = (t(k - 1) + t(k) + 1) >> 1;
-                else if (z > 0)
-                    v = (t(k - 2) + 2 * t(k - 1) + t(k) + 2) >> 2;
-                else if (z == -1)
-                    v = (l(0) + 2 * T[0] + t(0) + 2) >> 2;
-                else
-                    v = (l(y - 2 * x - 1) + 2 * l(y - 2 * x - 2) + l(y - 2 * x - 3) + 2) >> 2;
-                break;
-            }
-            case 6: {
-                const int z = 2 * y - x, k = y - (x >> 1);
-                if (z >= 0 && !(z & 1))
-                    v = (l(k - 1) + l(k) + 1) >> 1;
-                else if (z > 0)
-                    v = (l(k - 2) + 2 * l(k - 1) + l(k) + 2) >> 2;
-                else if (z == -1)
-                    v = (l(0) + 2 * T[0] + t(0) + 2) >> 2;
-                else
-                    v = (t(x - 2 * y - 1) + 2 * t(x - 2 * y - 2) + t(x - 2 * y - 3) + 2) >> 2;
-                break;
-            }
-            case 7: {
-                const int k = x + (y >> 1);
-                v = (y & 1) ? (t(k) + 2 * t(k + 1) + t(k + 2) + 2) >> 2 : (t(k) + t(k + 1) + 1) >> 1;
-                break;
-            }
-            case 8: {
-                const int z = x + 2 * y, k = y + (x >> 1);
-                if (z > 13)
-                    v = l(7);
-                else if (z == 13)
-                    v = (l(6) + 3 * l(7) + 2) >> 2;
-                else if (z & 1)
-                    v = (l(k) + 2 * l(k + 1) + l(k + 2) + 2) >> 2;
-                else
-                    v = (l(k) + l(k + 1) + 1) >> 1;
-                break;
-            }
-            }
-            pred[y * 8 + x] = uint8_t(v);
-        }
+    switch (mode) {
+    case 0: predict8x8Mode<0>(T, L, left, top, dc, pred); break;
+    case 1: predict8x8Mode<1>(T, L, left, top, dc, pred); break;
+    case 2: predict8x8Mode<2>(T, L, left, top, dc, pred); break;
+    case 3: predict8x8Mode<3>(T, L, left, top, dc, pred); break;
+    case 4: predict8x8Mode<4>(T, L, left, top, dc, pred); break;
+    case 5: predict8x8Mode<5>(T, L, left, top, dc, pred); break;
+    case 6: predict8x8Mode<6>(T, L, left, top, dc, pred); break;
+    case 7: predict8x8Mode<7>(T, L, left, top, dc, pred); break;
+    case 8: predict8x8Mode<8>(T, L, left, top, dc, pred); break;
     }
 }
 
