@@ -341,11 +341,14 @@ int main(int argc, char** argv)
             const char* name;
             double kx, ky;
             bool planes;
+            bool mips = false; // RGBA: uploaded with mip levels (stills)
         };
         const Case cases[] = {
             {"zone plate RGBA at 1/4", 0.25, 0.25, false},
             {"zone plate RGBA at 0.18", 0.18, 0.18, false},
             {"zone plate RGBA at 1/4 x, 1 y", 0.25, 1.0, false},
+            {"zone plate RGBA mips at 1/4", 0.25, 0.25, false, true},
+            {"zone plate RGBA mips at 1/4 x, 1 y", 0.25, 1.0, false, true},
             {"zone plate yuv at 1/4", 0.25, 0.25, true},
             {"zone plate yuv at 1/4 x, 0.9 y", 0.25, 0.9, true},
         };
@@ -355,7 +358,7 @@ int main(int argc, char** argv)
             std::vector<uint8_t> cpu(size_t(W) * H * 4, 0), out(cpu.size());
             Compose::draw(cpu.data(), W, H, plate.data(), w, h, m, 1.0);
             gpu->begin();
-            Gpu::TexturePtr t = c.planes ? gpu->uploadYuv(yuv->frame, yinfo, true) : gpu->uploadRgba(plate.data(), w, h, true);
+            Gpu::TexturePtr t = c.planes ? gpu->uploadYuv(yuv->frame, yinfo, true) : gpu->uploadRgba(plate.data(), w, h, true, c.mips);
             if (!CHECK(t != nullptr)) {
                 gpu->finish();
                 continue;
@@ -396,6 +399,42 @@ int main(int argc, char** argv)
             CHECK(gi.psnr >= 32);
             CHECK(gi.psnr >= ci.psnr - 1.0);
         }
+    }
+
+    // 4c. A cropped layer shrunk 4:1 without mips: what the crop cut away never shows at the edge (the taps are cropped
+    // each, as Compose::crop clears the source before the CPU draws). Left half red, right half green, the green half
+    // cropped away: no green anywhere, the picture as the CPU draws it
+    {
+        const int w = 512, h = 256;
+        std::vector<uint8_t> src(size_t(w) * h * 4);
+        for (int y = 0; y < h; ++y)
+            for (int x = 0; x < w; ++x) {
+                uint8_t* p = &src[(size_t(y) * w + x) * 4];
+                p[0] = x < w / 2 - 2 ? 255 : 0; // the edge inside a target pixel (4 source pixels from 252)
+                p[1] = x < w / 2 - 2 ? 0 : 255;
+                p[2] = 0;
+                p[3] = 255;
+            }
+        const QRectF crop(0, 0, w / 2 - 2, h);
+        const int W = w / 4 + 8, H = h / 4 + 8;
+        const Compose::Affine m = Compose::placement(4, 4, w / 4.0, h / 4.0, 0, w, h, true, true);
+        std::vector<uint8_t> cropped = src, cpu(size_t(W) * H * 4, 0), out(cpu.size());
+        const uint8_t none[4] = {0, 0, 0, 0};
+        Compose::crop(cropped.data(), w, h, crop.left(), crop.top(), crop.right(), crop.bottom(), none);
+        Compose::draw(cpu.data(), W, H, cropped.data(), w, h, m, 1.0);
+        gpu->begin();
+        Gpu::TexturePtr t = gpu->uploadRgba(src.data(), w, h, true);
+        Gpu::TexturePtr canvas = gpu->target(QSize(W, H));
+        gpu->draw(*canvas, {t.get(), m, 1.0, nullptr, crop});
+        gpu->readRgba(*canvas, out.data());
+        gpu->finish();
+        int green = 0;
+        for (size_t i = 0; i < out.size(); i += 4) green = std::max(green, int(out[i + 1]));
+        const Diff d = compare(cpu.data(), out.data(), cpu.size());
+        show("cropped RGBA at 1/4", d);
+        std::printf("  %-34s most green %d\n", "", green);
+        CHECK(green <= 2);
+        CHECK(d.psnr >= 40);
     }
 
     // 5. Colour grade: baked correction on the CPU vs the 3D LUT on the card

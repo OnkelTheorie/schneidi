@@ -81,6 +81,14 @@ vec4 sampleAt(vec2 q, ivec2 size, int lod, int mode)
     return vec4(ysum, uv * alpha, alpha);
 }
 
+// Share of source position st (pixels of level 0) kept by the crop (area share like Compose::crop; 1 = no crop)
+float cropShare(vec2 st)
+{
+    if (crop.z < crop.x) return 1.0;
+    vec2 lo = clamp(st - crop.xy + 0.5, 0.0, 1.0), hi = clamp(crop.zw - st + 0.5, 0.0, 1.0);
+    return lo.x * lo.y * hi.x * hi.y;
+}
+
 void main()
 {
     int mode = int(target.w + 0.5);
@@ -101,13 +109,14 @@ void main()
         discard;
     vec4 acc;
     if (taps.x == 1 && taps.y == 1) { // the usual case (same for every pixel of the draw: no divergence)
-        acc = sampleAt(q, size, lod, mode);
+        acc = sampleAt(q, size, lod, mode) * cropShare(s);
     } else {
+        // Each tap cropped on its own: once at the pixel's centre, a pixel at the crop edge took in the texels cut away
         acc = vec4(0.0);
         for (int ty = 0; ty < taps.y; ++ty)
             for (int tx = 0; tx < taps.x; ++tx) {
-                vec2 o = (vec2(tx, ty) + 0.5) / vec2(taps) - 0.5;
-                acc += sampleAt(q + o * 2.0 * reach, size, lod, mode);
+                vec2 qt = q + ((vec2(tx, ty) + 0.5) / vec2(taps) - 0.5) * 2.0 * reach;
+                acc += sampleAt(qt, size, lod, mode) * cropShare((qt + 0.5) / scale);
             }
         acc /= float(taps.x * taps.y);
     }
@@ -126,11 +135,6 @@ void main()
         vec3 c = clamp((yuv * vec4(Y, uv, 1.0)).rgb, 0.0, 1.0);
         if (chroma.w > 0.5) c = texture(lut3, c * lut.x + lut.y).rgb;
         color = vec4(c * alpha, alpha);
-    }
-    // Crop (source pixels, area share like Compose::crop)
-    if (crop.z >= crop.x) {
-        vec2 lo = clamp(s - crop.xy + 0.5, 0.0, 1.0), hi = clamp(crop.zw - s + 0.5, 0.0, 1.0);
-        color *= lo.x * lo.y * hi.x * hi.y;
     }
     fragColor = color * inv0.w;
 }

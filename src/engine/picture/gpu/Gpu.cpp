@@ -560,23 +560,28 @@ TexturePtr Context::target(QSize size, const float clear[4])
     return t;
 }
 
-TexturePtr Context::uploadRgba(const uint8_t* rgba, int w, int h, bool premultiplied)
+TexturePtr Context::uploadRgba(const uint8_t* rgba, int w, int h, bool premultiplied, bool mips)
 {
     if (!rgba || w <= 0 || h <= 0) return {};
-    TexturePtr t = d->take({1, w, h, 0, 0}, [&] {
+    const int levels = mips ? d->rhi->mipLevelsForSize(QSize(w, h)) : 1;
+    TexturePtr t = d->take({1, w, h, 0, levels}, [&] {
         auto t = std::make_unique<Texture>();
         t->size = QSize(w, h);
-        t->tex[0].reset(d->rhi->newTexture(QRhiTexture::RGBA8, t->size));
+        QRhiTexture::Flags flags;
+        if (mips) flags |= QRhiTexture::MipMapped | QRhiTexture::UsedWithGenerateMips;
+        t->tex[0].reset(d->rhi->newTexture(QRhiTexture::RGBA8, t->size, 1, flags));
         return t->tex[0]->create() ? std::move(t) : nullptr;
     });
     if (!t) return {};
     t->kind = premultiplied ? Texture::Rgba : Texture::RgbaStraight;
+    t->mipLevels = levels;
     // Read in place when the frame is submitted (finish()), like uploadYuv's planes: the pointer constructor copied
     // every picture into a fresh QByteArray on the GPU thread - three full-HD layers of a compositing graph cost ~10 ms
     // per frame there (page faults of 8 MB allocations), the one thread every preview frame waits for
     QRhiTextureSubresourceUploadDescription desc;
     desc.setData(QByteArray::fromRawData(reinterpret_cast<const char*>(rgba), qsizetype(size_t(w) * h * 4)));
     d->batch()->uploadTexture(t->tex[0].get(), QRhiTextureUploadDescription({0, 0, desc}));
+    if (mips) d->batch()->generateMips(t->tex[0].get());
     return t;
 }
 

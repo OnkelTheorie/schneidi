@@ -2629,8 +2629,25 @@ struct Renderer::Impl {
                     if (it != stills.end() && it->second.first.lock() == op.still) {
                         src = it->second.second;
                     } else {
+                        // With mip levels: uploaded once, drawn every frame - shrunk, a level is read instead of a grid
+                        // of taps. The levels average what is stored: a still with transparency is premultiplied first
                         const QImage& img = op.still->image;
-                        src = g.uploadRgba(img.constBits(), img.width(), img.height(), false);
+                        if (op.still->opaque) {
+                            src = g.uploadRgba(img.constBits(), img.width(), img.height(), false, true);
+                        } else {
+                            std::vector<uint8_t> pm(size_t(img.width()) * img.height() * 4);
+                            for (int y = 0; y < img.height(); ++y) {
+                                const uint8_t* in = img.constScanLine(y);
+                                uint8_t* out = pm.data() + size_t(y) * img.width() * 4;
+                                for (int x = 0; x < img.width() * 4; x += 4) {
+                                    const uint32_t a = in[x + 3];
+                                    for (int c = 0; c < 3; ++c) out[x + c] = uint8_t((in[x + c] * a + 127) / 255);
+                                    out[x + 3] = uint8_t(a);
+                                }
+                            }
+                            src = g.uploadRgba(pm.data(), img.width(), img.height(), true, true);
+                            keep.buffers.push_back(std::move(pm)); // read when the frame is submitted
+                        }
                         for (auto e = stills.begin(); e != stills.end();) // sources closed since: textures go
                             e = e->second.first.expired() ? stills.erase(e) : std::next(e);
                         if (src) stills[op.still.get()] = {op.still, src};
