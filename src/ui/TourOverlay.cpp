@@ -267,6 +267,13 @@ void TourOverlay::showStep(const QString& text, int index, int count, bool waiti
     qApp->installEventFilter(this); // Esc
 }
 
+void TourOverlay::setStepText(const QString& text)
+{
+    if (m_question || m_text->text() == text) return;
+    m_text->setText(text);
+    if (isVisible()) relayout();
+}
+
 void TourOverlay::showQuestion(const QString& title, const QString& text, const QString& hint,
                                const QVector<Choice>& choices)
 {

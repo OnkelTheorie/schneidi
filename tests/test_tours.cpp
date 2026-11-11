@@ -12,7 +12,10 @@
 //   the center of each hole hits its target (not another panel, not the overlay), the target is big enough, the bubble
 //   fits, stays in the window and off the holes. After each tour the user's project (unsaved changes too), page,
 //   panels, sizes and settings are back as they were; with unsaved changes the tour asks first.
-// TOURS_DUMP=<folder>: a picture of every step (the user-settings runs, the questions) for a look.
+// - the cutting tour after the user's mistakes (testCutTour): everything deleted at one step = the clips back at the
+//   next one (with a note), the Inspector shows a clip; the split step puts the playhead in its clip's middle
+// TOURS_DUMP=<folder>: a picture of every step (the user-settings runs, the questions) for a look. A large font: the
+// whole test with QT_FONT_DPI=120 (every check holds there too).
 
 #include "check.h"
 
@@ -28,6 +31,7 @@
 #include "core/Tours.h"
 #include "engine/Engine.h"
 #include "ui/EffectsLibrary.h"
+#include "ui/Inspector.h"
 #include "ui/TourOverlay.h"
 #include "ui/comp/CompCanvas.h"
 #include "ui/comp/CompPage.h"
@@ -850,6 +854,172 @@ void testHistoryAndLive(MainWindow& w)
     w.setLiveWaiting({});
 }
 
+const Clip* firstOnV1(Project* p)
+{
+    const Timeline& tl = p->timeline();
+    return !tl.video.isEmpty() && !tl.video[0].clips.isEmpty() ? &tl.video[0].clips[0] : nullptr;
+}
+
+bool hasVideoClip(Project* p)
+{
+    for (const Track& t : p->timeline().video)
+        for (const Clip& c : t.clips)
+            if (c.kind == ClipKind::Media) return true;
+    return false;
+}
+
+// The Inspector shows a clip: its "No clip selected" is hidden and a selected clip exists
+bool inspectorShowsClip(MainWindow& w)
+{
+    auto* ins = w.findChild<Inspector*>();
+    if (!ins || !ins->isVisible()) return false;
+    bool selected = false;
+    for (int id : w.liveSelection()->ids()) selected |= TimelineOps::findClip(w.liveProject()->timeline(), id) != nullptr;
+    for (QLabel* l : ins->findChildren<QLabel*>())
+        if (l->text() == T("Kein Clip ausgewählt")) return selected && l->isHidden();
+    return false;
+}
+
+QString bubbleText(TourOverlay* o)
+{
+    auto* l = o->bubble()->findChild<QLabel*>("tour_text");
+    return l ? l->text() : QString();
+}
+
+// The split key as the user has it (key set, own keys), pressed in the window
+void pressBound(MainWindow& w, const char* id)
+{
+    QTest::keySequence(w.windowHandle(), InputBindings::instance().current(id));
+    QTest::qWait(60);
+}
+
+// The split step: the playhead in the middle of the clip it is about (the first on V1, selected), the split key
+// splits it right there and the tour goes on
+void checkSplitStep(MainWindow& w, const QString& where)
+{
+    Project* p = w.liveProject();
+    auto* tv = w.findChild<TimelineView*>();
+    TourRunner* r = w.tours()->runner();
+    const TourStep* s = r->step();
+    if (!CHECK(tv && s)) return;
+    Check::report(s->wait == "clip_added", "the split step", __FILE__, __LINE__, where);
+    const Clip* c = firstOnV1(p);
+    if (!Check::report(c, "a clip to split", __FILE__, __LINE__, where)) return;
+    const int ph = tv->playhead(), mid = c->start + c->length() / 2;
+    Check::report(ph > c->start && ph < c->end() && std::abs(ph - mid) <= 1, "playhead in the middle of the clip", __FILE__,
+                  __LINE__, QString("%1: playhead %2, clip %3-%4").arg(where).arg(ph).arg(c->start).arg(c->end()));
+    // The text says the split happens at the playhead, with the user's key
+    const QString key = InputBindings::instance().current("split").toString(QKeySequence::NativeText);
+    Check::report(bubbleText(w.tours()->overlay()).contains("<b>" + key.toHtmlEscaped() + "</b>"), "split key in the text",
+                  __FILE__, __LINE__, where);
+    const int id = c->id, index = r->index(), before = clipCount(p);
+    pressBound(w, "split");
+    const Clip* left = TimelineOps::findClip(p->timeline(), id);
+    Check::report(clipCount(p) > before && left && left->end() == ph, "split at the playhead", __FILE__, __LINE__,
+                  QString("%1: %2 -> %3 clips").arg(where).arg(before).arg(clipCount(p)));
+    Check::report(r->index() == index + 1, "goes on after the split", __FILE__, __LINE__, where);
+}
+
+// The cutting tour (normal path and the user's mistakes; the walk does every tour once as intended):
+// - the split step puts the playhead in the middle of its clip and selects it: the split key just works, also when
+//   the user moved the playhead away or selected another clip and came back
+// - everything deleted (select all + delete) at the gap step: the bubble says how to get it back at once, the next
+//   step brings the clips back (undo) with a short note; every later step has a clip, the Inspector shows one, the
+//   split step works again after one more delete-all
+// - the start tour with the drag step skipped: the split step has a clip of its own
+void testCutTour(MainWindow& w, const QString& run, bool dumpIt)
+{
+    TourManager* tours = w.tours();
+    TourOverlay* o = tours->overlay();
+    TourRunner* r = tours->runner();
+    Project* p = w.liveProject();
+    auto* tv = w.findChild<TimelineView*>();
+    QAction* selectAll = bound("select_all");
+    QAction* del = bound("ripple_delete");
+    if (!CHECK(tv && selectAll && del)) return;
+    const auto start = [&](const char* id) {
+        tours->start(id);
+        if (QPushButton* keep = button(o, "tour_keep")) keep->click();
+        QTest::qWait(30);
+        return CHECK(r->running());
+    };
+    const auto go = [&](const char* name) {
+        if (QPushButton* b = button(o, name); CHECK(b)) b->click();
+        QTest::qWait(30);
+    };
+    const auto deleteAll = [&] {
+        selectAll->trigger();
+        del->trigger();
+        QTest::qWait(30);
+        CHECK(!hasVideoClip(p));
+    };
+
+    // (a) + (c) the normal path of the split step, also after the user moved the playhead and the selection away
+    if (!start("editing")) return;
+    CHECK_EQ(r->index(), 0);
+    if (dumpIt) {
+        QTest::qWait(300); // the viewer's picture of the practice clip
+        dump(&w, run + "-cut-split");
+    }
+    checkSplitStep(w, run + " split");
+    emit tv->seekRequested(TimelineOps::endFrame(p->timeline()) + 50); // past every clip
+    const Timeline& tl = p->timeline();
+    if (CHECK(!tl.video.isEmpty() && tl.video[0].clips.size() > 2)) w.liveSelection()->set({tl.video[0].clips.last().id});
+    QTest::qWait(30);
+    go("tour_back");
+    CHECK_EQ(r->index(), 0);
+    checkSplitStep(w, run + " split again");
+    tours->stop();
+
+    // (b) everything deleted at the gap step
+    if (!start("editing")) return;
+    const int full = clipCount(p);
+    go("tour_next"); // skips the split
+    go("tour_next");
+    CHECK_EQ(r->index(), 2);
+    const QString plain = bubbleText(o);
+    deleteAll();
+    const QString undoKey = "<b>" + InputBindings::instance().current("undo").toString(QKeySequence::NativeText).toHtmlEscaped() + "</b>";
+    Check::report(bubbleText(o) != plain && bubbleText(o).contains(undoKey), "the bubble says how to get the clips back",
+                  __FILE__, __LINE__, run + ": " + bubbleText(o));
+    if (dumpIt) dump(&w, run + "-cut-lost");
+    go("tour_next");
+    CHECK_EQ(r->index(), 3);
+    Check::report(clipCount(p) == full, "the clips back at the next step", __FILE__, __LINE__,
+                  run + QString(": %1 of %2").arg(clipCount(p)).arg(full));
+    Check::report(bubbleText(o).contains(undoKey), "a note says they came back", __FILE__, __LINE__, run + ": " + bubbleText(o));
+    if (dumpIt) dump(&w, run + "-cut-restored");
+    go("tour_next");
+    go("tour_next");
+    CHECK_EQ(r->index(), 5);
+    Check::report(inspectorShowsClip(w), "the Inspector shows a clip", __FILE__, __LINE__, run);
+    // Once more, at the Inspector step, then back to the split step: a clip there, the split works
+    deleteAll();
+    for (int i = 0; i < 5; ++i) go("tour_back");
+    CHECK_EQ(r->index(), 0);
+    CHECK(hasVideoClip(p));
+    checkSplitStep(w, run + " split after delete-all");
+    // A stale selection (the selected clip deleted) at the Inspector step: a clip selected that exists
+    for (int i = r->index(); i < 5; ++i) go("tour_next");
+    CHECK_EQ(r->index(), 5);
+    if (const Clip* c = firstOnV1(p); CHECK(c)) {
+        w.liveSelection()->set({c->id});
+        w.editor()->deleteSelection();
+        go("tour_back");
+        go("tour_next");
+        Check::report(inspectorShowsClip(w), "the Inspector shows a clip after the selected one was deleted", __FILE__,
+                      __LINE__, run);
+    }
+    tours->stop();
+
+    // The start tour with the drag step skipped: the steps after it have a clip, the split works
+    if (!start("first_steps")) return;
+    while (r->running() && r->index() < 5) go("tour_next");
+    CHECK_EQ(r->index(), 5);
+    checkSplitStep(w, run + " first steps, drag skipped");
+    tours->stop();
+}
+
 // The user's own project: a clip of its own (a title: no media at all), unsaved, selected, the playhead moved
 void ownProject(MainWindow& w)
 {
@@ -913,6 +1083,7 @@ void runWindow(Engine& engine, const QString& run, const QString& settingsFile, 
         QTest::qWait(30);
         sameLook(before, look(w), run + " after " + t.id);
     }
+    testCutTour(w, run, dumpIt);
     if (!user) testPanelToggles(w); // after the tours (they put every splitter's sizes back) too
     testHistoryAndLive(w);
     // Back in the user's project after the tours: the same clip, still unsaved, still selected

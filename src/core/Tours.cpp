@@ -15,7 +15,8 @@
 //   "steps": [
 //     {"target": "mediaPool", "page": "edit", "text": "Hier liegen deine Clips."},
 //     {"target": "mediaPool|timeline", "wait": "clip_on_timeline", "offer": "clips", "text": "Zieh einen Clip ..."},
-//     {"target": "comp_canvas", "page": "comp", "action": "comp_nodes", "text": "..."}
+//     {"target": "comp_canvas", "page": "comp", "action": "comp_nodes", "text": "..."},
+//     {"target": "area:clip_v1", "needs": "clip", "action": "playhead_mid_clip", "text": "..."}
 //   ]
 // }
 
@@ -42,6 +43,7 @@ Tour parse(const QByteArray& json, QString* error)
         step.action = s.value("action").toString();
         step.keep = s.value("keep").toString();
         step.tool = s.value("tool").toString();
+        step.needs = s.value("needs").toString();
         if (step.text.isEmpty()) {
             if (error) *error = QStringLiteral("step %1 without text").arg(t.steps.size() + 1);
             return {};
