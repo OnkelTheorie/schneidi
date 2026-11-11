@@ -507,6 +507,10 @@ bool MainWindow::applyLoaded(ProjectData data, const QString& path, bool ask)
     OpenTrace::mark("missing media/effects checked");
     m_engine->setFormat(data.format); // media lengths in the file already count at this frame rate
     OpenTrace::mark("engine format set");
+    // The timeline shown after loading is set up below (restoreViews, the engine): the switch to another timeline
+    // (currentSequenceChanged) has nothing to keep of the old project's and must not seek the engine, which still
+    // has the old timeline - it drew the old project's picture once more before the new one
+    m_shownSequence = data.currentSequence;
     m_project->load(data);
     OpenTrace::mark("project loaded (signals handled)");
     if (relinked > 0) m_project->markModified(); // new paths are only in the file after saving
