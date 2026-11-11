@@ -1922,6 +1922,54 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
             for (const QJsonValue& c : hd["candidates"].toArray()) dmKills += c["kills"].toInt();
             CHECK_EQ(dmKills, 2);
             CHECK(!hd.contains("teamkills"));
+            // Assists (report 9.11.: "X + Onkel Theo -> Y" counted as the player's kill): the player's lines are
+            // their kills and their assists, "killer + assister  weapon  victim" with a white "+". The player's name
+            // (P: six thin bars) is the first one of their kills; a teammate (M: one stripe). A at 1 s: "P  weapon
+            // V", a kill. B at 2.5 s: "P + M  weapon  V", a kill with an assist. C at 4 s: "M + P  weapon  V": M
+            // killed, the player only assisted, no kill
+            {
+                const auto box = [](int x, int y, int w, int h, const QString& c, const QString& when) {
+                    return QString(",drawbox=x=%1:y=%2:w=%3:h=%4:c=%5:t=fill:enable='%6'")
+                        .arg(x).arg(y).arg(w).arg(h).arg(c, when);
+                };
+                const auto player = [&](int x, int y, const QString& when) {
+                    QString s;
+                    for (int k = 0; k < 6; ++k) s += box(x + 10 * k, y, 6, 12, t, when);
+                    return s;
+                };
+                const auto mate = [&](int x, int y, const QString& when) { return box(x, y + 4, 60, 4, t, when); };
+                const auto plus = [&](int x, int y, const QString& when) {
+                    return box(x, y + 5, 8, 2, "white", when) + box(x + 3, y + 2, 2, 8, "white", when);
+                };
+                const auto assistLine = [&](int y, const QString& when, int kind) {
+                    const int ty = y + 10;
+                    QString s = QString(",drawbox=x=1510:y=%1:w=400:h=31:c=0x181818:t=fill:enable='%2',"
+                                        "drawbox=x=1510:y=%1:w=400:h=31:c=0xd8444a:t=1:enable='%2'")
+                                    .arg(y)
+                                    .arg(when);
+                    if (kind == 0) s += player(1530, ty, when);
+                    if (kind == 1) s += player(1530, ty, when) + plus(1598, ty, when) + mate(1612, ty, when);
+                    if (kind == 2) s += mate(1530, ty, when) + plus(1598, ty, when) + player(1612, ty, when);
+                    return s + box(1700, ty, 50, 12, "white", when) + box(1790, ty, 100, 12, ct, when);
+                };
+                const QString assists = Check::makeMedia(
+                    dir.filePath("cs2_assist.mkv"),
+                    {"-f", "lavfi", "-i",
+                     "color=c=0x707070:s=1920x1080:d=6:r=25" + assistLine(74, "gte(t,1)", 0)
+                         + assistLine(108, "gte(t,2.5)", 1) + assistLine(142, "gte(t,4)", 2),
+                     "-c:v", "ffv1", "-pix_fmt", "bgr0"});
+                const QJsonObject ha = run("highlights", {{"file", assists}});
+                QVector<double> assistKills;
+                for (const QJsonValue& c : ha["candidates"].toArray())
+                    for (const QJsonValue& k : c["kill_s"].toArray()) assistKills << k.toDouble();
+                std::sort(assistKills.begin(), assistKills.end());
+                if (CHECK_EQ(assistKills.size(), 2)) {
+                    CHECK(std::abs(assistKills[0] - 1.0) < 0.15);
+                    CHECK(std::abs(assistKills[1] - 2.5) < 0.15);
+                }
+                if (CHECK_EQ(ha["assists"].toArray().size(), 1)) CHECK(std::abs(ha["assists"][0].toDouble() - 4.0) < 0.15);
+                CHECK(ha["assists_note"].isString());
+            }
         }
         // Without sound: the frame the line began to show
         if (const QJsonObject c = hl["candidates"][0].toObject(); CHECK(c["hit_s"].isArray())) {

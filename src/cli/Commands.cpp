@@ -1234,7 +1234,9 @@ const QVector<Command>& commands()
                        "in the sound before the line began, 'hit_by' sound; or the frame the line began, 'hit_by' "
                        "feed). Put accents and beats on hit_s: on the timeline it is {media:file, source:\"<hit_s>s\"}. "
                        "CS2: a teamkill (the victim in the player's own team colour) is not a kill: listed in "
-                       "'teamkills' (seconds), inside a candidate as 'teamkills' + 'teamkill_s' with a lower score.",
+                       "'teamkills' (seconds), inside a candidate as 'teamkills' + 'teamkill_s' with a lower score. The "
+                       "player's assist (\"A + player  weapon  victim\": A killed) is not a kill either: listed in "
+                       "'assists' (seconds).",
          {{"file", T::Path, "video file", false, true},
           {"files", T::Paths, "several video files (one result each, plus 'best': all candidates by score)"},
           {"game", T::String, "read the kill feed of this game: cs2 or valorant (its region, colour and tolerance; "

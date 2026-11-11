@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cmath>
 #include <mutex>
+#include <tuple>
 #include <vector>
 
 namespace Cli::detail {
@@ -45,6 +46,7 @@ constexpr int kTeamSat = 50;     // brightest minus darkest channel
 constexpr int kTeamPixels = 4;   // a name side needs this many pixels of its colour, twice as many as of the other
 constexpr int kTeamAbove = 40;  // a name's pixel is this much brighter (luma) than the middle of its line
 constexpr int kTeamGap = 3;      // the frame's top edge may break for this many outline widths (`near`) going left
+constexpr double kSameName = 0.5; // two lines' first names are the same when this part of their pixels match
 
 int teamOf(const uchar* p)
 {
@@ -63,6 +65,10 @@ struct Found {
     // Team colour of the first name (the killer) and the last one (the victim): 1 warm, -1 cool, 0 not clear (white
     // text, only one name, cut off)
     int killer = 0, victim = 0;
+    // The first name's start (its coloured pixels, 2 line heights wide, from its first column; empty = not read) and
+    // a "+" after it before the weapon: "A + B  weapon  C", A killed C, B assisted
+    std::vector<uchar> name;
+    bool plus = false;
 };
 
 struct Track {
@@ -168,6 +174,7 @@ ColorEvents framedLineEvents(const MediaSource& m, const QRectF& region, const Q
     const float strong = float(kStrong * length);
     const int sigX0 = x0, sigW = std::max(1, edge - reach - x0);
     const int sigY0 = int(std::lround(span * 0.2)), sigH = std::max(1, int(std::lround(span * 0.6)));
+    const int nameW = 2 * span, nameH = std::max(1, int(std::lround(span * 0.8)) - int(std::lround(span * 0.25)));
 
     std::vector<std::vector<Found>> found;
     std::vector<char> have;
@@ -256,13 +263,23 @@ ColorEvents framedLineEvents(const MediaSource& m, const QRectF& region, const Q
                 if (band.empty()) return;
                 std::nth_element(band.begin(), band.begin() + band.size() / 2, band.end());
                 const int above = band[band.size() / 2] + kTeamAbove;
-                std::vector<int> warm(size_t(b - a), 0), cool(size_t(b - a), 0);
+                std::vector<int> warm(size_t(b - a), 0), cool(size_t(b - a), 0), white(size_t(b - a), 0);
+                std::vector<int> whiteTop(size_t(b - a), yb), whiteBottom(size_t(b - a), -1);
                 int first = -1, last = -1;
                 for (int x = a; x < b; ++x) {
                     for (int y = ya; y < yb; ++y) {
-                        const int t = luma(x, y) >= above ? teamOf(rgb + size_t(y * w + x) * 3) : 0;
+                        const uchar* px = rgb + size_t(y * w + x) * 3;
+                        const bool lit = luma(x, y) >= above;
+                        const int t = lit ? teamOf(px) : 0;
                         warm[size_t(x - a)] += t > 0;
                         cool[size_t(x - a)] += t < 0;
+                        // White text and icons (the weapon, the "+"): bright and grey
+                        if (lit && t == 0 && std::max({px[0], px[1], px[2]}) >= kTeamBright
+                            && std::max({px[0], px[1], px[2]}) - std::min({px[0], px[1], px[2]}) < kTeamSat) {
+                            ++white[size_t(x - a)];
+                            whiteTop[size_t(x - a)] = std::min(whiteTop[size_t(x - a)], y);
+                            whiteBottom[size_t(x - a)] = std::max(whiteBottom[size_t(x - a)], y);
+                        }
                     }
                     if (warm[size_t(x - a)] + cool[size_t(x - a)] > 0) {
                         if (first < 0) first = x - a;
@@ -270,6 +287,39 @@ ColorEvents framedLineEvents(const MediaSource& m, const QRectF& region, const Q
                     }
                 }
                 const int width = 2 * span;
+                if (first >= 0) {
+                    // The first name's start, for telling the player's name from another one
+                    l.name.assign(size_t(width) * nameH, 0);
+                    for (int y = ya; y < std::min(yb, ya + nameH); ++y)
+                        for (int x = a + first; x < std::min(b, a + first + width); ++x)
+                            l.name[size_t((y - ya) * width + x - a - first)] =
+                                luma(x, y) >= above && teamOf(rgb + size_t(y * w + x) * 3) != 0;
+                    // A "+" after it: a small white cross (a vertical stroke, a horizontal one through its middle)
+                    // shortly after coloured text, before the first wide white thing (the weapon)
+                    for (int x = first; x < b - a;) {
+                        if (white[size_t(x)] == 0) {
+                            ++x;
+                            continue;
+                        }
+                        int end = x, top = yb, bottom = -1, most = 0;
+                        for (; end < b - a && white[size_t(end)] > 0; ++end) {
+                            top = std::min(top, whiteTop[size_t(end)]);
+                            bottom = std::max(bottom, whiteBottom[size_t(end)]);
+                            most = std::max(most, white[size_t(end)]);
+                        }
+                        const int cw = end - x, ch = bottom - top + 1;
+                        if (cw * 5 > span * 3) break; // the weapon: no "+" before it
+                        bool colourBefore = false;
+                        for (int k = std::max(0, x - span * 2 / 3); k < x; ++k)
+                            colourBefore = colourBefore || warm[size_t(k)] + cool[size_t(k)] > 0;
+                        if (colourBefore && cw >= 2 && cw * 2 <= span && ch * 5 >= cw * 3 && ch * 5 <= cw * 8
+                            && most * 10 >= ch * 7 && white[size_t(x)] * 2 <= ch && white[size_t(end - 1)] * 2 <= ch) {
+                            l.plus = true;
+                            break;
+                        }
+                        x = end;
+                    }
+                }
                 if (first < 0 || last - first < 2 * width) return; // one name only (a suicide) or none
                 const auto side = [&](int x, int y) {
                     int ww = 0, cc = 0;
@@ -415,7 +465,56 @@ ColorEvents framedLineEvents(const MediaSource& m, const QRectF& region, const Q
         if (const int c = sameTeam(tr); c != 0) (c > 0 ? warmSame : coolSame)++;
     const bool teams = !(warmSame > 0 && coolSame > 0) && warmSame + coolSame < 3;
 
-    std::vector<std::pair<int, bool>> fresh; // first sample, teamkill
+    // Assists: the player's lines are their kills and their assists ("A + player  weapon  C": A killed C). The
+    // player's name is the first name most lines share (a line without a "+" is the player's own kill: it wins a
+    // tie). A line with a "+" whose first name is another one is the player's assist, not a kill. Read from each
+    // line's first second: whether it has a "+" (in two of its samples) and its clearest first name
+    struct Names {
+        const std::vector<uchar>* name = nullptr;
+        bool plus = false;
+    };
+    const auto namesOf = [&](const Track& tr) {
+        Names n;
+        int votes = 0;
+        long best = 0;
+        for (size_t k = 0; k < std::min<size_t>(tr.at.size(), kRate); ++k) {
+            const Found& x = *tr.at[k];
+            votes += x.plus;
+            const long pixels = std::count(x.name.begin(), x.name.end(), uchar(1));
+            if (pixels > best) {
+                best = pixels;
+                n.name = &x.name;
+            }
+        }
+        n.plus = votes >= 2;
+        if (best < std::max(8, nameW * nameH / 50)) n.name = nullptr;
+        return n;
+    };
+    std::vector<Names> lineNames; // lines seen long enough (not a flicker), those on screen from the start too
+    for (const Track& tr : tracks)
+        if (tr.seen.size() >= 3) lineNames.push_back(namesOf(tr));
+    const auto sameName = [&](const std::vector<uchar>& a, const std::vector<uchar>& b) {
+        return sameContent(a, b, nameW, nameH) >= kSameName;
+    };
+    const std::vector<uchar>* player = nullptr;
+    {
+        int bestScore = 0;
+        bool bestPlain = false;
+        for (const Names& n : lineNames) {
+            if (!n.name) continue;
+            const int score = int(std::count_if(lineNames.begin(), lineNames.end(),
+                                                [&](const Names& o) { return o.name && sameName(*n.name, *o.name); }));
+            if (score > bestScore || (score == bestScore && !n.plus && !bestPlain)) {
+                bestScore = score;
+                bestPlain = !n.plus;
+                player = n.name;
+            }
+        }
+        // One line with a "+" alone does not tell which of its names is the player's
+        if (player && bestScore < 2 && !bestPlain) player = nullptr;
+    }
+
+    std::vector<std::tuple<int, bool, bool>> fresh; // first sample, teamkill, assist
     for (const Track& tr : tracks) {
         if (tr.old) continue;
         if (std::count_if(tr.seen.begin(), tr.seen.end(), [&](int k) { return k < tr.first + 4; }) < 3) continue;
@@ -431,7 +530,9 @@ ColorEvents framedLineEvents(const MediaSource& m, const QRectF& region, const Q
             return &g != &tr && g.last < tr.first && tr.first - g.last <= kCameBack
                    && lastLooks(g) >= kSameLine;
         });
-        if (!cameBack) fresh.push_back({tr.first, teams && sameTeam(tr) != 0});
+        const Names n = namesOf(tr);
+        const bool assist = player && n.plus && n.name && !sameName(*n.name, *player);
+        if (!cameBack) fresh.push_back({tr.first, teams && sameTeam(tr) != 0, assist});
     }
     std::sort(fresh.begin(), fresh.end());
 
@@ -443,7 +544,8 @@ ColorEvents framedLineEvents(const MediaSource& m, const QRectF& region, const Q
     };
     // The outline of a 1080p line: two edges across the region and the right edge
     const double area = (2.0 * (x1 - x0) + span) / (q * q) / (double(full.width()) * full.height());
-    for (const auto& [t, teamkill] : fresh) out.events << ColorEvent{frameOf(t), true, area, frameOf(t), teamkill};
+    for (const auto& [t, teamkill, assist] : fresh)
+        out.events << ColorEvent{frameOf(t), true, area, frameOf(t), teamkill, assist};
     return out;
 }
 
