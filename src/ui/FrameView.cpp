@@ -2,6 +2,7 @@
 #include "ui/FrameView.h"
 
 #include "app/Theme.h"
+#include "core/StartupTrace.h"
 #include "engine/CpuPath.h"
 #include "ui/ViewerOverlay.h"
 #ifdef SCHNEIDI_HAVE_RHI
@@ -16,10 +17,13 @@
 #include <QPainter>
 #include <QPixmap>
 #include <QSettings>
+#include <QTimer>
 #include <QWheelEvent>
+#include <QWindow>
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <memory>
 #include <optional>
 #include <utility>
 
@@ -90,6 +94,20 @@ QList<QPointer<FrameView>>& cachedViews()
     static QList<QPointer<FrameView>> views;
     return views;
 }
+// X11 start: views whose GPU surface waits for the window's first picture (attachDeferredSurfaces); `g_deferring`
+// ends when that window is about to show (prepareWindow; views made later make their surface right away)
+bool g_deferring = true;
+QList<QPointer<FrameView>>& deferredViews()
+{
+    static QList<QPointer<FrameView>> views;
+    return views;
+}
+// Only where measured and checked: xcb (no flash, the maximized state stays). Wayland makes another kind of native
+// window for an OpenGL surface (the raster flush into it is untested); Windows/macOS have not shown the delay.
+bool deferSurfaceAtStart()
+{
+    return QGuiApplication::platformName() == QLatin1String("xcb");
+}
 std::optional<FrameView::Probe> cachedProbe()
 {
     const QStringList parts = QSettings().value(kProbeKey).toString().split('|');
@@ -120,7 +138,64 @@ FrameView::FrameView(QWidget* parent) : QWidget(parent), m_background(Theme::vie
                               CpuPath::on() ? QStringLiteral("painter") : QSettings().value("viewer/renderer").toString(),
                               QGuiApplication::platformName(),
                               rhiCompiled(), probe, &m_backendInfo);
-    if (m_backend == Backend::Rhi) makeRhiSurface();
+    if (m_backend != Backend::Rhi) return;
+    if (m_gpuPending && g_deferring && deferSurfaceAtStart()) deferredViews() << this; // painter until then
+    else makeRhiSurface();
+}
+
+bool FrameView::surfaceDeferred() const
+{
+    return deferredViews().contains(const_cast<FrameView*>(this));
+}
+
+void FrameView::prepareWindow(QWidget* window)
+{
+    // Views made from now on (the window is about to show) make their surface right away as before
+    g_deferring = false;
+#ifdef SCHNEIDI_HAVE_RHI
+    if (!window || window->testAttribute(Qt::WA_WState_Created)) return;
+    bool needed = false;
+    // Only this window's views wait: one in another window (not shown yet) makes its surface now, its window is
+    // then created for the GPU when it shows
+    QList<QPointer<FrameView>>& views = deferredViews();
+    for (qsizetype i = views.size() - 1; i >= 0; --i) {
+        const QPointer<FrameView> v = views.at(i);
+        if (v && v->window() == window) {
+            needed = true;
+        } else {
+            views.removeAt(i);
+            if (v && v->m_backend == Backend::Rhi && !v->m_surface) v->makeRhiSurface();
+        }
+    }
+    if (!needed) return;
+    // The QWindow without its native window yet (a top-level is native anyway): it takes the surface type now,
+    // show() makes the native window of that type
+    window->setAttribute(Qt::WA_NativeWindow);
+    if (QWindow* handle = window->windowHandle()) handle->setSurfaceType(FrameViewRhiSurface::surfaceType());
+#else
+    Q_UNUSED(window);
+#endif
+}
+
+void FrameView::attachDeferredSurfaces()
+{
+    g_deferring = false;
+#ifdef SCHNEIDI_HAVE_RHI
+    for (const QPointer<FrameView>& v : std::exchange(deferredViews(), {})) {
+        if (!v || v->m_backend != Backend::Rhi || v->m_surface) continue;
+        const QWidget* window = v->window();
+        const QWindow* handle = window->windowHandle();
+        if (!window->testAttribute(Qt::WA_WState_Created) || !handle) {
+            v->makeRhiSurface(); // not on screen yet: its creation takes the surface along
+        } else if (handle->surfaceType() == FrameViewRhiSurface::surfaceType()) {
+            v->makeRhiSurface(true);
+        } else {
+            // Not prepared (prepareWindow): Qt would destroy and re-create the shown window - the painter until the
+            // next start instead of a flash
+            v->fallBackToPainter("window shown without a GPU surface type");
+        }
+    }
+#endif
 }
 
 void FrameView::setUseCachedGpuCheck(bool use)
@@ -132,10 +207,26 @@ void FrameView::checkCachedGpu()
 {
     g_cachedGpu = false;
 #ifdef SCHNEIDI_HAVE_RHI
+    // A view whose GPU surface is coming or has not rendered yet answers the check for free shortly (its window's
+    // QRhi) - a device made for the check instead would stall the GUI thread once more (two GL contexts). Waits a
+    // few seconds at most.
+    static int waits = 0;
+    const bool surfaceComing = std::any_of(cachedViews().cbegin(), cachedViews().cend(), [](const QPointer<FrameView>& v) {
+        return v && v->m_backend == Backend::Rhi && v->isVisible()
+               && (v->surfaceDeferred() || (v->m_surface && !static_cast<FrameViewRhiSurface*>(v->m_surface)->hasRhi()));
+    });
+    if (surfaceComing && !FrameViewRhiSurface::probed() && waits++ < 12) {
+        QTimer::singleShot(250, qApp, &FrameView::checkCachedGpu);
+        return;
+    }
     const QList<QPointer<FrameView>> views = std::exchange(cachedViews(), {});
     // Nothing took the stored check and nothing checked: nothing to learn (painter wished, headless, tests)
     if (views.isEmpty() && !FrameViewRhiSurface::probed()) return;
-    const Probe p = FrameViewRhiSurface::probe(); // free when a view checked at its start
+    // The window's own QRhi answers when a view already renders with it; otherwise a device made for the check
+    // (free when a view checked at its start)
+    for (const QPointer<FrameView>& v : views)
+        if (v && v->m_surface && static_cast<FrameViewRhiSurface*>(v->m_surface)->adoptAsProbe()) break;
+    const Probe p = FrameViewRhiSurface::probe();
     QSettings().setValue(kProbeKey, QString("%1|%2|%3").arg(p.ok ? 1 : 0).arg(p.software ? 1 : 0).arg(p.device));
     for (const QPointer<FrameView>& v : views) {
         if (!v) continue;
@@ -151,14 +242,37 @@ void FrameView::checkCachedGpu()
 #endif
 }
 
-void FrameView::makeRhiSurface()
+void FrameView::makeRhiSurface(bool intoShownWindow)
 {
 #ifdef SCHNEIDI_HAVE_RHI
-    auto* surface = new FrameViewRhiSurface(this);
+    FrameViewRhiSurface* surface = nullptr;
+    if (intoShownWindow) {
+        // Made without a parent and then reparented: only setParent() of a widget that already asks for RHI makes Qt
+        // switch the shown window to GPU composition (inside the constructor the QRhiWidget does not ask yet). The
+        // window's QRhi is created here (the GUI thread waits for the GL contexts).
+        surface = new FrameViewRhiSurface(this, false);
+        StartupTrace::mark("viewer surface made");
+        surface->setParent(this);
+        StartupTrace::mark("viewer window switched to RHI");
+        surface->setGeometry(rect());
+    } else {
+        surface = new FrameViewRhiSurface(this);
+    }
     m_surface = surface;
     m_overlayLayer = new FrameViewOverlayLayer(this);
     m_overlayLayer->setGeometry(rect());
     m_overlayLayer->raise();
+    if (intoShownWindow) {
+        surface->show();
+        m_overlayLayer->show();
+        if (StartupTrace::enabled()) {
+            auto once = std::make_shared<QMetaObject::Connection>();
+            *once = connect(surface, &QRhiWidget::frameSubmitted, this, [once] {
+                StartupTrace::mark("viewer first GPU frame");
+                disconnect(*once);
+            });
+        }
+    }
     connect(surface, &QRhiWidget::renderFailed, this, [this] { fallBackToPainter("RHI render failed"); });
 #endif
 }
@@ -317,7 +431,7 @@ void FrameView::paintOverlay(QPainter& p)
 
 void FrameView::paintEvent(QPaintEvent*)
 {
-    if (m_backend == Backend::Rhi) return; // the surface and the overlay layer cover the widget
+    if (m_surface) return; // the surface and the overlay layer cover the widget
     QPainter p(this);
     const QRectF r = frameRect();
     // Bars only where the picture is not (no overdraw of the whole widget per frame)

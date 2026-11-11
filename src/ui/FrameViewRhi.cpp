@@ -7,8 +7,8 @@
 #include <QOffscreenSurface>
 #include <rhi/qrhi.h>
 
-#include <atomic>
 #include <cstring>
+#include <optional>
 
 namespace {
 
@@ -40,45 +40,71 @@ QRhiWidget::Api FrameViewRhiSurface::platformApi()
 #endif
 }
 
+QSurface::SurfaceType FrameViewRhiSurface::surfaceType()
+{
+#if defined(Q_OS_WIN)
+    return QSurface::Direct3DSurface;
+#elif defined(Q_OS_MACOS) || defined(Q_OS_IOS)
+    return QSurface::MetalSurface;
+#else
+    return QSurface::OpenGLSurface;
+#endif
+}
+
 namespace {
-std::atomic<bool> g_probed{false};
+// The GPU check's answer once known (GUI thread only)
+std::optional<FrameView::Probe> g_probe;
+
+FrameView::Probe describe(const QRhi& rhi)
+{
+    FrameView::Probe p;
+    p.ok = true;
+    p.device = QString::fromUtf8(rhi.driverInfo().deviceName);
+    p.software = softwareDevice(rhi.driverInfo());
+    return p;
+}
 } // namespace
 
 bool FrameViewRhiSurface::probed()
 {
-    return g_probed.load();
+    return g_probe.has_value();
 }
 
 FrameView::Probe FrameViewRhiSurface::probe()
 {
-    static const FrameView::Probe result = [] {
-        FrameView::Probe p;
-        std::unique_ptr<QRhi> rhi;
+    if (g_probe) return *g_probe;
+    FrameView::Probe p;
+    std::unique_ptr<QRhi> rhi;
 #if defined(Q_OS_WIN)
-        QRhiD3D11InitParams params;
-        rhi.reset(QRhi::create(QRhi::D3D11, &params));
+    QRhiD3D11InitParams params;
+    rhi.reset(QRhi::create(QRhi::D3D11, &params));
 #elif defined(Q_OS_MACOS) || defined(Q_OS_IOS)
-        QRhiMetalInitParams params;
-        rhi.reset(QRhi::create(QRhi::Metal, &params));
+    QRhiMetalInitParams params;
+    rhi.reset(QRhi::create(QRhi::Metal, &params));
 #else
-        std::unique_ptr<QOffscreenSurface> surface(QRhiGles2InitParams::newFallbackSurface());
-        QRhiGles2InitParams params;
-        params.fallbackSurface = surface.get();
-        rhi.reset(QRhi::create(QRhi::OpenGLES2, &params));
+    std::unique_ptr<QOffscreenSurface> surface(QRhiGles2InitParams::newFallbackSurface());
+    QRhiGles2InitParams params;
+    params.fallbackSurface = surface.get();
+    rhi.reset(QRhi::create(QRhi::OpenGLES2, &params));
 #endif
-        if (!rhi) return p;
-        p.ok = true;
-        p.device = QString::fromUtf8(rhi->driverInfo().deviceName);
-        p.software = softwareDevice(rhi->driverInfo());
+    if (rhi) {
+        p = describe(*rhi);
         rhi.reset(); // before the fallback surface (OpenGL) goes: the QRhi needs it to shut down
         StartupTrace::mark("viewer RHI probe");
-        return p;
-    }();
-    g_probed = true;
-    return result;
+    }
+    g_probe = p;
+    return p;
 }
 
-FrameViewRhiSurface::FrameViewRhiSurface(FrameView* view) : QRhiWidget(view), m_view(view)
+bool FrameViewRhiSurface::adoptAsProbe()
+{
+    if (g_probe || !rhi()) return false;
+    g_probe = describe(*rhi());
+    return true;
+}
+
+FrameViewRhiSurface::FrameViewRhiSurface(FrameView* view, bool parented)
+    : QRhiWidget(parented ? view : nullptr), m_view(view)
 {
     setApi(platformApi());
     setAttribute(Qt::WA_TransparentForMouseEvents);

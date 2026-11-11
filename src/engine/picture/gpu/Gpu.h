@@ -197,6 +197,10 @@ public:
     // As instance(), but while a deferred prepare() is pending it starts the service in the background and returns
     // nullptr at once with *decided = false (render this frame on the CPU, ask again for the next)
     static Service* tryInstance(bool* decided);
+    // The GPU thread is being set up right now (or its deferred prepare() waits in the event queue): other OpenGL
+    // setup on the GUI thread waits for it where it can (the driver serializes context creation; both would stall
+    // longer side by side)
+    static bool starting();
     // Ends the GPU thread (its context released on it); after that run() refuses. Done on QCoreApplication::aboutToQuit
     static void shutdown();
     // Runs job(context) on the GPU thread inside begin()/finish() and waits for it (readbacks are filled on return);

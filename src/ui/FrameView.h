@@ -58,6 +58,16 @@ public:
     static void checkCachedGpu();
     // Took the stored check, the real one is still to come (tests)
     bool gpuPending() const { return m_gpuPending; }
+    // The app's start on X11: a GPU view that took the stored check paints with the painter until the window is on
+    // screen and makes its GPU surface then (attachDeferredSurfaces) - setting up the window's OpenGL composition
+    // (two GL contexts, ~300 ms with the NVIDIA driver) no longer delays the first picture. prepareWindow() before
+    // the window's first show() creates it as an OpenGL window already (only the native window type, no context):
+    // Qt then switches the shown window to GPU composition in place instead of destroying and re-creating it (a
+    // flash, and the maximized state). Other platforms make the surface right away as before.
+    static void prepareWindow(QWidget* window);
+    static void attachDeferredSurfaces();
+    // Waits for attachDeferredSurfaces (tests)
+    bool surfaceDeferred() const;
 
     // The frame to show (implicitly shared, no copy). Its pixel size may be smaller than the project frame (preview
     // scale): the zoom refers to frameSize()
@@ -113,7 +123,7 @@ private:
     void repaintPicture();
     void repaintOverlay();
     void fallBackToPainter(const QString& why); // the GPU surface failed
-    void makeRhiSurface();
+    void makeRhiSurface(bool intoShownWindow = false);
     QPointF clampedPan(const QPointF& pan) const;
     double scale() const; // widget pixels per frameSize() pixel
 

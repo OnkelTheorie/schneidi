@@ -198,6 +198,23 @@ void firstPaintDone()
         QTimer::singleShot(0, QCoreApplication::instance(), std::move(job));
 }
 
+// The viewer's deferred GPU surface (FrameView::attachDeferredSurfaces, ~300 ms of GL setup on the GUI thread):
+// after the GPU picture engine has set itself up (both at once take longer than one after the other, and the stalls
+// would add up into one), at the latest 3 s after the first paint
+void attachViewerSurface(int waited = 0)
+{
+    constexpr int kStepMs = 50, kMaxWaitMs = 3000;
+    if (Picture::Gpu::Service::starting() && waited < kMaxWaitMs) {
+        QTimer::singleShot(kStepMs, QCoreApplication::instance(), [waited] { attachViewerSurface(waited + kStepMs); });
+        return;
+    }
+    // One more turn of the event loop first (what the engine's start left to paint)
+    QTimer::singleShot(kStepMs, QCoreApplication::instance(), [] {
+        FrameView::attachDeferredSurfaces();
+        StartupTrace::mark("viewer GPU surface attached");
+    });
+}
+
 // The main window's first picture (afterFirstPaint): its first expose, one event loop turn later (Qt paints and
 // flushes the exposed window while handling the expose; the window's own Paint may never come when children cover
 // it, and children paint during show() already). Seen app-wide until then; SCHNEIDI_STARTUP_TRACE also marks the
@@ -417,6 +434,10 @@ int main(int argc, char* argv[])
     });
     new FirstPaintWatch(&w);
     QTimer::singleShot(kAfterFirstPaintMaxMs, &w, [] { firstPaintDone(); });
+    // The viewer's GPU surface follows the first picture (X11: the window's GL setup no longer delays it); the window
+    // is made as an OpenGL window right away so that it can take the surface in place
+    FrameView::prepareWindow(&w);
+    afterFirstPaint([] { attachViewerSurface(); });
     // Start maximized like DaVinci; screenshot test runs (offscreen) keep the fixed size from MainWindow
     if (app.arguments().contains("--screenshot")) w.show();
     else w.showMaximized();
