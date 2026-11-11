@@ -203,8 +203,19 @@ void testLayoutNeutralKeys()
     b.load();
     CHECK_EQ(in("trim_start"), QStringList({"Shift+[", "Shift+Q"}));
     CHECK_EQ(in("trim_end"), QStringList({"Shift+]", "E"})); // the user's own second key stays
-    CHECK_EQ(in("split_alt"), QStringList({"Ctrl+\\", ""}));  // Shift+B is the user's marker key
-    CHECK(b.action("trim_start")->shortcuts().contains(QKeySequence("Shift+Q")));
+    CHECK_EQ(in("split_alt"), QStringList({"Ctrl+\\", ""})); // Shift+B is the user's marker key
+    // The key is free, but the action was unbound on purpose (first slot empty too): it stays without keys
+    {
+        QFile f(b.filePath());
+        if (CHECK(f.open(QIODevice::WriteOnly)))
+            f.write(R"({"version": 3, "shortcuts": {"trim_start": "", "trim_end": "Shift+]", "split_alt": "",
+                        "add_marker": "M"}})");
+    }
+    b.load();
+    CHECK_EQ(in("trim_start"), QStringList({"", ""}));
+    CHECK_EQ(in("trim_end"), QStringList({"Shift+]", "Shift+W"}));
+    CHECK_EQ(in("split_alt"), QStringList({"", ""}));
+    CHECK(b.action("trim_end")->shortcuts().contains(QKeySequence("Shift+W")));
     b.applyPreset("standard");
 }
 

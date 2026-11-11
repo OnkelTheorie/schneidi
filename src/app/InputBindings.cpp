@@ -401,10 +401,10 @@ void InputBindings::load()
     if (version < kVersion) m_fileExisted = false;
     applyJson(root, version >= 2);
     // At start the actions are not registered yet (their scopes unknown): saveIfIncomplete() does it then
-    if (!m_entries.isEmpty() && !removeDuplicates().isEmpty()) {
-        applyAll();
-        save();
-    }
+    if (m_entries.isEmpty()) return;
+    const bool removed = !removeDuplicates().isEmpty();
+    applyAll(); // loaded again with actions registered: the set takes effect
+    if (removed) save();
 }
 
 void InputBindings::applyJson(const QJsonObject& root, bool withWheel)
@@ -428,8 +428,9 @@ void InputBindings::applyJson(const QJsonObject& root, bool withWheel)
         for (const QStringList& binds : std::as_const(m_inputs))
             for (const QString& in : binds) used.insert(in);
         for (auto it = secondKeysAdded().begin(); it != secondKeysAdded().end(); ++it) {
-            if (!m_inputs.contains(it.key()) || !m_inputs[it.key()].value(1).isEmpty() || used.contains(it.value()))
-                continue;
+            // Only where the action has a first key: both slots empty = unbound on purpose
+            const QStringList binds = m_inputs.value(it.key());
+            if (binds.value(0).isEmpty() || !binds.value(1).isEmpty() || used.contains(it.value())) continue;
             m_inputs[it.key()][1] = it.value();
             used.insert(it.value());
         }
