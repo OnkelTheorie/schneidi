@@ -747,12 +747,14 @@ Options parse(const QStringList& args)
 
 } // namespace
 
-QHash<QString, QStringList> parseOptions(const QStringList& args, const QStringList& valued, const QStringList& flags)
+QHash<QString, QStringList> parseOptions(const QStringList& args, const QStringList& valued, const QStringList& flags,
+                                         const QString& command)
 {
+    const QString see = " (see: schneidi-cli help " + command + ")";
     QHash<QString, QStringList> out;
     for (int i = 0; i < args.size(); ++i) {
         const QString& a = args[i];
-        if (!a.startsWith("--") || a.size() < 3) fail("USAGE", "unexpected argument: " + a + " (see: schneidi-cli help)");
+        if (!a.startsWith("--") || a.size() < 3) fail("USAGE", "unexpected argument: " + a + see);
         QString name = a.mid(2);
         QString value;
         const qsizetype eq = name.indexOf('=');
@@ -764,7 +766,7 @@ QHash<QString, QStringList> parseOptions(const QStringList& args, const QStringL
             out[name] << "true";
             continue;
         }
-        if (!valued.contains(name)) fail("USAGE", "unknown option --" + name + " (see: schneidi-cli help)");
+        if (!valued.contains(name)) fail("USAGE", "unknown option --" + name + see);
         if (eq < 0) {
             if (i + 1 >= args.size()) fail("USAGE", "missing value for --" + name);
             value = args[++i];

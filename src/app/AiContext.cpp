@@ -186,9 +186,8 @@ QString compactInstructions(const QString& instructions)
     return instructions;
 }
 
-// Only for a request the user asked for in words (trusting someone else's code): never needed by a small model;
-// help's "all" (every command with every parameter at once): the tool list already has them
-const QStringList kRareParams{QStringLiteral("trust_custom_code"), QStringLiteral("all")};
+// Only for a request the user asked for in words (trusting someone else's code): never needed by a small model
+const QStringList kRareParams{QStringLiteral("trust_custom_code")};
 
 QJsonArray compactTools(const QJsonArray& tools, const QJsonArray& editOps)
 {
@@ -214,6 +213,9 @@ QJsonArray compactTools(const QJsonArray& tools, const QJsonArray& editOps)
         }
         // Parameters a small model rarely needs are left out entirely (`help` still lists them)
         for (const QString& r : kRareParams) props.remove(r);
+        // help's "all" (every command with every parameter, ~80 KB): the tool list already has them. The MCP server
+        // leaves it out too; this covers an older one
+        if (name == "help") props.remove("all");
         for (auto it = props.begin(); it != props.end(); ++it) {
             QJsonObject p = it.value().toObject();
             const QString text = shortParam(p["description"].toString());

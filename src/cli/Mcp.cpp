@@ -109,7 +109,13 @@ QJsonArray toolList(const Options& opt)
         if (opt.server && longTools.contains(c.name))
             summary += QString(" On this server: if it takes longer than %1 s, the answer is a job (see `jobs`).")
                            .arg(opt.jobWaitS);
-        tools << QJsonObject{{"name", c.name}, {"description", summary}, {"inputSchema", inputSchema(c)}};
+        QJsonObject schema = inputSchema(c);
+        if (c.name == "help") { // "all" (every command with every parameter, ~80 KB): the tool list already has them
+            QJsonObject props = schema["properties"].toObject();
+            props.remove("all");
+            schema["properties"] = props;
+        }
+        tools << QJsonObject{{"name", c.name}, {"description", summary}, {"inputSchema", schema}};
     }
     for (const QJsonValue& t : opt.extraTools) tools << t;
     return tools;

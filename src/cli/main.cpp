@@ -204,7 +204,7 @@ int main(int argc, char* argv[])
     if (name == "mcp") {
         Cli::Mcp::Options opt;
         try {
-            const auto o = Cli::Serve::parseOptions(args, {"root", "map"}, {"no-extensions"});
+            const auto o = Cli::Serve::parseOptions(args, {"root", "map"}, {"no-extensions"}, "mcp");
             Cli::Sandbox::configure({o.value("root").value(0), o.value("map")});
             opt.root = Cli::Sandbox::root();
             opt.app = Cli::Sandbox::appAllowed();

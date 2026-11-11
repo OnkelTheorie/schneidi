@@ -732,14 +732,16 @@ void testContext()
     const QString longText = "where the kill feed is, \"x,y,w,h\" (fractions 0..1 or pixels; look with `frames` crop "
                              "first). Only the part with the player's mark";
     const QJsonArray tools{
-        tool("help", "Details of the edit ops.", {{"command", QJsonObject{{"type", "string"}, {"description", "x"}}}}),
+        tool("help", "Details of the edit ops.", {{"command", QJsonObject{{"type", "string"}, {"description", "x"}}},
+                                                  {"all", QJsonObject{{"type", "boolean"}, {"description", "everything"}}}}),
         tool("edit", "Apply edit operations to a project and save it. Answer: lots.",
              {{"ops", QJsonObject{{"type", "array"}, {"description", QString(10000, 'o')}}},
               {"project", QJsonObject{{"type", "string"}, {"description", "project file"}}}}),
         tool("highlights", "Candidates for a highlight video. More text.",
              {{"region", QJsonObject{{"type", "string"}, {"description", longText}}}}),
         tool("watch", "Watch folders: new files come in. More.",
-             {{"folder", QJsonObject{{"type", "string"}, {"description", "the folder to watch"}}}}),
+             {{"folder", QJsonObject{{"type", "string"}, {"description", "the folder to watch"}}},
+              {"all", QJsonObject{{"type", "boolean"}, {"description", "every watch"}}}}),
     };
     const QJsonArray ops{QJsonObject{{"op", "split"}, {"usage", "{op:'split', at, clip?}"}, {"summary", "cut"}},
                          QJsonObject{{"op", "trim"}, {"usage", "{op:'trim', clip, edge?, by|to}"}}};
@@ -759,6 +761,9 @@ void testContext()
         CHECK_EQ(c[3]["inputSchema"]["properties"]["folder"]["type"].toString(), QString("string"));
         CHECK(!c[3]["description"].toString().contains("help")); // `help` says it once for all of them
         CHECK(c[0]["description"].toString().contains("also those without a text here"));
+        // help's "all" (~80 KB of every command) is left out, another tool's "all" stays
+        CHECK(!c[0]["inputSchema"]["properties"].toObject().contains("all"));
+        CHECK(c[3]["inputSchema"]["properties"].toObject().contains("all"));
     }
     // Shorter still: times as text, optional keys without their values, a parameter text three tools share left out,
     // the instructions without the list of tools
