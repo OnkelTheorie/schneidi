@@ -887,6 +887,7 @@ void MainWindow::updatePreviewEdge()
 {
     m_engine->setPreviewEdge(previewEdgeFor(m_viewerRes));
     updateResolutionMenus();
+    if (m_viewer) updateProxyHint(); // the slow hint's offer depends on the preview size
 }
 
 std::optional<PreviewResolution::Choice> MainWindow::smallerPreview() const

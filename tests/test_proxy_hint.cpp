@@ -110,6 +110,19 @@ void fakePlayback(Engine& engine, int stepMs, int ms)
     emit engine.speedChanged(0.0);
 }
 
+// Pictures every `stepMs` for `ms` while playing (no speed change: the meter keeps its window)
+void slowPictures(Engine& engine, int stepMs, int ms)
+{
+    QElapsedTimer t;
+    t.start();
+    static int frame = 1000;
+    while (t.elapsed() < ms) {
+        QThread::msleep(stepMs);
+        emit engine.positionChanged(++frame);
+        QApplication::processEvents();
+    }
+}
+
 void testMainWindow(const QString& dir)
 {
     if (!Check::haveFfmpeg()) return;
@@ -257,11 +270,17 @@ void testLowerPreview(const QString& dir)
     fakePlayback(engine, 500, slowFor);
     CHECK(!viewer->hint().isEmpty());
     CHECK_EQ(button->text(), T("Vorschau verkleinern"));
-    CHECK(viewer->hint().contains(PreviewResolution::sizeText(before)));
+    // The hint bar takes some of the viewer's height (automatic follows it): the text names the size of now
+    QElapsedTimer shrink;
+    shrink.start();
+    while (shrink.elapsed() < 500) QApplication::processEvents(QEventLoop::AllEvents, 20);
+    const QSize shown = engine.previewSize();
+    CHECK(viewer->hint().contains(PreviewResolution::sizeText(shown)));
+    CHECK_EQ(button->text(), T("Vorschau verkleinern"));
     button->click();
     const Choice lowered = w.previewResolution(Target::Viewer);
     CHECK(lowered != Choice::Auto && PreviewResolution::lines(lowered) >= 360);
-    CHECK(pixels(engine.previewSize()) * 4 <= pixels(before) * 3);
+    CHECK(pixels(engine.previewSize()) * 4 <= pixels(shown) * 3);
     CHECK(viewer->hint().isEmpty());
 
     // At the smallest size with all proxies there: nothing left to offer, no hint
@@ -275,6 +294,28 @@ void testLowerPreview(const QString& dir)
     fakePlayback(engine, 500, slowFor);
     CHECK(viewer->hint().isEmpty());
     engine.setPreviewFullSize(false);
+
+    // The resolution changed after the hint was shown (menu, viewer resized): the hint no longer names the measured
+    // size, its button never applies the old offer
+    w.setPreviewResolution(Target::Viewer, Choice::Project);
+    fakePlayback(engine, 500, slowFor);
+    CHECK(viewer->hint().contains(QStringLiteral("1920×1080")));
+    w.setPreviewResolution(Target::Viewer, Choice::P720);
+    CHECK(!viewer->hint().contains(QStringLiteral("1920×1080")));
+    if (button->isVisible()) button->click();
+    CHECK(w.previewResolution(Target::Viewer) == Choice::P720);
+
+    // Accepted while playing: the slow seconds before the click do not count, a new offer needs a whole new window
+    w.setPreviewResolution(Target::Viewer, Choice::Project);
+    emit engine.speedChanged(1.0);
+    slowPictures(engine, 500, slowFor - 1000);
+    if (!CHECK(viewer->hint().contains(QStringLiteral("1920×1080")))) return;
+    slowPictures(engine, 500, PlaybackMeter::kWindowMs - 700); // reading the hint
+    button->click();
+    CHECK(w.previewResolution(Target::Viewer) == Choice::Auto);
+    slowPictures(engine, 500, 3500); // (a window of 4 s after the hint's report has passed; not the new warmup + window)
+    CHECK(viewer->hint().isEmpty());
+    emit engine.speedChanged(0.0);
 }
 
 } // namespace
