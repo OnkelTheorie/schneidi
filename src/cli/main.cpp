@@ -190,7 +190,8 @@ int main(int argc, char* argv[])
         Engine::initHeadless();
     }
     // Third-party licenses of what this program really loads (FFmpeg's configuration, GPL libraries);
-    // exit code 1 when a SCHNEIDI_NO_GPL build finds anything GPL (the check of the bundled packages)
+    // exit code 1 when a SCHNEIDI_NO_GPL build finds anything GPL (the check of the GPL-free packages); the GitHub
+    // downloads list their FFmpeg with x264/x265 here as GPL parts
     if (name == "--licenses") {
         QJsonArray parts, gpl;
         for (const Licenses::Part& p : Licenses::report()) {

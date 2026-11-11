@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # Builds dist/schneidi-windows-<version>.zip: program folder with schneidi.exe (+ schneidi-cli.exe), Qt and ffmpeg/ffprobe,
-# and dist/schneidi-setup-<version>.exe (Inno Setup), without anything GPL (the default since 0.16, like the AppImage;
-# x264/x265 are an optional download: engine/Extensions "x264", offered by the installer).
-# SCHNEIDI_NO_GPL=0: with MSYS2's full FFmpeg (GPL: x264/x265 built in) -> …-gpl.zip / …-gpl.exe in build-win-gpl/,
-# for local comparisons only, not for releases.
+# and dist/schneidi-setup-<version>.exe (Inno Setup), with the own slim FFmpeg of packaging/windows/build-ffmpeg-lgpl.sh.
+# GPL_ENCODERS (like the AppImage):
+#   1 (default, the GitHub download since 0.21): FFmpeg with x264/x265 (GPL-2.0+, MSYS2's x264/x265 DLLs in the
+#     folder, GPL-2.0 text and their notices in licenses/). schneidi's own code is the same as in the GPL-free build.
+#   0: nothing GPL (SCHNEIDI_NO_GPL; x264/x265 are an optional download: engine/Extensions "x264", offered by the
+#     installer) -> …-lgpl.zip / …-lgpl.exe in build-win-lgpl/. SCHNEIDI_NO_GPL=1 in the environment means the same.
 # Runs in MSYS2 (environment UCRT64). Layout as in src/engine/Bundle.h:
 #   schneidi.exe ffmpeg.exe ffprobe.exe *.dll  platforms/ styles/ …
 # Run from the project folder:  packaging/windows/build-windows.sh
@@ -19,27 +21,32 @@ VERSION="${VERSION:-0.1.0}"
 
 [ "${MSYSTEM:-}" = "UCRT64" ] || { echo "!! Please run in the MSYS2 environment UCRT64" >&2; exit 1; }
 
-# FFmpeg: the slim GPL-free one of packaging/windows/build-ffmpeg-lgpl.sh (OpenH264, kvazaar, SVT-AV1 … instead of
-# x264/x265; components: packaging/ffmpeg-components.txt) in FFMPEG_PREFIX, built there when it has no ffmpeg.exe.
-# Checked at the end with `schneidi-cli --licenses` and by the DLL names in the program folder.
-NO_GPL="${SCHNEIDI_NO_GPL:-1}"
+# FFmpeg: the slim one of packaging/windows/build-ffmpeg-lgpl.sh (components: packaging/ffmpeg-components.txt) in
+# FFMPEG_PREFIX, built there when it has no ffmpeg.exe. Checked at the end: GPL_ENCODERS=0 with `schneidi-cli
+# --licenses` and by the DLL names in the program folder, GPL_ENCODERS=1 for x264/x265 in the folder.
+GPL_ENCODERS="${GPL_ENCODERS:-1}"
+[ "${SCHNEIDI_NO_GPL:-}" = 1 ] && GPL_ENCODERS=0
+case "$GPL_ENCODERS" in 0 | 1) ;; *) echo "!! GPL_ENCODERS must be 0 or 1" >&2; exit 1 ;; esac
+export GPL_ENCODERS # for build-ffmpeg-lgpl.sh
 CMAKE_EXTRA=()
 SUFFIX=""
-FFMPEG_PREFIX="${FFMPEG_PREFIX:-}"
-FFMPEG_BIN="$UCRT/bin"
-if [ "$NO_GPL" = 1 ]; then
-    FFMPEG_PREFIX="$(realpath -m "${FFMPEG_PREFIX:-$ROOT/build-ffmpeg-lgpl/prefix}")"
-    [ -x "$FFMPEG_PREFIX/bin/ffmpeg.exe" ] || "$ROOT/packaging/windows/build-ffmpeg-lgpl.sh" "$FFMPEG_PREFIX"
-    export PKG_CONFIG_PATH="$FFMPEG_PREFIX/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
-    export PATH="$FFMPEG_PREFIX/bin:$PATH" # its DLLs: found first by the build checks and by ntldd below
-    FFMPEG_BIN="$FFMPEG_PREFIX/bin"
-    CMAKE_EXTRA+=(-DSCHNEIDI_NO_GPL=ON)
-else
-    FFMPEG_PREFIX=""
-    BUILD="$ROOT/build-win-gpl"
-    SUFFIX="-gpl"
+if [ "$GPL_ENCODERS" = 1 ]; then
+    FFMPEG_PREFIX="$(realpath -m "${FFMPEG_PREFIX:-$ROOT/build-ffmpeg/prefix}")"
     CMAKE_EXTRA+=(-DSCHNEIDI_NO_GPL=OFF)
+else
+    FFMPEG_PREFIX="$(realpath -m "${FFMPEG_PREFIX:-$ROOT/build-ffmpeg-lgpl/prefix}")"
+    BUILD="$ROOT/build-win-lgpl"
+    SUFFIX="-lgpl"
+    CMAKE_EXTRA+=(-DSCHNEIDI_NO_GPL=ON)
 fi
+[ -x "$FFMPEG_PREFIX/bin/ffmpeg.exe" ] || "$ROOT/packaging/windows/build-ffmpeg-lgpl.sh" "$FFMPEG_PREFIX"
+if [ "$GPL_ENCODERS" = 1 ]; then
+    encoders="$("$FFMPEG_PREFIX/bin/ffmpeg.exe" -hide_banner -encoders 2>/dev/null || true)"
+    grep -q ' libx264 ' <<<"$encoders" || { echo "!! $FFMPEG_PREFIX has no libx264 (built with GPL_ENCODERS=0?)" >&2; exit 1; }
+fi
+export PKG_CONFIG_PATH="$FFMPEG_PREFIX/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+export PATH="$FFMPEG_PREFIX/bin:$PATH" # its DLLs: found first by the build checks and by ntldd below
+FFMPEG_BIN="$FFMPEG_PREFIX/bin"
 OUT="$BUILD/schneidi"
 
 # pkg-config results stay in the CMake cache: another FFmpeg than last time -> configure again from scratch
@@ -67,6 +74,28 @@ cp "$ROOT/LICENSE" "$ROOT/THIRD_PARTY.md" "$OUT/licenses/"
 cp "$ROOT/third_party/earshot/LICENSE" "$OUT/licenses/earshot-LICENSE.txt"
 cp "$ROOT/third_party/rnnoise/COPYING" "$OUT/licenses/rnnoise-COPYING.txt"
 cp "$ROOT"/assets/sfx/cc0/LICENSE-* "$ROOT/assets/sfx/cc0/SOURCES.md" "$OUT/licenses/"
+for f in "$FFMPEG_PREFIX"/share/licenses/ffmpeg/*; do cp "$f" "$OUT/licenses/ffmpeg-$(basename "$f")"; done
+if [ "$GPL_ENCODERS" = 1 ]; then
+    # x264/x265 (GPL-2.0+, MSYS2 packages): GPL-2.0 text above (ffmpeg-COPYING.GPLv2), their own licence files if the
+    # packages have them, and a notice with copyright, version and where the source is
+    for lib in x264 x265; do
+        [ -d "$UCRT/share/licenses/$lib" ] || continue
+        for f in "$UCRT/share/licenses/$lib"/*; do cp "$f" "$OUT/licenses/$lib-$(basename "$f")"; done
+    done
+    {
+        echo "x264 and x265 in this folder (libx264-*.dll, libx265*.dll; used by FFmpeg's avcodec DLL) are free"
+        echo "software under the GNU General Public License version 2 or later (licenses/ffmpeg-COPYING.GPLv2)."
+        echo "Because of them FFmpeg as built here is GPL-2.0-or-later too. schneidi itself is AGPL-3.0-only."
+        echo
+        echo "x264: Copyright (C) 2003 and later the x264 project authors (Laurent Aimar, Loren Merritt, Fiona Glaser …)."
+        echo "      Source: https://code.videolan.org/videolan/x264"
+        echo "x265: Copyright (C) 2013 and later MulticoreWare, Inc and the x265 authors (Steve Borho, Min Chen …)."
+        echo "      Source: https://bitbucket.org/multicoreware/x265_git"
+        echo
+        echo "Built from the MSYS2 packages (sources and build scripts: https://github.com/msys2/MINGW-packages):"
+        pacman -Q mingw-w64-ucrt-x86_64-x264 mingw-w64-ucrt-x86_64-x265 2>/dev/null || true
+    } >"$OUT/licenses/x264-x265-NOTICE.txt"
+fi
 
 
 # --- Qt (Plugins: platforms, styles, imageformats, …) ---
@@ -109,9 +138,9 @@ while IFS= read -r -d '' f; do TARGETS+=("$f"); done < <(find "$OUT" -mindepth 2
 collect "${TARGETS[@]}"
 collect "$OUT"/*.dll # DLLs der eben kopierten DLLs (ntldd -R findet manche über Umwege nicht)
 
-# --- Nothing GPL in the package: FFmpeg's license and the libraries in the process (exit code 1 otherwise), plus
-# the DLLs in the folder by name (the bundled ffmpeg.exe is a process of its own) ---
-if [ "$NO_GPL" = 1 ]; then
+# --- GPL_ENCODERS=0: nothing GPL in the package: FFmpeg's license and the libraries in the process (exit code 1
+# otherwise), plus the DLLs in the folder by name (the bundled ffmpeg.exe is a process of its own) ---
+if [ "$GPL_ENCODERS" = 0 ]; then
     if ! QT_QPA_PLATFORM=offscreen "$OUT/schneidi-cli.exe" --licenses >"$BUILD/licenses.json"; then
         echo "!! GPL parts in the package:" >&2
         cat "$BUILD/licenses.json" >&2
@@ -126,6 +155,14 @@ if [ "$NO_GPL" = 1 ]; then
     "$OUT/ffmpeg.exe" -hide_banner -L 2>&1 | grep -q "Lesser General Public License" \
         || { echo "!! the bundled ffmpeg.exe is not LGPL" >&2; exit 1; }
     echo ">> license check: nothing GPL ($BUILD/licenses.json)"
+else
+    # x264/x265 really in the folder and found by schneidi (no download offer)
+    for lib in x264 x265; do
+        find "$OUT" -maxdepth 1 -iname "lib$lib*.dll" | grep -q . || { echo "!! lib$lib DLL missing in $OUT" >&2; exit 1; }
+    done
+    QT_QPA_PLATFORM=offscreen "$OUT/schneidi-cli.exe" --licenses >"$BUILD/licenses.json" || true
+    grep -q '"x264' "$BUILD/licenses.json" || { echo "!! schneidi-cli --licenses does not list x264" >&2; exit 1; }
+    echo ">> license check: x264/x265 bundled ($BUILD/licenses.json)"
 fi
 
 # --- ZIP ---
@@ -147,7 +184,7 @@ if [ -z "$ISCC" ]; then
 fi
 # MSYS2 würde /DName=… sonst für einen Pfad halten und umschreiben
 ISCC_EXTRA=("/Fschneidi-setup-$VERSION$SUFFIX")
-[ "$NO_GPL" = 1 ] && ISCC_EXTRA+=("/DGplFree=1") # x264/x265 not built in: offer the extension
+[ "$GPL_ENCODERS" = 0 ] && ISCC_EXTRA+=("/DGplFree=1") # x264/x265 not built in: offer the extension
 MSYS2_ARG_CONV_EXCL="*" "$ISCC" /Q "/DVersion=$VERSION" "${ISCC_EXTRA[@]}" "/DSourceDir=$(cygpath -w "$OUT")" "/DOutputDir=$(cygpath -w "$DIST")" \
     "$(cygpath -w "$ROOT/packaging/windows/schneidi.iss")"
 SETUP="$DIST/schneidi-setup-$VERSION$SUFFIX.exe"

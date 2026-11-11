@@ -7,12 +7,21 @@ miniaudio, a single header compiled into schneidi (the system's `miniaudio.h`, o
 on systems without one; its license text: `third_party/miniaudio/LICENSE`).
 The running program lists what it really loaded: `schneidi-cli --licenses` (AppImage: `schneidi-….AppImage cli --licenses`).
 
-## GPL-free packages (AppImage `packaging/linux/build-appimage.sh`, Docker image)
+## Downloads (AppImage `packaging/linux/build-appimage.sh`, Windows `packaging/windows/build-windows.sh`, Docker image)
+
+Since 0.21 the downloads bundle an FFmpeg with x264 and x265 for the best software H.264/H.265 quality. Those two are
+GPL-2.0-or-later, so the bundled FFmpeg is GPL-2.0-or-later as a whole; schneidi's own code is the same AGPL-3.0-only
+code as in the GPL-free build and does not need them. The packages carry the GPL-2.0 text and their notices
+(AppImage `usr/share/licenses/schneidi`, Windows `licenses\`, Docker `/usr/share/doc`). The same scripts with
+`GPL_ENCODERS=0` build the GPL-free variant (`…-lgpl` packages, `SCHNEIDI_NO_GPL`): the FFmpeg is LGPL-2.1+, there is
+no x264/x265, and everything else in the table stays.
 
 | Part | License | What for |
 |---|---|---|
 | [Qt 6](https://www.qt.io) (Core, Gui, Widgets, Network, Svg, DBus; platform plugins) | LGPL-3.0 | user interface |
-| [FFmpeg 7.1](https://ffmpeg.org) libraries and the `ffmpeg`/`ffprobe` programs, built by `packaging/linux/build-ffmpeg-lgpl.sh` without `--enable-gpl`/`--enable-nonfree` | LGPL-2.1+ | reading and writing media |
+| [FFmpeg 7.1](https://ffmpeg.org) libraries and the `ffmpeg`/`ffprobe` programs, built by `packaging/linux/build-ffmpeg-lgpl.sh` with `--enable-gpl` for x264/x265, without `--enable-nonfree` | GPL-2.0+ (GPL-free variant: LGPL-2.1+) | reading and writing media |
+| [x264](https://code.videolan.org/videolan/x264) (Debian 13 / MSYS2 package, shared library) | GPL-2.0+ | H.264 software encoder (not in the GPL-free variant) |
+| [x265](https://bitbucket.org/multicoreware/x265_git) (Debian 13 / MSYS2 package, shared library; Linux with libnuma, LGPL-2.1) | GPL-2.0+ | H.265 software encoder (not in the GPL-free variant) |
 | [OpenH264](https://www.openh264.org) | BSD-2-Clause | H.264 software encoder (see the note below) |
 | [kvazaar](https://github.com/ultravideo/kvazaar) (with [Crypto++](https://cryptopp.com), Boost Software License 1.0, which Debian's kvazaar links) | BSD-3-Clause | H.265 software encoder |
 | [SVT-AV1](https://gitlab.com/AOMediaCodec/SVT-AV1) | BSD-3-Clause-Clear + AOMedia Patent License 1.0 | AV1 encoder |
@@ -31,7 +40,7 @@ The running program lists what it really loaded: `schneidi-cli --licenses` (AppI
 | libglvnd (EGL/OpenGL dispatch, fallback only) | MIT-style | systems without a desktop |
 | System libraries pulled in by the above (glib, ICU, fontconfig, FreeType, HarfBuzz, libpng, zlib, zstd, libjpeg-turbo, PCRE2, X11/XCB/xkbcommon, Wayland, D-Bus, double-conversion, brotli, md4c …) | LGPL-2.1+, MIT, BSD, Zlib, IJG, Unicode, FTL, AFL-2.1 (D-Bus, dual-licensed) | as used by Qt |
 
-Not in these packages: x264, x265, Rubber Band, vid.stab, frei0r plugins.
+Not in these packages: Rubber Band, vid.stab, frei0r plugins (and x264/x265 in the GPL-free variant).
 
 whisper.cpp (speech recognition, MIT) is not bundled: schneidi downloads it as an extension on request.
 
@@ -43,7 +52,7 @@ downloads, each pinned by size and SHA-256:
 | [ONNX Runtime](https://github.com/microsoft/onnxruntime) 1.20.1, the CPU build of its GitHub release (Linux x64, Windows x64), id `onnxruntime` | MIT (its `LICENSE` and `ThirdPartyNotices.txt` are kept beside the library) | runs the models below; loaded at run time (QLibrary), never linked |
 | [YuNet](https://github.com/opencv/opencv_zoo/tree/48b10fa505aeb51fbd127fc60a5c660040e823b7/models/face_detection_yunet) `face_detection_yunet_2023mar.onnx` (Copyright (c) 2020 Shiqi Yu; opencv_zoo commit `48b10fa`), id `faces` | MIT (its `LICENSE` of the same commit is downloaded beside the model) | faces per shot in the material index (`index`) |
 
-x264/x265 (GPL-2.0+) are not bundled either: on request (Extensions, `schneidi-cli extensions --install x264`)
+In the GPL-free variant x264/x265 (GPL-2.0+) are not bundled either: on request (Extensions, `schneidi-cli extensions --install x264`)
 schneidi downloads an FFmpeg program built with them ([BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds),
 GPL) and runs it as a separate program for H.264/H.265 export when no graphics card encoder works. schneidi does not
 link it; it hands it pictures through a pipe and reads back the encoded video.
@@ -52,9 +61,7 @@ link it; it hands it pictures through a pipe and reads back the encoded video.
 royalties only for its own prebuilt binary downloaded from Cisco; a self-built or bundled OpenH264 is not covered.
 Hardware encoders (the graphics card's driver) are the alternative.
 
-## Packages with the system's FFmpeg (Windows, Debian package; AppImage with `SCHNEIDI_NO_GPL=0`, not released)
+## Packages with the system's FFmpeg (Debian package)
 
-As above, but with the FFmpeg of Debian 13 / MSYS2, which is built with `--enable-gpl` (x264, x265, Rubber Band,
-vid.stab, frei0r, …) and is therefore GPL-2.0+ as a whole. The Debian package uses these libraries from the system.
-Such an AppImage also carries the Qt image format plugins of the build system (KDE's kimageformats: AVIF, HEIF,
-JPEG XL, camera RAW, OpenEXR …, LGPL) with their libraries (libavif, libheif, libjxl, LibRaw, OpenEXR; BSD/LGPL).
+As above, but with the FFmpeg of Debian 13, which is built with `--enable-gpl` (x264, x265, Rubber Band, vid.stab,
+frei0r, …) and is therefore GPL-2.0+ as a whole. The Debian package uses these libraries from the system.

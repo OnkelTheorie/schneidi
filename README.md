@@ -6,7 +6,7 @@ schneidi has five pages – Media, Edit, Comp, Color and Deliver – and fewer f
 
 [![Download](https://img.shields.io/github/v/release/OnkelTheorie/schneidi?label=Download&color=2ea44f)](https://github.com/OnkelTheorie/schneidi/releases/latest)
 
-**[Download the latest release](https://github.com/OnkelTheorie/schneidi/releases/latest)** (Linux AppImage or Debian package). Windows: no download yet – [build it yourself](#building) (tested less thoroughly than Linux); an installer is planned for 1.0.
+**[Download the latest release](https://github.com/OnkelTheorie/schneidi/releases/latest)** (Linux AppImage or Debian package). Windows: no download yet – [build it yourself](#building) (tested less thoroughly than Linux); an installer is planned for 1.0. The bundled packages include x264/x265 (GPL) for the best H.264/H.265 quality without a graphics card encoder ([licenses](THIRD_PARTY.md)).
 
 **Try the AI in two minutes:** make the AppImage executable (`chmod +x schneidi-*.AppImage`) and start it, open a video, click **✧ AI** at the top and pick a provider – a local model through [Ollama](https://ollama.com) needs no account (`ollama pull qwen3`, and start Ollama with `OLLAMA_CONTEXT_LENGTH=32768 ollama serve`: the tools and the editing guide do not fit its default context), Claude or an OpenAI-compatible service needs a key. Then type what you want: "remove the pauses", "cut it to the beat".
 
@@ -274,11 +274,11 @@ sudo apt install build-essential cmake ninja-build pkg-config qt6-base-dev qt6-b
 cmake -S . -B build -G Ninja && cmake --build build && ./build/schneidi
 ```
 
-Optional: `libavfilter-dev` (effect "FFmpeg filter": a filter chain on a clip) and `qt6-shader-baker` (effect "Shader": own GLSL effects, compiled at run time by its `qsb` program; GPL-3, so the GPL-free AppImage/Windows packages do not bundle it - an installed one is found). Without them those two effects say they are not available; everything else works.
+Optional: `libavfilter-dev` (effect "FFmpeg filter": a filter chain on a clip) and `qt6-shader-baker` (effect "Shader": own GLSL effects, compiled at run time by its `qsb` program; GPL-3, so the AppImage/Windows packages do not bundle it - an installed one is found). Without them those two effects say they are not available; everything else works.
 
 Other distributions: the same libraries (Qt 6 Widgets/Network and its private GUI headers, FFmpeg 7). Without a miniaudio package (openSUSE, Fedora) the build uses the copy in `third_party/miniaudio` (`-DSCHNEIDI_SYSTEM_MINIAUDIO=ON` insists on the system's). Notes for distribution packagers and an openSUSE spec file: [packaging/linux/opensuse](packaging/linux/opensuse).
 
-AppImage: `packaging/linux/build-appimage.sh` → `dist/schneidi-<version>-x86_64.AppImage`, without any GPL library (own LGPL FFmpeg; H.264/H.265 through the graphics card, else OpenH264/kvazaar, or x264/x265 as an optional download in the program: Extensions); bundled libraries and their licenses: [THIRD_PARTY.md](THIRD_PARTY.md)
+AppImage: `packaging/linux/build-appimage.sh` → `dist/schneidi-<version>-x86_64.AppImage` with an own slim FFmpeg including x264/x265 (GPL; build packages `libx264-dev libx265-dev`); `GPL_ENCODERS=0` builds a GPL-free one instead (`…-lgpl.AppImage`: OpenH264/kvazaar, x264/x265 as an optional download in the program); bundled libraries and their licenses: [THIRD_PARTY.md](THIRD_PARTY.md)
 Debian package (system Qt/FFmpeg, no bundling): `cmake --build build && cpack --config build/CPackConfig.cmake -G DEB` → `dist/schneidi_<version>_amd64.deb`
 The .deb is built for Debian 13: it needs exactly its Qt 6.8.2 (the GPU viewer uses Qt's private RHI interface) and FFmpeg 7.1; on every other system use the AppImage.
 
@@ -286,11 +286,11 @@ The .deb is built for Debian 13: it needs exactly its Qt 6.8.2 (the GPU viewer u
 
 ```bash
 pacman -S --needed mingw-w64-ucrt-x86_64-{toolchain,cmake,ninja,pkgconf,qt6-base,qt6-svg,ntldd,miniaudio}
-pacman -S --needed nasm make diffutils mingw-w64-ucrt-x86_64-{openh264,kvazaar,svt-av1,libvpx,dav1d,opus,lame,libvpl,ffnvcodec-headers}
+pacman -S --needed nasm make diffutils mingw-w64-ucrt-x86_64-{openh264,kvazaar,svt-av1,libvpx,dav1d,opus,lame,libvpl,ffnvcodec-headers,x264,x265}
 packaging/windows/build-windows.sh
 ```
 
-Result: `dist/schneidi-windows-<version>.zip` (portable folder) and, if [Inno Setup 6](https://jrsoftware.org/isinfo.php) is installed (`winget install JRSoftware.InnoSetup`), `dist/schneidi-setup-<version>.exe`. Like the AppImage without any GPL library: the first run builds the own LGPL FFmpeg (`packaging/windows/build-ffmpeg-lgpl.sh`, into `build-ffmpeg-lgpl/prefix` or `FFMPEG_PREFIX`); the installer offers x264/x265 as an optional download. `SCHNEIDI_NO_GPL=0` packs MSYS2's full FFmpeg instead (`mingw-w64-ucrt-x86_64-ffmpeg`, GPL, `…-gpl.zip`) for local comparisons.
+Result: `dist/schneidi-windows-<version>.zip` (portable folder) and, if [Inno Setup 6](https://jrsoftware.org/isinfo.php) is installed (`winget install JRSoftware.InnoSetup`), `dist/schneidi-setup-<version>.exe`. Like the AppImage: the first run builds the own slim FFmpeg with x264/x265 (`packaging/windows/build-ffmpeg-lgpl.sh`, into `build-ffmpeg/prefix` or `FFMPEG_PREFIX`). `GPL_ENCODERS=0` builds without any GPL library (`build-ffmpeg-lgpl/prefix`, `…-lgpl.zip`; the installer then offers x264/x265 as an optional download).
 
 **Tests:**
 

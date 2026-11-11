@@ -43,9 +43,11 @@ endif()
 find_package(PkgConfig REQUIRED)
 # Decoding, encoding, scaling and resampling: FFmpeg libraries directly
 pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET libavformat libavcodec libswresample libswscale libavutil)
-# GPL-free build for the bundled packages (AppImage, Windows, Docker; 0.14): refuses an FFmpeg configured with
-# --enable-gpl/--enable-nonfree (point PKG_CONFIG_PATH at packaging/linux/build-ffmpeg-lgpl.sh's prefix). `schneidi-cli --licenses` and tests/test_license_free check the running program.
-option(SCHNEIDI_NO_GPL "Build without any GPL library (bundled packages)" OFF)
+# GPL-free build (0.14; the packages' GPL_ENCODERS=0 variant): refuses an FFmpeg configured with
+# --enable-gpl/--enable-nonfree (point PKG_CONFIG_PATH at the prefix of GPL_ENCODERS=0 packaging/linux/build-ffmpeg-lgpl.sh).
+# The GitHub downloads (since 0.21) build with it OFF and bundle an FFmpeg with x264/x265 (GPL); schneidi's own code is
+# the same either way. `schneidi-cli --licenses` and tests/test_license_free check the running program.
+option(SCHNEIDI_NO_GPL "Build without any GPL library (GPL-free packages)" OFF)
 if(SCHNEIDI_NO_GPL)
     # Only where it is read: the rest stays in the shared compiler cache
     set_property(SOURCE src/engine/Licenses.cpp APPEND PROPERTY COMPILE_DEFINITIONS SCHNEIDI_NO_GPL)

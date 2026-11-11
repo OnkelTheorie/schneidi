@@ -1,6 +1,8 @@
 # FFmpeg components of the bundled packages (AppImage, Windows program folder, Docker image): what schneidi uses.
 # Read by packaging/linux/build-ffmpeg-lgpl.sh (Linux and MSYS2): FFmpeg is configured with --disable-everything and
-# one --enable-<type>=<name> per line. Names as `./configure --list-<type>s` prints them; shell patterns (pcm_*) work.
+# one --enable-<type>=<name> per line. GPL components (libx264, libx265) are only built with GPL_ENCODERS=1 (the
+# default, GitHub downloads); the GPL-free build (GPL_ENCODERS=0) leaves them out because configure refuses them
+# without --enable-gpl. Names as `./configure --list-<type>s` prints them; shell patterns (pcm_*) work.
 # A name configure does not know stops the build. Components whose library is missing on a platform (VAAPI on
 # Windows, D3D11VA on Linux, an encoder library) are left out by configure itself.
 #
@@ -204,6 +206,9 @@ decoder adpcm_*
 
 # ---- Encoders ----
 # render formats (core/RenderJob.cpp) and their GPL-free replacements (engine/HardwareEncoders.cpp)
+# x264/x265: GPL, only in the GPL_ENCODERS=1 build (see the head of this file)
+encoder libx264
+encoder libx265
 encoder libopenh264
 encoder libkvazaar
 encoder libsvtav1

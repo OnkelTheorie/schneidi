@@ -110,6 +110,8 @@ Downgrade=Note: the newer version schneidi %1 is installed. It will be replaced 
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 Name: "assoc"; Description: "{cm:AssocProjects}"; GroupDescription: "{cm:AdditionalIcons}"
 #ifdef GplFree
+; Only the GPL-free build (build-windows.sh with GPL_ENCODERS=0 passes /DGplFree=1); the default download has
+; x264/x265 in its FFmpeg already.
 ; x264/x265 as the program's own extension (engine/Extensions "x264"): never ticked by default. The installer only runs
 ; schneidi-cli, which downloads it exactly like the app (fixed URL, size and SHA-256, into the user's AppData) – as the
 ; user who started the setup, also when it runs elevated. No network: the setup still finishes, the app offers it later.

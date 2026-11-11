@@ -131,6 +131,12 @@ QVector<Part> report()
     if (const QString yunet = Extensions::faceModel(); !yunet.isEmpty())
         out << Part{"YuNet 2023mar face detection, Shiqi Yu (extension \"faces\")", "MIT", false, yunet};
 
+    // GPL encoders inside this FFmpeg (the GitHub downloads since 0.21 bundle an FFmpeg with x264/x265): named also
+    // when they are linked statically into libavcodec and so never show up as a library of their own
+    for (const char* name : {"libx264", "libx265"})
+        if (avcodec_find_encoder_by_name(name))
+            out << Part{QString("%1 (encoder in FFmpeg)").arg(QLatin1String(name + 3)), "GPL-2+", true, {}};
+
     // Loaded libraries: GPL ones by name, ONNX Runtime
     for (const QString& path : loadedLibraries()) {
         const QString file = QFileInfo(path).fileName();
