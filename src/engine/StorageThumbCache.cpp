@@ -18,6 +18,7 @@
 namespace StorageThumbCache {
 
 namespace {
+// In the name: a new way of making them (v2: key frame at or after 1 s) leaves the old pictures to prune()
 constexpr int kQuality = 85;
 constexpr qint64 kMaxBytes = 64ll << 20;
 constexpr int kUnusedDays = 60;
@@ -31,7 +32,7 @@ QString dir()
 QString fileFor(const QFileInfo& file)
 {
     const QByteArray key = (file.absoluteFilePath() + '|' + QString::number(file.size()) + '|'
-                            + QString::number(file.lastModified().toMSecsSinceEpoch()))
+                            + QString::number(file.lastModified().toMSecsSinceEpoch()) + QStringLiteral("|v2"))
                                .toUtf8();
     return dir() + '/' + QString::fromLatin1(QCryptographicHash::hash(key, QCryptographicHash::Sha1).toHex()) + ".jpg";
 }
@@ -45,7 +46,7 @@ QImage load(const QFileInfo& file)
     // Used: kept by prune() (touched at most once a day, no write per look)
     QFile f(path);
     const QDateTime now = QDateTime::currentDateTime();
-    if (QFileInfo(path).lastModified().daysTo(now) >= 1 && f.open(QIODevice::ReadWrite))
+    if (QFileInfo(path).lastModified().daysTo(now) >= 1 && f.open(QIODevice::ReadWrite | QIODevice::ExistingOnly)) // gone meanwhile: not made anew, empty
         f.setFileTime(now, QFileDevice::FileModificationTime);
     return img;
 }

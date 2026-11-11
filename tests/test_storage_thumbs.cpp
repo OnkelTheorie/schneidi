@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Media Storage thumbnails, fast: Video::thumbnailAt (the key frame near 1 s decoded alone: same picture and colors as
-// stillAt there, turned phone video, short clip, VP9, 10-bit HDR, MJPEG at a lower resolution, intra refresh without key
-// frames) and StorageThumbCache (hit, a changed file misses, unwritable folder, pruning old pictures); the Media
-// Storage shows pictures from the cache, a broken file keeps its placeholder, a cache it cannot write still works.
+// Media Storage thumbnails, fast: Video::thumbnailAt (the key frame at or after 1 s decoded alone: same picture and
+// colors as stillAt there, turned phone video, short clip, VP9, 10-bit HDR, MJPEG at a lower resolution, intra refresh
+// without key frames, fade-in from black with long groups, a recorder's 2 s groups, interlaced H.264/MPEG-2) and
+// StorageThumbCache (hit, a changed file misses, unwritable folder, pruning old pictures); the Media Storage shows
+// pictures from the cache, a broken file keeps its placeholder, a transparent picture is stored over black, a cache it
+// cannot write still works.
 #include "check.h"
 
 #include "app/Theme.h"
@@ -19,6 +21,7 @@
 #include <QTemporaryDir>
 #include <QThread>
 
+#include <algorithm>
 #include <cmath>
 #include <functional>
 
@@ -40,6 +43,14 @@ double difference(const QImage& a0, const QImage& b0)
                    + std::abs(qBlue(pa[x]) - qBlue(pb[x]));
     }
     return sum / (3.0 * a.width() * a.height());
+}
+
+double brightness(const QImage& img)
+{
+    double sum = 0;
+    for (int y = 0; y < img.height(); ++y)
+        for (int x = 0; x < img.width(); ++x) sum += qGray(img.pixel(x, y));
+    return sum / std::max(1, img.width() * img.height());
 }
 
 bool waitFor(const std::function<bool()>& done, int ms = 30000)
@@ -148,6 +159,48 @@ void testThumbnailAt(const QTemporaryDir& dir)
         CHECK(difference(fast, Video::stillAt(mjpeg, 1.0, kBox)) < 6);
     }
 
+    // Fade in from black: not the black first picture. Key frames every 10 s: the one at 10 s (at or after 1 s)
+    const QString fade = Check::makeMedia(file("fade.mp4"), {"-f", "lavfi", "-i", "testsrc2=size=640x360:rate=25", "-t", "12",
+                                                             "-vf", "fade=in:st=0:d=2", "-c:v", "libx264", "-preset",
+                                                             "ultrafast", "-g", "250", "-keyint_min", "250", "-sc_threshold",
+                                                             "0", "-pix_fmt", "yuv420p"});
+    if (CHECK(!fade.isEmpty())) {
+        const QImage img = Video::thumbnailAt(fade, 1.0, kBox);
+        Check::report(brightness(img) > 60, "fade-in, key frames every 10 s", __FILE__, __LINE__,
+                      QString("brightness %1").arg(brightness(img)));
+    }
+    // A single key frame (at 0, black): the exact picture at 1 s instead (half faded in)
+    const QString fadeOne = Check::makeMedia(file("fadeone.mp4"), {"-f", "lavfi", "-i", "testsrc2=size=640x360:rate=25", "-t", "6",
+                                                                   "-vf", "fade=in:st=0:d=2", "-c:v", "libx264", "-preset",
+                                                                   "ultrafast", "-g", "250", "-pix_fmt", "yuv420p"});
+    if (CHECK(!fadeOne.isEmpty())) {
+        const QImage img = Video::thumbnailAt(fadeOne, 1.0, kBox);
+        Check::report(brightness(img) > 25, "fade-in, one key frame", __FILE__, __LINE__,
+                      QString("brightness %1").arg(brightness(img)));
+    }
+    // Like a recorder (clipi, OBS, phone): 60 fps, a key frame every 2 s, the first second dark -> the key frame at 2 s
+    const QString recorder = Check::makeMedia(file("recorder.mkv"), {"-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=60", "-t",
+                                                                     "7", "-vf", "fade=in:st=0:d=1", "-c:v", "libx264", "-preset",
+                                                                     "ultrafast", "-g", "120", "-keyint_min", "120",
+                                                                     "-sc_threshold", "0", "-pix_fmt", "yuv420p"});
+    if (CHECK(!recorder.isEmpty())) {
+        const QImage img = Video::thumbnailAt(recorder, 1.0, kBox);
+        CHECK(difference(img, Video::stillAt(recorder, 2.0, kBox)) < 3);
+    }
+
+    // Interlaced: MBAFF H.264 and field-coded MPEG-2 in a transport stream, as the exact way shows them
+    const QString mbaff = Check::makeMedia(file("mbaff.mp4"), {"-f", "lavfi", "-i", "testsrc2=size=1920x1080:rate=25", "-t", "3",
+                                                               "-vf", "setfield=tff", "-flags", "+ildct+ilme", "-c:v", "libx264",
+                                                               "-x264opts", "tff=1", "-g", "25", "-pix_fmt", "yuv420p"});
+    if (CHECK(!mbaff.isEmpty())) CHECK(difference(Video::thumbnailAt(mbaff, 1.0, kBox), Video::stillAt(mbaff, 1.0, kBox)) < 3);
+    const QString mpeg2 = Check::makeMedia(file("mpeg2.ts"), {"-f", "lavfi", "-i", "testsrc2=size=720x576:rate=25", "-t", "3",
+                                                              "-vf", "setfield=tff", "-flags", "+ildct+ilme", "-c:v", "mpeg2video",
+                                                              "-g", "25", "-b:v", "5M", "-pix_fmt", "yuv420p"});
+    if (CHECK(!mpeg2.isEmpty())) {
+        const QImage img = Video::thumbnailAt(mpeg2, 1.0, kBox);
+        CHECK(!img.isNull() && difference(img, Video::stillAt(mpeg2, 1.0, kBox)) < 4);
+    }
+
     // Intra refresh: no key frame decodes alone -> the exact way still gives a picture
     const QString refresh = Check::makeMedia(file("refresh.mp4"), {"-f", "lavfi", "-i", src, "-t", "3", "-c:v", "libx264",
                                                                    "-x264-params", "intra-refresh=1:keyint=30", "-pix_fmt", "yuv420p"});
@@ -216,9 +269,13 @@ void testStorage(const QTemporaryDir& media)
     QFile::copy(media.filePath("h264.mp4"), dir.filePath("a.mp4"));
     QFile::copy(media.filePath("rotated.mp4"), dir.filePath("b.mp4"));
     QFile::copy(media.filePath("junk.mp4"), dir.filePath("c.mp4"));
+    // Transparent (white in its color channels): over black, from the cache too
+    QImage clear(144, 72, QImage::Format_ARGB32); // read at its size (a scaled read premultiplies: black anyway)
+    clear.fill(qRgba(255, 255, 255, 0));
+    CHECK(clear.save(dir.filePath("d.png")));
     QDir(StorageThumbCache::dir()).removeRecursively();
     const auto shown = [&](QListWidget* list) { // a.mp4 and b.mp4 have their pictures, c.mp4 (broken) its "?"
-        return !isPlaceholder(iconOf(list, 0)) && !isPlaceholder(iconOf(list, 1));
+        return !isPlaceholder(iconOf(list, 0)) && !isPlaceholder(iconOf(list, 1)) && !isPlaceholder(iconOf(list, 3));
     };
     {
         MediaStorage storage;
@@ -228,7 +285,7 @@ void testStorage(const QTemporaryDir& media)
         auto* list = storage.findChild<QListWidget*>();
         if (!CHECK(list)) return;
         storage.setFolder(dir.path());
-        CHECK_EQ(list->count(), 3);
+        CHECK_EQ(list->count(), 4);
         const qint64 junkKey = list->item(2)->icon().cacheKey();
         CHECK(waitFor([&] { return shown(list) && list->item(2)->icon().cacheKey() != junkKey; }));
         CHECK(isPlaceholder(iconOf(list, 2)));
@@ -237,6 +294,9 @@ void testStorage(const QTemporaryDir& media)
     CHECK(QFile::exists(StorageThumbCache::fileFor(QFileInfo(dir.filePath("a.mp4")))));
     CHECK(QFile::exists(StorageThumbCache::fileFor(QFileInfo(dir.filePath("b.mp4")))));
     CHECK(!QFile::exists(StorageThumbCache::fileFor(QFileInfo(dir.filePath("c.mp4")))));
+    const QImage stored = StorageThumbCache::load(QFileInfo(dir.filePath("d.png")));
+    CHECK(!stored.isNull() && stored.width() <= kBox.width() && stored.height() <= kBox.height());
+    CHECK(brightness(stored) < 10);
 
     // A new Media Storage (a restart) takes the stored picture: replaced by green, it shows green
     QImage green(144, 81, QImage::Format_RGB32);
@@ -252,6 +312,7 @@ void testStorage(const QTemporaryDir& media)
         CHECK(waitFor([&] { return shown(list); }));
         const QColor c = iconOf(list, 0).pixelColor(72, 40);
         CHECK(c.green() > 200 && c.red() < 60);
+        CHECK(brightness(iconOf(list, 3)) < 10); // the transparent picture: black as when it was made
     }
 
     // The cache folder cannot be written: the thumbnails still come

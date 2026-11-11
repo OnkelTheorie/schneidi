@@ -645,7 +645,7 @@ void MediaStorage::nextThumb()
         // folder of big PNGs, which decode at full size, blocked the window for all of them in one go)
         const bool image = imageExt().contains(QFileInfo(path).suffix().toLower());
         m_thumbRunning.insert(path);
-        const QString source = image || onDisk ? path : ProxyManager::decodeSource(path);
+        const QString source = image ? path : ProxyManager::decodeSource(path);
         m_thumbPool->start([this, path, source, image, onDisk] {
             Background::lowerThisThread(Background::Level::Low); // own pool: its threads do nothing else
             const QFileInfo file(path);
@@ -657,6 +657,15 @@ void MediaStorage::nextThumb()
                     const QSize size = reader.size();
                     if (size.isValid()) reader.setScaledSize(size.scaled(kThumb, Qt::KeepAspectRatio));
                     img = reader.read();
+                    // as framed() shows it: transparent parts over black (JPEG has no alpha), at most kThumb large
+                    if (!img.isNull() && (img.width() > kThumb.width() || img.height() > kThumb.height()))
+                        img = img.scaled(kThumb, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+                    if (img.hasAlphaChannel()) {
+                        QImage opaque(img.size(), QImage::Format_RGB32);
+                        opaque.fill(Qt::black);
+                        QPainter(&opaque).drawImage(0, 0, img);
+                        img = opaque;
+                    }
                 } else {
                     img = Video::thumbnailAt(source, 1.0, kThumb);
                 }

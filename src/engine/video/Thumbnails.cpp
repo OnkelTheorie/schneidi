@@ -267,32 +267,89 @@ QImage stillAt(const QString& path, double seconds, const QSize& box)
 QImage thumbnailAt(const QString& path, double seconds, const QSize& box)
 {
     QImage img;
+    double at = 0; // time of the picture found
     {
         Source src;
         // One picture: frame threads would only add their start-up; slices/tiles/wavefronts still decode in parallel
         src.threadType = FF_THREAD_SLICE;
-        src.lowresBox = box.expandedTo(box.transposed()); // turned pictures fill it the other way round
+        // At least twice the box (turned pictures fill it the other way round): a quarter size of a field-coded MPEG-2
+        // picture lost too much
+        src.lowresBox = box.expandedTo(box.transposed()) * 2;
         if (!src.open(path, 2, true)) return {};
+        // Only the one key packet reaches the decoder: nothing to skip, and both fields of a field-coded key frame in
+        // that packet decode (skipping non-key frames would drop a P second field)
+        src.dec->skip_frame = AVDISCARD_DEFAULT;
         if (src.fmt->duration != AV_NOPTS_VALUE && double(src.fmt->duration) / AV_TIME_BASE <= seconds) seconds = 0;
+        const double tb = av_q2d(src.st->time_base);
+        // The first key packet at or after `seconds` within 5 s of stream (or 64 MB: a stream without key frame marks)
+        // from where the demuxer is; a key packet before `seconds` stands in. Packets only, nothing decoded
+        AVPacket* key = av_packet_alloc();
+        const auto freeKey = qScopeGuard([&] { av_packet_free(&key); });
+        bool found = false;
+        const auto scan = [&] {
+            int64_t first = AV_NOPTS_VALUE, bytes = 0;
+            while (av_read_frame(src.fmt, src.pkt) >= 0) {
+                if (src.pkt->stream_index != src.st->index) {
+                    av_packet_unref(src.pkt);
+                    continue;
+                }
+                bytes += src.pkt->size;
+                const int64_t ts = src.pkt->pts != AV_NOPTS_VALUE ? src.pkt->pts : src.pkt->dts;
+                if (first == AV_NOPTS_VALUE) first = ts;
+                const bool there = ts == AV_NOPTS_VALUE || double(ts) * tb - src.startSeconds >= seconds - 1e-3;
+                if (src.pkt->flags & AV_PKT_FLAG_KEY) {
+                    av_packet_unref(key);
+                    av_packet_move_ref(key, src.pkt);
+                    found = true;
+                    if (there) return true;
+                } else {
+                    av_packet_unref(src.pkt);
+                }
+                if (bytes > (64 << 20) || (ts != AV_NOPTS_VALUE && first != AV_NOPTS_VALUE && double(ts - first) * tb > 5.0))
+                    break;
+            }
+            return false;
+        };
+        bool there = false;
         if (seconds > 0) {
-            const int64_t target = int64_t(std::floor((seconds + src.startSeconds) / av_q2d(src.st->time_base)));
-            // Fails on raw streams without an index: then the first key frame from where the demuxer is (the start)
-            av_seek_frame(src.fmt, src.st->index, target, AVSEEK_FLAG_BACKWARD);
+            // The key frame at or after `seconds`: the one before is often the very first picture (black in a fade-in,
+            // a recorder's first frame). First from the key frame before it on (the next one if it is near: exact also
+            // where a forward seek overshoots, MPEG-TS), else a seek to the next one (a long group, by the index)
+            const int64_t target = int64_t(std::floor((seconds + src.startSeconds) / tb));
+            av_seek_frame(src.fmt, src.st->index, target, AVSEEK_FLAG_BACKWARD); // fails on raw streams: the start
+            there = scan();
+            if (!there && avformat_seek_file(src.fmt, src.st->index, target, target, INT64_MAX, 0) >= 0) {
+                AVPacket* before = av_packet_clone(key);
+                const bool had = found;
+                found = false;
+                there = scan() && found;
+                if (!there && had) { // nothing after it after all: the one before
+                    av_packet_unref(key);
+                    if (before) av_packet_move_ref(key, before);
+                    found = true;
+                }
+                av_packet_free(&before);
+            }
+        } else {
+            there = scan();
         }
-        bool sent = false;
-        for (int n = 0; n < 2000 && av_read_frame(src.fmt, src.pkt) >= 0; ++n) {
-            const bool key = src.pkt->stream_index == src.st->index && (src.pkt->flags & AV_PKT_FLAG_KEY);
-            if (key) sent = avcodec_send_packet(src.dec, src.pkt) >= 0;
-            av_packet_unref(src.pkt);
-            if (key) break;
-        }
-        if (sent) {
+        if (found && avcodec_send_packet(src.dec, key) >= 0) {
             avcodec_send_packet(src.dec, nullptr); // the picture out now, without waiting for the ones after it
             if (avcodec_receive_frame(src.dec, src.frame) >= 0) {
                 img = src.picture(src.frame, box, false);
+                at = src.seconds(src.frame);
                 av_frame_unref(src.frame);
             }
         }
+    }
+    // A dark key frame before `seconds` (the black start of a fade-in, no key frame after it): the exact picture there
+    if (!img.isNull() && seconds > 0 && !std::isnan(at) && at < seconds - 1e-3) {
+        double sum = 0;
+        for (int y = 0; y < img.height(); ++y) {
+            const QRgb* p = reinterpret_cast<const QRgb*>(img.constScanLine(y));
+            for (int x = 0; x < img.width(); ++x) sum += qGray(p[x]);
+        }
+        if (sum < 24.0 * img.width() * img.height()) img = {};
     }
     // No key frame that decodes alone (a stream without key frame marks, intra refresh): the exact way
     return img.isNull() ? stillAt(path, seconds, box) : img;
