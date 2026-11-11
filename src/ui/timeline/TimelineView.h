@@ -441,7 +441,9 @@ private:
     // Trim mode: running edit, delta and preview of the timeline
     TimelineOps::TrimEdit m_trimEdit;
     TrimHit m_trimHit{TimelineOps::TrimKind::Ripple, 0, TimelineOps::Edge::End};
-    int m_trimEditDelta = 0;
+    int m_trimEditDelta = 0;  // shown (allowed) one
+    int m_trimEditWanted = 0; // the one the mouse asks for
+    QString m_trimEditWhy;    // why the wanted one is not allowed (shown in the status bar once)
     std::optional<Timeline> m_trimPreview;
     // Trim view: last emitted frames (only changes are sent); shown = trimFramesChanged sent since the press
     TrimFrames::View m_trimFrames;

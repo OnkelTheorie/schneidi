@@ -101,8 +101,39 @@ Timeline Editor::previewTrimEdit(const TimelineOps::TrimEdit& e, int delta) cons
 
 QString Editor::trimEditRefusal(const TimelineOps::TrimEdit& e, int delta) const
 {
-    if (e.kind != TimelineOps::TrimKind::Ripple || e.isNull() || delta == 0) return {};
-    return linksRefusal(m_project->timeline(), previewTrimEdit(e, delta), QSet<int>(e.ids.cbegin(), e.ids.cend()), nullptr);
+    QString why;
+    allowedTrimEdit(e, delta, &why);
+    return why;
+}
+
+int Editor::allowedTrimEdit(const TimelineOps::TrimEdit& e, int delta, QString* why, Timeline* preview) const
+{
+    const Timeline& now = m_project->timeline();
+    const QSet<int> trimmed(e.ids.cbegin(), e.ids.cend());
+    const auto refusal = [&](const Timeline& after) { return linksRefusal(now, after, trimmed, nullptr); };
+    Timeline at = previewTrimEdit(e, delta);
+    QString reason = e.kind == TimelineOps::TrimKind::Ripple && delta != 0 ? refusal(at) : QString();
+    if (why) *why = reason;
+    if (reason.isEmpty()) {
+        if (preview) *preview = at;
+        return delta;
+    }
+    // The furthest allowed one between 0 (always: nothing changes) and delta (refused); the farther, the more comes
+    // apart, so halving finds it in a few previews
+    int ok = 0, no = delta;
+    Timeline okTimeline = now;
+    while (std::abs(no - ok) > 1) {
+        const int mid = ok + (no - ok) / 2;
+        Timeline t = previewTrimEdit(e, mid);
+        if (refusal(t).isEmpty()) {
+            ok = mid;
+            okTimeline = std::move(t);
+        } else {
+            no = mid;
+        }
+    }
+    if (preview) *preview = okTimeline;
+    return ok;
 }
 
 void Editor::applyTrimEdit(const TimelineOps::TrimEdit& e, int delta)

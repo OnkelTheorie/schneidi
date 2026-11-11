@@ -39,7 +39,9 @@ struct RetimedTrack {
 // (rippleTracks) - each by only its own changes took linked clips apart (two clips on different tracks at different
 // times). If that does not fit on one of them (a clip there lies across a change on another track and would run into
 // its neighbor), each one moves by its own changes, as before. Writes only these tracks (undo snapshots share the rest).
-void rippleRetimed(Timeline& tl, const QVector<RetimedTrack>& tracks, const QVector<QPair<int, int>>& shifts)
+// Returns a track where even its own changes do not fit (a clip there would run into another one: a group member that
+// starts after the group's earliest end moves up with it, onto a clip before it) - then tl is left half done: refuse.
+std::optional<TrackRef> rippleRetimed(Timeline& tl, const QVector<RetimedTrack>& tracks, const QVector<QPair<int, int>>& shifts)
 {
     const auto moved = [](QVector<Clip> clips, const QVector<QPair<int, int>>& by) {
         for (qsizetype i = 0; i < clips.size(); ++i) {
@@ -63,10 +65,18 @@ void rippleRetimed(Timeline& tl, const QVector<RetimedTrack>& tracks, const QVec
     }
     QVector<TrackRef> edited;
     for (qsizetype i = 0; i < tracks.size(); ++i) {
-        tl.track(tracks[i].ref).clips = together ? joint[i] : moved(tracks[i].clips, tracks[i].own);
+        QVector<Clip> clips = together ? joint[i] : moved(tracks[i].clips, tracks[i].own);
+        if (!fits(clips)) return tracks[i].ref;
+        tl.track(tracks[i].ref).clips = clips;
         edited << tracks[i].ref;
     }
     TimelineOps::rippleTracks(tl, shifts, edited);
+    return std::nullopt;
+}
+
+QString noRoom(TrackRef ref)
+{
+    return T("Nicht ausgeführt: Auf %1 liefe ein Clip in den davor – dort ist kein Platz").arg(trackShortName(ref));
 }
 
 // Linked clips of one file in sync (same start - in, same playback) stay in sync to the frame through a retime: one
@@ -145,8 +155,9 @@ public:
     // The shifts for all tracks; each retimed track's own ones (its groups') into `own`
     QVector<QPair<int, int>> shifts(QVector<RetimedTrack>& tracks) const
     {
-        QVector<QPair<int, int>> all;
+        QVector<QPair<int, int>> all, groupShift;
         QVector<bool> done(m_changes.size(), false);
+        QVector<qsizetype> groupOf(m_changes.size(), 0);
         for (qsizetype i = 0; i < m_changes.size(); ++i) {
             if (done[i]) continue;
             int from = m_changes[i].oldEnd, by = m_changes[i].delta;
@@ -158,13 +169,22 @@ public:
                         from = std::min(from, m_changes[j].oldEnd);
                         by = std::max(by, m_changes[j].delta);
                     }
-            const QPair<int, int> shift(from, by);
-            if (!all.contains(shift)) all << shift;
+            groupShift << qMakePair(from, by);
             for (qsizetype m : std::as_const(members)) {
                 done[m] = true;
-                QVector<QPair<int, int>>& own = tracks[m_changes[m].track].own;
-                if (!own.contains(shift)) own << shift;
+                groupOf[m] = groupShift.size() - 1;
             }
+        }
+        // Groups changing at the same place (separate clips ending together, their changes apart by rounding: +100 and
+        // +99) are one change there, the larger: added up, what follows moved by both (199)
+        for (auto& g : groupShift)
+            for (const auto& o : std::as_const(groupShift))
+                if (o.first == g.first) g.second = std::max(g.second, o.second);
+        for (const auto& g : std::as_const(groupShift))
+            if (!all.contains(g)) all << g;
+        for (qsizetype m = 0; m < m_changes.size(); ++m) {
+            QVector<QPair<int, int>>& own = tracks[m_changes[m].track].own;
+            if (!own.contains(groupShift[groupOf[m]])) own << groupShift[groupOf[m]];
         }
         return all;
     }
@@ -296,7 +316,11 @@ void Editor::setClipSpeed(const QVector<int>& ids, const Retime& r, bool ripple)
             retimed << t;
         }
         const QVector<QPair<int, int>> shifts = changes.shifts(retimed);
-        rippleRetimed(tl, retimed, shifts);
+        if (const std::optional<TrackRef> full = rippleRetimed(tl, retimed, shifts)) {
+            tl = before;
+            tell(noRoom(*full), true);
+            return;
+        }
         fitTransitions(tl, touched, sourceLength());
         if (!shifts.isEmpty()) keepsLinks(before, tl, touched);
     });
@@ -394,7 +418,10 @@ void Editor::editRamp(const QString& text, int clipId, const std::function<bool(
     }
     if (touched.isEmpty()) return;
     const QVector<QPair<int, int>> shifts = changes.shifts(retimed);
-    rippleRetimed(tl, retimed, shifts);
+    if (const std::optional<TrackRef> full = rippleRetimed(tl, retimed, shifts)) {
+        tell(noRoom(*full), true);
+        return;
+    }
     fitTransitions(tl, touched, sourceLength());
     if (!keepsLinks(cur, tl, touched)) return;
     m_project->edit(text, [&](Timeline& t) { t = tl; });

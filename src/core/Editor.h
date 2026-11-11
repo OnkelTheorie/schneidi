@@ -163,8 +163,12 @@ public:
     TimelineOps::TrimEdit trimEdit(TimelineOps::TrimKind kind, int clipId, TimelineOps::Edge edge = TimelineOps::Edge::End) const;
     int clampTrimEdit(const TimelineOps::TrimEdit& e, int delta) const;
     Timeline previewTrimEdit(const TimelineOps::TrimEdit& e, int delta) const; // for the live preview
-    // Why applyTrimEdit would refuse this ripple (linked clips apart; empty = it would not): the preview holds still
+    // Why applyTrimEdit would refuse this ripple (linked clips apart; empty = it would not)
     QString trimEditRefusal(const TimelineOps::TrimEdit& e, int delta) const;
+    // For the drag preview: the delta nearest to `delta` (towards 0) that applyTrimEdit does not refuse - the preview
+    // stops there instead of snapping back. *why: the refusal of `delta` itself (empty = allowed); *preview: the
+    // timeline at the result.
+    int allowedTrimEdit(const TimelineOps::TrimEdit& e, int delta, QString* why = nullptr, Timeline* preview = nullptr) const;
     void applyTrimEdit(const TimelineOps::TrimEdit& e, int delta);
     // Split edit (Alt-drag at a cut): a roll of the cut at `edge` of the clip on its own track only; its linked
     // partners keep their cut and stay linked (J/L cut). Kill feed copies of the clips go along.

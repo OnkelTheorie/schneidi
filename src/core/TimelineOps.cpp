@@ -493,13 +493,15 @@ RippleResult rippleDelete(Timeline& tl, const QVector<int>& clipIds)
     // Deleted ranges of all tracks combined
     const QVector<TrackRef> edited = tracksOf(tl, clipIds);
     QVector<QPair<int, int>> ranges;
-    struct Span { int start, end, link; };
-    QVector<QPair<int, Span>> spans; // the deleted clips (before)
-    for (int id : clipIds)
-        if (const Clip* c = findClip(tl, id)) {
+    struct Span { int start, end, link; bool picture; };
+    QVector<Span> spans; // the deleted clips (before)
+    for (int id : clipIds) {
+        TrackRef ref;
+        if (const Clip* c = findClip(tl, id, &ref)) {
             ranges << qMakePair(c->start, c->end());
-            spans << qMakePair(id, Span{c->start, c->end(), c->linkId});
+            spans << Span{c->start, c->end(), c->linkId, ref.kind == TrackKind::Video};
         }
+    }
     std::sort(ranges.begin(), ranges.end());
     QVector<QPair<int, int>> merged;
     for (const auto& r : ranges) {
@@ -552,21 +554,14 @@ RippleResult rippleDelete(Timeline& tl, const QVector<int>& clipIds)
     RippleResult result;
     for (const auto& r : std::as_const(merged)) result.deleted += r.second - r.first;
     for (const auto& s : std::as_const(shifts)) result.removed -= s.second;
-    // The time meant to go: of a linked group the time all its clips share (its own J/L tail under the next clip is
-    // no loss), of a clip alone its time; how much of it went
-    QHash<int, QPair<int, int>> groups; // link -> shared time
+    // The time meant to go: of a linked group with a picture the picture's time (its sound's own J/L tail under the
+    // next clip is no loss, a shorter sound does not make it less), of other clips their time; how much of it went
+    QSet<int> withPicture;
+    for (const Span& span : std::as_const(spans))
+        if (span.link > 0 && span.picture) withPicture.insert(span.link);
     QVector<QPair<int, int>> meant;
-    for (const auto& [id, span] : std::as_const(spans)) {
-        if (span.link <= 0) {
-            meant << qMakePair(span.start, span.end);
-            continue;
-        }
-        auto g = groups.find(span.link);
-        if (g == groups.end()) groups.insert(span.link, qMakePair(span.start, span.end));
-        else *g = qMakePair(std::max(g->first, span.start), std::min(g->second, span.end));
-    }
-    for (const auto& g : std::as_const(groups))
-        if (g.first < g.second) meant << g;
+    for (const Span& span : std::as_const(spans))
+        if (span.picture || span.link <= 0 || !withPicture.contains(span.link)) meant << qMakePair(span.start, span.end);
     std::sort(meant.begin(), meant.end());
     QVector<QPair<int, int>> meantMerged;
     for (const auto& r : std::as_const(meant)) {

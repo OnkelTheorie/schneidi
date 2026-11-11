@@ -690,16 +690,20 @@ QString Editor::linksRefusal(const Timeline& before, const Timeline& after, cons
     const auto& [x, y] = hard.first();
     const Side& stay = x.moved <= y.moved ? x : y;
     // A clip on the staying track across the first place where something moved: that track cannot follow
+    QHash<int, int> startNow; // id -> start in `after` (one pass, not a search per clip)
+    for (TrackKind k : {TrackKind::Video, TrackKind::Audio})
+        for (const Track& t : after.tracks(k))
+            for (const Clip& c : t.clips) startNow.insert(c.id, c.start);
     int from = INT_MAX;
     for (TrackKind k : {TrackKind::Video, TrackKind::Audio})
         for (const Track& t : before.tracks(k))
             for (const Clip& c : t.clips)
-                if (const Clip* now = TimelineOps::findClip(after, c.id); now && now->start != c.start) from = std::min(from, c.start);
+                if (const auto now = startNow.constFind(c.id); now != startNow.cend() && *now != c.start)
+                    from = std::min(from, c.start);
     bool across = false;
     if (stay.moved == 0)
         for (const Clip& c : before.track(stay.ref).clips)
-            if (const Clip* now = TimelineOps::findClip(after, c.id); now && now->start == c.start && c.start < from && c.end() > from)
-                across = true;
+            if (startNow.value(c.id, INT_MIN) == c.start && c.start < from && c.end() > from) across = true;
     if (across)
         return T("Nicht ausgeführt: Auf %1 liegt ein Clip über der Schnittstelle, die Spur kann nicht mit – Bild und Ton "
                  "von „%2“ liefen auseinander. Den Clip dort kürzen oder verschieben, dann geht es")
