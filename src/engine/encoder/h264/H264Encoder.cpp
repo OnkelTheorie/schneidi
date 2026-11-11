@@ -54,6 +54,9 @@ std::atomic<long> gStatInter{0}, gStatInterCbp{0}, gStatT8{0};
 std::atomic<long> gStatIntraTry[4] = {}, gStatIntraWin[4] = {}; // by ratio of the intra estimate to the inter cost
 // Experiments (H264_EXP bit mask), for A/B measurements only.
 const int gExp = std::getenv("H264_EXP") ? std::atoi(std::getenv("H264_EXP")) : 0;
+// Per thread (rows of a picture run on several threads): intra try in a P picture without Intra
+// 8x8 / 16x16 (experiments).
+thread_local bool tIntraSkip8 = false, tIntraSkip16 = false;
 const double gIntraFactor = std::getenv("H264_INTRAF") ? std::atof(std::getenv("H264_INTRAF")) : 2.0;
 double gPhaseMs[8] = {};
 double gWaitMs = 0; // summed over threads
@@ -2213,7 +2216,7 @@ bool FrameCoder::encodeMbIntra(MbOut& out, int mbx, int mby)
     MbOut a, b;
     bool deltaA = false;
     double costA = 1e300;
-    if (!intraSkip16_) {
+    if (!tIntraSkip16) {
         deltaA = encodeLuma16(a, mbx, mby, ch);
         costA = double(ssd()) + lambda * mbBits(a, mbx, mby, double(a.bw.bitCount()));
     }
@@ -2221,7 +2224,7 @@ bool FrameCoder::encodeMbIntra(MbOut& out, int mbx, int mby)
     save(snapA);
     const bool deltaB = encodeLuma4(b, mbx, mby, ch);
     const double costB = double(ssd()) + lambda * mbBits(b, mbx, mby, double(b.bw.bitCount()));
-    if (useT8() && !intraSkip8_) {
+    if (useT8() && !tIntraSkip8) {
         Snapshot snapB;
         save(snapB);
         MbOut c;
@@ -3242,10 +3245,10 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
             // Borderline cases (estimate above the inter cost) rarely win; experiments drop
             // the dearer intra types there.
             const bool borderline = double(intraEstimate) >= best.cost;
-            intraSkip8_ = borderline && (gExp & 2);
-            intraSkip16_ = borderline && (gExp & 4);
+            tIntraSkip8 = borderline && (gExp & 2);
+            tIntraSkip16 = borderline && (gExp & 4);
             intraDelta = encodeMbIntra(intraBits, mbx, mby);
-            intraSkip8_ = intraSkip16_ = false;
+            tIntraSkip8 = tIntraSkip16 = false;
             setBlocks(0, 0, 4, 4, 0, 0, -1);
             costIntra = double(mbSsd(mbx, mby)) + lambda * mbBits(intraBits, mbx, mby, double(intraBits.bw.bitCount() + seBits(0)));
             if (gStats) {

@@ -188,7 +188,6 @@ public:
     int mbTypeOffset_ = 0;                  // 5 for intra macroblocks in P slices
     bool pSlice_ = false;
     bool deblockedInline_ = false; // the wavefront filtered the picture already
-    bool intraSkip8_ = false, intraSkip16_ = false; // intra try in a P picture without Intra 8x8 / 16x16 (experiments)
     bool detectSceneCut(std::vector<uint8_t>& prevThumb);
     std::vector<float> treeOffset_; // per macroblock, 0 without the tree
 };
