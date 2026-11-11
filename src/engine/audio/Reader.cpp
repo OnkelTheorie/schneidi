@@ -12,6 +12,7 @@ extern "C" {
 }
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <deque>
 #include <iterator>
@@ -27,6 +28,7 @@ constexpr double kPreroll = 0.2;     // decoded before a jump target: codec (AAC
 constexpr double kJitter = 0.010;    // timestamp deviations below this are ignored (like aresample min_hard_comp)
 constexpr double kMaxForward = 2.0;  // forward jumps up to this far decode on instead of seeking
 constexpr double kKeepBack = 0.25;   // decoded samples kept before the last read (small steps back without a seek)
+constexpr std::chrono::milliseconds kRetryLost{1500}; // a lost file is tried again at most this often
 constexpr double kBackoff[] = {1.0, 4.0}; // seek further back when the first packet came too late
 constexpr int kProbePackets = 2000;  // read at most this many packets to find the picture's first key frame
 constexpr int kGridFrames = 24;      // frames measured in a stream with coarse timestamps (Matroska)
@@ -71,6 +73,10 @@ struct Reader::Impl {
     StreamInfo info;
     Stats stats;
     bool error = false;
+    // When opening the lost file last failed: until kRetryLost later, jumps read silence without trying (a reversed clip
+    // jumps back every block; each open of a gone network share or USB disk may block the mixer)
+    std::chrono::steady_clock::time_point lostAt{};
+    bool lostTried = false;
     std::deque<AVPacket*> queued; // packets of the stream read while looking for the picture's first key frame
 
     // Resampler input as the decoded frames come (HE-AAC may differ from the container's values)
@@ -607,10 +613,15 @@ struct Reader::Impl {
     void seek(int64_t target, int tryNo, bool fresh = false)
     {
         ++stats.seeks;
-        if (!fmt || !dec) fresh = true; // lost before: open the file anew
+        const bool wasLost = !fmt || !dec;
+        if (wasLost) fresh = true; // lost before: open the file anew
         attempt = tryNo;
         validFrom = target;
         wantOut = target - seconds(kPreroll);
+        if (wasLost && lostTried && std::chrono::steady_clock::now() - lostAt < kRetryLost) {
+            lose(); // tried a moment ago: silence and the error, no new attempt yet
+            return;
+        }
         const long double back = tryNo > 0 ? kBackoff[tryNo - 1] : 0;
         const long double t = zero + (long double)wantOut / outRate - back;
         // The start = the stream's first packet (an AAC priming packet lies before the file's start time). No demuxer
@@ -639,9 +650,12 @@ struct Reader::Impl {
             avcodec_flush_buffers(dec);
         }
         if (!fmt || !dec) {
+            lostAt = std::chrono::steady_clock::now();
+            lostTried = true;
             lose();
             return;
         }
+        if (wasLost) error = false; // the file is back: its error is over
         swr_free(&swr);
         inRate = 0;
         inFormat = -1;
