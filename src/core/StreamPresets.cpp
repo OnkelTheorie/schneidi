@@ -49,7 +49,16 @@ QVector<StreamRule> StreamPresets::plan(const MediaInfo& m) const
         r.title = streamTitle(m, k);
         out << r;
     }
-    if (n < 2) return out;
+    // A stream schneidi cannot play is never placed, whatever a rule says
+    const auto dead = [&m](int k) { return !m.audioStreamPlayable(k); };
+    const auto skipDead = [&] {
+        for (int k = 0; k < n; ++k)
+            if (dead(k)) out[k].action = StreamRule::Action::Skip;
+    };
+    if (n < 2) {
+        skipDead();
+        return out;
+    }
 
     QVector<bool> ruled(n, false);
     for (int k = 0; k < n; ++k) {
@@ -64,13 +73,19 @@ QVector<StreamRule> StreamPresets::plan(const MediaInfo& m) const
     if (muteMix) {
         // Only when the file has single streams besides its mixes (which are not left out)
         bool single = false;
-        for (int k = 0; k < n; ++k) single = single || (!isMixTitle(out[k].title) && out[k].action != StreamRule::Action::Skip);
+        for (int k = 0; k < n; ++k)
+            single = single || (!dead(k) && !isMixTitle(out[k].title) && out[k].action != StreamRule::Action::Skip);
         if (single)
             for (int k = 0; k < n; ++k)
                 if (!ruled[k] && isMixTitle(out[k].title)) out[k].action = StreamRule::Action::Mute;
     }
-    if (std::all_of(out.begin(), out.end(), [](const StreamRule& r) { return r.action == StreamRule::Action::Skip; }))
-        for (StreamRule& r : out) r.action = StreamRule::Action::Mute;
+    skipDead();
+    // Rules that leave out every playable stream: all of them muted instead (the file's sound stays at hand)
+    bool anyPlaced = false;
+    for (int k = 0; k < n; ++k) anyPlaced = anyPlaced || out[k].action != StreamRule::Action::Skip;
+    if (!anyPlaced)
+        for (int k = 0; k < n; ++k)
+            if (!dead(k)) out[k].action = StreamRule::Action::Mute;
     return out;
 }
 
@@ -110,7 +125,7 @@ QVector<StreamRule> StreamPresets::learn(const Timeline& tl, const MediaInfo& m,
     for (int k = 0; k < clips.size(); ++k) {
         StreamRule r;
         r.title = streamTitle(m, k).trimmed();
-        if (r.title.isEmpty()) continue;
+        if (r.title.isEmpty() || !m.audioStreamPlayable(k)) continue; // a dead stream says nothing about its title
         if (!clips[k]) {
             r.action = StreamRule::Action::Skip;
         } else {

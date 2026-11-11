@@ -100,6 +100,7 @@
 void MainWindow::buildLayout()
 {
     m_mediaPool = new MediaPool(m_project, m_engine);
+    m_mediaPool->setProbeCache(&m_probeCache); // a dropped file: the drop preview's probe, not a second one
     StartupTrace::mark("ctor MediaPool");
     m_effects = new EffectsLibrary;
     StartupTrace::mark("ctor EffectsLibrary");

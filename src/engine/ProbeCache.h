@@ -1,73 +1,51 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
-// Probe results of files not in the Media Pool (the timeline's drop preview, the Viewer for a file of Media Storage),
-// so dragging over the timeline does not open the file on every enter. Only usable results are kept (a length and a
-// picture or sound): a file probed while it was still being written, copied or held by another program stayed "no
-// picture, no sound" for the whole session, its drop refused although the thumbnail showed it. A kept result goes
-// when the file's size or time of change differ from when it was probed (one stat per lookup).
+// Probe results of files, for the timeline's drop preview, the Viewer of a Media Storage file and the import of a
+// file dropped from outside (one probe for the drop preview and the import). A file probed while it was still being
+// written, copied or held by another program stayed "no picture, no sound" for the whole session when every result
+// was kept by path, its drop refused although the thumbnail showed it. So:
+// - a result goes when the file's size or time of change differ from when it was probed (the stamp is taken before
+//   probing: a file changing meanwhile is not kept with a stale result);
+// - a usable result is kept; one that found nothing is kept only briefly (kNegativeMs) and only when the file is
+//   neither locked nor written to moments ago (repeated drag-enters do not open it again and again); a partial
+//   result (a quick look that skipped the long stream analysis) is not kept.
+// probe() runs on any thread; the cache itself is used on one thread (the UI's).
 
 #include "core/Types.h"
+#include "engine/MediaProbe.h"
 
-#include <QFileInfo>
 #include <QHash>
 #include <QString>
 
-#include <functional>
 #include <optional>
+
+struct ProbeResult {
+    MediaInfo info;                 // path and name always; no picture and no sound when unreadable
+    qint64 size = -1, modified = 0; // the file's stamp before probing (size -1: missing)
+    bool partial = false;           // a quick look that skipped the long stream analysis
+    MediaProbe::Busy busy = MediaProbe::Busy::No; // unreadable results only: maybe readable a moment later
+    QString why;                    // unreadable results of a full probe: MediaProbe::whyUnreadable
+    bool usable() const { return info.length > 0 && (info.hasVideo || info.hasAudio); }
+};
 
 class ProbeCache {
 public:
-    // A result worth keeping: something the timeline can place
-    static bool usable(const MediaInfo& m) { return m.length > 0 && (m.hasVideo || m.hasAudio); }
+    static constexpr qint64 kNegativeMs = 30000;
 
-    // The kept result of `path` while its file is unchanged
-    std::optional<MediaInfo> find(const QString& path)
-    {
-        const auto it = m_entries.constFind(path);
-        if (it == m_entries.cend()) return std::nullopt;
-        if (it->stamp != stampOf(path)) {
-            m_entries.erase(it);
-            return std::nullopt;
-        }
-        return it->info;
-    }
-    // Keeps `info` (under info.path) when it is usable, with the file's stamp now
-    void insert(const MediaInfo& info)
-    {
-        if (!usable(info)) {
-            m_entries.remove(info.path);
-            return;
-        }
-        m_entries.insert(info.path, Entry{info, stampOf(info.path)});
-    }
-    // The kept result, else `probe(path)` (kept when usable)
-    MediaInfo get(const QString& path, const std::function<MediaInfo(const QString&)>& probe)
-    {
-        if (std::optional<MediaInfo> known = find(path)) return *std::move(known);
-        MediaInfo info = probe(path);
-        info.path = path;
-        insert(info);
-        return info;
-    }
+    // Probes `path` (lengths in `rate`); `longAnalysis` false = a quick look for the UI thread (MediaProbe::ReadOptions)
+    static ProbeResult probe(const QString& path, FrameRate rate, bool longAnalysis = true);
+
+    // The kept result of `path` while its file is unchanged (and a negative one is young enough)
+    std::optional<ProbeResult> find(const QString& path);
+    // Keeps `r` by the rules above (under r.info.path)
+    void insert(const ProbeResult& r);
     void remove(const QString& path) { m_entries.remove(path); }
     void clear() { m_entries.clear(); }
-    bool contains(const QString& path) const { return m_entries.contains(path); }
 
 private:
-    struct Stamp {
-        qint64 size = -1;
-        qint64 modified = 0;
-        bool operator==(const Stamp&) const = default;
-    };
     struct Entry {
-        MediaInfo info;
-        Stamp stamp;
+        ProbeResult result;
+        qint64 keptAt = 0; // ms since the epoch
     };
-    static Stamp stampOf(const QString& path)
-    {
-        const QFileInfo fi(path);
-        if (!fi.exists()) return {};
-        return {fi.size(), fi.lastModified().toMSecsSinceEpoch()};
-    }
     QHash<QString, Entry> m_entries;
 };

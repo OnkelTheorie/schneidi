@@ -9,6 +9,7 @@ extern "C" {
 }
 
 #include <QDateTime>
+#include <QDir>
 #include <QFile>
 #include <QFileInfo>
 #include <QHash>
@@ -16,7 +17,19 @@ extern "C" {
 #include <QThread>
 #include <QStringList>
 
+#ifdef Q_OS_WIN
+#ifndef NOMINMAX
+#define NOMINMAX // std::min/std::max below
+#endif
+#include <windows.h>
+#else
+#include <cerrno>
+#include <fcntl.h>
+#include <unistd.h>
+#endif
+
 #include <algorithm>
+#include <atomic>
 #include <climits>
 #include <cmath>
 #include <memory>
@@ -180,7 +193,7 @@ bool fill(const AVFormatContext* fmt, bool audioFile, MediaInfo* info, bool leni
             video = true; // also a cover picture: the picture stream when there is no other
             moving = moving || !(st->disposition & AV_DISPOSITION_ATTACHED_PIC);
             continue;
-        } else if (p->ch_layout.nb_channels <= 0) {
+        } else if (p->ch_layout.nb_channels <= 0 || p->sample_rate <= 0) {
             if (!lenient) return false;
         } else {
             s = soundOf(p, codec);
@@ -189,14 +202,14 @@ bool fill(const AVFormatContext* fmt, bool audioFile, MediaInfo* info, bool leni
         sound = sound || s == Sound::Playable;
         AudioStreamInfo a;
         a.channels = p->ch_layout.nb_channels > 0 ? p->ch_layout.nb_channels : a.channels;
+        a.playable = s == Sound::Playable;
         // No empty and no "und" (undetermined) tag values
         if (const AVDictionaryEntry* t = av_dict_get(st->metadata, "title", nullptr, 0); t && qstrcmp(t->value, "und") != 0)
             a.title = QString::fromUtf8(t->value).trimmed();
         streams << a;
     }
-    if (!video && !sound) return false; // nothing playable
-    // Only a cover picture beside sound that cannot be played: nothing to play either (the cover shows with sound)
-    if (lenient && !moving && !sound) return false;
+    // Nothing playable; or only a cover picture beside sound that cannot be played (the cover shows with sound)
+    if (!sound && !moving) return false;
     info->hasVideo = !audioFile && video;
     info->hasAudio = sound;
     if (sound) info->audioStreams = streams;
@@ -204,7 +217,8 @@ bool fill(const AVFormatContext* fmt, bool audioFile, MediaInfo* info, bool leni
 }
 
 // A stream with a decoder whose values the stream analysis did not find: no packet of it within the analysed start
-// (sound that starts late in an MPEG-TS, a picture after seconds of sound). Reading further may find them.
+// (sound that starts late in an MPEG-TS, an empty sound PID, a picture after seconds of sound). Reading further may
+// find them.
 bool unsettled(const AVFormatContext* fmt)
 {
     for (unsigned i = 0; i < fmt->nb_streams; ++i) {
@@ -219,30 +233,69 @@ bool unsettled(const AVFormatContext* fmt)
     return false;
 }
 
-// Files whose longer analysis found nothing more (size and time of change then): not read that far again
+// What the longer analysis (kLongAnalysis) did for a file, while its size and time of change stay: found what the
+// short one missed (open it with the long options at once next time), or nothing more (not read that far again)
+constexpr int64_t kLongAnalysis = 60; // seconds; and 2 MB per second to read at most
+enum class LongOutcome { Helped, InVain };
 struct Analysed {
     qint64 size = -1, modified = 0;
+    LongOutcome outcome = LongOutcome::InVain;
 };
 std::mutex g_longMutex;
-QHash<QString, Analysed>& longInVain()
+QHash<QString, Analysed>& longAnalyses()
 {
     static QHash<QString, Analysed> files;
     return files;
 }
+std::atomic<int> g_longRuns{0};
 
-Analysed stampOf(const QFileInfo& fi)
+std::optional<LongOutcome> longOutcome(const QString& path, const QFileInfo& fi)
 {
-    return {fi.size(), fi.lastModified().toMSecsSinceEpoch()};
+    std::lock_guard lock(g_longMutex);
+    const auto it = longAnalyses().constFind(path);
+    if (it == longAnalyses().cend() || it->size != fi.size() || it->modified != fi.lastModified().toMSecsSinceEpoch())
+        return std::nullopt;
+    return it->outcome;
 }
 
-// Opening failed although the file is there and may be read: another program holds it without sharing read access
-// (Windows: a recorder, a copy in progress, a virus scan of a fresh download); FFmpeg's own error says "permission
-// denied" then
-bool locked(const QFileInfo& fi)
+void rememberLong(const QString& path, const QFileInfo& fi, LongOutcome outcome)
 {
-    if (!fi.isFile() || !fi.isReadable()) return false;
+    std::lock_guard lock(g_longMutex);
+    longAnalyses().insert(path, Analysed{fi.size(), fi.lastModified().toMSecsSinceEpoch(), outcome});
+}
+
+enum class Access { Open, Locked, Failed };
+
+// Can the file be opened for reading now? Locked: another program holds it without sharing read access (Windows:
+// ERROR_SHARING_VIOLATION or ERROR_LOCK_VIOLATION - a recorder, a copy in progress, a virus scan of a fresh
+// download; elsewhere EBUSY, or EACCES although the permissions allow reading). FFmpeg's own error says "permission
+// denied" then. Failed: any other reason, said in `error`.
+Access access(const QFileInfo& fi, QString* error = nullptr)
+{
+    if (!fi.isFile()) return Access::Failed;
     QFile f(fi.filePath());
-    return !f.open(QIODevice::ReadOnly);
+    if (f.open(QIODevice::ReadOnly)) return Access::Open;
+    if (error) *error = f.errorString();
+#ifdef Q_OS_WIN
+    const QString native = "\\\\?\\" + QDir::toNativeSeparators(fi.absoluteFilePath());
+    const HANDLE h = CreateFileW(reinterpret_cast<const wchar_t*>(native.utf16()), GENERIC_READ,
+                                 FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
+                                 FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h != INVALID_HANDLE_VALUE) {
+        CloseHandle(h);
+        return Access::Open; // free again meanwhile
+    }
+    const DWORD e = GetLastError();
+    return e == ERROR_SHARING_VIOLATION || e == ERROR_LOCK_VIOLATION ? Access::Locked : Access::Failed;
+#else
+    const int fd = ::open(QFile::encodeName(fi.filePath()).constData(), O_RDONLY | O_CLOEXEC);
+    if (fd >= 0) {
+        ::close(fd);
+        return Access::Open;
+    }
+    const int e = errno;
+    return e == EBUSY || (e == EACCES && fi.isReadable()) ? Access::Locked : Access::Failed;
+#endif
 }
 
 // Written to this many seconds ago or less: maybe still being written
@@ -256,10 +309,23 @@ bool fresh(const QFileInfo& fi)
 
 } // namespace
 
-bool mayBeBusy(const QString& path)
+Busy busy(const QString& path)
 {
     const QFileInfo fi(path);
-    return fi.isFile() && (fresh(fi) || locked(fi));
+    if (!fi.isFile()) return Busy::No;
+    if (access(fi) == Access::Locked) return Busy::Locked;
+    return fresh(fi) ? Busy::Written : Busy::No;
+}
+
+int longAnalysesForTest()
+{
+    return g_longRuns.load();
+}
+
+void forgetForTest()
+{
+    std::lock_guard lock(g_longMutex);
+    longAnalyses().clear();
 }
 
 namespace {
@@ -270,7 +336,7 @@ QString whyUnreadable(const QString& path)
 {
     QString reason = why(path);
     const QFileInfo fi(path);
-    if (fi.isFile() && !locked(fi) && fresh(fi))
+    if (fi.isFile() && access(fi) == Access::Open && fresh(fi))
         reason += "; it was written to moments ago - maybe it is still being recorded, downloaded or copied";
     return reason;
 }
@@ -281,8 +347,9 @@ bool isAudioFile(const QString& path)
     return audioExt.contains(QFileInfo(path).suffix().toLower());
 }
 
-std::optional<MediaInfo> read(const QString& path, FrameRate rate)
+std::optional<MediaInfo> read(const QString& path, FrameRate rate, const ReadOptions& options)
 {
+    if (options.partial) *options.partial = false;
     const QFileInfo fi(path);
     if (!fi.isFile()) return std::nullopt;
     const QString suffix = fi.suffix().toLower();
@@ -300,13 +367,29 @@ std::optional<MediaInfo> read(const QString& path, FrameRate rate)
     }
     if (forOtherProducer(suffix)) return std::nullopt;
     const QByteArray file = path.toUtf8();
+    // A file whose short analysis missed streams the long one found: the long one at once (no second open)
+    const std::optional<LongOutcome> before = longOutcome(path, fi);
+    bool longRan = false;
+    const auto openLong = [&](AVFormatContext** out) {
+        AVDictionary* o = nullptr;
+        av_dict_set_int(&o, "analyzeduration", kLongAnalysis * AV_TIME_BASE, 0);
+        av_dict_set_int(&o, "probesize", kLongAnalysis * 2 * 1024 * 1024, 0);
+        const int r = OpenMedia::input(out, file.constData(), o);
+        av_dict_free(&o);
+        if (r >= 0) longRan = true;
+        return r;
+    };
+    const bool longAtOnce = options.longAnalysis && before == LongOutcome::Helped;
+    const auto openIt = [&](AVFormatContext** out) {
+        return longAtOnce ? openLong(out) : OpenMedia::input(out, file.constData());
+    };
     AVFormatContext* raw = nullptr;
-    int opened = OpenMedia::input(&raw, file.constData());
+    int opened = openIt(&raw);
     // Held by another program a moment (a virus scan of a fresh download, a copy finishing): a few tries, ~1 s in all.
-    // Only failures pay for it.
-    for (int tries = 0; opened < 0 && tries < 4 && locked(fi); ++tries) {
+    // Only failures pay for it, and not the quick look.
+    for (int tries = 0; options.longAnalysis && opened < 0 && tries < 4 && access(fi) == Access::Locked; ++tries) {
         QThread::msleep(250);
-        opened = OpenMedia::input(&raw, file.constData());
+        opened = openIt(&raw);
     }
     if (opened < 0) return std::nullopt;
     std::unique_ptr<AVFormatContext, CloseInput> fmt(raw);
@@ -333,39 +416,30 @@ std::optional<MediaInfo> read(const QString& path, FrameRate rate)
     if (!known(duration) || !fill(fmt.get(), audioFile, &info)) {
         // libavformat's stream analysis: decodes the first frames, estimates the length
         if (avformat_find_stream_info(fmt.get(), nullptr) < 0) return std::nullopt;
-        if (!fill(fmt.get(), audioFile, &info) && unsettled(fmt.get())) {
+        if (!longRan && !fill(fmt.get(), audioFile, &info) && unsettled(fmt.get()) && before != LongOutcome::InVain) {
             // A stream without a packet in the analysed start (5 s): once more, reading up to 60 s (as the preview's
-            // reader does for a picture that starts late). A file where that found nothing more is not read that
-            // far again while it stays the same.
-            const Analysed stamp = stampOf(fi);
-            bool inVain = false;
-            {
-                std::lock_guard lock(g_longMutex);
-                const auto it = longInVain().constFind(path);
-                inVain = it != longInVain().cend() && it->size == stamp.size && it->modified == stamp.modified;
-            }
-            if (!inVain) {
-                constexpr int64_t kLongAnalysis = 60;
-                AVDictionary* o = nullptr;
-                av_dict_set_int(&o, "analyzeduration", kLongAnalysis * AV_TIME_BASE, 0);
-                av_dict_set_int(&o, "probesize", kLongAnalysis * 2 * 1024 * 1024, 0);
-                AVFormatContext* longer = nullptr;
-                const int r = OpenMedia::input(&longer, file.constData(), o);
-                av_dict_free(&o);
-                if (r >= 0) {
-                    fmt.reset(longer);
-                    if (avformat_find_stream_info(fmt.get(), nullptr) < 0) return std::nullopt;
-                    if (unsettled(fmt.get())) {
-                        std::lock_guard lock(g_longMutex);
-                        longInVain().insert(path, stamp);
-                    }
+            // reader does for a picture that starts late). Not on a quick look (the result is partial then).
+            if (!options.longAnalysis) {
+                if (options.partial) *options.partial = true;
+            } else if (AVFormatContext* longer = nullptr; openLong(&longer) >= 0) {
+                ++g_longRuns; // a second open: what remembering it saves next time
+                fmt.reset(longer);
+                if (avformat_find_stream_info(fmt.get(), nullptr) < 0) {
+                    rememberLong(path, fi, LongOutcome::InVain);
+                    return std::nullopt;
                 }
             }
         }
         duration = fmt->duration;
         if (!known(duration)) duration = tailDuration(fmt.get());
         // What can be played (a stream that cannot does not refuse the others)
-        if (!known(duration) || !fill(fmt.get(), audioFile, &info, true)) return std::nullopt;
+        const bool accepted = known(duration) && fill(fmt.get(), audioFile, &info, true);
+        // Remembered: helped when it settled every stream of a file now accepted, else in vain (not read that far again)
+        if (longRan)
+            rememberLong(path, fi, accepted && !unsettled(fmt.get()) ? LongOutcome::Helped : LongOutcome::InVain);
+        if (!accepted) return std::nullopt;
+    } else if (longRan) {
+        rememberLong(path, fi, LongOutcome::Helped);
     }
     // In the project frame rate, rounded to whole frames. A broken header can claim absurd lengths (time scale 1,
     // duration 2^32 s): capped at "unknown" (INT_MAX), never overflowing into a negative length
@@ -384,7 +458,13 @@ QString why(const QString& path)
     if (fi.isDir()) return "it is a folder, not a file";
     if (!fi.isFile()) return "not a regular file (a named pipe, device or socket)";
     if (!fi.isReadable()) return "no permission to read it";
-    if (locked(fi)) return "another program holds the file (still being recorded, copied or scanned?) - try again in a moment";
+    QString openError;
+    switch (access(fi, &openError)) {
+    case Access::Locked:
+        return "another program holds the file (still being recorded, copied or scanned?) - try again in a moment";
+    case Access::Failed: return QString("it cannot be opened (%1)").arg(openError);
+    case Access::Open: break;
+    }
     if (fi.size() == 0) return "the file is empty (0 bytes)";
     const QString suffix = fi.suffix().toLower();
     if (stillSuffix(suffix)) {

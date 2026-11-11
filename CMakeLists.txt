@@ -274,7 +274,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/engine/MediaIndex.h       src/engine/MediaIndex.cpp
     src/engine/AudioEvents.h      src/engine/AudioEvents.cpp
     src/engine/MediaProbe.h       src/engine/MediaProbe.cpp
-    src/engine/ProbeCache.h
+    src/engine/ProbeCache.h       src/engine/ProbeCache.cpp
     src/engine/SoundSync.h        src/engine/SoundSync.cpp
     src/engine/ColorGrade.h       src/engine/ColorGrade.cpp
     src/engine/GradedThumbs.h     src/engine/GradedThumbs.cpp

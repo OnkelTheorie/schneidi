@@ -562,7 +562,14 @@ void MainWindow::importFiles(const QStringList& paths, bool placeOnTimeline, boo
 
 MediaInfo MainWindow::probeCached(const QString& path)
 {
-    return m_probeCache.get(path, [this](const QString& p) { return m_engine->probe(p); });
+    // On the UI thread (the timeline's drag-enter, a template slot): a quick look that never runs the long stream
+    // analysis; when it was skipped, the full probe follows in the background (kept for the next drag-enter and the
+    // import of the drop)
+    if (std::optional<ProbeResult> known = m_probeCache.find(path)) return known->info;
+    const ProbeResult quick = ProbeCache::probe(path, m_project->format().rate, false);
+    if (quick.partial) probeLater(path);
+    else m_probeCache.insert(quick);
+    return quick.info;
 }
 
 void MainWindow::onDrop(const QStringList& paths, int frame, int track, PlaceParts parts)
@@ -686,9 +693,9 @@ void MainWindow::previewFile(const QString& path)
     }
     const MediaInfo& before = m_editor->previewSource();
     MediaInfo info;
-    const std::optional<MediaInfo> cached = m_probeCache.find(path);
+    const std::optional<ProbeResult> cached = m_probeCache.find(path);
     if (cached) {
-        info = *cached;
+        info = cached->info;
     } else {
         info.path = path;
         info.name = QFileInfo(path).fileName();
@@ -701,17 +708,25 @@ void MainWindow::previewFile(const QString& path)
     m_editor->setPreviewSource(info);
     m_engine->pause();
     m_engine->showSource(path, m_sourcePos.value(path, 0));
-    if (cached) return;
-    // Probing opens the file once more (mostly ~1 ms, other containers up to ~0.5 s): in the
-    // background, the window stays usable
+    if (!cached) probeLater(path);
+}
+
+void MainWindow::probeLater(const QString& path)
+{
+    // Probing opens the file once more (mostly ~1 ms, other containers up to ~0.5 s, a long stream analysis up to a
+    // minute): in the background, the window stays usable. The Viewer's file takes the result.
+    if (m_probing.contains(path)) return;
+    m_probing.insert(path);
     QThreadPool::globalInstance()->start([guard = QPointer<MainWindow>(this), format = m_project->format(), path] {
-        const MediaInfo probed = Engine::probe(format, path);
+        const ProbeResult probed = ProbeCache::probe(path, format.rate);
         QMetaObject::invokeMethod(qApp, [guard, format, probed] {
-            if (!guard || guard->m_project->format() != format) return; // lengths count in another frame rate now
-            guard->m_probeCache.insert(probed); // a file not readable (yet) is probed again next time
+            if (!guard) return;
+            guard->m_probing.remove(probed.info.path);
+            if (guard->m_project->format() != format) return; // lengths count in another frame rate now
+            guard->m_probeCache.insert(probed); // dropped if the file changed meanwhile
             const MediaInfo& shown = guard->m_editor->previewSource();
-            if (shown.path != probed.path) return; // another file meanwhile, or imported
-            MediaInfo info = probed;
+            if (shown.path != probed.info.path) return; // another file meanwhile, or imported
+            MediaInfo info = probed.info;
             info.markIn = shown.markIn;
             info.markOut = shown.markOut;
             info.markers = shown.markers;

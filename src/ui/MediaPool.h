@@ -2,6 +2,7 @@
 #pragma once
 #include "core/PoolFilter.h"
 #include "core/Types.h"
+#include "engine/MediaProbe.h"
 
 #include <QHash>
 #include <QImage>
@@ -13,6 +14,7 @@
 #include <atomic>
 
 class Project;
+class ProbeCache;
 class ElidedLabel;
 class Engine;
 class HoverScrub;
@@ -103,6 +105,8 @@ public:
 public slots:
     void importDialog();
     void importFiles(const QStringList& paths); // lands in the selected bin
+    // Results of the drop preview's probe (MainWindow's), reused for an import; may be null
+    void setProbeCache(ProbeCache* cache) { m_probeCache = cache; }
     // Like DaVinci "Add Folder and SubFolders into Media Pool (Create Bins)": bin with the folder name in the selected bin,
     // subfolders with media as sub-bins; one undo step for the bins
     void importFolder(const QString& dir);
@@ -152,6 +156,7 @@ protected:
 
 private:
     QAction* m_leaveOutSound = nullptr;
+    ProbeCache* m_probeCache = nullptr;
     void rebuild();      // media list changed: view anew (thumbnails of new media come from requestThumb)
     void rebuildBins();  // bin list anew (selection/expanded bins stay)
     void rebuildClips(); // clips of the selected bin (sorted)
@@ -161,8 +166,11 @@ private:
     struct Unreadable {
         QString path;
         int bin = 0;
+        QString why; // MediaProbe::whyUnreadable, found by the probe's thread
+        MediaProbe::Busy busy = MediaProbe::Busy::No;
     };
-    QVector<Unreadable> addFiles(const QStringList& paths, int bin); // returns the unreadable files
+    // Probes and adds; returns the unreadable files. `again`: probe even what the drop preview's cache knows (Retry)
+    QVector<Unreadable> addFiles(const QStringList& paths, int bin, bool again = false);
     bool importFolderInto(const QString& dir, int parentBin, int depth, QVector<Unreadable>* failed);
     // Says which files could not be read and why, offering to try again (a file still being written or held by
     // another program reads a moment later); tried again until they read or the user stops

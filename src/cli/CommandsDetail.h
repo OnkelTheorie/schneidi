@@ -324,6 +324,8 @@ QString trackLabel(const Project& p, const Timeline& tl, int audioTrack);
 // Audio streams of a file: "4", "Mikrofon", "Discord,Mikrofon" (numbers from 0 or stream names as `probe` lists them).
 // Throws if one is not there
 QVector<int> audioStreamsOf(const MediaInfo& info, const QString& list);
+// Throws BAD_ARGUMENT if `stream` is no stream of the file or one schneidi cannot play (no decoder here, no sound in it)
+void requirePlayableStream(const MediaInfo& info, int stream);
 
 QJsonObject cmdProbe(const QJsonObject& a, Context& ctx);
 QJsonObject cmdSilence(const QJsonObject& a, Context& ctx);

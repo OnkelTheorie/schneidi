@@ -116,8 +116,7 @@ QJsonObject cmdBeats(const QJsonObject& a, Context& ctx)
         Clip c;
         c.mediaPath = m.info.path;
         c.audioStream = a["audio_stream"].toInt();
-        if (c.audioStream < 0 || c.audioStream >= m.info.audioStreamCount())
-            fail("BAD_ARGUMENT", QString("the file has %1 audio stream(s)").arg(m.info.audioStreamCount()));
+        requirePlayableStream(m.info, c.audioStream);
         from = a.contains("from") ? parseTime(a["from"], f, "from") : 0;
         to = a.contains("to") ? std::min(m.info.length, parseTime(a["to"], f, "to")) : m.info.length;
         if (to <= from) fail("BAD_ARGUMENT", "'to' must be after 'from' (and 'from' before the end of the file)");

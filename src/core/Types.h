@@ -825,6 +825,10 @@ struct Sequence {
 struct AudioStreamInfo {
     int channels = 2;
     QString title; // stream title from the file (empty = none)
+    // Can schneidi play it? A stream without a decoder here, without values (an empty MPEG-TS sound PID) or in a sample
+    // format the sound path does not play keeps its place (streams count by their place in the file) but is never
+    // placed, transcribed or analysed. Older project files: true.
+    bool playable = true;
     bool operator==(const AudioStreamInfo&) const = default;
 };
 
@@ -861,6 +865,12 @@ struct MediaInfo {
     // Audio streams in file order (at the end because of aggregate initialization; empty for older project files: then 1 stream if hasAudio)
     QVector<AudioStreamInfo> audioStreams;
     int audioStreamCount() const { return hasAudio ? std::max<int>(1, audioStreams.size()) : 0; }
+    // Can this stream be played (see AudioStreamInfo::playable)? Streams the list does not name: yes, if the file has sound
+    bool audioStreamPlayable(int stream) const
+    {
+        if (stream < 0 || stream >= audioStreamCount()) return false;
+        return stream >= audioStreams.size() || audioStreams[stream].playable;
+    }
     // Display name of a stream: title from the file, otherwise "Track N"
     QString audioStreamName(int stream) const
     {

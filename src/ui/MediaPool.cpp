@@ -15,6 +15,7 @@
 #include "engine/GradedThumbs.h"
 #include "engine/MediaIndex.h"
 #include "engine/MediaProbe.h"
+#include "engine/ProbeCache.h"
 #include "engine/ProxyManager.h"
 #include "ui/FileManager.h"
 #include "ui/HoverScrub.h"
@@ -43,6 +44,9 @@
 #include <QLineEdit>
 #include <QListWidget>
 #include <QMap>
+#include <QProgressDialog>
+#include <QElapsedTimer>
+#include <QEventLoop>
 #include <QMenu>
 #include <QMessageBox>
 #include <QMimeData>
@@ -657,29 +661,77 @@ void MediaPool::importDialog()
     importFiles(files);
 }
 
-QVector<MediaPool::Unreadable> MediaPool::addFiles(const QStringList& paths, int bin)
+QVector<MediaPool::Unreadable> MediaPool::addFiles(const QStringList& paths, int bin, bool again)
 {
-    // Probing opens every file (~1 ms from the header, other containers up to ~0.5 s) – side
-    // by side in threads, otherwise the window stood still for seconds when importing a dozen stills. Added in the
-    // given order.
-    QVector<MediaInfo> infos(paths.size());
-    if (paths.size() == 1) {
-        infos[0] = m_engine->probe(paths[0]);
-    } else {
-        const ProjectFormat format = m_engine->format();
+    // Probing opens every file (~1 ms from the header, other containers up to ~0.5 s, a long stream analysis up to a
+    // minute): side by side in threads, the window repainting meanwhile (a progress dialog with Cancel when it takes
+    // longer; until then no input reaches the window). Added in the given order. A file the drop preview probed
+    // already (ProbeCache) is not probed again, unless `again` (Retry).
+    const int n = int(paths.size());
+    QVector<ProbeResult> results(n);
+    QVector<int> todo;
+    for (int i = 0; i < n; ++i) {
+        std::optional<ProbeResult> known = m_probeCache && !again ? m_probeCache->find(paths[i]) : std::nullopt;
+        if (known) results[i] = *std::move(known);
+        else todo << i;
+    }
+    if (!todo.isEmpty()) {
+        const FrameRate rate = m_engine->format().rate;
+        auto shared = std::make_shared<std::atomic<bool>>(false); // canceled: files not started yet are left out
+        std::atomic<int> done{0};
+        QVector<bool> skipped(n, false);
         QThreadPool pool;
-        pool.setMaxThreadCount(std::clamp(Background::threads(QThread::idealThreadCount() / 2), 1, int(paths.size())));
-        MediaInfo* out = infos.data(); // detached once here, the threads only write their own element
-        for (int i = 0; i < paths.size(); ++i)
-            pool.start([out, &format, &paths, i] { out[i] = Engine::probe(format, paths[i]); });
+        pool.setMaxThreadCount(std::clamp(Background::threads(QThread::idealThreadCount() / 2), 1, int(todo.size())));
+        ProbeResult* out = results.data(); // detached once here, the threads only write their own element
+        bool* skip = skipped.data();
+        for (int i : todo)
+            pool.start([out, skip, shared, &done, &paths, rate, i] {
+                if (shared->load()) skip[i] = true;
+                else out[i] = ProbeCache::probe(paths[i], rate);
+                ++done;
+            });
+        const int total = int(todo.size());
+        QEventLoop loop;
+        QTimer tick;
+        tick.setInterval(20);
+        QElapsedTimer since;
+        since.start();
+        std::unique_ptr<QProgressDialog> progress;
+        constexpr int kQuietMs = 400; // shorter: no dialog flashes up
+        connect(&tick, &QTimer::timeout, &loop, [&] {
+            if (done.load() >= total || (!progress && since.elapsed() >= kQuietMs)) loop.quit();
+            if (progress) progress->setValue(done.load());
+        });
+        tick.start();
+        if (done.load() < total) loop.exec(QEventLoop::ExcludeUserInputEvents);
+        if (done.load() < total) {
+            progress = std::make_unique<QProgressDialog>(T("Medien werden gelesen …"), T("Abbrechen"), 0, total, this);
+            progress->setWindowModality(Qt::ApplicationModal);
+            progress->setMinimumDuration(0);
+            progress->setAutoClose(false);
+            progress->setAutoReset(false);
+            connect(progress.get(), &QProgressDialog::canceled, &loop, [shared, &progress] {
+                shared->store(true);
+                progress->setLabelText(T("Wird abgebrochen …")); // the files being read now finish first
+            });
+            progress->show();
+            loop.exec();
+        }
         pool.waitForDone();
+        for (int i = 0; i < n; ++i)
+            if (skipped[i]) results[i] = {}; // left out: neither imported nor reported
+        if (m_probeCache)
+            for (int i : todo)
+                if (!skipped[i]) m_probeCache->insert(results[i]);
     }
     QVector<Unreadable> failed;
-    for (MediaInfo& info : infos) {
-        if (info.length <= 0 || (!info.hasVideo && !info.hasAudio)) {
-            failed << Unreadable{info.path, bin};
+    for (ProbeResult& r : results) {
+        if (r.info.path.isEmpty()) continue; // canceled
+        if (!r.usable()) {
+            failed << Unreadable{r.info.path, bin, r.why, r.busy};
             continue;
         }
+        MediaInfo info = r.info;
         info.bin = bin;
         m_project->addMedia(info);
     }
@@ -702,35 +754,55 @@ void MediaPool::importFiles(const QStringList& paths)
 
 void MediaPool::reportUnreadable(QVector<Unreadable> failed)
 {
+    using MediaProbe::Busy;
+    const auto label = [](const Unreadable& u) {
+        return u.busy == Busy::Locked    ? T("von einem anderen Programm gesperrt")
+               : u.busy == Busy::Written ? T("gerade erst geschrieben")
+                                         : QString();
+    };
     while (!failed.isEmpty()) {
-        QStringList names, reasons;
-        bool busy = false;
+        QStringList lines, reasons;
+        bool locked = false, written = false;
         for (const Unreadable& u : failed) {
-            names << QFileInfo(u.path).fileName();
-            reasons << QDir::toNativeSeparators(u.path) + ": " + MediaProbe::whyUnreadable(u.path);
-            busy = busy || MediaProbe::mayBeBusy(u.path);
+            const QString name = QFileInfo(u.path).fileName(), why = label(u);
+            lines << (why.isEmpty() ? name : QString("%1 (%2)").arg(name, why));
+            reasons << QDir::toNativeSeparators(u.path) + ": " + (u.why.isEmpty() ? QString("?") : u.why);
+            locked = locked || u.busy == Busy::Locked;
+            written = written || u.busy == Busy::Written;
         }
-        QMessageBox box(QMessageBox::Warning, T("Import"),
-                        failed.size() == 1 ? T("schneidi konnte in %1 kein Bild und keinen Ton finden.").arg(names.first())
-                                           : T("schneidi konnte in diesen Dateien kein Bild und keinen Ton finden:") + "\n"
-                                                 + names.join('\n'),
-                        QMessageBox::NoButton, this);
-        box.setInformativeText(busy ? T("Die Datei wird vielleicht noch geschrieben (Aufnahme, Download, Kopie) oder ist von "
-                                        "einem anderen Programm gesperrt. Erneut versuchen?")
-                                    : T("Die Datei ist beschädigt oder enthält nichts, was schneidi abspielen kann. Die "
-                                        "Details nennen den Grund."));
+        const bool one = failed.size() == 1;
+        QString text = one ? T("schneidi konnte in %1 kein Bild und keinen Ton finden.").arg(QFileInfo(failed[0].path).fileName())
+                           : T("schneidi konnte in %1 Dateien kein Bild und keinen Ton finden:").arg(failed.size()) + "\n"
+                                 + lines.join('\n');
+        // The real reason first (a damaged file stays damaged however fresh it is), then what a moment may change
+        QString info;
+        if (one && failed[0].busy == Busy::Locked) {
+            info = T("Ein anderes Programm hält die Datei gerade (Aufnahme, Kopie oder Virenprüfung?). Erneut versuchen?");
+        } else {
+            if (one && !failed[0].why.isEmpty()) info = T("Grund: %1").arg(failed[0].why) + "\n\n";
+            if (locked || written)
+                info += one ? T("Die Datei wurde gerade erst geschrieben – läuft die Aufnahme, der Download oder die Kopie "
+                                "noch, klappt es vielleicht gleich. Erneut versuchen?")
+                            : T("Manche Dateien werden vielleicht noch geschrieben oder sind gesperrt. Erneut versuchen?");
+            else
+                info += one ? T("Die Datei ist beschädigt oder enthält nichts, was schneidi abspielen kann.")
+                            : T("Die Dateien sind beschädigt oder enthalten nichts, was schneidi abspielen kann. Die "
+                                "Details nennen die Gründe.");
+        }
+        QMessageBox box(QMessageBox::Warning, T("Import"), text, QMessageBox::NoButton, this);
+        box.setInformativeText(info);
         box.setDetailedText(reasons.join('\n'));
         QPushButton* retry = box.addButton(T("Erneut versuchen"), QMessageBox::AcceptRole);
         QPushButton* close = box.addButton(QMessageBox::Close);
-        box.setDefaultButton(busy ? retry : close);
+        box.setDefaultButton(locked || written ? retry : close);
         box.exec();
         if (box.clickedButton() != retry) return;
         // Each into the bin it was meant for, as files of that bin together
         QVector<Unreadable> still;
         QMap<int, QStringList> byBin;
         for (const Unreadable& u : failed) byBin[u.bin] << u.path;
-        for (auto it = byBin.cbegin(); it != byBin.cend(); ++it)
-            still << addFiles(it.value(), it.key() == 0 || m_project->bin(it.key()) ? it.key() : m_currentBin); // a bin left empty went
+        for (auto it = byBin.cbegin(); it != byBin.cend(); ++it) // a bin left empty went: the selected one
+            still << addFiles(it.value(), it.key() == 0 || m_project->bin(it.key()) ? it.key() : m_currentBin, true);
         failed = std::move(still);
     }
 }

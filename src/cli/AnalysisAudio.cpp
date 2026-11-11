@@ -32,8 +32,7 @@ LoudPeaks loudPeaks(const MediaSource& m, const QJsonObject& a, const std::funct
     c.mediaPath = m.info.path;
     c.out = m.info.length - 1;
     c.audioStream = a["audio_stream"].toInt();
-    if (c.audioStream >= m.info.audioStreamCount())
-        fail("BAD_ARGUMENT", QString("the file has %1 audio stream(s)").arg(m.info.audioStreamCount()));
+    requirePlayableStream(m.info, c.audioStream);
     const std::atomic<bool>* stop = cancelFlag();
     const auto peaks = AudioAnalysis::clipFramePeaks(f, c, [&progress, stop](double p) {
         if (progress) progress(p);
@@ -265,7 +264,7 @@ QJsonObject cmdLoudness(const QJsonObject& a, Context& ctx)
         c.mediaPath = m.info.path;
         c.out = m.info.length - 1;
         c.audioStream = a["audio_stream"].toInt();
-        if (c.audioStream >= m.info.audioStreamCount()) fail("BAD_ARGUMENT", QString("the file has %1 audio stream(s)").arg(m.info.audioStreamCount()));
+        requirePlayableStream(m.info, c.audioStream);
         const auto l = AudioAnalysis::clipLoudness(m.format, c, progress);
         if (!l) fail("DECODE_FAILED", "could not read the sound");
         result["loudness"] = loudnessJson(*l);

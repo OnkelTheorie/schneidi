@@ -71,6 +71,7 @@ void opAudioStream(Session& s, const QJsonObject& op)
         const MediaInfo* m = s.project.mediaInfo(c.mediaPath);
         if (!m || stream >= m->audioStreamCount())
             fail("BAD_ARGUMENT", QString("clip %1 has %2 audio stream(s); stream counts from 0").arg(id).arg(m ? m->audioStreamCount() : 0));
+        requirePlayableStream(*m, stream);
     }
     s.editor.modifyClips(ids, "Audio stream", [stream](Clip& c) { c.audioStream = stream; });
 }

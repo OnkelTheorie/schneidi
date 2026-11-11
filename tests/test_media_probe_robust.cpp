@@ -20,6 +20,7 @@
 #include <QCoreApplication>
 #include <QDateTime>
 #include <QFile>
+#include <QFileInfo>
 #include <QTemporaryDir>
 
 namespace {
@@ -113,53 +114,86 @@ int main(int argc, char** argv)
         QFile f(in("fresh.mp4"));
         CHECK(f.open(QIODevice::WriteOnly) && f.write(QByteArray(4096, '\0')) == 4096);
         f.close();
-        CHECK(MediaProbe::mayBeBusy(in("fresh.mp4")));
+        CHECK(MediaProbe::busy(in("fresh.mp4")) == MediaProbe::Busy::Written);
         QFile old(in("fresh.mp4"));
         CHECK(old.open(QIODevice::ReadWrite)
               && old.setFileTime(QDateTime::currentDateTime().addSecs(-3600), QFileDevice::FileModificationTime));
         old.close();
-        CHECK(!MediaProbe::mayBeBusy(in("fresh.mp4")));
-        CHECK(!MediaProbe::mayBeBusy(in("missing.mp4")));
+        CHECK(MediaProbe::busy(in("fresh.mp4")) == MediaProbe::Busy::No);
+        CHECK(MediaProbe::busy(in("missing.mp4")) == MediaProbe::Busy::No);
     }
 
-    // 5. The probe cache keeps only results the timeline can place, and only while the file stays the same
+    // 5. The probe cache: usable results while the file stays the same; a damaged file briefly (no re-probe on every
+    // drag-enter), one written moments ago not at all (it may read a moment later); a result probed while the file
+    // changed is dropped (the stamp is taken before probing)
     {
         const QString path = in("cached.mp4");
-        QFile f(path);
-        CHECK(f.open(QIODevice::WriteOnly) && f.write("x") == 1);
-        f.close();
+        CHECK(QFile::copy(in("aac.mkv"), path));
         ProbeCache cache;
-        int probes = 0;
-        bool readable = false;
-        const auto probe = [&](const QString& p) {
-            ++probes;
-            MediaInfo m;
-            m.path = p;
-            if (readable) {
-                m.length = 100;
-                m.hasVideo = true;
-            }
-            return m;
-        };
-        CHECK(!ProbeCache::usable(cache.get(path, probe))); // still being written: nothing found
-        CHECK(!cache.contains(path));
-        readable = true;
-        CHECK(ProbeCache::usable(cache.get(path, probe))); // asked again, found now
-        CHECK_EQ(probes, 2);
-        cache.get(path, probe);
-        CHECK_EQ(probes, 2); // kept
-        // Overwritten (another size): probed again
-        CHECK(f.open(QIODevice::Append) && f.write("more") == 4);
-        f.close();
-        cache.get(path, probe);
-        CHECK_EQ(probes, 3);
-        // A result that turns unusable replaces the kept one
-        readable = false;
-        MediaInfo none;
-        none.path = path;
-        cache.insert(none);
+        ProbeResult r = ProbeCache::probe(path, rate);
+        CHECK(r.usable() && !r.partial);
+        cache.insert(r);
+        CHECK(cache.find(path).has_value());
+        {
+            QFile f(path);
+            CHECK(f.open(QIODevice::Append) && f.write("more") == 4); // overwritten: another size
+        }
+        CHECK(!cache.find(path).has_value());
+
+        // Changed between the stamp and the insert: not kept
+        const QString moving = in("moving.mp4");
+        CHECK(QFile::copy(in("aac.mkv"), moving));
+        const ProbeResult early = ProbeCache::probe(moving, rate);
+        {
+            QFile f(moving);
+            CHECK(f.open(QIODevice::Append) && f.write("x") == 1);
+        }
+        cache.insert(early);
+        CHECK(!cache.find(moving).has_value());
+
+        // Damaged, written moments ago: not kept; an hour old: kept (briefly), with its reason
+        const QString broken = in("broken.mp4");
+        {
+            QFile f(broken);
+            CHECK(f.open(QIODevice::WriteOnly) && f.write(QByteArray(4096, 'x')) == 4096);
+        }
+        ProbeResult fresh = ProbeCache::probe(broken, rate);
+        CHECK(!fresh.usable() && fresh.busy == MediaProbe::Busy::Written && !fresh.why.isEmpty());
+        cache.insert(fresh);
+        CHECK(!cache.find(broken).has_value());
+        {
+            QFile f(broken);
+            CHECK(f.open(QIODevice::ReadWrite)
+                  && f.setFileTime(QDateTime::currentDateTime().addSecs(-3600), QFileDevice::FileModificationTime));
+        }
+        const ProbeResult old = ProbeCache::probe(broken, rate);
+        CHECK(!old.usable() && old.busy == MediaProbe::Busy::No);
+        cache.insert(old);
+        const std::optional<ProbeResult> kept = cache.find(broken);
+        CHECK(kept && !kept->usable() && kept->why == old.why);
+
+        // A quick look that skipped the long analysis is not kept
+        ProbeResult partial = r;
+        partial.partial = true;
+        cache.clear();
+        cache.insert(partial);
         CHECK(!cache.find(path).has_value());
     }
+
+    // 6. A file without permission is no "held by another program"
+#ifdef Q_OS_UNIX
+    {
+        const QString closed = in("closed.mp4");
+        CHECK(QFile::copy(in("aac.mkv"), closed));
+        QFile::setPermissions(closed, QFileDevice::WriteOwner);
+        if (QFileInfo(closed).isReadable()) {
+            std::printf("running as root: permissions not tested\n");
+        } else {
+            CHECK(MediaProbe::busy(closed) != MediaProbe::Busy::Locked);
+            CHECK(!MediaProbe::whyUnreadable(closed).contains("another program"));
+        }
+    }
+#endif
 
     return Check::result();
 }
