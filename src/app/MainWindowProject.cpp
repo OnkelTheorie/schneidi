@@ -511,6 +511,12 @@ bool MainWindow::applyLoaded(ProjectData data, const QString& path, bool ask)
     OpenTrace::mark("project loaded (signals handled)");
     if (relinked > 0) m_project->markModified(); // new paths are only in the file after saving
     m_sourcePos.clear();
+    // The new timeline reaches the picture engine now, not after the edit debounce (m_engineTimer): its first frame
+    // renders while the window paints, instead of the old project's picture being shown first
+    m_engineTimer.stop();
+    m_engine->updateTimeline(previewTimeline());
+    OpenTrace::timelineSent();
+    updateRenderCacheBar();
     m_engine->showTimeline(data.playhead);
     OpenTrace::mark("engine showTimeline");
     m_timeline->view()->setPlayhead(data.playhead);
