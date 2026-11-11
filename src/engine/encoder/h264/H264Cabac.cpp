@@ -132,7 +132,21 @@ void residualBlock8x8(CabacEncoder& ce, const int* list)
 
 } // namespace
 
-void Encoder::cabacWriteMb(CabacEncoder& ce, int mbx, int mby, const MbSyntax& s, bool& prevQpNonZero)
+void Encoder::CabacState::resize(int mbW, int mbH)
+{
+    const size_t mbs = size_t(mbW) * mbH;
+    kind.assign(mbs, 0);
+    cbp.assign(mbs, 0);
+    chromaMode.assign(mbs, 0);
+    cbfDc.assign(mbs, 0);
+    t8.assign(mbs, 0);
+    cbfLuma.assign(mbs * 16, 0);
+    mvd.assign(mbs * 16, {0, 0});
+    cbfChroma[0].assign(mbs * 4, 0);
+    cbfChroma[1].assign(mbs * 4, 0);
+}
+
+void Encoder::cabacWriteMb(CabacEncoder& ce, CabacState& st, int mbx, int mby, const MbSyntax& s, bool& prevQpNonZero)
 {
     using K = MbSyntax::Kind;
     const size_t m = size_t(mby) * mbW_ + mbx;
@@ -152,28 +166,28 @@ void Encoder::cabacWriteMb(CabacEncoder& ce, int mbx, int mby, const MbSyntax& s
 
     // mb_skip_flag (P slices)
     if (pSlice_) {
-        const int inc = (hasL && cabKind_[mL] != kKindSkip) + (hasT && cabKind_[mT] != kKindSkip);
+        const int inc = (hasL && st.kind[mL] != kKindSkip) + (hasT && st.kind[mT] != kKindSkip);
         ce.decision(11 + inc, s.kind == K::Skip);
     }
     if (s.kind == K::Skip) {
-        cabKind_[m] = kKindSkip;
-        cabCbp_[m] = 0;
-        cabChromaMode_[m] = 0;
-        cabCbfDc_[m] = 0;
-        cabT8_[m] = 0;
+        st.kind[m] = kKindSkip;
+        st.cbp[m] = 0;
+        st.chromaMode[m] = 0;
+        st.cbfDc[m] = 0;
+        st.t8[m] = 0;
         for (int y = 0; y < 4; ++y)
             for (int x = 0; x < 4; ++x) {
                 const size_t o = size_t(mby * 4 + y) * lw + mbx * 4 + x;
-                cabCbfLuma_[o] = 0;
-                cabMvd_[o][0] = cabMvd_[o][1] = 0;
+                st.cbfLuma[o] = 0;
+                st.mvd[o][0] = st.mvd[o][1] = 0;
             }
         for (int c = 0; c < 2; ++c)
             for (int b = 0; b < 4; ++b)
-                cabCbfChroma_[c][size_t(mby * 2 + (b >> 1)) * chw + mbx * 2 + (b & 1)] = 0;
+                st.cbfChroma[c][size_t(mby * 2 + (b >> 1)) * chw + mbx * 2 + (b & 1)] = 0;
         prevQpNonZero = false;
         return;
     }
-    cabKind_[m] = s.kind == K::I16 ? kKindI16 : s.kind == K::I4 ? kKindI4 : kKindInter;
+    st.kind[m] = s.kind == K::I16 ? kKindI16 : s.kind == K::I4 ? kKindI4 : kKindInter;
 
     // mb_type (9.3.2.5, tables 9-36/9-37)
     if (intra) {
@@ -182,11 +196,11 @@ void Encoder::cabacWriteMb(CabacEncoder& ce, int mbx, int mby, const MbSyntax& s
             ce.decision(14, 1); // prefix: intra macroblock in a P slice
             base = 17;
         }
-        const int inc0 = pSlice_ ? 0 : (hasL && cabKind_[mL] != kKindI4) + (hasT && cabKind_[mT] != kKindI4);
+        const int inc0 = pSlice_ ? 0 : (hasL && st.kind[mL] != kKindI4) + (hasT && st.kind[mT] != kKindI4);
         if (s.kind == K::I4) {
             ce.decision(base + inc0, 0);
             if (useT8()) // transform_size_8x8_flag: Intra 8x8 or 4x4
-                ce.decision(399 + (hasL && cabT8_[mL]) + (hasT && cabT8_[mT]), s.t8);
+                ce.decision(399 + (hasL && st.t8[mL]) + (hasT && st.t8[mT]), s.t8);
         } else {
             ce.decision(base + inc0, 1);
             ce.terminate(0); // not I_PCM
@@ -224,7 +238,7 @@ void Encoder::cabacWriteMb(CabacEncoder& ce, int mbx, int mby, const MbSyntax& s
     }
     if (intra) {
         auto cond = [&](bool avail, size_t n) {
-            return avail && (cabKind_[n] == kKindI16 || cabKind_[n] == kKindI4) && cabChromaMode_[n] != 0;
+            return avail && (st.kind[n] == kKindI16 || st.kind[n] == kKindI4) && st.chromaMode[n] != 0;
         };
         const int v = s.chromaMode;
         ce.decision(64 + cond(hasL, mL) + cond(hasT, mT), v > 0);
@@ -232,9 +246,9 @@ void Encoder::cabacWriteMb(CabacEncoder& ce, int mbx, int mby, const MbSyntax& s
             ce.decision(67, v > 1);
         if (v > 1)
             ce.decision(67, v > 2);
-        cabChromaMode_[m] = uint8_t(v);
+        st.chromaMode[m] = uint8_t(v);
     } else {
-        cabChromaMode_[m] = 0;
+        st.chromaMode[m] = 0;
     }
 
     // mb_pred / sub_mb_pred: ref_idx_l0 and mvd_l0
@@ -251,7 +265,7 @@ void Encoder::cabacWriteMb(CabacEncoder& ce, int mbx, int mby, const MbSyntax& s
     for (int y = 0; y < 4; ++y)
         for (int x = 0; x < 4; ++x) {
             const size_t o = size_t(mby * 4 + y) * lw + mbx * 4 + x;
-            cabMvd_[o][0] = cabMvd_[o][1] = 0;
+            st.mvd[o][0] = st.mvd[o][1] = 0;
         }
     if (!intra) {
         const int count = kPartCount[s.interType];
@@ -260,7 +274,7 @@ void Encoder::cabacWriteMb(CabacEncoder& ce, int mbx, int mby, const MbSyntax& s
             const long n = mbOf4(bx, by);
             if (n < 0)
                 return false;
-            if (size_t(n) != m && cabKind_[size_t(n)] != kKindInter)
+            if (size_t(n) != m && st.kind[size_t(n)] != kKindInter)
                 return false;
             o = size_t(by) * lw + size_t(bx);
             return true;
@@ -286,9 +300,9 @@ void Encoder::cabacWriteMb(CabacEncoder& ce, int mbx, int mby, const MbSyntax& s
                 size_t o;
                 int sum = 0;
                 if (interNeighbour(bx - 1, by, o))
-                    sum += cabMvd_[o][c];
+                    sum += st.mvd[o][c];
                 if (interNeighbour(bx, by - 1, o))
-                    sum += cabMvd_[o][c];
+                    sum += st.mvd[o][c];
                 const int inc = sum < 3 ? 0 : sum > 32 ? 2 : 1;
                 const int base = c ? 47 : 40;
                 const int v = s.mvd[p][c], av = std::abs(v);
@@ -304,7 +318,7 @@ void Encoder::cabacWriteMb(CabacEncoder& ce, int mbx, int mby, const MbSyntax& s
                 const uint8_t stored = uint8_t(std::min(av, 255));
                 for (int y = P.y4; y < P.y4 + P.h4; ++y)
                     for (int x = P.x4; x < P.x4 + P.w4; ++x)
-                        cabMvd_[size_t(mby * 4 + y) * lw + mbx * 4 + x][c] = stored;
+                        st.mvd[size_t(mby * 4 + y) * lw + mbx * 4 + x][c] = stored;
             }
         }
     }
@@ -318,29 +332,29 @@ void Encoder::cabacWriteMb(CabacEncoder& ce, int mbx, int mby, const MbSyntax& s
                     return ((s.cbpLuma >> b8Inside) & 1) == 0 ? 1 : 0;
                 if (!avail)
                     return 0;
-                if (cabKind_[n] == kKindSkip)
+                if (st.kind[n] == kKindSkip)
                     return 1;
-                return ((cabCbp_[n] >> b8N) & 1) == 0 ? 1 : 0;
+                return ((st.cbp[n] >> b8N) & 1) == 0 ? 1 : 0;
             };
             const int a = cond(x8 == 1, b8 - 1, hasL, mL, b8 + 1);
             const int b = cond(y8 == 1, b8 - 2, hasT, mT, b8 + 2);
             ce.decision(73 + a + 2 * b, (s.cbpLuma >> b8) & 1);
         }
         auto condC = [&](bool avail, size_t n, int need) {
-            if (!avail || cabKind_[n] == kKindSkip)
+            if (!avail || st.kind[n] == kKindSkip)
                 return 0;
-            const int cc = cabCbp_[n] >> 4;
+            const int cc = st.cbp[n] >> 4;
             return need == 1 ? (cc != 0 ? 1 : 0) : (cc == 2 ? 1 : 0);
         };
         ce.decision(77 + condC(hasL, mL, 1) + 2 * condC(hasT, mT, 1), s.cbpChroma != 0);
         if (s.cbpChroma)
             ce.decision(81 + condC(hasL, mL, 2) + 2 * condC(hasT, mT, 2), s.cbpChroma == 2);
     }
-    cabCbp_[m] = uint8_t(s.cbpLuma | (s.cbpChroma << 4));
+    st.cbp[m] = uint8_t(s.cbpLuma | (s.cbpChroma << 4));
     const bool t8 = (s.kind == K::Inter && s.t8 && s.cbpLuma) || (s.kind == K::I4 && s.t8);
     if (s.kind == K::Inter && s.cbpLuma && useT8())
-        ce.decision(399 + (hasL && cabT8_[mL]) + (hasT && cabT8_[mT]), t8);
-    cabT8_[m] = t8;
+        ce.decision(399 + (hasL && st.t8[mL]) + (hasT && st.t8[mT]), t8);
+    st.t8[m] = t8;
 
     // mb_qp_delta
     if (s.kind == K::I16 || s.cbpLuma || s.cbpChroma) {
@@ -361,17 +375,17 @@ void Encoder::cabacWriteMb(CabacEncoder& ce, int mbx, int mby, const MbSyntax& s
             return intra ? 1 : 0;
         const int b8 = ((by & 3) >> 1) * 2 + ((bx & 3) >> 1);
         if (size_t(n) == m)
-            return ((s.cbpLuma >> b8) & 1) ? int(cabCbfLuma_[size_t(by) * lw + bx]) : 0;
-        if (cabKind_[size_t(n)] == kKindSkip || ((cabCbp_[size_t(n)] >> b8) & 1) == 0)
+            return ((s.cbpLuma >> b8) & 1) ? int(st.cbfLuma[size_t(by) * lw + bx]) : 0;
+        if (st.kind[size_t(n)] == kKindSkip || ((st.cbp[size_t(n)] >> b8) & 1) == 0)
             return 0;
-        return int(cabCbfLuma_[size_t(by) * lw + bx]);
+        return int(st.cbfLuma[size_t(by) * lw + bx]);
     };
     uint8_t dcFlags = 0;
     if (s.kind == K::I16) {
         auto cond = [&](bool avail, size_t n) {
             if (!avail)
                 return 1; // current macroblock is intra
-            return cabKind_[n] == kKindI16 ? (cabCbfDc_[n] & 1) : 0;
+            return st.kind[n] == kKindI16 ? (st.cbfDc[n] & 1) : 0;
         };
         dcFlags |= uint8_t(residualBlock(ce, 0, s.lumaDc, 16, cond(hasL, mL) + 2 * cond(hasT, mT)));
     }
@@ -381,11 +395,11 @@ void Encoder::cabacWriteMb(CabacEncoder& ce, int mbx, int mby, const MbSyntax& s
         const bool coded = (s.cbpLuma >> (blk >> 2)) & 1;
         if ((blk & 3) == 0 && coded)
             residualBlock8x8(ce, s.luma8[blk >> 2]);
-        cabCbfLuma_[size_t(by) * lw + bx] = coded;
+        st.cbfLuma[size_t(by) * lw + bx] = coded;
     }
     for (int blk = 0; blk < 16 && !t8; ++blk) {
         const int bx = mbx * 4 + kBlkX[blk], by = mby * 4 + kBlkY[blk];
-        uint8_t& flag = cabCbfLuma_[size_t(by) * lw + bx];
+        uint8_t& flag = st.cbfLuma[size_t(by) * lw + bx];
         flag = 0;
         if (!((s.cbpLuma >> (blk >> 2)) & 1))
             continue;
@@ -400,18 +414,18 @@ void Encoder::cabacWriteMb(CabacEncoder& ce, int mbx, int mby, const MbSyntax& s
             auto cond = [&](bool avail, size_t n) {
                 if (!avail)
                     return intra ? 1 : 0;
-                if (cabKind_[n] == kKindSkip || (cabCbp_[n] >> 4) == 0)
+                if (st.kind[n] == kKindSkip || (st.cbp[n] >> 4) == 0)
                     return 0;
-                return (cabCbfDc_[n] >> (1 + c)) & 1;
+                return (st.cbfDc[n] >> (1 + c)) & 1;
             };
             dcFlags |= uint8_t(residualBlock(ce, 3, s.chromaDc[c], 4, cond(hasL, mL) + 2 * cond(hasT, mT)) << (1 + c));
         }
     }
-    cabCbfDc_[m] = dcFlags;
+    st.cbfDc[m] = dcFlags;
     for (int c = 0; c < 2; ++c) {
         for (int blk = 0; blk < 4; ++blk) {
             const int bx = mbx * 2 + (blk & 1), by = mby * 2 + (blk >> 1);
-            uint8_t& flag = cabCbfChroma_[c][size_t(by) * chw + bx];
+            uint8_t& flag = st.cbfChroma[c][size_t(by) * chw + bx];
             flag = 0;
             if (s.cbpChroma != 2)
                 continue;
@@ -423,10 +437,10 @@ void Encoder::cabacWriteMb(CabacEncoder& ce, int mbx, int mby, const MbSyntax& s
                     return intra ? 1 : 0;
                 const size_t n = size_t(my) * mbW_ + mx;
                 if (n == m)
-                    return int(cabCbfChroma_[c][size_t(ny) * chw + nx]);
-                if (cabKind_[n] == kKindSkip || (cabCbp_[n] >> 4) != 2)
+                    return int(st.cbfChroma[c][size_t(ny) * chw + nx]);
+                if (st.kind[n] == kKindSkip || (st.cbp[n] >> 4) != 2)
                     return 0;
-                return int(cabCbfChroma_[c][size_t(ny) * chw + nx]);
+                return int(st.cbfChroma[c][size_t(ny) * chw + nx]);
             };
             flag = uint8_t(residualBlock(ce, 4, s.chromaAc[c][blk], 15, cond(bx - 1, by) + 2 * cond(bx, by - 1)));
         }
@@ -440,6 +454,8 @@ void Encoder::cabacWriteMb(CabacEncoder& ce, int mbx, int mby, const MbSyntax& s
 // coded yet"; each coefficient may become 0, floor(|x|) or floor(|x|) + 1. Distortion is the
 // pixel-domain SSD (scale = pixel error per level unit), rate the live contexts' bin costs.
 // x: real-valued levels in scan order; cat 2 (luma 4x4) or 5 (luma 8x8). Returns levels in scan order.
+static const bool gTrellisTwo = std::getenv("H264_EXP") && (std::atoi(std::getenv("H264_EXP")) & 1);
+
 void cabacTrellis(const CabacEncoder& ce, int cat, const double* x, const double* scale, int count, double lambda,
                   int cbfInc, int* out)
 {
@@ -493,8 +509,11 @@ void cabacTrellis(const CabacEncoder& ce, int cat, const double* x, const double
         int cand[3] = {0, 0, 0}, nc = 1;
         if (ax >= 0.5) {
             const int fl = int(ax);
-            if (fl >= 1)
+            if (fl >= 1) {
+                if (gTrellisTwo)
+                    nc = 0; // round down or up only: a level of 1.5 or more never drops to zero
                 cand[nc++] = fl;
+            }
             cand[nc++] = fl + 1;
         }
         std::fill(fresh, fresh + 9, 1e300);

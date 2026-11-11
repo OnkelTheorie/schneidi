@@ -13,6 +13,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <atomic>
+#include <chrono>
 #include <cstring>
 #include <memory>
 #include <thread>
@@ -32,6 +33,10 @@ namespace {
 // Macroblock statistics (H264_STATS=1), for comparisons with other encoders' logs.
 const bool gStats = std::getenv("H264_STATS") != nullptr;
 std::atomic<long> gStatInter{0}, gStatInterCbp{0}, gStatT8{0};
+std::atomic<long> gStatIntraTry[4] = {}, gStatIntraWin[4] = {}; // by ratio of the intra estimate to the inter cost
+// Experiments (H264_EXP bit mask), for A/B measurements only.
+const int gExp = std::getenv("H264_EXP") ? std::atoi(std::getenv("H264_EXP")) : 0;
+const double gIntraFactor = std::getenv("H264_INTRAF") ? std::atof(std::getenv("H264_INTRAF")) : 2.0;
 
 // 4x4 frame zig-zag scan: scan index -> raster index (y * 4 + x).
 constexpr int kZigzag[16] = {0, 1, 4, 8, 5, 2, 3, 6, 9, 12, 13, 10, 7, 11, 14, 15};
@@ -268,17 +273,10 @@ Encoder::Encoder(const EncoderConfig& config)
     refIdx_.resize(mvX_.size());
     sliceTopOfRow_.resize(size_t(mbH_));
     rowKey_.resize(size_t(mbH_));
-    cabKind_.resize(size_t(mbW_) * mbH_);
-    cabT8_.resize(cabKind_.size());
+    cabWave_.resize(mbW_, mbH_);
+    cabWrite_.resize(mbW_, mbH_);
     cabacByTop_.resize(size_t(mbH_));
     prevQpNzByTop_.resize(size_t(mbH_));
-    cabCbp_.resize(cabKind_.size());
-    cabChromaMode_.resize(cabKind_.size());
-    cabCbfDc_.resize(cabKind_.size());
-    cabCbfLuma_.resize(size_t(mbW_ * 4) * (mbH_ * 4));
-    cabMvd_.resize(size_t(mbW_ * 4) * (mbH_ * 4));
-    cabCbfChroma_[0].resize(size_t(mbW_ * 2) * (mbH_ * 2));
-    cabCbfChroma_[1].resize(size_t(mbW_ * 2) * (mbH_ * 2));
     qpPredByTop_.resize(size_t(mbH_));
     mbQp_.resize(size_t(mbW_) * mbH_);
     mbQpFinal_.resize(mbQp_.size());
@@ -435,6 +433,20 @@ Picture pictureOf(const LookaheadFrame& f, int w)
 
 int Encoder::delay() const { return useLookahead() ? std::max(0, cfg_.lookahead - 1) : 0; }
 
+Encoder::~Encoder() { joinPending(); }
+
+// The analysis of the newest picture runs beside the encoding of the oldest; it joins the
+// queue before the next picture is handled.
+void Encoder::joinPending()
+{
+    if (pendingThread_.joinable())
+        pendingThread_.join();
+    if (pendingFrame_) {
+        queue_.push_back(std::move(*pendingFrame_));
+        pendingFrame_.reset();
+    }
+}
+
 std::vector<uint8_t> Encoder::encode(const Picture& picture, bool forceKeyframe)
 {
     LookaheadFrame f = copyPicture(picture, cfg_.width, cfg_.height, forceKeyframe);
@@ -442,15 +454,27 @@ std::vector<uint8_t> Encoder::encode(const Picture& picture, bool forceKeyframe)
         return encodeFrame(f);
     if (!la_)
         la_ = std::make_unique<Lookahead>(cfg_.width, cfg_.height, mbW_, mbH_);
-    la_->analyse(f, queue_.empty() ? nullptr : &queue_.back());
-    queue_.push_back(std::move(f));
-    if (int(queue_.size()) < cfg_.lookahead)
+    joinPending();
+    const bool full = int(queue_.size()) + 1 >= cfg_.lookahead;
+    // In the background only when its predecessor stays in the queue while a picture is popped.
+    if (full && cfg_.threads > 1 && queue_.size() >= 2) {
+        pendingFrame_ = std::make_unique<LookaheadFrame>(std::move(f));
+        const LookaheadFrame* prev = &queue_.back();
+        pendingThread_ = std::thread([this, prev] { la_->analyse(*pendingFrame_, prev); });
+    } else {
+        la_->analyse(f, queue_.empty() ? nullptr : &queue_.back());
+        queue_.push_back(std::move(f));
+    }
+    if (!full)
         return {};
-    return flush();
+    std::vector<uint8_t> out = encodeFrame(queue_.front());
+    queue_.pop_front();
+    return out;
 }
 
 std::vector<uint8_t> Encoder::flush()
 {
+    joinPending();
     if (queue_.empty())
         return {};
     std::vector<uint8_t> out = encodeFrame(queue_.front());
@@ -773,7 +797,7 @@ std::vector<uint8_t> Encoder::encodeFrame(LookaheadFrame& frame)
                         encodeMbP(mb, mbx, r);
                     else
                         commitQp(mbx, r, encodeMbIntra(mb, mbx, r));
-                    cabacWriteMb(eng, mbx, r, mb.syn, rowPrevNz[size_t(r)]);
+                    cabacWriteMb(eng, cabWave_, mbx, r, mb.syn, rowPrevNz[size_t(r)]);
                     mbSyn_[size_t(r) * mbW_ + mbx] = mb.syn;
                     if (mbx == std::min(1, mbW_ - 1))
                         rowSnap[size_t(r)] = eng;
@@ -781,36 +805,52 @@ std::vector<uint8_t> Encoder::encodeFrame(LookaheadFrame& frame)
                 }
             }
         };
-        std::vector<std::thread> workers;
-        for (int t = 1; t < std::clamp(cfg_.threads, 1, rows); ++t)
-            workers.emplace_back(worker);
-        worker();
-        for (auto& t : workers)
-            t.join();
-
-        // Entropy coding in raster order; mb_qp_delta against the real predecessor.
-        BitWriter& bw = slices[0];
-        sliceHeader(bw, 0);
-        while (!bw.byteAligned())
-            bw.u(1, 1); // cabac_alignment_one_bit
-        CabacEncoder eng;
-        eng.start(&bw, cfg_.qp, pSlice_ ? 0 : -1);
-        int pred = cfg_.qp;
-        bool prevNz = false;
-        const size_t count = size_t(mbW_) * mbH_;
-        for (size_t m = 0; m < count; ++m) {
-            MbSyntax& syn = mbSyn_[m];
-            using K = MbSyntax::Kind;
-            const bool sends = syn.kind == K::I16 || (syn.kind != K::Skip && (syn.cbpLuma || syn.cbpChroma));
-            if (sends) {
-                syn.qpDelta = mbQp_[m] - pred;
-                pred = mbQp_[m];
+        // Entropy coding in raster order, mb_qp_delta against the real predecessor. It follows
+        // the decisions row by row (its own neighbour state), so with several threads only the
+        // last row's write remains after the wavefront.
+        auto writeSlice = [&] {
+            BitWriter& bw = slices[0];
+            sliceHeader(bw, 0);
+            while (!bw.byteAligned())
+                bw.u(1, 1); // cabac_alignment_one_bit
+            CabacEncoder eng;
+            eng.start(&bw, cfg_.qp, pSlice_ ? 0 : -1);
+            int pred = cfg_.qp;
+            bool prevNz = false;
+            const size_t count = size_t(mbW_) * mbH_;
+            for (int r = 0; r < rows; ++r) {
+                while (progress[size_t(r)].load(std::memory_order_acquire) < mbW_)
+                    std::this_thread::sleep_for(std::chrono::microseconds(100));
+                for (int mbx = 0; mbx < mbW_; ++mbx) {
+                    const size_t m = size_t(r) * mbW_ + mbx;
+                    MbSyntax& syn = mbSyn_[m];
+                    using K = MbSyntax::Kind;
+                    const bool sends = syn.kind == K::I16 || (syn.kind != K::Skip && (syn.cbpLuma || syn.cbpChroma));
+                    if (sends) {
+                        syn.qpDelta = mbQp_[m] - pred;
+                        pred = mbQp_[m];
+                    }
+                    mbQpFinal_[m] = int8_t(pred);
+                    cabacWriteMb(eng, cabWrite_, mbx, r, syn, prevNz);
+                    eng.terminate(m + 1 == count); // end_of_slice_flag
+                }
             }
-            mbQpFinal_[m] = int8_t(pred);
-            cabacWriteMb(eng, int(m % size_t(mbW_)), int(m / size_t(mbW_)), syn, prevNz);
-            eng.terminate(m + 1 == count); // end_of_slice_flag
+            bw.alignZero();
+        };
+        std::vector<std::thread> workers;
+        const int threads = std::clamp(cfg_.threads, 1, rows);
+        for (int t = 1; t < threads; ++t)
+            workers.emplace_back(worker);
+        if (threads > 1) {
+            std::thread writer(writeSlice);
+            worker();
+            for (auto& t : workers)
+                t.join();
+            writer.join();
+        } else {
+            worker();
+            writeSlice();
         }
-        bw.alignZero();
     } else {
         // Slices only look at macroblocks of their own slice, so they run in parallel.
         std::vector<std::thread> workers;
@@ -833,6 +873,11 @@ std::vector<uint8_t> Encoder::encodeFrame(LookaheadFrame& frame)
                      long(gStatInterCbp.load()), long(gStatT8.load()), 100.0 * gStatT8.load() / std::max<long>(1, gStatInterCbp.load()),
                      100.0 * gStatT8.load() / std::max<long>(1, gStatInter.load()));
         gStatInter = gStatInterCbp = gStatT8 = 0;
+        std::fprintf(stderr, "stats: intra tries/wins by estimate ratio <0.5: %ld/%ld  <1: %ld/%ld  <1.5: %ld/%ld  <2: %ld/%ld\n",
+                     long(gStatIntraTry[0].load()), long(gStatIntraWin[0].load()), long(gStatIntraTry[1].load()), long(gStatIntraWin[1].load()),
+                     long(gStatIntraTry[2].load()), long(gStatIntraWin[2].load()), long(gStatIntraTry[3].load()), long(gStatIntraWin[3].load()));
+        for (int i = 0; i < 4; ++i)
+            gStatIntraTry[i] = gStatIntraWin[i] = 0;
     }
     if (cfg_.deblock)
         deblockPicture();
@@ -1549,13 +1594,17 @@ bool Encoder::encodeMbIntra(MbOut& out, int mbx, int mby)
 
     const double lambda = 0.85 * std::pow(2.0, (mbQp_[size_t(mby) * mbW_ + mbx] - 12) / 3.0);
     MbOut a, b;
-    const bool deltaA = encodeLuma16(a, mbx, mby, ch);
-    const double costA = double(ssd()) + lambda * mbBits(a, mbx, mby, double(a.bw.bitCount()));
+    bool deltaA = false;
+    double costA = 1e300;
+    if (!intraSkip16_) {
+        deltaA = encodeLuma16(a, mbx, mby, ch);
+        costA = double(ssd()) + lambda * mbBits(a, mbx, mby, double(a.bw.bitCount()));
+    }
     Snapshot snapA;
     save(snapA);
     const bool deltaB = encodeLuma4(b, mbx, mby, ch);
     const double costB = double(ssd()) + lambda * mbBits(b, mbx, mby, double(b.bw.bitCount()));
-    if (useT8()) {
+    if (useT8() && !intraSkip8_) {
         Snapshot snapB;
         save(snapB);
         MbOut c;
@@ -1599,13 +1648,18 @@ int interCbpCode(int cbp)
     return table[size_t(cbp)];
 }
 
-int seBits(int v)
+// Bits of se(v): 2 * floor(log2(codeNum + 1)) + 1.
+inline int seBits(int v)
 {
     const uint32_t k = v > 0 ? uint32_t(2 * v - 1) : uint32_t(-2 * v);
+#if defined(__GNUC__) || defined(__clang__)
+    return 2 * (31 - __builtin_clz(k + 1)) + 1;
+#else
     int len = 0;
     while (((k + 1) >> len) > 1)
         ++len;
     return 2 * len + 1;
+#endif
 }
 
 // ---- 8x8 transform (High profile), 8.5.11.
@@ -1695,31 +1749,50 @@ const Basis8& basis8()
 }
 
 // Quantises an 8x8 residual (raster) for QP; deadzone offset as a fraction of a step.
+// The forward transform is the transpose of the inverse's real-valued basis; its entries are
+// multiples of 1/8, so 8 * basis is integer and the transform runs exactly in integers.
 void quantize8x8(const int* residual, int qp, double offset, int* levels, double* real = nullptr)
 {
-    const Basis8& B = basis8();
-    double tmp[64];
-    for (int y = 0; y < 8; ++y)
-        for (int j = 0; j < 8; ++j) {
-            double s = 0;
+    static const auto kM = [] { // 8 * basis, integer
+        std::array<std::array<int, 8>, 8> m{};
+        const Basis8& B = basis8();
+        for (int k = 0; k < 8; ++k)
             for (int x = 0; x < 8; ++x)
-                s += B.b[j][x] * residual[y * 8 + x];
-            tmp[y * 8 + j] = s;
-        }
-    const double step2 = double(1 << (qp / 6));
-    for (int i = 0; i < 8; ++i)
+                m[size_t(k)][size_t(x)] = int(std::lround(8.0 * B.b[k][x]));
+        return m;
+    }();
+    static const auto kScale = [] { // 256 / (n_i n_j v8) by QP % 6 and position, the /64 of the integer transform folded in
+        std::array<std::array<double, 64>, 6> t{};
+        const Basis8& B = basis8();
+        for (int q = 0; q < 6; ++q)
+            for (int k = 0; k < 64; ++k)
+                t[size_t(q)][size_t(k)] = B.norm[k >> 3] * B.norm[k & 7] * kDequantV8[q][posClass8(k)];
+        return t;
+    }();
+    int32_t tmp[64];
+    for (int y = 0; y < 8; ++y) {
+        const int* r = residual + y * 8;
         for (int j = 0; j < 8; ++j) {
-            double w = 0;
-            for (int y = 0; y < 8; ++y)
-                w += B.b[i][y] * tmp[y * 8 + j];
+            const int* m = kM[size_t(j)].data();
+            tmp[y * 8 + j] = m[0] * r[0] + m[1] * r[1] + m[2] * r[2] + m[3] * r[3] + m[4] * r[4] + m[5] * r[5] + m[6] * r[6] + m[7] * r[7];
+        }
+    }
+    const double step2 = double(1 << (qp / 6));
+    const double* scale = kScale[size_t(qp % 6)].data();
+    for (int i = 0; i < 8; ++i) {
+        const int* m = kM[size_t(i)].data();
+        for (int j = 0; j < 8; ++j) {
+            const int32_t w64 = m[0] * tmp[j] + m[1] * tmp[8 + j] + m[2] * tmp[16 + j] + m[3] * tmp[24 + j] + m[4] * tmp[32 + j] +
+                                m[5] * tmp[40 + j] + m[6] * tmp[48 + j] + m[7] * tmp[56 + j];
             // Decoder: r = B^T (Z * v8 * 2^(qp/6 - 2)) B / 64, so Z = 256 * W / (n_i n_j v8 2^(qp/6)).
             const int k = i * 8 + j;
-            const double x = 256.0 * w / (B.norm[i] * B.norm[j] * kDequantV8[qp % 6][posClass8(k)] * step2);
+            const double x = 256.0 * (double(w64) / 64.0) / (scale[k] * step2);
             const int mag = std::min(int(std::abs(x) + offset), kMaxLevel);
             levels[k] = x < 0 ? -mag : mag;
             if (real)
                 real[k] = x;
         }
+    }
 }
 
 void dequant8x8(const int* levels, int qp, int* d)
@@ -2186,7 +2259,12 @@ bool Encoder::encodeMbP(MbOut& result, int mbx, int mby)
                 by = cy;
             }
         }
+        // Experiment: a start point that already matches well (under 2 SAD per sample) skips
+        // the coarse steps.
+        const bool goodStart = (gExp & 8) && best < 2.0 * 16.0 * w4 * h4;
         for (int step : {32, 16, 8, 4}) {
+            if (goodStart && step > 8)
+                continue;
             for (int iter = 0; iter < 16; ++iter) {
                 bool moved = false;
                 static constexpr int kDir[4][2] = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
@@ -2529,10 +2607,22 @@ bool Encoder::encodeMbP(MbOut& result, int mbx, int mby)
         const int intraEstimate = intraEstimate16();
         // recY_ of this macroblock holds the inter reconstruction here, but Intra 16x16
         // prediction only reads the neighbours above and to the left.
-        if (double(intraEstimate) < best.cost * 2.0) {
+        if (double(intraEstimate) < best.cost * gIntraFactor) {
+            // Borderline cases (estimate above the inter cost) rarely win; experiments drop
+            // the dearer intra types there.
+            const bool borderline = double(intraEstimate) >= best.cost;
+            intraSkip8_ = borderline && (gExp & 2);
+            intraSkip16_ = borderline && (gExp & 4);
             intraDelta = encodeMbIntra(intraBits, mbx, mby);
+            intraSkip8_ = intraSkip16_ = false;
             setBlocks(0, 0, 4, 4, 0, 0, -1);
             costIntra = double(mbSsd(mbx, mby)) + lambda * mbBits(intraBits, mbx, mby, double(intraBits.bw.bitCount() + seBits(0)));
+            if (gStats) {
+                const int bucket = std::min(3, int(2.0 * intraEstimate / std::max(1.0, best.cost)));
+                gStatIntraTry[bucket].fetch_add(1, std::memory_order_relaxed);
+                if (costIntra < costInter && costIntra < costSkip)
+                    gStatIntraWin[bucket].fetch_add(1, std::memory_order_relaxed);
+            }
         }
     }
 
@@ -2920,7 +3010,7 @@ void Encoder::deblockMb(int mbx, int mby)
                 }
             // Luma: vertical edges left to right, then horizontal edges top to bottom
             // (with the 8x8 transform only edges 0 and 2).
-            const bool t8 = cabT8_[size_t(mby) * mbW_ + mbx] != 0;
+            const bool t8 = cabWave_.t8[size_t(mby) * mbW_ + mbx] != 0;
             for (int e = 0; e < 4; ++e)
                 for (int s = 0; s < 4; ++s) {
                     if (!bsV[e][s] || (t8 && (e & 1)))
@@ -3116,7 +3206,7 @@ double Encoder::mbBits(const MbOut& o, int mbx, int mby, double cavlcBits)
     CabacEncoder probe = *live;
     probe.startCounting();
     bool prev = *prevQpNzByTop_[top];
-    cabacWriteMb(probe, mbx, mby, o.syn, prev);
+    cabacWriteMb(probe, cabWave_, mbx, mby, o.syn, prev);
     return probe.countedBits();
 }
 
@@ -3130,7 +3220,7 @@ double Encoder::skipBits(int mbx, int mby)
     probe.startCounting();
     MbSyntax skip;
     bool prev = false;
-    cabacWriteMb(probe, mbx, mby, skip, prev);
+    cabacWriteMb(probe, cabWave_, mbx, mby, skip, prev);
     return probe.countedBits();
 }
 

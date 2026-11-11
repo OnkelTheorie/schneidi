@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <deque>
 #include <memory>
+#include <thread>
 #include <vector>
 
 namespace schneidi::h264 {
@@ -55,6 +56,7 @@ struct Picture {
 class Encoder {
 public:
     explicit Encoder(const EncoderConfig& config);
+    ~Encoder();
 
     // SPS + PPS as Annex B.
     std::vector<uint8_t> headers() const;
@@ -136,7 +138,17 @@ private:
     void buildRefPlanes(RefPic& R);
     void deblockPicture();
     void deblockMb(int mbx, int mby);
-    void cabacWriteMb(CabacEncoder& ce, int mbx, int mby, const MbSyntax& s, bool& prevQpNonZero);
+    // CABAC neighbour state (what the context selection of later macroblocks reads). The
+    // wavefront's estimates and the final raster-order write keep separate copies, so the
+    // write can follow the decisions row by row on its own thread.
+    struct CabacState {
+        std::vector<uint8_t> kind, cbp, chromaMode, cbfDc, t8; // per macroblock
+        std::vector<uint8_t> cbfLuma;                           // per 4x4 luma block
+        std::vector<std::array<uint8_t, 2>> mvd;                // |mvd| per 4x4 block, x and y
+        std::vector<uint8_t> cbfChroma[2];                      // per 4x4 chroma block
+        void resize(int mbW, int mbH);
+    };
+    void cabacWriteMb(CabacEncoder& ce, CabacState& st, int mbx, int mby, const MbSyntax& s, bool& prevQpNonZero);
     bool useCabac() const { return cfg_.cabac && cfg_.mode != IntraMode::Pcm; }
     bool useT8() const { return useCabac() && cfg_.transform8x8; }
     int residual(BitWriter& bw, const int* coeffs, int count, int nC) const;
@@ -144,11 +156,7 @@ private:
     double skipBits(int mbx, int mby);
     std::vector<CabacEncoder*> cabacByTop_; // live CABAC engine of each slice (by first row), for bit estimates
     std::vector<bool*> prevQpNzByTop_;
-    // CABAC neighbour state (written in slice order by cabacWriteMb).
-    std::vector<uint8_t> cabKind_, cabCbp_, cabChromaMode_, cabCbfDc_, cabT8_; // per macroblock
-    std::vector<uint8_t> cabCbfLuma_;                                  // per 4x4 luma block
-    std::vector<std::array<uint8_t, 2>> cabMvd_;                       // |mvd| per 4x4 block, x and y
-    std::vector<uint8_t> cabCbfChroma_[2];                             // per 4x4 chroma block
+    CabacState cabWave_, cabWrite_;
     int boundaryStrength(int pbx, int pby, int qbx, int qby, bool mbEdge) const;
     void mcLuma(const RefPic& R, int x0, int y0, int fx, int fy, int w, int h, uint8_t* out) const;
     int sadPart(const RefPic& R, int mbx, int mby, int x4, int y4, int w4, int h4, int mvx, int mvy, bool satd) const;
@@ -187,6 +195,7 @@ private:
     std::vector<float> mbEnergy_;
     int mbTypeOffset_ = 0;                  // 5 for intra macroblocks in P slices
     bool pSlice_ = false;
+    bool intraSkip8_ = false, intraSkip16_ = false; // intra try in a P picture without Intra 8x8 / 16x16 (experiments)
     int idrCount_ = 0;
     int framesSinceIdr_ = 0;
     bool lastWasSceneCut_ = false;
@@ -195,6 +204,9 @@ private:
     // Lookahead queue (front = next picture to encode) and the macroblock tree's QP offsets.
     std::unique_ptr<Lookahead> la_;
     std::deque<LookaheadFrame> queue_;
+    std::unique_ptr<LookaheadFrame> pendingFrame_; // being analysed on pendingThread_ while a picture is encoded
+    std::thread pendingThread_;
+    void joinPending();
     std::vector<float> treeOffset_; // per macroblock, 0 without the tree
     // Rate control state.
     double rcQp_ = 0;               // QP for P frames (I frames use 3 less)
