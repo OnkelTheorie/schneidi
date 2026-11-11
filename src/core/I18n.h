@@ -19,6 +19,7 @@ QString displayName(const QString& code);
 QString englishName(const QString& code);
 QList<Language> languages();           // German plus one language per dictionary in i18n/, German first
 QString language();                    // code of the current UI language
+QString installedLanguage();           // language of this run (install(), also --lang); language() before install()
 void setLanguage(const QString& lang); // only stores it, takes effect on the next start
 // Before creating the QApplication (application name set): environment for texts of the platform theme (LANGUAGE)
 void prepareEnvironment(const QString& override = {});

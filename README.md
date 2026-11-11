@@ -30,6 +30,36 @@ schneidi has five pages – Media, Edit, Comp, Color and Deliver – and fewer f
 - **Everything stays on your computer.** Speech recognition (whisper.cpp), text-based editing, sync by sound and rendering work offline – no account, no cloud, no telemetry, open source (AGPL-3.0-only). The only request schneidi makes by itself is a check for a new release on GitHub, at most once a day (off in File › Settings). The AI chat talks only to the provider you pick; with Ollama it stays on your computer too.
 - **Long recordings of one event.** Sync hours of recordings from several PCs or cameras by their sound and cut them in a multicam view that shows up to 16 angles at once.
 
+## Use with AI (MCP)
+
+schneidi is an [MCP](https://modelcontextprotocol.io) server too: Claude Code, Claude Desktop and other MCP clients
+can look at your material, cut, grade, mix and render with it – also in the project you have open in the app, where
+every change is one undo step.
+
+**Connect Claude in one step:** `schneidi-cli setup claude` (AppImage: `./schneidi-<version>-x86_64.AppImage cli setup claude`,
+or in the app File › Settings › AI › Connect with Claude…). It adds the MCP server to Claude Code and Claude Desktop
+with the path of this installation and installs the editing guide as a skill for Claude Code
+([skills/schneidi](skills/schneidi/SKILL.md): workflow and how-tos for highlight reels, talking heads, shorts, ads,
+templates, subtitles, color, compositing, sound). `--only code` / `--only desktop` picks one, `--remove` takes it out
+again. Run it again when the AppImage has a new name after an update.
+
+**By hand** – Claude Code:
+
+```bash
+claude mcp add --scope user schneidi -- schneidi-cli mcp
+```
+
+Claude Desktop (`claude_desktop_config.json`), Cursor and other MCP clients:
+
+```json
+{ "mcpServers": { "schneidi": { "command": "/path/to/schneidi-cli", "args": ["mcp"] } } }
+```
+
+With the AppImage the command is the AppImage itself and the arguments are `["cli", "mcp"]`. The skill by hand: copy
+[skills/schneidi](skills/schneidi) to `~/.claude/skills/schneidi`; every other AI gets the same guide through the
+`guide` tool. More – the commands, live editing in the open app, an MCP server over HTTP on a server – in
+[Command line and AI editing](#command-line-and-ai-editing-mcp).
+
 ## Screenshots
 
 ![Edit page while an AI assistant is connected: transcript, title inspector and timeline](screenshots/edit.png)
@@ -89,7 +119,7 @@ schneidi has five pages – Media, Edit, Comp, Color and Deliver – and fewer f
 - Clip speed / retime; **smooth slow motion** with in-between frames (blended, or computed from the motion with an own optical flow; never across a scene cut) – chosen in the speed dialog (Ctrl+R)
 - **Timeline exchange:** import and export FCP7 XML, OpenTimelineIO and EDL – bring a cut over from Premiere Pro or DaVinci Resolve, or hand one over for finishing
 - Own video decoding, also on the graphics card (NVIDIA, AMD/Intel via VA-API); proxy media and a render cache for smooth playback – schneidi offers proxies when playback cannot keep up
-- Export and render queue via FFmpeg: H.264, H.265, AV1, VP9 (WebM), ProRes and DNxHR, animated GIF, PNG/TIFF/JPEG image sequences and audio only (AAC, MP3, Opus, WAV, AIFF, FLAC, Apple Lossless); hardware encoders (NVENC, VAAPI, Quick Sync) when available, else OpenH264/kvazaar, or x264/x265 as an optional download (Extensions); presets for YouTube, YouTube Shorts, Instagram Reels and TikTok cap the bit rate; **Smart Render** copies unchanged parts of H.264/H.265 recordings instead of encoding them again
+- Export and render queue via FFmpeg: H.264, H.265, AV1, VP9 (WebM), ProRes and DNxHR, animated GIF, PNG/TIFF/JPEG image sequences and audio only (AAC, MP3, Opus, WAV, AIFF, FLAC, Apple Lossless); hardware encoders (NVENC, VAAPI, Quick Sync) when available, else x264/x265 (included in the downloads; the GPL-free `-lgpl` variant uses OpenH264/kvazaar); presets for YouTube, YouTube Shorts, Instagram Reels and TikTok cap the bit rate; **Smart Render** copies unchanged parts of H.264/H.265 recordings instead of encoding them again
 - Subtitles from speech (whisper.cpp, offline) – pick the voice tracks, one subtitle track each; in game recordings with a separate microphone stream it listens to the microphone, so song lyrics stay out of the subtitles; an optional download under Workspace → Extensions
 - **Word captions:** karaoke (the spoken word lights up), one word at a time, or one word per beat of the music, from the transcript's word times; export as SRT or WebVTT, or as a subtitle stream inside the MP4/MKV/WebM
 - Text-based editing: the Transcript panel shows what is said – delete words to cut them, remove pauses
@@ -200,9 +230,10 @@ schneidi-cli render talk.schneidi --out talk-cut.mp4 --preset "YouTube 1080p"
 schneidi-cli export_timeline talk.schneidi --out talk.xml       # for Premiere / DaVinci (also .otio, .edl)
 schneidi-cli import talk.schneidi --timeline_file premiere.xml   # a cut from Premiere / DaVinci as a new timeline
 schneidi-cli restore talk.schneidi                           # undo the last change (file mode)
-schneidi-cli help                                            # all commands (JSON)
-schneidi-cli help edit                                       # every edit operation with details
-schneidi-cli help edit --op speed_ramp                       # one edit operation
+schneidi-cli help                                            # the commands in short (JSON)
+schneidi-cli help render                                     # all parameters of one command
+schneidi-cli help edit                                       # every edit operation, what it is for
+schneidi-cli help edit --op speed_ramp                       # the details of one edit operation
 ```
 
 Edit operations cover cutting, inserting and source edits (insert, replace, place on top, fit to fill), moving,
@@ -214,16 +245,8 @@ clips, compositing graphs (`comp` with recipes, `comp_from`, `node`, trackers wi
 "34.2s"}`), so they stay right while earlier operations move clips. Output is JSON on stdout (exit code 0 = ok,
 1 = error, 2 = usage error); every save keeps a backup of the previous state (`backups`, `restore`). `schneidi-cli mcp` runs the same commands as an [MCP](https://modelcontextprotocol.io) server on stdio.
 
-**Connect Claude in one step:** `schneidi-cli setup claude` (AppImage: `./schneidi-<version>-x86_64.AppImage cli setup claude`,
-or File › Settings › AI › Connect with Claude…) adds the MCP server to Claude Code and Claude Desktop with the path of this installation (run it again when the AppImage has a new name after an update), and installs the editing guide as a
-skill for Claude Code ([skills/schneidi](skills/schneidi/SKILL.md): workflow and how-tos for highlight reels, talking
-heads, shorts, ads, templates, subtitles, color, compositing, sound). `--only code` / `--only desktop` picks one, `--remove` takes it out again.
-Every other AI gets the same guide through the `guide` tool. By hand: `claude mcp add --scope user schneidi --
-schneidi-cli mcp`, or in Claude Desktop's `claude_desktop_config.json`:
-
-```json
-{ "mcpServers": { "schneidi": { "command": "/path/to/schneidi-cli", "args": ["mcp"] } } }
-```
+**Connect Claude, Cursor or another MCP client:** `schneidi-cli setup claude`, or by hand – see
+[Use with AI (MCP)](#use-with-ai-mcp).
 
 **Live with the app:** if the project is open in schneidi, every command works on what the app shows (unsaved
 changes included). An `edit` changes the open project as one undo step and does not save; `info` adds the playhead
@@ -278,7 +301,7 @@ Optional: `libavfilter-dev` (effect "FFmpeg filter": a filter chain on a clip) a
 
 Other distributions: the same libraries (Qt 6 Widgets/Network and its private GUI headers, FFmpeg 7). Without a miniaudio package (openSUSE, Fedora) the build uses the copy in `third_party/miniaudio` (`-DSCHNEIDI_SYSTEM_MINIAUDIO=ON` insists on the system's). Notes for distribution packagers and an openSUSE spec file: [packaging/linux/opensuse](packaging/linux/opensuse).
 
-AppImage: `packaging/linux/build-appimage.sh` → `dist/schneidi-<version>-x86_64.AppImage`, without any GPL library (own LGPL FFmpeg; H.264/H.265 through the graphics card, else OpenH264/kvazaar, or x264/x265 as an optional download in the program: Extensions); bundled libraries and their licenses: [THIRD_PARTY.md](THIRD_PARTY.md)
+AppImage: `packaging/linux/build-appimage.sh` → `dist/schneidi-<version>-x86_64.AppImage` with an own slim FFmpeg including x264/x265 (GPL; build packages `libx264-dev libx265-dev`); `GPL_ENCODERS=0` builds a GPL-free one instead (`…-lgpl.AppImage`: OpenH264/kvazaar, x264/x265 as an optional download in the program); bundled libraries and their licenses: [THIRD_PARTY.md](THIRD_PARTY.md)
 Debian package (system Qt/FFmpeg, no bundling): `cmake --build build && cpack --config build/CPackConfig.cmake -G DEB` → `dist/schneidi_<version>_amd64.deb`
 The .deb is built for Debian 13: it needs exactly its Qt 6.8.2 (the GPU viewer uses Qt's private RHI interface) and FFmpeg 7.1; on every other system use the AppImage.
 
@@ -290,7 +313,7 @@ pacman -S --needed nasm make diffutils mingw-w64-ucrt-x86_64-{openh264,kvazaar,s
 packaging/windows/build-windows.sh
 ```
 
-Result: `dist/schneidi-windows-<version>.zip` (portable folder) and, if [Inno Setup 6](https://jrsoftware.org/isinfo.php) is installed (`winget install JRSoftware.InnoSetup`), `dist/schneidi-setup-<version>.exe`. Like the AppImage without any GPL library: the first run builds the own LGPL FFmpeg (`packaging/windows/build-ffmpeg-lgpl.sh`, into `build-ffmpeg-lgpl/prefix` or `FFMPEG_PREFIX`); the installer offers x264/x265 as an optional download. `SCHNEIDI_NO_GPL=0` packs MSYS2's full FFmpeg instead (`mingw-w64-ucrt-x86_64-ffmpeg`, GPL, `…-gpl.zip`) for local comparisons.
+Result: `dist/schneidi-windows-<version>.zip` (portable folder) and, if [Inno Setup 6](https://jrsoftware.org/isinfo.php) is installed (`winget install JRSoftware.InnoSetup`), `dist/schneidi-setup-<version>.exe`. Like the AppImage: the first run builds the own slim FFmpeg with x264/x265 (`packaging/windows/build-ffmpeg-lgpl.sh`, into `build-ffmpeg/prefix` or `FFMPEG_PREFIX`). `GPL_ENCODERS=0` builds without any GPL library (`build-ffmpeg-lgpl/prefix`, `…-lgpl.zip`; the installer then offers x264/x265 as an optional download).
 
 **Tests:**
 

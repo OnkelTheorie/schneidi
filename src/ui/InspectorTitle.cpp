@@ -182,7 +182,7 @@ void Inspector::buildTitlePage(QVBoxLayout* page)
         }
     };
     txt.grid->addWidget(rowLabel(T("Stil")), txt.rows, 0);
-    txt.grid->addLayout(styleBox, txt.rows++, 1);
+    txt.grid->addLayout(styleBox, txt.rows++, 1, 1, 3); // no reset or keyframes: the whole row
 
     addXY(txt, "titlePos", T("Position"), -10000, 10000, 0, 1, 3, [](Clip& c) -> double& { return c.title.posX; },
           [](Clip& c) -> double& { return c.title.posY; }, nullptr, AnimParam::TitlePosX, AnimParam::TitlePosY);

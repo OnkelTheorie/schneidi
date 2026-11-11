@@ -732,8 +732,9 @@ void opMarks(Session& s, const QJsonObject& op)
 
 int binOf(Session& s, const QString& path)
 {
-    // "Name" or "Parent/Child"; created if missing
+    // "Name" or "Parent/Child"; created if missing; "Master" alone = the root bin
     int bin = 0;
+    if (s.project.isRootBinPath(path)) return bin;
     for (const QString& part : path.split('/', Qt::SkipEmptyParts)) {
         int found = -1;
         for (int child : s.project.childBins(bin))
@@ -743,10 +744,11 @@ int binOf(Session& s, const QString& path)
     return bin;
 }
 
-// An existing bin by path, -1 = none
+// An existing bin by path, -1 = none; "Master" alone = the root bin (0)
 int findBin(const Session& s, const QString& path)
 {
     int bin = 0;
+    if (s.project.isRootBinPath(path)) return bin;
     for (const QString& part : path.split('/', Qt::SkipEmptyParts)) {
         int found = -1;
         for (int child : s.project.childBins(bin))
@@ -767,7 +769,8 @@ void opBin(Session& s, const QJsonObject& op)
         return;
     }
     const int bin = findBin(s, path);
-    if (bin <= 0) fail("NOT_FOUND", "no bin " + path + " (`info` lists the bins of the media)");
+    if (bin == 0) fail("BAD_ARGUMENT", "the root bin (Master) cannot be renamed, removed or moved");
+    if (bin < 0) fail("NOT_FOUND", "no bin " + path + " (`info` lists the bins of the media)");
     if (op.value("remove").toBool()) {
         s.project.removeBin(bin); // its media and sub-bins move up into the parent
         return;
@@ -1038,7 +1041,8 @@ void addEditOps(QVector<OpDef>& ops)
         << OpDef{"bin", "{op:'bin', bin, rename?, into?, remove?}",
                  "Media Pool bins: create (with missing parents), rename, move into another bin (\"\" = top level) or "
                  "remove",
-                 "bin = \"Name\" or \"A/B\" (not case-sensitive). Without rename/into/remove the bin is created. "
+                 "bin = \"Name\" or \"A/B\" (not case-sensitive); \"Master\" alone is the top level (also for "
+                 "into and op media's bin). Without rename/into/remove the bin is created. "
                  "remove:true deletes the bin; its media and sub-bins move into its parent bin (nothing is deleted "
                  "from disk). `info` media show their bin as a path.",
                  opBin}

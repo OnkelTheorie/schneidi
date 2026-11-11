@@ -1155,9 +1155,24 @@ const MediaBin* Project::bin(int id) const
 
 QString Project::binName(int id) const
 {
-    if (id == 0) return QStringLiteral("Master"); // is called that in German DaVinci too
+    // The root bin is not stored by name (id 0 is fixed), so its name follows the UI language. Its own key, not the
+    // mixer's "Master" bus: some languages name the bus with a word that does not fit a bin. CLI/MCP bin paths start
+    // below the root; a path that is just "Master" (or the root's name in the UI language) means the root itself.
+    // German (the source language) keeps the short "Master": the key only tells the translators what it is
+    if (id == 0) {
+        const QString name = T("Master-Ordner");
+        return name == QLatin1String("Master-Ordner") ? QStringLiteral("Master") : name;
+    }
     const MediaBin* b = bin(id);
     return b ? b->name : QString();
+}
+
+bool Project::isRootBinPath(const QString& path) const
+{
+    const QStringList parts = path.split('/', Qt::SkipEmptyParts);
+    if (parts.size() != 1) return false;
+    const QString name = parts[0].trimmed();
+    return name.compare("Master", Qt::CaseInsensitive) == 0 || name.compare(binName(0), Qt::CaseInsensitive) == 0;
 }
 
 QVector<int> Project::childBins(int parent) const

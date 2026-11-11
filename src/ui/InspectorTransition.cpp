@@ -40,6 +40,7 @@
 #include <QVBoxLayout>
 #include <cmath>
 #include "ui/InspectorDetail.h"
+#include "ui/ElidedLabel.h"
 
 using namespace InspectorDetail;
 
@@ -226,8 +227,7 @@ bool Inspector::refreshTransition()
     const bool video = kind == TrackKind::Video;
     QString name = video ? T(transitionTypeInfo(span.style.type).name) : T(audioCurveInfo(span.style.audio).name);
     if (video && span.style.isLuma()) name = EffectFolders::displayName(span.style.luma);
-    m_clipName->setText(name);
-    m_clipName->setToolTip({});
+    m_clipName->setFullText(name); // its tooltip: the whole name, when it ends in "…"
     m_tabs->button(kTransitionPage)->setChecked(true);
     m_pages->setCurrentIndex(kTransitionPage);
 

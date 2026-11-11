@@ -41,6 +41,7 @@
 #include <QVBoxLayout>
 #include <cmath>
 #include "ui/InspectorDetail.h"
+#include "ui/ElidedLabel.h"
 
 using namespace InspectorDetail;
 
@@ -143,7 +144,7 @@ void Inspector::buildSubtitlePage(QVBoxLayout* page)
         if (!selectedCue(&track)) return;
         if (const int id = m_editor->addSubtitle(m_playhead, track, QString())) editSubtitle(id);
     });
-    cue.grid->addWidget(add, cue.rows++, 1, 1, 2, Qt::AlignLeft);
+    cue.grid->addWidget(add, cue.rows++, 0, 1, 4, Qt::AlignLeft); // the whole row: long in some languages
 
     // ---- Word captions (shorts style): how the track shows its words ----
     Section wc = addSection(page, V, T("Wort-Untertitel"), {});
@@ -229,12 +230,9 @@ void Inspector::buildSubtitlePage(QVBoxLayout* page)
             shadow->setChecked(c->shadow);
         }
     };
-    auto* flags = new QHBoxLayout;
-    flags->setContentsMargins(0, 0, 0, 0);
-    flags->addWidget(upper);
-    flags->addWidget(shadow);
-    flags->addStretch(1);
-    wc.grid->addLayout(flags, wc.rows++, 1);
+    // One below the other: side by side they set the panel's minimum width (long in some languages)
+    wc.grid->addWidget(upper, wc.rows++, 1);
+    wc.grid->addWidget(shadow, wc.rows++, 1);
 
     // ---- Track style (applies to all subtitles of the track) ----
     Section st = addSection(page, V, T("Spurstil"), {});
@@ -432,7 +430,7 @@ bool Inspector::refreshSubtitle()
     const int count = m_editor->selection()->ids().size();
     QString name = QString("ST%1 · %2").arg(track + 1).arg(c->text.section('\n', 0, 0).trimmed());
     if (count > 1) name += QString("  (+%1)").arg(count - 1);
-    m_clipName->setText(name);
+    m_clipName->setFullText(name);
     m_clipName->setToolTip(subtitleTrackDisplayName(m_editor->project()->timeline().subtitles[track], track));
     m_tabs->button(kSubtitlePage)->setChecked(true);
     m_pages->setCurrentIndex(kSubtitlePage);

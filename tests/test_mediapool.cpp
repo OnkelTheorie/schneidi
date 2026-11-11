@@ -3,6 +3,7 @@
 // broken files (missing bins, cycles, unknown colors); Media Pool widget offscreen (bin switch, import into bin)
 #include "check.h"
 
+#include "core/I18n.h"
 #include "core/Project.h"
 #include "core/ProjectFile.h"
 #include "engine/Engine.h"
@@ -53,7 +54,7 @@ int main(int argc, char** argv)
     const int sub = p.addBin(b1, "Unter");
     CHECK_EQ(p.binName(b1), QString("Ordner 1"));
     CHECK_EQ(p.binName(b2), QString("Zeug"));
-    CHECK_EQ(p.binName(0), QString("Master"));
+    CHECK_EQ(p.binName(0), QString("Master")); // German (source language) keeps the short name, not the key
     CHECK_EQ(p.childBins(0), (QVector<int>{b1, b2}));
     CHECK_EQ(p.childBins(b1), QVector<int>{sub});
     CHECK(p.binInside(sub, b1) && p.binInside(sub, 0) && !p.binInside(b1, sub));
@@ -569,6 +570,17 @@ int main(int argc, char** argv)
         q.setFormat({1280, 720, q.format().rate});
         app.processEvents();
         CHECK(tipOf(edit).contains("1280 × 720"));
+    }
+    // The root bin's name follows the UI language (it is not stored in the project, id 0 is fixed). It has its own
+    // key, not the mixer's "Master" bus (zh "总输出" = main output): a language without its translation yet shows
+    // English, never the bus word
+    {
+        Project q;
+        I18n::install("zh");
+        CHECK_EQ(q.binName(0), I18n::translate("zh", "Master-Ordner"));
+        CHECK(q.binName(0) != I18n::translate("zh", "Master"));
+        CHECK(q.isRootBinPath("master") && q.isRootBinPath(" Master/") && q.isRootBinPath(q.binName(0)));
+        CHECK(!q.isRootBinPath("") && !q.isRootBinPath("Master/Clips") && !q.isRootBinPath("Clips"));
     }
     return Check::result();
 }

@@ -2994,5 +2994,6 @@
  "Wird abgebrochen …": "Canceling …",
  "gerade erst geschrieben": "written just now",
  "schneidi konnte in %1 Dateien kein Bild und keinen Ton finden:": "schneidi found no picture and no sound in %1 files:",
- "von einem anderen Programm gesperrt": "locked by another program"
+ "von einem anderen Programm gesperrt": "locked by another program",
+ "Master-Ordner": "Master"
 }

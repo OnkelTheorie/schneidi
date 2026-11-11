@@ -18,6 +18,7 @@ class QPlainTextEdit;
 class QComboBox;
 class QGridLayout;
 class QLabel;
+class ElidedLabel;
 class QSlider;
 class QStackedWidget;
 class QToolButton;
@@ -157,7 +158,7 @@ private:
     Editor* m_editor;
     QSize m_frameSize{1920, 1080};
     int m_playhead = 0;
-    QLabel* m_clipName;
+    ElidedLabel* m_clipName; // a long file name ends in "…" (all of it in the tooltip), never widens the panel
     QLabel* m_empty;
     QWidget* m_content;
     QStackedWidget* m_pages;

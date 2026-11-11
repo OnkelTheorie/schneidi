@@ -695,7 +695,13 @@ int main(int argc, char* argv[])
                        s.headers() << QPair<QByteArray, QByteArray>{"MCP-Protocol-Version", "2025-06-18"});
         CHECK_EQ(r.status, 200);
         QStringList tools;
-        for (const QJsonValue& t : r.json()["result"].toObject()["tools"].toArray()) tools << t["name"].toString();
+        for (const QJsonValue& t : r.json()["result"].toObject()["tools"].toArray()) {
+            tools << t["name"].toString();
+            // help's "all" (~80 KB of every command) is for a terminal: the tool list has every parameter already
+            if (t["name"].toString() == "help")
+                CHECK(!t["inputSchema"]["properties"].toObject().contains("all")
+                      && t["inputSchema"]["properties"].toObject().contains("command"));
+        }
         CHECK(tools.contains("render") && tools.contains("jobs") && tools.contains("files") && tools.contains("upload"));
         CHECK(!tools.contains("app") && !tools.contains("extensions"));
         CHECK_EQ(http("POST", s.base + "/mcp", R"({"jsonrpc":"2.0","id":1,"method":"tools/list"})",

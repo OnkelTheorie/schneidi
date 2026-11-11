@@ -12,6 +12,7 @@
 #include "core/Subtitles.h"
 #include "core/Timecode.h"
 #include "core/TimelineOps.h"
+#include "ui/ElidedLabel.h"
 #include "ui/ScrubField.h"
 #include "ui/WheelGuard.h"
 
@@ -33,16 +34,55 @@
 #include <QPixmap>
 #include <QPlainTextEdit>
 #include <QScrollArea>
+#include <QScrollBar>
 #include <QSet>
 #include <QSignalBlocker>
 #include <QSlider>
 #include <QStackedWidget>
 #include <QToolButton>
 #include <QVBoxLayout>
+#include <algorithm>
 #include <cmath>
 #include "ui/InspectorDetail.h"
 
 using namespace InspectorDetail;
+
+namespace {
+
+// A page of the Inspector: scrolls only up and down. Its minimum width is the page's own (plus the vertical
+// scrollbar), so the panel never gets narrower than its rows: with a large font or a long language the panel is a bit
+// wider instead of scrolling sideways or cutting off the keyframe buttons.
+class PageScroll : public QScrollArea {
+public:
+    PageScroll()
+    {
+        setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+        setWidgetResizable(true);
+        setFrameShape(QFrame::NoFrame);
+    }
+    void setPage(QWidget* page)
+    {
+        setWidget(page);
+        page->installEventFilter(this);
+    }
+    QSize minimumSizeHint() const override
+    {
+        QSize s = QScrollArea::minimumSizeHint();
+        if (widget())
+            s.setWidth(widget()->minimumSizeHint().width() + verticalScrollBar()->sizeHint().width() + 2 * frameWidth());
+        return s;
+    }
+
+protected:
+    bool eventFilter(QObject* watched, QEvent* event) override
+    {
+        // Rows shown, hidden or added (effect sections): the needed width may change
+        if (watched == widget() && event->type() == QEvent::LayoutRequest) updateGeometry();
+        return QScrollArea::eventFilter(watched, event);
+    }
+};
+
+} // namespace
 
 Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_editor(editor)
 {
@@ -86,7 +126,7 @@ Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
     // ---- Overall layout ----
     // Before the pages are built: they then grow inside the panel's own tree. Hung in after the last page, the whole
     // finished tree changed parents in one go (~60-80 ms of the start in 0.16, the window showed ~50 ms later than 0.15)
-    m_clipName = new QLabel;
+    m_clipName = new ElidedLabel(Qt::ElideMiddle);
     m_clipName->setAlignment(Qt::AlignCenter);
     m_clipName->setContentsMargins(8, 4, 8, 4);
     m_clipName->setStyleSheet(QString("color: %1;").arg(Theme::textDim.name()));
@@ -111,10 +151,8 @@ Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
         auto* lay = new QVBoxLayout(page);
         lay->setContentsMargins(0, 0, 0, 0);
         lay->setSpacing(0);
-        auto* scroll = new QScrollArea;
-        scroll->setWidget(page);
-        scroll->setWidgetResizable(true);
-        scroll->setFrameShape(QFrame::NoFrame);
+        auto* scroll = new PageScroll;
+        scroll->setPage(page);
         m_pages->addWidget(scroll);
         return lay;
     };
@@ -396,6 +434,7 @@ Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
     fxBarLay->setContentsMargins(10, 6, 6, 6);
     auto* fxHint = new QLabel(T("Entfernen: Papierkorb am Effekt"));
     fxHint->setStyleSheet(QString("color: %1;").arg(Theme::textDim.name()));
+    fxHint->setWordWrap(true);
     auto* removeAll = new QPushButton(T("Alle entfernen"));
     removeAll->setFocusPolicy(Qt::NoFocus);
     connect(removeAll, &QPushButton::clicked, this,
@@ -499,6 +538,30 @@ Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
     m_audioFxIndex = audioLay->count(); // Audio FX sections below (arrangeEffectSections)
     audioLay->addStretch(1);
 
+    // Choice boxes: as wide as their longest entry when there is room, in a narrow panel they give way (the entry
+    // ends in "…") instead of widening it
+    for (QComboBox* box : m_pages->findChildren<QComboBox*>())
+        box->setMinimumWidth(std::min(box->minimumSizeHint().width(), box->fontMetrics().averageCharWidth() * 8 + 24));
+    // Number fields made outside makeParam (subtitles, titles): may give a little in a narrow panel too
+    for (QLineEdit* edit : m_pages->findChildren<QLineEdit*>())
+        if (auto* field = dynamic_cast<ScrubField*>(edit)) field->setShrinkable(true);
+    // A check box alone in the value column may use the reset and keyframe columns too (long texts, a large font)
+    for (QGridLayout* grid : m_pages->findChildren<QGridLayout*>()) {
+        QVector<QLayoutItem*> alone;
+        for (int i = 0; i < grid->count(); ++i) {
+            int row, column, rows, columns;
+            grid->getItemPosition(i, &row, &column, &rows, &columns);
+            if (column == 1 && columns == 1 && qobject_cast<QCheckBox*>(grid->itemAt(i)->widget())
+                && !grid->itemAtPosition(row, 2) && !grid->itemAtPosition(row, 3))
+                alone << grid->itemAt(i);
+        }
+        for (QLayoutItem* item : alone) {
+            int row, column, rows, columns;
+            grid->getItemPosition(grid->indexOf(item), &row, &column, &rows, &columns);
+            grid->takeAt(grid->indexOf(item));
+            grid->addItem(item, row, 1, 1, std::max(1, grid->columnCount() - 1), item->alignment());
+        }
+    }
     m_tabs->button(0)->setChecked(true);
     WheelGuard::install(this); // scrolling the pages over sliders and boxes must not change their values
     connect(editor->selection(), &Selection::changed, this, &Inspector::refresh);
@@ -607,7 +670,7 @@ void Inspector::refresh()
     const int count = int(groups.size());
     QString name = m_editor->project()->clipName(*shown); // compound clips: name of the sequence
     if (count > 1) name += QString("  (+%1)").arg(count - 1);
-    m_clipName->setText(name);
+    m_clipName->setFullText(name);
     m_clipName->setToolTip(shown->mediaPath);
 
     // Gray out tabs without a matching clip like in DaVinci; title tab only for title clips
