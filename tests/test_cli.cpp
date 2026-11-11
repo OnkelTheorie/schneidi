@@ -1941,7 +1941,13 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
                 const auto plus = [&](int x, int y, const QString& when) {
                     return box(x, y + 5, 8, 2, "white", when) + box(x + 3, y + 2, 2, 8, "white", when);
                 };
-                const auto assistLine = [&](int y, const QString& when, int kind) {
+                // A filled round icon after the name (a grenade): no "+"
+                const auto disc = [&](int x, int y, const QString& when) {
+                    return box(x + 3, y + 2, 2, 1, "white", when) + box(x + 2, y + 3, 4, 1, "white", when)
+                           + box(x, y + 4, 8, 4, "white", when) + box(x + 2, y + 8, 4, 1, "white", when)
+                           + box(x + 3, y + 9, 2, 1, "white", when);
+                };
+                const auto assistLine = [&](int y, const QString& when, int kind, int victimW = 100) {
                     const int ty = y + 10;
                     QString s = QString(",drawbox=x=1510:y=%1:w=400:h=31:c=0x181818:t=fill:enable='%2',"
                                         "drawbox=x=1510:y=%1:w=400:h=31:c=0xd8444a:t=1:enable='%2'")
@@ -1950,7 +1956,8 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
                     if (kind == 0) s += player(1530, ty, when);
                     if (kind == 1) s += player(1530, ty, when) + plus(1598, ty, when) + mate(1612, ty, when);
                     if (kind == 2) s += mate(1530, ty, when) + plus(1598, ty, when) + player(1612, ty, when);
-                    return s + box(1700, ty, 50, 12, "white", when) + box(1790, ty, 100, 12, ct, when);
+                    if (kind == 3) s += player(1530, ty, when) + disc(1598, ty, when);
+                    return s + box(1700, ty, 50, 12, "white", when) + box(1790, ty, victimW, 12, ct, when);
                 };
                 const QString assists = Check::makeMedia(
                     dir.filePath("cs2_assist.mkv"),
@@ -1969,6 +1976,40 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
                 }
                 if (CHECK_EQ(ha["assists"].toArray().size(), 1)) CHECK(std::abs(ha["assists"][0].toDouble() - 4.0) < 0.15);
                 CHECK(ha["assists_note"].isString());
+                const auto killsAndAssists = [&](const QString& name, const QString& lines) {
+                    const QJsonObject h = run("highlights", {{"file", Check::makeMedia(dir.filePath(name),
+                                                              {"-f", "lavfi", "-i", "color=c=0x707070:s=1920x1080:d=6:r=25" + lines,
+                                                               "-c:v", "ffv1", "-pix_fmt", "bgr0"})}});
+                    QVector<double> k;
+                    for (const QJsonValue& c : h["candidates"].toArray())
+                        for (const QJsonValue& x : c["kill_s"].toArray()) k << x.toDouble();
+                    std::sort(k.begin(), k.end());
+                    QVector<double> as;
+                    for (const QJsonValue& x : h["assists"].toArray()) as << x.toDouble();
+                    return std::make_pair(k, as);
+                };
+                // More assists than kills (review 11.11.): "M + P" twice and one "P + M" kill. The first name most
+                // lines share is M's, but only the player can be first in a line without "+": with none of those
+                // nothing tells the names apart, all three count (never the player's kill taken for an assist)
+                {
+                    const auto [k, as] = killsAndAssists("cs2_more_assists.mkv",
+                                                         assistLine(74, "gte(t,1)", 2, 100) + assistLine(108, "gte(t,2.5)", 2, 80)
+                                                             + assistLine(142, "gte(t,4)", 1, 90));
+                    if (CHECK_EQ(k.size(), 3)) CHECK(std::abs(k[2] - 4.0) < 0.15);
+                    CHECK(as.isEmpty());
+                }
+                // A round icon after the name (a grenade kill) is no "+": the player's two grenade kills tell their
+                // name, the "M + P" line is an assist
+                {
+                    const auto [k, as] = killsAndAssists("cs2_grenade.mkv",
+                                                         assistLine(74, "gte(t,1)", 3, 100) + assistLine(108, "gte(t,2.5)", 3, 80)
+                                                             + assistLine(142, "gte(t,4)", 2, 90));
+                    if (CHECK_EQ(k.size(), 2)) {
+                        CHECK(std::abs(k[0] - 1.0) < 0.15);
+                        CHECK(std::abs(k[1] - 2.5) < 0.15);
+                    }
+                    if (CHECK_EQ(as.size(), 1)) CHECK(std::abs(as[0] - 4.0) < 0.15);
+                }
             }
         }
         // Without sound: the frame the line began to show

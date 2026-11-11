@@ -263,6 +263,37 @@ ColorEvents framedLineEvents(const MediaSource& m, const QRectF& region, const Q
                 if (band.empty()) return;
                 std::nth_element(band.begin(), band.begin() + band.size() / 2, band.end());
                 const int above = band[band.size() / 2] + kTeamAbove;
+                // White text and icons (the weapon, the "+"): bright and grey
+                const auto isWhite = [&](int x, int y) {
+                    const uchar* px = rgb + size_t(y * w + x) * 3;
+                    const int hi = std::max({px[0], px[1], px[2]}), lo = std::min({px[0], px[1], px[2]});
+                    return luma(x, y) >= above && teamOf(px) == 0 && hi >= kTeamBright && hi - lo < kTeamSat;
+                };
+                // A "+" in the box bx0..bx1, by0..by1: one thin full-height column stroke and one thin full-width row
+                // stroke, and nothing else (a filled disc or diamond, a grenade icon, fills the space between them)
+                const auto cross = [&](int bx0, int bx1, int by0, int by1) {
+                    const int cw = bx1 - bx0, ch = by1 - by0;
+                    std::vector<int> cols(static_cast<size_t>(cw), 0), rows(static_cast<size_t>(ch), 0);
+                    for (int y = by0; y < by1; ++y)
+                        for (int x = bx0; x < bx1; ++x)
+                            if (isWhite(x, y)) {
+                                ++cols[size_t(x - bx0)];
+                                ++rows[size_t(y - by0)];
+                            }
+                    std::vector<char> strokeCol(static_cast<size_t>(cw), 0), strokeRow(static_cast<size_t>(ch), 0);
+                    int nc = 0, nr = 0;
+                    for (int i = 0; i < cw; ++i) nc += strokeCol[size_t(i)] = cols[size_t(i)] * 10 >= ch * 7;
+                    for (int j = 0; j < ch; ++j) nr += strokeRow[size_t(j)] = rows[size_t(j)] * 10 >= cw * 7;
+                    if (nc == 0 || nr == 0 || nc * 3 > std::max(6, cw) || nr * 3 > std::max(6, ch)) return false;
+                    int off = 0, offArea = 0;
+                    for (int y = by0; y < by1; ++y)
+                        for (int x = bx0; x < bx1; ++x)
+                            if (!strokeCol[size_t(x - bx0)] && !strokeRow[size_t(y - by0)]) {
+                                ++offArea;
+                                off += isWhite(x, y);
+                            }
+                    return off * 10 <= offArea;
+                };
                 std::vector<int> warm(size_t(b - a), 0), cool(size_t(b - a), 0), white(size_t(b - a), 0);
                 std::vector<int> whiteTop(size_t(b - a), yb), whiteBottom(size_t(b - a), -1);
                 int first = -1, last = -1;
@@ -273,9 +304,7 @@ ColorEvents framedLineEvents(const MediaSource& m, const QRectF& region, const Q
                         const int t = lit ? teamOf(px) : 0;
                         warm[size_t(x - a)] += t > 0;
                         cool[size_t(x - a)] += t < 0;
-                        // White text and icons (the weapon, the "+"): bright and grey
-                        if (lit && t == 0 && std::max({px[0], px[1], px[2]}) >= kTeamBright
-                            && std::max({px[0], px[1], px[2]}) - std::min({px[0], px[1], px[2]}) < kTeamSat) {
+                        if (isWhite(x, y)) {
                             ++white[size_t(x - a)];
                             whiteTop[size_t(x - a)] = std::min(whiteTop[size_t(x - a)], y);
                             whiteBottom[size_t(x - a)] = std::max(whiteBottom[size_t(x - a)], y);
@@ -313,7 +342,8 @@ ColorEvents framedLineEvents(const MediaSource& m, const QRectF& region, const Q
                         for (int k = std::max(0, x - span * 2 / 3); k < x; ++k)
                             colourBefore = colourBefore || warm[size_t(k)] + cool[size_t(k)] > 0;
                         if (colourBefore && cw >= 2 && cw * 2 <= span && ch * 5 >= cw * 3 && ch * 5 <= cw * 8
-                            && most * 10 >= ch * 7 && white[size_t(x)] * 2 <= ch && white[size_t(end - 1)] * 2 <= ch) {
+                            && most * 10 >= ch * 7 && white[size_t(x)] * 2 <= ch && white[size_t(end - 1)] * 2 <= ch
+                            && cross(a + x, a + end, top, bottom + 1)) {
                             l.plus = true;
                             break;
                         }
@@ -465,9 +495,8 @@ ColorEvents framedLineEvents(const MediaSource& m, const QRectF& region, const Q
         if (const int c = sameTeam(tr); c != 0) (c > 0 ? warmSame : coolSame)++;
     const bool teams = !(warmSame > 0 && coolSame > 0) && warmSame + coolSame < 3;
 
-    // Assists: the player's lines are their kills and their assists ("A + player  weapon  C": A killed C). The
-    // player's name is the first name most lines share (a line without a "+" is the player's own kill: it wins a
-    // tie). A line with a "+" whose first name is another one is the player's assist, not a kill. Read from each
+    // Assists: the player's lines are their kills and their assists ("A + player  weapon  C": A killed C). A line
+    // with a "+" whose first name is not the player's is the player's assist, not a kill. Read from each
     // line's first second: whether it has a "+" (in two of its samples) and its clearest first name
     struct Names {
         const std::vector<uchar>* name = nullptr;
@@ -496,22 +525,21 @@ ColorEvents framedLineEvents(const MediaSource& m, const QRectF& region, const Q
     const auto sameName = [&](const std::vector<uchar>& a, const std::vector<uchar>& b) {
         return sameContent(a, b, nameW, nameH) >= kSameName;
     };
+    // Only the player can be first in a line without "+" (their own kill): their name is the one most of those lines
+    // share (counted over all lines). Lines with "+" alone do not tell it: the player may assist more than they kill,
+    // then the first name most lines share is a teammate's and the player's real kills would be taken for assists
     const std::vector<uchar>* player = nullptr;
     {
         int bestScore = 0;
-        bool bestPlain = false;
         for (const Names& n : lineNames) {
-            if (!n.name) continue;
+            if (!n.name || n.plus) continue;
             const int score = int(std::count_if(lineNames.begin(), lineNames.end(),
                                                 [&](const Names& o) { return o.name && sameName(*n.name, *o.name); }));
-            if (score > bestScore || (score == bestScore && !n.plus && !bestPlain)) {
+            if (score > bestScore) {
                 bestScore = score;
-                bestPlain = !n.plus;
                 player = n.name;
             }
         }
-        // One line with a "+" alone does not tell which of its names is the player's
-        if (player && bestScore < 2 && !bestPlain) player = nullptr;
     }
 
     std::vector<std::tuple<int, bool, bool>> fresh; // first sample, teamkill, assist
