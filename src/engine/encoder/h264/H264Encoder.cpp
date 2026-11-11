@@ -7,6 +7,7 @@
 #include "Cabac.h"
 #include "Cavlc.h"
 #include "Satd.h"
+#include "ThreadErrors.h"
 
 #include <algorithm>
 #include <array>
@@ -18,6 +19,7 @@
 #include <cstring>
 #include <memory>
 #include <thread>
+#include <utility>
 #include <condition_variable>
 #include <mutex>
 
@@ -51,6 +53,11 @@ namespace {
 // Macroblock statistics (H264_STATS=1), for comparisons with other encoders' logs.
 const bool gStats = std::getenv("H264_STATS") != nullptr;
 std::atomic<long> gStatInter{0}, gStatInterCbp{0}, gStatT8{0};
+std::mutex gStatMutex;
+double gStatT8LossIf4[20] = {}, gStatT8LossIf8[20] = {}; // RD cost lost if only 4x4 / only 8x8 were coded
+double gStatT8Total = 0;
+double gStatSplitN[20] = {}, gStatSplitWin[20] = {}, gStatSplitLoss[20] = {}, gStatInterTotal = 0; // by whole.cost / sqrt(lambda)
+std::atomic<long> gStatT8Try[20] = {}, gStatT8Win[20] = {}; // by sa8d / satd of the chosen layout, 0.05 steps from 0.6
 std::atomic<long> gStatIntraTry[4] = {}, gStatIntraWin[4] = {}; // by ratio of the intra estimate to the inter cost
 // Experiments (H264_EXP bit mask), for A/B measurements only.
 const int gExp = std::getenv("H264_EXP") ? std::atoi(std::getenv("H264_EXP")) : 0;
@@ -161,6 +168,16 @@ inline void waitAtLeast(const std::atomic<int>& counter, int need, int spin = 12
     }
     for (int v = counter.load(std::memory_order_acquire); v < need; v = counter.load(std::memory_order_acquire))
         counter.wait(v, std::memory_order_acquire);
+}
+
+// Raises a progress counter (never lowers it: after a failure every counter is pushed to its end
+// so no thread waits forever, and a late store of a running row must not undo that).
+inline void raiseTo(std::atomic<int>& counter, int v)
+{
+    int cur = counter.load(std::memory_order_relaxed);
+    while (cur < v && !counter.compare_exchange_weak(cur, v, std::memory_order_acq_rel, std::memory_order_relaxed)) {
+    }
+    counter.notify_all();
 }
 
 inline void spinWait()
@@ -626,19 +643,16 @@ void FirstPass::analyseBatch() const
         return;
     auto parallel = [&](auto&& fn) {
         std::atomic<int> next{0};
-        auto run = [&] {
+        runOnThreads(std::min(threads_, n), [&] {
             for (int i; (i = next.fetch_add(1)) < n;)
                 fn(i);
-        };
-        std::vector<std::thread> workers;
-        for (int t = 1; t < std::min(threads_, n); ++t)
-            workers.emplace_back(run);
-        run();
-        for (auto& t : workers)
-            t.join();
+        });
     };
     auto prevOf = [&](int i) { return i > 0 ? &batch_[size_t(i) - 1] : havePrev_ ? &prev_ : nullptr; };
-    parallel([&](int i) { la_->prepare(batch_[size_t(i)]); });
+    parallel([&](int i) {
+        failurePoint(FailPoint::FirstPassWorker);
+        la_->prepare(batch_[size_t(i)]);
+    });
     parallel([&](int i) { la_->sceneCut(batch_[size_t(i)], prevOf(i)); });
     // The motion search starts from the predecessor's vectors: in order.
     for (int i = 0; i < n; ++i)
@@ -776,10 +790,16 @@ struct Encoder::Pool {
 
     explicit Pool(int count)
     {
-        for (int t = 0; t < count; ++t)
-            threads.emplace_back([this] { run(); });
+        try {
+            for (int t = 0; t < count; ++t)
+                threads.emplace_back([this] { run(); });
+        } catch (...) { // no thread: stop the ones started (a joinable std::thread must not be destroyed)
+            shutdown();
+            throw;
+        }
     }
-    ~Pool()
+    ~Pool() { shutdown(); }
+    void shutdown()
     {
         {
             std::lock_guard<std::mutex> l(m);
@@ -809,7 +829,7 @@ struct Encoder::Pool {
                     cv.wait(l);
                 }
             }
-            c->waveRow(r);
+            c->waveRow(r); // catches its own failures
         }
     }
     void add(FrameCoder* c)
@@ -834,7 +854,8 @@ struct Encoder::Pool {
 
 Encoder::~Encoder()
 {
-    joinPending();
+    if (pendingThread_.joinable())
+        pendingThread_.join();
     if (inFlight_) {
         inFlight_->waveEnd();
         pool_->remove(inFlight_);
@@ -848,6 +869,10 @@ void Encoder::joinPending()
 {
     if (pendingThread_.joinable())
         pendingThread_.join();
+    if (pendingError_) {
+        pendingFrame_.reset();
+        std::rethrow_exception(std::exchange(pendingError_, nullptr));
+    }
     if (pendingFrame_) {
         queue_.push_back(std::move(*pendingFrame_));
         pendingFrame_.reset();
@@ -855,6 +880,18 @@ void Encoder::joinPending()
 }
 
 std::vector<uint8_t> Encoder::encode(const Picture& picture, bool forceKeyframe)
+{
+    if (broken_)
+        std::rethrow_exception(broken_);
+    try {
+        return encodeImpl(picture, forceKeyframe);
+    } catch (...) {
+        broken_ = std::current_exception();
+        throw;
+    }
+}
+
+std::vector<uint8_t> Encoder::encodeImpl(const Picture& picture, bool forceKeyframe)
 {
     LookaheadFrame f = copyPicture(picture, cfg_.width, cfg_.height, forceKeyframe);
     if (!useLookahead())
@@ -869,10 +906,18 @@ std::vector<uint8_t> Encoder::encode(const Picture& picture, bool forceKeyframe)
     if (full && queue_.size() >= 2) {
         pendingFrame_ = std::make_unique<LookaheadFrame>(std::move(f));
         const LookaheadFrame* prev = &queue_.back();
-        if (cfg_.threads > 1)
-            pendingThread_ = std::thread([this, prev] { la_->analyse(*pendingFrame_, prev); });
-        else
+        if (cfg_.threads > 1) {
+            pendingThread_ = std::thread([this, prev] {
+                try {
+                    failurePoint(FailPoint::LookaheadThread);
+                    la_->analyse(*pendingFrame_, prev);
+                } catch (...) {
+                    pendingError_ = std::current_exception();
+                }
+            });
+        } else {
             la_->analyse(*pendingFrame_, prev);
+        }
     } else {
         la_->analyse(f, queue_.empty() ? nullptr : &queue_.back());
         queue_.push_back(std::move(f));
@@ -885,6 +930,18 @@ std::vector<uint8_t> Encoder::encode(const Picture& picture, bool forceKeyframe)
 }
 
 std::vector<uint8_t> Encoder::flush()
+{
+    if (broken_)
+        std::rethrow_exception(broken_);
+    try {
+        return flushImpl();
+    } catch (...) {
+        broken_ = std::current_exception();
+        throw;
+    }
+}
+
+std::vector<uint8_t> Encoder::flushImpl()
 {
     joinPending();
     while (!queue_.empty()) {
@@ -904,8 +961,14 @@ std::vector<uint8_t> Encoder::step(LookaheadFrame* next)
     if (!pipelined())
         return started ? finishFrame(*started) : std::vector<uint8_t>{};
     std::vector<uint8_t> out;
-    if (inFlight_)
-        out = finishFrame(*inFlight_);
+    if (inFlight_) {
+        try {
+            out = finishFrame(*inFlight_);
+        } catch (...) {
+            inFlight_ = started; // the destructor ends it
+            throw;
+        }
+    }
     inFlight_ = started;
     return out;
 }
@@ -936,6 +999,7 @@ std::vector<uint8_t> Encoder::finishFrame(FrameCoder& fc)
     if (pipelined()) {
         fc.waveEnd();
         pool_->remove(&fc);
+        fc.rethrowWaveError();
         fc.done_ = fc.assemble(clock);
         fc.outPic_.reset();
     }
@@ -1113,6 +1177,7 @@ void FrameCoder::waveBegin(int threads, RefPic* out, bool writerThread)
     }
     w.written.store(0, std::memory_order_relaxed);
     w.rowsDone.store(0, std::memory_order_relaxed);
+    waveErrors_.clear();
     w.waitUs.store(0, std::memory_order_relaxed);
     w.out = out;
     w.yCopied = w.cCopied = w.fBuilt = w.hBuilt = 0;
@@ -1129,11 +1194,61 @@ void FrameCoder::waveBegin(int threads, RefPic* out, bool writerThread)
     }
     mbSyn_.resize(size_t(mbW_) * mbH_);
     if (writerThread)
-        w.writer = std::thread([this] { waveWrite(); });
+        w.writer = std::thread([this] { waveWriteGuarded(); });
     w.nextRow.store(0, std::memory_order_release); // rows may be taken from here on
 }
 
+// A failure (exception) in any row or the writer: it is kept for the caller, and every counter
+// anyone may wait on goes to its end, so the remaining rows stop early and the picture ends
+// (its content is then garbage; the encoder reports the failure and is not used again).
+void FrameCoder::waveFail()
+{
+    WaveState& w = wave_;
+    waveErrors_.capture();
+    for (int r = 0; r < w.rows; ++r) {
+        raiseTo(w.progress[size_t(r)], mbW_);
+        raiseTo(w.deblocked[size_t(r)], mbW_);
+    }
+    raiseTo(w.written, w.rows);
+    // The reference rows are released once no row writes them any more (waveRow, waveEnd).
+}
+
+void FrameCoder::rethrowWaveError() { waveErrors_.rethrow(); }
+
+void FrameCoder::waveWriteGuarded()
+{
+    try {
+        failurePoint(FailPoint::Writer);
+        waveWrite();
+    } catch (...) {
+        waveFail();
+    }
+}
+
 void FrameCoder::waveRow(int r)
+{
+    bool done = false;
+    try {
+        failurePoint(FailPoint::WaveRow);
+        done = !waveErrors_.failed() && waveRowBody(r);
+    } catch (...) {
+        waveFail();
+    }
+    if (!done) {
+        // Abandoned (failure here or elsewhere): release whoever waits for this row.
+        raiseTo(wave_.progress[size_t(r)], mbW_);
+        if (r > 0)
+            raiseTo(wave_.deblocked[size_t(r - 1)], mbW_);
+        wave_.rowsDone.fetch_add(1, std::memory_order_acq_rel);
+    }
+    // The last row of a failed picture: nothing writes the reference picture any more, so the
+    // next picture's rows (waiting for its rows) may go on.
+    if (waveErrors_.failed() && wave_.rowsDone.load(std::memory_order_acquire) >= wave_.rows && wave_.out)
+        raiseTo(wave_.out->rowsReady, mbH_);
+}
+
+// One row of the wavefront; false when it stopped early because the picture failed.
+bool FrameCoder::waveRowBody(int r)
 {
     WaveState& w = wave_;
     // Reference rows this row can reach: vectors up to 64 pixels (4 rows) plus the 6-tap filter.
@@ -1171,9 +1286,10 @@ void FrameCoder::waveRow(int r)
                     waitAtLeast(w.deblocked[size_t(r - 2)], std::min(dbNext + 2, mbW_), w.spin);
                 continue;
             }
+            if (waveErrors_.failed()) // the counters may have been pushed to their end
+                return;
             deblockMb(dbNext, r - 1);
-            w.deblocked[size_t(r - 1)].store(++dbNext, std::memory_order_release);
-            w.deblocked[size_t(r - 1)].notify_all();
+            raiseTo(w.deblocked[size_t(r - 1)], ++dbNext);
         }
     };
     CabacEncoder& eng = w.rowEngine[size_t(r)];
@@ -1182,6 +1298,8 @@ void FrameCoder::waveRow(int r)
         eng.startCounting();
     } else {
         waitAbove(std::min(2, mbW_));
+        if (waveErrors_.failed())
+            return false;
         eng = w.rowSnap[size_t(r - 1)];
     }
     qpPredByTop_[size_t(r)] = cfg_.qp;
@@ -1190,6 +1308,8 @@ void FrameCoder::waveRow(int r)
     prevQpNzByTop_[size_t(r)] = &w.rowPrevNz[size_t(r)];
     for (int mbx = 0; mbx < mbW_; ++mbx) {
         waitAbove(std::min(mbx + 2, mbW_));
+        if (waveErrors_.failed())
+            return false;
         MbOut mb;
         if (pSlice_)
             encodeMbP(mb, mbx, r);
@@ -1199,15 +1319,17 @@ void FrameCoder::waveRow(int r)
         mbSyn_[size_t(r) * mbW_ + mbx] = mb.syn;
         if (mbx == std::min(1, mbW_ - 1))
             w.rowSnap[size_t(r)] = eng;
-        w.progress[size_t(r)].store(mbx + 1, std::memory_order_release);
-        w.progress[size_t(r)].notify_all();
+        raiseTo(w.progress[size_t(r)], mbx + 1);
         deblockBehind(mbx, false);
     }
     deblockBehind(mbW_, true);
+    if (waveErrors_.failed())
+        return false;
     // Row r - 1 is filtered now, so row r - 2 is final (filtering row r - 1 changed its last lines).
     if (w.out && w.inlineDeblock && r >= 2)
         publishBand(r - 2);
     w.rowsDone.fetch_add(1, std::memory_order_acq_rel);
+    return true;
 }
 
 // Copies the final rows of band k (macroblock row) into the reference picture and builds its
@@ -1216,7 +1338,18 @@ void FrameCoder::publishBand(int k)
 {
     WaveState& w = wave_;
     RefPic& R = *w.out;
-    waitAtLeast(R.rowsReady, k);
+    // Band k - 1 comes from another row; after a failure it may never come (polling, not
+    // waitAtLeast: a failure does not change rowsReady until no row writes the picture any more).
+    for (int i = 0; R.rowsReady.load(std::memory_order_acquire) < k; ++i) {
+        if (waveErrors_.failed())
+            return;
+        if (i < 1024)
+            spinWait();
+        else
+            std::this_thread::sleep_for(std::chrono::microseconds(20));
+    }
+    if (waveErrors_.failed())
+        return;
     const bool last = k == mbH_ - 1;
     const int M = kMargin;
     const int yLim = last ? padH_ : std::min(padH_, 16 * k + 19);
@@ -1232,8 +1365,7 @@ void FrameCoder::publishBand(int k)
     const int hLim = last ? extH_ : M + 16 * k + 16;
     refHalfRows(R, w.hBuilt, hLim);
     w.hBuilt = hLim;
-    R.rowsReady.store(k + 1, std::memory_order_release);
-    R.rowsReady.notify_all();
+    raiseTo(R.rowsReady, k + 1);
 }
 
 // Entropy coding in raster order, mb_qp_delta against the real predecessor. It follows the
@@ -1254,6 +1386,8 @@ void FrameCoder::waveWrite()
     for (int r = 0; r < w.rows; ++r) {
         while (w.progress[size_t(r)].load(std::memory_order_acquire) < mbW_)
             std::this_thread::sleep_for(std::chrono::microseconds(100));
+        if (waveErrors_.failed())
+            return; // the rows hold no finished decisions
         for (int mbx = 0; mbx < mbW_; ++mbx) {
             const size_t m = size_t(r) * mbW_ + mbx;
             MbSyntax& syn = mbSyn_[m];
@@ -1267,8 +1401,7 @@ void FrameCoder::waveWrite()
             cabacWriteMb(eng, cabWrite_, mbx, r, syn, prevNz);
             eng.terminate(m + 1 == count); // end_of_slice_flag
         }
-        w.written.store(r + 1, std::memory_order_release);
-        w.written.notify_all();
+        raiseTo(w.written, r + 1);
     }
     bw.alignZero();
 }
@@ -1282,6 +1415,12 @@ void FrameCoder::waveEnd()
         std::this_thread::sleep_for(std::chrono::microseconds(50));
     if (w.writer.joinable())
         w.writer.join();
+    if (waveErrors_.failed()) {
+        if (w.out)
+            raiseTo(w.out->rowsReady, mbH_);
+        w.nextRow.store(INT_MAX / 2, std::memory_order_release);
+        return;
+    }
     if (w.inlineDeblock) { // the last row has no row below to filter it
         for (int mbx = 0; mbx < mbW_; ++mbx)
             deblockMb(mbx, w.rows - 1);
@@ -1316,6 +1455,17 @@ std::vector<uint8_t> FrameCoder::assemble(PhaseClock& clock)
                      long(gStatIntraTry[2].load()), long(gStatIntraWin[2].load()), long(gStatIntraTry[3].load()), long(gStatIntraWin[3].load()));
         for (int i = 0; i < 4; ++i)
             gStatIntraTry[i] = gStatIntraWin[i] = 0;
+        std::fprintf(stderr, "stats: t8 tries/wins by sa8d/satd (from 0.6, 0.05 steps):");
+        for (int i = 0; i < 20; ++i)
+            std::fprintf(stderr, " %ld/%ld", long(gStatT8Try[i].load()), long(gStatT8Win[i].load()));
+        std::fprintf(stderr, "\nstats: split by 2*log2(whole/sqrt(lambda)+1): n/wins/loss permille:");
+        for (int i = 0; i < 20; ++i)
+            std::fprintf(stderr, " [%d] %.0f/%.0f/%.2f", i, gStatSplitN[i], gStatSplitWin[i], 1000.0 * gStatSplitLoss[i] / std::max(1.0, gStatInterTotal));
+        std::fprintf(stderr, "\nstats: t8 loss if only 4x4 / only 8x8 (permille of the inter cost):");
+        for (int i = 0; i < 20; ++i)
+            std::fprintf(stderr, " %.2f/%.2f", 1000.0 * gStatT8LossIf4[i] / std::max(1.0, gStatT8Total),
+                         1000.0 * gStatT8LossIf8[i] / std::max(1.0, gStatT8Total));
+        std::fprintf(stderr, "\n");
     }
     if (cfg_.deblock && !deblockedInline_)
         deblockPicture();
@@ -1339,24 +1489,19 @@ std::vector<uint8_t> FrameCoder::code(bool idr, int framesSinceIdr, int idrCount
                 waveRow(r);
             }
         };
-        std::vector<std::thread> workers;
-        for (int t = 1; t < threads; ++t)
-            workers.emplace_back(worker);
-        worker();
-        for (auto& t : workers)
-            t.join();
+        runOnThreads(threads, worker); // rows catch their own failures
         if (threads == 1)
-            waveWrite();
+            waveWriteGuarded();
         waveEnd();
+        rethrowWaveError();
     } else {
         // Slices only look at macroblocks of their own slice, so they run in parallel.
         const int sliceCount = int(slices_.size());
-        std::vector<std::thread> workers;
-        for (int s = 1; s < sliceCount; ++s)
-            workers.emplace_back([this, s] { encodeSlice(s); });
-        encodeSlice(0);
-        for (auto& t : workers)
-            t.join();
+        std::atomic<int> next{0};
+        runOnThreads(sliceCount, [&] {
+            for (int s; (s = next.fetch_add(1)) < sliceCount;)
+                encodeSlice(s);
+        });
     }
     return assemble(clock);
 }
@@ -2624,9 +2769,7 @@ bool FrameCoder::encodeLuma8(MbOut& o, int mbx, int mby, const ChromaMb& ch)
             if ((needsTop && !top) || (needsLeft && !left) || (needsBoth && !corner))
                 return 1 << 30;
             predict8x8(mode, T, L, left, top, cand);
-            int cost = lambda * (mode == predMode ? 1 : 4);
-            for (int k = 0; k < 2; ++k)
-                cost += satd8x4U8(&srcY_[size_t(py + k * 4) * padW_ + px], padW_, cand + k * 32, 8);
+            const int cost = lambda * (mode == predMode ? 1 : 4) + satd8x8U8Fast(&srcY_[size_t(py) * padW_ + px], padW_, cand, 8);
             if (cost < bestCost) {
                 bestCost = cost;
                 bestMode = mode;
@@ -2825,6 +2968,22 @@ void FrameCoder::motionCompensate(const RefPic& R, int mbx, int mby, int x4, int
     const int cw = padW_ / 2, chh = padH_ / 2;
     const int xF = mvx & 7, yF = mvy & 7;
     const std::vector<uint8_t>* planes[2] = {&R.u, &R.v};
+    const int wA = (8 - xF) * (8 - yF), wB = xF * (8 - yF), wC = (8 - xF) * yF, wD = xF * yF;
+    const int bx0 = mbx * 8 + x4 * 2 + (mvx >> 3), by0 = mby * 8 + y4 * 2 + (mvy >> 3);
+    const int bw = w4 * 2, bh = h4 * 2;
+    if (bx0 >= 0 && by0 >= 0 && bx0 + bw < cw && by0 + bh < chh) { // inside: no edge clamping
+        for (int c = 0; c < 2; ++c) {
+            const uint8_t* p = planes[c]->data();
+            for (int y = 0; y < bh; ++y) {
+                const uint8_t* r0 = p + size_t(by0 + y) * cw + bx0;
+                const uint8_t* r1 = r0 + cw;
+                uint8_t* o = chroma[c] + (y4 * 2 + y) * 8 + x4 * 2;
+                for (int x = 0; x < bw; ++x)
+                    o[x] = uint8_t((wA * r0[x] + wB * r0[x + 1] + wC * r1[x] + wD * r1[x + 1] + 32) >> 6);
+            }
+        }
+        return;
+    }
     for (int c = 0; c < 2; ++c) {
         const std::vector<uint8_t>& p = *planes[c];
         for (int y = y4 * 2; y < (y4 + h4) * 2; ++y) {
@@ -3110,7 +3269,10 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
     };
     const Choice whole = tryLayout(0);
     Choice split;
-    if (cfg_.effort > 0) {
+    // Experiment H264_SPLITSKIP = c: no split layouts when the 16x16 cost is below c * sqrt(lambda)
+    // (a well-predicted macroblock rarely gains from splitting).
+    static const double kSplitSkip = std::getenv("H264_SPLITSKIP") ? std::atof(std::getenv("H264_SPLITSKIP")) : 0.0;
+    if (cfg_.effort > 0 && !(whole.cost < kSplitSkip * lambdaSad)) {
         // Experiment (H264_EXP & 256): the split layouts compare at full-pel (SATD); only the best
         // one gets the sub-pel refinement, and only when it is close.
         const bool lateSubpel = gExp & 256;
@@ -3132,14 +3294,33 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
     bool interDelta = false;
     const bool trellisLast = gExp & 32; // experiment: candidates with plain quantisation, the winner again with the trellis
     bool trellisNow = !trellisLast;
+    // Prediction and chroma coding of a layout do not depend on the transform size: kept for
+    // the second coding of the same layout (8x8 transform).
+    struct PredCache {
+        bool valid = false;
+        uint8_t lp[256], cp[2][64], recU[64], recV[64];
+        ChromaMb ch;
+    };
+    PredCache predCache[2]; // whole, split
+    const int cw = padW_ / 2;
+    const size_t chromaOff = size_t(mby * 8) * cw + mbx * 8;
     auto encodeInter = [&](const Choice& best, MbOut& io, bool t8) {
         BitWriter& interBits = io.bw;
         const Layout& layout = kLayouts[best.layout];
+        PredCache& pc = predCache[best.layout == 0 ? 0 : 1];
         for (int p = 0; p < layout.count; ++p) {
             const Part& P = layout.parts[p];
-            motionCompensate(*refs_[size_t(best.ref[p])], mbx, mby, P.x4, P.y4, P.w4, P.h4, best.mv[p][0], best.mv[p][1], lp,
-                             cp);
+            if (!pc.valid)
+                motionCompensate(*refs_[size_t(best.ref[p])], mbx, mby, P.x4, P.y4, P.w4, P.h4, best.mv[p][0], best.mv[p][1],
+                                 lp, cp);
             setBlocks(P.x4, P.y4, P.w4, P.h4, best.mv[p][0], best.mv[p][1], best.ref[p]);
+        }
+        if (pc.valid) {
+            std::memcpy(lp, pc.lp, sizeof(lp));
+            std::memcpy(cp, pc.cp, sizeof(cp));
+        } else {
+            std::memcpy(pc.lp, lp, sizeof(lp));
+            std::memcpy(pc.cp, cp, sizeof(cp));
         }
         const int qpDiv = qp / 6, qpMod = qp % 6;
         const int qbits = 15 + qpDiv;
@@ -3221,9 +3402,10 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
                     return t;
                 }();
                 double xs[16];
+                const double invStep = 1.0 / double(1 << qbits); // a power of two: same as dividing
                 for (int s = 0; s < 16; ++s) {
                     const int r = kZigzag[s];
-                    xs[s] = double(coef[r]) * kQuantMf[qpMod][posClass(r)] / double(1 << qbits);
+                    xs[s] = double(coef[r]) * kQuantMf[qpMod][posClass(r)] * invStep;
                 }
                 int scanLv[16];
                 cabacTrellis(*live, 2, xs, kScale4[size_t(qp)].data(), 16, lambda, 1, scanLv);
@@ -3268,7 +3450,21 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
                     recY_[lumaOff + size_t(oy + y) * padW_ + ox + x] = clip1(lp[(oy + y) * 16 + ox + x] + r[y * 4 + x]);
         }
         ChromaMb ch;
-        analyseChroma(mbx, mby, ch, cp);
+        if (pc.valid) {
+            ch = pc.ch;
+            for (int y = 0; y < 8; ++y) {
+                std::memcpy(&recU_[chromaOff + size_t(y) * cw], pc.recU + y * 8, 8);
+                std::memcpy(&recV_[chromaOff + size_t(y) * cw], pc.recV + y * 8, 8);
+            }
+        } else {
+            analyseChroma(mbx, mby, ch, cp);
+            pc.ch = ch;
+            for (int y = 0; y < 8; ++y) {
+                std::memcpy(pc.recU + y * 8, &recU_[chromaOff + size_t(y) * cw], 8);
+                std::memcpy(pc.recV + y * 8, &recV_[chromaOff + size_t(y) * cw], 8);
+            }
+            pc.valid = true;
+        }
         clearNz();
 
         io.syn.kind = MbSyntax::Kind::Inter;
@@ -3322,8 +3518,44 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
         // A skip_run ends here: count its codeword to be fair against skip.
         return double(mbSsd(mbx, mby)) + lambda * mbBits(io, mbx, mby, double(interBits.bitCount() + seBits(0)));
     };
+    // Transform size by SATD (experiment H264_EXP & 512): the 8x8 Hadamard of the residual against
+    // four 4x4 ones; clearly one way -> only that transform is coded, else both (as without).
+    static const double kT8Lo = std::getenv("H264_T8LO") ? std::atof(std::getenv("H264_T8LO")) : 1.0;
+    static const double kT8Hi = std::getenv("H264_T8HI") ? std::atof(std::getenv("H264_T8HI")) : 1.0;
+    const bool t8Pre = useT8() && cfg_.effort > 0 && (gExp & 512);
+    auto satd48 = [&](const Choice& c, int& s4, int& s8) {
+        const Layout& layout = kLayouts[c.layout];
+        uint8_t pred[256];
+        for (int p = 0; p < layout.count; ++p) {
+            const Part& P = layout.parts[p];
+            const int mvx = c.mv[p][0], mvy = c.mv[p][1];
+            mcLuma(*refs_[size_t(c.ref[p])], mbx * 16 + P.x4 * 4 + (mvx >> 2), mby * 16 + P.y4 * 4 + (mvy >> 2), mvx & 3,
+                   mvy & 3, P.w4 * 4, P.h4 * 4, pred + P.y4 * 4 * 16 + P.x4 * 4);
+        }
+        s4 = s8 = 0;
+        for (int oy = 0; oy < 16; oy += 4)
+            s4 += satd16x4U8(&srcY_[lumaOff + size_t(oy) * padW_], padW_, pred + oy * 16, 16);
+        for (int b8 = 0; b8 < 4; ++b8) {
+            const int ox = (b8 & 1) * 8, oy = (b8 >> 1) * 8;
+            s8 += sa8dU8(&srcY_[lumaOff + size_t(oy) * padW_ + ox], padW_, pred + oy * 16 + ox, 16);
+        }
+    };
+    auto transformPick = [&](const Choice& c) { // 0 = try both, 1 = 8x8 only, 2 = 4x4 only
+        if (!t8Pre)
+            return 0;
+        int s4, s8;
+        satd48(c, s4, s8);
+        if (double(s8) < kT8Lo * s4)
+            return 1;
+        static const double kT8Slope = std::getenv("H264_T8SLOPE") ? std::atof(std::getenv("H264_T8SLOPE")) : 0.0;
+        if (double(s8) > (kT8Hi + kT8Slope * std::max(0, qp - 26)) * s4)
+            return 2;
+        return 0;
+    };
     MbOut interBits;
-    double costInter = encodeInter(whole, interBits, false);
+    const int pickWhole = transformPick(whole);
+    double costInter = encodeInter(whole, interBits, pickWhole == 1);
+    int bestPick = pickWhole;
     bool chosenInterDelta = interDelta;
     MbState interState;
     saveMb(mbx, mby, interState);
@@ -3331,23 +3563,44 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
     // Try the split for real when its estimate is close or better.
     // Measured: 1.0 is as fast as 1.1 and -0.04 % BD-rate (0.95: +0.44 %). H264_SPLITF overrides.
     static const double kSplitTry = std::getenv("H264_SPLITF") ? std::atof(std::getenv("H264_SPLITF")) : 1.0;
+    const int splitBucket = std::clamp(int(2.0 * std::log2(whole.cost / lambdaSad + 1.0)), 0, 19);
+    const double costWhole4 = costInter;
     if (split.cost < whole.cost * kSplitTry) {
         MbOut splitBits;
-        const double costSplit = encodeInter(split, splitBits, false);
+        const int pickSplit = transformPick(split);
+        const double costSplit = encodeInter(split, splitBits, pickSplit == 1);
+        if (gStats && costSplit < costInter) {
+            std::lock_guard<std::mutex> l(gStatMutex);
+            gStatSplitWin[splitBucket] += 1;
+            gStatSplitLoss[splitBucket] += costInter - costSplit;
+        }
         if (costSplit < costInter) {
             costInter = costSplit;
             chosenInterDelta = interDelta;
             interBits = std::move(splitBits);
             saveMb(mbx, mby, interState);
             best = split;
+            bestPick = pickSplit;
         }
     }
     // 8x8 transform for the chosen layout (High profile). Experiment (H264_EXP & 128): not when
     // the 4x4 transform left no luma coefficients.
-    bool bestT8 = false;
-    if (useT8() && cfg_.effort > 0 && !((gExp & 128) && interBits.syn.cbpLuma == 0)) {
+    bool bestT8 = bestPick == 1;
+    if (useT8() && cfg_.effort > 0 && bestPick == 0 && !((gExp & 128) && interBits.syn.cbpLuma == 0)) {
         MbOut t8Bits;
         const double costT8 = encodeInter(best, t8Bits, true);
+        if (gStats && (t8Bits.syn.cbpLuma || interBits.syn.cbpLuma)) {
+            int s4, s8;
+            satd48(best, s4, s8);
+            const int bucket = std::clamp(int((double(s8) / std::max(1, s4) - 0.6) / 0.05), 0, 19);
+            gStatT8Try[bucket].fetch_add(1, std::memory_order_relaxed);
+            if (costT8 < costInter)
+                gStatT8Win[bucket].fetch_add(1, std::memory_order_relaxed);
+            std::lock_guard<std::mutex> l(gStatMutex);
+            gStatT8LossIf4[bucket] += std::max(0.0, costInter - costT8);
+            gStatT8LossIf8[bucket] += std::max(0.0, costT8 - costInter);
+            gStatT8Total += std::min(costT8, costInter);
+        }
         if (costT8 < costInter) {
             costInter = costT8;
             chosenInterDelta = interDelta;
@@ -3355,6 +3608,11 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
             saveMb(mbx, mby, interState);
             bestT8 = true;
         }
+    }
+    if (gStats) {
+        std::lock_guard<std::mutex> l(gStatMutex);
+        gStatSplitN[splitBucket] += 1;
+        gStatInterTotal += std::min(costInter, costWhole4);
     }
     if (trellisLast && cfg_.effort > 0) {
         trellisNow = true;
@@ -3443,12 +3701,11 @@ void FrameCoder::buildRefPlanes(RefPic& R)
     // Runs fn(y0, y1) over row ranges on cfg_.threads threads.
     auto parallelRows = [&](auto&& fn) {
         const int parts = std::clamp(cfg_.threads, 1, H);
-        std::vector<std::thread> workers;
-        for (int p = 1; p < parts; ++p)
-            workers.emplace_back([&, p] { fn(p * H / parts, (p + 1) * H / parts); });
-        fn(0, H / parts);
-        for (auto& t : workers)
-            t.join();
+        std::atomic<int> next{0};
+        runOnThreads(parts, [&] {
+            for (int p; (p = next.fetch_add(1)) < parts;)
+                fn(p * H / parts, (p + 1) * H / parts);
+        });
     };
     parallelRows([&](int y0, int y1) { refFullRows(R, y0, y1); });
     parallelRows([&](int y0, int y1) { refHalfRows(R, y0, y1); });
@@ -3604,6 +3861,23 @@ void FrameCoder::mcLuma(const RefPic& R, int x0, int y0, int fx, int fy, int w, 
     case 14: a = J; b = B + W; break;
     default: a = V + 1; b = B + W; break;
     }
+#if defined(__SSE2__) || defined(_M_X64)
+    if (b && (w == 16 || w == 8)) {
+        for (int y = 0; y < h; ++y) {
+            const uint8_t* ra = a + size_t(y) * W;
+            const uint8_t* rb = b + size_t(y) * W;
+            if (w == 16)
+                _mm_storeu_si128(reinterpret_cast<__m128i*>(out + y * 16),
+                                 _mm_avg_epu8(_mm_loadu_si128(reinterpret_cast<const __m128i*>(ra)),
+                                              _mm_loadu_si128(reinterpret_cast<const __m128i*>(rb))));
+            else
+                _mm_storel_epi64(reinterpret_cast<__m128i*>(out + y * 16),
+                                 _mm_avg_epu8(_mm_loadl_epi64(reinterpret_cast<const __m128i*>(ra)),
+                                              _mm_loadl_epi64(reinterpret_cast<const __m128i*>(rb))));
+        }
+        return;
+    }
+#endif
     for (int y = 0; y < h; ++y) {
         const uint8_t* ra = a + size_t(y) * W;
         uint8_t* o = out + y * 16;
@@ -3626,9 +3900,7 @@ int FrameCoder::sadPart(const RefPic& R, int mbx, int mby, int x4, int y4, int w
     int s = 0;
     if (!satd && !(mvx & 3) && !(mvy & 3)) {
         const uint8_t* ref = &R.F[size_t(py + (mvy >> 2) + kMargin) * extW_ + size_t(px + (mvx >> 2) + kMargin)];
-        for (int y = 0; y < h; ++y)
-            s += sadRow(&srcY_[lo + size_t(y) * padW_], ref + size_t(y) * extW_, w);
-        return s;
+        return sadBlock(&srcY_[lo], padW_, ref, extW_, w, h);
     }
     uint8_t buf[256];
     const uint8_t* pred = buf;
@@ -3649,14 +3921,17 @@ int FrameCoder::sadPart(const RefPic& R, int mbx, int mby, int x4, int y4, int w
                 s += satd16x4U8(&srcY_[lo + size_t(by * 4) * padW_], padW_, pred + by * 4 * ps, ps);
                 continue;
             }
-            for (int bx = 0; bx < w4; bx += 2) // partitions are at least 8 wide
+            if (!(by & 1) && by + 1 < h4) { // 8 wide (partitions are at least 8x8): two strips at once
+                s += satd8x8U8Fast(&srcY_[lo + size_t(by * 4) * padW_], padW_, pred + by * 4 * ps, ps);
+                ++by;
+                continue;
+            }
+            for (int bx = 0; bx < w4; bx += 2)
                 s += satd8x4U8(&srcY_[lo + size_t(by * 4) * padW_ + bx * 4], padW_, pred + by * 4 * ps + bx * 4, ps);
         }
         return s;
     }
-    for (int y = 0; y < h; ++y)
-        s += sadRow(&srcY_[lo + size_t(y) * padW_], pred + y * ps, w);
-    return s;
+    return sadBlock(&srcY_[lo], padW_, pred, ps, w, h);
 }
 
 namespace {
@@ -3769,12 +4044,7 @@ void FrameCoder::deblockPicture()
             }
         }
     };
-    std::vector<std::thread> pool;
-    for (int t = 1; t < threads; ++t)
-        pool.emplace_back(worker);
-    worker();
-    for (auto& t : pool)
-        t.join();
+    runOnThreads(threads, worker);
 }
 
 void FrameCoder::deblockMb(int mbx, int mby)
@@ -3925,10 +4195,7 @@ bool FrameCoder::detectSceneCut(std::vector<uint8_t>& prevThumb_)
                     for (int mx = -kRange; mx <= kRange; ++mx) {
                         if (by + my < 0 || bx + mx < 0 || by + my + 8 > th || bx + mx + 8 > tw)
                             continue;
-                        int s = 0;
-                        for (int y = 0; y < 8; ++y)
-                            s += sadRow(&thumb[size_t(by + y) * tw + bx], &prevThumb_[size_t(by + my + y) * tw + bx + mx], 8);
-                        best = std::min(best, s);
+                        best = std::min(best, sadBlock(&thumb[size_t(by) * tw + bx], tw, &prevThumb_[size_t(by + my) * tw + bx + mx], tw, 8, 8));
                     }
                 interCost += std::min(best, intra);
                 intraCost += intra + 16; // a little bias so flat pictures do not count as cuts

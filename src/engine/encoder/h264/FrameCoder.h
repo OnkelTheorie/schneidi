@@ -6,6 +6,7 @@
 #include "BitWriter.h"
 #include "Cabac.h"
 #include "H264Encoder.h"
+#include "ThreadErrors.h"
 
 #include <array>
 #include <atomic>
@@ -45,8 +46,9 @@ public:
         return r < wave_.rows ? r : -1;
     }
     bool rowsLeft() const { return wave_.nextRow.load(std::memory_order_acquire) < wave_.rows; }
-    void waveRow(int r);
+    void waveRow(int r); // never throws: a failure stops the picture (rethrowWaveError)
     void waveEnd();
+    void rethrowWaveError(); // after waveEnd: the first exception of a row or the writer
     std::vector<uint8_t> assemble(PhaseClock& clock);
 
     struct WaveState {
@@ -77,6 +79,10 @@ public:
     void sliceHeader(BitWriter& bw, int s) const;
     void encodeSlice(int s);
     void waveWrite();
+    void waveWriteGuarded();
+    bool waveRowBody(int r);
+    void waveFail();
+    ThreadErrors waveErrors_;
     void publishBand(int k);
 
     // Syntax elements of one coded macroblock, kept so the entropy coder can run after the decision.

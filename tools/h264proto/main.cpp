@@ -1,7 +1,7 @@
 // h264-proto: test driver for schneidi's own H.264 encoder.
 //   h264-proto selftest
 //   h264-proto encode <in.yuv> <width> <height> <out.h264> [--qp N] [--mode pcm|i16|i4|auto]
-//                     [--frames N] [--gop N] [--threads N] [--bitrate kbps] [--effort 0|1] [--aq strength] [--refs N] [--cavlc] [--no-t8] [--no-deblock]
+//                     [--frames N] [--gop N (120)] [--threads N] [--bitrate kbps] [--effort 0|1] [--aq strength] [--refs N] [--cavlc] [--no-t8] [--no-deblock]
 //                     [--lookahead N] [--no-mbtree] [--mbtree-strength S] [--2pass] [--recon out.yuv]
 // --2pass (with --bitrate): analyse the whole input first (lookahead only), then one QP for the clip.
 // --chunks N: N independent encoders side by side on parts of the clip (planChunks), --threads split
@@ -123,10 +123,11 @@ int main(int argc, char** argv)
     }
     if (argc < 6 || std::strcmp(argv[1], "encode") != 0) {
         std::fprintf(stderr, "usage: h264-proto selftest | encode <in.yuv> <w> <h> <out.h264> [--qp N] "
-                             "[--mode pcm|i16|i4|auto] [--frames N] [--gop N] [--threads N] [--bitrate kbps] [--effort 0|1] [--aq strength] [--refs N] [--cavlc] [--no-t8] [--no-deblock] [--recon out.yuv]\n");
+                             "[--mode pcm|i16|i4|auto] [--frames N] [--gop N (120)] [--threads N] [--bitrate kbps] [--effort 0|1] [--aq strength] [--refs N] [--cavlc] [--no-t8] [--no-deblock] [--recon out.yuv]\n");
         return 2;
     }
     EncoderConfig cfg;
+    cfg.gop = 120; // P pictures by default, like the export (the library's own default is intra only)
     const char* inPath = argv[2];
     cfg.width = std::atoi(argv[3]);
     cfg.height = std::atoi(argv[4]);
