@@ -1963,7 +1963,12 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
                                    QString(R"([{"op":"place","media":"%1","at":0,"in":2000000000,"duration":2000000000,"track":"V1"}])"),
                                    QString(R"([{"op":"place","media":"%1","at":2000000000,"duration":10,"track":"V1"}])"),
                                    QString(R"([{"op":"append","media":"%1","duration":2000000000}])"),
-                                   QString(R"([{"op":"keep","media":"%1","at":1073741800,"ranges":[[0,10],[0,100]]}])")}) {
+                                   QString(R"([{"op":"keep","media":"%1","at":1073741800,"ranges":[[0,10],[0,100]]}])"),
+                                   // longer than 2^29 frames (a project file keeps no longer clip)
+                                   QString(R"([{"op":"place","media":"%1","at":0,"duration":536870913,"track":"V3"}])"),
+                                   // a still's in lies inside its few frames: in 600 million with 24 frames is a
+                                   // clip of 600 million frames
+                                   QString(R"([{"op":"place","media":"%1","at":0,"in":600000000,"duration":24,"track":"V3"}])")}) {
             CHECK_EQ(errorOf("edit", {{"project", proj}, {"ops", ops.arg(still)}}), QString("BAD_ARGUMENT"));
             QFile f(proj);
             CHECK(f.open(QIODevice::ReadOnly) && f.readAll() == before);
@@ -1976,6 +1981,8 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
             CHECK_EQ(placed[0]["end"].toInt(), 1073741824);
             CHECK_EQ(run("info", {{"project", proj}})["timeline"]["tracks"][1]["clips"][0]["end"].toInt(), 1073741824);
         }
+        run("edit", {{"project", proj}, {"ops", QString(R"([{"op":"place","media":"%1","at":0,"duration":536870912,"track":"V3"}])").arg(still)}});
+        CHECK_EQ(run("info", {{"project", proj}})["timeline"]["tracks"][2]["clips"][0]["end"].toInt(), 536870912);
     }
     // Subtitles only (format srt/vtt): the same checks as a video render - the extension must fit, and no subtitle
     // file may replace a source file of the project (it wrote SRT text over the clip with overwrite)

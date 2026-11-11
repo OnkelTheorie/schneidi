@@ -213,15 +213,28 @@ void sourceRange(Session& s, const QJsonObject& op, const MediaInfo& m, int* in,
     if (*in >= *out) fail("BAD_ARGUMENT", QString("empty source range %1..%2 (media has %3 frames)").arg(*in).arg(*out).arg(m.length));
 }
 
-// The source range [in, out) placed at `at` must end within kMaxFrame on the timeline. Its length as
-// Editor::placeSourceRange makes it (material frames at this speed; a still has none), in double: no overflow here
+// The source range [in, out) placed at `at` must fit what a project file keeps: the clip's end on the timeline and its
+// material in/out within kMaxFrame, its length at most kMaxLength (ProjectFile clamps longer ones on loading). Its
+// in and length as Editor::placeSourceRange makes them (in/out clamped to the media, material frames at this speed; a
+// still has none), in double: no overflow here
+constexpr double kMaxLength = double(1 << 29);
+
 void checkPlacedEnd(int at, int in, int out, double speed, const MediaInfo& m)
 {
     if (m.isImage || speed <= 0) speed = 1.0;
+    const double first = std::clamp<double>(in, 0, std::max(0, m.length - 1));
+    const double last = m.isImage ? std::max<double>(out - 1, first) : std::clamp<double>(out - 1, first, std::max(0, m.length - 1));
     const auto material = [speed](double f) { return std::max(0.0, std::ceil(f / speed - 1e-6)); };
-    const double end = double(std::max(0, at)) + std::max(1.0, material(out) - material(in));
+    const double sIn = material(first), len = std::max(1.0, material(last + 1) - sIn);
+    const double end = double(std::max(0, at)) + len;
+    if (len > kMaxLength)
+        fail("BAD_ARGUMENT", QString("the clip would be %1 frames long, more than the limit of %2")
+                                 .arg(len, 0, 'f', 0).arg(kMaxLength, 0, 'f', 0));
     if (end > double(kMaxFrame))
         fail("BAD_ARGUMENT", QString("the clip would end at frame %1, beyond the limit of %2").arg(end, 0, 'f', 0).arg(kMaxFrame));
+    if (sIn + len - 1 > double(kMaxFrame)) // a very slow speed: material frames beyond what a project keeps
+        fail("BAD_ARGUMENT", QString("at speed %1 the source range reaches material frame %2, beyond the limit of %3")
+                                 .arg(speed).arg(sIn + len - 1, 0, 'f', 0).arg(kMaxFrame));
 }
 
 // "ST1" or 1 -> subtitle track index; missing = -1 (the visible track)
