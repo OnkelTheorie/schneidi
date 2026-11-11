@@ -40,6 +40,7 @@
 #include "core/TimelineOps.h"
 #include "engine/AudioAnalysis.h"
 #include "engine/Engine.h"
+#include "engine/video/Hardware.h"
 #include "engine/GradedThumbs.h"
 #include "engine/MediaCache.h"
 #include "engine/ClipFormat.h"
@@ -114,6 +115,9 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
 {
     setWindowTitle(appName());
     resize(1600, 950);
+    // The graphics card's decoder opens while the window is built (CUDA: 100-250 ms), not when the first picture of a
+    // project waits for it. Not without a screen (tests, --screenshot): nothing plays there.
+    if (QGuiApplication::platformName() != QLatin1String("offscreen")) Video::Hardware::warmUp();
     m_aiSettings = AiSettings::load(); // Settings › AI (MainWindowSettings.cpp)
     m_viewerRes = PreviewResolution::stored(PreviewResolution::Target::Viewer, m_engine->frameSize());
     m_monitorRes = PreviewResolution::stored(PreviewResolution::Target::Monitor, m_engine->frameSize());
