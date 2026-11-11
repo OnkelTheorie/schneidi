@@ -6,6 +6,7 @@
 // and tooltip, the right-click actions (loop playback in the range). RULER_SHOT_DIR=<dir> saves a picture of the
 // ruler (RULER_LANG=de/ru).
 #include "check.h"
+#include "timeline_guard.h"
 
 #include "app/Theme.h"
 #include "core/Editor.h"
@@ -92,6 +93,7 @@ constexpr int kUpperY = TimelineView::kRulerH - 13; // upper half of the bar: sc
 
 struct Fixture {
     Project project;
+    TimelineGuard guard_project{project};
     Selection sel;
     Editor editor{&project, &sel};
     TimelineView tv{&editor};

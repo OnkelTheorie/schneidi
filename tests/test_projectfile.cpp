@@ -3,6 +3,7 @@
 // all values come back unchanged (also fields that would be lost on the first save).
 // Also: moved project folder (relative paths), invalid/too new files.
 #include "check.h"
+#include "timeline_guard.h"
 
 #include "core/EffectRegistry.h"
 #include "core/Interchange.h"
@@ -668,6 +669,85 @@ int main(int argc, char** argv)
             CHECK(!opened(words, p).isEmpty());
             if (CHECK(p.media().size() == 1 && p.media()[0].transcripts.size() == 1))
                 CHECK(p.media()[0].transcripts[0].words.value(0).from == qint64(1) << 50);
+        }
+        // Clips with the same id or none, clips lying over each other on a track (edited by hand or by an AI): every
+        // clip gets an id of its own - above every id of the project, also those of timelines read later (a cue's new
+        // id once could be one of them) - and one lying over another moves to the first free track above at the same
+        // time (nothing is lost, its partner moves the same way and stays in sync)
+        {
+            Project p;
+            const QByteArray json = R"({"app":"schneidi","media":[{"name":"a.mp4","path":"/m/a.mp4","hasVideo":true,
+                "hasAudio":true,"length":300}],"timeline":{
+                "video":[{"clips":[{"id":1,"media":0,"start":0,"in":0,"out":99,"link":1},
+                                   {"id":1,"media":0,"start":50,"in":0,"out":99,"link":2},
+                                   {"media":0,"start":200,"in":0,"out":9}]}],
+                "audio":[{"clips":[{"id":2,"media":0,"start":0,"in":0,"out":99,"link":1},
+                                   {"id":2,"media":0,"start":50,"in":0,"out":99,"link":2}]}],
+                "subtitles":[{"cues":[{"id":2,"start":0,"end":10,"text":"a"}]}]},
+                "sequences":[{"id":7,"name":"B","timeline":{"video":[{"clips":[{"id":3,"media":0,"start":0,"in":0,"out":9}]}]}}],
+                "lastClipId":2})";
+            CHECK(!opened(json, p).isEmpty());
+            QSet<int> ids;
+            int clips = 0;
+            for (const Sequence& s : p.sequences()) {
+                CHECK_TIMELINE(s.timeline);
+                for (const auto* tracks : {&s.timeline.video, &s.timeline.audio})
+                    for (const Track& t : *tracks)
+                        for (const Clip& c : t.clips) {
+                            CHECK(!ids.contains(c.id));
+                            ids.insert(c.id);
+                            ++clips;
+                        }
+                for (const SubtitleTrack& t : s.timeline.subtitles)
+                    for (const SubtitleCue& c : t.cues) CHECK(!ids.contains(c.id)), ids.insert(c.id);
+            }
+            CHECK_EQ(clips, 6);
+            const Timeline& tl = p.timeline();
+            CHECK_EQ(Check::dump(tl), QString("V1: a[0-100|0-99] a[200-210|0-9]  V2: a[50-150|0-99]  A1: a[0-100|0-99]  "
+                                              "A2: a[50-150|0-99]"));
+            if (CHECK(tl.video.size() == 2 && tl.audio.size() == 2)) {
+                CHECK_EQ(tl.video[0].clips[0].id, 1); // the first one keeps its id
+                CHECK_EQ(tl.video[1].clips.value(0).linkId, tl.audio[1].clips.value(0).linkId);
+            }
+            // New ids come after every id there was: a new clip does not take one either
+            const int next = p.newClipId();
+            CHECK(next > *std::max_element(ids.cbegin(), ids.cend()));
+            CHECK(stable(json));
+        }
+        // ... not onto a track that plays otherwise (muted, other volume, locked) - a new track with the settings of its
+        // own; in a multicam clip always a new track (the angles point at tracks: another one is another camera)
+        {
+            Project p;
+            const QByteArray json = R"({"app":"schneidi","media":[{"name":"a.mp4","path":"/m/a.mp4","hasVideo":true,
+                "hasAudio":true,"length":300}],"timeline":{"video":[{"clips":[]}],
+                "audio":[{"volumeDb":-6,"clips":[{"id":1,"media":0,"start":0,"in":0,"out":99},
+                                                 {"id":2,"media":0,"start":50,"in":0,"out":99}]},
+                         {"muted":true,"clips":[]},{"locked":true,"clips":[]},{"volumeDb":-3,"clips":[]}]}})";
+            CHECK(!opened(json, p).isEmpty());
+            const Timeline& tl = p.timeline();
+            CHECK_TIMELINE(tl);
+            if (CHECK_EQ(int(tl.audio.size()), 5)) {
+                CHECK_EQ(Check::dump(tl), QString("V1:  A1: a[0-100|0-99]  A2:  A3:  A4:  A5: a[50-150|0-99]"));
+                CHECK_EQ(tl.audio[4].volumeDb, -6.0);
+                CHECK(!tl.audio[4].muted && !tl.audio[4].locked);
+            }
+            // A track above that plays the same way is taken
+            const QByteArray same = R"({"app":"schneidi","media":[{"name":"a.mp4","path":"/m/a.mp4","hasVideo":true,
+                "hasAudio":true,"length":300}],"timeline":{"video":[{"clips":[{"id":1,"media":0,"start":0,"in":0,"out":99},
+                {"id":2,"media":0,"start":50,"in":0,"out":99}]},{"clips":[]}],"audio":[{"clips":[]}]}})";
+            CHECK(!opened(same, p).isEmpty());
+            CHECK_EQ(Check::dump(p.timeline()), QString("V1: a[0-100|0-99]  V2: a[50-150|0-99]  A1:"));
+            // Multicam: V2 is the second camera - the clip goes to a new track
+            const QByteArray multicam = R"({"app":"schneidi","media":[{"name":"a.mp4","path":"/m/a.mp4","hasVideo":true,
+                "hasAudio":true,"length":300}],"currentSequence":1,"sequences":[{"id":1,"name":"T"},
+                {"id":2,"multicam":true,"angles":[{"name":"A","video":0,"audio":[]},{"name":"B","video":1,"audio":[]}],
+                 "timeline":{"video":[{"clips":[{"id":1,"media":0,"start":0,"in":0,"out":99},
+                 {"id":2,"media":0,"start":50,"in":0,"out":99}]},{"clips":[]}],"audio":[{"clips":[]}]}}]})";
+            CHECK(!opened(multicam, p).isEmpty());
+            if (const Sequence* m = p.sequence(2); CHECK(m)) {
+                CHECK_TIMELINE(m->timeline);
+                CHECK_EQ(Check::dump(m->timeline), QString("V1: a[0-100|0-99]  V2:  V3: a[50-150|0-99]  A1:"));
+            }
         }
         // A still frame before the file's start: its first frame (was saved without it and came back as `in`)
         {

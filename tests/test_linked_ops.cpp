@@ -4,6 +4,7 @@
 // takes its sound along as before; 'speed' with freeze:true stops the named picture and its linked sound plays on in
 // sync (linked:true: silent too), each with a note saying what happened to the partners.
 #include "check.h"
+#include "timeline_guard.h"
 
 #include "cli/Commands.h"
 #include "core/ProjectFile.h"
@@ -41,6 +42,7 @@ Timeline load()
     ProjectData d;
     QString error;
     ProjectFile::load(g_project, &d, &error);
+    CHECK_TIMELINE(d.timeline);
     return d.timeline;
 }
 

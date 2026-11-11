@@ -5,6 +5,7 @@
 // subtitle text streams in exported MP4/MKV/WebM (read back with libavformat).
 
 #include "render_check.h"
+#include "timeline_guard.h"
 
 #include "cli/Commands.h"
 #include "cli/CommandsDetail.h"
@@ -209,6 +210,7 @@ void testEdits()
     CHECK_EQ(wordsOf(o.cues[0]), QString("100-118:a@0-5 bb@5-10"));
     // Editor: trimming the start keeps the words where they are spoken; moving keeps them with the cue
     Project p;
+    TimelineGuard guard_p{p};
     Selection sel;
     Editor ed(&p, &sel);
     SubtitleCue c = cue(100, 150, "a bb ccc", {{0, 5}, {5, 10}, {20, 30}});
@@ -366,6 +368,7 @@ void testResetTrackStyle()
     std::printf("reset track style\n");
     for (CaptionMode mode : {CaptionMode::Karaoke, CaptionMode::Word}) {
         Project p;
+        TimelineGuard guard_p{p};
         Selection sel;
         Editor ed(&p, &sel);
         const int index = ed.addCaptions({cue(0, 25, "hello there")}, "Words", CaptionStyle{mode});

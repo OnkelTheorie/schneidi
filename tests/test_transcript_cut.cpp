@@ -3,6 +3,7 @@
 // words and pauses (ripple, one undo step), the panel itself with its bindable cut keys and the transcripts in the
 // project file.
 #include "check.h"
+#include "timeline_guard.h"
 
 #include "app/InputBindings.h"
 #include "app/Theme.h"
@@ -53,6 +54,7 @@ Clip clip(int id, int start, int in, int out, int link = 0)
 
 struct Fixture {
     Project project;
+    TimelineGuard guard_project{project};
     Selection sel;
     Editor editor{&project, &sel};
     Fixture()

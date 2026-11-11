@@ -5,6 +5,7 @@
 // ripple, transitions, copy). Flatten turns segments into the angle's own clips. Resync inside the multicam
 // sequence, renaming/adding angles, protections, project file (also broken files) and a long undo chain.
 #include "check.h"
+#include "timeline_guard.h"
 
 #include "core/Editor.h"
 #include "core/EffectRegistry.h"
@@ -95,6 +96,7 @@ QVector<Multicam::Angle> threeAngles()
 
 struct Fixture {
     Project p;
+    TimelineGuard guard_p{p};
     Selection sel;
     Editor ed{&p, &sel};
     QUndoStack* undo = p.undoStack();
@@ -452,6 +454,7 @@ void testSegmentsBehaveLikeNormalClips()
     f.undo->undo();
 
     // Move: shows the same sequence frames elsewhere
+    f.guard_p.allowSlip({middle}); // the picture alone
     f.ed.moveClips({middle}, 2000, TrackKind::Video, 0);
     const Clip* moved = TimelineOps::findClip(f.p.timeline(), middle);
     CHECK(moved && moved->start == 2300 && moved->in == 300 && moved->angle == 1);
@@ -734,6 +737,7 @@ void testProjectFileRoundTrip()
     QString err;
     if (!CHECK(ProjectFile::fromJson(j, "/x/p.schneidi", &back, &err))) return;
     Project q;
+    TimelineGuard guard_q{q};
     q.load(back);
     const Sequence* s = q.sequence(seq);
     if (!CHECK(s && s->multicam)) return;
@@ -763,6 +767,7 @@ void testProjectFileRepairsBrokenMulticam()
             s.angles[2].audioTracks = {2, 7};
         }
     Project q;
+    TimelineGuard guard_q{q};
     q.load(d);
     CHECK(q.sequence(seq)->angles.value(2) == (MulticamAngle{"P3", -1, {2}}));
     CHECK_EQ(clipOn(q.timeline(), TrackKind::Video, 0, 1)->angle, 0);
@@ -771,12 +776,14 @@ void testProjectFileRepairsBrokenMulticam()
     ProjectData missing = f.p.data();
     missing.sequences.removeIf([&](const Sequence& s) { return s.id == seq; });
     Project r;
+    TimelineGuard guard_r{r};
     r.load(missing);
     CHECK_EQ(mdump(r.timeline()).count("M"), 0);
     ProjectData plain = f.p.data();
     for (Sequence& s : plain.sequences)
         if (s.id == seq) s.multicam = false;
     Project t;
+    TimelineGuard guard_t{t};
     t.load(plain);
     CHECK_EQ(mdump(t.timeline()).count("M"), 0);
 }

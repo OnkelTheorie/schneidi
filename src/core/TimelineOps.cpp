@@ -264,8 +264,11 @@ void cutCopiesLikeBases(const Timeline& before, Timeline& after, const IdGen& ne
 void clearRange(Track& track, int start, int end, const IdGen& newId)
 {
     if (end <= start) return;
+    // Nothing there: the track stays untouched (read-only, undo snapshots share its clips)
+    const QVector<Clip>& clips = std::as_const(track.clips);
+    if (std::none_of(clips.cbegin(), clips.cend(), [&](const Clip& c) { return c.end() > start && c.start < end; })) return;
     QVector<Clip> result;
-    for (const Clip& c : track.clips) {
+    for (const Clip& c : clips) {
         if (c.end() <= start || c.start >= end) { // no overlap
             result << c;
             continue;
@@ -349,11 +352,12 @@ void shiftFrom(Track& track, int frame, int delta)
 
 void clearDissolveAt(Track& track, int frame)
 {
-    for (int i = 0; i + 1 < track.clips.size(); ++i) {
-        Clip& a = track.clips[i];
-        Clip& b = track.clips[i + 1];
-        if (a.end() == frame && isDissolve(a, b)) a.transOut = b.transIn = 0;
-    }
+    // Read first, written only where there is one (undo snapshots share the clips of the other tracks)
+    for (qsizetype i = 0; i + 1 < track.clips.size(); ++i)
+        if (const Clip& a = std::as_const(track.clips)[i]; a.end() == frame && isDissolve(a, std::as_const(track.clips)[i + 1])) {
+            track.clips[i].transOut = 0;
+            track.clips[i + 1].transIn = 0;
+        }
 }
 
 QVector<int> splitAt(Timeline& tl, const QVector<int>& clipIds, int frame,
@@ -400,7 +404,7 @@ void ensureTracks(Timeline& tl, TrackKind kind, int count)
 
 void rippleDelete(Timeline& tl, const QVector<int>& clipIds)
 {
-    // deleted ranges of all tracks combined -> offset for the other tracks
+    // Deleted ranges of all tracks combined
     const QVector<TrackRef> edited = tracksOf(tl, clipIds);
     QVector<QPair<int, int>> ranges;
     for (int id : clipIds)
@@ -411,27 +415,47 @@ void rippleDelete(Timeline& tl, const QVector<int>& clipIds)
         if (!merged.isEmpty() && r.first <= merged.last().second) merged.last().second = std::max(merged.last().second, r.second);
         else merged << r;
     }
-    QVector<QPair<int, int>> shifts;
-    for (const auto& r : merged) shifts << qMakePair(r.second, r.first - r.second);
-
-    for (TrackKind k : {TrackKind::Video, TrackKind::Audio}) {
-        for (auto& t : tl.tracks(k)) {
-            QVector<QPair<int, int>> gaps; // deleted ranges [start, end)
-            QVector<Clip> kept;
-            for (const Clip& c : t.clips) {
-                if (clipIds.contains(c.id)) gaps << qMakePair(c.start, c.end());
-                else kept << c;
+    // What stays on the affected tracks
+    QVector<QVector<Clip>> kept;
+    QVector<QPair<int, int>> covered; // [start, end) of the clips that stay, all affected tracks
+    for (const TrackRef& ref : edited) {
+        QVector<Clip> rest;
+        for (const Clip& c : std::as_const(tl).track(ref).clips)
+            if (!clipIds.contains(c.id)) {
+                rest << c;
+                covered << qMakePair(c.start, c.end());
             }
-            if (gaps.isEmpty()) continue;
-            for (Clip& c : kept) {
-                int shift = 0;
-                for (const auto& g : gaps)
-                    if (g.second <= c.start) shift += g.second - g.first;
-                c.start -= shift;
-            }
-            t.clips = kept;
-            sortTrack(t);
+        kept << rest;
+    }
+    std::sort(covered.begin(), covered.end());
+    // The time taken out: the deleted time where nothing stays on any affected track. Every track moves up by it
+    // together (the others in rippleTracks): each affected track by only its own gaps took linked clips apart (two
+    // clips deleted on different tracks at different times), and taking out time where a clip stays on another
+    // affected track (an L-cut: the sound of the deleted clip under the next picture) moved that clip against its
+    // sound. Nothing on the affected tracks lies in that time, so none of their clips can run into another.
+    QVector<QPair<int, int>> shifts; // (end of the time taken out, minus its length)
+    for (const auto& r : merged) {
+        int from = r.first;
+        for (const auto& c : std::as_const(covered)) {
+            if (c.second <= from || c.first >= r.second) continue;
+            if (c.first > from) shifts << qMakePair(c.first, from - c.first);
+            from = std::max(from, c.second);
+            if (from >= r.second) break;
         }
+        if (from < r.second) shifts << qMakePair(r.second, from - r.second);
+    }
+    // Only the affected tracks are written here (undo snapshots share the rest)
+    for (qsizetype i = 0; i < edited.size(); ++i) {
+        QVector<Clip>& rest = kept[i];
+        for (Clip& c : rest) {
+            int d = 0;
+            for (const auto& s : std::as_const(shifts))
+                if (s.first <= c.start) d += s.second;
+            c.start += d;
+        }
+        Track& t = tl.track(edited[i]);
+        t.clips = rest;
+        sortTrack(t);
     }
     rippleTracks(tl, shifts, edited);
 }

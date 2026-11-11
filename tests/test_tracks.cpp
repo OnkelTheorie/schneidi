@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Test tracks: add/delete, lock, rename, color, ripple across all unlocked tracks, track header operation (offscreen)
 #include "check.h"
+#include "timeline_guard.h"
 
 #include "core/Editor.h"
 #include "core/I18n.h"
@@ -37,6 +38,7 @@ static const Clip* F(const Project& p, int id) { return TimelineOps::findClip(p.
 static void setup(Project& p)
 {
     p.reset();
+    while (p.newClipId() < 100) {} // the clips below get their ids by hand: new ones (titles, cues) above them
     p.addMedia({"/x/a.mp4", "a.mp4", 1000, true, true, false});
     p.addMedia({"/x/m.mp3", "m.mp3", 1000, false, true, false});
     p.edit("setup", [](Timeline& tl) {
@@ -52,6 +54,7 @@ int main(int argc, char** argv)
     QApplication app(argc, argv);
     Check::initApp("tracks");
     Project p;
+    TimelineGuard guard_p{p};
     Selection sel;
     Editor ed(&p, &sel);
 
@@ -101,6 +104,37 @@ int main(int argc, char** argv)
     setup(p);
     ed.setClipSpeed({1}, {0.5, false, false, true}, true);
     CHECK(F(p, 1)->length() == 200 && F(p, 2)->start == 200 && F(p, 22)->start == 350);
+    // Two unlinked clips on different tracks at different times twice as fast: every track moves up by both (V1 by
+    // its own clip only took x apart from its sound on A1)
+    setup(p);
+    p.edit("x", [](Timeline& tl) {
+        tl.video[0].clips = {mk(31, 0, 100), mk(32, 100, 100, 5), mk(33, 500, 100, 6)};
+        tl.audio[0].clips = {mk(41, 100, 100, 5), mk(42, 300, 100, 0, "/x/m.mp3"), mk(43, 500, 100, 6)};
+        tl.audio[1].clips = {mk(51, 700, 100, 0, "/x/m.mp3")};
+    });
+    ed.setClipSpeed({31, 42}, {2.0, false, false, true}, true);
+    CHECK_EQ(Check::dump(p.timeline()), QString("V1: a[0-50|0-49] a[50-150|0-99] a[400-500|0-99]  V2:  "
+                                                "A1: a[50-150|0-99] m[250-300|0-49] a[400-500|0-99]  A2: m[600-700|0-99]"));
+
+    // A dissolve on a retimed track that the speed change pushes apart (A stays, B moves with V1's longer clip): it is
+    // released, not left as a fade out and a fade in
+    setup(p);
+    p.edit("x", [](Timeline& tl) {
+        tl.video[0].clips = {mk(31, 0, 100)};
+        while (tl.video.size() < 2) tl.video << Track{};
+        Clip a = mk(32, 60, 40), b = mk(33, 100, 50, 0), q = mk(34, 200, 50);
+        a.in = b.in = 300;
+        a.out = 339;
+        b.out = 349;
+        a.transOut = b.transIn = 10;
+        tl.video[1].clips = {a, b, q};
+        tl.audio[0].clips.clear();
+        tl.audio[1].clips.clear();
+    });
+    ed.setClipSpeed({31, 34}, {0.5, false, false, true}, true);
+    CHECK_EQ(F(p, 33)->start, 200);
+    CHECK(F(p, 32)->transOut == 0 && F(p, 33)->transIn == 0);
+    CHECK_EQ(F(p, 34)->start, 300);
 
     // --- Lock: nothing changeable, not selectable
     setup(p);

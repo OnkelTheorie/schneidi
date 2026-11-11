@@ -2,6 +2,7 @@
 // Test undo/redo chain: many editor operations in a row (each must create an undo step), then everything
 // back = initial state, everything forward = final state; each intermediate step is compared via JSON (project file).
 #include "check.h"
+#include "timeline_guard.h"
 
 #include "core/EffectRegistry.h"
 #include "core/Editor.h"
@@ -59,6 +60,7 @@ void testBrokenDissolves()
     for (int scenario = 0; scenario < 3; ++scenario) {
         fileLen = scenario == 2 ? 130 : 250; // reversed: A (0..99) then has no material left behind it
         Project p;
+        TimelineGuard guard_p{p};
         Selection sel;
         Editor ed(&p, &sel);
         setup(p, sel, ed);
@@ -78,6 +80,7 @@ void testBrokenDissolves()
     {
         fileLen = 250;
         Project p;
+        TimelineGuard guard_p{p};
         Selection sel;
         Editor ed(&p, &sel);
         setup(p, sel, ed);
@@ -104,6 +107,7 @@ void testFadesStayApart()
     auto len = [](const Clip& c) { return c.retimedLength(250); };
     auto spans = [&](const Project& p) { return TimelineOps::transitions(p.timeline().video[0], len); };
     Project p;
+    TimelineGuard guard_p{p};
     Selection sel;
     Editor ed(&p, &sel);
     p.addMedia({"/x/a.mp4", "a.mp4", 250, true, false, false});
@@ -161,6 +165,7 @@ void testFadesStayApart()
 void testFadeAfterTrim()
 {
     Project p;
+    TimelineGuard guard_p{p};
     Selection sel;
     Editor ed(&p, &sel);
     p.addMedia({"/x/a.mp4", "a.mp4", 250, true, false, false});
@@ -177,6 +182,7 @@ void testFadeAfterTrim()
 void testTransitionTrimClips()
 {
     Project p;
+    TimelineGuard guard_p{p};
     Selection sel;
     Editor ed(&p, &sel);
     p.addMedia({"/x/a.mp4", "a.mp4", 250, true, true, false});
@@ -227,6 +233,7 @@ void testTransitionTrimClips()
 void testTransitionTrimWantedLength()
 {
     Project p;
+    TimelineGuard guard_p{p};
     Selection sel;
     Editor ed(&p, &sel);
     p.addMedia({"/x/a.mp4", "a.mp4", 250, true, true, false});
@@ -279,6 +286,7 @@ void testTransitionTrimWantedLength()
 
     // Two clips without spare material, centred 12 frames: 6 frames off each, the timeline 12 frames shorter
     Project q;
+    TimelineGuard guard_q{q};
     Selection sel2;
     Editor ed2(&q, &sel2);
     q.addMedia({"/x/a.mp4", "a.mp4", 250, true, false, false});
@@ -297,6 +305,69 @@ void testTransitionTrimWantedLength()
     CHECK_EQ(qlen, 12);
 }
 
+// Undo memory: speed (with ripple), speed points and delete range write only the tracks they change - the others share
+// their clips (and the subtitle tracks their cues) with the step before; a copy of every track per step cost 0.3 MB
+// instead of 40 KB at 500 clips (tests/bench_undo). Undo and redo still give exactly the states.
+void testUndoSharesUntouchedTracks()
+{
+    Project p;
+    TimelineGuard guard_p{p};
+    Selection sel;
+    Editor ed(&p, &sel);
+    p.addMedia({"/x/a.mp4", "a.mp4", 400, true, true, false});
+    p.addMedia({"/x/m.wav", "m.wav", 900, false, true, false});
+    ed.addSubtitleTrack();
+    int v = 0;
+    p.edit("setup", [&](Timeline& tl) {
+        tl.subtitles[0].cues = {SubtitleCue{p.newClipId(), 0, 40, "before everything"}};
+        while (tl.audio.size() < 3) tl.audio << Track{TrackKind::Audio};
+        Clip c;
+        c.id = v = p.newClipId();
+        c.mediaPath = "/x/a.mp4";
+        c.start = 100;
+        c.out = 99;
+        c.linkId = p.newLinkId();
+        tl.video[0].clips << c;
+        c.id = p.newClipId();
+        tl.audio[0].clips << c;
+        Clip m;
+        m.id = p.newClipId();
+        m.mediaPath = "/x/m.wav";
+        m.out = 349; // [0, 350): across the edit points, its track cannot move (stays as it is)
+        tl.audio[1].clips << m;
+        m.id = p.newClipId();
+        m.out = 49; // [0, 50): before everything
+        tl.audio[2].clips << m;
+    });
+    // A2 is untouched by the speed changes only (a delete range cuts it)
+    const auto shared = [](const Timeline& a, const Timeline& b, const char* what, bool a2) {
+        const bool ok = (!a2 || a.audio[1].clips.constData() == b.audio[1].clips.constData())
+                        && a.audio[2].clips.constData() == b.audio[2].clips.constData()
+                        && a.subtitles[0].cues.constData() == b.subtitles[0].cues.constData();
+        if (!ok) std::printf("       %s: untouched tracks copied\n", what);
+        return ok;
+    };
+    const auto exact = [&](const Timeline& before, const char* what) {
+        const Timeline after = p.timeline();
+        CHECK(!(after == before));
+        p.undoStack()->undo();
+        if (!CHECK(p.timeline() == before)) std::printf("       %s: undo\n", what);
+        p.undoStack()->redo();
+        if (!CHECK(p.timeline() == after)) std::printf("       %s: redo\n", what);
+    };
+    const auto check = [&](const char* what, bool a2, const std::function<void()>& op) {
+        const Timeline before = p.timeline();
+        op();
+        CHECK(shared(before, p.timeline(), what, a2));
+        exact(before, what);
+    };
+    check("speed with ripple", true, [&] { ed.setClipSpeed({v}, {2.0, false, false, true}, true); });
+    check("speed point", true, [&] { ed.addSpeedPoint(v, 120); });
+    check("speed of a section", true, [&] { ed.setSegmentSpeed(v, 1, 0.5); });
+    check("delete range", false, [&] { ed.deleteRange(110, 115, false); });
+    check("delete range with ripple", false, [&] { ed.deleteRange(125, 130, true); });
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -308,8 +379,10 @@ int main(int argc, char** argv)
     testFadeAfterTrim();
     testTransitionTrimClips();
     testTransitionTrimWantedLength();
+    testUndoSharesUntouchedTracks();
 
     Project p;
+    TimelineGuard guard_p{p};
     Selection sel;
     Editor ed(&p, &sel);
     using namespace TimelineOps;
@@ -394,6 +467,9 @@ int main(int argc, char** argv)
     step("Marken löschen", [&] { ed.clearMarks(); });
     step("Quelle einfügen F9", [&] { ed.sourceEdit(Editor::SourceEditMode::Insert, "/x/b.mp4", 0, 20); });
     step("Quelle überschreiben F10", [&] { ed.sourceEdit(Editor::SourceEditMode::Overwrite, "/x/a.mp4", 0, 600); });
+    // Only the picture of a linked clip (its sound on A1 blocks A1's ripple): the clips after it come apart from their
+    // sound on purpose here; the guard checks the structure from now on
+    guard_p.stopSyncCheck();
     step("Ripple-Löschen", [&] { sel.set({V(p, 0, 1)}); ed.rippleDeleteSelection(); });
     step("Löschen", [&] { sel.set({A(p, 1, 0)}); ed.deleteSelection(); });
     step("Verknüpfen lösen", [&] { sel.set({V(p, 0, 0)}); ed.toggleLinkSelection(); });
@@ -460,6 +536,7 @@ int main(int argc, char** argv)
     // sorted, toggling again removes; markers that came unsorted (an imported timeline) are sorted first
     {
         Project q;
+        TimelineGuard guard_q{q};
         q.undoStack()->setUndoLimit(1); // as in schneidi-cli (every step keeps a snapshot of all markers)
         Selection s;
         Editor e(&q, &s);

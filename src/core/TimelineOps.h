@@ -86,8 +86,9 @@ void clearDissolveAt(Track& track, int frame);
 // Creates missing tracks until there are `count` tracks of the kind (names V3, A3, ...).
 void ensureTracks(Timeline& tl, TrackKind kind, int count);
 
-// Deletes clips with ripple: on the affected tracks everything following moves up (like Shift+Del in DaVinci),
-// the other unlocked tracks move along by the deleted ranges (rippleTracks).
+// Deletes clips with ripple: every unlocked track moves up by the deleted time where nothing stays on any affected
+// track (the others via rippleTracks), so linked clips stay in sync (an L-cut's sound under the next picture keeps
+// that time).
 void rippleDelete(Timeline& tl, const QVector<int>& clipIds);
 
 // Splits the clips at frame `frame`. Right halves get new IDs; linked

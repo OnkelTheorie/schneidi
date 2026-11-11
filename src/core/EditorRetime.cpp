@@ -24,6 +24,52 @@
 
 using EditorDetail::fitTransitions;
 
+namespace {
+
+// A track with retimed clips: its clips with the new lengths at their old places, and its length changes (old end ->
+// offset)
+struct RetimedTrack {
+    TrackRef ref;
+    QVector<Clip> clips;
+    QVector<QPair<int, int>> own;
+};
+
+// Ripple after retiming: the retimed tracks move by all length changes together, like the other tracks
+// (rippleTracks) - each by only its own changes took linked clips apart (two clips on different tracks at different
+// times). If that does not fit on one of them (a clip there lies across a change on another track and would run into
+// its neighbor), each one moves by its own changes, as before. Writes only these tracks (undo snapshots share the rest).
+void rippleRetimed(Timeline& tl, const QVector<RetimedTrack>& tracks, const QVector<QPair<int, int>>& shifts)
+{
+    const auto moved = [](QVector<Clip> clips, const QVector<QPair<int, int>>& by) {
+        for (qsizetype i = 0; i < clips.size(); ++i) {
+            int d = 0;
+            for (const auto& s : by)
+                if (s.first <= std::as_const(clips)[i].start) d += s.second;
+            if (d) clips[i].start += d;
+        }
+        return clips;
+    };
+    const auto fits = [](const QVector<Clip>& clips) {
+        for (qsizetype i = 0; i < clips.size(); ++i)
+            if (clips[i].start < (i ? clips[i - 1].end() : 0)) return false;
+        return true;
+    };
+    QVector<QVector<Clip>> joint;
+    bool together = true;
+    for (const RetimedTrack& t : tracks) {
+        joint << moved(t.clips, shifts);
+        together = together && fits(joint.last());
+    }
+    QVector<TrackRef> edited;
+    for (qsizetype i = 0; i < tracks.size(); ++i) {
+        tl.track(tracks[i].ref).clips = together ? joint[i] : moved(tracks[i].clips, tracks[i].own);
+        edited << tracks[i].ref;
+    }
+    TimelineOps::rippleTracks(tl, shifts, edited);
+}
+
+} // namespace
+
 void Editor::setFrameInterpolation(const QVector<int>& ids, FrameInterp mode)
 {
     QVector<int> targets;
@@ -43,79 +89,79 @@ void Editor::setClipSpeed(const QVector<int>& ids, const Retime& r, bool ripple)
     if (all.isEmpty() || r.speed <= 0) return;
     m_project->edit(T("Geschwindigkeit ändern"), [&](Timeline& tl) {
         QSet<int> touched;
-        const QVector<TrackRef> edited = TimelineOps::tracksOf(tl, all);
-        QVector<QPair<int, int>> shifts; // ripple for the other tracks (from old end, length change)
-        for (TrackKind k : {TrackKind::Video, TrackKind::Audio})
-            for (Track& t : tl.tracks(k)) {
-                // from the back, so ripple shifts do not distort each other
-                for (int i = t.clips.size() - 1; i >= 0; --i) {
-                    Clip& c = t.clips[i];
-                    if (!all.contains(c.id) || c.isTitle()) continue;
-                    const MediaInfo* m = m_project->mediaInfo(c.mediaPath);
-                    if (!m || m->isImage || m->length <= 0) continue;
-                    const int L = m->length;
-                    // Constant speed replaces a speed ramp (like DaVinci "Change Clip Speed")
-                    Clip n = c;
-                    n.speed = r.speed;
-                    n.reverse = r.reverse;
-                    n.freeze = r.freeze;
-                    n.ramp.clear();
-                    const RetimeMap oldMap(c, L), newMap(n, L);
-                    // Section in file frames (a = start of the clip, b = end, a > b when reversed)
-                    const int a = oldMap.pictureFrame(c.in);
-                    const int b = oldMap.pictureFrame(c.out);
-                    const bool flip = r.reverse != c.reverse;
-                    // New start: same file frame; on direction change the same piece reversed
-                    const int startFile = flip ? b : a;
-                    const int avail = std::max(1, int(L / r.speed));
-                    // The first material frame whose picture is that file frame (rounding could land one before it:
-                    // a flash of the previous frame at the cut)
-                    const int newIn = std::clamp(newMap.materialForPicture(startFile), 0, avail - 1);
-                    const int oldLen = c.length();
-                    int newLen = oldLen;
-                    if (ripple && !r.freeze && !c.freeze) {
-                        // The same file time [t0, t1) (speed ramps included): up to the last frame starting before its
-                        // end (rounding the source span / speed could show a picture beyond the old out-point)
-                        const double s0 = oldMap.sourceAt(c.in), s1 = oldMap.sourceAt(c.out + 1);
-                        const double t0 = c.reverse ? L - s1 : s0, t1 = c.reverse ? L - s0 : s1;
-                        const int past = int(std::ceil(newMap.materialAt(r.reverse ? L - t0 : t1) - 1e-6));
-                        newLen = std::max(1, past - newIn);
+        QVector<QPair<int, int>> shifts; // ripple (from old end, length change)
+        QVector<RetimedTrack> retimed;
+        for (const TrackRef& ref : TimelineOps::tracksOf(tl, all)) {
+            RetimedTrack t{ref, std::as_const(tl).track(ref).clips, {}};
+            for (qsizetype i = t.clips.size() - 1; i >= 0; --i) {
+                const Clip& was = std::as_const(t.clips)[i];
+                if (!all.contains(was.id) || was.isTitle()) continue;
+                const MediaInfo* m = m_project->mediaInfo(was.mediaPath);
+                if (!m || m->isImage || m->length <= 0) continue;
+                Clip& c = t.clips[i]; // (only now: the copy of the track detaches for a clip that changes)
+                const int L = m->length;
+                // Constant speed replaces a speed ramp (like DaVinci "Change Clip Speed")
+                Clip n = c;
+                n.speed = r.speed;
+                n.reverse = r.reverse;
+                n.freeze = r.freeze;
+                n.ramp.clear();
+                const RetimeMap oldMap(c, L), newMap(n, L);
+                // Section in file frames (a = start of the clip, b = end, a > b when reversed)
+                const int a = oldMap.pictureFrame(c.in);
+                const int b = oldMap.pictureFrame(c.out);
+                const bool flip = r.reverse != c.reverse;
+                // New start: same file frame; on direction change the same piece reversed
+                const int startFile = flip ? b : a;
+                const int avail = std::max(1, int(L / r.speed));
+                // The first material frame whose picture is that file frame (rounding could land one before it:
+                // a flash of the previous frame at the cut)
+                const int newIn = std::clamp(newMap.materialForPicture(startFile), 0, avail - 1);
+                const int oldLen = c.length();
+                int newLen = oldLen;
+                if (ripple && !r.freeze && !c.freeze) {
+                    // The same file time [t0, t1) (speed ramps included): up to the last frame starting before its
+                    // end (rounding the source span / speed could show a picture beyond the old out-point)
+                    const double s0 = oldMap.sourceAt(c.in), s1 = oldMap.sourceAt(c.out + 1);
+                    const double t0 = c.reverse ? L - s1 : s0, t1 = c.reverse ? L - s0 : s1;
+                    const int past = int(std::ceil(newMap.materialAt(r.reverse ? L - t0 : t1) - 1e-6));
+                    newLen = std::max(1, past - newIn);
+                }
+                if (!r.freeze) newLen = std::min(newLen, avail - newIn);
+                // Convert keyframes via the file frames
+                for (auto it = c.keys.begin(); it != c.keys.end(); ++it) {
+                    KeyTrack mapped = it.value();
+                    QVector<double> exact;
+                    for (Keyframe& kf : mapped) {
+                        exact << newMap.materialAtFile(oldMap.fileFrameAt(kf.frame));
+                        kf.frame = int(std::lround(exact.last()));
                     }
-                    if (!r.freeze) newLen = std::min(newLen, avail - newIn);
-                    // Convert keyframes via the file frames
-                    for (auto it = c.keys.begin(); it != c.keys.end(); ++it) {
-                        KeyTrack mapped = it.value();
-                        QVector<double> exact;
-                        for (Keyframe& kf : mapped) {
-                            exact << newMap.materialAtFile(oldMap.fileFrameAt(kf.frame));
-                            kf.frame = int(std::lround(exact.last()));
-                        }
-                        Keys::rescaleHandles(it.value(), mapped);
-                        it.value() = Keys::onePerFrame(mapped, exact);
-                    }
-                    const int oldEnd = c.end();
-                    c.in = newIn;
-                    c.out = newIn + newLen - 1;
-                    c.speed = r.speed;
-                    c.slot.ownSpeed = 0; // the user's speed is the slot's own one now (not a fill's slow motion)
-                    c.reverse = r.reverse;
-                    c.freeze = r.freeze;
-                    c.freezeFrame = r.freeze ? newIn : -1; // frame at the clip start (stays when splitting/trimming)
-                    c.keepPitch = r.keepPitch;
-                    if (r.interpolate) c.interpolate = *r.interpolate;
-                    c.ramp.clear();
-                    c.fadeIn = std::min(c.fadeIn, newLen);
-                    c.fadeOut = std::min(c.fadeOut, newLen);
-                    touched.insert(c.id);
-                    if (const int delta = newLen - oldLen; ripple && delta != 0) {
-                        for (int j = i + 1; j < t.clips.size(); ++j)
-                            if (t.clips[j].start >= oldEnd) t.clips[j].start += delta;
-                        // linked partners yield the same offset -> only once
-                        if (!shifts.contains(qMakePair(oldEnd, delta))) shifts << qMakePair(oldEnd, delta);
-                    }
+                    Keys::rescaleHandles(it.value(), mapped);
+                    it.value() = Keys::onePerFrame(mapped, exact);
+                }
+                const int oldEnd = c.end();
+                c.in = newIn;
+                c.out = newIn + newLen - 1;
+                c.speed = r.speed;
+                c.slot.ownSpeed = 0; // the user's speed is the slot's own one now (not a fill's slow motion)
+                c.reverse = r.reverse;
+                c.freeze = r.freeze;
+                c.freezeFrame = r.freeze ? newIn : -1; // frame at the clip start (stays when splitting/trimming)
+                c.keepPitch = r.keepPitch;
+                if (r.interpolate) c.interpolate = *r.interpolate;
+                c.ramp.clear();
+                c.fadeIn = std::min(c.fadeIn, newLen);
+                c.fadeOut = std::min(c.fadeOut, newLen);
+                touched.insert(c.id);
+                if (const int delta = newLen - oldLen; ripple && delta != 0) {
+                    t.own << qMakePair(oldEnd, delta);
+                    // linked partners yield the same offset -> only once
+                    if (!shifts.contains(qMakePair(oldEnd, delta))) shifts << qMakePair(oldEnd, delta);
                 }
             }
-        TimelineOps::rippleTracks(tl, shifts, edited);
+            retimed << t;
+        }
+        rippleRetimed(tl, retimed, shifts);
         fitTransitions(tl, touched, sourceLength());
     });
 }
@@ -150,51 +196,53 @@ void Editor::editRamp(const QString& text, int clipId, const std::function<bool(
     Timeline tl = cur;
     QSet<int> touched;
     QVector<QPair<int, int>> shifts;
-    for (TrackKind k : {TrackKind::Video, TrackKind::Audio})
-        for (Track& t : tl.tracks(k))
-            for (int i = t.clips.size() - 1; i >= 0; --i) {
-                Clip& c = t.clips[i];
-                if (!ids.contains(c.id)) continue;
-                const RetimeMap oldMap(c, L);
-                // Remember source positions: start, end (exclusive), keyframes
-                const double sIn = oldMap.sourceAt(c.in), sEnd = oldMap.sourceAt(c.out + 1);
-                QMap<AnimParam, QVector<double>> keySrc;
-                for (auto it = c.keys.cbegin(); it != c.keys.cend(); ++it)
-                    for (const Keyframe& kf : it.value()) keySrc[it.key()] << oldMap.sourceAt(kf.frame);
-                Clip n = c;
-                if (!change(n, oldMap, L)) continue;
-                ::Retime::normalize(n.ramp, L);
-                const RetimeMap newMap(n, L);
-                const int avail = std::max(1, newMap.length());
-                n.in = std::clamp(int(std::lround(newMap.materialAt(sIn))), 0, avail - 1);
-                const int len = std::clamp(int(std::lround(newMap.materialAt(sEnd))) - n.in, 1, avail - n.in);
-                n.out = n.in + len - 1;
-                for (auto it = n.keys.begin(); it != n.keys.end(); ++it) {
-                    KeyTrack mapped = it.value();
-                    const QVector<double>& src = keySrc[it.key()];
-                    mapped.resize(std::min(mapped.size(), src.size()));
-                    QVector<double> exact;
-                    for (int j = 0; j < mapped.size(); ++j) {
-                        exact << newMap.materialAt(src[j]);
-                        mapped[j].frame = int(std::lround(exact.last()));
-                    }
-                    Keys::rescaleHandles(it.value(), mapped);
-                    it.value() = Keys::onePerFrame(mapped, exact);
+    QVector<RetimedTrack> retimed;
+    for (const TrackRef& ref : TimelineOps::tracksOf(tl, ids)) {
+        RetimedTrack t{ref, std::as_const(tl).track(ref).clips, {}};
+        for (qsizetype i = t.clips.size() - 1; i >= 0; --i) {
+            if (!ids.contains(std::as_const(t.clips)[i].id)) continue;
+            const Clip c = std::as_const(t.clips)[i]; // a copy: the track is written only below, if it changes
+            const RetimeMap oldMap(c, L);
+            // Remember source positions: start, end (exclusive), keyframes
+            const double sIn = oldMap.sourceAt(c.in), sEnd = oldMap.sourceAt(c.out + 1);
+            QMap<AnimParam, QVector<double>> keySrc;
+            for (auto it = c.keys.cbegin(); it != c.keys.cend(); ++it)
+                for (const Keyframe& kf : it.value()) keySrc[it.key()] << oldMap.sourceAt(kf.frame);
+            Clip n = c;
+            if (!change(n, oldMap, L)) continue;
+            ::Retime::normalize(n.ramp, L);
+            const RetimeMap newMap(n, L);
+            const int avail = std::max(1, newMap.length());
+            n.in = std::clamp(int(std::lround(newMap.materialAt(sIn))), 0, avail - 1);
+            const int len = std::clamp(int(std::lround(newMap.materialAt(sEnd))) - n.in, 1, avail - n.in);
+            n.out = n.in + len - 1;
+            for (auto it = n.keys.begin(); it != n.keys.end(); ++it) {
+                KeyTrack mapped = it.value();
+                const QVector<double>& src = keySrc[it.key()];
+                mapped.resize(std::min(mapped.size(), src.size()));
+                QVector<double> exact;
+                for (int j = 0; j < mapped.size(); ++j) {
+                    exact << newMap.materialAt(src[j]);
+                    mapped[j].frame = int(std::lround(exact.last()));
                 }
-                n.fadeIn = std::min(n.fadeIn, len);
-                n.fadeOut = std::min(n.fadeOut, len);
-                const int oldEnd = c.end();
-                const int delta = n.length() - c.length();
-                c = n;
-                touched.insert(c.id);
-                if (delta != 0) {
-                    for (int j = i + 1; j < t.clips.size(); ++j)
-                        if (t.clips[j].start >= oldEnd) t.clips[j].start += delta;
-                    if (!shifts.contains(qMakePair(oldEnd, delta))) shifts << qMakePair(oldEnd, delta);
-                }
+                Keys::rescaleHandles(it.value(), mapped);
+                it.value() = Keys::onePerFrame(mapped, exact);
             }
+            n.fadeIn = std::min(n.fadeIn, len);
+            n.fadeOut = std::min(n.fadeOut, len);
+            const int oldEnd = c.end();
+            const int delta = n.length() - c.length();
+            t.clips[i] = n;
+            touched.insert(n.id);
+            if (delta != 0) {
+                t.own << qMakePair(oldEnd, delta);
+                if (!shifts.contains(qMakePair(oldEnd, delta))) shifts << qMakePair(oldEnd, delta);
+            }
+        }
+        retimed << t;
+    }
     if (touched.isEmpty()) return;
-    TimelineOps::rippleTracks(tl, shifts, TimelineOps::tracksOf(tl, ids));
+    rippleRetimed(tl, retimed, shifts);
     fitTransitions(tl, touched, sourceLength());
     m_project->edit(text, [&](Timeline& t) { t = tl; });
 }

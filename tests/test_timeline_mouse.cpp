@@ -3,6 +3,7 @@
 // plus selection from the playhead (Y / Ctrl+Y / Alt+Y), edit points by keyboard (V, U, , / .) and the Slip/Slide
 // tools (drag anywhere on a clip = trim mode's slip/slide, toolbar buttons, , / . with them).
 #include "check.h"
+#include "timeline_guard.h"
 
 #include "app/Theme.h"
 #include "core/Editor.h"
@@ -49,6 +50,7 @@ void drag(QWidget& w, QPoint from, QPoint to, Qt::KeyboardModifiers mods = {})
 
 struct Fixture {
     Project project;
+    TimelineGuard guard_project{project};
     Selection sel;
     Editor editor{&project, &sel};
     TimelineView tv{&editor};
@@ -261,6 +263,7 @@ void testSelectFromPlayhead()
 void testEditPoints()
 {
     Project project;
+    TimelineGuard guard_project{project};
     Selection sel;
     Editor editor(&project, &sel);
     project.addMedia(MediaInfo{"/x/a.mp4", "a.mp4", 3000, true, false, false});
@@ -317,6 +320,7 @@ void testEditPoints()
 // Slip/Slide tools: V1 a [0,100) in 100 | b [100,200) in 500 | c [200,300) in 1000, A1 a' linked to a
 struct ToolFixture {
     Project project;
+    TimelineGuard guard_project{project};
     Selection sel;
     Editor editor{&project, &sel};
     TimelineView tv{&editor};
@@ -439,6 +443,7 @@ void testSlipSlideTools()
         CHECK_EQ(f.project.undoStack()->count(), undo0);
         f.editor.toggleTrackLock({TrackKind::Video, 0});
         f.editor.toggleTrackLock({TrackKind::Audio, 0});
+        f.guard_project.allowSlip({1}); // its sound is locked: slips alone
         drag(f.tv, {f.x(50), 75}, {f.x(50) + f.frames(10), 75});
         CHECK(TimelineOps::findClip(f.project.timeline(), 1)->in != 100);
         CHECK_EQ(TimelineOps::findClip(f.project.timeline(), 4)->in, 100);
@@ -459,6 +464,7 @@ void testSlipSlideTools()
     // Toolbar: a button per tool, it follows the tool
     {
         Project project;
+        TimelineGuard guard_project{project};
         Selection sel;
         Editor editor(&project, &sel);
         TimelinePanel panel(&editor);

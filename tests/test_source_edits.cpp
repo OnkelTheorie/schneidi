@@ -8,6 +8,7 @@
 #include "core/TimelineOps.h"
 
 #include "check.h"
+#include "timeline_guard.h"
 
 #include <QCoreApplication>
 #include <cmath>
@@ -23,6 +24,7 @@ static void check(const char* name, const QString& got, const QString& want)
 
 struct Fixture {
     Project p;
+    TimelineGuard guard_p{p};
     Selection sel;
     Editor ed{&p, &sel};
     Fixture()

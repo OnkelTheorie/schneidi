@@ -3,6 +3,7 @@
 // overwriting on the track, editor operations with undo, project file, format change, burn-in in the render
 // (pixels) and SRT file on export.
 #include "render_check.h"
+#include "timeline_guard.h"
 
 #include "core/Editor.h"
 #include "core/Project.h"
@@ -153,6 +154,7 @@ void testPlace()
 void testEditor()
 {
     Project p;
+    TimelineGuard guard_p{p};
     Selection sel;
     Editor ed(&p, &sel);
     QUndoStack* undo = p.undoStack();
@@ -288,6 +290,7 @@ void testEditor()
 // Ctrl+B/blade split entries. Every edit is one undo step.
 struct RippleFixture {
     Project p;
+    TimelineGuard guard_p{p};
     Selection sel;
     Editor ed{&p, &sel};
     int x = 0, y = 0, z = 0; // V1: x [0,50) y [50,100) z [100,150), picture only
@@ -619,6 +622,7 @@ void testProjectFile()
 void testFrameRateChange()
 {
     Project p;
+    TimelineGuard guard_p{p};
     Selection sel;
     Editor ed(&p, &sel);
     ProjectFormat f = p.format();
@@ -894,6 +898,7 @@ void testSelectAllMixed()
 void testStackedImport()
 {
     Project p;
+    TimelineGuard guard_p{p};
     Selection sel;
     Editor ed(&p, &sel);
     const QVector<SubtitleCue> cues{{0, 10, 40, "eins"}};

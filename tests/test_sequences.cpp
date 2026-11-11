@@ -3,6 +3,7 @@
 // timelines, create/dissolve compound clip, loop protection, project file (also old files), bins,
 // rendering of nested timelines (pixels: content, transparency, section, export scaling).
 #include "render_check.h"
+#include "timeline_guard.h"
 
 #include "core/Editor.h"
 #include "core/Project.h"
@@ -52,6 +53,7 @@ const Clip* clipOn(const Timeline& tl, TrackKind kind, int track, int index)
 void testSequences()
 {
     Project p;
+    TimelineGuard guard_p{p};
     Selection sel;
     Editor ed(&p, &sel);
     QUndoStack* undo = p.undoStack();
@@ -130,6 +132,7 @@ void testSequences()
 void testCompound()
 {
     Project p;
+    TimelineGuard guard_p{p};
     Selection sel;
     Editor ed(&p, &sel);
     QUndoStack* undo = p.undoStack();
@@ -224,6 +227,7 @@ void testCompound()
 void testDecomposeKeepsClipsAbove()
 {
     Project p;
+    TimelineGuard guard_p{p};
     Selection sel;
     Editor ed(&p, &sel);
     p.addMedia(media("/x/a.mp4", 100, true, false));
@@ -246,6 +250,7 @@ void testDecomposeKeepsClipsAbove()
 void testDecomposeKeepsSettings()
 {
     Project p;
+    TimelineGuard guard_p{p};
     Selection sel;
     Editor ed(&p, &sel);
     p.addMedia(media("/x/a.mp4", 100));
@@ -313,6 +318,7 @@ void testDecomposeKeepsSettings()
 void testSequenceIdNotReused()
 {
     Project p;
+    TimelineGuard guard_p{p};
     const int second = p.addTimeline("Zwei");
     RenderJob job;
     job.id = 1;
@@ -326,12 +332,14 @@ void testSequenceIdNotReused()
     if (!CHECK(ProjectFile::fromJson(json, "/x/p.schneidi", &d, &err))) return;
     CHECK_EQ(d.lastSequenceId, second);
     Project again;
+    TimelineGuard guard_again{again};
     again.load(d);
     const int third = again.addTimeline("Drei");
     CHECK(third > second);
     CHECK(!again.sequence(again.renderQueue().value(0).sequence));
     // Nothing deleted: the file stays as before (no field)
     Project plain;
+    TimelineGuard guard_plain{plain};
     plain.addTimeline();
     CHECK(!ProjectFile::toJson(plain.data(), "/x/p.schneidi").contains("lastSequenceId"));
 }
@@ -350,6 +358,7 @@ void testNestingLoopOnLoad()
     QString err;
     if (!CHECK(ProjectFile::fromJson(json, "/x/p.schneidi", &d, &err))) return;
     Project p;
+    TimelineGuard guard_p{p};
     p.load(d);
     int nested = 0;
     for (const Sequence& s : p.sequences())
@@ -368,6 +377,7 @@ void testNestingLoopOnLoad()
 void testClipboardAcrossProjects()
 {
     Project p;
+    TimelineGuard guard_p{p};
     Selection sel;
     Editor ed(&p, &sel);
     p.addMedia(media("/x/a.mp4", 100));
@@ -416,6 +426,7 @@ void testClipboardAcrossProjects()
 void testProjectFile()
 {
     Project p;
+    TimelineGuard guard_p{p};
     Selection sel;
     Editor ed(&p, &sel);
     p.addMedia(media("/x/a.mp4", 100));
@@ -440,6 +451,7 @@ void testProjectFile()
     CHECK_EQ(back.sequences.size(), 3);
     CHECK_EQ(back.currentSequence, second);
     Project q;
+    TimelineGuard guard_q{q};
     q.load(back);
     CHECK_EQ(q.currentSequence(), second);
     CHECK_EQ(q.sequences().size(), 3);
@@ -463,6 +475,7 @@ void testProjectFile()
     old.timeline.video[0].clips.clear();
     old.timeline.audio[0].clips.clear();
     Project r;
+    TimelineGuard guard_r{r};
     r.load(old);
     CHECK_EQ(r.sequences().size(), 1);
     CHECK_EQ(r.sequenceName(r.currentSequence()), QString("Timeline 1"));
@@ -471,6 +484,7 @@ void testProjectFile()
     ProjectData broken = back;
     broken.sequences.removeIf([&](const Sequence& s) { return s.id == seq; });
     Project b2;
+    TimelineGuard guard_b2{b2};
     b2.load(broken);
     for (const Sequence& s : b2.sequences())
         for (const Clip* c : {clipOn(s.timeline, TrackKind::Video, 0, 0)})
@@ -580,6 +594,7 @@ void testTimelineFormat()
     QString err;
     if (CHECK(ProjectFile::fromJson(json, "/x/p.schneidi", &back, &err))) {
         Project q;
+        TimelineGuard guard_q{q};
         q.load(back);
         CHECK_EQ(q.sequenceFormat(shortId).size(), QSize(1080, 1920));
         CHECK(!q.sequence(main)->hasOwnSize());
@@ -587,12 +602,14 @@ void testTimelineFormat()
         CHECK_EQ(ProjectFile::toJson(q.data(), "/x/p.schneidi"), json);
     }
     Project plainProject;
+    TimelineGuard guard_plainProject{plainProject};
     CHECK(ProjectFile::toJson(plainProject.data(), "/x/p.schneidi").contains("\"version\": 4"));
     // A hand-edited file: odd or huge sizes brought within limits
     ProjectData odd = back;
     for (Sequence& q : odd.sequences)
         if (q.id == shortId) q.width = 99999, q.height = 1001;
     Project oddProject;
+    TimelineGuard guard_oddProject{oddProject};
     oddProject.load(odd);
     CHECK_EQ(oddProject.sequenceFormat(shortId).size(), QSize(kMaxFrameSize, 1000));
 }
@@ -669,6 +686,7 @@ int testRender(const QString& dir)
     const ProjectFormat fmt{320, 180, {25, 1}};
 
     Project p;
+    TimelineGuard guard_p{p};
     p.load([&] {
         ProjectData d;
         d.format = fmt;
@@ -725,6 +743,7 @@ int testRender(const QString& dir)
     // the short itself renders at its own size
     {
         Project v;
+        TimelineGuard guard_v{v};
         v.load([&] {
             ProjectData d;
             d.format = fmt; // 320 x 180
