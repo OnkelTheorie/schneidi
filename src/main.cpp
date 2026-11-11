@@ -34,6 +34,8 @@
 #include <QProcess>
 #include <QFileInfo>
 #include <QRegularExpression>
+#include <QPushButton>
+#include <QThread>
 #include <QTimer>
 #include <QWindow>
 #include <clocale>
@@ -146,6 +148,53 @@ public:
 private:
     bool m_exposed = false, m_painted = false;
 };
+
+// Claude Code or Claude Desktop is on this computer, but not connected to schneidi: asked once on start (Cli::Setup
+// offer rules: at most a few times, two weeks apart, never after "don't ask again"). Waits while another dialog is open
+// (restore, tours).
+void offerClaude(QWidget* window, const std::function<QJsonObject(bool)>& setup, int tries = 0)
+{
+    if (!window->isVisible() || QApplication::activeModalWidget()) {
+        if (tries < 20) QTimer::singleShot(30000, window, [=] { offerClaude(window, setup, tries + 1); });
+        return;
+    }
+    if (!Cli::Setup::offerDue()) return;
+    Cli::Setup::offerShown();
+    QMessageBox box(QMessageBox::Question, T("Mit Claude verbinden"),
+                    T("%1 ist auf diesem Computer installiert. Soll schneidi sich damit verbinden?")
+                        .arg(Cli::Setup::claudeFound().join(T(" und "))),
+                    QMessageBox::NoButton, window);
+    box.setInformativeText(T("Dann kann Claude deine Videos mit schneidi schneiden: Es bekommt die schneidi-Werkzeuge "
+                             "(MCP) und eine Schnitt-Anleitung (Skill). Geht auch später unter Einstellungen › KI."));
+    QPushButton* connect = box.addButton(T("Jetzt verbinden"), QMessageBox::AcceptRole);
+    box.addButton(T("Später"), QMessageBox::RejectRole);
+    QPushButton* never = box.addButton(T("Nicht mehr fragen"), QMessageBox::DestructiveRole);
+    box.setDefaultButton(connect);
+    box.exec();
+    if (box.clickedButton() == never) {
+        Cli::Setup::offerNever();
+        return;
+    }
+    if (box.clickedButton() != connect) return;
+    // `claude mcp add` may take a few seconds: in a helper thread, the window stays usable
+    auto result = std::make_shared<QJsonObject>();
+    QThread* worker = QThread::create([setup, result] { *result = setup(false); });
+    QObject::connect(worker, &QThread::finished, window, [window, worker, result] {
+        worker->deleteLater();
+        QStringList lines;
+        bool failed = false;
+        for (auto it = result->constBegin(); it != result->constEnd(); ++it) {
+            const QJsonObject o = it.value().toObject();
+            if (o.value("state").toString() == "skipped") continue;
+            failed |= o.value("state").toString() == "failed";
+            lines << (it.key() == "claude_code" ? QString("Claude Code") : QString("Claude Desktop")) + ": "
+                         + o.value("message").toString();
+        }
+        if (failed) QMessageBox::warning(window, T("Mit Claude verbinden"), lines.join("\n"));
+        else QMessageBox::information(window, T("Mit Claude verbinden"), T("Verbunden.") + "\n\n" + lines.join("\n"));
+    });
+    worker->start();
+}
 
 } // namespace
 
@@ -290,11 +339,15 @@ int main(int argc, char* argv[])
     // In-app tours never ask in test runs or without a screen (core/Tours.h)
     if (testRun || QGuiApplication::platformName() == QLatin1String("offscreen")) TourState::setSuppressed(true);
     // Settings › AI › "Connect with Claude": the same as `schneidi-cli setup claude` (Claude Code and Desktop)
-    w.setClaudeSetup([](bool remove) {
+    const auto claudeSetup = [](bool remove) {
         Cli::Setup::Options o;
         o.remove = remove;
         return Cli::Setup::claude(o);
-    });
+    };
+    w.setClaudeSetup(claudeSetup);
+    // Not connected to Claude yet: asked once, a few seconds after the window is up (never in test runs)
+    if (!testRun && QGuiApplication::platformName() != QLatin1String("offscreen"))
+        QTimer::singleShot(6000, &w, [&w, claudeSetup] { offerClaude(&w, claudeSetup); });
     // Live connection for schneidi-cli / MCP (cli/Live.h); test runs stay invisible to AIs unless SCHNEIDI_LIVE=1.
     // Started before the restore dialog: while it waits for the user, AIs hear that instead of "not running".
     std::unique_ptr<Cli::Live::Server> live;

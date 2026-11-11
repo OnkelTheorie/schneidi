@@ -38,6 +38,12 @@
 #include <iterator>
 #include <string>
 
+#ifdef Q_OS_WIN
+#include <io.h> // _isatty
+#else
+#include <unistd.h> // isatty
+#endif
+
 namespace {
 
 void print(const QJsonObject& o, bool pretty)
@@ -162,6 +168,20 @@ int main(int argc, char* argv[])
         }
     }
     if (name == "setup") return Cli::Setup::run(args, pretty);
+    // A person at a terminal (stderr is one, no AI tool runs us): a short tip when Claude is here but not connected -
+    // the same offer rules as the app's question (a few times, two weeks apart). Never in mcp/serve, never on stdout.
+#ifdef Q_OS_WIN
+    const bool terminal = _isatty(_fileno(stderr));
+#else
+    const bool terminal = isatty(fileno(stderr));
+#endif
+    if (terminal && name != "mcp" && name != "serve" && qEnvironmentVariableIsEmpty("CLAUDECODE")
+        && Cli::Setup::offerDue()) {
+        Cli::Setup::offerShown();
+        std::fprintf(stderr, "Tip: %s is installed. Connect it to schneidi: schneidi-cli setup claude\n"
+                             "     (no more tips: schneidi-cli setup claude --never)\n",
+                     qPrintable(Cli::Setup::claudeFound().join(" and ")));
+    }
 
     // The HTTP server only routes: the engine runs in its workers (`mcp` processes)
     if (name == "serve") return Cli::Serve::run(args);

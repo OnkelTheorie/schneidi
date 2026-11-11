@@ -23,7 +23,18 @@ QJsonObject claude(const Options& options);
 // Program and arguments that start this installation's MCP server (AppImage: the image with "cli mcp")
 QStringList serverCommand();
 
-// Command line `schneidi-cli setup <target> [--only code|desktop] [--remove]`; prints JSON, returns the exit code
+// Command line `schneidi-cli setup <target> [--only code|desktop] [--remove] [--never]`; prints JSON, returns the
+// exit code. --never only stops the offer below.
 int run(QStringList args, bool pretty);
+
+// The offer to connect (asked once on app start, a tip in an interactive terminal): Claude Code or Claude Desktop is
+// on this computer, but schneidi is connected to neither. Settings "claude/offer*" (shared by app and CLI): never
+// again after "don't ask again", at most kOfferTimes times, at least kOfferDays days apart.
+inline constexpr int kOfferTimes = 3, kOfferDays = 14;
+QStringList claudeFound(); // "Claude Code", "Claude Desktop" (those found)
+bool connected();          // the skill in Claude Code's skills folder or schneidi in Claude Desktop's MCP servers
+bool offerDue();           // found, not connected, not stopped, not asked too often or too recently
+void offerShown();         // counts the offer (the next one at the earliest kOfferDays later)
+void offerNever();         // "don't ask again"
 
 } // namespace Cli::Setup

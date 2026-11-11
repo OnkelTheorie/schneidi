@@ -139,6 +139,8 @@ schneidi_test(test_stabilize_denoise)
 schneidi_test(test_stabilize_motion)
 schneidi_test(test_cli)
 target_link_libraries(test_cli PRIVATE schneidi_cli_lib)
+schneidi_test(test_claude_offer) # when schneidi offers to connect Claude: found, not connected, how often
+target_link_libraries(test_claude_offer PRIVATE schneidi_cli_lib)
 schneidi_test(test_clip_tilt)
 target_link_libraries(test_clip_tilt PRIVATE schneidi_cli_lib)
 schneidi_test(test_loudness_target) # 0.19: target_lufs and normalize lufs reach the target after the master limiter

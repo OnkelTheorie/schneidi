@@ -4,6 +4,7 @@
 #include "cli/Guide.h"
 
 #include <QCoreApplication>
+#include <QDateTime>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -11,6 +12,7 @@
 #include <QJsonDocument>
 #include <QProcess>
 #include <QSaveFile>
+#include <QSettings>
 #include <QStandardPaths>
 
 #include <cstdio>
@@ -192,6 +194,13 @@ int run(QStringList args, bool pretty)
                      "Desktop to schneidi (MCP server + editing guide)");
     Options o;
     o.remove = args.removeAll("--remove") > 0;
+    if (args.removeAll("--never") > 0) { // only stops the offer (app start, terminal tip)
+        if (!args.isEmpty() || o.remove) return usage("--never stands alone");
+        offerNever();
+        print({{"ok", true}, {"message", "schneidi will not offer to connect Claude again (setup claude still works)"}},
+              pretty);
+        return 0;
+    }
     if (const qsizetype i = args.indexOf("--only"); i >= 0) {
         const QString only = args.value(i + 1);
         if (only != "code" && only != "desktop") return usage("--only takes code or desktop");
@@ -214,5 +223,45 @@ int run(QStringList args, bool pretty)
     print(result, pretty);
     return failed ? 1 : 0;
 }
+
+QStringList claudeFound()
+{
+    QStringList found;
+    if (!findClaude().isEmpty() || QFileInfo(claudeCodeDir()).isDir()) found << "Claude Code";
+    if (QFileInfo(claudeDesktopDir()).isDir()) found << "Claude Desktop";
+    return found;
+}
+
+bool connected()
+{
+    if (QFileInfo::exists(QDir(claudeCodeDir()).filePath("skills/" + kName + "/SKILL.md"))) return true;
+    QFile f(QDir(claudeDesktopDir()).filePath("claude_desktop_config.json"));
+    if (!f.open(QIODevice::ReadOnly)) return false;
+    return QJsonDocument::fromJson(f.readAll()).object().value("mcpServers").toObject().contains(kName);
+}
+
+namespace {
+constexpr const char* kOfferNever = "claude/offerNever";
+constexpr const char* kOfferCount = "claude/offerCount";
+constexpr const char* kOfferLast = "claude/offerLast"; // ms since epoch
+} // namespace
+
+bool offerDue()
+{
+    QSettings s;
+    if (s.value(kOfferNever, false).toBool() || s.value(kOfferCount, 0).toInt() >= kOfferTimes) return false;
+    const qint64 last = s.value(kOfferLast, 0).toLongLong();
+    if (last > 0 && QDateTime::currentMSecsSinceEpoch() - last < qint64(kOfferDays) * 24 * 3600 * 1000) return false;
+    return !claudeFound().isEmpty() && !connected();
+}
+
+void offerShown()
+{
+    QSettings s;
+    s.setValue(kOfferCount, s.value(kOfferCount, 0).toInt() + 1);
+    s.setValue(kOfferLast, QDateTime::currentMSecsSinceEpoch());
+}
+
+void offerNever() { QSettings().setValue(kOfferNever, true); }
 
 } // namespace Cli::Setup
