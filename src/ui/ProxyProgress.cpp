@@ -34,6 +34,11 @@ ProxyProgress::ProxyProgress(ProxyManager* proxies) : QObject(proxies), m_proxie
         m_failures.append({file, message});
         emit failuresChanged();
     });
+    // Made after all (tried again): no longer a failure to report
+    connect(proxies, &ProxyManager::proxyChanged, this, [this](const QString& file) {
+        if (!m_proxies->hasProxy(file)) return;
+        if (m_failures.removeIf([&](const Failure& f) { return f.file == file; }) > 0) emit failuresChanged();
+    });
     refresh();
 }
 

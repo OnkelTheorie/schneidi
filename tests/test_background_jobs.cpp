@@ -8,7 +8,8 @@
 // (ffmpeg): the indicator shows "Proxy 1/3 – …" while pending, the tooltip names the waiting files, the Media Pool's
 // thin bar shows too; after the last file "Proxies done", then it hides; ✕ cancels the queue.
 // Failed proxies never block: no message box (a batch of failures opened one per file), the status bar names it, the
-// indicator keeps one "proxies failed" entry (count) whose tooltip has each file with ffmpeg's last lines, until its ✕.
+// indicator keeps one "proxies failed" entry (count) whose tooltip has each file with ffmpeg's last lines, until its ✕;
+// a file whose proxy is made after all leaves it, another project clears it.
 // BACKGROUND_JOBS_DUMP=<folder>: pictures of the page bar and the pool header; BACKGROUND_JOBS_LANG=ru (another
 // language), BACKGROUND_JOBS_FONT=1.25 (larger font) to check that the texts fit.
 
@@ -16,6 +17,7 @@
 
 #include "app/MainWindow.h"
 #include "core/I18n.h"
+#include "core/Project.h"
 #include "engine/Engine.h"
 #include "engine/ProxyManager.h"
 #include "ui/BackgroundJobs.h"
@@ -309,6 +311,25 @@ void testFailures(MainWindow& w, Engine& engine, const QString& dir)
     CHECK(jobs->hasJob("proxy_errors"));
     CHECK_EQ(jobs->text(), T("Proxy fehlgeschlagen: %1").arg("again.mp4"));
     CHECK(jobs->toolTip().contains("again.mp4"));
+    // A failed file whose proxy is made after all (tried again) leaves the list
+    const QString made = dir + "/clip-1.mp4"; // has its proxy from testApp
+    if (CHECK(proxies->hasProxy(made))) {
+        emit proxies->failed(made, "first try failed");
+        settle();
+        CHECK_EQ(jobs->text(), T("%1 Proxys fehlgeschlagen").arg(2));
+        emit proxies->proxyChanged(made); // as when its proxy is finished
+        settle();
+        CHECK_EQ(jobs->text(), T("Proxy fehlgeschlagen: %1").arg("again.mp4"));
+        CHECK(!jobs->toolTip().contains("clip-1.mp4"));
+    }
+    // Another project: its files, not the old ones' failures
+    auto* project = w.findChild<Project*>();
+    if (CHECK(project)) {
+        project->reset();
+        settle();
+        CHECK(!jobs->hasJob("proxy_errors"));
+        CHECK(ProxyProgress::of(proxies)->failures().isEmpty());
+    }
     CHECK_EQ(boxes, 0);
 }
 

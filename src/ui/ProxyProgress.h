@@ -46,7 +46,8 @@ public:
     // After the batch: "Proxies done" ("done: 2 of 5" when some were canceled or failed, "canceled" when none was made)
     QString finishedText() const;
 
-    // Proxies that failed since the list was last cleared (ProxyManager::failed): shown without blocking anything - one
+    // Proxies that failed since the list was last cleared (ProxyManager::failed; a file whose proxy is made after all
+    // leaves it, the main window clears it for another project): shown without blocking anything - one
     // line for all of them ("Proxy failed: clip.mp4" / "3 proxies failed") and the details per file (ffmpeg's last lines)
     struct Failure {
         QString file;    // the original

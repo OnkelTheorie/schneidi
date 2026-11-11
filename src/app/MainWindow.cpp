@@ -1317,6 +1317,7 @@ void MainWindow::setupProxyHint()
     connect(m_project, &Project::loaded, proxies, [this, proxies] {
         m_importedMedia.clear();
         proxies->dropImports();
+        ProxyProgress::of(proxies)->clearFailures(); // the old project's files
     });
 }
 
