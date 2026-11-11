@@ -439,8 +439,17 @@ void MainWindow::showPage(Page page)
         m_editTop->insertWidget(0, m_editLeft);
         m_editTop->insertWidget(1, m_viewer);
         m_editTop->insertWidget(2, m_transcript);
-        if (m_editTop->indexOf(m_inspector) < 0 && m_editTop->indexOf(m_inspectorSlot) < 0)
-            m_editTop->insertWidget(3, m_inspector); // else there, or its slot (updateRightColumn)
+        if (m_editTop->indexOf(m_inspector) < 0 && m_editTop->indexOf(m_inspectorSlot) < 0) {
+            // First placement (else it is there, or its slot: updateRightColumn). With the mixer column the slot
+            // goes here and the Inspector straight into the column: every move of the Inspector re-applies the
+            // style sheet to its whole widget tree (~150 ms at the start)
+            if (m_mixerToggle && m_mixerToggle->isChecked()) {
+                m_inspectorSlot->setVisible(true); // takes the Inspector's size below, hidden again in the column swap
+                m_editTop->insertWidget(3, m_inspectorSlot);
+            } else {
+                m_editTop->insertWidget(3, m_inspector);
+            }
+        }
         m_editMain->insertWidget(1, m_timeline);
         m_editTop->setStretchFactor(1, 1);
         applySizes(m_editTop, {360, 880, 320, 360});
@@ -623,7 +632,8 @@ void MainWindow::updateRightColumn()
     const bool shown = m_inspectorToggle->isChecked();
     if (column) {
         const int at = m_editTop->indexOf(m_inspector);
-        const int width = at >= 0 && shown ? m_editTop->sizes().value(at) : 0;
+        const int place = at >= 0 ? at : m_editTop->indexOf(m_inspectorSlot); // the slot: the first placement
+        const int width = place >= 0 && shown ? m_editTop->sizes().value(place) : 0;
         if (at >= 0) m_editTop->replaceWidget(at, m_inspectorSlot); // same size, the inspector comes out
         m_inspectorSlot->hide();
         m_editRight->insertWidget(0, m_inspector);
