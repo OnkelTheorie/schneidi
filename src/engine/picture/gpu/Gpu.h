@@ -183,8 +183,10 @@ public:
     // workers, preview pump) finds it.
     static void prepare();
     // GUI app: prepare() only posts the work to the event loop (not in the way of the start); a worker asking for
-    // instance() meanwhile waits for it (at most 2 s)
-    static void setDeferredPrepare(bool deferred);
+    // instance() meanwhile waits for it (at most 2 s). `schedule` decides when the posted work runs (the app: after
+    // its window's first paint); without one, as soon as the event loop runs.
+    using Scheduler = std::function<void(std::function<void()>)>;
+    static void setDeferredPrepare(bool deferred, Scheduler schedule = {});
     // nullptr when SCHNEIDI_GPU=0, no GUI application, or no hardware device (then the CPU path). The first call starts
     // the GPU thread and waits until its context is made (or refused).
     static Service* instance();

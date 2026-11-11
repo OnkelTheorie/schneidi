@@ -1011,13 +1011,15 @@ std::atomic<int> g_state{0}; // 0 not started, 1 starting in the background, 2 d
 namespace {
 bool g_deferred = false;          // setDeferredPrepare
 bool g_preparePosted = false;     // a deferred prepare() waits in the GUI thread's event queue
+Service::Scheduler g_schedule;    // setDeferredPrepare: when the deferred prepare() runs (empty: next event loop turn)
 std::condition_variable g_surfaceReady;
 } // namespace
 
-void Service::setDeferredPrepare(bool deferred)
+void Service::setDeferredPrepare(bool deferred, Scheduler schedule)
 {
     std::lock_guard lock(g_surfaceMutex);
     g_deferred = deferred;
+    g_schedule = std::move(schedule);
 }
 
 void Service::prepare()
@@ -1032,13 +1034,15 @@ void Service::prepare()
         if (g_deferred) { // later, from the event loop (keeps the GL library load out of the start)
             if (!g_preparePosted) {
                 g_preparePosted = true;
-                QTimer::singleShot(0, QCoreApplication::instance(), [] {
+                auto job = [] {
                     {
                         std::lock_guard lock(g_surfaceMutex);
                         g_deferred = false;
                     }
                     prepare();
-                });
+                };
+                if (g_schedule) g_schedule(job);
+                else QTimer::singleShot(0, QCoreApplication::instance(), job);
             }
             return;
         }
@@ -1242,7 +1246,7 @@ Context::Stats Context::stats() const { return {}; }
 QSize size(const Texture& t) { return t.size; }
 bool canUpload(int) { return false; }
 void Service::prepare() {}
-void Service::setDeferredPrepare(bool) {}
+void Service::setDeferredPrepare(bool, Scheduler) {}
 Service* Service::instance() { return nullptr; }
 Service* Service::tryInstance(bool* decided)
 {
