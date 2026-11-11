@@ -5,6 +5,7 @@
 // - several threads asking one reader a little out of order (export workers, read-ahead)
 // - hardware decoding (if this machine has a device) = software decoding bit for bit (H.264, 10-bit HEVC)
 // - unused readers close their decoder after a pause and give the same pictures when asked again
+// - a decoder that cannot be opened again (after a hardware failure) answers nothing at once, for good
 // plus the frame properties the file states (size, rotation, colour standard and range, interlacing, alpha).
 // Replaces the comparison with MLT's producer (test_video_decoder, until 0.15).
 
@@ -27,7 +28,9 @@ extern "C" {
 #include <QThread>
 
 #include <atomic>
+#include <chrono>
 #include <cstring>
+#include <future>
 #include <mutex>
 #include <random>
 #include <thread>
@@ -181,6 +184,26 @@ void testHibernate(const QString& path)
         const auto p = readers[i]->picture(10 + i);
         CHECK(p && bytesOf(p->frame) == first[i]);
     }
+}
+
+// The hardware decoder failed and the software one does not open either (out of memory): every request is answered
+// with nothing at once and failed() says so. The decoder thread used to go on with the unopened decoder (a crash in
+// avcodec_flush_buffers, or requests waiting forever).
+void testDecoderLost(const QString& path)
+{
+    auto r = Video::Reader::open(path);
+    if (!CHECK(r)) return;
+    CHECK(r->picture(5) != nullptr);
+    CHECK(!r->failed());
+    Video::Reader::loseDecoderForTests(true);
+    auto asked = std::async(std::launch::async, [&] { return r->picture(60) == nullptr; });
+    const bool answered = asked.wait_for(std::chrono::seconds(10)) == std::future_status::ready;
+    Video::Reader::loseDecoderForTests(false);
+    if (!CHECK(answered)) return;
+    CHECK(asked.get());
+    CHECK(r->failed());
+    CHECK(r->picture(6) == nullptr); // at once, no thread left to answer
+    CHECK_EQ(r->stats().hardwareFailures, 1);
 }
 
 // A reversed clip in a forward export (or forward playback): the export's small windows (4 behind, 6 ahead), four
@@ -514,5 +537,6 @@ int main(int argc, char** argv)
     if (!hd10.isEmpty()) testHardware(Media{"hevc 10 bit 720p", hd10, 60});
 
     testHibernate(file("h264.mp4"));
+    testDecoderLost(file("h264.mp4"));
     return Check::result();
 }

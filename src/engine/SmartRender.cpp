@@ -34,7 +34,7 @@ bool plain(const Clip& c)
 
 namespace SmartRender {
 
-int colorspace(const QVector<Span>& spans, const QString& videoCodec, QSize size)
+int colorspace(const QVector<Span>& spans, const QString& videoCodec, QSize size, const std::atomic<bool>* cancel)
 {
     const AVCodec* encoder = avcodec_find_encoder_by_name(videoCodec.toUtf8().constData());
     if (!encoder) return 0;
@@ -42,6 +42,7 @@ int colorspace(const QVector<Span>& spans, const QString& videoCodec, QSize size
     for (const Span& s : spans) frames[s.file] += s.to - s.from;
     QHash<int, int> votes;
     for (auto it = frames.cbegin(); it != frames.cend(); ++it) {
+        if (cancel && cancel->load()) return 0;
         Video::Reader::Options o;
         o.threads = 1;
         o.hardware = false;

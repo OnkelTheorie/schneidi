@@ -10,6 +10,7 @@
 #include <QSize>
 #include <QString>
 #include <QVector>
+#include <atomic>
 #include <cstdint>
 
 namespace SmartRender {
@@ -28,8 +29,9 @@ struct Span {
 QVector<Span> spans(const Timeline& tl, int first, int length, bool burnSubtitles);
 
 // Color standard (MLT number, 601 or 709) of most frames among the spans whose files have the encoder's codec and the
-// output size; 0 = none such. Opens the files (slow, not in the GUI thread).
-int colorspace(const QVector<Span>& spans, const QString& videoCodec, QSize size);
+// output size; 0 = none such. Opens the files (slow, not in the GUI thread). cancel: set = stop opening them (0)
+int colorspace(const QVector<Span>& spans, const QString& videoCodec, QSize size,
+               const std::atomic<bool>* cancel = nullptr);
 
 // Wanted? SCHNEIDI_SMART_RENDER=off switches it off for tests and comparisons
 bool enabled();

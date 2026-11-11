@@ -93,6 +93,8 @@ struct LongAnalysis {
 
 std::mutex g_longMutex;
 std::atomic<int> g_longRuns{0};
+// Reader::loseDecoderForTests: 1 = the next decoder thread to look falls back, 2 = software decoders do not open
+std::atomic<int> g_loseDecoder{0};
 std::unordered_map<std::string, LongAnalysis>& longAnalyses()
 {
     static std::unordered_map<std::string, LongAnalysis> m;
@@ -602,6 +604,7 @@ struct Reader::Impl {
     int64_t validFrom = kNothing;                    // requests from here on can be answered by pics
     bool ended = false;                              // the decoder gave its last frame
     bool stop = false;
+    bool lost = false; // the decoder could not be opened again: no more pictures (Reader::failed)
     bool started = false;
     std::list<Request*> pending;
     int64_t high = -1;       // highest position asked for recently (read-ahead reference)
@@ -662,7 +665,7 @@ struct Reader::Impl {
         av_buffer_unref(&hw.context);
         hw = {};
         dec = avcodec_alloc_context3(codec);
-        if (!dec || avcodec_parameters_to_context(dec, stream->codecpar) < 0) {
+        if (!dec || avcodec_parameters_to_context(dec, stream->codecpar) < 0 || (!hardware && g_loseDecoder == 2)) {
             if (error) *error = QStringLiteral("decoder context");
             return false;
         }
@@ -1065,10 +1068,20 @@ struct Reader::Impl {
         wantHardware = false;
         restart(kNothing);
         lock.unlock();
-        QString ignored;
-        openDecoder(false, &ignored);
+        QString error;
+        const bool ok = openDecoder(false, &error);
         lock.lock();
         stats.hardware = false;
+        if (!ok) loseDecoder(error);
+    }
+
+    // Decoder thread, lock held: the decoder cannot be opened again (out of memory). Every request is answered with
+    // nothing, at once, instead of waiting for a decoder that never decodes (an export hung there).
+    void loseDecoder(const QString& error)
+    {
+        qWarning("Video: decoder of %s lost: %s", path.constData(), qPrintable(error));
+        lost = true;
+        stop = true;
     }
 
     // Decoder thread, lock held: close the decoder and drop every picture (opened again on the next request)
@@ -1088,12 +1101,12 @@ struct Reader::Impl {
     void wake(std::unique_lock<std::mutex>& lock)
     {
         lock.unlock();
-        QString ignored;
+        QString error;
         hwRefused = false;
-        const bool ok = openDecoder(wantHardware, &ignored);
+        const bool ok = openDecoder(wantHardware, &error);
         lock.lock();
         hibernating = false;
-        if (!ok) stop = true; // cannot happen (it opened before); answer every request with nothing
+        if (!ok) loseDecoder(error); // it opened before: out of memory
     }
 
     void finishLoop()
@@ -1138,8 +1151,10 @@ struct Reader::Impl {
         std::vector<Decoded> fresh;
         std::vector<std::shared_ptr<const Picture>> finished;
         while (!stop) {
-            if (finishFailed) {
+            if (finishFailed || g_loseDecoder == 1) {
                 finishFailed = false;
+                int armed = 1;
+                g_loseDecoder.compare_exchange_strong(armed, 2);
                 fallBack(lock);
                 continue;
             }
@@ -1559,6 +1574,7 @@ std::shared_ptr<const Picture> Reader::picture(int64_t position, const Fetch& fe
         Impl* impl = d.get();
         d->thread = std::thread([impl] { impl->run(); });
     }
+    if (d->lost) return nullptr; // the decoder thread has ended: nobody would answer
     if (fetch.cancel && fetch.cancel->load()) return nullptr; // before it moves the read-ahead's target
     // Read-ahead follows requests in order; out-of-order workers stay within a few frames
     d->sequential = d->high >= 0 && position >= d->high - 8 && position <= d->high + 2;
@@ -1589,6 +1605,17 @@ std::shared_ptr<const Picture> Reader::picture(int64_t position, const Fetch& fe
     }
     if (exact) *exact = req.exact;
     return req.result;
+}
+
+bool Reader::failed() const
+{
+    std::lock_guard lock(d->m);
+    return d->lost;
+}
+
+void Reader::loseDecoderForTests(bool on)
+{
+    g_loseDecoder = on ? 1 : 0;
 }
 
 Reader::Stats Reader::stats() const

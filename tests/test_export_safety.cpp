@@ -3,15 +3,20 @@
 // image sequence, SRT next to it), a disk full or write error midway is reported as a failure (not as "export
 // finished" with a cut-off file), an image sequence replaces an older one completely (a shorter one leaves no higher
 // numbers behind), and an odd project size is exported at the nearest even size (4:2:0 encoders refuse odd sizes).
+// An export that cannot go on (no memory for the sound, a video decoder lost for good) fails saying so instead of
+// hanging; a cancel while preparing returns at once; the x264/x265 intermediate of a killed render is removed later.
 
 #include "check.h"
 
 #include "core/RenderJob.h"
+#include "engine/ExportWriter.h"
 #include "engine/Exporter.h"
+#include "engine/video/Reader.h"
 
 #include <QApplication>
 #include <QDateTime>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QEventLoop>
 #include <QFile>
 #include <QFileInfo>
@@ -73,7 +78,7 @@ struct Result {
 
 void writeFile(const QString& path, const QByteArray& data);
 
-Result run(const ExportSettings& s, Stop stop = Stop::None, const Timeline& tl = timeline())
+Result run(const ExportSettings& s, Stop stop = Stop::None, const Timeline& tl = timeline(), int timeoutMs = 120000)
 {
     Exporter ex;
     QEventLoop loop;
@@ -92,7 +97,7 @@ Result run(const ExportSettings& s, Stop stop = Stop::None, const Timeline& tl =
         r.message = error;
         return r;
     }
-    QTimer::singleShot(120000, &loop, &QEventLoop::quit);
+    QTimer::singleShot(timeoutMs, &loop, &QEventLoop::quit);
     loop.exec();
     return r;
 }
@@ -158,14 +163,21 @@ void testStaleParts(const QString& root)
     QDir().mkpath(dir);
     const QString stale = dir + "/out.deadbeef.part.mp4", fresh = dir + "/out.cafe0123.part.mp4",
                   other = dir + "/other.deadbeef.part.mp4";
-    for (const QString& f : {stale, fresh, other}) writeFile(f, kOld);
-    for (const QString& f : {stale, other}) {
+    // The x264/x265 extension's intermediate (ExternalEncoder::intermediatePath of the part file, up to several GB):
+    // a killed render's goes once an hour old - also one of another render into this folder; a running render's
+    // (written all the time) and a user's file of a similar name stay
+    const QString staleNut = dir + "/.out.deadbeef.part.mp4.schneidi-video.nut",
+                  freshNut = dir + "/.out.cafe0123.part.mp4.schneidi-video.nut",
+                  otherNut = dir + "/.clip.0123abcd.part.mkv.schneidi-video.nut", userNut = dir + "/.notes.schneidi-video.nut";
+    for (const QString& f : {stale, fresh, other, staleNut, freshNut, otherNut, userNut}) writeFile(f, kOld);
+    for (const QString& f : {stale, other, staleNut, otherNut, userNut}) {
         QFile file(f);
         if (file.open(QIODevice::ReadWrite))
             CHECK(file.setFileTime(QDateTime::currentDateTime().addSecs(-7200), QFileDevice::FileModificationTime));
     }
     CHECK(run(settings(dir + "/out.mp4")).ok);
-    CHECK_EQ(entries(dir), (QStringList{"other.deadbeef.part.mp4", "out.cafe0123.part.mp4", "out.mp4"}));
+    CHECK_EQ(entries(dir), (QStringList{".notes.schneidi-video.nut", ".out.cafe0123.part.mp4.schneidi-video.nut",
+                                        "other.deadbeef.part.mp4", "out.cafe0123.part.mp4", "out.mp4"}));
 }
 
 void testKeepsOlderFile(const QString& root)
@@ -331,6 +343,106 @@ void testImageSequence(const QString& root)
     CHECK_EQ(entries(dir), QStringList({"seq"}));
 }
 
+// No memory for the sound encoder's frames: the export fails saying so. The encode thread used to end without a
+// word, the export waited for it forever (progress stuck, only a cancel ended it).
+void testSoundOutOfMemory(const QString& root)
+{
+    const QString dir = root + "/sound-memory";
+    QDir().mkpath(dir);
+    ExportWriter::failSoundBufferForTests(true);
+    QElapsedTimer took;
+    took.start();
+    const Result r = run(settings(dir + "/out.mp4"), Stop::None, timeline(), 30000);
+    ExportWriter::failSoundBufferForTests(false);
+    CHECK(r.started);
+    CHECK(!r.ok);
+    if (!CHECK(r.message.contains("out of memory")))
+        std::printf("       message after %lld ms: '%s'\n", took.elapsed(), qPrintable(r.message));
+    CHECK_EQ(entries(dir), QStringList());
+}
+
+// A video's decoder lost for good (after a hardware decoder failed, software would not open: out of memory): the
+// export fails saying so. Its frames used to wait for the decoder forever (and a cancel with them).
+void testDecoderLost(const QString& root)
+{
+    const QString dir = root + "/decoder-lost";
+    QDir().mkpath(dir);
+    Video::Reader::loseDecoderForTests(true);
+    QElapsedTimer took;
+    took.start();
+    const Result r = run(settings(dir + "/out.mp4"), Stop::None, timeline(), 30000);
+    Video::Reader::loseDecoderForTests(false);
+    CHECK(r.started);
+    CHECK(!r.ok);
+    if (!CHECK(!r.message.isEmpty())) std::printf("       no answer after %lld ms\n", took.elapsed());
+    CHECK_EQ(entries(dir), QStringList());
+}
+
+// Cancel while the export is still being prepared (smart render opens every file it may copy from): returns at once,
+// not after all of them were opened
+void testCancelWhilePreparing(const QString& root)
+{
+    const QString dir = root + "/prepare";
+    QDir().mkpath(dir);
+    constexpr int kFiles = 100, kEach = 10;
+    Timeline tl;
+    tl.video.resize(1);
+    for (int i = 0; i < kFiles; ++i) {
+        const QString file = dir + QString("/clip%1.mp4").arg(i, 3, 10, QChar('0'));
+        QFile::copy(g_media, file);
+        Clip c;
+        c.id = i + 1;
+        c.mediaPath = file;
+        c.start = i * kEach;
+        c.out = kEach - 1;
+        tl.video[0].clips << c;
+    }
+    ExportSettings s = settings(dir + "/out.mp4");
+    s.smartRender = true;
+    s.threads = 2;
+    s.audioCodec.clear();
+    // Time to get going without a cancel (prepared = every file opened)
+    qint64 prepare = 0;
+    {
+        Exporter ex;
+        QEventLoop loop;
+        QElapsedTimer t;
+        QObject::connect(&ex, &Exporter::started, &ex, [&] {
+            prepare = t.elapsed();
+            ex.cancel();
+        });
+        QObject::connect(&ex, &Exporter::finished, &loop, &QEventLoop::quit);
+        t.start();
+        QString error;
+        if (!CHECK(ex.start(tl, s, &error))) return;
+        QTimer::singleShot(60000, &loop, &QEventLoop::quit);
+        loop.exec();
+    }
+    // Canceled right after the start
+    qint64 cancel = 0;
+    bool finished = false, ok = true;
+    {
+        Exporter ex;
+        QObject::connect(&ex, &Exporter::finished, &ex, [&](bool success, const QString&) {
+            finished = true;
+            ok = success;
+        });
+        QString error;
+        if (!CHECK(ex.start(tl, s, &error))) return;
+        QElapsedTimer t;
+        t.start();
+        ex.cancel();
+        cancel = t.elapsed();
+        CHECK(!ex.isRunning());
+    }
+    CHECK(finished);
+    CHECK(!ok);
+    std::printf("       preparing %lld ms, cancel %lld ms\n", prepare, cancel);
+    if (prepare < 60) std::printf("       preparing too fast to tell, cancel time not checked\n");
+    else CHECK(cancel * 3 < prepare);
+    CHECK_EQ(QDir(dir).entryList({"out*"}, QDir::Files | QDir::Hidden), QStringList());
+}
+
 // Odd project size (an import or a project file can bring one) exported at project size: the nearest even size
 void testOddSize(const QString& root)
 {
@@ -376,5 +488,8 @@ int main(int argc, char** argv)
     testWrongContainer(tmp.path());
     testImageSequence(tmp.path());
     testOddSize(tmp.path());
+    testSoundOutOfMemory(tmp.path());
+    testCancelWhilePreparing(tmp.path());
+    testDecoderLost(tmp.path()); // last: before the fix it hangs
     return Check::result();
 }

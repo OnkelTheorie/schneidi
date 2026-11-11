@@ -103,16 +103,20 @@ QString partPath(const QString& target, const QString& id)
 
 // Temporary files of renders to `target` that were killed (crash, SIGKILL, power off) stay behind: removed once
 // nothing has written them for an hour (a running render writes its part file all the time; another render to the
-// same name keeps its own).
+// same name keeps its own). The same for the x264/x265 extension's intermediates of every render into this folder
+// (ExternalEncoder::intermediatePath of a part file: ".<part file>.schneidi-video.nut", hidden, up to several GB; its
+// program writes it all the time while encoding).
 void removeStaleParts(const QString& target)
 {
     const QFileInfo fi(target);
     const QString suffix = fi.suffix().isEmpty() ? QString() : "." + fi.suffix();
     const QRegularExpression part("^" + QRegularExpression::escape(fi.completeBaseName()) + "\\.[0-9a-f]{8}\\.part"
                                   + QRegularExpression::escape(suffix) + "$");
+    static const QRegularExpression intermediate("^\\..+\\.[0-9a-f]{8}\\.part(\\.[^.]+)?\\.schneidi-video\\.nut$");
     const QDateTime old = QDateTime::currentDateTime().addSecs(-3600);
     for (const QFileInfo& f : fi.dir().entryInfoList(QDir::Files | QDir::Hidden))
-        if (part.match(f.fileName()).hasMatch() && f.lastModified() < old) QFile::remove(f.absoluteFilePath());
+        if ((part.match(f.fileName()).hasMatch() || intermediate.match(f.fileName()).hasMatch()) && f.lastModified() < old)
+            QFile::remove(f.absoluteFilePath());
 }
 
 // Rename from onto to, replacing an existing file. QFile::rename refuses an existing target: the old file is moved
@@ -530,12 +534,16 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
     m_buildCancel = std::make_shared<std::atomic<bool>>(false);
     std::optional<Timeline> mixed;
     if (sound) mixed = tl;
-    m_build = QThread::create([graph, scaled = std::move(scaled), mixed = std::move(mixed), out, s, threads, from,
-                               length, frames, rate, convertRate, smart, copy = m_copy] {
+    // A cancel (stopBuild) waits for this thread: it stops between its steps and between the files it opens. What it
+    // made then is never used (its finished() is stale).
+    m_build = QThread::create([graph, cancel = m_buildCancel, scaled = std::move(scaled), mixed = std::move(mixed), out, s,
+                               threads, from, length, frames, rate, convertRate, smart, copy = m_copy] {
         Graph& g = *graph;
         {
             if (smart)
-                if (const int cs = SmartRender::colorspace(copy, s.videoCodec, out.size()); cs > 0) g.colorspace = cs;
+                if (const int cs = SmartRender::colorspace(copy, s.videoCodec, out.size(), cancel.get()); cs > 0)
+                    g.colorspace = cs;
+            if (*cancel) return;
             if (!s.videoCodec.isEmpty()) {
                 Picture::Options po;
                 po.format = out;
@@ -548,6 +556,7 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
                 po.overlay = s.overlay;
                 g.renderer = std::make_shared<Picture::Renderer>(scaled, po);
             }
+            if (*cancel) return;
             if (mixed) {
                 Audio::Mixer::Options o;
                 o.fileLength = [lengths = s.mediaLengths](const QString& path) { return lengths.value(path); };

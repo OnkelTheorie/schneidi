@@ -315,6 +315,8 @@ thread_local int64_t t_frame = -1;
 // Its hints (null = none) and whether a close picture stood in for one of its videos
 thread_local const RenderHints* t_hints = nullptr;
 thread_local bool t_exact = true;
+// A video's decoder was lost for good (Video::Reader::failed): an export renders no frame without it (render() null)
+thread_local bool t_sourceLost = false;
 
 // GPU path (0.19): a clip whose compositing graph the card may evaluate. clipLayer() of that clip plans the graph
 // (gpu/CompGpu) instead of evaluating it, and hands back where the result goes instead of drawing it
@@ -1025,6 +1027,7 @@ struct Renderer::Impl {
         bool exact = true;
         auto pic = v.reader->picture(request, fetch, &exact);
         if (!exact) t_exact = false;
+        if (!pic && v.reader->failed()) t_sourceLost = true;
         if (!pic || !pic->frame) return {};
         return pic;
     }
@@ -2819,10 +2822,14 @@ Frame Renderer::renderFrame(int64_t frame, const RenderHints& hints)
     t_frame = frame;
     t_hints = hints.nearest || hints.cancel ? &hints : nullptr;
     t_exact = true;
+    t_sourceLost = false;
+    // Export: a frame without a video whose decoder was lost is no frame (the export fails, saying so, instead of
+    // writing the clip black)
+    const auto lost = [&] { return t_sourceLost && d->options.mode == Mode::Export; };
 
     if (hints.yuv && d->passThrough(int(frame), ctx, *hints.yuv)) {
         t_hints = nullptr;
-        if (hints.cancel && hints.cancel->load()) return {};
+        if ((hints.cancel && hints.cancel->load()) || lost()) return {};
         Frame f;
         f.m_yuvWritten = true;
         f.m_exact = t_exact;
@@ -2838,7 +2845,7 @@ Frame Renderer::renderFrame(int64_t frame, const RenderHints& hints)
         Frame f;
         if (d->renderGpu(*gpu, f, frame, ctx, hints)) {
             t_hints = nullptr;
-            if (hints.cancel && hints.cancel->load()) return {};
+            if ((hints.cancel && hints.cancel->load()) || lost()) return {};
             f.m_exact = t_exact;
             f.m_width = ctx.W;
             f.m_height = ctx.H;
@@ -2863,7 +2870,7 @@ Frame Renderer::renderFrame(int64_t frame, const RenderHints& hints)
     d->renderTimeline(*ctx.root, int(frame), canvas, ctx, QString(), d->options.subtitles, 0);
     canvas.px.swap(f.m_buffer->data);
     t_hints = nullptr;
-    if (hints.cancel && hints.cancel->load()) return {};
+    if ((hints.cancel && hints.cancel->load()) || lost()) return {};
     f.m_exact = t_exact;
     f.m_width = ctx.W;
     f.m_height = ctx.H;
