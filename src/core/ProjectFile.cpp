@@ -887,6 +887,7 @@ QByteArray toJson(const ProjectData& data, const QString& projectPath)
             for (const AudioStreamInfo& a : m.audioStreams) {
                 QJsonObject so{{"channels", a.channels}};
                 if (!a.title.isEmpty()) so["title"] = a.title;
+                if (!a.playable) so["playable"] = false; // absent = playable (older files)
                 streams << so;
             }
             o["audioStreams"] = streams;
@@ -1136,7 +1137,8 @@ bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* d
         if (m.hasAudio) // missing in older files -> audioStreamCount() assumes 1 stream
             for (const QJsonValue& a : o.value("audioStreams").toArray())
                 m.audioStreams << AudioStreamInfo{std::max(1, a.toObject().value("channels").toInt(2)),
-                                                  a.toObject().value("title").toString()};
+                                                  a.toObject().value("title").toString(),
+                                                  a.toObject().value("playable").toBool(true)};
         for (const QJsonValue& v : o.value("transcripts").toArray()) {
             const QJsonObject to = v.toObject();
             MediaTranscript t;

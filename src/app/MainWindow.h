@@ -11,6 +11,7 @@
 
 #include <QElapsedTimer>
 #include "engine/PreviewResolution.h"
+#include "engine/ProbeCache.h"
 #include "ui/SecondScreen.h"
 #include "ui/timeline/ViewState.h"
 
@@ -291,6 +292,7 @@ private:
     void transcribeDialog();
     void speechDialog();
     MediaInfo probeCached(const QString& path);
+    void probeLater(const QString& path); // full probe in the background into m_probeCache
     // Like DaVinci with the first clip in an empty timeline: adapt the project to the clip's resolution/frame rate
     // (ask = ask first, otherwise take over directly)
     void offerClipFormat(const QStringList& paths, bool ask);
@@ -545,7 +547,8 @@ private:
         QVector<QMetaObject::Connection> watches; // splitterMoved of `sizes`
     } m_viewerAway;
 
-    QHash<QString, MediaInfo> m_probeCache;
+    ProbeCache m_probeCache; // drop preview, Viewer of a file not in the pool, import of a dropped file
+    QSet<QString> m_probing; // probeLater() running for these
     QHash<QString, int> m_sourcePos; // source playhead per file (this session only)
     QHash<int, int> m_sequencePos;   // playhead per timeline/compound clip (this session only)
     QHash<int, ViewState> m_sequenceView; // zoom/scroll per timeline/compound clip (saved in the project: views)
@@ -617,6 +620,10 @@ private:
     void discardChatPlan(const QString& id);
     std::function<QJsonObject(const QString&, const QJsonObject&)> m_chatRunner;
     std::function<void(const QString&)> m_liveWaiting;
+    QString m_liveTourMessage; // a tour runs: AIs wait
+    // Hands m_liveWaiting what AIs hear now: the tour's message, else "reading media" while the Media Pool probes an
+    // import (its wait runs an event loop that would deliver live requests), else nothing
+    void updateLiveWaiting();
     UserRunner m_userRunner;
     class AiChat* m_chat = nullptr;
     class AiChatPanel* m_chatPanel = nullptr;

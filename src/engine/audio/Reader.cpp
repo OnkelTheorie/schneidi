@@ -11,13 +11,17 @@ extern "C" {
 #include <libswresample/swresample.h>
 }
 
+#include <QFileInfo>
+
 #include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <deque>
 #include <iterator>
 #include <limits>
+#include <mutex>
 #include <numeric>
+#include <optional>
 #include <vector>
 
 namespace Audio {
@@ -40,6 +44,45 @@ constexpr double kOutlierCheck = 1.0;
 // for 5.1); 64 KB find it just as well
 constexpr int64_t kCodecProbeBytes = 1 << 16;
 constexpr int64_t kFar = -(int64_t(1) << 42); // "long before anything" (years), safe to multiply by a grid step
+// A stream the stream analysis found no values for (no packet in its first seconds: an empty MPEG-TS sound PID, sound
+// that starts late) is searched for its first sound in this much of the file at most (as MediaProbe's long analysis),
+// not to the file's end. Found none: the stream is dead (remembered per file while it stays the same: every later
+// open fails at once - playback, waveforms, export open a clip's stream again and again).
+constexpr int64_t kDeadSearchBytes = 120LL << 20;
+
+struct DeadStream {
+    QString path;
+    int stream = 0;
+    qint64 size = -1, modified = 0;
+};
+std::mutex g_deadMutex;
+std::vector<DeadStream>& deadStreams()
+{
+    static std::vector<DeadStream> list;
+    return list;
+}
+
+bool knownDead(const QString& path, int stream)
+{
+    std::lock_guard lock(g_deadMutex);
+    for (const DeadStream& d : deadStreams()) {
+        if (d.path != path || d.stream != stream) continue;
+        const QFileInfo fi(path);
+        return fi.size() == d.size && fi.lastModified().toMSecsSinceEpoch() == d.modified;
+    }
+    return false;
+}
+
+void rememberDead(const QString& path, int stream)
+{
+    const QFileInfo fi(path);
+    std::lock_guard lock(g_deadMutex);
+    auto& list = deadStreams();
+    list.erase(std::remove_if(list.begin(), list.end(), [&](const DeadStream& d) { return d.path == path && d.stream == stream; }),
+               list.end());
+    if (list.size() >= 256) list.erase(list.begin()); // a bounded list: the oldest goes
+    list.push_back(DeadStream{path, stream, fi.size(), fi.lastModified().toMSecsSinceEpoch()});
+}
 
 int64_t floorDiv(int64_t a, int64_t b)
 {
@@ -768,6 +811,7 @@ std::unique_ptr<Reader> Reader::open(const QString& path, int stream, const Opti
         if (error) *error = why;
         return nullptr;
     };
+    if (knownDead(path, stream)) return fail(QStringLiteral("audio stream %1 holds no sound").arg(stream));
     std::unique_ptr<Reader> r(new Reader);
     Impl& d = *r->d;
     d.outRate = options.rate > 0 ? options.rate : 48000;
@@ -799,6 +843,8 @@ std::unique_ptr<Reader> Reader::open(const QString& path, int stream, const Opti
     d.fmt->probesize = std::min(d.fmt->probesize, kCodecProbeBytes);
     AVStream* st = d.fmt->streams[d.index];
     d.tb = st->time_base;
+    // No values after the stream analysis: maybe late, maybe never any packet (searched in kDeadSearchBytes)
+    const bool unsettled = st->codecpar->ch_layout.nb_channels <= 0 || st->codecpar->sample_rate <= 0;
 
     int video = -1;
     for (unsigned i = 0; i < d.fmt->nb_streams && video < 0; ++i) {
@@ -810,7 +856,10 @@ std::unique_ptr<Reader> Reader::open(const QString& path, int stream, const Opti
 
     const AVCodec* codec = avcodec_find_decoder(st->codecpar->codec_id);
     if (!codec) return fail(QStringLiteral("no decoder for %1").arg(avcodec_get_name(st->codecpar->codec_id)));
-    if (!d.openDecoder()) return fail(QStringLiteral("cannot open the %1 decoder").arg(codec->name));
+    if (!d.openDecoder()) {
+        if (unsettled) rememberDead(path, stream);
+        return fail(QStringLiteral("cannot open the %1 decoder").arg(codec->name));
+    }
     d.pkt = av_packet_alloc();
     d.frame = av_frame_alloc();
     d.info.hasPicture = video >= 0;
@@ -856,8 +905,22 @@ std::unique_ptr<Reader> Reader::open(const QString& path, int stream, const Opti
     d.validFrom = d.wantOut = kFar;
     d.keepFrom = kFar;
     d.silentFrom = std::numeric_limits<int64_t>::max();
-    while (!d.started && d.step()) {}
-    if (!d.started) return fail(d.error ? QStringLiteral("cannot decode the audio") : QStringLiteral("no audio samples"));
+    const int readErrorsBefore = d.stats.readErrors;
+    {
+        std::optional<OpenMedia::ReadLimit> limit;
+        if (unsettled) limit.emplace(d.fmt, kDeadSearchBytes);
+        while (!d.started && d.step()) {}
+        if (!d.started && limit && limit->reached()) {
+            rememberDead(path, stream);
+            return fail(QStringLiteral("audio stream %1 holds no sound (none in its first %2 MB)").arg(stream).arg(kDeadSearchBytes >> 20));
+        }
+    }
+    if (!d.started) {
+        // Read to the file's end without a packet of it: dead. Not after a read error (a network share's hiccup):
+        // the next open tries again
+        if (unsettled && !d.error && d.stats.readErrors == readErrorsBefore) rememberDead(path, stream);
+        return fail(d.error ? QStringLiteral("cannot decode the audio") : QStringLiteral("no audio samples"));
+    }
     d.info.codec = QString::fromUtf8(d.dec->codec->name);
     d.info.sourceRate = d.inRate;
     d.info.sourceChannels = d.inLayout.nb_channels;

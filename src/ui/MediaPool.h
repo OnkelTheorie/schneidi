@@ -2,6 +2,7 @@
 #pragma once
 #include "core/PoolFilter.h"
 #include "core/Types.h"
+#include "engine/MediaProbe.h"
 
 #include <QHash>
 #include <QImage>
@@ -13,6 +14,7 @@
 #include <atomic>
 
 class Project;
+class ProbeCache;
 class ElidedLabel;
 class Engine;
 class HoverScrub;
@@ -103,6 +105,11 @@ public:
 public slots:
     void importDialog();
     void importFiles(const QStringList& paths); // lands in the selected bin
+    // Results of the drop preview's probe (MainWindow's), reused for an import; may be null
+    void setProbeCache(ProbeCache* cache) { m_probeCache = cache; }
+    // An import is waiting for its files to be probed (its event loop runs meanwhile: nothing else may change the
+    // project then - live requests, watch folders)
+    bool probing() const { return m_probing > 0; }
     // Like DaVinci "Add Folder and SubFolders into Media Pool (Create Bins)": bin with the folder name in the selected bin,
     // subfolders with media as sub-bins; one undo step for the bins
     void importFolder(const QString& dir);
@@ -123,6 +130,7 @@ public slots:
     void editHitNote(const QString& path, int shot);
 
 signals:
+    void probingChanged(bool probing); // see probing()
     void sourceRequested(const QString& path);
     // double-click on a hit of the material search: that file in the source viewer at that source frame
     void sourceRequestedAt(const QString& path, int frame);
@@ -152,14 +160,28 @@ protected:
 
 private:
     QAction* m_leaveOutSound = nullptr;
+    ProbeCache* m_probeCache = nullptr;
+    int m_probing = 0;           // addFiles waiting for its probes (nested: a Retry)
+    bool m_importCanceled = false; // Cancel in the import's progress: the rest of a folder import stops too
     void rebuild();      // media list changed: view anew (thumbnails of new media come from requestThumb)
     void rebuildBins();  // bin list anew (selection/expanded bins stay)
     void rebuildClips(); // clips of the selected bin (sorted)
     void showContextMenu(const QPoint& pos);
     void showBinMenu(const QPoint& pos);
     void removeBin(int id); // with confirmation if clips are inside
-    QStringList addFiles(const QStringList& paths, int bin); // returns the unreadable file names
-    bool importFolderInto(const QString& dir, int parentBin, int depth, QStringList* failed);
+    struct Unreadable {
+        QString path;
+        int bin = 0;
+        QString why; // MediaProbe::whyUnreadable, found by the probe's thread
+        MediaProbe::Busy busy = MediaProbe::Busy::No;
+    };
+    // Probes and adds; returns the unreadable files. `again`: probe even what the drop preview's cache knows (Retry)
+    // `added`: how many were added (canceled files are neither added nor unreadable)
+    QVector<Unreadable> addFiles(const QStringList& paths, int bin, bool again = false, int* added = nullptr);
+    bool importFolderInto(const QString& dir, int parentBin, int depth, QVector<Unreadable>* failed);
+    // Says which files could not be read and why, offering to try again (a file still being written or held by
+    // another program reads a moment later); tried again until they read or the user stops
+    void reportUnreadable(QVector<Unreadable> failed);
     void updateItem(const QString& path);
     // Thumbnail in a worker thread (opens the file and decodes up to a third of it: blocked the window per clip)
     void requestThumb(const QString& path, int frame);

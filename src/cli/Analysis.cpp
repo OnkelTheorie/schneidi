@@ -139,10 +139,23 @@ QVector<int> audioStreamsOf(const MediaInfo& info, const QString& list)
             for (int i = 0; i < count; ++i) all << QString("%1 = %2").arg(i).arg(info.audioStreamName(i));
             fail("BAD_ARGUMENT", QString("no audio stream '%1' in %2 (streams: %3)").arg(s, info.path, all.join(", ")));
         }
+        requirePlayableStream(info, index);
         if (!out.contains(index)) out << index;
     }
     if (out.isEmpty()) fail("BAD_ARGUMENT", "audio_stream is empty");
     return out;
+}
+
+void requirePlayableStream(const MediaInfo& info, int stream)
+{
+    const int count = info.audioStreamCount();
+    if (stream < 0 || stream >= count)
+        fail("BAD_ARGUMENT", QString("the file has %1 audio stream(s); stream counts from 0").arg(count));
+    if (!info.audioStreamPlayable(stream))
+        fail("BAD_ARGUMENT", QString("audio stream %1 (%2) of %3 cannot be played: no decoder here for its codec, or it "
+                                     "holds no sound")
+                                 .arg(stream)
+                                 .arg(info.audioStreamName(stream), info.path));
 }
 
 // "x,y,w,h" in pixels of the full picture, or fractions of it when all four are <= 1 ("0.75,0,0.25,0.3")
@@ -299,8 +312,13 @@ QJsonObject probeOne(const QJsonObject& a)
     }
     if (m.info.hasAudio) {
         QJsonArray streams;
-        for (int i = 0; i < m.info.audioStreamCount(); ++i) streams << m.info.audioStreamName(i);
+        QJsonArray dead; // streams schneidi cannot play (no decoder here, no sound): listed for their place, never used
+        for (int i = 0; i < m.info.audioStreamCount(); ++i) {
+            streams << m.info.audioStreamName(i);
+            if (!m.info.audioStreamPlayable(i)) dead << i;
+        }
         o["audio_streams"] = streams;
+        if (!dead.isEmpty()) o["unplayable_audio_streams"] = dead;
     }
     if (a["gaps"].toBool() && m.info.hasVideo && !m.info.isImage) o["gaps"] = gapsJson(m.info.path, m.format);
     if (m.info.hasVideo) {

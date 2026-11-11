@@ -1602,7 +1602,6 @@
  "Nicht ausgeführte Effekte bleiben im Projekt; im Inspektor kannst du sie später erlauben.": "Effects that are not run stay in the project; you can allow them later in the Inspector.",
  "Nicht gelöscht: %1": "Not deleted: %1",
  "Nicht im Preset (Seite Farbe bzw. Plugin fehlt): %1": "Not in the preset (Color page or plugin missing): %1",
- "Nicht lesbar:": "Could not read:",
  "Nicht mehr fragen": "Don't ask again",
  "Nicht mehr gültig: ein anderes Projekt wurde geöffnet.": "No longer valid: another project was opened.",
  "Nicht mehr nach Updates suchen (wieder einschalten: Einstellungen › Allgemein)": "Stop looking for updates (turn it back on: Settings › General)",
@@ -2983,5 +2982,17 @@
  "Proxy fehlgeschlagen: %1": "Proxy failed: %1",
  "%1 Proxys fehlgeschlagen": "%1 proxies failed",
  "Proxy fehlgeschlagen: %1 – Details unten rechts": "Proxy failed: %1 – details at the bottom right",
- "Meldung schließen": "Dismiss"
+ "Meldung schließen": "Dismiss",
+ "schneidi konnte in %1 kein Bild und keinen Ton finden.": "schneidi found no picture and no sound in %1.",
+ "Die Datei ist beschädigt oder enthält nichts, was schneidi abspielen kann.": "The file is damaged or holds nothing schneidi can play.",
+ "Die Datei wurde gerade erst geschrieben – läuft die Aufnahme, der Download oder die Kopie noch, klappt es vielleicht gleich. Erneut versuchen?": "The file was written just now – if the recording, download or copy is still running, it may work in a moment. Try again?",
+ "Die Dateien sind beschädigt oder enthalten nichts, was schneidi abspielen kann. Die Details nennen die Gründe.": "The files are damaged or hold nothing schneidi can play. The details say why.",
+ "Ein anderes Programm hält die Datei gerade (Aufnahme, Kopie oder Virenprüfung?). Erneut versuchen?": "Another program is holding the file right now (recording, copy or virus scan?). Try again?",
+ "Grund: %1": "Reason: %1",
+ "Manche Dateien werden vielleicht noch geschrieben oder sind gesperrt. Erneut versuchen?": "Some files may still be being written or are locked. Try again?",
+ "Medien werden gelesen …": "Reading media …",
+ "Wird abgebrochen …": "Canceling …",
+ "gerade erst geschrieben": "written just now",
+ "schneidi konnte in %1 Dateien kein Bild und keinen Ton finden:": "schneidi found no picture and no sound in %1 files:",
+ "von einem anderen Programm gesperrt": "locked by another program"
 }

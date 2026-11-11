@@ -9,6 +9,8 @@
 #include "engine/ProxyManager.h"
 #include <QEventLoop>
 #include <QThread>
+
+#include <algorithm>
 #include <QElapsedTimer>
 #include <QTemporaryDir>
 #include <QTimer>
@@ -338,10 +340,14 @@ int main(int argc, char** argv)
             QTimer::singleShot(20000, &loop, &QEventLoop::quit);
             loop.exec();
             CHECK(last->icon().cacheKey() != before.last()); // the last one got its thumbnail
-            int waiting = 0; // out of view at the top, still without one (the first one may have been under way)
-            for (int i = 1; i < 10; ++i)
+            // Out of view at the top, still without one. The first ones may have been under way before the scroll:
+            // one per worker of the thumbnail pool (MediaStorage: a quarter of the cores, 1 to 3 - in a cgroup with
+            // all 12 cores 3, in Claude's slice with 10 cores 2)
+            const int workers = std::clamp(QThread::idealThreadCount() / 4, 1, 3);
+            int waiting = 0;
+            for (int i = workers; i < 10; ++i)
                 if (list->item(i)->icon().cacheKey() == before[i]) ++waiting;
-            CHECK_EQ(waiting, 9);
+            CHECK_EQ(waiting, 10 - workers);
         }
     }
 
