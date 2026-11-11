@@ -1006,7 +1006,8 @@ const QVector<Command>& commands()
                            "the error names the ones that fit", true},
           {"preset", T::String, presetHelp()},
           {"format", T::String,
-           "h264 (default), h265, av1, vp9 (WebM); prores (422 HQ), prores422, proreslt, proresproxy, prores4444, "
+           "h264 (default), h265, av1, vp9 (WebM); h264_own (experimental own encoder: 8-bit 4:2:0, no B-frames, "
+           "slower than x264; quality 3 = two-pass bit rate); prores (422 HQ), prores422, proreslt, proresproxy, prores4444, "
            "dnxhr-sq, dnxhr-hq, dnxhr-hqx (MOV); gif (animated, no sound; e.g. height 480, fps 15); png, tiff, jpeg = "
            "image sequence (out 'x.png' writes x/x_00001.png …); audio only: aac, mp3, opus, wav, aiff, flac, alac; "
            "srt = only the subtitle files (the visible track into out, every other track with entries next to it as "

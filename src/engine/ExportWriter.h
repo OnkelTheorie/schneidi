@@ -62,7 +62,18 @@ public:
         QVector<Subtitles::TextTrack> subtitles;
         // x264/x265 of the extension: its ffmpeg program encodes the video (engine/ExternalEncoder; no smart render)
         QString externalProgram;
+        // Own H.264 encoder (videoCodec kOwnH264): output frames that start with a key frame (hard cuts of the
+        // timeline; sorted). The encoder also finds scene changes itself.
+        QVector<int> keyframes;
     };
+    // schneidi's own H.264 encoder (engine/encoder/h264, experimental): not an FFmpeg encoder, written by the writer
+    // itself (Annex B packets into the muxer, parameter sets as the stream's extradata). 8-bit 4:2:0 only, no
+    // B-frames. Options: "qp" (fixed quantizer, quality mode) or "bitrate" (kbit/s: two passes, the first only
+    // analyses the pictures)
+    static constexpr const char* kOwnH264 = "h264_own";
+    static bool isOwnH264(const QString& codec) { return codec == QLatin1String(kOwnH264); }
+    // The own encoder's fixed QP for an x264-like CRF (the export's quality levels)
+    static int ownH264Qp(int crf);
     // Picture engine and audio mixer
     struct Own {
         std::shared_ptr<Picture::Renderer> renderer; // nullptr = audio only
@@ -102,6 +113,9 @@ public:
     bool encoderFailed() const;
     QString error() const;
     int framesWritten() const;
+    // Share of the work done, 0..1: framesWritten() / length, with the own encoder's two passes the first pass
+    // (rendering and analysing only) counts as a small part
+    double progress() const;
     int framesCopied() const; // smart render: of framesWritten()
     // Smart render failed as a whole (e.g. the muxer refused the stream): render again without
     bool smartFailed() const;

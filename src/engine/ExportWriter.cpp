@@ -5,6 +5,7 @@
 #include "engine/OpenMedia.h"
 #include "engine/OutputColor.h"
 #include "engine/audio/Mixer.h"
+#include "engine/encoder/h264/H264Encoder.h"
 #include "engine/picture/Renderer.h"
 #include "engine/video/Reader.h"
 
@@ -154,6 +155,11 @@ AVPixelFormat streamFormat(AVPixelFormat f)
 // encodes then, ExternalEncoder)
 bool encoderKind(const QString& name, AVCodecID* id, AVMediaType* type)
 {
+    if (ExportWriter::isOwnH264(name)) {
+        *id = AV_CODEC_ID_H264;
+        *type = AVMEDIA_TYPE_VIDEO;
+        return true;
+    }
     if (const AVCodec* c = avcodec_find_encoder_by_name(name.toUtf8().constData())) {
         *id = c->id;
         *type = c->type;
@@ -233,6 +239,9 @@ bool ExportWriter::supportsOwn(const QString& path, const QString& muxer, const 
         if (!encoderKind(videoCodec, &id, &type) || type != AVMEDIA_TYPE_VIDEO) return no(videoCodec + " is no video encoder");
         const AVPixelFormat pf = av_get_pix_fmt(pixFmt.toUtf8().constData());
         if (pf == AV_PIX_FMT_NONE) return no("unknown pixel format " + pixFmt);
+        // The own encoder takes 8-bit 4:2:0 only: no 10 bit (HDR), no 4:2:2/4:4:4, no alpha, no full range
+        if (isOwnH264(videoCodec) && pf != AV_PIX_FMT_YUV420P)
+            return no("the own H.264 encoder writes only 8-bit 4:2:0 (yuv420p), not " + pixFmt);
         // Converted by OutputColor, uploaded (VAAPI) or by swscale from RGBA
         OutputColor::Target t;
         if (pf != AV_PIX_FMT_VAAPI && !OutputColor::targetOf(pf, t) && !sws_isSupportedOutput(pf))
@@ -313,6 +322,27 @@ struct ExportWriter::Impl {
     std::unique_ptr<ExternalEncoder> external;
     QString externalFile;
     std::vector<AVPacket*> heldSound;
+    // Own H.264 encoder (Settings::videoCodec kOwnH264)
+    bool own = false;
+    int ownQp = 23, ownBitrateK = 0;
+    std::vector<char> ownKey; // per output frame: a cut, start a key frame (Settings::keyframes)
+    // Two passes (bitrate): the fetch thread's first pass, done before it hands over the first picture
+    std::shared_ptr<const schneidi::h264::FirstPassStats> ownStats;
+    std::atomic<int> analysed{0}; // pictures of the first pass
+    std::unique_ptr<schneidi::h264::Encoder> ownEnc; // encode thread
+    int64_t ownPackets = 0;
+    bool ownKeyAt(int64_t i) const { return i >= 0 && i < int64_t(ownKey.size()) && ownKey[size_t(i)]; }
+    static schneidi::h264::Picture ownPicture(const AVFrame* f)
+    {
+        schneidi::h264::Picture p;
+        p.y = f->data[0];
+        p.u = f->data[1];
+        p.v = f->data[2];
+        p.strideY = f->linesize[0];
+        p.strideC = f->linesize[1];
+        return p;
+    }
+
     // Smart render
     std::vector<uint8_t> pieceHeader; // parameter sets of the piece encoder (Annex B)
     bool pieceStart = false;          // the next encoded packet is the piece's first: parameter sets before it
@@ -605,9 +635,35 @@ struct ExportWriter::Impl {
         return true;
     }
 
+    // Own encoder, bitrate mode: every picture rendered once more for the encoder's first pass (its cheap
+    // lookahead analysis of the whole clip, nothing encoded), so the rate control knows the clip ahead
+    bool ownFirstPass()
+    {
+        try {
+            schneidi::h264::FirstPass pass(width, height);
+            pump->run(0, s.length);
+            for (int i = 0; i < s.length && !stop; ++i) {
+                AVFrame* f = pump->take(i);
+                if (!f) {
+                    if (!stop) fail(QStringLiteral("no frame %1 from the timeline").arg(i));
+                    return false;
+                }
+                pass.add(ownPicture(f), ownKeyAt(i));
+                av_frame_free(&f);
+                ++analysed;
+            }
+            ownStats = pass.stats();
+        } catch (const std::exception& e) {
+            fail(QStringLiteral("own H.264 encoder, first pass: %1").arg(e.what()), true);
+            return false;
+        }
+        return !stop;
+    }
+
     void fetch()
     {
         if (smart) fetchSmart();
+        else if (own && ownBitrateK > 0 && pump && !ownFirstPass()) {} // failed or canceled: only the end below
         else fetchOwn(0, s.length, false);
         Item end;
         end.end = true;
@@ -965,7 +1021,7 @@ struct ExportWriter::Impl {
             vst->sample_aspect_ratio = aspect;
             if (!s.externalProgram.isEmpty()) {
                 if (!startExternal()) return false;
-            } else if (!smart) {
+            } else if (!smart && !own) { // (the own encoder starts with the first picture: startOwn)
                 if (!(venc = newVideoEncoder())) return false;
                 avcodec_parameters_from_context(vst->codecpar, venc);
             }
@@ -994,7 +1050,114 @@ struct ExportWriter::Impl {
             audioFrameSize = aenc->frame_size > 0 ? aenc->frame_size : 1024; // PCM takes any size
         }
         if (!openTextStreams()) return false;
-        return smart || external || writeHeader();
+        return smart || external || own || writeHeader();
+    }
+
+    // Own encoder, at the first picture (the first pass is done by then): the encoder, the stream's parameters from
+    // its parameter sets (MP4/MOV make an avcC of them, Matroska its CodecPrivate) and the header
+    bool startOwn()
+    {
+        schneidi::h264::EncoderConfig c;
+        c.width = width;
+        c.height = height;
+        c.qp = ownQp;
+        // Key frame at least every 250 pictures (x264's default), cuts and scene changes in between
+        c.gop = 250;
+        c.threads = s.threads > 0 ? s.threads : std::max(1, int(std::thread::hardware_concurrency()));
+        c.fps = fps;
+        if (ownBitrateK > 0) {
+            c.bitrateKbps = ownBitrateK;
+            c.firstPass = ownStats;
+        }
+        std::vector<uint8_t> header;
+        try {
+            ownEnc = std::make_unique<schneidi::h264::Encoder>(c);
+            header = ownEnc->headers();
+        } catch (const std::exception& e) {
+            fail(QStringLiteral("own H.264 encoder cannot be opened: %1").arg(e.what()), true);
+            return false;
+        }
+        AVCodecParameters* par = vst->codecpar;
+        par->codec_type = AVMEDIA_TYPE_VIDEO;
+        par->codec_id = AV_CODEC_ID_H264;
+        par->codec_tag = 0;
+        par->width = width;
+        par->height = height;
+        par->format = AV_PIX_FMT_YUV420P;
+        par->color_space = matrixOf(colorspace, height);
+        par->color_trc = transferOf(colorspace);
+        par->color_primaries = primariesOf(colorspace, height);
+        par->color_range = AVCOL_RANGE_MPEG;
+        par->field_order = AV_FIELD_PROGRESSIVE;
+        par->sample_aspect_ratio = aspect;
+        par->video_delay = 0; // no B-frames: decode order = picture order
+        // Profile and level from the SPS (after its start code and NAL header)
+        for (size_t i = 0; i + 6 < header.size(); ++i)
+            if (header[i] == 0 && header[i + 1] == 0 && header[i + 2] == 1 && (header[i + 3] & 0x1f) == 7) {
+                par->profile = header[i + 4];
+                par->level = header[i + 6];
+                break;
+            }
+        av_freep(&par->extradata);
+        par->extradata = static_cast<uint8_t*>(av_mallocz(header.size() + AV_INPUT_BUFFER_PADDING_SIZE));
+        if (!par->extradata) {
+            fail(QStringLiteral("out of memory"));
+            return false;
+        }
+        std::memcpy(par->extradata, header.data(), header.size());
+        par->extradata_size = int(header.size());
+        return writeHeader();
+    }
+
+    // Own encoder: one access unit (Annex B, one picture) into the muxer. No B-frames: pts = dts = its number
+    bool writeOwn(const std::vector<uint8_t>& au)
+    {
+        if (av_new_packet(packet, int(au.size())) < 0) {
+            fail(QStringLiteral("out of memory"));
+            return false;
+        }
+        std::memcpy(packet->data, au.data(), au.size());
+        packet->pts = packet->dts = ownPackets++;
+        packet->duration = 1;
+        if (hasIdr(packet, AV_CODEC_ID_H264)) packet->flags |= AV_PKT_FLAG_KEY;
+        av_packet_rescale_ts(packet, av_inv_q(rate), vst->time_base);
+        packet->stream_index = vst->index;
+        const int w = av_interleaved_write_frame(oc, packet);
+        if (w < 0) {
+            fail(QStringLiteral("writing failed: %1").arg(avError(w)));
+            return false;
+        }
+        return true;
+    }
+
+    // Own encoder: picture in (its output frame number = pts), the access unit that is ready out
+    bool encodeOwn(const AVFrame* f)
+    {
+        std::vector<uint8_t> au;
+        try {
+            au = ownEnc->encode(ownPicture(f), ownKeyAt(f->pts));
+        } catch (const std::exception& e) {
+            fail(QStringLiteral("own H.264 encoder: %1").arg(e.what()), true);
+            return false;
+        }
+        return au.empty() || writeOwn(au);
+    }
+
+    // Own encoder after the last picture: the pictures still in its lookahead
+    bool flushOwn()
+    {
+        while (!stop) {
+            std::vector<uint8_t> au;
+            try {
+                au = ownEnc->flush();
+            } catch (const std::exception& e) {
+                fail(QStringLiteral("own H.264 encoder: %1").arg(e.what()), true);
+                return false;
+            }
+            if (au.empty()) return true;
+            if (!writeOwn(au)) return false;
+        }
+        return false;
     }
 
     // x264/x265 of the extension: start its program (an encoder problem when it does not start: the export falls back
@@ -1464,6 +1627,7 @@ struct ExportWriter::Impl {
         // The program and its file belong to this thread's run
         external.reset();
         if (!externalFile.isEmpty()) QFile::remove(externalFile);
+        ownEnc.reset();
         freePackets(heldSound);
     }
 
@@ -1487,6 +1651,10 @@ struct ExportWriter::Impl {
                 freeItem(item);
                 break;
             }
+            if (own && !headerWritten && !item.end && !startOwn()) {
+                freeItem(item);
+                break;
+            }
             if (item.end) {
                 if (smart && !finishPiece()) break;
                 if (!headerWritten && !external) {
@@ -1495,6 +1663,7 @@ struct ExportWriter::Impl {
                 }
                 if (aenc && !flushSound()) break;
                 if (external && !finishExternal()) break;
+                if (ownEnc && !flushOwn()) break;
                 if (venc && avcodec_send_frame(venc, nullptr) >= 0 && !drain(venc, vst, true)) break;
                 const int r = av_write_trailer(oc);
                 if (r < 0) {
@@ -1540,6 +1709,13 @@ struct ExportWriter::Impl {
                     freeItem(item);
                     break;
                 }
+            }
+            if (own) {
+                const bool ok = !item.picture || encodeOwn(item.picture);
+                freeItem(item);
+                if (!ok) break;
+                ++written;
+                continue;
             }
             if (external) {
                 QString why;
@@ -1673,7 +1849,17 @@ ExportWriter::ExportWriter(const Settings& s, Own own) : d(std::make_unique<Impl
     const int parallel = std::max(1, d->o.parallel);
     d->queueMax = size_t(std::clamp(parallel, 2, 8));
     if (AVMediaType type; !encoderKind(s.videoCodec, &d->codecId, &type)) d->codecId = AV_CODEC_ID_NONE;
-    d->smart = !s.copy.isEmpty() && d->o.renderer && d->o.rate == d->o.timelineRate && s.externalProgram.isEmpty()
+    d->own = isOwnH264(s.videoCodec) && d->o.renderer;
+    if (d->own) {
+        for (const auto& [key, value] : s.videoOptions) {
+            if (key == "qp") d->ownQp = std::clamp(value.toInt(), 10, 51);
+            if (key == "bitrate") d->ownBitrateK = std::max(0, value.toInt());
+        }
+        d->ownKey.assign(size_t(std::max(0, s.length)), 0);
+        for (int k : s.keyframes)
+            if (k > 0 && k < s.length) d->ownKey[size_t(k)] = 1;
+    }
+    d->smart = !s.copy.isEmpty() && d->o.renderer && d->o.rate == d->o.timelineRate && s.externalProgram.isEmpty() && !d->own
                && (d->codecId == AV_CODEC_ID_H264 || d->codecId == AV_CODEC_ID_HEVC)
                && (streamFormat(d->pixFmt) == AV_PIX_FMT_YUV420P || streamFormat(d->pixFmt) == AV_PIX_FMT_YUV420P10LE);
     if (d->o.renderer) {
@@ -1733,9 +1919,27 @@ QString ExportWriter::error() const
     return d->error;
 }
 
+int ExportWriter::ownH264Qp(int crf)
+{
+    // Matched by file size on 1080p60 game footage (x264 medium, CRF 18/22/28 against fixed QPs): equal sizes at
+    // about CRF + 9, our PSNR then higher (x264 spends bits on psy tuning); one step finer for the lack of psy
+    // tuning. High/medium/small = QP 26/30/36
+    return std::clamp(crf + 8, 10, 51);
+}
+
 int ExportWriter::framesWritten() const
 {
     return d->written;
+}
+
+double ExportWriter::progress() const
+{
+    const double length = std::max(1, d->s.length);
+    const double done = d->written / length;
+    if (!d->own || d->ownBitrateK <= 0) return done;
+    // First pass: render + analyse (~20 ms per 1080p picture), a small part next to encoding
+    constexpr double kFirst = 0.15;
+    return kFirst * (d->analysed / length) + (1 - kFirst) * done;
 }
 
 int ExportWriter::framesCopied() const

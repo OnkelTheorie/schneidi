@@ -246,6 +246,11 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/engine/VideoEffects.h     src/engine/VideoEffects.cpp
     src/engine/Exporter.h         src/engine/Exporter.cpp
     src/engine/ExportWriter.h     src/engine/ExportWriter.cpp
+    # Own H.264 encoder (experimental export option "h264_own"; prototype tool h264-proto below)
+    src/engine/encoder/h264/H264Encoder.h src/engine/encoder/h264/H264Encoder.cpp
+    src/engine/encoder/h264/Cavlc.h       src/engine/encoder/h264/Cavlc.cpp
+    src/engine/encoder/h264/H264Cabac.cpp
+    src/engine/encoder/h264/Lookahead.h   src/engine/encoder/h264/Lookahead.cpp
     src/engine/SmartRender.h      src/engine/SmartRender.cpp
     src/engine/OutputColor.h      src/engine/OutputColor.cpp
     src/engine/HardwareEncoders.h src/engine/HardwareEncoders.cpp
@@ -693,7 +698,7 @@ if(SCHNEIDI_FUZZ)
     add_subdirectory(tests/fuzz)
 endif()
 
-# Own H.264 encoder (prototype, not part of the app yet): build with `cmake --build build --target h264-proto`
+# Own H.264 encoder (in the app as the experimental export format "h264_own"): the prototype tool, build with `cmake --build build --target h264-proto`
 add_executable(h264-proto EXCLUDE_FROM_ALL
     tools/h264proto/main.cpp
     src/engine/encoder/h264/Cavlc.cpp
@@ -701,5 +706,10 @@ add_executable(h264-proto EXCLUDE_FROM_ALL
     src/engine/encoder/h264/H264Cabac.cpp
     src/engine/encoder/h264/Lookahead.cpp)
 target_include_directories(h264-proto PRIVATE ${CMAKE_SOURCE_DIR}/src)
+# The encoder's inner loops gain from -O3 over the dev builds' -O2 (app and tool alike)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    set_source_files_properties(src/engine/encoder/h264/H264Encoder.cpp src/engine/encoder/h264/Cavlc.cpp
+        src/engine/encoder/h264/H264Cabac.cpp src/engine/encoder/h264/Lookahead.cpp PROPERTIES COMPILE_OPTIONS "-O3")
+endif()
 find_package(Threads REQUIRED)
 target_link_libraries(h264-proto PRIVATE Threads::Threads)

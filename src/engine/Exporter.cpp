@@ -393,7 +393,7 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
     // An encoder this FFmpeg does not have (the GPL-free build has no x264/x265 and offers what it has instead):
     // say so instead of failing without a reason
     if (!s.videoCodec.isEmpty() && !avcodec_find_encoder_by_name(s.videoCodec.toUtf8().constData())
-        && HardwareEncoders::externalProgram(s.videoCodec).isEmpty()) {
+        && HardwareEncoders::externalProgram(s.videoCodec).isEmpty() && !ExportWriter::isOwnH264(s.videoCodec)) {
         if (error) *error = T("Video-Encoder %1 ist in diesem Build nicht verfügbar.").arg(s.videoCodec);
         return false;
     }
@@ -528,9 +528,11 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
     const bool sameSize = out.size() == s.format.size();
     // (not with x264/x265 of the extension: its program encodes the whole video in one go)
     if (s.smartRender && !s.overlay && SmartRender::enabled() && s.output == ExportSettings::Output::File && !s.videoCodec.isEmpty()
-        && !convertRate && sameSize && HardwareEncoders::externalProgram(s.videoCodec).isEmpty())
+        && !convertRate && sameSize && HardwareEncoders::externalProgram(s.videoCodec).isEmpty()
+        && !ExportWriter::isOwnH264(s.videoCodec)) // (the own encoder has no pieces to put between copies)
         m_copy = SmartRender::spans(tl, m_from, m_length, s.burnSubtitles);
     const bool smart = !m_copy.isEmpty();
+    m_keyframes = ExportWriter::isOwnH264(s.videoCodec) ? cutFrames(tl, m_from, m_length, s.format.rate, rate) : QVector<int>();
 
     // Renderer and mixer are made in a thread (smart render looks at the files to copy), so the window stays
     // responsive. launch() continues in this thread. Sources open with their first frame.
@@ -623,6 +625,29 @@ bool Exporter::launch(QString* error)
     return true;
 }
 
+QVector<int> Exporter::cutFrames(const Timeline& tl, int from, int length, FrameRate timelineRate, FrameRate outputRate)
+{
+    // The lowest visible video track with pictures is the edit's main picture: its hard cuts (no transition at the
+    // clip's start) are where the picture changes as a whole. Titles and overlays above change only a part.
+    QVector<int> cuts;
+    for (const Track& t : tl.video) {
+        if (t.hidden) continue;
+        bool any = false;
+        for (const Clip& c : t.clips) {
+            if (!c.enabled || c.kind == ClipKind::Title) continue;
+            any = true;
+            if (c.transIn > 0 || c.start <= from || c.start >= from + length) continue;
+            // First output frame showing the clip: output frame k shows timeline frame from + floor(k * tl / out)
+            const int64_t a = int64_t(c.start - from) * outputRate.num * timelineRate.den;
+            const int64_t b = int64_t(outputRate.den) * timelineRate.num;
+            const int k = int(b > 0 ? (a + b - 1) / b : 0);
+            if (k > 0 && (cuts.isEmpty() || cuts.last() < k)) cuts << k;
+        }
+        if (any) break;
+    }
+    return cuts;
+}
+
 QString Exporter::fallbackCodec(const QString& failed) const
 {
     // A hardware encoder: the software one chosen with it; x264/x265 of the extension (a separate program): the free one
@@ -663,6 +688,12 @@ QVector<QPair<QByteArray, QByteArray>> Exporter::encoderOptions(const QString& c
     const ExportSettings& s = m_settings;
     QVector<QPair<QByteArray, QByteArray>> o;
     if (s.videoCodec.isEmpty()) return o;
+    if (ExportWriter::isOwnH264(codec)) {
+        // Own encoder: a bit rate ("Web": the cap as the target, two passes) or a fixed QP from the quality level
+        if (s.maxBitrateK > 0) o.append({"bitrate", QByteArray::number(s.maxBitrateK)});
+        else o.append({"qp", QByteArray::number(ExportWriter::ownH264Qp(s.crf > 0 ? s.crf : 20))});
+        return o;
+    }
     if (HardwareEncoders::isHardwareCodec(codec)) {
         for (const auto& [key, value] : HardwareEncoders::codecOptions(codec, s.crf)) o.append({key.toUtf8(), value.toUtf8()});
     } else {
@@ -722,6 +753,7 @@ bool Exporter::startWriter(const QString& codec, QString* error)
     w.length = m_length;
     w.copy = m_copy;
     w.maxBitrateK = s.maxBitrateK;
+    w.keyframes = m_keyframes;
     w.subtitles = m_textTracks;
     if (!s.videoCodec.isEmpty()) w.externalProgram = HardwareEncoders::externalProgram(codec);
     m_usedCodec = s.videoCodec.isEmpty() ? QString() : codec;
@@ -768,7 +800,7 @@ void Exporter::pollWriter()
     case ExportWriter::State::Running: {
         // GIF: the conversion afterwards gets the last tenth
         const int scale = m_settings.output == ExportSettings::Output::Gif ? 90 : 100;
-        emit progress(std::clamp(m_writer->framesWritten() * scale / std::max(1, m_length), 0, scale - 1));
+        emit progress(std::clamp(int(m_writer->progress() * scale), 0, scale - 1));
         return;
     }
     case ExportWriter::State::Failed: {

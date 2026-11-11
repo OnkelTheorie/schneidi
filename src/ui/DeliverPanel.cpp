@@ -118,6 +118,9 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
         if (m_format->count() > 0 && group(renderFormat(m_format->itemData(m_format->count() - 1).toString())) != group(f))
             m_format->insertSeparator(m_format->count());
         m_format->addItem(T(f.label), QString(f.id));
+        if (QLatin1String(f.id) == QLatin1String("h264_own"))
+            m_format->setItemData(m_format->count() - 1,
+                                  T("Experimentell: nur 8 Bit 4:2:0, ohne B-Frames, langsamer als x264."), Qt::ToolTipRole);
     }
 
     m_resolution = new QComboBox;
