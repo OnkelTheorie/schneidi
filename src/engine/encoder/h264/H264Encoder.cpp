@@ -2600,10 +2600,8 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
                 continue;
             predictLuma16(mode, &recY_[lumaOff], padW_, left, top, cand);
             int sum = 0;
-            for (int b = 0; b < 16; b += 2) {
-                const int ox = (b & 3) * 4, oy = (b >> 2) * 4;
-                sum += satd8x4U8(&srcY_[lumaOff + size_t(oy) * padW_ + ox], padW_, cand + oy * 16 + ox, 16);
-            }
+            for (int oy = 0; oy < 16; oy += 4)
+                sum += satd16x4U8(&srcY_[lumaOff + size_t(oy) * padW_], padW_, cand + oy * 16, 16);
             est = std::min(est, sum);
         }
         return est;
@@ -3270,9 +3268,14 @@ int FrameCoder::sadPart(const RefPic& R, int mbx, int mby, int x4, int y4, int w
     uint8_t pred[256];
     mcLuma(R, px + (mvx >> 2), py + (mvy >> 2), mvx & 3, mvy & 3, w, h, pred);
     if (satd) {
-        for (int by = 0; by < h4; ++by)
+        for (int by = 0; by < h4; ++by) {
+            if (w4 == 4) {
+                s += satd16x4U8(&srcY_[lo + size_t(by * 4) * padW_], padW_, pred + by * 4 * 16, 16);
+                continue;
+            }
             for (int bx = 0; bx < w4; bx += 2) // partitions are at least 8 wide
                 s += satd8x4U8(&srcY_[lo + size_t(by * 4) * padW_ + bx * 4], padW_, pred + by * 4 * 16 + bx * 4, 16);
+        }
         return s;
     }
     for (int y = 0; y < h; ++y)
