@@ -1952,6 +1952,31 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
             CHECK_EQ(clips[2]["end"].toInt() - clips[2]["start"].toInt(), stillLength);
         }
     }
+    // A still with 2 billion frames of position and length: the sums overflowed int (in + duration, at + length). Refused
+    // beyond 2^30, the most a project file keeps (a longer clip came back cut on loading); the project stays as it was
+    {
+        const QString still = dir.filePath("bg.png");
+        const QString proj = dir.filePath("still.schneidi");
+        const QByteArray before = [&] { QFile f(proj); return f.open(QIODevice::ReadOnly) ? f.readAll() : QByteArray(); }();
+        CHECK(!before.isEmpty());
+        for (const QString& ops : {QString(R"([{"op":"place","media":"%1","at":2000000000,"duration":2000000000,"track":"V1"}])"),
+                                   QString(R"([{"op":"place","media":"%1","at":0,"in":2000000000,"duration":2000000000,"track":"V1"}])"),
+                                   QString(R"([{"op":"place","media":"%1","at":2000000000,"duration":10,"track":"V1"}])"),
+                                   QString(R"([{"op":"append","media":"%1","duration":2000000000}])"),
+                                   QString(R"([{"op":"keep","media":"%1","at":1073741800,"ranges":[[0,10],[0,100]]}])")}) {
+            CHECK_EQ(errorOf("edit", {{"project", proj}, {"ops", ops.arg(still)}}), QString("BAD_ARGUMENT"));
+            QFile f(proj);
+            CHECK(f.open(QIODevice::ReadOnly) && f.readAll() == before);
+        }
+        // Up to the limit it works and loads back the same
+        const QJsonObject r = run("edit", {{"project", proj}, {"ops", QString(R"([{"op":"place","media":"%1","at":1073741800,"duration":24,"track":"V2"}])").arg(still)}});
+        const QJsonArray placed = r["timeline"]["tracks"][1]["clips"].toArray();
+        if (CHECK_EQ(placed.size(), qsizetype(1))) {
+            CHECK_EQ(placed[0]["start"].toInt(), 1073741800);
+            CHECK_EQ(placed[0]["end"].toInt(), 1073741824);
+            CHECK_EQ(run("info", {{"project", proj}})["timeline"]["tracks"][1]["clips"][0]["end"].toInt(), 1073741824);
+        }
+    }
     // Subtitles only (format srt/vtt): the same checks as a video render - the extension must fit, and no subtitle
     // file may replace a source file of the project (it wrote SRT text over the clip with overwrite)
     {

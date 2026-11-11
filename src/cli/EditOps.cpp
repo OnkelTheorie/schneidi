@@ -196,14 +196,32 @@ QColor colorOf(const QJsonValue& v, const QString& what)
 
 namespace {
 
+// The last frame a project file keeps (ProjectFile's intOf): a clip beyond it came back cut on loading, and the sum of
+// two times near int's end (a still at 2 billion frames with 2 billion frames of length) overflowed
+constexpr qint64 kMaxFrame = qint64(1) << 30;
+
 // Source range [in, out) of a media file: defaults to the whole file
 void sourceRange(Session& s, const QJsonObject& op, const MediaInfo& m, int* in, int* out)
 {
     *in = timeOf(s, op, "in", 0);
-    *out = op.contains("out") ? timeOf(s, op, "out") : m.length;
-    if (op.contains("duration")) *out = *in + timeOf(s, op, "duration");
-    if (!m.isImage) *out = std::min(*out, m.length); // a still takes any length (its default: the still length)
+    qint64 end = op.contains("out") ? timeOf(s, op, "out") : m.length;
+    if (op.contains("duration")) end = qint64(*in) + timeOf(s, op, "duration");
+    if (!m.isImage) end = std::min<qint64>(end, m.length); // a still takes any length (its default: the still length)
+    if (end > kMaxFrame)
+        fail("BAD_ARGUMENT", QString("the source range ends at frame %1, beyond the limit of %2").arg(end).arg(kMaxFrame));
+    *out = int(end);
     if (*in >= *out) fail("BAD_ARGUMENT", QString("empty source range %1..%2 (media has %3 frames)").arg(*in).arg(*out).arg(m.length));
+}
+
+// The source range [in, out) placed at `at` must end within kMaxFrame on the timeline. Its length as
+// Editor::placeSourceRange makes it (material frames at this speed; a still has none), in double: no overflow here
+void checkPlacedEnd(int at, int in, int out, double speed, const MediaInfo& m)
+{
+    if (m.isImage || speed <= 0) speed = 1.0;
+    const auto material = [speed](double f) { return std::max(0.0, std::ceil(f / speed - 1e-6)); };
+    const double end = double(std::max(0, at)) + std::max(1.0, material(out) - material(in));
+    if (end > double(kMaxFrame))
+        fail("BAD_ARGUMENT", QString("the clip would end at frame %1, beyond the limit of %2").arg(end, 0, 'f', 0).arg(kMaxFrame));
 }
 
 // "ST1" or 1 -> subtitle track index; missing = -1 (the visible track)
@@ -339,6 +357,7 @@ void opPlace(Session& s, const QJsonObject& op, bool append)
     sourceRange(s, op, m, &in, &out);
     const int at = append ? timeOf(s, op, "at", endOf(s)) : timeOf(s, op, "at");
     const double speed = op.contains("speed") ? numberOf(op, "speed", Retime::kMinSpeed, Retime::kMaxSpeed) : 1.0;
+    checkPlacedEnd(at, in, out, speed, m);
     const int len = s.editor.placeSourceRange(m.path, in, out - 1, at, parseTrack(op.value("track")), speed, partsOf(op, m));
     noteDoubledMix(s, m, at, at + len);
     placedInterpolate(s, op, m, at, at + len, speed);
@@ -381,6 +400,7 @@ void opKeep(Session& s, const QJsonObject& op)
         // speed: of this range, else of the whole op
         const QJsonObject sp = o.contains("speed") ? o : op;
         const double speed = sp.contains("speed") ? numberOf(sp, "speed", Retime::kMinSpeed, Retime::kMaxSpeed) : 1.0;
+        checkPlacedEnd(at, in, out, speed, m);
         at += s.editor.placeSourceRange(m.path, in, out - 1, at, track, speed, parts);
         slowest = std::min(slowest, speed);
     }
