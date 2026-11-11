@@ -1189,7 +1189,7 @@ bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* d
         }
         return list;
     };
-    auto readTimeline = [&](const QJsonObject& tl) {
+    auto readTimeline = [&](const QJsonObject& tl, bool multicam) {
         Timeline timeline;
         timeline.video = tracks(tl.value("video").toArray(), TrackKind::Video);
         timeline.audio = tracks(tl.value("audio").toArray(), TrackKind::Audio);
@@ -1227,8 +1227,10 @@ bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* d
             timeline.subtitles << t;
         }
         // Clips lying over each other on a track (a hand-edited or AI-written file; edits never make them): the later
-        // one moves to the first track above where its place is free (a new one on top if there is none), at the
-        // same time - nothing is lost, and its linked partner, moved the same way, stays in sync with it
+        // one moves to the first track above where its place is free and that plays the same way (not locked; muted,
+        // hidden, solo, volume, pan, EQ, dynamics like its own), otherwise to a new one on top with the settings of
+        // its own; in a multicam clip always to a new one (the angles point at tracks: another track is another
+        // camera). At the same time - nothing is lost, and its linked partner, moved the same way, stays in sync.
         for (QVector<Track>* list : {&timeline.video, &timeline.audio})
             for (qsizetype i = 0; i < list->size(); ++i) {
                 QVector<Clip> keep, over;
@@ -1237,15 +1239,21 @@ bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* d
                 if (over.isEmpty()) continue;
                 (*list)[i].clips = keep;
                 for (const Clip& c : std::as_const(over)) {
+                    const Track& own = std::as_const(*list)[i];
                     const auto room = [&](const Track& t) {
-                        return std::none_of(t.clips.cbegin(), t.clips.cend(),
-                                            [&](const Clip& o) { return o.start < c.end() && c.start < o.end(); });
+                        return !multicam && !t.locked && t.muted == own.muted && t.hidden == own.hidden
+                               && t.solo == own.solo && t.volumeDb == own.volumeDb && t.pan == own.pan && t.eq == own.eq
+                               && t.dynamics == own.dynamics
+                               && std::none_of(t.clips.cbegin(), t.clips.cend(),
+                                               [&](const Clip& o) { return o.start < c.end() && c.start < o.end(); });
                     };
                     qsizetype j = i + 1;
                     while (j < list->size() && !room(std::as_const(*list)[j])) ++j;
                     if (j == list->size()) {
-                        Track t;
-                        t.kind = (*list)[i].kind; // name empty = default ("Video 3" etc.)
+                        Track t = own; // plays like the clip's own track; name empty = default ("Audio 3" etc.)
+                        t.name.clear();
+                        t.color.clear();
+                        t.clips.clear();
                         *list << t;
                     }
                     QVector<Clip>& clips = (*list)[j].clips;
@@ -1285,7 +1293,14 @@ bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* d
         timeline.notes = TimelineStory::notesFromJson(tl.value("notes").toArray());
         return timeline;
     };
-    d.timeline = readTimeline(root.value("timeline").toObject());
+    // The open timeline (saved apart from the list) may be a multicam clip
+    const bool currentMulticam = [&] {
+        for (const QJsonValue& v : root.value("sequences").toArray())
+            if (intOf(v.toObject().value("id")) == intOf(root.value("currentSequence")))
+                return v.toObject().value("multicam").toBool();
+        return false;
+    }();
+    d.timeline = readTimeline(root.value("timeline").toObject(), currentMulticam);
     for (const QJsonValue& v : root.value("sequences").toArray()) {
         const QJsonObject o = v.toObject();
         Sequence seq;
@@ -1303,7 +1318,7 @@ bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* d
         seq.width = std::max(0, o.value("width").toInt()); // limits: Project::load
         seq.height = std::max(0, o.value("height").toInt());
         if (seq.id <= 0) continue;
-        if (o.contains("timeline")) seq.timeline = readTimeline(o.value("timeline").toObject());
+        if (o.contains("timeline")) seq.timeline = readTimeline(o.value("timeline").toObject(), seq.multicam);
         d.sequences << seq;
     }
     // The new ids for missing/duplicate ones (marked -1 by readTimeline): after every id of the project

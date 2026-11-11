@@ -714,6 +714,41 @@ int main(int argc, char** argv)
             CHECK(next > *std::max_element(ids.cbegin(), ids.cend()));
             CHECK(stable(json));
         }
+        // ... not onto a track that plays otherwise (muted, other volume, locked) - a new track with the settings of its
+        // own; in a multicam clip always a new track (the angles point at tracks: another one is another camera)
+        {
+            Project p;
+            const QByteArray json = R"({"app":"schneidi","media":[{"name":"a.mp4","path":"/m/a.mp4","hasVideo":true,
+                "hasAudio":true,"length":300}],"timeline":{"video":[{"clips":[]}],
+                "audio":[{"volumeDb":-6,"clips":[{"id":1,"media":0,"start":0,"in":0,"out":99},
+                                                 {"id":2,"media":0,"start":50,"in":0,"out":99}]},
+                         {"muted":true,"clips":[]},{"locked":true,"clips":[]},{"volumeDb":-3,"clips":[]}]}})";
+            CHECK(!opened(json, p).isEmpty());
+            const Timeline& tl = p.timeline();
+            CHECK_TIMELINE(tl);
+            if (CHECK_EQ(int(tl.audio.size()), 5)) {
+                CHECK_EQ(Check::dump(tl), QString("V1:  A1: a[0-100|0-99]  A2:  A3:  A4:  A5: a[50-150|0-99]"));
+                CHECK_EQ(tl.audio[4].volumeDb, -6.0);
+                CHECK(!tl.audio[4].muted && !tl.audio[4].locked);
+            }
+            // A track above that plays the same way is taken
+            const QByteArray same = R"({"app":"schneidi","media":[{"name":"a.mp4","path":"/m/a.mp4","hasVideo":true,
+                "hasAudio":true,"length":300}],"timeline":{"video":[{"clips":[{"id":1,"media":0,"start":0,"in":0,"out":99},
+                {"id":2,"media":0,"start":50,"in":0,"out":99}]},{"clips":[]}],"audio":[{"clips":[]}]}})";
+            CHECK(!opened(same, p).isEmpty());
+            CHECK_EQ(Check::dump(p.timeline()), QString("V1: a[0-100|0-99]  V2: a[50-150|0-99]  A1:"));
+            // Multicam: V2 is the second camera - the clip goes to a new track
+            const QByteArray multicam = R"({"app":"schneidi","media":[{"name":"a.mp4","path":"/m/a.mp4","hasVideo":true,
+                "hasAudio":true,"length":300}],"currentSequence":1,"sequences":[{"id":1,"name":"T"},
+                {"id":2,"multicam":true,"angles":[{"name":"A","video":0,"audio":[]},{"name":"B","video":1,"audio":[]}],
+                 "timeline":{"video":[{"clips":[{"id":1,"media":0,"start":0,"in":0,"out":99},
+                 {"id":2,"media":0,"start":50,"in":0,"out":99}]},{"clips":[]}],"audio":[{"clips":[]}]}}]})";
+            CHECK(!opened(multicam, p).isEmpty());
+            if (const Sequence* m = p.sequence(2); CHECK(m)) {
+                CHECK_TIMELINE(m->timeline);
+                CHECK_EQ(Check::dump(m->timeline), QString("V1: a[0-100|0-99]  V2:  V3: a[50-150|0-99]  A1:"));
+            }
+        }
         // A still frame before the file's start: its first frame (was saved without it and came back as `in`)
         {
             Project p;
