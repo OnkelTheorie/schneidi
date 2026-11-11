@@ -437,8 +437,6 @@ struct Renderer::Impl {
     std::mutex lengthMutex;
     std::map<QString, int> lengths; // file -> length in project frames (mediaLength)
 
-    std::mutex lutMutex;
-    std::map<QString, std::shared_ptr<const ColorGrade::Lut>> luts;
     // Gradients of luma transitions and wipes (8-bit gray, rows tightly packed), by style and size: building one
     // costs more than the rest of the frame (iris 1080p: 75 ms; it was built for every frame of the transition)
     std::mutex gradientMutex;
@@ -642,15 +640,9 @@ struct Renderer::Impl {
         return lengths.emplace(file, length).first->second;
     }
 
-    std::shared_ptr<const ColorGrade::Lut> lut(const QString& path)
-    {
-        std::lock_guard lock(lutMutex);
-        auto it = luts.find(path);
-        if (it != luts.end()) return it->second;
-        auto l = ColorGrade::loadLut(path);
-        luts.emplace(path, l);
-        return l;
-    }
+    // loadLut keeps the loaded LUTs itself and reads a file again once its time or size changed (a LUT overwritten,
+    // or one on a drive mounted after the project was opened); a cache by path here would keep the first result
+    static std::shared_ptr<const ColorGrade::Lut> lut(const QString& path) { return ColorGrade::loadLut(path); }
 
     // An effect instance's values for VideoEffects::apply (by property name, keyframes at clip frame t)
     static VideoEffects::Params effectParams(const Clip& c, const EffectInstance& inst, const EffectDescriptor& d, double t)
@@ -2207,7 +2199,6 @@ struct Renderer::Impl {
         QRectF crop;
         bool graded = false;
         ColorGrade::Params grade;
-        QString gradeLutPath;
         std::shared_ptr<const ColorGrade::Lut> gradeLut;
         // Group/Mix/Luma
         std::vector<GpuOp> a, b;
@@ -2312,7 +2303,6 @@ struct Renderer::Impl {
             if (!p.isNeutral() || l) {
                 op.graded = true;
                 op.grade = p;
-                op.gradeLutPath = lp;
                 op.gradeLut = std::move(l);
             }
         }
@@ -2604,20 +2594,22 @@ struct Renderer::Impl {
     struct LutCache {
         struct Entry {
             ColorGrade::Params params;
-            QString lutPath;
+            // The loaded LUT itself, not its path: a file read again (overwritten, or missing before) is a new
+            // object. Held here, so its address cannot be reused by another LUT while the entry lives
+            std::shared_ptr<const ColorGrade::Lut> source;
             Gpu::LutPtr lut;
         };
         std::vector<Entry> entries;
         Gpu::LutPtr get(Gpu::Context& g, const GpuOp& op)
         {
             for (size_t i = 0; i < entries.size(); ++i)
-                if (entries[i].params == op.grade && entries[i].lutPath == op.gradeLutPath) {
+                if (entries[i].params == op.grade && entries[i].source == op.gradeLut) {
                     std::rotate(entries.begin(), entries.begin() + i, entries.begin() + i + 1);
                     return entries.front().lut;
                 }
             Gpu::LutPtr l = g.gradeLut(*ColorGrade::bake(op.grade, op.gradeLut.get()));
             if (!l) return {};
-            entries.insert(entries.begin(), {op.grade, op.gradeLutPath, l});
+            entries.insert(entries.begin(), {op.grade, op.gradeLut, l});
             if (entries.size() > 16) entries.pop_back();
             return l;
         }
