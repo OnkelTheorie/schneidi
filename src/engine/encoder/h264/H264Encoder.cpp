@@ -3329,7 +3329,8 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
     saveMb(mbx, mby, interState);
     Choice best = whole;
     // Try the split for real when its estimate is close or better.
-    static const double kSplitTry = std::getenv("H264_SPLITF") ? std::atof(std::getenv("H264_SPLITF")) : 1.1; // experiment
+    // Measured: 1.0 is as fast as 1.1 and -0.04 % BD-rate (0.95: +0.44 %). H264_SPLITF overrides.
+    static const double kSplitTry = std::getenv("H264_SPLITF") ? std::atof(std::getenv("H264_SPLITF")) : 1.0;
     if (split.cost < whole.cost * kSplitTry) {
         MbOut splitBits;
         const double costSplit = encodeInter(split, splitBits, false);
