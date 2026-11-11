@@ -14,6 +14,7 @@ namespace SystemMemory {
 struct Info {
     qint64 total = 0;     // physical RAM in bytes (0 = unknown)
     qint64 available = 0; // RAM available for new work without swapping, in bytes (0 = unknown)
+    qint64 limit = 0;     // the smallest cgroup limit above the process, in bytes (0 = none known; Linux)
 };
 
 // Read now (not cached: what is available changes). SCHNEIDI_AVAILABLE_MB (a number) replaces the available amount
@@ -28,6 +29,7 @@ Info parseMeminfo(const QByteArray& text);
 // memory.max and memory.high) minus memory.current, plus the file cache there that can be dropped (active_file and
 // inactive_file of memory.stat, as MemAvailable counts it). A group above its limit even without that cache (memory.high
 // set below its use) has no room: 1 byte. Split off for tests (a folder tree in place of the mount).
-qint64 cgroupRoom(const QByteArray& self, const QString& root);
+// limit (optional): the smallest of those limits (0 = none).
+qint64 cgroupRoom(const QByteArray& self, const QString& root, qint64* limit = nullptr);
 
 } // namespace SystemMemory

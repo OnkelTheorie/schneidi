@@ -252,6 +252,10 @@ void testCgroupRoom(const QString& dir)
     put("/user.slice/memory.high", QByteArray::number(3000 * MB) + "\n");
     put("/user.slice/memory.current", QByteArray::number(2000 * MB) + "\n");
     CHECK_EQ(SystemMemory::cgroupRoom(self, root), 1000 * MB);
+    // The smallest limit (MemoryRelease::underPressure: the whole a cgroup's room is measured against)
+    qint64 limit = -1;
+    SystemMemory::cgroupRoom(self, root, &limit);
+    CHECK_EQ(limit, 3000 * MB);
     put("/user.slice/memory.high", "max\n");
     // A file just read or written sits on the active list: droppable too, as MemAvailable counts it (300 MB active +
     // 200 MB inactive of the 1 GB used -> 5120 - 524)

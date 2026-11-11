@@ -162,8 +162,9 @@ struct Pump::Impl {
                 }
                 if (c && c->trim && now - lastTrim >= kTrimEvery) {
                     lastTrim = now;
+                    const int64_t shown = next;
                     lock.unlock();
-                    c->trim();
+                    c->trim(shown);
                     lock.lock();
                     continue;
                 }

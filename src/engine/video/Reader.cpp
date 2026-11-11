@@ -721,7 +721,9 @@ struct Reader::Impl {
             const auto it = std::lower_bound(pics.begin(), pics.end(), r.position,
                                              [](const auto& p, int64_t pos) { return p->position < pos; });
             if (it != pics.end()) {
-                r.result = *it;
+                // A gap in the timestamps (variable frame rate: a picture held for seconds): the picture before it is
+                // still on screen there, not the next one (pics are the pictures decoded in a row, none missing)
+                r.result = (*it)->position > r.position && it != pics.begin() ? *std::prev(it) : *it;
                 r.done = true;
                 return true;
             }
@@ -876,10 +878,14 @@ struct Reader::Impl {
         // (playing on), the usual few
         const int window = seekWindow();
         const bool nearSeek = window > 0 && seekTarget >= 0 && high >= 0 && high - seekTarget < window;
-        const int limit = nearSeek ? std::max(behind(), window) : behind();
+        // At least one before: the picture on screen at ref when ref falls into a gap of the timestamps (variable
+        // frame rate); dropping it made the request seek again, and again (Options::behind = 0: scrub thumbnails)
+        const int limit = std::max(1, nearSeek ? std::max(behind(), window) : behind());
         while (before > limit && pics.size() > 1) {
-            validFrom = std::max(validFrom, pics.front()->position + 1);
             pics.pop_front();
+            // From the new first one on (not the dropped one + 1): in a gap of the timestamps after the dropped one,
+            // the dropped one was on screen - such a request seeks now instead of getting the next picture
+            validFrom = std::max(validFrom, pics.front()->position);
             --before;
         }
     }
@@ -1219,6 +1225,22 @@ struct Reader::Impl {
                     before = d;
                 } else {
                     keep.push_back(d);
+                }
+            }
+            // The first picture at or after the target comes after it (a gap in the timestamps, variable frame rate:
+            // the picture before was held for seconds): the newest one before the target is what is on screen there,
+            // kept as well. Else the next one answered, up to seconds too early. (A picture kept before the target
+            // came after any not kept: then that one is the newest, and the raw tail is gone.)
+            if (!keep.empty() && keep.front().position > target) {
+                if (!before.frame) {
+                    lock.lock();
+                    if (gen == generation) std::swap(before, rawTail);
+                    lock.unlock();
+                }
+                if (before.frame) {
+                    keptFrom = std::min(keptFrom, before.position);
+                    keep.insert(keep.begin(), before);
+                    before = {};
                 }
             }
             std::shared_ptr<const Picture> nearPic;

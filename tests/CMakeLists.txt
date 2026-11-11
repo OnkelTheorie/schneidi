@@ -426,6 +426,8 @@ add_executable(bench_graded_thumbs bench_graded_thumbs.cpp)
 target_link_libraries(bench_graded_thumbs PRIVATE schneidi_test_support Qt6::Test)
 add_executable(bench_memory bench_memory.cpp)
 target_link_libraries(bench_memory PRIVATE schneidi_test_support Qt6::Test)
+add_executable(bench_play_after_pause bench_play_after_pause.cpp)
+target_link_libraries(bench_play_after_pause PRIVATE schneidi_test_support Qt6::Test)
 if(WIN32) # WASAPI loopback: what the system sends to the sound card
     add_executable(bench_soundcard bench_soundcard.cpp)
     target_link_libraries(bench_soundcard PRIVATE schneidi_test_support Qt6::Test)

@@ -56,8 +56,9 @@ qint64 limitOf(const QByteArray& text)
 
 } // namespace
 
-qint64 cgroupRoom(const QByteArray& self, const QString& root)
+qint64 cgroupRoom(const QByteArray& self, const QString& root, qint64* limitOut)
 {
+    if (limitOut) *limitOut = 0;
     // cgroup v2 line: "0::/user.slice/.../app.scope" (v1 lines have a controller name between the colons)
     QByteArray group;
     for (const QByteArray& line : self.split('\n'))
@@ -82,6 +83,7 @@ qint64 cgroupRoom(const QByteArray& self, const QString& root)
             // throttles every allocation and reclaims until it is back under it): no room - 1 byte, never 0 (that
             // means "no limit known"), so the caller takes the least it can
             const qint64 here = std::max<qint64>(1, limit - used);
+            if (limitOut) *limitOut = *limitOut ? std::min(*limitOut, limit) : limit;
             room = room ? std::min(room, here) : here;
         }
         if (dir.size() <= top.size()) break;
@@ -98,7 +100,8 @@ Info read()
 #if defined(Q_OS_LINUX) || defined(Q_OS_ANDROID)
     QFile f(QStringLiteral("/proc/meminfo"));
     if (f.open(QIODevice::ReadOnly)) info = parseMeminfo(f.readAll());
-    if (const qint64 room = cgroupRoom(readSmall(QStringLiteral("/proc/self/cgroup")), QStringLiteral("/sys/fs/cgroup")))
+    if (const qint64 room = cgroupRoom(readSmall(QStringLiteral("/proc/self/cgroup")), QStringLiteral("/sys/fs/cgroup"),
+                                       &info.limit))
         info.available = info.available ? std::min(info.available, room) : room;
 #elif defined(Q_OS_WIN)
     MEMORYSTATUSEX m;

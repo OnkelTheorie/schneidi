@@ -251,6 +251,25 @@ double centreAt(const Clip& c, int t, double aspect, QSizeF frame)
     return 0.5 - Keys::valueAt(c, AnimParam::PosX, t - c.start) / f.picture.width();
 }
 
+// Variable frame rate with a gap: 0.5 s at 60 fps, the last picture held for 2 s, then 0.5 s more. The analysis goes
+// on after the held picture (the reader shows it for every position of the gap; that used to look like the end of
+// the file, and everything after the first gap had no samples)
+void testVfrGap(const QString& vfr)
+{
+    ReframeAnalysis::Need n;
+    n.file = vfr;
+    n.from = 0;
+    n.to = 2.95;
+    QString error;
+    const auto samples = ReframeAnalysis::analyze(n, &error);
+    if (!CHECK(samples && !samples->isEmpty())) {
+        std::printf("  %s\n", qPrintable(error));
+        return;
+    }
+    std::printf("  vfr gap: %d samples, last at %.2f s\n", int(samples->size()), samples->last().seconds);
+    CHECK(samples->last().seconds > 2.6);
+}
+
 void testAnalysis(const QString& dir, const QString& jumping, const QString& gliding, const QString& busy,
                   const QString& cut)
 {
@@ -589,6 +608,12 @@ int main(int argc, char** argv)
     Check::initEngine();
     std::setlocale(LC_NUMERIC, "C");
     testAnalysis(tmp.path(), jumping, gliding, busy, cut);
+    if (const QString vfr = Check::makeMedia(tmp.filePath("vfr-gap.mkv"),
+                                             {"-f", "lavfi", "-i", "testsrc2=s=320x180:r=60", "-frames:v", "60", "-vf",
+                                              "setpts='if(gte(N,30),(N+120)/60/TB,N/60/TB)'", "-fps_mode", "vfr",
+                                              "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p"});
+        CHECK(!vfr.isEmpty()))
+        testVfrGap(vfr);
     testCli(tmp.path(), jumping);
     testApp(jumping);
     return Check::result();

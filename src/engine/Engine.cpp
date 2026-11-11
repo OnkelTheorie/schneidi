@@ -560,7 +560,7 @@ std::shared_ptr<const Picture::Pump::Content> Engine::rendererContent(std::share
     }
     c->direction = [renderer](int dir) { renderer->setDirection(dir); };
     c->prepare = [renderer](int64_t f) { renderer->prepare(f); };
-    c->trim = [renderer] { renderer->trim(); };
+    c->trim = [renderer](int64_t shown) { renderer->trim(shown); };
     c->fps = m_format.rate.fps();
     return c;
 }
@@ -701,8 +701,8 @@ bool Engine::showMulticam(const Timeline& content, const QVector<MulticamAngle>&
     c->prepare = [layout](int64_t f) {
         for (const Cell& cell : *layout) cell.renderer->prepare(f);
     };
-    c->trim = [layout] {
-        for (const Cell& cell : *layout) cell.renderer->trim();
+    c->trim = [layout](int64_t shown) {
+        for (const Cell& cell : *layout) cell.renderer->trim(shown);
     };
     c->fps = m_format.rate.fps();
     // Building took a while and the old grid played on meanwhile: go on from there, not from `position`

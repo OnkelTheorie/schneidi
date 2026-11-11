@@ -40,6 +40,7 @@
 #include <QString>
 
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -163,7 +164,12 @@ public:
     // next 3 seconds (call from a worker thread before playback starts and while it plays forward)
     void prepare(int64_t frame);
     // Drop decoders and cached pictures not used for a while (memory pressure, idle)
-    void trim();
+    // shown: the frame the viewer shows (playback: the next one due; paused: the one standing), -1 = none known. Its
+    // sources are never closed for the count (Play goes on from there).
+    void trim(int64_t shown = -1);
+    void trim(std::chrono::steady_clock::time_point now, int64_t shown = -1); // as if it were `now` (tests)
+    // Sources kept open beyond those of the last few seconds (trim)
+    static constexpr int kKeepSources = 8;
 
     // Frames of content (TimelineOps::endFrame of the current snapshot)
     int64_t length() const;

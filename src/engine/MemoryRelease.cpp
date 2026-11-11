@@ -1,12 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "engine/MemoryRelease.h"
 
+#include "core/SystemMemory.h"
 #include "engine/picture/Renderer.h"
 
 #include <QFile>
 #include <QMutex>
 #include <QThread>
 #include <QVector>
+
+#include <algorithm>
 
 #ifdef __GLIBC__
 #include <malloc.h>
@@ -17,6 +20,7 @@ namespace {
 constexpr int kDelayMs = 4000;
 
 std::atomic<int> g_releases{0};
+std::atomic<int> g_pressure{-1}; // setPressureForTests
 QMutex g_mutex;                 // guards g_idle
 QVector<IdleRelease*> g_idle;   // living IdleRelease objects, newest last
 
@@ -55,6 +59,22 @@ qint64 residentBytes()
         if (line.startsWith("VmRSS:")) return line.mid(6).trimmed().split(' ').value(0).toLongLong() * 1024;
 #endif
     return -1;
+}
+
+bool underPressure()
+{
+    if (const int forced = g_pressure.load(); forced >= 0) return forced == 1;
+    const SystemMemory::Info m = SystemMemory::read(); // cgroup limits (container, systemd scope) count
+    // In a cgroup with a limit (container, systemd scope) that limit is the whole: available is the room it leaves
+    const qint64 total = m.limit > 0 && (m.total <= 0 || m.limit < m.total) ? m.limit : m.total;
+    if (total <= 0 || m.available <= 0) return false;
+    const qint64 keep = std::clamp<qint64>(total / 10, qint64(256) << 20, qint64(2) << 30);
+    return m.available < keep;
+}
+
+void setPressureForTests(int state)
+{
+    g_pressure = state;
 }
 
 int releases()

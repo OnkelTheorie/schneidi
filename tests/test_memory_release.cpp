@@ -9,11 +9,14 @@
 
 #include "engine/Engine.h"
 #include "engine/MemoryRelease.h"
+#include "engine/picture/Renderer.h"
 
 #include <cstdlib>
 
 #include <QApplication>
 #include <QElapsedTimer>
+#include <QFile>
+#include <QImage>
 #include <QEventLoop>
 #include <QTemporaryDir>
 #include <QTimer>
@@ -215,6 +218,128 @@ void testEngine(const QString& media)
     CHECK(!engine.activity().exporting);
 }
 
+Timeline clipsOf(const QStringList& files, int each)
+{
+    Timeline tl;
+    tl.video.resize(1);
+    for (int i = 0; i < files.size(); ++i) {
+        Clip c;
+        c.id = i + 1;
+        c.mediaPath = files[i];
+        c.start = i * each;
+        c.out = each - 1;
+        tl.video[0].clips << c;
+    }
+    return tl;
+}
+
+// Sources of the preview renderer over long pauses, memory pressure, a closed project and many clips
+void testSources(const QString& media, const QString& dir)
+{
+    using namespace std::chrono;
+    MemoryRelease::setPressureForTests(0);
+    Picture::Options o;
+    o.format = ProjectFormat{320, 180, {25, 1}};
+    o.mode = Picture::Mode::Preview;
+    const int each = 25;
+    {
+        Picture::Renderer r(clipsOf({media}, 250), o);
+        r.render(100);
+        CHECK_EQ(r.stats().sourcesOpen, 1);
+        // Paused for a long time (an hour): Play goes on with the open source
+        r.trim(steady_clock::now() + hours(1));
+        CHECK_EQ(r.stats().sourcesOpen, 1);
+        // Memory pressure: unused for a few seconds is enough to close it
+        MemoryRelease::setPressureForTests(1);
+        r.trim(steady_clock::now() + seconds(1));
+        CHECK_EQ(r.stats().sourcesOpen, 1); // in use right now
+        r.trim(steady_clock::now() + seconds(10));
+        CHECK_EQ(r.stats().sourcesOpen, 0);
+        MemoryRelease::setPressureForTests(0);
+        CHECK(!r.render(101).isNull()); // opened again
+        CHECK_EQ(r.stats().sourcesOpen, 1);
+        // Another project (or the clip deleted): no longer used by the timeline, closed after a while
+        r.update(Timeline{});
+        r.trim(steady_clock::now() + seconds(5)); // an undo right after finds it open
+        CHECK_EQ(r.stats().sourcesOpen, 1);
+        r.trim(steady_clock::now() + minutes(1));
+        CHECK_EQ(r.stats().sourcesOpen, 0);
+    }
+    // Many clips of different files played through: the most recently used few stay, the timeline's other files
+    // close by last use - the count does not grow with the clips played
+    QStringList files;
+    for (int i = 0; i < 20; ++i) {
+        const QString copy = dir + QString("/source%1.mov").arg(i);
+        if (QFile::exists(copy) || QFile::copy(media, copy)) files << copy;
+    }
+    if (!CHECK_EQ(files.size(), 20)) return;
+    Picture::Renderer r(clipsOf(files, each), o);
+    int most = 0;
+    for (int round = 0; round < 2; ++round)
+        for (int i = 0; i < files.size(); ++i) {
+            r.render(i * each + 5);
+            r.trim(steady_clock::now() + seconds(15)); // as if each clip had played for 15 s
+            most = std::max(most, r.stats().sourcesOpen);
+        }
+    std::printf("       20 files played through twice: at most %d sources open, %d at the end\n", most,
+                r.stats().sourcesOpen);
+    CHECK(most <= Picture::Renderer::kKeepSources + 1);
+    CHECK(r.stats().sourcesOpen >= 1);
+    // All of them in use at once (all asked for within the last seconds): none closed
+    for (int i = 0; i < files.size(); ++i) r.render(i * each + 6);
+    r.trim(steady_clock::now());
+    CHECK_EQ(r.stats().sourcesOpen, 20);
+    // Paused on clip 3, then the other clips were touched later (prepared by another thread): beyond the count, the
+    // least recently used go - never the one the paused frame shows
+    {
+        Picture::Renderer p(clipsOf(files, each), o);
+        p.render(3 * each + 5);
+        std::thread other([&] {
+            for (int i = 4; i < files.size(); ++i) p.prepare(i * each);
+        });
+        other.join();
+        CHECK(p.stats().sourcesOpen > Picture::Renderer::kKeepSources);
+        p.trim(steady_clock::now() + minutes(1), 3 * each + 5);
+        CHECK_EQ(p.stats().sourcesOpen, Picture::Renderer::kKeepSources);
+        p.update(clipsOf({files[3]}, each)); // the paused one alone: still open, nothing else
+        p.trim(steady_clock::now() + minutes(1));
+        CHECK_EQ(p.stats().sourcesOpen, 1);
+    }
+    // Paused just before a cut while the pump had rendered ahead into the next clip (and prepared the ones after it
+    // on other threads): the frame shown is on clip 3, the frames rendered last on clip 4. Clip 3's source stays.
+    {
+        Picture::Renderer p(clipsOf(files, each), o);
+        const int64_t shown = 3 * each + each - 2;
+        p.render(shown);
+        for (int k = 1; k <= 6; ++k) p.render(shown + k); // ahead, past the cut
+        std::thread other([&] {
+            for (int i = 4; i < files.size(); ++i) p.prepare(i * each);
+        });
+        other.join();
+        for (int i = 5; i < files.size(); ++i) p.render(i * each + 1); // touched after the shown frame
+        p.trim(steady_clock::now() + minutes(1), shown);
+        CHECK_EQ(p.stats().sourcesOpen, Picture::Renderer::kKeepSources);
+        p.update(clipsOf({files[3]}, each)); // only clip 3's file left in the timeline: was it kept?
+        p.trim(steady_clock::now() + minutes(1));
+        CHECK_EQ(p.stats().sourcesOpen, 1);
+    }
+    // Still pictures (up to 4x the project's pixels as RGBA) close after 30 s unused, as before
+    {
+        const QString png = dir + "/still.png";
+        QImage img(320, 180, QImage::Format_RGB32);
+        img.fill(Qt::red);
+        CHECK(img.save(png));
+        Picture::Renderer p(clipsOf({png}, 100), o);
+        p.render(10);
+        CHECK_EQ(p.stats().sourcesOpen, 1);
+        p.trim(steady_clock::now() + seconds(10));
+        CHECK_EQ(p.stats().sourcesOpen, 1);
+        p.trim(steady_clock::now() + minutes(1));
+        CHECK_EQ(p.stats().sourcesOpen, 0);
+    }
+    MemoryRelease::setPressureForTests(-1);
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -234,7 +359,10 @@ int main(int argc, char** argv)
             tmp.filePath("media.mov"),
             {"-f", "lavfi", "-i", "testsrc2=size=320x180:rate=25:duration=10", "-f", "lavfi", "-i",
              "sine=frequency=440:duration=10", "-c:v", "libx264", "-preset", "ultrafast", "-g", "25", "-c:a", "pcm_s16le"});
-        if (CHECK(!media.isEmpty())) testEngine(media);
+        if (CHECK(!media.isEmpty())) {
+            testEngine(media);
+            testSources(media, tmp.path());
+        }
     } else {
         std::printf("       ffmpeg missing: engine part skipped\n");
     }

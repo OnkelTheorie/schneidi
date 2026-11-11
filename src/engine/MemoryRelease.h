@@ -34,6 +34,12 @@ void release();
 void trimHeap();
 // Resident memory of this process in bytes (Linux; -1 = unknown)
 qint64 residentBytes();
+// The system runs short of memory: less than a tenth of it available (at least 256 MB, at most 2 GB kept free).
+// core/SystemMemory: MemAvailable or the room a cgroup leaves, Windows the physical memory available; false where
+// unknown. Decoders kept open for an instant Play are closed only then (Picture::Renderer::trim).
+bool underPressure();
+// Tests: 1 = under pressure, 0 = not, -1 = measure (the default)
+void setPressureForTests(int state);
 // How often release() ran (tests)
 int releases();
 
