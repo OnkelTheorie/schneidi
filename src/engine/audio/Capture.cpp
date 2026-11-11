@@ -12,7 +12,9 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstring>
+#include <mutex>
 #include <cmath>
 #include <numbers>
 #include <thread>
@@ -74,6 +76,10 @@ struct Capture::Impl {
     static constexpr int kHeaderEveryMs = 2000; // the header's sizes brought up to date while recording
 
     std::thread writer, timer;
+    // Wakes the writer at once when it is to end (closing an input must not wait out its 20 ms nap: the GUI thread
+    // closes the armed track's meter when a take starts)
+    std::mutex wakeMutex;
+    std::condition_variable wake;
     ma_context maContext{};
     ma_device maDevice{};
     bool context = false, device = false;
@@ -189,7 +195,8 @@ struct Capture::Impl {
                     header = std::chrono::steady_clock::now();
                 }
             }
-            sleepFor(std::chrono::milliseconds(20));
+            std::unique_lock<std::mutex> lock(wakeMutex);
+            if (!stopWriter.load()) waitFor(wake, lock, std::chrono::milliseconds(20));
         }
         drain();
         // Blocks lost at the very end (no later block carried their marker); the input has stopped by now
@@ -264,6 +271,16 @@ struct Capture::Impl {
         return true;
     }
 
+    void endWriter()
+    {
+        {
+            std::lock_guard<std::mutex> lock(wakeMutex);
+            stopWriter.store(true);
+        }
+        wake.notify_all();
+        if (writer.joinable()) writer.join();
+    }
+
     void stopInputs()
     {
         stopInput.store(true);
@@ -283,8 +300,7 @@ struct Capture::Impl {
     ~Impl()
     {
         stopInputs();
-        stopWriter.store(true);
-        if (writer.joinable()) writer.join();
+        endWriter();
     }
 };
 
@@ -318,6 +334,9 @@ std::unique_ptr<Capture> Capture::start(const Config& config, const QString& pat
 
     const QString stand = qEnvironmentVariable("SCHNEIDI_AUDIO_INPUT");
     if (stand == "null" || stand.startsWith("sine:") || stand.startsWith("burst:") || plainName(config.backend) == "null") {
+        // Tests: opening takes as long as a sound server can (SCHNEIDI_AUDIO_INPUT_DELAY=<ms>)
+        if (const int delay = qEnvironmentVariableIntValue("SCHNEIDI_AUDIO_INPUT_DELAY"); delay > 0)
+            sleepFor(std::chrono::milliseconds(delay));
         // "burst:<ms>": a 1 kHz tone for the first <ms> ms, then silence
         const bool burst = stand.startsWith("burst:");
         const double hz = burst ? 1000.0 : stand.startsWith("sine:") ? stand.mid(5).toDouble() : 0.0;
@@ -341,8 +360,7 @@ bool Capture::stop(QString* error)
     if (d->stopped) return !d->writeFailed;
     d->stopped = true;
     d->stopInputs();
-    d->stopWriter.store(true);
-    if (d->writer.joinable()) d->writer.join();
+    d->endWriter();
     if (d->path.isEmpty()) return true; // a level meter: no file
     // Whole sample frames only (a write cut short by a full disk can end inside one). WAV sizes are 32 bit: a
     // longer recording keeps the maximum (readers take the rest from the file length)

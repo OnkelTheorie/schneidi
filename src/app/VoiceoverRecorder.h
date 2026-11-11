@@ -8,6 +8,9 @@
 // the playhead (a seek, J, a speed change) - puts it into the Media Pool and onto that track, as one undo step.
 // An armed track's input level is measured before recording too (a capture without a file) - only while the app is
 // active and the timeline shown.
+// Inputs open and close on a thread of their own, one after the other (a sound server takes 30-50 ms to open one,
+// the app stood still that long when a take began, was armed or ended): start() returns at once, the take begins
+// - the timeline plays - once the input runs, exactly as before, so the take lines up the same way.
 
 #include "core/Voiceover.h"
 
@@ -36,10 +39,12 @@ public:
     // Track that records (audio track index), -1 = none armed
     int armedTrack() const { return m_armed; }
     void setArmedTrack(int track);
-    bool recording() const { return m_capture != nullptr; }
+    // Recording or about to (the input opens)
+    bool recording() const { return m_capture != nullptr || m_opening != nullptr; }
     // The take really runs: the timeline is heard (until then the UI says "Gleich …"; what is said meanwhile is kept)
     bool live() const { return m_live; }
-    // Starts recording (track: see above); false = no input (*error says why)
+    // Starts recording (track: see above); false = it cannot (*error says why). The input opens meanwhile: none
+    // found ends the take again with failed().
     bool start(QString* error = nullptr);
     // While recording: the growing take and the audio track it lands on now (>= the track count = a new one below)
     const Voiceover::LiveTake& take() const { return m_take; }
@@ -60,7 +65,7 @@ public:
     // The armed track's meter may listen (the timeline is shown). It never does while the app is in the background:
     // an open input keeps a Bluetooth headset in its call profile (poor sound for everything else)
     void setMeterShown(bool shown);
-    bool metering() const { return m_meter != nullptr; }
+    bool metering() const { return m_meter != nullptr || m_meterOpening != nullptr; }
 
 signals:
     void armedChanged(int track);
@@ -69,8 +74,18 @@ signals:
     void takeChanged();        // the take grew (while live, with each block)
     void liveChanged(bool on); // the take really runs (the first heard frame) / ended
     void finished(const QString& path, bool placed, const QString& error);
+    void failed(const QString& error); // the input did not open: no take
 
 private:
+    struct Opening; // an input opening on the input thread
+    class InputThread;
+    std::shared_ptr<Opening> openInput(const QString& path);
+    void inputOpened(const std::shared_ptr<Opening>& opening);
+    void dropOpening(std::shared_ptr<Opening>& opening); // no longer wanted: closed there (a take's file removed)
+    // Closed on the input thread; remove: a file to delete after (a take that never began)
+    void closeInput(std::unique_ptr<Audio::Capture> input, const QString& remove = QString());
+    void begin();      // the input runs: the take begins (the timeline plays)
+    void abortStart(); // stopped before the input ran: nothing recorded
     void tick();
     void stopLater(); // stop() from the event loop (once, for this take)
     void followTracks(); // the timeline changed: the armed track and the take's track follow theirs (Voiceover::findTrack)
@@ -83,6 +98,9 @@ private:
     std::function<bool(const QString&)> m_import;
     std::unique_ptr<Audio::Capture> m_capture;
     std::unique_ptr<Audio::Capture> m_meter; // armed, not recording: the input level only
+    std::unique_ptr<InputThread> m_inputs;
+    std::shared_ptr<Opening> m_opening;      // the take's input opening
+    std::shared_ptr<Opening> m_meterOpening; // the meter's input opening
     QTimer* m_timer;
     QTimer* m_meterTimer;
     Voiceover::Alignment m_alignment;

@@ -131,6 +131,10 @@ void MainWindow::setupVoiceover()
         statusBar()->showMessage(T("Voiceover: Aufnahme auf %1 läuft – Esc oder Leertaste beendet")
                                      .arg(trackShortName({TrackKind::Audio, m_voiceover->liveTrack()})));
     });
+    // The input did not open (start() returned at once, the input opens on its own thread)
+    connect(m_voiceover, &VoiceoverRecorder::failed, this, [this](const QString& error) {
+        QMessageBox::warning(this, T("Voiceover aufnehmen"), error);
+    });
     connect(m_voiceover, &VoiceoverRecorder::finished, this,
             [this](const QString& path, bool placed, const QString& error) {
                 // Whenever a take replaced something, say so (and how to get it back)
