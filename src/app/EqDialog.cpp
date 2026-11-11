@@ -22,11 +22,19 @@ QString shown(double v)
     return s.replace('.', QLocale().decimalPoint());
 }
 
-bool parsed(const QLineEdit* e, double* v)
+// Model value into a field, unless the user is typing in it (text not yet committed): a change from elsewhere (CLI,
+// undo, another window) never overwrites what is being typed
+void showValue(QLineEdit* e, double v)
+{
+    if (!e->isModified()) e->setText(shown(v));
+}
+
+bool parsed(QLineEdit* e, double* v)
 {
     bool ok = false;
     const double x = QString(e->text()).trimmed().replace(',', '.').toDouble(&ok);
     if (ok) *v = x;
+    e->setModified(false); // taken (or refused): the model's value shows again
     return ok;
 }
 
@@ -89,6 +97,9 @@ EqDialog::EqDialog(Editor* editor, int track, QWidget* parent) : QDialog(parent)
         m_editor->setTrackEq(m_track, eq);
     });
     connect(editor->project(), &Project::timelineChanged, this, &EqDialog::sync);
+    // The track number belongs to this timeline of this project: another one closes the window
+    connect(editor->project(), &Project::loaded, this, &EqDialog::detach);
+    connect(editor->project(), &Project::currentSequenceChanged, this, &EqDialog::detach);
     sync();
 }
 
@@ -106,9 +117,9 @@ void EqDialog::sync()
         BandRow& row = m_bands[size_t(i)];
         const QSignalBlocker block(row.on);
         row.on->setChecked(b.on);
-        row.freq->setText(shown(std::round(b.freq)));
-        row.gain->setText(shown(b.gainDb));
-        row.q->setText(shown(b.q));
+        showValue(row.freq, std::round(b.freq));
+        showValue(row.gain, b.gainDb);
+        showValue(row.q, b.q);
     }
 }
 
@@ -127,4 +138,16 @@ void EqDialog::commit(int band)
     if (eq != tl.audio[m_track].eq) eq.on = true; // changing a band switches the EQ on (like dragging)
     m_editor->setTrackEq(m_track, eq);
     sync();
+}
+
+void EqDialog::detach()
+{
+    // Typed text is dropped, never committed: closing takes the focus away (editingFinished), and the track number
+    // would now point at a track of the other project/timeline
+    m_track = -1;
+    for (QLineEdit* e : findChildren<QLineEdit*>()) {
+        const QSignalBlocker block(e);
+        e->setModified(false);
+    }
+    close();
 }

@@ -425,8 +425,11 @@ void testPoolKeys(QWidget* windowKeys, const int* windowDeletes)
     }
     delete outside;
 
-    // Key dialog: the pool's Delete is no conflict with the window's Delete, two window Deletes are
+    // Key dialog: the pool's Delete is no conflict with the window's Delete, two window Deletes are (a newly
+    // registered action whose default key another one has; loading a file takes such duplicates apart)
     {
+        QAction windowDelete3;
+        b.registerAction(&windowDelete3, "test_window_delete3", "Test", QKeySequence(Qt::Key_Delete));
         KeyBindingsDialog dlg;
         auto* table = dlg.findChild<QTableWidget*>();
         if (CHECK(table)) {
@@ -436,7 +439,7 @@ void testPoolKeys(QWidget* windowKeys, const int* windowDeletes)
                 if (id == "pool_remove_bin") poolTip = table->item(r, 2)->toolTip();
                 if (id == "pool_remove_bin") CHECK_EQ(table->item(r, 3)->text(), QKeySequence(Qt::Key_Backspace).toString(QKeySequence::NativeText));
                 CHECK(id != "pool_remove_bin_alt");
-                if (id == "test_window_delete") windowTip = table->item(r, 2)->toolTip();
+                if (id == "test_window_delete3") windowTip = table->item(r, 2)->toolTip();
                 if (id == "pool_remove_bin") CHECK_EQ(table->item(r, 0)->text(), T("Medienpool"));
             }
             CHECK(poolTip.isEmpty());

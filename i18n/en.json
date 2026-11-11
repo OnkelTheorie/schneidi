@@ -720,7 +720,6 @@
  "Differenz": "Difference",
  "Digitale Störung: Farbversatz, verschobene Blöcke, Zeilen, Rauschen; jedes Bild neu aus dem Startwert. Stärke 0 = aus": "Digital glitch: color split, shifted blocks, lines, noise; new on every frame from the seed. Strength 0 = off",
  "Doppelklick = zurücksetzen": "Double-click = reset",
- "Doppelklick auf Taste 1 oder Taste 2, dann die neue Taste oder die Seitentaste der Maus drücken (Esc = abbrechen). Fett = eigene Belegung, rot = doppelt belegt.": "Double-click Key 1 or Key 2, then press the new key or the side button of the mouse (Esc = cancel). Bold = custom, red = assigned twice.",
  "Doppelklick: im Dateimanager zeigen": "Double-click: show in file manager",
  "Doppelklick: in der Quellvorschau an dieser Stelle zeigen": "Double-click: show this moment in the source viewer",
  "Download fehlgeschlagen: %1": "Download failed: %1",
@@ -2164,7 +2163,6 @@
  "Taste 1": "Key 1",
  "Taste 2": "Key 2",
  "Taste oder Maustaste drücken …": "Press a key or mouse button …",
- "Taste, Tastenkombination oder Seitentaste der Maus drücken. Esc = abbrechen": "Press a key, key combination or side button of the mouse. Esc = cancel",
  "Tastenbelegung": "Keyboard Customization",
  "Tastenbelegung (*.json)": "Key set (*.json)",
  "Tastenbelegung laden": "Load Key Set",
@@ -2995,5 +2993,12 @@
  "gerade erst geschrieben": "written just now",
  "schneidi konnte in %1 Dateien kein Bild und keinen Ton finden:": "schneidi found no picture and no sound in %1 files:",
  "von einem anderen Programm gesperrt": "locked by another program",
- "Master-Ordner": "Master"
+ "Master-Ordner": "Master",
+ "%1 (nicht installiert)": "%1 (not installed)",
+ "%1 nicht übernommen (Taste nicht lesbar): %2": "%1 not taken (key not readable): %2",
+ "%1 war „%2“ – dort entfernt": "%1 was on “%2” – removed there",
+ "Diese Schrift ist auf diesem Rechner nicht installiert. Sie bleibt im Branding, bis du eine andere wählst.": "This font is not installed on this computer. It stays in the brand kit until you pick another one.",
+ "Doppelklick auf Taste 1 oder Taste 2, dann die neue Taste oder die Seitentaste der Maus drücken (abbrechen: daneben klicken). Fett = eigene Belegung, rot = doppelt belegt.": "Double-click Key 1 or Key 2, then press the new key or the side button of the mouse (to cancel, click elsewhere). Bold = custom, red = assigned twice.",
+ "Esc beendet auch die große Vorschau und eine Sprachaufnahme: solange eine davon läuft, wirkt Esc dort und nicht für diese Funktion": "Esc also ends the large viewer and a voice-over take: while one of them is on, Esc does that and not this function",
+ "Taste, Tastenkombination oder Seitentaste der Maus drücken (auch Esc). Abbrechen: daneben klicken": "Press a key, key combination or side button of the mouse (Esc too). To cancel, click elsewhere"
 }

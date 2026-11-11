@@ -938,10 +938,22 @@ bool Mixer::eventFilter(QObject* watched, QEvent* e)
 {
     if (e->type() == QEvent::MouseButtonDblClick)
         for (int i = 0; i < m_strips.size(); ++i) {
+            const bool eq = watched == m_strips[i]->eq;
+            if (!eq && watched != m_strips[i]->dyn) continue;
+            // One window per strip: a second double click brings the open one up
             QDialog* dialog = nullptr;
-            if (watched == m_strips[i]->eq) dialog = new EqDialog(editor(), i, this);
-            else if (watched == m_strips[i]->dyn) dialog = new DynamicsDialog(editor(), i, this);
-            if (!dialog) continue;
+            for (QDialog* d : findChildren<QDialog*>(Qt::FindDirectChildrenOnly))
+                if (d->isVisible() && d->property("mixerStrip").toInt() == i && d->property("mixerEq").toBool() == eq)
+                    dialog = d;
+            if (dialog) {
+                dialog->raise();
+                dialog->activateWindow();
+                return true;
+            }
+            if (eq) dialog = new EqDialog(editor(), i, this);
+            else dialog = new DynamicsDialog(editor(), i, this);
+            dialog->setProperty("mixerStrip", i);
+            dialog->setProperty("mixerEq", eq);
             dialog->setAttribute(Qt::WA_DeleteOnClose);
             dialog->show(); // not modal: the preview keeps playing while adjusting
             return true;    // no second click (would switch back)

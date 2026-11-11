@@ -18,9 +18,26 @@
 #include <QXmlStreamReader>
 #include <algorithm>
 
+// Qt's key mapper (private API, in the same headers as RHI): the Latin key of a non-Latin layout as shortcuts see it.
+// Without the private headers the native key codes are read directly
+#if __has_include(<QtGui/private/qkeymapper_p.h>)
+#include <QtGui/private/qkeymapper_p.h>
+#define SCHNEIDI_HAVE_KEYMAPPER
+#endif
+
 namespace {
 
-constexpr int kVersion = 3; // increase when defaults or the format change (3: two slots per action)
+// Increase when defaults or the format change (3: two slots per action; 4: layout-neutral second keys, see
+// secondKeysAdded())
+constexpr int kVersion = 4;
+
+// Second keys new in version 4 (the same as their defaults in MainWindowActions): Shift+[ / Shift+] and Ctrl+\ need
+// AltGr on most non-US layouts. A file from before gets them where its second slot is empty and nothing else has the key
+const QHash<QString, QString>& secondKeysAdded()
+{
+    static const QHash<QString, QString> keys{{"trim_start", "Shift+Q"}, {"trim_end", "Shift+W"}, {"split_alt", "Shift+B"}};
+    return keys;
+}
 
 const QHash<QString, WheelAction>& wheelNames()
 {
@@ -333,16 +350,17 @@ const QHash<QString, QString>& kysCommands()
 // Characters (letters, digits, punctuation): 0x80000000 + the character; the number pad: 0xC0000000 + its character;
 // every other key a small number of Premiere's own (Space 1, Backspace 2, Tab 3, Return 4, number pad Enter 5,
 // F1-F24 7-30, Del 35, Home 36, End 37, PgUp 38, PgDown 39, arrows 42-45). Empty = a key schneidi cannot name.
-// Not in any source seen: codes for Esc and Ins, and whether Premiere writes characters beyond ASCII (ü, ß on
-// another keyboard layout) the same way - those are left out rather than guessed
+// Characters beyond ASCII (ü, é, ß of another keyboard layout) follow the same scheme: the character itself.
+// Not in any source seen: the codes of Esc and Ins - left out rather than guessed (readKys counts them as not taken)
 QString premiereKeyName(quint32 code)
 {
     if (code & 0x80000000u) {
         const quint32 c = code & 0xFFFFu;
-        if (c < 0x21 || c > 0x7E) return {};
         const QChar ch{char16_t(c)};
+        if (c < 0x21 || c == 0x7F || !ch.isPrint() || ch.isSpace() || ch.isSurrogate()) return {};
         if ((code & 0x40000000u) && !(ch.isDigit() || QStringLiteral("*+-./").contains(ch))) return {};
-        return QString(ch.toUpper());
+        const QChar upper = ch.toUpper(); // ß has no single capital: stays
+        return QString(upper);
     }
     if (code >= 7 && code <= 30) return QString("F%1").arg(code - 6);
     static const QHash<quint32, QString> names = {
@@ -382,6 +400,11 @@ void InputBindings::load()
     const int version = root.value("version").toInt();
     if (version < kVersion) m_fileExisted = false;
     applyJson(root, version >= 2);
+    // At start the actions are not registered yet (their scopes unknown): saveIfIncomplete() does it then
+    if (m_entries.isEmpty()) return;
+    const bool removed = !removeDuplicates().isEmpty();
+    applyAll(); // loaded again with actions registered: the set takes effect
+    if (removed) save();
 }
 
 void InputBindings::applyJson(const QJsonObject& root, bool withWheel)
@@ -399,6 +422,18 @@ void InputBindings::applyJson(const QJsonObject& root, bool withWheel)
             for (const QJsonValue& v : it.value().toArray()) binds << normalizeInput(v.toString());
         else binds << normalizeInput(it.value().toString());
         m_inputs[it.key()] = padded(binds);
+    }
+    if (root.value("version").toInt() < 4 && !keys.isEmpty()) {
+        QSet<QString> used;
+        for (const QStringList& binds : std::as_const(m_inputs))
+            for (const QString& in : binds) used.insert(in);
+        for (auto it = secondKeysAdded().begin(); it != secondKeysAdded().end(); ++it) {
+            // Only where the action has a first key: both slots empty = unbound on purpose
+            const QStringList binds = m_inputs.value(it.key());
+            if (binds.value(0).isEmpty() || !binds.value(1).isEmpty() || used.contains(it.value())) continue;
+            m_inputs[it.key()][1] = it.value();
+            used.insert(it.value());
+        }
     }
     // Actions that became the second key of another one (0.13 test builds had Backspace in the bin list as an action of
     // its own): its key moves into the free slot, the old id is gone
@@ -476,34 +511,53 @@ QKeySequence InputBindings::current(const QString& id) const
     return {};
 }
 
-void InputBindings::setInput(const QString& id, int slot, const QString& input)
+QVector<InputBindings::Taken> InputBindings::setInput(const QString& id, int slot, const QString& input)
 {
-    if (slot < 0 || slot >= kSlots) return;
+    if (slot < 0 || slot >= kSlots) return {};
     QStringList binds = inputs(id);
     const QString in = normalizeInput(input);
     if (!in.isEmpty())
         for (QString& other : binds)
             if (other == in) other.clear();
     binds[slot] = in;
-    setInputs(id, binds);
+    return setInputs(id, binds);
 }
 
-void InputBindings::setInputs(const QString& id, const QStringList& list)
+bool InputBindings::sharedOnPurpose(const QString& a, const QString& b)
+{
+    static const QString angle = "multicam_switch_", target = "target_video_";
+    const auto pair = [](const QString& x, const QString& y) {
+        return x.startsWith(angle) && y.startsWith(target) && x.mid(angle.size()) == y.mid(target.size());
+    };
+    return pair(a, b) || pair(b, a);
+}
+
+QVector<InputBindings::Taken> InputBindings::setInputs(const QString& id, const QStringList& list)
 {
     QStringList binds;
     for (const QString& in : padded(list)) {
         const QString n = normalizeInput(in);
         binds << (binds.contains(n) ? QString() : n);
     }
-    // One action per mouse button: take it from the others
+    // Take the inputs from the other actions: a mouse button from every one, a key from those of the same scope
     QStringList ids = m_inputs.keys();
     for (const Entry& e : m_entries) ids << e.id;
+    ids.removeDuplicates();
+    QVector<Taken> taken;
+    const QString own = scope(id);
     for (const QString& in : binds) {
-        if (inputMouseButton(in) == Qt::NoButton) continue;
+        if (in.isEmpty()) continue;
+        const bool mouse = inputMouseButton(in) != Qt::NoButton;
         for (const QString& other : ids) {
-            if (other == id) continue;
+            if (other == id || (!mouse && (scope(other) != own || sharedOnPurpose(id, other)))) continue;
             QStringList o = inputs(other);
-            if (o.removeAll(in) > 0) m_inputs[other] = padded(o);
+            if (o.contains(in)) {
+                o.replace(o.indexOf(in), QString());
+                m_inputs[other] = o;
+                taken.append({other, in});
+                for (const Entry& e : m_entries)
+                    if (e.id == other) apply(e);
+            }
         }
     }
     m_inputs[id] = binds;
@@ -511,6 +565,44 @@ void InputBindings::setInputs(const QString& id, const QStringList& list)
         if (e.id == id) apply(e);
     rebuildMouse();
     save();
+    return taken;
+}
+
+QVector<InputBindings::Taken> InputBindings::removeDuplicates()
+{
+    // Who keeps an input: actions with it from the file before those with it as a default, then menu order
+    QVector<const Entry*> order;
+    for (const bool fromFile : {true, false})
+        for (const Entry& e : m_entries)
+            if (m_inputs.contains(e.id) == fromFile) order << &e;
+    QHash<QString, QString> owner; // scope + '\n' + key (or the mouse input) -> action id
+    QVector<Taken> removed;
+    for (const Entry* e : order) {
+        QStringList binds = inputs(e->id);
+        bool changed = false;
+        for (QString& in : binds) {
+            if (in.isEmpty()) continue;
+            const QString key = inputMouseButton(in) != Qt::NoButton ? in : e->scope + '\n' + in;
+            const QString first = owner.value(key);
+            if (first.isEmpty()) {
+                owner.insert(key, e->id);
+            } else if (!sharedOnPurpose(first, e->id)) {
+                qWarning("Key bindings: %s was on \"%s\" and \"%s\", removed from \"%s\"", qPrintable(in),
+                         qPrintable(first), qPrintable(e->id), qPrintable(e->id));
+                removed.append({e->id, in});
+                in.clear();
+                changed = true;
+            }
+        }
+        if (changed) m_inputs[e->id] = binds;
+    }
+    return removed; // only m_inputs: applying to the actions is the caller's (presetInputs runs this on a copy)
+}
+
+void InputBindings::applyAll()
+{
+    for (const Entry& e : m_entries) apply(e);
+    rebuildMouse();
 }
 
 void InputBindings::apply(const Entry& e) const
@@ -518,7 +610,7 @@ void InputBindings::apply(const Entry& e) const
     if (!e.action) return;
     QList<QKeySequence> keys;
     for (const QString& in : inputs(e.id))
-        if (!in.isEmpty() && inputMouseButton(in) == Qt::NoButton)
+        if (!in.isEmpty() && inputMouseButton(in) == Qt::NoButton && !(e.scope.isEmpty() && !m_held.value(in).isEmpty()))
             keys << QKeySequence::fromString(in, QKeySequence::PortableText);
     e.action->setShortcuts(keys);
 }
@@ -543,7 +635,9 @@ void InputBindings::resetAll()
 
 void InputBindings::saveIfIncomplete()
 {
-    bool complete = m_fileExisted;
+    const bool clean = removeDuplicates().isEmpty();
+    if (!clean) applyAll();
+    bool complete = m_fileExisted && clean;
     for (const Entry& e : m_entries) complete &= m_inputs.contains(e.id);
     if (!complete) save();
 }
@@ -596,6 +690,7 @@ bool InputBindings::importSet(const QString& path, QString* error)
     // A whole set: what the file leaves out goes back to the default
     m_inputs.clear();
     applyJson(doc.object(), true);
+    removeDuplicates();
     for (const Entry& e : m_entries) apply(e);
     rebuildMouse();
     save();
@@ -702,6 +797,7 @@ void InputBindings::loadPreset(const QString& id)
     } else if (id.startsWith("custom:")) {
         QFile f(QDir(customPresetDir()).filePath(id.mid(7) + ".json"));
         if (f.open(QIODevice::ReadOnly)) applyJson(QJsonDocument::fromJson(f.readAll()).object(), true);
+        removeDuplicates();
     }
     m_preset = id;
 }
@@ -718,6 +814,7 @@ InputBindings::KysResult InputBindings::readKys(const QByteArray& xml)
     // the global one first; a key already given to another command is left out (the file's order decides)
     KysResult r;
     QSet<QString> unknown;
+    QStringList notTaken; // action ids, in file order
     struct Binding {
         int rank; // 0 global (or no context), 1 timeline
         QString command, id, input;
@@ -752,6 +849,12 @@ InputBindings::KysResult InputBindings::readKys(const QByteArray& xml)
                 // Premiere writes the code unsigned (2147483719); signed (-2147483577) is the same 32 bits
                 const quint32 code = quint32(item.value("virtualkey").toLongLong(&numeric) & 0xFFFFFFFF);
                 QString key = item.contains("virtualkey") ? (numeric ? premiereKeyName(code) : QString()) : item.value("key");
+                if (!command.isEmpty() && key.isEmpty() && numeric && code != 0 && rank >= 0) {
+                    // A key schneidi cannot name: the command does not get it, which the summary says
+                    const QString id = kysCommands().value(command);
+                    if (id.isEmpty()) unknown.insert(command);
+                    else if (!notTaken.contains(id)) notTaken << id;
+                }
                 if (command.isEmpty() || key.isEmpty()) {
                     --depth;
                     continue;
@@ -799,6 +902,8 @@ InputBindings::KysResult InputBindings::readKys(const QByteArray& xml)
     }
     r.ok = !x.hasError() && !root.isEmpty() && (root.contains("premiere") || root.contains("shortcut"));
     r.taken = int(taken.size());
+    for (const QString& id : notTaken)
+        if (!r.keys.contains(id)) r.notTaken << id; // another key of the command came through: it has one
     r.unknown = int(unknown.size());
     return r;
 }
@@ -1012,6 +1117,97 @@ QWidget* InputBindings::scopeOf(const QString& id) const
     return nullptr;
 }
 
+InputBindings::NativeKeys InputBindings::platformNativeKeys()
+{
+#if defined(Q_OS_WIN)
+    return NativeKeys::Windows;
+#elif defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
+    return NativeKeys::Xkb; // X11 and Wayland both give xkb key codes
+#else
+    return NativeKeys::None;
+#endif
+}
+
+namespace {
+
+// A letter of another script than Latin (Cyrillic, Greek, Arabic, Hebrew...): Latin letters of other layouts (Ü, É)
+// are keys of their own there and stay
+bool nonLatinLetter(int key)
+{
+    if (key < 0x80 || key > 0xFFFF) return false; // ASCII or a named key (Qt::Key_Escape and up)
+    const QChar c{char16_t(key)};
+    return c.isLetter() && c.script() != QChar::Script_Latin && c.script() != QChar::Script_Common;
+}
+
+bool latinKey(int key)
+{
+    return (key >= Qt::Key_A && key <= Qt::Key_Z) || (key >= Qt::Key_0 && key <= Qt::Key_9);
+}
+
+// The Latin letter or digit of the physical key from the native codes, 0 if unknown
+int latinFromNative(const QKeyEvent* e, InputBindings::NativeKeys native)
+{
+    if (native == InputBindings::NativeKeys::Windows) {
+        // Windows' virtual key of a letter/digit key is its Latin letter/digit in every layout (VK_A = 'A')
+        const quint32 vk = e->nativeVirtualKey();
+        return (vk >= 'A' && vk <= 'Z') || (vk >= '0' && vk <= '9') ? int(vk) : 0;
+    }
+    if (native == InputBindings::NativeKeys::Xkb) {
+        // xkb key code = Linux evdev code + 8; the rows of a US keyboard (the usual first, Latin layout)
+        static const struct { quint32 first; const char* keys; } rows[] = {
+            {10, "1234567890"}, {24, "QWERTYUIOP"}, {38, "ASDFGHJKL"}, {52, "ZXCVBNM"}};
+        const quint32 code = e->nativeScanCode();
+        for (const auto& row : rows)
+            if (code >= row.first && code < row.first + quint32(qstrlen(row.keys))) return row.keys[code - row.first];
+    }
+    return 0;
+}
+
+} // namespace
+
+QKeyCombination InputBindings::bindingKey(const QKeyEvent* e, NativeKeys native)
+{
+    int key = e->key();
+    Qt::KeyboardModifiers mods =
+        e->modifiers() & (Qt::ShiftModifier | Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier);
+    if (key == Qt::Key_Backtab) key = Qt::Key_Tab;
+    if (nonLatinLetter(key)) {
+        int latin = 0;
+#ifdef SCHNEIDI_HAVE_KEYMAPPER
+        // What Qt's shortcut matching uses: on X11/Wayland the keysym of the first Latin layout group
+        for (const QKeyCombination& k : QKeyMapper::possibleKeys(e))
+            if (latinKey(k.key())) {
+                latin = k.key();
+                break;
+            }
+#endif
+        if (!latin) latin = latinFromNative(e, native);
+        if (latin) key = latin;
+    }
+    // Windows reports AltGr as left Ctrl + right Alt (QWindowsKeyMapper's native modifier bits 0x2 and 0x40): a
+    // character typed with it ("[" on German AltGr+8) is that character, not Ctrl+Alt+[
+    if (native == NativeKeys::Windows && mods.testFlags(Qt::ControlModifier | Qt::AltModifier)
+        && (e->nativeModifiers() & 0x42) == 0x42 && !e->text().isEmpty() && e->text().at(0).isPrint())
+        mods &= ~(Qt::ControlModifier | Qt::AltModifier);
+    return QKeyCombination(mods, Qt::Key(key));
+}
+
+void InputBindings::holdWindowKey(const QString& owner, const QString& key, bool on)
+{
+    const QString in = normalizeInput(key);
+    const bool before = !m_held.value(in).isEmpty();
+    if (on) m_held[in].insert(owner);
+    else if (m_held.contains(in) && m_held[in].remove(owner) && m_held[in].isEmpty()) m_held.remove(in);
+    if (before == !m_held.value(in).isEmpty()) return;
+    for (const Entry& e : m_entries)
+        if (e.scope.isEmpty() && inputs(e.id).contains(in)) apply(e);
+}
+
+QStringList InputBindings::windowInternalKeys()
+{
+    return {"Esc"}; // MainWindow: m_largeEscape, m_voiceoverEscape
+}
+
 bool InputBindings::matches(const QAction* action, const QKeyEvent* e)
 {
     if (!action || !action->isEnabled() || !e || e->key() == 0 || e->key() == Qt::Key_unknown) return false;
@@ -1019,8 +1215,10 @@ bool InputBindings::matches(const QAction* action, const QKeyEvent* e)
     const Qt::KeyboardModifiers mods =
         e->modifiers() & (Qt::ShiftModifier | Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier);
     const QKeySequence plain(QKeyCombination(mods, Qt::Key(e->key())));
+    // As captured (bindingKey): the Latin key under a non-Latin layout, AltGr on Windows without Ctrl+Alt
+    const QKeySequence bound(bindingKey(e));
     for (const QKeySequence& s : action->shortcuts())
-        if (s == key || s == plain) return true;
+        if (s == key || s == plain || s == bound) return true;
     return false;
 }
 

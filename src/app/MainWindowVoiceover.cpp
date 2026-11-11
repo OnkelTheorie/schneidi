@@ -3,6 +3,7 @@
 // mic buttons in the timeline's audio track headers (arm, right-click = input), the record button in the timeline's
 // toolbar and in the Mixer, the growing take in the timeline, the sign in the viewer, Esc to stop
 #include "app/MainWindow.h"
+#include "app/InputBindings.h"
 #include "app/VoiceoverRecorder.h"
 
 #include "core/I18n.h"
@@ -120,6 +121,9 @@ void MainWindow::setupVoiceover()
     connect(m_voiceover, &VoiceoverRecorder::recordingChanged, this, [this](bool on) {
         m_voiceoverEscape->setEnabled(on);
         if (m_largeEscape) m_largeEscape->setEnabled(m_large.active && !on); // see setViewerLarge
+        // A window action bound to Esc gives it up while either one uses it (InputBindings::holdWindowKey)
+        InputBindings::instance().holdWindowKey("voiceover", "Esc", on);
+        if (m_largeEscape) InputBindings::instance().holdWindowKey("large_viewer", "Esc", m_largeEscape->isEnabled());
         if (on) statusBar()->showMessage(T("Voiceover: gleich …")); // the input opens, the timeline not yet heard
         else {
             m_viewer->setRecording(false);

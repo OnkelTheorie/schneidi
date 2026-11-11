@@ -16,19 +16,24 @@
 #include "engine/Engine.h"
 
 #include <QAction>
+#include <QAbstractButton>
 #include <QApplication>
 #include <QComboBox>
 #include <QDir>
 #include <QFile>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QKeyEvent>
 #include <QLabel>
 #include <QPointer>
 #include <QPushButton>
 #include <QSignalSpy>
+#include <QTableWidget>
 #include <QTemporaryDir>
 #include <QTest>
+#include <algorithm>
 #include <clocale>
+#include <functional>
 #include <memory>
 
 namespace {
@@ -95,6 +100,26 @@ void testReadKys()
     CHECK_EQ(key(90), QString()); // no Premiere code (a Windows VK 'Z' is not what Premiere writes)
     CHECK_EQ(key(0x80000041, "<modifier.ctrl>true</modifier.ctrl><modifier.alt>true</modifier.alt>"), QString("Ctrl+Alt+A"));
 
+    // Characters beyond ASCII (a German or French keyboard): the same code scheme, the character itself
+    CHECK_EQ(key(0x800000FC), QString(QChar(0xDC))); // ü -> Ü like a -> A
+    CHECK_EQ(key(0x800000E9), QString(QChar(0xC9))); // é
+    CHECK_EQ(key(0x800000DF), QString(QChar(0xDF))); // ß (no capital)
+    CHECK_EQ(key(0x80000080), QString());            // a control character
+
+    // A key schneidi cannot name (Esc, Ins: their codes are in no file seen) on a command schneidi has: not taken,
+    // counted and named for the summary; on a command it lacks: unknown
+    {
+        const auto r = InputBindings::readKys(R"(<PremiereData Version="3"><shortcuts Version="5"><context.global Version="1">
+            <item.0 Version="1"><commandname>cmd.edit.undo</commandname><virtualkey>6</virtualkey></item.0>
+            <item.1 Version="1"><commandname>cmd.edit.redo</commandname><virtualkey>2147483737</virtualkey></item.1>
+            <item.2 Version="1"><commandname>cmd.tools.09pen</commandname><virtualkey>33</virtualkey></item.2>
+            <item.3 Version="1"><commandname>cmd.common.setin</commandname><virtualkey>34</virtualkey></item.3>
+            </context.global></shortcuts></PremiereData>)");
+        CHECK_EQ(r.taken, 1);
+        CHECK_EQ(r.unknown, 1);
+        CHECK_EQ(r.notTaken, QStringList({"undo", "mark_in"}));
+    }
+
     CHECK(!InputBindings::readKys("not xml at all").ok);
     CHECK(!InputBindings::readKys(R"({"shortcuts": {}})").ok);
     CHECK(!InputBindings::readKys("<html><body>hi</body></html>").ok);
@@ -136,6 +161,271 @@ void checkUniqueKeys(const char* where)
                               QString("%1: %2 on %3 and %4").arg(where, input, owner[key], e.id));
             owner.insert(key, e.id);
         }
+}
+
+// A key every common keyboard layout can type without a dead key or AltGr: letters, digits, F keys and named keys
+// ([ ] \ ` need AltGr on German, French, Nordic... layouts or sit elsewhere)
+bool layoutNeutral(const QString& input)
+{
+    if (input.isEmpty() || input.startsWith("mouse:")) return false;
+    const QKeyCombination k = QKeySequence::fromString(input, QKeySequence::PortableText)[0];
+    const int key = k.key();
+    const bool plain = (key >= Qt::Key_A && key <= Qt::Key_Z) || (key >= Qt::Key_0 && key <= Qt::Key_9)
+                       || (key >= Qt::Key_F1 && key <= Qt::Key_F24) || key >= 0x01000000;
+    return plain && !(k.keyboardModifiers().testFlags(Qt::ControlModifier | Qt::AltModifier));
+}
+
+// Trim start/end and the alternative split have a second key every layout can type, in every preset (Shift+[ / Shift+]
+// and Ctrl+\ cannot be pressed on QWERTZ and most non-US layouts); a keybindings.json from before gets it too
+void testLayoutNeutralKeys()
+{
+    InputBindings& b = InputBindings::instance();
+    for (const char* preset : {"standard", "beginner", "premiere", "finalcut"}) {
+        b.applyPreset(preset);
+        for (const char* id : {"trim_start", "trim_end", "split_alt"}) {
+            const QStringList keys = in(id);
+            Check::report(std::any_of(keys.begin(), keys.end(), layoutNeutral), "no layout-neutral key", __FILE__,
+                          __LINE__, QString("%1: %2 has %3").arg(preset, id, keys.join(", ")));
+        }
+        checkUniqueKeys(preset);
+    }
+    b.applyPreset("standard");
+    CHECK_EQ(in("trim_start"), QStringList({"Shift+[", "Shift+Q"}));
+    CHECK_EQ(in("trim_end"), QStringList({"Shift+]", "Shift+W"}));
+    CHECK_EQ(in("split_alt"), QStringList({"Ctrl+\\", "Shift+B"}));
+    // A file of version 3: the new second keys come in where the slot is empty and the key is free
+    {
+        QFile f(b.filePath());
+        if (CHECK(f.open(QIODevice::WriteOnly)))
+            f.write(R"({"version": 3, "shortcuts": {"trim_start": "Shift+[", "trim_end": ["Shift+]", "E"],
+                        "split_alt": "Ctrl+\\", "add_marker": "Shift+B"}})");
+    }
+    b.load();
+    CHECK_EQ(in("trim_start"), QStringList({"Shift+[", "Shift+Q"}));
+    CHECK_EQ(in("trim_end"), QStringList({"Shift+]", "E"})); // the user's own second key stays
+    CHECK_EQ(in("split_alt"), QStringList({"Ctrl+\\", ""})); // Shift+B is the user's marker key
+    // The key is free, but the action was unbound on purpose (first slot empty too): it stays without keys
+    {
+        QFile f(b.filePath());
+        if (CHECK(f.open(QIODevice::WriteOnly)))
+            f.write(R"({"version": 3, "shortcuts": {"trim_start": "", "trim_end": "Shift+]", "split_alt": "",
+                        "add_marker": "M"}})");
+    }
+    b.load();
+    CHECK_EQ(in("trim_start"), QStringList({"", ""}));
+    CHECK_EQ(in("trim_end"), QStringList({"Shift+]", "Shift+W"}));
+    CHECK_EQ(in("split_alt"), QStringList({"", ""}));
+    CHECK(b.action("trim_end")->shortcuts().contains(QKeySequence("Shift+W")));
+    b.applyPreset("standard");
+}
+
+// The table row of an action in the key dialog
+int rowOf(QTableWidget* table, const QString& id)
+{
+    for (int r = 0; r < table->rowCount(); ++r)
+        if (table->item(r, 1)->data(Qt::UserRole).toString() == id) return r;
+    return -1;
+}
+
+// Captures a key in the dialog like the user: double click on the slot, then the key goes to the capture field
+void capture(KeyBindingsDialog& dlg, const QString& id, int slot, const std::function<void(QWidget*)>& press)
+{
+    auto* table = dlg.findChild<QTableWidget*>();
+    const int row = rowOf(table, id);
+    if (!CHECK(row >= 0)) return;
+    emit table->cellDoubleClicked(row, 2 + slot);
+    QWidget* field = table->cellWidget(row, 2 + slot);
+    if (!CHECK(field)) return;
+    press(field);
+    QApplication::processEvents();
+}
+
+// A key already used in the same scope: the other action loses it (two actions on one key would both stop working), the
+// dialog says so. Files (keybindings.json, a loaded set) with a key twice: the first keeps it, the other loses it
+void testDuplicates()
+{
+    InputBindings& b = InputBindings::instance();
+    b.applyPreset("standard");
+    CHECK_EQ(in("add_marker").value(0), QString("M"));
+    const auto taken = b.setInput("split", 0, "M");
+    CHECK_EQ(taken.size(), 1);
+    CHECK(taken.value(0).id == "add_marker" && taken.value(0).input == "M");
+    CHECK(!in("add_marker").contains("M"));
+    CHECK(!b.action("add_marker")->shortcuts().contains(QKeySequence("M")));
+    checkUniqueKeys("setInput");
+    // A panel's key is no conflict with the window's (Del in the render queue and on the timeline)
+    b.setInput("delete", 1, "Del");
+    CHECK(in("render_queue_delete").contains("Del"));
+    CHECK(!in("delete_alt").contains("Del"));
+    // The multicam angle keys share Alt+N with the target tracks on purpose
+    b.applyPreset("standard");
+    b.setInput("target_video_1", 0, "Alt+1");
+    CHECK(in("multicam_switch_1").contains("Alt+1"));
+
+    // In the dialog: the notice line names the key and the action it was taken from
+    b.applyPreset("standard");
+    {
+        KeyBindingsDialog dlg;
+        dlg.show();
+        auto* notice = dlg.findChild<QLabel*>("key_taken_notice");
+        if (!CHECK(notice)) return;
+        CHECK(!notice->isVisibleTo(&dlg));
+        capture(dlg, "split", 1, [](QWidget* f) { QTest::keyClick(f, Qt::Key_M); });
+        CHECK_EQ(in("split").value(1), QString("M"));
+        CHECK(!in("add_marker").contains("M"));
+        CHECK(notice->isVisibleTo(&dlg));
+        CHECK(notice->text().contains("M"));
+        CHECK(notice->text().contains(QString(b.action("add_marker")->text()).remove('&')));
+    }
+
+    // A file with a key twice
+    QTemporaryDir tmp;
+    const QString path = QDir(tmp.path()).filePath("set.json");
+    const auto write = [&](const QByteArray& json) {
+        QFile f(path);
+        if (CHECK(f.open(QIODevice::WriteOnly))) f.write(json);
+    };
+    write(R"({"version": 3, "shortcuts": {"split": "M"}})"); // add_marker keeps its default M: the file's wins
+    QString error;
+    CHECK(b.importSet(path, &error));
+    CHECK_EQ(in("split").value(0), QString("M"));
+    CHECK(!in("add_marker").contains("M"));
+    checkUniqueKeys("importSet");
+    write(R"({"version": 3, "shortcuts": {"split": "M", "add_marker": "M"}})");
+    CHECK(b.importSet(path, &error));
+    CHECK((in("split").value(0) == "M") != (in("add_marker").value(0) == "M"));
+    checkUniqueKeys("importSet both");
+    // keybindings.json edited by hand
+    {
+        QFile f(b.filePath());
+        if (CHECK(f.open(QIODevice::WriteOnly)))
+            f.write(R"({"version": 3, "shortcuts": {"split": "M", "add_marker": "M", "mark_in": "M"}})");
+    }
+    b.load();
+    checkUniqueKeys("load");
+    b.applyPreset("standard");
+}
+
+// A key event as the platform delivers it: Qt key, modifiers, text and the native codes (X11/Wayland: xkb key code =
+// evdev code + 8 and keysym; Windows: scan code and virtual key)
+void sendKey(QWidget* w, int key, Qt::KeyboardModifiers mods, const QString& text, quint32 scanCode, quint32 virtualKey)
+{
+    QKeyEvent press(QEvent::KeyPress, key, mods, scanCode, virtualKey, 0, text);
+    QApplication::sendEvent(w, &press);
+}
+
+// Capturing in the dialog under other keyboard layouts: a Russian layout gives the Latin key of the same physical key
+// (the one shortcuts match), Windows' AltGr (= Ctrl+Alt there) is not taken as Ctrl+Alt
+void testCaptureLayouts()
+{
+    InputBindings& b = InputBindings::instance();
+    b.applyPreset("standard");
+    KeyBindingsDialog dlg;
+    dlg.show();
+    // Russian: the key that is A on a US keyboard gives "Ф" (X11 key code 38, Windows VK_A)
+    capture(dlg, "add_marker", 1, [](QWidget* f) { sendKey(f, 0x0424, Qt::NoModifier, QString(QChar(0x0444)), 38, 0x41); });
+    CHECK_EQ(in("add_marker").value(1), QString("A"));
+    capture(dlg, "add_marker", 1,
+            [](QWidget* f) { sendKey(f, 0x0421, Qt::ControlModifier, QString(), 54, 0x43); }); // Ctrl+С = Ctrl+C key
+    CHECK_EQ(in("add_marker").value(1), QString("Ctrl+C"));
+    // Latin letters of other layouts stay as they are (German Ü, French É)
+    capture(dlg, "add_marker", 1, [](QWidget* f) { sendKey(f, Qt::Key_Udiaeresis, Qt::NoModifier, "ü", 34, 0xBA); });
+    CHECK_EQ(in("add_marker").value(1), QString(QChar(0xDC)));
+    // A real Ctrl+Alt combination stays one
+    capture(dlg, "add_marker", 1,
+            [](QWidget* f) { sendKey(f, Qt::Key_J, Qt::ControlModifier | Qt::AltModifier, QString(), 44, 0x4A); });
+    CHECK_EQ(in("add_marker").value(1), QString("Ctrl+Alt+J"));
+    b.applyPreset("standard");
+
+    // The native codes of each platform (whichever this one is)
+    using N = InputBindings::NativeKeys;
+    const auto key = [](N native, int qtKey, Qt::KeyboardModifiers mods, const QString& text, quint32 scan, quint32 vk,
+                        quint32 nativeMods = 0) {
+        QKeyEvent e(QEvent::KeyPress, qtKey, mods, scan, vk, nativeMods, text);
+        return QKeySequence(InputBindings::bindingKey(&e, native)).toString(QKeySequence::PortableText);
+    };
+    CHECK_EQ(key(N::Windows, 0x0424, {}, QString(QChar(0x0444)), 0x1E, 0x41), QString("A")); // VK_A
+    CHECK_EQ(key(N::Xkb, 0x0424, {}, QString(QChar(0x0444)), 38, 0x6c6), QString("A"));      // key code 38
+    CHECK_EQ(key(N::Xkb, 0x0417, Qt::ShiftModifier, QString(QChar(0x0417)), 33, 0x6fa), QString("Shift+P"));
+    CHECK_EQ(key(N::Xkb, 0x03A9, {}, QString(QChar(0x03C9)), 55, 0x7f9), QString("V")); // Greek omega on the V key
+    CHECK_EQ(key(N::Xkb, Qt::Key_Udiaeresis, {}, "ü", 34, 0xfc), QString(QChar(0xDC)));
+    // Windows AltGr (left Ctrl + right Alt) typing "[" (German AltGr+8): "[", not Ctrl+Alt+[
+    const auto ctrlAlt = Qt::ControlModifier | Qt::AltModifier;
+    CHECK_EQ(key(N::Windows, Qt::Key_BracketLeft, ctrlAlt, "[", 0x09, 0x38, 0x42), QString("["));
+    CHECK_EQ(key(N::Windows, Qt::Key_At, ctrlAlt, "@", 0x10, 0x51, 0x42), QString("@")); // AltGr+Q
+    // Both Ctrl and Alt held by the user (no character): stays
+    CHECK_EQ(key(N::Windows, Qt::Key_J, ctrlAlt, QString(), 0x24, 0x4A, 0x06), QString("Ctrl+Alt+J"));
+    // X11/Wayland: AltGr is a level shift there, a Ctrl+Alt+digit with text stays
+    CHECK_EQ(key(N::Xkb, Qt::Key_1, ctrlAlt, "1", 10, 0x31, 0x0c), QString("Ctrl+Alt+1"));
+    CHECK_EQ(key(N::Xkb, Qt::Key_Backtab, Qt::ShiftModifier, QString(), 23, 0xfe20), QString("Shift+Tab"));
+
+    // Panel and scoped actions check keys themselves (matches): the same mapping there, so a key captured as "A" works
+    // under the Russian layout too (key code 38 on X11/Wayland, VK_A on Windows)
+    QAction panel;
+    panel.setShortcut(QKeySequence("A"));
+    QKeyEvent ef(QEvent::KeyPress, 0x0424, Qt::NoModifier, 38, 0x41, 0, QString(QChar(0x0444)));
+    CHECK(InputBindings::matches(&panel, &ef));
+    QKeyEvent other(QEvent::KeyPress, 0x0412, Qt::NoModifier, 55, 0x44, 0, QString(QChar(0x0432))); // В on V / D
+    CHECK(!InputBindings::matches(&panel, &other));
+#ifdef Q_OS_WIN
+    panel.setShortcut(QKeySequence("["));
+    QKeyEvent altGr(QEvent::KeyPress, Qt::Key_BracketLeft, Qt::ControlModifier | Qt::AltModifier, 0x09, 0x38, 0x42, "[");
+    CHECK(InputBindings::matches(&panel, &altGr));
+#endif
+}
+
+// Esc can be bound: capturing takes it like any key (cancel = click elsewhere or the small cancel button). On a window
+// action it is marked as a conflict: Esc also ends the large viewer and a voice-over take
+void testCaptureEscape()
+{
+    InputBindings& b = InputBindings::instance();
+    b.applyPreset("standard");
+    KeyBindingsDialog dlg;
+    dlg.show();
+    auto* table = dlg.findChild<QTableWidget*>();
+    capture(dlg, "deselect", 1, [](QWidget* f) { QTest::keyClick(f, Qt::Key_Escape); });
+    CHECK_EQ(in("deselect").value(1), QString("Esc"));
+    const int row = rowOf(table, "deselect");
+    if (CHECK(row >= 0)) {
+        QTableWidgetItem* item = table->item(row, 3);
+        CHECK(item->foreground().color() == Theme::warning);
+        CHECK(!item->toolTip().isEmpty());
+    }
+    // The cancel button: nothing changes
+    capture(dlg, "deselect", 0, [](QWidget* f) {
+        auto* cancel = f->findChild<QAbstractButton*>("key_capture_cancel");
+        if (CHECK(cancel)) cancel->click();
+    });
+    CHECK(!table->cellWidget(rowOf(table, "deselect"), 2));
+    CHECK_EQ(in("deselect").value(1), QString("Esc"));
+    b.applyPreset("standard");
+}
+
+// Showing the dialog compares with the preset (presetInputs on a copy): an own preset with a key twice must not put
+// the preset's keys onto the real actions while the table shows the user's
+void testPresetPreviewKeepsActions()
+{
+    InputBindings& b = InputBindings::instance();
+    QDir().mkpath(InputBindings::customPresetDir());
+    {
+        QFile f(QDir(InputBindings::customPresetDir()).filePath("dup.json"));
+        if (CHECK(f.open(QIODevice::WriteOnly)))
+            f.write(R"({"version": 4, "shortcuts": {"split": "M", "add_marker": "M"}})");
+    }
+    b.applyPreset("custom:dup");
+    b.setInputs("split", {"Ctrl+B", ""});
+    b.setInputs("add_marker", {"K", ""});
+    const auto shortcutsOf = [&](const char* id) { return b.action(id)->shortcuts(); };
+    {
+        KeyBindingsDialog dlg;
+        dlg.show();
+        QApplication::processEvents();
+    }
+    CHECK_EQ(in("add_marker"), QStringList({"K", ""}));
+    CHECK_EQ(shortcutsOf("add_marker"), QList<QKeySequence>({QKeySequence("K")}));
+    CHECK_EQ(shortcutsOf("split"), QList<QKeySequence>({QKeySequence("Ctrl+B")}));
+    QFile::remove(QDir(InputBindings::customPresetDir()).filePath("dup.json"));
+    b.applyPreset("standard");
 }
 
 void testKysContexts()
@@ -336,6 +626,24 @@ void testImport()
     CHECK(b.importKys(huge, nullptr, &error).isEmpty());
     CHECK_EQ(error, T("Die Datei ist zu groß für eine Tastenbelegung."));
     CHECK_EQ(b.currentPreset(), id);
+    // Keys schneidi cannot read: the summary names the functions that did not get theirs
+    {
+        const QString odd = QDir(tmp.path()).filePath("odd.kys");
+        QFile o(odd);
+        if (CHECK(o.open(QIODevice::WriteOnly)))
+            o.write(R"(<PremiereData Version="3"><shortcuts Version="5"><context.global Version="1">
+                <item.0 Version="1"><commandname>cmd.edit.undo</commandname><virtualkey>6</virtualkey></item.0>
+                <item.1 Version="1"><commandname>cmd.edit.redo</commandname><virtualkey>2147483737</virtualkey></item.1>
+                </context.global></shortcuts></PremiereData>)");
+        o.close();
+        KeyBindingsDialog dlg;
+        auto* summary = dlg.findChild<QLabel*>("key_import_summary");
+        if (CHECK(summary && dlg.importFile(odd))) {
+            CHECK(summary->text().contains(T("%1 nicht übernommen (Taste nicht lesbar): %2")
+                                               .arg(1)
+                                               .arg(QString(b.action("undo")->text()).remove('&'))));
+        }
+    }
     b.applyPreset("standard");
 }
 
@@ -349,6 +657,37 @@ void press(QWidget* w, const QString& input)
     const QKeyCombination k = comboOf(input);
     QTest::keyClick(w, k.key(), k.keyboardModifiers());
     QApplication::processEvents();
+}
+
+// Esc bound to a window action: while the large viewer is on, its Esc wins (the action gives up Esc for that time,
+// two enabled Esc shortcuts would be ambiguous and neither would fire); afterwards the action has it again
+void testEscapeModesWin(MainWindow& w)
+{
+    InputBindings& b = InputBindings::instance();
+    b.applyPreset("standard");
+    b.setInputs("deselect", {"Ctrl+Shift+A", "Esc"});
+    QAction* deselect = b.action("deselect");
+    QAction* large = b.action("viewer_large");
+    if (!CHECK(deselect && large)) return;
+    CHECK(deselect->shortcuts().contains(QKeySequence(Qt::Key_Escape)));
+    large->trigger();
+    QApplication::processEvents();
+    CHECK(large->isChecked());
+    CHECK(!deselect->shortcuts().contains(QKeySequence(Qt::Key_Escape)));
+    CHECK(deselect->shortcuts().contains(QKeySequence("Ctrl+Shift+A")));
+    CHECK_EQ(in("deselect"), QStringList({"Ctrl+Shift+A", "Esc"})); // the binding itself stays
+    w.activateWindow();
+    if (QTest::qWaitForWindowActive(&w)) {
+        QTest::keyClick(&w, Qt::Key_Escape);
+        QApplication::processEvents();
+        CHECK(!large->isChecked());
+    } else {
+        large->trigger();
+    }
+    QApplication::processEvents();
+    CHECK(!large->isChecked());
+    CHECK(deselect->shortcuts().contains(QKeySequence(Qt::Key_Escape)));
+    b.applyPreset("standard");
 }
 
 void testTrainer(MainWindow& w)
@@ -524,6 +863,12 @@ int main(int argc, char** argv)
         testPresets();
         testImport();
         testKysContexts();
+        testDuplicates();
+        testLayoutNeutralKeys();
+        testCaptureLayouts();
+        testCaptureEscape();
+        testPresetPreviewKeepsActions();
+        testEscapeModesWin(w);
         testTrainer(w);
     }
     testLanguages(engine);
