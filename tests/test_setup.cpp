@@ -10,6 +10,7 @@
 
 #include <QCoreApplication>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFileInfo>
 #include <QFile>
 #include <QJsonArray>
@@ -102,6 +103,66 @@ int main(int argc, char** argv)
         CHECK(QFile::exists(project));
         CHECK(!QFile::exists(dir.filePath("my_cut.schneidi")));
         CHECK(readFile(project).contains(QFileInfo(media).fileName().toUtf8()));
+    }
+
+    // --- The stdio MCP server of a running chat after an update: the program file on disk is not the one running.
+    // Every tool result then says so (restart the MCP server / the chat) instead of answering silently with the old
+    // build (report 9.11.)
+    {
+        QTemporaryDir dir;
+        const QString exe = dir.filePath(QFileInfo(Check::cliPath()).fileName());
+        CHECK(QFile::copy(Check::cliPath(), exe));
+        QProcess p;
+        QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+        env.insert("QT_QPA_PLATFORM", "offscreen");
+        env.remove("APPIMAGE");
+        p.setProcessEnvironment(env);
+        p.start(exe, {"mcp"});
+        CHECK(p.waitForStarted(10000));
+        int id = 0;
+        const auto call = [&](const QJsonObject& msg) {
+            QJsonObject m = msg;
+            m["jsonrpc"] = "2.0";
+            m["id"] = ++id;
+            p.write(QJsonDocument(m).toJson(QJsonDocument::Compact) + '\n');
+            QElapsedTimer t;
+            t.start();
+            while (t.elapsed() < 30000) {
+                if (!p.canReadLine() && !p.waitForReadyRead(1000)) continue;
+                while (p.canReadLine()) {
+                    const QJsonObject o = QJsonDocument::fromJson(p.readLine()).object();
+                    if (o["id"].toInt() == id) return o;
+                }
+            }
+            return QJsonObject();
+        };
+        const auto texts = [](const QJsonObject& answer) {
+            QString all;
+            for (const QJsonValue& c : answer["result"]["content"].toArray()) all += c["text"].toString() + "\n";
+            return all;
+        };
+        call({{"method", "initialize"},
+              {"params", QJsonObject{{"protocolVersion", "2025-03-26"}, {"capabilities", QJsonObject{}},
+                                     {"clientInfo", QJsonObject{{"name", "test"}, {"version", "1"}}}}}});
+        const QJsonObject guideCall{{"method", "tools/call"},
+                                    {"params", QJsonObject{{"name", "guide"}, {"arguments", QJsonObject{}}}}};
+        const QString before = texts(call(guideCall));
+        CHECK(before.contains("topics"));
+        CHECK(!before.contains("was updated"));
+        // An update replaces the file (a new file renamed over it, as installers and package managers do)
+        const QString fresh = exe + ".new";
+        CHECK(QFile::copy(Check::cliPath(), fresh));
+        QFile f(fresh);
+        if (CHECK(f.open(QIODevice::Append))) f.write("x"); // another build: another size
+        f.close();
+        CHECK(QFile::remove(exe));
+        CHECK(QFile::rename(fresh, exe));
+        const QString after = texts(call(guideCall));
+        CHECK(after.contains("topics")); // the tool still answers
+        CHECK(after.contains("schneidi was updated"));
+        CHECK(after.contains("restart"));
+        p.closeWriteChannel();
+        if (!p.waitForFinished(10000)) p.kill();
     }
 
 #ifdef Q_OS_WIN
