@@ -120,8 +120,12 @@ void MainWindow::setupVoiceover()
     connect(m_voiceover, &VoiceoverRecorder::recordingChanged, this, [this](bool on) {
         m_voiceoverEscape->setEnabled(on);
         if (m_largeEscape) m_largeEscape->setEnabled(m_large.active && !on); // see setViewerLarge
-        if (on) statusBar()->showMessage(T("Voiceover: gleich …")); // the input runs, the timeline not yet heard
-        else m_viewer->setRecording(false);
+        if (on) statusBar()->showMessage(T("Voiceover: gleich …")); // the input opens, the timeline not yet heard
+        else {
+            m_viewer->setRecording(false);
+            // Ended before it ran (stopped, cancelled, no input): "gleich …" does not stay (finished/failed say more)
+            if (statusBar()->currentMessage() == T("Voiceover: gleich …")) statusBar()->clearMessage();
+        }
     });
     // Red (viewer sign, toolbar mic, the take in the timeline) only once the take really runs
     connect(m_voiceover, &VoiceoverRecorder::liveChanged, this, [this](bool on) {
@@ -130,6 +134,10 @@ void MainWindow::setupVoiceover()
         if (m_voiceoverAction) m_voiceoverAction->setChecked(true);
         statusBar()->showMessage(T("Voiceover: Aufnahme auf %1 läuft – Esc oder Leertaste beendet")
                                      .arg(trackShortName({TrackKind::Audio, m_voiceover->liveTrack()})));
+    });
+    // The input did not open (start() returned at once, the input opens on its own thread)
+    connect(m_voiceover, &VoiceoverRecorder::failed, this, [this](const QString& error) {
+        QMessageBox::warning(this, T("Voiceover aufnehmen"), error);
     });
     connect(m_voiceover, &VoiceoverRecorder::finished, this,
             [this](const QString& path, bool placed, const QString& error) {

@@ -9,7 +9,8 @@
 //
 // Kinds like Audio::Device: an input through miniaudio (PulseAudio/PipeWire/ALSA/JACK, WASAPI/DirectSound,
 // CoreAudio) or a stand-in paced by a timer (tests, no microphone): the environment variable SCHNEIDI_AUDIO_INPUT =
-// "null" (silence), "sine:<Hz>" (a tone at -12 dBFS) or "burst:<ms>" (1 kHz for the first <ms> ms, then silence), or the backend "null". The input is never heard (no
+// "null" (silence), "sine:<Hz>" (a tone at -12 dBFS) or "burst:<ms>" (1 kHz for the first <ms> ms, then silence), or the backend "null"; SCHNEIDI_AUDIO_INPUT_DELAY=<ms> makes
+// opening a stand-in take that long (a sound server takes 30-50 ms to open an input, more when it wakes up). The input is never heard (no
 // monitoring: a microphone next to speakers would feed back).
 
 #include "engine/audio/Device.h"
@@ -35,6 +36,7 @@ public:
     // Opens the input and records into `path` (created/overwritten) until stop() or destruction. nullptr = no input
     // opened or the file cannot be written; *error says why. An empty path keeps nothing: only the level (takePeak)
     // and the frame count (an armed track's meter before recording).
+    // Opening a real input takes 30-50 ms (PulseAudio/PipeWire): the app calls it off the GUI thread.
     static std::unique_ptr<Capture> start(const Config& config, const QString& path, QString* error = nullptr);
     ~Capture();
 

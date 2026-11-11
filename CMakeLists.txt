@@ -571,6 +571,7 @@ if(SCHNEIDI_RHI)
 endif()
 if(WIN32)
     target_link_libraries(schneidi_lib PUBLIC advapi32) # Credential Manager: the AI chat's key (app/AiKeys.cpp)
+    target_link_libraries(schneidi_lib PUBLIC ole32) # COM on the voice-over's input thread (app/VoiceoverRecorder.cpp)
 endif()
 # Third-party code: its warnings are not ours
 set_source_files_properties(src/engine/audio/Miniaudio.cpp PROPERTIES COMPILE_OPTIONS "-w")
