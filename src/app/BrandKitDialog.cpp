@@ -131,7 +131,12 @@ BrandKitDialog::BrandKitDialog(const BrandKit& global, const std::optional<Brand
         auto* box = new QFontComboBox;
         box->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
         box->setMinimumContentsLength(14);
-        connect(on, &QCheckBox::toggled, this, [this] { store(); });
+        connect(on, &QCheckBox::toggled, this, [this, i](bool checked) {
+            // Switched off: the boxes from here on stand for no font any more (on again = the font each box shows)
+            if (!checked && !m_loading)
+                for (int j = i; j < m_shownFonts.size(); ++j) m_shownFonts[j].clear();
+            store();
+        });
         // Only a font the user picks replaces the kit's (a missing one stays as it is, see load())
         connect(box, &QFontComboBox::currentFontChanged, this, [this, i](const QFont& f) {
             if (m_loading) return;

@@ -21,6 +21,7 @@
 #include "ui/Inspector.h"
 
 #include <QApplication>
+#include <QCheckBox>
 #include <QComboBox>
 #include <QFile>
 #include <QFontComboBox>
@@ -537,6 +538,18 @@ void testDialogKeepsValues()
     CHECK_EQ(dlg.global().fonts.value(0), installed);
     CHECK_EQ(dlg.global().fonts.value(1), QString("Serif"));
     CHECK(!fonts[0]->currentText().contains(T("(nicht installiert)")));
+
+    // A box switched off and on again takes the font it shows, not the one it had before
+    BrandKitDialog again(global, std::nullopt);
+    QList<QCheckBox*> on;
+    for (QCheckBox* c : again.findChildren<QCheckBox*>()) on << c;
+    if (!CHECK(on.size() == 2)) return;
+    on[0]->setChecked(false);
+    CHECK(again.global().fonts.isEmpty());
+    on[0]->setChecked(true);
+    CHECK_EQ(again.global().fonts.size(), 1);
+    CHECK(again.global().fonts.value(0) != "Schneidi Missing Font Xyz");
+    CHECK(!again.global().fonts.value(0).isEmpty());
 }
 
 void testInspector()
