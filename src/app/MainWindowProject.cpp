@@ -88,16 +88,23 @@
 namespace {
 // A function, not a global: a global would be built before the dictionary is loaded (always German)
 QString fileFilter() { return T("schneidi-Projekt (*.%1)").arg(ProjectFile::Extension); }
+
+QDir autosaveDir() { return QDir(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)); }
+QString autosaveLockPath(int slot) { return autosaveDir().filePath(QString("autosave-%1.lock").arg(slot)); }
+QString autosaveFile(int slot)
+{
+    const QString name = slot == 1 ? QString("autosave") : QString("autosave-%1").arg(slot);
+    return autosaveDir().filePath(QString("%1.%2").arg(name, ProjectFile::Extension));
 }
+} // namespace
 
 QString MainWindow::autosavePath()
 {
-    const QDir dir(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation));
     if (m_autosaveSlot == 0) {
-        dir.mkpath(".");
+        autosaveDir().mkpath(".");
         // occupy the first free slot; a crashed instance leaves an orphaned lock, which QLockFile detects
         for (int slot = 1; slot <= 9 && m_autosaveSlot == 0; ++slot) {
-            auto lock = std::make_unique<QLockFile>(dir.filePath(QString("autosave-%1.lock").arg(slot)));
+            auto lock = std::make_unique<QLockFile>(autosaveLockPath(slot));
             if (lock->tryLock(0)) {
                 m_autosaveSlot = slot;
                 m_autosaveLock = std::move(lock);
@@ -105,8 +112,24 @@ QString MainWindow::autosavePath()
         }
         if (m_autosaveSlot == 0) m_autosaveSlot = 10; // all taken: own slot without lock
     }
-    const QString name = m_autosaveSlot == 1 ? QString("autosave") : QString("autosave-%1").arg(m_autosaveSlot);
-    return dir.filePath(QString("%1.%2").arg(name, ProjectFile::Extension));
+    return autosaveFile(m_autosaveSlot);
+}
+
+bool MainWindow::adoptOrphanedAutosave()
+{
+    // Each window writes into its own slot: the backup of a window that crashed while another one had slot 1 lies in
+    // a later slot, which a single window never looks into. A slot whose lock is free (no running window) and that
+    // holds a backup becomes this window's slot, so restoring, later backups and removing it all go there.
+    autosavePath(); // own slot first: a slot other windows already hold stays theirs
+    for (int slot = 1; slot <= 9; ++slot) {
+        if (slot == m_autosaveSlot || !QFileInfo::exists(autosaveFile(slot))) continue;
+        auto lock = std::make_unique<QLockFile>(autosaveLockPath(slot));
+        if (!lock->tryLock(0)) continue; // a running window's
+        m_autosaveSlot = slot;
+        m_autosaveLock = std::move(lock); // the previous slot's lock is released
+        return true;
+    }
+    return false;
 }
 
 QString MainWindow::autosaveKey() const
@@ -613,7 +636,8 @@ void MainWindow::removeAutosave()
 
 bool MainWindow::offerAutosaveRestore()
 {
-    if (m_autosaveDisabled || !QFileInfo::exists(autosavePath())) return false;
+    if (m_autosaveDisabled) return false;
+    if (!QFileInfo::exists(autosavePath()) && !adoptOrphanedAutosave()) return false;
     const QString original = QSettings().value(autosaveKey()).toString();
     const QString name = original.isEmpty() ? T("Unbenannt") : QFileInfo(original).fileName();
     const auto answer = QMessageBox::question(
