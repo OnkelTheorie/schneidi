@@ -350,16 +350,17 @@ const QHash<QString, QString>& kysCommands()
 // Characters (letters, digits, punctuation): 0x80000000 + the character; the number pad: 0xC0000000 + its character;
 // every other key a small number of Premiere's own (Space 1, Backspace 2, Tab 3, Return 4, number pad Enter 5,
 // F1-F24 7-30, Del 35, Home 36, End 37, PgUp 38, PgDown 39, arrows 42-45). Empty = a key schneidi cannot name.
-// Not in any source seen: codes for Esc and Ins, and whether Premiere writes characters beyond ASCII (ü, ß on
-// another keyboard layout) the same way - those are left out rather than guessed
+// Characters beyond ASCII (ü, é, ß of another keyboard layout) follow the same scheme: the character itself.
+// Not in any source seen: the codes of Esc and Ins - left out rather than guessed (readKys counts them as not taken)
 QString premiereKeyName(quint32 code)
 {
     if (code & 0x80000000u) {
         const quint32 c = code & 0xFFFFu;
-        if (c < 0x21 || c > 0x7E) return {};
         const QChar ch{char16_t(c)};
+        if (c < 0x21 || c == 0x7F || !ch.isPrint() || ch.isSpace() || ch.isSurrogate()) return {};
         if ((code & 0x40000000u) && !(ch.isDigit() || QStringLiteral("*+-./").contains(ch))) return {};
-        return QString(ch.toUpper());
+        const QChar upper = ch.toUpper(); // ß has no single capital: stays
+        return QString(upper);
     }
     if (code >= 7 && code <= 30) return QString("F%1").arg(code - 6);
     static const QHash<quint32, QString> names = {
@@ -805,6 +806,7 @@ InputBindings::KysResult InputBindings::readKys(const QByteArray& xml)
     // the global one first; a key already given to another command is left out (the file's order decides)
     KysResult r;
     QSet<QString> unknown;
+    QStringList notTaken; // action ids, in file order
     struct Binding {
         int rank; // 0 global (or no context), 1 timeline
         QString command, id, input;
@@ -839,6 +841,12 @@ InputBindings::KysResult InputBindings::readKys(const QByteArray& xml)
                 // Premiere writes the code unsigned (2147483719); signed (-2147483577) is the same 32 bits
                 const quint32 code = quint32(item.value("virtualkey").toLongLong(&numeric) & 0xFFFFFFFF);
                 QString key = item.contains("virtualkey") ? (numeric ? premiereKeyName(code) : QString()) : item.value("key");
+                if (!command.isEmpty() && key.isEmpty() && numeric && code != 0 && rank >= 0) {
+                    // A key schneidi cannot name: the command does not get it, which the summary says
+                    const QString id = kysCommands().value(command);
+                    if (id.isEmpty()) unknown.insert(command);
+                    else if (!notTaken.contains(id)) notTaken << id;
+                }
                 if (command.isEmpty() || key.isEmpty()) {
                     --depth;
                     continue;
@@ -886,6 +894,8 @@ InputBindings::KysResult InputBindings::readKys(const QByteArray& xml)
     }
     r.ok = !x.hasError() && !root.isEmpty() && (root.contains("premiere") || root.contains("shortcut"));
     r.taken = int(taken.size());
+    for (const QString& id : notTaken)
+        if (!r.keys.contains(id)) r.notTaken << id; // another key of the command came through: it has one
     r.unknown = int(unknown.size());
     return r;
 }

@@ -344,6 +344,17 @@ bool KeyBindingsDialog::importFile(const QString& path)
                        + (r.dropped > 0 ? ' ' + T("%1 Tasten weggelassen (nur für ein anderes Premiere-Fenster oder schon "
                                                   "von einem anderen Befehl belegt).").arg(r.dropped)
                                         : QString()));
+    if (!r.notTaken.isEmpty()) {
+        QStringList names;
+        for (const QString& actionId : r.notTaken) {
+            QString name = actionId;
+            for (const InputBindings::Entry& e : InputBindings::instance().entries())
+                if (e.id == actionId) name = QString(e.text).remove('&');
+            names << name;
+        }
+        m_summary->setText(m_summary->text() + ' '
+                           + T("%1 nicht übernommen (Taste nicht lesbar): %2").arg(names.size()).arg(names.join(", ")));
+    }
     m_summary->show();
     fill();
     return true;

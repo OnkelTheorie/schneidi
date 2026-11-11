@@ -100,6 +100,26 @@ void testReadKys()
     CHECK_EQ(key(90), QString()); // no Premiere code (a Windows VK 'Z' is not what Premiere writes)
     CHECK_EQ(key(0x80000041, "<modifier.ctrl>true</modifier.ctrl><modifier.alt>true</modifier.alt>"), QString("Ctrl+Alt+A"));
 
+    // Characters beyond ASCII (a German or French keyboard): the same code scheme, the character itself
+    CHECK_EQ(key(0x800000FC), QString(QChar(0xDC))); // ü -> Ü like a -> A
+    CHECK_EQ(key(0x800000E9), QString(QChar(0xC9))); // é
+    CHECK_EQ(key(0x800000DF), QString(QChar(0xDF))); // ß (no capital)
+    CHECK_EQ(key(0x80000080), QString());            // a control character
+
+    // A key schneidi cannot name (Esc, Ins: their codes are in no file seen) on a command schneidi has: not taken,
+    // counted and named for the summary; on a command it lacks: unknown
+    {
+        const auto r = InputBindings::readKys(R"(<PremiereData Version="3"><shortcuts Version="5"><context.global Version="1">
+            <item.0 Version="1"><commandname>cmd.edit.undo</commandname><virtualkey>6</virtualkey></item.0>
+            <item.1 Version="1"><commandname>cmd.edit.redo</commandname><virtualkey>2147483737</virtualkey></item.1>
+            <item.2 Version="1"><commandname>cmd.tools.09pen</commandname><virtualkey>33</virtualkey></item.2>
+            <item.3 Version="1"><commandname>cmd.common.setin</commandname><virtualkey>34</virtualkey></item.3>
+            </context.global></shortcuts></PremiereData>)");
+        CHECK_EQ(r.taken, 1);
+        CHECK_EQ(r.unknown, 1);
+        CHECK_EQ(r.notTaken, QStringList({"undo", "mark_in"}));
+    }
+
     CHECK(!InputBindings::readKys("not xml at all").ok);
     CHECK(!InputBindings::readKys(R"({"shortcuts": {}})").ok);
     CHECK(!InputBindings::readKys("<html><body>hi</body></html>").ok);
@@ -554,6 +574,24 @@ void testImport()
     CHECK(b.importKys(huge, nullptr, &error).isEmpty());
     CHECK_EQ(error, T("Die Datei ist zu groß für eine Tastenbelegung."));
     CHECK_EQ(b.currentPreset(), id);
+    // Keys schneidi cannot read: the summary names the functions that did not get theirs
+    {
+        const QString odd = QDir(tmp.path()).filePath("odd.kys");
+        QFile o(odd);
+        if (CHECK(o.open(QIODevice::WriteOnly)))
+            o.write(R"(<PremiereData Version="3"><shortcuts Version="5"><context.global Version="1">
+                <item.0 Version="1"><commandname>cmd.edit.undo</commandname><virtualkey>6</virtualkey></item.0>
+                <item.1 Version="1"><commandname>cmd.edit.redo</commandname><virtualkey>2147483737</virtualkey></item.1>
+                </context.global></shortcuts></PremiereData>)");
+        o.close();
+        KeyBindingsDialog dlg;
+        auto* summary = dlg.findChild<QLabel*>("key_import_summary");
+        if (CHECK(summary && dlg.importFile(odd))) {
+            CHECK(summary->text().contains(T("%1 nicht übernommen (Taste nicht lesbar): %2")
+                                               .arg(1)
+                                               .arg(QString(b.action("undo")->text()).remove('&'))));
+        }
+    }
     b.applyPreset("standard");
 }
 
