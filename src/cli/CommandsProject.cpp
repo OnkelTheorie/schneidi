@@ -803,6 +803,11 @@ QStringList fittingExtensions(const RenderFormatInfo& f)
 // "out.webm" with the default h264 or "out.mp4" with wav would fail late or write an odd file
 void checkExtension(const QString& out, const QString& formatId)
 {
+    if (formatId == "srt" || formatId == "vtt") { // subtitles only: the extension decides SRT or WebVTT
+        if (QFileInfo(out).suffix().compare(formatId, Qt::CaseInsensitive) != 0)
+            fail("BAD_ARGUMENT", QString("'.%1' does not fit format %2: use .%2").arg(QFileInfo(out).suffix(), formatId));
+        return;
+    }
     const RenderFormatInfo& f = renderFormat(formatId);
     if (f.kind != RenderKind::Video && f.kind != RenderKind::Audio) return; // GIF, image sequences: named by the format
     const QString ext = QFileInfo(out).suffix().toLower();
@@ -870,12 +875,13 @@ QJsonObject cmdRender(const QJsonObject& a, Context& ctx)
     if (sheet) {
         if (!QStringList{"png", "jpg", "jpeg"}.contains(QFileInfo(out).suffix().toLower()))
             fail("BAD_ARGUMENT", "review sheet writes a picture: out must end in .png (or .jpg)");
-    } else if (!srtOnly) {
+    } else {
         checkExtension(out, formatId);
     }
     RenderSettings target = job.settings;
     if (!srtOnly) target.format = formatId;
-    if (QFileInfo::exists(sheet ? out : firstOutputFile(out, target)) && !a["overwrite"].toBool())
+    // Subtitles only write `out` itself (a preset's image-sequence format must not name another file here)
+    if (QFileInfo::exists(sheet || srtOnly ? out : firstOutputFile(out, target)) && !a["overwrite"].toBool())
         fail("EXISTS", "output exists (pass overwrite to replace it): " + out);
     job.path = out;
     if (!srtOnly) job.settings.format = formatId;
@@ -970,6 +976,8 @@ QJsonObject cmdRender(const QJsonObject& a, Context& ctx)
         // the range start
         const QVector<Subtitles::SrtFile> files = Subtitles::srtFiles(tl, out);
         if (files.isEmpty()) fail("EMPTY", "the timeline has no subtitles");
+        if (const QString source = Exporter::overwrittenSource(tl, {}, out); !source.isEmpty())
+            fail("BAD_ARGUMENT", "the output would overwrite a source file of the project: " + source);
         QDir().mkpath(QFileInfo(out).absolutePath());
         QJsonArray more;
         for (const Subtitles::SrtFile& srt : files) {

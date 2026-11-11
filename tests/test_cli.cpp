@@ -1934,6 +1934,32 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
             CHECK_EQ(clips[2]["end"].toInt() - clips[2]["start"].toInt(), stillLength);
         }
     }
+    // Subtitles only (format srt/vtt): the same checks as a video render - the extension must fit, and no subtitle
+    // file may replace a source file of the project (it wrote SRT text over the clip with overwrite)
+    {
+        const QString clip = Check::makeMedia(dir.filePath("subsrc.mp4"), {"-f", "lavfi", "-i", "testsrc2=s=64x36:r=25:d=1",
+                                                                           "-c:v", "libx264", "-pix_fmt", "yuv420p"});
+        const QString proj = dir.filePath("subs.schneidi");
+        run("new", {{"project", proj}, {"fps", 25}, {"width", 320}, {"height", 180}, {"overwrite", true}});
+        run("edit", {{"project", proj}, {"ops", QString(R"([{"op":"append","media":"%1"},
+            {"op":"subtitle","text":"Hi","at":0,"duration":10}])").arg(clip)}});
+        const qint64 size = QFileInfo(clip).size();
+        CHECK_EQ(errorOf("render", {{"project", proj}, {"out", clip}, {"format", "srt"}, {"overwrite", true}}),
+                 QString("BAD_ARGUMENT"));
+        CHECK_EQ(errorOf("render", {{"project", proj}, {"out", clip}, {"format", "vtt"}, {"overwrite", true}}),
+                 QString("BAD_ARGUMENT"));
+        CHECK_EQ(QFileInfo(clip).size(), size); // the clip is untouched
+        // The extension must fit the format: SRT text in "x.mp4", WebVTT in "x.srt" are refused
+        CHECK(messageOf("render", {{"project", proj}, {"out", dir.filePath("subx.mp4")}, {"format", "srt"}}).contains(".srt"));
+        CHECK(!QFileInfo::exists(dir.filePath("subx.mp4")));
+        CHECK_EQ(errorOf("render", {{"project", proj}, {"out", dir.filePath("subx.srt")}, {"format", "vtt"}}),
+                 QString("BAD_ARGUMENT"));
+        CHECK(!QFileInfo::exists(dir.filePath("subx.srt")));
+        // Fitting names still work (upper case too), a missing extension is added
+        CHECK_EQ(run("render", {{"project", proj}, {"out", dir.filePath("subok.VTT")}, {"format", "vtt"}})["cues"].toInt(), 1);
+        CHECK(run("render", {{"project", proj}, {"out", dir.filePath("subok2")}, {"format", "srt"}})["out"].toString()
+                  .endsWith("subok2.srt"));
+    }
     // remove_track: names are those of the timeline when the op runs; several in one op are named before any goes;
     // the error names the tracks there are (AI run 2026-10-28 removed A1-A3, then "A5" failed without saying why)
     {
