@@ -235,6 +235,31 @@ void testVfrGap(const QString& path)
             for (int p = 155; p >= 25; --p) check(*r, p, "backwards");
         }
     }
+    // No pictures kept behind and none ahead (hover-scrub thumbnails, ScrubFrames): a request in the gap is answered,
+    // not seeked for forever (evict() dropped the held picture, the request seeked again - 100 % CPU). A cancel after
+    // 10 s turns a hang into a failure.
+    const auto guarded = [&](Video::Reader& r, int p, const char* how) {
+        std::atomic<bool> cancel{false}, answered{false};
+        std::thread timer([&] {
+            for (int i = 0; i < 1000 && !answered; ++i) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            cancel = true;
+        });
+        Video::Reader::Fetch fetch;
+        fetch.cancel = &cancel;
+        const int got = lumaOf(r.picture(p, fetch));
+        answered = true;
+        timer.join();
+        if (std::abs(got - expected(p)) > 1 && ++wrong == 1)
+            first = QString("%1 at %2: luma %3, expected %4").arg(how).arg(p).arg(got).arg(expected(p));
+    };
+    Video::Reader::Options none;
+    none.hardware = false;
+    none.ahead = 0;
+    none.behind = 0;
+    for (int p : {100, 60, 149, 30, 120})
+        if (auto r = Video::Reader::open(path, none)) guarded(*r, p, "behind 0, fresh");
+    if (auto r = Video::Reader::open(path, none))
+        for (int p = 0; p < 180; p += 7) guarded(*r, p, "behind 0, in order");
     Check::report(wrong == 0, "vfr gap: the held picture", __FILE__, __LINE__,
                   QString("%1 wrong pictures, first %2").arg(wrong).arg(first));
 }

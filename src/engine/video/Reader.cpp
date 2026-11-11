@@ -878,7 +878,9 @@ struct Reader::Impl {
         // (playing on), the usual few
         const int window = seekWindow();
         const bool nearSeek = window > 0 && seekTarget >= 0 && high >= 0 && high - seekTarget < window;
-        const int limit = nearSeek ? std::max(behind(), window) : behind();
+        // At least one before: the picture on screen at ref when ref falls into a gap of the timestamps (variable
+        // frame rate); dropping it made the request seek again, and again (Options::behind = 0: scrub thumbnails)
+        const int limit = std::max(1, nearSeek ? std::max(behind(), window) : behind());
         while (before > limit && pics.size() > 1) {
             pics.pop_front();
             // From the new first one on (not the dropped one + 1): in a gap of the timestamps after the dropped one,
