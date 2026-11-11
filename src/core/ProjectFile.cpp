@@ -1183,7 +1183,8 @@ bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* d
                 d.lastLinkId = std::max(d.lastLinkId, c.linkId);
                 t.clips << c;
             }
-            std::sort(t.clips.begin(), t.clips.end(), [](const Clip& a, const Clip& b) { return a.start < b.start; });
+            // stable: of two clips at the same place (a broken file), the first one in the file stays (see below)
+            std::stable_sort(t.clips.begin(), t.clips.end(), [](const Clip& a, const Clip& b) { return a.start < b.start; });
             list << t;
         }
         return list;
@@ -1225,11 +1226,45 @@ bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* d
             std::sort(t.cues.begin(), t.cues.end(), [](const SubtitleCue& a, const SubtitleCue& b) { return a.start < b.start; });
             timeline.subtitles << t;
         }
-        // ids unique across clips and subtitles; missing/duplicate ones (hand edits) get a new one
+        // Clips lying over each other on a track (a hand-edited or AI-written file; edits never make them): the later
+        // one moves to the first track above where its place is free (a new one on top if there is none), at the
+        // same time - nothing is lost, and its linked partner, moved the same way, stays in sync with it
+        for (QVector<Track>* list : {&timeline.video, &timeline.audio})
+            for (qsizetype i = 0; i < list->size(); ++i) {
+                QVector<Clip> keep, over;
+                for (const Clip& c : std::as_const((*list)[i].clips))
+                    (!keep.isEmpty() && c.start < keep.last().end() ? over : keep) << c;
+                if (over.isEmpty()) continue;
+                (*list)[i].clips = keep;
+                for (const Clip& c : std::as_const(over)) {
+                    const auto room = [&](const Track& t) {
+                        return std::none_of(t.clips.cbegin(), t.clips.cend(),
+                                            [&](const Clip& o) { return o.start < c.end() && c.start < o.end(); });
+                    };
+                    qsizetype j = i + 1;
+                    while (j < list->size() && !room(std::as_const(*list)[j])) ++j;
+                    if (j == list->size()) {
+                        Track t;
+                        t.kind = (*list)[i].kind; // name empty = default ("Video 3" etc.)
+                        *list << t;
+                    }
+                    QVector<Clip>& clips = (*list)[j].clips;
+                    clips.insert(std::upper_bound(clips.begin(), clips.end(), c.start,
+                                                  [](int start, const Clip& o) { return start < o.start; }),
+                                 c);
+                }
+            }
+        // ids unique across clips and subtitles; missing/duplicate ones (hand edits) get a new one (-1 here: the new
+        // ids are given once every timeline is read, above all ids of the project - one given here could be taken by
+        // a clip of a timeline read later)
         QSet<int> usedIds;
-        for (const auto* list : {&timeline.video, &timeline.audio})
-            for (const Track& t : *list)
-                for (const Clip& c : t.clips) usedIds.insert(c.id);
+        for (QVector<Track>* list : {&timeline.video, &timeline.audio})
+            for (qsizetype i = 0; i < list->size(); ++i)
+                for (qsizetype j = 0; j < (*list)[i].clips.size(); ++j) {
+                    const int id = std::as_const(*list)[i].clips[j].id;
+                    if (id <= 0 || usedIds.contains(id)) (*list)[i].clips[j].id = -1;
+                    else usedIds.insert(id);
+                }
         for (SubtitleTrack& t : timeline.subtitles)
             for (SubtitleCue& c : t.cues) {
                 if (c.id <= 0 || usedIds.contains(c.id)) {
@@ -1239,9 +1274,6 @@ bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* d
                 usedIds.insert(c.id);
                 d.lastClipId = std::max(d.lastClipId, c.id);
             }
-        for (SubtitleTrack& t : timeline.subtitles)
-            for (SubtitleCue& c : t.cues)
-                if (c.id < 0) c.id = ++d.lastClipId;
         for (const QJsonValue& v : tl.value("markers").toArray()) timeline.markers << intOf(v);
         timeline.masterVolumeDb = tl.value("masterVolumeDb").toDouble(0.0);
         timeline.masterLimiter = tl.value("masterLimiter").toBool(false);
@@ -1274,6 +1306,18 @@ bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* d
         if (o.contains("timeline")) seq.timeline = readTimeline(o.value("timeline").toObject());
         d.sequences << seq;
     }
+    // The new ids for missing/duplicate ones (marked -1 by readTimeline): after every id of the project
+    const auto giveIds = [&](Timeline& tl) {
+        for (QVector<Track>* list : {&tl.video, &tl.audio})
+            for (Track& t : *list)
+                for (Clip& c : t.clips)
+                    if (c.id < 0) c.id = ++d.lastClipId;
+        for (SubtitleTrack& t : tl.subtitles)
+            for (SubtitleCue& c : t.cues)
+                if (c.id < 0) c.id = ++d.lastClipId;
+    };
+    giveIds(d.timeline);
+    for (Sequence& seq : d.sequences) giveIds(seq.timeline);
     d.currentSequence = intOf(root.value("currentSequence"));
     d.renderQueue = RenderQueueJson::fromJson(root.value("renderQueue").toArray());
     const QJsonObject fixed = root.value("fixedFormat").toObject();
