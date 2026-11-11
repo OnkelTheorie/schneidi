@@ -165,15 +165,18 @@ void FrameViewRhiSurface::uploadFrame(QRhiResourceUpdateBatch* batch)
     if (upload.format() != QImage::Format_RGBA8888 && upload.format() != QImage::Format_RGBA8888_Premultiplied
         && upload.format() != QImage::Format_RGBX8888)
         upload = upload.convertToFormat(QImage::Format_RGBA8888);
+    // A frame over the device's texture size limit (OpenGL does not refuse it, the picture just stays black; D3D11 and
+    // Vulkan refuse it): shown scaled down to the limit, still on the GPU (no screen shows 16k pixels anyway)
+    const int maxSize = rhi()->resourceLimit(QRhi::TextureSizeMax);
+    if (maxSize > 0 && (upload.width() > maxSize || upload.height() > maxSize))
+        upload = upload.scaled(QSize(maxSize, maxSize), Qt::KeepAspectRatio, Qt::SmoothTransformation);
     if (m_texture->pixelSize() != upload.size()) {
-        // A frame over the device's texture size limit (OpenGL does not refuse it, it just stays black), or one the
-        // device cannot make: the painter shows it instead of a black viewer forever. Posted: the handler replaces
-        // this surface, which must not happen inside render()
-        const int maxSize = rhi()->resourceLimit(QRhi::TextureSizeMax);
-        const bool fits = upload.width() <= maxSize && upload.height() <= maxSize;
-        if (fits) m_texture->setPixelSize(upload.size());
-        if (!fits || !m_texture->create()) {
+        m_texture->setPixelSize(upload.size());
+        if (!m_texture->create()) {
+            // The device could not make it (out of memory): nothing drawn from the old, now destroyed texture, and the
+            // painter takes over. Posted: the handler replaces this surface, which must not happen inside render()
             m_texture->setPixelSize({});
+            m_uploadedKey = 0;
             QTimer::singleShot(0, this, [this] { emit renderFailed(); });
             return;
         }
