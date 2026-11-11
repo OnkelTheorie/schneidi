@@ -328,6 +328,7 @@ Encoder::Encoder(const EncoderConfig& config)
         cfg_.deblock = false;
     for (auto& c : coders_)
         c = std::make_unique<FrameCoder>(cfg_);
+    idrCount_ = cfg_.idrPicIdBase;
 }
 
 const std::vector<uint8_t>& Encoder::reconY() const { return (last_ ? last_ : coders_[0].get())->recY_; }
@@ -500,6 +501,94 @@ void FirstPass::add(const Picture& pic, bool forceKeyframe)
     f.y = {};
     prev_ = std::move(f);
     havePrev_ = true;
+}
+
+namespace {
+
+// Keyframes as the encoder places them from `from` on (schedule, caller, scene cuts), `from` itself
+// being one.
+std::vector<uint8_t> keyPlan(const FirstPassStats& st, const EncoderConfig& cfg, size_t from, size_t to)
+{
+    std::vector<uint8_t> key(to - from, 0);
+    int since = 0;
+    for (size_t i = from; i < to; ++i) {
+        const bool k = i == from || since >= cfg.gop || st.forceKeyframe[i] || (cfg.sceneCut && st.sceneChange[i] && since >= 6);
+        if (k)
+            since = 0;
+        ++since;
+        key[i - from] = k;
+    }
+    return key;
+}
+
+} // namespace
+
+ChunkPlan planChunks(const FirstPassStats& st, const EncoderConfig& cfg, int chunks, int minFrames)
+{
+    ChunkPlan plan;
+    const int n = int(st.size());
+    chunks = std::clamp(chunks, 1, std::max(1, n / std::max(1, minFrames)));
+    const std::vector<uint8_t> key = keyPlan(st, cfg, 0, size_t(n));
+    plan.start.push_back(0);
+    for (int c = 1; c < chunks; ++c) {
+        // The keyframe nearest to the even split within a quarter chunk, else the split itself
+        // (H264_CHUNK_EVEN: always the split, to measure what a seam costs).
+        const int target = int(int64_t(c) * n / chunks);
+        const int window = std::getenv("H264_CHUNK_EVEN") ? -1 : n / chunks / 4;
+        int best = target;
+        for (int d = 0; d <= window; ++d) {
+            if (target - d > plan.start.back() + minFrames / 2 && key[size_t(target - d)]) {
+                best = target - d;
+                break;
+            }
+            if (target + d < n && key[size_t(target + d)]) {
+                best = target + d;
+                break;
+            }
+        }
+        if (best - plan.start.back() >= minFrames / 2 && n - best >= minFrames / 2)
+            plan.start.push_back(best);
+    }
+    if (cfg.bitrateKbps <= 0)
+        return plan;
+    // Bits each chunk needs at one QP: I pictures cost about 2.5x their lookahead cost compared
+    // with P pictures (measured k ratio) and sit 3 QP lower (x sqrt 2).
+    constexpr double kIntraWeight = 2.5 * 1.41421356;
+    const size_t chunkCount = plan.start.size();
+    std::vector<double> need(chunkCount, 0.0);
+    double total = 0;
+    for (size_t c = 0; c < chunkCount; ++c) {
+        const size_t a = size_t(plan.start[c]), b = c + 1 < chunkCount ? size_t(plan.start[c + 1]) : size_t(n);
+        const std::vector<uint8_t> k = keyPlan(st, cfg, a, b);
+        auto part = std::make_shared<FirstPassStats>();
+        for (size_t i = a; i < b; ++i) {
+            need[c] += k[i - a] ? kIntraWeight * st.intraSum[i] : st.interSum[i];
+            part->intraSum.push_back(st.intraSum[i]);
+            part->interSum.push_back(st.interSum[i]);
+            part->sceneChange.push_back(st.sceneChange[i]);
+            part->forceKeyframe.push_back(st.forceKeyframe[i]);
+        }
+        total += need[c];
+        plan.firstPass.push_back(std::move(part));
+    }
+    const double budget = double(cfg.bitrateKbps) * n; // kbit * fps
+    for (size_t c = 0; c < chunkCount; ++c) {
+        const double frames = double(plan.firstPass[c]->size());
+        plan.bitrateKbps.push_back(std::max(1, int(std::lround(budget * need[c] / std::max(1.0, total) / frames))));
+    }
+    return plan;
+}
+
+EncoderConfig ChunkPlan::configFor(const EncoderConfig& cfg, int i, int threads) const
+{
+    EncoderConfig c = cfg;
+    c.threads = threads;
+    c.idrPicIdBase = (i * 4096) & 0xFFFF; // far from the ids of the chunk before
+    if (size_t(i) < bitrateKbps.size()) {
+        c.bitrateKbps = bitrateKbps[size_t(i)];
+        c.firstPass = firstPass[size_t(i)];
+    }
+    return c;
 }
 
 // QP for the P pictures at which the pictures not coded yet (first-pass costs, k per picture type

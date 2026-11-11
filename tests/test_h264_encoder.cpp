@@ -16,6 +16,7 @@ extern "C" {
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <memory>
 #include <vector>
 
 using namespace schneidi::h264;
@@ -55,9 +56,13 @@ Yuv synthFrame(int w, int h, int t)
 }
 
 // Encodes `frames` pictures, decodes them with libavcodec and compares with the reconstruction.
-bool roundTrip(const EncoderConfig& cfg, int frames, size_t* bytesOut = nullptr, int keyframeAt = -1)
+// With a chunk plan the parts go through their own encoders and the streams are concatenated.
+bool roundTrip(const EncoderConfig& cfg, int frames, size_t* bytesOut = nullptr, int keyframeAt = -1,
+               const ChunkPlan* plan = nullptr)
 {
-    Encoder enc(cfg);
+    auto encPtr = std::make_unique<Encoder>(plan ? plan->configFor(cfg, 0, cfg.threads) : cfg);
+    Encoder& enc0 = *encPtr;
+    (void)enc0;
     const AVCodec* codec = avcodec_find_decoder(AV_CODEC_ID_H264);
     if (!codec)
         return false;
@@ -101,12 +106,12 @@ bool roundTrip(const EncoderConfig& cfg, int frames, size_t* bytesOut = nullptr,
         Yuv r;
         r.w = cfg.width;
         r.h = cfg.height;
-        const int pw = enc.paddedWidth();
+        const int pw = encPtr->paddedWidth();
         for (int y = 0; y < r.h; ++y)
-            r.y.insert(r.y.end(), enc.reconY().begin() + y * pw, enc.reconY().begin() + y * pw + r.w);
+            r.y.insert(r.y.end(), encPtr->reconY().begin() + y * pw, encPtr->reconY().begin() + y * pw + r.w);
         for (int y = 0; y < r.h / 2; ++y) {
-            r.u.insert(r.u.end(), enc.reconU().begin() + y * (pw / 2), enc.reconU().begin() + y * (pw / 2) + r.w / 2);
-            r.v.insert(r.v.end(), enc.reconV().begin() + y * (pw / 2), enc.reconV().begin() + y * (pw / 2) + r.w / 2);
+            r.u.insert(r.u.end(), encPtr->reconU().begin() + y * (pw / 2), encPtr->reconU().begin() + y * (pw / 2) + r.w / 2);
+            r.v.insert(r.v.end(), encPtr->reconV().begin() + y * (pw / 2), encPtr->reconV().begin() + y * (pw / 2) + r.w / 2);
         }
         recon.push_back(std::move(r));
 
@@ -117,11 +122,24 @@ bool roundTrip(const EncoderConfig& cfg, int frames, size_t* bytesOut = nullptr,
         av_packet_unref(pkt);
         receive();
     };
-    std::vector<uint8_t> first = enc.headers();
+    std::vector<uint8_t> first = encPtr->headers();
+    size_t chunk = 0;
     for (int t = 0; t < frames && ok; ++t) {
+        if (plan && chunk + 1 < plan->start.size() && t == plan->start[chunk + 1]) {
+            while (ok) { // the rest of the chunk before, then the next encoder
+                std::vector<uint8_t> au = encPtr->flush();
+                if (au.empty())
+                    break;
+                au.insert(au.begin(), first.begin(), first.end());
+                first.clear();
+                take(std::move(au));
+            }
+            ++chunk;
+            encPtr = std::make_unique<Encoder>(plan->configFor(cfg, int(chunk), cfg.threads));
+        }
         const Yuv src = synthFrame(cfg.width, cfg.height, t);
         Picture pic{src.y.data(), src.u.data(), src.v.data(), src.w, src.w / 2};
-        std::vector<uint8_t> au = enc.encode(pic, t == keyframeAt);
+        std::vector<uint8_t> au = encPtr->encode(pic, t == keyframeAt);
         if (au.empty())
             continue;
         au.insert(au.begin(), first.begin(), first.end()); // SPS/PPS in front of the first access unit
@@ -129,7 +147,7 @@ bool roundTrip(const EncoderConfig& cfg, int frames, size_t* bytesOut = nullptr,
         take(std::move(au));
     }
     while (ok) {
-        std::vector<uint8_t> au = enc.flush();
+        std::vector<uint8_t> au = encPtr->flush();
         if (au.empty())
             break;
         au.insert(au.begin(), first.begin(), first.end());
@@ -247,6 +265,28 @@ int main()
         if (std::abs(kbps2 - 1000.0) >= 250.0)
             std::fprintf(stderr, "rate control with first pass: %.0f kbit/s instead of 1000\n", kbps2);
         CHECK(std::abs(kbps2 - 1000.0) < 250.0);
+    }
+    // Chunks side by side: independent encoders, streams concatenated, one decoder
+    {
+        EncoderConfig c = config(320, 192, IntraMode::Auto, 30, 2);
+        c.fps = 30;
+        FirstPass fp(c.width, c.height);
+        for (int t = 0; t < 60; ++t) {
+            const Yuv src = synthFrame(c.width, c.height, t);
+            fp.add(Picture{src.y.data(), src.u.data(), src.v.data(), src.w, src.w / 2});
+        }
+        const ChunkPlan plan = planChunks(*fp.stats(), c, 3, 10);
+        CHECK(plan.start.size() == 3);
+        CHECK(roundTrip(c, 60, nullptr, -1, &plan)); // fixed QP
+        c.bitrateKbps = 1000;
+        const ChunkPlan rated = planChunks(*fp.stats(), c, 3, 10);
+        CHECK(rated.bitrateKbps.size() == 3);
+        size_t bytes = 0;
+        CHECK(roundTrip(c, 60, &bytes, -1, &rated));
+        const double kbps = bytes * 8.0 / 2.0 / 1000.0;
+        if (std::abs(kbps - 1000.0) >= 250.0)
+            std::fprintf(stderr, "chunks: %.0f kbit/s instead of 1000\n", kbps);
+        CHECK(std::abs(kbps - 1000.0) < 250.0);
     }
     }
     return Check::result();

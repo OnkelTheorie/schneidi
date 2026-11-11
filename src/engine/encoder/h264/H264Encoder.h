@@ -55,7 +55,25 @@ struct EncoderConfig {
     // Bitrate mode with a first pass over the whole clip (FirstPass): one QP for the clip, only a
     // small correction while encoding. The pictures must come in the same order as analysed.
     std::shared_ptr<const FirstPassStats> firstPass;
+    // idr_pic_id of the first IDR picture: neighbouring chunks of a clip encoded side by side
+    // (planChunks) start far apart so two IDR pictures in a row never share one.
+    int idrPicIdBase = 0;
 };
+
+// Parallel encoding in chunks: independent encoders, each on its own part of the clip starting
+// with an IDR picture, run side by side; their streams are concatenated (SPS/PPS once, from any of
+// them - they are the same). Seams go where the whole clip would have a keyframe anyway (caller's
+// keyframes, scene cuts, the GOP schedule) if one lies near the even split. In the bitrate mode the
+// clip's budget is shared by the predicted bits of each chunk at one QP (first pass), and every
+// chunk runs the first-pass rate control on its own part.
+struct ChunkPlan {
+    std::vector<int> start;                                       // first picture of each chunk
+    std::vector<int> bitrateKbps;                                 // per chunk (bitrate mode)
+    std::vector<std::shared_ptr<const FirstPassStats>> firstPass; // per chunk (bitrate mode)
+    // Configuration of chunk i: cfg with its bitrate, first pass, idr_pic_id base and threads.
+    EncoderConfig configFor(const EncoderConfig& cfg, int i, int threads) const;
+};
+ChunkPlan planChunks(const FirstPassStats& stats, const EncoderConfig& cfg, int chunks, int minFrames = 60);
 
 struct Picture {
     const uint8_t* y = nullptr;

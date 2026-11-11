@@ -4,6 +4,8 @@
 //                     [--frames N] [--gop N] [--threads N] [--bitrate kbps] [--effort 0|1] [--aq strength] [--refs N] [--cavlc] [--no-t8] [--no-deblock]
 //                     [--lookahead N] [--no-mbtree] [--mbtree-strength S] [--2pass] [--recon out.yuv]
 // --2pass (with --bitrate): analyse the whole input first (lookahead only), then one QP for the clip.
+// --chunks N: N independent encoders side by side on parts of the clip (planChunks), --threads split
+// between them; implies the first pass. Input must be a file.
 // Input is raw yuv420p ("-" reads stdin). Prints size, speed and PSNR of the encoder's reconstruction.
 #include "engine/encoder/h264/Cavlc.h"
 #include "engine/encoder/h264/H264Encoder.h"
@@ -15,6 +17,10 @@
 #include <cstring>
 #include <deque>
 #include <string>
+#include <thread>
+#ifndef _WIN32
+#include <sys/resource.h>
+#endif
 #include <vector>
 
 using namespace schneidi::h264;
@@ -30,6 +36,81 @@ static double psnr(const uint8_t* a, int strideA, const uint8_t* b, int strideB,
     if (sse == 0)
         return 99.0;
     return 10.0 * std::log10(255.0 * 255.0 * w * h / sse);
+}
+
+// Peak resident memory in MB (0 where unknown).
+static long peakMb()
+{
+#ifndef _WIN32
+    rusage u{};
+    getrusage(RUSAGE_SELF, &u);
+    return u.ru_maxrss / 1024;
+#else
+    return 0;
+#endif
+}
+
+static bool seekFrame(FILE* f, int64_t offset)
+{
+#ifdef _WIN32
+    return _fseeki64(f, offset, SEEK_SET) == 0;
+#else
+    return fseeko(f, off_t(offset), SEEK_SET) == 0;
+#endif
+}
+
+// One chunk: pictures [start, start + count) of the file through its own encoder.
+struct ChunkResult {
+    std::vector<uint8_t> bytes;
+    double psnrY = 0, psnrU = 0, psnrV = 0;
+    int frames = 0;
+};
+
+static void encodeChunk(const EncoderConfig& cfg, const char* path, int start, int count, ChunkResult& res)
+{
+    const int w = cfg.width, h = cfg.height, cw = w / 2, ch = h / 2;
+    const size_t frameSize = size_t(w) * h * 3 / 2;
+    FILE* in = std::fopen(path, "rb");
+    if (!in || !seekFrame(in, int64_t(start) * int64_t(frameSize))) {
+        if (in)
+            std::fclose(in);
+        return;
+    }
+    Encoder enc(cfg);
+    std::deque<std::vector<uint8_t>> pending;
+    auto took = [&](const std::vector<uint8_t>& au) {
+        if (au.empty())
+            return;
+        res.bytes.insert(res.bytes.end(), au.begin(), au.end());
+        const std::vector<uint8_t>& src = pending.front();
+        const uint8_t* sy = src.data();
+        const uint8_t* su = sy + size_t(w) * h;
+        const uint8_t* sv = su + size_t(cw) * ch;
+        const int pw = enc.paddedWidth();
+        res.psnrY += psnr(sy, w, enc.reconY().data(), pw, w, h);
+        res.psnrU += psnr(su, cw, enc.reconU().data(), pw / 2, cw, ch);
+        res.psnrV += psnr(sv, cw, enc.reconV().data(), pw / 2, cw, ch);
+        pending.pop_front();
+        ++res.frames;
+    };
+    std::vector<uint8_t> frame(frameSize);
+    for (int i = 0; i < count && std::fread(frame.data(), 1, frameSize, in) == frameSize; ++i) {
+        Picture pic;
+        pic.y = frame.data();
+        pic.u = pic.y + size_t(w) * h;
+        pic.v = pic.u + size_t(cw) * ch;
+        pic.strideY = w;
+        pic.strideC = cw;
+        pending.push_back(frame);
+        took(enc.encode(pic));
+    }
+    for (;;) {
+        const auto au = enc.flush();
+        if (au.empty())
+            break;
+        took(au);
+    }
+    std::fclose(in);
 }
 
 int main(int argc, char** argv)
@@ -52,6 +133,7 @@ int main(int argc, char** argv)
     int maxFrames = 1 << 30;
     const char* reconPath = nullptr;
     bool twoPass = false;
+    int chunks = 1;
     for (int i = 6; i < argc; ++i) {
         const std::string a = argv[i];
         if (a == "--qp" && i + 1 < argc)
@@ -91,6 +173,8 @@ int main(int argc, char** argv)
             cfg.cabac = false;
         else if (a == "--no-deblock")
             cfg.deblock = false;
+        else if (a == "--chunks" && i + 1 < argc)
+            chunks = std::max(1, std::atoi(argv[++i]));
         else if (a == "--2pass")
             twoPass = true;
         else if (a == "--recon" && i + 1 < argc)
@@ -108,6 +192,62 @@ int main(int argc, char** argv)
     const int w = cfg.width, h = cfg.height, cw = w / 2, ch = h / 2;
     std::vector<uint8_t> frame(size_t(w) * h * 3 / 2);
     double firstPassSeconds = 0;
+    if (chunks > 1 && in != stdin) {
+        // First pass over the whole clip, then the chunks side by side.
+        auto t0 = std::chrono::steady_clock::now();
+        FirstPass fp(w, h);
+        for (int n = 0; n < maxFrames && std::fread(frame.data(), 1, frame.size(), in) == frame.size(); ++n) {
+            Picture pic;
+            pic.y = frame.data();
+            pic.strideY = w;
+            fp.add(pic);
+        }
+        std::fclose(in);
+        const int total = int(fp.stats()->size());
+        const ChunkPlan plan = planChunks(*fp.stats(), cfg, chunks);
+        firstPassSeconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+        const int count = int(plan.start.size());
+        const int per = std::max(1, cfg.threads / count);
+        std::vector<ChunkResult> res(static_cast<size_t>(count));
+        std::vector<std::thread> workers;
+        t0 = std::chrono::steady_clock::now();
+        for (int c = 0; c < count; ++c) {
+            const int start = plan.start[size_t(c)];
+            const int end = c + 1 < count ? plan.start[size_t(c) + 1] : total;
+            const EncoderConfig cc = plan.configFor(cfg, c, per);
+            workers.emplace_back([&res, cc, inPath, start, end, c] { encodeChunk(cc, inPath, start, end - start, res[size_t(c)]); });
+        }
+        for (auto& t : workers)
+            t.join();
+        const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+        const auto hdr = Encoder(cfg).headers();
+        std::fwrite(hdr.data(), 1, hdr.size(), out);
+        size_t totalBytes = hdr.size();
+        int frames = 0;
+        double py = 0, pu = 0, pv = 0;
+        std::printf("chunks");
+        for (int c = 0; c < count; ++c) {
+            const ChunkResult& r = res[size_t(c)];
+            std::fwrite(r.bytes.data(), 1, r.bytes.size(), out);
+            totalBytes += r.bytes.size();
+            frames += r.frames;
+            py += r.psnrY;
+            pu += r.psnrU;
+            pv += r.psnrV;
+            std::printf(" %d", plan.start[size_t(c)]);
+            if (size_t(c) < plan.bitrateKbps.size())
+                std::printf("@%d", plan.bitrateKbps[size_t(c)]);
+        }
+        std::fclose(out);
+        if (!frames) {
+            std::fprintf(stderr, "no frames read\n");
+            return 1;
+        }
+        std::printf("  threads %dx%d  first pass %.2f s  peak %ld MB  ", count, per, firstPassSeconds, peakMb());
+        std::printf("frames %d  bytes %zu (%.1f KB/frame)  %.2f fps  PSNR Y %.2f U %.2f V %.2f\n", frames, totalBytes,
+                    totalBytes / 1024.0 / frames, frames / seconds, py / frames, pu / frames, pv / frames);
+        return 0;
+    }
     if (twoPass && in != stdin) {
         const auto t0 = std::chrono::steady_clock::now();
         FirstPass fp(w, h);
@@ -188,7 +328,7 @@ int main(int argc, char** argv)
     }
     if (cfg.firstPass)
         std::printf("first pass %.2f s (%.1f ms/frame)  ", firstPassSeconds, firstPassSeconds * 1000.0 / frames);
-    std::printf("last qp %d  ", enc.lastQp());
+    std::printf("peak %ld MB  last qp %d  ", peakMb(), enc.lastQp());
     std::printf("frames %d  bytes %zu (%.1f KB/frame)  %.2f fps  PSNR Y %.2f U %.2f V %.2f\n", frames, totalBytes,
                 totalBytes / 1024.0 / frames, frames / seconds, psnrY / frames, psnrU / frames, psnrV / frames);
     return 0;
