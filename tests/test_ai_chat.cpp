@@ -57,6 +57,7 @@
 #include <QPointer>
 #include <QProcess>
 #include <QPushButton>
+#include <QRegularExpression>
 #include <QSettings>
 #include <QTcpServer>
 #include <QTcpSocket>
@@ -1106,10 +1107,41 @@ void test(const QString& dir)
         for (const AiChat::Entry& e : chat->entries()) tight |= e.kind == AiChat::Entry::Kind::Notice && e.text.contains("knapp") && e.text.contains("8192");
         CHECK(tight);
         // The short request stays within its budget (it grew past an 8192-token model with the 0.17 tools once):
-        // system prompt and tools of a fresh chat, the one word above aside
-        // (and keeps room for the next ops: 2500 characters below it after 0.17)
-        std::printf("       short request: %lld characters, budget %lld\n", chat->requestTokens() * 4, Ai::kCompactBudget);
-        CHECK(chat->requestTokens() * 4 <= Ai::kCompactBudget);
+        // system prompt and tools of a fresh chat, the one word above aside. New ops and parameters no longer make it
+        // grow by their whole text (Ai::compactOps, kParamText): 26,844 characters at 0.21 (30,952 before) = 13 % room
+        const qint64 used = chat->requestTokens() * 4;
+        std::printf("       short request: %lld characters, budget %lld (%lld %% room)\n", used, Ai::kCompactBudget,
+                    (Ai::kCompactBudget - used) * 100 / Ai::kCompactBudget);
+        CHECK(used <= Ai::kCompactBudget);
+        // Every op is in it (at least by name) and its full text is one `help` call away
+        {
+            QString ops;
+            for (const QJsonValue& t : fake.last().body["tools"].toArray())
+                if (t["function"]["name"].toString() == "edit")
+                    ops = t["function"]["parameters"]["properties"]["ops"]["description"].toString();
+            CHECK(!ops.isEmpty());
+            QProcess cli;
+            cli.start(Check::cliPath(), {"help", "edit"});
+            CHECK(cli.waitForFinished(30000));
+            const QJsonArray all = QJsonDocument::fromJson(cli.readAllStandardOutput()).object()["commands"][0]["ops"].toArray();
+            CHECK(all.size() > 50);
+            QStringList names;
+            for (const QJsonValue& o : all) {
+                const QString name = o["op"].toString();
+                if (!o["usage"].toString().isEmpty()) names << name;
+                if (!CHECK(ops.contains(QRegularExpression("(^|[ (|])" + name + "[(,|]|, " + name + "$"))))
+                    std::printf("       op %s missing in the short request\n", qPrintable(name));
+            }
+            cli.start(Check::cliPath(), {"help", "edit", "--op", names.join(',')});
+            CHECK(cli.waitForFinished(30000));
+            const QJsonArray detail = QJsonDocument::fromJson(cli.readAllStandardOutput()).object()["commands"][0]["ops"].toArray();
+            CHECK_EQ(detail.size(), names.size()); // `help` has every one of them
+        }
+        // AI_SHORT_DUMP=file.json: the short request as sent (system prompt, tools), to see where its characters go
+        if (const QString dump = qEnvironmentVariable("AI_SHORT_DUMP"); !dump.isEmpty()) {
+            QFile f(dump);
+            if (f.open(QIODevice::WriteOnly)) f.write(QJsonDocument(fake.last().body).toJson());
+        }
         // Off: the full request also for a server on this computer
         fake.gets.remove("/api/show");
         chat->clear();

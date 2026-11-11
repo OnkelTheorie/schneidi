@@ -757,13 +757,17 @@ void testContext()
         CHECK_EQ(c[1]["inputSchema"]["properties"]["project"]["description"].toString(), QString("project file"));
         CHECK_EQ(c[2]["inputSchema"]["properties"]["region"]["description"].toString(),
                  QString("where the kill feed is, \"x,y,w,h\""));
-        CHECK(!c[3]["inputSchema"]["properties"]["folder"].toObject().contains("description"));
-        CHECK_EQ(c[3]["inputSchema"]["properties"]["folder"]["type"].toString(), QString("string"));
+        // A rare tool: only its required parameters in the schema, the others by name (`help` has them); the schema
+        // lets them through (a server that holds the model to it)
+        CHECK(!c[3]["inputSchema"]["properties"].toObject().contains("folder"));
+        CHECK(c[3]["description"].toString().endsWith(" Other keys: all, folder."));
+        CHECK(c[3]["inputSchema"]["additionalProperties"].toBool());
+        CHECK(!c[3]["inputSchema"].toObject().contains("required"));
         CHECK(!c[3]["description"].toString().contains("help")); // `help` says it once for all of them
         CHECK(c[0]["description"].toString().contains("also those without a text here"));
         // help's "all" (~80 KB of every command) is left out, another tool's "all" stays
         CHECK(!c[0]["inputSchema"]["properties"].toObject().contains("all"));
-        CHECK(c[3]["inputSchema"]["properties"].toObject().contains("all"));
+        CHECK(c[3]["description"].toString().contains("all"));
     }
     // Shorter still: times as text, optional keys without their values, a parameter text three tools share left out,
     // the instructions without the list of tools
@@ -775,7 +779,7 @@ void testContext()
                               tool("b", "B.", {{"project", project}}), tool("c", "C.", {{"project", project}}),
                               tool("d", "D.", {{"file", QJsonObject{{"type", "string"}, {"description", "project file"}}}}),
                               tool("edit", "Edit.", {{"ops", QJsonObject{{"type", "array"}}}})};
-        const QJsonArray ops2{QJsonObject{{"op", "normalize"}, {"usage", "{op:'normalize', clips, mode?:'peak'|'lufs', ripple?:true, "
+        const QJsonArray ops2{QJsonObject{{"op", "volume"}, {"usage", "{op:'volume', clips, mode?:'peak'|'lufs', ripple?:true, "
                                                                           "ranges:[[from,to]], at?:[times], track?:'A1'}"}}};
         const QJsonArray m = Ai::compactTools(more, ops2);
         CHECK_EQ(m[0]["inputSchema"]["properties"]["from"]["type"].toString(), QString("string"));
@@ -785,7 +789,7 @@ void testContext()
         for (int i = 0; i < 3; ++i) CHECK(!m[i]["inputSchema"]["properties"]["project"].toObject().contains("description"));
         CHECK_EQ(m[3]["inputSchema"]["properties"]["file"]["description"].toString(), QString("project file")); // another key
         CHECK(m[4]["inputSchema"]["properties"]["ops"]["description"].toString().contains(
-            "normalize(clips, mode?, ripple?, ranges:[[from,to]], at?, track?)"));
+            "volume(clips, mode?, ripple?, ranges:[[from,to]], at?, track?)"));
         // Several names, nested braces, a second form with "or", a form without op: as calls where they are ops
         const QJsonArray ops3{QJsonObject{{"op", "enable"}, {"usage", "{op:'enable'|'disable', clips}"}},
                               QJsonObject{{"op", "align"}, {"usage", "{op:'align', events:[times], to:[times]|{first, every}}"}},
@@ -806,6 +810,63 @@ void testContext()
         CHECK_EQ(Ai::compactInstructions("A. If the project is open in the schneidi app, all tools work live on it; "
                                          "\"@app\" = the project open in the running app. Use absolute file paths."),
                  QString("A. Use absolute file paths."));
+    }
+    // The ops in short, so that a new op costs at most ~kOpChars: common ones whole, rare ones by name, the others
+    // with their required keys and the first optional ones that fit, "…" for the rest
+    {
+        CHECK_EQ(Ai::cappedUsage("split(at, clip?)", 40), QString("split(at, clip?)"));
+        CHECK_EQ(Ai::cappedUsage("window(clips, window?, add?, remove?, shape?, x?, y?)", 34),
+                 QString("window(clips, window?, add?, …)"));
+        // required keys stay even past the limit, wherever they stand
+        CHECK_EQ(Ai::cappedUsage("angle(at, cut?, mode?, angle, clip?)", 20), QString("angle(at, angle, …)"));
+        CHECK_EQ(Ai::cappedUsage("fill(slot, value:{file, from?, to?}, reframe?)", 20),
+                 QString("fill(slot, value:{file, from?, to?}, …)"));
+        // other forms go (`help` has them); a long call with nothing to leave out stays as it is
+        CHECK_EQ(Ai::cappedUsage("note(at, text) or note(done:id) or note(remove:id)", 30), QString("note(at, text, …)"));
+        CHECK_EQ(Ai::cappedUsage("comp(clips, graph:{nodes:[{id, type}], links:[[from, to]]})", 20),
+                 QString("comp(clips, graph:{nodes:[{id, type}], links:[[from, to]]})"));
+        CHECK_EQ(Ai::cappedUsage("title(text?, kind?, <style>, fill?)", 22), QString("title(text?, …)"));
+        const QString longOp = "{op:'window', clips, window?, add?, remove?, shape?, x?, y?, width?, height?, rotation?, "
+                               "softness?, invert?, fill?, amount?, color?, lift?, gamma?, gain?, offset?, contrast?}";
+        const QString coreLong = "{op:'title', text?, kind?, at?, duration?, track?, clip?, <style>, fill?, gradient?, "
+                                 "texture?, edge3d?, shadow?, glow?, text3d?, enter?, exit?}";
+        const QJsonArray ops4{QJsonObject{{"op", "title"}, {"usage", coreLong}},
+                              QJsonObject{{"op", "window"}, {"usage", longOp}},
+                              QJsonObject{{"op", "slot"}, {"usage", "{op:'slot', clip, id, kind?, label?}"}},
+                              QJsonObject{{"op", "fill"}, {"usage", "{op:'fill', slot, value}"}},
+                              QJsonObject{{"op", "split"}, {"usage", "{op:'split', at, clip?}"}}};
+        CHECK(Ai::kCoreOps.contains("title") && Ai::kRareOps.contains("slot") && !Ai::kCoreOps.contains("window"));
+        const QString o = Ai::compactOps(ops4);
+        CHECK(o.startsWith("title(text?, kind?, at?, duration?, track?, clip?, <style>, fill?, gradient?, texture?, "
+                           "edge3d?, shadow?, glow?, text3d?, enter?, exit?); window(clips, "));
+        const QString window = o.section("; ", 1, 1);
+        CHECK(window.endsWith(", …)") && window.size() <= Ai::kOpChars);
+        CHECK(o.contains("; split(at, clip?). Seldom needed (call `help` for their keys first): slot, fill"));
+        // An unknown op (a new one) is never longer than kOpChars plus its required keys
+        QJsonArray many;
+        for (char c = 'a'; c < 'u'; ++c) {
+            const QString name = QString("new_op_") + c;
+            many << QJsonObject{{"op", name}, {"usage", QString(longOp).replace("'window'", "'" + name + "'")}};
+        }
+        for (const QString& op : Ai::compactOps(many).split("; ")) CHECK(op.size() <= Ai::kOpChars);
+    }
+    // At most kParamText characters of parameter texts per tool: the longest go first
+    {
+        QJsonObject props;
+        for (int i = 0; i < 12; ++i)
+            props.insert(QString("p%1").arg(i, 2, 10, QChar('0')),
+                         QJsonObject{{"type", "string"}, {"description", QString("text of p%1 ").arg(i) + QString(i * 5, 'x')}});
+        const QJsonArray big{tool("render", "Render.", props), tool("edit", "Edit.", {{"ops", QJsonObject{{"type", "array"}}}})};
+        const QJsonArray cb = Ai::compactTools(big, ops);
+        const QJsonObject r = cb[0]["inputSchema"]["properties"].toObject();
+        qsizetype sum = 0;
+        for (const QJsonValue& p : r) sum += p["description"].toString().size();
+        CHECK_EQ(r.size(), 12); // every parameter stays, a long text goes first
+        CHECK(r["p00"].toObject().contains("description"));
+        // one of the two longest (equally long after shortening) left out, the short ones kept
+        CHECK(!r["p10"].toObject().contains("description") && r["p11"].toObject().contains("description"));
+        if (!CHECK(sum <= Ai::kParamText && sum > Ai::kParamText / 2))
+            std::printf("       %s\n", QJsonDocument(r).toJson(QJsonDocument::Compact).constData());
     }
     // Without the ops `edit` stays whole (the model could not edit otherwise)
     CHECK_EQ(Ai::compactTools(tools, {})[1].toObject(), tools[1].toObject());

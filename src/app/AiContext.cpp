@@ -159,7 +159,102 @@ QString shortUsage(const QString& usage)
     return out;
 }
 
+// The keys of a call's argument list at the top level ("a, b:[x, y], c?" -> "a", "b:[x, y]", "c?")
+QStringList topLevelKeys(const QString& args)
+{
+    QStringList keys;
+    int depth = 0;
+    bool quoted = false;
+    qsizetype from = 0;
+    for (qsizetype i = 0; i < args.size(); ++i) {
+        const QChar c = args[i];
+        if (c == '\'') quoted = !quoted;
+        if (quoted) continue;
+        if (c == '{' || c == '[' || c == '(') ++depth;
+        else if (c == '}' || c == ']' || c == ')') depth = std::max(0, depth - 1);
+        else if (c == ',' && depth == 0) {
+            keys << args.mid(from, i - from).trimmed();
+            from = i + 1;
+        }
+    }
+    if (const QString last = args.mid(from).trimmed(); !last.isEmpty()) keys << last;
+    return keys;
+}
+
+// A key the op can do without: "track?", "out?|duration?", "<style>" (a group of keys)
+bool optionalKey(const QString& key)
+{
+    const QString name = key.section(':', 0, 0);
+    return name.contains('?') || name.startsWith('<');
+}
+
 } // namespace
+
+QString cappedUsage(const QString& usage, int max)
+{
+    if (usage.size() <= max) return usage;
+    // The first form of the call only ("a(x) or a(y)": the others come from `help`)
+    const qsizetype open = usage.indexOf('(');
+    if (open <= 0) return usage;
+    int depth = 0;
+    qsizetype close = -1;
+    for (qsizetype i = open; i < usage.size() && close < 0; ++i) {
+        if (usage[i] == '(' || usage[i] == '[' || usage[i] == '{') ++depth;
+        else if ((usage[i] == ')' || usage[i] == ']' || usage[i] == '}') && --depth == 0) close = i;
+    }
+    if (close < 0) return usage;
+    const QString name = usage.left(open);
+    const QStringList keys = topLevelKeys(usage.mid(open + 1, close - open - 1));
+    // Every required key stays; optional ones in their order (the first are the main ones) while the call fits
+    qsizetype length = name.size() + 2;
+    for (const QString& k : keys)
+        if (!optionalKey(k)) length += k.size() + 2;
+    QStringList out;
+    bool full = false, dropped = close + 1 < usage.size(); // another form after this one
+    for (const QString& k : keys) {
+        if (optionalKey(k)) {
+            if (!full && length + k.size() + 2 + 3 <= max) {
+                length += k.size() + 2;
+            } else {
+                full = dropped = true;
+                continue;
+            }
+        }
+        out << k;
+    }
+    if (dropped) out << "…";
+    return name + '(' + out.join(", ") + ')';
+}
+
+// The ops of common edits: always with every key
+const QStringList kCoreOps{"append", "place",    "keep",       "insert", "split",    "trim",     "move",
+                           "delete", "delete_range", "clear",  "fade",   "transition", "title",  "subtitle",
+                           "captions", "speak",  "voiceover",  "volume", "speed",    "effect",   "timeline",
+                           "add_track"};
+
+// Ops an editing chat seldom needs (timeline and media pool housekeeping, multicam repairs, templates, node details):
+// by name only
+const QStringList kRareOps{"slot", "fill", "comp_from", "track_node", "cutout_node", "track_window", "multicam_nudge",
+                           "add_angle", "angle_name", "source_marker", "bin", "remove_media", "compound", "decompose",
+                           "place_timeline", "rename_timeline", "remove_timeline", "duplicate_timeline",
+                           "add_subtitle_track", "hook_variants", "sections", "section", "copy_attributes",
+                           "picture_aspect", "flatten", "marks", "link"};
+
+QString compactOps(const QJsonArray& editOps)
+{
+    QStringList ops, names;
+    for (const QJsonValue& op : editOps) {
+        const QString usage = op["usage"].toString();
+        if (usage.isEmpty()) continue;
+        const QString name = op["op"].toString();
+        if (kRareOps.contains(name)) names << name;
+        else if (kCoreOps.contains(name)) ops << shortUsage(usage);
+        else ops << cappedUsage(shortUsage(usage), kOpChars);
+    }
+    QString s = ops.join("; ");
+    if (!names.isEmpty()) s += ". Seldom needed (call `help` for their keys first): " + names.join(", ");
+    return s;
+}
 
 QString compactInstructions(const QString& instructions)
 {
@@ -206,7 +301,7 @@ QJsonArray compactTools(const QJsonArray& tools, const QJsonArray& editOps)
         QJsonObject schema = t["inputSchema"].toObject();
         QJsonObject props = schema["properties"].toObject();
         const bool rare = kRareTools.contains(name);
-        QString description = firstSentence(t["description"].toString());
+        QString description = firstSentence(t["description"].toString(), kToolText);
         if (name == "edit" && editOps.isEmpty()) { // without its ops the model cannot edit: as it is
             out << t;
             continue;
@@ -224,20 +319,58 @@ QJsonArray compactTools(const QJsonArray& tools, const QJsonArray& editOps)
             textTimes(p);
             it.value() = p;
         }
+        // At most kParamText characters of parameter texts per tool: the longest of the optional ones go first (the
+        // special cases, as a rule; `help` has them), so a new parameter costs its name and type, not more
+        if (!rare) {
+            const QJsonArray required = schema.value("required").toArray();
+            QVector<std::pair<qsizetype, QString>> texts;
+            qsizetype sum = 0;
+            for (auto it = props.begin(); it != props.end(); ++it)
+                if (const qsizetype n = it.value().toObject().value("description").toString().size(); n > 0) {
+                    if (!required.contains(it.key())) texts.push_back({n, it.key()});
+                    sum += n;
+                }
+            std::sort(texts.begin(), texts.end(), [](const auto& a, const auto& b) {
+                return a.first != b.first ? a.first > b.first : a.second < b.second;
+            });
+            for (const auto& [n, key] : texts) {
+                if (sum <= kParamText) break;
+                QJsonObject p = props[key].toObject();
+                p.remove("description");
+                props[key] = p;
+                sum -= n;
+            }
+        }
+        // A rarely needed tool: its required parameters in the schema, the others by name in its description
+        // (`help` has their types and texts; the model reads it before such a call). additionalProperties: a server
+        // that holds the model to the schema (llama.cpp's grammar) still lets it pass them
+        if (rare) {
+            const QJsonArray required = schema.value("required").toArray();
+            QStringList others;
+            for (auto it = props.begin(); it != props.end();) {
+                if (required.contains(it.key())) {
+                    ++it;
+                    continue;
+                }
+                others << it.key();
+                it = props.erase(it);
+            }
+            if (!others.isEmpty()) {
+                description += " Other keys: " + others.join(", ") + ".";
+                schema["additionalProperties"] = true;
+            }
+        }
         if (name == "help")
             description = "The details of a tool: command '<tool>' (all its parameters, also those without a text "
                           "here); of edit ops: command 'edit' and op '<name>' (or a comma list).";
         if (name == "edit") {
-            QStringList ops;
-            for (const QJsonValue& op : editOps)
-                if (const QString usage = op["usage"].toString(); !usage.isEmpty()) ops << shortUsage(usage);
             QJsonObject p = props["ops"].toObject();
             p["description"] = "List of operations, applied in order (nothing changes if one fails). Times: frames, "
-                               "\"4.5s\", \"HH:MM:SS:FF\" or \"MM:SS\"; ranges [from, to). Tracks: \"V1\", \"A2\". Clip ids "
-                               "come from `info` or the answer of the edit before (they change when clips are split). "
-                               "An op's parameters in detail: `help` with command 'edit' and op '<name>'. Ops, each written as "
-                               "name(keys) for {op:'name', keys}, key? = optional, a|b = one of them: "
-                               + ops.join("; ");
+                               "\"4.5s\" or \"MM:SS\"; ranges [from, to). Tracks: \"V1\", \"A2\". Clip ids come from `info` or the "
+                               "answer of the edit before (they change when clips are split). Ops, each written as "
+                               "name(keys) for {op:'name', keys}, key? = optional, a|b = one of them, … = more keys; "
+                               "every op in detail: `help` with command 'edit' and op '<name>'. "
+                               + compactOps(editOps);
             props["ops"] = p;
         }
         schema["properties"] = props;
