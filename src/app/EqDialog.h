@@ -17,6 +17,7 @@ public:
 
 private:
     void sync(); // model -> controls
+    void detach(); // another project or timeline: forget the track, drop typed text, close
     void commit(int band); // fields of a band -> model
 
     Editor* m_editor;

@@ -98,8 +98,8 @@ EqDialog::EqDialog(Editor* editor, int track, QWidget* parent) : QDialog(parent)
     });
     connect(editor->project(), &Project::timelineChanged, this, &EqDialog::sync);
     // The track number belongs to this timeline of this project: another one closes the window
-    connect(editor->project(), &Project::loaded, this, &QDialog::close);
-    connect(editor->project(), &Project::currentSequenceChanged, this, &QDialog::close);
+    connect(editor->project(), &Project::loaded, this, &EqDialog::detach);
+    connect(editor->project(), &Project::currentSequenceChanged, this, &EqDialog::detach);
     sync();
 }
 
@@ -138,4 +138,16 @@ void EqDialog::commit(int band)
     if (eq != tl.audio[m_track].eq) eq.on = true; // changing a band switches the EQ on (like dragging)
     m_editor->setTrackEq(m_track, eq);
     sync();
+}
+
+void EqDialog::detach()
+{
+    // Typed text is dropped, never committed: closing takes the focus away (editingFinished), and the track number
+    // would now point at a track of the other project/timeline
+    m_track = -1;
+    for (QLineEdit* e : findChildren<QLineEdit*>()) {
+        const QSignalBlocker block(e);
+        e->setModified(false);
+    }
+    close();
 }

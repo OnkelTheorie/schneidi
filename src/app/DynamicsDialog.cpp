@@ -75,8 +75,8 @@ DynamicsDialog::DynamicsDialog(Editor* editor, int track, QWidget* parent)
     connect(m_on, &QCheckBox::toggled, this, &DynamicsDialog::commit);
     connect(editor->project(), &Project::timelineChanged, this, &DynamicsDialog::sync);
     // The track number belongs to this timeline of this project: another one closes the window
-    connect(editor->project(), &Project::loaded, this, &QDialog::close);
-    connect(editor->project(), &Project::currentSequenceChanged, this, &QDialog::close);
+    connect(editor->project(), &Project::loaded, this, &DynamicsDialog::detach);
+    connect(editor->project(), &Project::currentSequenceChanged, this, &DynamicsDialog::detach);
     sync();
 }
 
@@ -107,4 +107,16 @@ void DynamicsDialog::commit()
     parsed(m_makeup, &d.makeupDb);
     m_editor->setTrackDynamics(m_track, d);
     sync(); // clamped values / invalid text back to the model's value
+}
+
+void DynamicsDialog::detach()
+{
+    // Typed text is dropped, never committed: closing takes the focus away (editingFinished), and the track number
+    // would now point at a track of the other project/timeline
+    m_track = -1;
+    for (QLineEdit* e : findChildren<QLineEdit*>()) {
+        const QSignalBlocker block(e);
+        e->setModified(false);
+    }
+    close();
 }

@@ -716,6 +716,45 @@ void testMixerDialogWindows()
     CHECK_EQ(freq->text(), QString("123"));
 }
 
+// Text typed but not committed when another project loads (or another timeline opens): the closing window must not
+// write it onto a track of the new one (closing takes the focus away = editingFinished)
+void testDialogsCloseWithoutCommit()
+{
+    for (const bool sequence : {false, true}) {
+        Project p;
+        Selection sel;
+        Editor ed(&p, &sel);
+        DynamicsDialog dyn(&ed, 0);
+        EqDialog eq(&ed, 0);
+        dyn.show();
+        eq.show();
+        auto* threshold = dyn.findChild<QLineEdit*>("threshold");
+        QLineEdit* freq = eq.findChildren<QLineEdit*>().value(0);
+        if (!CHECK(threshold && freq)) return;
+        dyn.activateWindow();
+        QTest::qWaitForWindowActive(&dyn);
+        threshold->setFocus();
+        threshold->selectAll();
+        QTest::keyClicks(threshold, "-7");
+        freq->selectAll();
+        QTest::keyClicks(freq, "321");
+        if (sequence) {
+            p.setCurrentSequence(p.duplicateSequence(p.currentSequence()));
+        } else {
+            ProjectData d;
+            d.timeline = Project().timeline();
+            p.load(d);
+        }
+        QApplication::processEvents();
+        emit threshold->editingFinished(); // whatever the platform does with the focus
+        emit freq->editingFinished();
+        const Track& a1 = p.timeline().audio[0];
+        CHECK(a1.dynamics == TrackDynamics{});
+        CHECK(a1.eq == TrackEq{});
+        CHECK(!dyn.isVisible() && !eq.isVisible());
+    }
+}
+
 // ---- CLI ----
 
 void testCliMixerEqCompressor(const QString& dir)
@@ -791,6 +830,7 @@ int main(int argc, char** argv)
     testEqCurveDrag();
     testDialogs();
     testMixerDialogWindows();
+    testDialogsCloseWithoutCommit();
     testCliMixerEqCompressor(dir.path());
 
     if (!Check::haveFfmpeg()) return Check::result();
