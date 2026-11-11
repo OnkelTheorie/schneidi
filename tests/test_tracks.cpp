@@ -419,6 +419,65 @@ int main(int argc, char** argv)
         CHECK(back3.timeline.audio[2].clips.size() == 3 && back3.timeline.video[1].clips.size() == 3);
     }
 
+    // --- Target tracks follow undo/redo of track add/delete/move (before: they stayed where the step had put them,
+    //     e.g. on a track that undo had removed again)
+    {
+        setup(p); // V1 V2, A1 A2
+        using TP = QPair<int, int>;
+        const auto targets = [&] { return TP(ed.targetVideoTrack(), ed.targetAudioTrack()); };
+        // Add below the target: target moves up with its track; undo -> back on the same track
+        ed.setTargetTracks(1, 1);
+        ed.addTrack(TrackKind::Audio, 0);
+        CHECK(targets() == TP(1, 2));
+        p.undoStack()->undo();
+        CHECK(p.timeline().audio.size() == 2);
+        CHECK(targets() == TP(1, 1));
+        p.undoStack()->redo();
+        CHECK(targets() == TP(1, 2));
+        p.undoStack()->undo();
+        // Add on top, the user targets the new track; undo removes it -> the target goes back to an existing one
+        ed.addTrack(TrackKind::Video, 2);
+        ed.setTargetTracks(2, 1);
+        p.undoStack()->undo();
+        CHECK(p.timeline().video.size() == 2);
+        CHECK(targets() == TP(1, 1));
+        p.undoStack()->redo();
+        CHECK(p.timeline().video.size() == 3 && targets().first < 3);
+        p.undoStack()->undo();
+        // Delete the target track: undo puts the target back on it; delete a track below: undo -> same track again
+        ed.setTargetTracks(1, 1);
+        ed.removeTrack({TrackKind::Audio, 1});
+        CHECK(targets() == TP(1, 0));
+        p.undoStack()->undo();
+        CHECK(targets() == TP(1, 1));
+        p.undoStack()->redo();
+        CHECK(targets() == TP(1, 0));
+        p.undoStack()->undo();
+        ed.removeTrack({TrackKind::Video, 0});
+        CHECK(targets() == TP(0, 1));
+        p.undoStack()->undo();
+        CHECK(targets() == TP(1, 1));
+        // Move: target follows its track, also back on undo
+        ed.setTargetTracks(0, 0);
+        ed.moveTrack(TrackKind::Audio, 0, 1);
+        CHECK(targets() == TP(0, 1));
+        p.undoStack()->undo();
+        CHECK(targets() == TP(0, 0));
+        p.undoStack()->redo();
+        CHECK(targets() == TP(0, 1));
+        // Changed by hand after the step: undo keeps the chosen track (it moves back with it) instead of resetting
+        ed.setTargetTracks(0, 0); // the old A2, now at index 0
+        p.undoStack()->undo();    // ... back at index 1
+        CHECK(targets() == TP(0, 1));
+        // Undo never leaves a target beyond the tracks, still one undo step per operation
+        const int steps = p.undoStack()->index();
+        ed.addTrack(TrackKind::Audio, 2);
+        CHECK(p.undoStack()->index() == steps + 1);
+        ed.setTargetTracks(0, 2);
+        p.undoStack()->undo();
+        CHECK(ed.targetAudioTrack() < p.timeline().audio.size());
+    }
+
     // --- UI: track header, clicks
     setup(p);
     ed.setTrackColor({TrackKind::Audio, 1}, "violet");
