@@ -89,6 +89,8 @@ struct Sequence {
     // EDL: Item::in is still the source timecode (the file's start timecode is not in the file);
     // applyStartTimecodes makes it a frame of the file
     bool inIsTimecode = false;
+    // The EDL's timecodes were drop-frame (29.97/59.94): a "full hour" of source timecode is 107892 frames at 29.97
+    bool dropFrame = false;
 };
 
 struct Error {

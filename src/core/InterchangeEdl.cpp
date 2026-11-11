@@ -156,10 +156,24 @@ Sequence readEdl(const QByteArray& data, FrameRate rate)
     QVector<Event> events;
     Event* last = nullptr;
     bool wipes = false;
+    // Drop-frame timecode (29.97/59.94 only): "HH:MM:SS;FF", or any separator after "FCM: DROP FRAME"
+    const bool dropRate = Timecode::isDropFrameRate(rate.num, rate.den);
+    bool fcmDrop = false;
+    const auto tc = [&](const QString& text) {
+        QString t = text;
+        if (dropRate && fcmDrop && !t.contains(';')) t[8] = ';'; // "HH:MM:SS:FF" -> "HH:MM:SS;FF"
+        if (dropRate && t.contains(';')) seq.dropFrame = true;
+        return Timecode::parse(t, fps, dropRate);
+    };
     const QStringList lines = QString::fromUtf8(data).split(QRegularExpression("\r?\n|\r"));
     for (const QString& line : lines) {
         if (line.startsWith("TITLE:")) {
             seq.name = line.mid(6).trimmed();
+            continue;
+        }
+        if (line.startsWith("FCM:", Qt::CaseInsensitive)) {
+            const QString mode = line.mid(4).trimmed().toUpper();
+            fcmDrop = mode.startsWith("DROP");
             continue;
         }
         if (const auto m = eventRe.match(line); m.hasMatch()) {
@@ -170,10 +184,10 @@ Sequence readEdl(const QByteArray& data, FrameRate rate)
             e.dissolve = kind != "C";
             wipes = wipes || kind.startsWith('W') || kind.startsWith('K');
             e.dur = m.captured(5).trimmed().toInt();
-            e.srcIn = Timecode::parse(m.captured(6), fps);
-            e.srcOut = Timecode::parse(m.captured(7), fps);
-            e.recIn = Timecode::parse(m.captured(8), fps);
-            e.recOut = Timecode::parse(m.captured(9), fps);
+            e.srcIn = tc(m.captured(6));
+            e.srcOut = tc(m.captured(7));
+            e.recIn = tc(m.captured(8));
+            e.recOut = tc(m.captured(9));
             // Second line of a dissolve: the line before (same event, 0 frames) is the outgoing clip or black
             if (e.dissolve && last && last->recIn == last->recOut && m.captured(1).toInt() > 0) {
                 e.afterBlack = last->reel.toUpper() == "BL" || last->reel.toUpper() == "BLK";
@@ -206,7 +220,8 @@ Sequence readEdl(const QByteArray& data, FrameRate rate)
     // from a full hour (Premiere: 00:59:53:11)
     int first = INT_MAX;
     for (const Event& e : events) first = std::min(first, e.recIn);
-    int offset = first / (3600 * fps) * (3600 * fps);
+    const int hour = Timecode::hourFrames(fps, seq.dropFrame);
+    int offset = first / hour * hour;
     if (first - offset > 600 * fps) offset = first;
     seq.inIsTimecode = true;
     int link = 0;

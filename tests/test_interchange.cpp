@@ -7,6 +7,7 @@
 #include "core/Interchange.h"
 #include "core/Project.h"
 #include "core/TimelineOps.h"
+#include "core/Timecode.h"
 
 #include <QCoreApplication>
 #include <QRegularExpression>
@@ -345,6 +346,57 @@ int main(int argc, char** argv)
         Seq copy = read(edl, Format::Edl, FrameRate{25, 1});
         applyStartTimecodes(copy, {}, [](const QString& path) { return path == kA ? 1000 : 0; });
         CHECK_EQ(copy.video[0].items[0].in, 265);
+    }
+
+    // Drop-frame timecode (29.97/59.94, "HH:MM:SS;FF"): ;00 and ;01 are skipped each minute but every tenth - an hour
+    // is 107892 frames at 29.97, not 108000 (non-drop reading was 3.6 s off per hour)
+    {
+        CHECK_EQ(Timecode::parse("00:00:59;29", 30, true), 1799);
+        CHECK_EQ(Timecode::parse("00:01:00;02", 30, true), 1800);
+        CHECK_EQ(Timecode::parse("00:01:00;00", 30, true), -1); // a label that does not exist
+        CHECK_EQ(Timecode::parse("00:10:00;00", 30, true), 17982);
+        CHECK_EQ(Timecode::parse("01:00:00;00", 30, true), 107892);
+        CHECK_EQ(Timecode::parse("01:00:00;00", 60, true), 215784);
+        CHECK_EQ(Timecode::parse("00:01:00;04", 60, true), 3600);
+        CHECK_EQ(Timecode::parse("00:00:00;30", 30, true), -1); // frame part beyond the timebase
+        CHECK_EQ(Timecode::parse("00:01:00;02", 30), 1802);       // no drop-frame rate: ';' is a separator
+        CHECK_EQ(Timecode::parse("00:01:00:02", 30, true), 1802); // ':' is non-drop also at 29.97
+        CHECK_EQ(Timecode::hourFrames(30, true), 107892);
+        CHECK_EQ(Timecode::hourFrames(25, true), 90000);
+        CHECK(Timecode::isDropFrameRate(30000, 1001) && Timecode::isDropFrameRate(60000, 1001));
+        CHECK(!Timecode::isDropFrameRate(30, 1) && !Timecode::isDropFrameRate(24000, 1001));
+
+        // An EDL of 29.97 drop-frame material: the source is 10 minutes into the file (17982 frames, not 18000), the
+        // second event 10 minutes later on the record side
+        const QByteArray dfEdl = "TITLE: df\nFCM: DROP FRAME\n\n"
+                                 "001  AX       V     C        01:10:00;00 01:10:01;00 01:00:00;00 01:00:01;00\n"
+                                 "* SOURCE FILE: /media/a.mp4\n"
+                                 "002  AX       V     C        01:10:00;00 01:10:01;00 01:10:00;00 01:10:01;00\n"
+                                 "* SOURCE FILE: /media/a.mp4\n";
+        const FrameRate ntsc{30000, 1001};
+        Seq d = read(dfEdl, Format::Edl, ntsc);
+        CHECK(d.dropFrame);
+        if (CHECK(!d.video.isEmpty() && d.video[0].items.size() == 2)) {
+            CHECK_EQ(d.video[0].items[0].start, 0);
+            CHECK_EQ(d.video[0].items[1].start, 17982);
+            CHECK_EQ(d.video[0].items[0].length, 30); // 1 s: 01:10:00;00 to 01:10:01;00
+        }
+        applyStartTimecodes(d, [](const QString&) { return QString("01:00:00;00"); });
+        if (CHECK(!d.video.isEmpty() && !d.video[0].items.isEmpty())) CHECK_EQ(d.video[0].items[0].in, 17982);
+        // Without the file's timecode: the full (drop-frame) hours are taken off
+        Seq d2 = read(dfEdl, Format::Edl, ntsc);
+        applyStartTimecodes(d2, {}, [](const QString&) { return 10; });
+        if (CHECK(!d2.video.isEmpty() && !d2.video[0].items.isEmpty())) CHECK_EQ(d2.video[0].items[0].in, 17982);
+        // "FCM: DROP FRAME" with ':' separators reads the same
+        QByteArray colons = dfEdl;
+        colons.replace(';', ':');
+        Seq d3 = read(colons, Format::Edl, ntsc);
+        CHECK(d3.dropFrame);
+        if (CHECK(!d3.video.isEmpty() && d3.video[0].items.size() == 2)) CHECK_EQ(d3.video[0].items[1].start, 17982);
+        // The same EDL read at 30 fps (no drop frame there): ';' only separates, nothing is dropped
+        Seq d4 = read(dfEdl, Format::Edl, FrameRate{30, 1});
+        CHECK(!d4.dropFrame);
+        if (CHECK(!d4.video.isEmpty() && d4.video[0].items.size() == 2)) CHECK_EQ(d4.video[0].items[1].start, 18000);
     }
 
     // Files of other programs (sample data of the OpenTimelineIO project, Apache 2.0)
