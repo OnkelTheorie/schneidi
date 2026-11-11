@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// The Inspector never shows a horizontal scrollbar: every page (Video, Audio, Title, Effects) fits the panel's width,
-// also with a large UI font (QT_FONT_DPI=144 or a large system font) and in a long language (Russian), also when the
+// The Inspector never shows a horizontal scrollbar: every page (Video, Audio, Title, Effects, Subtitle, Transition) fits
+// the panel's width, also with a large UI font (QT_FONT_DPI=144 or a large system font) and in a long language
+// (Russian, Hindi at a large font), also when the
 // panel is made narrow - it then stays as wide as its widest row (nothing cut off), and that width stays moderate:
 // within a real user's 308 px column at the normal font. Before, the rows needed ~350 px (a long clip name, long
 // labels, choice boxes, fixed number fields) and the pages scrolled sideways, at a large font up to 576 px.
@@ -72,13 +73,19 @@ void checkPages(const QString& font, const QString& lang, int maxWidth)
     // Several effects: their sections (Color, Blur, Green Screen …) on the Effects page
     for (const char* fx : {"color", "blur", "chromakey", "stabilize"}) editor.addEffect({v.id}, fx);
 
+    // A subtitle (Subtitle page) and a fade-in at the video clip's start (Transition page)
+    const int cue = editor.addSubtitle(150);
+    CHECK(cue > 0);
+    CHECK(editor.addTransitionAt(0, v.id, TransitionStyle{}));
+
     auto* group = insp.findChild<QStackedWidget*>();
     if (!CHECK(group)) return;
-    for (const QSet<int>& selected : {QSet<int>{v.id, a.id}, QSet<int>{title.id}}) {
-        sel.set(selected);
+    for (const QSet<int>& selected : {QSet<int>{v.id, a.id}, QSet<int>{title.id}, QSet<int>{cue}, QSet<int>{}}) {
+        if (selected.isEmpty()) sel.setTransition({0, v.id});
+        else sel.set(selected);
         settle();
-        std::printf("%s font, %s: the Inspector needs %d px\n", qPrintable(font), qPrintable(lang),
-                    insp.minimumSizeHint().width());
+        std::printf("%s font, %s, page %d: the Inspector needs %d px\n", qPrintable(font), qPrintable(lang),
+                    group->currentIndex(), insp.minimumSizeHint().width());
         for (QAbstractButton* tab : insp.findChildren<QAbstractButton*>()) {
             if (!tab->isCheckable() || !tab->group() || !tab->isVisible() || !tab->isEnabled()) continue;
             if (tab->group()->id(tab) < 0) continue;
@@ -122,11 +129,11 @@ int main(int argc, char** argv)
     const QFont normal = QApplication::font();
     QFont big = normal;
     big.setPointSizeF(normal.pointSizeF() * 1.5); // like QT_FONT_DPI=144 or a large system font
-    for (const char* lang : {"de", "ru"}) {
+    for (const char* lang : {"de", "ru", "hi"}) {
         I18n::install(lang);
         QApplication::setFont(normal);
         // A real user's Inspector column is 308 px wide (tests/data/tours/user-settings.conf, test_tours)
-        checkPages("normal", lang, 308);
+        if (QString(lang) != "hi") checkPages("normal", lang, 308);
         QApplication::setFont(big);
         checkPages("large", lang, 460);
     }

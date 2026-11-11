@@ -23,16 +23,37 @@ ScrubField::ScrubField(double min, double max, double step, int decimals, QWidge
     showValue();
 }
 
-// Room for a value like "100,000" also with a large UI font (a fixed 64 px cut off the first digit there)
+// The widest text the field shows: its smallest and largest value with sign, decimals and suffix ("-100,00 %"), or
+// the text for the smallest value ("-∞"). A huge range (a counter up to 1e9) counts as four digits: the panel should
+// not get wide for values hardly anyone types
+int ScrubField::widestText() const
+{
+    const QFontMetrics fm = fontMetrics();
+    const auto shown = [this, &fm](double v) {
+        const QString n = QString::number(std::clamp(v, -9999.0, 9999.0), 'f', m_decimals);
+        return fm.horizontalAdvance(QString(n).replace('.', I18n::decimalPoint()) + m_suffix);
+    };
+    int width = std::max(shown(m_min), shown(m_max));
+    if (!m_minText.isEmpty()) width = std::max(width, fm.horizontalAdvance(m_minText));
+    return width;
+}
+
+// Room for a value like "100,000" also with a large UI font (a fixed 64 px cut off the first digit there), and for
+// the widest text this field shows. A shrinkable field gives down to a short value ("0,000") or the text it shows
+// right now, whichever is wider ("-100,00 %", "-∞" are never cut): reserving the widest text of every field's range
+// made the Inspector ~40 px wider (two position fields side by side) for values rarely shown
 void ScrubField::fitWidth()
 {
-    const int width = std::max(64, fontMetrics().horizontalAdvance(QStringLiteral("100,000")) + 16);
+    const QFontMetrics fm = fontMetrics();
+    const int padding = 16; // padding and border of the style sheet, a little air
+    const int usual = std::max(64, fm.horizontalAdvance(QStringLiteral("100,000")) + padding);
     if (!m_shrinkable) {
-        setFixedWidth(width);
+        setFixedWidth(std::max(usual, widestText() + padding));
         return;
     }
-    setMinimumWidth(std::min(width, fontMetrics().horizontalAdvance(QStringLiteral("0,000")) + 16));
-    setMaximumWidth(width);
+    const int shown = std::max(fm.horizontalAdvance(QStringLiteral("0,000")), fm.horizontalAdvance(text())) + padding;
+    setMinimumWidth(shown);
+    setMaximumWidth(std::max(usual, shown));
     setSizePolicy(QSizePolicy::Preferred, sizePolicy().verticalPolicy());
 }
 
@@ -58,13 +79,29 @@ void ScrubField::setRange(double min, double max)
 {
     m_min = min;
     m_max = max;
+    fitWidth();
     setValue(m_value);
+}
+
+void ScrubField::setSuffix(const QString& s)
+{
+    m_suffix = s;
+    fitWidth();
+    showValue();
+}
+
+void ScrubField::setMinimumText(const QString& t)
+{
+    m_minText = t;
+    fitWidth();
+    showValue();
 }
 
 void ScrubField::showValue()
 {
     if (!m_minText.isEmpty() && m_value <= m_min) setText(m_minText);
     else setText(number() + m_suffix);
+    if (m_shrinkable) fitWidth(); // never narrower than the text shown now
 }
 
 // Decimal separator of the UI language, like the other number fields

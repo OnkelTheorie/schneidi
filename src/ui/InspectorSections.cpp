@@ -41,8 +41,10 @@
 #include <QSignalBlocker>
 #include <QSlider>
 #include <QStackedWidget>
+#include <QTextBoundaryFinder>
 #include <QToolButton>
 #include <QVBoxLayout>
+#include <algorithm>
 #include <cmath>
 #include <utility>
 #include "ui/InspectorDetail.h"
@@ -62,11 +64,50 @@ QToolButton* Inspector::resetButton(const std::function<void()>& fn)
     return b;
 }
 
+namespace {
+
+// A row label that wraps only when the panel is too narrow for it: its size hint is the text on one line (a word-
+// wrapped QLabel asks for less and wrapped in a grid even with room to spare), its minimum the widest part it cannot
+// break (a word; CJK text breaks between characters)
+class RowLabel : public QLabel {
+public:
+    using QLabel::QLabel;
+    QSize sizeHint() const override
+    {
+        const int width = extra() + advance(text());
+        const int height = heightForWidth(width);
+        return {width, height > 0 ? height : QLabel::sizeHint().height()};
+    }
+    QSize minimumSizeHint() const override
+    {
+        const QString t = text();
+        int widest = 0;
+        QTextBoundaryFinder breaks(QTextBoundaryFinder::Line, t);
+        for (qsizetype from = 0, to; (to = breaks.toNextBoundary()) >= 0; from = to)
+            widest = std::max(widest, advance(t.mid(from, to - from).trimmed()));
+        return {extra() + widest, QLabel::minimumSizeHint().height()};
+    }
+
+private:
+    // Rounded up and one pixel more: at exactly the integer advance the text may already wrap
+    int advance(const QString& s) const
+    {
+        return s.isEmpty() ? 0 : int(std::ceil(QFontMetricsF(font()).horizontalAdvance(s))) + 1;
+    }
+    int extra() const
+    {
+        const QMargins m = contentsMargins();
+        return m.left() + m.right() + 2 * margin();
+    }
+};
+
+} // namespace
+
 QLabel* Inspector::rowLabel(const QString& text)
 {
-    auto* l = new QLabel(text);
+    auto* l = new RowLabel(text);
     l->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-    // Two lines rather than a wider panel: long labels (Russian, a large font) wrap at their spaces
+    // Two lines rather than a wider panel: long labels (Russian, a large font) wrap, but only when there is no room
     l->setWordWrap(true);
     l->setStyleSheet(QString("color: %1;").arg(Theme::textDim.name()));
     return l;

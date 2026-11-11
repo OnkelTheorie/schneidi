@@ -12,11 +12,11 @@ public:
     double value() const { return m_value; }
     void setValue(double v); // without callback
     void setRange(double min, double max);
-    void setSuffix(const QString& s) { m_suffix = s; showValue(); }
+    void setSuffix(const QString& s);
     // Display for the smallest value (e.g. "-∞")
-    void setMinimumText(const QString& t) { m_minText = t; showValue(); }
-    // May get narrower than its usual width when the panel is narrow (the Inspector): never wider, never cut to
-    // less than a short value
+    void setMinimumText(const QString& t);
+    // May get narrower than its usual width when the panel is narrow (the Inspector): wider only for a long value,
+    // never narrower than the text it shows (sign, suffix, "-∞")
     void setShrinkable(bool on);
 
     std::function<void(double)> onChange; // on every change (also while dragging)
@@ -32,6 +32,7 @@ protected:
 
 private:
     void fitWidth();
+    int widestText() const;
     void showValue();
     QString number() const;
     void startEditing();
