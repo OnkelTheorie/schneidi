@@ -2968,5 +2968,6 @@
  "Ich habe dir einen Clip in die Timeline gelegt.": "I put a clip on the timeline for you.",
  "Der Clip liegt gerade außerhalb des sichtbaren Teils der Timeline: Scroll hin, dann siehst du den Abspielkopf in seiner Mitte.": "The clip is outside the visible part of the timeline right now: scroll to it to see the playhead in its middle.",
  "Hoppla, alle Clips sind weg. {key:undo} holt sie zurück.": "Oops, all clips are gone. {key:undo} brings them back.",
- "Programm im Vollbild": "Full-Screen App"
+ "Programm im Vollbild": "Full-Screen App",
+ "EDL: Timecodes mit einem Bild über der Bildrate als 0 gelesen": "EDL: timecodes with a frame beyond the frame rate read as 0"
 }
