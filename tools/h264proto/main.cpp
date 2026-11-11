@@ -10,7 +10,9 @@
 // Input is raw yuv420p ("-" reads stdin). Prints size, speed and PSNR of the encoder's reconstruction.
 #include "engine/encoder/h264/Cavlc.h"
 #include "engine/encoder/h264/H264Encoder.h"
+#include "engine/encoder/h264/ThreadErrors.h"
 
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -219,16 +221,15 @@ int main(int argc, char** argv)
         const int count = int(plan.start.size());
         const int per = std::max(1, cfg.threads / count);
         std::vector<ChunkResult> res(static_cast<size_t>(count));
-        std::vector<std::thread> workers;
         t0 = std::chrono::steady_clock::now();
-        for (int c = 0; c < count; ++c) {
-            const int start = plan.start[size_t(c)];
-            const int end = c + 1 < count ? plan.start[size_t(c) + 1] : total;
-            const EncoderConfig cc = plan.configFor(cfg, c, per);
-            workers.emplace_back([&res, cc, inPath, start, end, c] { encodeChunk(cc, inPath, start, end - start, res[size_t(c)]); });
-        }
-        for (auto& t : workers)
-            t.join();
+        std::atomic<int> nextChunk{0};
+        runOnThreads(count, [&] {
+            for (int c; (c = nextChunk.fetch_add(1)) < count;) {
+                const int start = plan.start[size_t(c)];
+                const int end = c + 1 < count ? plan.start[size_t(c) + 1] : total;
+                encodeChunk(plan.configFor(cfg, c, per), inPath, start, end - start, res[size_t(c)]);
+            }
+        });
         const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
         const auto hdr = Encoder(cfg).headers();
         std::fwrite(hdr.data(), 1, hdr.size(), out);
