@@ -488,6 +488,7 @@ void Player::Impl::mixForward(Feed& f, int n, float* const* out)
     if (f.old) {
         float* o[kChannels];
         for (int c = 0; c < kChannels; ++c) o[c] = f.other[c].data();
+        f.old->setChunked(-1);
         f.old->render(f.next, n, o);
         for (int i = 0; i < n; ++i) {
             const float w = std::min(1.f, float(f.xfade + i + 1) / kXfade);
@@ -508,7 +509,6 @@ void Player::Impl::mixBackward(Feed& f, int n, float* const* out)
     constexpr int len = kChunk + kOverlap;
     static_assert(kChunk % kBlock == 0 && kOverlap % kBlock == 0, "blocks of the meters");
     f.old.reset(); // a new mix takes over at the next chunk
-    f.mixer->setChunked(kOverlap);
     f.mixer->setMeterBlock(kBlock);
     const size_t stride = f.mixer->trackPeaks().size();
     for (int done = 0; done < n;) {
@@ -519,6 +519,9 @@ void Player::Impl::mixBackward(Feed& f, int n, float* const* out)
                 f.tailPeaks.assign(f.chunkPeaks.begin(), f.chunkPeaks.begin() + ptrdiff_t(stride));
             else
                 f.tailPeaks.clear();
+            // only a chunk right after the one before carries the filter state on; the first chunk after a seek or
+            // a change of direction starts over like the export (no gain reduction or noise estimate from elsewhere)
+            f.mixer->setChunked(f.haveTail ? kOverlap : -1);
             f.mixer->render(f.next - len, len, buf);
             f.chunkPeaks = f.mixer->blockPeaks();
             for (int c = 0; c < kChannels; ++c) {
