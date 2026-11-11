@@ -1108,7 +1108,7 @@ void test(const QString& dir)
         CHECK(tight);
         // The short request stays within its budget (it grew past an 8192-token model with the 0.17 tools once):
         // system prompt and tools of a fresh chat, the one word above aside. New ops and parameters no longer make it
-        // grow by their whole text (Ai::compactOps, kParamText): 26,844 characters at 0.21 (30,952 before) = 13 % room
+        // grow by their whole text (Ai::compactOps, kParamText): 27,044 characters at 0.21 (30,952 before) = 12.8 % room
         const qint64 used = chat->requestTokens() * 4;
         std::printf("       short request: %lld characters, budget %lld (%lld %% room)\n", used, Ai::kCompactBudget,
                     (Ai::kCompactBudget - used) * 100 / Ai::kCompactBudget);

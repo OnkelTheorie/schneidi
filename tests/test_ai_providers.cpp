@@ -856,7 +856,7 @@ void testContext()
         for (int i = 0; i < 12; ++i)
             props.insert(QString("p%1").arg(i, 2, 10, QChar('0')),
                          QJsonObject{{"type", "string"}, {"description", QString("text of p%1 ").arg(i) + QString(i * 5, 'x')}});
-        const QJsonArray big{tool("render", "Render.", props), tool("edit", "Edit.", {{"ops", QJsonObject{{"type", "array"}}}})};
+        const QJsonArray big{tool("frames", "Frames.", props), tool("edit", "Edit.", {{"ops", QJsonObject{{"type", "array"}}}})};
         const QJsonArray cb = Ai::compactTools(big, ops);
         const QJsonObject r = cb[0]["inputSchema"]["properties"].toObject();
         qsizetype sum = 0;
@@ -868,6 +868,7 @@ void testContext()
         if (!CHECK(sum <= Ai::kParamText && sum > Ai::kParamText / 2))
             std::printf("       %s\n", QJsonDocument(r).toJson(QJsonDocument::Compact).constData());
     }
+    CHECK(Ai::paramTextFor("render") > Ai::kParamText && Ai::paramTextFor("frames") == Ai::kParamText);
     // Without the ops `edit` stays whole (the model could not edit otherwise)
     CHECK_EQ(Ai::compactTools(tools, {})[1].toObject(), tools[1].toObject());
     CHECK(Ai::compactGuide("- social: Short").contains("call `guide` with the topic before such a task):\n- social: Short"));

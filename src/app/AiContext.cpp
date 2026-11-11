@@ -240,6 +240,12 @@ const QStringList kRareOps{"slot", "fill", "comp_from", "track_node", "cutout_no
                            "add_subtitle_track", "hook_variants", "sections", "section", "copy_attributes",
                            "picture_aspect", "flatten", "marks", "link"};
 
+qsizetype paramTextFor(const QString& tool)
+{
+    static const QHash<QString, qsizetype> more{{"render", 540}};
+    return more.value(tool, kParamText);
+}
+
 QString compactOps(const QJsonArray& editOps)
 {
     QStringList ops, names;
@@ -319,7 +325,7 @@ QJsonArray compactTools(const QJsonArray& tools, const QJsonArray& editOps)
             textTimes(p);
             it.value() = p;
         }
-        // At most kParamText characters of parameter texts per tool: the longest of the optional ones go first (the
+        // At most kParamText (paramTextFor) characters of parameter texts per tool: the longest of the optional ones go first (the
         // special cases, as a rule; `help` has them), so a new parameter costs its name and type, not more
         if (!rare) {
             const QJsonArray required = schema.value("required").toArray();
@@ -334,7 +340,7 @@ QJsonArray compactTools(const QJsonArray& tools, const QJsonArray& editOps)
                 return a.first != b.first ? a.first > b.first : a.second < b.second;
             });
             for (const auto& [n, key] : texts) {
-                if (sum <= kParamText) break;
+                if (sum <= paramTextFor(name)) break;
                 QJsonObject p = props[key].toObject();
                 p.remove("description");
                 props[key] = p;
