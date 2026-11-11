@@ -6,7 +6,10 @@
 #include "Satd.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
+#include <memory>
+#include <thread>
 
 namespace schneidi::h264 {
 
@@ -33,6 +36,12 @@ Lookahead::Lookahead(int width, int height, int mbW, int mbH)
 }
 
 void Lookahead::analyse(LookaheadFrame& f, const LookaheadFrame* prev) const
+{
+    prepare(f);
+    search(f, prev);
+}
+
+void Lookahead::prepare(LookaheadFrame& f) const
 {
     const int stride = halfW_ + 2 * kMargin;
     const int rows = halfH_ + 2 * kMargin;
@@ -75,6 +84,19 @@ void Lookahead::analyse(LookaheadFrame& f, const LookaheadFrame* prev) const
                 }
                 f.thumb[size_t(y) * tw + x] = uint8_t((sum + 8) >> 4);
             }
+    }
+}
+
+void Lookahead::search(LookaheadFrame& f, const LookaheadFrame* prev) const
+{
+    sceneCut(f, prev);
+    costs(f, prev);
+}
+
+void Lookahead::sceneCut(LookaheadFrame& f, const LookaheadFrame* prev) const
+{
+    {
+        const int tw = mbW_ * 4, th = mbH_ * 4;
         f.sceneChange = false;
         constexpr int kRange = 8; // thumbnail pixels = 32 picture pixels
         if (prev && prev->thumb.size() == f.thumb.size()) {
@@ -110,6 +132,11 @@ void Lookahead::analyse(LookaheadFrame& f, const LookaheadFrame* prev) const
         }
     }
 
+}
+
+void Lookahead::costs(LookaheadFrame& f, const LookaheadFrame* prev, int threads) const
+{
+    const int stride = halfW_ + 2 * kMargin;
     const size_t n = size_t(mbW_) * mbH_;
     f.intraCost.assign(n, 0);
     f.interCost.assign(n, 0);
@@ -123,8 +150,9 @@ void Lookahead::analyse(LookaheadFrame& f, const LookaheadFrame* prev) const
     };
     constexpr int kLambda = 1; // SATD per bit of vector difference (the lookahead has no QP)
     constexpr int kIntraPenalty = 8;
-    for (int by = 0; by < mbH_; ++by)
-        for (int bx = 0; bx < mbW_; ++bx) {
+    // One macroblock; its vector predictor reads the left, top and top-right vectors.
+    auto doMb = [&](int bx, int by, double& intraSum, double& interSum) {
+        {
             const size_t m = size_t(by) * mbW_ + bx;
             const uint8_t* cur = at(f.half, bx * 8, by * 8);
 
@@ -142,11 +170,11 @@ void Lookahead::analyse(LookaheadFrame& f, const LookaheadFrame* prev) const
                 std::fill(pred + y * 8, pred + y * 8 + 8, cur[y * stride - 1]);
             intra = std::min(intra, satd8x8U8(cur, stride, pred, 8)) + kIntraPenalty;
             f.intraCost[m] = intra;
-            f.intraSum += intra;
+            intraSum += intra;
             if (!prev) {
                 f.interCost[m] = intra;
-                f.interSum += intra;
-                continue;
+                interSum += intra;
+                return;
             }
 
             // Motion: predictor = median of the left, top and top-right vectors (half-pel units).
@@ -261,8 +289,47 @@ void Lookahead::analyse(LookaheadFrame& f, const LookaheadFrame* prev) const
             f.mvx[m] = int16_t(hx);
             f.mvy[m] = int16_t(hy);
             f.interCost[m] = bestSatd;
-            f.interSum += std::min(bestSatd, intra);
+            interSum += std::min(bestSatd, intra);
         }
+    };
+    // Rows in a wavefront (each two macroblocks behind the row above); the sums are of integers,
+    // so adding them row by row gives the same doubles in any order.
+    std::vector<double> rowIntra(size_t(mbH_), 0.0), rowInter(size_t(mbH_), 0.0);
+    threads = std::clamp(threads, 1, mbH_);
+    if (threads == 1) {
+        for (int by = 0; by < mbH_; ++by)
+            for (int bx = 0; bx < mbW_; ++bx)
+                doMb(bx, by, rowIntra[size_t(by)], rowInter[size_t(by)]);
+    } else {
+        std::unique_ptr<std::atomic<int>[]> done(new std::atomic<int>[size_t(mbH_)]);
+        for (int r = 0; r < mbH_; ++r)
+            done[size_t(r)].store(0, std::memory_order_relaxed);
+        std::atomic<int> nextRow{0};
+        auto worker = [&] {
+            for (int by; (by = nextRow.fetch_add(1)) < mbH_;)
+                for (int bx = 0; bx < mbW_; ++bx) {
+                    if (by > 0) {
+                        const int need = std::min(bx + 2, mbW_);
+                        for (int v = done[size_t(by - 1)].load(std::memory_order_acquire); v < need;
+                             v = done[size_t(by - 1)].load(std::memory_order_acquire))
+                            done[size_t(by - 1)].wait(v, std::memory_order_acquire);
+                    }
+                    doMb(bx, by, rowIntra[size_t(by)], rowInter[size_t(by)]);
+                    done[size_t(by)].store(bx + 1, std::memory_order_release);
+                    done[size_t(by)].notify_all();
+                }
+        };
+        std::vector<std::thread> workers;
+        for (int t = 1; t < threads; ++t)
+            workers.emplace_back(worker);
+        worker();
+        for (auto& t : workers)
+            t.join();
+    }
+    for (int r = 0; r < mbH_; ++r) {
+        f.intraSum += rowIntra[size_t(r)];
+        f.interSum += rowInter[size_t(r)];
+    }
 }
 
 void Lookahead::propagate(std::deque<LookaheadFrame>& frames) const

@@ -4,9 +4,13 @@
 #pragma once
 
 #include "BitWriter.h"
+#include "Cabac.h"
 #include "H264Encoder.h"
 
 #include <array>
+#include <atomic>
+#include <climits>
+#include <thread>
 #include <memory>
 #include <vector>
 
@@ -20,6 +24,7 @@ struct PhaseClock;
 struct RefPic {
     std::vector<uint8_t> y, u, v;
     std::vector<uint8_t> F, B, V, J;
+    std::atomic<int> rowsReady{0}; // macroblock rows that are final (planes and margin included)
 };
 
 class FrameCoder {
@@ -29,6 +34,50 @@ public:
     void loadSource(const Picture& picture);
     // Codes the picture (decisions, entropy coding, deblocking) into its slice NAL units.
     std::vector<uint8_t> code(bool idr, int frameNum, int idrPicId, PhaseClock& clock);
+
+    // Pieces of code(), also used to keep two pictures in flight (CABAC only): reset, waveBegin,
+    // then waveRow for every row claimRow hands out (any thread, in order), waveEnd, assemble.
+    void reset(bool idr, int framesSinceIdr, int idrCount);
+    void waveBegin(int threads, RefPic* out, bool writerThread);
+    int claimRow()
+    {
+        const int r = wave_.nextRow.fetch_add(1, std::memory_order_acq_rel);
+        return r < wave_.rows ? r : -1;
+    }
+    bool rowsLeft() const { return wave_.nextRow.load(std::memory_order_acquire) < wave_.rows; }
+    void waveRow(int r);
+    void waveEnd();
+    std::vector<uint8_t> assemble(PhaseClock& clock);
+
+    struct WaveState {
+        int rows = 0, allocated = 0, spin = 128;
+        bool inlineDeblock = false;
+        std::vector<CabacEncoder> rowEngine, rowSnap;
+        std::unique_ptr<std::atomic<int>[]> progress, deblocked; // macroblocks decided / filtered per row
+        std::unique_ptr<bool[]> rowPrevNz;
+        std::atomic<int> written{0};          // rows the entropy writer has finished
+        std::atomic<int> nextRow{INT_MAX / 2}; // next row to hand out (none before waveBegin)
+        std::atomic<int> rowsDone{0};
+        std::atomic<long> waitUs{0}, refWaitUs{0}; // waiting for the row above / the reference (H264_TIMING)
+        std::thread writer;
+        RefPic* out = nullptr; // reference picture filled band by band, or nullptr
+        int yCopied = 0, cCopied = 0, fBuilt = 0, hBuilt = 0;
+    };
+    WaveState wave_;
+    // Picture results kept until the encoder hands the picture out.
+    std::vector<uint8_t> done_;
+    std::shared_ptr<RefPic> outPic_; // the reference picture being filled, kept alive while coding
+    int frameNo_ = 0, outQp_ = 0;
+    bool outSceneCut_ = false, rcIdr_ = false, rcLookahead_ = false;
+    double rcCost_ = 0;
+    bool idr_ = false;
+    int framesSinceIdr_ = 0, idrCount_ = 0;
+    std::vector<int> sliceTop_;
+    std::vector<BitWriter> slices_;
+    void sliceHeader(BitWriter& bw, int s) const;
+    void encodeSlice(int s);
+    void waveWrite();
+    void publishBand(int k);
 
     // Syntax elements of one coded macroblock, kept so the entropy coder can run after the decision.
     struct MbSyntax {
@@ -80,6 +129,8 @@ public:
                           uint8_t* luma, uint8_t (*chroma)[64]) const;
     int64_t mbSsd(int mbx, int mby) const;
     void buildRefPlanes(RefPic& R);
+    void refFullRows(RefPic& R, int y0, int y1) const;
+    void refHalfRows(RefPic& R, int y0, int y1) const;
     void deblockPicture();
     void deblockMb(int mbx, int mby);
     // CABAC neighbour state (what the context selection of later macroblocks reads). The
@@ -137,7 +188,6 @@ public:
     int mbTypeOffset_ = 0;                  // 5 for intra macroblocks in P slices
     bool pSlice_ = false;
     bool deblockedInline_ = false; // the wavefront filtered the picture already
-    bool intraSkip8_ = false, intraSkip16_ = false; // intra try in a P picture without Intra 8x8 / 16x16 (experiments)
     bool detectSceneCut(std::vector<uint8_t>& prevThumb);
     std::vector<float> treeOffset_; // per macroblock, 0 without the tree
 };

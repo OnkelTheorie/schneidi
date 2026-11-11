@@ -55,7 +55,40 @@ struct EncoderConfig {
     // Bitrate mode with a first pass over the whole clip (FirstPass): one QP for the clip, only a
     // small correction while encoding. The pictures must come in the same order as analysed.
     std::shared_ptr<const FirstPassStats> firstPass;
+    // idr_pic_id of the first IDR picture: neighbouring chunks of a clip encoded side by side
+    // (planChunks) start far apart so two IDR pictures in a row never share one.
+    int idrPicIdBase = 0;
+    // Frame threading (CABAC, threads >= 2): the next picture starts while the last rows of the
+    // previous one are still coded; one more picture of delay(). Same stream either way.
+    bool frameThreads = true;
+    // VUI video signal (E.2.1, ITU-T H.273 codes; 2 = unspecified): written when one is set or the
+    // range is full. E.g. BT.709: 1, 1, 1.
+    int colourPrimaries = 2;
+    int transferCharacteristics = 2;
+    int matrixCoefficients = 2;
+    bool fullRange = false;
 };
+
+// level_idc (Table A-1) for this configuration: the lowest level whose macroblock rate, frame
+// size, decoded picture buffer and (bitrate mode, 1.5x the target as peak) bitrate fit.
+int levelIdcFor(const EncoderConfig& cfg);
+
+// Parallel encoding in chunks: independent encoders, each on its own part of the clip starting
+// with an IDR picture, run side by side; their streams are concatenated (SPS/PPS once, from any of
+// them - they are the same). Seams go where the whole clip would have a keyframe anyway (caller's
+// keyframes, scene cuts, the GOP schedule) if one lies near the even split. In the bitrate mode the
+// clip's budget is shared by the predicted bits of each chunk at one QP (first pass), and every
+// chunk runs the first-pass rate control on its own part.
+struct ChunkPlan {
+    std::vector<int> start;                                       // first picture of each chunk
+    std::vector<int> bitrateKbps;                                 // per chunk (bitrate mode)
+    std::vector<std::shared_ptr<const FirstPassStats>> firstPass; // per chunk (bitrate mode)
+    // Configuration of chunk i: cfg with its bitrate, first pass, idr_pic_id base and threads.
+    EncoderConfig configFor(const EncoderConfig& cfg, int i, int threads) const;
+};
+// minFrames: shortest chunk; 0 = 15 s of pictures (each seam costs about 8 %·s of BD-rate over the
+// clip, measured: 15 s chunks stay near 0.5 %). Short clips get one chunk.
+ChunkPlan planChunks(const FirstPassStats& stats, const EncoderConfig& cfg, int chunks, int minFrames = 0);
 
 struct Picture {
     const uint8_t* y = nullptr;
@@ -69,16 +102,20 @@ struct Picture {
 // picture of the clip (a few ms per 1080p picture), without encoding anything.
 class FirstPass {
 public:
-    FirstPass(int width, int height);
+    // threads > 1: pictures are analysed in batches side by side (same numbers).
+    FirstPass(int width, int height, int threads = 1);
     ~FirstPass();
     void add(const Picture& picture, bool forceKeyframe = false);
-    std::shared_ptr<const FirstPassStats> stats() const { return stats_; }
+    std::shared_ptr<const FirstPassStats> stats() const;
 
 private:
-    int width_, height_;
+    void analyseBatch() const;
+    int width_, height_, threads_;
     std::unique_ptr<Lookahead> la_;
-    LookaheadFrame prev_;
-    bool havePrev_ = false;
+    // Pictures waiting for the next batch, and the last analysed one (their predecessor).
+    mutable std::vector<LookaheadFrame> batch_;
+    mutable LookaheadFrame prev_;
+    mutable bool havePrev_ = false;
     std::shared_ptr<FirstPassStats> stats_;
 };
 
@@ -107,7 +144,25 @@ public:
     int lastQp() const { return lastQp_; }
 
 private:
-    std::vector<uint8_t> encodeFrame(LookaheadFrame& frame);
+    struct Pool;
+    FrameCoder* startFrame(LookaheadFrame& frame);
+    std::vector<uint8_t> finishFrame(FrameCoder& fc);
+    std::vector<uint8_t> step(LookaheadFrame* next);
+    bool pipelined() const { return cfg_.frameThreads && useCabac() && cfg_.threads >= 2; }
+    void applyRc(int upTo);
+    std::unique_ptr<Pool> pool_;
+    FrameCoder* inFlight_ = nullptr;           // started, not finished (frame threading)
+    const FrameCoder* lastStarted_ = nullptr;  // the picture before the next one (search start points)
+    // Rate control learns from a picture two pictures later (the one between may still be coded),
+    // with or without frame threading, so the stream does not depend on the thread count.
+    struct RcRecord {
+        int index;
+        bool idr, lookahead;
+        double cost;
+        int qp;
+        double bits;
+    };
+    std::deque<RcRecord> rcDone_;
     void markKeyframes();
     bool useLookahead() const { return cfg_.lookahead > 0 && cfg_.gop > 1 && (cfg_.bitrateKbps > 0 || cfg_.mbtree); }
     bool useCabac() const { return cfg_.cabac && cfg_.mode != IntraMode::Pcm; }

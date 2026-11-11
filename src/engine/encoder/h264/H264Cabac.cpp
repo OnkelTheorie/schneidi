@@ -454,7 +454,9 @@ void FrameCoder::cabacWriteMb(CabacEncoder& ce, CabacState& st, int mbx, int mby
 // coded yet"; each coefficient may become 0, floor(|x|) or floor(|x|) + 1. Distortion is the
 // pixel-domain SSD (scale = pixel error per level unit), rate the live contexts' bin costs.
 // x: real-valued levels in scan order; cat 2 (luma 4x4) or 5 (luma 8x8). Returns levels in scan order.
-static const bool gTrellisTwo = std::getenv("H264_EXP") && (std::atoi(std::getenv("H264_EXP")) & 1);
+// A level of 1.5 or more only rounds down or up, never to zero (-1.1 % instructions, BD-rate
+// -0.08 %); H264_TRELLIS3=1 keeps the zero candidate too (before 11.11.).
+static const bool gTrellisTwo = std::getenv("H264_TRELLIS3") == nullptr;
 
 void cabacTrellis(const CabacEncoder& ce, int cat, const double* x, const double* scale, int count, double lambda,
                   int cbfInc, int* out)
@@ -517,23 +519,31 @@ void cabacTrellis(const CabacEncoder& ce, int cat, const double* x, const double
             cand[nc++] = fl + 1;
         }
         std::fill(fresh, fresh + 9, 1e300);
+        // Significance and last bins of this position do not depend on the node.
+        const bool notLast = k < count - 1;
+        const uint32_t sig0 = ce.binCost(sigCtx(k), 0);
+        const uint32_t sig1Last[2] = {notLast ? ce.binCost(sigCtx(k), 1) + ce.binCost(lastCtx(k), 0) : 0,
+                                      notLast ? ce.binCost(sigCtx(k), 1) + ce.binCost(lastCtx(k), 1) : 0};
+        double errSq[3];
+        for (int ci = 0; ci < nc; ++ci) {
+            const double err = (ax - cand[ci]) * scale[k];
+            errSq[ci] = err * err;
+        }
         for (int n = 0; n < 9; ++n) {
             if (cost[n] >= 1e299)
                 continue;
             const bool empty = n == kEmpty;
             for (int ci = 0; ci < nc; ++ci) {
                 const int mag = cand[ci];
-                const double err = (ax - mag) * scale[k];
-                double cst = cost[n] + err * err;
+                double cst = cost[n] + errSq[ci];
                 int to;
                 if (mag == 0) {
                     if (!empty)
-                        cst += l256 * ce.binCost(sigCtx(k), 0);
+                        cst += l256 * sig0;
                     to = n;
                 } else {
                     uint32_t bits = levelBits(empty ? 0 : n, mag - 1);
-                    if (k < count - 1)
-                        bits += ce.binCost(sigCtx(k), 1) + ce.binCost(lastCtx(k), empty ? 1 : 0);
+                    bits += sig1Last[empty ? 1 : 0];
                     cst += l256 * bits;
                     to = next(empty ? 0 : n, mag);
                 }

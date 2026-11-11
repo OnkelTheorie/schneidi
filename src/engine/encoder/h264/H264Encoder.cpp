@@ -18,6 +18,8 @@
 #include <cstring>
 #include <memory>
 #include <thread>
+#include <condition_variable>
+#include <mutex>
 
 #if defined(__SSE2__) || defined(_M_X64)
 #include <emmintrin.h>
@@ -52,7 +54,14 @@ std::atomic<long> gStatInter{0}, gStatInterCbp{0}, gStatT8{0};
 std::atomic<long> gStatIntraTry[4] = {}, gStatIntraWin[4] = {}; // by ratio of the intra estimate to the inter cost
 // Experiments (H264_EXP bit mask), for A/B measurements only.
 const int gExp = std::getenv("H264_EXP") ? std::atoi(std::getenv("H264_EXP")) : 0;
-const double gIntraFactor = std::getenv("H264_INTRAF") ? std::atof(std::getenv("H264_INTRAF")) : 2.0;
+// Per thread (rows of a picture run on several threads): intra try in a P picture without Intra
+// 8x8 / 16x16 (experiments).
+thread_local bool tIntraSkip8 = false, tIntraSkip16 = false;
+// Intra try in P pictures only when its estimate is below 1.5x the inter cost (2.0 before 11.11.:
+// -10 % instructions for +0.17 % BD-rate), and in the borderline case (estimate above the inter
+// cost) without Intra 8x8 / 16x16 (-8 % for +0.2 %). H264_FULLINTRA=1 restores the full search.
+const bool gFullIntra = std::getenv("H264_FULLINTRA") != nullptr;
+const double gIntraFactor = std::getenv("H264_INTRAF") ? std::atof(std::getenv("H264_INTRAF")) : gFullIntra ? 2.0 : 1.5;
 double gPhaseMs[8] = {};
 double gWaitMs = 0; // summed over threads
 int gPhaseFrames = 0;
@@ -88,9 +97,72 @@ int chromaQp(int qp)
     return qp < 30 ? qp : kTable[qp - 30];
 }
 
+// Intra 4x4 / 8x8 direction search: all nine modes in order, or (experiment H264_EXP & 64) DC,
+// vertical, horizontal and the predicted mode first, then only the directions next to the best
+// one (angular order HU - H - HD - DDR - VR - V - VL - DDL). tryMode(mode) returns its cost.
+template <class F>
+void intraModeSearch(F&& tryMode, int predMode)
+{
+    if (!(gExp & 64)) {
+        for (int mode = 0; mode < 9; ++mode)
+            tryMode(mode);
+        return;
+    }
+    int cost[9];
+    std::fill(cost, cost + 9, 1 << 30);
+    for (int mode : {2, 0, 1})
+        cost[mode] = tryMode(mode);
+    if (predMode > 2)
+        cost[predMode] = tryMode(predMode);
+    auto test = [&](int mode) {
+        if (cost[mode] == (1 << 30) && mode != predMode)
+            cost[mode] = tryMode(mode);
+    };
+    if (cost[0] <= cost[1] && cost[0] <= cost[2]) { // vertical: its neighbours, then one further
+        test(5);
+        test(7);
+        test(cost[5] < cost[7] ? 4 : 3);
+    } else if (cost[1] <= cost[2]) { // horizontal
+        test(6);
+        test(8);
+        if (cost[6] < cost[1])
+            test(4);
+    } else { // DC: the two diagonals
+        test(3);
+        test(4);
+    }
+}
+
 inline uint8_t clip1(int v) { return uint8_t(v < 0 ? 0 : v > 255 ? 255 : v); }
 
 // One step of a spin wait: a pause for the hyperthread sibling, then let others run.
+// Waits until counter >= need: a short spin (the wavefront usually catches up within
+// microseconds), then sleeps in the kernel (atomic wait) instead of burning the hyperthread
+// sibling's time. Writers call notify_all after every store that someone may wait for.
+// Spin length before sleeping: long while the threads have a core each (sleeping costs latency;
+// 4 threads on 6 cores: +6 % with 8192 instead of 128), short once they share cores with SMT
+// siblings (10 threads on 6 cores: 128 is 4 % faster than 8192). H264_SPIN overrides.
+int spinFor(int threads)
+{
+    if (const char* e = std::getenv("H264_SPIN"))
+        return std::atoi(e);
+    const int hw = int(std::thread::hardware_concurrency());
+    return hw > 0 && 2 * threads <= hw ? 8192 : 128;
+}
+
+inline void waitAtLeast(const std::atomic<int>& counter, int need, int spin = 128)
+{
+    for (int i = 0; i < spin; ++i) {
+        if (counter.load(std::memory_order_acquire) >= need)
+            return;
+#if defined(__SSE2__) || defined(_M_X64)
+        _mm_pause();
+#endif
+    }
+    for (int v = counter.load(std::memory_order_acquire); v < need; v = counter.load(std::memory_order_acquire))
+        counter.wait(v, std::memory_order_acquire);
+}
+
 inline void spinWait()
 {
 #if defined(__SSE2__) || defined(_M_X64)
@@ -328,11 +400,45 @@ Encoder::Encoder(const EncoderConfig& config)
         cfg_.deblock = false;
     for (auto& c : coders_)
         c = std::make_unique<FrameCoder>(cfg_);
+    idrCount_ = cfg_.idrPicIdBase;
 }
 
 const std::vector<uint8_t>& Encoder::reconY() const { return (last_ ? last_ : coders_[0].get())->recY_; }
 const std::vector<uint8_t>& Encoder::reconU() const { return (last_ ? last_ : coders_[0].get())->recU_; }
 const std::vector<uint8_t>& Encoder::reconV() const { return (last_ ? last_ : coders_[0].get())->recV_; }
+
+int levelIdcFor(const EncoderConfig& cfg)
+{
+    struct Level {
+        int idc;
+        int64_t maxMbps, maxFs, maxDpbMbs, maxBr; // MaxBR in 1000 (1250 for High) bit/s
+    };
+    static constexpr Level kLevels[] = {
+        {10, 1485, 99, 396, 64},          {11, 3000, 396, 900, 192},        {12, 6000, 396, 2376, 384},
+        {13, 11880, 396, 2376, 768},      {20, 11880, 396, 2376, 2000},     {21, 19800, 792, 4752, 4000},
+        {22, 20250, 1620, 8100, 4000},    {30, 40500, 1620, 8100, 10000},   {31, 108000, 3600, 18000, 14000},
+        {32, 216000, 5120, 20480, 20000}, {40, 245760, 8192, 32768, 20000}, {41, 245760, 8192, 32768, 50000},
+        {42, 522240, 8704, 34816, 50000}, {50, 589824, 22080, 110400, 135000}, {51, 983040, 36864, 184320, 240000},
+        {52, 2073600, 36864, 184320, 240000}, {60, 4177920, 139264, 696320, 240000}, {61, 8355840, 139264, 696320, 480000},
+        {62, 16711680, 139264, 696320, 800000},
+    };
+    const int64_t mbW = (cfg.width + 15) / 16, mbH = (cfg.height + 15) / 16, fs = mbW * mbH;
+    const double fps = cfg.fps > 0 ? cfg.fps : 60.0;
+    const bool high = cfg.cabac && cfg.transform8x8 && cfg.mode != IntraMode::Pcm;
+    const double brFactor = high ? 1250.0 : 1000.0;
+    const int64_t dpb = std::max(1, cfg.refs);
+    for (const Level& l : kLevels) {
+        const int64_t side = int64_t(std::sqrt(double(l.maxFs) * 8.0)); // A.3.1: width and height in macroblocks
+        if (double(fs) * fps > double(l.maxMbps) * 1.0001 || fs > l.maxFs || mbW > side || mbH > side)
+            continue;
+        if (fs * dpb > l.maxDpbMbs)
+            continue;
+        if (cfg.bitrateKbps > 0 && cfg.bitrateKbps * 1.5 * 1000.0 > double(l.maxBr) * brFactor)
+            continue;
+        return l.idc;
+    }
+    return 62;
+}
 
 std::vector<uint8_t> Encoder::headers() const
 {
@@ -349,7 +455,7 @@ std::vector<uint8_t> Encoder::headers() const
             bw.u(66, 8);   // profile_idc: Baseline
             bw.u(0xC0, 8); // constraint_set0 + constraint_set1 (constrained baseline)
         }
-        bw.u(40, 8);   // level_idc 4.0
+        bw.u(uint32_t(levelIdcFor(cfg_)), 8); // level_idc
         bw.ue(0);      // seq_parameter_set_id
         if (useT8()) {
             bw.ue(1);       // chroma_format_idc 4:2:0
@@ -374,11 +480,23 @@ std::vector<uint8_t> Encoder::headers() const
             bw.ue(0);
             bw.ue(uint32_t((padH_ - cfg_.height) / 2));
         }
-        // VUI (E.1.1): only timing, so containers and players know the frame rate.
+        // VUI (E.1.1): timing, so containers and players know the frame rate, and the video signal
+        // (range, colours) when the caller knows it.
         bw.flag(true); // vui_parameters_present_flag
         bw.flag(false); // aspect_ratio_info_present_flag
         bw.flag(false); // overscan_info_present_flag
-        bw.flag(false); // video_signal_type_present_flag
+        const bool colours = cfg_.colourPrimaries != 2 || cfg_.transferCharacteristics != 2 || cfg_.matrixCoefficients != 2;
+        bw.flag(colours || cfg_.fullRange); // video_signal_type_present_flag
+        if (colours || cfg_.fullRange) {
+            bw.u(5, 3);               // video_format: unspecified
+            bw.flag(cfg_.fullRange);  // video_full_range_flag
+            bw.flag(colours);         // colour_description_present_flag
+            if (colours) {
+                bw.u(uint32_t(cfg_.colourPrimaries & 255), 8);
+                bw.u(uint32_t(cfg_.transferCharacteristics & 255), 8);
+                bw.u(uint32_t(cfg_.matrixCoefficients & 255), 8);
+            }
+        }
         bw.flag(false); // chroma_loc_info_present_flag
         bw.flag(true);  // timing_info_present_flag
         // Frame rate = time_scale / (2 * num_units_in_tick); 1001-based rates stay exact.
@@ -399,7 +517,7 @@ std::vector<uint8_t> Encoder::headers() const
         bw.ue(16);       // log2_max_mv_length_horizontal
         bw.ue(16);       // log2_max_mv_length_vertical
         bw.ue(0);        // max_num_reorder_frames
-        bw.ue(1);        // max_dec_frame_buffering
+        bw.ue(uint32_t(std::max(1, cfg_.refs))); // max_dec_frame_buffering (at least max_num_ref_frames)
         bw.rbspTrailing();
         appendNal(out, 3, 7, bw.bytes());
     }
@@ -478,8 +596,9 @@ Picture pictureOf(const LookaheadFrame& f, int w)
 
 } // namespace
 
-FirstPass::FirstPass(int width, int height)
-    : width_(width), height_(height), la_(std::make_unique<Lookahead>(width, height, (width + 15) / 16, (height + 15) / 16)),
+FirstPass::FirstPass(int width, int height, int threads)
+    : width_(width), height_(height), threads_(std::max(1, threads)),
+      la_(std::make_unique<Lookahead>(width, height, (width + 15) / 16, (height + 15) / 16)),
       stats_(std::make_shared<FirstPassStats>())
 {
 }
@@ -489,17 +608,147 @@ FirstPass::~FirstPass() = default;
 void FirstPass::add(const Picture& pic, bool forceKeyframe)
 {
     LookaheadFrame f; // the analysis reads only the luma
+    f.forceKeyframe = forceKeyframe;
     f.y.resize(size_t(width_) * height_);
     for (int y = 0; y < height_; ++y)
         std::memcpy(f.y.data() + size_t(y) * width_, pic.y + size_t(y) * pic.strideY, size_t(width_));
-    la_->analyse(f, havePrev_ ? &prev_ : nullptr);
-    stats_->intraSum.push_back(f.intraSum);
-    stats_->interSum.push_back(f.interSum);
-    stats_->sceneChange.push_back(f.sceneChange ? 1 : 0);
-    stats_->forceKeyframe.push_back(forceKeyframe ? 1 : 0);
-    f.y = {};
-    prev_ = std::move(f);
+    batch_.push_back(std::move(f));
+    if (int(batch_.size()) >= 4 * threads_)
+        analyseBatch();
+}
+
+// Half pictures, thumbnails and scene changes of the whole batch side by side, then the costs
+// in order (each against its predecessor, the last one of the batch before for the first).
+void FirstPass::analyseBatch() const
+{
+    const int n = int(batch_.size());
+    if (!n)
+        return;
+    auto parallel = [&](auto&& fn) {
+        std::atomic<int> next{0};
+        auto run = [&] {
+            for (int i; (i = next.fetch_add(1)) < n;)
+                fn(i);
+        };
+        std::vector<std::thread> workers;
+        for (int t = 1; t < std::min(threads_, n); ++t)
+            workers.emplace_back(run);
+        run();
+        for (auto& t : workers)
+            t.join();
+    };
+    auto prevOf = [&](int i) { return i > 0 ? &batch_[size_t(i) - 1] : havePrev_ ? &prev_ : nullptr; };
+    parallel([&](int i) { la_->prepare(batch_[size_t(i)]); });
+    parallel([&](int i) { la_->sceneCut(batch_[size_t(i)], prevOf(i)); });
+    // The motion search starts from the predecessor's vectors: in order.
+    for (int i = 0; i < n; ++i)
+        la_->costs(batch_[size_t(i)], prevOf(i), threads_);
+    for (LookaheadFrame& f : batch_) {
+        stats_->intraSum.push_back(f.intraSum);
+        stats_->interSum.push_back(f.interSum);
+        stats_->sceneChange.push_back(f.sceneChange ? 1 : 0);
+        stats_->forceKeyframe.push_back(f.forceKeyframe ? 1 : 0);
+    }
+    prev_ = std::move(batch_.back());
+    prev_.y = {};
     havePrev_ = true;
+    batch_.clear();
+}
+
+std::shared_ptr<const FirstPassStats> FirstPass::stats() const
+{
+    analyseBatch();
+    return stats_;
+}
+
+namespace {
+
+// Keyframes as the encoder places them from `from` on (schedule, caller, scene cuts), `from` itself
+// being one.
+std::vector<uint8_t> keyPlan(const FirstPassStats& st, const EncoderConfig& cfg, size_t from, size_t to)
+{
+    std::vector<uint8_t> key(to - from, 0);
+    int since = 0;
+    for (size_t i = from; i < to; ++i) {
+        const bool k = i == from || since >= cfg.gop || st.forceKeyframe[i] || (cfg.sceneCut && st.sceneChange[i] && since >= 6);
+        if (k)
+            since = 0;
+        ++since;
+        key[i - from] = k;
+    }
+    return key;
+}
+
+} // namespace
+
+ChunkPlan planChunks(const FirstPassStats& st, const EncoderConfig& cfg, int chunks, int minFrames)
+{
+    ChunkPlan plan;
+    const int n = int(st.size());
+    if (minFrames <= 0)
+        minFrames = int(std::lround(15.0 * (cfg.fps > 0 ? cfg.fps : 60.0)));
+    chunks = std::clamp(chunks, 1, std::max(1, n / std::max(1, minFrames)));
+    const std::vector<uint8_t> key = keyPlan(st, cfg, 0, size_t(n));
+    plan.start.push_back(0);
+    for (int c = 1; c < chunks; ++c) {
+        // The keyframe nearest to the even split within a quarter chunk, else the split itself
+        // (H264_CHUNK_EVEN: always the split, to measure what a seam costs).
+        const int target = int(int64_t(c) * n / chunks);
+        const int window = std::getenv("H264_CHUNK_EVEN") ? -1 : n / chunks / 4;
+        int best = target;
+        for (int d = 0; d <= window; ++d) {
+            if (target - d > plan.start.back() + minFrames / 2 && key[size_t(target - d)]) {
+                best = target - d;
+                break;
+            }
+            if (target + d < n && key[size_t(target + d)]) {
+                best = target + d;
+                break;
+            }
+        }
+        if (best - plan.start.back() >= minFrames / 2 && n - best >= minFrames / 2)
+            plan.start.push_back(best);
+    }
+    if (cfg.bitrateKbps <= 0)
+        return plan;
+    // Bits each chunk needs at one QP: I pictures cost about 2.5x their lookahead cost compared
+    // with P pictures (measured k ratio) and sit 3 QP lower (x sqrt 2).
+    constexpr double kIntraWeight = 2.5 * 1.41421356;
+    const size_t chunkCount = plan.start.size();
+    std::vector<double> need(chunkCount, 0.0);
+    double total = 0;
+    for (size_t c = 0; c < chunkCount; ++c) {
+        const size_t a = size_t(plan.start[c]), b = c + 1 < chunkCount ? size_t(plan.start[c + 1]) : size_t(n);
+        const std::vector<uint8_t> k = keyPlan(st, cfg, a, b);
+        auto part = std::make_shared<FirstPassStats>();
+        for (size_t i = a; i < b; ++i) {
+            need[c] += k[i - a] ? kIntraWeight * st.intraSum[i] : st.interSum[i];
+            part->intraSum.push_back(st.intraSum[i]);
+            part->interSum.push_back(st.interSum[i]);
+            part->sceneChange.push_back(st.sceneChange[i]);
+            part->forceKeyframe.push_back(st.forceKeyframe[i]);
+        }
+        total += need[c];
+        plan.firstPass.push_back(std::move(part));
+    }
+    const double budget = double(cfg.bitrateKbps) * n; // kbit * fps
+    for (size_t c = 0; c < chunkCount; ++c) {
+        const double frames = double(plan.firstPass[c]->size());
+        plan.bitrateKbps.push_back(std::max(1, int(std::lround(budget * need[c] / std::max(1.0, total) / frames))));
+    }
+    return plan;
+}
+
+EncoderConfig ChunkPlan::configFor(const EncoderConfig& cfg, int i, int threads) const
+{
+    EncoderConfig c = cfg;
+    c.threads = threads;
+    c.idrPicIdBase = (i * 4096) & 0xFFFF; // far from the ids of the chunk before
+    if (size_t(i) < bitrateKbps.size()) {
+        c.bitrateKbps = bitrateKbps[size_t(i)];
+        c.firstPass = firstPass[size_t(i)];
+    }
+    return c;
 }
 
 // QP for the P pictures at which the pictures not coded yet (first-pass costs, k per picture type
@@ -514,9 +763,84 @@ double Encoder::twoPassQp(double kI, double kP) const
     return 6.0 * std::log2(std::max(1.0, need) / budget);
 }
 
-int Encoder::delay() const { return useLookahead() ? std::max(0, cfg_.lookahead - 1) : 0; }
+int Encoder::delay() const { return (useLookahead() ? std::max(0, cfg_.lookahead - 1) : 0) + (pipelined() ? 1 : 0); }
 
-Encoder::~Encoder() { joinPending(); }
+// Workers of the frame threading: they take rows of the oldest picture first, then of the next
+// one (which waits for the reference rows it needs), so no worker ever waits on a row nobody has.
+struct Encoder::Pool {
+    std::mutex m;
+    std::condition_variable cv;
+    std::vector<std::thread> threads;
+    FrameCoder* active[2] = {nullptr, nullptr}; // oldest first
+    bool stop = false;
+
+    explicit Pool(int count)
+    {
+        for (int t = 0; t < count; ++t)
+            threads.emplace_back([this] { run(); });
+    }
+    ~Pool()
+    {
+        {
+            std::lock_guard<std::mutex> l(m);
+            stop = true;
+        }
+        cv.notify_all();
+        for (auto& t : threads)
+            t.join();
+    }
+    void run()
+    {
+        for (;;) {
+            FrameCoder* c = nullptr;
+            int r = -1;
+            {
+                std::unique_lock<std::mutex> l(m);
+                for (;;) {
+                    if (stop)
+                        return;
+                    for (FrameCoder* a : active)
+                        if (a && a->rowsLeft() && (r = a->claimRow()) >= 0) {
+                            c = a;
+                            break;
+                        }
+                    if (c)
+                        break;
+                    cv.wait(l);
+                }
+            }
+            c->waveRow(r);
+        }
+    }
+    void add(FrameCoder* c)
+    {
+        {
+            std::lock_guard<std::mutex> l(m);
+            (active[0] ? active[1] : active[0]) = c;
+        }
+        cv.notify_all();
+    }
+    void remove(FrameCoder* c)
+    {
+        std::lock_guard<std::mutex> l(m);
+        if (active[0] == c) {
+            active[0] = active[1];
+            active[1] = nullptr;
+        } else if (active[1] == c) {
+            active[1] = nullptr;
+        }
+    }
+};
+
+Encoder::~Encoder()
+{
+    joinPending();
+    if (inFlight_) {
+        inFlight_->waveEnd();
+        pool_->remove(inFlight_);
+    }
+    pool_.reset();
+}
 
 // The analysis of the newest picture runs beside the encoding of the oldest; it joins the
 // queue before the next picture is handled.
@@ -534,23 +858,28 @@ std::vector<uint8_t> Encoder::encode(const Picture& picture, bool forceKeyframe)
 {
     LookaheadFrame f = copyPicture(picture, cfg_.width, cfg_.height, forceKeyframe);
     if (!useLookahead())
-        return encodeFrame(f);
+        return step(&f);
     if (!la_)
         la_ = std::make_unique<Lookahead>(cfg_.width, cfg_.height, mbW_, mbH_);
     joinPending();
     const bool full = int(queue_.size()) + 1 >= cfg_.lookahead;
-    // In the background only when its predecessor stays in the queue while a picture is popped.
-    if (full && cfg_.threads > 1 && queue_.size() >= 2) {
+    // Once the queue is full the newest picture joins it only at the next call (analysed in the
+    // background with several threads), so the encoded picture sees the same queue with any
+    // thread count. Its predecessor stays in the queue while a picture is popped.
+    if (full && queue_.size() >= 2) {
         pendingFrame_ = std::make_unique<LookaheadFrame>(std::move(f));
         const LookaheadFrame* prev = &queue_.back();
-        pendingThread_ = std::thread([this, prev] { la_->analyse(*pendingFrame_, prev); });
+        if (cfg_.threads > 1)
+            pendingThread_ = std::thread([this, prev] { la_->analyse(*pendingFrame_, prev); });
+        else
+            la_->analyse(*pendingFrame_, prev);
     } else {
         la_->analyse(f, queue_.empty() ? nullptr : &queue_.back());
         queue_.push_back(std::move(f));
     }
     if (!full)
         return {};
-    std::vector<uint8_t> out = encodeFrame(queue_.front());
+    std::vector<uint8_t> out = step(&queue_.front());
     queue_.pop_front();
     return out;
 }
@@ -558,10 +887,69 @@ std::vector<uint8_t> Encoder::encode(const Picture& picture, bool forceKeyframe)
 std::vector<uint8_t> Encoder::flush()
 {
     joinPending();
-    if (queue_.empty())
-        return {};
-    std::vector<uint8_t> out = encodeFrame(queue_.front());
-    queue_.pop_front();
+    while (!queue_.empty()) {
+        std::vector<uint8_t> out = step(&queue_.front());
+        queue_.pop_front();
+        if (!out.empty())
+            return out;
+    }
+    return step(nullptr);
+}
+
+// Starts the next picture (if any) and hands out the one before: with frame threading the
+// picture just started runs on while the caller fetches the next one.
+std::vector<uint8_t> Encoder::step(LookaheadFrame* next)
+{
+    FrameCoder* started = next ? startFrame(*next) : nullptr;
+    if (!pipelined())
+        return started ? finishFrame(*started) : std::vector<uint8_t>{};
+    std::vector<uint8_t> out;
+    if (inFlight_)
+        out = finishFrame(*inFlight_);
+    inFlight_ = started;
+    return out;
+}
+
+void Encoder::applyRc(int upTo)
+{
+    while (!rcDone_.empty() && rcDone_.front().index <= upTo) {
+        const RcRecord r = rcDone_.front();
+        rcDone_.pop_front();
+        if (r.lookahead) {
+            if (r.cost > 0) {
+                rcKSum_[r.idr ? 0 : 1] += r.bits * std::exp2(r.qp / 6.0);
+                rcCostSum_[r.idr ? 0 : 1] += r.cost;
+            }
+        } else if (!r.idr) {
+            rcCplxSum_ += r.bits * std::pow(2.0, r.qp / 6.0);
+            rcCplxCount_ += 1.0;
+            rcQp_ = r.qp;
+        }
+        rcBits_ += r.bits;
+        rcTarget_ += cfg_.bitrateKbps * 1000.0 / cfg_.fps;
+    }
+}
+
+std::vector<uint8_t> Encoder::finishFrame(FrameCoder& fc)
+{
+    PhaseClock clock;
+    if (pipelined()) {
+        fc.waveEnd();
+        pool_->remove(&fc);
+        fc.done_ = fc.assemble(clock);
+        fc.outPic_.reset();
+    }
+    std::vector<uint8_t> out = std::move(fc.done_);
+    fc.done_.clear();
+    last_ = &fc;
+    lastQp_ = fc.outQp_;
+    lastWasSceneCut_ = fc.outSceneCut_;
+    if (cfg_.bitrateKbps > 0)
+        rcDone_.push_back({fc.frameNo_, fc.rcIdr_, fc.rcLookahead_, fc.rcCost_, fc.outQp_, double(out.size()) * 8.0});
+    if (gTiming) {
+        for (int i = 4; i < 8; ++i)
+            gPhaseMs[i] += clock.ms[i];
+    }
     return out;
 }
 
@@ -600,8 +988,13 @@ double Encoder::frameCost(const LookaheadFrame& f, bool intra) const
     return sum;
 }
 
-std::vector<uint8_t> FrameCoder::code(bool idr, int framesSinceIdr, int idrCount, PhaseClock& clock)
+// Per-picture setup: neighbour state, slices (CABAC: one slice in a wavefront; CAVLC, whose
+// decisions write bits directly: one slice per thread).
+void FrameCoder::reset(bool idr, int framesSinceIdr, int idrCount)
 {
+    idr_ = idr;
+    framesSinceIdr_ = framesSinceIdr;
+    idrCount_ = idrCount;
     std::fill(nzLuma_.begin(), nzLuma_.end(), 0);
     std::fill(modes4x4_.begin(), modes4x4_.end(), int8_t(-1));
     std::fill(nzChroma_[0].begin(), nzChroma_[0].end(), 0);
@@ -609,236 +1002,306 @@ std::vector<uint8_t> FrameCoder::code(bool idr, int framesSinceIdr, int idrCount
     std::fill(mvX_.begin(), mvX_.end(), int16_t(0));
     std::fill(mvY_.begin(), mvY_.end(), int16_t(0));
     std::fill(refIdx_.begin(), refIdx_.end(), int8_t(-1));
-    // CABAC: one slice, its rows decided in a wavefront by the threads and entropy coded in raster
-    // order afterwards. CAVLC (decisions write bits directly): one slice per thread.
     const bool wave = useCabac();
     const int sliceCount = wave ? 1 : std::clamp(cfg_.threads, 1, mbH_);
-    std::vector<BitWriter> slices(static_cast<size_t>(sliceCount));
-    std::vector<int> sliceTop(size_t(sliceCount) + 1);
+    sliceTop_.assign(size_t(sliceCount) + 1, 0);
     for (int s = 0; s <= sliceCount; ++s)
-        sliceTop[size_t(s)] = s * mbH_ / sliceCount;
+        sliceTop_[size_t(s)] = s * mbH_ / sliceCount;
     for (int s = 0; s < sliceCount; ++s)
-        for (int r = sliceTop[size_t(s)]; r < sliceTop[size_t(s) + 1]; ++r)
-            sliceTopOfRow_[size_t(r)] = sliceTop[size_t(s)];
+        for (int r = sliceTop_[size_t(s)]; r < sliceTop_[size_t(s) + 1]; ++r)
+            sliceTopOfRow_[size_t(r)] = sliceTop_[size_t(s)];
     for (int r = 0; r < mbH_; ++r)
         rowKey_[size_t(r)] = wave ? r : sliceTopOfRow_[size_t(r)];
+    slices_.assign(size_t(sliceCount), BitWriter());
+}
 
-    auto sliceHeader = [&](BitWriter& bw, int s) {
-        // slice_header (7.3.3)
-        bw.ue(uint32_t(sliceTop[size_t(s)] * mbW_)); // first_mb_in_slice
-        bw.ue(idr ? 7 : 5);                         // slice_type: I or P (all slices)
-        bw.ue(0);                                   // pic_parameter_set_id
-        bw.u(uint32_t(framesSinceIdr & 15), 4); // frame_num (0 for IDR)
-        if (idr) {
-            bw.ue(uint32_t(idrCount & 0xFFFF)); // idr_pic_id (differs between neighbours)
-        } else {
-            bw.flag(activeRefs_ > 1); // num_ref_idx_active_override_flag
-            if (activeRefs_ > 1)
-                bw.ue(uint32_t(activeRefs_ - 1)); // num_ref_idx_l0_active_minus1
-            bw.flag(false); // ref_pic_list_modification_flag_l0
-        }
-        if (idr) {
-            bw.flag(false); // no_output_of_prior_pics_flag
-            bw.flag(false); // long_term_reference_flag
-        } else {
-            bw.flag(false); // adaptive_ref_pic_marking_mode_flag
-            if (useCabac())
-                bw.ue(0); // cabac_init_idc
-        }
-        bw.se(cfg_.qp - 26);         // slice_qp_delta
-        bw.ue(cfg_.deblock ? 0 : 1); // disable_deblocking_filter_idc (0 filters across slice edges too)
-        if (cfg_.deblock) {
-            bw.se(0); // slice_alpha_c0_offset_div2
-            bw.se(0); // slice_beta_offset_div2
-        }
-    };
-    // CAVLC (and I_PCM): the macroblocks write their bits as they are decided.
-    auto encodeSlice = [&](int s) {
-        BitWriter& bw = slices[size_t(s)];
-        sliceHeader(bw, s);
-        int skipRun = 0;
-        qpPredByTop_[size_t(sliceTop[size_t(s)])] = cfg_.qp;
-        bool prevQpNonZero = false;
-        cabacByTop_[size_t(sliceTop[size_t(s)])] = nullptr;
-        prevQpNzByTop_[size_t(sliceTop[size_t(s)])] = &prevQpNonZero;
-        for (int mby = sliceTop[size_t(s)]; mby < sliceTop[size_t(s) + 1]; ++mby) {
-            for (int mbx = 0; mbx < mbW_; ++mbx) {
-                if (cfg_.mode == IntraMode::Pcm) {
-                    encodeMbPcm(bw, mbx, mby);
-                    continue;
-                }
-                MbOut mb;
-                bool coded = true;
-                if (pSlice_)
-                    coded = encodeMbP(mb, mbx, mby);
-                else
-                    commitQp(mbx, mby, encodeMbIntra(mb, mbx, mby));
-                if (!coded) {
-                    ++skipRun;
-                    continue;
-                }
-                if (pSlice_) {
-                    bw.ue(uint32_t(skipRun));
-                    skipRun = 0;
-                }
-                bw.append(mb.bw);
-            }
-        }
-        if (skipRun)
-            bw.ue(uint32_t(skipRun));
-        bw.rbspTrailing();
-    };
-    if (wave) {
-        // Decisions: a thread takes the next row and stays two macroblocks behind the row above
-        // (intra prediction and motion vector prediction read above-right). Bit estimates use a
-        // counting CABAC engine per row, started from the row above after its second macroblock.
-        const int rows = mbH_;
-        std::vector<CabacEncoder> rowEngine(static_cast<size_t>(rows)), rowSnap(static_cast<size_t>(rows));
-        std::unique_ptr<std::atomic<int>[]> progress(new std::atomic<int>[size_t(rows)]);
-        std::unique_ptr<std::atomic<int>[]> deblocked(new std::atomic<int>[size_t(rows)]); // macroblocks filtered per row
-        std::atomic<int> written{0};                                                        // rows the entropy writer has finished
-        std::unique_ptr<bool[]> rowPrevNz(new bool[size_t(rows)]);
-        for (int r = 0; r < rows; ++r) {
-            progress[size_t(r)].store(0, std::memory_order_relaxed);
-            deblocked[size_t(r)].store(0, std::memory_order_relaxed);
-        }
-        mbSyn_.resize(size_t(mbW_) * mbH_);
-        std::atomic<int> nextRow{0};
-        std::atomic<long> waitMs{0}; // microseconds the threads spent waiting for the row above (H264_TIMING)
-        const int threads = std::clamp(cfg_.threads, 1, rows);
-        // With several threads the row's thread also deblocks the row above, lagging one
-        // macroblock: by then every macroblock that predicts from those unfiltered samples is
-        // decided, the entropy writer has fixed the QPs (skipped macroblocks inherit it) and
-        // the row above that is filtered two macroblocks further (the raster order of 8.7).
-        const bool inlineDeblock = cfg_.deblock && threads > 1;
-        auto worker = [&] {
-            for (;;) {
-                const int r = nextRow.fetch_add(1);
-                if (r >= rows)
-                    return;
-                auto waitAbove = [&](int need) {
-                    if (r == 0 || progress[size_t(r - 1)].load(std::memory_order_acquire) >= need)
-                        return;
-                    const auto t0 = gTiming ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
-                    while (progress[size_t(r - 1)].load(std::memory_order_acquire) < need)
-                        spinWait();
-                    if (gTiming)
-                        waitMs.fetch_add(long(std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - t0).count()),
-                                         std::memory_order_relaxed);
-                };
-                int dbNext = 0; // next macroblock of row r - 1 to filter
-                auto deblockBehind = [&](int upTo, bool wait) {
-                    if (!inlineDeblock || r == 0)
-                        return;
-                    while (dbNext < upTo) {
-                        const bool ready = written.load(std::memory_order_acquire) >= r &&
-                                           (r == 1 || deblocked[size_t(r - 2)].load(std::memory_order_acquire) >= std::min(dbNext + 2, mbW_));
-                        if (!ready) {
-                            if (!wait)
-                                return;
-                            spinWait();
-                            continue;
-                        }
-                        deblockMb(dbNext, r - 1);
-                        deblocked[size_t(r - 1)].store(++dbNext, std::memory_order_release);
-                    }
-                };
-                CabacEncoder& eng = rowEngine[size_t(r)];
-                if (r == 0) {
-                    eng.start(nullptr, cfg_.qp, pSlice_ ? 0 : -1);
-                    eng.startCounting();
-                } else {
-                    waitAbove(std::min(2, mbW_));
-                    eng = rowSnap[size_t(r - 1)];
-                }
-                qpPredByTop_[size_t(r)] = cfg_.qp;
-                rowPrevNz[size_t(r)] = false;
-                cabacByTop_[size_t(r)] = &eng;
-                prevQpNzByTop_[size_t(r)] = &rowPrevNz[size_t(r)];
-                for (int mbx = 0; mbx < mbW_; ++mbx) {
-                    waitAbove(std::min(mbx + 2, mbW_));
-                    MbOut mb;
-                    if (pSlice_)
-                        encodeMbP(mb, mbx, r);
-                    else
-                        commitQp(mbx, r, encodeMbIntra(mb, mbx, r));
-                    cabacWriteMb(eng, cabWave_, mbx, r, mb.syn, rowPrevNz[size_t(r)]);
-                    mbSyn_[size_t(r) * mbW_ + mbx] = mb.syn;
-                    if (mbx == std::min(1, mbW_ - 1))
-                        rowSnap[size_t(r)] = eng;
-                    progress[size_t(r)].store(mbx + 1, std::memory_order_release);
-                    deblockBehind(mbx, false);
-                }
-                deblockBehind(mbW_, true);
-            }
-        };
-        // Entropy coding in raster order, mb_qp_delta against the real predecessor. It follows
-        // the decisions row by row (its own neighbour state), so with several threads only the
-        // last row's write remains after the wavefront.
-        auto writeSlice = [&] {
-            BitWriter& bw = slices[0];
-            sliceHeader(bw, 0);
-            while (!bw.byteAligned())
-                bw.u(1, 1); // cabac_alignment_one_bit
-            CabacEncoder eng;
-            eng.start(&bw, cfg_.qp, pSlice_ ? 0 : -1);
-            int pred = cfg_.qp;
-            bool prevNz = false;
-            const size_t count = size_t(mbW_) * mbH_;
-            for (int r = 0; r < rows; ++r) {
-                while (progress[size_t(r)].load(std::memory_order_acquire) < mbW_)
-                    std::this_thread::sleep_for(std::chrono::microseconds(100));
-                for (int mbx = 0; mbx < mbW_; ++mbx) {
-                    const size_t m = size_t(r) * mbW_ + mbx;
-                    MbSyntax& syn = mbSyn_[m];
-                    using K = MbSyntax::Kind;
-                    const bool sends = syn.kind == K::I16 || (syn.kind != K::Skip && (syn.cbpLuma || syn.cbpChroma));
-                    if (sends) {
-                        syn.qpDelta = mbQp_[m] - pred;
-                        pred = mbQp_[m];
-                    }
-                    mbQpFinal_[m] = int8_t(pred);
-                    cabacWriteMb(eng, cabWrite_, mbx, r, syn, prevNz);
-                    eng.terminate(m + 1 == count); // end_of_slice_flag
-                }
-                written.store(r + 1, std::memory_order_release);
-            }
-            bw.alignZero();
-        };
-        std::vector<std::thread> workers;
-        for (int t = 1; t < threads; ++t)
-            workers.emplace_back(worker);
-        if (threads > 1) {
-            std::thread writer(writeSlice);
-            worker();
-            for (auto& t : workers)
-                t.join();
-            writer.join();
-            if (inlineDeblock) { // the last row has no row below to filter it
-                for (int mbx = 0; mbx < mbW_; ++mbx)
-                    deblockMb(mbx, rows - 1);
-                deblockedInline_ = true;
-            }
-            if (gTiming)
-                gWaitMs += waitMs.load() / 1000.0;
-        } else {
-            worker();
-            writeSlice();
-        }
+// slice_header (7.3.3)
+void FrameCoder::sliceHeader(BitWriter& bw, int s) const
+{
+    bw.ue(uint32_t(sliceTop_[size_t(s)] * mbW_)); // first_mb_in_slice
+    bw.ue(idr_ ? 7 : 5);                           // slice_type: I or P (all slices)
+    bw.ue(0);                                      // pic_parameter_set_id
+    bw.u(uint32_t(framesSinceIdr_ & 15), 4);       // frame_num (0 for IDR)
+    if (idr_) {
+        bw.ue(uint32_t(idrCount_ & 0xFFFF)); // idr_pic_id (differs between neighbours)
     } else {
-        // Slices only look at macroblocks of their own slice, so they run in parallel.
-        std::vector<std::thread> workers;
-        for (int s = 1; s < sliceCount; ++s)
-            workers.emplace_back(encodeSlice, s);
-        encodeSlice(0);
-        for (auto& t : workers)
-            t.join();
+        bw.flag(activeRefs_ > 1); // num_ref_idx_active_override_flag
+        if (activeRefs_ > 1)
+            bw.ue(uint32_t(activeRefs_ - 1)); // num_ref_idx_l0_active_minus1
+        bw.flag(false); // ref_pic_list_modification_flag_l0
     }
+    if (idr_) {
+        bw.flag(false); // no_output_of_prior_pics_flag
+        bw.flag(false); // long_term_reference_flag
+    } else {
+        bw.flag(false); // adaptive_ref_pic_marking_mode_flag
+        if (useCabac())
+            bw.ue(0); // cabac_init_idc
+    }
+    bw.se(cfg_.qp - 26);         // slice_qp_delta
+    bw.ue(cfg_.deblock ? 0 : 1); // disable_deblocking_filter_idc (0 filters across slice edges too)
+    if (cfg_.deblock) {
+        bw.se(0); // slice_alpha_c0_offset_div2
+        bw.se(0); // slice_beta_offset_div2
+    }
+}
 
+// CAVLC (and I_PCM): the macroblocks write their bits as they are decided.
+void FrameCoder::encodeSlice(int s)
+{
+    BitWriter& bw = slices_[size_t(s)];
+    sliceHeader(bw, s);
+    int skipRun = 0;
+    qpPredByTop_[size_t(sliceTop_[size_t(s)])] = cfg_.qp;
+    bool prevQpNonZero = false;
+    cabacByTop_[size_t(sliceTop_[size_t(s)])] = nullptr;
+    prevQpNzByTop_[size_t(sliceTop_[size_t(s)])] = &prevQpNonZero;
+    for (int mby = sliceTop_[size_t(s)]; mby < sliceTop_[size_t(s) + 1]; ++mby) {
+        for (int mbx = 0; mbx < mbW_; ++mbx) {
+            if (cfg_.mode == IntraMode::Pcm) {
+                encodeMbPcm(bw, mbx, mby);
+                continue;
+            }
+            MbOut mb;
+            bool coded = true;
+            if (pSlice_)
+                coded = encodeMbP(mb, mbx, mby);
+            else
+                commitQp(mbx, mby, encodeMbIntra(mb, mbx, mby));
+            if (!coded) {
+                ++skipRun;
+                continue;
+            }
+            if (pSlice_) {
+                bw.ue(uint32_t(skipRun));
+                skipRun = 0;
+            }
+            bw.append(mb.bw);
+        }
+    }
+    if (skipRun)
+        bw.ue(uint32_t(skipRun));
+    bw.rbspTrailing();
+}
+
+// Wavefront (CABAC): a thread takes the next row and stays two macroblocks behind the row above
+// (intra prediction and motion vector prediction read above-right). Bit estimates use a counting
+// CABAC engine per row, started from the row above after its second macroblock. With several
+// threads the row's thread also deblocks the row above, lagging one macroblock: by then every
+// macroblock that predicts from those unfiltered samples is decided, the entropy writer has fixed
+// the QPs (skipped macroblocks inherit it) and the row above that is filtered two macroblocks
+// further (the raster order of 8.7). With `out`, finished rows go into that reference picture
+// band by band (rowsReady), so the next picture can start before this one is done.
+void FrameCoder::waveBegin(int threads, RefPic* out, bool writerThread)
+{
+    WaveState& w = wave_;
+    const int rows = mbH_;
+    w.rows = rows;
+    w.spin = spinFor(threads);
+    w.inlineDeblock = cfg_.deblock && threads > 1;
+    w.rowEngine.assign(size_t(rows), CabacEncoder());
+    w.rowSnap.assign(size_t(rows), CabacEncoder());
+    if (w.allocated != rows) {
+        w.progress.reset(new std::atomic<int>[size_t(rows)]);
+        w.deblocked.reset(new std::atomic<int>[size_t(rows)]);
+        w.rowPrevNz.reset(new bool[size_t(rows)]);
+        w.allocated = rows;
+    }
+    for (int r = 0; r < rows; ++r) {
+        w.progress[size_t(r)].store(0, std::memory_order_relaxed);
+        w.deblocked[size_t(r)].store(0, std::memory_order_relaxed);
+    }
+    w.written.store(0, std::memory_order_relaxed);
+    w.rowsDone.store(0, std::memory_order_relaxed);
+    w.waitUs.store(0, std::memory_order_relaxed);
+    w.out = out;
+    w.yCopied = w.cCopied = w.fBuilt = w.hBuilt = 0;
+    if (out) {
+        const size_t n = size_t(extW_) * extH_;
+        out->y.resize(recY_.size());
+        out->u.resize(recU_.size());
+        out->v.resize(recV_.size());
+        out->F.resize(n);
+        out->B.resize(n);
+        out->V.resize(n);
+        out->J.resize(n);
+        out->rowsReady.store(0, std::memory_order_relaxed);
+    }
+    mbSyn_.resize(size_t(mbW_) * mbH_);
+    if (writerThread)
+        w.writer = std::thread([this] { waveWrite(); });
+    w.nextRow.store(0, std::memory_order_release); // rows may be taken from here on
+}
+
+void FrameCoder::waveRow(int r)
+{
+    WaveState& w = wave_;
+    // Reference rows this row can reach: vectors up to 64 pixels (4 rows) plus the 6-tap filter.
+    if (pSlice_)
+        for (const auto& ref : refs_) {
+            const int need = std::min(mbH_, r + 6);
+            if (ref->rowsReady.load(std::memory_order_acquire) >= need)
+                continue;
+            const auto t0 = std::chrono::steady_clock::now();
+            waitAtLeast(ref->rowsReady, need, w.spin);
+            w.refWaitUs.fetch_add(long(std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - t0).count()),
+                                  std::memory_order_relaxed);
+        }
+    auto waitAbove = [&](int need) {
+        if (r == 0 || w.progress[size_t(r - 1)].load(std::memory_order_acquire) >= need)
+            return;
+        const auto t0 = gTiming ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+        waitAtLeast(w.progress[size_t(r - 1)], need, w.spin);
+        if (gTiming)
+            w.waitUs.fetch_add(long(std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - t0).count()),
+                               std::memory_order_relaxed);
+    };
+    int dbNext = 0; // next macroblock of row r - 1 to filter
+    auto deblockBehind = [&](int upTo, bool wait) {
+        if (!w.inlineDeblock || r == 0)
+            return;
+        while (dbNext < upTo) {
+            const bool ready = w.written.load(std::memory_order_acquire) >= r &&
+                               (r == 1 || w.deblocked[size_t(r - 2)].load(std::memory_order_acquire) >= std::min(dbNext + 2, mbW_));
+            if (!ready) {
+                if (!wait)
+                    return;
+                waitAtLeast(w.written, r, w.spin);
+                if (r > 1)
+                    waitAtLeast(w.deblocked[size_t(r - 2)], std::min(dbNext + 2, mbW_), w.spin);
+                continue;
+            }
+            deblockMb(dbNext, r - 1);
+            w.deblocked[size_t(r - 1)].store(++dbNext, std::memory_order_release);
+            w.deblocked[size_t(r - 1)].notify_all();
+        }
+    };
+    CabacEncoder& eng = w.rowEngine[size_t(r)];
+    if (r == 0) {
+        eng.start(nullptr, cfg_.qp, pSlice_ ? 0 : -1);
+        eng.startCounting();
+    } else {
+        waitAbove(std::min(2, mbW_));
+        eng = w.rowSnap[size_t(r - 1)];
+    }
+    qpPredByTop_[size_t(r)] = cfg_.qp;
+    w.rowPrevNz[size_t(r)] = false;
+    cabacByTop_[size_t(r)] = &eng;
+    prevQpNzByTop_[size_t(r)] = &w.rowPrevNz[size_t(r)];
+    for (int mbx = 0; mbx < mbW_; ++mbx) {
+        waitAbove(std::min(mbx + 2, mbW_));
+        MbOut mb;
+        if (pSlice_)
+            encodeMbP(mb, mbx, r);
+        else
+            commitQp(mbx, r, encodeMbIntra(mb, mbx, r));
+        cabacWriteMb(eng, cabWave_, mbx, r, mb.syn, w.rowPrevNz[size_t(r)]);
+        mbSyn_[size_t(r) * mbW_ + mbx] = mb.syn;
+        if (mbx == std::min(1, mbW_ - 1))
+            w.rowSnap[size_t(r)] = eng;
+        w.progress[size_t(r)].store(mbx + 1, std::memory_order_release);
+        w.progress[size_t(r)].notify_all();
+        deblockBehind(mbx, false);
+    }
+    deblockBehind(mbW_, true);
+    // Row r - 1 is filtered now, so row r - 2 is final (filtering row r - 1 changed its last lines).
+    if (w.out && w.inlineDeblock && r >= 2)
+        publishBand(r - 2);
+    w.rowsDone.fetch_add(1, std::memory_order_acq_rel);
+}
+
+// Copies the final rows of band k (macroblock row) into the reference picture and builds its
+// planes; bands go out in order (rowsReady), each needs the 3 luma lines below it.
+void FrameCoder::publishBand(int k)
+{
+    WaveState& w = wave_;
+    RefPic& R = *w.out;
+    waitAtLeast(R.rowsReady, k);
+    const bool last = k == mbH_ - 1;
+    const int M = kMargin;
+    const int yLim = last ? padH_ : std::min(padH_, 16 * k + 19);
+    std::memcpy(&R.y[size_t(w.yCopied) * padW_], &recY_[size_t(w.yCopied) * padW_], size_t(yLim - w.yCopied) * padW_);
+    w.yCopied = yLim;
+    const int cw = padW_ / 2, cLim = last ? padH_ / 2 : 8 * k + 8;
+    std::memcpy(&R.u[size_t(w.cCopied) * cw], &recU_[size_t(w.cCopied) * cw], size_t(cLim - w.cCopied) * cw);
+    std::memcpy(&R.v[size_t(w.cCopied) * cw], &recV_[size_t(w.cCopied) * cw], size_t(cLim - w.cCopied) * cw);
+    w.cCopied = cLim;
+    const int fLim = last ? extH_ : M + yLim;
+    refFullRows(R, w.fBuilt, fLim);
+    w.fBuilt = fLim;
+    const int hLim = last ? extH_ : M + 16 * k + 16;
+    refHalfRows(R, w.hBuilt, hLim);
+    w.hBuilt = hLim;
+    R.rowsReady.store(k + 1, std::memory_order_release);
+    R.rowsReady.notify_all();
+}
+
+// Entropy coding in raster order, mb_qp_delta against the real predecessor. It follows the
+// decisions row by row (its own neighbour state), so with several threads only the last row's
+// write remains after the wavefront.
+void FrameCoder::waveWrite()
+{
+    WaveState& w = wave_;
+    BitWriter& bw = slices_[0];
+    sliceHeader(bw, 0);
+    while (!bw.byteAligned())
+        bw.u(1, 1); // cabac_alignment_one_bit
+    CabacEncoder eng;
+    eng.start(&bw, cfg_.qp, pSlice_ ? 0 : -1);
+    int pred = cfg_.qp;
+    bool prevNz = false;
+    const size_t count = size_t(mbW_) * mbH_;
+    for (int r = 0; r < w.rows; ++r) {
+        while (w.progress[size_t(r)].load(std::memory_order_acquire) < mbW_)
+            std::this_thread::sleep_for(std::chrono::microseconds(100));
+        for (int mbx = 0; mbx < mbW_; ++mbx) {
+            const size_t m = size_t(r) * mbW_ + mbx;
+            MbSyntax& syn = mbSyn_[m];
+            using K = MbSyntax::Kind;
+            const bool sends = syn.kind == K::I16 || (syn.kind != K::Skip && (syn.cbpLuma || syn.cbpChroma));
+            if (sends) {
+                syn.qpDelta = mbQp_[m] - pred;
+                pred = mbQp_[m];
+            }
+            mbQpFinal_[m] = int8_t(pred);
+            cabacWriteMb(eng, cabWrite_, mbx, r, syn, prevNz);
+            eng.terminate(m + 1 == count); // end_of_slice_flag
+        }
+        w.written.store(r + 1, std::memory_order_release);
+        w.written.notify_all();
+    }
+    bw.alignZero();
+}
+
+// After every row is decided: the writer's last row, the last row's deblocking and the rest of
+// the reference picture.
+void FrameCoder::waveEnd()
+{
+    WaveState& w = wave_;
+    while (w.rowsDone.load(std::memory_order_acquire) < w.rows)
+        std::this_thread::sleep_for(std::chrono::microseconds(50));
+    if (w.writer.joinable())
+        w.writer.join();
+    if (w.inlineDeblock) { // the last row has no row below to filter it
+        for (int mbx = 0; mbx < mbW_; ++mbx)
+            deblockMb(mbx, w.rows - 1);
+        deblockedInline_ = true;
+    }
+    if (w.out) {
+        for (int k = std::max(0, w.inlineDeblock ? w.rows - 2 : 0); k < w.rows; ++k)
+            publishBand(k);
+    }
+    w.nextRow.store(INT_MAX / 2, std::memory_order_release);
+    if (gTiming)
+        gWaitMs += (w.waitUs.load() + w.refWaitUs.exchange(0)) / 1000.0;
+}
+
+std::vector<uint8_t> FrameCoder::assemble(PhaseClock& clock)
+{
     clock.lap(4); // decisions and entropy coding
     std::vector<uint8_t> out;
-    for (const BitWriter& bw : slices) {
-        if (idr)
+    for (const BitWriter& bw : slices_) {
+        if (idr_)
             appendNal(out, 3, 5, bw.bytes());
         else
             appendNal(out, 2, 1, bw.bytes());
@@ -861,7 +1324,44 @@ std::vector<uint8_t> FrameCoder::code(bool idr, int framesSinceIdr, int idrCount
     return out;
 }
 
-std::vector<uint8_t> Encoder::encodeFrame(LookaheadFrame& frame)
+// Codes the whole picture on cfg_.threads threads and returns it when done.
+std::vector<uint8_t> FrameCoder::code(bool idr, int framesSinceIdr, int idrCount, PhaseClock& clock)
+{
+    reset(idr, framesSinceIdr, idrCount);
+    if (useCabac()) {
+        const int threads = std::clamp(cfg_.threads, 1, mbH_);
+        waveBegin(threads, nullptr, threads > 1);
+        auto worker = [&] {
+            for (;;) {
+                const int r = claimRow();
+                if (r < 0)
+                    return;
+                waveRow(r);
+            }
+        };
+        std::vector<std::thread> workers;
+        for (int t = 1; t < threads; ++t)
+            workers.emplace_back(worker);
+        worker();
+        for (auto& t : workers)
+            t.join();
+        if (threads == 1)
+            waveWrite();
+        waveEnd();
+    } else {
+        // Slices only look at macroblocks of their own slice, so they run in parallel.
+        const int sliceCount = int(slices_.size());
+        std::vector<std::thread> workers;
+        for (int s = 1; s < sliceCount; ++s)
+            workers.emplace_back([this, s] { encodeSlice(s); });
+        encodeSlice(0);
+        for (auto& t : workers)
+            t.join();
+    }
+    return assemble(clock);
+}
+
+FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
 {
     const bool forceKeyframe = frame.forceKeyframe;
     const Picture picture = pictureOf(frame, cfg_.width);
@@ -886,7 +1386,8 @@ std::vector<uint8_t> Encoder::encodeFrame(LookaheadFrame& frame)
     fc.pSlice_ = !idr;
     fc.refs_.assign(refList_.begin(), refList_.end());
     fc.activeRefs_ = int(fc.refs_.size());
-    fc.prev_ = last_;
+    fc.prev_ = lastStarted_;
+    lastStarted_ = &fc;
 
     // Frame-level rate control (in the spirit of x264's one-pass ABR, aiming at a steady QP, which
     // is what PSNR likes best): a P picture gets the QP at which the average complexity of all P
@@ -895,6 +1396,7 @@ std::vector<uint8_t> Encoder::encodeFrame(LookaheadFrame& frame)
     // most 2 away from the last one. I pictures use the P QP - 3. The first picture is probed at a
     // fixed QP so the stream starts near the right QP instead of paying for a huge first picture.
     const int baseQp = cfg_.qp;
+    applyRc(frameIndex_ - 2);
     const bool lookahead = lookaheadFrame;
     double costUsed = 0; // lookahead cost of this picture, for the bit model afterwards
     if (lookahead) {
@@ -978,6 +1480,7 @@ std::vector<uint8_t> Encoder::encodeFrame(LookaheadFrame& frame)
                 pc.qp = probeQp;
                 pc.gop = std::max(2, cfg_.gop);
                 pc.sceneCut = false;
+                pc.frameThreads = false;
                 Encoder probe(pc);
                 const double bitsI = double(probe.encode(picture).size()) * 8.0;
                 const double kI = bitsI * std::exp2((probeQp - 3) / 6.0) / std::max(1.0, frame.intraSum);
@@ -1036,6 +1539,7 @@ std::vector<uint8_t> Encoder::encodeFrame(LookaheadFrame& frame)
             pc.lookahead = 0;
             pc.mbtree = false;
             pc.gop = std::max(2, cfg_.gop);
+            pc.frameThreads = false;
             Encoder probe(pc);
             const double bits = double(probe.encode(picture).size()) * 8.0;
             const double qI = std::clamp((baseQp - 3) + 6.0 * std::log2(bits / (4.0 * perFrame)), 10.0, 48.0);
@@ -1056,48 +1560,49 @@ std::vector<uint8_t> Encoder::encodeFrame(LookaheadFrame& frame)
     } else if (idr && cfg_.gop > 1) {
         cfg_.qp = std::clamp(baseQp - 3, 0, 51); // keyframes are references for the whole GOP
     }
-    lastQp_ = cfg_.qp;
     fc.cfg_.qp = cfg_.qp;
     fc.mbTypeOffset_ = idr ? 0 : 5;
+    fc.frameNo_ = frameIndex_;
+    fc.outQp_ = cfg_.qp;
+    fc.outSceneCut_ = cut;
+    fc.rcIdr_ = idr;
+    fc.rcLookahead_ = lookahead;
+    fc.rcCost_ = costUsed;
 
     clock.lap(2); // keyframe decision, macroblock tree, rate control (probe on the first picture)
     fc.planMacroblockQp();
     clock.lap(3);
-    std::vector<uint8_t> out = fc.code(idr, framesSinceIdr_, idrCount_, clock);
-    last_ = &fc;
+    // Sliding window (8.2.5.3): the newest picture goes first, the oldest drops out.
+    std::shared_ptr<RefPic> pic;
     if (cfg_.gop > 1) {
-        // Sliding window (8.2.5.3): the newest picture goes first, the oldest drops out.
-        std::shared_ptr<RefPic> pic;
         if (int(refList_.size()) >= std::max(1, cfg_.refs)) {
             pic = std::move(refList_.back());
             refList_.pop_back();
         }
         if (!pic || pic.use_count() > 1)
             pic = std::make_shared<RefPic>();
-        pic->y = fc.recY_;
-        pic->u = fc.recU_;
-        pic->v = fc.recV_;
-        fc.buildRefPlanes(*pic);
-        refList_.push_front(std::move(pic));
+        refList_.push_front(pic);
     }
-    if (cfg_.bitrateKbps <= 0)
-        cfg_.qp = baseQp;
-    if (cfg_.bitrateKbps > 0) {
-        const double bits = double(out.size()) * 8.0;
-        if (lookahead) {
-            if (costUsed > 0) {
-                rcKSum_[idr ? 0 : 1] += bits * std::exp2(cfg_.qp / 6.0);
-                rcCostSum_[idr ? 0 : 1] += costUsed;
-            }
-        } else if (!idr) {
-            rcCplxSum_ += bits * std::pow(2.0, cfg_.qp / 6.0);
-            rcCplxCount_ += 1.0;
-            rcQp_ = cfg_.qp;
+    if (pipelined()) {
+        // Rows go to the workers; finished rows go into the reference picture band by band.
+        if (!pool_)
+            pool_ = std::make_unique<Pool>(cfg_.threads);
+        fc.reset(idr, framesSinceIdr_, idrCount_);
+        fc.outPic_ = pic;
+        fc.waveBegin(cfg_.threads, pic.get(), true);
+        pool_->add(&fc);
+    } else {
+        fc.done_ = fc.code(idr, framesSinceIdr_, idrCount_, clock);
+        if (pic) {
+            pic->y = fc.recY_;
+            pic->u = fc.recU_;
+            pic->v = fc.recV_;
+            fc.buildRefPlanes(*pic);
+            pic->rowsReady.store(mbH_, std::memory_order_release);
+            pic->rowsReady.notify_all();
         }
-        rcBits_ += bits;
-        rcTarget_ += cfg_.bitrateKbps * 1000.0 / cfg_.fps;
-        cfg_.qp = baseQp;
     }
+    cfg_.qp = baseQp;
     if (idr)
         ++idrCount_;
     ++frameIndex_;
@@ -1111,7 +1616,7 @@ std::vector<uint8_t> Encoder::encodeFrame(LookaheadFrame& frame)
                          gPhaseMs[0] / gPhaseFrames, gPhaseMs[1] / gPhaseFrames, gPhaseMs[2] / gPhaseFrames, gPhaseMs[3] / gPhaseFrames,
                          gPhaseMs[4] / gPhaseFrames, gWaitMs / gPhaseFrames, gPhaseMs[5] / gPhaseFrames, gPhaseMs[6] / gPhaseFrames);
     }
-    return out;
+    return &fc;
 }
 
 void FrameCoder::encodeMbPcm(BitWriter& bw, int mbx, int mby)
@@ -1187,34 +1692,42 @@ int intraCbpCode(int cbp)
 constexpr int blkIdxAt(int x, int y) { return (y >> 1) * 8 + (x >> 1) * 4 + (y & 1) * 2 + (x & 1); }
 
 // Intra 4x4 prediction (8.3.1.2). T[0] = p[-1,-1], T[1 + x] = p[x,-1] (x = 0..7), L[y] = p[-1,y].
-void predict4x4(int mode, const int* T, const int* L, bool left, bool top, uint8_t* pred)
+template <int Mode>
+inline void predict4x4Mode(const int* T, const int* L, bool left, bool top, int dc, uint8_t* pred)
 {
+    (void)left;
+    (void)top;
+    (void)dc;
     auto t = [&](int x) { return T[x + 1]; };              // x = -1 is the corner
     auto l = [&](int y) { return y < 0 ? T[0] : L[y]; }; // y = -1 is the corner
-    for (int y = 0; y < 4; ++y) {
+    (void)t;
+    (void)l;
+    for (int y = 0; y < 4; ++y)
         for (int x = 0; x < 4; ++x) {
             int v = 128;
-            switch (mode) {
-            case 0: v = t(x); break;
-            case 1: v = l(y); break;
-            case 2: {
+            if constexpr (Mode == 0) {
+                v = t(x);
+            }
+            if constexpr (Mode == 1) {
+                v = l(y);
+            }
+            if constexpr (Mode == 2) {
                 const int st = t(0) + t(1) + t(2) + t(3), sl = l(0) + l(1) + l(2) + l(3);
                 v = (top && left) ? (st + sl + 4) >> 3 : left ? (sl + 2) >> 2 : top ? (st + 2) >> 2 : 128;
-                break;
             }
-            case 3:
+            if constexpr (Mode == 3) {
                 v = (x == 3 && y == 3) ? (t(6) + 3 * t(7) + 2) >> 2
                                        : (t(x + y) + 2 * t(x + y + 1) + t(x + y + 2) + 2) >> 2;
-                break;
-            case 4:
+            }
+            if constexpr (Mode == 4) {
                 if (x > y)
                     v = (t(x - y - 2) + 2 * t(x - y - 1) + t(x - y) + 2) >> 2;
                 else if (x < y)
                     v = (l(y - x - 2) + 2 * l(y - x - 1) + l(y - x) + 2) >> 2;
                 else
                     v = (t(0) + 2 * T[0] + l(0) + 2) >> 2;
-                break;
-            case 5: {
+            }
+            if constexpr (Mode == 5) {
                 const int z = 2 * x - y, k = x - (y >> 1);
                 if (z >= 0 && !(z & 1))
                     v = (t(k - 1) + t(k) + 1) >> 1;
@@ -1224,9 +1737,8 @@ void predict4x4(int mode, const int* T, const int* L, bool left, bool top, uint8
                     v = (l(0) + 2 * T[0] + t(0) + 2) >> 2;
                 else
                     v = (l(y - 1) + 2 * l(y - 2) + l(y - 3) + 2) >> 2;
-                break;
             }
-            case 6: {
+            if constexpr (Mode == 6) {
                 const int z = 2 * y - x, k = y - (x >> 1);
                 if (z >= 0 && !(z & 1))
                     v = (l(k - 1) + l(k) + 1) >> 1;
@@ -1236,14 +1748,12 @@ void predict4x4(int mode, const int* T, const int* L, bool left, bool top, uint8
                     v = (l(0) + 2 * T[0] + t(0) + 2) >> 2;
                 else
                     v = (t(x - 1) + 2 * t(x - 2) + t(x - 3) + 2) >> 2;
-                break;
             }
-            case 7: {
+            if constexpr (Mode == 7) {
                 const int k = x + (y >> 1);
                 v = (y & 1) ? (t(k) + 2 * t(k + 1) + t(k + 2) + 2) >> 2 : (t(k) + t(k + 1) + 1) >> 1;
-                break;
             }
-            case 8: {
+            if constexpr (Mode == 8) {
                 const int z = x + 2 * y, k = y + (x >> 1);
                 if (z > 5)
                     v = l(3);
@@ -1253,11 +1763,25 @@ void predict4x4(int mode, const int* T, const int* L, bool left, bool top, uint8
                     v = (l(k) + 2 * l(k + 1) + l(k + 2) + 2) >> 2;
                 else
                     v = (l(k) + l(k + 1) + 1) >> 1;
-                break;
-            }
             }
             pred[y * 4 + x] = uint8_t(v);
         }
+}
+
+// One loop per mode (the mode switch outside the sample loops).
+void predict4x4(int mode, const int* T, const int* L, bool left, bool top, uint8_t* pred)
+{
+    const int dc = 0; // Mode 2 sums its own neighbours
+    switch (mode) {
+    case 0: predict4x4Mode<0>(T, L, left, top, dc, pred); break;
+    case 1: predict4x4Mode<1>(T, L, left, top, dc, pred); break;
+    case 2: predict4x4Mode<2>(T, L, left, top, dc, pred); break;
+    case 3: predict4x4Mode<3>(T, L, left, top, dc, pred); break;
+    case 4: predict4x4Mode<4>(T, L, left, top, dc, pred); break;
+    case 5: predict4x4Mode<5>(T, L, left, top, dc, pred); break;
+    case 6: predict4x4Mode<6>(T, L, left, top, dc, pred); break;
+    case 7: predict4x4Mode<7>(T, L, left, top, dc, pred); break;
+    case 8: predict4x4Mode<8>(T, L, left, top, dc, pred); break;
     }
 }
 
@@ -1291,6 +1815,81 @@ void filterIntra8Refs(int* T, int* L, bool left, bool top, bool corner)
 }
 
 // Intra 8x8 prediction (8.3.2.2.2..10) from filtered references (layout as filterIntra8Refs). Output stride 8.
+template <int Mode>
+inline void predict8x8Mode(const int* T, const int* L, bool left, bool top, int dc, uint8_t* pred)
+{
+    (void)left;
+    (void)top;
+    (void)dc;
+    auto t = [&](int x) { return T[x + 1]; };              // x = -1 is the corner
+    auto l = [&](int y) { return y < 0 ? T[0] : L[y]; }; // y = -1 is the corner
+    (void)t;
+    (void)l;
+    for (int y = 0; y < 8; ++y)
+        for (int x = 0; x < 8; ++x) {
+            int v = 128;
+            if constexpr (Mode == 0) {
+                v = t(x);
+            }
+            if constexpr (Mode == 1) {
+                v = l(y);
+            }
+            if constexpr (Mode == 2) {
+                v = dc;
+            }
+            if constexpr (Mode == 3) {
+                v = (x == 7 && y == 7) ? (t(14) + 3 * t(15) + 2) >> 2
+                                       : (t(x + y) + 2 * t(x + y + 1) + t(x + y + 2) + 2) >> 2;
+            }
+            if constexpr (Mode == 4) {
+                if (x > y)
+                    v = (t(x - y - 2) + 2 * t(x - y - 1) + t(x - y) + 2) >> 2;
+                else if (x < y)
+                    v = (l(y - x - 2) + 2 * l(y - x - 1) + l(y - x) + 2) >> 2;
+                else
+                    v = (t(0) + 2 * T[0] + l(0) + 2) >> 2;
+            }
+            if constexpr (Mode == 5) {
+                const int z = 2 * x - y, k = x - (y >> 1);
+                if (z >= 0 && !(z & 1))
+                    v = (t(k - 1) + t(k) + 1) >> 1;
+                else if (z > 0)
+                    v = (t(k - 2) + 2 * t(k - 1) + t(k) + 2) >> 2;
+                else if (z == -1)
+                    v = (l(0) + 2 * T[0] + t(0) + 2) >> 2;
+                else
+                    v = (l(y - 2 * x - 1) + 2 * l(y - 2 * x - 2) + l(y - 2 * x - 3) + 2) >> 2;
+            }
+            if constexpr (Mode == 6) {
+                const int z = 2 * y - x, k = y - (x >> 1);
+                if (z >= 0 && !(z & 1))
+                    v = (l(k - 1) + l(k) + 1) >> 1;
+                else if (z > 0)
+                    v = (l(k - 2) + 2 * l(k - 1) + l(k) + 2) >> 2;
+                else if (z == -1)
+                    v = (l(0) + 2 * T[0] + t(0) + 2) >> 2;
+                else
+                    v = (t(x - 2 * y - 1) + 2 * t(x - 2 * y - 2) + t(x - 2 * y - 3) + 2) >> 2;
+            }
+            if constexpr (Mode == 7) {
+                const int k = x + (y >> 1);
+                v = (y & 1) ? (t(k) + 2 * t(k + 1) + t(k + 2) + 2) >> 2 : (t(k) + t(k + 1) + 1) >> 1;
+            }
+            if constexpr (Mode == 8) {
+                const int z = x + 2 * y, k = y + (x >> 1);
+                if (z > 13)
+                    v = l(7);
+                else if (z == 13)
+                    v = (l(6) + 3 * l(7) + 2) >> 2;
+                else if (z & 1)
+                    v = (l(k) + 2 * l(k + 1) + l(k + 2) + 2) >> 2;
+                else
+                    v = (l(k) + l(k + 1) + 1) >> 1;
+            }
+            pred[y * 8 + x] = uint8_t(v);
+        }
+}
+
 void predict8x8(int mode, const int* T, const int* L, bool left, bool top, uint8_t* pred)
 {
     auto t = [&](int x) { return T[x + 1]; };              // x = -1 is the corner
@@ -1304,69 +1903,16 @@ void predict8x8(int mode, const int* T, const int* L, bool left, bool top, uint8
         }
         dc = (top && left) ? (st + sl + 8) >> 4 : left ? (sl + 4) >> 3 : top ? (st + 4) >> 3 : 128;
     }
-    for (int y = 0; y < 8; ++y) {
-        for (int x = 0; x < 8; ++x) {
-            int v = 128;
-            switch (mode) {
-            case 0: v = t(x); break;
-            case 1: v = l(y); break;
-            case 2: v = dc; break;
-            case 3:
-                v = (x == 7 && y == 7) ? (t(14) + 3 * t(15) + 2) >> 2
-                                       : (t(x + y) + 2 * t(x + y + 1) + t(x + y + 2) + 2) >> 2;
-                break;
-            case 4:
-                if (x > y)
-                    v = (t(x - y - 2) + 2 * t(x - y - 1) + t(x - y) + 2) >> 2;
-                else if (x < y)
-                    v = (l(y - x - 2) + 2 * l(y - x - 1) + l(y - x) + 2) >> 2;
-                else
-                    v = (t(0) + 2 * T[0] + l(0) + 2) >> 2;
-                break;
-            case 5: {
-                const int z = 2 * x - y, k = x - (y >> 1);
-                if (z >= 0 && !(z & 1))
-                    v = (t(k - 1) + t(k) + 1) >> 1;
-                else if (z > 0)
-                    v = (t(k - 2) + 2 * t(k - 1) + t(k) + 2) >> 2;
-                else if (z == -1)
-                    v = (l(0) + 2 * T[0] + t(0) + 2) >> 2;
-                else
-                    v = (l(y - 2 * x - 1) + 2 * l(y - 2 * x - 2) + l(y - 2 * x - 3) + 2) >> 2;
-                break;
-            }
-            case 6: {
-                const int z = 2 * y - x, k = y - (x >> 1);
-                if (z >= 0 && !(z & 1))
-                    v = (l(k - 1) + l(k) + 1) >> 1;
-                else if (z > 0)
-                    v = (l(k - 2) + 2 * l(k - 1) + l(k) + 2) >> 2;
-                else if (z == -1)
-                    v = (l(0) + 2 * T[0] + t(0) + 2) >> 2;
-                else
-                    v = (t(x - 2 * y - 1) + 2 * t(x - 2 * y - 2) + t(x - 2 * y - 3) + 2) >> 2;
-                break;
-            }
-            case 7: {
-                const int k = x + (y >> 1);
-                v = (y & 1) ? (t(k) + 2 * t(k + 1) + t(k + 2) + 2) >> 2 : (t(k) + t(k + 1) + 1) >> 1;
-                break;
-            }
-            case 8: {
-                const int z = x + 2 * y, k = y + (x >> 1);
-                if (z > 13)
-                    v = l(7);
-                else if (z == 13)
-                    v = (l(6) + 3 * l(7) + 2) >> 2;
-                else if (z & 1)
-                    v = (l(k) + 2 * l(k + 1) + l(k + 2) + 2) >> 2;
-                else
-                    v = (l(k) + l(k + 1) + 1) >> 1;
-                break;
-            }
-            }
-            pred[y * 8 + x] = uint8_t(v);
-        }
+    switch (mode) {
+    case 0: predict8x8Mode<0>(T, L, left, top, dc, pred); break;
+    case 1: predict8x8Mode<1>(T, L, left, top, dc, pred); break;
+    case 2: predict8x8Mode<2>(T, L, left, top, dc, pred); break;
+    case 3: predict8x8Mode<3>(T, L, left, top, dc, pred); break;
+    case 4: predict8x8Mode<4>(T, L, left, top, dc, pred); break;
+    case 5: predict8x8Mode<5>(T, L, left, top, dc, pred); break;
+    case 6: predict8x8Mode<6>(T, L, left, top, dc, pred); break;
+    case 7: predict8x8Mode<7>(T, L, left, top, dc, pred); break;
+    case 8: predict8x8Mode<8>(T, L, left, top, dc, pred); break;
     }
 }
 
@@ -1662,12 +2208,12 @@ bool FrameCoder::encodeLuma4(MbOut& o, int mbx, int mby, const ChromaMb& ch)
 
         uint8_t pred[16], cand[16];
         int bestMode = 2, bestCost = 1 << 30;
-        for (int mode = 0; mode < 9; ++mode) {
+        auto tryMode = [&](int mode) {
             const bool needsTop = mode == 0 || mode == 3 || mode == 7;
             const bool needsLeft = mode == 1 || mode == 8;
             const bool needsBoth = mode >= 4 && mode <= 6;
             if ((needsTop && !top) || (needsLeft && !left) || (needsBoth && !(top && left)))
-                continue;
+                return 1 << 30;
             predict4x4(mode, T, L, left, top, cand);
             const int cost = satdU8(&srcY_[size_t(py) * padW_ + px], padW_, cand, 4) + lambda * (mode == predMode ? 1 : 4);
             if (cost < bestCost) {
@@ -1675,7 +2221,9 @@ bool FrameCoder::encodeLuma4(MbOut& o, int mbx, int mby, const ChromaMb& ch)
                 bestMode = mode;
                 std::memcpy(pred, cand, 16);
             }
-        }
+            return cost;
+        };
+        intraModeSearch(tryMode, predMode);
         modes[blkIdx] = bestMode;
         modes4x4_[size_t(by) * lw + bx] = int8_t(bestMode);
 
@@ -1788,7 +2336,7 @@ bool FrameCoder::encodeMbIntra(MbOut& out, int mbx, int mby)
     MbOut a, b;
     bool deltaA = false;
     double costA = 1e300;
-    if (!intraSkip16_) {
+    if (!tIntraSkip16) {
         deltaA = encodeLuma16(a, mbx, mby, ch);
         costA = double(ssd()) + lambda * mbBits(a, mbx, mby, double(a.bw.bitCount()));
     }
@@ -1796,7 +2344,7 @@ bool FrameCoder::encodeMbIntra(MbOut& out, int mbx, int mby)
     save(snapA);
     const bool deltaB = encodeLuma4(b, mbx, mby, ch);
     const double costB = double(ssd()) + lambda * mbBits(b, mbx, mby, double(b.bw.bitCount()));
-    if (useT8() && !intraSkip8_) {
+    if (useT8() && !tIntraSkip8) {
         Snapshot snapB;
         save(snapB);
         MbOut c;
@@ -2069,12 +2617,12 @@ bool FrameCoder::encodeLuma8(MbOut& o, int mbx, int mby, const ChromaMb& ch)
 
         uint8_t pred[64], cand[64];
         int bestMode = 2, bestCost = 1 << 30;
-        for (int mode = 0; mode < 9; ++mode) {
+        auto tryMode = [&](int mode) {
             const bool needsTop = mode == 0 || mode == 3 || mode == 7;
             const bool needsLeft = mode == 1 || mode == 8;
             const bool needsBoth = mode >= 4 && mode <= 6;
             if ((needsTop && !top) || (needsLeft && !left) || (needsBoth && !corner))
-                continue;
+                return 1 << 30;
             predict8x8(mode, T, L, left, top, cand);
             int cost = lambda * (mode == predMode ? 1 : 4);
             for (int k = 0; k < 2; ++k)
@@ -2084,7 +2632,9 @@ bool FrameCoder::encodeLuma8(MbOut& o, int mbx, int mby, const ChromaMb& ch)
                 bestMode = mode;
                 std::memcpy(pred, cand, 64);
             }
-        }
+            return cost;
+        };
+        intraModeSearch(tryMode, predMode);
 
         int res[64], levels[64];
         for (int y = 0; y < 8; ++y)
@@ -2402,10 +2952,8 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
                 continue;
             predictLuma16(mode, &recY_[lumaOff], padW_, left, top, cand);
             int sum = 0;
-            for (int b = 0; b < 16; b += 2) {
-                const int ox = (b & 3) * 4, oy = (b >> 2) * 4;
-                sum += satd8x4U8(&srcY_[lumaOff + size_t(oy) * padW_ + ox], padW_, cand + oy * 16 + ox, 16);
-            }
+            for (int oy = 0; oy < 16; oy += 4)
+                sum += satd16x4U8(&srcY_[lumaOff + size_t(oy) * padW_], padW_, cand + oy * 16, 16);
             est = std::min(est, sum);
         }
         return est;
@@ -2431,6 +2979,7 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
         if (prev_ && prev_->refIdx_[o] == 0)
             starts.push_back({prev_->mvX_[o], prev_->mvY_[o]});
     }
+    bool subpelNow = true; // half/quarter-pel refinement in search()
     auto search = [&](int x4, int y4, int w4, int h4, int ref, int pX, int pY, int& outX, int& outY) {
         starts.push_back({pX, pY});
         bool useSatd = false;
@@ -2480,6 +3029,8 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
         best = cost(bx, by);
         const bool diamond = gExp & 16; // experiment: 4 instead of 8 neighbours per sub-pel step
         for (int step : {2, 1}) {
+            if (!subpelNow)
+                break;
             const int cx0 = bx, cy0 = by;
             for (int dy = -1; dy <= 1; ++dy)
                 for (int dx = -1; dx <= 1; ++dx) {
@@ -2560,6 +3111,10 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
     const Choice whole = tryLayout(0);
     Choice split;
     if (cfg_.effort > 0) {
+        // Experiment (H264_EXP & 256): the split layouts compare at full-pel (SATD); only the best
+        // one gets the sub-pel refinement, and only when it is close.
+        const bool lateSubpel = gExp & 256;
+        subpelNow = !lateSubpel;
         split = tryLayout(3);
         if (split.cost < whole.cost * 1.1) { // 16x8 / 8x16 only where splitting looks worth it
             for (int li : {1, 2}) {
@@ -2568,6 +3123,9 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
                     split = c;
             }
         }
+        subpelNow = true;
+        if (lateSubpel && split.cost < whole.cost * 1.1)
+            split = tryLayout(split.layout);
     }
 
     // Encodes one inter choice; leaves its state in the macroblock and returns SSD + lambda * bits.
@@ -2771,7 +3329,9 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
     saveMb(mbx, mby, interState);
     Choice best = whole;
     // Try the split for real when its estimate is close or better.
-    if (split.cost < whole.cost * 1.1) {
+    // Measured: 1.0 is as fast as 1.1 and -0.04 % BD-rate (0.95: +0.44 %). H264_SPLITF overrides.
+    static const double kSplitTry = std::getenv("H264_SPLITF") ? std::atof(std::getenv("H264_SPLITF")) : 1.0;
+    if (split.cost < whole.cost * kSplitTry) {
         MbOut splitBits;
         const double costSplit = encodeInter(split, splitBits, false);
         if (costSplit < costInter) {
@@ -2782,9 +3342,10 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
             best = split;
         }
     }
-    // 8x8 transform for the chosen layout (High profile).
+    // 8x8 transform for the chosen layout (High profile). Experiment (H264_EXP & 128): not when
+    // the 4x4 transform left no luma coefficients.
     bool bestT8 = false;
-    if (useT8() && cfg_.effort > 0) {
+    if (useT8() && cfg_.effort > 0 && !((gExp & 128) && interBits.syn.cbpLuma == 0)) {
         MbOut t8Bits;
         const double costT8 = encodeInter(best, t8Bits, true);
         if (costT8 < costInter) {
@@ -2813,13 +3374,13 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
         // recY_ of this macroblock holds the inter reconstruction here, but Intra 16x16
         // prediction only reads the neighbours above and to the left.
         if (double(intraEstimate) < best.cost * gIntraFactor) {
-            // Borderline cases (estimate above the inter cost) rarely win; experiments drop
-            // the dearer intra types there.
+            // Borderline cases (estimate above the inter cost) rarely win: only the cheap
+            // intra types there.
             const bool borderline = double(intraEstimate) >= best.cost;
-            intraSkip8_ = borderline && (gExp & 2);
-            intraSkip16_ = borderline && (gExp & 4);
+            tIntraSkip8 = borderline && (!gFullIntra || (gExp & 2));
+            tIntraSkip16 = borderline && (!gFullIntra || (gExp & 4));
             intraDelta = encodeMbIntra(intraBits, mbx, mby);
-            intraSkip8_ = intraSkip16_ = false;
+            tIntraSkip8 = tIntraSkip16 = false;
             setBlocks(0, 0, 4, 4, 0, 0, -1);
             costIntra = double(mbSsd(mbx, mby)) + lambda * mbBits(intraBits, mbx, mby, double(intraBits.bw.bitCount() + seBits(0)));
             if (gStats) {
@@ -2889,110 +3450,125 @@ void FrameCoder::buildRefPlanes(RefPic& R)
         for (auto& t : workers)
             t.join();
     };
-    auto tap6 = [](int a, int b, int c, int d, int e, int f) { return a - 5 * b + 20 * c + 20 * d - 5 * e + f; };
+    parallelRows([&](int y0, int y1) { refFullRows(R, y0, y1); });
+    parallelRows([&](int y0, int y1) { refHalfRows(R, y0, y1); });
+}
 
-    parallelRows([&](int y0, int y1) {
-        for (int y = y0; y < y1; ++y) {
-            const uint8_t* src = &R.y[size_t(std::clamp(y - M, 0, padH_ - 1)) * padW_];
-            uint8_t* dst = &R.F[size_t(y) * W];
-            std::memset(dst, src[0], size_t(M));
-            std::memcpy(dst + M, src, size_t(padW_));
-            std::memset(dst + M + padW_, src[padW_ - 1], size_t(M));
-        }
-    });
-    parallelRows([&](int y0, int y1) {
-        std::vector<int> vRow(size_t(W) + 8);
-        for (int y = y0; y < y1; ++y) {
-            const uint8_t* r[6];
-            for (int k = 0; k < 6; ++k)
-                r[k] = &R.F[size_t(std::clamp(y - 2 + k, 0, H - 1)) * W];
-            const uint8_t* row = r[2];
-            int* vi = vRow.data(); // vertical 6-tap intermediate of this row (unclipped)
-            uint8_t* vb = &R.V[size_t(y) * W];
-            uint8_t* hb = &R.B[size_t(y) * W];
-            int x = 0, hEnd = 2;
+// Full-pel luma with the margin (edge samples repeated) for the rows [y0, y1) of the extended plane.
+void FrameCoder::refFullRows(RefPic& R, int y0, int y1) const
+{
+    const int M = kMargin;
+    const int W = extW_, H = extH_;
+    (void)M;
+    (void)H;
+    for (int y = y0; y < y1; ++y) {
+        const uint8_t* src = &R.y[size_t(std::clamp(y - M, 0, padH_ - 1)) * padW_];
+        uint8_t* dst = &R.F[size_t(y) * W];
+        std::memset(dst, src[0], size_t(M));
+        std::memcpy(dst + M, src, size_t(padW_));
+        std::memset(dst + M + padW_, src[padW_ - 1], size_t(M));
+    }
+}
+
+// Half-pel planes B, V, J for the rows [y0, y1); needs the full-pel rows y0 - 2 .. y1 + 2.
+void FrameCoder::refHalfRows(RefPic& R, int y0, int y1) const
+{
+    const int M = kMargin;
+    const int W = extW_, H = extH_;
+    (void)M;
+    (void)H;
+    auto tap6 = [](int a, int b, int c, int d, int e, int f) { return a - 5 * b + 20 * c + 20 * d - 5 * e + f; };
+    std::vector<int> vRow(size_t(W) + 8);
+    for (int y = y0; y < y1; ++y) {
+        const uint8_t* r[6];
+        for (int k = 0; k < 6; ++k)
+            r[k] = &R.F[size_t(std::clamp(y - 2 + k, 0, H - 1)) * W];
+        const uint8_t* row = r[2];
+        int* vi = vRow.data(); // vertical 6-tap intermediate of this row (unclipped)
+        uint8_t* vb = &R.V[size_t(y) * W];
+        uint8_t* hb = &R.B[size_t(y) * W];
+        int x = 0, hEnd = 2;
 #if defined(__SSE2__) || defined(_M_X64)
-            // Same arithmetic eight samples at a time (16-bit lanes hold -2550..10710).
-            {
-                const __m128i zero = _mm_setzero_si128(), c5 = _mm_set1_epi16(5), c20 = _mm_set1_epi16(20);
-                const __m128i r16 = _mm_set1_epi16(16);
-                auto ld = [&](const uint8_t* p) {
-                    return _mm_unpacklo_epi8(_mm_loadl_epi64(reinterpret_cast<const __m128i*>(p)), zero);
-                };
-                auto tap = [&](__m128i a, __m128i b, __m128i c, __m128i d, __m128i e, __m128i f) {
-                    const __m128i outer = _mm_add_epi16(a, f), mid = _mm_add_epi16(c, d), side = _mm_add_epi16(b, e);
-                    return _mm_sub_epi16(_mm_add_epi16(outer, _mm_mullo_epi16(mid, c20)), _mm_mullo_epi16(side, c5));
-                };
-                for (; x + 8 <= W; x += 8) {
-                    const __m128i vv = tap(ld(r[0] + x), ld(r[1] + x), ld(r[2] + x), ld(r[3] + x), ld(r[4] + x), ld(r[5] + x));
-                    const __m128i sign = _mm_srai_epi16(vv, 15);
-                    _mm_storeu_si128(reinterpret_cast<__m128i*>(vi + x), _mm_unpacklo_epi16(vv, sign));
-                    _mm_storeu_si128(reinterpret_cast<__m128i*>(vi + x + 4), _mm_unpackhi_epi16(vv, sign));
-                    const __m128i v8 = _mm_srai_epi16(_mm_add_epi16(vv, r16), 5);
-                    _mm_storel_epi64(reinterpret_cast<__m128i*>(vb + x), _mm_packus_epi16(v8, v8));
-                }
-                for (; hEnd + 11 <= W; hEnd += 8) {
-                    const uint8_t* q = row + hEnd;
-                    const __m128i bb = tap(ld(q - 2), ld(q - 1), ld(q), ld(q + 1), ld(q + 2), ld(q + 3));
-                    const __m128i b8 = _mm_srai_epi16(_mm_add_epi16(bb, r16), 5);
-                    _mm_storel_epi64(reinterpret_cast<__m128i*>(hb + hEnd), _mm_packus_epi16(b8, b8));
-                }
+        // Same arithmetic eight samples at a time (16-bit lanes hold -2550..10710).
+        {
+            const __m128i zero = _mm_setzero_si128(), c5 = _mm_set1_epi16(5), c20 = _mm_set1_epi16(20);
+            const __m128i r16 = _mm_set1_epi16(16);
+            auto ld = [&](const uint8_t* p) {
+                return _mm_unpacklo_epi8(_mm_loadl_epi64(reinterpret_cast<const __m128i*>(p)), zero);
+            };
+            auto tap = [&](__m128i a, __m128i b, __m128i c, __m128i d, __m128i e, __m128i f) {
+                const __m128i outer = _mm_add_epi16(a, f), mid = _mm_add_epi16(c, d), side = _mm_add_epi16(b, e);
+                return _mm_sub_epi16(_mm_add_epi16(outer, _mm_mullo_epi16(mid, c20)), _mm_mullo_epi16(side, c5));
+            };
+            for (; x + 8 <= W; x += 8) {
+                const __m128i vv = tap(ld(r[0] + x), ld(r[1] + x), ld(r[2] + x), ld(r[3] + x), ld(r[4] + x), ld(r[5] + x));
+                const __m128i sign = _mm_srai_epi16(vv, 15);
+                _mm_storeu_si128(reinterpret_cast<__m128i*>(vi + x), _mm_unpacklo_epi16(vv, sign));
+                _mm_storeu_si128(reinterpret_cast<__m128i*>(vi + x + 4), _mm_unpackhi_epi16(vv, sign));
+                const __m128i v8 = _mm_srai_epi16(_mm_add_epi16(vv, r16), 5);
+                _mm_storel_epi64(reinterpret_cast<__m128i*>(vb + x), _mm_packus_epi16(v8, v8));
             }
-#endif
-            for (; x < W; ++x) {
-                const int vv = tap6(r[0][x], r[1][x], r[2][x], r[3][x], r[4][x], r[5][x]);
-                vi[x] = vv;
-                vb[x] = clip1((vv + 16) >> 5);
-            }
-            for (x = 0; x < W; ++x) {
-                if (x == 2)
-                    x = hEnd; // [2, hEnd) done above
-                if (x >= W)
-                    break;
-                int bb;
-                if (x >= 2 && x + 3 < W)
-                    bb = tap6(row[x - 2], row[x - 1], row[x], row[x + 1], row[x + 2], row[x + 3]);
-                else
-                    bb = tap6(row[std::clamp(x - 2, 0, W - 1)], row[std::clamp(x - 1, 0, W - 1)], row[x],
-                              row[std::min(x + 1, W - 1)], row[std::min(x + 2, W - 1)], row[std::min(x + 3, W - 1)]);
-                hb[x] = clip1((bb + 16) >> 5);
-            }
-            // Centre half-pel: horizontal 6-tap over the vertical intermediate, same row.
-            const int* v = vRow.data();
-            uint8_t* j = &R.J[size_t(y) * W];
-            int jEnd = 2;
-#if defined(__SSE2__) || defined(_M_X64)
-            {
-                auto ld = [&](int x) { return _mm_loadu_si128(reinterpret_cast<const __m128i*>(v + x)); };
-                auto tap = [&](int x) { // 32-bit lanes: up to about 450000
-                    const __m128i outer = _mm_add_epi32(ld(x - 2), ld(x + 3));
-                    const __m128i mid = _mm_add_epi32(ld(x), ld(x + 1)), side = _mm_add_epi32(ld(x - 1), ld(x + 2));
-                    const __m128i mid20 = _mm_add_epi32(_mm_slli_epi32(mid, 4), _mm_slli_epi32(mid, 2));
-                    const __m128i side5 = _mm_add_epi32(_mm_slli_epi32(side, 2), side);
-                    const __m128i jj = _mm_sub_epi32(_mm_add_epi32(outer, mid20), side5);
-                    return _mm_srai_epi32(_mm_add_epi32(jj, _mm_set1_epi32(512)), 10);
-                };
-                for (; jEnd + 11 <= W; jEnd += 8) {
-                    const __m128i w = _mm_packs_epi32(tap(jEnd), tap(jEnd + 4));
-                    _mm_storel_epi64(reinterpret_cast<__m128i*>(j + jEnd), _mm_packus_epi16(w, w));
-                }
-            }
-#endif
-            for (int x = 0; x < W; ++x) {
-                if (x == 2)
-                    x = jEnd; // [2, jEnd) done above
-                if (x >= W)
-                    break;
-                int jj;
-                if (x >= 2 && x + 3 < W)
-                    jj = tap6(v[x - 2], v[x - 1], v[x], v[x + 1], v[x + 2], v[x + 3]);
-                else
-                    jj = tap6(v[std::clamp(x - 2, 0, W - 1)], v[std::clamp(x - 1, 0, W - 1)], v[x],
-                              v[std::min(x + 1, W - 1)], v[std::min(x + 2, W - 1)], v[std::min(x + 3, W - 1)]);
-                j[x] = clip1((jj + 512) >> 10);
+            for (; hEnd + 11 <= W; hEnd += 8) {
+                const uint8_t* q = row + hEnd;
+                const __m128i bb = tap(ld(q - 2), ld(q - 1), ld(q), ld(q + 1), ld(q + 2), ld(q + 3));
+                const __m128i b8 = _mm_srai_epi16(_mm_add_epi16(bb, r16), 5);
+                _mm_storel_epi64(reinterpret_cast<__m128i*>(hb + hEnd), _mm_packus_epi16(b8, b8));
             }
         }
-    });
+#endif
+        for (; x < W; ++x) {
+            const int vv = tap6(r[0][x], r[1][x], r[2][x], r[3][x], r[4][x], r[5][x]);
+            vi[x] = vv;
+            vb[x] = clip1((vv + 16) >> 5);
+        }
+        for (x = 0; x < W; ++x) {
+            if (x == 2)
+                x = hEnd; // [2, hEnd) done above
+            if (x >= W)
+                break;
+            int bb;
+            if (x >= 2 && x + 3 < W)
+                bb = tap6(row[x - 2], row[x - 1], row[x], row[x + 1], row[x + 2], row[x + 3]);
+            else
+                bb = tap6(row[std::clamp(x - 2, 0, W - 1)], row[std::clamp(x - 1, 0, W - 1)], row[x],
+                          row[std::min(x + 1, W - 1)], row[std::min(x + 2, W - 1)], row[std::min(x + 3, W - 1)]);
+            hb[x] = clip1((bb + 16) >> 5);
+        }
+        // Centre half-pel: horizontal 6-tap over the vertical intermediate, same row.
+        const int* v = vRow.data();
+        uint8_t* j = &R.J[size_t(y) * W];
+        int jEnd = 2;
+#if defined(__SSE2__) || defined(_M_X64)
+        {
+            auto ld = [&](int x) { return _mm_loadu_si128(reinterpret_cast<const __m128i*>(v + x)); };
+            auto tap = [&](int x) { // 32-bit lanes: up to about 450000
+                const __m128i outer = _mm_add_epi32(ld(x - 2), ld(x + 3));
+                const __m128i mid = _mm_add_epi32(ld(x), ld(x + 1)), side = _mm_add_epi32(ld(x - 1), ld(x + 2));
+                const __m128i mid20 = _mm_add_epi32(_mm_slli_epi32(mid, 4), _mm_slli_epi32(mid, 2));
+                const __m128i side5 = _mm_add_epi32(_mm_slli_epi32(side, 2), side);
+                const __m128i jj = _mm_sub_epi32(_mm_add_epi32(outer, mid20), side5);
+                return _mm_srai_epi32(_mm_add_epi32(jj, _mm_set1_epi32(512)), 10);
+            };
+            for (; jEnd + 11 <= W; jEnd += 8) {
+                const __m128i w = _mm_packs_epi32(tap(jEnd), tap(jEnd + 4));
+                _mm_storel_epi64(reinterpret_cast<__m128i*>(j + jEnd), _mm_packus_epi16(w, w));
+            }
+        }
+#endif
+        for (int x = 0; x < W; ++x) {
+            if (x == 2)
+                x = jEnd; // [2, jEnd) done above
+            if (x >= W)
+                break;
+            int jj;
+            if (x >= 2 && x + 3 < W)
+                jj = tap6(v[x - 2], v[x - 1], v[x], v[x + 1], v[x + 2], v[x + 3]);
+            else
+                jj = tap6(v[std::clamp(x - 2, 0, W - 1)], v[std::clamp(x - 1, 0, W - 1)], v[x],
+                          v[std::min(x + 1, W - 1)], v[std::min(x + 2, W - 1)], v[std::min(x + 3, W - 1)]);
+            j[x] = clip1((jj + 512) >> 10);
+        }
+    }
 }
 
 // Luma prediction of a w x h block at integer position (x0, y0) plus quarter offset (fx, fy),
@@ -3054,16 +3630,32 @@ int FrameCoder::sadPart(const RefPic& R, int mbx, int mby, int x4, int y4, int w
             s += sadRow(&srcY_[lo + size_t(y) * padW_], ref + size_t(y) * extW_, w);
         return s;
     }
-    uint8_t pred[256];
-    mcLuma(R, px + (mvx >> 2), py + (mvy >> 2), mvx & 3, mvy & 3, w, h, pred);
+    uint8_t buf[256];
+    const uint8_t* pred = buf;
+    int ps = 16;
+    // Full and half positions are one plane: read it in place instead of copying the block.
+    const int fx = mvx & 3, fy = mvy & 3;
+    if (!(fx & 1) && !(fy & 1)) {
+        const RefPic& P = R;
+        const std::vector<uint8_t>& plane = fy ? (fx ? P.J : P.V) : (fx ? P.B : P.F);
+        pred = plane.data() + size_t(py + (mvy >> 2) + kMargin) * extW_ + size_t(px + (mvx >> 2) + kMargin);
+        ps = extW_;
+    } else {
+        mcLuma(R, px + (mvx >> 2), py + (mvy >> 2), fx, fy, w, h, buf);
+    }
     if (satd) {
-        for (int by = 0; by < h4; ++by)
+        for (int by = 0; by < h4; ++by) {
+            if (w4 == 4) {
+                s += satd16x4U8(&srcY_[lo + size_t(by * 4) * padW_], padW_, pred + by * 4 * ps, ps);
+                continue;
+            }
             for (int bx = 0; bx < w4; bx += 2) // partitions are at least 8 wide
-                s += satd8x4U8(&srcY_[lo + size_t(by * 4) * padW_ + bx * 4], padW_, pred + by * 4 * 16 + bx * 4, 16);
+                s += satd8x4U8(&srcY_[lo + size_t(by * 4) * padW_ + bx * 4], padW_, pred + by * 4 * ps + bx * 4, ps);
+        }
         return s;
     }
     for (int y = 0; y < h; ++y)
-        s += sadRow(&srcY_[lo + size_t(y) * padW_], pred + y * 16, w);
+        s += sadRow(&srcY_[lo + size_t(y) * padW_], pred + y * ps, w);
     return s;
 }
 
