@@ -299,9 +299,27 @@ void testSources(const QString& media, const QString& dir)
         });
         other.join();
         CHECK(p.stats().sourcesOpen > Picture::Renderer::kKeepSources);
-        p.trim(steady_clock::now() + minutes(1));
+        p.trim(steady_clock::now() + minutes(1), 3 * each + 5);
         CHECK_EQ(p.stats().sourcesOpen, Picture::Renderer::kKeepSources);
         p.update(clipsOf({files[3]}, each)); // the paused one alone: still open, nothing else
+        p.trim(steady_clock::now() + minutes(1));
+        CHECK_EQ(p.stats().sourcesOpen, 1);
+    }
+    // Paused just before a cut while the pump had rendered ahead into the next clip (and prepared the ones after it
+    // on other threads): the frame shown is on clip 3, the frames rendered last on clip 4. Clip 3's source stays.
+    {
+        Picture::Renderer p(clipsOf(files, each), o);
+        const int64_t shown = 3 * each + each - 2;
+        p.render(shown);
+        for (int k = 1; k <= 6; ++k) p.render(shown + k); // ahead, past the cut
+        std::thread other([&] {
+            for (int i = 4; i < files.size(); ++i) p.prepare(i * each);
+        });
+        other.join();
+        for (int i = 5; i < files.size(); ++i) p.render(i * each + 1); // touched after the shown frame
+        p.trim(steady_clock::now() + minutes(1), shown);
+        CHECK_EQ(p.stats().sourcesOpen, Picture::Renderer::kKeepSources);
+        p.update(clipsOf({files[3]}, each)); // only clip 3's file left in the timeline: was it kept?
         p.trim(steady_clock::now() + minutes(1));
         CHECK_EQ(p.stats().sourcesOpen, 1);
     }

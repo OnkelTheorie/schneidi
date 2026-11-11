@@ -310,7 +310,6 @@ struct Source {
     FileStamp::Stamp stamp; // of the media file when opened: another one = the file was overwritten, open it again
     std::chrono::steady_clock::time_point used;
     int64_t usedFrame = -1; // last output frame that asked for it (export: dropped once rendering went past it)
-    int64_t lastFrame = -1; // the output frame that asked for it most recently (trim keeps what the paused one uses)
 };
 
 // Output frame the calling thread renders right now (Renderer::render)
@@ -432,7 +431,6 @@ struct Renderer::Impl {
     std::shared_ptr<const Timeline> snapshot;
     QSize output;
     std::atomic<int> direction{1};
-    std::atomic<int64_t> lastRendered{-1}; // the output frame rendered most recently (the one shown when paused)
 
     std::mutex sourceMutex;
     std::map<QString, Source> sources;
@@ -493,7 +491,6 @@ struct Renderer::Impl {
             if (it != sources.end() && it->second.stamp == stamp) {
                 it->second.used = std::chrono::steady_clock::now();
                 it->second.usedFrame = std::max(it->second.usedFrame, t_frame);
-                it->second.lastFrame = t_frame;
                 return it->second;
             }
             // Overwritten under the same name: everything kept of the old content goes - in every lane (mediaLength
@@ -575,7 +572,6 @@ struct Renderer::Impl {
         s.failed = !s.video && !s.still;
         s.used = std::chrono::steady_clock::now();
         s.usedFrame = t_frame;
-        s.lastFrame = t_frame;
         std::lock_guard lock(sourceMutex);
         return sources.emplace(key, s).first->second;
     }
@@ -2826,7 +2822,6 @@ Frame Renderer::renderFrame(int64_t frame, const RenderHints& hints)
     if (d->options.mode == Mode::Export && frame % 16 == 0)
         d->dropBefore(frame - std::max<int64_t>(int64_t(2 * ctx.fps), 4 * d->options.parallelFrames + 8));
     t_frame = frame;
-    d->lastRendered = frame;
     t_hints = hints.nearest || hints.cancel ? &hints : nullptr;
     t_exact = true;
     t_sourceLost = false;
@@ -2971,12 +2966,12 @@ void Renderer::prepare(int64_t frame)
     }
 }
 
-void Renderer::trim()
+void Renderer::trim(int64_t shown)
 {
-    trim(std::chrono::steady_clock::now());
+    trim(std::chrono::steady_clock::now(), shown);
 }
 
-void Renderer::trim(std::chrono::steady_clock::time_point now)
+void Renderer::trim(std::chrono::steady_clock::time_point now, int64_t shown)
 {
     // Sources stay open over pauses, however long: Play opening its files again waited for the first picture (1080p60
     // ~260 ms, 4K HEVC ~550 ms; open: 2-15 ms, bench_play_after_pause), and the readers put an unused decoder to sleep
@@ -2994,22 +2989,38 @@ void Renderer::trim(std::chrono::steady_clock::time_point now)
         tl = d->snapshot;
     }
     // The files the timeline reads: originals, the proxies read for them, rendered clips
-    QSet<QString> used;
+    // ... and those of the clips at the shown frame (outer timeline; a compound clip's inner files all count)
+    QSet<QString> used, atShown;
     if (tl) {
-        std::function<void(const Timeline&)> collect = [&](const Timeline& t) {
+        std::function<void(const Timeline&, bool)> collect = [&](const Timeline& t, bool outer) {
             for (const QVector<Track>* tracks : {&t.video, &t.audio})
                 for (const Track& track : *tracks)
                     for (const Clip& c : track.clips) {
+                        const bool here = outer && shown >= 0 && tracks == &t.video && shown >= c.start
+                                          && shown < c.end();
+                        if (here && c.isNested() && tl->nested)
+                            if (const auto n = tl->nested->constFind(c.sequenceId); n != tl->nested->cend()) {
+                                QSet<QString> inner;
+                                std::swap(inner, used);
+                                collect(*n, false);
+                                std::swap(inner, used);
+                                atShown.unite(inner);
+                                used.unite(inner);
+                            }
                         if (c.mediaPath.isEmpty()) continue;
-                        used.insert(c.mediaPath);
-                        if (d->options.proxy) used.insert(d->options.proxy(c.mediaPath));
+                        QStringList files{c.mediaPath};
+                        if (d->options.proxy) files << d->options.proxy(c.mediaPath);
                         if (d->options.renderCache && tracks == &t.video)
-                            if (const QString file = d->options.renderCache(c); !file.isEmpty()) used.insert(file);
+                            if (const QString file = d->options.renderCache(c); !file.isEmpty()) files << file;
+                        for (const QString& f : files) {
+                            used.insert(f);
+                            if (here) atShown.insert(f);
+                        }
                     }
         };
-        collect(*tl);
+        collect(*tl, true);
         if (tl->nested)
-            for (const Timeline& n : *tl->nested) collect(n);
+            for (const Timeline& n : *tl->nested) collect(n, false);
     }
     std::vector<Source> closed; // closed outside the lock (a reader joins its threads)
     std::lock_guard lock(d->sourceMutex);
@@ -3028,11 +3039,11 @@ void Renderer::trim(std::chrono::steady_clock::time_point now)
         }
     }
     if (int(d->sources.size()) > kKeepSources) {
-        // Never what the frame rendered last needs (the paused picture: Play goes on from there), whatever its time
-        const int64_t shown = d->lastRendered.load();
+        // Never what the shown frame needs (paused: Play goes on from there), whatever its last use - the pump may
+        // have rendered ahead into the next clip and prepared later ones since
         std::vector<std::pair<steady_clock::time_point, QString>> byUse;
         for (const auto& [key, s] : d->sources)
-            if (s.lastFrame != shown || shown < 0) byUse.emplace_back(s.used, key);
+            if (!atShown.contains(fileOf(key))) byUse.emplace_back(s.used, key);
         std::sort(byUse.begin(), byUse.end()); // least recently used first
         size_t over = d->sources.size() - kKeepSources;
         for (size_t i = 0; i < byUse.size() && over > 0; ++i, --over) {

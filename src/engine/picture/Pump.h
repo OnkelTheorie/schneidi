@@ -51,8 +51,9 @@ public:
         // Called from a worker now and then while playing forward with frame = next frame to show: open decoders and
         // decode the first pictures of clips that start soon (optional)
         std::function<void(int64_t)> prepare;
-        // Called now and then (idle workers): drop decoders unused for a while (optional)
-        std::function<void()> trim;
+        // Called now and then (idle workers) with the frame shown (the next one due): drop decoders unused for a while,
+        // never the shown frame's (optional)
+        std::function<void(int64_t shown)> trim;
         double fps = 25; // content frames per second (clock frames to seconds)
     };
     // Where the sound is, in content frames (fractional: frame f plays from f to f + 1); NaN = no clock (show at once)
