@@ -88,8 +88,8 @@ bool useCompact(Compact mode, const Endpoint& e, qint64 context)
 }
 
 // Tools an editing chat in the app seldom needs: their parameters come from `help` when they are used
-const QStringList kRareTools{"new",  "templates", "backups", "restore", "export_timeline", "watch", "sync", "extensions",
-                             "import", "scopes", "brand"};
+const QStringList kRareTools{"new",  "templates", "backups", "restore", "export_timeline", "watch", "sync",
+                             "extensions", "scopes", "brand"};
 
 QString firstSentence(const QString& text, int max)
 {
@@ -126,6 +126,8 @@ void textTimes(QJsonObject& p)
     }
 }
 
+} // namespace
+
 // An op signature in short: the values and defaults of optional keys left out ("mode?:'peak'|'lufs'" -> "mode?"),
 // `help` with the op has them; written as a call: "{op:'split', at, clip?}" -> "split(at, clip?)", "{op:'enable'|
 // 'disable', clips}" -> "enable|disable(clips)" (the ops' text says how to read it)
@@ -158,6 +160,8 @@ QString shortUsage(const QString& usage)
     }
     return out;
 }
+
+namespace {
 
 // The keys of a call's argument list at the top level ("a, b:[x, y], c?" -> "a", "b:[x, y]", "c?")
 QStringList topLevelKeys(const QString& args)
@@ -237,8 +241,7 @@ const QStringList kCoreOps{"append", "place",    "keep",       "insert", "split"
 const QStringList kRareOps{"slot", "fill", "comp_from", "track_node", "cutout_node", "track_window", "multicam_nudge",
                            "add_angle", "angle_name", "source_marker", "bin", "remove_media", "compound", "decompose",
                            "place_timeline", "rename_timeline", "remove_timeline", "duplicate_timeline",
-                           "add_subtitle_track", "hook_variants", "sections", "section", "copy_attributes",
-                           "picture_aspect", "flatten", "marks", "link"};
+                           "add_subtitle_track", "copy_attributes", "flatten", "marks", "link"};
 
 qsizetype paramTextFor(const QString& tool)
 {
@@ -345,25 +348,6 @@ QJsonArray compactTools(const QJsonArray& tools, const QJsonArray& editOps)
                 p.remove("description");
                 props[key] = p;
                 sum -= n;
-            }
-        }
-        // A rarely needed tool: its required parameters in the schema, the others by name in its description
-        // (`help` has their types and texts; the model reads it before such a call). additionalProperties: a server
-        // that holds the model to the schema (llama.cpp's grammar) still lets it pass them
-        if (rare) {
-            const QJsonArray required = schema.value("required").toArray();
-            QStringList others;
-            for (auto it = props.begin(); it != props.end();) {
-                if (required.contains(it.key())) {
-                    ++it;
-                    continue;
-                }
-                others << it.key();
-                it = props.erase(it);
-            }
-            if (!others.isEmpty()) {
-                description += " Other keys: " + others.join(", ") + ".";
-                schema["additionalProperties"] = true;
             }
         }
         if (name == "help")

@@ -30,8 +30,8 @@ constexpr qint64 kCompactBelow = 32768;
 bool useCompact(Compact mode, const Endpoint& e, qint64 context);
 
 // The tools in short: all of them, each with the first sentence of its description and short parameter texts (the
-// first clause; at most kParamText characters of them per tool); rarely needed tools (kRareTools) with their required
-// parameters only, the others named in the description; `edit` lists its ops as signatures written as calls
+// first clause; at most kParamText characters of them per tool); rarely needed tools (kRareTools) with parameter names
+// and types only; `edit` lists its ops as signatures written as calls
 // ("split(at, clip?)", see compactOps; editOps: the 'ops' of `help` with command 'edit'; empty = `edit` stays as it
 // is); `help` says it has the details of every tool. The order and the names stay. New ops and parameters cost their
 // names and a bounded short text, so the request stays within kCompactBudget without trimming texts by hand.
@@ -60,6 +60,9 @@ QString compactOps(const QJsonArray& editOps);
 constexpr int kOpChars = 56;
 extern const QStringList kCoreOps;
 extern const QStringList kRareOps;
+// An op's 'usage' from `help` written as a call, without the values of optional keys: "{op:'split', at, clip?}" ->
+// "split(at, clip?)" (what kCoreOps show)
+QString shortUsage(const QString& usage);
 // A signature "name(a, b?, c?)" cut to `max` characters: required keys always, optional ones while they fit, "…"
 // for the rest (other forms "… or name(…)" included)
 QString cappedUsage(const QString& usage, int max);

@@ -757,17 +757,15 @@ void testContext()
         CHECK_EQ(c[1]["inputSchema"]["properties"]["project"]["description"].toString(), QString("project file"));
         CHECK_EQ(c[2]["inputSchema"]["properties"]["region"]["description"].toString(),
                  QString("where the kill feed is, \"x,y,w,h\""));
-        // A rare tool: only its required parameters in the schema, the others by name (`help` has them); the schema
-        // lets them through (a server that holds the model to it)
-        CHECK(!c[3]["inputSchema"]["properties"].toObject().contains("folder"));
-        CHECK(c[3]["description"].toString().endsWith(" Other keys: all, folder."));
-        CHECK(c[3]["inputSchema"]["additionalProperties"].toBool());
-        CHECK(!c[3]["inputSchema"].toObject().contains("required"));
+        // A rare tool: every parameter with its type, no texts
+        CHECK(!c[3]["inputSchema"]["properties"]["folder"].toObject().contains("description"));
+        CHECK_EQ(c[3]["inputSchema"]["properties"]["folder"]["type"].toString(), QString("string"));
+        CHECK(!c[3]["inputSchema"].toObject().contains("additionalProperties"));
         CHECK(!c[3]["description"].toString().contains("help")); // `help` says it once for all of them
         CHECK(c[0]["description"].toString().contains("also those without a text here"));
         // help's "all" (~80 KB of every command) is left out, another tool's "all" stays
         CHECK(!c[0]["inputSchema"]["properties"].toObject().contains("all"));
-        CHECK(c[3]["description"].toString().contains("all"));
+        CHECK(c[3]["inputSchema"]["properties"].toObject().contains("all"));
     }
     // Shorter still: times as text, optional keys without their values, a parameter text three tools share left out,
     // the instructions without the list of tools
