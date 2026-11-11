@@ -16,6 +16,7 @@
 #include <QStandardPaths>
 
 #include <cstdio>
+#include <mutex>
 
 namespace Cli::Setup {
 
@@ -177,6 +178,9 @@ QStringList serverCommand()
 
 QJsonObject claude(const Options& options)
 {
+    // The app's start question and Settings › AI may run it at once: one after the other (same files, same `claude`)
+    static std::mutex running;
+    std::lock_guard lock(running);
     QJsonObject out;
     if (options.code) out["claude_code"] = setupCode(options.remove);
     if (options.desktop) out["claude_desktop"] = setupDesktop(options.remove);
@@ -210,6 +214,7 @@ int run(QStringList args, bool pretty)
     }
     if (!args.isEmpty()) return usage("unexpected argument: " + args.first());
     QJsonObject result = claude(o);
+    if (o.remove) offerNever(); // removed on purpose: no offer to connect again
     bool failed = false, any = false;
     for (const QJsonValue& v : result) {
         failed |= v["state"].toString() == "failed";
@@ -235,6 +240,17 @@ QStringList claudeFound()
 bool connected()
 {
     if (QFileInfo::exists(QDir(claudeCodeDir()).filePath("skills/" + kName + "/SKILL.md"))) return true;
+    // Claude Code's MCP servers (also added by hand with `claude mcp add`, any scope): ~/.claude.json, or the file
+    // in CLAUDE_CONFIG_DIR
+    const QString env = qEnvironmentVariable("CLAUDE_CONFIG_DIR");
+    if (QFile f(env.isEmpty() ? QDir::home().filePath(".claude.json") : QDir(env).filePath(".claude.json"));
+        f.open(QIODevice::ReadOnly)) {
+        const QJsonObject o = QJsonDocument::fromJson(f.readAll()).object();
+        if (o.value("mcpServers").toObject().contains(kName)) return true;
+        const QJsonObject projects = o.value("projects").toObject();
+        for (auto it = projects.constBegin(); it != projects.constEnd(); ++it)
+            if (it.value().toObject().value("mcpServers").toObject().contains(kName)) return true;
+    }
     QFile f(QDir(claudeDesktopDir()).filePath("claude_desktop_config.json"));
     if (!f.open(QIODevice::ReadOnly)) return false;
     return QJsonDocument::fromJson(f.readAll()).object().value("mcpServers").toObject().contains(kName);
@@ -251,7 +267,8 @@ bool offerDue()
     QSettings s;
     if (s.value(kOfferNever, false).toBool() || s.value(kOfferCount, 0).toInt() >= kOfferTimes) return false;
     const qint64 last = s.value(kOfferLast, 0).toLongLong();
-    if (last > 0 && QDateTime::currentMSecsSinceEpoch() - last < qint64(kOfferDays) * 24 * 3600 * 1000) return false;
+    const qint64 since = QDateTime::currentMSecsSinceEpoch() - last;
+    if (last > 0 && since >= 0 && since < qint64(kOfferDays) * 24 * 3600 * 1000) return false;
     return !claudeFound().isEmpty() && !connected();
 }
 

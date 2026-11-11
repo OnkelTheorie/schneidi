@@ -103,6 +103,8 @@ public:
     // the start (main.cpp, never in test runs); pageName = a page's name in the tour files ("media", "edit", ...)
     void offerTours();
     class TourManager* tours() const { return m_tours; }
+    // A tour asks or runs, or an AI drives the app: no unasked questions (the Claude offer) now
+    bool busyForQuestions() const;
     static QString pageName(Page page);
 
     // Project file (.schneidi): only references to the original media + edit

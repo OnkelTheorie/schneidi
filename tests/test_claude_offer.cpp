@@ -83,6 +83,26 @@ int main(int argc, char** argv)
     QDir(code + "/skills").removeRecursively();
     CHECK(Cli::Setup::offerDue());
 
+    // Claude Code with the MCP server added by hand (no skill), at user or project scope: connected
+    writeFile(code + "/.claude.json", R"({"projects":{"/x":{"mcpServers":{"schneidi":{"command":"y"}}}}})");
+    CHECK(Cli::Setup::connected());
+    writeFile(code + "/.claude.json", R"({"mcpServers":{"schneidi":{"command":"y"}}})");
+    CHECK(Cli::Setup::connected());
+    writeFile(code + "/.claude.json", R"({"mcpServers":{"other":{"command":"y"}}})");
+    CHECK(!Cli::Setup::connected());
+    QFile::remove(code + "/.claude.json");
+
+    // A clock set back (last offer "in the future") does not block the offer for long
+    QSettings().setValue("claude/offerLast", QDateTime::currentMSecsSinceEpoch() + 30 * day);
+    CHECK(Cli::Setup::offerDue());
+    resetOffer();
+
+    // `setup claude --remove` (on purpose): never offered again
+    QDir().mkpath(desktop); // Claude Desktop there, schneidi not set up in it
+    CHECK_EQ(Cli::Setup::run({"claude", "--remove", "--only", "desktop"}, false), 0);
+    CHECK(!Cli::Setup::offerDue());
+    resetOffer();
+
     // Claude Desktop with schneidi among its MCP servers: connected; with other servers only: not
     writeFile(desktop + "/claude_desktop_config.json", R"({"mcpServers":{"other":{"command":"x"}}})");
     CHECK(Cli::Setup::claudeFound().contains("Claude Desktop"));

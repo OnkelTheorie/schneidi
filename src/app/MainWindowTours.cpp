@@ -557,3 +557,8 @@ void MainWindow::closePopups()
         if (QWidget* popup = QApplication::activePopupWidget()) popup->close();
         else break;
 }
+
+bool MainWindow::busyForQuestions() const
+{
+    return m_liveConnected || (m_tours && (m_tours->asking() || m_tours->runner()->running()));
+}

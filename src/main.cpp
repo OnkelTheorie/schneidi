@@ -7,6 +7,7 @@
 #include "core/StartupTrace.h"
 #include "core/ProjectFile.h"
 #include "app/MainWindow.h"
+#include "app/AiSettingsPage.h"
 #include "cli/Commands.h"
 #include "cli/Live.h"
 #include "cli/Setup.h"
@@ -34,6 +35,7 @@
 #include <QProcess>
 #include <QFileInfo>
 #include <QRegularExpression>
+#include <QPointer>
 #include <QPushButton>
 #include <QThread>
 #include <QTimer>
@@ -152,9 +154,11 @@ private:
 // Claude Code or Claude Desktop is on this computer, but not connected to schneidi: asked once on start (Cli::Setup
 // offer rules: at most a few times, two weeks apart, never after "don't ask again"). Waits while another dialog is open
 // (restore, tours).
-void offerClaude(QWidget* window, const std::function<QJsonObject(bool)>& setup, int tries = 0)
+QPointer<QThread> g_claudeSetupThread; // waited for before main returns (it runs `claude …` processes)
+
+void offerClaude(MainWindow* window, const std::function<QJsonObject(bool)>& setup, int tries = 0)
 {
-    if (!window->isVisible() || QApplication::activeModalWidget()) {
+    if (!window->isVisible() || QApplication::activeModalWidget() || window->busyForQuestions()) {
         if (tries < 20) QTimer::singleShot(30000, window, [=] { offerClaude(window, setup, tries + 1); });
         return;
     }
@@ -167,9 +171,12 @@ void offerClaude(QWidget* window, const std::function<QJsonObject(bool)>& setup,
     box.setInformativeText(T("Dann kann Claude deine Videos mit schneidi schneiden: Es bekommt die schneidi-Werkzeuge "
                              "(MCP) und eine Schnitt-Anleitung (Skill). Geht auch später unter Einstellungen › KI."));
     QPushButton* connect = box.addButton(T("Jetzt verbinden"), QMessageBox::AcceptRole);
-    box.addButton(T("Später"), QMessageBox::RejectRole);
+    QPushButton* later = box.addButton(T("Später"), QMessageBox::RejectRole);
     QPushButton* never = box.addButton(T("Nicht mehr fragen"), QMessageBox::DestructiveRole);
-    box.setDefaultButton(connect);
+    // It comes unasked while the user may be typing: Enter/Space/Escape must not connect
+    for (QAbstractButton* b : box.buttons()) b->setFocusPolicy(Qt::TabFocus);
+    box.setDefaultButton(later);
+    box.setEscapeButton(later);
     box.exec();
     if (box.clickedButton() == never) {
         Cli::Setup::offerNever();
@@ -179,19 +186,17 @@ void offerClaude(QWidget* window, const std::function<QJsonObject(bool)>& setup,
     // `claude mcp add` may take a few seconds: in a helper thread, the window stays usable
     auto result = std::make_shared<QJsonObject>();
     QThread* worker = QThread::create([setup, result] { *result = setup(false); });
+    g_claudeSetupThread = worker;
     QObject::connect(worker, &QThread::finished, window, [window, worker, result] {
         worker->deleteLater();
-        QStringList lines;
-        bool failed = false;
-        for (auto it = result->constBegin(); it != result->constEnd(); ++it) {
-            const QJsonObject o = it.value().toObject();
-            if (o.value("state").toString() == "skipped") continue;
-            failed |= o.value("state").toString() == "failed";
-            lines << (it.key() == "claude_code" ? QString("Claude Code") : QString("Claude Desktop")) + ": "
-                         + o.value("message").toString();
+        bool done = false, failed = false;
+        for (const QJsonValue& v : *result) {
+            done |= v.toObject().value("state").toString() == "done";
+            failed |= v.toObject().value("state").toString() == "failed";
         }
-        if (failed) QMessageBox::warning(window, T("Mit Claude verbinden"), lines.join("\n"));
-        else QMessageBox::information(window, T("Mit Claude verbinden"), T("Verbunden.") + "\n\n" + lines.join("\n"));
+        const QString text = AiSettingsPage::claudeResultText(*result, false);
+        if (failed || !done) QMessageBox::warning(window, T("Mit Claude verbinden"), text);
+        else QMessageBox::information(window, T("Mit Claude verbinden"), text);
     });
     worker->start();
 }
@@ -342,11 +347,14 @@ int main(int argc, char* argv[])
     const auto claudeSetup = [](bool remove) {
         Cli::Setup::Options o;
         o.remove = remove;
-        return Cli::Setup::claude(o);
+        const QJsonObject result = Cli::Setup::claude(o);
+        if (remove) Cli::Setup::offerNever(); // removed on purpose: no offer to connect again
+        return result;
     };
     w.setClaudeSetup(claudeSetup);
     // Not connected to Claude yet: asked once, a few seconds after the window is up (never in test runs)
-    if (!testRun && QGuiApplication::platformName() != QLatin1String("offscreen"))
+    if (!testRun && QGuiApplication::platformName() != QLatin1String("offscreen")
+        && qEnvironmentVariableIsEmpty("CLAUDECODE")) // started by Claude Code: nobody there to answer
         QTimer::singleShot(6000, &w, [&w, claudeSetup] { offerClaude(&w, claudeSetup); });
     // Live connection for schneidi-cli / MCP (cli/Live.h); test runs stay invisible to AIs unless SCHNEIDI_LIVE=1.
     // Started before the restore dialog: while it waits for the user, AIs hear that instead of "not running".
@@ -427,6 +435,7 @@ int main(int argc, char* argv[])
         });
     }
     const int rc = app.exec();
+    if (g_claudeSetupThread) g_claudeSetupThread->wait(); // a running `claude mcp add` finishes first
     // Restart after design/language change: only here, when the window is closed and everything has been saved
     // The live server goes first: the new process would otherwise hand its project back to this one, which is quitting
     if (w.restartRequested()) {
