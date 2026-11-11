@@ -50,6 +50,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <memory>
 
 namespace Cli {
@@ -1644,8 +1645,14 @@ QJsonObject normalize(const Command& cmd, const QJsonObject& given)
             ok = v.isString() && !str.isEmpty();
             break;
         case ParamType::Integer:
-            if (v.isDouble()) out[p.name] = v.toInt();
-            else out[p.name] = str.toInt(&ok);
+            if (v.isDouble()) {
+                // toInt() gives 0 for 1.5 or a number beyond int: audio_stream 1.5 silently took the first stream
+                const double d = v.toDouble();
+                ok = d == std::floor(d) && d >= std::numeric_limits<int>::min() && d <= std::numeric_limits<int>::max();
+                if (ok) out[p.name] = int(d);
+            } else {
+                out[p.name] = str.toInt(&ok);
+            }
             break;
         case ParamType::Number:
             if (v.isDouble()) out[p.name] = v.toDouble();

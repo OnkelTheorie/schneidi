@@ -249,6 +249,24 @@ int runTests(int argc, char** argv)
             message = e.message;
         }
         CHECK(message.contains("'file'") && message.contains("source") && message.contains("sheet"));
+        // A whole number given with a fraction (audio_stream 1.5) or out of range was silently 0 (the first stream):
+        // refused like "1.5" as text; 2.0 and 1e3 are whole numbers
+        const Cli::Command* overview = Cli::find("overview");
+        const auto integerCode = [&](const QJsonValue& v) {
+            try {
+                return QString::number(Cli::normalize(*overview, {{"file", g_path}, {"audio_stream", v}})["audio_stream"].toInt());
+            } catch (const Cli::Error& e) {
+                return e.code;
+            }
+        };
+        CHECK_EQ(integerCode(1.5), QString("BAD_ARGUMENT"));
+        CHECK_EQ(integerCode("1.5"), QString("BAD_ARGUMENT"));
+        CHECK_EQ(integerCode(-0.5), QString("BAD_ARGUMENT"));
+        CHECK_EQ(integerCode(3e9), QString("BAD_ARGUMENT"));
+        CHECK_EQ(integerCode(2.0), QString("2"));
+        CHECK_EQ(integerCode(1e3), QString("1000"));
+        CHECK_EQ(integerCode(-1), QString("-1"));
+        CHECK_EQ(integerCode("2"), QString("2"));
         // "--target_lufs nan" reads as a number but is none: refused (check left out its loudness test silently)
         const Cli::Command* check = Cli::find("check");
         for (const char* bad : {"nan", "inf", "-inf"}) {
