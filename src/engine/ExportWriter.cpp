@@ -847,7 +847,7 @@ struct ExportWriter::Impl {
                 return;
             }
         g.count = int(pos.size());
-        // Next GOP right behind (a gap in between: the Reader shows the next picture there, not ours)
+        // Next GOP right behind (a gap in between: the Reader holds this GOP's last picture there, a copy has none)
         g.whole = !next || src.position(next) == g.start + g.count;
         if (!g.whole) g.why = "gap before the next key frame";
     }

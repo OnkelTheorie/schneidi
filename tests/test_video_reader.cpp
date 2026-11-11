@@ -6,6 +6,7 @@
 // - hardware decoding (if this machine has a device) = software decoding bit for bit (H.264, 10-bit HEVC)
 // - unused readers close their decoder after a pause and give the same pictures when asked again
 // - a decoder that cannot be opened again (after a hardware failure) answers nothing at once, for good
+// - a gap in the timestamps of a variable-rate file (a picture held for 2 s) shows the held picture, not the next one
 // plus the frame properties the file states (size, rotation, colour standard and range, interlacing, alpha).
 // Replaces the comparison with MLT's producer (test_video_decoder, until 0.15).
 
@@ -184,6 +185,58 @@ void testHibernate(const QString& path)
         const auto p = readers[i]->picture(10 + i);
         CHECK(p && bytesOf(p->frame) == first[i]);
     }
+}
+
+// Variable frame rate with a gap: picture N of the file shows its frame number as luma (16 + 2N), pictures 0..29
+// stand at positions 0..29 (60 fps), picture 29 is held for 2 s, pictures 30..59 stand at 150..179. Every position in
+// the gap shows the held picture 29 (it is on screen until the next one), not picture 30 two seconds too early - when
+// playing in order, after a seek into the gap (fresh or used reader, preview seek window or none), stepping back.
+int lumaOf(const std::shared_ptr<const Video::Picture>& p)
+{
+    if (!p || !p->frame) return -1;
+    const AVFrame* f = p->frame;
+    int64_t sum = 0;
+    for (int y = 0; y < f->height; ++y)
+        for (int x = 0; x < f->width; ++x) sum += f->data[0][y * f->linesize[0] + x];
+    return int((sum + f->width * f->height / 2) / (int64_t(f->width) * f->height));
+}
+
+void testVfrGap(const QString& path)
+{
+    const auto expected = [](int position) {
+        const int picture = position < 30 ? position : position < 150 ? 29 : std::min(59, position - 120);
+        return 16 + 2 * picture;
+    };
+    int wrong = 0;
+    QString first;
+    const auto check = [&](Video::Reader& r, int position, const char* how) {
+        const int got = lumaOf(r.picture(position));
+        if (std::abs(got - expected(position)) <= 1) return;
+        if (++wrong == 1)
+            first = QString("%1 at %2: luma %3, expected %4").arg(how).arg(position).arg(got).arg(expected(position));
+    };
+    for (const int64_t keep : {int64_t(0), int64_t(96) * 1024 * 1024}) {
+        Video::Reader::Options o;
+        o.hardware = false;
+        o.keepBytes = keep;
+        {
+            auto r = Video::Reader::open(path, o);
+            if (!CHECK(r)) return;
+            CHECK(r->info().frameRate.num == 60 && r->info().frameRate.den == 1);
+            for (int p = 0; p < 180; ++p) check(*r, p, "in order");
+        }
+        for (int p : {30, 60, 100, 149, 150, 151}) { // a fresh reader, straight into the gap
+            auto r = Video::Reader::open(path, o);
+            check(*r, p, "fresh seek");
+        }
+        {
+            auto r = Video::Reader::open(path, o);
+            for (int p : {170, 60, 40, 120, 160, 31, 149, 28, 29, 30, 150, 148}) check(*r, p, "jumps");
+            for (int p = 155; p >= 25; --p) check(*r, p, "backwards");
+        }
+    }
+    Check::report(wrong == 0, "vfr gap: the held picture", __FILE__, __LINE__,
+                  QString("%1 wrong pictures, first %2").arg(wrong).arg(first));
 }
 
 // The hardware decoder failed and the software one does not open either (out of memory): every request is answered
@@ -538,5 +591,13 @@ int main(int argc, char** argv)
 
     testHibernate(file("h264.mp4"));
     testDecoderLost(file("h264.mp4"));
+    // Picture 29 held for 2 s (lossless: the luma is the picture's number), Matroska (1 ms timestamps)
+    if (const QString vfr = Check::makeMedia(file("vfr-gap.mkv"),
+                                             {"-f", "lavfi", "-i", "testsrc2=size=320x240:rate=60,format=yuv420p,geq=lum='16+2*N':cb=128:cr=128",
+                                              "-frames:v", "60", "-vf", "setpts='if(gte(N,30),(N+120)/60/TB,N/60/TB)'",
+                                              "-fps_mode", "vfr", "-c:v", "libx264", "-g", "60", "-qp", "0", "-pix_fmt",
+                                              "yuv420p"});
+        CHECK(!vfr.isEmpty()))
+        testVfrGap(vfr);
     return Check::result();
 }
