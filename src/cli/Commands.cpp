@@ -73,7 +73,7 @@ QString absolute(const QString& path)
 namespace {
 
 // A time with colons, read as people write them - never guessed into frames: "HH:MM:SS:FF" or "HH:MM:SS;FF"
-// (timecode, the frame part below the frame rate), "HH:MM:SS" and "MM:SS" (clock time), and a '.' in the last part
+// (timecode, the frame part below the frame rate; ';' at 29.97/59.94 = drop frame), "HH:MM:SS" and "MM:SS" (clock time), and a '.' in the last part
 // means decimal seconds ("00:01:02.5", "1:02.500"). Minutes and seconds after the first part stay below 60.
 int clockTime(const QString& s, const ProjectFormat& fmt, const QString& what)
 {
@@ -111,6 +111,9 @@ int clockTime(const QString& s, const ProjectFormat& fmt, const QString& what)
         if (v[3] >= timebase) bad(QString("has frame %1, but a second has only %2 frames").arg(v[3]).arg(timebase));
         if (v[1] >= 60 || v[2] >= 60) bad("has minutes or seconds above 59");
         frames = ((v[0] * 60 + v[1]) * 60 + v[2]) * timebase + v[3];
+        // "HH:MM:SS;FF" at 29.97/59.94: drop-frame timecode (cameras, ffprobe, other editors), not a separator
+        if (semicolon >= 0 && Timecode::isDropFrameRate(fmt.rate.num, fmt.rate.den))
+            frames = Timecode::dropFrameNumber(v[0], v[1], v[2], v[3], timebase);
     } else {
         for (int i = 1; i < v.size(); ++i)
             if (v[i] >= 60) bad("has minutes or seconds above 59");

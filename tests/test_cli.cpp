@@ -306,6 +306,16 @@ int runTests(int argc, char** argv)
         CHECK_EQ(at("1:02.5"), 1563);
         CHECK_EQ(at("00:01:30"), 2250); // hours:minutes:seconds
         CHECK_EQ(at("90:00"), 135000); // 90 minutes
+        // 29.97: "HH:MM:SS;FF" is drop-frame timecode (1 h = 107892 frames), ':' stays non-drop
+        {
+            ProjectFormat ntsc;
+            ntsc.rate = FrameRate{30000, 1001};
+            const auto atN = [&](const char* t) { return Cli::detail::parseTime(QJsonValue(t), ntsc, "at"); };
+            CHECK_EQ(atN("01:00:00;00"), 107892);
+            CHECK_EQ(atN("00:10:00;00"), 17982);
+            CHECK_EQ(atN("00:01:00;02"), 1800);
+            CHECK_EQ(atN("01:00:00:00"), 108000);
+        }
         for (const char* bad : {"00:00:04:50", "00:00:04:25", "00:61:00:00", "1:75", "00:00:04:20.5", "1:2:3:4:5",
                                 "1;30", "00:00;04:20", "1:", ":30", "1:3a", "1:30.", "00:00:04;20;1"})
             CHECK_EQ(timeError(QJsonValue(bad)), QString("BAD_ARGUMENT"));
