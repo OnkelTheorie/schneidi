@@ -454,7 +454,23 @@ void opNode(Session& s, const QJsonObject& op)
     if (op.contains("params")) {
         const QVariantMap values = nodeValues(s, kindOf(n->type, QString("node %1").arg(id)), op.value("params"),
                                               QString("node %1").arg(id), fxEffectOf(c, id));
-        if (!values.isEmpty()) done(s.editor.setCompNodeValues(clip, id, values, &err));
+        if (op.contains("at")) { // like the Inspector: an animated value gets a keyframe there, others their value
+            const int at = timeOf(s, op, "at");
+            if (at < c.start || at >= c.end())
+                fail("BAD_ARGUMENT", QString("node %1: at must lie inside clip %2 (%3..%4)")
+                                         .arg(id).arg(clip).arg(c.start).arg(c.end() - 1));
+            if (!values.isEmpty()) done(s.editor.setCompNodeValuesAt(clip, id, values, at, {}, &err));
+        } else {
+            // The keyframes of an animated value win over its static value: setting that would do nothing
+            for (auto it = values.begin(); it != values.end(); ++it)
+                if (Keys::animated(c, Keys::effectParam(QString::fromLatin1(::Comp::kEffectId),
+                                                        CompGraph::paramKey(id, it.key()))))
+                    fail("BAD_ARGUMENT", QString("node %1: '%2' is animated (keyframes), a plain value would not show; "
+                                                 "give at:<time> to set its keyframe there, or use {op:'keyframe', "
+                                                 "param:'comp.n%1.%2', at, value}")
+                                             .arg(id).arg(it.key()));
+            if (!values.isEmpty()) done(s.editor.setCompNodeValues(clip, id, values, &err));
+        }
         any = true;
     }
     if (op.value("out").toBool()) {
@@ -751,11 +767,13 @@ void addCompOps(QVector<OpDef>& ops)
                  "the new node; input:false only adds it (a text or color to link yourself). A clip without a graph "
                  "gets one ('clip' node first). The answer's notes give the new id and the graph. remove: what read "
                  "the node reads its first input instead (a chain stays a chain). link replaces what was in that "
-                 "input; a cycle or an input the type does not have is an error. unlink takes the link from `from` "
+                 "input; a cycle or an input the type does not have is an error. params of an animated value (keyframes) "
+                 "need at:<time>: a keyframe there (like the Inspector; other values just change). A mask kind (mask, matte) behind a "
+                 "picture node is only added (link it into a merge's mask input). unlink takes the link from `from` "
                  "(without input: the one it feeds). File values (media path, grade lut, text texture) must be "
                  "readable files; a lut also by name as in op 'look'. Example: blur only in a mask - "
                  R"({"op":"node","clip":4,"add":{"type":"blur","params":{"radius":12}}} then {"op":"node","clip":4,"add":{"type":"mask","params":{"shape":"ellipse"}},"input":false} and {"op":"node","clip":4,"link":[3,2,"mask"]}.)",
-                 opNode, QStringList{"id", "params", "remove", "link", "unlink", "out"}}
+                 opNode, QStringList{"id", "params", "remove", "link", "unlink", "out", "at"}}
         << OpDef{"track_node", "{op:'track_node', clip, node, from?, to?}",
                  "run a tracker node: follows its point(s) or a face over the clip; masks/transforms with follow:<id> "
                  "go along",

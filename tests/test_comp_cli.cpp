@@ -417,6 +417,57 @@ int main(int argc, char** argv)
         CHECK(messageOf("frames", {{"source", g_project}, {"node", 2}, {"out", dir.path()}}).contains("give clip"));
     }
 
+    // Values of an animated node value: params without `at` is an error naming the key (it did nothing: the keyframes
+    // win), with `at` they set a keyframe there like the Inspector; a value without keyframes takes `at` as well
+    {
+        QJsonObject g = op(R"({"op":"comp","graph":{"nodes":[{"id":1,"type":"clip"},{"id":2,"type":"blur","params":{"radius":3}}],"links":[[1,2,"src"]],"out":2}})");
+        g["clips"] = QJsonArray{clip};
+        QJsonObject k = op(R"({"op":"keyframe","param":"comp.n2.radius","keys":[{"at":0,"value":2},{"at":10,"value":20}]})");
+        k["clips"] = QJsonArray{clip};
+        edit({g, k});
+        const QByteArray before = fileBytes();
+        QJsonObject p = op(R"({"op":"node","id":2,"params":{"radius":7}})");
+        p["clip"] = clip;
+        const QString err = editError({p});
+        if (!CHECK(err.contains("radius") && err.contains("at") && err.contains("keyframe"))) std::printf("       %s\n", qPrintable(err));
+        CHECK(fileBytes() == before);
+        p["at"] = 5;
+        CHECK_EQ(editError({p}), QString("none"));
+        {
+            const ProjectData d = load();
+            const Clip* c = clipIn(d, clip);
+            const AnimParam ap = Keys::effectParam(Comp::kEffectId, "n2.radius");
+            CHECK(c && Keys::keyAt(*c, ap, 5) && Keys::valueAt(*c, ap, 5) == 7);
+            CHECK(c && Keys::valueAt(*c, ap, 0) == 2 && Keys::valueAt(*c, ap, 10) == 20);
+        }
+        QJsonObject q = op(R"({"op":"node","id":2,"params":{"opacity":0.5},"at":5})"); // blur has no opacity
+        q["clip"] = clip;
+        CHECK(editError({q}).contains("opacity"));
+        edit({QJsonObject{{"op", "comp"}, {"clips", QJsonArray{clip}}, {"remove", true}}});
+    }
+
+    // A mask kind added behind the picture (default input) is only added: the output stays a picture. A graph whose
+    // output is a mask anyway (set by hand) does nothing - check says so
+    {
+        QJsonObject g = op(R"({"op":"comp","graph":{"nodes":[{"id":1,"type":"clip"}],"out":1}})");
+        g["clips"] = QJsonArray{clip};
+        QJsonObject m = op(R"({"op":"node","add":{"type":"mask","params":{"shape":"ellipse"}}})");
+        m["clip"] = clip;
+        QJsonObject t = op(R"({"op":"node","add":{"type":"matte"}})");
+        t["clip"] = clip;
+        edit({g, m, t});
+        CompGraph cg = graphOf(clip);
+        CHECK(cg.nodes.size() == 3 && cg.out == 1 && cg.links.isEmpty());
+        CHECK(!answerText(run("check", {{"source", g_project}, {"sound", false}})).contains("comp_output_mask"));
+        QJsonObject o = op(R"({"op":"node","id":2,"out":true})");
+        o["clip"] = clip;
+        edit({o});
+        CHECK_EQ(graphOf(clip).out, 2);
+        const QString ct = answerText(run("check", {{"source", g_project}, {"sound", false}}));
+        CHECK(ct.contains("comp_output_mask"));
+        edit({QJsonObject{{"op", "comp"}, {"clips", QJsonArray{clip}}, {"remove", true}}});
+    }
+
     // comp_from: both tracks into one comp clip (compound + graph), named in the notes
     {
         const QJsonObject r = edit({QJsonObject{{"op", "comp_from"}, {"clips", QJsonArray{clip, upper}}}});
@@ -560,6 +611,48 @@ int main(int argc, char** argv)
         CHECK(b > 0);
         CHECK(ed.setCompOut(id, 50, kinds, &err));
         CHECK(ed.removeCompNode(id, b, kinds, &err));
+    }
+
+    // Editor: removing the output node never makes a mask the output (the last picture node, else none); a new graph
+    // (or recipe) keeps a bypassed comp bypassed
+    {
+        Project p;
+        p.load(load());
+        Selection sel;
+        Editor ed(&p, &sel);
+        const auto kinds = [](const QString& t, QStringList* in) { return Picture::Comp::kindInfo(t, in); };
+        int clip = 0; // the comp clip of comp_from
+        for (const Track& t : p.timeline().video)
+            for (const Clip& c : t.clips)
+                if (!clip) clip = c.id;
+        CompGraph g;
+        g.nodes = {{1, "color", {}}, {2, "clip", {}}, {3, "mask", {}}};
+        g.out = 1;
+        QString err;
+        CHECK(ed.setCompGraph({clip}, g, {}, kinds, &err));
+        const auto current = [&] {
+            CompGraph now;
+            const Clip* c = TimelineOps::findClip(p.timeline(), clip);
+            const EffectInstance* e = c ? EffectRegistry::instance(*c, Comp::kEffectId) : nullptr;
+            if (e) Comp::graphOf(*e, &now);
+            return now;
+        };
+        CHECK(ed.removeCompNode(clip, 1, kinds, &err));
+        CHECK_EQ(current().out, 2);
+        // Only a mask would be left: refused with a clear message (a graph needs an output; a mask is none)
+        CHECK(!ed.removeCompNode(clip, 2, kinds, &err) && err.contains("no output"));
+        CHECK_EQ(current().out, 2);
+        // Bypass, then a new graph
+        ed.modifyClips({clip}, "bypass", [](Clip& c) { EffectRegistry::instance(c, Comp::kEffectId)->enabled = false; });
+        CHECK(ed.setCompGraph({clip}, g, {}, kinds, &err));
+        const Clip* c = TimelineOps::findClip(p.timeline(), clip);
+        const EffectInstance* e = c ? EffectRegistry::instance(*c, Comp::kEffectId) : nullptr;
+        CHECK(e && !e->enabled);
+        // A mask added behind the clip node through the Editor (the canvas' and the CLI's way) is only added
+        ed.removeComp({clip});
+        const int mask = ed.addCompNode(clip, "mask", {}, 0, "mask", kinds, &err);
+        CHECK(mask > 1);
+        CHECK(current().out == 1 && current().links.isEmpty());
     }
     return Check::result();
 }

@@ -105,6 +105,15 @@ QStringList pixelKeys(const QString& type);
 // from the clip start must be added there (CompGraph.cpp)
 void followHead(Clip& c, int frames, double fps);
 
+// Node kinds whose picture is a mask (gray), not RGBA: "mask", "matte" (Picture::Comp::NodeType::output == Mask). Such
+// a node never is the graph's output (the engine would ignore the whole graph). A NEW mask kind goes here
+// (CompGraph.cpp); test_comp_graph compares the table with the engine's kinds
+bool outputsMask(const QString& type);
+// Adding a node of `type` behind a node of `fromType` (empty = none): a mask behind a picture is only added, not wired
+// in (its input combines masks; it goes into a merge's mask input) - else the output would become a mask. The rule of
+// Editor::addCompNode, shared with the node canvas
+bool maskBehindPicture(const QString& type, const QString& fromType);
+
 // Every file the graph reads (fileKeys of its nodes: media, LUTs, textures), in node order, without duplicates
 QStringList mediaPaths(const EffectInstance& e);
 // Calls fn for every non-empty file value (fileKeys) with its full key "n<id>.<key>"; a changed path is stored

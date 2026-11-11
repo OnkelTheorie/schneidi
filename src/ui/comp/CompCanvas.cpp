@@ -360,14 +360,11 @@ void CompCanvas::addNode(const QString& type)
     if (!PC::kindInfo(type, &inputs)) return;
     // Behind the selected node (or the output): it feeds the new node's first input. Only added (the user wires it):
     // a generator, and a mask behind a picture (its input combines masks; it goes into a merge's mask input)
-    const PC::NodeType* k = PC::find(type);
+    // (Editor::addCompNode applies that rule itself, Comp::maskBehindPicture; here it decides the place)
     const int from = m_selected ? m_selected : m_graph.out;
     const CompNode* f = m_graph.node(from);
-    const PC::NodeType* fk = f ? PC::find(f->type) : nullptr;
-    const bool maskBehindPicture = k && k->output == PC::Buf::Mask && (!fk || fk->output != PC::Buf::Mask);
-    const QString input = inputs.isEmpty() || (maskBehindPicture && !m_graph.isEmpty()) || !CompUi::autoLink()
-                              ? QString()
-                              : inputs.first();
+    const bool maskBehindPicture = ::Comp::maskBehindPicture(type, f ? f->type : QString());
+    const QString input = inputs.isEmpty() || maskBehindPicture || !CompUi::autoLink() ? QString() : inputs.first();
     // Its place: right of `from` in a chain, left below it when only added (it mostly feeds `from`: a merge's fg);
     // further down while that is taken. Placed in the same undo step (an unplaced graph gets every shown place, as a
     // node drag does)
@@ -380,9 +377,14 @@ void CompCanvas::addNode(const QString& type)
         return false;
     };
     for (int i = 0; i < 50 && taken(at); ++i) at.ry() += 70;
-    QUndoStack* undo = m_editor->project()->undoStack();
-    undo->beginMacro(T("Knoten hinzufügen"));
     QString err;
+    if (m_editor->editable({m_clipId}).isEmpty()) { // refused before a step begins (no empty one in the history)
+        report(false, T("Der Clip liegt auf einer gesperrten Spur"));
+        return;
+    }
+    QUndoStack* undo = m_editor->project()->undoStack();
+    const int steps = undo->index();
+    undo->beginMacro(T("Knoten hinzufügen"));
     const int id = m_editor->addCompNode(m_clipId, type, {}, m_selected, input, CompUi::kinds(), &err);
     if (id) {
         QHash<int, QPointF> places = before;
@@ -390,6 +392,7 @@ void CompCanvas::addNode(const QString& type)
         m_editor->moveCompNodes(m_clipId, places);
     }
     undo->endMacro();
+    if (!id && undo->index() > steps) undo->undo(); // refused: the empty macro goes again (as CompUi::applyRecipe)
     report(id != 0, err);
     if (id) {
         refresh();

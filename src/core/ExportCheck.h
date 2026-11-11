@@ -31,7 +31,7 @@ struct Issue {
                      // "slow_hook", "stutter", "missing_effect", "encoder_quality", "black_bars", "too_long",
                      // "pace_slow", "story_no_hook", "story_hook_late", "story_resolution_late",
                      // "story_open_question", "story_no_cta", "story_gap", "retention_drop", "comp_unused_input",
-                     // "comp_slow", "key_edges", "custom_effect_skipped", "custom_code_untrusted"
+                     // "comp_output_mask", "comp_slow", "key_edges", "custom_effect_skipped", "custom_code_untrusted"
     QString message; // for people, in the UI language
     int from = -1;   // frames (exclusive end), -1 = whole video
     int to = -1;
@@ -242,7 +242,8 @@ double compCostMs(const EffectInstance& comp, QSize size);
 // Above this a graph is slow: about the share of a frame one core has for it at 30 fps export
 inline constexpr double kCompBudgetMs = 40;
 // Graphs of the video clips in [from, to): comp_unused_input (info) per clip with nodes that do not reach the output
-// (their work is lost or a link is missing), comp_slow (info) per clip whose graph is estimated above kCompBudgetMs at
+// (their work is lost or a link is missing), comp_output_mask (warning) per clip whose output node gives a mask (the
+// engine ignores such a graph: the clip shows its plain picture), comp_slow (info) per clip whose graph is estimated above kCompBudgetMs at
 // the format's size and that does not use the render cache yet
 QVector<Issue> comp(const Timeline& tl, int from, int to, const ProjectFormat& f);
 // key_edges (info): a key's matte (alpha 0..255, w x h) with many half-transparent pixels inside the subject (its

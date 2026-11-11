@@ -288,6 +288,16 @@ int redirectMedia(EffectInstance& e, const std::function<QString(const QString&)
     return n;
 }
 
+bool outputsMask(const QString& type)
+{
+    return type == QLatin1String("mask") || type == QLatin1String("matte");
+}
+
+bool maskBehindPicture(const QString& type, const QString& fromType)
+{
+    return outputsMask(type) && (fromType.isEmpty() || !outputsMask(fromType));
+}
+
 void followHead(Clip& c, int frames, double fps)
 {
     if (frames == 0) return;
