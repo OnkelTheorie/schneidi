@@ -4,6 +4,7 @@
 #include "cli/Guide.h"
 
 #include <QCoreApplication>
+#include <QDateTime>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -11,9 +12,11 @@
 #include <QJsonDocument>
 #include <QProcess>
 #include <QSaveFile>
+#include <QSettings>
 #include <QStandardPaths>
 
 #include <cstdio>
+#include <mutex>
 
 namespace Cli::Setup {
 
@@ -175,6 +178,9 @@ QStringList serverCommand()
 
 QJsonObject claude(const Options& options)
 {
+    // The app's start question and Settings › AI may run it at once: one after the other (same files, same `claude`)
+    static std::mutex running;
+    std::lock_guard lock(running);
     QJsonObject out;
     if (options.code) out["claude_code"] = setupCode(options.remove);
     if (options.desktop) out["claude_desktop"] = setupDesktop(options.remove);
@@ -192,6 +198,13 @@ int run(QStringList args, bool pretty)
                      "Desktop to schneidi (MCP server + editing guide)");
     Options o;
     o.remove = args.removeAll("--remove") > 0;
+    if (args.removeAll("--never") > 0) { // only stops the offer (app start, terminal tip)
+        if (!args.isEmpty() || o.remove) return usage("--never stands alone");
+        offerNever();
+        print({{"ok", true}, {"message", "schneidi will not offer to connect Claude again (setup claude still works)"}},
+              pretty);
+        return 0;
+    }
     if (const qsizetype i = args.indexOf("--only"); i >= 0) {
         const QString only = args.value(i + 1);
         if (only != "code" && only != "desktop") return usage("--only takes code or desktop");
@@ -201,6 +214,7 @@ int run(QStringList args, bool pretty)
     }
     if (!args.isEmpty()) return usage("unexpected argument: " + args.first());
     QJsonObject result = claude(o);
+    if (o.remove) offerNever(); // removed on purpose: no offer to connect again
     bool failed = false, any = false;
     for (const QJsonValue& v : result) {
         failed |= v["state"].toString() == "failed";
@@ -214,5 +228,57 @@ int run(QStringList args, bool pretty)
     print(result, pretty);
     return failed ? 1 : 0;
 }
+
+QStringList claudeFound()
+{
+    QStringList found;
+    if (!findClaude().isEmpty() || QFileInfo(claudeCodeDir()).isDir()) found << "Claude Code";
+    if (QFileInfo(claudeDesktopDir()).isDir()) found << "Claude Desktop";
+    return found;
+}
+
+bool connected()
+{
+    if (QFileInfo::exists(QDir(claudeCodeDir()).filePath("skills/" + kName + "/SKILL.md"))) return true;
+    // Claude Code's MCP servers (also added by hand with `claude mcp add`, any scope): ~/.claude.json, or the file
+    // in CLAUDE_CONFIG_DIR
+    const QString env = qEnvironmentVariable("CLAUDE_CONFIG_DIR");
+    if (QFile f(env.isEmpty() ? QDir::home().filePath(".claude.json") : QDir(env).filePath(".claude.json"));
+        f.open(QIODevice::ReadOnly)) {
+        const QJsonObject o = QJsonDocument::fromJson(f.readAll()).object();
+        if (o.value("mcpServers").toObject().contains(kName)) return true;
+        const QJsonObject projects = o.value("projects").toObject();
+        for (auto it = projects.constBegin(); it != projects.constEnd(); ++it)
+            if (it.value().toObject().value("mcpServers").toObject().contains(kName)) return true;
+    }
+    QFile f(QDir(claudeDesktopDir()).filePath("claude_desktop_config.json"));
+    if (!f.open(QIODevice::ReadOnly)) return false;
+    return QJsonDocument::fromJson(f.readAll()).object().value("mcpServers").toObject().contains(kName);
+}
+
+namespace {
+constexpr const char* kOfferNever = "claude/offerNever";
+constexpr const char* kOfferCount = "claude/offerCount";
+constexpr const char* kOfferLast = "claude/offerLast"; // ms since epoch
+} // namespace
+
+bool offerDue()
+{
+    QSettings s;
+    if (s.value(kOfferNever, false).toBool() || s.value(kOfferCount, 0).toInt() >= kOfferTimes) return false;
+    const qint64 last = s.value(kOfferLast, 0).toLongLong();
+    const qint64 since = QDateTime::currentMSecsSinceEpoch() - last;
+    if (last > 0 && since >= 0 && since < qint64(kOfferDays) * 24 * 3600 * 1000) return false;
+    return !claudeFound().isEmpty() && !connected();
+}
+
+void offerShown()
+{
+    QSettings s;
+    s.setValue(kOfferCount, s.value(kOfferCount, 0).toInt() + 1);
+    s.setValue(kOfferLast, QDateTime::currentMSecsSinceEpoch());
+}
+
+void offerNever() { QSettings().setValue(kOfferNever, true); }
 
 } // namespace Cli::Setup
