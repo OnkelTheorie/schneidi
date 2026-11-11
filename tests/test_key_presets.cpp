@@ -347,6 +347,20 @@ void testCaptureLayouts()
     // X11/Wayland: AltGr is a level shift there, a Ctrl+Alt+digit with text stays
     CHECK_EQ(key(N::Xkb, Qt::Key_1, ctrlAlt, "1", 10, 0x31, 0x0c), QString("Ctrl+Alt+1"));
     CHECK_EQ(key(N::Xkb, Qt::Key_Backtab, Qt::ShiftModifier, QString(), 23, 0xfe20), QString("Shift+Tab"));
+
+    // Panel and scoped actions check keys themselves (matches): the same mapping there, so a key captured as "A" works
+    // under the Russian layout too (key code 38 on X11/Wayland, VK_A on Windows)
+    QAction panel;
+    panel.setShortcut(QKeySequence("A"));
+    QKeyEvent ef(QEvent::KeyPress, 0x0424, Qt::NoModifier, 38, 0x41, 0, QString(QChar(0x0444)));
+    CHECK(InputBindings::matches(&panel, &ef));
+    QKeyEvent other(QEvent::KeyPress, 0x0412, Qt::NoModifier, 55, 0x44, 0, QString(QChar(0x0432))); // В on V / D
+    CHECK(!InputBindings::matches(&panel, &other));
+#ifdef Q_OS_WIN
+    panel.setShortcut(QKeySequence("["));
+    QKeyEvent altGr(QEvent::KeyPress, Qt::Key_BracketLeft, Qt::ControlModifier | Qt::AltModifier, 0x09, 0x38, 0x42, "[");
+    CHECK(InputBindings::matches(&panel, &altGr));
+#endif
 }
 
 // Esc can be bound: capturing takes it like any key (cancel = click elsewhere or the small cancel button). On a window

@@ -1203,8 +1203,10 @@ bool InputBindings::matches(const QAction* action, const QKeyEvent* e)
     const Qt::KeyboardModifiers mods =
         e->modifiers() & (Qt::ShiftModifier | Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier);
     const QKeySequence plain(QKeyCombination(mods, Qt::Key(e->key())));
+    // As captured (bindingKey): the Latin key under a non-Latin layout, AltGr on Windows without Ctrl+Alt
+    const QKeySequence bound(bindingKey(e));
     for (const QKeySequence& s : action->shortcuts())
-        if (s == key || s == plain) return true;
+        if (s == key || s == plain || s == bound) return true;
     return false;
 }
 
