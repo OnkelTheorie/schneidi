@@ -52,7 +52,7 @@ int main(int argc, char** argv)
     const int sub = p.addBin(b1, "Unter");
     CHECK_EQ(p.binName(b1), QString("Ordner 1"));
     CHECK_EQ(p.binName(b2), QString("Zeug"));
-    CHECK_EQ(p.binName(0), QString("Master-Ordner")); // German source text (no translator in this test yet)
+    CHECK_EQ(p.binName(0), QString("Master")); // German (source language) keeps the short name, not the key
     CHECK_EQ(p.childBins(0), (QVector<int>{b1, b2}));
     CHECK_EQ(p.childBins(b1), QVector<int>{sub});
     CHECK(p.binInside(sub, b1) && p.binInside(sub, 0) && !p.binInside(b1, sub));

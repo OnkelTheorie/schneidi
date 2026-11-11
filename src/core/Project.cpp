@@ -1158,7 +1158,11 @@ QString Project::binName(int id) const
     // The root bin is not stored by name (id 0 is fixed), so its name follows the UI language. Its own key, not the
     // mixer's "Master" bus: some languages name the bus with a word that does not fit a bin. CLI/MCP bin paths start
     // below the root; a path that is just "Master" (or the root's name in the UI language) means the root itself.
-    if (id == 0) return T("Master-Ordner");
+    // German (the source language) keeps the short "Master": the key only tells the translators what it is
+    if (id == 0) {
+        const QString name = T("Master-Ordner");
+        return name == QLatin1String("Master-Ordner") ? QStringLiteral("Master") : name;
+    }
     const MediaBin* b = bin(id);
     return b ? b->name : QString();
 }
