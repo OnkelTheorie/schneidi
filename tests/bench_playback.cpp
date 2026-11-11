@@ -111,7 +111,9 @@ int main(int argc, char** argv)
     QVector<double> behind; // sound clock minus shown frame (frames) at every new position
     QElapsedTimer clock;
     QObject::connect(&engine, &Engine::frameReady, &app, [&] { shown << clock.nsecsElapsed(); });
+    QVector<QPair<qint64, int>> leaps; // (time, frames) where the shown position moved on by more than one frame
     QObject::connect(&engine, &Engine::positionChanged, &app, [&](int f) {
+        if (!positions.isEmpty() && f - positions.last() > 1) leaps.append({clock.nsecsElapsed(), f - positions.last()});
         positions << f;
         if (const double sound = engine.soundFrame(); !std::isnan(sound)) behind << sound - f;
     });
@@ -139,6 +141,10 @@ int main(int argc, char** argv)
                     "max %.1f frames\n", soundAtEnd, shownAtEnd, (soundAtEnd - shownAtEnd) / fps, sum / behind.size(),
                     worst);
     }
+    const Picture::Pump::Stats st = engine.pictureStats();
+    std::printf("pump: rendered %d, shown %d, skipped %d, catch-up jumps %d (cost estimate %.2f s)\n", st.rendered,
+                st.shown, st.skipped, st.jumps, st.jumpCost);
+    for (const auto& [t, n] : leaps) std::printf("  position leap at %.2f s: %d frames\n", t / 1e9, n);
     // Per second: shown frames and the longest gap between two frames
     for (int s = 0; s < int(seconds); ++s) {
         int n = 0;
