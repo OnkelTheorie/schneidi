@@ -200,8 +200,8 @@ void Editor::editRamp(const QString& text, int clipId, const std::function<bool(
     for (const TrackRef& ref : TimelineOps::tracksOf(tl, ids)) {
         RetimedTrack t{ref, std::as_const(tl).track(ref).clips, {}};
         for (qsizetype i = t.clips.size() - 1; i >= 0; --i) {
-            const Clip c = std::as_const(t.clips)[i];
-            if (!ids.contains(c.id)) continue;
+            if (!ids.contains(std::as_const(t.clips)[i].id)) continue;
+            const Clip c = std::as_const(t.clips)[i]; // a copy: the track is written only below, if it changes
             const RetimeMap oldMap(c, L);
             // Remember source positions: start, end (exclusive), keyframes
             const double sIn = oldMap.sourceAt(c.in), sEnd = oldMap.sourceAt(c.out + 1);
