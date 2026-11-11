@@ -105,6 +105,8 @@ public:
     int framesCopied() const; // smart render: of framesWritten()
     // Smart render failed as a whole (e.g. the muxer refused the stream): render again without
     bool smartFailed() const;
+    // Tests only: no memory for the sound encoder's frames (true until switched off again)
+    static void failSoundBufferForTests(bool on);
 
 private:
     struct Impl;

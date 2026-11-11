@@ -173,6 +173,8 @@ void freePackets(std::vector<AVPacket*>& packets)
     packets.clear();
 }
 
+std::atomic<bool> g_failSoundBuffer{false}; // ExportWriter::failSoundBufferForTests
+
 } // namespace
 
 bool ExportWriter::containerTakes(const QString& path, const QString& muxer, const QString& videoCodec,
@@ -1398,13 +1400,17 @@ struct ExportWriter::Impl {
     bool encodeSound(int samples)
     {
         AVFrame* f = av_frame_alloc();
-        if (!f) return false;
+        if (!f) {
+            fail(QStringLiteral("out of memory"));
+            return false;
+        }
         f->format = aenc->sample_fmt;
         f->nb_samples = samples;
         f->sample_rate = aenc->sample_rate;
         av_channel_layout_copy(&f->ch_layout, &aenc->ch_layout);
-        if (av_frame_get_buffer(f, 0) < 0) {
+        if (g_failSoundBuffer || av_frame_get_buffer(f, 0) < 0) {
             av_frame_free(&f);
+            fail(QStringLiteral("out of memory"));
             return false;
         }
         const int channels = s.audioChannels;
@@ -1452,6 +1458,9 @@ struct ExportWriter::Impl {
     void encode()
     {
         encodeAll();
+        // Every way out but the end and a cancel says why (fail): one that does not would leave the export waiting
+        // for this thread forever (the fetch thread blocked on the full queue, state() Running)
+        if (state == State::Running && !stop) fail(QStringLiteral("encoding stopped"));
         // The program and its file belong to this thread's run
         external.reset();
         if (!externalFile.isEmpty()) QFile::remove(externalFile);
@@ -1737,4 +1746,9 @@ int ExportWriter::framesCopied() const
 bool ExportWriter::smartFailed() const
 {
     return d->smartBroke;
+}
+
+void ExportWriter::failSoundBufferForTests(bool on)
+{
+    g_failSoundBuffer = on;
 }
