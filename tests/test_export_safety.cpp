@@ -9,6 +9,7 @@
 #include "core/RenderJob.h"
 #include "engine/ExportWriter.h"
 #include "engine/Exporter.h"
+#include "engine/video/Reader.h"
 
 #include <QApplication>
 #include <QDateTime>
@@ -351,6 +352,23 @@ void testSoundOutOfMemory(const QString& root)
     CHECK_EQ(entries(dir), QStringList());
 }
 
+// A video's decoder lost for good (after a hardware decoder failed, software would not open: out of memory): the
+// export fails saying so. Its frames used to wait for the decoder forever (and a cancel with them).
+void testDecoderLost(const QString& root)
+{
+    const QString dir = root + "/decoder-lost";
+    QDir().mkpath(dir);
+    Video::Reader::loseDecoderForTests(true);
+    QElapsedTimer took;
+    took.start();
+    const Result r = run(settings(dir + "/out.mp4"), Stop::None, timeline(), 30000);
+    Video::Reader::loseDecoderForTests(false);
+    CHECK(r.started);
+    CHECK(!r.ok);
+    if (!CHECK(!r.message.isEmpty())) std::printf("       no answer after %lld ms\n", took.elapsed());
+    CHECK_EQ(entries(dir), QStringList());
+}
+
 // Odd project size (an import or a project file can bring one) exported at project size: the nearest even size
 void testOddSize(const QString& root)
 {
@@ -397,5 +415,6 @@ int main(int argc, char** argv)
     testImageSequence(tmp.path());
     testOddSize(tmp.path());
     testSoundOutOfMemory(tmp.path());
+    testDecoderLost(tmp.path()); // last: before the fix it hangs
     return Check::result();
 }
