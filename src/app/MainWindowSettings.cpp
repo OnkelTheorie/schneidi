@@ -69,6 +69,7 @@ void MainWindow::settingsDialog(int tab)
     if (!m_autosaveDisabled && dlg.proxyImportRule() != ProxyManager::importRule())
         ProxyManager::setImportRule(dlg.proxyImportRule());
     if (!m_autosaveDisabled && dlg.proxyQuality() != ProxyManager::quality()) setProxyQuality(dlg.proxyQuality());
+    if (!m_autosaveDisabled && dlg.audioOutput() != Engine::audioOutput()) m_engine->setAudioOutput(dlg.audioOutput());
     if (dlg.backgroundThreads() != Background::chosenThreads() && !m_autosaveDisabled)
         Background::setChosenThreads(dlg.backgroundThreads()); // takes effect with the next job
     // Language like from the menu (Workspace › Language): takes effect after a restart; test runs keep the setting
