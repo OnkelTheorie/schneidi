@@ -2765,9 +2765,7 @@ bool FrameCoder::encodeLuma8(MbOut& o, int mbx, int mby, const ChromaMb& ch)
             if ((needsTop && !top) || (needsLeft && !left) || (needsBoth && !corner))
                 return 1 << 30;
             predict8x8(mode, T, L, left, top, cand);
-            int cost = lambda * (mode == predMode ? 1 : 4);
-            for (int k = 0; k < 2; ++k)
-                cost += satd8x4U8(&srcY_[size_t(py + k * 4) * padW_ + px], padW_, cand + k * 32, 8);
+            const int cost = lambda * (mode == predMode ? 1 : 4) + satd8x8U8Fast(&srcY_[size_t(py) * padW_ + px], padW_, cand, 8);
             if (cost < bestCost) {
                 bestCost = cost;
                 bestMode = mode;
@@ -3870,7 +3868,12 @@ int FrameCoder::sadPart(const RefPic& R, int mbx, int mby, int x4, int y4, int w
                 s += satd16x4U8(&srcY_[lo + size_t(by * 4) * padW_], padW_, pred + by * 4 * ps, ps);
                 continue;
             }
-            for (int bx = 0; bx < w4; bx += 2) // partitions are at least 8 wide
+            if (!(by & 1) && by + 1 < h4) { // 8 wide (partitions are at least 8x8): two strips at once
+                s += satd8x8U8Fast(&srcY_[lo + size_t(by * 4) * padW_], padW_, pred + by * 4 * ps, ps);
+                ++by;
+                continue;
+            }
+            for (int bx = 0; bx < w4; bx += 2)
                 s += satd8x4U8(&srcY_[lo + size_t(by * 4) * padW_ + bx * 4], padW_, pred + by * 4 * ps + bx * 4, ps);
         }
         return s;

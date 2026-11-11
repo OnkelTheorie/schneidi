@@ -163,13 +163,13 @@ void Lookahead::costs(LookaheadFrame& f, const LookaheadFrame* prev, int threads
             for (int i = 0; i < 8; ++i)
                 dc += cur[-stride + i] + cur[i * stride - 1];
             std::fill(pred, pred + 64, uint8_t((dc + 8) >> 4));
-            int intra = satd8x8U8(cur, stride, pred, 8);
+            int intra = satd8x8U8Fast(cur, stride, pred, 8);
             for (int y = 0; y < 8; ++y)
                 std::copy_n(cur - stride, 8, pred + y * 8);
-            intra = std::min(intra, satd8x8U8(cur, stride, pred, 8));
+            intra = std::min(intra, satd8x8U8Fast(cur, stride, pred, 8));
             for (int y = 0; y < 8; ++y)
                 std::fill(pred + y * 8, pred + y * 8 + 8, cur[y * stride - 1]);
-            intra = std::min(intra, satd8x8U8(cur, stride, pred, 8)) + kIntraPenalty;
+            intra = std::min(intra, satd8x8U8Fast(cur, stride, pred, 8)) + kIntraPenalty;
             f.intraCost[m] = intra;
             intraSum += intra;
             if (!prev) {
@@ -259,7 +259,7 @@ void Lookahead::costs(LookaheadFrame& f, const LookaheadFrame* prev, int threads
                 const int fx = hx >> 1, fy = hy >> 1;
                 const uint8_t* ref = at(prev->half, bx * 8 + fx, by * 8 + fy);
                 if (!(hx & 1) && !(hy & 1))
-                    return satd8x8U8(cur, stride, ref, stride) + mvCost(hx, hy);
+                    return satd8x8U8Fast(cur, stride, ref, stride) + mvCost(hx, hy);
                 uint8_t p[64];
                 const int ox = hx & 1, oy = hy & 1;
                 for (int y = 0; y < 8; ++y)
@@ -267,7 +267,7 @@ void Lookahead::costs(LookaheadFrame& f, const LookaheadFrame* prev, int threads
                         const uint8_t* q = ref + y * stride + x;
                         p[y * 8 + x] = uint8_t((q[0] + q[ox] + q[oy * stride] + q[oy * stride + ox] + 2) >> 2);
                     }
-                return satd8x8U8(cur, stride, p, 8) + mvCost(hx, hy);
+                return satd8x8U8Fast(cur, stride, p, 8) + mvCost(hx, hy);
             };
             int hx = 2 * bestX, hy = 2 * bestY;
             clampMv(hx, hy);

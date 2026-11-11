@@ -132,12 +132,9 @@ inline int satd8x8U8(const uint8_t* a, int strideA, const uint8_t* b, int stride
 #ifdef SCHNEIDI_H264_AVX2
 // Four 4x4 blocks side by side (16 x 4): the 8x4 kernel's steps on both 128-bit lanes at once
 // (lane 0 = columns 0-7, lane 1 = columns 8-15); same result as four satdU8 calls.
-__attribute__((target("avx2"))) inline int satd16x4U8Avx2(const uint8_t* a, int strideA, const uint8_t* b, int strideB)
+// Core: four rows of differences, each lane holding two 4x4 blocks side by side.
+__attribute__((target("avx2"))) inline int satdLanesAvx2(const __m256i* r)
 {
-    __m256i r[4];
-    for (int i = 0; i < 4; ++i)
-        r[i] = _mm256_sub_epi16(_mm256_cvtepu8_epi16(_mm_loadu_si128(reinterpret_cast<const __m128i*>(a + i * strideA))),
-                                _mm256_cvtepu8_epi16(_mm_loadu_si128(reinterpret_cast<const __m128i*>(b + i * strideB))));
     const __m256i s01 = _mm256_add_epi16(r[0], r[1]), d01 = _mm256_sub_epi16(r[0], r[1]);
     const __m256i s23 = _mm256_add_epi16(r[2], r[3]), d23 = _mm256_sub_epi16(r[2], r[3]);
     const __m256i t0 = _mm256_add_epi16(s01, s23), t1 = _mm256_sub_epi16(s01, s23);
@@ -158,6 +155,29 @@ __attribute__((target("avx2"))) inline int satd16x4U8Avx2(const uint8_t* a, int 
         total += ((_mm256_cvtsi256_si32(s1) + 1) >> 1) + ((_mm_cvtsi128_si32(_mm256_extracti128_si256(s1, 1)) + 1) >> 1);
     }
     return total;
+}
+
+__attribute__((target("avx2"))) inline int satd16x4U8Avx2(const uint8_t* a, int strideA, const uint8_t* b, int strideB)
+{
+    __m256i r[4];
+    for (int i = 0; i < 4; ++i)
+        r[i] = _mm256_sub_epi16(_mm256_cvtepu8_epi16(_mm_loadu_si128(reinterpret_cast<const __m128i*>(a + i * strideA))),
+                                _mm256_cvtepu8_epi16(_mm_loadu_si128(reinterpret_cast<const __m128i*>(b + i * strideB))));
+    return satdLanesAvx2(r);
+}
+
+// An 8x8 block: rows 0-3 in lane 0, rows 4-7 in lane 1; same result as satd8x8U8.
+__attribute__((target("avx2"))) inline int satd8x8U8Avx2(const uint8_t* a, int strideA, const uint8_t* b, int strideB)
+{
+    __m256i r[4];
+    for (int i = 0; i < 4; ++i) {
+        const __m128i ra = _mm_unpacklo_epi64(_mm_loadl_epi64(reinterpret_cast<const __m128i*>(a + i * strideA)),
+                                              _mm_loadl_epi64(reinterpret_cast<const __m128i*>(a + (i + 4) * strideA)));
+        const __m128i rb = _mm_unpacklo_epi64(_mm_loadl_epi64(reinterpret_cast<const __m128i*>(b + i * strideB)),
+                                              _mm_loadl_epi64(reinterpret_cast<const __m128i*>(b + (i + 4) * strideB)));
+        r[i] = _mm256_sub_epi16(_mm256_cvtepu8_epi16(ra), _mm256_cvtepu8_epi16(rb));
+    }
+    return satdLanesAvx2(r);
 }
 
 inline bool haveAvx2()
@@ -253,6 +273,16 @@ inline int sa8dU8(const uint8_t* a, int strideA, const uint8_t* b, int strideB)
         s += std::abs(v);
     return (s + 2) >> 2;
 #endif
+}
+
+// SATD of an 8x8 block (four 4x4 blocks): AVX2 where the CPU has it.
+inline int satd8x8U8Fast(const uint8_t* a, int strideA, const uint8_t* b, int strideB)
+{
+#ifdef SCHNEIDI_H264_AVX2
+    if (haveAvx2())
+        return satd8x8U8Avx2(a, strideA, b, strideB);
+#endif
+    return satd8x8U8(a, strideA, b, strideB);
 }
 
 // SAD of one row of 8 or 16 samples (SSE2 where available, plain C elsewhere).
