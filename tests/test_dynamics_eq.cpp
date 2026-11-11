@@ -34,6 +34,7 @@
 #include <QToolButton>
 #include <QUndoStack>
 #include <algorithm>
+#include <type_traits>
 #include <clocale>
 #include <cmath>
 #include <vector>
@@ -637,6 +638,84 @@ void testDialogs()
     CHECK(p.timeline().audio[1].eq.on);
 }
 
+// The Mixer's EQ/compressor windows: one per strip (a second double click brings the open one up), closed when another
+// project is loaded or another timeline opened (their track number would point at another track), and a field the user
+// is typing in is not overwritten by a change from elsewhere
+void testMixerDialogWindows()
+{
+    Project p;
+    Engine engine;
+    Mixer mixer(&p, &engine);
+    mixer.show();
+    auto* eqButton = mixer.findChild<QToolButton*>("eq_A1");
+    auto* dynButton = mixer.findChild<QToolButton*>("dyn_A1");
+    if (!CHECK(eqButton && dynButton)) return;
+    const auto open = [&](QWidget* w) {
+        QTest::mouseDClick(w, Qt::LeftButton);
+        QApplication::processEvents();
+    };
+    const auto shown = [&](auto* dummy) {
+        int n = 0;
+        for (auto* d : mixer.findChildren<std::remove_pointer_t<decltype(dummy)>*>())
+            if (d->isVisible()) ++n;
+        return n;
+    };
+    open(eqButton);
+    open(eqButton);
+    CHECK_EQ(shown((EqDialog*)nullptr), 1);
+    open(dynButton);
+    open(dynButton);
+    CHECK_EQ(shown((DynamicsDialog*)nullptr), 1);
+    // Another project: both close
+    ProjectData d;
+    d.timeline = p.timeline();
+    p.load(d);
+    QApplication::processEvents();
+    CHECK_EQ(shown((EqDialog*)nullptr), 0);
+    CHECK_EQ(shown((DynamicsDialog*)nullptr), 0);
+    // Another timeline: both close
+    open(eqButton = mixer.findChild<QToolButton*>("eq_A1"));
+    open(dynButton = mixer.findChild<QToolButton*>("dyn_A1"));
+    CHECK_EQ(shown((EqDialog*)nullptr), 1);
+    const int other = p.duplicateSequence(p.currentSequence());
+    p.setCurrentSequence(other);
+    QApplication::processEvents();
+    CHECK_EQ(shown((EqDialog*)nullptr), 0);
+    CHECK_EQ(shown((DynamicsDialog*)nullptr), 0);
+
+    // Typing in a field: a change from elsewhere (the CLI, undo) leaves the typed text alone, the others follow
+    Selection sel;
+    Editor ed(&p, &sel);
+    DynamicsDialog dyn(&ed, 0);
+    auto* threshold = dyn.findChild<QLineEdit*>("threshold");
+    auto* ratio = dyn.findChild<QLineEdit*>("ratio");
+    if (!CHECK(threshold && ratio)) return;
+    threshold->selectAll();
+    QTest::keyClicks(threshold, "-4");
+    TrackDynamics changed = p.timeline().audio[0].dynamics;
+    changed.ratio = 7;
+    ed.setTrackDynamics(0, changed);
+    CHECK_EQ(threshold->text(), QString("-4"));
+    CHECK_EQ(ratio->text(), QString("7"));
+    QTest::keyClick(threshold, Qt::Key_Return); // committed: now the model's value again
+    CHECK_EQ(p.timeline().audio[0].dynamics.thresholdDb, -4.0);
+    changed = p.timeline().audio[0].dynamics;
+    changed.thresholdDb = -10;
+    ed.setTrackDynamics(0, changed);
+    CHECK_EQ(threshold->text(), QString("-10"));
+    EqDialog eq(&ed, 0);
+    QLineEdit* freq = nullptr;
+    for (QLineEdit* e : eq.findChildren<QLineEdit*>())
+        if (!freq) freq = e;
+    if (!CHECK(freq)) return;
+    freq->selectAll();
+    QTest::keyClicks(freq, "123");
+    TrackEq eqChanged = p.timeline().audio[0].eq;
+    eqChanged.bands[3].gainDb = 2;
+    ed.setTrackEq(0, eqChanged);
+    CHECK_EQ(freq->text(), QString("123"));
+}
+
 // ---- CLI ----
 
 void testCliMixerEqCompressor(const QString& dir)
@@ -711,6 +790,7 @@ int main(int argc, char** argv)
     testMixerButtons();
     testEqCurveDrag();
     testDialogs();
+    testMixerDialogWindows();
     testCliMixerEqCompressor(dir.path());
 
     if (!Check::haveFfmpeg()) return Check::result();

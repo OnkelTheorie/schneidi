@@ -22,11 +22,19 @@ QString shown(double v)
     return s.replace('.', QLocale().decimalPoint());
 }
 
-bool parsed(const QLineEdit* e, double* v)
+// Model value into a field, unless the user is typing in it (text not yet committed): a change from elsewhere (CLI,
+// undo, another window) never overwrites what is being typed
+void showValue(QLineEdit* e, double v)
+{
+    if (!e->isModified()) e->setText(shown(v));
+}
+
+bool parsed(QLineEdit* e, double* v)
 {
     bool ok = false;
     const double x = QString(e->text()).trimmed().replace(',', '.').toDouble(&ok);
     if (ok) *v = x;
+    e->setModified(false); // taken (or refused): the model's value shows again
     return ok;
 }
 } // namespace
@@ -66,6 +74,9 @@ DynamicsDialog::DynamicsDialog(Editor* editor, int track, QWidget* parent)
 
     connect(m_on, &QCheckBox::toggled, this, &DynamicsDialog::commit);
     connect(editor->project(), &Project::timelineChanged, this, &DynamicsDialog::sync);
+    // The track number belongs to this timeline of this project: another one closes the window
+    connect(editor->project(), &Project::loaded, this, &QDialog::close);
+    connect(editor->project(), &Project::currentSequenceChanged, this, &QDialog::close);
     sync();
 }
 
@@ -79,7 +90,7 @@ void DynamicsDialog::sync()
     const std::pair<QLineEdit*, double> values[] = {{m_threshold, d.thresholdDb}, {m_ratio, d.ratio},
                                                     {m_attack, d.attackMs},       {m_release, d.releaseMs},
                                                     {m_knee, d.kneeDb},           {m_makeup, d.makeupDb}};
-    for (const auto& [e, v] : values) e->setText(shown(v));
+    for (const auto& [e, v] : values) showValue(e, v);
 }
 
 void DynamicsDialog::commit()
