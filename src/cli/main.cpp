@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // schneidi-cli: schneidi without a window, for scripts and AIs. Same project files and editing logic as the app.
-//   schneidi-cli help                      all commands (JSON)
+//   schneidi-cli help                      the commands in short; help <command>: its parameters (JSON)
 //   schneidi-cli info film.schneidi        timeline as JSON
 //   schneidi-cli mcp                       MCP server on stdio (Claude Desktop, Claude Code, …)
 //   schneidi-cli serve --root /data        MCP server over HTTP (AIs on other devices, Docker), cli/Serve.h

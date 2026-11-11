@@ -337,9 +337,16 @@ int runTests(int argc, char** argv)
             CHECK(message.contains("\"6.95s\"") && message.contains("whole numbers"));
         }
     }
+    // Without a command: every command in short (name and first sentence) and where the details are - not ~80 KB of
+    // parameters at a terminal; --all: everything
     const QJsonObject help = run("help", {});
     CHECK_EQ(help["commands"].toArray().size(), int(Cli::commands().size()));
-    CHECK(help.contains("servers") && help.contains("usage"));
+    CHECK(help.contains("usage") && help.contains("more") && !help.contains("servers"));
+    CHECK(!help["commands"][0].toObject().contains("params"));
+    CHECK(QJsonDocument(help).toJson(QJsonDocument::Compact).size() < 10000);
+    const QJsonObject all = run("help", {{"all", true}});
+    CHECK_EQ(all["commands"].toArray().size(), int(Cli::commands().size()));
+    CHECK(all.contains("servers") && all.contains("usage") && all["commands"][0].toObject().contains("params"));
     // One command: only that (the MCP/HTTP server options were 2.5 KB of every `help edit --op …` answer)
     const QJsonObject one = run("help", {{"command", "watch"}});
     CHECK(one["commands"].toArray().size() == 1 && !one.contains("servers") && !one.contains("usage"));

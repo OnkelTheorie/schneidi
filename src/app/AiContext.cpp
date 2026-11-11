@@ -186,8 +186,9 @@ QString compactInstructions(const QString& instructions)
     return instructions;
 }
 
-// Only for a request the user asked for in words (trusting someone else's code): never needed by a small model
-const QStringList kRareParams{QStringLiteral("trust_custom_code")};
+// Only for a request the user asked for in words (trusting someone else's code): never needed by a small model;
+// help's "all" (every command with every parameter at once): the tool list already has them
+const QStringList kRareParams{QStringLiteral("trust_custom_code"), QStringLiteral("all")};
 
 QJsonArray compactTools(const QJsonArray& tools, const QJsonArray& editOps)
 {

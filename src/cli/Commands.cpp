@@ -782,10 +782,11 @@ const QVector<Command>& commands()
 {
     using T = ParamType;
     static const QVector<Command> list{
-        {"help", "List all commands with their parameters (JSON).",
-         {{"command", T::String, "only this command", false, true},
+        {"help", "The commands in short; with a command: its parameters (JSON).",
+         {{"command", T::String, "only this command, with all its parameters", false, true},
           {"op", T::String, "with command 'edit': the details of these ops, e.g. \"speed_ramp\" or \"title,track\" "
-                            "(\"all\" = every op; without: only what each op is for)"}}, cmdHelp},
+                            "(\"all\" = every op; without: only what each op is for)"},
+          {"all", T::Boolean, "every command with all its parameters (long: ~80 KB)"}}, cmdHelp},
         {"guide", "How to edit well with schneidi: the workflow (look at the material, small steps, check the render) "
                   "and how-tos per task (highlight reel, talking head, short/9:16, ad, subtitles, color, sound, "
                   "several cameras, export, checking a render, automation with watch folders). Read it first if you "
@@ -1756,6 +1757,20 @@ QJsonObject cmdGuide(const QJsonObject& a, Context&)
             {"note", "references/<topic>.md in the guide = guide with that topic; command and op details: help"}};
 }
 
+// A command's summary in short (the overview of `help`): its first sentence (two when the first is only a word or
+// two, "Templates."), at most ~160 characters, cut at a space with "…"
+QString firstSentence(const QString& text)
+{
+    int end = text.indexOf(". ");
+    while (end >= 0 && end < 30) end = text.indexOf(". ", end + 2);
+    QString out = end < 0 ? text : text.left(end + 1);
+    if (out.size() > 160) {
+        const int space = out.lastIndexOf(' ', 157);
+        out = out.left(space > 0 ? space : 157) + QStringLiteral("…");
+    }
+    return out;
+}
+
 QJsonObject cmdHelp(const QJsonObject& a, Context&)
 {
     // The servers are not commands of the table: their options
@@ -1802,6 +1817,25 @@ QJsonObject cmdHelp(const QJsonObject& a, Context&)
     QJsonObject o{{"program", "schneidi-cli"}, {"version", QCoreApplication::applicationVersion()},
                   {"api_version", ApiVersion}, {"commands", list}};
     if (a.contains("command")) return o; // one command (or op): only that, an AI asks for it in the middle of work
+    if (!a["all"].toBool()) {
+        // Without a command: what there is, in short (all parameters of all commands were ~80 KB at a terminal); the
+        // details per command. The MCP tool list has every parameter anyway.
+        QJsonArray brief;
+        for (const QJsonValue& v : list)
+            brief << QJsonObject{{"name", v["name"]}, {"summary", firstSentence(v["summary"].toString())}};
+        return {{"program", "schneidi-cli"},
+                {"version", QCoreApplication::applicationVersion()},
+                {"api_version", ApiVersion},
+                {"usage", "schneidi-cli <command> [positional…] [--param value]; output is JSON on stdout, exit code "
+                          "0 = ok, 1 = error, 2 = usage error"},
+                {"more", QJsonArray{"schneidi-cli help <command>: all parameters of one command",
+                                    "schneidi-cli help edit --op <name>: details of edit ops (\"all\" = every op)",
+                                    "schneidi-cli help --all: every command with all its parameters",
+                                    "schneidi-cli guide: how to edit well with schneidi (workflow, how-tos per task)",
+                                    "schneidi-cli help mcp / help serve: the MCP server on stdio / over HTTP",
+                                    "schneidi-cli setup claude: connect Claude Code and Claude Desktop"}},
+                {"commands", brief}};
+    }
     o["usage"] = "schneidi-cli <command> [positional…] [--param value]; output is JSON on stdout, exit code 0 = ok, 1 = "
                  "error, 2 = usage error. `schneidi-cli mcp` runs an MCP server on stdio, `schneidi-cli serve` one over "
                  "HTTP (see 'servers'); `schneidi-cli setup claude` connects Claude Code and Claude Desktop to it. "
