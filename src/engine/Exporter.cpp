@@ -530,12 +530,16 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
     m_buildCancel = std::make_shared<std::atomic<bool>>(false);
     std::optional<Timeline> mixed;
     if (sound) mixed = tl;
-    m_build = QThread::create([graph, scaled = std::move(scaled), mixed = std::move(mixed), out, s, threads, from,
-                               length, frames, rate, convertRate, smart, copy = m_copy] {
+    // A cancel (stopBuild) waits for this thread: it stops between its steps and between the files it opens. What it
+    // made then is never used (its finished() is stale).
+    m_build = QThread::create([graph, cancel = m_buildCancel, scaled = std::move(scaled), mixed = std::move(mixed), out, s,
+                               threads, from, length, frames, rate, convertRate, smart, copy = m_copy] {
         Graph& g = *graph;
         {
             if (smart)
-                if (const int cs = SmartRender::colorspace(copy, s.videoCodec, out.size()); cs > 0) g.colorspace = cs;
+                if (const int cs = SmartRender::colorspace(copy, s.videoCodec, out.size(), cancel.get()); cs > 0)
+                    g.colorspace = cs;
+            if (*cancel) return;
             if (!s.videoCodec.isEmpty()) {
                 Picture::Options po;
                 po.format = out;
@@ -548,6 +552,7 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
                 po.overlay = s.overlay;
                 g.renderer = std::make_shared<Picture::Renderer>(scaled, po);
             }
+            if (*cancel) return;
             if (mixed) {
                 Audio::Mixer::Options o;
                 o.fileLength = [lengths = s.mediaLengths](const QString& path) { return lengths.value(path); };

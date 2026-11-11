@@ -369,6 +369,71 @@ void testDecoderLost(const QString& root)
     CHECK_EQ(entries(dir), QStringList());
 }
 
+// Cancel while the export is still being prepared (smart render opens every file it may copy from): returns at once,
+// not after all of them were opened
+void testCancelWhilePreparing(const QString& root)
+{
+    const QString dir = root + "/prepare";
+    QDir().mkpath(dir);
+    constexpr int kFiles = 100, kEach = 10;
+    Timeline tl;
+    tl.video.resize(1);
+    for (int i = 0; i < kFiles; ++i) {
+        const QString file = dir + QString("/clip%1.mp4").arg(i, 3, 10, QChar('0'));
+        QFile::copy(g_media, file);
+        Clip c;
+        c.id = i + 1;
+        c.mediaPath = file;
+        c.start = i * kEach;
+        c.out = kEach - 1;
+        tl.video[0].clips << c;
+    }
+    ExportSettings s = settings(dir + "/out.mp4");
+    s.smartRender = true;
+    s.threads = 2;
+    s.audioCodec.clear();
+    // Time to get going without a cancel (prepared = every file opened)
+    qint64 prepare = 0;
+    {
+        Exporter ex;
+        QEventLoop loop;
+        QElapsedTimer t;
+        QObject::connect(&ex, &Exporter::started, &ex, [&] {
+            prepare = t.elapsed();
+            ex.cancel();
+        });
+        QObject::connect(&ex, &Exporter::finished, &loop, &QEventLoop::quit);
+        t.start();
+        QString error;
+        if (!CHECK(ex.start(tl, s, &error))) return;
+        QTimer::singleShot(60000, &loop, &QEventLoop::quit);
+        loop.exec();
+    }
+    // Canceled right after the start
+    qint64 cancel = 0;
+    bool finished = false, ok = true;
+    {
+        Exporter ex;
+        QObject::connect(&ex, &Exporter::finished, &ex, [&](bool success, const QString&) {
+            finished = true;
+            ok = success;
+        });
+        QString error;
+        if (!CHECK(ex.start(tl, s, &error))) return;
+        QElapsedTimer t;
+        t.start();
+        ex.cancel();
+        cancel = t.elapsed();
+        CHECK(!ex.isRunning());
+    }
+    CHECK(finished);
+    CHECK(!ok);
+    std::printf("       preparing %lld ms, cancel %lld ms\n", prepare, cancel);
+    if (prepare < 60) std::printf("       preparing too fast to tell, cancel time not checked\n");
+    else CHECK(cancel * 3 < prepare);
+    CHECK_EQ(QDir(dir).entryList({"out*"}, QDir::Files | QDir::Hidden), QStringList());
+}
+
 // Odd project size (an import or a project file can bring one) exported at project size: the nearest even size
 void testOddSize(const QString& root)
 {
@@ -415,6 +480,7 @@ int main(int argc, char** argv)
     testImageSequence(tmp.path());
     testOddSize(tmp.path());
     testSoundOutOfMemory(tmp.path());
+    testCancelWhilePreparing(tmp.path());
     testDecoderLost(tmp.path()); // last: before the fix it hangs
     return Check::result();
 }
