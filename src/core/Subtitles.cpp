@@ -386,7 +386,7 @@ bool ripple(SubtitleTrack& track, const QVector<QPair<int, int>>& shifts)
     };
     QVector<SubtitleCue> moved;
     bool changed = false;
-    for (SubtitleCue c : track.cues) {
+    for (SubtitleCue c : std::as_const(track.cues)) { // (read-only: undo snapshots share the cues)
         const bool timed = Captions::timed(c);
         // The end of a word caption goes with its last word
         const int endAnchor = timed ? c.start + c.words.last().from : c.start;

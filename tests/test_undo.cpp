@@ -305,6 +305,69 @@ void testTransitionTrimWantedLength()
     CHECK_EQ(qlen, 12);
 }
 
+// Undo memory: speed (with ripple), speed points and delete range write only the tracks they change - the others share
+// their clips (and the subtitle tracks their cues) with the step before; a copy of every track per step cost 0.3 MB
+// instead of 40 KB at 500 clips (tests/bench_undo). Undo and redo still give exactly the states.
+void testUndoSharesUntouchedTracks()
+{
+    Project p;
+    TimelineGuard guard_p{p};
+    Selection sel;
+    Editor ed(&p, &sel);
+    p.addMedia({"/x/a.mp4", "a.mp4", 400, true, true, false});
+    p.addMedia({"/x/m.wav", "m.wav", 900, false, true, false});
+    ed.addSubtitleTrack();
+    int v = 0;
+    p.edit("setup", [&](Timeline& tl) {
+        tl.subtitles[0].cues = {SubtitleCue{p.newClipId(), 0, 40, "before everything"}};
+        while (tl.audio.size() < 3) tl.audio << Track{TrackKind::Audio};
+        Clip c;
+        c.id = v = p.newClipId();
+        c.mediaPath = "/x/a.mp4";
+        c.start = 100;
+        c.out = 99;
+        c.linkId = p.newLinkId();
+        tl.video[0].clips << c;
+        c.id = p.newClipId();
+        tl.audio[0].clips << c;
+        Clip m;
+        m.id = p.newClipId();
+        m.mediaPath = "/x/m.wav";
+        m.out = 349; // [0, 350): across the edit points, its track cannot move (stays as it is)
+        tl.audio[1].clips << m;
+        m.id = p.newClipId();
+        m.out = 49; // [0, 50): before everything
+        tl.audio[2].clips << m;
+    });
+    // A2 is untouched by the speed changes only (a delete range cuts it)
+    const auto shared = [](const Timeline& a, const Timeline& b, const char* what, bool a2) {
+        const bool ok = (!a2 || a.audio[1].clips.constData() == b.audio[1].clips.constData())
+                        && a.audio[2].clips.constData() == b.audio[2].clips.constData()
+                        && a.subtitles[0].cues.constData() == b.subtitles[0].cues.constData();
+        if (!ok) std::printf("       %s: untouched tracks copied\n", what);
+        return ok;
+    };
+    const auto exact = [&](const Timeline& before, const char* what) {
+        const Timeline after = p.timeline();
+        CHECK(!(after == before));
+        p.undoStack()->undo();
+        if (!CHECK(p.timeline() == before)) std::printf("       %s: undo\n", what);
+        p.undoStack()->redo();
+        if (!CHECK(p.timeline() == after)) std::printf("       %s: redo\n", what);
+    };
+    const auto check = [&](const char* what, bool a2, const std::function<void()>& op) {
+        const Timeline before = p.timeline();
+        op();
+        CHECK(shared(before, p.timeline(), what, a2));
+        exact(before, what);
+    };
+    check("speed with ripple", true, [&] { ed.setClipSpeed({v}, {2.0, false, false, true}, true); });
+    check("speed point", true, [&] { ed.addSpeedPoint(v, 120); });
+    check("speed of a section", true, [&] { ed.setSegmentSpeed(v, 1, 0.5); });
+    check("delete range", false, [&] { ed.deleteRange(110, 115, false); });
+    check("delete range with ripple", false, [&] { ed.deleteRange(125, 130, true); });
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -316,6 +379,7 @@ int main(int argc, char** argv)
     testFadeAfterTrim();
     testTransitionTrimClips();
     testTransitionTrimWantedLength();
+    testUndoSharesUntouchedTracks();
 
     Project p;
     TimelineGuard guard_p{p};

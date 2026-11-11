@@ -26,15 +26,24 @@ using EditorDetail::fitTransitions;
 
 void EditorDetail::fitTransitions(Timeline& tl, const QSet<int>& clipIds, const TimelineOps::SourceLength& len)
 {
+    // Read-only first, written only where a value changes (undo snapshots share the untouched tracks)
     for (TrackKind k : {TrackKind::Video, TrackKind::Audio})
-        for (Track& t : tl.tracks(k)) {
+        for (qsizetype i = 0; i < std::as_const(tl).tracks(k).size(); ++i) {
+            const Track& t = std::as_const(tl).tracks(k)[i];
+            if (std::none_of(t.clips.cbegin(), t.clips.cend(), [&](const Clip& c) { return clipIds.contains(c.id); }))
+                continue;
             QHash<int, int> in, out;
             for (const auto& s : TimelineOps::transitions(t, len)) {
                 if (s.leftId) out[s.leftId] = s.length();
                 if (s.rightId) in[s.rightId] = s.length();
             }
-            for (Clip& c : t.clips) {
-                if (!clipIds.contains(c.id)) continue;
+            QVector<qsizetype> changed;
+            for (qsizetype j = 0; j < t.clips.size(); ++j) {
+                const Clip& c = t.clips[j];
+                if (clipIds.contains(c.id) && (c.transIn != in.value(c.id) || c.transOut != out.value(c.id))) changed << j;
+            }
+            for (qsizetype j : std::as_const(changed)) { // (writing may detach: `t` is not used from here on)
+                Clip& c = tl.tracks(k)[i].clips[j];
                 c.transIn = in.value(c.id);
                 c.transOut = out.value(c.id);
             }

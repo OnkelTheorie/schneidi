@@ -264,8 +264,11 @@ void cutCopiesLikeBases(const Timeline& before, Timeline& after, const IdGen& ne
 void clearRange(Track& track, int start, int end, const IdGen& newId)
 {
     if (end <= start) return;
+    // Nothing there: the track stays untouched (read-only, undo snapshots share its clips)
+    const QVector<Clip>& clips = std::as_const(track.clips);
+    if (std::none_of(clips.cbegin(), clips.cend(), [&](const Clip& c) { return c.end() > start && c.start < end; })) return;
     QVector<Clip> result;
-    for (const Clip& c : track.clips) {
+    for (const Clip& c : clips) {
         if (c.end() <= start || c.start >= end) { // no overlap
             result << c;
             continue;
@@ -349,11 +352,12 @@ void shiftFrom(Track& track, int frame, int delta)
 
 void clearDissolveAt(Track& track, int frame)
 {
-    for (int i = 0; i + 1 < track.clips.size(); ++i) {
-        Clip& a = track.clips[i];
-        Clip& b = track.clips[i + 1];
-        if (a.end() == frame && isDissolve(a, b)) a.transOut = b.transIn = 0;
-    }
+    // Read first, written only where there is one (undo snapshots share the clips of the other tracks)
+    for (qsizetype i = 0; i + 1 < track.clips.size(); ++i)
+        if (const Clip& a = std::as_const(track.clips)[i]; a.end() == frame && isDissolve(a, std::as_const(track.clips)[i + 1])) {
+            track.clips[i].transOut = 0;
+            track.clips[i + 1].transIn = 0;
+        }
 }
 
 QVector<int> splitAt(Timeline& tl, const QVector<int>& clipIds, int frame,
