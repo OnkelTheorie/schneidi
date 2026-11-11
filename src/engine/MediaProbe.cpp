@@ -8,14 +8,19 @@ extern "C" {
 #include <libavutil/samplefmt.h>
 }
 
+#include <QDateTime>
+#include <QFile>
 #include <QFileInfo>
+#include <QHash>
 #include <QImageReader>
+#include <QThread>
 #include <QStringList>
 
 #include <algorithm>
 #include <climits>
 #include <cmath>
 #include <memory>
+#include <mutex>
 
 namespace MediaProbe {
 
@@ -152,8 +157,11 @@ struct CloseInput {
     void operator()(AVFormatContext* f) const { avformat_close_input(&f); }
 };
 
-// The streams as Engine::probe reports them; false = not decidable from what is known now
-bool fill(const AVFormatContext* fmt, bool audioFile, MediaInfo* info)
+// The streams as Engine::probe reports them; false = not decidable from what is known now (`lenient`: decided from
+// what is known: streams that cannot be played are left out, false only when no stream can be played at all).
+// A sound stream that cannot be played keeps its place in the list (the sound reader counts a file's audio streams by
+// their place), as one that decodes to a sample format the sound path does not play.
+bool fill(const AVFormatContext* fmt, bool audioFile, MediaInfo* info, bool lenient = false)
 {
     bool video = false, sound = false;
     QVector<AudioStreamInfo> streams;
@@ -162,17 +170,24 @@ bool fill(const AVFormatContext* fmt, bool audioFile, MediaInfo* info)
         const AVCodecParameters* p = st->codecpar;
         if (p->codec_type != AVMEDIA_TYPE_VIDEO && p->codec_type != AVMEDIA_TYPE_AUDIO) continue;
         const AVCodec* codec = avcodec_find_decoder(p->codec_id);
-        if (!codec) return false; // no decoder in this FFmpeg: not playable here
-        if (p->codec_type == AVMEDIA_TYPE_VIDEO) {
+        const bool isVideo = p->codec_type == AVMEDIA_TYPE_VIDEO;
+        // No decoder in this FFmpeg (an unknown codec, one the slim package build leaves out), values unknown
+        Sound s = Sound::NotPlayable;
+        if (!codec) {
+            if (!lenient) return false;
+            if (isVideo) continue;
+        } else if (isVideo) {
             video = true; // also a cover picture: the picture stream when there is no other
             continue;
+        } else if (p->ch_layout.nb_channels <= 0) {
+            if (!lenient) return false;
+        } else {
+            s = soundOf(p, codec);
+            if (s == Sound::Unknown && !lenient) return false;
         }
-        if (p->ch_layout.nb_channels <= 0) return false;
-        const Sound s = soundOf(p, codec);
-        if (s == Sound::Unknown) return false;
         sound = sound || s == Sound::Playable;
         AudioStreamInfo a;
-        a.channels = p->ch_layout.nb_channels;
+        a.channels = p->ch_layout.nb_channels > 0 ? p->ch_layout.nb_channels : a.channels;
         // No empty and no "und" (undetermined) tag values
         if (const AVDictionaryEntry* t = av_dict_get(st->metadata, "title", nullptr, 0); t && qstrcmp(t->value, "und") != 0)
             a.title = QString::fromUtf8(t->value).trimmed();
@@ -185,7 +200,77 @@ bool fill(const AVFormatContext* fmt, bool audioFile, MediaInfo* info)
     return true;
 }
 
+// A stream with a decoder whose values the stream analysis did not find: no packet of it within the analysed start
+// (sound that starts late in an MPEG-TS, a picture after seconds of sound). Reading further may find them.
+bool unsettled(const AVFormatContext* fmt)
+{
+    for (unsigned i = 0; i < fmt->nb_streams; ++i) {
+        const AVCodecParameters* p = fmt->streams[i]->codecpar;
+        const AVCodec* codec = avcodec_find_decoder(p->codec_id);
+        if (!codec) continue; // reading further finds no decoder
+        if (p->codec_type == AVMEDIA_TYPE_VIDEO && (p->width <= 0 || p->height <= 0)) return true;
+        if (p->codec_type == AVMEDIA_TYPE_AUDIO
+            && (p->ch_layout.nb_channels <= 0 || p->sample_rate <= 0 || soundOf(p, codec) == Sound::Unknown))
+            return true;
+    }
+    return false;
+}
+
+// Files whose longer analysis found nothing more (size and time of change then): not read that far again
+struct Analysed {
+    qint64 size = -1, modified = 0;
+};
+std::mutex g_longMutex;
+QHash<QString, Analysed>& longInVain()
+{
+    static QHash<QString, Analysed> files;
+    return files;
+}
+
+Analysed stampOf(const QFileInfo& fi)
+{
+    return {fi.size(), fi.lastModified().toMSecsSinceEpoch()};
+}
+
+// Opening failed although the file is there and may be read: another program holds it without sharing read access
+// (Windows: a recorder, a copy in progress, a virus scan of a fresh download); FFmpeg's own error says "permission
+// denied" then
+bool locked(const QFileInfo& fi)
+{
+    if (!fi.isFile() || !fi.isReadable()) return false;
+    QFile f(fi.filePath());
+    return !f.open(QIODevice::ReadOnly);
+}
+
+// Written to this many seconds ago or less: maybe still being written
+constexpr qint64 kFreshSeconds = 30;
+
+bool fresh(const QFileInfo& fi)
+{
+    const QDateTime changed = fi.lastModified();
+    return changed.isValid() && std::abs(changed.secsTo(QDateTime::currentDateTime())) <= kFreshSeconds;
+}
+
 } // namespace
+
+bool mayBeBusy(const QString& path)
+{
+    const QFileInfo fi(path);
+    return fi.isFile() && (fresh(fi) || locked(fi));
+}
+
+namespace {
+QString why(const QString& path);
+} // namespace
+
+QString whyUnreadable(const QString& path)
+{
+    QString reason = why(path);
+    const QFileInfo fi(path);
+    if (fi.isFile() && !locked(fi) && fresh(fi))
+        reason += "; it was written to moments ago - maybe it is still being recorded, downloaded or copied";
+    return reason;
+}
 
 bool isAudioFile(const QString& path)
 {
@@ -211,9 +296,17 @@ std::optional<MediaInfo> read(const QString& path, FrameRate rate)
         return info;
     }
     if (forOtherProducer(suffix)) return std::nullopt;
+    const QByteArray file = path.toUtf8();
     AVFormatContext* raw = nullptr;
-    if (OpenMedia::input(&raw, path.toUtf8().constData()) < 0) return std::nullopt;
-    const std::unique_ptr<AVFormatContext, CloseInput> fmt(raw);
+    int opened = OpenMedia::input(&raw, file.constData());
+    // Held by another program a moment (a virus scan of a fresh download, a copy finishing): a few tries, ~1 s in all.
+    // Only failures pay for it.
+    for (int tries = 0; opened < 0 && tries < 4 && locked(fi); ++tries) {
+        QThread::msleep(250);
+        opened = OpenMedia::input(&raw, file.constData());
+    }
+    if (opened < 0) return std::nullopt;
+    std::unique_ptr<AVFormatContext, CloseInput> fmt(raw);
     if (pictureDemuxer(fmt->iformat)) {
         // A still picture with another extension: as a still when Qt reads it
         QImageReader reader(path);
@@ -237,9 +330,39 @@ std::optional<MediaInfo> read(const QString& path, FrameRate rate)
     if (!known(duration) || !fill(fmt.get(), audioFile, &info)) {
         // libavformat's stream analysis: decodes the first frames, estimates the length
         if (avformat_find_stream_info(fmt.get(), nullptr) < 0) return std::nullopt;
+        if (!fill(fmt.get(), audioFile, &info) && unsettled(fmt.get())) {
+            // A stream without a packet in the analysed start (5 s): once more, reading up to 60 s (as the preview's
+            // reader does for a picture that starts late). A file where that found nothing more is not read that
+            // far again while it stays the same.
+            const Analysed stamp = stampOf(fi);
+            bool inVain = false;
+            {
+                std::lock_guard lock(g_longMutex);
+                const auto it = longInVain().constFind(path);
+                inVain = it != longInVain().cend() && it->size == stamp.size && it->modified == stamp.modified;
+            }
+            if (!inVain) {
+                constexpr int64_t kLongAnalysis = 60;
+                AVDictionary* o = nullptr;
+                av_dict_set_int(&o, "analyzeduration", kLongAnalysis * AV_TIME_BASE, 0);
+                av_dict_set_int(&o, "probesize", kLongAnalysis * 2 * 1024 * 1024, 0);
+                AVFormatContext* longer = nullptr;
+                const int r = OpenMedia::input(&longer, file.constData(), o);
+                av_dict_free(&o);
+                if (r >= 0) {
+                    fmt.reset(longer);
+                    if (avformat_find_stream_info(fmt.get(), nullptr) < 0) return std::nullopt;
+                    if (unsettled(fmt.get())) {
+                        std::lock_guard lock(g_longMutex);
+                        longInVain().insert(path, stamp);
+                    }
+                }
+            }
+        }
         duration = fmt->duration;
         if (!known(duration)) duration = tailDuration(fmt.get());
-        if (!known(duration) || !fill(fmt.get(), audioFile, &info)) return std::nullopt;
+        // What can be played (a stream that cannot does not refuse the others)
+        if (!known(duration) || !fill(fmt.get(), audioFile, &info, true)) return std::nullopt;
     }
     // In the project frame rate, rounded to whole frames. A broken header can claim absurd lengths (time scale 1,
     // duration 2^32 s): capped at "unknown" (INT_MAX), never overflowing into a negative length
@@ -249,13 +372,16 @@ std::optional<MediaInfo> read(const QString& path, FrameRate rate)
     return info;
 }
 
-QString whyUnreadable(const QString& path)
+namespace {
+
+QString why(const QString& path)
 {
     const QFileInfo fi(path);
     if (!fi.exists()) return fi.isSymLink() ? "a link to a file that does not exist" : "the file does not exist";
     if (fi.isDir()) return "it is a folder, not a file";
     if (!fi.isFile()) return "not a regular file (a named pipe, device or socket)";
     if (!fi.isReadable()) return "no permission to read it";
+    if (locked(fi)) return "another program holds the file (still being recorded, copied or scanned?) - try again in a moment";
     if (fi.size() == 0) return "the file is empty (0 bytes)";
     const QString suffix = fi.suffix().toLower();
     if (stillSuffix(suffix)) {
@@ -300,5 +426,7 @@ QString whyUnreadable(const QString& path)
     if (fmt->duration == AV_NOPTS_VALUE || fmt->duration <= 0) return "its length is unknown (a damaged or unfinished file)";
     return "damaged or unsupported";
 }
+
+} // namespace
 
 } // namespace MediaProbe
