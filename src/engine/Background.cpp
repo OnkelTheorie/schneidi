@@ -68,7 +68,11 @@ void lowerProcess(QProcess& process, Level level)
     process.setCreateProcessArgumentsModifier([flag](QProcess::CreateProcessArguments* a) { a->flags |= flag; });
 #elif defined(Q_OS_UNIX)
     const int nice = level == Level::Low ? 10 : 19;
-    process.setChildProcessModifier([nice] { (void)::nice(nice); });
+    // glibc marks nice() warn_unused_result; a (void) cast does not silence GCC under _FORTIFY_SOURCE (Arch, Fedora)
+    process.setChildProcessModifier([nice] {
+        if (::nice(nice) == -1) {
+        }
+    });
 #else
     Q_UNUSED(process);
     Q_UNUSED(level);

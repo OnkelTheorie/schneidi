@@ -1,0 +1,68 @@
+# Maintainer: schneidi project <324913804+OnkelTheorie@users.noreply.github.com>
+#
+# Arch Linux package of schneidi, built from the source tarball of a release tag.
+# Build:  makepkg -si      (see README.md next to this file; a local checkout: make-local-tarball.sh)
+
+pkgname=schneidi
+pkgver=0.20.0
+pkgrel=1
+pkgdesc='Fast, light video editor that an AI assistant can edit with'
+arch=('x86_64' 'aarch64')
+url='https://github.com/OnkelTheorie/schneidi'
+# schneidi: AGPL-3.0-only; built in: RNNoise (BSD-3-Clause), earshot sound recipes (MIT), recorded sounds (CC0-1.0),
+# miniaudio (MIT-0 or Unlicense, compiled in from the header)
+license=('AGPL-3.0-only AND BSD-3-Clause AND MIT AND CC0-1.0 AND (MIT-0 OR Unlicense)')
+depends=(
+  'qt6-base'
+  'ffmpeg'
+  'alsa-lib'      # miniaudio opens ALSA/PulseAudio at run time (dlopen), invisible to the dependency scan
+  'hicolor-icon-theme'
+  'libgcc'
+  'libstdc++'
+  'glibc'
+)
+makedepends=('cmake' 'ninja' 'pkgconf' 'miniaudio')
+optdepends=(
+  'libpulse: sound output through PulseAudio/PipeWire-Pulse'
+  'qt6-shadertools: own GLSL shader effects (the qsb shader compiler)'
+  'libva-mesa-driver: hardware video decoding on AMD (VA-API)'
+  'intel-media-driver: hardware video decoding on Intel (VA-API)'
+)
+# No schneidi-debug package (~270 MB) for a local build; Arch's build flags (LTO, _GLIBCXX_ASSERTIONS) stay on
+options=('!debug')
+_rnnoise_model=0b50c45
+source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz"
+        "https://media.xiph.org/rnnoise/models/rnnoise_data-$_rnnoise_model.tar.gz")
+# The model tarball is read by the build itself (checked by its SHA-256 there too)
+noextract=("rnnoise_data-$_rnnoise_model.tar.gz")
+sha256sums=('f02367fb1185ae3b013f16dfe197ecec3d475bbb6ac50434152cbe1b0c78541f'
+            '4ac81c5c0884ec4bd5907026aaae16209b7b76cd9d7f71af582094a2f98f4b43')
+
+build() {
+  # Release build from a tarball (no .git folder): schneidi's own code is linked statically into both programs
+  # (SCHNEIDI_SHARED_LIBS off), no tests. The system miniaudio.h is used (makedepends).
+  cmake -S "$pkgname-$pkgver" -B build -G Ninja \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_INSTALL_PREFIX=/usr \
+    -DSCHNEIDI_SHARED_LIBS=OFF \
+    -DSCHNEIDI_TESTS=OFF \
+    -DSCHNEIDI_SYSTEM_MINIAUDIO=ON \
+    -DSCHNEIDI_RNNOISE_MODEL="$srcdir/rnnoise_data-$_rnnoise_model.tar.gz" \
+    -DQT_NO_PRIVATE_MODULE_WARNING=ON
+  cmake --build build
+}
+
+check() {
+  QT_QPA_PLATFORM=offscreen build/schneidi-cli --version
+}
+
+package() {
+  DESTDIR="$pkgdir" cmake --install build
+  # Debian-policy copyright/changelog.gz: Arch keeps the licenses in /usr/share/licenses instead
+  rm -rf "$pkgdir/usr/share/doc/$pkgname"
+  cd "$pkgname-$pkgver"
+  install -Dm644 LICENSE THIRD_PARTY.md -t "$pkgdir/usr/share/licenses/$pkgname/"
+  install -Dm644 third_party/rnnoise/COPYING "$pkgdir/usr/share/licenses/$pkgname/COPYING.rnnoise"
+  install -Dm644 third_party/earshot/LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE.earshot"
+  install -Dm644 README.md -t "$pkgdir/usr/share/doc/$pkgname/"
+}
