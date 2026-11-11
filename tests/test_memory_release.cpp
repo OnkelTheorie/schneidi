@@ -16,6 +16,7 @@
 #include <QApplication>
 #include <QElapsedTimer>
 #include <QFile>
+#include <QImage>
 #include <QEventLoop>
 #include <QTemporaryDir>
 #include <QTimer>
@@ -288,6 +289,36 @@ void testSources(const QString& media, const QString& dir)
     for (int i = 0; i < files.size(); ++i) r.render(i * each + 6);
     r.trim(steady_clock::now());
     CHECK_EQ(r.stats().sourcesOpen, 20);
+    // Paused on clip 3, then the other clips were touched later (prepared by another thread): beyond the count, the
+    // least recently used go - never the one the paused frame shows
+    {
+        Picture::Renderer p(clipsOf(files, each), o);
+        p.render(3 * each + 5);
+        std::thread other([&] {
+            for (int i = 4; i < files.size(); ++i) p.prepare(i * each);
+        });
+        other.join();
+        CHECK(p.stats().sourcesOpen > Picture::Renderer::kKeepSources);
+        p.trim(steady_clock::now() + minutes(1));
+        CHECK_EQ(p.stats().sourcesOpen, Picture::Renderer::kKeepSources);
+        p.update(clipsOf({files[3]}, each)); // the paused one alone: still open, nothing else
+        p.trim(steady_clock::now() + minutes(1));
+        CHECK_EQ(p.stats().sourcesOpen, 1);
+    }
+    // Still pictures (up to 4x the project's pixels as RGBA) close after 30 s unused, as before
+    {
+        const QString png = dir + "/still.png";
+        QImage img(320, 180, QImage::Format_RGB32);
+        img.fill(Qt::red);
+        CHECK(img.save(png));
+        Picture::Renderer p(clipsOf({png}, 100), o);
+        p.render(10);
+        CHECK_EQ(p.stats().sourcesOpen, 1);
+        p.trim(steady_clock::now() + seconds(10));
+        CHECK_EQ(p.stats().sourcesOpen, 1);
+        p.trim(steady_clock::now() + minutes(1));
+        CHECK_EQ(p.stats().sourcesOpen, 0);
+    }
     MemoryRelease::setPressureForTests(-1);
 }
 

@@ -310,6 +310,7 @@ struct Source {
     FileStamp::Stamp stamp; // of the media file when opened: another one = the file was overwritten, open it again
     std::chrono::steady_clock::time_point used;
     int64_t usedFrame = -1; // last output frame that asked for it (export: dropped once rendering went past it)
+    int64_t lastFrame = -1; // the output frame that asked for it most recently (trim keeps what the paused one uses)
 };
 
 // Output frame the calling thread renders right now (Renderer::render)
@@ -431,6 +432,7 @@ struct Renderer::Impl {
     std::shared_ptr<const Timeline> snapshot;
     QSize output;
     std::atomic<int> direction{1};
+    std::atomic<int64_t> lastRendered{-1}; // the output frame rendered most recently (the one shown when paused)
 
     std::mutex sourceMutex;
     std::map<QString, Source> sources;
@@ -491,6 +493,7 @@ struct Renderer::Impl {
             if (it != sources.end() && it->second.stamp == stamp) {
                 it->second.used = std::chrono::steady_clock::now();
                 it->second.usedFrame = std::max(it->second.usedFrame, t_frame);
+                it->second.lastFrame = t_frame;
                 return it->second;
             }
             // Overwritten under the same name: everything kept of the old content goes - in every lane (mediaLength
@@ -572,6 +575,7 @@ struct Renderer::Impl {
         s.failed = !s.video && !s.still;
         s.used = std::chrono::steady_clock::now();
         s.usedFrame = t_frame;
+        s.lastFrame = t_frame;
         std::lock_guard lock(sourceMutex);
         return sources.emplace(key, s).first->second;
     }
@@ -2822,6 +2826,7 @@ Frame Renderer::renderFrame(int64_t frame, const RenderHints& hints)
     if (d->options.mode == Mode::Export && frame % 16 == 0)
         d->dropBefore(frame - std::max<int64_t>(int64_t(2 * ctx.fps), 4 * d->options.parallelFrames + 8));
     t_frame = frame;
+    d->lastRendered = frame;
     t_hints = hints.nearest || hints.cancel ? &hints : nullptr;
     t_exact = true;
     t_sourceLost = false;
@@ -3011,7 +3016,10 @@ void Renderer::trim(std::chrono::steady_clock::time_point now)
     const auto fileOf = [](const QString& key) { return key.mid(key.indexOf('|') + 1); };
     for (auto it = d->sources.begin(); it != d->sources.end();) {
         const auto idle = now - it->second.used;
-        const bool drop = (pressure && idle > seconds(5)) || (idle > seconds(30) && !used.contains(fileOf(it->first)));
+        // A still picture (up to 4x the project's pixels as RGBA: ~33 MB at 1080p, ~133 MB at 4K) is quick to read
+        // again and holds no decoder: closed after 30 s unused, as before
+        const bool drop = (pressure && idle > seconds(5))
+                          || (idle > seconds(30) && (it->second.still || !used.contains(fileOf(it->first))));
         if (drop) {
             closed.push_back(std::move(it->second));
             it = d->sources.erase(it);
@@ -3020,10 +3028,14 @@ void Renderer::trim(std::chrono::steady_clock::time_point now)
         }
     }
     if (int(d->sources.size()) > kKeepSources) {
+        // Never what the frame rendered last needs (the paused picture: Play goes on from there), whatever its time
+        const int64_t shown = d->lastRendered.load();
         std::vector<std::pair<steady_clock::time_point, QString>> byUse;
-        for (const auto& [key, s] : d->sources) byUse.emplace_back(s.used, key);
+        for (const auto& [key, s] : d->sources)
+            if (s.lastFrame != shown || shown < 0) byUse.emplace_back(s.used, key);
         std::sort(byUse.begin(), byUse.end()); // least recently used first
-        for (size_t i = 0; i + kKeepSources < byUse.size(); ++i) {
+        size_t over = d->sources.size() - kKeepSources;
+        for (size_t i = 0; i < byUse.size() && over > 0; ++i, --over) {
             if (now - byUse[i].first <= seconds(10)) break; // in use: kept beyond the count
             auto it = d->sources.find(byUse[i].second);
             closed.push_back(std::move(it->second));

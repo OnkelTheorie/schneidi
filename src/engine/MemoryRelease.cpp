@@ -65,8 +65,10 @@ bool underPressure()
 {
     if (const int forced = g_pressure.load(); forced >= 0) return forced == 1;
     const SystemMemory::Info m = SystemMemory::read(); // cgroup limits (container, systemd scope) count
-    if (m.total <= 0 || m.available <= 0) return false;
-    const qint64 keep = std::clamp<qint64>(m.total / 10, qint64(256) << 20, qint64(2) << 30);
+    // In a cgroup with a limit (container, systemd scope) that limit is the whole: available is the room it leaves
+    const qint64 total = m.limit > 0 && (m.total <= 0 || m.limit < m.total) ? m.limit : m.total;
+    if (total <= 0 || m.available <= 0) return false;
+    const qint64 keep = std::clamp<qint64>(total / 10, qint64(256) << 20, qint64(2) << 30);
     return m.available < keep;
 }
 
