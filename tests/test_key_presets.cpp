@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Key presets for people coming from other editors: Premiere Pro and Final Cut Pro on schneidi's actions (keys schneidi's
 // own actions lose when the preset takes them, second monitor reachable in every set), the preset stored in
-// keybindings.json, a Premiere .kys file imported as a preset of its own ("7 taken, 3 unknown"), the key settings
+// keybindings.json, a Premiere .kys file (in the layout and key codes Premiere saves) imported as a preset of its own ("9 taken, 3 unknown"), the key settings
 // dialog (preset combo, import) and the key trainer (rounds, hits, skip, its keys never fire window actions). The dialog
 // and the trainer in English and Russian with a 1.25x font: every button's text fits.
 // KEY_PRESETS_DUMP=<dir> saves screenshots.
@@ -45,14 +45,55 @@ void testReadKys()
     if (!CHECK(f.open(QIODevice::ReadOnly))) return;
     const auto r = InputBindings::readKys(f.readAll());
     CHECK(r.ok);
-    CHECK_EQ(r.taken, 7);   // undo, add edit, play, in, zoom in, snap, ripple delete
-    CHECK_EQ(r.unknown, 3); // match frame, pen, lift (find has no key: not counted)
+    // undo, add edit, play, set in, zoom in, snap, ripple delete (global and timeline), step forward
+    CHECK_EQ(r.taken, 9);
+    CHECK_EQ(r.unknown, 3); // match frame, pen, help (find has no key: not counted)
+    CHECK_EQ(r.dropped, 1); // maximize frame: program monitor only (the loop there is unknown: not counted)
     CHECK_EQ(r.keys.value("split"), QStringList({"D", "Ctrl+K"}));
     CHECK_EQ(r.keys.value("zoom_in"), QStringList({"=", "+"})); // number pad + counts as +
     CHECK_EQ(r.keys.value("snapping"), QStringList({"Shift+N"}));
-    CHECK_EQ(r.keys.value("ripple_delete"), QStringList({"Alt+Del"}));
+    CHECK_EQ(r.keys.value("ripple_delete"), QStringList({"Alt+Del", "Alt+Backspace"})); // the timeline's after the global
     CHECK_EQ(r.keys.value("undo"), QStringList({"Ctrl+Z"}));
+    CHECK_EQ(r.keys.value("play_pause"), QStringList({"Space"}));
+    CHECK_EQ(r.keys.value("mark_in"), QStringList({"I"}));
+    CHECK_EQ(r.keys.value("frame_next"), QStringList({"Right"}));
+    CHECK(!r.keys.contains("viewer_large"));
     CHECK(!r.keys.contains("find"));
+
+    // Premiere's key codes: characters with the top bit, the number pad with the next one, other keys by number
+    const auto key = [](qint64 code, const char* mods = "") {
+        const QString item = QString("<item.0 Version=\"1\"><commandname>cmd.edit.undo</commandname>%1"
+                                     "<virtualkey>%2</virtualkey></item.0>")
+                                 .arg(QString::fromLatin1(mods))
+                                 .arg(code);
+        const auto r = InputBindings::readKys(
+            QString("<PremiereData Version=\"3\"><shortcuts Version=\"5\"><platform>windows</platform>"
+                    "<context.global Version=\"1\"><itemcount>1</itemcount>%1</context.global></shortcuts></PremiereData>")
+                .arg(item)
+                .toUtf8());
+        return r.keys.value("undo").value(0);
+    };
+    CHECK_EQ(key(0x80000047), QString("G"));
+    CHECK_EQ(key(qint64(qint32(0x80000047))), QString("G")); // the same code written as a signed number
+    CHECK_EQ(key(qint64(qint32(0xC000002B))), QString("+"));
+    CHECK_EQ(key(0x80000035, "<modifier.shift>true</modifier.shift>"), QString("Shift+5"));
+    CHECK_EQ(key(0x8000002C), QString(","));
+    CHECK_EQ(key(0x80000060), QString("`"));
+    CHECK_EQ(key(0xC0000037), QString("7")); // number pad 7
+    CHECK_EQ(key(0xC000002A), QString("*"));
+    CHECK_EQ(key(1), QString("Space"));
+    CHECK_EQ(key(2), QString("Backspace"));
+    CHECK_EQ(key(4), QString("Return"));
+    CHECK_EQ(key(7), QString("F1"));
+    CHECK_EQ(key(12), QString("F6"));
+    CHECK_EQ(key(18), QString("F12"));
+    CHECK_EQ(key(35), QString("Del"));
+    CHECK_EQ(key(36), QString("Home"));
+    CHECK_EQ(key(39), QString("PgDown"));
+    CHECK_EQ(key(42), QString("Left"));
+    CHECK_EQ(key(45), QString("Down"));
+    CHECK_EQ(key(90), QString()); // no Premiere code (a Windows VK 'Z' is not what Premiere writes)
+    CHECK_EQ(key(0x80000041, "<modifier.ctrl>true</modifier.ctrl><modifier.alt>true</modifier.alt>"), QString("Ctrl+Alt+A"));
 
     CHECK(!InputBindings::readKys("not xml at all").ok);
     CHECK(!InputBindings::readKys(R"({"shortcuts": {}})").ok);
@@ -61,20 +102,20 @@ void testReadKys()
 
 // Premiere's contexts: one key may do one thing in the timeline and another one elsewhere. Only the global and the
 // timeline context count, the global one wins; a key twice is kept for the first command only
-const char* kContexts = R"(<?xml version="1.0" encoding="UTF-8" ?>
-<PremiereData Version="3"><shortcuts>
-  <context.timeline>
-    <item><commandname>cmd.marker.setin</commandname><virtualkey>75</virtualkey></item>
-    <item><commandname>cmd.sequence.snap</commandname><virtualkey>78</virtualkey></item>
+const char* kContexts = R"(<?xml version="1.0" encoding="UTF-8"?>
+<PremiereData Version="3"><shortcuts Version="5"><platform>windows</platform>
+  <context.timeline Version="1"><itemcount>2</itemcount>
+    <item.0 Version="1"><commandname>cmd.common.setin</commandname><modifier.shift>false</modifier.shift><modifier.alt>false</modifier.alt><modifier.ctrl>false</modifier.ctrl><virtualkey>2147483723</virtualkey></item.0>
+    <item.1 Version="1"><commandname>cmd.sequence.snap</commandname><modifier.shift>false</modifier.shift><modifier.alt>false</modifier.alt><modifier.ctrl>false</modifier.ctrl><virtualkey>2147483726</virtualkey></item.1>
   </context.timeline>
-  <context.global>
-    <item><commandname>cmd.edit.undo</commandname><virtualkey>90</virtualkey><modifier.ctrl>true</modifier.ctrl></item>
-    <item><commandname>cmd.sequence.addedit</commandname><virtualkey>75</virtualkey></item>
+  <context.global Version="1"><itemcount>2</itemcount>
+    <item.0 Version="1"><commandname>cmd.edit.undo</commandname><modifier.shift>false</modifier.shift><modifier.alt>false</modifier.alt><modifier.ctrl>true</modifier.ctrl><virtualkey>2147483738</virtualkey></item.0>
+    <item.1 Version="1"><commandname>cmd.sequence.razorateditline</commandname><modifier.shift>false</modifier.shift><modifier.alt>false</modifier.alt><modifier.ctrl>false</modifier.ctrl><virtualkey>2147483723</virtualkey></item.1>
   </context.global>
-  <context.panel.project>
-    <item><commandname>cmd.sequence.zoomin</commandname><virtualkey>78</virtualkey></item>
-    <item><commandname>cmd.tool.pen</commandname><virtualkey>80</virtualkey></item>
-  </context.panel.project>
+  <context.project Version="1"><itemcount>2</itemcount>
+    <item.0 Version="1"><commandname>cmd.zoom.in</commandname><modifier.shift>false</modifier.shift><modifier.alt>false</modifier.alt><modifier.ctrl>false</modifier.ctrl><virtualkey>2147483726</virtualkey></item.0>
+    <item.1 Version="1"><commandname>cmd.tools.09pen</commandname><modifier.shift>false</modifier.shift><modifier.alt>false</modifier.alt><modifier.ctrl>false</modifier.ctrl><virtualkey>2147483728</virtualkey></item.1>
+  </context.project>
 </shortcuts></PremiereData>
 )";
 
@@ -227,10 +268,11 @@ void testImport()
     CHECK(InputBindings::presetIds().contains(id));
     CHECK_EQ(combo->currentData().toString(), id);
     CHECK(combo->findData(id) >= 0);
-    CHECK(summary->text().contains("7") && summary->text().contains("3"));
+    CHECK(summary->text().contains("9") && summary->text().contains("3"));
     CHECK_EQ(in("split"), QStringList({"D", "Ctrl+K"}));   // both keys of the file, no side button
     CHECK_EQ(in("snapping"), QStringList({"Shift+N", ""}));
-    CHECK_EQ(in("ripple_delete"), QStringList({"Alt+Del", ""}));
+    CHECK_EQ(in("ripple_delete"), QStringList({"Alt+Del", "Alt+Backspace"}));
+    CHECK_EQ(in("play_pause").value(0), QString("Space"));
     CHECK_EQ(in("tool_blade").value(0), QString("C")); // not in the file: Premiere's
     CHECK_EQ(in("toggle_enabled").value(0), QString("Shift+E"));
 

@@ -7,6 +7,9 @@
 // for the hold time and then the indicator hides. In the app with tiny synthetic clips and the real ProxyManager
 // (ffmpeg): the indicator shows "Proxy 1/3 – …" while pending, the tooltip names the waiting files, the Media Pool's
 // thin bar shows too; after the last file "Proxies done", then it hides; ✕ cancels the queue.
+// Failed proxies never block: no message box (a batch of failures opened one per file), the status bar names it, the
+// indicator keeps one "proxies failed" entry (count) whose tooltip has each file with ffmpeg's last lines, until its ✕;
+// a file whose proxy is made after all leaves it, another project clears it.
 // BACKGROUND_JOBS_DUMP=<folder>: pictures of the page bar and the pool header; BACKGROUND_JOBS_LANG=ru (another
 // language), BACKGROUND_JOBS_FONT=1.25 (larger font) to check that the texts fit.
 
@@ -14,6 +17,7 @@
 
 #include "app/MainWindow.h"
 #include "core/I18n.h"
+#include "core/Project.h"
 #include "engine/Engine.h"
 #include "engine/ProxyManager.h"
 #include "ui/BackgroundJobs.h"
@@ -25,6 +29,8 @@
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFileInfo>
+#include <QMessageBox>
+#include <QTimer>
 #include <QProgressBar>
 #include <QStatusBar>
 #include <QTemporaryDir>
@@ -246,6 +252,87 @@ void testApp(MainWindow& w, Engine& engine, const QString& dir)
     for (const QString& c : more) CHECK(!proxies->hasProxy(c));
 }
 
+// Proxy errors: emitted as ProxyManager emits them (ffmpeg's tail), plus a real one (a file without video)
+void testFailures(MainWindow& w, Engine& engine, const QString& dir)
+{
+    auto* jobs = w.findChild<BackgroundJobs*>();
+    if (!CHECK(jobs)) return;
+    ProxyManager* proxies = engine.proxies();
+    // A message box would block right in the emit: closed by this timer, counted as a failure of the test
+    int boxes = 0;
+    QTimer closer;
+    QObject::connect(&closer, &QTimer::timeout, [&] {
+        for (QWidget* top : QApplication::topLevelWidgets())
+            if (auto* box = qobject_cast<QMessageBox*>(top); box && box->isVisible()) {
+                ++boxes;
+                box->done(0);
+            }
+    });
+    closer.start(20);
+    for (int i = 1; i <= 3; ++i)
+        emit proxies->failed(QString("%1/broken-%2.mp4").arg(dir).arg(i),
+                             T("Proxy konnte nicht erzeugt werden:\n%1").arg(QString("[h264 @ 0x1] error %1 while decoding").arg(i)));
+    settle();
+    CHECK_EQ(boxes, 0);
+    CHECK(w.statusBar()->currentMessage().contains("broken-3.mp4"));
+    CHECK(jobs->hasJob("proxy_errors"));
+    CHECK(!jobs->isHidden());
+    CHECK_EQ(jobs->text(), T("%1 Proxys fehlgeschlagen").arg(3));
+    CHECK(jobs->percent() < 0); // a message, no progress bar
+    for (int i = 1; i <= 3; ++i) {
+        CHECK(jobs->toolTip().contains(QString("broken-%1.mp4").arg(i)));
+        CHECK(jobs->toolTip().contains(QString("error %1 while decoding").arg(i)));
+    }
+    // A real failure through the queue: sound only, no video
+    const QString wav = Check::makeMedia(dir + "/sound.wav", {"-f", "lavfi", "-i", "sine=frequency=440:duration=1"});
+    if (CHECK(!wav.isEmpty())) {
+        proxies->generate({wav});
+        QElapsedTimer t;
+        t.start();
+        while (proxies->pendingCount() > 0 && t.elapsed() < 20000) QTest::qWait(10);
+        settle();
+        CHECK_EQ(boxes, 0);
+        CHECK(jobs->toolTip().contains("sound.wav"));
+        CHECK_EQ(jobs->text(), T("%1 Proxys fehlgeschlagen").arg(4));
+    }
+    // Stays (no hold time) until dismissed with its ✕
+    QTest::qWait(jobs->holdMs() + 150);
+    CHECK(jobs->hasJob("proxy_errors"));
+    auto* cancel = jobs->findChild<QToolButton*>("background_jobs_cancel");
+    if (CHECK(cancel && cancel->isVisible())) {
+        QTest::mouseClick(cancel, Qt::LeftButton);
+        settle();
+        CHECK(!jobs->hasJob("proxy_errors"));
+        CHECK(jobs->isHidden());
+    }
+    // The next failure starts a new count
+    emit proxies->failed(dir + "/again.mp4", "boom");
+    settle();
+    CHECK(jobs->hasJob("proxy_errors"));
+    CHECK_EQ(jobs->text(), T("Proxy fehlgeschlagen: %1").arg("again.mp4"));
+    CHECK(jobs->toolTip().contains("again.mp4"));
+    // A failed file whose proxy is made after all (tried again) leaves the list
+    const QString made = dir + "/clip-1.mp4"; // has its proxy from testApp
+    if (CHECK(proxies->hasProxy(made))) {
+        emit proxies->failed(made, "first try failed");
+        settle();
+        CHECK_EQ(jobs->text(), T("%1 Proxys fehlgeschlagen").arg(2));
+        emit proxies->proxyChanged(made); // as when its proxy is finished
+        settle();
+        CHECK_EQ(jobs->text(), T("Proxy fehlgeschlagen: %1").arg("again.mp4"));
+        CHECK(!jobs->toolTip().contains("clip-1.mp4"));
+    }
+    // Another project: its files, not the old ones' failures
+    auto* project = w.findChild<Project*>();
+    if (CHECK(project)) {
+        project->reset();
+        settle();
+        CHECK(!jobs->hasJob("proxy_errors"));
+        CHECK(ProxyProgress::of(proxies)->failures().isEmpty());
+    }
+    CHECK_EQ(boxes, 0);
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -275,5 +362,6 @@ int main(int argc, char** argv)
     w.activateWindow();
     CHECK(QTest::qWaitForWindowActive(&w));
     testApp(w, engine, dir.path());
+    testFailures(w, engine, dir.path());
     return Check::result();
 }

@@ -30,6 +30,15 @@ ProxyProgress::ProxyProgress(ProxyManager* proxies) : QObject(proxies), m_proxie
     connect(proxies, &ProxyManager::queueChanged, this, &ProxyProgress::refresh);
     connect(proxies, &ProxyManager::progress, this, &ProxyProgress::refresh);
     connect(proxies, &ProxyManager::proxyChanged, this, &ProxyProgress::refresh);
+    connect(proxies, &ProxyManager::failed, this, [this](const QString& file, const QString& message) {
+        m_failures.append({file, message});
+        emit failuresChanged();
+    });
+    // Made after all (tried again): no longer a failure to report
+    connect(proxies, &ProxyManager::proxyChanged, this, [this](const QString& file) {
+        if (!m_proxies->hasProxy(file)) return;
+        if (m_failures.removeIf([&](const Failure& f) { return f.file == file; }) > 0) emit failuresChanged();
+    });
     refresh();
 }
 
@@ -72,6 +81,31 @@ QString ProxyProgress::finishedText() const
     if (m_batch.done == 0) return T("Proxy-Erzeugung abgebrochen");
     if (m_batch.dropped > 0) return T("Proxys fertig: %1 von %2").arg(m_batch.done).arg(m_batch.done + m_batch.dropped);
     return T("Proxys fertig");
+}
+
+QString ProxyProgress::failureText() const
+{
+    if (m_failures.isEmpty()) return {};
+    if (m_failures.size() == 1) return T("Proxy fehlgeschlagen: %1").arg(QFileInfo(m_failures.front().file).fileName());
+    return T("%1 Proxys fehlgeschlagen").arg(m_failures.size());
+}
+
+QString ProxyProgress::failureDetails() const
+{
+    constexpr int kMax = 12;
+    QStringList parts;
+    const int from = std::max(0, int(m_failures.size()) - kMax);
+    if (from > 0) parts << T("… und %1 weitere").arg(from);
+    for (int i = from; i < m_failures.size(); ++i)
+        parts << QFileInfo(m_failures[i].file).fileName() + ":\n" + m_failures[i].message.trimmed();
+    return parts.join("\n\n");
+}
+
+void ProxyProgress::clearFailures()
+{
+    if (m_failures.isEmpty()) return;
+    m_failures.clear();
+    emit failuresChanged();
 }
 
 void ProxyProgress::refresh()

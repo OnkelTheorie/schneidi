@@ -109,7 +109,10 @@ public:
     TexturePtr target(QSize size, const float clear[4] = nullptr);
     // Upload RGBA (8 bit, rows tightly packed). Not copied: `rgba` must stay valid until finish() (Service::run returns
     // after it, so the caller's buffers of a job qualify)
-    TexturePtr uploadRgba(const uint8_t* rgba, int w, int h, bool premultiplied);
+    // mips: also build mip levels (drawn at 2:1 or smaller; for a picture uploaded once and drawn many times, e.g. a
+    // still: the draw then reads one level instead of averaging many taps). Straight alpha with mips: the levels average
+    // straight colour (dark fringes at soft edges) - premultiply first unless it is opaque
+    TexturePtr uploadRgba(const uint8_t* rgba, int w, int h, bool premultiplied, bool mips = false);
     // Upload a decoded software picture (planar/semi-planar 8 or 10-bit Y'CbCr); nullptr = format not supported (then
     // convert on the CPU and use uploadRgba). mips: also build mip levels (drawn at 2:1 or smaller)
     TexturePtr uploadYuv(const AVFrame* frame, const Video::Info& info, bool mips = false);

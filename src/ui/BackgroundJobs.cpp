@@ -34,12 +34,10 @@ BackgroundJobs::BackgroundJobs(QWidget* parent) : QWidget(parent)
     m_cancel->setAutoRaise(true);
     m_cancel->setFocusPolicy(Qt::NoFocus);
     connect(m_cancel, &QToolButton::clicked, this, [this] {
-        for (const Entry& e : std::as_const(m_jobs))
-            if (!e.done && e.job.cancel) {
-                const auto cancel = e.job.cancel; // the call may change m_jobs
-                cancel();
-                return;
-            }
+        const Entry* e = shownEntry();
+        if (!e || e->done || !e->job.cancel) return;
+        const auto cancel = e->job.cancel; // the call may change m_jobs
+        cancel();
     });
 
     auto* lay = new QHBoxLayout(this);
@@ -122,22 +120,29 @@ int BackgroundJobs::percent() const
     return (m_bar->value() + 5) / 10;
 }
 
+const BackgroundJobs::Entry* BackgroundJobs::shownEntry() const
+{
+    // A running job before a notice before a done one: a done text is only news while nothing else runs
+    const Entry* notice = nullptr;
+    for (const Entry& e : m_jobs) {
+        if (e.done) continue;
+        if (!e.job.notice) return &e;
+        if (!notice) notice = &e;
+    }
+    if (notice) return notice;
+    return m_jobs.isEmpty() ? nullptr : &m_jobs.front();
+}
+
 void BackgroundJobs::refresh()
 {
     if (m_jobs.isEmpty()) {
         hide();
         return;
     }
-    // A running job before a done one: the done text is only news while nothing else runs
-    const Entry* shown = &m_jobs.front();
-    for (const Entry& e : m_jobs)
-        if (!e.done) {
-            shown = &e;
-            break;
-        }
+    const Entry* shown = shownEntry();
     QString line = shown->job.text;
     int running = 0;
-    for (const Entry& e : m_jobs) running += e.done ? 0 : 1;
+    for (const Entry& e : m_jobs) running += e.done || e.job.notice ? 0 : 1;
     if (running > 1) line += "  " + T("(+%1)").arg(running - 1);
     m_text->setFullText(line);
     QStringList tips;
@@ -154,8 +159,9 @@ void BackgroundJobs::refresh()
         m_bar->setRange(0, 1000);
         m_bar->setValue(int(std::lround(std::clamp(shown->job.fraction, 0.0, 1.0) * 1000)));
     }
-    m_bar->setVisible(!shown->done);
+    m_bar->setVisible(!shown->done && !shown->job.notice);
     m_cancel->setVisible(!shown->done && bool(shown->job.cancel));
-    m_cancel->setToolTip(shown->done ? QString() : T("Abbrechen"));
+    m_cancel->setToolTip(shown->done ? QString() : shown->job.notice ? T("Meldung schließen") : T("Abbrechen"));
+    m_text->setStyleSheet(QString("color: %1;").arg((shown->job.notice ? Theme::warning : Theme::textDim).name()));
     show();
 }

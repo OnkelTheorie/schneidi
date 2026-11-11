@@ -640,9 +640,7 @@ MediaPool::MediaPool(Project* project, Engine* engine, QWidget* parent)
     });
     connect(proxies, &ProxyManager::queueChanged, this, &MediaPool::updateProxyStatus);
     connect(ProxyProgress::of(proxies), &ProxyProgress::changed, this, &MediaPool::updateProxyStatus);
-    connect(proxies, &ProxyManager::failed, this, [this](const QString& path, const QString& msg) {
-        QMessageBox::warning(this, T("Proxy-Medien"), QFileInfo(path).fileName() + "\n" + msg);
-    });
+    // Failures are not asked about here: the main window reports them without blocking (status line, background jobs)
     applyViewMode();
     rebuild();
     updateProxyStatus();
