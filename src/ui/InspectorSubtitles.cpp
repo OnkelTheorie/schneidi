@@ -286,10 +286,14 @@ void Inspector::buildSubtitlePage(QVBoxLayout* page)
             set(v);
         };
         edit->onFinish = [this] { m_editor->project()->closeMerge(); };
-        connect(sl, &QSlider::valueChanged, this, [edit, set, min, max](int v) {
+        connect(sl, &QSlider::valueChanged, this, [this, sl, edit, set, min, max](int v) {
+            // A click into the groove (page step) moves without press/release: one undo step of its own
+            const bool step = !sl->isSliderDown();
+            if (step) m_editor->project()->closeMerge();
             const double val = min + (max - min) * v / kSliderSteps;
             edit->setValue(val);
             set(val);
+            if (step) m_editor->project()->closeMerge();
         });
         connect(sl, &QSlider::sliderReleased, this, [this] { m_editor->project()->closeMerge(); });
         m_subRefreshers << [edit, sl, field, current, min, max] {

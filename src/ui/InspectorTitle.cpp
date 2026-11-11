@@ -92,9 +92,12 @@ void Inspector::buildTitlePage(QVBoxLayout* page)
     edit->setPlaceholderText(T("Text"));
     edit->setTabChangesFocus(true);
     // Live: every change immediately into the preview, typing = one undo step
-    connect(edit, &QPlainTextEdit::textChanged, this, [this, edit, V] {
+    // (per clip: typing into another title is its own step)
+    connect(edit, &QPlainTextEdit::textChanged, this, [this, edit, V, current] {
         const QString text = edit->toPlainText();
-        apply(V, "titleText", T("Titeltext"), [text](Clip& c) { c.title.text = text; }, true);
+        const Clip* c = current();
+        apply(V, QString("titleText:%1").arg(c ? c->id : 0), T("Titeltext"), [text](Clip& c) { c.title.text = text; },
+              true);
     });
     m_refreshers << [edit, current] {
         const Clip* c = current();
@@ -525,8 +528,10 @@ void Inspector::buildGeneratorSections(QVBoxLayout* page, const Section& outline
     auto lineEdit = [this, V, current](Section& s, const QString& label, const QString& undo,
                                        const std::function<QString&(Clip&)>& field) {
         auto* e = new QLineEdit;
-        connect(e, &QLineEdit::textEdited, this, [this, V, undo, field](const QString& text) {
-            apply(V, "title" + undo, undo, [field, text](Clip& c) { field(c) = text; }, true);
+        connect(e, &QLineEdit::textEdited, this, [this, V, undo, field, current](const QString& text) {
+            const Clip* c = current(); // per clip: typing into another title is its own step
+            apply(V, QString("title%1:%2").arg(undo).arg(c ? c->id : 0), undo, [field, text](Clip& c) { field(c) = text; },
+                  true);
         });
         m_refreshers << [e, current, field] {
             if (const Clip* c = current()) {

@@ -2,7 +2,8 @@
 // Restore after a crash (MainWindow::offerAutosaveRestore): a broken automatic backup says why it cannot be restored
 // and is moved aside, so the next start does not offer it again; a good one is restored. The backup of another slot
 // (a second window that crashed while this slot's window was closed normally) is offered too, unless a running
-// window holds that slot.
+// window holds that slot. Opening a backup removes the automatic backup of the project left; File › Recent Projects
+// greys out a moved-away project when the menu opens.
 #include "check.h"
 
 #include "app/MainWindow.h"
@@ -16,6 +17,7 @@
 #include <QDir>
 #include <QFile>
 #include <QLockFile>
+#include <QMenu>
 #include <QSettings>
 #include <QMessageBox>
 #include <QStandardPaths>
@@ -123,6 +125,41 @@ int main(int argc, char** argv)
         QLockFile one(dir + "/autosave-1.lock"), two(dir + "/autosave-2.lock");
         CHECK(!two.tryLock(0));
         CHECK(one.tryLock(0));
+    }
+    // File › Open Backup…: the automatic backup of the project left (its changes saved or discarded) goes; a crash
+    // right after must not offer those changes
+    {
+        const QString own = dir + "/autosave-2." + ProjectFile::Extension; // this window's slot now
+        ProjectData left;
+        left.timeline.markers << 5;
+        CHECK(ProjectFile::save(left, own, &err));
+        ProjectData kept;
+        kept.timeline.markers << 6;
+        const QString copy = tmp.path() + "/backup." + ProjectFile::Extension;
+        CHECK(ProjectFile::save(kept, copy, &err));
+        CHECK(w.openBackup(copy));
+        CHECK(w.liveProject()->timeline().markers.contains(6));
+        CHECK(w.liveProject()->isModified());
+        CHECK(!QFileInfo::exists(own));
+    }
+    // File › Recent Projects: a project moved away since the menu was built is greyed out when the menu opens
+    {
+        const QString there = tmp.path() + "/recent." + ProjectFile::Extension;
+        CHECK(ProjectFile::save(ProjectData{}, there, &err));
+        QSettings().setValue("recentProjects", QStringList{there});
+        auto* recent = w.findChild<QMenu*>("recent_menu");
+        if (CHECK(recent)) {
+            const auto entry = [&]() -> QAction* {
+                for (QAction* a : recent->actions())
+                    if (a->toolTip() == there) return a;
+                return nullptr;
+            };
+            emit recent->aboutToShow();
+            if (CHECK(entry())) CHECK(entry()->isEnabled());
+            QFile::remove(there);
+            emit recent->aboutToShow();
+            if (CHECK(entry())) CHECK(!entry()->isEnabled());
+        }
     }
     return Check::result();
 }

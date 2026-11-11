@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 #include <QDialog>
+#include <QVector>
+
+#include "core/Types.h"
 
 class Editor;
 class QCheckBox;
@@ -17,10 +20,14 @@ public:
 private:
     void sync();   // model -> controls
     void detach(); // another project or timeline: forget the track, drop typed text, close
+    // Tracks added, removed or reordered (also by undo): the window follows its track, gone = detach; then sync
+    void followTrack();
+    void showTitle();
     void commit(); // controls -> model
 
     Editor* m_editor;
     int m_track;
+    QVector<Track> m_tracks; // the audio tracks as last seen (where m_track is)
     QCheckBox* m_on;
     QLineEdit *m_threshold, *m_ratio, *m_attack, *m_release, *m_knee, *m_makeup;
 };

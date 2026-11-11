@@ -773,10 +773,14 @@ Inspector::Param* Inspector::addSlider(Section& s, const QString& key, const QSt
     slider->setFocusPolicy(Qt::NoFocus); // arrow keys stay with the timeline
     slider->setValue(sliderPos(def, min, max));
     p->slider = slider;
-    connect(slider, &QSlider::valueChanged, this, [p](int v) {
+    connect(slider, &QSlider::valueChanged, this, [this, p](int v) {
+        // A click into the groove (page step) moves without press/release: one undo step of its own
+        const bool step = !p->slider->isSliderDown();
+        if (step) m_editor->project()->closeMerge();
         p->edit->setValue(p->min + (p->max - p->min) * v / kSliderSteps);
         const QSignalBlocker b(p->slider); // avoid feedback
         if (p->edit->onChange) p->edit->onChange(p->edit->value());
+        if (step) m_editor->project()->closeMerge();
     });
     connect(slider, &QSlider::sliderReleased, this, [this] { m_editor->project()->closeMerge(); });
 

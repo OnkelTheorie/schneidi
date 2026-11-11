@@ -4,6 +4,7 @@
 #include "core/Editor.h"
 #include "core/Equalizer.h"
 #include "core/Project.h"
+#include "core/TimelineOps.h"
 #include "ui/EqCurve.h"
 
 #include <QCheckBox>
@@ -53,7 +54,8 @@ QString bandName(EqBand::Kind k)
 
 EqDialog::EqDialog(Editor* editor, int track, QWidget* parent) : QDialog(parent), m_editor(editor), m_track(track)
 {
-    setWindowTitle(T("EQ – %1").arg(trackShortName({TrackKind::Audio, track})));
+    showTitle();
+    m_tracks = editor->project()->timeline().audio;
     auto* root = new QVBoxLayout(this);
     m_on = new QCheckBox(T("EQ an"));
     m_on->setObjectName("eqOn");
@@ -96,7 +98,7 @@ EqDialog::EqDialog(Editor* editor, int track, QWidget* parent) : QDialog(parent)
         eq.on = on;
         m_editor->setTrackEq(m_track, eq);
     });
-    connect(editor->project(), &Project::timelineChanged, this, &EqDialog::sync);
+    connect(editor->project(), &Project::timelineChanged, this, &EqDialog::followTrack);
     // The track number belongs to this timeline of this project: another one closes the window
     connect(editor->project(), &Project::loaded, this, &EqDialog::detach);
     connect(editor->project(), &Project::currentSequenceChanged, this, &EqDialog::detach);
@@ -137,6 +139,27 @@ void EqDialog::commit(int band)
     parsed(row.q, &b.q);
     if (eq != tl.audio[m_track].eq) eq.on = true; // changing a band switches the EQ on (like dragging)
     m_editor->setTrackEq(m_track, eq);
+    sync();
+}
+
+void EqDialog::showTitle() { setWindowTitle(T("EQ – %1").arg(trackShortName({TrackKind::Audio, m_track}))); }
+
+void EqDialog::followTrack()
+{
+    if (m_track < 0) return; // detached
+    const QVector<Track>& now = m_editor->project()->timeline().audio;
+    const int t = TimelineOps::followTrack(m_tracks, now, m_track);
+    m_tracks = now;
+    if (t < 0) {
+        detach();
+        return;
+    }
+    if (t != m_track) {
+        m_track = t;
+        m_curve->setTrack(t);
+        showTitle();
+        if (property("mixerStrip").isValid()) setProperty("mixerStrip", t); // the Mixer finds it at its strip
+    }
     sync();
 }
 

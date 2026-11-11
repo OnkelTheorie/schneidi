@@ -564,7 +564,11 @@ Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
     }
     m_tabs->button(0)->setChecked(true);
     WheelGuard::install(this); // scrolling the pages over sliders and boxes must not change their values
-    connect(editor->selection(), &Selection::changed, this, &Inspector::refresh);
+    connect(editor->selection(), &Selection::changed, this, [this] {
+        // Another selection: typing or dragging there is a new undo step, never merged with the last clip's
+        m_editor->project()->closeMerge();
+        refresh();
+    });
     connect(editor->project(), &Project::timelineChanged, this, &Inspector::refresh);
     refresh();
 }

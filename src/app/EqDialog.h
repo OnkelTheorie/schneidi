@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 #include <QDialog>
+#include <QVector>
+
+#include "core/Types.h"
 #include <array>
 
 class Editor;
@@ -18,10 +21,14 @@ public:
 private:
     void sync(); // model -> controls
     void detach(); // another project or timeline: forget the track, drop typed text, close
+    // Tracks added, removed or reordered (also by undo): the window follows its track, gone = detach; then sync
+    void followTrack();
+    void showTitle();
     void commit(int band); // fields of a band -> model
 
     Editor* m_editor;
     int m_track;
+    QVector<Track> m_tracks; // the audio tracks as last seen (where m_track is)
     QCheckBox* m_on;
     EqCurve* m_curve;
     struct BandRow {

@@ -1153,4 +1153,26 @@ bool usesMediaOnVideo(const Timeline& tl, const QString& path)
     return false;
 }
 
+int followTrack(const QVector<Track>& before, const QVector<Track>& after, int index)
+{
+    if (index < 0 || index >= before.size()) return -1;
+    const Track& own = before[index];
+    if (index < after.size() && after[index] == own) return index;
+    if (before.size() == after.size()) {
+        // Same number: a move only when `after` holds the same tracks in another order; anything else is an edit of
+        // tracks in place (this one's EQ changed: its old state may well equal another, untouched track)
+        QVector<bool> used(before.size(), false);
+        bool permuted = true;
+        for (int i = 0; i < after.size() && permuted; ++i) {
+            permuted = false;
+            for (int j = 0; j < before.size() && !permuted; ++j)
+                if (!used[j] && before[j] == after[i]) permuted = used[j] = true;
+        }
+        if (!permuted) return index;
+    }
+    for (int i = 0; i < after.size(); ++i)
+        if (after[i] == own) return i;
+    return -1;
+}
+
 } // namespace TimelineOps

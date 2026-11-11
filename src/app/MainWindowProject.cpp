@@ -263,8 +263,21 @@ void MainWindow::startProject(const StartTemplate& t)
     m_templateCopies.clear();
     const ProjectData d = StartTemplates::apply(t); // Neutral: the empty project as always
     m_engine->setFormat(d.format); // media lengths already fit (empty) -> do not re-read
+    // The old project's per-timeline zoom/scroll/playhead belong to it: the switch handler (currentSequenceChanged)
+    // must neither keep them nor restore them for the new project's timelines (same ids)
+    m_sequenceView.clear();
+    m_sequencePos.clear();
+    m_shownSequence = d.currentSequence;
     m_project->load(d);
+    m_sequenceView.clear(); // nothing the switch kept during loading (a template without its current sequence: 0)
+    m_sequencePos.clear();
+    m_shownSequence = m_project->currentSequence();
     m_sourcePos.clear();
+    // New project = the user's step: keep the zoom, start at the front and top (like a timeline never shown)
+    TimelineView* tv = m_timeline->view();
+    const ViewState v = tv->view();
+    tv->setZoomAndScroll(v.pxPerFrame, 0, 0);
+    tv->setPlayhead(0);
     m_engine->showTimeline(0);
     setProjectPath({});
     removeAutosave();
@@ -580,14 +593,22 @@ void MainWindow::openBackupDialog()
     QDir().mkpath(dir);
     const QString path = QFileDialog::getOpenFileName(this, T("Sicherungskopie öffnen"), dir, fileFilter());
     if (path.isEmpty()) return;
+    openBackup(path);
+}
+
+bool MainWindow::openBackup(const QString& path)
+{
     ProjectData data;
     QString error;
     if (!ProjectFile::load(path, &data, &error)) {
         QMessageBox::warning(this, T("Projekt öffnen"), T("%1 konnte nicht geöffnet werden:\n%2").arg(path, error));
-        return;
+        return false;
     }
-    if (!applyLoaded(std::move(data), {})) return;
+    if (!applyLoaded(std::move(data), {})) return false;
+    // The project left (saved or discarded) is not what a crash should offer now; the backup is autosaved anew
+    removeAutosave();
     m_project->markModified();
+    return true;
 }
 
 bool MainWindow::save()

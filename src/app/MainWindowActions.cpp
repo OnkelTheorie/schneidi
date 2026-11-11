@@ -123,6 +123,9 @@ void MainWindow::buildActions()
     makeAction(file, "project_open", T("Projekt öffnen…"), QKeySequence("Ctrl+O"), [this] { openProjectDialog(); });
     makeAction(file, "project_open_video", T("Video als Projekt öffnen…"), QKeySequence(), [this] { openMediaAsProjectDialog(); });
     m_recentMenu = file->addMenu(T("Zuletzt geöffnet"));
+    m_recentMenu->setObjectName("recent_menu");
+    // Files moved or deleted since the window was built: greyed out when the menu opens, not only at the start
+    connect(m_recentMenu, &QMenu::aboutToShow, this, &MainWindow::rebuildRecentMenu);
     rebuildRecentMenu();
     makeAction(file, "project_save", T("Projekt speichern"), QKeySequence("Ctrl+S"), [this] { save(); });
     makeAction(file, "project_save_as", T("Projekt speichern unter…"), QKeySequence("Ctrl+Shift+S"), [this] { saveAs(); });

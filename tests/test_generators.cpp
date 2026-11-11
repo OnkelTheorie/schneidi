@@ -2,7 +2,8 @@
 // Shorts building blocks: push/whip transitions and eased wipes (pixels at 0/50/100 % per direction), the animated
 // counter (value and text at given frames, easing, decimals, German vs English separators, drawn like a text title
 // with that text), the progress bar (filled width at given frames in both spans), project file round trip, the CLI
-// ops and `check` on a progress bar at the bottom of a vertical timeline.
+// ops and `check` on a progress bar at the bottom of a vertical timeline; undo steps of the Inspector's title page (per
+// clip, slider groove clicks).
 // SCHNEIDI_PICTURE_DUMP=<folder>: saves the rendered pictures there to look at.
 #include "render_check.h"
 
@@ -21,6 +22,9 @@
 
 #include <QApplication>
 #include <QComboBox>
+#include <QLineEdit>
+#include <QPlainTextEdit>
+#include <QUndoStack>
 #include <QScrollArea>
 #include <QScrollBar>
 #include <QTest>
@@ -553,6 +557,92 @@ void testInspectorWheel()
     CHECK(p.timeline() == before); // nothing changed in the project
 }
 
+// Undo steps of the title page: typing into one title and then into another (text field, a counter's prefix) are two
+// steps, never one (the merge key is per clip, and another selection ends the series); clicks into a slider's groove
+// (page steps: no press/release) are one step each
+void testInspectorTitleUndo()
+{
+    std::printf("inspector title undo\n");
+    Project p;
+    ProjectData d;
+    d.timeline = emptyTimeline();
+    p.load(d);
+    Selection sel;
+    Editor e(&p, &sel);
+    Inspector insp(&e);
+    e.addTitle(0, -1, 50, TitleKind::Text);
+    const int a = *sel.ids().begin();
+    e.addTitle(100, -1, 50, TitleKind::Text);
+    const int b = *sel.ids().begin();
+    const auto text = [&](int id) { return TimelineOps::findClip(p.timeline(), id)->title.text; };
+    const QString bText = text(b);
+    QPlainTextEdit* edit = nullptr;
+    for (QPlainTextEdit* t : insp.findChildren<QPlainTextEdit*>())
+        if (t->placeholderText() == T("Text")) edit = t;
+    if (!CHECK(edit)) return;
+    QUndoStack* undo = p.undoStack();
+    sel.set({a});
+    const int start = undo->index();
+    edit->setPlainText("one");
+    edit->setPlainText("one more"); // typing on: the same step
+    CHECK_EQ(undo->index(), start + 1);
+    sel.set({b});
+    edit->setPlainText("two");
+    CHECK_EQ(undo->index(), start + 2);
+    undo->undo();
+    CHECK_EQ(text(a), QString("one more"));
+    CHECK_EQ(text(b), bText);
+    undo->undo();
+    CHECK(text(a) != QString("one more"));
+
+    // A counter's prefix (a line edit): per clip too
+    e.addTitle(200, -1, 50, TitleKind::Counter);
+    const int c1 = *sel.ids().begin();
+    e.addTitle(300, -1, 50, TitleKind::Counter);
+    const int c2 = *sel.ids().begin();
+    p.edit("prefix", [&](Timeline& tl) {
+        TimelineOps::findClip(tl, c1)->title.prefix = "P1";
+        TimelineOps::findClip(tl, c2)->title.prefix = "P2";
+    });
+    const auto prefixEdit = [&](const QString& now) -> QLineEdit* {
+        for (QLineEdit* l : insp.findChildren<QLineEdit*>())
+            if (l->text() == now) return l;
+        return nullptr;
+    };
+    sel.set({c1});
+    QLineEdit* prefix = prefixEdit("P1");
+    if (!CHECK(prefix)) return;
+    const int before = undo->index();
+    emit prefix->textEdited("P1x");
+    sel.set({c2});
+    emit prefix->textEdited("P2x");
+    CHECK_EQ(undo->index(), before + 2);
+    undo->undo();
+    CHECK_EQ(TimelineOps::findClip(p.timeline(), c1)->title.prefix, QString("P1x"));
+    CHECK_EQ(TimelineOps::findClip(p.timeline(), c2)->title.prefix, QString("P2"));
+
+    // Slider groove clicks: one step each
+    sel.set({a});
+    QSlider* slider = nullptr; // one that changes the clip and has room for three more steps
+    for (QSlider* s : insp.findChildren<QSlider*>()) {
+        if (slider || s->value() > s->maximum() - 4 * s->pageStep()) continue;
+        const int i = undo->index();
+        s->triggerAction(QAbstractSlider::SliderPageStepAdd);
+        if (undo->index() > i) slider = s;
+    }
+    if (!CHECK(slider)) return;
+    const int steps = undo->index();
+    slider->triggerAction(QAbstractSlider::SliderPageStepAdd);
+    slider->triggerAction(QAbstractSlider::SliderPageStepAdd);
+    CHECK_EQ(undo->index(), steps + 2);
+    // ... and a drag is one step
+    slider->setSliderDown(true);
+    slider->setSliderPosition(slider->value() + 3);
+    slider->setSliderPosition(slider->value() + 3);
+    slider->setSliderDown(false);
+    CHECK_EQ(undo->index(), steps + 3);
+}
+
 // Counter decimal places in the Inspector: 0..6 like the project file and the CLI
 void testCounterDecimals()
 {
@@ -810,6 +900,7 @@ int main(int argc, char** argv)
     testCounterInspector();
     testInspectorWheel();
     testCounterDecimals();
+    testInspectorTitleUndo();
     testProjectFile(tmp.path());
     testCli(tmp.path());
     return Check::result();

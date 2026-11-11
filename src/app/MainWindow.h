@@ -134,6 +134,9 @@ public:
     // "Check Fields": the placeholders of the open project and what is wrong with them
     void checkPlaceholders();
     bool offerAutosaveRestore(); // after a crash: offer the last automatic backup (true = restored)
+    // File › Open Backup… after the file dialog: the backup as an untitled, modified project; the automatic backup
+    // of the project left is removed (false = not readable, message shown)
+    bool openBackup(const QString& path);
     void disableAutosave();      // test runs: do not write/delete a backup
     // Set project settings (one undo step); test helper --format
     void setProjectFormat(const ProjectFormat& format);
