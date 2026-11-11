@@ -162,7 +162,9 @@ public:
     // (affects only the organization, not the media list itself).
     const QVector<MediaBin>& bins() const { return m_bins; }
     const MediaBin* bin(int id) const;
-    QString binName(int id) const;                // 0 = "Master"
+    QString binName(int id) const;                // 0 = "Master" (in the UI language)
+    // A bin path that means the root bin: one part "Master" (any case) or the root's name in the UI language
+    bool isRootBinPath(const QString& path) const;
     QVector<int> childBins(int parent) const;     // sorted by name (like DaVinci)
     bool binInside(int id, int ancestor) const;   // id == ancestor or below
     int addBin(int parent, const QString& name = {}); // default name "Bin 1", "Bin 2" ...; returns the id

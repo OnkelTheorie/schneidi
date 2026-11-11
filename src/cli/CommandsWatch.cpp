@@ -69,12 +69,11 @@ QJsonObject arrivalJson(const Project& p, const WatchArrival& a)
     return o;
 }
 
-// Bin by path ("Clips" or "Recordings/Raw"), created if missing; "" or "Master" = Master
+// Bin by path ("Clips" or "Recordings/Raw"), created if missing; "" or "Master" = the root bin
 int binByPath(Project& p, const QString& path)
 {
     const QStringList parts = path.split('/', Qt::SkipEmptyParts);
-    if (parts.isEmpty() || (parts.size() == 1 && parts[0].trimmed().compare("Master", Qt::CaseInsensitive) == 0))
-        return 0;
+    if (parts.isEmpty() || p.isRootBinPath(path)) return 0;
     int bin = 0;
     for (const QString& part : parts) {
         int found = -1;
