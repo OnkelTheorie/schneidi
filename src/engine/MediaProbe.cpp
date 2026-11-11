@@ -163,7 +163,7 @@ struct CloseInput {
 // their place), as one that decodes to a sample format the sound path does not play.
 bool fill(const AVFormatContext* fmt, bool audioFile, MediaInfo* info, bool lenient = false)
 {
-    bool video = false, sound = false;
+    bool video = false, sound = false, moving = false; // moving: a picture stream that is no cover
     QVector<AudioStreamInfo> streams;
     for (unsigned i = 0; i < fmt->nb_streams; ++i) {
         const AVStream* st = fmt->streams[i];
@@ -178,6 +178,7 @@ bool fill(const AVFormatContext* fmt, bool audioFile, MediaInfo* info, bool leni
             if (isVideo) continue;
         } else if (isVideo) {
             video = true; // also a cover picture: the picture stream when there is no other
+            moving = moving || !(st->disposition & AV_DISPOSITION_ATTACHED_PIC);
             continue;
         } else if (p->ch_layout.nb_channels <= 0) {
             if (!lenient) return false;
@@ -194,6 +195,8 @@ bool fill(const AVFormatContext* fmt, bool audioFile, MediaInfo* info, bool leni
         streams << a;
     }
     if (!video && !sound) return false; // nothing playable
+    // Only a cover picture beside sound that cannot be played: nothing to play either (the cover shows with sound)
+    if (lenient && !moving && !sound) return false;
     info->hasVideo = !audioFile && video;
     info->hasAudio = sound;
     if (sound) info->audioStreams = streams;
