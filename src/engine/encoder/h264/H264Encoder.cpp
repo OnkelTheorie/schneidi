@@ -56,6 +56,7 @@ std::atomic<long> gStatInter{0}, gStatInterCbp{0}, gStatT8{0};
 std::mutex gStatMutex;
 double gStatT8LossIf4[20] = {}, gStatT8LossIf8[20] = {}; // RD cost lost if only 4x4 / only 8x8 were coded
 double gStatT8Total = 0;
+double gStatSplitN[20] = {}, gStatSplitWin[20] = {}, gStatSplitLoss[20] = {}, gStatInterTotal = 0; // by whole.cost / sqrt(lambda)
 std::atomic<long> gStatT8Try[20] = {}, gStatT8Win[20] = {}; // by sa8d / satd of the chosen layout, 0.05 steps from 0.6
 std::atomic<long> gStatIntraTry[4] = {}, gStatIntraWin[4] = {}; // by ratio of the intra estimate to the inter cost
 // Experiments (H264_EXP bit mask), for A/B measurements only.
@@ -1457,6 +1458,9 @@ std::vector<uint8_t> FrameCoder::assemble(PhaseClock& clock)
         std::fprintf(stderr, "stats: t8 tries/wins by sa8d/satd (from 0.6, 0.05 steps):");
         for (int i = 0; i < 20; ++i)
             std::fprintf(stderr, " %ld/%ld", long(gStatT8Try[i].load()), long(gStatT8Win[i].load()));
+        std::fprintf(stderr, "\nstats: split by 2*log2(whole/sqrt(lambda)+1): n/wins/loss permille:");
+        for (int i = 0; i < 20; ++i)
+            std::fprintf(stderr, " [%d] %.0f/%.0f/%.2f", i, gStatSplitN[i], gStatSplitWin[i], 1000.0 * gStatSplitLoss[i] / std::max(1.0, gStatInterTotal));
         std::fprintf(stderr, "\nstats: t8 loss if only 4x4 / only 8x8 (permille of the inter cost):");
         for (int i = 0; i < 20; ++i)
             std::fprintf(stderr, " %.2f/%.2f", 1000.0 * gStatT8LossIf4[i] / std::max(1.0, gStatT8Total),
@@ -3265,7 +3269,10 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
     };
     const Choice whole = tryLayout(0);
     Choice split;
-    if (cfg_.effort > 0) {
+    // Experiment H264_SPLITSKIP = c: no split layouts when the 16x16 cost is below c * sqrt(lambda)
+    // (a well-predicted macroblock rarely gains from splitting).
+    static const double kSplitSkip = std::getenv("H264_SPLITSKIP") ? std::atof(std::getenv("H264_SPLITSKIP")) : 0.0;
+    if (cfg_.effort > 0 && !(whole.cost < kSplitSkip * lambdaSad)) {
         // Experiment (H264_EXP & 256): the split layouts compare at full-pel (SATD); only the best
         // one gets the sub-pel refinement, and only when it is close.
         const bool lateSubpel = gExp & 256;
@@ -3555,10 +3562,17 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
     // Try the split for real when its estimate is close or better.
     // Measured: 1.0 is as fast as 1.1 and -0.04 % BD-rate (0.95: +0.44 %). H264_SPLITF overrides.
     static const double kSplitTry = std::getenv("H264_SPLITF") ? std::atof(std::getenv("H264_SPLITF")) : 1.0;
+    const int splitBucket = std::clamp(int(2.0 * std::log2(whole.cost / lambdaSad + 1.0)), 0, 19);
+    const double costWhole4 = costInter;
     if (split.cost < whole.cost * kSplitTry) {
         MbOut splitBits;
         const int pickSplit = transformPick(split);
         const double costSplit = encodeInter(split, splitBits, pickSplit == 1);
+        if (gStats && costSplit < costInter) {
+            std::lock_guard<std::mutex> l(gStatMutex);
+            gStatSplitWin[splitBucket] += 1;
+            gStatSplitLoss[splitBucket] += costInter - costSplit;
+        }
         if (costSplit < costInter) {
             costInter = costSplit;
             chosenInterDelta = interDelta;
@@ -3593,6 +3607,11 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
             saveMb(mbx, mby, interState);
             bestT8 = true;
         }
+    }
+    if (gStats) {
+        std::lock_guard<std::mutex> l(gStatMutex);
+        gStatSplitN[splitBucket] += 1;
+        gStatInterTotal += std::min(costInter, costWhole4);
     }
     if (trellisLast && cfg_.effort > 0) {
         trellisNow = true;
