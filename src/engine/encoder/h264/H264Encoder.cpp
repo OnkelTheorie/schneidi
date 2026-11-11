@@ -3402,9 +3402,10 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
                     return t;
                 }();
                 double xs[16];
+                const double invStep = 1.0 / double(1 << qbits); // a power of two: same as dividing
                 for (int s = 0; s < 16; ++s) {
                     const int r = kZigzag[s];
-                    xs[s] = double(coef[r]) * kQuantMf[qpMod][posClass(r)] / double(1 << qbits);
+                    xs[s] = double(coef[r]) * kQuantMf[qpMod][posClass(r)] * invStep;
                 }
                 int scanLv[16];
                 cabacTrellis(*live, 2, xs, kScale4[size_t(qp)].data(), 16, lambda, 1, scanLv);
