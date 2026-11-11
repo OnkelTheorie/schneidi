@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
+#include "engine/ProxyManager.h"
 #include "app/AiSettings.h"
 #include "app/PageVisibility.h"
 #include "core/Editor.h"
@@ -176,6 +177,8 @@ public:
     void setLiveWaiting(const std::function<void(const QString& message)>& waiting) { m_liveWaiting = waiting; }
     const AiSettings& aiSettings() const { return m_aiSettings; }
     void setAiSettings(const AiSettings& s);
+    // Settings › Proxy quality: stores it, offers to make the project's existing proxies again at the new size
+    void setProxyQuality(ProxyManager::Quality quality);
     // AI chat (the "AI" panel, MainWindowChat.cpp): main.cpp hands in its tool server (`schneidi-cli mcp`; the app
     // does not link the command layer) with the environment of the live connection (Cli::Live::Server::chatEnvironment)
     void setAiChatTools(const QStringList& command, const QHash<QString, QString>& environment);

@@ -104,7 +104,7 @@ Plan plan(const QStringList& keep, const QStringList& busy, const QString& dirPa
             item.original = n.original;
             if (n.original.isEmpty()) item.reason = Reason::Unknown;
             else if (!QFileInfo::exists(n.original)) item.reason = Reason::Missing;
-            else if (n.maxSize > 0 && n.maxSize != ProxyManager::kMaxSize) item.reason = Reason::OtherSize;
+            else if (n.maxSize > 0 && n.maxSize != ProxyManager::maxSize()) item.reason = Reason::OtherSize;
             else if (QFileInfo(ProxyManager::proxyPath(n.original)).completeBaseName() != hash) item.reason = Reason::Changed;
             else item.reason = Reason::Unused;
         }

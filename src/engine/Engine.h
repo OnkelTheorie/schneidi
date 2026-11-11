@@ -82,6 +82,10 @@ public:
     // Proxy media: preview (timeline video tracks, source view) reads the proxy if present and
     // enabled; audio and export always from the original. Call updateTimeline() after changes.
     ProxyManager* proxies() const { return m_proxies; }
+    // The shown picture reads at least one proxy file (timeline: a video clip of the shown timeline, nested ones
+    // included; source view: its file; multicam: an angle) - the viewer says so ("Proxy 540p"). showsProxyChanged
+    // when that changes.
+    bool showsProxy() const { return m_showsProxy; }
     // Render cache: preview plays pre-rendered clip outputs (export never); updateTimeline() queues missing ones
     RenderCache* renderCache() const { return m_renderCache; }
     // Single frames from media files in their own thread (trim view while dragging an edit); follows setFormat()
@@ -205,6 +209,7 @@ signals:
     void colorBypassChanged(bool on);
     void loopChanged(bool on); // setLoopRange switched loop playback on or off
     void modeChanged(Engine::Mode mode);
+    void showsProxyChanged(bool on);
     // Only during playback: peak levels in dBFS, [A1 L, A1 R, A2 L, …, Master L, Master R];
     // the master measures true peak (dBTP, BS.1770 4x oversampled) like the delivery check
     void audioLevels(const QVector<float>& db);
@@ -236,6 +241,10 @@ private:
     // Proxy and render-cache files of the shown timeline, resolved on the UI thread (the renderers ask from theirs);
     // true = something changed; timeline = the render cache's files too (else only proxies are added)
     bool resolveFiles(const Timeline& tl, bool timeline);
+    // m_showsProxy for the current mode from the resolved files; shownTimeline = the timeline being shown when m_built
+    // is not set yet
+    void updateShowsProxy(const Timeline* shownTimeline = nullptr);
+    bool m_showsProxy = false;
     QImage ownStill(const Timeline& tl, int position, bool transparent);
     // The clock in frames of what is shown, where playback of `frame` (content frame) starts in samples, and what
     // the player plays in the current mode (positions = content frames)

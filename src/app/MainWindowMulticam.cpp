@@ -113,6 +113,7 @@ void MainWindow::setupMulticam()
     connect(proxies, &ProxyManager::queueChanged, this, &MainWindow::updateMulticamProxies);
     connect(proxies, &ProxyManager::proxyChanged, this, &MainWindow::updateMulticamProxies);
     connect(proxies, &ProxyManager::enabledChanged, this, &MainWindow::updateMulticamProxies);
+    connect(proxies, &ProxyManager::qualityChanged, this, &MainWindow::updateMulticamProxies);
     updateMulticamProxies();
 }
 

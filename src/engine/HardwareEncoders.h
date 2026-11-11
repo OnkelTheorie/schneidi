@@ -43,8 +43,10 @@ bool formatAvailable(const QString& format);
 // Encoder options of a software codec for a quality (crf as for x264: 18/22/28) where the codec has no "crf" of its
 // own (OpenH264, kvazaar); empty for the others (they take crf)
 QVector<QPair<QString, QString>> softwareOptions(const QString& codec, int crf, QSize size, double fps);
-// ffmpeg arguments for the video encoder of proxy files (short GOP, no B-frames, fast to decode): x264, else OpenH264
-QStringList proxyVideoArguments();
+// ffmpeg arguments for the video encoder of proxy files (short GOP, no B-frames, fast to decode): x264, else OpenH264.
+// size = the proxy's picture (OpenH264's bit rate grows with it), full = the original's size (proxy quality "full
+// resolution": a bit more quality, the point is the lighter codec)
+QStringList proxyVideoArguments(QSize size = QSize(960, 540), bool full = false);
 bool isHardwareCodec(const QString& codec);
 VideoEncoder encoderOfCodec(const QString& codec); // Software for anything that is not a hardware codec
 

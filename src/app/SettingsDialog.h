@@ -45,6 +45,8 @@ public:
     PreviewResolution::Choice previewResolution(PreviewResolution::Target target) const;
     // Proxy media made right on import (ProxyManager::importRule)
     ProxyManager::ImportRule proxyImportRule() const;
+    // Size of proxy media (ProxyManager::quality)
+    ProxyManager::Quality proxyQuality() const;
     bool ownProjectFolder() const;
     QString projectFolder() const;
     // The stored choice (QSettings "project/ownFolder", "project/folder"); folder() = the default when none is stored
@@ -74,6 +76,7 @@ private:
     QCheckBox* m_autoLink = nullptr;
     QComboBox* m_secondScreen = nullptr;
     QComboBox* m_proxyImport = nullptr;
+    QComboBox* m_proxyQuality = nullptr;
     QComboBox* m_viewerResolution = nullptr;
     QComboBox* m_monitorResolution = nullptr;
     QLineEdit* m_folder = nullptr;

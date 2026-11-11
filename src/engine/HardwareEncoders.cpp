@@ -311,12 +311,16 @@ QVector<QPair<QString, QString>> softwareOptions(const QString& codec, int crf, 
     return {};
 }
 
-QStringList proxyVideoArguments()
+QStringList proxyVideoArguments(QSize size, bool full)
 {
     if (builtIn("libx264"))
-        return {"-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-tune", "fastdecode"};
-    // GPL-free build: OpenH264 at a bit rate that suits the proxy size (at most 960 px wide, see ProxyManager)
-    return {"-c:v", "libopenh264", "-rc_mode", "quality", "-b:v", "6M", "-allow_skip_frames", "0"};
+        return {"-c:v", "libx264", "-preset", "veryfast", "-crf", full ? "21" : "23", "-tune", "fastdecode"};
+    // GPL-free build: OpenH264 at a bit rate that suits the proxy size: 6 Mbit/s at 960x540, growing with the pixels
+    // (720p ~10, 1080p ~24, 4K ~95 at most 100), a quarter more at full resolution
+    const double pixels = std::max(1.0, double(size.width()) * size.height());
+    const double mbit = std::clamp(6.0 * pixels / (960.0 * 540.0) * (full ? 1.25 : 1.0), 6.0, 100.0);
+    return {"-c:v", "libopenh264", "-rc_mode", "quality", "-b:v", QString("%1M").arg(int(std::lround(mbit))),
+            "-allow_skip_frames", "0"};
 }
 
 VideoEncoder encoderOfCodec(const QString& codec)

@@ -2945,5 +2945,16 @@
  "Ohne Ton – auch: beim Ziehen in die Timeline Shift halten": "Without sound – also: hold Shift while dragging into the timeline",
  "Ton beim Einfügen weglassen": "Leave out sound when placing",
  "Ziehen: nur das Bild in die Timeline, ohne Ton": "Drag: only the picture into the timeline, without sound",
- "Ziehen: nur den Ton in die Timeline, ohne Bild": "Drag: only the sound into the timeline, without picture"
+ "Ziehen: nur den Ton in die Timeline, ohne Bild": "Drag: only the sound into the timeline, without picture",
+ "volle Auflösung": "full resolution",
+ "Proxy %1": "Proxy %1",
+ "Klein (540p, am schnellsten)": "Small (540p, fastest)",
+ "Mittel (720p)": "Medium (720p)",
+ "Groß (1080p)": "Large (1080p)",
+ "Volle Auflösung (nur leichter Codec)": "Full resolution (lighter codec only)",
+ "Proxy-Qualität": "Proxy quality",
+ "Eine Datei dieses Projekts hat Proxy-Medien in der alten Qualität.": "One file of this project has proxy media in the old quality.",
+ "%1 Dateien dieses Projekts haben Proxy-Medien in der alten Qualität.": "%1 files of this project have proxy media in the old quality.",
+ "Jetzt neu erzeugen (Qualität: %1)?": "Generate them again now (quality: %1)?",
+ "Die alten Dateien bleiben, bis du sie unter Wiedergabe › Proxy-Medien aufräumen… löschst.": "The old files stay until you delete them with Playback › Clean Up Proxy Media…."
 }

@@ -273,6 +273,7 @@ schneidi_test(test_proxy_hint)
 schneidi_test(test_autosave_restore) # restore after a crash: a broken backup says why and is moved aside
 schneidi_test(test_media_timing) # proxy frame k = original frame k, shorter sources keep later clips in place, frame positions
 schneidi_test(test_proxy_cleanup) # which proxy files cleaning up deletes, which stay, dry run
+schneidi_test(test_proxy_quality) # proxy size per quality level, changing it, cleanup, the viewer note
 schneidi_test(test_memory_release) # picture pools and the heap given back while idle, never during playback
 schneidi_test(test_settings) # app settings (File › Settings…), AI page, indicator modes
 schneidi_test(test_update_check) # update hint against a local HTTP server

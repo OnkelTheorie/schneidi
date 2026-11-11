@@ -6,6 +6,7 @@
 #include "core/Timecode.h"
 #include "engine/Engine.h"
 #include "engine/PreviewResolution.h"
+#include "engine/ProxyManager.h"
 #include "engine/StillFetcher.h"
 #include "ui/TrimView.h"
 #include "ui/MediaPool.h"
@@ -366,6 +367,9 @@ Viewer::Viewer(Engine* engine, QWidget* parent) : QWidget(parent), m_engine(engi
         emit fullSizeWanted(z != FrameView::kFit && z >= 1.0);
     });
     connect(m_engine, &Engine::positionChanged, this, &Viewer::updateTimecode);
+    // "Proxy 540p" in the title row while the picture comes from proxy files (a proxy looks softer than the original)
+    connect(m_engine, &Engine::showsProxyChanged, this, &Viewer::updateModeText);
+    connect(m_engine->proxies(), &ProxyManager::qualityChanged, this, &Viewer::updateModeText);
     connect(m_engine, &Engine::speedChanged, this,
             [this](double s) { m_playBtn->setText(s == 0.0 ? "▶" : "⏸"); });
     // Loop playback in the In/Out range (ruler menu, Playback menu): the button says so
@@ -679,6 +683,8 @@ void Viewer::updateModeText()
                    : m_keptSource.isEmpty() ? T("Timeline auf dem zweiten Monitor")
                                             : T("Quelle – %1 (angehalten)").arg(m_keptSource);
     if (m_engine->colorBypass()) text += T("  (Farbkorrektur umgangen)");
+    if (m_engine->showsProxy() && !m_multicamOn && !keepsPicture())
+        text += "  ·  " + T("Proxy %1").arg(ProxyManager::qualityLabel(ProxyManager::quality()));
     m_mode->setTextFormat(m_recording ? Qt::RichText : Qt::PlainText);
     if (m_recording)
         text = text.toHtmlEscaped()

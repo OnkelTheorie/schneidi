@@ -197,6 +197,7 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
             proxiesChanged();
     });
     connect(proxies, &ProxyManager::enabledChanged, this, proxiesChanged);
+    connect(proxies, &ProxyManager::qualityChanged, this, proxiesChanged); // other proxy files now
     setupProxyHint();
     setupBackgroundJobs();
     // Before/After: cached clips contain the correction -> rebuild the preview so they come from the original
@@ -1254,6 +1255,7 @@ void MainWindow::setupProxyHint()
     connect(proxies, &ProxyManager::queueChanged, this, &MainWindow::updateProxyHint);
     connect(proxies, &ProxyManager::proxyChanged, this, &MainWindow::updateProxyHint);
     connect(proxies, &ProxyManager::enabledChanged, this, &MainWindow::updateProxyHint);
+    connect(proxies, &ProxyManager::qualityChanged, this, &MainWindow::updateProxyHint);
 
     // Proxies on import (Settings › General): every way a file comes into the open project (Media Pool, drop on the
     // timeline, watch folders, the live MCP/CLI import) says mediaImported; undo/redo and loading a project do not

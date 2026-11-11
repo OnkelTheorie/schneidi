@@ -201,6 +201,15 @@ QWidget* SettingsDialog::buildGeneral()
     m_proxyImport->addItem(T("Immer"), int(ProxyManager::ImportRule::Always));
     m_proxyImport->setCurrentIndex(std::max(0, m_proxyImport->findData(int(ProxyManager::importRule()))));
     xform->addRow(T("Beim Import erzeugen"), m_proxyImport);
+    m_proxyQuality = new QComboBox;
+    m_proxyQuality->setObjectName("proxy_quality");
+    using Q = ProxyManager::Quality;
+    m_proxyQuality->addItem(T("Klein (540p, am schnellsten)"), int(Q::Small));
+    m_proxyQuality->addItem(T("Mittel (720p)"), int(Q::Medium));
+    m_proxyQuality->addItem(T("Groß (1080p)"), int(Q::Large));
+    m_proxyQuality->addItem(T("Volle Auflösung (nur leichter Codec)"), int(Q::Full));
+    m_proxyQuality->setCurrentIndex(std::max(0, m_proxyQuality->findData(int(ProxyManager::quality()))));
+    xform->addRow(T("Qualität"), m_proxyQuality);
     xform->addRow(hint(T("Proxy-Medien sind kleine Kopien für eine flüssige Vorschau, der Export nutzt immer die "
                          "Originale. Von Hand: Wiedergabe › Proxy-Medien erzeugen oder Rechtsklick auf einen Clip.")));
     lay->addWidget(proxyBox);
@@ -283,6 +292,11 @@ PreviewResolution::Choice SettingsDialog::previewResolution(PreviewResolution::T
 {
     const QComboBox* box = target == PreviewResolution::Target::Viewer ? m_viewerResolution : m_monitorResolution;
     return PreviewResolution::Choice(box->currentData().toInt());
+}
+
+ProxyManager::Quality SettingsDialog::proxyQuality() const
+{
+    return ProxyManager::Quality(m_proxyQuality->currentData().toInt());
 }
 
 ProxyManager::ImportRule SettingsDialog::proxyImportRule() const
