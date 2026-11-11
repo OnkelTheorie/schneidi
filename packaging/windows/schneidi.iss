@@ -38,31 +38,73 @@ UninstallDisplayIcon={app}\schneidi.exe
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
+; No language picker: the Windows UI language decides, English if Inno has no translation for it
+ShowLanguageDialog=no
 ChangesAssociations=yes
 ; Läuft schneidi noch, bietet der Installer an, es zu schließen
 CloseApplications=yes
 
 [Languages]
-Name: "de"; MessagesFile: "compiler:Languages\German.isl"
+; Setup follows the Windows UI language (LanguageDetectionMethod=uilanguage, no language dialog). English comes first:
+; Inno uses the first entry when no listed language matches. Then the official Inno Setup translations of the languages
+; schneidi's UI has (Chinese, Hindi, Indonesian have none). Each only if the compiler has the file, so an older Inno
+; Setup still builds the installer.
 Name: "en"; MessagesFile: "compiler:Default.isl"
+#if FileExists(AddBackslash(CompilerPath) + "Languages\German.isl")
+Name: "de"; MessagesFile: "compiler:Languages\German.isl"
+#endif
+#if FileExists(AddBackslash(CompilerPath) + "Languages\Ukrainian.isl")
+Name: "uk"; MessagesFile: "compiler:Languages\Ukrainian.isl"
+#endif
+#if FileExists(AddBackslash(CompilerPath) + "Languages\Russian.isl")
+Name: "ru"; MessagesFile: "compiler:Languages\Russian.isl"
+#endif
+#if FileExists(AddBackslash(CompilerPath) + "Languages\Polish.isl")
+Name: "pl"; MessagesFile: "compiler:Languages\Polish.isl"
+#endif
+#if FileExists(AddBackslash(CompilerPath) + "Languages\French.isl")
+Name: "fr"; MessagesFile: "compiler:Languages\French.isl"
+#endif
+#if FileExists(AddBackslash(CompilerPath) + "Languages\Spanish.isl")
+Name: "es"; MessagesFile: "compiler:Languages\Spanish.isl"
+#endif
+#if FileExists(AddBackslash(CompilerPath) + "Languages\Italian.isl")
+Name: "it"; MessagesFile: "compiler:Languages\Italian.isl"
+#endif
+#if FileExists(AddBackslash(CompilerPath) + "Languages\Dutch.isl")
+Name: "nl"; MessagesFile: "compiler:Languages\Dutch.isl"
+#endif
+#if FileExists(AddBackslash(CompilerPath) + "Languages\Turkish.isl")
+Name: "tr"; MessagesFile: "compiler:Languages\Turkish.isl"
+#endif
+#if FileExists(AddBackslash(CompilerPath) + "Languages\Japanese.isl")
+Name: "ja"; MessagesFile: "compiler:Languages\Japanese.isl"
+#endif
+#if FileExists(AddBackslash(CompilerPath) + "Languages\Korean.isl")
+Name: "ko"; MessagesFile: "compiler:Languages\Korean.isl"
+#endif
+#if FileExists(AddBackslash(CompilerPath) + "Languages\BrazilianPortuguese.isl")
+Name: "ptBR"; MessagesFile: "compiler:Languages\BrazilianPortuguese.isl"
+#endif
 
 [CustomMessages]
+; Unprefixed = English default for every language without its own text (only German has one so far)
 de.AssocProjects=.schneidi-Projekte mit schneidi öffnen
-en.AssocProjects=Open .schneidi projects with schneidi
+AssocProjects=Open .schneidi projects with schneidi
 de.ProjectFile=schneidi-Projekt
-en.ProjectFile=schneidi project
+ProjectFile=schneidi project
 de.ExtraComponents=Zusätzliche Komponenten (optional – schneidi funktioniert auch ohne):
-en.ExtraComponents=Additional components (optional – schneidi works without them):
+ExtraComponents=Additional components (optional – schneidi works without them):
 de.EncoderExtension=Bessere Export-Qualität ohne Grafikkarte (x264/x265, GPL-Lizenz, etwa 90 MB Download)
-en.EncoderExtension=Better export quality without a graphics card (x264/x265, GPL license, about 90 MB download)
+EncoderExtension=Better export quality without a graphics card (x264/x265, GPL license, about 90 MB download)
 de.EncoderDownload=Lade x264/x265 herunter …
-en.EncoderDownload=Downloading x264/x265 …
+EncoderDownload=Downloading x264/x265 …
 de.UpdateFrom=schneidi %1 ist installiert und wird auf %2 aktualisiert. Einstellungen, Projekte und Erweiterungen bleiben erhalten.
-en.UpdateFrom=schneidi %1 is installed and will be updated to %2. Settings, projects and extensions are kept.
+UpdateFrom=schneidi %1 is installed and will be updated to %2. Settings, projects and extensions are kept.
 de.Reinstall=schneidi %1 ist bereits installiert und wird neu installiert. Einstellungen, Projekte und Erweiterungen bleiben erhalten.
-en.Reinstall=schneidi %1 is already installed and will be installed again. Settings, projects and extensions are kept.
+Reinstall=schneidi %1 is already installed and will be installed again. Settings, projects and extensions are kept.
 de.Downgrade=Achtung: Installiert ist die neuere Version schneidi %1. Sie wird durch die ältere Version %2 ersetzt.
-en.Downgrade=Note: the newer version schneidi %1 is installed. It will be replaced by the older version %2.
+Downgrade=Note: the newer version schneidi %1 is installed. It will be replaced by the older version %2.
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
