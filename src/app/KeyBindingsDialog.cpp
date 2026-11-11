@@ -166,6 +166,11 @@ KeyBindingsDialog::KeyBindingsDialog(QWidget* parent) : QDialog(parent)
     m_summary->setObjectName("key_import_summary");
     m_summary->setWordWrap(true);
     m_summary->hide();
+    m_notice = new QLabel;
+    m_notice->setObjectName("key_taken_notice");
+    m_notice->setWordWrap(true);
+    m_notice->setStyleSheet(QString("color: %1;").arg(Theme::warning.name()));
+    m_notice->hide();
 
     auto* resetOne = new QPushButton(T("Zurücksetzen"));
     resetOne->setToolTip(T("Gewählte Zeile auf die Vorlage zurücksetzen"));
@@ -239,6 +244,7 @@ KeyBindingsDialog::KeyBindingsDialog(QWidget* parent) : QDialog(parent)
     lay->addWidget(m_summary);
     lay->addWidget(m_filter);
     lay->addWidget(m_table, 1);
+    lay->addWidget(m_notice);
     lay->addWidget(hint);
     lay->addLayout(buttons);
 
@@ -340,8 +346,21 @@ void KeyBindingsDialog::resetRow(int row)
     const QString id = m_table->item(row, ColText)->data(Qt::UserRole).toString();
     auto& bindings = InputBindings::instance();
     const QString preset = bindings.currentPreset().isEmpty() ? QString("standard") : bindings.currentPreset();
-    bindings.setInputs(id, bindings.presetInputs(preset).value(id, bindings.defaultInputs(id)));
+    showTaken(bindings.setInputs(id, bindings.presetInputs(preset).value(id, bindings.defaultInputs(id))));
     fill();
+}
+
+void KeyBindingsDialog::showTaken(const QVector<InputBindings::Taken>& taken)
+{
+    QStringList lines;
+    for (const InputBindings::Taken& t : taken) {
+        QString text = t.id;
+        for (const InputBindings::Entry& e : InputBindings::instance().entries())
+            if (e.id == t.id) text = QString(e.text).remove('&');
+        lines << T("%1 war „%2“ – dort entfernt").arg(InputBindings::inputText(t.input), text);
+    }
+    m_notice->setText(lines.join('\n'));
+    m_notice->setVisible(!lines.isEmpty());
 }
 
 void KeyBindingsDialog::editSlot(int row, int slot)
@@ -349,7 +368,7 @@ void KeyBindingsDialog::editSlot(int row, int slot)
     if (row < 0) return;
     const QString id = m_table->item(row, ColText)->data(Qt::UserRole).toString();
     auto* capture = new InputCapture([this, id, slot](const QString& input, bool ok) {
-        if (ok) InputBindings::instance().setInput(id, slot, input);
+        if (ok) showTaken(InputBindings::instance().setInput(id, slot, input));
         QMetaObject::invokeMethod(this, [this] { fill(); }, Qt::QueuedConnection); // remove the editor only afterwards
     });
     m_table->setCellWidget(row, ColSlot1 + slot, capture);

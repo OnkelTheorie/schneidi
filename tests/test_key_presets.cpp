@@ -26,9 +26,11 @@
 #include <QPointer>
 #include <QPushButton>
 #include <QSignalSpy>
+#include <QTableWidget>
 #include <QTemporaryDir>
 #include <QTest>
 #include <clocale>
+#include <functional>
 #include <memory>
 
 namespace {
@@ -136,6 +138,93 @@ void checkUniqueKeys(const char* where)
                               QString("%1: %2 on %3 and %4").arg(where, input, owner[key], e.id));
             owner.insert(key, e.id);
         }
+}
+
+// The table row of an action in the key dialog
+int rowOf(QTableWidget* table, const QString& id)
+{
+    for (int r = 0; r < table->rowCount(); ++r)
+        if (table->item(r, 1)->data(Qt::UserRole).toString() == id) return r;
+    return -1;
+}
+
+// Captures a key in the dialog like the user: double click on the slot, then the key goes to the capture field
+void capture(KeyBindingsDialog& dlg, const QString& id, int slot, const std::function<void(QWidget*)>& press)
+{
+    auto* table = dlg.findChild<QTableWidget*>();
+    const int row = rowOf(table, id);
+    if (!CHECK(row >= 0)) return;
+    emit table->cellDoubleClicked(row, 2 + slot);
+    QWidget* field = table->cellWidget(row, 2 + slot);
+    if (!CHECK(field)) return;
+    press(field);
+    QApplication::processEvents();
+}
+
+// A key already used in the same scope: the other action loses it (two actions on one key would both stop working), the
+// dialog says so. Files (keybindings.json, a loaded set) with a key twice: the first keeps it, the other loses it
+void testDuplicates()
+{
+    InputBindings& b = InputBindings::instance();
+    b.applyPreset("standard");
+    CHECK_EQ(in("add_marker").value(0), QString("M"));
+    const auto taken = b.setInput("split", 0, "M");
+    CHECK_EQ(taken.size(), 1);
+    CHECK(taken.value(0).id == "add_marker" && taken.value(0).input == "M");
+    CHECK(!in("add_marker").contains("M"));
+    CHECK(!b.action("add_marker")->shortcuts().contains(QKeySequence("M")));
+    checkUniqueKeys("setInput");
+    // A panel's key is no conflict with the window's (Del in the render queue and on the timeline)
+    b.setInput("delete", 1, "Del");
+    CHECK(in("render_queue_delete").contains("Del"));
+    CHECK(!in("delete_alt").contains("Del"));
+    // The multicam angle keys share Alt+N with the target tracks on purpose
+    b.applyPreset("standard");
+    b.setInput("target_video_1", 0, "Alt+1");
+    CHECK(in("multicam_switch_1").contains("Alt+1"));
+
+    // In the dialog: the notice line names the key and the action it was taken from
+    b.applyPreset("standard");
+    {
+        KeyBindingsDialog dlg;
+        dlg.show();
+        auto* notice = dlg.findChild<QLabel*>("key_taken_notice");
+        if (!CHECK(notice)) return;
+        CHECK(!notice->isVisibleTo(&dlg));
+        capture(dlg, "split", 1, [](QWidget* f) { QTest::keyClick(f, Qt::Key_M); });
+        CHECK_EQ(in("split").value(1), QString("M"));
+        CHECK(!in("add_marker").contains("M"));
+        CHECK(notice->isVisibleTo(&dlg));
+        CHECK(notice->text().contains("M"));
+        CHECK(notice->text().contains(QString(b.action("add_marker")->text()).remove('&')));
+    }
+
+    // A file with a key twice
+    QTemporaryDir tmp;
+    const QString path = QDir(tmp.path()).filePath("set.json");
+    const auto write = [&](const QByteArray& json) {
+        QFile f(path);
+        if (CHECK(f.open(QIODevice::WriteOnly))) f.write(json);
+    };
+    write(R"({"version": 3, "shortcuts": {"split": "M"}})"); // add_marker keeps its default M: the file's wins
+    QString error;
+    CHECK(b.importSet(path, &error));
+    CHECK_EQ(in("split").value(0), QString("M"));
+    CHECK(!in("add_marker").contains("M"));
+    checkUniqueKeys("importSet");
+    write(R"({"version": 3, "shortcuts": {"split": "M", "add_marker": "M"}})");
+    CHECK(b.importSet(path, &error));
+    CHECK((in("split").value(0) == "M") != (in("add_marker").value(0) == "M"));
+    checkUniqueKeys("importSet both");
+    // keybindings.json edited by hand
+    {
+        QFile f(b.filePath());
+        if (CHECK(f.open(QIODevice::WriteOnly)))
+            f.write(R"({"version": 3, "shortcuts": {"split": "M", "add_marker": "M", "mark_in": "M"}})");
+    }
+    b.load();
+    checkUniqueKeys("load");
+    b.applyPreset("standard");
 }
 
 void testKysContexts()
@@ -524,6 +613,7 @@ int main(int argc, char** argv)
         testPresets();
         testImport();
         testKysContexts();
+        testDuplicates();
         testTrainer(w);
     }
     testLanguages(engine);

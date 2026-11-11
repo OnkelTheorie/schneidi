@@ -382,6 +382,8 @@ void InputBindings::load()
     const int version = root.value("version").toInt();
     if (version < kVersion) m_fileExisted = false;
     applyJson(root, version >= 2);
+    // At start the actions are not registered yet (their scopes unknown): saveIfIncomplete() does it then
+    if (!m_entries.isEmpty() && !removeDuplicates().isEmpty()) save();
 }
 
 void InputBindings::applyJson(const QJsonObject& root, bool withWheel)
@@ -476,34 +478,53 @@ QKeySequence InputBindings::current(const QString& id) const
     return {};
 }
 
-void InputBindings::setInput(const QString& id, int slot, const QString& input)
+QVector<InputBindings::Taken> InputBindings::setInput(const QString& id, int slot, const QString& input)
 {
-    if (slot < 0 || slot >= kSlots) return;
+    if (slot < 0 || slot >= kSlots) return {};
     QStringList binds = inputs(id);
     const QString in = normalizeInput(input);
     if (!in.isEmpty())
         for (QString& other : binds)
             if (other == in) other.clear();
     binds[slot] = in;
-    setInputs(id, binds);
+    return setInputs(id, binds);
 }
 
-void InputBindings::setInputs(const QString& id, const QStringList& list)
+bool InputBindings::sharedOnPurpose(const QString& a, const QString& b)
+{
+    static const QString angle = "multicam_switch_", target = "target_video_";
+    const auto pair = [](const QString& x, const QString& y) {
+        return x.startsWith(angle) && y.startsWith(target) && x.mid(angle.size()) == y.mid(target.size());
+    };
+    return pair(a, b) || pair(b, a);
+}
+
+QVector<InputBindings::Taken> InputBindings::setInputs(const QString& id, const QStringList& list)
 {
     QStringList binds;
     for (const QString& in : padded(list)) {
         const QString n = normalizeInput(in);
         binds << (binds.contains(n) ? QString() : n);
     }
-    // One action per mouse button: take it from the others
+    // Take the inputs from the other actions: a mouse button from every one, a key from those of the same scope
     QStringList ids = m_inputs.keys();
     for (const Entry& e : m_entries) ids << e.id;
+    ids.removeDuplicates();
+    QVector<Taken> taken;
+    const QString own = scope(id);
     for (const QString& in : binds) {
-        if (inputMouseButton(in) == Qt::NoButton) continue;
+        if (in.isEmpty()) continue;
+        const bool mouse = inputMouseButton(in) != Qt::NoButton;
         for (const QString& other : ids) {
-            if (other == id) continue;
+            if (other == id || (!mouse && (scope(other) != own || sharedOnPurpose(id, other)))) continue;
             QStringList o = inputs(other);
-            if (o.removeAll(in) > 0) m_inputs[other] = padded(o);
+            if (o.contains(in)) {
+                o.replace(o.indexOf(in), QString());
+                m_inputs[other] = o;
+                taken.append({other, in});
+                for (const Entry& e : m_entries)
+                    if (e.id == other) apply(e);
+            }
         }
     }
     m_inputs[id] = binds;
@@ -511,6 +532,42 @@ void InputBindings::setInputs(const QString& id, const QStringList& list)
         if (e.id == id) apply(e);
     rebuildMouse();
     save();
+    return taken;
+}
+
+QVector<InputBindings::Taken> InputBindings::removeDuplicates()
+{
+    // Who keeps an input: actions with it from the file before those with it as a default, then menu order
+    QVector<const Entry*> order;
+    for (const bool fromFile : {true, false})
+        for (const Entry& e : m_entries)
+            if (m_inputs.contains(e.id) == fromFile) order << &e;
+    QHash<QString, QString> owner; // scope + '\n' + key (or the mouse input) -> action id
+    QVector<Taken> removed;
+    for (const Entry* e : order) {
+        QStringList binds = inputs(e->id);
+        bool changed = false;
+        for (QString& in : binds) {
+            if (in.isEmpty()) continue;
+            const QString key = inputMouseButton(in) != Qt::NoButton ? in : e->scope + '\n' + in;
+            const QString first = owner.value(key);
+            if (first.isEmpty()) {
+                owner.insert(key, e->id);
+            } else if (!sharedOnPurpose(first, e->id)) {
+                qWarning("Key bindings: %s was on \"%s\" and \"%s\", removed from \"%s\"", qPrintable(in),
+                         qPrintable(first), qPrintable(e->id), qPrintable(e->id));
+                removed.append({e->id, in});
+                in.clear();
+                changed = true;
+            }
+        }
+        if (changed) m_inputs[e->id] = binds;
+    }
+    if (!removed.isEmpty()) {
+        for (const Entry& e : m_entries) apply(e);
+        rebuildMouse();
+    }
+    return removed;
 }
 
 void InputBindings::apply(const Entry& e) const
@@ -543,7 +600,7 @@ void InputBindings::resetAll()
 
 void InputBindings::saveIfIncomplete()
 {
-    bool complete = m_fileExisted;
+    bool complete = m_fileExisted && removeDuplicates().isEmpty();
     for (const Entry& e : m_entries) complete &= m_inputs.contains(e.id);
     if (!complete) save();
 }
@@ -596,6 +653,7 @@ bool InputBindings::importSet(const QString& path, QString* error)
     // A whole set: what the file leaves out goes back to the default
     m_inputs.clear();
     applyJson(doc.object(), true);
+    removeDuplicates();
     for (const Entry& e : m_entries) apply(e);
     rebuildMouse();
     save();
@@ -702,6 +760,7 @@ void InputBindings::loadPreset(const QString& id)
     } else if (id.startsWith("custom:")) {
         QFile f(QDir(customPresetDir()).filePath(id.mid(7) + ".json"));
         if (f.open(QIODevice::ReadOnly)) applyJson(QJsonDocument::fromJson(f.readAll()).object(), true);
+        removeDuplicates();
     }
     m_preset = id;
 }

@@ -52,10 +52,24 @@ public:
     QStringList inputs(const QString& id) const;        // always kSlots entries
     QStringList defaultInputs(const QString& id) const; // always kSlots entries
     QKeySequence current(const QString& id) const;      // first key of the action (empty if none)
-    // Sets one slot; the same input in the other slot is cleared, a mouse button is taken from other actions
-    // (one action per mouse button)
-    void setInput(const QString& id, int slot, const QString& input);
-    void setInputs(const QString& id, const QStringList& inputs);
+    // An input taken away from another action (setInput/setInputs, removeDuplicates)
+    struct Taken {
+        QString id;    // the action that lost it
+        QString input; // the input it lost
+    };
+    // Sets one slot; the same input in the other slot is cleared. A key is taken from the other actions of the same
+    // scope (two actions on one key would both stop working), a mouse button from every other action (one action per
+    // mouse button). Returns what was taken from whom (for the dialog's notice)
+    QVector<Taken> setInput(const QString& id, int slot, const QString& input);
+    QVector<Taken> setInputs(const QString& id, const QStringList& inputs);
+    // One action per key and scope, one per mouse button: a key two registered actions have (a hand-edited or imported
+    // file) stays with the action that has it from the file over one that has it as a default, among those with the
+    // first in menu order; the others lose it (logged). Done by load() once actions are registered,
+    // saveIfIncomplete(), importSet() and loading an own preset
+    QVector<Taken> removeDuplicates();
+    // Two actions that share their keys on purpose: only one of them is enabled at a time (multicam angle N and video
+    // target track N, Alt+N)
+    static bool sharedOnPurpose(const QString& a, const QString& b);
     void resetAll();
     // A whole set of keys, mouse buttons and wheel (same format as keybindings.json), e.g. to take it to another
     // computer or keep several: export writes the current set, import replaces it (actions missing in the file get

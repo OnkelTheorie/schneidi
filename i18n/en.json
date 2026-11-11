@@ -85,6 +85,7 @@
  "%1 verschieben": "Move %1",
  "%1 von %2 Mediendateien wurden nicht gefunden:\n%3\n\nOrdner auswählen, in dem sie liegen?": "%1 of %2 media files were not found:\n%3\n\nChoose the folder they are in?",
  "%1 von %2 Proxy-Dateien braucht weder das offene noch ein zuletzt geöffnetes Projekt (zusammen %3).": "%1 of %2 proxy files are needed neither by the open project nor by a recently opened one (%3 in total).",
+ "%1 war „%2“ – dort entfernt": "%1 was on “%2” – removed there",
  "%1 weitere Sprünge im Bild": "%1 more jump cuts",
  "%1 wird in der Timeline verwendet und kann nicht überschrieben werden.": "%1 is used in the timeline and cannot be overwritten.",
  "%1 wird mit %2 kodiert (keine Grafikkarte, die kodiert): für die gleiche Qualität etwa doppelt so große Dateien.": "%1 is encoded with %2 (no graphics card that encodes): files about twice as large for the same quality.",
