@@ -3,9 +3,10 @@
 // Reports shown frames per second and the longest gaps (stutter) per second of playback; with the own audio engine
 // (the default; not with SCHNEIDI_AUDIO=mlt) also how far the shown frame is behind the sound clock (picture follows sound).
 // Run: xvfb-run -a env SDL_AUDIODRIVER=dummy ./build-tests/tests/bench_playback <project.schneidi> [seconds] [start]
-//      [--proxies]
+//      [--proxies] [--edge <px>]
 //      (start in seconds of the timeline; default 10 s from 0; --proxies: first create the proxies of all video files
-//      in the test cache, report time and size, then play from the proxies)
+//      in the test cache, report time and size, then play from the proxies; --edge: the preview's longer edge like
+//      the app's preview resolution, Engine::setPreviewEdge, 0 = the engine's default 960, 1920 = Full HD)
 #include "check.h"
 
 #include "core/Project.h"
@@ -30,15 +31,26 @@ int main(int argc, char** argv)
     QApplication app(argc, argv);
     Check::initApp("bench-playback");
     bool useProxies = false;
-    for (int i = 1; i < argc; ++i) {
-        if (std::string(argv[i]) != "--proxies") continue;
-        useProxies = true;
-        for (int j = i; j + 1 < argc; ++j) argv[j] = argv[j + 1];
-        --argc;
-        break;
+    int edge = 0;
+    for (int i = 1; i < argc;) {
+        const std::string a = argv[i];
+        int take = 0;
+        if (a == "--proxies") {
+            useProxies = true;
+            take = 1;
+        } else if (a == "--edge" && i + 1 < argc) {
+            edge = atoi(argv[i + 1]);
+            take = 2;
+        }
+        if (take == 0) {
+            ++i;
+            continue;
+        }
+        for (int j = i; j + take < argc; ++j) argv[j] = argv[j + take];
+        argc -= take;
     }
     if (argc < 2) {
-        std::printf("usage: bench_playback <project.schneidi> [seconds] [start] [--proxies]\n");
+        std::printf("usage: bench_playback <project.schneidi> [seconds] [start] [--proxies] [--edge <px>]\n");
         return 2;
     }
     ProjectData data;
@@ -84,6 +96,7 @@ int main(int argc, char** argv)
         std::printf("proxies created in %.1f s\n", took.elapsed() / 1000.0);
     }
     engine.setFormat(project.format());
+    engine.setPreviewEdge(edge);
     engine.updateTimeline(project.timeline());
     engine.showTimeline(start);
     {
@@ -112,6 +125,7 @@ int main(int argc, char** argv)
     engine.pause();
 
     const double fps = project.format().rate.fps();
+    std::printf("preview %dx%d\n", engine.previewSize().width(), engine.previewSize().height());
     std::printf("project %s, %.3f fps, %d frames shown in %.1f s = %.1f fps (positions %d..%d)\n", argv[1], fps,
                 int(shown.size()), seconds, shown.size() / seconds, positions.isEmpty() ? -1 : positions.first(),
                 positions.isEmpty() ? -1 : positions.last());
