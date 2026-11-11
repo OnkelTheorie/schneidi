@@ -483,6 +483,51 @@ void testSameContentAgain()
     CHECK(waitFor([&] { return renders.load() >= 1; }, 2000));
 }
 
+// The content's picture changed while playing without a new generation (Engine: a stabilization finished - a refresh
+// would drop the frames prepared ahead): forgetRecent. Stepping back after the stop rendered the frames of before
+// again from the recent ones - the clip unstabilized; also the frames already prepared ahead when it came
+void testForgetRecent()
+{
+    TestClock clock;
+    Seen seen;
+    std::atomic<int> cost{5}, color{10};
+    Picture::Pump pump([&] { return clock.now(); },
+                       [&](const QImage& img, int64_t pos, double) { seen.add(img, pos, clock.now()); }, 2);
+    pump.setContent(content(&cost, &color), 0, 0);
+    CHECK(waitFor([&] { return seen.count() == 1; }, 1000));
+    seen.take();
+    clock.play(0, 1);
+    pump.setSpeed(1, 0);
+    std::this_thread::sleep_for(600ms);
+    color = 20;
+    pump.forgetRecent();
+    CHECK_EQ(pump.stats().recentBytes, int64_t(0));
+    std::this_thread::sleep_for(300ms);
+    clock.stop();
+    const auto played = seen.take();
+    const int64_t stop = played.empty() ? 0 : played.back().position;
+    pump.setSpeed(0, stop);
+    std::this_thread::sleep_for(100ms);
+    seen.take();
+    // Every frame played (before and after the change) shows the new picture when stepped onto again
+    int old = 0, steps = 0;
+    const int recentBefore = pump.stats().recent;
+    for (const Seen::Entry& e : played) {
+        if (e.position == stop) continue;
+        pump.seek(e.position);
+        if (!CHECK(waitFor([&] { return seen.count() >= 1; }, 1000))) break;
+        std::this_thread::sleep_for(5ms);
+        for (const Seen::Entry& got : seen.take())
+            if (got.position == e.position && got.color != 20) ++old;
+        ++steps;
+    }
+    const int fromRecent = pump.stats().recent - recentBefore;
+    std::printf("       %d frames stepped onto again, %d with the old picture, %d from the recent ones\n", steps, old,
+                fromRecent);
+    CHECK(steps > 5);
+    CHECK_EQ(old, 0);
+}
+
 int main(int argc, char** argv)
 {
     Check::initEnv();
@@ -495,6 +540,8 @@ int main(int argc, char** argv)
     testStillPastEnd();
     std::printf("same content again\n");
     testSameContentAgain();
+    std::printf("forget recent while playing\n");
+    testForgetRecent();
     std::printf("shuttle to the end\n");
     testShuttleReachesEnd();
     if (Check::haveFfmpeg()) {

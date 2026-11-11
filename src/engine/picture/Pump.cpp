@@ -65,7 +65,8 @@ struct Pump::Impl {
     bool pendingStill = false;
     struct Rendered {
         QImage image;
-        bool exact = true; // false: a close picture (scrubbing), the exact one follows
+        bool exact = true;  // false: a close picture (scrubbing), the exact one follows
+        uint64_t epoch = 0; // recentEpoch when its render began (forgetRecent: not kept among the recent ones)
     };
     std::map<int64_t, Rendered> frames; // rendered for `generation`
     std::set<int64_t> inflight;         // being rendered for `generation`
@@ -80,6 +81,7 @@ struct Pump::Impl {
     };
     std::map<int64_t, Recent> recent;
     int64_t recentBytes = 0, recentBudget = kRecentBudget;
+    uint64_t recentEpoch = 0; // +1 at forgetRecent: frames drawn before are shown but not kept
     uint64_t stamp = 0;
     bool preparing = false;
     SteadyClock::time_point lastPrepare, lastTrim = SteadyClock::now();
@@ -175,7 +177,7 @@ struct Pump::Impl {
                 continue;
             }
             inflight.insert(p);
-            const uint64_t gen = generation;
+            const uint64_t gen = generation, epoch = recentEpoch;
             std::shared_ptr<const Content> c = content;
             std::shared_ptr<std::atomic<bool>> cancel;
             Want want;
@@ -204,7 +206,7 @@ struct Pump::Impl {
                 wake.notify_all();                      // the exact one is rendered for it
                 continue;
             }
-            frames[p] = {std::move(img), !cancel || want.exact};
+            frames[p] = {std::move(img), !cancel || want.exact, epoch};
             prune();
             ready.notify_all();
         }
@@ -284,7 +286,7 @@ struct Pump::Impl {
                 const int64_t at = next;
                 const uint64_t gen = generation;
                 QImage keep = r.exact ? r.image : QImage();
-                if (deliver(lock, std::move(r.image), at, 0.0)) remember(at, std::move(keep), gen);
+                if (deliver(lock, std::move(r.image), at, 0.0)) remember(at, std::move(keep), gen, r.epoch);
                 continue;
             }
             const int dir = direction();
@@ -321,6 +323,7 @@ struct Pump::Impl {
             }
             const int64_t pos = next;
             QImage img = std::move(it->second.image);
+            const uint64_t epoch = it->second.epoch;
             frames.erase(it);
             const uint64_t gen = generation;
             QImage keep = img;
@@ -337,7 +340,7 @@ struct Pump::Impl {
             wake.notify_all();
             const double s = speed;
             const bool shown = deliver(lock, std::move(img), pos, s);
-            if (shown) remember(pos, std::move(keep), gen);
+            if (shown) remember(pos, std::move(keep), gen, epoch);
             if (shown && !std::isnan(now)) keepUp(pos, clock ? clock() : NAN);
         }
     }
@@ -371,7 +374,7 @@ struct Pump::Impl {
             if (frames.count(p) || inflight.count(p)) return;
             auto it = recent.find(p);
             if (it == recent.end()) return;
-            frames[p] = {it->second.image, true};
+            frames[p] = {it->second.image, true, recentEpoch};
             it->second.stamp = ++stamp;
             ++stats.recent;
             any = true;
@@ -389,10 +392,11 @@ struct Pump::Impl {
         return any;
     }
 
-    // Under m: keeps a shown frame (rendered for generation gen) among the recent ones, the oldest go over budget
-    void remember(int64_t pos, QImage image, uint64_t gen)
+    // Under m: keeps a shown frame (rendered for generation gen, begun at recentEpoch epoch) among the recent ones, the
+    // oldest go over budget
+    void remember(int64_t pos, QImage image, uint64_t gen, uint64_t epoch)
     {
-        if (image.isNull() || gen != generation || recentBudget <= 0) return;
+        if (image.isNull() || gen != generation || epoch != recentEpoch || recentBudget <= 0) return;
         auto [it, added] = recent.try_emplace(pos);
         if (!added) recentBytes -= it->second.image.sizeInBytes();
         it->second.image = std::move(image);
@@ -562,6 +566,17 @@ void Pump::dropRecent()
         std::lock_guard lock(d->m);
         gone.swap(d->recent);
         d->recentBytes = 0;
+    }
+}
+
+void Pump::forgetRecent()
+{
+    std::map<int64_t, Impl::Recent> gone; // freed outside the lock
+    {
+        std::lock_guard lock(d->m);
+        gone.swap(d->recent);
+        d->recentBytes = 0;
+        ++d->recentEpoch;
     }
 }
 

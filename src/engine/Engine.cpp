@@ -142,8 +142,10 @@ Engine::Engine(QObject* parent)
         if (!m_renderer) return;
         m_renderCache->sync(m_built);
         // Paused: the still again. Playing: newly drawn frames take the correction (a refresh drops the frames
-        // prepared ahead - a hitch for each analysis that finishes)
+        // prepared ahead - a hitch for each analysis that finishes), but the frames kept for stepping back are of
+        // before: forgotten, or stepping back after the stop showed them unstabilized
         if (m_mode == Mode::Timeline && m_speed == 0.0) refresh();
+        else if (m_pump) m_pump->forgetRecent();
     });
     // ... with the recently shown frames (up to 192 MB): stepping back after a pause renders again
     connect(m_idleRelease, &IdleRelease::releasing, this, [this] {
