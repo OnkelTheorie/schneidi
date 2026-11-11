@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "app/MainWindow.h"
+#include "app/OpenTrace.h"
 #include "core/StartupTrace.h"
 #include "app/TourManager.h"
 #include "ui/TourOverlay.h"
@@ -145,6 +146,7 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
     m_engineTimer.setInterval(30);
     connect(&m_engineTimer, &QTimer::timeout, this, [this] {
         m_engine->updateTimeline(previewTimeline()); // the Comp page may show one node of a graph
+        OpenTrace::timelineSent();
         updateRenderCacheBar();
     });
     connect(m_editor, &Editor::mixerOnlyEdit, m_engine, &Engine::mixerOnlyNext);
