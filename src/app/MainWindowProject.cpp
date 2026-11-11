@@ -439,12 +439,23 @@ bool MainWindow::applyLoaded(ProjectData data, const QString& path, bool ask)
     int relinked = 0;
     for (QStringList missing = ask ? ProjectFile::missingMedia(data) : QStringList{}; !missing.isEmpty();
          missing = ProjectFile::missingMedia(data)) {
-        QMessageBox box(QMessageBox::Warning, T("Medien fehlen"),
-                        missing.size() == 1 ? T("1 Datei nicht gefunden (verschoben oder umbenannt?):")
-                                            : T("%1 Dateien nicht gefunden (verschoben oder umbenannt?):").arg(missing.size()),
-                        QMessageBox::NoButton, this);
+        // Files only the Media Pool still lists (no timeline reads them) cost nothing: said, so nobody hunts for them
+        const QStringList unused = ProjectFile::unusedMedia(data);
+        const bool allUnused = std::all_of(missing.cbegin(), missing.cend(), [&](const QString& p) { return unused.contains(p); });
+        QString text;
+        if (allUnused)
+            text = missing.size() == 1
+                       ? T("1 Datei im Medienpool nicht gefunden (verschoben oder gelöscht?). Keine Timeline benutzt "
+                           "sie: das Projekt spielt und exportiert auch ohne sie.")
+                       : T("%1 Dateien im Medienpool nicht gefunden (verschoben oder gelöscht?). Keine Timeline benutzt "
+                           "sie: das Projekt spielt und exportiert auch ohne sie.").arg(missing.size());
+        else
+            text = missing.size() == 1 ? T("1 Datei nicht gefunden (verschoben oder umbenannt?):")
+                                       : T("%1 Dateien nicht gefunden (verschoben oder umbenannt?):").arg(missing.size());
+        QMessageBox box(QMessageBox::Warning, T("Medien fehlen"), text, QMessageBox::NoButton, this);
         QStringList names;
-        for (const QString& p : missing.mid(0, 15)) names << p;
+        for (const QString& p : missing.mid(0, 15))
+            names << (!allUnused && unused.contains(p) ? T("%1 (in keiner Timeline benutzt)").arg(p) : p);
         if (missing.size() > 15) names << "…";
         box.setInformativeText(names.join('\n'));
         QPushButton* search = box.addButton(T("Ordner durchsuchen…"), QMessageBox::AcceptRole);

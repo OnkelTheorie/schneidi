@@ -107,7 +107,8 @@ public:
 
     // A pooled RGBA8 render target (premultiplied), cleared to `clear` (straight RGBA 0..1) by its first pass
     TexturePtr target(QSize size, const float clear[4] = nullptr);
-    // Upload RGBA (8 bit, rows tightly packed)
+    // Upload RGBA (8 bit, rows tightly packed). Not copied: `rgba` must stay valid until finish() (Service::run returns
+    // after it, so the caller's buffers of a job qualify)
     TexturePtr uploadRgba(const uint8_t* rgba, int w, int h, bool premultiplied);
     // Upload a decoded software picture (planar/semi-planar 8 or 10-bit Y'CbCr); nullptr = format not supported (then
     // convert on the CPU and use uploadRgba). mips: also build mip levels (drawn at 2:1 or smaller)

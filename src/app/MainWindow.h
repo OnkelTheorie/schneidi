@@ -400,6 +400,10 @@ private:
     // Background work at the bottom right of the status bar (ui/BackgroundJobs): proxies today
     void setupBackgroundJobs();
     bool offersRenderCache() const; // the hint offers "Render-Cache: Smart" instead of proxies
+    // The viewer's preview resolution one step smaller (PreviewResolution::smaller) when that makes the engine's
+    // picture noticeably smaller: not while zoomed to 100 %, the viewer is away or a second monitor wants it as large
+    std::optional<PreviewResolution::Choice> smallerPreview() const;
+    int previewEdgeFor(PreviewResolution::Choice viewerRes) const; // what updatePreviewEdge asks for with that choice
     QStringList playingVideoFiles() const; // video files of what plays (timeline incl. nested clips, or the source)
     bool expensiveAtPlayhead() const;      // a clip with effects or changed speed plays here (RenderCache::isExpensive)
     void createMulticamClip(const QStringList& paths);
@@ -438,7 +442,18 @@ private:
     QTimer m_engineTimer; // bundles model changes -> engine
     PlaybackMeter m_playMeter;
     QElapsedTimer m_playClock;
-    QStringList m_slowFiles; // playback was too slow with these files (proxy hint); empty = no hint
+    bool m_slow = false;     // the last measurement found playback too slow (the hint decides what to offer)
+    QStringList m_slowFiles; // its video files (proxies)
+    // Every file had its proxy (or proxies are off) when it was measured: proxies did not help, a smaller preview may
+    bool m_slowWithProxies = false;
+    // The viewer's resolution choice when it was measured (changed since: the measurement says nothing about a smaller
+    // preview; a viewer resize does not count, the hint bar itself takes some of its height)
+    PreviewResolution::Choice m_slowRes = PreviewResolution::Choice::Auto;
+    enum class HintOffer { None, SmallerPreview, RenderCache, Proxies };
+    HintOffer m_hintOffer = HintOffer::None; // what the hint's button does
+    // SmallerPreview: the choice the hint named and the one it was offered from (changed since: offered anew)
+    PreviewResolution::Choice m_offeredRes = PreviewResolution::Choice::Auto, m_offeredFrom = PreviewResolution::Choice::Auto;
+    void restartPlayMeter(); // after the hint's action while playing: seconds from before it do not count
     double m_slowRate = 0, m_slowFps = 0;
     bool m_proxyHintClosed = false; // closed: not again in this session
     // Files imported since the last pass to ProxyManager::importedFiles (proxies on import): one probe per import

@@ -107,6 +107,9 @@ QByteArray fingerprint(const QString& path);
 // Returns the number of files found again.
 int relink(ProjectData* data, const QString& searchDir);
 QStringList missingMedia(const ProjectData& data);
+// Media Pool files nothing of the project reads (core/ProjectRefs: clips, compositing nodes, titles, wipes, effect
+// files, brand kit), in pool order: missing, they cost nothing (the open dialog says so)
+QStringList unusedMedia(const ProjectData& data);
 // Effects this computer does not know (e.g. frei0r plugin missing, project from another computer), sorted: they stay
 // in the file with their values and keyframes but have no effect
 QStringList missingEffects(const ProjectData& data);

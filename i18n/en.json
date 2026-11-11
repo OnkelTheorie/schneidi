@@ -2968,5 +2968,10 @@
  "Der Clip liegt gerade außerhalb des sichtbaren Teils der Timeline: Scroll hin, dann siehst du den Abspielkopf in seiner Mitte.": "The clip is outside the visible part of the timeline right now: scroll to it to see the playhead in its middle.",
  "Hoppla, alle Clips sind weg. {key:undo} holt sie zurück.": "Oops, all clips are gone. {key:undo} brings them back.",
  "Programm im Vollbild": "Full-Screen App",
- "EDL: Timecodes mit einem Bild über der Bildrate als 0 gelesen": "EDL: timecodes with a frame beyond the frame rate read as 0"
+ "EDL: Timecodes mit einem Bild über der Bildrate als 0 gelesen": "EDL: timecodes with a frame beyond the frame rate read as 0",
+ "Die Wiedergabe ruckelt (%1 von %2 Bildern/s) bei einer Vorschau von %3 Pixeln. Mit %4 läuft sie flüssiger, der Export bleibt in voller Auflösung. Zurückstellen: Rechtsklick auf die Vorschau › Vorschau-Auflösung": "Playback stutters (%1 of %2 pictures/s) with a preview of %3 pixels. At %4 it plays more smoothly, the export keeps the full resolution. To change it back: right-click the preview › Preview Resolution",
+ "Vorschau verkleinern": "Smaller preview",
+ "1 Datei im Medienpool nicht gefunden (verschoben oder gelöscht?). Keine Timeline benutzt sie: das Projekt spielt und exportiert auch ohne sie.": "1 file of the Media Pool not found (moved or deleted?). No timeline uses it: the project plays and exports without it.",
+ "%1 Dateien im Medienpool nicht gefunden (verschoben oder gelöscht?). Keine Timeline benutzt sie: das Projekt spielt und exportiert auch ohne sie.": "%1 files of the Media Pool not found (moved or deleted?). No timeline uses them: the project plays and exports without them.",
+ "%1 (in keiner Timeline benutzt)": "%1 (used in no timeline)"
 }

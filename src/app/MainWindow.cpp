@@ -1222,34 +1222,60 @@ void MainWindow::setupProxyHint()
         if (speed == 1.0) m_playMeter.start(m_project->frameRate(), m_playClock.elapsed());
         else m_playMeter.stop();
     });
-    connect(m_engine, &Engine::positionChanged, this, [this] {
-        if (!m_playMeter.frame(m_playClock.elapsed()) || m_proxyHintClosed || !m_slowFiles.isEmpty()) return;
-        m_slowFiles = playingVideoFiles();
-        m_slowEffects = expensiveAtPlayhead();
-        m_slowRate = m_playMeter.rate();
-        m_slowFps = m_playMeter.fps();
-        qInfo("Playback too slow: %.1f of %.2f pictures/s", m_slowRate, m_slowFps);
-        updateProxyHint();
-    });
     ProxyManager* proxies = m_engine->proxies();
     RenderCache* cache = m_engine->renderCache();
+    connect(m_engine, &Engine::positionChanged, this, [this, proxies] {
+        if (!m_playMeter.frame(m_playClock.elapsed()) || m_proxyHintClosed || m_slow) return;
+        m_slow = true;
+        m_slowFiles = playingVideoFiles();
+        m_slowEffects = expensiveAtPlayhead();
+        m_slowWithProxies = true;
+        if (proxies->enabled()) // switched off: the user wants the originals, proxies are no offer
+            for (const QString& f : std::as_const(m_slowFiles))
+                if (!proxies->hasProxy(f)) m_slowWithProxies = false;
+        m_slowRate = m_playMeter.rate();
+        m_slowFps = m_playMeter.fps();
+        m_slowRes = m_viewerRes;
+        qInfo("Playback too slow: %.1f of %.2f pictures/s at a %dx%d preview", m_slowRate, m_slowFps,
+              m_engine->previewSize().width(), m_engine->previewSize().height());
+        updateProxyHint();
+    });
     connect(m_viewer, &Viewer::hintAccepted, this, [this, proxies, cache] {
-        if (offersRenderCache()) {
+        switch (std::exchange(m_hintOffer, HintOffer::None)) {
+        case HintOffer::SmallerPreview:
+            // Exactly the size the hint named (the resolution changed since: offered anew). Done at once (the viewer
+            // shows the new size for a moment); still too slow: a new measurement decides
+            if (m_viewerRes != m_offeredFrom) return updateProxyHint();
+            m_slow = false;
+            m_slowFiles.clear();
+            m_slowEffects = false;
+            setPreviewResolution(PreviewResolution::Target::Viewer, m_offeredRes); // (updates the hint)
+            restartPlayMeter();
+            return;
+        case HintOffer::RenderCache:
             // Effects were the cost: their clips get rendered in the background; if it still stutters afterwards,
             // a new measurement offers proxies
+            m_slow = false;
             m_slowFiles.clear();
             m_slowEffects = false;
             cache->setMode(RenderCache::Mode::Smart);
+            restartPlayMeter();
             return updateProxyHint();
+        case HintOffer::Proxies: {
+            QStringList missing;
+            for (const QString& f : std::as_const(m_slowFiles))
+                if (!proxies->isPending(f) && !proxies->hasProxy(f)) missing << f;
+            proxies->generate(missing);
+            return updateProxyHint(); // (generate may queue nothing: no signal, the hint must not stay with a dead button)
         }
-        QStringList missing;
-        for (const QString& f : std::as_const(m_slowFiles))
-            if (!proxies->isPending(f) && !proxies->hasProxy(f)) missing << f;
-        proxies->generate(missing);
+        case HintOffer::None: return;
+        }
     });
     connect(m_viewer, &Viewer::hintClosed, this, [this] {
         m_proxyHintClosed = true;
+        m_slow = false;
         m_slowFiles.clear();
+        m_hintOffer = HintOffer::None;
     });
     connect(cache, &RenderCache::modeChanged, this, &MainWindow::updateProxyHint);
     connect(proxies, &ProxyManager::queueChanged, this, &MainWindow::updateProxyHint);
@@ -1284,12 +1310,35 @@ bool MainWindow::offersRenderCache() const
 
 void MainWindow::updateProxyHint()
 {
-    if (offersRenderCache())
+    // What helps first: a preview the user raised above the automatic size goes back to it (decoding is rarely the
+    // cost then, proxies would leave every effect at as many pixels); then the smart render cache when effects play,
+    // proxies for files without them; a smaller preview again when every file had its proxy already
+    m_hintOffer = HintOffer::None;
+    if (!m_slow) return m_viewer->setHint({});
+    // Measured with another resolution choice (changed in the menu since): says nothing about this one
+    const std::optional<PreviewResolution::Choice> smaller = m_viewerRes == m_slowRes ? smallerPreview() : std::nullopt;
+    const auto offerSmaller = [&] {
+        m_hintOffer = HintOffer::SmallerPreview;
+        m_offeredRes = *smaller;
+        m_offeredFrom = m_viewerRes;
+        const QSize then = PreviewResolution::sizeFor(m_engine->frameSize(), previewEdgeFor(*smaller));
+        m_viewer->setHint(T("Die Wiedergabe ruckelt (%1 von %2 Bildern/s) bei einer Vorschau von %3 Pixeln. Mit %4 läuft "
+                            "sie flüssiger, der Export bleibt in voller Auflösung. Zurückstellen: Rechtsklick auf die "
+                            "Vorschau › Vorschau-Auflösung")
+                              .arg(qRound(m_slowRate))
+                              .arg(qRound(m_slowFps))
+                              .arg(PreviewResolution::sizeText(m_engine->previewSize()), PreviewResolution::sizeText(then)),
+                          T("Vorschau verkleinern"));
+    };
+    if (smaller == PreviewResolution::Choice::Auto) return offerSmaller();
+    if (offersRenderCache()) {
+        m_hintOffer = HintOffer::RenderCache;
         return m_viewer->setHint(T("Die Wiedergabe ruckelt (%1 von %2 Bildern/s): Hier kosten die Effekte am meisten. "
                                    "Der Render-Cache „Smart“ rechnet Clips mit Effekten in Pausen vor, der Export nutzt "
                                    "weiter die Originale")
                                      .arg(qRound(m_slowRate)).arg(qRound(m_slowFps)),
                                  T("Render-Cache: Intelligent"));
+    }
     const ProxyManager* proxies = m_engine->proxies();
     int missing = 0, pending = 0;
     if (proxies->enabled()) // proxy media switched off: the user wants the originals
@@ -1297,17 +1346,27 @@ void MainWindow::updateProxyHint()
             if (proxies->isPending(f)) ++pending;
             else if (!proxies->hasProxy(f)) ++missing;
         }
-    if (missing > 0)
+    if (missing > 0) {
+        m_hintOffer = HintOffer::Proxies;
         m_viewer->setHint(T("Die Wiedergabe ruckelt (%1 von %2 Bildern/s): Proxy-Medien machen die Vorschau flüssig, "
                             "der Export nutzt weiter die Originale")
                               .arg(qRound(m_slowRate)).arg(qRound(m_slowFps)),
                           T("Proxy-Medien erzeugen"));
-    else if (pending > 0)
+    } else if (pending > 0) {
         m_viewer->setHint(T("Proxy-Medien werden erzeugt (noch %1) …").arg(pending));
-    else {
-        m_slowFiles.clear(); // all there (or switched off): a new measurement decides again
+    } else if (m_slowWithProxies && smaller) {
+        offerSmaller(); // measured with every proxy there: they did not help
+    } else {
+        // All there now (or switched off, or nothing smaller): a new measurement decides again
+        m_slow = false;
+        m_slowFiles.clear();
         m_viewer->setHint({});
     }
+}
+
+void MainWindow::restartPlayMeter()
+{
+    if (m_playMeter.running()) m_playMeter.start(m_playMeter.fps(), m_playClock.elapsed());
 }
 
 bool MainWindow::expensiveAtPlayhead() const

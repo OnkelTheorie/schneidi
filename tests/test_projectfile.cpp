@@ -475,6 +475,49 @@ int main(int argc, char** argv)
         CHECK(c && QFileInfo(c->mediaPath).fileName() == "b.mov");
     }
 
+    // --- Media no timeline uses (left in the Media Pool): the open dialog says so (MainWindow::applyLoaded). A file of
+    // another timeline or a title's texture counts as used
+    {
+        ProjectData d;
+        CHECK(ProjectFile::fromJson(R"({"app":"schneidi","version":1,"media":[
+            {"path":"/weg/a.mp4","length":100,"hasVideo":true},
+            {"path":"/weg/b.mp4","length":100,"hasVideo":true},
+            {"path":"/weg/c.mp4","length":100,"hasVideo":true},
+            {"path":"/weg/d.png","length":1,"hasVideo":true,"isImage":true}],
+            "timeline":{"video":[{"clips":[{"id":1,"media":0,"start":0,"in":0,"out":9}]}],"audio":[]}})",
+                                    tmp.filePath("pool.schneidi"), &d, &err));
+        CHECK_EQ(ProjectFile::unusedMedia(d), QStringList({"/weg/b.mp4", "/weg/c.mp4", "/weg/d.png"}));
+        Sequence other;
+        other.id = 99;
+        other.timeline.video.resize(1);
+        other.timeline.video[0].clips << mk(5, "/weg/b.mp4", 0, 0, 9);
+        Clip title;
+        title.id = 6;
+        title.kind = ClipKind::Title;
+        title.title.look.texture = "/weg/d.png";
+        other.timeline.video[0].clips << title;
+        d.sequences << other;
+        CHECK_EQ(ProjectFile::unusedMedia(d), QStringList({"/weg/c.mp4"}));
+        CHECK_EQ(ProjectFile::missingMedia(d).size(), 4); // missing all the same
+        // A transition's wipe picture and a brand kit file are used too (core/ProjectRefs: one list of every path)
+        d.media << d.media[2] << d.media[2];
+        d.media[4].path = "/weg/wipe.png";
+        d.media[5].path = "/weg/logo.png";
+        d.timeline.video[0].clips[0].transOutStyle.luma = "/weg/wipe.png";
+        BrandKit kit;
+        kit.logo = "/weg/logo.png";
+        d.brand = kit;
+        CHECK_EQ(ProjectFile::unusedMedia(d), QStringList({"/weg/c.mp4"}));
+        // ... and relink finds the wipe picture again (it pointed at the old path before)
+        const QString found = tmp.filePath("wischen");
+        QDir().mkpath(found);
+        QFile wipe(found + "/wipe.png");
+        CHECK(wipe.open(QIODevice::WriteOnly));
+        wipe.close();
+        CHECK_EQ(ProjectFile::relink(&d, found), 1);
+        CHECK_EQ(d.timeline.video[0].clips[0].transOutStyle.luma, found + "/wipe.png");
+    }
+
     // --- Older file: freeze frame without freezeFrame shows `in` - also after splitting (shifts `in` of the right part)
     {
         ProjectData d;
