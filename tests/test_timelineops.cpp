@@ -128,6 +128,31 @@ int main(int argc, char** argv)
         CHECK_TIMELINE(tl);
     }
 
+    // --- rippleDelete on two tracks at different times (an unlinked clip each): every track moves up by all deleted
+    // time, the affected ones too - otherwise V1 moved by its own gap only and the linked x on V1/A1 came apart
+    {
+        Timeline tl = tracks(1, 2);
+        tl.video[0].clips << mk(1, "t", 0, 10) << mk(2, "x", 10, 10, 0, 5) << mk(3, "y", 50, 10, 0, 6);
+        tl.audio[0].clips << mk(4, "x", 10, 10, 0, 5) << mk(5, "m", 30, 10) << mk(6, "y", 50, 10, 0, 6);
+        tl.audio[1].clips << mk(7, "n", 60, 10);
+        const Timeline before = tl;
+        rippleDelete(tl, {1, 5});
+        CHECK_EQ(dump(tl), QString("V1: x[0-10|0-9] y[30-40|0-9]  A1: x[0-10|0-9] y[30-40|0-9]  A2: n[40-50|0-9]"));
+        CHECK_TIMELINE_SYNC(before, tl);
+    }
+    // ... unless a clip of an affected track lies across time deleted elsewhere (g on V1 would run into e): then the
+    // affected tracks close only their own gaps, as before - all of them, so e and its sound f stay together
+    {
+        Timeline tl = tracks(1, 2);
+        tl.video[0].clips << mk(1, "t", 0, 10) << mk(2, "g", 25, 10) << mk(3, "e", 40, 10, 0, 7);
+        tl.audio[0].clips << mk(4, "b", 20, 10) << mk(5, "e", 40, 10, 0, 7);
+        tl.audio[1].clips << mk(6, "n", 40, 10);
+        const Timeline before = tl;
+        rippleDelete(tl, {1, 4});
+        CHECK_EQ(dump(tl), QString("V1: g[15-25|0-9] e[30-40|0-9]  A1: e[30-40|0-9]  A2: n[20-30|0-9]"));
+        CHECK_TIMELINE_SYNC(before, tl);
+    }
+
     // --- insertGap / shiftFrom / clearDissolveAt
     {
         Ids ids;

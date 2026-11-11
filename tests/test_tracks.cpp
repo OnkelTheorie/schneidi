@@ -104,6 +104,17 @@ int main(int argc, char** argv)
     setup(p);
     ed.setClipSpeed({1}, {0.5, false, false, true}, true);
     CHECK(F(p, 1)->length() == 200 && F(p, 2)->start == 200 && F(p, 22)->start == 350);
+    // Two unlinked clips on different tracks at different times twice as fast: every track moves up by both (V1 by
+    // its own clip only took x apart from its sound on A1)
+    setup(p);
+    p.edit("x", [](Timeline& tl) {
+        tl.video[0].clips = {mk(31, 0, 100), mk(32, 100, 100, 5), mk(33, 500, 100, 6)};
+        tl.audio[0].clips = {mk(41, 100, 100, 5), mk(42, 300, 100, 0, "/x/m.mp3"), mk(43, 500, 100, 6)};
+        tl.audio[1].clips = {mk(51, 700, 100, 0, "/x/m.mp3")};
+    });
+    ed.setClipSpeed({31, 42}, {2.0, false, false, true}, true);
+    CHECK_EQ(Check::dump(p.timeline()), QString("V1: a[0-50|0-49] a[50-150|0-99] a[400-500|0-99]  V2:  "
+                                                "A1: a[50-150|0-99] m[250-300|0-49] a[400-500|0-99]  A2: m[600-700|0-99]"));
 
     // --- Lock: nothing changeable, not selectable
     setup(p);
