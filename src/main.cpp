@@ -100,14 +100,20 @@ QPixmap splashPixmap()
 // Qt Quick (its OpenGL is the viewer's own QRhi), and the theme skips the check when a Qt Quick backend is already
 // chosen: chosen here, before the QApplication. Only where that theme loads (it brings Qt Quick along anyway), and
 // without linking Qt Quick: the symbol is looked up, nothing happens without it.
-void skipKdeQuickOpenGlCheck()
+void skipKdeQuickOpenGlCheck(int argc, char* argv[])
 {
+    // Without a screen (offscreen/minimal: test runs, --screenshot) there is no OpenGL check to skip
+    QByteArray platform = qgetenv("QT_QPA_PLATFORM");
+    for (int i = 1; i + 1 < argc; ++i)
+        if (qstrcmp(argv[i], "-platform") == 0 || qstrcmp(argv[i], "--platform") == 0) platform = argv[i + 1];
+    if (platform.startsWith("offscreen") || platform.startsWith("minimal")) return;
     const QByteArray theme = qgetenv("QT_QPA_PLATFORMTHEME").toLower();
     const bool kde = theme.isEmpty() ? qgetenv("XDG_CURRENT_DESKTOP").toUpper().contains("KDE")
                                            || !qEnvironmentVariableIsEmpty("KDE_FULL_SESSION")
                                      : theme.contains("kde");
     if (!kde) return;
-    // The Qt Quick of this Qt only (next to its Qt Core: a bundled Qt never mixes with the system's)
+    // The Qt Quick of this Qt only (next to its Qt Core: a bundled Qt never mixes with the system's; where Qt's
+    // libraries live in separate folders the check simply stays)
     // (looked up in Qt Core itself: &qVersion in the program may be its own call stub)
     void* coreLib = dlopen("libQt6Core.so.6", RTLD_LAZY | RTLD_NOLOAD);
     void* coreSymbol = coreLib ? dlsym(coreLib, "qVersion") : nullptr;
@@ -189,34 +195,45 @@ void firstPaintDone()
         QTimer::singleShot(0, QCoreApplication::instance(), std::move(job));
 }
 
-// The main window's first paint (afterFirstPaint); with SCHNEIDI_STARTUP_TRACE also its first expose (phase table)
+// The main window's first picture (afterFirstPaint): its first expose, one event loop turn later (Qt paints and
+// flushes the exposed window while handling the expose; the window's own Paint may never come when children cover
+// it, and children paint during show() already). Seen app-wide until then; SCHNEIDI_STARTUP_TRACE also marks the
+// first Paint after the expose.
 class FirstPaintWatch : public QObject {
 public:
-    using QObject::QObject;
+    explicit FirstPaintWatch(QWidget* window) : QObject(window), m_window(window)
+    {
+        QCoreApplication::instance()->installEventFilter(this);
+    }
     bool eventFilter(QObject* o, QEvent* e) override
     {
-        if (e->type() == QEvent::Expose && !m_exposed) {
+        if (e->type() == QEvent::Expose && !m_exposed && o == m_window->windowHandle()
+            && m_window->windowHandle()->isExposed()) {
             m_exposed = true;
             StartupTrace::mark("first expose");
-        } else if (e->type() == QEvent::Paint && !m_painted && o == parent()) {
-            m_painted = true;
+            QTimer::singleShot(0, this, [] {
+                StartupTrace::mark("event loop idle after first paint");
+                firstPaintDone();
+            });
+            // SCHNEIDI_STARTUP_TRACE=2: quits by itself (measuring runs), after the work deferred past the paint;
+            // exit(), not quit(): no window is asked to close (no question about unsaved changes)
+            if (qEnvironmentVariableIntValue("SCHNEIDI_STARTUP_TRACE") == 2)
+                QTimer::singleShot(2500, qApp, [] {
+                    StartupTrace::mark("quit (SCHNEIDI_STARTUP_TRACE=2)");
+                    QCoreApplication::exit(0);
+                });
+            if (!StartupTrace::enabled()) QCoreApplication::instance()->removeEventFilter(this);
+        } else if (e->type() == QEvent::Paint && m_exposed && o->isWidgetType()
+                   && static_cast<QWidget*>(o)->window() == m_window) {
             StartupTrace::mark("first paint (main window)");
-            if (StartupTrace::enabled()) {
-                QTimer::singleShot(0, this, [] { StartupTrace::mark("event loop idle after first paint"); });
-                // SCHNEIDI_STARTUP_TRACE=2: quits by itself (measuring runs), after the work deferred past the paint
-                if (qEnvironmentVariableIntValue("SCHNEIDI_STARTUP_TRACE") == 2)
-                    QTimer::singleShot(2500, qApp, [] {
-                        StartupTrace::mark("quit (SCHNEIDI_STARTUP_TRACE=2)");
-                        QApplication::quit();
-                    });
-            }
-            firstPaintDone();
+            QCoreApplication::instance()->removeEventFilter(this);
         }
         return false;
     }
 
 private:
-    bool m_exposed = false, m_painted = false;
+    QWidget* m_window;
+    bool m_exposed = false;
 };
 
 // Claude Code or Claude Desktop is on this computer, but not connected to schneidi: asked once on start (Cli::Setup
@@ -308,7 +325,7 @@ int main(int argc, char* argv[])
 #endif
     I18n::prepareEnvironment(langOverride);
 #if defined(Q_OS_UNIX) && !defined(Q_OS_DARWIN) && !defined(Q_OS_ANDROID)
-    if (screenshot.isEmpty()) skipKdeQuickOpenGlCheck();
+    skipKdeQuickOpenGlCheck(argc, argv); // (--screenshot set the offscreen platform above)
 #endif
     QApplication app(argc, argv);
     StartupTrace::mark("QApplication");
@@ -375,12 +392,7 @@ int main(int argc, char* argv[])
     w.setUserRunner([&w](const QString& command, const QJsonObject& args, const QString& undoText) {
         return Cli::Live::runForUser(&w, command, args, undoText);
     });
-    auto* firstPaint = new FirstPaintWatch(&w);
-    w.installEventFilter(firstPaint);
-    if (StartupTrace::enabled()) {
-        w.winId(); // the native window exists now: its expose reaches the filter
-        w.windowHandle()->installEventFilter(firstPaint);
-    }
+    new FirstPaintWatch(&w);
     QTimer::singleShot(kAfterFirstPaintMaxMs, &w, [] { firstPaintDone(); });
     // Start maximized like DaVinci; screenshot test runs (offscreen) keep the fixed size from MainWindow
     if (app.arguments().contains("--screenshot")) w.show();

@@ -1012,6 +1012,31 @@ namespace {
 bool g_deferred = false;          // setDeferredPrepare
 bool g_preparePosted = false;     // a deferred prepare() waits in the GUI thread's event queue
 Service::Scheduler g_schedule;    // setDeferredPrepare: when the deferred prepare() runs (empty: next event loop turn)
+bool g_parked = false;            // the deferred prepare() waits for g_schedule (not yet in the event queue)
+
+#if !defined(Q_OS_WIN) && !defined(Q_OS_MACOS) && !defined(Q_OS_IOS)
+// The deferred prepare() as a job for the GUI thread's event loop (a second run finds the surface and does nothing)
+void deferredPrepareJob()
+{
+    {
+        std::lock_guard lock(g_surfaceMutex);
+        g_deferred = false;
+        g_parked = false;
+    }
+    Service::prepare();
+}
+
+// Someone needs the GPU before g_schedule's time (a worker waits for the surface): the parked job on the next turn
+void promoteParkedPrepare()
+{
+    std::lock_guard lock(g_surfaceMutex);
+    if (!g_parked) return;
+    g_parked = false;
+    QMetaObject::invokeMethod(QCoreApplication::instance(), &deferredPrepareJob, Qt::QueuedConnection);
+}
+// tryInstance's background start: renders on the CPU meanwhile, so it waits for the scheduled prepare() (no hurry)
+thread_local bool t_backgroundStart = false;
+#endif
 std::condition_variable g_surfaceReady;
 } // namespace
 
@@ -1022,7 +1047,7 @@ void Service::setDeferredPrepare(bool deferred, Scheduler schedule)
     g_schedule = std::move(schedule);
 }
 
-void Service::prepare()
+void Service::prepare(bool now)
 {
 #if !defined(Q_OS_WIN) && !defined(Q_OS_MACOS) && !defined(Q_OS_IOS)
     if (envSwitch() == 0 || !qobject_cast<QGuiApplication*>(QCoreApplication::instance())
@@ -1031,18 +1056,19 @@ void Service::prepare()
     {
         std::lock_guard lock(g_surfaceMutex);
         if (g_surface || g_surfaceTaken) return;
+        if (now) {
+            g_deferred = false;
+            g_parked = false; // a parked job finds the surface made
+        }
         if (g_deferred) { // later, from the event loop (keeps the GL library load out of the start)
             if (!g_preparePosted) {
                 g_preparePosted = true;
-                auto job = [] {
-                    {
-                        std::lock_guard lock(g_surfaceMutex);
-                        g_deferred = false;
-                    }
-                    prepare();
-                };
-                if (g_schedule) g_schedule(job);
-                else QTimer::singleShot(0, QCoreApplication::instance(), job);
+                if (g_schedule) {
+                    g_parked = true;
+                    g_schedule(&deferredPrepareJob);
+                } else {
+                    QTimer::singleShot(0, QCoreApplication::instance(), &deferredPrepareJob);
+                }
             }
             return;
         }
@@ -1062,6 +1088,16 @@ void Service::prepare()
 
 Service* Service::instance()
 {
+#if !defined(Q_OS_WIN) && !defined(Q_OS_MACOS) && !defined(Q_OS_IOS)
+    // Needed now (not tryInstance's background start) while prepare() still waits for its time: the GUI thread makes
+    // the surface at once (it may be about to wait for a background start that waits for the surface), a worker has
+    // the GUI thread make it on its next turn
+    if (g_state.load() != 2 && !t_backgroundStart && envSwitch() != 0
+        && qobject_cast<QGuiApplication*>(QCoreApplication::instance())) {
+        if (QThread::currentThread() == QCoreApplication::instance()->thread()) prepare(true);
+        else promoteParkedPrepare();
+    }
+#endif
     static Service* service = []() -> Service* {
         if (envSwitch() == 0 || !qobject_cast<QGuiApplication*>(QCoreApplication::instance())) return nullptr;
         struct Decided {
@@ -1149,7 +1185,12 @@ Service* Service::tryInstance(bool* decided)
         return instance();
     }
     int idle = 0;
-    if (g_state.compare_exchange_strong(idle, 1)) std::thread([] { instance(); }).detach();
+    if (g_state.compare_exchange_strong(idle, 1)) std::thread([] {
+#if !defined(Q_OS_WIN) && !defined(Q_OS_MACOS) && !defined(Q_OS_IOS)
+            t_backgroundStart = true;
+#endif
+            instance();
+        }).detach();
     *decided = false;
     return nullptr;
 }
@@ -1245,7 +1286,7 @@ bool Context::readYuv(const Texture&, const OutputColor::Target&) { return false
 Context::Stats Context::stats() const { return {}; }
 QSize size(const Texture& t) { return t.size; }
 bool canUpload(int) { return false; }
-void Service::prepare() {}
+void Service::prepare(bool) {}
 void Service::setDeferredPrepare(bool, Scheduler) {}
 Service* Service::instance() { return nullptr; }
 Service* Service::tryInstance(bool* decided)

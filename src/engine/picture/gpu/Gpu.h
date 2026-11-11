@@ -180,8 +180,8 @@ class Service {
 public:
     // Makes the OpenGL surface ahead when called on the GUI thread (QOffscreenSurface needs it on the offscreen platform;
     // ~40 ms, mostly loading the GL library). Renderer's constructor calls it, so a first instance() on a worker (export
-    // workers, preview pump) finds it.
-    static void prepare();
+    // workers, preview pump) finds it. `now`: also while prepare() is deferred (an export about to start).
+    static void prepare(bool now = false);
     // GUI app: prepare() only posts the work to the event loop (not in the way of the start); a worker asking for
     // instance() meanwhile waits for it (at most 2 s). `schedule` decides when the posted work runs (the app: after
     // its window's first paint); without one, as soon as the event loop runs.
