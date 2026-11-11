@@ -420,6 +420,55 @@ int main(int argc, char** argv)
         CHECK(d.mean <= 1.5);
     }
 
+    // A still wider than the card's largest texture (a panorama: D3D11 takes 16384 px): the card cannot hold it, the
+    // layer is drawn on the CPU. Before 0.21 the layer was left out and the frame still counted as made on the card
+    {
+        const int maxSize = Picture::Gpu::Service::instance()->info().maxTextureSize;
+        std::printf("  largest texture %d px\n", maxSize);
+        const int w = std::max(18000, maxSize + 600), h = 3'600'000 / w; // under the still loader's 4x project pixels
+        const QString pano = Check::makeMedia(tmp.filePath("pano.png"),
+                                              {"-f", "lavfi", "-i", QString("testsrc2=size=%1x%2").arg(w).arg(h), "-frames:v", "1"});
+        if (CHECK(!pano.isEmpty())) {
+            Clip c = media(1, pano, 0, 30);
+            c.transform.zoomX = c.transform.zoomY = 12; // a part of it fills the frame
+            same("still wider than a texture", oneTrack({c}), {0}, 1.5, 30);
+        }
+    }
+
+    // Interlaced 4:2:0: the CPU converts field by field (chroma of one field never bleeds into the other); the card
+    // sampled the chroma plane as progressive. Red lines in the top field, blue in the bottom one
+    {
+        const QString il = Check::makeMedia(
+            tmp.filePath("interlaced.mkv"),
+            {"-f", "lavfi", "-i", "color=c=black:size=1280x720:rate=25:duration=1", "-vf",
+             "format=gbrp,geq=r='if(mod(Y,2),0,255)':g='0':b='if(mod(Y,2),255,0)',scale=interl=1,format=yuv420p,setfield=tff",
+             "-c:v", "libx264", "-preset", "ultrafast", "-qp", "0", "-flags", "+ildct+ilme", "-x264-params", "tff=1",
+             "-field_order", "tt"});
+        if (CHECK(!il.isEmpty())) same("interlaced 4:2:0", oneTrack({media(1, il, 0, 20)}), {3}, 1.5, 30);
+    }
+
+    // The card lost (driver reset, GPU removed): the frame whose end reported it goes the CPU way, not the stale pixels
+    // of a pooled buffer as a GPU frame; the context is made again and the next frame is on the card once more.
+    // Before 0.21 endOffscreenFrame's result was not looked at and every later frame fell to the CPU for good
+    {
+        Timeline tl = oneTrack({media(1, g_a, 0, 30)});
+        Picture::Renderer cpu(tl, options(Picture::Mode::Export, false)), gpu(tl, options(Picture::Mode::Export, true));
+        const Picture::Frame a = cpu.render(5);
+        CHECK(gpu.render(20).gpu()); // a pooled buffer with another picture in it
+        Picture::Gpu::Service::instance()->simulateDeviceLoss();
+        const Picture::Frame b = gpu.render(5);
+        CHECK(!b.isNull());
+        CHECK(!b.gpu());
+        if (!b.isNull()) {
+            const Diff d = compare(a.bits(), b.bits(), size_t(a.width()) * a.height() * 4);
+            std::printf("  frame of the lost device       mean %.3f max %3d\n", d.mean, d.max);
+            CHECK(d.mean <= 0.01);
+        }
+        const Picture::Frame c = gpu.render(5);
+        CHECK(c.gpu()); // a new context
+        if (!c.isNull()) CHECK(compare(a.bits(), c.bits(), size_t(a.width()) * a.height() * 4).mean <= 1.0);
+    }
+
     if (const int n = qEnvironmentVariableIntValue("PICTURE_GPU_RENDER_BENCH"); n > 0) {
         Timeline tl;
         tl.video.resize(3);

@@ -70,6 +70,7 @@ struct DeviceInfo {
     QString device;         // driver's device name
     QString error;          // why not
     bool comp = false;      // compositing graphs work on it (Context::compSupported)
+    int maxTextureSize = 0; // largest texture side (QRhi::TextureSizeMax; D3D11 16384): larger pictures stay on the CPU
 };
 
 // The device a Context gets on this machine (probed once, on the first call; GUI application needed)
@@ -102,8 +103,13 @@ public:
 
     // false: the card refused the frame (context lost, driver reset): every operation would do nothing
     bool begin();
-    // Submits what was recorded, waits for the card, fills the readbacks
-    void finish();
+    // Submits what was recorded, waits for the card, fills the readbacks. false: the card failed the frame (device
+    // lost, driver reset): no readback was filled, nothing of the frame may be used
+    bool finish();
+    // The device is gone (QRhi::isDeviceLost): the Context must be made anew
+    bool lost() const;
+    // Tests: the current frame's end reports the device lost, and begin() refuses from then on (as a real loss)
+    void simulateDeviceLoss();
 
     // A pooled RGBA8 render target (premultiplied), cleared to `clear` (straight RGBA 0..1) by its first pass
     TexturePtr target(QSize size, const float clear[4] = nullptr);
@@ -152,7 +158,7 @@ public:
     // ---- Fragment shaders made at run time (effect "shader", engine/picture/ShaderEffect): the same uniform block and
     // bindings as the built-in shaders (quad.vert), p = its 10 parameter vec4 after rect and target, t0 = the input
     // (binding 1). Draws over all of a new RGBA8 target(size). key names the shader (its pipeline is kept for the next
-    // frames; at most 16 shaders, the oldest are dropped). nullptr = the pipeline could not be made
+    // frames; at most 16 shaders, the least recently used is dropped). nullptr = the pipeline could not be made
     TexturePtr customPass(const QByteArray& key, const QShader& frag, QSize size, const float p[40], const Texture* t0);
 
     // Readbacks, filled by the next finish(); the memory must stay valid until then
@@ -164,6 +170,8 @@ public:
     struct Stats {
         int texturesPooled = 0;  // render targets kept for reuse
         int passes = 0;          // passes of the last frame
+        int lutsMade = 0;        // 3D LUT textures made (not taken from the pool)
+        int pipelinesMade = 0;   // customPass pipelines made
     };
     Stats stats() const;
 
@@ -200,8 +208,11 @@ public:
     // Ends the GPU thread (its context released on it); after that run() refuses. Done on QCoreApplication::aboutToQuit
     static void shutdown();
     // Runs job(context) on the GPU thread inside begin()/finish() and waits for it (readbacks are filled on return);
-    // false = shut down or the card refused the frame, nothing ran (the caller takes the CPU path)
+    // false = shut down, or the card refused or failed the frame (device lost: the context is made again for the next
+    // one): nothing of the job may be used, the caller takes the CPU path
     bool run(const std::function<void(Context&)>& job);
+    // Tests: the next frame with work fails as on a lost device (Context::simulateDeviceLoss)
+    void simulateDeviceLoss();
     // The caller is the GPU thread itself (inside a job): run() would wait for itself
     bool onThread() const;
     const DeviceInfo& info() const;

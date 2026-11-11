@@ -185,14 +185,18 @@ struct Context::Impl {
     // Compositing (RGBA16F targets: pipelines of their own, the render pass differs)
     std::unique_ptr<QRhiGraphicsPipeline> layer16Ps, comp16Ps[4];
     QShader compFrag[4];
-    // Run-time shaders (customPass) by key, the oldest first
+    // Run-time shaders (customPass) by key, least recently used first
     std::vector<std::pair<QByteArray, std::unique_ptr<QRhiGraphicsPipeline>>> customPs;
+    // Pipelines dropped from customPs while the frame may still use them: released after its end (finish())
+    std::vector<std::unique_ptr<QRhiGraphicsPipeline>> retiredPs;
     bool compOk = false;
 
     // Per-pass resources, reused frame after frame (slot i = i-th pass of the frame)
     std::vector<std::unique_ptr<QRhiBuffer>> ubos;
     std::vector<std::unique_ptr<QRhiShaderResourceBindings>> srbs;
     int passes = 0, lastPasses = 0;
+    int lutsMade = 0, pipelinesMade = 0;
+    bool simulatedLoss = false; // simulateDeviceLoss()
 
     // Texture pool: shared state so textures given out can find it (or know it is gone)
     struct Pool {
@@ -204,6 +208,17 @@ struct Context::Impl {
     // readback size stayed on the card for the whole session (typing a title's text made a new size per key)
     static constexpr uint64_t kUnusedFrames = 240, kSweepEvery = 120;
     std::shared_ptr<Pool> pool = std::make_shared<Pool>();
+
+    // 3D LUTs: a LUT dropped by its owner (a cache evicting it, the last draw of a keyframed grade) may still be read
+    // by a pass of the frame being recorded (up to three jobs share one frame), so it is never released at once: it
+    // waits in `retired` for the frame's end and is then kept for the next gradeLut of its size (keyframed grades
+    // bake a LUT per frame: no new 52^3 texture each time)
+    struct LutPool {
+        std::mutex lock;
+        std::vector<std::unique_ptr<Lut3d>> retired, free;
+    };
+    static constexpr size_t kFreeLuts = 8;
+    std::shared_ptr<LutPool> luts = std::make_shared<LutPool>();
 
     // Pictures referenced by uploads until finish() (the GL backend reads them when the frame is submitted)
     std::vector<AVFrame*> heldFrames;
@@ -223,6 +238,8 @@ struct Context::Impl {
         userData.reset();
         compData.reset();
         pool.reset(); // textures still given out leak their GPU objects instead of touching a dead QRhi
+        luts.reset(); // as the textures (LUTs still given out leak theirs)
+        retiredPs.clear();
     }
 
     QRhiResourceUpdateBatch* batch()
@@ -502,6 +519,8 @@ std::unique_ptr<Context> Context::create(QOffscreenSurface* surface, QString* wh
         return {};
     }
     c->d->info.comp = c->d->compOk;
+    const int maxSize = c->d->rhi->resourceLimit(QRhi::TextureSizeMax);
+    c->d->info.maxTextureSize = maxSize > 0 ? maxSize : 16384; // (unknown: what every backend takes)
     return c;
 }
 
@@ -513,24 +532,43 @@ std::shared_ptr<void>& Context::compData() { return d->compData; }
 bool Context::begin()
 {
     if (d->recording) return true;
+    if (d->simulatedLoss) return false;
     if (d->rhi->beginOffscreenFrame(&d->cb) != QRhi::FrameOpSuccess) return false;
     d->recording = true;
     d->passes = 0;
     return true;
 }
 
-void Context::finish()
+bool Context::finish()
 {
-    if (!d->recording) return;
+    if (!d->recording) return true;
     if (d->pending) {
         d->cb->resourceUpdate(d->pending);
         d->pending = nullptr;
     }
-    d->rhi->endOffscreenFrame(); // waits for the card: readbacks are complete
+    QRhi::FrameOpResult r = d->rhi->endOffscreenFrame(); // waits for the card: readbacks are complete
+    if (d->simulatedLoss) r = QRhi::FrameOpDeviceLost;
     d->recording = false;
     d->lastPasses = d->passes;
-    for (auto& rb : d->readbacks) rb.deliver(rb.result->data);
+    // A failed frame (device lost, driver reset) filled no readback: nothing is delivered, the caller's buffers keep
+    // what they had and the jobs count as not run (Service), so nobody takes them for the card's picture
+    if (r == QRhi::FrameOpSuccess)
+        for (auto& rb : d->readbacks) rb.deliver(rb.result->data);
+    else
+        qWarning("GPU picture engine: the card failed a frame (%s)",
+                 r == QRhi::FrameOpDeviceLost ? "device lost" : "error");
     d->readbacks.clear();
+    d->retiredPs.clear(); // the frame is done with them
+    {
+        std::vector<std::unique_ptr<Lut3d>> drop; // released outside the lock
+        std::lock_guard<std::mutex> g(d->luts->lock);
+        for (auto& l : d->luts->retired) d->luts->free.push_back(std::move(l));
+        d->luts->retired.clear();
+        while (d->luts->free.size() > Impl::kFreeLuts) {
+            drop.push_back(std::move(d->luts->free.front()));
+            d->luts->free.erase(d->luts->free.begin());
+        }
+    }
     for (AVFrame* f : d->heldFrames) av_frame_free(&f);
     d->heldFrames.clear();
     d->heldData.clear();
@@ -547,11 +585,16 @@ void Context::finish()
                     ++it;
                 }
     }
+    return r == QRhi::FrameOpSuccess;
 }
+
+void Context::simulateDeviceLoss() { d->simulatedLoss = true; }
+
+bool Context::lost() const { return d->simulatedLoss || d->rhi->isDeviceLost(); }
 
 TexturePtr Context::target(QSize size, const float clear[4])
 {
-    if (size.isEmpty()) return {};
+    if (size.isEmpty() || std::max(size.width(), size.height()) > d->info.maxTextureSize) return {};
     TexturePtr t = d->take({0, size.width(), size.height(), 0, 0}, [&] { return d->makeTarget(size); });
     if (!t) return {};
     t->pendingClear = true;
@@ -562,7 +605,7 @@ TexturePtr Context::target(QSize size, const float clear[4])
 
 TexturePtr Context::uploadRgba(const uint8_t* rgba, int w, int h, bool premultiplied, bool mips)
 {
-    if (!rgba || w <= 0 || h <= 0) return {};
+    if (!rgba || w <= 0 || h <= 0 || std::max(w, h) > d->info.maxTextureSize) return {};
     const int levels = mips ? d->rhi->mipLevelsForSize(QSize(w, h)) : 1;
     TexturePtr t = d->take({1, w, h, 0, levels}, [&] {
         auto t = std::make_unique<Texture>();
@@ -587,7 +630,7 @@ TexturePtr Context::uploadRgba(const uint8_t* rgba, int w, int h, bool premultip
 
 TexturePtr Context::uploadGray(const uint8_t* gray, int w, int h)
 {
-    if (!gray || w <= 0 || h <= 0) return {};
+    if (!gray || w <= 0 || h <= 0 || std::max(w, h) > d->info.maxTextureSize) return {};
     TexturePtr t = d->take({2, w, h, 0, 0}, [&] {
         auto t = std::make_unique<Texture>();
         t->size = QSize(w, h);
@@ -603,7 +646,8 @@ TexturePtr Context::uploadGray(const uint8_t* gray, int w, int h)
 
 TexturePtr Context::uploadYuv(const AVFrame* frame, const Video::Info& info, bool mips)
 {
-    if (!frame || frame->width <= 0 || frame->height <= 0) return {};
+    if (!frame || frame->width <= 0 || frame->height <= 0 || std::max(frame->width, frame->height) > d->info.maxTextureSize)
+        return {};
     const auto fmt = AVPixelFormat(frame->format);
     const AVPixFmtDescriptor* desc = av_pix_fmt_desc_get(fmt);
     if (!desc || (desc->flags & (AV_PIX_FMT_FLAG_RGB | AV_PIX_FMT_FLAG_PAL | AV_PIX_FMT_FLAG_HWACCEL | AV_PIX_FMT_FLAG_BE))
@@ -655,6 +699,9 @@ TexturePtr Context::uploadYuv(const AVFrame* frame, const Video::Info& info, boo
     m[0] = a, m[1] = a, m[2] = a, m[3] = 0;
     m[4] = 0, m[5] = float(gu), m[6] = float(bu), m[7] = 0;
     m[8] = float(rv), m[9] = float(gv), m[10] = 0, m[11] = 0;
+    // The shader samples the shared chroma plane as (.r, .g) = columns 1, 2: Cr first (NV21, NV42) swaps them
+    if (semi && desc->comp[1].offset > desc->comp[2].offset)
+        for (int i = 4; i < 8; ++i) std::swap(m[i], m[i + 4]);
     m[12] = float(-ys * yo - rv * co), m[13] = float(-ys * yo - (gu + gv) * co), m[14] = float(-ys * yo - bu * co), m[15] = 1;
 
     // Keep the picture until finish(): the upload reads the plane memory when the frame is submitted (no copy here)
@@ -691,10 +738,34 @@ LutPtr Context::gradeLut(const ColorGrade::Baked& baked, int n)
                 p[3] = 255;
             }
     ColorGrade::apply(lattice.data(), n * n, n, baked, 1);
-    auto lut = std::make_shared<Lut3d>();
-    lut->size = n;
-    lut->tex.reset(d->rhi->newTexture(QRhiTexture::RGBA8, n, n, n, 1, QRhiTexture::ThreeDimensional));
-    if (!lut->tex->create()) return {};
+    std::unique_ptr<Lut3d> made;
+    {
+        std::lock_guard<std::mutex> g(d->luts->lock);
+        auto& free = d->luts->free;
+        auto it = std::find_if(free.rbegin(), free.rend(), [n](const auto& l) { return l->size == n; });
+        if (it != free.rend()) {
+            made = std::move(*it);
+            free.erase(std::next(it).base());
+        }
+    }
+    if (!made) {
+        made = std::make_unique<Lut3d>();
+        made->size = n;
+        made->tex.reset(d->rhi->newTexture(QRhiTexture::RGBA8, n, n, n, 1, QRhiTexture::ThreeDimensional));
+        if (!made->tex->create()) return {};
+        ++d->lutsMade;
+    }
+    // Dropped: back to the pool after the frame that may still read it (never released while recorded)
+    std::weak_ptr<Impl::LutPool> weak = d->luts;
+    LutPtr lut(made.release(), [weak](Lut3d* l) {
+        if (auto pool = weak.lock()) {
+            std::lock_guard<std::mutex> g(pool->lock);
+            pool->retired.emplace_back(l);
+            return;
+        }
+        (void)l->tex.release(); // context gone: its QRhi too
+        delete l;
+    });
     QList<QRhiTextureUploadEntry> entries;
     const size_t slice = size_t(n) * n * 4;
     for (int z = 0; z < n; ++z)
@@ -806,7 +877,7 @@ bool Context::compSupported() const { return d->compOk; }
 
 TexturePtr Context::compTarget(QSize size, const float clear[4])
 {
-    if (size.isEmpty() || !d->compOk) return {};
+    if (size.isEmpty() || !d->compOk || std::max(size.width(), size.height()) > d->info.maxTextureSize) return {};
     TexturePtr t = d->take({5, size.width(), size.height(), 0, 0}, [&] { return d->makeTarget(size, true); });
     if (!t) return {};
     t->pendingClear = true;
@@ -839,8 +910,14 @@ TexturePtr Context::customPass(const QByteArray& key, const QShader& frag, QSize
 {
     if (!d->recording || !frag.isValid() || size.isEmpty()) return {};
     auto it = std::find_if(d->customPs.begin(), d->customPs.end(), [&](const auto& e) { return e.first == key; });
-    if (it == d->customPs.end()) {
-        if (d->customPs.size() >= 16) d->customPs.erase(d->customPs.begin());
+    if (it != d->customPs.end()) { // used now: the most recent (the last one)
+        std::rotate(it, it + 1, d->customPs.end());
+        it = d->customPs.end() - 1;
+    } else {
+        if (d->customPs.size() >= 16) { // the least recently used goes - after this frame (a pass may use it)
+            if (d->customPs.front().second) d->retiredPs.push_back(std::move(d->customPs.front().second));
+            d->customPs.erase(d->customPs.begin());
+        }
         d->customPs.emplace_back(key, nullptr);
         it = d->customPs.end() - 1;
     }
@@ -851,7 +928,9 @@ TexturePtr Context::customPass(const QByteArray& key, const QShader& frag, QSize
     Uniforms u;
     u.rect[2] = float(size.width()), u.rect[3] = float(size.height());
     std::memcpy(u.inv0, p, 40 * sizeof(float));
+    const bool made = !it->second;
     d->pass(*out, it->second, frag, false, u, t0 ? t0->tex[0].get() : nullptr, nullptr, nullptr, nullptr);
+    if (made && it->second) ++d->pipelinesMade;
     if (!it->second) { // the pipeline was refused (pass() drew nothing)
         d->customPs.erase(it);
         return {};
@@ -939,6 +1018,8 @@ Context::Stats Context::stats() const
         s.texturesPooled = int(d->pool->free.size());
     }
     s.passes = d->lastPasses;
+    s.lutsMade = d->lutsMade;
+    s.pipelinesMade = d->pipelinesMade;
     return s;
 }
 
@@ -981,6 +1062,24 @@ struct Service::Impl {
         std::condition_variable doneCv;
     };
     std::deque<Job*> queue;
+    std::atomic<bool> loseDevice{false}; // simulateDeviceLoss()
+    int remade = 0;
+
+    // The device is lost: the context (and everything on the card: pools, the callers' caches in userData) is made
+    // anew on the same surface. A few times per run; a device that keeps getting lost turns the engine off (every job
+    // then reports not run: CPU path). false = no context now
+    bool remake()
+    {
+        context.reset();
+        constexpr int kRemakes = 3;
+        if (remade >= kRemakes) return false;
+        ++remade;
+        QString why;
+        context = Context::create(surface.get(), &why, envSwitch() == 1);
+        if (context) qWarning("GPU picture engine: device lost, context made again (%d of %d)", remade, kRemakes);
+        else qWarning("GPU picture engine off: device lost and no new context (%s)", qPrintable(why));
+        return context != nullptr;
+    }
 
     void loop()
     {
@@ -1000,13 +1099,18 @@ struct Service::Impl {
             }
             const bool quit = !jobs.back()->fn;
             const size_t work = jobs.size() - (quit ? 1 : 0);
-            // A frame the card refuses runs no job: their readbacks would stay unfilled and look like a result
-            if (work > 0 && context->begin()) {
-                for (size_t i = 0; i < work; ++i) {
-                    (*jobs[i]->fn)(*context);
-                    jobs[i]->ran = true;
+            // A frame the card refuses (begin) or fails (finish: device lost, driver reset) counts as not run: its
+            // readbacks are unfilled and must not look like a result - the callers take the CPU path for it
+            if (work > 0) {
+                bool begun = context && context->begin();
+                if (!begun && context && remake()) begun = context->begin(); // lost before this frame
+                if (begun) {
+                    if (loseDevice.exchange(false)) context->simulateDeviceLoss();
+                    for (size_t i = 0; i < work; ++i) (*jobs[i]->fn)(*context);
+                    const bool ok = context->finish();
+                    for (size_t i = 0; i < work; ++i) jobs[i]->ran = ok;
+                    if (!ok && context->lost()) remake(); // the next frame on a new device
                 }
-                context->finish();
             }
             if (quit) context.reset(); // on its own thread (GL context, textures)
             {
@@ -1244,6 +1348,8 @@ bool Service::run(const std::function<void(Context&)>& job)
 
 const DeviceInfo& Service::info() const { return d->info; }
 
+void Service::simulateDeviceLoss() { d->loseDevice = true; }
+
 bool Service::onThread() const { return std::this_thread::get_id() == d->thread.get_id(); }
 
 #else // no Qt RHI headers: the CPU path only
@@ -1284,9 +1390,11 @@ std::shared_ptr<void>& Context::userData()
 std::shared_ptr<void>& Context::compData() { return userData(); }
 const DeviceInfo& Context::info() const { return d->info; }
 bool Context::begin() { return false; }
-void Context::finish() {}
+bool Context::finish() { return true; }
+void Context::simulateDeviceLoss() {}
+bool Context::lost() const { return false; }
 TexturePtr Context::target(QSize, const float*) { return {}; }
-TexturePtr Context::uploadRgba(const uint8_t*, int, int, bool) { return {}; }
+TexturePtr Context::uploadRgba(const uint8_t*, int, int, bool, bool) { return {}; }
 TexturePtr Context::uploadYuv(const AVFrame*, const Video::Info&, bool) { return {}; }
 TexturePtr Context::uploadGray(const uint8_t*, int, int) { return {}; }
 LutPtr Context::gradeLut(const ColorGrade::Baked&, int) { return {}; }
@@ -1311,6 +1419,7 @@ Service* Service::tryInstance(bool* decided)
     return nullptr;
 }
 void Service::shutdown() {}
+void Service::simulateDeviceLoss() {}
 bool Service::run(const std::function<void(Context&)>&) { return false; }
 bool Service::onThread() const { return false; }
 const DeviceInfo& Service::info() const { return probe(); }
