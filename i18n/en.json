@@ -2960,5 +2960,6 @@
  "Hoppla, alle Clips sind weg. {key:undo} holt sie zurück – sonst hole ich sie beim nächsten Schritt zurück.": "Oops, all clips are gone. {key:undo} brings them back – otherwise I'll bring them back at the next step.",
  "Die Timeline war leer: Ich habe die Clips mit {key:undo} zurückgeholt.": "The timeline was empty: I brought the clips back with {key:undo}.",
  "Ich habe dir einen Clip in die Timeline gelegt.": "I put a clip on the timeline for you.",
- "Der Clip liegt gerade außerhalb des sichtbaren Teils der Timeline: Scroll hin, dann siehst du den Abspielkopf in seiner Mitte.": "The clip is outside the visible part of the timeline right now: scroll to it to see the playhead in its middle."
+ "Der Clip liegt gerade außerhalb des sichtbaren Teils der Timeline: Scroll hin, dann siehst du den Abspielkopf in seiner Mitte.": "The clip is outside the visible part of the timeline right now: scroll to it to see the playhead in its middle.",
+ "Hoppla, alle Clips sind weg. {key:undo} holt sie zurück.": "Oops, all clips are gone. {key:undo} brings them back."
 }

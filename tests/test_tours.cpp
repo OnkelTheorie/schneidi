@@ -52,6 +52,7 @@
 #include <QSplitter>
 #include <QTemporaryDir>
 #include <QTest>
+#include <QUndoStack>
 #include <QTimer>
 #include <QWindow>
 #include <QTranslator>
@@ -1020,6 +1021,130 @@ void testCutTour(MainWindow& w, const QString& run, bool dumpIt)
     tours->stop();
 }
 
+int clipsIn(Project* p, int sequence)
+{
+    const Sequence* s = p->sequence(sequence);
+    if (!s) return -1;
+    int n = 0;
+    for (const Track& t : s->timeline.video) n += t.clips.size();
+    for (const Track& t : s->timeline.audio) n += t.clips.size();
+    return n;
+}
+
+// The repair after the user's other moves, all inside the practice project:
+// - another timeline opened (no undo step) and empty: the repair never undoes the user's steps on the first one (a
+//   sample clip in the open timeline instead, the history as it was)
+// - a compound clip made of every clip: a clip, no "all gone" hint, nothing undone
+// - the start tour's "needs a clip" with the drag step skipped: nothing of the user's undone, a sample clip placed
+// - Back to the drag step after deleting the clip: the step waits for the drag again (no repair there)
+// - the last step: the hint does not promise a next step
+void testCutTourEdges(MainWindow& w, const QString& run)
+{
+    TourManager* tours = w.tours();
+    TourOverlay* o = tours->overlay();
+    TourRunner* r = tours->runner();
+    Project* p = w.liveProject();
+    QUndoStack* st = p->undoStack();
+    QAction* selectAll = bound("select_all");
+    QAction* del = bound("ripple_delete");
+    if (!CHECK(selectAll && del)) return;
+    const auto start = [&](const char* id) {
+        tours->start(id);
+        if (QPushButton* keep = button(o, "tour_keep")) keep->click();
+        QTest::qWait(30);
+        return CHECK(r->running());
+    };
+    const auto go = [&](const char* name) {
+        if (QPushButton* b = button(o, name); CHECK(b)) b->click();
+        QTest::qWait(30);
+    };
+    const QString undoKey = "<b>" + InputBindings::instance().current("undo").toString(QKeySequence::NativeText).toHtmlEscaped() + "</b>";
+
+    // Another timeline
+    if (start("editing")) {
+        const int first = p->currentSequence();
+        const int second = p->addTimeline(); // one undo step, opened
+        p->setCurrentSequence(first);
+        pressBound(w, "split"); // a step of the user's on the first timeline
+        CHECK_EQ(r->index(), 1);
+        const int split = clipsIn(p, first);
+        const int index = st->index();
+        p->setCurrentSequence(second); // empty, no undo step
+        QTest::qWait(30);
+        go("tour_next");
+        Check::report(clipsIn(p, first) == split, "the split on the other timeline kept", __FILE__, __LINE__,
+                      run + QString(": %1 -> %2 clips").arg(split).arg(clipsIn(p, first)));
+        Check::report(st->index() >= index, "no step of the user's undone", __FILE__, __LINE__,
+                      run + QString(": %1 -> %2").arg(index).arg(st->index()));
+        CHECK(hasVideoClip(p));
+        tours->stop();
+    }
+
+    // A compound clip of everything
+    if (start("editing")) {
+        go("tour_next");
+        go("tour_next");
+        QVector<int> ids;
+        for (const Clip& c : p->timeline().video.value(0).clips) ids << c.id;
+        ids = w.editor()->withLinked(ids);
+        w.liveSelection()->set(QSet<int>(ids.cbegin(), ids.cend()));
+        CHECK(w.editor()->createCompoundClip() != 0);
+        QTest::qWait(30);
+        const int index = st->index();
+        Check::report(!bubbleText(o).contains(undoKey), "no 'all gone' for a compound clip", __FILE__, __LINE__, run);
+        go("tour_next");
+        bool compound = false;
+        for (const Track& t : p->timeline().video)
+            for (const Clip& c : t.clips) compound |= c.kind == ClipKind::Compound;
+        Check::report(compound && st->index() == index, "the compound clip stays", __FILE__, __LINE__,
+                      run + QString(": undo index %1 -> %2").arg(index).arg(st->index()));
+        tours->stop();
+    }
+
+    // The start tour: a title of the user's, the drag step skipped
+    if (start("first_steps")) {
+        w.editor()->addTitle(0, 0, 30, TitleKind::Text);
+        const int index = st->index();
+        while (r->running() && r->index() < 4) go("tour_next");
+        bool title = false;
+        for (const Track& t : p->timeline().video)
+            for (const Clip& c : t.clips) title |= c.kind == ClipKind::Title;
+        Check::report(title && st->index() >= index && hasVideoClip(p), "a clip placed, the title kept", __FILE__, __LINE__,
+                      run + QString(": undo index %1 -> %2").arg(index).arg(st->index()));
+        tours->stop();
+    }
+
+    // Back to the drag step after deleting the dragged clip
+    if (start("first_steps")) {
+        while (r->running() && r->index() < 3) go("tour_next");
+        auto* tv = w.findChild<TimelineView*>();
+        if (CHECK(tv && r->index() == 3)) emit tv->dropRequested({p->media().value(0).path}, 0, 0, PlaceParts::Both);
+        QTest::qWait(60);
+        CHECK_EQ(r->index(), 4);
+        selectAll->trigger();
+        del->trigger();
+        QTest::qWait(30);
+        go("tour_back");
+        Check::report(r->index() == 3 && r->waiting() && !hasVideoClip(p), "the drag step waits for the drag", __FILE__,
+                      __LINE__, run);
+        tours->stop();
+    }
+
+    // The last step
+    if (start("editing")) {
+        while (r->running() && r->index() + 1 < r->count()) go("tour_next");
+        selectAll->trigger();
+        del->trigger();
+        QTest::qWait(30);
+        const QString text = bubbleText(o);
+        Check::report(text.contains(undoKey) && !text.contains(tours->richText("Hoppla, alle Clips sind weg. {key:undo} holt "
+                                                                               "sie zurück – sonst hole ich sie beim nächsten "
+                                                                               "Schritt zurück.")),
+                      "the last step's hint", __FILE__, __LINE__, run + ": " + text);
+        tours->stop();
+    }
+}
+
 // The user's own project: a clip of its own (a title: no media at all), unsaved, selected, the playhead moved
 void ownProject(MainWindow& w)
 {
@@ -1084,6 +1209,7 @@ void runWindow(Engine& engine, const QString& run, const QString& settingsFile, 
         sameLook(before, look(w), run + " after " + t.id);
     }
     testCutTour(w, run, dumpIt);
+    testCutTourEdges(w, run);
     if (!user) testPanelToggles(w); // after the tours (they put every splitter's sizes back) too
     testHistoryAndLive(w);
     // Back in the user's project after the tours: the same clip, still unsaved, still selected

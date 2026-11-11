@@ -60,7 +60,7 @@ public:
         // bubble (German key, e.g. "the clip is outside the visible timeline"), taken once
         enum class Restored { No, Undone, Placed };
         std::function<bool()> hasClip;
-        std::function<Restored()> restoreClip;
+        std::function<Restored(bool mayUndo)> restoreClip; // mayUndo: the tour had a clip (the user deleted it)
         std::function<QString()> takeNote;
     };
     TourManager(QMainWindow* window, Project* project, Host host);
@@ -81,6 +81,8 @@ public:
     QString stepText(const TourStep& step) const;
     // The same for any German key (the notes below a step's text)
     QString richText(const QString& german) const;
+    // A note below the step's text that is not true any more (the clip scrolled into view): taken away
+    void dropNote(const QString& german);
     TourOverlay* overlay() const { return m_overlay; }
     // The rectangles a target string stands for (window coordinates; empty = nothing visible of it)
     QVector<QRect> resolve(const QString& target) const;

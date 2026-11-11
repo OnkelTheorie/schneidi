@@ -245,9 +245,11 @@ QString TourManager::shownText() const
     const TourStep* s = m_runner.step();
     if (!s) return {};
     QString out = stepText(*s);
-    QStringList notes = m_lostShown ? QStringList{N_("Hoppla, alle Clips sind weg. {key:undo} holt sie zurück – sonst hole "
-                                                     "ich sie beim nächsten Schritt zurück.")}
-                                    : m_notes;
+    const bool last = m_runner.index() + 1 == m_runner.count(); // no next step to bring them back
+    QStringList notes = !m_lostShown ? m_notes
+                        : last       ? QStringList{N_("Hoppla, alle Clips sind weg. {key:undo} holt sie zurück.")}
+                                     : QStringList{N_("Hoppla, alle Clips sind weg. {key:undo} holt sie zurück – sonst "
+                                                      "hole ich sie beim nächsten Schritt zurück.")};
     for (const QString& n : std::as_const(notes)) out += "<br><br><i>" + richText(n) + "</i>";
     return out;
 }
@@ -260,10 +262,12 @@ void TourManager::prepare(const TourStep& step)
         m_hadClip = true;
         return;
     }
-    // Deleted (all of them: select all, then Delete) at an earlier step, or never placed (the drag step skipped)
+    // Deleted (all of them: select all, then Delete) at an earlier step, or never placed (the drag step skipped).
+    // Not on a step that asks the user to place one (Back to the drag step): it waits for the drag again
     if (!m_hadClip && step.needs != QLatin1String("clip")) return;
+    if (step.wait == QLatin1String("clip_on_timeline")) return;
     m_busy = true;
-    const Host::Restored r = m_host.restoreClip();
+    const Host::Restored r = m_host.restoreClip(m_hadClip); // undo only what the user deleted
     m_busy = false;
     if (r == Host::Restored::Undone) m_notes << N_("Die Timeline war leer: Ich habe die Clips mit {key:undo} zurückgeholt.");
     if (r == Host::Restored::Placed) m_notes << N_("Ich habe dir einen Clip in die Timeline gelegt.");
@@ -280,6 +284,12 @@ void TourManager::updateLost()
     m_lostShown = lost;
     if (lost) m_notes.clear(); // "brought back" would be wrong now
     m_overlay->setStepText(shownText()); // the text only: the buttons and the keyboard focus stay
+}
+
+void TourManager::dropNote(const QString& german)
+{
+    if (!m_notes.removeAll(german) || !m_runner.running()) return;
+    m_overlay->setStepText(shownText());
 }
 
 void TourManager::finished(bool)
