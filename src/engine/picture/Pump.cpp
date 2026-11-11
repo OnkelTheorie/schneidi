@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "engine/picture/Pump.h"
 
+#include "core/SystemMemory.h"
 #include "engine/audio/Wait.h"
 
 #include <QThread>
@@ -34,8 +35,10 @@ constexpr double kJumpMargin = 1.2;
 // Idle workers: look for clips starting soon this often, drop unused decoders this often
 constexpr auto kPrepareEvery = std::chrono::milliseconds(250);
 constexpr auto kTrimEvery = std::chrono::seconds(10);
-// Recently shown frames: 192 MB = ~95 frames of the 960x540 preview, ~23 at full 1080p
+// Recently shown frames: at most 192 MB = ~95 frames of the 960x540 preview, ~23 at full 1080p; on a small machine
+// 1/16 of its memory (see recentBudgetFor), at least 16 MB
 constexpr int64_t kRecentBudget = 192ll * 1024 * 1024;
+constexpr int64_t kMinRecentBudget = 16ll * 1024 * 1024;
 
 double seconds(SteadyClock::duration d) { return std::chrono::duration<double>(d).count(); }
 
@@ -423,6 +426,7 @@ Pump::Pump(Clock clock, Show show, int workers) : d(std::make_unique<Impl>())
 {
     d->clock = std::move(clock);
     d->show = std::move(show);
+    d->recentBudget = recentBudgetFor(SystemMemory::read());
     d->workerCount = workers > 0 ? workers : std::clamp(QThread::idealThreadCount() / 3, 2, 4);
     for (int i = 0; i < d->workerCount; ++i) d->workers.emplace_back([this] { d->workerLoop(); });
     d->shower = std::thread([this] { d->showLoop(); });
@@ -544,6 +548,17 @@ void Pump::dropRecent()
         gone.swap(d->recent);
         d->recentBytes = 0;
     }
+}
+
+int64_t Pump::recentBudgetFor(const SystemMemory::Info& memory)
+{
+    // The whole is the machine's RAM or the cgroup limit above the process (container, systemd scope), the smaller.
+    // A fixed 192 MB filled within ~3 s of playback and made a 415-MB Raspberry Pi Zero 2 W swap: the sound device and
+    // the decoders stalled for seconds, the picture stood still (0.18-0.21)
+    qint64 total = memory.total;
+    if (memory.limit > 0 && (total <= 0 || memory.limit < total)) total = memory.limit;
+    if (total <= 0) return kRecentBudget; // unknown: as on a usual computer
+    return std::clamp<int64_t>(total / 16, kMinRecentBudget, kRecentBudget);
 }
 
 void Pump::setRecentBudget(int64_t bytes)

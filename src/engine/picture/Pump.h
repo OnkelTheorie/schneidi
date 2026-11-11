@@ -22,6 +22,8 @@
 //
 // Positions are content frames (the multicam grid's are sequence frames; the Engine adds its offset).
 
+#include "core/SystemMemory.h"
+
 #include <QImage>
 
 #include <atomic>
@@ -89,8 +91,11 @@ public:
         int cancelled = 0;   // still renders given up because the position moved on
         int64_t recentBytes = 0; // memory the recently shown frames hold now
     };
-    // Memory for recently shown frames (bytes; tests make it small)
+    // Memory for recently shown frames (bytes; tests make it small). Default: recentBudgetFor(SystemMemory::read())
     void setRecentBudget(int64_t bytes);
+    // The default budget for a machine: 1/16 of its RAM (or of the cgroup limit, the smaller), 16 to 192 MB - a
+    // 16-GB computer keeps 192 MB, a Raspberry Pi Zero 2 W (415 MB) 26 MB
+    static int64_t recentBudgetFor(const SystemMemory::Info& memory);
     // Forgets the recently shown frames (memory given back while idle; they are rendered again when wanted)
     void dropRecent();
     Stats stats() const;
