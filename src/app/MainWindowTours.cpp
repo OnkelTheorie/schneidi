@@ -39,7 +39,10 @@
 #include <QSplitter>
 #include <QStatusBar>
 #include <QPointer>
+#include <QUndoStack>
 #include <algorithm>
+#include <cmath>
+#include <memory>
 #include <utility>
 #include <QToolButton>
 
@@ -112,14 +115,128 @@ void MainWindow::setupTours(QMenu* help)
             m_timeline->view()->setPlayhead(c->start + c->length() / 2);
         }
     };
-    // The Inspector shows a clip: the first video clip selected when none is
+    // The Inspector shows a clip: the first video clip selected when none is (a selection of deleted clips counts as
+    // none: the Inspector would stay empty)
     host.actions["select_clip"] = [this] {
-        if (!m_selection->ids().isEmpty()) return;
+        for (int id : m_selection->ids())
+            if (TimelineOps::findClip(m_project->timeline(), id)) return;
+        for (const QVector<Track>* tracks : {&m_project->timeline().video, &m_project->timeline().audio})
+            for (const Track& t : *tracks)
+                if (!t.clips.isEmpty()) {
+                    m_selection->set({t.clips.first().id});
+                    return;
+                }
+    };
+    // The split step: the playhead in the middle of the clip it is about (the first on V1, else the first video clip),
+    // that clip selected (the split key splits the selected clips only) - the key just works. Only the playhead moves,
+    // never the timeline's zoom or scroll (core rule): a clip outside the visible part gets the playhead in its middle
+    // and a note that it is out of view (gone once the user scrolled it into view); one partly visible, in the middle
+    // of what shows
+    static const char* const outOfViewNote = N_("Der Clip liegt gerade außerhalb des sichtbaren Teils der Timeline: "
+                                                "Scroll hin, dann siehst du den Abspielkopf in seiner Mitte.");
+    auto note = std::make_shared<QString>();
+    auto outOfView = std::make_shared<int>(0); // the clip of that note
+    host.takeNote = [note] { return std::exchange(*note, QString()); };
+    connect(m_timeline->view(), &TimelineView::viewChanged, this, [this, outOfView] {
+        if (*outOfView && m_tours && !m_timeline->view()->clipArea(*outOfView).isEmpty()) {
+            *outOfView = 0;
+            m_tours->dropNote(outOfViewNote);
+        }
+    });
+    host.actions["playhead_mid_clip"] = [this, note, outOfView] {
+        *outOfView = 0;
+        // The first clip on V1 that is no title (a title would be split too, but it is not the tour's clip), else
+        // the first such clip on any video track
+        const Timeline& tl = m_project->timeline();
+        const Clip* clip = nullptr;
+        for (const Track& t : tl.video)
+            for (const Clip& c : t.clips)
+                if (!clip && c.kind != ClipKind::Title) clip = &c;
+        if (!clip || clip->length() < 2) return;
+        const int id = clip->id, start = clip->start, end = clip->end();
+        TimelineView* tv = m_timeline->view();
+        const ViewState& v = tv->view();
+        int from = start, to = end; // the frames of the clip on screen
+        if (v.pxPerFrame > 0) {
+            from = std::max(from, int(std::ceil(v.leftFrame)));
+            to = std::min(to, int(v.leftFrame + (tv->width() - TimelineView::kHeaderW) / v.pxPerFrame));
+        }
+        int at = start + (end - start) / 2;
+        if (tv->clipArea(id).isEmpty() || to - from < 2) {
+            *note = outOfViewNote;
+            *outOfView = id;
+        } else if (from > start || to < end) at = std::clamp(from + (to - from) / 2, start + 1, end - 1);
+        m_selection->set({id});
+        m_engine->seek(at);
+        tv->setPlayhead(at);
+    };
+    // The steps work on a video clip of the practice project (a title does not count; a compound or multicam clip
+    // does). Deleted (the user selected all and pressed Delete): undone, step by step until one is back - only while
+    // each undo changes the open timeline and stays on it (a step on another timeline, an import: stop) and never for
+    // nothing (no clip back: the history and the open timeline as they were). Else (or when the tour never had a
+    // clip: the drag step skipped) a sample clip placed on V1 at the playhead, or where the view begins, after what is
+    // there if that place is taken. The practice project has a history of its own: none of this reaches the user's
+    // project
+    const auto hasClip = [this] {
         for (const Track& t : m_project->timeline().video)
-            if (!t.clips.isEmpty()) {
-                m_selection->set({t.clips.first().id});
-                return;
+            for (const Clip& c : t.clips)
+                if (c.kind != ClipKind::Title) return true;
+        return false;
+    };
+    host.hasClip = hasClip;
+    host.restoreClip = [this, hasClip](bool mayUndo) {
+        using R = TourManager::Host::Restored;
+        if (hasClip()) return R::No;
+        QUndoStack* undo = m_project->undoStack();
+        if (mayUndo) {
+            const auto shape = [this] { // the open timeline: which one, its tracks and clips
+                QVector<int> out{m_project->currentSequence()};
+                const Timeline& tl = m_project->timeline();
+                for (const QVector<Track>* tracks : {&tl.video, &tl.audio})
+                    for (const Track& t : *tracks) {
+                        out << -1;
+                        for (const Clip& c : t.clips) out << c.id << c.start << c.length();
+                    }
+                return out;
+            };
+            const int start = undo->index(), sequence = m_project->currentSequence();
+            bool stopped = false;
+            for (int guard = 0; guard < 20 && !hasClip() && undo->canUndo(); ++guard) {
+                const qsizetype media = m_project->media().size();
+                const QVector<int> before = shape();
+                undo->undo();
+                // An import, a step on another timeline (its undo opens that one), nothing on this one: no further
+                stopped = m_project->media().size() < media || m_project->currentSequence() != sequence || shape() == before;
+                if (stopped) break;
             }
+            if (!stopped && hasClip()) return R::Undone;
+            undo->setIndex(start); // nothing came back: every step of the user's as it was (redo too)
+            if (m_project->currentSequence() != sequence) m_project->setCurrentSequence(sequence); // the redo opened another
+        }
+        if (m_project->media().isEmpty()) loadTourSample();
+        const MediaInfo* video = nullptr;
+        for (const MediaInfo& m : m_project->media())
+            if (!video && m.hasVideo && m.length > 0) video = &m;
+        if (!video) return R::No;
+        const QString path = video->path;
+        const int length = int(video->length);
+        TimelineView* tv = m_timeline->view();
+        const ViewState& v = tv->view();
+        const int left = int(std::ceil(v.leftFrame));
+        const int right = v.pxPerFrame > 0 ? int(v.leftFrame + (tv->width() - TimelineView::kHeaderW) / v.pxPerFrame) : left;
+        int at = tv->playhead() >= left && tv->playhead() < right ? tv->playhead() : left;
+        const Timeline& tl = m_project->timeline();
+        int end = 0;
+        bool taken = false;
+        for (const QVector<Track>* tracks : {&tl.video, &tl.audio})
+            if (!tracks->isEmpty())
+                for (const Clip& c : tracks->first().clips) {
+                    end = std::max(end, c.end());
+                    taken |= c.start < at + length && c.end() > at;
+                }
+        if (taken) at = end;
+        m_editor->addMediaAt({path}, at, 0);
+        return hasClip() ? R::Placed : R::No;
     };
     // Tour mode: a practice project and a fixed layout; the user's project and layout come back at the end
     host.enter = [this](const Tour& t) { enterTourMode(t); };

@@ -2790,7 +2790,6 @@
  "Die Maske bestimmt, wo der Knoten wirkt: Weiß heißt ja, Schwarz heißt nein.": "The mask decides where the node acts: white means yes, black means no.",
  "Die Messanzeigen zeigen, was im Bild steckt. In der Wellenform ist oben hell und unten dunkel: Was oben anstößt, ist überbelichtet.": "The scopes show what is in the picture. In the waveform, the top is bright and the bottom dark: whatever hits the top is overexposed.",
  "Du findest alle Rundgänge jederzeit unter Hilfe › Rundgänge.": "You can find all tours any time under Help › Tours.",
- "Eine Lücke anklicken und Entf drücken schließt sie. Umschalt+Entf löscht einen Clip und rückt alles danach nach.": "Click a gap and press Delete to close it. Shift+Delete removes a clip and moves everything after it up.",
  "Erste Schritte": "First Steps",
  "Fenster wirken nur auf einen Bildteil, etwa um ein Gesicht aufzuhellen: Rechteck oder Ellipse hinzufügen und im Bild verschieben.": "Windows act on only part of the picture, for example to brighten a face: add a rectangle or ellipse and move it in the picture.",
  "Fertig geschnitten? Auf der Seite Export wählst du eine Vorgabe, etwa YouTube oder TikTok, und speicherst dein Video.": "Done editing? On the Deliver page you pick a preset, such as YouTube or TikTok, and save your video.",
@@ -2910,7 +2909,6 @@
  "Öffne oben die Effekte.": "Open the Effects at the top.",
  "Rundgang Farbe starten": "Start the Color Tour",
  "Unten wechselst du die Seiten. Wenn du fertig bist: Geh unten auf Export und render dein Video.": "At the bottom you switch pages. When you are done: go to Deliver at the bottom and render your video.",
- "Schneiden: {key:split} teilt den Clip am Abspielkopf. Oder nimm das Klingen-Werkzeug ({key:tool_blade}) und klick auf den Clip. Probier es aus!": "Cutting: {key:split} splits the clip at the playhead. Or take Blade Edit Mode ({key:tool_blade}) and click on the clip. Try it!",
  "Wähl eine Vorlage, etwa YouTube, und klick auf „Zur Render-Warteschlange hinzufügen“. „Alle rendern“ speichert dann dein Video.": "Choose a preset, for example YouTube, and click “Add to Render Queue”. “Render All” then saves your video.",
  "Rundgang erst nach dem Rendern – oder das Rendern abbrechen.": "Tour after the render – or cancel the render.",
  "Rundgang erst, wenn die Änderungen der KI übernommen oder verworfen sind.": "Tour once the AI's changes are accepted or discarded.",
@@ -2962,5 +2960,12 @@
  " und ": " and ",
  "Dann kann Claude deine Videos mit schneidi schneiden: Es bekommt die schneidi-Werkzeuge (MCP) und eine Schnitt-Anleitung (Skill). Geht auch später unter Einstellungen › KI.": "Claude can then edit your videos with schneidi: it gets the schneidi tools (MCP) and an editing guide (skill). You can also do this later in Settings › AI.",
  "Verbunden.": "Connected.",
- "Jetzt verbinden": "Connect now"
+ "Jetzt verbinden": "Connect now",
+ "Schneiden: Der Abspielkopf (die senkrechte Linie) steht schon mitten im Clip. {key:split} teilt den Clip genau dort, am Abspielkopf. Oder nimm das Klingen-Werkzeug ({key:tool_blade}) und klick auf den Clip. Probier es aus!": "Cutting: the playhead (the vertical line) is already in the middle of the clip. {key:split} splits the clip right there, at the playhead. Or take Blade Edit Mode ({key:tool_blade}) and click on the clip. Try it!",
+ "Eine Lücke anklicken und {key:delete} drücken schließt sie. Einen Clip anklicken und {key:ripple_delete} drücken löscht nur diesen Clip und rückt alles danach nach.": "Click a gap and press {key:delete} to close it. Click a clip and press {key:ripple_delete} to delete just that clip and move everything after it up.",
+ "Hoppla, alle Clips sind weg. {key:undo} holt sie zurück – sonst hole ich sie beim nächsten Schritt zurück.": "Oops, all clips are gone. {key:undo} brings them back – otherwise I'll bring them back at the next step.",
+ "Die Timeline war leer: Ich habe die Clips mit {key:undo} zurückgeholt.": "The timeline was empty: I brought the clips back with {key:undo}.",
+ "Ich habe dir einen Clip in die Timeline gelegt.": "I put a clip on the timeline for you.",
+ "Der Clip liegt gerade außerhalb des sichtbaren Teils der Timeline: Scroll hin, dann siehst du den Abspielkopf in seiner Mitte.": "The clip is outside the visible part of the timeline right now: scroll to it to see the playhead in its middle.",
+ "Hoppla, alle Clips sind weg. {key:undo} holt sie zurück.": "Oops, all clips are gone. {key:undo} brings them back."
 }

@@ -55,6 +55,13 @@ public:
         std::function<bool()> save;
         // Why no tour can start now (a render, an AI change waiting for review ...; shown in the status bar), empty = it can
         std::function<QString()> blocked;
+        // The practice timeline has a video clip (the steps work on one). restoreClip brings one back when there is
+        // none: the user's deletions undone, else a sample clip placed. takeNote: a note a step's action left for the
+        // bubble (German key, e.g. "the clip is outside the visible timeline"), taken once
+        enum class Restored { No, Undone, Placed };
+        std::function<bool()> hasClip;
+        std::function<Restored(bool mayUndo)> restoreClip; // mayUndo: the tour had a clip (the user deleted it)
+        std::function<QString()> takeNote;
     };
     TourManager(QMainWindow* window, Project* project, Host host);
 
@@ -72,6 +79,10 @@ public:
     // A step's text as the bubble shows it (rich text): translated, "{key:<action id>}" replaced by the action's key in
     // the user's current key set (bold), or by the action's name when it has no key
     QString stepText(const TourStep& step) const;
+    // The same for any German key (the notes below a step's text)
+    QString richText(const QString& german) const;
+    // A note below the step's text that is not true any more (the clip scrolled into view): taken away
+    void dropNote(const QString& german);
     TourOverlay* overlay() const { return m_overlay; }
     // The rectangles a target string stands for (window coordinates; empty = nothing visible of it)
     QVector<QRect> resolve(const QString& target) const;
@@ -97,6 +108,10 @@ private:
     void finished(bool completed);
     bool holds(const QString& condition) const;
     void begin(const TourStep& step);
+    // Before a step: the clips the user deleted back (or one placed where the step needs it), with a note
+    void prepare(const TourStep& step);
+    QString shownText() const; // the step's text and its notes, as the bubble shows it
+    void updateLost();         // the clips all gone while a step shows: the bubble says how to get them back
     int clipCount() const;
     QVector<int> timelineShape() const;
     QAction* findAction(const QString& id) const;
@@ -114,4 +129,8 @@ private:
     int m_baseClips = 0;
     QVector<int> m_baseTimeline; // every clip's place and length (a trim changes it)
     QPointer<QAction> m_offerAction;
+    bool m_hadClip = false;  // the practice timeline had a video clip during this tour
+    bool m_lostShown = false; // the bubble says the clips are gone
+    bool m_busy = false;      // the tour itself changes the project (a step's repair or action): no checks meanwhile
+    QStringList m_notes;      // German keys shown below the step's text until the next step
 };
