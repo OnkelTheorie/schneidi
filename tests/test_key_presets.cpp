@@ -16,12 +16,14 @@
 #include "engine/Engine.h"
 
 #include <QAction>
+#include <QAbstractButton>
 #include <QApplication>
 #include <QComboBox>
 #include <QDir>
 #include <QFile>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QKeyEvent>
 #include <QLabel>
 #include <QPointer>
 #include <QPushButton>
@@ -270,6 +272,87 @@ void testDuplicates()
     }
     b.load();
     checkUniqueKeys("load");
+    b.applyPreset("standard");
+}
+
+// A key event as the platform delivers it: Qt key, modifiers, text and the native codes (X11/Wayland: xkb key code =
+// evdev code + 8 and keysym; Windows: scan code and virtual key)
+void sendKey(QWidget* w, int key, Qt::KeyboardModifiers mods, const QString& text, quint32 scanCode, quint32 virtualKey)
+{
+    QKeyEvent press(QEvent::KeyPress, key, mods, scanCode, virtualKey, 0, text);
+    QApplication::sendEvent(w, &press);
+}
+
+// Capturing in the dialog under other keyboard layouts: a Russian layout gives the Latin key of the same physical key
+// (the one shortcuts match), Windows' AltGr (= Ctrl+Alt there) is not taken as Ctrl+Alt
+void testCaptureLayouts()
+{
+    InputBindings& b = InputBindings::instance();
+    b.applyPreset("standard");
+    KeyBindingsDialog dlg;
+    dlg.show();
+    // Russian: the key that is A on a US keyboard gives "Ф" (X11 key code 38, Windows VK_A)
+    capture(dlg, "add_marker", 1, [](QWidget* f) { sendKey(f, 0x0424, Qt::NoModifier, QString(QChar(0x0444)), 38, 0x41); });
+    CHECK_EQ(in("add_marker").value(1), QString("A"));
+    capture(dlg, "add_marker", 1,
+            [](QWidget* f) { sendKey(f, 0x0421, Qt::ControlModifier, QString(), 54, 0x43); }); // Ctrl+С = Ctrl+C key
+    CHECK_EQ(in("add_marker").value(1), QString("Ctrl+C"));
+    // Latin letters of other layouts stay as they are (German Ü, French É)
+    capture(dlg, "add_marker", 1, [](QWidget* f) { sendKey(f, Qt::Key_Udiaeresis, Qt::NoModifier, "ü", 34, 0xBA); });
+    CHECK_EQ(in("add_marker").value(1), QString(QChar(0xDC)));
+    // A real Ctrl+Alt combination stays one
+    capture(dlg, "add_marker", 1,
+            [](QWidget* f) { sendKey(f, Qt::Key_J, Qt::ControlModifier | Qt::AltModifier, QString(), 44, 0x4A); });
+    CHECK_EQ(in("add_marker").value(1), QString("Ctrl+Alt+J"));
+    b.applyPreset("standard");
+
+    // The native codes of each platform (whichever this one is)
+    using N = InputBindings::NativeKeys;
+    const auto key = [](N native, int qtKey, Qt::KeyboardModifiers mods, const QString& text, quint32 scan, quint32 vk,
+                        quint32 nativeMods = 0) {
+        QKeyEvent e(QEvent::KeyPress, qtKey, mods, scan, vk, nativeMods, text);
+        return QKeySequence(InputBindings::bindingKey(&e, native)).toString(QKeySequence::PortableText);
+    };
+    CHECK_EQ(key(N::Windows, 0x0424, {}, QString(QChar(0x0444)), 0x1E, 0x41), QString("A")); // VK_A
+    CHECK_EQ(key(N::Xkb, 0x0424, {}, QString(QChar(0x0444)), 38, 0x6c6), QString("A"));      // key code 38
+    CHECK_EQ(key(N::Xkb, 0x0417, Qt::ShiftModifier, QString(QChar(0x0417)), 33, 0x6fa), QString("Shift+P"));
+    CHECK_EQ(key(N::Xkb, 0x03A9, {}, QString(QChar(0x03C9)), 55, 0x7f9), QString("V")); // Greek omega on the V key
+    CHECK_EQ(key(N::Xkb, Qt::Key_Udiaeresis, {}, "ü", 34, 0xfc), QString(QChar(0xDC)));
+    // Windows AltGr (left Ctrl + right Alt) typing "[" (German AltGr+8): "[", not Ctrl+Alt+[
+    const auto ctrlAlt = Qt::ControlModifier | Qt::AltModifier;
+    CHECK_EQ(key(N::Windows, Qt::Key_BracketLeft, ctrlAlt, "[", 0x09, 0x38, 0x42), QString("["));
+    CHECK_EQ(key(N::Windows, Qt::Key_At, ctrlAlt, "@", 0x10, 0x51, 0x42), QString("@")); // AltGr+Q
+    // Both Ctrl and Alt held by the user (no character): stays
+    CHECK_EQ(key(N::Windows, Qt::Key_J, ctrlAlt, QString(), 0x24, 0x4A, 0x06), QString("Ctrl+Alt+J"));
+    // X11/Wayland: AltGr is a level shift there, a Ctrl+Alt+digit with text stays
+    CHECK_EQ(key(N::Xkb, Qt::Key_1, ctrlAlt, "1", 10, 0x31, 0x0c), QString("Ctrl+Alt+1"));
+    CHECK_EQ(key(N::Xkb, Qt::Key_Backtab, Qt::ShiftModifier, QString(), 23, 0xfe20), QString("Shift+Tab"));
+}
+
+// Esc can be bound: capturing takes it like any key (cancel = click elsewhere or the small cancel button). On a window
+// action it is marked as a conflict: Esc also ends the large viewer and a voice-over take
+void testCaptureEscape()
+{
+    InputBindings& b = InputBindings::instance();
+    b.applyPreset("standard");
+    KeyBindingsDialog dlg;
+    dlg.show();
+    auto* table = dlg.findChild<QTableWidget*>();
+    capture(dlg, "deselect", 1, [](QWidget* f) { QTest::keyClick(f, Qt::Key_Escape); });
+    CHECK_EQ(in("deselect").value(1), QString("Esc"));
+    const int row = rowOf(table, "deselect");
+    if (CHECK(row >= 0)) {
+        QTableWidgetItem* item = table->item(row, 3);
+        CHECK(item->foreground().color() == Theme::warning);
+        CHECK(!item->toolTip().isEmpty());
+    }
+    // The cancel button: nothing changes
+    capture(dlg, "deselect", 0, [](QWidget* f) {
+        auto* cancel = f->findChild<QAbstractButton*>("key_capture_cancel");
+        if (CHECK(cancel)) cancel->click();
+    });
+    CHECK(!table->cellWidget(rowOf(table, "deselect"), 2));
+    CHECK_EQ(in("deselect").value(1), QString("Esc"));
     b.applyPreset("standard");
 }
 
@@ -661,6 +744,8 @@ int main(int argc, char** argv)
         testKysContexts();
         testDuplicates();
         testLayoutNeutralKeys();
+        testCaptureLayouts();
+        testCaptureEscape();
         testTrainer(w);
     }
     testLanguages(engine);

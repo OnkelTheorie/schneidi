@@ -24,27 +24,40 @@
 #include <QMessageBox>
 #include <QSettings>
 #include <QTableWidget>
+#include <QToolButton>
 #include <QVBoxLayout>
 
 namespace {
 enum Column { ColCategory, ColText, ColSlot1, ColSlot2, ColCount };
 
 // Captures the next key (with modifiers) or mouse side button, like a QKeySequenceEdit that also takes the mouse.
-// Esc or clicking away = cancel.
-class InputCapture : public QLabel {
+// Every key counts, Esc too; clicking elsewhere or the small cancel button = cancel.
+class InputCapture : public QWidget {
 public:
     explicit InputCapture(std::function<void(const QString&, bool)> done) : m_done(std::move(done))
     {
-        setText(T("Taste oder Maustaste drücken …"));
         setFocusPolicy(Qt::StrongFocus);
-        setStyleSheet(QString("color: %1; padding-left: 4px;").arg(Theme::primary.name()));
-        setToolTip(T("Taste, Tastenkombination oder Seitentaste der Maus drücken. Esc = abbrechen"));
+        setToolTip(T("Taste, Tastenkombination oder Seitentaste der Maus drücken (auch Esc). Abbrechen: daneben klicken"));
+        auto* row = new QHBoxLayout(this);
+        row->setContentsMargins(4, 0, 0, 0);
+        row->setSpacing(2);
+        m_label = new QLabel(T("Taste oder Maustaste drücken …"));
+        m_label->setStyleSheet(QString("color: %1;").arg(Theme::primary.name()));
+        row->addWidget(m_label, 1);
+        auto* cancel = new QToolButton;
+        cancel->setObjectName("key_capture_cancel");
+        cancel->setText(QStringLiteral("×"));
+        cancel->setToolTip(T("Abbrechen"));
+        cancel->setAutoRaise(true);
+        cancel->setFocusPolicy(Qt::NoFocus); // the capture keeps the focus (losing it cancels too)
+        connect(cancel, &QToolButton::clicked, this, [this] { finish({}, false); });
+        row->addWidget(cancel);
     }
 
 protected:
     bool event(QEvent* e) override
     {
-        // Take every key, also Tab and keys that are shortcuts somewhere else
+        // Take every key, also Tab, Esc and keys that are shortcuts somewhere else
         if (e->type() == QEvent::ShortcutOverride) {
             e->accept();
             return true;
@@ -53,14 +66,14 @@ protected:
             keyPress(static_cast<QKeyEvent*>(e));
             return true;
         }
-        return QLabel::event(e);
+        return QWidget::event(e);
     }
     void mousePressEvent(QMouseEvent* e) override
     {
         e->accept();
         if (InputBindings::bindableMouseButtons().contains(e->button()))
             finish(InputBindings::mouseInput(e->button()), true);
-        else if (e->button() != Qt::LeftButton) setText(T("Bei der Maus nur Seitentasten/Zusatztasten"));
+        else if (e->button() != Qt::LeftButton) m_label->setText(T("Bei der Maus nur Seitentasten/Zusatztasten"));
     }
     void mouseDoubleClickEvent(QMouseEvent* e) override { mousePressEvent(e); }
     void focusOutEvent(QFocusEvent*) override { finish({}, false); }
@@ -68,18 +81,17 @@ protected:
 private:
     void keyPress(QKeyEvent* e)
     {
-        int key = e->key();
-        const Qt::KeyboardModifiers mods =
-            e->modifiers() & (Qt::ShiftModifier | Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier);
-        if (key == Qt::Key_Escape && mods == Qt::NoModifier) return finish({}, false);
+        const int key = e->key();
         if (key == Qt::Key_Shift || key == Qt::Key_Control || key == Qt::Key_Alt || key == Qt::Key_Meta
             || key == Qt::Key_AltGr || key == Qt::Key_unknown || key == 0) {
             // Only modifiers so far: show them and wait for the key
-            setText(QKeySequence(mods.toInt()).toString(QKeySequence::NativeText) + " …");
+            const Qt::KeyboardModifiers mods =
+                e->modifiers() & (Qt::ShiftModifier | Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier);
+            m_label->setText(QKeySequence(mods.toInt()).toString(QKeySequence::NativeText) + " …");
             return;
         }
-        if (key == Qt::Key_Backtab) key = Qt::Key_Tab; // Shift+Tab arrives as Backtab
-        finish(QKeySequence(QKeyCombination(mods, Qt::Key(key))).toString(QKeySequence::PortableText), true);
+        // Latin key of a non-Latin layout, AltGr on Windows not as Ctrl+Alt (InputBindings::bindingKey)
+        finish(QKeySequence(InputBindings::bindingKey(e)).toString(QKeySequence::PortableText), true);
     }
     void finish(const QString& input, bool ok)
     {
@@ -88,6 +100,7 @@ private:
         m_done = nullptr;
         done(input, ok); // ok = false: change nothing
     }
+    QLabel* m_label;
     std::function<void(const QString&, bool)> m_done;
 };
 }
@@ -125,7 +138,7 @@ KeyBindingsDialog::KeyBindingsDialog(QWidget* parent) : QDialog(parent)
             [this](int row, int col) { editSlot(row, col == ColSlot2 ? 1 : 0); });
 
     auto* hint = new QLabel(T("Doppelklick auf Taste 1 oder Taste 2, dann die neue Taste oder die Seitentaste der Maus "
-                            "drücken (Esc = abbrechen). Fett = eigene Belegung, rot = doppelt belegt."));
+                            "drücken (abbrechen: daneben klicken). Fett = eigene Belegung, rot = doppelt belegt."));
     hint->setWordWrap(true);
     hint->setStyleSheet(QString("color: %1;").arg(Theme::textDim.name()));
 
@@ -276,6 +289,8 @@ void KeyBindingsDialog::fill()
     for (const auto& e : entries)
         for (const QString& in : bindings.inputs(e.id))
             if (!in.isEmpty()) ++uses[useKey(e, in)];
+    // Keys the window uses itself in a mode (Esc ends the large viewer): on a window action they clash there
+    const QStringList internal = InputBindings::windowInternalKeys();
 
     for (int r = 0; r < m_table->rowCount(); ++r)
         for (int c = ColSlot1; c <= ColSlot2; ++c) m_table->removeCellWidget(r, c);
@@ -301,6 +316,10 @@ void KeyBindingsDialog::fill()
             if (uses.value(useKey(e, inputs[s])) > 1) {
                 item->setForeground(Theme::warning);
                 item->setToolTip(T("Diese Taste ist mehrfach belegt"));
+            } else if (e.scope.isEmpty() && internal.contains(inputs[s])) {
+                item->setForeground(Theme::warning);
+                item->setToolTip(T("Esc beendet auch die große Vorschau und eine Sprachaufnahme: solange eine davon "
+                                   "läuft, wirkt Esc gar nicht (doppelt belegt)"));
             }
             m_table->setItem(i, ColSlot1 + s, item);
         }

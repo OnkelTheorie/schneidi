@@ -137,6 +137,16 @@ public:
     // Is the key of this event one of the action's keys (enabled actions only)? A key of the number pad also counts
     // as the same key without the pad (Enter, Delete, digits)
     static bool matches(const QAction* action, const QKeyEvent* e);
+    // The key of a key press as a binding (the key bindings dialog). A letter of a non-Latin layout (Russian, Greek...)
+    // becomes the Latin key of the same physical key - the one shortcuts match there; on Windows, AltGr typing a
+    // character arrives as Ctrl+Alt, which is dropped. Shift+Tab arrives as Backtab: Tab.
+    // `native` = how to read the event's native codes (the running platform's; tests pass one)
+    enum class NativeKeys { Windows, Xkb, None };
+    static NativeKeys platformNativeKeys();
+    static QKeyCombination bindingKey(const QKeyEvent* e, NativeKeys native = platformNativeKeys());
+    // Keys the main window uses itself while a mode is on (Esc ends the large viewer and a voice-over take): bound to a
+    // window action they clash there (the key bindings dialog marks them)
+    static QStringList windowInternalKeys();
     // The action among `actions` whose keys match the key event, else nullptr
     static QAction* matching(const QList<QAction*>& actions, const QKeyEvent* event);
 

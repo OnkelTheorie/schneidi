@@ -18,6 +18,13 @@
 #include <QXmlStreamReader>
 #include <algorithm>
 
+// Qt's key mapper (private API, in the same headers as RHI): the Latin key of a non-Latin layout as shortcuts see it.
+// Without the private headers the native key codes are read directly
+#if __has_include(<QtGui/private/qkeymapper_p.h>)
+#include <QtGui/private/qkeymapper_p.h>
+#define SCHNEIDI_HAVE_KEYMAPPER
+#endif
+
 namespace {
 
 // Increase when defaults or the format change (3: two slots per action; 4: layout-neutral second keys, see
@@ -1090,6 +1097,86 @@ QWidget* InputBindings::scopeOf(const QString& id) const
             return qobject_cast<QWidget*>(e.action->parent()); // a panel action: the panel that owns it
         }
     return nullptr;
+}
+
+InputBindings::NativeKeys InputBindings::platformNativeKeys()
+{
+#if defined(Q_OS_WIN)
+    return NativeKeys::Windows;
+#elif defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
+    return NativeKeys::Xkb; // X11 and Wayland both give xkb key codes
+#else
+    return NativeKeys::None;
+#endif
+}
+
+namespace {
+
+// A letter of another script than Latin (Cyrillic, Greek, Arabic, Hebrew...): Latin letters of other layouts (Ü, É)
+// are keys of their own there and stay
+bool nonLatinLetter(int key)
+{
+    if (key < 0x80 || key > 0xFFFF) return false; // ASCII or a named key (Qt::Key_Escape and up)
+    const QChar c{char16_t(key)};
+    return c.isLetter() && c.script() != QChar::Script_Latin && c.script() != QChar::Script_Common;
+}
+
+bool latinKey(int key)
+{
+    return (key >= Qt::Key_A && key <= Qt::Key_Z) || (key >= Qt::Key_0 && key <= Qt::Key_9);
+}
+
+// The Latin letter or digit of the physical key from the native codes, 0 if unknown
+int latinFromNative(const QKeyEvent* e, InputBindings::NativeKeys native)
+{
+    if (native == InputBindings::NativeKeys::Windows) {
+        // Windows' virtual key of a letter/digit key is its Latin letter/digit in every layout (VK_A = 'A')
+        const quint32 vk = e->nativeVirtualKey();
+        return (vk >= 'A' && vk <= 'Z') || (vk >= '0' && vk <= '9') ? int(vk) : 0;
+    }
+    if (native == InputBindings::NativeKeys::Xkb) {
+        // xkb key code = Linux evdev code + 8; the rows of a US keyboard (the usual first, Latin layout)
+        static const struct { quint32 first; const char* keys; } rows[] = {
+            {10, "1234567890"}, {24, "QWERTYUIOP"}, {38, "ASDFGHJKL"}, {52, "ZXCVBNM"}};
+        const quint32 code = e->nativeScanCode();
+        for (const auto& row : rows)
+            if (code >= row.first && code < row.first + quint32(qstrlen(row.keys))) return row.keys[code - row.first];
+    }
+    return 0;
+}
+
+} // namespace
+
+QKeyCombination InputBindings::bindingKey(const QKeyEvent* e, NativeKeys native)
+{
+    int key = e->key();
+    Qt::KeyboardModifiers mods =
+        e->modifiers() & (Qt::ShiftModifier | Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier);
+    if (key == Qt::Key_Backtab) key = Qt::Key_Tab;
+    if (nonLatinLetter(key)) {
+        int latin = 0;
+#ifdef SCHNEIDI_HAVE_KEYMAPPER
+        // What Qt's shortcut matching uses: on X11/Wayland the keysym of the first Latin layout group
+        for (const QKeyCombination& k : QKeyMapper::possibleKeys(e))
+            if (latinKey(k.key())) {
+                latin = k.key();
+                break;
+            }
+#endif
+        if (!latin) latin = latinFromNative(e, native);
+        if (latin) key = latin;
+    }
+    // Windows reports AltGr as left Ctrl + right Alt (QWindowsKeyMapper's native modifier bits 0x2 and 0x40): a
+    // character typed with it ("[" on German AltGr+8) is that character, not Ctrl+Alt+[
+    if (native == NativeKeys::Windows && mods.testFlags(Qt::ControlModifier | Qt::AltModifier)
+        && (e->nativeModifiers() & 0x42) == 0x42 && !e->text().isEmpty() && e->text().at(0).isPrint())
+        mods &= ~(Qt::ControlModifier | Qt::AltModifier);
+    return QKeyCombination(mods, Qt::Key(key));
+}
+
+QStringList InputBindings::windowInternalKeys()
+{
+    return {"Esc"}; // MainWindow: m_largeEscape, m_voiceoverEscape
 }
 
 bool InputBindings::matches(const QAction* action, const QKeyEvent* e)
