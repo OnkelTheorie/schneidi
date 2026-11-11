@@ -671,6 +671,42 @@ void testFollowNotSound()
 
 // Reframing a whole timeline leaves its overlays (a small webcam picture on V2) where they are; asked for by id, one
 // is reframed
+// The copy on a locked track: a speed change of its clip leaves it (and its track) alone, like every other edit on a
+// locked track
+void testRetimeLockedCopy()
+{
+    MediaAspect::setProbe([](const QString&) { return 16.0 / 9.0; });
+    Project p;
+    TimelineGuard guard_p{p};
+    Selection sel;
+    Editor ed(&p, &sel);
+    p.setCurrentSequence(p.addTimeline("Short", 0, QSize(1080, 1920)));
+    p.addMedia({"/x/cs2/a.mkv", "a.mkv", 400, true, true, false});
+    int game = 0;
+    p.edit("setup", [&](Timeline& tl) {
+        Clip v;
+        v.id = game = p.newClipId();
+        v.mediaPath = "/x/cs2/a.mkv";
+        v.start = 20;
+        v.in = 100;
+        v.out = 159;
+        v.linkId = p.newLinkId();
+        tl.video[0].clips << v;
+    });
+    const auto keeps = ed.reframeKeeps({game}, Reframe::Mode::Center, {}, {});
+    ed.reframeClips({game}, Reframe::Mode::Center, {}, {}, &keeps);
+    if (!CHECK_EQ(keptCopies(p.timeline()).size(), 1)) return;
+    const int track = keptCopies(p.timeline())[0].first;
+    ed.toggleTrackLock({TrackKind::Video, track});
+    const Track lockedBefore = p.timeline().video[track];
+    guard_p.stopSyncCheck(); // the clip changes speed, its locked copy cannot follow
+    ed.setClipSpeed({game}, {0.5, false, false, true}, true);
+    CHECK_EQ(TimelineOps::findClip(p.timeline(), game)->speed, 0.5);
+    CHECK(p.timeline().video[track] == lockedBefore);
+    ed.addSpeedPoint(game, 40);
+    CHECK(p.timeline().video[track] == lockedBefore);
+}
+
 void testOverlays()
 {
     MediaAspect::setProbe([](const QString&) { return 16.0 / 9.0; });
@@ -1193,6 +1229,7 @@ int main(int argc, char** argv)
     testPictureAspect();
     testFollow(tmp.path());
     testFollowNotSound();
+    testRetimeLockedCopy();
     testOverwriteCopy();
     testOverlays();
     if (!Check::haveFfmpeg()) return Check::skip("ffmpeg nicht gefunden");

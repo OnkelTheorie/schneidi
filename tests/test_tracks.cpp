@@ -116,6 +116,26 @@ int main(int argc, char** argv)
     CHECK_EQ(Check::dump(p.timeline()), QString("V1: a[0-50|0-49] a[50-150|0-99] a[400-500|0-99]  V2:  "
                                                 "A1: a[50-150|0-99] m[250-300|0-49] a[400-500|0-99]  A2: m[600-700|0-99]"));
 
+    // A dissolve on a retimed track that the speed change pushes apart (A stays, B moves with V1's longer clip): it is
+    // released, not left as a fade out and a fade in
+    setup(p);
+    p.edit("x", [](Timeline& tl) {
+        tl.video[0].clips = {mk(31, 0, 100)};
+        while (tl.video.size() < 2) tl.video << Track{};
+        Clip a = mk(32, 60, 40), b = mk(33, 100, 50, 0), q = mk(34, 200, 50);
+        a.in = b.in = 300;
+        a.out = 339;
+        b.out = 349;
+        a.transOut = b.transIn = 10;
+        tl.video[1].clips = {a, b, q};
+        tl.audio[0].clips.clear();
+        tl.audio[1].clips.clear();
+    });
+    ed.setClipSpeed({31, 34}, {0.5, false, false, true}, true);
+    CHECK_EQ(F(p, 33)->start, 200);
+    CHECK(F(p, 32)->transOut == 0 && F(p, 33)->transIn == 0);
+    CHECK_EQ(F(p, 34)->start, 300);
+
     // --- Lock: nothing changeable, not selectable
     setup(p);
     ed.toggleTrackLock({TrackKind::Video, 0});
