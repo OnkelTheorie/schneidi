@@ -156,10 +156,37 @@ Sequence readEdl(const QByteArray& data, FrameRate rate)
     QVector<Event> events;
     Event* last = nullptr;
     bool wipes = false;
-    const QStringList lines = QString::fromUtf8(data).split(QRegularExpression("\r?\n|\r"));
+    // Drop-frame timecode (29.97/59.94 only), decided per label: its last separator is ';' ("HH:MM:SS;FF",
+    // "HH;MM;SS;FF"). Only an EDL without any ';' label follows its "FCM: DROP FRAME" header for all labels - mixed
+    // EDLs (drop-frame record times, non-drop source times of a non-drop camera) keep each label as written.
+    const bool dropRate = Timecode::isDropFrameRate(rate.num, rate.den);
+    bool fcmDrop = false, anySemicolon = false, recordDrop = false, badLabel = false;
+    const QString text = QString::fromUtf8(data);
+    if (dropRate)
+        for (const QString& line : text.split(QRegularExpression("\r?\n|\r")))
+            if (const auto m = eventRe.match(line); m.hasMatch())
+                for (int i = 6; i <= 9; ++i) anySemicolon = anySemicolon || m.captured(i).contains(';');
+    const auto tc = [&](const QString& label, bool source) {
+        const bool drop = dropRate && (label.at(8) == ';' || (!anySemicolon && fcmDrop));
+        QString t = label;
+        if (drop) { // the fixed "HH:MM:SS;FF" form Timecode::parse reads as drop frame
+            t.replace(';', ':').replace('.', ':');
+            t[8] = ';';
+            (source ? seq.dropFrame : recordDrop) = true;
+        }
+        const int frames = Timecode::parse(t, fps, drop);
+        if (frames < 0) badLabel = true; // frame part beyond the frame rate
+        return std::max(0, frames);
+    };
+    const QStringList lines = text.split(QRegularExpression("\r?\n|\r"));
     for (const QString& line : lines) {
         if (line.startsWith("TITLE:")) {
             seq.name = line.mid(6).trimmed();
+            continue;
+        }
+        if (line.startsWith("FCM:", Qt::CaseInsensitive)) {
+            const QString mode = line.mid(4).trimmed().toUpper();
+            fcmDrop = mode.startsWith("DROP");
             continue;
         }
         if (const auto m = eventRe.match(line); m.hasMatch()) {
@@ -170,10 +197,10 @@ Sequence readEdl(const QByteArray& data, FrameRate rate)
             e.dissolve = kind != "C";
             wipes = wipes || kind.startsWith('W') || kind.startsWith('K');
             e.dur = m.captured(5).trimmed().toInt();
-            e.srcIn = Timecode::parse(m.captured(6), fps);
-            e.srcOut = Timecode::parse(m.captured(7), fps);
-            e.recIn = Timecode::parse(m.captured(8), fps);
-            e.recOut = Timecode::parse(m.captured(9), fps);
+            e.srcIn = tc(m.captured(6), true);
+            e.srcOut = tc(m.captured(7), true);
+            e.recIn = tc(m.captured(8), false);
+            e.recOut = tc(m.captured(9), false);
             // Second line of a dissolve: the line before (same event, 0 frames) is the outgoing clip or black
             if (e.dissolve && last && last->recIn == last->recOut && m.captured(1).toInt() > 0) {
                 e.afterBlack = last->reel.toUpper() == "BL" || last->reel.toUpper() == "BLK";
@@ -206,7 +233,8 @@ Sequence readEdl(const QByteArray& data, FrameRate rate)
     // from a full hour (Premiere: 00:59:53:11)
     int first = INT_MAX;
     for (const Event& e : events) first = std::min(first, e.recIn);
-    int offset = first / (3600 * fps) * (3600 * fps);
+    const int hour = Timecode::hourFrames(fps, recordDrop);
+    int offset = first / hour * hour;
     if (first - offset > 600 * fps) offset = first;
     seq.inIsTimecode = true;
     int link = 0;
@@ -270,6 +298,7 @@ Sequence readEdl(const QByteArray& data, FrameRate rate)
             if (!sorted) seq.warnings << T("EDL: Ereignisse auf %1 nicht in zeitlicher Reihenfolge").arg(td.name);
         }
     if (wipes) seq.warnings << T("EDL: Wischblenden und Keys als Überblendung gelesen");
+    if (badLabel) seq.warnings << T("EDL: Timecodes mit einem Bild über der Bildrate als 0 gelesen");
     seq.warnings << T("EDL: keine Framerate in der Datei, mit %1 fps gelesen").arg(rate.label());
     return seq;
 }

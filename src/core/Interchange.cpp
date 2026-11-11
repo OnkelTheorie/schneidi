@@ -319,11 +319,13 @@ void applyStartTimecodes(Sequence& seq, const std::function<QString(const QStrin
                          const std::function<int(const QString&)>& length)
 {
     const int fps = seq.format.rate.timebase();
-    const int hour = 3600 * fps;
+    const int hour = Timecode::hourFrames(fps, seq.dropFrame); // the EDL's source timecodes
+    // A 29.97 camera writes drop-frame start timecodes ("01:00:00;00")
+    const bool drop = Timecode::isDropFrameRate(seq.format.rate.num, seq.format.rate.den);
     QHash<QString, int> startOf; // path -> start frame, -1 = no timecode
     for (const QString& path : mediaFiles(seq)) {
         const QString tc = timecode ? timecode(path) : QString();
-        startOf.insert(path, tc.isEmpty() ? -1 : std::max(-1, Timecode::parse(tc, fps)));
+        startOf.insert(path, tc.isEmpty() ? -1 : std::max(-1, Timecode::parse(tc, fps, drop)));
     }
     // The file frame the clip's first picture shows (RetimeMap::pictureFrame, forward)
     const auto fileFrame = [](const Item& it) {
