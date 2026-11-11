@@ -23,10 +23,9 @@ void handler(QtMsgType type, const QMessageLogContext& ctx, const QString& msg)
 
 bool isLossMessage(const QString& message)
 {
-    // Qt 6 xcb: "The X11 connection broke (error %d). Did the X11 server die?" (and "The X11 connection broke: %s
-    // (code %d)"); Wayland: "The Wayland connection broke. Did the Wayland compositor die?"
-    return message.startsWith(QLatin1String("The X11 connection broke"))
-           || message.startsWith(QLatin1String("The Wayland connection broke"));
+    // Qt 6 xcb: "The X11 connection broke (error %d). Did the X11 server die?" and "The X11 connection broke: %s
+    // (code %d)"
+    return message.startsWith(QLatin1String("The X11 connection broke"));
 }
 
 void install()
