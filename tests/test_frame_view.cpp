@@ -279,6 +279,28 @@ void testDrawing()
     dump(&view, "zoom-50");
 }
 
+// A frame wider than the GPU's texture size limit: still shown on the GPU, scaled down to the limit (before: OpenGL took
+// the texture without complaint and the viewer stayed black). GPU path only: FRAME_VIEW_PLATFORM=xcb
+// SCHNEIDI_VIEWER=gpu under Xvfb (llvmpipe: 16384)
+void testTextureTooLarge()
+{
+    FrameView view;
+    if (view.backend() != FrameView::Backend::Rhi) {
+        std::fprintf(stderr, "  texture too large: skipped (no GPU viewer here)\n");
+        return;
+    }
+    view.setBackground(Qt::black);
+    view.resize(400, 300);
+    view.show();
+    QImage wide(QSize(17000, 1200), QImage::Format_RGBA8888); // over 16384, 80 MB; ~28 px high in the view
+    wide.fill(Qt::red);
+    view.setFrame(wide);
+    const QImage shot = view.grab().toImage();
+    CHECK(view.backend() == FrameView::Backend::Rhi);
+    const QColor mid = shot.pixelColor(shot.width() / 2, shot.height() / 2);
+    CHECK(mid.red() > 200 && mid.green() < 60 && mid.blue() < 60);
+}
+
 // CPU time per displayed 1080p frame: a new frame each time (as during playback), drawn into a 1280x720 view
 void bench(int frames)
 {
@@ -407,6 +429,7 @@ int main(int argc, char** argv)
     testGeometry();
     testOverlayAndMouse();
     testDrawing();
+    testTextureTooLarge();
     QTemporaryDir dir;
     testViewer(dir.path());
     return Check::result();
