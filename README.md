@@ -119,7 +119,7 @@ With the AppImage the command is the AppImage itself and the arguments are `["cl
 - Clip speed / retime; **smooth slow motion** with in-between frames (blended, or computed from the motion with an own optical flow; never across a scene cut) – chosen in the speed dialog (Ctrl+R)
 - **Timeline exchange:** import and export FCP7 XML, OpenTimelineIO and EDL – bring a cut over from Premiere Pro or DaVinci Resolve, or hand one over for finishing
 - Own video decoding, also on the graphics card (NVIDIA, AMD/Intel via VA-API); proxy media and a render cache for smooth playback – schneidi offers proxies when playback cannot keep up
-- Export and render queue via FFmpeg: H.264, H.265, AV1, VP9 (WebM), ProRes and DNxHR, animated GIF, PNG/TIFF/JPEG image sequences and audio only (AAC, MP3, Opus, WAV, AIFF, FLAC, Apple Lossless); hardware encoders (NVENC, VAAPI, Quick Sync) when available, else OpenH264/kvazaar, or x264/x265 as an optional download (Extensions); presets for YouTube, YouTube Shorts, Instagram Reels and TikTok cap the bit rate; **Smart Render** copies unchanged parts of H.264/H.265 recordings instead of encoding them again
+- Export and render queue via FFmpeg: H.264, H.265, AV1, VP9 (WebM), ProRes and DNxHR, animated GIF, PNG/TIFF/JPEG image sequences and audio only (AAC, MP3, Opus, WAV, AIFF, FLAC, Apple Lossless); hardware encoders (NVENC, VAAPI, Quick Sync) when available, else x264/x265 (included in the downloads; the GPL-free `-lgpl` variant uses OpenH264/kvazaar); presets for YouTube, YouTube Shorts, Instagram Reels and TikTok cap the bit rate; **Smart Render** copies unchanged parts of H.264/H.265 recordings instead of encoding them again
 - Subtitles from speech (whisper.cpp, offline) – pick the voice tracks, one subtitle track each; in game recordings with a separate microphone stream it listens to the microphone, so song lyrics stay out of the subtitles; an optional download under Workspace → Extensions
 - **Word captions:** karaoke (the spoken word lights up), one word at a time, or one word per beat of the music, from the transcript's word times; export as SRT or WebVTT, or as a subtitle stream inside the MP4/MKV/WebM
 - Text-based editing: the Transcript panel shows what is said – delete words to cut them, remove pauses
@@ -301,7 +301,7 @@ Optional: `libavfilter-dev` (effect "FFmpeg filter": a filter chain on a clip) a
 
 Other distributions: the same libraries (Qt 6 Widgets/Network and its private GUI headers, FFmpeg 7). Without a miniaudio package (openSUSE, Fedora) the build uses the copy in `third_party/miniaudio` (`-DSCHNEIDI_SYSTEM_MINIAUDIO=ON` insists on the system's). Notes for distribution packagers and an openSUSE spec file: [packaging/linux/opensuse](packaging/linux/opensuse).
 
-AppImage: `packaging/linux/build-appimage.sh` → `dist/schneidi-<version>-x86_64.AppImage`, without any GPL library (own LGPL FFmpeg; H.264/H.265 through the graphics card, else OpenH264/kvazaar, or x264/x265 as an optional download in the program: Extensions); bundled libraries and their licenses: [THIRD_PARTY.md](THIRD_PARTY.md)
+AppImage: `packaging/linux/build-appimage.sh` → `dist/schneidi-<version>-x86_64.AppImage` with an own slim FFmpeg including x264/x265 (GPL; build packages `libx264-dev libx265-dev`); `GPL_ENCODERS=0` builds a GPL-free one instead (`…-lgpl.AppImage`: OpenH264/kvazaar, x264/x265 as an optional download in the program); bundled libraries and their licenses: [THIRD_PARTY.md](THIRD_PARTY.md)
 Debian package (system Qt/FFmpeg, no bundling): `cmake --build build && cpack --config build/CPackConfig.cmake -G DEB` → `dist/schneidi_<version>_amd64.deb`
 The .deb is built for Debian 13: it needs exactly its Qt 6.8.2 (the GPU viewer uses Qt's private RHI interface) and FFmpeg 7.1; on every other system use the AppImage.
 
@@ -313,7 +313,7 @@ pacman -S --needed nasm make diffutils mingw-w64-ucrt-x86_64-{openh264,kvazaar,s
 packaging/windows/build-windows.sh
 ```
 
-Result: `dist/schneidi-windows-<version>.zip` (portable folder) and, if [Inno Setup 6](https://jrsoftware.org/isinfo.php) is installed (`winget install JRSoftware.InnoSetup`), `dist/schneidi-setup-<version>.exe`. Like the AppImage without any GPL library: the first run builds the own LGPL FFmpeg (`packaging/windows/build-ffmpeg-lgpl.sh`, into `build-ffmpeg-lgpl/prefix` or `FFMPEG_PREFIX`); the installer offers x264/x265 as an optional download. `SCHNEIDI_NO_GPL=0` packs MSYS2's full FFmpeg instead (`mingw-w64-ucrt-x86_64-ffmpeg`, GPL, `…-gpl.zip`) for local comparisons.
+Result: `dist/schneidi-windows-<version>.zip` (portable folder) and, if [Inno Setup 6](https://jrsoftware.org/isinfo.php) is installed (`winget install JRSoftware.InnoSetup`), `dist/schneidi-setup-<version>.exe`. Like the AppImage: the first run builds the own slim FFmpeg with x264/x265 (`packaging/windows/build-ffmpeg-lgpl.sh`, into `build-ffmpeg/prefix` or `FFMPEG_PREFIX`). `GPL_ENCODERS=0` builds without any GPL library (`build-ffmpeg-lgpl/prefix`, `…-lgpl.zip`; the installer then offers x264/x265 as an optional download).
 
 **Tests:**
 
