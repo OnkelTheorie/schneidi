@@ -58,7 +58,17 @@ struct EncoderConfig {
     // idr_pic_id of the first IDR picture: neighbouring chunks of a clip encoded side by side
     // (planChunks) start far apart so two IDR pictures in a row never share one.
     int idrPicIdBase = 0;
+    // VUI video signal (E.2.1, ITU-T H.273 codes; 2 = unspecified): written when one is set or the
+    // range is full. E.g. BT.709: 1, 1, 1.
+    int colourPrimaries = 2;
+    int transferCharacteristics = 2;
+    int matrixCoefficients = 2;
+    bool fullRange = false;
 };
+
+// level_idc (Table A-1) for this configuration: the lowest level whose macroblock rate, frame
+// size, decoded picture buffer and (bitrate mode, 1.5x the target as peak) bitrate fit.
+int levelIdcFor(const EncoderConfig& cfg);
 
 // Parallel encoding in chunks: independent encoders, each on its own part of the clip starting
 // with an IDR picture, run side by side; their streams are concatenated (SPS/PPS once, from any of

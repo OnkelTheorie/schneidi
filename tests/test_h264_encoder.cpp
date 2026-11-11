@@ -266,6 +266,25 @@ int main()
             std::fprintf(stderr, "rate control with first pass: %.0f kbit/s instead of 1000\n", kbps2);
         CHECK(std::abs(kbps2 - 1000.0) < 250.0);
     }
+    // level_idc (Table A-1) in the SPS: 720p30 3.1, 1080p60 4.2, 4K30 5.1; VUI colours decode
+    {
+        auto level = [](int w, int h, double fps) {
+            EncoderConfig c;
+            c.width = w;
+            c.height = h;
+            c.fps = fps;
+            const std::vector<uint8_t> hdr = Encoder(c).headers();
+            return int(hdr[7]); // start code, NAL header, profile_idc, constraint flags, level_idc
+        };
+        CHECK(level(1280, 720, 30) == 31);
+        CHECK(level(1920, 1080, 60) == 42);
+        CHECK(level(3840, 2160, 30) == 51);
+        CHECK(level(3840, 2160, 60) == 52);
+        EncoderConfig c = config(176, 144, IntraMode::Auto, 6, 2);
+        c.colourPrimaries = c.transferCharacteristics = c.matrixCoefficients = 1;
+        c.fullRange = true;
+        CHECK(roundTrip(c, 4));
+    }
     // Chunks side by side: independent encoders, streams concatenated, one decoder
     {
         EncoderConfig c = config(320, 192, IntraMode::Auto, 30, 2);

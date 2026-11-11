@@ -371,6 +371,39 @@ const std::vector<uint8_t>& Encoder::reconY() const { return (last_ ? last_ : co
 const std::vector<uint8_t>& Encoder::reconU() const { return (last_ ? last_ : coders_[0].get())->recU_; }
 const std::vector<uint8_t>& Encoder::reconV() const { return (last_ ? last_ : coders_[0].get())->recV_; }
 
+int levelIdcFor(const EncoderConfig& cfg)
+{
+    struct Level {
+        int idc;
+        int64_t maxMbps, maxFs, maxDpbMbs, maxBr; // MaxBR in 1000 (1250 for High) bit/s
+    };
+    static constexpr Level kLevels[] = {
+        {10, 1485, 99, 396, 64},          {11, 3000, 396, 900, 192},        {12, 6000, 396, 2376, 384},
+        {13, 11880, 396, 2376, 768},      {20, 11880, 396, 2376, 2000},     {21, 19800, 792, 4752, 4000},
+        {22, 20250, 1620, 8100, 4000},    {30, 40500, 1620, 8100, 10000},   {31, 108000, 3600, 18000, 14000},
+        {32, 216000, 5120, 20480, 20000}, {40, 245760, 8192, 32768, 20000}, {41, 245760, 8192, 32768, 50000},
+        {42, 522240, 8704, 34816, 50000}, {50, 589824, 22080, 110400, 135000}, {51, 983040, 36864, 184320, 240000},
+        {52, 2073600, 36864, 184320, 240000}, {60, 4177920, 139264, 696320, 240000}, {61, 8355840, 139264, 696320, 480000},
+        {62, 16711680, 139264, 696320, 800000},
+    };
+    const int64_t mbW = (cfg.width + 15) / 16, mbH = (cfg.height + 15) / 16, fs = mbW * mbH;
+    const double fps = cfg.fps > 0 ? cfg.fps : 60.0;
+    const bool high = cfg.cabac && cfg.transform8x8 && cfg.mode != IntraMode::Pcm;
+    const double brFactor = high ? 1250.0 : 1000.0;
+    const int64_t dpb = std::max(1, cfg.refs);
+    for (const Level& l : kLevels) {
+        const int64_t side = int64_t(std::sqrt(double(l.maxFs) * 8.0)); // A.3.1: width and height in macroblocks
+        if (double(fs) * fps > double(l.maxMbps) * 1.0001 || fs > l.maxFs || mbW > side || mbH > side)
+            continue;
+        if (fs * dpb > l.maxDpbMbs)
+            continue;
+        if (cfg.bitrateKbps > 0 && cfg.bitrateKbps * 1.5 * 1000.0 > double(l.maxBr) * brFactor)
+            continue;
+        return l.idc;
+    }
+    return 62;
+}
+
 std::vector<uint8_t> Encoder::headers() const
 {
     std::vector<uint8_t> out;
@@ -386,7 +419,7 @@ std::vector<uint8_t> Encoder::headers() const
             bw.u(66, 8);   // profile_idc: Baseline
             bw.u(0xC0, 8); // constraint_set0 + constraint_set1 (constrained baseline)
         }
-        bw.u(40, 8);   // level_idc 4.0
+        bw.u(uint32_t(levelIdcFor(cfg_)), 8); // level_idc
         bw.ue(0);      // seq_parameter_set_id
         if (useT8()) {
             bw.ue(1);       // chroma_format_idc 4:2:0
@@ -411,11 +444,23 @@ std::vector<uint8_t> Encoder::headers() const
             bw.ue(0);
             bw.ue(uint32_t((padH_ - cfg_.height) / 2));
         }
-        // VUI (E.1.1): only timing, so containers and players know the frame rate.
+        // VUI (E.1.1): timing, so containers and players know the frame rate, and the video signal
+        // (range, colours) when the caller knows it.
         bw.flag(true); // vui_parameters_present_flag
         bw.flag(false); // aspect_ratio_info_present_flag
         bw.flag(false); // overscan_info_present_flag
-        bw.flag(false); // video_signal_type_present_flag
+        const bool colours = cfg_.colourPrimaries != 2 || cfg_.transferCharacteristics != 2 || cfg_.matrixCoefficients != 2;
+        bw.flag(colours || cfg_.fullRange); // video_signal_type_present_flag
+        if (colours || cfg_.fullRange) {
+            bw.u(5, 3);               // video_format: unspecified
+            bw.flag(cfg_.fullRange);  // video_full_range_flag
+            bw.flag(colours);         // colour_description_present_flag
+            if (colours) {
+                bw.u(uint32_t(cfg_.colourPrimaries & 255), 8);
+                bw.u(uint32_t(cfg_.transferCharacteristics & 255), 8);
+                bw.u(uint32_t(cfg_.matrixCoefficients & 255), 8);
+            }
+        }
         bw.flag(false); // chroma_loc_info_present_flag
         bw.flag(true);  // timing_info_present_flag
         // Frame rate = time_scale / (2 * num_units_in_tick); 1001-based rates stay exact.
@@ -436,7 +481,7 @@ std::vector<uint8_t> Encoder::headers() const
         bw.ue(16);       // log2_max_mv_length_horizontal
         bw.ue(16);       // log2_max_mv_length_vertical
         bw.ue(0);        // max_num_reorder_frames
-        bw.ue(1);        // max_dec_frame_buffering
+        bw.ue(uint32_t(std::max(1, cfg_.refs))); // max_dec_frame_buffering (at least max_num_ref_frames)
         bw.rbspTrailing();
         appendNal(out, 3, 7, bw.bytes());
     }
