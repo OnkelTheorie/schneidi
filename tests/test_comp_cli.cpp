@@ -642,6 +642,15 @@ int main(int argc, char** argv)
         // Only a mask would be left: refused with a clear message (a graph needs an output; a mask is none)
         CHECK(!ed.removeCompNode(clip, 2, kinds, &err) && err.contains("no output"));
         CHECK_EQ(current().out, 2);
+        // A graph of an older version with only masks (its output a mask): removing one says why it cannot
+        ed.modifyClips({clip}, "legacy", [](Clip& c) {
+            EffectInstance* e = EffectRegistry::instance(c, Comp::kEffectId);
+            CompGraph m;
+            m.nodes = {{1, "mask", {}}, {2, "mask", {}}};
+            m.out = 1;
+            Comp::setGraph(*e, m);
+        });
+        CHECK(!ed.removeCompNode(clip, 2, kinds, &err) && err.contains("only masks"));
         // Bypass, then a new graph
         ed.modifyClips({clip}, "bypass", [](Clip& c) { EffectRegistry::instance(c, Comp::kEffectId)->enabled = false; });
         CHECK(ed.setCompGraph({clip}, g, {}, kinds, &err));

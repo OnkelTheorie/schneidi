@@ -99,9 +99,9 @@ QStringList pixelKeys(const QString& type);
 
 // The clip's first frame moved `frames` further into its content (a head trim, the right piece of a cut; negative =
 // back out): values that count from the clip's start follow, so the picture stays where it was in the timeline - a
-// media node's offset (frames, × its speed; keyframes too) and the visible range of text nodes (from/until in seconds,
-// only with fps > 0). from 0 (= from the start) and until 0 (= to the end) stay; a range that ended before the new
-// start becomes an empty one (the node shows nothing on this clip, as before). A NEW node kind with a value counted
+// media node's offset (frames × its speed - an animated one: the speed at the new first frame; keyframes too) and the visible range of text nodes (from/until in seconds,
+// fps <= 0: nothing moves). from 0 (= from the start) and until 0 (= to the end) stay, others move below 0 too (until < 0
+// = over before the start: invisible), so trimming back out restores them exactly. A NEW node kind with a value counted
 // from the clip start must be added there (CompGraph.cpp)
 void followHead(Clip& c, int frames, double fps);
 

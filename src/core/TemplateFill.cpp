@@ -40,12 +40,15 @@ QVector<QPair<int, const Timeline*>> timelines(const ProjectData& d)
     return out;
 }
 
+// The timeline to edit, with the project's frame rate (comp values in seconds follow its cuts, Comp::followHead)
 Timeline* timelineOf(ProjectData& d, int sequence)
 {
-    if (sequence == d.currentSequence) return &d.timeline;
+    Timeline* tl = nullptr;
+    if (sequence == d.currentSequence) tl = &d.timeline;
     for (Sequence& s : d.sequences)
-        if (s.id == sequence) return &s.timeline;
-    return nullptr;
+        if (!tl && s.id == sequence) tl = &s.timeline;
+    if (tl) tl->frameRate = d.format.rate.fps();
+    return tl;
 }
 
 std::optional<MediaInfo> mediaOf(const ProjectData& d, const Context& ctx, const QString& path)
@@ -662,7 +665,7 @@ void fillMedia(ProjectData& d, Timeline& tl, const SlotRef& r, const MediaInfo& 
             SlotReport once; // the report counts it once (loop repeats get the same zoom)
             keepWidth(c, base, m, frame, ctx, i == 0 ? rep : once);
         }
-        TimelineOps::placeClip(track, c, newId);
+        TimelineOps::placeClip(track, c, newId, tl.frameRate);
         rep.clips << c.id;
     }
     if (video && !sound.isEmpty()) {
@@ -689,7 +692,7 @@ void fillMedia(ProjectData& d, Timeline& tl, const SlotRef& r, const MediaInfo& 
                     a.linkId = p.linkId;
                     if (i > 0) a.transIn = 0, a.fadeIn = 0, a.transInAlone = false;
                     if (i < lastSounding) a.transOut = 0, a.fadeOut = 0, a.transOutAlone = false;
-                    TimelineOps::placeClip(tl.audio[s.track], a, newId);
+                    TimelineOps::placeClip(tl.audio[s.track], a, newId, tl.frameRate);
                 }
             }
         }

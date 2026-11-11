@@ -392,7 +392,7 @@ void CompCanvas::addNode(const QString& type)
         m_editor->moveCompNodes(m_clipId, places);
     }
     undo->endMacro();
-    if (!id && undo->index() > steps) undo->undo(); // refused: the empty macro goes again (as CompUi::applyRecipe)
+    if (!id) CompUi::dropRefusedStep(undo, steps); // refused: the empty macro goes, also from redo
     report(id != 0, err);
     if (id) {
         refresh();

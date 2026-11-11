@@ -6,6 +6,8 @@
 #include "check.h"
 
 #include "core/CompGraph.h"
+#include "core/Keyframes.h"
+#include "core/ProjectFile.h"
 #include "core/Editor.h"
 #include "core/EffectRegistry.h"
 #include "core/Project.h"
@@ -53,14 +55,8 @@ double val(Project& p, int id, const char* key)
 
 bool near(double a, double b) { return std::abs(a - b) < 1e-6; }
 
-// The node is invisible over the whole clip (Picture::Comp::visibleWeight: a range with until > 0 that ends at or
-// before its start)
-bool hidden(Project& p, int id, int node)
-{
-    const double from = val(p, id, qPrintable(QString("n%1.from").arg(node)));
-    const double until = val(p, id, qPrintable(QString("n%1.until").arg(node)));
-    return until > 0 && until <= std::max(0.0, from);
-}
+// The node is invisible over the whole clip (Picture::Comp::visibleWeight: until < 0 = over before the start)
+bool hidden(Project& p, int id, int node) { return val(p, id, qPrintable(QString("n%1.until").arg(node))) < 0; }
 
 struct Fixture {
     Project p;
@@ -196,6 +192,73 @@ void testTrims()
         if (CHECK(nb && nb->start == 290)) f.checkMoved(f.b, 40, "overwritten head");
         f.undoAll();
     }
+    {
+        Fixture f;
+        std::printf("the source viewer overwrites B's head\n");
+        CHECK(f.ed.placeSourceRange("/x/c.mp4", 0, 59, 230, 0) > 0); // ends 40 frames into B
+        const Clip* nb = TimelineOps::findClip(f.p.timeline(), f.b);
+        if (CHECK(nb && nb->start == 290)) f.checkMoved(f.b, 40, "overwritten head (source viewer)");
+        f.undoAll();
+    }
+}
+
+// Trimming 3 s in and back out gives the exact values again, also of a range that was over before the new start
+void testTrimBack()
+{
+    Fixture f;
+    const int three = int(std::lround(3 * f.fps));
+    f.ed.trimClip(f.b, Edge::Start, three);
+    CHECK(hidden(f.p, f.b, 4)); // 1..3 s: over exactly at the new start
+    CHECK(near(val(f.p, f.b, "n4.from"), -2));
+    f.ed.trimClip(f.b, Edge::Start, -three);
+    f.checkUnmoved(f.b);
+    CHECK(near(val(f.p, f.b, "n4.from"), 1) && near(val(f.p, f.b, "n4.until"), 3));
+    CHECK(near(val(f.p, f.b, "n6.from"), 0) && near(val(f.p, f.b, "n6.until"), 8));
+    CHECK(!hidden(f.p, f.b, 4));
+}
+
+// Without a frame rate (a timeline edited outside a Project) nothing of the graph moves - never half (offset moved,
+// titles not); a loaded project has its rate on every timeline, so a preview of a trim matches the trim
+void testFrameRate()
+{
+    Fixture f;
+    Timeline bare = f.p.timeline();
+    bare.frameRate = 0;
+    int next = 9000;
+    TimelineOps::splitAt(bare, {f.b}, 375, [&] { return ++next; }, [&] { return ++next; });
+    for (const Clip& x : bare.video[0].clips)
+        if (x.start == 375) {
+            const EffectInstance* e = EffectRegistry::instance(x, Comp::kEffectId);
+            CHECK(e && near(e->params.value("n2.offset").toDouble(), 10) && near(e->params.value("n3.from").toDouble(), 6));
+        }
+    Project q;
+    Selection sel;
+    Editor ed(&q, &sel);
+    ProjectData d = f.p.data();
+    for (Sequence& s : d.sequences) s.timeline.frameRate = 0;
+    d.timeline.frameRate = 0; // as read from a file
+    q.load(d);
+    CHECK(q.timeline().frameRate > 0);
+    const Timeline preview = ed.previewTrim(f.b, Edge::Start, 25);
+    const Clip* pb = TimelineOps::findClip(preview, f.b);
+    const EffectInstance* pe = pb ? EffectRegistry::instance(*pb, Comp::kEffectId) : nullptr;
+    ed.trimClip(f.b, Edge::Start, 25);
+    CHECK(pe && near(pe->params.value("n3.from").toDouble(), val(q, f.b, "n3.from")));
+    CHECK(pe && near(pe->params.value("n2.offset").toDouble(), val(q, f.b, "n2.offset")));
+    CHECK(near(val(q, f.b, "n3.from"), 6 - 25 / f.fps));
+}
+
+// An animated speed: the shift uses the speed at the new first frame, so the picture there stays
+void testAnimatedSpeed()
+{
+    Fixture f;
+    const AnimParam sp = Keys::effectParam(Comp::kEffectId, "n2.speed");
+    f.ed.modifyClips({f.b}, "speed keys", [&](Clip& c) {
+        Keys::setKey(c, sp, 0, 1.0);
+        Keys::setKey(c, sp, 100, 5.0);
+    });
+    f.ed.trimClip(f.b, Edge::Start, 50); // speed 3 at the new start (static: 2)
+    CHECK(near(val(f.p, f.b, "n2.offset"), 10 + 50 * 3.0));
 }
 
 } // namespace
@@ -207,5 +270,8 @@ int main(int argc, char** argv)
     Check::initApp("comp_timeline");
     testSplit();
     testTrims();
+    testTrimBack();
+    testFrameRate();
+    testAnimatedSpeed();
     return Check::result();
 }

@@ -219,6 +219,12 @@ int main(int argc, char** argv)
         CHECK_EQ(addBySearch(canvas, project, clipId, "blur"), 0);
         CHECK_EQ(undo->index(), at);
         CHECK_EQ(undo->count(), count);
+        // A recipe refused there neither (no "Redo" of nothing left behind)
+        QString why;
+        CHECK(!CompUi::applyRecipe(ed, {clipId}, "greenscreen", {}, &why));
+        CHECK_EQ(undo->index(), at);
+        CHECK_EQ(undo->count(), count);
+        CHECK(!undo->canRedo());
         ed->toggleTrackLock(ref);
         settle();
     }

@@ -180,6 +180,7 @@ bool Editor::removeCompNode(int clipId, int node, const CompGraph::KindInfo& kin
 {
     return editComp(clipId, T("Knoten entfernen"), [&](CompGraph& g, EffectInstance&, QString* why) {
         if (!g.node(node)) return failWith(why, QStringLiteral("no node %1 in the graph").arg(node));
+        const bool picture = !Comp::outputsMask(g.node(node)->type);
         const CompLink* through = throughLink(g, node);
         const int source = through ? through->from : 0;
         QVector<CompLink> links;
@@ -199,9 +200,13 @@ bool Editor::removeCompNode(int clipId, int node, const CompGraph::KindInfo& kin
         for (qsizetype i = g.nodes.size() - 1; g.out == 0 && i >= 0; --i)
             if (!Comp::outputsMask(g.nodes[i].type)) g.out = g.nodes[i].id;
         if (g.out == 0 && !g.nodes.isEmpty())
-            return failWith(why, QStringLiteral("node %1 is the last node with a picture: the graph would have no output "
-                                                "(masks are none); add a picture node first, or remove the whole graph")
-                                     .arg(node));
+            return failWith(why, picture ? QStringLiteral("node %1 is the last node with a picture: the graph would have "
+                                                          "no output (masks are none); add a picture node first, or "
+                                                          "remove the whole graph")
+                                               .arg(node)
+                                         : QStringLiteral("the graph has only masks, no node with a picture, so it "
+                                                          "has no output (it does nothing); add a picture node first, "
+                                                          "or remove the whole graph"));
         return true;
     }, kinds, err);
 }

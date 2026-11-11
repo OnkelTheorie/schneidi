@@ -58,14 +58,14 @@ int main(int argc, char** argv)
     {
         Ids ids;
         Track t;
-        placeClip(t, mk(1, "a", 0, 100), ids.gen());
+        placeClip(t, mk(1, "a", 0, 100), ids.gen(), 25);
         CHECK_EQ(t.clips.size(), 1);
         // into the middle: a is split, right part new ID and provisional link (-old, see resolvePendingLinks),
         // transition/fade at the cut edges gone
         t.clips[0].linkId = 7;
         t.clips[0].transIn = t.clips[0].transOut = 10;
         t.clips[0].fadeIn = t.clips[0].fadeOut = 5;
-        placeClip(t, mk(2, "b", 40, 20), ids.gen());
+        placeClip(t, mk(2, "b", 40, 20), ids.gen(), 25);
         Timeline tl = tracks(1, 0);
         tl.video[0] = t;
         CHECK_EQ(dump(tl), QString("V1: a[0-40|0-39] b[40-60|0-19] a[60-100|60-99]"));
@@ -81,14 +81,14 @@ int main(int argc, char** argv)
         CHECK(t.clips[0].transIn == 10 && t.clips[0].transOut == 0 && t.clips[0].fadeIn == 5 && t.clips[0].fadeOut == 0);
         CHECK(t.clips[2].transIn == 0 && t.clips[2].transOut == 10 && t.clips[2].fadeIn == 0 && t.clips[2].fadeOut == 5);
         // Cut off end and start, remove completely covered clip
-        clearRange(tl.video[0], 30, 70, ids.gen());
+        clearRange(tl.video[0], 30, 70, ids.gen(), 25);
         CHECK_EQ(dump(tl), QString("V1: a[0-30|0-29] a[70-100|70-99]"));
         CHECK_TIMELINE(tl);
-        clearRange(tl.video[0], 60, 60, ids.gen()); // empty range: nothing
-        clearRange(tl.video[0], 0, 30, ids.gen());
+        clearRange(tl.video[0], 60, 60, ids.gen(), 25); // empty range: nothing
+        clearRange(tl.video[0], 0, 30, ids.gen(), 25);
         CHECK_EQ(dump(tl), QString("V1: a[70-100|70-99]"));
         CHECK_TIMELINE(tl);
-        placeClip(tl.video[0], mk(3, "c", 60, 50), ids.gen()); // covers a entirely
+        placeClip(tl.video[0], mk(3, "c", 60, 50), ids.gen(), 25); // covers a entirely
         CHECK_EQ(dump(tl), QString("V1: c[60-110|0-49]"));
         CHECK_TIMELINE(tl);
         CHECK(removeClip(tl, 3) && !removeClip(tl, 3) && tl.video[0].clips.isEmpty());
@@ -247,7 +247,7 @@ int main(int argc, char** argv)
         tl.audio[0].clips << mk(2, "v", 1213, 257, 143, 5);  // starts after the range, in sync with v
         tl.audio[1].clips << mk(3, "v", 1213, 257, 143, 5);  // a second stream: the same
         tl.audio[2].clips << mk(4, "v", 1070, 400, 0, 5);    // under both pieces: stays with the left one
-        clearRange(tl.video[0], 1078, 1137, ids.gen());
+        clearRange(tl.video[0], 1078, 1137, ids.gen(), 25);
         resolvePendingLinks(tl, newLink);
         const Clip* left = findClip(tl, 1);
         const Clip* right = tl.video[0].clips.size() == 2 ? &tl.video[0].clips[1] : nullptr;
@@ -262,7 +262,7 @@ int main(int argc, char** argv)
         Timeline t2 = tracks(1, 1);
         t2.video[0].clips << mk(1, "v", 1070, 400, 0, 5);
         t2.audio[0].clips << mk(2, "v", 1213, 257, 10, 5);
-        clearRange(t2.video[0], 1078, 1137, ids.gen());
+        clearRange(t2.video[0], 1078, 1137, ids.gen(), 25);
         resolvePendingLinks(t2, newLink);
         CHECK_EQ(findClip(t2, 2)->linkId, 5);
     }
@@ -274,7 +274,7 @@ int main(int argc, char** argv)
         tl.video[0].clips << mk(1, "cam", 0, 100, 0, 5);
         tl.audio[0].clips << mk(2, "rec", 20, 80, 0, 5);  // under the right piece only
         tl.audio[1].clips << mk(3, "rec2", 0, 50, 0, 5);  // more under the left piece
-        clearRange(tl.video[0], 30, 40, ids.gen());
+        clearRange(tl.video[0], 30, 40, ids.gen(), 25);
         resolvePendingLinks(tl, [&] { return ++link; });
         CHECK_EQ(findClip(tl, 2)->linkId, 71);
         CHECK_EQ(findClip(tl, 3)->linkId, 5);
@@ -296,7 +296,7 @@ int main(int argc, char** argv)
                 tl.audio[k].clips << mk(2 + k, "v", as, al, as - vs, 5);
             }
             const int from = pick(0, vs + vl), to = from + pick(1, 60);
-            clearRange(tl.video[0], from, to, ids.gen());
+            clearRange(tl.video[0], from, to, ids.gen(), 25);
             resolvePendingLinks(tl, [&] { return ++link; });
             for (int k = 0; k < 2; ++k) {
                 const Clip& a = tl.audio[k].clips[0];

@@ -253,6 +253,7 @@ Timeline emptyTimeline()
 Project::Project(QObject* parent) : QObject(parent)
 {
     m_sequences << Sequence{1, T("Timeline %1").arg(1), false, 0, emptyTimeline()};
+    stampFrameRate();
     connect(m_undo, &QUndoStack::cleanChanged, this, [this] { emit modifiedChanged(isModified()); });
 }
 
@@ -397,6 +398,7 @@ void Project::load(const ProjectData& d)
     markSaved();
     emit formatChanged();
     noteTimelineFormat(true);
+    stampFrameRate();
     emit mediaChanged();
     emit sequencesChanged();
     emit poolChanged();
@@ -485,6 +487,7 @@ void Project::applyFormat(const ProjectFormat& format, const QVector<Sequence>& 
 {
     m_format = format;
     m_sequences = sequences;
+    stampFrameRate();
     emit formatChanged();
     noteTimelineFormat();
     emit timelineChanged();
@@ -535,7 +538,15 @@ void Project::setTimeline(const Timeline& tl)
 {
     current().timeline = tl;
     current().timeline.nested.reset();
+    current().timeline.frameRate = frameRate();
     emit timelineChanged();
+}
+
+void Project::stampFrameRate()
+{
+    const double fps = frameRate();
+    for (Sequence& s : m_sequences)
+        if (s.timeline.frameRate != fps) s.timeline.frameRate = fps;
 }
 
 void Project::setTimeline(int sequenceId, const Timeline& tl)
@@ -569,6 +580,7 @@ void Project::setCurrentSequence(int id)
     if (id == m_current || !sequence(id)) return;
     closeMerge();
     m_current = id;
+    stampFrameRate();
     emit currentSequenceChanged();
     noteTimelineFormat();
     emit timelineChanged();
@@ -589,6 +601,7 @@ void Project::editSequences(const QString& text, const std::function<void(QVecto
 void Project::applySequences(const QVector<Sequence>& sequences, int cur)
 {
     m_sequences = sequences;
+    stampFrameRate();
     for (const Sequence& s : m_sequences) m_lastSequenceId = std::max(m_lastSequenceId, s.id);
     const bool switched = cur != m_current;
     m_current = cur;
