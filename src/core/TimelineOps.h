@@ -5,6 +5,8 @@
 
 #include "core/Types.h"
 
+#include <QSet>
+
 #include <functional>
 
 using IdGen = std::function<int()>;
@@ -47,8 +49,15 @@ QVector<int> repeatedSound(const Timeline& tl, const QVector<int>& clipIds);
 // If a linked clip is split, the right piece provisionally gets the linkId -old (same on all tracks);
 // resolvePendingLinks (called by Project::edit) turns that into a new common link.
 void clearRange(Track& track, int start, int end, const IdGen& newId);
-// Replace provisional (negative) linkIds from clearRange with new ones: same provisional id -> same new id
+// Replace provisional (negative) linkIds from clearRange with new ones: same provisional id -> same new id. A partner
+// that was not cut (on a track without a right piece) goes with the right piece when it plays in sync with it (same
+// file and playback, same start - in, overlapping in time) and not with the left piece that kept the old link (a
+// delete range over a picture whose sound starts after the range); otherwise it keeps the old link.
 void resolvePendingLinks(Timeline& tl, const IdGen& newLinkId);
+// Linked pairs (ids) in sync in `before` - the same file showing the same frame at the same place, or other files side
+// by side in time - whose offset (start - in) to each other changed in `after`; pairs where one clip is in `ignore`
+// (changed on purpose), plays otherwise now (speed, reverse, freeze, ramp) or is gone are left out.
+QVector<QPair<int, int>> linksApart(const Timeline& before, const Timeline& after, const QSet<int>& ignore = {});
 // After an edit from `before` to `after`: kill feed copies (Reframe::keepCopy, linked to their clip) that the edit left
 // as they were while it cut their clip in place (another clip overwrote its middle, an end or all of it: clearRange,
 // placeClip) are cut the same way - the part over the new clip goes, each piece stays linked to the clip's piece
@@ -86,13 +95,19 @@ void clearDissolveAt(Track& track, int frame);
 // Creates missing tracks until there are `count` tracks of the kind (names V3, A3, ...).
 void ensureTracks(Timeline& tl, TrackKind kind, int count);
 
-// Deletes clips with ripple: every unlocked track moves up by the deleted time where nothing stays on any affected
-// track (the others via rippleTracks), so linked clips stay in sync (an L-cut's sound under the next picture keeps
-// that time).
-void rippleDelete(Timeline& tl, const QVector<int>& clipIds);
+// Deletes clips with ripple: the time taken out is the deleted time where nothing stays on any affected track (an
+// L-cut's sound under the next picture keeps that time, so linked clips stay in sync). The affected tracks move up by
+// it; the other unlocked tracks too, unless a clip of theirs would run into another one there (rippleTracks: that
+// track stays). Returns the frames taken out (less than deleted when clips stay in the deleted time).
+struct RippleResult {
+    int deleted = 0; // frames of deleted time (all tracks together)
+    int removed = 0; // frames taken out of the timeline
+};
+RippleResult rippleDelete(Timeline& tl, const QVector<int>& clipIds);
 
 // Splits the clips at frame `frame`. Right halves get new IDs; linked
-// pairs stay linked (new common linkId for the right parts).
+// pairs stay linked (new common linkId for the right parts; a partner that was not split and plays in sync with a
+// right part only - an L-cut's sound starting after `frame` - goes with it, see resolvePendingLinks).
 // Returns the IDs of the new right parts.
 QVector<int> splitAt(Timeline& tl, const QVector<int>& clipIds, int frame,
                      const IdGen& newClipId, const IdGen& newLinkId);

@@ -1,14 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Random editor operations on a timeline with linked clips (picture + sound), as the timeline does them (linked
-// selection on): after each one the invariants of tests/timeline_guard.h (sorted, no overlap, unique ids); at the end
-// undo all = the start, redo all = the end. Fixed seeds: a failure names seed and step (TIMELINE_GUARD_DUMP=1 shows the
+// selection on): after each one the invariants of tests/timeline_guard.h (sorted, no overlap, unique ids, links in
+// sync); at the end undo all = the start, redo all = the end. Fixed seeds: a failure names seed and step (TIMELINE_GUARD_DUMP=1 shows the
 // timelines around it). Seeds/steps: INVARIANT_SEEDS, INVARIANT_STEPS.
-// Linked clips coming apart is printed as a note ("HINWEIS sync"), not failed: random edits reach the known open cases
-// (0.21 block 2) - a ripple (delete, speed, trim) that moves the clips after it on every track, except a track where
-// a clip lies across the edit point (it would run into it): that track stays, and a picture/sound pair split between
-// a moving and a staying track comes apart; a delete range across a linked picture whose sound starts after the range
-// leaves the sound linked to the left piece. The fixed cases have their own tests (test_timelineops, test_tracks).
-// INVARIANT_STRICT_SYNC=1 fails on them.
+// Linked clips that were in sync stay in sync too (since 0.21 a ripple that would take them apart is refused, a delete
+// range keeps a sound with the piece it plays with).
 #include "check.h"
 #include "timeline_guard.h"
 
@@ -25,7 +21,6 @@ namespace {
 
 using namespace TimelineOps;
 
-int g_notes = 0; // linked clips that came apart (notes, see above)
 
 QVector<int> allClips(const Timeline& tl)
 {
@@ -51,7 +46,6 @@ void run(unsigned seed, int steps)
     const auto pick = [&](int lo, int hi) { return std::uniform_int_distribution<int>(lo, hi)(rng); };
     Project p;
     TimelineGuard guard(p);
-    if (!qEnvironmentVariableIsSet("INVARIANT_STRICT_SYNC")) guard.syncNotesOnly();
     Selection sel;
     Editor ed(&p, &sel);
     const QStringList files{"/x/a.mp4", "/x/b.mp4", "/x/m.wav"};
@@ -70,7 +64,7 @@ void run(unsigned seed, int steps)
     for (int step = 0; step < steps; ++step) {
         const Timeline& tl = p.timeline();
         const QVector<int> ids = allClips(tl);
-        const int before = guard.problemCount() + guard.noteCount();
+        const int before = guard.problemCount();
         if (ids.isEmpty()) {
             ed.addMediaAt({files[pick(0, 2)]}, pick(0, 600), pick(0, 1));
             continue;
@@ -130,7 +124,7 @@ void run(unsigned seed, int steps)
             break;
         case 17: last = "redo"; p.undoStack()->redo(); break;
         }
-        if (guard.problemCount() + guard.noteCount() > before) {
+        if (guard.problemCount() > before) {
             std::printf("       seed %u, step %d: %s on clip %d\n", seed, step, qPrintable(last), id);
             if (guard.problemCount() > 20) return; // enough for one seed
         }
@@ -143,7 +137,6 @@ void run(unsigned seed, int steps)
     if (!CHECK(p.timeline() == first)) std::printf("       seed %u: undo all\n", seed);
     p.undoStack()->setIndex(end);
     if (!CHECK(p.timeline() == final)) std::printf("       seed %u: redo all\n", seed);
-    g_notes += guard.noteCount();
 }
 
 } // namespace
@@ -156,6 +149,5 @@ int main(int argc, char** argv)
     const int seeds = qEnvironmentVariableIntValue("INVARIANT_SEEDS") > 0 ? qEnvironmentVariableIntValue("INVARIANT_SEEDS") : 40;
     const int steps = qEnvironmentVariableIntValue("INVARIANT_STEPS") > 0 ? qEnvironmentVariableIntValue("INVARIANT_STEPS") : 150;
     for (int s = 1; s <= seeds; ++s) run(unsigned(s), steps);
-    std::printf("%d sync notes (linked clips apart, known open cases)\n", g_notes);
     return Check::result();
 }

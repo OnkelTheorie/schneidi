@@ -174,6 +174,42 @@ QVector<int> repeatedSound(const Timeline& tl, const QVector<int>& clipIds)
     return out;
 }
 
+namespace {
+
+// After a cut gave the right pieces of link groups new links (old link -> new link): an uncut partner (on a track
+// without a right piece) goes with the right piece it plays in sync with (same file and playback, same start - in,
+// overlapping in time) - unless it is in sync with the left piece too (it lies under both, or only under the left
+// one): then it stays, as before. The pieces: the clips of the link on the tracks that were cut.
+void relinkUncut(Timeline& tl, const QHash<int, int>& rightLinks)
+{
+    const auto inSync = [](const Clip& a, const Clip& b) {
+        return a.mediaPath == b.mediaPath && a.start - a.in == b.start - b.in && a.start < b.end() && b.start < a.end()
+               && a.speed == b.speed && a.reverse == b.reverse && a.freeze == b.freeze && a.ramp == b.ramp;
+    };
+    QHash<int, int> relink; // clip id -> new link
+    for (auto m = rightLinks.cbegin(); m != rightLinks.cend(); ++m) {
+        const int oldLink = m.key(), newLink = m.value();
+        QVector<const Clip*> right, left, partners;
+        for (TrackKind k : {TrackKind::Video, TrackKind::Audio})
+            for (const Track& t : std::as_const(tl).tracks(k)) {
+                const bool cut = std::any_of(t.clips.cbegin(), t.clips.cend(), [&](const Clip& c) { return c.linkId == newLink; });
+                for (const Clip& c : t.clips) {
+                    if (c.linkId == newLink) right << &c;
+                    else if (c.linkId == oldLink) (cut ? left : partners) << &c;
+                }
+            }
+        for (const Clip* c : std::as_const(partners))
+            if (c->keepRegion.isEmpty() // kill feed copies follow their clip their own way (cutCopiesLikeBases)
+                && std::any_of(right.cbegin(), right.cend(), [&](const Clip* r) { return inSync(*c, *r); })
+                && std::none_of(left.cbegin(), left.cend(), [&](const Clip* l) { return inSync(*c, *l); }))
+                relink.insert(c->id, newLink);
+    }
+    if (!relink.isEmpty())
+        changeClips(tl, [&](const Clip& c) { return relink.contains(c.id); }, [&](Clip& c) { c.linkId = relink.value(c.id); });
+}
+
+} // namespace
+
 void resolvePendingLinks(Timeline& tl, const IdGen& newLinkId)
 {
     QHash<int, int> map;
@@ -181,6 +217,43 @@ void resolvePendingLinks(Timeline& tl, const IdGen& newLinkId)
         if (!map.contains(c.linkId)) map[c.linkId] = newLinkId();
         c.linkId = map[c.linkId];
     });
+    QHash<int, int> rightLinks;
+    for (auto m = map.cbegin(); m != map.cend(); ++m) rightLinks.insert(-m.key(), m.value());
+    relinkUncut(tl, rightLinks);
+}
+
+QVector<QPair<int, int>> linksApart(const Timeline& before, const Timeline& after, const QSet<int>& ignore)
+{
+    const auto playsLike = [](const Clip& a, const Clip& b) {
+        return a.speed == b.speed && a.reverse == b.reverse && a.freeze == b.freeze && a.ramp == b.ramp;
+    };
+    const auto linked = [](const Timeline& tl) {
+        QHash<int, Clip> m;
+        for (TrackKind k : {TrackKind::Video, TrackKind::Audio})
+            for (const Track& t : tl.tracks(k))
+                for (const Clip& c : t.clips)
+                    if (c.linkId > 0) m.insert(c.id, c);
+        return m;
+    };
+    const QHash<int, Clip> was = linked(before), now = linked(after);
+    QHash<int, QVector<int>> groups; // link -> clips in both, same link, same playback
+    for (auto it = now.cbegin(); it != now.cend(); ++it) {
+        const auto old = was.constFind(it.key());
+        if (old == was.cend() || ignore.contains(it.key()) || old->linkId != it->linkId || !playsLike(*old, *it)) continue;
+        groups[it->linkId] << it.key();
+    }
+    QVector<QPair<int, int>> out;
+    for (const QVector<int>& ids : std::as_const(groups))
+        for (qsizetype i = 0; i < ids.size(); ++i)
+            for (qsizetype j = i + 1; j < ids.size(); ++j) {
+                const Clip &a0 = was[ids[i]], &b0 = was[ids[j]], &a1 = now[ids[i]], &b1 = now[ids[j]];
+                if (!playsLike(a1, b1)) continue;
+                const int d0 = (a0.start - a0.in) - (b0.start - b0.in), d1 = (a1.start - a1.in) - (b1.start - b1.in);
+                const bool synced = a0.mediaPath == b0.mediaPath ? d0 == 0 : a0.start < b0.end() && b0.start < a0.end();
+                if (synced && d0 != d1) out << qMakePair(std::min(ids[i], ids[j]), std::max(ids[i], ids[j]));
+            }
+    std::sort(out.begin(), out.end()); // (the hash's order changes per run: the message names the same pair each time)
+    return out;
 }
 
 void cutCopiesLikeBases(const Timeline& before, Timeline& after, const IdGen& newId)
@@ -389,6 +462,7 @@ QVector<int> splitAt(Timeline& tl, const QVector<int>& clipIds, int frame,
         sortTrack(t);
         created << right.id;
     }
+    relinkUncut(tl, linkMap); // a partner that starts after the cut plays with the right piece
     return created;
 }
 
@@ -402,7 +476,7 @@ void ensureTracks(Timeline& tl, TrackKind kind, int count)
     }
 }
 
-void rippleDelete(Timeline& tl, const QVector<int>& clipIds)
+RippleResult rippleDelete(Timeline& tl, const QVector<int>& clipIds)
 {
     // Deleted ranges of all tracks combined
     const QVector<TrackRef> edited = tracksOf(tl, clipIds);
@@ -458,6 +532,10 @@ void rippleDelete(Timeline& tl, const QVector<int>& clipIds)
         sortTrack(t);
     }
     rippleTracks(tl, shifts, edited);
+    RippleResult result;
+    for (const auto& r : std::as_const(merged)) result.deleted += r.second - r.first;
+    for (const auto& s : std::as_const(shifts)) result.removed -= s.second;
+    return result;
 }
 
 int clampTrackDelta(const Timeline& tl, const QVector<int>& clipIds, TrackKind anchorKind, int trackDelta)
