@@ -2,7 +2,7 @@
 // Serialises the syntax elements the macroblock coders chose; context selection follows the
 // neighbour rules of 9.3.3.1.1 (availability stops at slice edges like everywhere else).
 #include "Cabac.h"
-#include "H264Encoder.h"
+#include "FrameCoder.h"
 
 #include <algorithm>
 #include <cmath>
@@ -132,7 +132,7 @@ void residualBlock8x8(CabacEncoder& ce, const int* list)
 
 } // namespace
 
-void Encoder::CabacState::resize(int mbW, int mbH)
+void FrameCoder::CabacState::resize(int mbW, int mbH)
 {
     const size_t mbs = size_t(mbW) * mbH;
     kind.assign(mbs, 0);
@@ -146,7 +146,7 @@ void Encoder::CabacState::resize(int mbW, int mbH)
     cbfChroma[1].assign(mbs * 4, 0);
 }
 
-void Encoder::cabacWriteMb(CabacEncoder& ce, CabacState& st, int mbx, int mby, const MbSyntax& s, bool& prevQpNonZero)
+void FrameCoder::cabacWriteMb(CabacEncoder& ce, CabacState& st, int mbx, int mby, const MbSyntax& s, bool& prevQpNonZero)
 {
     using K = MbSyntax::Kind;
     const size_t m = size_t(mby) * mbW_ + mbx;

@@ -2,6 +2,7 @@
 // Clause numbers refer to ITU-T H.264. The encoder mirrors the decoder's
 // reconstruction exactly (8.3, 8.5), so later P frames can reference it.
 #include "H264Encoder.h"
+#include "FrameCoder.h"
 
 #include "Cabac.h"
 #include "Cavlc.h"
@@ -28,17 +29,8 @@ namespace schneidi::h264 {
 void cabacTrellis(const CabacEncoder& ce, int cat, const double* x, const double* scale, int count, double lambda,
                   int cbfInc, int* out);
 
-namespace {
-
-// Macroblock statistics (H264_STATS=1), for comparisons with other encoders' logs.
-const bool gStats = std::getenv("H264_STATS") != nullptr;
-std::atomic<long> gStatInter{0}, gStatInterCbp{0}, gStatT8{0};
-std::atomic<long> gStatIntraTry[4] = {}, gStatIntraWin[4] = {}; // by ratio of the intra estimate to the inter cost
-// Experiments (H264_EXP bit mask), for A/B measurements only.
-const int gExp = std::getenv("H264_EXP") ? std::atoi(std::getenv("H264_EXP")) : 0;
-const double gIntraFactor = std::getenv("H264_INTRAF") ? std::atof(std::getenv("H264_INTRAF")) : 2.0;
 // Phase timing per picture (H264_TIMING=1): where the serial parts are.
-const bool gTiming = std::getenv("H264_TIMING") != nullptr;
+static const bool gTiming = std::getenv("H264_TIMING") != nullptr;
 struct PhaseClock {
     std::chrono::steady_clock::time_point t = std::chrono::steady_clock::now();
     double ms[8] = {};
@@ -51,6 +43,16 @@ struct PhaseClock {
         t = now;
     }
 };
+
+namespace {
+
+// Macroblock statistics (H264_STATS=1), for comparisons with other encoders' logs.
+const bool gStats = std::getenv("H264_STATS") != nullptr;
+std::atomic<long> gStatInter{0}, gStatInterCbp{0}, gStatT8{0};
+std::atomic<long> gStatIntraTry[4] = {}, gStatIntraWin[4] = {}; // by ratio of the intra estimate to the inter cost
+// Experiments (H264_EXP bit mask), for A/B measurements only.
+const int gExp = std::getenv("H264_EXP") ? std::atoi(std::getenv("H264_EXP")) : 0;
+const double gIntraFactor = std::getenv("H264_INTRAF") ? std::atof(std::getenv("H264_INTRAF")) : 2.0;
 double gPhaseMs[8] = {};
 double gWaitMs = 0; // summed over threads
 int gPhaseFrames = 0;
@@ -279,13 +281,15 @@ void predictChroma8(int mode, const uint8_t* rec, int stride, bool left, bool to
 
 } // namespace
 
-Encoder::Encoder(const EncoderConfig& config)
+FrameCoder::FrameCoder(const EncoderConfig& config)
     : cfg_(config)
 {
     mbW_ = (cfg_.width + 15) / 16;
     mbH_ = (cfg_.height + 15) / 16;
     padW_ = mbW_ * 16;
     padH_ = mbH_ * 16;
+    extW_ = padW_ + 2 * kMargin;
+    extH_ = padH_ + 2 * kMargin;
     srcY_.resize(size_t(padW_) * padH_);
     srcU_.resize(size_t(padW_ / 2) * (padH_ / 2));
     srcV_.resize(srcU_.size());
@@ -312,6 +316,23 @@ Encoder::Encoder(const EncoderConfig& config)
     nzChroma_[0].resize(size_t(mbW_ * 2) * (mbH_ * 2));
     nzChroma_[1].resize(nzChroma_[0].size());
 }
+
+Encoder::Encoder(const EncoderConfig& config)
+    : cfg_(config)
+{
+    mbW_ = (cfg_.width + 15) / 16;
+    mbH_ = (cfg_.height + 15) / 16;
+    padW_ = mbW_ * 16;
+    padH_ = mbH_ * 16;
+    if (cfg_.mode == IntraMode::Pcm)
+        cfg_.deblock = false;
+    for (auto& c : coders_)
+        c = std::make_unique<FrameCoder>(cfg_);
+}
+
+const std::vector<uint8_t>& Encoder::reconY() const { return (last_ ? last_ : coders_[0].get())->recY_; }
+const std::vector<uint8_t>& Encoder::reconU() const { return (last_ ? last_ : coders_[0].get())->recU_; }
+const std::vector<uint8_t>& Encoder::reconV() const { return (last_ ? last_ : coders_[0].get())->recV_; }
 
 std::vector<uint8_t> Encoder::headers() const
 {
@@ -410,7 +431,7 @@ std::vector<uint8_t> Encoder::headers() const
     return out;
 }
 
-void Encoder::loadSource(const Picture& pic)
+void FrameCoder::loadSource(const Picture& pic)
 {
     // Copy with edge replication into the macroblock-aligned buffers.
     auto copyPlane = [](const uint8_t* src, int srcStride, int w, int h, std::vector<uint8_t>& dst, int dw, int dh) {
@@ -579,211 +600,15 @@ double Encoder::frameCost(const LookaheadFrame& f, bool intra) const
     return sum;
 }
 
-std::vector<uint8_t> Encoder::encodeFrame(LookaheadFrame& frame)
+std::vector<uint8_t> FrameCoder::code(bool idr, int framesSinceIdr, int idrCount, PhaseClock& clock)
 {
-    const bool forceKeyframe = frame.forceKeyframe;
-    const Picture picture = pictureOf(frame, cfg_.width);
-    PhaseClock clock;
-    loadSource(picture);
-    clock.lap(0);
-    const bool lookaheadFrame = useLookahead() && !queue_.empty() && &queue_.front() == &frame;
     std::fill(nzLuma_.begin(), nzLuma_.end(), 0);
     std::fill(modes4x4_.begin(), modes4x4_.end(), int8_t(-1));
     std::fill(nzChroma_[0].begin(), nzChroma_[0].end(), 0);
     std::fill(nzChroma_[1].begin(), nzChroma_[1].end(), 0);
-
     std::fill(mvX_.begin(), mvX_.end(), int16_t(0));
     std::fill(mvY_.begin(), mvY_.end(), int16_t(0));
     std::fill(refIdx_.begin(), refIdx_.end(), int8_t(-1));
-
-    // Keyframe on schedule, on request (a cut the caller knows) or on a detected scene change.
-    const bool sceneChange = cfg_.sceneCut && cfg_.gop > 1 &&
-                             (lookaheadFrame ? frame.sceneChange : detectSceneCut()); // keeps its thumbnail current
-    clock.lap(1);
-    const bool cut = sceneChange && frameIndex_ > 0 && framesSinceIdr_ >= 6;
-    const bool idr = cfg_.gop <= 1 || frameIndex_ == 0 || framesSinceIdr_ >= cfg_.gop || forceKeyframe || cut;
-    if (idr)
-        framesSinceIdr_ = 0;
-    lastWasSceneCut_ = cut;
-    pSlice_ = !idr;
-    if (idr)
-        refs_.clear(); // an IDR picture marks all references unused
-    activeRefs_ = idr ? 0 : int(refs_.size());
-
-    // Frame-level rate control (in the spirit of x264's one-pass ABR, aiming at a steady QP, which
-    // is what PSNR likes best): a P picture gets the QP at which the average complexity of all P
-    // pictures so far (bits * 2^(qp/6); bits roughly halve per +6 QP) meets the per-frame budget,
-    // scaled by the bits over or under the target (overflow against a buffer of 5 s of bits) and at
-    // most 2 away from the last one. I pictures use the P QP - 3. The first picture is probed at a
-    // fixed QP so the stream starts near the right QP instead of paying for a huge first picture.
-    const int baseQp = cfg_.qp;
-    const bool lookahead = lookaheadFrame;
-    double costUsed = 0; // lookahead cost of this picture, for the bit model afterwards
-    if (lookahead) {
-        markKeyframes();
-        frame.keyframe = idr;
-        if (cfg_.mbtree) {
-            la_->propagate(queue_);
-            treeOffset_.resize(size_t(mbW_) * mbH_);
-            for (size_t m = 0; m < treeOffset_.size(); ++m)
-                treeOffset_[m] = std::max(-8.0f, Lookahead::qpOffset(frame, int(m), cfg_.mbtreeStrength));
-        }
-    } else {
-        treeOffset_.clear();
-    }
-    if (cfg_.bitrateKbps > 0 && lookahead) {
-        // Rate control with lookahead: bits = k * cost * 2^(-qp/6) with k measured on the pictures
-        // coded so far (per picture type, I pictures 3 below the P QP). The P QP is the one at
-        // which a picture of average cost (all pictures seen so far, the queued ones included)
-        // meets the per-frame budget - a steady QP is what PSNR likes best - nudged by the bits
-        // over or under the target so far, and at most 3 away from the last one.
-        const double perFrame = cfg_.bitrateKbps * 1000.0 / cfg_.fps;
-        auto kOf = [&](bool intra) {
-            const int t = intra ? 0 : 1;
-            return rcCostSum_[t] > 0 ? rcKSum_[t] / rcCostSum_[t] : rcKSum_[1 - t] / rcCostSum_[1 - t];
-        };
-        // Predicted bits at QP 0 of the queued pictures (and the one coded now).
-        auto windowNeed = [&](int& count) {
-            double need = 0;
-            count = 0;
-            for (const LookaheadFrame& g : queue_) {
-                const double c = frameCost(g, g.keyframe);
-                if (&g == &frame)
-                    costUsed = c;
-                need += kOf(g.keyframe) * c * (g.keyframe ? std::exp2(0.5) : 1.0);
-                ++count;
-            }
-            return need;
-        };
-        const bool windowOnly = std::getenv("H264_RC_WINDOW") != nullptr;
-        // First pass: the whole clip's costs are known, one QP for all of it.
-        const bool twoPass = cfg_.firstPass && size_t(frameIndex_) < cfg_.firstPass->size();
-        if (twoPass && frameIndex_ == 0) {
-            // Keyframes as the encoder will place them (schedule, caller, scene cuts).
-            const FirstPassStats& st = *cfg_.firstPass;
-            tpKey_.assign(st.size(), 0);
-            tpRemI_ = tpRemP_ = 0;
-            int since = 0;
-            for (size_t i = 0; i < st.size(); ++i) {
-                const bool key = i == 0 || since >= cfg_.gop || st.forceKeyframe[i] || (cfg_.sceneCut && st.sceneChange[i] && since >= 6);
-                if (key)
-                    since = 0;
-                ++since;
-                tpKey_[i] = key;
-                (key ? tpRemI_ : tpRemP_) += key ? st.intraSum[i] : st.interSum[i];
-            }
-        }
-        auto steadyQp = [&] {
-            if (twoPass) {
-                for (const LookaheadFrame& g : queue_)
-                    if (&g == &frame)
-                        costUsed = g.keyframe ? g.intraSum : g.interSum;
-                return twoPassQp(kOf(true), kOf(false));
-            }
-            int count;
-            const double need = windowNeed(count);
-            const double all = windowOnly ? need : need + rcNeedSeen_;
-            const int n = windowOnly ? count : count + rcFramesSeen_;
-            return 6.0 * std::log2(std::max(1.0, all) / (n * perFrame));
-        };
-        if (frameIndex_ == 0) {
-            // Probe: the first picture as I and the second as P calibrate the model. The bits
-            // fall off faster than 2^(-qp/6) once the QP passes the noise, so the probe moves
-            // towards the predicted QP until it is within reach.
-            int probeQp = baseQp;
-            for (int round = 0; round < 3; ++round) {
-                EncoderConfig pc = cfg_;
-                pc.bitrateKbps = 0;
-                pc.lookahead = 0;
-                pc.mbtree = false;
-                pc.aqStrength = 0;
-                pc.qp = probeQp;
-                pc.gop = std::max(2, cfg_.gop);
-                pc.sceneCut = false;
-                Encoder probe(pc);
-                const double bitsI = double(probe.encode(picture).size()) * 8.0;
-                const double kI = bitsI * std::exp2((probeQp - 3) / 6.0) / std::max(1.0, frame.intraSum);
-                rcKSum_[0] = kI;
-                rcCostSum_[0] = 1; // seeds only: the first real pictures outweigh them
-                rcKSum_[1] = kI;
-                rcCostSum_[1] = 1;
-                if (queue_.size() > 1) {
-                    const LookaheadFrame& second = queue_[1];
-                    const double bitsP = double(probe.encode(pictureOf(second, cfg_.width)).size()) * 8.0;
-                    rcKSum_[1] = bitsP * std::exp2(probeQp / 6.0) / std::max(1.0, second.interSum);
-                }
-                const double predicted = steadyQp();
-                if (std::getenv("H264_RC_TRACE"))
-                    std::fprintf(stderr, "rc: probe at %d predicts %.1f\n", probeQp, predicted);
-                if (std::abs(predicted - probeQp) <= 4.0)
-                    break;
-                probeQp = std::clamp(int(std::lround(std::clamp(predicted, probeQp - 6.0, probeQp + 6.0))), 10, 51);
-            }
-            rcQp_ = 0;
-        }
-        // The debt only nudges the QP (at most +-3, paid back over 10 s): a quiet passage must not
-        // pull the QP down just to spend its budget, that costs PSNR where it is already high.
-        const double debt = rcBits_ - rcTarget_;
-        const double overflow = std::clamp(1.0 + debt / (10.0 * perFrame * cfg_.fps), 0.7, 1.4);
-        double qp = steadyQp() + 6.0 * std::log2(overflow);
-        if (std::getenv("H264_RC_TRACE"))
-            std::fprintf(stderr, "rc: frame %d overflow %.2f kI %.3f kP %.3f cost %.0f (intra %.0f inter %.0f) qp %.2f\n",
-                         frameIndex_, overflow, kOf(true), kOf(false), costUsed, frame.intraSum, frame.interSum, qp);
-        if (twoPass) {
-            // The QP stays put; the model's k settles over the first pictures (the probe misses
-            // by up to 2x, so up to 2 QP per picture then) and the leftover budget corrects
-            // slowly (at most half a QP per picture).
-            qp = twoPassQp(kOf(true), kOf(false));
-            const double step = rcFramesSeen_ < 12 ? 2.0 : 0.5;
-            if (rcQp_ > 0)
-                qp = std::clamp(qp, rcQp_ - step, rcQp_ + step);
-            const FirstPassStats& st = *cfg_.firstPass;
-            const size_t i = size_t(frameIndex_);
-            (tpKey_[i] ? tpRemI_ : tpRemP_) -= tpKey_[i] ? st.intraSum[i] : st.interSum[i];
-            if (std::getenv("H264_RC_TRACE"))
-                std::fprintf(stderr, "rc2: frame %d kI %.3f kP %.3f qp %.2f\n", frameIndex_, kOf(true), kOf(false), qp);
-        } else if (rcQp_ > 0) {
-            qp = std::clamp(qp, rcQp_ - 3.0, rcQp_ + 3.0);
-        }
-        rcQp_ = std::clamp(qp, 10.0, 51.0);
-        cfg_.qp = std::clamp(int(std::lround(idr ? qp - 3 : qp)), 10, 51);
-        rcNeedSeen_ += kOf(idr) * costUsed * (idr ? std::exp2(0.5) : 1.0);
-        rcFramesSeen_ += 1;
-    } else if (cfg_.bitrateKbps > 0) {
-        const double perFrame = cfg_.bitrateKbps * 1000.0 / cfg_.fps;
-        if (frameIndex_ == 0) {
-            // The probe aims at an I picture of about four P budgets.
-            EncoderConfig pc = cfg_;
-            pc.bitrateKbps = 0;
-            pc.lookahead = 0;
-            pc.mbtree = false;
-            pc.gop = std::max(2, cfg_.gop);
-            Encoder probe(pc);
-            const double bits = double(probe.encode(picture).size()) * 8.0;
-            const double qI = std::clamp((baseQp - 3) + 6.0 * std::log2(bits / (4.0 * perFrame)), 10.0, 48.0);
-            rcQp_ = qI + 3;
-            rcCplxSum_ = perFrame * std::pow(2.0, rcQp_ / 6.0);
-            rcCplxCount_ = 1;
-        }
-        double qp = rcQp_;
-        if (idr) {
-            qp = rcQp_ - 3;
-        } else if (rcCplxCount_ > 0) {
-            const double debt = rcBits_ - rcTarget_;
-            const double overflow = std::clamp(1.0 + debt / (5.0 * perFrame * cfg_.fps), 0.5, 2.0);
-            qp = 6.0 * std::log2(rcCplxSum_ / rcCplxCount_ / perFrame) + 6.0 * std::log2(overflow);
-            qp = std::clamp(qp, rcQp_ - 2.0, rcQp_ + 2.0);
-        }
-        cfg_.qp = std::clamp(int(std::lround(qp)), 10, 51);
-    } else if (idr && cfg_.gop > 1) {
-        cfg_.qp = std::clamp(baseQp - 3, 0, 51); // keyframes are references for the whole GOP
-    }
-    lastQp_ = cfg_.qp;
-    mbTypeOffset_ = idr ? 0 : 5;
-
-    clock.lap(2); // keyframe decision, macroblock tree, rate control (probe on the first picture)
-    planMacroblockQp();
-    clock.lap(3);
     // CABAC: one slice, its rows decided in a wavefront by the threads and entropy coded in raster
     // order afterwards. CAVLC (decisions write bits directly): one slice per thread.
     const bool wave = useCabac();
@@ -803,9 +628,9 @@ std::vector<uint8_t> Encoder::encodeFrame(LookaheadFrame& frame)
         bw.ue(uint32_t(sliceTop[size_t(s)] * mbW_)); // first_mb_in_slice
         bw.ue(idr ? 7 : 5);                         // slice_type: I or P (all slices)
         bw.ue(0);                                   // pic_parameter_set_id
-        bw.u(uint32_t(framesSinceIdr_ & 15), 4); // frame_num (0 for IDR)
+        bw.u(uint32_t(framesSinceIdr & 15), 4); // frame_num (0 for IDR)
         if (idr) {
-            bw.ue(uint32_t(idrCount_ & 0xFFFF)); // idr_pic_id (differs between neighbours)
+            bw.ue(uint32_t(idrCount & 0xFFFF)); // idr_pic_id (differs between neighbours)
         } else {
             bw.flag(activeRefs_ > 1); // num_ref_idx_active_override_flag
             if (activeRefs_ > 1)
@@ -1033,21 +858,227 @@ std::vector<uint8_t> Encoder::encodeFrame(LookaheadFrame& frame)
         deblockPicture();
     deblockedInline_ = false;
     clock.lap(5);
-    prevMvX_ = mvX_;
-    prevMvY_ = mvY_;
-    prevRefIdx_ = refIdx_;
+    return out;
+}
+
+std::vector<uint8_t> Encoder::encodeFrame(LookaheadFrame& frame)
+{
+    const bool forceKeyframe = frame.forceKeyframe;
+    const Picture picture = pictureOf(frame, cfg_.width);
+    PhaseClock clock;
+    FrameCoder& fc = *coders_[size_t(nextCoder_)];
+    nextCoder_ = (nextCoder_ + 1) % 3;
+    fc.loadSource(picture);
+    clock.lap(0);
+    const bool lookaheadFrame = useLookahead() && !queue_.empty() && &queue_.front() == &frame;
+
+    // Keyframe on schedule, on request (a cut the caller knows) or on a detected scene change.
+    const bool sceneChange = cfg_.sceneCut && cfg_.gop > 1 &&
+                             (lookaheadFrame ? frame.sceneChange : fc.detectSceneCut(prevThumb_)); // keeps its thumbnail current
+    clock.lap(1);
+    const bool cut = sceneChange && frameIndex_ > 0 && framesSinceIdr_ >= 6;
+    const bool idr = cfg_.gop <= 1 || frameIndex_ == 0 || framesSinceIdr_ >= cfg_.gop || forceKeyframe || cut;
+    if (idr)
+        framesSinceIdr_ = 0;
+    lastWasSceneCut_ = cut;
+    if (idr)
+        refList_.clear(); // an IDR picture marks all references unused
+    fc.pSlice_ = !idr;
+    fc.refs_.assign(refList_.begin(), refList_.end());
+    fc.activeRefs_ = int(fc.refs_.size());
+    fc.prev_ = last_;
+
+    // Frame-level rate control (in the spirit of x264's one-pass ABR, aiming at a steady QP, which
+    // is what PSNR likes best): a P picture gets the QP at which the average complexity of all P
+    // pictures so far (bits * 2^(qp/6); bits roughly halve per +6 QP) meets the per-frame budget,
+    // scaled by the bits over or under the target (overflow against a buffer of 5 s of bits) and at
+    // most 2 away from the last one. I pictures use the P QP - 3. The first picture is probed at a
+    // fixed QP so the stream starts near the right QP instead of paying for a huge first picture.
+    const int baseQp = cfg_.qp;
+    const bool lookahead = lookaheadFrame;
+    double costUsed = 0; // lookahead cost of this picture, for the bit model afterwards
+    if (lookahead) {
+        markKeyframes();
+        frame.keyframe = idr;
+        if (cfg_.mbtree) {
+            la_->propagate(queue_);
+            fc.treeOffset_.resize(size_t(mbW_) * mbH_);
+            for (size_t m = 0; m < fc.treeOffset_.size(); ++m)
+                fc.treeOffset_[m] = std::max(-8.0f, Lookahead::qpOffset(frame, int(m), cfg_.mbtreeStrength));
+        }
+    } else {
+        fc.treeOffset_.clear();
+    }
+    if (cfg_.bitrateKbps > 0 && lookahead) {
+        // Rate control with lookahead: bits = k * cost * 2^(-qp/6) with k measured on the pictures
+        // coded so far (per picture type, I pictures 3 below the P QP). The P QP is the one at
+        // which a picture of average cost (all pictures seen so far, the queued ones included)
+        // meets the per-frame budget - a steady QP is what PSNR likes best - nudged by the bits
+        // over or under the target so far, and at most 3 away from the last one.
+        const double perFrame = cfg_.bitrateKbps * 1000.0 / cfg_.fps;
+        auto kOf = [&](bool intra) {
+            const int t = intra ? 0 : 1;
+            return rcCostSum_[t] > 0 ? rcKSum_[t] / rcCostSum_[t] : rcKSum_[1 - t] / rcCostSum_[1 - t];
+        };
+        // Predicted bits at QP 0 of the queued pictures (and the one coded now).
+        auto windowNeed = [&](int& count) {
+            double need = 0;
+            count = 0;
+            for (const LookaheadFrame& g : queue_) {
+                const double c = frameCost(g, g.keyframe);
+                if (&g == &frame)
+                    costUsed = c;
+                need += kOf(g.keyframe) * c * (g.keyframe ? std::exp2(0.5) : 1.0);
+                ++count;
+            }
+            return need;
+        };
+        const bool windowOnly = std::getenv("H264_RC_WINDOW") != nullptr;
+        // First pass: the whole clip's costs are known, one QP for all of it.
+        const bool twoPass = cfg_.firstPass && size_t(frameIndex_) < cfg_.firstPass->size();
+        if (twoPass && frameIndex_ == 0) {
+            // Keyframes as the encoder will place them (schedule, caller, scene cuts).
+            const FirstPassStats& st = *cfg_.firstPass;
+            tpKey_.assign(st.size(), 0);
+            tpRemI_ = tpRemP_ = 0;
+            int since = 0;
+            for (size_t i = 0; i < st.size(); ++i) {
+                const bool key = i == 0 || since >= cfg_.gop || st.forceKeyframe[i] || (cfg_.sceneCut && st.sceneChange[i] && since >= 6);
+                if (key)
+                    since = 0;
+                ++since;
+                tpKey_[i] = key;
+                (key ? tpRemI_ : tpRemP_) += key ? st.intraSum[i] : st.interSum[i];
+            }
+        }
+        auto steadyQp = [&] {
+            if (twoPass) {
+                for (const LookaheadFrame& g : queue_)
+                    if (&g == &frame)
+                        costUsed = g.keyframe ? g.intraSum : g.interSum;
+                return twoPassQp(kOf(true), kOf(false));
+            }
+            int count;
+            const double need = windowNeed(count);
+            const double all = windowOnly ? need : need + rcNeedSeen_;
+            const int n = windowOnly ? count : count + rcFramesSeen_;
+            return 6.0 * std::log2(std::max(1.0, all) / (n * perFrame));
+        };
+        if (frameIndex_ == 0) {
+            // Probe: the first picture as I and the second as P calibrate the model. The bits
+            // fall off faster than 2^(-qp/6) once the QP passes the noise, so the probe moves
+            // towards the predicted QP until it is within reach.
+            int probeQp = baseQp;
+            for (int round = 0; round < 3; ++round) {
+                EncoderConfig pc = cfg_;
+                pc.bitrateKbps = 0;
+                pc.lookahead = 0;
+                pc.mbtree = false;
+                pc.aqStrength = 0;
+                pc.qp = probeQp;
+                pc.gop = std::max(2, cfg_.gop);
+                pc.sceneCut = false;
+                Encoder probe(pc);
+                const double bitsI = double(probe.encode(picture).size()) * 8.0;
+                const double kI = bitsI * std::exp2((probeQp - 3) / 6.0) / std::max(1.0, frame.intraSum);
+                rcKSum_[0] = kI;
+                rcCostSum_[0] = 1; // seeds only: the first real pictures outweigh them
+                rcKSum_[1] = kI;
+                rcCostSum_[1] = 1;
+                if (queue_.size() > 1) {
+                    const LookaheadFrame& second = queue_[1];
+                    const double bitsP = double(probe.encode(pictureOf(second, cfg_.width)).size()) * 8.0;
+                    rcKSum_[1] = bitsP * std::exp2(probeQp / 6.0) / std::max(1.0, second.interSum);
+                }
+                const double predicted = steadyQp();
+                if (std::getenv("H264_RC_TRACE"))
+                    std::fprintf(stderr, "rc: probe at %d predicts %.1f\n", probeQp, predicted);
+                if (std::abs(predicted - probeQp) <= 4.0)
+                    break;
+                probeQp = std::clamp(int(std::lround(std::clamp(predicted, probeQp - 6.0, probeQp + 6.0))), 10, 51);
+            }
+            rcQp_ = 0;
+        }
+        // The debt only nudges the QP (at most +-3, paid back over 10 s): a quiet passage must not
+        // pull the QP down just to spend its budget, that costs PSNR where it is already high.
+        const double debt = rcBits_ - rcTarget_;
+        const double overflow = std::clamp(1.0 + debt / (10.0 * perFrame * cfg_.fps), 0.7, 1.4);
+        double qp = steadyQp() + 6.0 * std::log2(overflow);
+        if (std::getenv("H264_RC_TRACE"))
+            std::fprintf(stderr, "rc: frame %d overflow %.2f kI %.3f kP %.3f cost %.0f (intra %.0f inter %.0f) qp %.2f\n",
+                         frameIndex_, overflow, kOf(true), kOf(false), costUsed, frame.intraSum, frame.interSum, qp);
+        if (twoPass) {
+            // The QP stays put; the model's k settles over the first pictures (the probe misses
+            // by up to 2x, so up to 2 QP per picture then) and the leftover budget corrects
+            // slowly (at most half a QP per picture).
+            qp = twoPassQp(kOf(true), kOf(false));
+            const double step = rcFramesSeen_ < 12 ? 2.0 : 0.5;
+            if (rcQp_ > 0)
+                qp = std::clamp(qp, rcQp_ - step, rcQp_ + step);
+            const FirstPassStats& st = *cfg_.firstPass;
+            const size_t i = size_t(frameIndex_);
+            (tpKey_[i] ? tpRemI_ : tpRemP_) -= tpKey_[i] ? st.intraSum[i] : st.interSum[i];
+            if (std::getenv("H264_RC_TRACE"))
+                std::fprintf(stderr, "rc2: frame %d kI %.3f kP %.3f qp %.2f\n", frameIndex_, kOf(true), kOf(false), qp);
+        } else if (rcQp_ > 0) {
+            qp = std::clamp(qp, rcQp_ - 3.0, rcQp_ + 3.0);
+        }
+        rcQp_ = std::clamp(qp, 10.0, 51.0);
+        cfg_.qp = std::clamp(int(std::lround(idr ? qp - 3 : qp)), 10, 51);
+        rcNeedSeen_ += kOf(idr) * costUsed * (idr ? std::exp2(0.5) : 1.0);
+        rcFramesSeen_ += 1;
+    } else if (cfg_.bitrateKbps > 0) {
+        const double perFrame = cfg_.bitrateKbps * 1000.0 / cfg_.fps;
+        if (frameIndex_ == 0) {
+            // The probe aims at an I picture of about four P budgets.
+            EncoderConfig pc = cfg_;
+            pc.bitrateKbps = 0;
+            pc.lookahead = 0;
+            pc.mbtree = false;
+            pc.gop = std::max(2, cfg_.gop);
+            Encoder probe(pc);
+            const double bits = double(probe.encode(picture).size()) * 8.0;
+            const double qI = std::clamp((baseQp - 3) + 6.0 * std::log2(bits / (4.0 * perFrame)), 10.0, 48.0);
+            rcQp_ = qI + 3;
+            rcCplxSum_ = perFrame * std::pow(2.0, rcQp_ / 6.0);
+            rcCplxCount_ = 1;
+        }
+        double qp = rcQp_;
+        if (idr) {
+            qp = rcQp_ - 3;
+        } else if (rcCplxCount_ > 0) {
+            const double debt = rcBits_ - rcTarget_;
+            const double overflow = std::clamp(1.0 + debt / (5.0 * perFrame * cfg_.fps), 0.5, 2.0);
+            qp = 6.0 * std::log2(rcCplxSum_ / rcCplxCount_ / perFrame) + 6.0 * std::log2(overflow);
+            qp = std::clamp(qp, rcQp_ - 2.0, rcQp_ + 2.0);
+        }
+        cfg_.qp = std::clamp(int(std::lround(qp)), 10, 51);
+    } else if (idr && cfg_.gop > 1) {
+        cfg_.qp = std::clamp(baseQp - 3, 0, 51); // keyframes are references for the whole GOP
+    }
+    lastQp_ = cfg_.qp;
+    fc.cfg_.qp = cfg_.qp;
+    fc.mbTypeOffset_ = idr ? 0 : 5;
+
+    clock.lap(2); // keyframe decision, macroblock tree, rate control (probe on the first picture)
+    fc.planMacroblockQp();
+    clock.lap(3);
+    std::vector<uint8_t> out = fc.code(idr, framesSinceIdr_, idrCount_, clock);
+    last_ = &fc;
     if (cfg_.gop > 1) {
         // Sliding window (8.2.5.3): the newest picture goes first, the oldest drops out.
-        RefPic pic;
-        if (int(refs_.size()) >= std::max(1, cfg_.refs)) {
-            pic = std::move(refs_.back());
-            refs_.pop_back();
+        std::shared_ptr<RefPic> pic;
+        if (int(refList_.size()) >= std::max(1, cfg_.refs)) {
+            pic = std::move(refList_.back());
+            refList_.pop_back();
         }
-        pic.y = recY_;
-        pic.u = recU_;
-        pic.v = recV_;
-        buildRefPlanes(pic);
-        refs_.insert(refs_.begin(), std::move(pic));
+        if (!pic || pic.use_count() > 1)
+            pic = std::make_shared<RefPic>();
+        pic->y = fc.recY_;
+        pic->u = fc.recU_;
+        pic->v = fc.recV_;
+        fc.buildRefPlanes(*pic);
+        refList_.push_front(std::move(pic));
     }
     if (cfg_.bitrateKbps <= 0)
         cfg_.qp = baseQp;
@@ -1083,7 +1114,7 @@ std::vector<uint8_t> Encoder::encodeFrame(LookaheadFrame& frame)
     return out;
 }
 
-void Encoder::encodeMbPcm(BitWriter& bw, int mbx, int mby)
+void FrameCoder::encodeMbPcm(BitWriter& bw, int mbx, int mby)
 {
     bw.ue(25); // mb_type I_PCM
     bw.alignZero();
@@ -1112,7 +1143,7 @@ void Encoder::encodeMbPcm(BitWriter& bw, int mbx, int mby)
                 nzChroma_[c][size_t(mby * 2 + y) * (mbW_ * 2) + mbx * 2 + x] = 16;
 }
 
-int Encoder::lumaNc(int bx, int by) const
+int FrameCoder::lumaNc(int bx, int by) const
 {
     const int w = mbW_ * 4;
     const bool hasA = bx > 0, hasB = (by & 3) ? true : topMbAvailable(by >> 2);
@@ -1123,7 +1154,7 @@ int Encoder::lumaNc(int bx, int by) const
     return hasA ? nA : nB;
 }
 
-int Encoder::chromaNc(int c, int bx, int by) const
+int FrameCoder::chromaNc(int c, int bx, int by) const
 {
     const int w = mbW_ * 2;
     const bool hasA = bx > 0, hasB = (by & 1) ? true : topMbAvailable(by >> 1);
@@ -1341,14 +1372,14 @@ void predict8x8(int mode, const int* T, const int* L, bool left, bool top, uint8
 
 } // namespace
 
-struct Encoder::ChromaMb {
+struct FrameCoder::ChromaMb {
     int mode = 0;
     int cbp = 0;
     int dc[2][4];
     int ac[2][4][16];
 };
 
-void Encoder::analyseChroma(int mbx, int mby, ChromaMb& ch, const uint8_t (*interPred)[64])
+void FrameCoder::analyseChroma(int mbx, int mby, ChromaMb& ch, const uint8_t (*interPred)[64])
 {
     const bool left = mbx > 0, top = topMbAvailable(mby);
     const int cw = padW_ / 2;
@@ -1432,7 +1463,7 @@ void Encoder::analyseChroma(int mbx, int mby, ChromaMb& ch, const uint8_t (*inte
     }
 }
 
-void Encoder::writeChroma(MbOut& o, int mbx, int mby, const ChromaMb& ch)
+void FrameCoder::writeChroma(MbOut& o, int mbx, int mby, const ChromaMb& ch)
 {
     BitWriter& bw = o.bw;
     o.syn.cbpChroma = ch.cbp;
@@ -1460,7 +1491,7 @@ void Encoder::writeChroma(MbOut& o, int mbx, int mby, const ChromaMb& ch)
     }
 }
 
-bool Encoder::encodeLuma16(MbOut& o, int mbx, int mby, const ChromaMb& ch)
+bool FrameCoder::encodeLuma16(MbOut& o, int mbx, int mby, const ChromaMb& ch)
 {
     BitWriter& bw = o.bw;
     const bool left = mbx > 0, top = topMbAvailable(mby);
@@ -1575,7 +1606,7 @@ bool Encoder::encodeLuma16(MbOut& o, int mbx, int mby, const ChromaMb& ch)
     return true;
 }
 
-bool Encoder::encodeLuma4(MbOut& o, int mbx, int mby, const ChromaMb& ch)
+bool FrameCoder::encodeLuma4(MbOut& o, int mbx, int mby, const ChromaMb& ch)
 {
     BitWriter& bw = o.bw;
     const int qp = mbQp_[size_t(mby) * mbW_ + mbx];
@@ -1705,7 +1736,7 @@ bool Encoder::encodeLuma4(MbOut& o, int mbx, int mby, const ChromaMb& ch)
     return cbp != 0;
 }
 
-bool Encoder::encodeMbIntra(MbOut& out, int mbx, int mby)
+bool FrameCoder::encodeMbIntra(MbOut& out, int mbx, int mby)
 {
     ChromaMb ch;
     analyseChroma(mbx, mby, ch);
@@ -1998,7 +2029,7 @@ int median3(int a, int b, int c) { return std::max(std::min(a, b), std::min(std:
 
 // Intra 8x8 (High profile, CABAC only): four 8x8 blocks, each with its own prediction direction
 // from filtered neighbour samples and an 8x8 transform.
-bool Encoder::encodeLuma8(MbOut& o, int mbx, int mby, const ChromaMb& ch)
+bool FrameCoder::encodeLuma8(MbOut& o, int mbx, int mby, const ChromaMb& ch)
 {
     const int qp = mbQp_[size_t(mby) * mbW_ + mbx];
     const int lw = mbW_ * 4;
@@ -2092,7 +2123,7 @@ bool Encoder::encodeLuma8(MbOut& o, int mbx, int mby, const ChromaMb& ch)
     return cbp != 0;
 }
 
-struct Encoder::MbState {
+struct FrameCoder::MbState {
     uint8_t y[256];
     uint8_t c[2][64];
     uint8_t nz[16];
@@ -2102,7 +2133,7 @@ struct Encoder::MbState {
     int8_t ref[16];
 };
 
-void Encoder::saveMb(int mbx, int mby, MbState& s) const
+void FrameCoder::saveMb(int mbx, int mby, MbState& s) const
 {
     const size_t lo = size_t(mby * 16) * padW_ + mbx * 16;
     for (int y = 0; y < 16; ++y)
@@ -2128,7 +2159,7 @@ void Encoder::saveMb(int mbx, int mby, MbState& s) const
             s.nzc[c][b] = nzChroma_[c][size_t(mby * 2 + (b >> 1)) * chw + mbx * 2 + (b & 1)];
 }
 
-void Encoder::restoreMb(int mbx, int mby, const MbState& s)
+void FrameCoder::restoreMb(int mbx, int mby, const MbState& s)
 {
     const size_t lo = size_t(mby * 16) * padW_ + mbx * 16;
     for (int y = 0; y < 16; ++y)
@@ -2154,7 +2185,7 @@ void Encoder::restoreMb(int mbx, int mby, const MbState& s)
             nzChroma_[c][size_t(mby * 2 + (b >> 1)) * chw + mbx * 2 + (b & 1)] = s.nzc[c][b];
 }
 
-int64_t Encoder::mbSsd(int mbx, int mby) const
+int64_t FrameCoder::mbSsd(int mbx, int mby) const
 {
     int64_t s = 0;
     const size_t lo = size_t(mby * 16) * padW_ + mbx * 16;
@@ -2179,7 +2210,7 @@ int64_t Encoder::mbSsd(int mbx, int mby) const
 // Neighbouring 4x4 block (x4, y4 relative to the macroblock, may be -1 or 4) for motion
 // vector prediction (8.4.1.3.2). `decoded` marks blocks of the current macroblock that
 // already have their vector.
-Encoder::MvNb Encoder::mvNeighbour(int mbx, int mby, int x4, int y4, const bool* decoded) const
+FrameCoder::MvNb FrameCoder::mvNeighbour(int mbx, int mby, int x4, int y4, const bool* decoded) const
 {
     MvNb n;
     bool avail;
@@ -2207,7 +2238,7 @@ Encoder::MvNb Encoder::mvNeighbour(int mbx, int mby, int x4, int y4, const bool*
 
 // Motion vector prediction (8.4.1.3) for a partition at (x4, y4) of w4 x h4 blocks.
 // shape: 0 = median, 1/2 = 16x8 top/bottom, 3/4 = 8x16 left/right.
-void Encoder::predictMvPart(int mbx, int mby, int x4, int y4, int w4, int shape, int refIdx, const bool* decoded,
+void FrameCoder::predictMvPart(int mbx, int mby, int x4, int y4, int w4, int shape, int refIdx, const bool* decoded,
                             int& mvx, int& mvy) const
 {
     MvNb a = mvNeighbour(mbx, mby, x4 - 1, y4, decoded);
@@ -2235,7 +2266,7 @@ void Encoder::predictMvPart(int mbx, int mby, int x4, int y4, int w4, int shape,
 }
 
 // Motion compensation of one partition into macroblock-sized prediction buffers.
-void Encoder::motionCompensate(const RefPic& R, int mbx, int mby, int x4, int y4, int w4, int h4, int mvx, int mvy,
+void FrameCoder::motionCompensate(const RefPic& R, int mbx, int mby, int x4, int y4, int w4, int h4, int mvx, int mvy,
                                uint8_t* luma, uint8_t (*chroma)[64]) const
 {
     mcLuma(R, mbx * 16 + x4 * 4 + (mvx >> 2), mby * 16 + y4 * 4 + (mvy >> 2), mvx & 3, mvy & 3, w4 * 4, h4 * 4,
@@ -2263,7 +2294,7 @@ void Encoder::motionCompensate(const RefPic& R, int mbx, int mby, int x4, int y4
 
 // Greedy rate-distortion quantisation of one 4x4 block (raster levels, 16 coefficients):
 // from high to low frequency, lower each level by one step while SSD + lambda * bits drops.
-void Encoder::rdoQuantize(int* levels, const int* residual, int qp, double lambda, int nC) const
+void FrameCoder::rdoQuantize(int* levels, const int* residual, int qp, double lambda, int nC) const
 {
     const int qpDiv = qp / 6, qpMod = qp % 6;
     auto evaluate = [&](const int* lv) {
@@ -2298,7 +2329,7 @@ void Encoder::rdoQuantize(int* levels, const int* residual, int qp, double lambd
     }
 }
 
-bool Encoder::encodeMbP(MbOut& result, int mbx, int mby)
+bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
 {
     const int lw = mbW_ * 4, chw = mbW_ * 2;
     const size_t mbIndex = size_t(mby) * mbW_ + mbx;
@@ -2342,7 +2373,7 @@ bool Encoder::encodeMbP(MbOut& result, int mbx, int mby)
 
     // ---- Candidate 1: P_Skip.
     uint8_t lp[256], cp[2][64];
-    motionCompensate(refs_[0], mbx, mby, 0, 0, 4, 4, skipX, skipY, lp, cp);
+    motionCompensate(*refs_[0], mbx, mby, 0, 0, 4, 4, skipX, skipY, lp, cp);
     {
         for (int y = 0; y < 16; ++y)
             std::memcpy(&recY_[lumaOff + size_t(y) * padW_], lp + y * 16, 16);
@@ -2397,13 +2428,13 @@ bool Encoder::encodeMbP(MbOut& result, int mbx, int mby)
     }
     {
         const size_t o = size_t(mby * 4) * lw + mbx * 4;
-        if (prevRefIdx_.size() == refIdx_.size() && prevRefIdx_[o] == 0)
-            starts.push_back({prevMvX_[o], prevMvY_[o]});
+        if (prev_ && prev_->refIdx_[o] == 0)
+            starts.push_back({prev_->mvX_[o], prev_->mvY_[o]});
     }
     auto search = [&](int x4, int y4, int w4, int h4, int ref, int pX, int pY, int& outX, int& outY) {
         starts.push_back({pX, pY});
         bool useSatd = false;
-        const RefPic& R = refs_[size_t(ref)];
+        const RefPic& R = *refs_[size_t(ref)];
         auto cost = [&](int vx, int vy) {
             return double(sadPart(R, mbx, mby, x4, y4, w4, h4, vx, vy, useSatd)) +
                    lambdaSad * (seBits(vx - pX) + seBits(vy - pY));
@@ -2548,7 +2579,7 @@ bool Encoder::encodeMbP(MbOut& result, int mbx, int mby)
         const Layout& layout = kLayouts[best.layout];
         for (int p = 0; p < layout.count; ++p) {
             const Part& P = layout.parts[p];
-            motionCompensate(refs_[size_t(best.ref[p])], mbx, mby, P.x4, P.y4, P.w4, P.h4, best.mv[p][0], best.mv[p][1], lp,
+            motionCompensate(*refs_[size_t(best.ref[p])], mbx, mby, P.x4, P.y4, P.w4, P.h4, best.mv[p][0], best.mv[p][1], lp,
                              cp);
             setBlocks(P.x4, P.y4, P.w4, P.h4, best.mv[p][0], best.mv[p][1], best.ref[p]);
         }
@@ -2827,7 +2858,7 @@ bool Encoder::encodeMbP(MbOut& result, int mbx, int mby)
 }
 
 // After a macroblock is chosen: its QP is the planned one if it sent mb_qp_delta, else the predictor.
-void Encoder::commitQp(int mbx, int mby, bool codedDelta)
+void FrameCoder::commitQp(int mbx, int mby, bool codedDelta)
 {
     const size_t m = size_t(mby) * mbW_ + mbx;
     int& pred = qpPredByTop_[size_t(rowKey_[size_t(mby)])];
@@ -2836,7 +2867,7 @@ void Encoder::commitQp(int mbx, int mby, bool codedDelta)
     mbQpFinal_[m] = int8_t(pred);
 }
 
-void Encoder::buildRefPlanes(RefPic& R)
+void FrameCoder::buildRefPlanes(RefPic& R)
 {
     const int M = kMargin;
     extW_ = padW_ + 2 * M;
@@ -2966,7 +2997,7 @@ void Encoder::buildRefPlanes(RefPic& R)
 
 // Luma prediction of a w x h block at integer position (x0, y0) plus quarter offset (fx, fy),
 // table 8-12. Output stride is 16.
-void Encoder::mcLuma(const RefPic& R, int x0, int y0, int fx, int fy, int w, int h, uint8_t* out) const
+void FrameCoder::mcLuma(const RefPic& R, int x0, int y0, int fx, int fy, int w, int h, uint8_t* out) const
 {
     const int M = kMargin;
     const int W = extW_;
@@ -3011,7 +3042,7 @@ void Encoder::mcLuma(const RefPic& R, int x0, int y0, int fx, int fy, int w, int
 }
 
 // SAD (full-pel fast path) or SATD of a partition against the reference.
-int Encoder::sadPart(const RefPic& R, int mbx, int mby, int x4, int y4, int w4, int h4, int mvx, int mvy, bool satd) const
+int FrameCoder::sadPart(const RefPic& R, int mbx, int mby, int x4, int y4, int w4, int h4, int mvx, int mvy, bool satd) const
 {
     const int px = mbx * 16 + x4 * 4, py = mby * 16 + y4 * 4;
     const int w = w4 * 4, h = h4 * 4;
@@ -3107,7 +3138,7 @@ inline void filterLine(uint8_t* q, int step, int bS, int alpha, int beta, int in
 } // namespace
 
 // Boundary strength between two 4x4 luma blocks (8.7.2.1), positions in 4x4 units.
-int Encoder::boundaryStrength(int pbx, int pby, int qbx, int qby, bool mbEdge) const
+int FrameCoder::boundaryStrength(int pbx, int pby, int qbx, int qby, bool mbEdge) const
 {
     const int lw = mbW_ * 4;
     const size_t mp = size_t(pby) * lw + pbx, mq = size_t(qby) * lw + qbx;
@@ -3120,7 +3151,7 @@ int Encoder::boundaryStrength(int pbx, int pby, int qbx, int qby, bool mbEdge) c
     return 0;
 }
 
-void Encoder::deblockPicture()
+void FrameCoder::deblockPicture()
 {
     // Wavefront: macroblock x of a row may be filtered once the row above has finished
     // macroblocks up to x + 1 (whose edges touch the samples shared with it). That keeps
@@ -3154,7 +3185,7 @@ void Encoder::deblockPicture()
         t.join();
 }
 
-void Encoder::deblockMb(int mbx, int mby)
+void FrameCoder::deblockMb(int mbx, int mby)
 {
     const int cw = padW_ / 2;
     {
@@ -3228,7 +3259,7 @@ void Encoder::deblockMb(int mbx, int mby)
 
 // Adaptive quantisation: flat macroblocks (where errors show) get a finer QP, busy ones a
 // coarser QP; the offsets average to zero so the frame QP keeps its meaning.
-void Encoder::planMacroblockQp()
+void FrameCoder::planMacroblockQp()
 {
     const int n = mbW_ * mbH_;
     const bool tree = treeOffset_.size() == size_t(n);
@@ -3270,7 +3301,7 @@ void Encoder::planMacroblockQp()
 // Scene change: on quarter-size thumbnails, compare the best small-motion SAD of each 8x8
 // block with its SAD against its own mean (a crude intra cost). When motion no longer helps
 // for most of the picture, a keyframe is cheaper and looks better than a P frame.
-bool Encoder::detectSceneCut()
+bool FrameCoder::detectSceneCut(std::vector<uint8_t>& prevThumb_)
 {
     const int tw = padW_ / 4, th = padH_ / 4;
     std::vector<uint8_t> thumb(size_t(tw) * th);
@@ -3320,7 +3351,7 @@ bool Encoder::detectSceneCut()
 
 // True when the residual against this prediction would quantise to zero everywhere (inter
 // rounding), luma 4x4 blocks and chroma DC/AC alike.
-bool Encoder::skipResidualIsZero(int mbx, int mby, const uint8_t* lp, const uint8_t (*cp)[64], int qp) const
+bool FrameCoder::skipResidualIsZero(int mbx, int mby, const uint8_t* lp, const uint8_t (*cp)[64], int qp) const
 {
     const int qpDiv = qp / 6, qpMod = qp % 6;
     const int qbits = 15 + qpDiv;
@@ -3368,7 +3399,7 @@ bool Encoder::skipResidualIsZero(int mbx, int mby, const uint8_t* lp, const uint
 
 // Bits of a candidate macroblock: the CAVLC count, or with CABAC a dry run on a copy of the
 // slice's current context states.
-double Encoder::mbBits(const MbOut& o, int mbx, int mby, double cavlcBits)
+double FrameCoder::mbBits(const MbOut& o, int mbx, int mby, double cavlcBits)
 {
     const size_t top = size_t(rowKey_[size_t(mby)]);
     const CabacEncoder* live = cabacByTop_[top];
@@ -3381,7 +3412,7 @@ double Encoder::mbBits(const MbOut& o, int mbx, int mby, double cavlcBits)
     return probe.countedBits();
 }
 
-double Encoder::skipBits(int mbx, int mby)
+double FrameCoder::skipBits(int mbx, int mby)
 {
     const size_t top = size_t(rowKey_[size_t(mby)]);
     const CabacEncoder* live = cabacByTop_[top];
@@ -3397,7 +3428,7 @@ double Encoder::skipBits(int mbx, int mby)
 
 
 // A CAVLC residual block, or with CABAC only its coefficient count (the CAVLC bits are not used then).
-int Encoder::residual(BitWriter& bw, const int* coeffs, int count, int nC) const
+int FrameCoder::residual(BitWriter& bw, const int* coeffs, int count, int nC) const
 {
     if (!useCabac())
         return writeResidualBlock(bw, coeffs, count, nC);
