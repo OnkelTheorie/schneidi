@@ -2,11 +2,9 @@
 #include "core/TemplateLibrary.h"
 
 #include "core/CodeTrust.h"
-#include "core/CompGraph.h"
-#include "core/EffectFolders.h"
-#include "core/EffectRegistry.h"
 #include "core/I18n.h"
 #include "core/PathKey.h"
+#include "core/ProjectRefs.h"
 #include "core/StartTemplates.h"
 #include "core/TemplateFill.h"
 #include "core/TimelineOps.h"
@@ -348,45 +346,10 @@ std::optional<ContentTemplate> save(const ProjectData& project, const QString& n
 
 void forEachFile(ProjectData& d, const std::function<void(QString& path)>& fn)
 {
-    const auto file = [&](QString& path) {
-        if (!path.isEmpty() && !EffectFolders::isBuiltin(path)) fn(path);
-    };
-    const auto scan = [&](Timeline& tl) {
-        for (TrackKind k : {TrackKind::Video, TrackKind::Audio})
-            for (Track& t : tl.tracks(k))
-                for (Clip& c : t.clips) {
-                    if (c.kind == ClipKind::Media) file(c.mediaPath);
-                    if (c.isTitle()) file(c.title.look.texture); // a title's texture picture
-                    file(c.transInStyle.luma);
-                    file(c.transOutStyle.luma);
-                    for (EffectInstance& e : c.effects) {
-                        if (e.effectId == QLatin1String(Comp::kEffectId)) { // files of compositing nodes
-                            Comp::forEachFile(e, [&](const QString&, QString& path) { file(path); });
-                            continue;
-                        }
-                        const EffectDescriptor* desc = EffectRegistry::find(e.effectId);
-                        if (!desc) continue;
-                        for (const EffectParam& p : desc->params) {
-                            if (p.type != EffectParam::Path || !e.params.contains(p.key)) continue;
-                            QString path = e.params.value(p.key).toString();
-                            const QString before = path;
-                            file(path);
-                            if (path != before) e.params[p.key] = path;
-                        }
-                    }
-                }
-    };
-    scan(d.timeline);
-    for (Sequence& s : d.sequences)
-        if (s.id != d.currentSequence) scan(s.timeline);
-    // The open timeline is `timeline`; its copy in `sequences` follows it (a save writes it from there)
-    for (Sequence& s : d.sequences)
-        if (s.id == d.currentSequence) s.timeline = d.timeline;
-    if (d.brand) {
-        file(d.brand->logo);
-        file(d.brand->intro);
-        file(d.brand->outro);
-    }
+    // The Media Pool goes its own way here (only the files in use are copied), watch folders stay where they are
+    ProjectRefs::forEach(d, [&](QString& path, ProjectRefs::Kind kind) {
+        if (kind != ProjectRefs::Kind::PoolMedia && kind != ProjectRefs::Kind::WatchFolder) fn(path);
+    });
 }
 
 bool copyTemplateFiles(ProjectData& d, const QString& templateDir, const QString& targetDir, FileCopies* out,

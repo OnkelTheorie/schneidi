@@ -773,6 +773,7 @@ QJsonObject cmdRestore(const QJsonObject& a, Context&)
     ProjectData d;
     QString error;
     if (!ProjectFile::load(source, &d, &error)) fail("BAD_PROJECT", error);
+    Sandbox::checkProject(d); // a work folder's rules as for any project saved there
     // Saved again (not copied): media paths relative to the project file stay right
     const QString backup = ProjectFile::backup(path);
     if (!ProjectFile::save(d, path, &error)) fail("SAVE_FAILED", error);

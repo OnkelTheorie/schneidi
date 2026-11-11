@@ -109,4 +109,7 @@ public:
     }
     // Plan mode of the app's own chat (Settings › AI): its edits must be plans; the user runs them from the chat
     virtual bool livePlanOnly() const { return false; }
+    // Review mode of the app's own chat (Settings › AI): the user accepts or discards its changes at the end of a
+    // request, so undo, redo and saving stay the user's
+    virtual bool liveReviewOnly() const { return false; }
 };

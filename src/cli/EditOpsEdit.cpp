@@ -117,13 +117,14 @@ void applyLook(TitleLook& look, const QJsonObject& op)
 {
     QJsonObject o = op;
     if (const QJsonValue tex = op.value("texture"); tex.isString() || tex.isObject()) {
-        // The picture as an absolute path (the project file stores it relative too)
+        // The picture as an absolute path (the project file stores it relative too); in a work folder only one in it
         QJsonObject t = tex.isObject() ? tex.toObject() : QJsonObject{{"path", tex.toString()}};
         if (t.contains("path")) {
-            const QString path = t.value("path").toString();
+            const QString given = t.value("path").toString();
+            const QString path = given.isEmpty() ? given : absolute(given);
             if (path.isEmpty() || !QFileInfo(path).isFile())
-                fail("BAD_ARGUMENT", QString("texture: picture file not found: '%1'").arg(path));
-            t["path"] = QFileInfo(path).absoluteFilePath();
+                fail("BAD_ARGUMENT", QString("texture: picture file not found: '%1'").arg(given));
+            t["path"] = path;
         }
         o["texture"] = t;
     }
