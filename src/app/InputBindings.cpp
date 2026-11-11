@@ -401,7 +401,10 @@ void InputBindings::load()
     if (version < kVersion) m_fileExisted = false;
     applyJson(root, version >= 2);
     // At start the actions are not registered yet (their scopes unknown): saveIfIncomplete() does it then
-    if (!m_entries.isEmpty() && !removeDuplicates().isEmpty()) save();
+    if (!m_entries.isEmpty() && !removeDuplicates().isEmpty()) {
+        applyAll();
+        save();
+    }
 }
 
 void InputBindings::applyJson(const QJsonObject& root, bool withWheel)
@@ -592,11 +595,13 @@ QVector<InputBindings::Taken> InputBindings::removeDuplicates()
         }
         if (changed) m_inputs[e->id] = binds;
     }
-    if (!removed.isEmpty()) {
-        for (const Entry& e : m_entries) apply(e);
-        rebuildMouse();
-    }
-    return removed;
+    return removed; // only m_inputs: applying to the actions is the caller's (presetInputs runs this on a copy)
+}
+
+void InputBindings::applyAll()
+{
+    for (const Entry& e : m_entries) apply(e);
+    rebuildMouse();
 }
 
 void InputBindings::apply(const Entry& e) const
@@ -629,7 +634,9 @@ void InputBindings::resetAll()
 
 void InputBindings::saveIfIncomplete()
 {
-    bool complete = m_fileExisted && removeDuplicates().isEmpty();
+    const bool clean = removeDuplicates().isEmpty();
+    if (!clean) applyAll();
+    bool complete = m_fileExisted && clean;
     for (const Entry& e : m_entries) complete &= m_inputs.contains(e.id);
     if (!complete) save();
 }

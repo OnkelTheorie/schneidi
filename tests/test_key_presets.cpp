@@ -376,6 +376,33 @@ void testCaptureEscape()
     b.applyPreset("standard");
 }
 
+// Showing the dialog compares with the preset (presetInputs on a copy): an own preset with a key twice must not put
+// the preset's keys onto the real actions while the table shows the user's
+void testPresetPreviewKeepsActions()
+{
+    InputBindings& b = InputBindings::instance();
+    QDir().mkpath(InputBindings::customPresetDir());
+    {
+        QFile f(QDir(InputBindings::customPresetDir()).filePath("dup.json"));
+        if (CHECK(f.open(QIODevice::WriteOnly)))
+            f.write(R"({"version": 4, "shortcuts": {"split": "M", "add_marker": "M"}})");
+    }
+    b.applyPreset("custom:dup");
+    b.setInputs("split", {"Ctrl+B", ""});
+    b.setInputs("add_marker", {"K", ""});
+    const auto shortcutsOf = [&](const char* id) { return b.action(id)->shortcuts(); };
+    {
+        KeyBindingsDialog dlg;
+        dlg.show();
+        QApplication::processEvents();
+    }
+    CHECK_EQ(in("add_marker"), QStringList({"K", ""}));
+    CHECK_EQ(shortcutsOf("add_marker"), QList<QKeySequence>({QKeySequence("K")}));
+    CHECK_EQ(shortcutsOf("split"), QList<QKeySequence>({QKeySequence("Ctrl+B")}));
+    QFile::remove(QDir(InputBindings::customPresetDir()).filePath("dup.json"));
+    b.applyPreset("standard");
+}
+
 void testKysContexts()
 {
     const auto r = InputBindings::readKys(kContexts);
@@ -784,6 +811,7 @@ int main(int argc, char** argv)
         testLayoutNeutralKeys();
         testCaptureLayouts();
         testCaptureEscape();
+        testPresetPreviewKeepsActions();
         testTrainer(w);
     }
     testLanguages(engine);

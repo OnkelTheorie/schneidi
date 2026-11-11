@@ -64,8 +64,8 @@ public:
     QVector<Taken> setInputs(const QString& id, const QStringList& inputs);
     // One action per key and scope, one per mouse button: a key two registered actions have (a hand-edited or imported
     // file) stays with the action that has it from the file over one that has it as a default, among those with the
-    // first in menu order; the others lose it (logged). Done by load() once actions are registered,
-    // saveIfIncomplete(), importSet() and loading an own preset
+    // first in menu order; the others lose it (logged). Changes the set only, not the actions (callers apply it). Done
+    // by load() once actions are registered, saveIfIncomplete(), importSet() and loading an own preset
     QVector<Taken> removeDuplicates();
     // Two actions that share their keys on purpose: only one of them is enabled at a time (multicam angle N and video
     // target track N, Alt+N)
@@ -157,6 +157,7 @@ private:
 
     void save();
     void apply(const Entry& e) const; // keys of the action's slots -> QAction
+    void applyAll();                  // every registered action + the mouse buttons
     void rebuildMouse();
     QJsonObject toJson() const;
     void applyJson(const QJsonObject& root, bool withWheel); // shortcuts, mouse (and wheel) from a file
