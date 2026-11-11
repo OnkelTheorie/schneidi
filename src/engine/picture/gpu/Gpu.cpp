@@ -571,7 +571,11 @@ TexturePtr Context::uploadRgba(const uint8_t* rgba, int w, int h, bool premultip
     });
     if (!t) return {};
     t->kind = premultiplied ? Texture::Rgba : Texture::RgbaStraight;
-    QRhiTextureSubresourceUploadDescription desc(rgba, quint32(size_t(w) * h * 4));
+    // Read in place when the frame is submitted (finish()), like uploadYuv's planes: the pointer constructor copied
+    // every picture into a fresh QByteArray on the GPU thread - three full-HD layers of a compositing graph cost ~10 ms
+    // per frame there (page faults of 8 MB allocations), the one thread every preview frame waits for
+    QRhiTextureSubresourceUploadDescription desc;
+    desc.setData(QByteArray::fromRawData(reinterpret_cast<const char*>(rgba), qsizetype(size_t(w) * h * 4)));
     d->batch()->uploadTexture(t->tex[0].get(), QRhiTextureUploadDescription({0, 0, desc}));
     return t;
 }
