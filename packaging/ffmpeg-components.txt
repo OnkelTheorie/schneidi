@@ -11,7 +11,8 @@
 #   Users notice a file that does not open, not a few hundred KB. tools/ffmpeg-import-check.sh compares against the
 #   full build.
 # - Export: every encoder/muxer of core/RenderJob.cpp (render formats), engine/HardwareEncoders.cpp (hardware and
-#   GPL-free replacements, proxy encoder), engine/RenderCache.cpp, engine/Transcriber.cpp, engine/Exporter.cpp (GIF).
+#   GPL-free replacements, proxy encoder), engine/RenderCache.cpp, engine/Transcriber.cpp, engine/Exporter.cpp (GIF),
+#   engine/ExportWriter.cpp (embedded subtitle streams: without their encoder the export leaves them out silently).
 # - Devices: none, except the lavfi input of the hardware encoder test.
 # - Filters: only the bundled ffmpeg program uses them (proxies, render cache, GIF palette, hardware encoder test,
 #   SCHNEIDI_ANALYSIS=ffmpeg comparisons) plus those its command line inserts by itself (autorotate, format/rate
@@ -242,6 +243,14 @@ encoder av1_vaapi
 encoder h264_qsv
 encoder hevc_qsv
 encoder av1_qsv
+# subtitle streams in the export (engine/ExportWriter.cpp openTextStreams: MP4/MOV mov_text, MKV SRT, WebM WebVTT)
+# and their decoders (a player-side read back in test_captions; small)
+encoder movtext
+encoder subrip
+encoder webvtt
+decoder movtext
+decoder subrip
+decoder webvtt
 # the ffmpeg program: `-f null` (hardware test, analyses), `-f rawvideo` (region analysis)
 encoder wrapped_avframe
 encoder rawvideo
