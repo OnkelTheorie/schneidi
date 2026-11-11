@@ -2979,6 +2979,7 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
         if (prev_ && prev_->refIdx_[o] == 0)
             starts.push_back({prev_->mvX_[o], prev_->mvY_[o]});
     }
+    bool subpelNow = true; // half/quarter-pel refinement in search()
     auto search = [&](int x4, int y4, int w4, int h4, int ref, int pX, int pY, int& outX, int& outY) {
         starts.push_back({pX, pY});
         bool useSatd = false;
@@ -3028,6 +3029,8 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
         best = cost(bx, by);
         const bool diamond = gExp & 16; // experiment: 4 instead of 8 neighbours per sub-pel step
         for (int step : {2, 1}) {
+            if (!subpelNow)
+                break;
             const int cx0 = bx, cy0 = by;
             for (int dy = -1; dy <= 1; ++dy)
                 for (int dx = -1; dx <= 1; ++dx) {
@@ -3108,6 +3111,10 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
     const Choice whole = tryLayout(0);
     Choice split;
     if (cfg_.effort > 0) {
+        // Experiment (H264_EXP & 256): the split layouts compare at full-pel (SATD); only the best
+        // one gets the sub-pel refinement, and only when it is close.
+        const bool lateSubpel = gExp & 256;
+        subpelNow = !lateSubpel;
         split = tryLayout(3);
         if (split.cost < whole.cost * 1.1) { // 16x8 / 8x16 only where splitting looks worth it
             for (int li : {1, 2}) {
@@ -3116,6 +3123,9 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
                     split = c;
             }
         }
+        subpelNow = true;
+        if (lateSubpel && split.cost < whole.cost * 1.1)
+            split = tryLayout(split.layout);
     }
 
     // Encodes one inter choice; leaves its state in the macroblock and returns SSD + lambda * bits.
@@ -3618,21 +3628,32 @@ int FrameCoder::sadPart(const RefPic& R, int mbx, int mby, int x4, int y4, int w
             s += sadRow(&srcY_[lo + size_t(y) * padW_], ref + size_t(y) * extW_, w);
         return s;
     }
-    uint8_t pred[256];
-    mcLuma(R, px + (mvx >> 2), py + (mvy >> 2), mvx & 3, mvy & 3, w, h, pred);
+    uint8_t buf[256];
+    const uint8_t* pred = buf;
+    int ps = 16;
+    // Full and half positions are one plane: read it in place instead of copying the block.
+    const int fx = mvx & 3, fy = mvy & 3;
+    if (!(fx & 1) && !(fy & 1)) {
+        const RefPic& P = R;
+        const std::vector<uint8_t>& plane = fy ? (fx ? P.J : P.V) : (fx ? P.B : P.F);
+        pred = plane.data() + size_t(py + (mvy >> 2) + kMargin) * extW_ + size_t(px + (mvx >> 2) + kMargin);
+        ps = extW_;
+    } else {
+        mcLuma(R, px + (mvx >> 2), py + (mvy >> 2), fx, fy, w, h, buf);
+    }
     if (satd) {
         for (int by = 0; by < h4; ++by) {
             if (w4 == 4) {
-                s += satd16x4U8(&srcY_[lo + size_t(by * 4) * padW_], padW_, pred + by * 4 * 16, 16);
+                s += satd16x4U8(&srcY_[lo + size_t(by * 4) * padW_], padW_, pred + by * 4 * ps, ps);
                 continue;
             }
             for (int bx = 0; bx < w4; bx += 2) // partitions are at least 8 wide
-                s += satd8x4U8(&srcY_[lo + size_t(by * 4) * padW_ + bx * 4], padW_, pred + by * 4 * 16 + bx * 4, 16);
+                s += satd8x4U8(&srcY_[lo + size_t(by * 4) * padW_ + bx * 4], padW_, pred + by * 4 * ps + bx * 4, ps);
         }
         return s;
     }
     for (int y = 0; y < h; ++y)
-        s += sadRow(&srcY_[lo + size_t(y) * padW_], pred + y * 16, w);
+        s += sadRow(&srcY_[lo + size_t(y) * padW_], pred + y * ps, w);
     return s;
 }
 
