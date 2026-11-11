@@ -16,7 +16,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 PACKAGES=(nasm make diffutils)
 LIBS=(openh264 kvazaar svt-av1 libvpx dav1d opus lame libvpl ffnvcodec-headers)
-[ "${GPL_ENCODERS:-1}" = 1 ] && LIBS+=(x264 x265)
+[ "${GPL_ENCODERS:-1}" = 1 ] && LIBS+=(libx264 x265) # (MSYS2 names the x264 package libx264)
 for p in "${LIBS[@]}"; do
     PACKAGES+=("mingw-w64-ucrt-x86_64-$p")
 done

@@ -100,7 +100,7 @@ if [ "$GPL_ENCODERS" = 1 ]; then
         echo
         echo "Source: licenses/SOURCE-OFFER.txt. Built from these MSYS2 packages (their source packages:"
         echo "https://repo.msys2.org/mingw/sources/, build scripts: https://github.com/msys2/MINGW-packages):"
-        pacman -Q mingw-w64-ucrt-x86_64-x264 mingw-w64-ucrt-x86_64-x265
+        pacman -Q mingw-w64-ucrt-x86_64-libx264 mingw-w64-ucrt-x86_64-x265
     } >"$OUT/licenses/x264-x265-NOTICE.txt"
 fi
 
