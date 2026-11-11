@@ -120,10 +120,7 @@ void Lookahead::sceneCut(LookaheadFrame& f, const LookaheadFrame* prev) const
                         for (int mx = -kRange; mx <= kRange; ++mx) {
                             if (by + my < 0 || bx + mx < 0 || by + my + 8 > th || bx + mx + 8 > tw)
                                 continue;
-                            int sad = 0;
-                            for (int y = 0; y < 8; ++y)
-                                sad += sadRow(&thumb[size_t(by + y) * tw + bx], &prevThumb[size_t(by + my + y) * tw + bx + mx], 8);
-                            best = std::min(best, sad);
+                            best = std::min(best, sadBlock(&thumb[size_t(by) * tw + bx], tw, &prevThumb[size_t(by + my) * tw + bx + mx], tw, 8, 8));
                         }
                     interCost += std::min(best, intra);
                     intraCost += intra + 16; // a little bias so flat pictures do not count as cuts
@@ -207,10 +204,7 @@ void Lookahead::costs(LookaheadFrame& f, const LookaheadFrame* prev, int threads
             auto mvCost = [&](int vx, int vy) { return kLambda * (seBits(vx - px) + seBits(vy - py)); };
             auto sadFull = [&](int vx, int vy) { // vx, vy in full pel
                 const uint8_t* ref = at(prev->half, bx * 8 + vx, by * 8 + vy);
-                int s = 0;
-                for (int y = 0; y < 8; ++y)
-                    s += sadRow(cur + y * stride, ref + y * stride, 8);
-                return s + mvCost(2 * vx, 2 * vy);
+                return sadBlock(cur, stride, ref, stride, 8, 8) + mvCost(2 * vx, 2 * vy);
             };
             int bestX = 0, bestY = 0;
             int best = sadFull(0, 0);
@@ -262,11 +256,23 @@ void Lookahead::costs(LookaheadFrame& f, const LookaheadFrame* prev, int threads
                     return satd8x8U8Fast(cur, stride, ref, stride) + mvCost(hx, hy);
                 uint8_t p[64];
                 const int ox = hx & 1, oy = hy & 1;
+#if defined(__SSE2__) || defined(_M_X64)
+                const __m128i zero = _mm_setzero_si128(), two = _mm_set1_epi16(2);
+                auto load = [&](const uint8_t* q) { return _mm_unpacklo_epi8(_mm_loadl_epi64(reinterpret_cast<const __m128i*>(q)), zero); };
+                for (int y = 0; y < 8; ++y) {
+                    const uint8_t* q = ref + y * stride;
+                    const __m128i sum = _mm_add_epi16(_mm_add_epi16(load(q), load(q + ox)),
+                                                      _mm_add_epi16(load(q + oy * stride), load(q + oy * stride + ox)));
+                    const __m128i v = _mm_srli_epi16(_mm_add_epi16(sum, two), 2);
+                    _mm_storel_epi64(reinterpret_cast<__m128i*>(p + y * 8), _mm_packus_epi16(v, v));
+                }
+#else
                 for (int y = 0; y < 8; ++y)
                     for (int x = 0; x < 8; ++x) {
                         const uint8_t* q = ref + y * stride + x;
                         p[y * 8 + x] = uint8_t((q[0] + q[ox] + q[oy * stride] + q[oy * stride + ox] + 2) >> 2);
                     }
+#endif
                 return satd8x8U8Fast(cur, stride, p, 8) + mvCost(hx, hy);
             };
             int hx = 2 * bestX, hy = 2 * bestY;

@@ -4194,10 +4194,7 @@ bool FrameCoder::detectSceneCut(std::vector<uint8_t>& prevThumb_)
                     for (int mx = -kRange; mx <= kRange; ++mx) {
                         if (by + my < 0 || bx + mx < 0 || by + my + 8 > th || bx + mx + 8 > tw)
                             continue;
-                        int s = 0;
-                        for (int y = 0; y < 8; ++y)
-                            s += sadRow(&thumb[size_t(by + y) * tw + bx], &prevThumb_[size_t(by + my + y) * tw + bx + mx], 8);
-                        best = std::min(best, s);
+                        best = std::min(best, sadBlock(&thumb[size_t(by) * tw + bx], tw, &prevThumb_[size_t(by + my) * tw + bx + mx], tw, 8, 8));
                     }
                 interCost += std::min(best, intra);
                 intraCost += intra + 16; // a little bias so flat pictures do not count as cuts
