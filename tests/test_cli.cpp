@@ -344,6 +344,11 @@ int runTests(int argc, char** argv)
     CHECK(help.contains("usage") && help.contains("more") && !help.contains("servers"));
     CHECK(!help["commands"][0].toObject().contains("params"));
     CHECK(QJsonDocument(help).toJson(QJsonDocument::Compact).size() < 10000);
+    for (const QJsonValue& c : help["commands"].toArray()) { // an abbreviation does not end the first sentence
+        const QString summary = c["summary"].toString();
+        for (const char* abbr : {"e.g.", "i.e.", "etc.", "vs."})
+            if (!CHECK(!summary.endsWith(QLatin1String(abbr)))) std::printf("       %s\n", qPrintable(summary));
+    }
     const QJsonObject all = run("help", {{"all", true}});
     CHECK_EQ(all["commands"].toArray().size(), int(Cli::commands().size()));
     CHECK(all.contains("servers") && all.contains("usage") && all["commands"][0].toObject().contains("params"));
@@ -858,6 +863,13 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
         CHECK_EQ(run("info", {{"project", g_path}})["media"][0]["bin"].toString(), QString("Archive/Monday"));
         ed(R"([{"op":"bin","bin":"Archive/Monday","remove":true}])");
         CHECK_EQ(run("info", {{"project", g_path}})["media"][0]["bin"].toString(), QString("Archive"));
+        // "Master" alone is the root bin, not a new sub-bin of that name (as in watch folders)
+        ed(R"([{"op":"bin","bin":"Archive","into":"master"},{"op":"media","media":"/x/a.mp4","bin":"Master"}])");
+        CHECK(!run("info", {{"project", g_path}})["media"][0].toObject().contains("bin"));
+        ed(R"([{"op":"media","media":"/x/a.mp4","bin":"Archive"}])");
+        CHECK_EQ(run("info", {{"project", g_path}})["media"][0]["bin"].toString(), QString("Archive")); // still top level
+        CHECK_EQ(errorOf("edit", {{"project", g_path}, {"ops", R"([{"op":"bin","bin":"Master","rename":"Root"}])"}}),
+                 QString("BAD_ARGUMENT"));
         CHECK_EQ(errorOf("edit", {{"project", g_path}, {"ops", R"([{"op":"bin","bin":"Nope","remove":true}])"}}), QString("NOT_FOUND"));
         CHECK_EQ(errorOf("edit", {{"project", g_path}, {"ops", R"([{"op":"bin","bin":"Archive","into":"Archive/Sub"}])"}}),
                  QString("BAD_ARGUMENT"));

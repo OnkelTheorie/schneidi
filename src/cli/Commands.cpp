@@ -1758,11 +1758,19 @@ QJsonObject cmdGuide(const QJsonObject& a, Context&)
 }
 
 // A command's summary in short (the overview of `help`): its first sentence (two when the first is only a word or
-// two, "Templates."), at most ~160 characters, cut at a space with "…"
+// two, "Templates."), at most ~160 characters, cut at a space with "…"; "e.g.", "i.e.", "etc." and "vs." end nothing
 QString firstSentence(const QString& text)
 {
-    int end = text.indexOf(". ");
-    while (end >= 0 && end < 30) end = text.indexOf(". ", end + 2);
+    const auto ends = [&text](qsizetype at) {
+        const QString before = text.left(at + 1);
+        for (const char* abbr : {"e.g.", "i.e.", "etc.", "vs."})
+            if (before.endsWith(QLatin1String(abbr), Qt::CaseInsensitive)
+                && (before.size() == qsizetype(qstrlen(abbr)) || !before[before.size() - qstrlen(abbr) - 1].isLetter()))
+                return false;
+        return at >= 30;
+    };
+    qsizetype end = text.indexOf(". ");
+    while (end >= 0 && !ends(end)) end = text.indexOf(". ", end + 2);
     QString out = end < 0 ? text : text.left(end + 1);
     if (out.size() > 160) {
         const int space = out.lastIndexOf(' ', 157);
