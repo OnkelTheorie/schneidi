@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "buildinfo.h"
 #include "app/CrashReport.h"
+#include "app/DisplayLoss.h"
 #include "app/InputBindings.h"
 #include "app/LaunchArgs.h"
 #include "app/Log.h"
@@ -344,6 +345,7 @@ int main(int argc, char* argv[])
         if (Cli::Live::handOver(LaunchArgs::files(args))) return 0;
     }
     Log::install();
+    DisplayLoss::install(); // after the log: the display gone ends the program at once, logged (app/DisplayLoss.h)
     Extensions::cleanUp(); // old versions a running program held at its update
     CrashReport::install(); // after the log: attaches the previous run's log to its crash report
     // Test aid: --lang <code> (en, de, fr, …) only applies to this run (the setting stays unchanged)
