@@ -18,6 +18,8 @@
 #include <cstring>
 #include <memory>
 #include <thread>
+#include <condition_variable>
+#include <mutex>
 
 #if defined(__SSE2__) || defined(_M_X64)
 #include <emmintrin.h>
@@ -684,9 +686,84 @@ double Encoder::twoPassQp(double kI, double kP) const
     return 6.0 * std::log2(std::max(1.0, need) / budget);
 }
 
-int Encoder::delay() const { return useLookahead() ? std::max(0, cfg_.lookahead - 1) : 0; }
+int Encoder::delay() const { return (useLookahead() ? std::max(0, cfg_.lookahead - 1) : 0) + (pipelined() ? 1 : 0); }
 
-Encoder::~Encoder() { joinPending(); }
+// Workers of the frame threading: they take rows of the oldest picture first, then of the next
+// one (which waits for the reference rows it needs), so no worker ever waits on a row nobody has.
+struct Encoder::Pool {
+    std::mutex m;
+    std::condition_variable cv;
+    std::vector<std::thread> threads;
+    FrameCoder* active[2] = {nullptr, nullptr}; // oldest first
+    bool stop = false;
+
+    explicit Pool(int count)
+    {
+        for (int t = 0; t < count; ++t)
+            threads.emplace_back([this] { run(); });
+    }
+    ~Pool()
+    {
+        {
+            std::lock_guard<std::mutex> l(m);
+            stop = true;
+        }
+        cv.notify_all();
+        for (auto& t : threads)
+            t.join();
+    }
+    void run()
+    {
+        for (;;) {
+            FrameCoder* c = nullptr;
+            int r = -1;
+            {
+                std::unique_lock<std::mutex> l(m);
+                for (;;) {
+                    if (stop)
+                        return;
+                    for (FrameCoder* a : active)
+                        if (a && a->rowsLeft() && (r = a->claimRow()) >= 0) {
+                            c = a;
+                            break;
+                        }
+                    if (c)
+                        break;
+                    cv.wait(l);
+                }
+            }
+            c->waveRow(r);
+        }
+    }
+    void add(FrameCoder* c)
+    {
+        {
+            std::lock_guard<std::mutex> l(m);
+            (active[0] ? active[1] : active[0]) = c;
+        }
+        cv.notify_all();
+    }
+    void remove(FrameCoder* c)
+    {
+        std::lock_guard<std::mutex> l(m);
+        if (active[0] == c) {
+            active[0] = active[1];
+            active[1] = nullptr;
+        } else if (active[1] == c) {
+            active[1] = nullptr;
+        }
+    }
+};
+
+Encoder::~Encoder()
+{
+    joinPending();
+    if (inFlight_) {
+        inFlight_->waveEnd();
+        pool_->remove(inFlight_);
+    }
+    pool_.reset();
+}
 
 // The analysis of the newest picture runs beside the encoding of the oldest; it joins the
 // queue before the next picture is handled.
@@ -704,23 +781,28 @@ std::vector<uint8_t> Encoder::encode(const Picture& picture, bool forceKeyframe)
 {
     LookaheadFrame f = copyPicture(picture, cfg_.width, cfg_.height, forceKeyframe);
     if (!useLookahead())
-        return encodeFrame(f);
+        return step(&f);
     if (!la_)
         la_ = std::make_unique<Lookahead>(cfg_.width, cfg_.height, mbW_, mbH_);
     joinPending();
     const bool full = int(queue_.size()) + 1 >= cfg_.lookahead;
-    // In the background only when its predecessor stays in the queue while a picture is popped.
-    if (full && cfg_.threads > 1 && queue_.size() >= 2) {
+    // Once the queue is full the newest picture joins it only at the next call (analysed in the
+    // background with several threads), so the encoded picture sees the same queue with any
+    // thread count. Its predecessor stays in the queue while a picture is popped.
+    if (full && queue_.size() >= 2) {
         pendingFrame_ = std::make_unique<LookaheadFrame>(std::move(f));
         const LookaheadFrame* prev = &queue_.back();
-        pendingThread_ = std::thread([this, prev] { la_->analyse(*pendingFrame_, prev); });
+        if (cfg_.threads > 1)
+            pendingThread_ = std::thread([this, prev] { la_->analyse(*pendingFrame_, prev); });
+        else
+            la_->analyse(*pendingFrame_, prev);
     } else {
         la_->analyse(f, queue_.empty() ? nullptr : &queue_.back());
         queue_.push_back(std::move(f));
     }
     if (!full)
         return {};
-    std::vector<uint8_t> out = encodeFrame(queue_.front());
+    std::vector<uint8_t> out = step(&queue_.front());
     queue_.pop_front();
     return out;
 }
@@ -728,10 +810,69 @@ std::vector<uint8_t> Encoder::encode(const Picture& picture, bool forceKeyframe)
 std::vector<uint8_t> Encoder::flush()
 {
     joinPending();
-    if (queue_.empty())
-        return {};
-    std::vector<uint8_t> out = encodeFrame(queue_.front());
-    queue_.pop_front();
+    while (!queue_.empty()) {
+        std::vector<uint8_t> out = step(&queue_.front());
+        queue_.pop_front();
+        if (!out.empty())
+            return out;
+    }
+    return step(nullptr);
+}
+
+// Starts the next picture (if any) and hands out the one before: with frame threading the
+// picture just started runs on while the caller fetches the next one.
+std::vector<uint8_t> Encoder::step(LookaheadFrame* next)
+{
+    FrameCoder* started = next ? startFrame(*next) : nullptr;
+    if (!pipelined())
+        return started ? finishFrame(*started) : std::vector<uint8_t>{};
+    std::vector<uint8_t> out;
+    if (inFlight_)
+        out = finishFrame(*inFlight_);
+    inFlight_ = started;
+    return out;
+}
+
+void Encoder::applyRc(int upTo)
+{
+    while (!rcDone_.empty() && rcDone_.front().index <= upTo) {
+        const RcRecord r = rcDone_.front();
+        rcDone_.pop_front();
+        if (r.lookahead) {
+            if (r.cost > 0) {
+                rcKSum_[r.idr ? 0 : 1] += r.bits * std::exp2(r.qp / 6.0);
+                rcCostSum_[r.idr ? 0 : 1] += r.cost;
+            }
+        } else if (!r.idr) {
+            rcCplxSum_ += r.bits * std::pow(2.0, r.qp / 6.0);
+            rcCplxCount_ += 1.0;
+            rcQp_ = r.qp;
+        }
+        rcBits_ += r.bits;
+        rcTarget_ += cfg_.bitrateKbps * 1000.0 / cfg_.fps;
+    }
+}
+
+std::vector<uint8_t> Encoder::finishFrame(FrameCoder& fc)
+{
+    PhaseClock clock;
+    if (pipelined()) {
+        fc.waveEnd();
+        pool_->remove(&fc);
+        fc.done_ = fc.assemble(clock);
+        fc.outPic_.reset();
+    }
+    std::vector<uint8_t> out = std::move(fc.done_);
+    fc.done_.clear();
+    last_ = &fc;
+    lastQp_ = fc.outQp_;
+    lastWasSceneCut_ = fc.outSceneCut_;
+    if (cfg_.bitrateKbps > 0)
+        rcDone_.push_back({fc.frameNo_, fc.rcIdr_, fc.rcLookahead_, fc.rcCost_, fc.outQp_, double(out.size()) * 8.0});
+    if (gTiming) {
+        for (int i = 4; i < 8; ++i)
+            gPhaseMs[i] += clock.ms[i];
+    }
     return out;
 }
 
@@ -1139,7 +1280,7 @@ std::vector<uint8_t> FrameCoder::code(bool idr, int framesSinceIdr, int idrCount
     return assemble(clock);
 }
 
-std::vector<uint8_t> Encoder::encodeFrame(LookaheadFrame& frame)
+FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
 {
     const bool forceKeyframe = frame.forceKeyframe;
     const Picture picture = pictureOf(frame, cfg_.width);
@@ -1164,7 +1305,8 @@ std::vector<uint8_t> Encoder::encodeFrame(LookaheadFrame& frame)
     fc.pSlice_ = !idr;
     fc.refs_.assign(refList_.begin(), refList_.end());
     fc.activeRefs_ = int(fc.refs_.size());
-    fc.prev_ = last_;
+    fc.prev_ = lastStarted_;
+    lastStarted_ = &fc;
 
     // Frame-level rate control (in the spirit of x264's one-pass ABR, aiming at a steady QP, which
     // is what PSNR likes best): a P picture gets the QP at which the average complexity of all P
@@ -1173,6 +1315,7 @@ std::vector<uint8_t> Encoder::encodeFrame(LookaheadFrame& frame)
     // most 2 away from the last one. I pictures use the P QP - 3. The first picture is probed at a
     // fixed QP so the stream starts near the right QP instead of paying for a huge first picture.
     const int baseQp = cfg_.qp;
+    applyRc(frameIndex_ - 2);
     const bool lookahead = lookaheadFrame;
     double costUsed = 0; // lookahead cost of this picture, for the bit model afterwards
     if (lookahead) {
@@ -1256,6 +1399,7 @@ std::vector<uint8_t> Encoder::encodeFrame(LookaheadFrame& frame)
                 pc.qp = probeQp;
                 pc.gop = std::max(2, cfg_.gop);
                 pc.sceneCut = false;
+                pc.frameThreads = false;
                 Encoder probe(pc);
                 const double bitsI = double(probe.encode(picture).size()) * 8.0;
                 const double kI = bitsI * std::exp2((probeQp - 3) / 6.0) / std::max(1.0, frame.intraSum);
@@ -1314,6 +1458,7 @@ std::vector<uint8_t> Encoder::encodeFrame(LookaheadFrame& frame)
             pc.lookahead = 0;
             pc.mbtree = false;
             pc.gop = std::max(2, cfg_.gop);
+            pc.frameThreads = false;
             Encoder probe(pc);
             const double bits = double(probe.encode(picture).size()) * 8.0;
             const double qI = std::clamp((baseQp - 3) + 6.0 * std::log2(bits / (4.0 * perFrame)), 10.0, 48.0);
@@ -1334,49 +1479,48 @@ std::vector<uint8_t> Encoder::encodeFrame(LookaheadFrame& frame)
     } else if (idr && cfg_.gop > 1) {
         cfg_.qp = std::clamp(baseQp - 3, 0, 51); // keyframes are references for the whole GOP
     }
-    lastQp_ = cfg_.qp;
     fc.cfg_.qp = cfg_.qp;
     fc.mbTypeOffset_ = idr ? 0 : 5;
+    fc.frameNo_ = frameIndex_;
+    fc.outQp_ = cfg_.qp;
+    fc.outSceneCut_ = cut;
+    fc.rcIdr_ = idr;
+    fc.rcLookahead_ = lookahead;
+    fc.rcCost_ = costUsed;
 
     clock.lap(2); // keyframe decision, macroblock tree, rate control (probe on the first picture)
     fc.planMacroblockQp();
     clock.lap(3);
-    std::vector<uint8_t> out = fc.code(idr, framesSinceIdr_, idrCount_, clock);
-    last_ = &fc;
+    // Sliding window (8.2.5.3): the newest picture goes first, the oldest drops out.
+    std::shared_ptr<RefPic> pic;
     if (cfg_.gop > 1) {
-        // Sliding window (8.2.5.3): the newest picture goes first, the oldest drops out.
-        std::shared_ptr<RefPic> pic;
         if (int(refList_.size()) >= std::max(1, cfg_.refs)) {
             pic = std::move(refList_.back());
             refList_.pop_back();
         }
         if (!pic || pic.use_count() > 1)
             pic = std::make_shared<RefPic>();
-        pic->y = fc.recY_;
-        pic->u = fc.recU_;
-        pic->v = fc.recV_;
-        fc.buildRefPlanes(*pic);
-        pic->rowsReady.store(mbH_, std::memory_order_release);
-        refList_.push_front(std::move(pic));
+        refList_.push_front(pic);
     }
-    if (cfg_.bitrateKbps <= 0)
-        cfg_.qp = baseQp;
-    if (cfg_.bitrateKbps > 0) {
-        const double bits = double(out.size()) * 8.0;
-        if (lookahead) {
-            if (costUsed > 0) {
-                rcKSum_[idr ? 0 : 1] += bits * std::exp2(cfg_.qp / 6.0);
-                rcCostSum_[idr ? 0 : 1] += costUsed;
-            }
-        } else if (!idr) {
-            rcCplxSum_ += bits * std::pow(2.0, cfg_.qp / 6.0);
-            rcCplxCount_ += 1.0;
-            rcQp_ = cfg_.qp;
+    if (pipelined()) {
+        // Rows go to the workers; finished rows go into the reference picture band by band.
+        if (!pool_)
+            pool_ = std::make_unique<Pool>(cfg_.threads);
+        fc.reset(idr, framesSinceIdr_, idrCount_);
+        fc.outPic_ = pic;
+        fc.waveBegin(cfg_.threads, pic.get(), true);
+        pool_->add(&fc);
+    } else {
+        fc.done_ = fc.code(idr, framesSinceIdr_, idrCount_, clock);
+        if (pic) {
+            pic->y = fc.recY_;
+            pic->u = fc.recU_;
+            pic->v = fc.recV_;
+            fc.buildRefPlanes(*pic);
+            pic->rowsReady.store(mbH_, std::memory_order_release);
         }
-        rcBits_ += bits;
-        rcTarget_ += cfg_.bitrateKbps * 1000.0 / cfg_.fps;
-        cfg_.qp = baseQp;
     }
+    cfg_.qp = baseQp;
     if (idr)
         ++idrCount_;
     ++frameIndex_;
@@ -1390,7 +1534,7 @@ std::vector<uint8_t> Encoder::encodeFrame(LookaheadFrame& frame)
                          gPhaseMs[0] / gPhaseFrames, gPhaseMs[1] / gPhaseFrames, gPhaseMs[2] / gPhaseFrames, gPhaseMs[3] / gPhaseFrames,
                          gPhaseMs[4] / gPhaseFrames, gWaitMs / gPhaseFrames, gPhaseMs[5] / gPhaseFrames, gPhaseMs[6] / gPhaseFrames);
     }
-    return out;
+    return &fc;
 }
 
 void FrameCoder::encodeMbPcm(BitWriter& bw, int mbx, int mby)

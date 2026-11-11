@@ -64,6 +64,12 @@ public:
         int yCopied = 0, cCopied = 0, fBuilt = 0, hBuilt = 0;
     };
     WaveState wave_;
+    // Picture results kept until the encoder hands the picture out.
+    std::vector<uint8_t> done_;
+    std::shared_ptr<RefPic> outPic_; // the reference picture being filled, kept alive while coding
+    int frameNo_ = 0, outQp_ = 0;
+    bool outSceneCut_ = false, rcIdr_ = false, rcLookahead_ = false;
+    double rcCost_ = 0;
     bool idr_ = false;
     int framesSinceIdr_ = 0, idrCount_ = 0;
     std::vector<int> sliceTop_;

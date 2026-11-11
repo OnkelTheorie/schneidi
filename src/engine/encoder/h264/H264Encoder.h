@@ -58,6 +58,9 @@ struct EncoderConfig {
     // idr_pic_id of the first IDR picture: neighbouring chunks of a clip encoded side by side
     // (planChunks) start far apart so two IDR pictures in a row never share one.
     int idrPicIdBase = 0;
+    // Frame threading (CABAC, threads >= 2): the next picture starts while the last rows of the
+    // previous one are still coded; one more picture of delay(). Same stream either way.
+    bool frameThreads = true;
     // VUI video signal (E.2.1, ITU-T H.273 codes; 2 = unspecified): written when one is set or the
     // range is full. E.g. BT.709: 1, 1, 1.
     int colourPrimaries = 2;
@@ -135,7 +138,25 @@ public:
     int lastQp() const { return lastQp_; }
 
 private:
-    std::vector<uint8_t> encodeFrame(LookaheadFrame& frame);
+    struct Pool;
+    FrameCoder* startFrame(LookaheadFrame& frame);
+    std::vector<uint8_t> finishFrame(FrameCoder& fc);
+    std::vector<uint8_t> step(LookaheadFrame* next);
+    bool pipelined() const { return cfg_.frameThreads && useCabac() && cfg_.threads >= 2; }
+    void applyRc(int upTo);
+    std::unique_ptr<Pool> pool_;
+    FrameCoder* inFlight_ = nullptr;           // started, not finished (frame threading)
+    const FrameCoder* lastStarted_ = nullptr;  // the picture before the next one (search start points)
+    // Rate control learns from a picture two pictures later (the one between may still be coded),
+    // with or without frame threading, so the stream does not depend on the thread count.
+    struct RcRecord {
+        int index;
+        bool idr, lookahead;
+        double cost;
+        int qp;
+        double bits;
+    };
+    std::deque<RcRecord> rcDone_;
     void markKeyframes();
     bool useLookahead() const { return cfg_.lookahead > 0 && cfg_.gop > 1 && (cfg_.bitrateKbps > 0 || cfg_.mbtree); }
     bool useCabac() const { return cfg_.cabac && cfg_.mode != IntraMode::Pcm; }
