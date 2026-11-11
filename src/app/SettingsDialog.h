@@ -47,6 +47,8 @@ public:
     ProxyManager::ImportRule proxyImportRule() const;
     // Size of proxy media (ProxyManager::quality)
     ProxyManager::Quality proxyQuality() const;
+    // Sound output device (Engine::audioOutput id, empty = system default)
+    QString audioOutput() const;
     bool ownProjectFolder() const;
     QString projectFolder() const;
     // The stored choice (QSettings "project/ownFolder", "project/folder"); folder() = the default when none is stored
@@ -77,6 +79,7 @@ private:
     QComboBox* m_secondScreen = nullptr;
     QComboBox* m_proxyImport = nullptr;
     QComboBox* m_proxyQuality = nullptr;
+    QComboBox* m_audioOutput = nullptr;
     QComboBox* m_viewerResolution = nullptr;
     QComboBox* m_monitorResolution = nullptr;
     QLineEdit* m_folder = nullptr;

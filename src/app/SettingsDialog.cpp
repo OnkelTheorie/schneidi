@@ -6,6 +6,8 @@
 #include "app/Theme.h"
 #include "app/UpdateCheck.h"
 #include "core/I18n.h"
+#include "engine/Engine.h"
+#include "engine/audio/Device.h"
 #include "engine/Background.h"
 #include "ui/comp/CompShared.h"
 #include "ui/WheelGuard.h"
@@ -245,6 +247,25 @@ QWidget* SettingsDialog::buildGeneral()
                          "brauchen aber einen schnellen Rechner. Der Export nutzt immer die volle Auflösung.")));
     lay->addWidget(viewerBox);
 
+    // Sound output (also in Playback › Audio › Output device); the list is read now: devices come and go
+    auto* soundBox = new QGroupBox(T("Ton"));
+    auto* sform = new QFormLayout(soundBox);
+    sform->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
+    m_audioOutput = new QComboBox;
+    m_audioOutput->setObjectName("audio_output");
+    m_audioOutput->addItem(T("Systemstandard"), QString());
+    const QString currentOutput = Engine::audioOutput();
+    bool found = currentOutput.isEmpty();
+    for (const Audio::Device::Output& o : Audio::Device::outputs(Engine::audioDriver())) {
+        m_audioOutput->addItem(o.name, o.id);
+        found = found || o.id == currentOutput;
+    }
+    if (!found) m_audioOutput->addItem(T("%1 (nicht angeschlossen)").arg(currentOutput), currentOutput);
+    m_audioOutput->setCurrentIndex(std::max(0, m_audioOutput->findData(currentOutput)));
+    sform->addRow(T("Ausgabegerät"), m_audioOutput);
+    sform->addRow(hint(T("Wohin schneidi den Ton spielt. Systemstandard folgt dem Gerät, das im System gewählt ist.")));
+    lay->addWidget(soundBox);
+
     // Preview on a second monitor (Workspace menu): what the main window does with the viewer's area meanwhile
     auto* preview = new QGroupBox(T("Vorschau auf zweitem Monitor"));
     auto* vform = new QFormLayout(preview);
@@ -292,6 +313,11 @@ PreviewResolution::Choice SettingsDialog::previewResolution(PreviewResolution::T
 {
     const QComboBox* box = target == PreviewResolution::Target::Viewer ? m_viewerResolution : m_monitorResolution;
     return PreviewResolution::Choice(box->currentData().toInt());
+}
+
+QString SettingsDialog::audioOutput() const
+{
+    return m_audioOutput->currentData().toString();
 }
 
 ProxyManager::Quality SettingsDialog::proxyQuality() const
