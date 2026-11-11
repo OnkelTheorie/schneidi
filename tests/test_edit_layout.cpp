@@ -5,7 +5,10 @@
 // - with the preview on a second monitor and its area hidden, the timeline moves up into the viewer's place: from the
 //   top bar down between the left column and the Inspector, whose widths stay; the mixer keeps its height; with the
 //   viewer back the layout is exactly the one before; the timeline's zoom/scroll never change (core rule);
-// - a layout saved by an older version (the timeline beside the mixer in "editBottom") loads.
+// - a layout saved by an older version (the timeline beside the mixer in "editBottom") loads;
+// - the right column (Inspector over Mixer) is only as wide as it needs: the mixer's strips at their natural width, the
+//   Inspector usable; a much wider saved column (0.20: 520 px for two tracks) shrinks when it comes, the room goes to
+//   the timeline; a width the user drags during the session stays.
 // EDIT_LAYOUT_DUMP=<folder>: pictures of the normal and the hidden-viewer layout, with and without the mixer, at
 // 1920x1080 and 1366x768.
 
@@ -299,6 +302,57 @@ void testOldSaved(Engine& engine)
     s.remove("panels/mixer");
 }
 
+
+// The right column only as wide as its content: by default and from a much wider saved width; a width dragged in the
+// session stays (a page switch does not fight it)
+void testColumnWidth(Engine& engine)
+{
+    for (const bool saved : {false, true}) {
+        QSettings s;
+        s.remove("layout");
+        if (saved) { // the user's layout from 0.20: a 520 px column for two tracks
+            s.setValue("layout/editRow", QVariantList{1397, 520});
+            s.setValue("layout/editTop", QVariantList{451, 945, 320, 452});
+            s.setValue("layout/editMain", QVariantList{543, 327});
+        }
+        s.setValue("panels/mixer", true);
+        MainWindow w(&engine);
+        w.disableAutosave();
+        w.resize(1600, 900);
+        w.show();
+        settle();
+        settle();
+        Ui ui(w);
+        auto* right = w.findChild<QSplitter*>("editRight");
+        auto* row = w.findChild<QSplitter*>("editRow");
+        if (!CHECK(ui.ok() && right && row && ui.mixer->isVisible() && ui.inspector->isVisible())) continue;
+        const QString where = saved ? "saved 520 px" : "default";
+        const int natural = ui.mixer->naturalWidth();
+        const int column = right->width();
+        Check::report(column >= natural, "all strips fit", __FILE__, __LINE__,
+                      QString("%1: column %2 px, strips need %3").arg(where).arg(column).arg(natural));
+        Check::report(column <= std::max(natural, 340) + 16, "column not wider than needed", __FILE__, __LINE__,
+                      QString("%1: column %2 px, strips need %3").arg(where).arg(column).arg(natural));
+        Check::report(ui.inspector->width() >= 300, "Inspector usable", __FILE__, __LINE__,
+                      QString("%1: %2 px").arg(where).arg(ui.inspector->width()));
+        dump(&w, "column-" + QString(saved ? "saved" : "default"));
+        // Dragged wider in the session: stays across a page switch
+        QList<int> sizes = row->sizes();
+        sizes[0] -= 200;
+        sizes[1] += 200;
+        row->setSizes(sizes);
+        settle();
+        const int dragged = right->width();
+        w.showPage(MainWindow::Page::Color);
+        settle();
+        w.showPage(MainWindow::Page::Edit);
+        settle();
+        CHECK_EQ(right->width(), dragged);
+        s.remove("layout");
+        s.remove("panels/mixer");
+    }
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -313,6 +367,7 @@ int main(int argc, char** argv)
     if (!CHECK(engine.init(&err))) return Check::result();
     std::setlocale(LC_NUMERIC, "C");
     testOldSaved(engine);
+    testColumnWidth(engine);
     MainWindow w(&engine);
     w.disableAutosave();
     w.show();

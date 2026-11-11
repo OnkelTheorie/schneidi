@@ -34,8 +34,6 @@
 namespace {
 
 constexpr int kStripW = 70;
-// Room to spare widens the strips (and the master) up to this; what is left after that goes to the loudness meter
-constexpr int kMaxStripW = 2 * kStripW;
 constexpr float kSilent = -200.f;
 constexpr double kMeterFloor = -60.0; // lowest value of the level display (dBFS)
 constexpr double kMeterFall = 24.0;   // decay in dB/s (rise instantly)
@@ -762,7 +760,7 @@ Mixer::Mixer(Project* project, Engine* engine, QWidget* parent)
     root->setContentsMargins(0, 0, 0, 0);
     root->setSpacing(0);
     // Title row; on the right the voice-over controls (input level, record)
-    auto* titleRow = new QWidget;
+    auto* titleRow = m_titleRow = new QWidget;
     titleRow->setObjectName("PanelTitle");
     titleRow->setAttribute(Qt::WA_StyledBackground);
     titleRow->setStyleSheet(QString("QWidget#PanelTitle { background: %1; }").arg(Theme::panelHeader.name()));
@@ -905,8 +903,10 @@ Mixer::Mixer(Project* project, Engine* engine, QWidget* parent)
         }
         menu.exec(m_loudness->mapToGlobal(pos));
     });
-    // The loudness meter takes what the strips leave: no empty column on the right (fitStrips)
+    // The loudness meter takes what the strips leave, up to one strip more (fitStrips); a wider panel than that
+    // stays plain on the right - the strips are never stretched
     row->addWidget(m_loudness, 1);
+    row->addStretch(0);
     root->addLayout(row, 1);
 
     setMinimumWidth(kStripW * 3 + 40);
@@ -1042,11 +1042,11 @@ void Mixer::resizeEvent(QResizeEvent* e)
     fitStrips();
 }
 
-// Only whole channel strips: a strip area a few pixels narrower than all strips gave a scrollbar that moved only those
-// few pixels and looked stuck; a strip that does not fit completely scrolls in instead. Room to spare (the mixer in
-// the Edit page's column is as wide as the Inspector above it) widens the strips and the master up to kMaxStripW, the
-// rest goes to the loudness meter - never an empty area beside it (it came back once when the mixer moved into the
-// column: test_mixer_layout).
+// Only whole channel strips at their natural width: a strip area a few pixels narrower than all strips gave a scrollbar
+// that moved only those few pixels and looked stuck; a strip that does not fit completely scrolls in instead. The
+// leftover (less than a strip) goes to the loudness meter, so there is no empty column beside it. A panel wider than
+// all strips does not stretch them (0.21 did, it looked bloated): the loudness meter takes at most one strip more, the
+// rest stays plain on the right - the column is made only as wide as the mixer needs (MainWindow::updateRightColumn).
 void Mixer::fitStrips()
 {
     // Beside the timeline never wider than all strips + master + loudness: the splitter gives the rest to the timeline.
@@ -1054,20 +1054,21 @@ void Mixer::fitStrips()
     auto* sp = qobject_cast<QSplitter*>(parentWidget());
     setMaximumWidth(sp && sp->orientation() == Qt::Vertical ? QWIDGETSIZE_MAX
                                                              : int(m_strips.size()) * kStripW + fixedWidth());
+    const int loudness = m_loudness->minimumSizeHint().width();
+    m_loudness->setMaximumWidth(loudness + kStripW);
     const int n = int(m_strips.size());
-    // For the strips and the master (2 px more for its thick border), the loudness meter at its smallest
-    const int room = width() - 2 - m_loudness->minimumSizeHint().width();
-    int stripW = kStripW, shown = n;
-    if ((n + 1) * kStripW <= room) stripW = std::min(kMaxStripW, room / (n + 1)); // all fit: as wide as there is room
-    else shown = std::clamp((room - kStripW) / kStripW, n ? 1 : 0, n);
-    for (ChannelStrip* s : m_strips) s->setFixedWidth(stripW);
-    m_master->setFixedWidth(stripW + 2);
-    m_stripScroll->setFixedWidth(shown * stripW); // fixed: the box layout would otherwise share out the difference
-    m_stripScroll->horizontalScrollBar()->setSingleStep(stripW); // arrow keys/wheel: one strip at a time
+    const int shown = std::clamp((width() - fixedWidth()) / kStripW, n ? 1 : 0, n);
+    m_stripScroll->setFixedWidth(shown * kStripW); // fixed: the box layout would otherwise share out the difference
     // The scrollbar under the strips takes height: keep master and loudness bottoms level with the strips
     const int sb = shown < n ? m_stripScroll->horizontalScrollBar()->sizeHint().height() : 0;
     m_master->layout()->setContentsMargins(5, 4, 3, 4 + sb);
     m_loudness->layout()->setContentsMargins(3, 4, 3, 4 + sb);
+}
+
+int Mixer::naturalWidth() const
+{
+    // The title row's voice-over buttons whole too (long names, e.g. Russian with a large font)
+    return std::max(int(m_strips.size()) * kStripW + fixedWidth(), m_titleRow->sizeHint().width());
 }
 
 int Mixer::fixedWidth() const { return kStripW + 2 + m_loudness->minimumSizeHint().width(); }

@@ -260,14 +260,16 @@ QWidget* MainWindow::buildTopBar()
 
 QWidget* MainWindow::buildPageBar()
 {
-    // One compact row at the bottom: the status text (or the name and version) on the left, the page buttons in the
+    // One row at the bottom: the status text (or the name and version) on the left, the page buttons in the
     // middle (icon and name side by side), background work on the right. The status bar's row is gone, its messages
     // show here (showStatusText) - every pixel the bars do not need goes to the pages
     auto* bar = new QWidget;
     bar->setObjectName("PageBar");
     bar->setStyleSheet(
         QString("QWidget#PageBar { background: %1; border-top: 1px solid %2; }"
-                "QToolButton { color: %3; padding: 2px 14px; border-radius: 0; border-bottom: 2px solid transparent; }"
+                // one line, but a comfortable click target (about 35 px with the normal font)
+                "QToolButton { color: %3; padding: 8px 16px 7px 16px; border-radius: 0;"
+                " border-bottom: 2px solid transparent; }"
                 "QToolButton:checked { color: %4; background: transparent; border-bottom: 2px solid %4; }"
                 "QToolButton:hover { color: %5; }")
             .arg(Theme::window.name(), Theme::border.name(), Theme::textDim.name(), Theme::primary.name(),
@@ -551,16 +553,18 @@ void MainWindow::watchSizes(QSplitter* s, const QString& name)
 
 void MainWindow::applySizes(QSplitter* s, const QList<int>& defaults)
 {
+    s->setSizes(sizesFor(s, defaults));
+}
+
+QList<int> MainWindow::sizesFor(QSplitter* s, const QList<int>& defaults)
+{
     m_defaultSizes[s] = defaults;
     // A tour shows the defaults (its targets where it expects them); the user's sizes come back after it
     const QVariantList saved = m_tourSaved.active ? QVariantList() : QSettings().value("layout/" + s->objectName()).toList();
-    if (saved.size() != defaults.size() || s->count() != defaults.size()) {
-        s->setSizes(defaults);
-        return;
-    }
+    if (saved.size() != defaults.size() || s->count() != defaults.size()) return defaults;
     QList<int> sizes;
     for (const QVariant& v : saved) sizes << std::max(0, v.toInt());
-    s->setSizes(sizes);
+    return sizes;
 }
 
 void MainWindow::uncollapse(QWidget* panel)
@@ -592,7 +596,10 @@ void MainWindow::resetSizes()
     settings.endGroup();
     if (m_colorBottom) applySizes(m_colorBottom, {1100, 420});
     showPage(m_page); // sets the page's defaults again
-    if (m_editRight->isVisibleTo(m_editRow)) applySizes(m_editRight, m_editMain->sizes());
+    if (m_editRight->isVisibleTo(m_editRow)) {
+        fitRightColumn(m_editRow->sizes(), true); // the column's default: as wide as its content
+        applySizes(m_editRight, m_editMain->sizes());
+    }
 }
 
 void MainWindow::applyPanelSet(bool pool, bool effects, bool storage, bool transcript, bool mixer, bool inspector)
@@ -612,6 +619,31 @@ void MainWindow::updateLeftColumn()
                                                   || m_storageToggle->isChecked());
 }
 
+int MainWindow::rightColumnWidth() const
+{
+    // The mixer's strips at their natural width; the Inspector usable (its sliders and fields need about this much)
+    constexpr int kInspectorWidth = 320;
+    const int inspector = m_inspectorToggle->isChecked()
+                              ? std::max(kInspectorWidth, m_inspector->minimumSizeHint().width())
+                              : 0;
+    return std::max(inspector, m_mixer->naturalWidth());
+}
+
+void MainWindow::fitRightColumn(QList<int> sizes, bool exact)
+{
+    // The sizes are given: before the first layout the splitter's own are not the ones it will take
+    if (sizes.size() == 2) {
+        const int total = sizes[0] + sizes[1];
+        const int want = std::min(rightColumnWidth(), total * 45 / 100); // many tracks: the strips scroll
+        // A few pixels more are the user's; much more is room the timeline can use
+        if (exact || sizes[1] > want + 16) {
+            sizes[0] = total - want;
+            sizes[1] = want;
+        }
+    }
+    m_editRow->setSizes(sizes);
+}
+
 void MainWindow::updateRightColumn()
 {
     // The Inspector's place in the top row stays (its slot), so the row keeps its saved sizes either way
@@ -629,10 +661,12 @@ void MainWindow::updateRightColumn()
         m_editRight->insertWidget(0, m_inspector);
         m_inspector->setVisible(shown);
         m_editRight->show();
-        // The column as wide as the Inspector was (else as the mixer's own), the saved width if there is one
+        // The column as wide as the Inspector was (else as the mixer's own), the saved width if there is one - but not
+        // much wider than its content needs (0.20 saved 520 px for two tracks): the room goes to the timeline. Only
+        // when the column comes; a width the user drags in the session stays
         const int total = std::max(m_editRow->width(), 1000);
-        const int right = width > 0 ? width : std::max(360, m_mixer->minimumWidth());
-        applySizes(m_editRow, {total - right - m_editRow->handleWidth(), right});
+        const int right = width > 0 ? width : rightColumnWidth();
+        fitRightColumn(sizesFor(m_editRow, {total - right - m_editRow->handleWidth(), right}), false);
         applySizes(m_editRight, m_editMain->sizes()); // the mixer's top level with the timeline's
     } else {
         const int at = m_editTop->indexOf(m_inspectorSlot);

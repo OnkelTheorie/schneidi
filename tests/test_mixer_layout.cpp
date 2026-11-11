@@ -1,10 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// The Mixer panel fills its room: no empty column right of the loudness meter, no gaps between the channel strips,
-// master and loudness, all of them down to the bottom. Measured on the widget geometry at several panel widths and
-// track counts, in a column below another panel (the Edit page: below the Inspector, MainWindow::updateRightColumn)
-// and beside the timeline in a side-by-side splitter, with the normal and a large UI font.
-// Came back once already: with the mixer moved into the Inspector's column (0.20) its width followed the Inspector's
-// and the strips kept their fixed width -> an empty area as wide as two strips beside the loudness meter.
+// The Mixer panel's strips keep their natural width and fill the room they are given without gaps:
+// - channel strips are never stretched (all as wide as one strip, the master 2 px more): a wide panel does not pull
+//   them apart, at most the loudness meter takes a little more (up to one strip), the rest stays plain on the right;
+// - at its natural width (Mixer::naturalWidth: all strips + master + loudness) nothing is empty; narrower, whole strips
+//   scroll and the loudness meter takes the leftover (less than a strip) - no empty column right of it;
+// - no gaps between strips, master and loudness, all down to the bottom.
+// Measured at several panel widths and track counts, in a column below another panel (the Edit page: below the
+// Inspector, MainWindow::updateRightColumn) and beside the timeline, with the normal and a large UI font.
+// History: 0.20 put the mixer into the Inspector's column and left an empty area as wide as two strips beside the
+// loudness meter; 0.21's first fix stretched the strips instead (ugly) - the column is now only as wide as needed
+// (test_edit_layout) and the strips stay as they are.
 // MIXER_LAYOUT_DUMP=<folder>: a picture per case.
 
 #include "check.h"
@@ -57,14 +62,40 @@ QVector<QRect> visibleStrips(Mixer& mixer)
     return rects;
 }
 
+constexpr int kStrip = 70; // a channel strip's natural width (Mixer.cpp kStripW)
+
+// The channel strips (in the scroll area) never stretched
+void checkNatural(Mixer& mixer, const QString& where)
+{
+    auto* scroll = mixer.findChild<QScrollArea*>();
+    for (QWidget* s : mixer.findChildren<QWidget*>("Strip"))
+        if (scroll && scroll->isAncestorOf(s))
+            Check::report(s->width() == kStrip, "channel strip at its natural width", __FILE__, __LINE__,
+                          QString("%1: %2 px").arg(where).arg(s->width()));
+}
+
 void checkFilled(Mixer& mixer, const QString& where)
 {
+    checkNatural(mixer, where);
     const QVector<QRect> rects = visibleStrips(mixer);
     if (!Check::report(rects.size() >= 3, "strips shown", __FILE__, __LINE__, where)) return;
-    // Up to the right edge: no empty column beside the loudness meter
+    // The loudness meter: the rightmost strip
+    QWidget* loudness = nullptr;
+    for (QWidget* w : mixer.findChildren<QWidget*>("Strip"))
+        if (w->isVisible() && (!loudness || w->mapTo(&mixer, QPoint()).x() > loudness->mapTo(&mixer, QPoint()).x()))
+            loudness = w;
+    if (!CHECK(loudness)) return;
+    const int loudnessMin = loudness->minimumSizeHint().width();
+    // It takes at most one strip more than it needs
+    Check::report(loudness->width() <= loudnessMin + kStrip + 1, "loudness meter not stretched", __FILE__, __LINE__,
+                  QString("%1: loudness %2 px, needs %3").arg(where).arg(loudness->width()).arg(loudnessMin));
+    // Up to the right edge, unless the panel is more than a strip wider than the strips need (plain room on the right)
+    const int needed = loudness->mapTo(&mixer, QPoint()).x() + loudnessMin;
     const int rightGap = mixer.width() - 1 - rects.last().right();
-    Check::report(rightGap <= 2, "no empty area on the right", __FILE__, __LINE__,
-                  QString("%1: %2 px empty right of the loudness meter (mixer %3 px)").arg(where).arg(rightGap).arg(mixer.width()));
+    const int allowed = std::max(2, mixer.width() - needed - kStrip);
+    Check::report(rightGap <= allowed, "no empty area on the right", __FILE__, __LINE__,
+                  QString("%1: %2 px empty right of the loudness meter (mixer %3 px, strips need %4 px)")
+                      .arg(where).arg(rightGap).arg(mixer.width()).arg(needed));
     Check::report(rects.first().left() <= 1, "starts at the left edge", __FILE__, __LINE__,
                   QString("%1: first strip at x=%2").arg(where).arg(rects.first().left()));
     // No gaps between neighbours (strips, master, loudness)
@@ -103,13 +134,13 @@ void testColumn(Engine& engine, const QString& font)
     host.show();
     for (const int tracks : {1, 2, 3, 5, 8}) {
         setAudioTracks(p, tracks);
-        for (const int width : {300, 360, 452, 520, 700, 900}) {
-            host.resize(width, 720);
+        for (const int width : {300, 360, 452, 520, 700, 900, -1}) { // -1: the mixer's natural width
+            host.resize(width > 0 ? width : mixer->naturalWidth(), 720);
             settle();
-            const QString where = QString("column %1 px, %2 tracks, %3 font").arg(width).arg(tracks).arg(font);
-            CHECK_EQ(mixer->width(), width); // the column decides, the mixer follows
+            const QString where = QString("column %1 px, %2 tracks, %3 font").arg(host.width()).arg(tracks).arg(font);
+            CHECK_EQ(mixer->width(), host.width()); // the column decides, the mixer follows
             checkFilled(*mixer, where);
-            dump(&host, QString("column-%1-%2-%3").arg(width).arg(tracks).arg(font));
+            dump(&host, QString("column-%1-%2-%3").arg(host.width()).arg(tracks).arg(font));
         }
     }
 }
