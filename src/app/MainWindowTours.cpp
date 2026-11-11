@@ -553,9 +553,9 @@ void MainWindow::enterTourMode(const Tour& tour)
     updatePageButtons();
 
     // AIs wait meanwhile (APP_WAITING with this text): their edits would land in the practice project
-    if (m_liveWaiting)
-        m_liveWaiting("a tour runs in the schneidi app (the user is learning on a practice project, the real project is "
-                      "set aside); try again once the user ended it");
+    m_liveTourMessage = "a tour runs in the schneidi app (the user is learning on a practice project, the real project is "
+                        "set aside); try again once the user ended it";
+    updateLiveWaiting();
     m_project->setHistoryAside(true); // the user's undo history waits untouched; the practice project gets its own
     m_tourSwap = true;
     buildPracticeProject(tour.practice);
@@ -664,7 +664,8 @@ void MainWindow::leaveTourMode()
     };
     restoreView();
     QTimer::singleShot(0, m_timeline->view(), restoreView); // after restoreViews' own (queued) one and the layout
-    if (m_liveWaiting) m_liveWaiting({}); // AIs may work on the user's project again
+    m_liveTourMessage.clear(); // AIs may work on the user's project again
+    updateLiveWaiting();
     checkProjectFile();
 }
 

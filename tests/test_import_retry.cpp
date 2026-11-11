@@ -54,6 +54,9 @@ int main(int argc, char** argv)
     w.resize(1400, 900);
     w.show();
     Project* project = w.liveProject();
+    // What AIs on the live connection hear (main.cpp hands the server's setWaiting in)
+    QStringList live;
+    w.setLiveWaiting([&live](const QString& message) { live << message; });
 
     int boxes = 0;
     QString text, informative;
@@ -95,6 +98,9 @@ int main(int argc, char** argv)
     CHECK(retried);
     const MediaInfo* m = project->mediaInfo(file);
     CHECK(m && m->hasVideo && m->length == 50);
+    // While the import waited for its probes (an event loop runs, delivering live requests), AIs were told to wait,
+    // and told they may go on afterwards
+    CHECK(live.size() >= 2 && !live.first().isEmpty() && live.last().isEmpty());
 
     // Two damaged files, one written moments ago, one an hour old: counted, each marked for itself
     {
@@ -147,6 +153,25 @@ int main(int argc, char** argv)
         const MediaInfo* lm = project->mediaInfo(late);
         CHECK(lm && lm->hasVideo && lm->hasAudio);
         CHECK_EQ(MediaProbe::longAnalysesForTest(), before + 1); // not probed again: the drop preview's result
+
+        // A file dropped from outside is imported after the drop returned (the drag source - Windows Explorer over
+        // OLE - waited for the probes and any message otherwise)
+        const QString dropped = dir.filePath("dropped.mp4");
+        CHECK(QFile::copy(complete, dropped));
+        QMimeData dropMime;
+        dropMime.setUrls({QUrl::fromLocalFile(dropped)});
+        QDragEnterEvent enter2(pt, Qt::CopyAction, &dropMime, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(tv, &enter2);
+        QDragMoveEvent move(pt, Qt::CopyAction, &dropMime, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(tv, &move);
+        boxes = 10; // the project format question of an empty timeline: "Nicht ändern"
+        QTimer::singleShot(0, answer);
+        QDropEvent drop(QPointF(pt), Qt::CopyAction, &dropMime, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(tv, &drop);
+        CHECK(!project->mediaInfo(dropped)); // not yet: the drop returned first
+        t.restart();
+        while (!project->mediaInfo(dropped) && t.elapsed() < 10000) QTest::qWait(20);
+        CHECK(project->mediaInfo(dropped) != nullptr);
     }
     return Check::result();
 }

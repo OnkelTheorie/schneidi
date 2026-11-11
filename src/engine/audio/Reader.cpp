@@ -905,6 +905,7 @@ std::unique_ptr<Reader> Reader::open(const QString& path, int stream, const Opti
     d.validFrom = d.wantOut = kFar;
     d.keepFrom = kFar;
     d.silentFrom = std::numeric_limits<int64_t>::max();
+    const int readErrorsBefore = d.stats.readErrors;
     {
         std::optional<OpenMedia::ReadLimit> limit;
         if (unsettled) limit.emplace(d.fmt, kDeadSearchBytes);
@@ -915,7 +916,9 @@ std::unique_ptr<Reader> Reader::open(const QString& path, int stream, const Opti
         }
     }
     if (!d.started) {
-        if (unsettled) rememberDead(path, stream); // to the file's end: no packet of it at all
+        // Read to the file's end without a packet of it: dead. Not after a read error (a network share's hiccup):
+        // the next open tries again
+        if (unsettled && !d.error && d.stats.readErrors == readErrorsBefore) rememberDead(path, stream);
         return fail(d.error ? QStringLiteral("cannot decode the audio") : QStringLiteral("no audio samples"));
     }
     d.info.codec = QString::fromUtf8(d.dec->codec->name);

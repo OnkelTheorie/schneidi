@@ -53,7 +53,7 @@ void ProbeCache::insert(const ProbeResult& r)
     qint64 size = 0, modified = 0;
     stampOf(path, &size, &modified);
     const bool keep = !r.partial && size == r.size && modified == r.modified
-                      && (r.usable() || r.busy == MediaProbe::Busy::No);
+                      && (r.usable() || (r.busy == MediaProbe::Busy::No && !r.why.isEmpty()));
     if (!keep) {
         m_entries.remove(path);
         return;

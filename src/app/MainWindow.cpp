@@ -600,17 +600,23 @@ void MainWindow::onDrop(const QStringList& paths, int frame, int track, PlacePar
     QStringList unknown;
     for (const QString& p : paths)
         if (!m_project->mediaInfo(p)) unknown << p;
-    if (!unknown.isEmpty()) m_mediaPool->importFiles(unknown);
-    if (m_project->frameRateLocked()) {
-        m_editor->addMediaAt(paths, frame, track, parts);
-        return;
-    }
     // Empty timeline: possibly ask about the project format – only after the drop (no modal query in the middle
     // of drag & drop, the source, e.g. the file manager, would otherwise wait)
-    QTimer::singleShot(0, this, [this, paths, frame, track, parts] {
-        offerClipFormat(paths, true);
+    const auto place = [this, paths, frame, track, parts] {
+        if (!m_project->frameRateLocked()) offerClipFormat(paths, true);
         m_editor->addMediaAt(paths, frame, track, parts);
-    });
+    };
+    if (!unknown.isEmpty()) {
+        // New files are probed after the drop returned: the import waits for its probes (a progress dialog, an
+        // "unreadable" message) and the drag source (Windows Explorer over OLE) would wait with it
+        QTimer::singleShot(0, this, [this, unknown, place] {
+            m_mediaPool->importFiles(unknown);
+            place();
+        });
+        return;
+    }
+    if (m_project->frameRateLocked()) place();
+    else QTimer::singleShot(0, this, place);
 }
 
 void MainWindow::offerClipFormat(const QStringList& paths, bool ask)
@@ -709,6 +715,15 @@ void MainWindow::previewFile(const QString& path)
     m_engine->pause();
     m_engine->showSource(path, m_sourcePos.value(path, 0));
     if (!cached) probeLater(path);
+}
+
+void MainWindow::updateLiveWaiting()
+{
+    if (!m_liveWaiting) return;
+    if (!m_liveTourMessage.isEmpty()) m_liveWaiting(m_liveTourMessage);
+    else if (m_mediaPool && m_mediaPool->probing())
+        m_liveWaiting("schneidi is reading media files the user imports; try again in a moment");
+    else m_liveWaiting({});
 }
 
 void MainWindow::probeLater(const QString& path)

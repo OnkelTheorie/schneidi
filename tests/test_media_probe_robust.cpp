@@ -166,6 +166,12 @@ int main(int argc, char** argv)
             CHECK(f.open(QIODevice::ReadWrite)
                   && f.setFileTime(QDateTime::currentDateTime().addSecs(-3600), QFileDevice::FileModificationTime));
         }
+        // A quick look (the timeline's drag-enter) finds no reason: not kept, the drop's import probes again and can
+        // say why (it said "?" before)
+        const ProbeResult quickLook = ProbeCache::probe(broken, rate, false);
+        CHECK(!quickLook.usable() && quickLook.busy == MediaProbe::Busy::No && quickLook.why.isEmpty());
+        cache.insert(quickLook);
+        CHECK(!cache.find(broken).has_value());
         const ProbeResult old = ProbeCache::probe(broken, rate);
         CHECK(!old.usable() && old.busy == MediaProbe::Busy::No);
         cache.insert(old);

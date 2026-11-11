@@ -219,18 +219,24 @@ bool fill(const AVFormatContext* fmt, bool audioFile, MediaInfo* info, bool leni
 // A stream with a decoder whose values the stream analysis did not find: no packet of it within the analysed start
 // (sound that starts late in an MPEG-TS, an empty sound PID, a picture after seconds of sound). Reading further may
 // find them.
-bool unsettled(const AVFormatContext* fmt)
+int unsettledCount(const AVFormatContext* fmt)
 {
+    int n = 0;
     for (unsigned i = 0; i < fmt->nb_streams; ++i) {
         const AVCodecParameters* p = fmt->streams[i]->codecpar;
         const AVCodec* codec = avcodec_find_decoder(p->codec_id);
         if (!codec) continue; // reading further finds no decoder
-        if (p->codec_type == AVMEDIA_TYPE_VIDEO && (p->width <= 0 || p->height <= 0)) return true;
+        if (p->codec_type == AVMEDIA_TYPE_VIDEO && (p->width <= 0 || p->height <= 0)) ++n;
         if (p->codec_type == AVMEDIA_TYPE_AUDIO
             && (p->ch_layout.nb_channels <= 0 || p->sample_rate <= 0 || soundOf(p, codec) == Sound::Unknown))
-            return true;
+            ++n;
     }
-    return false;
+    return n;
+}
+
+bool unsettled(const AVFormatContext* fmt)
+{
+    return unsettledCount(fmt) > 0;
 }
 
 // What the longer analysis (kLongAnalysis) did for a file, while its size and time of change stay: found what the
@@ -277,7 +283,9 @@ Access access(const QFileInfo& fi, QString* error = nullptr)
     if (f.open(QIODevice::ReadOnly)) return Access::Open;
     if (error) *error = f.errorString();
 #ifdef Q_OS_WIN
-    const QString native = "\\\\?\\" + QDir::toNativeSeparators(fi.absoluteFilePath());
+    // The long-path form: \\?\C:\... for a drive, \\?\UNC\server\share\... for a network share
+    const QString plain = QDir::toNativeSeparators(fi.absoluteFilePath());
+    const QString native = plain.startsWith("\\\\") ? "\\\\?\\UNC\\" + plain.mid(2) : "\\\\?\\" + plain;
     const HANDLE h = CreateFileW(reinterpret_cast<const wchar_t*>(native.utf16()), GENERIC_READ,
                                  FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
                                  FILE_ATTRIBUTE_NORMAL, nullptr);
@@ -293,8 +301,10 @@ Access access(const QFileInfo& fi, QString* error = nullptr)
         ::close(fd);
         return Access::Open;
     }
-    const int e = errno;
-    return e == EBUSY || (e == EACCES && fi.isReadable()) ? Access::Locked : Access::Failed;
+    // Only EBUSY means "in use" here. EACCES although the permission bits allow reading comes from a security
+    // module (AppArmor, SELinux, a Flatpak/Snap sandbox): no other program holds the file, waiting does not help -
+    // said with the system's message (QFile's errorString) instead of retrying
+    return errno == EBUSY ? Access::Locked : Access::Failed;
 #endif
 }
 
@@ -380,6 +390,7 @@ std::optional<MediaInfo> read(const QString& path, FrameRate rate, const ReadOpt
         return r;
     };
     const bool longAtOnce = options.longAnalysis && before == LongOutcome::Helped;
+    int shortUnsettled = -1; // streams the short analysis left unsettled, when the long one followed
     const auto openIt = [&](AVFormatContext** out) {
         return longAtOnce ? openLong(out) : OpenMedia::input(out, file.constData());
     };
@@ -423,6 +434,7 @@ std::optional<MediaInfo> read(const QString& path, FrameRate rate, const ReadOpt
                 if (options.partial) *options.partial = true;
             } else if (AVFormatContext* longer = nullptr; openLong(&longer) >= 0) {
                 ++g_longRuns; // a second open: what remembering it saves next time
+                shortUnsettled = unsettledCount(fmt.get());
                 fmt.reset(longer);
                 if (avformat_find_stream_info(fmt.get(), nullptr) < 0) {
                     rememberLong(path, fi, LongOutcome::InVain);
@@ -434,12 +446,13 @@ std::optional<MediaInfo> read(const QString& path, FrameRate rate, const ReadOpt
         if (!known(duration)) duration = tailDuration(fmt.get());
         // What can be played (a stream that cannot does not refuse the others)
         const bool accepted = known(duration) && fill(fmt.get(), audioFile, &info, true);
-        // Remembered: helped when it settled every stream of a file now accepted, else in vain (not read that far again)
-        if (longRan)
-            rememberLong(path, fi, accepted && !unsettled(fmt.get()) ? LongOutcome::Helped : LongOutcome::InVain);
+        // Remembered after a second open: helped when it settled any stream the short analysis had not (a late sound
+        // beside an empty PID: the late one counts), else in vain (not read that far again). A file opened with the
+        // long analysis at once keeps what it was remembered with.
+        if (shortUnsettled >= 0)
+            rememberLong(path, fi,
+                         accepted && unsettledCount(fmt.get()) < shortUnsettled ? LongOutcome::Helped : LongOutcome::InVain);
         if (!accepted) return std::nullopt;
-    } else if (longRan) {
-        rememberLong(path, fi, LongOutcome::Helped);
     }
     // In the project frame rate, rounded to whole frames. A broken header can claim absurd lengths (time scale 1,
     // duration 2^32 s): capped at "unknown" (INT_MAX), never overflowing into a negative length

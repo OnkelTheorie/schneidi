@@ -620,6 +620,10 @@ private:
     void discardChatPlan(const QString& id);
     std::function<QJsonObject(const QString&, const QJsonObject&)> m_chatRunner;
     std::function<void(const QString&)> m_liveWaiting;
+    QString m_liveTourMessage; // a tour runs: AIs wait
+    // Hands m_liveWaiting what AIs hear now: the tour's message, else "reading media" while the Media Pool probes an
+    // import (its wait runs an event loop that would deliver live requests), else nothing
+    void updateLiveWaiting();
     UserRunner m_userRunner;
     class AiChat* m_chat = nullptr;
     class AiChatPanel* m_chatPanel = nullptr;

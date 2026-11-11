@@ -132,12 +132,44 @@ int main(int argc, char** argv)
         const std::optional<MediaInfo> again = MediaProbe::read(in("late.ts"), rate);
         CHECK(again && again->hasAudio);
         CHECK_EQ(MediaProbe::longAnalysesForTest(), before + 1); // opened with the long analysis at once
-        partial = true;
-        CHECK(MediaProbe::read(in("late.ts"), rate, quick).has_value());
-        CHECK(!partial || q.has_value()); // (a quick look may stay partial; it never reads long)
+        // A quick look now: still partial (the long analysis is known to find more - a quick look must not pass for
+        // the whole file, its result without the sound would be kept), and it did not read long
+        partial = false;
+        const std::optional<MediaInfo> q2 = MediaProbe::read(in("late.ts"), rate, quick);
+        CHECK(q2 && q2->hasVideo);
+        CHECK(partial);
         CHECK_EQ(MediaProbe::longAnalysesForTest(), before + 1);
         const std::unique_ptr<Audio::Reader> r = Audio::Reader::open(in("late.ts"), 0, Audio::Reader::Options{48000, 2});
         if (CHECK(r != nullptr)) CHECK(r->info().start > 48000 * 10); // the sound from 12 s on
+    }
+
+    // 2b. Sound that starts 12 s in beside an empty PID: the long analysis settles the late sound but not the empty
+    // one - it helped all the same (remembered as such: a later probe keeps the late sound, a quick look stays
+    // partial), the empty one stays dead
+    if (CHECK(!Check::makeMedia(in("late_and_dead.ts"),
+                                QStringList{"-f", "lavfi", "-i", "testsrc2=size=320x240:rate=25:duration=20", "-itsoffset",
+                                            "12", "-f", "lavfi", "-i", "sine=duration=5", "-f", "lavfi", "-i",
+                                            "sine=duration=20", "-map", "0", "-map", "1", "-map", "2"}
+                                    + x264 + QStringList{"-c:a", "aac"})
+                   .isEmpty())
+        && CHECK(emptied(in("late_and_dead.ts"), in("late_dead.ts"), 0x102))) {
+        MediaProbe::forgetForTest();
+        const int before = MediaProbe::longAnalysesForTest();
+        for (int round = 0; round < 3; ++round) {
+            const std::optional<MediaInfo> m = MediaProbe::read(in("late_dead.ts"), rate);
+            if (CHECK(m.has_value()) && CHECK(m->audioStreams.size() >= 2)) {
+                CHECK(m->hasAudio);
+                CHECK(m->audioStreamPlayable(0)); // the late sound, every time
+                CHECK(!m->audioStreamPlayable(1)); // the empty PID
+            }
+        }
+        CHECK_EQ(MediaProbe::longAnalysesForTest(), before + 1); // a second open only the first time
+        bool partial = false;
+        MediaProbe::ReadOptions quick;
+        quick.longAnalysis = false;
+        quick.partial = &partial;
+        CHECK(MediaProbe::read(in("late_dead.ts"), rate, quick).has_value());
+        CHECK(partial);
     }
 
     // 3. A cover picture beside sound in a sample format the sound path does not play (64-bit float), decided from the

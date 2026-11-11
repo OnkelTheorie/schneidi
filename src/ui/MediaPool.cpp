@@ -661,8 +661,9 @@ void MediaPool::importDialog()
     importFiles(files);
 }
 
-QVector<MediaPool::Unreadable> MediaPool::addFiles(const QStringList& paths, int bin, bool again)
+QVector<MediaPool::Unreadable> MediaPool::addFiles(const QStringList& paths, int bin, bool again, int* added)
 {
+    if (added) *added = 0;
     // Probing opens every file (~1 ms from the header, other containers up to ~0.5 s, a long stream analysis up to a
     // minute): side by side in threads, the window repainting meanwhile (a progress dialog with Cancel when it takes
     // longer; until then no input reaches the window). Added in the given order. A file the drop preview probed
@@ -672,7 +673,7 @@ QVector<MediaPool::Unreadable> MediaPool::addFiles(const QStringList& paths, int
     QVector<int> todo;
     for (int i = 0; i < n; ++i) {
         std::optional<ProbeResult> known = m_probeCache && !again ? m_probeCache->find(paths[i]) : std::nullopt;
-        if (known) results[i] = *std::move(known);
+        if (known && (known->usable() || !known->why.isEmpty())) results[i] = *std::move(known); // with its reason
         else todo << i;
     }
     if (!todo.isEmpty()) {
@@ -703,6 +704,9 @@ QVector<MediaPool::Unreadable> MediaPool::addFiles(const QStringList& paths, int
             if (progress) progress->setValue(done.load());
         });
         tick.start();
+        // Live requests and watch folders wait meanwhile (MainWindow::updateLiveWaiting, FolderWatch's busy check)
+        ++m_probing;
+        if (m_probing == 1) emit probingChanged(true);
         if (done.load() < total) loop.exec(QEventLoop::ExcludeUserInputEvents);
         if (done.load() < total) {
             progress = std::make_unique<QProgressDialog>(T("Medien werden gelesen …"), T("Abbrechen"), 0, total, this);
@@ -710,20 +714,24 @@ QVector<MediaPool::Unreadable> MediaPool::addFiles(const QStringList& paths, int
             progress->setMinimumDuration(0);
             progress->setAutoClose(false);
             progress->setAutoReset(false);
-            connect(progress.get(), &QProgressDialog::canceled, &loop, [shared, &progress] {
+            connect(progress.get(), &QProgressDialog::canceled, &loop, [this, shared, &progress] {
                 shared->store(true);
+                m_importCanceled = true; // a folder import stops with its next folder
                 progress->setLabelText(T("Wird abgebrochen …")); // the files being read now finish first
             });
             progress->show();
             loop.exec();
         }
         pool.waitForDone();
+        if (--m_probing == 0) emit probingChanged(false);
         for (int i = 0; i < n; ++i)
             if (skipped[i]) results[i] = {}; // left out: neither imported nor reported
         if (m_probeCache)
             for (int i : todo)
                 if (!skipped[i]) m_probeCache->insert(results[i]);
     }
+    // The bin went meanwhile (nothing should change the project during the wait; to be safe): the top level
+    if (bin != 0 && !m_project->bin(bin)) bin = 0;
     QVector<Unreadable> failed;
     for (ProbeResult& r : results) {
         if (r.info.path.isEmpty()) continue; // canceled
@@ -734,6 +742,7 @@ QVector<MediaPool::Unreadable> MediaPool::addFiles(const QStringList& paths, int
         MediaInfo info = r.info;
         info.bin = bin;
         m_project->addMedia(info);
+        if (added) ++*added;
     }
     return failed;
 }
@@ -749,6 +758,7 @@ void MediaPool::importFiles(const QStringList& paths)
     }
     if (!subtitles.isEmpty()) emit subtitleFilesImported(subtitles);
     if (files.isEmpty()) return;
+    m_importCanceled = false;
     reportUnreadable(addFiles(files, m_currentBin)); // import lands in the selected bin
 }
 
@@ -827,6 +837,7 @@ void MediaPool::importFolder(const QString& dir)
     QVector<Unreadable> failed;
     QUndoStack* undo = m_project->undoStack();
     undo->beginMacro(T("Ordner importieren"));
+    m_importCanceled = false;
     importFolderInto(dir, m_currentBin, 0, &failed);
     undo->endMacro();
     reportUnreadable(failed);
@@ -835,7 +846,7 @@ void MediaPool::importFolder(const QString& dir)
 // Only creates the bin if there is media in the folder (or below); returns whether anything was imported
 bool MediaPool::importFolderInto(const QString& dir, int parentBin, int depth, QVector<Unreadable>* failed)
 {
-    if (depth > 8) return false; // protection against very deep trees
+    if (depth > 8 || m_importCanceled) return false; // protection against very deep trees; Cancel stops the rest
     const QDir d(dir);
     QStringList files;
     for (const QFileInfo& fi : d.entryInfoList(QDir::Files, QDir::Name | QDir::IgnoreCase | QDir::LocaleAware))
@@ -847,9 +858,9 @@ bool MediaPool::importFolderInto(const QString& dir, int parentBin, int depth, Q
     const int bin = m_project->addBin(parentBin, d.dirName());
     bool any = false;
     if (!files.isEmpty()) {
-        const QVector<Unreadable> bad = addFiles(files, bin);
-        *failed << bad;
-        any = bad.size() < files.size();
+        int added = 0;
+        *failed << addFiles(files, bin, false, &added);
+        any = added > 0; // canceled files are neither added nor unreadable: an empty bin goes
     }
     for (const QFileInfo& sub : subdirs) any = importFolderInto(sub.absoluteFilePath(), bin, depth + 1, failed) || any;
     if (!any) m_project->removeBin(bin); // nothing usable inside

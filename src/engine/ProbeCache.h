@@ -6,8 +6,9 @@
 // was kept by path, its drop refused although the thumbnail showed it. So:
 // - a result goes when the file's size or time of change differ from when it was probed (the stamp is taken before
 //   probing: a file changing meanwhile is not kept with a stale result);
-// - a usable result is kept; one that found nothing is kept only briefly (kNegativeMs) and only when the file is
-//   neither locked nor written to moments ago (repeated drag-enters do not open it again and again); a partial
+// - a usable result is kept; one that found nothing is kept only briefly (kNegativeMs), only when the file is
+//   neither locked nor written to moments ago (repeated drag-enters do not open it again and again) and only with
+//   its reason (a quick look does not find it: the import of the drop probes again and can say why); a partial
 //   result (a quick look that skipped the long stream analysis) is not kept.
 // probe() runs on any thread; the cache itself is used on one thread (the UI's).
 
