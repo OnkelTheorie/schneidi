@@ -374,7 +374,7 @@ void testEditsOverMaterialAndEmptySpace()
         f.p.addMedia(obs("/x/two.mkv", 100, {"Game", "Mic"}));
         f.ed.placeSourceRange("/x/two.mkv", 0, 99, 0, 0);
         f.ed.addTrack(TrackKind::Audio, 1);                             // Mic now on A3
-        f.ed.placeSourceRange("/x/plain.mp4", 0, 99, 0, 1, 1.0 / 3, true); // music on A2 over 0..299 (slowed)
+        f.ed.placeSourceRange("/x/plain.mp4", 0, 99, 0, 1, 1.0 / 3, PlaceParts::Sound); // music on A2 over 0..299 (slowed)
         CHECK_EQ(f.ed.dropStreamTracks(f.p.timeline(), *f.p.mediaInfo("/x/two.mkv"), 0, 150), QVector<int>({0, 2}));
         if (how == 0) f.ed.addMediaAt({"/x/two.mkv"}, 150, 0);
         else f.ed.placeSourceRange("/x/two.mkv", 0, 99, 150, 0);
