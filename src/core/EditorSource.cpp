@@ -524,7 +524,9 @@ int Editor::sourceEdit(SourceEditMode mode, const QString& path, int srcPos, int
     case M::AppendAtEnd: text = T("Am Ende anhängen: %1"); break;
     case M::FitToFill: text = T("Einpassen: %1"); break;
     }
+    bool refused = false;
     p->edit(text.arg(m.name), [&](Timeline& tl) {
+        const Timeline before = tl;
         auto newId = [p] { return p->newClipId(); };
         for (const TrackRef& r : rippleTracks) ensureTracks(tl, r.kind, r.index + 1);
         if (mode == M::Insert) {
@@ -543,7 +545,11 @@ int Editor::sourceEdit(SourceEditMode mode, const QString& path, int srcPos, int
         if (mode == M::RippleOverwrite && m2.hasAudio) streams = streamTracksInOrder(tl, m2, aTrack, start, len);
         placeSource(tl, m2, sIn, len, start, vTrack, aTrack, speed, &streams);
         if (usedTimelineMarks) tl.markIn = tl.markOut = -1; // like DaVinci: used marks are consumed
+        // An insert between a picture and its sound (an L-cut's sound after the insert point, the picture before it)
+        // would take them apart: refused, like a ripple (keepsLinks)
+        if (mode == M::Insert || mode == M::RippleOverwrite) refused = !keepsLinks(before, tl, {});
     });
+    if (refused) return playhead;
     return mode == M::Replace ? playhead : start + len;
 }
 
