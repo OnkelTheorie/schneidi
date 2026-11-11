@@ -260,6 +260,12 @@ void MainWindow::liveCommandRunning(bool running, bool ownChat)
 
 bool MainWindow::livePlanOnly() const { return m_aiSettings.approval == AiSettings::Approval::Plan; }
 
+// Also while a request that started in review mode is still open (the setting changed meanwhile)
+bool MainWindow::liveReviewOnly() const
+{
+    return m_aiSettings.approval == AiSettings::Approval::Review || m_review.active;
+}
+
 void MainWindow::livePlan(const QString& state, const QJsonObject& plan, bool ownChat)
 {
     const QString id = plan["id"].toString();

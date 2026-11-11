@@ -638,6 +638,22 @@ QJsonObject Server::runCommand(const QJsonObject& msg, bool ownChat, bool byUser
                                                "`%1` changes the project without one: say in your answer what you would "
                                                "do, the user does it or switches plan mode off")
                                            .arg(name));
+    // Undo, redo and saving stay the user's in plan and review mode: the chat's undo followed by an edit dropped the
+    // user's own steps (a new step clears the redo), and "discard" of review mode then went back to the wrong state
+    if (ownChat && !byUser && name == "app") {
+        const QString action = args.value("action").toString().trimmed().toLower();
+        if (action == "undo" || action == "redo" || action == "save") {
+            if (m_host->livePlanOnly())
+                return errorReply("PLAN_MODE", QString("the user wants to see a plan first (plan mode in the schneidi "
+                                                       "app): `app %1` is the user's; send changes as a plan "
+                                                       "(edit with plan:true)").arg(action));
+            if (m_host->liveReviewOnly())
+                return errorReply("REVIEW_MODE", QString("the user reviews your changes at the end of this request "
+                                                         "(review mode in the schneidi app) and accepts or discards "
+                                                         "them: `app %1` is the user's; to take back a change of "
+                                                         "yours, edit it back").arg(action));
+        }
+    }
     HostScope scope(m_host);
     Project* p = m_host->liveProject();
     const QHash<int, ClipState> before = clipStates(*p);

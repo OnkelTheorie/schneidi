@@ -27,7 +27,8 @@
 // runs (changes) get APP_WAITING
 // Plans (`edit` plan:true, plan_id + run/discard) run in the app too: making or dropping one is no undo step, the host
 // hears of them (LiveHost::livePlan); in the chat's plan mode (LiveHost::livePlanOnly) the chat's other edits are
-// refused with PLAN_MODE - the user runs a plan through Server::runForChat.
+// refused with PLAN_MODE - the user runs a plan through Server::runForChat. `app` undo/redo/save of the chat are
+// refused in plan mode (PLAN_MODE) and in review mode (LiveHost::liveReviewOnly, REVIEW_MODE): they are the user's.
 // hello of an app that refuses AIs has "allowed":false and "refusal": why (the user disconnected, or the setting)
 //
 // The app's own AI chat starts `schneidi-cli mcp` with the environment of Server::chatEnvironment(): that process

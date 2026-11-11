@@ -160,6 +160,7 @@ public:
     void liveCommandRunning(bool running, bool ownChat) override;
     void livePlan(const QString& state, const QJsonObject& plan, bool ownChat) override;
     bool livePlanOnly() const override;
+    bool liveReviewOnly() const override;
     // AI log (click on the AI indicator, Workspace › AI Log): popup under the indicator
     void showAiLog();
     class AiLog* aiLog() const { return m_aiLog; }
