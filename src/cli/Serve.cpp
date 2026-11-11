@@ -22,6 +22,7 @@
 #include <QNetworkAccessManager>
 #include <QPointer>
 #include <QRandomGenerator>
+#include <QSaveFile>
 #include <QStandardPaths>
 #include <QTcpServer>
 #include <QTcpSocket>
@@ -714,10 +715,18 @@ Options parse(const QStringList& args)
         if (opt.token.isEmpty()) {
             opt.token = randomToken(32);
             QDir().mkpath(QFileInfo(f.fileName()).absolutePath());
-            if (!f.open(QIODevice::WriteOnly) || f.write(opt.token.toUtf8() + '\n') < 0)
-                fail("WRITE_FAILED", "cannot store the token in " + f.fileName());
-            f.close();
-            f.setPermissions(QFile::ReadOwner | QFile::WriteOwner);
+            // A new file, owner-only before the token goes in (as Live.cpp): never readable by others, not even for a
+            // moment, and an old file someone else had opened never gets it
+            QSaveFile out(f.fileName());
+            bool written = out.open(QIODevice::WriteOnly);
+            const bool owner = written && out.setPermissions(QFile::ReadOwner | QFile::WriteOwner);
+#ifndef Q_OS_WIN // Windows only has a read-only flag here (the profile folder itself is private)
+            written = written && owner;
+#else
+            Q_UNUSED(owner);
+#endif
+            written = written && out.write(opt.token.toUtf8() + '\n') >= 0 && out.commit();
+            if (!written) fail("WRITE_FAILED", "cannot store the token in " + f.fileName());
         }
         opt.tokenFrom = f.fileName();
         opt.tokenShown = true;
