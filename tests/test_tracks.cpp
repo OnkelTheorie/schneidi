@@ -363,6 +363,64 @@ int main(int argc, char** argv)
             CHECK_EQ(m->start - 700, y->start - 200);                   // the others: by the same amount
         }
 
+    // --- Two separate clips ending together, their changes apart by rounding (+100, +99): what follows moves by the
+    // larger one, not by both
+    {
+        setup(p);
+        p.edit("x", [&](Timeline& tl) {
+            while (tl.video.size() < 2) tl.video << Track{};
+            tl.video[0].clips = {mk(1, 0, 100), mk(2, 100, 50)};
+            tl.video[1].clips = {mk(31, 1, 99), mk(32, 100, 50)};
+            tl.audio[0].clips.clear();
+            tl.audio[1].clips = {mk(21, 300, 10, 0, "/x/m.mp3")};
+        });
+        ed.setClipSpeed({1, 31}, {0.5, false, false, true}, true);
+        CHECK(F(p, 1)->length() == 200 && F(p, 31)->length() == 198);
+        CHECK(F(p, 2)->start == 200 && F(p, 32)->start == 200 && F(p, 21)->start == 400);
+    }
+    // --- A linked sound that starts where its picture ends moves up with it on speed-up; an unselected clip before it
+    // on its track would be run into: refused (it overlapped)
+    {
+        setup(p);
+        p.edit("x", [&](Timeline& tl) {
+            tl.video[0].clips = {mk(1, 0, 100, 7)};
+            Clip a = mk(12, 100, 100, 7);
+            a.in = 100;
+            a.out = 199;
+            tl.audio[0].clips = {mk(11, 0, 100, 0, "/x/m.mp3"), a};
+            tl.audio[1].clips.clear();
+        });
+        ed.takeNotice();
+        const Timeline was = p.timeline();
+        ed.setClipSpeed({1}, {2.0, false, false, true}, true);
+        CHECK(p.timeline() == was);
+        const Editor::Notice n = ed.takeNotice();
+        if (!CHECK(n.refused && n.text.contains("A1"))) std::printf("       %s\n", qPrintable(n.text));
+    }
+    // --- The ripple-trim drag stops at the furthest allowed delta (here: none - P on V2 starts before the edit point,
+    // its sound after it), says why; an allowed one is kept as it is
+    {
+        setup(p);
+        p.edit("x", [&](Timeline& tl) {
+            while (tl.video.size() < 2) tl.video << Track{};
+            tl.video[0].clips = {mk(1, 0, 100)};
+            tl.audio[0].clips.clear();
+            Clip v = mk(31, 90, 60, 3), a = mk(22, 110, 40, 3);
+            a.in = 20;
+            a.out = 59;
+            tl.video[1].clips = {v};
+            tl.audio[1].clips = {a};
+        });
+        const auto e = ed.trimEdit(TimelineOps::TrimKind::Ripple, 1, TimelineOps::Edge::End);
+        QString why;
+        Timeline preview;
+        CHECK_EQ(ed.allowedTrimEdit(e, 20, &why, &preview), 0);
+        CHECK(!why.isEmpty() && preview == p.timeline());
+        p.edit("x", [](Timeline& tl) { tl.audio[1].clips[0].start = 90; tl.audio[1].clips[0].in = 0; });
+        CHECK_EQ(ed.allowedTrimEdit(e, 20, &why, &preview), 20);
+        CHECK(why.isEmpty() && TimelineOps::findClip(preview, 1)->length() == 120);
+    }
+
     // --- Lock: nothing changeable, not selectable
     setup(p);
     ed.toggleTrackLock({TrackKind::Video, 0});

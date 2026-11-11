@@ -103,8 +103,9 @@ void ensureTracks(Timeline& tl, TrackKind kind, int count);
 struct RippleResult {
     int deleted = 0; // frames of deleted time (all tracks together)
     int removed = 0; // frames taken out of the timeline
-    // The time meant to go: of each linked group the time all its deleted clips share (its own J/L tail under the next
-    // clip does not count), of a clip alone its time; and how much of it was taken out (less: other clips stay in it)
+    // The time meant to go: of a linked group with a picture the picture's time (its sound's own J/L tail under the
+    // next clip does not count), of other clips their time; and how much of it was taken out (less: other clips stay
+    // in it)
     int meant = 0, meantRemoved = 0;
 };
 RippleResult rippleDelete(Timeline& tl, const QVector<int>& clipIds);

@@ -296,6 +296,8 @@ void TimelineView::mousePressEvent(QMouseEvent* e)
         m_trimHit = *hit;
         m_trimEdit = split ? m_editor->splitEdit(hit->clipId, hit->edge) : m_editor->trimEdit(hit->kind, hit->clipId, hit->edge);
         m_trimEditDelta = 0;
+        m_trimEditWanted = 0;
+        m_trimEditWhy.clear();
         m_trimPreview = m_editor->project()->timeline();
         m_drag = Drag::TrimEdit;
         updateTrimFrames(*m_trimPreview, m_trimEdit, 0);
@@ -331,6 +333,8 @@ void TimelineView::mousePressEvent(QMouseEvent* e)
                 m_trimHit = TrimHit{TimelineOps::TrimKind::Roll, hit->clipId, hit->edge};
                 m_trimEdit = split;
                 m_trimEditDelta = 0;
+                m_trimEditWanted = 0;
+                m_trimEditWhy.clear();
                 m_trimPreview = m_editor->project()->timeline();
                 m_drag = Drag::TrimEdit;
                 updateTrimFrames(*m_trimPreview, m_trimEdit, 0);
@@ -583,15 +587,20 @@ void TimelineView::dragMove(const QPoint& pos, Qt::KeyboardModifiers mods)
         }
         if (!edges.isEmpty()) delta += snapDelta(edges, exclude);
         delta = m_editor->clampTrimEdit(m_trimEdit, delta);
-        // A ripple that would take linked picture and sound apart: the preview holds still and says why (releasing
-        // does nothing, instead of moving and snapping back)
-        if (const QString why = m_editor->trimEditRefusal(m_trimEdit, delta); !why.isEmpty()) {
-            delta = 0;
+        if (delta == m_trimEditWanted && m_trimPreview) return; // nothing new (one preview per change, not per pixel)
+        m_trimEditWanted = delta;
+        // A ripple that would take linked picture and sound apart: the preview stops at the last allowed delta (release
+        // applies that) and says why - once per reason, cleared back in the allowed range
+        QString why;
+        Timeline preview;
+        delta = m_editor->allowedTrimEdit(m_trimEdit, delta, &why, &preview);
+        if (why != m_trimEditWhy) {
+            m_trimEditWhy = why;
             emit message(why);
         }
         if (delta != m_trimEditDelta || !m_trimPreview) {
             m_trimEditDelta = delta;
-            m_trimPreview = m_editor->previewTrimEdit(m_trimEdit, delta);
+            m_trimPreview = std::move(preview);
             updateTrimFrames(*m_trimPreview, m_trimEdit, delta);
             update();
         }
@@ -749,6 +758,7 @@ void TimelineView::mouseReleaseEvent(QMouseEvent* e)
     if (trimEdit && m_trimEditDelta != 0) m_editor->applyTrimEdit(m_trimEdit, m_trimEditDelta);
     m_trimPreview.reset();
     m_trimEditDelta = 0;
+    m_trimEditWhy.clear(); // (its message stays a while: why the trim stopped there)
     if (trimmed || trimEdit) endTrimFrames(); // viewer back to the playhead frame
     if (keys && m_keyDelta != 0) { // one undo step per drag
         const QVector<int> times = m_editor->selection()->keyTimes().values().toVector();

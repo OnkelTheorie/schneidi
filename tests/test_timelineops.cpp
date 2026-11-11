@@ -199,6 +199,21 @@ int main(int argc, char** argv)
         CHECK(r2.deleted == 50 && r2.removed == 50);
     }
 
+    // --- The time meant to go of a linked group: its picture's time - also when its sound is shorter (a J-cut: the
+    // next sound starts under it) or does not overlap it at all
+    {
+        Timeline tl = tracks(1, 1);
+        tl.video[0].clips << mk(1, "x", 0, 100, 0, 1) << mk(2, "y", 100, 100, 0, 2);
+        tl.audio[0].clips << mk(3, "x", 0, 30, 0, 1) << mk(4, "y", 30, 170, 0, 2);
+        const RippleResult r = rippleDelete(tl, {1, 3});
+        CHECK(r.meant == 100 && r.meantRemoved == 30);
+        Timeline t2 = tracks(1, 1);
+        t2.video[0].clips << mk(1, "x", 0, 100, 0, 1);
+        t2.audio[0].clips << mk(3, "x", 100, 100, 100, 1);
+        const RippleResult r2 = rippleDelete(t2, {1, 3});
+        CHECK_EQ(r2.meant, 100);
+    }
+
     // --- linksApart: linked pairs in sync before and not after; on-purpose changes and other playback left out
     {
         Timeline a = tracks(1, 1);
