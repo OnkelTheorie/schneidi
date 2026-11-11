@@ -21,6 +21,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <algorithm>
+#include <optional>
 
 using EditorDetail::fitTransitions;
 
@@ -68,6 +69,76 @@ void rippleRetimed(Timeline& tl, const QVector<RetimedTrack>& tracks, const QVec
     TimelineOps::rippleTracks(tl, shifts, edited);
 }
 
+// Linked clips of one file in sync (same start - in, same playback) stay in sync to the frame through a retime: one
+// offset (start - new in) for all of them - each rounded alone, an L-cut's sound (another in point) could end up a
+// frame off its picture. The offset is the first one (pictures first: theirs is rounded to show the right first
+// frame) that gives every clip of the group an in point within its material; none does: each its own.
+class SyncedIns {
+public:
+    // First every clip with its own new in point and the highest one its material allows
+    void offer(const Clip& c, int own, int hi, bool picture)
+    {
+        m_members << Member{c, own, hi, picture};
+    }
+    // Then: the new in point of `c` (before the change; its own: `own`)
+    int in(const Clip& c, int own)
+    {
+        if (!m_settled) settle();
+        for (const Member& m : std::as_const(m_members))
+            if (m.was.id == c.id) return m.offset ? std::clamp(c.start - *m.offset, 0, m.hi) : own;
+        return own;
+    }
+
+private:
+    struct Member {
+        Clip was;
+        int own, hi;
+        bool picture;
+        std::optional<int> offset = {};
+    };
+    static bool together(const Clip& a, const Clip& b)
+    {
+        return a.mediaPath == b.mediaPath && a.start - a.in == b.start - b.in && a.speed == b.speed
+               && a.reverse == b.reverse && a.freeze == b.freeze && a.ramp == b.ramp;
+    }
+    void settle()
+    {
+        m_settled = true;
+        // Pictures first, as offered otherwise
+        std::stable_sort(m_members.begin(), m_members.end(),
+                         [](const Member& a, const Member& b) { return a.picture && !b.picture; });
+        for (qsizetype i = 0; i < m_members.size(); ++i) {
+            if (m_members[i].offset) continue;
+            QVector<qsizetype> group;
+            for (qsizetype j = i; j < m_members.size(); ++j)
+                if (!m_members[j].offset && together(m_members[i].was, m_members[j].was)) group << j;
+            if (group.size() < 2) continue;
+            for (qsizetype g : std::as_const(group)) {
+                const int offset = m_members[g].was.start - m_members[g].own;
+                const bool fits = std::all_of(group.cbegin(), group.cend(), [&](qsizetype k) {
+                    const int in = m_members[k].was.start - offset;
+                    return in >= 0 && in <= m_members[k].hi;
+                });
+                if (!fits) continue;
+                for (qsizetype k : std::as_const(group)) m_members[k].offset = offset;
+                break;
+            }
+        }
+    }
+    QVector<Member> m_members;
+    bool m_settled = false;
+};
+
+// The tracks of the clips, video first (see SyncedIns)
+QVector<TrackRef> tracksVideoFirst(const Timeline& tl, const QVector<int>& ids)
+{
+    QVector<TrackRef> refs = TimelineOps::tracksOf(tl, ids);
+    std::stable_sort(refs.begin(), refs.end(), [](const TrackRef& a, const TrackRef& b) {
+        return a.kind == TrackKind::Video && b.kind != TrackKind::Video;
+    });
+    return refs;
+}
+
 } // namespace
 
 void Editor::setFrameInterpolation(const QVector<int>& ids, FrameInterp mode)
@@ -92,13 +163,39 @@ void Editor::setClipSpeed(const QVector<int>& ids, const Retime& r, bool ripple)
         QSet<int> touched;
         QVector<QPair<int, int>> shifts; // ripple (from old end, length change)
         QVector<RetimedTrack> retimed;
-        for (const TrackRef& ref : TimelineOps::tracksOf(tl, all)) {
+        // The new in point of a clip on its own: the first material frame whose picture is the same file frame as
+        // before (on direction change: the same piece reversed; rounding could land one before it: a flash of the
+        // previous frame at the cut)
+        const auto ownIn = [&](const Clip& c, int L, int* avail) {
+            Clip n = c;
+            n.speed = r.speed;
+            n.reverse = r.reverse;
+            n.freeze = r.freeze;
+            n.ramp.clear();
+            const RetimeMap oldMap(c, L), newMap(n, L);
+            const int startFile = r.reverse != c.reverse ? oldMap.pictureFrame(c.out) : oldMap.pictureFrame(c.in);
+            *avail = std::max(1, int(L / r.speed));
+            return std::clamp(newMap.materialForPicture(startFile), 0, *avail - 1);
+        };
+        const auto retimable = [&](const Clip& c) -> const MediaInfo* {
+            if (!all.contains(c.id) || c.isTitle()) return nullptr;
+            const MediaInfo* m = m_project->mediaInfo(c.mediaPath);
+            return m && !m->isImage && m->length > 0 ? m : nullptr;
+        };
+        const QVector<TrackRef> refs = tracksVideoFirst(tl, all);
+        SyncedIns ins;
+        for (const TrackRef& ref : refs)
+            for (const Clip& c : std::as_const(tl).track(ref).clips)
+                if (const MediaInfo* m = retimable(c)) {
+                    int avail = 0;
+                    const int own = ownIn(c, m->length, &avail);
+                    ins.offer(c, own, avail - 1, ref.kind == TrackKind::Video);
+                }
+        for (const TrackRef& ref : refs) {
             RetimedTrack t{ref, std::as_const(tl).track(ref).clips, {}};
             for (qsizetype i = t.clips.size() - 1; i >= 0; --i) {
-                const Clip& was = std::as_const(t.clips)[i];
-                if (!all.contains(was.id) || was.isTitle()) continue;
-                const MediaInfo* m = m_project->mediaInfo(was.mediaPath);
-                if (!m || m->isImage || m->length <= 0) continue;
+                const MediaInfo* m = retimable(std::as_const(t.clips)[i]);
+                if (!m) continue;
                 Clip& c = t.clips[i]; // (only now: the copy of the track detaches for a clip that changes)
                 const int L = m->length;
                 // Constant speed replaces a speed ramp (like DaVinci "Change Clip Speed")
@@ -108,16 +205,8 @@ void Editor::setClipSpeed(const QVector<int>& ids, const Retime& r, bool ripple)
                 n.freeze = r.freeze;
                 n.ramp.clear();
                 const RetimeMap oldMap(c, L), newMap(n, L);
-                // Section in file frames (a = start of the clip, b = end, a > b when reversed)
-                const int a = oldMap.pictureFrame(c.in);
-                const int b = oldMap.pictureFrame(c.out);
-                const bool flip = r.reverse != c.reverse;
-                // New start: same file frame; on direction change the same piece reversed
-                const int startFile = flip ? b : a;
-                const int avail = std::max(1, int(L / r.speed));
-                // The first material frame whose picture is that file frame (rounding could land one before it:
-                // a flash of the previous frame at the cut)
-                const int newIn = std::clamp(newMap.materialForPicture(startFile), 0, avail - 1);
+                int avail = 0;
+                const int newIn = ins.in(c, ownIn(c, L, &avail)); // in sync with its partners (SyncedIns)
                 const int oldLen = c.length();
                 int newLen = oldLen;
                 if (ripple && !r.freeze && !c.freeze) {
@@ -199,7 +288,25 @@ void Editor::editRamp(const QString& text, int clipId, const std::function<bool(
     QSet<int> touched;
     QVector<QPair<int, int>> shifts;
     QVector<RetimedTrack> retimed;
-    for (const TrackRef& ref : TimelineOps::tracksOf(tl, ids)) {
+    // The new in point of a clip on its own (the same source position); nullopt = the change does not apply
+    const auto ownIn = [&](const Clip& c, int* avail) -> std::optional<int> {
+        Clip n = c;
+        if (!change(n, RetimeMap(c, L), L)) return std::nullopt;
+        ::Retime::normalize(n.ramp, L);
+        const RetimeMap newMap(n, L);
+        *avail = std::max(1, newMap.length());
+        return std::clamp(int(std::lround(newMap.materialAt(RetimeMap(c, L).sourceAt(c.in)))), 0, *avail - 1);
+    };
+    const QVector<TrackRef> refs = tracksVideoFirst(tl, ids);
+    SyncedIns ins;
+    for (const TrackRef& ref : refs)
+        for (const Clip& c : std::as_const(tl).track(ref).clips) {
+            int avail = 0;
+            if (!ids.contains(c.id)) continue;
+            if (const std::optional<int> own = ownIn(c, &avail))
+                ins.offer(c, *own, avail - 1, ref.kind == TrackKind::Video);
+        }
+    for (const TrackRef& ref : refs) {
         RetimedTrack t{ref, std::as_const(tl).track(ref).clips, {}};
         for (qsizetype i = t.clips.size() - 1; i >= 0; --i) {
             if (!ids.contains(std::as_const(t.clips)[i].id)) continue;
@@ -215,7 +322,7 @@ void Editor::editRamp(const QString& text, int clipId, const std::function<bool(
             ::Retime::normalize(n.ramp, L);
             const RetimeMap newMap(n, L);
             const int avail = std::max(1, newMap.length());
-            n.in = std::clamp(int(std::lround(newMap.materialAt(sIn))), 0, avail - 1);
+            n.in = ins.in(c, std::clamp(int(std::lround(newMap.materialAt(sIn))), 0, avail - 1)); // see SyncedIns
             const int len = std::clamp(int(std::lround(newMap.materialAt(sEnd))) - n.in, 1, avail - n.in);
             n.out = n.in + len - 1;
             for (auto it = n.keys.begin(); it != n.keys.end(); ++it) {

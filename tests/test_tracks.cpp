@@ -225,6 +225,38 @@ int main(int argc, char** argv)
         CHECK(!m.refused && m.text.contains("70") && m.text.contains("110"));
     }
 
+    // --- Speed on an L-cut pair (the sound starts later, other in points): both new in points come from the same
+    // place, so picture and sound stay in sync to the frame (each rounded alone, they could end one frame apart)
+    for (const double speed : {0.33, 0.7, 1.5, 2.37}) {
+        for (const bool reverse : {false, true}) {
+            for (const int vIn : {37, 41, 113}) {
+                setup(p);
+                p.edit("x", [&](Timeline& tl) {
+                    Clip v = mk(61, 100, 200, 9), a = mk(62, 160, 140, 9);
+                    v.in = vIn;
+                    v.out = vIn + 199;
+                    a.in = vIn + 60;
+                    a.out = a.in + 139;
+                    tl.video[0].clips = {v};
+                    tl.audio[0].clips = {a};
+                    tl.audio[1].clips.clear();
+                });
+                ed.setClipSpeed({61}, {speed, reverse, false, true}, true);
+                const Clip* v = F(p, 61);
+                const Clip* a = F(p, 62);
+                if (!CHECK(v && a && v->speed == speed && v->start - v->in == a->start - a->in))
+                    std::printf("       speed %g reverse %d in %d\n", speed, int(reverse), vIn);
+                if (reverse) continue;
+                ed.addSpeedPoint(61, 190);
+                ed.setSegmentSpeed(61, 1, speed * 1.7);
+                v = F(p, 61);
+                a = F(p, 62);
+                if (!CHECK(v && a && v->ramp == a->ramp && v->start - v->in == a->start - a->in))
+                    std::printf("       ramp after speed %g in %d\n", speed, vIn);
+            }
+        }
+    }
+
     // --- Lock: nothing changeable, not selectable
     setup(p);
     ed.toggleTrackLock({TrackKind::Video, 0});

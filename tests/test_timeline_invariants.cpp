@@ -146,7 +146,7 @@ int main(int argc, char** argv)
     Check::initEnv();
     QApplication app(argc, argv);
     Check::initApp("timeline_invariants");
-    const int seeds = qEnvironmentVariableIntValue("INVARIANT_SEEDS") > 0 ? qEnvironmentVariableIntValue("INVARIANT_SEEDS") : 40;
+    const int seeds = qEnvironmentVariableIntValue("INVARIANT_SEEDS") > 0 ? qEnvironmentVariableIntValue("INVARIANT_SEEDS") : 100;
     const int steps = qEnvironmentVariableIntValue("INVARIANT_STEPS") > 0 ? qEnvironmentVariableIntValue("INVARIANT_STEPS") : 150;
     for (int s = 1; s <= seeds; ++s) run(unsigned(s), steps);
     return Check::result();
