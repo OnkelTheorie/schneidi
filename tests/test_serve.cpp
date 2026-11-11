@@ -10,6 +10,8 @@
 #include "cli/Mcp.h"
 #include "cli/Sandbox.h"
 #include "cli/ServeJobs.h"
+#include "core/BrandKit.h"
+#include "core/CompGraph.h"
 #include "core/Project.h"
 #include "core/ProjectFile.h"
 
@@ -18,6 +20,7 @@
 #include <QDateTime>
 #include <QElapsedTimer>
 #include <QEventLoop>
+#include <QImage>
 #include <QGuiApplication>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -137,6 +140,90 @@ void sandboxRules(const QString& base)
             CHECK_EQ(check(root + "/link/missing.mp4"), QString("OUTSIDE_ROOT"));
             CHECK_EQ(check(root + "/dangling.mp4"), QString("OUTSIDE_ROOT"));
         }
+    }
+    // Every file a project names, not only its media: a picture, LUT or texture of a compositing node, a title's or
+    // subtitle style's texture picture, a wipe image, the project brand kit's files. Outside: refused; inside, a
+    // built-in LUT or wipe: fine
+    {
+        const QString in = root + "/clips/pic.png", out = QDir(base).filePath("outside/pic.png");
+        QFile(in).open(QIODevice::WriteOnly);
+        QFile(out).open(QIODevice::WriteOnly);
+        const auto check = [](const std::function<void(ProjectData&, Clip&)>& setup) {
+            ProjectData d;
+            d.timeline = emptyTimeline();
+            Clip c;
+            c.id = 1;
+            c.kind = ClipKind::Title;
+            c.out = 24;
+            setup(d, c);
+            d.timeline.video[0].clips << c;
+            auto p = std::make_unique<Project>();
+            p->load(d);
+            return codeOf([&] { Cli::Sandbox::checkProject(*p); });
+        };
+        const auto node = [&](const QString& type, const QString& key, const QString& file) {
+            return check([&](ProjectData&, Clip& c) {
+                EffectInstance e;
+                e.effectId = Comp::kEffectId;
+                CompGraph g;
+                g.nodes << CompNode{1, type, {}};
+                g.out = 1;
+                Comp::setGraph(e, g);
+                e.params[CompGraph::paramKey(1, key)] = file;
+                c.effects << e;
+            });
+        };
+        CHECK_EQ(node(Comp::kMediaType, Comp::kPathKey, out), QString("OUTSIDE_ROOT")); // an image node
+        CHECK_EQ(node(Comp::kMediaType, Comp::kPathKey, in), QString("none"));
+        CHECK_EQ(node(Comp::kGradeType, Comp::kLutKey, out), QString("OUTSIDE_ROOT"));
+        CHECK_EQ(node(Comp::kGradeType, Comp::kLutKey, ":/luts/edit.cube"), QString("none")); // built-in
+        CHECK_EQ(node(Comp::kTextType, Comp::kTextureKey, out), QString("OUTSIDE_ROOT"));
+        CHECK_EQ(node(Comp::kTextType, Comp::kTextureKey, root + "/.hidden/key.png"), QString("HIDDEN"));
+        CHECK_EQ(node(Comp::kTextType, "font", "/usr/share/fonts/x.ttf"), QString("none")); // a font name, no file
+        const auto texture = [&](const QString& file) {
+            return check([&](ProjectData&, Clip& c) { c.title.look.texture = file; });
+        };
+        CHECK_EQ(texture(out), QString("OUTSIDE_ROOT"));
+        CHECK_EQ(texture(in), QString("none"));
+        CHECK_EQ(texture("clips/pic.png"), QString("OUTSIDE_ROOT")); // not a plain absolute path, as for media
+        CHECK_EQ(check([&](ProjectData& d, Clip&) {
+                     SubtitleTrack t;
+                     t.style.look.texture = out;
+                     d.timeline.subtitles << t;
+                 }),
+                 QString("OUTSIDE_ROOT"));
+        CHECK_EQ(check([&](ProjectData&, Clip& c) { c.transInStyle.luma = out; }), QString("OUTSIDE_ROOT"));
+        CHECK_EQ(check([&](ProjectData&, Clip& c) { c.transOutStyle.luma = ":/lumas/clock"; }), QString("none"));
+        for (QString BrandKit::*field : {&BrandKit::logo, &BrandKit::intro, &BrandKit::outro}) {
+            CHECK_EQ(check([&](ProjectData& d, Clip&) { d.brand.emplace().*field = out; }), QString("OUTSIDE_ROOT"));
+            CHECK_EQ(check([&](ProjectData& d, Clip&) { d.brand.emplace().*field = in; }), QString("none"));
+        }
+        // The server's own global kit may name files anywhere: a project kit made from it keeps them (only names: using
+        // one goes through the work folder rules like any file)
+        BrandKit global;
+        global.logo = out;
+        CHECK(Brand::setGlobal(global));
+        CHECK_EQ(check([&](ProjectData& d, Clip&) { d.brand.emplace().logo = out; }), QString("none"));
+        const QString secret = QDir(base).filePath("outside/secret.mp4"); // not a file of the global kit
+        CHECK_EQ(check([&](ProjectData& d, Clip&) { d.brand.emplace().intro = secret; }), QString("OUTSIDE_ROOT"));
+        CHECK(Brand::setGlobal({}));
+        CHECK_EQ(check([&](ProjectData& d, Clip&) { d.brand.emplace().logo = out; }), QString("OUTSIDE_ROOT"));
+        // In a timeline that is not the open one too
+        CHECK_EQ(check([&](ProjectData& d, Clip&) {
+                     Sequence open, other;
+                     open.id = 1;
+                     other.id = 7;
+                     other.timeline = emptyTimeline();
+                     Clip c;
+                     c.id = 2;
+                     c.kind = ClipKind::Title;
+                     c.out = 24;
+                     c.title.look.texture = out;
+                     other.timeline.video[0].clips << c;
+                     d.sequences << open << other;
+                     d.currentSequence = 1;
+                 }),
+                 QString("OUTSIDE_ROOT"));
     }
     CHECK_EQ(codeOf([] { Cli::Sandbox::configure({"/no/such/folder"}); }), QString("BAD_ARGUMENT"));
     CHECK_EQ(codeOf([&] { Cli::Sandbox::configure({root, {"no-equals-sign"}}); }), QString("BAD_ARGUMENT"));
@@ -687,6 +774,53 @@ int main(int argc, char* argv[])
         CHECK_EQ(a["frames"].toArray().size(), qsizetype(2));
         CHECK(a["frames"][0]["url"].toString().startsWith(s.base + "/files/stills/"));
         CHECK(!s.call("probe", {{"file", "clip.mp4"}}).contains("url"));
+        // Files a project names besides its media: a picture in a compositing node outside the work folder (a project
+        // file written elsewhere) is refused, one inside works; a title's texture picture from an edit op likewise
+        {
+            QImage pic(16, 16, QImage::Format_RGB32);
+            pic.fill(Qt::red);
+            CHECK(pic.save(tmp.filePath("outside/pic.png")) && pic.save(root + "/pic.png"));
+            const auto withImageNode = [&](const QString& file) {
+                ProjectData d;
+                QString err;
+                if (!ProjectFile::load(root + "/film.schneidi", &d, &err) || d.timeline.video.isEmpty()
+                    || d.timeline.video[0].clips.isEmpty())
+                    return false;
+                Clip& c = d.timeline.video[0].clips[0];
+                c.effects.clear();
+                EffectInstance e;
+                e.effectId = Comp::kEffectId;
+                CompGraph g;
+                g.nodes << CompNode{1, Comp::kMediaType, {}};
+                g.out = 1;
+                Comp::setGraph(e, g);
+                e.params[CompGraph::paramKey(1, Comp::kPathKey)] = file;
+                c.effects << e;
+                return ProjectFile::save(d, root + "/film.schneidi", &err);
+            };
+            const QJsonObject still{{"source", "film.schneidi"}, {"at", QJsonArray{0}}, {"out", "comp-stills"}};
+            CHECK(withImageNode(tmp.filePath("outside/pic.png")));
+            CHECK_EQ(errorCode(s.call("frames", still)), QString("OUTSIDE_ROOT"));
+            CHECK(withImageNode(root + "/pic.png"));
+            CHECK_EQ(errorCode(s.call("frames", still)), QString("ok"));
+            CHECK(withImageNode({}));
+            const auto title = [](const QString& texture) {
+                return QJsonArray{QJsonObject{{"op", "title"}, {"text", "Hi"}, {"at", 0}, {"texture", texture}}};
+            };
+            CHECK_EQ(errorCode(s.call("edit", {{"project", "film.schneidi"}, {"ops", title("../outside/pic.png")}})),
+                     QString("OUTSIDE_ROOT"));
+            CHECK_EQ(errorCode(s.call("edit", {{"project", "film.schneidi"}, {"ops", title(tmp.filePath("outside/pic.png"))}})),
+                     QString("OUTSIDE_ROOT"));
+            CHECK_EQ(errorCode(s.call("edit", {{"project", "film.schneidi"}, {"ops", title("pic.png")}})), QString("ok"));
+            ProjectData d;
+            QString err;
+            QStringList textures;
+            if (CHECK(ProjectFile::load(root + "/film.schneidi", &d, &err)))
+                for (const Track& t : d.timeline.video)
+                    for (const Clip& c : t.clips)
+                        if (c.isTitle()) textures << c.title.look.texture;
+            CHECK_EQ(textures, QStringList{root + "/pic.png"});
+        }
 
         // ---------- Server 2: no token (this computer only), slow calls ----------
         Server slow;

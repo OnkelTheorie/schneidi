@@ -220,6 +220,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/core/StreamPresets.h      src/core/StreamPresets.cpp
     src/core/StartTemplates.h     src/core/StartTemplates.cpp
     src/core/BrandKit.h           src/core/BrandKit.cpp
+    src/core/ProjectRefs.h        src/core/ProjectRefs.cpp
     src/core/TemplateLibrary.h    src/core/TemplateLibrary.cpp
     src/core/TemplateFill.h       src/core/TemplateFill.cpp
     src/core/DataRows.h           src/core/DataRows.cpp

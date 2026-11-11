@@ -4,9 +4,11 @@
 
 #include "cli/CommandsDetail.h"
 #include "cli/Live.h"
+#include "core/BrandKit.h"
 #include "core/EffectFolders.h"
-#include "core/EffectRegistry.h"
 #include "core/Project.h"
+#include "core/ProjectFile.h"
+#include "core/ProjectRefs.h"
 
 #include <QDir>
 #include <QFile>
@@ -276,25 +278,24 @@ void checkProject(const Project& p)
 {
     const State& s = state();
     if (s.root.isEmpty()) return;
+    ProjectData d = p.data();
+    // The server's own global brand kit may name files anywhere: a project kit made from it keeps them (only names
+    // here, using one goes through resolve() like any file)
+    QStringList globalBrand;
+    if (d.brand) {
+        const BrandKit g = Brand::global();
+        globalBrand << g.logo << g.intro << g.outro;
+    }
     QStringList files;
-    for (const MediaInfo& m : p.media()) files << m.path;
-    for (const WatchFolder& w : p.watchFolders()) files << w.path; // `watch` would list and import from there
-    for (const Sequence& q : p.sequences())
-        for (TrackKind k : {TrackKind::Video, TrackKind::Audio})
-            for (const Track& t : q.timeline.tracks(k))
-                for (const Clip& c : t.clips) {
-                    files << c.mediaPath << c.transInStyle.luma << c.transOutStyle.luma;
-                    for (const EffectInstance& e : c.effects)
-                        if (const EffectDescriptor* d = EffectRegistry::find(e.effectId))
-                            for (const EffectParam& param : d->params)
-                                if (param.type == EffectParam::Path) files << e.params.value(param.key).toString();
-                }
+    ProjectRefs::forEach(d, [&](QString& path, ProjectRefs::Kind kind) {
+        if (kind == ProjectRefs::Kind::BrandFile && globalBrand.contains(path)) return;
+        files << path;
+    });
     // The server's own LUTs and transition images (`effects` lists them) are allowed
     QStringList own{QDir::cleanPath(EffectFolders::root())};
     if (const QString c = QFileInfo(EffectFolders::root()).canonicalFilePath(); !c.isEmpty()) own << c;
     files.removeDuplicates();
     for (const QString& f : files) {
-        if (f.isEmpty() || EffectFolders::isBuiltin(f)) continue;
         if (allowedFile(f, own)) {
             // Inside, but hidden or a playlist/MLT XML that reads files from anywhere
             const QString clean = QDir::cleanPath(QDir::fromNativeSeparators(f));

@@ -47,8 +47,10 @@ void checkMedia(const QString& absolutePath);
 // Answers: paths of this computer back to the client's (reverse of the maps); strings in objects/arrays too
 QString mapBack(const QString& path);
 QJsonValue mapBack(const QJsonValue& v);
-// A project file names media, LUTs and transition images: refuse any outside the root, also missing ones (a project
-// put into the work folder must not read other files of the server; the engine reads more than plain paths)
+// A project file names media, LUTs, transition images, files of compositing nodes, texture pictures, brand kit files
+// and watch folders (core/ProjectRefs.h, the one list): refuse any outside the root (or the server's own effects
+// folder), also missing ones (a project put into the work folder must not read other files of the server; the engine
+// reads more than plain paths). Files of the server's own global brand kit are only names and stay allowed.
 void checkProject(const Project& p);
 
 } // namespace Cli::Sandbox
