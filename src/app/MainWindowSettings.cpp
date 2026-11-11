@@ -9,6 +9,7 @@
 #include "app/DesignDialog.h"
 #include "app/KeyBindingsDialog.h"
 #include "app/SettingsDialog.h"
+#include "core/Project.h"
 #include "ui/comp/CompShared.h"
 #include "app/StartTemplatesPage.h"
 #include "app/Theme.h"
@@ -67,6 +68,7 @@ void MainWindow::settingsDialog(int tab)
         setPreviewResolution(target, dlg.previewResolution(target));
     if (!m_autosaveDisabled && dlg.proxyImportRule() != ProxyManager::importRule())
         ProxyManager::setImportRule(dlg.proxyImportRule());
+    if (!m_autosaveDisabled && dlg.proxyQuality() != ProxyManager::quality()) setProxyQuality(dlg.proxyQuality());
     if (dlg.backgroundThreads() != Background::chosenThreads() && !m_autosaveDisabled)
         Background::setChosenThreads(dlg.backgroundThreads()); // takes effect with the next job
     // Language like from the menu (Workspace › Language): takes effect after a restart; test runs keep the setting
@@ -76,6 +78,27 @@ void MainWindow::settingsDialog(int tab)
         offerRestart(I18n::translate(lang, N_("Die Sprache ändert sich nach dem Neustart von schneidi.")),
                      I18n::translate(lang, N_("Jetzt neu starten")), I18n::translate(lang, N_("Später")));
     }
+}
+
+void MainWindow::setProxyQuality(ProxyManager::Quality quality)
+{
+    // The project's files with a proxy of the old quality: offered to be made again (otherwise the preview plays
+    // their originals until proxies are made by hand)
+    QStringList files;
+    for (const MediaInfo& m : m_project->media()) files << m.path;
+    QStringList had = ProxyManager::withProxy(files, ProxyManager::maxSize());
+    // … without those that have one at the new size already (switching back), nor when proxies are off
+    for (const QString& p : ProxyManager::withProxy(had, ProxyManager::maxSizeOf(quality))) had.removeAll(p);
+    ProxyManager* proxies = m_engine->proxies();
+    proxies->setQuality(quality);
+    if (had.isEmpty() || !proxies->enabled()) return;
+    const QString count = had.size() == 1 ? T("Eine Datei dieses Projekts hat Proxy-Medien in der alten Qualität.")
+                                          : T("%1 Dateien dieses Projekts haben Proxy-Medien in der alten Qualität.")
+                                                .arg(had.size());
+    const QString text = count + " "
+                         + T("Jetzt neu erzeugen (Qualität: %1)?").arg(ProxyManager::qualityLabel(quality)) + "\n\n"
+                         + T("Die alten Dateien bleiben, bis du sie unter Wiedergabe › Proxy-Medien aufräumen… löschst.");
+    if (QMessageBox::question(this, T("Proxy-Qualität"), text) == QMessageBox::Yes) proxies->generate(had);
 }
 
 void MainWindow::setAiSettings(const AiSettings& s)

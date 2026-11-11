@@ -173,6 +173,13 @@ Engine::Engine(QObject* parent)
     // render cache, frames kept for stepping back, the still shown - on the UI thread.
     m_resolved = std::make_shared<Resolved>(); // made once here: the observer keeps it
     m_resolved->bypass = m_gradeBypass;
+    // Proxy quality or "use proxy media" changed: the timeline is resolved again by the app (updateTimeline), the
+    // source view here - it would keep reading the file it opened
+    const auto reshowSource = [this] {
+        if (m_mode == Mode::Source && !m_sourcePath.isEmpty()) showSource(m_sourcePath, m_position, m_sourceAspect);
+    };
+    connect(m_proxies, &ProxyManager::qualityChanged, this, reshowSource);
+    connect(m_proxies, &ProxyManager::enabledChanged, this, reshowSource);
     m_stampObserver = FileStamp::addObserver([this, resolved = m_resolved](const QString& path) {
         {
             std::lock_guard lock(resolved->mutex);
@@ -483,7 +490,39 @@ bool Engine::resolveFiles(const Timeline& tl, bool timeline)
         m_resolved->cache = std::move(cache);
         changed = true;
     }
+    if (timeline && m_mode == Mode::Timeline) updateShowsProxy(&tl, true);
+    else updateShowsProxy(nullptr, true);
     return changed;
+}
+
+void Engine::updateShowsProxy(const Timeline* shownTimeline, bool locked)
+{
+    // The FileStamp observer writes the map from any thread (an overwritten file): read it under the lock
+    std::unique_lock lock(m_resolved->mutex, std::defer_lock);
+    if (!locked) lock.lock();
+    const auto proxyOf = [this](const QString& path) {
+        const auto it = m_resolved->proxies.constFind(path);
+        return it != m_resolved->proxies.cend() && !it->isEmpty() && *it != path;
+    };
+    std::function<bool(const Timeline&)> uses = [&](const Timeline& t) {
+        for (const Track& track : t.video)
+            for (const Clip& c : track.clips)
+                if (!c.mediaPath.isEmpty() && proxyOf(c.mediaPath)) return true;
+        if (t.nested)
+            for (const Timeline& inner : *t.nested)
+                if (uses(inner)) return true;
+        return false;
+    };
+    bool on = false;
+    switch (m_mode) {
+    case Mode::Source: on = !m_sourcePath.isEmpty() && proxyOf(m_sourcePath); break;
+    case Mode::Multicam: on = uses(m_gridContent); break;
+    case Mode::Timeline: on = uses(shownTimeline ? *shownTimeline : m_built); break;
+    }
+    if (on == m_showsProxy) return;
+    m_showsProxy = on;
+    // Queued: resolveFiles may hold the mutex, and the receivers may ask the engine again
+    QMetaObject::invokeMethod(this, [this, on] { emit showsProxyChanged(on); }, Qt::QueuedConnection);
 }
 
 Picture::Options Engine::previewOptions(const QSize& output) const
@@ -594,6 +633,7 @@ void Engine::showTimeline(int position, bool keepSpeed)
         releaseFreedMemory();
     }
     m_sourceRenderer.reset();
+    updateShowsProxy();
     emit modeChanged(m_mode);
 }
 
@@ -680,6 +720,7 @@ bool Engine::showMulticam(const Timeline& content, const QVector<MulticamAngle>&
     showContent(c, position);
     releaseFreedMemory(); // the old grid's decoders and frames
     syncPlayer(position, true);
+    updateShowsProxy();
     if (changed) emit modeChanged(m_mode);
     return true;
 }
@@ -723,6 +764,7 @@ void Engine::showSource(const QString& path, int position, double aspect)
         m_gridRenderers.clear();
         releaseFreedMemory();
     }
+    updateShowsProxy();
     emit modeChanged(m_mode);
 }
 

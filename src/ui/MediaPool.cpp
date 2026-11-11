@@ -633,6 +633,9 @@ MediaPool::MediaPool(Project* project, Engine* engine, QWidget* parent)
     ProxyManager* proxies = m_engine->proxies();
     connect(proxies, &ProxyManager::progress, this, [this](const QString& path, int) { updateItem(path); });
     connect(proxies, &ProxyManager::proxyChanged, this, &MediaPool::updateItem);
+    connect(proxies, &ProxyManager::qualityChanged, this, [this] { // the proxy marks follow the new quality's files
+        for (const QString& path : m_items.keys()) updateItem(path);
+    });
     connect(proxies, &ProxyManager::queueChanged, this, &MediaPool::updateProxyStatus);
     connect(ProxyProgress::of(proxies), &ProxyProgress::changed, this, &MediaPool::updateProxyStatus);
     connect(proxies, &ProxyManager::failed, this, [this](const QString& path, const QString& msg) {

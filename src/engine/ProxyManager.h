@@ -18,7 +18,25 @@ class QProcess;
 class ProxyManager : public QObject {
     Q_OBJECT
 public:
-    static constexpr int kMaxSize = 960; // longer image edge of the proxy (pixels)
+    static constexpr int kMaxSize = 960; // longer image edge of the proxy (pixels) at the default quality (Small)
+    // "Full resolution": larger than any picture, so the proxy keeps the original's size (only a lighter codec)
+    static constexpr int kFullSize = 1 << 16;
+
+    // Proxy quality (Settings › General, "proxy/quality", for all projects): the longer edge of the proxy.
+    // Small = 960 px (540p, the default), Medium = 1280 (720p), Large = 1920 (1080p), Full = the original's size.
+    // The size is part of the proxy's name: another quality means other files (old ones are "other size" for cleanup).
+    enum class Quality { Small, Medium, Large, Full };
+    static Quality quality(); // the stored one (read once, then kept)
+    // Reads the stored quality again (the app may have changed it since: a long-running schneidi-cli/MCP process
+    // before cleaning up the proxy folder)
+    static void reloadQuality();
+    static int maxSizeOf(Quality q);
+    static int maxSize() { return maxSizeOf(quality()); }
+    // Short name for the viewer and the settings: "540p", "720p", "1080p", "volle Auflösung"
+    static QString qualityLabel(Quality q);
+    // Stores the quality; a proxy being made right now is started again at the new size. Emits qualityChanged.
+    // Existing proxies of the old quality stay on the disk (regenerate: generate() with withProxy(…, old size)).
+    void setQuality(Quality q);
 
     explicit ProxyManager(QObject* parent = nullptr);
     ~ProxyManager() override;
@@ -26,6 +44,10 @@ public:
     static QString cacheDir();
     // Location of the proxy for an original (regardless of whether it exists yet)
     static QString proxyPath(const QString& original);
+    // … for a proxy of the given longer edge (maxSizeOf)
+    static QString proxyPath(const QString& original, int maxSize);
+    // Of `originals` the ones that have a proxy of that size on the disk (what to regenerate after a quality change)
+    static QStringList withProxy(const QStringList& originals, int maxSize);
     bool hasProxy(const QString& original) const;
     // For thumbnails, filmstrips and stills: proxy if present (regardless of the switch, much faster to decode and
     // seek; same frame rate and aspect ratio), otherwise the original
@@ -76,6 +98,7 @@ signals:
     void failed(const QString& original, const QString& message);
     void enabledChanged(bool on);
     void queueChanged(); // queue/progress changed (status display)
+    void qualityChanged(); // setQuality: other proxy files now (the preview resolves again)
 
 private:
     void startNext();
@@ -88,6 +111,7 @@ private:
     QStringList m_queue;
     QString m_current;      // original whose proxy is currently being created
     QString m_currentPart;  // half-finished file (only renamed at the end)
+    int m_currentSize = 0;  // longer edge the current proxy is made at (maxSize() when it started)
     double m_durationUs = 0;
     int m_progress = 0;
     QString m_errorTail;    // last ffmpeg messages for the error display
