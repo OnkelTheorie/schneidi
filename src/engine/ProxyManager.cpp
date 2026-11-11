@@ -19,6 +19,7 @@ extern "C" {
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QHash>
 #include <QProcess>
 #include <QRandomGenerator>
 #include <QSettings>
@@ -29,6 +30,7 @@ extern "C" {
 #include <cmath>
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <vector>
 
@@ -52,6 +54,7 @@ struct SourceInfo {
     QString decoder;    // the reader's (libvpx-vp9 for VP9 with alpha)
     double seconds = 0;
     int width = 0, height = 0; // the picture's pixels
+    bool interlaced = false;
 };
 
 struct ProxyJob {
@@ -111,6 +114,12 @@ SourceInfo probeSource(const QString& path)
         const std::shared_ptr<const Video::Picture> first = reader->picture(0);
         s.alpha = first && seeThrough(first->frame);
     }
+    // Interlaced: from the stream's field order, else (not stated) from the first picture
+    if (in.fieldOrder != AV_FIELD_UNKNOWN) {
+        s.interlaced = in.fieldOrder != AV_FIELD_PROGRESSIVE;
+    } else if (const std::shared_ptr<const Video::Picture> first = reader->picture(0)) {
+        s.interlaced = !first->progressive;
+    }
     s.decoder = in.codec;
     if (media) s.seconds = media->length / 25.0;
     else if (in.duration > 0) s.seconds = double(in.duration) / 1e6; // AV_TIME_BASE units
@@ -127,6 +136,46 @@ const char* ffColorspace(int cs)
     case 2020: return "bt2020nc";
     default: return "bt709";
     }
+}
+
+// Filters an ffmpeg program lists (`ffmpeg -filters`), cached per file and modification time
+QStringList programFilters(const QString& program)
+{
+    static std::mutex mutex;
+    static QHash<QString, QStringList> cache;
+    const QFileInfo info(program);
+    const QString key = info.absoluteFilePath() + '|' + QString::number(info.lastModified().toMSecsSinceEpoch());
+    {
+        std::lock_guard lock(mutex);
+        if (auto it = cache.constFind(key); it != cache.cend()) return *it;
+    }
+    QProcess p;
+    p.start(program, {"-hide_banner", "-nostdin", "-filters"});
+    QStringList list;
+    if (p.waitForStarted(10000) && p.waitForFinished(20000) && p.exitStatus() == QProcess::NormalExit) {
+        // " TSC bwdif             V->V       Deinterlace the input image."
+        for (const QByteArray& line : p.readAllStandardOutput().split('\n')) {
+            const QList<QByteArray> words = line.simplified().split(' ');
+            if (words.size() >= 3 && words[0].size() == 3) list << QString::fromUtf8(words[1]);
+        }
+    } else if (p.state() != QProcess::NotRunning) {
+        p.kill(); // our own process
+        p.waitForFinished(2000);
+    }
+    std::lock_guard lock(mutex);
+    cache.insert(key, list);
+    return list;
+}
+
+// The deinterlacer the ffmpeg program has: bwdif (sharper, fewer jaggies on edges), else yadif; empty = none.
+// One picture per frame (the proxy keeps the original's frame rate and frame count)
+QString deinterlaceFilter(const QString& program)
+{
+    if (!QFileInfo(program).isAbsolute()) return {};
+    const QStringList filters = programFilters(program);
+    if (filters.contains("bwdif")) return QStringLiteral("bwdif=mode=send_frame:parity=auto:deint=all");
+    if (filters.contains("yadif")) return QStringLiteral("yadif=mode=send_frame:parity=auto:deint=all");
+    return {};
 }
 
 // Runs in a helper thread (opening + decoding the first frame can take a while at 4K): assemble the ffmpeg call
@@ -151,6 +200,15 @@ ProxyJob prepareJob(const QString& original, const QString& part, int maxSize)
     QString scale = QString("scale=w='trunc(%1*iw*sar/2)*2':h='trunc(%1*ih/2)*2'"
                                   ":in_color_matrix=%2:out_color_matrix=%2:in_range=%3:out_range=tv,setsar=1")
                               .arg(f, matrix, info.fullRange ? "pc" : "tv");
+    // Interlaced (DV, broadcast, camcorders): the two fields deinterlaced before scaling - scaled as one picture the
+    // fields of two moments blend into combs and ghosts in the proxy (the original's preview draws field by field)
+    if (info.interlaced) {
+        if (const QString deint = deinterlaceFilter(Bundle::tool("ffmpeg")); !deint.isEmpty())
+            scale.prepend(deint + ',');
+        else
+            qWarning("Proxy of interlaced %s without deinterlacing: ffmpeg has neither bwdif nor yadif",
+                     qPrintable(original));
+    }
     // Frame 0 of the proxy = frame 0 of the original. The decoder counts from the first video key frame;
     // FFmpeg (without -copyts) shifts by the container start, the earliest of all streams. A recording whose sound
     // starts before the picture (OBS, phones, games: ~1 frame) would put the first picture at +1 frame, and the

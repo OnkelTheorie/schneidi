@@ -24,6 +24,11 @@
 #include <QTemporaryDir>
 #include <QTimer>
 #include <clocale>
+#include <cmath>
+
+extern "C" {
+#include <libavutil/frame.h>
+}
 
 namespace {
 
@@ -164,6 +169,48 @@ void testSizes(const QString& dir)
     pm.setQuality(Q::Small);
 }
 
+// An interlaced original (x264 with interlaced coding, top field first): each frame's top field black, the bottom one
+// white, swapping every frame. Scaled as one picture without deinterlacing, every proxy frame came out an even gray
+// (the fields blended); deinterlaced, each frame is one field's picture - black or white
+void testInterlaced(const QString& dir)
+{
+    const QString original = Check::makeMedia(
+        dir + "/interlaced.mp4",
+        {"-f", "lavfi", "-i",
+         "color=c=black:size=1920x1080:rate=50:duration=1,format=yuv420p,"
+         "geq=lum='if(eq(mod(N\\,4)\\,1)+eq(mod(N\\,4)\\,2)\\,235\\,16)':cb=128:cr=128,"
+         "tinterlace=mode=interleave_top,setfield=tff",
+         "-flags", "+ilme+ildct", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p"});
+    if (!CHECK(!original.isEmpty())) return;
+    if (const auto r = Video::Reader::open(original, {}); CHECK(r)) CHECK(r->info().fieldOrder >= 2); // AV_FIELD_TT..
+    ProxyManager pm;
+    pm.setQuality(Q::Small);
+    QString message;
+    QObject::connect(&pm, &ProxyManager::failed, [&](const QString&, const QString& m) { message = m; });
+    pm.generate({original});
+    waitDone(pm, original);
+    if (!message.isEmpty()) std::printf("proxy failed: %s\n", qPrintable(message));
+    if (!CHECK(pm.hasProxy(original))) return;
+    const std::unique_ptr<Video::Reader> proxy = Video::Reader::open(ProxyManager::proxyPath(original), {});
+    if (!CHECK(proxy)) return;
+    int blended = 0, frames = 0;
+    for (int i = 0; i < 20; ++i) {
+        const std::shared_ptr<const Video::Picture> pic = proxy->picture(i);
+        if (!pic || !pic->frame) break;
+        const AVFrame* f = pic->frame;
+        double sum = 0;
+        int n = 0;
+        for (int y = f->height / 4; y < f->height * 3 / 4; ++y)
+            for (int x = f->width / 4; x < f->width * 3 / 4; x += 4, ++n) sum += f->data[0][size_t(y) * f->linesize[0] + x];
+        const double mean = n ? sum / n : 0;
+        if (std::abs(mean - 125) < 60) ++blended;
+        ++frames;
+    }
+    std::printf("interlaced original: %d of %d proxy frames with blended fields\n", blended, frames);
+    CHECK(frames >= 10);
+    CHECK_EQ(blended, 0);
+}
+
 QString modeText(Viewer* viewer)
 {
     QApplication::processEvents(); // showsProxyChanged is queued
@@ -263,6 +310,7 @@ int main(int argc, char** argv)
     if (!CHECK(tmp.isValid())) return Check::result();
     testSizes(tmp.path());
     testMainWindow(tmp.path());
+    testInterlaced(tmp.path());
     QSettings().remove("proxy/quality");
     QDir(ProxyManager::cacheDir()).removeRecursively();
     return Check::result();

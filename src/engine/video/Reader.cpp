@@ -1544,6 +1544,7 @@ std::unique_ptr<Reader> Reader::open(const QString& path, const Options& options
     in.hasBFrames = d.dec->has_b_frames > 0;
     in.duration = d.fmt->duration == AV_NOPTS_VALUE ? -1 : d.fmt->duration;
     in.codec = QString::fromLatin1(d.codec->name);
+    in.fieldOrder = int(par->field_order);
     const AVCodecDescriptor* desc = avcodec_descriptor_get(par->codec_id);
     d.mustDecode = !desc || !(desc->props & AV_CODEC_PROP_INTRA_ONLY);
     d.planarFormat = in.format;
