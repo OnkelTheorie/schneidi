@@ -254,11 +254,11 @@ QString compactGuide(const QString& topics)
         "(cuts), `peaks`/`highlights` (loud or exciting moments), `beats` (a song).\n"
         "2. Say the plan in one or two sentences, then do it; ask only when the answer changes the result a lot.\n"
         "3. Edit in small steps with `edit`. Take clip ids from `info` or the answer of the last `edit`, never guess "
-        "them. Unsure how an op or a tool works: ask `help` (command 'edit' and op '<name>', or command '<tool>') "
-        "instead of guessing; `effects` lists effects and transitions.\n"
-        "4. Check with `check` and `info`, look with `frames`; after `render`, check the rendered file too.\n"
+        "them. Unsure about an op or tool: ask `help` (command 'edit' + op '<name>', or command '<tool>'), never "
+        "guess; `effects` lists effects and transitions.\n"
+        "4. Check with `check` and `info`, look with `frames`; check rendered files too.\n"
         "5. Times in seconds (\"4.5s\") are the safest. Never overwrite the user's files: renders get new names. Do "
-        "what was asked, the way it was asked, with good defaults (-14 LUFS for the web, H.264 MP4). Downloads "
+        "what was asked, with good defaults (-14 LUFS for the web, H.264 MP4). Downloads "
         "(`extensions`, e.g. whisper for `transcribe`) need the user's yes.";
     if (!topics.trimmed().isEmpty())
         s += "\n\nTask guides (call `guide` with the topic before such a task):\n" + topics.trimmed();
