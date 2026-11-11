@@ -116,6 +116,8 @@ int main(int argc, char** argv)
         QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
         env.insert("QT_QPA_PLATFORM", "offscreen");
         env.remove("APPIMAGE");
+        // The copy finds its libraries where the build put them (Windows looks for DLLs along PATH)
+        env.insert("PATH", QFileInfo(Check::cliPath()).absolutePath() + QDir::listSeparator() + env.value("PATH"));
         p.setProcessEnvironment(env);
         p.start(exe, {"mcp"});
         CHECK(p.waitForStarted(10000));
@@ -149,13 +151,14 @@ int main(int argc, char** argv)
         const QString before = texts(call(guideCall));
         CHECK(before.contains("topics"));
         CHECK(!before.contains("was updated"));
-        // An update replaces the file (a new file renamed over it, as installers and package managers do)
+        // An update replaces the file (the new one renamed into its place, as installers and package managers do)
         const QString fresh = exe + ".new";
         CHECK(QFile::copy(Check::cliPath(), fresh));
         QFile f(fresh);
         if (CHECK(f.open(QIODevice::Append))) f.write("x"); // another build: another size
         f.close();
-        CHECK(QFile::remove(exe));
+        // (the running file is moved aside, not removed: Windows cannot delete a running program, only rename it)
+        CHECK(QFile::rename(exe, exe + ".old"));
         CHECK(QFile::rename(fresh, exe));
         const QString after = texts(call(guideCall));
         CHECK(after.contains("topics")); // the tool still answers
