@@ -94,26 +94,33 @@ bool writeOutlier(const QString& in, const QString& out, int which, double ahead
 }
 
 // The file's data vanishes while it is open (disk unplugged; on Linux an open file keeps its data when deleted, emptying
-// it makes reads fail like a gone disk): jumps never crash (what is still buffered may sound). The crash of a failed
-// fresh demuxer (fmt == nullptr after a failed reopen) needs a demuxer whose seek fails – none of FFmpeg's common ones
-// did here, so that path is guarded in the code without a file to reach it.
+// it makes reads fail like a gone disk): jumps never crash (what is still buffered may sound). Ogg (FLAC in .oga) has a
+// seek that fails on the emptied file: the fresh demuxer fails too (fmt == nullptr), and the next jump back in the same
+// clip read fmt->start_time and crashed (lost at 5 s, then back to 1 s)
 void testVanished(const QString& dir)
 {
     std::printf("-- file vanishes while open\n");
-    for (const char* ext : {"mkv", "m4a", "wav"}) {
-        const QString path = Check::makeMedia(dir + "/vanish." + ext, {"-f", "lavfi", "-i", "sine=f=440:d=6"});
-        if (!CHECK(!path.isEmpty())) continue;
-        auto r = Audio::Reader::open(path);
-        if (!CHECK(r)) continue;
-        std::vector<float> l(4800), rr(4800);
-        float* out[] = {l.data(), rr.data()};
-        r->read(3 * kRate, 4800, out);
-        CHECK(peak(l, 0, l.size()) > 0.1);
-        if (!CHECK(QFile::resize(path, 0))) continue;
-        for (int64_t p : {r->info().start, int64_t(5 * kRate), int64_t(kRate), int64_t(0), int64_t(4 * kRate)}) {
-            std::fill(l.begin(), l.end(), 7.f);
-            r->read(p, 4800, out);
-            CHECK(peak(l, 0, l.size()) < 1.0); // filled: sound still buffered or silence
+    const std::vector<std::vector<int64_t>> orders{{0, 5 * kRate, kRate, 0, 4 * kRate}, {5 * kRate, kRate, 0, 4 * kRate}};
+    for (const char* ext : {"mkv", "m4a", "wav", "oga"}) {
+        for (size_t o = 0; o < orders.size(); ++o) {
+            const QString path = Check::makeMedia(QString("%1/vanish%2.%3").arg(dir).arg(o).arg(ext),
+                                                  {"-f", "lavfi", "-i", "sine=f=440:d=6"});
+            if (!CHECK(!path.isEmpty())) continue;
+            auto r = Audio::Reader::open(path);
+            if (!CHECK(r)) continue;
+            std::vector<float> l(4800), rr(4800);
+            float* out[] = {l.data(), rr.data()};
+            r->read(3 * kRate, 4800, out);
+            CHECK(peak(l, 0, l.size()) > 0.1);
+            if (!CHECK(QFile::resize(path, 0))) continue;
+            bool ok = true;
+            for (int64_t p : orders[o]) {
+                std::fill(l.begin(), l.end(), 7.f);
+                ok = r->read(std::max(p, r->info().start), 4800, out);
+                CHECK(peak(l, 0, l.size()) < 1.0); // filled: sound still buffered or silence
+            }
+            if (r->stats().reopens > 0) CHECK(!ok); // the fresh demuxer failed: the caller hears of it (clip offline)
+            std::printf("       .%s order %zu: %d seeks, %d fresh demuxers\n", ext, o, r->stats().seeks, r->stats().reopens);
         }
     }
 }

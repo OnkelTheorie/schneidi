@@ -613,8 +613,9 @@ struct Reader::Impl {
         wantOut = target - seconds(kPreroll);
         const long double back = tryNo > 0 ? kBackoff[tryNo - 1] : 0;
         const long double t = zero + (long double)wantOut / outRate - back;
-        // The start = the stream's first packet (an AAC priming packet lies before the file's start time)
-        int64_t begin = fmt->start_time != AV_NOPTS_VALUE ? fmt->start_time : 0;
+        // The start = the stream's first packet (an AAC priming packet lies before the file's start time). No demuxer
+        // (lost before): fresh, so the file is opened anew below and `begin` is not used
+        int64_t begin = fmt && fmt->start_time != AV_NOPTS_VALUE ? fmt->start_time : 0;
         if (firstTs != AV_NOPTS_VALUE) begin = std::min(begin, firstTs);
         const int64_t ts = std::llround(t * AV_TIME_BASE);
         fromStart = fresh || wantOut <= info.start || ts <= begin;
