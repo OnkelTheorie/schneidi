@@ -1084,7 +1084,7 @@ void Mixer::growToFit()
         item = sp;
         sp = qobject_cast<QSplitter*>(sp->parentWidget());
     }
-    if (!sp || !isVisible() || sp->count() < 2) return;
+    if (!sp || !isVisible() || sp->count() < 2 || m_keepWidth) return;
     QList<int> sizes = sp->sizes();
     const int idx = sp->indexOf(item), other = idx == 0 ? 1 : 0;
     const int want = std::min(int(m_strips.size()) * kStripW + fixedWidth(), (sizes[idx] + sizes[other]) * 45 / 100);

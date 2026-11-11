@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "ui/MediaStorage.h"
+#include "ui/SplitterMemory.h"
 
 #include "app/Theme.h"
 #include "core/I18n.h"
@@ -269,8 +270,8 @@ MediaStorage::MediaStorage(QWidget* parent) : QWidget(parent)
     split->addWidget(m_tree);
     split->addWidget(fileArea);
     split->setStretchFactor(1, 1);
-    split->setSizes({110, 400});
     split->setCollapsible(1, false); // folder tree can be pushed shut completely in narrow columns
+    SplitterMemory::remember(split, "mediaStorageTree", {110, 400}); // the user's drag comes back on the next start
 
     auto* lay = new QVBoxLayout(this);
     lay->setContentsMargins(0, 0, 0, 0);
