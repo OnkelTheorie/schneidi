@@ -17,6 +17,11 @@
 #include <QGuiApplication>
 #include <QTimer>
 
+#ifdef _WIN32
+#include <objbase.h>
+#endif
+
+#include <chrono>
 #include <cmath>
 #include <condition_variable>
 #include <deque>
@@ -50,58 +55,98 @@ struct VoiceoverRecorder::Opening {
 
 // Opens and closes inputs one after the other, never on the GUI thread (a sound server takes 30-50 ms to open one,
 // ma_device_uninit and the writer's end a few more). In order, so an input is closed before the next one opens (an
-// ALSA hw device opens only once). Ending runs what is still queued.
+// ALSA hw device opens only once). An input is closed on this thread too: miniaudio's WASAPI context initializes COM
+// on the thread that opens it and uninitializes it on the one that closes it (closed on the GUI thread, that undid
+// Qt's COM there with every take). Ending runs what is still queued - for a while: a job that hangs (a driver that
+// never answers) does not keep the app from quitting, the thread is left to itself then (its state is its own).
 class VoiceoverRecorder::InputThread {
 public:
-    InputThread() { m_thread = std::thread([this] { run(); }); }
+    InputThread()
+    {
+        std::thread([state = m_state] { run(state); }).detach(); // ended by ~InputThread (finished, waited for)
+    }
     ~InputThread()
     {
-        {
-            std::lock_guard<std::mutex> lock(m_mutex);
-            m_quit = true;
-        }
-        m_wake.notify_all();
-        m_thread.join();
+        std::unique_lock<std::mutex> lock(m_state->mutex);
+        m_state->quit = true;
+        m_state->wake.notify_all();
+        if (!m_state->wake.wait_for(lock, std::chrono::seconds(3), [this] { return m_state->finished; }))
+            qWarning("Voiceover: the input thread does not end (a sound driver hangs) - left behind");
     }
     void post(std::function<void()> job)
     {
-        {
-            std::lock_guard<std::mutex> lock(m_mutex);
-            m_jobs.push_back(std::move(job));
-        }
-        m_wake.notify_all();
+        std::lock_guard<std::mutex> lock(m_state->mutex);
+        m_state->jobs.push_back(std::move(job));
+        m_state->wake.notify_all();
+    }
+    // Runs `job` there and waits for it at most `ms`: false = it did not run in time (it still runs later)
+    bool call(std::function<void()> job, int ms)
+    {
+        struct Done {
+            std::mutex mutex;
+            std::condition_variable cv;
+            bool done = false;
+        };
+        auto done = std::make_shared<Done>();
+        post([job = std::move(job), done] {
+            job();
+            std::lock_guard<std::mutex> lock(done->mutex);
+            done->done = true;
+            done->cv.notify_all();
+        });
+        std::unique_lock<std::mutex> lock(done->mutex);
+        return done->cv.wait_for(lock, std::chrono::milliseconds(ms), [&] { return done->done; });
     }
 
 private:
-    void run()
+    struct State {
+        std::mutex mutex;
+        std::condition_variable wake; // jobs, quit; finished (the other way)
+        std::deque<std::function<void()>> jobs;
+        bool quit = false, finished = false;
+    };
+    static void run(std::shared_ptr<State> state)
     {
+#ifdef _WIN32
+        // Balanced on this thread: miniaudio's own CoInitializeEx/CoUninitialize per context only count on top
+        const HRESULT com = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+#endif
         for (;;) {
             std::function<void()> job;
             {
-                std::unique_lock<std::mutex> lock(m_mutex);
-                m_wake.wait(lock, [this] { return m_quit || !m_jobs.empty(); });
-                if (m_jobs.empty()) return;
-                job = std::move(m_jobs.front());
-                m_jobs.pop_front();
+                std::unique_lock<std::mutex> lock(state->mutex);
+                state->wake.wait(lock, [&] { return state->quit || !state->jobs.empty(); });
+                if (state->jobs.empty()) break;
+                job = std::move(state->jobs.front());
+                state->jobs.pop_front();
             }
             job();
             job = nullptr; // what it holds (an input to close) ends here, not on the GUI thread
         }
+#ifdef _WIN32
+        if (SUCCEEDED(com)) CoUninitialize();
+#endif
+        std::lock_guard<std::mutex> lock(state->mutex);
+        state->finished = true;
+        state->wake.notify_all();
     }
-    std::mutex m_mutex;
-    std::condition_variable m_wake;
-    std::deque<std::function<void()>> m_jobs;
-    bool m_quit = false;
-    std::thread m_thread;
+    std::shared_ptr<State> m_state = std::make_shared<State>();
 };
 
 VoiceoverRecorder::VoiceoverRecorder(Engine* engine, Project* project, Editor* editor,
                                      std::function<QString()> projectPath, std::function<bool(const QString&)> import,
                                      QObject* parent)
     : QObject(parent), m_engine(engine), m_project(project), m_editor(editor), m_projectPath(std::move(projectPath)),
-      m_import(std::move(import)), m_timer(new QTimer(this)), m_meterTimer(new QTimer(this)),
-      m_inputs(std::make_unique<InputThread>())
+      m_import(std::move(import)), m_inputs(std::make_unique<InputThread>()), m_timer(new QTimer(this)),
+      m_meterTimer(new QTimer(this)), m_openTimeout(new QTimer(this))
 {
+    m_openTimeout->setSingleShot(true);
+    m_openTimeout->setInterval(5000);
+    connect(m_openTimeout, &QTimer::timeout, this, [this] {
+        if (!m_opening || m_capture) return;
+        abortStart();
+        emit failed(T("Der Eingang antwortet nicht – ein anderes Eingabegerät wählen oder das Gerät neu anschließen."));
+    });
     m_meterTimer->setInterval(33);
     connect(m_meterTimer, &QTimer::timeout, this, [this] {
         if (!m_meter) return;
@@ -114,11 +159,17 @@ VoiceoverRecorder::VoiceoverRecorder(Engine* engine, Project* project, Editor* e
     // recording; so does a seek (a click in the ruler, Home, arrow keys): a take only runs forward from its start
     // These end it from the event loop: a pause or seek may come from inside an undo step (one in another timeline
     // opens that one), and placing the take pushes a step of its own
+    // While the input opens (the timeline stopped at the key press, it plays once the input runs) any of these, a
+    // play (Space) too, ends it as well: the take would begin somewhere else than where the key was pressed
     connect(m_engine, &Engine::speedChanged, this, [this](double speed) {
-        if (speed != 1.0 && m_capture && m_playing && !m_stopping && !m_starting) stopLater();
+        if (m_starting || m_stopping) return;
+        if (m_opening ? !m_capture : speed != 1.0 && m_capture && m_playing) stopLater();
     });
     connect(m_engine, &Engine::seeked, this, [this] {
-        if (m_capture && !m_stopping && !m_starting) stopLater();
+        if (recording() && !m_stopping && !m_starting) stopLater();
+    });
+    connect(m_engine, &Engine::modeChanged, this, [this](Engine::Mode mode) {
+        if (recording() && !m_stopping && mode != Engine::Mode::Timeline) stopLater();
     });
     // Another timeline opened (a tab, an undo there, an AI): the take ends and goes to the timeline it began in
     connect(m_project, &Project::currentSequenceChanged, this, [this] {
@@ -139,7 +190,7 @@ VoiceoverRecorder::VoiceoverRecorder(Engine* engine, Project* project, Editor* e
 VoiceoverRecorder::~VoiceoverRecorder()
 {
     if (m_capture) { // closing the window mid-take: the file stays complete, no signals any more
-        m_capture->stop();
+        closeTake();
         QSettings().remove(kRunningKey);
     }
     dropOpening(m_opening);
@@ -170,9 +221,9 @@ std::shared_ptr<VoiceoverRecorder::Opening> VoiceoverRecorder::openInput(const Q
             }
             opening->input = std::move(input);
             opening->why = why;
+            // Under the lock: the recorder's destructor drops (cancels) its openings first, so it is still there
+            QMetaObject::invokeMethod(this, [this, opening] { inputOpened(opening); }, Qt::QueuedConnection);
         }
-        // The recorder waits for this thread before it goes (its destructor): it is still there
-        QMetaObject::invokeMethod(this, [this, opening] { inputOpened(opening); }, Qt::QueuedConnection);
     });
     return opening;
 }
@@ -215,14 +266,20 @@ void VoiceoverRecorder::inputOpened(const std::shared_ptr<Opening>& opening)
         m_meter = std::move(input); // no input: no meter, recording says why
         if (m_meter) m_meterTimer->start();
     } else if (opening == m_opening) {
-        m_opening.reset();
+        m_openTimeout->stop();
         if (!input) {
-            m_engine->setOpenEnd(false);
-            emit recordingChanged(false);
-            updateMeter();
+            abortStart();
             emit failed(T("Kein Eingang: %1").arg(why));
             return;
         }
+        // Another timeline or the source view meanwhile (ended by their signals already; checked here too)
+        if (m_project->currentSequence() != m_sequence || m_engine->mode() != Engine::Mode::Timeline) {
+            closeInput(std::move(input), opening->path);
+            abortStart();
+            emit finished(QString(), false, T("Nichts aufgenommen."));
+            return;
+        }
+        m_opening.reset();
         m_capture = std::move(input);
         begin();
     } else if (input) {
@@ -342,9 +399,15 @@ bool VoiceoverRecorder::start(QString* error)
     // The timeline plays along also behind its last clip and on an empty one (open end: black picture, silence, the
     // playhead and the take run on) - recording does not stop at the end
     m_engine->setOpenEnd(true);
-    // The input opens on its thread (30-50 ms, more when the sound server wakes up): the take begins once it runs
-    // (begin), "Gleich …" meanwhile. In this order as before: the input first, then the timeline plays.
+    // The timeline stops where the key was pressed and the take begins there: the input opens on its thread (30-50
+    // ms, seconds when a Bluetooth headset or the sound server wakes up), "Gleich …" meanwhile; once it runs, the
+    // timeline plays (begin) - the input first, then the timeline, as always. A seek or play meanwhile ends it.
+    m_starting = true;
+    m_engine->pause();
+    m_starting = false;
+    m_pressedAt = m_engine->position();
     m_opening = openInput(Voiceover::uniquePath(dir, QDateTime::currentDateTime()));
+    m_openTimeout->start();
     emit recordingChanged(true); // "Gleich …": the take shows once the timeline is heard (tick)
     return true;
 }
@@ -358,7 +421,7 @@ void VoiceoverRecorder::begin()
     m_engine->pause();
     // Right after the take before: start at its end (the playhead stops a frame or two off it)
     const int tolerance = std::max(3, int(std::lround(m_project->frameRate() / 10)));
-    m_from = Voiceover::buttStart(m_project->timeline(), m_track, m_engine->position(), tolerance);
+    m_from = Voiceover::buttStart(m_project->timeline(), m_track, m_pressedAt, tolerance);
     const int preroll = int(std::lround(m_settings.prerollSeconds * m_project->frameRate()));
     m_playFrom = std::max(0, m_from - preroll);
     if (m_playFrom != m_engine->position()) m_engine->seek(int(m_playFrom));
@@ -379,6 +442,7 @@ void VoiceoverRecorder::begin()
 
 void VoiceoverRecorder::abortStart()
 {
+    m_openTimeout->stop();
     dropOpening(m_opening); // its file goes too: nothing was recorded
     m_engine->setOpenEnd(false);
     emit recordingChanged(false);
@@ -433,13 +497,12 @@ bool VoiceoverRecorder::stop(QString* error)
     m_timer->stop();
     if (m_playing) m_engine->pause();
     m_engine->setOpenEnd(false);
-    QString why;
-    const bool written = m_capture->stop(&why);
     const QString path = m_capture->path();
     const int inputLatency = m_capture->latency();
     const int rate = m_capture->rate();
-    const long long frames = m_capture->frames(), dropped = m_capture->dropped();
-    m_capture.reset();
+    QString why;
+    long long frames = 0, dropped = 0;
+    const bool written = closeTake(&why, &frames, &dropped);
     QSettings().remove(kRunningKey);
     if (std::exchange(m_live, false)) emit liveChanged(false);
     emit recordingChanged(false);
@@ -496,8 +559,7 @@ void VoiceoverRecorder::cancel()
     if (!m_capture) return;
     m_stopping = true;
     m_timer->stop();
-    m_capture->stop();
-    m_capture.reset();
+    closeTake();
     QSettings().remove(kRunningKey);
     if (m_playing) m_engine->pause();
     m_engine->setOpenEnd(false);
@@ -505,4 +567,35 @@ void VoiceoverRecorder::cancel()
     if (std::exchange(m_live, false)) emit liveChanged(false);
     emit recordingChanged(false);
     updateMeter();
+}
+
+bool VoiceoverRecorder::closeTake(QString* error, long long* frames, long long* dropped)
+{
+    struct Result {
+        bool written = false;
+        QString why;
+        long long frames = 0, dropped = 0;
+    };
+    auto result = std::make_shared<Result>();
+    std::shared_ptr<Audio::Capture> input(std::move(m_capture));
+    // On the input thread, where it was opened (COM, see InputThread); the file is complete when this returns
+    const bool done = m_inputs->call([input, result] {
+        result->written = input->stop(&result->why);
+        result->frames = input->frames();
+        result->dropped = input->dropped();
+    }, 5000);
+    if (!done) {
+        qWarning("Voiceover: closing the input takes too long (a sound driver hangs)");
+        if (error) *error = T("Der Eingang antwortet nicht.");
+        return false;
+    }
+    if (error) *error = result->why;
+    if (frames) *frames = result->frames;
+    if (dropped) *dropped = result->dropped;
+    return result->written;
+}
+
+void VoiceoverRecorder::setOpenTimeout(int ms)
+{
+    m_openTimeout->setInterval(ms);
 }

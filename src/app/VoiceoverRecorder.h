@@ -61,6 +61,8 @@ public:
     // A take that was running when the app ended without stopping it (a crash, a power cut): its file, once ("" =
     // none). The WAV header follows while recording (Audio::Capture), so the file reads to about where it ended.
     static QString runningTake();
+    // Tests: how long an input may take to open (5 s)
+    void setOpenTimeout(int ms);
     void inputChanged(); // the input setting changed: the armed track's meter listens to the new one
     // The armed track's meter may listen (the timeline is shown). It never does while the app is in the background:
     // an open input keeps a Bluetooth headset in its call profile (poor sound for everything else)
@@ -86,6 +88,8 @@ private:
     void closeInput(std::unique_ptr<Audio::Capture> input, const QString& remove = QString());
     void begin();      // the input runs: the take begins (the timeline plays)
     void abortStart(); // stopped before the input ran: nothing recorded
+    // Stops the take's input on the input thread and waits for it (bounded); false = not written (*error says why)
+    bool closeTake(QString* error = nullptr, long long* frames = nullptr, long long* dropped = nullptr);
     void tick();
     void stopLater(); // stop() from the event loop (once, for this take)
     void followTracks(); // the timeline changed: the armed track and the take's track follow theirs (Voiceover::findTrack)
@@ -103,6 +107,7 @@ private:
     std::shared_ptr<Opening> m_meterOpening; // the meter's input opening
     QTimer* m_timer;
     QTimer* m_meterTimer;
+    QTimer* m_openTimeout; // an input that does not open: the take ends with failed()
     Voiceover::Alignment m_alignment;
     Voiceover::Settings m_settings;
     Voiceover::LiveTake m_take;
@@ -120,6 +125,7 @@ private:
     Voiceover::TrackKey m_trackKey; // which track m_track is
     int m_placedTrack = -1;
     int m_replaced = 0;
+    int m_pressedAt = 0;    // playhead at the key press (the timeline stops there while the input opens)
     int m_from = 0;         // playhead when recording started (the clip starts here)
     double m_playFrom = 0;  // where playback started (pre-roll before m_from)
     bool m_playing = false; // the timeline plays along (open end: also behind its last clip)
