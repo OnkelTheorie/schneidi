@@ -4,7 +4,6 @@
 
 #include "cli/CommandsDetail.h"
 #include "cli/Live.h"
-#include "core/BrandKit.h"
 #include "core/EffectFolders.h"
 #include "core/Project.h"
 #include "core/ProjectFile.h"
@@ -274,26 +273,39 @@ bool allowedFile(const QString& given, const QStringList& own)
 
 } // namespace
 
+namespace {
+
+// The server's own LUTs and transition images (`effects` lists them) are allowed in projects
+QStringList ownFolders()
+{
+    QStringList own{QDir::cleanPath(EffectFolders::root())};
+    if (const QString c = QFileInfo(EffectFolders::root()).canonicalFilePath(); !c.isEmpty()) own << c;
+    return own;
+}
+
+} // namespace
+
+bool projectFileAllowed(const QString& path)
+{
+    if (state().root.isEmpty()) return true;
+    if (!allowedFile(path, ownFolders())) return false;
+    const QString clean = QDir::cleanPath(QDir::fromNativeSeparators(path));
+    return !hidden(clean) && !namesOtherFiles(clean);
+}
+
 void checkProject(const Project& p)
+{
+    if (!state().root.isEmpty()) checkProject(p.data());
+}
+
+void checkProject(const ProjectData& data)
 {
     const State& s = state();
     if (s.root.isEmpty()) return;
-    ProjectData d = p.data();
-    // The server's own global brand kit may name files anywhere: a project kit made from it keeps them (only names
-    // here, using one goes through resolve() like any file)
-    QStringList globalBrand;
-    if (d.brand) {
-        const BrandKit g = Brand::global();
-        globalBrand << g.logo << g.intro << g.outro;
-    }
+    ProjectData d = data; // forEach may change paths, this only reads them
     QStringList files;
-    ProjectRefs::forEach(d, [&](QString& path, ProjectRefs::Kind kind) {
-        if (kind == ProjectRefs::Kind::BrandFile && globalBrand.contains(path)) return;
-        files << path;
-    });
-    // The server's own LUTs and transition images (`effects` lists them) are allowed
-    QStringList own{QDir::cleanPath(EffectFolders::root())};
-    if (const QString c = QFileInfo(EffectFolders::root()).canonicalFilePath(); !c.isEmpty()) own << c;
+    ProjectRefs::forEach(d, [&](QString& path, ProjectRefs::Kind) { files << path; });
+    const QStringList own = ownFolders();
     files.removeDuplicates();
     for (const QString& f : files) {
         if (allowedFile(f, own)) {

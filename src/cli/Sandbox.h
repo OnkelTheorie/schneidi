@@ -11,6 +11,7 @@
 #include <QStringList>
 
 class Project;
+struct ProjectData;
 
 namespace Cli::Sandbox {
 
@@ -50,7 +51,11 @@ QJsonValue mapBack(const QJsonValue& v);
 // A project file names media, LUTs, transition images, files of compositing nodes, texture pictures, brand kit files
 // and watch folders (core/ProjectRefs.h, the one list): refuse any outside the root (or the server's own effects
 // folder), also missing ones (a project put into the work folder must not read other files of the server; the engine
-// reads more than plain paths). Files of the server's own global brand kit are only names and stay allowed.
+// reads more than plain paths). Also the server's own global brand kit's files: a template saved from the project
+// would copy them. No root: nothing to check.
 void checkProject(const Project& p);
+void checkProject(const ProjectData& d);
+// A file a project may name here (what checkProject accepts): always true without a root
+bool projectFileAllowed(const QString& path);
 
 } // namespace Cli::Sandbox

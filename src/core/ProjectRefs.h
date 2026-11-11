@@ -24,8 +24,8 @@ enum class Kind {
     WatchFolder,    // a watched folder (a folder, not a file)
 };
 
-// Calls fn for every path of the project that is set and no built-in resource of the program (EffectFolders::isBuiltin:
-// ":/luts/…", ":/lumas/…"), in all timelines; fn may change the path in place (the opened timeline's copy in
+// Calls fn for every path of the project that is set and no LUT, wipe or look bundled with the program (":/luts/<name>",
+// ":/lumas/<name>"; only for effect, wipe and compositing node files), in all timelines; fn may change the path in place (the opened timeline's copy in
 // `sequences` follows `timeline` afterwards). Not paths: font names, the watch log (a history of names, never opened),
 // the render queue's targets (written by the app's Deliver page only).
 void forEach(ProjectData& d, const std::function<void(QString& path, Kind kind)>& fn);

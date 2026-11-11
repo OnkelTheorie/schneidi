@@ -286,6 +286,9 @@ QJsonObject cmdShort(const QJsonObject& a, Context& ctx); // CommandsShort.cpp
 QJsonObject cmdBrand(const QJsonObject& a, Context& ctx); // CommandsBrand.cpp
 // The kit fields of `brand set` (logo, logo_corner, logo_size, colors, fonts, intro, outro) in `a` over `k`
 BrandKit brandWithFields(BrandKit k, const QJsonObject& a); // CommandsBrand.cpp
+// The kit a project's own kit starts from (`p.effectiveBrand()`, maybe the global one): in a work folder without the
+// files a project may not name there (cli/Sandbox.h projectFileAllowed) - the global kit's may lie anywhere
+BrandKit projectKitBase(BrandKit k); // CommandsBrand.cpp
 // Templates (CommandsTemplate.cpp): `templates` (start templates of CommandsProject.cpp + content templates), filling
 // one into a new project (reusable: render N times), a placeholder as `info`/`templates` show it, the edit ops'
 // values and context, the beats a live fill needs measured here

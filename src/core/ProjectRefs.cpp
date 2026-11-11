@@ -9,10 +9,25 @@
 
 namespace ProjectRefs {
 
+namespace {
+
+// A LUT, wipe or look bundled with the program: a built-in prefix and one plain name after it (":/luts/edit.cube",
+// ":/lumas/uhr"), never a way out of the resources (":/luts/../../home/x") and never for media or brand files
+bool bundled(const QString& path, Kind kind)
+{
+    if (kind != Kind::EffectFile && kind != Kind::TransitionWipe && kind != Kind::CompFile) return false;
+    if (!EffectFolders::isBuiltin(path)) return false;
+    const QStringList parts = path.mid(2).split('/');
+    return parts.size() == 2 && !parts[1].isEmpty() && parts[1] != QLatin1String(".") && parts[1] != QLatin1String("..")
+           && !path.contains('\\');
+}
+
+} // namespace
+
 void forEach(ProjectData& d, const std::function<void(QString& path, Kind kind)>& fn)
 {
     const auto file = [&](QString& path, Kind kind) {
-        if (!path.isEmpty() && !EffectFolders::isBuiltin(path)) fn(path, kind);
+        if (!path.isEmpty() && !bundled(path, kind)) fn(path, kind);
     };
     const auto scan = [&](Timeline& tl) {
         for (TrackKind k : {TrackKind::Video, TrackKind::Audio})

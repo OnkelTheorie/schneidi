@@ -195,7 +195,7 @@ QJsonObject applyBrand(Editor& editor, Project& p, const QJsonValue& brand)
                 for (const QJsonValue& v : fields[key].toArray()) list << v.toString();
                 fields[key] = list.join(',');
             }
-        editor.setProjectBrand(brandWithFields(p.effectiveBrand(), fields));
+        editor.setProjectBrand(brandWithFields(projectKitBase(p.effectiveBrand()), fields));
         out["kit"] = "own";
         out["applied"] = true;
     } else {
@@ -823,12 +823,22 @@ QJsonObject fillTemplateInto(const QJsonObject& a, Context& ctx, FillBatch* batc
         if (!TemplateLibrary::copyTemplateFiles(result, t.dir, target, &copies, &err, batch ? &batch->copies : nullptr))
             fail("SAVE_FAILED", err);
     }
-    const QString backup = exists ? ProjectFile::backup(out) : QString();
-    QString error;
-    if (!ProjectFile::save(result, out, &error)) {
+    const auto dropCopies = [&] {
         for (const QString& f : std::as_const(copies.written)) QFile::remove(f);
         if (batch)
             for (const QString& f : std::as_const(copies.written)) batch->copies.remove(copies.moved.key(f));
+    };
+    // In a work folder only files there (a template file left out of the copies still points into the library)
+    try {
+        Sandbox::checkProject(result);
+    } catch (const Error&) {
+        dropCopies();
+        throw;
+    }
+    const QString backup = exists ? ProjectFile::backup(out) : QString();
+    QString error;
+    if (!ProjectFile::save(result, out, &error)) {
+        dropCopies();
         fail("SAVE_FAILED", error);
     }
     lock.reset();

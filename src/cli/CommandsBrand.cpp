@@ -3,6 +3,7 @@
 // them, sets fields, copies the kit into the titles that reference it (apply), places the logo or intro/outro. What
 // changes a project runs in the app when it has the project open (one undo step), else on the file (backup first).
 #include "cli/CommandsDetail.h"
+#include "cli/Sandbox.h"
 
 #include "core/BrandKit.h"
 #include "core/Editor.h"
@@ -61,6 +62,13 @@ QStringList listOf(const QString& s)
 }
 
 } // namespace
+
+BrandKit projectKitBase(BrandKit k)
+{
+    for (QString* file : {&k.logo, &k.intro, &k.outro})
+        if (!file->isEmpty() && !Sandbox::projectFileAllowed(*file)) file->clear();
+    return k;
+}
 
 // The fields given in `a` over `k`; an empty string clears a file/list
 BrandKit brandWithFields(BrandKit k, const QJsonObject& a)
@@ -138,7 +146,7 @@ QJsonObject cmdBrand(const QJsonObject& a, Context&)
     Session s(project, writes ? Session::Access::Write : Session::Access::Read);
     Project& p = s.project;
     if (action == "set" && !global) {
-        s.editor.setProjectBrand(brandWithFields(p.effectiveBrand(), a)); // starts from what applies now
+        s.editor.setProjectBrand(brandWithFields(projectKitBase(p.effectiveBrand()), a)); // starts from what applies now
     } else if (action == "unset") {
         if (!p.brand()) s.notes << "the project has no own kit: nothing to unset";
         s.editor.setProjectBrand(std::nullopt);

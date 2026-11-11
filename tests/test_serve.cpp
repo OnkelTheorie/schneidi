@@ -177,6 +177,12 @@ void sandboxRules(const QString& base)
         CHECK_EQ(node(Comp::kMediaType, Comp::kPathKey, in), QString("none"));
         CHECK_EQ(node(Comp::kGradeType, Comp::kLutKey, out), QString("OUTSIDE_ROOT"));
         CHECK_EQ(node(Comp::kGradeType, Comp::kLutKey, ":/luts/edit.cube"), QString("none")); // built-in
+        // Only a real built-in name: no way out of the resources, never for media
+        const QString escape = ":/luts/../../.." + QDir(base).filePath("outside/secret.mp4");
+        CHECK_EQ(node(Comp::kGradeType, Comp::kLutKey, escape), QString("OUTSIDE_ROOT"));
+        CHECK_EQ(node(Comp::kMediaType, Comp::kPathKey, escape), QString("OUTSIDE_ROOT"));
+        CHECK_EQ(check([&](ProjectData&, Clip& c) { c.transInStyle.luma = ":/lumas/../x"; }), QString("OUTSIDE_ROOT"));
+        CHECK_EQ(check([&](ProjectData& d, Clip&) { d.brand.emplace().logo = ":/luts/edit.cube"; }), QString("OUTSIDE_ROOT"));
         CHECK_EQ(node(Comp::kTextType, Comp::kTextureKey, out), QString("OUTSIDE_ROOT"));
         CHECK_EQ(node(Comp::kTextType, Comp::kTextureKey, root + "/.hidden/key.png"), QString("HIDDEN"));
         CHECK_EQ(node(Comp::kTextType, "font", "/usr/share/fonts/x.ttf"), QString("none")); // a font name, no file
@@ -198,16 +204,67 @@ void sandboxRules(const QString& base)
             CHECK_EQ(check([&](ProjectData& d, Clip&) { d.brand.emplace().*field = out; }), QString("OUTSIDE_ROOT"));
             CHECK_EQ(check([&](ProjectData& d, Clip&) { d.brand.emplace().*field = in; }), QString("none"));
         }
-        // The server's own global kit may name files anywhere: a project kit made from it keeps them (only names: using
-        // one goes through the work folder rules like any file)
+        // The server's own global kit is no exception: a project kit naming its files outside is refused (a template
+        // saved from the project would copy them in); a project kit set from it (brand set global:false) leaves them out,
+        // keeps those inside
         BrandKit global;
         global.logo = out;
+        global.intro = in;
         CHECK(Brand::setGlobal(global));
-        CHECK_EQ(check([&](ProjectData& d, Clip&) { d.brand.emplace().logo = out; }), QString("none"));
-        const QString secret = QDir(base).filePath("outside/secret.mp4"); // not a file of the global kit
-        CHECK_EQ(check([&](ProjectData& d, Clip&) { d.brand.emplace().intro = secret; }), QString("OUTSIDE_ROOT"));
-        CHECK(Brand::setGlobal({}));
         CHECK_EQ(check([&](ProjectData& d, Clip&) { d.brand.emplace().logo = out; }), QString("OUTSIDE_ROOT"));
+        {
+            ProjectData d;
+            d.timeline = emptyTimeline();
+            QString err;
+            CHECK(ProjectFile::save(d, root + "/brand.schneidi", &err));
+            const Cli::Command* brand = Cli::find("brand");
+            Cli::Context ctx;
+            CHECK_EQ(codeOf([&] {
+                         brand->run(Cli::normalize(*brand, {{"action", "set"}, {"global", false},
+                                                            {"project", "brand.schneidi"}, {"colors", "#ff0000"}}),
+                                    ctx);
+                     }),
+                     QString("none"));
+            ProjectData saved;
+            if (CHECK(ProjectFile::load(root + "/brand.schneidi", &saved, &err)) && CHECK(saved.brand.has_value())) {
+                CHECK(saved.brand->logo.isEmpty());
+                CHECK_EQ(saved.brand->intro, in);
+                CHECK_EQ(saved.brand->colors.size(), qsizetype(1));
+            }
+            CHECK_EQ(Brand::global().logo, out); // the server's own kit stays as it is
+        }
+        CHECK(Brand::setGlobal({}));
+        // Commands that save a project without opening one check it too: `restore` of a backup naming a file outside,
+        // `templates fill` without copying the template's files (they stay in the template library)
+        {
+            const auto run = [](const QString& name, const QJsonObject& args) {
+                const Cli::Command* cmd = Cli::find(name);
+                Cli::Context ctx;
+                return codeOf([&] { cmd->run(Cli::normalize(*cmd, args), ctx); });
+            };
+            ProjectData d;
+            d.timeline = emptyTimeline();
+            Clip c;
+            c.id = 1;
+            c.kind = ClipKind::Title;
+            c.out = 24;
+            c.title.look.texture = out;
+            d.timeline.video[0].clips << c;
+            QString err;
+            const QString file = root + "/restore.schneidi";
+            CHECK(ProjectFile::save(d, file, &err));
+            CHECK(!ProjectFile::backup(file).isEmpty());
+            d.timeline.video[0].clips[0].title.look.texture = in;
+            CHECK(ProjectFile::save(d, file, &err));
+            CHECK_EQ(run("restore", {{"project", "restore.schneidi"}}), QString("OUTSIDE_ROOT"));
+            ProjectData now;
+            if (CHECK(ProjectFile::load(file, &now, &err)))
+                CHECK_EQ(now.timeline.video[0].clips[0].title.look.texture, in); // nothing restored
+            CHECK_EQ(run("templates", {{"fill", "intro-outro"}, {"out_project", "filled.schneidi"}, {"copy_media", false}}),
+                     QString("OUTSIDE_ROOT"));
+            CHECK(!QFileInfo::exists(root + "/filled.schneidi"));
+            CHECK_EQ(run("templates", {{"fill", "intro-outro"}, {"out_project", "filled.schneidi"}}), QString("none"));
+        }
         // In a timeline that is not the open one too
         CHECK_EQ(check([&](ProjectData& d, Clip&) {
                      Sequence open, other;
