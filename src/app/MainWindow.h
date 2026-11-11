@@ -226,6 +226,10 @@ public:
     // it, on the screen the window is on (ui/FullScreenViewer); the playback keys work there, Esc or the same key leave.
     // Playback goes on across the switch.
     void setViewerFullScreen(bool on);
+    // The whole program full screen (Workspace › Full-Screen App, Ctrl+F11; not the viewer's full screen above): the
+    // window without its frame and the desktop's bars, menus and panels as they are. Off (the same key or menu entry,
+    // not Esc - Esc has its own jobs in the editor) brings back the state before: maximized or normal.
+    void setAppFullScreen(bool on);
     class FullScreenViewer* fullScreenViewer() const; // nullptr while it is off
     // Preview on a second monitor (Workspace menu, Ctrl+Shift+F; ui/SecondScreen, MainWindowLayout.cpp): the key moves
     // it to the next monitor other than the one the main window is on, after the last one back into the window (two
@@ -250,11 +254,13 @@ public:
 protected:
     bool eventFilter(QObject* obj, QEvent* event) override;
     void closeEvent(QCloseEvent* event) override;
+    void changeEvent(QEvent* event) override; // window state: the full-screen action follows
 
 private:
     void buildLayout();
     QWidget* buildTopBar();
     QWidget* buildPageBar();
+    void showStatusText(const QString& text); // in the page bar: a status message, empty = the name and version
     void updatePageButtons(); // hidden pages' buttons go, the current page's button always stays
     void updateLeftColumn(); // show the left column only if Media Pool or Effects is on
     void updateRightColumn(); // the Inspector above the Mixer in their own column while the Mixer is on
@@ -462,6 +468,8 @@ private:
     QSplitter* m_colorBottom = nullptr; // color wheels | scopes
     QHash<QSplitter*, QList<int>> m_defaultSizes;
     QButtonGroup* m_pageButtons = nullptr;
+    class ElidedLabel* m_statusText = nullptr; // left in the page bar: status messages (the status bar is hidden)
+    class QHBoxLayout* m_pageBarRight = nullptr; // right in the page bar: background work
     PageVisibility m_pageVisibility{{"media", "edit", "comp", "color", "deliver"}}; // bar order
     QToolButton* m_poolToggle = nullptr;
     QToolButton* m_effectsToggle = nullptr;
@@ -479,6 +487,8 @@ private:
     QAction* m_largeAction = nullptr;
     class QShortcut* m_largeEscape = nullptr; // Esc ends the large viewer (only enabled while it is on)
     QAction* m_fullScreenAction = nullptr;
+    QAction* m_appFullScreenAction = nullptr;
+    bool m_maximizedBeforeFullScreen = true; // the window state setAppFullScreen(false) brings back
     QPointer<class FullScreenViewer> m_fullScreen; // while the full-screen viewer is on
     QPointer<QWidget> m_focusBeforeFullScreen;      // gets the keyboard focus back when it ends
     // Second monitor (MainWindowLayout.cpp)

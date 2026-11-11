@@ -1199,7 +1199,7 @@ void MainWindow::exportSubtitlesDialog()
 void MainWindow::setupBackgroundJobs()
 {
     m_backgroundJobs = new BackgroundJobs;
-    statusBar()->addPermanentWidget(m_backgroundJobs);
+    m_pageBarRight->addWidget(m_backgroundJobs); // right in the page bar (the status bar is hidden)
     ProxyManager* proxies = m_engine->proxies();
     ProxyProgress* progress = ProxyProgress::of(proxies);
     connect(progress, &ProxyProgress::changed, m_backgroundJobs, [this, proxies, progress] {

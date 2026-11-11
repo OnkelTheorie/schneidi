@@ -793,6 +793,10 @@ void MainWindow::buildActions()
                                     [this] { setViewerFullScreen(m_fullScreenAction->isChecked()); });
     m_fullScreenAction->setCheckable(true);
     m_viewer->addViewAction(m_fullScreenAction, Viewer::ViewIcon::FullScreen);
+    // The whole program full screen (browsers: F11 - here Replace like in other editors, so Ctrl+F11; rebindable)
+    m_appFullScreenAction = makeAction(workspace, "app_full_screen", T("Programm im Vollbild"), QKeySequence("Ctrl+F11"),
+                                       [this] { setAppFullScreen(m_appFullScreenAction->isChecked()); });
+    m_appFullScreenAction->setCheckable(true);
     // Preview on a second monitor (ui/SecondScreen): the key moves it on to the next monitor, after the last one back
     m_secondScreenAction = makeAction(workspace, "viewer_second_screen", T("Vorschau auf zweitem Monitor"),
                                       QKeySequence("Ctrl+Shift+F"), [this] {

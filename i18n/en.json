@@ -2962,5 +2962,6 @@
  " und ": " and ",
  "Dann kann Claude deine Videos mit schneidi schneiden: Es bekommt die schneidi-Werkzeuge (MCP) und eine Schnitt-Anleitung (Skill). Geht auch später unter Einstellungen › KI.": "Claude can then edit your videos with schneidi: it gets the schneidi tools (MCP) and an editing guide (skill). You can also do this later in Settings › AI.",
  "Verbunden.": "Connected.",
- "Jetzt verbinden": "Connect now"
+ "Jetzt verbinden": "Connect now",
+ "Programm im Vollbild": "Full-Screen App"
 }

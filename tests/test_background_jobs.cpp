@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Background work at the bottom right of the status bar (ui/BackgroundJobs) and the proxies' batch progress
+// Background work at the bottom right of the page bar (ui/BackgroundJobs) and the proxies' batch progress
 // (ui/ProxyProgress).
 // ProxyBatch on made-up queues: count, overall fraction (finished files plus the running one's share), files that
 // leave without a proxy drop out of the batch, a new batch starts at zero. BackgroundJobs alone: shown while a job
@@ -7,7 +7,7 @@
 // for the hold time and then the indicator hides. In the app with tiny synthetic clips and the real ProxyManager
 // (ffmpeg): the indicator shows "Proxy 1/3 – …" while pending, the tooltip names the waiting files, the Media Pool's
 // thin bar shows too; after the last file "Proxies done", then it hides; ✕ cancels the queue.
-// BACKGROUND_JOBS_DUMP=<folder>: pictures of the status bar and the pool header; BACKGROUND_JOBS_LANG=ru (another
+// BACKGROUND_JOBS_DUMP=<folder>: pictures of the page bar and the pool header; BACKGROUND_JOBS_LANG=ru (another
 // language), BACKGROUND_JOBS_FONT=1.25 (larger font) to check that the texts fit.
 
 #include "check.h"
@@ -171,7 +171,8 @@ void testApp(MainWindow& w, Engine& engine, const QString& dir)
     auto* jobs = w.findChild<BackgroundJobs*>();
     auto* pool = w.findChild<MediaPool*>();
     if (!CHECK(jobs && pool)) return;
-    CHECK(w.statusBar()->isAncestorOf(jobs));
+    QWidget* bar = w.findChild<QWidget*>("PageBar"); // the bottom row (the status bar itself is hidden)
+    if (!CHECK(bar && bar->isAncestorOf(jobs))) return;
     CHECK(jobs->isHidden());
     jobs->setHoldMs(300);
     ProxyManager* proxies = engine.proxies();
@@ -195,7 +196,7 @@ void testApp(MainWindow& w, Engine& engine, const QString& dir)
     CHECK_EQ(jobs->percent(), 0);
     CHECK(!poolBar->isHidden());
     settle();
-    dump(w.statusBar(), "statusbar-running");
+    dump(bar, "statusbar-running");
     // Counts up file by file, never backwards
     int lastPercent = 0;
     bool sawSecond = false;
@@ -211,7 +212,7 @@ void testApp(MainWindow& w, Engine& engine, const QString& dir)
             sawSecond = true;
             CHECK(jobs->percent() >= 33);
             CHECK(poolBar->value() >= 333);
-            dump(w.statusBar(), "statusbar-second");
+            dump(bar, "statusbar-second");
             dump(pool, "pool-second", QRect(0, 0, pool->width(), 60));
         }
     }
@@ -223,7 +224,7 @@ void testApp(MainWindow& w, Engine& engine, const QString& dir)
     CHECK_EQ(jobs->text(), T("Proxys fertig"));
     CHECK(poolBar->isHidden());
     settle();
-    dump(w.statusBar(), "statusbar-done");
+    dump(bar, "statusbar-done");
     QTest::qWait(450);
     CHECK(jobs->isHidden());
 
