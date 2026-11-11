@@ -16,6 +16,7 @@
 #include "check.h"
 
 #include <QDateTime>
+#include <QDirIterator>
 #include <QElapsedTimer>
 #include <QEventLoop>
 #include <QGuiApplication>
@@ -488,6 +489,35 @@ int main(int argc, char* argv[])
             CHECK_EQ(http("POST", proxied.base + "/mcp", R"({"jsonrpc":"2.0","id":1,"method":"ping"})",
                           proxied.headers() << QPair<QByteArray, QByteArray>{"Host", "edit.example"}).status, 401);
             CHECK_EQ(http("GET", proxied.base + "/files/clip.mp4").status, 401);
+        }
+    }
+    // The generated token goes into a new file that is owner-only before the token is in it: one that was readable by
+    // others (and opened by them) never shows it (the token was written into the old file, then made owner-only)
+    {
+        const QString data = tmp.filePath("s0t");
+        {
+            Server first;
+            CHECK(first.start(root, data, {"--public-url", "https://edit.example"}, {}));
+        }
+        QString tokenPath;
+        QDirIterator it(data, {"serve-token"}, QDir::Files, QDirIterator::Subdirectories);
+        if (it.hasNext()) tokenPath = it.next();
+        if (CHECK(!tokenPath.isEmpty())) {
+            const auto others = QFile::ReadGroup | QFile::WriteGroup | QFile::ReadOther | QFile::WriteOther;
+            CHECK(QFile::resize(tokenPath, 0)); // empty: a new token is made
+            CHECK(QFile::setPermissions(tokenPath, QFile::ReadOwner | QFile::WriteOwner | QFile::ReadGroup | QFile::ReadOther));
+#ifndef Q_OS_WIN // Windows cannot replace a file another program has open
+            QFile before(tokenPath);
+            CHECK(before.open(QIODevice::ReadOnly));
+#endif
+            Server second;
+            CHECK(second.start(root, data, {"--public-url", "https://edit.example"}, {}));
+#ifndef Q_OS_WIN
+            CHECK(before.readAll().isEmpty());
+#endif
+            QFile now(tokenPath);
+            CHECK(now.open(QIODevice::ReadOnly) && now.readLine().trimmed().size() >= 16);
+            CHECK(!(QFileInfo(tokenPath).permissions() & others));
         }
     }
     // ... and its clients are elsewhere although it listens on 127.0.0.1: `upload` must not fetch from this computer

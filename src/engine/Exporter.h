@@ -133,6 +133,9 @@ public:
     // Does the timeline (also nested sequences) read this file? Then the export must not overwrite it
     // (source and output destroyed) – refuse like DaVinci instead of asking.
     static bool readsFile(const Timeline& tl, const QString& path);
+    // The first file an export would write that the timeline reads (empty: none): `path` and, with a subtitle path,
+    // every subtitle file of Subtitles::srtFiles. Shared by the export and the CLI's subtitle-only render.
+    static QString overwrittenSource(const Timeline& tl, const QString& path, const QString& subtitlePath = {});
     // Do both paths point to the same existing file? (Windows: case does not matter)
     static bool sameFile(const QString& a, const QString& b);
     // The lossless intermediate of a GIF export with this part id (ExportSettings::partId), in the temp folder

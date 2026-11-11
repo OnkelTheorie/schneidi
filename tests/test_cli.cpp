@@ -249,6 +249,24 @@ int runTests(int argc, char** argv)
             message = e.message;
         }
         CHECK(message.contains("'file'") && message.contains("source") && message.contains("sheet"));
+        // A whole number given with a fraction (audio_stream 1.5) or out of range was silently 0 (the first stream):
+        // refused like "1.5" as text; 2.0 and 1e3 are whole numbers
+        const Cli::Command* overview = Cli::find("overview");
+        const auto integerCode = [&](const QJsonValue& v) {
+            try {
+                return QString::number(Cli::normalize(*overview, {{"file", g_path}, {"audio_stream", v}})["audio_stream"].toInt());
+            } catch (const Cli::Error& e) {
+                return e.code;
+            }
+        };
+        CHECK_EQ(integerCode(1.5), QString("BAD_ARGUMENT"));
+        CHECK_EQ(integerCode("1.5"), QString("BAD_ARGUMENT"));
+        CHECK_EQ(integerCode(-0.5), QString("BAD_ARGUMENT"));
+        CHECK_EQ(integerCode(3e9), QString("BAD_ARGUMENT"));
+        CHECK_EQ(integerCode(2.0), QString("2"));
+        CHECK_EQ(integerCode(1e3), QString("1000"));
+        CHECK_EQ(integerCode(-1), QString("-1"));
+        CHECK_EQ(integerCode("2"), QString("2"));
         // "--target_lufs nan" reads as a number but is none: refused (check left out its loudness test silently)
         const Cli::Command* check = Cli::find("check");
         for (const char* bad : {"nan", "inf", "-inf"}) {
@@ -1933,6 +1951,64 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
             CHECK(stillLength > 0);
             CHECK_EQ(clips[2]["end"].toInt() - clips[2]["start"].toInt(), stillLength);
         }
+    }
+    // A still with 2 billion frames of position and length: the sums overflowed int (in + duration, at + length). Refused
+    // beyond 2^30, the most a project file keeps (a longer clip came back cut on loading); the project stays as it was
+    {
+        const QString still = dir.filePath("bg.png");
+        const QString proj = dir.filePath("still.schneidi");
+        const QByteArray before = [&] { QFile f(proj); return f.open(QIODevice::ReadOnly) ? f.readAll() : QByteArray(); }();
+        CHECK(!before.isEmpty());
+        for (const QString& ops : {QString(R"([{"op":"place","media":"%1","at":2000000000,"duration":2000000000,"track":"V1"}])"),
+                                   QString(R"([{"op":"place","media":"%1","at":0,"in":2000000000,"duration":2000000000,"track":"V1"}])"),
+                                   QString(R"([{"op":"place","media":"%1","at":2000000000,"duration":10,"track":"V1"}])"),
+                                   QString(R"([{"op":"append","media":"%1","duration":2000000000}])"),
+                                   QString(R"([{"op":"keep","media":"%1","at":1073741800,"ranges":[[0,10],[0,100]]}])"),
+                                   // longer than 2^29 frames (a project file keeps no longer clip)
+                                   QString(R"([{"op":"place","media":"%1","at":0,"duration":536870913,"track":"V3"}])"),
+                                   // a still's in lies inside its few frames: in 600 million with 24 frames is a
+                                   // clip of 600 million frames
+                                   QString(R"([{"op":"place","media":"%1","at":0,"in":600000000,"duration":24,"track":"V3"}])")}) {
+            CHECK_EQ(errorOf("edit", {{"project", proj}, {"ops", ops.arg(still)}}), QString("BAD_ARGUMENT"));
+            QFile f(proj);
+            CHECK(f.open(QIODevice::ReadOnly) && f.readAll() == before);
+        }
+        // Up to the limit it works and loads back the same
+        const QJsonObject r = run("edit", {{"project", proj}, {"ops", QString(R"([{"op":"place","media":"%1","at":1073741800,"duration":24,"track":"V2"}])").arg(still)}});
+        const QJsonArray placed = r["timeline"]["tracks"][1]["clips"].toArray();
+        if (CHECK_EQ(placed.size(), qsizetype(1))) {
+            CHECK_EQ(placed[0]["start"].toInt(), 1073741800);
+            CHECK_EQ(placed[0]["end"].toInt(), 1073741824);
+            CHECK_EQ(run("info", {{"project", proj}})["timeline"]["tracks"][1]["clips"][0]["end"].toInt(), 1073741824);
+        }
+        run("edit", {{"project", proj}, {"ops", QString(R"([{"op":"place","media":"%1","at":0,"duration":536870912,"track":"V3"}])").arg(still)}});
+        CHECK_EQ(run("info", {{"project", proj}})["timeline"]["tracks"][2]["clips"][0]["end"].toInt(), 536870912);
+    }
+    // Subtitles only (format srt/vtt): the same checks as a video render - the extension must fit, and no subtitle
+    // file may replace a source file of the project (it wrote SRT text over the clip with overwrite)
+    {
+        const QString clip = Check::makeMedia(dir.filePath("subsrc.mp4"), {"-f", "lavfi", "-i", "testsrc2=s=64x36:r=25:d=1",
+                                                                           "-c:v", "libx264", "-pix_fmt", "yuv420p"});
+        const QString proj = dir.filePath("subs.schneidi");
+        run("new", {{"project", proj}, {"fps", 25}, {"width", 320}, {"height", 180}, {"overwrite", true}});
+        run("edit", {{"project", proj}, {"ops", QString(R"([{"op":"append","media":"%1"},
+            {"op":"subtitle","text":"Hi","at":0,"duration":10}])").arg(clip)}});
+        const qint64 size = QFileInfo(clip).size();
+        CHECK_EQ(errorOf("render", {{"project", proj}, {"out", clip}, {"format", "srt"}, {"overwrite", true}}),
+                 QString("BAD_ARGUMENT"));
+        CHECK_EQ(errorOf("render", {{"project", proj}, {"out", clip}, {"format", "vtt"}, {"overwrite", true}}),
+                 QString("BAD_ARGUMENT"));
+        CHECK_EQ(QFileInfo(clip).size(), size); // the clip is untouched
+        // The extension must fit the format: SRT text in "x.mp4", WebVTT in "x.srt" are refused
+        CHECK(messageOf("render", {{"project", proj}, {"out", dir.filePath("subx.mp4")}, {"format", "srt"}}).contains(".srt"));
+        CHECK(!QFileInfo::exists(dir.filePath("subx.mp4")));
+        CHECK_EQ(errorOf("render", {{"project", proj}, {"out", dir.filePath("subx.srt")}, {"format", "vtt"}}),
+                 QString("BAD_ARGUMENT"));
+        CHECK(!QFileInfo::exists(dir.filePath("subx.srt")));
+        // Fitting names still work (upper case too), a missing extension is added
+        CHECK_EQ(run("render", {{"project", proj}, {"out", dir.filePath("subok.VTT")}, {"format", "vtt"}})["cues"].toInt(), 1);
+        CHECK(run("render", {{"project", proj}, {"out", dir.filePath("subok2")}, {"format", "srt"}})["out"].toString()
+                  .endsWith("subok2.srt"));
     }
     // remove_track: names are those of the timeline when the op runs; several in one op are named before any goes;
     // the error names the tracks there are (AI run 2026-10-28 removed A1-A3, then "A5" failed without saying why)

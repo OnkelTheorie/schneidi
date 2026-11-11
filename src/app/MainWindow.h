@@ -354,6 +354,7 @@ private:
     // Every running instance has its own backup slot (QLockFile) so that two windows do not
     // overwrite or delete each other's backup; slot 1 = "autosave.schneidi" as before
     QString autosavePath();
+    bool adoptOrphanedAutosave(); // takes over a free slot that holds a backup (true = this window's slot now)
     QString autosaveKey() const; // QSettings key: which project the backup belongs to
     void createCompoundClip(); // ask for the name like DaVinci
     // Comp page (MainWindowComp.cpp)

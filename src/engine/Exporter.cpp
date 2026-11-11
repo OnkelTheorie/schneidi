@@ -209,6 +209,16 @@ bool Exporter::readsFile(const Timeline& tl, const QString& path)
     return false;
 }
 
+QString Exporter::overwrittenSource(const Timeline& tl, const QString& path, const QString& subtitlePath)
+{
+    QStringList targets{path};
+    if (!subtitlePath.isEmpty())
+        for (const Subtitles::SrtFile& srt : Subtitles::srtFiles(tl, subtitlePath)) targets << srt.path;
+    for (const QString& target : std::as_const(targets))
+        if (!target.isEmpty() && readsFile(tl, target)) return target;
+    return {};
+}
+
 bool Exporter::anyRunning()
 {
     return g_running > 0;
@@ -361,15 +371,11 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
         if (error) *error = end <= 0 ? T("Die Timeline ist leer.") : T("Der In/Out-Bereich enthält nichts.");
         return false;
     }
-    QStringList targets{s.path};
-    if (!s.subtitlePath.isEmpty())
-        for (const Subtitles::SrtFile& srt : Subtitles::srtFiles(tl, s.subtitlePath)) targets << srt.path;
-    for (const QString& target : std::as_const(targets))
-        if (!target.isEmpty() && readsFile(tl, target)) {
-            if (error) *error = T("%1 wird in der Timeline verwendet und kann nicht überschrieben werden.")
-                                    .arg(QFileInfo(target).fileName());
-            return false;
-        }
+    if (const QString target = overwrittenSource(tl, s.path, s.subtitlePath); !target.isEmpty()) {
+        if (error) *error = T("%1 wird in der Timeline verwendet und kann nicht überschrieben werden.")
+                                .arg(QFileInfo(target).fileName());
+        return false;
+    }
     // Stabilization needs its analysis pass: run what is missing first, never export unstabilized silently
     if (!std::exchange(m_analysisDone, false) && runAnalyses(tl, s)) return true;
 

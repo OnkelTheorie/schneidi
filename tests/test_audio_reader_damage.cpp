@@ -17,6 +17,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QTemporaryDir>
+#include <QThread>
 
 extern "C" {
 #include <libavformat/avformat.h>
@@ -94,28 +95,70 @@ bool writeOutlier(const QString& in, const QString& out, int which, double ahead
 }
 
 // The file's data vanishes while it is open (disk unplugged; on Linux an open file keeps its data when deleted, emptying
-// it makes reads fail like a gone disk): jumps never crash (what is still buffered may sound). The crash of a failed
-// fresh demuxer (fmt == nullptr after a failed reopen) needs a demuxer whose seek fails – none of FFmpeg's common ones
-// did here, so that path is guarded in the code without a file to reach it.
+// it makes reads fail like a gone disk): jumps never crash (what is still buffered may sound). Ogg (FLAC in .oga) has a
+// seek that fails on the emptied file: the fresh demuxer fails too (fmt == nullptr), and the next jump back in the same
+// clip read fmt->start_time and crashed (lost at 5 s, then back to 1 s)
 void testVanished(const QString& dir)
 {
     std::printf("-- file vanishes while open\n");
-    for (const char* ext : {"mkv", "m4a", "wav"}) {
-        const QString path = Check::makeMedia(dir + "/vanish." + ext, {"-f", "lavfi", "-i", "sine=f=440:d=6"});
-        if (!CHECK(!path.isEmpty())) continue;
-        auto r = Audio::Reader::open(path);
-        if (!CHECK(r)) continue;
-        std::vector<float> l(4800), rr(4800);
-        float* out[] = {l.data(), rr.data()};
-        r->read(3 * kRate, 4800, out);
-        CHECK(peak(l, 0, l.size()) > 0.1);
-        if (!CHECK(QFile::resize(path, 0))) continue;
-        for (int64_t p : {r->info().start, int64_t(5 * kRate), int64_t(kRate), int64_t(0), int64_t(4 * kRate)}) {
-            std::fill(l.begin(), l.end(), 7.f);
-            r->read(p, 4800, out);
-            CHECK(peak(l, 0, l.size()) < 1.0); // filled: sound still buffered or silence
+    const std::vector<std::vector<int64_t>> orders{{0, 5 * kRate, kRate, 0, 4 * kRate}, {5 * kRate, kRate, 0, 4 * kRate}};
+    for (const char* ext : {"mkv", "m4a", "wav", "oga"}) {
+        for (size_t o = 0; o < orders.size(); ++o) {
+            const QString path = Check::makeMedia(QString("%1/vanish%2.%3").arg(dir).arg(o).arg(ext),
+                                                  {"-f", "lavfi", "-i", "sine=f=440:d=6"});
+            if (!CHECK(!path.isEmpty())) continue;
+            auto r = Audio::Reader::open(path);
+            if (!CHECK(r)) continue;
+            std::vector<float> l(4800), rr(4800);
+            float* out[] = {l.data(), rr.data()};
+            r->read(3 * kRate, 4800, out);
+            CHECK(peak(l, 0, l.size()) > 0.1);
+            if (!CHECK(QFile::resize(path, 0))) continue;
+            bool ok = true;
+            for (int64_t p : orders[o]) {
+                std::fill(l.begin(), l.end(), 7.f);
+                ok = r->read(std::max(p, r->info().start), 4800, out);
+                CHECK(peak(l, 0, l.size()) < 1.0); // filled: sound still buffered or silence
+            }
+            if (r->stats().reopens > 0) CHECK(!ok); // the fresh demuxer failed: the caller hears of it (clip offline)
+            std::printf("       .%s order %zu: %d seeks, %d fresh demuxers\n", ext, o, r->stats().seeks, r->stats().reopens);
         }
     }
+}
+
+// After the lost file could not be opened again, reading on (a reversed clip reads backwards block by block, each block a
+// jump back) must not try to open it for every block - on a gone network share or USB disk each attempt may block the
+// mixer. It is tried again after a while, and once it is back the clip sounds and reports no error any more.
+void testLostRetry(const QString& dir)
+{
+    std::printf("-- lost file: retries spaced out, back again\n");
+    const QString path = Check::makeMedia(dir + "/retry.oga", {"-f", "lavfi", "-i", "sine=f=440:d=6"});
+    const QString saved = dir + "/retry-saved.oga";
+    if (!CHECK(!path.isEmpty() && QFile::copy(path, saved))) return;
+    auto r = Audio::Reader::open(path);
+    if (!CHECK(r)) return;
+    std::vector<float> l(480), rr(480);
+    float* out[] = {l.data(), rr.data()};
+    r->read(3 * kRate, 480, out);
+    if (!CHECK(QFile::resize(path, 0))) return;
+    CHECK(!r->read(int64_t(5.5 * kRate), 480, out)); // further than reading on: a jump, which fails
+    const int tries = r->stats().reopens;
+    CHECK(tries >= 1);
+    bool anyOk = false;
+    for (int64_t p = int64_t(5.5 * kRate) - 480; p > int64_t(3.5 * kRate); p -= 480) { // reversed: every block a little before the last
+        std::fill(l.begin(), l.end(), 7.f);
+        anyOk |= r->read(p, 480, out);
+        CHECK(peak(l, 0, l.size()) < 1.0);
+    }
+    CHECK(!anyOk);
+    std::printf("       %d tries to open after 200 blocks read backwards\n", r->stats().reopens);
+    CHECK(r->stats().reopens <= tries + 1);
+    // The file is back: after the pause the next jump opens it, sound and no error
+    QFile::remove(path);
+    if (!CHECK(QFile::copy(saved, path))) return;
+    QThread::msleep(1700);
+    CHECK(r->read(kRate, 480, out));
+    CHECK(peak(l, 0, l.size()) > 0.01);
 }
 
 // A track that has no packets for an hour (muted microphone of a multi-track recording)
@@ -305,6 +348,7 @@ int main(int argc, char** argv)
     if (!Check::haveFfmpeg()) return Check::skip("ffmpeg nicht gefunden");
     QTemporaryDir dir;
     testVanished(dir.path());
+    testLostRetry(dir.path());
     testLongGap(dir.path());
     testOutlier(dir.path());
     testNoDuration(dir.path());
