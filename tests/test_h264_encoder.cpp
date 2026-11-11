@@ -7,6 +7,7 @@
 
 #include "engine/encoder/h264/Cavlc.h"
 #include "engine/encoder/h264/H264Encoder.h"
+#include "engine/encoder/h264/ThreadErrors.h"
 
 extern "C" {
 #include <libavcodec/avcodec.h>
@@ -17,6 +18,7 @@ extern "C" {
 #include <cstdio>
 #include <cstring>
 #include <memory>
+#include <stdexcept>
 #include <vector>
 
 using namespace schneidi::h264;
@@ -307,6 +309,56 @@ int main()
             std::fprintf(stderr, "chunks: %.0f kbit/s instead of 1000\n", kbps);
         CHECK(std::abs(kbps - 1000.0) < 250.0);
     }
+    }
+    // Failures on the encoder's own threads come out of the caller's next call (not std::terminate),
+    // and the encoder stays failed; a new encoder works again.
+    {
+        auto encodeAll = [](FailPoint p, int after, int threads, bool frameThreads) {
+            EncoderConfig c = config(320, 192, IntraMode::Auto, 30, threads);
+            c.frameThreads = frameThreads;
+            injectFailure(p, after);
+            int thrown = 0;
+            {
+                Encoder enc(c);
+                for (int t = 0; t < 50; ++t) {
+                    const Yuv src = synthFrame(c.width, c.height, t);
+                    try {
+                        enc.encode(Picture{src.y.data(), src.u.data(), src.v.data(), src.w, src.w / 2});
+                    } catch (const std::runtime_error&) {
+                        ++thrown;
+                    }
+                }
+                try {
+                    while (!enc.flush().empty()) {
+                    }
+                } catch (const std::runtime_error&) {
+                    ++thrown;
+                }
+            } // the destructor must not hang or terminate either
+            injectFailure(p, 0);
+            return thrown;
+        };
+        CHECK(encodeAll(FailPoint::WaveRow, 30, 4, true) >= 2);   // pool worker, frame threading
+        CHECK(encodeAll(FailPoint::WaveRow, 30, 4, false) >= 2);  // wavefront threads of one picture
+        CHECK(encodeAll(FailPoint::Writer, 3, 4, true) >= 2);     // entropy writer thread
+        CHECK(encodeAll(FailPoint::LookaheadThread, 10, 4, true) >= 2);
+        CHECK(encodeAll(FailPoint::WaveRow, 5, 1, true) >= 2);     // one thread: the caller's own
+        CHECK(encodeAll(FailPoint::WaveRow, 0, 4, true) == 0);
+        injectFailure(FailPoint::FirstPassWorker, 30);
+        bool firstPassThrew = false;
+        try {
+            FirstPass fp(320, 192, 4);
+            for (int t = 0; t < 60; ++t) {
+                const Yuv src = synthFrame(320, 192, t);
+                fp.add(Picture{src.y.data(), src.u.data(), src.v.data(), src.w, src.w / 2});
+            }
+            fp.stats();
+        } catch (const std::runtime_error&) {
+            firstPassThrew = true;
+        }
+        injectFailure(FailPoint::FirstPassWorker, 0);
+        CHECK(firstPassThrew);
+        CHECK(roundTrip(config(176, 144, IntraMode::Auto, 8, 4), 8));
     }
     return Check::result();
 }

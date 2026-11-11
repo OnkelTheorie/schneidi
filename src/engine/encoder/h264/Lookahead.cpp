@@ -4,6 +4,7 @@
 #include "Lookahead.h"
 
 #include "Satd.h"
+#include "ThreadErrors.h"
 
 #include <algorithm>
 #include <atomic>
@@ -319,12 +320,7 @@ void Lookahead::costs(LookaheadFrame& f, const LookaheadFrame* prev, int threads
                     done[size_t(by)].notify_all();
                 }
         };
-        std::vector<std::thread> workers;
-        for (int t = 1; t < threads; ++t)
-            workers.emplace_back(worker);
-        worker();
-        for (auto& t : workers)
-            t.join();
+        runOnThreads(threads, worker); // rows allocate nothing: only starting a thread can fail
     }
     for (int r = 0; r < mbH_; ++r) {
         f.intraSum += rowIntra[size_t(r)];

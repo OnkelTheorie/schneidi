@@ -9,6 +9,7 @@
 #include <array>
 #include <cstdint>
 #include <deque>
+#include <exception>
 #include <memory>
 #include <thread>
 #include <vector>
@@ -130,6 +131,8 @@ public:
     // the lookahead is still filling. forceKeyframe: start a new GOP at this picture (e.g. a cut in
     // the timeline). Pictures come out in order, `delay()` pictures after they went in.
     std::vector<uint8_t> encode(const Picture& picture, bool forceKeyframe = false);
+    // Exceptions (also those on the encoder's own threads, e.g. std::bad_alloc) come out of
+    // encode()/flush(); the encoder is then finished: every later call throws the same again.
     // After the last picture: the remaining access units, one per call, empty when done.
     std::vector<uint8_t> flush();
     int delay() const;
@@ -186,7 +189,11 @@ private:
     std::deque<LookaheadFrame> queue_;
     std::unique_ptr<LookaheadFrame> pendingFrame_; // being analysed on pendingThread_ while a picture is encoded
     std::thread pendingThread_;
+    std::exception_ptr pendingError_; // thrown on pendingThread_, rethrown by joinPending
+    std::exception_ptr broken_;       // a failed encode()/flush(): every later call throws it again
     void joinPending();
+    std::vector<uint8_t> encodeImpl(const Picture& picture, bool forceKeyframe);
+    std::vector<uint8_t> flushImpl();
     // Rate control state.
     double rcQp_ = 0;               // QP for P frames (I frames use 3 less)
     double rcBits_ = 0, rcTarget_ = 0; // produced / wanted bits so far

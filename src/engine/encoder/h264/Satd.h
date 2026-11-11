@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <initializer_list>
 
 #if defined(__SSE2__) || defined(_M_X64)
 #include <emmintrin.h>
@@ -176,6 +177,84 @@ inline int satd16x4U8(const uint8_t* a, int strideA, const uint8_t* b, int strid
     return satd8x4U8(a, strideA, b, strideB) + satd8x4U8(a + 8, strideA, b + 8, strideB);
 }
 
+// 8x8 Hadamard SATD of the difference of two 8x8 blocks, scaled like satd4x4 (sum / 4 instead of
+// sum / 2: the 8-point transform gains 2x more than the 4-point one per dimension). Compared with
+// satd8x8U8 it tells whether the 8x8 transform suits a residual better than four 4x4 ones.
+inline int sa8dU8(const uint8_t* a, int strideA, const uint8_t* b, int strideB)
+{
+#if defined(__SSE2__) || defined(_M_X64)
+    // Rows as 8 x int16: 8-point butterflies across the rows, transpose, again in 32 bit.
+    const __m128i zero = _mm_setzero_si128();
+    __m128i r[8];
+    for (int i = 0; i < 8; ++i)
+        r[i] = _mm_sub_epi16(_mm_unpacklo_epi8(_mm_loadl_epi64(reinterpret_cast<const __m128i*>(a + i * strideA)), zero),
+                             _mm_unpacklo_epi8(_mm_loadl_epi64(reinterpret_cast<const __m128i*>(b + i * strideB)), zero));
+    for (int s = 1; s < 8; s <<= 1)
+        for (int i = 0; i < 8; i += 2 * s)
+            for (int j = i; j < i + s; ++j) {
+                const __m128i x = r[j], y = r[j + s];
+                r[j] = _mm_add_epi16(x, y);
+                r[j + s] = _mm_sub_epi16(x, y);
+            }
+    const __m128i a0 = _mm_unpacklo_epi16(r[0], r[1]), a1 = _mm_unpackhi_epi16(r[0], r[1]);
+    const __m128i a2 = _mm_unpacklo_epi16(r[2], r[3]), a3 = _mm_unpackhi_epi16(r[2], r[3]);
+    const __m128i a4 = _mm_unpacklo_epi16(r[4], r[5]), a5 = _mm_unpackhi_epi16(r[4], r[5]);
+    const __m128i a6 = _mm_unpacklo_epi16(r[6], r[7]), a7 = _mm_unpackhi_epi16(r[6], r[7]);
+    const __m128i b0 = _mm_unpacklo_epi32(a0, a2), b1 = _mm_unpackhi_epi32(a0, a2);
+    const __m128i b2 = _mm_unpacklo_epi32(a1, a3), b3 = _mm_unpackhi_epi32(a1, a3);
+    const __m128i b4 = _mm_unpacklo_epi32(a4, a6), b5 = _mm_unpackhi_epi32(a4, a6);
+    const __m128i b6 = _mm_unpacklo_epi32(a5, a7), b7 = _mm_unpackhi_epi32(a5, a7);
+    const __m128i t[8] = {_mm_unpacklo_epi64(b0, b4), _mm_unpackhi_epi64(b0, b4), _mm_unpacklo_epi64(b1, b5),
+                          _mm_unpackhi_epi64(b1, b5), _mm_unpacklo_epi64(b2, b6), _mm_unpackhi_epi64(b2, b6),
+                          _mm_unpacklo_epi64(b3, b7), _mm_unpackhi_epi64(b3, b7)};
+    __m128i lo[8], hi[8];
+    for (int i = 0; i < 8; ++i) {
+        const __m128i sign = _mm_srai_epi16(t[i], 15);
+        lo[i] = _mm_unpacklo_epi16(t[i], sign);
+        hi[i] = _mm_unpackhi_epi16(t[i], sign);
+    }
+    for (__m128i* v : {lo, hi})
+        for (int s = 1; s < 8; s <<= 1)
+            for (int i = 0; i < 8; i += 2 * s)
+                for (int j = i; j < i + s; ++j) {
+                    const __m128i x = v[j], y = v[j + s];
+                    v[j] = _mm_add_epi32(x, y);
+                    v[j + s] = _mm_sub_epi32(x, y);
+                }
+    __m128i acc = zero;
+    for (int i = 0; i < 8; ++i)
+        for (__m128i v : {lo[i], hi[i]}) {
+            const __m128i s = _mm_srai_epi32(v, 31);
+            acc = _mm_add_epi32(acc, _mm_sub_epi32(_mm_xor_si128(v, s), s));
+        }
+    acc = _mm_add_epi32(acc, _mm_shuffle_epi32(acc, _MM_SHUFFLE(1, 0, 3, 2)));
+    acc = _mm_add_epi32(acc, _mm_shuffle_epi32(acc, _MM_SHUFFLE(2, 3, 0, 1)));
+    return (_mm_cvtsi128_si32(acc) + 2) >> 2;
+#else
+    int d[64];
+    for (int y = 0; y < 8; ++y)
+        for (int x = 0; x < 8; ++x)
+            d[y * 8 + x] = int(a[y * strideA + x]) - int(b[y * strideB + x]);
+    auto line = [](int* v, int step) {
+        for (int s = 1; s < 8; s <<= 1)
+            for (int i = 0; i < 8; i += 2 * s)
+                for (int j = i; j < i + s; ++j) {
+                    const int x = v[j * step], y = v[(j + s) * step];
+                    v[j * step] = x + y;
+                    v[(j + s) * step] = x - y;
+                }
+    };
+    for (int y = 0; y < 8; ++y)
+        line(d + y * 8, 1);
+    for (int x = 0; x < 8; ++x)
+        line(d + x, 8);
+    int s = 0;
+    for (int v : d)
+        s += std::abs(v);
+    return (s + 2) >> 2;
+#endif
+}
+
 // SAD of one row of 8 or 16 samples (SSE2 where available, plain C elsewhere).
 inline int sadRow(const uint8_t* a, const uint8_t* b, int w)
 {
@@ -195,6 +274,38 @@ inline int sadRow(const uint8_t* a, const uint8_t* b, int w)
     for (int x = 0; x < w; ++x)
         s += std::abs(int(a[x]) - int(b[x]));
     return s;
+}
+
+// SAD of a w x h block (w = 8 or 16, h even): same as summing sadRow, one horizontal sum at the end.
+inline int sadBlock(const uint8_t* a, int strideA, const uint8_t* b, int strideB, int w, int h)
+{
+#if defined(__SSE2__) || defined(_M_X64)
+    __m128i acc = _mm_setzero_si128();
+    if (w == 16) {
+        for (int y = 0; y < h; ++y)
+            acc = _mm_add_epi64(acc, _mm_sad_epu8(_mm_loadu_si128(reinterpret_cast<const __m128i*>(a + y * strideA)),
+                                                  _mm_loadu_si128(reinterpret_cast<const __m128i*>(b + y * strideB))));
+    } else if (w == 8 && !(h & 1)) {
+        for (int y = 0; y < h; y += 2) {
+            const __m128i ra = _mm_unpacklo_epi64(_mm_loadl_epi64(reinterpret_cast<const __m128i*>(a + y * strideA)),
+                                                  _mm_loadl_epi64(reinterpret_cast<const __m128i*>(a + (y + 1) * strideA)));
+            const __m128i rb = _mm_unpacklo_epi64(_mm_loadl_epi64(reinterpret_cast<const __m128i*>(b + y * strideB)),
+                                                  _mm_loadl_epi64(reinterpret_cast<const __m128i*>(b + (y + 1) * strideB)));
+            acc = _mm_add_epi64(acc, _mm_sad_epu8(ra, rb));
+        }
+    } else {
+        int s = 0;
+        for (int y = 0; y < h; ++y)
+            s += sadRow(a + y * strideA, b + y * strideB, w);
+        return s;
+    }
+    return _mm_cvtsi128_si32(acc) + _mm_cvtsi128_si32(_mm_unpackhi_epi64(acc, acc));
+#else
+    int s = 0;
+    for (int y = 0; y < h; ++y)
+        s += sadRow(a + y * strideA, b + y * strideB, w);
+    return s;
+#endif
 }
 
 } // namespace schneidi::h264
