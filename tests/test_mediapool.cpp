@@ -3,6 +3,7 @@
 // broken files (missing bins, cycles, unknown colors); Media Pool widget offscreen (bin switch, import into bin)
 #include "check.h"
 
+#include "core/I18n.h"
 #include "core/Project.h"
 #include "core/ProjectFile.h"
 #include "engine/Engine.h"
@@ -563,6 +564,13 @@ int main(int argc, char** argv)
         q.setFormat({1280, 720, q.format().rate});
         app.processEvents();
         CHECK(tipOf(edit).contains("1280 × 720"));
+    }
+    // The root bin's name follows the UI language (it is not stored in the project, id 0 is fixed)
+    {
+        Project q;
+        I18n::install("ru");
+        CHECK_EQ(q.binName(0), I18n::translate("ru", "Master"));
+        CHECK(q.binName(0) != QString("Master"));
     }
     return Check::result();
 }

@@ -1155,7 +1155,9 @@ const MediaBin* Project::bin(int id) const
 
 QString Project::binName(int id) const
 {
-    if (id == 0) return QStringLiteral("Master"); // is called that in German DaVinci too
+    // The root bin is not stored by name (id 0 is fixed), so its name follows the UI language. The CLI and MCP run in
+    // English; bin paths there start below the root (CommandsWatch also takes "Master" in any UI language).
+    if (id == 0) return T("Master");
     const MediaBin* b = bin(id);
     return b ? b->name : QString();
 }
