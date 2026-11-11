@@ -111,7 +111,7 @@ QJsonObject highlightsOne(const QJsonObject& given, Context& ctx)
     };
 
     // Kill feed: a new line of the player's colour; sound: loud moments (shots, explosions, shouts)
-    QVector<int> kills, banners, teamkills;
+    QVector<int> kills, banners, teamkills, assists;
     QVector<ColorEvent> killEvents;
     double most = 0;
     if (feed) {
@@ -127,6 +127,8 @@ QJsonObject highlightsOne(const QJsonObject& given, Context& ctx)
         for (const ColorEvent& e : ce.events) {
             if (e.area > kBannerArea) {
                 banners << e.frame;
+            } else if (e.assist) {
+                assists << e.frame; // the player helped, someone else killed
             } else if (e.teamkill) {
                 teamkills << e.frame;
             } else {
@@ -276,6 +278,13 @@ QJsonObject highlightsOne(const QJsonObject& given, Context& ctx)
                                 "teamkill): not counted in 'kills', not a moment of their own; inside a moment they "
                                 "lower its score";
     }
+    if (!assists.isEmpty()) {
+        QJsonArray times;
+        for (int t : assists) times << seconds(t, f);
+        out["assists"] = times;
+        out["assists_note"] = "the player's own kill feed lines where someone else killed and the player assisted "
+                              "(\"A + player  weapon  victim\"): not counted in 'kills', not a moment of their own";
+    }
     if (!banners.isEmpty()) {
         QJsonArray times;
         for (int b : banners) times << seconds(b, f);
@@ -287,7 +296,8 @@ QJsonObject highlightsOne(const QJsonObject& given, Context& ctx)
 }
 
 // Raise when the analysis gives other results for the same file and settings (old cache entries are then ignored)
-constexpr int kCacheVersion = 6; // 4, 5: CS2 kill feed lines by their frame (2 and 3 were experiments); 6: teamkills
+constexpr int kCacheVersion = 8; // 4, 5: CS2 kill feed lines by their frame (2 and 3 were experiments); 6: teamkills;
+                                 // 7: a new line in the next sample with another text; 8: assists
 
 QString cacheFile(const QString& key)
 {

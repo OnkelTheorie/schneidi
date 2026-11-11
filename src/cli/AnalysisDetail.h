@@ -119,6 +119,7 @@ struct ColorEvent {
     double area; // part of the whole picture
     int onset;   // the first frame where the change began to show (a kill feed line slides in over a few frames)
     bool teamkill = false; // a kill feed line whose victim is in the killer's team colour (framedLineEvents)
+    bool assist = false;   // a kill feed line of the player's assist: "A + player  weapon  C" (framedLineEvents)
 };
 struct ColorEvents {
     QVector<ColorEvent> events; // in time order

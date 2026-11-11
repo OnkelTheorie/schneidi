@@ -11,6 +11,9 @@
 
 #include <QBuffer>
 #include <QCoreApplication>
+#include <QDateTime>
+#include <QDir>
+#include <QFileInfo>
 #include <QJsonDocument>
 #include <QThread>
 
@@ -137,6 +140,28 @@ void testHooks(const QString& tool, const std::function<void(double)>& progress)
     QThread::msleep(delay / 2);
     if (progress) progress(0.5);
     QThread::msleep(delay - delay / 2);
+}
+
+// The program file this server runs from (an AppImage: the AppImage file) as it was at the start. An MCP server
+// lives as long as the AI's chat: after an update it would go on answering with the old build without a word
+struct ProgramFile {
+    QString path;
+    QDateTime modified;
+    qint64 size = -1;
+};
+
+ProgramFile programFile(const QString& path)
+{
+    const QFileInfo fi(path);
+    return {path, fi.exists() ? fi.lastModified() : QDateTime(), fi.exists() ? fi.size() : -1};
+}
+
+// The file on disk is another one now (there and different: one being replaced may be gone for a moment)
+bool updated(const ProgramFile& started)
+{
+    if (started.path.isEmpty() || started.size < 0) return false;
+    const ProgramFile now = programFile(started.path);
+    return now.size >= 0 && (now.size != started.size || now.modified != started.modified);
 }
 
 } // namespace
@@ -308,8 +333,21 @@ int run(const Options& opt)
         std::fwrite(line.constData(), 1, size_t(line.size()), stdout);
         std::fflush(stdout);
     };
-    const ToolCall here = [&opt](const QJsonObject& params, const Send& notify, const Done& done) {
-        done(callTool(params, opt, notify));
+    QString exe = qEnvironmentVariable("APPIMAGE");
+    if (exe.isEmpty()) exe = QCoreApplication::applicationFilePath();
+    const ProgramFile started = programFile(exe);
+    const ToolCall here = [&opt, started](const QJsonObject& params, const Send& notify, const Done& done) {
+        QJsonObject result = callTool(params, opt, notify);
+        if (updated(started)) {
+            QJsonArray content = result["content"].toArray();
+            content << QJsonObject{
+                {"type", "text"},
+                {"text", QString("Note: schneidi was updated (%1) while this MCP server kept running the old version: "
+                                 "restart the schneidi MCP server (or start a new chat/session) to use the new version.")
+                             .arg(QDir::toNativeSeparators(started.path))}};
+            result["content"] = content;
+        }
+        done(result);
     };
     std::string line;
     while (std::getline(std::cin, line)) {
