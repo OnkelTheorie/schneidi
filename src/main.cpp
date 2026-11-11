@@ -219,12 +219,30 @@ public:
                 firstPaintDone();
             });
             // SCHNEIDI_STARTUP_TRACE=2: quits by itself (measuring runs), after the work deferred past the paint;
-            // exit(), not quit(): no window is asked to close (no question about unsaved changes)
-            if (qEnvironmentVariableIntValue("SCHNEIDI_STARTUP_TRACE") == 2)
-                QTimer::singleShot(2500, qApp, [] {
+            // exit(), not quit(): no window is asked to close (no question about unsaved changes). Until then a
+            // 5 ms ticker measures the longest stall of the GUI thread after the first expose (what the user feels
+            // as a frozen window right after it appeared).
+            if (qEnvironmentVariableIntValue("SCHNEIDI_STARTUP_TRACE") == 2) {
+                auto* ticker = new QTimer(this);
+                ticker->setTimerType(Qt::PreciseTimer);
+                ticker->setInterval(5);
+                connect(ticker, &QTimer::timeout, this, [this] {
+                    const qint64 now = StartupTrace::elapsed();
+                    if (m_lastTick >= 0 && now - m_lastTick > m_longestStall) {
+                        m_longestStall = now - m_lastTick;
+                        m_stallEnd = now;
+                    }
+                    m_lastTick = now;
+                });
+                m_lastTick = StartupTrace::elapsed(); // the paint of the expose counts too
+                ticker->start();
+                QTimer::singleShot(2500, qApp, [this] {
+                    std::fprintf(stderr, "startup: longest GUI stall after first expose %lld ms (ended at %lld ms)\n",
+                                 static_cast<long long>(m_longestStall), static_cast<long long>(m_stallEnd));
                     StartupTrace::mark("quit (SCHNEIDI_STARTUP_TRACE=2)");
                     QCoreApplication::exit(0);
                 });
+            }
             if (!StartupTrace::enabled()) QCoreApplication::instance()->removeEventFilter(this);
         } else if (e->type() == QEvent::Paint && m_exposed && o->isWidgetType()
                    && static_cast<QWidget*>(o)->window() == m_window) {
@@ -237,6 +255,7 @@ public:
 private:
     QWidget* m_window;
     bool m_exposed = false;
+    qint64 m_lastTick = -1, m_longestStall = 0, m_stallEnd = 0; // SCHNEIDI_STARTUP_TRACE=2
 };
 
 // Claude Code or Claude Desktop is on this computer, but not connected to schneidi: asked once on start (Cli::Setup
