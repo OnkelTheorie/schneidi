@@ -113,6 +113,7 @@ schneidi_test(test_export_formats)
 schneidi_test(test_export_writer)
 schneidi_test(test_export_timing)
 schneidi_test(test_smart_render)
+schneidi_test(test_storage_thumbs) # Media Storage thumbnails: key frame near 1 s decoded alone (rotation, VP9, 10-bit, MJPEG lowres), disk cache
 schneidi_test(test_filmstrips) # filmstrips + Media Storage previews with the own decoder: same pictures as the ffmpeg command
 schneidi_test(test_occlusion)
 schneidi_test(test_picture_passthrough) # export: a plain full-size video hands its decoded planes to the encoder; full-frame stills at the bottom
@@ -399,6 +400,8 @@ endforeach()
 # Benchmark, not run by CTest
 add_executable(bench_filmstrips bench_filmstrips.cpp)
 target_link_libraries(bench_filmstrips PRIVATE schneidi_lib)
+add_executable(bench_storage_thumbs bench_storage_thumbs.cpp)
+target_link_libraries(bench_storage_thumbs PRIVATE schneidi_lib)
 add_executable(bench_engine bench_engine.cpp)
 target_link_libraries(bench_engine PRIVATE schneidi_test_support Qt6::Test)
 add_executable(bench_playback bench_playback.cpp)

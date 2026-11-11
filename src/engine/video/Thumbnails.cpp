@@ -33,6 +33,8 @@ struct Source {
     int turns = 0;       // quarter turns clockwise to show it upright
     double sar = 1.0;    // pixel aspect of the stored picture
     double startSeconds = 0; // container start time (the ffmpeg command line counts from it)
+    int threadType = FF_THREAD_FRAME | FF_THREAD_SLICE;
+    QSize lowresBox; // set: the decoder may give a smaller picture (lowres, MJPEG and the like) still covering it
 
     ~Source()
     {
@@ -63,7 +65,14 @@ struct Source {
         if (!dec || avcodec_parameters_to_context(dec, st->codecpar) < 0) return false;
         dec->pkt_timebase = st->time_base;
         dec->thread_count = threads;
-        dec->thread_type = FF_THREAD_FRAME | FF_THREAD_SLICE;
+        dec->thread_type = threadType;
+        if (codec->max_lowres > 0 && !lowresBox.isEmpty()) {
+            int lowres = 0;
+            while (lowres < codec->max_lowres && (dec->width >> (lowres + 1)) >= lowresBox.width()
+                   && (dec->height >> (lowres + 1)) >= lowresBox.height())
+                ++lowres;
+            dec->lowres = lowres;
+        }
         if (keysOnly) {
             dec->skip_frame = AVDISCARD_NONKEY;
             // A few pixels per block in the end: the deblocking filter changes nothing visible (mean 0.3 of 255 on game
@@ -253,6 +262,40 @@ QImage stillAt(const QString& path, double seconds, const QSize& box)
     // Nothing after the seek (a raw stream without time stamps such as .h264: it lands anywhere): the first picture
     if (img.isNull() && opened && seconds > 0) return stillOnce(path, 0, box, &opened);
     return img;
+}
+
+QImage thumbnailAt(const QString& path, double seconds, const QSize& box)
+{
+    QImage img;
+    {
+        Source src;
+        // One picture: frame threads would only add their start-up; slices/tiles/wavefronts still decode in parallel
+        src.threadType = FF_THREAD_SLICE;
+        src.lowresBox = box.expandedTo(box.transposed()); // turned pictures fill it the other way round
+        if (!src.open(path, 2, true)) return {};
+        if (src.fmt->duration != AV_NOPTS_VALUE && double(src.fmt->duration) / AV_TIME_BASE <= seconds) seconds = 0;
+        if (seconds > 0) {
+            const int64_t target = int64_t(std::floor((seconds + src.startSeconds) / av_q2d(src.st->time_base)));
+            // Fails on raw streams without an index: then the first key frame from where the demuxer is (the start)
+            av_seek_frame(src.fmt, src.st->index, target, AVSEEK_FLAG_BACKWARD);
+        }
+        bool sent = false;
+        for (int n = 0; n < 2000 && av_read_frame(src.fmt, src.pkt) >= 0; ++n) {
+            const bool key = src.pkt->stream_index == src.st->index && (src.pkt->flags & AV_PKT_FLAG_KEY);
+            if (key) sent = avcodec_send_packet(src.dec, src.pkt) >= 0;
+            av_packet_unref(src.pkt);
+            if (key) break;
+        }
+        if (sent) {
+            avcodec_send_packet(src.dec, nullptr); // the picture out now, without waiting for the ones after it
+            if (avcodec_receive_frame(src.dec, src.frame) >= 0) {
+                img = src.picture(src.frame, box, false);
+                av_frame_unref(src.frame);
+            }
+        }
+    }
+    // No key frame that decodes alone (a stream without key frame marks, intra refresh): the exact way
+    return img.isNull() ? stillAt(path, seconds, box) : img;
 }
 
 int fixedPictures(const QString& path, const std::vector<double>& at, int minKeys, int maxDecode,
