@@ -5,10 +5,12 @@
 
 #include "Cabac.h"
 #include "Cavlc.h"
+#include "Satd.h"
 
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <atomic>
 #include <cstring>
@@ -26,6 +28,10 @@ void cabacTrellis(const CabacEncoder& ce, int cat, const double* x, const double
                   int cbfInc, int* out);
 
 namespace {
+
+// Macroblock statistics (H264_STATS=1), for comparisons with other encoders' logs.
+const bool gStats = std::getenv("H264_STATS") != nullptr;
+std::atomic<long> gStatInter{0}, gStatInterCbp{0}, gStatT8{0};
 
 // 4x4 frame zig-zag scan: scan index -> raster index (y * 4 + x).
 constexpr int kZigzag[16] = {0, 1, 4, 8, 5, 2, 3, 6, 9, 12, 13, 10, 7, 11, 14, 15};
@@ -110,26 +116,6 @@ void inverse4x4(const int* in, int* out)
 }
 
 // 4x4 Hadamard (used for the luma DC both ways).
-void hadamard4x4(const int* in, int* out)
-{
-    int t[16];
-    for (int y = 0; y < 4; ++y) {
-        const int* r = in + y * 4;
-        const int a = r[0] + r[1], b = r[0] - r[1], c = r[2] + r[3], d = r[2] - r[3];
-        t[y * 4 + 0] = a + c;
-        t[y * 4 + 1] = a - c;
-        t[y * 4 + 2] = b - d;
-        t[y * 4 + 3] = b + d;
-    }
-    for (int x = 0; x < 4; ++x) {
-        const int a = t[x] + t[4 + x], b = t[x] - t[4 + x], c = t[8 + x] + t[12 + x], d = t[8 + x] - t[12 + x];
-        out[x] = a + c;
-        out[4 + x] = a - c;
-        out[8 + x] = b - d;
-        out[12 + x] = b + d;
-    }
-}
-
 inline int quantize(int coef, int mf, int qbits, int offset)
 {
     const int mag = int((int64_t(std::abs(coef)) * mf + offset) >> qbits);
@@ -416,8 +402,101 @@ void Encoder::loadSource(const Picture& pic)
     copyPlane(pic.v, pic.strideC, cfg_.width / 2, cfg_.height / 2, srcV_, padW_ / 2, padH_ / 2);
 }
 
+namespace {
+
+LookaheadFrame copyPicture(const Picture& pic, int w, int h, bool forceKeyframe)
+{
+    LookaheadFrame f;
+    f.forceKeyframe = forceKeyframe;
+    f.y.resize(size_t(w) * h);
+    f.u.resize(size_t(w / 2) * (h / 2));
+    f.v.resize(f.u.size());
+    for (int y = 0; y < h; ++y)
+        std::memcpy(f.y.data() + size_t(y) * w, pic.y + size_t(y) * pic.strideY, size_t(w));
+    for (int y = 0; y < h / 2; ++y) {
+        std::memcpy(f.u.data() + size_t(y) * (w / 2), pic.u + size_t(y) * pic.strideC, size_t(w / 2));
+        std::memcpy(f.v.data() + size_t(y) * (w / 2), pic.v + size_t(y) * pic.strideC, size_t(w / 2));
+    }
+    return f;
+}
+
+Picture pictureOf(const LookaheadFrame& f, int w)
+{
+    Picture p;
+    p.y = f.y.data();
+    p.u = f.u.data();
+    p.v = f.v.data();
+    p.strideY = w;
+    p.strideC = w / 2;
+    return p;
+}
+
+} // namespace
+
+int Encoder::delay() const { return useLookahead() ? std::max(0, cfg_.lookahead - 1) : 0; }
+
 std::vector<uint8_t> Encoder::encode(const Picture& picture, bool forceKeyframe)
 {
+    LookaheadFrame f = copyPicture(picture, cfg_.width, cfg_.height, forceKeyframe);
+    if (!useLookahead())
+        return encodeFrame(f);
+    if (!la_)
+        la_ = std::make_unique<Lookahead>(cfg_.width, cfg_.height, mbW_, mbH_);
+    la_->analyse(f, queue_.empty() ? nullptr : &queue_.back());
+    queue_.push_back(std::move(f));
+    if (int(queue_.size()) < cfg_.lookahead)
+        return {};
+    return flush();
+}
+
+std::vector<uint8_t> Encoder::flush()
+{
+    if (queue_.empty())
+        return {};
+    std::vector<uint8_t> out = encodeFrame(queue_.front());
+    queue_.pop_front();
+    return out;
+}
+
+// Which queued pictures the schedule or the caller makes keyframes (scene cuts are only
+// detected when a picture is encoded).
+void Encoder::markKeyframes()
+{
+    int since = framesSinceIdr_;
+    bool first = frameIndex_ == 0;
+    for (LookaheadFrame& f : queue_) {
+        f.keyframe = first || since >= cfg_.gop || f.forceKeyframe;
+        first = false;
+        if (f.keyframe)
+            since = 0;
+        ++since;
+    }
+}
+
+// Lookahead cost of a picture for the bit model, with the macroblock tree's QP offsets folded in
+// (a block at offset -6 costs about twice the bits).
+double Encoder::frameCost(const LookaheadFrame& f, bool intra) const
+{
+    const size_t n = size_t(mbW_) * mbH_;
+    if (f.intraCost.size() != n)
+        return 0;
+    double sum = 0;
+    for (size_t m = 0; m < n; ++m) {
+        const double c = intra ? f.intraCost[m] : std::min(f.intraCost[m], f.interCost[m]);
+        if (cfg_.mbtree) {
+            const float off = std::max(-8.0f, Lookahead::qpOffset(f, int(m), cfg_.mbtreeStrength));
+            sum += c * std::exp2(-off / 6.0);
+        } else {
+            sum += c;
+        }
+    }
+    return sum;
+}
+
+std::vector<uint8_t> Encoder::encodeFrame(LookaheadFrame& frame)
+{
+    const bool forceKeyframe = frame.forceKeyframe;
+    const Picture picture = pictureOf(frame, cfg_.width);
     loadSource(picture);
     std::fill(nzLuma_.begin(), nzLuma_.end(), 0);
     std::fill(modes4x4_.begin(), modes4x4_.end(), int8_t(-1));
@@ -447,12 +526,108 @@ std::vector<uint8_t> Encoder::encode(const Picture& picture, bool forceKeyframe)
     // most 2 away from the last one. I pictures use the P QP - 3. The first picture is probed at a
     // fixed QP so the stream starts near the right QP instead of paying for a huge first picture.
     const int baseQp = cfg_.qp;
-    if (cfg_.bitrateKbps > 0) {
+    const bool lookahead = useLookahead() && !queue_.empty() && &queue_.front() == &frame;
+    double costUsed = 0; // lookahead cost of this picture, for the bit model afterwards
+    if (lookahead) {
+        markKeyframes();
+        frame.keyframe = idr;
+        if (cfg_.mbtree) {
+            la_->propagate(queue_);
+            treeOffset_.resize(size_t(mbW_) * mbH_);
+            for (size_t m = 0; m < treeOffset_.size(); ++m)
+                treeOffset_[m] = std::max(-8.0f, Lookahead::qpOffset(frame, int(m), cfg_.mbtreeStrength));
+        }
+    } else {
+        treeOffset_.clear();
+    }
+    if (cfg_.bitrateKbps > 0 && lookahead) {
+        // Rate control with lookahead: bits = k * cost * 2^(-qp/6) with k measured on the pictures
+        // coded so far (per picture type, I pictures 3 below the P QP). The P QP is the one at
+        // which a picture of average cost (all pictures seen so far, the queued ones included)
+        // meets the per-frame budget - a steady QP is what PSNR likes best - scaled by the bits
+        // over or under the target so far (against a buffer of 3 s), and at most 3 away from
+        // the last one.
+        const double perFrame = cfg_.bitrateKbps * 1000.0 / cfg_.fps;
+        auto kOf = [&](bool intra) {
+            const int t = intra ? 0 : 1;
+            return rcCostSum_[t] > 0 ? rcKSum_[t] / rcCostSum_[t] : rcKSum_[1 - t] / rcCostSum_[1 - t];
+        };
+        // Predicted bits at QP 0 of the queued pictures (and the one coded now).
+        auto windowNeed = [&](int& count) {
+            double need = 0;
+            count = 0;
+            for (const LookaheadFrame& g : queue_) {
+                const double c = frameCost(g, g.keyframe);
+                if (&g == &frame)
+                    costUsed = c;
+                need += kOf(g.keyframe) * c * (g.keyframe ? std::exp2(0.5) : 1.0);
+                ++count;
+            }
+            return need;
+        };
+        const bool windowOnly = std::getenv("H264_RC_WINDOW") != nullptr;
+        auto steadyQp = [&] {
+            int count;
+            const double need = windowNeed(count);
+            const double all = windowOnly ? need : need + rcNeedSeen_;
+            const int n = windowOnly ? count : count + rcFramesSeen_;
+            return 6.0 * std::log2(std::max(1.0, all) / (n * perFrame));
+        };
+        if (frameIndex_ == 0) {
+            // Probe: the first picture as I and the second as P calibrate the model. The bits
+            // fall off faster than 2^(-qp/6) once the QP passes the noise, so the probe moves
+            // towards the predicted QP until it is within reach.
+            int probeQp = baseQp;
+            for (int round = 0; round < 3; ++round) {
+                EncoderConfig pc = cfg_;
+                pc.bitrateKbps = 0;
+                pc.lookahead = 0;
+                pc.mbtree = false;
+                pc.aqStrength = 0;
+                pc.qp = probeQp;
+                pc.gop = std::max(2, cfg_.gop);
+                pc.sceneCut = false;
+                Encoder probe(pc);
+                const double bitsI = double(probe.encode(picture).size()) * 8.0;
+                const double kI = bitsI * std::exp2((probeQp - 3) / 6.0) / std::max(1.0, frame.intraSum);
+                rcKSum_[0] = kI;
+                rcCostSum_[0] = 1; // seeds only: the first real pictures outweigh them
+                rcKSum_[1] = kI;
+                rcCostSum_[1] = 1;
+                if (queue_.size() > 1) {
+                    const LookaheadFrame& second = queue_[1];
+                    const double bitsP = double(probe.encode(pictureOf(second, cfg_.width)).size()) * 8.0;
+                    rcKSum_[1] = bitsP * std::exp2(probeQp / 6.0) / std::max(1.0, second.interSum);
+                }
+                const double predicted = steadyQp();
+                if (std::getenv("H264_RC_TRACE"))
+                    std::fprintf(stderr, "rc: probe at %d predicts %.1f\n", probeQp, predicted);
+                if (std::abs(predicted - probeQp) <= 4.0)
+                    break;
+                probeQp = std::clamp(int(std::lround(std::clamp(predicted, probeQp - 6.0, probeQp + 6.0))), 10, 51);
+            }
+            rcQp_ = 0;
+        }
+        const double debt = rcBits_ - rcTarget_;
+        const double overflow = std::clamp(1.0 + debt / (3.0 * perFrame * cfg_.fps), 0.5, 2.0);
+        double qp = steadyQp() + 6.0 * std::log2(overflow);
+        if (std::getenv("H264_RC_TRACE"))
+            std::fprintf(stderr, "rc: frame %d overflow %.2f kI %.3f kP %.3f cost %.0f (intra %.0f inter %.0f) qp %.2f\n",
+                         frameIndex_, overflow, kOf(true), kOf(false), costUsed, frame.intraSum, frame.interSum, qp);
+        if (rcQp_ > 0)
+            qp = std::clamp(qp, rcQp_ - 3.0, rcQp_ + 3.0);
+        rcQp_ = std::clamp(qp, 10.0, 51.0);
+        cfg_.qp = std::clamp(int(std::lround(idr ? qp - 3 : qp)), 10, 51);
+        rcNeedSeen_ += kOf(idr) * costUsed * (idr ? std::exp2(0.5) : 1.0);
+        rcFramesSeen_ += 1;
+    } else if (cfg_.bitrateKbps > 0) {
         const double perFrame = cfg_.bitrateKbps * 1000.0 / cfg_.fps;
         if (frameIndex_ == 0) {
             // The probe aims at an I picture of about four P budgets.
             EncoderConfig pc = cfg_;
             pc.bitrateKbps = 0;
+            pc.lookahead = 0;
+            pc.mbtree = false;
             pc.gop = std::max(2, cfg_.gop);
             Encoder probe(pc);
             const double bits = double(probe.encode(picture).size()) * 8.0;
@@ -653,6 +828,12 @@ std::vector<uint8_t> Encoder::encode(const Picture& picture, bool forceKeyframe)
         else
             appendNal(out, 2, 1, bw.bytes());
     }
+    if (gStats && pSlice_) {
+        std::fprintf(stderr, "stats: inter %ld with luma %ld 8x8 %ld (%.1f %% of coded, %.1f %% of inter)\n", long(gStatInter.load()),
+                     long(gStatInterCbp.load()), long(gStatT8.load()), 100.0 * gStatT8.load() / std::max<long>(1, gStatInterCbp.load()),
+                     100.0 * gStatT8.load() / std::max<long>(1, gStatInter.load()));
+        gStatInter = gStatInterCbp = gStatT8 = 0;
+    }
     if (cfg_.deblock)
         deblockPicture();
     prevMvX_ = mvX_;
@@ -675,7 +856,12 @@ std::vector<uint8_t> Encoder::encode(const Picture& picture, bool forceKeyframe)
         cfg_.qp = baseQp;
     if (cfg_.bitrateKbps > 0) {
         const double bits = double(out.size()) * 8.0;
-        if (!idr) {
+        if (lookahead) {
+            if (costUsed > 0) {
+                rcKSum_[idr ? 0 : 1] += bits * std::exp2(cfg_.qp / 6.0);
+                rcCostSum_[idr ? 0 : 1] += costUsed;
+            }
+        } else if (!idr) {
             rcCplxSum_ += bits * std::pow(2.0, cfg_.qp / 6.0);
             rcCplxCount_ += 1.0;
             rcQp_ = cfg_.qp;
@@ -762,93 +948,6 @@ int intraCbpCode(int cbp)
 }
 
 constexpr int blkIdxAt(int x, int y) { return (y >> 1) * 8 + (x >> 1) * 4 + (y & 1) * 2 + (x & 1); }
-
-[[maybe_unused]] int satd4x4(const int* diff);
-
-// SATD of a 4x4 block between two 8-bit images; same result as satd4x4 on their difference.
-inline int satdU8(const uint8_t* a, int strideA, const uint8_t* b, int strideB)
-{
-#if defined(__SSE2__) || defined(_M_X64)
-    const __m128i zero = _mm_setzero_si128();
-    auto row = [&](int i) {
-        int32_t wa, wb;
-        std::memcpy(&wa, a + i * strideA, 4);
-        std::memcpy(&wb, b + i * strideB, 4);
-        return _mm_sub_epi16(_mm_unpacklo_epi8(_mm_cvtsi32_si128(wa), zero), _mm_unpacklo_epi8(_mm_cvtsi32_si128(wb), zero));
-    };
-    const __m128i r0 = row(0), r1 = row(1), r2 = row(2), r3 = row(3);
-    // Vertical 4-point Hadamard (lanes = columns).
-    const __m128i s01 = _mm_add_epi16(r0, r1), d01 = _mm_sub_epi16(r0, r1);
-    const __m128i s23 = _mm_add_epi16(r2, r3), d23 = _mm_sub_epi16(r2, r3);
-    const __m128i t0 = _mm_add_epi16(s01, s23), t1 = _mm_sub_epi16(s01, s23);
-    const __m128i t2 = _mm_sub_epi16(d01, d23), t3 = _mm_add_epi16(d01, d23);
-    // Transpose: v0 = columns 0|1, v1 = columns 2|3.
-    const __m128i u0 = _mm_unpacklo_epi16(t0, t1), u1 = _mm_unpacklo_epi16(t2, t3);
-    const __m128i v0 = _mm_unpacklo_epi32(u0, u1), v1 = _mm_unpackhi_epi32(u0, u1);
-    const __m128i c1 = _mm_unpackhi_epi64(v0, v0), c3 = _mm_unpackhi_epi64(v1, v1);
-    // Horizontal 4-point Hadamard on the columns.
-    const __m128i ha = _mm_add_epi16(v0, c1), hb = _mm_sub_epi16(v0, c1);
-    const __m128i hc = _mm_add_epi16(v1, c3), hd = _mm_sub_epi16(v1, c3);
-    const __m128i o01 = _mm_unpacklo_epi64(_mm_add_epi16(ha, hc), _mm_sub_epi16(ha, hc));
-    const __m128i o23 = _mm_unpacklo_epi64(_mm_sub_epi16(hb, hd), _mm_add_epi16(hb, hd));
-    auto absv = [&](__m128i x) { return _mm_max_epi16(x, _mm_sub_epi16(zero, x)); };
-    const __m128i sum = _mm_madd_epi16(_mm_add_epi16(absv(o01), absv(o23)), _mm_set1_epi16(1));
-    const __m128i s2 = _mm_add_epi32(sum, _mm_shuffle_epi32(sum, _MM_SHUFFLE(1, 0, 3, 2)));
-    const __m128i s1 = _mm_add_epi32(s2, _mm_shuffle_epi32(s2, _MM_SHUFFLE(2, 3, 0, 1)));
-    return (_mm_cvtsi128_si32(s1) + 1) >> 1;
-#else
-    int diff[16];
-    for (int y = 0; y < 4; ++y)
-        for (int x = 0; x < 4; ++x)
-            diff[y * 4 + x] = int(a[y * strideA + x]) - int(b[y * strideB + x]);
-    return satd4x4(diff);
-#endif
-}
-
-// satdU8 of the two 4x4 blocks side by side at a and a + 4 (same result as two calls), sharing
-// the vertical transform across eight lanes.
-inline int satd8x4U8(const uint8_t* a, int strideA, const uint8_t* b, int strideB)
-{
-#if defined(__SSE2__) || defined(_M_X64)
-    const __m128i zero = _mm_setzero_si128();
-    auto row = [&](int i) {
-        return _mm_sub_epi16(_mm_unpacklo_epi8(_mm_loadl_epi64(reinterpret_cast<const __m128i*>(a + i * strideA)), zero),
-                             _mm_unpacklo_epi8(_mm_loadl_epi64(reinterpret_cast<const __m128i*>(b + i * strideB)), zero));
-    };
-    const __m128i r0 = row(0), r1 = row(1), r2 = row(2), r3 = row(3);
-    const __m128i s01 = _mm_add_epi16(r0, r1), d01 = _mm_sub_epi16(r0, r1);
-    const __m128i s23 = _mm_add_epi16(r2, r3), d23 = _mm_sub_epi16(r2, r3);
-    const __m128i t0 = _mm_add_epi16(s01, s23), t1 = _mm_sub_epi16(s01, s23);
-    const __m128i t2 = _mm_sub_epi16(d01, d23), t3 = _mm_add_epi16(d01, d23);
-    auto absv = [&](__m128i x) { return _mm_max_epi16(x, _mm_sub_epi16(zero, x)); };
-    auto half = [&](__m128i u0, __m128i u1) { // horizontal stage of one block, returns its |coefficient| sum
-        const __m128i v0 = _mm_unpacklo_epi32(u0, u1), v1 = _mm_unpackhi_epi32(u0, u1);
-        const __m128i c1 = _mm_unpackhi_epi64(v0, v0), c3 = _mm_unpackhi_epi64(v1, v1);
-        const __m128i ha = _mm_add_epi16(v0, c1), hb = _mm_sub_epi16(v0, c1);
-        const __m128i hc = _mm_add_epi16(v1, c3), hd = _mm_sub_epi16(v1, c3);
-        const __m128i o01 = _mm_unpacklo_epi64(_mm_add_epi16(ha, hc), _mm_sub_epi16(ha, hc));
-        const __m128i o23 = _mm_unpacklo_epi64(_mm_sub_epi16(hb, hd), _mm_add_epi16(hb, hd));
-        const __m128i sum = _mm_madd_epi16(_mm_add_epi16(absv(o01), absv(o23)), _mm_set1_epi16(1));
-        const __m128i s2 = _mm_add_epi32(sum, _mm_shuffle_epi32(sum, _MM_SHUFFLE(1, 0, 3, 2)));
-        const __m128i s1 = _mm_add_epi32(s2, _mm_shuffle_epi32(s2, _MM_SHUFFLE(2, 3, 0, 1)));
-        return (_mm_cvtsi128_si32(s1) + 1) >> 1;
-    };
-    return half(_mm_unpacklo_epi16(t0, t1), _mm_unpacklo_epi16(t2, t3)) +
-           half(_mm_unpackhi_epi16(t0, t1), _mm_unpackhi_epi16(t2, t3));
-#else
-    return satdU8(a, strideA, b, strideB) + satdU8(a + 4, strideA, b + 4, strideB);
-#endif
-}
-
-[[maybe_unused]] int satd4x4(const int* diff)
-{
-    int t[16];
-    hadamard4x4(diff, t);
-    int s = 0;
-    for (int v : t)
-        s += std::abs(v);
-    return (s + 1) >> 1;
-}
 
 // Intra 4x4 prediction (8.3.1.2). T[0] = p[-1,-1], T[1 + x] = p[x,-1] (x = 0..7), L[y] = p[-1,y].
 void predict4x4(int mode, const int* T, const int* L, bool left, bool top, uint8_t* pred)
@@ -1659,27 +1758,6 @@ int decimateScore(const int* levels)
     return score;
 }
 
-// SAD of one row of 8 or 16 samples (SSE2 where available, plain C elsewhere).
-inline int sadRow(const uint8_t* a, const uint8_t* b, int w)
-{
-#if defined(__SSE2__) || defined(_M_X64)
-    if (w == 16) {
-        const __m128i s = _mm_sad_epu8(_mm_loadu_si128(reinterpret_cast<const __m128i*>(a)),
-                                       _mm_loadu_si128(reinterpret_cast<const __m128i*>(b)));
-        return _mm_cvtsi128_si32(s) + _mm_extract_epi16(s, 4);
-    }
-    if (w == 8) {
-        const __m128i s = _mm_sad_epu8(_mm_loadl_epi64(reinterpret_cast<const __m128i*>(a)),
-                                       _mm_loadl_epi64(reinterpret_cast<const __m128i*>(b)));
-        return _mm_cvtsi128_si32(s);
-    }
-#endif
-    int s = 0;
-    for (int x = 0; x < w; ++x)
-        s += std::abs(int(a[x]) - int(b[x]));
-    return s;
-}
-
 int median3(int a, int b, int c) { return std::max(std::min(a, b), std::min(std::max(a, b), c)); }
 
 } // namespace
@@ -2469,6 +2547,13 @@ bool Encoder::encodeMbP(MbOut& result, int mbx, int mby)
         restoreMb(mbx, mby, interState);
         result = std::move(interBits);
         coded = chosenInterDelta;
+        if (gStats) {
+            gStatInter.fetch_add(1, std::memory_order_relaxed);
+            if (result.syn.cbpLuma)
+                gStatInterCbp.fetch_add(1, std::memory_order_relaxed);
+            if (result.syn.t8)
+                gStatT8.fetch_add(1, std::memory_order_relaxed);
+        }
     } else {
         result = std::move(intraBits); // state is already the intra one
         coded = intraDelta;
@@ -2885,8 +2970,14 @@ void Encoder::deblockMb(int mbx, int mby)
 void Encoder::planMacroblockQp()
 {
     const int n = mbW_ * mbH_;
+    const bool tree = treeOffset_.size() == size_t(n);
     if (cfg_.aqStrength <= 0 || cfg_.mode == IntraMode::Pcm) {
-        std::fill(mbQp_.begin(), mbQp_.end(), int8_t(cfg_.qp));
+        if (!tree) {
+            std::fill(mbQp_.begin(), mbQp_.end(), int8_t(cfg_.qp));
+            return;
+        }
+        for (int m = 0; m < n; ++m)
+            mbQp_[size_t(m)] = int8_t(std::clamp(int(std::lround(cfg_.qp + treeOffset_[size_t(m)])), 0, 51));
         return;
     }
     double mean = 0;
@@ -2907,7 +2998,9 @@ void Encoder::planMacroblockQp()
         }
     mean /= n;
     for (int m = 0; m < n; ++m) {
-        const double offset = std::clamp(cfg_.aqStrength * (mbEnergy_[size_t(m)] - mean) * 0.5, -8.0, 8.0);
+        double offset = std::clamp(cfg_.aqStrength * (mbEnergy_[size_t(m)] - mean) * 0.5, -8.0, 8.0);
+        if (tree)
+            offset += treeOffset_[size_t(m)];
         mbQp_[size_t(m)] = int8_t(std::clamp(int(std::lround(cfg_.qp + offset)), 0, 51));
     }
 }

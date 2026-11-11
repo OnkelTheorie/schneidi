@@ -1,7 +1,8 @@
 // h264-proto: test driver for schneidi's own H.264 encoder.
 //   h264-proto selftest
 //   h264-proto encode <in.yuv> <width> <height> <out.h264> [--qp N] [--mode pcm|i16|i4|auto]
-//                     [--frames N] [--gop N] [--threads N] [--bitrate kbps] [--effort 0|1] [--aq strength] [--refs N] [--cavlc] [--no-t8] [--no-deblock] [--recon out.yuv]
+//                     [--frames N] [--gop N] [--threads N] [--bitrate kbps] [--effort 0|1] [--aq strength] [--refs N] [--cavlc] [--no-t8] [--no-deblock]
+//                     [--lookahead N] [--no-mbtree] [--mbtree-strength S] [--recon out.yuv]
 // Input is raw yuv420p ("-" reads stdin). Prints size, speed and PSNR of the encoder's reconstruction.
 #include "engine/encoder/h264/Cavlc.h"
 #include "engine/encoder/h264/H264Encoder.h"
@@ -11,6 +12,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <deque>
 #include <string>
 #include <vector>
 
@@ -73,6 +75,14 @@ int main(int argc, char** argv)
             cfg.refs = std::atoi(argv[++i]);
         else if (a == "--no-scenecut")
             cfg.sceneCut = false;
+        else if (a == "--lookahead" && i + 1 < argc)
+            cfg.lookahead = std::atoi(argv[++i]);
+        else if (a == "--fps" && i + 1 < argc)
+            cfg.fps = std::atof(argv[++i]);
+        else if (a == "--no-mbtree")
+            cfg.mbtree = false;
+        else if (a == "--mbtree-strength" && i + 1 < argc)
+            cfg.mbtreeStrength = std::atof(argv[++i]);
         else if (a == "--no-t8")
             cfg.transform8x8 = false;
         else if (a == "--cavlc")
@@ -98,28 +108,26 @@ int main(int argc, char** argv)
 
     const int w = cfg.width, h = cfg.height, cw = w / 2, ch = h / 2;
     std::vector<uint8_t> frame(size_t(w) * h * 3 / 2);
-    int frames = 0;
+    int frames = 0, fed = 0;
     double psnrY = 0, psnrU = 0, psnrV = 0, seconds = 0;
-    while (frames < maxFrames && std::fread(frame.data(), 1, frame.size(), in) == frame.size()) {
-        Picture pic;
-        pic.y = frame.data();
-        pic.u = pic.y + size_t(w) * h;
-        pic.v = pic.u + size_t(cw) * ch;
-        pic.strideY = w;
-        pic.strideC = cw;
-        const auto t0 = std::chrono::steady_clock::now();
-        const auto au = enc.encode(pic);
-        seconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+    // The encoder may hold pictures back (lookahead): PSNR against the source picture that came out.
+    std::deque<std::vector<uint8_t>> pending;
+    auto took = [&](const std::vector<uint8_t>& au) {
+        if (au.empty())
+            return;
         std::fwrite(au.data(), 1, au.size(), out);
         if (std::getenv("H264_PROTO_TRACE"))
             std::fprintf(stderr, "frame %d qp %d bytes %zu%s\n", frames, enc.lastQp(), au.size(),
                          enc.lastWasSceneCut() ? " scene cut" : "");
         totalBytes += au.size();
-
+        const std::vector<uint8_t>& src = pending.front();
+        const uint8_t* sy = src.data();
+        const uint8_t* su = sy + size_t(w) * h;
+        const uint8_t* sv = su + size_t(cw) * ch;
         const int pw = enc.paddedWidth();
-        psnrY += psnr(pic.y, w, enc.reconY().data(), pw, w, h);
-        psnrU += psnr(pic.u, cw, enc.reconU().data(), pw / 2, cw, ch);
-        psnrV += psnr(pic.v, cw, enc.reconV().data(), pw / 2, cw, ch);
+        psnrY += psnr(sy, w, enc.reconY().data(), pw, w, h);
+        psnrU += psnr(su, cw, enc.reconU().data(), pw / 2, cw, ch);
+        psnrV += psnr(sv, cw, enc.reconV().data(), pw / 2, cw, ch);
         if (recon) {
             for (int y = 0; y < h; ++y)
                 std::fwrite(enc.reconY().data() + size_t(y) * pw, 1, size_t(w), recon);
@@ -127,7 +135,30 @@ int main(int argc, char** argv)
                 for (int y = 0; y < ch; ++y)
                     std::fwrite(p->data() + size_t(y) * (pw / 2), 1, size_t(cw), recon);
         }
+        pending.pop_front();
         ++frames;
+    };
+    while (fed < maxFrames && std::fread(frame.data(), 1, frame.size(), in) == frame.size()) {
+        Picture pic;
+        pic.y = frame.data();
+        pic.u = pic.y + size_t(w) * h;
+        pic.v = pic.u + size_t(cw) * ch;
+        pic.strideY = w;
+        pic.strideC = cw;
+        pending.push_back(frame);
+        ++fed;
+        const auto t0 = std::chrono::steady_clock::now();
+        const auto au = enc.encode(pic);
+        seconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+        took(au);
+    }
+    for (;;) {
+        const auto t0 = std::chrono::steady_clock::now();
+        const auto au = enc.flush();
+        seconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+        if (au.empty())
+            break;
+        took(au);
     }
     std::fclose(in);
     std::fclose(out);

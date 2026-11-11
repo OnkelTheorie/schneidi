@@ -4,9 +4,12 @@
 #pragma once
 
 #include "BitWriter.h"
+#include "Lookahead.h"
 
 #include <array>
 #include <cstdint>
+#include <deque>
+#include <memory>
 #include <vector>
 
 namespace schneidi::h264 {
@@ -36,6 +39,9 @@ struct EncoderConfig {
     bool sceneCut = true; // keyframe on detected scene changes
     bool cabac = true;    // CABAC entropy coding (Main profile); false = CAVLC (Baseline)
     bool transform8x8 = true; // 8x8 transform for inter macroblocks (High profile; needs CABAC)
+    int lookahead = 40;       // pictures analysed ahead for the rate control and the macroblock tree (0 = none)
+    bool mbtree = true;       // macroblock tree: finer QP where later pictures reference a block (needs lookahead)
+    double mbtreeStrength = 2.0;
 };
 
 struct Picture {
@@ -52,12 +58,16 @@ public:
 
     // SPS + PPS as Annex B.
     std::vector<uint8_t> headers() const;
-    // One access unit (IDR or P picture) as Annex B. forceKeyframe: start a new GOP here
-    // (e.g. a cut in the timeline).
+    // Queues a picture; returns the next access unit (IDR or P picture, Annex B) or nothing while
+    // the lookahead is still filling. forceKeyframe: start a new GOP at this picture (e.g. a cut in
+    // the timeline). Pictures come out in order, `delay()` pictures after they went in.
     std::vector<uint8_t> encode(const Picture& picture, bool forceKeyframe = false);
+    // After the last picture: the remaining access units, one per call, empty when done.
+    std::vector<uint8_t> flush();
+    int delay() const;
     bool lastWasSceneCut() const { return lastWasSceneCut_; }
 
-    // Reconstruction of the last encoded picture as the decoder outputs it (padded size).
+    // Reconstruction of the last picture that came out, as the decoder outputs it (padded size).
     const std::vector<uint8_t>& reconY() const { return recY_; }
     const std::vector<uint8_t>& reconU() const { return recU_; }
     const std::vector<uint8_t>& reconV() const { return recV_; }
@@ -92,6 +102,9 @@ private:
         std::vector<uint8_t> F, B, V, J; // luma with margin: full, horizontal/vertical/centre half
     };
     void loadSource(const Picture& picture);
+    std::vector<uint8_t> encodeFrame(LookaheadFrame& frame);
+    void markKeyframes();
+    bool useLookahead() const { return cfg_.lookahead > 0 && cfg_.gop > 1 && (cfg_.bitrateKbps > 0 || cfg_.mbtree); }
     void encodeMbPcm(BitWriter& bw, int mbx, int mby);
     struct ChromaMb;
     bool encodeMbIntra(MbOut& out, int mbx, int mby);
@@ -179,10 +192,19 @@ private:
     bool lastWasSceneCut_ = false;
     std::vector<uint8_t> prevThumb_; // quarter-size luma of the previous picture
     bool detectSceneCut();
+    // Lookahead queue (front = next picture to encode) and the macroblock tree's QP offsets.
+    std::unique_ptr<Lookahead> la_;
+    std::deque<LookaheadFrame> queue_;
+    std::vector<float> treeOffset_; // per macroblock, 0 without the tree
     // Rate control state.
     double rcQp_ = 0;               // QP for P frames (I frames use 3 less)
     double rcBits_ = 0, rcTarget_ = 0; // produced / wanted bits so far
     double rcCplxSum_ = 0, rcCplxCount_ = 0; // complexity (bits * 2^(qp/6)) of the P frames so far
+    // Lookahead model: bits = k * cost * 2^(-qp/6), k per picture type from the pictures coded so far.
+    double rcKSum_[2] = {0, 0}, rcCostSum_[2] = {0, 0}; // [0] I, [1] P
+    double rcNeedSeen_ = 0; // predicted bits at QP 0 of the pictures coded so far
+    int rcFramesSeen_ = 0;
+    double frameCost(const LookaheadFrame& f, bool intra) const;
 };
 
 } // namespace schneidi::h264

@@ -690,7 +690,8 @@ add_executable(h264-proto EXCLUDE_FROM_ALL
     tools/h264proto/main.cpp
     src/engine/encoder/h264/Cavlc.cpp
     src/engine/encoder/h264/H264Encoder.cpp
-    src/engine/encoder/h264/H264Cabac.cpp)
+    src/engine/encoder/h264/H264Cabac.cpp
+    src/engine/encoder/h264/Lookahead.cpp)
 target_include_directories(h264-proto PRIVATE ${CMAKE_SOURCE_DIR}/src)
 find_package(Threads REQUIRED)
 target_link_libraries(h264-proto PRIVATE Threads::Threads)

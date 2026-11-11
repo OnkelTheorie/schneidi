@@ -93,14 +93,11 @@ bool roundTrip(const EncoderConfig& cfg, int frames, size_t* bytesOut = nullptr,
         }
     };
 
-    for (int t = 0; t < frames && ok; ++t) {
-        const Yuv src = synthFrame(cfg.width, cfg.height, t);
-        Picture pic{src.y.data(), src.u.data(), src.v.data(), src.w, src.w / 2};
-        std::vector<uint8_t> au = t == 0 ? enc.headers() : std::vector<uint8_t>{};
-        const auto data = enc.encode(pic, t == keyframeAt);
-        au.insert(au.end(), data.begin(), data.end());
+    // The encoder may hold pictures back (lookahead): feed all, then flush.
+    auto take = [&](std::vector<uint8_t> au) {
+        if (au.empty())
+            return;
         bytes += au.size();
-
         Yuv r;
         r.w = cfg.width;
         r.h = cfg.height;
@@ -119,6 +116,25 @@ bool roundTrip(const EncoderConfig& cfg, int frames, size_t* bytesOut = nullptr,
             ok = false;
         av_packet_unref(pkt);
         receive();
+    };
+    std::vector<uint8_t> first = enc.headers();
+    for (int t = 0; t < frames && ok; ++t) {
+        const Yuv src = synthFrame(cfg.width, cfg.height, t);
+        Picture pic{src.y.data(), src.u.data(), src.v.data(), src.w, src.w / 2};
+        std::vector<uint8_t> au = enc.encode(pic, t == keyframeAt);
+        if (au.empty())
+            continue;
+        au.insert(au.begin(), first.begin(), first.end()); // SPS/PPS in front of the first access unit
+        first.clear();
+        take(std::move(au));
+    }
+    while (ok) {
+        std::vector<uint8_t> au = enc.flush();
+        if (au.empty())
+            break;
+        au.insert(au.begin(), first.begin(), first.end());
+        first.clear();
+        take(std::move(au));
     }
     avcodec_send_packet(ctx, nullptr);
     receive();
@@ -187,6 +203,15 @@ int main()
     }
     // A keyframe the caller asks for (a cut in the timeline) in the middle of a GOP
     CHECK(roundTrip(config(176, 144, IntraMode::Auto, 30), 10, nullptr, 4));
+    {
+        EncoderConfig c = config(176, 144, IntraMode::Auto, 8, 2);
+        c.lookahead = 0; // pictures go straight through, no macroblock tree
+        c.mbtree = false;
+        CHECK(roundTrip(c, 10));
+        c.lookahead = 4; // shorter than the stream: pictures come out while others go in
+        c.mbtree = true;
+        CHECK(roundTrip(c, 10, nullptr, 6));
+    }
     for (int refs : {2, 3}) { // several reference pictures (ref_idx te(v)/ue(v), sliding window)
         EncoderConfig c = config(176, 144, IntraMode::Auto, 10, 2);
         c.refs = refs;
@@ -205,6 +230,8 @@ int main()
         size_t bytes = 0;
         CHECK(roundTrip(c, 60, &bytes));
         const double kbps = bytes * 8.0 / 2.0 / 1000.0; // 60 frames at 30 fps
+        if (std::abs(kbps - 1000.0) >= 250.0)
+            std::fprintf(stderr, "rate control: %.0f kbit/s instead of 1000\n", kbps);
         CHECK(std::abs(kbps - 1000.0) < 250.0);
     }
     }
