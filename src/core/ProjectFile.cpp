@@ -1595,6 +1595,29 @@ QStringList missingMedia(const ProjectData& data)
     return missing;
 }
 
+QStringList unusedMedia(const ProjectData& data)
+{
+    // The references redirect() follows
+    QSet<QString> used;
+    auto scan = [&](const Timeline& tl) {
+        for (const auto* tracks : {&tl.video, &tl.audio})
+            for (const Track& t : *tracks)
+                for (const Clip& c : t.clips) {
+                    if (!c.mediaPath.isEmpty()) used.insert(c.mediaPath);
+                    if (c.isTitle() && !c.title.look.texture.isEmpty()) used.insert(c.title.look.texture);
+                    for (const EffectInstance& e : c.effects)
+                        if (e.effectId == QLatin1String(Comp::kEffectId))
+                            for (const QString& p : Comp::mediaPaths(e)) used.insert(p);
+                }
+    };
+    scan(data.timeline);
+    for (const Sequence& s : data.sequences) scan(s.timeline);
+    QStringList out;
+    for (const MediaInfo& m : data.media)
+        if (!used.contains(m.path)) out << m.path;
+    return out;
+}
+
 int relink(ProjectData* data, const QString& searchDir)
 {
     QHash<QString, QStringList> wanted; // file name -> old paths (camera names like C0001.MP4 repeat)

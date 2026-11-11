@@ -475,6 +475,32 @@ int main(int argc, char** argv)
         CHECK(c && QFileInfo(c->mediaPath).fileName() == "b.mov");
     }
 
+    // --- Media no timeline uses (left in the Media Pool): the open dialog says so (MainWindow::applyLoaded). A file of
+    // another timeline or a title's texture counts as used
+    {
+        ProjectData d;
+        CHECK(ProjectFile::fromJson(R"({"app":"schneidi","version":1,"media":[
+            {"path":"/weg/a.mp4","length":100,"hasVideo":true},
+            {"path":"/weg/b.mp4","length":100,"hasVideo":true},
+            {"path":"/weg/c.mp4","length":100,"hasVideo":true},
+            {"path":"/weg/d.png","length":1,"hasVideo":true,"isImage":true}],
+            "timeline":{"video":[{"clips":[{"id":1,"media":0,"start":0,"in":0,"out":9}]}],"audio":[]}})",
+                                    tmp.filePath("pool.schneidi"), &d, &err));
+        CHECK_EQ(ProjectFile::unusedMedia(d), QStringList({"/weg/b.mp4", "/weg/c.mp4", "/weg/d.png"}));
+        Sequence other;
+        other.id = 99;
+        other.timeline.video.resize(1);
+        other.timeline.video[0].clips << mk(5, "/weg/b.mp4", 0, 0, 9);
+        Clip title;
+        title.id = 6;
+        title.kind = ClipKind::Title;
+        title.title.look.texture = "/weg/d.png";
+        other.timeline.video[0].clips << title;
+        d.sequences << other;
+        CHECK_EQ(ProjectFile::unusedMedia(d), QStringList({"/weg/c.mp4"}));
+        CHECK_EQ(ProjectFile::missingMedia(d).size(), 4); // missing all the same
+    }
+
     // --- Older file: freeze frame without freezeFrame shows `in` - also after splitting (shifts `in` of the right part)
     {
         ProjectData d;
