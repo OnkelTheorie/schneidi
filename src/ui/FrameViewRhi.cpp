@@ -5,6 +5,7 @@
 
 #include <QFile>
 #include <QOffscreenSurface>
+#include <QTimer>
 #include <rhi/qrhi.h>
 
 #include <atomic>
@@ -165,8 +166,17 @@ void FrameViewRhiSurface::uploadFrame(QRhiResourceUpdateBatch* batch)
         && upload.format() != QImage::Format_RGBX8888)
         upload = upload.convertToFormat(QImage::Format_RGBA8888);
     if (m_texture->pixelSize() != upload.size()) {
-        m_texture->setPixelSize(upload.size());
-        if (!m_texture->create()) return;
+        // A frame over the device's texture size limit (OpenGL does not refuse it, it just stays black), or one the
+        // device cannot make: the painter shows it instead of a black viewer forever. Posted: the handler replaces
+        // this surface, which must not happen inside render()
+        const int maxSize = rhi()->resourceLimit(QRhi::TextureSizeMax);
+        const bool fits = upload.width() <= maxSize && upload.height() <= maxSize;
+        if (fits) m_texture->setPixelSize(upload.size());
+        if (!fits || !m_texture->create()) {
+            m_texture->setPixelSize({});
+            QTimer::singleShot(0, this, [this] { emit renderFailed(); });
+            return;
+        }
         rebuildBindings(); // the bindings refer to the native texture object
     }
     // The batch keeps a reference to the image data (implicitly shared): no copy on the CPU side

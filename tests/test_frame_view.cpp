@@ -279,6 +279,30 @@ void testDrawing()
     dump(&view, "zoom-50");
 }
 
+// A frame the GPU cannot hold (wider than any texture size limit): the viewer falls back to the painter and shows it,
+// instead of drawing black forever (GPU path only: FRAME_VIEW_PLATFORM=xcb SCHNEIDI_VIEWER=gpu under Xvfb)
+void testTextureTooLarge()
+{
+    FrameView view;
+    if (view.backend() != FrameView::Backend::Rhi) {
+        std::fprintf(stderr, "  texture too large: skipped (no GPU viewer here)\n");
+        return;
+    }
+    view.resize(400, 300);
+    view.show();
+    view.setFrame(card({320, 180}));
+    QImage wide(QSize(20000, 1000), QImage::Format_RGBA8888); // over llvmpipe's 16384 (the Xvfb device)
+    wide.fill(Qt::red);
+    view.setFrame(wide);
+    QElapsedTimer t;
+    t.start();
+    while (view.backend() == FrameView::Backend::Rhi && t.elapsed() < 5000) {
+        view.grab(); // renders the GPU surface like a shown frame (Xvfb may not expose the window in time)
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    }
+    CHECK(view.backend() == FrameView::Backend::Painter);
+}
+
 // CPU time per displayed 1080p frame: a new frame each time (as during playback), drawn into a 1280x720 view
 void bench(int frames)
 {
@@ -407,6 +431,7 @@ int main(int argc, char** argv)
     testGeometry();
     testOverlayAndMouse();
     testDrawing();
+    testTextureTooLarge();
     QTemporaryDir dir;
     testViewer(dir.path());
     return Check::result();
