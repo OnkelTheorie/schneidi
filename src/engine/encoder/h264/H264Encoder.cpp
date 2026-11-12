@@ -4126,9 +4126,13 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
     Choice split;
     // No split layouts when the 16x16 cost is below c * sqrt(lambda): a well-predicted macroblock
     // rarely gains from splitting. Measured (two-pass, AQ + tree, 600 pictures CS2, BD-rate PSNR-Y /
-    // instructions): 120 +0.03 % / -2.6 %, 160 +0.15 % / -7.4 %, 200 +0.53 % / -12.7 %. H264_SPLITSKIP
-    // overrides (0 = always search the splits).
-    static const double kSplitSkip = std::getenv("H264_SPLITSKIP") ? std::atof(std::getenv("H264_SPLITSKIP")) : 160.0;
+    // instructions): 120 +0.03 % / -2.6 %, 160 +0.15 % / -7.4 %, 200 +0.53 % / -12.7 %. With the mode
+    // decision by estimate (which gained 0.40 %): 180 +0.23 % / -3.0 %, 200 +0.43 % / -5.5 % against 160
+    // -> 200 there, 160 without it. H264_SPLITSKIP overrides (0 = always search the splits).
+    static const double kSplitSkipEnv = std::getenv("H264_SPLITSKIP") ? std::atof(std::getenv("H264_SPLITSKIP")) : -1.0;
+    static const int kRdEstEnv = std::getenv("H264_RDEST") ? std::atoi(std::getenv("H264_RDEST")) : -1;
+    const bool kRdEst = (kRdEstEnv < 0 ? cfg_.modeEstimate : kRdEstEnv != 0) && useCabac() && useT8() && cfg_.effort > 0;
+    const double kSplitSkip = kSplitSkipEnv >= 0 ? kSplitSkipEnv : kRdEst ? 200.0 : 160.0;
     if (cfg_.effort > 0 && !(whole.cost < kSplitSkip * lambdaSad)) {
         // Experiment (H264_EXP & 256): the split layouts compare at full-pel (SATD); only the best
         // one gets the sub-pel refinement, and only when it is close.
@@ -4303,11 +4307,9 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
     // counted for real, the other one only when the estimates are within kEstBoth * lambda, and the
     // split only when its estimate is below kEstSplit times the 16x16 one. Measured (two-pass, AQ +
     // tree, 600 pictures CS2, BD-rate PSNR-Y / SSIM-Y / instructions against coding every candidate):
-    // -0.40 / -0.33 % / -1.5 % (the split now competes with its best transform, not only with 4x4;
-    // the estimate picks the wrong transform for 0.12 % of the inter cost). kEstSplit 1.0: -0.30 /
-    // -0.23 % / -2.0 %, not worth it. EncoderConfig::modeEstimate; H264_RDEST=0/1 overrides.
-    static const int kRdEstEnv = std::getenv("H264_RDEST") ? std::atoi(std::getenv("H264_RDEST")) : -1;
-    const bool kRdEst = kRdEstEnv < 0 ? cfg_.modeEstimate : kRdEstEnv != 0;
+    // -0.40 / -0.33 % / -1.7 % (the split now competes with its best transform, not only with 4x4;
+    // the estimate picks the wrong transform for 0.12 % of the inter cost). kEstSplit 1.0: +0.10 %
+    // for another -0.5 %, not worth it. EncoderConfig::modeEstimate; H264_RDEST=0/1 overrides.
     static const double kEstBoth = std::getenv("H264_ESTBOTH") ? std::atof(std::getenv("H264_ESTBOTH")) : 0.0;
     static const double kEstSplit = std::getenv("H264_ESTSPLIT") ? std::atof(std::getenv("H264_ESTSPLIT")) : 1e9;
     const CabacEncoder* liveCe = cabacByTop_[size_t(rowKey_[size_t(mby)])];
