@@ -49,6 +49,7 @@
 #if defined(Q_OS_UNIX) && !defined(Q_OS_DARWIN) && !defined(Q_OS_ANDROID)
 #include <dlfcn.h>
 #endif
+#include <algorithm>
 #include <functional>
 #include <memory>
 #include <utility>
@@ -224,6 +225,26 @@ public:
     explicit FirstPaintWatch(QWidget* window) : QObject(window), m_window(window)
     {
         QCoreApplication::instance()->installEventFilter(this);
+        // SCHNEIDI_STARTUP_TRACE=2: a 5 ms ticker lists every stall of the GUI thread from here on (made before the
+        // window shows: the first gap is the way from show() to the event loop) - what the user sees as a stuttering
+        // open animation or a frozen window right after it appeared
+        if (qEnvironmentVariableIntValue("SCHNEIDI_STARTUP_TRACE") == 2) {
+            auto* ticker = new QTimer(this);
+            ticker->setTimerType(Qt::PreciseTimer);
+            ticker->setInterval(5);
+            connect(ticker, &QTimer::timeout, this, [this] {
+                const qint64 now = StartupTrace::elapsed();
+                if (now - m_lastTick > kStallMs) m_stalls.push_back({m_lastTick, now});
+                // After the first expose (its own paint counts)
+                if (m_exposedAt >= 0 && now - std::max(m_lastTick, m_exposedAt) > m_longestStall) {
+                    m_longestStall = now - std::max(m_lastTick, m_exposedAt);
+                    m_stallEnd = now;
+                }
+                m_lastTick = now;
+            });
+            m_lastTick = StartupTrace::elapsed();
+            ticker->start();
+        }
     }
     bool eventFilter(QObject* o, QEvent* e) override
     {
@@ -236,24 +257,14 @@ public:
                 firstPaintDone();
             });
             // SCHNEIDI_STARTUP_TRACE=2: quits by itself (measuring runs), after the work deferred past the paint;
-            // exit(), not quit(): no window is asked to close (no question about unsaved changes). Until then a
-            // 5 ms ticker measures the longest stall of the GUI thread after the first expose (what the user feels
-            // as a frozen window right after it appeared).
+            // exit(), not quit(): no window is asked to close (no question about unsaved changes). Then it lists the
+            // ticker's stalls and the longest one after the first expose.
             if (qEnvironmentVariableIntValue("SCHNEIDI_STARTUP_TRACE") == 2) {
-                auto* ticker = new QTimer(this);
-                ticker->setTimerType(Qt::PreciseTimer);
-                ticker->setInterval(5);
-                connect(ticker, &QTimer::timeout, this, [this] {
-                    const qint64 now = StartupTrace::elapsed();
-                    if (m_lastTick >= 0 && now - m_lastTick > m_longestStall) {
-                        m_longestStall = now - m_lastTick;
-                        m_stallEnd = now;
-                    }
-                    m_lastTick = now;
-                });
-                m_lastTick = StartupTrace::elapsed(); // the paint of the expose counts too
-                ticker->start();
+                m_exposedAt = StartupTrace::elapsed();
                 QTimer::singleShot(2500, qApp, [this] {
+                    for (const auto& [from, to] : m_stalls)
+                        std::fprintf(stderr, "startup: GUI stall %lld..%lld ms (%lld ms)\n", static_cast<long long>(from),
+                                     static_cast<long long>(to), static_cast<long long>(to - from));
                     std::fprintf(stderr, "startup: longest GUI stall after first expose %lld ms (ended at %lld ms)\n",
                                  static_cast<long long>(m_longestStall), static_cast<long long>(m_stallEnd));
                     StartupTrace::mark("quit (SCHNEIDI_STARTUP_TRACE=2)");
@@ -272,7 +283,10 @@ public:
 private:
     QWidget* m_window;
     bool m_exposed = false;
-    qint64 m_lastTick = -1, m_longestStall = 0, m_stallEnd = 0; // SCHNEIDI_STARTUP_TRACE=2
+    // SCHNEIDI_STARTUP_TRACE=2
+    static constexpr qint64 kStallMs = 16; // one frame at 60 Hz
+    qint64 m_lastTick = -1, m_exposedAt = -1, m_longestStall = 0, m_stallEnd = 0;
+    std::vector<std::pair<qint64, qint64>> m_stalls; // [from, to] in ms since main()
 };
 
 // Claude Code or Claude Desktop is on this computer, but not connected to schneidi: asked once on start (Cli::Setup
