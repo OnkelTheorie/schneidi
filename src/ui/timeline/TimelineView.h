@@ -226,11 +226,13 @@ private:
         QString label;          // kind and text/file, translated
         int first = 0, end = 0; // timeline frames, end exclusive (the dragged one: where it goes)
         QRect rect;
+        bool keyed = false; // from/until have keyframes: the range at the playhead, not draggable
     };
     struct NodeHit {
         int clipId = 0;
         int node = 0;
         int part = 0; // -1 start edge, 0 the bar (moves), 1 end edge
+        bool keyed = false;
     };
     // The bars of clip c drawn in r (at most 3); more = how many are left out ("+n"); dot = the mark of a clip too low
     // for bars (empty = none)
@@ -239,7 +241,9 @@ private:
     std::optional<NodeHit> nodeBarAt(const QPoint& pos) const;
     QString nodeBarToolTip(const QPoint& pos) const;
     int nodeSnapDelta(const QVector<int>& edges) const; // playhead, clip edges, markers; correction or 0
-    bool nodeBarPress(const QPoint& pos);               // starts a drag; false = no bar there
+    // nodeBarPress starts a drag; false = no (draggable) bar there. Called after fade handles, transitions and clip
+    // edges had their chance (a bar never blocks trimming)
+    bool nodeBarPress(const QPoint& pos);
     void nodeBarDrag(const QPoint& pos);
     void nodeBarRelease();                              // one undo step (Editor::setCompNodeRange)
     bool nodeBarDoubleClick(const QPoint& pos);         // compNodeOpenRequested
@@ -247,6 +251,7 @@ private:
     NodeHit m_nodeDrag, m_nodeHover;
     int m_nodeStartFirst = 0, m_nodeStartEnd = 0; // the dragged bar at the press
     int m_nodeFirst = 0, m_nodeEnd = 0;           // and now
+    double m_nodeFrom = 0, m_nodeUntil = 0;       // its stored values at the press
     // Retime bar: speed point (point >= 0) or section (segment >= 0) under the mouse
     struct RetimeHit {
         int clipId = 0;

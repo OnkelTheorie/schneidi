@@ -56,7 +56,9 @@ QVector<TimelineView::NodeBar> TimelineView::nodeBars(const QRect& r, const Clip
     if (dot) *dot = {};
     const EffectInstance* e = EffectRegistry::instance(c, Comp::kEffectId);
     if (!e || !e->enabled) return bars;
-    const QVector<Comp::NodeRange> ranges = Comp::nodeRanges(*e);
+    // Keyframed from/until: the range at the playhead, as the engine shows it there
+    const int t = std::clamp(m_playhead - c.start, 0, std::max(0, c.length() - 1));
+    const QVector<Comp::NodeRange> ranges = Comp::nodeRanges(*e, &c, t);
     if (ranges.isEmpty()) return bars;
     const QRect body = clipBodyRect(r);
     if (body.height() < kNodeBarsMinBody || r.width() < 8) { // too low (or narrow): a dot says "there are some"
@@ -69,6 +71,7 @@ QVector<TimelineView::NodeBar> TimelineView::nodeBars(const QRect& r, const Clip
         NodeBar b;
         b.node = ranges[i].node;
         b.label = nodeLabel(*e, ranges[i]);
+        b.keyed = ranges[i].keyed;
         Comp::rangeFrames(c, ranges[i], fps, &b.first, &b.end);
         // The bar being dragged shows where it goes
         if (m_drag == Drag::NodeRange && m_nodeDrag.clipId == c.id && m_nodeDrag.node == b.node) {
@@ -105,7 +108,7 @@ void TimelineView::drawNodeBars(QPainter& p, const QRect& r, const Clip& c)
         // A dark band under it keeps it readable on the filmstrip
         p.fillRect(QRect(body.left(), b.rect.top() - 1, body.width(), b.rect.height() + 2), QColor(0, 0, 0, 70));
         p.setPen(QPen(QColor(0, 0, 0, 170), 1));
-        p.setBrush(active ? Theme::primary : Theme::secondary);
+        p.setBrush(active ? Theme::primary : b.keyed ? Theme::textDim : Theme::secondary); // keyed: not draggable
         p.drawRoundedRect(QRectF(b.rect).adjusted(0.5, -0.5, -0.5, 0.5), 2, 2);
     }
     if (more > 0 && !bars.isEmpty()) { // the rest as "+n" above the bars
@@ -144,10 +147,10 @@ std::optional<TimelineView::NodeHit> TimelineView::nodeBarAt(const QPoint& pos) 
         const QRect r = clipRect(*row, c);
         if (!r.contains(pos)) continue;
         for (const NodeBar& b : nodeBars(r, c)) {
-            const QRect grab = b.rect.adjusted(-3, -2, 3, 2);
+            const QRect grab = b.rect.adjusted(-3, -1, 3, 1); // half the gap: two bars never share a row
             if (!grab.contains(pos)) continue;
             const int edge = std::min(5, std::max(2, b.rect.width() / 3));
-            NodeHit h{c.id, b.node, 0};
+            NodeHit h{c.id, b.node, 0, b.keyed};
             if (pos.x() <= b.rect.left() + edge) h.part = -1;
             else if (pos.x() >= b.rect.right() - edge) h.part = 1;
             return h;
@@ -172,9 +175,12 @@ QString TimelineView::nodeBarToolTip(const QPoint& pos) const
             return T("%1: %2 bis %3").arg(b.label, Timecode::format(b.first, fps), Timecode::format(b.end, fps));
         };
         for (const NodeBar& b : bars)
-            if (b.rect.adjusted(-3, -2, 3, 2).contains(pos))
+            if (b.rect.adjusted(-3, -1, 3, 1).contains(pos))
                 return line(b) + QStringLiteral("\n")
-                       + T("Ziehen verschiebt, die Enden kürzen; Doppelklick öffnet den Knoten auf der Compositing-Seite");
+                       + (b.keyed ? T("Der Zeitbereich hat Keyframes: der Balken zeigt ihn am Abspielkopf und lässt sich "
+                                      "nicht ziehen (Keyframes von „Wirkt ab/bis“ entfernen)")
+                                  : T("Ziehen verschiebt, die Enden kürzen; Doppelklick öffnet den Knoten auf der "
+                                      "Compositing-Seite"));
         if (!dot.adjusted(-3, -3, 3, 3).contains(pos) && !(more > 0 && clipBodyRect(r).contains(pos)
                                                             && pos.y() >= clipBodyRect(r).bottom() - 24))
             continue;
@@ -182,7 +188,8 @@ QString TimelineView::nodeBarToolTip(const QPoint& pos) const
         const EffectInstance* e = EffectRegistry::instance(c, Comp::kEffectId);
         if (!e) continue;
         QStringList lines{T("Knoten mit Zeitbereich (höhere Spur zeigt sie als Balken):")};
-        for (const Comp::NodeRange& nr : Comp::nodeRanges(*e)) {
+        const int t = std::clamp(m_playhead - c.start, 0, std::max(0, c.length() - 1));
+        for (const Comp::NodeRange& nr : Comp::nodeRanges(*e, &c, t)) {
             NodeBar b;
             b.label = nodeLabel(*e, nr);
             Comp::rangeFrames(c, nr, fpsOf(m_editor), &b.first, &b.end);
@@ -213,11 +220,13 @@ int TimelineView::nodeSnapDelta(const QVector<int>& edges) const
 bool TimelineView::nodeBarPress(const QPoint& pos)
 {
     const auto h = nodeBarAt(pos);
-    if (!h) return false;
+    if (!h || h->keyed) return false;
     const Clip* c = TimelineOps::findClip(m_editor->project()->timeline(), h->clipId);
     const EffectInstance* e = c ? EffectRegistry::instance(*c, Comp::kEffectId) : nullptr;
     Comp::NodeRange r;
-    if (!e || !Comp::activeRange(*e, h->node, &r)) return false;
+    if (!e || !Comp::activeRange(*e, h->node, &r, c, 0) || r.keyed) return false;
+    m_nodeFrom = r.from;
+    m_nodeUntil = r.until;
     Selection* sel = m_editor->selection();
     if (!sel->contains(h->clipId)) {
         const QVector<int> group = m_editor->withLinked({h->clipId});
@@ -266,8 +275,12 @@ void TimelineView::nodeBarRelease()
     if (m_nodeFirst == m_nodeStartFirst && m_nodeEnd == m_nodeStartEnd) return; // a click: nothing changes
     const Clip* c = TimelineOps::findClip(m_editor->project()->timeline(), h.clipId);
     if (!c) return;
+    // Only what was dragged changes: the start edge keeps the stored until (0 = to the end stays), the end edge the
+    // stored from; a moved bar stays "to the end" when it was and still ends at the clip's end
     double from = 0, until = 0;
-    Comp::rangeValues(*c, m_nodeFirst, m_nodeEnd, fpsOf(m_editor), &from, &until);
+    Comp::rangeValues(*c, m_nodeFirst, m_nodeEnd, fpsOf(m_editor), &from, &until, h.part == 0 && m_nodeUntil == 0);
+    if (h.part < 0) until = m_nodeUntil;
+    if (h.part > 0) from = m_nodeFrom;
     QString err;
     if (!m_editor->setCompNodeRange(h.clipId, h.node, from, until, &err)) emit message(err);
 }

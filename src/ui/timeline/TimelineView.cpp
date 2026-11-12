@@ -515,11 +515,7 @@ void TimelineView::updateHoverCursor(const QPoint& pos)
         setCursor(Qt::PointingHandCursor);
         return;
     }
-    setNodeHover(pos);
-    if (const auto h = nodeBarAt(pos)) { // a node's time range: ends trim, the bar moves
-        setCursor(h->part ? Qt::SizeHorCursor : Qt::OpenHandCursor);
-        return;
-    }
+
     if (m_tool == Tool::Select) {
         if (const auto t = transitionAt(pos)) {
             if (m_hoverVolClip) {
@@ -529,6 +525,11 @@ void TimelineView::updateHoverCursor(const QPoint& pos)
             setCursor(t->edge ? Qt::SizeHorCursor : Qt::ArrowCursor);
             return;
         }
+    }
+    setNodeHover(pos);
+    if (const auto h = edgeAt(pos) ? std::nullopt : nodeBarAt(pos); h && !h->keyed) { // ends trim, the bar moves
+        setCursor(h->part ? Qt::SizeHorCursor : Qt::OpenHandCursor);
+        return;
     }
     const int vol = m_tool == Tool::Select && !edgeAt(pos) ? volumeLineAt(pos) : 0;
     if (vol != m_hoverVolClip) {

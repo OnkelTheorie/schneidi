@@ -77,11 +77,11 @@ bool evaluate(const EffectInstance& comp, const Env& env, Cache* cache, Buf* out
 // Node kinds of a graph this version does not know (skippedEffects, missingEffects)
 QStringList unknownKinds(const EffectInstance& comp);
 
-// The graph as it works at clip frame t (0.22): nodes outside their time range (Comp::inRange of "from"/"until", with
-// keyframes when `clip` has them) taken out of the picture's way - what read such a node reads its picture input
-// instead (src, else bg, else fg: a merge out of its range shows its bg), a node without one gives nothing (its readers
-// lose that input; as the output: a transparent picture, except text/3D text, which fade by themselves). false = every
-// node works at t (*out untouched: use comp). evaluate() does this itself; the card's planner gets the result
+// The graph as it works at clip frame t (0.22): nodes outside their time range (Comp::rangeAt: from/until, keyframes of
+// `clip` when it has them) taken out of the picture's way - what read such a node reads its picture input instead
+// (src, else bg, else fg: a merge out of its range shows its bg); a node without one (a generator) is read as one added
+// transparent color node, also as the output. false = every node works at t (*out untouched: use comp). evaluate()
+// does this itself on the graph it parses; the card's planner gets the result
 bool activeGraph(const EffectInstance& comp, double t, double fps, const Clip* clip, EffectInstance* out);
 
 } // namespace Picture::Comp

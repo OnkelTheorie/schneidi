@@ -686,6 +686,7 @@
  "Der Song ist nur %1 lang – kürzer als die gewünschte Länge.": "The song is only %1 long – shorter than the wanted length.",
  "Der Song wird an seinen Phrasen auf die Länge des Platzhalters geschnitten (sonst gekürzt mit Ausblenden)": "The song is cut on its phrases to the placeholder’s length (otherwise trimmed with a fade-out)",
  "Der Ton der Spuren ließ sich nicht messen.": "Could not measure the sound of the tracks.",
+ "Der Zeitbereich hat Keyframes: der Balken zeigt ihn am Abspielkopf und lässt sich nicht ziehen (Keyframes von „Wirkt ab/bis“ entfernen)": "The time range has keyframes: the bar shows it at the playhead and cannot be dragged (remove the keyframes of “Works from/until”)",
  "Der erste starke Moment (Treffer, lauter Moment, erstes Wort oder Text) kommt erst nach %1 s – in den ersten %2 s entscheidet sich, wer bleibt; ihn nach vorn holen oder als Teaser zeigen": "The first strong moment (a hit, a loud moment, the first word or a text) only comes after %1 s – the first %2 s decide who stays; move it forward or show it as a teaser",
  "Der gekürzte Song würde andere Clips auf seiner Spur überdecken – den Clip daneben verschieben oder eine freie Spur nehmen.": "The shortened song would cover other clips on its track – move the clip next to it or use a free track.",
  "Design": "Design",

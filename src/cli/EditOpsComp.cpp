@@ -413,7 +413,7 @@ void opNodeRange(Session& s, const QJsonObject& op, const Clip& c, const CompNod
         if (a < c.start || b > c.end())
             fail("BAD_ARGUMENT", QString("node %1: range must lie inside clip %2 (%3..%4, to exclusive), got %5..%6")
                                      .arg(n.id).arg(c.id).arg(c.start).arg(c.end()).arg(a).arg(b));
-        ::Comp::rangeValues(c, a, b, fps, &from, &until);
+        if (a > c.start || b < c.end()) ::Comp::rangeValues(c, a, b, fps, &from, &until); // the whole clip = no range
     }
     QString err;
     if (!s.editor.setCompNodeRange(c.id, n.id, from, until, &err)) fail("FAILED", err);
@@ -654,10 +654,11 @@ QJsonObject compJson(const EffectInstance& e, const ProjectFormat& f, const Clip
                             v[shown] = v.take(k);
             o["params"] = v;
         }
-        if (::Comp::NodeRange r; clip && ::Comp::activeRange(e, n.id, &r)) { // where it works (timeline frames)
+        if (::Comp::NodeRange r; clip && ::Comp::activeRange(e, n.id, &r, clip, 0)) { // where it works (timeline frames)
             int first = 0, end = 0;
             ::Comp::rangeFrames(*clip, r, f.rate.fps(), &first, &end);
             o["range"] = QJsonArray{first, end};
+            if (r.keyed) o["range_keyframed"] = true; // from/until have keyframes: the range at the clip's start
         }
         if (!PC::find(n.type)) o["available"] = false; // a newer version's kind: passed through
         for (const char* key : {"e_chain", "e_code"}) // custom code not confirmed (core/CodeTrust.h): passed through
@@ -822,7 +823,7 @@ void addCompOps(QVector<OpDef>& ops)
                  "need at:<time>: a keyframe there (like the Inspector; other values just change). A mask kind (mask, matte) behind a "
                  "picture node is only added (link it into a merge's mask input). unlink takes the link from `from` "
                  "(without input: the one it feeds). Time range: {op:'node', clip, id, range:[from, to]} (timeline times, to "
-                 "exclusive; range:false = the whole clip): the node works only there - outside, a node with a picture "
+                 "exclusive; range:false or the whole clip = no range): the node works only there - outside, a node with a picture "
                  "input hands it on unchanged (a merge shows its bg), a generator (text, media, color) shows nothing; "
                  "stored as params from/until in seconds from the clip's start (params:{from:2, until:5.5} works too, "
                  "until 0 = to the end), they follow cuts and trims. Masks and trackers have none. `info` gives each "

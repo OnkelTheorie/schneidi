@@ -336,6 +336,11 @@ void followHead(Clip& c, int frames, double fps)
         for (const char* name : {kFromKey, kUntilKey}) {
             const QString k = CompGraph::paramKey(n.id, QString::fromLatin1(name));
             if (const double v = e->params.value(k, 0.0).toDouble(); v != 0) e->params[k] = moved(v);
+            // Keyframed (seconds as values; their times are source frames and stay right): the same move
+            const auto kf = c.keys.find(Keys::effectParam(QString::fromLatin1(kEffectId), k));
+            if (kf != c.keys.end())
+                for (Keyframe& f : *kf)
+                    if (f.value != 0) f.value = moved(f.value);
         }
     }
 }
@@ -355,32 +360,52 @@ bool inRange(double from, double until, double s)
     return s >= std::max(0.0, from) && s < end;
 }
 
+void rangeAt(const EffectInstance& e, const Clip* clip, int node, double t, double* from, double* until, bool* keyed)
+{
+    if (keyed) *keyed = false;
+    double* out[2] = {from, until};
+    const char* keys[2] = {kFromKey, kUntilKey};
+    for (int i = 0; i < 2; ++i) {
+        const QString full = CompGraph::paramKey(node, QString::fromLatin1(keys[i]));
+        if (clip) {
+            const AnimParam p = Keys::effectParam(QString::fromLatin1(kEffectId), full);
+            if (Keys::animated(*clip, p)) {
+                *out[i] = Keys::valueAt(*clip, p, t);
+                if (keyed) *keyed = true;
+                continue;
+            }
+        }
+        *out[i] = e.params.value(full, 0.0).toDouble();
+    }
+}
+
 namespace {
-bool rangeIn(const EffectInstance& e, const CompGraph& g, int node, NodeRange* r)
+bool rangeIn(const EffectInstance& e, const CompGraph& g, int node, NodeRange* r, const Clip* clip, double t)
 {
     const CompNode* n = g.node(node);
     if (!n || !hasRange(n->type)) return false;
-    const double from = e.params.value(CompGraph::paramKey(node, QString::fromLatin1(kFromKey)), 0.0).toDouble();
-    const double until = e.params.value(CompGraph::paramKey(node, QString::fromLatin1(kUntilKey)), 0.0).toDouble();
+    double from = 0, until = 0;
+    bool keyed = false;
+    rangeAt(e, clip, node, t, &from, &until, &keyed);
     if (!rangeSet(from, until)) return false;
-    if (r) *r = {node, n->type, from, until};
+    if (r) *r = {node, n->type, from, until, keyed};
     return true;
 }
 } // namespace
 
-bool activeRange(const EffectInstance& e, int node, NodeRange* r)
+bool activeRange(const EffectInstance& e, int node, NodeRange* r, const Clip* clip, double t)
 {
     CompGraph g;
-    return graphOf(e, &g) && rangeIn(e, g, node, r);
+    return graphOf(e, &g) && rangeIn(e, g, node, r, clip, t);
 }
 
-QVector<NodeRange> nodeRanges(const EffectInstance& e)
+QVector<NodeRange> nodeRanges(const EffectInstance& e, const Clip* clip, double t)
 {
     QVector<NodeRange> out;
     CompGraph g;
     if (!graphOf(e, &g)) return out;
     for (const CompNode& n : g.nodes)
-        if (NodeRange r; rangeIn(e, g, n.id, &r)) out << r;
+        if (NodeRange r; rangeIn(e, g, n.id, &r, clip, t)) out << r;
     return out;
 }
 
@@ -397,11 +422,15 @@ void rangeFrames(const Clip& c, const NodeRange& r, double fps, int* first, int*
     *end = c.start + b;
 }
 
-void rangeValues(const Clip& c, int first, int end, double fps, double* from, double* until)
+void rangeValues(const Clip& c, int first, int end, double fps, double* from, double* until, bool openEnd)
 {
     fps = std::max(1e-6, fps);
     const int a = std::clamp(first - c.start, 0, c.length()), b = std::clamp(end - c.start, a, c.length());
     *from = a / fps;
+    if (openEnd && b == c.length() && a < b) {
+        *until = 0;
+        return;
+    }
     // A range that ends where it starts would read as "to the end" (until 0): one frame at least
     *until = std::max(b, a + 1) / fps;
 }

@@ -261,7 +261,6 @@ void TimelineView::mousePressEvent(QMouseEvent* e)
         update();
         return;
     }
-    if (nodeBarPress(pos)) return; // a node's time range bar (moves, its ends trim it)
     // Retime controls: drag speed point, click on the speed opens the selection (like DaVinci ▾)
     if (m_tool == Tool::Select)
         if (const auto h = retimeHitAt(pos); h && (h->point >= 0 || !edgeAt(pos))) {
@@ -323,6 +322,8 @@ void TimelineView::mousePressEvent(QMouseEvent* e)
         }
         return;
     }
+    // A node's time range bar (moves, its ends trim it); clip edges, fade handles and transitions above win
+    if (!edgeAt(pos) && nodeBarPress(pos)) return;
     if (const auto hit = edgeAt(pos)) {
         // Alt-drag at a cut (a clip touches it on the other side): only this track's edge rolls, the linked partners
         // keep their cut and stay linked (J/L cut: the sound starts early or runs on under the next picture)

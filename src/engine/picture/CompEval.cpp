@@ -109,96 +109,100 @@ QStringList unknownKinds(const EffectInstance& comp)
 }
 
 namespace {
-bool evaluateGraph(const EffectInstance& comp, const Env& env, Cache* cache, Buf* out, Stats* stats);
-} // namespace
 
-bool evaluate(const EffectInstance& comp, const Env& env, Cache* cache, Buf* out, Stats* stats)
+// Nodes outside their time range taken out of g's way (activeGraph). A reader of a node that gives nothing (a
+// generator, a chain of such) reads one added transparent color node instead: a filter without its src makes nothing
+// at all and would end the graph. *transparent = that node's id (0 = none added). false = g unchanged
+bool rangeGraph(CompGraph& g, const EffectInstance& comp, double t, double fps, const Clip* clip, int* transparent)
 {
-    EffectInstance active;
-    if (activeGraph(comp, env.t, env.fps, env.clip, &active)) return evaluateGraph(active, env, cache, out, stats);
-    return evaluateGraph(comp, env, cache, out, stats);
-}
-
-bool activeGraph(const EffectInstance& comp, double t, double fps, const Clip* clip, EffectInstance* out)
-{
-    // Cheap first: a stored or animated from/until at all (most graphs have none)
-    const QString fromTail = QStringLiteral(".") + QLatin1String(::Comp::kFromKey);
-    const QString untilTail = QStringLiteral(".") + QLatin1String(::Comp::kUntilKey);
+    *transparent = 0;
+    // Cheap first, without allocating: a stored or animated from/until at all (most graphs have none)
+    static const QLatin1String fromTail(".from"), untilTail(".until");
     bool any = false;
     for (auto it = comp.params.cbegin(); it != comp.params.cend() && !any; ++it)
         any = (it.key().endsWith(fromTail) || it.key().endsWith(untilTail)) && it.value().toDouble() != 0;
     if (clip && !any)
         for (auto it = clip->keys.cbegin(); it != clip->keys.cend() && !any; ++it) {
+            if (it.value().isEmpty() || !Keys::isEffectParam(it.key())) continue;
             QString effect, full;
-            any = !it.value().isEmpty() && Keys::effectParamOf(it.key(), &effect, &full)
-                  && effect == QLatin1String(::Comp::kEffectId) && (full.endsWith(fromTail) || full.endsWith(untilTail));
+            any = Keys::effectParamOf(it.key(), &effect, &full) && effect == QLatin1String(::Comp::kEffectId)
+                  && (full.endsWith(fromTail) || full.endsWith(untilTail));
         }
     if (!any) return false;
-    CompGraph g;
-    if (!::Comp::graphOf(comp, &g)) return false;
     const QVector<int> order = g.evalOrder();
-    auto value = [&](int id, const char* key) {
-        const QString full = CompGraph::paramKey(id, QString::fromLatin1(key));
-        if (clip) {
-            const AnimParam p = Keys::effectParam(QString::fromLatin1(::Comp::kEffectId), full);
-            if (Keys::animated(*clip, p)) return Keys::valueAt(*clip, p, t);
-        }
-        return comp.params.value(full, 0.0).toDouble();
-    };
     const double s = t / std::max(1e-6, fps);
-    QHash<int, int> through; // node out of its range -> the node whose picture it hands on (0 = none)
+    QHash<int, int> through; // node out of its range -> the node whose picture it hands on (-1 = none)
     for (int id : order) {
         const CompNode* n = g.node(id);
         if (!n || !::Comp::hasRange(n->type)) continue;
-        if (::Comp::inRange(value(id, ::Comp::kFromKey), value(id, ::Comp::kUntilKey), s)) continue;
+        double from = 0, until = 0;
+        ::Comp::rangeAt(comp, clip, id, t, &from, &until);
+        if (::Comp::inRange(from, until, s)) continue;
         const CompLink* l = nullptr;
         for (const char* name : {"src", "bg", "fg"})
             if ((l = g.linkInto(id, QString::fromLatin1(name)))) break;
-        int from = l ? l->from : 0;
-        if (from && through.contains(from)) from = through.value(from); // a chain of them (order: resolved before)
-        through.insert(id, from);
+        int from_ = l ? l->from : -1;
+        if (from_ > 0 && through.contains(from_)) from_ = through.value(from_); // a chain (order: resolved before)
+        through.insert(id, from_);
     }
     if (through.isEmpty()) return false;
+    auto source = [&](int id) {
+        int from = through.value(id);
+        if (from < 0) {
+            if (!*transparent) {
+                *transparent = g.nextId();
+                g.nodes << CompNode{*transparent, QStringLiteral("color"), {}};
+            }
+            from = *transparent;
+        }
+        return from;
+    };
     bool changed = false;
-    QVector<CompLink> links;
-    for (const CompLink& l : g.links) {
-        if (!through.contains(l.from)) {
-            links << l;
-            continue;
-        }
-        changed = true;
-        if (const int from = through.value(l.from)) links << CompLink{from, l.to, l.input};
-    }
-    g.links = links;
-    if (through.contains(g.out)) {
-        const CompNode* o = g.node(g.out);
-        if (const int from = through.value(g.out)) {
-            g.out = from;
+    for (CompLink& l : g.links)
+        if (through.contains(l.from)) {
+            l.from = source(l.from);
             changed = true;
-        } else if (o && o->type != QLatin1String(::Comp::kTextType) && o->type != QLatin1String("text3d")) {
-            // A generator as the output, out of its range: a transparent picture (not the clip's own one)
-            const int id = g.nextId();
-            g.nodes << CompNode{id, QStringLiteral("color"), {}};
-            *out = comp;
-            out->params[CompGraph::paramKey(id, QStringLiteral("color"))] = QStringLiteral("#00000000");
-            g.out = id;
-            ::Comp::setGraph(*out, g);
-            return true;
         }
+    if (through.contains(g.out)) {
+        g.out = source(g.out);
+        changed = true;
     }
-    if (!changed) return false;
+    return changed;
+}
+
+bool evaluateGraph(const CompGraph& g, int transparent, const EffectInstance& comp, const Env& env, Cache* cache,
+                   Buf* out, Stats* stats);
+
+constexpr const char* kTransparent = "#00000000";
+
+} // namespace
+
+bool evaluate(const EffectInstance& comp, const Env& env, Cache* cache, Buf* out, Stats* stats)
+{
+    if (env.size.isEmpty()) return false;
+    CompGraph g;
+    if (!::Comp::graphOf(comp, &g)) return false;
+    int transparent = 0;
+    rangeGraph(g, comp, env.t, env.fps, env.clip, &transparent);
+    return evaluateGraph(g, transparent, comp, env, cache, out, stats);
+}
+
+bool activeGraph(const EffectInstance& comp, double t, double fps, const Clip* clip, EffectInstance* out)
+{
+    CompGraph g;
+    int transparent = 0;
+    if (!::Comp::graphOf(comp, &g) || !rangeGraph(g, comp, t, fps, clip, &transparent)) return false;
     *out = comp;
+    if (transparent) out->params[CompGraph::paramKey(transparent, QStringLiteral("color"))] = QString::fromLatin1(kTransparent);
     ::Comp::setGraph(*out, g);
     return true;
 }
 
 namespace {
 
-bool evaluateGraph(const EffectInstance& comp, const Env& env, Cache* cache, Buf* out, Stats* stats)
+bool evaluateGraph(const CompGraph& g, int transparent, const EffectInstance& comp, const Env& env, Cache* cache,
+                   Buf* out, Stats* stats)
 {
-    if (env.size.isEmpty()) return false;
-    CompGraph g;
-    if (!::Comp::graphOf(comp, &g)) return false;
     const QVector<int> order = g.evalOrder();
     if (order.isEmpty()) return false;
 
@@ -209,6 +213,7 @@ bool evaluateGraph(const EffectInstance& comp, const Env& env, Cache* cache, Buf
         QString key;
         if (CompGraph::splitParamKey(it.key(), &id, &key)) values[id].insert(key, it.value());
     }
+    if (transparent) values[transparent].insert(QStringLiteral("color"), QString::fromLatin1(kTransparent));
     QHash<int, QSet<QString>> animated;
     if (env.clip)
         for (auto it = env.clip->keys.cbegin(); it != env.clip->keys.cend(); ++it) {

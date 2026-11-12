@@ -173,7 +173,26 @@ void testEval()
     CHECK(!activeGraph(gen, 30, 25, nullptr, &active));
     CHECK(activeGraph(gen, 10, 25, nullptr, &active));
     CompGraph g;
-    CHECK(::Comp::graphOf(active, &g) && !g.linkInto(3, "fg") && g.linkInto(3, "bg"));
+    // The fg reads one added transparent color node now (not the generator)
+    const CompLink* fg = ::Comp::graphOf(active, &g) ? g.linkInto(3, "fg") : nullptr;
+    CHECK(fg && g.node(fg->from) && g.node(fg->from)->type == "color" && fg->from != 2 && g.linkInto(3, "bg"));
+    CHECK(fg && active.params.value(CompGraph::paramKey(fg->from, "color")).toString() == "#00000000");
+    // A generator feeding a filter that is the output (text -> shadow, media -> transform), out of range: transparent
+    // - not the clip's own picture (a filter without its src makes nothing and the graph would fail). Old projects:
+    // text with until feeding a shadow was transparent there before 0.22 too (its weight 0)
+    const EffectInstance shadow = comp({"clip", "text", "shadow"}, {{2, 3, "src"}}, 3,
+                                       {{"n2.text", "Hi"}, {"n2.until", 1.0}, {"n2.fade", 0.0}});
+    CHECK(run(shadow, 30, &c) && c.alpha() == 0);
+    const EffectInstance moved = comp({"clip", "media", "transform"}, {{2, 3, "src"}}, 3,
+                                      {{"n2.path", "/x/b.png"}, {"n2.from", 2.0}});
+    CHECK(run(moved, 10, &c) && c.alpha() == 0);
+    CHECK(run(moved, 60, &c) && c == blue);
+    // Two generators out of range share the one transparent node
+    const EffectInstance two = comp({"clip", "color", "color", "merge", "merge"},
+                                    {{1, 4, "bg"}, {2, 4, "fg"}, {4, 5, "bg"}, {3, 5, "fg"}}, 5,
+                                    {{"n2.color", "#ffff0000"}, {"n3.color", "#ffff0000"}, {"n2.from", 3.0}, {"n3.from", 3.0}});
+    CHECK(activeGraph(two, 0, 25, nullptr, &active) && ::Comp::graphOf(active, &g) && g.nodes.size() == 6);
+    CHECK(run(two, 0, &c) && c == green);
     // A keyframed until (a range that grows) is read at t
     Clip k;
     k.keys[Keys::effectParam(::Comp::kEffectId, "n2.until")] = {Keyframe{0, 1.0}, Keyframe{100, 5.0}};
@@ -240,6 +259,21 @@ void testEditor()
     CHECK(!f.ed.setCompNodeRange(f.id, 3, 1, 2, &err) && err.contains("no time range")); // a mask
     CHECK(!f.ed.setCompNodeRange(f.id, 2, 3, 2, &err) && err.contains("before"));
     CHECK(!f.ed.setCompNodeRange(f.id, 42, 1, 2, &err));
+    // Keyframed from/until decide the range (render and bars alike): a plain value would not show, refused
+    const int keyedBefore = f.p.undoStack()->index();
+    f.p.edit("keys", [&](Timeline& tl) {
+        TimelineOps::findClip(tl, f.id)->keys[Keys::effectParam(::Comp::kEffectId, "n5.until")] = {Keyframe{50, 6.0},
+                                                                                                    Keyframe{150, 9.0}};
+    });
+    CHECK(!f.ed.setCompNodeRange(f.id, 5, 1, 2, &err) && err.contains("keyframes"));
+    {
+        const Clip* c = TimelineOps::findClip(f.p.timeline(), f.id);
+        const EffectInstance* e = EffectRegistry::instance(*c, ::Comp::kEffectId);
+        ::Comp::NodeRange r;
+        CHECK(::Comp::activeRange(*e, 5, &r, c, 50) && r.keyed && near(r.until, 7.5));
+        CHECK(::Comp::activeRange(*e, 5, &r) && !r.keyed && near(r.until, 0)); // without the clip: stored values
+    }
+    while (f.p.undoStack()->index() > keyedBefore) f.p.undoStack()->undo();
     CHECK(f.ed.setCompNodeRange(f.id, 2, 0, 0, &err)); // the whole clip again
     CHECK(!::Comp::activeRange(*EffectRegistry::instance(*TimelineOps::findClip(f.p.timeline(), f.id), ::Comp::kEffectId), 2));
     CHECK_EQ(f.p.undoStack()->index(), before + 2);
@@ -343,6 +377,12 @@ void testCli(const QString& dir)
     CHECK(errorOf({QJsonObject{{"op", "node"}, {"clip", clip}, {"id", 4}, {"range", QJsonArray{60, 70}}}}).contains("no time range"));
     CHECK(errorOf({QJsonObject{{"op", "node"}, {"clip", clip}, {"id", 2}, {"range", QJsonArray{10, 70}}}}).contains("inside clip"));
     CHECK(errorOf({QJsonObject{{"op", "node"}, {"clip", clip}, {"id", 2}, {"range", QJsonArray{90, 80}}}}).contains("after"));
+    // The whole clip = no range (no pointless bar)
+    run("edit", {{"project", g_project},
+                 {"ops", QJsonArray{QJsonObject{{"op", "node"}, {"clip", clip}, {"id", 2}, {"range", QJsonArray{50, 150}}}}}});
+    CHECK(!QString::fromUtf8(QJsonDocument(run("info", {{"project", g_project}})).toJson()).contains("\"range\""));
+    run("edit", {{"project", g_project},
+                 {"ops", QJsonArray{QJsonObject{{"op", "node"}, {"clip", clip}, {"id", 2}, {"range", QJsonArray{75, 100}}}}}});
     run("edit", {{"project", g_project},
                  {"ops", QJsonArray{QJsonObject{{"op", "node"}, {"clip", clip}, {"id", 2}, {"range", false}}}}});
     CHECK(!QString::fromUtf8(QJsonDocument(run("info", {{"project", g_project}})).toJson()).contains("\"range\""));
@@ -433,6 +473,36 @@ void testUi()
                     Qt::LeftButton, Qt::LeftButton, {});
     QApplication::sendEvent(&tv, &dbl);
     CHECK(asked == 5 && askedClip == f.id);
+    // The color node runs to the end (until 0): moving its start keeps "to the end"
+    mouse(tv, QEvent::MouseButtonPress, {x(200) + 1, yColor}, Qt::LeftButton);
+    mouse(tv, QEvent::MouseMove, {x(210), yColor}, Qt::LeftButton);
+    mouse(tv, QEvent::MouseMove, {x(225) + 1, yColor}, Qt::LeftButton);
+    mouse(tv, QEvent::MouseButtonRelease, {x(225) + 1, yColor}, Qt::NoButton);
+    if (!CHECK(near(f.val(f.id, "n5.from"), 5) && near(f.val(f.id, "n5.until"), 0)))
+        std::printf("       from %g until %g\n", f.val(f.id, "n5.from"), f.val(f.id, "n5.until"));
+    // Moving the whole bar away from the clip's end: now it ends at a time (225..350 -> 200..325)
+    mouse(tv, QEvent::MouseButtonPress, {x(300), yColor}, Qt::LeftButton);
+    mouse(tv, QEvent::MouseMove, {x(290), yColor}, Qt::LeftButton);
+    mouse(tv, QEvent::MouseMove, {x(275), yColor}, Qt::LeftButton);
+    mouse(tv, QEvent::MouseButtonRelease, {x(275), yColor}, Qt::NoButton);
+    CHECK(near(f.val(f.id, "n5.from"), 4) && near(f.val(f.id, "n5.until"), 9));
+    // A bar starting at the clip's start: the clip edge still trims the clip (a bar never blocks it)
+    CHECK(f.ed.setCompNodeRange(f.id, 2, 0, 3));
+    QApplication::processEvents();
+    const int clipBefore = TimelineOps::findClip(f.p.timeline(), f.id)->start;
+    mouse(tv, QEvent::MouseButtonPress, {x(100) + 1, yBlur}, Qt::LeftButton);
+    mouse(tv, QEvent::MouseMove, {x(105), yBlur}, Qt::LeftButton);
+    mouse(tv, QEvent::MouseMove, {x(110) + 1, yBlur}, Qt::LeftButton);
+    mouse(tv, QEvent::MouseButtonRelease, {x(110) + 1, yBlur}, Qt::NoButton);
+    CHECK_EQ(TimelineOps::findClip(f.p.timeline(), f.id)->start, clipBefore + 10);
+    CHECK(near(f.val(f.id, "n2.from"), 0)); // trimmed: from 0 = from the (new) start
+    // Keyframed until: the bar shows it but does not move
+    f.p.edit("keys", [&](Timeline& tl) {
+        TimelineOps::findClip(tl, f.id)->keys[Keys::effectParam(::Comp::kEffectId, "n2.until")] = {Keyframe{0, 3.0}};
+    });
+    tv.update();
+    mouse(tv, QEvent::MouseMove, {x(130), yBlur}, Qt::NoButton);
+    CHECK(tv.cursor().shape() != Qt::OpenHandCursor);
     I18n::install("en");
 }
 

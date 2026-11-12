@@ -376,6 +376,13 @@ bool Editor::setCompNodeRange(int clipId, int node, double from, double until, Q
     if (!std::isfinite(from) || !std::isfinite(until)) return failWith(err, QStringLiteral("the range is not a number"));
     if (until != 0 && until <= from)
         return failWith(err, QStringLiteral("the range ends (%1 s) before it starts (%2 s)").arg(until).arg(from));
+    if (const Clip* c = TimelineOps::findClip(m_project->timeline(), clipId))
+        for (const char* key : {Comp::kFromKey, Comp::kUntilKey})
+            if (Keys::animated(*c, Keys::effectParam(QString::fromLatin1(Comp::kEffectId),
+                                                     CompGraph::paramKey(node, QString::fromLatin1(key)))))
+                return failWith(err, QStringLiteral("node %1: '%2' has keyframes, they decide the range; remove them first "
+                                                    "({op:'keyframe', clips, param:'comp.n%1.%2', at, remove:true})")
+                                         .arg(node).arg(key));
     return editComp(clipId, T("Zeitbereich des Knotens"), [&](CompGraph& g, EffectInstance& e, QString* why) {
         const CompNode* n = g.node(node);
         if (!n) return failWith(why, QStringLiteral("no node %1 in the graph").arg(node));

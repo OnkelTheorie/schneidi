@@ -129,17 +129,23 @@ bool inRange(double from, double until, double s);
 struct NodeRange {
     int node = 0;
     QString type;
-    double from = 0, until = 0; // seconds from the clip's start, as stored
+    double from = 0, until = 0; // seconds from the clip's start
+    bool keyed = false;         // from/until have keyframes: the values at the asked clip frame (not draggable)
 };
-// The stored range of node `node` (static values; keyframes are not used for it). false = no such node, a kind without
-// a range or no range set (the whole clip)
-bool activeRange(const EffectInstance& e, int node, NodeRange* r = nullptr);
-// The nodes of the graph with a range set, in the graph's node order
-QVector<NodeRange> nodeRanges(const EffectInstance& e);
+// from/until of node `node` at clip frame t as the engine reads them: keyframes of `clip` (when given and set) win over
+// the stored values. keyed = one of them has keyframes
+void rangeAt(const EffectInstance& e, const Clip* clip, int node, double t, double* from, double* until,
+             bool* keyed = nullptr);
+// The range of node `node` (rangeAt at clip frame t). false = no such node, a kind without a range or no range set
+// (the whole clip)
+bool activeRange(const EffectInstance& e, int node, NodeRange* r = nullptr, const Clip* clip = nullptr, double t = 0);
+// The nodes of the graph with a range set, in the graph's node order (rangeAt at clip frame t)
+QVector<NodeRange> nodeRanges(const EffectInstance& e, const Clip* clip = nullptr, double t = 0);
 // A range as timeline frames [first, end) of clip `c` (clamped to the clip; first == end when it lies outside it)
 void rangeFrames(const Clip& c, const NodeRange& r, double fps, int* first, int* end);
-// Timeline frames [first, end) of clip `c` as stored values (first at the clip's start = from 0)
-void rangeValues(const Clip& c, int first, int end, double fps, double* from, double* until);
+// Timeline frames [first, end) of clip `c` as stored values: first at the clip's start = from 0; end at the clip's end
+// = until 0 ("to the end", it grows with the clip) when openEnd, else the exact time
+void rangeValues(const Clip& c, int first, int end, double fps, double* from, double* until, bool openEnd = false);
 
 // Every file the graph reads (fileKeys of its nodes: media, LUTs, textures), in node order, without duplicates
 QStringList mediaPaths(const EffectInstance& e);
