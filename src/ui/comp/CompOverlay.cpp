@@ -8,12 +8,14 @@
 #include "core/Keyframes.h"
 #include "core/Project.h"
 #include "core/TimelineOps.h"
+#include "engine/RegionPick.h"
 #include "engine/Tracker.h"
 #include "engine/picture/CompNodes.h"
 #include "ui/TiltTransform.h"
 #include "ui/comp/CompShared.h"
 
 #include <QMouseEvent>
+#include <QSettings>
 #include <QPainter>
 #include <QPainterPath>
 #include <algorithm>
@@ -28,11 +30,16 @@ constexpr double kHit = 9;
 
 } // namespace
 
-CompOverlay::CompOverlay(Editor* editor, QObject* parent) : ViewerOverlay(parent), m_editor(editor) {}
+CompOverlay::CompOverlay(Editor* editor, QObject* parent)
+    : ViewerOverlay(parent), m_editor(editor),
+      m_tolerance(std::clamp(QSettings().value("comp/pickTolerance", RegionPick::kDefaultTolerance).toDouble(), 0.0, 1.0))
+{
+}
 
 void CompOverlay::setTarget(int clipId, int node, int playhead)
 {
     if (clipId == m_clipId && node == m_node && playhead == m_playhead) return;
+    if (clipId != m_clipId || node != m_node) setPicking(false); // picking belongs to the mask it started on
     m_clipId = clipId;
     m_node = node;
     m_playhead = playhead;
@@ -261,6 +268,7 @@ void CompOverlay::paint(QPainter& p, const QRectF& frame)
 
 Qt::CursorShape CompOverlay::cursorAt(const QPointF& pos, const QRectF& frame) const
 {
+    if (m_picking && clip()) return Qt::CrossCursor;
     const int i = handleAt(pos, frame);
     if (i < 0) return Qt::ArrowCursor;
     return handles()[i].kind == Handle::Size ? Qt::SizeFDiagCursor : Qt::SizeAllCursor;
@@ -269,6 +277,18 @@ Qt::CursorShape CompOverlay::cursorAt(const QPointF& pos, const QRectF& frame) c
 bool CompOverlay::mousePress(QMouseEvent* e, const QRectF& frame)
 {
     if (e->button() != Qt::LeftButton) return false;
+    if (m_picking) {
+        QTransform ct;
+        const Clip* c = clip();
+        if (!c || !clipToWidget(frame, &ct)) return false;
+        // 0..1 of the clip's own picture (without bars), as RegionPick and the tracker read it
+        const QPointF pos = ct.inverted().map(e->position());
+        const QRectF r = Tracker::pictureRect(m_editor->project()->timelineFormat(), *c);
+        const QPointF p((pos.x() - r.left()) / std::max(1.0, r.width()), (pos.y() - r.top()) / std::max(1.0, r.height()));
+        if (p.x() < 0 || p.y() < 0 || p.x() > 1 || p.y() > 1) return true; // on the bars: nothing to pick
+        pickAt(p, e->modifiers());
+        return true;
+    }
     m_drag = handleAt(e->position(), frame);
     if (m_drag >= 0) emit changed();
     return m_drag >= 0;
@@ -316,4 +336,87 @@ bool CompOverlay::mouseRelease(QMouseEvent* e, const QRectF&)
     m_editor->project()->closeMerge();
     emit changed();
     return true;
+}
+
+void CompOverlay::setPicking(bool on)
+{
+    if (on == m_picking) return;
+    m_picking = on;
+    emit pickingChanged(on);
+    emit changed();
+}
+
+namespace {
+
+// What a pick says to the user (RegionPick's texts are English, for the CLI)
+QString pickText(const RegionPick::Result& r)
+{
+    if (!r.ok()) return T("Hier ist keine Fläche zu finden: Toleranz erhöhen oder auf eine größere, gleichmäßige Fläche klicken");
+    if (r.area > 0.6) return T("Die Fläche ist über fast das ganze Bild gelaufen: Toleranz senken oder näher an ihrer Mitte klicken");
+    if (!r.warning.isEmpty()) return T("Sehr kleine Fläche: Toleranz erhöhen");
+    return T("Fläche gewählt: %1 Punkte").arg(r.polygon.size());
+}
+
+} // namespace
+
+int CompOverlay::pickAt(QPointF point, Qt::KeyboardModifiers modifiers)
+{
+    const Clip* c = clip();
+    CompGraph g;
+    if (!c || !CompUi::graphOf(*c, &g) || !g.node(m_node) || g.node(m_node)->type != QLatin1String("mask")) return 0;
+    const ProjectFormat format = m_editor->project()->timelineFormat();
+    RegionPick::Options o;
+    o.tolerance = m_tolerance;
+    const QImage picture = RegionPick::clipPicture(format, *c, CompUi::clipFrame(*c, m_playhead), o.maxEdge);
+    const RegionPick::Result r = RegionPick::pick(picture, point, o);
+    m_pickStatus = pickText(r);
+    int id = 0;
+    if (r.ok()) {
+        const RegionPick::Combine mode = modifiers & Qt::ShiftModifier ? RegionPick::Combine::Add
+                                         : modifiers & (Qt::AltModifier | Qt::ControlModifier) ? RegionPick::Combine::Subtract
+                                                                                               : RegionPick::Combine::Replace;
+        QPointF placed(-1, -1);
+        QString err;
+        id = RegionPick::applyPick(*m_editor, format, m_clipId, m_node, mode, r.polygon, m_playhead, &picture, &placed, &err);
+        if (!id) m_pickStatus = T("Nicht übernommen: %1").arg(err);
+        else if (placed.x() >= 0) m_pickStatus += T(" · Tracker-Punkt an die Kante gesetzt");
+        if (id) m_last = LastPick{m_clipId, id, m_playhead, point, picture};
+    }
+    emit picked(m_pickStatus);
+    emit changed();
+    return id;
+}
+
+void CompOverlay::setPickTolerance(double tolerance)
+{
+    tolerance = std::clamp(tolerance, 0.0, 1.0);
+    if (std::abs(tolerance - m_tolerance) < 1e-9) return;
+    m_tolerance = tolerance;
+    QSettings().setValue("comp/pickTolerance", tolerance);
+    repick();
+}
+
+int CompOverlay::repick()
+{
+    if (!m_last.clipId || m_last.clipId != m_clipId || m_last.picture.isNull()) return 0;
+    const Clip* c = TimelineOps::findClip(m_editor->project()->timeline(), m_last.clipId);
+    CompGraph g;
+    if (!c || !CompUi::graphOf(*c, &g) || !g.node(m_last.node) || g.node(m_last.node)->type != QLatin1String("mask")) {
+        m_last = {};
+        return 0;
+    }
+    RegionPick::Options o;
+    o.tolerance = m_tolerance;
+    const RegionPick::Result r = RegionPick::pick(m_last.picture, m_last.point, o);
+    m_pickStatus = pickText(r);
+    int id = 0;
+    if (r.ok()) {
+        QString err;
+        id = RegionPick::applyPick(*m_editor, m_editor->project()->timelineFormat(), m_last.clipId, m_last.node,
+                                   RegionPick::Combine::Replace, r.polygon, m_last.playhead, nullptr, nullptr, &err);
+        if (!id) m_pickStatus = T("Nicht übernommen: %1").arg(err);
+    }
+    emit picked(m_pickStatus);
+    emit changed();
+    return id;
 }

@@ -4,7 +4,9 @@
 // mask: a shape (core/Masks: rect, ellipse, polygon, bezier, linear/radial gradient) as a Mask plane; soft edge in
 // project pixels, invert, rotate (clockwise degrees); combined with the mask at its own `mask` input (add, subtract,
 // intersect); `follow` = id of a tracker node: the shape moves by the tracker's (x, y) - (rx, ry) and turns/scales
-// around (x, y) with its angle/scale (follow rule, core/CompTrack.h).
+// around (x, y) with its angle/scale (follow rule, core/CompTrack.h); a four-corner tracker (mode quad, 0.22) carries
+// it in perspective: every point through the homography from its start corners to the corners found (quadMap), so a
+// polygon drawn on a wall stays on it while the camera turns.
 // matte: a Mask plane from the luma (of the premultiplied color) or the alpha of the picture at `src`.
 #include "engine/picture/CompNodes.h"
 
@@ -67,6 +69,22 @@ QPointF defaultPoint(int i)
     return i < 4 ? QPointF(kX[i], kY[i]) : QPointF(0.5, 0.5);
 }
 
+} // namespace
+
+bool quadMap(const std::function<double(const QString&)>& value, double W, double H, Compose::Homography* out)
+{
+    double from[8], to[8];
+    for (int i = 0; i < 8; ++i) {
+        const double scale = i % 2 ? H : W;
+        from[i] = value(QString::fromLatin1(::Comp::kQuadStartKeys[i])) * scale;
+        to[i] = value(QString::fromLatin1(::Comp::kCornerKeys[i])) * scale;
+        if (!std::isfinite(from[i]) || !std::isfinite(to[i])) return false;
+    }
+    return Compose::homography(from, to, out);
+}
+
+namespace {
+
 QRect fullArea(const Buf& b) { return QRect(0, 0, b.w, b.h); }
 
 Buf maskBuf(NodeCtx& ctx, int W, int H)
@@ -106,13 +124,26 @@ bool evalMask(NodeCtx& ctx, Buf* out)
     if (const int follow = ::Comp::followId(ctx.num("follow")); follow > 0 && ctx.numOf) {
         const double v = ctx.numOf(follow, ::Comp::kSeenKey);
         seen = std::isfinite(v) ? std::clamp(v, 0.0, 1.0) : 1.0;
-        Masks::Follow f;
-        // The follow rule (core/CompTrack.h): moved by (x, y) - (rx, ry), scaled and turned around (x, y)
-        f.from = QPointF(ctx.numOf(follow, "rx") * W, ctx.numOf(follow, "ry") * H);
-        f.to = QPointF(ctx.numOf(follow, "x") * W, ctx.numOf(follow, "y") * H);
-        f.scale = ctx.numOf(follow, "scale");
-        f.angle = ctx.numOf(follow, "angle");
-        g = Masks::followed(g, f);
+        Compose::Homography h;
+        if (ctx.numOf(follow, ::Comp::kQuadKey) > 0.5) { // four corners (0.22): in perspective, start corners -> found
+            if (quadMap([&](const QString& key) { return ctx.numOf(follow, key); }, W, H, &h))
+                g = Masks::mapped(g, [&h](QPointF p, QPointF* out) {
+                    double x = 0, y = 0;
+                    if (!Compose::mapPoint(h, p.x(), p.y(), &x, &y)) return false;
+                    *out = QPointF(x, y);
+                    return true;
+                });
+            else
+                g.empty = true; // the corners make no quad (crossed, folded): nothing, like a corner pin
+        } else {
+            Masks::Follow f;
+            // The follow rule (core/CompTrack.h): moved by (x, y) - (rx, ry), scaled and turned around (x, y)
+            f.from = QPointF(ctx.numOf(follow, "rx") * W, ctx.numOf(follow, "ry") * H);
+            f.to = QPointF(ctx.numOf(follow, "x") * W, ctx.numOf(follow, "y") * H);
+            f.scale = ctx.numOf(follow, "scale");
+            f.angle = ctx.numOf(follow, "angle");
+            g = Masks::followed(g, f);
+        }
     }
     Buf b = maskBuf(ctx, W, H);
     QRect area = MaskRaster::render(g, W, H, b.data());

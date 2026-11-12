@@ -180,6 +180,10 @@ inline constexpr const char* kCornerPinType = "corner_pin";
 bool cornerPinCorners(const std::function<double(const QString&)>& num,
                       const std::function<double(int, const QString&)>& numOf, QSize size, QPointF out[4], double* seen);
 bool cornerPinMap(const QRect& area, const QPointF corners[4], Compose::Homography* out);
+// A mask following a four-corner tracker (0.22, CompNodesMask.cpp): the homography from the tracker's start corners
+// q0x..q3y to its corners c0x..c3y (value(key) = the tracker's value as followers read it), both times the picture's
+// W x H. false = no quad (crossed, three on a line) or not finite
+bool quadMap(const std::function<double(const QString&)>& value, double W, double H, Compose::Homography* out);
 void registerStyleNodes(QVector<NodeType>& out); // E: text, shadow, glitch
 void registerCutoutNodes(QVector<NodeType>& out); // cutout (AI person matte, CompNodesCutout.cpp)
 void registerText3dNodes(QVector<NodeType>& out); // 3D text (round 3): text3d

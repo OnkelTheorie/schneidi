@@ -43,12 +43,16 @@ public:
     bool analyzing() const { return bool(m_job); }
     void startAnalysis();  // the button's act for the shown node
     void cancelAnalysis();
+    // Picking a region (a mask node, 0.22): the state of the viewer's pick mode (CompOverlay) shown in the row
+    void setPickState(bool on, double tolerance, const QString& status);
 
 signals:
     // Pipette of a color parameter (the key color): pick it from the picture going into the node
     void keyPickRequested(int node, const QString& key);
     void outRequested(int node); // "Als Ausgang"
     void extensionsRequested();  // the cutout model is missing: open the extensions dialog
+    void pickToggled(bool on);               // "Fläche im Bild wählen" (a mask node): clicks in the viewer pick
+    void pickToleranceChanged(double tolerance);
 
 private:
     const Clip* clip() const;
@@ -58,7 +62,8 @@ private:
     QStringList shownKeys(const Clip& c) const; // the parameters shown for the node now
     void rebuild(const Clip& c, const QStringList& keys);
     void set(const QString& key, const QVariant& value, bool drag);
-    int addAnalysisRow(int row, const QString& kind); // cutout / tracker: button, progress, hint; returns the next row
+    int addAnalysisRow(int row, const QString& kind);
+    int addPickRow(int row); // mask: pick a region in the viewer, tolerance, what came out // cutout / tracker: button, progress, hint; returns the next row
     void updateAnalysisRow();
     struct Job;
     void analysisDone(const Job& job, const QString& cache, const QVector<::Comp::TrackPoint>& points, const ::Comp::TrackLoss& lost,
@@ -88,5 +93,10 @@ private:
     int m_noteNode = 0;
     class QPushButton* m_analyzeButton = nullptr;
     QLabel* m_analyzeStatus = nullptr;
+    class QPushButton* m_pickButton = nullptr;
+    QLabel* m_pickStatus = nullptr;
+    bool m_picking = false;
+    double m_pickTolerance = 0.35;
+    QString m_pickText;
     class QPushButton* m_extensionsButton = nullptr;
 };

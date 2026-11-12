@@ -163,6 +163,39 @@ Geometry followed(Geometry g, const Follow& f)
     return g;
 }
 
+Geometry mapped(Geometry g, const std::function<bool(QPointF, QPointF*)>& map)
+{
+    if (g.empty) return g;
+    if (g.shape == Shape::Rect || g.shape == Shape::Ellipse) { // the outline as a polygon, turned like the shape
+        const double r = g.rotation * M_PI / 180, c = std::cos(r), s = std::sin(r);
+        QVector<QPointF> path;
+        if (g.shape == Shape::Rect) {
+            for (const QPointF d : {QPointF(-g.halfW, -g.halfH), QPointF(g.halfW, -g.halfH), QPointF(g.halfW, g.halfH),
+                                    QPointF(-g.halfW, g.halfH)})
+                path.append(g.center + rotated(d, c, s));
+        } else {
+            // Steps so a chord stays within a quarter pixel of the arc: sagitta = R (1 - cos(pi / n))
+            const double R = std::max(g.halfW, g.halfH);
+            const int n = std::clamp(int(std::ceil(M_PI / std::acos(std::clamp(1 - 0.25 / std::max(R, 0.25), -1.0, 1.0)))), 16, 1024);
+            for (int i = 0; i < n; ++i) {
+                const double a = 2 * M_PI * i / n;
+                path.append(g.center + rotated(QPointF(g.halfW * std::cos(a), g.halfH * std::sin(a)), c, s));
+            }
+        }
+        g.path = path;
+        g.shape = Shape::Polygon;
+        g.rotation = 0;
+    }
+    for (QPointF& p : g.path)
+        if (!map(p, &p) || !finite(p)) {
+            g.empty = true;
+            return g;
+        }
+    if (g.shape == Shape::Linear || g.shape == Shape::Radial)
+        if (!map(g.a, &g.a) || !map(g.b, &g.b) || !finite(g.a) || !finite(g.b)) g.empty = true;
+    return g;
+}
+
 QRectF bounds(const Geometry& g)
 {
     if (g.empty) return {};

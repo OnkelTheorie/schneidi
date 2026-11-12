@@ -315,6 +315,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/engine/picture/gpu/CompGpu.h src/engine/picture/gpu/CompGpu.cpp
     src/engine/video/Text.h       src/engine/video/Text.cpp
     src/engine/Tracker.h          src/engine/Tracker.cpp
+    src/engine/RegionPick.h       src/engine/RegionPick.cpp
     src/engine/TextRegions.h      src/engine/TextRegions.cpp
     src/engine/ReframeAnalysis.h  src/engine/ReframeAnalysis.cpp
     src/engine/BarDetect.h        src/engine/BarDetect.cpp

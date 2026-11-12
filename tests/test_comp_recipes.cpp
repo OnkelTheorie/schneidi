@@ -138,8 +138,8 @@ int main(int argc, char** argv)
     if (!CHECK_EQ(clips.size(), 6)) return Check::result();
 
     // The list: the built-in recipes with their slots
-    const QStringList builtIn{"blur_face", "glitch_title", "greenscreen", "pip_frame", "screen_replace", "sticker_track",
-                              "text_behind"};
+    const QStringList builtIn{"blur_face",     "glitch_title", "greenscreen", "pip_frame",         "screen_replace",
+                              "sticker_behind_object", "sticker_track", "text_behind", "text_behind_object"};
     {
         const QJsonObject r = run("effects", {{"kind", "recipes"}});
         QStringList ids;
@@ -165,7 +165,7 @@ int main(int argc, char** argv)
         CompGraph g;
         QHash<int, QVariantMap> values;
         QVariantMap with;
-        if (r.id == "sticker_track") with["sticker"] = yellow;
+        if (r.id == "sticker_track" || r.id == "sticker_behind_object") with["sticker"] = yellow;
         if (r.id == "screen_replace") with["picture"] = yellow;
         if (!CHECK(CompRecipes::apply(r, with, &g, &values, &err))) std::printf("       %s: %s\n", qPrintable(r.id), qPrintable(err));
         // Neutral: no glitch above mild, nothing switched on the name does not say

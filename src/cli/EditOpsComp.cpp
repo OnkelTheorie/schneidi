@@ -17,6 +17,7 @@
 #include "core/Keyframes.h"
 #include "core/TimelineOps.h"
 #include "engine/ColorGrade.h"
+#include "engine/RegionPick.h"
 #include "engine/picture/CompCutout.h"
 #include "engine/picture/CompNodes.h"
 #include "engine/picture/CompTrack.h"
@@ -615,6 +616,108 @@ void opTrackNode(Session& s, const QJsonObject& op)
     s.notes << QJsonObject{{"track_node", note}};
 }
 
+// The occluder mask of a graph for pick_region add without node: a mask feeding a merge's "mask" input (recipe
+// text_behind_object: 6), walked back to the start of its chain (masks read through their "mask" input). 0 = none
+int occluderMask(const CompGraph& g)
+{
+    for (const CompLink& l : g.links) {
+        const CompNode* from = g.node(l.from);
+        const CompNode* to = g.node(l.to);
+        if (!from || !to || from->type != QLatin1String("mask") || to->type != QLatin1String("merge")
+            || l.input != QLatin1String("mask"))
+            continue;
+        int node = from->id;
+        for (int guard = 0; guard < 64; ++guard) {
+            int prev = 0;
+            for (const CompLink& m : g.links)
+                if (m.to == node && m.input == QLatin1String("mask"))
+                    if (const CompNode* p = g.node(m.from); p && p->type == QLatin1String("mask")) prev = p->id;
+            if (!prev) break;
+            node = prev;
+        }
+        return node;
+    }
+    return 0;
+}
+
+// {op:'pick_region', clip, at?, point:[x, y], tolerance?, add?, node?, combine?} (0.22): the even surface around a
+// point as a polygon (engine/RegionPick); add puts it into a mask of the clip's graph (recipe text_behind_object when
+// the clip has none), one undo step
+void opPickRegion(Session& s, const QJsonObject& op)
+{
+    const Clip& c = clipOf(s, op, "clip");
+    const Clip clip = c;
+    const QJsonArray pt = op.value("point").toArray();
+    if (pt.size() != 2 || !pt[0].isDouble() || !pt[1].isDouble() || pt[0].toDouble() < 0 || pt[0].toDouble() > 1
+        || pt[1].toDouble() < 0 || pt[1].toDouble() > 1)
+        fail("BAD_ARGUMENT", "pick_region: point is [x, y] with numbers 0..1 of the clip's picture (look with `frames` first)");
+    const QPointF point(pt[0].toDouble(), pt[1].toDouble());
+    const int at = timeOf(s, op, "at", clip.start);
+    if (at < clip.start || at >= clip.end())
+        fail("BAD_ARGUMENT", QString("pick_region: at must lie inside clip %1 (%2..%3)").arg(clip.id).arg(clip.start).arg(clip.end() - 1));
+    RegionPick::Options o;
+    if (op.contains("tolerance")) o.tolerance = numberOf(op, "tolerance", 0, 1);
+    RegionPick::Combine mode = RegionPick::Combine::Replace;
+    if (op.contains("combine") && !RegionPick::combineFromId(op.value("combine").toString(), &mode))
+        fail("BAD_ARGUMENT", "pick_region: combine is replace, add or subtract");
+    const bool add = op.value("add").toBool() || op.contains("node") || mode != RegionPick::Combine::Replace;
+    if (clip.isNested() || clip.isTitle())
+        fail("BAD_ARGUMENT", "pick_region works on video clips only (not on titles, compound or multicam clips)");
+    const QImage picture = RegionPick::clipPicture(s.format(), clip, at - clip.start, o.maxEdge);
+    const RegionPick::Result r = RegionPick::pick(picture, point, o);
+    if (!r.ok()) fail("FAILED", r.error.isEmpty() ? QString("nothing picked") : r.error);
+    QJsonArray polygon;
+    for (const QPointF& p : r.polygon) polygon << QJsonArray{std::round(p.x() * 10000) / 10000, std::round(p.y() * 10000) / 10000};
+    QJsonObject note{{"clip", clip.id}, {"at", at}, {"polygon", polygon}, {"points", int(r.polygon.size())},
+                     {"area", std::round(r.area * 10000) / 10000}, {"touches_edge", r.touchesEdge}};
+    if (!r.warning.isEmpty()) note["warning"] = r.warning;
+    if (add) {
+        struct Macro {
+            QUndoStack* undo = nullptr;
+            ~Macro()
+            {
+                if (undo) undo->endMacro();
+            }
+        } macro;
+        macro.undo = s.project.undoStack();
+        macro.undo->beginMacro(T("Fläche wählen"));
+        QString err;
+        CompGraph g = graphOfClip(clip, false);
+        int node = op.value("node").toInt();
+        if (g.nodes.isEmpty()) { // no graph yet: the recipe that hides text behind the surface
+            if (node) fail("NOT_FOUND", QString("clip %1 has no compositing graph (without node, add:true puts the recipe text_behind_object on)").arg(clip.id));
+            const Parsed p = recipeGraph(s, QJsonObject{{"recipe", "text_behind_object"}});
+            if (!s.editor.setCompGraph({clip.id}, p.graph, p.values, kKinds, &err)) fail("FAILED", err);
+            g = p.graph;
+            node = occluderMask(g);
+            note["recipe"] = "text_behind_object";
+        } else if (!node) {
+            node = occluderMask(g);
+            if (!node)
+                fail("NOT_FOUND", QString("clip %1's graph has no mask in a merge's mask input: give node (a mask id), "
+                                          "or put recipe text_behind_object on").arg(clip.id));
+        }
+        const CompNode* n = g.node(node);
+        if (!n) fail("NOT_FOUND", QString("no node %1 in the graph of clip %2").arg(node).arg(clip.id));
+        if (n->type != QLatin1String("mask")) fail("BAD_ARGUMENT", QString("node %1 is a %2 node, not a mask").arg(node).arg(n->type));
+        QPointF placed(-1, -1);
+        const int id = RegionPick::applyPick(s.editor, s.format(), clip.id, node, mode, r.polygon, at, &picture, &placed, &err);
+        if (!id) fail("FAILED", err);
+        note["node"] = id;
+        if (placed.x() >= 0) note["tracker_point"] = QJsonArray{placed.x(), placed.y()};
+        const Clip* now = TimelineOps::findClip(s.project.timeline(), clip.id);
+        const EffectInstance* e = now ? EffectRegistry::instance(*now, ::Comp::kEffectId) : nullptr;
+        const int follow = e ? ::Comp::followId(e->params.value(CompGraph::paramKey(id, "follow")).toDouble()) : 0;
+        if (follow > 0) {
+            note["follow"] = follow;
+            note["next"] = QString("track the surface so the mask stays on it: {op:'track_node', clip:%1, node:%2, from:%3} "
+                                   "(and to:%4 from:%3 for the frames before); check with `frames` {clip:%1, node:%5}")
+                               .arg(clip.id).arg(follow).arg(at).arg(clip.start).arg(g.out);
+        }
+    }
+    s.notes << QJsonObject{{"pick_region", note}};
+}
+
 } // namespace
 
 QJsonArray recipeSlotsJson(const CompRecipe& r)
@@ -692,6 +795,10 @@ QJsonArray compNodeKindsJson()
                         "reference point); followers (follow = this id) move by (x - rx, y - ry) and scale/turn around (x, y). "
                         "mode quad: start corners q0x..q3y (clockwise from the top left), results c0x..c3y as keyframes "
                         "(track_node with corners sets the start)";
+        if (k.id == QLatin1String("mask"))
+            o["note"] = "positions 0..1 of the picture; follow = a tracker id: moved/scaled/turned by the follow rule, "
+                        "a quad tracker carries every point in perspective (start corners -> corners found). "
+                        "Op pick_region makes a polygon of the even surface around a point";
         if (k.id == QLatin1String(PC::kCornerPinType))
             o["note"] = "corners c0x..c3y as 0..1 of the picture, clockwise from the top left; follow = a tracker id: a "
                         "quad tracker's corners are used, another tracker moves the own corners by the follow rule. "
@@ -869,7 +976,9 @@ void addCompOps(QVector<OpDef>& ops)
                  "from a key), blur_face (x, y, size, radius, track; then track_node on node 2), pip_frame (x, y, "
                  "size, frame_color, shadow), glitch_title (text, color, size, strength - mild), sticker_track "
                  "(sticker = a file, x, y, size; then track_node on node 2), screen_replace (picture = a file, left, top, "
-                 "right, bottom; then track_node on node 2 with corners). with:{slot: value} fills them (files = "
+                 "right, bottom; then track_node on node 2 with corners), text_behind_object / sticker_behind_object (text "
+                 "or sticker = a file, x, y, size: behind a wall, pillar or car; then pick_region with add:true and "
+                 "track_node on node 2). with:{slot: value} fills them (files = "
                  "media pool items, imported), '<node id>.<key>' sets any node value; missing slots keep the "
                  "recipe's values; an unknown slot is an error. The answer's notes give the graph and the next step. "
                  R"(Example: {"op":"comp","clips":[4],"recipe":"greenscreen","with":{"background":"/videos/beach.jpg","tolerance":0.35}}. )"
@@ -931,7 +1040,24 @@ void addCompOps(QVector<OpDef>& ops)
                  "'bridge' (move straight through the gap, like before 0.22); gaps up to 5 frames are bridged "
                  "always. `info` lists each tracker's gaps, `check` warns (tracker_lost, tracker_ended). Face mode "
                  "needs the 'faces' extension.",
-                 opTrackNode, QStringList{"clips"}};
+                 opTrackNode, QStringList{"clips"}}
+        << OpDef{"pick_region", "{op:'pick_region', clip, at?, point, tolerance?, add?, node?, combine?}",
+                 "the even surface around a point (a wall, a pillar, a car) as a polygon; add:true makes it a mask the "
+                 "text goes behind",
+                 "point = [x, y] 0..1 of the clip's own picture at timeline time `at` (default: the clip's start; look "
+                 "with `frames` first). From there the region of similar color grows (stops at sharp edges, holes "
+                 "filled) and its outline becomes a polygon of at most 24 corners (notes: polygon [[x, y], ...], area = "
+                 "share of the picture, touches_edge, warning when it spread over most of the picture or stayed tiny). "
+                 "tolerance 0..1 (default 0.35): higher takes more different colors (a wall with shadows), lower stops "
+                 "earlier. add:true puts it into a mask: node = that mask's id (default: the mask in a merge's mask "
+                 "input; a clip without a graph gets recipe text_behind_object, whose mask 6 keeps the object in front "
+                 "of the words); combine 'replace' (default), 'add' (another surface: a new mask chained behind, "
+                 "combine add) or 'subtract' (take a part away). The mask keeps following its tracker (follow): picked "
+                 "at a frame where the tracker moved, the corners are drawn back to its reference (a four-corner "
+                 "tracker: through its perspective). A fresh point tracker gets its point on structure at the "
+                 "surface's edge (notes: tracker_point, next = the track_node to run). One undo step. Check with "
+                 "`frames` {clip, node} (the merge's output); points can be dragged on the Comp page afterwards.",
+                 opPickRegion};
 }
 
 } // namespace Cli::detail
