@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "engine/picture/CompNodes.h"
+#include "core/CompTrack.h"
 
 #include <QHash>
 
@@ -120,7 +121,12 @@ bool runNode(const QString& type, const QVariantMap& params, const QHash<QString
     ctx.num = [k, &params](const QString& key) { return numValue(*k, params, key); };
     ctx.color = [k, &params](const QString& key) { return colorValue(*k, params, key); };
     ctx.text = [k, &params](const QString& key) { return textValue(*k, params, key); };
-    ctx.numOf = [&opt](int node, const QString& key) { return opt.otherNodes.value(node).value(key).toDouble(); };
+    ctx.numOf = [&opt](int node, const QString& key) {
+        const QVariantMap& v = opt.otherNodes.value(node);
+        // A tracker's visibility not given: seen (followers stay as they are)
+        if (key == QLatin1String(::Comp::kSeenKey) && !v.contains(key)) return 1.0;
+        return v.value(key).toDouble();
+    };
     ctx.input = [&inputs](const QString& name) -> const Buf* {
         const auto it = inputs.constFind(name);
         return it == inputs.cend() || it->isNull() ? nullptr : &*it;

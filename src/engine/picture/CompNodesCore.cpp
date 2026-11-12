@@ -176,12 +176,18 @@ bool evalMerge(NodeCtx& ctx, Buf* out)
 // Where the transform puts the source: anchor (ax, ay of the picture) to (x, y), scaled by size, turned by angle
 // (clockwise); with "follow" the tracker carries that placement by the follow rule (core/CompTrack.h): moved by the
 // tracker's (x, y) - (rx, ry), scaled by its scale and turned by its angle around (x, y). Not analyzed = unchanged
-Compose::Affine transformOf(NodeCtx& ctx, bool* identity)
+// seen (may be null): the tracker's visibility 0..1 (a lost point fades the follower out), 1 without one
+Compose::Affine transformOf(NodeCtx& ctx, bool* identity, double* seen = nullptr)
 {
     const double W = ctx.size.width(), H = ctx.size.height();
     double x = ctx.num("x"), y = ctx.num("y"), size = ctx.num("size"), angle = ctx.num("angle");
     const int follow = ::Comp::followId(ctx.num("follow"));
+    if (seen) *seen = 1;
     if (follow > 0 && ctx.numOf) {
+        if (seen) {
+            const double v = ctx.numOf(follow, ::Comp::kSeenKey);
+            *seen = std::isfinite(v) ? std::clamp(v, 0.0, 1.0) : 1.0;
+        }
         double ts = ctx.numOf(follow, "scale");
         ts = ts > 0 && std::isfinite(ts) ? ts : 1.0;
         double ta = ctx.numOf(follow, "angle");
@@ -262,8 +268,10 @@ bool evalTransform(NodeCtx& ctx, Buf* out)
     const Buf* src = ctx.input("src");
     if (!src || src->kind != Buf::Rgba) return false;
     bool identity = false;
-    const Compose::Affine m = transformOf(ctx, &identity);
+    double seen = 1;
+    const Compose::Affine m = transformOf(ctx, &identity, &seen);
     *out = ctx.take(Buf::Rgba);
+    if (seen <= 0) return true; // the tracked point is lost: the follower is gone (transparent)
     // Clamped like a clip's tilt (a hand-edited project may hold 90: edge-on, a degenerate quad)
     const double tiltX = std::clamp(ctx.num("tilt_x"), -89.0, 89.0), tiltY = std::clamp(ctx.num("tilt_y"), -89.0, 89.0);
     if (std::abs(tiltX) > 1e-6 || std::abs(tiltY) > 1e-6) { // tilted in depth: a projective draw around the position
@@ -272,14 +280,15 @@ bool evalTransform(NodeCtx& ctx, Buf* out)
         Compose::Homography h;
         if (Compose::tilted(m, src->w, src->h, m.a * ax + m.b * ay + m.c, m.d * ax + m.e * ay + m.f, tiltX, tiltY,
                             std::clamp(ctx.num("fov"), 5.0, 120.0), out->w, out->h, &h))
-            Compose::draw(out->data(), out->w, out->h, src->data(), src->w, src->h, h, 1.0);
+            Compose::draw(out->data(), out->w, out->h, src->data(), src->w, src->h, h, seen);
         return true;
     }
     if (identity) {
         copyBuf(*src, *out);
+        fadeContent(*out, seen);
         return true;
     }
-    Compose::draw(out->data(), out->w, out->h, src->data(), src->w, src->h, m, 1.0);
+    Compose::draw(out->data(), out->w, out->h, src->data(), src->w, src->h, m, seen);
     return true;
 }
 

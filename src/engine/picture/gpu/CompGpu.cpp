@@ -10,6 +10,7 @@
 #include "engine/ColorGrade.h"
 #include "engine/VideoEffects.h"
 #include "engine/video/Blend.h"
+#include "engine/picture/CompTrack.h"
 
 #include <QHash>
 #include <QSet>
@@ -328,11 +329,13 @@ CompPlanPtr planComp(const EffectInstance& comp, const Comp::Env& env, Comp::Cac
                     const CompNode* o = g.node(other);
                     const Comp::NodeType* ok = o ? Comp::find(o->type) : nullptr;
                     if (!ok) return 0.0;
-                    if (o->type == QLatin1String(::Comp::kTrackerType)) // the follow rule, as CompEval
+                    if (o->type == QLatin1String(::Comp::kTrackerType)) { // the follow rule, as CompEval
+                        const ::Comp::FollowTime ft = Comp::followTime(env.clip, other, values.value(other), env.t, env.fps);
                         return ::Comp::followValue(
                             key, text(other, *ok, QStringLiteral("mode")),
                             [&](const QString& q) { return values.value(other).contains(q) || animated.value(other).contains(q); },
-                            [&](const QString& q) { return num(other, *ok, q); });
+                            [&](const QString& q) { return num(other, *ok, q); }, &ft);
+                    }
                     return num(other, *ok, key);
                 };
                 ctx.input = [](const QString&) -> const Comp::Buf* { return nullptr; };
