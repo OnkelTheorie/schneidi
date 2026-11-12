@@ -26,7 +26,7 @@ double kindCostMs(const QString& type)
     static const QHash<QString, double> costs{
         {"clip", 0},   {"media", 6},  {"color", 1},  {"gradient", 3},   {"merge", 4},   {"transform", 8},
         {"crop", 2},   {"blur", 70},  {"grade", 6},  {"fx", 10},        {"mask", 3},    {"matte", 1},
-        {"key", 8},    {"matte_tune", 8}, {"tracker", 1}, {"text", 5}, {"shadow", 18}, {"glitch", 8}};
+        {"key", 8},    {"matte_tune", 8}, {"tracker", 1}, {"text", 5}, {"shadow", 18}, {"glitch", 8}, {"camera", 0}};
     return costs.value(type, 5);
 }
 
@@ -75,11 +75,8 @@ QVector<Issue> comp(const Timeline& tl, int from, int to, const ProjectFormat& f
                                  .arg(o->id).arg(o->type),
                              a, b, c.id};
             const QVector<int> order = g.evalOrder();
-            // A tracker is read through `follow` (a value, not a link): followed nodes count as used
-            QSet<int> followed;
-            for (int id : order)
-                if (const int f = Comp::followId(e->params.value(CompGraph::paramKey(id, QStringLiteral("follow"))).toDouble()))
-                    followed.insert(f);
+            // A tracker is read through `follow`, a camera through `camera` (values, not links): they count as used
+            const QSet<int> followed = Comp::valueReads(*e, g, order);
             QStringList unused;
             for (const CompNode& n : g.nodes)
                 if (!order.contains(n.id) && !followed.contains(n.id))
@@ -87,6 +84,18 @@ QVector<Issue> comp(const Timeline& tl, int from, int to, const ProjectFormat& f
             if (!unused.isEmpty())
                 out << Issue{Severity::Info, QStringLiteral("comp_unused_input"),
                              T("Compositing-Graph: Knoten %1 erreichen die Ausgabe nicht und wirken nicht").arg(unused.join(", ")),
+                             a, b, c.id};
+            // A depth without a camera (0.22): z set, but `camera` names no camera node - the layer does not move
+            QStringList noCamera;
+            for (int id : order)
+                if (const CompNode* n = g.node(id); n && Comp::takesCamera(n->type)
+                    && e->params.value(CompGraph::paramKey(id, QString::fromLatin1(Comp::kLayerDepthKey))).toDouble() > 0
+                    && Comp::cameraOf(*e, g, id) == 0)
+                    noCamera << QString::number(id);
+            if (!noCamera.isEmpty())
+                out << Issue{Severity::Info, QStringLiteral("comp_camera_missing"),
+                             T("Compositing-Graph: Knoten %1 haben eine Tiefe im Raum, aber keine Kamera - die Tiefe "
+                               "wirkt nicht (einen Kamera-Knoten hinzufügen; Wert „Kamera“ = seine Id oder 0)").arg(noCamera.join(", ")),
                              a, b, c.id};
             // Trackers others follow that lost their point (keys n<id>.seen): each gap followers do not bridge, and
             // a track that ends lost (gave up, or the analysis ended there)

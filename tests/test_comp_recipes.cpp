@@ -138,7 +138,7 @@ int main(int argc, char** argv)
     if (!CHECK_EQ(clips.size(), 6)) return Check::result();
 
     // The list: the built-in recipes with their slots
-    const QStringList builtIn{"blur_face", "glitch_title", "greenscreen", "pip_frame", "screen_replace", "sticker_track",
+    const QStringList builtIn{"blur_face", "glitch_title", "greenscreen", "parallax_photo", "pip_frame", "screen_replace", "sticker_track",
                               "text_behind"};
     {
         const QJsonObject r = run("effects", {{"kind", "recipes"}});

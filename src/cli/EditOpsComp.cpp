@@ -697,6 +697,14 @@ QJsonArray compNodeKindsJson()
                         "quad tracker's corners are used, another tracker moves the own corners by the follow rule. "
                         "Its src picture (its content area: a text's box) is stretched onto the corners, transparent "
                         "outside - merge it over the clip";
+        if (k.id == QLatin1String(::Comp::kCameraType))
+            o["note"] = "the shared 2.5D camera (no picture, never linked; one per graph): layers (transform, media, "
+                        "text, text3d) with params {z: depth} move with it (camera: its id, 0 = the graph's camera) - z 1 = the picture plane, 2 = twice as far "
+                        "(a pan by p moves it p/2), 0 = the camera leaves it alone; at rest every z looks as without "
+                        "a camera. pan_x/pan_y in picture widths/heights (camera moves right/down, the picture the other "
+                        "way), push = dolly forward (near layers grow more), zoom without parallax, drift_* = steady "
+                        "move per second without keyframes, follow = a tracker id (its motion becomes pan/push/roll). "
+                        "Recipe parallax_photo";
         list << o;
     }
     return list;
@@ -746,15 +754,25 @@ QJsonObject compJson(const EffectInstance& e, const ProjectFormat& f, const Clip
         if (n.type == QLatin1String(PC::kCutoutType)) // not analysed: shows nothing (EditOpsCutout.cpp)
             if (const QString hint = PC::cutoutHint(values.value(n.id).value(PC::kCutoutCacheKey).toString()); !hint.isEmpty())
                 o["hint"] = hint;
+        if (n.type == QLatin1String(::Comp::kCameraType)) { // the layers in its space (0.22)
+            QJsonArray layers;
+            for (const CompNode& m : g.nodes)
+                if (::Comp::cameraOf(e, g, m.id) == n.id
+                    && e.params.value(CompGraph::paramKey(m.id, QString::fromLatin1(::Comp::kLayerDepthKey))).toDouble() > 0)
+                    layers << m.id;
+            o["layers"] = layers;
+            if (layers.isEmpty())
+                o["hint"] = QString("no layer stands in its space yet: {op:'node', clip, id:<layer>, params:{z:1}} on a "
+                                    "transform, media, text or text3d node (camera:%1 names it, 0 = the graph's camera)").arg(n.id);
+        }
         nodes << o;
     }
     for (const CompLink& l : g.links) links << QJsonArray{l.from, l.to, l.input};
     QJsonObject o{{"nodes", nodes}, {"links", links}, {"out", g.out}};
     QJsonArray unused;
     const QVector<int> order = g.evalOrder();
-    QSet<int> followed; // trackers read through `follow` (a value, not a link) are used
-    for (int id : order)
-        if (const int f = ::Comp::followId(e.params.value(CompGraph::paramKey(id, "follow")).toDouble())) followed.insert(f);
+    // Trackers read through `follow`, cameras through `camera` (values, not links) are used
+    const QSet<int> followed = ::Comp::valueReads(e, g, order);
     for (const CompNode& n : g.nodes)
         if (!order.contains(n.id) && !followed.contains(n.id)) unused << n.id;
     if (!unused.isEmpty()) o["unused"] = unused; // do not reach the output
@@ -896,7 +914,10 @@ void addCompOps(QVector<OpDef>& ops)
                  "input; a cycle or an input the type does not have is an error. params of an animated value (keyframes) "
                  "need at:<time>: a keyframe there (like the Inspector; other values just change). A mask kind (mask, matte) behind a "
                  "picture node is only added (link it into a merge's mask input). unlink takes the link from `from` "
-                 "(without input: the one it feeds). Time range: {op:'node', clip, id, range:[from, to]} (timeline times, to "
+                 "(without input: the one it feeds). Camera (2.5D parallax): {op:'node', clip, add:{type:'camera', "
+                 "params:{drift_x:0.02}}} then params {z:2} on transform/media/text/text3d nodes (camera:<id> names it, "
+                 "0 = the graph's camera): near layers (small z) move further than far ones (`effects kind:'nodes'` explains its values; recipe "
+                 "parallax_photo). Time range: {op:'node', clip, id, range:[from, to]} (timeline times, to "
                  "exclusive; range:false or the whole clip = no range): the node works only there - outside, a node with a picture "
                  "input hands it on unchanged (a merge shows its bg), a generator (text, media, color) shows nothing; "
                  "stored as params from/until in seconds from the clip's start (params:{from:2, until:5.5} works too, "

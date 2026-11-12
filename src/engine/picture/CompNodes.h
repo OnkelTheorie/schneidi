@@ -76,6 +76,10 @@ struct NodeCtx {
     // scale by "scale" / turn by "angle" (clockwise) around (x, y), in pixels. A transform keeps its own x/y as its
     // placement and adds that. Not analyzed: x/y = rx/ry, scale 1, angle 0 = nothing moves
     std::function<double(int node, const QString& key)> numOf;
+    // Another node's kind id ("" = no such node): a layer checks that the node its "camera" names is a camera (0.22)
+    std::function<QString(int node)> typeOf;
+    // The graph's camera (its first node of kind camera, 0.22): a layer with a depth and camera 0 stands in its space
+    int graphCamera = 0;
 
     // Picture at an input (nullptr = not connected or the node there made nothing)
     std::function<const Buf*(const QString& input)> input;
@@ -135,7 +139,8 @@ struct RunOptions {
     double fps = 25;
     std::function<Buf(const QString& path, double clipTime)> mediaPicture;
     const Buf* clipPicture = nullptr;
-    QHash<int, QVariantMap> otherNodes; // values of other nodes for numOf (id -> {key: value})
+    QHash<int, QVariantMap> otherNodes; // values of other nodes for numOf (id -> {key: value}; "type" = typeOf)
+    int graphCamera = 0;                // NodeCtx::graphCamera
 };
 // false = unknown kind or the node made nothing
 bool runNode(const QString& type, const QVariantMap& params, const QHash<QString, Buf>& inputs, const RunOptions& opt,
@@ -183,5 +188,6 @@ bool cornerPinMap(const QRect& area, const QPointF corners[4], Compose::Homograp
 void registerStyleNodes(QVector<NodeType>& out); // E: text, shadow, glitch
 void registerCutoutNodes(QVector<NodeType>& out); // cutout (AI person matte, CompNodesCutout.cpp)
 void registerText3dNodes(QVector<NodeType>& out); // 3D text (round 3): text3d
+void registerCameraNodes(QVector<NodeType>& out); // camera (0.22, CompCamera.cpp): the shared 2.5D camera
 
 } // namespace Picture::Comp

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "core/CompGraph.h"
 
+#include "core/CompTrack.h"
 #include "core/Keyframes.h"
 #include "core/Types.h"
 
@@ -12,6 +13,7 @@
 #include <algorithm>
 #include <cmath>
 #include <iterator>
+#include <utility>
 
 const CompNode* CompGraph::node(int id) const
 {
@@ -327,6 +329,21 @@ void followHead(Clip& c, int frames, double fps)
             if (k != c.keys.end())
                 for (Keyframe& f : *k) f.value += shift;
         }
+        // A camera's drift counts seconds from the clip's start: the position it had at the new first frame goes into
+        // its own values (pan_x/pan_y/push), so the picture stays in the timeline (keyframes are source frames: stay)
+        if (n.type == QLatin1String(kCameraType)) {
+            const double sec = frames / fps;
+            for (const auto& [value, drift] : {std::pair{"pan_x", "drift_x"}, std::pair{"pan_y", "drift_y"},
+                                               std::pair{"push", "drift_push"}}) {
+                const double d = e->params.value(CompGraph::paramKey(n.id, QLatin1String(drift)), 0.0).toDouble();
+                if (d == 0 || !std::isfinite(d)) continue;
+                const QString key = CompGraph::paramKey(n.id, QLatin1String(value));
+                e->params[key] = e->params.value(key, 0.0).toDouble() + d * sec;
+                const auto k = c.keys.find(Keys::effectParam(QString::fromLatin1(kEffectId), key));
+                if (k != c.keys.end())
+                    for (Keyframe& f : *k) f.value += d * sec;
+            }
+        }
         // The time range (every kind that has one; also a newer version's kind: from/until mean the same for all).
         // 0 means "from the start" / "to the end" and stays; any other value moves, also below 0 (from < 0 = from
         // the start, until < 0 = over before the start: never; inRange), so trimming back out gives the exact values
@@ -347,7 +364,46 @@ void followHead(Clip& c, int frames, double fps)
 
 bool hasRange(const QString& type)
 {
-    return !type.isEmpty() && !outputsMask(type) && type != QLatin1String("tracker");
+    return !type.isEmpty() && !outputsMask(type) && type != QLatin1String("tracker") && type != QLatin1String(kCameraType);
+}
+
+bool takesCamera(const QString& type)
+{
+    return type == QLatin1String("transform") || type == QLatin1String(kMediaType) || type == QLatin1String(kTextType)
+           || type == QLatin1String("text3d");
+}
+
+int graphCamera(const CompGraph& g)
+{
+    for (const CompNode& n : g.nodes)
+        if (n.type == QLatin1String(kCameraType)) return n.id;
+    return 0;
+}
+
+int cameraOf(const EffectInstance& e, const CompGraph& g, int node)
+{
+    const CompNode* n = g.node(node);
+    if (!n || !takesCamera(n->type)) return 0;
+    int id = followId(e.params.value(CompGraph::paramKey(node, QLatin1String(kCameraKey))).toDouble());
+    if (id == 0) id = graphCamera(g);
+    const CompNode* cam = id != node ? g.node(id) : nullptr;
+    return cam && cam->type == QLatin1String(kCameraType) ? id : 0;
+}
+
+QSet<int> valueReads(const EffectInstance& e, const CompGraph& g, const QVector<int>& nodes)
+{
+    QSet<int> out;
+    const auto followOf = [&](int id) {
+        return followId(e.params.value(CompGraph::paramKey(id, QStringLiteral("follow"))).toDouble());
+    };
+    for (int id : nodes) {
+        if (const int f = followOf(id)) out.insert(f);
+        if (const int c = cameraOf(e, g, id)) {
+            out.insert(c);
+            if (const int f = followOf(c)) out.insert(f);
+        }
+    }
+    return out;
 }
 
 bool rangeSet(double from, double until) { return from > 0 || until != 0; }

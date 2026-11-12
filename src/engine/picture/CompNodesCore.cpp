@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Compositing node kinds of package A (0.19): clip, media, color, gradient, merge, transform, crop, blur, grade, fx
 #include "engine/picture/CompNodes.h"
+#include "engine/picture/CompCamera.h"
 
 #include "core/CodeTrust.h"
 #include "core/CompGraph.h"
@@ -282,6 +283,11 @@ bool evalTransform(NodeCtx& ctx, Buf* out)
     const Compose::Affine m = transformOf(ctx, &identity, &seen);
     *out = ctx.take(Buf::Rgba);
     if (seen <= 0) return true; // the tracked point is lost: the follower is gone (transparent)
+    // In a camera's space (0.22): the placement then the camera's map of its depth, one projective draw
+    Compose::Homography cam;
+    bool camHidden = false;
+    const bool camera = layerCamera(ctx, &cam, &camHidden);
+    if (camera && camHidden) return true; // behind the camera: nothing
     // Clamped like a clip's tilt (a hand-edited project may hold 90: edge-on, a degenerate quad)
     const double tiltX = std::clamp(ctx.num("tilt_x"), -89.0, 89.0), tiltY = std::clamp(ctx.num("tilt_y"), -89.0, 89.0);
     if (std::abs(tiltX) > 1e-6 || std::abs(tiltY) > 1e-6) { // tilted in depth: a projective draw around the position
@@ -290,7 +296,13 @@ bool evalTransform(NodeCtx& ctx, Buf* out)
         Compose::Homography h;
         if (Compose::tilted(m, src->w, src->h, m.a * ax + m.b * ay + m.c, m.d * ax + m.e * ay + m.f, tiltX, tiltY,
                             std::clamp(ctx.num("fov"), 5.0, 120.0), out->w, out->h, &h))
-            Compose::draw(out->data(), out->w, out->h, src->data(), src->w, src->h, h, seen);
+            Compose::draw(out->data(), out->w, out->h, src->data(), src->w, src->h, camera ? Compose::multiply(cam, h) : h,
+                          seen);
+        return true;
+    }
+    if (camera) {
+        const Compose::Homography flat{{m.a, m.b, m.c, m.d, m.e, m.f, 0, 0, 1}};
+        Compose::draw(out->data(), out->w, out->h, src->data(), src->w, src->h, Compose::multiply(cam, flat), seen);
         return true;
     }
     if (identity) {
