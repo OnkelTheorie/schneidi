@@ -31,6 +31,7 @@
 #include <QTimer>
 #include <clocale>
 #include <cmath>
+#include <tuple>
 
 namespace {
 
@@ -443,6 +444,71 @@ void testRefused(const QString& dir)
     QFile::remove(w.path); // (the writer leaves removing to its caller)
 }
 
+// Sizes: a tiny picture is refused with a reason (no file), the smallest allowed one is written; above the highest
+// H.264 level (6.2: 8K at 120 fps at most) refused instead of a stream that breaks the level it claims
+void testSizes(const QString& dir)
+{
+    CHECK(!ExportWriter::ownSizeProblem(QSize(16, 16), 25).isEmpty());
+    CHECK(!ExportWriter::ownSizeProblem(QSize(640, 30), 25).isEmpty());
+    CHECK(ExportWriter::ownSizeProblem(QSize(32, 32), 25).isEmpty());
+    CHECK(ExportWriter::ownSizeProblem(QSize(1920, 1080), 60).isEmpty());
+    CHECK(ExportWriter::ownSizeProblem(QSize(7680, 4320), 120).isEmpty());
+    CHECK(ExportWriter::ownSizeProblem(QSize(8192, 4320), 60).isEmpty());
+    const QString fast = ExportWriter::ownSizeProblem(QSize(7680, 4320), 144);
+    if (!CHECK(fast.contains("level"))) std::printf("       %s\n", qPrintable(fast));
+    CHECK(!ExportWriter::ownSizeProblem(QSize(15360, 8640), 25).isEmpty()); // 16K
+    CHECK(!ExportWriter::ownSizeProblem(QSize(16896, 512), 25).isEmpty());  // wider than 6.2 allows (1056 macroblocks)
+    // The level fits where the encoder finds one (the export's defaults)
+    for (const auto& [w, h, fps] : {std::tuple{7680, 4320, 120.0}, std::tuple{3840, 2160, 60.0}, std::tuple{640, 360, 25.0}}) {
+        schneidi::h264::EncoderConfig c;
+        c.width = w;
+        c.height = h;
+        c.fps = fps;
+        CHECK(schneidi::h264::levelIdcFor(c) <= 62);
+    }
+    // A tiny export: refused by the writer, before the first pass, no file left
+    {
+        const QString path = dir + "/tiny.mp4";
+        ExportSettings s = settings(path, 0, ProjectFormat{16, 16, {25, 1}});
+        s.audioCodec.clear();
+        QString message;
+        CHECK(!render(sequence({{g_media, 0, 5}}), s, &message));
+        if (!CHECK(message.contains("32x32"))) std::printf("       %s\n", qPrintable(message));
+        CHECK(!QFile::exists(path));
+    }
+    // The smallest allowed: written, decodes cleanly
+    {
+        const QString path = dir + "/small.mp4";
+        ExportSettings s = settings(path, 0, ProjectFormat{32, 32, {25, 1}});
+        s.audioCodec.clear();
+        if (CHECK(render(sequence({{g_media, 0, 10}}), s))) {
+            const QJsonObject v = probe(path);
+            CHECK_EQ(v.value("width").toInt(), 32);
+            CHECK_EQ(v.value("height").toInt(), 32);
+            CHECK_EQ(v.value("nb_read_frames").toString().toInt(), 10);
+            CHECK(decodeErrors(path).isEmpty());
+        }
+    }
+}
+
+// A review render (marks drawn on, "ultrafast") with the own encoder: plain H.264 instead (the own encoder has no fast
+// setting and would ignore the preset)
+void testReview()
+{
+    RenderJob j;
+    j.id = 1;
+    j.path = "/nowhere/review.mp4";
+    j.settings.format = "h264_own";
+    j.review = true;
+    const ExportSettings s = RenderQueue::exportSettings(j, kFmt);
+    CHECK(!ExportWriter::isOwnH264(s.videoCodec));
+    CHECK_EQ(s.videoCodec, HardwareEncoders::resolve(VideoEncoder::Software, "h264").codec);
+    CHECK_EQ(s.preset, QString("ultrafast"));
+    CHECK(!s.smartRender);
+    j.review = false;
+    CHECK(ExportWriter::isOwnH264(RenderQueue::exportSettings(j, kFmt).videoCodec));
+}
+
 // Cancel while encoding and during the first pass of the "web" mode: a long timeline (60 s of noise), so neither is
 // over before the first progress report (Exporter polls every 200 ms)
 void testCancel(const QString& dir)
@@ -528,6 +594,8 @@ int main(int argc, char** argv)
     testLookahead(tmp.path());
     testBitrate(tmp.path());
     testRefused(tmp.path());
+    testSizes(tmp.path());
+    testReview();
     testCancel(tmp.path());
     return Check::result();
 }
