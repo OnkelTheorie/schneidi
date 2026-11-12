@@ -7,7 +7,8 @@
 // Parameters: mode point|two|face; start points ax/ay (point, face: where the face is), bx/by (second point) 0..1;
 // size = side of the square looked for, relative to the picture width; results x/y 0..1, scale (1 = as at the start),
 // angle (degrees clockwise against the start); rx/ry = the reference point followers are drawn relative to (the
-// follow rule: core/CompTrack.h).
+// follow rule: core/CompTrack.h). Losing the point (0.22): seen = keyframes 1 found / 0 lost (written by the analysis),
+// lost = what followers do in a gap (bridge|hold|fade), max_lost = frames in a row lost before the analysis stops.
 #include "core/CompTrack.h"
 #include "core/I18n.h"
 #include "engine/picture/CompNodes.h"
@@ -74,6 +75,26 @@ void registerTrackNodes(QVector<NodeType>& out)
              << number("rx", T("Bezugspunkt x"), 0.5, -1, 2, 0.001, 3,
                        T("Wo das Verfolgte im Startbild ist; Folgende bewegen sich um den Abstand dazu"))
              << number("ry", T("Bezugspunkt y"), 0.5, -1, 2, 0.001, 3);
+    EffectParam lost;
+    lost.key = QString::fromLatin1(::Comp::kLostKey);
+    lost.label = T("Bei Verlust");
+    lost.type = EffectParam::Choice;
+    // auto (also a missing value: older projects, recipes): hold for a face - a blur over it must never fade and show
+    // it - and fade for points (::Comp::lostModeOf)
+    lost.choices = {QStringLiteral("auto"), QStringLiteral("fade"), QStringLiteral("hold"), QStringLiteral("bridge")};
+    lost.choiceLabels = {T("Automatisch"), T("Ausblenden"), T("Halten"), T("Überbrücken")};
+    lost.defaultValue = lost.choices.first();
+    lost.description = T("Was Folgende tun, solange der Punkt verloren ist: weich aus- und wieder einblenden, an der "
+                         "letzten sicheren Stelle stehen bleiben oder die Lücke überbrücken. Lücken bis %1 Bilder "
+                         "werden immer überbrückt. Automatisch: bei Gesichtern halten, sonst ausblenden")
+                           .arg(::Comp::kBridgeFrames);
+    k.params << lost;
+    k.params << number(::Comp::kMaxLostKey, T("Aufgeben nach"), ::Comp::kDefaultMaxLost, 1, 10000, 1, 0,
+                       T("So viele Bilder in Folge darf der Punkt verloren sein, dann endet die Spur (Analyse)"));
+    EffectParam seen = number(::Comp::kSeenKey, T("Gesehen"), 1, 0, 1, 1, 0,
+                              T("1 = gefunden, 0 = verloren (Keyframes der Analyse)"));
+    seen.sparse = true; // only keyframes, written by the analysis
+    k.params << seen;
     k.output = Buf::Rgba;
     k.varying = false; // the picture is its input's; the results are keyframes the engine sees
     k.passThrough = QStringLiteral("src"); // the engine hands the picture on without a copy

@@ -201,6 +201,8 @@ QStringList CompInspector::shownKeys(const Clip& c) const
         if (key && (luma ? chromaKeys : lumaKeys).contains(p.key)) continue;
         if (k->id == QLatin1String("mask") && pointKey(p.key, &index) && index >= points) continue;
         if (k->id == QLatin1String("mask") && handleKey(p.key)) continue;
+        // The tracker's seen keys are its analysis' result (shown as the warning in its analysis row, not a field)
+        if (k->id == QLatin1String(::Comp::kTrackerType) && p.key == QLatin1String(::Comp::kSeenKey)) continue;
         keys << p.key;
     }
     return keys;
@@ -549,6 +551,11 @@ void CompInspector::updateAnalysisRow()
         text = m_analysisNote;
     } else if (m_job) {
         text = T("Eine andere Analyse läuft noch.");
+    } else if (!cutout) { // a tracker that lost its point: where (as the badge on its node says)
+        if (const Clip* c = clip()) {
+            text = CompUi::trackerWarning(*c, m_node, m_editor->project()->timelineFormat().rate.fps());
+            color = Theme::warning;
+        }
     } else if (cutout) {
         if (const Clip* c = clip()) {
             const QString cache = CompUi::nodeValues(*c, m_node).value(QString::fromLatin1(PC::kCutoutCacheKey)).toString();
@@ -592,6 +599,7 @@ void CompInspector::startAnalysis()
     QThreadPool::globalInstance()->start([guard, copy, format, from, last, job, progress] {
         QString cache, error, note;
         QVector<::Comp::TrackPoint> points;
+        ::Comp::TrackLoss lost;
         if (job.kind == QLatin1String(PC::kCutoutType)) {
             const PC::CutoutRun r = PC::cutoutNode(format, copy, job.node, 0, last, progress, job.cancel.get());
             error = r.canceled ? T("Abgebrochen") : r.error;
@@ -602,10 +610,11 @@ void CompInspector::startAnalysis()
             error = r.canceled ? T("Abgebrochen") : r.error;
             if (error.isEmpty() && r.points.isEmpty()) error = T("Nichts verfolgt");
             points = r.points;
+            lost = ::Comp::TrackLoss{r.lostFrames, r.gaveUp, last};
             if (r.gaveUp) note = T("Zu lange verloren: die Spur endet dort");
         }
-        QMetaObject::invokeMethod(guard, [guard, job, cache, points, error, note] {
-            if (guard) guard->analysisDone(job, cache, points, error, note);
+        QMetaObject::invokeMethod(guard, [guard, job, cache, points, lost, error, note] {
+            if (guard) guard->analysisDone(job, cache, points, lost, error, note);
         }, Qt::QueuedConnection);
     });
 }
@@ -615,7 +624,7 @@ void CompInspector::cancelAnalysis()
     if (m_job) m_job->cancel->store(true);
 }
 
-void CompInspector::analysisDone(const Job& job, const QString& cache, const QVector<::Comp::TrackPoint>& points,
+void CompInspector::analysisDone(const Job& job, const QString& cache, const QVector<::Comp::TrackPoint>& points, const ::Comp::TrackLoss& lost,
                                  const QString& error, const QString& note)
 {
     // Started on another project (opened, restored meanwhile): nothing of it is shown or applied here
@@ -633,9 +642,13 @@ void CompInspector::analysisDone(const Job& job, const QString& cache, const QVe
         QString err;
         m_analysisNote = m_editor->cutoutCompNode(clipId, node, cache, &err) ? T("Fertig") : err;
     } else {
-        m_analysisNote = m_editor->trackCompNode(clipId, node, points) ? T("Fertig: %1 Bilder verfolgt").arg(points.size())
+        m_analysisNote = m_editor->trackCompNode(clipId, node, points, lost) ? T("Fertig: %1 Bilder verfolgt").arg(points.size())
                                                                        : T("Das Ergebnis lässt sich nicht speichern");
         if (!note.isEmpty()) m_analysisNote += " – " + note;
+        if (const Clip* c = TimelineOps::findClip(m_editor->project()->timeline(), clipId))
+            if (const QString warn = CompUi::trackerWarning(*c, node, m_editor->project()->timelineFormat().rate.fps());
+                !warn.isEmpty())
+                m_analysisNote += " – " + warn;
     }
     refresh();
     updateAnalysisRow();

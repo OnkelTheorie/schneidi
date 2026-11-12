@@ -245,6 +245,8 @@ TrackStart startOf(const QVariantMap& values)
     st.a = QPointF(numValue(*k, values, "ax"), numValue(*k, values, "ay"));
     st.b = QPointF(numValue(*k, values, "bx"), numValue(*k, values, "by"));
     st.size = std::clamp(numValue(*k, values, "size"), 0.005, 1.0);
+    const double maxLost = numValue(*k, values, QString::fromLatin1(::Comp::kMaxLostKey));
+    st.maxLost = std::isfinite(maxLost) ? std::clamp(int(std::lround(maxLost)), 1, 100000) : ::Comp::kDefaultMaxLost;
     return st;
 }
 
@@ -255,6 +257,26 @@ double trackerValue(const QVariantMap& values, const QString& key)
     return ::Comp::followValue(
         key, textValue(*k, values, QStringLiteral("mode")), [&](const QString& q) { return values.contains(q); },
         [&](const QString& q) { return numValue(*k, values, q); });
+}
+
+::Comp::FollowTime followTime(const Clip* clip, int node, const QVariantMap& values, double t, double fps)
+{
+    ::Comp::FollowTime ft;
+    ft.t = t;
+    ft.fps = fps;
+    const NodeType* k = find(::Comp::kTrackerType);
+    if (k)
+        ft.lost = ::Comp::lostModeOf(values.value(QString::fromLatin1(::Comp::kLostKey)).toString(),
+                                     textValue(*k, values, QStringLiteral("mode")));
+    // The keys as they are (not cut to the clip): a gap trimmed half off still holds to the frame before it
+    if (clip) ft.gaps = ::Comp::trackGaps(::Comp::seenKeys(*clip, node), std::max(0, clip->length() - 1));
+    if (ft.gaps.isEmpty()) return ft; // nothing to hold or fade: valueAt is never asked
+    ft.valueAt = [clip, node, values, k](const QString& key, double at) {
+        const AnimParam p = Keys::effectParam(::Comp::kEffectId, CompGraph::paramKey(node, key));
+        if (clip && Keys::animated(*clip, p)) return Keys::valueAt(*clip, p, at);
+        return k ? numValue(*k, values, key) : values.value(key).toDouble();
+    };
+    return ft;
 }
 
 TrackRun trackNode(const ProjectFormat& format, const Clip& c, int node, int from, int to,

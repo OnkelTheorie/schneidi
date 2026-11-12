@@ -8,6 +8,7 @@
 #include "core/Keyframes.h"
 #include "core/Project.h"
 #include "core/CodeTrust.h"
+#include "core/CompTrack.h"
 #include "core/TimelineOps.h"
 #include "engine/picture/CompNodes.h"
 #include "engine/picture/CustomEffects.h"
@@ -20,6 +21,7 @@
 #include <QUndoStack>
 
 #include <algorithm>
+#include <cmath>
 
 namespace PC = Picture::Comp;
 
@@ -147,6 +149,26 @@ QString untrustedCode(const Clip& c, int node)
     if (key.isEmpty()) return {};
     const QString code = v.value(key).toString();
     return CodeTrust::isTrusted(code) ? QString() : code;
+}
+
+QString trackerWarning(const Clip& c, int node, double fps)
+{
+    CompGraph g;
+    const CompNode* n = graphOf(c, &g) ? g.node(node) : nullptr;
+    if (!n || n->type != QLatin1String(::Comp::kTrackerType)) return {};
+    const double rate = fps > 0 ? fps : 25;
+    const auto clock = [&](int clipFrame) {
+        const int s = int(std::floor(std::max(0, c.start + clipFrame) / rate));
+        return QStringLiteral("%1:%2").arg(s / 60, 2, 10, QLatin1Char('0')).arg(s % 60, 2, 10, QLatin1Char('0'));
+    };
+    QStringList parts;
+    for (const ::Comp::TrackGap& gap : ::Comp::trackGaps(c, node)) {
+        if (gap.bridged()) continue;
+        if (gap.openEnd) parts << T("ab %1 nicht wiedergefunden").arg(clock(gap.from));
+        else if (gap.openStart) parts << T("erst ab %1 gefunden").arg(clock(gap.to + 1));
+        else parts << QStringLiteral("%1–%2").arg(clock(gap.from), clock(gap.to));
+    }
+    return parts.isEmpty() ? QString() : T("Punkt verloren: %1").arg(parts.join(QStringLiteral(" · ")));
 }
 
 Timeline viewTimeline(Timeline tl, int clipId, int node, bool matte)

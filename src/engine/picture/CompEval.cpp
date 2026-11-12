@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "engine/picture/CompEval.h"
+#include "engine/picture/CompTrack.h"
 
 #include "core/CompGraph.h"
 #include "core/CompTrack.h"
@@ -155,6 +156,8 @@ bool evaluate(const EffectInstance& comp, const Env& env, Cache* cache, Buf* out
         if (!k) return valuesOf(id).value(key).toDouble();
         return numValue(*k, valuesOf(id), key);
     };
+
+    QHash<int, ::Comp::FollowTime> followTimes; // per tracker followed (gaps, lost mode) at env.t
 
     // Static: kind not varying, no keyframes, every connected input static; keyed by its values and the inputs' keys
     for (int id : order) {
@@ -347,11 +350,16 @@ bool evaluate(const EffectInstance& comp, const Env& env, Cache* cache, Buf* out
                 const NodeType* ok = o ? find(o->type) : nullptr;
                 // A tracker's x/y/rx/ry by the follow rule (core/CompTrack.h): not analyzed yet = at its reference
                 // point, so a follower does not move (Picture::Comp::trackerValue)
-                if (ok && o->type == QLatin1String(::Comp::kTrackerType))
+                if (ok && o->type == QLatin1String(::Comp::kTrackerType)) {
+                    // Losing the point (0.22): its gaps and lost mode (seen, held values)
+                    auto ft = followTimes.constFind(other); // once per tracker and frame (numOf runs ~7x a follower)
+                    if (ft == followTimes.cend())
+                        ft = followTimes.insert(other, followTime(env.clip, other, valuesOf(other), env.t, env.fps));
                     return ::Comp::followValue(
                         key, textValue(*ok, valuesOf(other), QStringLiteral("mode")),
                         [&](const QString& q) { return valuesOf(other).contains(q) || isAnimated(other, q); },
-                        [&](const QString& q) { return valueOf(other, ok, q); });
+                        [&](const QString& q) { return valueOf(other, ok, q); }, &*ft);
+                }
                 return valueOf(other, ok, key);
             };
             ctx.input = [&, id](const QString& name) { return inputOf(id, name); };

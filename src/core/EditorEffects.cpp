@@ -371,7 +371,75 @@ void Editor::setGradeWindowPath(int clipId, int n, int from, const QVector<Grade
     });
 }
 
-bool Editor::trackCompNode(int clipId, int node, const QVector<Comp::TrackPoint>& points)
+namespace {
+
+// Seen keyframes of a tracker over the analyzed range (found frames and lost ones): step keys, one on each side of a
+// change, so every frame reads exactly 1 or 0. What lies before and after the range keeps its value; without lost
+// frames and without earlier seen keys nothing is written (an analysis that never lost the point)
+// The frames an analysis covers: its points, and after giving up the rest of the asked range (loss.to)
+void coveredRange(const QVector<Comp::TrackPoint>& points, const Comp::TrackLoss& loss, int* lo, int* hi)
+{
+    *lo = INT_MAX;
+    *hi = INT_MIN;
+    for (const Comp::TrackPoint& q : points) {
+        *lo = std::min(*lo, q.frame);
+        *hi = std::max(*hi, q.frame);
+    }
+    if (loss.gaveUp) {
+        for (int f : loss.frames) {
+            *lo = std::min(*lo, f);
+            *hi = std::max(*hi, f);
+        }
+        if (loss.to >= 0) {
+            *lo = std::min(*lo, loss.to);
+            *hi = std::max(*hi, loss.to);
+        }
+    }
+}
+
+// Lost frames between found ones are gaps; lost frames at the far end of a run that did not give up are not (the last
+// frames blurred: followers hold the last place, nothing vanishes for the rest of the clip); after giving up every
+// frame of the asked range without a point is lost
+void writeSeen(Clip& c, int node, const QVector<Comp::TrackPoint>& points, const Comp::TrackLoss& loss)
+{
+    const AnimParam p = Keys::effectParam(Comp::kEffectId, CompGraph::paramKey(node, Comp::kSeenKey));
+    const bool had = Keys::animated(c, p);
+    QSet<int> found;
+    for (const Comp::TrackPoint& q : points) found.insert(q.frame);
+    int lo = 0, hi = -1;
+    coveredRange(points, loss, &lo, &hi);
+    if (lo > hi) return;
+    bool anyLost = false;
+    for (int f = lo; f <= hi && !anyLost; ++f) anyLost = !found.contains(f) && (loss.gaveUp || loss.frames.contains(f));
+    if (!anyLost && !had) return;
+    // The old curve around the range (step keys: their values as they are)
+    bool keysBefore = false, keysAfter = false;
+    for (int t : Keys::keyTimes(c, {p})) {
+        keysBefore |= t < lo;
+        keysAfter |= t > hi;
+    }
+    const double before = had ? Keys::valueAt(c, p, lo - 1) : 1.0, after = had ? Keys::valueAt(c, p, hi + 1) : 1.0;
+    for (int t : Keys::keyTimes(c, {p}))
+        if (t >= lo - 1 && t <= hi + 1) Keys::removeKey(c, p, t);
+    const auto state = [&](int f) { return found.contains(f) ? 1.0 : 0.0; };
+    // Into the range: the old value up to lo - 1 (a key there keeps it a step), the new one from lo
+    if (keysBefore && before != state(lo)) Keys::setKey(c, p, lo - 1, before);
+    if (keysBefore || state(lo) == 0 || !keysAfter) Keys::setKey(c, p, lo, state(lo));
+    for (int f = lo + 1; f <= hi; ++f)
+        if (state(f) != state(f - 1)) {
+            Keys::setKey(c, p, f - 1, state(f - 1));
+            Keys::setKey(c, p, f, state(f));
+        }
+    // Out of it: the old value again from hi + 1
+    if (keysAfter) {
+        Keys::setKey(c, p, hi, state(hi));
+        if (after != state(hi)) Keys::setKey(c, p, hi + 1, after);
+    }
+}
+
+} // namespace
+
+bool Editor::trackCompNode(int clipId, int node, const QVector<Comp::TrackPoint>& points, const Comp::TrackLoss& loss)
 {
     const Clip* found = TimelineOps::findClip(m_project->timeline(), clipId);
     if (!found || points.isEmpty()) return false;
@@ -382,11 +450,10 @@ bool Editor::trackCompNode(int clipId, int node, const QVector<Comp::TrackPoint>
     modifyClips({clipId}, T("Knoten verfolgen"), [&](Clip& c) {
         AnimParam params[4];
         for (int i = 0; i < 4; ++i) params[i] = Keys::effectParam(Comp::kEffectId, CompGraph::paramKey(node, Comp::kTrackKeys[i]));
-        int lo = points.first().frame, hi = lo;
-        for (const Comp::TrackPoint& p : points) {
-            lo = std::min(lo, p.frame);
-            hi = std::max(hi, p.frame);
-        }
+        // Replaced: the run's range, after giving up up to the end of the asked range (an older path there would
+        // otherwise carry on after the point was lost)
+        int lo = 0, hi = 0;
+        coveredRange(points, loss, &lo, &hi);
         // The old path's size and turn at the new run's start frame (its scale/angle start at 1/0 there)
         const int start = points.first().frame;
         const double oldScale = Keys::keyTimes(c, {params[2]}).isEmpty() ? 1.0 : Keys::valueAt(c, params[2], start);
@@ -414,6 +481,7 @@ bool Editor::trackCompNode(int clipId, int node, const QVector<Comp::TrackPoint>
             const double v[4] = {p.x, p.y, p.scale * scale0, p.angle + angle0};
             for (int i = 0; i < 4; ++i) Keys::setKey(c, params[i], p.frame, v[i]);
         }
+        writeSeen(c, node, points, loss);
     });
     return true;
 }

@@ -8,6 +8,8 @@
 #include "core/EffectFolders.h"
 #include "core/I18n.h"
 #include "core/EffectRegistry.h"
+#include "core/CompGraph.h"
+#include "core/CompTrack.h"
 #include "core/Keyframes.h"
 #include "core/MediaAspect.h"
 #include "core/Project.h"
@@ -491,6 +493,20 @@ void TimelineView::drawKeyLane(QPainter& p, const Row& row, const Clip& c)
     p.setPen(Theme::control);
     p.drawRect(lane.adjusted(0, 0, -1, -1));
     p.setClipRect(lane.adjusted(-6, 0, 6, 0), Qt::IntersectClip);
+    // Where a tracker of the clip's compositing graph lost its point (gaps its followers do not bridge): red strokes
+    // along the lane's bottom (core/CompTrack.h)
+    if (const EffectInstance* e = EffectRegistry::instance(c, Comp::kEffectId)) {
+        CompGraph g;
+        if (Comp::graphOf(*e, &g))
+            for (const CompNode& n : g.nodes) {
+                if (n.type != QLatin1String(Comp::kTrackerType)) continue;
+                for (const Comp::TrackGap& gap : Comp::trackGaps(c, n.id)) {
+                    if (gap.bridged()) continue;
+                    const double x0 = frameToX(c.pos() + gap.from), x1 = frameToX(c.pos() + std::min(gap.to + 1, c.length()));
+                    p.fillRect(QRectF(x0, lane.bottom() - 3, std::max(2.0, x1 - x0), 3), Theme::warning);
+                }
+            }
+    }
     p.setRenderHint(QPainter::Antialiasing);
     const double y = lane.center().y() + 0.5;
     // selected last, so they lie above others while dragging

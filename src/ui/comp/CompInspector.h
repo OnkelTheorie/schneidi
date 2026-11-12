@@ -61,7 +61,7 @@ private:
     int addAnalysisRow(int row, const QString& kind); // cutout / tracker: button, progress, hint; returns the next row
     void updateAnalysisRow();
     struct Job;
-    void analysisDone(const Job& job, const QString& cache, const QVector<::Comp::TrackPoint>& points,
+    void analysisDone(const Job& job, const QString& cache, const QVector<::Comp::TrackPoint>& points, const ::Comp::TrackLoss& lost,
                       const QString& error, const QString& note);
 
     Editor* m_editor;

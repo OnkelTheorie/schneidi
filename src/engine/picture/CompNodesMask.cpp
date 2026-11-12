@@ -15,6 +15,7 @@
 #include "engine/video/Compose.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 
 namespace Picture::Comp {
@@ -101,7 +102,10 @@ bool evalMask(NodeCtx& ctx, Buf* out)
         }
     }
     Masks::Geometry g = Masks::toPixels(s, ctx.size);
+    double seen = 1; // the tracker's visibility (core/CompTrack.h): a lost point fades its follower out
     if (const int follow = ::Comp::followId(ctx.num("follow")); follow > 0 && ctx.numOf) {
+        const double v = ctx.numOf(follow, ::Comp::kSeenKey);
+        seen = std::isfinite(v) ? std::clamp(v, 0.0, 1.0) : 1.0;
         Masks::Follow f;
         // The follow rule (core/CompTrack.h): moved by (x, y) - (rx, ry), scaled and turned around (x, y)
         f.from = QPointF(ctx.numOf(follow, "rx") * W, ctx.numOf(follow, "ry") * H);
@@ -115,6 +119,15 @@ bool evalMask(NodeCtx& ctx, Buf* out)
     if (s.invert) {
         MaskRaster::invert(b.data(), W, H);
         area = fullArea(b);
+    }
+    if (seen < 1) { // this mask's own share fades (what comes in at "mask" stays)
+        const uint32_t k = uint32_t(std::lround(seen * 256));
+        if (k == 0) {
+            std::memset(b.data(), 0, b.px.size());
+            area = QRect();
+        } else {
+            for (uint8_t& v : b.px) v = uint8_t((v * k + 128) >> 8);
+        }
     }
     if (const Buf* in = ctx.input ? ctx.input("mask") : nullptr;
         in && in->kind == Buf::Mask && in->w == W && in->h == H) {

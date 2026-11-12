@@ -35,7 +35,7 @@ struct TrackStart {
     QPointF a{0.5, 0.5};  // point (or first point, or where the face is) at the start frame, 0..1 of the picture
     QPointF b{0.6, 0.5};  // second point (mode Two)
     double size = 0.05;   // side of the square looked for around each point, relative to the picture width
-    int maxLost = 50;     // frames in a row without a match before it gives up (a longer hiding)
+    int maxLost = ::Comp::kDefaultMaxLost; // frames in a row without a match before it gives up (a longer hiding)
 };
 
 struct TrackRun {
@@ -67,6 +67,11 @@ TrackStart startOf(const QVariantMap& values);
 // rx/ry not set = the point the mode implies (::Comp::impliedReference), x/y not set (not analyzed yet) = rx/ry, so a
 // follower does not move. scale/angle missing = 1/0 (their defaults). The engine's numOf does the same with keyframes
 double trackerValue(const QVariantMap& values, const QString& key);
+
+// What followers of tracker `node` need at clip frame t beyond its values there (core/CompTrack.h FollowTime): its
+// lost mode (values, missing = fade), gaps (the clip's seen keys; none without a clip) and values at other frames
+// (keyframes of the clip, else `values`)
+::Comp::FollowTime followTime(const Clip* clip, int node, const QVariantMap& values, double t, double fps);
 
 // Tracker node `node` of clip c's "comp" graph over clip frames from..to; the node's start values at `from`
 // (keyframes resolved). Pictures: the clip alone without its effects, its own picture without the bars of another
