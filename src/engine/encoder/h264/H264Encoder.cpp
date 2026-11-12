@@ -66,11 +66,26 @@ const int gExp = std::getenv("H264_EXP") ? std::atoi(std::getenv("H264_EXP")) : 
 // Per thread (rows of a picture run on several threads): intra try in a P picture without Intra
 // 8x8 / 16x16 (experiments).
 thread_local bool tIntraSkip8 = false, tIntraSkip16 = false;
-// Intra try in P pictures only when its estimate is below 1.5x the inter cost (2.0 before 11.11.:
+// Intra try in an inter picture: the caller's Intra 16x16 SATD estimate (-1 = none). With it the
+// three intra types are first compared by SATD (+ mode bits) and only those within kIntraSel of the
+// best are coded in full (H264_INTRASEL = factor, 0 = off: all of them as before). Measured with
+// the intra try threshold 1.2 and the limit against inter 1.0 (two-pass, AQ + tree, 600 pictures CS2,
+// BD-rate PSNR-Y / SSIM-Y / instructions): threshold 1.2 alone +0.17 / +0.11 % / -5.9 %, all three
+// +0.30 / +0.22 % / -7.8 %; pre-selection 1.1 with limit 0.9 +0.31 / +0.53 % / -6.4 % (no).
+thread_local int tIntraEst16 = -1;
+const double gIntraSel = std::getenv("H264_INTRASEL") ? std::atof(std::getenv("H264_INTRASEL")) : 1.2;
+// With the pre-selection: an intra type is also given up once its SATD exceeds this many times the
+// inter cost (the motion search's SATD + mode bits; H264_INTRAINTER, 0 = no such limit).
+thread_local double tInterCost = -1;
+const double gIntraInter = std::getenv("H264_INTRAINTER") ? std::atof(std::getenv("H264_INTRAINTER")) : 1.0;
+// Set by encodeMbIntra when every intra type was given up (nothing coded).
+thread_local bool tIntraNone = false;
+// Intra try in P pictures only when its estimate is below gIntraFactor x the inter cost (2.0 before 11.11.:
 // -10 % instructions for +0.17 % BD-rate), and in the borderline case (estimate above the inter
 // cost) without Intra 8x8 / 16x16 (-8 % for +0.2 %). H264_FULLINTRA=1 restores the full search.
 const bool gFullIntra = std::getenv("H264_FULLINTRA") != nullptr;
-const double gIntraFactor = std::getenv("H264_INTRAF") ? std::atof(std::getenv("H264_INTRAF")) : gFullIntra ? 2.0 : 1.5;
+// 1.5 -> 1.2 (12.11., with the pre-selection below): see gIntraSel.
+const double gIntraFactor = std::getenv("H264_INTRAF") ? std::atof(std::getenv("H264_INTRAF")) : gFullIntra ? 2.0 : 1.2;
 // B pictures: 16x8 and 8x16 partitions besides 16x16 (H264_BPARTS=0 turns them off, for measurements).
 const bool gBParts = !std::getenv("H264_BPARTS") || std::atoi(std::getenv("H264_BPARTS")) != 0;
 double gPhaseMs[8] = {};
@@ -2639,7 +2654,7 @@ bool FrameCoder::encodeLuma16(MbOut& o, int mbx, int mby, const ChromaMb& ch)
     return true;
 }
 
-bool FrameCoder::encodeLuma4(MbOut& o, int mbx, int mby, const ChromaMb& ch)
+bool FrameCoder::encodeLuma4(MbOut& o, int mbx, int mby, const ChromaMb& ch, int* satdOut, int bound)
 {
     BitWriter& bw = o.bw;
     const int qp = mbQp_[size_t(mby) * mbW_ + mbx];
@@ -2653,6 +2668,7 @@ bool FrameCoder::encodeLuma4(MbOut& o, int mbx, int mby, const ChromaMb& ch)
     int modes[16], predModes[16];
     int levels[16][16]; // per blkIdx, raster order
     int cbpLuma = 0;
+    int satdSum = 0; // chosen modes: SATD + lambda * mode bits
 
     for (int blkIdx = 0; blkIdx < 16; ++blkIdx) {
         const int bxIn = kBlkX[blkIdx], byIn = kBlkY[blkIdx];
@@ -2718,6 +2734,12 @@ bool FrameCoder::encodeLuma4(MbOut& o, int mbx, int mby, const ChromaMb& ch)
             return cost;
         };
         intraModeSearch(tryMode, predMode);
+        satdSum += bestCost;
+        if (satdSum > bound) {
+            if (satdOut)
+                *satdOut = -1;
+            return false; // clearly worse than something else: the caller drops it
+        }
         modes[blkIdx] = bestMode;
         modes4x4_[size_t(by) * lw + bx] = int8_t(bestMode);
 
@@ -2741,6 +2763,8 @@ bool FrameCoder::encodeLuma4(MbOut& o, int mbx, int mby, const ChromaMb& ch)
                 recY_[size_t(py + y) * padW_ + px + x] = clip1(pred[y * 4 + x] + r[y * 4 + x]);
     }
 
+    if (satdOut)
+        *satdOut = satdSum;
     // Syntax (7.3.5): I_NxN.
     o.syn.kind = MbSyntax::Kind::I4;
     std::memcpy(o.syn.i4Mode, modes, sizeof(modes));
@@ -2827,6 +2851,67 @@ bool FrameCoder::encodeMbIntra(MbOut& out, int mbx, int mby)
     };
 
     const double lambda = 0.85 * std::pow(2.0, (mbQp_[size_t(mby) * mbW_ + mbx] - 12) / 3.0);
+    if (tIntraEst16 >= 0 && gIntraSel > 0) {
+        // SATD pre-selection: Intra 4x4 and 8x8 are analysed block by block (and given up once
+        // clearly worse than the best so far or than inter); full RD (and the Intra 16x16 coding)
+        // only for the types near the best SATD.
+        const int est16 = tIntraSkip16 ? INT_MAX : tIntraEst16;
+        const double interLim = gIntraInter > 0 && tInterCost >= 0 ? gIntraInter * tInterCost : 1e18;
+        auto boundOf = [&](double best) {
+            const double b = std::min(gIntraSel * best, interLim);
+            return b >= double(INT_MAX) ? INT_MAX : int(b);
+        };
+        MbOut b, c;
+        int satd4 = -1, satd8 = -1;
+        const bool deltaB = encodeLuma4(b, mbx, mby, ch, &satd4, boundOf(double(est16)));
+        Snapshot snapB, snapC;
+        if (satd4 >= 0)
+            save(snapB);
+        bool deltaC = false;
+        if (useT8() && !tIntraSkip8) {
+            deltaC = encodeLuma8(c, mbx, mby, ch, boundOf(double(std::min(satd4 >= 0 ? satd4 : INT_MAX, est16))), &satd8);
+            if (satd8 >= 0)
+                save(snapC);
+        }
+        int minSat = est16;
+        if (satd4 >= 0)
+            minSat = std::min(minSat, satd4);
+        if (satd8 >= 0)
+            minSat = std::min(minSat, satd8);
+        const double lim = std::min(gIntraSel * minSat, interLim);
+        double costA = 1e300, costB = 1e300, costC = 1e300;
+        if (satd8 >= 0 && satd8 <= lim) {
+            restore(snapC);
+            costC = double(ssd()) + lambda * mbBits(c, mbx, mby, 0.0);
+        }
+        if (satd4 >= 0 && satd4 <= lim) {
+            restore(snapB);
+            costB = double(ssd()) + lambda * mbBits(b, mbx, mby, double(b.bw.bitCount()));
+        }
+        MbOut a;
+        bool deltaA = false;
+        if (est16 != INT_MAX && est16 <= lim) {
+            deltaA = encodeLuma16(a, mbx, mby, ch);
+            costA = double(ssd()) + lambda * mbBits(a, mbx, mby, double(a.bw.bitCount()));
+        }
+        if (costA >= 1e300 && costB >= 1e300 && costC >= 1e300) {
+            tIntraNone = true; // all given up: the macroblock state is left half written
+            return false;
+        }
+        // Same order of preference as below.
+        if (costC < costA && costC < costB) {
+            restore(snapC);
+            out = std::move(c);
+            return deltaC;
+        }
+        if (costB <= costA) {
+            restore(snapB);
+            out = std::move(b);
+            return deltaB;
+        }
+        out = std::move(a); // state is the Intra 16x16 one (coded last)
+        return deltaA;
+    }
     MbOut a, b;
     bool deltaA = false;
     double costA = 1e300;
@@ -3045,12 +3130,15 @@ int median3(int a, int b, int c) { return std::max(std::min(a, b), std::min(std:
 
 // Intra 8x8 (High profile, CABAC only): four 8x8 blocks, each with its own prediction direction
 // from filtered neighbour samples and an 8x8 transform.
-bool FrameCoder::encodeLuma8(MbOut& o, int mbx, int mby, const ChromaMb& ch)
+bool FrameCoder::encodeLuma8(MbOut& o, int mbx, int mby, const ChromaMb& ch, int bound, int* satdOut)
 {
     const int qp = mbQp_[size_t(mby) * mbW_ + mbx];
     const int lw = mbW_ * 4;
     const int lambda = std::max(1, int(0.9 * std::pow(2.0, (qp - 12) / 6.0) + 0.5));
     int cbpLuma = 0;
+    int satdSum = 0; // chosen modes: SATD + lambda * mode bits
+    if (satdOut)
+        *satdOut = -1; // aborted until the end
     for (int b8 = 0; b8 < 4; ++b8) {
         const int ox = (b8 & 1) * 8, oy = (b8 >> 1) * 8;
         const int px = mbx * 16 + ox, py = mby * 16 + oy;
@@ -3108,6 +3196,9 @@ bool FrameCoder::encodeLuma8(MbOut& o, int mbx, int mby, const ChromaMb& ch)
             return cost;
         };
         intraModeSearch(tryMode, predMode);
+        satdSum += bestCost;
+        if (satdSum > bound)
+            return false; // clearly worse than another intra type: the caller drops it
 
         int res[64], levels[64];
         for (int y = 0; y < 8; ++y)
@@ -3135,6 +3226,8 @@ bool FrameCoder::encodeLuma8(MbOut& o, int mbx, int mby, const ChromaMb& ch)
         o.syn.i4Mode[b8] = bestMode;
         o.syn.i4Pred[b8] = predMode;
     }
+    if (satdOut)
+        *satdOut = satdSum;
     o.syn.kind = MbSyntax::Kind::I4;
     o.syn.t8 = true;
     o.syn.chromaMode = ch.mode;
@@ -4148,10 +4241,16 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
             const bool borderline = double(intraEstimate) >= best.cost;
             tIntraSkip8 = borderline && (!gFullIntra || (gExp & 2));
             tIntraSkip16 = borderline && (!gFullIntra || (gExp & 4));
+            tIntraEst16 = intraEstimate;
+            tInterCost = best.cost;
+            tIntraNone = false;
             intraDelta = encodeMbIntra(intraBits, mbx, mby);
             tIntraSkip8 = tIntraSkip16 = false;
+            tIntraEst16 = -1;
             setBlocks(0, 0, 4, 4, 0, 0, -1);
-            costIntra = double(mbSsd(mbx, mby)) + lambda * mbBits(intraBits, mbx, mby, double(intraBits.bw.bitCount() + seBits(0)));
+            if (!tIntraNone)
+                costIntra = double(mbSsd(mbx, mby)) +
+                            lambda * mbBits(intraBits, mbx, mby, double(intraBits.bw.bitCount() + seBits(0)));
             if (gStats) {
                 const int bucket = std::min(3, int(2.0 * intraEstimate / std::max(1.0, best.cost)));
                 gStatIntraTry[bucket].fetch_add(1, std::memory_order_relaxed);
@@ -4575,11 +4674,16 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
             const bool borderline = double(est) >= estInter;
             tIntraSkip8 = borderline && (!gFullIntra || (gExp & 2));
             tIntraSkip16 = borderline && (!gFullIntra || (gExp & 4));
+            tIntraEst16 = est;
+            tInterCost = estInter;
+            tIntraNone = false;
             intraDelta = encodeMbIntra(intraBits, mbx, mby);
             tIntraSkip8 = tIntraSkip16 = false;
+            tIntraEst16 = -1;
             const int zero[2] = {0, 0};
             setBlocks(0, 0, 4, 4, 0, zero, zero);
-            costIntra = double(mbSsd(mbx, mby)) + lambda * mbBits(intraBits, mbx, mby, 0.0);
+            if (!tIntraNone)
+                costIntra = double(mbSsd(mbx, mby)) + lambda * mbBits(intraBits, mbx, mby, 0.0);
         }
     }
 

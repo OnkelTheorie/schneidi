@@ -157,8 +157,10 @@ public:
     void writeChroma(MbOut& o, int mbx, int mby, const ChromaMb& ch);
     // Return whether the macroblock sent mb_qp_delta.
     bool encodeLuma16(MbOut& o, int mbx, int mby, const ChromaMb& ch);
-    bool encodeLuma4(MbOut& o, int mbx, int mby, const ChromaMb& ch);
-    bool encodeLuma8(MbOut& o, int mbx, int mby, const ChromaMb& ch);
+    // satdOut: the sum of the chosen modes' SATD + lambda * mode bits. Both give up (satdOut -1, the
+    // macroblock state half written) once that sum exceeds bound.
+    bool encodeLuma4(MbOut& o, int mbx, int mby, const ChromaMb& ch, int* satdOut = nullptr, int bound = INT_MAX);
+    bool encodeLuma8(MbOut& o, int mbx, int mby, const ChromaMb& ch, int bound = INT_MAX, int* satdOut = nullptr);
     // Returns false for a skipped macroblock.
     bool encodeMbP(MbOut& result, int mbx, int mby);
     bool encodeMbB(MbOut& result, int mbx, int mby);
