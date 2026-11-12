@@ -234,6 +234,97 @@ inline bool anyAbove4x4(const int* coef, const int* limit)
 #endif
 }
 
+// Quantisation of a 4x4 block (raster): level = sign * min((|coef| * mf + offset) >> qbits, maxLevel)
+// with mf[i & 7] (the two row patterns of the position classes). |coef| and mf below 2^15 (true for
+// residuals of 8-bit samples). Returns whether any level is non-zero.
+inline bool quant4x4(const int* coef, const int* mf, int qbits, int offset, int maxLevel, int* levels)
+{
+#ifdef SCHNEIDI_H264_SSE2
+    using namespace transform_detail;
+    const __m128i m0 = ld(mf), m1 = ld(mf + 4), off = _mm_set1_epi32(offset), cnt = _mm_cvtsi32_si128(qbits);
+    const __m128i lim = _mm_set1_epi32(maxLevel);
+    __m128i any = _mm_setzero_si128();
+    for (int i = 0; i < 4; ++i) {
+        const __m128i c = ld(coef + 4 * i);
+        const __m128i sign = _mm_srai_epi32(c, 31);
+        const __m128i a = _mm_sub_epi32(_mm_xor_si128(c, sign), sign);
+        // The high words of a and mf are zero: madd gives the 32-bit product.
+        __m128i q = _mm_srl_epi32(_mm_add_epi32(_mm_madd_epi16(a, i & 1 ? m1 : m0), off), cnt);
+        q = _mm_min_epi16(q, lim); // below 2^15, high words zero
+        any = _mm_or_si128(any, q);
+        st(levels + 4 * i, _mm_sub_epi32(_mm_xor_si128(q, sign), sign));
+    }
+    return _mm_movemask_epi8(_mm_cmpeq_epi32(any, _mm_setzero_si128())) != 0xffff;
+#else
+    bool any = false;
+    for (int i = 0; i < 16; ++i) {
+        const int a = coef[i] < 0 ? -coef[i] : coef[i];
+        int q = int((int64_t(a) * mf[i & 7] + offset) >> qbits);
+        if (q > maxLevel)
+            q = maxLevel;
+        levels[i] = coef[i] < 0 ? -q : q;
+        any |= q != 0;
+    }
+    return any;
+#endif
+}
+
+// Dequantisation of a 4x4 block (raster): d = (level * v[i & 7]) << shift; |level| and v below 2^15.
+inline void dequant4x4(const int* levels, const int* v, int shift, int* d)
+{
+#ifdef SCHNEIDI_H264_SSE2
+    using namespace transform_detail;
+    const __m128i v0 = ld(v), v1 = ld(v + 4), cnt = _mm_cvtsi32_si128(shift);
+    for (int i = 0; i < 4; ++i) // the level's low word is its value, the high word meets a zero in v
+        st(d + 4 * i, _mm_sll_epi32(_mm_madd_epi16(ld(levels + 4 * i), i & 1 ? v1 : v0), cnt));
+#else
+    for (int i = 0; i < 16; ++i)
+        d[i] = int(unsigned(levels[i] * v[i & 7]) << shift);
+#endif
+}
+
+// dst = clip(pred + r) for a 4x4 block; r raster (int), |r| below 2^15.
+inline void addClip4x4(const uint8_t* pred, int stridePred, const int* r, uint8_t* dst, int strideDst)
+{
+#ifdef SCHNEIDI_H264_SSE2
+    using namespace transform_detail;
+    const __m128i zero = _mm_setzero_si128();
+    for (int y = 0; y < 4; ++y) {
+        int32_t p;
+        std::memcpy(&p, pred + y * stridePred, 4);
+        const __m128i sum = _mm_add_epi16(_mm_unpacklo_epi8(_mm_cvtsi32_si128(p), zero), _mm_packs_epi32(ld(r + 4 * y), zero));
+        const int32_t o = _mm_cvtsi128_si32(_mm_packus_epi16(sum, zero));
+        std::memcpy(dst + y * strideDst, &o, 4);
+    }
+#else
+    for (int y = 0; y < 4; ++y)
+        for (int x = 0; x < 4; ++x) {
+            const int v = pred[y * stridePred + x] + r[y * 4 + x];
+            dst[y * strideDst + x] = uint8_t(v < 0 ? 0 : v > 255 ? 255 : v);
+        }
+#endif
+}
+
+// dst = clip(pred + r) for an 8x8 block; r raster (int), |r| below 2^15.
+inline void addClip8x8(const uint8_t* pred, int stridePred, const int* r, uint8_t* dst, int strideDst)
+{
+#ifdef SCHNEIDI_H264_SSE2
+    using namespace transform_detail;
+    const __m128i zero = _mm_setzero_si128();
+    for (int y = 0; y < 8; ++y) {
+        const __m128i p = _mm_unpacklo_epi8(_mm_loadl_epi64(reinterpret_cast<const __m128i*>(pred + y * stridePred)), zero);
+        const __m128i sum = _mm_add_epi16(p, _mm_packs_epi32(ld(r + 8 * y), ld(r + 8 * y + 4)));
+        _mm_storel_epi64(reinterpret_cast<__m128i*>(dst + y * strideDst), _mm_packus_epi16(sum, zero));
+    }
+#else
+    for (int y = 0; y < 8; ++y)
+        for (int x = 0; x < 8; ++x) {
+            const int v = pred[y * stridePred + x] + r[y * 8 + x];
+            dst[y * strideDst + x] = uint8_t(v < 0 ? 0 : v > 255 ? 255 : v);
+        }
+#endif
+}
+
 // 8.5.12.2: rows first, then columns, then (x + 32) >> 6.
 inline void inverse4x4(const int* in, int* out)
 {

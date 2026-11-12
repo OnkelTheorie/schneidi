@@ -108,6 +108,22 @@ constexpr int kDequantV[6][3] = {
     {10, 16, 13}, {11, 18, 14}, {13, 20, 16}, {14, 23, 18}, {16, 25, 20}, {18, 29, 23},
 };
 
+// The two row patterns of a 4x4 block's position classes (rows 0/2: 0 2 0 2, rows 1/3: 2 1 2 1) for
+// the SIMD kernels of Transform.h: quantisation multipliers and dequantisation scales by QP % 6.
+struct RowPatterns {
+    int mf[6][8], v[6][8];
+    constexpr RowPatterns() : mf(), v()
+    {
+        constexpr int kClass[8] = {0, 2, 0, 2, 2, 1, 2, 1};
+        for (int q = 0; q < 6; ++q)
+            for (int i = 0; i < 8; ++i) {
+                mf[q][i] = kQuantMf[q][kClass[i]];
+                v[q][i] = kDequantV[q][kClass[i]];
+            }
+    }
+};
+constexpr RowPatterns kRows;
+
 constexpr int posClass(int raster)
 {
     const int y = raster >> 2, x = raster & 3;
@@ -2713,11 +2729,7 @@ void FrameCoder::analyseChroma(int mbx, int mby, ChromaMb& ch, const uint8_t (*i
         int ccoef[4][16];
         for (int b = 0; b < 4; ++b) {
             const int ox = (b & 1) * 4, oy = (b >> 1) * 4;
-            int res[16];
-            for (int y = 0; y < 4; ++y)
-                for (int x = 0; x < 4; ++x)
-                    res[y * 4 + x] = int(csrcBlk[c][(oy + y) * 8 + ox + x]) - int(cpred[c][(oy + y) * 8 + ox + x]);
-            forward4x4(res, ccoef[b]);
+            forward4x4Diff(csrcBlk[c] + oy * 8 + ox, 8, cpred[c] + oy * 8 + ox, 8, ccoef[b]);
         }
         const int a = ccoef[0][0], b = ccoef[1][0], cc = ccoef[2][0], d = ccoef[3][0];
         const int f[4] = {a + b + cc + d, a - b + cc - d, a + b - cc - d, a - b - cc + d};
@@ -2726,11 +2738,8 @@ void FrameCoder::analyseChroma(int mbx, int mby, ChromaMb& ch, const uint8_t (*i
             anyDc |= ch.dc[c][i] != 0;
         }
         for (int blk = 0; blk < 4; ++blk) {
-            ch.ac[c][blk][0] = 0;
-            for (int i = 1; i < 16; ++i) {
-                ch.ac[c][blk][i] = quantize(ccoef[blk][i], kQuantMf[qpcMod][posClass(i)], cqbits, cOffset);
-                anyAc |= ch.ac[c][blk][i] != 0;
-            }
+            ccoef[blk][0] = 0; // the DC went its own way above
+            anyAc |= quant4x4(ccoef[blk], kRows.mf[qpcMod], cqbits, cOffset, kMaxLevel, ch.ac[c][blk]);
         }
     }
     ch.cbp = anyAc ? 2 : anyDc ? 1 : 0;
@@ -2741,16 +2750,12 @@ void FrameCoder::analyseChroma(int mbx, int mby, ChromaMb& ch, const uint8_t (*i
                           l[0] - l[1] - l[2] + l[3]};
         uint8_t* r0 = &(*crec[c])[chromaOff];
         for (int blk = 0; blk < 4; ++blk) {
-            int d[16];
+            int d[16], r[16];
+            dequant4x4(ch.ac[c][blk], kRows.v[qpcMod], qpcDiv, d); // ac[0] is 0
             d[0] = ((f[blk] * 16 * kDequantV[qpcMod][0]) << qpcDiv) >> 5;
-            for (int i = 1; i < 16; ++i)
-                d[i] = (ch.ac[c][blk][i] * kDequantV[qpcMod][posClass(i)]) << qpcDiv;
-            int r[16];
             inverse4x4(d, r);
             const int ox = (blk & 1) * 4, oy = (blk >> 1) * 4;
-            for (int y = 0; y < 4; ++y)
-                for (int x = 0; x < 4; ++x)
-                    r0[size_t(oy + y) * cw + ox + x] = clip1(cpred[c][(oy + y) * 8 + ox + x] + r[y * 4 + x]);
+            addClip4x4(cpred[c] + oy * 8 + ox, 8, r, r0 + size_t(oy) * cw + ox, cw);
         }
     }
 }
@@ -2813,11 +2818,7 @@ bool FrameCoder::encodeLuma16(MbOut& o, int mbx, int mby, const ChromaMb& ch)
     int coef[16][16]; // spatial block index b = y * 4 + x
     for (int b = 0; b < 16; ++b) {
         const int ox = (b & 3) * 4, oy = (b >> 2) * 4;
-        int res[16];
-        for (int y = 0; y < 4; ++y)
-            for (int x = 0; x < 4; ++x)
-                res[y * 4 + x] = int(src[(oy + y) * 16 + ox + x]) - int(pred[(oy + y) * 16 + ox + x]);
-        forward4x4(res, coef[b]);
+        forward4x4Diff(src + oy * 16 + ox, 16, pred + oy * 16 + ox, 16, coef[b]);
     }
 
     const int qbits = 15 + qpDiv;
@@ -2832,11 +2833,8 @@ bool FrameCoder::encodeLuma16(MbOut& o, int mbx, int mby, const ChromaMb& ch)
     int acLevel[16][16];
     bool anyAc = false;
     for (int b = 0; b < 16; ++b) {
-        acLevel[b][0] = 0;
-        for (int i = 1; i < 16; ++i) {
-            acLevel[b][i] = quantize(coef[b][i], kQuantMf[qpMod][posClass(i)], qbits, intraOffset);
-            anyAc |= acLevel[b][i] != 0;
-        }
+        coef[b][0] = 0; // the DC is in dcIn
+        anyAc |= quant4x4(coef[b], kRows.mf[qpMod], qbits, intraOffset, kMaxLevel, acLevel[b]);
     }
     const int cbpLuma = anyAc ? 15 : 0;
 
@@ -2845,18 +2843,15 @@ bool FrameCoder::encodeLuma16(MbOut& o, int mbx, int mby, const ChromaMb& ch)
     const int dcScale = 16 * kDequantV[qpMod][0];
     for (int b = 0; b < 16; ++b) {
         int d[16];
+        dequant4x4(acLevel[b], kRows.v[qpMod], qpDiv, d); // acLevel[b][0] is 0
         if (qp >= 36)
             d[0] = (dcF[b] * dcScale) << (qpDiv - 6);
         else
             d[0] = (dcF[b] * dcScale + (1 << (5 - qpDiv))) >> (6 - qpDiv);
-        for (int i = 1; i < 16; ++i)
-            d[i] = (acLevel[b][i] * kDequantV[qpMod][posClass(i)]) << qpDiv;
         int r[16];
         inverse4x4(d, r);
         const int ox = (b & 3) * 4, oy = (b >> 2) * 4;
-        for (int y = 0; y < 4; ++y)
-            for (int x = 0; x < 4; ++x)
-                rec[size_t(oy + y) * padW_ + ox + x] = clip1(pred[(oy + y) * 16 + ox + x] + r[y * 4 + x]);
+        addClip4x4(pred + oy * 16 + ox, 16, r, rec + size_t(oy) * padW_ + ox, padW_);
     }
 
     // Syntax (7.3.5).
@@ -2987,24 +2982,18 @@ bool FrameCoder::encodeLuma4(MbOut& o, int mbx, int mby, const ChromaMb& ch, int
         modes[blkIdx] = bestMode;
         modes4x4_[size_t(by) * lw + bx] = int8_t(bestMode);
 
-        int res[16], coef[16];
-        for (int i = 0; i < 16; ++i)
-            res[i] = src[i] - pred[i];
-        forward4x4(res, coef);
-        bool any = false;
-        int d[16];
-        for (int i = 0; i < 16; ++i) {
-            levels[blkIdx][i] = quantize(coef[i], kQuantMf[qpMod][posClass(i)], qbits, intraOffset);
-            any |= levels[blkIdx][i] != 0;
-            d[i] = (levels[blkIdx][i] * kDequantV[qpMod][posClass(i)]) << qpDiv;
-        }
-        if (any)
+        int coef[16];
+        forward4x4Diff(&srcY_[size_t(py) * padW_ + px], padW_, pred, 4, coef);
+        if (quant4x4(coef, kRows.mf[qpMod], qbits, intraOffset, kMaxLevel, levels[blkIdx])) {
             cbpLuma |= 1 << (blkIdx >> 2);
-        int r[16];
-        inverse4x4(d, r);
-        for (int y = 0; y < 4; ++y)
-            for (int x = 0; x < 4; ++x)
-                recY_[size_t(py + y) * padW_ + px + x] = clip1(pred[y * 4 + x] + r[y * 4 + x]);
+            int d[16], r[16];
+            dequant4x4(levels[blkIdx], kRows.v[qpMod], qpDiv, d);
+            inverse4x4(d, r);
+            addClip4x4(pred, 4, r, &recY_[size_t(py) * padW_ + px], padW_);
+        } else {
+            for (int y = 0; y < 4; ++y)
+                std::memcpy(&recY_[size_t(py + y) * padW_ + px], pred + y * 4, 4);
+        }
     }
 
     if (satdOut)
@@ -3464,9 +3453,7 @@ bool FrameCoder::encodeLuma8(MbOut& o, int mbx, int mby, const ChromaMb& ch, int
         int d[64], r[64];
         dequant8x8(levels, qp, d);
         inverse8x8(d, r);
-        for (int y = 0; y < 8; ++y)
-            for (int x = 0; x < 8; ++x)
-                recY_[size_t(py + y) * padW_ + px + x] = clip1(pred[y * 8 + x] + r[y * 8 + x]);
+        addClip8x8(pred, 8, r, &recY_[size_t(py) * padW_ + px], padW_);
         for (int y = 0; y < 2; ++y)
             for (int x = 0; x < 2; ++x) {
                 modes4x4_[size_t(by + y) * lw + bx + x] = int8_t(bestMode);
@@ -4060,9 +4047,7 @@ void FrameCoder::reconInterLuma(int mbx, int mby, const uint8_t* lp, int qp, boo
             int d[64], r[64];
             dequant8x8(levels8[b8], qp, d);
             inverse8x8(d, r);
-            for (int y = 0; y < 8; ++y)
-                for (int x = 0; x < 8; ++x)
-                    recY_[lumaOff + size_t(oy + y) * padW_ + ox + x] = clip1(lp[(oy + y) * 16 + ox + x] + r[y * 8 + x]);
+            addClip8x8(lp + oy * 16 + ox, 16, r, &recY_[lumaOff + size_t(oy) * padW_ + ox], padW_);
             for (int k = 0; k < 64; ++k)
                 io.syn.luma8[b8][k] = levels8[b8][kZigzag8[k]];
         }
@@ -4075,14 +4060,10 @@ void FrameCoder::reconInterLuma(int mbx, int mby, const uint8_t* lp, int qp, boo
                 std::memcpy(&recY_[lumaOff + size_t(oy + y) * padW_ + ox], lp + (oy + y) * 16 + ox, 4);
             continue;
         }
-        int d[16];
-        for (int i = 0; i < 16; ++i)
-            d[i] = (levels[blkIdx][i] * kDequantV[qpMod][posClass(i)]) << qpDiv;
-        int r[16];
+        int d[16], r[16];
+        dequant4x4(levels[blkIdx], kRows.v[qpMod], qpDiv, d);
         inverse4x4(d, r);
-        for (int y = 0; y < 4; ++y)
-            for (int x = 0; x < 4; ++x)
-                recY_[lumaOff + size_t(oy + y) * padW_ + ox + x] = clip1(lp[(oy + y) * 16 + ox + x] + r[y * 4 + x]);
+        addClip4x4(lp + oy * 16 + ox, 16, r, &recY_[lumaOff + size_t(oy) * padW_ + ox], padW_);
     }
 }
 
@@ -5531,8 +5512,29 @@ void FrameCoder::deblockMb(int mbx, int mby)
             };
             const EdgeQp inner = edgeQp(qpQ), leftEdge = edgeQp(qpLeft), topEdge = edgeQp(qpTop);
             int bsV[4][4], bsH[4][4]; // [edge][segment]
+            // A macroblock predicted in one piece without luma coefficients (most skipped ones) has
+            // no inner edge to filter: boundaryStrength would say 0 for each of them.
+            bool uniform = !bSlice_;
+            if (uniform) {
+                const int lw = mbW_ * 4;
+                const size_t o0 = size_t(mby * 4) * lw + mbx * 4;
+                const int ref0 = refIdx_[o0], vx0 = mvX_[o0], vy0 = mvY_[o0];
+                uniform = ref0 >= 0;
+                for (int y = 0; y < 4 && uniform; ++y)
+                    for (int x = 0; x < 4; ++x) {
+                        const size_t o = o0 + size_t(y) * lw + x;
+                        if (nzLuma_[o] || refIdx_[o] != ref0 || mvX_[o] != vx0 || mvY_[o] != vy0) {
+                            uniform = false;
+                            break;
+                        }
+                    }
+            }
             for (int e = 0; e < 4; ++e)
                 for (int s = 0; s < 4; ++s) {
+                    if (uniform && e > 0) {
+                        bsV[e][s] = bsH[e][s] = 0;
+                        continue;
+                    }
                     const int bx = mbx * 4 + e, by = mby * 4 + s;
                     bsV[e][s] = bx == 0 ? 0 : boundaryStrength(bx - 1, by, bx, by, e == 0);
                     const int hx = mbx * 4 + s, hy = mby * 4 + e;
