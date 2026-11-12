@@ -480,20 +480,6 @@ void opNode(Session& s, const QJsonObject& op)
     if (!any) fail("BAD_ARGUMENT", "node: nothing to do (params, out:true or remove:true)");
 }
 
-// Runs of lost clip frames as [[from, to], ...] in timeline frames (inclusive), in time order
-QJsonArray lostRanges(QVector<int> frames, int start)
-{
-    std::sort(frames.begin(), frames.end());
-    QJsonArray out;
-    for (int i = 0; i < frames.size();) {
-        int j = i;
-        while (j + 1 < frames.size() && frames[j + 1] <= frames[j] + 1) ++j;
-        out << QJsonArray{start + frames[i], start + frames[j]};
-        i = j + 1;
-    }
-    return out;
-}
-
 void opTrackNode(Session& s, const QJsonObject& op)
 {
     const Clip& c = clipOf(s, op, "clip");
@@ -512,11 +498,16 @@ void opTrackNode(Session& s, const QJsonObject& op)
     const PC::TrackRun r = PC::trackNode(s.format(), clip, node, from, to);
     if (!r.error.isEmpty()) fail("FAILED", r.error);
     if (r.points.isEmpty()) fail("FAILED", QString("nothing tracked for node %1").arg(node));
-    if (!s.editor.trackCompNode(clip.id, node, r.points, r.lostFrames))
+    if (!s.editor.trackCompNode(clip.id, node, r.points, ::Comp::TrackLoss{r.lostFrames, r.gaveUp, to}))
         fail("FAILED", "could not store the tracking result");
     QJsonObject note{{"clip", clip.id}, {"node", node}, {"from", clip.start + from}, {"to", clip.start + to},
                      {"points", int(r.points.size())}, {"lost_frames", int(r.lostFrames.size())},
-                     {"gave_up", r.gaveUp}, {"outliers", r.outliers}, {"lost", lostRanges(r.lostFrames, clip.start)}};
+                     {"gave_up", r.gaveUp}, {"outliers", r.outliers}};
+    // Where followers lose it, as stored (seen keys: lost frames at the end of a run that did not give up are none)
+    QJsonArray lost;
+    if (const Clip* now = TimelineOps::findClip(s.project.timeline(), clip.id))
+        for (const ::Comp::TrackGap& gap : ::Comp::trackGaps(*now, node)) lost << QJsonArray{clip.start + gap.from, clip.start + gap.to};
+    note["lost"] = lost;
     note["lost_at"] = r.lostAt >= 0 ? QJsonValue(clip.start + r.lostAt) : QJsonValue();
     note["found_at"] = r.foundAt >= 0 ? QJsonValue(clip.start + r.foundAt) : QJsonValue();
     if (r.gaveUp)
@@ -807,9 +798,9 @@ void addCompOps(QVector<OpDef>& ops)
                  "notes say points, lost_at/found_at (timeline frames where it lost/found the point again), gave_up "
                  "(lost too long: stopped after max_lost frames in a row, default 50), outliers (two points: frames "
                  "that used one) and lost: [[from, to], ...] (timeline frames, inclusive) where the point was not "
-                 "seen. Those frames become keyframes of the node's 'seen' (1 found, 0 lost). What followers do there "
-                 "is the node's value lost (set it with {op:'node', clip, id, params:{lost:'hold'}}): 'fade' "
-                 "(default: fade out over 0.2 s, in again when found), 'hold' (stay at the last place seen) or "
+                 "seen (frames lost at the end without giving up are no gap: followers hold). Those frames become keyframes of the node's 'seen' (1 found, 0 lost). What followers do there "
+                 "is the node's value lost (set it with {op:'node', clip, id, params:{lost:'hold'}}): 'auto' "
+                 "(default: hold for a face, else fade), 'fade' (fade out over 0.2 s, in again when found), 'hold' (stay at the last place seen) or "
                  "'bridge' (move straight through the gap, like before 0.22); gaps up to 5 frames are bridged "
                  "always. `info` lists each tracker's gaps, `check` warns (tracker_lost, tracker_ended). Face mode "
                  "needs the 'faces' extension.",

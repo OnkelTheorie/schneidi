@@ -20,6 +20,13 @@ bool lostModeFromId(const QString& id, LostMode* mode)
     return true;
 }
 
+LostMode lostModeOf(const QString& id, const QString& trackMode)
+{
+    LostMode m;
+    if (lostModeFromId(id, &m)) return m;
+    return trackMode == QLatin1String("face") ? LostMode::Hold : LostMode::Fade;
+}
+
 const char* lostModeId(LostMode mode)
 {
     switch (mode) {
@@ -60,15 +67,27 @@ QVector<std::pair<int, double>> seenKeys(const Clip& c, int node)
 {
     QVector<std::pair<int, double>> keys;
     const AnimParam p = Keys::effectParam(QString::fromLatin1(kEffectId), CompGraph::paramKey(node, QString::fromLatin1(kSeenKey)));
-    if (!Keys::animated(c, p)) return keys;
-    for (int t : Keys::keyTimes(c, {p}))
-        if (const Keyframe* k = Keys::keyAt(c, p, t)) keys.append({t, k->value});
+    const auto it = c.keys.constFind(p);
+    if (it == c.keys.cend()) return keys;
+    keys.reserve(it->size());
+    for (const Keyframe& k : *it) keys.append({k.frame - c.in, k.value}); // sorted by frame (KeyTrack)
     return keys;
 }
 
 QVector<TrackGap> trackGaps(const Clip& c, int node)
 {
-    return trackGaps(seenKeys(c, node), std::max(0, c.length() - 1));
+    const int last = std::max(0, c.length() - 1);
+    QVector<TrackGap> out;
+    for (TrackGap g : trackGaps(seenKeys(c, node), last)) {
+        const int whole = g.length();
+        const TrackGap before = g;
+        g.from = std::max(g.from, 0);
+        g.to = std::min(g.to, last);
+        if (g.to < g.from) continue; // outside the clip (trimmed off)
+        if (g.from != before.from || g.to != before.to) g.whole = whole;
+        out << g;
+    }
+    return out;
 }
 
 const TrackGap* gapAt(const QVector<TrackGap>& gaps, double t)

@@ -599,7 +599,7 @@ void CompInspector::startAnalysis()
     QThreadPool::globalInstance()->start([guard, copy, format, from, last, job, progress] {
         QString cache, error, note;
         QVector<::Comp::TrackPoint> points;
-        QVector<int> lost;
+        ::Comp::TrackLoss lost;
         if (job.kind == QLatin1String(PC::kCutoutType)) {
             const PC::CutoutRun r = PC::cutoutNode(format, copy, job.node, 0, last, progress, job.cancel.get());
             error = r.canceled ? T("Abgebrochen") : r.error;
@@ -610,7 +610,7 @@ void CompInspector::startAnalysis()
             error = r.canceled ? T("Abgebrochen") : r.error;
             if (error.isEmpty() && r.points.isEmpty()) error = T("Nichts verfolgt");
             points = r.points;
-            lost = r.lostFrames;
+            lost = ::Comp::TrackLoss{r.lostFrames, r.gaveUp, last};
             if (r.gaveUp) note = T("Zu lange verloren: die Spur endet dort");
         }
         QMetaObject::invokeMethod(guard, [guard, job, cache, points, lost, error, note] {
@@ -624,7 +624,7 @@ void CompInspector::cancelAnalysis()
     if (m_job) m_job->cancel->store(true);
 }
 
-void CompInspector::analysisDone(const Job& job, const QString& cache, const QVector<::Comp::TrackPoint>& points, const QVector<int>& lost,
+void CompInspector::analysisDone(const Job& job, const QString& cache, const QVector<::Comp::TrackPoint>& points, const ::Comp::TrackLoss& lost,
                                  const QString& error, const QString& note)
 {
     // Started on another project (opened, restored meanwhile): nothing of it is shown or applied here

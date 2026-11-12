@@ -223,7 +223,7 @@ void testFollowers(const TrackRun& r)
     CHECK(::Comp::trackGaps(f.clip(), 1).isEmpty());
 
     const int undoBefore = f.p.undoStack()->index();
-    CHECK(f.ed.trackCompNode(f.id, 1, r.points, r.lostFrames));
+    CHECK(f.ed.trackCompNode(f.id, 1, r.points, {r.lostFrames}));
     CHECK_EQ(f.p.undoStack()->index(), undoBefore + 1);
     // Seen: exact steps on every frame
     const AnimParam seen = Keys::effectParam(::Comp::kEffectId, "n1.seen");
@@ -286,7 +286,7 @@ void testFollowers(const TrackRun& r)
         pts.clear();
         for (const ::Comp::TrackPoint& q : all)
             if (!lost.contains(q.frame)) pts << q;
-        CHECK(s.ed.trackCompNode(s.id, 1, pts, lost));
+        CHECK(s.ed.trackCompNode(s.id, 1, pts, {lost}));
         for (const char* mode : {"fade", "hold"}) {
             s.setLost(mode);
             const QPointF c = whiteCenter(evalAt(s.clip(), 12), &amount);
@@ -301,7 +301,7 @@ void testFollowers(const TrackRun& r)
 
     // Re-tracking a part keeps the seen value outside it: a new analysis of frames 50..60 without losses
     Fixture k(tracker);
-    CHECK(k.ed.trackCompNode(k.id, 1, r.points, r.lostFrames));
+    CHECK(k.ed.trackCompNode(k.id, 1, r.points, {r.lostFrames}));
     QVector<::Comp::TrackPoint> tail;
     for (const ::Comp::TrackPoint& q : r.points)
         if (q.frame >= 50) tail << q;
@@ -315,6 +315,78 @@ void testFollowers(const TrackRun& r)
     CHECK(::Comp::trackGaps(k.clip(), 1).isEmpty());
     for (int t = 0; t <= 60; ++t) exact = exact && Keys::valueAt(k.clip(), seen, t) == 1.0;
     CHECK(exact);
+}
+
+// Review fixes: face trackers hold by default, gaps of a trimmed clip, losses at the end, giving up over an old path
+void testEdges(const TrackRun& r)
+{
+    std::printf("edges\n");
+    const QPointF a = norm(squarePath(0));
+    const auto expected = [&](int t) { return QPointF(0.3, 0.35) + norm(squarePath(t)) - norm(squarePath(0)); };
+    double full = 0, amount = 0;
+    // A face tracker without a lost value (an older blur_face graph, one built by hand) holds: the blur stays
+    {
+        Fixture f({{"mode", "face"}, {"ax", a.x()}, {"ay", a.y()}});
+        CHECK(f.ed.trackCompNode(f.id, 1, r.points, {r.lostFrames}));
+        whiteCenter(evalAt(f.clip(), 19), &full);
+        const QPointF c = whiteCenter(evalAt(f.clip(), 30), &amount);
+        if (!CHECK(full > 0 && std::abs(amount / full - 1) < 0.01 && dist(c, expected(19)) < 1.0))
+            std::printf("       face: %.3f of the mask at %.4f, %.4f\n", full > 0 ? amount / full : 0, c.x(), c.y());
+        f.setLost("auto");
+        whiteCenter(evalAt(f.clip(), 30), &amount);
+        CHECK(std::abs(amount / full - 1) < 0.01);
+        CHECK(::Comp::lostModeOf("", "face") == ::Comp::LostMode::Hold);
+        CHECK(::Comp::lostModeOf("auto", "point") == ::Comp::LostMode::Fade);
+        CHECK(::Comp::lostModeOf("fade", "face") == ::Comp::LostMode::Fade);
+    }
+    // Trimmed: the gaps shown are cut to the clip; one trimmed off is gone; a cut gap is no "short" one
+    {
+        Fixture f({{"mode", "point"}, {"ax", a.x()}, {"ay", a.y()}});
+        CHECK(f.ed.trackCompNode(f.id, 1, r.points, {r.lostFrames}));
+        f.ed.modifyClips({f.id}, "trim", [](Clip& c) { c.in += 35; });
+        QVector<TrackGap> g = ::Comp::trackGaps(f.clip(), 1);
+        if (CHECK_EQ(g.size(), 1)) {
+            CHECK_EQ(g[0].from, 0);
+            CHECK_EQ(g[0].to, kHideTo - 35);
+            CHECK(!g[0].bridged());
+        }
+        f.ed.modifyClips({f.id}, "trim", [](Clip& c) { c.in += 10; });
+        CHECK(::Comp::trackGaps(f.clip(), 1).isEmpty());
+        // Rendering still holds a half trimmed gap at the frame before it (source 19)
+        f.setLost("hold");
+        f.ed.modifyClips({f.id}, "trim", [](Clip& c) { c.in -= 20; }); // in = 25: clip frame 0 = source 25
+        CHECK(dist(whiteCenter(evalAt(f.clip(), 0)), expected(19)) < 1.0);
+    }
+    // Lost at the end without giving up (the last frames blurred): no gap, no tracker_ended, nothing vanishes
+    {
+        Fixture f({{"mode", "point"}, {"ax", a.x()}, {"ay", a.y()}});
+        QVector<::Comp::TrackPoint> pts;
+        for (const ::Comp::TrackPoint& q : r.points)
+            if (q.frame <= 57) pts << q;
+        CHECK(f.ed.trackCompNode(f.id, 1, pts, {{58, 59, 60}, false, 60}));
+        CHECK(::Comp::trackGaps(f.clip(), 1).isEmpty());
+        whiteCenter(evalAt(f.clip(), 80), &amount);
+        CHECK(amount > 0);
+        for (const ExportCheck::Issue& i : ExportCheck::comp(f.p.timeline(), 0, 100, f.p.timelineFormat()))
+            CHECK(i.check != QLatin1String("tracker_ended"));
+    }
+    // Giving up over an earlier full path: its keys after the loss go, the rest of the asked range is lost
+    {
+        Fixture f({{"mode", "point"}, {"ax", a.x()}, {"ay", a.y()}});
+        CHECK(f.ed.trackCompNode(f.id, 1, r.points));
+        QVector<::Comp::TrackPoint> first;
+        QVector<int> gone;
+        for (const ::Comp::TrackPoint& q : r.points)
+            if (q.frame < kHideFrom) first << q;
+        for (int t = kHideFrom; t < kHideFrom + 30; ++t) gone << t;
+        CHECK(f.ed.trackCompNode(f.id, 1, first, {gone, true, 60}));
+        const QVector<int> xs = Keys::keyTimes(f.clip(), {Keys::effectParam(::Comp::kEffectId, "n1.x")});
+        CHECK(!xs.isEmpty() && xs.last() < kHideFrom);
+        const QVector<TrackGap> g = ::Comp::trackGaps(f.clip(), 1);
+        CHECK(g.size() == 1 && g[0].from == kHideFrom && g[0].openEnd);
+        whiteCenter(evalAt(f.clip(), 55), &amount);
+        CHECK_EQ(amount, 0.0); // fade: gone
+    }
 }
 
 void testTransform()
@@ -373,7 +445,7 @@ void testCheck(const TrackRun& r)
         return out;
     };
     CHECK(issues("tracker_lost").isEmpty());
-    CHECK(f.ed.trackCompNode(f.id, 1, r.points, r.lostFrames));
+    CHECK(f.ed.trackCompNode(f.id, 1, r.points, {r.lostFrames}));
     const QVector<ExportCheck::Issue> lost = issues("tracker_lost");
     if (CHECK_EQ(lost.size(), 1)) {
         CHECK_EQ(lost[0].from, kHideFrom);
@@ -392,7 +464,7 @@ void testCheck(const TrackRun& r)
         if (q.frame < kHideFrom) first << q;
     for (int t = kHideFrom; t < kHideFrom + 50; ++t) gone << t;
     Fixture e({{"mode", "point"}, {"ax", a.x()}, {"ay", a.y()}});
-    CHECK(e.ed.trackCompNode(e.id, 1, first, gone));
+    CHECK(e.ed.trackCompNode(e.id, 1, first, {gone, true, 99}));
     QVector<ExportCheck::Issue> ended;
     for (const ExportCheck::Issue& i : ExportCheck::comp(e.p.timeline(), 0, 100, e.p.timelineFormat()))
         if (i.check == QLatin1String("tracker_ended")) ended << i;
@@ -510,6 +582,7 @@ int main(int argc, char** argv)
     const TrackRun r = analysis();
     testAnalysis(r);
     testFollowers(r);
+    testEdges(r);
     testTransform();
     testCheck(r);
     testCli(dir.path());

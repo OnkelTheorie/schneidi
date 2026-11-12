@@ -2693,7 +2693,7 @@
  "Wartend:": "Waiting:",
  "Wartet": "Queued",
  "Wartet auf die Analyse": "Waiting for the analysis",
- "Was Folgende tun, solange der Punkt verloren ist: weich aus- und wieder einblenden, an der letzten sicheren Stelle stehen bleiben oder die Lücke überbrücken. Lücken bis %1 Bilder werden immer überbrückt": "What followers do while the point is lost: fade out and back in softly, stay at the last sure place, or bridge the gap. Gaps of up to %1 frames are always bridged",
+ "Was Folgende tun, solange der Punkt verloren ist: weich aus- und wieder einblenden, an der letzten sicheren Stelle stehen bleiben oder die Lücke überbrücken. Lücken bis %1 Bilder werden immer überbrückt. Automatisch: bei Gesichtern halten, sonst ausblenden": "What followers do while the point is lost: fade out and back in softly, stay at the last sure place, or bridge the gap. Gaps of up to %1 frames are always bridged. Automatic: hold for faces, fade otherwise",
  "Was an den Bildrändern passiert, die das Verschieben freilegt": "What happens at the picture edges the shifting uncovers",
  "Was deckender ist, wird ganz deckend (schließt Löcher im Motiv)": "What is more opaque becomes fully opaque (closes holes in the subject)",
  "Was die Fläche um das eingepasste Bild füllt: transparent (Spuren darunter sind zu sehen) oder dasselbe Bild vergrößert und unscharf, z. B. für Hochformat aus 16:9": "What fills the area around the fitted picture: transparent (tracks below show through) or the same picture enlarged and blurred, e.g. for vertical video from 16:9",

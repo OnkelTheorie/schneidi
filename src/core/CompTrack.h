@@ -54,9 +54,21 @@ inline constexpr double kFadeSeconds = 0.2; // fade out/in of mode fade
 inline constexpr int kDefaultMaxLost = 50;
 
 enum class LostMode { Bridge, Hold, Fade };
-// "bridge", "hold", "fade"; false = unknown (callers keep the default: fade)
+// "bridge", "hold", "fade"; false = unknown ("auto", missing, a newer version's value)
 bool lostModeFromId(const QString& id, LostMode* mode);
 const char* lostModeId(LostMode mode);
+// The mode a tracker's value "lost" stands for: its own choice, else ("auto", missing - older projects, recipes) hold
+// for a face (a blur over it must never fade away and show the face) and fade for points
+LostMode lostModeOf(const QString& id, const QString& trackMode);
+
+// What an analysis did not find (Editor::trackCompNode): the lost frames, whether it gave up (lost maxLost frames in
+// a row: the rest of the asked range counts as lost) and where the asked range ended (clip frame, -1 = unknown).
+// A run that ends lost without giving up (the last frames blurred) is no gap: followers hold the last place
+struct TrackLoss {
+    QVector<int> frames;
+    bool gaveUp = false;
+    int to = -1;
+};
 
 // A run of frames where the tracked thing was not seen (clip frames, both inclusive). openStart: lost before the first
 // key (a backwards analysis that gave up) - from is 0; openEnd: never found again (gave up, or the analysis ended
@@ -66,16 +78,19 @@ struct TrackGap {
     int to = 0;
     bool openStart = false;
     bool openEnd = false;
+    int whole = 0; // its length before it was cut to the clip (trackGaps of a trimmed clip), 0 = length()
     int length() const { return to - from + 1; }
     // Short and found again on both sides: followers bridge it in every mode
-    bool bridged() const { return !openStart && !openEnd && length() <= kBridgeFrames; }
+    bool bridged() const { return !openStart && !openEnd && (whole > 0 ? whole : length()) <= kBridgeFrames; }
     bool operator==(const TrackGap&) const = default;
 };
 
 // The gaps of seen keys (clip frame, value), sorted by frame; last = the clip's last frame. A gap starts at a key
 // below 0.5 after one at or above it (or at the first key) and ends before the next key at or above 0.5
 QVector<TrackGap> trackGaps(const QVector<std::pair<int, double>>& seen, int last);
-// The gaps of tracker `node` of clip c (its keyframes "n<id>.seen" of the effect "comp"); none without them
+// The gaps of tracker `node` of clip c (its keyframes "n<id>.seen" of the effect "comp"); none without them. Cut to
+// the clip's frames 0..length-1 (keys lie in source frames: a trimmed clip keeps those outside), gaps outside dropped -
+// what badge, Inspector, info and check show. Rendering holds to frames outside: it reads the keys as they are
 QVector<TrackGap> trackGaps(const Clip& c, int node);
 // The seen keys of tracker `node` of clip c (clip frames)
 QVector<std::pair<int, double>> seenKeys(const Clip& c, int node);

@@ -79,12 +79,14 @@ void registerTrackNodes(QVector<NodeType>& out)
     lost.key = QString::fromLatin1(::Comp::kLostKey);
     lost.label = T("Bei Verlust");
     lost.type = EffectParam::Choice;
-    lost.choices = {QStringLiteral("fade"), QStringLiteral("hold"), QStringLiteral("bridge")};
-    lost.choiceLabels = {T("Ausblenden"), T("Halten"), T("Überbrücken")};
+    // auto (also a missing value: older projects, recipes): hold for a face - a blur over it must never fade and show
+    // it - and fade for points (::Comp::lostModeOf)
+    lost.choices = {QStringLiteral("auto"), QStringLiteral("fade"), QStringLiteral("hold"), QStringLiteral("bridge")};
+    lost.choiceLabels = {T("Automatisch"), T("Ausblenden"), T("Halten"), T("Überbrücken")};
     lost.defaultValue = lost.choices.first();
     lost.description = T("Was Folgende tun, solange der Punkt verloren ist: weich aus- und wieder einblenden, an der "
                          "letzten sicheren Stelle stehen bleiben oder die Lücke überbrücken. Lücken bis %1 Bilder "
-                         "werden immer überbrückt")
+                         "werden immer überbrückt. Automatisch: bei Gesichtern halten, sonst ausblenden")
                            .arg(::Comp::kBridgeFrames);
     k.params << lost;
     k.params << number(::Comp::kMaxLostKey, T("Aufgeben nach"), ::Comp::kDefaultMaxLost, 1, 10000, 1, 0,

@@ -157,6 +157,8 @@ bool evaluate(const EffectInstance& comp, const Env& env, Cache* cache, Buf* out
         return numValue(*k, valuesOf(id), key);
     };
 
+    QHash<int, ::Comp::FollowTime> followTimes; // per tracker followed (gaps, lost mode) at env.t
+
     // Static: kind not varying, no keyframes, every connected input static; keyed by its values and the inputs' keys
     for (int id : order) {
         NodeState& s = state[id];
@@ -350,11 +352,13 @@ bool evaluate(const EffectInstance& comp, const Env& env, Cache* cache, Buf* out
                 // point, so a follower does not move (Picture::Comp::trackerValue)
                 if (ok && o->type == QLatin1String(::Comp::kTrackerType)) {
                     // Losing the point (0.22): its gaps and lost mode (seen, held values)
-                    const ::Comp::FollowTime ft = followTime(env.clip, other, valuesOf(other), env.t, env.fps);
+                    auto ft = followTimes.constFind(other); // once per tracker and frame (numOf runs ~7x a follower)
+                    if (ft == followTimes.cend())
+                        ft = followTimes.insert(other, followTime(env.clip, other, valuesOf(other), env.t, env.fps));
                     return ::Comp::followValue(
                         key, textValue(*ok, valuesOf(other), QStringLiteral("mode")),
                         [&](const QString& q) { return valuesOf(other).contains(q) || isAnimated(other, q); },
-                        [&](const QString& q) { return valueOf(other, ok, q); }, &ft);
+                        [&](const QString& q) { return valueOf(other, ok, q); }, &*ft);
                 }
                 return valueOf(other, ok, key);
             };
