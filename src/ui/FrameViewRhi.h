@@ -61,8 +61,8 @@ public:
     // Vulkan (opt-in) must pass the start's check within 2 s and show into this display's windows, else OpenGL in
     // this run already. Never changes after that.
     static void settleApi(bool allowSoftware);
-    // warmUp()'s check allows the GPU (waits for it; true when there was none): the shown window may be switched
-    // to GPU composition. False: why, and Vulkan is given up for the next starts.
+    // warmUp()'s check allows the GPU (never waits: not made yet = failed; true when there was none): the shown window
+    // may be switched to GPU composition. False: why, and Vulkan is given up for the next starts.
     static bool startCheckPasses(bool allowSoftware, QString* why);
     // Gives a top-level window what its GPU composition needs before Qt makes the window's QRhi (Vulkan: the
     // instance); false when that cannot work (Vulkan without an instance)
