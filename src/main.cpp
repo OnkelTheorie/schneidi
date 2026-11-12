@@ -315,8 +315,9 @@ private:
 
 // Started with a project (a double-click on a .schneidi file) or media: the video files of the first picture open
 // on helper threads while the window is built (Video::Reader::prepare) - the picture engine takes them instead of
-// opening each file only once the window is up. The project is read once more here (a few ms).
-void prepareFirstPicture(const QStringList& files)
+// opening each file only once the window is up. On a helper thread: reading the project once more and asking which
+// files are stills (image format plugins load) took ~95 ms on the GUI thread.
+void prepareFirstPictureNow(const QStringList& files)
 {
     QString project;
     for (const QString& f : files)
@@ -339,6 +340,11 @@ void prepareFirstPicture(const QStringList& files)
     preview.keepBytes = 1;
     for (const QString& v : videos)
         if (QImageReader::imageFormat(v).isEmpty()) Video::Reader::prepare(v, preview); // stills are read another way
+}
+
+void prepareFirstPicture(const QStringList& files)
+{
+    QThreadPool::globalInstance()->start([files] { prepareFirstPictureNow(files); });
 }
 
 // Claude Code or Claude Desktop is on this computer, but not connected to schneidi: asked once on start (Cli::Setup
