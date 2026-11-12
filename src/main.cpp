@@ -55,6 +55,7 @@
 #include <utility>
 #include <vector>
 
+
 namespace {
 
 // Splash window: logo (like assets/schneidi.svg, drawn by hand - without QtSvg), name and version in the design colors
@@ -178,12 +179,12 @@ private:
     QString m_message;
 };
 
-// Work that must not delay the main window's first picture (the GPU picture engine's OpenGL surface: 150+ ms on the
-// GUI thread with the NVIDIA driver): run once the window is painted, at the latest after kAfterFirstPaintMaxMs
-// (a window that is never painted, e.g. started minimized)
+// Work that must not delay the main window's first picture: run once the window is painted, at the latest after
+// kAfterFirstPaintMaxMs (a window that is never painted, e.g. started minimized)
 constexpr int kAfterFirstPaintMaxMs = 3000;
 std::vector<std::function<void()>> g_afterFirstPaint;
 bool g_firstPaintDone = false;
+QElapsedTimer g_sinceFirstPaint;
 
 void afterFirstPaint(std::function<void()> job)
 {
@@ -194,25 +195,47 @@ void afterFirstPaint(std::function<void()> job)
 void firstPaintDone()
 {
     if (std::exchange(g_firstPaintDone, true)) return;
+    g_sinceFirstPaint.start();
     // Each on its own event loop turn: the painted frame reaches the screen first
     for (std::function<void()>& job : std::exchange(g_afterFirstPaint, {}))
         QTimer::singleShot(0, QCoreApplication::instance(), std::move(job));
 }
 
-// The viewer's deferred GPU surface (FrameView::attachDeferredSurfaces, ~300 ms of GL setup on the GUI thread):
-// after the GPU picture engine has set itself up (both at once take longer than one after the other, and the stalls
-// would add up into one), at the latest 3 s after the first paint
-void attachViewerSurface(int waited = 0)
+// The window manager animates a new window for ~150-300 ms after its first picture (KWin: from ~150 ms after the
+// first paint on). Making an OpenGL context in that time - on any thread - stalls the X server with the NVIDIA driver,
+// and the animation stutters (measured: frames 50-90 ms apart); a busy GUI thread alone or making a Vulkan device does
+// not. The OpenGL setup waits until the animation is over.
+constexpr int kOpenAnimationMs = 450;
+
+void afterOpenAnimation(std::function<void()> job)
 {
-    constexpr int kStepMs = 50, kMaxWaitMs = 3000;
-    if (Picture::Gpu::Service::starting() && waited < kMaxWaitMs) {
-        QTimer::singleShot(kStepMs, QCoreApplication::instance(), [waited] { attachViewerSurface(waited + kStepMs); });
-        return;
-    }
-    // One more turn of the event loop first (what the engine's start left to paint)
-    QTimer::singleShot(kStepMs, QCoreApplication::instance(), [] {
+    afterFirstPaint([job = std::move(job)]() mutable {
+        const qint64 left = kOpenAnimationMs - g_sinceFirstPaint.elapsed();
+        QTimer::singleShot(std::max<qint64>(0, left), QCoreApplication::instance(), std::move(job));
+    });
+}
+
+// The GPU picture engine's OpenGL surface (Picture::Gpu::Service::setDeferredPrepare) after the open animation and
+// after the viewer's GPU surface (both at once would add up into one longer stall)
+std::function<void()> g_enginePrepare;
+bool g_viewerAttached = false, g_openAnimationOver = false;
+
+void prepareEngineWhenFree()
+{
+    if (g_viewerAttached && g_openAnimationOver && g_enginePrepare)
+        QTimer::singleShot(0, QCoreApplication::instance(), std::exchange(g_enginePrepare, {}));
+}
+
+// The viewer's deferred GPU surface (FrameView::attachDeferredSurfaces) after the open animation: Vulkan stalls the
+// GUI thread ~50-150 ms (its drivers were loaded meanwhile, FrameView::warmUpGpu), OpenGL ~300 ms (two contexts).
+// Until then the viewer paints with QPainter - a project's first picture shows that way without waiting for it.
+void attachViewerSurface()
+{
+    afterOpenAnimation([] {
         FrameView::attachDeferredSurfaces();
         StartupTrace::mark("viewer GPU surface attached");
+        g_viewerAttached = true;
+        prepareEngineWhenFree();
     });
 }
 
@@ -420,8 +443,16 @@ int main(int argc, char* argv[])
     StartupTrace::mark("splash shown");
 
     FfmpegLog::install([](bool error, const QString& text) { Log::message(error ? "AV-E" : "AV-W", text); });
-    // The GPU picture engine's OpenGL surface from the event loop, not on the way to the first window
-    Picture::Gpu::Service::setDeferredPrepare(true, afterFirstPaint);
+    // The GPU picture engine's OpenGL surface from the event loop, not on the way to the first window and not while it
+    // animates open
+    Picture::Gpu::Service::setDeferredPrepare(true, [](std::function<void()> job) {
+        g_enginePrepare = std::move(job);
+        prepareEngineWhenFree();
+    });
+    afterOpenAnimation([] {
+        g_openAnimationOver = true;
+        prepareEngineWhenFree();
+    });
     Engine engine;
     QString error;
     const qint64 beforeEngine = startTimer.elapsed();
@@ -440,6 +471,11 @@ int main(int argc, char* argv[])
     });
     // The viewer trusts the last run's GPU check; the real one (a throwaway OpenGL/D3D device) comes after the window
     FrameView::setUseCachedGpuCheck(true);
+    FrameView::warmUpGpu(); // while the window is built
+    // Started with a project or media (a double-click on a .schneidi file): the video decoder opens beside the
+    // window's setup; otherwise a while after the window settled (it costs video memory, wakes a laptop's card)
+    if (!LaunchArgs::files(app.arguments().mid(1)).isEmpty()) MainWindow::warmUpVideoDecoding();
+    else afterOpenAnimation([] { QTimer::singleShot(1500, qApp, [] { MainWindow::warmUpVideoDecoding(); }); });
     MainWindow w(&engine);
     StartupTrace::mark("MainWindow constructed");
     // Menu entries that map onto an edit op of the command layer ("Musik auf Länge…"): the user's own undo step
@@ -451,7 +487,7 @@ int main(int argc, char* argv[])
     // The viewer's GPU surface follows the first picture (X11: the window's GL setup no longer delays it); the window
     // is made as an OpenGL window right away so that it can take the surface in place
     FrameView::prepareWindow(&w);
-    afterFirstPaint([] { attachViewerSurface(); });
+    attachViewerSurface();
     // Start maximized like DaVinci; screenshot test runs (offscreen) keep the fixed size from MainWindow
     if (app.arguments().contains("--screenshot")) w.show();
     else w.showMaximized();

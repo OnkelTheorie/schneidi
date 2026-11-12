@@ -12,6 +12,7 @@ extern "C" {
 }
 
 #include <atomic>
+#include <condition_variable>
 #include <map>
 #include <mutex>
 #include <vector>
@@ -42,10 +43,13 @@ namespace {
 constexpr const char* kSettingKey = "playback/hardwareDecoding";
 
 struct Opened {
-    AVBufferRef* context = nullptr; // nullptr = tried, does not work here
+    bool opening = false;           // a thread opens it right now (outside g_mutex), the others wait (g_opened)
+    bool done = false;              // tried
+    AVBufferRef* context = nullptr; // nullptr after done = does not work here
 };
 
 std::mutex g_mutex;
+std::condition_variable g_opened;
 std::map<AVHWDeviceType, Opened> g_devices; // guarded by g_mutex
 std::atomic<int> g_enabled{-1};             // -1 = not read yet
 
@@ -77,18 +81,27 @@ AVPixelFormat hwFormat(const AVCodec* codec, AVHWDeviceType type)
     }
 }
 
-// Opens the device once; later calls return the same one (or nullptr if it failed). g_mutex held.
+// Opens the device once; later calls return the same one (or nullptr if it failed). The driver call (CUDA: 100-250
+// ms) runs without g_mutex: deviceReady() never waits for it, a second caller for the same type waits for the first.
 AVBufferRef* open(AVHWDeviceType type)
 {
-    auto [it, fresh] = g_devices.try_emplace(type);
-    if (fresh) {
-        AVBufferRef* ctx = nullptr;
-        // VAAPI: libva's default is the first render node; CUDA: device 0; D3D11VA: default adapter
-        const bool ok = av_hwdevice_ctx_create(&ctx, type, nullptr, nullptr, 0) >= 0;
-        if (ok) it->second.context = ctx;
-        qInfo("Video decoding: %s %s", av_hwdevice_get_type_name(type), ok ? "ready" : "not available");
-    }
-    return it->second.context;
+    std::unique_lock lock(g_mutex);
+    Opened& o = g_devices[type]; // std::map: the reference stays valid
+    if (o.opening) g_opened.wait(lock, [&o] { return o.done; });
+    if (o.done) return o.context;
+    o.opening = true;
+    lock.unlock();
+    AVBufferRef* ctx = nullptr;
+    // VAAPI: libva's default is the first render node; CUDA: device 0; D3D11VA: default adapter
+    const bool ok = av_hwdevice_ctx_create(&ctx, type, nullptr, nullptr, 0) >= 0;
+    qInfo("Video decoding: %s %s", av_hwdevice_get_type_name(type), ok ? "ready" : "not available");
+    lock.lock();
+    o.context = ok ? ctx : nullptr;
+    o.done = true;
+    o.opening = false;
+    lock.unlock();
+    g_opened.notify_all();
+    return ok ? ctx : nullptr;
 }
 
 } // namespace
@@ -101,7 +114,7 @@ bool deviceReady(const AVCodec* codec)
     for (AVHWDeviceType type : types) {
         if (hwFormat(codec, type) == AV_PIX_FMT_NONE) continue;
         const auto it = g_devices.find(type);
-        if (it != g_devices.end() && it->second.context) return true;
+        if (it != g_devices.end() && it->second.done && it->second.context) return true;
     }
     return false;
 }
@@ -110,11 +123,10 @@ Device deviceFor(const AVCodec* codec)
 {
     if (!codec) return {};
     const std::vector<AVHWDeviceType> types = candidates();
-    if (types.empty()) return {};
-    std::lock_guard lock(g_mutex);
     for (AVHWDeviceType type : types) {
         const AVPixelFormat fmt = hwFormat(codec, type);
         if (fmt == AV_PIX_FMT_NONE) continue;
+        // The context is never freed while the program runs (g_devices keeps its reference)
         if (AVBufferRef* ctx = open(type)) return {av_buffer_ref(ctx), type, fmt};
     }
     return {};
@@ -124,10 +136,10 @@ void warmUp()
 {
     static std::once_flag once;
     std::call_once(once, [] {
+        const std::vector<AVHWDeviceType> types = candidates();
+        if (types.empty()) return;
         // The global pool: it is waited for at exit, never a driver call cut off halfway
-        QThreadPool::globalInstance()->start([] {
-            const std::vector<AVHWDeviceType> types = candidates();
-            std::lock_guard lock(g_mutex);
+        QThreadPool::globalInstance()->start([types] {
             for (AVHWDeviceType type : types)
                 if (open(type)) break;
         });

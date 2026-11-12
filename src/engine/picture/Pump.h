@@ -69,7 +69,9 @@ public:
     Pump(const Pump&) = delete;
     Pump& operator=(const Pump&) = delete;
 
-    // Shows `content` from `position` on at `speed` (nullptr = nothing: no frames)
+    // Shows `content` from `position` on at `speed` (nullptr = nothing: no frames). The content shown already, both
+    // stopped: only a seek - frames rendered or under way stay valid. After the content's output changed (model,
+    // output size, grade bypass) call refresh() as well, a second setContent() of the same content does not redraw.
     void setContent(std::shared_ptr<const Content> content, int64_t position, double speed);
     // Speed change; position = where playback goes on (the frame shown when stopping). Same direction while playing:
     // the frames rendered ahead stay.

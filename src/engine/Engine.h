@@ -14,6 +14,7 @@
 #include <QSize>
 #include <QTimer>
 #include <QVector>
+#include <algorithm>
 #include <atomic>
 #include <memory>
 #include <mutex>
@@ -127,6 +128,9 @@ public:
     // Model changed: the renderer takes it as a new snapshot (playback goes on); files open lazily in the render
     // threads, the window never waits for them
     void updateTimeline(const Timeline& tl);
+    // A project being loaded: the position its timeline will be shown at (showTimeline right after updateTimeline).
+    // The first renderer starts its first frame there instead of at the old position (rendered for nothing).
+    void setLoadPosition(int position) { m_position = std::max(0, position); }
     // Kept for callers from the time files were opened ahead: the own engine never waits for files
     void setOpenInBackground(bool) {}
     bool opening() const { return false; }

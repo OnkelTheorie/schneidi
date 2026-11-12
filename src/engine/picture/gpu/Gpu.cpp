@@ -13,7 +13,9 @@
 #include <QGuiApplication>
 #include <QElapsedTimer>
 #include <QOffscreenSurface>
+#include <QOpenGLContext>
 #include <QThread>
+#include <QThreadPool>
 #include <QTimer>
 #include <rhi/qrhi.h>
 #ifdef Q_OS_WIN
@@ -1173,17 +1175,52 @@ bool g_deferred = false;          // setDeferredPrepare
 bool g_preparePosted = false;     // a deferred prepare() waits in the GUI thread's event queue
 Service::Scheduler g_schedule;    // setDeferredPrepare: when the deferred prepare() runs (empty: next event loop turn)
 bool g_parked = false;            // the deferred prepare() waits for g_schedule (not yet in the event queue)
+std::condition_variable g_surfaceReady;
 
 #if !defined(Q_OS_WIN) && !defined(Q_OS_MACOS) && !defined(Q_OS_IOS)
-// The deferred prepare() as a job for the GUI thread's event loop (a second run finds the surface and does nothing)
+// The surface of a deferred prepare(), made on the GUI thread in the format a helper thread resolved (a surface made
+// meanwhile, prepare(true), wins)
+void makeDeferredSurface(const QSurfaceFormat& format)
+{
+    {
+        std::lock_guard lock(g_surfaceMutex);
+        if (g_surface || g_surfaceTaken) return;
+    }
+    auto* surface = new QOffscreenSurface;
+    surface->setFormat(format);
+    surface->create();
+    {
+        std::lock_guard lock(g_surfaceMutex);
+        g_surface = surface;
+        g_preparePosted = false;
+    }
+    g_surfaceReady.notify_all();
+    StartupTrace::mark("GPU surface made");
+}
+
+// The deferred prepare() as a job for the GUI thread's event loop (a second run finds the surface and does nothing).
+// QRhiGles2InitParams::newFallbackSurface() makes a throwaway OpenGL context to resolve the surface's format: ~150 ms
+// with the NVIDIA driver, on the GUI thread a frozen window. That context is made on a helper thread here; the GUI
+// thread only makes the surface (QOffscreenSurface needs the GUI thread on some platforms).
 void deferredPrepareJob()
 {
     {
         std::lock_guard lock(g_surfaceMutex);
         g_deferred = false;
         g_parked = false;
+        if (g_surface || g_surfaceTaken) return;
     }
-    Service::prepare();
+    if (envSwitch() == 0 || !qobject_cast<QGuiApplication*>(QCoreApplication::instance())) return;
+    QThreadPool::globalInstance()->start([] {
+        QSurfaceFormat format = glFormat();
+        {
+            QOpenGLContext probe;
+            probe.setFormat(format);
+            if (probe.create()) format = probe.format();
+        }
+        QMetaObject::invokeMethod(QCoreApplication::instance(), [format] { makeDeferredSurface(format); },
+                                  Qt::QueuedConnection);
+    });
 }
 
 // Someone needs the GPU before g_schedule's time (a worker waits for the surface): the parked job on the next turn
@@ -1197,7 +1234,6 @@ void promoteParkedPrepare()
 // tryInstance's background start: renders on the CPU meanwhile, so it waits for the scheduled prepare() (no hurry)
 thread_local bool t_backgroundStart = false;
 #endif
-std::condition_variable g_surfaceReady;
 } // namespace
 
 void Service::setDeferredPrepare(bool deferred, Scheduler schedule)
