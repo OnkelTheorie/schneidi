@@ -99,8 +99,8 @@ QStringList pixelKeys(const QString& type);
 
 // The clip's first frame moved `frames` further into its content (a head trim, the right piece of a cut; negative =
 // back out): values that count from the clip's start follow, so the picture stays where it was in the timeline - a
-// media node's offset (frames × its speed - an animated one: the speed at the new first frame; keyframes too) and the visible range of text nodes (from/until in seconds,
-// fps <= 0: nothing moves). from 0 (= from the start) and until 0 (= to the end) stay, others move below 0 too (until < 0
+// media node's offset (frames × its speed - an animated one: the speed at the new first frame; keyframes too) and the time
+// range of every node (from/until in seconds, fps <= 0: nothing moves). from 0 (= from the start) and until 0 (= to the end) stay, others move below 0 too (until < 0
 // = over before the start: invisible), so trimming back out restores them exactly. A NEW node kind with a value counted
 // from the clip start must be added there (CompGraph.cpp)
 void followHead(Clip& c, int frames, double fps);
@@ -113,6 +113,39 @@ bool outputsMask(const QString& type);
 // in (its input combines masks; it goes into a merge's mask input) - else the output would become a mask. The rule of
 // Editor::addCompNode, shared with the node canvas
 bool maskBehindPicture(const QString& type, const QString& fromType);
+
+// ---- Time range of a node (0.22) ----
+// Every node kind with a picture output has the values "from"/"until": seconds from the clip's start in which the
+// node works (from 0 = from the start, until 0 = to the end; below 0 after a head trim, see followHead). Outside it a
+// node with a picture input hands that on unchanged (src, else bg: a merge without its fg), a generator gives nothing
+// (Picture::Comp::activeGraph). Mask kinds and the tracker (its picture is its input's) have none.
+inline constexpr const char* kFromKey = "from";
+inline constexpr const char* kUntilKey = "until";
+bool hasRange(const QString& type);
+// A range other than the whole clip (from > 0 or until != 0)
+bool rangeSet(double from, double until);
+// Whether a node with this range works at second `s` of its clip (until < 0: over before the start, never)
+bool inRange(double from, double until, double s);
+struct NodeRange {
+    int node = 0;
+    QString type;
+    double from = 0, until = 0; // seconds from the clip's start
+    bool keyed = false;         // from/until have keyframes: the values at the asked clip frame (not draggable)
+};
+// from/until of node `node` at clip frame t as the engine reads them: keyframes of `clip` (when given and set) win over
+// the stored values. keyed = one of them has keyframes
+void rangeAt(const EffectInstance& e, const Clip* clip, int node, double t, double* from, double* until,
+             bool* keyed = nullptr);
+// The range of node `node` (rangeAt at clip frame t). false = no such node, a kind without a range or no range set
+// (the whole clip)
+bool activeRange(const EffectInstance& e, int node, NodeRange* r = nullptr, const Clip* clip = nullptr, double t = 0);
+// The nodes of the graph with a range set, in the graph's node order (rangeAt at clip frame t)
+QVector<NodeRange> nodeRanges(const EffectInstance& e, const Clip* clip = nullptr, double t = 0);
+// A range as timeline frames [first, end) of clip `c` (clamped to the clip; first == end when it lies outside it)
+void rangeFrames(const Clip& c, const NodeRange& r, double fps, int* first, int* end);
+// Timeline frames [first, end) of clip `c` as stored values: first at the clip's start = from 0; end at the clip's end
+// = until 0 ("to the end", it grows with the clip) when openEnd, else the exact time
+void rangeValues(const Clip& c, int first, int end, double fps, double* from, double* until, bool openEnd = false);
 
 // Every file the graph reads (fileKeys of its nodes: media, LUTs, textures), in node order, without duplicates
 QStringList mediaPaths(const EffectInstance& e);

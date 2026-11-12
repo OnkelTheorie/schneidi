@@ -505,6 +505,9 @@ public:
                              QString* err = nullptr);
     // A copy of node `node` with its values and keyframes (no links) at `pos`; returns its id, 0 = nothing changed
     int duplicateCompNode(int clipId, int node, const QPointF& pos, QString* err = nullptr);
+    // Time range of a node (0.22, Comp::hasRange kinds): from/until in seconds from the clip's start as stored (0 = from
+    // the start / to the end); a drag of its bar in the timeline, op 'node' range. One undo step. false = no such node, a kind without a range, until <= from (and until != 0)
+    bool setCompNodeRange(int clipId, int node, double from, double until, QString* err = nullptr);
     // Hide names (core/NameBlur): every clip's masks become new rectangle windows with fill "blur" or "pixelate" of
     // strength `amount`, their place and size keyed along the mask (off = size 0 and amount 0). Free window numbers
     // only; masks beyond them are left out and counted in `dropped` (their names stay visible). Clips on locked tracks

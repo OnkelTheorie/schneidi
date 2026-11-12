@@ -748,6 +748,9 @@ void TimelineView::drawClip(QPainter& p, const QRect& r, const Clip& c, TrackKin
         }
     }
 
+    // Time ranges of compositing nodes (bars at the bottom, TimelineNodes.cpp)
+    if (!ghost && kind == TrackKind::Video) drawNodeBars(p, r, c);
+
     // Keyframe icon bottom right (like DaVinci): click opens the keyframe lane
     if (!ghost && r.width() >= 40 && r.height() >= 24 && Keys::hasKeys(c)) {
         const QRectF k = keyIconRect(r);

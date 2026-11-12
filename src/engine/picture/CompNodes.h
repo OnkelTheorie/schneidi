@@ -155,6 +155,10 @@ int choiceValue(const NodeType& k, const QVariantMap& values, const QString& key
 // until 0 = to the end) and "fade" (seconds in and out). visibleRangeParams() = those three values,
 // visibleWeight() = 0 outside, 1 inside, a ramp in the fades; rangeVaries() = the node changes with time because of it
 QVector<EffectParam> visibleRangeParams();
+// The time range "from"/"until" alone (core/CompGraph.h: Comp::hasRange), for every other kind with a picture output:
+// added to each such kind once in all(), after its own values; outside the range the engine hands the node's input on
+// (Picture::Comp::activeGraph)
+QVector<EffectParam> rangeParams();
 double visibleWeight(const NodeCtx& ctx);
 bool rangeVaries(const QVariantMap& values);
 
