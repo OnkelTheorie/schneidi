@@ -6,7 +6,8 @@
 // masked blur, key -> grade -> blur -> merge). Within 2 code values (premultiplied colour and alpha). Also the split
 // rule: a CPU node after a card node, or a graph without card nodes, stays on the CPU; a polygon mask is uploaded.
 // Projective draws (0.22: corner pin by hand and following a quad tracker, a text's box pinned, a transform tilted in
-// depth): PSNR of premultiplied RGBA at least 40 dB.
+// depth; the shared camera: layers at a depth, panned, pushed, turned, following a tracker): PSNR of premultiplied
+// RGBA at least 40 dB.
 // Skips (77) without a hardware GPU device; SCHNEIDI_GPU=1 runs it on a software device too.
 // COMP_GPU_BENCH=n: n frames of the recipes at 1920x1080, CPU (CompEval, all threads) vs card (plan + passes +
 // readback), ms per frame.
@@ -329,6 +330,51 @@ int main(int argc, char** argv)
           comp({"clip", "text", "corner_pin", "merge"}, {{2, 3, "src"}, {1, 4, "bg"}, {3, 4, "fg"}}, 4,
                merged(pin, {{"n2.text", "PIN"}, {"n2.size", 40.0}, {"n3.c0x", 0.15}, {"n3.c0y", 0.12}, {"n3.c1x", 0.82},
                             {"n3.c1y", 0.2}, {"n3.c2x", 0.9}, {"n3.c2y", 0.85}, {"n3.c3x", 0.1}, {"n3.c3y", 0.92}})), pic);
+    // 4c. The shared camera (0.22): a transform in its space is one projective draw on the card; a text, media or 3D
+    // text is moved on the CPU and uploaded; the camera following a tracker; z 0 / at rest = the plain transform
+    close("transform at z 2, camera panned and pushed",
+          comp({"clip", "transform", "camera"}, {{1, 2, "src"}}, 2,
+               {{"n2.size", 0.8}, {"n2.z", 2.0}, {"n2.camera", 3}, {"n3.pan_x", 0.08}, {"n3.push", 0.3}}), pic);
+    close("transform tilted at z 0.7, camera turned and rolled",
+          comp({"clip", "transform", "camera"}, {{1, 2, "src"}}, 2,
+               {{"n2.size", 0.7}, {"n2.tilt_y", 20.0}, {"n2.z", 0.7}, {"n2.camera", 3}, {"n3.tilt_y", 8.0},
+                {"n3.tilt_x", -5.0}, {"n3.roll", 6.0}, {"n3.zoom", 1.1}}), pic);
+    close("two layers over the clip (parallax), a text in the space",
+          comp({"clip", "gradient", "transform", "merge", "text", "merge", "camera"},
+               {{2, 3, "src"}, {1, 4, "bg"}, {3, 4, "fg"}, {4, 6, "bg"}, {5, 6, "fg"}}, 6,
+               merged(band(2, 0, 1, "#ff2040ff", "#ffffe020"),
+                      {{"n3.size", 0.5}, {"n3.z", 2.0}, {"n3.camera", 7}, {"n5.text", "DEPTH"}, {"n5.size", 40.0},
+                       {"n5.z", 1.0}, {"n5.camera", 7}, {"n7.pan_x", -0.05}, {"n7.pan_y", 0.03}, {"n7.push", 0.2}})), pic);
+    close("camera following a tracker",
+          comp({"clip", "tracker", "transform", "camera"}, {{1, 2, "src"}, {2, 3, "src"}}, 3,
+               {{"n2.mode", "two"}, {"n2.rx", 0.5}, {"n2.ry", 0.5}, {"n2.x", 0.56}, {"n2.y", 0.47}, {"n2.scale", 1.2},
+                {"n2.angle", 8.0}, {"n3.size", 0.8}, {"n3.z", 1.5}, {"n3.camera", 4}, {"n4.follow", 2.0}}), pic);
+    same("transform at z 0 next to a moved camera (unchanged)",
+         comp({"clip", "transform", "camera"}, {{1, 2, "src"}}, 2,
+              {{"n2.x", 0.4}, {"n2.size", 0.8}, {"n2.angle", 12.0}, {"n2.z", 0.0}, {"n2.camera", 3}, {"n3.pan_x", 0.1}}), pic);
+    same("transform at z 2, camera at rest (unchanged)",
+         comp({"clip", "transform", "camera"}, {{1, 2, "src"}}, 2,
+              {{"n2.x", 0.4}, {"n2.size", 0.8}, {"n2.angle", 12.0}, {"n2.z", 2.0}, {"n2.camera", 3}}), pic);
+    // A big layer placed aside and tilted, the camera pushed and turned: partly behind the camera = nothing on both
+    same("camera: placed picture partly behind the camera (nothing)",
+         comp({"clip", "transform", "camera"}, {{1, 2, "src"}}, 2,
+              {{"n2.size", 6.0}, {"n2.x", 2.5}, {"n2.z", 1.0}, {"n2.camera", 3}, {"n3.push", 0.6},
+               {"n3.tilt_y", 30.0}}), pic);
+    close("camera: big tilted layer in front", comp({"clip", "transform", "camera"}, {{1, 2, "src"}}, 2,
+                                                    {{"n2.size", 1.6}, {"n2.x", 0.7}, {"n2.tilt_y", 35.0}, {"n2.z", 1.2},
+                                                     {"n2.camera", 3}, {"n3.push", 0.3}, {"n3.tilt_y", -10.0}}), pic);
+    {
+        const PC::Env env = envFor(pic);
+        QString reason;
+        CHECK(Gpu::planComp(comp({"clip", "transform", "camera"}, {{1, 2, "src"}}, 2,
+                                 {{"n2.z", 2.0}, {"n2.camera", 3}, {"n3.pan_x", 0.1}}), env, nullptr, &reason));
+        // The camera shrinks below 1/2 (zoom 0.4): on the CPU, like a small transform
+        CHECK(!Gpu::planComp(comp({"clip", "transform", "camera"}, {{1, 2, "src"}}, 2,
+                                  {{"n2.z", 1.0}, {"n2.camera", 3}, {"n3.zoom", 0.4}}), env, nullptr, &reason));
+        // ... and a camera at zoom 1 with the same graph stays on the card
+        CHECK(Gpu::planComp(comp({"clip", "transform", "camera"}, {{1, 2, "src"}}, 2,
+                                 {{"n2.z", 1.0}, {"n2.camera", 3}, {"n3.zoom", 0.9}}), env, nullptr, &reason));
+    }
     {
         const PC::Env env = envFor(pic);
         QString reason;

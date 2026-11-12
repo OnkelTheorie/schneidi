@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "engine/picture/CompNodes.h"
+#include "engine/picture/CompCamera.h"
 #include "core/CompGraph.h"
 #include "core/CompTrack.h"
 
@@ -29,9 +30,13 @@ const QVector<NodeType>& all()
         registerStyleNodes(out);
         registerCutoutNodes(out);
         registerText3dNodes(out);
+        registerCameraNodes(out);
         // The time range (0.22): every kind with a picture output has one (text and 3D text with their fade)
         for (NodeType& k : out)
             if (k.output == Buf::Rgba && ::Comp::hasRange(k.id) && !k.param(QStringLiteral("from"))) k.params << rangeParams();
+        // The shared camera (0.22): layers stand at a depth z in its space
+        for (NodeType& k : out)
+            if (::Comp::takesCamera(k.id)) k.params << cameraLayerParams();
         return out;
     }();
     return kinds;
@@ -129,8 +134,12 @@ bool runNode(const QString& type, const QVariantMap& params, const QHash<QString
         const QVariantMap& v = opt.otherNodes.value(node);
         // A tracker's visibility not given: seen (followers stay as they are)
         if (key == QLatin1String(::Comp::kSeenKey) && !v.contains(key)) return 1.0;
+        // A node given with its kind ("type"): missing values are the kind's defaults (a camera's zoom 1, fov 40)
+        if (const NodeType* ok = find(v.value(QStringLiteral("type")).toString())) return numValue(*ok, v, key);
         return v.value(key).toDouble();
     };
+    ctx.graphCamera = opt.graphCamera;
+    ctx.typeOf = [&opt](int node) { return opt.otherNodes.value(node).value(QStringLiteral("type")).toString(); };
     ctx.input = [&inputs](const QString& name) -> const Buf* {
         const auto it = inputs.constFind(name);
         return it == inputs.cend() || it->isNull() ? nullptr : &*it;
@@ -141,6 +150,7 @@ bool runNode(const QString& type, const QVariantMap& params, const QHash<QString
     ctx.mediaPicture = opt.mediaPicture;
     Buf result;
     if (!k->eval(ctx, &result) || result.isNull()) return false;
+    if (finishesWithCamera(*k)) applyCamera(ctx, result);
     *out = std::move(result);
     return true;
 }

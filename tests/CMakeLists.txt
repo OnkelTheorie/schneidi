@@ -499,6 +499,8 @@ schneidi_test(test_comp_corner_pin) # four-corner tracking (0.22): QuadTracker, 
 target_link_libraries(test_comp_corner_pin PRIVATE schneidi_cli_lib)
 schneidi_test(test_comp_region_pick) # text behind a wall (0.22): RegionPick polygon within 2 px, masks following a quad tracker, recipe text_behind_object, op pick_region, the pick mode of the Comp page
 target_link_libraries(test_comp_region_pick PRIVATE schneidi_cli_lib)
+schneidi_test(test_comp_camera) # shared 2.5D camera (0.22): map, parallax of transform/media/text/text3d, bit-identical without it, tracker follow, drift/cache/head trim, tables, check, CLI, recipe parallax_photo
+target_link_libraries(test_comp_camera PRIVATE schneidi_cli_lib)
 # Compositing graphs on the graphics card (0.19 package F) vs CompEval: merge modes, masks, keys, blur, recipes;
 # decides about the card itself (77 without a hardware device)
 schneidi_test(test_comp_gpu)

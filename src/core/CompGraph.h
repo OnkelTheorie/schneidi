@@ -7,6 +7,7 @@
 // The node kinds (inputs, parameters, pixels) are in engine/picture/CompNodes.h; core only knows their names.
 
 #include <QPointF>
+#include <QSet>
 #include <QString>
 #include <QStringList>
 #include <QVariant>
@@ -146,6 +147,32 @@ void rangeFrames(const Clip& c, const NodeRange& r, double fps, int* first, int*
 // Timeline frames [first, end) of clip `c` as stored values: first at the clip's start = from 0; end at the clip's end
 // = until 0 ("to the end", it grows with the clip) when openEnd, else the exact time
 void rangeValues(const Clip& c, int first, int end, double fps, double* from, double* until, bool openEnd = false);
+
+// ---- Shared camera (0.22, engine/picture/CompCamera.h) ----
+// A node "camera" has no picture, only values; layers stand at the distance "z" from it (0 = not in its space: the
+// camera leaves them alone) and name it in their value "camera" (read like a tracker through `follow`, not a link;
+// 0 = the graph's camera: one camera per graph)
+inline constexpr const char* kCameraType = "camera";
+inline constexpr const char* kCameraKey = "camera";
+inline constexpr const char* kLayerDepthKey = "z";
+// The kinds that stand in a camera's space (values z and camera): transform, media, text, text3d. A NEW layer kind
+// goes here (CompGraph.cpp)
+bool takesCamera(const QString& type);
+// The graph's camera: its first node of kind camera, 0 = none
+int graphCamera(const CompGraph& g);
+// A node's number at clip frame t as the engine reads it: keyframes of `clip` (when given and set) win over the stored
+// value (missing = fallback)
+double nodeNumber(const EffectInstance& e, const Clip* clip, int node, const QString& key, double t, double fallback = 0);
+// Above 0 anywhere: the stored value, or (keyframed in `clip`) any of its keyframes
+bool everPositive(const EffectInstance& e, const Clip* clip, int node, const QString& key);
+// The camera node a layer node names (nodeNumber at clip frame t): its value camera when that is a node of kind
+// camera, camera 0 = the graph's camera; 0 = none (also for a kind without a camera). Its depth is not looked at
+int cameraOf(const EffectInstance& e, const CompGraph& g, int node, const Clip* clip = nullptr, double t = 0);
+// A layer in a camera's space at some time (everPositive z and a camera): that camera, else 0 (check, info)
+int layerCameraOf(const EffectInstance& e, const CompGraph& g, int node, const Clip* clip = nullptr);
+// The nodes read through a value, not a link: trackers named by `follow`, cameras named by `camera` and the
+// trackers those cameras follow, for the nodes in `nodes` (check and info count them as used)
+QSet<int> valueReads(const EffectInstance& e, const CompGraph& g, const QVector<int>& nodes, const Clip* clip = nullptr);
 
 // Every file the graph reads (fileKeys of its nodes: media, LUTs, textures), in node order, without duplicates
 QStringList mediaPaths(const EffectInstance& e);

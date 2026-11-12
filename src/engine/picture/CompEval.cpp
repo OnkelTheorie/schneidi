@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "engine/picture/CompEval.h"
+#include "engine/picture/CompCamera.h"
 #include "engine/picture/CompTrack.h"
 
 #include "core/CompGraph.h"
@@ -249,6 +250,7 @@ bool evaluateGraph(const CompGraph& g, int transparent, const EffectInstance& co
     };
 
     QHash<int, ::Comp::FollowTime> followTimes; // per tracker followed (gaps, lost mode) at env.t
+    const int graphCamera = ::Comp::graphCamera(g); // the graph's camera (0.22)
 
     // Static: kind not varying, no keyframes, every connected input static; keyed by its values and the inputs' keys
     for (int id : order) {
@@ -264,6 +266,22 @@ bool evaluateGraph(const CompGraph& g, int transparent, const EffectInstance& co
                 const NodeType* fk = fn ? find(fn->type) : nullptr;
                 if (animated.contains(f) || (fk && varies(*fk, valuesOf(f)))) isStatic = false;
                 else key = mix(key, ownHash(fn ? fn->type : QString(), valuesOf(f), env));
+            }
+        }
+        // A layer in a camera's space (0.22) reads the camera's values (and its tracker's): static only while those
+        // are fixed (no keyframes, no drift), keyed by them
+        if (isStatic && s.kind->param(QString::fromLatin1(::Comp::kCameraKey))
+            && valueOf(id, s.kind, QString::fromLatin1(::Comp::kLayerDepthKey)) > 0) {
+            if (const int c = ::Comp::cameraOf(comp, g, id, env.clip, env.t); c > 0) {
+                const NodeType* ck = find(QString::fromLatin1(::Comp::kCameraType));
+                if (animated.contains(c) || (ck && varies(*ck, valuesOf(c)))) isStatic = false;
+                else key = mix(key, ownHash(QString::fromLatin1(::Comp::kCameraType), valuesOf(c), env));
+                if (const int f = ::Comp::followId(valueOf(c, ck, QStringLiteral("follow"))); isStatic && f > 0) {
+                    const CompNode* fn = g.node(f);
+                    const NodeType* fk = fn ? find(fn->type) : nullptr;
+                    if (animated.contains(f) || (fk && varies(*fk, valuesOf(f)))) isStatic = false;
+                    else key = mix(key, ownHash(fn ? fn->type : QString(), valuesOf(f), env));
+                }
             }
         }
         for (const CompLink& l : g.links)
@@ -453,6 +471,11 @@ bool evaluateGraph(const CompGraph& g, int transparent, const EffectInstance& co
                 }
                 return valueOf(other, ok, key);
             };
+            ctx.graphCamera = graphCamera;
+            ctx.typeOf = [&](int other) {
+                const CompNode* o = g.node(other);
+                return o ? o->type : QString();
+            };
             ctx.input = [&, id](const QString& name) { return inputOf(id, name); };
             ctx.take = take;
             ctx.give = [&](Buf&& b) {
@@ -464,7 +487,10 @@ bool evaluateGraph(const CompGraph& g, int transparent, const EffectInstance& co
             ctx.clipPicture = env.clipPicture;
             ctx.mediaPicture = env.mediaPicture;
             Buf result;
-            if (k->eval(ctx, &result) && !result.isNull() && result.w == env.size.width()
+            const bool made = k->eval(ctx, &result);
+            // A layer in a camera's space moved by it (0.22; the transform does it in its own draw)
+            if (made && !result.isNull() && finishesWithCamera(*k)) applyCamera(ctx, result);
+            if (made && !result.isNull() && result.w == env.size.width()
                 && result.h == env.size.height()) {
                 if (isStatic && cache) {
                     s.kept = std::make_shared<const Buf>(std::move(result));

@@ -10,6 +10,7 @@
 #include "engine/ColorGrade.h"
 #include "engine/VideoEffects.h"
 #include "engine/video/Blend.h"
+#include "engine/picture/CompCamera.h"
 #include "engine/picture/CompTrack.h"
 
 #include <QHash>
@@ -231,6 +232,7 @@ CompPlanPtr planComp(const EffectInstance& comp, const Comp::Env& env, Comp::Cac
         }
         return num(other, *ok, key);
     };
+    const int graphCamera = ::Comp::graphCamera(g); // the graph's camera (0.22)
     auto plan = std::make_shared<CompPlan>();
     plan->size = env.size;
     QHash<int, int> stepOf;    // node -> its step (-1 = made nothing)
@@ -282,6 +284,18 @@ CompPlanPtr planComp(const EffectInstance& comp, const Comp::Env& env, Comp::Cac
         if (t == QLatin1String("transform")) {
             if (::Comp::followId(num(id, *k, "follow")) > 0) return fail(reason, "transform follows a tracker");
             if (std::abs(num(id, *k, "size")) < 0.5) return fail(reason, "transform shrinks below 1/2");
+            // In a camera's space: its zoom or a push backwards shrinks too (0.22)
+            Compose::Homography cam;
+            bool camHidden = false;
+            const auto typeOf = [&](int other) {
+                const CompNode* o = g.node(other);
+                return o ? o->type : QString();
+            };
+            if (Comp::layerCamera(id, num(id, *k, QString::fromLatin1(::Comp::kLayerDepthKey)),
+                                  num(id, *k, QString::fromLatin1(::Comp::kCameraKey)), graphCamera, typeOf, numOf,
+                                  env.size, env.t / std::max(1.0, env.fps), &cam, &camHidden)
+                && !camHidden && std::abs(num(id, *k, "size")) * Comp::scaleAt(cam, W / 2.0, H / 2.0) < 0.5)
+                return fail(reason, "transform shrinks below 1/2 (camera)");
             return true; // tilted in depth too: a projective draw (0.22)
         }
         if (t == QLatin1String(Comp::kCornerPinType)) return true;
@@ -535,6 +549,28 @@ CompPlanPtr planComp(const EffectInstance& comp, const Comp::Env& env, Comp::Cac
                     if (!Compose::tilted(m, W, H, m.a * ax + m.b * ay + m.c, m.d * ax + m.e * ay + m.f, tiltX, tiltY,
                                          std::clamp(num(id, *k, "fov"), 5.0, 120.0), W, H, &s.h)) {
                         s.op = Step::Color; // a corner behind the camera: nothing drawn
+                        stepOf[id] = push(std::move(s));
+                        onCard.insert(id);
+                        continue;
+                    }
+                    s.projective = true;
+                }
+                // In a camera's space (0.22, CompNodesCore evalTransform): the placement then the camera's map
+                Compose::Homography cam;
+                bool camHidden = false;
+                const auto typeOf = [&](int other) {
+                    const CompNode* o = g.node(other);
+                    return o ? o->type : QString();
+                };
+                if (Comp::layerCamera(id, num(id, *k, QString::fromLatin1(::Comp::kLayerDepthKey)),
+                                      num(id, *k, QString::fromLatin1(::Comp::kCameraKey)), graphCamera, typeOf, numOf, env.size,
+                                      env.t / std::max(1.0, env.fps), &cam, &camHidden)) {
+                    identity = false;
+                    const Compose::Homography flat{{m.a, m.b, m.c, m.d, m.e, m.f, 0, 0, 1}};
+                    if (!camHidden) s.h = Compose::multiply(cam, s.projective ? s.h : flat);
+                    // Behind the camera, or the placed picture partly so (CompNodesCore evalTransform): nothing drawn
+                    if (camHidden || !Comp::inFront(s.h, W, H)) {
+                        s.op = Step::Color;
                         stepOf[id] = push(std::move(s));
                         onCard.insert(id);
                         continue;
