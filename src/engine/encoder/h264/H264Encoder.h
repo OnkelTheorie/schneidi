@@ -74,6 +74,10 @@ struct EncoderConfig {
     int bframes = 0;
     int bQpOffset = 2;     // QP of a B picture above the P QP
     bool bAdaptive = true; // fewer B pictures where the motion is too strong for them to pay
+    // Predictions from both lists weighted by the distance to the two reference pictures
+    // (implicit weighted prediction) instead of their plain average. Measured on a slow zoom:
+    // no gain (+0.7 % BD-rate), so off by default.
+    bool weightedBipred = false;
 };
 
 // level_idc (Table A-1) for this configuration: the lowest level whose macroblock rate, frame

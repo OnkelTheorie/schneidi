@@ -3,7 +3,7 @@
 //   h264-proto encode <in.yuv> <width> <height> <out.h264> [--qp N] [--mode pcm|i16|i4|auto]
 //                     [--frames N] [--gop N (120)] [--threads N] [--bitrate kbps] [--effort 0|1] [--aq strength] [--refs N] [--cavlc] [--no-t8] [--no-deblock]
 //                     [--lookahead N] [--no-mbtree] [--mbtree-strength S] [--2pass] [--recon out.yuv]
-//                     [--bframes N (0)] [--b-qp offset (2)] [--no-b-adapt]
+//                     [--bframes N (0)] [--b-qp offset (2)] [--no-b-adapt] [--weightb]
 // --bframes N: up to N B pictures in a row (CABAC only). Access units are written in coding order,
 // PSNR and --recon go by display order.
 // --2pass (with --bitrate): analyse the whole input first (lookahead only), then one QP for the clip.
@@ -199,6 +199,8 @@ int main(int argc, char** argv)
             cfg.bQpOffset = std::atoi(argv[++i]);
         else if (a == "--no-b-adapt")
             cfg.bAdaptive = false;
+        else if (a == "--weightb")
+            cfg.weightedBipred = true;
         else if (a == "--recon" && i + 1 < argc)
             reconPath = argv[++i];
     }

@@ -387,6 +387,12 @@ int main()
                 q.qp = qp;
                 CHECK(roundTrip(q, 12));
             }
+            for (int bframes : {2, 3}) { // implicit weighted prediction: unequal weights off the middle
+                EncoderConfig q = config(176, 144, IntraMode::Auto, 30, 2);
+                q.bframes = bframes;
+                q.weightedBipred = true;
+                CHECK(roundTrip(q, 12));
+            }
         }
         {
             // Rate control with B pictures: one pass, with a first pass, and in chunks

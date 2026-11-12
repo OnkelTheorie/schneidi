@@ -567,7 +567,7 @@ std::vector<uint8_t> Encoder::headers() const
         bw.ue(0);       // num_ref_idx_l0_default_active_minus1
         bw.ue(0);       // num_ref_idx_l1_default_active_minus1
         bw.flag(false); // weighted_pred_flag
-        bw.u(0, 2);     // weighted_bipred_idc
+        bw.u(useB() && cfg_.weightedBipred ? 2 : 0, 2); // weighted_bipred_idc: implicit (by picture distance) or none
         bw.se(0);       // pic_init_qp_minus26
         bw.se(0);       // pic_init_qs_minus26
         bw.se(0);       // chroma_qp_index_offset
@@ -1683,6 +1683,7 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
         // one after, which was coded just before this run of B pictures (list 1).
         fc.refs_.assign(1, refList_[1]);
         fc.refs1_.assign(1, refList_[0]);
+        fc.setBiWeights();
     } else {
         fc.refs_.assign(refList_.begin(), refList_.begin() + std::min<ptrdiff_t>(ptrdiff_t(refList_.size()), std::max(1, cfg_.refs)));
         fc.refs1_.clear();
@@ -3972,8 +3973,27 @@ void FrameCoder::directPredict(int mbx, int mby, DirectPred& d) const
     }
 }
 
+// Implicit weights of a prediction from both lists (8.4.2.3.2): by the picture order distances,
+// the nearer reference picture counts more. Equal weights are the plain average.
+void FrameCoder::setBiWeights()
+{
+    biW0_ = biW1_ = 32;
+    if (!cfg_.weightedBipred)
+        return;
+    const int tb = std::clamp(2 * (gopPos_ - refs_[0]->gopPos), -128, 127);
+    const int td = std::clamp(2 * (refs1_[0]->gopPos - refs_[0]->gopPos), -128, 127);
+    if (td == 0)
+        return;
+    const int tx = (16384 + std::abs(td / 2)) / td;
+    const int scale = std::clamp((tb * tx + 32) >> 6, -1024, 1023) >> 2;
+    if (scale < -64 || scale > 128)
+        return;
+    biW0_ = 64 - scale;
+    biW1_ = scale;
+}
+
 // Prediction of a block of a B macroblock into macroblock-sized buffers: from list 0 (use 1),
-// list 1 (2) or the rounded average of both (3; default weighted prediction, 8.4.2.3.1).
+// list 1 (2) or both (3): their rounded average or, with implicit weights, their weighted sum.
 void FrameCoder::predictBi(int mbx, int mby, int x4, int y4, int w4, int h4, int use, const int* mv0, const int* mv1,
                            uint8_t* luma, uint8_t (*chroma)[64]) const
 {
@@ -3985,6 +4005,17 @@ void FrameCoder::predictBi(int mbx, int mby, int x4, int y4, int w4, int h4, int
     uint8_t l1[256], c1[2][64];
     motionCompensate(*refs_[0], mbx, mby, x4, y4, w4, h4, mv0[0], mv0[1], luma, chroma);
     motionCompensate(*refs1_[0], mbx, mby, x4, y4, w4, h4, mv1[0], mv1[1], l1, c1);
+    const int w0 = biW0_, w1 = biW1_;
+    if (w0 != w1) {
+        for (int y = y4 * 4; y < (y4 + h4) * 4; ++y)
+            for (int x = x4 * 4; x < (x4 + w4) * 4; ++x)
+                luma[y * 16 + x] = clip1((luma[y * 16 + x] * w0 + l1[y * 16 + x] * w1 + 32) >> 6);
+        for (int c = 0; c < 2; ++c)
+            for (int y = y4 * 2; y < (y4 + h4) * 2; ++y)
+                for (int x = x4 * 2; x < (x4 + w4) * 2; ++x)
+                    chroma[c][y * 8 + x] = clip1((chroma[c][y * 8 + x] * w0 + c1[c][y * 8 + x] * w1 + 32) >> 6);
+        return;
+    }
     for (int y = y4 * 4; y < (y4 + h4) * 4; ++y)
         for (int x = x4 * 4; x < (x4 + w4) * 4; ++x)
             luma[y * 16 + x] = uint8_t((luma[y * 16 + x] + l1[y * 16 + x] + 1) >> 1);
@@ -4148,7 +4179,7 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
             mcLuma(*refs1_[0], px + (c.mv[p][1][0] >> 2), py + (c.mv[p][1][1] >> 2), c.mv[p][1][0] & 3, c.mv[p][1][1] & 3, w, h, b);
             for (int y = 0; y < h; ++y)
                 for (int x = 0; x < w; ++x)
-                    a[y * 16 + x] = uint8_t((a[y * 16 + x] + b[y * 16 + x] + 1) >> 1);
+                    a[y * 16 + x] = clip1((a[y * 16 + x] * biW0_ + b[y * 16 + x] * biW1_ + 32) >> 6);
             int satdBi = 0;
             const size_t so = lumaOff + size_t(P.y4 * 4) * padW_ + P.x4 * 4;
             for (int oy = 0; oy < h; oy += 4)

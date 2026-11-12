@@ -262,6 +262,8 @@ public:
     bool refPic_ = true;   // the picture is a reference (nal_ref_idc)
     bool pocLsb_ = false;  // pic_order_cnt_type 0: the slice header carries pic_order_cnt_lsb
     int gopPos_ = 0;       // display distance from the IDR picture
+    int biW0_ = 32, biW1_ = 32; // B picture: weights of the list 0 / list 1 prediction when both are used (of 64)
+    void setBiWeights();
     std::vector<int> sliceTopOfRow_;        // first macroblock row of the slice of each row
     std::vector<int> rowKey_;               // per row: index of its live CABAC / QP predictor state (slice top, or the row itself in the wavefront)
     std::vector<MbSyntax> mbSyn_;           // wavefront: chosen syntax of every macroblock, written in raster order afterwards
