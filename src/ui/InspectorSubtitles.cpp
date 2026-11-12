@@ -291,7 +291,7 @@ void Inspector::buildSubtitlePage(QVBoxLayout* page)
             edit->setValue(val);
             set(val);
         });
-        connect(sl, &QSlider::sliderReleased, this, [this] { m_editor->project()->closeMerge(); });
+        separateSliderSteps(sl);
         m_subRefreshers << [edit, sl, field, current, min, max] {
             if (auto t = current()) {
                 const double v = field(*t);

@@ -1153,4 +1153,12 @@ bool usesMediaOnVideo(const Timeline& tl, const QString& path)
     return false;
 }
 
+int followTrack(const QVector<Track>& tracks, quint64 uid, int index)
+{
+    if (index >= 0 && index < tracks.size() && tracks[index].uid.value == uid) return index;
+    for (int i = 0; i < tracks.size(); ++i)
+        if (tracks[i].uid.value == uid) return i;
+    return -1;
+}
+
 } // namespace TimelineOps

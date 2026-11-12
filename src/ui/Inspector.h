@@ -108,6 +108,10 @@ private:
     void endEffectDrag(bool apply);
     // Row with slider + number field
     // anim: animatable parameter -> keyframe diamonds on the right (field stays for non-animatable values)
+    // Undo steps of a slider: a drag (press to release) is one, and so is a click that sets it where it lands
+    // (absolute set) with the drag after it; a click into the groove (page step) is one of its own. Connect after the
+    // slider's valueChanged handler that applies the value.
+    void separateSliderSteps(QSlider* slider);
     Param* addSlider(Section& s, const QString& key, const QString& label, double min, double max, double def,
                      double step, int decimals, const Field& field, std::optional<AnimParam> anim = {});
     // Row with X/Y fields (like Zoom/Position in DaVinci); link = chain icon in between
@@ -156,6 +160,10 @@ private:
     void refresh();
 
     Editor* m_editor;
+    // What the selection was when it last changed (Selection::changed also comes for keyframe diamonds only)
+    QSet<int> m_shownIds;
+    TransitionKey m_shownTransition;
+    EditPoint m_shownEditPoint;
     QSize m_frameSize{1920, 1080};
     int m_playhead = 0;
     ElidedLabel* m_clipName; // a long file name ends in "…" (all of it in the tooltip), never widens the panel

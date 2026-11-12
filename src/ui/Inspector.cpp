@@ -564,7 +564,19 @@ Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
     }
     m_tabs->button(0)->setChecked(true);
     WheelGuard::install(this); // scrolling the pages over sliders and boxes must not change their values
-    connect(editor->selection(), &Selection::changed, this, &Inspector::refresh);
+    connect(editor->selection(), &Selection::changed, this, [this] {
+        // Other clips, another transition or edit point: typing or dragging there is a new undo step, never merged
+        // with the last one's. Selected keyframes alone (setKeyframes, also on every frame of a curve point drag)
+        // keep the series: the drag stays one step.
+        const Selection* sel = m_editor->selection();
+        if (sel->ids() != m_shownIds || sel->transition() != m_shownTransition || sel->editPoint() != m_shownEditPoint) {
+            m_shownIds = sel->ids();
+            m_shownTransition = sel->transition();
+            m_shownEditPoint = sel->editPoint();
+            m_editor->project()->closeMerge();
+        }
+        refresh();
+    });
     connect(editor->project(), &Project::timelineChanged, this, &Inspector::refresh);
     refresh();
 }
