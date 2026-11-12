@@ -380,6 +380,9 @@ filter vflip
 filter rotate
 filter crop
 filter split
+# proxies of interlaced material (engine/ProxyManager.cpp): bwdif, yadif where bwdif is missing (both LGPL-2.1+)
+filter bwdif
+filter yadif
 filter palettegen
 filter paletteuse
 filter hwupload

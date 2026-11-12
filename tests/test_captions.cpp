@@ -869,13 +869,17 @@ void testBundledComponents()
 {
     QFile f(Check::sourceDir() + "/packaging/ffmpeg-components.txt");
     if (!CHECK(f.open(QIODevice::ReadOnly | QIODevice::Text))) return;
-    QSet<QString> encoders, decoders;
+    QSet<QString> encoders, decoders, filters;
     for (const QString& line : QString::fromUtf8(f.readAll()).split('\n')) {
         const QStringList w = line.simplified().split(' ');
         if (w.size() < 2) continue;
         if (w[0] == "encoder") encoders << QString(w[1]).remove('_');
         if (w[0] == "decoder") decoders << QString(w[1]).remove('_');
+        if (w[0] == "filter") filters << w[1];
     }
+    // Proxies of interlaced material are deinterlaced (engine/ProxyManager.cpp: bwdif, yadif as the fallback)
+    for (const char* filter : {"bwdif", "yadif"})
+        if (!CHECK(filters.contains(filter))) std::printf("       ffmpeg-components.txt lacks filter %s\n", filter);
     for (const AVCodecID id : {AV_CODEC_ID_MOV_TEXT, AV_CODEC_ID_SUBRIP, AV_CODEC_ID_WEBVTT}) {
         bool encoder = false, decoder = false;
         void* it = nullptr;

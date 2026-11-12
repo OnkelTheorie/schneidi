@@ -24,6 +24,16 @@
 
 #include <algorithm>
 
+#ifdef Q_OS_WIN
+#ifndef NOMINMAX
+#define NOMINMAX // std::min/std::max below
+#endif
+#include <windows.h>
+#else
+#include <filesystem>
+#include <system_error>
+#endif
+
 namespace Cli::Serve {
 
 using detail::fail;
@@ -137,17 +147,39 @@ QString writePath(const QString& target)
     return fi.absolutePath() + "/.schneidi-upload-" + QString::number(QRandomGenerator::global()->generate64(), 36);
 }
 
-// Commits `file` (opened on writePath(target)) and puts it at `target`. A long name: the old file goes first
-// (Windows renames onto no existing file), so that one replace is not atomic.
+} // namespace
+
+bool replaceFile(const QString& from, const QString& to)
+{
+#ifdef Q_OS_WIN
+    // QFile::rename does not replace an existing file. The long-path form (\\?\C:\..., \\?\UNC\server\...): a name
+    // near 255 characters makes the whole path longer than MAX_PATH.
+    const auto native = [](const QString& path) {
+        const QString plain = QDir::toNativeSeparators(QFileInfo(path).absoluteFilePath());
+        return plain.startsWith("\\\\") ? "\\\\?\\UNC\\" + plain.mid(2) : "\\\\?\\" + plain;
+    };
+    const QString src = native(from), dst = native(to);
+    return MoveFileExW(reinterpret_cast<const wchar_t*>(src.utf16()), reinterpret_cast<const wchar_t*>(dst.utf16()),
+                       MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH);
+#else
+    // rename(2) replaces `to` atomically (never onto a folder)
+    std::error_code error;
+    std::filesystem::rename(std::filesystem::path(QFile::encodeName(from).toStdString()),
+                            std::filesystem::path(QFile::encodeName(to).toStdString()), error);
+    return !error;
+#endif
+}
+
+namespace {
+
+// Commits `file` (opened on writePath(target)) and puts it at `target`. A long name: the new file replaces the old one
+// in one step (replaceFile); when that fails (Windows: a virus scanner or the indexer has the old file open) the old
+// file is still there and only the new one goes.
 bool commitTo(QSaveFile& file, const QString& target)
 {
     if (!file.commit()) return false;
     if (file.fileName() == target) return true;
-    if (QFile::exists(target) && !QFile::remove(target)) {
-        QFile::remove(file.fileName());
-        return false;
-    }
-    if (QFile::rename(file.fileName(), target)) return true;
+    if (replaceFile(file.fileName(), target)) return true;
     QFile::remove(file.fileName());
     return false;
 }

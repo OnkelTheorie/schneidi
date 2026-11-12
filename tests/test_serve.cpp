@@ -9,6 +9,7 @@
 #include "cli/Commands.h"
 #include "cli/Mcp.h"
 #include "cli/Sandbox.h"
+#include "cli/Serve.h"
 #include "cli/ServeJobs.h"
 #include "core/BrandKit.h"
 #include "core/CompGraph.h"
@@ -505,6 +506,38 @@ int main(int argc, char* argv[])
     QTemporaryDir tmp;
     sandboxRules(tmp.filePath("rules"));
 
+    // Replacing a file (the end of a long-name upload): a replace that fails keeps the old file; the old one is never
+    // removed before the new one is in place (a sharing violation on Windows used to lose both)
+    {
+        const QString dir = tmp.filePath("replace");
+        QDir().mkpath(dir);
+        const auto write = [](const QString& path, const QByteArray& data) {
+            QFile f(path);
+            return f.open(QIODevice::WriteOnly) && f.write(data) == data.size();
+        };
+        const auto read = [](const QString& path) {
+            QFile f(path);
+            return f.open(QIODevice::ReadOnly) ? f.readAll() : QByteArray("<missing>");
+        };
+        CHECK(write(dir + "/target", "old"));
+        CHECK(write(dir + "/new", "new"));
+        CHECK(Cli::Serve::replaceFile(dir + "/new", dir + "/target"));
+        CHECK_EQ(read(dir + "/target"), QByteArray("new"));
+        CHECK(!QFileInfo::exists(dir + "/new"));
+        // The new file gone (as if a scanner moved it away): no replace, the old file stays
+        CHECK(!Cli::Serve::replaceFile(dir + "/vanished", dir + "/target"));
+        CHECK_EQ(read(dir + "/target"), QByteArray("new"));
+        // A target that cannot be replaced (a folder): the old one and the new file both stay
+        QDir().mkpath(dir + "/folder/inside");
+        CHECK(write(dir + "/new2", "new2"));
+        CHECK(!Cli::Serve::replaceFile(dir + "/new2", dir + "/folder"));
+        CHECK(QFileInfo(dir + "/folder/inside").isDir());
+        CHECK_EQ(read(dir + "/new2"), QByteArray("new2"));
+        // A target that does not exist yet
+        CHECK(Cli::Serve::replaceFile(dir + "/new2", dir + "/fresh"));
+        CHECK_EQ(read(dir + "/fresh"), QByteArray("new2"));
+    }
+
     // Jobs that run in the server itself (upload) wait for their file like the others; ending or cancelling one never
     // frees the file of another job
     {
@@ -852,6 +885,17 @@ int main(int argc, char* argv[])
         CHECK_EQ(types.value("in/sub/data.bin"), QString("file"));
         CHECK(!types.contains("link/other.mp4"));
         if (links) CHECK(!types.contains("link"));
+        // A long-name upload's temporary file (".schneidi-upload-…", left by a crash) is not listed
+        {
+            QFile stray(root + "/in/.schneidi-upload-stray");
+            CHECK(stray.open(QIODevice::WriteOnly));
+            stray.close();
+            a = s.call("files", {{"recursive", true}});
+            for (const QJsonValue& e : a["entries"].toArray()) CHECK(!e["path"].toString().contains(".schneidi-upload"));
+            a = s.call("files", {{"path", "in"}});
+            for (const QJsonValue& e : a["entries"].toArray()) CHECK(!e["path"].toString().contains(".schneidi-upload"));
+            QFile::remove(stray.fileName());
+        }
         CHECK_EQ(errorCode(s.call("files", {{"path", "../outside"}})), QString("OUTSIDE_ROOT"));
 
         // Render: progress as Server-Sent Events when asked for, the answer with a download link
