@@ -682,9 +682,8 @@ QJsonObject Server::runCommand(const QJsonObject& msg, bool ownChat, bool byUser
     LiveChange change;
     change.command = name;
     change.ownChat = ownChat;
-    try {
-        result = cmd->run(args, ctx);
-    } catch (const Error& e) {
+    // A failed command: its open undo macro closed and taken back, the reply and the AI log say why
+    const auto failed = [&](const QString& code, const QString& message) {
         if (step) {
             undo->endMacro();
             if (undo->index() > index) undo->undo(); // all or nothing, like on the file
@@ -694,10 +693,19 @@ QJsonObject Server::runCommand(const QJsonObject& msg, bool ownChat, bool byUser
         }
         if (logged) {
             change.step = stepText(name, args, {}, *p);
-            change.error = e.message;
+            change.error = message;
             m_host->liveChanged(change);
         }
-        return errorReply(e.code, e.message);
+        return errorReply(code, message);
+    };
+    try {
+        result = cmd->run(args, ctx);
+    } catch (const Error& e) {
+        return failed(e.code, e.message);
+    } catch (const std::exception& e) { // not an Error (std::bad_alloc …): the macro must not stay open either
+        return failed("INTERNAL", QString("the command failed: %1").arg(e.what()));
+    } catch (...) {
+        return failed("INTERNAL", "the command failed");
     }
     if (step) {
         undo->endMacro();

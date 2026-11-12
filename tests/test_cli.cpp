@@ -10,6 +10,7 @@
 #include "core/ProjectFile.h"
 #include "core/RenderJob.h"
 #include "core/TimelineOps.h"
+#include "engine/ClipFormat.h"
 #include "engine/Exporter.h"
 
 #include <QLockFile>
@@ -219,6 +220,38 @@ int runTests(int argc, char** argv)
         CHECK(at("1,5s, 3s,2,25s") == (QJsonArray{"1.5s", "3s", "2.25s"}));
         CHECK(at("6,95") == (QJsonArray{"6", "95"}));
         CHECK(at("10, 20s") == (QJsonArray{"10", "20s"}));
+        // Numbers as text: no thousands separators ("1,500" was 1500); a lone comma is a decimal comma
+        {
+            const Cli::Command* newCmd = Cli::find("new");
+            const auto fps = [&](const char* text) {
+                return Cli::normalize(*newCmd, {{"project", g_path}, {"fps", text}})["fps"].toDouble();
+            };
+            CHECK_EQ(fps("1,5"), 1.5);
+            CHECK_EQ(fps("1,50"), 1.5);
+            CHECK_EQ(fps("1,5000"), 1.5);
+            // One comma and three digits: 1500 in English, 1.5 in German - refused with both spellings to choose
+            for (const char* amb : {"1,500", "-12,250", "100,000"}) {
+                QString msg;
+                try {
+                    Cli::normalize(*newCmd, {{"project", g_path}, {"fps", amb}});
+                } catch (const Cli::Error& e) {
+                    msg = e.code + ": " + e.message;
+                }
+                Check::report(msg.startsWith("BAD_ARGUMENT") && msg.contains("ambiguous") && msg.contains("fps"),
+                              qPrintable(msg), __FILE__, __LINE__);
+            }
+            CHECK_EQ(fps("29.97"), 29.97);
+            CHECK_EQ(fps("25"), 25.0);
+            for (const char* bad : {"1,500.5", "1,000,000", "1.5.5", "nan"}) {
+                QString code;
+                try {
+                    Cli::normalize(*newCmd, {{"project", g_path}, {"fps", bad}});
+                } catch (const Cli::Error& e) {
+                    code = e.code;
+                }
+                CHECK_EQ(code, QString("BAD_ARGUMENT"));
+            }
+        }
         CHECK_EQ(Cli::detail::parseTime(QJsonValue("6,95s"), ProjectFormat{}, "at"), int(std::lround(6.95 * ProjectFormat{}.rate.fps())));
         // A file name with a comma stays one path in a comma-separated string; other pieces still split
         {
@@ -315,6 +348,14 @@ int runTests(int argc, char** argv)
             CHECK_EQ(atN("00:10:00;00"), 17982);
             CHECK_EQ(atN("00:01:00;02"), 1800);
             CHECK_EQ(atN("01:00:00:00"), 108000);
+            // Beyond 100000 hours dropFrameNumber gives -1: an error, not frame -1
+            QString code;
+            try {
+                atN("100001:00:00;00");
+            } catch (const Cli::Error& e) {
+                code = e.code + e.message;
+            }
+            CHECK(code.startsWith("BAD_ARGUMENT") && code.contains("too long"));
         }
         for (const char* bad : {"00:00:04:50", "00:00:04:25", "00:61:00:00", "1:75", "00:00:04:20.5", "1:2:3:4:5",
                                 "1;30", "00:00;04:20", "1:", ":30", "1:3a", "1:30.", "00:00:04;20;1"})
@@ -2143,6 +2184,135 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
         CHECK_EQ(run("render", {{"project", proj}, {"out", dir.filePath("subok.VTT")}, {"format", "vtt"}})["cues"].toInt(), 1);
         CHECK(run("render", {{"project", proj}, {"out", dir.filePath("subok2")}, {"format", "srt"}})["out"].toString()
                   .endsWith("subok2.srt"));
+        // Round trip: schneidi's own WebVTT read back by op subtitles (the WEBVTT header took the first cue's place,
+        // and &amp;/&lt; stayed escaped)
+        run("edit", {{"project", proj}, {"ops", R"([{"op":"subtitles","name":"two","cues":[{"from":12,"to":18,"text":"A & <b> --> c"},
+            {"from":19,"to":24,"text":"Zwei"}]}])"}});
+        const QString vtt = dir.filePath("round.vtt");
+        CHECK(run("render", {{"project", proj}, {"out", vtt}, {"format", "vtt"}})["cues"].toInt() >= 1);
+        const QJsonObject back = run("edit", {{"project", proj}, {"ops", QString(R"([{"op":"subtitles","srt":"%1"}])").arg(vtt)}});
+        CHECK(!back.contains("notes"));
+        const QJsonArray subs = run("info", {{"project", proj}})["timeline"]["subtitles"].toArray();
+        if (CHECK_EQ(subs.size(), qsizetype(3))) {
+            const QJsonArray rc = subs[2]["cues"].toArray();
+            // the file holds one of the two tracks (the main one): read back with the same cues
+            bool same = false;
+            for (int t = 0; t < 2 && !same; ++t) {
+                const QJsonArray want = subs[t]["cues"].toArray();
+                same = !rc.isEmpty() && rc.size() == want.size();
+                for (int i = 0; same && i < rc.size(); ++i)
+                    same = rc[i]["text"] == want[i]["text"] && rc[i]["start"] == want[i]["start"] && rc[i]["end"] == want[i]["end"];
+            }
+            CHECK(same);
+        }
+        // A broken SRT entry is reported, not silently dropped
+        const QString bad = dir.filePath("bad.srt");
+        {
+            QFile f(bad);
+            CHECK(f.open(QIODevice::WriteOnly));
+            f.write("1\n00:00:00,000 --> 00:00:01,000\nok\n\n2\n00:00:xx --> 00:00:02,000\nbroken\n");
+        }
+        const QJsonObject withBad = run("edit", {{"project", proj}, {"dry_run", true}, {"ops", QString(R"([{"op":"subtitles","srt":"%1"}])").arg(bad)}});
+        CHECK(withBad["notes"][0].toString().contains("1 broken entry"));
+    }
+    // Frame rates: standard ones and 48/100/120 as given; any other refused with the list (12 became 23.976 and 90
+    // became 60 in silence)
+    {
+        const QString proj = dir.filePath("rates.schneidi");
+        for (const double fps : {120.0, 100.0, 48.0, 29.97, 23.976, 59.94}) {
+            const QJsonObject r = run("new", {{"project", proj}, {"fps", fps}, {"overwrite", true}});
+            CHECK(std::abs(run("info", {{"project", proj}})["format"]["fps"].toDouble() - fps) < 0.01);
+            (void)r;
+        }
+        for (const double fps : {12.0, 90.0, 47.0, 119.0}) {
+            const QString msg = messageOf("new", {{"project", proj}, {"fps", fps}, {"overwrite", true}});
+            Check::report(msg.contains("48, 50") && msg.contains("120"), qPrintable(msg), __FILE__, __LINE__);
+        }
+        run("new", {{"project", proj}, {"fps", 25}, {"overwrite", true}});
+        run("edit", {{"project", proj}, {"ops", R"([{"op":"format","fps":100}])"}});
+        CHECK_EQ(run("info", {{"project", proj}})["format"]["fps"].toDouble(), 100.0);
+        CHECK_EQ(errorOf("edit", {{"project", proj}, {"ops", R"([{"op":"format","fps":90}])"}}), QString("BAD_ARGUMENT"));
+        CHECK_EQ(run("info", {{"project", proj}})["format"]["fps"].toDouble(), 100.0);
+        // Template and export rates: 48 stays 48 (was 50), a template's own rate stays itself
+        CHECK(Cli::detail::templateFrameRate(48) == (FrameRate{48, 1}));
+        CHECK(std::abs(Cli::detail::templateFrameRate(119.88).fps() - 119.88) < 0.001);
+        CHECK(Cli::detail::exportFrameRate(12) == (FrameRate{12, 1}));
+        CHECK(Cli::detail::exportFrameRate(120) == (FrameRate{120, 1}));
+        CHECK(Cli::detail::exportFrameRate(59.94) == (FrameRate{60000, 1001}));
+    }
+    // An imported timeline's exact frame rate (119.88 from Premiere/FCP7, 12, 47.952) into an empty project: kept like
+    // the app does (the format op refused it, so the import failed)
+    {
+        const QString proj = dir.filePath("hfr-import.schneidi");
+        const auto importRate = [&](int timebase, bool ntsc) {
+            const QString xml = dir.filePath(QString("hfr-%1-%2.xml").arg(timebase).arg(ntsc));
+            QFile f(xml);
+            if (!f.open(QIODevice::WriteOnly)) return QString("cannot write");
+            f.write(QString("<xmeml version=\"4\"><sequence><name>hfr</name><rate><timebase>%1</timebase><ntsc>%2</ntsc>"
+                            "</rate><media><video><format><samplecharacteristics><width>1280</width><height>720</height>"
+                            "</samplecharacteristics></format></video></media></sequence></xmeml>")
+                        .arg(timebase)
+                        .arg(ntsc ? "TRUE" : "FALSE")
+                        .toUtf8());
+            f.close();
+            run("new", {{"project", proj}, {"overwrite", true}});
+            run("import", {{"project", proj}, {"timeline_file", xml}});
+            const QJsonObject fmt = run("info", {{"project", proj}})["format"].toObject();
+            return fmt["fps_label"].toString() + " " + QString::number(fmt["width"].toInt());
+        };
+        CHECK_EQ(importRate(120, true), QString("120000/1001 1280"));
+        CHECK_EQ(importRate(12, false), QString("12/1 1280"));
+        CHECK_EQ(importRate(48, true), QString("48000/1001 1280"));
+        CHECK_EQ(importRate(90, false), QString("90/1 1280"));
+        // `_rate` is no user key of its own: fps stays the checked one, both together are refused
+        CHECK_EQ(errorOf("edit", {{"project", proj}, {"ops", R"([{"op":"format","fps":25,"_rate":{"num":12,"den":1}}])"}}),
+                 QString("BAD_ARGUMENT"));
+        // An EDL's frame rate as given (13 snapped to 12 or 23.976 in silence)
+        const QString edl = dir.filePath("rate.edl");
+        {
+            QFile f(edl);
+            CHECK(f.open(QIODevice::WriteOnly));
+            f.write("TITLE: r\n\n001  AX       V     C        00:00:00:00 00:00:01:00 01:00:00:00 01:00:01:00\n");
+        }
+        CHECK(messageOf("import", {{"project", proj}, {"timeline_file", edl}, {"fps", 13}}).contains("120"));
+    }
+    // render --fps: 48/100/120 of a high frame rate project too (nearestExportRate stopped at 60: 120 rendered 60 and
+    // 48 rendered 50), other rates refused; a platform preset (up to 60 fps) halves 120
+    {
+        const QString proj = dir.filePath("hfr-render.schneidi");
+        const auto rateOf = [](const QString& file) {
+            const ClipFormat cf = detectClipFormat(file);
+            return QString("%1/%2").arg(cf.rate.num).arg(cf.rate.den);
+        };
+        for (const int fps : {120, 100}) {
+            run("new", {{"project", proj}, {"fps", fps}, {"overwrite", true}});
+            run("edit", {{"project", proj}, {"ops", R"([{"op":"title","text":"Hi","at":0,"duration":"1s"}])"}});
+            const QString own = dir.filePath(QString("hfr-%1.mp4").arg(fps));
+            run("render", {{"project", proj}, {"out", own}, {"height", 180}, {"to", "0.5s"}, {"overwrite", true}});
+            CHECK_EQ(rateOf(own), QString("%1/1").arg(fps));
+        }
+        // the 100 fps project: --fps 100 and 48 as asked
+        for (const int fps : {100, 48}) {
+            const QString out = dir.filePath(QString("hfr-as-%1.mp4").arg(fps));
+            run("render", {{"project", proj}, {"out", out}, {"height", 180}, {"to", "0.5s"}, {"fps", fps}, {"overwrite", true}});
+            CHECK_EQ(rateOf(out), QString("%1/1").arg(fps));
+        }
+        run("new", {{"project", proj}, {"fps", 120}, {"overwrite", true}});
+        run("edit", {{"project", proj}, {"ops", R"([{"op":"title","text":"Hi","at":0,"duration":"1s"}])"}});
+        const QString as120 = dir.filePath("hfr-as-120.mp4");
+        run("render", {{"project", proj}, {"out", as120}, {"height", 180}, {"to", "0.5s"}, {"fps", "120"}, {"overwrite", true}});
+        CHECK_EQ(rateOf(as120), QString("120/1"));
+        const QString tiktok = dir.filePath("hfr-tiktok.mp4");
+        run("render", {{"project", proj}, {"out", tiktok}, {"preset", "tiktok"}, {"to", "0.3s"}, {"overwrite", true}});
+        CHECK_EQ(rateOf(tiktok), QString("60/1"));
+        const QString msg = messageOf("render", {{"project", proj}, {"out", dir.filePath("hfr-13.mp4")}, {"fps", 13}});
+        Check::report(msg.contains("13") && msg.contains("120") && msg.contains("12,"), qPrintable(msg), __FILE__, __LINE__);
+        // EDL has two frame digits: refused at 120 fps with the reason, FCP7 XML is written
+        const QString edlMsg = messageOf("export_timeline", {{"project", proj}, {"out", dir.filePath("hfr.edl")}});
+        Check::report(edlMsg.contains("99"), qPrintable(edlMsg), __FILE__, __LINE__);
+        CHECK(!QFileInfo::exists(dir.filePath("hfr.edl")));
+        run("export_timeline", {{"project", proj}, {"out", dir.filePath("hfr.xml")}});
+        CHECK(QFileInfo::exists(dir.filePath("hfr.xml")));
     }
     // remove_track: names are those of the timeline when the op runs; several in one op are named before any goes;
     // the error names the tracks there are (AI run 2026-10-28 removed A1-A3, then "A5" failed without saying why)

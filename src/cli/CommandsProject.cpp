@@ -906,7 +906,8 @@ QJsonObject cmdRender(const QJsonObject& a, Context& ctx)
         job.settings.size = QSize(w & ~1, h & ~1);
     }
     if (a.contains("fps")) {
-        const FrameRate r = nearestExportRate(a["fps"].toDouble());
+        // 48/100/120 from a 120 fps project too (nearestExportRate stopped at 60); anything else is refused
+        const FrameRate r = exportFrameRate(a["fps"].toDouble());
         job.settings.rateNum = r.num;
         job.settings.rateDen = r.den;
     }

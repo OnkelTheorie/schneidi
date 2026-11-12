@@ -75,7 +75,7 @@ QJsonObject contentJson(const ContentTemplate& t)
     o["height"] = t.height;
     o["fps"] = std::round(t.fps * 1000) / 1000;
     ProjectFormat f;
-    f.rate = nearestFrameRate(t.fps > 0 ? t.fps : 25);
+    f.rate = templateFrameRate(t.fps > 0 ? t.fps : 25); // 48 stays 48 (nearestFrameRate made it 50)
     o["length_s"] = secs(t.length, f);
     o["slots"] = QJsonArray::fromStringList(t.slotIds);
     if (!t.preview.isEmpty() && !Sandbox::active()) o["preview"] = t.preview;

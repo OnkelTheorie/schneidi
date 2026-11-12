@@ -12,6 +12,8 @@
 #include <QCoreApplication>
 #include <QRegularExpression>
 
+#include <functional>
+
 using namespace Interchange;
 using Seq = Interchange::Sequence; // ::Sequence is the project's
 
@@ -623,6 +625,103 @@ int main(int argc, char** argv)
             "source_range":{"duration":{"rate":25,"value":50},"start_time":{"rate":25,"value":0}}}]}]}})");
         if (CHECK(s.video.size() == 1 && s.video[0].items.size() == 2))
             CHECK(s.video[0].items[0].length == 0 && s.video[0].items[1].start == 0 && s.video[0].items[1].length == 50);
+    }
+    // Deeply nested files (an upload to `serve`): refused instead of overflowing the stack
+    {
+        QByteArray deep = "<xmeml><sequence>";
+        for (int i = 0; i < 200000; ++i) deep += "<a>";
+        threw = false;
+        try {
+            readFcp7(deep);
+        } catch (const Error&) {
+            threw = true;
+        }
+        CHECK(threw);
+        // 200 levels are still read (a real file has about 15)
+        QByteArray ok = "<xmeml><sequence><name>deep</name><rate><timebase>25</timebase></rate>";
+        for (int i = 0; i < 200; ++i) ok += "<a>";
+        for (int i = 0; i < 200; ++i) ok += "</a>";
+        ok += "<media></media></sequence></xmeml>";
+        CHECK(readFcp7(ok).name == "deep");
+        QByteArray json;
+        for (int i = 0; i < 200000; ++i) json += "[";
+        threw = false;
+        try {
+            readOtio(json);
+        } catch (const Error&) {
+            threw = true;
+        }
+        CHECK(threw);
+    }
+    // Huge numbers in a file (an upload to `serve`): an error, never billions of tracks or overflowed frames
+    {
+        const auto throws = [](const std::function<void()>& f) {
+            try {
+                f();
+            } catch (const Error&) {
+                return true;
+            }
+            return false;
+        };
+        const QByteArray cut = "001  AX       V     C        00:00:00:00 00:00:01:00 01:00:00:00 01:00:01:00\n";
+        // EDL audio track A99999999 allocated that many tracks (out of memory); A64 is still read, A65 not
+        CHECK(throws([] { readEdl("001  AX       A99999999 C        00:00:00:00 00:00:01:00 01:00:00:00 01:00:01:00\n", {25, 1}); }));
+        CHECK(throws([] { readEdl("001  AX       A99999999999999999999 C 00:00:00:00 00:00:01:00 01:00:00:00 01:00:01:00\n", {25, 1}); }));
+        CHECK(throws([] { readEdl("001  AX       A65   C        00:00:00:00 00:00:01:00 01:00:00:00 01:00:01:00\n", {25, 1}); }));
+        CHECK_EQ(readEdl("001  AX       A64   C        00:00:00:00 00:00:01:00 01:00:00:00 01:00:01:00\n", {25, 1}).audio.size(),
+                 qsizetype(64));
+        // A dissolve of 10^12 frames (its end overflowed)
+        CHECK(throws([&cut] {
+            readEdl(cut + "002  AX       V     D    999999999999 00:00:00:00 00:00:01:00 01:00:01:00 01:00:02:00\n", {25, 1});
+        }));
+        CHECK(!throws([&cut] { readEdl(cut + "002  AX       V     D    010 00:00:00:00 00:00:01:00 01:00:01:00 01:00:02:00\n", {25, 1}); }));
+        // FCP7: in/out/start/end of 10^30 or 2 * 10^9 (int(lround) undefined, sums overflowed)
+        const auto fcp = [](const char* in, const char* out, const char* start, const char* end) {
+            return QByteArray(R"(<xmeml><sequence><rate><timebase>25</timebase></rate><media><video><track><clipitem>)")
+                   + "<in>" + in + "</in><out>" + out + "</out><start>" + start + "</start><end>" + end + "</end>"
+                   + "<file><pathurl>file:///m/a.mp4</pathurl></file></clipitem></track></video></media></sequence></xmeml>";
+        };
+        CHECK(!throws([&] { readFcp7(fcp("0", "20", "0", "20")); }));
+        CHECK(throws([&] { readFcp7(fcp("0", "1e30", "0", "20")); }));
+        CHECK(throws([&] { readFcp7(fcp("-1e30", "20", "0", "20")); }));
+        CHECK(throws([&] { readFcp7(fcp("0", "20", "0", "2000000000")); }));
+        CHECK(throws([&] { readFcp7(fcp("0", "20", "-2000000000", "-1")); }));
+        CHECK(throws([&] { readFcp7(fcp("0", "20", "inf", "20")); }));
+        // in/out in a clip rate of 1 fps on a 1000 fps sequence: 10^6 * 1000 is beyond the limit after converting
+        CHECK(throws([] {
+            readFcp7(R"(<xmeml><sequence><rate><timebase>1000</timebase></rate><media><video><track><clipitem>
+                <rate><timebase>1</timebase></rate><in>0</in><out>1000000</out><start>0</start><end>20</end>
+                <file><pathurl>file:///m/a.mp4</pathurl></file></clipitem></track></video></media></sequence></xmeml>)");
+        }));
+        CHECK(throws([] {
+            readFcp7(R"(<xmeml><sequence><rate><timebase>25</timebase></rate><media><video><track><clipitem><in>0</in>
+                <out>20</out><file><pathurl>file:///m/a.mp4</pathurl><duration>1e300</duration></file></clipitem></track>
+                </video></media></sequence></xmeml>)");
+        }));
+    }
+    // EDL timecodes have two frame digits: a 100/120 fps timeline is refused, 60 fps is written
+    {
+        Seq s;
+        s.name = "fast";
+        TrackData td;
+        Item it;
+        it.path = "/m/a.mp4";
+        it.name = "a.mp4";
+        it.length = 50;
+        td.items << it;
+        s.video << td;
+        for (const FrameRate r : {FrameRate{120, 1}, FrameRate{100, 1}, FrameRate{120000, 1001}}) {
+            s.format.rate = r;
+            QString msg;
+            try {
+                write(s, Format::Edl);
+            } catch (const Error& e) {
+                msg = e.message;
+            }
+            CHECK(msg.contains("99"));
+        }
+        s.format.rate = {60, 1};
+        CHECK(write(s, Format::Edl).contains("001  AX"));
     }
     return Check::result();
 }

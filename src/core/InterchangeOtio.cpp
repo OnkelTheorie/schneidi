@@ -44,14 +44,6 @@ QJsonObject transition(int before, int after, double rate, const Transition& tr)
             {"out_offset", rationalTime(after, rate)}, {"metadata", meta}};
 }
 
-// No timeline reaches 2^29 frames (6 days at 1000 fps): a time beyond is broken, and the sums of times stay inside int
-constexpr int kMaxFrames = 1 << 29;
-
-void checkFrames(double f)
-{
-    if (!(std::abs(f) <= kMaxFrames)) throw Error{T("Zeitangabe außerhalb des möglichen Bereichs")};
-}
-
 // Frames of a RationalTime in the sequence's rate, unrounded (a slow-motion clip's source start lies between frames)
 double exactFrames(const QJsonValue& rt, double rate)
 {

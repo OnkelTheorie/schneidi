@@ -98,6 +98,39 @@ void testSrt()
     CHECK_EQ(skipped, 2);
     CHECK_EQ(Subtitles::srtTime(3723004), QString("01:02:03,004"));
 
+    // WebVTT: the header block, NOTE/STYLE blocks and cue ids are not cues; "MM:SS.mmm" times, entities unescaped
+    // (the WEBVTT header was taken as the first cue's number and that cue dropped)
+    c = Subtitles::parseSrt("WEBVTT - Titel\nKind: captions\n\nNOTE ein Kommentar\nzweite Zeile\n\nSTYLE\n::cue { color: red }\n\n"
+                            "00:01.000 --> 00:02.000 align:start\n<v Anna>Eins</v> &amp; &lt;zwei&gt;\n\n"
+                            "cue-2\n00:00:03.000 --> 00:00:04.000\nDrei\n\nNOTE\nnoch einer\n",
+                            25, &skipped);
+    CHECK_EQ(cues(c), QString("25-50:Eins & <zwei> 75-100:Drei"));
+    CHECK_EQ(skipped, 0);
+    // A header without a blank line before the first cue
+    c = Subtitles::parseSrt("WEBVTT\n00:00.000 --> 00:01.000\nA\n", 25, &skipped);
+    CHECK_EQ(cues(c), QString("0-25:A"));
+    CHECK_EQ(skipped, 0);
+    // "WEBVTT" must stand alone or be followed by a space or tab: "WEBVTTX" is no header (its cue is read as SRT,
+    // without unescaping); a tab before the title is one
+    c = Subtitles::parseSrt("WEBVTTX\n00:00:00.000 --> 00:00:01.000\nA &amp; B\n", 25, &skipped);
+    CHECK_EQ(cues(c), QString("0-25:A &amp; B"));
+    c = Subtitles::parseSrt("WEBVTT\tTitel\n\n00:00.000 --> 00:01.000\nA &amp; B\n", 25, &skipped);
+    CHECK_EQ(cues(c), QString("0-25:A & B"));
+    CHECK_EQ(skipped, 0);
+    // Numeric references and the direction marks; "&amp;lt;" is the text "&lt;" (one pass); unknown/invalid stay
+    c = Subtitles::parseSrt("WEBVTT\n\n00:00.000 --> 00:01.000\n&#233;t&#xE9; &#x1F600; &lrm;a&rlm; &amp;lt; &foo; &#0; "
+                            "&#xD800; &#99999999;\n",
+                            25, &skipped);
+    CHECK_EQ(c.value(0).text, QString::fromUtf8("été 😀 \u200Ea\u200F &lt; &foo; &#0; &#xD800; &#99999999;"));
+    // In SRT, "&amp;" stays as it is (SRT knows no entities)
+    CHECK_EQ(Subtitles::parseSrt("1\n00:00:00,000 --> 00:00:01,000\nA &amp; B\n", 25).value(0).text, QString("A &amp; B"));
+    // Round trip through schneidi's own WebVTT
+    {
+        const QVector<SubtitleCue> list{{1, 0, 30, "A & <b> --> c"}, {2, 50, 75, "Zwei\nZeilen"}, {3, 90000, 90025, "Stunde"}};
+        CHECK_EQ(cues(Subtitles::parseSrt(Subtitles::toVtt(list, 25), 25, &skipped)), cues(list));
+        CHECK_EQ(skipped, 0);
+    }
+
     // Export: one file per track with entries, the visible one into the chosen file, the others next to it
     {
         Timeline tl;

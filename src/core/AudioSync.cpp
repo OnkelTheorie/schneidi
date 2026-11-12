@@ -264,7 +264,8 @@ Match match(const std::vector<float>& reference, const std::vector<float>& other
     // Allowed lags as indices in c
     long long lo = 0, hi = (long long)c.size() - 1;
     if (options.maxOffsetS > 0) {
-        const long long maxLag = std::llround(options.maxOffsetS * kEnvelopeRate);
+        // Never beyond both files together (a huge value overflowed the conversion to an integer)
+        const long long maxLag = std::llround(std::min(options.maxOffsetS * kEnvelopeRate, double(na + nb)));
         lo = std::max(lo, nb - 1 - maxLag);
         hi = std::min(hi, nb - 1 + maxLag);
     }

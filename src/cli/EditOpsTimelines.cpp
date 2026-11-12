@@ -167,8 +167,17 @@ void opFormat(Session& s, const QJsonObject& op)
     if (op.value("aspect").toString().trimmed().toLower() == "project")
         fail("BAD_ARGUMENT", "aspect:'project' needs 'timeline' (which timeline goes back to the project's resolution)");
     if (const QSize size = sizeOf(op, nullptr, f.size()); !size.isEmpty()) f.width = size.width(), f.height = size.height();
-    if (op.contains("fps")) {
-        const FrameRate rate = nearestFrameRate(numberOf(op, "fps", 1, 120));
+    if (op.contains("fps") && op.contains("_rate")) fail("BAD_ARGUMENT", "give fps or _rate, not both");
+    if (op.contains("fps") || op.contains("_rate")) {
+        // fps: typed by a user or an AI, one of the offered rates. _rate {num, den}: the exact rate of an imported
+        // timeline (119.88, 12, 47.952 …), kept like the app does, only brought inside the limits
+        FrameRate rate;
+        if (op.contains("_rate")) {
+            const QJsonObject r = op.value("_rate").toObject();
+            rate = withinLimits({f.width, f.height, {r.value("num").toInt(), r.value("den").toInt()}}).rate;
+        } else {
+            rate = projectFrameRate(numberOf(op, "fps", 1, 120));
+        }
         if (rate != f.rate && s.project.frameRateLocked())
             fail("FAILED", "the frame rate can only change while all timelines are empty; make a new "
                            "project with `new --fps` instead");
@@ -243,8 +252,8 @@ void addTimelineOps(QVector<OpDef>& ops)
                  "resolution: every timeline without its own resolution is scaled (bars for clips of the old shape). "
                  "With the project open in the app (@app) that is refused while other such timelines hold clips: ask "
                  "the user first and send confirm:true only after they said yes. fps never takes timeline (one rate "
-                 "per project). Nested timelines of another resolution are fitted in like a clip of that shape.",
-                 opFormat};
+                 "per project; 23.976, 24, 25, 29.97, 30, 48, 50, 59.94, 60, 100 or 120, others are refused). Nested timelines of another resolution are fitted in like a clip of that shape.",
+                 opFormat, {"_rate"}}; // _rate: an imported timeline's exact rate (import timeline_file)
 }
 
 } // namespace Cli::detail
