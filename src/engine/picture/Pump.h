@@ -98,6 +98,10 @@ public:
     static int64_t recentBudgetFor(const SystemMemory::Info& memory);
     // Forgets the recently shown frames (memory given back while idle; they are rendered again when wanted)
     void dropRecent();
+    // The picture of the content changed without a new generation (a stabilization finished while playing: a refresh
+    // would drop the frames prepared ahead, a hitch): the recently shown frames are forgotten, and frames whose
+    // render began before are still shown but not kept - stepping back renders them again with the change
+    void forgetRecent();
     Stats stats() const;
 
 private:

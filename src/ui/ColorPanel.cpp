@@ -524,6 +524,7 @@ void ColorPanel::loadLut()
     if (path.isEmpty()) return;
     settings.setValue("color/lutDir", QFileInfo(path).absolutePath());
     QString error;
+    ColorGrade::revalidateLuts(); // the file as it is now (one just overwritten, one that failed before)
     if (!ColorGrade::loadLut(path, &error)) {
         QMessageBox::warning(this, T("LUT laden"), T("Die LUT-Datei lässt sich nicht lesen:\n%1").arg(error));
         return;

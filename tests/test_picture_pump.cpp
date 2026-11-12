@@ -50,6 +50,15 @@ struct TestClock {
         std::lock_guard lock(m);
         running = false;
     }
+    // Stands still where it is now (a clock, not NaN: frames ahead stay due later and wait)
+    void freeze()
+    {
+        std::lock_guard lock(m);
+        if (!running) return;
+        start += speed * t.nsecsElapsed() / 1e9 * kFps;
+        speed = 0;
+        t.start();
+    }
     double now()
     {
         std::lock_guard lock(m);
@@ -483,6 +492,71 @@ void testSameContentAgain()
     CHECK(waitFor([&] { return renders.load() >= 1; }, 2000));
 }
 
+// The content's picture changed while playing without a new generation (Engine: a stabilization finished - a refresh
+// would drop the frames prepared ahead): forgetRecent. Stepping back after the stop rendered the frames of before
+// again from the recent ones - the clip unstabilized; also the frames already prepared ahead when it came
+void testForgetRecent()
+{
+    TestClock clock;
+    Seen seen;
+    std::atomic<int> cost{5}, color{10};
+    Picture::Pump pump([&] { return clock.now(); },
+                       [&](const QImage& img, int64_t pos, double) { seen.add(img, pos, clock.now()); }, 2);
+    pump.setContent(content(&cost, &color), 0, 0);
+    CHECK(waitFor([&] { return seen.count() == 1; }, 1000));
+    seen.take();
+    clock.play(0, 1);
+    pump.setSpeed(1, 0);
+    CHECK(waitFor([&] { return seen.count() >= 10; }, 3000));
+    // The clock stands: the frames rendered ahead (old picture) wait in the pump, not yet due
+    clock.freeze();
+    std::this_thread::sleep_for(60ms); // (the show thread shows what is due and waits; the workers fill ahead)
+    const auto played = seen.take();
+    if (!CHECK(!played.empty())) return;
+    const int64_t stop = played.back().position + 1; // rendered ahead with the old picture
+    color = 20;
+    pump.forgetRecent();
+    CHECK_EQ(pump.stats().recentBytes, int64_t(0));
+    // Paused right there: the still is the new picture, not the frame rendered ahead before the change
+    pump.setSpeed(0, stop);
+    clock.stop();
+    int pausedColor = -1;
+    CHECK(waitFor(
+        [&] {
+            for (const Seen::Entry& e : seen.take())
+                if (e.position == stop) pausedColor = e.color;
+            return pausedColor >= 0;
+        },
+        2000));
+    if (!CHECK_EQ(pausedColor, 20)) std::printf("       paused on a frame rendered before the change\n");
+    // Every frame played (before and after the change, the pause position too) shows the new picture when stepped
+    // onto again
+    int old = 0, steps = 0;
+    const int recentBefore = pump.stats().recent;
+    std::vector<int64_t> positions;
+    for (const Seen::Entry& e : played) positions.push_back(e.position);
+    positions.push_back(stop);
+    for (const int64_t at : positions) {
+        pump.seek(at);
+        int got = -1;
+        if (!CHECK(waitFor(
+                [&] {
+                    for (const Seen::Entry& e : seen.take())
+                        if (e.position == at) got = e.color;
+                    return got >= 0;
+                },
+                1000)))
+            break;
+        if (got != 20) ++old;
+        ++steps;
+    }
+    const int fromRecent = pump.stats().recent - recentBefore;
+    std::printf("       %d frames stepped onto again, %d with the old picture, %d from the recent ones\n", steps, old,
+                fromRecent);
+    CHECK(steps > 5);
+    CHECK_EQ(old, 0);
+}
+
 int main(int argc, char** argv)
 {
     Check::initEnv();
@@ -495,6 +569,8 @@ int main(int argc, char** argv)
     testStillPastEnd();
     std::printf("same content again\n");
     testSameContentAgain();
+    std::printf("forget recent while playing\n");
+    testForgetRecent();
     std::printf("shuttle to the end\n");
     testShuttleReachesEnd();
     if (Check::haveFfmpeg()) {

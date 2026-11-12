@@ -14,6 +14,7 @@
 #include <QList>
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstring>
 #include <future>
@@ -692,48 +693,84 @@ std::shared_ptr<const Lut> parseLut(const QString& path, QString* error)
     return lut;
 }
 
+namespace {
+
+struct LoadedLut {
+    std::shared_ptr<const Lut> lut;
+    QString error;
+};
+struct LutEntry {
+    QDateTime mtime; // of the file read (invalid: it was not there)
+    qint64 size = 0;
+    std::chrono::steady_clock::time_point checked; // last look at the file
+    std::shared_future<LoadedLut> result;
+};
+std::mutex g_lutMutex;
+QHash<QString, LutEntry> g_luts;
+
+} // namespace
+
 std::shared_ptr<const Lut> loadLut(const QString& path, QString* error)
 {
     // Failures are kept too (a broken big LUT was parsed again on every timeline rebuild), and a LUT being read is
-    // waited for instead of read a second time by another thread (export + preview)
-    struct Loaded {
-        std::shared_ptr<const Lut> lut;
-        QString error;
-    };
-    struct Entry {
-        QDateTime mtime;
-        qint64 size = 0;
-        std::shared_future<Loaded> result;
-    };
-    static std::mutex mutex;
-    static QHash<QString, Entry> cache;
-    const QFileInfo fi(path);
-    std::promise<Loaded> promise;
-    std::shared_future<Loaded> result;
-    bool mine = false;
+    // waited for instead of read a second time by another thread (export + preview). The file is looked at (stat)
+    // outside the lock and at most every kLutRecheckMs: every frame of every render thread asks, and a stat on a slow
+    // or unreachable network drive under the one lock held all of them up.
+    using Clock = std::chrono::steady_clock;
+    const auto now = Clock::now();
+    std::shared_future<LoadedLut> result;
     {
-        std::lock_guard<std::mutex> lock(mutex);
-        const auto it = cache.constFind(path);
-        if (it != cache.cend() && it->mtime == fi.lastModified() && it->size == fi.size()) {
-            result = it->result;
-        } else {
-            result = promise.get_future().share();
-            cache.insert(path, Entry{fi.lastModified(), fi.size(), result});
-            mine = true;
+        std::lock_guard<std::mutex> lock(g_lutMutex);
+        const auto it = g_luts.constFind(path);
+        if (it != g_luts.cend() && now - it->checked < std::chrono::milliseconds(kLutRecheckMs)) result = it->result;
+    }
+    if (!result.valid()) {
+        const QFileInfo fi(path);
+        const bool there = fi.exists();
+        const QDateTime mtime = there ? fi.lastModified() : QDateTime();
+        const qint64 size = there ? fi.size() : 0;
+        std::promise<LoadedLut> promise;
+        bool mine = false;
+        {
+            std::lock_guard<std::mutex> lock(g_lutMutex);
+            const auto it = g_luts.find(path);
+            if (it != g_luts.end()) {
+                const bool same = it->mtime == mtime && it->size == size;
+                // Not reachable now (a network drive gone, the file moved away): a LUT loaded before stays (one still
+                // being read is waited for)
+                const bool keep = !there
+                                  && (it->result.wait_for(std::chrono::seconds(0)) != std::future_status::ready
+                                      || it->result.get().lut);
+                if (same || keep) {
+                    it->checked = now;
+                    result = it->result;
+                }
+            }
+            if (!result.valid()) {
+                result = promise.get_future().share();
+                g_luts.insert(path, LutEntry{mtime, size, now, result});
+                mine = true;
+            }
+        }
+        if (mine) { // read outside the lock: other LUTs load meanwhile
+            LoadedLut loaded;
+            try {
+                loaded.lut = parseLut(path, &loaded.error);
+            } catch (...) { // out of memory: nobody may wait forever
+                loaded.error = QStringLiteral("zu wenig Speicher");
+            }
+            promise.set_value(loaded);
         }
     }
-    if (mine) { // read outside the lock: other LUTs load meanwhile
-        Loaded loaded;
-        try {
-            loaded.lut = parseLut(path, &loaded.error);
-        } catch (...) { // out of memory: nobody may wait forever
-            loaded.error = QStringLiteral("zu wenig Speicher");
-        }
-        promise.set_value(loaded);
-    }
-    const Loaded& loaded = result.get();
+    const LoadedLut& loaded = result.get();
     if (!loaded.lut && error) *error = loaded.error;
     return loaded.lut;
+}
+
+void revalidateLuts()
+{
+    std::lock_guard<std::mutex> lock(g_lutMutex);
+    for (LutEntry& e : g_luts) e.checked = {};
 }
 
 void prepare(Lut& lut) { lut.tables = makeTables(lut); }

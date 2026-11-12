@@ -38,6 +38,11 @@ public:
     // Existing proxies of the old quality stay on the disk (regenerate: generate() with withProxy(…, old size)).
     void setQuality(Quality q);
 
+    // The ffmpeg call that makes the proxy of `original` (output "-"), for tests; empty when none can be made
+    static QStringList proxyArguments(const QString& original, int maxSize);
+    // Filters an ffmpeg program lists (`ffmpeg -filters`), kept per file and modification time once listing worked
+    static QStringList programFilters(const QString& program);
+
     explicit ProxyManager(QObject* parent = nullptr);
     ~ProxyManager() override;
 

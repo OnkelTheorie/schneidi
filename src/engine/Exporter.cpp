@@ -10,6 +10,7 @@
 #include "core/TimelineOps.h"
 #include "engine/Bundle.h"
 #include "engine/ClipFormat.h"
+#include "engine/ColorGrade.h"
 #include "engine/ExportWriter.h"
 #include "engine/HardwareEncoders.h"
 #include "engine/MemoryRelease.h"
@@ -363,6 +364,7 @@ Exporter::~Exporter()
 bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error)
 {
     if (isRunning()) return false;
+    ColorGrade::revalidateLuts(); // a LUT file changed just before: the export uses it as it is now
     const int end = TimelineOps::endFrame(tl);
     m_from = std::clamp(s.from, 0, std::max(0, end - 1));
     const int to = s.to < 0 ? end - 1 : std::min(s.to, end - 1);

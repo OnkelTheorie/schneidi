@@ -50,6 +50,7 @@ struct Info {
     bool hasBFrames = false;
     int64_t duration = 0;         // container duration in AV_TIME_BASE units, < 0 if unknown
     QString codec;                // decoder name
+    int fieldOrder = 0;           // the stream's AVFieldOrder (0 unknown, 1 progressive, else interlaced)
 };
 
 struct Picture {
