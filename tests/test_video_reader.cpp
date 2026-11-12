@@ -5,6 +5,7 @@
 // - several threads asking one reader a little out of order (export workers, read-ahead)
 // - hardware decoding (if this machine has a device) = software decoding bit for bit (H.264, 10-bit HEVC)
 // - unused readers close their decoder after a pause and give the same pictures when asked again
+// - a reader opened ahead (Reader::prepare) is taken by the next open() of the file with the same decoder options
 // - a decoder that cannot be opened again (after a hardware failure) answers nothing at once, for good
 // - a gap in the timestamps of a variable-rate file (a picture held for 2 s) shows the held picture, not the next one
 // plus the frame properties the file states (size, rotation, colour standard and range, interlacing, alpha).
@@ -138,6 +139,33 @@ void testThreads(const Media& m, const QVector<QByteArray>& ref)
     for (auto& t : threads) t.join();
     Check::report(wrong == 0, qPrintable(m.name + ": 4 threads = in order"), __FILE__, __LINE__,
                   QString("%1 wrong pictures").arg(wrong.load()));
+}
+
+// Reader::prepare (the app's start with a project): the next open() with the same threads/hardware takes the reader
+// opened ahead - with the taker's other options - and gives the same pictures; other options open the file anew
+void testPrepared(const Media& m, const QVector<QByteArray>& ref)
+{
+    Video::Reader::Options o;
+    o.hardware = false;
+    Video::Reader::prepare(m.path, o);
+    CHECK_EQ(Video::Reader::preparedCount(), 1);
+    Video::Reader::Options other = o;
+    other.threads = 2;
+    auto fresh = Video::Reader::open(m.path, other);
+    CHECK(fresh);
+    CHECK_EQ(Video::Reader::preparedCount(), 1); // not taken: other threads
+    Video::Reader::Options taker = o;
+    taker.ahead = 3;
+    taker.keepBytes = 64 << 20;
+    auto r = Video::Reader::open(m.path, taker);
+    CHECK_EQ(Video::Reader::preparedCount(), 0);
+    if (!CHECK(r)) return;
+    int wrong = 0;
+    for (int pos : {0, m.frames / 2, 3, m.frames - 1})
+        if (const auto p = r->picture(pos); !p || p->position != pos || bytesOf(p->frame) != ref.value(pos)) ++wrong;
+    CHECK_EQ(wrong, 0);
+    auto again = Video::Reader::open(m.path, taker); // taken once only: this one opens the file
+    CHECK(again && again->picture(1));
 }
 
 // Hardware pictures = software pictures (H.264/HEVC decoding is bit exact)
@@ -502,6 +530,7 @@ int main(int argc, char** argv)
             continue;
         testSeeks(m, ref);
         if (m.name == "h264" || m.name == "hevc-10bit" || m.name == "prores") testThreads(m, ref);
+        if (m.name == "h264") testPrepared(m, ref);
         if (m.name == "long-gop") testBackwards(m, ref, m.frames - 1, 100);
     }
 

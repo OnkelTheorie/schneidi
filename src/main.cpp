@@ -25,6 +25,7 @@
 #include "engine/StorageThumbCache.h"
 #include "engine/FfmpegLog.h"
 #include "engine/picture/gpu/Gpu.h"
+#include "engine/video/Reader.h"
 
 #include <QApplication>
 #include <QAction>
@@ -38,6 +39,7 @@
 #include <QSettings>
 #include <QProcess>
 #include <QFileInfo>
+#include <QImageReader>
 #include <QRegularExpression>
 #include <QPointer>
 #include <QPushButton>
@@ -311,6 +313,31 @@ private:
     std::vector<std::pair<qint64, qint64>> m_stalls; // [from, to] in ms since main()
 };
 
+// Started with a project (a double-click on a .schneidi file) or media: the video files of the first picture open
+// on helper threads while the window is built (Video::Reader::prepare) - the picture engine takes them instead of
+// opening each file only once the window is up. The project is read once more here (a few ms).
+void prepareFirstPicture(const QStringList& files)
+{
+    QString project;
+    for (const QString& f : files)
+        if (f.endsWith(QString(".%1").arg(ProjectFile::Extension))) project = f;
+    QStringList videos;
+    if (!project.isEmpty()) {
+        ProjectData data;
+        QString error;
+        if (!ProjectFile::load(QFileInfo(project).absoluteFilePath(), &data, &error)) return;
+        for (const Track& t : data.timeline.video)
+            for (const Clip& c : t.hidden ? QVector<Clip>{} : t.clips)
+                if (c.kind == ClipKind::Media && c.enabled && !c.mediaPath.isEmpty() && c.start <= data.playhead
+                    && data.playhead < c.end() && !videos.contains(c.mediaPath))
+                    videos << c.mediaPath;
+    } else if (!files.isEmpty()) {
+        videos << QFileInfo(files.first()).absoluteFilePath(); // a new project of the clip, shown from its start
+    }
+    for (const QString& v : videos)
+        if (QImageReader::imageFormat(v).isEmpty()) Video::Reader::prepare(v); // stills are read another way
+}
+
 // Claude Code or Claude Desktop is on this computer, but not connected to schneidi: asked once on start (Cli::Setup
 // offer rules: at most a few times, two weeks apart, never after "don't ask again"). Waits while another dialog is open
 // (restore, tours).
@@ -474,8 +501,10 @@ int main(int argc, char* argv[])
     FrameView::warmUpGpu(); // while the window is built
     // Started with a project or media (a double-click on a .schneidi file): the video decoder opens beside the
     // window's setup; otherwise a while after the window settled (it costs video memory, wakes a laptop's card)
-    if (!LaunchArgs::files(app.arguments().mid(1)).isEmpty()) MainWindow::warmUpVideoDecoding();
-    else afterOpenAnimation([] { QTimer::singleShot(1500, qApp, [] { MainWindow::warmUpVideoDecoding(); }); });
+    if (const QStringList launchFiles = LaunchArgs::files(app.arguments().mid(1)); !launchFiles.isEmpty()) {
+        MainWindow::warmUpVideoDecoding();
+        if (screenshot.isEmpty()) prepareFirstPicture(launchFiles);
+    } else afterOpenAnimation([] { QTimer::singleShot(1500, qApp, [] { MainWindow::warmUpVideoDecoding(); }); });
     MainWindow w(&engine);
     StartupTrace::mark("MainWindow constructed");
     // Menu entries that map onto an edit op of the command layer ("Musik auf Länge…"): the user's own undo step

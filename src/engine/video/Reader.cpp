@@ -15,9 +15,12 @@ extern "C" {
 }
 
 #include <QDateTime>
+#include <QCoreApplication>
 #include <QFileInfo>
+#include <QThreadPool>
 
 #include <algorithm>
+#include <map>
 #include <atomic>
 #include <chrono>
 #include <climits>
@@ -1419,8 +1422,98 @@ std::optional<double> zeroOffset(const QString& path)
 Reader::Reader() : d(std::make_unique<Impl>()) {}
 Reader::~Reader() = default;
 
+namespace {
+
+// Reader::prepare: readers opened ahead, by path
+struct Prepared {
+    Reader::Options options;
+    bool done = false;    // opened (or failed: reader null)
+    bool taken = false;   // open() took it, or it expired: the helper thread lets go
+    std::unique_ptr<Reader> reader;
+};
+std::mutex g_preparedMutex;
+std::condition_variable g_preparedCv;
+std::multimap<QString, std::shared_ptr<Prepared>> g_prepared; // guarded by g_preparedMutex
+thread_local bool t_preparing = false; // the helper thread of prepare(): its open() never takes a prepared reader
+
+std::unique_ptr<Reader> takePrepared(const QString& path, const Reader::Options& options)
+{
+    std::unique_lock lock(g_preparedMutex);
+    auto [from, to] = g_prepared.equal_range(path);
+    for (auto it = from; it != to; ++it) {
+        const std::shared_ptr<Prepared> p = it->second;
+        if (p->options.threads != options.threads || p->options.hardware != options.hardware) continue;
+        g_prepared.erase(it);
+        g_preparedCv.wait(lock, [&p] { return p->done; });
+        p->taken = true;
+        g_preparedCv.notify_all();
+        return std::move(p->reader);
+    }
+    return nullptr;
+}
+
+} // namespace
+
+void Reader::prepare(const QString& path, const Options& options)
+{
+    static std::once_flag hooked;
+    std::call_once(hooked, [] {
+        // At the quit: nothing waits for its taker any more (the helper threads close their readers and end)
+        if (QCoreApplication* app = QCoreApplication::instance())
+            QObject::connect(app, &QCoreApplication::aboutToQuit, app, [] {
+                std::lock_guard lock(g_preparedMutex);
+                for (auto& [path, p] : g_prepared) p->taken = true;
+                g_prepared.clear();
+                g_preparedCv.notify_all();
+            });
+    });
+    auto p = std::make_shared<Prepared>();
+    p->options = options;
+    {
+        std::lock_guard lock(g_preparedMutex);
+        g_prepared.emplace(path, p);
+    }
+    // The global pool: waited for at exit, a driver call is never cut off halfway
+    QThreadPool::globalInstance()->start([path, options, p] {
+        t_preparing = true;
+        std::unique_ptr<Reader> reader = open(path, options);
+        t_preparing = false;
+        std::unique_lock lock(g_preparedMutex);
+        p->reader = std::move(reader);
+        p->done = true;
+        g_preparedCv.notify_all();
+        // Not taken in time: closed here (a proxy was used instead, the playhead moved...)
+        if (!g_preparedCv.wait_for(lock, std::chrono::milliseconds(kPreparedMs), [&p] { return p->taken; })) {
+            for (auto it = g_prepared.begin(); it != g_prepared.end(); ++it)
+                if (it->second == p) {
+                    g_prepared.erase(it);
+                    break;
+                }
+        }
+        reader = std::move(p->reader); // closed outside the lock
+        lock.unlock();
+    });
+}
+
+int Reader::preparedCount()
+{
+    std::lock_guard lock(g_preparedMutex);
+    return int(g_prepared.size());
+}
+
+void Reader::prepare(const QString& path)
+{
+    prepare(path, Options{});
+}
+
 std::unique_ptr<Reader> Reader::open(const QString& path, const Options& options, QString* error)
 {
+    if (std::unique_ptr<Reader> prepared = t_preparing ? nullptr : takePrepared(path, options)) {
+        // Before its decoding thread starts (the first picture()): the taker's windows and limits
+        std::lock_guard lock(prepared->d->m);
+        prepared->d->opt = options;
+        return prepared;
+    }
     std::unique_ptr<Reader> reader(new Reader);
     Impl& d = *reader->d;
     d.path = path.toUtf8();
