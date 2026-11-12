@@ -115,9 +115,6 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
 {
     setWindowTitle(appName());
     resize(1600, 950);
-    // The graphics card's decoder opens while the window is built (CUDA: 100-250 ms), not when the first picture of a
-    // project waits for it. Not without a screen (tests, --screenshot): nothing plays there.
-    if (QGuiApplication::platformName() != QLatin1String("offscreen")) Video::Hardware::warmUp();
     m_aiSettings = AiSettings::load(); // Settings › AI (MainWindowSettings.cpp)
     m_viewerRes = PreviewResolution::stored(PreviewResolution::Target::Viewer, m_engine->frameSize());
     m_monitorRes = PreviewResolution::stored(PreviewResolution::Target::Monitor, m_engine->frameSize());
@@ -557,8 +554,16 @@ void MainWindow::connectColorPage()
     if (m_tours) connect(m_colorPanel, &ColorPanel::tourRequested, m_tours, [this] { m_tours->start("color"); });
 }
 
+void MainWindow::warmUpVideoDecoding()
+{
+    // The graphics card's decoder (CUDA: 100-250 ms to open) opens beside the rest of the work, not when the first
+    // picture waits for it. Not without a screen (tests, --screenshot): nothing plays there.
+    if (QGuiApplication::platformName() != QLatin1String("offscreen")) Video::Hardware::warmUp();
+}
+
 void MainWindow::importFiles(const QStringList& paths, bool placeOnTimeline, bool adoptFormat)
 {
+    warmUpVideoDecoding();
     m_mediaPool->importFiles(paths);
     if (!placeOnTimeline) return;
     // Test helper (--demo): put files one after another on V1/A1; project format from the first clip without asking

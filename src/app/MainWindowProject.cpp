@@ -355,6 +355,7 @@ void MainWindow::openMediaAsProjectDialog()
 
 void MainWindow::openMediaAsProject(const QStringList& files)
 {
+    warmUpVideoDecoding();
     // Neutral, not the default start template: the clip decides the format, not a template's fixed 9:16
     startProject(StartTemplates::find(StartTemplates::NeutralId).value_or(StartTemplates::builtIn().value(0)));
     QStringList paths;
@@ -426,6 +427,7 @@ void MainWindow::saveEffectPreset()
 bool MainWindow::openProject(const QString& path)
 {
     OpenTrace::begin();
+    warmUpVideoDecoding();
     ProjectData data;
     QString error, warning;
     if (!ProjectFile::load(path, &data, &error, &warning)) {
@@ -524,6 +526,8 @@ bool MainWindow::applyLoaded(ProjectData data, const QString& path, bool ask)
     // (currentSequenceChanged) has nothing to keep of the old project's and must not seek the engine, which still
     // has the old timeline - it drew the old project's picture once more before the new one
     m_shownSequence = data.currentSequence;
+    m_sequenceView.clear(); // the old project's (same ids): restoreViews sets the new ones
+    m_sequencePos.clear();
     m_project->load(data);
     OpenTrace::mark("project loaded (signals handled)");
     if (relinked > 0) m_project->markModified(); // new paths are only in the file after saving
@@ -531,6 +535,7 @@ bool MainWindow::applyLoaded(ProjectData data, const QString& path, bool ask)
     // The new timeline reaches the picture engine now, not after the edit debounce (m_engineTimer): its first frame
     // renders while the window paints, instead of the old project's picture being shown first
     m_engineTimer.stop();
+    m_engine->setLoadPosition(data.playhead);
     m_engine->updateTimeline(previewTimeline());
     OpenTrace::timelineSent();
     updateRenderCacheBar();

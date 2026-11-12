@@ -5,7 +5,8 @@
 // first frame, "usable" (both shown and the event loop idle) and the longest GUI-thread stall of the next 3 s.
 // SCHNEIDI_OPEN_TRACE=2 quits after that report (measuring runs); =3 opens the same project once more first, the
 // File › Open path into a running app (SCHNEIDI_OPEN_TRACE_NEXT=<file>: that project instead), and quits after its
-// report. Off: one cached flag test per mark.
+// report. Off: one cached flag test per mark. The times include modal dialogs of the open (missing media, trust):
+// measure with projects that ask nothing.
 
 #include <QAbstractEventDispatcher>
 #include <QCoreApplication>
@@ -71,6 +72,10 @@ public:
         connect(&m_beat, &QTimer::timeout, this, [this] {
             if (m_usable) m_maxStall = std::max(m_maxStall, m_busy.elapsed() - 5);
             m_busy.start();
+        });
+        // An open that never becomes usable (failed, replaced by another one, no frame with a picture): not kept
+        QTimer::singleShot(30000, this, [this] {
+            if (!m_usable) deleteLater();
         });
     }
     // A frame leaves the engine: of the new timeline only once the engine has it (OpenTrace::timelineSent); queued

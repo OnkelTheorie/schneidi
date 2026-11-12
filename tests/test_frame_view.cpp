@@ -26,6 +26,8 @@
 #include <QGuiApplication>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QProcess>
+#include <QSettings>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QToolButton>
@@ -80,6 +82,77 @@ void send(QWidget* w, QEvent::Type type, QPointF pos, Qt::MouseButton button, Qt
 {
     QMouseEvent e(type, pos, w->mapToGlobal(pos), button, buttons, Qt::NoModifier);
     QApplication::sendEvent(w, &e);
+}
+
+// The viewer's API on Linux/BSD: the environment, then the setting (Vulkan opted in, OpenGL after a Vulkan failure),
+// else OpenGL
+void testApiChoice()
+{
+    CHECK(!FrameView::preferVulkan("", "", "xcb", true)); // OpenGL by default (zero-copy display planned)
+    CHECK(!FrameView::preferVulkan("", "", "wayland", true));
+    CHECK(FrameView::preferVulkan("", "vulkan", "xcb", true)); // opted in
+    CHECK(!FrameView::preferVulkan("", "", "xcb", false));    // Qt or the build without Vulkan
+    CHECK(!FrameView::preferVulkan("", "opengl", "xcb", true)); // Vulkan failed here once
+    CHECK(FrameView::preferVulkan("vulkan", "opengl", "xcb", true)); // the environment wins
+    CHECK(!FrameView::preferVulkan("OpenGL", "", "xcb", true));
+    CHECK(FrameView::preferVulkan("", "vulkan", "wayland", true));
+    CHECK(!FrameView::preferVulkan("vulkan", "", "xcb", false)); // never without it
+}
+
+// X11 start (FRAME_VIEW_PLATFORM=xcb under Xvfb, SCHNEIDI_VIEWER=gpu for its software device), in a process of its own
+// per API (the API is decided once per run): views of the stored check paint with the painter until the shown window
+// is switched to GPU composition in place, and end on the GPU - also one made between prepareWindow and the switch
+// (it switches with the others instead of finding no QRhi). "vulkan" (opt-in) where this machine has no usable Vulkan:
+// OpenGL in the same run, never a window without a picture.
+void testDeferredAttach(const QString& api)
+{
+    QSettings().setValue("viewer/gpuCheck", "1|0|Test GPU");
+    FrameView::setUseCachedGpuCheck(true);
+    FrameView::warmUpGpu(true);
+    QWidget window;
+    window.resize(640, 360);
+    auto* first = new FrameView(&window);
+    first->setGeometry(0, 0, 320, 360);
+    if (!CHECK(first->surfaceDeferred())) return;
+    FrameView::prepareWindow(&window);
+    if (api == "opengl") CHECK(!FrameView::composesWithVulkan());
+    qInfo("deferred attach, %s asked: %s", qPrintable(api), FrameView::composesWithVulkan() ? "Vulkan" : "OpenGL");
+    window.show();
+    if (!CHECK(QTest::qWaitForWindowExposed(&window))) return;
+    auto* later = new FrameView(&window);
+    later->setGeometry(320, 0, 320, 360);
+    later->show();
+    CHECK(later->surfaceDeferred());
+    CHECK(first->backend() == FrameView::Backend::Rhi);
+    CHECK(!first->gpuSurfaceReady()); // the painter until the switch
+    FrameView::attachDeferredSurfaces();
+    for (FrameView* v : {first, later}) {
+        CHECK(!v->surfaceDeferred());
+        (void)QTest::qWaitFor([v] { return v->gpuSurfaceReady() || v->backend() != FrameView::Backend::Rhi; }, 10000);
+        CHECK(v->backend() == FrameView::Backend::Rhi);
+        CHECK(v->gpuSurfaceReady());
+    }
+    FrameView::checkCachedGpu(); // answered by the start's check or the window's QRhi
+    CHECK(!QSettings().value("viewer/gpuCheck").toString().isEmpty());
+    for (const char* key : {"viewer/gpuCheck", "viewer/gpuApi", "viewer/vulkanCheckRunning"}) QSettings().remove(key);
+    FrameView::setUseCachedGpuCheck(false);
+}
+
+// Both APIs, each in a child process of this test (xcb only)
+void testDeferredAttachBothApis(const char* self)
+{
+    if (QGuiApplication::platformName() != QLatin1String("xcb")) return;
+    for (const QString api : {QStringLiteral("opengl"), QStringLiteral("vulkan")}) {
+        QProcess child;
+        child.setProcessChannelMode(QProcess::MergedChannels);
+        child.start(QString::fromLocal8Bit(self), {"--deferred-attach", api});
+        const bool done = child.waitForFinished(60000);
+        const QByteArray out = child.readAll();
+        if (!Check::report(done && child.exitStatus() == QProcess::NormalExit && child.exitCode() == 0,
+                           qPrintable("deferred attach with " + api), __FILE__, __LINE__, QString::fromLocal8Bit(out)))
+            continue;
+        qInfo().noquote() << out.trimmed();
+    }
 }
 
 void testChoice()
@@ -417,8 +490,16 @@ int main(int argc, char** argv)
     Check::initEnv();
     // FRAME_VIEW_PLATFORM=xcb under Xvfb: the GPU path (with SCHNEIDI_VIEWER=gpu on a software device)
     if (qEnvironmentVariableIsSet("FRAME_VIEW_PLATFORM")) qputenv("QT_QPA_PLATFORM", qgetenv("FRAME_VIEW_PLATFORM"));
+    // The child of testDeferredAttachBothApis: the X11 start with one API (decided once per process)
+    const bool attachChild = argc >= 3 && qstrcmp(argv[1], "--deferred-attach") == 0;
+    if (attachChild) qputenv("SCHNEIDI_VIEWER_API", argv[2]);
     QApplication app(argc, argv);
     Check::initApp("frame-view");
+    if (attachChild) {
+        testDeferredAttach(QString::fromLocal8Bit(argv[2]));
+        return Check::result();
+    }
+    testDeferredAttachBothApis(argv[0]);
     qInfo().noquote() << "FrameView backend:" << (FrameView().backend() == FrameView::Backend::Rhi ? "rhi" : "painter")
                       << FrameView().backendInfo();
     if (const int frames = qEnvironmentVariableIntValue("FRAME_VIEW_BENCH"); frames > 0) {
@@ -426,6 +507,7 @@ int main(int argc, char** argv)
         return 0;
     }
     testChoice();
+    testApiChoice();
     testGeometry();
     testOverlayAndMouse();
     testDrawing();

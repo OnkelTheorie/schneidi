@@ -50,6 +50,12 @@ public:
     static Backend chooseBackend(const QString& env, const QString& setting, const QString& platform, bool rhiCompiled,
                                  const std::function<Probe()>& probe, QString* why = nullptr);
     static bool rhiCompiled();
+    // Linux/BSD: does the GPU view compose through Vulkan rather than OpenGL. `env`: SCHNEIDI_VIEWER_API ("vulkan" or
+    // "opengl"), `setting`: viewer/gpuApi ("vulkan" opts in, "opengl" once Vulkan failed here), `platform`:
+    // QGuiApplication::platformName(), `vulkanBuilt`: Qt and the build have Vulkan. Default OpenGL (the planned
+    // zero-copy display wraps the picture engine's GL textures); Vulkan is experimental, opt-in only - a Vulkan device
+    // is cheaper to make than an OpenGL context with the NVIDIA driver and does not stall the window system.
+    static bool preferVulkan(const QString& env, const QString& setting, const QString& platform, bool vulkanBuilt);
     // The app's start: views take the previous run's GPU check (settings) instead of making a device to check now;
     // checkCachedGpu() checks for real after the window is up (a device that went away: the painter) and stores the
     // answer for the next start. Without a stored check (first start) the view checks right away as always. The
@@ -59,15 +65,25 @@ public:
     // Took the stored check, the real one is still to come (tests)
     bool gpuPending() const { return m_gpuPending; }
     // The app's start on X11: a GPU view that took the stored check paints with the painter until the window is on
-    // screen and makes its GPU surface then (attachDeferredSurfaces) - setting up the window's OpenGL composition
-    // (two GL contexts, ~300 ms with the NVIDIA driver) no longer delays the first picture. prepareWindow() before
-    // the window's first show() creates it as an OpenGL window already (only the native window type, no context):
+    // screen and makes its GPU surface then (attachDeferredSurfaces) - setting up the window's GPU composition
+    // (OpenGL: two GL contexts, ~300 ms with the NVIDIA driver) no longer delays the first picture. prepareWindow()
+    // before the window's first show() creates it as a GPU window already (only the native window type, no device):
     // Qt then switches the shown window to GPU composition in place instead of destroying and re-creating it (a
     // flash, and the maximized state). Other platforms make the surface right away as before.
     static void prepareWindow(QWidget* window);
     static void attachDeferredSurfaces();
+    // The app's start, before the window is built: GPU setup that can run on a helper thread meanwhile (Vulkan's
+    // drivers and a first device); nothing when views will not use the GPU
+    // `openGl`: the OpenGL check too (the app: after the window's open animation; Vulkan's runs at once)
+    static void warmUpGpu(bool openGl);
+    // Calls `then` (GUI thread) once warmUpGpu()'s check is made (at most ~3 s from now)
+    static void whenGpuChecked(std::function<void()> then, int waited = 0);
+    // GPU views compose through Vulkan in this run (preferVulkan; false after a Vulkan failure or without RHI)
+    static bool composesWithVulkan();
     // Waits for attachDeferredSurfaces (tests)
     bool surfaceDeferred() const;
+    // The GPU surface exists and has its QRhi (it rendered at least once; tests)
+    bool gpuSurfaceReady() const;
 
     // The frame to show (implicitly shared, no copy). Its pixel size may be smaller than the project frame (preview
     // scale): the zoom refers to frameSize()

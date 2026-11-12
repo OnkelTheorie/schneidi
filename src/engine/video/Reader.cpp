@@ -15,9 +15,12 @@ extern "C" {
 }
 
 #include <QDateTime>
+#include <QCoreApplication>
 #include <QFileInfo>
+#include <QThreadPool>
 
 #include <algorithm>
+#include <map>
 #include <atomic>
 #include <chrono>
 #include <climits>
@@ -1430,8 +1433,153 @@ std::optional<double> zeroOffset(const QString& path)
 Reader::Reader() : d(std::make_unique<Impl>()) {}
 Reader::~Reader() = default;
 
+namespace {
+
+// Reader::prepare: readers opened ahead, by path. No thread waits for a taker: the open runs as one pool job, a reader
+// not taken in time is closed by the next prepare()/open()/dropPrepared() that finds it expired.
+struct Prepared {
+    enum class State { Queued, Opening, Done, Cancelled };
+    Reader::Options options;
+    State state = State::Queued;
+    std::chrono::steady_clock::time_point since = std::chrono::steady_clock::now();
+    std::unique_ptr<Reader> reader; // Done: the reader (null: the file did not open)
+};
+std::mutex g_preparedMutex;
+std::condition_variable g_preparedCv;
+std::multimap<QString, std::shared_ptr<Prepared>> g_prepared; // guarded by g_preparedMutex
+thread_local bool t_preparing = false; // the job of prepare(): its open() never takes a prepared reader
+bool g_preparedQuit = false;           // the application quits: a job closes what it opened (guarded by the mutex)
+
+// Takes the expired ones (or all) out of g_prepared (lock held): their readers, to be closed outside the lock. A queued
+// one is cancelled (its job does nothing), one being opened is left to its job (expired once it is done)
+std::vector<std::unique_ptr<Reader>> takeExpired(bool all)
+{
+    std::vector<std::unique_ptr<Reader>> out;
+    const auto now = std::chrono::steady_clock::now();
+    for (auto it = g_prepared.begin(); it != g_prepared.end();) {
+        Prepared& p = *it->second;
+        const bool expired = all || now - p.since > std::chrono::milliseconds(Reader::kPreparedMs);
+        if (expired && p.state != Prepared::State::Opening) {
+            if (p.state == Prepared::State::Queued) p.state = Prepared::State::Cancelled;
+            out.push_back(std::move(p.reader));
+            it = g_prepared.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    return out;
+}
+
+std::unique_ptr<Reader> takePrepared(const QString& path, const Reader::Options& options)
+{
+    std::vector<std::unique_ptr<Reader>> expired;
+    std::unique_ptr<Reader> taken;
+    {
+        std::unique_lock lock(g_preparedMutex);
+        if (g_prepared.empty()) return nullptr;
+        expired = takeExpired(false);
+        auto [from, to] = g_prepared.equal_range(path);
+        for (auto it = from; it != to; ++it) {
+            const std::shared_ptr<Prepared> p = it->second;
+            // The same decoder (threads, hardware) and the same kind of user: a preview's reader (seek window,
+            // steps back) is not given to a thumbnail's
+            if (p->options.threads != options.threads || p->options.hardware != options.hardware
+                || p->options.autoBackward != options.autoBackward
+                || (p->options.keepBytes > 0) != (options.keepBytes > 0))
+                continue;
+            g_prepared.erase(it);
+            // Its job has not started (few cores, a busy pool): cancelled, the caller opens the file itself now
+            if (p->state == Prepared::State::Queued) {
+                p->state = Prepared::State::Cancelled;
+                break;
+            }
+            // Being opened: that is sooner than opening it once more
+            g_preparedCv.wait(lock, [&p] { return p->state == Prepared::State::Done; });
+            taken = std::move(p->reader);
+            break;
+        }
+    }
+    return taken; // `expired` closes outside the lock
+}
+
+} // namespace
+
+void Reader::prepare(const QString& path, const Options& options)
+{
+    static std::once_flag hooked;
+    std::call_once(hooked, [] {
+        // At the quit: nothing is kept for a taker any more
+        if (QCoreApplication* app = QCoreApplication::instance())
+            QObject::connect(app, &QCoreApplication::aboutToQuit, app, [] {
+                {
+                    std::lock_guard lock(g_preparedMutex);
+                    g_preparedQuit = true;
+                }
+                dropPrepared();
+            });
+    });
+    auto p = std::make_shared<Prepared>();
+    p->options = options;
+    std::vector<std::unique_ptr<Reader>> expired;
+    {
+        std::lock_guard lock(g_preparedMutex);
+        expired = takeExpired(false);
+        g_prepared.emplace(path, p);
+    }
+    // One pool job that only opens (waited for at exit: a driver call is never cut off halfway)
+    QThreadPool::globalInstance()->start([path, options, p] {
+        {
+            std::lock_guard lock(g_preparedMutex);
+            if (p->state == Prepared::State::Cancelled) return;
+            p->state = Prepared::State::Opening;
+        }
+        t_preparing = true;
+        std::unique_ptr<Reader> reader = open(path, options);
+        t_preparing = false;
+        {
+            std::lock_guard lock(g_preparedMutex);
+            if (!g_preparedQuit) p->reader = std::move(reader); // else closed here, below
+            p->state = Prepared::State::Done;
+            p->since = std::chrono::steady_clock::now(); // kept kPreparedMs from now on
+            if (g_preparedQuit)
+                for (auto it = g_prepared.begin(); it != g_prepared.end(); ++it)
+                    if (it->second == p) {
+                        g_prepared.erase(it);
+                        break;
+                    }
+        }
+        g_preparedCv.notify_all();
+    });
+}
+
+void Reader::dropPrepared()
+{
+    std::vector<std::unique_ptr<Reader>> readers;
+    {
+        std::lock_guard lock(g_preparedMutex);
+        readers = takeExpired(true);
+    }
+}
+
+int Reader::preparedCount()
+{
+    std::lock_guard lock(g_preparedMutex);
+    return int(g_prepared.size());
+}
+
+void Reader::prepare(const QString& path)
+{
+    prepare(path, Options{});
+}
+
 std::unique_ptr<Reader> Reader::open(const QString& path, const Options& options, QString* error)
 {
+    if (std::unique_ptr<Reader> prepared = t_preparing ? nullptr : takePrepared(path, options)) {
+        // Before its decoding thread starts (the first picture()): the taker's windows and limits
+        std::lock_guard lock(prepared->d->m);
+        prepared->d->opt = options;
+        return prepared;
+    }
     std::unique_ptr<Reader> reader(new Reader);
     Impl& d = *reader->d;
     d.path = path.toUtf8();

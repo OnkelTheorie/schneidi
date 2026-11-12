@@ -62,6 +62,8 @@ public:
     ~MainWindow() override;
     // placeOnTimeline (test helper --demo): one after another on V1/A1; adoptFormat = project format from the first clip
     void importFiles(const QStringList& paths, bool placeOnTimeline = false, bool adoptFormat = true);
+    // Opens the graphics card's video decoder in the background (Video::Hardware::warmUp): there is video to show
+    static void warmUpVideoDecoding();
     // Workspace › Brand Kit…: the dialog; the result is saved and applied to the open project (one undo step)
     void editBrandKit();
     // Timeline of another editor (FCP7 XML, OTIO, EDL) as a new timeline; false = not readable (message shown)
