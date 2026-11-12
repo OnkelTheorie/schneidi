@@ -442,6 +442,7 @@ void testCliOp(const QString& dir)
     QFile in2(path);
     CHECK(in2.open(QIODevice::ReadOnly));
     CHECK(ProjectFile::fromJson(in2.readAll(), path, &back, nullptr));
+    in2.close(); // Windows: an open file cannot be replaced by the next save (SAVE_FAILED)
     if (CHECK_EQ(back.timeline.subtitles.size(), 2)) {
         const SubtitleTrack& t = back.timeline.subtitles[1];
         CHECK(t.captions.mode == CaptionMode::Word);
@@ -452,7 +453,7 @@ void testCliOp(const QString& dir)
     }
     // Track op: change the mode afterwards; a wrong mode is an error
     o = run({QJsonObject{{"op", "track"}, {"track", "ST2"}, {"captions", "karaoke"}, {"pop_ms", 0}}});
-    CHECK(!o.contains("error"));
+    if (!CHECK(!o.contains("error"))) std::fprintf(stderr, "       %s\n", qPrintable(o.value("error").toString()));
     o = run({QJsonObject{{"op", "track"}, {"track", "ST2"}, {"captions", "sparkle"}}});
     CHECK(o.value("error").toString().startsWith("BAD_ARGUMENT"));
 }
