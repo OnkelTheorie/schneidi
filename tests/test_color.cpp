@@ -300,6 +300,7 @@ void testRender(const QString& dir)
         Picture::Renderer lr(one(grade({{"lut", later}})), o);
         CHECK(diff(lr.render(10).toImage(), ref) < 0.5);
         CHECK(writeFile(later, cube(5, [](double& r, double& g, double& b) { r = 1 - r; g = 1 - g; b = 1 - b; })));
+        ColorGrade::revalidateLuts(); // (loadLut looks at a file at most every kLutRecheckMs; an export start: at once)
         const Rgb appeared = gray(lr.render(11).toImage());
         if (!CHECK(std::abs(appeared.r - (255 - g0.r)) < 6))
             std::printf("       LUT that appeared later: gray %.1f, expected %.1f\n", appeared.r, 255 - g0.r);
@@ -310,6 +311,7 @@ void testRender(const QString& dir)
             if (f.open(QIODevice::ReadWrite))
                 f.setFileTime(QDateTime::currentDateTime().addSecs(5), QFileDevice::FileModificationTime);
         }
+        ColorGrade::revalidateLuts();
         if (const double d = diff(lr.render(12).toImage(), ref); !CHECK(d < 1.0))
             std::printf("       overwritten LUT still applied: differs by %.3f\n", d);
     }

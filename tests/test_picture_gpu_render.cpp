@@ -10,6 +10,7 @@
 
 #include "core/CompGraph.h"
 #include "core/EffectRegistry.h"
+#include "engine/ColorGrade.h"
 #include "engine/OutputColor.h"
 #include "engine/picture/Renderer.h"
 #include "engine/picture/gpu/Gpu.h"
@@ -442,8 +443,10 @@ int main(int argc, char** argv)
         };
         const double missing = meanTo(2);
         CHECK(cubeFile(lutPath, 5, true));
+        ColorGrade::revalidateLuts(); // (loadLut looks at a file at most every kLutRecheckMs)
         const double appeared = meanTo(3);
         CHECK(cubeFile(lutPath, 3, false));
+        ColorGrade::revalidateLuts();
         const double overwritten = meanTo(4);
         std::printf("  changing LUT: missing %.2f, appeared (invert) %.2f, overwritten (identity) %.2f\n", missing,
                     appeared, overwritten);

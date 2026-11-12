@@ -27,6 +27,7 @@
 #include <cmath>
 
 extern "C" {
+#include <libavcodec/defs.h>
 #include <libavutil/frame.h>
 }
 
@@ -211,6 +212,66 @@ void testInterlaced(const QString& dir)
     CHECK_EQ(blended, 0);
 }
 
+// The deinterlacer gets the field shown first (parity tff/bff) as the decoder flags the pictures, else as the stream
+// states it; a progressive source gets none. A bottom-first H.264 in MP4 states TT (the parser's guess) - only the
+// decoded pictures say bottom first; in MKV the ffmpeg program writes BT (FFmpeg's "bottom first")
+void testDeinterlaceArguments(const QString& dir)
+{
+    const auto make = [&](const QString& name, const QString& field) {
+        QString chain = "color=c=gray:size=352x288:rate=25:duration=0.4,format=yuv420p";
+        QStringList flags;
+        if (!field.isEmpty()) {
+            chain += ",tinterlace=mode=interleave_" + QString(field == "tff" ? "top" : "bottom") + ",setfield=" + field;
+            flags << "-flags" << "+ilme+ildct";
+        }
+        return Check::makeMedia(dir + "/" + name,
+                                QStringList{"-f", "lavfi", "-i", chain} + flags
+                                    + QStringList{"-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p"});
+    };
+    const QString progressive = make("progressive.mp4", {}), tff = make("tff.mkv", "tff"), bff = make("bff.mkv", "bff"),
+                  bffMp4 = make("bff.mp4", "bff");
+    if (!CHECK(!progressive.isEmpty() && !tff.isEmpty() && !bff.isEmpty() && !bffMp4.isEmpty())) return;
+    const auto filter = [](const QString& original) {
+        const QStringList args = ProxyManager::proxyArguments(original, ProxyManager::kMaxSize);
+        const qsizetype vf = args.indexOf("-vf");
+        return vf >= 0 && vf + 1 < args.size() ? args[vf + 1] : QString("<no -vf>");
+    };
+    const QString p = filter(progressive), t = filter(tff), b = filter(bff), b4 = filter(bffMp4);
+    std::printf("proxy filters: progressive '%s'\n  tff '%s'\n  bff '%s'\n  bff mp4 '%s'\n", qPrintable(p.left(50)),
+                qPrintable(t.left(50)), qPrintable(b.left(50)), qPrintable(b4.left(50)));
+    CHECK(!p.contains("bwdif") && !p.contains("yadif"));
+    if (const auto r = Video::Reader::open(bff, {}); CHECK(r)) CHECK_EQ(r->info().fieldOrder, int(AV_FIELD_BT));
+    if (const auto r = Video::Reader::open(tff, {}); CHECK(r)) CHECK_EQ(r->info().fieldOrder, int(AV_FIELD_TB));
+    if (!t.contains("bwdif") && !t.contains("yadif")) {
+        std::printf("  (the ffmpeg program has no deinterlacer: parity not checked)\n");
+        return;
+    }
+    CHECK(t.contains("parity=tff"));
+    CHECK(b.contains("parity=bff"));
+    CHECK(b4.contains("parity=bff"));
+}
+
+// The filters of an ffmpeg program are kept only when listing them worked: a failed or timed-out `ffmpeg -filters`
+// (a scanner holding the file, a slow first start) left an empty list for the program's life - no deinterlacing
+void testProgramFiltersRetry(const QString& dir)
+{
+#ifdef Q_OS_UNIX
+    const QString marker = dir + "/ffmpeg-works", program = dir + "/fake-ffmpeg";
+    QFile f(program);
+    if (!CHECK(f.open(QIODevice::WriteOnly))) return;
+    f.write(QString("#!/bin/sh\n[ -f '%1' ] || exit 1\necho ' TSC bwdif             V->V       Deinterlace the input image.'\n")
+                .arg(marker)
+                .toUtf8());
+    f.close();
+    f.setPermissions(f.permissions() | QFileDevice::ExeOwner);
+    CHECK(ProxyManager::programFilters(program).isEmpty());
+    QFile(marker).open(QIODevice::WriteOnly);
+    CHECK(ProxyManager::programFilters(program).contains("bwdif"));
+#else
+    Q_UNUSED(dir);
+#endif
+}
+
 QString modeText(Viewer* viewer)
 {
     QApplication::processEvents(); // showsProxyChanged is queued
@@ -311,6 +372,8 @@ int main(int argc, char** argv)
     testSizes(tmp.path());
     testMainWindow(tmp.path());
     testInterlaced(tmp.path());
+    testDeinterlaceArguments(tmp.path());
+    testProgramFiltersRetry(tmp.path());
     QSettings().remove("proxy/quality");
     QDir(ProxyManager::cacheDir()).removeRecursively();
     return Check::result();

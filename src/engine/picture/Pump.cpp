@@ -134,8 +134,10 @@ struct Pump::Impl {
     void prune()
     {
         if (speed == 0) {
+            // A frame begun before forgetRecent is of the old picture: not the still (rendered again)
             for (auto it = frames.begin(); it != frames.end();)
-                it = it->first != next ? (++stats.skipped, frames.erase(it)) : std::next(it);
+                it = it->first != next || it->second.epoch != recentEpoch ? (++stats.skipped, frames.erase(it))
+                                                                          : std::next(it);
             return;
         }
         const int dir = direction();
@@ -577,7 +579,9 @@ void Pump::forgetRecent()
         gone.swap(d->recent);
         d->recentBytes = 0;
         ++d->recentEpoch;
+        d->prune(); // stopped: a still rendered before is drawn again
     }
+    d->wake.notify_all();
 }
 
 int64_t Pump::recentBudgetFor(const SystemMemory::Info& memory)

@@ -55,6 +55,7 @@ struct SourceInfo {
     double seconds = 0;
     int width = 0, height = 0; // the picture's pixels
     bool interlaced = false;
+    QString parity = QStringLiteral("auto"); // interlaced: the field shown first ("tff", "bff"; "auto": not known)
 };
 
 struct ProxyJob {
@@ -86,6 +87,22 @@ bool seeThrough(const AVFrame* f)
             if (a < opaque) return true;
     }
     return false;
+}
+
+// The parity (which field is shown first) a stream's AVFieldOrder states. libavcodec/defs.h documents TB as "top
+// coded first, bottom displayed first", but FFmpeg itself treats TB as top field first and BT as bottom first: the
+// ffmpeg program writes TB/BT for top/bottom-first pictures (fftools/ffmpeg_enc.c; a bottom-first H.264 in MKV reads
+// back as BT), the rawvideo, v210 and FFV1 decoders flag TB pictures top-first, the yuv4mpeg, AVI and MXF muxers
+// write TB as top-first. Files carry that meaning, so it is followed here. Not stated: "auto".
+const char* fieldParity(int fieldOrder)
+{
+    switch (fieldOrder) {
+    case AV_FIELD_TT:
+    case AV_FIELD_TB: return "tff";
+    case AV_FIELD_BB:
+    case AV_FIELD_BT: return "bff";
+    default: return "auto";
+    }
 }
 
 SourceInfo probeSource(const QString& path)
@@ -120,6 +137,15 @@ SourceInfo probeSource(const QString& path)
     } else if (const std::shared_ptr<const Video::Picture> first = reader->picture(0)) {
         s.interlaced = !first->progressive;
     }
+    // The field shown first: as the decoder flags the first picture, else as the stream states it. The decoder's
+    // flag goes first: H.264 in MP4/MOV/TS states the parser's guess (TT for a bottom-first stream without timing
+    // SEI), while the decoder knows the order from the fields' picture order counts.
+    if (s.interlaced) {
+        s.parity = fieldParity(in.fieldOrder);
+        if (const std::shared_ptr<const Video::Picture> first = reader->picture(0);
+            first && first->frame && (first->frame->flags & AV_FRAME_FLAG_INTERLACED))
+            s.parity = first->frame->flags & AV_FRAME_FLAG_TOP_FIELD_FIRST ? "tff" : "bff";
+    }
     s.decoder = in.codec;
     if (media) s.seconds = media->length / 25.0;
     else if (in.duration > 0) s.seconds = double(in.duration) / 1e6; // AV_TIME_BASE units
@@ -138,8 +164,10 @@ const char* ffColorspace(int cs)
     }
 }
 
-// Filters an ffmpeg program lists (`ffmpeg -filters`), cached per file and modification time
-QStringList programFilters(const QString& program)
+// Filters an ffmpeg program lists (`ffmpeg -filters`), cached per file and modification time. Only a listing that
+// worked is kept: a failed or timed-out one (a virus scanner holding the program, a slow first start) is tried again
+// next time instead of leaving the program without deinterlacing for the process's life.
+QStringList listFilters(const QString& program)
 {
     static std::mutex mutex;
     static QHash<QString, QStringList> cache;
@@ -152,15 +180,19 @@ QStringList programFilters(const QString& program)
     QProcess p;
     p.start(program, {"-hide_banner", "-nostdin", "-filters"});
     QStringList list;
-    if (p.waitForStarted(10000) && p.waitForFinished(20000) && p.exitStatus() == QProcess::NormalExit) {
+    if (p.waitForStarted(10000) && p.waitForFinished(20000) && p.exitStatus() == QProcess::NormalExit
+        && p.exitCode() == 0) {
         // " TSC bwdif             V->V       Deinterlace the input image."
         for (const QByteArray& line : p.readAllStandardOutput().split('\n')) {
             const QList<QByteArray> words = line.simplified().split(' ');
             if (words.size() >= 3 && words[0].size() == 3) list << QString::fromUtf8(words[1]);
         }
-    } else if (p.state() != QProcess::NotRunning) {
-        p.kill(); // our own process
-        p.waitForFinished(2000);
+    } else {
+        if (p.state() != QProcess::NotRunning) {
+            p.kill(); // our own process
+            p.waitForFinished(2000);
+        }
+        return list;
     }
     std::lock_guard lock(mutex);
     cache.insert(key, list);
@@ -169,12 +201,13 @@ QStringList programFilters(const QString& program)
 
 // The deinterlacer the ffmpeg program has: bwdif (sharper, fewer jaggies on edges), else yadif; empty = none.
 // One picture per frame (the proxy keeps the original's frame rate and frame count)
-QString deinterlaceFilter(const QString& program)
+QString deinterlaceFilter(const QString& program, const QString& parity)
 {
     if (!QFileInfo(program).isAbsolute()) return {};
-    const QStringList filters = programFilters(program);
-    if (filters.contains("bwdif")) return QStringLiteral("bwdif=mode=send_frame:parity=auto:deint=all");
-    if (filters.contains("yadif")) return QStringLiteral("yadif=mode=send_frame:parity=auto:deint=all");
+    const QStringList filters = listFilters(program);
+    const QString options = QString("=mode=send_frame:parity=%1:deint=all").arg(parity);
+    if (filters.contains("bwdif")) return "bwdif" + options;
+    if (filters.contains("yadif")) return "yadif" + options;
     return {};
 }
 
@@ -203,7 +236,7 @@ ProxyJob prepareJob(const QString& original, const QString& part, int maxSize)
     // Interlaced (DV, broadcast, camcorders): the two fields deinterlaced before scaling - scaled as one picture the
     // fields of two moments blend into combs and ghosts in the proxy (the original's preview draws field by field)
     if (info.interlaced) {
-        if (const QString deint = deinterlaceFilter(Bundle::tool("ffmpeg")); !deint.isEmpty())
+        if (const QString deint = deinterlaceFilter(Bundle::tool("ffmpeg"), info.parity); !deint.isEmpty())
             scale.prepend(deint + ',');
         else
             qWarning("Proxy of interlaced %s without deinterlacing: ffmpeg has neither bwdif nor yadif",
@@ -273,6 +306,13 @@ ProxyJob prepareJob(const QString& original, const QString& part, int maxSize)
 }
 
 } // namespace
+
+QStringList ProxyManager::proxyArguments(const QString& original, int maxSize)
+{
+    return prepareJob(original, QStringLiteral("-"), maxSize).args;
+}
+
+QStringList ProxyManager::programFilters(const QString& program) { return listFilters(program); }
 
 ProxyManager::ProxyManager(QObject* parent) : QObject(parent)
 {

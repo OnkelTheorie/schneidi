@@ -262,11 +262,13 @@ void testRobustness(const QString& dir)
             CHECK(f.open(QIODevice::ReadWrite) && f.setFileTime(mtime, QFileDevice::FileModificationTime));
         }
         err.clear();
+        ColorGrade::revalidateLuts(); // (looked at again now, not after kLutRecheckMs)
         CHECK(!ColorGrade::loadLut(p, &err) && !err.isEmpty());
         {
             QFile f(p);
             CHECK(f.open(QIODevice::ReadWrite) && f.setFileTime(mtime.addSecs(5), QFileDevice::FileModificationTime));
         }
+        ColorGrade::revalidateLuts();
         if (auto l = ColorGrade::loadLut(p, &err); CHECK(l)) CHECK(isInvert(l.get()));
     }
 
@@ -289,6 +291,52 @@ void testRobustness(const QString& dir)
             CHECK(a && a == b);
         }
     }
+}
+
+// loadLut's cache: a LUT file is looked at again (stat) at most every ColorGrade::kLutRecheckMs per path, not on every
+// frame (the stat ran under the one lock of all LUTs: a slow network drive held up every render thread); a file that
+// cannot be reached any more keeps the LUT loaded before; revalidateLuts() makes the next load look at once.
+void testCacheRecheck(const QString& dir)
+{
+    const QString p = QDir(dir).filePath("recheck/look.cube");
+    CHECK(writeFile(p, cube(5, kInvert)));
+    ColorGrade::revalidateLuts();
+    const auto first = ColorGrade::loadLut(p);
+    CHECK(first && isInvert(first.get()));
+
+    // Overwritten (another size): within the interval the cached LUT stays, no stat per frame
+    CHECK(writeFile(p, cube(3, kIdent)));
+    CHECK(ColorGrade::loadLut(p) == first);
+    // ... after revalidateLuts (an export starts) the new file counts
+    ColorGrade::revalidateLuts();
+    const auto second = ColorGrade::loadLut(p);
+    CHECK(second && second != first && !isInvert(second.get()));
+
+    // The file cannot be reached (network drive gone, file moved away): the LUT loaded before stays
+    CHECK(QFile::rename(p, p + ".away"));
+    ColorGrade::revalidateLuts();
+    CHECK(ColorGrade::loadLut(p) == second);
+    // ... and once it is back with another content, that is loaded
+    CHECK(QFile::rename(p + ".away", p));
+    CHECK(writeFile(p, cube(5, kInvert)));
+    ColorGrade::revalidateLuts();
+    const auto third = ColorGrade::loadLut(p);
+    CHECK(third && third != second && isInvert(third.get()));
+
+    // A failure is not kept against a file that appears (failure -> success loads)
+    const QString later = QDir(dir).filePath("recheck/later.cube");
+    QString err;
+    CHECK(!ColorGrade::loadLut(later, &err) && !err.isEmpty());
+    CHECK(writeFile(later, cube(5, kInvert)));
+    ColorGrade::revalidateLuts();
+    const auto appeared = ColorGrade::loadLut(later);
+    CHECK(appeared && isInvert(appeared.get()));
+
+    // Without revalidateLuts the change is seen once the interval has passed
+    CHECK(writeFile(later, cube(3, kIdent)));
+    QTest::qWait(ColorGrade::kLutRecheckMs + 200);
+    const auto changed = ColorGrade::loadLut(later);
+    CHECK(changed && changed != appeared && !isInvert(changed.get()));
 }
 
 void testBuiltins()
@@ -460,6 +508,7 @@ int main(int argc, char** argv)
 
     testFormats(tmp.path());
     testRobustness(tmp.path());
+    testCacheRecheck(tmp.path());
     testBuiltins();
     testUserFolder(tmp.path());
     testWidget();

@@ -50,6 +50,15 @@ struct TestClock {
         std::lock_guard lock(m);
         running = false;
     }
+    // Stands still where it is now (a clock, not NaN: frames ahead stay due later and wait)
+    void freeze()
+    {
+        std::lock_guard lock(m);
+        if (!running) return;
+        start += speed * t.nsecsElapsed() / 1e9 * kFps;
+        speed = 0;
+        t.start();
+    }
     double now()
     {
         std::lock_guard lock(m);
@@ -498,27 +507,47 @@ void testForgetRecent()
     seen.take();
     clock.play(0, 1);
     pump.setSpeed(1, 0);
-    std::this_thread::sleep_for(600ms);
+    CHECK(waitFor([&] { return seen.count() >= 10; }, 3000));
+    // The clock stands: the frames rendered ahead (old picture) wait in the pump, not yet due
+    clock.freeze();
+    std::this_thread::sleep_for(60ms); // (the show thread shows what is due and waits; the workers fill ahead)
+    const auto played = seen.take();
+    if (!CHECK(!played.empty())) return;
+    const int64_t stop = played.back().position + 1; // rendered ahead with the old picture
     color = 20;
     pump.forgetRecent();
     CHECK_EQ(pump.stats().recentBytes, int64_t(0));
-    std::this_thread::sleep_for(300ms);
-    clock.stop();
-    const auto played = seen.take();
-    const int64_t stop = played.empty() ? 0 : played.back().position;
+    // Paused right there: the still is the new picture, not the frame rendered ahead before the change
     pump.setSpeed(0, stop);
-    std::this_thread::sleep_for(100ms);
-    seen.take();
-    // Every frame played (before and after the change) shows the new picture when stepped onto again
+    clock.stop();
+    int pausedColor = -1;
+    CHECK(waitFor(
+        [&] {
+            for (const Seen::Entry& e : seen.take())
+                if (e.position == stop) pausedColor = e.color;
+            return pausedColor >= 0;
+        },
+        2000));
+    if (!CHECK_EQ(pausedColor, 20)) std::printf("       paused on a frame rendered before the change\n");
+    // Every frame played (before and after the change, the pause position too) shows the new picture when stepped
+    // onto again
     int old = 0, steps = 0;
     const int recentBefore = pump.stats().recent;
-    for (const Seen::Entry& e : played) {
-        if (e.position == stop) continue;
-        pump.seek(e.position);
-        if (!CHECK(waitFor([&] { return seen.count() >= 1; }, 1000))) break;
-        std::this_thread::sleep_for(5ms);
-        for (const Seen::Entry& got : seen.take())
-            if (got.position == e.position && got.color != 20) ++old;
+    std::vector<int64_t> positions;
+    for (const Seen::Entry& e : played) positions.push_back(e.position);
+    positions.push_back(stop);
+    for (const int64_t at : positions) {
+        pump.seek(at);
+        int got = -1;
+        if (!CHECK(waitFor(
+                [&] {
+                    for (const Seen::Entry& e : seen.take())
+                        if (e.position == at) got = e.color;
+                    return got >= 0;
+                },
+                1000)))
+            break;
+        if (got != 20) ++old;
         ++steps;
     }
     const int fromRecent = pump.stats().recent - recentBefore;
