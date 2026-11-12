@@ -160,20 +160,20 @@ RAM in steps of 16 MB (the 2400G was measured in a Docker container, the 5600X i
 
 0.10 managed 3.6 frames/s on one core and 9 on two: 0.11 decodes the video itself. Decoding on the graphics card (NVIDIA, AMD/Intel via VA-API; here a GTX 1070 and the 2400G's built-in Vega 11) is on by default – with it one core is enough even on the 2400G. On a computer too slow for the originals, schneidi notices it during playback and offers to generate proxy media (also by hand: right-click a clip in the Media Pool › Generate Proxy Media). Playback › Clean Up Proxy Media… lists the proxy files no open or recent project needs (original deleted or changed, project gone) and frees their space. A few seconds after playback stops or an export ends, schneidi gives the memory it no longer needs back to the system (after a 1080p export about 1450 → 590 MB).
 
-**And on real weak hardware: a Raspberry Pi Zero 2 W** (4 × 1 GHz Cortex-A53, 512 MB RAM, Debian 13 ARM64, no hardware decoding; built from source, there is no ARM download yet). DaVinci Resolve, Premiere Pro and Final Cut Pro are not available for this computer at all. Material: 15 s of a 1080p60 gaming clip.
+**And on real weak hardware: a Raspberry Pi Zero 2 W** (4 × 1 GHz Cortex-A53, 512 MB RAM, Debian 13 ARM64, no hardware decoding; built from source, there is no ARM download yet; measured with 0.21.0). DaVinci Resolve, Premiere Pro and Final Cut Pro are not available for this computer at all. Material: 15 s of a 1080p60 gaming clip.
 
 | | Raspberry Pi Zero 2 W |
 |---|---|
-| Window visible | 6.5 s, 180 MB RAM |
-| Playback 720p30 original | 29 of 30 frames/s, sound in sync |
+| Window visible | 3.7 s, 108 MB RAM (222 MB with a 720p clip) |
+| Playback 720p30 original | 30 of 30 frames/s, sound in sync |
 | Playback 1080p60 original | 1 frame/s – the Pi cannot even decode it in real time |
-| Playback 1080p60 from proxies | 59 of 60 frames/s, sound in sync |
-| Jumping in the timeline, original → proxies | 2 s → 0.07 s |
-| Export 5 s of 720p (x264) | 82 s |
+| Playback 1080p60 from proxies | 56 of 60 frames/s over 10 s – a steady 60 from the third second on, sound in sync |
+| Jumping in the timeline, original → proxies | 2.4 s → 0.05 s |
+| Export 5 s of 720p (x264) | 56 s |
 
 ## Performance
 
-Measured, not estimated: the large 1080x1920 test project (27 clips, about 60 titles) renders in about 37 s with 1.5 GB of RAM since 0.15.0 (0.14.1: 59 s, 4.3 GB), an empty project starts in about 0.4 s, and a Raspberry Pi Zero 2 W with 415 MB of RAM opens the window in under 5 s. 8K footage is editable with proxies; 8K60 without proxies is not smooth. Every benchmark run on record, including the ones that got worse, is in [BENCHMARKS.md](BENCHMARKS.md).
+Measured, not estimated: the large 1080x1920 test project (27 clips, about 60 titles) renders in about 37 s with 1.5 GB of RAM since 0.15.0 (0.14.1: 59 s, 4.3 GB), an empty project starts in about 0.4 s, and a Raspberry Pi Zero 2 W with 415 MB of RAM opens the window in about 4 s. 8K footage is editable with proxies; 8K60 without proxies is not smooth. Every benchmark run on record, including the ones that got worse, is in [BENCHMARKS.md](BENCHMARKS.md).
 
 ## AI chat in the app
 
