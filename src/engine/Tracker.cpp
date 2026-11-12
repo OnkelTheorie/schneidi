@@ -125,6 +125,12 @@ void PointTracker::takeTemplate(const Gray& f, double x0, double y0, float mix)
     m_tNorm = std::sqrt(norm);
 }
 
+void PointTracker::relearn(const Gray& f, float mix)
+{
+    if (!valid() || f.width < m_tw || f.height < m_th || f.channels != m_channels) return;
+    takeTemplate(f, m_center.x() - m_tw / 2.0, m_center.y() - m_th / 2.0, std::clamp(mix, 0.0f, 1.0f));
+}
+
 double PointTracker::ncc(const Gray& f, int x0, int y0) const
 {
     // Weighted correlation; each channel of the template has zero weighted mean, so the picture's mean drops out of
@@ -313,6 +319,8 @@ bool QuadTracker::next(const Gray& f, int radius)
     int n = 0;
     for (int i = 0; i < 4; ++i) {
         prev[i] = m_points[size_t(i)].center();
+        // Searched where the last frame's movement carries it (a camera moving fast: the search window stays on it)
+        if (m_moved) m_points[size_t(i)].moveTo(prev[i] + m_step[i]);
         good[i] = m_points[size_t(i)].next(f, radius);
         now[i] = m_points[size_t(i)].center();
         n += good[i];
@@ -350,8 +358,14 @@ bool QuadTracker::next(const Gray& f, int radius)
         }
     }
     m_outliers = 4 - n;
+    // The four agree: the surface turns and grows under the templates (a camera walking up to a sign), so the points
+    // the others confirm learn their new look faster than a lone point may (it could learn what hides it). A match
+    // already weak (something in front) learns nothing
+    for (int i = 0; i < 4; ++i)
+        if (good[i] && n >= 3 && m_points[size_t(i)].score() >= kLearn) m_points[size_t(i)].relearn(f, kLearnMix);
     if (n < 2) {
         for (int i = 0; i < 4; ++i) m_points[size_t(i)].moveTo(prev[i]);
+        m_moved = false; // lost: no movement to go on from
         return false;
     }
     // The points not used follow the good ones
@@ -376,7 +390,9 @@ bool QuadTracker::next(const Gray& f, int radius)
     for (int i = 0; i < 4; ++i) {
         from[2 * i] = m_start[i].x(), from[2 * i + 1] = m_start[i].y();
         to[2 * i] = point(i).x(), to[2 * i + 1] = point(i).y();
+        m_step[i] = point(i) - prev[i];
     }
+    m_moved = true;
     Compose::Homography h;
     if (Compose::homography(from, to, &h)) m_h = h; // folded (a bad frame): the last one stays
     return true;

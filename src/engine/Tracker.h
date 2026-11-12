@@ -44,6 +44,9 @@ public:
     QPointF center() const { return m_center; }
     // Puts the point somewhere else without changing what it looks for (an outlier corrected by its partner)
     void moveTo(const QPointF& center) { m_center = center; }
+    // Takes in the picture at the current place into the template by `mix` (0..1): what it looks for changes (a
+    // surface seen from another angle)
+    void relearn(const Gray& frame, float mix);
     // Template update below the "good match" score: false = keep it (a partly hidden point must not learn the
     // occluder), true = follow faster (default: a background that changes)
     void setAdaptWhenUnsure(bool on) { m_adaptUnsure = on; }
@@ -124,6 +127,9 @@ public:
     }
     // A point further than this from where the other three put it is an outlier (pixels; at least kMinError)
     static constexpr double kMinError = 2.0, kErrorShare = 0.1; // share of the template side
+    // A point at least this good that the others confirm takes in its look of the frame by this share
+    static constexpr double kLearn = 0.6;
+    static constexpr float kLearnMix = 0.2f;
 
 private:
     std::vector<PointTracker> m_points;
@@ -131,6 +137,8 @@ private:
     Compose::Homography m_h;
     int m_outliers = 0;
     double m_tolerance = kMinError;
+    QPointF m_step[4]; // each point's movement in the last frame (where the next search starts)
+    bool m_moved = false;
 };
 
 // How much a w x h square around (x, y) of a picture has to hold on to: the smaller eigenvalue of its structure
