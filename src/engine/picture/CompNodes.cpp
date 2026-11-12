@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "engine/picture/CompNodes.h"
+#include "core/CompGraph.h"
 #include "core/CompTrack.h"
 
 #include <QHash>
@@ -28,6 +29,9 @@ const QVector<NodeType>& all()
         registerStyleNodes(out);
         registerCutoutNodes(out);
         registerText3dNodes(out);
+        // The time range (0.22): every kind with a picture output has one (text and 3D text with their fade)
+        for (NodeType& k : out)
+            if (k.output == Buf::Rgba && ::Comp::hasRange(k.id) && !k.param(QStringLiteral("from"))) k.params << rangeParams();
         return out;
     }();
     return kinds;

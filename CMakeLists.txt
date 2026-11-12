@@ -456,6 +456,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/ui/timeline/TimelineCurves.cpp
     src/ui/timeline/TimelinePaint.cpp
     src/ui/timeline/TimelineMouse.cpp
+    src/ui/timeline/TimelineNodes.cpp
     src/ui/timeline/TimelineDrop.cpp
     src/ui/timeline/TimelineMenus.cpp
     src/ui/timeline/TimelineSubtitles.cpp

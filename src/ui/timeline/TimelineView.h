@@ -163,6 +163,8 @@ signals:
     void soundDropRequested(const QByteArray& sound, int frame);
     // A compositing recipe from the Effects Library dropped onto video clip `clipId` (MainWindow applies it)
     void recipeDropped(int clipId, const QString& recipe);
+    // Double-click on a node's time range bar: open that node on the Comp page
+    void compNodeOpenRequested(int clipId, int node);
     // Right-click on a clip (it is selected then)
     void clipMenuRequested(const QPoint& globalPos);
     // Double-click on a subtitle: edit the text in the Inspector
@@ -217,7 +219,34 @@ private:
     };
     enum class Drag { None, Scrub, MaybeMove, Move, Trim, TrimEdit, Volume, TransitionLength, Fade, Keyframe,
                       CueMaybeMove, CueMove, CueTrim, SpeedPoint, CurvePoint, CurveHandle,
-                      TrackMaybeMove, TrackMove, Rubber, SectionEdge, Marks };
+                      TrackMaybeMove, TrackMove, Rubber, SectionEdge, Marks, NodeRange };
+    // Time ranges of compositing nodes (0.22, TimelineNodes.cpp): bars at the bottom of a clip with a graph
+    struct NodeBar {
+        int node = 0;
+        QString label;          // kind and text/file, translated
+        int first = 0, end = 0; // timeline frames, end exclusive (the dragged one: where it goes)
+        QRect rect;
+    };
+    struct NodeHit {
+        int clipId = 0;
+        int node = 0;
+        int part = 0; // -1 start edge, 0 the bar (moves), 1 end edge
+    };
+    // The bars of clip c drawn in r (at most 3); more = how many are left out ("+n"); dot = the mark of a clip too low
+    // for bars (empty = none)
+    QVector<NodeBar> nodeBars(const QRect& r, const Clip& c, int* more = nullptr, QRect* dot = nullptr) const;
+    void drawNodeBars(QPainter& p, const QRect& r, const Clip& c);
+    std::optional<NodeHit> nodeBarAt(const QPoint& pos) const;
+    QString nodeBarToolTip(const QPoint& pos) const;
+    int nodeSnapDelta(const QVector<int>& edges) const; // playhead, clip edges, markers; correction or 0
+    bool nodeBarPress(const QPoint& pos);               // starts a drag; false = no bar there
+    void nodeBarDrag(const QPoint& pos);
+    void nodeBarRelease();                              // one undo step (Editor::setCompNodeRange)
+    bool nodeBarDoubleClick(const QPoint& pos);         // compNodeOpenRequested
+    void setNodeHover(const QPoint& pos);
+    NodeHit m_nodeDrag, m_nodeHover;
+    int m_nodeStartFirst = 0, m_nodeStartEnd = 0; // the dragged bar at the press
+    int m_nodeFirst = 0, m_nodeEnd = 0;           // and now
     // Retime bar: speed point (point >= 0) or section (segment >= 0) under the mouse
     struct RetimeHit {
         int clipId = 0;

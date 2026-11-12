@@ -487,6 +487,8 @@ schneidi_test(test_comp_tracker_face)
 schneidi_test(test_comp_eval) # compositing evaluation (0.19 A): merge modes vs formula, graph = effect list bit-identical, comp_from, cache, unknown kinds
 schneidi_test(test_comp_follow) # tracker follow rule (0.19): followers relative to rx/ry, no jump when the analysis lands, transform/mask alike
 schneidi_test(test_comp_timeline) # comp graphs through timeline edits: media offset and text from/until follow cuts and head trims, slip keeps them, undo
+schneidi_test(test_comp_range) # time range of any node (0.22): from/until, engine passes a node out of range, cuts/trims, setCompNodeRange, CLI range/info/frames, timeline bars (ru, big font)
+target_link_libraries(test_comp_range PRIVATE schneidi_cli_lib)
 schneidi_test(test_comp_cli) # compositing through the CLI (0.19 G): ops comp/comp_from/node/track_node, keyframes comp.n<id>.<key>, effects kind nodes, frames at a node, comp checks, undo
 target_link_libraries(test_comp_cli PRIVATE schneidi_cli_lib)
 schneidi_test(test_comp_tracker_lost) # losing the tracked point (0.22): seen keys, lost modes bridge/hold/fade of masks and transforms, check tracker_lost/_ended, CLI

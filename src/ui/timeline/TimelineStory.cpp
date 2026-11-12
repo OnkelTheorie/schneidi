@@ -141,6 +141,7 @@ bool TimelineView::event(QEvent* e)
         QString tip = renderCacheToolTip(help->pos()); // the bar at the top of the ruler
         if (tip.isEmpty()) tip = storyToolTip(help->pos());
         if (tip.isEmpty()) tip = marksToolTip(markGrabAt(help->pos())); // In/Out: timecode and length
+        if (tip.isEmpty()) tip = nodeBarToolTip(help->pos()); // a compositing node's time range
         if (help->pos().x() < kHeaderW)
             if (const auto row = rowAt(help->pos().y()); row && micButton(*row).contains(help->pos()))
                 tip = T("Aufnahmebereit: die Aufnahmetaste nimmt auf dieser Spur auf (Rechtsklick: Eingang wählen)");

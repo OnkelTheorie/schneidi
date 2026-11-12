@@ -229,18 +229,28 @@ QVector<EffectParam> visibleRangeParams()
     };
 }
 
+QVector<EffectParam> rangeParams()
+{
+    return {
+        // Like visibleRangeParams, for a node that changes a picture (outside its range it hands its input on)
+        {"from", T("Wirkt ab"), {}, EffectParam::Double, 0.0, -36000.0, 36000.0, AnimParam::Count, 0.01, 2, {},
+         T("Sekunden ab Clipanfang, ab denen der Knoten wirkt; davor reicht er sein Bild unverändert weiter (Knopf „Hier“: der Abspielkopf)")},
+        {"until", T("Wirkt bis"), {}, EffectParam::Double, 0.0, -36000.0, 36000.0, AnimParam::Count, 0.01, 2, {},
+         T("Sekunden ab Clipanfang, bis zu denen der Knoten wirkt; 0 = bis zum Ende (Knopf „Hier“: der Abspielkopf)")},
+    };
+}
+
 double visibleWeight(const NodeCtx& ctx)
 {
-    const double from = std::max(0.0, ctx.num("from")), until = ctx.num("until");
-    if (until < 0) return 0.0;               // over before the clip's start (its head was trimmed or cut off)
-    if (from <= 0 && until <= 0) return 1.0; // the whole clip
-    const double s = ctx.t / std::max(1.0, ctx.fps), fade = std::max(0.0, ctx.num("fade"));
-    const double end = until > 0 ? until : 1e12;
-    if (s < from || s >= end || end <= from) return 0.0;
+    const double from = ctx.num("from"), until = ctx.num("until");
+    const double s = ctx.t / std::max(1.0, ctx.fps);
+    if (!::Comp::inRange(from, until, s)) return 0.0; // the shared rule (core/CompGraph.h), also for every other node
+    if (from <= 0 && until <= 0) return 1.0;          // the whole clip
+    const double fade = std::max(0.0, ctx.num("fade"));
     double w = 1.0;
     if (fade > 0) {
         if (from > 0) w = std::min(w, (s - from) / fade);
-        if (until > 0) w = std::min(w, (end - s) / fade);
+        if (until > 0) w = std::min(w, (until - s) / fade);
     }
     return std::clamp(w, 0.0, 1.0);
 }

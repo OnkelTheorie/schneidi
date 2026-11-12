@@ -322,6 +322,22 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
             if (applyRecipe({clipId}, recipe)) m_selection->set({clipId});
         });
     });
+    // Double-click on a node's time range bar: the node on the Comp page, the playhead inside its range
+    connect(tv, &TimelineView::compNodeOpenRequested, this, [this](int clipId, int node) {
+        openComp(clipId);
+        if (m_compPage) m_compPage->selectNode(node);
+        const Clip* c = TimelineOps::findClip(m_project->timeline(), clipId);
+        const EffectInstance* e = c ? EffectRegistry::instance(*c, Comp::kEffectId) : nullptr;
+        Comp::NodeRange r;
+        if (!e || !Comp::activeRange(*e, node, &r)) return;
+        int first = 0, end = 0;
+        Comp::rangeFrames(*c, r, m_project->format().rate.fps(), &first, &end);
+        const int at = m_timeline->view()->playhead();
+        if (first < end && (at < first || at >= end)) {
+            if (m_engine->mode() == Engine::Mode::Source) m_engine->showTimeline(first);
+            else m_engine->seek(first);
+        }
+    });
     // After the drop (the drag source waits until dropEvent returns; a message box there would block it)
     connect(tv, &TimelineView::soundDropRequested, this, [this](const QByteArray& sound, int frame) {
         QTimer::singleShot(0, this, [this, sound, frame] { placeSound(sound, frame); });

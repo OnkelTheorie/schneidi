@@ -872,7 +872,10 @@ struct Renderer::Impl {
         if (t_compCapture && t_compCapture->clip == &c && !t_compCapture->plan) {
             // The card evaluates the graph (its CPU nodes are evaluated and kept in the plan here); img stays
             QString why;
-            if ((t_compCapture->plan = Gpu::planComp(comp, env, &compCache, &why))) {
+            // Nodes outside their time range are out of the way here already (0.22): the card sees what works at t
+            EffectInstance active;
+            const bool ranged = Comp::activeGraph(comp, t, ctx.fps, &c, &active);
+            if ((t_compCapture->plan = Gpu::planComp(ranged ? active : comp, env, &compCache, &why))) {
                 img.px.swap(clip.px);
                 return true;
             }

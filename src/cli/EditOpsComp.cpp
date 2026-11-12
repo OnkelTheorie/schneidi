@@ -390,6 +390,35 @@ void opCompFrom(Session& s, const QJsonObject& op)
     s.notes << QJsonObject{{"comp_from", note}};
 }
 
+// {op:'node', clip, id, range:[from, to]}: the node works in timeline frames [from, to) of the clip (stored as seconds
+// from the clip's start, Comp::rangeValues); range:false = the whole clip again
+void opNodeRange(Session& s, const QJsonObject& op, const Clip& c, const CompNode& n)
+{
+    if (op.contains("params") || op.contains("out") || op.contains("link") || op.contains("unlink"))
+        fail("BAD_ARGUMENT", "node: give range alone (then params/out in another op)");
+    if (!::Comp::hasRange(n.type))
+        fail("BAD_ARGUMENT", QString("node %1 (%2) has no time range: masks and trackers work over the whole clip")
+                                 .arg(n.id).arg(n.type));
+    const double fps = s.format().rate.fps();
+    const QJsonValue v = op.value("range");
+    double from = 0, until = 0;
+    if (!(v.isNull() || (v.isBool() && !v.toBool()))) {
+        const QJsonArray r = v.toArray();
+        if (r.size() != 2)
+            fail("BAD_ARGUMENT", "node: range is [from, to] in timeline times (frames, \"4.5s\", timecode), to "
+                                 "exclusive; range:false = the whole clip");
+        const QJsonObject pair{{"from", r[0]}, {"to", r[1]}};
+        const int a = timeOf(s, pair, "from"), b = timeOf(s, pair, "to");
+        if (b <= a) fail("BAD_ARGUMENT", "node: range 'to' must be after 'from'");
+        if (a < c.start || b > c.end())
+            fail("BAD_ARGUMENT", QString("node %1: range must lie inside clip %2 (%3..%4, to exclusive), got %5..%6")
+                                     .arg(n.id).arg(c.id).arg(c.start).arg(c.end()).arg(a).arg(b));
+        ::Comp::rangeValues(c, a, b, fps, &from, &until);
+    }
+    QString err;
+    if (!s.editor.setCompNodeRange(c.id, n.id, from, until, &err)) fail("FAILED", err);
+}
+
 void opNode(Session& s, const QJsonObject& op)
 {
     const Clip& c = clipOf(s, op, "clip");
@@ -436,6 +465,10 @@ void opNode(Session& s, const QJsonObject& op)
     if (!n) fail("NOT_FOUND", QString("no node %1 in the graph of clip %2").arg(id).arg(clip));
     if (op.value("remove").toBool()) {
         done(s.editor.removeCompNode(clip, id, kKinds, &err));
+        return;
+    }
+    if (op.contains("range")) { // the time range in timeline times (0.22)
+        opNodeRange(s, op, c, *n);
         return;
     }
     // params and out:true together are one undo step
@@ -621,6 +654,11 @@ QJsonObject compJson(const EffectInstance& e, const ProjectFormat& f, const Clip
                             v[shown] = v.take(k);
             o["params"] = v;
         }
+        if (::Comp::NodeRange r; clip && ::Comp::activeRange(e, n.id, &r)) { // where it works (timeline frames)
+            int first = 0, end = 0;
+            ::Comp::rangeFrames(*clip, r, f.rate.fps(), &first, &end);
+            o["range"] = QJsonArray{first, end};
+        }
         if (!PC::find(n.type)) o["available"] = false; // a newer version's kind: passed through
         for (const char* key : {"e_chain", "e_code"}) // custom code not confirmed (core/CodeTrust.h): passed through
             if (!CodeTrust::isTrusted(values.value(n.id).value(QLatin1String(key)).toString())) o["untrusted"] = true;
@@ -783,10 +821,15 @@ void addCompOps(QVector<OpDef>& ops)
                  "input; a cycle or an input the type does not have is an error. params of an animated value (keyframes) "
                  "need at:<time>: a keyframe there (like the Inspector; other values just change). A mask kind (mask, matte) behind a "
                  "picture node is only added (link it into a merge's mask input). unlink takes the link from `from` "
-                 "(without input: the one it feeds). File values (media path, grade lut, text texture) must be "
+                 "(without input: the one it feeds). Time range: {op:'node', clip, id, range:[from, to]} (timeline times, to "
+                 "exclusive; range:false = the whole clip): the node works only there - outside, a node with a picture "
+                 "input hands it on unchanged (a merge shows its bg), a generator (text, media, color) shows nothing; "
+                 "stored as params from/until in seconds from the clip's start (params:{from:2, until:5.5} works too, "
+                 "until 0 = to the end), they follow cuts and trims. Masks and trackers have none. `info` gives each "
+                 "node's range in timeline frames. File values (media path, grade lut, text texture) must be "
                  "readable files; a lut also by name as in op 'look'. Example: blur only in a mask - "
                  R"({"op":"node","clip":4,"add":{"type":"blur","params":{"radius":12}}} then {"op":"node","clip":4,"add":{"type":"mask","params":{"shape":"ellipse"}},"input":false} and {"op":"node","clip":4,"link":[3,2,"mask"]}.)",
-                 opNode, QStringList{"id", "params", "remove", "link", "unlink", "out", "at"}}
+                 opNode, QStringList{"id", "params", "remove", "link", "unlink", "out", "at", "range"}}
         << OpDef{"track_node", "{op:'track_node', clip, node, from?, to?}",
                  "run a tracker node: follows its point(s) or a face over the clip; masks/transforms with follow:<id> "
                  "go along",

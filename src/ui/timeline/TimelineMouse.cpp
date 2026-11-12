@@ -261,6 +261,7 @@ void TimelineView::mousePressEvent(QMouseEvent* e)
         update();
         return;
     }
+    if (nodeBarPress(pos)) return; // a node's time range bar (moves, its ends trim it)
     // Retime controls: drag speed point, click on the speed opens the selection (like DaVinci ▾)
     if (m_tool == Tool::Select)
         if (const auto h = retimeHitAt(pos); h && (h->point >= 0 || !edgeAt(pos))) {
@@ -606,6 +607,9 @@ void TimelineView::dragMove(const QPoint& pos, Qt::KeyboardModifiers mods)
         }
         return;
     }
+    case Drag::NodeRange:
+        nodeBarDrag(pos);
+        return;
     case Drag::CurvePoint:
     case Drag::CurveHandle:
         curveMove(pos, mods);
@@ -703,6 +707,13 @@ void TimelineView::mouseReleaseEvent(QMouseEvent* e)
         updateHoverCursor(e->position().toPoint());
         return;
     }
+    if (m_drag == Drag::NodeRange) {
+        m_drag = Drag::None;
+        nodeBarRelease();
+        updateHoverCursor(e->position().toPoint());
+        update();
+        return;
+    }
     if (m_drag == Drag::Marks) {
         m_drag = Drag::None;
         marksRelease();
@@ -796,6 +807,7 @@ void TimelineView::mouseDoubleClickEvent(QMouseEvent* e)
         return;
     }
     if (e->button() == Qt::LeftButton && pos.x() >= kHeaderW && curveDoubleClick(pos)) return;
+    if (e->button() == Qt::LeftButton && nodeBarDoubleClick(pos)) return; // the node on the Comp page
     // Double-click on the track name: rename (like DaVinci)
     if (e->button() == Qt::LeftButton && pos.x() < kHeaderW && pos.y() >= kRulerH) {
         if (const auto row = rowAt(pos.y()); row && nameRect(*row).adjusted(-32, 0, 0, 0).contains(pos)) {

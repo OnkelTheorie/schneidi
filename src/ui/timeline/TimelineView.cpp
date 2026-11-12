@@ -515,6 +515,11 @@ void TimelineView::updateHoverCursor(const QPoint& pos)
         setCursor(Qt::PointingHandCursor);
         return;
     }
+    setNodeHover(pos);
+    if (const auto h = nodeBarAt(pos)) { // a node's time range: ends trim, the bar moves
+        setCursor(h->part ? Qt::SizeHorCursor : Qt::OpenHandCursor);
+        return;
+    }
     if (m_tool == Tool::Select) {
         if (const auto t = transitionAt(pos)) {
             if (m_hoverVolClip) {
