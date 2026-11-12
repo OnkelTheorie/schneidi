@@ -447,6 +447,7 @@ void CompCanvas::paintEvent(QPaintEvent*)
     }
     const double z = m_view.zoom;
     const Clip* clipPtr = TimelineOps::findClip(m_editor->project()->timeline(), m_clipId);
+    const double fps = m_editor->project()->timelineFormat().rate.fps();
     // Wires
     auto wire = [&](const QPointF& a, const QPointF& b, const QColor& col) {
         QPainterPath path(a);
@@ -486,8 +487,21 @@ void CompCanvas::paintEvent(QPaintEvent*)
                       n.id == m_selected || out ? 2 : 1));
         p.setBrush(Qt::NoBrush);
         p.drawPath(box);
+        // A tracker that lost its point carries a warning badge in its header (tooltip: where)
+        const bool lostBadge = clipPtr && !CompUi::trackerWarning(*clipPtr, n.id, fps).isEmpty();
+        if (lostBadge) {
+            const double d = (kHeader - 8) * z;
+            const QRectF badge(r.right() - 5 * z - d, r.top() + (kHeader * z - d) / 2, d, d);
+            p.setPen(Qt::NoPen);
+            p.setBrush(Theme::warning);
+            p.drawEllipse(badge);
+            p.setPen(Theme::readableOn(Theme::warning));
+            p.setFont(bold);
+            p.drawText(badge, Qt::AlignCenter, QStringLiteral("!"));
+            p.setBrush(Qt::NoBrush);
+        }
         p.setPen(Theme::text);
-        const QRectF titleRect(r.left() + 7 * z, r.top(), r.width() - 14 * z, kHeader * z);
+        const QRectF titleRect(r.left() + 7 * z, r.top(), r.width() - (lostBadge ? kHeader + 12 : 14) * z, kHeader * z);
         // A long name ("Alphamaske verfeinern 3", Russian names) in a smaller font first, cut off only below 75 %
         QFont title = bold;
         const QString name = CompUi::nodeName(n);
@@ -676,8 +690,14 @@ bool CompCanvas::event(QEvent* e)
         if (inputAt(h->pos(), &input)) text = CompUi::portHelp(input);
         else if (outputAt(h->pos())) text = T("Ausgang des Knotens: von hier zum Eingang eines anderen Knotens ziehen");
         else if (const int id = nodeAt(h->pos()))
-            if (const CompNode* n = m_graph.node(id))
+            if (const CompNode* n = m_graph.node(id)) {
                 if (const PC::NodeType* k = PC::find(n->type)) text = k->description;
+                // A tracker that lost its point: where first (its warning badge)
+                if (const Clip* c = TimelineOps::findClip(m_editor->project()->timeline(), m_clipId))
+                    if (const QString warn = CompUi::trackerWarning(*c, id, m_editor->project()->timelineFormat().rate.fps());
+                        !warn.isEmpty())
+                        text = warn + QStringLiteral("\n\n") + text;
+            }
         if (!text.isEmpty()) {
             QToolTip::showText(h->globalPos(), text, this);
             return true;
