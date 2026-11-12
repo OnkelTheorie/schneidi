@@ -394,6 +394,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/app/VoiceoverRecorder.h src/app/VoiceoverRecorder.cpp
     src/app/WatchFoldersDialog.h src/app/WatchFoldersDialog.cpp
     src/app/Log.h                 src/app/Log.cpp
+    src/app/HangWatch.h           src/app/HangWatch.cpp
     src/app/DisplayLoss.h         src/app/DisplayLoss.cpp
     src/app/CrashReport.h         src/app/CrashReport.cpp
 

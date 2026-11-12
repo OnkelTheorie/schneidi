@@ -5,6 +5,7 @@
 #include "app/InputBindings.h"
 #include "app/LaunchArgs.h"
 #include "app/Log.h"
+#include "app/HangWatch.h"
 #include "core/StartupTrace.h"
 #include "core/ProjectFile.h"
 #include "app/MainWindow.h"
@@ -468,6 +469,7 @@ int main(int argc, char* argv[])
     DisplayLoss::install(); // after the log: the display gone ends the program at once, logged (app/DisplayLoss.h)
     Extensions::cleanUp(); // old versions a running program held at its update
     CrashReport::install(); // after the log: attaches the previous run's log to its crash report
+    HangWatch::install(); // after the log: a GUI thread that stops answering for 3 s is logged with its call stack
     // Test aid: --lang <code> (en, de, fr, …) only applies to this run (the setting stays unchanged)
     I18n::install(langOverride);
 

@@ -5,23 +5,33 @@
 #include <QDateTime>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QStandardPaths>
 #include <QSysInfo>
 
 #include <algorithm>
+#include <atomic>
+#include <cstdlib>
 #include <mutex>
 
 namespace Log {
 namespace {
 
 constexpr int kKeep = 3; // schneidi.log, schneidi.1.log, schneidi.2.log
+constexpr int kKeptMax = 10; // logs/kept/
+// The last line of a run that ended normally (exit() or a return from main; not a crash, a kill, std::_Exit)
+constexpr const char* kEnded = "schneidi ended normally";
+constexpr const char* kEndedAfterHang = "schneidi ended normally after a hang";
+constexpr const char* kHangLevel = "HANG";
 
 std::mutex s_mutex;
 QFile s_file;
 QtMessageHandler s_previous = nullptr;
+std::atomic<bool> s_hung{false};
 
 void write(const char* level, const QString& text)
 {
+    if (qstrncmp(level, kHangLevel, 4) == 0) s_hung = true;
     const QByteArray line = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss.zzz ").toUtf8() + level + ' '
                             + text.trimmed().toUtf8() + '\n';
     std::lock_guard<std::mutex> lock(s_mutex);
@@ -40,6 +50,35 @@ void qtHandler(QtMsgType type, const QMessageLogContext& ctx, const QString& msg
     if (s_previous) s_previous(type, ctx, msg);
 }
 
+// The previous run's log (before the rotation): copied to logs/kept/ when it did not end normally or hung. Only its
+// end is read (the end line says both), at every start.
+void keepIfTroubled(const QDir& dir, const QString& path)
+{
+    QFile f(path);
+    if (!f.open(QIODevice::ReadOnly)) return;
+    const qint64 size = f.size();
+    if (size == 0) return;
+    f.seek(std::max<qint64>(0, size - 512));
+    const QByteArray tail = f.readAll();
+    f.seek(0);
+    const QByteArray first = f.readLine(64); // "yyyy-MM-dd HH:mm:ss.zzz ..." of its start
+    f.close();
+    const bool hung = tail.contains(kEndedAfterHang);
+    if (tail.contains(kEnded) && !hung) return;
+    const QDir kept(dir.filePath("kept"));
+    QDir().mkpath(kept.path());
+    QString stamp = QString::fromUtf8(first.left(19)).replace(' ', '_').replace(':', '-');
+    if (stamp.size() != 19) stamp = QFileInfo(path).lastModified().toString("yyyy-MM-dd_HH-mm-ss");
+    QFile::copy(path, kept.filePath(QString("schneidi-%1-%2.log").arg(stamp, hung ? "hang" : "unclean")));
+    QStringList files = kept.entryList({"schneidi-*.log"}, QDir::Files, QDir::Name);
+    while (files.size() > kKeptMax) QFile::remove(kept.filePath(files.takeFirst()));
+}
+
+void writeEnd()
+{
+    write("INFO ", s_hung ? kEndedAfterHang : kEnded);
+}
+
 } // namespace
 
 QString directory()
@@ -52,6 +91,11 @@ void install()
     const QDir dir(directory());
     QDir().mkpath(dir.path());
     const auto name = [&](int i) { return dir.filePath(i == 0 ? "schneidi.log" : QString("schneidi.%1.log").arg(i)); };
+    keepIfTroubled(dir, name(0));
+    {
+        std::lock_guard<std::mutex> lock(s_mutex);
+        if (s_file.isOpen()) s_file.close(); // installed again (tests)
+    }
     QFile::remove(name(kKeep - 1));
     for (int i = kKeep - 2; i >= 0; --i) QFile::rename(name(i), name(i + 1));
     s_file.setFileName(name(0));
@@ -61,6 +105,10 @@ void install()
     write("INFO ", QString("schneidi %1 gestartet (%2, Qt %3)")
                        .arg(QCoreApplication::applicationVersion(), QSysInfo::prettyProductName(), qVersion()));
     s_previous = qInstallMessageHandler(qtHandler);
+    // Registered after s_file/s_mutex exist: runs before their destructors
+    static bool once = false;
+    if (!once) std::atexit(writeEnd);
+    once = true;
 }
 
 void message(const char* level, const QString& text)
