@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <cstring>
 #include <memory>
 #include <thread>
 
@@ -54,7 +55,20 @@ void Lookahead::prepare(LookaheadFrame& f) const
         const uint8_t* r1 = f.y.data() + size_t(sy1) * width_;
         uint8_t* out = f.half.data() + size_t(y + kMargin) * stride + kMargin;
         const int inside = std::min(halfW_, width_ / 2); // both source columns inside the picture
-        for (int x = 0; x < inside; ++x)
+        int x = 0;
+#if defined(__SSE2__) || defined(_M_X64)
+        // Eight averages per step: even and odd samples of both rows as 16-bit sums (same numbers).
+        const __m128i lowByte = _mm_set1_epi16(0x00ff), two = _mm_set1_epi16(2);
+        for (; x + 8 <= inside; x += 8) {
+            const __m128i a = _mm_loadu_si128(reinterpret_cast<const __m128i*>(r0 + 2 * x));
+            const __m128i b = _mm_loadu_si128(reinterpret_cast<const __m128i*>(r1 + 2 * x));
+            const __m128i sum = _mm_add_epi16(_mm_add_epi16(_mm_and_si128(a, lowByte), _mm_srli_epi16(a, 8)),
+                                              _mm_add_epi16(_mm_and_si128(b, lowByte), _mm_srli_epi16(b, 8)));
+            _mm_storel_epi64(reinterpret_cast<__m128i*>(out + x),
+                             _mm_packus_epi16(_mm_srli_epi16(_mm_add_epi16(sum, two), 2), _mm_setzero_si128()));
+        }
+#endif
+        for (; x < inside; ++x)
             out[x] = uint8_t((r0[2 * x] + r0[2 * x + 1] + r1[2 * x] + r1[2 * x + 1] + 2) >> 2);
         for (int x = inside; x < halfW_; ++x) {
             const int sx0 = std::min(2 * x, width_ - 1), sx1 = std::min(2 * x + 1, width_ - 1);
@@ -83,7 +97,23 @@ void Lookahead::prepare(LookaheadFrame& f) const
             const uint8_t* rows[4];
             for (int dy = 0; dy < 4; ++dy)
                 rows[dy] = f.y.data() + size_t(std::min(y * 4 + dy, height_ - 1)) * width_;
-            for (int x = 0; x < inside; ++x) {
+            int x = 0;
+#if defined(__SSE2__) || defined(_M_X64)
+            // Four thumbnail samples per step: 16-bit sums of the four rows, then of four neighbours.
+            const __m128i lowByte = _mm_set1_epi16(0x00ff), ones = _mm_set1_epi16(1), eight = _mm_set1_epi32(8);
+            for (; x + 4 <= inside; x += 4) {
+                __m128i sum = _mm_setzero_si128();
+                for (int dy = 0; dy < 4; ++dy) {
+                    const __m128i a = _mm_loadu_si128(reinterpret_cast<const __m128i*>(rows[dy] + 4 * x));
+                    sum = _mm_add_epi16(sum, _mm_add_epi16(_mm_and_si128(a, lowByte), _mm_srli_epi16(a, 8)));
+                }
+                const __m128i four = _mm_srli_epi32(_mm_add_epi32(_mm_madd_epi16(sum, ones), eight), 4); // pairs of pairs
+                const __m128i bytes = _mm_packus_epi16(_mm_packs_epi32(four, four), four);
+                const int32_t v = _mm_cvtsi128_si32(bytes);
+                std::memcpy(&f.thumb[size_t(y) * tw + x], &v, 4);
+            }
+#endif
+            for (; x < inside; ++x) {
                 int sum = 0;
                 for (int dy = 0; dy < 4; ++dy)
                     sum += rows[dy][4 * x] + rows[dy][4 * x + 1] + rows[dy][4 * x + 2] + rows[dy][4 * x + 3];
@@ -118,6 +148,22 @@ void Lookahead::sceneCut(LookaheadFrame& f, const LookaheadFrame* prev) const
             const std::vector<uint8_t>& thumb = f.thumb;
             const std::vector<uint8_t>& prevThumb = prev->thumb;
             int64_t interCost = 0, intraCost = 0;
+            // Sums of every 8x8 block of the previous thumbnail (integral image): a block's SAD is at
+            // least the difference of the two sums, so most of the 289 positions need no SAD at all
+            // (same minimum as trying every one).
+            const int iw = tw + 1;
+            std::vector<uint32_t> integral(size_t(iw) * (th + 1), 0);
+            for (int y = 0; y < th; ++y) {
+                uint32_t row = 0;
+                for (int x = 0; x < tw; ++x) {
+                    row += prevThumb[size_t(y) * tw + x];
+                    integral[size_t(y + 1) * iw + x + 1] = integral[size_t(y) * iw + x + 1] + row;
+                }
+            }
+            auto prevSum = [&](int x, int y) {
+                return int(integral[size_t(y + 8) * iw + x + 8] - integral[size_t(y) * iw + x + 8] - integral[size_t(y + 8) * iw + x] +
+                           integral[size_t(y) * iw + x]);
+            };
             for (int by = 0; by + 8 <= th; by += 8)
                 for (int bx = 0; bx + 8 <= tw; bx += 8) {
                     int sum = 0;
@@ -129,10 +175,13 @@ void Lookahead::sceneCut(LookaheadFrame& f, const LookaheadFrame* prev) const
                     for (int y = 0; y < 8; ++y)
                         for (int x = 0; x < 8; ++x)
                             intra += std::abs(thumb[size_t(by + y) * tw + bx + x] - mean);
-                    int best = 1 << 30;
-                    for (int my = -kRange; my <= kRange; ++my)
+                    // The same place first: usually close to the best, so the bound below bites early.
+                    int best = sadBlock(&thumb[size_t(by) * tw + bx], tw, &prevThumb[size_t(by) * tw + bx], tw, 8, 8);
+                    for (int my = -kRange; my <= kRange && best > 0; ++my)
                         for (int mx = -kRange; mx <= kRange; ++mx) {
                             if (by + my < 0 || bx + mx < 0 || by + my + 8 > th || bx + mx + 8 > tw)
+                                continue;
+                            if (std::abs(sum - prevSum(bx + mx, by + my)) >= best)
                                 continue;
                             best = std::min(best, sadBlock(&thumb[size_t(by) * tw + bx], tw, &prevThumb[size_t(by + my) * tw + bx + mx], tw, 8, 8));
                         }
