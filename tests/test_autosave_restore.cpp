@@ -141,6 +141,13 @@ int main(int argc, char** argv)
         CHECK(w.liveProject()->timeline().markers.contains(6));
         CHECK(w.liveProject()->isModified());
         CHECK(!QFileInfo::exists(own));
+        // Opening the automatic backup itself: it is what was opened, never deleted under it
+        ProjectData self;
+        self.timeline.markers << 7;
+        CHECK(ProjectFile::save(self, own, &err));
+        CHECK(w.openBackup(QDir(QFileInfo(own).absolutePath()).filePath("./" + QFileInfo(own).fileName())));
+        CHECK(w.liveProject()->timeline().markers.contains(7));
+        CHECK(QFileInfo::exists(own));
     }
     // File › Recent Projects: a project moved away since the menu was built is greyed out when the menu opens
     {

@@ -44,7 +44,8 @@ DynamicsDialog::DynamicsDialog(Editor* editor, int track, QWidget* parent)
     : QDialog(parent), m_editor(editor), m_track(track)
 {
     showTitle();
-    m_tracks = editor->project()->timeline().audio;
+    if (const QVector<Track>& audio = editor->project()->timeline().audio; track >= 0 && track < audio.size())
+        m_trackUid = audio[track].uid.value;
     auto* root = new QVBoxLayout(this);
     m_on = new QCheckBox(T("Kompressor an"));
     m_on->setObjectName("dynamicsOn");
@@ -116,9 +117,7 @@ void DynamicsDialog::showTitle() { setWindowTitle(T("Kompressor – %1").arg(tra
 void DynamicsDialog::followTrack()
 {
     if (m_track < 0) return; // detached
-    const QVector<Track>& now = m_editor->project()->timeline().audio;
-    const int t = TimelineOps::followTrack(m_tracks, now, m_track);
-    m_tracks = now;
+    const int t = TimelineOps::followTrack(m_editor->project()->timeline().audio, m_trackUid, m_track);
     if (t < 0) {
         detach();
         return;

@@ -763,6 +763,26 @@ Inspector::Param* Inspector::makeParam(const Section& s, const QString& key, con
     return p;
 }
 
+void Inspector::separateSliderSteps(QSlider* slider)
+{
+    static constexpr char kStep[] = "schneidiUndoStep";
+    // Every action the user starts without holding the handle begins a new step. The value is applied after
+    // actionTriggered (valueChanged follows), so a page/single step is closed there; an absolute-set click
+    // (SliderMove before the press counts) stays open for the drag that follows, its release closes it.
+    connect(slider, &QAbstractSlider::actionTriggered, this, [this, slider](int action) {
+        if (slider->isSliderDown() || action == QAbstractSlider::SliderNoAction) return; // a drag: closed on release
+        m_editor->project()->closeMerge();
+        slider->setProperty(kStep, action != QAbstractSlider::SliderMove);
+    });
+    connect(slider, &QSlider::valueChanged, this, [this, slider] {
+        if (!slider->property(kStep).toBool()) return;
+        slider->setProperty(kStep, false);
+        m_editor->project()->closeMerge();
+    });
+    connect(slider, &QSlider::sliderPressed, this, [slider] { slider->setProperty(kStep, false); }); // (step at the end)
+    connect(slider, &QSlider::sliderReleased, this, [this] { m_editor->project()->closeMerge(); });
+}
+
 Inspector::Param* Inspector::addSlider(Section& s, const QString& key, const QString& label, double min, double max,
                                        double def, double step, int decimals, const Field& field,
                                        std::optional<AnimParam> anim)
@@ -773,16 +793,12 @@ Inspector::Param* Inspector::addSlider(Section& s, const QString& key, const QSt
     slider->setFocusPolicy(Qt::NoFocus); // arrow keys stay with the timeline
     slider->setValue(sliderPos(def, min, max));
     p->slider = slider;
-    connect(slider, &QSlider::valueChanged, this, [this, p](int v) {
-        // A click into the groove (page step) moves without press/release: one undo step of its own
-        const bool step = !p->slider->isSliderDown();
-        if (step) m_editor->project()->closeMerge();
+    connect(slider, &QSlider::valueChanged, this, [p](int v) {
         p->edit->setValue(p->min + (p->max - p->min) * v / kSliderSteps);
         const QSignalBlocker b(p->slider); // avoid feedback
         if (p->edit->onChange) p->edit->onChange(p->edit->value());
-        if (step) m_editor->project()->closeMerge();
     });
-    connect(slider, &QSlider::sliderReleased, this, [this] { m_editor->project()->closeMerge(); });
+    separateSliderSteps(slider);
 
     auto* box = new QHBoxLayout;
     box->setContentsMargins(0, 0, 0, 0);

@@ -605,8 +605,9 @@ bool MainWindow::openBackup(const QString& path)
         return false;
     }
     if (!applyLoaded(std::move(data), {})) return false;
-    // The project left (saved or discarded) is not what a crash should offer now; the backup is autosaved anew
-    removeAutosave();
+    // The project left (saved or discarded) is not what a crash should offer now; the backup is autosaved anew.
+    // The automatic backup itself opened: that is the file the user picked, it stays.
+    if (QFileInfo(path) != QFileInfo(autosavePath())) removeAutosave(); // (same file: canonical, case per system)
     m_project->markModified();
     return true;
 }
@@ -752,7 +753,10 @@ void MainWindow::rebuildRecentMenu()
             if (maybeLeaveProject()) openProject(path);
         });
         a->setToolTip(path);
-        a->setEnabled(QFileInfo::exists(path));
+        // Runs each time the menu opens. A network path (UNC) whose server is offline can make this check stall for
+        // seconds on Windows: such entries stay enabled (opening says so if the file is gone)
+        const bool network = path.startsWith(QLatin1String("//")) || path.startsWith(QLatin1String("\\\\"));
+        a->setEnabled(network || QFileInfo::exists(path));
     }
     m_recentMenu->setEnabled(!recent.isEmpty());
 }

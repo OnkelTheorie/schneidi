@@ -11,6 +11,7 @@
 #include "core/ProjectFile.h"
 #include "core/Selection.h"
 #include "core/TimelineOps.h"
+#include "ui/Inspector.h"
 #include "ui/timeline/TimelineView.h"
 
 #include <QApplication>
@@ -282,6 +283,7 @@ void testUi()
     project.load(ProjectData{ProjectFormat{}, 0, project.media(), {}, tl, 1, 0});
     auto opacity = [&] { return TimelineOps::findClip(project.timeline(), 1)->keys.value(AnimParam::Opacity); };
 
+    Inspector insp(&editor); // closes the merge series when the selection changes: never while a point is dragged
     TimelineView tv(&editor);
     tv.resize(1200, 500);
     tv.show();
@@ -311,6 +313,22 @@ void testUi()
     project.undoStack()->undo();
     CHECK_EQ(opacity().last().frame, 80);
     CHECK(close(opacity().last().value, 80));
+
+    // A drag over many frames (the selected point moves with it, setKeyframes each time): still one undo step
+    {
+        const int before = project.undoStack()->index();
+        const QPoint from(xOf(80), yOf(80));
+        mouse(tv, QEvent::MouseButtonPress, from, Qt::LeftButton);
+        // to the left, about 12 frames
+        for (int f = 1; f <= 6; ++f)
+            mouse(tv, QEvent::MouseMove, from + QPoint(-int(std::lround(f * 2 * ppf)), -2 * f), Qt::LeftButton);
+        mouse(tv, QEvent::MouseButtonRelease, from + QPoint(-int(std::lround(12 * ppf)), -12), Qt::NoButton);
+        CHECK(opacity().last().frame >= 66 && opacity().last().frame <= 72);
+        CHECK_EQ(project.undoStack()->index(), before + 1);
+        project.undoStack()->undo();
+        CHECK_EQ(opacity().last().frame, 80);
+        CHECK(close(opacity().last().value, 80));
+    }
 
     // Shift = one axis only; snapping to keyframe 50 of the other parameter
     drag(tv, {xOf(80), yOf(80)}, {xOf(51) + 1, yOf(80) - 3}, Qt::ShiftModifier);

@@ -16,6 +16,7 @@
 #include "core/Project.h"
 #include "core/ProjectFile.h"
 #include "core/Selection.h"
+#include "core/TimelineOps.h"
 #include "engine/AudioAnalysis.h"
 #include "engine/Engine.h"
 #include "engine/ClipFormat.h"
@@ -756,9 +757,9 @@ void testDialogsCloseWithoutCommit()
     }
 }
 
-// Tracks have no ids: an EQ/compressor window follows its track when tracks are moved, added or removed (also by
-// undo), never editing the track that now has its old number; its track deleted = the window closes. Its own edits
-// keep it on its track even when the old state equals another track (two empty tracks).
+// An EQ/compressor window follows its track (Track::uid) when tracks are moved, added or removed (also by undo), never
+// editing the track that now has its old number; its track deleted = the window closes. Its own edits keep it on its
+// track even when the old state equals another track (two empty tracks).
 void testDialogsFollowTrack()
 {
     Project p;
@@ -826,6 +827,77 @@ void testDialogsFollowTrack()
     sameOn->setChecked(true);
     CHECK(q.timeline().audio[0].eq.on && !q.timeline().audio[1].eq.on);
     CHECK(same.windowTitle().contains("A1"));
+
+    // A recording with two sound streams dropped onto A1: A1 gets a clip and its stream's name, A2 is made in the same
+    // step (Editor::insertMedia). The window on A1 stays there, also when the drop is undone
+    {
+        Project r;
+        Selection rs;
+        Editor re(&r, &rs);
+        while (r.timeline().audio.size() > 1) re.removeTrack({TrackKind::Audio, 1});
+        auto* w = new EqDialog(&re, 0);
+        w->setAttribute(Qt::WA_DeleteOnClose);
+        QPointer<EqDialog> alive(w);
+        w->show();
+        auto* on = w->findChild<QCheckBox*>("eqOn");
+        if (!CHECK(on)) return;
+        r.edit("drop", [](Timeline& tl) {
+            Clip c;
+            c.id = 900;
+            c.mediaPath = "/x/two-streams.mkv";
+            c.in = 0;
+            c.out = 49;
+            tl.audio[0].name = "Game";
+            tl.audio[0].clips << c;
+            TimelineOps::ensureTracks(tl, TrackKind::Audio, 2);
+            c.id = 901;
+            c.audioStream = 1;
+            tl.audio[1].name = "Mic";
+            tl.audio[1].clips << c;
+        });
+        QApplication::processEvents();
+        CHECK(alive);
+        if (!alive) return;
+        on->setChecked(true);
+        CHECK(r.timeline().audio[0].eq.on && !r.timeline().audio[1].eq.on);
+        r.undoStack()->undo(); // the EQ
+        r.undoStack()->undo(); // the drop: A1 alone and empty again
+        QApplication::processEvents();
+        CHECK(alive);
+        if (!alive) return;
+        on->setChecked(true);
+        CHECK(r.timeline().audio.size() == 1 && r.timeline().audio[0].eq.on);
+        r.undoStack()->redo(); // the drop again
+        r.undoStack()->redo(); // the EQ (on A1)
+        QApplication::processEvents();
+        CHECK(alive && r.timeline().audio[0].eq.on && w->windowTitle().contains("A1"));
+        delete alive.data();
+    }
+
+    // Equal (empty, default) tracks: a track inserted above the window's track moves the window along; its own track
+    // deleted next to an equal one closes the window (never jumps to the neighbour)
+    {
+        Project r;
+        Selection rs;
+        Editor re(&r, &rs);
+        while (r.timeline().audio.size() > 1) re.removeTrack({TrackKind::Audio, 1});
+        auto* w = new EqDialog(&re, 0);
+        w->setAttribute(Qt::WA_DeleteOnClose);
+        QPointer<EqDialog> alive(w);
+        w->show();
+        auto* on = w->findChild<QCheckBox*>("eqOn");
+        if (!CHECK(on)) return;
+        re.addTrack(TrackKind::Audio, 0); // a new, equal track above: the window's one is A2 now
+        CHECK(alive && w->windowTitle().contains("A2"));
+        on->setChecked(true);
+        CHECK(r.timeline().audio[1].eq.on && !r.timeline().audio[0].eq.on);
+        r.undoStack()->undo(); // the EQ: both equal again
+        re.removeTrack({TrackKind::Audio, 1}); // its own track goes, the equal one at A1 stays
+        QApplication::processEvents();
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        CHECK(!alive);
+        delete alive.data();
+    }
 }
 
 // ---- CLI ----

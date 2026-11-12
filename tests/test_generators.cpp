@@ -641,6 +641,17 @@ void testInspectorTitleUndo()
     slider->setSliderPosition(slider->value() + 3);
     slider->setSliderDown(false);
     CHECK_EQ(undo->index(), steps + 3);
+    // ... and so is a click that sets the slider where it lands (absolute set: the value jumps before the press counts
+    // as one) followed by a drag
+    slider->setSliderPosition(slider->value() - 5);
+    slider->setSliderDown(true);
+    slider->setSliderPosition(slider->value() + 2);
+    slider->setSliderPosition(slider->value() + 2);
+    slider->setSliderDown(false);
+    CHECK_EQ(undo->index(), steps + 4);
+    // a groove click after it is a step of its own again
+    slider->triggerAction(QAbstractSlider::SliderPageStepSub);
+    CHECK_EQ(undo->index(), steps + 5);
 }
 
 // Counter decimal places in the Inspector: 0..6 like the project file and the CLI

@@ -1,9 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 #include <QDialog>
-#include <QVector>
-
-#include "core/Types.h"
 #include <array>
 
 class Editor;
@@ -28,7 +25,7 @@ private:
 
     Editor* m_editor;
     int m_track;
-    QVector<Track> m_tracks; // the audio tracks as last seen (where m_track is)
+    quint64 m_trackUid = 0; // Track::uid of m_track: followed when tracks are added, removed or reordered
     QCheckBox* m_on;
     EqCurve* m_curve;
     struct BandRow {
