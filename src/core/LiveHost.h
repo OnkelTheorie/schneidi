@@ -65,6 +65,14 @@ public:
     virtual QJsonObject liveProxyState(const QString& file) const = 0;
     // Proxy file being written right now (empty = none): cleaning up the proxy folder leaves it alone
     virtual QString liveProxyWriting() const { return {}; }
+    // Render cache of the preview (engine/RenderCache): {mode, state, clip?, percent?, waiting, cached, clips}; empty =
+    // the host has none. Control: mode "off"/"smart"/"user" (empty = unchanged), pause = stop until the next change
+    virtual QJsonObject liveRenderCache() const { return {}; }
+    virtual void liveRenderCacheControl(const QString& mode, bool pause)
+    {
+        Q_UNUSED(mode);
+        Q_UNUSED(pause);
+    }
     // Files handed to the app (`schneidi <file>` while it runs, `app open`): a project file (.schneidi) opens, media
     // files come into the Media Pool and are selected there, the window comes to the front. byUser = the user's own
     // hand-over (asks "save changes?" before another project opens); an AI never replaces a project with unsaved

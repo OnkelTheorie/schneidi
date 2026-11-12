@@ -19,6 +19,7 @@
 #include <QObject>
 #include <QSet>
 #include <QString>
+#include <QStringList>
 #include <QTimer>
 #include <QVector>
 #include <atomic>
@@ -63,6 +64,7 @@ public:
     struct Span {
         int start = 0, end = 0; // timeline frames, end exclusive
         double done = 0;
+        QString name; // the clip's name (tooltip)
     };
     QVector<Span> spans(const Timeline& tl) const;
 
@@ -83,6 +85,16 @@ public:
 
     bool isRendering() const { return m_thread != nullptr; }
     int pendingCount() const;
+    // The clip rendering now (its name, empty = none) and how far it is (0..1)
+    QString currentName() const { return m_currentName; }
+    double currentProgress() const;
+    // Names of the clips waiting after it (in order)
+    QStringList pendingNames() const;
+
+    // The ✕ of its background job: stops rendering and forgets what waits, until the next change that needs a new
+    // render (a clip changed or added, another mode, the cache cleared). Not saved.
+    void pauseUntilChange();
+    bool isPaused() const { return m_paused; }
 
     // Renders the output of a clip (see TimelineBuilder::buildClipOutput) synchronously into `file`.
     // With alpha (ProRes 4444) if the clip has transparency, otherwise ProRes 422 LT. cancel/paused may be null.
@@ -101,6 +113,7 @@ private:
     struct Job {
         QString key;
         Clip clip; // normalized
+        QString name;
     };
     void startNext();
     void cancelCurrent();
@@ -123,6 +136,9 @@ private:
     // (disconnecting does not take back what is queued already): that one is stale and must do nothing.
     quint64 m_run = 0;
     QString m_currentKey;
+    QString m_currentName;
+    bool m_paused = false;
+    QSet<QString> m_pausedKeys; // what was missing when paused: a sync() that wants only these stays paused
     std::shared_ptr<std::atomic<bool>> m_cancel;
     std::shared_ptr<std::atomic<int>> m_progress; // 0..1000
     int m_lastProgress = -1;

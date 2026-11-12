@@ -160,6 +160,8 @@ public:
     void liveGenerateProxies(const QStringList& files) override;
     QJsonObject liveProxyState(const QString& file) const override;
     QString liveProxyWriting() const override;
+    QJsonObject liveRenderCache() const override;
+    void liveRenderCacheControl(const QString& mode, bool pause) override;
     bool liveOpen(const QStringList& files, bool byUser, QString* error) override;
     bool liveAskTrust(const ProjectData& data, const QString& path) override;
     void bringToFront(); // window up and active (files handed over from another process)
@@ -309,6 +311,7 @@ private:
     void startKeyPick(int clipId);
     void stopKeyPick();
     void updateRenderCacheBar(); // render cache bar above the timeline
+    void updateRenderCacheJob(bool allDone); // its job at the bottom right (ui/BackgroundJobs)
     void clipSpeedDialog();
     void normalizeAudioDialog();
     // Import presets for audio streams and ducking (MainWindowAudio.cpp)
@@ -439,6 +442,7 @@ private:
 
     MediaPool* m_mediaPool = nullptr;
     class BackgroundJobs* m_backgroundJobs = nullptr;
+    bool m_renderCacheJob = false; // the render cache's job is shown as running (updateRenderCacheJob)
     EffectsLibrary* m_effects = nullptr;
     MediaStorage* m_storage = nullptr;
     Viewer* m_viewer = nullptr;

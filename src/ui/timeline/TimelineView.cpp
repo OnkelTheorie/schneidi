@@ -656,12 +656,32 @@ void TimelineView::setSnapping(bool on)
 
 // ---------- Drawing ----------
 
-void TimelineView::setRenderCacheSpans(const QVector<CacheSpan>& spans)
+void TimelineView::setRenderCacheSpans(const QVector<CacheSpan>& spans, bool paused)
 {
+    m_cachePaused = paused; // only the tooltip reads it
     auto same = [](const CacheSpan& a, const CacheSpan& b) { return a.start == b.start && a.end == b.end && a.done == b.done; };
-    if (spans.size() == m_cacheSpans.size() && std::equal(spans.begin(), spans.end(), m_cacheSpans.begin(), same)) return;
+    if (spans.size() == m_cacheSpans.size() && std::equal(spans.begin(), spans.end(), m_cacheSpans.begin(), same)) {
+        m_cacheSpans = spans; // names may differ
+        return;
+    }
     m_cacheSpans = spans;
     update(0, 0, width(), kRulerH);
+}
+
+QString TimelineView::renderCacheToolTip(const QPoint& pos) const
+{
+    if (pos.x() < kHeaderW || pos.y() > kCacheTipH) return {};
+    const double frame = xToFrame(pos.x());
+    for (const CacheSpan& c : m_cacheSpans) {
+        if (frame < c.start || frame >= c.end) continue;
+        QString state;
+        if (c.done >= 1.0) state = T("fertig");
+        else if (c.done > 0) state = T("%1 % gerendert").arg(int(c.done * 100));
+        else state = m_cachePaused ? T("pausiert") : T("noch nicht gerendert");
+        return T("Render-Cache: %1 – %2").arg(c.name, state) + "\n"
+               + T("Blau = fertig vorgerendert, Rot = fehlt noch. Ausschalten: Wiedergabe › Render-Cache › Aus");
+    }
+    return {};
 }
 
 QRect TimelineView::headerButton(const Row& row) const

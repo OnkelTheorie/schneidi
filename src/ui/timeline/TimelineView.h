@@ -103,8 +103,12 @@ public:
     struct CacheSpan {
         int start = 0, end = 0; // timeline frames, end exclusive
         double done = 0;
+        QString name; // the clip's (tooltip)
     };
-    void setRenderCacheSpans(const QVector<CacheSpan>& spans);
+    // paused: the user paused the cache (its job's ✕), the red parts wait for the next change
+    void setRenderCacheSpans(const QVector<CacheSpan>& spans, bool paused = false);
+    // Tooltip over the bar at `pos` (widget coordinates; empty = not over it): clip, how far, what the colors mean
+    QString renderCacheToolTip(const QPoint& pos) const;
 
     // Retime controls like DaVinci (Retime Controls): bar at the top of the clip with speed per section and speed points
     void setRetimeControls(const QVector<int>& ids, bool on);
@@ -413,6 +417,8 @@ private:
     Editor* m_editor;
     MediaCache* m_cache = nullptr;
     QVector<CacheSpan> m_cacheSpans;
+    bool m_cachePaused = false;
+    static constexpr int kCacheTipH = 6; // the bar is 3 px high: its tooltip reaches a little lower
     ViewState m_view;
     Tool m_tool = Tool::Select;
     bool m_snap = true;

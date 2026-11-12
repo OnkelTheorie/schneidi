@@ -138,7 +138,8 @@ bool TimelineView::event(QEvent* e)
 {
     if (e->type() == QEvent::ToolTip) {
         const auto* help = static_cast<QHelpEvent*>(e);
-        QString tip = storyToolTip(help->pos());
+        QString tip = renderCacheToolTip(help->pos()); // the bar at the top of the ruler
+        if (tip.isEmpty()) tip = storyToolTip(help->pos());
         if (tip.isEmpty()) tip = marksToolTip(markGrabAt(help->pos())); // In/Out: timecode and length
         if (help->pos().x() < kHeaderW)
             if (const auto row = rowAt(help->pos().y()); row && micButton(*row).contains(help->pos()))

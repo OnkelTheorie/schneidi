@@ -233,6 +233,8 @@ QJsonObject appState(LiveHost* h)
     const Timeline& tl = p->timeline();
     if (tl.markIn >= 0 || tl.markOut >= 0)
         o["marks"] = QJsonObject{{"in", tl.markIn}, {"out", tl.markOut}};
+    // Background work of the preview the user sees (bottom right): rendering clips ahead
+    if (const QJsonObject cache = h->liveRenderCache(); !cache.isEmpty()) o["render_cache"] = cache;
     return o;
 }
 
