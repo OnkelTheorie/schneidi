@@ -134,6 +134,8 @@ bool runNode(const QString& type, const QVariantMap& params, const QHash<QString
         const QVariantMap& v = opt.otherNodes.value(node);
         // A tracker's visibility not given: seen (followers stay as they are)
         if (key == QLatin1String(::Comp::kSeenKey) && !v.contains(key)) return 1.0;
+        // A node given with its kind ("type"): missing values are the kind's defaults (a camera's zoom 1, fov 40)
+        if (const NodeType* ok = find(v.value(QStringLiteral("type")).toString())) return numValue(*ok, v, key);
         return v.value(key).toDouble();
     };
     ctx.graphCamera = opt.graphCamera;

@@ -14,7 +14,10 @@
 // plane z = 1; positive = right / down, the picture moves the other way), push (moves forward, as a share of D: 0.5 =
 // the picture plane twice as big; near layers grow more), zoom (focal length: everything bigger alike, no parallax),
 // tilt_x (looks up, degrees), tilt_y (turns right), roll (turns clockwise), fov (vertical field of view, degrees),
-// drift_x / drift_y / drift_push (a steady move per second from the clip's start: a slow pan without keyframes),
+// drift_x / drift_y / drift_push (a steady move per second from the clip's start: a slow pan without keyframes; the
+// push eases off towards kDriftPushCap, so a long clip never goes through the picture plane; drift values are steady,
+// keyframes on them are not integrated - the CLI refuses them), drift_offset (seconds of drift already gone at the
+// clip's start: a head trim adds to it),
 // follow (a tracker: its 2D motion read as pan, push and roll, so layers at z = 1 go exactly with the tracked
 // picture and other depths get parallax; no 3D camera solve).
 //
@@ -31,6 +34,16 @@
 #include <functional>
 
 namespace Picture::Comp {
+
+// The push a drift of perSecond gives after `seconds`: perSecond * seconds at first, easing towards +-kDriftPushCap
+// (before 0: straight on)
+inline constexpr double kDriftPushCap = 0.9;
+double driftPush(double perSecond, double seconds);
+// Whether h keeps the source rectangle sw x sh in front (w > 0 at its four corners): else nothing is drawn (CPU and
+// card alike - a corner behind the camera would mirror)
+bool inFront(const Compose::Homography& h, int sw, int sh);
+// The size change of h at (x, y) (square root of the Jacobian's determinant): below 1/2 the card's sampling aliases
+double scaleAt(const Compose::Homography& h, double x, double y);
 
 struct Camera {
     double panX = 0, panY = 0; // pixels at the picture plane (camera position)

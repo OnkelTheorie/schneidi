@@ -272,7 +272,7 @@ bool evaluateGraph(const CompGraph& g, int transparent, const EffectInstance& co
         // are fixed (no keyframes, no drift), keyed by them
         if (isStatic && s.kind->param(QString::fromLatin1(::Comp::kCameraKey))
             && valueOf(id, s.kind, QString::fromLatin1(::Comp::kLayerDepthKey)) > 0) {
-            if (const int c = ::Comp::cameraOf(comp, g, id); c > 0) {
+            if (const int c = ::Comp::cameraOf(comp, g, id, env.clip, env.t); c > 0) {
                 const NodeType* ck = find(QString::fromLatin1(::Comp::kCameraType));
                 if (animated.contains(c) || (ck && varies(*ck, valuesOf(c)))) isStatic = false;
                 else key = mix(key, ownHash(QString::fromLatin1(::Comp::kCameraType), valuesOf(c), env));

@@ -160,12 +160,19 @@ inline constexpr const char* kLayerDepthKey = "z";
 bool takesCamera(const QString& type);
 // The graph's camera: its first node of kind camera, 0 = none
 int graphCamera(const CompGraph& g);
-// The camera node a layer node names: its value camera when that is a node of kind camera, camera 0 = the graph's
-// camera; 0 = none (also for a kind without a camera). Its depth is not looked at
-int cameraOf(const EffectInstance& e, const CompGraph& g, int node);
+// A node's number at clip frame t as the engine reads it: keyframes of `clip` (when given and set) win over the stored
+// value (missing = fallback)
+double nodeNumber(const EffectInstance& e, const Clip* clip, int node, const QString& key, double t, double fallback = 0);
+// Above 0 anywhere: the stored value, or (keyframed in `clip`) any of its keyframes
+bool everPositive(const EffectInstance& e, const Clip* clip, int node, const QString& key);
+// The camera node a layer node names (nodeNumber at clip frame t): its value camera when that is a node of kind
+// camera, camera 0 = the graph's camera; 0 = none (also for a kind without a camera). Its depth is not looked at
+int cameraOf(const EffectInstance& e, const CompGraph& g, int node, const Clip* clip = nullptr, double t = 0);
+// A layer in a camera's space at some time (everPositive z and a camera): that camera, else 0 (check, info)
+int layerCameraOf(const EffectInstance& e, const CompGraph& g, int node, const Clip* clip = nullptr);
 // The nodes read through a value, not a link: trackers named by `follow`, cameras named by `camera` and the
 // trackers those cameras follow, for the nodes in `nodes` (check and info count them as used)
-QSet<int> valueReads(const EffectInstance& e, const CompGraph& g, const QVector<int>& nodes);
+QSet<int> valueReads(const EffectInstance& e, const CompGraph& g, const QVector<int>& nodes, const Clip* clip = nullptr);
 
 // Every file the graph reads (fileKeys of its nodes: media, LUTs, textures), in node order, without duplicates
 QStringList mediaPaths(const EffectInstance& e);

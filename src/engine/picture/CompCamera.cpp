@@ -36,6 +36,18 @@ EffectParam num(const char* key, const QString& label, double def, double lo, do
 
 double finite(double v, double fallback) { return std::isfinite(v) ? v : fallback; }
 
+} // namespace
+
+double driftPush(double perSecond, double seconds)
+{
+    const double x = perSecond * seconds;
+    if (!(seconds > 0) || !std::isfinite(x)) return std::isfinite(x) ? x : 0.0; // before the start: straight on
+    // Starts at perSecond, eases towards +-kDriftPushCap: never through the picture plane, never shrinking to nothing
+    return std::copysign(kDriftPushCap * (1 - std::exp(-std::abs(x) / kDriftPushCap)), x);
+}
+
+namespace {
+
 // 3x3 products, row-major
 void mul(const double a[9], const double b[9], double out[9])
 {
@@ -52,10 +64,11 @@ Camera cameraAt(const std::function<double(int, const QString&)>& numOf, int id,
     Camera c;
     const double W = size.width(), H = size.height();
     const auto v = [&](const char* key, double fallback) { return finite(numOf(id, QString::fromLatin1(key)), fallback); };
-    const double s = finite(seconds, 0.0);
+    // The drift's own clock: seconds from the clip's start plus drift_offset (a head trim moves it, Comp::followHead)
+    const double s = finite(seconds, 0.0) + v("drift_offset", 0);
     c.panX = (v("pan_x", 0) + v("drift_x", 0) * s) * W;
     c.panY = (v("pan_y", 0) + v("drift_y", 0) * s) * H;
-    c.push = v("push", 0) + v("drift_push", 0) * s;
+    c.push = v("push", 0) + driftPush(v("drift_push", 0), s);
     c.zoom = std::clamp(v("zoom", 1), 0.01, 100.0);
     c.tiltX = std::clamp(v("tilt_x", 0), -89.0, 89.0);
     c.tiltY = std::clamp(v("tilt_y", 0), -89.0, 89.0);
@@ -121,6 +134,27 @@ bool cameraMap(const Camera& cam, double z, QSize size, Compose::Homography* out
     }
     *out = h;
     return true;
+}
+
+bool inFront(const Compose::Homography& h, int sw, int sh)
+{
+    const double corners[8] = {0, 0, double(sw), 0, double(sw), double(sh), 0, double(sh)};
+    for (int i = 0; i < 4; ++i) {
+        const double w = h.m[6] * corners[2 * i] + h.m[7] * corners[2 * i + 1] + h.m[8];
+        if (!(w > 1e-9)) return false;
+    }
+    return true;
+}
+
+double scaleAt(const Compose::Homography& h, double x, double y)
+{
+    const double* m = h.m;
+    const double w = m[6] * x + m[7] * y + m[8];
+    if (!(std::abs(w) > 1e-12)) return 0;
+    const double X = (m[0] * x + m[1] * y + m[2]) / w, Y = (m[3] * x + m[4] * y + m[5]) / w;
+    const double a = (m[0] - X * m[6]) / w, b = (m[1] - X * m[7]) / w;
+    const double c = (m[3] - Y * m[6]) / w, d = (m[4] - Y * m[7]) / w;
+    return std::sqrt(std::abs(a * d - b * c));
 }
 
 bool isIdentity(const Compose::Homography& h)
@@ -252,14 +286,16 @@ void registerCameraNodes(QVector<NodeType>& out)
             T("Gleichmäßiger Schwenk je Sekunde ab Clipanfang (Bildbreiten): langsame Bewegung ohne Keyframes")),
         num("drift_y", T("Gleiten Y"), 0, -2, 2, 0.001, 3, T("Gleichmäßiger Schwenk je Sekunde ab Clipanfang (Bildhöhen)")),
         num("drift_push", T("Gleitende Fahrt"), 0, -0.5, 0.5, 0.001, 3,
-            T("Gleichmäßige Fahrt nach vorn je Sekunde ab Clipanfang (Ken-Burns-3D)")),
+            T("Fahrt nach vorn je Sekunde ab Clipanfang (Ken-Burns-3D); wird mit der Zeit langsamer und kommt nie an der Bildebene an")),
+        num("drift_offset", T("Gleiten ab"), 0, -36000, 36000, 0.01, 2,
+            T("Sekunden Gleiten, die am Clipanfang schon vergangen sind (Trimmen am Anfang setzt das, damit das Bild stehen bleibt)")),
         num("follow", T("Folgt Tracker"), 0, 0, 1e6, 1, 0,
             T("Id eines Tracker-Knotens (0 = keiner): seine Bewegung wird Schwenk, Fahrt und Rollen der Kamera, Ebenen "
               "mit Tiefe 1 gehen genau mit, andere Tiefen bekommen Parallaxe")),
     };
     // Its values move the layers; the camera itself makes no picture. A drift moves it every frame
     k.isVarying = [](const NodeType& kind, const QVariantMap& values) {
-        for (const char* d : {"drift_x", "drift_y", "drift_push"})
+        for (const char* d : {"drift_x", "drift_y", "drift_push"}) // (drift_offset alone moves nothing)
             if (numValue(kind, values, QString::fromLatin1(d)) != 0) return true;
         return false;
     };

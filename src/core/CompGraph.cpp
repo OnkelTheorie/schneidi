@@ -13,7 +13,6 @@
 #include <algorithm>
 #include <cmath>
 #include <iterator>
-#include <utility>
 
 const CompNode* CompGraph::node(int id) const
 {
@@ -329,20 +328,14 @@ void followHead(Clip& c, int frames, double fps)
             if (k != c.keys.end())
                 for (Keyframe& f : *k) f.value += shift;
         }
-        // A camera's drift counts seconds from the clip's start: the position it had at the new first frame goes into
-        // its own values (pan_x/pan_y/push), so the picture stays in the timeline (keyframes are source frames: stay)
+        // A camera's drift counts seconds from the clip's start: its own clock (drift_offset) moves along, so the
+        // camera at a timeline frame stays where it was (its pan/push keyframes are source frames: they stay)
         if (n.type == QLatin1String(kCameraType)) {
-            const double sec = frames / fps;
-            for (const auto& [value, drift] : {std::pair{"pan_x", "drift_x"}, std::pair{"pan_y", "drift_y"},
-                                               std::pair{"push", "drift_push"}}) {
-                const double d = e->params.value(CompGraph::paramKey(n.id, QLatin1String(drift)), 0.0).toDouble();
-                if (d == 0 || !std::isfinite(d)) continue;
-                const QString key = CompGraph::paramKey(n.id, QLatin1String(value));
-                e->params[key] = e->params.value(key, 0.0).toDouble() + d * sec;
-                const auto k = c.keys.find(Keys::effectParam(QString::fromLatin1(kEffectId), key));
-                if (k != c.keys.end())
-                    for (Keyframe& f : *k) f.value += d * sec;
-            }
+            bool drifts = false;
+            for (const char* d : {"drift_x", "drift_y", "drift_push"})
+                drifts = drifts || e->params.value(CompGraph::paramKey(n.id, QLatin1String(d)), 0.0).toDouble() != 0;
+            const QString key = CompGraph::paramKey(n.id, QStringLiteral("drift_offset"));
+            if (drifts || e->params.contains(key)) e->params[key] = e->params.value(key, 0.0).toDouble() + frames / fps;
         }
         // The time range (every kind that has one; also a newer version's kind: from/until mean the same for all).
         // 0 means "from the start" / "to the end" and stays; any other value moves, also below 0 (from < 0 = from
@@ -380,25 +373,52 @@ int graphCamera(const CompGraph& g)
     return 0;
 }
 
-int cameraOf(const EffectInstance& e, const CompGraph& g, int node)
+double nodeNumber(const EffectInstance& e, const Clip* clip, int node, const QString& key, double t, double fallback)
+{
+    const QString full = CompGraph::paramKey(node, key);
+    if (clip) {
+        const AnimParam p = Keys::effectParam(QString::fromLatin1(kEffectId), full);
+        if (Keys::animated(*clip, p)) return Keys::valueAt(*clip, p, t);
+    }
+    return e.params.value(full, fallback).toDouble();
+}
+
+bool everPositive(const EffectInstance& e, const Clip* clip, int node, const QString& key)
+{
+    const QString full = CompGraph::paramKey(node, key);
+    if (clip) {
+        const auto k = clip->keys.constFind(Keys::effectParam(QString::fromLatin1(kEffectId), full));
+        if (k != clip->keys.cend() && !k->isEmpty()) {
+            for (const Keyframe& f : *k)
+                if (f.value > 0) return true;
+            return false;
+        }
+    }
+    return e.params.value(full, 0.0).toDouble() > 0;
+}
+
+int layerCameraOf(const EffectInstance& e, const CompGraph& g, int node, const Clip* clip)
+{
+    return everPositive(e, clip, node, QLatin1String(kLayerDepthKey)) ? cameraOf(e, g, node, clip, 0) : 0;
+}
+
+int cameraOf(const EffectInstance& e, const CompGraph& g, int node, const Clip* clip, double t)
 {
     const CompNode* n = g.node(node);
     if (!n || !takesCamera(n->type)) return 0;
-    int id = followId(e.params.value(CompGraph::paramKey(node, QLatin1String(kCameraKey))).toDouble());
+    int id = followId(nodeNumber(e, clip, node, QLatin1String(kCameraKey), t));
     if (id == 0) id = graphCamera(g);
     const CompNode* cam = id != node ? g.node(id) : nullptr;
     return cam && cam->type == QLatin1String(kCameraType) ? id : 0;
 }
 
-QSet<int> valueReads(const EffectInstance& e, const CompGraph& g, const QVector<int>& nodes)
+QSet<int> valueReads(const EffectInstance& e, const CompGraph& g, const QVector<int>& nodes, const Clip* clip)
 {
     QSet<int> out;
-    const auto followOf = [&](int id) {
-        return followId(e.params.value(CompGraph::paramKey(id, QStringLiteral("follow"))).toDouble());
-    };
+    const auto followOf = [&](int id) { return followId(nodeNumber(e, clip, id, QStringLiteral("follow"), 0)); };
     for (int id : nodes) {
         if (const int f = followOf(id)) out.insert(f);
-        if (const int c = cameraOf(e, g, id)) {
+        if (const int c = cameraOf(e, g, id, clip)) {
             out.insert(c);
             if (const int f = followOf(c)) out.insert(f);
         }

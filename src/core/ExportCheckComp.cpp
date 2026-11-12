@@ -76,7 +76,7 @@ QVector<Issue> comp(const Timeline& tl, int from, int to, const ProjectFormat& f
                              a, b, c.id};
             const QVector<int> order = g.evalOrder();
             // A tracker is read through `follow`, a camera through `camera` (values, not links): they count as used
-            const QSet<int> followed = Comp::valueReads(*e, g, order);
+            const QSet<int> followed = Comp::valueReads(*e, g, order, &c);
             QStringList unused;
             for (const CompNode& n : g.nodes)
                 if (!order.contains(n.id) && !followed.contains(n.id))
@@ -89,8 +89,8 @@ QVector<Issue> comp(const Timeline& tl, int from, int to, const ProjectFormat& f
             QStringList noCamera;
             for (int id : order)
                 if (const CompNode* n = g.node(id); n && Comp::takesCamera(n->type)
-                    && e->params.value(CompGraph::paramKey(id, QString::fromLatin1(Comp::kLayerDepthKey))).toDouble() > 0
-                    && Comp::cameraOf(*e, g, id) == 0)
+                    && Comp::everPositive(*e, &c, id, QString::fromLatin1(Comp::kLayerDepthKey))
+                    && Comp::cameraOf(*e, g, id, &c) == 0)
                     noCamera << QString::number(id);
             if (!noCamera.isEmpty())
                 out << Issue{Severity::Info, QStringLiteral("comp_camera_missing"),

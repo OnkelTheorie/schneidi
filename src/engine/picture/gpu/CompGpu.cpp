@@ -284,6 +284,18 @@ CompPlanPtr planComp(const EffectInstance& comp, const Comp::Env& env, Comp::Cac
         if (t == QLatin1String("transform")) {
             if (::Comp::followId(num(id, *k, "follow")) > 0) return fail(reason, "transform follows a tracker");
             if (std::abs(num(id, *k, "size")) < 0.5) return fail(reason, "transform shrinks below 1/2");
+            // In a camera's space: its zoom or a push backwards shrinks too (0.22)
+            Compose::Homography cam;
+            bool camHidden = false;
+            const auto typeOf = [&](int other) {
+                const CompNode* o = g.node(other);
+                return o ? o->type : QString();
+            };
+            if (Comp::layerCamera(id, num(id, *k, QString::fromLatin1(::Comp::kLayerDepthKey)),
+                                  num(id, *k, QString::fromLatin1(::Comp::kCameraKey)), graphCamera, typeOf, numOf,
+                                  env.size, env.t / std::max(1.0, env.fps), &cam, &camHidden)
+                && !camHidden && std::abs(num(id, *k, "size")) * Comp::scaleAt(cam, W / 2.0, H / 2.0) < 0.5)
+                return fail(reason, "transform shrinks below 1/2 (camera)");
             return true; // tilted in depth too: a projective draw (0.22)
         }
         if (t == QLatin1String(Comp::kCornerPinType)) return true;
@@ -554,14 +566,15 @@ CompPlanPtr planComp(const EffectInstance& comp, const Comp::Env& env, Comp::Cac
                                       num(id, *k, QString::fromLatin1(::Comp::kCameraKey)), graphCamera, typeOf, numOf, env.size,
                                       env.t / std::max(1.0, env.fps), &cam, &camHidden)) {
                     identity = false;
-                    if (camHidden) { // behind the camera: nothing drawn
+                    const Compose::Homography flat{{m.a, m.b, m.c, m.d, m.e, m.f, 0, 0, 1}};
+                    if (!camHidden) s.h = Compose::multiply(cam, s.projective ? s.h : flat);
+                    // Behind the camera, or the placed picture partly so (CompNodesCore evalTransform): nothing drawn
+                    if (camHidden || !Comp::inFront(s.h, W, H)) {
                         s.op = Step::Color;
                         stepOf[id] = push(std::move(s));
                         onCard.insert(id);
                         continue;
                     }
-                    const Compose::Homography flat{{m.a, m.b, m.c, m.d, m.e, m.f, 0, 0, 1}};
-                    s.h = Compose::multiply(cam, s.projective ? s.h : flat);
                     s.projective = true;
                 }
             } else if (t == QLatin1String("crop")) {

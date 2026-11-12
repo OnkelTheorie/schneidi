@@ -357,12 +357,93 @@ void testTime()
         c.effects << e;
         const Buf before = evalAt(c.effects[0], 40, QSize(W, H), nullptr, nullptr, &c);
         ::Comp::followHead(c, 25, 25);
-        CHECK(std::abs(c.effects[0].params.value("n3.pan_x").toDouble() - 0.1) < 1e-12);
-        CHECK(std::abs(c.effects[0].params.value("n3.push").toDouble() - 0.02) < 1e-12);
+        CHECK(std::abs(c.effects[0].params.value("n3.drift_offset").toDouble() - 1.0) < 1e-12);
+        CHECK(!c.effects[0].params.contains("n3.pan_x")); // the camera's own values stay
         const Buf after = evalAt(c.effects[0], 15, QSize(W, H), nullptr, nullptr, &c);
         CHECK(near(centroid(after), centroid(before), 1e-3));
         ::Comp::followHead(c, -25, 25); // trimmed back out: the values as they were
-        CHECK(std::abs(c.effects[0].params.value("n3.pan_x").toDouble()) < 1e-12);
+        CHECK(std::abs(c.effects[0].params.value("n3.drift_offset").toDouble()) < 1e-12);
+        CHECK(same(evalAt(c.effects[0], 40, QSize(W, H), nullptr, nullptr, &c), before));
+    }
+}
+
+// ---- Long clips: the push eases off, layers stay bounded; partly behind the camera; runNode defaults ----
+void testBounds()
+{
+    std::printf("bounds\n");
+    // driftPush: linear at first, never beyond the cap
+    CHECK(std::abs(driftPush(0.03, 1) - 0.03) < 0.001);
+    CHECK(driftPush(0.03, 1e6) <= kDriftPushCap && driftPush(-0.03, 1e6) >= -kDriftPushCap);
+    CHECK(driftPush(0.03, -2) == -0.06); // before the start (trimmed back out): straight on
+    // The recipe's camera (push 0.03/s) over 60 s at 25 fps: the person (z 1) grows at most 1 / (1 - cap) and is never
+    // hidden
+    g_clipPic = marker(W, H, 200, 60);
+    const EffectInstance e = transformGraph({{"n2.z", 1.0}, {"n2.camera", 3}, {"n3.drift_push", 0.03}, {"n2.size", 0.3}});
+    double last = 0;
+    bool grows = true, shown = true;
+    for (int s = 0; s <= 60; s += 5) {
+        const Buf b = evalAt(e, s * 25.0);
+        const double a = alphaSum(b);
+        shown = shown && a > 0;
+        grows = grows && a >= last - 1e-6;
+        last = a;
+        Compose::Homography h;
+        Camera cam = cameraAt([](int, const QString& k) { return k == "drift_push" ? 0.03 : k == "zoom" ? 1.0 : k == "fov" ? 40.0 : 0.0; },
+                              3, QSize(W, H), s);
+        CHECK(cameraMap(cam, 1, QSize(W, H), &h) && scaleAt(h, W / 2.0, H / 2.0) <= 1 / (1 - kDriftPushCap) + 1e-9);
+    }
+    CHECK(shown && grows);
+    // A big layer moved aside, the camera pushed in and turned: corners of the placed picture behind the camera ->
+    // nothing (never a mirrored ghost); in front -> drawn
+    g_clipPic = marker(W, H, 160, 90, 40);
+    const Buf behind = evalAt(transformGraph({{"n2.size", 6.0}, {"n2.x", 2.5}, {"n2.z", 1.0},
+                                              {"n2.camera", 3}, {"n3.push", 0.6}, {"n3.tilt_y", 30.0}}));
+    CHECK(!behind.isNull() && alphaSum(behind) == 0);
+    {
+        Camera cam;
+        cam.push = 0.6;
+        cam.tiltY = 30;
+        Compose::Homography h;
+        CHECK(cameraMap(cam, 1, QSize(W, H), &h)); // the frame itself is in front ...
+        const Compose::Affine m = Compose::placement(2.5 * W - 3 * W, 0.5 * H - 3 * H, 6 * W, 6 * H, 0, W, H, true, true);
+        CHECK(!inFront(Compose::multiply(h, {{m.a, m.b, m.c, m.d, m.e, m.f, 0, 0, 1}}), W, H)); // ... the layer is not
+    }
+    // runNode: a camera given with its kind gets its defaults (zoom 1, fov 40): a layer at rest stays as it is
+    RunOptions opt;
+    opt.size = QSize(W, H);
+    opt.otherNodes.insert(3, {{"type", "camera"}});
+    opt.graphCamera = 3;
+    QHash<QString, Buf> in;
+    in.insert("src", g_clipPic);
+    Buf a, b;
+    CHECK(runNode("transform", {}, in, opt, &a));
+    CHECK(runNode("transform", {{"z", 2.0}}, in, opt, &b));
+    CHECK(same(a, b));
+}
+
+// ---- The camera holds while its tracker lost the point (hold/fade: the tracker's last seen values) ----
+void testLostTracker()
+{
+    std::printf("lost tracker\n");
+    g_clipPic = marker(W, H, 160, 90);
+    Clip c;
+    c.id = 1;
+    c.in = 0;
+    c.out = 100;
+    const auto key = [&](const char* k, int f, double v) { Keys::setKey(c, Keys::effectParam(::Comp::kEffectId, k), f, v); };
+    for (int f = 0; f <= 40; ++f) key("n3.x", f, 0.5 + f * 2.0 / W); // 2 px a frame
+    key("n3.y", 0, 0.5);
+    for (auto [f, v] : {std::pair{0, 1.0}, {9, 1.0}, {10, 0.0}, {25, 0.0}, {26, 1.0}, {40, 1.0}}) key("n3.seen", f, v);
+    for (const char* mode : {"hold", "fade"}) {
+        const EffectInstance e = graph({{1, "clip", {}}, {2, "transform", {}}, {3, "tracker", {}}, {4, "camera", {}}},
+                                       {{1, 2, "src"}}, 2,
+                                       {{"n3.mode", "point"}, {"n3.lost", mode}, {"n3.rx", 0.5}, {"n3.ry", 0.5},
+                                        {"n4.follow", 3}, {"n2.z", 1.0}, {"n2.camera", 4}});
+        const QPointF at9 = centroid(evalAt(e, 9, QSize(W, H), nullptr, nullptr, &c));
+        const Buf b20 = evalAt(e, 20, QSize(W, H), nullptr, nullptr, &c);
+        if (!CHECK(near(centroid(b20), at9, 0.05))) print(mode, centroid(b20), at9);
+        CHECK(alphaSum(b20) > 0.9 * alphaSum(g_clipPic)); // the camera does not fade the layers
+        CHECK(near(at9, centroid(g_clipPic) + QPointF(18, 0), 0.1));
     }
 }
 
@@ -422,6 +503,26 @@ void testTables()
     CHECK_EQ(::Comp::cameraOf(c.effects[0], g, 4), 0); // names node 9: no camera
     CHECK_EQ(::Comp::graphCamera(g), 3);
     CHECK(::Comp::valueReads(c.effects[0], g, g.evalOrder()).contains(3));
+    // A keyframed depth counts (check and the renderer read the same values)
+    {
+        Timeline t2 = tl;
+        Clip& k = t2.video[0].clips[0];
+        k.effects[0].params.remove("n2.z");
+        k.effects[0].params.remove("n2.camera");
+        k.effects[0].params.remove("n4.camera");
+        k.effects[0].params.remove("n4.z");
+        k.effects[0].params.insert("n2.camera", 9);
+        Keys::setKey(k, Keys::effectParam(::Comp::kEffectId, "n2.z"), 0, 0.0);
+        Keys::setKey(k, Keys::effectParam(::Comp::kEffectId, "n2.z"), 20, 1.5);
+        bool flagged = false;
+        for (const ExportCheck::Issue& i : ExportCheck::comp(t2, 0, 50, f))
+            if (i.check == "comp_camera_missing") flagged = i.message.contains("2");
+        CHECK(flagged);
+        CompGraph g2;
+        ::Comp::graphOf(k.effects[0], &g2);
+        CHECK(::Comp::everPositive(k.effects[0], &k, 2, "z"));
+        CHECK_EQ(::Comp::layerCameraOf(k.effects[0], g2, 2, &k), 0);
+    }
 }
 
 // ---- CLI ----
@@ -532,6 +633,11 @@ void testCli(const QString& dir)
         }
     }
     CHECK(listed && layerKeys);
+    // A camera's drift has no keyframes (steady)
+    err.clear();
+    edit({QJsonObject{{"op", "keyframe"}, {"clips", QJsonArray{clip}}, {"param", QString("comp.n%1.drift_x").arg(cam)},
+                      {"at", 0}, {"value", 0.1}}}, &err);
+    CHECK(err.contains("steady"));
     // help of op node names the camera
     CHECK(json(run("help", {{"command", "edit"}, {"op", "node"}})).contains("type:'camera'"));
 
@@ -572,6 +678,8 @@ int main(int argc, char** argv)
     testLayers();
     testFollow();
     testTime();
+    testBounds();
+    testLostTracker();
     testTables();
     testCli(dir.path());
     return Check::result();

@@ -703,7 +703,7 @@ QJsonArray compNodeKindsJson()
                         "(a pan by p moves it p/2), 0 = the camera leaves it alone; at rest every z looks as without "
                         "a camera. pan_x/pan_y in picture widths/heights (camera moves right/down, the picture the other "
                         "way), push = dolly forward (near layers grow more), zoom without parallax, drift_* = steady "
-                        "move per second without keyframes, follow = a tracker id (its motion becomes pan/push/roll). "
+                        "move per second without keyframes (the push eases off, never through the picture), follow = a tracker id (its motion becomes pan/push/roll). "
                         "Recipe parallax_photo";
         list << o;
     }
@@ -757,8 +757,7 @@ QJsonObject compJson(const EffectInstance& e, const ProjectFormat& f, const Clip
         if (n.type == QLatin1String(::Comp::kCameraType)) { // the layers in its space (0.22)
             QJsonArray layers;
             for (const CompNode& m : g.nodes)
-                if (::Comp::cameraOf(e, g, m.id) == n.id
-                    && e.params.value(CompGraph::paramKey(m.id, QString::fromLatin1(::Comp::kLayerDepthKey))).toDouble() > 0)
+                if (::Comp::layerCameraOf(e, g, m.id, clip) == n.id)
                     layers << m.id;
             o["layers"] = layers;
             if (layers.isEmpty())
@@ -772,7 +771,7 @@ QJsonObject compJson(const EffectInstance& e, const ProjectFormat& f, const Clip
     QJsonArray unused;
     const QVector<int> order = g.evalOrder();
     // Trackers read through `follow`, cameras through `camera` (values, not links) are used
-    const QSet<int> followed = ::Comp::valueReads(e, g, order);
+    const QSet<int> followed = ::Comp::valueReads(e, g, order, clip);
     for (const CompNode& n : g.nodes)
         if (!order.contains(n.id) && !followed.contains(n.id)) unused << n.id;
     if (!unused.isEmpty()) o["unused"] = unused; // do not reach the output
@@ -801,6 +800,10 @@ void checkCompParam(Session& s, const QVector<int>& ids, AnimParam p, double* lo
             fail("BAD_ARGUMENT", QString("comp.%1: node %2 (%3) has no parameter '%4'").arg(full).arg(node).arg(n->type, key));
         if (ep && ep->type != EffectParam::Double)
             fail("BAD_ARGUMENT", QString("comp.%1: only numbers have keyframes (%2 is a %3)").arg(full, key, typeName(ep->type)));
+        // A camera's drift is a steady move (0.22): keyframes would not be integrated - animate pan/push instead
+        if (n->type == QLatin1String(::Comp::kCameraType) && key.startsWith(QLatin1String("drift_")))
+            fail("BAD_ARGUMENT", QString("comp.%1: a camera's drift is steady (no keyframes); animate pan_x, pan_y or "
+                                         "push with keyframes instead").arg(full));
         if (ep && ep->min < ep->max) {
             *lo = std::max(*lo, ep->min);
             *hi = std::min(*hi, ep->max);

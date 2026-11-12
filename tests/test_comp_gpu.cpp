@@ -355,11 +355,25 @@ int main(int argc, char** argv)
     same("transform at z 2, camera at rest (unchanged)",
          comp({"clip", "transform", "camera"}, {{1, 2, "src"}}, 2,
               {{"n2.x", 0.4}, {"n2.size", 0.8}, {"n2.angle", 12.0}, {"n2.z", 2.0}, {"n2.camera", 3}}), pic);
+    // A big layer placed aside and tilted, the camera pushed and turned: partly behind the camera = nothing on both
+    same("camera: placed picture partly behind the camera (nothing)",
+         comp({"clip", "transform", "camera"}, {{1, 2, "src"}}, 2,
+              {{"n2.size", 6.0}, {"n2.x", 2.5}, {"n2.z", 1.0}, {"n2.camera", 3}, {"n3.push", 0.6},
+               {"n3.tilt_y", 30.0}}), pic);
+    close("camera: big tilted layer in front", comp({"clip", "transform", "camera"}, {{1, 2, "src"}}, 2,
+                                                    {{"n2.size", 1.6}, {"n2.x", 0.7}, {"n2.tilt_y", 35.0}, {"n2.z", 1.2},
+                                                     {"n2.camera", 3}, {"n3.push", 0.3}, {"n3.tilt_y", -10.0}}), pic);
     {
         const PC::Env env = envFor(pic);
         QString reason;
         CHECK(Gpu::planComp(comp({"clip", "transform", "camera"}, {{1, 2, "src"}}, 2,
                                  {{"n2.z", 2.0}, {"n2.camera", 3}, {"n3.pan_x", 0.1}}), env, nullptr, &reason));
+        // The camera shrinks below 1/2 (zoom 0.4): on the CPU, like a small transform
+        CHECK(!Gpu::planComp(comp({"clip", "transform", "camera"}, {{1, 2, "src"}}, 2,
+                                  {{"n2.z", 1.0}, {"n2.camera", 3}, {"n3.zoom", 0.4}}), env, nullptr, &reason));
+        // ... and a camera at zoom 1 with the same graph stays on the card
+        CHECK(Gpu::planComp(comp({"clip", "transform", "camera"}, {{1, 2, "src"}}, 2,
+                                 {{"n2.z", 1.0}, {"n2.camera", 3}, {"n3.zoom", 0.9}}), env, nullptr, &reason));
     }
     {
         const PC::Env env = envFor(pic);

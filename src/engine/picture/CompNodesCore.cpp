@@ -295,14 +295,17 @@ bool evalTransform(NodeCtx& ctx, Buf* out)
         const double ax = ctx.num("ax") * ctx.size.width(), ay = ctx.num("ay") * ctx.size.height();
         Compose::Homography h;
         if (Compose::tilted(m, src->w, src->h, m.a * ax + m.b * ay + m.c, m.d * ax + m.e * ay + m.f, tiltX, tiltY,
-                            std::clamp(ctx.num("fov"), 5.0, 120.0), out->w, out->h, &h))
-            Compose::draw(out->data(), out->w, out->h, src->data(), src->w, src->h, camera ? Compose::multiply(cam, h) : h,
-                          seen);
+                            std::clamp(ctx.num("fov"), 5.0, 120.0), out->w, out->h, &h)) {
+            if (camera) h = Compose::multiply(cam, h);
+            // The placed picture may reach beyond the frame: all of it in front of the camera, else nothing (card alike)
+            if (!camera || inFront(h, src->w, src->h))
+                Compose::draw(out->data(), out->w, out->h, src->data(), src->w, src->h, h, seen);
+        }
         return true;
     }
     if (camera) {
-        const Compose::Homography flat{{m.a, m.b, m.c, m.d, m.e, m.f, 0, 0, 1}};
-        Compose::draw(out->data(), out->w, out->h, src->data(), src->w, src->h, Compose::multiply(cam, flat), seen);
+        const Compose::Homography h = Compose::multiply(cam, {{m.a, m.b, m.c, m.d, m.e, m.f, 0, 0, 1}});
+        if (inFront(h, src->w, src->h)) Compose::draw(out->data(), out->w, out->h, src->data(), src->w, src->h, h, seen);
         return true;
     }
     if (identity) {
