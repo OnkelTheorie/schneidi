@@ -393,6 +393,8 @@ struct Pump::Impl {
     void remember(int64_t pos, QImage image, uint64_t gen)
     {
         if (image.isNull() || gen != generation || recentBudget <= 0) return;
+        // Larger than the whole budget: it would push out every other recent frame and then itself
+        if (image.sizeInBytes() > recentBudget) return;
         auto [it, added] = recent.try_emplace(pos);
         if (!added) recentBytes -= it->second.image.sizeInBytes();
         it->second.image = std::move(image);
