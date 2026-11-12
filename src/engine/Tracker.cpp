@@ -361,8 +361,13 @@ bool QuadTracker::next(const Gray& f, int radius)
     // The four agree: the surface turns and grows under the templates (a camera walking up to a sign), so the points
     // the others confirm learn their new look faster than a lone point may (it could learn what hides it). A match
     // already weak (something in front) learns nothing
-    for (int i = 0; i < 4; ++i)
-        if (good[i] && n >= 3 && m_points[size_t(i)].score() >= kLearn) m_points[size_t(i)].relearn(f, kLearnMix);
+    // Four found and agreeing confirm each other. Three fit any affine map, nothing confirms them: then only a point
+    // matching well on its own learns (a corner hidden: the others must not drift meanwhile, but a camera walking
+    // up to a sign while one corner leaves the picture must not lose the other three either)
+    if (n >= 3)
+        for (int i = 0; i < 4; ++i)
+            if (good[i] && m_points[size_t(i)].score() >= (n == 4 ? kLearn : kLearnAlone))
+                m_points[size_t(i)].relearn(f, kLearnMix);
     if (n < 2) {
         for (int i = 0; i < 4; ++i) m_points[size_t(i)].moveTo(prev[i]);
         m_moved = false; // lost: no movement to go on from
@@ -385,6 +390,22 @@ bool QuadTracker::next(const Gray& f, int radius)
             if (!ok) p = similarityFrom2(prev[idx[0]], prev[idx[1]], now[idx[0]], now[idx[1]], prev[i]);
             m_points[size_t(i)].moveTo(p);
         }
+    }
+    // The surface cannot grow or shrink by a third in one frame: points sliding together (the surface leaving the
+    // picture, a corner taken over by another one) - lost, rather than a collapsing quad
+    const auto area = [](const QPointF* q) {
+        double a = 0;
+        for (int i = 0; i < 4; ++i) a += q[i].x() * q[(i + 1) % 4].y() - q[(i + 1) % 4].x() * q[i].y();
+        return a / 2;
+    };
+    QPointF cur[4];
+    for (int i = 0; i < 4; ++i) cur[i] = point(i);
+    const double before = area(prev), after = area(cur);
+    if (before == 0 || after / before < 1 / kMaxAreaStep || after / before > kMaxAreaStep) {
+        for (int i = 0; i < 4; ++i) m_points[size_t(i)].moveTo(prev[i]);
+        m_moved = false;
+        m_outliers = 4;
+        return false;
     }
     double from[8], to[8];
     for (int i = 0; i < 4; ++i) {

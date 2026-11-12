@@ -363,9 +363,13 @@ bool homography(const double from[8], const double to[8], Homography* out)
     Homography a, b, ai;
     if (!homography(1, 1, from, &a) || !homography(1, 1, to, &b) || !invert(a, &ai)) return false;
     Homography h = multiply(b, ai);
-    if (std::abs(h.m[8]) < 1e-15) return false;
-    const double s = 1.0 / h.m[8]; // m[8] = 1 like the rectangle's map
-    for (double& v : h.m) v *= s;
+    // Scaled so that w is 1 on average over the source quad (positive: in front). Not by m[8] = w at the pixel
+    // origin: with strong perspective the origin may lie beyond the horizon (w < 0 there) while the quad is in front
+    double mean = 0;
+    for (int i = 0; i < 4; ++i) mean += h.m[6] * from[2 * i] + h.m[7] * from[2 * i + 1] + h.m[8];
+    mean /= 4;
+    if (!std::isfinite(mean) || std::abs(mean) < 1e-15) return false;
+    for (double& v : h.m) v /= mean;
     for (int i = 0; i < 4; ++i) // the source quad stays in front (no fold)
         if (h.m[6] * from[2 * i] + h.m[7] * from[2 * i + 1] + h.m[8] <= 1e-9) return false;
     *out = h;

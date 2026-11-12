@@ -334,6 +334,36 @@ int main(int argc, char** argv)
         QString reason;
         CHECK(Gpu::planComp(comp({"clip", "transform"}, {{1, 2, "src"}}, 2, {{"n2.tilt_x", 25.0}}), env, nullptr, &reason));
         CHECK(Gpu::planComp(comp({"clip", "corner_pin"}, {{1, 2, "src"}}, 2, pin), env, nullptr, &reason));
+        // A source with a content area (a text's box, a letterboxed media) through a grade on the card: the card does
+        // not carry the area, so the graph stays on the CPU (GPU = CPU: the box is stretched, not the whole frame)
+        const EffectInstance graded =
+            comp({"clip", "text", "grade", "corner_pin", "merge"}, {{2, 3, "src"}, {3, 4, "src"}, {1, 5, "bg"}, {4, 5, "fg"}}, 5,
+                 {{"n2.text", "PIN"}, {"n2.size", 40.0}, {"n3.saturation", 60.0}, {"n4.c0x", 0.15}, {"n4.c0y", 0.12},
+                  {"n4.c1x", 0.82}, {"n4.c1y", 0.2}, {"n4.c2x", 0.9}, {"n4.c2y", 0.85}, {"n4.c3x", 0.1}, {"n4.c3y", 0.92}});
+        CHECK(!Gpu::planComp(graded, env, nullptr, &reason));
+        CHECK(reason.contains("content area"));
+        // The same pin without the grade (on the card, the text uploaded with its box): the letters land on the same
+        // pixels as the graded one on the CPU (a grade keeps alpha)
+        EffectInstance plain = graded;
+        CompGraph pg;
+        ::Comp::graphOf(plain, &pg);
+        pg.links = {{2, 4, "src"}, {1, 5, "bg"}, {4, 5, "fg"}};
+        pg.out = 4;
+        ::Comp::setGraph(plain, pg);
+        EffectInstance gradedPin = graded;
+        CompGraph gg;
+        ::Comp::graphOf(gradedPin, &gg);
+        gg.out = 4;
+        ::Comp::setGraph(gradedPin, gg);
+        PC::Buf b;
+        const Gpu::CompPlanPtr plainPlan = Gpu::planComp(plain, env, nullptr, &reason);
+        if (CHECK(plainPlan) && CHECK(PC::evaluate(gradedPin, env, nullptr, &b))) {
+            const std::vector<uint8_t> card = runCard(*plainPlan, env.size);
+            int worst = 0;
+            if (CHECK(card.size() == b.px.size()))
+                for (size_t i = 3; i < card.size(); i += 4) worst = std::max(worst, std::abs(int(card[i]) - int(b.px[i])));
+            if (!CHECK(worst <= 3)) std::printf("       letterboxed pin: alpha off by %d\n", worst);
+        }
     }
 
     // 5. Recipes

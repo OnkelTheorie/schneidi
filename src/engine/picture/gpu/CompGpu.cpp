@@ -297,7 +297,16 @@ CompPlanPtr planComp(const EffectInstance& comp, const Comp::Env& env, Comp::Cac
         const CompNode* n = g.node(id);
         if (!n) continue;
         QString reason;
-        const bool card = cardKind(id, *n, Comp::find(n->type), &reason);
+        bool card = cardKind(id, *n, Comp::find(n->type), &reason);
+        // A corner pin stretches its source's content area (Buf::area) onto the corners: known here only for a
+        // picture the CPU made (uploaded) or a colour; the card's other steps do not carry it (a letterboxed media
+        // through a grade) - then the pin stays on the CPU like its CPU result
+        if (card && n->type == QLatin1String(Comp::kCornerPinType))
+            if (const CompLink* l = g.linkInto(id, QStringLiteral("src")); l && cardNodes.contains(l->from))
+                if (const CompNode* from = g.node(l->from); from && from->type != QLatin1String("color")) {
+                    card = false;
+                    reason = "corner pin of a picture made on the card (its content area)";
+                }
         bool fedByCard = false;
         for (const CompLink& l : g.links)
             if (l.to == id && cardNodes.contains(l.from)) fedByCard = true;

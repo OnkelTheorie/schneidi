@@ -198,6 +198,7 @@ TrackRun trackQuad(const std::function<QImage(int)>& frame, const Tracker::Gray&
     for (int i = 0; i < 4; ++i) c0[i] = QPointF(cornersPx[2 * i], cornersPx[2 * i + 1]);
     const double area0 = std::max(1e-9, area(c0));
     double lastAngle = 0;
+    QPointF lastCorner[4] = {c0[0], c0[1], c0[2], c0[3]}, lastMid = mid0; // a corner the map cannot place keeps these
     const auto point = [&](int f) {
         ::Comp::TrackPoint tp;
         tp.frame = f;
@@ -205,13 +206,15 @@ TrackRun trackQuad(const std::function<QImage(int)>& frame, const Tracker::Gray&
         QPointF c[4];
         const Compose::Homography& h = quad.homography();
         for (int i = 0; i < 4; ++i) {
-            double x = c0[i].x(), y = c0[i].y();
-            if (!Compose::mapPoint(h, c0[i].x(), c0[i].y(), &x, &y)) x = c0[i].x(), y = c0[i].y();
-            c[i] = QPointF(x, y);
+            double x = 0, y = 0;
+            if (Compose::mapPoint(h, c0[i].x(), c0[i].y(), &x, &y)) lastCorner[i] = QPointF(x, y);
+            c[i] = lastCorner[i];
+            x = c[i].x(), y = c[i].y();
             tp.corners[i] = QPointF(x / W, y / H);
         }
-        double mx = mid0.x(), my = mid0.y();
-        if (!Compose::mapPoint(h, mid0.x(), mid0.y(), &mx, &my)) mx = mid0.x(), my = mid0.y();
+        double mx = 0, my = 0;
+        if (Compose::mapPoint(h, mid0.x(), mid0.y(), &mx, &my)) lastMid = QPointF(mx, my);
+        mx = lastMid.x(), my = lastMid.y();
         tp.x = mx / W;
         tp.y = my / H;
         tp.scale = std::sqrt(area(c) / area0);

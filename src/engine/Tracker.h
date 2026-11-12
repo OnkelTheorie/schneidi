@@ -128,8 +128,10 @@ public:
     // A point further than this from where the other three put it is an outlier (pixels; at least kMinError)
     static constexpr double kMinError = 2.0, kErrorShare = 0.1; // share of the template side
     // A point at least this good that the others confirm takes in its look of the frame by this share
-    static constexpr double kLearn = 0.6;
+    static constexpr double kLearn = 0.6, kLearnAlone = 0.8;
     static constexpr float kLearnMix = 0.2f;
+    // Area of the four points against the last frame beyond this factor (either way) = lost
+    static constexpr double kMaxAreaStep = 1.4;
 
 private:
     std::vector<PointTracker> m_points;

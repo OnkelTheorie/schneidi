@@ -817,8 +817,8 @@ void Context::draw(Texture& dst, const Layer& layer)
     // Bounding box of the drawn source (+1 pixel: soft edge), as Compose::draw
     double x0 = 1e18, x1 = -1e18, y0 = 1e18, y1 = -1e18;
     double quadArea = 0; // projective: the area the source covers (its overall shrink picks the mip level)
+    double q[8];         // the source's corners on the target
     {
-        double q[8];
         int i = 0;
         for (const auto& [sx, sy] : {std::pair{0.0, 0.0}, std::pair{double(sw), 0.0}, std::pair{double(sw), double(sh)},
                                      std::pair{0.0, double(sh)}}) {
@@ -845,10 +845,10 @@ void Context::draw(Texture& dst, const Layer& layer)
     if (layer.projective) {
         Compose::Homography inv;
         if (!Compose::invert(layer.h, &inv)) return;
-        // Scaled so that w is 1 at the middle of the drawn quad (positive inside: the shader drops w <= 0)
-        const double cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
-        const double w = inv.m[6] * cx + inv.m[7] * cy + inv.m[8];
-        if (std::abs(w) < 1e-15) return;
+        // Scaled so that w is 1 on average over the drawn quad's corners (positive inside: the shader drops w <= 0)
+        double w = 0;
+        for (int k = 0; k < 4; ++k) w += (inv.m[6] * q[2 * k] + inv.m[7] * q[2 * k + 1] + inv.m[8]) / 4;
+        if (!std::isfinite(w) || std::abs(w) < 1e-15) return;
         for (int k = 0; k < 3; ++k) {
             u.inv0[k] = float(inv.m[k] / w);
             u.inv1[k] = float(inv.m[3 + k] / w);

@@ -126,6 +126,20 @@ void testCompose()
     // Crossed (corners 2 and 3 swapped): no quad
     const double crossed[8] = {50, 40, 400, 60, 20, 280, 390, 300};
     CHECK(!Compose::homography(from, crossed, &h));
+    // Strong perspective: the pixel origin lies beyond the horizon (w < 0 there), the quads are in front
+    {
+        const Compose::Homography p{{1, 0, 0, 0, 1, 0, 0.004, 0, -1}}; // w = 0.004 x - 1: in front for x > 250
+        double src[8] = {300, 10, 400, 10, 400, 100, 300, 100}, dst[8];
+        for (int i = 0; i < 4; ++i) CHECK(Compose::mapPoint(p, src[2 * i], src[2 * i + 1], &dst[2 * i], &dst[2 * i + 1]));
+        Compose::Homography q;
+        if (CHECK(Compose::homography(src, dst, &q))) {
+            double x = 0, y = 0;
+            CHECK(Compose::mapPoint(q, 350, 55, &x, &y));
+            double ex = 0, ey = 0;
+            Compose::mapPoint(p, 350, 55, &ex, &ey);
+            CHECK(std::abs(x - ex) < 1e-6 && std::abs(y - ey) < 1e-6);
+        }
+    }
     // The quad's middle: where the diagonals cross
     const QPointF m = ::Comp::quadMiddle({0, 0}, {4, 0}, {4, 2}, {0, 2});
     CHECK(std::abs(m.x() - 2) < 1e-9 && std::abs(m.y() - 1) < 1e-9);
