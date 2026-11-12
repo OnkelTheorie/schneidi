@@ -1058,8 +1058,7 @@ struct Reader::Impl {
             const AVCodecParameters* par = stream->codecpar;
             d.progressive = !(frame->flags & AV_FRAME_FLAG_INTERLACED)
                             && (par->field_order == AV_FIELD_PROGRESSIVE || par->field_order == AV_FIELD_UNKNOWN);
-            d.topFieldFirst = (frame->flags & AV_FRAME_FLAG_TOP_FIELD_FIRST) || par->field_order == AV_FIELD_TT
-                              || par->field_order == AV_FIELD_TB;
+            d.topFieldFirst = topFieldShownFirst(frame, par->field_order).value_or(false);
             if (d.position >= target - keepReach) dec->skip_loop_filter = AVDISCARD_NONE;
             d.frame = av_frame_clone(frame);
             av_frame_unref(frame);
@@ -1344,6 +1343,18 @@ struct Reader::Impl {
         done.notify_all();
     }
 };
+
+std::optional<bool> topFieldShownFirst(const AVFrame* frame, int fieldOrder)
+{
+    if (frame && (frame->flags & AV_FRAME_FLAG_INTERLACED)) return (frame->flags & AV_FRAME_FLAG_TOP_FIELD_FIRST) != 0;
+    switch (fieldOrder) {
+    case AV_FIELD_TT:
+    case AV_FIELD_TB: return true;
+    case AV_FIELD_BB:
+    case AV_FIELD_BT: return false;
+    default: return std::nullopt;
+    }
+}
 
 double streamRotation(const AVStream* stream)
 {
