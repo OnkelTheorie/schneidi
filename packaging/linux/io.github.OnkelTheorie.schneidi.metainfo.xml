@@ -109,6 +109,15 @@
   </requires>
 
   <releases>
+    <release version="0.21.0" date="2026-11-12">
+      <description>
+        <p>Languages Update: ten more UI languages (Ukrainian, Japanese, Portuguese (Brazil), Chinese (Simplified),
+        Italian, Hindi, Dutch, Turkish, Korean, Indonesian), x264/x265 in the downloads, a selectable proxy size,
+        placing only picture or only sound, drop-frame timecode, a smoother and faster start, and a big round of
+        fixes.</p>
+      </description>
+      <url type="details">https://github.com/OnkelTheorie/schneidi/releases/tag/v0.21.0</url>
+    </release>
     <release version="0.20.0" date="2026-11-09">
       <description>
         <p>Newcomer Update: in-app tours on a built-in practice project (first steps, editing, color, compositing, task

@@ -282,12 +282,12 @@ Guided tours on a built-in practice project (first steps, editing, color, compos
 ### 0.21 – Languages Update (released)
 Ten more languages (Ukrainian, Japanese, Portuguese (Brazil), Chinese (Simplified), Italian, Hindi, Dutch, Turkish, Korean, Indonesian), x264/x265 in the downloads, a selectable proxy size, placing only picture or only sound, drop-frame timecode, a smoother and faster start, and a big round of fixes.
 
-### Next: Tracking Update
+### Next: 0.22 – Tracking Update
 Better tracking: fade out when the point is lost, a node's time range on the timeline, text behind a wall, four-corner tracking, a shared camera for 2.5D.
 
 ### Later
-- **0.22 – Studio:** a page for sound – a big mixer, large waveforms, volume curves to draw, EQ and compressor per track, voice cleanup, loudness, recording
-- **0.23 – Color Update 2:** curves on the Color page, qualifier (select by hue, saturation and lightness), more scope overlays
+- **0.23 – Studio:** a page for sound – a big mixer, large waveforms, volume curves to draw, EQ and compressor per track, voice cleanup, loudness, recording
+- **0.24 – Color Update 2:** curves on the Color page, qualifier (select by hue, saturation and lightness), more scope overlays
 
 ## Building
 
