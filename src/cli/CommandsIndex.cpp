@@ -4,6 +4,7 @@
 #include "cli/AnalysisDetail.h"
 
 #include "core/ContactSheet.h"
+#include "core/PathKey.h"
 #include "core/Retime.h"
 #include "engine/MediaIndex.h"
 #include "engine/Snapshot.h"
@@ -130,7 +131,7 @@ QJsonArray placements(const Session& s, const QString& file, double from, double
         const QVector<Track>& tracks = kind == TrackKind::Video ? tl.video : tl.audio;
         for (int ti = 0; ti < tracks.size(); ++ti)
             for (const Clip& c : tracks[ti].clips) {
-                if (c.kind != ClipKind::Media || c.mediaPath != file) continue;
+                if (c.kind != ClipKind::Media || !PathKey::same(c.mediaPath, file)) continue;
                 const MediaInfo* m = p.mediaInfo(c.mediaPath);
                 const RetimeMap map(c, m ? m->length : 0);
                 const int a = map.pictureFrame(c.in), b = map.pictureFrame(c.out);

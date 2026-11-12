@@ -46,6 +46,13 @@ int main(int argc, char** argv)
         CHECK(!PathKey::isInside("/t/intro2/a.png", "/t/intro", fold));
         CHECK(!PathKey::isInside("/t/intro/../b.png", "/t/intro", fold));
     }
+    // One media file in clips and the pool (edit 'media'+'source', index placements, render review hits): as
+    // Project::mediaInfo matches it - on Windows case and separators do not matter
+    CHECK(PathKey::same("C:/Clips/A.mp4", "c:\\clips\\a.mp4", true));
+    CHECK(!PathKey::same("C:/Clips/A.mp4", "c:/clips/a.mp4", false));
+    CHECK(!PathKey::same("C:/Clips/A.mp4", "C:/Clips/B.mp4", true));
+    CHECK(!PathKey::same("", "x", true));
+    for (bool fold : {false, true}) CHECK(PathKey::same("/x/a.mp4", "/x/a.mp4", fold));
 #ifdef Q_OS_WIN
     CHECK(PathKey::kFoldCase);
 #else

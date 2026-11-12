@@ -4,6 +4,7 @@
 
 #include "core/CodeTrust.h"
 #include "core/EffectRegistry.h"
+#include "core/PathKey.h"
 #include "core/Presets.h"
 #include "core/Retime.h"
 #include "core/StreamPresets.h"
@@ -122,7 +123,7 @@ int timeRef(Session& s, const QJsonObject& r, const char* key)
         for (const QVector<Track>* tracks : {&tl.video, &tl.audio})
             for (const Track& t : *tracks)
                 for (const Clip& c : t.clips) {
-                    if (c.kind != ClipKind::Media || c.mediaPath != path) continue;
+                    if (c.kind != ClipKind::Media || !PathKey::same(c.mediaPath, path)) continue;
                     const int at = timelineAtSource(s, c, source);
                     if (at >= 0 && (best < 0 || at < best)) best = at;
                     if (used.size() < 12) used << sourceSpan(s, c);
@@ -477,7 +478,7 @@ void opAlign(Session& s, const QJsonObject& op)
                 if (tracks == &tl.video && track.hidden) continue;
                 for (const Clip& c : track.clips)
                     if (c.kind == ClipKind::Media && c.enabled && t >= c.start && t < c.end()
-                        && (path.isEmpty() ? tracks == &tl.video : c.mediaPath == path))
+                        && (path.isEmpty() ? tracks == &tl.video : PathKey::same(c.mediaPath, path)))
                         return &c;
             }
         return nullptr;
@@ -651,7 +652,14 @@ void opSubtitles(Session& s, const QJsonObject& op)
         const QString path = absolute(op.value("srt").toString());
         QFile f(path);
         if (!f.open(QIODevice::ReadOnly)) fail("NOT_FOUND", "cannot read " + path);
-        cues = Subtitles::parseSrt(f.readAll(), s.project.frameRate());
+        int skipped = 0;
+        cues = Subtitles::parseSrt(f.readAll(), s.project.frameRate(), &skipped);
+        if (skipped > 0)
+            s.notes << QString("subtitles: %1 broken entr%2 in %3 skipped (no readable time line, times like "
+                               "00:01:02,500 --> 00:01:04,000, or no text)")
+                           .arg(skipped)
+                           .arg(skipped == 1 ? "y" : "ies")
+                           .arg(QFileInfo(path).fileName());
         if (trackName.isEmpty()) trackName = QFileInfo(path).completeBaseName();
     } else if (op.contains("words")) {
         // One cue per word with its time: grouped into readable cues below, the word times kept

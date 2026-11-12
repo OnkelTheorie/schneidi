@@ -9,6 +9,7 @@
 
 #include "core/EffectFolders.h"
 #include "core/GameHud.h"
+#include "core/PathKey.h"
 #include "core/SfxPlace.h"
 #include "core/SfxSynth.h"
 #include "core/TimelineOps.h"
@@ -150,7 +151,7 @@ int sfxTrack(const Timeline& tl)
 // of the kind being placed (its own cap per minute)
 SfxPlace::Existing existingOf(const Clip& c, double fps, const Source& src)
 {
-    SfxPlace::Existing e{c.start / fps, false, !src.kind && c.mediaPath == src.file};
+    SfxPlace::Existing e{c.start / fps, false, !src.kind && PathKey::same(c.mediaPath, src.file)};
     if (const auto n = SfxSynth::parseCachedFile(c.mediaPath)) {
         e.at = (c.start - c.in) / fps + SfxSynth::anchorOf(n->kind, n->seed, n->asked);
         e.impact = n->kind == SfxSynth::Kind::Impact;
@@ -316,7 +317,7 @@ void opSfx(Session& s, const QJsonObject& op)
             fail("FAILED", QString("could not place the sound on A%1 (locked?)").arg(track + 1));
         int clipId = -1;
         for (const Clip& c : s.project.timeline().audio[track].clips)
-            if (c.start == start && c.mediaPath == m.path) clipId = c.id;
+            if (c.start == start && PathKey::same(c.mediaPath, m.path)) clipId = c.id;
         if (mix && mix->maxMomentary > -50) {
             // The sound alone at 0 dB, measured the same way (the master's gain is in both; its limiter is not: it
             // would squash a hot file and let the clip come out too loud). Once per file and op (many cuts, one sound)

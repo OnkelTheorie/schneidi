@@ -86,8 +86,10 @@ QVector<Listed> list(const WatchFolder& w, QStringList* folders = nullptr);
 
 // Lists the watched folders and tells which files are new and complete. Between scans it remembers what it saw: a file
 // still being written (recorders write for minutes) is taken once its size and time stay unchanged for settleMs, a
-// file that could not be read only after it changed. Without an earlier scan (`watch` from the command line) the
-// file's modification time alone decides. Not thread-safe: one scan at a time.
+// file that could not be read only after it changed. A file is never taken on its first look (unless settleMs is 0):
+// a second scan must see the same size and time - with an old modification time that second look may come at once
+// (`unconfirmed` counts such files; `watch` from the command line looks again a moment later). Not thread-safe: one
+// scan at a time.
 class Scanner {
 public:
     explicit Scanner(int settleMs = kSettleMs) : m_settleMs(settleMs) {}
@@ -102,6 +104,7 @@ public:
         QVector<Found> ready; // new and complete: probe and import these
         QStringList pending;  // new, but still changing or too fresh: look again in a moment
         QStringList folders;  // folders listed (subfolders included): what to watch for changes
+        int unconfirmed = 0;  // pending files seen for the first time but long unchanged: ready after a second look
     };
     // inPool(pathKey) = already in the project
     Result scan(const QVector<WatchFolder>& watches, const std::function<bool(const QString& key)>& inPool,

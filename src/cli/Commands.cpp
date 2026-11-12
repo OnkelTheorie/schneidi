@@ -52,6 +52,7 @@
 #include <cmath>
 #include <limits>
 #include <memory>
+#include <optional>
 
 namespace Cli {
 
@@ -114,6 +115,7 @@ int clockTime(const QString& s, const ProjectFormat& fmt, const QString& what)
         // "HH:MM:SS;FF" at 29.97/59.94: drop-frame timecode (cameras, ffprobe, other editors), not a separator
         if (semicolon >= 0 && Timecode::isDropFrameRate(fmt.rate.num, fmt.rate.den))
             frames = Timecode::dropFrameNumber(v[0], v[1], v[2], v[3], timebase);
+        if (frames < 0) bad("is too long"); // dropFrameNumber: -1 beyond 100000 hours (was taken as frame -1)
     } else {
         for (int i = 1; i < v.size(); ++i)
             if (v[i] >= 60) bad("has minutes or seconds above 59");
@@ -123,6 +125,22 @@ int clockTime(const QString& s, const ProjectFormat& fmt, const QString& what)
     const double total = timecode ? double(frames) : std::round(seconds * fmt.rate.fps());
     if (total > 2e9) bad("is too long");
     return int(total);
+}
+
+// A number given as text (--gain 1.5): "." is the decimal point; a lone "," is a decimal comma too ("1,5" = 1.5 -
+// German writing, as in times "6,95s"). No thousands separators: QLocale::c() read "1,500" as 1500. "1,500" itself
+// (one comma, three digits after it) is refused: in English it is 1500, in German 1.5 - neither is guessed
+double numberFromText(const QString& text, bool* ok, const QString& what)
+{
+    QString t = text.trimmed();
+    static const QRegularExpression ambiguous(R"(^[+-]?\d{1,3},\d{3}$)");
+    if (ambiguous.match(t).hasMatch())
+        fail("BAD_ARGUMENT", QString("%1: '%2' is ambiguous (thousands separator or decimal comma?); write %3 or %4")
+                                 .arg(what, t, QString(t).remove(','), QString(t).replace(',', '.')));
+    if (t.count(',') == 1 && !t.contains('.')) t.replace(',', '.');
+    QLocale c = QLocale::c();
+    c.setNumberOptions(QLocale::RejectGroupSeparator);
+    return c.toDouble(t, ok);
 }
 
 } // namespace
@@ -176,12 +194,65 @@ ProjectFormat parseFormat(const QJsonObject& a, ProjectFormat f)
     if (a.contains("height")) f.height = a["height"].toInt();
     if (f.width < 16 || f.height < 16 || f.width > 8192 || f.height > 8192 || f.width % 2 || f.height % 2)
         fail("BAD_ARGUMENT", "width/height must be even numbers between 16 and 8192");
-    if (a.contains("fps")) {
-        const double fps = a["fps"].toDouble();
-        if (fps < 1 || fps > 120) fail("BAD_ARGUMENT", "fps must be between 1 and 120");
-        f.rate = nearestFrameRate(fps);
-    }
+    if (a.contains("fps")) f.rate = projectFrameRate(a["fps"].toDouble());
     return f;
+}
+
+namespace {
+
+// The rates a user may type: the standard rates, plus high frame rates of cameras and phones (48 for cinema HFR,
+// 100/120 for slow motion; the engine plays and renders any rate, the lists in the app only offer the standard
+// ones), for an export also the small ones (10/12/15 for GIFs and small files). Ascending
+QVector<FrameRate> offeredRates(bool exportRates)
+{
+    static const FrameRate high[] = {{48, 1}, {100, 1}, {120, 1}};
+    QVector<FrameRate> rates(std::begin(kFrameRates), std::end(kFrameRates));
+    for (const FrameRate& r : high) rates << r;
+    if (exportRates)
+        for (const FrameRate& r : kExportOnlyRates) rates << r;
+    std::sort(rates.begin(), rates.end(), [](const FrameRate& x, const FrameRate& y) { return x.fps() < y.fps(); });
+    return rates;
+}
+
+std::optional<FrameRate> findRate(double fps, bool exportRates)
+{
+    // 29.97 and 23.976 as written by hand (30000/1001 = 29.97003, 24000/1001 = 23.976)
+    for (const FrameRate& r : offeredRates(exportRates))
+        if (std::abs(r.fps() - fps) < 0.01) return r;
+    return std::nullopt;
+}
+
+[[noreturn]] void refuseRate(double fps, bool exportRates, const QString& what)
+{
+    QStringList allowed;
+    for (const FrameRate& r : offeredRates(exportRates))
+        allowed << (r.isInteger() ? QString::number(r.num) : QString::number(r.fps(), 'f', r.num == 24000 ? 3 : 2));
+    // Never snapped to another rate in silence (12 became 23.976, 120 became 60)
+    fail("BAD_ARGUMENT", QString("%1 %2 is not a frame rate schneidi offers; use one of %3")
+                             .arg(what)
+                             .arg(fps)
+                             .arg(allowed.join(", ")));
+}
+
+} // namespace
+
+FrameRate projectFrameRate(double fps, const QString& what)
+{
+    if (const auto r = findRate(fps, false)) return *r;
+    refuseRate(fps, false, what);
+}
+
+FrameRate exportFrameRate(double fps)
+{
+    if (const auto r = findRate(fps, true)) return *r;
+    refuseRate(fps, true, "fps");
+}
+
+FrameRate templateFrameRate(double fps)
+{
+    if (const auto r = findRate(fps, true)) return *r;
+    // A template file's own rate (only lengths are counted with it): kept to a thousandth, never another rate
+    return withinLimits({1920, 1080, {int(std::lround(std::clamp(fps, 1.0, 1000.0) * 1000)), 1000}}).rate;
 }
 
 QJsonObject formatJson(const ProjectFormat& f)
@@ -806,7 +877,7 @@ const QVector<Command>& commands()
           {"width", T::Integer, "timeline width (default: the first video in media, else the template's, 1920)"},
           {"height", T::Integer, "timeline height (default: the first video in media, else the template's, 1080)"},
           {"fps", T::Number, "frame rate (default: the first video in media - its nearest standard rate -, else the "
-                             "template's, 25; 23.976, 24, 25, 29.97, 30, 50, 59.94, 60). A template's fixed size or "
+                             "template's, 25; 23.976, 24, 25, 29.97, 30, 48, 50, 59.94, 60, 100, 120; others are refused). A template's fixed size or "
                              "rate stays; the answer's format_from names the video"},
           {"media", T::Paths, "media files to import"},
           {"overwrite", T::Boolean, "replace an existing project (its last state goes into the backups; not while "
@@ -884,7 +955,8 @@ const QVector<Command>& commands()
           {"search", T::Paths, "folders to look for media of the timeline that are not where the file says "
                                "(another computer); default: the folder of the timeline file"},
           {"name", T::String, "name of the new timeline (default: the one in the file)"},
-          {"fps", T::Number, "EDL only (it has no frame rate): its frame rate (default: the project's)"}},
+          {"fps", T::Number, "EDL only (it has no frame rate): its frame rate (default: the project's; 23.976 … 60, 48, "
+                            "100 or 120, others are refused)"}},
          cmdImport},
         {"export_timeline", "Write a timeline for another editor: FCP7 XML (Premiere Pro: File › Import; DaVinci "
                             "Resolve: File › Import › Timeline), OpenTimelineIO (.otio, DaVinci Resolve 18.5+) or EDL "
@@ -1015,7 +1087,8 @@ const QVector<Command>& commands()
           {"quality", T::Integer, "0 = high (default), 1 = medium, 2 = small, 3 = web: high with a bit rate cap like YouTube recommends (H.264/H.265 only; the YouTube and phone presets use it). ProRes, DNxHR, GIF and images have a fixed quality"},
           {"height", T::Integer, "shorter image edge, e.g. 720: 16 to 8192, an odd one rounded down to even (default: timeline resolution)"},
           {"size", T::String, "fixed output size, e.g. 1080x1920 (portrait; the picture is fitted in)"},
-          {"fps", T::Number, "output frame rate (default: the timeline's)"},
+          {"fps", T::Number, "output frame rate (default: the timeline's): 10, 12, 15, 23.976, 24, 25, 29.97, 30, 48, 50, "
+                            "59.94, 60, 100 or 120, others are refused"},
           {"encoder", T::String, "H.264/H.265 video encoder: auto (default: a hardware encoder of the graphics card when "
                                  "one works here, else software), software, nvenc (NVIDIA), vaapi (AMD/Intel on Linux), "
                                  "qsv (Intel Quick Sync). A hardware encoder that does not work falls back to software; "
@@ -1663,7 +1736,7 @@ QJsonObject normalize(const Command& cmd, const QJsonObject& given)
             break;
         case ParamType::Number:
             if (v.isDouble()) out[p.name] = v.toDouble();
-            else if (const double d = QLocale::c().toDouble(str, &ok); ok && !std::isfinite(d)) ok = false; // "nan", "inf"
+            else if (const double d = numberFromText(str, &ok, p.name); ok && !std::isfinite(d)) ok = false; // "nan", "inf"
             else out[p.name] = d;
             break;
         case ParamType::Boolean:
@@ -1852,7 +1925,8 @@ QJsonObject cmdHelp(const QJsonObject& a, Context&)
                  "HTTP (see 'servers'); `schneidi-cli setup claude` connects Claude Code and Claude Desktop to it. "
                  "Long commands (render, transcribe, highlights, short …) write progress lines on stderr: "
                  "{\"progress\":45,\"stage\":\"transcribe\",\"eta_s\":30} (percent, the step running now, "
-                 "estimated seconds left). --verbose: also progress notes and engine messages on stderr.";
+                 "estimated seconds left). --verbose: also progress notes and engine messages on stderr. Numbers: "
+                 "\"1.5\" or with a decimal comma \"1,5\" (\"1,500\" is 1.5, not 1500: no thousands separators).";
     o["servers"] = servers;
     return o;
 }

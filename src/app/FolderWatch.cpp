@@ -21,6 +21,7 @@ struct FolderWatch::Batch {
     int generation = 0;
     QVector<WatchImport> imports;
     QStringList pending;
+    int unconfirmed = 0; // of pending: only waiting for a second look
     QStringList folders;
 };
 
@@ -112,6 +113,7 @@ void FolderWatch::startScan()
         const WatchFolders::Scanner::Result found =
             scanner->scan(watches, [&pool](const QString& key) { return pool.contains(key); });
         batch->pending = found.pending;
+        batch->unconfirmed = found.unconfirmed;
         batch->folders = found.folders;
         for (const WatchFolders::Scanner::Found& f : found.ready) {
             Background::yieldToForeground(); // opening files for the preview first
@@ -135,8 +137,8 @@ void FolderWatch::scanDone(const std::shared_ptr<Batch>& batch)
             m_waitingGeneration = m_generation;
             importWaiting();
         }
-        // Still being written: look again once it may be done
-        if (!batch->pending.isEmpty()) scanSoon(m_settleMs + 250);
+        // Still being written: look again once it may be done; files only seen once (long unchanged) sooner
+        if (!batch->pending.isEmpty()) scanSoon(batch->pending.size() == batch->unconfirmed ? std::min(m_settleMs, 1000) + 250 : m_settleMs + 250);
     } else {
         m_again = true;
     }
