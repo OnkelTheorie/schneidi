@@ -3,6 +3,7 @@
 
 #include "core/I18n.h"
 #include "engine/Bundle.h"
+#include "engine/ExportWriter.h"
 #include "engine/Extensions.h"
 
 #include <QDateTime>
@@ -278,7 +279,8 @@ QString softwareCodec(const QString& format)
 {
     const RenderFormatInfo& f = renderFormat(format);
     if (!*f.videoCodec) return {};
-    if (builtIn(f.videoCodec) || !externalProgram(f.videoCodec).isEmpty()) return f.videoCodec;
+    if (ExportWriter::isOwnH264(f.videoCodec) || builtIn(f.videoCodec) || !externalProgram(f.videoCodec).isEmpty())
+        return f.videoCodec;
     return freeReplacement(f.videoCodec);
 }
 
@@ -288,7 +290,7 @@ bool formatAvailable(const QString& format)
     if (QLatin1String(f.id) != format) return false;
     if (*f.audioCodec && !builtIn(renderFormat(format).audioCodec)) return false;
     // (the extension last: asking its program takes a moment, and the panel's format list asks at start)
-    if (!*f.videoCodec || builtIn(f.videoCodec) || !freeReplacement(f.videoCodec).isEmpty()
+    if (!*f.videoCodec || ExportWriter::isOwnH264(f.videoCodec) || builtIn(f.videoCodec) || !freeReplacement(f.videoCodec).isEmpty()
         || !externalProgram(f.videoCodec).isEmpty())
         return true;
     return f.hardware && probed() && !available(format).isEmpty();

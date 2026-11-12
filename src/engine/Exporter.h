@@ -114,7 +114,7 @@ public:
     // 12) keeps the preset's lookahead - a shorter one costs quality, which nobody asked for there.
     static bool lowMemoryLookahead(int processors, const ThreadChoice& automatic);
     // Encoder options of a render whose threads were lowered a lot for the RAM (lowMemoryLookahead): shorter
-    // lookahead of x264/x265 (a format's own options still win: they are applied after)
+    // lookahead of x264/x265 and the own H.264 encoder (a format's own options still win: they are applied after)
     static QVector<QPair<QByteArray, QByteArray>> lowMemoryOptions(const QString& codec);
     // The most memory the video decoders of the range [from, to) hold at one frame: every clip showing then with a
     // decoder of its own (another file, or the same file at another position: picture-in-picture, a transition;
@@ -130,6 +130,10 @@ public:
     // How many images are rendered at once: threads (0 = all), but 1 if a frame needs the one before (stabilizing
     // with border "keep")
     static int parallelFrames(const Timeline& tl, int threads);
+    // Output frames where the picture cuts hard (the main video track's clip starts without a transition from another
+    // source), sorted, at least kOwnMinKeyDistance apart: key frames of the own H.264 encoder
+    static constexpr int kOwnMinKeyDistance = 6; // as the encoder's scene detection
+    static QVector<int> cutFrames(const Timeline& tl, int from, int length, FrameRate timelineRate, FrameRate outputRate);
     // Does the timeline (also nested sequences) read this file? Then the export must not overwrite it
     // (source and output destroyed) – refuse like DaVinci instead of asking.
     static bool readsFile(const Timeline& tl, const QString& path);
@@ -229,6 +233,7 @@ private:
     // queued (disconnecting does not take back what is queued already): that one is stale and must do nothing.
     quint64 m_threadRun = 0;
 
+    QVector<int> m_keyframes;          // own H.264 encoder: cuts (cutFrames)
     QVector<SmartRender::Span> m_copy; // smart render: what may be copied (empty = encode everything)
     int m_copiedPercent = 0;
     // Smart render failed as a whole: render again encoding everything
