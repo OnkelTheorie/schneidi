@@ -20,7 +20,9 @@ jobs:
             qt6-base-dev qt6-base-private-dev \
             libavformat-dev libavcodec-dev libswresample-dev libswscale-dev libavutil-dev libminiaudio-dev \
             libavfilter-dev qt6-shader-baker \
-            ffmpeg xvfb xauth locales ccache
+            ffmpeg xvfb xauth locales ccache fonts-noto-core
+          # fonts-noto-core: the layout tests' widths are measured with Noto Sans (the desktop default of the main
+          # development machine); without it the container's fallback font is a few pixels wider
           # Locale-aware sorting and German number format are tested; default "C" locale breaks them
           sed -i 's/^# *de_DE.UTF-8/de_DE.UTF-8/' /etc/locale.gen
           locale-gen

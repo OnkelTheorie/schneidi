@@ -188,10 +188,12 @@ void testThumbnailAt(const QTemporaryDir& dir)
         CHECK(difference(img, Video::stillAt(recorder, 2.0, kBox)) < 3);
     }
 
-    // Interlaced: MBAFF H.264 and field-coded MPEG-2 in a transport stream, as the exact way shows them
+    // Interlaced: MBAFF H.264 and field-coded MPEG-2 in a transport stream, as the exact way shows them. Key frames
+    // fixed at every second: x264's scene cut decisions depend on its thread count (1-4 cores: none exactly at 1 s)
     const QString mbaff = Check::makeMedia(file("mbaff.mp4"), {"-f", "lavfi", "-i", "testsrc2=size=1920x1080:rate=25", "-t", "3",
                                                                "-vf", "setfield=tff", "-flags", "+ildct+ilme", "-c:v", "libx264",
-                                                               "-x264opts", "tff=1", "-g", "25", "-pix_fmt", "yuv420p"});
+                                                               "-x264opts", "tff=1", "-g", "25", "-keyint_min", "25",
+                                                               "-sc_threshold", "0", "-pix_fmt", "yuv420p"});
     if (CHECK(!mbaff.isEmpty())) CHECK(difference(Video::thumbnailAt(mbaff, 1.0, kBox), Video::stillAt(mbaff, 1.0, kBox)) < 3);
     const QString mpeg2 = Check::makeMedia(file("mpeg2.ts"), {"-f", "lavfi", "-i", "testsrc2=size=720x576:rate=25", "-t", "3",
                                                               "-vf", "setfield=tff", "-flags", "+ildct+ilme", "-c:v", "mpeg2video",

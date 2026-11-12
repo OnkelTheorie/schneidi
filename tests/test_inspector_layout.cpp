@@ -19,6 +19,7 @@
 #include <QAbstractButton>
 #include <QApplication>
 #include <QButtonGroup>
+#include <QFontInfo>
 #include <QScrollArea>
 #include <QScrollBar>
 #include <QStackedWidget>
@@ -127,6 +128,8 @@ int main(int argc, char** argv)
     Check::initApp("inspector-layout");
     Theme::apply(app);
     const QFont normal = QApplication::font();
+    // The width limits below are measured with Noto Sans (CI installs it); a wider font fails them without a bug
+    std::printf("font: %s %.1f pt\n", qPrintable(QFontInfo(normal).family()), normal.pointSizeF());
     QFont big = normal;
     big.setPointSizeF(normal.pointSizeF() * 1.5); // like QT_FONT_DPI=144 or a large system font
     for (const char* lang : {"de", "ru", "hi"}) {
