@@ -366,11 +366,6 @@ set_tests_properties(test_av_sync test_preview_audio test_play_end test_play_loo
                      test_watch_folders test_voiceover test_voiceover_app test_handover
                      PROPERTIES LABELS timing)
 
-# Label "font_calibrated": layout tests whose pixel limits are measured with the main development machine's fonts
-# (Debian 13 desktop, Noto). Another font set (the CI container) is a pixel or two wider without a bug, so CI skips them
-# (ctest -LE font_calibrated); the full local suite runs them.
-set_tests_properties(test_inspector_layout test_window_space PROPERTIES LABELS font_calibrated)
-
 # Server/container without a display: titles (Qt's fonts) and the renderer still work
 foreach(name test_cli test_multicam_render)
     add_test(NAME ${name}_no_display COMMAND ${name})
@@ -556,3 +551,8 @@ foreach(_t ${_schneidi_all_tests})
         "SCHNEIDI_TEST_SETTINGS=set:${_dir}" "XDG_CONFIG_HOME=set:${_dir}/config" "XDG_DATA_HOME=set:${_dir}/data"
         "XDG_CACHE_HOME=set:${_dir}/cache" "SCHNEIDI_TEST_SETTINGS_READY=unset:")
 endforeach()
+
+# Label "font_calibrated": layout tests whose pixel limits are measured with the main development machine's fonts
+# (Debian 13 desktop, Noto). Another font set (the CI container) is a pixel or two wider without a bug, so CI skips them
+# (ctest -LE font_calibrated); the full local suite runs them.
+set_tests_properties(test_inspector_layout test_window_space PROPERTIES LABELS font_calibrated)
