@@ -334,8 +334,11 @@ void prepareFirstPicture(const QStringList& files)
     } else if (!files.isEmpty()) {
         videos << QFileInfo(files.first()).absoluteFilePath(); // a new project of the clip, shown from its start
     }
+    // The picture engine's preview readers keep a seek window (the size is the taker's)
+    Video::Reader::Options preview;
+    preview.keepBytes = 1;
     for (const QString& v : videos)
-        if (QImageReader::imageFormat(v).isEmpty()) Video::Reader::prepare(v); // stills are read another way
+        if (QImageReader::imageFormat(v).isEmpty()) Video::Reader::prepare(v, preview); // stills are read another way
 }
 
 // Claude Code or Claude Desktop is on this computer, but not connected to schneidi: asked once on start (Cli::Setup

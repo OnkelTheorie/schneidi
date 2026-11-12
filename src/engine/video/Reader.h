@@ -117,9 +117,10 @@ public:
     static std::unique_ptr<Reader> open(const QString& path) { return open(path, Options{}); }
     // Opens `path` ahead of its use, on a helper thread: the app started with a project opens the files of its first
     // picture while the window is built (file, stream analysis, the graphics card's decoder: 100-300 ms). The next
-    // open() of the same path with the same threads and hardware options takes that reader (waiting for it if it is
-    // not open yet) instead of opening the file again; one not taken within kPreparedMs (or at the application's
-    // quit) is closed. Thread-safe.
+    // open() of the same path with the same threads and hardware options and the same kind of user (autoBackward,
+    // keepBytes zero or not: a preview's reader, not a thumbnail's) takes that reader with its own options (waiting
+    // for it if it is not open yet) instead of opening the file again; one not taken within kPreparedMs (or at the
+    // application's quit) is closed. Thread-safe.
     static void prepare(const QString& path, const Options& options);
     static void prepare(const QString& path);
     // Readers prepared and not taken yet (tests)

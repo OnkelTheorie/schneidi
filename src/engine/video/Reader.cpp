@@ -1442,7 +1442,11 @@ std::unique_ptr<Reader> takePrepared(const QString& path, const Reader::Options&
     auto [from, to] = g_prepared.equal_range(path);
     for (auto it = from; it != to; ++it) {
         const std::shared_ptr<Prepared> p = it->second;
-        if (p->options.threads != options.threads || p->options.hardware != options.hardware) continue;
+        // The same decoder (threads, hardware) and the same kind of user: a preview's reader (seek window, steps
+        // back) is not given to a thumbnail's
+        if (p->options.threads != options.threads || p->options.hardware != options.hardware
+            || p->options.autoBackward != options.autoBackward || (p->options.keepBytes > 0) != (options.keepBytes > 0))
+            continue;
         g_prepared.erase(it);
         g_preparedCv.wait(lock, [&p] { return p->done; });
         p->taken = true;

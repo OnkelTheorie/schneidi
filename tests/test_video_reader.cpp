@@ -147,6 +147,7 @@ void testPrepared(const Media& m, const QVector<QByteArray>& ref)
 {
     Video::Reader::Options o;
     o.hardware = false;
+    o.keepBytes = 1; // a preview's kind of reader (the taker's size applies)
     Video::Reader::prepare(m.path, o);
     CHECK_EQ(Video::Reader::preparedCount(), 1);
     Video::Reader::Options other = o;
@@ -154,6 +155,10 @@ void testPrepared(const Media& m, const QVector<QByteArray>& ref)
     auto fresh = Video::Reader::open(m.path, other);
     CHECK(fresh);
     CHECK_EQ(Video::Reader::preparedCount(), 1); // not taken: other threads
+    Video::Reader::Options thumbnail = o;
+    thumbnail.autoBackward = false;
+    CHECK(Video::Reader::open(m.path, thumbnail));
+    CHECK_EQ(Video::Reader::preparedCount(), 1); // not taken: another kind of user
     Video::Reader::Options taker = o;
     taker.ahead = 3;
     taker.keepBytes = 64 << 20;
