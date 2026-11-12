@@ -51,9 +51,12 @@ public:
     // The GPU check of the start on a helper thread, while the window is built (probe() then answers with it).
     // Vulkan: also loads the drivers and makes a device once, so the window's own device costs little later.
     // Linux/BSD only (OpenGL: xcb only).
-    static void warmUp();
+    // `openGl`: OpenGL too (Vulkan always) - the app asks for it after the window's open animation only.
+    static void warmUp(bool openGl);
     // warmUp() ran for the API used now
     static bool warmedUp();
+    // warmUp()'s check is still being made
+    static bool warmUpRunning();
     // Makes this run's API final before a window is made for it (FrameView::prepareWindow, the first surface).
     // Vulkan (opt-in) must pass the start's check within 2 s and show into this display's windows, else OpenGL in
     // this run already. Never changes after that.

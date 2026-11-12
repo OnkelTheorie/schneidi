@@ -234,10 +234,15 @@ void prepareEngineWhenFree()
 void attachViewerSurface()
 {
     afterOpenAnimation([] {
-        FrameView::attachDeferredSurfaces();
-        StartupTrace::mark("viewer GPU surface attached");
-        g_viewerAttached = true;
-        prepareEngineWhenFree();
+        // The check that the GPU still works (a stored "ok" is not enough to switch a shown window) on a helper
+        // thread first: no OpenGL context while the window is built or animates
+        FrameView::warmUpGpu(true);
+        FrameView::whenGpuChecked([] {
+            FrameView::attachDeferredSurfaces();
+            StartupTrace::mark("viewer GPU surface attached");
+            g_viewerAttached = true;
+            prepareEngineWhenFree();
+        });
     });
 }
 
@@ -512,9 +517,9 @@ int main(int argc, char* argv[])
         return Cli::reviewOverlay(data, sequence, &cancel);
     });
     // The viewer trusts the last run's GPU check; the real one comes after the window (X11: made on a helper thread
-    // while the window is built, warmUpGpu; elsewhere a throwaway device once the window is up)
+    // after the open animation, warmUpGpu; elsewhere a throwaway device once the window is up)
     FrameView::setUseCachedGpuCheck(true);
-    FrameView::warmUpGpu(); // while the window is built
+    FrameView::warmUpGpu(false); // while the window is built (Vulkan, opt-in; OpenGL's check after the animation)
     // Started with a project or media (a double-click on a .schneidi file): the video decoder opens beside the
     // window's setup; otherwise a while after the window settled (it costs video memory, wakes a laptop's card)
     if (const QStringList launchFiles = LaunchArgs::files(app.arguments().mid(1)); !launchFiles.isEmpty()) {

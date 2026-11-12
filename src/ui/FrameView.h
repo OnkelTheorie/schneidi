@@ -74,7 +74,10 @@ public:
     static void attachDeferredSurfaces();
     // The app's start, before the window is built: GPU setup that can run on a helper thread meanwhile (Vulkan's
     // drivers and a first device); nothing when views will not use the GPU
-    static void warmUpGpu();
+    // `openGl`: the OpenGL check too (the app: after the window's open animation; Vulkan's runs at once)
+    static void warmUpGpu(bool openGl);
+    // Calls `then` (GUI thread) once warmUpGpu()'s check is made (at most ~3 s from now)
+    static void whenGpuChecked(std::function<void()> then, int waited = 0);
     // GPU views compose through Vulkan in this run (preferVulkan; false after a Vulkan failure or without RHI)
     static bool composesWithVulkan();
     // Waits for attachDeferredSurfaces (tests)

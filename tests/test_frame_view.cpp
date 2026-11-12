@@ -108,7 +108,7 @@ void testDeferredAttach(const QString& api)
 {
     QSettings().setValue("viewer/gpuCheck", "1|0|Test GPU");
     FrameView::setUseCachedGpuCheck(true);
-    FrameView::warmUpGpu();
+    FrameView::warmUpGpu(true);
     QWidget window;
     window.resize(640, 360);
     auto* first = new FrameView(&window);

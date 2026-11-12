@@ -238,7 +238,7 @@ void FrameView::attachDeferredSurfaces()
             v->makeRhiSurface(); // not on screen yet: its creation takes the surface along
         } else if (handle->surfaceType() == FrameViewRhiSurface::surfaceType()) {
             // The stored check said "GPU ok", but it may not work any more (a driver update, ssh -X, VNC): the check
-            // made at the start (FrameView::warmUpGpu) decides before the shown window is touched - a window switched
+            // made on a helper thread before (FrameView::warmUpGpu) decides before the shown window is touched - a window switched
             // to a failing GPU composition turns black
             QString why;
             if (!FrameViewRhiSurface::startCheckPasses(gpuForced(), &why)) {
@@ -255,15 +255,33 @@ void FrameView::attachDeferredSurfaces()
 #endif
 }
 
-void FrameView::warmUpGpu()
+void FrameView::warmUpGpu(bool openGl)
 {
 #ifdef SCHNEIDI_HAVE_RHI
     static const QStringList headless{"offscreen", "minimal", "vnc", "linuxfb", "vkkhrdisplay"};
     const QString wish =
         qEnvironmentVariable("SCHNEIDI_VIEWER", QSettings().value("viewer/renderer").toString()).trimmed().toLower();
     if (CpuPath::on() || wish == "painter" || wish == "cpu" || headless.contains(QGuiApplication::platformName())) return;
-    FrameViewRhiSurface::warmUp();
+    FrameViewRhiSurface::warmUp(openGl);
+#else
+    Q_UNUSED(openGl);
 #endif
+}
+
+void FrameView::whenGpuChecked(std::function<void()> then, int waited)
+{
+#ifdef SCHNEIDI_HAVE_RHI
+    constexpr int kStepMs = 20, kMaxWaitMs = 3000; // the check gives up itself after 2 s (startCheckPasses)
+    if (FrameViewRhiSurface::warmUpRunning() && waited < kMaxWaitMs) {
+        QTimer::singleShot(kStepMs, qApp, [then = std::move(then), waited]() mutable {
+            whenGpuChecked(std::move(then), waited + kStepMs);
+        });
+        return;
+    }
+#else
+    Q_UNUSED(waited);
+#endif
+    then();
 }
 
 bool FrameView::composesWithVulkan()

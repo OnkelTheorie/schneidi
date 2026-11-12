@@ -221,18 +221,19 @@ bool FrameViewRhiSurface::probed()
     return g_probe.has_value();
 }
 
-void FrameViewRhiSurface::warmUp()
+void FrameViewRhiSurface::warmUp(bool openGl)
 {
 #if defined(Q_OS_WIN) || defined(Q_OS_MACOS) || defined(Q_OS_IOS)
+    Q_UNUSED(openGl);
     return; // a D3D11/Metal device is cheap and has not delayed the start
 #else
     if (g_probe || g_warmUp) return;
     const bool vk = vulkan();
-    // OpenGL: only where a fallback surface may be made off the GUI thread (GLX pbuffers), the platform allows
-    // contexts on other threads, and there are cores to spare (a check only: on one or two cores it would slow the
-    // window's setup down; the stored check decides then, as before)
-    if (!vk && (QGuiApplication::platformName() != QLatin1String("xcb") || !QOpenGLContext::supportsThreadedOpenGL()
-                || QThread::idealThreadCount() < 4))
+    // OpenGL only when asked (not while the window is built: making a context there slowed its setup down ~70 ms,
+    // the X server is busy with it), where a fallback surface may be made off the GUI thread (GLX pbuffers) and the
+    // platform allows contexts on other threads
+    if (!vk && (!openGl || QGuiApplication::platformName() != QLatin1String("xcb")
+                || !QOpenGLContext::supportsThreadedOpenGL()))
         return;
     if (vk) { // a driver that crashes or hangs here: OpenGL from the next start on (vulkan())
         QSettings settings;
@@ -265,12 +266,19 @@ bool FrameViewRhiSurface::warmedUp()
     return g_warmUp && g_warmUp->vulkan == vulkan();
 }
 
+bool FrameViewRhiSurface::warmUpRunning()
+{
+    if (!g_warmUp) return false;
+    std::lock_guard lock(g_warmUp->m);
+    return !g_warmUp->done;
+}
+
 void FrameViewRhiSurface::settleApi(bool allowSoftware)
 {
     if (g_apiSettled) return;
 #if defined(SCHNEIDI_VIEWER_VULKAN)
     if (vulkan()) {
-        warmUp(); // (nothing when it ran)
+        warmUp(false); // (nothing when it ran)
         QString why;
         const std::optional<FrameView::Probe> p = warmUpResult(kCheckWaitMs);
         if (!p) why = QStringLiteral("the Vulkan check did not finish in time");
