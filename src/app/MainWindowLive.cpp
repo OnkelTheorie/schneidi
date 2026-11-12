@@ -111,7 +111,12 @@ void MainWindow::liveRenderCacheControl(const QString& mode, bool pause)
     if (mode == "off") cache->setMode(RenderCache::Mode::Off);
     else if (mode == "smart") cache->setMode(RenderCache::Mode::Smart);
     else if (mode == "user") cache->setMode(RenderCache::Mode::User);
-    if (pause) cache->pauseUntilChange(); // a new mode queues through cacheChanged (like the menu)
+    if (pause) {
+        cache->pauseUntilChange();
+    } else {
+        cache->resume(); // pause:false (or only a mode) ends a pause
+        m_engine->syncRenderCache();
+    }
     updateRenderCacheBar();
 }
 

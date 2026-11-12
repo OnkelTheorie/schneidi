@@ -66,7 +66,8 @@ public:
     // Proxy file being written right now (empty = none): cleaning up the proxy folder leaves it alone
     virtual QString liveProxyWriting() const { return {}; }
     // Render cache of the preview (engine/RenderCache): {mode, state, clip?, percent?, waiting, cached, clips}; empty =
-    // the host has none. Control: mode "off"/"smart"/"user" (empty = unchanged), pause = stop until the next change
+    // the host has none. Control: mode "off"/"smart"/"user" (empty = unchanged), pause = stop until the next change,
+    // otherwise a pause ends
     virtual QJsonObject liveRenderCache() const { return {}; }
     virtual void liveRenderCacheControl(const QString& mode, bool pause)
     {

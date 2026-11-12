@@ -29,6 +29,7 @@ extern "C" {
 
 #include <QCoreApplication>
 #include <QElapsedTimer>
+#include <QFile>
 #include <QTemporaryDir>
 #include <QThread>
 #include <QThreadPool>
@@ -648,6 +649,42 @@ int main(int argc, char** argv)
         if (m.name == "h264" || m.name == "hevc-10bit" || m.name == "prores") testThreads(m, ref);
         if (m.name == "h264") testPrepared(m, ref);
         if (m.name == "long-gop") testBackwards(m, ref, m.frames - 1, 100);
+    }
+
+    // A Matroska file cut short (a recording that crashed): some demuxers say EIO at the cut. The file is still there
+    // as opened, so that is its end - every picture before it comes, the reader is not "lost" (which would fail an
+    // export and reopen it on every seek)
+    {
+        const QString whole = Check::makeMedia(file("whole.mkv"), {"-f", "lavfi", "-i", "testsrc2=size=320x240:rate=25",
+                                                                   "-t", "4", "-c:v", "libx264", "-g", "25",
+                                                                   "-pix_fmt", "yuv420p"});
+        QFile in(whole), out(file("cut.mkv"));
+        if (CHECK(!whole.isEmpty() && in.open(QIODevice::ReadOnly) && out.open(QIODevice::WriteOnly))) {
+            out.write(in.read(in.size() * 6 / 10 + 7)); // in the middle of a block
+            out.close();
+            Video::Reader::Options o;
+            o.hardware = false;
+            Video::Reader::eioAtEndForTests(true); // FFmpeg 7.1 says EOF there, other builds EIO
+            auto r = Video::Reader::open(file("cut.mkv"), o);
+            if (CHECK(r)) {
+                int got = 0;
+                for (int i = 0; i < 100; ++i)
+                    if (const auto p = r->picture(i); p && p->position == i) ++got;
+                CHECK(got >= 50); // more than half of the 100 frames were written
+                CHECK(got < 100);
+                CHECK(!r->failed());
+                const auto again = r->picture(10); // a seek back after the end still answers
+                CHECK(again && again->position == 10);
+            }
+            // The same read error with the file gone: lost (a disk pulled)
+            auto gone = Video::Reader::open(file("cut.mkv"), o);
+            if (CHECK(gone) && CHECK(gone->picture(0))) {
+                CHECK(QFile::rename(file("cut.mkv"), file("cut-away.mkv")));
+                for (int i = 1; i < 100 && !gone->failed(); ++i) gone->picture(i);
+                CHECK(gone->failed());
+            }
+            Video::Reader::eioAtEndForTests(false);
+        }
     }
 
     // What the files state

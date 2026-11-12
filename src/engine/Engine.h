@@ -89,6 +89,8 @@ public:
     bool showsProxy() const { return m_showsProxy; }
     // Render cache: preview plays pre-rendered clip outputs (export never); updateTimeline() queues missing ones
     RenderCache* renderCache() const { return m_renderCache; }
+    // Queue what the render cache misses of the shown timeline now (after its mode changed or a pause ended)
+    void syncRenderCache();
     // Single frames from media files in their own thread (trim view while dragging an edit); follows setFormat()
     StillFetcher* stills() const { return m_stills; }
     // Looks at the shown timeline's media files on the disk (FileStamp::now, in the background): one overwritten under its name
@@ -237,6 +239,7 @@ private:
     void refresh();
     void mediaFileChanged(); // FileStamp saw a media file change (UI thread)
     void applyAudioState();
+    void retryLostSources(); // a seek or play start: lost sources may be back (Picture::Renderer::retryLost)
     void applyTimeline(const Timeline& tl);
     void emitLevels();
     // The pump shows `content` from `position` (Timeline/Source/Multicam), frames come to onPumpShown (pump thread)

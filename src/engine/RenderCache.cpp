@@ -255,6 +255,12 @@ QStringList RenderCache::pendingNames() const
     return names;
 }
 
+void RenderCache::resume()
+{
+    m_paused = false;
+    m_pausedKeys.clear(); // the next sync() queues what is missing
+}
+
 void RenderCache::pauseUntilChange()
 {
     if (m_paused && !m_thread && m_jobs.isEmpty()) return;
@@ -300,6 +306,10 @@ void RenderCache::sync(const Timeline& tl)
         }
     }
     // Paused by the user: stays so while only what was paused waits; a clip needing a new render resumes all
+    if (m_paused && jobs.isEmpty()) { // nothing waits any more (rendered or gone): no longer paused
+        m_paused = false;
+        m_pausedKeys.clear();
+    }
     if (m_paused) {
         const bool fresh = std::any_of(jobs.cbegin(), jobs.cend(), [this](const Job& j) { return !m_pausedKeys.contains(j.key); });
         if (fresh) {
@@ -331,6 +341,8 @@ void RenderCache::clear()
 {
     cancelCurrent();
     m_failed.clear();
+    m_paused = false; // everything is to be rendered anew
+    m_pausedKeys.clear();
     const QDir dir(cacheDir());
     for (const QString& f : dir.entryList({"*.mov"}, QDir::Files)) QFile::remove(dir.filePath(f));
     emit cacheChanged(); // preview reads the originals again; the following sync() renders anew

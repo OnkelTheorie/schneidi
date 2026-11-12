@@ -95,6 +95,7 @@ public:
     // render (a clip changed or added, another mode, the cache cleared). Not saved.
     void pauseUntilChange();
     bool isPaused() const { return m_paused; }
+    void resume(); // ends a pause (the next sync() queues what is missing)
 
     // Renders the output of a clip (see TimelineBuilder::buildClipOutput) synchronously into `file`.
     // With alpha (ProRes 4444) if the clip has transparency, otherwise ProRes 422 LT. cancel/paused may be null.

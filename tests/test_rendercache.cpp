@@ -516,7 +516,23 @@ void testBackground()
     CHECK(!rc.isPaused());
     CHECK_EQ(rc.pendingCount(), 2);
     CHECK(waitFor([&] { return !rc.resolve(h).isEmpty() && !rc.resolve(changedTl.video[0].clips[1]).isEmpty(); }, 60000));
-    // Another mode resumes as well
+    // Nothing waits any more: no longer paused (the state said "paused" with all rendered)
+    rc.pauseUntilChange();
+    CHECK(rc.isPaused());
+    rc.sync(changedTl);
+    CHECK(!rc.isPaused());
+    // Clearing, resume() and another mode end a pause as well
+    Timeline third = changedTl;
+    third.video[0].clips[1].in = 5;
+    rc.sync(third);
+    rc.pauseUntilChange();
+    rc.clear();
+    CHECK(!rc.isPaused());
+    rc.pauseUntilChange();
+    rc.resume();
+    CHECK(!rc.isPaused());
+    rc.sync(third);
+    CHECK(rc.pendingCount() > 0);
     rc.pauseUntilChange();
     CHECK(rc.isPaused());
     rc.setMode(RenderCache::Mode::Smart);

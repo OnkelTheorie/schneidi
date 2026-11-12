@@ -2061,6 +2061,7 @@
  "Render-Cache pausieren (bis zur nächsten Änderung)": "Pause the render cache (until the next change)",
  "Render-Cache pausiert bis zur nächsten Änderung": "Render cache paused until the next change",
  "Render-Cache – %1 – %2 %": "Render cache – %1 – %2 %",
+ "Render-Cache – wartet (%1)": "Render cache – waiting (%1)",
  "Render-Cache: %1": "Render Cache: %1",
  "Render-Cache: %1 – %2": "Render cache: %1 – %2",
  "Render-Cache: Bild %1 ließ sich nicht rendern.": "Render cache: frame %1 could not be rendered.",

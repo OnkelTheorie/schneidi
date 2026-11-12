@@ -373,7 +373,19 @@ void testLostAndBack(const QString& file, const QString& red)
     CHECK(colorOf(renderer.render(0).toImage()) != Color::Red); // tried a moment ago: not again yet
     CHECK_EQ(lost.size(), 1); // and not told again
     QTest::qWait(1600);
+    CHECK(colorOf(renderer.render(0).toImage()) != Color::Red); // no seek or play since: not on every request
+    renderer.retryLost(); // a seek (Engine::seek) or play start
     CHECK_COLOR(renderer.render(0).toImage(), Color::Red); // the next request opens it again
+    CHECK_EQ(lost.size(), 1);
+
+    // A file that never opened (offline media, an unreadable import) is no lost one: not told, not retried
+    Timeline offlineTl = Picture::mediaTimeline(file);
+    offlineTl.video[0].clips[0].mediaPath = file + ".never.mp4";
+    Picture::Renderer offline(offlineTl, o);
+    offline.render(0);
+    QTest::qWait(1600);
+    offline.retryLost();
+    offline.render(0);
     CHECK_EQ(lost.size(), 1);
 }
 

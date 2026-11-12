@@ -99,6 +99,7 @@ std::mutex g_longMutex;
 std::atomic<int> g_longRuns{0};
 // Reader::loseDecoderForTests: 1 = the next decoder thread to look falls back, 2 = software decoders do not open
 std::atomic<int> g_loseDecoder{0};
+std::atomic<bool> g_eioAtEnd{false}; // Reader::eioAtEndForTests
 std::unordered_map<std::string, LongAnalysis>& longAnalyses()
 {
     static std::unordered_map<std::string, LongAnalysis> m;
@@ -623,6 +624,7 @@ struct Reader::Impl {
     bool stop = false;
     bool lost = false; // the decoder could not be opened again: no more pictures (Reader::failed)
     std::atomic<int> readError{0}; // the file could not be read any more (a disk or share gone): lost as well
+    qint64 openSize = -1;          // the file's size when opened (a read error with the file as it was = damaged data)
     bool started = false;
     std::list<Request*> pending;
     int64_t high = -1;       // highest position asked for recently (read-ahead reference)
@@ -675,6 +677,13 @@ struct Reader::Impl {
             if (desc && !(desc->flags & AV_PIX_FMT_FLAG_HWACCEL)) return *p;
         }
         return AV_PIX_FMT_NONE;
+    }
+
+    // Decoder thread: the file is no longer there as it was opened (gone, its disk gone, other size)
+    bool fileGone() const
+    {
+        const QFileInfo fi(QString::fromUtf8(path));
+        return !fi.exists() || (openSize >= 0 && fi.size() != openSize);
     }
 
     bool openDecoder(bool hardware, QString* error)
@@ -1002,9 +1011,12 @@ struct Reader::Impl {
     {
         AVPacket* send = pkt;
         if (!draining) {
-            const int r = av_read_frame(fmt, pkt);
+            int r = av_read_frame(fmt, pkt);
+            if (r == AVERROR_EOF && g_eioAtEnd) r = AVERROR(EIO);
             if (r == AVERROR(EAGAIN)) return;
-            if (r < 0 && lostFile(r)) readError = r;
+            // Some demuxers say EIO for data cut short (Matroska of a recording that crashed): with the file still there
+            // as opened it is its end, as before; only a file gone or changed under it is lost
+            if (r < 0 && lostFile(r) && fileGone()) readError = r;
             if (r < 0) {
                 draining = true;
                 send = nullptr;
@@ -1603,6 +1615,7 @@ std::unique_ptr<Reader> Reader::open(const QString& path, const Options& options
     std::unique_ptr<Reader> reader(new Reader);
     Impl& d = *reader->d;
     d.path = path.toUtf8();
+    d.openSize = QFileInfo(path).exists() ? QFileInfo(path).size() : -1;
     d.opt = options;
     // Opens the file and picks the first video stream with a decoder that is no cover picture (MLT's
     // find_default_streams). analyze = seconds the stream analysis reads at most (0 = FFmpeg's default, 5 s).
@@ -1813,6 +1826,11 @@ bool Reader::failed() const
 {
     std::lock_guard lock(d->m);
     return d->lost;
+}
+
+void Reader::eioAtEndForTests(bool on)
+{
+    g_eioAtEnd = on;
 }
 
 void Reader::loseDecoderForTests(bool on)

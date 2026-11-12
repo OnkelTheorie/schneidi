@@ -415,7 +415,20 @@ void testRenderCache(MainWindow& w, Engine& engine, const QString& dir)
     CHECK_EQ(w.liveRenderCache()["state"].toString(), QString("idle"));
     CHECK_EQ(w.liveRenderCache()["cached"].toInt(), 1);
     CHECK(rulerTip().contains(T("fertig")));
-    // An AI pauses it the same way, and switches it off
+    // An AI pauses it the same way and resumes it (pause:false)
+    w.editor()->modifyClips({id}, "trim", [](Clip& c) { c.out -= 2; });
+    t.restart();
+    while (!cache->isRendering() && t.elapsed() < 10000) QTest::qWait(10);
+    w.liveRenderCacheControl("", true);
+    CHECK(cache->isPaused());
+    CHECK_EQ(w.liveRenderCache()["state"].toString(), QString("paused"));
+    w.liveRenderCacheControl("", false);
+    CHECK(!cache->isPaused());
+    CHECK(cache->pendingCount() > 0 || cache->isRendering());
+    t.restart();
+    while (w.liveRenderCache()["state"].toString() != "idle" && t.elapsed() < 60000) QTest::qWait(20);
+    CHECK_EQ(w.liveRenderCache()["state"].toString(), QString("idle"));
+    // ... and switches it off
     w.liveRenderCacheControl("off", false);
     CHECK(cache->mode() == RenderCache::Mode::Off);
     CHECK_EQ(w.liveRenderCache()["state"].toString(), QString("off"));

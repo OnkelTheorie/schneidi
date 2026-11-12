@@ -309,7 +309,9 @@ struct Source {
     std::shared_ptr<StillSource> still;
     bool failed = false;
     FileStamp::Stamp stamp; // of the media file when opened: another one = the file was overwritten, open it again
-    std::chrono::steady_clock::time_point opened; // when it was opened (or the open failed): a broken one is retried
+    std::chrono::steady_clock::time_point opened; // when it was opened (or the open failed): a lost one is retried
+    bool lost = false;  // failed although the file opened before (Renderer::retryLost tries it again)
+    uint64_t retry = 0; // Impl::retryGen when it was opened
     std::chrono::steady_clock::time_point used;
     int64_t usedFrame = -1; // last output frame that asked for it (export: dropped once rendering went past it)
 };
@@ -322,9 +324,10 @@ thread_local bool t_exact = true;
 // A video's decoder was lost for good (Video::Reader::failed): an export renders no frame without it (render() null)
 thread_local bool t_sourceLost = false;
 thread_local QString t_lostFile; // its media file
-// A broken source (its file could not be opened, its decoder was lost) is opened again on a request at most this often:
-// a file back (a USB disk or network share again, the same content: FileStamp sees no change) shows again on the next
-// play or seek, while a file still gone costs one failed open per this time (each open of a gone share may block)
+// A lost source (its file opened before, then could not be opened or read: a USB disk or share gone) is opened again
+// after the next seek or play start (Renderer::retryLost), and at most this often: a file back with the same content
+// (FileStamp sees no change) shows again, a file still gone costs one failed open per seek, never one per frame (each
+// open of a gone share may block). Files that never opened stay failed (offline media, unreadable imports).
 constexpr std::chrono::milliseconds kRetryBroken{1500};
 
 // GPU path (0.19): a clip whose compositing graph the card may evaluate. clipLayer() of that clip plans the graph
@@ -442,6 +445,7 @@ struct Renderer::Impl {
     std::mutex sourceMutex;
     std::map<QString, Source> sources;
     QSet<QString> opened; // media files opened once (sourceMutex): failing later = lost
+    std::atomic<uint64_t> retryGen{0}; // counts retryLost(): a lost source is tried again once per count
     mutable std::mutex lostMutex;
     QString lost; // media file of the last frame that went without a lost source (lostSource)
     std::mutex lengthMutex;
@@ -507,13 +511,13 @@ struct Renderer::Impl {
             auto it = sources.find(key);
             if (it != sources.end() && it->second.stamp == stamp) {
                 const auto now = std::chrono::steady_clock::now();
-                const bool broken = it->second.failed || (it->second.video && it->second.video->reader->failed());
-                if (!broken || now - it->second.opened < kRetryBroken) {
+                const bool lost = it->second.lost || (it->second.video && it->second.video->reader->failed());
+                if (!lost || it->second.retry == retryGen.load() || now - it->second.opened < kRetryBroken) {
                     it->second.used = now;
                     it->second.usedFrame = std::max(it->second.usedFrame, t_frame);
                     return it->second;
                 }
-                retried = std::move(it->second); // broken a while: try the file again
+                retried = std::move(it->second); // lost, and a seek or play since: try the file again
                 sources.erase(it);
             }
             // Overwritten under the same name: everything kept of the old content goes - in every lane (mediaLength
@@ -537,6 +541,7 @@ struct Renderer::Impl {
         }
         Source s;
         s.stamp = stamp;
+        s.retry = retryGen.load();
         if (looksLikeStill(file)) {
             QImageReader reader(file);
             reader.setAutoTransform(true);
@@ -601,7 +606,7 @@ struct Renderer::Impl {
         {
             std::lock_guard lock(sourceMutex);
             if (!s.failed) opened.insert(path);
-            else lost = opened.contains(path);
+            else lost = s.lost = opened.contains(path);
             result = sources.emplace(key, s).first->second;
         }
         if (lost) {
@@ -3153,6 +3158,11 @@ int64_t Renderer::length() const
 }
 
 const Options& Renderer::options() const { return d->options; }
+
+void Renderer::retryLost()
+{
+    ++d->retryGen;
+}
 
 QString Renderer::lostSource() const
 {

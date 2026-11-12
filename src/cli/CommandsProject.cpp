@@ -1281,9 +1281,9 @@ QJsonObject cmdApp(const QJsonObject& a, Context&)
         const QString mode = a["mode"].toString().trimmed().toLower();
         if (!mode.isEmpty() && mode != "off" && mode != "smart" && mode != "user")
             fail("BAD_ARGUMENT", "render_cache: mode must be off, smart or user");
-        const bool pause = a["pause"].toBool();
-        if (mode.isEmpty() && !pause) fail("BAD_ARGUMENT", "render_cache needs 'mode' and/or 'pause': true");
-        h->liveRenderCacheControl(mode, pause);
+        if (mode.isEmpty() && !a.contains("pause"))
+            fail("BAD_ARGUMENT", "render_cache needs 'mode' and/or 'pause' (true pauses, false resumes)");
+        h->liveRenderCacheControl(mode, a["pause"].toBool());
     } else if (action == "clean_proxies") {
         // Proxy files neither the app's project (unsaved changes included) nor a recent project needs
         // (engine/ProxyCleanup): listed, deleted only with delete:true

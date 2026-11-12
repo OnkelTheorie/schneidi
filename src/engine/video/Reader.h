@@ -183,6 +183,8 @@ public:
     // Tests only: the next decoder thread to look acts as if its hardware decoder failed, and from then on no software
     // decoder opens (false: back to normal)
     static void loseDecoderForTests(bool on);
+    // Tests only: the end of every file reads as EIO (as some demuxers say for data cut short)
+    static void eioAtEndForTests(bool on);
 
 private:
     Reader();

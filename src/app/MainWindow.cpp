@@ -866,7 +866,16 @@ void MainWindow::updateRenderCacheJob(bool allDone)
         m_renderCacheJob = true;
         return;
     }
-    if (!m_renderCacheJob || cache->pendingCount() > 0) return; // the next clip starts in a moment
+    if (!m_renderCacheJob) return;
+    if (cache->pendingCount() > 0) { // the next clip starts in a moment
+        BackgroundJobs::Job job;
+        job.text = T("Render-Cache – wartet (%1)").arg(cache->pendingNames().join(", "));
+        job.fraction = -1;
+        job.cancel = [cache] { cache->pauseUntilChange(); };
+        job.cancelToolTip = T("Render-Cache pausieren (bis zur nächsten Änderung)");
+        m_backgroundJobs->setJob(id, job);
+        return;
+    }
     m_renderCacheJob = false;
     if (cache->isPaused()) m_backgroundJobs->finishJob(id, T("Render-Cache pausiert bis zur nächsten Änderung"));
     else if (allDone && cache->mode() != RenderCache::Mode::Off) m_backgroundJobs->finishJob(id, T("Render-Cache fertig"));
