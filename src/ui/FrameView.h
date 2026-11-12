@@ -51,10 +51,10 @@ public:
                                  const std::function<Probe()>& probe, QString* why = nullptr);
     static bool rhiCompiled();
     // Linux/BSD: does the GPU view compose through Vulkan rather than OpenGL. `env`: SCHNEIDI_VIEWER_API ("vulkan" or
-    // "opengl"), `setting`: viewer/gpuApi ("opengl" once Vulkan failed here), `platform`: QGuiApplication::
-    // platformName(), `vulkanBuilt`: Qt and the build have Vulkan. Auto: Vulkan on X11 - with the NVIDIA driver every
-    // OpenGL context costs ~150 ms and stalls the window system while it is made (the window's open animation
-    // stutters), a Vulkan device is cheaper and does not. Wayland keeps OpenGL (not measured there).
+    // "opengl"), `setting`: viewer/gpuApi ("vulkan" opts in, "opengl" once Vulkan failed here), `platform`:
+    // QGuiApplication::platformName(), `vulkanBuilt`: Qt and the build have Vulkan. Default OpenGL (the planned
+    // zero-copy display wraps the picture engine's GL textures); Vulkan is experimental, opt-in only - a Vulkan device
+    // is cheaper to make than an OpenGL context with the NVIDIA driver and does not stall the window system.
     static bool preferVulkan(const QString& env, const QString& setting, const QString& platform, bool vulkanBuilt);
     // The app's start: views take the previous run's GPU check (settings) instead of making a device to check now;
     // checkCachedGpu() checks for real after the window is up (a device that went away: the painter) and stores the

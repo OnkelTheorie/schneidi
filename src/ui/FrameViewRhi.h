@@ -54,6 +54,10 @@ public:
     static void warmUp();
     // warmUp() ran for the API used now
     static bool warmedUp();
+    // Makes this run's API final before a window is made for it (FrameView::prepareWindow, the first surface).
+    // Vulkan (opt-in) must pass the start's check within 2 s and show into this display's windows, else OpenGL in
+    // this run already. Never changes after that.
+    static void settleApi(bool allowSoftware);
     // warmUp()'s check allows the GPU (waits for it; true when there was none): the shown window may be switched
     // to GPU composition. False: why, and Vulkan is given up for the next starts.
     static bool startCheckPasses(bool allowSoftware, QString* why);

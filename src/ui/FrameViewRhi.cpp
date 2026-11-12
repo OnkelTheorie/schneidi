@@ -6,6 +6,7 @@
 #include <QFile>
 #include <QGuiApplication>
 #include <QOffscreenSurface>
+#include <QOpenGLContext>
 #include <QSettings>
 #include <QTimer>
 #include <QWindow>
@@ -15,7 +16,9 @@
 #endif
 
 #include <cstring>
-#include <future>
+#include <condition_variable>
+#include <mutex>
+#include <thread>
 #include <optional>
 
 namespace {
@@ -38,11 +41,15 @@ bool softwareDevice(const QRhiDriverInfo& info)
 } // namespace
 
 namespace {
-// The viewer's API on Linux/BSD, decided once per run (FrameView::preferVulkan); false after a Vulkan failure
+// The viewer's API on Linux/BSD, decided once per run (FrameView::preferVulkan); false after a Vulkan failure before
+// the API was settled (settleApi: a window is made for it, it never changes after that in this run)
 std::optional<bool> g_vulkan;
-constexpr const char* kApiKey = "viewer/gpuApi"; // "opengl" after Vulkan failed here (FrameView::preferVulkan)
+bool g_apiSettled = false;
+constexpr const char* kApiKey = "viewer/gpuApi"; // "vulkan" opts in, "opengl" after Vulkan failed here
 // Set while the start's Vulkan check runs (warmUp): still there at the next start = the driver crashed or hung in it
 constexpr const char* kVulkanTryingKey = "viewer/vulkanCheckRunning";
+// How long the window's setup waits for the start's check (a hung driver: the other API, or the painter)
+constexpr int kCheckWaitMs = 2000;
 } // namespace
 
 bool FrameViewRhiSurface::vulkan()
@@ -65,8 +72,10 @@ bool FrameViewRhiSurface::vulkan()
 void FrameViewRhiSurface::vulkanFailed(const QString& why)
 {
     if (!vulkan()) return;
-    g_vulkan = false;
-    qWarning("Viewer: Vulkan not usable (%s), OpenGL from now on", qPrintable(why));
+    qWarning("Viewer: Vulkan not usable (%s), OpenGL %s", qPrintable(why),
+             g_apiSettled ? "from the next start on" : "from now on");
+    // Never mid-run: a window made for Vulkan keeps it (its views fall back to the painter)
+    if (!g_apiSettled) g_vulkan = false;
     // Remembered unless the environment asked for Vulkan (a test of it must not change the user's choice)
     if (qEnvironmentVariableIsEmpty("SCHNEIDI_VIEWER_API")) QSettings().setValue(kApiKey, QStringLiteral("opengl"));
 }
@@ -136,16 +145,24 @@ FrameView::Probe describe(const QRhi& rhi)
     p.software = softwareDevice(rhi.driverInfo());
     return p;
 }
-} // namespace
 
-bool FrameViewRhiSurface::probed()
-{
-    return g_probe.has_value();
-}
+// The start's check (warmUp), made on a helper thread of its own: never waited for without a time limit, a hung
+// driver must not hang the start (nor the quit: the thread is detached)
+struct WarmUp {
+    std::mutex m;
+    std::condition_variable cv;
+    bool done = false;
+    bool vulkan = false;
+    FrameView::Probe probe;
+#if defined(SCHNEIDI_VIEWER_VULKAN)
+    VkPhysicalDevice physDev = VK_NULL_HANDLE; // for the present check (settleApi)
+    uint32_t queueFamily = 0;
+#endif
+};
+std::shared_ptr<WarmUp> g_warmUp; // GUI thread
 
-namespace {
-// A device of the given API made and thrown away: does it work, which is it
-FrameView::Probe probeApi(bool vulkan)
+// A device of the given API made and thrown away: does it work, which is it (`into`: also the Vulkan device)
+FrameView::Probe probeApi(bool vulkan, WarmUp* into = nullptr)
 {
     FrameView::Probe p;
     std::unique_ptr<QRhi> rhi;
@@ -154,11 +171,19 @@ FrameView::Probe probeApi(bool vulkan)
         QRhiVulkanInitParams params;
         params.inst = FrameViewRhiSurface::vulkanInstance();
         if (params.inst) rhi.reset(QRhi::create(QRhi::Vulkan, &params));
-        if (rhi) p = describe(*rhi);
+        if (rhi) {
+            p = describe(*rhi);
+            if (into)
+                if (const auto* h = static_cast<const QRhiVulkanNativeHandles*>(rhi->nativeHandles())) {
+                    into->physDev = h->physDev;
+                    into->queueFamily = h->gfxQueueFamilyIdx;
+                }
+        }
         return p;
     }
 #else
     Q_UNUSED(vulkan);
+    Q_UNUSED(into);
 #endif
 #if defined(Q_OS_WIN)
     QRhiD3D11InitParams params;
@@ -178,66 +203,114 @@ FrameView::Probe probeApi(bool vulkan)
     }
     return p;
 }
+
+// The start's check, if it ran for the API used now and finished within `ms`
+std::optional<FrameView::Probe> warmUpResult(int ms)
+{
+    const std::shared_ptr<WarmUp> w = g_warmUp;
+    if (!w || w->vulkan != FrameViewRhiSurface::vulkan()) return std::nullopt;
+    std::unique_lock lock(w->m);
+    if (!w->cv.wait_for(lock, std::chrono::milliseconds(ms), [&w] { return w->done; })) return std::nullopt;
+    return w->probe;
+}
 } // namespace
 
-namespace {
-// warmUp(): the start's check, made on a helper thread (GUI thread only), and its API
-std::shared_future<FrameView::Probe> g_warmUp;
-bool g_warmUpVulkan = false;
-} // namespace
+bool FrameViewRhiSurface::probed()
+{
+    return g_probe.has_value();
+}
 
 void FrameViewRhiSurface::warmUp()
 {
 #if defined(Q_OS_WIN) || defined(Q_OS_MACOS) || defined(Q_OS_IOS)
     return; // a D3D11/Metal device is cheap and has not delayed the start
 #else
-    if (g_probe || g_warmUp.valid()) return;
+    if (g_probe || g_warmUp) return;
     const bool vk = vulkan();
-    // OpenGL: only where a fallback surface may be made off the GUI thread (GLX pbuffers)
-    if (!vk && QGuiApplication::platformName() != QLatin1String("xcb")) return;
-    g_warmUpVulkan = vk;
+    // OpenGL: only where a fallback surface may be made off the GUI thread (GLX pbuffers) and the platform allows
+    // contexts on other threads
+    if (!vk && (QGuiApplication::platformName() != QLatin1String("xcb") || !QOpenGLContext::supportsThreadedOpenGL()))
+        return;
     if (vk) { // a driver that crashes or hangs here: OpenGL from the next start on (vulkan())
         QSettings settings;
         settings.setValue(kVulkanTryingKey, true);
         settings.sync();
     }
+    auto w = std::make_shared<WarmUp>();
+    w->vulkan = vk;
+    g_warmUp = w;
     // Vulkan: loads the drivers (every installed one: ~100-200 ms) and makes a device once - the first one costs the
     // most, the window's own one afterwards ~50 ms. OpenGL: the check only (each context costs the same). A
     // QVulkanInstance and a QRhi may be made on any thread.
-    g_warmUp = std::async(std::launch::async, [vk] {
-                   const FrameView::Probe p = probeApi(vk);
-                   if (vk)
-                       QMetaObject::invokeMethod(
-                           QCoreApplication::instance(), [] { QSettings().remove(kVulkanTryingKey); },
-                           Qt::QueuedConnection);
-                   return p;
-               }).share();
+    std::thread([w] {
+        const FrameView::Probe p = probeApi(w->vulkan, w.get());
+        {
+            std::lock_guard lock(w->m);
+            w->probe = p;
+            w->done = true;
+        }
+        w->cv.notify_all();
+        if (w->vulkan)
+            QMetaObject::invokeMethod(
+                QCoreApplication::instance(), [] { QSettings().remove(kVulkanTryingKey); }, Qt::QueuedConnection);
+    }).detach();
 #endif
 }
 
 bool FrameViewRhiSurface::warmedUp()
 {
-    return g_warmUp.valid() && g_warmUpVulkan == vulkan();
+    return g_warmUp && g_warmUp->vulkan == vulkan();
+}
+
+void FrameViewRhiSurface::settleApi(bool allowSoftware)
+{
+    if (g_apiSettled) return;
+#if defined(SCHNEIDI_VIEWER_VULKAN)
+    if (vulkan()) {
+        warmUp(); // (nothing when it ran)
+        QString why;
+        const std::optional<FrameView::Probe> p = warmUpResult(kCheckWaitMs);
+        if (!p) why = QStringLiteral("the Vulkan check did not finish in time");
+        else if (!p->ok) why = QStringLiteral("no Vulkan device");
+        else if (p->software && !allowSoftware) why = "software device " + p->device;
+        else {
+            // Can the device show into this display's windows (a throwaway window of the Vulkan type, not shown)
+            QWindow test;
+            test.setSurfaceType(QSurface::VulkanSurface);
+            test.setVulkanInstance(vulkanInstance());
+            test.create();
+            if (!vulkanInstance()->supportsPresent(g_warmUp->physDev, g_warmUp->queueFamily, &test))
+                why = QStringLiteral("the device cannot show into this display's windows");
+        }
+        if (!why.isEmpty()) vulkanFailed(why); // OpenGL in this run already: no window was made for Vulkan yet
+    }
+#else
+    Q_UNUSED(allowSoftware);
+#endif
+    g_apiSettled = true;
 }
 
 bool FrameViewRhiSurface::startCheckPasses(bool allowSoftware, QString* why)
 {
     if (!warmedUp()) return true; // nothing checked: as before (the stored check)
-    const FrameView::Probe p = g_warmUp.get();
-    if (p.ok && (!p.software || allowSoftware)) return true;
-    const QString reason = p.ok ? "software device " + p.device : QStringLiteral("no GPU device at the start");
+    const std::optional<FrameView::Probe> p = warmUpResult(kCheckWaitMs);
+    if (p && p->ok && (!p->software || allowSoftware)) return true;
+    const QString reason = !p   ? QStringLiteral("the GPU check of the start did not finish in time")
+                           : p->ok ? "software device " + p->device
+                                   : QStringLiteral("no GPU device at the start");
     if (why) *why = reason;
-    // Vulkan: OpenGL may still work - from the next start on (a shown Vulkan window cannot take it in place)
-    vulkanFailed(reason);
+    vulkanFailed(reason); // Vulkan: OpenGL from the next start on (the shown window keeps its type)
     return false;
 }
 
 FrameView::Probe FrameViewRhiSurface::probe()
 {
     if (g_probe) return *g_probe;
-    FrameView::Probe p = warmedUp() ? g_warmUp.get() : probeApi(vulkan());
-    // Vulkan missing or only a software device (lavapipe): OpenGL may still have the hardware
-    if (vulkan() && (!p.ok || p.software)) {
+    std::optional<FrameView::Probe> warm = warmedUp() ? warmUpResult(kCheckWaitMs) : std::nullopt;
+    FrameView::Probe p = warm ? *warm : probeApi(vulkan());
+    // Vulkan missing or only a software device (lavapipe), before a window was made for it: OpenGL may still have
+    // the hardware
+    if (vulkan() && !g_apiSettled && (!p.ok || p.software)) {
         const FrameView::Probe gl = probeApi(false);
         if (gl.ok && (!gl.software || !p.ok)) {
             vulkanFailed(p.ok ? QStringLiteral("software device ") + p.device : QStringLiteral("no device"));

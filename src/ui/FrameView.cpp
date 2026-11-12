@@ -72,7 +72,8 @@ bool FrameView::preferVulkan(const QString& env, const QString& setting, const Q
         if (wish == "vulkan" || wish == "vk") return true;
         if (wish == "opengl" || wish == "gl") return false;
     }
-    return platform == QLatin1String("xcb");
+    Q_UNUSED(platform); // OpenGL by default everywhere: the planned zero-copy display shares the engine's GL textures
+    return false;
 }
 
 FrameView::Backend FrameView::chooseBackend(const QString& env, const QString& setting, const QString& platform,
@@ -119,6 +120,13 @@ QList<QPointer<FrameView>>& deferredViews()
 bool deferSurfaceAtStart()
 {
     return QGuiApplication::platformName() == QLatin1String("xcb");
+}
+// The GPU forced on a software device too (SCHNEIDI_VIEWER/viewer/renderer "gpu"; tests)
+bool gpuForced()
+{
+    const QString wish =
+        qEnvironmentVariable("SCHNEIDI_VIEWER", QSettings().value("viewer/renderer").toString()).trimmed().toLower();
+    return wish == "gpu" || wish == "rhi";
 }
 // The deferred views include one in this window: its switch to GPU composition is still to come
 bool attachPending(const QWidget* window)
@@ -196,6 +204,7 @@ void FrameView::prepareWindow(QWidget* window)
         }
     }
     if (!needed) return;
+    FrameViewRhiSurface::settleApi(gpuForced()); // the window's type follows the API: final from here on
     if (!window->testAttribute(Qt::WA_WState_Created)) {
         // The QWindow without its native window yet (a top-level is native anyway): it takes the surface type now,
         // show() makes the native window of that type
@@ -232,10 +241,7 @@ void FrameView::attachDeferredSurfaces()
             // made at the start (FrameView::warmUpGpu) decides before the shown window is touched - a window switched
             // to a failing GPU composition turns black
             QString why;
-            const QString wish = qEnvironmentVariable("SCHNEIDI_VIEWER", QSettings().value("viewer/renderer").toString())
-                                     .trimmed()
-                                     .toLower();
-            if (!FrameViewRhiSurface::startCheckPasses(wish == "gpu" || wish == "rhi", &why)) {
+            if (!FrameViewRhiSurface::startCheckPasses(gpuForced(), &why)) {
                 v->fallBackToPainter(why);
                 continue;
             }
@@ -324,6 +330,7 @@ void FrameView::checkCachedGpu()
 void FrameView::makeRhiSurface(bool intoShownWindow)
 {
 #ifdef SCHNEIDI_HAVE_RHI
+    FrameViewRhiSurface::settleApi(gpuForced());
     // Vulkan: the window takes the run's instance (made now: ~50 ms of driver loading, not on the way to the window)
     if (!FrameViewRhiSurface::prepareWindow(window()->windowHandle())) {
         FrameViewRhiSurface::vulkanFailed(QStringLiteral("no Vulkan instance"));
