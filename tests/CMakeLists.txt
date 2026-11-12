@@ -36,6 +36,8 @@ schneidi_test(test_interchange_app)
 schneidi_test(test_projectfile)
 schneidi_test(test_generators)
 target_link_libraries(test_generators PRIVATE schneidi_cli_lib)
+schneidi_test(test_audio_stream_arg) # CLI analyses: audio_stream not given = the first stream that plays
+target_link_libraries(test_audio_stream_arg PRIVATE schneidi_cli_lib)
 schneidi_test(test_project_versions)
 schneidi_test(test_undo)
 schneidi_test(test_h264_encoder) # own H.264 encoder: bit-exact against FFmpeg's decoder (sources in schneidi_lib)
