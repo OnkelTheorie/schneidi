@@ -4,7 +4,7 @@
 # Build:  makepkg -si      (see README.md next to this file; a local checkout: make-local-tarball.sh)
 
 pkgname=schneidi
-pkgver=0.20.0
+pkgver=0.21.0
 pkgrel=1
 pkgdesc='Fast, light video editor that an AI assistant can edit with'
 arch=('x86_64' 'aarch64')
@@ -35,7 +35,7 @@ source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz"
         "https://media.xiph.org/rnnoise/models/rnnoise_data-$_rnnoise_model.tar.gz")
 # The model tarball is read by the build itself (checked by its SHA-256 there too)
 noextract=("rnnoise_data-$_rnnoise_model.tar.gz")
-sha256sums=('f02367fb1185ae3b013f16dfe197ecec3d475bbb6ac50434152cbe1b0c78541f'
+sha256sums=('d62c17c7717716e2a6bf38895a29a8e972c893ad59c9b0f6432403fb4d541e0e'
             '4ac81c5c0884ec4bd5907026aaae16209b7b76cd9d7f71af582094a2f98f4b43')
 
 build() {
