@@ -3751,9 +3751,11 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
     };
     const Choice whole = tryLayout(0);
     Choice split;
-    // Experiment H264_SPLITSKIP = c: no split layouts when the 16x16 cost is below c * sqrt(lambda)
-    // (a well-predicted macroblock rarely gains from splitting).
-    static const double kSplitSkip = std::getenv("H264_SPLITSKIP") ? std::atof(std::getenv("H264_SPLITSKIP")) : 0.0;
+    // No split layouts when the 16x16 cost is below c * sqrt(lambda): a well-predicted macroblock
+    // rarely gains from splitting. Measured (two-pass, AQ + tree, 600 pictures CS2, BD-rate PSNR-Y /
+    // instructions): 120 +0.03 % / -2.6 %, 160 +0.15 % / -7.4 %, 200 +0.53 % / -12.7 %. H264_SPLITSKIP
+    // overrides (0 = always search the splits).
+    static const double kSplitSkip = std::getenv("H264_SPLITSKIP") ? std::atof(std::getenv("H264_SPLITSKIP")) : 160.0;
     if (cfg_.effort > 0 && !(whole.cost < kSplitSkip * lambdaSad)) {
         // Experiment (H264_EXP & 256): the split layouts compare at full-pel (SATD); only the best
         // one gets the sub-pel refinement, and only when it is close.
