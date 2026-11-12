@@ -3,6 +3,7 @@
 
 #include "app/Theme.h"
 #include "core/Editor.h"
+#include "core/EffectRegistry.h"
 #include "core/CompTrack.h"
 #include "core/I18n.h"
 #include "core/Keyframes.h"
@@ -16,6 +17,7 @@
 
 #include <QMouseEvent>
 #include <QSettings>
+#include <QUndoStack>
 #include <QPainter>
 #include <QPainterPath>
 #include <algorithm>
@@ -39,7 +41,11 @@ CompOverlay::CompOverlay(Editor* editor, QObject* parent)
 void CompOverlay::setTarget(int clipId, int node, int playhead)
 {
     if (clipId == m_clipId && node == m_node && playhead == m_playhead) return;
-    if (clipId != m_clipId || node != m_node) setPicking(false); // picking belongs to the mask it started on
+    if (clipId != m_clipId || node != m_node) {
+        setPicking(false); // picking belongs to the mask it started on
+        m_last = {};
+    }
+    if (clipId != m_clipId) m_source = {};
     m_clipId = clipId;
     m_node = node;
     m_playhead = playhead;
@@ -57,6 +63,13 @@ const Clip* CompOverlay::clip() const
 {
     if (!m_visible || !m_clipId || !m_node) return nullptr;
     return TimelineOps::findClip(m_editor->project()->timeline(), m_clipId);
+}
+
+QRectF CompOverlay::ownRect() const
+{
+    const Clip* c = clip();
+    if (!c) return QRectF(QPointF(), pictureSize());
+    return Tracker::pictureRect(m_editor->project()->timelineFormat(), *c);
 }
 
 QSizeF CompOverlay::pictureSize() const
@@ -97,9 +110,14 @@ QVector<CompOverlay::Handle> CompOverlay::handles() const
     const PC::NodeType* k = n ? PC::find(n->type) : nullptr;
     if (!k) return out;
     const int t = CompUi::clipFrame(*c, m_playhead);
-    const QSizeF pic = pictureSize();
+    // The graph works on the clip's own picture (a 9:16 clip in a 16:9 frame: the picture between the bars), so every
+    // node's 0..1 positions and sizes are of that picture (Tracker::pictureRect), not of the frame
+    const QRectF own = ownRect();
+    const QSizeF pic = own.size();
     const auto num = [&](const QString& key) { return CompUi::number(*c, m_node, *k, key, t); };
-    const auto at = [&](const QString& kx, const QString& ky) { return QPointF(num(kx) * pic.width(), num(ky) * pic.height()); };
+    const auto at = [&](const QString& kx, const QString& ky) {
+        return own.topLeft() + QPointF(num(kx) * pic.width(), num(ky) * pic.height());
+    };
     const QVariantMap values = CompUi::nodeValues(*c, m_node);
     if (k->id == QLatin1String("mask")) {
         const QString shape = PC::textValue(*k, values, QStringLiteral("shape"));
@@ -181,7 +199,7 @@ void CompOverlay::paint(QPainter& p, const QRectF& frame)
     CompUi::graphOf(*c, &g);
     const PC::NodeType* k = PC::find(g.node(m_node)->type);
     const int t = CompUi::clipFrame(*c, m_playhead);
-    const QSizeF pic = pictureSize();
+    const QSizeF pic = ownRect().size();
     p.save();
     p.setRenderHint(QPainter::Antialiasing);
     // The shape's outline (dark under light: visible on any picture)
@@ -268,7 +286,7 @@ void CompOverlay::paint(QPainter& p, const QRectF& frame)
 
 Qt::CursorShape CompOverlay::cursorAt(const QPointF& pos, const QRectF& frame) const
 {
-    if (m_picking && clip()) return Qt::CrossCursor;
+    if (m_picking && clip() && handleAt(pos, frame) < 0) return Qt::CrossCursor;
     const int i = handleAt(pos, frame);
     if (i < 0) return Qt::ArrowCursor;
     return handles()[i].kind == Handle::Size ? Qt::SizeFDiagCursor : Qt::SizeAllCursor;
@@ -277,7 +295,10 @@ Qt::CursorShape CompOverlay::cursorAt(const QPointF& pos, const QRectF& frame) c
 bool CompOverlay::mousePress(QMouseEvent* e, const QRectF& frame)
 {
     if (e->button() != Qt::LeftButton) return false;
-    if (m_picking) {
+    // Picking: a click picks, except on a point of the shape without Shift/Alt/Ctrl - that drags it (fine-tuning)
+    const bool onHandle = !(e->modifiers() & (Qt::ShiftModifier | Qt::AltModifier | Qt::ControlModifier))
+                          && handleAt(e->position(), frame) >= 0;
+    if (m_picking && !onHandle) {
         QTransform ct;
         const Clip* c = clip();
         if (!c || !clipToWidget(frame, &ct)) return false;
@@ -301,7 +322,8 @@ bool CompOverlay::mouseMove(QMouseEvent* e, const QRectF& frame)
     const QVector<Handle> hs = handles();
     if (m_drag >= hs.size() || !clipToWidget(frame, &ct)) return true;
     const QPointF pos = ct.inverted().map(e->position()); // clip picture pixels
-    const QSizeF pic = pictureSize();
+    const QSizeF pic = ownRect().size();
+    m_last = {}; // points moved by hand: the tolerance slider must not pick them away again
     const Handle& h = hs[m_drag];
     QVariantMap values;
     if (h.kind == Handle::Size) {
@@ -316,13 +338,10 @@ bool CompOverlay::mouseMove(QMouseEvent* e, const QRectF& frame)
         const QPointF l = lt.inverted().map(pos);
         values.insert(h.kx, std::abs(l.x()) * 2 / pic.width());
         values.insert(h.ky, std::abs(l.y()) * 2 / pic.width());
-    } else if (h.ownPicture) {
-        const QRectF r = Tracker::pictureRect(m_editor->project()->timelineFormat(), *clip());
+    } else { // 0..1 of the clip's own picture
+        const QRectF r = ownRect();
         values.insert(h.kx, (pos.x() - r.left()) / std::max(1.0, r.width()));
         values.insert(h.ky, (pos.y() - r.top()) / std::max(1.0, r.height()));
-    } else {
-        values.insert(h.kx, pos.x() / pic.width());
-        values.insert(h.ky, pos.y() / pic.height());
     }
     m_editor->setCompNodeValuesAt(m_clipId, m_node, values, m_playhead,
                                   QStringLiteral("comp:overlay:%1:%2").arg(m_clipId).arg(m_node));
@@ -340,6 +359,7 @@ bool CompOverlay::mouseRelease(QMouseEvent* e, const QRectF&)
 
 void CompOverlay::setPicking(bool on)
 {
+    if (!on) m_last = {}; // the slider re-picks only while picking that mask
     if (on == m_picking) return;
     m_picking = on;
     emit pickingChanged(on);
@@ -367,7 +387,7 @@ int CompOverlay::pickAt(QPointF point, Qt::KeyboardModifiers modifiers)
     const ProjectFormat format = m_editor->project()->timelineFormat();
     RegionPick::Options o;
     o.tolerance = m_tolerance;
-    const QImage picture = RegionPick::clipPicture(format, *c, CompUi::clipFrame(*c, m_playhead), o.maxEdge);
+    const QImage picture = clipPicture(*c, CompUi::clipFrame(*c, m_playhead), o.maxEdge);
     const RegionPick::Result r = RegionPick::pick(picture, point, o);
     m_pickStatus = pickText(r);
     int id = 0;
@@ -380,7 +400,7 @@ int CompOverlay::pickAt(QPointF point, Qt::KeyboardModifiers modifiers)
         id = RegionPick::applyPick(*m_editor, format, m_clipId, m_node, mode, r.polygon, m_playhead, &picture, &placed, &err);
         if (!id) m_pickStatus = T("Nicht übernommen: %1").arg(err);
         else if (placed.x() >= 0) m_pickStatus += T(" · Tracker-Punkt an die Kante gesetzt");
-        if (id) m_last = LastPick{m_clipId, id, m_playhead, point, picture};
+        if (id) m_last = LastPick{m_clipId, m_node, id, m_playhead, point, picture, placed};
     }
     emit picked(m_pickStatus);
     emit changed();
@@ -398,7 +418,9 @@ void CompOverlay::setPickTolerance(double tolerance)
 
 int CompOverlay::repick()
 {
-    if (!m_last.clipId || m_last.clipId != m_clipId || m_last.picture.isNull()) return 0;
+    // Only the last click on the mask being picked now (not after picking ended, another node, points dragged by hand)
+    if (!m_picking || !m_last.clipId || m_last.clipId != m_clipId || m_last.base != m_node || m_last.picture.isNull())
+        return 0;
     const Clip* c = TimelineOps::findClip(m_editor->project()->timeline(), m_last.clipId);
     CompGraph g;
     if (!c || !CompUi::graphOf(*c, &g) || !g.node(m_last.node) || g.node(m_last.node)->type != QLatin1String("mask")) {
@@ -411,12 +433,43 @@ int CompOverlay::repick()
     m_pickStatus = pickText(r);
     int id = 0;
     if (r.ok()) {
+        QUndoStack* undo = m_editor->project()->undoStack();
+        undo->beginMacro(T("Fläche wählen"));
         QString err;
         id = RegionPick::applyPick(*m_editor, m_editor->project()->timelineFormat(), m_last.clipId, m_last.node,
                                    RegionPick::Combine::Replace, r.polygon, m_last.playhead, nullptr, nullptr, &err);
         if (!id) m_pickStatus = T("Nicht übernommen: %1").arg(err);
+        // The tracker point this pick put on the old outline: onto the new one while it still sits there unanalysed
+        if (id && m_last.placed.x() >= 0) {
+            const Clip* now = TimelineOps::findClip(m_editor->project()->timeline(), m_last.clipId);
+            const EffectInstance* e = now ? EffectRegistry::instance(*now, ::Comp::kEffectId) : nullptr;
+            const int follow = e ? ::Comp::followId(e->params.value(CompGraph::paramKey(id, "follow")).toDouble()) : 0;
+            const auto key = [&](const char* k) { return CompGraph::paramKey(follow, QString::fromLatin1(k)); };
+            const bool untouched = follow > 0 && std::abs(e->params.value(key("ax")).toDouble() - m_last.placed.x()) < 1e-6
+                                   && std::abs(e->params.value(key("ay")).toDouble() - m_last.placed.y()) < 1e-6
+                                   && !Keys::animated(*now, Keys::effectParam(::Comp::kEffectId, key("x")));
+            if (untouched) {
+                const QPointF tp = RegionPick::trackablePoint(m_last.picture, r.polygon, e->params.value(key("size"), 0.05).toDouble());
+                const QPointF v(std::round(tp.x() * 1e4) / 1e4, std::round(tp.y() * 1e4) / 1e4);
+                if (m_editor->setCompNodeValues(m_last.clipId, follow, {{"ax", v.x()}, {"ay", v.y()}})) m_last.placed = v;
+            }
+        }
+        undo->endMacro();
     }
     emit picked(m_pickStatus);
     emit changed();
     return id;
+}
+
+QImage CompOverlay::clipPicture(const Clip& c, int frame, int maxEdge)
+{
+    // One decoder per clip while picking on it (each click would open the file again); a changed clip (source, in)
+    // gets a new one
+    const QString key = QStringLiteral("%1|%2|%3|%4").arg(c.id).arg(c.mediaPath).arg(c.in).arg(c.length());
+    if (!m_source || key != m_sourceKey) {
+        if (c.isNested() || c.isTitle()) return {};
+        m_source = Tracker::clipPictures(m_editor->project()->timelineFormat(), c);
+        m_sourceKey = key;
+    }
+    return m_source(std::clamp(frame, 0, std::max(0, c.length() - 1)), std::max(maxEdge, 64));
 }

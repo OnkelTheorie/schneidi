@@ -113,6 +113,27 @@ QVector<QPointF> simplify(QVector<QPointF> loop, double eps)
     return out;
 }
 
+bool segmentsCross(QPointF a, QPointF b, QPointF c, QPointF d)
+{
+    const auto side = [](QPointF p, QPointF q, QPointF r) {
+        return (q.x() - p.x()) * (r.y() - p.y()) - (q.y() - p.y()) * (r.x() - p.x());
+    };
+    const double d1 = side(c, d, a), d2 = side(c, d, b), d3 = side(a, b, c), d4 = side(a, b, d);
+    return ((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0));
+}
+
+// Two sides of the closed polygon that are not neighbours cross (a bow-tie)
+bool selfCrossing(const QVector<QPointF>& p)
+{
+    const int n = int(p.size());
+    for (int i = 0; i < n; ++i)
+        for (int j = i + 2; j < n; ++j) {
+            if (i == 0 && j == n - 1) continue; // neighbours over the start
+            if (segmentsCross(p[i], p[(i + 1) % n], p[j], p[(j + 1) % n])) return true;
+        }
+    return false;
+}
+
 double signedArea(const QVector<QPointF>& p)
 {
     double a = 0;
@@ -346,8 +367,18 @@ Result pick(const QImage& img, QPointF point, const Options& o)
         return r;
     }
     const int maxPoints = std::clamp(o.maxPoints, 3, Masks::kMaxPoints);
-    QVector<QPointF> poly = simplify(loop, 0.7);
-    for (double eps = 0.7 * 1.25; poly.size() > maxPoints && eps < 1e5; eps *= 1.25) poly = simplify(loop, eps);
+    // The coarsest outline with at most maxPoints corners whose sides do not cross (the two halves are simplified
+    // apart and could cross in a thin U); crossing there: the finest one without crossing that a mask still takes
+    QVector<QPointF> poly, uncrossed;
+    for (double eps = 0.7; eps < 1e5; eps *= 1.25) {
+        poly = simplify(loop, eps);
+        const bool crossed = selfCrossing(poly);
+        if (!crossed && poly.size() <= Masks::kMaxPoints) uncrossed = poly;
+        if (poly.size() <= maxPoints) {
+            if (crossed && !uncrossed.isEmpty()) poly = uncrossed;
+            break;
+        }
+    }
     if (signedArea(poly) < 0) std::reverse(poly.begin(), poly.end()); // clockwise on screen
     for (QPointF& p : poly) p = QPointF(p.x() / w, p.y() / h);
     r.polygon = poly;
@@ -398,17 +429,44 @@ QPointF trackablePoint(const QImage& img, const QVector<QPointF>& polygon, doubl
         const double tr = xx + yy, det = xx * yy - xy * xy;
         return tr / 2 - std::sqrt(std::max(0.0, tr * tr / 4 - det));
     };
-    QPointF best = polygon.first();
+    // Candidates: the corners and the middles of the sides, each moved inward by half the square's half side - three
+    // quarters of the square on the surface (it moves with it), the outline still in it (an even surface has no
+    // structure of its own; a square half on the background would follow the background's motion as much)
+    QPolygonF poly;
+    for (const QPointF& p : polygon) poly << QPointF(p.x() * w, p.y() * h);
+    const int n = int(poly.size());
+    const auto inward = [&](QPointF d) { // the side's normal into the polygon (either orientation)
+        const double len = std::hypot(d.x(), d.y());
+        return len > 0 ? QPointF(-d.y() / len, d.x() / len) : QPointF();
+    };
+    double area = 0;
+    for (int i = 0; i < n; ++i) area += poly[i].x() * poly[(i + 1) % n].y() - poly[(i + 1) % n].x() * poly[i].y();
+    const double sign = area >= 0 ? 1 : -1; // y down: positive = clockwise on screen, the inside on the right
+    const double shift = r / 2.0;
+    const auto fits = [&](QPointF p) { return p.x() >= r && p.y() >= r && p.x() <= w - 1 - r && p.y() <= h - 1 - r; };
+    QPointF best(-1, -1);
     double bestScore = -1;
-    const double margin = std::max(double(r) / w, 0.02);
-    for (int i = 0; i < polygon.size(); ++i)
-        for (double t : {0.0, 0.5}) { // corners and the middles of the sides
-            const QPointF p = polygon[i] + t * (polygon[(i + 1) % polygon.size()] - polygon[i]);
-            // Not at the picture's edge: the square looked for must fit
-            if (p.x() < margin || p.y() < margin || p.x() > 1 - margin || p.y() > 1 - margin) continue;
-            if (const double s = score(p); s > bestScore) bestScore = s, best = p;
+    for (int i = 0; i < n; ++i) {
+        const QPointF a = poly[(i + n - 1) % n], b = poly[i], c = poly[(i + 1) % n];
+        const QPointF nb = inward(b - a) + inward(c - b), nc = inward(c - b);
+        const double nbl = std::hypot(nb.x(), nb.y());
+        const QPointF cands[2] = {b + (nbl > 0 ? nb / nbl : QPointF()) * sign * shift, (b + c) / 2 + nc * sign * shift};
+        for (const QPointF& p : cands) {
+            if (!fits(p) || !poly.containsPoint(p, Qt::OddEvenFill)) continue;
+            if (const double sc = score(QPointF(p.x() / w, p.y() / h)); sc > bestScore) bestScore = sc, best = p;
         }
-    return best;
+    }
+    if (bestScore < 0) { // nothing fits inside (a sliver at the border): the most textured point of the outline in the picture
+        for (const QPointF& p : poly)
+            if (fits(p))
+                if (const double sc = score(QPointF(p.x() / w, p.y() / h)); sc > bestScore) bestScore = sc, best = p;
+    }
+    if (bestScore < 0) { // the middle of the polygon's corners, kept inside the picture
+        QPointF m;
+        for (const QPointF& p : poly) m += p / n;
+        best = QPointF(std::clamp(m.x(), double(r), double(w - 1 - r)), std::clamp(m.y(), double(r), double(h - 1 - r)));
+    }
+    return QPointF(best.x() / w, best.y() / h);
 }
 
 bool combineFromId(const QString& id, Combine* out)

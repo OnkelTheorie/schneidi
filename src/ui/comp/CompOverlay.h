@@ -19,6 +19,8 @@
 #include <QTransform>
 #include <QVector>
 
+#include <functional>
+
 class Editor;
 struct Clip;
 
@@ -66,8 +68,10 @@ signals:
 private:
     const Clip* clip() const;
     int repick(); // the last pick again with m_tolerance
+    QImage clipPicture(const Clip& c, int frame, int maxEdge); // RegionPick::clipPicture with one decoder per clip
     bool clipToWidget(const QRectF& frame, QTransform* t) const;
     QSizeF pictureSize() const;
+    QRectF ownRect() const; // where the clip's own picture lies in the frame (project pixels)
     int handleAt(const QPointF& pos, const QRectF& frame) const;
 
     Editor* m_editor;
@@ -77,10 +81,16 @@ private:
     bool m_picking = false;
     double m_tolerance;
     struct LastPick {
-        int clipId = 0, node = 0, playhead = 0;
+        int clipId = 0;
+        int base = 0; // the mask selected when it was picked
+        int node = 0; // the mask holding the polygon (base, or one chained behind it)
+        int playhead = 0;
         QPointF point;
         QImage picture;
+        QPointF placed{-1, -1}; // where it put the tracker's point (-1 = not)
     };
     LastPick m_last;
     QString m_pickStatus;
+    std::function<QImage(int, int)> m_source;
+    QString m_sourceKey;
 };

@@ -34,9 +34,14 @@
 
 #include <QApplication>
 #include <QDir>
+#include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QLineF>
+#include <QMouseEvent>
 #include <QPainter>
+#include <QPainterPath>
+#include <QSettings>
 #include <QPushButton>
 #include <QRandomGenerator>
 #include <QTemporaryDir>
@@ -163,9 +168,52 @@ void testPick()
     CHECK(!RegionPick::pick(flat, QPointF(1.5, 0.5)).ok());
     CHECK(!RegionPick::pick(QImage(), QPointF(0.5, 0.5)).ok());
 
-    // The point to track: on structure (checker edge around the wall), not inside the even wall
+    // The point to track: on the wall near its outline (the square mostly on the surface, its edge still in it)
     const QPointF tp = RegionPick::trackablePoint(flat, r.polygon, 0.05);
-    CHECK(toOutline(QPointF(tp.x() * W, tp.y() * H), kWall) <= 3);
+    CHECK(kWall.containsPoint(QPointF(tp.x() * W, tp.y() * H), Qt::OddEvenFill));
+    CHECK(toOutline(QPointF(tp.x() * W, tp.y() * H), kWall) <= 6);
+
+    // Thin bands bent back on themselves (a U, a hook, a zigzag; 4 px wide): coarse outlines never cross themselves
+    {
+        const auto crosses = [](const QVector<QPointF>& pts) {
+            QPolygonF poly;
+            for (const QPointF& q : pts) poly << QPointF(q.x() * W, q.y() * H);
+            for (int i = 0; i < poly.size(); ++i)
+                for (int j = i + 2; j < poly.size(); ++j) {
+                    if (i == 0 && j == poly.size() - 1) continue;
+                    QPointF x;
+                    if (QLineF(poly[i], poly[(i + 1) % poly.size()]).intersects(QLineF(poly[j], poly[(j + 1) % poly.size()]), &x)
+                            == QLineF::BoundedIntersection
+                        && x != poly[i] && x != poly[(i + 1) % poly.size()] && x != poly[j] && x != poly[(j + 1) % poly.size()])
+                        return true;
+                }
+            return false;
+        };
+        int crossedShapes = 0, shapes = 0;
+        QRandomGenerator rnd(3);
+        for (int k = 0; k < 40; ++k) {
+            QPainterPath path(QPointF(40 + rnd.bounded(240), 20 + rnd.bounded(140)));
+            for (int i = 0; i < 4; ++i) path.lineTo(40 + rnd.bounded(240), 20 + rnd.bounded(140));
+            QImage u(W, H, QImage::Format_RGB32);
+            checker(u);
+            QPainter p(&u);
+            p.setPen(QPen(QColor(200, 120, 40), 4, Qt::SolidLine, Qt::FlatCap, Qt::MiterJoin));
+            p.drawPath(path);
+            p.end();
+            const QPointF start = path.pointAtPercent(0.5);
+            if (qRed(u.pixel(int(start.x()), int(start.y()))) != 200) continue;
+            RegionPick::Options few;
+            few.maxPoints = 6; // coarse: the two halves would cut across a gap
+            const RegionPick::Result ur = RegionPick::pick(u, QPointF(start.x() / W, start.y() / H), few);
+            if (!ur.ok()) continue;
+            ++shapes;
+            crossedShapes += crosses(ur.polygon);
+            CHECK(ur.polygon.size() <= Masks::kMaxPoints);
+        }
+        std::printf("       bands: %d of %d outlines cross\n", crossedShapes, shapes);
+        CHECK(shapes >= 20);
+        CHECK_EQ(crossedShapes, 0);
+    }
 
     // Combine ids
     RegionPick::Combine c;
@@ -408,7 +456,7 @@ void testCli(const QString& dir)
     CHECK(an["next"].toString().contains("track_node"));
     if (CHECK(an.contains("tracker_point"))) {
         const QPointF tp(an["tracker_point"].toArray()[0].toDouble() * W, an["tracker_point"].toArray()[1].toDouble() * H);
-        CHECK(toOutline(tp, pillarAt(0)) <= 3);
+        CHECK(pillarAt(0).containsPoint(tp, Qt::OddEvenFill) && toOutline(tp, pillarAt(0)) <= 6);
     }
     // Words over the middle (white, big), then the pillar in front of them where the clip starts
     edit({QJsonObject{{"op", "node"}, {"clip", clip}, {"id", 3},
@@ -482,6 +530,7 @@ void testApp()
     Selection sel;
     Editor ed(&p, &sel);
     const int clip = p.timeline().video[0].clips.first().id;
+    QSettings().remove("comp/pickTolerance"); // the default tolerance, not an earlier run's
     CompOverlay overlay(&ed);
     overlay.setTarget(clip, 6, 0);
     overlay.setVisible(true);
@@ -495,14 +544,88 @@ void testApp()
     // The tolerance picks the last click again: one more step, the same node
     overlay.setPickTolerance(0.2);
     CHECK_EQ(p.undoStack()->index(), steps + 2);
-    p.undoStack()->undo();
-    p.undoStack()->undo();
+    // Not after picking ended, not on another mask, not after points were dragged by hand
+    const auto maskPoints = [&](int node) {
+        const EffectInstance* e = EffectRegistry::instance(*TimelineOps::findClip(p.timeline(), clip), ::Comp::kEffectId);
+        QStringList l;
+        for (int i = 0; i < 32; ++i) l << e->params.value(CompGraph::paramKey(node, QString("p%1x").arg(i))).toString();
+        return l.join(',');
+    };
+    overlay.setPicking(false);
+    overlay.setPickTolerance(0.5);
+    CHECK_EQ(p.undoStack()->index(), steps + 2);
+    overlay.setPicking(true);
+    overlay.setPickTolerance(0.3);
+    CHECK_EQ(p.undoStack()->index(), steps + 2);
+    overlay.pickAt(QPointF(0.95, 0.05), Qt::ShiftModifier); // picks again: base 6
+    CHECK_EQ(p.undoStack()->index(), steps + 3);
+    {
+        // Another mask (the new one) selected: the slider does nothing to it or to the last pick
+        overlay.setTarget(clip, id, 0);
+        overlay.setPicking(true);
+        const QString before = maskPoints(id);
+        overlay.setPickTolerance(0.45);
+        CHECK_EQ(p.undoStack()->index(), steps + 3);
+        CHECK(maskPoints(id) == before);
+    }
+    {
+        // Back on mask 6: a pick, then a point dragged by hand (picking on, a press on a point drags it): the slider
+        // keeps the hand-made shape
+        overlay.setTarget(clip, 6, 0);
+        overlay.setPicking(true);
+        overlay.pickAt(QPointF(162.0 / W, 0.5), {});
+        const int before = p.undoStack()->index();
+        const QRectF frame(0, 0, W, H);
+        const QPointF from = overlay.handlePos(0, frame);
+        QMouseEvent press(QEvent::MouseButtonPress, from, from, Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+        CHECK(overlay.mousePress(&press, frame));
+        QMouseEvent move(QEvent::MouseMove, from + QPointF(5, 5), from + QPointF(5, 5), Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
+        overlay.mouseMove(&move, frame);
+        QMouseEvent release(QEvent::MouseButtonRelease, from + QPointF(5, 5), from + QPointF(5, 5), Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+        overlay.mouseRelease(&release, frame);
+        CHECK_EQ(p.undoStack()->index(), before + 1);
+        const QString dragged = maskPoints(6);
+        overlay.setPickTolerance(0.6);
+        CHECK_EQ(p.undoStack()->index(), before + 1);
+        CHECK(maskPoints(6) == dragged);
+    }
+    while (p.undoStack()->index() > steps) p.undoStack()->undo();
     CompGraph g;
     ::Comp::graphOf(*EffectRegistry::instance(*TimelineOps::findClip(p.timeline(), clip), ::Comp::kEffectId), &g);
     CHECK(!g.node(id));
     // Another node: picking ends
     overlay.setTarget(clip, 2, 0);
     CHECK(!overlay.picking());
+
+    // A 9:16 clip in the 16:9 project: the graph works on the clip's own picture, so a mask's point 0..1 is drawn
+    // between the bars (where the engine puts it), not on the frame
+    {
+        const QString dir = QFileInfo(g_project).absolutePath();
+        const QString tall = Check::makeMedia(dir + "/tall.mp4", {"-f", "lavfi", "-i", "color=c=gray:s=90x160:d=1:r=25", "-c:v",
+                                                                  "libx264", "-pix_fmt", "yuv420p"});
+        if (CHECK(!tall.isEmpty())) {
+            const QString saved = g_project;
+            g_project = dir + "/tall.schneidi";
+            run("new", {{"project", g_project}, {"width", W}, {"height", H}, {"fps", 25}, {"media", QJsonArray{tall}}});
+            edit({QJsonObject{{"op", "append"}, {"media", tall}},
+                  QJsonObject{{"op", "comp"}, {"clips", QJsonArray{1}},
+                              {"graph", QJsonObject{{"nodes", QJsonArray{QJsonObject{{"id", 1}, {"type", "clip"}},
+                                                                         QJsonObject{{"id", 2}, {"type", "mask"},
+                                                                                     {"params", QJsonObject{{"shape", "polygon"}, {"p0x", 0.0}, {"p0y", 0.0}}}}}},
+                                                    {"links", QJsonArray{}}, {"out", 1}}}}});
+            Project tp;
+            tp.load(load());
+            Selection tsel;
+            Editor ted(&tp, &tsel);
+            CompOverlay o(&ted);
+            o.setTarget(tp.timeline().video[0].clips.first().id, 2, 0);
+            o.setVisible(true);
+            const QPointF h = o.handlePos(0, QRectF(0, 0, W, H));
+            const double left = (W - H * 90.0 / 160.0) / 2; // where the picture starts
+            if (!CHECK(std::abs(h.x() - left) < 1.5 && std::abs(h.y()) < 1.5)) std::printf("       handle at %.1f, %.1f\n", h.x(), h.y());
+            g_project = saved;
+        }
+    }
 
     CompInspector inspector(&ed);
     inspector.setTarget(clip, 6);
