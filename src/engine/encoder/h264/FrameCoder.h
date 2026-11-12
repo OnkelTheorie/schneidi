@@ -176,7 +176,10 @@ public:
     // diamond on SAD from the best start point, then half/quarter-pel on SATD. Returns the cost
     // (SATD + lambdaSad * vector bits).
     double motionSearch(const RefPic& R, int mbx, int mby, int x4, int y4, int w4, int h4, int pX, int pY, double lambdaSad,
-                        const std::pair<int, int>* starts, int startCount, bool subpel, int& outX, int& outY) const;
+                        const std::pair<int, int>* starts, int startCount, int subpel, int& outX, int& outY,
+                        double predCost = -1, double* fullPelCost = nullptr) const;
+    double refineQuarter(const RefPic& R, int mbx, int mby, int x4, int y4, int w4, int h4, int pX, int pY, double lambdaSad,
+                         int& vx, int& vy) const;
     // The residual of an inter macroblock against its prediction: luma levels and reconstruction
     // (codeInterLuma), then after the caller wrote the macroblock header the coded block pattern,
     // mb_qp_delta and coefficients (writeInterResidual; returns whether mb_qp_delta was sent).
@@ -248,6 +251,7 @@ public:
     std::vector<uint8_t> nzChroma_[2]; // TotalCoeff per 4x4 chroma AC block
     std::vector<int16_t> mvX_, mvY_;        // per 4x4 block, quarter-pel units
     std::vector<int8_t> refIdx_;            // per 4x4 block: 0 inter, -1 intra
+    std::vector<float> fullPelCost_;        // per macroblock: full-pel cost of its 16x16 search, -1 = none (P pictures)
     // List 1 of a B picture (there refIdx_ is list 0: -1 = intra or list 1 only).
     std::vector<int16_t> mvX1_, mvY1_;
     std::vector<int8_t> refIdx1_;

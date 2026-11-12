@@ -16,6 +16,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <atomic>
+#include <climits>
 #include <chrono>
 #include <cstring>
 #include <memory>
@@ -348,6 +349,7 @@ FrameCoder::FrameCoder(const EncoderConfig& config)
     mvX_.resize(nzLuma_.size());
     mvY_.resize(nzLuma_.size());
     refIdx_.resize(mvX_.size());
+    fullPelCost_.assign(size_t(mbW_) * mbH_, -1.0f);
     if (cfg_.bframes > 0) {
         mvX1_.resize(mvX_.size());
         mvY1_.resize(mvX_.size());
@@ -3415,9 +3417,13 @@ void FrameCoder::rdoQuantize(int* levels, const int* residual, int qp, double la
 
 // Motion search for one partition: diamond full-pel, then half/quarter-pel with SATD.
 // Start points: neighbours' vectors and the same macroblock in the previous P frame.
+// Points already measured (repeated start points, the centre a step just left) are not measured
+// again: their cost never beats the best, so the result is the same with fewer SADs. predCost >= 0: the full-pel cost the neighbours ended with; a start
+// point at least that good skips the coarse steps (32, 16). subpel: 0 full-pel only, 1 up to
+// half-pel, 2 up to quarter-pel. fullPelCost (optional) gets the full-pel cost of the result.
 double FrameCoder::motionSearch(const RefPic& R, int mbx, int mby, int x4, int y4, int w4, int h4, int pX, int pY,
-                                double lambdaSad, const std::pair<int, int>* starts, int startCount, bool subpel, int& outX,
-                                int& outY) const
+                                double lambdaSad, const std::pair<int, int>* starts, int startCount, int subpel, int& outX,
+                                int& outY, double predCost, double* fullPelCost) const
 {
     const int range = 64 * 4;
     bool useSatd = false;
@@ -3425,11 +3431,24 @@ double FrameCoder::motionSearch(const RefPic& R, int mbx, int mby, int x4, int y
         return double(sadPart(R, mbx, mby, x4, y4, w4, h4, vx, vy, useSatd)) +
                lambdaSad * (seBits(vx - pX) + seBits(vy - pY));
     };
+    // Start points measured so far (duplicates are common: the skip vector, the neighbours, the prediction).
+    int seenX[16], seenY[16], seenCount = 0;
     int bx = 0, by = 0;
     double best = cost(0, 0);
+    seenX[0] = seenY[0] = 0;
+    seenCount = 1;
     for (int i = 0; i < startCount; ++i) {
         const int cx = std::clamp(starts[i].first & ~3, -range, range);
         const int cy = std::clamp(starts[i].second & ~3, -range, range);
+        bool dup = false;
+        for (int j = 0; j < seenCount && !dup; ++j)
+            dup = seenX[j] == cx && seenY[j] == cy;
+        if (dup)
+            continue;
+        if (seenCount < 16) {
+            seenX[seenCount] = cx;
+            seenY[seenCount++] = cy;
+        }
         const double c = cost(cx, cy);
         if (c < best) {
             best = c;
@@ -3439,7 +3458,8 @@ double FrameCoder::motionSearch(const RefPic& R, int mbx, int mby, int x4, int y
     }
     // Experiment: a start point that already matches well (under 2 SAD per sample) skips
     // the coarse steps.
-    const bool goodStart = (gExp & 8) && best < 2.0 * 16.0 * w4 * h4;
+    const bool goodStart = ((gExp & 8) && best < 2.0 * 16.0 * w4 * h4) || (predCost >= 0 && best <= predCost);
+    int fromX = INT_MIN, fromY = INT_MIN; // the centre the last move left (measured, never better)
     for (int step : {32, 16, 8, 4}) {
         if (goodStart && step > 8)
             continue;
@@ -3448,11 +3468,13 @@ double FrameCoder::motionSearch(const RefPic& R, int mbx, int mby, int x4, int y
             static constexpr int kDir[4][2] = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
             for (const auto& d : kDir) {
                 const int cx = bx + d[0] * step, cy = by + d[1] * step;
-                if (std::abs(cx) > range || std::abs(cy) > range)
+                if (std::abs(cx) > range || std::abs(cy) > range || (cx == fromX && cy == fromY))
                     continue;
                 const double c = cost(cx, cy);
                 if (c < best) {
                     best = c;
+                    fromX = bx;
+                    fromY = by;
                     bx = cx;
                     by = cy;
                     moved = true;
@@ -3462,11 +3484,13 @@ double FrameCoder::motionSearch(const RefPic& R, int mbx, int mby, int x4, int y
                 break;
         }
     }
+    if (fullPelCost)
+        *fullPelCost = best;
     useSatd = true;
     best = cost(bx, by);
     const bool diamond = gExp & 16; // experiment: 4 instead of 8 neighbours per sub-pel step
     for (int step : {2, 1}) {
-        if (!subpel)
+        if (subpel < (step == 2 ? 1 : 2))
             break;
         const int cx0 = bx, cy0 = by;
         for (int dy = -1; dy <= 1; ++dy)
@@ -3486,6 +3510,32 @@ double FrameCoder::motionSearch(const RefPic& R, int mbx, int mby, int x4, int y
     }
     outX = bx;
     outY = by;
+    return best;
+}
+
+// Quarter-pel step around a vector (a search that stopped at half-pel): SATD of the eight
+// neighbours one quarter away, the centre's cost given.
+double FrameCoder::refineQuarter(const RefPic& R, int mbx, int mby, int x4, int y4, int w4, int h4, int pX, int pY,
+                                 double lambdaSad, int& vx, int& vy) const
+{
+    const int range = 64 * 4;
+    auto cost = [&](int cx, int cy) {
+        return double(sadPart(R, mbx, mby, x4, y4, w4, h4, cx, cy, true)) + lambdaSad * (seBits(cx - pX) + seBits(cy - pY));
+    };
+    double best = cost(vx, vy);
+    const int cx0 = vx, cy0 = vy;
+    for (int dy = -1; dy <= 1; ++dy)
+        for (int dx = -1; dx <= 1; ++dx) {
+            const int cx = cx0 + dx, cy = cy0 + dy;
+            if ((!dx && !dy) || std::abs(cx) > range || std::abs(cy) > range)
+                continue;
+            const double c = cost(cx, cy);
+            if (c < best) {
+                best = c;
+                vx = cx;
+                vy = cy;
+            }
+        }
     return best;
 }
 
@@ -3741,6 +3791,7 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
         }
         return est;
     };
+    fullPelCost_[mbIndex] = -1.0f;
     if (skipResidualIsZero(mbx, mby, lp, cp, qp)) {
         result.syn.kind = MbSyntax::Kind::Skip;
         mbQpFinal_[mbIndex] = int8_t(qpPredOf(mby));
@@ -3765,11 +3816,31 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
         if (!prev_ && !R0.ref.empty() && R0.ref[o] == 0)
             starts.push_back({R0.mvx[o], R0.mvy[o]});
     }
-    bool subpelNow = true; // half/quarter-pel refinement in search()
+    int subpelNow = 2; // sub-pel refinement in search(): 2 quarter, 1 half, 0 none
+    // Experiment H264_COARSE = factor (0 = off): a start point as good as the full-pel cost the
+    // neighbours' 16x16 searches ended with (times factor) skips the coarse search steps. 1.5:
+    // +0.20 % BD-rate for -1.2 % instructions, with the split rule above +0.55 % -> not used.
+    static const double kCoarse = std::getenv("H264_COARSE") ? std::atof(std::getenv("H264_COARSE")) : 0.0;
+    double predFull = -1;
+    if (kCoarse > 0 && pSlice_ && !bSlice_) {
+        const float l = mbx > 0 ? fullPelCost_[mbIndex - 1] : -1.0f;
+        const float t = topMbAvailable(mby) ? fullPelCost_[mbIndex - size_t(mbW_)] : -1.0f;
+        const float tr = topMbAvailable(mby) && mbx + 1 < mbW_ ? fullPelCost_[mbIndex - size_t(mbW_) + 1] : -1.0f;
+        float m = -1.0f;
+        for (float c : {l, t, tr})
+            if (c >= 0 && (m < 0 || c < m))
+                m = c;
+        if (m >= 0)
+            predFull = kCoarse * m;
+    }
+    double wholeFull = -1;
     auto search = [&](int x4, int y4, int w4, int h4, int ref, int pX, int pY, int& outX, int& outY) {
         starts.push_back({pX, pY});
+        const double area = double(w4 * h4) / 16.0;
+        const bool whole16 = w4 == 4 && h4 == 4 && ref == 0;
         const double best = motionSearch(*refs_[size_t(ref)], mbx, mby, x4, y4, w4, h4, pX, pY, lambdaSad, starts.data(),
-                                         int(starts.size()), subpelNow, outX, outY);
+                                         int(starts.size()), subpelNow, outX, outY, predFull >= 0 ? predFull * area : -1.0,
+                                         whole16 ? &wholeFull : nullptr);
         starts.pop_back();
         return best;
     };
@@ -3830,6 +3901,7 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
         return ch;
     };
     const Choice whole = tryLayout(0);
+    fullPelCost_[mbIndex] = float(wholeFull);
     Choice split;
     // No split layouts when the 16x16 cost is below c * sqrt(lambda): a well-predicted macroblock
     // rarely gains from splitting. Measured (two-pass, AQ + tree, 600 pictures CS2, BD-rate PSNR-Y /
@@ -3839,8 +3911,13 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
     if (cfg_.effort > 0 && !(whole.cost < kSplitSkip * lambdaSad)) {
         // Experiment (H264_EXP & 256): the split layouts compare at full-pel (SATD); only the best
         // one gets the sub-pel refinement, and only when it is close.
+        // The split layouts compare at half-pel; the best one gets the quarter-pel step only when its
+        // cost is within 1.1 times the 16x16 cost. Measured (two-pass, AQ + tree, 600 pictures CS2,
+        // BD-rate PSNR-Y / instructions): +0.29 % / -4.8 %; always refining the best split +0.37 % /
+        // -3.8 %. H264_QPELSPLIT = c overrides, 0 = every split searched to quarter-pel.
+        static const double kQpelSplit = std::getenv("H264_QPELSPLIT") ? std::atof(std::getenv("H264_QPELSPLIT")) : 1.1;
         const bool lateSubpel = gExp & 256;
-        subpelNow = !lateSubpel;
+        subpelNow = lateSubpel ? 0 : kQpelSplit > 0 ? 1 : 2;
         split = tryLayout(3);
         if (split.cost < whole.cost * 1.1) { // 16x8 / 8x16 only where splitting looks worth it
             for (int li : {1, 2}) {
@@ -3849,9 +3926,29 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
                     split = c;
             }
         }
-        subpelNow = true;
+        subpelNow = 2;
         if (lateSubpel && split.cost < whole.cost * 1.1)
             split = tryLayout(split.layout);
+        if (!lateSubpel && kQpelSplit > 0 && split.cost < whole.cost * kQpelSplit) {
+            // Parts in order: a part's vector prediction follows the refined vectors before it.
+            const Layout& L = kLayouts[split.layout];
+            bool decoded[16] = {};
+            split.cost = lambdaSad * L.typeBits;
+            for (int p = 0; p < L.count; ++p) {
+                const Part& P = L.parts[p];
+                int pX, pY;
+                predictMvPart(mbx, mby, P.x4, P.y4, P.w4, P.shape, split.ref[p], decoded, pX, pY);
+                split.mvp[p][0] = pX;
+                split.mvp[p][1] = pY;
+                split.cost += refineQuarter(*refs_[size_t(split.ref[p])], mbx, mby, P.x4, P.y4, P.w4, P.h4, pX, pY, lambdaSad,
+                                            split.mv[p][0], split.mv[p][1]) +
+                              lambdaSad * refBits(split.ref[p]);
+                setBlocks(P.x4, P.y4, P.w4, P.h4, split.mv[p][0], split.mv[p][1], split.ref[p]);
+                for (int y = P.y4; y < P.y4 + P.h4; ++y)
+                    for (int x = P.x4; x < P.x4 + P.w4; ++x)
+                        decoded[y * 4 + x] = true;
+            }
+        }
     }
 
     // Encodes one inter choice; leaves its state in the macroblock and returns SSD + lambda * bits.
@@ -4324,7 +4421,7 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
                 c.mvp[p][list][1] = pY;
                 starts[list][startCount[list]] = {pX, pY};
                 cost[list] = motionSearch(list ? *refs1_[0] : *refs_[0], mbx, mby, P.x4, P.y4, P.w4, P.h4, pX, pY, lambdaSad,
-                                          starts[list], startCount[list] + 1, true, c.mv[p][list][0], c.mv[p][list][1]);
+                                          starts[list], startCount[list] + 1, 2, c.mv[p][list][0], c.mv[p][list][1]);
             }
             // Both lists: the average of the two predictions found.
             uint8_t a[256], b[256];
