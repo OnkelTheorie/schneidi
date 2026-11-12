@@ -837,7 +837,7 @@ double Encoder::twoPassQp(double kI, double kP, double kB) const
     return 6.0 * std::log2(std::max(1.0, need) / budget);
 }
 
-int Encoder::delay() const { return (useLookahead() ? std::max(0, cfg_.lookahead - 1) : 0) + (pipelined() ? 1 : 0); }
+int Encoder::delay() const { return (useLookahead() ? std::max(0, cfg_.lookahead - 1) : 0) + (pipelined() ? kInFlight - 1 : 0); }
 
 // Workers of the frame threading. Rows are not waited in: a worker takes a row that can go on (of
 // the oldest picture first, from the top), runs it until it would have to wait (for the row above,
@@ -847,7 +847,7 @@ int Encoder::delay() const { return (useLookahead() ? std::max(0, cfg_.lookahead
 struct Encoder::Pool {
     WaveSignal sig; // its mutex also guards active and stop
     std::vector<std::thread> threads;
-    FrameCoder* active[2] = {nullptr, nullptr}; // oldest first
+    std::vector<FrameCoder*> active; // oldest first
     bool stop = false;
     int spin = 128;
 
@@ -885,7 +885,7 @@ struct Encoder::Pool {
                 if (stop)
                     return;
                 for (FrameCoder* a : active)
-                    if (a && (r = a->claimRunnableRow()) >= 0) {
+                    if ((r = a->claimRunnableRow()) >= 0) {
                         c = a;
                         break;
                     }
@@ -921,30 +921,35 @@ struct Encoder::Pool {
     {
         {
             std::lock_guard<std::mutex> l(sig.m);
-            (active[0] ? active[1] : active[0]) = c;
+            active.push_back(c);
         }
         sig.wake(true);
     }
     void remove(FrameCoder* c)
     {
         std::lock_guard<std::mutex> l(sig.m);
-        if (active[0] == c) {
-            active[0] = active[1];
-            active[1] = nullptr;
-        } else if (active[1] == c) {
-            active[1] = nullptr;
-        }
+        active.erase(std::remove(active.begin(), active.end(), c), active.end());
         c->wave_.signal = nullptr;
     }
 };
+
+// Pictures in flight when picture `index` (coding order) starts, itself included: two while the
+// rate control settles (it learns from every finished picture, and one more in flight is one more
+// picture coded on the first guess: +0.18 % BD-rate on a 10 s clip), then kInFlight. H264_WARM
+// overrides the length of that start.
+int Encoder::inFlightAt(int index) const
+{
+    static const int kWarm = std::getenv("H264_WARM") ? std::atoi(std::getenv("H264_WARM")) : 16;
+    return index < kWarm ? 2 : kInFlight;
+}
 
 Encoder::~Encoder()
 {
     if (pendingThread_.joinable())
         pendingThread_.join();
-    if (inFlight_) {
-        inFlight_->waveEnd();
-        pool_->remove(inFlight_);
+    for (FrameCoder* fc : inFlight_) {
+        fc->waveEnd();
+        pool_->remove(fc);
     }
     pool_.reset();
 }
@@ -1199,16 +1204,18 @@ std::vector<uint8_t> Encoder::step(LookaheadFrame* next)
     FrameCoder* started = next ? startFrame(*next) : nullptr;
     if (!pipelined())
         return started ? finishFrame(*started) : std::vector<uint8_t>{};
+    if (started)
+        inFlight_.push_back(started);
+    // The oldest picture comes out once more are in flight than the next picture may find (or
+    // nothing more comes in): the caller prepares the next picture while the others are coded.
+    // Where the depth grows (after the warm-up) one call hands out nothing.
     std::vector<uint8_t> out;
-    if (inFlight_) {
-        try {
-            out = finishFrame(*inFlight_);
-        } catch (...) {
-            inFlight_ = started; // the destructor ends it
-            throw;
-        }
+    const int keep = started ? inFlightAt(frameIndex_) - 1 : 0;
+    if (int(inFlight_.size()) > keep) {
+        FrameCoder* oldest = inFlight_.front();
+        inFlight_.pop_front();
+        out = finishFrame(*oldest); // throws: the destructor ends the others
     }
-    inFlight_ = started;
     return out;
 }
 
@@ -1242,6 +1249,8 @@ std::vector<uint8_t> Encoder::finishFrame(FrameCoder& fc)
         fc.done_ = fc.assemble(clock);
         fc.outPic_.reset();
     }
+    fc.refs_.clear(); // its reference pictures can be reused once nothing else holds them
+    fc.refs1_.clear();
     std::vector<uint8_t> out = std::move(fc.done_);
     fc.done_.clear();
     last_ = &fc;
@@ -1955,7 +1964,7 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
     const Picture picture = pictureOf(frame, cfg_.width);
     PhaseClock clock;
     FrameCoder& fc = *coders_[size_t(nextCoder_)];
-    nextCoder_ = (nextCoder_ + 1) % 3;
+    nextCoder_ = (nextCoder_ + 1) % kCoders;
     fc.loadSource(picture);
     clock.lap(0);
     const bool bMode = useB(); // the picture's type is decided already (planQueue)
@@ -2002,7 +2011,7 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
     // most 2 away from the last one. I pictures use the P QP - 3. The first picture is probed at a
     // fixed QP so the stream starts near the right QP instead of paying for a huge first picture.
     const int baseQp = cfg_.qp;
-    applyRc(frameIndex_ - 2);
+    applyRc(frameIndex_ - inFlightAt(frameIndex_));
     const bool lookahead = lookaheadFrame;
     double costUsed = 0; // lookahead cost of this picture, for the bit model afterwards
     if (lookahead) {
@@ -2220,7 +2229,20 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
             pic = std::move(refList_.back());
             refList_.pop_back();
         }
-        if (!pic || pic.use_count() > 1)
+        // A picture still referenced by one in flight waits in the spares; a spare nobody holds
+        // any more is used again (no allocation and page faults of ~14 MB per 1080p picture).
+        if (pic && pic.use_count() > 1) {
+            refSpare_.push_back(std::move(pic));
+            pic.reset();
+            if (refSpare_.size() > size_t(kInFlight + 2))
+                refSpare_.erase(refSpare_.begin()); // freed once the picture using it is done
+        }
+        for (size_t i = 0; !pic && i < refSpare_.size(); ++i)
+            if (refSpare_[i].use_count() == 1) {
+                pic = std::move(refSpare_[i]);
+                refSpare_.erase(refSpare_.begin() + ptrdiff_t(i));
+            }
+        if (!pic)
             pic = std::make_shared<RefPic>();
         pic->gopPos = frame.gopPos;
         refList_.push_front(pic);

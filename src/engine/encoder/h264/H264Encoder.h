@@ -71,7 +71,8 @@ struct EncoderConfig {
     // (planChunks) start far apart so two IDR pictures in a row never share one.
     int idrPicIdBase = 0;
     // Frame threading (CABAC, threads >= 2): the next picture starts while the last rows of the
-    // previous one are still coded; one more picture of delay(). Same stream either way.
+    // previous ones are still coded (two in flight while the rate control settles, then three); two
+    // more pictures of delay(). Same stream either way.
     bool frameThreads = true;
     // VUI video signal (E.2.1, ITU-T H.273 codes; 2 = unspecified): written when one is set or the
     // range is full. E.g. BT.709: 1, 1, 1.
@@ -161,8 +162,9 @@ public:
 
     // SPS + PPS as Annex B.
     std::vector<uint8_t> headers() const;
-    // Queues a picture; returns the next access unit (IDR or P picture, Annex B) or nothing while
-    // the lookahead is still filling. forceKeyframe: start a new GOP at this picture (e.g. a cut in
+    // Queues a picture; returns the next access unit (IDR or P picture, Annex B) or nothing: while
+    // the lookahead is still filling, while the first pictures are in flight (frame threading), and
+    // once more where the frame threading goes from two to three pictures in flight. forceKeyframe: start a new GOP at this picture (e.g. a cut in
     // the timeline). Pictures come out in order, `delay()` pictures after they went in.
     std::vector<uint8_t> encode(const Picture& picture, bool forceKeyframe = false);
     // Exceptions (also those on the encoder's own threads, e.g. std::bad_alloc) come out of
@@ -194,10 +196,17 @@ private:
     bool pipelined() const { return cfg_.frameThreads && useCabac() && cfg_.threads >= 2; }
     void applyRc(int upTo);
     std::unique_ptr<Pool> pool_;
-    FrameCoder* inFlight_ = nullptr;           // started, not finished (frame threading)
+    // Frame threading: up to kInFlight pictures are started before the oldest comes out, so the
+    // workers have rows of two pictures while the caller prepares the next one (tree, rate control).
+    static constexpr int kInFlight = 3;
+    // In flight, the one that came out last (reconY) and the one before the oldest in flight
+    // (its vectors are start points).
+    static constexpr int kCoders = kInFlight + 1;
+    int inFlightAt(int index) const;
+    std::deque<FrameCoder*> inFlight_;         // started, not finished (frame threading), oldest first
     const FrameCoder* lastStarted_ = nullptr;  // the picture before the next one (search start points)
-    // Rate control learns from a picture two pictures later (the one between may still be coded),
-    // with or without frame threading, so the stream does not depend on the thread count.
+    // Rate control learns from a picture inFlightAt() pictures later (the ones between may still be
+    // coded), with or without frame threading, so the stream does not depend on the thread count.
     struct RcRecord {
         int index;
         int type; // 0 I, 1 P, 2 B
@@ -228,10 +237,11 @@ private:
     EncoderConfig cfg_;
     int mbW_ = 0, mbH_ = 0, padW_ = 0, padH_ = 0;
     // Pictures in flight (round robin) and the one that came out last.
-    std::unique_ptr<FrameCoder> coders_[3];
+    std::unique_ptr<FrameCoder> coders_[kCoders];
     int nextCoder_ = 0;
     const FrameCoder* last_ = nullptr;
     std::deque<std::shared_ptr<RefPic>> refList_; // reference pictures, newest first
+    std::vector<std::shared_ptr<RefPic>> refSpare_; // retired ones, used again once no picture in flight holds them
     int lastQp_ = 0;
     int frameIndex_ = 0;
     int idrCount_ = 0;

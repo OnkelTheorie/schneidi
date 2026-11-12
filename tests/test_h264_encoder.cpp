@@ -474,6 +474,31 @@ int main()
                 CHECK(roundTrip(full, 60, &bytesFull));
                 CHECK(std::abs(double(bytesFull) - double(bytes)) < 0.05 * double(bytes));
             }
+            // Frame threading (two pictures in flight at first, then three; rows parked instead of
+            // waited in): the same stream with one thread, without frame threading and with more
+            // threads than rows can run - two-pass with B pictures and one pass without.
+            for (const bool withB : {true, false}) {
+                EncoderConfig t = c;
+                if (!withB) {
+                    t.bframes = 0;
+                    t.firstPass.reset();
+                }
+                size_t ref = 0;
+                t.threads = 1;
+                CHECK(roundTrip(t, 60, &ref));
+                for (const int threads : {2, 5, 16}) {
+                    for (const bool frameThreads : {true, false}) {
+                        t.threads = threads;
+                        t.frameThreads = frameThreads;
+                        size_t got = 0;
+                        CHECK(roundTrip(t, 60, &got));
+                        if (got != ref)
+                            std::fprintf(stderr, "threads %d frame threading %d B %d: %zu bytes, one thread %zu\n", threads,
+                                         int(frameThreads), int(withB), got, ref);
+                        CHECK(got == ref);
+                    }
+                }
+            }
             c.firstPass.reset();
             const ChunkPlan rated = planChunks(*fp.stats(), c, 3, 10);
             bytes = 0;
