@@ -256,6 +256,8 @@ void CompInspector::rebuild(const Clip& c, const QStringList& keys)
     m_analyzeButton = nullptr;
     m_analyzeStatus = nullptr;
     m_extensionsButton = nullptr;
+    m_pickButton = nullptr;
+    m_pickStatus = nullptr;
     while (QLayoutItem* it = m_grid->takeAt(0)) {
         if (QWidget* w = it->widget()) { // gone from findChild right away (tests, the value pass below)
             w->hide();
@@ -291,6 +293,7 @@ void CompInspector::rebuild(const Clip& c, const QStringList& keys)
             allow->setVisible(show);
         };
     }
+    if (k->id == QLatin1String("mask")) row = addPickRow(row);
     for (const QString& key : keys) {
         const EffectParam* p = k->param(key);
         if (!p) continue;
@@ -510,6 +513,57 @@ void CompInspector::rebuild(const Clip& c, const QStringList& keys)
     }
     if (k->id == QLatin1String(PC::kCutoutType) || k->id == QLatin1String(::Comp::kTrackerType))
         row = addAnalysisRow(row, k->id);
+}
+
+int CompInspector::addPickRow(int row)
+{
+    m_pickButton = new QPushButton(T("Fläche im Bild wählen"));
+    m_pickButton->setObjectName("comp_pick_region");
+    m_pickButton->setCheckable(true);
+    m_pickButton->setChecked(m_picking);
+    m_pickButton->setToolTip(T("Dann ins Bild klicken: die gleichfarbige Fläche dort (Wand, Säule, Auto) wird die Form "
+                               "dieser Maske. Shift-Klick nimmt eine weitere Fläche dazu, Alt-Klick (oder Strg-Klick) "
+                               "zieht eine ab. Die Punkte lassen sich danach von Hand ziehen"));
+    connect(m_pickButton, &QPushButton::toggled, this, [this](bool on) {
+        if (on == m_picking) return;
+        m_picking = on;
+        emit pickToggled(on);
+    });
+    auto* label = new QLabel(T("Toleranz"));
+    label->setToolTip(T("Wie verschieden eine Farbe sein darf und noch zur Fläche gehört: höher bei Schatten und "
+                        "Struktur, niedriger, wenn die Fläche ausläuft. Wählt den letzten Klick gleich neu"));
+    auto* slider = new QSlider(Qt::Horizontal);
+    slider->setObjectName("comp_pick_tolerance");
+    slider->setRange(0, 100);
+    slider->setValue(int(std::lround(m_pickTolerance * 100)));
+    slider->setToolTip(label->toolTip());
+    // On release (or a key): each change picks the last click again, one undo step
+    const auto send = [this, slider] { emit pickToleranceChanged(slider->value() / 100.0); };
+    connect(slider, &QSlider::sliderReleased, this, send);
+    connect(slider, &QSlider::valueChanged, this, [slider, send] {
+        if (!slider->isSliderDown()) send();
+    });
+    m_pickStatus = new QLabel(m_pickText);
+    m_pickStatus->setObjectName("comp_pick_status");
+    m_pickStatus->setWordWrap(true);
+    m_pickStatus->setStyleSheet(QString("color: %1;").arg(Theme::textDim.name()));
+    m_grid->addWidget(m_pickButton, row++, 0, 1, 3);
+    m_grid->addWidget(label, row, 0);
+    m_grid->addWidget(slider, row++, 1, 1, 2);
+    m_grid->addWidget(m_pickStatus, row++, 0, 1, 3);
+    return row;
+}
+
+void CompInspector::setPickState(bool on, double tolerance, const QString& status)
+{
+    m_picking = on;
+    m_pickTolerance = tolerance;
+    m_pickText = status;
+    if (m_pickButton && m_pickButton->isChecked() != on) {
+        const QSignalBlocker block(m_pickButton);
+        m_pickButton->setChecked(on);
+    }
+    if (m_pickStatus) m_pickStatus->setText(status);
 }
 
 int CompInspector::addAnalysisRow(int row, const QString& kind)

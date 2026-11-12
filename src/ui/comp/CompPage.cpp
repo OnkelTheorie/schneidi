@@ -159,6 +159,15 @@ CompPage::CompPage(Editor* editor, QWidget* parent) : QWidget(parent), m_editor(
         m_editor->setCompOut(m_clipId, node, CompUi::kinds());
     });
     connect(m_inspector, &CompInspector::extensionsRequested, this, &CompPage::extensionsRequested);
+    // Picking a region (0.22): the Inspector's button and slider drive the viewer's pick mode, which reports back
+    const auto pickState = [this] {
+        m_inspector->setPickState(m_overlay->picking(), m_overlay->pickTolerance(), m_overlay->pickStatus());
+    };
+    connect(m_inspector, &CompInspector::pickToggled, m_overlay, &CompOverlay::setPicking);
+    connect(m_inspector, &CompInspector::pickToleranceChanged, m_overlay, &CompOverlay::setPickTolerance);
+    connect(m_overlay, &CompOverlay::pickingChanged, this, pickState);
+    connect(m_overlay, &CompOverlay::picked, this, pickState);
+    pickState();
     connect(m_inspector, &CompInspector::keyPickRequested, this,
             [this](int node, const QString& key) { emit keyPickRequested(m_clipId, node, key); });
     connect(m_showNode, &QToolButton::toggled, this, &CompPage::viewChanged);
