@@ -2,7 +2,7 @@
 
 **A fast, light video editor that an AI assistant can edit with you – live, in the project you have open.**
 
-schneidi has five pages – Media, Edit, Comp, Color and Deliver – and fewer features than the big editors, but it starts in under a second, plays a demanding 1080p60 project smoothly on four CPU cores and runs even on a Raspberry Pi. It opens H.264/H.265 video with AAC sound on Linux out of the box – no codec packs, no paid version. The UI is available in English, German, Spanish, French, Polish and Russian.
+schneidi has five pages – Media, Edit, Comp, Color and Deliver – and fewer features than the big editors, but it starts in under a second, plays a demanding 1080p60 project smoothly on four CPU cores and runs even on a Raspberry Pi. It opens H.264/H.265 video with AAC sound on Linux out of the box – no codec packs, no paid version. The UI is available in 16 languages, from English and German to Japanese, Hindi and Indonesian.
 
 [![Download](https://img.shields.io/github/v/release/OnkelTheorie/schneidi?label=Download&color=2ea44f)](https://github.com/OnkelTheorie/schneidi/releases/latest)
 
@@ -132,7 +132,7 @@ With the AppImage the command is the AppImage itself and the arguments are `["cl
 - **Effect sounds** (Effects › Sounds, or op `sfx`): CC0 recordings and computed risers for whooshes, hits, impacts and clicks, set as loud as the sound where they land – only where you put them or ask for them, never by themselves; your own sounds from the effects folder too
 - **Sound-aware cutting:** J/L cuts and room tone, a song cut to the video's length on its phrases with its real ending, events snapped to the beat, a rough cut from a script with the best take of each line, jump cuts hidden by a zoom, B-roll that matches what is said
 - **Command line and MCP server** (`schneidi-cli`, locally or over HTTP on a server): scripts or an AI assistant can edit almost everything the app can – find pauses, scene changes, loud moments and events in a part of the picture (kill feed, score), pick highlights (your own kills, loud fights), make a finished short of game recordings in one call, build compositing graphs (recipes, keys, masks, trackers, cutouts), fill templates (also one video per row of a table) and apply a brand kit, sync recordings by their sound, build multicam clips, transcribe, cut and trim, grade, animate, mix, duck music and normalize, measure loudness, look at frames (or a detail of them) and scopes, render ([details](#command-line-and-ai-editing-mcp))
-- Themes, six UI languages (English, German, Spanish, French, Polish, Russian)
+- Themes, 16 UI languages (English, German, Spanish, French, Polish, Russian, Ukrainian, Japanese, Portuguese (Brazil), Chinese (Simplified), Italian, Hindi, Dutch, Turkish, Korean, Indonesian – the newer ones translated by AI, improvements by native speakers welcome as issues)
 
 ## How light is it?
 
@@ -279,8 +279,11 @@ What we are working on next. Plans can still change; the order within a version 
 ### 0.20 – Newcomer Update (released)
 Guided tours on a built-in practice project (first steps, editing, color, compositing, task guides), hide pages you don't use, the preview on a second monitor with a chosen resolution, Premiere/Final Cut key sets with `.kys` import and a key trainer, clips tilted in 3D, voice-over straight onto a track with a live take, a draggable In/Out range with loop playback, proxies easier to make and see, and a much faster start.
 
-### Next: 0.21 – Languages, then Tracking
-Ten more languages (Ukrainian, Japanese, Portuguese (Brazil), Chinese (Simplified), Italian, Hindi, Dutch, Turkish, Korean, Indonesian – translations by AI, improvements by native speakers welcome as issues), x264/x265 in the downloads, then better tracking: fade out when the point is lost, a node's time range on the timeline, text behind a wall, four-corner tracking, a shared camera for 2.5D.
+### 0.21 – Languages Update (released)
+Ten more languages (Ukrainian, Japanese, Portuguese (Brazil), Chinese (Simplified), Italian, Hindi, Dutch, Turkish, Korean, Indonesian), x264/x265 in the downloads, a selectable proxy size, placing only picture or only sound, drop-frame timecode, a smoother and faster start, and a big round of fixes.
+
+### Next: Tracking Update
+Better tracking: fade out when the point is lost, a node's time range on the timeline, text behind a wall, four-corner tracking, a shared camera for 2.5D.
 
 ### Later
 - **0.22 – Studio:** a page for sound – a big mixer, large waveforms, volume curves to draw, EQ and compressor per track, voice cleanup, loudness, recording
