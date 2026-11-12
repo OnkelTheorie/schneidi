@@ -142,6 +142,8 @@ void FrameCoder::CabacState::resize(int mbW, int mbH)
     t8.assign(mbs, 0);
     cbfLuma.assign(mbs * 16, 0);
     mvd.assign(mbs * 16, {0, 0});
+    mvd1.assign(mbs * 16, {0, 0});
+    direct.assign(mbs, 0);
     cbfChroma[0].assign(mbs * 4, 0);
     cbfChroma[1].assign(mbs * 4, 0);
 }
@@ -164,11 +166,20 @@ void FrameCoder::cabacWriteMb(CabacEncoder& ce, CabacState& st, int mbx, int mby
         return long(ny) * mbW_ + nx;
     };
 
-    // mb_skip_flag (P slices)
+    // mb_skip_flag (P and B slices)
     if (pSlice_) {
         const int inc = (hasL && st.kind[mL] != kKindSkip) + (hasT && st.kind[mT] != kKindSkip);
-        ce.decision(11 + inc, s.kind == K::Skip);
+        ce.decision((bSlice_ ? 24 : 11) + inc, s.kind == K::Skip);
     }
+    // B slices, mb_type bin 0: neighbours that are neither B_Skip nor B_Direct_16x16.
+    const int incB = bSlice_ ? (hasL && st.kind[mL] != kKindSkip && !st.direct[mL]) + (hasT && st.kind[mT] != kKindSkip && !st.direct[mT]) : 0;
+    st.direct[m] = bSlice_ && s.kind == K::Inter && s.bType == 0;
+    if (bSlice_)
+        for (int y = 0; y < 4; ++y)
+            for (int x = 0; x < 4; ++x) {
+                const size_t o = size_t(mby * 4 + y) * lw + mbx * 4 + x;
+                st.mvd1[o][0] = st.mvd1[o][1] = 0;
+            }
     if (s.kind == K::Skip) {
         st.kind[m] = kKindSkip;
         st.cbp[m] = 0;
@@ -192,7 +203,16 @@ void FrameCoder::cabacWriteMb(CabacEncoder& ce, CabacState& st, int mbx, int mby
     // mb_type (9.3.2.5, tables 9-36/9-37)
     if (intra) {
         int base = 3;
-        if (pSlice_) {
+        if (bSlice_) {
+            // prefix of an intra macroblock in a B slice: 1 1 1 1 0 1
+            ce.decision(27 + incB, 1);
+            ce.decision(30, 1);
+            ce.decision(31, 1);
+            ce.decision(32, 1);
+            ce.decision(32, 0);
+            ce.decision(32, 1);
+            base = 32;
+        } else if (pSlice_) {
             ce.decision(14, 1); // prefix: intra macroblock in a P slice
             base = 17;
         }
@@ -204,8 +224,8 @@ void FrameCoder::cabacWriteMb(CabacEncoder& ce, CabacState& st, int mbx, int mby
         } else {
             ce.decision(base + inc0, 1);
             ce.terminate(0); // not I_PCM
-            const int ctxLuma = pSlice_ ? 18 : 6, ctxChroma = pSlice_ ? 19 : 7;
-            const int ctxChroma2 = pSlice_ ? 19 : 8, ctxMode0 = pSlice_ ? 20 : 9, ctxMode1 = pSlice_ ? 20 : 10;
+            const int ctxLuma = pSlice_ ? base + 1 : 6, ctxChroma = pSlice_ ? base + 2 : 7;
+            const int ctxChroma2 = pSlice_ ? base + 2 : 8, ctxMode0 = pSlice_ ? base + 3 : 9, ctxMode1 = pSlice_ ? base + 3 : 10;
             ce.decision(ctxLuma, s.cbpLuma != 0);
             ce.decision(ctxChroma, s.cbpChroma != 0);
             if (s.cbpChroma)
@@ -213,6 +233,38 @@ void FrameCoder::cabacWriteMb(CabacEncoder& ce, CabacState& st, int mbx, int mby
             ce.decision(ctxMode0, (s.i16Mode >> 1) & 1);
             ce.decision(ctxMode1, s.i16Mode & 1);
         }
+    } else if (bSlice_) {
+        // mb_type in B slices (9.3.2.5, table 9-37): 0 | 1 0 x | 1 1 + four or five bins.
+        const int t = s.bType;
+        ce.decision(27 + incB, t != 0);
+        if (t == 1 || t == 2) {
+            ce.decision(30, 0);
+            ce.decision(32, t - 1);
+        } else if (t != 0) {
+            ce.decision(30, 1);
+            const int five = t >= 12 && t <= 21 ? t + 4 : -1;                           // 1xxxx: 16..25
+            const int four = five >= 0 ? five >> 1 : t <= 10 ? t - 3 : t == 11 ? 14 : 15; // 22 (B_8x8) = 15
+            ce.decision(31, (four >> 3) & 1);
+            ce.decision(32, (four >> 2) & 1);
+            ce.decision(32, (four >> 1) & 1);
+            ce.decision(32, four & 1);
+            if (five >= 0)
+                ce.decision(32, five & 1);
+        }
+        if (t == 22)
+            for (int p = 0; p < 4; ++p) { // sub_mb_type: direct, L0, L1 or Bi 8x8
+                const int sub = s.bSub[p];
+                ce.decision(36, sub != 0);
+                if (sub == 1 || sub == 2) {
+                    ce.decision(37, 0);
+                    ce.decision(39, sub - 1);
+                } else if (sub == 3) {
+                    ce.decision(37, 1);
+                    ce.decision(38, 0);
+                    ce.decision(39, 0);
+                    ce.decision(39, 0);
+                }
+            }
     } else {
         static constexpr int kBins[4][3] = {{0, 0, 0}, {0, 1, 1}, {0, 1, 0}, {0, 0, 1}};
         const int* b = kBins[s.interType];
@@ -267,7 +319,43 @@ void FrameCoder::cabacWriteMb(CabacEncoder& ce, CabacState& st, int mbx, int mby
             const size_t o = size_t(mby * 4 + y) * lw + mbx * 4 + x;
             st.mvd[o][0] = st.mvd[o][1] = 0;
         }
-    if (!intra) {
+    if (!intra && bSlice_) {
+        // One reference per list: no ref_idx. mvd_l0 of every partition that uses list 0, then mvd_l1.
+        const BParts bp = bPartsOf(s.bType, s.bSub);
+        for (int list = 0; list < 2; ++list) {
+            std::vector<std::array<uint8_t, 2>>& mvds = list ? st.mvd1 : st.mvd;
+            for (int p = 0; p < bp.count; ++p) {
+                if (!(bp.use[p] & (1 << list)))
+                    continue;
+                const Part& P = kParts[bp.shape][p];
+                const int bx = mbx * 4 + P.x4, by = mby * 4 + P.y4;
+                for (int c = 0; c < 2; ++c) {
+                    // Neighbours that are unavailable, skipped, intra, direct or without this list count 0.
+                    int sum = 0;
+                    if (mbOf4(bx - 1, by) >= 0)
+                        sum += mvds[size_t(by) * lw + size_t(bx - 1)][c];
+                    if (mbOf4(bx, by - 1) >= 0)
+                        sum += mvds[size_t(by - 1) * lw + size_t(bx)][c];
+                    const int inc = sum < 3 ? 0 : sum > 32 ? 2 : 1;
+                    const int base = c ? 47 : 40;
+                    const int v = list ? s.mvd1[p][c] : s.mvd[p][c], av = std::abs(v);
+                    const int prefix = std::min(av, 9); // UEG3, uCoff 9
+                    for (int i = 0; i < prefix; ++i)
+                        ce.decision(base + (i == 0 ? inc : std::min(i + 2, 6)), 1);
+                    if (av < 9)
+                        ce.decision(base + (prefix == 0 ? inc : std::min(prefix + 2, 6)), 0);
+                    else
+                        expGolombBypass(ce, unsigned(av - 9), 3);
+                    if (av)
+                        ce.bypass(v < 0);
+                    const uint8_t stored = uint8_t(std::min(av, 255));
+                    for (int y = P.y4; y < P.y4 + P.h4; ++y)
+                        for (int x = P.x4; x < P.x4 + P.w4; ++x)
+                            mvds[size_t(mby * 4 + y) * lw + mbx * 4 + x][c] = stored;
+                }
+            }
+        }
+    } else if (!intra) {
         const int count = kPartCount[s.interType];
         // Neighbour 4x4 block info for ref_idx / mvd contexts: inter macroblocks only.
         auto interNeighbour = [&](int bx, int by, size_t& o) {

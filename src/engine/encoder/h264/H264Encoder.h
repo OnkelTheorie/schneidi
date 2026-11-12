@@ -68,6 +68,12 @@ struct EncoderConfig {
     int transferCharacteristics = 2;
     int matrixCoefficients = 2;
     bool fullRange = false;
+    // B pictures (CABAC only, Main/High): up to this many in a row between two reference pictures,
+    // not used as references themselves. 0 = none (the stream is then the same as without this
+    // option). Access units come out in coding order: lastDisplayIndex() says which picture one is.
+    int bframes = 0;
+    int bQpOffset = 2;     // QP of a B picture above the P QP
+    bool bAdaptive = true; // fewer B pictures where the motion is too strong for them to pay
 };
 
 // level_idc (Table A-1) for this configuration: the lowest level whose macroblock rate, frame
@@ -137,6 +143,12 @@ public:
     std::vector<uint8_t> flush();
     int delay() const;
     bool lastWasSceneCut() const { return lastWasSceneCut_; }
+    // The access unit that came out last: its position in input (display) order, counted from 0,
+    // and its type ('I', 'P', 'B'). Without B pictures the display index simply counts up.
+    int lastDisplayIndex() const { return lastDisplayIndex_; }
+    char lastType() const { return lastType_; }
+    // Pictures an access unit may come out ahead of its display turn (the dts shift a muxer needs).
+    int reorderDelay() const { return useB() ? 1 : 0; }
 
     // Reconstruction of the last picture that came out, as the decoder outputs it (padded size).
     const std::vector<uint8_t>& reconY() const;
@@ -160,14 +172,25 @@ private:
     // with or without frame threading, so the stream does not depend on the thread count.
     struct RcRecord {
         int index;
-        bool idr, lookahead;
+        int type; // 0 I, 1 P, 2 B
+        bool lookahead;
         double cost;
         int qp;
         double bits;
     };
     std::deque<RcRecord> rcDone_;
     void markKeyframes();
-    bool useLookahead() const { return cfg_.lookahead > 0 && cfg_.gop > 1 && (cfg_.bitrateKbps > 0 || cfg_.mbtree); }
+    bool useLookahead() const
+    {
+        return (cfg_.lookahead > 0 && cfg_.gop > 1 && (cfg_.bitrateKbps > 0 || cfg_.mbtree)) || useB();
+    }
+    // B pictures: the queue holds the pictures in display order; planQueue gives the undecided
+    // ones their type, pickNext the next one in coding order (the reference picture after a run
+    // of B pictures goes first and stays queued until they are coded).
+    bool useB() const { return cfg_.bframes > 0 && useCabac() && cfg_.gop > 1; }
+    void planQueue();
+    LookaheadFrame* pickNext();
+    std::vector<uint8_t> codeNext();
     bool useCabac() const { return cfg_.cabac && cfg_.mode != IntraMode::Pcm; }
     bool useT8() const { return useCabac() && cfg_.transform8x8; }
 
@@ -183,6 +206,11 @@ private:
     int idrCount_ = 0;
     int framesSinceIdr_ = 0;
     bool lastWasSceneCut_ = false;
+    int lastDisplayIndex_ = -1;
+    char lastType_ = 'I';
+    int inCount_ = 0;      // pictures taken in (display index of the next one)
+    int gopPos_ = 0;       // B mode: display distance from the last IDR picture of the first undecided picture
+    int refCount_ = 0;     // B mode: reference pictures since the last IDR picture (frame_num)
     std::vector<uint8_t> prevThumb_; // quarter-size luma of the previous picture
     // Lookahead queue (front = next picture to encode) and the macroblock tree's QP offsets.
     std::unique_ptr<Lookahead> la_;
@@ -199,13 +227,13 @@ private:
     double rcBits_ = 0, rcTarget_ = 0; // produced / wanted bits so far
     double rcCplxSum_ = 0, rcCplxCount_ = 0; // complexity (bits * 2^(qp/6)) of the P frames so far
     // Lookahead model: bits = k * cost * 2^(-qp/6), k per picture type from the pictures coded so far.
-    double rcKSum_[2] = {0, 0}, rcCostSum_[2] = {0, 0}; // [0] I, [1] P
+    double rcKSum_[3] = {0, 0, 0}, rcCostSum_[3] = {0, 0, 0}; // [0] I, [1] P, [2] B
     double rcNeedSeen_ = 0; // predicted bits at QP 0 of the pictures coded so far
     int rcFramesSeen_ = 0;
     // First-pass rate control: predicted keyframes and the costs of the pictures not coded yet.
-    std::vector<uint8_t> tpKey_;
-    double tpRemI_ = 0, tpRemP_ = 0;
-    double twoPassQp(double kI, double kP) const;
+    std::vector<uint8_t> tpKey_, tpType_;
+    double tpRemI_ = 0, tpRemP_ = 0, tpRemB_ = 0;
+    double twoPassQp(double kI, double kP, double kB) const;
     double frameCost(const LookaheadFrame& f, bool intra) const;
 
 };

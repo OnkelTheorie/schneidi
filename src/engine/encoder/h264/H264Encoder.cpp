@@ -69,6 +69,8 @@ thread_local bool tIntraSkip8 = false, tIntraSkip16 = false;
 // cost) without Intra 8x8 / 16x16 (-8 % for +0.2 %). H264_FULLINTRA=1 restores the full search.
 const bool gFullIntra = std::getenv("H264_FULLINTRA") != nullptr;
 const double gIntraFactor = std::getenv("H264_INTRAF") ? std::atof(std::getenv("H264_INTRAF")) : gFullIntra ? 2.0 : 1.5;
+// B pictures: 16x8 and 8x16 partitions besides 16x16 (H264_BPARTS=0 turns them off, for measurements).
+const bool gBParts = !std::getenv("H264_BPARTS") || std::atoi(std::getenv("H264_BPARTS")) != 0;
 double gPhaseMs[8] = {};
 double gWaitMs = 0; // summed over threads
 int gPhaseFrames = 0;
@@ -390,6 +392,11 @@ FrameCoder::FrameCoder(const EncoderConfig& config)
     mvX_.resize(nzLuma_.size());
     mvY_.resize(nzLuma_.size());
     refIdx_.resize(mvX_.size());
+    if (cfg_.bframes > 0) {
+        mvX1_.resize(mvX_.size());
+        mvY1_.resize(mvX_.size());
+        refIdx1_.resize(mvX_.size());
+    }
     sliceTopOfRow_.resize(size_t(mbH_));
     rowKey_.resize(size_t(mbH_));
     cabWave_.resize(mbW_, mbH_);
@@ -415,6 +422,10 @@ Encoder::Encoder(const EncoderConfig& config)
     padH_ = mbH_ * 16;
     if (cfg_.mode == IntraMode::Pcm)
         cfg_.deblock = false;
+    // B pictures need CABAC and P pictures; their run and its reference picture must fit the queue.
+    cfg_.bframes = useB() ? std::min(cfg_.bframes, 8) : 0;
+    if (useB())
+        cfg_.lookahead = std::max(cfg_.lookahead, cfg_.bframes + 3);
     for (auto& c : coders_)
         c = std::make_unique<FrameCoder>(cfg_);
     idrCount_ = cfg_.idrPicIdBase;
@@ -443,7 +454,8 @@ int levelIdcFor(const EncoderConfig& cfg)
     const double fps = cfg.fps > 0 ? cfg.fps : 60.0;
     const bool high = cfg.cabac && cfg.transform8x8 && cfg.mode != IntraMode::Pcm;
     const double brFactor = high ? 1250.0 : 1000.0;
-    const int64_t dpb = std::max(1, cfg.refs);
+    const bool bPictures = cfg.bframes > 0 && cfg.cabac && cfg.mode != IntraMode::Pcm && cfg.gop > 1;
+    const int64_t dpb = std::max(bPictures ? 2 : 1, cfg.refs);
     for (const Level& l : kLevels) {
         const int64_t side = int64_t(std::sqrt(double(l.maxFs) * 8.0)); // A.3.1: width and height in macroblocks
         if (double(fs) * fps > double(l.maxMbps) * 1.0001 || fs > l.maxFs || mbW > side || mbH > side)
@@ -482,8 +494,15 @@ std::vector<uint8_t> Encoder::headers() const
             bw.flag(false); // seq_scaling_matrix_present_flag
         }
         bw.ue(0);      // log2_max_frame_num_minus4
-        bw.ue(2);      // pic_order_cnt_type: output order = decode order
-        bw.ue(uint32_t(std::max(1, cfg_.refs))); // max_num_ref_frames
+        // B pictures keep the reference pictures on both sides: two frames at least.
+        const uint32_t refFrames = uint32_t(std::max(useB() ? 2 : 1, cfg_.refs));
+        if (useB()) {
+            bw.ue(0); // pic_order_cnt_type: pic_order_cnt_lsb in every slice header
+            bw.ue(4); // log2_max_pic_order_cnt_lsb_minus4 (8 bits)
+        } else {
+            bw.ue(2); // pic_order_cnt_type: output order = decode order
+        }
+        bw.ue(refFrames); // max_num_ref_frames
         bw.flag(false); // gaps_in_frame_num_value_allowed_flag
         bw.ue(uint32_t(mbW_ - 1));
         bw.ue(uint32_t(mbH_ - 1));
@@ -533,8 +552,8 @@ std::vector<uint8_t> Encoder::headers() const
         bw.ue(0);        // max_bits_per_mb_denom
         bw.ue(16);       // log2_max_mv_length_horizontal
         bw.ue(16);       // log2_max_mv_length_vertical
-        bw.ue(0);        // max_num_reorder_frames
-        bw.ue(uint32_t(std::max(1, cfg_.refs))); // max_dec_frame_buffering (at least max_num_ref_frames)
+        bw.ue(useB() ? 1 : 0); // max_num_reorder_frames (B pictures: the reference picture after them comes first)
+        bw.ue(refFrames);      // max_dec_frame_buffering (at least max_num_ref_frames)
         bw.rbspTrailing();
         appendNal(out, 3, 7, bw.bytes());
     }
@@ -767,13 +786,15 @@ EncoderConfig ChunkPlan::configFor(const EncoderConfig& cfg, int i, int threads)
 
 // QP for the P pictures at which the pictures not coded yet (first-pass costs, k per picture type
 // from the pictures coded so far) spend exactly the bits that are left of the clip's budget.
-double Encoder::twoPassQp(double kI, double kP) const
+double Encoder::twoPassQp(double kI, double kP, double kB) const
 {
     const FirstPassStats& st = *cfg_.firstPass;
     const double perFrame = cfg_.bitrateKbps * 1000.0 / cfg_.fps;
     const double left = double(st.size()) - frameIndex_;
     const double budget = std::max(double(st.size()) * perFrame - rcBits_, 0.5 * left * perFrame);
-    const double need = kI * tpRemI_ * std::exp2(0.5) + kP * tpRemP_;
+    double need = kI * tpRemI_ * std::exp2(0.5) + kP * tpRemP_;
+    if (tpRemB_ > 0)
+        need += kB * tpRemB_ * std::exp2(-cfg_.bQpOffset / 6.0);
     return 6.0 * std::log2(std::max(1.0, need) / budget);
 }
 
@@ -894,6 +915,7 @@ std::vector<uint8_t> Encoder::encode(const Picture& picture, bool forceKeyframe)
 std::vector<uint8_t> Encoder::encodeImpl(const Picture& picture, bool forceKeyframe)
 {
     LookaheadFrame f = copyPicture(picture, cfg_.width, cfg_.height, forceKeyframe);
+    f.index = inCount_++;
     if (!useLookahead())
         return step(&f);
     if (!la_)
@@ -924,8 +946,85 @@ std::vector<uint8_t> Encoder::encodeImpl(const Picture& picture, bool forceKeyfr
     }
     if (!full)
         return {};
+    if (useB())
+        return codeNext();
     std::vector<uint8_t> out = step(&queue_.front());
     queue_.pop_front();
+    return out;
+}
+
+// Types of the queued pictures that are not decided yet, in display order: keyframes as the
+// schedule, the caller and the scene changes ask for them, then runs of up to `bframes` B pictures
+// each followed by a P picture. The picture before a keyframe and the last one are P pictures (a
+// B picture needs a later reference of its own GOP). With `decide` the first run and its
+// reference picture become final.
+void Encoder::planQueue()
+{
+    size_t u = 0;
+    while (u < queue_.size() && queue_[u].decided)
+        ++u;
+    auto keyAt = [&](size_t j, int pos) {
+        const LookaheadFrame& f = queue_[j];
+        return f.index == 0 || pos >= cfg_.gop || f.forceKeyframe || (cfg_.sceneCut && f.sceneChange && pos >= 6);
+    };
+    int pos = gopPos_, run = 0;
+    for (size_t j = u; j < queue_.size(); ++j) {
+        LookaheadFrame& f = queue_[j];
+        const bool key = keyAt(j, pos);
+        f.keyframe = key;
+        f.cutKey = cfg_.sceneCut && f.sceneChange && f.index > 0 && pos >= 6;
+        if (key) {
+            f.type = 0;
+            pos = 0;
+            run = 0;
+        } else {
+            const bool last = j + 1 == queue_.size();
+            if (run < cfg_.bframes && !last && !keyAt(j + 1, pos + 1)) {
+                f.type = 2;
+                ++run;
+            } else {
+                f.type = 1;
+                run = 0;
+            }
+        }
+        f.gopPos = pos++;
+    }
+}
+
+// The next picture in coding order: the reference picture after a run of B pictures first (it
+// stays in the queue, marked as coded), then the B pictures.
+LookaheadFrame* Encoder::pickNext()
+{
+    if (queue_.empty())
+        return nullptr;
+    if (!queue_.front().decided) {
+        planQueue();
+        for (LookaheadFrame& f : queue_) {
+            f.decided = true;
+            if (f.type != 2) {
+                gopPos_ = f.gopPos + 1;
+                break;
+            }
+        }
+    }
+    LookaheadFrame& front = queue_.front();
+    if (front.type != 2)
+        return &front;
+    for (LookaheadFrame& f : queue_)
+        if (f.type != 2)
+            return f.coded ? &front : &f;
+    return &front; // not reached: a run of B pictures always has its reference picture
+}
+
+std::vector<uint8_t> Encoder::codeNext()
+{
+    LookaheadFrame* f = pickNext();
+    std::vector<uint8_t> out = step(f);
+    if (f) {
+        f->coded = true;
+        while (!queue_.empty() && queue_.front().coded)
+            queue_.pop_front();
+    }
     return out;
 }
 
@@ -945,8 +1044,13 @@ std::vector<uint8_t> Encoder::flushImpl()
 {
     joinPending();
     while (!queue_.empty()) {
-        std::vector<uint8_t> out = step(&queue_.front());
-        queue_.pop_front();
+        std::vector<uint8_t> out;
+        if (useB()) {
+            out = codeNext();
+        } else {
+            out = step(&queue_.front());
+            queue_.pop_front();
+        }
         if (!out.empty())
             return out;
     }
@@ -980,10 +1084,10 @@ void Encoder::applyRc(int upTo)
         rcDone_.pop_front();
         if (r.lookahead) {
             if (r.cost > 0) {
-                rcKSum_[r.idr ? 0 : 1] += r.bits * std::exp2(r.qp / 6.0);
-                rcCostSum_[r.idr ? 0 : 1] += r.cost;
+                rcKSum_[r.type] += r.bits * std::exp2(r.qp / 6.0);
+                rcCostSum_[r.type] += r.cost;
             }
-        } else if (!r.idr) {
+        } else if (r.type != 0) {
             rcCplxSum_ += r.bits * std::pow(2.0, r.qp / 6.0);
             rcCplxCount_ += 1.0;
             rcQp_ = r.qp;
@@ -1008,8 +1112,10 @@ std::vector<uint8_t> Encoder::finishFrame(FrameCoder& fc)
     last_ = &fc;
     lastQp_ = fc.outQp_;
     lastWasSceneCut_ = fc.outSceneCut_;
+    lastDisplayIndex_ = fc.displayIndex_;
+    lastType_ = "IPB"[fc.rcType_];
     if (cfg_.bitrateKbps > 0)
-        rcDone_.push_back({fc.frameNo_, fc.rcIdr_, fc.rcLookahead_, fc.rcCost_, fc.outQp_, double(out.size()) * 8.0});
+        rcDone_.push_back({fc.frameNo_, fc.rcType_, fc.rcLookahead_, fc.rcCost_, fc.outQp_, double(out.size()) * 8.0});
     if (gTiming) {
         for (int i = 4; i < 8; ++i)
             gPhaseMs[i] += clock.ms[i];
@@ -1054,10 +1160,10 @@ double Encoder::frameCost(const LookaheadFrame& f, bool intra) const
 
 // Per-picture setup: neighbour state, slices (CABAC: one slice in a wavefront; CAVLC, whose
 // decisions write bits directly: one slice per thread).
-void FrameCoder::reset(bool idr, int framesSinceIdr, int idrCount)
+void FrameCoder::reset(bool idr, int frameNum, int idrCount)
 {
     idr_ = idr;
-    framesSinceIdr_ = framesSinceIdr;
+    framesSinceIdr_ = frameNum;
     idrCount_ = idrCount;
     std::fill(nzLuma_.begin(), nzLuma_.end(), 0);
     std::fill(modes4x4_.begin(), modes4x4_.end(), int8_t(-1));
@@ -1066,6 +1172,11 @@ void FrameCoder::reset(bool idr, int framesSinceIdr, int idrCount)
     std::fill(mvX_.begin(), mvX_.end(), int16_t(0));
     std::fill(mvY_.begin(), mvY_.end(), int16_t(0));
     std::fill(refIdx_.begin(), refIdx_.end(), int8_t(-1));
+    if (bSlice_) {
+        std::fill(mvX1_.begin(), mvX1_.end(), int16_t(0));
+        std::fill(mvY1_.begin(), mvY1_.end(), int16_t(0));
+        std::fill(refIdx1_.begin(), refIdx1_.end(), int8_t(-1));
+    }
     const bool wave = useCabac();
     const int sliceCount = wave ? 1 : std::clamp(cfg_.threads, 1, mbH_);
     sliceTop_.assign(size_t(sliceCount) + 1, 0);
@@ -1083,22 +1194,30 @@ void FrameCoder::reset(bool idr, int framesSinceIdr, int idrCount)
 void FrameCoder::sliceHeader(BitWriter& bw, int s) const
 {
     bw.ue(uint32_t(sliceTop_[size_t(s)] * mbW_)); // first_mb_in_slice
-    bw.ue(idr_ ? 7 : 5);                           // slice_type: I or P (all slices)
+    bw.ue(idr_ ? 7 : bSlice_ ? 6 : 5);             // slice_type: I, B or P (all slices)
     bw.ue(0);                                      // pic_parameter_set_id
     bw.u(uint32_t(framesSinceIdr_ & 15), 4);       // frame_num (0 for IDR)
-    if (idr_) {
+    if (idr_)
         bw.ue(uint32_t(idrCount_ & 0xFFFF)); // idr_pic_id (differs between neighbours)
-    } else {
+    if (pocLsb_)
+        bw.u(uint32_t((2 * gopPos_) & 255), 8); // pic_order_cnt_lsb
+    if (bSlice_)
+        bw.flag(true); // direct_spatial_mv_pred_flag
+    if (!idr_) {
+        // B slices use one reference per list, the default of the picture parameter set.
         bw.flag(activeRefs_ > 1); // num_ref_idx_active_override_flag
         if (activeRefs_ > 1)
             bw.ue(uint32_t(activeRefs_ - 1)); // num_ref_idx_l0_active_minus1
         bw.flag(false); // ref_pic_list_modification_flag_l0
+        if (bSlice_)
+            bw.flag(false); // ref_pic_list_modification_flag_l1
     }
     if (idr_) {
         bw.flag(false); // no_output_of_prior_pics_flag
         bw.flag(false); // long_term_reference_flag
     } else {
-        bw.flag(false); // adaptive_ref_pic_marking_mode_flag
+        if (refPic_)
+            bw.flag(false); // adaptive_ref_pic_marking_mode_flag
         if (useCabac())
             bw.ue(0); // cabac_init_idc
     }
@@ -1190,6 +1309,11 @@ void FrameCoder::waveBegin(int threads, RefPic* out, bool writerThread)
         out->B.resize(n);
         out->V.resize(n);
         out->J.resize(n);
+        if (cfg_.bframes > 0) {
+            out->mvx.resize(mvX_.size());
+            out->mvy.resize(mvX_.size());
+            out->ref.resize(mvX_.size());
+        }
         out->rowsReady.store(0, std::memory_order_relaxed);
     }
     mbSyn_.resize(size_t(mbW_) * mbH_);
@@ -1252,16 +1376,22 @@ bool FrameCoder::waveRowBody(int r)
 {
     WaveState& w = wave_;
     // Reference rows this row can reach: vectors up to 64 pixels (4 rows) plus the 6-tap filter.
-    if (pSlice_)
-        for (const auto& ref : refs_) {
-            const int need = std::min(mbH_, r + 6);
-            if (ref->rowsReady.load(std::memory_order_acquire) >= need)
-                continue;
-            const auto t0 = std::chrono::steady_clock::now();
-            waitAtLeast(ref->rowsReady, need, w.spin);
-            w.refWaitUs.fetch_add(long(std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - t0).count()),
-                                  std::memory_order_relaxed);
-        }
+    auto waitRef = [&](const RefPic& ref) {
+        const int need = std::min(mbH_, r + 6);
+        if (ref.rowsReady.load(std::memory_order_acquire) >= need)
+            return;
+        const auto t0 = std::chrono::steady_clock::now();
+        waitAtLeast(ref.rowsReady, need, w.spin);
+        w.refWaitUs.fetch_add(long(std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - t0).count()),
+                              std::memory_order_relaxed);
+    };
+    if (pSlice_) {
+        for (const auto& ref : refs_)
+            waitRef(*ref);
+        if (bSlice_)
+            for (const auto& ref : refs1_)
+                waitRef(*ref);
+    }
     auto waitAbove = [&](int need) {
         if (r == 0 || w.progress[size_t(r - 1)].load(std::memory_order_acquire) >= need)
             return;
@@ -1311,7 +1441,9 @@ bool FrameCoder::waveRowBody(int r)
         if (waveErrors_.failed())
             return false;
         MbOut mb;
-        if (pSlice_)
+        if (bSlice_)
+            encodeMbB(mb, mbx, r);
+        else if (pSlice_)
             encodeMbP(mb, mbx, r);
         else
             commitQp(mbx, r, encodeMbIntra(mb, mbx, r));
@@ -1365,6 +1497,12 @@ void FrameCoder::publishBand(int k)
     const int hLim = last ? extH_ : M + 16 * k + 16;
     refHalfRows(R, w.hBuilt, hLim);
     w.hBuilt = hLim;
+    if (!R.ref.empty()) { // the row's motion, for the B pictures that use this picture
+        const size_t o = size_t(k) * 4 * (size_t(mbW_) * 4), n = 4 * (size_t(mbW_) * 4);
+        std::memcpy(&R.mvx[o], &mvX_[o], n * sizeof(int16_t));
+        std::memcpy(&R.mvy[o], &mvY_[o], n * sizeof(int16_t));
+        std::memcpy(&R.ref[o], &refIdx_[o], n);
+    }
     raiseTo(R.rowsReady, k + 1);
 }
 
@@ -1443,9 +1581,9 @@ std::vector<uint8_t> FrameCoder::assemble(PhaseClock& clock)
         if (idr_)
             appendNal(out, 3, 5, bw.bytes());
         else
-            appendNal(out, 2, 1, bw.bytes());
+            appendNal(out, refPic_ ? 2 : 0, 1, bw.bytes());
     }
-    if (gStats && pSlice_) {
+    if (gStats && pSlice_ && !bSlice_) {
         std::fprintf(stderr, "stats: inter %ld with luma %ld 8x8 %ld (%.1f %% of coded, %.1f %% of inter)\n", long(gStatInter.load()),
                      long(gStatInterCbp.load()), long(gStatT8.load()), 100.0 * gStatT8.load() / std::max<long>(1, gStatInterCbp.load()),
                      100.0 * gStatT8.load() / std::max<long>(1, gStatInter.load()));
@@ -1475,9 +1613,9 @@ std::vector<uint8_t> FrameCoder::assemble(PhaseClock& clock)
 }
 
 // Codes the whole picture on cfg_.threads threads and returns it when done.
-std::vector<uint8_t> FrameCoder::code(bool idr, int framesSinceIdr, int idrCount, PhaseClock& clock)
+std::vector<uint8_t> FrameCoder::code(bool idr, int frameNum, int idrCount, PhaseClock& clock)
 {
-    reset(idr, framesSinceIdr, idrCount);
+    reset(idr, frameNum, idrCount);
     if (useCabac()) {
         const int threads = std::clamp(cfg_.threads, 1, mbH_);
         waveBegin(threads, nullptr, threads > 1);
@@ -1519,23 +1657,40 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
     nextCoder_ = (nextCoder_ + 1) % 3;
     fc.loadSource(picture);
     clock.lap(0);
-    const bool lookaheadFrame = useLookahead() && !queue_.empty() && &queue_.front() == &frame;
+    const bool bMode = useB(); // the picture's type is decided already (planQueue)
+    const bool lookaheadFrame = useLookahead() && !queue_.empty() && (bMode || &queue_.front() == &frame);
 
     // Keyframe on schedule, on request (a cut the caller knows) or on a detected scene change.
     const bool sceneChange = cfg_.sceneCut && cfg_.gop > 1 &&
                              (lookaheadFrame ? frame.sceneChange : fc.detectSceneCut(prevThumb_)); // keeps its thumbnail current
     clock.lap(1);
-    const bool cut = sceneChange && frameIndex_ > 0 && framesSinceIdr_ >= 6;
-    const bool idr = cfg_.gop <= 1 || frameIndex_ == 0 || framesSinceIdr_ >= cfg_.gop || forceKeyframe || cut;
+    const bool cut = bMode ? frame.cutKey && frame.type == 0 : sceneChange && frameIndex_ > 0 && framesSinceIdr_ >= 6;
+    const bool idr = bMode ? frame.type == 0
+                           : cfg_.gop <= 1 || frameIndex_ == 0 || framesSinceIdr_ >= cfg_.gop || forceKeyframe || cut;
+    const int type = idr ? 0 : bMode && frame.type == 2 ? 2 : 1; // I, P, B
     if (idr)
         framesSinceIdr_ = 0;
     lastWasSceneCut_ = cut;
     if (idr)
         refList_.clear(); // an IDR picture marks all references unused
     fc.pSlice_ = !idr;
-    fc.refs_.assign(refList_.begin(), refList_.end());
+    fc.bSlice_ = type == 2;
+    fc.refPic_ = type != 2;
+    fc.pocLsb_ = bMode;
+    fc.gopPos_ = frame.gopPos;
+    if (type == 2) {
+        // The reference pictures around it in display order: the one before (list 0) and the
+        // one after, which was coded just before this run of B pictures (list 1).
+        fc.refs_.assign(1, refList_[1]);
+        fc.refs1_.assign(1, refList_[0]);
+    } else {
+        fc.refs_.assign(refList_.begin(), refList_.begin() + std::min<ptrdiff_t>(ptrdiff_t(refList_.size()), std::max(1, cfg_.refs)));
+        fc.refs1_.clear();
+    }
     fc.activeRefs_ = int(fc.refs_.size());
-    fc.prev_ = lastStarted_;
+    // With B pictures the picture coded before may still be in flight and is no reference: the
+    // start points come from the reference picture's motion instead.
+    fc.prev_ = bMode ? nullptr : lastStarted_;
     lastStarted_ = &fc;
 
     // Frame-level rate control (in the spirit of x264's one-pass ABR, aiming at a steady QP, which
@@ -1549,9 +1704,14 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
     const bool lookahead = lookaheadFrame;
     double costUsed = 0; // lookahead cost of this picture, for the bit model afterwards
     if (lookahead) {
-        markKeyframes();
+        if (bMode)
+            planQueue(); // also the pictures that joined since the decision
+        else
+            markKeyframes();
         frame.keyframe = idr;
-        if (cfg_.mbtree) {
+        if (type == 2) {
+            fc.treeOffset_.clear(); // nothing references a B picture
+        } else if (cfg_.mbtree) {
             la_->propagate(queue_);
             fc.treeOffset_.resize(size_t(mbW_) * mbH_);
             for (size_t m = 0; m < fc.treeOffset_.size(); ++m)
@@ -1571,15 +1731,23 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
             const int t = intra ? 0 : 1;
             return rcCostSum_[t] > 0 ? rcKSum_[t] / rcCostSum_[t] : rcKSum_[1 - t] / rcCostSum_[1 - t];
         };
+        // B pictures: their own k once one is coded (before that a guess from the P pictures),
+        // and their bits at the P QP shrink by the QP offset.
+        auto kB = [&] { return rcCostSum_[2] > 0 ? rcKSum_[2] / rcCostSum_[2] : 0.4 * kOf(false); };
+        auto kType = [&](int t) { return t == 2 ? kB() : kOf(t == 0); };
+        auto typeScale = [&](int t) { return t == 0 ? std::exp2(0.5) : t == 2 ? std::exp2(-cfg_.bQpOffset / 6.0) : 1.0; };
         // Predicted bits at QP 0 of the queued pictures (and the one coded now).
         auto windowNeed = [&](int& count) {
             double need = 0;
             count = 0;
             for (const LookaheadFrame& g : queue_) {
-                const double c = frameCost(g, g.keyframe);
+                if (g.coded && &g != &frame)
+                    continue; // a reference picture coded ahead of its turn
+                const int t = g.keyframe ? 0 : bMode && g.type == 2 ? 2 : 1;
+                const double c = t == 2 ? g.interSum : frameCost(g, g.keyframe);
                 if (&g == &frame)
                     costUsed = c;
-                need += kOf(g.keyframe) * c * (g.keyframe ? std::exp2(0.5) : 1.0);
+                need += kType(t) * c * typeScale(t);
                 ++count;
             }
             return need;
@@ -1591,7 +1759,8 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
             // Keyframes as the encoder will place them (schedule, caller, scene cuts).
             const FirstPassStats& st = *cfg_.firstPass;
             tpKey_.assign(st.size(), 0);
-            tpRemI_ = tpRemP_ = 0;
+            tpType_.assign(st.size(), 1);
+            tpRemI_ = tpRemP_ = tpRemB_ = 0;
             int since = 0;
             for (size_t i = 0; i < st.size(); ++i) {
                 const bool key = i == 0 || since >= cfg_.gop || st.forceKeyframe[i] || (cfg_.sceneCut && st.sceneChange[i] && since >= 6);
@@ -1599,7 +1768,20 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
                     since = 0;
                 ++since;
                 tpKey_[i] = key;
-                (key ? tpRemI_ : tpRemP_) += key ? st.intraSum[i] : st.interSum[i];
+            }
+            // Picture types as planQueue will place them.
+            int run = 0;
+            for (size_t i = 0; i < st.size(); ++i) {
+                if (tpKey_[i]) {
+                    tpType_[i] = 0;
+                    run = 0;
+                } else if (bMode && run < cfg_.bframes && i + 1 < st.size() && !tpKey_[i + 1]) {
+                    tpType_[i] = 2;
+                    ++run;
+                } else {
+                    run = 0;
+                }
+                (tpType_[i] == 0 ? tpRemI_ : tpType_[i] == 2 ? tpRemB_ : tpRemP_) += tpKey_[i] ? st.intraSum[i] : st.interSum[i];
             }
         }
         auto steadyQp = [&] {
@@ -1607,7 +1789,7 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
                 for (const LookaheadFrame& g : queue_)
                     if (&g == &frame)
                         costUsed = g.keyframe ? g.intraSum : g.interSum;
-                return twoPassQp(kOf(true), kOf(false));
+                return twoPassQp(kOf(true), kOf(false), kB());
             }
             int count;
             const double need = windowNeed(count);
@@ -1624,6 +1806,7 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
                 EncoderConfig pc = cfg_;
                 pc.bitrateKbps = 0;
                 pc.lookahead = 0;
+                pc.bframes = 0;
                 pc.mbtree = false;
                 pc.aqStrength = 0;
                 pc.qp = probeQp;
@@ -1663,21 +1846,21 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
             // The QP stays put; the model's k settles over the first pictures (the probe misses
             // by up to 2x, so up to 2 QP per picture then) and the leftover budget corrects
             // slowly (at most half a QP per picture).
-            qp = twoPassQp(kOf(true), kOf(false));
+            qp = twoPassQp(kOf(true), kOf(false), kB());
             const double step = rcFramesSeen_ < 12 ? 2.0 : 0.5;
             if (rcQp_ > 0)
                 qp = std::clamp(qp, rcQp_ - step, rcQp_ + step);
             const FirstPassStats& st = *cfg_.firstPass;
-            const size_t i = size_t(frameIndex_);
-            (tpKey_[i] ? tpRemI_ : tpRemP_) -= tpKey_[i] ? st.intraSum[i] : st.interSum[i];
+            const size_t i = std::min(size_t(frame.index), st.size() - 1);
+            (tpType_[i] == 0 ? tpRemI_ : tpType_[i] == 2 ? tpRemB_ : tpRemP_) -= tpKey_[i] ? st.intraSum[i] : st.interSum[i];
             if (std::getenv("H264_RC_TRACE"))
                 std::fprintf(stderr, "rc2: frame %d kI %.3f kP %.3f qp %.2f\n", frameIndex_, kOf(true), kOf(false), qp);
         } else if (rcQp_ > 0) {
             qp = std::clamp(qp, rcQp_ - 3.0, rcQp_ + 3.0);
         }
         rcQp_ = std::clamp(qp, 10.0, 51.0);
-        cfg_.qp = std::clamp(int(std::lround(idr ? qp - 3 : qp)), 10, 51);
-        rcNeedSeen_ += kOf(idr) * costUsed * (idr ? std::exp2(0.5) : 1.0);
+        cfg_.qp = std::clamp(int(std::lround(idr ? qp - 3 : type == 2 ? qp + cfg_.bQpOffset : qp)), 10, 51);
+        rcNeedSeen_ += kType(type) * costUsed * typeScale(type);
         rcFramesSeen_ += 1;
     } else if (cfg_.bitrateKbps > 0) {
         const double perFrame = cfg_.bitrateKbps * 1000.0 / cfg_.fps;
@@ -1686,6 +1869,7 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
             EncoderConfig pc = cfg_;
             pc.bitrateKbps = 0;
             pc.lookahead = 0;
+            pc.bframes = 0;
             pc.mbtree = false;
             pc.gop = std::max(2, cfg_.gop);
             pc.frameThreads = false;
@@ -1708,13 +1892,16 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
         cfg_.qp = std::clamp(int(std::lround(qp)), 10, 51);
     } else if (idr && cfg_.gop > 1) {
         cfg_.qp = std::clamp(baseQp - 3, 0, 51); // keyframes are references for the whole GOP
+    } else if (type == 2) {
+        cfg_.qp = std::clamp(baseQp + cfg_.bQpOffset, 0, 51); // nothing depends on a B picture
     }
     fc.cfg_.qp = cfg_.qp;
     fc.mbTypeOffset_ = idr ? 0 : 5;
     fc.frameNo_ = frameIndex_;
+    fc.displayIndex_ = frame.index;
     fc.outQp_ = cfg_.qp;
     fc.outSceneCut_ = cut;
-    fc.rcIdr_ = idr;
+    fc.rcType_ = type;
     fc.rcLookahead_ = lookahead;
     fc.rcCost_ = costUsed;
 
@@ -1723,29 +1910,39 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
     clock.lap(3);
     // Sliding window (8.2.5.3): the newest picture goes first, the oldest drops out.
     std::shared_ptr<RefPic> pic;
-    if (cfg_.gop > 1) {
-        if (int(refList_.size()) >= std::max(1, cfg_.refs)) {
+    if (cfg_.gop > 1 && type != 2) {
+        if (int(refList_.size()) >= std::max(bMode ? 2 : 1, cfg_.refs)) {
             pic = std::move(refList_.back());
             refList_.pop_back();
         }
         if (!pic || pic.use_count() > 1)
             pic = std::make_shared<RefPic>();
+        pic->gopPos = frame.gopPos;
         refList_.push_front(pic);
     }
+    // frame_num: reference pictures since the IDR picture (without B pictures: all pictures).
+    const int frameNum = bMode ? (idr ? 0 : refCount_) : framesSinceIdr_;
+    if (bMode && type != 2)
+        refCount_ = idr ? 1 : refCount_ + 1;
     if (pipelined()) {
         // Rows go to the workers; finished rows go into the reference picture band by band.
         if (!pool_)
             pool_ = std::make_unique<Pool>(cfg_.threads);
-        fc.reset(idr, framesSinceIdr_, idrCount_);
+        fc.reset(idr, frameNum, idrCount_);
         fc.outPic_ = pic;
         fc.waveBegin(cfg_.threads, pic.get(), true);
         pool_->add(&fc);
     } else {
-        fc.done_ = fc.code(idr, framesSinceIdr_, idrCount_, clock);
+        fc.done_ = fc.code(idr, frameNum, idrCount_, clock);
         if (pic) {
             pic->y = fc.recY_;
             pic->u = fc.recU_;
             pic->v = fc.recV_;
+            if (cfg_.bframes > 0) {
+                pic->mvx = fc.mvX_;
+                pic->mvy = fc.mvY_;
+                pic->ref = fc.refIdx_;
+            }
             fc.buildRefPlanes(*pic);
             pic->rowsReady.store(mbH_, std::memory_order_release);
             pic->rowsReady.notify_all();
@@ -2828,6 +3025,8 @@ struct FrameCoder::MbState {
     uint8_t nzc[2][4];
     int16_t mvx[16], mvy[16];
     int8_t ref[16];
+    int16_t mvx1[16], mvy1[16]; // list 1 (B pictures only)
+    int8_t ref1[16];
 };
 
 void FrameCoder::saveMb(int mbx, int mby, MbState& s) const
@@ -2850,6 +3049,11 @@ void FrameCoder::saveMb(int mbx, int mby, MbState& s) const
             s.mvx[y * 4 + x] = mvX_[o];
             s.mvy[y * 4 + x] = mvY_[o];
             s.ref[y * 4 + x] = refIdx_[o];
+            if (bSlice_) {
+                s.mvx1[y * 4 + x] = mvX1_[o];
+                s.mvy1[y * 4 + x] = mvY1_[o];
+                s.ref1[y * 4 + x] = refIdx1_[o];
+            }
         }
     for (int c = 0; c < 2; ++c)
         for (int b = 0; b < 4; ++b)
@@ -2876,6 +3080,11 @@ void FrameCoder::restoreMb(int mbx, int mby, const MbState& s)
             mvX_[o] = s.mvx[y * 4 + x];
             mvY_[o] = s.mvy[y * 4 + x];
             refIdx_[o] = s.ref[y * 4 + x];
+            if (bSlice_) {
+                mvX1_[o] = s.mvx1[y * 4 + x];
+                mvY1_[o] = s.mvy1[y * 4 + x];
+                refIdx1_[o] = s.ref1[y * 4 + x];
+            }
         }
     for (int c = 0; c < 2; ++c)
         for (int b = 0; b < 4; ++b)
@@ -2907,7 +3116,7 @@ int64_t FrameCoder::mbSsd(int mbx, int mby) const
 // Neighbouring 4x4 block (x4, y4 relative to the macroblock, may be -1 or 4) for motion
 // vector prediction (8.4.1.3.2). `decoded` marks blocks of the current macroblock that
 // already have their vector.
-FrameCoder::MvNb FrameCoder::mvNeighbour(int mbx, int mby, int x4, int y4, const bool* decoded) const
+FrameCoder::MvNb FrameCoder::mvNeighbour(int mbx, int mby, int x4, int y4, const bool* decoded, int list) const
 {
     MvNb n;
     bool avail;
@@ -2925,6 +3134,14 @@ FrameCoder::MvNb FrameCoder::mvNeighbour(int mbx, int mby, int x4, int y4, const
     if (!avail)
         return n;
     const size_t o = size_t(mby * 4 + y4) * (mbW_ * 4) + size_t(mbx * 4 + x4);
+    if (list) {
+        n.ref = refIdx1_[o];
+        if (n.ref >= 0) {
+            n.mvx = mvX1_[o];
+            n.mvy = mvY1_[o];
+        }
+        return n;
+    }
     n.ref = refIdx_[o];
     if (n.ref >= 0) {
         n.mvx = mvX_[o];
@@ -2936,13 +3153,13 @@ FrameCoder::MvNb FrameCoder::mvNeighbour(int mbx, int mby, int x4, int y4, const
 // Motion vector prediction (8.4.1.3) for a partition at (x4, y4) of w4 x h4 blocks.
 // shape: 0 = median, 1/2 = 16x8 top/bottom, 3/4 = 8x16 left/right.
 void FrameCoder::predictMvPart(int mbx, int mby, int x4, int y4, int w4, int shape, int refIdx, const bool* decoded,
-                            int& mvx, int& mvy) const
+                            int& mvx, int& mvy, int list) const
 {
-    MvNb a = mvNeighbour(mbx, mby, x4 - 1, y4, decoded);
-    MvNb b = mvNeighbour(mbx, mby, x4, y4 - 1, decoded);
-    MvNb c = mvNeighbour(mbx, mby, x4 + w4, y4 - 1, decoded);
+    MvNb a = mvNeighbour(mbx, mby, x4 - 1, y4, decoded, list);
+    MvNb b = mvNeighbour(mbx, mby, x4, y4 - 1, decoded, list);
+    MvNb c = mvNeighbour(mbx, mby, x4 + w4, y4 - 1, decoded, list);
     if (!c.avail)
-        c = mvNeighbour(mbx, mby, x4 - 1, y4 - 1, decoded); // D replaces C
+        c = mvNeighbour(mbx, mby, x4 - 1, y4 - 1, decoded, list); // D replaces C
     const MvNb* directional = shape == 1 ? &b : shape == 2 ? &a : shape == 3 ? &a : shape == 4 ? &c : nullptr;
     if (directional && directional->ref == refIdx) {
         mvx = directional->mvx;
@@ -3042,6 +3259,256 @@ void FrameCoder::rdoQuantize(int* levels, const int* residual, int qp, double la
     }
 }
 
+// Motion search for one partition: diamond full-pel, then half/quarter-pel with SATD.
+// Start points: neighbours' vectors and the same macroblock in the previous P frame.
+double FrameCoder::motionSearch(const RefPic& R, int mbx, int mby, int x4, int y4, int w4, int h4, int pX, int pY,
+                                double lambdaSad, const std::pair<int, int>* starts, int startCount, bool subpel, int& outX,
+                                int& outY) const
+{
+    const int range = 64 * 4;
+    bool useSatd = false;
+    auto cost = [&](int vx, int vy) {
+        return double(sadPart(R, mbx, mby, x4, y4, w4, h4, vx, vy, useSatd)) +
+               lambdaSad * (seBits(vx - pX) + seBits(vy - pY));
+    };
+    int bx = 0, by = 0;
+    double best = cost(0, 0);
+    for (int i = 0; i < startCount; ++i) {
+        const int cx = std::clamp(starts[i].first & ~3, -range, range);
+        const int cy = std::clamp(starts[i].second & ~3, -range, range);
+        const double c = cost(cx, cy);
+        if (c < best) {
+            best = c;
+            bx = cx;
+            by = cy;
+        }
+    }
+    // Experiment: a start point that already matches well (under 2 SAD per sample) skips
+    // the coarse steps.
+    const bool goodStart = (gExp & 8) && best < 2.0 * 16.0 * w4 * h4;
+    for (int step : {32, 16, 8, 4}) {
+        if (goodStart && step > 8)
+            continue;
+        for (int iter = 0; iter < 16; ++iter) {
+            bool moved = false;
+            static constexpr int kDir[4][2] = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
+            for (const auto& d : kDir) {
+                const int cx = bx + d[0] * step, cy = by + d[1] * step;
+                if (std::abs(cx) > range || std::abs(cy) > range)
+                    continue;
+                const double c = cost(cx, cy);
+                if (c < best) {
+                    best = c;
+                    bx = cx;
+                    by = cy;
+                    moved = true;
+                }
+            }
+            if (!moved)
+                break;
+        }
+    }
+    useSatd = true;
+    best = cost(bx, by);
+    const bool diamond = gExp & 16; // experiment: 4 instead of 8 neighbours per sub-pel step
+    for (int step : {2, 1}) {
+        if (!subpel)
+            break;
+        const int cx0 = bx, cy0 = by;
+        for (int dy = -1; dy <= 1; ++dy)
+            for (int dx = -1; dx <= 1; ++dx) {
+                if ((!dx && !dy) || (diamond && dx && dy))
+                    continue;
+                const int cx = cx0 + dx * step, cy = cy0 + dy * step;
+                if (std::abs(cx) > range || std::abs(cy) > range)
+                    continue;
+                const double c = cost(cx, cy);
+                if (c < best) {
+                    best = c;
+                    bx = cx;
+                    by = cy;
+                }
+            }
+    }
+    outX = bx;
+    outY = by;
+    return best;
+}
+
+// Luma residual of an inter macroblock against the prediction lp: transform, quantisation
+// (trellis), decimation and reconstruction.
+void FrameCoder::codeInterLuma(int mbx, int mby, const uint8_t* lp, int qp, double lambda, bool t8, bool trellis, MbOut& io,
+                               InterResidual& ir)
+{
+    const size_t lumaOff = size_t(mby * 16) * padW_ + mbx * 16;
+    const int qpDiv = qp / 6, qpMod = qp % 6;
+    const int qbits = 15 + qpDiv;
+    const int interOffset = (1 << qbits) / 6;
+    int (*levels)[16] = ir.levels;
+    int (*levels8)[64] = ir.levels8;
+    int cbpLuma = 0;
+    std::memset(ir.levels8, 0, sizeof(ir.levels8));
+    if (t8) {
+        // No decimation here: measured, it costs more quality than it saves for 8x8 blocks.
+        for (int b8 = 0; b8 < 4; ++b8) {
+            const int ox = (b8 & 1) * 8, oy = (b8 >> 1) * 8;
+            int res[64];
+            for (int y = 0; y < 8; ++y)
+                for (int x = 0; x < 8; ++x)
+                    res[y * 8 + x] = int(srcY_[lumaOff + size_t(oy + y) * padW_ + ox + x]) - int(lp[(oy + y) * 16 + ox + x]);
+            const CabacEncoder* live = cabacByTop_[size_t(rowKey_[size_t(mby)])];
+            double real[64];
+            quantize8x8(res, qp, 1.0 / 6.0, levels8[b8], real);
+            if (live && cfg_.effort > 0 && trellis) {
+                // Pixel error per level unit, by QP and scan position (computed once).
+                static const auto kScale8 = [] {
+                    std::array<std::array<double, 64>, 52> t{};
+                    const Basis8& B = basis8();
+                    for (int q = 0; q < 52; ++q)
+                        for (int s = 0; s < 64; ++s) {
+                            const int r = kZigzag8[s];
+                            t[size_t(q)][size_t(s)] = kDequantV8[q % 6][posClass8(r)] * std::pow(2.0, q / 6 - 2) *
+                                                      std::sqrt(B.norm[r >> 3] * B.norm[r & 7]) / 64.0;
+                        }
+                    return t;
+                }();
+                double xs[64];
+                for (int s = 0; s < 64; ++s)
+                    xs[s] = real[kZigzag8[s]];
+                int scanLv[64];
+                cabacTrellis(*live, 5, xs, kScale8[size_t(qp)].data(), 64, lambda, 0, scanLv);
+                for (int s = 0; s < 64; ++s)
+                    levels8[b8][kZigzag8[s]] = std::clamp(scanLv[s], -kMaxLevel, kMaxLevel);
+            }
+        }
+        for (int b8 = 0; b8 < 4; ++b8) {
+            const int ox = (b8 & 1) * 8, oy = (b8 >> 1) * 8;
+            int count = 0;
+            for (int k = 0; k < 64; ++k)
+                count += levels8[b8][k] != 0;
+            if (count)
+                cbpLuma |= 1 << b8;
+            int d[64], r[64];
+            dequant8x8(levels8[b8], qp, d);
+            inverse8x8(d, r);
+            for (int y = 0; y < 8; ++y)
+                for (int x = 0; x < 8; ++x)
+                    recY_[lumaOff + size_t(oy + y) * padW_ + ox + x] = clip1(lp[(oy + y) * 16 + ox + x] + r[y * 8 + x]);
+            for (int k = 0; k < 64; ++k)
+                io.syn.luma8[b8][k] = levels8[b8][kZigzag8[k]];
+        }
+        for (int b = 0; b < 16; ++b)
+            std::fill(levels[b], levels[b] + 16, 0);
+    }
+    for (int blkIdx = 0; blkIdx < 16 && !t8; ++blkIdx) {
+        const int ox = kBlkX[blkIdx] * 4, oy = kBlkY[blkIdx] * 4;
+        int res[16], coef[16];
+        for (int y = 0; y < 4; ++y)
+            for (int x = 0; x < 4; ++x)
+                res[y * 4 + x] = int(srcY_[lumaOff + size_t(oy + y) * padW_ + ox + x]) - int(lp[(oy + y) * 16 + ox + x]);
+        forward4x4(res, coef);
+        const CabacEncoder* live = cabacByTop_[size_t(rowKey_[size_t(mby)])];
+        if (cfg_.effort > 0 && live && trellis) {
+            // Trellis with CABAC costs on real-valued levels.
+            static const auto kScale4 = [] {
+                std::array<std::array<double, 16>, 52> t{};
+                static constexpr double kNorm4[4] = {4.0, 2.5, 4.0, 2.5};
+                for (int q = 0; q < 52; ++q)
+                    for (int s = 0; s < 16; ++s) {
+                        const int r = kZigzag[s];
+                        t[size_t(q)][size_t(s)] = kDequantV[q % 6][posClass(r)] * double(1 << (q / 6)) *
+                                                  std::sqrt(kNorm4[r >> 2] * kNorm4[r & 3]) / 64.0;
+                    }
+                return t;
+            }();
+            double xs[16];
+            const double invStep = 1.0 / double(1 << qbits); // a power of two: same as dividing
+            for (int s = 0; s < 16; ++s) {
+                const int r = kZigzag[s];
+                xs[s] = double(coef[r]) * kQuantMf[qpMod][posClass(r)] * invStep;
+            }
+            int scanLv[16];
+            cabacTrellis(*live, 2, xs, kScale4[size_t(qp)].data(), 16, lambda, 1, scanLv);
+            for (int s = 0; s < 16; ++s)
+                levels[blkIdx][kZigzag[s]] = std::clamp(scanLv[s], -kMaxLevel, kMaxLevel);
+        } else if (cfg_.effort > 0 && !live) {
+            // Round to nearest, then let the rate-distortion pass decide which levels to lower.
+            for (int i = 0; i < 16; ++i)
+                levels[blkIdx][i] = quantize(coef[i], kQuantMf[qpMod][posClass(i)], qbits, (1 << qbits) / 2);
+            rdoQuantize(levels[blkIdx], res, qp, lambda, lumaNc(mbx * 4 + kBlkX[blkIdx], mby * 4 + kBlkY[blkIdx]));
+        } else {
+            for (int i = 0; i < 16; ++i)
+                levels[blkIdx][i] = quantize(coef[i], kQuantMf[qpMod][posClass(i)], qbits, interOffset);
+        }
+    }
+    // Decimation: a few lone +-1 levels cost more bits than they bring back.
+    int scores[16], mbScore = 0;
+    for (int blkIdx = 0; blkIdx < 16 && !t8; ++blkIdx) {
+        scores[blkIdx] = decimateScore(levels[blkIdx]);
+        mbScore += scores[blkIdx];
+    }
+    for (int b8 = 0; b8 < 4 && !t8; ++b8) {
+        const int s = scores[b8 * 4] + scores[b8 * 4 + 1] + scores[b8 * 4 + 2] + scores[b8 * 4 + 3];
+        if (s < 4 || mbScore < 6)
+            for (int k = 0; k < 4; ++k)
+                std::fill(levels[b8 * 4 + k], levels[b8 * 4 + k] + 16, 0);
+    }
+    for (int blkIdx = 0; blkIdx < 16 && !t8; ++blkIdx) {
+        const int ox = kBlkX[blkIdx] * 4, oy = kBlkY[blkIdx] * 4;
+        bool any = false;
+        int d[16];
+        for (int i = 0; i < 16; ++i) {
+            any |= levels[blkIdx][i] != 0;
+            d[i] = (levels[blkIdx][i] * kDequantV[qpMod][posClass(i)]) << qpDiv;
+        }
+        if (any)
+            cbpLuma |= 1 << (blkIdx >> 2);
+        int r[16];
+        inverse4x4(d, r);
+        for (int y = 0; y < 4; ++y)
+            for (int x = 0; x < 4; ++x)
+                recY_[lumaOff + size_t(oy + y) * padW_ + ox + x] = clip1(lp[(oy + y) * 16 + ox + x] + r[y * 4 + x]);
+    }
+    ir.cbpLuma = cbpLuma;
+}
+
+// The part of an inter macroblock after its header: coded block pattern, mb_qp_delta and the
+// coefficients (syntax, CAVLC bits, coefficient counts). Returns whether mb_qp_delta was sent.
+bool FrameCoder::writeInterResidual(int mbx, int mby, int qp, bool t8, const InterResidual& res, const ChromaMb& ch, MbOut& io)
+{
+    const int lw = mbW_ * 4;
+    BitWriter& interBits = io.bw;
+    const int (*levels)[16] = res.levels;
+    const int (*levels8)[64] = res.levels8;
+    const int cbpLuma = res.cbpLuma;
+    const int cbp = cbpLuma | (ch.cbp << 4);
+    interBits.ue(uint32_t(interCbpCode(cbp)));
+    io.syn.cbpLuma = cbpLuma;
+    io.syn.t8 = t8 && cbpLuma != 0;
+    io.syn.hasQpDelta = cbp != 0;
+    io.syn.qpDelta = qp - qpPredOf(mby);
+    if (cbp)
+        interBits.se(qp - qpPredOf(mby)); // mb_qp_delta
+    for (int blkIdx = 0; blkIdx < 16; ++blkIdx) {
+        const int bx = mbx * 4 + kBlkX[blkIdx], by = mby * 4 + kBlkY[blkIdx];
+        int total = 0;
+        int scan[16];
+        for (int k = 0; k < 16; ++k)
+            scan[k] = levels[blkIdx][kZigzag[k]];
+        std::memcpy(io.syn.luma[blkIdx], scan, sizeof(scan));
+        if (t8) {
+            // 8x8 transform (CABAC only): the four 4x4 blocks carry the 8x8 block's count (bS, nC).
+            for (int k = 0; k < 64; ++k)
+                total += levels8[blkIdx >> 2][k] != 0;
+        } else if (cbpLuma & (1 << (blkIdx >> 2))) {
+            total = residual(interBits, scan, 16, lumaNc(bx, by));
+        }
+        nzLuma_[size_t(by) * lw + bx] = uint8_t(std::min(total, 255));
+    }
+    writeChroma(io, mbx, mby, ch);
+    return cbp != 0;
+}
+
 bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
 {
     const int lw = mbW_ * 4, chw = mbW_ * 2;
@@ -3128,7 +3595,6 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
     }
 
     // ---- Candidate 2: inter with 16x16, 16x8, 8x16 or 8x8 partitions.
-    const int range = 64 * 4;
     // Motion search for one partition: diamond full-pel, then half/quarter-pel with SATD.
     // Start points: neighbours' vectors and the same macroblock in the previous P frame.
     std::vector<std::pair<int, int>> starts = {{skipX, skipY}};
@@ -3141,78 +3607,17 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
         const size_t o = size_t(mby * 4) * lw + mbx * 4;
         if (prev_ && prev_->refIdx_[o] == 0)
             starts.push_back({prev_->mvX_[o], prev_->mvY_[o]});
+        // With B pictures: the same block of the reference picture (its motion is kept there).
+        const RefPic& R0 = *refs_[0];
+        if (!prev_ && !R0.ref.empty() && R0.ref[o] == 0)
+            starts.push_back({R0.mvx[o], R0.mvy[o]});
     }
     bool subpelNow = true; // half/quarter-pel refinement in search()
     auto search = [&](int x4, int y4, int w4, int h4, int ref, int pX, int pY, int& outX, int& outY) {
         starts.push_back({pX, pY});
-        bool useSatd = false;
-        const RefPic& R = *refs_[size_t(ref)];
-        auto cost = [&](int vx, int vy) {
-            return double(sadPart(R, mbx, mby, x4, y4, w4, h4, vx, vy, useSatd)) +
-                   lambdaSad * (seBits(vx - pX) + seBits(vy - pY));
-        };
-        int bx = 0, by = 0;
-        double best = cost(0, 0);
-        for (auto [cx, cy] : starts) {
-            cx = std::clamp(cx & ~3, -range, range);
-            cy = std::clamp(cy & ~3, -range, range);
-            const double c = cost(cx, cy);
-            if (c < best) {
-                best = c;
-                bx = cx;
-                by = cy;
-            }
-        }
-        // Experiment: a start point that already matches well (under 2 SAD per sample) skips
-        // the coarse steps.
-        const bool goodStart = (gExp & 8) && best < 2.0 * 16.0 * w4 * h4;
-        for (int step : {32, 16, 8, 4}) {
-            if (goodStart && step > 8)
-                continue;
-            for (int iter = 0; iter < 16; ++iter) {
-                bool moved = false;
-                static constexpr int kDir[4][2] = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
-                for (const auto& d : kDir) {
-                    const int cx = bx + d[0] * step, cy = by + d[1] * step;
-                    if (std::abs(cx) > range || std::abs(cy) > range)
-                        continue;
-                    const double c = cost(cx, cy);
-                    if (c < best) {
-                        best = c;
-                        bx = cx;
-                        by = cy;
-                        moved = true;
-                    }
-                }
-                if (!moved)
-                    break;
-            }
-        }
-        useSatd = true;
-        best = cost(bx, by);
-        const bool diamond = gExp & 16; // experiment: 4 instead of 8 neighbours per sub-pel step
-        for (int step : {2, 1}) {
-            if (!subpelNow)
-                break;
-            const int cx0 = bx, cy0 = by;
-            for (int dy = -1; dy <= 1; ++dy)
-                for (int dx = -1; dx <= 1; ++dx) {
-                    if ((!dx && !dy) || (diamond && dx && dy))
-                        continue;
-                    const int cx = cx0 + dx * step, cy = cy0 + dy * step;
-                    if (std::abs(cx) > range || std::abs(cy) > range)
-                        continue;
-                    const double c = cost(cx, cy);
-                    if (c < best) {
-                        best = c;
-                        bx = cx;
-                        by = cy;
-                    }
-                }
-        }
+        const double best = motionSearch(*refs_[size_t(ref)], mbx, mby, x4, y4, w4, h4, pX, pY, lambdaSad, starts.data(),
+                                         int(starts.size()), subpelNow, outX, outY);
         starts.pop_back();
-        outX = bx;
-        outY = by;
         return best;
     };
 
@@ -3326,133 +3731,8 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
             std::memcpy(pc.lp, lp, sizeof(lp));
             std::memcpy(pc.cp, cp, sizeof(cp));
         }
-        const int qpDiv = qp / 6, qpMod = qp % 6;
-        const int qbits = 15 + qpDiv;
-        const int interOffset = (1 << qbits) / 6;
-        int levels[16][16];
-        int cbpLuma = 0;
-        int levels8[4][64] = {};
-        if (t8) {
-            // No decimation here: measured, it costs more quality than it saves for 8x8 blocks.
-            for (int b8 = 0; b8 < 4; ++b8) {
-                const int ox = (b8 & 1) * 8, oy = (b8 >> 1) * 8;
-                int res[64];
-                for (int y = 0; y < 8; ++y)
-                    for (int x = 0; x < 8; ++x)
-                        res[y * 8 + x] = int(srcY_[lumaOff + size_t(oy + y) * padW_ + ox + x]) - int(lp[(oy + y) * 16 + ox + x]);
-                const CabacEncoder* live = cabacByTop_[size_t(rowKey_[size_t(mby)])];
-                double real[64];
-                quantize8x8(res, qp, 1.0 / 6.0, levels8[b8], real);
-                if (live && cfg_.effort > 0 && trellisNow) {
-                    // Pixel error per level unit, by QP and scan position (computed once).
-                    static const auto kScale8 = [] {
-                        std::array<std::array<double, 64>, 52> t{};
-                        const Basis8& B = basis8();
-                        for (int q = 0; q < 52; ++q)
-                            for (int s = 0; s < 64; ++s) {
-                                const int r = kZigzag8[s];
-                                t[size_t(q)][size_t(s)] = kDequantV8[q % 6][posClass8(r)] * std::pow(2.0, q / 6 - 2) *
-                                                          std::sqrt(B.norm[r >> 3] * B.norm[r & 7]) / 64.0;
-                            }
-                        return t;
-                    }();
-                    double xs[64];
-                    for (int s = 0; s < 64; ++s)
-                        xs[s] = real[kZigzag8[s]];
-                    int scanLv[64];
-                    cabacTrellis(*live, 5, xs, kScale8[size_t(qp)].data(), 64, lambda, 0, scanLv);
-                    for (int s = 0; s < 64; ++s)
-                        levels8[b8][kZigzag8[s]] = std::clamp(scanLv[s], -kMaxLevel, kMaxLevel);
-                }
-            }
-            for (int b8 = 0; b8 < 4; ++b8) {
-                const int ox = (b8 & 1) * 8, oy = (b8 >> 1) * 8;
-                int count = 0;
-                for (int k = 0; k < 64; ++k)
-                    count += levels8[b8][k] != 0;
-                if (count)
-                    cbpLuma |= 1 << b8;
-                int d[64], r[64];
-                dequant8x8(levels8[b8], qp, d);
-                inverse8x8(d, r);
-                for (int y = 0; y < 8; ++y)
-                    for (int x = 0; x < 8; ++x)
-                        recY_[lumaOff + size_t(oy + y) * padW_ + ox + x] = clip1(lp[(oy + y) * 16 + ox + x] + r[y * 8 + x]);
-                for (int k = 0; k < 64; ++k)
-                    io.syn.luma8[b8][k] = levels8[b8][kZigzag8[k]];
-            }
-            for (int b = 0; b < 16; ++b)
-                std::fill(levels[b], levels[b] + 16, 0);
-        }
-        for (int blkIdx = 0; blkIdx < 16 && !t8; ++blkIdx) {
-            const int ox = kBlkX[blkIdx] * 4, oy = kBlkY[blkIdx] * 4;
-            int res[16], coef[16];
-            for (int y = 0; y < 4; ++y)
-                for (int x = 0; x < 4; ++x)
-                    res[y * 4 + x] = int(srcY_[lumaOff + size_t(oy + y) * padW_ + ox + x]) - int(lp[(oy + y) * 16 + ox + x]);
-            forward4x4(res, coef);
-            const CabacEncoder* live = cabacByTop_[size_t(rowKey_[size_t(mby)])];
-            if (cfg_.effort > 0 && live && trellisNow) {
-                // Trellis with CABAC costs on real-valued levels.
-                static const auto kScale4 = [] {
-                    std::array<std::array<double, 16>, 52> t{};
-                    static constexpr double kNorm4[4] = {4.0, 2.5, 4.0, 2.5};
-                    for (int q = 0; q < 52; ++q)
-                        for (int s = 0; s < 16; ++s) {
-                            const int r = kZigzag[s];
-                            t[size_t(q)][size_t(s)] = kDequantV[q % 6][posClass(r)] * double(1 << (q / 6)) *
-                                                      std::sqrt(kNorm4[r >> 2] * kNorm4[r & 3]) / 64.0;
-                        }
-                    return t;
-                }();
-                double xs[16];
-                const double invStep = 1.0 / double(1 << qbits); // a power of two: same as dividing
-                for (int s = 0; s < 16; ++s) {
-                    const int r = kZigzag[s];
-                    xs[s] = double(coef[r]) * kQuantMf[qpMod][posClass(r)] * invStep;
-                }
-                int scanLv[16];
-                cabacTrellis(*live, 2, xs, kScale4[size_t(qp)].data(), 16, lambda, 1, scanLv);
-                for (int s = 0; s < 16; ++s)
-                    levels[blkIdx][kZigzag[s]] = std::clamp(scanLv[s], -kMaxLevel, kMaxLevel);
-            } else if (cfg_.effort > 0 && !live) {
-                // Round to nearest, then let the rate-distortion pass decide which levels to lower.
-                for (int i = 0; i < 16; ++i)
-                    levels[blkIdx][i] = quantize(coef[i], kQuantMf[qpMod][posClass(i)], qbits, (1 << qbits) / 2);
-                rdoQuantize(levels[blkIdx], res, qp, lambda, lumaNc(mbx * 4 + kBlkX[blkIdx], mby * 4 + kBlkY[blkIdx]));
-            } else {
-                for (int i = 0; i < 16; ++i)
-                    levels[blkIdx][i] = quantize(coef[i], kQuantMf[qpMod][posClass(i)], qbits, interOffset);
-            }
-        }
-        // Decimation: a few lone +-1 levels cost more bits than they bring back.
-        int scores[16], mbScore = 0;
-        for (int blkIdx = 0; blkIdx < 16 && !t8; ++blkIdx) {
-            scores[blkIdx] = decimateScore(levels[blkIdx]);
-            mbScore += scores[blkIdx];
-        }
-        for (int b8 = 0; b8 < 4 && !t8; ++b8) {
-            const int s = scores[b8 * 4] + scores[b8 * 4 + 1] + scores[b8 * 4 + 2] + scores[b8 * 4 + 3];
-            if (s < 4 || mbScore < 6)
-                for (int k = 0; k < 4; ++k)
-                    std::fill(levels[b8 * 4 + k], levels[b8 * 4 + k] + 16, 0);
-        }
-        for (int blkIdx = 0; blkIdx < 16 && !t8; ++blkIdx) {
-            const int ox = kBlkX[blkIdx] * 4, oy = kBlkY[blkIdx] * 4;
-            bool any = false;
-            int d[16];
-            for (int i = 0; i < 16; ++i) {
-                any |= levels[blkIdx][i] != 0;
-                d[i] = (levels[blkIdx][i] * kDequantV[qpMod][posClass(i)]) << qpDiv;
-            }
-            if (any)
-                cbpLuma |= 1 << (blkIdx >> 2);
-            int r[16];
-            inverse4x4(d, r);
-            for (int y = 0; y < 4; ++y)
-                for (int x = 0; x < 4; ++x)
-                    recY_[lumaOff + size_t(oy + y) * padW_ + ox + x] = clip1(lp[(oy + y) * 16 + ox + x] + r[y * 4 + x]);
-        }
+        InterResidual res;
+        codeInterLuma(mbx, mby, lp, qp, lambda, t8, trellisNow, io, res);
         ChromaMb ch;
         if (pc.valid) {
             ch = pc.ch;
@@ -3493,32 +3773,7 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
             interBits.se(best.mv[p][0] - best.mvp[p][0]);
             interBits.se(best.mv[p][1] - best.mvp[p][1]);
         }
-        const int cbp = cbpLuma | (ch.cbp << 4);
-        interBits.ue(uint32_t(interCbpCode(cbp)));
-        io.syn.cbpLuma = cbpLuma;
-        io.syn.t8 = t8 && cbpLuma != 0;
-        io.syn.hasQpDelta = cbp != 0;
-        io.syn.qpDelta = qp - qpPredOf(mby);
-        if (cbp)
-            interBits.se(qp - qpPredOf(mby)); // mb_qp_delta
-        interDelta = cbp != 0;
-        for (int blkIdx = 0; blkIdx < 16; ++blkIdx) {
-            const int bx = mbx * 4 + kBlkX[blkIdx], by = mby * 4 + kBlkY[blkIdx];
-            int total = 0;
-            int scan[16];
-            for (int k = 0; k < 16; ++k)
-                scan[k] = levels[blkIdx][kZigzag[k]];
-            std::memcpy(io.syn.luma[blkIdx], scan, sizeof(scan));
-            if (t8) {
-                // 8x8 transform (CABAC only): the four 4x4 blocks carry the 8x8 block's count (bS, nC).
-                for (int k = 0; k < 64; ++k)
-                    total += levels8[blkIdx >> 2][k] != 0;
-            } else if (cbpLuma & (1 << (blkIdx >> 2))) {
-                total = residual(interBits, scan, 16, lumaNc(bx, by));
-            }
-            nzLuma_[size_t(by) * lw + bx] = uint8_t(std::min(total, 255));
-        }
-        writeChroma(io, mbx, mby, ch);
+        interDelta = writeInterResidual(mbx, mby, qp, t8, res, ch, io);
         // A skip_run ends here: count its codeword to be fair against skip.
         return double(mbSsd(mbx, mby)) + lambda * mbBits(io, mbx, mby, double(interBits.bitCount() + seBits(0)));
     };
@@ -3672,6 +3927,383 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
             if (result.syn.t8)
                 gStatT8.fetch_add(1, std::memory_order_relaxed);
         }
+    } else {
+        result = std::move(intraBits); // state is already the intra one
+        coded = intraDelta;
+    }
+    commitQp(mbx, mby, coded);
+    return true;
+}
+
+// Spatial direct prediction (8.4.1.2.2, direct_8x8_inference_flag = 1): per list the smallest
+// reference index among the neighbours A, B and C (none in both lists: index 0 in both with zero
+// vectors) and the median vector prediction for it; an 8x8 quadrant whose co-located block in the
+// first list 1 picture (its corner 4x4 block) stands still takes the zero vector for index 0.
+void FrameCoder::directPredict(int mbx, int mby, DirectPred& d) const
+{
+    const bool none[16] = {};
+    int mvp[2][2] = {};
+    for (int list = 0; list < 2; ++list) {
+        const MvNb a = mvNeighbour(mbx, mby, -1, 0, none, list), b = mvNeighbour(mbx, mby, 0, -1, none, list);
+        MvNb c = mvNeighbour(mbx, mby, 4, -1, none, list);
+        if (!c.avail)
+            c = mvNeighbour(mbx, mby, -1, -1, none, list);
+        auto minPositive = [](int x, int y) { return x >= 0 && y >= 0 ? std::min(x, y) : std::max(x, y); };
+        d.ref[list] = minPositive(a.ref, minPositive(b.ref, c.ref));
+        if (d.ref[list] >= 0)
+            predictMvPart(mbx, mby, 0, 0, 4, 0, d.ref[list], none, mvp[list][0], mvp[list][1], list);
+    }
+    const bool zero = d.ref[0] < 0 && d.ref[1] < 0;
+    if (zero)
+        d.ref[0] = d.ref[1] = 0;
+    const RefPic& col = *refs1_[0];
+    const int lw = mbW_ * 4;
+    for (int q = 0; q < 4; ++q) {
+        bool colZero = false;
+        if (!zero) {
+            const size_t o = size_t(mby * 4 + (q >> 1) * 3) * lw + size_t(mbx * 4 + (q & 1) * 3);
+            colZero = col.ref[o] == 0 && std::abs(col.mvx[o]) <= 1 && std::abs(col.mvy[o]) <= 1;
+        }
+        for (int list = 0; list < 2; ++list) {
+            const bool still = d.ref[list] < 0 || zero || (d.ref[list] == 0 && colZero);
+            d.mv[list][q][0] = still ? 0 : mvp[list][0];
+            d.mv[list][q][1] = still ? 0 : mvp[list][1];
+        }
+    }
+}
+
+// Prediction of a block of a B macroblock into macroblock-sized buffers: from list 0 (use 1),
+// list 1 (2) or the rounded average of both (3; default weighted prediction, 8.4.2.3.1).
+void FrameCoder::predictBi(int mbx, int mby, int x4, int y4, int w4, int h4, int use, const int* mv0, const int* mv1,
+                           uint8_t* luma, uint8_t (*chroma)[64]) const
+{
+    if (use != 3) {
+        const int* mv = use == 1 ? mv0 : mv1;
+        motionCompensate(use == 1 ? *refs_[0] : *refs1_[0], mbx, mby, x4, y4, w4, h4, mv[0], mv[1], luma, chroma);
+        return;
+    }
+    uint8_t l1[256], c1[2][64];
+    motionCompensate(*refs_[0], mbx, mby, x4, y4, w4, h4, mv0[0], mv0[1], luma, chroma);
+    motionCompensate(*refs1_[0], mbx, mby, x4, y4, w4, h4, mv1[0], mv1[1], l1, c1);
+    for (int y = y4 * 4; y < (y4 + h4) * 4; ++y)
+        for (int x = x4 * 4; x < (x4 + w4) * 4; ++x)
+            luma[y * 16 + x] = uint8_t((luma[y * 16 + x] + l1[y * 16 + x] + 1) >> 1);
+    for (int c = 0; c < 2; ++c)
+        for (int y = y4 * 2; y < (y4 + h4) * 2; ++y)
+            for (int x = x4 * 2; x < (x4 + w4) * 2; ++x)
+                chroma[c][y * 8 + x] = uint8_t((chroma[c][y * 8 + x] + c1[c][y * 8 + x] + 1) >> 1);
+}
+
+// A macroblock of a B picture: B_Skip (spatial direct prediction, nothing coded), B_Direct_16x16
+// (the same prediction with a residual), one 16x16 or two 16x8 / 8x16 partitions from list 0,
+// list 1 or both, or intra. Returns false for a skipped macroblock.
+bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
+{
+    const int lw = mbW_ * 4, chw = mbW_ * 2;
+    const size_t mbIndex = size_t(mby) * mbW_ + mbx;
+    const int qp = mbQp_[mbIndex];
+    const double lambda = 0.85 * std::pow(2.0, (qp - 12) / 3.0);
+    const double lambdaSad = std::sqrt(lambda);
+    const size_t lumaOff = size_t(mby * 16) * padW_ + mbx * 16;
+    const int cw = padW_ / 2;
+    const size_t chromaOff = size_t(mby * 8) * cw + mbx * 8;
+
+    // Motion of a block: the lists in `use` take their vector, the others are unused (-1).
+    auto setBlocks = [&](int x4, int y4, int w4, int h4, int use, const int* mv0, const int* mv1) {
+        for (int y = y4; y < y4 + h4; ++y)
+            for (int x = x4; x < x4 + w4; ++x) {
+                const size_t o = size_t(mby * 4 + y) * lw + mbx * 4 + x;
+                mvX_[o] = int16_t(use & 1 ? mv0[0] : 0);
+                mvY_[o] = int16_t(use & 1 ? mv0[1] : 0);
+                refIdx_[o] = int8_t(use & 1 ? 0 : -1);
+                mvX1_[o] = int16_t(use & 2 ? mv1[0] : 0);
+                mvY1_[o] = int16_t(use & 2 ? mv1[1] : 0);
+                refIdx1_[o] = int8_t(use & 2 ? 0 : -1);
+            }
+    };
+    auto clearNz = [&] {
+        for (int y = 0; y < 4; ++y)
+            for (int x = 0; x < 4; ++x) {
+                const size_t o = size_t(mby * 4 + y) * lw + mbx * 4 + x;
+                nzLuma_[o] = 0;
+                modes4x4_[o] = -1;
+            }
+        for (int c = 0; c < 2; ++c)
+            for (int b = 0; b < 4; ++b)
+                nzChroma_[c][size_t(mby * 2 + (b >> 1)) * chw + mbx * 2 + (b & 1)] = 0;
+    };
+    // SATD of a macroblock-sized luma prediction.
+    auto satd16 = [&](const uint8_t* pred) {
+        int sum = 0;
+        for (int oy = 0; oy < 16; oy += 4)
+            sum += satd16x4U8(&srcY_[lumaOff + size_t(oy) * padW_], padW_, pred + oy * 16, 16);
+        return sum;
+    };
+
+    // ---- Candidate 1: B_Skip, the direct prediction as it is.
+    DirectPred d;
+    directPredict(mbx, mby, d);
+    const int dUse = (d.ref[0] >= 0 ? 1 : 0) | (d.ref[1] >= 0 ? 2 : 0);
+    bool uniform = true;
+    for (int q = 1; q < 4; ++q)
+        for (int list = 0; list < 2; ++list)
+            uniform = uniform && d.mv[list][q][0] == d.mv[list][0][0] && d.mv[list][q][1] == d.mv[list][0][1];
+    uint8_t dlp[256], dcp[2][64];
+    if (uniform)
+        predictBi(mbx, mby, 0, 0, 4, 4, dUse, d.mv[0][0], d.mv[1][0], dlp, dcp);
+    else
+        for (int q = 0; q < 4; ++q)
+            predictBi(mbx, mby, (q & 1) * 2, (q >> 1) * 2, 2, 2, dUse, d.mv[0][q], d.mv[1][q], dlp, dcp);
+    auto setDirect = [&] {
+        for (int q = 0; q < 4; ++q)
+            setBlocks((q & 1) * 2, (q >> 1) * 2, 2, 2, dUse, d.mv[0][q], d.mv[1][q]);
+    };
+    for (int y = 0; y < 16; ++y)
+        std::memcpy(&recY_[lumaOff + size_t(y) * padW_], dlp + y * 16, 16);
+    for (int y = 0; y < 8; ++y) {
+        std::memcpy(&recU_[chromaOff + size_t(y) * cw], dcp[0] + y * 8, 8);
+        std::memcpy(&recV_[chromaOff + size_t(y) * cw], dcp[1] + y * 8, 8);
+    }
+    clearNz();
+    setDirect();
+    const double costSkip = double(mbSsd(mbx, mby)) + lambda * skipBits(mbx, mby);
+    MbState skipState;
+    saveMb(mbx, mby, skipState);
+    if (skipResidualIsZero(mbx, mby, dlp, dcp, qp)) {
+        result.syn.kind = MbSyntax::Kind::Skip;
+        mbQpFinal_[mbIndex] = int8_t(qpPredOf(mby));
+        return false;
+    }
+    const double estDirect = double(satd16(dlp)) + lambdaSad;
+
+    // ---- Candidate 2: motion search in both lists. Start points: the direct vector, the
+    // neighbours' vectors and the co-located block's vector scaled to this picture's distance.
+    struct Part {
+        int x4, y4, w4, h4, shape;
+    };
+    static constexpr Part kPart[3][2] = {
+        {{0, 0, 4, 4, 0}, {0, 0, 4, 4, 0}},
+        {{0, 0, 4, 2, 1}, {0, 2, 4, 2, 2}}, // 16x8
+        {{0, 0, 2, 4, 3}, {2, 0, 2, 4, 4}}, // 8x16
+    };
+    struct Cand {
+        double cost = 1e300;
+        int bType = 0, shape = 0, count = 0;
+        int use[2] = {};
+        int mv[2][2][2] = {};  // [partition][list][x, y]
+        int mvp[2][2][2] = {}; // the predictors the vector differences are coded against
+    };
+    const bool none[16] = {};
+    std::pair<int, int> starts[2][8];
+    int startCount[2] = {0, 0};
+    for (int list = 0; list < 2; ++list) {
+        auto add = [&](int x, int y) { starts[list][startCount[list]++] = {x, y}; };
+        if (d.ref[list] >= 0)
+            add(d.mv[list][0][0], d.mv[list][0][1]);
+        for (auto [nx, ny] : {std::pair{-1, 0}, std::pair{0, -1}, std::pair{4, -1}}) {
+            const MvNb n = mvNeighbour(mbx, mby, nx, ny, none, list);
+            if (n.ref == 0)
+                add(n.mvx, n.mvy);
+        }
+    }
+    {
+        const RefPic& col = *refs1_[0];
+        const size_t o = size_t(mby * 4 + 1) * lw + size_t(mbx * 4 + 1);
+        const int td = col.gopPos - refs_[0]->gopPos, tb = gopPos_ - refs_[0]->gopPos;
+        if (col.ref[o] == 0 && td > 0) {
+            const int fx = col.mvx[o] * tb / td, fy = col.mvy[o] * tb / td;
+            starts[0][startCount[0]++] = {fx, fy};
+            starts[1][startCount[1]++] = {fx - col.mvx[o], fy - col.mvy[o]};
+        }
+    }
+    // Bits of an mb_type by its number of bins (the first three have adaptive contexts).
+    auto typeBits = [](int bType) { return bType == 0 ? 1 : bType <= 2 ? 3 : bType <= 11 ? 6 : 7; };
+    auto mvBits = [&](const Cand& c, int p, int list) {
+        return seBits(c.mv[p][list][0] - c.mvp[p][list][0]) + seBits(c.mv[p][list][1] - c.mvp[p][list][1]);
+    };
+    // One layout (16x16, 16x8 or 8x16): per partition the search in both lists, then the cheapest
+    // of list 0, list 1 and both by SATD + vector and type bits.
+    auto tryShape = [&](int shape) {
+        Cand c;
+        c.shape = shape;
+        c.count = shape == 0 ? 1 : 2;
+        double total = 0;
+        bool decoded[16] = {};
+        for (int p = 0; p < c.count; ++p) {
+            const Part& P = kPart[shape][p];
+            double cost[2];
+            for (int list = 0; list < 2; ++list) {
+                int pX, pY;
+                predictMvPart(mbx, mby, P.x4, P.y4, P.w4, P.shape, 0, decoded, pX, pY, list);
+                c.mvp[p][list][0] = pX;
+                c.mvp[p][list][1] = pY;
+                starts[list][startCount[list]] = {pX, pY};
+                cost[list] = motionSearch(list ? *refs1_[0] : *refs_[0], mbx, mby, P.x4, P.y4, P.w4, P.h4, pX, pY, lambdaSad,
+                                          starts[list], startCount[list] + 1, true, c.mv[p][list][0], c.mv[p][list][1]);
+            }
+            // Both lists: the average of the two predictions found.
+            uint8_t a[256], b[256];
+            const int px = mbx * 16 + P.x4 * 4, py = mby * 16 + P.y4 * 4, w = P.w4 * 4, h = P.h4 * 4;
+            mcLuma(*refs_[0], px + (c.mv[p][0][0] >> 2), py + (c.mv[p][0][1] >> 2), c.mv[p][0][0] & 3, c.mv[p][0][1] & 3, w, h, a);
+            mcLuma(*refs1_[0], px + (c.mv[p][1][0] >> 2), py + (c.mv[p][1][1] >> 2), c.mv[p][1][0] & 3, c.mv[p][1][1] & 3, w, h, b);
+            for (int y = 0; y < h; ++y)
+                for (int x = 0; x < w; ++x)
+                    a[y * 16 + x] = uint8_t((a[y * 16 + x] + b[y * 16 + x] + 1) >> 1);
+            int satdBi = 0;
+            const size_t so = lumaOff + size_t(P.y4 * 4) * padW_ + P.x4 * 4;
+            for (int oy = 0; oy < h; oy += 4)
+                for (int ox = 0; ox < w; ox += 8)
+                    satdBi += satd8x4U8(&srcY_[so + size_t(oy) * padW_ + ox], padW_, a + oy * 16 + ox, 16);
+            const double costBi = satdBi + lambdaSad * (mvBits(c, p, 0) + mvBits(c, p, 1));
+            c.use[p] = costBi < cost[0] && costBi < cost[1] ? 3 : cost[0] <= cost[1] ? 1 : 2;
+            total += c.use[p] == 3 ? costBi : cost[c.use[p] - 1];
+            // Later partitions predict their vectors from this one.
+            setBlocks(P.x4, P.y4, P.w4, P.h4, c.use[p], c.mv[p][0], c.mv[p][1]);
+            for (int y = P.y4; y < P.y4 + P.h4; ++y)
+                for (int x = P.x4; x < P.x4 + P.w4; ++x)
+                    decoded[y * 4 + x] = true;
+        }
+        if (shape == 0) {
+            c.bType = c.use[0];
+        } else {
+            static constexpr int kPair[4][4] = {{0, 0, 0, 0}, {0, 0, 2, 4}, {0, 3, 1, 5}, {0, 6, 7, 8}}; // [use 0][use 1]
+            c.bType = 4 + 2 * kPair[c.use[0]][c.use[1]] + (shape - 1);
+        }
+        c.cost = total + lambdaSad * typeBits(c.bType);
+        return c;
+    };
+    Cand best = tryShape(0);
+    if (cfg_.effort > 0 && gBParts) {
+        for (int shape : {1, 2}) {
+            const Cand c = tryShape(shape);
+            if (c.cost < best.cost)
+                best = c;
+        }
+    }
+
+    // Codes the direct prediction (which = 0) or the searched candidate (1) with its residual;
+    // leaves its state in the macroblock and returns SSD + lambda * bits.
+    uint8_t clp[256], ccp[2][64];
+    for (int p = 0; p < best.count; ++p) {
+        const Part& P = kPart[best.shape][p];
+        predictBi(mbx, mby, P.x4, P.y4, P.w4, P.h4, best.use[p], best.mv[p][0], best.mv[p][1], clp, ccp);
+    }
+    struct ChromaCache {
+        bool valid = false;
+        uint8_t recU[64], recV[64];
+        ChromaMb ch;
+    };
+    ChromaCache chromaCache[2];
+    bool sentDelta = false;
+    auto encodeB = [&](int which, MbOut& io, bool t8) {
+        const uint8_t* lp = which ? clp : dlp;
+        const uint8_t (*cp)[64] = which ? ccp : dcp;
+        if (which) {
+            for (int p = 0; p < best.count; ++p) {
+                const Part& P = kPart[best.shape][p];
+                setBlocks(P.x4, P.y4, P.w4, P.h4, best.use[p], best.mv[p][0], best.mv[p][1]);
+            }
+        } else {
+            setDirect();
+        }
+        InterResidual res;
+        codeInterLuma(mbx, mby, lp, qp, lambda, t8, true, io, res);
+        ChromaCache& cc = chromaCache[which];
+        ChromaMb ch;
+        if (cc.valid) {
+            ch = cc.ch;
+            for (int y = 0; y < 8; ++y) {
+                std::memcpy(&recU_[chromaOff + size_t(y) * cw], cc.recU + y * 8, 8);
+                std::memcpy(&recV_[chromaOff + size_t(y) * cw], cc.recV + y * 8, 8);
+            }
+        } else {
+            analyseChroma(mbx, mby, ch, cp);
+            cc.ch = ch;
+            for (int y = 0; y < 8; ++y) {
+                std::memcpy(cc.recU + y * 8, &recU_[chromaOff + size_t(y) * cw], 8);
+                std::memcpy(cc.recV + y * 8, &recV_[chromaOff + size_t(y) * cw], 8);
+            }
+            cc.valid = true;
+        }
+        clearNz();
+        io.syn.kind = MbSyntax::Kind::Inter;
+        io.syn.bType = uint8_t(which ? best.bType : 0);
+        if (which)
+            for (int p = 0; p < best.count; ++p)
+                for (int c = 0; c < 2; ++c) {
+                    io.syn.mvd[p][c] = best.mv[p][0][c] - best.mvp[p][0][c];
+                    io.syn.mvd1[p][c] = best.mv[p][1][c] - best.mvp[p][1][c];
+                }
+        sentDelta = writeInterResidual(mbx, mby, qp, t8, res, ch, io);
+        return double(mbSsd(mbx, mby)) + lambda * mbBits(io, mbx, mby, 0.0);
+    };
+    MbOut interBits;
+    int bestWhich = 0;
+    double costInter = encodeB(0, interBits, false);
+    bool chosenDelta = sentDelta;
+    MbState interState;
+    saveMb(mbx, mby, interState);
+    {
+        MbOut candBits;
+        const double costCand = encodeB(1, candBits, false);
+        if (costCand < costInter) {
+            costInter = costCand;
+            chosenDelta = sentDelta;
+            interBits = std::move(candBits);
+            saveMb(mbx, mby, interState);
+            bestWhich = 1;
+        }
+    }
+    // 8x8 transform for the better of the two (High profile).
+    if (useT8() && cfg_.effort > 0) {
+        MbOut t8Bits;
+        const double costT8 = encodeB(bestWhich, t8Bits, true);
+        if (costT8 < costInter) {
+            costInter = costT8;
+            chosenDelta = sentDelta;
+            interBits = std::move(t8Bits);
+            saveMb(mbx, mby, interState);
+        }
+    }
+
+    // ---- Candidate 3: intra, only when a cheap Intra 16x16 SATD estimate beats the predictions.
+    MbOut intraBits;
+    double costIntra = 1e300;
+    bool intraDelta = false;
+    {
+        const bool left = mbx > 0, top = topMbAvailable(mby);
+        uint8_t cand[256];
+        int est = 1 << 30;
+        for (int mode = 0; mode < 4; ++mode) {
+            if ((mode == 0 && !top) || (mode == 1 && !left) || (mode == 3 && !(top && left)))
+                continue;
+            predictLuma16(mode, &recY_[lumaOff], padW_, left, top, cand);
+            est = std::min(est, satd16(cand));
+        }
+        const double estInter = std::min(best.cost, estDirect);
+        if (double(est) < estInter * gIntraFactor) {
+            const bool borderline = double(est) >= estInter;
+            tIntraSkip8 = borderline && (!gFullIntra || (gExp & 2));
+            tIntraSkip16 = borderline && (!gFullIntra || (gExp & 4));
+            intraDelta = encodeMbIntra(intraBits, mbx, mby);
+            tIntraSkip8 = tIntraSkip16 = false;
+            const int zero[2] = {0, 0};
+            setBlocks(0, 0, 4, 4, 0, zero, zero);
+            costIntra = double(mbSsd(mbx, mby)) + lambda * mbBits(intraBits, mbx, mby, 0.0);
+        }
+    }
+
+    if (costSkip <= costInter && costSkip <= costIntra) {
+        restoreMb(mbx, mby, skipState);
+        result.syn.kind = MbSyntax::Kind::Skip;
+        mbQpFinal_[mbIndex] = int8_t(qpPredOf(mby));
+        return false;
+    }
+    bool coded;
+    if (costInter <= costIntra) {
+        restoreMb(mbx, mby, interState);
+        result = std::move(interBits);
+        coded = chosenDelta;
     } else {
         result = std::move(intraBits); // state is already the intra one
         coded = intraDelta;
@@ -4013,6 +4645,22 @@ int FrameCoder::boundaryStrength(int pbx, int pby, int qbx, int qby, bool mbEdge
 {
     const int lw = mbW_ * 4;
     const size_t mp = size_t(pby) * lw + pbx, mq = size_t(qby) * lw + qbx;
+    if (bSlice_) {
+        // One reference picture per list, two different pictures: the blocks must use the same
+        // lists and their vectors per list must be closer than one sample.
+        const bool p0 = refIdx_[mp] >= 0, p1 = refIdx1_[mp] >= 0, q0 = refIdx_[mq] >= 0, q1 = refIdx1_[mq] >= 0;
+        if (!(p0 || p1) || !(q0 || q1))
+            return mbEdge ? 4 : 3;
+        if (nzLuma_[mp] || nzLuma_[mq])
+            return 2;
+        if (p0 != q0 || p1 != q1)
+            return 1;
+        if (p0 && (std::abs(mvX_[mp] - mvX_[mq]) >= 4 || std::abs(mvY_[mp] - mvY_[mq]) >= 4))
+            return 1;
+        if (p1 && (std::abs(mvX1_[mp] - mvX1_[mq]) >= 4 || std::abs(mvY1_[mp] - mvY1_[mq]) >= 4))
+            return 1;
+        return 0;
+    }
     if (refIdx_[mp] < 0 || refIdx_[mq] < 0)
         return mbEdge ? 4 : 3;
     if (nzLuma_[size_t(pby) * lw + pbx] || nzLuma_[size_t(qby) * lw + qbx])

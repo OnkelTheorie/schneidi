@@ -3,6 +3,9 @@
 //   h264-proto encode <in.yuv> <width> <height> <out.h264> [--qp N] [--mode pcm|i16|i4|auto]
 //                     [--frames N] [--gop N (120)] [--threads N] [--bitrate kbps] [--effort 0|1] [--aq strength] [--refs N] [--cavlc] [--no-t8] [--no-deblock]
 //                     [--lookahead N] [--no-mbtree] [--mbtree-strength S] [--2pass] [--recon out.yuv]
+//                     [--bframes N (0)] [--b-qp offset (2)] [--no-b-adapt]
+// --bframes N: up to N B pictures in a row (CABAC only). Access units are written in coding order,
+// PSNR and --recon go by display order.
 // --2pass (with --bitrate): analyse the whole input first (lookahead only), then one QP for the clip.
 // --chunks N: N independent encoders side by side on parts of the clip (planChunks), --threads split
 // between them; implies the first pass. Input must be a file. --chunk-min F: shortest chunk in
@@ -19,6 +22,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <deque>
+#include <map>
 #include <string>
 #include <thread>
 #ifndef _WIN32
@@ -80,12 +84,12 @@ static void encodeChunk(const EncoderConfig& cfg, const char* path, int start, i
         return;
     }
     Encoder enc(cfg);
-    std::deque<std::vector<uint8_t>> pending;
+    std::map<int, std::vector<uint8_t>> pending; // by display index: B pictures come out of order
     auto took = [&](const std::vector<uint8_t>& au) {
         if (au.empty())
             return;
         res.bytes.insert(res.bytes.end(), au.begin(), au.end());
-        const std::vector<uint8_t>& src = pending.front();
+        const std::vector<uint8_t>& src = pending.at(enc.lastDisplayIndex());
         const uint8_t* sy = src.data();
         const uint8_t* su = sy + size_t(w) * h;
         const uint8_t* sv = su + size_t(cw) * ch;
@@ -93,7 +97,7 @@ static void encodeChunk(const EncoderConfig& cfg, const char* path, int start, i
         res.psnrY += psnr(sy, w, enc.reconY().data(), pw, w, h);
         res.psnrU += psnr(su, cw, enc.reconU().data(), pw / 2, cw, ch);
         res.psnrV += psnr(sv, cw, enc.reconV().data(), pw / 2, cw, ch);
-        pending.pop_front();
+        pending.erase(enc.lastDisplayIndex());
         ++res.frames;
     };
     std::vector<uint8_t> frame(frameSize);
@@ -104,7 +108,7 @@ static void encodeChunk(const EncoderConfig& cfg, const char* path, int start, i
         pic.v = pic.u + size_t(cw) * ch;
         pic.strideY = w;
         pic.strideC = cw;
-        pending.push_back(frame);
+        pending[i] = frame;
         took(enc.encode(pic));
     }
     for (;;) {
@@ -189,6 +193,12 @@ int main(int argc, char** argv)
             cfg.fullRange = true;
         else if (a == "--2pass")
             twoPass = true;
+        else if (a == "--bframes" && i + 1 < argc)
+            cfg.bframes = std::atoi(argv[++i]);
+        else if (a == "--b-qp" && i + 1 < argc)
+            cfg.bQpOffset = std::atoi(argv[++i]);
+        else if (a == "--no-b-adapt")
+            cfg.bAdaptive = false;
         else if (a == "--recon" && i + 1 < argc)
             reconPath = argv[++i];
     }
@@ -280,31 +290,40 @@ int main(int argc, char** argv)
     int frames = 0, fed = 0;
     double psnrY = 0, psnrU = 0, psnrV = 0, seconds = 0;
     // The encoder may hold pictures back (lookahead): PSNR against the source picture that came out.
-    std::deque<std::vector<uint8_t>> pending;
+    std::map<int, std::vector<uint8_t>> pending; // by display index: B pictures come out of order
+    double typePsnr[3] = {}, typeBytes[3] = {};
+    int typeCount[3] = {};
     auto took = [&](const std::vector<uint8_t>& au) {
         if (au.empty())
             return;
         std::fwrite(au.data(), 1, au.size(), out);
-        if (std::getenv("H264_PROTO_TRACE"))
-            std::fprintf(stderr, "frame %d qp %d bytes %zu%s\n", frames, enc.lastQp(), au.size(),
-                         enc.lastWasSceneCut() ? " scene cut" : "");
         totalBytes += au.size();
-        const std::vector<uint8_t>& src = pending.front();
+        const std::vector<uint8_t>& src = pending.at(enc.lastDisplayIndex());
         const uint8_t* sy = src.data();
         const uint8_t* su = sy + size_t(w) * h;
         const uint8_t* sv = su + size_t(cw) * ch;
         const int pw = enc.paddedWidth();
-        psnrY += psnr(sy, w, enc.reconY().data(), pw, w, h);
+        const double py = psnr(sy, w, enc.reconY().data(), pw, w, h);
+        psnrY += py;
         psnrU += psnr(su, cw, enc.reconU().data(), pw / 2, cw, ch);
         psnrV += psnr(sv, cw, enc.reconV().data(), pw / 2, cw, ch);
+        const int t = enc.lastType() == 'I' ? 0 : enc.lastType() == 'P' ? 1 : 2;
+        typePsnr[t] += py;
+        typeBytes[t] += double(au.size());
+        ++typeCount[t];
+        if (std::getenv("H264_PROTO_TRACE"))
+            std::fprintf(stderr, "frame %d display %d %c qp %d bytes %zu psnr %.2f%s\n", frames, enc.lastDisplayIndex(),
+                         enc.lastType(), enc.lastQp(), au.size(), py, enc.lastWasSceneCut() ? " scene cut" : "");
         if (recon) {
+            if (cfg.bframes > 0) // display order
+                seekFrame(recon, int64_t(enc.lastDisplayIndex()) * int64_t(frame.size()));
             for (int y = 0; y < h; ++y)
                 std::fwrite(enc.reconY().data() + size_t(y) * pw, 1, size_t(w), recon);
             for (const auto* p : {&enc.reconU(), &enc.reconV()})
                 for (int y = 0; y < ch; ++y)
                     std::fwrite(p->data() + size_t(y) * (pw / 2), 1, size_t(cw), recon);
         }
-        pending.pop_front();
+        pending.erase(enc.lastDisplayIndex());
         ++frames;
     };
     while (fed < maxFrames && std::fread(frame.data(), 1, frame.size(), in) == frame.size()) {
@@ -314,7 +333,7 @@ int main(int argc, char** argv)
         pic.v = pic.u + size_t(cw) * ch;
         pic.strideY = w;
         pic.strideC = cw;
-        pending.push_back(frame);
+        pending[fed] = frame;
         ++fed;
         const auto t0 = std::chrono::steady_clock::now();
         const auto au = enc.encode(pic);
@@ -339,6 +358,11 @@ int main(int argc, char** argv)
     }
     if (cfg.firstPass)
         std::printf("first pass %.2f s (%.1f ms/frame)  ", firstPassSeconds, firstPassSeconds * 1000.0 / frames);
+    if (typeCount[2])
+        std::printf("I %d (%.1f KB, %.2f dB) P %d (%.1f KB, %.2f dB) B %d (%.1f KB, %.2f dB)  ", typeCount[0],
+                    typeBytes[0] / 1024.0 / std::max(1, typeCount[0]), typePsnr[0] / std::max(1, typeCount[0]), typeCount[1],
+                    typeBytes[1] / 1024.0 / std::max(1, typeCount[1]), typePsnr[1] / std::max(1, typeCount[1]), typeCount[2],
+                    typeBytes[2] / 1024.0 / typeCount[2], typePsnr[2] / typeCount[2]);
     std::printf("peak %ld MB  last qp %d  ", peakMb(), enc.lastQp());
     std::printf("frames %d  bytes %zu (%.1f KB/frame)  %.2f fps  PSNR Y %.2f U %.2f V %.2f\n", frames, totalBytes,
                 totalBytes / 1024.0 / frames, frames / seconds, psnrY / frames, psnrU / frames, psnrV / frames);

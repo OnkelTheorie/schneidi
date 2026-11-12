@@ -26,7 +26,42 @@ struct RefPic {
     std::vector<uint8_t> y, u, v;
     std::vector<uint8_t> F, B, V, J;
     std::atomic<int> rowsReady{0}; // macroblock rows that are final (planes and margin included)
+    // With B pictures: the picture's list 0 motion per 4x4 block (ref -1 = intra), final for the
+    // rows in rowsReady. Direct prediction reads the co-located block, the search its start points.
+    std::vector<int16_t> mvx, mvy;
+    std::vector<int8_t> ref;
+    int gopPos = 0; // display distance from the IDR picture
 };
+
+// Partitions of an inter macroblock in a B slice by its mb_type (table 7-14; 0 = B_Direct_16x16
+// has none, 22 = B_8x8 takes them from the sub types): shape 0 16x16, 1 16x8, 2 8x16, 3 8x8, and per
+// partition which lists predict it (1 list 0, 2 list 1, 3 both; 0 = direct).
+struct BParts {
+    int shape = 0, count = 0;
+    int use[4] = {};
+};
+inline BParts bPartsOf(int bType, const uint8_t* sub)
+{
+    BParts b;
+    if (bType == 0)
+        return b;
+    if (bType <= 3) {
+        b.count = 1;
+        b.use[0] = bType;
+    } else if (bType < 22) {
+        static constexpr uint8_t kPairs[9][2] = {{1, 1}, {2, 2}, {1, 2}, {2, 1}, {1, 3}, {2, 3}, {3, 1}, {3, 2}, {3, 3}};
+        b.shape = 1 + (bType - 4) % 2;
+        b.count = 2;
+        b.use[0] = kPairs[(bType - 4) / 2][0];
+        b.use[1] = kPairs[(bType - 4) / 2][1];
+    } else {
+        b.shape = 3;
+        b.count = 4;
+        for (int i = 0; i < 4; ++i)
+            b.use[i] = sub[i];
+    }
+    return b;
+}
 
 class FrameCoder {
 public:
@@ -38,7 +73,7 @@ public:
 
     // Pieces of code(), also used to keep two pictures in flight (CABAC only): reset, waveBegin,
     // then waveRow for every row claimRow hands out (any thread, in order), waveEnd, assemble.
-    void reset(bool idr, int framesSinceIdr, int idrCount);
+    void reset(bool idr, int frameNum, int idrCount);
     void waveBegin(int threads, RefPic* out, bool writerThread);
     int claimRow()
     {
@@ -69,8 +104,9 @@ public:
     // Picture results kept until the encoder hands the picture out.
     std::vector<uint8_t> done_;
     std::shared_ptr<RefPic> outPic_; // the reference picture being filled, kept alive while coding
-    int frameNo_ = 0, outQp_ = 0;
-    bool outSceneCut_ = false, rcIdr_ = false, rcLookahead_ = false;
+    int frameNo_ = 0, outQp_ = 0, displayIndex_ = 0;
+    int rcType_ = 0; // 0 I, 1 P, 2 B
+    bool outSceneCut_ = false, rcLookahead_ = false;
     double rcCost_ = 0;
     bool idr_ = false;
     int framesSinceIdr_ = 0, idrCount_ = 0;
@@ -92,6 +128,10 @@ public:
         int i4Mode[16] = {}, i4Pred[16] = {};
         int interType = 0; // 0 16x16, 1 16x8, 2 8x16, 3 8x8
         int ref[4] = {}, mvd[4][2] = {};
+        // B slices (Kind::Inter): mb_type of table 7-14 (0 = B_Direct_16x16 .. 22 = B_8x8), the
+        // list 1 vector differences and for B_8x8 the sub types (0 direct, 1 L0, 2 L1, 3 Bi).
+        uint8_t bType = 0, bSub[4] = {};
+        int mvd1[4][2] = {};
         int cbpLuma = 0, cbpChroma = 0;
         bool hasQpDelta = false;
         int qpDelta = 0;
@@ -121,6 +161,33 @@ public:
     bool encodeLuma8(MbOut& o, int mbx, int mby, const ChromaMb& ch);
     // Returns false for a skipped macroblock.
     bool encodeMbP(MbOut& result, int mbx, int mby);
+    bool encodeMbB(MbOut& result, int mbx, int mby);
+    // Spatial direct prediction (8.4.1.2.2) of a macroblock in a B slice: per list the reference
+    // (-1 = unused) and a vector per 8x8 quadrant.
+    struct DirectPred {
+        int ref[2];
+        int mv[2][4][2];
+    };
+    void directPredict(int mbx, int mby, DirectPred& d) const;
+    // Prediction of one block of a B macroblock from list 0, list 1 or their average.
+    void predictBi(int mbx, int mby, int x4, int y4, int w4, int h4, int use, const int* mv0, const int* mv1, uint8_t* luma,
+                   uint8_t (*chroma)[64]) const;
+    // Motion search of one partition in reference R around the predictor (pX, pY): full-pel
+    // diamond on SAD from the best start point, then half/quarter-pel on SATD. Returns the cost
+    // (SATD + lambdaSad * vector bits).
+    double motionSearch(const RefPic& R, int mbx, int mby, int x4, int y4, int w4, int h4, int pX, int pY, double lambdaSad,
+                        const std::pair<int, int>* starts, int startCount, bool subpel, int& outX, int& outY) const;
+    // The residual of an inter macroblock against its prediction: luma levels and reconstruction
+    // (codeInterLuma), then after the caller wrote the macroblock header the coded block pattern,
+    // mb_qp_delta and coefficients (writeInterResidual; returns whether mb_qp_delta was sent).
+    struct InterResidual {
+        int levels[16][16];
+        int levels8[4][64];
+        int cbpLuma;
+    };
+    void codeInterLuma(int mbx, int mby, const uint8_t* lp, int qp, double lambda, bool t8, bool trellis, MbOut& io,
+                       InterResidual& ir);
+    bool writeInterResidual(int mbx, int mby, int qp, bool t8, const InterResidual& res, const ChromaMb& ch, MbOut& io);
     void rdoQuantize(int* levels, const int* residual, int qp, double lambda, int nC) const;
     bool skipResidualIsZero(int mbx, int mby, const uint8_t* lp, const uint8_t (*cp)[64], int qp) const;
     struct MvNb {
@@ -128,9 +195,9 @@ public:
         int ref = -1;
         int mvx = 0, mvy = 0;
     };
-    MvNb mvNeighbour(int mbx, int mby, int x4, int y4, const bool* decoded) const;
+    MvNb mvNeighbour(int mbx, int mby, int x4, int y4, const bool* decoded, int list = 0) const;
     void predictMvPart(int mbx, int mby, int x4, int y4, int w4, int shape, int refIdx, const bool* decoded, int& mvx,
-                       int& mvy) const;
+                       int& mvy, int list = 0) const;
     void motionCompensate(const RefPic& R, int mbx, int mby, int x4, int y4, int w4, int h4, int mvx, int mvy,
                           uint8_t* luma, uint8_t (*chroma)[64]) const;
     int64_t mbSsd(int mbx, int mby) const;
@@ -146,6 +213,8 @@ public:
         std::vector<uint8_t> kind, cbp, chromaMode, cbfDc, t8; // per macroblock
         std::vector<uint8_t> cbfLuma;                           // per 4x4 luma block
         std::vector<std::array<uint8_t, 2>> mvd;                // |mvd| per 4x4 block, x and y
+        std::vector<std::array<uint8_t, 2>> mvd1;               // the same for list 1 (B slices)
+        std::vector<uint8_t> direct;                            // per macroblock: B_Direct_16x16
         std::vector<uint8_t> cbfChroma[2];                      // per 4x4 chroma block
         void resize(int mbW, int mbH);
     };
@@ -179,12 +248,20 @@ public:
     std::vector<uint8_t> nzChroma_[2]; // TotalCoeff per 4x4 chroma AC block
     std::vector<int16_t> mvX_, mvY_;        // per 4x4 block, quarter-pel units
     std::vector<int8_t> refIdx_;            // per 4x4 block: 0 inter, -1 intra
+    // List 1 of a B picture (there refIdx_ is list 0: -1 = intra or list 1 only).
+    std::vector<int16_t> mvX1_, mvY1_;
+    std::vector<int8_t> refIdx1_;
     const FrameCoder* prev_ = nullptr; // the previous picture (its vectors are search start points)
     // Reference luma with a margin: full-pel, horizontal half, vertical half, centre half (8.4.2.2.1).
     static constexpr int kMargin = 96;
     int extW_ = 0, extH_ = 0;
     std::vector<std::shared_ptr<const RefPic>> refs_; // reference list, newest first
+    std::vector<std::shared_ptr<const RefPic>> refs1_; // B picture: list 1 (the next reference picture in display order)
     int activeRefs_ = 0;
+    bool bSlice_ = false;  // B picture (pSlice_ is set too: an inter slice)
+    bool refPic_ = true;   // the picture is a reference (nal_ref_idc)
+    bool pocLsb_ = false;  // pic_order_cnt_type 0: the slice header carries pic_order_cnt_lsb
+    int gopPos_ = 0;       // display distance from the IDR picture
     std::vector<int> sliceTopOfRow_;        // first macroblock row of the slice of each row
     std::vector<int> rowKey_;               // per row: index of its live CABAC / QP predictor state (slice top, or the row itself in the wavefront)
     std::vector<MbSyntax> mbSyn_;           // wavefront: chosen syntax of every macroblock, written in raster order afterwards

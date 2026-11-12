@@ -20,6 +20,13 @@ struct LookaheadFrame {
     bool keyframe = false;                     // the schedule or the caller makes this an IDR picture
     std::vector<uint8_t> thumb;                // quarter-size luma for the scene change detection
     bool sceneChange = false;                  // motion no longer helps against the previous picture
+    // B pictures (Encoder::planQueue): the picture's place and type.
+    int index = 0;        // display index
+    int gopPos = 0;       // display distance from the IDR picture of its GOP (half its picture order count)
+    uint8_t type = 1;     // 0 I, 1 P, 2 B
+    bool decided = false; // the type is final
+    bool coded = false;   // a reference picture coded ahead of the B pictures before it
+    bool cutKey = false;  // keyframe because of a detected scene change
 };
 
 class Lookahead {

@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // schneidi's own H.264 encoder (prototype): every stream must decode with FFmpeg's decoder to exactly the
 // pictures the encoder reconstructed (CAVLC and CABAC; I and P frames, all intra/inter modes, slices, adaptive QP,
-// rate control, odd sizes).
+// rate control, odd sizes). With B pictures the access units come in coding order: the decoder must hand the
+// pictures out in display order with the right timestamps.
 
 #include "check.h"
 
@@ -17,6 +18,7 @@ extern "C" {
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <map>
 #include <memory>
 #include <stdexcept>
 #include <vector>
@@ -59,8 +61,16 @@ Yuv synthFrame(int w, int h, int t)
 
 // Encodes `frames` pictures, decodes them with libavcodec and compares with the reconstruction.
 // With a chunk plan the parts go through their own encoders and the streams are concatenated.
+// B pictures (cfg.bframes): the reconstructions are kept by display index, the packets carry the display index as
+// pts, and the decoder (with its reordering delay) must return picture i with pts i. `info` reports what came out.
+struct StreamInfo {
+    std::string types;      // picture types in coding order
+    std::vector<int> order; // display index of each access unit, in coding order
+    double minPsnrY = 99;   // lowest luma PSNR of a reconstruction against its source picture
+};
+
 bool roundTrip(const EncoderConfig& cfg, int frames, size_t* bytesOut = nullptr, int keyframeAt = -1,
-               const ChunkPlan* plan = nullptr)
+               const ChunkPlan* plan = nullptr, StreamInfo* info = nullptr)
 {
     auto encPtr = std::make_unique<Encoder>(plan ? plan->configFor(cfg, 0, cfg.threads) : cfg);
     Encoder& enc0 = *encPtr;
@@ -69,23 +79,26 @@ bool roundTrip(const EncoderConfig& cfg, int frames, size_t* bytesOut = nullptr,
     if (!codec)
         return false;
     AVCodecContext* ctx = avcodec_alloc_context3(codec);
-    ctx->flags |= AV_CODEC_FLAG_LOW_DELAY;
+    if (cfg.bframes <= 0)
+        ctx->flags |= AV_CODEC_FLAG_LOW_DELAY;
     ctx->thread_count = 1;
     if (avcodec_open2(ctx, codec, nullptr) < 0)
         return false;
     AVPacket* pkt = av_packet_alloc();
     AVFrame* frame = av_frame_alloc();
 
-    std::vector<Yuv> recon;
+    std::map<int, Yuv> recon; // by display index
     size_t decoded = 0, bytes = 0;
+    int chunkBase = 0, packets = 0;
     bool ok = true;
     auto receive = [&] {
         while (avcodec_receive_frame(ctx, frame) == 0) {
-            if (decoded >= recon.size()) {
+            if (!recon.count(int(decoded)) || frame->pts != int64_t(decoded)) {
+                std::fprintf(stderr, "picture %zu: not coded yet or wrong pts %lld\n", decoded, static_cast<long long>(frame->pts));
                 ok = false;
                 return;
             }
-            const Yuv& r = recon[decoded++];
+            const Yuv& r = recon[int(decoded++)];
             for (int p = 0; p < 3; ++p) {
                 const int pw = p ? r.w / 2 : r.w, ph = p ? r.h / 2 : r.h;
                 const std::vector<uint8_t>& ref = p == 0 ? r.y : p == 1 ? r.u : r.v;
@@ -115,10 +128,26 @@ bool roundTrip(const EncoderConfig& cfg, int frames, size_t* bytesOut = nullptr,
             r.u.insert(r.u.end(), encPtr->reconU().begin() + y * (pw / 2), encPtr->reconU().begin() + y * (pw / 2) + r.w / 2);
             r.v.insert(r.v.end(), encPtr->reconV().begin() + y * (pw / 2), encPtr->reconV().begin() + y * (pw / 2) + r.w / 2);
         }
-        recon.push_back(std::move(r));
+        const int display = chunkBase + encPtr->lastDisplayIndex();
+        if (recon.count(display)) {
+            std::fprintf(stderr, "picture %d came out twice\n", display);
+            ok = false;
+        }
+        if (info) {
+            info->types += encPtr->lastType();
+            info->order.push_back(display);
+            const Yuv src = synthFrame(cfg.width, cfg.height, display);
+            double sse = 0;
+            for (size_t i = 0; i < src.y.size(); ++i)
+                sse += double(int(src.y[i]) - int(r.y[i])) * double(int(src.y[i]) - int(r.y[i]));
+            info->minPsnrY = std::min(info->minPsnrY, sse > 0 ? 10.0 * std::log10(255.0 * 255.0 * double(src.y.size()) / sse) : 99.0);
+        }
+        recon[display] = std::move(r);
 
         av_new_packet(pkt, int(au.size()));
         std::memcpy(pkt->data, au.data(), au.size());
+        pkt->pts = display;
+        pkt->dts = packets++ - encPtr->reorderDelay();
         if (avcodec_send_packet(ctx, pkt) < 0)
             ok = false;
         av_packet_unref(pkt);
@@ -137,6 +166,7 @@ bool roundTrip(const EncoderConfig& cfg, int frames, size_t* bytesOut = nullptr,
                 take(std::move(au));
             }
             ++chunk;
+            chunkBase = t;
             encPtr = std::make_unique<Encoder>(plan->configFor(cfg, int(chunk), cfg.threads));
         }
         const Yuv src = synthFrame(cfg.width, cfg.height, t);
@@ -267,6 +297,126 @@ int main()
         if (std::abs(kbps2 - 1000.0) >= 250.0)
             std::fprintf(stderr, "rate control with first pass: %.0f kbit/s instead of 1000\n", kbps2);
         CHECK(std::abs(kbps2 - 1000.0) < 250.0);
+    }
+    // B pictures (CABAC only): coding order, display order and timestamps, every picture bit-exact
+    if (gCabac) {
+        for (int bframes : {1, 2, 3}) {
+            for (int threads : {1, 3}) {
+                EncoderConfig c = config(176, 144, IntraMode::Auto, 30, threads);
+                c.bframes = bframes;
+                c.bAdaptive = false;
+                StreamInfo info;
+                size_t bytes = 0;
+                CHECK(roundTrip(c, 14, &bytes, -1, nullptr, &info));
+                // I first, then each reference picture before the B pictures in front of it; the last picture is P.
+                const char* expect = bframes == 1 ? "IPBPBPBPBPBPBP" : bframes == 2 ? "IPBBPBBPBBPBBP" : "IPBBBPBBBPBBBP";
+                if (info.types != expect)
+                    std::fprintf(stderr, "bframes %d: types %s\n", bframes, info.types.c_str());
+                CHECK(info.types == expect);
+                // A B picture lies between the two reference pictures coded before it, B pictures ascend.
+                bool orderOk = info.order.size() == 14 && info.order[0] == 0;
+                int before = -1, after = 0, lastB = -1;
+                for (size_t i = 1; orderOk && i < info.order.size(); ++i) {
+                    if (info.types[i] == 'B') {
+                        orderOk = info.order[i] > std::max(before, lastB) && info.order[i] < after;
+                        lastB = info.order[i];
+                    } else {
+                        orderOk = info.order[i] > after;
+                        before = after;
+                        after = info.order[i];
+                        lastB = -1;
+                    }
+                }
+                CHECK(orderOk);
+                if (info.minPsnrY < 30.0)
+                    std::fprintf(stderr, "bframes %d: PSNR-Y %.2f dB\n", bframes, info.minPsnrY);
+                CHECK(info.minPsnrY >= 30.0);
+                // The same stream with any thread count.
+                static size_t bytesOne[4] = {};
+                if (threads == 1)
+                    bytesOne[bframes] = bytes;
+                CHECK(bytes == bytesOne[bframes]);
+            }
+        }
+        {
+            // Smaller than without B pictures at the same QP on this (easy) material
+            EncoderConfig c = config(320, 192, IntraMode::Auto, 30, 2);
+            size_t plain = 0, withB = 0;
+            CHECK(roundTrip(c, 31, &plain));
+            c.bframes = 2;
+            CHECK(roundTrip(c, 31, &withB));
+            if (withB >= plain)
+                std::fprintf(stderr, "B pictures: %zu bytes, without %zu\n", withB, plain);
+            CHECK(withB < plain);
+        }
+        {
+            // A keyframe the caller asks for and the GOP end: the picture before a keyframe is a P picture
+            EncoderConfig c = config(176, 144, IntraMode::Auto, 8, 2);
+            c.bframes = 2;
+            c.bAdaptive = false;
+            StreamInfo info;
+            CHECK(roundTrip(c, 20, nullptr, 5, nullptr, &info));
+            std::string display(20, '?');
+            for (size_t i = 0; i < info.order.size(); ++i)
+                display[size_t(info.order[i])] = info.types[i];
+            if (display != "IBBBPIBBPBBPPIBBPBBP" && display != "IBBPPIBBPBBPPIBBPBBP")
+                std::fprintf(stderr, "types in display order: %s\n", display.c_str());
+            CHECK(display == "IBBPPIBBPBBPPIBBPBBP");
+        }
+        {
+            // Without the 8x8 transform (Main), with several references, without frame threading, adaptive QP extremes
+            EncoderConfig c = config(250, 142, IntraMode::Auto, 12, 3);
+            c.bframes = 2;
+            c.transform8x8 = false;
+            CHECK(roundTrip(c, 14));
+            c.transform8x8 = true;
+            c.refs = 3;
+            CHECK(roundTrip(c, 14));
+            c.refs = 1;
+            c.frameThreads = false;
+            c.aqStrength = 3;
+            CHECK(roundTrip(c, 14));
+            c.aqStrength = 0;
+            c.lookahead = 0; // the queue grows to what the B pictures need
+            c.mbtree = false;
+            c.effort = 0;
+            CHECK(roundTrip(c, 14));
+            for (int qp : {14, 44}) {
+                EncoderConfig q = config(176, 144, IntraMode::Auto, 30, 2);
+                q.bframes = 3;
+                q.qp = qp;
+                CHECK(roundTrip(q, 12));
+            }
+        }
+        {
+            // Rate control with B pictures: one pass, with a first pass, and in chunks
+            EncoderConfig c = config(320, 192, IntraMode::Auto, 30, 2);
+            c.bframes = 2;
+            c.bitrateKbps = 1000;
+            c.fps = 30;
+            size_t bytes = 0;
+            CHECK(roundTrip(c, 60, &bytes));
+            double kbps = bytes * 8.0 / 2.0 / 1000.0;
+            if (std::abs(kbps - 1000.0) >= 250.0)
+                std::fprintf(stderr, "rate control with B pictures: %.0f kbit/s instead of 1000\n", kbps);
+            CHECK(std::abs(kbps - 1000.0) < 250.0);
+            FirstPass fp(c.width, c.height);
+            for (int t = 0; t < 60; ++t) {
+                const Yuv src = synthFrame(c.width, c.height, t);
+                fp.add(Picture{src.y.data(), src.u.data(), src.v.data(), src.w, src.w / 2});
+            }
+            c.firstPass = fp.stats();
+            bytes = 0;
+            CHECK(roundTrip(c, 60, &bytes));
+            kbps = bytes * 8.0 / 2.0 / 1000.0;
+            if (std::abs(kbps - 1000.0) >= 250.0)
+                std::fprintf(stderr, "first pass with B pictures: %.0f kbit/s instead of 1000\n", kbps);
+            CHECK(std::abs(kbps - 1000.0) < 250.0);
+            c.firstPass.reset();
+            const ChunkPlan rated = planChunks(*fp.stats(), c, 3, 10);
+            bytes = 0;
+            CHECK(roundTrip(c, 60, &bytes, -1, &rated));
+        }
     }
     // level_idc (Table A-1) in the SPS: 720p30 3.1, 1080p60 4.2, 4K30 5.1; VUI colours decode
     {
