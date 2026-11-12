@@ -42,7 +42,10 @@ struct CompPlan {
         QRectF crop;
         bool graded = false;
         ColorGrade::Params grade;
+        bool projective = false; // Draw: through h instead of m (transform tilted in depth, corner pin)
+        Compose::Homography h;
         int mixMask = -1; // Draw: then mixed with its source by this mask step
+        QRect area;       // Upload: where the CPU picture has content (Buf::area, empty = all)
     };
     QSize size;
     std::vector<Step> steps;
@@ -212,6 +215,22 @@ CompPlanPtr planComp(const EffectInstance& comp, const Comp::Env& env, Comp::Cac
     auto text = [&](int id, const Comp::NodeType& k, const QString& key) { return Comp::textValue(k, values.value(id), key); };
 
     QHash<int, ::Comp::FollowTime> followTimes; // per tracker followed (gaps, lost mode) at env.t
+    // Another node's value at t as a follower reads it (NodeCtx::numOf, as CompEval): a tracker's by the follow rule
+    auto numOf = [&](int other, const QString& key) -> double {
+        const CompNode* o = g.node(other);
+        const Comp::NodeType* ok = o ? Comp::find(o->type) : nullptr;
+        if (!ok) return 0.0;
+        if (o->type == QLatin1String(::Comp::kTrackerType)) {
+            auto ft = followTimes.constFind(other); // once per tracker (numOf runs ~7x a follower)
+            if (ft == followTimes.cend())
+                ft = followTimes.insert(other, Comp::followTime(env.clip, other, values.value(other), env.t, env.fps));
+            return ::Comp::followValue(
+                key, text(other, *ok, QStringLiteral("mode")),
+                [&](const QString& q) { return values.value(other).contains(q) || animated.value(other).contains(q); },
+                [&](const QString& q) { return num(other, *ok, q); }, &*ft);
+        }
+        return num(other, *ok, key);
+    };
     auto plan = std::make_shared<CompPlan>();
     plan->size = env.size;
     QHash<int, int> stepOf;    // node -> its step (-1 = made nothing)
@@ -262,11 +281,10 @@ CompPlanPtr planComp(const EffectInstance& comp, const Comp::Env& env, Comp::Cac
         }
         if (t == QLatin1String("transform")) {
             if (::Comp::followId(num(id, *k, "follow")) > 0) return fail(reason, "transform follows a tracker");
-            if (std::abs(num(id, *k, "tilt_x")) > 1e-6 || std::abs(num(id, *k, "tilt_y")) > 1e-6)
-                return fail(reason, "transform tilted in depth");
             if (std::abs(num(id, *k, "size")) < 0.5) return fail(reason, "transform shrinks below 1/2");
-            return true;
+            return true; // tilted in depth too: a projective draw (0.22)
         }
+        if (t == QLatin1String(Comp::kCornerPinType)) return true;
         if (t == QLatin1String("crop")) return std::max(0.0, num(id, *k, "soft")) * env.scale < 0.5 || fail(reason, "soft crop");
         if (t == QLatin1String("grade")) return text(id, *k, "lut").isEmpty() || fail(reason, "grade with a LUT file");
         return fail(reason, "node " + t);
@@ -326,21 +344,7 @@ CompPlanPtr planComp(const EffectInstance& comp, const Comp::Env& env, Comp::Cac
                 ctx.num = [&, fid, fk](const QString& key) { return num(fid, *fk, key); };
                 ctx.color = [&, fid, fk](const QString& key) { return color(fid, *fk, key); };
                 ctx.text = [&, fid, fk](const QString& key) { return text(fid, *fk, key); };
-                ctx.numOf = [&](int other, const QString& key) {
-                    const CompNode* o = g.node(other);
-                    const Comp::NodeType* ok = o ? Comp::find(o->type) : nullptr;
-                    if (!ok) return 0.0;
-                    if (o->type == QLatin1String(::Comp::kTrackerType)) { // the follow rule, as CompEval
-                        auto ft = followTimes.constFind(other); // once per tracker (numOf runs ~7x a follower)
-                        if (ft == followTimes.cend())
-                            ft = followTimes.insert(other, Comp::followTime(env.clip, other, values.value(other), env.t, env.fps));
-                        return ::Comp::followValue(
-                            key, text(other, *ok, QStringLiteral("mode")),
-                            [&](const QString& q) { return values.value(other).contains(q) || animated.value(other).contains(q); },
-                            [&](const QString& q) { return num(other, *ok, q); }, &*ft);
-                    }
-                    return num(other, *ok, key);
-                };
+                ctx.numOf = numOf;
                 ctx.input = [](const QString&) -> const Comp::Buf* { return nullptr; };
                 ctx.take = [&](Comp::Buf::Kind kind) { return Comp::Buf(kind, W, H); };
                 ctx.give = [](Comp::Buf&& b) { b.px = {}; }; // scratch buffers: plain memory here
@@ -364,6 +368,7 @@ CompPlanPtr planComp(const EffectInstance& comp, const Comp::Env& env, Comp::Cac
                     stepOf[l.from] = -1;
                     continue;
                 }
+                up.area = b.area;
                 up.pixels = std::make_shared<std::vector<uint8_t>>(std::move(b.px));
             }
             stepOf[l.from] = push(std::move(up));
@@ -468,6 +473,26 @@ CompPlanPtr planComp(const EffectInstance& comp, const Comp::Env& env, Comp::Cac
             s.op = Step::Blur;
             s.in[0] = src;
             s.in[1] = inputStep(id, "mask");
+        } else if (t == QLatin1String(Comp::kCornerPinType)) {
+            const int src = rgbaIn(id, "src");
+            QPointF c[4];
+            double seen = 1;
+            // The source's content area as on the CPU: an uploaded CPU picture's (a text), a card step's is the frame
+            QRect area(0, 0, W, H);
+            if (src >= 0 && plan->steps[size_t(src)].op == Step::Upload && !plan->steps[size_t(src)].area.isEmpty())
+                area = plan->steps[size_t(src)].area.intersected(area);
+            const auto own = [&](const QString& key) { return num(id, *k, key); };
+            if (src < 0 || !Comp::cornerPinCorners(own, numOf, env.size, c, &seen) || seen <= 0
+                || !Comp::cornerPinMap(area, c, &s.h)) {
+                s.op = Step::Color; // nothing: a transparent picture
+                stepOf[id] = push(std::move(s));
+                onCard.insert(id);
+                continue;
+            }
+            s.op = Step::Draw;
+            s.in[0] = src;
+            s.projective = true;
+            s.p[0] = float(seen); // opacity
         } else if (t == QLatin1String("transform") || t == QLatin1String("crop") || t == QLatin1String("grade")) {
             const int src = rgbaIn(id, "src");
             if (src < 0) {
@@ -493,6 +518,20 @@ CompPlanPtr planComp(const EffectInstance& comp, const Comp::Env& env, Comp::Cac
                 identity = std::abs(m.a - 1) < 1e-9 && std::abs(m.e - 1) < 1e-9 && std::abs(m.b) < 1e-9
                            && std::abs(m.d) < 1e-9 && std::abs(m.c) < 1e-9 && std::abs(m.f) < 1e-9;
                 if (identity) s.m = {};
+                // Tilted in depth (CompNodesCore evalTransform): a projective draw around where the anchor lands
+                const double tiltX = std::clamp(num(id, *k, "tilt_x"), -89.0, 89.0);
+                const double tiltY = std::clamp(num(id, *k, "tilt_y"), -89.0, 89.0);
+                if (std::abs(tiltX) > 1e-6 || std::abs(tiltY) > 1e-6) {
+                    identity = false;
+                    if (!Compose::tilted(m, W, H, m.a * ax + m.b * ay + m.c, m.d * ax + m.e * ay + m.f, tiltX, tiltY,
+                                         std::clamp(num(id, *k, "fov"), 5.0, 120.0), W, H, &s.h)) {
+                        s.op = Step::Color; // a corner behind the camera: nothing drawn
+                        stepOf[id] = push(std::move(s));
+                        onCard.insert(id);
+                        continue;
+                    }
+                    s.projective = true;
+                }
             } else if (t == QLatin1String("crop")) {
                 const double x0 = std::clamp(num(id, *k, "left"), 0.0, 1.0) * W, y0 = std::clamp(num(id, *k, "top"), 0.0, 1.0) * H;
                 const double x1 = (1 - std::clamp(num(id, *k, "right"), 0.0, 1.0)) * W;
@@ -605,7 +644,13 @@ TexturePtr runComp(Context& g, const CompPlan& plan, std::vector<TexturePtr>* ke
             if (s.graded && !lut) break;
             out = g.compTarget(size);
             if (!out) break;
-            g.draw(*out, {src, s.m, 1.0, lut.get(), s.crop});
+            Context::Layer layer{src, s.m, 1.0, lut.get(), s.crop};
+            if (s.projective) {
+                layer.projective = true;
+                layer.h = s.h;
+                layer.opacity = s.p[0] > 0 ? s.p[0] : 1.0;
+            }
+            g.draw(*out, layer);
             if (s.mixMask >= 0 && tex(s.mixMask)) {
                 float p[40] = {};
                 p[5] = 1;

@@ -1,0 +1,28 @@
+{
+    "name": "Picture on a screen",
+    "description": "A picture or video laid onto a screen, a sign or a wall in perspective: four tracked corners carry it along.",
+    "name_de": "Bild auf Bildschirm",
+    "description_de": "Ein Bild oder Video liegt perspektivisch auf einem Bildschirm, einem Schild oder einer Wand: vier getrackte Ecken tragen es mit.",
+    "name_en": "Picture on a screen",
+    "description_en": "A picture or video laid onto a screen, a sign or a wall in perspective: four tracked corners carry it along.",
+    "note": "Put the four corners on the screen first: {op:'track_node', clip, node:2, corners:[[x, y], [x, y], [x, y], [x, y]]} (0..1, clockwise from the top left; look with `frames` before) - it tracks them and the picture follows.",
+    "graph": {
+        "nodes": [
+            {"id": 1, "type": "clip", "x": 0, "y": 0},
+            {"id": 2, "type": "tracker", "x": 160, "y": 0, "params": {"mode": "quad", "size": 0.04}},
+            {"id": 3, "type": "media", "x": 0, "y": 120},
+            {"id": 4, "type": "corner_pin", "x": 160, "y": 120, "params": {"follow": 2}},
+            {"id": 5, "type": "merge", "x": 320, "y": 60}
+        ],
+        "links": [[1, 2, "src"], [3, 4, "src"], [2, 5, "bg"], [4, 5, "fg"]],
+        "out": 5
+    },
+    "slots": {
+        "picture": {"type": "media", "required": true, "description": "the picture or video to lay onto the surface", "targets": ["3.path"]},
+        "left": {"type": "number", "description": "left edge of the surface at the start, 0..1 (corners 1 and 4; drag them exactly in the viewer or give corners to track_node)", "targets": ["2.q0x", "2.q3x", "4.c0x", "4.c3x"]},
+        "top": {"type": "number", "description": "top edge, 0..1 (corners 1 and 2)", "targets": ["2.q0y", "2.q1y", "4.c0y", "4.c1y"]},
+        "right": {"type": "number", "description": "right edge, 0..1 (corners 2 and 3)", "targets": ["2.q1x", "2.q2x", "4.c1x", "4.c2x"]},
+        "bottom": {"type": "number", "description": "bottom edge, 0..1 (corners 3 and 4)", "targets": ["2.q2y", "2.q3y", "4.c2y", "4.c3y"]},
+        "opacity": {"type": "number", "description": "opacity 0..1", "targets": ["4.opacity"]}
+    }
+}

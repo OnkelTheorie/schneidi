@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Tracking for the Color page windows (position) and the tracker node of the compositing graph (one point, two points
-// for size and rotation): follows the picture inside a region from frame to frame. Own template matching (normalized cross
+// for size and rotation, four points of a flat surface for perspective): follows the picture inside a region from frame to frame. Own template matching (normalized cross
 // correlation over the color channels, sub-pixel peak, slowly updated template) – no OpenCV.
 
 #include "core/GradeWindows.h"
 #include "core/ProjectFormat.h"
 #include "core/Types.h"
+#include "engine/video/Compose.h"
 
 #include <QImage>
 #include <QPointF>
@@ -99,6 +100,42 @@ private:
     double m_scale = 1, m_angle = 0;
     bool m_outlier = false;
 };
+
+// Four points of a flat surface (a sign, a screen, a wall) followed together: each frame a homography from where they
+// were in the first picture to where they are now (corners of the surface: map them through it). Each frame all four
+// are searched; a point that is lost or jumps away from what the other three say (its place against the frame's
+// movement of the others, the reprojection error) is an outlier: it is put where the movement of the good points puts
+// it (affine from three, size and turn from two). Fewer than two points found = lost (everything stays as it was).
+class QuadTracker {
+public:
+    QuadTracker(const Gray& first, const QRectF regions[4]);
+    bool valid() const;
+    // false = fewer than two points found; radius as PointTracker::next
+    bool next(const Gray& frame, int radius = 0);
+    QPointF point(int i) const { return m_points[size_t(i)].center(); }
+    QPointF start(int i) const { return m_start[size_t(i)]; }
+    // Start points -> points now (pixels of the pictures)
+    const Compose::Homography& homography() const { return m_h; }
+    int outliers() const { return m_outliers; } // points the last frame did not use (0..4)
+    double score() const;
+    void setAdaptWhenUnsure(bool on)
+    {
+        for (PointTracker& p : m_points) p.setAdaptWhenUnsure(on);
+    }
+    // A point further than this from where the other three put it is an outlier (pixels; at least kMinError)
+    static constexpr double kMinError = 2.0, kErrorShare = 0.1; // share of the template side
+
+private:
+    std::vector<PointTracker> m_points;
+    QPointF m_start[4];
+    Compose::Homography m_h;
+    int m_outliers = 0;
+    double m_tolerance = kMinError;
+};
+
+// How much a w x h square around (x, y) of a picture has to hold on to: the smaller eigenvalue of its structure
+// tensor (Shi-Tomasi), gradients of values 0..1 per pixel. 0 = flat or a straight edge only (cannot be tracked)
+double cornerStrength(const Gray& g, QPointF center, double side);
 
 using Point = GradeWindows::PathPoint;
 

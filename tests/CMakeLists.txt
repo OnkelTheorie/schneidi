@@ -491,6 +491,8 @@ schneidi_test(test_comp_cli) # compositing through the CLI (0.19 G): ops comp/co
 target_link_libraries(test_comp_cli PRIVATE schneidi_cli_lib)
 schneidi_test(test_comp_tracker_lost) # losing the tracked point (0.22): seen keys, lost modes bridge/hold/fade of masks and transforms, check tracker_lost/_ended, CLI
 target_link_libraries(test_comp_tracker_lost PRIVATE schneidi_cli_lib)
+schneidi_test(test_comp_corner_pin) # four-corner tracking (0.22): QuadTracker, mode quad, node corner_pin, CLI track_node corners, recipe screen_replace
+target_link_libraries(test_comp_corner_pin PRIVATE schneidi_cli_lib)
 # Compositing graphs on the graphics card (0.19 package F) vs CompEval: merge modes, masks, keys, blur, recipes;
 # decides about the card itself (77 without a hardware device)
 schneidi_test(test_comp_gpu)

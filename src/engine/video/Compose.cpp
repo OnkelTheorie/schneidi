@@ -323,6 +323,55 @@ bool homography(int sw, int sh, const double to[8], Homography* out)
     return true;
 }
 
+Homography multiply(const Homography& b, const Homography& a)
+{
+    Homography r;
+    for (int i = 0; i < 3; ++i)
+        for (int j = 0; j < 3; ++j) {
+            double v = 0;
+            for (int k = 0; k < 3; ++k) v += b.m[3 * i + k] * a.m[3 * k + j];
+            r.m[3 * i + j] = v;
+        }
+    return r;
+}
+
+bool invert(const Homography& h, Homography* out)
+{
+    const double* m = h.m;
+    const double adj[9] = {m[4] * m[8] - m[5] * m[7], m[2] * m[7] - m[1] * m[8], m[1] * m[5] - m[2] * m[4],
+                           m[5] * m[6] - m[3] * m[8], m[0] * m[8] - m[2] * m[6], m[2] * m[3] - m[0] * m[5],
+                           m[3] * m[7] - m[4] * m[6], m[1] * m[6] - m[0] * m[7], m[0] * m[4] - m[1] * m[3]};
+    const double det = m[0] * adj[0] + m[1] * adj[3] + m[2] * adj[6];
+    if (!std::isfinite(det) || std::abs(det) < 1e-18) return false;
+    for (int i = 0; i < 9; ++i) out->m[i] = adj[i] / det;
+    return true;
+}
+
+bool mapPoint(const Homography& h, double x, double y, double* X, double* Y)
+{
+    const double* m = h.m;
+    const double w = m[6] * x + m[7] * y + m[8];
+    if (!(w > 1e-12)) return false;
+    *X = (m[0] * x + m[1] * y + m[2]) / w;
+    *Y = (m[3] * x + m[4] * y + m[5]) / w;
+    return true;
+}
+
+bool homography(const double from[8], const double to[8], Homography* out)
+{
+    // Unit square -> from, unit square -> to: from -> to = to * from^-1
+    Homography a, b, ai;
+    if (!homography(1, 1, from, &a) || !homography(1, 1, to, &b) || !invert(a, &ai)) return false;
+    Homography h = multiply(b, ai);
+    if (std::abs(h.m[8]) < 1e-15) return false;
+    const double s = 1.0 / h.m[8]; // m[8] = 1 like the rectangle's map
+    for (double& v : h.m) v *= s;
+    for (int i = 0; i < 4; ++i) // the source quad stays in front (no fold)
+        if (h.m[6] * from[2 * i] + h.m[7] * from[2 * i + 1] + h.m[8] <= 1e-9) return false;
+    *out = h;
+    return true;
+}
+
 bool tilted(const Affine& m, int sw, int sh, double px, double py, double tiltX, double tiltY, double fov, int dw,
             int dh, Homography* out)
 {

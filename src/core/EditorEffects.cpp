@@ -481,6 +481,16 @@ bool Editor::trackCompNode(int clipId, int node, const QVector<Comp::TrackPoint>
             const double v[4] = {p.x, p.y, p.scale * scale0, p.angle + angle0};
             for (int i = 0; i < 4; ++i) Keys::setKey(c, params[i], p.frame, v[i]);
         }
+        // Four corners (mode quad): absolute places, replaced in the run's range like the rest
+        if (points.first().quad) {
+            for (int i = 0; i < 8; ++i) {
+                const AnimParam cp = Keys::effectParam(Comp::kEffectId, CompGraph::paramKey(node, Comp::kCornerKeys[i]));
+                for (int t : Keys::keyTimes(c, {cp}))
+                    if (t >= lo && t <= hi) Keys::removeKey(c, cp, t);
+                for (const Comp::TrackPoint& p : points)
+                    Keys::setKey(c, cp, p.frame, i % 2 ? p.corners[i / 2].y() : p.corners[i / 2].x());
+            }
+        }
         writeSeen(c, node, points, loss);
     });
     return true;

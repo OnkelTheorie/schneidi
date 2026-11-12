@@ -203,6 +203,13 @@ QStringList CompInspector::shownKeys(const Clip& c) const
         if (k->id == QLatin1String("mask") && handleKey(p.key)) continue;
         // The tracker's seen keys are its analysis' result (shown as the warning in its analysis row, not a field)
         if (k->id == QLatin1String(::Comp::kTrackerType) && p.key == QLatin1String(::Comp::kSeenKey)) continue;
+        // Four corners (mode quad): the start corners only in that mode; the corners found are drawn in the viewer
+        if (k->id == QLatin1String(::Comp::kTrackerType)) {
+            const bool quad = PC::textValue(*k, values, QStringLiteral("mode")) == QLatin1String(::Comp::kQuadMode);
+            if (::Comp::cornerKeyIndex(p.key, 'c') >= 0) continue;
+            if (!quad && ::Comp::cornerKeyIndex(p.key, 'q') >= 0) continue;
+            if (quad && (p.key == QLatin1String("bx") || p.key == QLatin1String("by"))) continue;
+        }
         keys << p.key;
     }
     return keys;
@@ -612,6 +619,7 @@ void CompInspector::startAnalysis()
             points = r.points;
             lost = ::Comp::TrackLoss{r.lostFrames, r.gaveUp, last};
             if (r.gaveUp) note = T("Zu lange verloren: die Spur endet dort");
+            if (!r.hint.isEmpty()) note = note.isEmpty() ? r.hint : note + QStringLiteral(" – ") + r.hint;
         }
         QMetaObject::invokeMethod(guard, [guard, job, cache, points, lost, error, note] {
             if (guard) guard->analysisDone(job, cache, points, lost, error, note);

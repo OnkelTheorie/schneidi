@@ -3,6 +3,7 @@
 
 #include "app/Theme.h"
 #include "core/Editor.h"
+#include "core/CompTrack.h"
 #include "core/I18n.h"
 #include "core/Keyframes.h"
 #include "core/Project.h"
@@ -119,9 +120,26 @@ QVector<CompOverlay::Handle> CompOverlay::handles() const
         const auto own = [&](const QString& kx, const QString& ky) {
             return r.topLeft() + QPointF(num(kx) * r.width(), num(ky) * r.height());
         };
+        const QString mode = PC::textValue(*k, values, QStringLiteral("mode"));
+        if (mode == QLatin1String(::Comp::kQuadMode)) { // the four start corners, clockwise from the top left
+            for (int i = 0; i < 4; ++i) {
+                const QString kx = QString::fromLatin1(::Comp::kQuadStartKeys[2 * i]);
+                const QString ky = QString::fromLatin1(::Comp::kQuadStartKeys[2 * i + 1]);
+                out << Handle{Handle::Point, kx, ky, own(kx, ky), QString::number(i + 1), true};
+            }
+            return out;
+        }
         out << Handle{Handle::Point, "ax", "ay", own("ax", "ay"), QStringLiteral("A"), true};
-        if (PC::textValue(*k, values, QStringLiteral("mode")) == QLatin1String("two"))
+        if (mode == QLatin1String("two"))
             out << Handle{Handle::Point, "bx", "by", own("bx", "by"), QStringLiteral("B"), true};
+    } else if (k->id == QLatin1String(PC::kCornerPinType)) {
+        // Its own corners by hand; following a tracker they come from there (the corners shown as an outline only)
+        if (::Comp::followId(num(QStringLiteral("follow"))) > 0) return out;
+        for (int i = 0; i < 4; ++i) {
+            const QString kx = QString::fromLatin1(::Comp::kCornerKeys[2 * i]);
+            const QString ky = QString::fromLatin1(::Comp::kCornerKeys[2 * i + 1]);
+            out << Handle{Handle::Point, kx, ky, at(kx, ky), QString::number(i + 1)};
+        }
     }
     return out;
 }
@@ -180,6 +198,36 @@ void CompOverlay::paint(QPainter& p, const QRectF& frame)
             if (shape == QLatin1String("polygon") || shape == QLatin1String("bezier")) poly << poly.first();
             outline.addPolygon(poly);
         }
+    }
+    // Four corners (tracker mode quad, corner pin): their quad; a tracker's corners found at the playhead dashed
+    QPainterPath found;
+    if ((k->id == QLatin1String(::Comp::kTrackerType) || k->id == QLatin1String(PC::kCornerPinType)) && hs.size() == 4) {
+        QPolygonF poly;
+        for (const Handle& h : hs) poly << ct.map(h.at);
+        poly << poly.first();
+        outline.addPolygon(poly);
+        if (k->id == QLatin1String(::Comp::kTrackerType)) {
+            const AnimParam c0 = Keys::effectParam(::Comp::kEffectId, CompGraph::paramKey(m_node, ::Comp::kCornerKeys[0]));
+            if (Keys::animated(*c, c0)) {
+                const QRectF r = Tracker::pictureRect(m_editor->project()->timelineFormat(), *c);
+                QPolygonF now;
+                for (int i = 0; i < 4; ++i) {
+                    const double x = CompUi::number(*c, m_node, *k, QString::fromLatin1(::Comp::kCornerKeys[2 * i]), t);
+                    const double y = CompUi::number(*c, m_node, *k, QString::fromLatin1(::Comp::kCornerKeys[2 * i + 1]), t);
+                    now << ct.map(r.topLeft() + QPointF(x * r.width(), y * r.height()));
+                }
+                now << now.first();
+                found.addPolygon(now);
+            }
+        }
+    }
+    if (!found.isEmpty()) {
+        p.setBrush(Qt::NoBrush);
+        p.setPen(QPen(QColor(0, 0, 0, 140), 3));
+        p.drawPath(found);
+        QPen dash(Theme::primary, 1.6, Qt::DashLine);
+        p.setPen(dash);
+        p.drawPath(found);
     }
     if (!outline.isEmpty()) {
         p.setBrush(Qt::NoBrush);
