@@ -90,8 +90,9 @@ struct Uniforms {
     float yuv[16] = {};
     float lut[4] = {};
     float crop[4] = {0, 0, -1, -1};
+    float persp[4] = {0, 0, 1, 0}; // layer.frag: destination -> source w (g, h, i); affine = 0, 0, 1
 };
-static_assert(sizeof(Uniforms) == 192);
+static_assert(sizeof(Uniforms) == 208);
 
 class Texture {
 public:
@@ -810,31 +811,61 @@ void Context::draw(Texture& dst, const Layer& layer)
     if (!d->recording || !s || s == &dst || dst.kind != Texture::Target || layer.opacity <= 0) return; // no feedback loop
     const Compose::Affine& m = layer.m;
     const double det = m.a * m.e - m.b * m.d;
-    if (std::abs(det) < 1e-12) return;
+    if (!layer.projective && std::abs(det) < 1e-12) return;
     Uniforms u;
     const int sw = s->size.width(), sh = s->size.height();
     // Bounding box of the drawn source (+1 pixel: soft edge), as Compose::draw
     double x0 = 1e18, x1 = -1e18, y0 = 1e18, y1 = -1e18;
-    for (const auto& [sx, sy] : {std::pair{0.0, 0.0}, std::pair{double(sw), 0.0}, std::pair{0.0, double(sh)},
-                                 std::pair{double(sw), double(sh)}}) {
-        const double x = m.a * sx + m.b * sy + m.c, y = m.d * sx + m.e * sy + m.f;
-        x0 = std::min(x0, x), x1 = std::max(x1, x), y0 = std::min(y0, y), y1 = std::max(y1, y);
+    double quadArea = 0; // projective: the area the source covers (its overall shrink picks the mip level)
+    double q[8];         // the source's corners on the target
+    {
+        int i = 0;
+        for (const auto& [sx, sy] : {std::pair{0.0, 0.0}, std::pair{double(sw), 0.0}, std::pair{double(sw), double(sh)},
+                                     std::pair{0.0, double(sh)}}) {
+            double x = 0, y = 0;
+            if (layer.projective) {
+                if (!Compose::mapPoint(layer.h, sx, sy, &x, &y)) return; // behind the camera (Compose::homography refuses it)
+            } else {
+                x = m.a * sx + m.b * sy + m.c, y = m.d * sx + m.e * sy + m.f;
+            }
+            q[2 * i] = x, q[2 * i + 1] = y;
+            ++i;
+            x0 = std::min(x0, x), x1 = std::max(x1, x), y0 = std::min(y0, y), y1 = std::max(y1, y);
+        }
+        for (int k = 0; k < 4; ++k) quadArea += q[2 * k] * q[2 * ((k + 1) % 4) + 1] - q[2 * ((k + 1) % 4)] * q[2 * k + 1];
+        quadArea = std::abs(quadArea) / 2;
     }
+    if (layer.projective && quadArea < 0.25) return; // as Compose::draw
     const double W = dst.size.width(), H = dst.size.height();
     u.rect[0] = float(std::clamp(std::floor(x0) - 1, 0.0, W));
     u.rect[1] = float(std::clamp(std::floor(y0) - 1, 0.0, H));
     u.rect[2] = float(std::clamp(std::ceil(x1) + 1, 0.0, W));
     u.rect[3] = float(std::clamp(std::ceil(y1) + 1, 0.0, H));
     if (u.rect[0] >= u.rect[2] || u.rect[1] >= u.rect[3]) return;
-    const double ia = m.e / det, ib = -m.b / det, id = -m.d / det, ie = m.a / det;
-    u.inv0[0] = float(ia), u.inv0[1] = float(ib), u.inv0[2] = float(-(ia * m.c + ib * m.f));
-    u.inv1[0] = float(id), u.inv1[1] = float(ie), u.inv1[2] = float(-(id * m.c + ie * m.f));
+    if (layer.projective) {
+        Compose::Homography inv;
+        if (!Compose::invert(layer.h, &inv)) return;
+        // Scaled so that w is 1 on average over the drawn quad's corners (positive inside: the shader drops w <= 0)
+        double w = 0;
+        for (int k = 0; k < 4; ++k) w += (inv.m[6] * q[2 * k] + inv.m[7] * q[2 * k + 1] + inv.m[8]) / 4;
+        if (!std::isfinite(w) || std::abs(w) < 1e-15) return;
+        for (int k = 0; k < 3; ++k) {
+            u.inv0[k] = float(inv.m[k] / w);
+            u.inv1[k] = float(inv.m[3 + k] / w);
+            u.persp[k] = float(inv.m[6 + k] / w);
+        }
+    } else {
+        const double ia = m.e / det, ib = -m.b / det, id = -m.d / det, ie = m.a / det;
+        u.inv0[0] = float(ia), u.inv0[1] = float(ib), u.inv0[2] = float(-(ia * m.c + ib * m.f));
+        u.inv1[0] = float(id), u.inv1[1] = float(ie), u.inv1[2] = float(-(id * m.c + ie * m.f));
+    }
     u.inv0[3] = float(std::lround(std::clamp(layer.opacity, 0.0, 1.0) * 256) / 256.0);
     // Compose::draw halves while 2:1 or more is left (per axis). The card: the mip level both axes allow (the smaller
     // reduction), what is left per axis (no mips: all of it; squeezed: the larger one) averaged by the shader's grid of
     // taps over the pixel's footprint - bilinear alone skipped texels there (stair-steps)
     {
-        const double ax = std::hypot(m.a, m.d), ay = std::hypot(m.b, m.e);
+        double ax = std::hypot(m.a, m.d), ay = std::hypot(m.b, m.e);
+        if (layer.projective) ax = ay = std::sqrt(quadArea / std::max(1.0, double(sw) * sh)); // the overall shrink
         const double nx = ax > 0 ? 1.0 / ax : 1.0, ny = ay > 0 ? 1.0 / ay : 1.0;
         int level = 0;
         if (s->mipLevels > 1)

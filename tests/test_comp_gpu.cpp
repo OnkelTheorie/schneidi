@@ -5,6 +5,8 @@
 // blur (with mask), transform, crop, grade, and recipe-like graphs (green screen over a background with a title band,
 // masked blur, key -> grade -> blur -> merge). Within 2 code values (premultiplied colour and alpha). Also the split
 // rule: a CPU node after a card node, or a graph without card nodes, stays on the CPU; a polygon mask is uploaded.
+// Projective draws (0.22: corner pin by hand and following a quad tracker, a text's box pinned, a transform tilted in
+// depth): PSNR of premultiplied RGBA at least 40 dB.
 // Skips (77) without a hardware GPU device; SCHNEIDI_GPU=1 runs it on a software device too.
 // COMP_GPU_BENCH=n: n frames of the recipes at 1920x1080, CPU (CompEval, all threads) vs card (plan + passes +
 // readback), ms per frame.
@@ -76,6 +78,7 @@ struct Result {
     bool cpu = false, gpu = false;
     int maxColor = 0, maxAlpha = 0;
     double off = 0; // percent of pixels off by more than 1
+    double psnr = 0; // premultiplied RGBA, dB (inf = identical)
 };
 
 std::vector<uint8_t> runCard(const Gpu::CompPlan& plan, QSize size, bool read = true)
@@ -118,9 +121,15 @@ Result compare(const EffectInstance& e, const PC::Buf& clip)
     r.gpu = !gpu.empty();
     if (!r.cpu || !r.gpu || cpu.px.size() != gpu.size()) return r;
     size_t off = 0;
+    double sq = 0;
     for (size_t i = 0; i < gpu.size(); i += 4) {
         const int ac = cpu.px[i + 3], ag = gpu[i + 3];
         int worst = std::abs(ac - ag);
+        sq += double(ac - ag) * (ac - ag);
+        for (int c = 0; c < 3; ++c) {
+            const int d = (cpu.px[i + c] * ac + 127) / 255 - (gpu[i + c] * ag + 127) / 255;
+            sq += double(d) * d;
+        }
         r.maxAlpha = std::max(r.maxAlpha, worst);
         for (int c = 0; c < 3; ++c) { // premultiplied: what is seen over any background
             const int pc = (cpu.px[i + c] * ac + 127) / 255, pg = (gpu[i + c] * ag + 127) / 255;
@@ -130,7 +139,22 @@ Result compare(const EffectInstance& e, const PC::Buf& clip)
         off += worst > 1;
     }
     r.off = 100.0 * double(off) / double(gpu.size() / 4);
+    const double mse = sq / double(gpu.size());
+    r.psnr = mse > 0 ? 10 * std::log10(255.0 * 255.0 / mse) : 1e9;
     return r;
+}
+
+// Projective draws: the card's float map against the CPU's fixed point differs by a little at edges
+void close(const char* name, const EffectInstance& e, const PC::Buf& clip, double minPsnr = 40)
+{
+    const Result r = compare(e, clip);
+    const bool ok = r.cpu && r.gpu && r.psnr >= minPsnr;
+    if (qEnvironmentVariableIsSet("COMP_GPU_VERBOSE"))
+        std::printf("%-60s PSNR %.1f dB, max colour %d alpha %d, %.2f %% off by > 1\n", name, r.psnr, r.maxColor,
+                    r.maxAlpha, r.off);
+    Check::report(ok, name, __FILE__, __LINE__,
+                  QString("cpu %1 gpu %2, PSNR %3 dB, max colour %4, alpha %5").arg(r.cpu).arg(r.gpu)
+                      .arg(r.psnr, 0, 'f', 1).arg(r.maxColor).arg(r.maxAlpha));
 }
 
 void same(const char* name, const EffectInstance& e, const PC::Buf& clip, int tolerance = 2)
@@ -279,6 +303,68 @@ int main(int argc, char** argv)
     same("grade", comp({"clip", "grade"}, {{1, 2, "src"}}, 2, {{"n2.saturation", 80.0}, {"n2.contrast", 1.1}}), pic);
     same("grade in a mask", comp({"clip", "grade", "mask"}, {{1, 2, "src"}, {3, 2, "mask"}}, 2,
                                  {{"n2.saturation", 20.0}, {"n3.shape", "rect"}, {"n3.soft", 8.0}}), pic);
+
+    // 4b. Projective (0.22): a transform tilted in depth, the corner pin
+    close("transform tilted in depth", comp({"clip", "transform"}, {{1, 2, "src"}}, 2,
+                                            {{"n2.size", 0.8}, {"n2.tilt_x", 25.0}, {"n2.tilt_y", -15.0}}), pic);
+    close("transform tilted, turned, moved", comp({"clip", "transform"}, {{1, 2, "src"}}, 2,
+                                                  {{"n2.x", 0.45}, {"n2.angle", 10.0}, {"n2.tilt_y", 40.0}, {"n2.fov", 70.0}}), pic);
+    const QVariantMap pin{{"n2.c0x", 0.15}, {"n2.c0y", 0.12}, {"n2.c1x", 0.82}, {"n2.c1y", 0.2},
+                          {"n2.c2x", 0.9}, {"n2.c2y", 0.85}, {"n2.c3x", 0.1}, {"n2.c3y", 0.92}};
+    close("corner pin by hand", comp({"clip", "corner_pin"}, {{1, 2, "src"}}, 2, pin), pic);
+    close("corner pin shrinking (small quad)", comp({"clip", "corner_pin"}, {{1, 2, "src"}}, 2,
+                                                   {{"n2.c0x", 0.4}, {"n2.c0y", 0.4}, {"n2.c1x", 0.62}, {"n2.c1y", 0.42},
+                                                    {"n2.c2x", 0.6}, {"n2.c2y", 0.6}, {"n2.c3x", 0.41}, {"n2.c3y", 0.58}}), pic);
+    close("corner pin over the clip with opacity",
+          comp({"clip", "gradient", "corner_pin", "merge"}, {{2, 3, "src"}, {1, 4, "bg"}, {3, 4, "fg"}}, 4,
+               merged(merged(band(2, 0, 1, "#ff2040ff", "#ffffe020"), {{"n3.opacity", 0.7}}),
+                      {{"n3.c0x", 0.3}, {"n3.c0y", 0.2}, {"n3.c1x", 0.75}, {"n3.c1y", 0.3}, {"n3.c2x", 0.7},
+                       {"n3.c2y", 0.7}, {"n3.c3x", 0.25}, {"n3.c3y", 0.8}})), pic);
+    close("corner pin following a quad tracker (start corners)",
+          comp({"clip", "tracker", "gradient", "corner_pin", "merge"}, {{1, 2, "src"}, {3, 4, "src"}, {2, 5, "bg"}, {4, 5, "fg"}}, 5,
+               merged(band(3, 0, 1, "#ff2040ff", "#ffffe020"),
+                      {{"n2.mode", "quad"}, {"n2.q0x", 0.2}, {"n2.q0y", 0.25}, {"n2.q1x", 0.7}, {"n2.q1y", 0.2},
+                       {"n2.q2x", 0.75}, {"n2.q2y", 0.8}, {"n2.q3x", 0.25}, {"n2.q3y", 0.7}, {"n4.follow", 2.0}})), pic);
+    close("corner pin of a text (its box, uploaded)",
+          comp({"clip", "text", "corner_pin", "merge"}, {{2, 3, "src"}, {1, 4, "bg"}, {3, 4, "fg"}}, 4,
+               merged(pin, {{"n2.text", "PIN"}, {"n2.size", 40.0}, {"n3.c0x", 0.15}, {"n3.c0y", 0.12}, {"n3.c1x", 0.82},
+                            {"n3.c1y", 0.2}, {"n3.c2x", 0.9}, {"n3.c2y", 0.85}, {"n3.c3x", 0.1}, {"n3.c3y", 0.92}})), pic);
+    {
+        const PC::Env env = envFor(pic);
+        QString reason;
+        CHECK(Gpu::planComp(comp({"clip", "transform"}, {{1, 2, "src"}}, 2, {{"n2.tilt_x", 25.0}}), env, nullptr, &reason));
+        CHECK(Gpu::planComp(comp({"clip", "corner_pin"}, {{1, 2, "src"}}, 2, pin), env, nullptr, &reason));
+        // A source with a content area (a text's box, a letterboxed media) through a grade on the card: the card does
+        // not carry the area, so the graph stays on the CPU (GPU = CPU: the box is stretched, not the whole frame)
+        const EffectInstance graded =
+            comp({"clip", "text", "grade", "corner_pin", "merge"}, {{2, 3, "src"}, {3, 4, "src"}, {1, 5, "bg"}, {4, 5, "fg"}}, 5,
+                 {{"n2.text", "PIN"}, {"n2.size", 40.0}, {"n3.saturation", 60.0}, {"n4.c0x", 0.15}, {"n4.c0y", 0.12},
+                  {"n4.c1x", 0.82}, {"n4.c1y", 0.2}, {"n4.c2x", 0.9}, {"n4.c2y", 0.85}, {"n4.c3x", 0.1}, {"n4.c3y", 0.92}});
+        CHECK(!Gpu::planComp(graded, env, nullptr, &reason));
+        CHECK(reason.contains("content area"));
+        // The same pin without the grade (on the card, the text uploaded with its box): the letters land on the same
+        // pixels as the graded one on the CPU (a grade keeps alpha)
+        EffectInstance plain = graded;
+        CompGraph pg;
+        ::Comp::graphOf(plain, &pg);
+        pg.links = {{2, 4, "src"}, {1, 5, "bg"}, {4, 5, "fg"}};
+        pg.out = 4;
+        ::Comp::setGraph(plain, pg);
+        EffectInstance gradedPin = graded;
+        CompGraph gg;
+        ::Comp::graphOf(gradedPin, &gg);
+        gg.out = 4;
+        ::Comp::setGraph(gradedPin, gg);
+        PC::Buf b;
+        const Gpu::CompPlanPtr plainPlan = Gpu::planComp(plain, env, nullptr, &reason);
+        if (CHECK(plainPlan) && CHECK(PC::evaluate(gradedPin, env, nullptr, &b))) {
+            const std::vector<uint8_t> card = runCard(*plainPlan, env.size);
+            int worst = 0;
+            if (CHECK(card.size() == b.px.size()))
+                for (size_t i = 3; i < card.size(); i += 4) worst = std::max(worst, std::abs(int(card[i]) - int(b.px[i])));
+            if (!CHECK(worst <= 3)) std::printf("       letterboxed pin: alpha off by %d\n", worst);
+        }
+    }
 
     // 5. Recipes
     same("recipe green screen over a background with a title band", recipeGreenScreen(), pic);

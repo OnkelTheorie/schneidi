@@ -16,6 +16,11 @@
 // seen) or fade (hold and fade out over kFadeSeconds, fade in again once found). Gaps up to kBridgeFrames are always
 // bridged (a shake, a short blur). Followers read the visibility as numOf(id, "seen") (0..1) and multiply their
 // opacity by it. A tracker without seen keys (older projects, not analyzed) has no gaps: everything as before.
+//
+// Four corners (0.22, mode "quad"): start corners "q0x/q0y … q3x/q3y" (0..1 of the picture, clockwise from the top
+// left), the analysis writes the corners it found as keyframes "c0x … c3y" and x/y/scale/angle of the quad's middle
+// (where its diagonals cross), so every follower can follow it like any tracker. Not analyzed: c = q. A corner pin
+// (node "corner_pin") that follows a quad tracker takes its corners; numOf(id, "quad") = 1 tells it the mode.
 
 #include <QPointF>
 #include <QString>
@@ -37,12 +42,30 @@ struct TrackPoint {
     double y = 0.5;
     double scale = 1; // size against the start frame (two points: distance; face: width)
     double angle = 0; // degrees clockwise against the start frame (two points only)
+    bool quad = false;  // mode quad: corners are set
+    QPointF corners[4]; // the four corners, 0..1 of the picture
 };
 
 // The parameters the result is written into, in TrackPoint order
 inline const char* const kTrackKeys[4] = {"x", "y", "scale", "angle"};
 // The reference point (plain values, no keyframes): written by Editor::trackCompNode from the start frame's point
 inline const char* const kRefKeys[2] = {"rx", "ry"};
+// Mode quad: the start corners (plain values) and the corners found (keyframes), x then y per corner
+inline const char* const kQuadStartKeys[8] = {"q0x", "q0y", "q1x", "q1y", "q2x", "q2y", "q3x", "q3y"};
+inline const char* const kCornerKeys[8] = {"c0x", "c0y", "c1x", "c1y", "c2x", "c2y", "c3x", "c3y"};
+// Not a value: numOf(id, "quad") = 1 for a tracker in mode quad (its corners are what a corner pin follows), else 0
+inline const char* const kQuadKey = "quad";
+inline const char* const kQuadMode = "quad";
+// Where the diagonals of the quad a b c d (in order) cross; the mean of the four when they do not
+inline QPointF quadMiddle(QPointF a, QPointF b, QPointF c, QPointF d)
+{
+    // a + s (c - a) = b + u (d - b)
+    const QPointF r = c - a, q = d - b, ab = b - a;
+    const double den = r.x() * q.y() - r.y() * q.x();
+    if (std::abs(den) < 1e-12) return (a + b + c + d) / 4;
+    const double sa = (ab.x() * q.y() - ab.y() * q.x()) / den;
+    return a + sa * r;
+}
 
 // Seen keyframes (1 = found, 0 = lost), the choice what followers do in a gap and the frames in a row it may be lost
 // before the analysis gives up
@@ -123,6 +146,15 @@ inline QPointF impliedReference(const QString& mode, QPointF a, QPointF b)
     return mode == QLatin1String("two") ? (a + b) / 2 : a;
 }
 
+// The start corner of key c<i>x / c<i>y (q<i>x / q<i>y), -1 = not a corner key
+inline int cornerKeyIndex(const QString& key, char prefix)
+{
+    if (key.size() != 3 || key[0] != QLatin1Char(prefix) || key[1] < QLatin1Char('0') || key[1] > QLatin1Char('3')
+        || (key[2] != QLatin1Char('x') && key[2] != QLatin1Char('y')))
+        return -1;
+    return (key[1].unicode() - '0') * 2 + (key[2] == QLatin1Char('y') ? 1 : 0);
+}
+
 // A tracker's value as followers read it, by the rule above. has(key) = the node has a value or keyframes for key,
 // value(key) = its value at the frame (missing = the kind's default), mode = the node's mode id
 // With time (0.22): "seen" = followVisibility; in hold and fade mode x/y/scale/angle stay at the last frame seen
@@ -131,6 +163,7 @@ inline double followValue(const QString& key, const QString& mode, const std::fu
                           const std::function<double(const QString&)>& value, const FollowTime* time = nullptr)
 {
     if (key == QLatin1String(kSeenKey)) return time ? followVisibility(*time) : 1.0;
+    if (key == QLatin1String(kQuadKey)) return mode == QLatin1String(kQuadMode) ? 1.0 : 0.0;
     if (time && time->lost != LostMode::Bridge && time->valueAt) {
         if (const TrackGap* g = gapAt(time->gaps, time->t)) {
             const double at = g->openStart ? g->to + 1 : g->from - 1;
@@ -144,10 +177,18 @@ inline double followValue(const QString& key, const QString& mode, const std::fu
         if (key == QLatin1String("scale")) return 1.0;
         if (key == QLatin1String("angle")) return 0.0;
     }
+    // Corners not analyzed yet: the start corners (a pin on them does not move)
+    if (const int ci = cornerKeyIndex(key, 'c'); ci >= 0 && !has(key)) return value(QLatin1String(kQuadStartKeys[ci]));
     const bool isX = key == QLatin1String("x"), isY = key == QLatin1String("y");
     const bool isRx = key == QLatin1String("rx"), isRy = key == QLatin1String("ry");
     if (!(isX || isY || isRx || isRy) || has(key)) return value(key);
     if (isX || isY) return followValue(QLatin1String(isX ? "rx" : "ry"), mode, has, value);
+    if (mode == QLatin1String(kQuadMode)) { // the quad's middle
+        QPointF q[4];
+        for (int i = 0; i < 4; ++i) q[i] = {value(QLatin1String(kQuadStartKeys[2 * i])), value(QLatin1String(kQuadStartKeys[2 * i + 1]))};
+        const QPointF m = quadMiddle(q[0], q[1], q[2], q[3]);
+        return isRx ? m.x() : m.y();
+    }
     const QPointF r = impliedReference(mode, {value(QStringLiteral("ax")), value(QStringLiteral("ay"))},
                                        {value(QStringLiteral("bx")), value(QStringLiteral("by"))});
     return isRx ? r.x() : r.y();

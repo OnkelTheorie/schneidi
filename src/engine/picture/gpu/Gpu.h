@@ -137,6 +137,10 @@ public:
         double opacity = 1.0;
         const Lut3d* grade = nullptr;
         QRectF crop;                // source pixels kept, empty = all
+        // Set: source pixels -> target pixels through this projective map instead of m (a picture tilted in depth,
+        // a corner pin; Compose::draw with a Homography: mip steps by the overall shrink)
+        bool projective = false;
+        Compose::Homography h;
     };
     // Source over: draws the layer onto dst (premultiplied)
     void draw(Texture& dst, const Layer& layer);

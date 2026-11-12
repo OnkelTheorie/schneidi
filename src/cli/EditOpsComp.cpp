@@ -513,10 +513,49 @@ void opNode(Session& s, const QJsonObject& op)
     if (!any) fail("BAD_ARGUMENT", "node: nothing to do (params, out:true or remove:true)");
 }
 
+// track_node with mode and/or corners (0.22, mode quad): sets them on the node before the analysis; *undo is then an
+// open macro (the values and the result are one step). false = nothing given
+bool setTrackStart(Session& s, const QJsonObject& op, int clip, int node, QUndoStack** undo)
+{
+    if (!op.contains("mode") && !op.contains("corners")) return false;
+    QVariantMap values;
+    if (op.contains("mode")) {
+        const QString mode = op.value("mode").toString();
+        if (!PC::trackModeFromId(mode, nullptr))
+            fail("BAD_ARGUMENT", QString("track_node: mode is point, two, face or quad (not '%1')").arg(mode));
+        values["mode"] = mode;
+    }
+    if (op.contains("corners")) {
+        const QJsonArray a = op.value("corners").toArray();
+        if (a.size() != 4)
+            fail("BAD_ARGUMENT", "track_node: corners are four [x, y] (0..1 of the clip's picture), clockwise from the top left");
+        double to[8];
+        for (int i = 0; i < 4; ++i) {
+            const QJsonArray p = a[i].toArray();
+            if (p.size() != 2 || !p[0].isDouble() || !p[1].isDouble() || p[0].toDouble() < 0 || p[0].toDouble() > 1
+                || p[1].toDouble() < 0 || p[1].toDouble() > 1)
+                fail("BAD_ARGUMENT", QString("track_node: corner %1 must be [x, y] with numbers 0..1").arg(i));
+            to[2 * i] = p[0].toDouble(), to[2 * i + 1] = p[1].toDouble();
+            values[QString::fromLatin1(::Comp::kQuadStartKeys[2 * i])] = to[2 * i];
+            values[QString::fromLatin1(::Comp::kQuadStartKeys[2 * i + 1])] = to[2 * i + 1];
+        }
+        Compose::Homography h;
+        if (!Compose::homography(to, to, &h))
+            fail("BAD_ARGUMENT", "track_node: the corners make no quad (three on a line, or crossed: give them clockwise "
+                                 "from the top left)");
+        if (!values.contains("mode")) values["mode"] = QString::fromLatin1(::Comp::kQuadMode);
+    }
+    *undo = s.project.undoStack();
+    (*undo)->beginMacro(T("Knoten verfolgen"));
+    QString err;
+    if (!s.editor.setCompNodeValues(clip, node, values, &err)) fail("FAILED", err.isEmpty() ? QString("could not set the start values") : err);
+    return true;
+}
+
 void opTrackNode(Session& s, const QJsonObject& op)
 {
     const Clip& c = clipOf(s, op, "clip");
-    const Clip clip = c; // the timeline changes below
+    Clip clip = c; // the timeline changes below
     if (!op.contains("node")) fail("BAD_ARGUMENT", "missing 'node' (id of a tracker node)");
     const int node = op.value("node").toInt();
     const CompGraph g = graphOfClip(clip);
@@ -524,6 +563,14 @@ void opTrackNode(Session& s, const QJsonObject& op)
     if (!n) fail("NOT_FOUND", QString("no node %1 in the graph of clip %2").arg(node).arg(clip.id));
     if (n->type != QLatin1String(::Comp::kTrackerType))
         fail("BAD_ARGUMENT", QString("node %1 is a %2 node, not a tracker").arg(node).arg(n->type));
+    struct Macro {
+        QUndoStack* undo = nullptr;
+        ~Macro()
+        {
+            if (undo) undo->endMacro();
+        }
+    } macro;
+    if (setTrackStart(s, op, clip.id, node, &macro.undo)) clip = *TimelineOps::findClip(s.project.timeline(), clip.id);
     // Timeline frames in, clip frames for the analysis (backwards when to < from)
     const int last = clip.length() - 1;
     const int from = std::clamp(timeOf(s, op, "from", clip.start) - clip.start, 0, last);
@@ -546,6 +593,25 @@ void opTrackNode(Session& s, const QJsonObject& op)
     if (r.gaveUp)
         note["hint"] = "lost for too long: the track stops there; start a new track_node from a frame where it is "
                        "visible again (from), or move the start points (ax, ay)";
+    // Mode quad: the corners at the last frame tracked, and corners tracked further inside (no structure there)
+    if (!r.points.isEmpty() && r.points.last().quad) {
+        QJsonArray corners;
+        for (const QPointF& p : r.points.last().corners)
+            corners << QJsonArray{std::round(p.x() * 10000) / 10000, std::round(p.y() * 10000) / 10000};
+        note["corners"] = corners;
+        note["corners_at"] = clip.start + r.points.last().frame;
+        if (!r.movedIn.isEmpty()) {
+            QJsonArray moved;
+            for (int i : r.movedIn) moved << i;
+            note["moved_in"] = moved;
+            note["hint"] = QString("corner(s) %1 lie on a flat area: tracked a bit further inside (the corners follow "
+                                   "the other points' perspective); better: corners on visible structure").arg([&] {
+                QStringList l;
+                for (int i : r.movedIn) l << QString::number(i);
+                return l.join(", ");
+            }());
+        }
+    }
     s.notes << QJsonObject{{"track_node", note}};
 }
 
@@ -623,7 +689,14 @@ QJsonArray compNodeKindsJson()
         if (k.id == QLatin1String(::Comp::kTrackerType))
             o["note"] = "ax, ay (bx, by) = start points as 0..1 of the CLIP's own picture (without letterbox bars) at "
                         "the start frame; edit op track_node writes x, y, scale, angle as keyframes and rx, ry (the "
-                        "reference point); followers (follow = this id) move by (x - rx, y - ry) and scale/turn around (x, y)";
+                        "reference point); followers (follow = this id) move by (x - rx, y - ry) and scale/turn around (x, y). "
+                        "mode quad: start corners q0x..q3y (clockwise from the top left), results c0x..c3y as keyframes "
+                        "(track_node with corners sets the start)";
+        if (k.id == QLatin1String(PC::kCornerPinType))
+            o["note"] = "corners c0x..c3y as 0..1 of the picture, clockwise from the top left; follow = a tracker id: a "
+                        "quad tracker's corners are used, another tracker moves the own corners by the follow rule. "
+                        "Its src picture (its content area: a text's box) is stretched onto the corners, transparent "
+                        "outside - merge it over the clip";
         list << o;
     }
     return list;
@@ -795,7 +868,8 @@ void addCompOps(QVector<OpDef>& ops)
                  "(background, color, tolerance …), text_behind (background, text, color, size, x, y; the subject "
                  "from a key), blur_face (x, y, size, radius, track; then track_node on node 2), pip_frame (x, y, "
                  "size, frame_color, shadow), glitch_title (text, color, size, strength - mild), sticker_track "
-                 "(sticker = a file, x, y, size; then track_node on node 2). with:{slot: value} fills them (files = "
+                 "(sticker = a file, x, y, size; then track_node on node 2), screen_replace (picture = a file, left, top, "
+                 "right, bottom; then track_node on node 2 with corners). with:{slot: value} fills them (files = "
                  "media pool items, imported), '<node id>.<key>' sets any node value; missing slots keep the "
                  "recipe's values; an unknown slot is an error. The answer's notes give the graph and the next step. "
                  R"(Example: {"op":"comp","clips":[4],"recipe":"greenscreen","with":{"background":"/videos/beach.jpg","tolerance":0.35}}. )"
@@ -834,8 +908,17 @@ void addCompOps(QVector<OpDef>& ops)
         << OpDef{"track_node", "{op:'track_node', clip, node, from?, to?}",
                  "run a tracker node: follows its point(s) or a face over the clip; masks/transforms with follow:<id> "
                  "go along",
-                 "node = id of a 'tracker' node (mode point|two|face, start points ax, ay, bx, by at frame `from`, as 0..1 "
+                 "node = id of a 'tracker' node (mode point|two|face|quad, start points ax, ay, bx, by at frame `from`, as 0..1 "
                  "of the clip's own picture without letterbox bars). "
+                 "Four corners of a flat surface (a screen, a sign, a wall in perspective): "
+                 "{op:'track_node', clip, node, mode:'quad', corners:[[x, y], [x, y], [x, y], [x, y]]} (0..1, clockwise "
+                 "from the top left; sets the node's mode and start corners q0x..q3y, one undo step with the result). "
+                 "It writes the corners as keyframes c0x..c3y (notes: corners at the last frame) and x, y, scale, angle "
+                 "of the middle; a corner hidden or jumping is put where the other three say (counted in outliers); a "
+                 "corner on a flat area is tracked a bit further inside (notes: moved_in, hint). A 'corner_pin' node "
+                 "with follow:<id> lays its src picture onto those corners: {op:'node', clip, add:{type:'corner_pin', "
+                 "params:{follow:2}}, input:false}, then link a picture into it and merge it over the clip (recipe "
+                 "screen_replace does all of that). "
                  "from/to = timeline times inside the clip (default: the whole clip; to before from = backwards). "
                  "The result becomes keyframes of the node's x, y, scale, angle (replacing those in the range) and its "
                  "reference point rx, ry; followers move by (x - rx, y - ry). The "

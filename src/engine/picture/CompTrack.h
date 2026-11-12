@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
-// Analysis of the tracker node (compositing graph, 0.19): follows one point, two points (position, size, rotation)
-// or a face over a frame range and returns where it is per frame. Runs once on request (op/app later), never per frame
+// Analysis of the tracker node (compositing graph, 0.19): follows one point, two points (position, size, rotation),
+// four corners of a flat surface (0.22: perspective; Tracker::QuadTracker) or a face over a frame range and returns where it is per frame. Runs once on request (op/app later), never per frame
 // during playback: the result becomes keyframes of the node's own parameters (Editor::trackCompNode), the node itself
 // only passes its picture through.
 //
@@ -26,14 +26,15 @@
 
 namespace Picture::Comp {
 
-enum class TrackMode { Point, Two, Face };
-// "point", "two", "face" (the node's `mode` values); false = unknown
+enum class TrackMode { Point, Two, Face, Quad };
+// "point", "two", "face", "quad" (the node's `mode` values); false = unknown
 bool trackModeFromId(const QString& id, TrackMode* mode);
 
 struct TrackStart {
     TrackMode mode = TrackMode::Point;
     QPointF a{0.5, 0.5};  // point (or first point, or where the face is) at the start frame, 0..1 of the picture
     QPointF b{0.6, 0.5};  // second point (mode Two)
+    QPointF corners[4] = {{0.3, 0.3}, {0.7, 0.3}, {0.7, 0.7}, {0.3, 0.7}}; // mode Quad: clockwise from the top left
     double size = 0.05;   // side of the square looked for around each point, relative to the picture width
     int maxLost = ::Comp::kDefaultMaxLost; // frames in a row without a match before it gives up (a longer hiding)
 };
@@ -45,7 +46,9 @@ struct TrackRun {
     int foundAt = -1;                   // first frame found again after lostAt (-1 = not again)
     bool gaveUp = false;                // lost for maxLost frames in a row: stopped there
     bool canceled = false;
-    int outliers = 0;                   // two points: frames that used only one of them
+    int outliers = 0;                   // two points: frames that used only one of them; quad: frames without all four
+    QVector<int> movedIn;               // quad: corners (0..3) without structure, tracked a bit further inside
+    QString hint;                       // translated, for the user (moved corners), empty = none
     QString error;                      // nothing tracked (translated)
 };
 

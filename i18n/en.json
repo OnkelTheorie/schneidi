@@ -2587,7 +2587,6 @@
  "Verfolgen ▶": "Track ▶",
  "Verfolgt bis %1": "Tracked to %1",
  "Verfolgt die Startpunkte vom Abspielkopf bis zum Clipende; das Ergebnis sind Keyframes, denen andere Knoten folgen": "Tracks the start points from the playhead to the clip's end; the result is keyframes other nodes follow",
- "Verfolgt einen Punkt, zwei Punkte (Größe und Drehung) oder ein Gesicht; andere Knoten folgen ihm. Das Bild geht unverändert durch": "Tracks one point, two points (size and rotation) or a face; other nodes follow it. The picture passes through unchanged",
  "Verknüpfte Auswahl": "Linked Selection",
  "Verknüpfte Auswahl (Strg+Shift+L): an = Video und Ton eines Clips bewegen sich zusammen, aus = einzeln auswählen, verschieben und trimmen": "Linked Selection (Ctrl+Shift+L): on = a clip's video and audio move together, off = select, move and trim them separately",
  "Verknüpfung lösen": "Unlink Clips",
@@ -3045,5 +3044,15 @@
  "Rendert Clips mit Effekten oder geänderter Geschwindigkeit vor, damit die Vorschau flüssig läuft (der Export rechnet immer aus den Originalen).": "Renders clips with effects or changed speed ahead so the preview plays smoothly (the export always renders from the originals).",
  "noch nicht gerendert": "not rendered yet",
  "pausiert": "paused",
- "✕ pausiert bis zur nächsten Änderung. Ausschalten: Wiedergabe › Render-Cache › Aus": "✕ pauses it until the next change. Switch off: Playback › Render Cache › None"
+ "✕ pausiert bis zur nächsten Änderung. Ausschalten: Wiedergabe › Render-Cache › Aus": "✕ pauses it until the next change. Switch off: Playback › Render Cache › None",
+ "Auf Fläche legen": "Corner pin",
+ "Die vier Ecken bilden kein Viereck (drei auf einer Linie oder überkreuzt)": "The four corners do not make a quad (three on a line or crossed)",
+ "Ecke %1 %2 (Ergebnis)": "Corner %1 %2 (result)",
+ "Ecke %1 ohne Struktur: etwas weiter innen verfolgt": "Corner %1 has no structure: tracked a bit further inside",
+ "Ecke %1 x": "Corner %1 x",
+ "Ecke %1 y": "Corner %1 y",
+ "Fläche (4 Ecken)": "Surface (4 corners)",
+ "Id eines Tracker-Knotens (0 = keiner): im Modus „Fläche“ nimmt er dessen Ecken, sonst bewegen sich die eigenen Ecken mit dem Tracker": "Id of a tracker node (0 = none): in “Surface” mode it takes that tracker's corners, otherwise its own corners move with the tracker",
+ "Legt ein Bild oder Video perspektivisch auf vier Ecken (Bildschirm, Schild, Wand): von Hand gezogen oder den Ecken eines Trackers im Modus „Fläche“ folgend": "Lays a picture or video onto four corners in perspective (a screen, a sign, a wall): dragged by hand or following the corners of a tracker in “Surface” mode",
+ "Verfolgt einen Punkt, zwei Punkte (Größe und Drehung), vier Ecken einer Fläche (Perspektive) oder ein Gesicht; andere Knoten folgen ihm. Das Bild geht unverändert durch": "Tracks one point, two points (size and rotation), four corners of a surface (perspective) or a face; other nodes follow it. The picture passes through unchanged"
 }

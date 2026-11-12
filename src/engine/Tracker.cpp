@@ -125,6 +125,12 @@ void PointTracker::takeTemplate(const Gray& f, double x0, double y0, float mix)
     m_tNorm = std::sqrt(norm);
 }
 
+void PointTracker::relearn(const Gray& f, float mix)
+{
+    if (!valid() || f.width < m_tw || f.height < m_th || f.channels != m_channels) return;
+    takeTemplate(f, m_center.x() - m_tw / 2.0, m_center.y() - m_th / 2.0, std::clamp(mix, 0.0f, 1.0f));
+}
+
 double PointTracker::ncc(const Gray& f, int x0, int y0) const
 {
     // Weighted correlation; each channel of the template has zero weighted mean, so the picture's mean drops out of
@@ -245,6 +251,197 @@ bool TwoPointTracker::next(const Gray& f, int radius)
     if (leadA) m_b.moveTo(pb + (m_a.center() - pa));
     else m_a.moveTo(pa + (m_b.center() - pb));
     return true;
+}
+
+namespace {
+
+// The affine map taking a0 a1 a2 onto b0 b1 b2 applied to p; false when the a's lie on a line
+bool affineFrom3(const QPointF a[3], const QPointF b[3], QPointF p, QPointF* out)
+{
+    // p = a0 + s (a1 - a0) + u (a2 - a0) -> b0 + s (b1 - b0) + u (b2 - b0)
+    const QPointF e1 = a[1] - a[0], e2 = a[2] - a[0], d = p - a[0];
+    const double det = e1.x() * e2.y() - e1.y() * e2.x();
+    if (std::abs(det) < 1e-9) return false;
+    const double sv = (d.x() * e2.y() - d.y() * e2.x()) / det, uv = (e1.x() * d.y() - e1.y() * d.x()) / det;
+    *out = b[0] + sv * (b[1] - b[0]) + uv * (b[2] - b[0]);
+    return true;
+}
+
+// The similarity (shift, size, turn) taking a0 a1 onto b0 b1 applied to p
+QPointF similarityFrom2(QPointF a0, QPointF a1, QPointF b0, QPointF b1, QPointF p)
+{
+    const QPointF da = a1 - a0, db = b1 - b0;
+    const double la = da.x() * da.x() + da.y() * da.y();
+    if (la < 1e-12) return p + (b0 - a0);
+    // Complex division db / da
+    const double re = (db.x() * da.x() + db.y() * da.y()) / la, im = (db.y() * da.x() - db.x() * da.y()) / la;
+    const QPointF d = p - a0;
+    return b0 + QPointF(re * d.x() - im * d.y(), im * d.x() + re * d.y());
+}
+
+} // namespace
+
+QuadTracker::QuadTracker(const Gray& first, const QRectF regions[4])
+{
+    m_points.reserve(4);
+    double side = 0;
+    for (int i = 0; i < 4; ++i) {
+        m_points.emplace_back(first, regions[i]);
+        m_start[i] = m_points.back().center();
+        side = std::max({side, double(m_points.back().templateWidth()), double(m_points.back().templateHeight())});
+    }
+    m_tolerance = std::max(kMinError, kErrorShare * side);
+}
+
+bool QuadTracker::valid() const
+{
+    if (m_points.size() != 4) return false;
+    for (const PointTracker& p : m_points)
+        if (!p.valid()) return false;
+    double from[8], to[8];
+    for (int i = 0; i < 4; ++i) from[2 * i] = to[2 * i] = m_start[i].x(), from[2 * i + 1] = to[2 * i + 1] = m_start[i].y();
+    Compose::Homography h;
+    return Compose::homography(from, to, &h); // a quad (no three on a line, not crossed)
+}
+
+double QuadTracker::score() const
+{
+    double s = 1;
+    for (const PointTracker& p : m_points) s = std::min(s, p.score());
+    return s;
+}
+
+bool QuadTracker::next(const Gray& f, int radius)
+{
+    if (m_points.size() != 4) return false;
+    QPointF prev[4], now[4];
+    bool good[4];
+    int n = 0;
+    for (int i = 0; i < 4; ++i) {
+        prev[i] = m_points[size_t(i)].center();
+        // Searched where the last frame's movement carries it (a camera moving fast: the search window stays on it)
+        if (m_moved) m_points[size_t(i)].moveTo(prev[i] + m_step[i]);
+        good[i] = m_points[size_t(i)].next(f, radius);
+        now[i] = m_points[size_t(i)].center();
+        n += good[i];
+    }
+    // All four found: each one against where the frame's movement of the other three puts it. One point off moves the
+    // others' predictions as much as its own (any three fit an affine map), so the error says only that one is off:
+    // which one is the point moving most unlike the others (against the median movement)
+    if (n == 4) {
+        double worst = 0;
+        for (int i = 0; i < 4; ++i) {
+            QPointF a[3], b[3], pred;
+            for (int j = 0, k = 0; j < 4; ++j)
+                if (j != i) a[k] = prev[j], b[k++] = now[j];
+            if (affineFrom3(a, b, prev[i], &pred)) worst = std::max(worst, std::hypot(now[i].x() - pred.x(), now[i].y() - pred.y()));
+        }
+        if (worst > m_tolerance) {
+            double mx[4], my[4];
+            for (int i = 0; i < 4; ++i) mx[i] = now[i].x() - prev[i].x(), my[i] = now[i].y() - prev[i].y();
+            std::sort(mx, mx + 4);
+            std::sort(my, my + 4);
+            const QPointF median((mx[1] + mx[2]) / 2, (my[1] + my[2]) / 2);
+            int out = 0;
+            double far = -1;
+            for (int i = 0; i < 4; ++i) {
+                const QPointF d = now[i] - prev[i] - median;
+                // Ties (a symmetric move): the weaker match
+                const double v = std::hypot(d.x(), d.y()) + 1e-3 * (1 - m_points[size_t(i)].score());
+                if (v > far) {
+                    far = v;
+                    out = i;
+                }
+            }
+            good[out] = false;
+            n = 3;
+        }
+    }
+    m_outliers = 4 - n;
+    // The four agree: the surface turns and grows under the templates (a camera walking up to a sign), so the points
+    // the others confirm learn their new look faster than a lone point may (it could learn what hides it). A match
+    // already weak (something in front) learns nothing
+    // Four found and agreeing confirm each other. Three fit any affine map, nothing confirms them: then only a point
+    // matching well on its own learns (a corner hidden: the others must not drift meanwhile, but a camera walking
+    // up to a sign while one corner leaves the picture must not lose the other three either)
+    if (n >= 3)
+        for (int i = 0; i < 4; ++i)
+            if (good[i] && m_points[size_t(i)].score() >= (n == 4 ? kLearn : kLearnAlone))
+                m_points[size_t(i)].relearn(f, kLearnMix);
+    if (n < 2) {
+        for (int i = 0; i < 4; ++i) m_points[size_t(i)].moveTo(prev[i]);
+        m_moved = false; // lost: no movement to go on from
+        return false;
+    }
+    // The points not used follow the good ones
+    if (n < 4) {
+        int idx[4], k = 0;
+        for (int i = 0; i < 4; ++i)
+            if (good[i]) idx[k++] = i;
+        for (int i = 0; i < 4; ++i) {
+            if (good[i]) continue;
+            QPointF p;
+            bool ok = false;
+            if (n == 3) {
+                const QPointF a[3] = {prev[idx[0]], prev[idx[1]], prev[idx[2]]};
+                const QPointF b[3] = {now[idx[0]], now[idx[1]], now[idx[2]]};
+                ok = affineFrom3(a, b, prev[i], &p);
+            }
+            if (!ok) p = similarityFrom2(prev[idx[0]], prev[idx[1]], now[idx[0]], now[idx[1]], prev[i]);
+            m_points[size_t(i)].moveTo(p);
+        }
+    }
+    // The surface cannot grow or shrink by a third in one frame: points sliding together (the surface leaving the
+    // picture, a corner taken over by another one) - lost, rather than a collapsing quad
+    const auto area = [](const QPointF* q) {
+        double a = 0;
+        for (int i = 0; i < 4; ++i) a += q[i].x() * q[(i + 1) % 4].y() - q[(i + 1) % 4].x() * q[i].y();
+        return a / 2;
+    };
+    QPointF cur[4];
+    for (int i = 0; i < 4; ++i) cur[i] = point(i);
+    const double before = area(prev), after = area(cur);
+    if (before == 0 || after / before < 1 / kMaxAreaStep || after / before > kMaxAreaStep) {
+        for (int i = 0; i < 4; ++i) m_points[size_t(i)].moveTo(prev[i]);
+        m_moved = false;
+        m_outliers = 4;
+        return false;
+    }
+    double from[8], to[8];
+    for (int i = 0; i < 4; ++i) {
+        from[2 * i] = m_start[i].x(), from[2 * i + 1] = m_start[i].y();
+        to[2 * i] = point(i).x(), to[2 * i + 1] = point(i).y();
+        m_step[i] = point(i) - prev[i];
+    }
+    m_moved = true;
+    Compose::Homography h;
+    if (Compose::homography(from, to, &h)) m_h = h; // folded (a bad frame): the last one stays
+    return true;
+}
+
+double cornerStrength(const Gray& g, QPointF center, double side)
+{
+    const int half = std::max(2, int(std::lround(side / 2)));
+    const int cx = int(std::lround(center.x())), cy = int(std::lround(center.y()));
+    double a = 0, b = 0, c = 0;
+    int n = 0;
+    for (int y = std::max(1, cy - half); y <= std::min(g.height - 2, cy + half); ++y)
+        for (int x = std::max(1, cx - half); x <= std::min(g.width - 2, cx + half); ++x) {
+            double gx = 0, gy = 0;
+            for (int ch = 0; ch < g.channels; ++ch) {
+                gx += (g.at(x + 1, y, ch) - g.at(x - 1, y, ch)) / 2;
+                gy += (g.at(x, y + 1, ch) - g.at(x, y - 1, ch)) / 2;
+            }
+            gx /= g.channels;
+            gy /= g.channels;
+            a += gx * gx;
+            b += gx * gy;
+            c += gy * gy;
+            ++n;
+        }
+    if (n == 0) return 0;
+    a /= n, b /= n, c /= n;
+    return (a + c) / 2 - std::sqrt((a - c) * (a - c) / 4 + b * b);
 }
 
 std::function<QImage(int, int)> clipFrames(const ProjectFormat& format, const Clip& c)
