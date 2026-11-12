@@ -7,6 +7,7 @@
 #include "Cabac.h"
 #include "Cavlc.h"
 #include "Satd.h"
+#include "Transform.h"
 #include "ThreadErrors.h"
 
 #include <algorithm>
@@ -193,51 +194,6 @@ inline void spinWait()
 // Blocks in luma4x4BlkIdx order -> (x, y) in 4x4 units inside the macroblock.
 constexpr int kBlkX[16] = {0, 1, 0, 1, 2, 3, 2, 3, 0, 1, 0, 1, 2, 3, 2, 3};
 constexpr int kBlkY[16] = {0, 0, 1, 1, 0, 0, 1, 1, 2, 2, 3, 3, 2, 2, 3, 3};
-
-void forward4x4(const int* in, int* out)
-{
-    int t[16];
-    for (int y = 0; y < 4; ++y) {
-        const int* r = in + y * 4;
-        const int s03 = r[0] + r[3], d03 = r[0] - r[3];
-        const int s12 = r[1] + r[2], d12 = r[1] - r[2];
-        t[y * 4 + 0] = s03 + s12;
-        t[y * 4 + 1] = 2 * d03 + d12;
-        t[y * 4 + 2] = s03 - s12;
-        t[y * 4 + 3] = d03 - 2 * d12;
-    }
-    for (int x = 0; x < 4; ++x) {
-        const int s03 = t[x] + t[12 + x], d03 = t[x] - t[12 + x];
-        const int s12 = t[4 + x] + t[8 + x], d12 = t[4 + x] - t[8 + x];
-        out[x] = s03 + s12;
-        out[4 + x] = 2 * d03 + d12;
-        out[8 + x] = s03 - s12;
-        out[12 + x] = d03 - 2 * d12;
-    }
-}
-
-// 8.5.12.2: rows first, then columns, then (x + 32) >> 6.
-void inverse4x4(const int* in, int* out)
-{
-    int t[16];
-    for (int y = 0; y < 4; ++y) {
-        const int* d = in + y * 4;
-        const int e = d[0] + d[2], f = d[0] - d[2];
-        const int g = (d[1] >> 1) - d[3], h = d[1] + (d[3] >> 1);
-        t[y * 4 + 0] = e + h;
-        t[y * 4 + 1] = f + g;
-        t[y * 4 + 2] = f - g;
-        t[y * 4 + 3] = e - h;
-    }
-    for (int x = 0; x < 4; ++x) {
-        const int e = t[x] + t[8 + x], f = t[x] - t[8 + x];
-        const int g = (t[4 + x] >> 1) - t[12 + x], h = t[4 + x] + (t[12 + x] >> 1);
-        out[x] = (e + h + 32) >> 6;
-        out[4 + x] = (f + g + 32) >> 6;
-        out[8 + x] = (f - g + 32) >> 6;
-        out[12 + x] = (e - h + 32) >> 6;
-    }
-}
 
 // 4x4 Hadamard (used for the luma DC both ways).
 inline int quantize(int coef, int mf, int qbits, int offset)
@@ -2335,6 +2291,116 @@ void predict8x8(int mode, const int* T, const int* L, bool left, bool top, uint8
     }
 }
 
+// Directional intra prediction by table. With the edge E = p[-1, N-1..0], the corner, p[0..2N-1, -1]
+// (3N + 1 samples), every sample of the directional modes is (sum of w_i E_i + 2) >> 2 with quarter
+// weights: a copy, a two-tap (a + b + 1) >> 1, a three-tap (a + 2b + c + 2) >> 2 or (a + 3b + 2) >> 2 at
+// the far end. intraEdges() computes all of them once per block, the table (made by feeding the
+// formulas above unit edges) says which one each sample of a mode is: same numbers, no per-sample
+// branches. DC (mode 2) keeps its own path.
+template <int N>
+struct IntraDirTable {
+    static constexpr int kE = 3 * N + 1;           // edge samples
+    static constexpr int kG = kE + (kE - 1) + (kE - 2) + 2; // + two-tap + three-tap + two (1, 3) ends
+    uint8_t idx[9][N * N] = {};
+    bool ok = true;
+    IntraDirTable()
+    {
+        // Weight vectors (quarters) of the candidate values.
+        std::vector<std::array<int, kE>> cand(kG);
+        for (auto& c : cand)
+            c.fill(0);
+        for (int j = 0; j < kE; ++j)
+            cand[size_t(j)][size_t(j)] = 4;
+        for (int j = 0; j < kE - 1; ++j)
+            cand[size_t(kE + j)][size_t(j)] = cand[size_t(kE + j)][size_t(j + 1)] = 2;
+        for (int j = 0; j < kE - 2; ++j) {
+            auto& c = cand[size_t(2 * kE - 1 + j)];
+            c[size_t(j)] = 1;
+            c[size_t(j + 1)] = 2;
+            c[size_t(j + 2)] = 1;
+        }
+        // (l[N-2] + 3 l[N-1] + 2) >> 2 and (t[2N-2] + 3 t[2N-1] + 2) >> 2.
+        cand[size_t(kG - 2)][1] = 1;
+        cand[size_t(kG - 2)][0] = 3;
+        cand[size_t(kG - 1)][size_t(kE - 2)] = 1;
+        cand[size_t(kG - 1)][size_t(kE - 1)] = 3;
+        int w[9][N * N][kE] = {};
+        for (int j = 0; j < kE; ++j) {
+            int e[kE] = {};
+            e[j] = 64;
+            int T[2 * N + 1], L[N];
+            T[0] = e[N];
+            for (int x = 0; x < 2 * N; ++x)
+                T[1 + x] = e[N + 1 + x];
+            for (int y = 0; y < N; ++y)
+                L[y] = e[N - 1 - y];
+            for (int m = 0; m < 9; ++m) {
+                if (m == 2)
+                    continue;
+                uint8_t out[N * N];
+                if constexpr (N == 4)
+                    predict4x4(m, T, L, true, true, out);
+                else
+                    predict8x8(m, T, L, true, true, out);
+                for (int p = 0; p < N * N; ++p) {
+                    if (out[p] % 16)
+                        ok = false;
+                    w[m][p][j] = out[p] / 16;
+                }
+            }
+        }
+        for (int m = 0; m < 9; ++m) {
+            if (m == 2)
+                continue;
+            for (int p = 0; p < N * N; ++p) {
+                int found = -1;
+                for (int c = 0; c < kG && found < 0; ++c)
+                    if (std::equal(cand[size_t(c)].begin(), cand[size_t(c)].end(), w[m][p]))
+                        found = c;
+                if (found < 0)
+                    ok = false;
+                else
+                    idx[m][p] = uint8_t(found);
+            }
+        }
+    }
+    // All candidate values of one block's edge (T and L as predict4x4 / predict8x8 take them).
+    static void edges(const int* T, const int* L, uint8_t* g)
+    {
+        int e[kE];
+        for (int y = 0; y < N; ++y)
+            e[N - 1 - y] = L[y];
+        e[N] = T[0];
+        for (int x = 0; x < 2 * N; ++x)
+            e[N + 1 + x] = T[1 + x];
+        for (int j = 0; j < kE; ++j)
+            g[j] = uint8_t(e[j]);
+        for (int j = 0; j < kE - 1; ++j)
+            g[kE + j] = uint8_t((e[j] + e[j + 1] + 1) >> 1);
+        for (int j = 0; j < kE - 2; ++j)
+            g[2 * kE - 1 + j] = uint8_t((e[j] + 2 * e[j + 1] + e[j + 2] + 2) >> 2);
+        g[kG - 2] = uint8_t((e[1] + 3 * e[0] + 2) >> 2);
+        g[kG - 1] = uint8_t((e[kE - 2] + 3 * e[kE - 1] + 2) >> 2);
+    }
+    void predict(int mode, const uint8_t* g, uint8_t* pred) const
+    {
+        const uint8_t* t = idx[mode];
+        for (int p = 0; p < N * N; ++p)
+            pred[p] = g[t[p]];
+    }
+};
+
+const IntraDirTable<4>& intraDir4()
+{
+    static const IntraDirTable<4> t;
+    return t;
+}
+const IntraDirTable<8>& intraDir8()
+{
+    static const IntraDirTable<8> t;
+    return t;
+}
+
 } // namespace
 
 struct FrameCoder::ChromaMb {
@@ -2626,6 +2692,10 @@ bool FrameCoder::encodeLuma4(MbOut& o, int mbx, int mby, const ChromaMb& ch)
                 src[y * 4 + x] = srcY_[size_t(py + y) * padW_ + px + x];
 
         uint8_t pred[16], cand[16];
+        const IntraDirTable<4>& dir = intraDir4();
+        uint8_t edge[IntraDirTable<4>::kG];
+        if (dir.ok)
+            IntraDirTable<4>::edges(T, L, edge);
         int bestMode = 2, bestCost = 1 << 30;
         auto tryMode = [&](int mode) {
             const bool needsTop = mode == 0 || mode == 3 || mode == 7;
@@ -2633,7 +2703,10 @@ bool FrameCoder::encodeLuma4(MbOut& o, int mbx, int mby, const ChromaMb& ch)
             const bool needsBoth = mode >= 4 && mode <= 6;
             if ((needsTop && !top) || (needsLeft && !left) || (needsBoth && !(top && left)))
                 return 1 << 30;
-            predict4x4(mode, T, L, left, top, cand);
+            if (mode != 2 && dir.ok)
+                dir.predict(mode, edge, cand);
+            else
+                predict4x4(mode, T, L, left, top, cand);
             const int cost = satdU8(&srcY_[size_t(py) * padW_ + px], padW_, cand, 4) + lambda * (mode == predMode ? 1 : 4);
             if (cost < bestCost) {
                 bestCost = cost;
@@ -2866,22 +2939,6 @@ void inverse8Line(const T* d, T* g, bool exact)
     g[7] = f0 - f7;
 }
 
-// Decoder-exact inverse: rows, then columns, then (x + 32) >> 6.
-void inverse8x8(const int* d, int* out)
-{
-    int t[64];
-    for (int i = 0; i < 8; ++i)
-        inverse8Line<int>(d + i * 8, t + i * 8, true);
-    for (int j = 0; j < 8; ++j) {
-        int col[8], res[8];
-        for (int i = 0; i < 8; ++i)
-            col[i] = t[i * 8 + j];
-        inverse8Line<int>(col, res, true);
-        for (int i = 0; i < 8; ++i)
-            out[i * 8 + j] = (res[i] + 32) >> 6;
-    }
-}
-
 // Real-valued basis of the inverse (basis[k][x] = output sample x for a unit coefficient k)
 // and its squared norms; the encoder's forward transform is its transpose.
 struct Basis8 {
@@ -2912,15 +2969,9 @@ const Basis8& basis8()
 // multiples of 1/8, so 8 * basis is integer and the transform runs exactly in integers.
 void quantize8x8(const int* residual, int qp, double offset, int* levels, double* real = nullptr)
 {
-    static const auto kM = [] { // 8 * basis, integer
-        std::array<std::array<int, 8>, 8> m{};
-        const Basis8& B = basis8();
-        for (int k = 0; k < 8; ++k)
-            for (int x = 0; x < 8; ++x)
-                m[size_t(k)][size_t(x)] = int(std::lround(8.0 * B.b[k][x]));
-        return m;
-    }();
-    static const auto kScale = [] { // 256 / (n_i n_j v8) by QP % 6 and position, the /64 of the integer transform folded in
+    // Decoder: r = B^T (Z * v8 * 2^(qp/6 - 2)) B / 64, so Z = 256 * W / (n_i n_j v8 2^(qp/6)) with W = w64 / 64,
+    // i.e. Z = 4 * w64 / den: both multiplications by powers of two are exact, so this is the same double.
+    static const auto kScale = [] { // n_i n_j v8 by QP % 6 and position
         std::array<std::array<double, 64>, 6> t{};
         const Basis8& B = basis8();
         for (int q = 0; q < 6; ++q)
@@ -2928,41 +2979,37 @@ void quantize8x8(const int* residual, int qp, double offset, int* levels, double
                 t[size_t(q)][size_t(k)] = B.norm[k >> 3] * B.norm[k & 7] * kDequantV8[q][posClass8(k)];
         return t;
     }();
-    int32_t tmp[64];
-    for (int y = 0; y < 8; ++y) {
-        const int* r = residual + y * 8;
-        for (int j = 0; j < 8; ++j) {
-            const int* m = kM[size_t(j)].data();
-            tmp[y * 8 + j] = m[0] * r[0] + m[1] * r[1] + m[2] * r[2] + m[3] * r[3] + m[4] * r[4] + m[5] * r[5] + m[6] * r[6] + m[7] * r[7];
-        }
-    }
+    int w64[64];
+    forward8x8(residual, w64);
     const double step2 = double(1 << (qp / 6));
     const double* scale = kScale[size_t(qp % 6)].data();
-    for (int i = 0; i < 8; ++i) {
-        const int* m = kM[size_t(i)].data();
-        for (int j = 0; j < 8; ++j) {
-            const int32_t w64 = m[0] * tmp[j] + m[1] * tmp[8 + j] + m[2] * tmp[16 + j] + m[3] * tmp[24 + j] + m[4] * tmp[32 + j] +
-                                m[5] * tmp[40 + j] + m[6] * tmp[48 + j] + m[7] * tmp[56 + j];
-            // Decoder: r = B^T (Z * v8 * 2^(qp/6 - 2)) B / 64, so Z = 256 * W / (n_i n_j v8 2^(qp/6)).
-            const int k = i * 8 + j;
-            const double x = 256.0 * (double(w64) / 64.0) / (scale[k] * step2);
-            const int mag = std::min(int(std::abs(x) + offset), kMaxLevel);
-            levels[k] = x < 0 ? -mag : mag;
-            if (real)
-                real[k] = x;
-        }
+    for (int k = 0; k < 64; ++k) {
+        const double x = 4.0 * double(w64[k]) / (scale[k] * step2);
+        const int mag = std::min(int(std::abs(x) + offset), kMaxLevel);
+        levels[k] = x < 0 ? -mag : mag;
+        if (real)
+            real[k] = x;
     }
 }
 
 void dequant8x8(const int* levels, int qp, int* d)
 {
-    const int qpDiv = qp / 6, qpMod = qp % 6;
-    for (int k = 0; k < 64; ++k) {
-        const int ls = 16 * kDequantV8[qpMod][posClass8(k)];
-        if (qpDiv >= 6)
-            d[k] = (levels[k] * ls) << (qpDiv - 6);
-        else
-            d[k] = (levels[k] * ls + (1 << (5 - qpDiv))) >> (6 - qpDiv);
+    static const auto kLs = [] { // 16 * normAdjust8x8 by QP % 6 and position
+        std::array<std::array<int, 64>, 6> t{};
+        for (int q = 0; q < 6; ++q)
+            for (int k = 0; k < 64; ++k)
+                t[size_t(q)][size_t(k)] = 16 * kDequantV8[q][posClass8(k)];
+        return t;
+    }();
+    const int qpDiv = qp / 6;
+    const int* ls = kLs[size_t(qp % 6)].data();
+    if (qpDiv >= 6) {
+        for (int k = 0; k < 64; ++k)
+            d[k] = (levels[k] * ls[k]) << (qpDiv - 6);
+    } else {
+        const int sh = 6 - qpDiv, rnd = 1 << (5 - qpDiv);
+        for (int k = 0; k < 64; ++k)
+            d[k] = (levels[k] * ls[k] + rnd) >> sh;
     }
 }
 
@@ -3035,6 +3082,10 @@ bool FrameCoder::encodeLuma8(MbOut& o, int mbx, int mby, const ChromaMb& ch)
         }
 
         uint8_t pred[64], cand[64];
+        const IntraDirTable<8>& dir = intraDir8();
+        uint8_t edge[IntraDirTable<8>::kG];
+        if (dir.ok)
+            IntraDirTable<8>::edges(T, L, edge);
         int bestMode = 2, bestCost = 1 << 30;
         auto tryMode = [&](int mode) {
             const bool needsTop = mode == 0 || mode == 3 || mode == 7;
@@ -3042,7 +3093,10 @@ bool FrameCoder::encodeLuma8(MbOut& o, int mbx, int mby, const ChromaMb& ch)
             const bool needsBoth = mode >= 4 && mode <= 6;
             if ((needsTop && !top) || (needsLeft && !left) || (needsBoth && !corner))
                 return 1 << 30;
-            predict8x8(mode, T, L, left, top, cand);
+            if (mode != 2 && dir.ok)
+                dir.predict(mode, edge, cand);
+            else
+                predict8x8(mode, T, L, left, top, cand);
             const int cost = lambda * (mode == predMode ? 1 : 4) + satd8x8U8Fast(&srcY_[size_t(py) * padW_ + px], padW_, cand, 8);
             if (cost < bestCost) {
                 bestCost = cost;
@@ -3166,16 +3220,42 @@ void FrameCoder::restoreMb(int mbx, int mby, const MbState& s)
 
 int64_t FrameCoder::mbSsd(int mbx, int mby) const
 {
-    int64_t s = 0;
     const size_t lo = size_t(mby * 16) * padW_ + mbx * 16;
+    const int cw = padW_ / 2;
+    const size_t co = size_t(mby * 8) * cw + mbx * 8;
+#if defined(__SSE2__) || defined(_M_X64)
+    // At most 256 * 255^2 + 128 * 255^2: fits 32 bits.
+    const __m128i zero = _mm_setzero_si128();
+    __m128i acc = zero;
+    auto add8 = [&](__m128i a, __m128i b) { // 8 samples, zero-extended to 16 bits
+        const __m128i d = _mm_sub_epi16(a, b);
+        acc = _mm_add_epi32(acc, _mm_madd_epi16(d, d));
+    };
+    for (int y = 0; y < 16; ++y) {
+        const size_t o = lo + size_t(y) * padW_;
+        const __m128i a = _mm_loadu_si128(reinterpret_cast<const __m128i*>(&srcY_[o]));
+        const __m128i b = _mm_loadu_si128(reinterpret_cast<const __m128i*>(&recY_[o]));
+        add8(_mm_unpacklo_epi8(a, zero), _mm_unpacklo_epi8(b, zero));
+        add8(_mm_unpackhi_epi8(a, zero), _mm_unpackhi_epi8(b, zero));
+    }
+    for (int y = 0; y < 8; ++y) {
+        const size_t o = co + size_t(y) * cw;
+        add8(_mm_unpacklo_epi8(_mm_loadl_epi64(reinterpret_cast<const __m128i*>(&srcU_[o])), zero),
+             _mm_unpacklo_epi8(_mm_loadl_epi64(reinterpret_cast<const __m128i*>(&recU_[o])), zero));
+        add8(_mm_unpacklo_epi8(_mm_loadl_epi64(reinterpret_cast<const __m128i*>(&srcV_[o])), zero),
+             _mm_unpacklo_epi8(_mm_loadl_epi64(reinterpret_cast<const __m128i*>(&recV_[o])), zero));
+    }
+    acc = _mm_add_epi32(acc, _mm_shuffle_epi32(acc, _MM_SHUFFLE(1, 0, 3, 2)));
+    acc = _mm_add_epi32(acc, _mm_shuffle_epi32(acc, _MM_SHUFFLE(2, 3, 0, 1)));
+    return int64_t(uint32_t(_mm_cvtsi128_si32(acc)));
+#else
+    int64_t s = 0;
     for (int y = 0; y < 16; ++y)
         for (int x = 0; x < 16; ++x) {
             const size_t o = lo + size_t(y) * padW_ + x;
             const int d = int(srcY_[o]) - int(recY_[o]);
             s += d * d;
         }
-    const int cw = padW_ / 2;
-    const size_t co = size_t(mby * 8) * cw + mbx * 8;
     for (int y = 0; y < 8; ++y)
         for (int x = 0; x < 8; ++x) {
             const size_t o = co + size_t(y) * cw + x;
@@ -3184,6 +3264,7 @@ int64_t FrameCoder::mbSsd(int mbx, int mby) const
             s += du * du + dv * dv;
         }
     return s;
+#endif
 }
 
 // Neighbouring 4x4 block (x4, y4 relative to the macroblock, may be -1 or 4) for motion
@@ -3419,8 +3500,7 @@ void FrameCoder::codeInterLuma(int mbx, int mby, const uint8_t* lp, int qp, doub
     const int interOffset = (1 << qbits) / 6;
     int (*levels)[16] = ir.levels;
     int (*levels8)[64] = ir.levels8;
-    int cbpLuma = 0;
-    std::memset(ir.levels8, 0, sizeof(ir.levels8));
+    int cbpLuma = 0; // levels8 is only read with t8, which writes all of it
     if (t8) {
         // No decimation here: measured, it costs more quality than it saves for 8x8 blocks.
         for (int b8 = 0; b8 < 4; ++b8) {

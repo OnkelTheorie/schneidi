@@ -53,7 +53,10 @@ void Lookahead::prepare(LookaheadFrame& f) const
         const uint8_t* r0 = f.y.data() + size_t(sy0) * width_;
         const uint8_t* r1 = f.y.data() + size_t(sy1) * width_;
         uint8_t* out = f.half.data() + size_t(y + kMargin) * stride + kMargin;
-        for (int x = 0; x < halfW_; ++x) {
+        const int inside = std::min(halfW_, width_ / 2); // both source columns inside the picture
+        for (int x = 0; x < inside; ++x)
+            out[x] = uint8_t((r0[2 * x] + r0[2 * x + 1] + r1[2 * x] + r1[2 * x + 1] + 2) >> 2);
+        for (int x = inside; x < halfW_; ++x) {
             const int sx0 = std::min(2 * x, width_ - 1), sx1 = std::min(2 * x + 1, width_ - 1);
             out[x] = uint8_t((r0[sx0] + r0[sx1] + r1[sx0] + r1[sx1] + 2) >> 2);
         }
@@ -75,8 +78,18 @@ void Lookahead::prepare(LookaheadFrame& f) const
     {
         const int tw = mbW_ * 4, th = mbH_ * 4;
         f.thumb.assign(size_t(tw) * th, 0);
-        for (int y = 0; y < th; ++y)
-            for (int x = 0; x < tw; ++x) {
+        const int inside = std::min(tw, width_ / 4); // all four source columns inside the picture
+        for (int y = 0; y < th; ++y) {
+            const uint8_t* rows[4];
+            for (int dy = 0; dy < 4; ++dy)
+                rows[dy] = f.y.data() + size_t(std::min(y * 4 + dy, height_ - 1)) * width_;
+            for (int x = 0; x < inside; ++x) {
+                int sum = 0;
+                for (int dy = 0; dy < 4; ++dy)
+                    sum += rows[dy][4 * x] + rows[dy][4 * x + 1] + rows[dy][4 * x + 2] + rows[dy][4 * x + 3];
+                f.thumb[size_t(y) * tw + x] = uint8_t((sum + 8) >> 4);
+            }
+            for (int x = inside; x < tw; ++x) {
                 int sum = 0;
                 for (int dy = 0; dy < 4; ++dy) {
                     const uint8_t* row = f.y.data() + size_t(std::min(y * 4 + dy, height_ - 1)) * width_;
@@ -85,6 +98,7 @@ void Lookahead::prepare(LookaheadFrame& f) const
                 }
                 f.thumb[size_t(y) * tw + x] = uint8_t((sum + 8) >> 4);
             }
+        }
     }
 }
 
