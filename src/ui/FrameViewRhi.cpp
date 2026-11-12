@@ -4,11 +4,18 @@
 #include "core/StartupTrace.h"
 
 #include <QFile>
+#include <QGuiApplication>
 #include <QOffscreenSurface>
+#include <QSettings>
 #include <QTimer>
+#include <QWindow>
 #include <rhi/qrhi.h>
+#if defined(SCHNEIDI_VIEWER_VULKAN)
+#include <QVulkanInstance>
+#endif
 
 #include <cstring>
+#include <future>
 #include <optional>
 
 namespace {
@@ -30,6 +37,33 @@ bool softwareDevice(const QRhiDriverInfo& info)
 
 } // namespace
 
+namespace {
+// The viewer's API on Linux/BSD, decided once per run (FrameView::preferVulkan); false after a Vulkan failure
+std::optional<bool> g_vulkan;
+constexpr const char* kApiKey = "viewer/gpuApi"; // "opengl" after Vulkan failed here (FrameView::preferVulkan)
+} // namespace
+
+bool FrameViewRhiSurface::vulkan()
+{
+#if defined(SCHNEIDI_VIEWER_VULKAN)
+    if (!g_vulkan)
+        g_vulkan = FrameView::preferVulkan(qEnvironmentVariable("SCHNEIDI_VIEWER_API"),
+                                           QSettings().value(kApiKey).toString(), QGuiApplication::platformName(), true);
+    return *g_vulkan;
+#else
+    return false;
+#endif
+}
+
+void FrameViewRhiSurface::vulkanFailed(const QString& why)
+{
+    if (!vulkan()) return;
+    g_vulkan = false;
+    qWarning("Viewer: Vulkan not usable (%s), OpenGL from now on", qPrintable(why));
+    // Remembered unless the environment asked for Vulkan (a test of it must not change the user's choice)
+    if (qEnvironmentVariableIsEmpty("SCHNEIDI_VIEWER_API")) QSettings().setValue(kApiKey, QStringLiteral("opengl"));
+}
+
 QRhiWidget::Api FrameViewRhiSurface::platformApi()
 {
 #if defined(Q_OS_WIN)
@@ -37,7 +71,7 @@ QRhiWidget::Api FrameViewRhiSurface::platformApi()
 #elif defined(Q_OS_MACOS) || defined(Q_OS_IOS)
     return QRhiWidget::Api::Metal;
 #else
-    return QRhiWidget::Api::OpenGL;
+    return vulkan() ? QRhiWidget::Api::Vulkan : QRhiWidget::Api::OpenGL;
 #endif
 }
 
@@ -48,8 +82,39 @@ QSurface::SurfaceType FrameViewRhiSurface::surfaceType()
 #elif defined(Q_OS_MACOS) || defined(Q_OS_IOS)
     return QSurface::MetalSurface;
 #else
-    return QSurface::OpenGLSurface;
+    return vulkan() ? QSurface::VulkanSurface : QSurface::OpenGLSurface;
 #endif
+}
+
+#if defined(SCHNEIDI_VIEWER_VULKAN)
+QVulkanInstance* FrameViewRhiSurface::vulkanInstance()
+{
+    // One for the whole run (probe and windows), never destroyed while a window may use it; made on first use:
+    // loading the Vulkan drivers costs ~50 ms
+    static QVulkanInstance* instance = [] {
+        auto* inst = new QVulkanInstance;
+        inst->setExtensions(QRhiVulkanInitParams::preferredInstanceExtensions());
+        inst->setApiVersion(inst->supportedApiVersion());
+        if (inst->create()) return inst;
+        delete inst;
+        return static_cast<QVulkanInstance*>(nullptr);
+    }();
+    return instance;
+}
+#endif
+
+bool FrameViewRhiSurface::prepareWindow(QWindow* window)
+{
+#if defined(SCHNEIDI_VIEWER_VULKAN)
+    if (!vulkan()) return true;
+    QVulkanInstance* instance = vulkanInstance();
+    if (!instance) return false;
+    // A window made later (not created yet) gets Qt's own default instance when it composes
+    if (window && !window->vulkanInstance()) window->setVulkanInstance(instance);
+#else
+    Q_UNUSED(window);
+#endif
+    return true;
 }
 
 namespace {
@@ -71,11 +136,23 @@ bool FrameViewRhiSurface::probed()
     return g_probe.has_value();
 }
 
-FrameView::Probe FrameViewRhiSurface::probe()
+namespace {
+// A device of the given API made and thrown away: does it work, which is it
+FrameView::Probe probeApi(bool vulkan)
 {
-    if (g_probe) return *g_probe;
     FrameView::Probe p;
     std::unique_ptr<QRhi> rhi;
+#if defined(SCHNEIDI_VIEWER_VULKAN)
+    if (vulkan) {
+        QRhiVulkanInitParams params;
+        params.inst = FrameViewRhiSurface::vulkanInstance();
+        if (params.inst) rhi.reset(QRhi::create(QRhi::Vulkan, &params));
+        if (rhi) p = describe(*rhi);
+        return p;
+    }
+#else
+    Q_UNUSED(vulkan);
+#endif
 #if defined(Q_OS_WIN)
     QRhiD3D11InitParams params;
     rhi.reset(QRhi::create(QRhi::D3D11, &params));
@@ -91,8 +168,64 @@ FrameView::Probe FrameViewRhiSurface::probe()
     if (rhi) {
         p = describe(*rhi);
         rhi.reset(); // before the fallback surface (OpenGL) goes: the QRhi needs it to shut down
-        StartupTrace::mark("viewer RHI probe");
     }
+    return p;
+}
+} // namespace
+
+namespace {
+// warmUp(): the start's check, made on a helper thread (GUI thread only), and its API
+std::shared_future<FrameView::Probe> g_warmUp;
+bool g_warmUpVulkan = false;
+} // namespace
+
+void FrameViewRhiSurface::warmUp()
+{
+#if defined(Q_OS_WIN) || defined(Q_OS_MACOS) || defined(Q_OS_IOS)
+    return; // a D3D11/Metal device is cheap and has not delayed the start
+#else
+    if (g_probe || g_warmUp.valid()) return;
+    const bool vk = vulkan();
+    // OpenGL: only where a fallback surface may be made off the GUI thread (GLX pbuffers)
+    if (!vk && QGuiApplication::platformName() != QLatin1String("xcb")) return;
+    g_warmUpVulkan = vk;
+    // Vulkan: loads the drivers (every installed one: ~100-200 ms) and makes a device once - the first one costs the
+    // most, the window's own one afterwards ~50 ms. OpenGL: the check only (each context costs the same). A
+    // QVulkanInstance and a QRhi may be made on any thread.
+    g_warmUp = std::async(std::launch::async, [vk] { return probeApi(vk); }).share();
+#endif
+}
+
+bool FrameViewRhiSurface::warmedUp()
+{
+    return g_warmUp.valid() && g_warmUpVulkan == vulkan();
+}
+
+bool FrameViewRhiSurface::startCheckPasses(bool allowSoftware, QString* why)
+{
+    if (!warmedUp()) return true; // nothing checked: as before (the stored check)
+    const FrameView::Probe p = g_warmUp.get();
+    if (p.ok && (!p.software || allowSoftware)) return true;
+    const QString reason = p.ok ? "software device " + p.device : QStringLiteral("no GPU device at the start");
+    if (why) *why = reason;
+    // Vulkan: OpenGL may still work - from the next start on (a shown Vulkan window cannot take it in place)
+    vulkanFailed(reason);
+    return false;
+}
+
+FrameView::Probe FrameViewRhiSurface::probe()
+{
+    if (g_probe) return *g_probe;
+    FrameView::Probe p = warmedUp() ? g_warmUp.get() : probeApi(vulkan());
+    // Vulkan missing or only a software device (lavapipe): OpenGL may still have the hardware
+    if (vulkan() && (!p.ok || p.software)) {
+        const FrameView::Probe gl = probeApi(false);
+        if (gl.ok && (!gl.software || !p.ok)) {
+            vulkanFailed(p.ok ? QStringLiteral("software device ") + p.device : QStringLiteral("no device"));
+            p = gl;
+        }
+    }
+    StartupTrace::mark("viewer RHI probe");
     g_probe = p;
     return p;
 }

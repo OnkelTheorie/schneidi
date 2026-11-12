@@ -8,13 +8,22 @@
 
 #include <QRhiWidget>
 #include <QSurface>
+#include <QtGui/qtguiglobal.h>
 #include <memory>
+
+// Linux/BSD: the viewer may compose through Vulkan (FrameView::preferVulkan); needs Qt with Vulkan and its headers
+#if !defined(Q_OS_WIN) && !defined(Q_OS_MACOS) && !defined(Q_OS_IOS) && !defined(Q_OS_ANDROID) && QT_CONFIG(vulkan) \
+    && __has_include(<vulkan/vulkan.h>)
+#define SCHNEIDI_VIEWER_VULKAN 1
+#endif
 
 class QRhiBuffer;
 class QRhiGraphicsPipeline;
 class QRhiSampler;
 class QRhiShaderResourceBindings;
 class QRhiTexture;
+class QVulkanInstance;
+class QWindow;
 
 class FrameViewRhiSurface : public QRhiWidget {
 public:
@@ -30,6 +39,27 @@ public:
     static QRhiWidget::Api platformApi();
     // The native window type a top-level needs for that API's composition
     static QSurface::SurfaceType surfaceType();
+    // Linux/BSD: the viewer composes through Vulkan (FrameView::preferVulkan), decided once per run
+    static bool vulkan();
+    // Vulkan did not work here (no device, only a software one, the window's QRhi failed): OpenGL from now on and
+    // for the next starts (viewer/gpuApi)
+    static void vulkanFailed(const QString& why);
+#if defined(SCHNEIDI_VIEWER_VULKAN)
+    // The run's Vulkan instance (nullptr when Vulkan cannot start)
+    static QVulkanInstance* vulkanInstance();
+#endif
+    // The GPU check of the start on a helper thread, while the window is built (probe() then answers with it).
+    // Vulkan: also loads the drivers and makes a device once, so the window's own device costs little later.
+    // Linux/BSD only (OpenGL: xcb only).
+    static void warmUp();
+    // warmUp() ran for the API used now
+    static bool warmedUp();
+    // warmUp()'s check allows the GPU (waits for it; true when there was none): the shown window may be switched
+    // to GPU composition. False: why, and Vulkan is given up for the next starts.
+    static bool startCheckPasses(bool allowSoftware, QString* why);
+    // Gives a top-level window what its GPU composition needs before Qt makes the window's QRhi (Vulkan: the
+    // instance); false when that cannot work (Vulkan without an instance)
+    static bool prepareWindow(QWindow* window);
     // This surface's QRhi (the window's, once it has rendered) answers the GPU check instead of a device made for it
     // (probe() then returns it); false while it has none or the check is known already
     bool adoptAsProbe();

@@ -26,6 +26,7 @@
 #include <QGuiApplication>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QSettings>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QToolButton>
@@ -80,6 +81,55 @@ void send(QWidget* w, QEvent::Type type, QPointF pos, Qt::MouseButton button, Qt
 {
     QMouseEvent e(type, pos, w->mapToGlobal(pos), button, buttons, Qt::NoModifier);
     QApplication::sendEvent(w, &e);
+}
+
+// The viewer's API on Linux/BSD: the environment, then the setting (OpenGL after a Vulkan failure), else Vulkan on X11
+void testApiChoice()
+{
+    CHECK(FrameView::preferVulkan("", "", "xcb", true));
+    CHECK(!FrameView::preferVulkan("", "", "wayland", true)); // not measured there: OpenGL as before
+    CHECK(!FrameView::preferVulkan("", "", "xcb", false));    // Qt or the build without Vulkan
+    CHECK(!FrameView::preferVulkan("", "opengl", "xcb", true)); // Vulkan failed here once
+    CHECK(FrameView::preferVulkan("vulkan", "opengl", "xcb", true)); // the environment wins
+    CHECK(!FrameView::preferVulkan("OpenGL", "", "xcb", true));
+    CHECK(FrameView::preferVulkan("", "vulkan", "wayland", true));
+    CHECK(!FrameView::preferVulkan("vulkan", "", "xcb", false)); // never without it
+}
+
+// X11 start (FRAME_VIEW_PLATFORM=xcb under Xvfb, SCHNEIDI_VIEWER=gpu for its software device): views of the stored
+// check paint with the painter until the shown window is switched to GPU composition in place, and end on the GPU -
+// also one made between prepareWindow and the switch (it switches with the others instead of finding no QRhi)
+void testDeferredAttach()
+{
+    if (QGuiApplication::platformName() != QLatin1String("xcb")) return;
+    QSettings().setValue("viewer/gpuCheck", "1|0|Test GPU");
+    FrameView::setUseCachedGpuCheck(true);
+    FrameView::warmUpGpu();
+    QWidget window;
+    window.resize(640, 360);
+    auto* first = new FrameView(&window);
+    first->setGeometry(0, 0, 320, 360);
+    if (!CHECK(first->surfaceDeferred())) return;
+    FrameView::prepareWindow(&window);
+    window.show();
+    if (!CHECK(QTest::qWaitForWindowExposed(&window))) return;
+    auto* later = new FrameView(&window);
+    later->setGeometry(320, 0, 320, 360);
+    later->show();
+    CHECK(later->surfaceDeferred());
+    CHECK(first->backend() == FrameView::Backend::Rhi);
+    CHECK(!first->gpuSurfaceReady()); // the painter until the switch
+    FrameView::attachDeferredSurfaces();
+    for (FrameView* v : {first, later}) {
+        CHECK(!v->surfaceDeferred());
+        (void)QTest::qWaitFor([v] { return v->gpuSurfaceReady() || v->backend() != FrameView::Backend::Rhi; }, 10000);
+        CHECK(v->backend() == FrameView::Backend::Rhi);
+        CHECK(v->gpuSurfaceReady());
+    }
+    FrameView::checkCachedGpu(); // answered by the start's check or the window's QRhi
+    CHECK(!QSettings().value("viewer/gpuCheck").toString().isEmpty());
+    QSettings().remove("viewer/gpuCheck");
+    FrameView::setUseCachedGpuCheck(false);
 }
 
 void testChoice()
@@ -419,6 +469,7 @@ int main(int argc, char** argv)
     if (qEnvironmentVariableIsSet("FRAME_VIEW_PLATFORM")) qputenv("QT_QPA_PLATFORM", qgetenv("FRAME_VIEW_PLATFORM"));
     QApplication app(argc, argv);
     Check::initApp("frame-view");
+    testDeferredAttach(); // first: the start's path needs a GPU check not made yet in this process
     qInfo().noquote() << "FrameView backend:" << (FrameView().backend() == FrameView::Backend::Rhi ? "rhi" : "painter")
                       << FrameView().backendInfo();
     if (const int frames = qEnvironmentVariableIntValue("FRAME_VIEW_BENCH"); frames > 0) {
@@ -426,6 +477,7 @@ int main(int argc, char** argv)
         return 0;
     }
     testChoice();
+    testApiChoice();
     testGeometry();
     testOverlayAndMouse();
     testDrawing();

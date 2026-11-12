@@ -65,6 +65,16 @@ bool FrameView::rhiCompiled()
 #endif
 }
 
+bool FrameView::preferVulkan(const QString& env, const QString& setting, const QString& platform, bool vulkanBuilt)
+{
+    if (!vulkanBuilt) return false;
+    for (const QString& wish : {env.trimmed().toLower(), setting.trimmed().toLower()}) {
+        if (wish == "vulkan" || wish == "vk") return true;
+        if (wish == "opengl" || wish == "gl") return false;
+    }
+    return platform == QLatin1String("xcb");
+}
+
 FrameView::Backend FrameView::chooseBackend(const QString& env, const QString& setting, const QString& platform,
                                             bool rhiCompiled, const std::function<Probe()>& probe, QString* why)
 {
@@ -102,11 +112,19 @@ QList<QPointer<FrameView>>& deferredViews()
     static QList<QPointer<FrameView>> views;
     return views;
 }
-// Only where measured and checked: xcb (no flash, the maximized state stays). Wayland makes another kind of native
-// window for an OpenGL surface (the raster flush into it is untested); Windows/macOS have not shown the delay.
+// Only where measured and checked: xcb (no flash, the maximized state stays; checked with Qt 6.8.2 - the in-place
+// switch relies on QWidget::setParent of a widget asking for RHI into a window of the right surface type). Wayland
+// makes another kind of native window for a GPU surface (the raster flush into it is untested); Windows/macOS have
+// not shown the delay.
 bool deferSurfaceAtStart()
 {
     return QGuiApplication::platformName() == QLatin1String("xcb");
+}
+// The deferred views include one in this window: its switch to GPU composition is still to come
+bool attachPending(const QWidget* window)
+{
+    return std::any_of(deferredViews().cbegin(), deferredViews().cend(),
+                       [window](const QPointer<FrameView>& v) { return v && v->window() == window; });
 }
 std::optional<FrameView::Probe> cachedProbe()
 {
@@ -140,7 +158,17 @@ FrameView::FrameView(QWidget* parent) : QWidget(parent), m_background(Theme::vie
                               rhiCompiled(), probe, &m_backendInfo);
     if (m_backend != Backend::Rhi) return;
     if (m_gpuPending && g_deferring && deferSurfaceAtStart()) deferredViews() << this; // painter until then
+    else if (deferSurfaceAtStart() && attachPending(window())) deferredViews() << this; // switches with the others
     else makeRhiSurface();
+}
+
+bool FrameView::gpuSurfaceReady() const
+{
+#ifdef SCHNEIDI_HAVE_RHI
+    return m_surface && static_cast<FrameViewRhiSurface*>(m_surface)->hasRhi();
+#else
+    return false;
+#endif
 }
 
 bool FrameView::surfaceDeferred() const
@@ -153,7 +181,7 @@ void FrameView::prepareWindow(QWidget* window)
     // Views made from now on (the window is about to show) make their surface right away as before
     g_deferring = false;
 #ifdef SCHNEIDI_HAVE_RHI
-    if (!window || window->testAttribute(Qt::WA_WState_Created)) return;
+    if (!window) return;
     bool needed = false;
     // Only this window's views wait: one in another window (not shown yet) makes its surface now, its window is
     // then created for the GPU when it shows
@@ -168,10 +196,22 @@ void FrameView::prepareWindow(QWidget* window)
         }
     }
     if (!needed) return;
-    // The QWindow without its native window yet (a top-level is native anyway): it takes the surface type now,
-    // show() makes the native window of that type
-    window->setAttribute(Qt::WA_NativeWindow);
-    if (QWindow* handle = window->windowHandle()) handle->setSurfaceType(FrameViewRhiSurface::surfaceType());
+    if (!window->testAttribute(Qt::WA_WState_Created)) {
+        // The QWindow without its native window yet (a top-level is native anyway): it takes the surface type now,
+        // show() makes the native window of that type
+        window->setAttribute(Qt::WA_NativeWindow);
+        if (QWindow* handle = window->windowHandle()) handle->setSurfaceType(FrameViewRhiSurface::surfaceType());
+        return;
+    }
+    // Created already: of the GPU type, attachDeferredSurfaces switches it in place; otherwise the surfaces now
+    // (Qt makes the native window again - before it is shown, nobody sees that)
+    if (const QWindow* handle = window->windowHandle(); handle && handle->surfaceType() == FrameViewRhiSurface::surfaceType())
+        return;
+    qWarning("Viewer: the window was created before prepareWindow without the GPU surface type: GPU surface now");
+    for (qsizetype i = views.size() - 1; i >= 0; --i) {
+        const QPointer<FrameView> v = views.takeAt(i);
+        if (v && v->m_backend == Backend::Rhi && !v->m_surface) v->makeRhiSurface();
+    }
 #else
     Q_UNUSED(window);
 #endif
@@ -188,6 +228,17 @@ void FrameView::attachDeferredSurfaces()
         if (!window->testAttribute(Qt::WA_WState_Created) || !handle) {
             v->makeRhiSurface(); // not on screen yet: its creation takes the surface along
         } else if (handle->surfaceType() == FrameViewRhiSurface::surfaceType()) {
+            // The stored check said "GPU ok", but it may not work any more (a driver update, ssh -X, VNC): the check
+            // made at the start (FrameView::warmUpGpu) decides before the shown window is touched - a window switched
+            // to a failing GPU composition turns black
+            QString why;
+            const QString wish = qEnvironmentVariable("SCHNEIDI_VIEWER", QSettings().value("viewer/renderer").toString())
+                                     .trimmed()
+                                     .toLower();
+            if (!FrameViewRhiSurface::startCheckPasses(wish == "gpu" || wish == "rhi", &why)) {
+                v->fallBackToPainter(why);
+                continue;
+            }
             v->makeRhiSurface(true);
         } else {
             // Not prepared (prepareWindow): Qt would destroy and re-create the shown window - the painter until the
@@ -195,6 +246,26 @@ void FrameView::attachDeferredSurfaces()
             v->fallBackToPainter("window shown without a GPU surface type");
         }
     }
+#endif
+}
+
+void FrameView::warmUpGpu()
+{
+#ifdef SCHNEIDI_HAVE_RHI
+    static const QStringList headless{"offscreen", "minimal", "vnc", "linuxfb", "vkkhrdisplay"};
+    const QString wish =
+        qEnvironmentVariable("SCHNEIDI_VIEWER", QSettings().value("viewer/renderer").toString()).trimmed().toLower();
+    if (CpuPath::on() || wish == "painter" || wish == "cpu" || headless.contains(QGuiApplication::platformName())) return;
+    FrameViewRhiSurface::warmUp();
+#endif
+}
+
+bool FrameView::composesWithVulkan()
+{
+#ifdef SCHNEIDI_HAVE_RHI
+    return FrameViewRhiSurface::vulkan();
+#else
+    return false;
 #endif
 }
 
@@ -215,7 +286,8 @@ void FrameView::checkCachedGpu()
         return v && v->m_backend == Backend::Rhi && v->isVisible()
                && (v->surfaceDeferred() || (v->m_surface && !static_cast<FrameViewRhiSurface*>(v->m_surface)->hasRhi()));
     });
-    if (surfaceComing && !FrameViewRhiSurface::probed() && waits++ < 12) {
+    // The start's own check (warmUpGpu) answers without a device made now: no need to wait
+    if (surfaceComing && !FrameViewRhiSurface::probed() && !FrameViewRhiSurface::warmedUp() && waits++ < 12) {
         QTimer::singleShot(250, qApp, &FrameView::checkCachedGpu);
         return;
     }
@@ -227,7 +299,14 @@ void FrameView::checkCachedGpu()
     for (const QPointer<FrameView>& v : views)
         if (v && v->m_surface && static_cast<FrameViewRhiSurface*>(v->m_surface)->adoptAsProbe()) break;
     const Probe p = FrameViewRhiSurface::probe();
-    QSettings().setValue(kProbeKey, QString("%1|%2|%3").arg(p.ok ? 1 : 0).arg(p.software ? 1 : 0).arg(p.device));
+    if (FrameViewRhiSurface::vulkan() && (!p.ok || p.software)) {
+        // The window's Vulkan device is a software one (lavapipe; OpenGL may have the hardware): the next start
+        // checks again with OpenGL
+        FrameViewRhiSurface::vulkanFailed(p.ok ? "software device " + p.device : QStringLiteral("no device"));
+        QSettings().remove(kProbeKey);
+    } else {
+        QSettings().setValue(kProbeKey, QString("%1|%2|%3").arg(p.ok ? 1 : 0).arg(p.software ? 1 : 0).arg(p.device));
+    }
     for (const QPointer<FrameView>& v : views) {
         if (!v) continue;
         v->m_gpuPending = false;
@@ -245,6 +324,22 @@ void FrameView::checkCachedGpu()
 void FrameView::makeRhiSurface(bool intoShownWindow)
 {
 #ifdef SCHNEIDI_HAVE_RHI
+    // Vulkan: the window takes the run's instance (made now: ~50 ms of driver loading, not on the way to the window)
+    if (!FrameViewRhiSurface::prepareWindow(window()->windowHandle())) {
+        FrameViewRhiSurface::vulkanFailed(QStringLiteral("no Vulkan instance"));
+        // A shown window of the Vulkan type cannot take OpenGL in place (prepareWindow): the painter for this run
+        if (intoShownWindow) {
+            fallBackToPainter("no Vulkan instance");
+            return;
+        }
+    }
+    // A window that exists already (a view made after its window was created): only the in-place switch makes Qt
+    // compose it through the GPU - a QRhiWidget made with its parent would find no QRhi ("No QRhi")
+    if (!intoShownWindow && window()->testAttribute(Qt::WA_WState_Created) && window()->windowHandle()) {
+        if (window()->windowHandle()->surfaceType() != FrameViewRhiSurface::surfaceType())
+            qInfo("Viewer: its window has another surface type, Qt makes the window again for the GPU");
+        intoShownWindow = true;
+    }
     FrameViewRhiSurface* surface = nullptr;
     if (intoShownWindow) {
         // Made without a parent and then reparented: only setParent() of a widget that already asks for RHI makes Qt
@@ -273,7 +368,12 @@ void FrameView::makeRhiSurface(bool intoShownWindow)
             });
         }
     }
-    connect(surface, &QRhiWidget::renderFailed, this, [this] { fallBackToPainter("RHI render failed"); });
+    connect(surface, &QRhiWidget::renderFailed, this, [this, surface] {
+        // The window's Vulkan device could not be made: OpenGL from the next start on
+        if (FrameViewRhiSurface::vulkan() && !surface->hasRhi())
+            FrameViewRhiSurface::vulkanFailed(QStringLiteral("the window's device failed"));
+        fallBackToPainter("RHI render failed");
+    });
 #endif
 }
 
