@@ -133,7 +133,8 @@ struct Source {
             case AVCOL_SPC_SMPTE240M: space = SWS_CS_SMPTE240M; break;
             case AVCOL_SPC_BT470BG:
             case AVCOL_SPC_SMPTE170M: break;
-            default: space = f->width * f->height > 750000 ? SWS_CS_ITU709 : SWS_CS_ITU601; break;
+            // the stream's own size, not the frame's: a lowres decode (MPEG-2, MJPEG) shrinks it below the HD line
+            default: space = int64_t(st->codecpar->width) * st->codecpar->height > 750000 ? SWS_CS_ITU709 : SWS_CS_ITU601; break;
             }
             const bool full = f->color_range == AVCOL_RANGE_JPEG;
             int* inv = nullptr;

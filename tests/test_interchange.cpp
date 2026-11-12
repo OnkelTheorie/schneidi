@@ -416,6 +416,14 @@ int main(int argc, char** argv)
             CHECK_EQ(mx2.video[0].items[0].in, 300);
             CHECK_EQ(mx2.video[0].items[1].in, 18000);
         }
+        // Non-drop source times (an export: the writers write non-drop) and a drop-frame camera timecode: its digits
+        // are the start ("01:00:00;00" -> 108000), not the drop-frame count (107892) the labels would then miss by 108
+        Seq nd = mx;
+        applyStartTimecodes(nd, [](const QString&) { return QString("01:00:00;00"); });
+        if (CHECK(!nd.video.isEmpty() && nd.video[0].items.size() == 2)) {
+            CHECK_EQ(nd.video[0].items[0].mediaStart, 108000);
+            CHECK_EQ(nd.video[0].items[0].in, 300);
+        }
         // … and without the file's timecode the non-drop hour is taken off
         applyStartTimecodes(mx, {}, [](const QString&) { return 10; });
         if (CHECK(!mx.video.isEmpty() && !mx.video[0].items.isEmpty())) CHECK_EQ(mx.video[0].items[0].in, 300);

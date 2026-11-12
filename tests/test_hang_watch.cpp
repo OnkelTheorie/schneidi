@@ -49,7 +49,13 @@ void hangIsReported()
         QMutexLocker lock(&g_mutex);
         g_reports << text;
     });
-    spin(1500); // armed (first heartbeat), then idle: nothing
+    spin(1500); // not armed yet: nothing, however long
+    CHECK(reports().isEmpty());
+    blockGuiThread(2000);
+    spin(300);
+    CHECK(reports().isEmpty());
+    HangWatch::arm();
+    spin(1500); // armed, idle: nothing
     CHECK(reports().isEmpty());
     blockGuiThread(2500);
     spin(1200); // the heartbeat comes again

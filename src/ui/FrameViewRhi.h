@@ -35,6 +35,8 @@ public:
     static FrameView::Probe probe();
     // probe() has run (its answer is known without touching the GPU)
     static bool probed();
+    // probe() gave up on a start check stuck in the driver (says nothing about the GPU: not stored)
+    static bool probeTimedOut();
     // The API QRhiWidget is set to (the same one the probe tried)
     static QRhiWidget::Api platformApi();
     // The native window type a top-level needs for that API's composition

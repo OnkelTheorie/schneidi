@@ -678,7 +678,9 @@ int main(int argc, char* argv[])
         });
     }
     StartupTrace::mark("event loop starts");
+    HangWatch::arm();
     const int rc = app.exec();
+    HangWatch::uninstall(); // waits while quitting (threads, a running voice-over take) are no hang
     if (g_claudeSetupThread) g_claudeSetupThread->wait(); // a running `claude mcp add` finishes first
     // Restart after design/language change: only here, when the window is closed and everything has been saved
     // The live server goes first: the new process would otherwise hand its project back to this one, which is quitting

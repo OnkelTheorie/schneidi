@@ -8,8 +8,10 @@
 #include <QThread>
 #include <QTimer>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cstring>
 #include <condition_variable>
 #include <mutex>
 #include <thread>
@@ -124,31 +126,50 @@ QString frameText(DWORD64 pc)
     return text;
 }
 
+// The top of the GUI thread's stack, copied while it is suspended
+constexpr size_t kStackCopy = 64 * 1024;
+DWORD64 s_stackCopy[kStackCopy / sizeof(DWORD64)];
+
+// Readable code right before `v` that is a call instruction: `v` is a return address (E8 rel32, or FF /2 with a
+// ModRM of 2 to 7 bytes)
+bool isReturnAddress(DWORD64 v)
+{
+    if (v < 0x10000) return false;
+    MEMORY_BASIC_INFORMATION mi{};
+    if (!VirtualQuery(reinterpret_cast<LPCVOID>(v - 7), &mi, sizeof mi) || mi.State != MEM_COMMIT
+        || mi.Type != MEM_IMAGE || !(mi.Protect & (PAGE_EXECUTE_READ | PAGE_EXECUTE | PAGE_EXECUTE_READWRITE)))
+        return false;
+    const auto regionEnd = reinterpret_cast<DWORD64>(mi.BaseAddress) + mi.RegionSize;
+    if (v > regionEnd) return false;
+    const auto* code = reinterpret_cast<const unsigned char*>(v);
+    if (code[-5] == 0xE8) return true;
+    for (int len : {2, 3, 6, 7}) // FF /2: register, [reg], [reg+disp8], [rip+disp32]/[reg+disp32]/with SIB
+        if (code[-len] == 0xFF && ((code[-len + 1] >> 3) & 7) == 2) return true;
+    return false;
+}
+
+// No unwinding while the thread is suspended: RtlLookupFunctionEntry/RtlVirtualUnwind may take ntdll locks the
+// suspended thread holds (loading a DLL) - the watcher and then the whole program would wait forever. Suspended, it
+// only reads the registers and copies the top of its stack; after ResumeThread the copy is scanned for return
+// addresses (a value pointing right behind a call instruction in a loaded module). Stale entries are possible, the
+// order is the stack's.
 QStringList guiStack()
 {
     if (!s_gui || SuspendThread(s_gui) == DWORD(-1)) return {};
-    // While it is suspended: no allocation, no lock (it may hold the heap's) - addresses into a fixed array only
-    DWORD64 pcs[kMaxFrames];
-    int n = 0;
     CONTEXT c{};
-    c.ContextFlags = CONTEXT_FULL;
-    if (GetThreadContext(s_gui, &c)) {
-        while (n < kMaxFrames && c.Rip && c.Rsp >= s_stackLow && c.Rsp < s_stackHigh) {
-            pcs[n++] = c.Rip;
-            DWORD64 imageBase = 0;
-            if (PRUNTIME_FUNCTION f = RtlLookupFunctionEntry(c.Rip, &imageBase, nullptr)) {
-                void* handlerData = nullptr;
-                DWORD64 frame = 0;
-                RtlVirtualUnwind(UNW_FLAG_NHANDLER, imageBase, c.Rip, f, &c, &handlerData, &frame, nullptr);
-            } else { // leaf function: the return address is on top of the stack
-                c.Rip = *reinterpret_cast<const DWORD64*>(c.Rsp);
-                c.Rsp += 8;
-            }
-        }
+    c.ContextFlags = CONTEXT_CONTROL;
+    size_t words = 0;
+    const bool haveContext = GetThreadContext(s_gui, &c);
+    if (haveContext && c.Rsp >= s_stackLow && c.Rsp < s_stackHigh) {
+        const size_t bytes = std::min<size_t>(kStackCopy, size_t(s_stackHigh - c.Rsp));
+        std::memcpy(s_stackCopy, reinterpret_cast<const void*>(c.Rsp), bytes); // [Rsp, high) is committed
+        words = bytes / sizeof(DWORD64);
     }
     ResumeThread(s_gui);
-    QStringList out;
-    for (int i = 0; i < n; ++i) out << frameText(pcs[i]);
+    if (!haveContext) return {};
+    QStringList out{frameText(c.Rip)};
+    for (size_t i = 0; i < words && out.size() < kMaxFrames; ++i)
+        if (isReturnAddress(s_stackCopy[i])) out << frameText(s_stackCopy[i]);
     return out;
 }
 #else
@@ -213,11 +234,17 @@ void install(int thresholdMs, std::function<void(const QString&)> report)
     s_timer = new QTimer(QCoreApplication::instance());
     s_timer->setInterval(kBeatMs);
     QObject::connect(s_timer, &QTimer::timeout, [] { s_beat = nowMs(); });
-    s_timer->start();
     s_thread = std::thread(watch, qint64(thresholdMs), std::move(report));
     static bool once = false;
     if (!once) qAddPostRoutine(uninstall); // before the QCoreApplication is gone (the report may use Qt)
     once = true;
+}
+
+void arm()
+{
+    if (!s_timer) return;
+    s_beat = nowMs();
+    s_timer->start();
 }
 
 void uninstall()

@@ -146,6 +146,20 @@ QVector<int> audioStreamsOf(const MediaInfo& info, const QString& list)
     return out;
 }
 
+int audioStreamArg(const MediaInfo& info, const QJsonObject& a)
+{
+    if (a.contains("audio_stream")) {
+        const int stream = a["audio_stream"].toInt();
+        requirePlayableStream(info, stream);
+        return stream;
+    }
+    // Not named: the first one that plays (a file whose stream 0 is empty or of a codec this build lacks still has
+    // its sound analysed, as transcribe does); only a stream the caller named is an error when it can't be played
+    for (int i = 0; i < std::max(1, info.audioStreamCount()); ++i)
+        if (info.audioStreamPlayable(i)) return i;
+    fail("NO_AUDIO", "no audio stream of " + info.path + " can be played");
+}
+
 void requirePlayableStream(const MediaInfo& info, int stream)
 {
     const int count = info.audioStreamCount();

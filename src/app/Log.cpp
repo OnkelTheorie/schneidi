@@ -6,6 +6,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QLockFile>
 #include <QStandardPaths>
 #include <QSysInfo>
 
@@ -28,6 +29,9 @@ std::mutex s_mutex;
 QFile s_file;
 QtMessageHandler s_previous = nullptr;
 std::atomic<bool> s_hung{false};
+// Held while this process owns schneidi.log: a second instance (--new-instance, a test run) neither rotates the log
+// of the one that runs nor judges it (its end line is not written yet), it appends to it
+QLockFile* s_owner = nullptr;
 
 void write(const char* level, const QString& text)
 {
@@ -76,7 +80,7 @@ void keepIfTroubled(const QDir& dir, const QString& path)
 
 void writeEnd()
 {
-    write("INFO ", s_hung ? kEndedAfterHang : kEnded);
+    if (s_owner) write("INFO ", s_hung ? kEndedAfterHang : kEnded); // the owner's end only
 }
 
 } // namespace
@@ -91,13 +95,22 @@ void install()
     const QDir dir(directory());
     QDir().mkpath(dir.path());
     const auto name = [&](int i) { return dir.filePath(i == 0 ? "schneidi.log" : QString("schneidi.%1.log").arg(i)); };
-    keepIfTroubled(dir, name(0));
+    if (!s_owner) {
+        auto* lock = new QLockFile(dir.filePath("schneidi.log.lock")); // left to the process end on purpose
+        // Never stale by age (a run of hours keeps it); a lock whose process is gone (a crash) is taken over
+        lock->setStaleLockTime(0);
+        if (lock->tryLock(0)) s_owner = lock;
+        else delete lock;
+    }
+    if (s_owner) {
+        keepIfTroubled(dir, name(0));
+        QFile::remove(name(kKeep - 1));
+        for (int i = kKeep - 2; i >= 0; --i) QFile::rename(name(i), name(i + 1));
+    }
     {
         std::lock_guard<std::mutex> lock(s_mutex);
         if (s_file.isOpen()) s_file.close(); // installed again (tests)
     }
-    QFile::remove(name(kKeep - 1));
-    for (int i = kKeep - 2; i >= 0; --i) QFile::rename(name(i), name(i + 1));
     s_file.setFileName(name(0));
     // Still there: another instance holds it open (Windows refuses the rename), so append instead of wiping its log
     const QIODevice::OpenMode mode = QFile::exists(name(0)) ? QIODevice::Append : QIODevice::Truncate;

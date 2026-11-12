@@ -166,6 +166,7 @@ private:
     EditPoint m_shownEditPoint;
     QSize m_frameSize{1920, 1080};
     int m_playhead = 0;
+    bool m_valuesOnly = false; // refresh() from setPlayhead: no geometry update (see refresh)
     ElidedLabel* m_clipName; // a long file name ends in "…" (all of it in the tooltip), never widens the panel
     QLabel* m_empty;
     QWidget* m_content;

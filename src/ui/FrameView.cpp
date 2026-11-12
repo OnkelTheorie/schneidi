@@ -323,12 +323,12 @@ void FrameView::checkCachedGpu()
     for (const QPointer<FrameView>& v : views)
         if (v && v->m_surface && static_cast<FrameViewRhiSurface*>(v->m_surface)->adoptAsProbe()) break;
     const Probe p = FrameViewRhiSurface::probe();
-    if (FrameViewRhiSurface::vulkan() && (!p.ok || p.software)) {
+    if (FrameViewRhiSurface::vulkan() && !FrameViewRhiSurface::probeTimedOut() && (!p.ok || p.software)) {
         // The window's Vulkan device is a software one (lavapipe; OpenGL may have the hardware): the next start
         // checks again with OpenGL
         FrameViewRhiSurface::vulkanFailed(p.ok ? "software device " + p.device : QStringLiteral("no device"));
         QSettings().remove(kProbeKey);
-    } else {
+    } else if (!FrameViewRhiSurface::probeTimedOut()) { // a stuck check says nothing: the stored one stays
         QSettings().setValue(kProbeKey, QString("%1|%2|%3").arg(p.ok ? 1 : 0).arg(p.software ? 1 : 0).arg(p.device));
     }
     for (const QPointer<FrameView>& v : views) {

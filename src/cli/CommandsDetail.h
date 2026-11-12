@@ -333,6 +333,8 @@ QString trackLabel(const Project& p, const Timeline& tl, int audioTrack);
 QVector<int> audioStreamsOf(const MediaInfo& info, const QString& list);
 // Throws BAD_ARGUMENT if `stream` is no stream of the file or one schneidi cannot play (no decoder here, no sound in it)
 void requirePlayableStream(const MediaInfo& info, int stream);
+// The 'audio_stream' argument: the named one (must play), else the first stream that plays (NO_AUDIO if none)
+int audioStreamArg(const MediaInfo& info, const QJsonObject& a);
 
 QJsonObject cmdProbe(const QJsonObject& a, Context& ctx);
 QJsonObject cmdSilence(const QJsonObject& a, Context& ctx);

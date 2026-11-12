@@ -137,6 +137,7 @@ bool FrameViewRhiSurface::prepareWindow(QWindow* window)
 namespace {
 // The GPU check's answer once known (GUI thread only)
 std::optional<FrameView::Probe> g_probe;
+bool g_probeTimedOut = false; // g_probe is "failed" because the start's check never finished
 
 FrameView::Probe describe(const QRhi& rhi)
 {
@@ -215,6 +216,11 @@ std::optional<FrameView::Probe> warmUpResult(int ms)
     return w->probe;
 }
 } // namespace
+
+bool FrameViewRhiSurface::probeTimedOut()
+{
+    return g_probeTimedOut;
+}
 
 bool FrameViewRhiSurface::probed()
 {
@@ -333,6 +339,14 @@ FrameView::Probe FrameViewRhiSurface::probe()
 {
     if (g_probe) return *g_probe;
     std::optional<FrameView::Probe> warm = warmedUp() ? warmUpResult(kCheckWaitMs) : std::nullopt;
+    // The start's check is still stuck in the driver: never the same device creation on the GUI thread (it would
+    // hang there too, next to the stuck one) - counts as failed, like startCheckPasses
+    if (warmedUp() && !warm) {
+        StartupTrace::mark("viewer RHI probe (start check did not finish)");
+        g_probe = FrameView::Probe{};
+        g_probeTimedOut = true;
+        return *g_probe;
+    }
     FrameView::Probe p = warm ? *warm : probeApi(vulkan());
     // Vulkan missing or only a software device (lavapipe), before a window was made for it: OpenGL may still have
     // the hardware

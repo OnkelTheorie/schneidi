@@ -31,8 +31,7 @@ LoudPeaks loudPeaks(const MediaSource& m, const QJsonObject& a, const std::funct
     Clip c;
     c.mediaPath = m.info.path;
     c.out = m.info.length - 1;
-    c.audioStream = a["audio_stream"].toInt();
-    requirePlayableStream(m.info, c.audioStream);
+    c.audioStream = audioStreamArg(m.info, a);
     const std::atomic<bool>* stop = cancelFlag();
     const auto peaks = AudioAnalysis::clipFramePeaks(f, c, [&progress, stop](double p) {
         if (progress) progress(p);
@@ -159,7 +158,7 @@ QJsonObject peaksOne(const QJsonObject& a, Context& ctx)
                 o.only << kind;
             }
             if (a.contains("min_conf")) o.minConf = a["min_conf"].toDouble();
-            const AudioEvents::Result r = AudioEvents::analyzeFile(m.info.path, a["audio_stream"].toInt(), o);
+            const AudioEvents::Result r = AudioEvents::analyzeFile(m.info.path, audioStreamArg(m.info, a), o);
             if (!r.error.isEmpty()) {
                 if (o.engine == AudioEvents::Engine::Yamnet && !AudioEvents::yamnetAvailable())
                     fail("NOT_INSTALLED", r.error + " - or use events:'heuristic'");
@@ -263,8 +262,7 @@ QJsonObject cmdLoudness(const QJsonObject& a, Context& ctx)
         Clip c;
         c.mediaPath = m.info.path;
         c.out = m.info.length - 1;
-        c.audioStream = a["audio_stream"].toInt();
-        requirePlayableStream(m.info, c.audioStream);
+        c.audioStream = audioStreamArg(m.info, a);
         const auto l = AudioAnalysis::clipLoudness(m.format, c, progress);
         if (!l) fail("DECODE_FAILED", "could not read the sound");
         result["loudness"] = loudnessJson(*l);

@@ -320,8 +320,10 @@ void applyStartTimecodes(Sequence& seq, const std::function<QString(const QStrin
 {
     const int fps = seq.format.rate.timebase();
     const int hour = Timecode::hourFrames(fps, seq.dropFrame); // the EDL's source timecodes
-    // A 29.97 camera writes drop-frame start timecodes ("01:00:00;00")
-    const bool drop = Timecode::isDropFrameRate(seq.format.rate.num, seq.format.rate.den);
+    // A 29.97 camera writes drop-frame start timecodes ("01:00:00;00"): counted the way the EDL/XML counts its source
+    // timecodes - drop-frame only when they are (an imported DF EDL). A non-drop export keeps the label's digits
+    // ("01:00:00;00" -> 01:00:00:00, as 0.20 wrote it): read as a DF count it put every source 3.6 s/hour early.
+    const bool drop = seq.dropFrame && Timecode::isDropFrameRate(seq.format.rate.num, seq.format.rate.den);
     QHash<QString, int> startOf; // path -> start frame, -1 = no timecode
     for (const QString& path : mediaFiles(seq)) {
         const QString tc = timecode ? timecode(path) : QString();

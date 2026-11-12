@@ -626,7 +626,11 @@ void Inspector::setPlayhead(int frame)
     m_playhead = frame;
     // Only redisplay when something can change (every frame during playback)
     const Clip* shown[] = {primary(TrackKind::Video), primary(TrackKind::Audio)};
-    if (std::any_of(std::begin(shown), std::end(shown), [](const Clip* c) { return c && Keys::hasKeys(*c); })) refresh();
+    if (std::any_of(std::begin(shown), std::end(shown), [](const Clip* c) { return c && Keys::hasKeys(*c); })) {
+        m_valuesOnly = true;
+        refresh();
+        m_valuesOnly = false;
+    }
 }
 
 QVector<int> Inspector::selectedIds(TrackKind kind, bool title, const QString& effect) const
@@ -672,6 +676,7 @@ void Inspector::refresh()
         Inspector* self;
         ~Told()
         {
+            if (self->m_valuesOnly) return; // a playhead step: values change, not which rows show (every frame)
             self->m_pages->updateGeometry();
             self->m_content->updateGeometry();
             self->updateGeometry();

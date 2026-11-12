@@ -247,7 +247,8 @@ void TimelineView::dragMoveEvent(QDragMoveEvent* e)
     m_slotDropClip = slotDropClipAt(e->position().toPoint(), e->modifiers());
     if (m_slotDropClip) {
         m_dropFrame = -1;
-        e->acceptProposedAction();
+        e->setDropAction(Qt::CopyAction); // see dragEnterEvent
+        e->accept();
         update();
         return;
     }
@@ -321,7 +322,8 @@ void TimelineView::dropEvent(QDropEvent* e)
         m_slotDropClip = 0;
         m_dropFrame = -1;
         m_dropItems.clear();
-        e->acceptProposedAction();
+        e->setDropAction(Qt::CopyAction); // see dragEnterEvent
+        e->accept();
         fillSlotFromDrop(slotClip, e->mimeData());
         m_dropFile.clear();
         update();

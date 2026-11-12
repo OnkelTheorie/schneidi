@@ -1926,7 +1926,7 @@ QJsonObject cmdHelp(const QJsonObject& a, Context&)
                  "Long commands (render, transcribe, highlights, short …) write progress lines on stderr: "
                  "{\"progress\":45,\"stage\":\"transcribe\",\"eta_s\":30} (percent, the step running now, "
                  "estimated seconds left). --verbose: also progress notes and engine messages on stderr. Numbers: "
-                 "\"1.5\" or with a decimal comma \"1,5\" (\"1,500\" is 1.5, not 1500: no thousands separators).";
+                 "\"1.5\" or with a decimal comma \"1,5\" (\"1,500\" is refused as ambiguous: write 1500 or 1.5).";
     o["servers"] = servers;
     return o;
 }

@@ -32,6 +32,7 @@
 #include <QDateTime>
 #include <QDialog>
 #include <QDialogButtonBox>
+#include <QDrag>
 #include <QDir>
 #include <QDragEnterEvent>
 #include <QFileDialog>
@@ -96,6 +97,19 @@ protected:
         return data;
     }
     QStringList mimeTypes() const override { return {MediaPool::MimeType, MediaPool::ListMimeType}; }
+    // Never QAbstractItemView::startDrag: a drop that ends as a Move (Shift held over a target that takes the proposed
+    // action, a bin) would make it delete the dragged rows itself - the clip gone from the list and MediaPool's
+    // path -> item map left with a freed item. The pool rebuilds itself after a move into a bin.
+    void startDrag(Qt::DropActions actions) override
+    {
+        const QList<QListWidgetItem*> items = selectedItems();
+        if (items.isEmpty()) return;
+        auto* drag = new QDrag(this);
+        drag->setMimeData(mimeData(items));
+        const QIcon icon = items.first()->icon();
+        if (!icon.isNull()) drag->setPixmap(icon.pixmap(iconSize().isValid() ? iconSize() : kListIcon));
+        drag->exec(actions, Qt::CopyAction);
+    }
 };
 
 // Bin list: drag clips or bins onto it = move (Delete removes the selected bin: MediaPool::keyActions)
