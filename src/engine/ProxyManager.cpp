@@ -89,22 +89,6 @@ bool seeThrough(const AVFrame* f)
     return false;
 }
 
-// The parity (which field is shown first) a stream's AVFieldOrder states. libavcodec/defs.h documents TB as "top
-// coded first, bottom displayed first", but FFmpeg itself treats TB as top field first and BT as bottom first: the
-// ffmpeg program writes TB/BT for top/bottom-first pictures (fftools/ffmpeg_enc.c; a bottom-first H.264 in MKV reads
-// back as BT), the rawvideo, v210 and FFV1 decoders flag TB pictures top-first, the yuv4mpeg, AVI and MXF muxers
-// write TB as top-first. Files carry that meaning, so it is followed here. Not stated: "auto".
-const char* fieldParity(int fieldOrder)
-{
-    switch (fieldOrder) {
-    case AV_FIELD_TT:
-    case AV_FIELD_TB: return "tff";
-    case AV_FIELD_BB:
-    case AV_FIELD_BT: return "bff";
-    default: return "auto";
-    }
-}
-
 SourceInfo probeSource(const QString& path)
 {
     SourceInfo s;
@@ -137,14 +121,12 @@ SourceInfo probeSource(const QString& path)
     } else if (const std::shared_ptr<const Video::Picture> first = reader->picture(0)) {
         s.interlaced = !first->progressive;
     }
-    // The field shown first: as the decoder flags the first picture, else as the stream states it. The decoder's
-    // flag goes first: H.264 in MP4/MOV/TS states the parser's guess (TT for a bottom-first stream without timing
-    // SEI), while the decoder knows the order from the fields' picture order counts.
+    // The field shown first: as the decoder flags the first picture, else as the stream states it (see
+    // Video::topFieldShownFirst; the reader's pictures carry the same answer)
     if (s.interlaced) {
-        s.parity = fieldParity(in.fieldOrder);
-        if (const std::shared_ptr<const Video::Picture> first = reader->picture(0);
-            first && first->frame && (first->frame->flags & AV_FRAME_FLAG_INTERLACED))
-            s.parity = first->frame->flags & AV_FRAME_FLAG_TOP_FIELD_FIRST ? "tff" : "bff";
+        const std::shared_ptr<const Video::Picture> first = reader->picture(0);
+        const std::optional<bool> top = Video::topFieldShownFirst(first ? first->frame : nullptr, in.fieldOrder);
+        s.parity = top ? (*top ? "tff" : "bff") : "auto";
     }
     s.decoder = in.codec;
     if (media) s.seconds = media->length / 25.0;
