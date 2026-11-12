@@ -41,14 +41,21 @@ namespace {
 // The viewer's API on Linux/BSD, decided once per run (FrameView::preferVulkan); false after a Vulkan failure
 std::optional<bool> g_vulkan;
 constexpr const char* kApiKey = "viewer/gpuApi"; // "opengl" after Vulkan failed here (FrameView::preferVulkan)
+// Set while the start's Vulkan check runs (warmUp): still there at the next start = the driver crashed or hung in it
+constexpr const char* kVulkanTryingKey = "viewer/vulkanCheckRunning";
 } // namespace
 
 bool FrameViewRhiSurface::vulkan()
 {
 #if defined(SCHNEIDI_VIEWER_VULKAN)
-    if (!g_vulkan)
+    if (!g_vulkan) {
         g_vulkan = FrameView::preferVulkan(qEnvironmentVariable("SCHNEIDI_VIEWER_API"),
                                            QSettings().value(kApiKey).toString(), QGuiApplication::platformName(), true);
+        if (*g_vulkan && QSettings().value(kVulkanTryingKey).toBool()) {
+            QSettings().remove(kVulkanTryingKey);
+            vulkanFailed(QStringLiteral("the last start ended inside the Vulkan check"));
+        }
+    }
     return *g_vulkan;
 #else
     return false;
@@ -189,10 +196,22 @@ void FrameViewRhiSurface::warmUp()
     // OpenGL: only where a fallback surface may be made off the GUI thread (GLX pbuffers)
     if (!vk && QGuiApplication::platformName() != QLatin1String("xcb")) return;
     g_warmUpVulkan = vk;
+    if (vk) { // a driver that crashes or hangs here: OpenGL from the next start on (vulkan())
+        QSettings settings;
+        settings.setValue(kVulkanTryingKey, true);
+        settings.sync();
+    }
     // Vulkan: loads the drivers (every installed one: ~100-200 ms) and makes a device once - the first one costs the
     // most, the window's own one afterwards ~50 ms. OpenGL: the check only (each context costs the same). A
     // QVulkanInstance and a QRhi may be made on any thread.
-    g_warmUp = std::async(std::launch::async, [vk] { return probeApi(vk); }).share();
+    g_warmUp = std::async(std::launch::async, [vk] {
+                   const FrameView::Probe p = probeApi(vk);
+                   if (vk)
+                       QMetaObject::invokeMethod(
+                           QCoreApplication::instance(), [] { QSettings().remove(kVulkanTryingKey); },
+                           Qt::QueuedConnection);
+                   return p;
+               }).share();
 #endif
 }
 

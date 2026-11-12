@@ -55,7 +55,6 @@
 #include <utility>
 #include <vector>
 
-
 namespace {
 
 // Splash window: logo (like assets/schneidi.svg, drawn by hand - without QtSvg), name and version in the design colors
@@ -469,7 +468,8 @@ int main(int argc, char* argv[])
     RenderQueue::setReviewMarks([](const ProjectData& data, int sequence, const std::atomic<bool>& cancel) {
         return Cli::reviewOverlay(data, sequence, &cancel);
     });
-    // The viewer trusts the last run's GPU check; the real one (a throwaway OpenGL/D3D device) comes after the window
+    // The viewer trusts the last run's GPU check; the real one comes after the window (X11: made on a helper thread
+    // while the window is built, warmUpGpu; elsewhere a throwaway device once the window is up)
     FrameView::setUseCachedGpuCheck(true);
     FrameView::warmUpGpu(); // while the window is built
     // Started with a project or media (a double-click on a .schneidi file): the video decoder opens beside the
@@ -484,8 +484,8 @@ int main(int argc, char* argv[])
     });
     new FirstPaintWatch(&w);
     QTimer::singleShot(kAfterFirstPaintMaxMs, &w, [] { firstPaintDone(); });
-    // The viewer's GPU surface follows the first picture (X11: the window's GL setup no longer delays it); the window
-    // is made as an OpenGL window right away so that it can take the surface in place
+    // The viewer's GPU surface follows the open animation (X11: the window's GPU setup no longer delays the first
+    // picture); the window is made as a GPU (Vulkan/OpenGL) window right away so that it can take the surface in place
     FrameView::prepareWindow(&w);
     attachViewerSurface();
     // Start maximized like DaVinci; screenshot test runs (offscreen) keep the fixed size from MainWindow
