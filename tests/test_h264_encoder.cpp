@@ -395,6 +395,21 @@ int main()
             }
         }
         {
+            // Adaptive placement (the default): any mix of run lengths decodes, with any thread count the same
+            size_t bytesOne = 0;
+            for (int threads : {1, 4}) {
+                EncoderConfig c = config(320, 192, IntraMode::Auto, 30, threads);
+                c.bframes = 3;
+                StreamInfo info;
+                size_t bytes = 0;
+                CHECK(roundTrip(c, 24, &bytes, -1, nullptr, &info));
+                CHECK(info.types.size() == 24 && info.types[0] == 'I' && info.minPsnrY >= 30.0);
+                if (threads == 1)
+                    bytesOne = bytes;
+                CHECK(bytes == bytesOne);
+            }
+        }
+        {
             // Rate control with B pictures: one pass, with a first pass, and in chunks
             EncoderConfig c = config(320, 192, IntraMode::Auto, 30, 2);
             c.bframes = 2;
@@ -406,12 +421,13 @@ int main()
             if (std::abs(kbps - 1000.0) >= 250.0)
                 std::fprintf(stderr, "rate control with B pictures: %.0f kbit/s instead of 1000\n", kbps);
             CHECK(std::abs(kbps - 1000.0) < 250.0);
-            FirstPass fp(c.width, c.height);
+            FirstPass fp(c.width, c.height, 2, true); // with the scores of the adaptive placement
             for (int t = 0; t < 60; ++t) {
                 const Yuv src = synthFrame(c.width, c.height, t);
                 fp.add(Picture{src.y.data(), src.u.data(), src.v.data(), src.w, src.w / 2});
             }
             c.firstPass = fp.stats();
+            CHECK(c.firstPass->bScore.size() == 60);
             bytes = 0;
             CHECK(roundTrip(c, 60, &bytes));
             kbps = bytes * 8.0 / 2.0 / 1000.0;

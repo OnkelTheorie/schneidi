@@ -27,6 +27,10 @@ struct LookaheadFrame {
     bool decided = false; // the type is final
     bool coded = false;   // a reference picture coded ahead of the B pictures before it
     bool cutKey = false;  // keyframe because of a detected scene change
+    // How badly the picture is predicted when the picture before it is left out: its cost against
+    // the picture two back over the summed costs of both single steps (0.5 = steady motion, towards
+    // 1 and above = motion that changes from picture to picture). -1 = not measured.
+    double bScore = -1;
 };
 
 class Lookahead {
@@ -42,7 +46,11 @@ public:
     // search = sceneCut (needs only prev's thumbnail) + costs (starts from prev's vectors, so
     // pictures go one after another).
     void sceneCut(LookaheadFrame& f, const LookaheadFrame* prev) const;
-    void costs(LookaheadFrame& f, const LookaheadFrame* prev, int threads = 1) const;
+    // seed: another start point of the search, that picture's vector times seedScale.
+    void costs(LookaheadFrame& f, const LookaheadFrame* prev, int threads = 1, const LookaheadFrame* seed = nullptr,
+               int seedScale = 1) const;
+    // bScore of f (analysed against prev) from a second search against prev2, the picture before prev.
+    double bScore(const LookaheadFrame& f, const LookaheadFrame& prev, const LookaheadFrame& prev2) const;
 
     // Macroblock tree over the queue: propagates the cost of every block back through the
     // motion vectors to the blocks it was predicted from, last picture first. Keyframes do not

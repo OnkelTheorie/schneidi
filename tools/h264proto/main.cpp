@@ -219,7 +219,7 @@ int main(int argc, char** argv)
     if (chunks > 1 && in != stdin) {
         // First pass over the whole clip, then the chunks side by side.
         auto t0 = std::chrono::steady_clock::now();
-        FirstPass fp(w, h, cfg.threads);
+        FirstPass fp(w, h, cfg.threads, cfg.bframes > 0 && cfg.bAdaptive);
         for (int n = 0; n < maxFrames && std::fread(frame.data(), 1, frame.size(), in) == frame.size(); ++n) {
             Picture pic;
             pic.y = frame.data();
@@ -273,7 +273,7 @@ int main(int argc, char** argv)
     }
     if (twoPass && in != stdin) {
         const auto t0 = std::chrono::steady_clock::now();
-        FirstPass fp(w, h, cfg.threads);
+        FirstPass fp(w, h, cfg.threads, cfg.bframes > 0 && cfg.bAdaptive);
         for (int n = 0; n < maxFrames && std::fread(frame.data(), 1, frame.size(), in) == frame.size(); ++n) {
             Picture pic;
             pic.y = frame.data();

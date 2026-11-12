@@ -132,7 +132,17 @@ void Lookahead::sceneCut(LookaheadFrame& f, const LookaheadFrame* prev) const
 
 }
 
-void Lookahead::costs(LookaheadFrame& f, const LookaheadFrame* prev, int threads) const
+double Lookahead::bScore(const LookaheadFrame& f, const LookaheadFrame& prev, const LookaheadFrame& prev2) const
+{
+    LookaheadFrame far;
+    far.half = f.half;
+    costs(far, &prev2, 1, &f, 2); // about twice the vector of one step
+    const double steps = f.interSum + prev.interSum;
+    return steps > 0 ? far.interSum / steps : 0.5;
+}
+
+void Lookahead::costs(LookaheadFrame& f, const LookaheadFrame* prev, int threads, const LookaheadFrame* seed,
+                      int seedScale) const
 {
     const int stride = halfW_ + 2 * kMargin;
     const size_t n = size_t(mbW_) * mbH_;
@@ -229,6 +239,8 @@ void Lookahead::costs(LookaheadFrame& f, const LookaheadFrame* prev, int threads
                 tryStart(rx, ry);
             if (!prev->mvx.empty())
                 tryStart(prev->mvx[m], prev->mvy[m]);
+            if (seed)
+                tryStart(seed->mvx[m] * seedScale, seed->mvy[m] * seedScale);
             for (int step : {4, 2, 1})
                 for (int iter = 0; iter < 16; ++iter) {
                     bool moved = false;

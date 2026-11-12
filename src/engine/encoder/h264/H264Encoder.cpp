@@ -424,8 +424,9 @@ Encoder::Encoder(const EncoderConfig& config)
         cfg_.deblock = false;
     // B pictures need CABAC and P pictures; their run and its reference picture must fit the queue.
     cfg_.bframes = useB() ? std::min(cfg_.bframes, 8) : 0;
+    // (the newest picture is analysed against the two before it while older ones leave the queue)
     if (useB())
-        cfg_.lookahead = std::max(cfg_.lookahead, cfg_.bframes + 3);
+        cfg_.lookahead = std::max(cfg_.lookahead, cfg_.bframes + 4);
     for (auto& c : coders_)
         c = std::make_unique<FrameCoder>(cfg_);
     idrCount_ = cfg_.idrPicIdBase;
@@ -632,10 +633,10 @@ Picture pictureOf(const LookaheadFrame& f, int w)
 
 } // namespace
 
-FirstPass::FirstPass(int width, int height, int threads)
+FirstPass::FirstPass(int width, int height, int threads, bool forB)
     : width_(width), height_(height), threads_(std::max(1, threads)),
       la_(std::make_unique<Lookahead>(width, height, (width + 15) / 16, (height + 15) / 16)),
-      stats_(std::make_shared<FirstPassStats>())
+      stats_(std::make_shared<FirstPassStats>()), forB_(forB)
 {
 }
 
@@ -676,6 +677,23 @@ void FirstPass::analyseBatch() const
     // The motion search starts from the predecessor's vectors: in order.
     for (int i = 0; i < n; ++i)
         la_->costs(batch_[size_t(i)], prevOf(i), threads_);
+    if (forB_) {
+        auto prev2Of = [&](int i) { return i > 1 ? &batch_[size_t(i) - 2] : i == 1 ? (havePrev_ ? &prev_ : nullptr) : havePrev2_ ? &prev2_ : nullptr; };
+        parallel([&](int i) {
+            if (prev2Of(i))
+                batch_[size_t(i)].bScore = la_->bScore(batch_[size_t(i)], *prevOf(i), *prev2Of(i));
+        });
+        for (const LookaheadFrame& f : batch_)
+            stats_->bScore.push_back(f.bScore);
+        if (n >= 2) {
+            prev2_ = std::move(batch_[size_t(n) - 2]);
+            havePrev2_ = true;
+        } else {
+            prev2_ = std::move(prev_);
+            havePrev2_ = havePrev_;
+        }
+        prev2_.y = {};
+    }
     for (LookaheadFrame& f : batch_) {
         stats_->intraSum.push_back(f.intraSum);
         stats_->interSum.push_back(f.interSum);
@@ -760,6 +778,8 @@ ChunkPlan planChunks(const FirstPassStats& st, const EncoderConfig& cfg, int chu
             part->interSum.push_back(st.interSum[i]);
             part->sceneChange.push_back(st.sceneChange[i]);
             part->forceKeyframe.push_back(st.forceKeyframe[i]);
+            if (!st.bScore.empty())
+                part->bScore.push_back(st.bScore[i]);
         }
         total += need[c];
         plan.firstPass.push_back(std::move(part));
@@ -922,26 +942,34 @@ std::vector<uint8_t> Encoder::encodeImpl(const Picture& picture, bool forceKeyfr
         la_ = std::make_unique<Lookahead>(cfg_.width, cfg_.height, mbW_, mbH_);
     joinPending();
     const bool full = int(queue_.size()) + 1 >= cfg_.lookahead;
+    const bool scoreB = bAdapt() && !cfg_.firstPass; // the adaptive B placement measures here
     // Once the queue is full the newest picture joins it only at the next call (analysed in the
     // background with several threads), so the encoded picture sees the same queue with any
     // thread count. Its predecessor stays in the queue while a picture is popped.
     if (full && queue_.size() >= 2) {
         pendingFrame_ = std::make_unique<LookaheadFrame>(std::move(f));
         const LookaheadFrame* prev = &queue_.back();
+        const LookaheadFrame* prev2 = scoreB ? &queue_[queue_.size() - 2] : nullptr;
         if (cfg_.threads > 1) {
-            pendingThread_ = std::thread([this, prev] {
+            pendingThread_ = std::thread([this, prev, prev2] {
                 try {
                     failurePoint(FailPoint::LookaheadThread);
                     la_->analyse(*pendingFrame_, prev);
+                    if (prev2)
+                        pendingFrame_->bScore = la_->bScore(*pendingFrame_, *prev, *prev2);
                 } catch (...) {
                     pendingError_ = std::current_exception();
                 }
             });
         } else {
             la_->analyse(*pendingFrame_, prev);
+            if (prev2)
+                pendingFrame_->bScore = la_->bScore(*pendingFrame_, *prev, *prev2);
         }
     } else {
         la_->analyse(f, queue_.empty() ? nullptr : &queue_.back());
+        if (scoreB && queue_.size() >= 2)
+            f.bScore = la_->bScore(f, queue_.back(), queue_[queue_.size() - 2]);
         queue_.push_back(std::move(f));
     }
     if (!full)
@@ -958,6 +986,41 @@ std::vector<uint8_t> Encoder::encodeImpl(const Picture& picture, bool forceKeyfr
 // each followed by a P picture. The picture before a keyframe and the last one are P pictures (a
 // B picture needs a later reference of its own GOP). With `decide` the first run and its
 // reference picture become final.
+// Threshold of the adaptive B placement: a run of n B pictures needs every picture after its
+// first one, up to the reference picture that ends it, to score below kBScoreMax[n]. Measured
+// (fixed QP, BD-rate PSNR-Y against no B pictures; slow zoom with grain / fast game): 0.55 -46 % /
+// 0 %, 0.57 -50 % / +2 %, 0.59 -52 % / +7 %, always three -53 % / +18 %. H264_BT1..3 override.
+static const double kBScoreMax[4] = {
+    0,
+    std::getenv("H264_BT1") ? std::atof(std::getenv("H264_BT1")) : 0.57,
+    std::getenv("H264_BT2") ? std::atof(std::getenv("H264_BT2")) : 0.57,
+    std::getenv("H264_BT3") ? std::atof(std::getenv("H264_BT3")) : 0.57,
+};
+// Longest run of B pictures (up to maxB) that may start at a picture; score(k) is the bScore of
+// the k-th picture after it (negative: unknown, the run ends before it).
+template <class Score>
+static int bRunLimit(int maxB, Score&& score)
+{
+    int limit = 0;
+    double worst = 0;
+    for (int k = 1; k <= maxB; ++k) {
+        const double s = score(k);
+        if (s < 0)
+            break;
+        worst = std::max(worst, s);
+        if (worst < kBScoreMax[std::min(k, 3)])
+            limit = k;
+    }
+    return limit;
+}
+
+double Encoder::bScoreOf(const LookaheadFrame& f) const
+{
+    if (cfg_.firstPass)
+        return size_t(f.index) < cfg_.firstPass->bScore.size() ? cfg_.firstPass->bScore[size_t(f.index)] : -1.0;
+    return f.bScore;
+}
+
 void Encoder::planQueue()
 {
     size_t u = 0;
@@ -967,7 +1030,8 @@ void Encoder::planQueue()
         const LookaheadFrame& f = queue_[j];
         return f.index == 0 || pos >= cfg_.gop || f.forceKeyframe || (cfg_.sceneCut && f.sceneChange && pos >= 6);
     };
-    int pos = gopPos_, run = 0;
+    const bool adapt = bAdapt();
+    int pos = gopPos_, run = 0, runLimit = cfg_.bframes;
     for (size_t j = u; j < queue_.size(); ++j) {
         LookaheadFrame& f = queue_[j];
         const bool key = keyAt(j, pos);
@@ -979,7 +1043,9 @@ void Encoder::planQueue()
             run = 0;
         } else {
             const bool last = j + 1 == queue_.size();
-            if (run < cfg_.bframes && !last && !keyAt(j + 1, pos + 1)) {
+            if (run == 0 && adapt)
+                runLimit = bRunLimit(cfg_.bframes, [&](int k) { return j + size_t(k) < queue_.size() ? bScoreOf(queue_[j + size_t(k)]) : -1.0; });
+            if (run < runLimit && !last && !keyAt(j + 1, pos + 1)) {
                 f.type = 2;
                 ++run;
             } else {
@@ -999,8 +1065,11 @@ LookaheadFrame* Encoder::pickNext()
         return nullptr;
     if (!queue_.front().decided) {
         planQueue();
+        static const bool trace = std::getenv("H264_B_TRACE") != nullptr;
         for (LookaheadFrame& f : queue_) {
             f.decided = true;
+            if (trace)
+                std::fprintf(stderr, "btype: picture %d %c score %.3f\n", f.index, "IPB"[f.type], bScoreOf(f));
             if (f.type != 2) {
                 gopPos_ = f.gopPos + 1;
                 break;
@@ -1771,12 +1840,15 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
                 tpKey_[i] = key;
             }
             // Picture types as planQueue will place them.
-            int run = 0;
+            const bool adapt = bAdapt();
+            int run = 0, runLimit = cfg_.bframes;
             for (size_t i = 0; i < st.size(); ++i) {
+                if (run == 0 && adapt && !tpKey_[i])
+                    runLimit = bRunLimit(cfg_.bframes, [&](int k) { return i + size_t(k) < st.bScore.size() ? st.bScore[i + size_t(k)] : -1.0; });
                 if (tpKey_[i]) {
                     tpType_[i] = 0;
                     run = 0;
-                } else if (bMode && run < cfg_.bframes && i + 1 < st.size() && !tpKey_[i + 1]) {
+                } else if (bMode && run < runLimit && i + 1 < st.size() && !tpKey_[i + 1]) {
                     tpType_[i] = 2;
                     ++run;
                 } else {
@@ -4203,32 +4275,40 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
         c.cost = total + lambdaSad * typeBits(c.bType);
         return c;
     };
-    Cand best = tryShape(0);
+    // The 16x16 candidate and, where its estimate is better, the best split one (both are coded for real).
+    Cand cands[2];
+    cands[0] = tryShape(0);
+    int candCount = 1;
     if (cfg_.effort > 0 && gBParts) {
         for (int shape : {1, 2}) {
             const Cand c = tryShape(shape);
-            if (c.cost < best.cost)
-                best = c;
+            if (c.cost < cands[1].cost)
+                cands[1] = c;
         }
+        if (cands[1].cost < cands[0].cost)
+            candCount = 2;
     }
+    const double estSearch = candCount == 2 ? cands[1].cost : cands[0].cost;
 
-    // Codes the direct prediction (which = 0) or the searched candidate (1) with its residual;
+    // Codes the direct prediction (which = 0) or a searched candidate (1, 2) with its residual;
     // leaves its state in the macroblock and returns SSD + lambda * bits.
-    uint8_t clp[256], ccp[2][64];
-    for (int p = 0; p < best.count; ++p) {
-        const Part& P = kPart[best.shape][p];
-        predictBi(mbx, mby, P.x4, P.y4, P.w4, P.h4, best.use[p], best.mv[p][0], best.mv[p][1], clp, ccp);
-    }
+    uint8_t clp[2][256], ccp[2][2][64];
+    for (int k = 0; k < candCount; ++k)
+        for (int p = 0; p < cands[k].count; ++p) {
+            const Part& P = kPart[cands[k].shape][p];
+            predictBi(mbx, mby, P.x4, P.y4, P.w4, P.h4, cands[k].use[p], cands[k].mv[p][0], cands[k].mv[p][1], clp[k], ccp[k]);
+        }
     struct ChromaCache {
         bool valid = false;
         uint8_t recU[64], recV[64];
         ChromaMb ch;
     };
-    ChromaCache chromaCache[2];
+    ChromaCache chromaCache[3];
     bool sentDelta = false;
     auto encodeB = [&](int which, MbOut& io, bool t8) {
-        const uint8_t* lp = which ? clp : dlp;
-        const uint8_t (*cp)[64] = which ? ccp : dcp;
+        const Cand& best = cands[which ? which - 1 : 0];
+        const uint8_t* lp = which ? clp[which - 1] : dlp;
+        const uint8_t (*cp)[64] = which ? ccp[which - 1] : dcp;
         if (which) {
             for (int p = 0; p < best.count; ++p) {
                 const Part& P = kPart[best.shape][p];
@@ -4274,18 +4354,18 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
     bool chosenDelta = sentDelta;
     MbState interState;
     saveMb(mbx, mby, interState);
-    {
+    for (int which = 1; which <= candCount; ++which) {
         MbOut candBits;
-        const double costCand = encodeB(1, candBits, false);
+        const double costCand = encodeB(which, candBits, false);
         if (costCand < costInter) {
             costInter = costCand;
             chosenDelta = sentDelta;
             interBits = std::move(candBits);
             saveMb(mbx, mby, interState);
-            bestWhich = 1;
+            bestWhich = which;
         }
     }
-    // 8x8 transform for the better of the two (High profile).
+    // 8x8 transform for the best of them (High profile).
     if (useT8() && cfg_.effort > 0) {
         MbOut t8Bits;
         const double costT8 = encodeB(bestWhich, t8Bits, true);
@@ -4311,7 +4391,7 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
             predictLuma16(mode, &recY_[lumaOff], padW_, left, top, cand);
             est = std::min(est, satd16(cand));
         }
-        const double estInter = std::min(best.cost, estDirect);
+        const double estInter = std::min(estSearch, estDirect);
         if (double(est) < estInter * gIntraFactor) {
             const bool borderline = double(est) >= estInter;
             tIntraSkip8 = borderline && (!gFullIntra || (gExp & 2));

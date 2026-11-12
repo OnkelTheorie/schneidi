@@ -31,6 +31,7 @@ enum class IntraMode {
 struct FirstPassStats {
     std::vector<double> intraSum, interSum; // per picture, like LookaheadFrame
     std::vector<uint8_t> sceneChange, forceKeyframe;
+    std::vector<double> bScore; // per picture (LookaheadFrame::bScore), only with FirstPass(.., forB = true)
     size_t size() const { return intraSum.size(); }
 };
 
@@ -73,7 +74,9 @@ struct EncoderConfig {
     // option). Access units come out in coding order: lastDisplayIndex() says which picture one is.
     int bframes = 0;
     int bQpOffset = 2;     // QP of a B picture above the P QP
-    bool bAdaptive = true; // fewer B pictures where the motion is too strong for them to pay
+    // Fewer B pictures where the motion changes too much for them to pay (LookaheadFrame::bScore;
+    // with a first pass it must have been made with forB).
+    bool bAdaptive = true;
     // Predictions from both lists weighted by the distance to the two reference pictures
     // (implicit weighted prediction) instead of their plain average. Measured on a slow zoom:
     // no gain (+0.7 % BD-rate), so off by default.
@@ -114,7 +117,8 @@ struct Picture {
 class FirstPass {
 public:
     // threads > 1: pictures are analysed in batches side by side (same numbers).
-    FirstPass(int width, int height, int threads = 1);
+    // forB: also what the adaptive B picture placement needs (one more search per picture).
+    FirstPass(int width, int height, int threads = 1, bool forB = false);
     ~FirstPass();
     void add(const Picture& picture, bool forceKeyframe = false);
     std::shared_ptr<const FirstPassStats> stats() const;
@@ -125,8 +129,9 @@ private:
     std::unique_ptr<Lookahead> la_;
     // Pictures waiting for the next batch, and the last analysed one (their predecessor).
     mutable std::vector<LookaheadFrame> batch_;
-    mutable LookaheadFrame prev_;
-    mutable bool havePrev_ = false;
+    mutable LookaheadFrame prev_, prev2_;
+    mutable bool havePrev_ = false, havePrev2_ = false;
+    bool forB_ = false;
     std::shared_ptr<FirstPassStats> stats_;
 };
 
@@ -192,6 +197,9 @@ private:
     // ones their type, pickNext the next one in coding order (the reference picture after a run
     // of B pictures goes first and stays queued until they are coded).
     bool useB() const { return cfg_.bframes > 0 && useCabac() && cfg_.gop > 1; }
+    // Adaptive placement: from the first pass when there is one (so its plan holds), else from the queue.
+    bool bAdapt() const { return useB() && cfg_.bAdaptive && (!cfg_.firstPass || !cfg_.firstPass->bScore.empty()); }
+    double bScoreOf(const LookaheadFrame& f) const;
     void planQueue();
     LookaheadFrame* pickNext();
     std::vector<uint8_t> codeNext();
