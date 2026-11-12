@@ -17,6 +17,8 @@
 # Build packages (Debian 13): see packaging/linux/Dockerfile.ffmpeg-lgpl. Then:
 #   PKG_CONFIG_PATH=<prefix>/lib/pkgconfig LD_LIBRARY_PATH=<prefix>/lib …   (build-appimage.sh does it)
 # The version matches Debian 13's FFmpeg (same library sonames as the system libraries).
+# A finished build writes <prefix>/share/schneidi/ffmpeg-build.txt (version, variant, hash of the component list);
+# `build-ffmpeg-lgpl.sh --stamp` prints what it would write, so the package scripts build again when the list changed.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -26,14 +28,22 @@ NVHEADERS_VERSION="12.2.72.0" # NVENC/NVDEC headers (MIT), header-only
 NVHEADERS_SHA256="c295a2ba8a06434d4bdc5c2208f8a825285210d71d91d572329b2c51fd0d4d03"
 GPL_ENCODERS="${GPL_ENCODERS:-1}"
 case "$GPL_ENCODERS" in 0 | 1) ;; *) echo "!! GPL_ENCODERS must be 0 or 1" >&2; exit 1 ;; esac
+FULL="${FFMPEG_FULL:-0}"
+COMPONENTS="$ROOT/packaging/ffmpeg-components.txt"
+stamp() {
+    local list
+    list="$(sha256sum "$COMPONENTS" | cut -d' ' -f1)"
+    echo "ffmpeg=$FFMPEG_VERSION gpl_encoders=$GPL_ENCODERS full=$FULL components=$list"
+}
+if [ "${1:-}" = "--stamp" ]; then stamp; exit 0; fi
 if [ "$GPL_ENCODERS" = 1 ]; then WORK="${FFMPEG_WORK:-$ROOT/build-ffmpeg}"; else WORK="${FFMPEG_WORK:-$ROOT/build-ffmpeg-lgpl}"; fi
 PREFIX="$(realpath -m "${1:-$WORK/prefix}")"
 JOBS="${JOBS:-4}"
-FULL="${FFMPEG_FULL:-0}"
-COMPONENTS="$ROOT/packaging/ffmpeg-components.txt"
+STAMP_FILE="$PREFIX/share/schneidi/ffmpeg-build.txt"
 case "$(uname -s)" in MINGW* | MSYS* | CYGWIN*) WINDOWS=1 ;; *) WINDOWS=0 ;; esac
 
 mkdir -p "$WORK/download" "$PREFIX"
+rm -f "$STAMP_FILE" # (a build that stops half-way leaves no stamp: the next package build tries again)
 fetch() { # file url sha256
     local file="$WORK/download/$1"
     if [ ! -f "$file" ]; then
@@ -146,4 +156,6 @@ else
         grep -qE "^ *V[^ ]* +$e " <<<"$ENCODERS" || { echo "!! the GPL_ENCODERS=1 build has no $e encoder" >&2; exit 1; }
     done
 fi
+mkdir -p "$(dirname "$STAMP_FILE")"
+stamp >"$STAMP_FILE"
 echo ">> done: $PREFIX ($(LD_LIBRARY_PATH="$PREFIX/lib" "$PREFIX/bin/ffmpeg" -hide_banner -version | head -1))"
