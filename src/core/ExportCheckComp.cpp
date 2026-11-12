@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Checks of compositing graphs (0.19, effect "comp"): nodes that do not reach the output, graphs too slow to play,
-// soft key mattes. Pure on the timeline (key_edges on a matte the caller rendered).
+// soft key mattes, trackers that lost their point (0.22). Pure on the timeline (key_edges on a matte the caller rendered).
 #include "core/ExportCheck.h"
 
 #include "core/CompGraph.h"
@@ -28,6 +28,16 @@ double kindCostMs(const QString& type)
         {"crop", 2},   {"blur", 70},  {"grade", 6},  {"fx", 10},        {"mask", 3},    {"matte", 1},
         {"key", 8},    {"matte_tune", 8}, {"tracker", 1}, {"text", 5}, {"shadow", 18}, {"glitch", 8}};
     return costs.value(type, 5);
+}
+
+// Timeline frame as a clock time "MM:SS" ("H:MM:SS" from an hour)
+QString clock(int frame, const ProjectFormat& f)
+{
+    const double fps = f.rate.fps() > 0 ? f.rate.fps() : 25;
+    const int s = int(std::floor(std::max(0, frame) / fps));
+    if (s >= 3600)
+        return QStringLiteral("%1:%2:%3").arg(s / 3600).arg(s / 60 % 60, 2, 10, QLatin1Char('0')).arg(s % 60, 2, 10, QLatin1Char('0'));
+    return QStringLiteral("%1:%2").arg(s / 60, 2, 10, QLatin1Char('0')).arg(s % 60, 2, 10, QLatin1Char('0'));
 }
 
 } // namespace
@@ -78,6 +88,33 @@ QVector<Issue> comp(const Timeline& tl, int from, int to, const ProjectFormat& f
                 out << Issue{Severity::Info, QStringLiteral("comp_unused_input"),
                              T("Compositing-Graph: Knoten %1 erreichen die Ausgabe nicht und wirken nicht").arg(unused.join(", ")),
                              a, b, c.id};
+            // Trackers others follow that lost their point (keys n<id>.seen): each gap followers do not bridge, and
+            // a track that ends lost (gave up, or the analysis ended there)
+            for (int id : std::as_const(followed)) {
+                const CompNode* n = g.node(id);
+                if (!n || n->type != QLatin1String(Comp::kTrackerType)) continue;
+                for (const Comp::TrackGap& gap : Comp::trackGaps(c, id)) {
+                    if (gap.bridged()) continue;
+                    const int ga = std::max(a, c.start + gap.from), gb = std::min(b, c.start + gap.to + 1);
+                    if (gb <= ga) continue;
+                    if (gap.openEnd || gap.openStart)
+                        out << Issue{Severity::Warning, QStringLiteral("tracker_ended"),
+                                     gap.openStart
+                                         ? T("Tracker %1 findet den Punkt erst ab %2: davor folgt ihm nichts sicher "
+                                             "(neu tracken, wo der Punkt sichtbar ist)")
+                                               .arg(id).arg(clock(c.start + gap.to + 1, f))
+                                         : T("Tracker %1 verliert den Punkt ab %2 und findet ihn nicht wieder: die Spur "
+                                             "endet dort (ab einem Bild neu tracken, wo er wieder sichtbar ist)")
+                                               .arg(id).arg(clock(c.start + gap.from, f)),
+                                     ga, gb, c.id};
+                    else
+                        out << Issue{Severity::Warning, QStringLiteral("tracker_lost"),
+                                     T("Tracker %1 verliert den Punkt bei %2–%3 (%4 Bilder)")
+                                         .arg(id).arg(clock(c.start + gap.from, f), clock(c.start + gap.to, f))
+                                         .arg(gap.length()),
+                                     ga, gb, c.id};
+                }
+            }
             const double ms = compCostMs(*e, f.size());
             if (ms > kCompBudgetMs && !c.renderCache)
                 out << Issue{Severity::Info, QStringLiteral("comp_slow"),

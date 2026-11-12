@@ -632,7 +632,7 @@ QJsonObject clipJson(const Project& p, const Clip& c, TrackRef ref)
             }
             if (e.effectId == QLatin1String(::Comp::kEffectId)) { // the graph short: nodes, links, out, cost
                 eo.remove("params");
-                eo["graph"] = compJson(e, f);
+                eo["graph"] = compJson(e, f, &c);
             }
             if (!e.enabled) eo["enabled"] = false;
             // Not in this version (a frei0r/LADSPA plugin of an older project, an id of a newer one): kept, but skipped
@@ -1394,7 +1394,8 @@ const QVector<Command>& commands()
                   "recording - a 4:3 game in a 16:9 video - that show in a timeline of another shape or a zoomed "
                   "clip; fix: edit op crop_bars, or reframe), compositing graphs (comp_unused_input: nodes that do not "
                   "reach the output; comp_output_mask: the output node gives a mask, the graph does nothing; comp_slow: estimated above 40 ms per frame, playback may stutter; key_edges: a "
-                  "key's matte with many half-transparent pixels in the subject), and the sound of the mix as exported: no "
+                  "key's matte with many half-transparent pixels in the subject; tracker_lost: a followed tracker lost "
+                  "its point for more than 5 frames, range = the gap; tracker_ended: it never found it again), and the sound of the mix as exported: no "
                   "sound, clipping, true peak above -1 dBTP, loudness off the target, silence at the end, and "
                   "under_music: a track with events more than 15 LU under the music while its events play (music = "
                   "a track named music/song/BGM, or one of sound files only that plays without pauses; events = the "

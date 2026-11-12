@@ -184,8 +184,9 @@ QJsonArray compNodeKindsJson();
 QJsonArray recipesJson();
 QJsonArray recipeSlotsJson(const ::CompRecipe& r);
 // A clip's graph for `info` and answers: nodes with their values, links [from, to, input], out, unused (nodes not
-// reaching out), cost_ms (rough estimate at the format's size, ExportCheck::compCostMs)
-QJsonObject compJson(const EffectInstance& comp, const ProjectFormat& f);
+// reaching out), cost_ms (rough estimate at the format's size, ExportCheck::compCostMs). With the clip: each tracker's
+// gaps as lost [[from, to], ...] (timeline frames, inclusive) and lost_ended (never found again)
+QJsonObject compJson(const EffectInstance& comp, const ProjectFormat& f, const Clip* clip = nullptr);
 // op 'keyframe' on a node value ("comp.n3.size"): every clip must have that node with a number parameter of that
 // key; *lo/*hi = its range (unchanged for other parameters)
 void checkCompParam(Session& s, const QVector<int>& ids, AnimParam p, double* lo, double* hi);

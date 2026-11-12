@@ -356,7 +356,7 @@ void opComp(Session& s, const QJsonObject& op)
                                             }())}};
         if (!r->note.isEmpty()) note["next"] = r->note;
         if (const Clip* c = TimelineOps::findClip(s.project.timeline(), ids.first()))
-            if (const EffectInstance* e = EffectRegistry::instance(*c, ::Comp::kEffectId)) note["graph"] = compJson(*e, s.format());
+            if (const EffectInstance* e = EffectRegistry::instance(*c, ::Comp::kEffectId)) note["graph"] = compJson(*e, s.format(), c);
         s.notes << QJsonObject{{"comp_recipe", note}};
         return;
     }
@@ -386,7 +386,7 @@ void opCompFrom(Session& s, const QJsonObject& op)
         if (TrackRef r; TimelineOps::findClip(s.project.timeline(), id, &r) && r.kind == TrackKind::Video) clip = id;
     const Clip* c = TimelineOps::findClip(s.project.timeline(), clip);
     QJsonObject note{{"clip", clip}, {"timeline", seq}};
-    if (c) note["graph"] = compJson(*EffectRegistry::instance(*c, ::Comp::kEffectId), s.format());
+    if (c) note["graph"] = compJson(*EffectRegistry::instance(*c, ::Comp::kEffectId), s.format(), c);
     s.notes << QJsonObject{{"comp_from", note}};
 }
 
@@ -480,6 +480,20 @@ void opNode(Session& s, const QJsonObject& op)
     if (!any) fail("BAD_ARGUMENT", "node: nothing to do (params, out:true or remove:true)");
 }
 
+// Runs of lost clip frames as [[from, to], ...] in timeline frames (inclusive), in time order
+QJsonArray lostRanges(QVector<int> frames, int start)
+{
+    std::sort(frames.begin(), frames.end());
+    QJsonArray out;
+    for (int i = 0; i < frames.size();) {
+        int j = i;
+        while (j + 1 < frames.size() && frames[j + 1] <= frames[j] + 1) ++j;
+        out << QJsonArray{start + frames[i], start + frames[j]};
+        i = j + 1;
+    }
+    return out;
+}
+
 void opTrackNode(Session& s, const QJsonObject& op)
 {
     const Clip& c = clipOf(s, op, "clip");
@@ -498,10 +512,11 @@ void opTrackNode(Session& s, const QJsonObject& op)
     const PC::TrackRun r = PC::trackNode(s.format(), clip, node, from, to);
     if (!r.error.isEmpty()) fail("FAILED", r.error);
     if (r.points.isEmpty()) fail("FAILED", QString("nothing tracked for node %1").arg(node));
-    if (!s.editor.trackCompNode(clip.id, node, r.points)) fail("FAILED", "could not store the tracking result");
+    if (!s.editor.trackCompNode(clip.id, node, r.points, r.lostFrames))
+        fail("FAILED", "could not store the tracking result");
     QJsonObject note{{"clip", clip.id}, {"node", node}, {"from", clip.start + from}, {"to", clip.start + to},
                      {"points", int(r.points.size())}, {"lost_frames", int(r.lostFrames.size())},
-                     {"gave_up", r.gaveUp}, {"outliers", r.outliers}};
+                     {"gave_up", r.gaveUp}, {"outliers", r.outliers}, {"lost", lostRanges(r.lostFrames, clip.start)}};
     note["lost_at"] = r.lostAt >= 0 ? QJsonValue(clip.start + r.lostAt) : QJsonValue();
     note["found_at"] = r.foundAt >= 0 ? QJsonValue(clip.start + r.foundAt) : QJsonValue();
     if (r.gaveUp)
@@ -590,7 +605,7 @@ QJsonArray compNodeKindsJson()
     return list;
 }
 
-QJsonObject compJson(const EffectInstance& e, const ProjectFormat& f)
+QJsonObject compJson(const EffectInstance& e, const ProjectFormat& f, const Clip* clip)
 {
     CompGraph g;
     if (!::Comp::graphOf(e, &g)) return {{"broken", true}};
@@ -618,6 +633,13 @@ QJsonObject compJson(const EffectInstance& e, const ProjectFormat& f)
         if (!PC::find(n.type)) o["available"] = false; // a newer version's kind: passed through
         for (const char* key : {"e_chain", "e_code"}) // custom code not confirmed (core/CodeTrust.h): passed through
             if (!CodeTrust::isTrusted(values.value(n.id).value(QLatin1String(key)).toString())) o["untrusted"] = true;
+        if (clip && n.type == QLatin1String(::Comp::kTrackerType)) // where it lost the point (keys n<id>.seen)
+            if (const QVector<::Comp::TrackGap> gaps = ::Comp::trackGaps(*clip, n.id); !gaps.isEmpty()) {
+                QJsonArray lost;
+                for (const ::Comp::TrackGap& gap : gaps) lost << QJsonArray{clip->start + gap.from, clip->start + gap.to};
+                o["lost"] = lost;
+                if (gaps.last().openEnd || gaps.first().openStart) o["lost_ended"] = true;
+            }
         if (n.type == QLatin1String(PC::kCutoutType)) // not analysed: shows nothing (EditOpsCutout.cpp)
             if (const QString hint = PC::cutoutHint(values.value(n.id).value(PC::kCutoutCacheKey).toString()); !hint.isEmpty())
                 o["hint"] = hint;
@@ -783,8 +805,14 @@ void addCompOps(QVector<OpDef>& ops)
                  "The result becomes keyframes of the node's x, y, scale, angle (replacing those in the range) and its "
                  "reference point rx, ry; followers move by (x - rx, y - ry). The "
                  "notes say points, lost_at/found_at (timeline frames where it lost/found the point again), gave_up "
-                 "(lost too long: stopped) and outliers (two points: frames that used one). Face mode needs the "
-                 "'faces' extension.",
+                 "(lost too long: stopped after max_lost frames in a row, default 50), outliers (two points: frames "
+                 "that used one) and lost: [[from, to], ...] (timeline frames, inclusive) where the point was not "
+                 "seen. Those frames become keyframes of the node's 'seen' (1 found, 0 lost). What followers do there "
+                 "is the node's value lost (set it with {op:'node', clip, id, params:{lost:'hold'}}): 'fade' "
+                 "(default: fade out over 0.2 s, in again when found), 'hold' (stay at the last place seen) or "
+                 "'bridge' (move straight through the gap, like before 0.22); gaps up to 5 frames are bridged "
+                 "always. `info` lists each tracker's gaps, `check` warns (tracker_lost, tracker_ended). Face mode "
+                 "needs the 'faces' extension.",
                  opTrackNode, QStringList{"clips"}};
 }
 
